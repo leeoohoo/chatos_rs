@@ -4,11 +4,15 @@
 use std::cmp::Ordering;
 
 use async_trait::async_trait;
+use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
+use base64::Engine as _;
 use chatos_builtin_tools::{RemoteConnectionControllerContext, RemoteConnectionControllerStore};
 use serde_json::{json, Value};
 use tokio::time::Duration;
 
-use super::ssh::{run_ssh_command, test_remote_server_connectivity};
+use super::ssh::{
+    download_sftp_file, run_ssh_command, test_remote_server_connectivity, upload_sftp_file,
+};
 use super::store_helpers::{persist_test_result, resolve_enabled_server, touch_server};
 use super::support::{
     command_danger_reason, normalize_remote_path, parse_directory_entries, resolve_connection_id,
@@ -224,6 +228,98 @@ impl RemoteConnectionControllerStore for TaskRunnerRemoteConnectionStore {
             "source_size_bytes": source_size,
             "truncated": truncated,
             "content": content,
+        }))
+    }
+
+    async fn download_file(
+        &self,
+        context: RemoteConnectionControllerContext,
+        connection_id: Option<String>,
+        path: String,
+        encoding: String,
+        max_bytes: Option<usize>,
+    ) -> Result<Value, String> {
+        let connection_id = resolve_connection_id(&context, connection_id)?;
+        let server = resolve_enabled_server(self, &connection_id).await?;
+        let normalized_path = normalize_remote_path(path.as_str());
+        let transfer_limit = max_bytes
+            .unwrap_or(context.max_read_file_bytes)
+            .clamp(1, context.max_read_file_bytes.max(1));
+        let result = download_sftp_file(
+            &server,
+            normalized_path.as_str(),
+            transfer_limit,
+            Duration::from_secs(context.command_timeout_seconds),
+        )
+        .await?;
+        let content_size_bytes = result.content.len();
+        let content = match encoding.as_str() {
+            "base64" => BASE64_STANDARD.encode(result.content.as_slice()),
+            "text" => String::from_utf8(result.content).map_err(|_| {
+                "远程文件不是有效 UTF-8 文本；请使用 encoding=\"base64\" 重新下载".to_string()
+            })?,
+            _ => return Err("encoding must be one of: text, base64".to_string()),
+        };
+        touch_server(self, &server.id).await?;
+
+        Ok(json!({
+            "connection_id": server.id,
+            "path": normalized_path,
+            "encoding": encoding,
+            "max_bytes": transfer_limit,
+            "source_size_bytes": result.source_size,
+            "content_size_bytes": content_size_bytes,
+            "truncated": result.truncated,
+            "content": content,
+        }))
+    }
+
+    async fn upload_file(
+        &self,
+        context: RemoteConnectionControllerContext,
+        connection_id: Option<String>,
+        path: String,
+        content: String,
+        encoding: String,
+        create_parent_dirs: bool,
+        overwrite: bool,
+    ) -> Result<Value, String> {
+        let connection_id = resolve_connection_id(&context, connection_id)?;
+        let server = resolve_enabled_server(self, &connection_id).await?;
+        let normalized_path = normalize_remote_path(path.as_str());
+        let bytes = match encoding.as_str() {
+            "base64" => BASE64_STANDARD
+                .decode(content.as_bytes())
+                .map_err(|err| format!("content 不是有效 base64: {err}"))?,
+            "text" => content.into_bytes(),
+            _ => return Err("encoding must be one of: text, base64".to_string()),
+        };
+        let max_upload_bytes = context.max_read_file_bytes.max(1);
+        if bytes.len() > max_upload_bytes {
+            return Err(format!(
+                "上传内容超过限制: {} bytes > {} bytes",
+                bytes.len(),
+                max_upload_bytes
+            ));
+        }
+        let bytes_written = upload_sftp_file(
+            &server,
+            normalized_path.as_str(),
+            bytes,
+            create_parent_dirs,
+            overwrite,
+            Duration::from_secs(context.command_timeout_seconds),
+        )
+        .await?;
+        touch_server(self, &server.id).await?;
+
+        Ok(json!({
+            "connection_id": server.id,
+            "path": normalized_path,
+            "encoding": encoding,
+            "bytes_written": bytes_written,
+            "create_parent_dirs": create_parent_dirs,
+            "overwrite": overwrite,
         }))
     }
 }

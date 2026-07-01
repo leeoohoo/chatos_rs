@@ -90,7 +90,7 @@ pub use self::chatos_message_tasks::{
 pub(crate) use self::filter_sanitize::sanitize_prompt_list_filters;
 use self::filter_sanitize::{sanitize_run_list_filters, sanitize_task_list_filters};
 use self::process_log_text::apply_task_process_log_update;
-use self::remote_servers::build_remote_server_record;
+use self::remote_servers::{build_remote_server_record, find_reusable_remote_server};
 use self::schedule_helpers::{advance_task_schedule_after_dispatch, sanitize_task_schedule_config};
 pub(crate) use self::skill_service::RuntimeSkillContext;
 use self::status_display::{TaskScheduleModeExt, TaskStatusExt};

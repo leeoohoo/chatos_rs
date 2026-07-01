@@ -163,6 +163,28 @@ pub fn is_session_summary_message(message: &Message) -> bool {
         == Some("session_summary")
 }
 
+pub fn is_runtime_guidance_message(message: &Message) -> bool {
+    message
+        .message_mode
+        .as_deref()
+        .map(str::trim)
+        .is_some_and(|mode| mode == "runtime_guidance")
+        || message
+            .message_source
+            .as_deref()
+            .map(str::trim)
+            .is_some_and(|source| source == "runtime_guidance")
+        || message
+            .metadata
+            .as_ref()
+            .and_then(|metadata| metadata.get("runtime_guidance"))
+            .is_some()
+}
+
+pub fn is_runtime_guidance_user_message(message: &Message) -> bool {
+    message.role == "user" && is_runtime_guidance_message(message)
+}
+
 pub fn message_is_hidden(message: &Message) -> bool {
     message
         .metadata

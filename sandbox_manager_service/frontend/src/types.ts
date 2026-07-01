@@ -35,6 +35,8 @@ export interface SandboxLeaseRecord {
   run_workspace: string;
   backend: string;
   backend_id?: string | null;
+  image_id?: string | null;
+  image_ref?: string | null;
   status: SandboxStatus;
   agent_endpoint?: string | null;
   resource_limits: ResourceLimits;
@@ -104,6 +106,7 @@ export interface CreateSandboxLeasePayload {
   project_id: string;
   run_id: string;
   workspace_root: string;
+  image_id?: string;
   tools: string[];
   ttl_seconds?: number;
   resource_limits?: ResourceLimits;
@@ -114,6 +117,8 @@ export interface CreateSandboxLeaseResponse {
   lease_id: string;
   sandbox_id: string;
   backend_id?: string | null;
+  image_id?: string | null;
+  image_ref?: string | null;
   status: SandboxStatus;
   agent_endpoint?: string | null;
   run_workspace: string;
@@ -146,4 +151,64 @@ export interface SystemConfigResponse {
   kata_runtime: string;
   kata_image: string;
   kata_network_mode: string;
+  image_tag_prefix: string;
+  image_build_context: string;
+  image_dockerfile: string;
+}
+
+export interface SandboxImageRuntimeVersionRecord {
+  id: string;
+  label: string;
+  description: string;
+  default: boolean;
+}
+
+export interface SandboxImageFeatureRecord {
+  id: string;
+  label: string;
+  description: string;
+  default_version: string;
+  versions: SandboxImageRuntimeVersionRecord[];
+}
+
+export interface SandboxImageRecord {
+  id: string;
+  name: string;
+  description: string;
+  image_ref: string;
+  features: string[];
+  backend: string;
+  initialized: boolean;
+  status: string;
+  buildable: boolean;
+  is_default: boolean;
+}
+
+export interface SandboxImageCatalogResponse {
+  backend: string;
+  default_image_id: string;
+  image_tag_prefix: string;
+  features: SandboxImageFeatureRecord[];
+  images: SandboxImageRecord[];
+}
+
+export interface InitializeSandboxImagePayload {
+  features: string[];
+  custom_build_script?: string;
+}
+
+export interface SandboxImageJobRecord {
+  id: string;
+  image_id: string;
+  image_name: string;
+  image_ref: string;
+  features: string[];
+  backend: string;
+  status: 'running' | 'succeeded' | 'failed' | string;
+  created_at: string;
+  updated_at: string;
+  started_at?: string | null;
+  finished_at?: string | null;
+  output: string;
+  error?: string | null;
 }

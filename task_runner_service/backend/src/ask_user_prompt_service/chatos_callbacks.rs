@@ -8,7 +8,9 @@ use tracing::{info, warn};
 use crate::http_body::{read_response_text_limited_or_message, ERROR_BODY_PREVIEW_LIMIT_BYTES};
 use crate::models::{now_rfc3339, AskUserPromptRecord, TaskRecord, TaskRunRecord, TaskStatus};
 
-use super::support::status_label;
+use super::support::{
+    redacted_prompt_payload, redacted_prompt_response, secret_field_keys, status_label,
+};
 use super::*;
 
 #[derive(Debug, Clone, Serialize)]
@@ -143,6 +145,7 @@ fn build_chatos_ask_user_prompt_callback_payload(
     run: Option<&TaskRunRecord>,
     prompt: &AskUserPromptRecord,
 ) -> ChatosAskUserPromptCallbackPayload {
+    let secret_keys = secret_field_keys(&prompt.payload);
     ChatosAskUserPromptCallbackPayload {
         event: event.to_string(),
         task_id: task.id.clone(),
@@ -164,8 +167,8 @@ fn build_chatos_ask_user_prompt_callback_payload(
             message: prompt.message.clone(),
             allow_cancel: prompt.allow_cancel,
             timeout_ms: prompt.timeout_ms,
-            payload: prompt.payload.clone(),
-            response: prompt.response.clone(),
+            payload: redacted_prompt_payload(prompt.payload.clone()),
+            response: redacted_prompt_response(prompt.response.clone(), &secret_keys),
             status: status_label(prompt.status).to_string(),
             expires_at: prompt.expires_at.clone(),
         },

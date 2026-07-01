@@ -15,6 +15,15 @@ pub fn build_router(state: AppState) -> Router {
         .route("/health", get(handlers::health))
         .route("/api/system/config", get(handlers::system_config))
         .route("/api/sandbox-pool/status", get(handlers::pool_status))
+        .route("/api/sandbox-images", get(handlers::list_sandbox_images))
+        .route(
+            "/api/sandbox-images/jobs",
+            get(handlers::list_sandbox_image_jobs),
+        )
+        .route(
+            "/api/sandbox-images/initialize",
+            post(handlers::initialize_sandbox_image),
+        )
         .route(
             "/api/sandboxes/leases",
             post(handlers::create_sandbox_lease),

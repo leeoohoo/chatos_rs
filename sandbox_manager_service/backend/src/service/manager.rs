@@ -14,13 +14,16 @@ use crate::config::AppConfig;
 use crate::error::ApiError;
 use crate::models::{
     CreateSandboxLeaseRequest, CreateSandboxLeaseResponse, DestroySandboxResponse,
-    HeartbeatRequest, HeartbeatResponse, ListSandboxQuery, PoolStatusResponse,
-    ReleaseSandboxRequest, ReleaseSandboxResponse, SandboxEventRecord, SandboxHealthCheck,
-    SandboxHealthResponse, SandboxLeaseRecord, SandboxMcpCallRequest, SandboxMcpCallResponse,
-    SandboxMcpToolsResponse, SandboxStatus, SystemConfigResponse,
+    HeartbeatRequest, HeartbeatResponse, InitializeSandboxImageRequest, ListSandboxQuery,
+    PoolStatusResponse, ReleaseSandboxRequest, ReleaseSandboxResponse, SandboxEventRecord,
+    SandboxHealthCheck, SandboxHealthResponse, SandboxImageCatalogResponse, SandboxImageJobRecord,
+    SandboxLeaseRecord, SandboxMcpCallRequest, SandboxMcpCallResponse, SandboxMcpToolsResponse,
+    SandboxStatus, SystemConfigResponse,
 };
 use crate::pool::SandboxPoolRef;
 use crate::store::SandboxStore;
+
+use super::images;
 
 #[derive(Clone)]
 pub struct SandboxManager {
@@ -28,6 +31,7 @@ pub struct SandboxManager {
     store: SandboxStore,
     backend: SandboxBackendRef,
     pool: SandboxPoolRef,
+    image_jobs: images::ImageJobStore,
 }
 
 impl SandboxManager {
@@ -44,6 +48,7 @@ impl SandboxManager {
             store,
             backend,
             pool,
+            image_jobs: images::ImageJobStore::default(),
         })
     }
 
@@ -73,6 +78,14 @@ impl SandboxManager {
             self.prepare_run_workspace(input.workspace_root.as_str(), input.run_id.as_str())?;
         let resource_limits = input.resource_limits.unwrap_or_default();
         let network = input.network.unwrap_or_default();
+        let requested_image_id = input.image_id.clone();
+        let image = images::resolve_for_create(
+            &self.config,
+            self.config.backend,
+            requested_image_id.as_deref(),
+        )
+        .await
+        .map_err(ApiError::bad_request)?;
         let tools = if input.tools.is_empty() {
             vec!["filesystem".to_string(), "terminal".to_string()]
         } else {
@@ -90,6 +103,8 @@ impl SandboxManager {
             run_workspace: run_workspace.to_string_lossy().to_string(),
             backend: self.backend.kind().to_string(),
             backend_id: None,
+            image_id: Some(image.id.clone()),
+            image_ref: Some(image.image_ref.clone()),
             status: SandboxStatus::Leasing,
             agent_endpoint: None,
             resource_limits: resource_limits.clone(),
@@ -109,7 +124,11 @@ impl SandboxManager {
             &record,
             "lease_created",
             Some("sandbox lease created"),
-            Some(json!({ "backend": self.backend.kind() })),
+            Some(json!({
+                "backend": self.backend.kind(),
+                "image_id": image.id,
+                "image_ref": image.image_ref,
+            })),
         )
         .await;
 
@@ -118,6 +137,7 @@ impl SandboxManager {
             .create(SandboxCreateSpec {
                 sandbox_id: sandbox_id.clone(),
                 run_workspace: record.run_workspace.clone(),
+                image: record.image_ref.clone().unwrap_or_default(),
                 resource_limits,
                 network,
             })
@@ -158,6 +178,8 @@ impl SandboxManager {
                     lease_id,
                     sandbox_id,
                     backend_id: record.backend_id,
+                    image_id: record.image_id,
+                    image_ref: record.image_ref,
                     status: record.status,
                     agent_endpoint: record.agent_endpoint,
                     run_workspace: record.run_workspace,
@@ -446,6 +468,29 @@ impl SandboxManager {
             .map_err(ApiError::internal)
     }
 
+    pub async fn sandbox_images(&self) -> Result<SandboxImageCatalogResponse, ApiError> {
+        Ok(images::catalog(&self.config, self.config.backend).await)
+    }
+
+    pub async fn sandbox_image_jobs(&self) -> Result<Vec<SandboxImageJobRecord>, ApiError> {
+        Ok(self.image_jobs.list().await)
+    }
+
+    pub async fn initialize_sandbox_image(
+        &self,
+        input: InitializeSandboxImageRequest,
+    ) -> Result<SandboxImageJobRecord, ApiError> {
+        images::start_initialize_job(
+            self.image_jobs.clone(),
+            &self.config,
+            self.config.backend,
+            &input.features,
+            input.custom_build_script.as_deref(),
+        )
+        .await
+        .map_err(ApiError::bad_request)
+    }
+
     pub fn pool_status(&self) -> PoolStatusResponse {
         PoolStatusResponse {
             backend: self.backend.kind().to_string(),
@@ -475,6 +520,13 @@ impl SandboxManager {
             kata_runtime: self.config.kata_runtime.clone(),
             kata_image: self.config.kata_image.clone(),
             kata_network_mode: self.config.kata_network_mode.clone(),
+            image_tag_prefix: self.config.image_tag_prefix.clone(),
+            image_build_context: self
+                .config
+                .image_build_context
+                .to_string_lossy()
+                .to_string(),
+            image_dockerfile: self.config.image_dockerfile.to_string_lossy().to_string(),
         }
     }
 

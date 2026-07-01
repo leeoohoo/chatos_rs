@@ -49,7 +49,7 @@ pub struct AiRuntime {
     max_iterations: usize,
 }
 
-const EMPTY_FINAL_RESPONSE_FOLLOWUP_PROMPT: &str = "上一轮响应没有返回任何可展示的最终结果。请不要继续调用工具，直接基于目前对话上下文、已执行步骤和已有工具结果，输出本次任务的最终结果；如果无法完成，请明确说明阻塞原因、已完成事项和下一步建议。";
+const EMPTY_FINAL_RESPONSE_FOLLOWUP_PROMPT: &str = "上一轮响应没有返回任何可展示的最终结果。请先检查当前任务是否已经真实完成：如果已经满足目标且不需要更多验证，直接输出最终结果；如果仍有未完成工作、未处理的任务状态/门禁反馈、缺少关键事实或缺少验证，请继续使用必要工具完成工作或记录明确阻塞。不要把未完成工作包装成最终结果。";
 const EMPTY_FINAL_RESPONSE_ERROR: &str = "模型未返回可展示的最终结果";
 const MAX_TRANSIENT_MODEL_REQUEST_RETRIES: usize = 3;
 

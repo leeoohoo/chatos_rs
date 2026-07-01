@@ -11,6 +11,14 @@ pub(crate) fn enrich_tool_schemas_with_model_configs(
 ) {
 }
 
+fn thinking_level_schema() -> Value {
+    json!({
+        "type": "string",
+        "enum": ["none", "auto", "minimal", "low", "medium", "high", "xhigh", "max"],
+        "description": "可选的默认思考等级。不要自由输入；只能从枚举中选择。省略该字段表示使用模型/供应商/运行时默认值。"
+    })
+}
+
 pub(crate) fn create_model_config_schema() -> Value {
     json!({
         "type": "object",
@@ -26,7 +34,7 @@ pub(crate) fn create_model_config_schema() -> Value {
             },
             "temperature": { "type": "number" },
             "max_output_tokens": { "type": "integer" },
-            "thinking_level": { "type": "string" },
+            "thinking_level": thinking_level_schema(),
             "supports_responses": { "type": "boolean" },
             "instructions": { "type": "string" },
             "request_cwd": { "type": "string" },
@@ -54,7 +62,7 @@ pub(crate) fn update_model_config_schema() -> Value {
             },
             "temperature": { "type": "number" },
             "max_output_tokens": { "type": "integer" },
-            "thinking_level": { "type": "string" },
+            "thinking_level": thinking_level_schema(),
             "supports_responses": { "type": "boolean" },
             "instructions": { "type": "string" },
             "request_cwd": { "type": "string" },

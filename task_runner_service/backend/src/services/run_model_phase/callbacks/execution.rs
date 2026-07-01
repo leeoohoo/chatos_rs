@@ -203,7 +203,7 @@ impl RunService {
         json!({
             "role": "system",
             "content": format!(
-                "[Task Runner completion gate]\n{message}\n这是第 {attempt} 次完成前校验反馈。不要结束当前任务；请继续调用内置 TaskManager 工具查看/更新/完成这些子任务。只有所有子任务都成功后，父任务才能给出最终完成答复。"
+                "[Task Runner completion gate]\n{message}\n这是第 {attempt} 次完成前校验反馈。本门禁优先级高于空响应补偿或普通收尾提示：不要结束当前任务，也不要输出最终总结。请继续调用必要工具推进上述子任务；对子任务只能在有真实完成证据时调用 TaskManager 标记成功，或在有可核验证据时标记 blocked 并写明阻塞。只有所有子任务都成功后，父任务才能给出最终完成答复。"
             )
         })
     }
@@ -376,6 +376,9 @@ mod tests {
             .expect("feedback content");
         assert!(content.contains("第 2 次完成前校验反馈"));
         assert!(content.contains("不要结束当前任务"));
-        assert!(content.contains("继续调用内置 TaskManager 工具"));
+        assert!(content.contains("不要输出最终总结"));
+        assert!(content.contains("继续调用必要工具"));
+        assert!(content.contains("调用 TaskManager 标记成功"));
+        assert!(content.contains("标记 blocked"));
     }
 }

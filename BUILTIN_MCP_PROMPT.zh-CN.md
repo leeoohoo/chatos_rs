@@ -225,6 +225,8 @@
 `remote_connection_controller_run_command`
 `remote_connection_controller_list_directory`
 `remote_connection_controller_read_file`
+`remote_connection_controller_download_file`
+`remote_connection_controller_upload_file`
 
 默认在以下场景使用：
 1. 用户提到服务器、远端机器、SSH、线上环境、远程目录、远程日志、远程配置文件。
@@ -236,6 +238,8 @@
 3. 执行远程检查或操作时，用 `remote_connection_controller_run_command`。
 4. 看远程目录结构时，用 `remote_connection_controller_list_directory`。
 5. 读远程文件内容时，用 `remote_connection_controller_read_file`。
+6. 下载远程文件时，用 `remote_connection_controller_download_file`；二进制文件使用 `encoding=base64`。
+7. 上传文件内容到远程主机时，用 `remote_connection_controller_upload_file`；二进制内容使用 `encoding=base64`。
 
 额外原则：
 1. 远程问题不要落到本地终端或本地文件工具上。

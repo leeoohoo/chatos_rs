@@ -3034,6 +3034,7 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "axum",
+ "base64 0.22.1",
  "chrono",
  "dotenvy",
  "futures-util",
@@ -3041,6 +3042,7 @@ dependencies = [
  "reqwest",
  "serde",
  "serde_json",
+ "sha2",
  "tokio",
  "tower-http 0.5.2",
  "tracing",

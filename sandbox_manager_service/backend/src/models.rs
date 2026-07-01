@@ -104,6 +104,10 @@ pub struct SandboxLeaseRecord {
     pub run_workspace: String,
     pub backend: String,
     pub backend_id: Option<String>,
+    #[serde(default)]
+    pub image_id: Option<String>,
+    #[serde(default)]
+    pub image_ref: Option<String>,
     pub status: SandboxStatus,
     pub agent_endpoint: Option<String>,
     pub resource_limits: ResourceLimits,
@@ -134,6 +138,7 @@ pub struct CreateSandboxLeaseRequest {
     pub project_id: String,
     pub run_id: String,
     pub workspace_root: String,
+    pub image_id: Option<String>,
     #[serde(default)]
     pub tools: Vec<String>,
     pub ttl_seconds: Option<u64>,
@@ -146,6 +151,8 @@ pub struct CreateSandboxLeaseResponse {
     pub lease_id: String,
     pub sandbox_id: String,
     pub backend_id: Option<String>,
+    pub image_id: Option<String>,
+    pub image_ref: Option<String>,
     pub status: SandboxStatus,
     pub agent_endpoint: Option<String>,
     pub run_workspace: String,
@@ -273,6 +280,74 @@ pub struct SystemConfigResponse {
     pub kata_runtime: String,
     pub kata_image: String,
     pub kata_network_mode: String,
+    pub image_tag_prefix: String,
+    pub image_build_context: String,
+    pub image_dockerfile: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SandboxImageRuntimeVersionRecord {
+    pub id: String,
+    pub label: String,
+    pub description: String,
+    pub default: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SandboxImageFeatureRecord {
+    pub id: String,
+    pub label: String,
+    pub description: String,
+    pub default_version: String,
+    pub versions: Vec<SandboxImageRuntimeVersionRecord>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SandboxImageRecord {
+    pub id: String,
+    pub name: String,
+    pub description: String,
+    pub image_ref: String,
+    pub features: Vec<String>,
+    pub backend: String,
+    pub initialized: bool,
+    pub status: String,
+    pub buildable: bool,
+    pub is_default: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SandboxImageCatalogResponse {
+    pub backend: String,
+    pub default_image_id: String,
+    pub image_tag_prefix: String,
+    pub features: Vec<SandboxImageFeatureRecord>,
+    pub images: Vec<SandboxImageRecord>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct InitializeSandboxImageRequest {
+    #[serde(default)]
+    pub features: Vec<String>,
+    #[serde(default)]
+    pub custom_build_script: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SandboxImageJobRecord {
+    pub id: String,
+    pub image_id: String,
+    pub image_name: String,
+    pub image_ref: String,
+    pub features: Vec<String>,
+    pub backend: String,
+    pub status: String,
+    pub created_at: String,
+    pub updated_at: String,
+    pub started_at: Option<String>,
+    pub finished_at: Option<String>,
+    pub output: String,
+    pub error: Option<String>,
 }
 
 fn default_true() -> bool {

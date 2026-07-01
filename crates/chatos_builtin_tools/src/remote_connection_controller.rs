@@ -74,6 +74,26 @@ pub trait RemoteConnectionControllerStore: Send + Sync {
         path: String,
         max_bytes: Option<usize>,
     ) -> Result<Value, String>;
+
+    async fn download_file(
+        &self,
+        context: RemoteConnectionControllerContext,
+        connection_id: Option<String>,
+        path: String,
+        encoding: String,
+        max_bytes: Option<usize>,
+    ) -> Result<Value, String>;
+
+    async fn upload_file(
+        &self,
+        context: RemoteConnectionControllerContext,
+        connection_id: Option<String>,
+        path: String,
+        content: String,
+        encoding: String,
+        create_parent_dirs: bool,
+        overwrite: bool,
+    ) -> Result<Value, String>;
 }
 
 #[derive(Clone)]
@@ -142,6 +162,8 @@ impl RemoteConnectionControllerService {
                     "run_command",
                     "list_directory",
                     "read_file",
+                    "download_file",
+                    "upload_file",
                 ],
                 reason,
             );
@@ -153,7 +175,9 @@ impl RemoteConnectionControllerService {
         service.register_test_connection(bound.clone(), opts.store.clone(), require_connection_id);
         service.register_run_command(bound.clone(), opts.store.clone(), require_connection_id);
         service.register_list_directory(bound.clone(), opts.store.clone(), require_connection_id);
-        service.register_read_file(bound, opts.store, require_connection_id);
+        service.register_read_file(bound.clone(), opts.store.clone(), require_connection_id);
+        service.register_download_file(bound.clone(), opts.store.clone(), require_connection_id);
+        service.register_upload_file(bound, opts.store, require_connection_id);
         Ok(service)
     }
 
@@ -382,6 +406,132 @@ impl RemoteConnectionControllerService {
             }),
         );
     }
+
+    fn register_download_file(
+        &mut self,
+        bound: RemoteConnectionControllerContext,
+        store: RemoteConnectionControllerStoreRef,
+        require_connection_id: bool,
+    ) {
+        let server_name = bound.server_name.clone();
+        let required = if require_connection_id {
+            json!(["connection_id", "path"])
+        } else {
+            json!(["path"])
+        };
+        let description = if require_connection_id {
+            format!(
+                "Download a remote file through SFTP on SSH server {}. connection_id is required because no default connection is bound. Returns content as UTF-8 text by default; use encoding=base64 for binary files.",
+                server_name
+            )
+        } else {
+            format!(
+                "Download a remote file through SFTP on bound SSH server {}. Returns content as UTF-8 text by default; use encoding=base64 for binary files.",
+                server_name
+            )
+        };
+        self.register_tool(
+            "download_file",
+            &description,
+            json!({
+                "type": "object",
+                "properties": {
+                    "connection_id": { "type": "string" },
+                    "path": { "type": "string" },
+                    "encoding": { "type": "string", "enum": ["text", "base64"] },
+                    "max_bytes": { "type": "integer", "minimum": 1, "maximum": 262144 }
+                },
+                "required": required,
+                "additionalProperties": false
+            }),
+            async_text_tool_handler(move |args| {
+                let connection_id = optional_trimmed_string(&args, "connection_id");
+                let path = required_trimmed_string(&args, "path")?;
+                let encoding = optional_encoding(&args, "encoding", "text")?;
+                let max_bytes = optional_usize(&args, "max_bytes");
+                let ctx = bound.clone();
+                let store = store.inner();
+                Ok(async move {
+                    store
+                        .download_file(ctx, connection_id, path, encoding, max_bytes)
+                        .await
+                })
+            }),
+        );
+    }
+
+    fn register_upload_file(
+        &mut self,
+        bound: RemoteConnectionControllerContext,
+        store: RemoteConnectionControllerStoreRef,
+        require_connection_id: bool,
+    ) {
+        let server_name = bound.server_name.clone();
+        let required = if require_connection_id {
+            json!(["connection_id", "path", "content"])
+        } else {
+            json!(["path", "content"])
+        };
+        let description = if require_connection_id {
+            format!(
+                "Upload content to a remote file through SFTP on SSH server {}. connection_id is required because no default connection is bound. Use encoding=base64 for binary content.",
+                server_name
+            )
+        } else {
+            format!(
+                "Upload content to a remote file through SFTP on bound SSH server {}. Use encoding=base64 for binary content.",
+                server_name
+            )
+        };
+        self.register_tool(
+            "upload_file",
+            &description,
+            json!({
+                "type": "object",
+                "properties": {
+                    "connection_id": { "type": "string" },
+                    "path": { "type": "string" },
+                    "content": { "type": "string" },
+                    "encoding": { "type": "string", "enum": ["text", "base64"] },
+                    "create_parent_dirs": { "type": "boolean" },
+                    "overwrite": { "type": "boolean" }
+                },
+                "required": required,
+                "additionalProperties": false
+            }),
+            async_text_tool_handler(move |args| {
+                let connection_id = optional_trimmed_string(&args, "connection_id");
+                let path = required_trimmed_string(&args, "path")?;
+                let content = required_string(&args, "content")?;
+                let encoding = optional_encoding(&args, "encoding", "text")?;
+                let create_parent_dirs =
+                    optional_bool_with_default(&args, "create_parent_dirs", true);
+                let overwrite = optional_bool_with_default(&args, "overwrite", true);
+                let ctx = bound.clone();
+                let store = store.inner();
+                Ok(async move {
+                    store
+                        .upload_file(
+                            ctx,
+                            connection_id,
+                            path,
+                            content,
+                            encoding,
+                            create_parent_dirs,
+                            overwrite,
+                        )
+                        .await
+                })
+            }),
+        );
+    }
+}
+
+fn required_string(args: &Value, field: &str) -> Result<String, String> {
+    args.get(field)
+        .and_then(Value::as_str)
+        .map(ToOwned::to_owned)
+        .ok_or_else(|| format!("{field} is required"))
 }
 
 fn required_trimmed_string(args: &Value, field: &str) -> Result<String, String> {
@@ -417,6 +567,18 @@ fn optional_usize(args: &Value, field: &str) -> Option<usize> {
 
 fn optional_bool(args: &Value, field: &str) -> bool {
     args.get(field).and_then(Value::as_bool).unwrap_or(false)
+}
+
+fn optional_bool_with_default(args: &Value, field: &str, default: bool) -> bool {
+    args.get(field).and_then(Value::as_bool).unwrap_or(default)
+}
+
+fn optional_encoding(args: &Value, field: &str, default: &str) -> Result<String, String> {
+    let encoding = optional_trimmed_string(args, field).unwrap_or_else(|| default.to_string());
+    match encoding.as_str() {
+        "text" | "base64" => Ok(encoding),
+        _ => Err(format!("{field} must be one of: text, base64")),
+    }
 }
 
 #[cfg(test)]
@@ -476,6 +638,36 @@ mod tests {
         ) -> Result<Value, String> {
             Ok(json!({ "path": path, "content": "" }))
         }
+
+        async fn download_file(
+            &self,
+            _context: RemoteConnectionControllerContext,
+            _connection_id: Option<String>,
+            path: String,
+            encoding: String,
+            _max_bytes: Option<usize>,
+        ) -> Result<Value, String> {
+            Ok(json!({ "path": path, "encoding": encoding, "content": "" }))
+        }
+
+        async fn upload_file(
+            &self,
+            _context: RemoteConnectionControllerContext,
+            _connection_id: Option<String>,
+            path: String,
+            content: String,
+            encoding: String,
+            create_parent_dirs: bool,
+            overwrite: bool,
+        ) -> Result<Value, String> {
+            Ok(json!({
+                "path": path,
+                "encoding": encoding,
+                "bytes_written": content.len(),
+                "create_parent_dirs": create_parent_dirs,
+                "overwrite": overwrite,
+            }))
+        }
     }
 
     fn option_base() -> RemoteConnectionControllerOptions {
@@ -515,13 +707,15 @@ mod tests {
         let service = RemoteConnectionControllerService::new(options).expect("init");
         assert!(service.list_tools().is_empty());
         let unavailable = service.unavailable_tools();
-        assert_eq!(unavailable.len(), 5);
+        assert_eq!(unavailable.len(), 7);
         for name in [
             "list_connections",
             "test_connection",
             "run_command",
             "list_directory",
             "read_file",
+            "download_file",
+            "upload_file",
         ] {
             assert!(
                 unavailable.iter().any(|(tool_name, _)| tool_name == name),
@@ -546,6 +740,15 @@ mod tests {
         let read_required = find_required_for_tool(&tools, "read_file");
         assert!(read_required.iter().any(|value| value == "connection_id"));
         assert!(read_required.iter().any(|value| value == "path"));
+        let download_required = find_required_for_tool(&tools, "download_file");
+        assert!(download_required
+            .iter()
+            .any(|value| value == "connection_id"));
+        assert!(download_required.iter().any(|value| value == "path"));
+        let upload_required = find_required_for_tool(&tools, "upload_file");
+        assert!(upload_required.iter().any(|value| value == "connection_id"));
+        assert!(upload_required.iter().any(|value| value == "path"));
+        assert!(upload_required.iter().any(|value| value == "content"));
     }
 
     #[test]
@@ -566,5 +769,59 @@ mod tests {
         let read_required = find_required_for_tool(&tools, "read_file");
         assert!(read_required.iter().any(|value| value == "path"));
         assert!(!read_required.iter().any(|value| value == "connection_id"));
+        let download_required = find_required_for_tool(&tools, "download_file");
+        assert!(download_required.iter().any(|value| value == "path"));
+        assert!(!download_required
+            .iter()
+            .any(|value| value == "connection_id"));
+        let upload_required = find_required_for_tool(&tools, "upload_file");
+        assert!(upload_required.iter().any(|value| value == "path"));
+        assert!(upload_required.iter().any(|value| value == "content"));
+        assert!(!upload_required.iter().any(|value| value == "connection_id"));
+    }
+
+    #[test]
+    fn upload_and_download_tools_validate_encoding() {
+        let service = RemoteConnectionControllerService::new(option_base()).expect("init");
+
+        let download = service
+            .call_tool(
+                "download_file",
+                json!({
+                    "connection_id": "conn",
+                    "path": "/tmp/a.bin",
+                    "encoding": "base64",
+                }),
+            )
+            .expect("download");
+        assert!(download.to_string().contains("base64"));
+
+        let upload = service
+            .call_tool(
+                "upload_file",
+                json!({
+                    "connection_id": "conn",
+                    "path": "/tmp/a.txt",
+                    "content": "hello",
+                    "create_parent_dirs": false,
+                    "overwrite": false,
+                }),
+            )
+            .expect("upload");
+        assert!(upload
+            .to_string()
+            .contains("hello".len().to_string().as_str()));
+
+        let err = service
+            .call_tool(
+                "download_file",
+                json!({
+                    "connection_id": "conn",
+                    "path": "/tmp/a.bin",
+                    "encoding": "hex",
+                }),
+            )
+            .expect_err("invalid encoding");
+        assert!(err.contains("encoding must be one of"));
     }
 }

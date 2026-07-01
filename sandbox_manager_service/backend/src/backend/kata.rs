@@ -74,7 +74,7 @@ impl SandboxBackend for KataSandboxBackend {
             .arg("no-new-privileges")
             .arg("-v")
             .arg(format!("{}:/workspace:rw", spec.run_workspace))
-            .arg(&self.config.kata_image);
+            .arg(&spec.image);
 
         let output = command.output().await.map_err(|err| {
             format!(

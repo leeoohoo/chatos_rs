@@ -165,6 +165,13 @@ fn append_runtime_input_items_preserves_existing_items_for_empty_final_followup(
 }
 
 #[test]
+fn empty_final_followup_does_not_forbid_needed_tools() {
+    assert!(!EMPTY_FINAL_RESPONSE_FOLLOWUP_PROMPT.contains("不要继续调用工具"));
+    assert!(EMPTY_FINAL_RESPONSE_FOLLOWUP_PROMPT.contains("继续使用必要工具"));
+    assert!(EMPTY_FINAL_RESPONSE_FOLLOWUP_PROMPT.contains("不要把未完成工作包装成最终结果"));
+}
+
+#[test]
 fn should_persist_tool_result_skips_successful_empty_arrays_only() {
     let empty_success = tool_result("[]", Some(json!([])), true, false, false);
     assert!(!should_persist_tool_result(&empty_success));

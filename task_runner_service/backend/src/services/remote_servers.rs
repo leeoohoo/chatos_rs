@@ -5,6 +5,7 @@ use uuid::Uuid;
 
 use crate::auth::CurrentUser;
 use crate::models::{CreateRemoteServerRequest, RemoteServerRecord};
+use crate::store::AppStore;
 
 use super::{normalized_optional, validate_required};
 
@@ -54,6 +55,63 @@ pub(super) fn build_remote_server_record(
     };
     validate_remote_server_auth_fields(&record)?;
     Ok(record)
+}
+
+pub(super) async fn find_reusable_remote_server(
+    store: &AppStore,
+    candidate: &RemoteServerRecord,
+) -> Result<Option<RemoteServerRecord>, String> {
+    Ok(store
+        .list_remote_servers()
+        .await?
+        .into_iter()
+        .find(|existing| remote_servers_can_reuse(existing, candidate)))
+}
+
+fn remote_servers_can_reuse(existing: &RemoteServerRecord, candidate: &RemoteServerRecord) -> bool {
+    existing.enabled
+        && remote_server_scope_key(existing) == remote_server_scope_key(candidate)
+        && existing
+            .host
+            .trim()
+            .eq_ignore_ascii_case(candidate.host.trim())
+        && existing.port == candidate.port
+        && text_matches(existing.username.as_str(), candidate.username.as_str())
+        && text_matches(existing.auth_type.as_str(), candidate.auth_type.as_str())
+        && optional_text_matches(existing.password.as_deref(), candidate.password.as_deref())
+        && optional_text_matches(
+            existing.private_key_path.as_deref(),
+            candidate.private_key_path.as_deref(),
+        )
+        && optional_text_matches(
+            existing.certificate_path.as_deref(),
+            candidate.certificate_path.as_deref(),
+        )
+        && optional_text_matches(
+            existing.default_remote_path.as_deref(),
+            candidate.default_remote_path.as_deref(),
+        )
+        && text_matches(
+            existing.host_key_policy.as_str(),
+            candidate.host_key_policy.as_str(),
+        )
+}
+
+fn remote_server_scope_key(record: &RemoteServerRecord) -> Option<&str> {
+    normalized_text(record.owner_user_id.as_deref())
+        .or_else(|| normalized_text(record.creator_user_id.as_deref()))
+}
+
+fn text_matches(left: &str, right: &str) -> bool {
+    left.trim() == right.trim()
+}
+
+fn optional_text_matches(left: Option<&str>, right: Option<&str>) -> bool {
+    normalized_text(left) == normalized_text(right)
+}
+
+fn normalized_text(value: Option<&str>) -> Option<&str> {
+    value.map(str::trim).filter(|item| !item.is_empty())
 }
 
 pub(super) fn normalize_remote_server_port(value: Option<i64>) -> Result<i64, String> {

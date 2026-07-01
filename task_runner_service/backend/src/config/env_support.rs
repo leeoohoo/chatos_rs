@@ -6,12 +6,12 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use chatos_ai_runtime::{
-    DEFAULT_TOOL_RESULTS_MODEL_TOTAL_MAX_CHARS, DEFAULT_TOOL_RESULT_MODEL_MAX_CHARS,
-    TOOL_RESULTS_MODEL_TOTAL_MAX_CHARS_ENV, TOOL_RESULT_MODEL_MAX_CHARS_ENV,
+    DEFAULT_TOOL_RESULT_MODEL_MAX_CHARS, DEFAULT_TOOL_RESULTS_MODEL_TOTAL_MAX_CHARS,
+    TOOL_RESULT_MODEL_MAX_CHARS_ENV, TOOL_RESULTS_MODEL_TOTAL_MAX_CHARS_ENV,
 };
 
 use super::database::{default_database_url, normalize_database_url};
-use super::{AppConfig, StoreMode, DEFAULT_TASK_RUN_EXECUTION_TIMEOUT_MS};
+use super::{AppConfig, DEFAULT_TASK_RUN_EXECUTION_TIMEOUT_MS, StoreMode};
 
 impl AppConfig {
     pub fn from_env() -> Result<Self, String> {
@@ -66,9 +66,12 @@ impl AppConfig {
             TOOL_RESULTS_MODEL_TOTAL_MAX_CHARS_ENV,
             DEFAULT_TOOL_RESULTS_MODEL_TOTAL_MAX_CHARS,
         );
-        let default_execution_environment_mode = normalize_execution_environment_mode(
-            normalized_env("TASK_RUNNER_EXECUTION_ENVIRONMENT_MODE"),
-        );
+        let default_execution_environment_mode =
+            normalized_env("TASK_RUNNER_EXECUTION_ENVIRONMENT_MODE");
+        let default_execution_environment_mode =
+            crate::models::normalize_execution_environment_mode(
+                default_execution_environment_mode.as_deref(),
+            );
         let default_sandbox_manager_base_url =
             normalized_env("TASK_RUNNER_SANDBOX_MANAGER_BASE_URL")
                 .unwrap_or_else(|| "http://127.0.0.1:8095".to_string());
@@ -190,19 +193,6 @@ pub(super) fn env_u64(key: &str, default_value: u64) -> u64 {
         .and_then(|value| value.parse::<u64>().ok())
         .filter(|value| *value > 0)
         .unwrap_or(default_value)
-}
-
-fn normalize_execution_environment_mode(value: Option<String>) -> String {
-    match value
-        .as_deref()
-        .map(str::trim)
-        .unwrap_or("local")
-        .to_ascii_lowercase()
-        .as_str()
-    {
-        "cloud" => "cloud".to_string(),
-        _ => "local".to_string(),
-    }
 }
 
 fn default_memory_engine_base_url() -> Option<String> {

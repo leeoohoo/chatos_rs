@@ -75,7 +75,7 @@ export function SandboxesPage() {
           loading={query.isLoading}
           dataSource={query.data ?? []}
           pagination={{ pageSize: 12 }}
-          scroll={{ x: 1100 }}
+          scroll={{ x: 1250 }}
           columns={[
             {
               title: t('common.status'),
@@ -94,6 +94,12 @@ export function SandboxesPage() {
             { title: t('common.project'), dataIndex: 'project_id', width: 160 },
             { title: t('common.run'), dataIndex: 'run_id', width: 160 },
             { title: t('common.backend'), dataIndex: 'backend', width: 100 },
+            {
+              title: t('common.image'),
+              dataIndex: 'image_ref',
+              width: 220,
+              render: (value) => value ?? '-',
+            },
             {
               title: t('common.expiresAt'),
               dataIndex: 'expires_at',

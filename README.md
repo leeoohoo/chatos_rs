@@ -116,21 +116,8 @@ If root `.env` keeps `START_USER_SERVICE=1` and
 `CHATOS_USER_SERVICE_BASE_URL=http://127.0.0.1:39190`, then
 `./restart_services.sh restart` will also start the local `user_service`.
 
-Containerized local run:
-
-```bash
-docker compose up -d user-service-backend user-service-frontend backend frontend
-```
-
 Current limitation:
-- `docker compose config` has been validated for this repository.
 - On the current Windows machine, Smart App Control / Code Integrity can block Rust-generated EXE/DLL artifacts during `cargo run` or `cargo test`; use the WSL flow above to avoid that execution-policy issue.
-
-Default container URLs:
-- ChatOS frontend: `http://127.0.0.1:8080`
-- ChatOS backend: `http://127.0.0.1:3997`
-- user_service frontend: `http://127.0.0.1:39191`
-- user_service backend: `http://127.0.0.1:39190`
 
 Default logs:
 - `/tmp/chatos_rs_dev_<repo-hash>/backend.log`

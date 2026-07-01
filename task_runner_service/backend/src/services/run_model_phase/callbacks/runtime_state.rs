@@ -123,7 +123,7 @@ impl RunService {
                         run_id.clone(),
                         "tool_stream",
                         None,
-                        Some(payload),
+                        Some(sanitize_runtime_event_payload(payload)),
                     ));
                 }
             })),
@@ -135,7 +135,7 @@ impl RunService {
                         run_id.clone(),
                         "tools_end",
                         Some("工具调用结束".to_string()),
-                        Some(payload),
+                        Some(sanitize_runtime_event_payload(payload)),
                     ));
                 }
             })),
@@ -149,7 +149,7 @@ impl RunService {
                         run_id.clone(),
                         "model_request",
                         Some("即将发起模型请求".to_string()),
-                        Some(payload),
+                        Some(sanitize_runtime_event_payload(payload)),
                     ));
                 }
             })),
@@ -206,6 +206,139 @@ impl RunService {
         });
 
         (stop_cancel_poll, cancel_poll_handle)
+    }
+}
+
+const EVENT_SECRET_VALUE_MASK: &str = "******";
+
+fn sanitize_runtime_event_payload(mut payload: Value) -> Value {
+    sanitize_runtime_event_value(&mut payload);
+    payload
+}
+
+fn sanitize_runtime_event_value(value: &mut Value) {
+    match value {
+        Value::Object(map) => {
+            let is_ask_user_tool = map
+                .get("name")
+                .and_then(Value::as_str)
+                .is_some_and(|name| name.contains("ask_user_prompt"));
+            if is_ask_user_tool {
+                sanitize_ask_user_tool_result(map);
+            }
+            if object_looks_like_ask_user_response(map) {
+                if let Some(values) = map.get_mut("values") {
+                    redact_all_values(values);
+                }
+            }
+            for item in map.values_mut() {
+                sanitize_runtime_event_value(item);
+            }
+        }
+        Value::Array(items) => {
+            for item in items {
+                sanitize_runtime_event_value(item);
+            }
+        }
+        Value::String(_) => {
+            if let Some(parsed) = sanitize_json_string(value) {
+                *value = parsed;
+            }
+        }
+        _ => {}
+    }
+}
+
+fn sanitize_ask_user_tool_result(map: &mut serde_json::Map<String, Value>) {
+    if let Some(content) = map.get_mut("content") {
+        sanitize_ask_user_response_string(content);
+    }
+    if let Some(result) = map.get_mut("result") {
+        redact_all_response_values(result);
+        sanitize_runtime_event_value(result);
+    }
+}
+
+fn sanitize_ask_user_response_string(value: &mut Value) {
+    let Some(text) = value.as_str() else {
+        sanitize_runtime_event_value(value);
+        return;
+    };
+    let Ok(mut parsed) = serde_json::from_str::<Value>(text) else {
+        return;
+    };
+    redact_all_response_values(&mut parsed);
+    if let Ok(redacted) = serde_json::to_string(&parsed) {
+        *value = Value::String(redacted);
+    }
+}
+
+fn sanitize_json_string(value: &Value) -> Option<Value> {
+    let text = value.as_str()?;
+    let mut parsed = serde_json::from_str::<Value>(text).ok()?;
+    if !looks_like_ask_user_response(&parsed) {
+        return None;
+    }
+    redact_all_response_values(&mut parsed);
+    serde_json::to_string(&parsed).ok().map(Value::String)
+}
+
+fn looks_like_ask_user_response(value: &Value) -> bool {
+    let Some(map) = value.as_object() else {
+        return false;
+    };
+    object_looks_like_ask_user_response(map)
+}
+
+fn object_looks_like_ask_user_response(map: &serde_json::Map<String, Value>) -> bool {
+    let Some(status) = map.get("status").and_then(Value::as_str) else {
+        return false;
+    };
+    matches!(
+        status,
+        "pending" | "submitted" | "cancelled" | "timed_out" | "failed"
+    ) && map.get("values").is_some()
+}
+
+fn redact_all_response_values(value: &mut Value) {
+    match value {
+        Value::Object(map) => {
+            if let Some(values) = map.get_mut("values") {
+                redact_all_values(values);
+            }
+            for item in map.values_mut() {
+                redact_all_response_values(item);
+            }
+        }
+        Value::Array(items) => {
+            for item in items {
+                redact_all_response_values(item);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn redact_all_values(value: &mut Value) {
+    match value {
+        Value::Object(map) => {
+            for item in map.values_mut() {
+                if !item.is_null() {
+                    *item = Value::String(EVENT_SECRET_VALUE_MASK.to_string());
+                }
+            }
+        }
+        Value::Array(items) => {
+            for item in items {
+                if !item.is_null() {
+                    *item = Value::String(EVENT_SECRET_VALUE_MASK.to_string());
+                }
+            }
+        }
+        other if !other.is_null() => {
+            *other = Value::String(EVENT_SECRET_VALUE_MASK.to_string());
+        }
+        _ => {}
     }
 }
 
@@ -285,5 +418,78 @@ mod tests {
         });
 
         assert!(tool_result_marks_root_task_done(&payload, "task-1"));
+    }
+
+    #[test]
+    fn sanitize_runtime_event_payload_redacts_ask_user_tool_results() {
+        let payload = json!({
+            "name": "ask_user_prompt_mixed_form",
+            "success": true,
+            "content": serde_json::to_string(&json!({
+                "status": "submitted",
+                "values": {
+                    "public_port_policy": "direct_open_defaults",
+                    "admin_password": "super-secret"
+                },
+                "selection": "proceed"
+            })).expect("content"),
+            "result": {
+                "status": "submitted",
+                "values": {
+                    "token": "secret-token"
+                },
+                "selection": "proceed"
+            }
+        });
+
+        let sanitized = sanitize_runtime_event_payload(payload);
+        let content = sanitized["content"].as_str().expect("content");
+
+        assert!(!content.contains("super-secret"));
+        assert!(content.contains(EVENT_SECRET_VALUE_MASK));
+        assert_eq!(
+            sanitized["result"]["values"]["token"],
+            EVENT_SECRET_VALUE_MASK
+        );
+        assert_eq!(sanitized["result"]["selection"], "proceed");
+    }
+
+    #[test]
+    fn sanitize_runtime_event_payload_redacts_ask_user_output_in_model_input() {
+        let payload = json!({
+            "input": [
+                {
+                    "type": "function_call_output",
+                    "call_id": "call_1",
+                    "output": serde_json::to_string(&json!({
+                        "status": "submitted",
+                        "values": {
+                            "admin_password": "super-secret"
+                        },
+                        "selection": "proceed"
+                    })).expect("output")
+                }
+            ]
+        });
+
+        let sanitized = sanitize_runtime_event_payload(payload);
+        let output = sanitized["input"][0]["output"].as_str().expect("output");
+
+        assert!(!output.contains("super-secret"));
+        assert!(output.contains(EVENT_SECRET_VALUE_MASK));
+    }
+
+    #[test]
+    fn sanitize_runtime_event_payload_keeps_unrelated_status_values_objects() {
+        let payload = json!({
+            "status": "ok",
+            "values": {
+                "debug": "keep-me"
+            }
+        });
+
+        let sanitized = sanitize_runtime_event_payload(payload);
+
+        assert_eq!(sanitized["values"]["debug"], "keep-me");
     }
 }

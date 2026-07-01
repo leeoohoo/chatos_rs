@@ -8,10 +8,10 @@ use serde_json::{json, Value};
 use crate::error::ApiError;
 use crate::models::{
     CreateSandboxLeaseRequest, CreateSandboxLeaseResponse, DestroySandboxResponse,
-    HeartbeatRequest, HeartbeatResponse, ListSandboxQuery, PoolStatusResponse,
-    ReleaseSandboxRequest, ReleaseSandboxResponse, SandboxEventRecord, SandboxHealthResponse,
-    SandboxLeaseRecord, SandboxMcpCallRequest, SandboxMcpCallResponse, SandboxMcpToolsResponse,
-    SystemConfigResponse,
+    HeartbeatRequest, HeartbeatResponse, InitializeSandboxImageRequest, ListSandboxQuery,
+    PoolStatusResponse, ReleaseSandboxRequest, ReleaseSandboxResponse, SandboxEventRecord,
+    SandboxHealthResponse, SandboxImageCatalogResponse, SandboxImageJobRecord, SandboxLeaseRecord,
+    SandboxMcpCallRequest, SandboxMcpCallResponse, SandboxMcpToolsResponse, SystemConfigResponse,
 };
 use crate::state::AppState;
 
@@ -32,6 +32,25 @@ pub async fn pool_status(
     State(state): State<AppState>,
 ) -> Result<Json<PoolStatusResponse>, ApiError> {
     Ok(Json(state.manager.pool_status()))
+}
+
+pub async fn list_sandbox_images(
+    State(state): State<AppState>,
+) -> Result<Json<SandboxImageCatalogResponse>, ApiError> {
+    Ok(Json(state.manager.sandbox_images().await?))
+}
+
+pub async fn list_sandbox_image_jobs(
+    State(state): State<AppState>,
+) -> Result<Json<Vec<SandboxImageJobRecord>>, ApiError> {
+    Ok(Json(state.manager.sandbox_image_jobs().await?))
+}
+
+pub async fn initialize_sandbox_image(
+    State(state): State<AppState>,
+    Json(input): Json<InitializeSandboxImageRequest>,
+) -> Result<Json<SandboxImageJobRecord>, ApiError> {
+    Ok(Json(state.manager.initialize_sandbox_image(input).await?))
 }
 
 pub async fn create_sandbox_lease(

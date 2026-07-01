@@ -72,7 +72,7 @@ const TaskModelRow = ({
           />
         </label>
         <label className="block">
-          <span className="mb-1 block text-xs text-muted-foreground">{t('modelSettings.thinkingLevel')}</span>
+          <span className="mb-1 block text-xs text-muted-foreground">{t('taskModelSettings.defaultThinkingLevel')}</span>
           <select
             value={draft.thinking}
             onChange={(event) => onChange({ thinking: event.target.value })}

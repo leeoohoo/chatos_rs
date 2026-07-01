@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
+import type { SessionMessageResponse } from './session';
+
 export interface MemoryAgentSkillResponse {
   id: string;
   name: string;
@@ -243,6 +245,27 @@ export interface StreamChatCommandResponse {
   turn_id?: string | null;
   user_message_id?: string | null;
   source_user_message_id?: string | null;
+}
+
+export interface RuntimeGuidanceItemPayload {
+  guidance_id: string;
+  session_id?: string;
+  conversation_id?: string;
+  turn_id: string;
+  content: string;
+  status: 'queued' | 'applied' | 'dropped' | string;
+  created_at: string;
+  applied_at?: string | null;
+  dropped_at?: string | null;
+  attachments?: StreamChatAttachmentPayload[];
+}
+
+export interface RuntimeGuidanceCommandResponse {
+  accepted?: boolean;
+  conversation_id?: string;
+  turn_id?: string | null;
+  guidance?: RuntimeGuidanceItemPayload;
+  message?: SessionMessageResponse;
 }
 
 export interface StreamChatModelConfigPayload {

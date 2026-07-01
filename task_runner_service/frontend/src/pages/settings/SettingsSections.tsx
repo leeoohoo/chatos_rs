@@ -129,11 +129,16 @@ export function SettingsOverviewTab({
             {config.tool_results_model_total_max_chars}
           </Descriptions.Item>
           <Descriptions.Item label={t('settings.executionEnvironmentMode')}>
-            <Tag color={config.execution_environment_mode === 'cloud' ? 'purple' : 'blue'}>
-              {config.execution_environment_mode === 'cloud'
-                ? t('settings.executionMode.cloud')
-                : t('settings.executionMode.local')}
-            </Tag>
+            <Space wrap>
+              <Tag color={config.execution_environment_mode === 'cloud' ? 'purple' : 'blue'}>
+                {config.execution_environment_mode === 'cloud'
+                  ? t('settings.executionMode.cloud')
+                  : t('settings.executionMode.local')}
+              </Tag>
+              <Typography.Text type="secondary">
+                {t('settings.executionEnvironmentAutoNote')}
+              </Typography.Text>
+            </Space>
           </Descriptions.Item>
           <Descriptions.Item label={t('settings.sandboxEnabled')}>
             <Tag color={config.sandbox_enabled ? 'green' : 'default'}>
@@ -267,29 +272,6 @@ function RuntimeSettingsForm({ t, form, saveLoading, onSubmit }: RuntimeSettings
             ]}
           >
             <InputNumber min={1} style={{ width: 220 }} />
-          </Form.Item>
-          <Form.Item
-            name="execution_environment_mode"
-            label={t('settings.executionEnvironmentMode')}
-            rules={[
-              {
-                required: true,
-                message: t('settings.executionEnvironmentModeRequired'),
-              },
-            ]}
-          >
-            <Segmented
-              options={[
-                {
-                  label: t('settings.executionMode.local'),
-                  value: 'local',
-                },
-                {
-                  label: t('settings.executionMode.cloud'),
-                  value: 'cloud',
-                },
-              ]}
-            />
           </Form.Item>
           <Form.Item
             name="sandbox_enabled"

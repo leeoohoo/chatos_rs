@@ -60,16 +60,9 @@ impl RunService {
     }
 
     pub(super) async fn effective_execution_environment_mode(&self) -> Result<String, String> {
-        Ok(self
-            .store
-            .get_runtime_settings()
-            .await?
-            .map(|settings| {
-                normalize_execution_environment_mode(Some(
-                    settings.execution_environment_mode.as_str(),
-                ))
-            })
-            .unwrap_or_else(|| self.config.default_execution_environment_mode.clone()))
+        Ok(normalize_execution_environment_mode(Some(
+            self.config.default_execution_environment_mode.as_str(),
+        )))
     }
 
     pub(super) async fn effective_sandbox_enabled(&self) -> Result<bool, String> {

@@ -2,6 +2,7 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use super::*;
+use crate::mcp_server::support::{create_model_config_schema, update_model_config_schema};
 
 #[test]
 fn create_task_schema_hides_memory_scope_fields() {
@@ -31,6 +32,31 @@ fn create_task_schema_hides_memory_scope_fields() {
     assert!(kind_enum
         .iter()
         .any(|value| value.as_str() == Some("RemoteConnectionController")));
+}
+
+#[test]
+fn model_config_thinking_level_schema_is_enum_choice() {
+    let create_schema = create_model_config_schema();
+    let update_schema = update_model_config_schema();
+
+    for schema in [create_schema, update_schema] {
+        let thinking_level = schema
+            .pointer("/properties/thinking_level")
+            .and_then(|value| value.as_object())
+            .expect("thinking_level schema");
+        let values = thinking_level
+            .get("enum")
+            .and_then(|value| value.as_array())
+            .expect("thinking_level enum");
+
+        assert_eq!(
+            thinking_level.get("type").and_then(|value| value.as_str()),
+            Some("string")
+        );
+        assert!(values.iter().any(|value| value.as_str() == Some("low")));
+        assert!(values.iter().any(|value| value.as_str() == Some("xhigh")));
+        assert!(values.iter().any(|value| value.as_str() == Some("auto")));
+    }
 }
 
 #[test]

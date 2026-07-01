@@ -59,10 +59,8 @@ impl TaskService {
         if let Some(tool_results_model_total_max_chars) = input.tool_results_model_total_max_chars {
             settings.tool_results_model_total_max_chars = tool_results_model_total_max_chars;
         }
-        if let Some(mode) = input.execution_environment_mode {
-            settings.execution_environment_mode =
-                normalize_execution_environment_mode(Some(mode.as_str()));
-        }
+        settings.execution_environment_mode =
+            self.config.default_execution_environment_mode.clone();
         if let Some(sandbox_enabled) = input.sandbox_enabled {
             settings.sandbox_enabled = sandbox_enabled;
         }
@@ -118,15 +116,9 @@ impl TaskService {
     }
 
     pub async fn effective_execution_environment_mode(&self) -> Result<String, String> {
-        Ok(self
-            .get_runtime_settings()
-            .await?
-            .map(|settings| {
-                normalize_execution_environment_mode(Some(
-                    settings.execution_environment_mode.as_str(),
-                ))
-            })
-            .unwrap_or_else(|| self.config.default_execution_environment_mode.clone()))
+        Ok(normalize_execution_environment_mode(Some(
+            self.config.default_execution_environment_mode.as_str(),
+        )))
     }
 
     pub async fn effective_sandbox_enabled(&self) -> Result<bool, String> {

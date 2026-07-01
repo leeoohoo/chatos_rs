@@ -3,7 +3,7 @@
 
 import { PlusOutlined } from '@ant-design/icons';
 import { App, Button, Form, Input, InputNumber, Select, Space, Typography } from 'antd';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 
 import { sandboxesApi } from '../api/sandboxes';
@@ -16,6 +16,10 @@ export function CreateSandboxPage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { message } = App.useApp();
+  const imagesQuery = useQuery({
+    queryKey: ['sandbox-images'],
+    queryFn: sandboxesApi.images,
+  });
 
   const mutation = useMutation({
     mutationFn: (values: CreateSandboxLeasePayload) => sandboxesApi.create(values),
@@ -47,6 +51,7 @@ export function CreateSandboxPage() {
             project_id: 'project-dev',
             run_id: `run-${Date.now()}`,
             workspace_root: '/tmp/chatos-sandbox-demo',
+            image_id: imagesQuery.data?.default_image_id ?? 'default',
             tools: ['filesystem', 'terminal'],
             ttl_seconds: 3600,
             cpu: 2,
@@ -62,6 +67,7 @@ export function CreateSandboxPage() {
               project_id: values.project_id,
               run_id: values.run_id,
               workspace_root: values.workspace_root,
+              image_id: values.image_id,
               tools: values.tools,
               ttl_seconds: values.ttl_seconds,
               resource_limits: {
@@ -88,6 +94,26 @@ export function CreateSandboxPage() {
           </Form.Item>
           <Form.Item label={t('create.workspaceRoot')} name="workspace_root" rules={[{ required: true, message: t('form.required') }]}>
             <Input />
+          </Form.Item>
+          <Form.Item label={t('common.image')} name="image_id">
+            <Select
+              loading={imagesQuery.isLoading}
+              options={(imagesQuery.data?.images ?? [
+                {
+                  id: 'default',
+                  name: t('image.default'),
+                  image_ref: '',
+                  initialized: true,
+                  buildable: false,
+                },
+              ]).map((image) => ({
+                label: `${image.name}${image.image_ref ? ` · ${image.image_ref}` : ''}${
+                  image.buildable && !image.initialized ? ` · ${t('image.missing')}` : ''
+                }`,
+                value: image.id,
+                disabled: image.buildable && !image.initialized,
+              }))}
+            />
           </Form.Item>
           <Form.Item label={t('create.tools')} name="tools">
             <Select

@@ -28,6 +28,7 @@ import type {
   ReviewRepairResponse,
   ReviewRepairStatusResponse,
   SessionSummariesListResponse,
+  RuntimeGuidanceCommandResponse,
   StreamChatAttachmentPayload,
   StreamChatCommandResponse,
   StreamChatModelConfigPayload,
@@ -54,6 +55,12 @@ export interface RuntimeFacade {
     reasoningEnabled?: boolean,
     options?: StreamChatOptions,
   ): Promise<StreamChatCommandResponse>;
+  sendRuntimeGuidance(
+    conversationId: string,
+    turnId: string,
+    content: string,
+    attachments?: StreamChatAttachmentPayload[],
+  ): Promise<RuntimeGuidanceCommandResponse>;
   getAgentTools(options?: {
     conversationId?: string | null;
     mcpEnabled?: boolean;
@@ -140,6 +147,17 @@ export const runtimeFacade: RuntimeFacade & ThisType<ApiClient> = {
       reasoningEnabled,
       options,
     );
+  },
+  async sendRuntimeGuidance(conversationId, turnId, content, attachments) {
+    return this.getRequestFn()<RuntimeGuidanceCommandResponse>('/agent/chat/guidance', {
+      method: 'POST',
+      body: JSON.stringify({
+        conversation_id: conversationId,
+        turn_id: turnId,
+        content,
+        attachments: attachments || [],
+      }),
+    });
   },
   async getAgentTools(options) {
     const query = buildQuery({
