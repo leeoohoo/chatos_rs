@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Required Notice: Copyright (c) 2025 AI Chat Team
+
 use tracing_subscriber::EnvFilter;
 
 use user_service_backend::{build_router, load_user_service_dotenv, AppConfig, AppState};

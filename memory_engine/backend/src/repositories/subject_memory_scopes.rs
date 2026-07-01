@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Required Notice: Copyright (c) 2025 AI Chat Team
+
 use futures_util::TryStreamExt;
 use mongodb::bson::{doc, Bson};
 use uuid::Uuid;

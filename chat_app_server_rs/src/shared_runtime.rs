@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Required Notice: Copyright (c) 2025 AI Chat Team
+
 pub use chatos_ai_runtime::{
     base_url_disallows_system_messages, base_url_requires_responses_input_list,
     build_responses_text_input, run_compatible_prompt_with, select_preferred_response_text,

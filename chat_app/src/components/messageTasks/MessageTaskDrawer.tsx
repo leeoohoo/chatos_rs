@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Required Notice: Copyright (c) 2025 AI Chat Team
+
 import { useEffect, useMemo, useRef, useState, type FC } from 'react';
 import { RefreshCw, X } from 'lucide-react';
 import type { Message } from '../../types';

@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+# Required Notice: Copyright (c) 2025 AI Chat Team
+
 
 DEV_MONGO_COMMON_SCRIPT_PATH="${BASH_SOURCE[0]}"
 DEV_MONGO_COMMON_ROOT_DIR="$(cd "$(dirname "$DEV_MONGO_COMMON_SCRIPT_PATH")/.." && pwd)"

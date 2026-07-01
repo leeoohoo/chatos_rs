@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Required Notice: Copyright (c) 2025 AI Chat Team
+
 pub(crate) struct SubjectMemoryJobProgress {
     pub(crate) processed_count: usize,
     pub(crate) generated_level0: usize,

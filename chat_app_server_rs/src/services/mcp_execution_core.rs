@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Required Notice: Copyright (c) 2025 AI Chat Team
+
 #[path = "mcp_execution_core/execution.rs"]
 mod execution;
 #[path = "mcp_execution_core/executor.rs"]

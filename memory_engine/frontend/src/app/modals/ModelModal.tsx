@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Required Notice: Copyright (c) 2025 AI Chat Team
+
 import { Col, Form, Input, InputNumber, Modal, Row, Select, Switch, Typography } from 'antd';
 import type { FormInstance } from 'antd';
 

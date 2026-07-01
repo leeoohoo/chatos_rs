@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Required Notice: Copyright (c) 2025 AI Chat Team
+
 import { Alert, Collapse, Space, Tag, Typography } from 'antd';
 
 import { useI18n } from '../i18n/I18nProvider';

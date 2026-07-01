@@ -1,10 +1,15 @@
-use std::path::Path;
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Required Notice: Copyright (c) 2025 AI Chat Team
+
+use std::fs;
+use std::path::{Path, PathBuf};
 
 use chatos_builtin_tools::path_with_bundled_tools;
 use portable_pty::{CommandBuilder, SlavePty};
 
 use crate::models::terminal_log::TerminalLog;
 use crate::repositories::{terminal_logs, terminals};
+use crate::services::process_isolation;
 
 use super::shell_path::select_shell;
 
@@ -31,6 +36,16 @@ fn build_default_posix_path(home: &str) -> std::ffi::OsString {
 
 fn path_env_with_bundled_tools(base_path: Option<std::ffi::OsString>) -> Option<String> {
     path_with_bundled_tools(base_path).map(|path| path.to_string_lossy().into_owned())
+}
+
+fn terminal_home_for(cwd: &Path) -> PathBuf {
+    let home = cwd.join(".chatos").join("terminal-home");
+    let _ = fs::create_dir_all(home.join(".cache"));
+    let _ = fs::create_dir_all(home.join(".local"));
+    let _ = fs::create_dir_all(home.join(".cargo"));
+    let _ = fs::create_dir_all(home.join(".rustup"));
+    let _ = fs::create_dir_all(home.join("tmp"));
+    home
 }
 
 pub(super) fn spawn_terminal_touch(handle: tokio::runtime::Handle, terminal_id: String) {
@@ -62,9 +77,14 @@ pub(super) fn spawn_terminal_output_persist(
 pub(super) fn spawn_shell(
     cwd: &Path,
     slave: Box<dyn SlavePty + Send>,
+    user_id: Option<&str>,
 ) -> Result<Box<dyn portable_pty::Child + Send + Sync>, String> {
     let shell = select_shell();
-    let mut cmd = CommandBuilder::new(shell.clone());
+    let isolation = process_isolation::resolve_for_user(user_id)?;
+    let (command, args) =
+        process_isolation::terminal_helper_command(shell.as_str(), isolation.as_ref())?;
+    let mut cmd = CommandBuilder::new(command);
+    cmd.args(args);
     cmd.env_clear();
     cmd.cwd(cwd);
     cmd.env("PWD", cwd.to_string_lossy().to_string());
@@ -88,10 +108,9 @@ pub(super) fn spawn_shell(
             }
         }
     } else {
-        let home = std::env::var("HOME")
-            .ok()
-            .filter(|v| !v.trim().is_empty())
-            .unwrap_or_else(|| cwd.to_string_lossy().to_string());
+        let terminal_home = terminal_home_for(cwd);
+        process_isolation::prepare_workspace_for_user(cwd, isolation.as_ref())?;
+        let home = terminal_home.to_string_lossy().to_string();
         let path = path_env_with_bundled_tools(Some(build_default_posix_path(home.as_str())))
             .unwrap_or_else(|| {
                 build_default_posix_path(home.as_str())
@@ -100,10 +119,62 @@ pub(super) fn spawn_shell(
             });
 
         cmd.env("HOME", home.as_str());
+        cmd.env(
+            "XDG_CACHE_HOME",
+            terminal_home.join(".cache").to_string_lossy().to_string(),
+        );
+        cmd.env(
+            "XDG_CONFIG_HOME",
+            terminal_home.join(".config").to_string_lossy().to_string(),
+        );
+        cmd.env(
+            "XDG_DATA_HOME",
+            terminal_home
+                .join(".local/share")
+                .to_string_lossy()
+                .to_string(),
+        );
+        cmd.env(
+            "npm_config_prefix",
+            terminal_home.join(".local").to_string_lossy().to_string(),
+        );
+        cmd.env(
+            "PIP_CACHE_DIR",
+            terminal_home
+                .join(".cache/pip")
+                .to_string_lossy()
+                .to_string(),
+        );
+        cmd.env(
+            "CARGO_HOME",
+            terminal_home.join(".cargo").to_string_lossy().to_string(),
+        );
+        cmd.env(
+            "RUSTUP_HOME",
+            terminal_home.join(".rustup").to_string_lossy().to_string(),
+        );
+        cmd.env(
+            "GOMODCACHE",
+            terminal_home
+                .join(".cache/go/pkg/mod")
+                .to_string_lossy()
+                .to_string(),
+        );
+        cmd.env(
+            "GOCACHE",
+            terminal_home
+                .join(".cache/go-build")
+                .to_string_lossy()
+                .to_string(),
+        );
         cmd.env("SHELL", shell.as_str());
         cmd.env("PATH", path);
 
-        if let Ok(user) = std::env::var("USER") {
+        if let Some(spec) = isolation.as_ref() {
+            let user = spec.login_name();
+            cmd.env("USER", user.as_str());
+            cmd.env("LOGNAME", user.as_str());
+        } else if let Ok(user) = std::env::var("USER") {
             if !user.trim().is_empty() {
                 cmd.env("USER", user.as_str());
                 cmd.env("LOGNAME", user.as_str());
@@ -121,13 +192,10 @@ pub(super) fn spawn_shell(
                 cmd.env("LC_CTYPE", lc_ctype.as_str());
             }
         }
-        if let Ok(tmpdir) = std::env::var("TMPDIR") {
-            if !tmpdir.trim().is_empty() {
-                cmd.env("TMPDIR", tmpdir.as_str());
-            }
-        } else {
-            cmd.env("TMPDIR", "/tmp");
-        }
+        cmd.env(
+            "TMPDIR",
+            terminal_home.join("tmp").to_string_lossy().to_string(),
+        );
     }
 
     slave

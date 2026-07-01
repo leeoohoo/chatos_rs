@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Required Notice: Copyright (c) 2025 AI Chat Team
+
 use std::path::Path;
 
 const CONTROL_CHAR_RATIO_THRESHOLD: f64 = 0.02;

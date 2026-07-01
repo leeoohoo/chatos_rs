@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Required Notice: Copyright (c) 2025 AI Chat Team
+
 use crate::core::internal_context_locale::InternalContextLocale;
 
 pub(super) fn text(locale: InternalContextLocale, zh: &'static str, en: &'static str) -> String {

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Required Notice: Copyright (c) 2025 AI Chat Team
+
 import { resolveToolFamily } from '../../../lib/tools/catalog';
 import { asArray, asBoolean, asNumber, asRecord, asString, asStringList } from './value';
 import { isMeaningfulBrowserPageUrl } from './labels';

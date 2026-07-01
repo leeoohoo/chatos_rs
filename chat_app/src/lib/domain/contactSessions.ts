@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Required Notice: Copyright (c) 2025 AI Chat Team
+
 import type { Session } from '../../types';
 import { asRecord, readTrimmedString, readValue } from './normalizerUtils';
 import { readSessionRuntimeFromMetadata } from './sessionRuntime';

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Required Notice: Copyright (c) 2025 AI Chat Team
+
 use chatos_ai_runtime as shared_ai_runtime;
 use chatos_builtin_tools::BrowserVisionFailure;
 use chatos_mcp_runtime::ToolCallerModelRuntime;

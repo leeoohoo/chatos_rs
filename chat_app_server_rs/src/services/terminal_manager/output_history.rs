@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Required Notice: Copyright (c) 2025 AI Chat Team
+
 use std::collections::VecDeque;
 
 pub(super) const SNAPSHOT_LIMIT_BYTES: usize = 2 * 1024 * 1024;

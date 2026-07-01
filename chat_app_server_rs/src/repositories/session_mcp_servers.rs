@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Required Notice: Copyright (c) 2025 AI Chat Team
+
 use crate::core::mongo_cursor::collect_and_map;
 use crate::models::session_mcp_server::SessionMcpServer;
 use crate::repositories::db::{

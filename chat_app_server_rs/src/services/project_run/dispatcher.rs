@@ -1,9 +1,13 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Required Notice: Copyright (c) 2025 AI Chat Team
+
 use std::collections::HashMap;
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use crate::core::path_guard::{canonicalize_existing_dir, path_is_within_root};
 use crate::models::project_run::ProjectRunCatalog;
 use crate::models::terminal::{TerminalService, TERMINAL_KIND_PROJECT_RUN};
 use crate::models::terminal_log::{TerminalLog, TerminalLogService};
@@ -129,15 +133,20 @@ pub(crate) async fn dispatch_command(
     if command.trim().is_empty() {
         return Err("运行命令不能为空".to_string());
     }
-    validate_command_preflight(command, cwd.as_str())?;
     let project_root = normalized_cwd(project_root);
     if project_root.is_empty() {
         return Err("项目根目录不能为空".to_string());
     }
-    let project_root_path = PathBuf::from(project_root.as_str());
-    if !project_root_path.exists() || !project_root_path.is_dir() {
-        return Err("项目根目录不存在或不是目录".to_string());
+    let project_root_path = canonicalize_existing_dir(Path::new(project_root.as_str()))
+        .map_err(|_| "项目根目录不存在或不是目录".to_string())?;
+    let cwd_path = canonicalize_existing_dir(Path::new(cwd.as_str()))
+        .map_err(|_| "运行目录不存在或不是目录".to_string())?;
+    if !path_is_within_root(cwd_path.as_path(), project_root_path.as_path()) {
+        return Err("运行目录必须位于项目目录内".to_string());
     }
+    let project_root = project_root_path.to_string_lossy().to_string();
+    let cwd = cwd_path.to_string_lossy().to_string();
+    validate_command_preflight(command, cwd.as_str())?;
 
     let manager = get_terminal_manager();
     let reusable = if let Some(terminal_id) = preferred_terminal_id

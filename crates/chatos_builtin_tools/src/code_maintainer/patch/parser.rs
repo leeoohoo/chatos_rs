@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Required Notice: Copyright (c) 2025 AI Chat Team
+
 use super::PatchOp;
 
 pub(super) fn parse_replace_style_patch(input: &str) -> Result<Vec<PatchOp>, String> {

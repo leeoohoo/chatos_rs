@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Required Notice: Copyright (c) 2025 AI Chat Team
+
 import { isHighlightLanguageRegistered } from '../tools/highlight';
 
 const EXT_LANGUAGE_MAP: Record<string, string> = {

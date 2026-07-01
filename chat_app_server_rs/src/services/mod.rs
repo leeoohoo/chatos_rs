@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Required Notice: Copyright (c) 2025 AI Chat Team
+
 pub mod access_token_scope;
 pub mod agent_builder;
 pub mod agent_runtime;
@@ -32,6 +35,7 @@ pub(crate) mod message_manager_common;
 pub mod model_runtime_resolver;
 pub mod new_user_bootstrap;
 pub mod notepad;
+pub(crate) mod process_isolation;
 pub mod project_fs_cache;
 pub mod project_local_cache;
 pub(crate) mod project_management_api_client;

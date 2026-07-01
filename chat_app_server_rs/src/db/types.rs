@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Required Notice: Copyright (c) 2025 AI Chat Team
+
 use mongodb::{Client, Database as MongoDatabase};
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;

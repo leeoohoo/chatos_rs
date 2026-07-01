@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Required Notice: Copyright (c) 2025 AI Chat Team
+
 import { ReloadOutlined } from '@ant-design/icons';
 import { Button, Form, Input, Select, Space, Table, Typography } from 'antd';
 import { useQuery } from '@tanstack/react-query';

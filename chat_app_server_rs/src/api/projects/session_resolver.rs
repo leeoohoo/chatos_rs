@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Required Notice: Copyright (c) 2025 AI Chat Team
+
 use crate::core::chat_runtime::{contact_id_from_metadata, project_id_from_metadata};
 use crate::models::project::PUBLIC_PROJECT_ID;
 use crate::models::session::Session;

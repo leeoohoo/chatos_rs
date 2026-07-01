@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Required Notice: Copyright (c) 2025 AI Chat Team
+
 use super::*;
 
 pub(super) fn task_belongs_to_context(task: &TaskRecord, root_task_id: &str) -> bool {

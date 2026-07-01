@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Required Notice: Copyright (c) 2025 AI Chat Team
+
 const CODE_MAINTAINER_TOOL_NAMES = new Set([
   'read_file_raw',
   'read_file_range',

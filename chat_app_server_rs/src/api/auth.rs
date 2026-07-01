@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Required Notice: Copyright (c) 2025 AI Chat Team
+
 use axum::http::{HeaderMap, StatusCode};
 use axum::{routing::get, routing::post, Json, Router};
 use serde::Deserialize;

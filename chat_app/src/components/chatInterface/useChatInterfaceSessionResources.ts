@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Required Notice: Copyright (c) 2025 AI Chat Team
+
 import type { SessionSummariesListResponse } from '../../lib/api/client/types';
 import type { Project, Session } from '../../types';
 import { useContactMemoryContext } from './useContactMemoryContext';

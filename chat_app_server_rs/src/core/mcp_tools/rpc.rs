@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Required Notice: Copyright (c) 2025 AI Chat Team
+
 use std::collections::HashMap;
 use std::process::Stdio;
 use std::sync::OnceLock;
@@ -9,6 +12,7 @@ use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncWriteExt, BufReader};
 use uuid::Uuid;
 
 use crate::services::mcp_loader::McpStdioServer;
+use crate::services::process_isolation;
 
 static MCP_HTTP_CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
 
@@ -104,6 +108,14 @@ pub async fn jsonrpc_stdio_call(
     if let Some(cwd) = &cfg.cwd {
         cmd.current_dir(cwd);
     }
+    let isolation = process_isolation::resolve_for_user(cfg.user_id.as_deref())?;
+    if let Some(cwd) = &cfg.cwd {
+        process_isolation::prepare_workspace_for_user(
+            std::path::Path::new(cwd),
+            isolation.as_ref(),
+        )?;
+    }
+    process_isolation::apply_to_tokio_command(&mut cmd, isolation.as_ref())?;
 
     cmd.stdin(Stdio::piped())
         .stdout(Stdio::piped())

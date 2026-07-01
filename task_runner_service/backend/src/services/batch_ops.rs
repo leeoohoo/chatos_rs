@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Required Notice: Copyright (c) 2025 AI Chat Team
+
 use crate::models::{BatchTaskOperationItem, BatchTaskOperationResponse};
 
 pub(super) fn normalize_batch_task_ids(task_ids: Vec<String>) -> Result<Vec<String>, String> {

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Required Notice: Copyright (c) 2025 AI Chat Team
+
 const RAW_API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || '').trim();
 const API_BASE_URL = normalizeApiBaseUrl(RAW_API_BASE_URL);
 const AUTH_TOKEN_STORAGE_KEY = 'task_runner_service_auth_token';

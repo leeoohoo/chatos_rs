@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Required Notice: Copyright (c) 2025 AI Chat Team
+
 use super::*;
 
 pub(super) fn default_database_url(store_mode: StoreMode, mongodb_database: &str) -> String {

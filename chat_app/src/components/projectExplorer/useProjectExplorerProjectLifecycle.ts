@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Required Notice: Copyright (c) 2025 AI Chat Team
+
 import { useEffect, type Dispatch, type SetStateAction } from 'react';
 import type { FsEntry, FsReadResult } from '../../types';
 import type { MoveConflictState } from './Overlays';

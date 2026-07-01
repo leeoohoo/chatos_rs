@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Required Notice: Copyright (c) 2025 AI Chat Team
+
 use chatos_mcp_runtime::ToolCallerModelRuntime;
 use serde_json::Value;
 
@@ -123,6 +126,7 @@ mod tests {
                     "DEMO_TOKEN".to_string(),
                     "secret".to_string(),
                 )])),
+                user_id: None,
             }],
             vec![McpBuiltinServer {
                 name: "memory_skill_reader".to_string(),

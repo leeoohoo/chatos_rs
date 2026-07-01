@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Required Notice: Copyright (c) 2025 AI Chat Team
+
 pub const GET_PROJECT_OVERVIEW: &str = "get_project_overview";
 pub const INITIALIZE_PROJECT: &str = "initialize_project";
 pub const LIST_REQUIREMENTS: &str = "list_requirements";

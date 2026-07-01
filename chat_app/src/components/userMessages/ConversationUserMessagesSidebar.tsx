@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Required Notice: Copyright (c) 2025 AI Chat Team
+
 import React, { useEffect, useRef, useState } from 'react';
 import { MessageSquareText, RefreshCw } from 'lucide-react';
 

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Required Notice: Copyright (c) 2025 AI Chat Team
+
 use std::path::{Path, PathBuf};
 
 use super::path_utils::{canonicalize_path, path_is_within_root, shell_quote_path_for_shell};

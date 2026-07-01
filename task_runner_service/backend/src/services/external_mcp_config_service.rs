@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Required Notice: Copyright (c) 2025 AI Chat Team
+
 use std::collections::BTreeMap;
 
 use chatos_mcp_runtime::{list_tools_http, list_tools_stdio, parse_tool_definition};

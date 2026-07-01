@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Required Notice: Copyright (c) 2025 AI Chat Team
+
 use super::{
     ensure_task_runner_body_within_limit, exchange_task_runner_token_via_user_service,
     fetch_task_runner_skill, UserServiceTaskRunnerExchange,

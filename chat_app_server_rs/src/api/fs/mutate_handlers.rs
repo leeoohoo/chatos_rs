@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Required Notice: Copyright (c) 2025 AI Chat Team
+
 #[path = "mutate_handlers_create.rs"]
 mod mutate_handlers_create;
 #[path = "mutate_handlers_delete.rs"]

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Required Notice: Copyright (c) 2025 AI Chat Team
+
 import { memo, type MouseEvent } from 'react';
 import { Activity, FileText, ScrollText } from 'lucide-react';
 

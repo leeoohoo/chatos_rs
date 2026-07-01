@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Required Notice: Copyright (c) 2025 AI Chat Team
+
 export type QueryPrimitive = string | number | boolean | null | undefined;
 export type JsonRecord = Record<string, unknown>;
 

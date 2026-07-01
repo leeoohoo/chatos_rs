@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Required Notice: Copyright (c) 2025 AI Chat Team
+
 use serde_json::Value;
 
 use chatos_ai_runtime::merge_pending_tool_turn_items as merge_shared_pending_tool_turn_items;

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Required Notice: Copyright (c) 2025 AI Chat Team
+
 use serde_json::{json, Value};
 
 use crate::response_parse::{extract_reasoning_from_response, text_value_or_json};

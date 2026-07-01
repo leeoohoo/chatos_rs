@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Required Notice: Copyright (c) 2025 AI Chat Team
+
 use ssh2::{KeyboardInteractivePrompt, Prompt, Session};
 use std::path::Path as FsPath;
 use std::sync::mpsc;

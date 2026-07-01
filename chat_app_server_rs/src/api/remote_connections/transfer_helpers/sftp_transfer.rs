@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Required Notice: Copyright (c) 2025 AI Chat Team
+
 use ssh2::{OpenFlags, OpenType};
 use std::io::{Read, Write};
 use std::path::{Path as FsPath, PathBuf};

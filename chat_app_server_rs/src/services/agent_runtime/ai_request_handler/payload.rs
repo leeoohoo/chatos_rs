@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Required Notice: Copyright (c) 2025 AI Chat Team
+
 use chatos_ai_runtime::request_payload::{
     build_chat_completions_request_payload as build_shared_chat_completions_request_payload,
     build_responses_request_payload as build_shared_responses_request_payload,

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Required Notice: Copyright (c) 2025 AI Chat Team
+
 pub(super) fn split_lines(text: &str) -> (Vec<String>, String, bool) {
     let eol = if text.contains("\r\n") { "\r\n" } else { "\n" };
     let ends_with_eol = text.ends_with(eol);

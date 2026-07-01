@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Required Notice: Copyright (c) 2025 AI Chat Team
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ProjectRunPathChangeKind {
     Catalog,

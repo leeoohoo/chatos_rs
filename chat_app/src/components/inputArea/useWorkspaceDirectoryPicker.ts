@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Required Notice: Copyright (c) 2025 AI Chat Team
+
 import { useCallback, useEffect, useState, type Dispatch, type SetStateAction } from 'react';
 import { useI18n } from '../../i18n/I18nProvider';
 import { deriveParentPath } from '../../lib/domain/filesystem';

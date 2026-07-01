@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Required Notice: Copyright (c) 2025 AI Chat Team
+
 import type { Project } from '../../../types';
 
 export type ActivePanel = 'chat' | 'project' | 'terminal' | 'remote_terminal' | 'remote_sftp';

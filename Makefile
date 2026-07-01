@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+# Required Notice: Copyright (c) 2025 AI Chat Team
+
 SHELL := /bin/bash
 
 .PHONY: help dev restart status stop build test smoke smoke-user-service-flow code-size-report hotspot-line-warnings

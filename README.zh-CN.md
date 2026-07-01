@@ -123,3 +123,5 @@ make stop-user-service-wsl
 ## 许可协议
 本项目采用 [PolyForm Noncommercial License 1.0.0](./LICENSE) 以源码可见方式发布。
 未经版权持有人另行书面授权，不允许将本项目用于商业用途。
+可以用 `python3 scripts/apply_license_headers.py` 检查第一方源码头部声明。
+可以用 `python3 scripts/apply_license_headers.py --write` 批量补齐缺失声明。

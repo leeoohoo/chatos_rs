@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Required Notice: Copyright (c) 2025 AI Chat Team
+
 use super::BoundContext;
 
 pub(super) fn normalize_optional_string(value: Option<String>) -> Option<String> {

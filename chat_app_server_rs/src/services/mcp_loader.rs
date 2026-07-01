@@ -1,3 +1,8 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Required Notice: Copyright (c) 2025 AI Chat Team
+
+use crate::api::fs::policy::{FsPathPolicy, FsPolicyError};
+use crate::core::auth::AuthUser;
 use crate::core::mcp_args::{parse_args_json_array_or_whitespace, parse_env};
 use crate::models::mcp_config::McpConfig;
 use crate::models::project::PUBLIC_PROJECT_ID;
@@ -7,6 +12,7 @@ use crate::services::builtin_mcp::{
     list_builtin_mcp_configs, BuiltinMcpKind,
 };
 use crate::utils::workspace::resolve_workspace_dir;
+use tracing::warn;
 
 #[derive(Debug, Clone)]
 pub struct McpHttpServer {
@@ -22,6 +28,7 @@ pub struct McpStdioServer {
     pub args: Option<Vec<String>>,
     pub cwd: Option<String>,
     pub env: Option<std::collections::HashMap<String, String>>,
+    pub user_id: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -45,6 +52,7 @@ fn build_servers_from_configs(
     workspace_dir: Option<&str>,
     user_id: Option<String>,
     project_id: Option<String>,
+    policy: Option<&FsPathPolicy>,
 ) -> (
     Vec<McpHttpServer>,
     Vec<McpStdioServer>,
@@ -55,7 +63,9 @@ fn build_servers_from_configs(
     let mut builtin_servers = Vec::new();
     let workspace_dir_value = workspace_dir
         .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty());
+        .filter(|value| !value.is_empty())
+        .and_then(|value| authorize_mcp_dir(policy, value.as_str(), "workspace_dir"));
+    let default_workspace_dir = default_mcp_workspace_dir(policy);
 
     for cfg in configs {
         let server_name = if is_builtin_mcp_id(&cfg.id) {
@@ -85,7 +95,9 @@ fn build_servers_from_configs(
                     // when the composer has no selected project.
                     continue;
                 }
-                None => resolve_workspace_dir(None),
+                None => default_workspace_dir
+                    .clone()
+                    .unwrap_or_else(|| resolve_workspace_dir(None)),
             };
             let allow_writes = !matches!(kind, BuiltinMcpKind::CodeMaintainerRead);
             builtin_servers.push(McpBuiltinServer {
@@ -118,19 +130,85 @@ fn build_servers_from_configs(
                 .as_deref()
                 .map(|value| value.trim().to_string())
                 .filter(|value| !value.is_empty())
-                .or_else(|| workspace_dir_value.clone());
+                .or_else(|| workspace_dir_value.clone())
+                .or_else(|| default_workspace_dir.clone());
+            let cwd = match cwd {
+                Some(value) => match authorize_mcp_dir(policy, value.as_str(), "stdio cwd") {
+                    Some(path) => Some(path),
+                    None => {
+                        warn!(
+                            mcp_config_id = cfg.id.as_str(),
+                            mcp_name = cfg.name.as_str(),
+                            "skip stdio MCP config with unauthorized cwd"
+                        );
+                        continue;
+                    }
+                },
+                None => None,
+            };
             let server = McpStdioServer {
                 name: server_name,
                 command: cfg.command,
                 args: if args.is_empty() { None } else { Some(args) },
                 cwd,
                 env: if env.is_empty() { None } else { Some(env) },
+                user_id: user_id.clone(),
             };
             stdio_servers.push(server);
         }
     }
 
     (http_servers, stdio_servers, builtin_servers)
+}
+
+async fn fs_policy_for_user_id(user_id: Option<&str>) -> Result<Option<FsPathPolicy>, String> {
+    let Some(user_id) = user_id.map(str::trim).filter(|value| !value.is_empty()) else {
+        return Ok(None);
+    };
+    let auth = AuthUser {
+        user_id: user_id.to_string(),
+        role: "user".to_string(),
+    };
+    FsPathPolicy::for_user(&auth)
+        .await
+        .map(Some)
+        .map_err(|err| fs_policy_error_message(&err))
+}
+
+fn fs_policy_error_message(err: &FsPolicyError) -> String {
+    err.message().to_string()
+}
+
+fn default_mcp_workspace_dir(policy: Option<&FsPathPolicy>) -> Option<String> {
+    policy.and_then(|policy| {
+        policy
+            .default_public_dir()
+            .or_else(|| policy.default_workspace_dir())
+            .map(|path| path.to_string_lossy().to_string())
+    })
+}
+
+fn authorize_mcp_dir(policy: Option<&FsPathPolicy>, raw: &str, label: &str) -> Option<String> {
+    let Some(policy) = policy else {
+        let trimmed = raw.trim();
+        return (!trimmed.is_empty()).then(|| trimmed.to_string());
+    };
+    let authorized = match policy.authorize_existing_dir(
+        raw,
+        format!("{label} 不存在或不是目录").as_str(),
+        format!("{label} 不存在或不是目录").as_str(),
+    ) {
+        Ok(path) => path,
+        Err(err) => {
+            warn!(error = err.message(), "MCP directory authorization failed");
+            return None;
+        }
+    };
+    if let Err(err) = policy.require_write(&authorized) {
+        warn!(error = err.message(), "MCP directory is not writable");
+        return None;
+    }
+    Some(authorized.path.to_string_lossy().to_string())
 }
 
 pub async fn load_mcp_configs_for_user(
@@ -179,11 +257,13 @@ pub async fn load_mcp_configs_for_user(
                 v
             }
         });
+    let policy = fs_policy_for_user_id(user_id.as_deref()).await?;
     Ok(build_servers_from_configs(
         configs,
         workspace_dir,
         user_id,
         normalized_project_id,
+        policy.as_ref(),
     ))
 }
 
@@ -211,7 +291,8 @@ mod tests {
             updated_at: String::new(),
         };
 
-        let (_http, _stdio, builtin) = build_servers_from_configs(vec![cfg], Some("."), None, None);
+        let (_http, _stdio, builtin) =
+            build_servers_from_configs(vec![cfg], Some("."), None, None, None);
         assert_eq!(builtin.len(), 1);
         assert_eq!(builtin[0].name, BROWSER_TOOLS_SERVER_NAME);
     }

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Required Notice: Copyright (c) 2025 AI Chat Team
+
 import { normalizeTerminalLog } from '../../lib/store/helpers/terminals';
 import type { TerminalLogResponse } from '../../lib/api/client/types';
 import type { TerminalLog } from '../../types';

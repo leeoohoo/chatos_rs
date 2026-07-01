@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Required Notice: Copyright (c) 2025 AI Chat Team
+
 use super::types::ProjectContext;
 use crate::core::path_guard::{canonicalize_existing_dir, path_is_within_root};
 use std::path::{Component, Path, PathBuf};

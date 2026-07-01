@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Required Notice: Copyright (c) 2025 AI Chat Team
+
 use super::blocks::{
     build_thread_summary_level0_text, format_subject_memory, subject_ids_for_context,
     subject_memory_subject_ids_for_context, thread_agent_subject_id,

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Required Notice: Copyright (c) 2025 AI Chat Team
+
 use crate::models::memory_mapping_types::{MemoryProjectDto, SyncMemoryProjectRequestDto};
 use crate::models::project::{normalize_project_id, PUBLIC_PROJECT_ID};
 use crate::repositories::chatos_memory_mappings as mappings_repo;

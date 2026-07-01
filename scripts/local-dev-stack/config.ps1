@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+# Required Notice: Copyright (c) 2025 AI Chat Team
+
 Import-DotEnvFile -Path (Join-Path $repoRoot '.env')
 
 $projectSyncSecret = Get-EnvOrDefault -Name 'PROJECT_SERVICE_SYNC_SECRET' -DefaultValue (Get-EnvOrDefault -Name 'CHATOS_PROJECT_SERVICE_SYNC_SECRET' -DefaultValue 'change_me_project_sync_secret')

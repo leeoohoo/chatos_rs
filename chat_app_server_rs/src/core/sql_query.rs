@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Required Notice: Copyright (c) 2025 AI Chat Team
+
 pub fn append_optional_user_id_filter(
     query: &mut String,
     include_user_id_filter: bool,

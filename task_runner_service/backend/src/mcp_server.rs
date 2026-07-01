@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Required Notice: Copyright (c) 2025 AI Chat Team
+
 use crate::ask_user_prompt_service::AskUserPromptService;
 use crate::services::{
     ExternalMcpConfigService, McpCatalogService, ModelConfigService, RunService, SkillService,

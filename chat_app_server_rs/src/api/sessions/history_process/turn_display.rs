@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Required Notice: Copyright (c) 2025 AI Chat Team
+
 use crate::core::messages::{is_session_summary_message as is_session_summary, message_turn_id};
 use crate::models::message::Message;
 

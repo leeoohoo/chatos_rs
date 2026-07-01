@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Required Notice: Copyright (c) 2025 AI Chat Team
+
 use std::collections::HashMap;
 use std::error::Error as StdError;
 use std::process::Stdio;
@@ -11,6 +14,7 @@ use tokio::sync::Mutex as AsyncMutex;
 use tracing::{debug, info, warn};
 use uuid::Uuid;
 
+use crate::process_isolation;
 use crate::types::McpStdioServer;
 
 const MCP_RPC_TIMEOUT: Duration = Duration::from_secs(15);
@@ -231,6 +235,9 @@ fn tools_list_http_cache_key(url: &str, headers: Option<&HashMap<String, String>
 
 fn tools_list_stdio_cache_key(cfg: &McpStdioServer) -> String {
     let mut parts = vec![format!("stdio:command={}", cfg.command.trim())];
+    if let Some(user_id) = &cfg.user_id {
+        parts.push(format!("user_id={}", user_id.trim()));
+    }
     if let Some(args) = &cfg.args {
         for arg in args {
             parts.push(format!("arg={arg}"));
@@ -548,6 +555,14 @@ async fn spawn_stdio_session(cfg: &McpStdioServer) -> Result<StdioRpcSession, St
     if let Some(cwd) = &cfg.cwd {
         cmd.current_dir(cwd);
     }
+    let isolation = process_isolation::resolve_for_user(cfg.user_id.as_deref())?;
+    if let Some(cwd) = &cfg.cwd {
+        process_isolation::prepare_workspace_for_user(
+            std::path::Path::new(cwd),
+            isolation.as_ref(),
+        )?;
+    }
+    process_isolation::apply_to_tokio_command(&mut cmd, isolation.as_ref())?;
     cmd.stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null());
@@ -720,6 +735,7 @@ mod tests {
             args: Some(vec!["server.js".to_string()]),
             cwd: Some("/workspace".to_string()),
             env: Some(HashMap::from([("TOKEN".to_string(), "one".to_string())])),
+            user_id: None,
         };
         let mut changed = base.clone();
         changed.args = Some(vec!["other.js".to_string()]);
@@ -731,6 +747,31 @@ mod tests {
     }
 
     #[test]
+    fn stdio_tools_list_cache_key_includes_user_id() {
+        let mut first = McpStdioServer {
+            name: "demo".to_string(),
+            command: "node".to_string(),
+            args: Some(vec!["server.js".to_string()]),
+            cwd: Some("/workspace".to_string()),
+            env: None,
+            user_id: Some("user-a".to_string()),
+        };
+        let mut second = first.clone();
+        second.user_id = Some("user-b".to_string());
+
+        assert_ne!(
+            tools_list_stdio_cache_key(&first),
+            tools_list_stdio_cache_key(&second)
+        );
+
+        first.user_id = Some("user-b".to_string());
+        assert_eq!(
+            tools_list_stdio_cache_key(&first),
+            tools_list_stdio_cache_key(&second)
+        );
+    }
+
+    #[test]
     fn stdio_session_cache_key_includes_server_name() {
         let mut first = McpStdioServer {
             name: "alpha".to_string(),
@@ -738,6 +779,7 @@ mod tests {
             args: Some(vec!["server.js".to_string()]),
             cwd: Some("/workspace".to_string()),
             env: None,
+            user_id: None,
         };
         let mut second = first.clone();
         second.name = "beta".to_string();
@@ -801,6 +843,7 @@ done
                 "COUNT_FILE".to_string(),
                 count_file.to_string_lossy().to_string(),
             )])),
+            user_id: None,
         };
 
         let first = jsonrpc_stdio_call(&cfg, "demo/one", json!({}), None)
@@ -846,6 +889,7 @@ done
                 "COUNT_FILE".to_string(),
                 count_file.to_string_lossy().to_string(),
             )])),
+            user_id: None,
         };
 
         let mut handles = Vec::new();

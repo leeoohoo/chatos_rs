@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Required Notice: Copyright (c) 2025 AI Chat Team
+
 use super::support::{
     apply_manager_patch, shared_outcome_items_into_tool_state, task_belongs_to_context,
     task_manager_status_from_task_status, task_priority_from_manager_label,

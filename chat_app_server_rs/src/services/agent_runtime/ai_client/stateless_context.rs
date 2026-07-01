@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Required Notice: Copyright (c) 2025 AI Chat Team
+
 use chatos_ai_runtime::{build_stateless_history_items_with_output_cap, StatelessHistoryMessage};
 use serde_json::Value;
 use tracing::info;

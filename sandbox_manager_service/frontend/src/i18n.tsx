@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Required Notice: Copyright (c) 2025 AI Chat Team
+
 import { createContext, ReactNode, useContext, useMemo, useState } from 'react';
 
 export type Language = 'zh' | 'en';

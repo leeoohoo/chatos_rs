@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Required Notice: Copyright (c) 2025 AI Chat Team
+
 use portable_pty::CommandBuilder;
 use serde_json::Value;
 use ssh2::Session;

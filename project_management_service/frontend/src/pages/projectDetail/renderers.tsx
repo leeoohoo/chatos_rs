@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Required Notice: Copyright (c) 2025 AI Chat Team
+
 import { EditOutlined, SaveOutlined } from '@ant-design/icons';
 import { Button, Descriptions, Form, Input, Space, Tag, Typography } from 'antd';
 import dayjs from 'dayjs';

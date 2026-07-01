@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Required Notice: Copyright (c) 2025 AI Chat Team
+
 use crate::config::AppConfig;
 use crate::db::Db;
 use crate::models::{EngineRecord, DEFAULT_ENGINE_THREAD_REPAIR_PROMPT_TEMPLATE};

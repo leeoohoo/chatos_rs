@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Required Notice: Copyright (c) 2025 AI Chat Team
+
 pub(super) fn shell_quote(value: &str) -> String {
     let mut escaped = String::with_capacity(value.len() + 2);
     escaped.push('\'');

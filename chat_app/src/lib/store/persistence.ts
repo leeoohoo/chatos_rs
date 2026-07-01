@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Required Notice: Copyright (c) 2025 AI Chat Team
+
 export const CHAT_STORE_PERSIST_PREFIX = 'chat-store-with-backend';
 export const LEGACY_CHAT_STORE_PERSIST_KEY = CHAT_STORE_PERSIST_PREFIX;
 

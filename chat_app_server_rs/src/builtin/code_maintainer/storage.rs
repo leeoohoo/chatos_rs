@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Required Notice: Copyright (c) 2025 AI Chat Team
+
 use crate::db::{get_db_sync, Database};
 use crate::models::project::ProjectService;
 use crate::repositories::change_logs::{

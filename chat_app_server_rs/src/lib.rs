@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Required Notice: Copyright (c) 2025 AI Chat Team
+
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
 use tokio::signal;
@@ -18,6 +21,10 @@ mod utils;
 pub mod shared_runtime;
 
 use crate::services::terminal_manager::get_terminal_manager;
+
+pub fn maybe_run_process_isolation_exec_helper() -> Result<bool, String> {
+    services::process_isolation::maybe_run_exec_helper_from_env()
+}
 
 pub async fn run_server_from_env() -> Result<(), String> {
     dotenvy::dotenv().ok();

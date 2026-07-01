@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Required Notice: Copyright (c) 2025 AI Chat Team
+
 use std::env;
 
 pub const DEFAULT_WORKSPACE_DIR: &str = "~/.chatos_workspace";

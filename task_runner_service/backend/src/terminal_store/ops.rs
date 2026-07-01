@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Required Notice: Copyright (c) 2025 AI Chat Team
+
 use async_trait::async_trait;
 use chatos_builtin_tools::{
     path_with_bundled_tools, TerminalControllerContext, TerminalControllerStore,

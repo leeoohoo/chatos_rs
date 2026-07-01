@@ -162,3 +162,5 @@ Development plan documents may live in root-level historical files or local `doc
 ## License
 This project is source-available under the [PolyForm Noncommercial License 1.0.0](./LICENSE).
 Commercial use is not permitted without a separate written license from the copyright holder.
+Check first-party source headers with `python3 scripts/apply_license_headers.py`.
+Add missing headers with `python3 scripts/apply_license_headers.py --write`.

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Required Notice: Copyright (c) 2025 AI Chat Team
+
 use serde_json::json;
 
 use super::events::{build_error_event_payload, select_persisted_turn_messages_from_desc_page};

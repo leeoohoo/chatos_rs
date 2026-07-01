@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Required Notice: Copyright (c) 2025 AI Chat Team
+
 export const buildWsUrl = (baseUrl: string, path: string, webSocketTicket?: string | null) => {
   const cleanedBase = baseUrl.endsWith('/') ? baseUrl.slice(0, -1) : baseUrl;
   const cleanedPath = path.startsWith('/') ? path : `/${path}`;

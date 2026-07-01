@@ -1,4 +1,5 @@
-use std::path::Path;
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Required Notice: Copyright (c) 2025 AI Chat Team
 
 pub fn normalize_non_empty(input: Option<String>) -> Option<String> {
     input.and_then(|v| normalize_non_empty_str(&v))
@@ -10,37 +11,6 @@ pub fn normalize_non_empty_str(input: &str) -> Option<String> {
         None
     } else {
         Some(trimmed.to_string())
-    }
-}
-
-pub fn validate_existing_dir(
-    path: &str,
-    empty_error: &str,
-    invalid_error: &str,
-) -> Result<String, String> {
-    let trimmed = path.trim();
-    if trimmed.is_empty() {
-        return Err(empty_error.to_string());
-    }
-    if !Path::new(trimmed).is_dir() {
-        return Err(invalid_error.to_string());
-    }
-    Ok(trimmed.to_string())
-}
-
-pub fn validate_existing_dir_if_present(
-    path: Option<String>,
-    invalid_error: &str,
-) -> Result<Option<String>, String> {
-    match path {
-        Some(raw) => {
-            let trimmed = raw.trim().to_string();
-            if !Path::new(&trimmed).is_dir() {
-                return Err(invalid_error.to_string());
-            }
-            Ok(Some(trimmed))
-        }
-        None => Ok(None),
     }
 }
 
@@ -65,22 +35,5 @@ mod tests {
             Some("test".to_string())
         );
         assert_eq!(normalize_non_empty_str(""), None);
-    }
-
-    #[test]
-    fn rejects_missing_directory() {
-        let err = validate_existing_dir("", "empty", "invalid").unwrap_err();
-        assert_eq!(err, "empty");
-
-        let err =
-            validate_existing_dir("/definitely-not-existing-path", "empty", "invalid").unwrap_err();
-        assert_eq!(err, "invalid");
-    }
-
-    #[test]
-    fn rejects_invalid_optional_directory() {
-        let err = validate_existing_dir_if_present(Some("/not-existing".to_string()), "invalid")
-            .unwrap_err();
-        assert_eq!(err, "invalid");
     }
 }

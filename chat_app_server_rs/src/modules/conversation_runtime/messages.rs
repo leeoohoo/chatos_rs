@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Required Notice: Copyright (c) 2025 AI Chat Team
+
 use crate::core::messages::message_is_hidden;
 use crate::models::memory_runtime_types::TurnRuntimeSnapshotLookupResponseDto;
 use crate::models::message::Message;

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Required Notice: Copyright (c) 2025 AI Chat Team
+
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -65,7 +68,7 @@ impl TerminalSession {
             })
             .map_err(|e| format!("open pty failed: {e}"))?;
 
-        let child = spawn_shell(root_cwd.as_path(), pair.slave)?;
+        let child = spawn_shell(root_cwd.as_path(), pair.slave, terminal.user_id.as_deref())?;
         let child_killer = child.clone_killer();
 
         let mut reader = pair

@@ -1,3 +1,6 @@
+-- SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+-- Required Notice: Copyright (c) 2025 AI Chat Team
+
 CREATE TABLE IF NOT EXISTS external_mcp_configs (
   id TEXT PRIMARY KEY,
   name TEXT NOT NULL,

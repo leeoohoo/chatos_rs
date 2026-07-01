@@ -1,9 +1,13 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Required Notice: Copyright (c) 2025 AI Chat Team
+
 pub mod builder;
 pub mod builtin_catalog;
 pub mod builtin_prompt;
 pub mod executor;
 pub mod naming;
 pub mod parallelism;
+mod process_isolation;
 pub mod registry;
 pub mod rpc;
 pub mod schema;

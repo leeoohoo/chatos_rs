@@ -1,6 +1,10 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Required Notice: Copyright (c) 2025 AI Chat Team
+
 use axum::{extract::Path, http::StatusCode, Json};
 use serde_json::Value;
 
+use crate::api::fs::policy::{FsPathPolicy, FsPolicyError};
 use crate::core::auth::AuthUser;
 use crate::core::session_access::{ensure_owned_session, map_session_access_error};
 use crate::models::session::Session;
@@ -25,6 +29,36 @@ fn normalize_id_list(values: Vec<String>) -> Vec<String> {
         out.push(trimmed.to_string());
     }
     out
+}
+
+fn fs_policy_error_tuple(err: FsPolicyError) -> (StatusCode, Json<Value>) {
+    (
+        err.status_code(),
+        Json(serde_json::json!({ "error": err.message() })),
+    )
+}
+
+async fn authorize_optional_workspace_root(
+    auth: &AuthUser,
+    raw: Option<String>,
+) -> Result<Option<String>, (StatusCode, Json<Value>)> {
+    let Some(raw) = normalize_optional_text(raw) else {
+        return Ok(None);
+    };
+    let policy = FsPathPolicy::for_user(auth)
+        .await
+        .map_err(fs_policy_error_tuple)?;
+    let authorized = policy
+        .authorize_existing_dir(
+            raw.as_str(),
+            "工作空间目录不存在或不是目录",
+            "工作空间目录不存在或不是目录",
+        )
+        .map_err(fs_policy_error_tuple)?;
+    policy
+        .require_write(&authorized)
+        .map_err(fs_policy_error_tuple)?;
+    Ok(Some(authorized.path.to_string_lossy().to_string()))
 }
 
 fn as_object(value: Option<&Value>) -> Option<&serde_json::Map<String, Value>> {
@@ -195,7 +229,10 @@ pub(super) async fn update_session_runtime_settings(
         next.remote_connection_id = normalize_optional_text(value);
     }
     if let Some(value) = req.workspace_root {
-        next.workspace_root = normalize_optional_text(value);
+        next.workspace_root = match authorize_optional_workspace_root(&auth, value).await {
+            Ok(path) => path,
+            Err(err) => return err,
+        };
     }
     if let Some(value) = req.mcp_enabled {
         next.mcp_enabled = value;
