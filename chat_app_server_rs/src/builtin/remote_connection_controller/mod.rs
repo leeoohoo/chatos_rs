@@ -10,8 +10,9 @@ use serde_json::Value;
 use chatos_builtin_tools::{RemoteConnectionControllerContext, RemoteConnectionControllerStore};
 
 use self::actions::{
-    list_connections_with_context, list_directory_with_context, read_file_with_context,
-    run_command_with_context, test_connection_with_context,
+    download_file_with_context, list_connections_with_context, list_directory_with_context,
+    read_file_with_context, run_command_with_context, test_connection_with_context,
+    upload_file_with_context,
 };
 
 #[derive(Clone)]
@@ -82,6 +83,46 @@ impl RemoteConnectionControllerStore for ChatosRemoteConnectionControllerStore {
         max_bytes: Option<usize>,
     ) -> Result<Value, String> {
         read_file_with_context(bound_context(context), connection_id, path, max_bytes).await
+    }
+
+    async fn download_file(
+        &self,
+        context: RemoteConnectionControllerContext,
+        connection_id: Option<String>,
+        path: String,
+        encoding: String,
+        max_bytes: Option<usize>,
+    ) -> Result<Value, String> {
+        download_file_with_context(
+            bound_context(context),
+            connection_id,
+            path,
+            encoding,
+            max_bytes,
+        )
+        .await
+    }
+
+    async fn upload_file(
+        &self,
+        context: RemoteConnectionControllerContext,
+        connection_id: Option<String>,
+        path: String,
+        content: String,
+        encoding: String,
+        create_parent_dirs: bool,
+        overwrite: bool,
+    ) -> Result<Value, String> {
+        upload_file_with_context(
+            bound_context(context),
+            connection_id,
+            path,
+            content,
+            encoding,
+            create_parent_dirs,
+            overwrite,
+        )
+        .await
     }
 }
 
