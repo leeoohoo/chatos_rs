@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Required Notice: Copyright (c) 2025 AI Chat Team
+
 use axum::{
     extract::{Path, Query},
     http::StatusCode,
@@ -9,17 +12,60 @@ use tracing::warn;
 use crate::core::auth::AuthUser;
 use crate::core::project_access::{ensure_owned_project, map_project_access_error};
 use crate::core::user_scope::resolve_user_id;
-use crate::core::validation::{
-    normalize_non_empty, validate_existing_dir, validate_existing_dir_if_present,
-};
+use crate::core::validation::normalize_non_empty;
 use crate::models::project::{Project, ProjectService};
 use crate::services::chatos_memory_mappings;
 use crate::services::realtime::publish_projects_updated;
 use crate::services::terminal_manager::get_terminal_manager;
 
+use super::super::fs::policy::{FsPathPolicy, FsPolicyError};
 use super::contracts::{CreateProjectRequest, ProjectQuery, UpdateProjectRequest};
 use super::memory_sync::{sync_active_project, sync_archived_project};
 use super::session_resolver::resolve_project_contact_session_id;
+
+fn fs_policy_error_tuple(err: FsPolicyError) -> (StatusCode, Json<Value>) {
+    (
+        err.status_code(),
+        Json(serde_json::json!({ "error": err.message() })),
+    )
+}
+
+async fn authorize_project_root(
+    auth: &AuthUser,
+    raw: &str,
+    empty_message: &str,
+    invalid_message: &str,
+) -> Result<String, (StatusCode, Json<Value>)> {
+    if raw.trim().is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": empty_message })),
+        ));
+    }
+    let policy = FsPathPolicy::for_user(auth)
+        .await
+        .map_err(fs_policy_error_tuple)?;
+    let authorized = policy
+        .authorize_existing_dir(raw, invalid_message, invalid_message)
+        .map_err(fs_policy_error_tuple)?;
+    policy
+        .require_write(&authorized)
+        .map_err(fs_policy_error_tuple)?;
+    Ok(authorized.path.to_string_lossy().to_string())
+}
+
+async fn authorize_optional_project_root(
+    auth: &AuthUser,
+    raw: Option<String>,
+    invalid_message: &str,
+) -> Result<Option<String>, (StatusCode, Json<Value>)> {
+    let Some(raw) = raw else {
+        return Ok(None);
+    };
+    authorize_project_root(auth, raw.as_str(), invalid_message, invalid_message)
+        .await
+        .map(Some)
+}
 
 async fn attach_project_session_id(mut project: Project) -> Project {
     let project_id = project.id.clone();
@@ -94,18 +140,16 @@ pub(super) async fn create_project(
             Json(serde_json::json!({"error": "项目名称不能为空"})),
         );
     };
-    let root_path = match validate_existing_dir(
+    let root_path = match authorize_project_root(
+        &auth,
         root_path.as_deref().unwrap_or(""),
         "项目目录不能为空",
         "项目目录不存在或不是目录",
-    ) {
+    )
+    .await
+    {
         Ok(path) => path,
-        Err(err) => {
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(serde_json::json!({"error": err})),
-            );
-        }
+        Err(err) => return err,
     };
 
     let project = Project::new(name, root_path, git_url, description, Some(user_id));
@@ -180,16 +224,12 @@ pub(super) async fn update_project(
         description,
     } = req;
 
-    let root_path = match validate_existing_dir_if_present(root_path, "项目目录不存在或不是目录")
-    {
-        Ok(path) => path,
-        Err(err) => {
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(serde_json::json!({"error": err})),
-            );
-        }
-    };
+    let root_path =
+        match authorize_optional_project_root(&auth, root_path, "项目目录不存在或不是目录").await
+        {
+            Ok(path) => path,
+            Err(err) => return err,
+        };
 
     if let Err(err) = ProjectService::update(&id, name, root_path, git_url, description).await {
         return (

@@ -8,17 +8,21 @@ use std::time::Duration;
 use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncWriteExt, BufReader};
 use uuid::Uuid;
 
+use crate::core::auth::AuthUser;
 use crate::core::mcp_args::{parse_args_json_array, parse_env};
+use crate::core::mcp_config_access::{ensure_owned_mcp_config, map_mcp_config_access_error};
 use crate::repositories::mcp_configs as mcp_repo;
 use crate::services::builtin_mcp::{get_builtin_mcp_config, is_builtin_mcp_id};
+use crate::services::process_isolation;
 
-use super::ResourceByCommandRequest;
+use super::{authorize_mcp_cwd_or_default, ResourceByCommandRequest};
 
 const MCP_RESOURCE_STDIO_TIMEOUT: Duration = Duration::from_secs(15);
 const MCP_RESOURCE_RESPONSE_LINE_LIMIT_BYTES: usize = 2 * 1024 * 1024;
 const MCP_RESOURCE_TEXT_LIMIT_BYTES: usize = 1 * 1024 * 1024;
 
 pub(super) async fn get_mcp_resource_config(
+    auth: AuthUser,
     Path(config_id): Path<String>,
 ) -> (StatusCode, Json<Value>) {
     if is_builtin_mcp_id(&config_id) {
@@ -26,6 +30,9 @@ pub(super) async fn get_mcp_resource_config(
             StatusCode::BAD_REQUEST,
             Json(json!({"error": "内置 MCP 不支持资源配置读取"})),
         );
+    }
+    if let Err(err) = ensure_owned_mcp_config(&config_id, &auth).await {
+        return map_mcp_config_access_error(err);
     }
     let cfg = if is_builtin_mcp_id(&config_id) {
         get_builtin_mcp_config(&config_id)
@@ -57,8 +64,19 @@ pub(super) async fn get_mcp_resource_config(
     }
     let args = parse_args_json_array(&cfg.args);
     let env = parse_env(&cfg.env);
-    let cwd = cfg.cwd.clone();
-    match read_mcp_resource_config(&cfg.command, &args, &env, cwd.as_deref()).await {
+    let cwd = match authorize_mcp_cwd_or_default(&auth, cfg.cwd.clone()).await {
+        Ok(path) => path,
+        Err(err) => return err,
+    };
+    match read_mcp_resource_config(
+        &cfg.command,
+        &args,
+        &env,
+        cwd.as_deref(),
+        Some(&auth.user_id),
+    )
+    .await
+    {
         Ok(text) => {
             let data =
                 serde_json::from_str::<Value>(&text).unwrap_or_else(|_| json!({ "raw": text }));
@@ -75,6 +93,7 @@ pub(super) async fn get_mcp_resource_config(
 }
 
 pub(super) async fn post_mcp_resource_config(
+    auth: AuthUser,
     Json(req): Json<ResourceByCommandRequest>,
 ) -> (StatusCode, Json<Value>) {
     if req.r#type.as_deref() != Some("stdio") {
@@ -95,7 +114,12 @@ pub(super) async fn post_mcp_resource_config(
     let args = parse_args_json_array(&req.args);
     let env = parse_env(&req.env);
     let alias = req.alias.unwrap_or_else(|| "mcp_server".to_string());
-    match read_mcp_resource_config(&command, &args, &env, req.cwd.as_deref()).await {
+    let cwd = match authorize_mcp_cwd_or_default(&auth, req.cwd).await {
+        Ok(path) => path,
+        Err(err) => return err,
+    };
+    match read_mcp_resource_config(&command, &args, &env, cwd.as_deref(), Some(&auth.user_id)).await
+    {
         Ok(text) => {
             let data =
                 serde_json::from_str::<Value>(&text).unwrap_or_else(|_| json!({ "raw": text }));
@@ -116,10 +140,11 @@ async fn read_mcp_resource_config(
     args: &[String],
     env: &HashMap<String, String>,
     cwd: Option<&str>,
+    user_id: Option<&str>,
 ) -> Result<String, String> {
     tokio::time::timeout(
         MCP_RESOURCE_STDIO_TIMEOUT,
-        read_mcp_resource_config_inner(command, args, env, cwd),
+        read_mcp_resource_config_inner(command, args, env, cwd, user_id),
     )
     .await
     .map_err(|_| {
@@ -135,6 +160,7 @@ async fn read_mcp_resource_config_inner(
     args: &[String],
     env: &HashMap<String, String>,
     cwd: Option<&str>,
+    user_id: Option<&str>,
 ) -> Result<String, String> {
     let mut cmd = tokio::process::Command::new(command);
     if !args.is_empty() {
@@ -146,6 +172,14 @@ async fn read_mcp_resource_config_inner(
     if let Some(cwd) = cwd {
         cmd.current_dir(cwd);
     }
+    let isolation = process_isolation::resolve_for_user(user_id)?;
+    if let Some(cwd) = cwd {
+        process_isolation::prepare_workspace_for_user(
+            std::path::Path::new(cwd),
+            isolation.as_ref(),
+        )?;
+    }
+    process_isolation::apply_to_tokio_command(&mut cmd, isolation.as_ref())?;
     cmd.stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());

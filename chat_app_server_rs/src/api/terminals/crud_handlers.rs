@@ -1,13 +1,19 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Required Notice: Copyright (c) 2025 AI Chat Team
+
 use axum::extract::{Path, Query};
 use axum::http::StatusCode;
 use axum::Json;
 use serde_json::Value;
 use std::path::Path as FsPath;
 
+use super::super::fs::policy::{AuthorizedPath, FsPathPolicy, FsPolicyError};
 use crate::core::auth::AuthUser;
+use crate::core::path_guard::{canonicalize_existing_dir, path_is_within_root};
+use crate::core::project_access::{ensure_owned_project, map_project_access_error};
 use crate::core::terminal_access::{ensure_owned_terminal, map_terminal_access_error};
 use crate::core::user_scope::resolve_user_id;
-use crate::core::validation::{normalize_non_empty, validate_existing_dir};
+use crate::core::validation::normalize_non_empty;
 use crate::models::terminal::{Terminal, TerminalService, TERMINAL_KIND_SHARED};
 use crate::models::terminal_log::{TerminalLog, TerminalLogService};
 use crate::services::project_run::validate_command_preflight;
@@ -19,6 +25,64 @@ use super::{
     attach_busy, derive_terminal_name, CreateTerminalRequest, DispatchTerminalCommandRequest,
     TerminalQuery,
 };
+
+fn fs_policy_error_tuple(err: FsPolicyError) -> (StatusCode, Json<Value>) {
+    (
+        err.status_code(),
+        Json(serde_json::json!({ "error": err.message() })),
+    )
+}
+
+async fn authorize_terminal_cwd(
+    auth: &AuthUser,
+    raw: &str,
+    empty_message: &str,
+    invalid_message: &str,
+) -> Result<AuthorizedPath, (StatusCode, Json<Value>)> {
+    if raw.trim().is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": empty_message })),
+        ));
+    }
+    let policy = FsPathPolicy::for_user(auth)
+        .await
+        .map_err(fs_policy_error_tuple)?;
+    let authorized = policy
+        .authorize_existing_dir(raw, invalid_message, invalid_message)
+        .map_err(fs_policy_error_tuple)?;
+    policy
+        .require_write(&authorized)
+        .map_err(fs_policy_error_tuple)?;
+    Ok(authorized)
+}
+
+async fn ensure_cwd_matches_project(
+    auth: &AuthUser,
+    project_id: Option<&str>,
+    cwd: &std::path::Path,
+) -> Result<(), (StatusCode, Json<Value>)> {
+    let Some(project_id) = project_id else {
+        return Ok(());
+    };
+    let project = ensure_owned_project(project_id, auth)
+        .await
+        .map_err(map_project_access_error)?;
+    let project_root =
+        canonicalize_existing_dir(FsPath::new(project.root_path.as_str())).map_err(|_| {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({ "error": "项目目录不存在或不是目录" })),
+            )
+        })?;
+    if !path_is_within_root(cwd, project_root.as_path()) {
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({ "error": "终端目录必须位于当前项目目录内" })),
+        ));
+    }
+    Ok(())
+}
 
 pub(super) async fn list_terminals(
     auth: AuthUser,
@@ -82,19 +146,25 @@ pub(super) async fn create_terminal(
         Err(err) => return err,
     };
 
-    let cwd = match validate_existing_dir(
+    let cwd = match authorize_terminal_cwd(
+        &auth,
         cwd.as_deref().unwrap_or(""),
         "终端目录不能为空",
         "终端目录不存在或不是目录",
-    ) {
+    )
+    .await
+    {
         Ok(path) => path,
-        Err(err) => {
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(serde_json::json!({ "error": err })),
-            );
-        }
+        Err(err) => return err,
     };
+    let normalized_project_id = normalize_non_empty(project_id);
+    if let Err(err) =
+        ensure_cwd_matches_project(&auth, normalized_project_id.as_deref(), cwd.path.as_path())
+            .await
+    {
+        return err;
+    }
+    let cwd = cwd.path.to_string_lossy().to_string();
 
     let name = normalize_non_empty(name).unwrap_or_else(|| derive_terminal_name(&cwd));
 
@@ -105,7 +175,7 @@ pub(super) async fn create_terminal(
             cwd,
             TERMINAL_KIND_SHARED.to_string(),
             Some(user_id),
-            normalize_non_empty(project_id),
+            normalized_project_id,
         )
         .await
     {
@@ -204,19 +274,25 @@ pub(super) async fn dispatch_terminal_command(
         Ok(user_id) => user_id,
         Err(err) => return err,
     };
-    let cwd = match validate_existing_dir(
+    let cwd = match authorize_terminal_cwd(
+        &auth,
         cwd.as_deref().unwrap_or(""),
         "运行目录不能为空",
         "运行目录不存在或不是目录",
-    ) {
+    )
+    .await
+    {
         Ok(path) => path,
-        Err(err) => {
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(serde_json::json!({ "error": err })),
-            );
-        }
+        Err(err) => return err,
     };
+    let normalized_project_id = normalize_non_empty(project_id);
+    if let Err(err) =
+        ensure_cwd_matches_project(&auth, normalized_project_id.as_deref(), cwd.path.as_path())
+            .await
+    {
+        return err;
+    }
+    let cwd = cwd.path.to_string_lossy().to_string();
     let command = match normalize_non_empty(command) {
         Some(value) => value,
         None => {
@@ -232,7 +308,6 @@ pub(super) async fn dispatch_terminal_command(
             Json(serde_json::json!({ "error": err })),
         );
     }
-    let normalized_project_id = normalize_non_empty(project_id);
     let allow_create = create_if_missing.unwrap_or(true);
 
     let manager = get_terminal_manager();

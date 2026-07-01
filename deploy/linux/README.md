@@ -19,6 +19,17 @@ cd /home/ubuntu/chatos_rs
 sudo BACKEND_PORT=13001 SERVER_NAME=your.domain.com bash scripts/server-install-nodocker.sh
 ```
 
+如果要同时启用 Linux OS 用户级进程隔离：
+
+```bash
+cd /home/ubuntu/chatos_rs
+sudo ENABLE_PROCESS_ISOLATION=1 \
+  PROCESS_ISOLATION_PRIVILEGE_MODE=capabilities \
+  BACKEND_PORT=13001 \
+  SERVER_NAME=your.domain.com \
+  bash scripts/server-install-nodocker.sh
+```
+
 可选变量：
 
 - `APP_ROOT`：默认 `/opt/chatos`
@@ -27,6 +38,8 @@ sudo BACKEND_PORT=13001 SERVER_NAME=your.domain.com bash scripts/server-install-
 - `BACKEND_PORT`：默认 `13001`
 - `SERVER_NAME`：Nginx `server_name`，默认 `_`
 - `FORCE_ENV_REWRITE=1`：覆盖重建 `/etc/chatos/chatos-backend.env`
+- `ENABLE_PROCESS_ISOLATION=1`：写入 `CHATOS_PROCESS_ISOLATION_ENABLED=true` 并生成 systemd drop-in
+- `PROCESS_ISOLATION_PRIVILEGE_MODE`：默认 `capabilities`，也可设为 `root`
 
 ## 4) 部署后检查
 
@@ -47,6 +60,20 @@ curl http://127.0.0.1:13001/health
 ```bash
 sudo systemctl restart chatos-backend
 ```
+
+启用 OS 用户级进程隔离后，脚本会生成：
+
+- `/etc/systemd/system/chatos-backend.service.d/process-isolation.conf`
+
+已部署环境可以单独开启：
+
+```bash
+sudo SERVICE_NAME=chatos-backend bash scripts/configure-linux-process-isolation.sh
+```
+
+默认使用 `capabilities` 模式，让服务继续以 `chatos` 用户运行，同时授予
+`CAP_SETUID`、`CAP_SETGID`、`CAP_CHOWN`。这是终端和 stdio MCP 降权到用户 UID/GID
+所必需的能力。
 
 ## 6) HTTPS（推荐）
 

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Required Notice: Copyright (c) 2025 AI Chat Team
+
 use axum::{
     routing::{get, post},
     Router,
@@ -6,7 +9,7 @@ use axum::{
 mod contracts;
 mod helpers;
 mod mutate_handlers;
-mod policy;
+pub(crate) mod policy;
 mod query_handlers;
 mod read_mode;
 mod response;

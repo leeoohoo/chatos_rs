@@ -11,3 +11,6 @@ tokio = { version = "1", features = ["process", "io-util", "macros", "rt", "sync
 reqwest = { version = "0.12", features = ["json", "stream", "gzip", "brotli", "deflate", "rustls-tls"] }
 tracing = "0.1"
 uuid = { version = "1", features = ["v4", "serde"] }
+libc = "0.2"
+sha2 = "0.10"
+walkdir = "2.4"

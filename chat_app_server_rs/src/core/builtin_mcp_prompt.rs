@@ -111,6 +111,7 @@ fn shared_tool_info(info: &ToolInfo) -> chatos_mcp_runtime::ToolInfo {
                 args: server.args,
                 cwd: server.cwd,
                 env: server.env,
+                user_id: server.user_id,
             }
         }),
         tool_info: info.tool_info.clone(),

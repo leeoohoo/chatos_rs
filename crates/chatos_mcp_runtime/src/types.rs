@@ -34,6 +34,8 @@ pub struct McpStdioServer {
     pub args: Option<Vec<String>>,
     pub cwd: Option<String>,
     pub env: Option<std::collections::HashMap<String, String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub user_id: Option<String>,
 }
 
 impl McpStdioServer {
@@ -44,6 +46,7 @@ impl McpStdioServer {
             args: None,
             cwd: None,
             env: None,
+            user_id: None,
         }
     }
 
@@ -63,6 +66,11 @@ impl McpStdioServer {
 
     pub fn with_env(mut self, env: std::collections::HashMap<String, String>) -> Self {
         self.env = Some(env);
+        self
+    }
+
+    pub fn with_user_id(mut self, user_id: impl Into<String>) -> Self {
+        self.user_id = Some(user_id.into());
         self
     }
 }

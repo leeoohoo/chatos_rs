@@ -123,6 +123,7 @@ mod tests {
                     "DEMO_TOKEN".to_string(),
                     "secret".to_string(),
                 )])),
+                user_id: None,
             }],
             vec![McpBuiltinServer {
                 name: "memory_skill_reader".to_string(),

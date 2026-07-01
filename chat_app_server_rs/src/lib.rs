@@ -19,6 +19,10 @@ pub mod shared_runtime;
 
 use crate::services::terminal_manager::get_terminal_manager;
 
+pub fn maybe_run_process_isolation_exec_helper() -> Result<bool, String> {
+    services::process_isolation::maybe_run_exec_helper_from_env()
+}
+
 pub async fn run_server_from_env() -> Result<(), String> {
     dotenvy::dotenv().ok();
 

@@ -6,7 +6,9 @@ use base64::Engine as _;
 use serde::Serialize;
 use tracing::warn;
 
+use crate::api::fs::policy::FsPathPolicy;
 use crate::config::Config;
+use crate::core::auth::AuthUser;
 use crate::core::builtin_mcp_prompt::compose_builtin_mcp_system_prompt;
 use crate::core::chat_context::resolve_system_prompt;
 use crate::core::chat_runtime::{
@@ -159,11 +161,15 @@ pub async fn resolve_runtime_context(
         requested_project_root,
     )
     .await;
+    let resolved_project_root =
+        authorize_runtime_workspace_dir(effective_user_id.as_deref(), resolved_project_root).await;
 
     let default_remote_connection_id = normalize_id(req.remote_connection_id.clone())
         .or_else(|| runtime_metadata.remote_connection_id.clone());
     let workspace_root = normalize_id(req.workspace_root.clone())
         .or_else(|| runtime_metadata.workspace_root.clone());
+    let workspace_root =
+        authorize_runtime_workspace_dir(effective_user_id.as_deref(), workspace_root).await;
 
     let (mut http_servers, stdio_servers, builtin_servers) = empty_mcp_server_bundle();
     let mut task_runner_skill_prompt = None;
@@ -506,6 +512,58 @@ fn normalize_optional_text(value: Option<&str>) -> Option<String> {
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(ToOwned::to_owned)
+}
+
+async fn authorize_runtime_workspace_dir(
+    user_id: Option<&str>,
+    raw: Option<String>,
+) -> Option<String> {
+    let raw = normalize_optional_text(raw.as_deref())?;
+    let Some(user_id) = user_id.map(str::trim).filter(|value| !value.is_empty()) else {
+        warn!("runtime workspace path dropped: missing effective user id");
+        return None;
+    };
+    let auth = AuthUser {
+        user_id: user_id.to_string(),
+        role: "user".to_string(),
+    };
+    let policy = match FsPathPolicy::for_user(&auth).await {
+        Ok(policy) => policy,
+        Err(err) => {
+            warn!(
+                user_id,
+                error = err.message(),
+                "runtime workspace path dropped: policy unavailable"
+            );
+            return None;
+        }
+    };
+    let authorized = match policy.authorize_existing_dir(
+        raw.as_str(),
+        "运行工作目录不存在或不是目录",
+        "运行工作目录不存在或不是目录",
+    ) {
+        Ok(path) => path,
+        Err(err) => {
+            warn!(
+                user_id,
+                workspace_dir = raw.as_str(),
+                error = err.message(),
+                "runtime workspace path dropped: unauthorized"
+            );
+            return None;
+        }
+    };
+    if let Err(err) = policy.require_write(&authorized) {
+        warn!(
+            user_id,
+            workspace_dir = raw.as_str(),
+            error = err.message(),
+            "runtime workspace path dropped: not writable"
+        );
+        return None;
+    }
+    Some(authorized.path.to_string_lossy().to_string())
 }
 
 fn is_concrete_project_id(project_id: &str) -> bool {

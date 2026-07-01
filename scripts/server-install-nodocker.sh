@@ -36,6 +36,8 @@ SERVICE_USER="${SERVICE_USER:-chatos}"
 SERVICE_GROUP="${SERVICE_GROUP:-chatos}"
 BACKEND_PORT="${BACKEND_PORT:-13001}"
 SERVER_NAME="${SERVER_NAME:-_}"
+ENABLE_PROCESS_ISOLATION="${ENABLE_PROCESS_ISOLATION:-0}"
+PROCESS_ISOLATION_PRIVILEGE_MODE="${PROCESS_ISOLATION_PRIVILEGE_MODE:-capabilities}"
 
 BACKEND_BIN_SRC="${BACKEND_BIN_SRC:-$SOURCE_ROOT/chat_app_server_rs/target/release/chat_app_server_rs}"
 BACKEND_CONFIG_SRC="${BACKEND_CONFIG_SRC:-$SOURCE_ROOT/chat_app_server_rs/config}"
@@ -43,6 +45,7 @@ FRONTEND_DIST_SRC="${FRONTEND_DIST_SRC:-$SOURCE_ROOT/chat_app/dist}"
 SERVICE_TEMPLATE="${SERVICE_TEMPLATE:-$SOURCE_ROOT/deploy/linux/systemd/chatos-backend.service.tpl}"
 NGINX_TEMPLATE="${NGINX_TEMPLATE:-$SOURCE_ROOT/deploy/linux/nginx/chatos.conf.tpl}"
 ENV_TEMPLATE="${ENV_TEMPLATE:-$SOURCE_ROOT/deploy/linux/chatos-backend.env.example}"
+PROCESS_ISOLATION_SCRIPT="${PROCESS_ISOLATION_SCRIPT:-$SOURCE_ROOT/scripts/configure-linux-process-isolation.sh}"
 
 BACKEND_DIR="$APP_ROOT/backend"
 FRONTEND_DIR="$APP_ROOT/frontend"
@@ -116,6 +119,21 @@ sed \
 
 chmod 0644 "$SERVICE_FILE"
 
+if [[ "$ENABLE_PROCESS_ISOLATION" == "1" || "$ENABLE_PROCESS_ISOLATION" == "true" || "$ENABLE_PROCESS_ISOLATION" == "yes" || "$ENABLE_PROCESS_ISOLATION" == "on" ]]; then
+  if [[ ! -f "$PROCESS_ISOLATION_SCRIPT" ]]; then
+    echo "[ERROR] OS 用户级隔离配置脚本不存在: $PROCESS_ISOLATION_SCRIPT"
+    exit 1
+  fi
+  SERVICE_NAME="$SERVICE_NAME" \
+    SERVICE_USER="$SERVICE_USER" \
+    SERVICE_GROUP="$SERVICE_GROUP" \
+    ENV_FILE="$ENV_FILE" \
+    PROCESS_ISOLATION_PRIVILEGE_MODE="$PROCESS_ISOLATION_PRIVILEGE_MODE" \
+    SYSTEMD_DAEMON_RELOAD=0 \
+    RESTART_SERVICE=0 \
+    bash "$PROCESS_ISOLATION_SCRIPT"
+fi
+
 sed \
   -e "s|__SERVER_NAME__|$SERVER_NAME|g" \
   -e "s|__BACKEND_PORT__|$BACKEND_PORT|g" \
@@ -137,6 +155,11 @@ echo "- 后端监听: http://127.0.0.1:$BACKEND_PORT"
 echo "- 前端目录: $FRONTEND_DIR"
 echo "- 访问地址: http://$(hostname -I | awk '{print $1}')"
 echo "- 环境文件: $ENV_FILE"
+if [[ "$ENABLE_PROCESS_ISOLATION" == "1" || "$ENABLE_PROCESS_ISOLATION" == "true" || "$ENABLE_PROCESS_ISOLATION" == "yes" || "$ENABLE_PROCESS_ISOLATION" == "on" ]]; then
+  echo "- OS 用户级进程隔离: enabled ($PROCESS_ISOLATION_PRIVILEGE_MODE)"
+else
+  echo "- OS 用户级进程隔离: disabled（可运行 sudo ENABLE_PROCESS_ISOLATION=1 bash scripts/server-install-nodocker.sh 开启）"
+fi
 echo
 echo "常用命令:"
 echo "  systemctl status $SERVICE_NAME"

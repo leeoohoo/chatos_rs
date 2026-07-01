@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Required Notice: Copyright (c) 2025 AI Chat Team
+
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 
@@ -11,10 +14,10 @@ use serde_json::{json, Value};
 
 use crate::core::auth::AuthUser;
 
-pub(super) const PATH_OUTSIDE_ALLOWED_ROOTS: &str = "路径超出允许范围";
-pub(super) const PATH_TRAVERSAL_BLOCKED: &str = "路径不能包含 ..";
-pub(super) const ROOT_MUTATION_BLOCKED: &str = "不允许修改受控根目录";
-pub(super) const WRITE_NOT_ALLOWED: &str = "当前目录不允许写入";
+pub(crate) const PATH_OUTSIDE_ALLOWED_ROOTS: &str = "路径超出允许范围";
+pub(crate) const PATH_TRAVERSAL_BLOCKED: &str = "路径不能包含 ..";
+pub(crate) const ROOT_MUTATION_BLOCKED: &str = "不允许修改受控根目录";
+pub(crate) const WRITE_NOT_ALLOWED: &str = "当前目录不允许写入";
 pub(super) use self::policy_paths::normalize_path_for_compare;
 
 #[derive(Debug, Clone)]
@@ -25,10 +28,11 @@ pub(super) struct FsAllowedRoot {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub(super) enum FsAllowedRootKind {
-    CurrentDir,
     Workspace,
+    Public,
     Project,
     ProjectParent,
+    CurrentDir,
     RepoParent,
     Ssh,
     Home,
@@ -38,23 +42,25 @@ pub(super) enum FsAllowedRootKind {
 impl FsAllowedRootKind {
     fn priority(self) -> u8 {
         match self {
-            Self::CurrentDir => 0,
-            Self::Workspace => 1,
+            Self::Workspace => 0,
+            Self::Public => 1,
             Self::Project => 2,
             Self::ProjectParent => 3,
-            Self::RepoParent => 4,
-            Self::Ssh => 5,
-            Self::Home => 6,
-            Self::Configured => 7,
+            Self::CurrentDir => 4,
+            Self::RepoParent => 5,
+            Self::Ssh => 6,
+            Self::Home => 7,
+            Self::Configured => 8,
         }
     }
 
     fn as_str(self) -> &'static str {
         match self {
-            Self::CurrentDir => "current_dir",
             Self::Workspace => "workspace",
+            Self::Public => "public",
             Self::Project => "project",
             Self::ProjectParent => "project_parent",
+            Self::CurrentDir => "current_dir",
             Self::RepoParent => "repo_parent",
             Self::Ssh => "ssh",
             Self::Home => "home",
@@ -65,10 +71,11 @@ impl FsAllowedRootKind {
     fn can_write(self) -> bool {
         matches!(
             self,
-            Self::CurrentDir
-                | Self::Workspace
+            Self::Workspace
+                | Self::Public
                 | Self::Project
                 | Self::ProjectParent
+                | Self::CurrentDir
                 | Self::RepoParent
                 | Self::Configured
         )
@@ -76,27 +83,27 @@ impl FsAllowedRootKind {
 }
 
 #[derive(Debug, Clone)]
-pub(super) struct FsPathPolicy {
+pub(crate) struct FsPathPolicy {
     roots: Vec<FsAllowedRoot>,
 }
 
 #[derive(Debug, Clone)]
-pub(super) struct AuthorizedPath {
-    pub(super) path: PathBuf,
-    pub(super) navigation_root: PathBuf,
-    pub(super) project_root: Option<PathBuf>,
-    pub(super) can_write: bool,
+pub(crate) struct AuthorizedPath {
+    pub(crate) path: PathBuf,
+    pub(crate) navigation_root: PathBuf,
+    pub(crate) project_root: Option<PathBuf>,
+    pub(crate) can_write: bool,
 }
 
 #[derive(Debug, Clone)]
-pub(super) enum FsPolicyError {
+pub(crate) enum FsPolicyError {
     BadRequest(String),
     Forbidden(String),
     Internal(String),
 }
 
 impl FsPolicyError {
-    pub(super) fn status_code(&self) -> StatusCode {
+    pub(crate) fn status_code(&self) -> StatusCode {
         match self {
             Self::BadRequest(_) => StatusCode::BAD_REQUEST,
             Self::Forbidden(_) => StatusCode::FORBIDDEN,
@@ -104,7 +111,7 @@ impl FsPolicyError {
         }
     }
 
-    pub(super) fn message(&self) -> &str {
+    pub(crate) fn message(&self) -> &str {
         match self {
             Self::BadRequest(message) | Self::Forbidden(message) | Self::Internal(message) => {
                 message.as_str()
@@ -114,7 +121,7 @@ impl FsPolicyError {
 }
 
 impl FsPathPolicy {
-    pub(super) async fn for_user(auth: &AuthUser) -> Result<Self, FsPolicyError> {
+    pub(crate) async fn for_user(auth: &AuthUser) -> Result<Self, FsPolicyError> {
         let roots = policy_roots::build_allowed_roots(auth).await;
 
         if roots.is_empty() {
@@ -126,7 +133,7 @@ impl FsPathPolicy {
         Ok(Self { roots })
     }
 
-    pub(super) fn roots_json(&self) -> Vec<Value> {
+    pub(crate) fn roots_json(&self) -> Vec<Value> {
         self.roots
             .iter()
             .map(|root| {
@@ -142,7 +149,21 @@ impl FsPathPolicy {
             .collect()
     }
 
-    pub(super) fn authorize_existing_path(
+    pub(crate) fn default_workspace_dir(&self) -> Option<&Path> {
+        self.roots
+            .iter()
+            .find(|root| root.kind == FsAllowedRootKind::Workspace)
+            .map(|root| root.path.as_path())
+    }
+
+    pub(crate) fn default_public_dir(&self) -> Option<&Path> {
+        self.roots
+            .iter()
+            .find(|root| root.kind == FsAllowedRootKind::Public)
+            .map(|root| root.path.as_path())
+    }
+
+    pub(crate) fn authorize_existing_path(
         &self,
         raw: &str,
     ) -> Result<AuthorizedPath, FsPolicyError> {
@@ -151,7 +172,7 @@ impl FsPathPolicy {
         self.authorized_path_for(canonical)
     }
 
-    pub(super) fn authorize_existing_dir(
+    pub(crate) fn authorize_existing_dir(
         &self,
         raw: &str,
         missing_message: &str,
@@ -164,7 +185,7 @@ impl FsPathPolicy {
         Ok(authorized)
     }
 
-    pub(super) fn authorize_existing_file(
+    pub(crate) fn authorize_existing_file(
         &self,
         raw: &str,
         missing_message: &str,
@@ -177,7 +198,7 @@ impl FsPathPolicy {
         Ok(authorized)
     }
 
-    pub(super) fn authorize_existing_entry(
+    pub(crate) fn authorize_existing_entry(
         &self,
         raw: &str,
         missing_message: &str,
@@ -227,21 +248,21 @@ impl FsPathPolicy {
         self.authorized_path_for(canonical_parent.join(file_name))
     }
 
-    pub(super) fn forbid_root_mutation(&self, path: &Path) -> Result<(), FsPolicyError> {
+    pub(crate) fn forbid_root_mutation(&self, path: &Path) -> Result<(), FsPolicyError> {
         if self.is_exact_allowed_root(path) {
             return Err(FsPolicyError::Forbidden(ROOT_MUTATION_BLOCKED.to_string()));
         }
         Ok(())
     }
 
-    pub(super) fn require_write(&self, path: &AuthorizedPath) -> Result<(), FsPolicyError> {
+    pub(crate) fn require_write(&self, path: &AuthorizedPath) -> Result<(), FsPolicyError> {
         if !path.can_write {
             return Err(FsPolicyError::Forbidden(WRITE_NOT_ALLOWED.to_string()));
         }
         Ok(())
     }
 
-    pub(super) fn parent_for(&self, path: &AuthorizedPath) -> Option<String> {
+    pub(crate) fn parent_for(&self, path: &AuthorizedPath) -> Option<String> {
         if policy_paths::normalize_path_for_compare(path.path.as_path())
             == policy_paths::normalize_path_for_compare(path.navigation_root.as_path())
         {

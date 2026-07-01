@@ -17,6 +17,8 @@ use crate::services::builtin_mcp::{
     builtin_display_name, is_builtin_mcp_id, list_builtin_mcp_configs,
 };
 
+use super::fs::policy::{FsPathPolicy, FsPolicyError};
+
 mod ai_model;
 mod mcp_resource;
 
@@ -191,6 +193,61 @@ async fn list_mcp_configs(
     (StatusCode::OK, Json(Value::Array(out)))
 }
 
+fn fs_policy_error_tuple(err: FsPolicyError) -> (StatusCode, Json<Value>) {
+    (
+        err.status_code(),
+        Json(serde_json::json!({ "error": err.message() })),
+    )
+}
+
+pub(super) async fn authorize_optional_mcp_cwd(
+    auth: &AuthUser,
+    raw: Option<String>,
+) -> Result<Option<String>, (StatusCode, Json<Value>)> {
+    let Some(raw) = raw.map(|value| value.trim().to_string()) else {
+        return Ok(None);
+    };
+    if raw.is_empty() {
+        return Ok(None);
+    }
+    let policy = FsPathPolicy::for_user(auth)
+        .await
+        .map_err(fs_policy_error_tuple)?;
+    let authorized = policy
+        .authorize_existing_dir(
+            raw.as_str(),
+            "MCP 工作目录不存在或不是目录",
+            "MCP 工作目录不存在或不是目录",
+        )
+        .map_err(fs_policy_error_tuple)?;
+    policy
+        .require_write(&authorized)
+        .map_err(fs_policy_error_tuple)?;
+    Ok(Some(authorized.path.to_string_lossy().to_string()))
+}
+
+pub(super) async fn default_mcp_cwd(
+    auth: &AuthUser,
+) -> Result<Option<String>, (StatusCode, Json<Value>)> {
+    let policy = FsPathPolicy::for_user(auth)
+        .await
+        .map_err(fs_policy_error_tuple)?;
+    Ok(policy
+        .default_public_dir()
+        .or_else(|| policy.default_workspace_dir())
+        .map(|path| path.to_string_lossy().to_string()))
+}
+
+pub(super) async fn authorize_mcp_cwd_or_default(
+    auth: &AuthUser,
+    raw: Option<String>,
+) -> Result<Option<String>, (StatusCode, Json<Value>)> {
+    match authorize_optional_mcp_cwd(auth, raw).await? {
+        Some(path) => Ok(Some(path)),
+        None => default_mcp_cwd(auth).await,
+    }
+}
+
 async fn create_mcp_config(
     auth: AuthUser,
     Json(req): Json<McpConfigRequest>,
@@ -211,15 +268,24 @@ async fn create_mcp_config(
             Json(json!({"error": "创建MCP配置失败"})),
         );
     };
+    let mcp_type = req.r#type.unwrap_or_else(|| "stdio".to_string());
+    let cwd = if mcp_type == "stdio" {
+        match authorize_optional_mcp_cwd(&auth, req.cwd).await {
+            Ok(path) => path,
+            Err(err) => return err,
+        }
+    } else {
+        None
+    };
     let id = Uuid::new_v4().to_string();
     let cfg = McpConfig {
         id: id.clone(),
         name,
         command,
-        r#type: req.r#type.unwrap_or_else(|| "stdio".to_string()),
+        r#type: mcp_type,
         args: req.args,
         env: req.env,
-        cwd: req.cwd,
+        cwd,
         user_id: Some(user_id),
         enabled: req.enabled.unwrap_or(true),
         created_at: crate::core::time::now_rfc3339(),
@@ -307,8 +373,14 @@ async fn update_mcp_config(
         update_requested = true;
     }
     if let Some(v) = req.cwd {
-        cfg.cwd = Some(v);
+        match authorize_optional_mcp_cwd(&auth, Some(v)).await {
+            Ok(path) => cfg.cwd = path,
+            Err(err) => return err,
+        }
         update_requested = true;
+    }
+    if cfg.r#type != "stdio" {
+        cfg.cwd = None;
     }
     if let Some(v) = req.enabled {
         cfg.enabled = v;

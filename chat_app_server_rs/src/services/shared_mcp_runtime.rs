@@ -68,6 +68,7 @@ pub(crate) fn shared_stdio_server(server: ChatosStdioServer) -> chatos_mcp_runti
         args: server.args,
         cwd: server.cwd,
         env: server.env,
+        user_id: server.user_id,
     }
 }
 
@@ -231,6 +232,7 @@ fn chatos_stdio_server(server: chatos_mcp_runtime::McpStdioServer) -> ChatosStdi
         args: server.args,
         cwd: server.cwd,
         env: server.env,
+        user_id: server.user_id,
     }
 }
 
