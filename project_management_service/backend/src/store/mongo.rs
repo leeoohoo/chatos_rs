@@ -279,6 +279,30 @@ where
         .map_err(|err| err.to_string())
 }
 
+async fn find_many_page<T>(
+    collection: &Collection<T>,
+    filter: Document,
+    sort: Document,
+    limit: usize,
+    offset: usize,
+) -> Result<Vec<T>, String>
+where
+    T: Send + Sync + Unpin + serde::de::DeserializeOwned,
+{
+    let options = FindOptions::builder()
+        .sort(sort)
+        .limit(limit.max(1) as i64)
+        .skip(offset as u64)
+        .build();
+    collection
+        .find(filter, options)
+        .await
+        .map_err(|err| err.to_string())?
+        .try_collect::<Vec<_>>()
+        .await
+        .map_err(|err| err.to_string())
+}
+
 async fn upsert_by_id<T>(collection: &Collection<T>, id: &str, record: &T) -> Result<(), String>
 where
     T: Send + Sync + serde::Serialize,
@@ -313,6 +337,20 @@ fn keyword_filter(value: Option<String>) -> Option<Bson> {
             options: "i".to_string(),
         })
     })
+}
+
+fn keyword_or_filter(value: Option<String>, fields: &[&str]) -> Option<Vec<Document>> {
+    let keyword = keyword_filter(value)?;
+    Some(
+        fields
+            .iter()
+            .map(|field| {
+                let mut filter = Document::new();
+                filter.insert(*field, keyword.clone());
+                filter
+            })
+            .collect(),
+    )
 }
 
 fn escape_regex(value: &str) -> String {

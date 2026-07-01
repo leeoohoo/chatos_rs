@@ -23,12 +23,67 @@ impl SqliteStore {
             "SELECT * FROM project_work_items
              WHERE project_id = ?1
                AND (?2 IS NULL OR status = ?2)
-               AND (?3 IS NULL OR title LIKE ?3 OR description LIKE ?3)
+               AND (
+                 ?3 IS NULL
+                 OR id LIKE ?3
+                 OR requirement_id LIKE ?3
+                 OR title LIKE ?3
+                 OR description LIKE ?3
+                 OR tags_json LIKE ?3
+                 OR task_runner_default_model_config_id LIKE ?3
+                 OR task_runner_enabled_tool_ids_json LIKE ?3
+                 OR task_runner_skill_ids_json LIKE ?3
+               )
              ORDER BY sort_order ASC, priority DESC, updated_at DESC",
         )
         .bind(project_id)
         .bind(status.map(|status| status.as_str().to_string()))
         .bind(keyword)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|err| err.to_string())?;
+        Ok(rows.iter().map(work_item_from_row).collect())
+    }
+
+    pub async fn list_work_items_by_project_page(
+        &self,
+        project_id: &str,
+        status: Option<ProjectWorkItemStatus>,
+        keyword: Option<String>,
+        requirement_id: Option<String>,
+        include_archived: bool,
+        limit: usize,
+        offset: usize,
+    ) -> Result<Vec<ProjectWorkItemRecord>, String> {
+        let keyword = normalized_optional(keyword).map(|value| format!("%{value}%"));
+        let requirement_id = normalized_optional(requirement_id);
+        let rows = sqlx::query(
+            "SELECT * FROM project_work_items
+             WHERE project_id = ?1
+               AND (?2 IS NULL OR status = ?2)
+               AND (?3 IS NULL OR requirement_id = ?3)
+               AND (?4 OR status <> 'archived')
+               AND (
+                 ?5 IS NULL
+                 OR id LIKE ?5
+                 OR requirement_id LIKE ?5
+                 OR title LIKE ?5
+                 OR description LIKE ?5
+                 OR tags_json LIKE ?5
+                 OR task_runner_default_model_config_id LIKE ?5
+                 OR task_runner_enabled_tool_ids_json LIKE ?5
+                 OR task_runner_skill_ids_json LIKE ?5
+               )
+             ORDER BY sort_order ASC, priority DESC, updated_at DESC
+             LIMIT ?6 OFFSET ?7",
+        )
+        .bind(project_id)
+        .bind(status.map(|status| status.as_str().to_string()))
+        .bind(requirement_id)
+        .bind(include_archived)
+        .bind(keyword)
+        .bind(limit.max(1) as i64)
+        .bind(offset as i64)
         .fetch_all(&self.pool)
         .await
         .map_err(|err| err.to_string())?;

@@ -30,6 +30,16 @@ export function buildRequirementTree(items: RequirementRecord[]): RequirementTab
     roots.push(node);
   });
 
+  const assignTreeLevel = (nodes: RequirementTableRecord[], level: number) => {
+    nodes.forEach((node) => {
+      node.tree_level = level;
+      if (node.children?.length) {
+        assignTreeLevel(node.children, level + 1);
+      }
+    });
+  };
+  assignTreeLevel(roots, 0);
+
   return roots;
 }
 

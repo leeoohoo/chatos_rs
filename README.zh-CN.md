@@ -120,5 +120,6 @@ make stop-user-service-wsl
 - [db_connection_hub backend](./db_connection_hub/backend/README.md)
 - [db_connection_hub frontend](./db_connection_hub/frontend/README.md)
 
-## 开源协议
-本项目使用 [MIT License](./LICENSE)。
+## 许可协议
+本项目采用 [PolyForm Noncommercial License 1.0.0](./LICENSE) 以源码可见方式发布。
+未经版权持有人另行书面授权，不允许将本项目用于商业用途。

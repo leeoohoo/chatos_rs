@@ -18,6 +18,28 @@ impl RunService {
         if !task_terminal_enabled(task) {
             return;
         }
+        match self.should_route_task_to_sandbox(task).await {
+            Ok(true) => {
+                info!(
+                    task_id = task.id.as_str(),
+                    run_id = run.id.as_str(),
+                    workspace_dir,
+                    "task runner skipped local task terminal because sandbox routing is enabled"
+                );
+                return;
+            }
+            Ok(false) => {}
+            Err(err) => {
+                warn!(
+                    task_id = task.id.as_str(),
+                    run_id = run.id.as_str(),
+                    workspace_dir,
+                    "task runner skipped local task terminal because sandbox routing config could not be loaded: {}",
+                    err
+                );
+                return;
+            }
+        }
         let context = self.task_terminal_context(task, workspace_dir);
         match TaskRunnerTerminalControllerStore
             .start_shell_session(context, ".".to_string())

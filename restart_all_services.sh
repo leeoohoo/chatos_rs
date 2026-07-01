@@ -19,16 +19,20 @@ load_optional_env "$ROOT_DIR/.env"
 # credentials from service-local env files must be reconciled here.
 load_optional_env "$ROOT_DIR/memory_engine/.env"
 load_optional_env "$ROOT_DIR/task_runner_service/.env"
+load_optional_env "$ROOT_DIR/sandbox_manager_service/.env"
+load_optional_env "$ROOT_DIR/sandbox_manager_service/backend/.env"
 
 MEMORY_ENGINE_SCRIPT="$ROOT_DIR/memory_engine/restart_services.sh"
 USER_SERVICE_SCRIPT="$ROOT_DIR/user_service/restart_services.sh"
 PROJECT_MANAGEMENT_SCRIPT="$ROOT_DIR/project_management_service/restart_services.sh"
+SANDBOX_MANAGER_SCRIPT="$ROOT_DIR/restart_sandbox_manager_service.sh"
 CHATOS_SCRIPT="$ROOT_DIR/restart_services.sh"
 TASK_RUNNER_SCRIPT="$ROOT_DIR/restart_task_runner_service.sh"
 
 START_MEMORY_ENGINE="${START_MEMORY_ENGINE:-1}"
 START_USER_SERVICE="${START_USER_SERVICE:-1}"
 START_PROJECT_MANAGEMENT="${START_PROJECT_MANAGEMENT:-1}"
+START_SANDBOX_MANAGER="${START_SANDBOX_MANAGER:-${START_SANDBOX_SERVICE:-${START_SANDBOX:-1}}}"
 START_CHATOS="${START_CHATOS:-1}"
 START_TASK_RUNNER="${START_TASK_RUNNER:-1}"
 
@@ -88,6 +92,10 @@ do_status() {
     run_service "project_management_service" "$PROJECT_MANAGEMENT_SCRIPT" status
     echo
   fi
+  if run_enabled "$START_SANDBOX_MANAGER"; then
+    run_service "sandbox_manager_service" "$SANDBOX_MANAGER_SCRIPT" status
+    echo
+  fi
   if run_enabled "$START_CHATOS"; then
     run_chatos status
     echo
@@ -106,6 +114,9 @@ do_stop() {
   if run_enabled "$START_CHATOS"; then
     run_chatos stop || failed=1
   fi
+  if run_enabled "$START_SANDBOX_MANAGER"; then
+    run_service "sandbox_manager_service" "$SANDBOX_MANAGER_SCRIPT" stop || failed=1
+  fi
   if run_enabled "$START_PROJECT_MANAGEMENT"; then
     run_service "project_management_service" "$PROJECT_MANAGEMENT_SCRIPT" stop || failed=1
   fi
@@ -123,6 +134,7 @@ do_restart() {
   local started_memory=0
   local started_user=0
   local started_project=0
+  local started_sandbox=0
   local started_chatos=0
   local started_task=0
 
@@ -139,6 +151,10 @@ do_restart() {
   if run_enabled "$START_PROJECT_MANAGEMENT"; then
     run_service "project_management_service" "$PROJECT_MANAGEMENT_SCRIPT" restart || return 1
     started_project=1
+  fi
+  if run_enabled "$START_SANDBOX_MANAGER"; then
+    run_service "sandbox_manager_service" "$SANDBOX_MANAGER_SCRIPT" restart || return 1
+    started_sandbox=1
   fi
   if run_enabled "$START_CHATOS"; then
     run_chatos restart || return 1
@@ -161,6 +177,10 @@ do_restart() {
   if (( started_project == 1 )); then
     echo "  project_management backend: http://localhost:${PROJECT_SERVICE_PORT:-39210}"
     echo "  project_management frontend: http://localhost:${PROJECT_SERVICE_FRONTEND_PORT:-39211}"
+  fi
+  if (( started_sandbox == 1 )); then
+    echo "  sandbox_manager backend: http://localhost:${SANDBOX_MANAGER_PORT:-8095}"
+    echo "  sandbox_manager frontend: http://localhost:${SANDBOX_MANAGER_FRONTEND_PORT:-8096}"
   fi
   if (( started_chatos == 1 )); then
     echo "  chatos backend: http://localhost:${MAIN_BACKEND_PORT:-${BACKEND_PORT:-3997}}"

@@ -1,0 +1,49 @@
+const RAW_API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || '').trim();
+const API_BASE_URL = RAW_API_BASE_URL.replace(/\/+$/, '').replace(/\/api$/, '');
+
+function buildApiUrl(path: string): string {
+  const normalizedPath = path.startsWith('/') ? path : `/${path}`;
+  return API_BASE_URL ? `${API_BASE_URL}${normalizedPath}` : normalizedPath;
+}
+
+export type QueryValue = string | number | boolean | null | undefined;
+
+export function withQuery(path: string, params: Record<string, QueryValue>): string {
+  const search = new URLSearchParams();
+  Object.entries(params).forEach(([key, value]) => {
+    if (value === undefined || value === null) {
+      return;
+    }
+    const text = String(value).trim();
+    if (text) {
+      search.set(key, text);
+    }
+  });
+  const query = search.toString();
+  return query ? `${path}?${query}` : path;
+}
+
+export async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const headers = new Headers(init?.headers);
+  if (!headers.has('Content-Type')) {
+    headers.set('Content-Type', 'application/json');
+  }
+  const response = await fetch(buildApiUrl(path), { ...init, headers });
+  if (!response.ok) {
+    let message = response.statusText;
+    try {
+      const data = (await response.json()) as { error?: { message?: string } };
+      if (data.error?.message) {
+        message = data.error.message;
+      }
+    } catch {
+      // keep status text
+    }
+    throw new Error(message);
+  }
+  if (response.status === 204) {
+    return undefined as T;
+  }
+  const text = await response.text();
+  return text.trim() ? (JSON.parse(text) as T) : (undefined as T);
+}

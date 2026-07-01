@@ -5,6 +5,7 @@ import {
   ChevronRight,
   CheckCircle2,
   ClipboardList,
+  Eye,
   FileText,
   GitBranch,
   Link2,
@@ -34,6 +35,7 @@ import {
   PlanLoadingState,
   PlanPaneHeader,
   PlanStatsBar,
+  RequirementExecutionPreviewModal,
   RequirementContentSection,
   TechnicalDocumentsSection,
   WorkItemRow,
@@ -45,7 +47,7 @@ import {
   SELECTED_WORK_ITEM_RENDER_INCREMENT,
   buildDependencyMaps,
   buildDependencyMapsFromGraph,
-  buildDownstreamRequirementScope,
+  buildRequirementExecutionScope,
   buildRequirementChildrenMap,
   buildRequirementColumns,
   buildRequirementPath,
@@ -114,6 +116,8 @@ export const ProjectPlanPane: React.FC<ProjectPlanPaneProps> = ({ project, class
   const [selectedRequirementId, setSelectedRequirementId] = useState<string | null>(null);
   const [activeDetailTab, setActiveDetailTab] = useState<DetailTabId>('requirement');
   const [executingRequirementId, setExecutingRequirementId] = useState<string | null>(null);
+  const [executionPreviewRequirement, setExecutionPreviewRequirement] = useState<ProjectRequirementResponse | null>(null);
+  const [executionPreviewCanConfirm, setExecutionPreviewCanConfirm] = useState(false);
   const [executionMessage, setExecutionMessage] = useState<string | null>(null);
   const [visibleWorkItemLimit, setVisibleWorkItemLimit] = useState(SELECTED_WORK_ITEM_INITIAL_RENDER_LIMIT);
   const updateChatConfig = useChatStore((state) => state.updateChatConfig);
@@ -202,7 +206,10 @@ export const ProjectPlanPane: React.FC<ProjectPlanPaneProps> = ({ project, class
     }
   }, [apiClient, documentsByRequirement, project.id]);
 
-  const executeRequirement = useCallback(async (requirement: ProjectRequirementResponse) => {
+  const executeRequirement = useCallback(async (
+    requirement: ProjectRequirementResponse,
+    options?: { includePrerequisiteDependents?: boolean },
+  ) => {
     if (executingRequirementId) {
       return;
     }
@@ -211,7 +218,9 @@ export const ProjectPlanPane: React.FC<ProjectPlanPaneProps> = ({ project, class
     setError(null);
     void updateChatConfig({ planModeEnabled: false });
     try {
-      const result = await apiClient.executeProjectRequirement(project.id, requirement.id);
+      const result = await apiClient.executeProjectRequirement(project.id, requirement.id, {
+        include_prerequisite_dependents: Boolean(options?.includePrerequisiteDependents),
+      });
       const createdTasks = result.created_tasks || result.createdTasks || [];
       await loadPlan();
       const conversationId = readText(result.conversation_id) || readText(result.conversationId);
@@ -403,7 +412,7 @@ export const ProjectPlanPane: React.FC<ProjectPlanPaneProps> = ({ project, class
     ? requirementChildrenMap.get(selectedRequirement.id) || []
     : [];
   const selectedExecutionScopeIds = useMemo(
-    () => buildDownstreamRequirementScope({
+    () => buildRequirementExecutionScope({
       dependencyMaps,
       requirements,
       rootId: selectedRequirementId,
@@ -596,30 +605,44 @@ export const ProjectPlanPane: React.FC<ProjectPlanPaneProps> = ({ project, class
                       更新于 {formatDateTime(getUpdatedAt(selectedRequirement))}
                     </div>
                   </div>
-                  {selectedRequirementCanShowAction ? (
+                  <div className="flex shrink-0 flex-wrap items-center gap-2">
                     <button
                       type="button"
-                      className={cn(
-                        'inline-flex shrink-0 items-center gap-1.5 rounded-md border px-3 py-1.5 text-xs font-medium shadow-sm disabled:cursor-not-allowed disabled:border-border disabled:bg-muted disabled:text-muted-foreground disabled:shadow-none',
-                        selectedRequirementIsExecuting
-                          ? 'border-destructive/40 bg-destructive text-destructive-foreground hover:bg-destructive/90'
-                          : 'border-primary/40 bg-primary text-primary-foreground hover:bg-primary/90',
-                      )}
-                      disabled={!!executingRequirementId}
+                      className="inline-flex items-center gap-1.5 rounded-md border border-border bg-background px-3 py-1.5 text-xs font-medium text-muted-foreground shadow-sm hover:bg-accent hover:text-foreground"
                       onClick={() => {
-                        if (selectedRequirementIsExecuting) {
-                          void stopRequirementExecution(selectedRequirement);
-                        } else {
-                          void executeRequirement(selectedRequirement);
-                        }
+                        setExecutionPreviewCanConfirm(false);
+                        setExecutionPreviewRequirement(selectedRequirement);
                       }}
                     >
-                      {selectedRequirementIsExecuting ? <Square className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5" />}
-                      {selectedRequirementActionBusy
-                        ? (selectedRequirementIsExecuting ? '停止中' : '执行中')
-                        : (selectedRequirementIsExecuting ? '停止' : '执行关联任务')}
+                      <Eye className="h-3.5 w-3.5" />
+                      预览流程
                     </button>
-                  ) : null}
+                    {selectedRequirementCanShowAction ? (
+                      <button
+                        type="button"
+                        className={cn(
+                          'inline-flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-xs font-medium shadow-sm disabled:cursor-not-allowed disabled:border-border disabled:bg-muted disabled:text-muted-foreground disabled:shadow-none',
+                          selectedRequirementIsExecuting
+                            ? 'border-destructive/40 bg-destructive text-destructive-foreground hover:bg-destructive/90'
+                            : 'border-primary/40 bg-primary text-primary-foreground hover:bg-primary/90',
+                        )}
+                        disabled={!!executingRequirementId}
+                        onClick={() => {
+                          if (selectedRequirementIsExecuting) {
+                            void stopRequirementExecution(selectedRequirement);
+                          } else {
+                            setExecutionPreviewCanConfirm(true);
+                            setExecutionPreviewRequirement(selectedRequirement);
+                          }
+                        }}
+                      >
+                        {selectedRequirementIsExecuting ? <Square className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5" />}
+                        {selectedRequirementActionBusy
+                          ? (selectedRequirementIsExecuting ? '停止中' : '执行中')
+                          : (selectedRequirementIsExecuting ? '停止' : '执行关联任务')}
+                      </button>
+                    ) : null}
+                  </div>
                 </div>
 
                 <div className="mt-4 border-b border-border">
@@ -815,6 +838,26 @@ export const ProjectPlanPane: React.FC<ProjectPlanPaneProps> = ({ project, class
           </main>
         </div>
       )}
+      {executionPreviewRequirement ? (
+        <RequirementExecutionPreviewModal
+          dependencyMaps={dependencyMaps}
+          requirement={executionPreviewRequirement}
+          requirements={requirements}
+          running={Boolean(executingRequirementId)}
+          onClose={() => {
+            setExecutionPreviewRequirement(null);
+            setExecutionPreviewCanConfirm(false);
+          }}
+          onConfirm={executionPreviewCanConfirm
+            ? (includePrerequisiteDependents) => {
+              const requirementToExecute = executionPreviewRequirement;
+              setExecutionPreviewRequirement(null);
+              setExecutionPreviewCanConfirm(false);
+              void executeRequirement(requirementToExecute, { includePrerequisiteDependents });
+            }
+            : undefined}
+        />
+      ) : null}
     </div>
   );
 };

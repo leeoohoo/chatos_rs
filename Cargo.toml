@@ -7,7 +7,9 @@ members = [
   "crates/memory_engine_sdk",
   "crates/chatos_mcp_runtime",
   "task_runner_service/backend",
-  "project_management_service/backend"
+  "project_management_service/backend",
+  "sandbox_manager_service/backend",
+  "sandbox_manager_service/sandbox_mcp_server"
 ]
 exclude = [
   "memory_engine/backend",

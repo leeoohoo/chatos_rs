@@ -63,6 +63,14 @@ impl AppConfig {
             TOOL_RESULTS_MODEL_TOTAL_MAX_CHARS_ENV,
             DEFAULT_TOOL_RESULTS_MODEL_TOTAL_MAX_CHARS,
         );
+        let default_execution_environment_mode = normalize_execution_environment_mode(
+            normalized_env("TASK_RUNNER_EXECUTION_ENVIRONMENT_MODE"),
+        );
+        let default_sandbox_manager_base_url =
+            normalized_env("TASK_RUNNER_SANDBOX_MANAGER_BASE_URL")
+                .unwrap_or_else(|| "http://127.0.0.1:8095".to_string());
+        let default_sandbox_lease_ttl_seconds =
+            env_u64("TASK_RUNNER_SANDBOX_LEASE_TTL_SECONDS", 7_200).max(60);
         let callback_timeout_ms = std::env::var("TASK_RUNNER_CALLBACK_TIMEOUT_MS")
             .ok()
             .and_then(|value| value.parse::<u64>().ok())
@@ -135,6 +143,9 @@ impl AppConfig {
             default_task_execution_max_iterations,
             default_tool_result_model_max_chars,
             default_tool_results_model_total_max_chars,
+            default_execution_environment_mode,
+            default_sandbox_manager_base_url,
+            default_sandbox_lease_ttl_seconds,
             chatos_callback_url: normalized_env("TASK_RUNNER_CHATOS_CALLBACK_URL"),
             chatos_callback_secret: normalized_env("TASK_RUNNER_CHATOS_CALLBACK_SECRET"),
             internal_api_secret: normalized_env("TASK_RUNNER_INTERNAL_API_SECRET")
@@ -168,6 +179,27 @@ pub(super) fn env_usize(key: &str, default_value: usize) -> usize {
         .and_then(|value| value.parse::<usize>().ok())
         .filter(|value| *value > 0)
         .unwrap_or(default_value)
+}
+
+pub(super) fn env_u64(key: &str, default_value: u64) -> u64 {
+    std::env::var(key)
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(default_value)
+}
+
+fn normalize_execution_environment_mode(value: Option<String>) -> String {
+    match value
+        .as_deref()
+        .map(str::trim)
+        .unwrap_or("local")
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "cloud" => "cloud".to_string(),
+        _ => "local".to_string(),
+    }
 }
 
 fn default_memory_engine_base_url() -> Option<String> {

@@ -13,7 +13,7 @@ pub(super) use context::{
 };
 pub(super) use errors::HandlerError;
 pub(super) use plan::{
-    add_requirement_work_item_dependencies, collect_downstream_requirement_scope,
+    add_requirement_work_item_dependencies, collect_requirement_execution_scope,
     parse_requirements, parse_work_items, project_plan_array, project_plan_value,
     requirement_dependency_map, topological_work_item_order, validate_requirement_prerequisites,
     work_item_dependency_map,

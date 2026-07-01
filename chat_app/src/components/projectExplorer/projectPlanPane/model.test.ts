@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
 import {
-  buildDownstreamRequirementScope,
   buildDependencyMaps,
+  buildRequirementExecutionScope,
   buildVisiblePlanItems,
   canShowRequirementExecutionAction,
   mergeDependencyMaps,
@@ -47,7 +47,7 @@ describe('projectPlanPane model', () => {
     expect(merged.workItemPrerequisites.get('item-b')).toEqual(['item-a']);
   });
 
-  it('builds downstream requirement scope without walking to parents or prerequisites', () => {
+  it('builds execution scope with downstream requirements and required prerequisites', () => {
     const requirements = [
       { id: 'parent', title: 'Parent' },
       { id: 'child', title: 'Child', parent_requirement_id: 'parent' },
@@ -57,18 +57,20 @@ describe('projectPlanPane model', () => {
       { id: 'after-dependent', title: 'After Dependent' },
       { id: 'sibling', title: 'Sibling', parent_requirement_id: 'parent' },
       { id: 'prerequisite', title: 'Prerequisite' },
+      { id: 'unrelated-dependent', title: 'Unrelated Dependent' },
     ];
     const dependencyMaps = buildDependencyMaps({
       dependencyGraph: {
         edges: [
-          { from: 'requirement:prerequisite', to: 'requirement:child', edge_type: 'blocks' },
           { from: 'requirement:child', to: 'requirement:dependent', edge_type: 'blocks' },
+          { from: 'requirement:prerequisite', to: 'requirement:dependent', edge_type: 'blocks' },
           { from: 'requirement:dependent', to: 'requirement:after-dependent', edge_type: 'blocks' },
+          { from: 'requirement:prerequisite', to: 'requirement:unrelated-dependent', edge_type: 'blocks' },
         ],
       },
     });
 
-    const scope = buildDownstreamRequirementScope({
+    const scope = buildRequirementExecutionScope({
       dependencyMaps,
       requirements,
       rootId: 'child',
@@ -80,7 +82,59 @@ describe('projectPlanPane model', () => {
       'dependent',
       'dependent-child',
       'after-dependent',
+      'prerequisite',
     ]);
+  });
+
+  it('keeps completed external prerequisites out of execution scope', () => {
+    const requirements = [
+      { id: 'root', title: 'Root' },
+      { id: 'dependent', title: 'Dependent' },
+      { id: 'completed-prerequisite', title: 'Completed Prerequisite', status: 'done' as const },
+    ];
+    const dependencyMaps = buildDependencyMaps({
+      dependencyGraph: {
+        edges: [
+          { from: 'requirement:root', to: 'requirement:dependent', edge_type: 'blocks' },
+          { from: 'requirement:completed-prerequisite', to: 'requirement:dependent', edge_type: 'blocks' },
+        ],
+      },
+    });
+
+    const scope = buildRequirementExecutionScope({
+      dependencyMaps,
+      requirements,
+      rootId: 'root',
+    });
+
+    expect(scope).toEqual(['root', 'dependent']);
+  });
+
+  it('can include dependents unlocked by required prerequisites', () => {
+    const requirements = [
+      { id: 'root', title: 'Root' },
+      { id: 'dependent', title: 'Dependent' },
+      { id: 'prerequisite', title: 'Prerequisite' },
+      { id: 'prerequisite-dependent', title: 'Prerequisite Dependent' },
+    ];
+    const dependencyMaps = buildDependencyMaps({
+      dependencyGraph: {
+        edges: [
+          { from: 'requirement:root', to: 'requirement:dependent', edge_type: 'blocks' },
+          { from: 'requirement:prerequisite', to: 'requirement:dependent', edge_type: 'blocks' },
+          { from: 'requirement:prerequisite', to: 'requirement:prerequisite-dependent', edge_type: 'blocks' },
+        ],
+      },
+    });
+
+    const scope = buildRequirementExecutionScope({
+      dependencyMaps,
+      includePrerequisiteDependents: true,
+      requirements,
+      rootId: 'root',
+    });
+
+    expect(scope).toEqual(['root', 'dependent', 'prerequisite', 'prerequisite-dependent']);
   });
 
   it('hides requirement execution action for terminal statuses', () => {

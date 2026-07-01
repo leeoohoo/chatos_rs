@@ -3,10 +3,12 @@ import {
   Button,
   Descriptions,
   Form,
+  Input,
   InputNumber,
   Segmented,
   Space,
   Statistic,
+  Switch,
   Tag,
   Typography,
 } from 'antd';
@@ -122,6 +124,26 @@ export function SettingsOverviewTab({
           </Descriptions.Item>
           <Descriptions.Item label={t('settings.currentToolResultsBudget')}>
             {config.tool_results_model_total_max_chars}
+          </Descriptions.Item>
+          <Descriptions.Item label={t('settings.executionEnvironmentMode')}>
+            <Tag color={config.execution_environment_mode === 'cloud' ? 'purple' : 'blue'}>
+              {config.execution_environment_mode === 'cloud'
+                ? t('settings.executionMode.cloud')
+                : t('settings.executionMode.local')}
+            </Tag>
+          </Descriptions.Item>
+          <Descriptions.Item label={t('settings.sandboxEnabled')}>
+            <Tag color={config.sandbox_enabled ? 'green' : 'default'}>
+              {config.sandbox_enabled
+                ? t('settings.sandboxSwitchOn')
+                : t('settings.sandboxSwitchOff')}
+            </Tag>
+          </Descriptions.Item>
+          <Descriptions.Item label={t('settings.sandboxManagerBaseUrl')}>
+            {config.sandbox_manager_base_url || '-'}
+          </Descriptions.Item>
+          <Descriptions.Item label={t('settings.sandboxLeaseTtl')}>
+            {config.sandbox_lease_ttl_seconds} s
           </Descriptions.Item>
         </Descriptions>
       ) : null}
@@ -242,6 +264,72 @@ function RuntimeSettingsForm({ t, form, saveLoading, onSubmit }: RuntimeSettings
             ]}
           >
             <InputNumber min={1} style={{ width: 220 }} />
+          </Form.Item>
+          <Form.Item
+            name="execution_environment_mode"
+            label={t('settings.executionEnvironmentMode')}
+            rules={[
+              {
+                required: true,
+                message: t('settings.executionEnvironmentModeRequired'),
+              },
+            ]}
+          >
+            <Segmented
+              options={[
+                {
+                  label: t('settings.executionMode.local'),
+                  value: 'local',
+                },
+                {
+                  label: t('settings.executionMode.cloud'),
+                  value: 'cloud',
+                },
+              ]}
+            />
+          </Form.Item>
+          <Form.Item
+            name="sandbox_enabled"
+            label={t('settings.sandboxEnabled')}
+            valuePropName="checked"
+            help={t('settings.sandboxEnabledHelp')}
+          >
+            <Switch
+              checkedChildren={t('settings.sandboxSwitchOn')}
+              unCheckedChildren={t('settings.sandboxSwitchOff')}
+            />
+          </Form.Item>
+          <Form.Item shouldUpdate noStyle>
+            {({ getFieldValue }) =>
+              getFieldValue('sandbox_enabled') ? (
+                <>
+                  <Form.Item
+                    name="sandbox_manager_base_url"
+                    label={t('settings.sandboxManagerBaseUrl')}
+                    rules={[
+                      {
+                        required: true,
+                        message: t('settings.sandboxManagerBaseUrlRequired'),
+                      },
+                    ]}
+                  >
+                    <Input style={{ width: 280 }} placeholder="http://127.0.0.1:8095" />
+                  </Form.Item>
+                  <Form.Item
+                    name="sandbox_lease_ttl_seconds"
+                    label={t('settings.sandboxLeaseTtl')}
+                    rules={[
+                      {
+                        required: true,
+                        message: t('settings.sandboxLeaseTtlRequired'),
+                      },
+                    ]}
+                  >
+                    <InputNumber min={60} precision={0} style={{ width: 220 }} />
+                  </Form.Item>
+                </>
+              ) : null
+            }
           </Form.Item>
           <Button type="primary" onClick={() => form.submit()} loading={saveLoading}>
             {t('common.save')}

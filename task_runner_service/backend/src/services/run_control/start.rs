@@ -115,6 +115,11 @@ impl RunService {
         }
         let effective_workspace_dir =
             ensure_effective_task_workspace_dir(&self.config, &task, &model_config)?;
+        let execution_environment_mode = self
+            .effective_execution_environment_mode()
+            .await
+            .unwrap_or_else(|_| self.config.default_execution_environment_mode.clone());
+        let sandbox_enabled = self.effective_sandbox_enabled().await.unwrap_or(false);
 
         let run_id = Uuid::new_v4().to_string();
         let input_snapshot = json!({
@@ -126,6 +131,8 @@ impl RunService {
             "prompt_override": input.prompt_override,
             "model_config_id": model_config_id,
             "mcp_config": task.mcp_config,
+            "execution_environment_mode": execution_environment_mode,
+            "sandbox_enabled": sandbox_enabled,
         });
         let now = now_rfc3339();
         let run = TaskRunRecord {

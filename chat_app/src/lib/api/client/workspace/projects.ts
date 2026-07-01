@@ -95,7 +95,7 @@ export const executeProjectRequirement = (
   request: ApiRequestFn,
   projectId: string,
   requirementId: string,
-  data?: { contact_id?: string },
+  data?: { contact_id?: string; include_prerequisite_dependents?: boolean; includePrerequisiteDependents?: boolean },
 ): Promise<ProjectRequirementExecuteResponse> => {
   return request<ProjectRequirementExecuteResponse>(
     `/projects/${encodeURIComponent(projectId)}/requirements/${encodeURIComponent(requirementId)}/execute`,

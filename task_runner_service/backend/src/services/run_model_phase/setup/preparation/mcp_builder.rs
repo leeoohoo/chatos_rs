@@ -15,6 +15,7 @@ pub(super) async fn build_mcp_builder_parts(
     effective_workspace_dir: &str,
     task_process_logging_enabled: bool,
     task_service: TaskService,
+    sandbox_context: Option<&crate::services::sandbox_runtime::SandboxRuntimeContext>,
 ) -> (
     Vec<chatos_mcp_runtime::McpBuiltinServer>,
     chatos_mcp_runtime::BuiltinToolRegistry,
@@ -27,7 +28,11 @@ pub(super) async fn build_mcp_builder_parts(
         server_options = server_options.with_remote_connection_id(remote_server_id);
     }
 
-    let selected_builtin_kinds = runtime_selected_builtin_kinds(task);
+    let mut selected_builtin_kinds = runtime_selected_builtin_kinds(task);
+    if sandbox_context.is_some() {
+        selected_builtin_kinds
+            .retain(|kind| !crate::services::sandbox_runtime::sandbox_replaces_builtin_kind(*kind));
+    }
     let selected_builtin_kind_names = selected_builtin_kinds
         .iter()
         .map(|kind| kind.kind_name().to_string())
@@ -45,10 +50,12 @@ pub(super) async fn build_mcp_builder_parts(
         builtin_servers_from_kinds(selected_builtin_kinds.clone(), &server_options);
     apply_project_management_builtin_context(&mut builtin_servers, task);
     if super::is_chatos_plan_task(task) {
-        builtin_servers.push(
-            chatos_mcp_runtime::BuiltinMcpKind::CodeMaintainerWrite
-                .server_with_options(&server_options),
-        );
+        if sandbox_context.is_none() {
+            builtin_servers.push(
+                chatos_mcp_runtime::BuiltinMcpKind::CodeMaintainerWrite
+                    .server_with_options(&server_options),
+            );
+        }
         if let Some(owner_user_id) = normalized_task_owner_user_id(task) {
             builtin_servers.push(task_runner_skill_lookup_builtin_server(
                 effective_workspace_dir,
@@ -72,7 +79,10 @@ pub(super) async fn build_mcp_builder_parts(
         );
     let mut builtin_registry = builtin_registry;
     if super::is_chatos_plan_task(task) {
-        builtin_registry.register(DisabledBuiltinProvider::code_maintainer_write_for_chatos_plan());
+        if sandbox_context.is_none() {
+            builtin_registry
+                .register(DisabledBuiltinProvider::code_maintainer_write_for_chatos_plan());
+        }
         if let Some(owner_user_id) = normalized_task_owner_user_id(task) {
             builtin_registry.register(TaskRunnerSkillLookupProvider::new(
                 TASK_RUNNER_SKILL_LOOKUP_SERVER_NAME,

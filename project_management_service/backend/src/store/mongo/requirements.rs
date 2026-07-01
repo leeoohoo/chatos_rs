@@ -4,7 +4,7 @@ use mongodb::bson::doc;
 use uuid::Uuid;
 
 use super::super::common::normalize_id_list;
-use super::{find_many, keyword_filter, upsert_by_id, MongoStore};
+use super::{find_many, find_many_page, keyword_or_filter, upsert_by_id, MongoStore};
 use crate::auth::CurrentUser;
 use crate::models::*;
 
@@ -19,20 +19,68 @@ impl MongoStore {
         if let Some(status) = status {
             filter.insert("status", status.as_str());
         }
-        if let Some(keyword) = keyword_filter(keyword) {
-            filter.insert(
-                "$or",
-                vec![
-                    doc! { "title": keyword.clone() },
-                    doc! { "summary": keyword.clone() },
-                    doc! { "detail": keyword },
-                ],
-            );
+        if let Some(keyword) = keyword_or_filter(
+            keyword,
+            &[
+                "id",
+                "parent_requirement_id",
+                "title",
+                "summary",
+                "detail",
+                "business_value",
+                "acceptance_criteria",
+                "source",
+            ],
+        ) {
+            filter.insert("$or", keyword);
         }
         find_many(
             &self.requirements,
             filter,
             Some(doc! { "priority": -1, "updated_at": -1, "id": 1 }),
+        )
+        .await
+    }
+
+    pub async fn list_requirements_page(
+        &self,
+        project_id: &str,
+        status: Option<RequirementStatus>,
+        keyword: Option<String>,
+        include_archived: bool,
+        limit: usize,
+        offset: usize,
+    ) -> Result<Vec<RequirementRecord>, String> {
+        let mut filter = doc! { "project_id": project_id };
+        if let Some(status) = status {
+            filter.insert("status", status.as_str());
+        } else if !include_archived {
+            filter.insert(
+                "status",
+                doc! { "$ne": RequirementStatus::Archived.as_str() },
+            );
+        }
+        if let Some(keyword) = keyword_or_filter(
+            keyword,
+            &[
+                "id",
+                "parent_requirement_id",
+                "title",
+                "summary",
+                "detail",
+                "business_value",
+                "acceptance_criteria",
+                "source",
+            ],
+        ) {
+            filter.insert("$or", keyword);
+        }
+        find_many_page(
+            &self.requirements,
+            filter,
+            doc! { "priority": -1, "updated_at": -1, "id": 1 },
+            limit,
+            offset,
         )
         .await
     }

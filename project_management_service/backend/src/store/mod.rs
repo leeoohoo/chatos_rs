@@ -126,6 +126,43 @@ impl AppStore {
         }
     }
 
+    pub async fn list_requirements_page(
+        &self,
+        project_id: &str,
+        status: Option<RequirementStatus>,
+        keyword: Option<String>,
+        include_archived: bool,
+        limit: usize,
+        offset: usize,
+    ) -> Result<Vec<RequirementRecord>, String> {
+        match self {
+            Self::Mongo(store) => {
+                store
+                    .list_requirements_page(
+                        project_id,
+                        status,
+                        keyword,
+                        include_archived,
+                        limit,
+                        offset,
+                    )
+                    .await
+            }
+            Self::Sqlite(store) => {
+                store
+                    .list_requirements_page(
+                        project_id,
+                        status,
+                        keyword,
+                        include_archived,
+                        limit,
+                        offset,
+                    )
+                    .await
+            }
+        }
+    }
+
     pub async fn create_requirement(
         &self,
         project_id: &str,
@@ -322,6 +359,46 @@ impl AppStore {
             Self::Sqlite(store) => {
                 store
                     .list_work_items_by_project(project_id, status, keyword)
+                    .await
+            }
+        }
+    }
+
+    pub async fn list_work_items_by_project_page(
+        &self,
+        project_id: &str,
+        status: Option<ProjectWorkItemStatus>,
+        keyword: Option<String>,
+        requirement_id: Option<String>,
+        include_archived: bool,
+        limit: usize,
+        offset: usize,
+    ) -> Result<Vec<ProjectWorkItemRecord>, String> {
+        match self {
+            Self::Mongo(store) => {
+                store
+                    .list_work_items_by_project_page(
+                        project_id,
+                        status,
+                        keyword,
+                        requirement_id,
+                        include_archived,
+                        limit,
+                        offset,
+                    )
+                    .await
+            }
+            Self::Sqlite(store) => {
+                store
+                    .list_work_items_by_project_page(
+                        project_id,
+                        status,
+                        keyword,
+                        requirement_id,
+                        include_archived,
+                        limit,
+                        offset,
+                    )
                     .await
             }
         }

@@ -49,6 +49,7 @@ pub(in crate::services) struct PreparedModelExecution {
     runtime_config: TaskRuntimeConfig,
     mcp_builder: McpExecutorBuilder,
     tool_result_model_budget_limits: ToolResultModelBudgetLimits,
+    sandbox_context: Option<crate::services::sandbox_runtime::SandboxRuntimeContext>,
 }
 
 impl RunService {
@@ -104,10 +105,14 @@ impl RunService {
             }
         };
 
+        let sandbox_context = prepared_execution.sandbox_context.clone();
         let report = self
             .execute_prepared_model_run(&task, &run, &model_config, prepared_execution)
             .await;
         self.finalize_model_phase(&task, &mut run, report, effective_workspace_dir.as_str())
             .await;
+        if let Some(context) = sandbox_context.as_ref() {
+            self.release_sandbox(&run, context).await;
+        }
     }
 }

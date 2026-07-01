@@ -9,7 +9,7 @@ use crate::core::project_access::ensure_owned_project;
 use crate::services::{access_token_scope, project_management_api_client, task_runner_api_client};
 
 use super::requirement_execution::{
-    add_requirement_work_item_dependencies, collect_downstream_requirement_scope,
+    add_requirement_work_item_dependencies, collect_requirement_execution_scope,
     create_and_start_execution_tasks, create_execution_message,
     ensure_requirement_execution_not_active, is_done_status, load_execution_links_for_work_items,
     load_external_prerequisite_task_ids, load_task_runner_builtin_prompt_locale,
@@ -25,6 +25,8 @@ use super::requirement_execution::{
 #[derive(Debug, Default, Deserialize)]
 pub(super) struct ExecuteRequirementRequest {
     contact_id: Option<String>,
+    #[serde(default, alias = "includePrerequisiteDependents")]
+    include_prerequisite_dependents: bool,
 }
 
 pub(super) async fn execute_requirement(
@@ -118,10 +120,11 @@ async fn execute_requirement_inner(
     let all_work_items = parse_work_items(project_plan_array(&plan, "work_items", "workItems"));
     let dependency_graph = project_plan_value(&plan, "dependency_graph", "dependencyGraph");
     let requirement_dependency_map = requirement_dependency_map(&dependency_graph);
-    let requirement_scope = collect_downstream_requirement_scope(
+    let requirement_scope = collect_requirement_execution_scope(
         &requirement_items,
         requirement_id.as_str(),
         &requirement_dependency_map,
+        req.include_prerequisite_dependents,
     );
     validate_requirement_prerequisites(
         &requirement_items,
@@ -152,7 +155,7 @@ async fn execute_requirement_inner(
     });
     if selected_work_items.is_empty() {
         return Err(HandlerError::bad_request(
-            "该需求及其向下关联范围内没有需要执行的未完成项目任务",
+            "该需求执行范围内没有需要执行的未完成项目任务",
         ));
     }
     let contact_runtime = select_contact_runtime(
@@ -341,10 +344,11 @@ async fn stop_requirement_execution_inner(
     };
     let dependency_graph = project_plan_value(&plan, "dependency_graph", "dependencyGraph");
     let requirement_dependency_map = requirement_dependency_map(&dependency_graph);
-    let requirement_scope = collect_downstream_requirement_scope(
+    let requirement_scope = collect_requirement_execution_scope(
         &requirement_items,
         requirement_id.as_str(),
         &requirement_dependency_map,
+        false,
     );
     let selected_work_items =
         parse_work_items(project_plan_array(&plan, "work_items", "workItems"))

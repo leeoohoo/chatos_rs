@@ -101,12 +101,17 @@ pub struct ProjectTaskIdArgs {
 pub struct ListRequirementsArgs {
     pub status: Option<RequirementStatus>,
     pub keyword: Option<String>,
+    pub limit: Option<usize>,
+    pub offset: Option<usize>,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct ListProjectTasksArgs {
     pub status: Option<ProjectTaskStatus>,
     pub keyword: Option<String>,
+    pub requirement_id: Option<String>,
+    pub limit: Option<usize>,
+    pub offset: Option<usize>,
 }
 
 #[derive(Debug, Deserialize)]

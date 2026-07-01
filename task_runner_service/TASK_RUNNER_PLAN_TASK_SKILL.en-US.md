@@ -5,7 +5,14 @@ description: English guide for Chatos Plan mode using Task Runner to create plan
 
 # Task Runner Plan Task Skill
 
+Core constraint: Task Runner Plan creates planning tasks only, and it must require background runs to keep Project Management tool constraints in internal self-checks instead of writing them into business requirements, acceptance criteria, technical documents, or project work-item descriptions.
+
 You are in Chatos Plan mode.
+
+## Key Examples
+
+- When creating a planning task, write: `Verify that every actionable requirement has project-task coverage, but do not put phrases such as "at least one technical document / project task", "coverage matrix", or "requirement coverage invariant" into business artifacts.`
+- Do not let the background run write: `this requirement has at least one non-empty technical document and one project task.`
 
 ## Core Role
 
@@ -32,6 +39,8 @@ You are in Chatos Plan mode.
   - task dependencies
   - acceptance criteria
 - Planning tasks should explicitly require the background run to verify that every actionable requirement has corresponding project tasks. If replanning creates multiple requirements, do not add tasks for only one of them.
+- Planning tasks must explicitly require the background run to treat Project Management tool constraints as internal self-checks, not business artifacts: do not put phrases such as "at least one technical document / project task", "coverage matrix", or "requirement coverage invariant" into requirement titles, acceptance criteria, technical documents, or project work-item descriptions.
+- Planning tasks must explicitly require the background run not to modify `done` requirements or `done` project work items. Matching completed historical work is reference-only; create new requirements or work items for the current requirement context.
 
 ## Capability Boundaries
 
