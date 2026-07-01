@@ -146,7 +146,12 @@ def add_header(path: Path) -> bool:
         body = body[1:]
 
     offset = insertion_offset(body, path)
-    next_text = bom + body[:offset] + comment_header(path, newline) + body[offset:]
+    header = comment_header(path, newline)
+    if not body.strip():
+        header = header.rstrip() + newline
+        next_text = bom + header
+    else:
+        next_text = bom + body[:offset] + header + body[offset:]
     path.write_text(next_text, encoding="utf-8", newline="")
     return True
 
