@@ -15,6 +15,10 @@ import yaml
 ROOT = Path(__file__).resolve().parent.parent
 CONTRACT_DIR = ROOT / ".github" / "api-contract"
 FRAGMENTS_DIR = CONTRACT_DIR / "fragments"
+LICENSE_HEADER = (
+    "# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0\n"
+    "# Required Notice: Copyright (c) 2025 AI Chat Team\n\n"
+)
 
 SERVICES: Dict[str, Dict[str, Path]] = {
     "chat_app_server_rs": {
@@ -35,7 +39,7 @@ def load_yaml(path: Path) -> dict:
 
 
 def dump_yaml(data: dict) -> str:
-    return yaml.safe_dump(data, sort_keys=False, allow_unicode=False)
+    return LICENSE_HEADER + yaml.safe_dump(data, sort_keys=False, allow_unicode=False)
 
 
 def collect_fragment_files(fragment_dir: Path) -> Tuple[Path, List[Path]]:
