@@ -26,6 +26,7 @@ yarn-error.log*
 .local/
 .cache/
 .vite/
+/.task-runner/
 
 .DS_Store
 *.pyc
