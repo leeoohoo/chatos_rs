@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Required Notice: Copyright (c) 2025 AI Chat Team
+
 pub fn now_rfc3339() -> String {
     chrono::Utc::now().to_rfc3339()
 }

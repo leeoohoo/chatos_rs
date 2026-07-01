@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Required Notice: Copyright (c) 2025 AI Chat Team
+
 use crate::auth::CurrentUser;
 use crate::models::{
     normalize_project_id, AskUserPromptRecord, CreateTaskRequest, TaskListFilters, TaskRecord,

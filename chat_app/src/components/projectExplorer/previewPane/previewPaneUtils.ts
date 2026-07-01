@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Required Notice: Copyright (c) 2025 AI Chat Team
+
 import type { MouseEvent } from 'react';
 
 const isTokenChar = (value: string): boolean => /[A-Za-z0-9_$]/.test(value);

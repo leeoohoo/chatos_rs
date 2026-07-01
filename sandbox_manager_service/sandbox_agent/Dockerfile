@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+# Required Notice: Copyright (c) 2025 AI Chat Team
+
 FROM mcr.microsoft.com/devcontainers/base:dev-ubuntu-24.04
 
 ENV DEBIAN_FRONTEND=noninteractive

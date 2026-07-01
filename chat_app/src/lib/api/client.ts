@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Required Notice: Copyright (c) 2025 AI Chat Team
+
 // API客户端，用于连接后端服务
 import * as fsApi from './client/fs';
 import { configFacade, type ConfigFacade } from './client/facades/configFacade';

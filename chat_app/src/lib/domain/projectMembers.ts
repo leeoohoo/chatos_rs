@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Required Notice: Copyright (c) 2025 AI Chat Team
+
 import type { ContactRecord } from '../../types';
 import type { ProjectContactLinkResponse } from '../api/client/types';
 import type { ContactItem, ProjectContactLink } from '../../components/projectExplorer/teamMembers/types';

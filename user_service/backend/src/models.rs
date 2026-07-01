@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Required Notice: Copyright (c) 2025 AI Chat Team
+
 use serde::{Deserialize, Serialize};
 
 pub const USER_ROLE_SUPER_ADMIN: &str = "super_admin";

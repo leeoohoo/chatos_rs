@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Required Notice: Copyright (c) 2025 AI Chat Team
+
 use base64::engine::general_purpose::STANDARD as BASE64_STD;
 use base64::Engine;
 use serde::{Deserialize, Serialize};

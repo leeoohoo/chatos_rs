@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Required Notice: Copyright (c) 2025 AI Chat Team
+
 import { useEffect } from 'react';
 import type { Dispatch, MutableRefObject, SetStateAction } from 'react';
 import { Terminal as XTerm } from '@xterm/xterm';

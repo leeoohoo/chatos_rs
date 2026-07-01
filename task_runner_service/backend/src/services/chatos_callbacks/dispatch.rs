@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Required Notice: Copyright (c) 2025 AI Chat Team
+
 use super::*;
 
 use super::payload::{build_chatos_task_callback_payload, load_task_snapshot_for_callback};

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Required Notice: Copyright (c) 2025 AI Chat Team
+
 pub const SERVER_NAME: &str = "project_management_service";
 pub const ENDPOINT_PATH: &str = "/mcp";
 pub const TRANSPORT_HTTP_JSONRPC: &str = "http-jsonrpc";

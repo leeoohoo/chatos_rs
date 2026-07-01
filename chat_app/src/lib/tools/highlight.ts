@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Required Notice: Copyright (c) 2025 AI Chat Team
+
 import hljs from 'highlight.js/lib/core';
 
 import bash from 'highlight.js/lib/languages/bash';

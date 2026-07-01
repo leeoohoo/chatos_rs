@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Required Notice: Copyright (c) 2025 AI Chat Team
+
 import { Card, Col, Empty, Row, Skeleton, Space, Statistic, Tag } from 'antd';
 
 import type { DashboardStats } from '../types';

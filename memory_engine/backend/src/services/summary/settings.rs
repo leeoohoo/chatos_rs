@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Required Notice: Copyright (c) 2025 AI Chat Team
+
 use crate::db::Db;
 use crate::repositories::control_plane as cp_repo;
 use crate::services::ai_pipeline::MIN_TOKEN_LIMIT;

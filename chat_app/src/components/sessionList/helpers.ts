@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Required Notice: Copyright (c) 2025 AI Chat Team
+
 import type { FsEntry, RemoteConnection, Session } from '../../types';
 import type { FsEntryResponse } from '../../lib/api/client/types';
 import {

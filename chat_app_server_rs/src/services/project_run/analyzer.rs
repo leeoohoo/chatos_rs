@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Required Notice: Copyright (c) 2025 AI Chat Team
+
 #[path = "analyzer/change_detection.rs"]
 mod change_detection;
 #[path = "analyzer/go.rs"]

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Required Notice: Copyright (c) 2025 AI Chat Team
+
 use chatos_ai_runtime::{
     append_tool_turn_items as append_shared_tool_turn_items,
     merge_missing_tool_turn_items as merge_shared_missing_tool_turn_items,

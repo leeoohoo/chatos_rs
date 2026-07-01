@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Required Notice: Copyright (c) 2025 AI Chat Team
+
 use super::chatos_async_planner;
 use super::support::{
     agent_tool_allowed, create_task_schema, enrich_tool_schemas_with_model_configs,

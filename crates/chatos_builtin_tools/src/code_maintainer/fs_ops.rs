@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Required Notice: Copyright (c) 2025 AI Chat Team
+
 use crate::bundled_tools::bundled_tool_path;
 
 use super::utils::{ensure_path_inside_root, is_binary_buffer, sha256_bytes};

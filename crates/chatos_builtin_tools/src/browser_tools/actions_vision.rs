@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Required Notice: Copyright (c) 2025 AI Chat Team
+
 use chatos_mcp_runtime::ToolCallerModelRuntime;
 use serde_json::{json, Value};
 use uuid::Uuid;

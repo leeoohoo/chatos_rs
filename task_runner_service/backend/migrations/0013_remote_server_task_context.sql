@@ -1,3 +1,6 @@
+-- SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+-- Required Notice: Copyright (c) 2025 AI Chat Team
+
 ALTER TABLE remote_servers ADD COLUMN creator_user_id TEXT;
 ALTER TABLE remote_servers ADD COLUMN creator_username TEXT;
 ALTER TABLE remote_servers ADD COLUMN creator_display_name TEXT;

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Required Notice: Copyright (c) 2025 AI Chat Team
+
 use chatos_ai_runtime::TaskBuiltinMcpPromptMode;
 use chatos_mcp_runtime::{
     builtin_servers_from_kinds, configurable_builtin_kinds, default_runtime_builtin_kinds,

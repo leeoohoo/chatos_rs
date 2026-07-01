@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Required Notice: Copyright (c) 2025 AI Chat Team
+
 pub(super) fn project_work_item_status_is_active(status: &str) -> bool {
     matches!(
         status.trim().to_ascii_lowercase().as_str(),

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Required Notice: Copyright (c) 2025 AI Chat Team
+
 const TEXT_PREVIEW_MAX_CHARS = 16_000;
 const JSON_PREVIEW_MAX_CHARS = 20_000;
 const JSON_STRING_MAX_CHARS = 512;

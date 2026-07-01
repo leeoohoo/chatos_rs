@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Required Notice: Copyright (c) 2025 AI Chat Team
+
 mod task_runner_callback;
 #[path = "agent_chat/tools_panel.rs"]
 mod tools_panel;

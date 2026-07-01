@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Required Notice: Copyright (c) 2025 AI Chat Team
+
 use crate::api::fs::policy::{FsPathPolicy, FsPolicyError};
 use crate::core::auth::AuthUser;
 use crate::core::mcp_args::{parse_args_json_array_or_whitespace, parse_env};

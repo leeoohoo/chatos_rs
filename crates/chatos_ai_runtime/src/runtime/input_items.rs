@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Required Notice: Copyright (c) 2025 AI Chat Team
+
 use serde_json::{json, Value};
 
 use crate::tool_runtime::merge_pending_tool_turn_items;

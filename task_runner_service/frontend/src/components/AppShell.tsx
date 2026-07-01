@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Required Notice: Copyright (c) 2025 AI Chat Team
+
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { Button, Layout, Menu, Segmented, Space, Typography } from 'antd';
 import {

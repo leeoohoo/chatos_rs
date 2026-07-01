@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+# Required Notice: Copyright (c) 2025 AI Chat Team
+
 set -euo pipefail
 export PATH="$HOME/.local/bin:$PATH"
 

@@ -1,3 +1,6 @@
+-- SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+-- Required Notice: Copyright (c) 2025 AI Chat Team
+
 ALTER TABLE tasks ADD COLUMN source_session_id TEXT;
 ALTER TABLE tasks ADD COLUMN source_turn_id TEXT;
 

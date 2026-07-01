@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Required Notice: Copyright (c) 2025 AI Chat Team
+
 import { normalizeRawMessages } from '../../../domain/messages';
 import type { SessionMessageResponse } from '../../../api/client/types';
 import type { StreamingMessage } from './types';

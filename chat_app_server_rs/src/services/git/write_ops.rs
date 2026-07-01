@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Required Notice: Copyright (c) 2025 AI Chat Team
+
 use super::contracts::*;
 use super::process::{git_output, git_output_with_status, DEFAULT_GIT_TIMEOUT, REMOTE_GIT_TIMEOUT};
 use super::shared::{

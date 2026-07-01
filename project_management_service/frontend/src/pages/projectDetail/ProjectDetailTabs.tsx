@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Required Notice: Copyright (c) 2025 AI Chat Team
+
 import { CaretDownOutlined, CaretRightOutlined, PlusOutlined, ReloadOutlined } from '@ant-design/icons';
 import { Button, Card, Col, Descriptions, Form, Row, Space, Statistic, Switch, Table, Tabs, Tag, Typography } from 'antd';
 import type { ColumnsType } from 'antd/es/table';

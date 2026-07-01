@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Required Notice: Copyright (c) 2025 AI Chat Team
+
 use super::provider_extract::native_extract;
 use super::provider_fallback::{run_timed_strategy, StrategyRun};
 use super::provider_search::{

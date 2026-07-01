@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Required Notice: Copyright (c) 2025 AI Chat Team
+
 pub(super) fn parse_bool_query_flag(value: Option<String>) -> bool {
     value
         .as_deref()

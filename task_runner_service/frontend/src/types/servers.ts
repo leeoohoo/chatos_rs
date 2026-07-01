@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Required Notice: Copyright (c) 2025 AI Chat Team
+
 export type RemoteServerAuthType = 'password' | 'private_key' | 'private_key_cert';
 export type RemoteServerHostKeyPolicy = 'accept_new' | 'strict';
 export type RemoteServerTestStatus = 'success' | 'failed';

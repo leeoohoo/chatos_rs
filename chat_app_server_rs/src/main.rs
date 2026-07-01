@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Required Notice: Copyright (c) 2025 AI Chat Team
+
 fn main() {
     match chat_app_server_rs::maybe_run_process_isolation_exec_helper() {
         Ok(false) => {}

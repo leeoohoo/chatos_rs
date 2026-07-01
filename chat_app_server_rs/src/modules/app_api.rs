@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Required Notice: Copyright (c) 2025 AI Chat Team
+
 use axum::Router;
 
 use super::{conversation_runtime, memory, platform_admin, remote_execution, workspace};

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Required Notice: Copyright (c) 2025 AI Chat Team
+
 use super::chunking::split_chunks_by_token_limit;
 use super::input::build_ai_input;
 use super::{estimate_tokens_text, is_context_overflow_error, MIN_TOKEN_LIMIT};

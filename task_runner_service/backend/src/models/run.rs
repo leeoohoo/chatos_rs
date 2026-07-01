@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Required Notice: Copyright (c) 2025 AI Chat Team
+
 use chatos_builtin_tools::{AskUserPromptPayload, AskUserResponseSubmission};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;

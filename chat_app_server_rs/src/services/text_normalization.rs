@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Required Notice: Copyright (c) 2025 AI Chat Team
+
 use std::collections::HashSet;
 
 pub fn normalize_optional_text_ref(value: Option<&str>) -> Option<String> {

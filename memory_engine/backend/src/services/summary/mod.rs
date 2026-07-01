@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Required Notice: Copyright (c) 2025 AI Chat Team
+
 use crate::models::{EngineRecord, EngineSummary};
 
 pub(crate) const DEFAULT_PENDING_RECORD_SCAN_LIMIT: i64 = 5000;

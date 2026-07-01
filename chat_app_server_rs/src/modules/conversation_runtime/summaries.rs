@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Required Notice: Copyright (c) 2025 AI Chat Team
+
 use crate::models::memory_runtime_types::DeleteSummaryResultDto;
 use crate::models::session_summary_v2::SessionSummaryV2;
 use crate::services::chatos_sessions;

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Required Notice: Copyright (c) 2025 AI Chat Team
+
 import '@testing-library/jest-dom/vitest';
 import type { ReactElement } from 'react';
 import { cleanup, render } from '@testing-library/react';

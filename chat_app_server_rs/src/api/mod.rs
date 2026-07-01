@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Required Notice: Copyright (c) 2025 AI Chat Team
+
 use axum::body::Body;
 use axum::extract::{DefaultBodyLimit, OriginalUri};
 use axum::http::{

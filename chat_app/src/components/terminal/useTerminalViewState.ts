@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Required Notice: Copyright (c) 2025 AI Chat Team
+
 import { useMemo, useRef, useState } from 'react';
 import type { FitAddon } from '@xterm/addon-fit';
 import type { Terminal as XTerm } from '@xterm/xterm';

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Required Notice: Copyright (c) 2025 AI Chat Team
+
 use crate::repositories::system_contexts;
 use crate::services::access_token_scope;
 use crate::services::chatos_sessions;

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Required Notice: Copyright (c) 2025 AI Chat Team
+
 import { Button, Drawer, Empty, List, Space, Tag, Typography } from 'antd';
 import dayjs from 'dayjs';
 

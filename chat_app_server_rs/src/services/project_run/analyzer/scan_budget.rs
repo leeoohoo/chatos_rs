@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Required Notice: Copyright (c) 2025 AI Chat Team
+
 use std::time::{Duration, Instant};
 
 pub(super) use crate::services::project_run::file_limits::{

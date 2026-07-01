@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Required Notice: Copyright (c) 2025 AI Chat Team
+
 use crate::core::auth::AuthUser;
 use crate::models::project::{Project, ProjectService};
 use axum::http::StatusCode;

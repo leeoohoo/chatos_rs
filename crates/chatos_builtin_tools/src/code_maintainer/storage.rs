@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Required Notice: Copyright (c) 2025 AI Chat Team
+
 use super::utils::{generate_id, now_iso, resolve_state_dir};
 use serde::Serialize;
 use std::fs;

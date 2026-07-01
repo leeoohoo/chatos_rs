@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Required Notice: Copyright (c) 2025 AI Chat Team
+
 import * as accountApi from '../account';
 import * as notepadApi from '../notepad';
 import * as streamApi from '../stream';

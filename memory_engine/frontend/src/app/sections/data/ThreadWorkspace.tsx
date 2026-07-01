@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Required Notice: Copyright (c) 2025 AI Chat Team
+
 import { Card, Empty, Space, Table, Tabs, Tag, Typography } from 'antd';
 import type { TableColumnsType, TabsProps } from 'antd';
 

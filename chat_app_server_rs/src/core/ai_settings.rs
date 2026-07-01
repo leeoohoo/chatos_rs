@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Required Notice: Copyright (c) 2025 AI Chat Team
+
 use serde_json::Value;
 
 pub const DEFAULT_ATTACHMENT_TOTAL_MAX_BYTES: i64 = 20 * 1024 * 1024;

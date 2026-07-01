@@ -1,4 +1,7 @@
 #![allow(dead_code, unused_imports)]
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Required Notice: Copyright (c) 2025 AI Chat Team
+
 
 #[path = "../config.rs"]
 mod config;

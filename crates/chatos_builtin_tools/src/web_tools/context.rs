@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Required Notice: Copyright (c) 2025 AI Chat Team
+
 use serde_json::Value;
 
 pub(super) fn required_trimmed_string(args: &Value, field: &str) -> Result<String, String> {

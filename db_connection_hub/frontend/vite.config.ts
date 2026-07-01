@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Required Notice: Copyright (c) 2025 AI Chat Team
+
 import { defineConfig } from "vite";
 
 const backendOrigin = process.env.VITE_DEV_BACKEND_ORIGIN || "http://127.0.0.1:8099";

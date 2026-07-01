@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Required Notice: Copyright (c) 2025 AI Chat Team
+
 use serde::{Deserialize, Serialize};
 
 use super::normalizer::{normalize_priority, normalize_status, normalize_tags, trimmed_non_empty};

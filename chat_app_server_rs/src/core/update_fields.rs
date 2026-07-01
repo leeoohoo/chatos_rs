@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Required Notice: Copyright (c) 2025 AI Chat Team
+
 use mongodb::bson::Document;
 
 pub fn mongo_set_doc_from_optional_strings<'a, I>(fields: I) -> Document

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Required Notice: Copyright (c) 2025 AI Chat Team
+
 use crate::models::{
     normalize_project_id, TaskSourceContext, PUBLIC_PROJECT_ID, TASK_PROFILE_CHATOS_PLAN,
     TASK_PROFILE_DEFAULT,

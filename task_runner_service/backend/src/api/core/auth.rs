@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Required Notice: Copyright (c) 2025 AI Chat Team
+
 use super::*;
 use crate::http_body::{
     read_response_json_limited, read_response_text_limited_or_message,

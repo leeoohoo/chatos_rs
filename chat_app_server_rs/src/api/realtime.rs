@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Required Notice: Copyright (c) 2025 AI Chat Team
+
 use axum::extract::ws::{Message, WebSocket};
 use axum::extract::WebSocketUpgrade;
 use axum::response::IntoResponse;

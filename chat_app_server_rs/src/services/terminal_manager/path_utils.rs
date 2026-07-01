@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Required Notice: Copyright (c) 2025 AI Chat Team
+
 use std::path::{Path, PathBuf};
 
 pub(super) fn canonicalize_path(path: &Path) -> Result<PathBuf, std::io::Error> {

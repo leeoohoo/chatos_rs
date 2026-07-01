@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Required Notice: Copyright (c) 2025 AI Chat Team
+
 import type { Message } from '../../../types';
 import { asRecord } from './value';
 import { CODE_READ_TOOL_NAMES } from './toolName';

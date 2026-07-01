@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Required Notice: Copyright (c) 2025 AI Chat Team
+
 use crate::domain::dependency_graph::{
     project_dependency_graph as build_project_dependency_graph, requirement_node, work_item_node,
 };

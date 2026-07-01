@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Required Notice: Copyright (c) 2025 AI Chat Team
+
 use std::collections::{HashMap, HashSet};
 
 use chatos_mcp_runtime::{canonical_prefixed_tool_name, legacy_prefixed_tool_name};

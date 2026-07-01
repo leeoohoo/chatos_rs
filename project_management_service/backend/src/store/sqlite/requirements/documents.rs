@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Required Notice: Copyright (c) 2025 AI Chat Team
+
 use uuid::Uuid;
 
 use super::super::super::sqlite_rows::requirement_document_from_row;

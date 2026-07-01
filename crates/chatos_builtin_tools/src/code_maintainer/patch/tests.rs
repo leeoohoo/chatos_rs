@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Required Notice: Copyright (c) 2025 AI Chat Team
+
 use super::{apply_patch, apply_patch_limited};
 use std::fs;
 use std::path::PathBuf;

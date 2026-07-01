@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Required Notice: Copyright (c) 2025 AI Chat Team
+
 #[path = "query_handlers_download.rs"]
 mod query_handlers_download;
 #[path = "query_handlers_listing.rs"]

@@ -1,3 +1,6 @@
+-- SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+-- Required Notice: Copyright (c) 2025 AI Chat Team
+
 CREATE INDEX IF NOT EXISTS idx_task_runs_model_config_id_created_at
 ON task_runs(model_config_id, created_at DESC);
 

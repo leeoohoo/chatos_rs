@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Required Notice: Copyright (c) 2025 AI Chat Team
+
 pub fn normalize_search_keyword(value: &str) -> String {
     value.trim().to_lowercase()
 }

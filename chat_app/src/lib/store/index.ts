@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Required Notice: Copyright (c) 2025 AI Chat Team
+
 import { apiClient } from '../api/client';
 import { createChatStoreWithBackend } from './createChatStoreWithBackend';
 import type { ChatStore as ChatStoreHook } from './createChatStoreWithBackend';

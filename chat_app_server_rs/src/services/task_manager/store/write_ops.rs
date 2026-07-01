@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Required Notice: Copyright (c) 2025 AI Chat Team
+
 #[path = "write_ops/state_rules.rs"]
 mod state_rules;
 #[path = "write_ops/update_ops.rs"]

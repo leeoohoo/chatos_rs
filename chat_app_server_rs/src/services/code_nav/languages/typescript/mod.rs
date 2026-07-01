@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Required Notice: Copyright (c) 2025 AI Chat Team
+
 use crate::services::code_nav::languages::ts_service::{
     get_semantic_document_symbols, get_semantic_locations, semantic_capabilities,
     supports_typescript_file, TsServiceMode,

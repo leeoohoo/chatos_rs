@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Required Notice: Copyright (c) 2025 AI Chat Team
+
 use futures_util::StreamExt;
 
 pub(crate) const ERROR_BODY_PREVIEW_LIMIT_BYTES: usize = 16 * 1024;

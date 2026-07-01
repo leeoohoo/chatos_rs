@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Required Notice: Copyright (c) 2025 AI Chat Team
+
 pub fn canonical_prefixed_tool_name(server_name: &str, tool_name: &str) -> String {
     format!(
         "{}_{}",

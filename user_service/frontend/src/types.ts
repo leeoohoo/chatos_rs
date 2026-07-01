@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Required Notice: Copyright (c) 2025 AI Chat Team
+
 export type UserRole = 'super_admin' | 'user';
 export type PrincipalType = 'human_user' | 'agent_account';
 

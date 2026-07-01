@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Required Notice: Copyright (c) 2025 AI Chat Team
+
 import { FolderOutlined, ProjectOutlined, SettingOutlined } from '@ant-design/icons';
 import { Layout, Menu, Space, Typography, Button } from 'antd';
 import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom';

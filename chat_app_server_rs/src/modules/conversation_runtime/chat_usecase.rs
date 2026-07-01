@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Required Notice: Copyright (c) 2025 AI Chat Team
+
 use crate::api::chat_stream_common::ChatStreamRequest;
 use crate::config::Config;
 use crate::core::ai_model_config::ResolvedChatModelConfig;
