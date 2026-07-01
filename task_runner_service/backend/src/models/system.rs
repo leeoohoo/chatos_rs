@@ -32,6 +32,7 @@ pub struct SystemConfigResponse {
     pub tool_results_model_total_max_chars: usize,
     pub default_execution_environment_mode: String,
     pub execution_environment_mode: String,
+    pub sandbox_enabled: bool,
     pub default_sandbox_manager_base_url: String,
     pub sandbox_manager_base_url: String,
     pub default_sandbox_lease_ttl_seconds: u64,

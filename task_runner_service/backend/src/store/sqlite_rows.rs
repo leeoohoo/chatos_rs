@@ -142,6 +142,7 @@ pub(super) fn runtime_settings_from_row(row: &SqliteRow) -> Result<RuntimeSettin
         tool_results_model_total_max_chars: row.get::<i64, _>("tool_results_model_total_max_chars")
             as usize,
         execution_environment_mode: row.get("execution_environment_mode"),
+        sandbox_enabled: int_to_bool(row.get::<i64, _>("sandbox_enabled")),
         sandbox_manager_base_url: row.get("sandbox_manager_base_url"),
         sandbox_lease_ttl_seconds: row.get::<i64, _>("sandbox_lease_ttl_seconds") as u64,
         created_at: row.get("created_at"),

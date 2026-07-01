@@ -29,6 +29,11 @@ pub(in crate::api) async fn system_config_handler(
         .effective_execution_environment_mode()
         .await
         .map_err(ApiError::bad_request)?;
+    let sandbox_enabled = state
+        .task_service
+        .effective_sandbox_enabled()
+        .await
+        .map_err(ApiError::bad_request)?;
     let sandbox_manager_base_url = state
         .task_service
         .effective_sandbox_manager_base_url()
@@ -45,6 +50,7 @@ pub(in crate::api) async fn system_config_handler(
         task_execution_max_iterations,
         tool_result_model_budget_limits,
         execution_environment_mode,
+        sandbox_enabled,
         sandbox_manager_base_url,
         sandbox_lease_ttl_seconds,
     )))
@@ -76,6 +82,7 @@ pub(in crate::api) async fn update_system_config_handler(
         crate::models::normalize_execution_environment_mode(Some(
             settings.execution_environment_mode.as_str(),
         )),
+        settings.sandbox_enabled,
         settings.sandbox_manager_base_url,
         settings.sandbox_lease_ttl_seconds,
     )))

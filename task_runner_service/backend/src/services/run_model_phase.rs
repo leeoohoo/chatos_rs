@@ -112,7 +112,7 @@ impl RunService {
         self.finalize_model_phase(&task, &mut run, report, effective_workspace_dir.as_str())
             .await;
         if let Some(context) = sandbox_context.as_ref() {
-            self.release_cloud_sandbox(&run, context).await;
+            self.release_sandbox(&run, context).await;
         }
     }
 }

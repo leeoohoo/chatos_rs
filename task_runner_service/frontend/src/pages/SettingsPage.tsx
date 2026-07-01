@@ -102,6 +102,7 @@ export function SettingsPage() {
       tool_results_model_total_max_chars: config.tool_results_model_total_max_chars,
       execution_environment_mode:
         config.execution_environment_mode === 'cloud' ? 'cloud' : 'local',
+      sandbox_enabled: config.sandbox_enabled,
       sandbox_manager_base_url: config.sandbox_manager_base_url,
       sandbox_lease_ttl_seconds: config.sandbox_lease_ttl_seconds,
     });
@@ -117,6 +118,7 @@ export function SettingsPage() {
       tool_result_model_max_chars: values.tool_result_model_max_chars,
       tool_results_model_total_max_chars: values.tool_results_model_total_max_chars,
       execution_environment_mode: values.execution_environment_mode,
+      sandbox_enabled: values.sandbox_enabled,
       sandbox_manager_base_url: values.sandbox_manager_base_url,
       sandbox_lease_ttl_seconds: values.sandbox_lease_ttl_seconds,
     });

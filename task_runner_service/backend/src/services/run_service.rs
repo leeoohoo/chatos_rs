@@ -69,6 +69,15 @@ impl RunService {
             .unwrap_or_else(|| self.config.default_execution_environment_mode.clone()))
     }
 
+    pub(super) async fn effective_sandbox_enabled(&self) -> Result<bool, String> {
+        Ok(self
+            .store
+            .get_runtime_settings()
+            .await?
+            .map(|settings| settings.sandbox_enabled)
+            .unwrap_or(false))
+    }
+
     pub(super) async fn effective_sandbox_manager_base_url(&self) -> Result<String, String> {
         Ok(self
             .store

@@ -23,7 +23,7 @@ pub(super) async fn prepare_model_execution(
 ) -> Result<PreparedModelExecution, String> {
     let loaded_external_mcp = load_external_mcp_servers(service, task).await?;
     let sandbox_context = service
-        .prepare_cloud_sandbox_if_needed(task, run, effective_workspace_dir)
+        .prepare_sandbox_if_needed(task, run, effective_workspace_dir)
         .await?;
     let system_http_servers =
         load_system_http_mcp_servers(service, task, run, sandbox_context.as_ref())?;
@@ -135,7 +135,7 @@ fn build_execution_metadata(
     });
     if let Some(context) = sandbox_context {
         if let Some(object) = metadata.as_object_mut() {
-            object.insert("execution_environment_mode".to_string(), json!("cloud"));
+            object.insert("sandbox_enabled".to_string(), json!(true));
             object.insert("sandbox".to_string(), context.to_metadata());
         }
     }

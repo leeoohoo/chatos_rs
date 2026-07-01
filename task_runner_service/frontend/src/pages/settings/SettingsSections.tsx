@@ -8,6 +8,7 @@ import {
   Segmented,
   Space,
   Statistic,
+  Switch,
   Tag,
   Typography,
 } from 'antd';
@@ -129,6 +130,13 @@ export function SettingsOverviewTab({
               {config.execution_environment_mode === 'cloud'
                 ? t('settings.executionMode.cloud')
                 : t('settings.executionMode.local')}
+            </Tag>
+          </Descriptions.Item>
+          <Descriptions.Item label={t('settings.sandboxEnabled')}>
+            <Tag color={config.sandbox_enabled ? 'green' : 'default'}>
+              {config.sandbox_enabled
+                ? t('settings.sandboxSwitchOn')
+                : t('settings.sandboxSwitchOff')}
             </Tag>
           </Descriptions.Item>
           <Descriptions.Item label={t('settings.sandboxManagerBaseUrl')}>
@@ -280,9 +288,20 @@ function RuntimeSettingsForm({ t, form, saveLoading, onSubmit }: RuntimeSettings
               ]}
             />
           </Form.Item>
+          <Form.Item
+            name="sandbox_enabled"
+            label={t('settings.sandboxEnabled')}
+            valuePropName="checked"
+            help={t('settings.sandboxEnabledHelp')}
+          >
+            <Switch
+              checkedChildren={t('settings.sandboxSwitchOn')}
+              unCheckedChildren={t('settings.sandboxSwitchOff')}
+            />
+          </Form.Item>
           <Form.Item shouldUpdate noStyle>
             {({ getFieldValue }) =>
-              getFieldValue('execution_environment_mode') === 'cloud' ? (
+              getFieldValue('sandbox_enabled') ? (
                 <>
                   <Form.Item
                     name="sandbox_manager_base_url"

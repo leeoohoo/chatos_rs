@@ -175,4 +175,5 @@ Historical plans/assessments/contracts may live in root-level historical files o
 - [WSL Rust dev flow](./WSL_RUST_DEV_FLOW_20260619.md)
 
 ## License
-This project is licensed under the [MIT License](./LICENSE).
+This project is source-available under the [PolyForm Noncommercial License 1.0.0](./LICENSE).
+Commercial use is not permitted without a separate written license from the copyright holder.

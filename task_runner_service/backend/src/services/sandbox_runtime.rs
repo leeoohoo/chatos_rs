@@ -62,21 +62,21 @@ impl SandboxRuntimeContext {
 }
 
 impl RunService {
-    pub(super) async fn should_route_task_to_cloud_sandbox(
+    pub(super) async fn should_route_task_to_sandbox(
         &self,
         task: &TaskRecord,
     ) -> Result<bool, String> {
-        let mode = self.effective_execution_environment_mode().await?;
-        Ok(mode == "cloud" && task_requires_cloud_sandbox(task))
+        let sandbox_enabled = self.effective_sandbox_enabled().await?;
+        Ok(sandbox_enabled && task_requires_sandbox(task))
     }
 
-    pub(super) async fn prepare_cloud_sandbox_if_needed(
+    pub(super) async fn prepare_sandbox_if_needed(
         &self,
         task: &TaskRecord,
         run: &mut TaskRunRecord,
         effective_workspace_dir: &str,
     ) -> Result<Option<SandboxRuntimeContext>, String> {
-        if !self.should_route_task_to_cloud_sandbox(task).await? {
+        if !self.should_route_task_to_sandbox(task).await? {
             return Ok(None);
         }
 
@@ -88,7 +88,7 @@ impl RunService {
         self.append_sandbox_event(
             run,
             "sandbox_requested",
-            "正在申请云端沙箱",
+            "正在申请沙箱",
             Some(json!({
                 "workspace_root": workspace_root.to_string_lossy(),
                 "ttl_seconds": ttl_seconds,
@@ -105,7 +105,7 @@ impl RunService {
                 self.append_sandbox_event(
                     run,
                     "sandbox_failed",
-                    format!("申请云端沙箱失败: {err}"),
+                    format!("申请沙箱失败: {err}"),
                     None,
                 )
                 .await;
@@ -120,7 +120,7 @@ impl RunService {
                 self.append_sandbox_event(
                     run,
                     "sandbox_failed",
-                    format!("云端沙箱响应无效: {err}"),
+                    format!("沙箱响应无效: {err}"),
                     None,
                 )
                 .await;
@@ -134,7 +134,7 @@ impl RunService {
             self.append_sandbox_event(
                 run,
                 "sandbox_failed",
-                format!("复制工作区到云端沙箱失败: {err}"),
+                format!("复制工作区到沙箱失败: {err}"),
                 Some(context.to_metadata()),
             )
             .await;
@@ -145,7 +145,7 @@ impl RunService {
             Ok(health) if health.ok => {}
             Ok(health) => {
                 let _ = client.release(&context, true, true).await;
-                let message = format!("云端沙箱健康检查失败: {}", health.message);
+                let message = format!("沙箱健康检查失败: {}", health.message);
                 self.append_sandbox_event(
                     run,
                     "sandbox_failed",
@@ -163,7 +163,7 @@ impl RunService {
                 self.append_sandbox_event(
                     run,
                     "sandbox_failed",
-                    format!("云端沙箱健康检查失败: {err}"),
+                    format!("沙箱健康检查失败: {err}"),
                     Some(context.to_metadata()),
                 )
                 .await;
@@ -177,7 +177,7 @@ impl RunService {
         self.append_sandbox_event(
             run,
             "sandbox_ready",
-            "云端沙箱已就绪，文件和终端 MCP 将使用沙箱服务",
+            "沙箱已就绪，文件和终端 MCP 将使用沙箱服务",
             Some(context.to_metadata()),
         )
         .await;
@@ -187,13 +187,13 @@ impl RunService {
             sandbox_id = context.sandbox_id.as_str(),
             lease_id = context.lease_id.as_str(),
             run_workspace = context.run_workspace.as_str(),
-            "task runner prepared cloud sandbox"
+            "task runner prepared sandbox"
         );
 
         Ok(Some(context))
     }
 
-    pub(super) async fn release_cloud_sandbox(
+    pub(super) async fn release_sandbox(
         &self,
         run: &TaskRunRecord,
         context: &SandboxRuntimeContext,
@@ -231,7 +231,7 @@ impl RunService {
                     .append_run_event(TaskRunEventRecord::new(
                         run.id.clone(),
                         "sandbox_released",
-                        Some("云端沙箱已释放".to_string()),
+                        Some("沙箱已释放".to_string()),
                         Some(payload),
                     ))
                     .await
@@ -248,7 +248,7 @@ impl RunService {
                     .append_run_event(TaskRunEventRecord::new(
                         run.id.clone(),
                         "sandbox_release_failed",
-                        Some(format!("释放云端沙箱失败: {err}")),
+                        Some(format!("释放沙箱失败: {err}")),
                         Some(context.to_metadata()),
                     ))
                     .await
@@ -261,7 +261,7 @@ impl RunService {
                 warn!(
                     run_id = run.id.as_str(),
                     sandbox_id = context.sandbox_id.as_str(),
-                    "failed to release cloud sandbox: {err}"
+                    "failed to release sandbox: {err}"
                 );
             }
         }
@@ -315,7 +315,7 @@ impl SandboxRuntimeContext {
     }
 }
 
-pub(super) fn task_requires_cloud_sandbox(task: &TaskRecord) -> bool {
+pub(super) fn task_requires_sandbox(task: &TaskRecord) -> bool {
     if !task.mcp_config.enabled {
         return false;
     }
@@ -344,12 +344,12 @@ pub(super) fn sandbox_mcp_prefixed_input_items(
 ) -> Vec<Value> {
     let text = if locale.is_english() {
         format!(
-            "[Cloud sandbox]\nTask Runner created an isolated sandbox for this run. File and terminal operations must use the `sandbox_*` MCP tools exposed by the sandbox service. Treat paths as relative to the sandbox workspace unless a tool asks otherwise. Sandbox id: `{}`. Lease id: `{}`. Host-side run workspace copy: `{}`.",
+            "[Sandbox]\nTask Runner created an isolated sandbox for this run. File and terminal operations must use the `sandbox_*` MCP tools exposed by the sandbox service. Treat paths as relative to the sandbox workspace unless a tool asks otherwise. Sandbox id: `{}`. Lease id: `{}`. Host-side run workspace copy: `{}`.",
             context.sandbox_id, context.lease_id, context.run_workspace
         )
     } else {
         format!(
-            "[云端沙箱]\nTask Runner 已为本次运行创建隔离沙箱。文件读写和终端命令必须使用沙箱服务暴露的 `sandbox_*` MCP 工具。除非工具参数另有说明，路径都按沙箱工作区的相对路径处理。Sandbox ID：`{}`。Lease ID：`{}`。宿主机 `.chatos` 运行副本：`{}`。",
+            "[沙箱]\nTask Runner 已为本次运行创建隔离沙箱。文件读写和终端命令必须使用沙箱服务暴露的 `sandbox_*` MCP 工具。除非工具参数另有说明，路径都按沙箱工作区的相对路径处理。Sandbox ID：`{}`。Lease ID：`{}`。宿主机 `.chatos` 运行副本：`{}`。",
             context.sandbox_id, context.lease_id, context.run_workspace
         )
     };
@@ -366,10 +366,7 @@ pub(super) fn sandbox_mcp_prefixed_input_items(
 
 fn attach_sandbox_context_to_run(run: &mut TaskRunRecord, context: &SandboxRuntimeContext) {
     if let Some(object) = run.input_snapshot.as_object_mut() {
-        object.insert(
-            "execution_environment_mode".to_string(),
-            Value::String("cloud".to_string()),
-        );
+        object.insert("sandbox_enabled".to_string(), Value::Bool(true));
         object.insert("sandbox".to_string(), context.to_metadata());
     }
 }

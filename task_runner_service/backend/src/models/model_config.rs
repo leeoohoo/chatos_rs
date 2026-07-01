@@ -212,6 +212,8 @@ pub struct RuntimeSettingsRecord {
     pub tool_results_model_total_max_chars: usize,
     #[serde(default = "default_execution_environment_mode")]
     pub execution_environment_mode: String,
+    #[serde(default)]
+    pub sandbox_enabled: bool,
     #[serde(default = "default_sandbox_manager_base_url")]
     pub sandbox_manager_base_url: String,
     #[serde(default = "default_sandbox_lease_ttl_seconds")]
@@ -227,6 +229,7 @@ pub struct UpdateRuntimeSettingsRequest {
     pub tool_result_model_max_chars: Option<usize>,
     pub tool_results_model_total_max_chars: Option<usize>,
     pub execution_environment_mode: Option<String>,
+    pub sandbox_enabled: Option<bool>,
     pub sandbox_manager_base_url: Option<String>,
     pub sandbox_lease_ttl_seconds: Option<u64>,
 }

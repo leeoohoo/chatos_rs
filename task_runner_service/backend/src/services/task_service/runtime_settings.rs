@@ -38,6 +38,7 @@ impl TaskService {
                     .config
                     .default_tool_results_model_total_max_chars,
                 execution_environment_mode: self.config.default_execution_environment_mode.clone(),
+                sandbox_enabled: false,
                 sandbox_manager_base_url: self.config.default_sandbox_manager_base_url.clone(),
                 sandbox_lease_ttl_seconds: self.config.default_sandbox_lease_ttl_seconds,
                 created_at: now.clone(),
@@ -58,6 +59,9 @@ impl TaskService {
         if let Some(mode) = input.execution_environment_mode {
             settings.execution_environment_mode =
                 normalize_execution_environment_mode(Some(mode.as_str()));
+        }
+        if let Some(sandbox_enabled) = input.sandbox_enabled {
+            settings.sandbox_enabled = sandbox_enabled;
         }
         if let Some(base_url) = input.sandbox_manager_base_url {
             let base_url = base_url.trim();
@@ -120,6 +124,14 @@ impl TaskService {
                 ))
             })
             .unwrap_or_else(|| self.config.default_execution_environment_mode.clone()))
+    }
+
+    pub async fn effective_sandbox_enabled(&self) -> Result<bool, String> {
+        Ok(self
+            .get_runtime_settings()
+            .await?
+            .map(|settings| settings.sandbox_enabled)
+            .unwrap_or(false))
     }
 
     pub async fn effective_sandbox_manager_base_url(&self) -> Result<String, String> {

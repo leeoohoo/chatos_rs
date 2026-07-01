@@ -174,6 +174,7 @@ pub fn system_config(
     task_execution_max_iterations: usize,
     tool_result_model_budget_limits: ToolResultModelBudgetLimits,
     execution_environment_mode: String,
+    sandbox_enabled: bool,
     sandbox_manager_base_url: String,
     sandbox_lease_ttl_seconds: u64,
 ) -> SystemConfigResponse {
@@ -202,6 +203,7 @@ pub fn system_config(
         tool_results_model_total_max_chars: tool_result_model_budget_limits.total_max_chars,
         default_execution_environment_mode: config.default_execution_environment_mode.clone(),
         execution_environment_mode,
+        sandbox_enabled,
         default_sandbox_manager_base_url: config.default_sandbox_manager_base_url.clone(),
         sandbox_manager_base_url,
         default_sandbox_lease_ttl_seconds: config.default_sandbox_lease_ttl_seconds,

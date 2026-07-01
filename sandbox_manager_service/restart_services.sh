@@ -67,6 +67,41 @@ start_frontend() {
   fi
 }
 
+print_session_status() {
+  local session="$1"
+  local name="$2"
+  if command -v tmux >/dev/null 2>&1 && tmux has-session -t "$session" 2>/dev/null; then
+    echo "  $name tmux session: running ($session)"
+  else
+    echo "  $name tmux session: N/A"
+  fi
+}
+
+print_port_status() {
+  local port="$1"
+  local name="$2"
+  local pid
+  pid="$(pid_for_port "$port")"
+  if [[ -n "$pid" ]]; then
+    echo "  $name port: $port (listening pid=$pid)"
+  else
+    echo "  $name port: $port (not listening)"
+  fi
+}
+
+status() {
+  echo "[INFO] sandbox manager status"
+  print_session_status "$BACKEND_SESSION" "backend"
+  print_session_status "$FRONTEND_SESSION" "frontend"
+  print_port_status "$BACKEND_PORT" "backend"
+  print_port_status "$FRONTEND_PORT" "frontend"
+  echo
+  echo "  backend url: http://localhost:$BACKEND_PORT"
+  echo "  frontend url: http://localhost:$FRONTEND_PORT"
+  echo "  backend log: $LOG_DIR/sandbox_manager_backend.log"
+  echo "  frontend log: $LOG_DIR/sandbox_manager_frontend.log"
+}
+
 case "$ACTION" in
   stop)
     stop_session "$FRONTEND_SESSION" "sandbox manager frontend"
@@ -86,11 +121,16 @@ case "$ACTION" in
     start_backend
     start_frontend
     ;;
+  status)
+    status
+    ;;
   *)
-    echo "Usage: $0 [start|stop|restart]" >&2
+    echo "Usage: $0 [start|stop|restart|status]" >&2
     exit 2
     ;;
 esac
 
-echo "[INFO] backend log: $LOG_DIR/sandbox_manager_backend.log"
-echo "[INFO] frontend log: $LOG_DIR/sandbox_manager_frontend.log"
+if [[ "$ACTION" != "status" ]]; then
+  echo "[INFO] backend log: $LOG_DIR/sandbox_manager_backend.log"
+  echo "[INFO] frontend log: $LOG_DIR/sandbox_manager_frontend.log"
+fi
