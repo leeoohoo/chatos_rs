@@ -159,3 +159,59 @@ fn requested_task_runner_locale(lang: Option<&str>) -> BuiltinMcpPromptLocale {
         _ => BuiltinMcpPromptLocale::ZhCn,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use axum::extract::Query;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn plan_skill_zh_cn_requires_task_creation_for_direct_pm_requests() {
+        let Json(response) = task_runner_skill_handler(Query(TaskRunnerLocaleQuery {
+            lang: Some("zh-CN".to_string()),
+            profile: Some("chatos_plan".to_string()),
+        }))
+        .await;
+
+        assert_eq!(response.name, "task-runner-plan-task-zh-cn");
+        assert!(response.content.contains("视为已经授权创建或调整"));
+        assert!(response.content.contains("Task Runner 规划任务"));
+        assert!(response.content.contains("主对话不具备项目探索"));
+        assert!(response.content.contains("已经成为事实"));
+        assert!(response.content.contains("participant You as \"你"));
+        assert!(!response.content.contains("participant Facts"));
+        assert!(response.content.contains("不要再请求确认"));
+        assert!(response.content.contains("task_runner_service_create_task"));
+        assert!(response.content.contains("Phase/Epic 层"));
+        assert!(response.content.contains("只有粗粒度阶段任务"));
+    }
+
+    #[tokio::test]
+    async fn plan_skill_en_us_requires_task_creation_for_direct_pm_requests() {
+        let Json(response) = task_runner_skill_handler(Query(TaskRunnerLocaleQuery {
+            lang: Some("en-US".to_string()),
+            profile: Some("chatos_plan".to_string()),
+        }))
+        .await;
+
+        assert_eq!(response.name, "task-runner-plan-task-en-us");
+        assert!(response
+            .content
+            .contains("project-related execution requests"));
+        assert!(response
+            .content
+            .contains("does not have project-exploration"));
+        assert!(response.content.contains("already-established facts"));
+        assert!(response.content.contains("participant You as \"You"));
+        assert!(!response.content.contains("participant Facts"));
+        assert!(response
+            .content
+            .contains("do not ask for confirmation again"));
+        assert!(response.content.contains("task_runner_service_create_task"));
+        assert!(response.content.contains("Phase/Epic level"));
+        assert!(response
+            .content
+            .contains("only coarse phase-level work items"));
+    }
+}
