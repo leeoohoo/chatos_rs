@@ -132,6 +132,14 @@ export function buildProjectDetailColumns({
       render: (status: ProjectWorkItemRecord['status']) => workItemStatusTag(status),
     },
     {
+      title: '类型',
+      dataIndex: 'is_planning_task',
+      width: 100,
+      render: (isPlanningTask: boolean) => (
+        isPlanningTask ? <Tag color="processing">规划</Tag> : <Tag>执行</Tag>
+      ),
+    },
+    {
       title: '执行模型',
       dataIndex: 'task_runner_default_model_config_id',
       width: 200,

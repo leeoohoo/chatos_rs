@@ -150,6 +150,13 @@ export function SettingsOverviewTab({
           <Descriptions.Item label={t('settings.sandboxManagerBaseUrl')}>
             {config.sandbox_manager_base_url || '-'}
           </Descriptions.Item>
+          <Descriptions.Item label={t('settings.sandboxManagerAuth')}>
+            <Tag color={config.sandbox_manager_auth_configured ? 'green' : 'red'}>
+              {config.sandbox_manager_auth_configured
+                ? t('settings.sandboxManagerAuthConfigured')
+                : t('settings.sandboxManagerAuthMissing')}
+            </Tag>
+          </Descriptions.Item>
           <Descriptions.Item label={t('settings.sandboxLeaseTtl')}>
             {config.sandbox_lease_ttl_seconds} s
           </Descriptions.Item>

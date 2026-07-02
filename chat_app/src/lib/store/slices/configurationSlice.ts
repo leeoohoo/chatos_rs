@@ -36,8 +36,6 @@ export const configurationInitialState: ConfigurationSliceState = {
     temperature: 0.7,
     systemPrompt: '',
     enableMcp: true,
-    reasoningEnabled: false,
-    planModeEnabled: false,
   },
   mcpConfigs: [],
   aiModelConfigs: [],

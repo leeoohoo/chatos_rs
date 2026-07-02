@@ -223,12 +223,18 @@ export const api = {
     ),
   listProjectWorkItems: (
     projectId: string,
-    filters?: { status?: ProjectWorkItemStatus; keyword?: string; include_archived?: boolean },
+    filters?: {
+      status?: ProjectWorkItemStatus;
+      keyword?: string;
+      is_planning_task?: boolean;
+      include_archived?: boolean;
+    },
   ) =>
     request<ProjectWorkItemRecord[]>(
       withQuery(`/api/projects/${projectId}/work-items`, {
         status: filters?.status,
         keyword: filters?.keyword,
+        is_planning_task: filters?.is_planning_task,
         include_archived: filters?.include_archived,
       }),
     ),

@@ -257,6 +257,82 @@ pub struct ListSandboxQuery {
     pub limit: Option<i64>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SandboxAccessClientRecord {
+    pub id: String,
+    pub name: String,
+    pub client_id: String,
+    pub key_hash: String,
+    pub enabled: bool,
+    pub scopes: Vec<String>,
+    pub allowed_tenant_ids: Vec<String>,
+    pub allowed_project_ids: Vec<String>,
+    pub allowed_tools: Vec<String>,
+    pub max_lease_ttl_seconds: u64,
+    pub created_at: String,
+    pub updated_at: String,
+    pub last_used_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SandboxAccessClientResponse {
+    pub id: String,
+    pub name: String,
+    pub client_id: String,
+    pub enabled: bool,
+    pub scopes: Vec<String>,
+    pub allowed_tenant_ids: Vec<String>,
+    pub allowed_project_ids: Vec<String>,
+    pub allowed_tools: Vec<String>,
+    pub max_lease_ttl_seconds: u64,
+    pub created_at: String,
+    pub updated_at: String,
+    pub last_used_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct CreateSandboxAccessClientResponse {
+    pub client: SandboxAccessClientResponse,
+    pub client_key: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct RotateSandboxAccessClientKeyResponse {
+    pub client: SandboxAccessClientResponse,
+    pub client_key: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct CreateSandboxAccessClientRequest {
+    pub name: String,
+    pub client_id: Option<String>,
+    #[serde(default)]
+    pub scopes: Vec<String>,
+    #[serde(default)]
+    pub allowed_tenant_ids: Vec<String>,
+    #[serde(default)]
+    pub allowed_project_ids: Vec<String>,
+    #[serde(default)]
+    pub allowed_tools: Vec<String>,
+    pub max_lease_ttl_seconds: Option<u64>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct UpdateSandboxAccessClientRequest {
+    pub name: Option<String>,
+    pub enabled: Option<bool>,
+    pub scopes: Option<Vec<String>>,
+    pub allowed_tenant_ids: Option<Vec<String>>,
+    pub allowed_project_ids: Option<Vec<String>>,
+    pub allowed_tools: Option<Vec<String>>,
+    pub max_lease_ttl_seconds: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct DeleteSandboxAccessClientResponse {
+    pub ok: bool,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct PoolStatusResponse {
     pub backend: String,

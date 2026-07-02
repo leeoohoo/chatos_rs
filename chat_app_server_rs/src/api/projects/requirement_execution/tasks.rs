@@ -85,6 +85,8 @@ pub(in crate::api::projects) async fn create_and_start_execution_tasks(
             mcp_config.workspace_dir = Some(workspace_dir);
         }
         mcp_config.builtin_prompt_locale = Some(builtin_prompt_locale.to_string());
+        let task_profile = task_profile_for_work_item(work_item);
+        let tags = execution_tags_for_work_item(work_item);
         let create_request = task_runner_api_client::CreateTaskRunnerTaskRequest {
             title: work_item.title.clone(),
             description: build_task_description(work_item),
@@ -95,23 +97,17 @@ pub(in crate::api::projects) async fn create_and_start_execution_tasks(
                 "project_root": project_root,
                 "requirement_id": work_item.requirement_id,
                 "project_task_id": work_item.id,
+                "is_planning_task": work_item.is_planning_task,
                 "source_session_id": session.id,
                 "source_user_message_id": message.id,
                 "source_turn_id": message_turn_id(message),
             })),
             status: Some("ready".to_string()),
             priority: Some(work_item.priority),
-            tags: Some(normalize_tags(
-                work_item
-                    .tags
-                    .iter()
-                    .cloned()
-                    .chain(std::iter::once("project_requirement_execution".to_string()))
-                    .collect(),
-            )),
+            tags: Some(normalize_tags(tags)),
             default_model_config_id: Some(work_item.task_runner_default_model_config_id.clone()),
             project_id: Some(project_id.to_string()),
-            task_profile: Some("default".to_string()),
+            task_profile: Some(task_profile.to_string()),
             schedule: Some(task_runner_api_client::TaskRunnerTaskScheduleRequest {
                 mode: "contact_async".to_string(),
                 run_at: Some(now_rfc3339()),
@@ -363,5 +359,67 @@ fn build_task_description(work_item: &WorkItemPlanItem) -> Option<String> {
         None
     } else {
         Some(parts.join("\n\n"))
+    }
+}
+
+fn task_profile_for_work_item(work_item: &WorkItemPlanItem) -> &'static str {
+    if work_item.is_planning_task {
+        "chatos_plan"
+    } else {
+        "default"
+    }
+}
+
+fn execution_tags_for_work_item(work_item: &WorkItemPlanItem) -> Vec<String> {
+    let mut tags = work_item
+        .tags
+        .iter()
+        .cloned()
+        .chain(std::iter::once("project_requirement_execution".to_string()))
+        .collect::<Vec<_>>();
+    if work_item.is_planning_task {
+        tags.push("project_planning_task".to_string());
+    }
+    tags
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn work_item(is_planning_task: bool) -> WorkItemPlanItem {
+        WorkItemPlanItem {
+            id: "task-1".to_string(),
+            requirement_id: "req-1".to_string(),
+            title: "任务".to_string(),
+            description: None,
+            task_runner_default_model_config_id: "model-1".to_string(),
+            task_runner_enabled_tool_ids: vec!["tool-1".to_string()],
+            task_runner_skill_ids: Vec::new(),
+            status: "todo".to_string(),
+            priority: 0,
+            tags: vec!["custom".to_string()],
+            is_planning_task,
+        }
+    }
+
+    #[test]
+    fn planning_work_item_uses_plan_profile_and_tag() {
+        let item = work_item(true);
+
+        assert_eq!(task_profile_for_work_item(&item), "chatos_plan");
+        assert!(execution_tags_for_work_item(&item)
+            .iter()
+            .any(|tag| tag == "project_planning_task"));
+    }
+
+    #[test]
+    fn concrete_work_item_uses_default_profile_without_plan_tag() {
+        let item = work_item(false);
+
+        assert_eq!(task_profile_for_work_item(&item), "default");
+        assert!(!execution_tags_for_work_item(&item)
+            .iter()
+            .any(|tag| tag == "project_planning_task"));
     }
 }

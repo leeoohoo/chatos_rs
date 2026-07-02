@@ -120,6 +120,8 @@ pub struct ProjectWorkItemRecord {
     pub sort_order: i64,
     pub tags: Vec<String>,
     #[serde(default)]
+    pub is_planning_task: bool,
+    #[serde(default)]
     pub creator_user_id: Option<String>,
     #[serde(default)]
     pub creator_username: Option<String>,
@@ -151,6 +153,8 @@ pub struct CreateProjectWorkItemRequest {
     pub due_at: Option<String>,
     pub sort_order: Option<i64>,
     pub tags: Option<Vec<String>>,
+    #[serde(default)]
+    pub is_planning_task: bool,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -165,6 +169,7 @@ pub struct UpdateProjectWorkItemRequest {
     pub due_at: Option<String>,
     pub sort_order: Option<i64>,
     pub tags: Option<Vec<String>>,
+    pub is_planning_task: Option<bool>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

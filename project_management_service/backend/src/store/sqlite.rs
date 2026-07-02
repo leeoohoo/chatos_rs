@@ -85,6 +85,8 @@ impl SqliteStore {
             .await?;
         self.ensure_text_column("project_work_items", "task_runner_skill_ids_json")
             .await?;
+        self.ensure_integer_column_with_default("project_work_items", "is_planning_task", 0)
+            .await?;
         for column in [
             "source_session_id",
             "source_user_message_id",
@@ -214,6 +216,33 @@ impl SqliteStore {
             return Ok(());
         }
         let statement = format!("ALTER TABLE {table} ADD COLUMN {column} TEXT");
+        sqlx::query(statement.as_str())
+            .execute(&self.pool)
+            .await
+            .map_err(|err| format!("migration failed: {err}; sql={statement}"))?;
+        Ok(())
+    }
+
+    async fn ensure_integer_column_with_default(
+        &self,
+        table: &str,
+        column: &str,
+        default_value: i64,
+    ) -> Result<(), String> {
+        let pragma = format!("PRAGMA table_info({table})");
+        let rows = sqlx::query(pragma.as_str())
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|err| err.to_string())?;
+        if rows
+            .iter()
+            .any(|row| row.get::<String, _>("name").as_str() == column)
+        {
+            return Ok(());
+        }
+        let statement = format!(
+            "ALTER TABLE {table} ADD COLUMN {column} INTEGER NOT NULL DEFAULT {default_value}"
+        );
         sqlx::query(statement.as_str())
             .execute(&self.pool)
             .await

@@ -9,13 +9,17 @@ use mongodb::options::{
 };
 use mongodb::{Client, Collection, IndexModel};
 
-use crate::models::{ListSandboxQuery, SandboxEventRecord, SandboxLeaseRecord, SandboxStatus};
+use crate::models::{
+    ListSandboxQuery, SandboxAccessClientRecord, SandboxEventRecord, SandboxLeaseRecord,
+    SandboxStatus,
+};
 
 #[derive(Clone)]
 pub struct SandboxStore {
     leases: Collection<SandboxLeaseRecord>,
     events: Collection<SandboxEventRecord>,
     capacity_slots: Collection<Document>,
+    access_clients: Collection<SandboxAccessClientRecord>,
 }
 
 impl SandboxStore {
@@ -30,6 +34,7 @@ impl SandboxStore {
             leases: db.collection("sandbox_leases"),
             events: db.collection("sandbox_events"),
             capacity_slots: db.collection("sandbox_capacity_slots"),
+            access_clients: db.collection("sandbox_access_clients"),
         };
         store.ensure_indexes().await?;
         Ok(store)
@@ -92,6 +97,20 @@ impl SandboxStore {
             Some("idx_sandbox_capacity_slots_lease"),
             true,
             true,
+        )
+        .await?;
+        create_index(
+            &self.access_clients,
+            doc! { "client_id": 1 },
+            Some("idx_sandbox_access_clients_client_id"),
+            true,
+        )
+        .await?;
+        create_index(
+            &self.access_clients,
+            doc! { "updated_at": -1 },
+            Some("idx_sandbox_access_clients_updated_at"),
+            false,
         )
         .await?;
         Ok(())
@@ -406,6 +425,82 @@ impl SandboxStore {
             .try_collect()
             .await
             .map_err(|err| format!("read sandbox events cursor failed: {err}"))
+    }
+
+    pub async fn list_access_clients(&self) -> Result<Vec<SandboxAccessClientRecord>, String> {
+        let options = FindOptions::builder()
+            .sort(doc! { "created_at": -1 })
+            .limit(500)
+            .build();
+        self.access_clients
+            .find(doc! {}, options)
+            .await
+            .map_err(|err| format!("list sandbox access clients failed: {err}"))?
+            .try_collect()
+            .await
+            .map_err(|err| format!("read sandbox access clients cursor failed: {err}"))
+    }
+
+    pub async fn get_access_client_by_client_id(
+        &self,
+        client_id: &str,
+    ) -> Result<Option<SandboxAccessClientRecord>, String> {
+        self.access_clients
+            .find_one(doc! { "client_id": client_id }, None)
+            .await
+            .map_err(|err| format!("get sandbox access client failed: {err}"))
+    }
+
+    pub async fn get_access_client_by_id(
+        &self,
+        id: &str,
+    ) -> Result<Option<SandboxAccessClientRecord>, String> {
+        self.access_clients
+            .find_one(doc! { "id": id }, None)
+            .await
+            .map_err(|err| format!("get sandbox access client failed: {err}"))
+    }
+
+    pub async fn create_access_client(
+        &self,
+        record: &SandboxAccessClientRecord,
+    ) -> Result<(), String> {
+        self.access_clients
+            .insert_one(record, None)
+            .await
+            .map(|_| ())
+            .map_err(|err| format!("insert sandbox access client failed: {err}"))
+    }
+
+    pub async fn replace_access_client(
+        &self,
+        record: &SandboxAccessClientRecord,
+    ) -> Result<(), String> {
+        self.access_clients
+            .replace_one(doc! { "id": &record.id }, record, None)
+            .await
+            .map(|_| ())
+            .map_err(|err| format!("replace sandbox access client failed: {err}"))
+    }
+
+    pub async fn delete_access_client(&self, id: &str) -> Result<bool, String> {
+        self.access_clients
+            .delete_one(doc! { "id": id }, None)
+            .await
+            .map(|result| result.deleted_count > 0)
+            .map_err(|err| format!("delete sandbox access client failed: {err}"))
+    }
+
+    pub async fn mark_access_client_used(&self, id: &str, used_at: &str) -> Result<(), String> {
+        self.access_clients
+            .update_one(
+                doc! { "id": id },
+                doc! { "$set": { "last_used_at": used_at, "updated_at": used_at } },
+                None,
+            )
+            .await
+            .map(|_| ())
+            .map_err(|err| format!("mark sandbox access client used failed: {err}"))
     }
 }
 

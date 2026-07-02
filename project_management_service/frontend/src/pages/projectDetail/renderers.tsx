@@ -156,6 +156,9 @@ export function WorkItemDetailPreview({
       <section style={detailPreviewMetaStyle}>
         <Descriptions bordered column={{ xs: 1, sm: 2, lg: 3 }} size="small">
           <Descriptions.Item label="所属需求">{requirementTitle}</Descriptions.Item>
+          <Descriptions.Item label="类型">
+            {workItem.is_planning_task ? <Tag color="processing">规划</Tag> : <Tag>执行</Tag>}
+          </Descriptions.Item>
           <Descriptions.Item label="估算点数">{workItem.estimate_points ?? '-'}</Descriptions.Item>
           <Descriptions.Item label="计划完成">{formatDateTime(workItem.due_at)}</Descriptions.Item>
           <Descriptions.Item label="排序">{workItem.sort_order}</Descriptions.Item>

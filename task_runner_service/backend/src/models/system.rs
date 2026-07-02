@@ -38,6 +38,7 @@ pub struct SystemConfigResponse {
     pub sandbox_enabled: bool,
     pub default_sandbox_manager_base_url: String,
     pub sandbox_manager_base_url: String,
+    pub sandbox_manager_auth_configured: bool,
     pub default_sandbox_lease_ttl_seconds: u64,
     pub sandbox_lease_ttl_seconds: u64,
 }

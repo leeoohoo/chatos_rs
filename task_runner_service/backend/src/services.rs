@@ -209,6 +209,8 @@ pub fn system_config(
         sandbox_enabled,
         default_sandbox_manager_base_url: config.default_sandbox_manager_base_url.clone(),
         sandbox_manager_base_url,
+        sandbox_manager_auth_configured: config.sandbox_manager_client_id.is_some()
+            && config.sandbox_manager_client_key.is_some(),
         default_sandbox_lease_ttl_seconds: config.default_sandbox_lease_ttl_seconds,
         sandbox_lease_ttl_seconds,
     }

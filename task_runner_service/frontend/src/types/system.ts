@@ -34,6 +34,7 @@ export interface SystemConfigResponse {
   sandbox_enabled: boolean;
   default_sandbox_manager_base_url: string;
   sandbox_manager_base_url: string;
+  sandbox_manager_auth_configured: boolean;
   default_sandbox_lease_ttl_seconds: number;
   sandbox_lease_ttl_seconds: number;
 }

@@ -23,6 +23,8 @@ export interface SessionRuntimeSettingsResponse {
   selected_thinking_level?: string | null;
   remote_connection_id?: string | null;
   workspace_root?: string | null;
+  reasoning_enabled: boolean;
+  plan_mode_enabled: boolean;
   mcp_enabled: boolean;
   enabled_mcp_ids: string[];
   auto_create_task: boolean;
@@ -36,6 +38,8 @@ export interface SessionRuntimeSettingsPayload {
   selected_thinking_level?: string | null;
   remote_connection_id?: string | null;
   workspace_root?: string | null;
+  reasoning_enabled?: boolean;
+  plan_mode_enabled?: boolean;
   mcp_enabled?: boolean;
   enabled_mcp_ids?: string[];
   auto_create_task?: boolean;

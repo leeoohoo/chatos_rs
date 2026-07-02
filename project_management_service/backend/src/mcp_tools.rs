@@ -376,6 +376,7 @@ async fn call_tool(
                     status,
                     args.keyword,
                     requirement_id,
+                    args.is_planning_task,
                     false,
                     page.fetch_limit(),
                     page.offset,
@@ -440,6 +441,7 @@ async fn call_tool(
                         due_at: args.due_at,
                         sort_order: args.sort_order,
                         tags: args.tags,
+                        is_planning_task: args.is_planning_task,
                     },
                     current_user,
                 )
@@ -812,6 +814,7 @@ impl From<UpdateProjectTaskPatch> for UpdateProjectWorkItemRequest {
             due_at: value.due_at,
             sort_order: value.sort_order,
             tags: value.tags,
+            is_planning_task: value.is_planning_task,
         }
     }
 }
@@ -946,6 +949,7 @@ mod tests {
                     due_at: None,
                     sort_order: None,
                     tags: None,
+                    is_planning_task: false,
                 },
                 user,
             )

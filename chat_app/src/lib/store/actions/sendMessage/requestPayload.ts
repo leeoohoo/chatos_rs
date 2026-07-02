@@ -2,6 +2,7 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 import type { AiModelConfig, ChatConfig } from '../../../../types';
+import { PUBLIC_PROJECT_ID } from '../../../domain/contactSessions';
 import type {
   ApiAttachmentPayload,
   StreamChatLogPayload,
@@ -10,7 +11,7 @@ import type {
 
 export const resolveModelCapabilities = (
   selectedModel: AiModelConfig,
-  chatConfig: ChatConfig,
+  reasoningEnabledSetting: boolean,
 ): {
   supportsImages: boolean;
   supportsReasoning: boolean;
@@ -19,13 +20,27 @@ export const resolveModelCapabilities = (
   const supportsImages = selectedModel?.supports_images === true;
   const supportsReasoning = selectedModel?.supports_reasoning === true || !!selectedModel?.thinking_level;
   const reasoningEnabled = supportsReasoning
-    && (chatConfig?.reasoningEnabled === true || !!selectedModel?.thinking_level);
+    && reasoningEnabledSetting === true;
   return {
     supportsImages,
     supportsReasoning,
     reasoningEnabled,
   };
 };
+
+const hasConcreteProjectContext = (projectId: string | null | undefined): boolean => {
+  const normalized = typeof projectId === 'string' ? projectId.trim() : '';
+  return normalized.length > 0 && normalized !== '0' && normalized !== PUBLIC_PROJECT_ID;
+};
+
+export const resolveEffectivePlanMode = ({
+  projectId,
+  planModeEnabled,
+}: {
+  projectId: string | null | undefined;
+  planModeEnabled: boolean | undefined;
+}): boolean => hasConcreteProjectContext(projectId)
+  && planModeEnabled === true;
 
 const compactLogText = (value: string, maxChars = 240): string => {
   const normalized = String(value || '').replace(/\s+/g, ' ').trim();

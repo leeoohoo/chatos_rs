@@ -32,7 +32,7 @@ pub async fn project_plan_snapshot(
 ) -> Result<ProjectPlanSnapshot, String> {
     let mut requirements = store.list_requirements(project_id, None, None).await?;
     let mut work_items = store
-        .list_work_items_by_project(project_id, None, None)
+        .list_work_items_by_project(project_id, None, None, None)
         .await?;
     if !include_archived {
         requirements = non_archived_requirements(requirements);
@@ -252,6 +252,7 @@ mod tests {
                     due_at: None,
                     sort_order: None,
                     tags: None,
+                    is_planning_task: false,
                 },
                 &user,
             )

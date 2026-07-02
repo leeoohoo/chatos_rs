@@ -26,7 +26,10 @@ impl RunService {
                         .await?;
                     continue;
                 }
-                if let Some(run) = self.dispatch_ready_chatos_async_task(task.id.as_str()).await? {
+                if let Some(run) = self
+                    .dispatch_ready_chatos_async_task(task.id.as_str())
+                    .await?
+                {
                     runs.push(run);
                 }
             }
@@ -64,7 +67,8 @@ impl RunService {
                     ..TaskListFilters::default()
                 })
                 .await?;
-            self.dispatch_ready_chatos_async_tasks(tasks.as_slice()).await
+            self.dispatch_ready_chatos_async_tasks(tasks.as_slice())
+                .await
         })
     }
 
@@ -83,7 +87,8 @@ impl RunService {
             .await
         {
             Ok(run) => {
-                self.consume_chatos_async_schedule_slot_at(task_id, now).await?;
+                self.consume_chatos_async_schedule_slot_at(task_id, now)
+                    .await?;
                 Ok(Some(run))
             }
             Err(err) if is_chatos_async_active_run_conflict_error(err.as_str()) => {
@@ -91,7 +96,8 @@ impl RunService {
                 Ok(None)
             }
             Err(err) => {
-                self.mark_chatos_async_schedule_failed(task_id, &err).await?;
+                self.mark_chatos_async_schedule_failed(task_id, &err)
+                    .await?;
                 Err(err)
             }
         }

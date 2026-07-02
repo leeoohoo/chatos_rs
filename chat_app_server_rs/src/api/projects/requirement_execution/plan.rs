@@ -7,7 +7,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use super::errors::HandlerError;
 use super::status::is_done_status;
 use super::types::{RequirementPlanItem, WorkItemPlanItem};
-use super::values::{value_i64, value_string, value_string_vec};
+use super::values::{value_bool, value_i64, value_string, value_string_vec};
 
 pub(in crate::api::projects) fn project_plan_array(
     plan: &Value,
@@ -82,6 +82,9 @@ pub(in crate::api::projects) fn parse_work_items(values: Vec<Value>) -> Vec<Work
                     .and_then(|value| i32::try_from(value).ok())
                     .unwrap_or_default(),
                 tags: value_string_vec(&value, "tags").unwrap_or_default(),
+                is_planning_task: value_bool(&value, "is_planning_task")
+                    .or_else(|| value_bool(&value, "isPlanningTask"))
+                    .unwrap_or(false),
             })
         })
         .collect()
@@ -338,6 +341,7 @@ pub(in crate::api::projects) fn requirement_dependency_map(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
     fn requirement(id: &str, parent_requirement_id: Option<&str>) -> RequirementPlanItem {
         requirement_with_status(id, parent_requirement_id, "approved")
@@ -444,6 +448,34 @@ mod tests {
         assert!(scope.contains("root"));
         assert!(scope.contains("dependent"));
         assert!(!scope.contains("completed-prerequisite"));
+    }
+
+    #[test]
+    fn parse_work_items_reads_planning_task_flags() {
+        let items = parse_work_items(vec![
+            json!({
+                "id": "task-snake",
+                "requirement_id": "req-1",
+                "title": "继续拆解方案",
+                "is_planning_task": true
+            }),
+            json!({
+                "id": "task-camel",
+                "requirementId": "req-1",
+                "title": "补充技术计划",
+                "isPlanningTask": true
+            }),
+            json!({
+                "id": "task-default",
+                "requirement_id": "req-1",
+                "title": "实现接口"
+            }),
+        ]);
+
+        assert_eq!(items.len(), 3);
+        assert!(items[0].is_planning_task);
+        assert!(items[1].is_planning_task);
+        assert!(!items[2].is_planning_task);
     }
 }
 

@@ -139,6 +139,11 @@ pub(super) fn work_item_from_row(row: &SqliteRow) -> ProjectWorkItemRecord {
         due_at: row.get("due_at"),
         sort_order: row.get("sort_order"),
         tags,
+        is_planning_task: row
+            .try_get::<Option<bool>, _>("is_planning_task")
+            .ok()
+            .flatten()
+            .unwrap_or(false),
         creator_user_id: row.get("creator_user_id"),
         creator_username: row.get("creator_username"),
         creator_display_name: row.get("creator_display_name"),

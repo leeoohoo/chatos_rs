@@ -15,6 +15,7 @@ import {
   Row,
   Select,
   Space,
+  Switch,
   Tag,
   Typography,
 } from 'antd';
@@ -316,6 +317,7 @@ export function ProjectDetailOverlays({
             sort_order: 0,
             task_runner_enabled_tool_ids: [],
             task_runner_skill_ids: [],
+            is_planning_task: false,
           }}
           onFinish={onCreateWorkItem}
         >
@@ -344,6 +346,13 @@ export function ProjectDetailOverlays({
           </Form.Item>
           <Form.Item name="description" label="描述">
             <Input.TextArea rows={4} />
+          </Form.Item>
+          <Form.Item
+            name="is_planning_task"
+            label="规划任务"
+            valuePropName="checked"
+          >
+            <Switch />
           </Form.Item>
           {executionOptionsErrorMessage ? (
             <Typography.Text type="danger">{executionOptionsErrorMessage}</Typography.Text>

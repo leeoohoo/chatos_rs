@@ -156,6 +156,46 @@ export interface SystemConfigResponse {
   image_dockerfile: string;
 }
 
+export interface SandboxAccessClient {
+  id: string;
+  name: string;
+  client_id: string;
+  enabled: boolean;
+  scopes: string[];
+  allowed_tenant_ids: string[];
+  allowed_project_ids: string[];
+  allowed_tools: string[];
+  max_lease_ttl_seconds: number;
+  created_at: string;
+  updated_at: string;
+  last_used_at?: string | null;
+}
+
+export interface SandboxAccessClientPayload {
+  name: string;
+  client_id?: string | null;
+  scopes: string[];
+  allowed_tenant_ids: string[];
+  allowed_project_ids: string[];
+  allowed_tools: string[];
+  max_lease_ttl_seconds?: number | null;
+}
+
+export interface SandboxAccessClientUpdatePayload {
+  name?: string;
+  enabled?: boolean;
+  scopes?: string[];
+  allowed_tenant_ids?: string[];
+  allowed_project_ids?: string[];
+  allowed_tools?: string[];
+  max_lease_ttl_seconds?: number;
+}
+
+export interface SandboxAccessClientSecretResponse {
+  client: SandboxAccessClient;
+  client_key: string;
+}
+
 export interface SandboxImageRuntimeVersionRecord {
   id: string;
   label: string;
