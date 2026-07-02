@@ -7,6 +7,7 @@ use super::matching::{
     normalize_source_id, normalized_chatos_source, task_matches_source_user_message,
 };
 use super::*;
+use crate::models::now_rfc3339;
 
 mod graph;
 
@@ -66,6 +67,7 @@ impl TaskService {
             .into_iter()
             .filter(|task| source.matches_task(task))
             .collect::<Vec<_>>();
+        tasks = self.reconcile_stale_active_message_tasks(tasks).await?;
         tasks.sort_by(|left, right| right.updated_at.cmp(&left.updated_at));
         self.hydrate_tasks_prerequisites(tasks).await
     }
@@ -135,6 +137,10 @@ impl TaskService {
                 })
                 .await?;
             for task in tasks {
+                let task = self.reconcile_stale_active_message_task(task).await?;
+                if !is_active_task_status(task.status) {
+                    continue;
+                }
                 if task.source_session_id.as_deref().map(str::trim)
                     != Some(source_session_id.as_str())
                 {
@@ -172,7 +178,9 @@ impl TaskService {
                             running_count: 0,
                             active_count: 0,
                         });
-                entry.running_count += 1;
+                if is_running_task_status(task.status) {
+                    entry.running_count += 1;
+                }
                 entry.active_count += 1;
             }
         }
@@ -184,6 +192,64 @@ impl TaskService {
                 .then_with(|| left.source_turn_id.cmp(&right.source_turn_id))
         });
         Ok(items)
+    }
+
+    async fn reconcile_stale_active_message_tasks(
+        &self,
+        tasks: Vec<TaskRecord>,
+    ) -> Result<Vec<TaskRecord>, String> {
+        let mut repaired = Vec::with_capacity(tasks.len());
+        for task in tasks {
+            repaired.push(self.reconcile_stale_active_message_task(task).await?);
+        }
+        Ok(repaired)
+    }
+
+    async fn reconcile_stale_active_message_task(
+        &self,
+        task: TaskRecord,
+    ) -> Result<TaskRecord, String> {
+        if !is_active_task_status(task.status) {
+            return Ok(task);
+        }
+        let Some(last_run_id) = task
+            .last_run_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToOwned::to_owned)
+        else {
+            return Ok(task);
+        };
+        let Some(last_run) = self.store.get_run(last_run_id.as_str()).await? else {
+            return Ok(task);
+        };
+        if last_run.task_id.trim() != task.id.trim() {
+            return Ok(task);
+        }
+        let Some(next_status) = terminal_task_status_for_run_status(last_run.status) else {
+            return Ok(task);
+        };
+        if !should_reconcile_stale_active_task(&task, &last_run) {
+            return Ok(task);
+        }
+
+        let mut repaired = task;
+        repaired.status = next_status;
+        repaired.last_run_id = Some(last_run.id.clone());
+        if repaired
+            .result_summary
+            .as_deref()
+            .map(str::trim)
+            .is_none_or(str::is_empty)
+        {
+            repaired.result_summary = last_run
+                .result_summary
+                .clone()
+                .or_else(|| last_run.error_message.clone());
+        }
+        repaired.updated_at = now_rfc3339();
+        self.store.save_task(repaired).await
     }
 
     pub async fn get_task_for_chatos_message(
@@ -361,6 +427,35 @@ impl TaskService {
             .get_run(id)
             .await?
             .map(ChatosMessageTaskRunSummary::from))
+    }
+}
+
+fn is_active_task_status(status: TaskStatus) -> bool {
+    matches!(
+        status,
+        TaskStatus::Ready | TaskStatus::Queued | TaskStatus::Running
+    )
+}
+
+fn is_running_task_status(status: TaskStatus) -> bool {
+    matches!(status, TaskStatus::Queued | TaskStatus::Running)
+}
+
+fn terminal_task_status_for_run_status(status: TaskRunStatus) -> Option<TaskStatus> {
+    match status {
+        TaskRunStatus::Succeeded => Some(TaskStatus::Succeeded),
+        TaskRunStatus::Failed => Some(TaskStatus::Failed),
+        TaskRunStatus::Cancelled => Some(TaskStatus::Cancelled),
+        TaskRunStatus::Blocked => Some(TaskStatus::Blocked),
+        TaskRunStatus::Queued | TaskRunStatus::Running => None,
+    }
+}
+
+fn should_reconcile_stale_active_task(task: &TaskRecord, run: &TaskRunRecord) -> bool {
+    match task.status {
+        TaskStatus::Queued | TaskStatus::Running => true,
+        TaskStatus::Ready => run.updated_at.trim() >= task.updated_at.trim(),
+        _ => false,
     }
 }
 

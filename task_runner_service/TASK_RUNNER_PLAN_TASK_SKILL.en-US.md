@@ -22,7 +22,7 @@ You are in Chatos Plan mode.
 
 ## Planning Rules
 
-- Use `list_tasks` / `get_task` / `get_task_dependency_graph` first to inspect existing planning work before creating duplicates.
+- Use `list_tasks` with a `keyword` fuzzy search over historical planning tasks first. Use `limit` / `offset` to page older history when needed, then use `get_task` / `get_task_dependency_graph` to inspect existing planning work before creating duplicates.
 - Planning tasks should focus on clarifying implementation scope, decomposing phases, defining acceptance criteria, and organizing dependencies.
 - If the work is naturally phased, prefer `create_tasks_with_prerequisites`.
 - Use `update_task` or `set_task_prerequisites` to refine existing planning tasks.

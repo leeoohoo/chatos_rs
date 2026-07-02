@@ -43,15 +43,13 @@ impl TaskRunnerMcpService {
                         tag: args.tag,
                         model_config_id: args.model_config_id,
                         project_id: request_context.project_scope_id(),
-                        task_profile: request_context
-                            .is_chatos_plan_task_profile()
-                            .then(|| TASK_PROFILE_CHATOS_PLAN.to_string()),
+                        task_profile: Some(request_context.requested_task_profile().to_string()),
                         creator_user_id: task_creator_filter(current_user)?,
                         scheduled_only: args.scheduled_only,
                         parent_task_id: args.parent_task_id,
                         source_run_id: args.source_run_id,
                         limit: args.limit,
-                        offset: None,
+                        offset: args.offset,
                         ..TaskListFilters::default()
                     })
                     .await?;

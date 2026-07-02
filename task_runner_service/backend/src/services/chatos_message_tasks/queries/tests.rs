@@ -3,8 +3,9 @@
 
 use super::*;
 use crate::config::{AppConfig, StoreMode};
-use crate::models::{CreateTaskRequest, TaskSourceContext};
+use crate::models::{now_rfc3339, CreateTaskRequest, TaskRunRecord, TaskSourceContext};
 use crate::store::AppStore;
+use serde_json::json;
 use std::net::{IpAddr, Ipv4Addr};
 use std::time::Duration;
 
@@ -81,6 +82,85 @@ async fn create_chatos_task(service: &TaskService, title: &str) -> TaskRecord {
         )
         .await
         .expect("create chatos task")
+}
+
+fn failed_run_for_task(task: &TaskRecord, run_id: &str) -> TaskRunRecord {
+    let now = now_rfc3339();
+    TaskRunRecord {
+        id: run_id.to_string(),
+        task_id: task.id.clone(),
+        model_config_id: "model-1".to_string(),
+        memory_thread_id: task.memory_thread_id.clone(),
+        status: TaskRunStatus::Failed,
+        started_at: Some(now.clone()),
+        finished_at: Some(now.clone()),
+        input_snapshot: json!({}),
+        context_snapshot: None,
+        result_summary: Some("run failed".to_string()),
+        error_message: Some("boom".to_string()),
+        usage: None,
+        report: None,
+        cancel_requested: false,
+        summary_job_run_id: None,
+        created_at: now.clone(),
+        updated_at: now,
+    }
+}
+
+#[tokio::test]
+async fn active_message_sources_repair_stale_running_task_from_failed_last_run() {
+    let service = test_service().await;
+    let mut task = create_chatos_task(&service, "stale").await;
+    task.status = TaskStatus::Running;
+    task.last_run_id = Some("run-failed".to_string());
+    service
+        .store
+        .save_task(task.clone())
+        .await
+        .expect("save stale task");
+    service
+        .store
+        .save_run(failed_run_for_task(&task, "run-failed"))
+        .await
+        .expect("save failed run");
+
+    let active_sources = service
+        .list_active_message_task_sources_for_chatos_session(
+            "session-1",
+            &["message-1".to_string()],
+            &[],
+        )
+        .await
+        .expect("active sources");
+
+    assert!(active_sources.is_empty());
+    let repaired = service
+        .store
+        .get_task(task.id.as_str())
+        .await
+        .expect("load repaired task")
+        .expect("repaired task");
+    assert_eq!(repaired.status, TaskStatus::Failed);
+    assert_eq!(repaired.result_summary.as_deref(), Some("run failed"));
+}
+
+#[tokio::test]
+async fn active_message_sources_do_not_count_ready_tasks_as_running() {
+    let service = test_service().await;
+    create_chatos_task(&service, "ready").await;
+
+    let active_sources = service
+        .list_active_message_task_sources_for_chatos_session(
+            "session-1",
+            &["message-1".to_string()],
+            &[],
+        )
+        .await
+        .expect("active sources");
+
+    assert_eq!(active_sources.len(), 1);
+    assert_eq!(active_sources[0].active_count, 1);
+    assert_eq!(active_sources[0].running_count, 0);
 }
 
 #[tokio::test]

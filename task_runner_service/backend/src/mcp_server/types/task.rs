@@ -21,6 +21,8 @@ pub(in crate::mcp_server) struct ListTasksArgs {
     pub(in crate::mcp_server) source_run_id: Option<String>,
     #[serde(default)]
     pub(in crate::mcp_server) limit: Option<usize>,
+    #[serde(default)]
+    pub(in crate::mcp_server) offset: Option<usize>,
 }
 
 #[derive(Debug, Deserialize)]

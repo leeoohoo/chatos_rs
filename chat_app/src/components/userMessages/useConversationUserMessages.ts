@@ -146,13 +146,14 @@ const taskStatesFromActiveMessageTasks = (
     if (!sourceUserMessageId) {
       return;
     }
-    const runningCount = Math.max(Number(item.running_count || item.active_count || 0), 1);
+    const runningCount = Math.max(Number(item.running_count || 0), 0);
+    if (runningCount <= 0) {
+      return;
+    }
     writeTaskState(sourceUserMessageId, runningCount);
   });
-  const ids = Array.isArray(response.active_source_user_message_ids)
-    ? response.active_source_user_message_ids
-    : Array.isArray(response.running_source_user_message_ids)
-      ? response.running_source_user_message_ids
+  const ids = Array.isArray(response.running_source_user_message_ids)
+    ? response.running_source_user_message_ids
     : [];
   ids.forEach((id) => {
     const sourceUserMessageId = readString(id);

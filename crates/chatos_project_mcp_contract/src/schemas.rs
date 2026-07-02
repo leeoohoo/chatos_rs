@@ -40,7 +40,7 @@ pub fn project_management_server_tool_definitions(
 pub fn task_runner_builtin_tool_definitions(
     execution_options: Option<&TaskRunnerExecutionSchemaOptions>,
 ) -> Vec<Value> {
-    tool_definitions(execution_options, false)
+    tool_definitions(execution_options, true)
 }
 
 pub fn requirement_status_values() -> Vec<&'static str> {

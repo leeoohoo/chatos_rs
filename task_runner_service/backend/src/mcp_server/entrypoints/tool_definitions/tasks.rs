@@ -7,17 +7,35 @@ pub(super) fn task_tool_definitions() -> Vec<Value> {
     vec![
         tool_definition(
             "list_tasks",
-            "List Task Runner tasks with optional status, keyword, tag, schedule, or parent filters.",
+            "List historical Task Runner tasks created for the current owner and current task profile. Default profile returns ordinary tasks; Chatos Plan profile returns planning tasks. Use keyword for fuzzy search and limit/offset to page older history.",
             json!({
                 "type": "object",
                 "properties": {
-                    "status": { "type": "string", "enum": task_status_values() },
-                    "keyword": { "type": "string" },
-                    "tag": { "type": "string" },
-                    "scheduled_only": { "type": "boolean" },
-                    "parent_task_id": { "type": "string" },
-                    "source_run_id": { "type": "string" },
-                    "limit": { "type": "integer", "minimum": 1, "maximum": 500 }
+                    "status": {
+                        "type": "string",
+                        "enum": task_status_values(),
+                        "description": "Optional status filter."
+                    },
+                    "keyword": {
+                        "type": "string",
+                        "description": "Fuzzy search across task id, title, objective, description, result summary, and tags. Use this first when the user refers to earlier work."
+                    },
+                    "tag": { "type": "string", "description": "Exact tag filter." },
+                    "scheduled_only": { "type": "boolean", "description": "Only return scheduled or async tasks." },
+                    "parent_task_id": { "type": "string", "description": "Only return direct subtasks of this task." },
+                    "source_run_id": { "type": "string", "description": "Only return tasks created from a specific source run." },
+                    "limit": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 500,
+                        "description": "Maximum result count. Results are sorted by most recently updated first."
+                    },
+                    "offset": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 100000,
+                        "description": "Number of matching tasks to skip for paging older history."
+                    }
                 },
                 "additionalProperties": false
             }),

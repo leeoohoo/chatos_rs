@@ -123,6 +123,48 @@ describe('domain/messages', () => {
     expect(message.status).toBe('completed');
   });
 
+  it('normalizes serialized Responses output_text parts before building render segments', () => {
+    const rawMessages = [
+      {
+        id: 'assistant_tool_calls',
+        role: 'assistant',
+        content: '{"type":"output_text","annotations":[],"logprobs":[],"text":""}',
+        metadata: {
+          response_status: 'tool_calls',
+        },
+        tool_calls: [
+          {
+            id: 'call_cancel_1',
+            name: 'task_runner_service_cancel_task',
+            arguments: '{}',
+          },
+        ],
+        created_at: '2026-04-23T12:05:00.000Z',
+      },
+      {
+        id: 'assistant_text_part',
+        role: 'assistant',
+        content: JSON.stringify([
+          { type: 'output_text', text: 'visible ' },
+          { type: 'output_text', text: 'answer' },
+        ]),
+        metadata: null,
+        created_at: '2026-04-23T12:06:00.000Z',
+      },
+    ] as unknown as SessionMessageResponse[];
+
+    const [toolCallMessage, textMessage] = normalizeRawMessages(rawMessages, 'session_b');
+
+    expect(toolCallMessage.content).toBe('');
+    expect(toolCallMessage.metadata?.contentSegments).toEqual([
+      { type: 'tool_call', toolCallId: 'call_cancel_1' },
+    ]);
+    expect(textMessage.content).toBe('visible answer');
+    expect(textMessage.metadata?.contentSegments).toEqual([
+      { type: 'text', content: 'visible answer' },
+    ]);
+  });
+
   it('treats only task runner assistant outputs as task runner async messages', () => {
     expect(isTaskRunnerAsyncMessage({
       messageMode: 'task_runner_async_plan',

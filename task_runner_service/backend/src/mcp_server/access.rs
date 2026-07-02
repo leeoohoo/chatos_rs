@@ -4,7 +4,7 @@
 use crate::auth::CurrentUser;
 use crate::models::{
     normalize_project_id, AskUserPromptRecord, CreateTaskRequest, TaskListFilters, TaskRecord,
-    TaskRunRecord, TaskScheduleMode, TaskStatsResponse, TaskStatus, TASK_PROFILE_CHATOS_PLAN,
+    TaskRunRecord, TaskScheduleMode, TaskStatsResponse, TaskStatus,
 };
 
 use super::chatos_async_planner::require_chatos_async_source_context;
@@ -28,9 +28,7 @@ impl TaskRunnerMcpService {
             .task_service
             .list_tasks_filtered(TaskListFilters {
                 project_id,
-                task_profile: request_context
-                    .is_chatos_plan_task_profile()
-                    .then(|| TASK_PROFILE_CHATOS_PLAN.to_string()),
+                task_profile: Some(request_context.requested_task_profile().to_string()),
                 creator_user_id: if current_user.is_admin() {
                     None
                 } else {
@@ -331,12 +329,9 @@ fn ensure_task_profile_scope(
     task: &TaskRecord,
     request_context: &McpRequestContext,
 ) -> Result<(), String> {
-    if !request_context.is_chatos_plan_task_profile() {
-        return Ok(());
-    }
     if task
         .task_profile
-        .eq_ignore_ascii_case(TASK_PROFILE_CHATOS_PLAN)
+        .eq_ignore_ascii_case(request_context.requested_task_profile())
     {
         Ok(())
     } else {
