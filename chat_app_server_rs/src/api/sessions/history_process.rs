@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use crate::core::messages::is_session_summary_message as is_session_summary;
+use crate::core::messages::{
+    is_runtime_guidance_user_message, is_session_summary_message as is_session_summary,
+};
 use crate::models::message::Message;
 
 use super::history_process_support::{
@@ -53,7 +55,9 @@ pub(super) fn build_compact_history_messages(messages: Vec<Message>) -> Vec<Mess
     let user_indexes: Vec<usize> = messages
         .iter()
         .enumerate()
-        .filter_map(|(index, message)| (message.role == "user").then_some(index))
+        .filter_map(|(index, message)| {
+            (message.role == "user" && !is_runtime_guidance_user_message(message)).then_some(index)
+        })
         .collect();
 
     if user_indexes.is_empty() {

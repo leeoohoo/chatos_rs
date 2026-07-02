@@ -91,11 +91,13 @@ body {
 }
 
 .json-input textarea,
-.json-panel {
+.json-panel,
+.log-panel {
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace;
 }
 
-.json-panel {
+.json-panel,
+.log-panel {
   max-height: 420px;
   overflow: auto;
   margin: 0;
@@ -106,4 +108,5 @@ body {
   color: #e5e7eb;
   font-size: 12px;
   line-height: 1.6;
+  white-space: pre-wrap;
 }

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use axum::{
     extract::{Path, Query},
@@ -12,7 +12,7 @@ use serde_json::Value;
 use tracing::warn;
 
 use crate::core::auth::AuthUser;
-use crate::core::messages::{message_turn_id, MessageOut};
+use crate::core::messages::{is_runtime_guidance_user_message, message_turn_id, MessageOut};
 use crate::core::pagination::parse_positive_limit;
 use crate::core::session_access::{ensure_owned_session, map_session_access_error};
 use crate::models::message::Message;
@@ -35,6 +35,39 @@ use compact_merge::{
     merge_missing_project_requirement_execution_messages,
     merge_missing_project_requirement_execution_turn_items,
 };
+
+fn merge_missing_runtime_guidance_messages(
+    mut messages: Vec<Message>,
+    all_messages: &[Message],
+) -> Vec<Message> {
+    let existing_ids: HashSet<String> = messages.iter().map(|message| message.id.clone()).collect();
+    let visible_turn_ids: HashSet<String> = messages
+        .iter()
+        .filter_map(|message| message_turn_id(message).map(ToOwned::to_owned))
+        .collect();
+    let mut missing: Vec<Message> = all_messages
+        .iter()
+        .filter(|message| {
+            is_runtime_guidance_user_message(message)
+                && !existing_ids.contains(message.id.as_str())
+                && message_turn_id(message)
+                    .map(|turn_id| visible_turn_ids.contains(turn_id))
+                    .unwrap_or(false)
+        })
+        .cloned()
+        .collect();
+    if missing.is_empty() {
+        return messages;
+    }
+
+    messages.append(&mut missing);
+    messages.sort_by(|left, right| {
+        left.created_at
+            .cmp(&right.created_at)
+            .then_with(|| left.id.cmp(&right.id))
+    });
+    messages
+}
 
 async fn resolve_compact_history_before_turn_id(
     conversation_id: &str,
@@ -101,7 +134,9 @@ fn parse_compact_history_offset(
     let user_indexes: Vec<usize> = compact_messages
         .iter()
         .enumerate()
-        .filter_map(|(index, message)| (message.role == "user").then_some(index))
+        .filter_map(|(index, message)| {
+            (message.role == "user" && !is_runtime_guidance_user_message(message)).then_some(index)
+        })
         .collect();
     for (position, user_index) in user_indexes.iter().enumerate() {
         if crate::core::messages::message_turn_id(&compact_messages[*user_index]) != Some(before) {
@@ -204,6 +239,7 @@ pub(in crate::api::sessions) async fn get_session_compact_history(
                     &all_messages,
                     before_turn_id,
                 );
+                messages = merge_missing_runtime_guidance_messages(messages, &all_messages);
             }
             Err(err) => {
                 warn!(
@@ -282,6 +318,7 @@ fn find_user_index_for_turn_cursor(messages: &[Message], cursor: &str) -> Option
 
     messages.iter().position(|message| {
         message.role == "user"
+            && !is_runtime_guidance_user_message(message)
             && (message_turn_id(message) == Some(normalized) || message.id == normalized)
     })
 }
@@ -329,7 +366,9 @@ async fn build_fallback_user_message_turns_response(
     let user_indexes: Vec<usize> = messages
         .iter()
         .enumerate()
-        .filter_map(|(index, message)| (message.role == "user").then_some(index))
+        .filter_map(|(index, message)| {
+            (message.role == "user" && !is_runtime_guidance_user_message(message)).then_some(index)
+        })
         .collect();
     if user_indexes.is_empty() {
         return Ok(None);

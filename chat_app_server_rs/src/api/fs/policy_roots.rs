@@ -191,7 +191,7 @@ fn safe_path_component(value: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::user_path_component;
+    use super::{host_fs_roots_enabled_for, user_path_component};
 
     #[test]
     fn user_path_component_avoids_sanitization_collisions() {
@@ -204,26 +204,71 @@ mod tests {
         assert!(value.starts_with("user-1-"));
         assert!(value.len() > "user-1-".len());
     }
+
+    #[test]
+    fn host_fs_roots_default_to_enabled_outside_production() {
+        assert!(host_fs_roots_enabled_for(None, None));
+        assert!(host_fs_roots_enabled_for(Some("development"), None));
+        assert!(host_fs_roots_enabled_for(Some("test"), None));
+    }
+
+    #[test]
+    fn host_fs_roots_default_to_disabled_in_production() {
+        assert!(!host_fs_roots_enabled_for(Some("production"), None));
+        assert!(!host_fs_roots_enabled_for(Some(" production "), None));
+    }
+
+    #[test]
+    fn host_fs_roots_explicit_env_overrides_default() {
+        assert!(host_fs_roots_enabled_for(Some("production"), Some(true)));
+        assert!(!host_fs_roots_enabled_for(Some("development"), Some(false)));
+    }
 }
 
 fn host_fs_roots_enabled() -> bool {
-    env_bool("CHATOS_ENABLE_HOST_FS_ROOTS") || env_bool("FS_ENABLE_HOST_ROOTS")
+    if let Some(value) = env_bool_override("CHATOS_ENABLE_HOST_FS_ROOTS")
+        .or_else(|| env_bool_override("FS_ENABLE_HOST_ROOTS"))
+    {
+        return host_fs_roots_enabled_for(env::var("NODE_ENV").ok().as_deref(), Some(value));
+    }
+    host_fs_roots_enabled_for(env::var("NODE_ENV").ok().as_deref(), None)
+}
+
+fn host_fs_roots_enabled_for(node_env: Option<&str>, override_value: Option<bool>) -> bool {
+    if let Some(value) = override_value {
+        return value;
+    }
+    !is_production_env_value(node_env)
 }
 
 fn legacy_project_roots_enabled() -> bool {
     env_bool("CHATOS_ALLOW_LEGACY_PROJECT_ROOTS")
 }
 
+fn is_production_env_value(value: Option<&str>) -> bool {
+    value
+        .map(|value| value.trim().eq_ignore_ascii_case("production"))
+        .unwrap_or(false)
+}
+
+fn env_bool_override(key: &str) -> Option<bool> {
+    env::var(key)
+        .ok()
+        .map(|value| matches_env_bool(value.trim()))
+}
+
 fn env_bool(key: &str) -> bool {
     env::var(key)
         .ok()
-        .map(|value| {
-            matches!(
-                value.trim().to_ascii_lowercase().as_str(),
-                "1" | "true" | "yes" | "on"
-            )
-        })
+        .map(|value| matches_env_bool(value.trim()))
         .unwrap_or(false)
+}
+
+fn matches_env_bool(value: &str) -> bool {
+    matches!(
+        value.to_ascii_lowercase().as_str(),
+        "1" | "true" | "yes" | "on"
+    )
 }
 
 fn push_root(roots: &mut Vec<FsAllowedRoot>, candidate: PathBuf, kind: FsAllowedRootKind) {

@@ -104,31 +104,6 @@ When the repository root `.env` keeps `START_USER_SERVICE=1` and
 `CHATOS_USER_SERVICE_BASE_URL=http://127.0.0.1:39190`, the root
 `./restart_services.sh restart` flow will also start the local `user_service`.
 
-## Docker Compose
-
-Repository root `docker-compose.yml` now includes:
-
-- `user-service-backend`
-- `user-service-frontend`
-
-Start only the unified user service:
-
-```bash
-docker compose up -d user-service-backend user-service-frontend
-```
-
-Start it together with ChatOS:
-
-```bash
-docker compose up -d user-service-backend user-service-frontend backend frontend
-```
-
-Current limitation:
-
-- `docker compose config` is validated
-- actual Docker image build was not executed here because the local Docker daemon is currently unavailable
-- on the current Windows machine, direct `cargo run` can be blocked by Smart App Control / Code Integrity, so the WSL flow is the preferred Rust runtime path
-
 ## Default Admin
 
 On first startup the service creates a default `super_admin` account:

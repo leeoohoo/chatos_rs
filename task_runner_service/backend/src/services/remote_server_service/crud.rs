@@ -36,6 +36,9 @@ impl RemoteServerService {
     ) -> Result<RemoteServerRecord, String> {
         let now = now_rfc3339();
         let record = build_remote_server_record(input, creator, None, now)?;
+        if let Some(existing) = find_reusable_remote_server(&self.store, &record).await? {
+            return Ok(existing);
+        }
         self.store.save_remote_server(record).await
     }
 
@@ -101,5 +104,109 @@ impl RemoteServerService {
             return Err(format!("远程服务器仍被任务引用，暂时不能删除: {task_id}"));
         }
         self.store.delete_remote_server(id).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::{AppConfig, StoreMode};
+    use crate::models::UserRole;
+    use std::net::{IpAddr, Ipv4Addr};
+    use std::time::Duration;
+
+    fn test_config() -> AppConfig {
+        AppConfig {
+            host: IpAddr::V4(Ipv4Addr::LOCALHOST),
+            port: 0,
+            store_mode: StoreMode::Memory,
+            database_url: "memory://remote-server-service-test".to_string(),
+            memory_engine_base_url: None,
+            memory_engine_source_id: "task".to_string(),
+            memory_engine_operator_token: None,
+            default_tenant_id: "tenant".to_string(),
+            default_subject_id: "subject".to_string(),
+            default_workspace_dir: ".".to_string(),
+            memory_timeout: Duration::from_millis(1000),
+            execution_timeout: Duration::from_millis(1000),
+            scheduler_poll_interval: Duration::from_millis(1000),
+            auto_memory_summary: false,
+            default_task_execution_max_iterations: 1,
+            default_tool_result_model_max_chars: 1000,
+            default_tool_results_model_total_max_chars: 2000,
+            default_execution_environment_mode: "local".to_string(),
+            default_sandbox_manager_base_url: "http://127.0.0.1:8095".to_string(),
+            default_sandbox_lease_ttl_seconds: 7_200,
+            chatos_callback_url: None,
+            chatos_callback_secret: None,
+            internal_api_secret: None,
+            callback_timeout: Duration::from_millis(1000),
+            admin_username: "admin".to_string(),
+            admin_password: "admin".to_string(),
+            admin_display_name: "Admin".to_string(),
+            user_service_base_url: "http://127.0.0.1:39190".to_string(),
+            user_service_request_timeout: Duration::from_millis(5000),
+            project_service_base_url: None,
+            project_service_sync_secret: None,
+            project_service_request_timeout: Duration::from_millis(5000),
+        }
+    }
+
+    async fn test_service() -> RemoteServerService {
+        let config = test_config();
+        let store = AppStore::new(&config).await.expect("store");
+        RemoteServerService::new(store)
+    }
+
+    fn agent_user(owner_user_id: &str) -> CurrentUser {
+        CurrentUser {
+            id: format!("agent-{owner_user_id}"),
+            username: format!("agent-{owner_user_id}"),
+            display_name: format!("Agent {owner_user_id}"),
+            role: UserRole::Agent,
+            owner_user_id: Some(owner_user_id.to_string()),
+            owner_username: Some(format!("user-{owner_user_id}")),
+            owner_display_name: Some(format!("User {owner_user_id}")),
+        }
+    }
+
+    fn remote_server_request(name: &str) -> CreateRemoteServerRequest {
+        CreateRemoteServerRequest {
+            name: name.to_string(),
+            host: "8.155.171.124".to_string(),
+            port: Some(22),
+            username: "root".to_string(),
+            auth_type: "password".to_string(),
+            password: Some("secret".to_string()),
+            private_key_path: None,
+            certificate_path: None,
+            default_remote_path: None,
+            host_key_policy: Some("accept_new".to_string()),
+            enabled: Some(true),
+        }
+    }
+
+    #[tokio::test]
+    async fn create_remote_server_reuses_matching_existing_server() {
+        let service = test_service().await;
+        let creator = agent_user("owner-a");
+
+        let first = service
+            .create_remote_server(remote_server_request("first name"), Some(&creator))
+            .await
+            .expect("create first server");
+        let second = service
+            .create_remote_server(remote_server_request("second name"), Some(&creator))
+            .await
+            .expect("reuse matching server");
+
+        assert_eq!(second.id, first.id);
+        assert_eq!(second.name, first.name);
+        let servers = service
+            .store
+            .list_remote_servers()
+            .await
+            .expect("list remote servers");
+        assert_eq!(servers.len(), 1);
     }
 }

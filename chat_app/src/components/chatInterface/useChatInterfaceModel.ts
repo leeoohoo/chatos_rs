@@ -132,7 +132,7 @@ export const useChatInterfaceModel = ({
   const taskModelAttention = useMemo(() => store.aiModelConfigs.some((item) => (
     item.enabled
     && Boolean(item.model_name.trim())
-    && (!item.task_usage_scenario?.trim() || !item.task_thinking_level?.trim())
+    && !item.task_usage_scenario?.trim()
   )), [store.aiModelConfigs]);
 
   const conversation: ChatInterfaceConversationState = {

@@ -10,7 +10,7 @@
 - `task_runner_service/`：任务执行与 agent 运行时服务
 - `memory_engine/`：独立记忆微服务
 
-如果你只想快速跑起主界面，可以走 Docker 快速路径。
+如果你要部署到服务器，走宿主机安装脚本。
 如果你要做 Rust 开发，Windows 下优先走 WSL。
 
 ## 2. 按系统选安装方式
@@ -18,14 +18,13 @@
 | 系统 | 推荐方式 | 适用场景 |
 | --- | --- | --- |
 | Windows | WSL Ubuntu + 根级 `make` 命令 | 最推荐，适合本地开发和 Rust 调试 |
-| Windows | Docker Desktop | 只想快速跑 ChatOS + `user_service` |
-| macOS | 本机 Node + Rust + Docker/Mongo | 本地开发 |
-| Linux | 本机 Node + Rust + Docker/Mongo | 本地开发、联调、测试 |
-| Linux 服务器 | Docker 或 `server-install-nodocker.sh` | 服务器部署 |
+| macOS | 本机 Node + Rust + MongoDB | 本地开发 |
+| Linux | 本机 Node + Rust + MongoDB | 本地开发、联调、测试 |
+| Linux 服务器 | `server-install-nodocker.sh` + systemd + nginx | 服务器部署 |
 
 注意：
 
-- 当前 `scripts/docker-up.sh` / `docker-compose.yml` 主要覆盖 `chatos + user_service`，不是完整四个微服务全家桶。
+- 本仓库不再提供应用层 Docker/Compose 部署入口，避免误导生产运维。
 - 完整本地联调优先使用根目录 `make restart-all` 或 Windows 下 `make restart-all-wsl`。
 
 ## 3. 通用前置条件
@@ -38,7 +37,7 @@
 - Node.js 18 及以上，推荐 20 LTS
 - npm
 - Rust stable（通过 `rustup` 安装）
-- Docker / Docker Desktop
+- MongoDB（本地完整联调可以使用外部 MongoDB，或按下文 Linux 本地 Mongo 脚本准备）
 
 说明：
 
@@ -190,68 +189,18 @@ make restart-memory-engine-wsl
 - [WSL_RUST_DEV_FLOW_20260619.md](./WSL_RUST_DEV_FLOW_20260619.md)
 - [USER_SERVICE_LOCAL_RUNBOOK_20260619.md](./USER_SERVICE_LOCAL_RUNBOOK_20260619.md)
 
-## 6. Windows 备选方案：Docker Desktop
+## 6. 部署约定：不走 Docker 容器路径
 
-如果你只是想快速跑起主界面和统一用户服务，可以走 Docker。
+本仓库不再提供应用层 Dockerfile、Docker Compose 和 Docker 启动脚本。
 
-前提：
+生产/运维部署请按宿主机进程处理：
 
-- 已安装 Docker Desktop
-- 已启用 WSL2 backend 或 Docker 默认 Linux 容器模式
+- Linux 服务器：构建 release 产物后执行 `sudo bash scripts/server-install-nodocker.sh`
+- 服务托管：使用 systemd 管理后端进程
+- 前端托管：使用 nginx 指向 `chat_app/dist`
+- 数据库：使用宿主机或外部 MongoDB 服务
 
-### 6.1 初始化 Docker 用环境变量
-
-PowerShell：
-
-```powershell
-Copy-Item chat_app_server_rs/.env.example chat_app_server_rs/.env
-```
-
-然后把 `chat_app_server_rs/.env` 里的这项改掉：
-
-```env
-DATABASE_TYPE=sqlite
-```
-
-原因：
-
-- 当前 `docker-compose.yml` 没有内置 Mongo 服务
-- `chat_app_server_rs/.env.example` 默认是 `DATABASE_TYPE=mongodb`
-- 如果不改，backend 容器会去连一个并不存在的 Mongo
-
-### 6.2 启动容器
-
-PowerShell：
-
-```powershell
-docker compose --env-file chat_app_server_rs/.env up -d --build user-service-backend user-service-frontend backend frontend
-```
-
-如果你已经有 Bash，也可以直接用封装脚本：
-
-```bash
-bash scripts/docker-up.sh
-```
-
-### 6.3 访问地址
-
-Docker 快速路径默认地址：
-
-- ChatOS 前端：`http://127.0.0.1:8080`
-- ChatOS 后端：`http://127.0.0.1:3997`
-- `user_service` 前端：`http://127.0.0.1:39191`
-- `user_service` 后端：`http://127.0.0.1:39190`
-
-### 6.4 停止容器
-
-```powershell
-docker compose --env-file chat_app_server_rs/.env down
-```
-
-注意：
-
-- 这条路径当前不负责启动 `task_runner_service` 和 `memory_engine`
-- 需要完整微服务联调时，不要走这条路径
+如果未来确实需要容器化，请单独维护部署仓库或环境专属编排，避免和本仓库的宿主机部署方式混在一起。
 
 ## 7. macOS 本地安装
 
@@ -261,7 +210,6 @@ docker compose --env-file chat_app_server_rs/.env down
 
 ```bash
 brew install git make node
-brew install --cask docker
 curl https://sh.rustup.rs -sSf | sh -s -- -y
 source "$HOME/.cargo/env"
 rustup default stable
@@ -289,8 +237,7 @@ make stop-all
 说明：
 
 - `.env` 默认 `START_DEV_MONGO=auto`
-- 如果本机有 Docker，脚本会优先尝试自动拉起开发用 Mongo
-- 如果你不想依赖 Docker，就需要自己准备 Mongo，并把 `.env` 里的 `MONGODB_*`、`TASK_RUNNER_DATABASE_URL`、`MEMORY_ENGINE_MONGODB_URI` 改成你自己的地址
+- 建议准备本机或外部 MongoDB，并把 `.env` 里的 `MONGODB_*`、`TASK_RUNNER_DATABASE_URL`、`MEMORY_ENGINE_MONGODB_URI` 改成你自己的地址
 
 ## 8. Linux 本地安装
 
@@ -318,8 +265,7 @@ sudo apt-get install -y \
   lsof \
   net-tools \
   nodejs \
-  npm \
-  docker.io
+  npm
 curl https://sh.rustup.rs -sSf | sh -s -- -y
 source "$HOME/.cargo/env"
 rustup default stable
@@ -361,26 +307,9 @@ bash scripts/restart_local_mongo.sh stop
 
 ## 9. Linux 服务器部署
 
-### 9.1 Docker 路径
+### 9.1 宿主机路径
 
-适合快速把 `ChatOS + user_service` 部起来。
-
-```bash
-cp chat_app_server_rs/.env.example chat_app_server_rs/.env
-bash scripts/docker-up.sh
-```
-
-启动前请先确认：
-
-```env
-DATABASE_TYPE=sqlite
-```
-
-否则当前 compose 路径下的 backend 会因为找不到 Mongo 而启动失败。
-
-### 9.2 无 Docker 路径
-
-适合主 ChatOS 服务部署。
+适合主 ChatOS 服务部署，使用 systemd 管理后端进程，使用 nginx 托管前端静态文件。
 
 先构建产物：
 
@@ -416,12 +345,10 @@ sudo bash scripts/server-install-nodocker.sh
 - `memory_engine` frontend：`4178`
 - 开发用 MongoDB：`27018`
 
-### 10.2 Docker 快速路径
+### 10.2 服务器宿主机路径
 
-- ChatOS frontend：`8080`
-- ChatOS backend：`3997`
-- `user_service` frontend：`39191`
-- `user_service` backend：`39190`
+- ChatOS backend：默认 `13001`，可通过 `BACKEND_PORT` 覆盖
+- ChatOS frontend：由 nginx 对外暴露，默认走站点配置的 HTTP 入口
 
 ## 11. 常用命令
 
@@ -457,23 +384,15 @@ make stop-all-wsl
 当前机器可能被 `Smart App Control / Code Integrity` 拦截 Rust 产物执行。
 这种情况下直接改走 WSL，不要继续在原生 Windows 上硬顶。
 
-### 12.2 为什么 Docker 路径没有把全部微服务都拉起来
+### 12.2 为什么仓库里没有 Docker Compose 部署路径
 
-因为当前仓库里的 `docker-compose.yml` 主要覆盖的是：
-
-- `backend`
-- `frontend`
-- `user-service-backend`
-- `user-service-frontend`
-
-完整联调请用根目录本地脚本方案。
-
-另外，Docker 快速路径启动前请把 `chat_app_server_rs/.env` 的 `DATABASE_TYPE` 改成 `sqlite`，因为当前 compose 没有内置 Mongo。
+当前项目按宿主机部署设计，应用层 Dockerfile、Compose 和 Docker 启动脚本会误导运维，所以不在本仓库保留。
+完整联调请用根目录本地脚本方案，服务器部署请用 `scripts/server-install-nodocker.sh`。
 
 ### 12.3 根目录 `.env` 和 `chat_app_server_rs/.env` 有什么区别
 
 - 根目录 `.env`：给本地根级启动脚本用
-- `chat_app_server_rs/.env`：当前主要给 Docker 快速路径用
+- `chat_app_server_rs/.env`：给主后端专属配置覆盖使用
 
 ### 12.4 我要先看哪个入口
 
@@ -481,4 +400,4 @@ make stop-all-wsl
 
 - Windows 开发：先看 [WSL_RUST_DEV_FLOW_20260619.md](./WSL_RUST_DEV_FLOW_20260619.md)
 - 本地完整联调：直接从本文第 4 节开始
-- 只想快速起界面：直接走本文第 6 节 Docker 路径
+- 服务器部署：直接看本文第 9 节宿主机路径

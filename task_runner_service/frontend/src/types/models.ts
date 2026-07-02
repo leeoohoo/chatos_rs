@@ -70,7 +70,6 @@ export interface UpdateRuntimeSettingsPayload {
   execution_timeout_ms?: number;
   tool_result_model_max_chars?: number;
   tool_results_model_total_max_chars?: number;
-  execution_environment_mode?: 'local' | 'cloud' | string;
   sandbox_enabled?: boolean;
   sandbox_manager_base_url?: string;
   sandbox_lease_ttl_seconds?: number;

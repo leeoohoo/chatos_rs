@@ -71,7 +71,7 @@ impl SandboxBackend for DockerSandboxBackend {
             .arg("no-new-privileges")
             .arg("-v")
             .arg(format!("{}:/workspace:rw", spec.run_workspace))
-            .arg(&self.config.docker_image);
+            .arg(&spec.image);
         let output = command.output().await.map_err(|err| {
             format!("start docker sandbox failed: {err}; is docker installed and running?")
         })?;

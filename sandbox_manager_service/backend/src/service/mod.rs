@@ -2,6 +2,7 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 mod cleanup;
+mod images;
 mod manager;
 
 pub use manager::SandboxManager;

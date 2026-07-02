@@ -225,6 +225,8 @@ When these tools exist, they are the only standard entry point for remote SSH an
 `remote_connection_controller_run_command`
 `remote_connection_controller_list_directory`
 `remote_connection_controller_read_file`
+`remote_connection_controller_download_file`
+`remote_connection_controller_upload_file`
 
 Use them by default in these situations:
 1. The user mentions a server, remote machine, SSH, production environment, remote directory, remote logs, or remote configuration files.
@@ -236,6 +238,8 @@ Recommended order:
 3. Use `remote_connection_controller_run_command` for remote inspection or operations.
 4. Use `remote_connection_controller_list_directory` for remote directory structure.
 5. Use `remote_connection_controller_read_file` to read remote file contents.
+6. Use `remote_connection_controller_download_file` to download remote files; use `encoding=base64` for binary files.
+7. Use `remote_connection_controller_upload_file` to upload file content to remote hosts; use `encoding=base64` for binary content.
 
 Additional rules:
 1. Remote problems should not be handled with local terminal or local file tools.

@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use chatos_ai_runtime::model_config::{normalize_provider, normalize_thinking_level};
 use chatos_ai_runtime::ModelRuntimeConfig;
+use chatos_ai_runtime::model_config::{normalize_provider, normalize_thinking_level};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -77,6 +77,46 @@ fn is_openai_api_base_url(base_url: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::ModelConfigRecord;
+
+    #[test]
+    fn execution_environment_defaults_to_cloud_on_linux_only() {
+        assert_eq!(
+            super::default_execution_environment_mode_for_os("linux"),
+            "cloud"
+        );
+        assert_eq!(
+            super::default_execution_environment_mode_for_os("macos"),
+            "local"
+        );
+        assert_eq!(
+            super::default_execution_environment_mode_for_os("windows"),
+            "local"
+        );
+    }
+
+    #[test]
+    fn execution_environment_normalization_uses_platform_default_for_missing_or_invalid_values() {
+        assert_eq!(
+            super::normalize_execution_environment_mode_for_os(None, "linux"),
+            "cloud"
+        );
+        assert_eq!(
+            super::normalize_execution_environment_mode_for_os(Some(""), "linux"),
+            "cloud"
+        );
+        assert_eq!(
+            super::normalize_execution_environment_mode_for_os(Some("unknown"), "linux"),
+            "cloud"
+        );
+        assert_eq!(
+            super::normalize_execution_environment_mode_for_os(None, "macos"),
+            "local"
+        );
+        assert_eq!(
+            super::normalize_execution_environment_mode_for_os(Some("cloud"), "macos"),
+            "cloud"
+        );
+    }
 
     #[test]
     fn runtime_config_treats_custom_openai_base_url_as_compatible() {
@@ -238,19 +278,33 @@ pub struct UpdateRuntimeSettingsRequest {
 }
 
 pub fn normalize_execution_environment_mode(value: Option<&str>) -> String {
+    normalize_execution_environment_mode_for_os(value, std::env::consts::OS)
+}
+
+fn normalize_execution_environment_mode_for_os(value: Option<&str>, os: &str) -> String {
+    let default_mode = default_execution_environment_mode_for_os(os);
     match value
         .map(str::trim)
-        .unwrap_or("local")
+        .filter(|value| !value.is_empty())
+        .unwrap_or(default_mode)
         .to_ascii_lowercase()
         .as_str()
     {
         "cloud" => "cloud".to_string(),
-        _ => "local".to_string(),
+        "local" => "local".to_string(),
+        _ => default_mode.to_string(),
     }
 }
 
 pub fn default_execution_environment_mode() -> String {
-    "local".to_string()
+    default_execution_environment_mode_for_os(std::env::consts::OS).to_string()
+}
+
+fn default_execution_environment_mode_for_os(os: &str) -> &'static str {
+    match os {
+        "linux" => "cloud",
+        _ => "local",
+    }
 }
 
 pub fn default_sandbox_manager_base_url() -> String {

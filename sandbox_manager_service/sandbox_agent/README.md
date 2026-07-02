@@ -8,6 +8,15 @@ Build:
 docker build -t chatos-sandbox-agent:latest -f sandbox_manager_service/sandbox_agent/Dockerfile .
 ```
 
+Build a composed development image:
+
+```bash
+docker build -t chatos-sandbox-agent:dev-java17-python3.14-go1.26 \
+  -f sandbox_manager_service/sandbox_agent/Dockerfile \
+  --build-arg SANDBOX_FEATURES=java@17,python@3.14,go@1.26 \
+  .
+```
+
 Run locally:
 
 ```bash

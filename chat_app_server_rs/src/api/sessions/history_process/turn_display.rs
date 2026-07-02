@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use crate::core::messages::{is_session_summary_message as is_session_summary, message_turn_id};
+use crate::core::messages::{
+    is_runtime_guidance_user_message, is_session_summary_message as is_session_summary,
+    message_turn_id,
+};
 use crate::models::message::Message;
 
 use super::super::history_process_support::{
@@ -20,9 +23,11 @@ pub(super) fn find_user_index_by_turn_id(messages: &[Message], turn_id: &str) ->
         return None;
     }
 
-    messages
-        .iter()
-        .position(|message| message.role == "user" && message_turn_id(message) == Some(normalized))
+    messages.iter().position(|message| {
+        message.role == "user"
+            && !is_runtime_guidance_user_message(message)
+            && message_turn_id(message) == Some(normalized)
+    })
 }
 
 fn build_turn_process_messages(messages: &[Message], user_index: usize) -> Vec<Message> {
@@ -31,7 +36,9 @@ fn build_turn_process_messages(messages: &[Message], user_index: usize) -> Vec<M
         .iter()
         .enumerate()
         .skip(user_index + 1)
-        .find_map(|(index, message)| (message.role == "user").then_some(index))
+        .find_map(|(index, message)| {
+            (message.role == "user" && !is_runtime_guidance_user_message(message)).then_some(index)
+        })
         .unwrap_or(messages.len());
 
     let final_assistant_index =
@@ -79,7 +86,9 @@ pub(super) fn build_turn_display_messages(messages: &[Message], user_index: usiz
         .iter()
         .enumerate()
         .skip(user_index + 1)
-        .find_map(|(index, message)| (message.role == "user").then_some(index))
+        .find_map(|(index, message)| {
+            (message.role == "user" && !is_runtime_guidance_user_message(message)).then_some(index)
+        })
         .unwrap_or(messages.len());
 
     let final_assistant_index =

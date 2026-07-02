@@ -9,6 +9,7 @@ import { DashboardPage } from './pages/DashboardPage';
 import { McpTestPage } from './pages/McpTestPage';
 import { PoolPage } from './pages/PoolPage';
 import { SandboxDetailPage } from './pages/SandboxDetailPage';
+import { SandboxImagesPage } from './pages/SandboxImagesPage';
 import { SandboxesPage } from './pages/SandboxesPage';
 import { SettingsPage } from './pages/SettingsPage';
 
@@ -21,6 +22,7 @@ export function App() {
         <Route path="/sandboxes" element={<SandboxesPage />} />
         <Route path="/sandboxes/:sandboxId" element={<SandboxDetailPage />} />
         <Route path="/pool" element={<PoolPage />} />
+        <Route path="/images" element={<SandboxImagesPage />} />
         <Route path="/mcp-test" element={<McpTestPage />} />
         <Route path="/create" element={<CreateSandboxPage />} />
         <Route path="/settings" element={<SettingsPage />} />

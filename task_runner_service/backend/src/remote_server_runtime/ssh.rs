@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use std::io::Read;
+use std::io::{Read, Write};
 use std::path::Path as FsPath;
 use std::time::Duration as StdDuration;
 
-use ssh2::{KeyboardInteractivePrompt, Prompt, Session};
+use ssh2::{KeyboardInteractivePrompt, OpenFlags, OpenType, Prompt, Session, Sftp};
 use tokio::task;
 use tokio::time::Duration;
 
@@ -86,6 +86,51 @@ pub(super) async fn run_ssh_command(
     .map_err(|err| format!("SSH 命令线程执行失败: {err}"))?
 }
 
+pub(super) struct SftpDownloadResult {
+    pub(super) content: Vec<u8>,
+    pub(super) source_size: Option<u64>,
+    pub(super) truncated: bool,
+}
+
+pub(super) async fn download_sftp_file(
+    server: &RemoteServerRecord,
+    remote_path: &str,
+    max_bytes: usize,
+    timeout_duration: Duration,
+) -> Result<SftpDownloadResult, String> {
+    let server = server.clone();
+    let remote_path = remote_path.to_string();
+    task::spawn_blocking(move || {
+        download_sftp_file_blocking(&server, remote_path.as_str(), max_bytes, timeout_duration)
+    })
+    .await
+    .map_err(|err| format!("SFTP 下载线程执行失败: {err}"))?
+}
+
+pub(super) async fn upload_sftp_file(
+    server: &RemoteServerRecord,
+    remote_path: &str,
+    content: Vec<u8>,
+    create_parent_dirs: bool,
+    overwrite: bool,
+    timeout_duration: Duration,
+) -> Result<usize, String> {
+    let server = server.clone();
+    let remote_path = remote_path.to_string();
+    task::spawn_blocking(move || {
+        upload_sftp_file_blocking(
+            &server,
+            remote_path.as_str(),
+            content.as_slice(),
+            create_parent_dirs,
+            overwrite,
+            timeout_duration,
+        )
+    })
+    .await
+    .map_err(|err| format!("SFTP 上传线程执行失败: {err}"))?
+}
+
 fn run_ssh_command_blocking(
     server: &RemoteServerRecord,
     remote_command: &str,
@@ -117,6 +162,134 @@ fn run_ssh_command_blocking(
             Err(format!("SSH 命令失败，exit={exit_code}"))
         }
     }
+}
+
+fn download_sftp_file_blocking(
+    server: &RemoteServerRecord,
+    remote_path: &str,
+    max_bytes: usize,
+    timeout_duration: Duration,
+) -> Result<SftpDownloadResult, String> {
+    let session = connect_ssh_session(server, timeout_duration)?;
+    let sftp = session
+        .sftp()
+        .map_err(|err| format!("初始化 SFTP 失败: {err}"))?;
+    let path = FsPath::new(remote_path);
+    let source_size = sftp.stat(path).ok().and_then(|stat| stat.size);
+    let mut file = sftp
+        .open(path)
+        .map_err(|err| format!("打开远程文件失败: {err}"))?;
+    let mut content = Vec::new();
+    let read_limit = max_bytes.saturating_add(1) as u64;
+    std::io::Read::by_ref(&mut file)
+        .take(read_limit)
+        .read_to_end(&mut content)
+        .map_err(|err| format!("读取远程文件失败: {err}"))?;
+
+    let read_past_limit = content.len() > max_bytes;
+    if read_past_limit {
+        content.truncate(max_bytes);
+    }
+    let truncated = read_past_limit || source_size.is_some_and(|size| size > max_bytes as u64);
+
+    Ok(SftpDownloadResult {
+        content,
+        source_size,
+        truncated,
+    })
+}
+
+fn upload_sftp_file_blocking(
+    server: &RemoteServerRecord,
+    remote_path: &str,
+    content: &[u8],
+    create_parent_dirs: bool,
+    overwrite: bool,
+    timeout_duration: Duration,
+) -> Result<usize, String> {
+    let session = connect_ssh_session(server, timeout_duration)?;
+    let sftp = session
+        .sftp()
+        .map_err(|err| format!("初始化 SFTP 失败: {err}"))?;
+    let path = FsPath::new(remote_path);
+
+    if create_parent_dirs {
+        ensure_sftp_parent_dirs(&sftp, remote_path)?;
+    }
+    if !overwrite && sftp.stat(path).is_ok() {
+        return Err(format!(
+            "远程文件已存在: {remote_path}。如需覆盖，请设置 overwrite=true"
+        ));
+    }
+
+    let mut file = sftp
+        .open_mode(
+            path,
+            OpenFlags::WRITE | OpenFlags::TRUNCATE,
+            0o644,
+            OpenType::File,
+        )
+        .map_err(|err| format!("打开远程写入文件失败: {err}"))?;
+    file.write_all(content)
+        .map_err(|err| format!("写入远程文件失败: {err}"))?;
+    file.flush()
+        .map_err(|err| format!("刷新远程文件失败: {err}"))?;
+    Ok(content.len())
+}
+
+fn ensure_sftp_parent_dirs(sftp: &Sftp, remote_path: &str) -> Result<(), String> {
+    let Some(parent) = remote_parent_dir(remote_path) else {
+        return Ok(());
+    };
+    ensure_sftp_dir(sftp, parent.as_str())
+}
+
+fn remote_parent_dir(remote_path: &str) -> Option<String> {
+    let trimmed = remote_path.trim_end_matches('/');
+    let (parent, _) = trimmed.rsplit_once('/')?;
+    if parent.is_empty() {
+        Some("/".to_string())
+    } else {
+        Some(parent.to_string())
+    }
+}
+
+fn ensure_sftp_dir(sftp: &Sftp, dir: &str) -> Result<(), String> {
+    let trimmed = dir.trim();
+    if trimmed.is_empty() || trimmed == "." || trimmed == "/" {
+        return Ok(());
+    }
+
+    let absolute = trimmed.starts_with('/');
+    let mut current = if absolute {
+        "/".to_string()
+    } else {
+        String::new()
+    };
+
+    for part in trimmed.split('/').filter(|part| {
+        let part = part.trim();
+        !part.is_empty() && part != "."
+    }) {
+        current = if current.is_empty() {
+            part.to_string()
+        } else if current == "/" {
+            format!("/{part}")
+        } else {
+            format!("{current}/{part}")
+        };
+
+        let path = FsPath::new(current.as_str());
+        if sftp.stat(path).is_ok() {
+            continue;
+        }
+        if let Err(err) = sftp.mkdir(path, 0o755) {
+            if sftp.stat(path).is_err() {
+                return Err(format!("创建远程目录失败 {}: {err}", current));
+            }
+        }
+    }
+    Ok(())
 }
 
 fn read_ssh_stream_limited<R: Read>(reader: &mut R, stream_label: &str) -> Result<Vec<u8>, String> {

@@ -65,21 +65,31 @@ impl TaskService {
                 mcp_config.workspace_dir.as_deref(),
             )?;
         }
-        let passthrough_remote_server =
-            if let Some(remote_server_config) = source_context.remote_server_config.clone() {
-                Some(build_remote_server_record(
-                    remote_server_config,
-                    creator,
-                    Some(id.clone()),
-                    now.clone(),
-                )?)
+        let mut passthrough_remote_server_to_save = None;
+        let passthrough_remote_server_id = if let Some(remote_server_config) =
+            source_context.remote_server_config.clone()
+        {
+            let remote_server = build_remote_server_record(
+                remote_server_config,
+                creator,
+                Some(id.clone()),
+                now.clone(),
+            )?;
+            if let Some(existing) = find_reusable_remote_server(&self.store, &remote_server).await?
+            {
+                Some(existing.id)
             } else {
-                None
-            };
-        if let Some(remote_server) = passthrough_remote_server.as_ref() {
-            mcp_config.default_remote_server_id = Some(remote_server.id.clone());
+                let remote_server_id = remote_server.id.clone();
+                passthrough_remote_server_to_save = Some(remote_server);
+                Some(remote_server_id)
+            }
+        } else {
+            None
+        };
+        if let Some(remote_server_id) = passthrough_remote_server_id.as_ref() {
+            mcp_config.default_remote_server_id = Some(remote_server_id.clone());
         }
-        if passthrough_remote_server.is_none() {
+        if passthrough_remote_server_id.is_none() {
             self.validate_task_mcp_config(&mcp_config, creator, task_owner_user_id.as_deref())
                 .await?;
         } else {
@@ -146,7 +156,7 @@ impl TaskService {
             "task runner created task with MCP selection"
         );
         self.ensure_task_thread(&task).await?;
-        if let Some(remote_server) = passthrough_remote_server {
+        if let Some(remote_server) = passthrough_remote_server_to_save {
             self.store.save_remote_server(remote_server).await?;
         }
         let saved = self.store.save_task(task).await?;
@@ -162,7 +172,7 @@ impl TaskService {
 mod tests {
     use super::*;
     use crate::config::{AppConfig, StoreMode};
-    use crate::models::UserRole;
+    use crate::models::{CreateRemoteServerRequest, UserRole};
     use std::net::{IpAddr, Ipv4Addr};
     use std::time::Duration;
 
@@ -268,6 +278,22 @@ mod tests {
         }
     }
 
+    fn remote_server_request(name: &str) -> CreateRemoteServerRequest {
+        CreateRemoteServerRequest {
+            name: name.to_string(),
+            host: "8.155.171.124".to_string(),
+            port: Some(22),
+            username: "root".to_string(),
+            auth_type: "password".to_string(),
+            password: Some("secret".to_string()),
+            private_key_path: None,
+            certificate_path: None,
+            default_remote_path: None,
+            host_key_policy: Some("accept_new".to_string()),
+            enabled: Some(true),
+        }
+    }
+
     async fn create_task_with_project(
         service: &TaskService,
         project_id: Option<&str>,
@@ -336,6 +362,54 @@ mod tests {
             .expect_err("missing project should be rejected");
 
         assert!(err.contains("项目不存在"));
+    }
+
+    #[tokio::test]
+    async fn create_task_reuses_matching_passthrough_remote_server() {
+        let service = test_service().await;
+        let creator = agent_user("owner-a");
+
+        let first = service
+            .create_task(
+                create_task_request("remote task one"),
+                Some(&creator),
+                Some(TaskSourceContext {
+                    remote_server_config: Some(remote_server_request("task runner remote")),
+                    ..TaskSourceContext::default()
+                }),
+            )
+            .await
+            .expect("create first remote task");
+        let first_server_id = first
+            .mcp_config
+            .default_remote_server_id
+            .clone()
+            .expect("first remote server id");
+
+        let second = service
+            .create_task(
+                create_task_request("remote task two"),
+                Some(&creator),
+                Some(TaskSourceContext {
+                    remote_server_config: Some(remote_server_request("different display name")),
+                    ..TaskSourceContext::default()
+                }),
+            )
+            .await
+            .expect("create second remote task");
+
+        assert_eq!(
+            second.mcp_config.default_remote_server_id.as_deref(),
+            Some(first_server_id.as_str())
+        );
+        let servers = service
+            .store
+            .list_remote_servers()
+            .await
+            .expect("list remote servers");
+        assert_eq!(servers.len(), 1);
+        assert_eq!(servers[0].id, first_server_id);
+        assert_eq!(servers[0].task_id.as_deref(), Some(first.id.as_str()));
     }
 
     #[tokio::test]

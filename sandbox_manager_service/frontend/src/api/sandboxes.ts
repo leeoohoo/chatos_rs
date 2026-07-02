@@ -4,7 +4,10 @@
 import type {
   CreateSandboxLeasePayload,
   CreateSandboxLeaseResponse,
+  InitializeSandboxImagePayload,
   PoolStatusResponse,
+  SandboxImageCatalogResponse,
+  SandboxImageJobRecord,
   SandboxEventRecord,
   SandboxHealthResponse,
   SandboxLeaseRecord,
@@ -35,6 +38,13 @@ export const sandboxesApi = {
       method: 'POST',
       body: JSON.stringify(payload),
     }),
+  images: () => request<SandboxImageCatalogResponse>('/api/sandbox-images'),
+  initializeImage: (payload: InitializeSandboxImagePayload) =>
+    request<SandboxImageJobRecord>('/api/sandbox-images/initialize', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+  imageJobs: () => request<SandboxImageJobRecord[]>('/api/sandbox-images/jobs'),
   get: (sandboxId: string) => request<SandboxLeaseRecord>(`/api/sandboxes/${sandboxId}`),
   events: (sandboxId: string) =>
     request<SandboxEventRecord[]>(`/api/sandboxes/${sandboxId}/events`),

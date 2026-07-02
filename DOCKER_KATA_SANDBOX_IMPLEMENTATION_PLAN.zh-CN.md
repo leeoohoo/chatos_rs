@@ -220,7 +220,7 @@ SANDBOX_MANAGER_BACKEND=auto 或未配置
   -> std::env::consts::OS == "windows" => docker
 ```
 
-这样不依赖启动脚本。无论通过 `cargo run`、systemd、Docker Compose 还是开发脚本启动，选择逻辑都一致。
+这样不依赖启动脚本。无论通过 `cargo run`、systemd 还是开发脚本启动，选择逻辑都一致。
 
 ## 工作区模型
 

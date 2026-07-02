@@ -33,11 +33,17 @@ import {
   replaceOptimisticUserMessageId,
   setTaskRunnerAsyncUserMessageStatus,
 } from './sendMessage/sessionState';
+import { normalizePersistedMessage } from './sendMessage/persistedTurnMessages';
 import {
   mergeSessionRuntimeIntoMetadata,
   readSessionRuntimeFromMetadata,
 } from '../helpers/sessionRuntime';
 import { PUBLIC_PROJECT_ID } from '../../domain/contactSessions';
+import {
+  cloneStreamingMessageDraft,
+  extractCompactHistoryMessages,
+  writeSessionMessagesCache,
+} from './sessionsUtils';
 import type {
   ChatStoreGet,
   ChatStoreSet,
@@ -50,6 +56,21 @@ const REALTIME_STREAM_CONNECT_GRACE_MS = 2200;
 const hasConcreteProjectContext = (projectId: string | null | undefined): boolean => {
   const normalized = typeof projectId === 'string' ? projectId.trim() : '';
   return normalized.length > 0 && normalized !== '0' && normalized !== PUBLIC_PROJECT_ID;
+};
+
+const mergeMessageByIdAndTime = (messages: Message[] = [], nextMessage: Message): Message[] => {
+  const next = [...messages.filter((message) => message.id !== nextMessage.id), nextMessage];
+  return next
+    .map((message, index) => ({ message, index }))
+    .sort((left, right) => {
+      const leftTime = left.message.createdAt instanceof Date ? left.message.createdAt.getTime() : 0;
+      const rightTime = right.message.createdAt instanceof Date ? right.message.createdAt.getTime() : 0;
+      if (Number.isFinite(leftTime) && Number.isFinite(rightTime) && leftTime !== rightTime) {
+        return leftTime - rightTime;
+      }
+      return left.index - right.index;
+    })
+    .map(({ message }) => message);
 };
 
 const loadAttachmentTotalMaxBytes = async (
@@ -104,7 +125,86 @@ export function createSendMessageHandler({
     // 检查是否已经在发送消息，防止重复发送
     const chatState = sessionChatState[currentSessionId] || createDefaultSessionChatState();
     if (chatState.isLoading || chatState.isStreaming || chatState.isStopping) {
-      debugLog('Message sending already in progress, ignoring duplicate request');
+      const activeTurnId = typeof chatState.activeTurnId === 'string'
+        ? chatState.activeTurnId.trim()
+        : '';
+      if (!activeTurnId) {
+        debugLog('Message sending already in progress but no active turn is available');
+        return;
+      }
+
+      try {
+        const userId = getUserIdParam();
+        const attachmentTotalMaxBytes = await loadAttachmentTotalMaxBytes(client, userId);
+        const { previewAttachments, apiAttachments } = await prepareAttachmentsForStreaming(
+          attachments,
+          true,
+          {
+            dropImagesWhenUnsupported: false,
+            maxTotalBytes: attachmentTotalMaxBytes,
+          },
+        );
+        assertPayloadWithinTransportBudget({
+          conversation_id: currentSessionId,
+          turn_id: activeTurnId,
+          content,
+          attachments: apiAttachments || [],
+        }, requestPayloadMaxBytesForAttachmentTotalLimit(attachmentTotalMaxBytes));
+
+        const guidanceResponse = await client.sendRuntimeGuidance(
+          currentSessionId,
+          activeTurnId,
+          content,
+          apiAttachments,
+        );
+        if (guidanceResponse?.accepted === false) {
+          throw new Error('追加指令未被接受');
+        }
+
+        const guidanceMessage = normalizePersistedMessage(
+          guidanceResponse?.message,
+          currentSessionId,
+        );
+        if (guidanceMessage) {
+          const displayGuidanceMessage: Message = previewAttachments.length > 0
+            ? {
+                ...guidanceMessage,
+                metadata: {
+                  ...(guidanceMessage.metadata || {}),
+                  attachments: previewAttachments.map((attachment) => ({
+                    ...attachment,
+                    messageId: guidanceMessage.id,
+                  })),
+                },
+              }
+            : guidanceMessage;
+          set((state) => {
+            if (state.currentSessionId === currentSessionId) {
+              state.messages = mergeMessageByIdAndTime(state.messages || [], displayGuidanceMessage);
+            }
+
+            const cached = state.sessionMessagesCache?.[currentSessionId];
+            const cachedMessages = cached?.messages || [];
+            const mergedCachedMessages = mergeMessageByIdAndTime(cachedMessages, displayGuidanceMessage);
+            writeSessionMessagesCache(state, currentSessionId, {
+              messages: cloneStreamingMessageDraft(extractCompactHistoryMessages(mergedCachedMessages)),
+              nextBefore: state.sessionMessagePaginationState?.[currentSessionId]?.nextBefore
+                ?? cached?.nextBefore
+                ?? null,
+              loaded: cached?.loaded ?? state.sessionMessagePaginationState?.[currentSessionId]?.loaded ?? true,
+            });
+          });
+        }
+
+        debugLog('✅ 追加指令已提交到当前运行中的轮次');
+      } catch (error) {
+        const readableError = error instanceof Error ? error.message : '追加指令发送失败';
+        console.error('❌ 追加指令发送失败:', readableError, error);
+        set((state) => {
+          state.error = readableError;
+        });
+        throw new Error(readableError);
+      }
       return;
     }
 

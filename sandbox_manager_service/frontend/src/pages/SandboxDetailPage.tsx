@@ -86,6 +86,9 @@ export function SandboxDetailPage() {
           </Descriptions.Item>
           <Descriptions.Item label={t('common.backend')}>{sandbox?.backend ?? '-'}</Descriptions.Item>
           <Descriptions.Item label={t('health.backendId')}>{sandbox?.backend_id ?? '-'}</Descriptions.Item>
+          <Descriptions.Item label={t('common.image')} span={2}>
+            <Typography.Text copyable>{sandbox?.image_ref ?? '-'}</Typography.Text>
+          </Descriptions.Item>
           <Descriptions.Item label={t('common.lease')}>{sandbox?.id ?? '-'}</Descriptions.Item>
           <Descriptions.Item label={t('common.sandbox')}>{sandbox?.sandbox_id ?? '-'}</Descriptions.Item>
           <Descriptions.Item label={t('common.tenant')}>{sandbox?.tenant_id ?? '-'}</Descriptions.Item>

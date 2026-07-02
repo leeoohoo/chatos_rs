@@ -3,12 +3,15 @@
 
 use std::cmp::Ordering;
 
+use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
+use base64::Engine as _;
 use serde::Serialize;
 use serde_json::{json, Value};
 use tokio::time::Duration;
 
 use crate::api::remote_connections::{
-    resolve_jump_connection_snapshot, run_remote_connectivity_test, run_ssh_command,
+    download_remote_file_bytes, resolve_jump_connection_snapshot, run_remote_connectivity_test,
+    run_ssh_command, upload_remote_file_bytes,
 };
 use crate::models::remote_connection::{RemoteConnection, RemoteConnectionService};
 
@@ -219,6 +222,97 @@ pub(super) async fn read_file_with_context(
         "source_size_bytes": source_size,
         "truncated": truncated,
         "content": content,
+    }))
+}
+
+pub(super) async fn download_file_with_context(
+    ctx: BoundContext,
+    explicit_connection_id: Option<String>,
+    path: String,
+    encoding: String,
+    max_bytes: Option<usize>,
+) -> Result<Value, String> {
+    let connection = resolve_owned_connection(&ctx, explicit_connection_id).await?;
+    let normalized_path = normalize_remote_path(path.as_str());
+    let transfer_limit = max_bytes
+        .unwrap_or(ctx.max_read_file_bytes)
+        .clamp(1, ctx.max_read_file_bytes.max(1));
+    let resolved_connection = resolve_jump_connection_snapshot(&connection).await?;
+    let result = download_remote_file_bytes(
+        &resolved_connection,
+        normalized_path.as_str(),
+        transfer_limit,
+        Duration::from_secs(ctx.command_timeout_seconds),
+    )
+    .await?;
+    let content_size_bytes = result.content.len();
+    let content = match encoding.as_str() {
+        "base64" => BASE64_STANDARD.encode(result.content.as_slice()),
+        "text" => String::from_utf8(result.content).map_err(|_| {
+            "远程文件不是有效 UTF-8 文本；请使用 encoding=\"base64\" 重新下载".to_string()
+        })?,
+        _ => return Err("encoding must be one of: text, base64".to_string()),
+    };
+    let _ = RemoteConnectionService::touch(&connection.id).await;
+
+    Ok(json!({
+        "connection_id": connection.id,
+        "path": normalized_path,
+        "encoding": encoding,
+        "max_bytes": transfer_limit,
+        "source_size_bytes": result.source_size,
+        "content_size_bytes": content_size_bytes,
+        "truncated": result.truncated,
+        "content": content,
+    }))
+}
+
+pub(super) async fn upload_file_with_context(
+    ctx: BoundContext,
+    explicit_connection_id: Option<String>,
+    path: String,
+    content: String,
+    encoding: String,
+    create_parent_dirs: bool,
+    overwrite: bool,
+) -> Result<Value, String> {
+    let connection = resolve_owned_connection(&ctx, explicit_connection_id).await?;
+    let normalized_path = normalize_remote_path(path.as_str());
+    let bytes = match encoding.as_str() {
+        "base64" => BASE64_STANDARD
+            .decode(content.as_bytes())
+            .map_err(|err| format!("content 不是有效 base64: {err}"))?,
+        "text" => content.into_bytes(),
+        _ => return Err("encoding must be one of: text, base64".to_string()),
+    };
+    let max_upload_bytes = ctx.max_read_file_bytes.max(1);
+    if bytes.len() > max_upload_bytes {
+        return Err(format!(
+            "上传内容超过限制: {} bytes > {} bytes",
+            bytes.len(),
+            max_upload_bytes
+        ));
+    }
+
+    let resolved_connection = resolve_jump_connection_snapshot(&connection).await?;
+    let bytes_written = upload_remote_file_bytes(
+        &resolved_connection,
+        normalized_path.as_str(),
+        bytes,
+        create_parent_dirs,
+        overwrite,
+        Duration::from_secs(ctx.command_timeout_seconds),
+    )
+    .await?;
+    let _ = RemoteConnectionService::touch(&connection.id).await;
+
+    Ok(json!({
+        "connection_id": connection.id,
+        "path": normalized_path,
+        "encoding": encoding,
+        "bytes_written": bytes_written,
+        "create_parent_dirs": create_parent_dirs,
+        "overwrite": overwrite,
     }))
 }
 

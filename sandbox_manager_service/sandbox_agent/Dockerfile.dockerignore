@@ -3,11 +3,15 @@
 
 **
 !Cargo.lock
+!BUILTIN_MCP_PROMPT.en-US.md
+!BUILTIN_MCP_PROMPT.zh-CN.md
 !crates
 !crates/chatos_builtin_tools
 !crates/chatos_builtin_tools/**
 !crates/chatos_mcp_runtime
 !crates/chatos_mcp_runtime/**
 !sandbox_manager_service
+!sandbox_manager_service/sandbox_agent
+!sandbox_manager_service/sandbox_agent/Cargo.workspace.toml
 !sandbox_manager_service/sandbox_mcp_server
 !sandbox_manager_service/sandbox_mcp_server/**

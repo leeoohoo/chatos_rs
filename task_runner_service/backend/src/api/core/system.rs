@@ -74,6 +74,11 @@ pub(in crate::api) async fn update_system_config_handler(
         .execution_timeout_ms
         .filter(|value| *value > 0)
         .unwrap_or(state.config.execution_timeout.as_millis() as u64);
+    let execution_environment_mode = state
+        .task_service
+        .effective_execution_environment_mode()
+        .await
+        .map_err(ApiError::bad_request)?;
     Ok(Json(system_config(
         &state.config,
         execution_timeout_ms,
@@ -82,9 +87,7 @@ pub(in crate::api) async fn update_system_config_handler(
             settings.tool_result_model_max_chars,
             settings.tool_results_model_total_max_chars,
         ),
-        crate::models::normalize_execution_environment_mode(Some(
-            settings.execution_environment_mode.as_str(),
-        )),
+        execution_environment_mode,
         settings.sandbox_enabled,
         settings.sandbox_manager_base_url,
         settings.sandbox_lease_ttl_seconds,

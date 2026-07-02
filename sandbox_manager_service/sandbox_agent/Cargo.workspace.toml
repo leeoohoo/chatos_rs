@@ -1,0 +1,10 @@
+# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+# Required Notice: Copyright (c) 2025 AI Chat Team
+
+[workspace]
+members = [
+  "crates/chatos_builtin_tools",
+  "crates/chatos_mcp_runtime",
+  "sandbox_manager_service/sandbox_mcp_server",
+]
+resolver = "2"

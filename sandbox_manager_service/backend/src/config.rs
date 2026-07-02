@@ -41,6 +41,9 @@ pub struct AppConfig {
     pub kata_runtime: String,
     pub kata_image: String,
     pub kata_network_mode: String,
+    pub image_tag_prefix: String,
+    pub image_build_context: PathBuf,
+    pub image_dockerfile: PathBuf,
 }
 
 impl AppConfig {
@@ -63,6 +66,17 @@ impl AppConfig {
             env_parse("SANDBOX_MANAGER_CLEANUP_INTERVAL_SECONDS").unwrap_or(30);
         let docker_image = normalized_env("SANDBOX_MANAGER_DOCKER_IMAGE")
             .unwrap_or_else(|| "chatos-sandbox-agent:latest".to_string());
+        let image_build_context = normalized_env("SANDBOX_MANAGER_IMAGE_BUILD_CONTEXT")
+            .map(PathBuf::from)
+            .unwrap_or_else(default_image_build_context);
+        let image_dockerfile = normalized_env("SANDBOX_MANAGER_IMAGE_DOCKERFILE")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| {
+                image_build_context
+                    .join("sandbox_manager_service")
+                    .join("sandbox_agent")
+                    .join("Dockerfile")
+            });
 
         Ok(Self {
             host,
@@ -90,6 +104,10 @@ impl AppConfig {
             kata_image: normalized_env("SANDBOX_MANAGER_KATA_IMAGE").unwrap_or(docker_image),
             kata_network_mode: normalized_env("SANDBOX_MANAGER_KATA_NETWORK")
                 .unwrap_or_else(|| "bridge".to_string()),
+            image_tag_prefix: normalized_env("SANDBOX_MANAGER_IMAGE_TAG_PREFIX")
+                .unwrap_or_else(|| "chatos-sandbox-agent".to_string()),
+            image_build_context,
+            image_dockerfile,
         })
     }
 
@@ -169,6 +187,14 @@ fn default_database_url() -> String {
 
 fn default_work_root() -> PathBuf {
     PathBuf::from(".chatos").join("sandboxes")
+}
+
+fn default_image_build_context() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(Path::parent)
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| PathBuf::from("."))
 }
 
 fn default_backend_for_current_os() -> SandboxBackendKind {

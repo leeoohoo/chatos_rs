@@ -4,6 +4,7 @@
 import {
   AppstoreOutlined,
   ApiOutlined,
+  CloudDownloadOutlined,
   DashboardOutlined,
   PlusCircleOutlined,
   SettingOutlined,
@@ -56,6 +57,11 @@ export function AppShell() {
               label: <Link to="/pool">{t('nav.pool')}</Link>,
             },
             {
+              key: '/images',
+              icon: <CloudDownloadOutlined />,
+              label: <Link to="/images">{t('nav.images')}</Link>,
+            },
+            {
               key: '/create',
               icon: <PlusCircleOutlined />,
               label: <Link to="/create">{t('nav.create')}</Link>,
@@ -98,6 +104,9 @@ function selectedNavKey(pathname: string): string {
   }
   if (pathname.startsWith('/pool')) {
     return '/pool';
+  }
+  if (pathname.startsWith('/images')) {
+    return '/images';
   }
   if (pathname.startsWith('/mcp-test')) {
     return '/mcp-test';

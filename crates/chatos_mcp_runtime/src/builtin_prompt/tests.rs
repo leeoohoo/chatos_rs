@@ -115,6 +115,20 @@ fn includes_project_management_section_when_selected() {
 }
 
 #[test]
+fn remote_connection_prompt_lists_file_transfer_tools() {
+    let prompt = compose_builtin_mcp_system_prompt(
+        &[build_builtin_server(
+            BuiltinMcpKind::RemoteConnectionController,
+        )],
+        BuiltinMcpPromptLocale::ZhCn,
+    )
+    .expect("prompt");
+
+    assert!(prompt.contains("`remote_connection_controller_download_file`"));
+    assert!(prompt.contains("`remote_connection_controller_upload_file`"));
+}
+
+#[test]
 fn effective_prompt_keeps_available_sections_and_appends_runtime_limitations() {
     let mut tool_metadata = HashMap::new();
     tool_metadata.insert(

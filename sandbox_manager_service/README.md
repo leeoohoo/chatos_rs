@@ -36,6 +36,9 @@ SANDBOX_MANAGER_KATA_CONTAINER_CLI=nerdctl
 SANDBOX_MANAGER_KATA_RUNTIME=io.containerd.kata.v2
 SANDBOX_MANAGER_KATA_IMAGE=chatos-sandbox-agent:latest
 SANDBOX_MANAGER_KATA_NETWORK=bridge
+SANDBOX_MANAGER_IMAGE_TAG_PREFIX=chatos-sandbox-agent
+SANDBOX_MANAGER_IMAGE_BUILD_CONTEXT=/path/to/chatos_rs
+SANDBOX_MANAGER_IMAGE_DOCKERFILE=/path/to/chatos_rs/sandbox_manager_service/sandbox_agent/Dockerfile
 SANDBOX_MANAGER_FRONTEND_PORT=8096
 SANDBOX_MANAGER_API_PROXY_TARGET=http://127.0.0.1:8095
 ```
@@ -56,7 +59,7 @@ SANDBOX_MANAGER_API_PROXY_TARGET=http://127.0.0.1:8095
 docker build -t chatos-sandbox-agent:latest -f sandbox_manager_service/sandbox_agent/Dockerfile .
 ```
 
-镜像内置 `chatos-sandbox-mcp-server`，默认监听 `49888`，HTTP MCP 入口为 `/mcp`，并把文件和终端操作限制在容器内的 `/workspace`。
+默认镜像包含 JDK、Node.js、Rust、Go 的默认版本。也可以在管理台的“镜像”菜单里按语言选择具体版本并初始化，例如 JDK 8/11/17/21/25、Node.js 20/22/24/26、Python 3.10-3.14、Go 1.22-1.26、Rust stable/beta/nightly 或固定版本、.NET 8/9/10、PHP 8.2-8.5、Ruby 3.2-4.0、GCC 13/14、Clang 18/19/20。服务会按组合构建类似 `chatos-sandbox-agent:dev-java21-python3.14-go1.26` 的镜像，并在页面中显示初始化任务状态和构建日志。镜像内置 `chatos-sandbox-mcp-server`，默认监听 `49888`，HTTP MCP 入口为 `/mcp`，并把文件和终端操作限制在容器内的 `/workspace`。
 
 ```bash
 ./sandbox_manager_service/restart_services.sh restart
@@ -102,6 +105,45 @@ curl http://127.0.0.1:8095/api/sandboxes
 
 ```bash
 curl http://127.0.0.1:8095/api/sandbox-pool/status
+```
+
+镜像列表：
+
+```bash
+curl http://127.0.0.1:8095/api/sandbox-images
+```
+
+初始化自定义组合镜像：
+
+```bash
+curl -X POST http://127.0.0.1:8095/api/sandbox-images/initialize \
+  -H 'content-type: application/json' \
+  -d '{ "features": ["java@17", "python@3.14", "go@1.26"] }'
+```
+
+也可以附加自定义构建脚本。脚本会在语言工具链安装完成后以 root 身份执行；不要在脚本里写入密钥或令牌：
+
+```bash
+curl -X POST http://127.0.0.1:8095/api/sandbox-images/initialize \
+  -H 'content-type: application/json' \
+  -d '{
+    "features": ["node@24"],
+    "custom_build_script": "apt-get update && apt-get install -y --no-install-recommends postgresql-client"
+  }'
+```
+
+初始化任务列表：
+
+```bash
+curl http://127.0.0.1:8095/api/sandbox-images/jobs
+```
+
+创建沙箱时指定镜像：
+
+```json
+{
+  "image_id": "dev-java17-python3.14-go1.26"
+}
 ```
 
 ## 当前边界

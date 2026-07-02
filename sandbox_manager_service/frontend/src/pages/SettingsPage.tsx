@@ -65,6 +65,15 @@ export function SettingsPage() {
           <Descriptions.Item label={t('settings.kataNetwork')}>
             {data?.kata_network_mode ?? '-'}
           </Descriptions.Item>
+          <Descriptions.Item label={t('settings.imageTagPrefix')}>
+            {data?.image_tag_prefix ?? '-'}
+          </Descriptions.Item>
+          <Descriptions.Item label={t('settings.imageBuildContext')}>
+            {data?.image_build_context ?? '-'}
+          </Descriptions.Item>
+          <Descriptions.Item label={t('settings.imageDockerfile')} span={2}>
+            {data?.image_dockerfile ?? '-'}
+          </Descriptions.Item>
         </Descriptions>
       </div>
     </Space>
