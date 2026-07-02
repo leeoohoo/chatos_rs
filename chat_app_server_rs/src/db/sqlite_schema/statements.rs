@@ -315,6 +315,8 @@ pub(super) const CREATE_TABLES: &[&str] = &[
             selected_thinking_level TEXT,
             remote_connection_id TEXT,
             workspace_root TEXT,
+            reasoning_enabled INTEGER NOT NULL DEFAULT 0,
+            plan_mode_enabled INTEGER NOT NULL DEFAULT 0,
             mcp_enabled INTEGER NOT NULL DEFAULT 1,
             enabled_mcp_ids TEXT NOT NULL DEFAULT '[]',
             auto_create_task INTEGER NOT NULL DEFAULT 0,

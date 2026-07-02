@@ -14,39 +14,25 @@ import type { InputAreaProps, Project } from '../../types';
 interface UseInputAreaMessageDraftOptions {
   attachments: File[];
   clearAttachments: () => void;
-  currentRemoteConnectionId: string | null;
   disabled: boolean;
   effectiveAllowAttachments: boolean;
   maxLength: number;
-  normalizedWorkspaceRoot: string | null;
   onSend: InputAreaProps['onSend'];
-  planModeAvailable: boolean;
-  planModeEnabled: boolean;
   requireModelSelection: () => boolean;
   selectedProjectId: string | null;
   selectedRuntimeProject: Project | null;
-  selectedModelId: string | null;
-  effectiveModelName: string | null;
-  effectiveThinkingLevel: string | null;
 }
 
 export const useInputAreaMessageDraft = ({
   attachments,
   clearAttachments,
-  currentRemoteConnectionId,
   disabled,
   effectiveAllowAttachments,
   maxLength,
-  normalizedWorkspaceRoot,
   onSend,
-  planModeAvailable,
-  planModeEnabled,
   requireModelSelection,
   selectedProjectId,
   selectedRuntimeProject,
-  selectedModelId,
-  effectiveModelName,
-  effectiveThinkingLevel,
 }: UseInputAreaMessageDraftOptions) => {
   const [message, setMessage] = useState('');
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -95,36 +81,22 @@ export const useInputAreaMessageDraft = ({
     const runtimeProjectRoot = runtimeProjectId === '0'
       ? null
       : (selectedRuntimeProject?.rootPath || null);
-    const runtimeWorkspaceRoot = normalizedWorkspaceRoot || null;
 
     onSend(trimmedMessage, attachments, {
-      modelConfigId: selectedModelId,
-      modelName: effectiveModelName,
-      thinkingLevel: effectiveThinkingLevel,
-      remoteConnectionId: currentRemoteConnectionId,
       projectId: runtimeProjectId,
       projectRoot: runtimeProjectRoot,
-      workspaceRoot: runtimeWorkspaceRoot,
-      planMode: planModeAvailable && planModeEnabled,
     });
     resetComposer();
   }, [
     attachments,
-    currentRemoteConnectionId,
     disabled,
     effectiveAllowAttachments,
     message,
-    normalizedWorkspaceRoot,
     onSend,
-    planModeAvailable,
-    planModeEnabled,
     requireModelSelection,
     resetComposer,
     selectedProjectId,
     selectedRuntimeProject,
-    selectedModelId,
-    effectiveModelName,
-    effectiveThinkingLevel,
   ]);
 
   const handleKeyDown = useCallback((event: KeyboardEvent<HTMLTextAreaElement>) => {

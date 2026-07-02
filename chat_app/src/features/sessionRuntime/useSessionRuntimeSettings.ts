@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { useApiClient } from '../../lib/api/ApiClientContext';
 import type {
@@ -12,14 +12,9 @@ import type { Session } from '../../types';
 import {
   normalizeNullableText,
 } from '../../lib/domain/sessionSettings';
-import { readSessionRuntimeFromMetadata } from '../../lib/store/helpers/sessionRuntime';
-
-type UpdateSessionFn = (sessionId: string, updates: Partial<Session>) => Promise<void>;
 
 interface UseSessionRuntimeSettingsOptions {
   session: Session | null | undefined;
-  updateSession?: UpdateSessionFn;
-  defaultWorkspaceRoot?: string | null;
 }
 
 export interface SessionModelRuntimeSelection {
@@ -32,87 +27,95 @@ interface UseSessionRuntimeSettingsResult {
   selectedModelId: string | null;
   selectedModelName: string | null;
   selectedThinkingLevel: string | null;
+  remoteConnectionId: string | null;
   workspaceRoot: string | null;
+  reasoningEnabled: boolean;
+  planModeEnabled: boolean;
   setSelectedModelId: (modelId: string | null) => void;
   setSelectedModelName: (modelName: string | null) => void;
   setSelectedThinkingLevel: (level: string | null) => void;
   setModelRuntimeSelection: (selection: SessionModelRuntimeSelection) => void;
+  setRemoteConnectionId: (connectionId: string | null) => void;
   setWorkspaceRoot: (path: string | null) => void;
+  setReasoningEnabled: (enabled: boolean) => void;
+  setPlanModeEnabled: (enabled: boolean) => void;
+  flushRuntimeSettings: () => Promise<void>;
 }
 
 interface RuntimeSettingsState {
   selectedModelId: string | null;
   selectedModelName: string | null;
   selectedThinkingLevel: string | null;
+  remoteConnectionId: string | null;
   workspaceRoot: string | null;
+  reasoningEnabled: boolean;
+  planModeEnabled: boolean;
 }
 
 const toRuntimePayload = (state: RuntimeSettingsState): SessionRuntimeSettingsPayload => ({
   selected_model_id: state.selectedModelId,
   selected_model_name: state.selectedModelName,
   selected_thinking_level: state.selectedThinkingLevel,
+  remote_connection_id: state.remoteConnectionId,
   workspace_root: state.workspaceRoot,
+  reasoning_enabled: state.reasoningEnabled,
+  plan_mode_enabled: state.planModeEnabled,
 });
 
 const areRuntimeStatesEqual = (a: RuntimeSettingsState, b: RuntimeSettingsState): boolean => (
   a.selectedModelId === b.selectedModelId
   && a.selectedModelName === b.selectedModelName
   && a.selectedThinkingLevel === b.selectedThinkingLevel
+  && a.remoteConnectionId === b.remoteConnectionId
   && a.workspaceRoot === b.workspaceRoot
+  && a.reasoningEnabled === b.reasoningEnabled
+  && a.planModeEnabled === b.planModeEnabled
 );
+
+const emptyRuntimeState = (): RuntimeSettingsState => ({
+  selectedModelId: null,
+  selectedModelName: null,
+  selectedThinkingLevel: null,
+  remoteConnectionId: null,
+  workspaceRoot: null,
+  reasoningEnabled: false,
+  planModeEnabled: false,
+});
 
 const runtimeFromResponse = (
   response: SessionRuntimeSettingsResponse,
-  fallback: RuntimeSettingsState,
 ): RuntimeSettingsState => ({
   selectedModelId: Object.prototype.hasOwnProperty.call(response, 'selected_model_id')
     ? normalizeNullableText(response.selected_model_id)
-    : fallback.selectedModelId,
+    : null,
   selectedModelName: Object.prototype.hasOwnProperty.call(response, 'selected_model_name')
     ? normalizeNullableText(response.selected_model_name)
-    : fallback.selectedModelName,
+    : null,
   selectedThinkingLevel: Object.prototype.hasOwnProperty.call(response, 'selected_thinking_level')
     ? normalizeNullableText(response.selected_thinking_level)
-    : fallback.selectedThinkingLevel,
+    : null,
+  remoteConnectionId: Object.prototype.hasOwnProperty.call(response, 'remote_connection_id')
+    ? normalizeNullableText(response.remote_connection_id)
+    : null,
   workspaceRoot: Object.prototype.hasOwnProperty.call(response, 'workspace_root')
     ? normalizeNullableText(response.workspace_root)
-    : fallback.workspaceRoot,
+    : null,
+  reasoningEnabled: Object.prototype.hasOwnProperty.call(response, 'reasoning_enabled')
+    ? response.reasoning_enabled === true
+    : false,
+  planModeEnabled: Object.prototype.hasOwnProperty.call(response, 'plan_mode_enabled')
+    ? response.plan_mode_enabled === true
+    : false,
 });
-
-const runtimeFromSessionMetadata = (
-  session: Session | null | undefined,
-  defaults: {
-    workspaceRoot: string | null;
-  },
-): RuntimeSettingsState => {
-  const runtime = readSessionRuntimeFromMetadata(session?.metadata);
-  return {
-    selectedModelId: normalizeNullableText(runtime?.selectedModelId ?? null),
-    selectedModelName: normalizeNullableText(runtime?.selectedModelName ?? null),
-    selectedThinkingLevel: normalizeNullableText(runtime?.selectedThinkingLevel ?? null),
-    workspaceRoot: normalizeNullableText(runtime?.workspaceRoot ?? defaults.workspaceRoot),
-  };
-};
 
 export const useSessionRuntimeSettings = ({
   session,
-  defaultWorkspaceRoot = null,
 }: UseSessionRuntimeSettingsOptions): UseSessionRuntimeSettingsResult => {
   const client = useApiClient();
-  const normalizedDefaultWorkspaceRoot = useMemo(
-    () => normalizeNullableText(defaultWorkspaceRoot),
-    [defaultWorkspaceRoot],
-  );
-  const defaults = useMemo(() => ({
-    workspaceRoot: normalizedDefaultWorkspaceRoot,
-  }), [normalizedDefaultWorkspaceRoot]);
-
-  const initialRuntime = useMemo(
-    () => runtimeFromSessionMetadata(session, defaults),
-    [],
-  );
+  const initialRuntime = emptyRuntimeState();
   const runtimeRef = useRef<RuntimeSettingsState>(initialRuntime);
   const persistChainRef = useRef<Promise<unknown>>(Promise.resolve());
+  const persistErrorRef = useRef<unknown>(null);
   const [runtimeState, setRuntimeState] = useState<RuntimeSettingsState>(initialRuntime);
 
   const applyRuntimeState = useCallback((next: RuntimeSettingsState) => {
@@ -122,8 +125,7 @@ export const useSessionRuntimeSettings = ({
 
   useEffect(() => {
     const sessionId = typeof session?.id === 'string' ? session.id.trim() : '';
-    const fallback = runtimeFromSessionMetadata(session, defaults);
-    applyRuntimeState(fallback);
+    applyRuntimeState(emptyRuntimeState());
     if (!sessionId) {
       return;
     }
@@ -134,7 +136,7 @@ export const useSessionRuntimeSettings = ({
         if (cancelled) {
           return;
         }
-        applyRuntimeState(runtimeFromResponse(response, fallback));
+        applyRuntimeState(runtimeFromResponse(response));
       })
       .catch((error) => {
         if (!cancelled) {
@@ -148,9 +150,7 @@ export const useSessionRuntimeSettings = ({
   }, [
     applyRuntimeState,
     client,
-    defaults,
     session?.id,
-    session?.metadata,
   ]);
 
   const persistRuntimePatch = useCallback((patch: Partial<RuntimeSettingsState>) => {
@@ -166,9 +166,18 @@ export const useSessionRuntimeSettings = ({
       selectedThinkingLevel: Object.prototype.hasOwnProperty.call(patch, 'selectedThinkingLevel')
         ? normalizeNullableText(patch.selectedThinkingLevel)
         : current.selectedThinkingLevel,
+      remoteConnectionId: Object.prototype.hasOwnProperty.call(patch, 'remoteConnectionId')
+        ? normalizeNullableText(patch.remoteConnectionId)
+        : current.remoteConnectionId,
       workspaceRoot: Object.prototype.hasOwnProperty.call(patch, 'workspaceRoot')
         ? normalizeNullableText(patch.workspaceRoot)
         : current.workspaceRoot,
+      reasoningEnabled: Object.prototype.hasOwnProperty.call(patch, 'reasoningEnabled')
+        ? patch.reasoningEnabled === true
+        : current.reasoningEnabled,
+      planModeEnabled: Object.prototype.hasOwnProperty.call(patch, 'planModeEnabled')
+        ? patch.planModeEnabled === true
+        : current.planModeEnabled,
     };
 
     if (areRuntimeStatesEqual(current, next)) {
@@ -181,10 +190,16 @@ export const useSessionRuntimeSettings = ({
     }
 
     const payload = toRuntimePayload(next);
+    persistErrorRef.current = null;
     persistChainRef.current = persistChainRef.current
       .catch(() => undefined)
       .then(() => client.updateConversationRuntimeSettings(sessionId, payload))
+      .then((response) => {
+        persistErrorRef.current = null;
+        applyRuntimeState(runtimeFromResponse(response));
+      })
       .catch((error) => {
+        persistErrorRef.current = error;
         console.error('Failed to persist session runtime settings:', error);
       });
   }, [applyRuntimeState, client, session?.id]);
@@ -215,19 +230,47 @@ export const useSessionRuntimeSettings = ({
     });
   }, [persistRuntimePatch]);
 
+  const setRemoteConnectionId = useCallback((connectionId: string | null) => {
+    persistRuntimePatch({ remoteConnectionId: connectionId });
+  }, [persistRuntimePatch]);
+
   const setWorkspaceRoot = useCallback((path: string | null) => {
     persistRuntimePatch({ workspaceRoot: path });
   }, [persistRuntimePatch]);
+
+  const setReasoningEnabled = useCallback((enabled: boolean) => {
+    persistRuntimePatch({ reasoningEnabled: enabled });
+  }, [persistRuntimePatch]);
+
+  const setPlanModeEnabled = useCallback((enabled: boolean) => {
+    persistRuntimePatch({ planModeEnabled: enabled });
+  }, [persistRuntimePatch]);
+
+  const flushRuntimeSettings = useCallback(async () => {
+    await persistChainRef.current.catch(() => undefined);
+    if (persistErrorRef.current) {
+      throw persistErrorRef.current instanceof Error
+        ? persistErrorRef.current
+        : new Error('Failed to persist session runtime settings');
+    }
+  }, []);
 
   return {
     selectedModelId: runtimeState.selectedModelId,
     selectedModelName: runtimeState.selectedModelName,
     selectedThinkingLevel: runtimeState.selectedThinkingLevel,
+    remoteConnectionId: runtimeState.remoteConnectionId,
     workspaceRoot: runtimeState.workspaceRoot,
+    reasoningEnabled: runtimeState.reasoningEnabled,
+    planModeEnabled: runtimeState.planModeEnabled,
     setSelectedModelId,
     setSelectedModelName,
     setSelectedThinkingLevel,
     setModelRuntimeSelection,
+    setRemoteConnectionId,
     setWorkspaceRoot,
+    setReasoningEnabled,
+    setPlanModeEnabled,
+    flushRuntimeSettings,
   };
 };

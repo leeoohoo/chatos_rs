@@ -98,7 +98,8 @@ impl RunService {
         let workspace_root = sandbox_workspace_root(effective_workspace_dir)?;
         let base_url = self.effective_sandbox_manager_base_url().await?;
         let ttl_seconds = self.effective_sandbox_lease_ttl_seconds().await?;
-        let client = SandboxManagerClient::new(base_url)?;
+        let client =
+            SandboxManagerClient::new(base_url, SandboxManagerAuth::from_config(&self.config))?;
 
         self.append_sandbox_event(
             run,
@@ -228,7 +229,10 @@ impl RunService {
                 return;
             }
         };
-        let client = match SandboxManagerClient::new(base_url) {
+        let client = match SandboxManagerClient::new(
+            base_url,
+            SandboxManagerAuth::from_config(&self.config),
+        ) {
             Ok(client) => client,
             Err(err) => {
                 warn!(
@@ -558,7 +562,7 @@ struct SandboxManagerAuth {
 }
 
 impl SandboxManagerClient {
-    fn new(base_url: String) -> Result<Self, String> {
+    fn new(base_url: String, auth: Option<SandboxManagerAuth>) -> Result<Self, String> {
         let base_url = base_url.trim().trim_end_matches('/').to_string();
         if base_url.is_empty() {
             return Err("sandbox manager base url is empty".to_string());
@@ -570,7 +574,7 @@ impl SandboxManagerClient {
         Ok(Self {
             base_url,
             client,
-            auth: SandboxManagerAuth::from_env()?,
+            auth,
         })
     }
 
@@ -685,33 +689,16 @@ impl SandboxManagerClient {
 }
 
 impl SandboxManagerAuth {
-    fn from_env() -> Result<Option<Self>, String> {
-        let client_id = normalized_env("TASK_RUNNER_SANDBOX_MANAGER_CLIENT_ID")
-            .or_else(|| normalized_env("SANDBOX_MANAGER_SYSTEM_CLIENT_ID"));
-        let client_key = normalized_env("TASK_RUNNER_SANDBOX_MANAGER_CLIENT_KEY")
-            .or_else(|| normalized_env("SANDBOX_MANAGER_SYSTEM_CLIENT_KEY"));
-
-        match (client_id, client_key) {
-            (Some(client_id), Some(client_key)) => Ok(Some(Self {
+    fn from_config(config: &AppConfig) -> Option<Self> {
+        match (
+            config.sandbox_manager_client_id.clone(),
+            config.sandbox_manager_client_key.clone(),
+        ) {
+            (Some(client_id), Some(client_key)) => Some(Self {
                 client_id,
                 client_key,
-            })),
-            (None, None) => Ok(None),
-            (Some(_), None) => Err(
-                "TASK_RUNNER_SANDBOX_MANAGER_CLIENT_KEY is required when sandbox client id is set"
-                    .to_string(),
-            ),
-            (None, Some(_)) => Err(
-                "TASK_RUNNER_SANDBOX_MANAGER_CLIENT_ID is required when sandbox client key is set"
-                    .to_string(),
-            ),
+            }),
+            _ => None,
         }
     }
-}
-
-fn normalized_env(key: &str) -> Option<String> {
-    std::env::var(key)
-        .ok()
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
 }

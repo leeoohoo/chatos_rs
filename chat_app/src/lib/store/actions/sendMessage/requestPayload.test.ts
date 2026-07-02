@@ -3,7 +3,10 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { buildChatRequestLogPayload } from './requestPayload';
+import {
+  buildChatRequestLogPayload,
+  resolveEffectivePlanMode,
+} from './requestPayload';
 
 describe('sendMessage request payload helpers', () => {
   it('summarizes chat request debug logs without embedding full payload content', () => {
@@ -50,5 +53,24 @@ describe('sendMessage request payload helpers', () => {
       size: 1024,
       type: 'file',
     });
+  });
+
+  it('keeps plan mode off when the saved session setting is disabled', () => {
+    expect(resolveEffectivePlanMode({
+      projectId: 'project-1',
+      planModeEnabled: false,
+    })).toBe(false);
+  });
+
+  it('requires a concrete project and saved session setting to enable plan mode', () => {
+    expect(resolveEffectivePlanMode({
+      projectId: 'project-1',
+      planModeEnabled: true,
+    })).toBe(true);
+
+    expect(resolveEffectivePlanMode({
+      projectId: '0',
+      planModeEnabled: true,
+    })).toBe(false);
   });
 });

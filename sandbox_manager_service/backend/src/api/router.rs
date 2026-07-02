@@ -2,7 +2,7 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use axum::middleware;
-use axum::routing::{get, post};
+use axum::routing::{get, post, put};
 use axum::Router;
 use tower_http::cors::{Any, CorsLayer};
 use tower_http::trace::TraceLayer;
@@ -24,6 +24,18 @@ pub fn build_router(state: AppState) -> Router {
         .route(
             "/api/sandbox-images/initialize",
             post(handlers::initialize_sandbox_image),
+        )
+        .route(
+            "/api/access-clients",
+            get(handlers::list_access_clients).post(handlers::create_access_client),
+        )
+        .route(
+            "/api/access-clients/:id",
+            put(handlers::update_access_client).delete(handlers::delete_access_client),
+        )
+        .route(
+            "/api/access-clients/:id/rotate-key",
+            post(handlers::rotate_access_client_key),
         )
         .route(
             "/api/sandboxes/leases",

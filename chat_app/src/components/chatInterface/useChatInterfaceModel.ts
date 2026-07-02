@@ -36,7 +36,6 @@ export const useChatInterfaceModel = ({
 
   const runtimeSettings = useSessionRuntimeSettings({
     session: store.currentSession,
-    updateSession: store.updateSession,
   });
   const effectiveSelectedModelId = runtimeSettings.selectedModelId;
 
@@ -48,7 +47,9 @@ export const useChatInterfaceModel = ({
     activePanel: store.activePanel,
     currentProject: store.currentProject,
     currentTerminal: store.currentTerminal,
-    currentRemoteConnection: store.currentRemoteConnection,
+    currentRemoteConnection: (store.remoteConnections || []).find(
+      (connection) => connection.id === runtimeSettings.remoteConnectionId,
+    ) || null,
     sessionChatState: store.sessionChatState || {},
   });
 
@@ -66,11 +67,11 @@ export const useChatInterfaceModel = ({
     currentSession: store.currentSession,
     messages: store.messages,
     runtimeContextRefreshNonce: derived.runtimeContextRefreshNonce,
-    currentRemoteConnectionId: store.currentRemoteConnection?.id || null,
     summaryPaneSessionId,
     setSummaryPaneSessionId,
     onMessageSend,
     sendMessage: store.sendMessage,
+    flushRuntimeSettings: runtimeSettings.flushRuntimeSettings,
     selectRemoteConnection: store.selectRemoteConnection,
     loadMessages: store.loadMessages,
     loadMoreMessages: store.loadMoreMessages,
@@ -153,8 +154,8 @@ export const useChatInterfaceModel = ({
     memoryError: resources.memoryError,
     supportedFileTypes: derived.supportedFileTypes,
     supportsReasoning: derived.supportsReasoning,
-    reasoningEnabled: store.chatConfig?.reasoningEnabled === true,
-    planModeEnabled: store.chatConfig?.planModeEnabled === true,
+    reasoningEnabled: runtimeSettings.reasoningEnabled,
+    planModeEnabled: runtimeSettings.planModeEnabled,
     selectedModelId: effectiveSelectedModelId,
     selectedModelName: runtimeSettings.selectedModelName,
     selectedThinkingLevel: runtimeSettings.selectedThinkingLevel,
@@ -162,7 +163,7 @@ export const useChatInterfaceModel = ({
     composerAvailableProjects: resources.composerAvailableProjects,
     currentProject: store.currentProject,
     composerWorkspaceRoot: runtimeSettings.workspaceRoot,
-    currentRemoteConnectionId: store.currentRemoteConnection?.id || null,
+    currentRemoteConnectionId: runtimeSettings.remoteConnectionId,
     remoteConnections: store.remoteConnections || [],
     reviewRepairRunning: controller.reviewRepairRunning,
     reviewRepairPendingCount: controller.reviewRepairPendingCount,
@@ -175,15 +176,15 @@ export const useChatInterfaceModel = ({
     handleCloseSummary: controller.handleCloseSummary,
     toggleSidebar: store.toggleSidebar,
     handleMessageSend: controller.handleMessageSend,
-    updateReasoningEnabled: (enabled: boolean) => store.updateChatConfig({ reasoningEnabled: enabled }),
-    updatePlanModeEnabled: (enabled: boolean) => store.updateChatConfig({ planModeEnabled: enabled }),
+    updateReasoningEnabled: runtimeSettings.setReasoningEnabled,
+    updatePlanModeEnabled: runtimeSettings.setPlanModeEnabled,
     setSelectedModel: runtimeSettings.setSelectedModelId,
     setSelectedModelName: runtimeSettings.setSelectedModelName,
     setSelectedThinkingLevel: runtimeSettings.setSelectedThinkingLevel,
     setModelRuntimeSelection: runtimeSettings.setModelRuntimeSelection,
     handleComposerProjectChange: resources.handleComposerProjectChange,
     handleComposerWorkspaceRootChange: runtimeSettings.setWorkspaceRoot,
-    handleComposerRemoteConnectionChange: controller.handleComposerRemoteConnectionChange,
+    handleComposerRemoteConnectionChange: runtimeSettings.setRemoteConnectionId,
     handleRunReviewRepair: controller.handleRunReviewRepair,
   };
 

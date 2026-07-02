@@ -119,6 +119,7 @@ pub(super) async fn create_work_item(
                 due_at: None,
                 sort_order: None,
                 tags: None,
+                is_planning_task: false,
             },
             &test_user(),
         )

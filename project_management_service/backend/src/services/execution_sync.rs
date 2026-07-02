@@ -230,7 +230,7 @@ async fn complete_related_requirements_if_work_items_done(
     }
 
     let project_work_items = store
-        .list_work_items_by_project(&work_item.project_id, None, None)
+        .list_work_items_by_project(&work_item.project_id, None, None, None)
         .await
         .map_err(ExecutionSyncError::bad_request)?;
     let mut updated_requirements = Vec::new();
@@ -421,6 +421,7 @@ mod tests {
                     due_at: None,
                     sort_order: None,
                     tags: None,
+                    is_planning_task: false,
                 },
                 &test_user(),
             )

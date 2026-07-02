@@ -19,8 +19,6 @@ export interface ChatConfig {
   temperature: number;
   systemPrompt: string;
   enableMcp: boolean;
-  reasoningEnabled: boolean;
-  planModeEnabled: boolean;
 }
 
 export interface McpConfig {

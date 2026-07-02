@@ -65,5 +65,6 @@ export function buildCreateWorkItemPayload(values: WorkItemFormValues): CreateWo
     due_at: values.due_at,
     sort_order: values.sort_order,
     tags,
+    is_planning_task: values.is_planning_task === true,
   };
 }

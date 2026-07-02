@@ -178,6 +178,7 @@ mod tests {
             due_at: None,
             sort_order: 0,
             tags: Vec::new(),
+            is_planning_task: false,
             creator_user_id: None,
             creator_username: None,
             creator_display_name: None,

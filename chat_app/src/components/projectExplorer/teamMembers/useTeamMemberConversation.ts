@@ -382,7 +382,7 @@ export const useTeamMemberConversation = ({
   const handleSendMessage = useCallback(async (
     content: string,
     attachments?: File[],
-    runtimeOptions?: SendMessageRuntimeOptions,
+    _runtimeOptions?: SendMessageRuntimeOptions,
   ) => {
     if (!selectedContact) {
       return;
@@ -400,16 +400,11 @@ export const useTeamMemberConversation = ({
         });
       }
       await sendMessage(content, attachments, {
-        remoteConnectionId: runtimeOptions?.remoteConnectionId,
-        modelConfigId: runtimeOptions?.modelConfigId,
-        modelName: runtimeOptions?.modelName,
-        thinkingLevel: runtimeOptions?.thinkingLevel,
         contactAgentId: selectedContact.agentId,
         contactId: selectedContact.id,
         projectId,
         projectRoot: projectRootPath || null,
         workspaceRoot: null,
-        planMode: runtimeOptions?.planMode === true,
       });
     } catch (error) {
       console.error('Failed to send message in team pane:', error);

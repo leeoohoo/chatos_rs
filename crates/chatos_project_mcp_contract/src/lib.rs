@@ -101,6 +101,25 @@ mod tests {
             .cloned()
             .unwrap_or_default();
         assert_eq!(skill_enum, vec![json!("skill-a"), json!("skill-b")]);
+        assert!(properties.contains_key("is_planning_task"));
+        let list_tasks = definitions
+            .iter()
+            .find(|tool| {
+                tool.get("name").and_then(Value::as_str) == Some(tools::LIST_PROJECT_TASKS)
+            })
+            .expect("list_project_tasks");
+        assert!(list_tasks
+            .pointer("/inputSchema/properties/is_planning_task")
+            .is_some());
+        let update_task = definitions
+            .iter()
+            .find(|tool| {
+                tool.get("name").and_then(Value::as_str) == Some(tools::UPDATE_PROJECT_TASK)
+            })
+            .expect("update_project_task");
+        assert!(update_task
+            .pointer("/inputSchema/properties/patch/properties/is_planning_task")
+            .is_some());
     }
 
     #[test]
@@ -159,7 +178,7 @@ mod tests {
         assert_schema_snapshot_hash(
             "project_management_server_tools",
             schemas::project_management_server_tool_definitions(None),
-            0x421e08d102fb41b2,
+            0x2998b96aa560a008,
         );
     }
 
@@ -168,7 +187,7 @@ mod tests {
         assert_schema_snapshot_hash(
             "task_runner_builtin_tools",
             schemas::task_runner_builtin_tool_definitions(None),
-            0x421e08d102fb41b2,
+            0x2998b96aa560a008,
         );
     }
 

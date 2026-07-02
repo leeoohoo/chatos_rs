@@ -16,11 +16,19 @@ impl MongoStore {
         &self,
         project_id: &str,
         status: Option<ProjectWorkItemStatus>,
+        is_planning_task: Option<bool>,
         keyword: Option<String>,
     ) -> Result<Vec<ProjectWorkItemRecord>, String> {
         let mut filter = doc! { "project_id": project_id };
         if let Some(status) = status {
             filter.insert("status", status.as_str());
+        }
+        if let Some(is_planning_task) = is_planning_task {
+            if is_planning_task {
+                filter.insert("is_planning_task", true);
+            } else {
+                filter.insert("is_planning_task", doc! { "$ne": true });
+            }
         }
         if let Some(keyword) = keyword_or_filter(
             keyword,
@@ -51,6 +59,7 @@ impl MongoStore {
         status: Option<ProjectWorkItemStatus>,
         keyword: Option<String>,
         requirement_id: Option<String>,
+        is_planning_task: Option<bool>,
         include_archived: bool,
         limit: usize,
         offset: usize,
@@ -58,6 +67,13 @@ impl MongoStore {
         let mut filter = doc! { "project_id": project_id };
         if let Some(requirement_id) = normalized_optional(requirement_id) {
             filter.insert("requirement_id", requirement_id);
+        }
+        if let Some(is_planning_task) = is_planning_task {
+            if is_planning_task {
+                filter.insert("is_planning_task", true);
+            } else {
+                filter.insert("is_planning_task", doc! { "$ne": true });
+            }
         }
         if let Some(status) = status {
             filter.insert("status", status.as_str());
@@ -168,6 +184,7 @@ impl MongoStore {
             due_at: normalized_optional(input.due_at),
             sort_order: input.sort_order.unwrap_or_default(),
             tags: normalize_id_list(input.tags.unwrap_or_default()),
+            is_planning_task: input.is_planning_task,
             creator_user_id: Some(user.id.clone()),
             creator_username: Some(user.username.clone()),
             creator_display_name: Some(user.display_name.clone()),
@@ -260,6 +277,9 @@ impl MongoStore {
         }
         if let Some(tags) = patch.tags {
             item.tags = normalize_id_list(tags);
+        }
+        if let Some(is_planning_task) = patch.is_planning_task {
+            item.is_planning_task = is_planning_task;
         }
         item.updated_at = now_rfc3339();
         upsert_by_id(&self.work_items, &item.id, &item).await?;

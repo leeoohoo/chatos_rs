@@ -60,6 +60,8 @@ fn doc_to_settings(doc: &Document) -> Option<SessionRuntimeSettings> {
             .ok()
             .map(ToOwned::to_owned),
         workspace_root: doc.get_str("workspace_root").ok().map(ToOwned::to_owned),
+        reasoning_enabled: doc.get_bool("reasoning_enabled").unwrap_or(false),
+        plan_mode_enabled: doc.get_bool("plan_mode_enabled").unwrap_or(false),
         mcp_enabled: doc.get_bool("mcp_enabled").unwrap_or(true),
         enabled_mcp_ids: list_from_bson(doc.get("enabled_mcp_ids")),
         auto_create_task: doc.get_bool("auto_create_task").unwrap_or(false),
@@ -76,6 +78,8 @@ fn row_to_settings(row: sqlx::sqlite::SqliteRow) -> SessionRuntimeSettings {
         .map(normalize_id_list)
         .unwrap_or_default();
     let mcp_enabled_raw: Option<i64> = row.try_get("mcp_enabled").ok();
+    let reasoning_enabled_raw: Option<i64> = row.try_get("reasoning_enabled").ok();
+    let plan_mode_enabled_raw: Option<i64> = row.try_get("plan_mode_enabled").ok();
     let auto_create_task_raw: Option<i64> = row.try_get("auto_create_task").ok();
 
     SessionRuntimeSettings {
@@ -86,6 +90,8 @@ fn row_to_settings(row: sqlx::sqlite::SqliteRow) -> SessionRuntimeSettings {
         selected_thinking_level: row.try_get("selected_thinking_level").ok(),
         remote_connection_id: row.try_get("remote_connection_id").ok(),
         workspace_root: row.try_get("workspace_root").ok(),
+        reasoning_enabled: reasoning_enabled_raw.unwrap_or(0) != 0,
+        plan_mode_enabled: plan_mode_enabled_raw.unwrap_or(0) != 0,
         mcp_enabled: mcp_enabled_raw.unwrap_or(1) != 0,
         enabled_mcp_ids,
         auto_create_task: auto_create_task_raw.unwrap_or(0) != 0,
@@ -163,6 +169,8 @@ pub async fn upsert_session_runtime_settings(
                     "session_id": &mongo_settings.session_id,
                     "user_id": &mongo_settings.user_id,
                     "mcp_enabled": mongo_settings.mcp_enabled,
+                    "reasoning_enabled": mongo_settings.reasoning_enabled,
+                    "plan_mode_enabled": mongo_settings.plan_mode_enabled,
                     "enabled_mcp_ids": enabled_mcp_ids,
                     "auto_create_task": mongo_settings.auto_create_task,
                     "updated_at": &mongo_settings.updated_at,
@@ -218,7 +226,7 @@ pub async fn upsert_session_runtime_settings(
                 )
                 .to_string();
                 sqlx::query(
-                    "INSERT INTO session_runtime_settings (session_id, user_id, selected_model_id, selected_model_name, selected_thinking_level, remote_connection_id, workspace_root, mcp_enabled, enabled_mcp_ids, auto_create_task, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(session_id) DO UPDATE SET user_id = excluded.user_id, selected_model_id = excluded.selected_model_id, selected_model_name = excluded.selected_model_name, selected_thinking_level = excluded.selected_thinking_level, remote_connection_id = excluded.remote_connection_id, workspace_root = excluded.workspace_root, mcp_enabled = excluded.mcp_enabled, enabled_mcp_ids = excluded.enabled_mcp_ids, auto_create_task = excluded.auto_create_task, updated_at = excluded.updated_at",
+                    "INSERT INTO session_runtime_settings (session_id, user_id, selected_model_id, selected_model_name, selected_thinking_level, remote_connection_id, workspace_root, reasoning_enabled, plan_mode_enabled, mcp_enabled, enabled_mcp_ids, auto_create_task, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(session_id) DO UPDATE SET user_id = excluded.user_id, selected_model_id = excluded.selected_model_id, selected_model_name = excluded.selected_model_name, selected_thinking_level = excluded.selected_thinking_level, remote_connection_id = excluded.remote_connection_id, workspace_root = excluded.workspace_root, reasoning_enabled = excluded.reasoning_enabled, plan_mode_enabled = excluded.plan_mode_enabled, mcp_enabled = excluded.mcp_enabled, enabled_mcp_ids = excluded.enabled_mcp_ids, auto_create_task = excluded.auto_create_task, updated_at = excluded.updated_at",
                 )
                 .bind(&sqlite_settings.session_id)
                 .bind(&sqlite_settings.user_id)
@@ -227,6 +235,8 @@ pub async fn upsert_session_runtime_settings(
                 .bind(&sqlite_settings.selected_thinking_level)
                 .bind(&sqlite_settings.remote_connection_id)
                 .bind(&sqlite_settings.workspace_root)
+                .bind(bool_to_sqlite_int(sqlite_settings.reasoning_enabled))
+                .bind(bool_to_sqlite_int(sqlite_settings.plan_mode_enabled))
                 .bind(bool_to_sqlite_int(sqlite_settings.mcp_enabled))
                 .bind(enabled_mcp_ids)
                 .bind(bool_to_sqlite_int(sqlite_settings.auto_create_task))

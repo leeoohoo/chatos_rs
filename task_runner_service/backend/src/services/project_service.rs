@@ -407,6 +407,8 @@ mod tests {
             default_tool_results_model_total_max_chars: 2000,
             default_execution_environment_mode: "local".to_string(),
             default_sandbox_manager_base_url: "http://127.0.0.1:8095".to_string(),
+            sandbox_manager_client_id: None,
+            sandbox_manager_client_key: None,
             default_sandbox_lease_ttl_seconds: 7_200,
             chatos_callback_url: None,
             chatos_callback_secret: None,

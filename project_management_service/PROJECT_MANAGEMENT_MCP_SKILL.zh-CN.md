@@ -89,6 +89,7 @@ sequenceDiagram
 - 一个需求可以维护多份技术文档。优先使用 `list_requirement_technical_documents` 查看现有文档，再用 `get_requirement_technical_document` 读取指定文档，用 `upsert_requirement_technical_document` 创建或更新文档。
 - 技术文档应按关注点拆分，避免单篇过长影响 AI 读取和维护。常用 `doc_type` 包括 `technical_overview`、`implementation_plan`、`ui_svg_preview`、`architecture_diagram`、`flowchart`、`sequence_diagram`、`api_design`、`data_model`、`risk_notes`、`other`。
 - 创建项目任务前，必须确保该需求尚未完成，并且至少有一份非空技术文档；如果文档为空，先调用 `upsert_requirement_technical_document` 补齐，再调用 `create_project_task`。
+- 创建项目任务时必须判断任务类型：如果该项目任务的目标是继续规划、继续拆解需求、补充技术方案、创建更多项目任务或调整依赖，调用 `create_project_task` 时设置 `is_planning_task: true`；如果任务目标是编码、测试、修复、文档落地、部署或其他具体执行工作，设置为 `false` 或省略。
 - 创建项目任务时，如果当前规划运行环境中有与任务强相关的 skill，先调用 `task_runner_service_search_installed_skills` 按关键词搜索当前可用 skills，必要时调用 `task_runner_service_get_skill_detail` 阅读完整说明；只能把返回的真实 id 写入 `create_project_task.task_runner_skill_ids`，不要根据名称猜测或编造 id。没有相关 skill 时省略或传空数组。
 - 不要创建无效分组：如果一个父需求下面的“子需求”只是执行步骤、模块拆分或任务清单，直接在父需求下创建多个 `project_task`。例如“父需求 A + 3 个子需求 + 只有 1 个子需求有任务”是无效结构；应改为“需求 A + 3 个项目任务”，必要时用项目任务前置关系表达顺序。
 - 只有当子需求本身是独立可交付范围时才创建子需求；每个可执行子需求仍然必须有项目任务覆盖。如果某个父需求只是汇总、里程碑或纯资料整理，不能直接执行，例外理由只用于内部覆盖矩阵；如必须写入业务文档，只能转译成业务范围说明，例如“本项为阶段汇总，实际落地由下列子范围承载”，不要写“无直接项目任务”或类似工具层表述。
@@ -146,9 +147,9 @@ sequenceDiagram
 - `list_requirement_technical_documents`: 查询某个需求下的技术文档列表，可按 `doc_type` 过滤。
 - `get_requirement_technical_document`: 按 `document_id` 读取某个需求下的一份技术文档。
 - `upsert_requirement_technical_document`: 创建一份新的需求技术文档；传入 `document_id` 时更新已有文档。
-- `list_project_tasks`: 查询项目管理任务/工作项；支持 `keyword` 模糊匹配、`status`/`requirement_id` 过滤、`limit`/`offset` 分页。
-- `create_project_task`: 在某个需求下创建项目管理任务/工作项；要求该需求至少已有一份非空技术文档。可通过 `task_runner_skill_ids` 绑定当前可见的 skills。
-- `update_project_task`: 更新项目管理任务/工作项，并可同时替换前置项目任务。
+- `list_project_tasks`: 查询项目管理任务/工作项；支持 `keyword` 模糊匹配、`status`/`requirement_id`/`is_planning_task` 过滤、`limit`/`offset` 分页。
+- `create_project_task`: 在某个需求下创建项目管理任务/工作项；要求该需求至少已有一份非空技术文档。规划型项目任务必须传 `is_planning_task: true`，普通执行任务保持 `false`。可通过 `task_runner_skill_ids` 绑定当前可见的 skills。
+- `update_project_task`: 更新项目管理任务/工作项，并可同时替换前置项目任务；可用 `patch.is_planning_task` 修正尚未完成项目任务的规划/执行类型。
 - `delete_project_task`: 删除尚未被执行的项目任务；规划阶段删除误建任务时使用。
 - `set_project_task_dependencies`: 替换某个项目任务的前置项目任务列表。
 - `get_project_dependency_graph`: 查询项目级需求、项目任务和依赖图。

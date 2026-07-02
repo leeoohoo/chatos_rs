@@ -23,6 +23,7 @@ pub(in crate::api::projects) struct WorkItemPlanItem {
     pub(in crate::api::projects) status: String,
     pub(in crate::api::projects) priority: i32,
     pub(in crate::api::projects) tags: Vec<String>,
+    pub(in crate::api::projects) is_planning_task: bool,
 }
 
 #[derive(Debug, Clone)]

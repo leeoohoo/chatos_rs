@@ -126,7 +126,7 @@ fn tool_definitions(
             object_schema(
                 vec![
                     string_field("requirement_id", "Requirement id to update."),
-                    patch_field("patch", "Fields to update on the requirement."),
+                    requirement_patch_field(),
                     string_array_field(
                         "prerequisite_requirement_ids",
                         "Optional full replacement list of prerequisite requirement ids.",
@@ -224,6 +224,10 @@ fn tool_definitions(
                         "requirement_id",
                         "Optional requirement id filter for checking coverage under one requirement.",
                     ),
+                    optional_boolean_field(
+                        "is_planning_task",
+                        "Optional filter for project tasks that are themselves planning/decomposition tasks.",
+                    ),
                     page_limit_field(),
                     page_offset_field(),
                 ],
@@ -252,6 +256,10 @@ fn tool_definitions(
                     optional_string_field("due_at", "Optional due time as string."),
                     integer_field("sort_order", "Optional sort order."),
                     string_array_field("tags", "Optional tags."),
+                    boolean_field(
+                        "is_planning_task",
+                        "Set true only when this project task is itself a planning/decomposition task whose execution should continue project planning through TaskRunner chatos_plan profile. Leave false for implementation, testing, documentation, deployment, or other concrete execution work.",
+                    ),
                     string_array_field(
                         "prerequisite_project_task_ids",
                         "Optional full list of prerequisite project task ids.",
@@ -271,7 +279,7 @@ fn tool_definitions(
             object_schema(
                 vec![
                     string_field("project_task_id", "Project task/work item id to update."),
-                    patch_field("patch", "Fields to update on the project task."),
+                    project_task_patch_field(),
                     string_array_field(
                         "prerequisite_project_task_ids",
                         "Optional full replacement list of prerequisite project task ids.",
@@ -363,6 +371,20 @@ fn integer_field(name: &'static str, description: &'static str) -> (&'static str
     )
 }
 
+fn boolean_field(name: &'static str, description: &'static str) -> (&'static str, Value) {
+    (
+        name,
+        json!({ "type": "boolean", "default": false, "description": description }),
+    )
+}
+
+fn optional_boolean_field(name: &'static str, description: &'static str) -> (&'static str, Value) {
+    (
+        name,
+        json!({ "type": ["boolean", "null"], "description": description }),
+    )
+}
+
 fn page_limit_field() -> (&'static str, Value) {
     (
         "limit",
@@ -412,14 +434,68 @@ fn string_array_field(name: &'static str, description: &'static str) -> (&'stati
     )
 }
 
-fn patch_field(name: &'static str, description: &'static str) -> (&'static str, Value) {
+fn requirement_patch_field() -> (&'static str, Value) {
     (
-        name,
-        json!({
-            "type": "object",
-            "description": description,
-            "additionalProperties": true
-        }),
+        "patch",
+        object_schema(
+            vec![
+                optional_string_field("parent_requirement_id", "Optional parent requirement id."),
+                enum_field(
+                    "requirement_type",
+                    "Optional requirement type.",
+                    REQUIREMENT_TYPE_VALUES,
+                ),
+                optional_string_field("title", "Optional requirement title."),
+                optional_string_field("summary", "Optional requirement summary."),
+                optional_string_field("detail", "Optional requirement detail."),
+                optional_string_field("business_value", "Optional business value."),
+                optional_string_field("acceptance_criteria", "Optional acceptance criteria."),
+                optional_string_field("source", "Optional requirement source."),
+                integer_field(
+                    "priority",
+                    "Optional priority; higher means more important.",
+                ),
+                enum_field(
+                    "status",
+                    "Optional requirement status.",
+                    REQUIREMENT_STATUS_VALUES,
+                ),
+                optional_string_field("assignee_user_id", "Optional assignee user id."),
+            ],
+            vec![],
+        ),
+    )
+}
+
+fn project_task_patch_field() -> (&'static str, Value) {
+    (
+        "patch",
+        object_schema(
+            vec![
+                optional_string_field(
+                    "requirement_id",
+                    "Optional target requirement id. The target requirement must belong to the current project.",
+                ),
+                optional_string_field("title", "Optional project task title."),
+                optional_string_field("description", "Optional project task description."),
+                enum_field(
+                    "status",
+                    "Optional project task status.",
+                    PROJECT_TASK_STATUS_VALUES,
+                ),
+                integer_field("priority", "Optional priority; higher means more important."),
+                optional_string_field("assignee_user_id", "Optional assignee user id."),
+                integer_field("estimate_points", "Optional estimate points."),
+                optional_string_field("due_at", "Optional due time as string."),
+                integer_field("sort_order", "Optional sort order."),
+                string_array_field("tags", "Optional tags."),
+                optional_boolean_field(
+                    "is_planning_task",
+                    "Set true only when this project task should execute as a TaskRunner chatos_plan planning/decomposition task. Set false for concrete implementation or delivery work.",
+                ),
+            ],
+            vec![],
+        ),
     )
 }
 

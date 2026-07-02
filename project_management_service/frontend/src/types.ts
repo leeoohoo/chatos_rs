@@ -181,6 +181,7 @@ export interface ProjectWorkItemRecord {
   due_at?: string | null;
   sort_order: number;
   tags: string[];
+  is_planning_task: boolean;
   created_at: string;
   updated_at: string;
   archived_at?: string | null;
@@ -199,6 +200,7 @@ export interface CreateWorkItemPayload {
   due_at?: string;
   sort_order?: number;
   tags?: string[];
+  is_planning_task?: boolean;
 }
 
 export type UpdateWorkItemPayload = Partial<CreateWorkItemPayload> & {

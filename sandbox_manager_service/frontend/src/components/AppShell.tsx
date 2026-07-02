@@ -6,6 +6,7 @@ import {
   ApiOutlined,
   CloudDownloadOutlined,
   DashboardOutlined,
+  KeyOutlined,
   PlusCircleOutlined,
   SettingOutlined,
   UnorderedListOutlined,
@@ -62,6 +63,11 @@ export function AppShell() {
               label: <Link to="/images">{t('nav.images')}</Link>,
             },
             {
+              key: '/access-clients',
+              icon: <KeyOutlined />,
+              label: <Link to="/access-clients">{t('nav.accessClients')}</Link>,
+            },
+            {
               key: '/create',
               icon: <PlusCircleOutlined />,
               label: <Link to="/create">{t('nav.create')}</Link>,
@@ -107,6 +113,9 @@ function selectedNavKey(pathname: string): string {
   }
   if (pathname.startsWith('/images')) {
     return '/images';
+  }
+  if (pathname.startsWith('/access-clients')) {
+    return '/access-clients';
   }
   if (pathname.startsWith('/mcp-test')) {
     return '/mcp-test';

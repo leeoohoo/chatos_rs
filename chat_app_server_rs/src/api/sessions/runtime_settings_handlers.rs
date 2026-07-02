@@ -61,106 +61,6 @@ async fn authorize_optional_workspace_root(
     Ok(Some(authorized.path.to_string_lossy().to_string()))
 }
 
-fn as_object(value: Option<&Value>) -> Option<&serde_json::Map<String, Value>> {
-    value.and_then(Value::as_object)
-}
-
-fn metadata_source(metadata: Option<&Value>) -> Option<&serde_json::Map<String, Value>> {
-    let meta = metadata.and_then(Value::as_object)?;
-    if let Some(source) = meta
-        .get("source_metadata")
-        .and_then(Value::as_object)
-        .filter(|source| !source.is_empty())
-    {
-        return Some(source);
-    }
-    Some(meta)
-}
-
-fn read_text_from_objects(
-    objects: &[Option<&serde_json::Map<String, Value>>],
-    keys: &[&str],
-) -> Option<String> {
-    for object in objects {
-        let Some(object) = object else {
-            continue;
-        };
-        for key in keys {
-            if let Some(value) = object.get(*key).and_then(Value::as_str) {
-                let trimmed = value.trim();
-                if !trimmed.is_empty() {
-                    return Some(trimmed.to_string());
-                }
-            }
-        }
-    }
-    None
-}
-
-fn read_bool(
-    object: Option<&serde_json::Map<String, Value>>,
-    keys: &[&str],
-    fallback: bool,
-) -> bool {
-    let Some(object) = object else {
-        return fallback;
-    };
-    for key in keys {
-        if let Some(value) = object.get(*key).and_then(Value::as_bool) {
-            return value;
-        }
-    }
-    fallback
-}
-
-fn read_id_list(object: Option<&serde_json::Map<String, Value>>, keys: &[&str]) -> Vec<String> {
-    let Some(object) = object else {
-        return Vec::new();
-    };
-    for key in keys {
-        let Some(value) = object.get(*key) else {
-            continue;
-        };
-        if let Some(items) = value.as_array() {
-            return normalize_id_list(
-                items
-                    .iter()
-                    .filter_map(|item| item.as_str().map(ToOwned::to_owned))
-                    .collect(),
-            );
-        }
-    }
-    Vec::new()
-}
-
-fn fallback_from_session(session: &Session, user_id: &str) -> SessionRuntimeSettings {
-    let mut settings = SessionRuntimeSettings::new(session.id.clone(), user_id.to_string());
-    let source = metadata_source(session.metadata.as_ref());
-    let runtime = as_object(source.and_then(|item| item.get("chat_runtime")));
-    let ui_chat_selection = as_object(source.and_then(|item| item.get("ui_chat_selection")));
-
-    settings.selected_model_id = read_text_from_objects(
-        &[runtime, ui_chat_selection],
-        &["selected_model_id", "selectedModelId"],
-    );
-    settings.selected_model_name = read_text_from_objects(
-        &[runtime, ui_chat_selection],
-        &["selected_model_name", "selectedModelName"],
-    );
-    settings.selected_thinking_level = read_text_from_objects(
-        &[runtime, ui_chat_selection],
-        &["selected_thinking_level", "selectedThinkingLevel"],
-    );
-    settings.remote_connection_id =
-        read_text_from_objects(&[runtime], &["remote_connection_id", "remoteConnectionId"]);
-    settings.workspace_root =
-        read_text_from_objects(&[runtime], &["workspace_root", "workspaceRoot"]);
-    settings.mcp_enabled = read_bool(runtime, &["mcp_enabled", "mcpEnabled"], true);
-    settings.enabled_mcp_ids = read_id_list(runtime, &["enabled_mcp_ids", "enabledMcpIds"]);
-    settings.auto_create_task = read_bool(runtime, &["auto_create_task", "autoCreateTask"], false);
-    settings
-}
-
 async fn load_or_default(
     session: &Session,
     auth: &AuthUser,
@@ -170,7 +70,8 @@ async fn load_or_default(
         auth.user_id.as_str(),
     )
     .await?;
-    Ok(existing.unwrap_or_else(|| fallback_from_session(session, auth.user_id.as_str())))
+    Ok(existing
+        .unwrap_or_else(|| SessionRuntimeSettings::new(session.id.clone(), auth.user_id.clone())))
 }
 
 pub(super) async fn get_session_runtime_settings(
@@ -233,6 +134,12 @@ pub(super) async fn update_session_runtime_settings(
             Ok(path) => path,
             Err(err) => return err,
         };
+    }
+    if let Some(value) = req.reasoning_enabled {
+        next.reasoning_enabled = value;
+    }
+    if let Some(value) = req.plan_mode_enabled {
+        next.plan_mode_enabled = value;
     }
     if let Some(value) = req.mcp_enabled {
         next.mcp_enabled = value;
