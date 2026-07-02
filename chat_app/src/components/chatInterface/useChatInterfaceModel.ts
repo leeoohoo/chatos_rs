@@ -64,6 +64,7 @@ export const useChatInterfaceModel = ({
     apiClient: store.apiClient,
     activePanel: store.activePanel,
     currentSession: store.currentSession,
+    messages: store.messages,
     runtimeContextRefreshNonce: derived.runtimeContextRefreshNonce,
     currentRemoteConnectionId: store.currentRemoteConnection?.id || null,
     summaryPaneSessionId,
@@ -71,6 +72,7 @@ export const useChatInterfaceModel = ({
     onMessageSend,
     sendMessage: store.sendMessage,
     selectRemoteConnection: store.selectRemoteConnection,
+    loadMessages: store.loadMessages,
     loadMoreMessages: store.loadMoreMessages,
     loadProjects: store.loadProjects,
     loadAiModelConfigs: store.loadAiModelConfigs,
@@ -162,6 +164,9 @@ export const useChatInterfaceModel = ({
     composerWorkspaceRoot: runtimeSettings.workspaceRoot,
     currentRemoteConnectionId: store.currentRemoteConnection?.id || null,
     remoteConnections: store.remoteConnections || [],
+    reviewRepairRunning: controller.reviewRepairRunning,
+    reviewRepairPendingCount: controller.reviewRepairPendingCount,
+    reviewRepairDisabled: controller.reviewRepairDisabled,
   };
 
   const conversationActions: ChatInterfaceConversationActions = {
@@ -179,6 +184,7 @@ export const useChatInterfaceModel = ({
     handleComposerProjectChange: resources.handleComposerProjectChange,
     handleComposerWorkspaceRootChange: runtimeSettings.setWorkspaceRoot,
     handleComposerRemoteConnectionChange: controller.handleComposerRemoteConnectionChange,
+    handleRunReviewRepair: controller.handleRunReviewRepair,
   };
 
   const overlay: ChatInterfaceOverlayState = {

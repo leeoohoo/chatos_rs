@@ -107,6 +107,43 @@ impl AppStore {
         }
     }
 
+    pub async fn update_task_schedule_if_next_run_at(
+        &self,
+        task_id: &str,
+        expected_next_run_at: &str,
+        schedule: TaskScheduleConfig,
+        updated_at: &str,
+    ) -> Result<Option<TaskRecord>, String> {
+        match self {
+            Self::InMemory(store) => Ok(store.update_task_schedule_if_next_run_at(
+                task_id,
+                expected_next_run_at,
+                schedule,
+                updated_at,
+            )),
+            Self::Sqlite(store) => {
+                store
+                    .update_task_schedule_if_next_run_at(
+                        task_id,
+                        expected_next_run_at,
+                        schedule,
+                        updated_at,
+                    )
+                    .await
+            }
+            Self::Mongo(store) => {
+                store
+                    .update_task_schedule_if_next_run_at(
+                        task_id,
+                        expected_next_run_at,
+                        schedule,
+                        updated_at,
+                    )
+                    .await
+            }
+        }
+    }
+
     pub async fn list_task_prerequisites(
         &self,
         task_id: &str,

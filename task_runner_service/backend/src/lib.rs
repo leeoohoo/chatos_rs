@@ -15,7 +15,8 @@ pub mod services;
 pub mod state;
 pub mod store;
 pub mod terminal_store;
+pub mod worker;
 
 pub use api::build_router;
-pub use config::{load_task_runner_dotenv, AppConfig};
+pub use config::{load_task_runner_dotenv, AppConfig, TaskRunnerRole};
 pub use state::AppState;

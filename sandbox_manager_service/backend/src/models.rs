@@ -113,6 +113,10 @@ pub struct SandboxLeaseRecord {
     pub resource_limits: ResourceLimits,
     pub network: NetworkPolicy,
     pub tools: Vec<String>,
+    #[serde(default)]
+    pub agent_token_nonce: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub idempotency_key: Option<String>,
     pub created_at: String,
     pub updated_at: String,
     pub expires_at: String,
@@ -155,6 +159,7 @@ pub struct CreateSandboxLeaseResponse {
     pub image_ref: Option<String>,
     pub status: SandboxStatus,
     pub agent_endpoint: Option<String>,
+    pub agent_token: String,
     pub run_workspace: String,
     pub expires_at: String,
 }

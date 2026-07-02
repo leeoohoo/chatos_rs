@@ -45,6 +45,7 @@ impl RunService {
             "prompt_override": input.prompt_override,
             "model_config_id": model_config_id,
             "mcp_config": task.mcp_config,
+            "effective_workspace_dir": effective_workspace_dir.as_str(),
             "started_as_prerequisite": true,
         });
         let now = now_rfc3339();
@@ -64,6 +65,10 @@ impl RunService {
             report: None,
             cancel_requested: false,
             summary_job_run_id: None,
+            worker_id: None,
+            claim_token: None,
+            claim_until: None,
+            attempt: 0,
             created_at: now.clone(),
             updated_at: now,
         };
@@ -89,25 +94,6 @@ impl RunService {
                 None,
             ))
             .await?;
-
-        let prerequisite_context = self
-            .collect_succeeded_prerequisite_context(task.id.as_str())
-            .await?;
-        let service = self.clone();
-        let run_for_spawn = run.clone();
-        let input_for_spawn = input.clone();
-        crate::auth::spawn_with_current_access_token(async move {
-            service
-                .execute_run_model_phase(
-                    task,
-                    model_config,
-                    run_for_spawn,
-                    input_for_spawn,
-                    effective_workspace_dir,
-                    prerequisite_context,
-                )
-                .await;
-        });
 
         Ok(run)
     }

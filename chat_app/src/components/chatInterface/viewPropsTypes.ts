@@ -34,6 +34,9 @@ export interface ChatInterfaceConversationState {
   composerWorkspaceRoot: string | null;
   currentRemoteConnectionId: string | null;
   remoteConnections: RemoteConnection[];
+  reviewRepairRunning: boolean;
+  reviewRepairPendingCount: number | null;
+  reviewRepairDisabled: boolean;
 }
 
 export interface ChatInterfaceConversationActions {
@@ -55,6 +58,7 @@ export interface ChatInterfaceConversationActions {
   handleComposerProjectChange: (projectId: string | null) => void;
   handleComposerWorkspaceRootChange: (path: string | null) => void;
   handleComposerRemoteConnectionChange: (connectionId: string | null) => void;
+  handleRunReviewRepair: (sessionId: string) => void | Promise<void>;
 }
 
 export interface ChatInterfaceOverlayState {

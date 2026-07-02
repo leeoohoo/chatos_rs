@@ -42,6 +42,8 @@ impl RunService {
         if matches!(run.status, TaskRunStatus::Queued) {
             run.status = TaskRunStatus::Cancelled;
             run.cancel_requested = true;
+            run.claim_token = None;
+            run.claim_until = None;
             run.finished_at = Some(now_rfc3339());
             run.updated_at = now_rfc3339();
             self.store.save_run(run.clone()).await?;

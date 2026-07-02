@@ -265,6 +265,10 @@ pub(super) fn task_run_from_row(row: &SqliteRow) -> Result<TaskRunRecord, String
         report: decode_json_option(row.get("report_json"))?,
         cancel_requested: int_to_bool(row.get::<i64, _>("cancel_requested")),
         summary_job_run_id: row.get("summary_job_run_id"),
+        worker_id: row.get("worker_id"),
+        claim_token: row.get("claim_token"),
+        claim_until: row.get("claim_until"),
+        attempt: row.get::<i64, _>("attempt"),
         created_at: row.get("created_at"),
         updated_at: row.get("updated_at"),
     })

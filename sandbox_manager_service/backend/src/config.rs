@@ -44,6 +44,18 @@ pub struct AppConfig {
     pub image_tag_prefix: String,
     pub image_build_context: PathBuf,
     pub image_dockerfile: PathBuf,
+    pub require_auth: bool,
+    pub operator_token: Option<String>,
+    pub user_service_base_url: String,
+    pub user_service_request_timeout_ms: u64,
+    pub system_client_id: Option<String>,
+    pub system_client_key: Option<String>,
+    pub system_client_scopes: Vec<String>,
+    pub system_client_allowed_tenant_ids: Vec<String>,
+    pub system_client_allowed_project_ids: Vec<String>,
+    pub system_client_allowed_tools: Vec<String>,
+    pub system_client_max_lease_ttl_seconds: u64,
+    pub agent_token_secret: String,
 }
 
 impl AppConfig {
@@ -78,6 +90,12 @@ impl AppConfig {
                     .join("Dockerfile")
             });
 
+        let lease_ttl = Duration::from_secs(lease_ttl_seconds);
+        let system_client_max_lease_ttl_seconds =
+            env_parse("SANDBOX_MANAGER_SYSTEM_CLIENT_MAX_LEASE_TTL_SECONDS")
+                .unwrap_or(lease_ttl_seconds)
+                .max(60);
+
         Ok(Self {
             host,
             port,
@@ -91,7 +109,7 @@ impl AppConfig {
                 .unwrap_or_else(default_work_root),
             pool_max_active: env_parse("SANDBOX_MANAGER_POOL_MAX_ACTIVE").unwrap_or(5),
             pool_max_pending: env_parse("SANDBOX_MANAGER_POOL_MAX_PENDING").unwrap_or(50),
-            lease_ttl: Duration::from_secs(lease_ttl_seconds),
+            lease_ttl,
             cleanup_interval: Duration::from_secs(cleanup_interval_seconds.max(5)),
             agent_port: env_parse("SANDBOX_MANAGER_AGENT_PORT").unwrap_or(49_888),
             docker_image: docker_image.clone(),
@@ -108,6 +126,50 @@ impl AppConfig {
                 .unwrap_or_else(|| "chatos-sandbox-agent".to_string()),
             image_build_context,
             image_dockerfile,
+            require_auth: env_bool("SANDBOX_MANAGER_REQUIRE_AUTH", false),
+            operator_token: normalized_env("SANDBOX_MANAGER_OPERATOR_TOKEN"),
+            user_service_base_url: normalized_env("SANDBOX_MANAGER_USER_SERVICE_BASE_URL")
+                .or_else(|| normalized_env("CHATOS_USER_SERVICE_BASE_URL"))
+                .or_else(|| normalized_env("USER_SERVICE_BASE_URL"))
+                .unwrap_or_else(|| "http://127.0.0.1:39190".to_string()),
+            user_service_request_timeout_ms: env_parse(
+                "SANDBOX_MANAGER_USER_SERVICE_REQUEST_TIMEOUT_MS",
+            )
+            .or_else(|| env_parse("CHATOS_USER_SERVICE_REQUEST_TIMEOUT_MS"))
+            .or_else(|| env_parse("USER_SERVICE_DOWNSTREAM_REQUEST_TIMEOUT_MS"))
+            .unwrap_or(5_000)
+            .max(300),
+            system_client_id: normalized_env("SANDBOX_MANAGER_SYSTEM_CLIENT_ID"),
+            system_client_key: normalized_env("SANDBOX_MANAGER_SYSTEM_CLIENT_KEY"),
+            system_client_scopes: env_csv(
+                "SANDBOX_MANAGER_SYSTEM_CLIENT_SCOPES",
+                &[
+                    "sandbox.lease.create",
+                    "sandbox.lease.read",
+                    "sandbox.lease.release",
+                    "sandbox.mcp.tools",
+                    "sandbox.mcp.call",
+                    "sandbox.pool.read",
+                    "sandbox.images.read",
+                ],
+            ),
+            system_client_allowed_tenant_ids: env_csv(
+                "SANDBOX_MANAGER_SYSTEM_CLIENT_ALLOWED_TENANT_IDS",
+                &["*"],
+            ),
+            system_client_allowed_project_ids: env_csv(
+                "SANDBOX_MANAGER_SYSTEM_CLIENT_ALLOWED_PROJECT_IDS",
+                &["*"],
+            ),
+            system_client_allowed_tools: env_csv(
+                "SANDBOX_MANAGER_SYSTEM_CLIENT_ALLOWED_TOOLS",
+                &["*"],
+            ),
+            system_client_max_lease_ttl_seconds,
+            agent_token_secret: normalized_env("SANDBOX_MANAGER_AGENT_TOKEN_SECRET")
+                .or_else(|| normalized_env("SANDBOX_MANAGER_SYSTEM_CLIENT_KEY"))
+                .or_else(|| normalized_env("SANDBOX_MANAGER_OPERATOR_TOKEN"))
+                .unwrap_or_else(|| "chatos-sandbox-agent-dev-secret".to_string()),
         })
     }
 
@@ -155,6 +217,36 @@ where
     T: std::str::FromStr,
 {
     normalized_env(key).and_then(|value| value.parse::<T>().ok())
+}
+
+fn env_bool(key: &str, default_value: bool) -> bool {
+    normalized_env(key)
+        .map(|value| {
+            matches!(
+                value.to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes" | "on"
+            )
+        })
+        .unwrap_or(default_value)
+}
+
+fn env_csv(key: &str, default_values: &[&str]) -> Vec<String> {
+    normalized_env(key)
+        .map(|value| {
+            value
+                .split(',')
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(ToOwned::to_owned)
+                .collect::<Vec<_>>()
+        })
+        .filter(|values| !values.is_empty())
+        .unwrap_or_else(|| {
+            default_values
+                .iter()
+                .map(|value| value.to_string())
+                .collect()
+        })
 }
 
 fn default_database_url() -> String {

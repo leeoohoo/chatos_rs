@@ -141,6 +141,42 @@ impl RunService {
         self.store.has_active_run_for_task(task_id).await
     }
 
+    pub async fn claim_next_queued_run(
+        &self,
+        worker_id: &str,
+        claim_ttl: Duration,
+    ) -> Result<Option<TaskRunRecord>, String> {
+        let claim_token = Uuid::new_v4().to_string();
+        let claim_until = (chrono::Utc::now()
+            + chrono::Duration::from_std(claim_ttl).map_err(|err| err.to_string())?)
+        .to_rfc3339();
+        self.store
+            .claim_next_queued_run(worker_id, claim_token.as_str(), claim_until.as_str())
+            .await
+    }
+
+    pub async fn renew_run_claim(
+        &self,
+        run: &TaskRunRecord,
+        worker_id: &str,
+        claim_ttl: Duration,
+    ) -> Result<bool, String> {
+        let Some(claim_token) = run.claim_token.as_deref() else {
+            return Ok(false);
+        };
+        let claim_until = (chrono::Utc::now()
+            + chrono::Duration::from_std(claim_ttl).map_err(|err| err.to_string())?)
+        .to_rfc3339();
+        self.store
+            .renew_run_claim(&run.id, worker_id, claim_token, claim_until.as_str())
+            .await
+    }
+
+    pub async fn fail_expired_run_claims(&self) -> Result<usize, String> {
+        let now = now_rfc3339();
+        self.store.fail_expired_run_claims(now.as_str()).await
+    }
+
     pub async fn batch_start_runs(
         &self,
         request: BatchTaskRunRequest,

@@ -38,8 +38,14 @@ impl RunService {
                 .or_else(|| Some("任务已通过 TaskManager 标记为成功。".to_string()));
             run.result_summary = result_summary.clone();
         }
-        if let Err(err) = self.store.save_run(run.clone()).await {
-            warn!("failed to persist completed task run {}: {}", run.id, err);
+        match self.store.save_run(run.clone()).await {
+            Ok(saved) => {
+                *run = saved;
+            }
+            Err(err) => {
+                warn!("failed to persist completed task run {}: {}", run.id, err);
+                return;
+            }
         }
 
         let event_type = match run.status {
@@ -191,6 +197,7 @@ mod tests {
         AppConfig {
             host: IpAddr::V4(Ipv4Addr::LOCALHOST),
             port: 0,
+            role: crate::config::TaskRunnerRole::All,
             store_mode: StoreMode::Memory,
             database_url: "memory://run-completion-test".to_string(),
             memory_engine_base_url: None,
@@ -202,6 +209,10 @@ mod tests {
             memory_timeout: Duration::from_millis(1000),
             execution_timeout: Duration::from_millis(1000),
             scheduler_poll_interval: Duration::from_millis(1000),
+            worker_id: "test-worker".to_string(),
+            worker_poll_interval: Duration::from_millis(1_000),
+            worker_claim_ttl: Duration::from_millis(120_000),
+            worker_concurrency: 4,
             auto_memory_summary: false,
             default_task_execution_max_iterations: 1,
             default_tool_result_model_max_chars: 1000,
@@ -277,6 +288,10 @@ mod tests {
             report: None,
             cancel_requested: false,
             summary_job_run_id: None,
+            worker_id: None,
+            claim_token: None,
+            claim_until: None,
+            attempt: 0,
             created_at: now.clone(),
             updated_at: now,
         }

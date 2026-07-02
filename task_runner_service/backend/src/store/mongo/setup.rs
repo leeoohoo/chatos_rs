@@ -175,6 +175,12 @@ impl MongoStore {
             .await?;
         self.ensure_index(&self.runs, doc! { "cancel_requested": 1 }, false)
             .await?;
+        self.ensure_index(&self.runs, doc! { "status": 1, "created_at": 1 }, false)
+            .await?;
+        self.ensure_index(&self.runs, doc! { "status": 1, "claim_until": 1 }, false)
+            .await?;
+        self.ensure_index(&self.runs, doc! { "worker_id": 1, "claim_token": 1 }, false)
+            .await?;
         self.ensure_task_run_indexes().await?;
 
         self.ensure_index(&self.run_events, doc! { "id": 1 }, true)

@@ -192,7 +192,7 @@ export const enUS: MessageDictionary = {
   'mcpCatalog.externalConfigUpdated': 'External MCP config updated',
   'mcpCatalog.externalConfigDeleted': 'External MCP config deleted',
   'mcpCatalog.externalConfigDeleteTitle': 'Delete external MCP config: {name}',
-  'mcpCatalog.externalConfigDeleteContent': 'The config will be removed if no task references it. The backend rejects deletion while it is still bound to a task.',
+  'mcpCatalog.externalConfigDeleteContent': 'Only configs that are not referenced by tasks can be deleted. If it is still referenced, edit the config and turn it off instead.',
   'mcpCatalog.externalConfigNameRequired': 'Enter a name',
   'mcpCatalog.externalConfigUrlRequired': 'Enter a URL',
   'mcpCatalog.externalConfigCommand': 'Command',

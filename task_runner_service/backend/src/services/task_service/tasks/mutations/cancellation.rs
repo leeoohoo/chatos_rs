@@ -229,6 +229,8 @@ impl TaskService {
             if run.status == TaskRunStatus::Queued {
                 run.status = TaskRunStatus::Cancelled;
                 run.cancel_requested = true;
+                run.claim_token = None;
+                run.claim_until = None;
                 run.finished_at = Some(now_rfc3339());
                 run.updated_at = now_rfc3339();
                 self.store.save_run(run.clone()).await?;
@@ -275,6 +277,7 @@ mod tests {
         AppConfig {
             host: IpAddr::V4(Ipv4Addr::LOCALHOST),
             port: 0,
+            role: crate::config::TaskRunnerRole::All,
             store_mode: StoreMode::Memory,
             database_url: "memory://task-runner-test".to_string(),
             memory_engine_base_url: None,
@@ -286,6 +289,10 @@ mod tests {
             memory_timeout: Duration::from_millis(1000),
             execution_timeout: Duration::from_millis(1000),
             scheduler_poll_interval: Duration::from_millis(1000),
+            worker_id: "test-worker".to_string(),
+            worker_poll_interval: Duration::from_millis(1_000),
+            worker_claim_ttl: Duration::from_millis(120_000),
+            worker_concurrency: 4,
             auto_memory_summary: false,
             default_task_execution_max_iterations: 1,
             default_tool_result_model_max_chars: 1000,

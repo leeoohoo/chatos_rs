@@ -22,10 +22,19 @@ pub enum StoreMode {
     Mongo,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TaskRunnerRole {
+    All,
+    Api,
+    Worker,
+    Scheduler,
+}
+
 #[derive(Debug, Clone)]
 pub struct AppConfig {
     pub host: IpAddr,
     pub port: u16,
+    pub role: TaskRunnerRole,
     pub store_mode: StoreMode,
     pub database_url: String,
     pub memory_engine_base_url: Option<String>,
@@ -37,6 +46,10 @@ pub struct AppConfig {
     pub memory_timeout: Duration,
     pub execution_timeout: Duration,
     pub scheduler_poll_interval: Duration,
+    pub worker_id: String,
+    pub worker_poll_interval: Duration,
+    pub worker_claim_ttl: Duration,
+    pub worker_concurrency: usize,
     pub auto_memory_summary: bool,
     pub default_task_execution_max_iterations: usize,
     pub default_tool_result_model_max_chars: usize,
@@ -65,6 +78,18 @@ impl AppConfig {
 
     pub fn default_workspace_path(&self) -> PathBuf {
         PathBuf::from(&self.default_workspace_dir)
+    }
+
+    pub fn api_enabled(&self) -> bool {
+        matches!(self.role, TaskRunnerRole::All | TaskRunnerRole::Api)
+    }
+
+    pub fn worker_enabled(&self) -> bool {
+        matches!(self.role, TaskRunnerRole::All | TaskRunnerRole::Worker)
+    }
+
+    pub fn scheduler_enabled(&self) -> bool {
+        matches!(self.role, TaskRunnerRole::All | TaskRunnerRole::Scheduler)
     }
 
     pub fn store_mode_key(&self) -> &'static str {
@@ -103,6 +128,26 @@ impl StoreMode {
             Self::Memory => "memory",
             Self::Sqlite => "sqlite",
             Self::Mongo => "mongo",
+        }
+    }
+}
+
+impl TaskRunnerRole {
+    fn from_env(value: Option<&str>) -> Self {
+        match value.unwrap_or("all").trim().to_ascii_lowercase().as_str() {
+            "api" | "api-only" => Self::Api,
+            "worker" | "worker-only" => Self::Worker,
+            "scheduler" | "scheduler-only" => Self::Scheduler,
+            _ => Self::All,
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::All => "all",
+            Self::Api => "api",
+            Self::Worker => "worker",
+            Self::Scheduler => "scheduler",
         }
     }
 }

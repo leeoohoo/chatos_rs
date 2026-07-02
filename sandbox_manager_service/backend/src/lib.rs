@@ -2,6 +2,7 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 pub mod api;
+pub mod auth;
 pub mod backend;
 pub mod config;
 pub mod error;

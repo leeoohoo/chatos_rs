@@ -47,6 +47,10 @@ interface ChatConversationPaneProps {
   memoryError: string | null;
   onRefreshMemory: (sessionId: string) => void;
   onCloseSummary: () => void;
+  onRunReviewRepair: (sessionId: string) => void | Promise<void>;
+  reviewRepairRunning: boolean;
+  reviewRepairPendingCount: number | null;
+  reviewRepairDisabled: boolean;
   runtimeContextOpen?: boolean;
   runtimeContextSessionId?: string | null;
   onToggleSessionSummary?: (sessionId: string) => void;
@@ -213,6 +217,10 @@ const ChatConversationPane: React.FC<ChatConversationPaneProps> = ({
   memoryError,
   onRefreshMemory,
   onCloseSummary,
+  onRunReviewRepair,
+  reviewRepairRunning,
+  reviewRepairPendingCount,
+  reviewRepairDisabled,
   runtimeContextOpen = false,
   runtimeContextSessionId = null,
   onToggleSessionSummary,
@@ -286,6 +294,10 @@ const ChatConversationPane: React.FC<ChatConversationPaneProps> = ({
           onOpenRuntimeContext={onOpenSessionRuntimeContext && currentSession?.id ? () => {
             onOpenSessionRuntimeContext(currentSession.id);
           } : undefined}
+          reviewRepairRunning={reviewRepairRunning}
+          reviewRepairPendingCount={reviewRepairPendingCount}
+          reviewRepairDisabled={reviewRepairDisabled}
+          onReviewRepair={currentSession?.id ? () => onRunReviewRepair(currentSession.id) : undefined}
           onSelectMessage={handleSelectUserMessage}
           onLoadMoreHistory={handleLoadMoreUserMessagesHistory}
           onOpenTasks={setTaskMessage}

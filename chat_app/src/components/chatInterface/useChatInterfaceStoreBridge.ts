@@ -28,6 +28,7 @@ export const useChatInterfaceStoreBridge = () => {
     ),
     error: state.error,
     loadProjects: state.loadProjects,
+    loadMessages: state.loadMessages,
     loadMoreMessages: state.loadMoreMessages,
     sendMessage: state.sendMessage,
     selectRemoteConnection: state.selectRemoteConnection,

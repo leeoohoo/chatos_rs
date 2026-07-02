@@ -197,11 +197,12 @@ export function TaskEditorDrawer({
   );
   const externalMcpConfigOptions = useMemo(
     () =>
-      externalMcpConfigs.map((config) => ({
-        label: `${config.name} (${config.transport})${config.enabled ? '' : ' / disabled'}`,
-        value: config.id,
-        disabled: !config.enabled,
-      })),
+      externalMcpConfigs
+        .filter((config) => config.enabled)
+        .map((config) => ({
+          label: `${config.name} (${config.transport})`,
+          value: config.id,
+        })),
     [externalMcpConfigs],
   );
   const skillOptions = useMemo(

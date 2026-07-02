@@ -81,6 +81,7 @@ fn test_config() -> AppConfig {
     AppConfig {
         host: IpAddr::V4(Ipv4Addr::LOCALHOST),
         port: 0,
+        role: crate::config::TaskRunnerRole::All,
         store_mode: StoreMode::Memory,
         database_url: "memory://mcp-project-scope-test".to_string(),
         memory_engine_base_url: None,
@@ -92,6 +93,10 @@ fn test_config() -> AppConfig {
         memory_timeout: Duration::from_millis(1000),
         execution_timeout: Duration::from_millis(1000),
         scheduler_poll_interval: Duration::from_millis(1000),
+        worker_id: "test-worker".to_string(),
+        worker_poll_interval: Duration::from_millis(1_000),
+        worker_claim_ttl: Duration::from_millis(120_000),
+        worker_concurrency: 4,
         auto_memory_summary: false,
         default_task_execution_max_iterations: 1,
         default_tool_result_model_max_chars: 1000,

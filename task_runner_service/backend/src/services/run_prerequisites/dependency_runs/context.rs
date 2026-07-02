@@ -132,27 +132,6 @@ impl RunService {
         }
     }
 
-    pub(super) async fn collect_succeeded_prerequisite_context(
-        &self,
-        task_id: &str,
-    ) -> Result<Vec<PrerequisiteTaskContext>, String> {
-        let prerequisite_ids = self.resolve_prerequisite_order(task_id).await?;
-        let mut contexts = Vec::new();
-        for prerequisite_task_id in prerequisite_ids {
-            let task = self
-                .store
-                .get_task(&prerequisite_task_id)
-                .await?
-                .ok_or_else(|| format!("前置任务不存在: {prerequisite_task_id}"))?;
-            if task.status != TaskStatus::Succeeded {
-                return Err(format!("前置任务尚未成功完成: {}", task.title));
-            }
-            let run = self.latest_successful_run(task.id.as_str()).await?;
-            contexts.push(build_prerequisite_context(&task, run.as_ref()));
-        }
-        Ok(contexts)
-    }
-
     async fn resolve_prerequisite_order(&self, task_id: &str) -> Result<Vec<String>, String> {
         TaskService::new(self.config.clone(), self.store.clone())
             .resolve_prerequisite_order(task_id)

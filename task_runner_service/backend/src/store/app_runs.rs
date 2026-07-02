@@ -66,9 +66,64 @@ impl AppStore {
 
     pub async fn save_run(&self, run: TaskRunRecord) -> Result<TaskRunRecord, String> {
         match self {
-            Self::InMemory(store) => Ok(store.save_run(run)),
+            Self::InMemory(store) => store.save_run(run),
             Self::Sqlite(store) => store.save_run(run).await,
             Self::Mongo(store) => store.save_run(run).await,
+        }
+    }
+
+    pub async fn claim_next_queued_run(
+        &self,
+        worker_id: &str,
+        claim_token: &str,
+        claim_until: &str,
+    ) -> Result<Option<TaskRunRecord>, String> {
+        match self {
+            Self::InMemory(store) => {
+                Ok(store.claim_next_queued_run(worker_id, claim_token, claim_until))
+            }
+            Self::Sqlite(store) => {
+                store
+                    .claim_next_queued_run(worker_id, claim_token, claim_until)
+                    .await
+            }
+            Self::Mongo(store) => {
+                store
+                    .claim_next_queued_run(worker_id, claim_token, claim_until)
+                    .await
+            }
+        }
+    }
+
+    pub async fn renew_run_claim(
+        &self,
+        run_id: &str,
+        worker_id: &str,
+        claim_token: &str,
+        claim_until: &str,
+    ) -> Result<bool, String> {
+        match self {
+            Self::InMemory(store) => {
+                Ok(store.renew_run_claim(run_id, worker_id, claim_token, claim_until))
+            }
+            Self::Sqlite(store) => {
+                store
+                    .renew_run_claim(run_id, worker_id, claim_token, claim_until)
+                    .await
+            }
+            Self::Mongo(store) => {
+                store
+                    .renew_run_claim(run_id, worker_id, claim_token, claim_until)
+                    .await
+            }
+        }
+    }
+
+    pub async fn fail_expired_run_claims(&self, now: &str) -> Result<usize, String> {
+        match self {
+            Self::InMemory(store) => Ok(store.fail_expired_run_claims(now)),
+            Self::Sqlite(store) => store.fail_expired_run_claims(now).await,
+            Self::Mongo(store) => store.fail_expired_run_claims(now).await,
         }
     }
 

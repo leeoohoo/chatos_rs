@@ -35,6 +35,7 @@ export interface TeamMemberWorkspaceProps {
   supportsReasoning: boolean;
   reasoningEnabled: boolean;
   planModeEnabled: boolean;
+  reviewRepairRunning: boolean;
   availableRemoteConnections: RemoteConnection[];
   currentRemoteConnectionId: string | null;
   onRemoteConnectionChange: (connectionId: string | null) => void;

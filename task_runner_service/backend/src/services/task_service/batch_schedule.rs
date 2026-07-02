@@ -95,12 +95,31 @@ impl TaskService {
         id: &str,
         started_at: DateTime<Utc>,
     ) -> Result<Option<TaskRecord>, String> {
-        let Some(mut task) = self.store.get_task(id).await? else {
+        let Some(task) = self.store.get_task(id).await? else {
             return Ok(None);
         };
-        task.schedule = advance_task_schedule_after_dispatch(&task.schedule, started_at)?;
-        task.updated_at = now_rfc3339();
-        Ok(Some(self.store.save_task(task).await?))
+        self.mark_scheduled_run_started_if_due(&task, started_at)
+            .await
+    }
+
+    pub async fn mark_scheduled_run_started_if_due(
+        &self,
+        task: &TaskRecord,
+        started_at: DateTime<Utc>,
+    ) -> Result<Option<TaskRecord>, String> {
+        let Some(expected_next_run_at) = task.schedule.next_run_at.as_deref() else {
+            return Ok(None);
+        };
+        let next_schedule = advance_task_schedule_after_dispatch(&task.schedule, started_at)?;
+        let updated_at = now_rfc3339();
+        self.store
+            .update_task_schedule_if_next_run_at(
+                task.id.as_str(),
+                expected_next_run_at,
+                next_schedule,
+                updated_at.as_str(),
+            )
+            .await
     }
 
     pub async fn mark_scheduled_run_failed(

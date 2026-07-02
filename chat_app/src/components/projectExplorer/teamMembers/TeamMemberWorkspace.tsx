@@ -32,6 +32,7 @@ const TeamMemberWorkspace: React.FC<TeamMemberWorkspaceProps> = ({
   supportsReasoning,
   reasoningEnabled,
   planModeEnabled,
+  reviewRepairRunning,
   availableRemoteConnections,
   currentRemoteConnectionId,
   onRemoteConnectionChange,
@@ -105,6 +106,7 @@ const TeamMemberWorkspace: React.FC<TeamMemberWorkspaceProps> = ({
         supportsReasoning={supportsReasoning}
         reasoningEnabled={reasoningEnabled}
         planModeEnabled={planModeEnabled}
+        reviewRepairRunning={reviewRepairRunning}
         availableRemoteConnections={availableRemoteConnections}
         currentRemoteConnectionId={currentRemoteConnectionId}
         onRemoteConnectionChange={onRemoteConnectionChange}

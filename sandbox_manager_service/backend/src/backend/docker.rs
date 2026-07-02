@@ -59,6 +59,14 @@ impl SandboxBackend for DockerSandboxBackend {
             .arg(pids)
             .arg("--workdir")
             .arg("/workspace");
+        command
+            .arg("-e")
+            .arg(format!("CHATOS_SANDBOX_ID={}", spec.sandbox_id));
+        if let Some(agent_token) = spec.agent_token.as_deref() {
+            command
+                .arg("-e")
+                .arg(format!("CHATOS_SANDBOX_MCP_TOKEN={agent_token}"));
+        }
         if publish_agent {
             command
                 .arg("-p")

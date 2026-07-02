@@ -9,7 +9,7 @@ use chrono::{DateTime, Utc};
 use futures_util::TryStreamExt;
 use mongodb::{
     bson::{self, doc, Bson, Document},
-    options::{FindOptions, IndexOptions, ReplaceOptions},
+    options::{FindOneAndUpdateOptions, FindOptions, IndexOptions, ReplaceOptions, ReturnDocument},
     Client, Collection, IndexModel,
 };
 use parking_lot::RwLock;
@@ -28,8 +28,8 @@ use crate::models::{
     ExternalMcpConfigRecord, ModelConfigRecord, ModelConfigUsageRecord, PaginatedResponse,
     PromptListFilters, RemoteServerRecord, RunListFilters, RunSummaryRecord, RuntimeSettingsRecord,
     SkillRecord, TaskListFilters, TaskPrerequisiteRecord, TaskProjectRecord, TaskRecord,
-    TaskRunEventRecord, TaskRunRecord, TaskRunStatus, TaskScheduleMode, TaskStatsResponse,
-    TaskStatus, TaskSummaryRecord, UserRecord,
+    TaskRunEventRecord, TaskRunRecord, TaskRunStatus, TaskScheduleConfig, TaskScheduleMode,
+    TaskStatsResponse, TaskStatus, TaskSummaryRecord, UserRecord,
 };
 
 mod app_models;
@@ -70,6 +70,28 @@ use self::task_support::{
 
 const ACTIVE_TASK_RUN_UNIQUE_INDEX_NAME: &str = "idx_task_runs_active_task_unique";
 const TASK_RUNS_TASK_CREATED_INDEX_NAME: &str = "idx_task_runs_task_created_at";
+
+fn task_run_status_is_terminal(status: TaskRunStatus) -> bool {
+    matches!(
+        status,
+        TaskRunStatus::Succeeded
+            | TaskRunStatus::Failed
+            | TaskRunStatus::Cancelled
+            | TaskRunStatus::Blocked
+    )
+}
+
+fn prepare_run_for_claim_guarded_persist(mut run: TaskRunRecord) -> TaskRunRecord {
+    if task_run_status_is_terminal(run.status) {
+        run.claim_token = None;
+        run.claim_until = None;
+    }
+    run
+}
+
+fn lost_run_claim_error(run_id: &str) -> String {
+    format!("run claim lost before persisting run {run_id}")
+}
 
 #[derive(Default)]
 struct StoreData {

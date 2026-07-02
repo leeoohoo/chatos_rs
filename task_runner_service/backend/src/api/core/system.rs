@@ -167,6 +167,44 @@ mod tests {
     use super::*;
 
     #[tokio::test]
+    async fn default_skill_zh_cn_includes_ai_role_sequence_diagram() {
+        let Json(response) = task_runner_skill_handler(Query(TaskRunnerLocaleQuery {
+            lang: Some("zh-CN".to_string()),
+            profile: None,
+        }))
+        .await;
+
+        assert_eq!(response.name, "task-runner-ai-agent-zh-cn");
+        assert!(response.content.contains("你（AI 主对话）"));
+        assert!(response.content.contains("Task Runner 任务队列"));
+        assert!(response.content.contains("Worker 定时执行器"));
+        assert!(response.content.contains("返回任务已安排"));
+        assert!(response.content.contains("回调事实结果"));
+        assert!(!response.content.contains("目标系统 / 项目管理"));
+        assert!(!response.content.contains("participant Facts"));
+    }
+
+    #[tokio::test]
+    async fn default_skill_en_us_includes_ai_role_sequence_diagram() {
+        let Json(response) = task_runner_skill_handler(Query(TaskRunnerLocaleQuery {
+            lang: Some("en-US".to_string()),
+            profile: None,
+        }))
+        .await;
+
+        assert_eq!(response.name, "task-runner-ai-agent-en-us");
+        assert!(response.content.contains("You (AI main chat)"));
+        assert!(response.content.contains("Task Runner task queue"));
+        assert!(response.content.contains("Scheduled worker"));
+        assert!(response.content.contains("Return arranged task"));
+        assert!(response.content.contains("Callback factual result"));
+        assert!(!response
+            .content
+            .contains("Target system / Project Management"));
+        assert!(!response.content.contains("participant Facts"));
+    }
+
+    #[tokio::test]
     async fn plan_skill_zh_cn_requires_task_creation_for_direct_pm_requests() {
         let Json(response) = task_runner_skill_handler(Query(TaskRunnerLocaleQuery {
             lang: Some("zh-CN".to_string()),

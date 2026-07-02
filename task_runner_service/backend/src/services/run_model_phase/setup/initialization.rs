@@ -52,7 +52,9 @@ pub(super) async fn initialize_model_phase(
         return false;
     }
 
-    mark_run_running(service, run).await;
+    if !mark_run_running(service, run).await {
+        return false;
+    }
     mark_task_running(service, task, &run.id).await;
     persist_prerequisite_context(service, run, prerequisite_context).await;
     service
@@ -61,12 +63,20 @@ pub(super) async fn initialize_model_phase(
     true
 }
 
-async fn mark_run_running(service: &RunService, run: &mut TaskRunRecord) {
+async fn mark_run_running(service: &RunService, run: &mut TaskRunRecord) -> bool {
     run.status = TaskRunStatus::Running;
-    run.started_at = Some(now_rfc3339());
+    if run.started_at.is_none() {
+        run.started_at = Some(now_rfc3339());
+    }
     run.updated_at = now_rfc3339();
-    if let Err(err) = service.store.save_run(run.clone()).await {
-        warn!("failed to persist running task run {}: {}", run.id, err);
+    match service.store.save_run(run.clone()).await {
+        Ok(saved) => {
+            *run = saved;
+        }
+        Err(err) => {
+            warn!("failed to persist running task run {}: {}", run.id, err);
+            return false;
+        }
     }
     if let Err(err) = service
         .store
@@ -80,6 +90,7 @@ async fn mark_run_running(service: &RunService, run: &mut TaskRunRecord) {
     {
         warn!("failed to append running event for run {}: {}", run.id, err);
     }
+    true
 }
 
 async fn mark_task_running(service: &RunService, task: &TaskRecord, run_id: &str) {

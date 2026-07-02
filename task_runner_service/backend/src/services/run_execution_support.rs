@@ -74,11 +74,17 @@ impl RunService {
         run.cancel_requested = false;
         run.finished_at = Some(now_rfc3339());
         run.updated_at = now_rfc3339();
-        if let Err(err) = self.store.save_run(run.clone()).await {
-            warn!(
-                "failed to persist pre-start cancelled run {}: {}",
-                run.id, err
-            );
+        match self.store.save_run(run.clone()).await {
+            Ok(saved) => {
+                *run = saved;
+            }
+            Err(err) => {
+                warn!(
+                    "failed to persist pre-start cancelled run {}: {}",
+                    run.id, err
+                );
+                return;
+            }
         }
         if let Err(err) = self
             .store

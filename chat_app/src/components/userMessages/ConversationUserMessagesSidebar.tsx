@@ -23,10 +23,14 @@ interface ConversationUserMessagesSidebarProps {
   runtimeContextActive?: boolean;
   summaryLoading?: boolean;
   runtimeContextLoading?: boolean;
+  reviewRepairRunning?: boolean;
   summaryDisabled?: boolean;
   runtimeContextDisabled?: boolean;
+  reviewRepairDisabled?: boolean;
+  reviewRepairPendingCount?: number | null;
   onOpenSummary?: () => void | Promise<void>;
   onOpenRuntimeContext?: () => void | Promise<void>;
+  onReviewRepair?: () => void | Promise<void>;
   onSelectMessage?: (message: Message) => void;
   onLoadMoreHistory?: (oldestLoadedMessage: Message | null) => void | Promise<void>;
   onOpenTasks: (message: Message) => void;
@@ -59,10 +63,14 @@ const ConversationUserMessagesSidebar: React.FC<ConversationUserMessagesSidebarP
   runtimeContextActive = false,
   summaryLoading = false,
   runtimeContextLoading = false,
+  reviewRepairRunning = false,
   summaryDisabled,
   runtimeContextDisabled,
+  reviewRepairDisabled,
+  reviewRepairPendingCount = null,
   onOpenSummary,
   onOpenRuntimeContext,
+  onReviewRepair,
   onSelectMessage,
   onLoadMoreHistory,
   onOpenTasks,
@@ -127,6 +135,10 @@ const ConversationUserMessagesSidebar: React.FC<ConversationUserMessagesSidebarP
 
   const isSummaryDisabled = summaryDisabled ?? !sessionId;
   const isRuntimeContextDisabled = runtimeContextDisabled ?? !sessionId;
+  const isReviewRepairDisabled = !sessionId || reviewRepairRunning || (reviewRepairDisabled ?? false);
+  const reviewRepairTitle = typeof reviewRepairPendingCount === 'number' && reviewRepairPendingCount > 0
+    ? `${t('taskWorkbar.reviewRepair')} (${reviewRepairPendingCount})`
+    : t('taskWorkbar.reviewRepair');
 
   const openProcessTimeline = async (item: UserMessageTurn) => {
     if (!sessionId) {
@@ -182,6 +194,19 @@ const ConversationUserMessagesSidebar: React.FC<ConversationUserMessagesSidebarP
                 title={t('session.runtimeContextTitle')}
               >
                 {runtimeContextLoading ? t('common.loading') : t('session.runtimeContext')}
+              </button>
+            ) : null}
+            {onReviewRepair ? (
+              <button
+                type="button"
+                className={buildActionButtonClass(reviewRepairRunning)}
+                disabled={isReviewRepairDisabled}
+                onClick={() => {
+                  void onReviewRepair();
+                }}
+                title={reviewRepairRunning ? t('taskWorkbar.reviewRepairing') : reviewRepairTitle}
+              >
+                {reviewRepairRunning ? t('taskWorkbar.reviewRepairing') : t('taskWorkbar.reviewRepair')}
               </button>
             ) : null}
             <button
