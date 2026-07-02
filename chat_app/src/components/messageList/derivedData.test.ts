@@ -225,6 +225,51 @@ describe('buildVisibleMessageState', () => {
     ]);
   });
 
+  it('filters assistant tool-call carrier messages from the main visible message list', () => {
+    const messages: Message[] = [
+      buildUser({
+        id: 'user-tool-carrier-1',
+        metadata: {
+          conversation_turn_id: 'turn-tool-carrier-1',
+        },
+      }),
+      buildAssistant({
+        id: 'assistant-tool-carrier-1',
+        content: '{"type":"output_text","annotations":[],"logprobs":[],"text":""}',
+        metadata: {
+          conversation_turn_id: 'turn-tool-carrier-1',
+          toolCalls: [{
+            id: 'tool-call-carrier-1',
+            messageId: 'assistant-tool-carrier-1',
+            name: 'task_runner_service_cancel_task',
+            arguments: {},
+            createdAt: new Date('2026-05-07T10:00:01.000Z'),
+          }],
+          contentSegments: [
+            { type: 'tool_call', toolCallId: 'tool-call-carrier-1', content: '' as never },
+          ],
+        },
+      }),
+      buildAssistant({
+        id: 'assistant-final-tool-carrier-1',
+        content: '已处理完成',
+        metadata: {
+          conversation_turn_id: 'turn-tool-carrier-1',
+          historyFinalForUserMessageId: 'user-tool-carrier-1',
+          historyFinalForTurnId: 'turn-tool-carrier-1',
+        },
+      }),
+    ];
+
+    const state = buildVisibleMessageState(messages.map(parseMessageForList));
+
+    expect(state.visibleMessages.map((message) => message.id)).toEqual([
+      'user-tool-carrier-1',
+      'assistant-final-tool-carrier-1',
+    ]);
+    expect(state.assistantToolCallById.has('tool-call-carrier-1')).toBe(true);
+  });
+
   it('filters hidden tool messages from the main visible message list', () => {
     const messages: Message[] = [
       buildUser({

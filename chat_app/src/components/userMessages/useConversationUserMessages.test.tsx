@@ -137,6 +137,58 @@ describe('useConversationUserMessages', () => {
     });
   });
 
+  it('does not treat ready-only active task state as running', async () => {
+    const client = {
+      getConversationUserMessageTurns: vi.fn().mockResolvedValue({
+        items: [{
+          turn_id: 'turn-ready',
+          user_message: {
+            id: 'user-ready',
+            conversation_id: 'session-1',
+            role: 'user',
+            content: '这个任务现在只是待运行',
+            status: 'completed',
+            created_at: '2026-06-16T06:55:00.000Z',
+            metadata: {
+              conversation_turn_id: 'turn-ready',
+              task_runner_async: {
+                running_task_ids: ['task-ready'],
+                overall_status: 'running',
+              },
+            },
+          },
+          final_assistant_message: null,
+          has_process: true,
+          process_message_count: 1,
+        }],
+        has_more: false,
+        next_before: null,
+      }),
+      getConversationTaskRunnerActiveMessageTasks: vi.fn().mockResolvedValue({
+        active_source_user_message_ids: ['user-ready'],
+        running_source_user_message_ids: [],
+        items: [{
+          source_user_message_id: 'user-ready',
+          source_turn_id: 'turn-ready',
+          running_count: 0,
+          active_count: 1,
+        }],
+      }),
+    };
+
+    const { result } = renderHook(
+      () => useConversationUserMessages('session-1'),
+      { wrapper: wrapperForClient(client) },
+    );
+
+    await waitFor(() => {
+      expect(result.current.items).toHaveLength(1);
+    });
+    await waitFor(() => {
+      expect(result.current.items[0]?.taskState.running).toBe(false);
+    });
+  });
+
   it('maps active task status by source turn id when message id is missing', async () => {
     const client = {
       getConversationUserMessageTurns: vi.fn().mockResolvedValue({

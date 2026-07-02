@@ -90,6 +90,32 @@ impl SqliteStore {
         Ok(task)
     }
 
+    pub(in crate::store) async fn update_task_schedule_if_next_run_at(
+        &self,
+        task_id: &str,
+        expected_next_run_at: &str,
+        schedule: TaskScheduleConfig,
+        updated_at: &str,
+    ) -> Result<Option<TaskRecord>, String> {
+        let result = sqlx::query(
+            "UPDATE tasks
+             SET schedule_json = ?, updated_at = ?
+             WHERE id = ?
+               AND json_extract(schedule_json, '$.next_run_at') = ?",
+        )
+        .bind(encode_json(&schedule)?)
+        .bind(updated_at)
+        .bind(task_id)
+        .bind(expected_next_run_at)
+        .execute(&self.pool)
+        .await
+        .map_err(|err| err.to_string())?;
+        if result.rows_affected() == 0 {
+            return Ok(None);
+        }
+        self.get_task(task_id).await
+    }
+
     pub(in crate::store) async fn delete_task(&self, id: &str) -> Result<bool, String> {
         let mut tx = self.pool.begin().await.map_err(|err| err.to_string())?;
         sqlx::query("DELETE FROM task_prerequisites WHERE task_id = ? OR prerequisite_task_id = ?")

@@ -6,12 +6,12 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use chatos_ai_runtime::{
-    DEFAULT_TOOL_RESULT_MODEL_MAX_CHARS, DEFAULT_TOOL_RESULTS_MODEL_TOTAL_MAX_CHARS,
-    TOOL_RESULT_MODEL_MAX_CHARS_ENV, TOOL_RESULTS_MODEL_TOTAL_MAX_CHARS_ENV,
+    DEFAULT_TOOL_RESULTS_MODEL_TOTAL_MAX_CHARS, DEFAULT_TOOL_RESULT_MODEL_MAX_CHARS,
+    TOOL_RESULTS_MODEL_TOTAL_MAX_CHARS_ENV, TOOL_RESULT_MODEL_MAX_CHARS_ENV,
 };
 
 use super::database::{default_database_url, normalize_database_url};
-use super::{AppConfig, DEFAULT_TASK_RUN_EXECUTION_TIMEOUT_MS, StoreMode};
+use super::{AppConfig, StoreMode, TaskRunnerRole, DEFAULT_TASK_RUN_EXECUTION_TIMEOUT_MS};
 
 impl AppConfig {
     pub fn from_env() -> Result<Self, String> {
@@ -31,6 +31,7 @@ impl AppConfig {
             .ok()
             .and_then(|value| value.parse::<u16>().ok())
             .unwrap_or(39090);
+        let role = TaskRunnerRole::from_env(normalized_env("TASK_RUNNER_ROLE").as_deref());
         let timeout_ms = std::env::var("TASK_RUNNER_MEMORY_TIMEOUT_MS")
             .ok()
             .and_then(|value| value.parse::<u64>().ok())
@@ -43,6 +44,20 @@ impl AppConfig {
             .ok()
             .and_then(|value| value.parse::<u64>().ok())
             .unwrap_or(15_000);
+        let worker_poll_interval_ms = std::env::var("TASK_RUNNER_WORKER_POLL_MS")
+            .ok()
+            .and_then(|value| value.parse::<u64>().ok())
+            .unwrap_or(1_000);
+        let worker_claim_ttl_ms = std::env::var("TASK_RUNNER_WORKER_CLAIM_TTL_MS")
+            .ok()
+            .and_then(|value| value.parse::<u64>().ok())
+            .unwrap_or(120_000);
+        let worker_concurrency = std::env::var("TASK_RUNNER_WORKER_CONCURRENCY")
+            .ok()
+            .and_then(|value| value.parse::<usize>().ok())
+            .filter(|value| *value > 0)
+            .unwrap_or(4);
+        let worker_id = normalized_env("TASK_RUNNER_WORKER_ID").unwrap_or_else(default_worker_id);
         let auto_memory_summary = std::env::var("TASK_RUNNER_AUTO_MEMORY_SUMMARY")
             .ok()
             .map(|value| {
@@ -122,6 +137,7 @@ impl AppConfig {
         Ok(Self {
             host,
             port,
+            role,
             store_mode,
             database_url: normalize_database_url(
                 store_mode,
@@ -145,6 +161,10 @@ impl AppConfig {
             memory_timeout: Duration::from_millis(timeout_ms),
             execution_timeout: Duration::from_millis(execution_timeout_ms),
             scheduler_poll_interval: Duration::from_millis(scheduler_poll_interval_ms.max(1_000)),
+            worker_id,
+            worker_poll_interval: Duration::from_millis(worker_poll_interval_ms.max(100)),
+            worker_claim_ttl: Duration::from_millis(worker_claim_ttl_ms.max(30_000)),
+            worker_concurrency,
             auto_memory_summary,
             default_task_execution_max_iterations,
             default_tool_result_model_max_chars,
@@ -170,6 +190,18 @@ impl AppConfig {
             ),
         })
     }
+}
+
+fn default_worker_id() -> String {
+    let hostname = normalized_env("HOSTNAME")
+        .or_else(|| normalized_env("COMPUTERNAME"))
+        .unwrap_or_else(|| "task-runner".to_string());
+    format!(
+        "{}-{}-{}",
+        hostname,
+        std::process::id(),
+        uuid::Uuid::new_v4()
+    )
 }
 
 pub(super) fn normalized_env(key: &str) -> Option<String> {

@@ -50,6 +50,85 @@ const parseMaybeJson = (value: unknown): unknown => {
   }
 };
 
+const RESPONSE_TEXT_PART_TYPES = new Set(['input_text', 'output_text', 'text']);
+
+const readFirstStringValue = (
+  record: UnknownRecord,
+  keys: string[],
+): string | null => {
+  for (const key of keys) {
+    const value = readValue(record, key);
+    if (typeof value === 'string') {
+      return value;
+    }
+  }
+  return null;
+};
+
+const extractResponsesContentText = (value: unknown): string | null => {
+  const parsed = parseMaybeJson(value);
+  if (Array.isArray(parsed)) {
+    let matched = false;
+    const chunks: string[] = [];
+    parsed.forEach((item) => {
+      const text = extractResponsesContentText(item);
+      if (text === null) {
+        return;
+      }
+      matched = true;
+      if (text) {
+        chunks.push(text);
+      }
+    });
+    return matched ? chunks.join('') : null;
+  }
+
+  const record = asRecord(parsed);
+  if (!record) {
+    return null;
+  }
+
+  const type = String(readValue(record, 'type') || '').trim().toLowerCase();
+  if (RESPONSE_TEXT_PART_TYPES.has(type)) {
+    const text = readFirstStringValue(record, [
+      'text',
+      'value',
+      'output_text',
+      'delta',
+      'output',
+      'content',
+    ]);
+    if (text !== null) {
+      return text;
+    }
+    return extractResponsesContentText(readValue(record, 'content')) ?? '';
+  }
+
+  if (type === 'message' || type === 'output_message') {
+    return extractResponsesContentText(readValue(record, 'content'));
+  }
+
+  const outputText = readValue(record, 'output_text');
+  if (typeof outputText === 'string') {
+    return outputText;
+  }
+
+  const content = readValue(record, 'content');
+  if (Array.isArray(content)) {
+    return extractResponsesContentText(content);
+  }
+
+  return null;
+};
+
+export const normalizeMessageContent = (value: unknown): string => {
+  const responsesText = extractResponsesContentText(value);
+  if (responsesText !== null) {
+    return responsesText;
+  }
+  return typeof value === 'string' ? value : String(value ?? '');
+};
+
 const normalizeToolCallsArray = (value: unknown): UnknownRecord[] => {
   const parsed = parseMaybeJson(value);
   if (Array.isArray(parsed)) {
@@ -106,7 +185,7 @@ const normalizeContentSegmentsArray = (value: unknown): NormalizedContentSegment
       }
 
       const rawContent = readValue(segmentRecord, 'content');
-      const content = typeof rawContent === 'string' ? rawContent : String(rawContent ?? '');
+      const content = normalizeMessageContent(rawContent);
       if (!content) {
         return null;
       }
@@ -326,13 +405,14 @@ export const normalizeRawMessages = (
       readValue(messageRecord, 'toolCalls') ?? readValue(messageRecord, 'tool_calls'),
     );
     const rawContent = readValue(messageRecord, 'content');
+    const content = normalizeMessageContent(rawContent);
     const conversationId = readValue(messageRecord, 'conversation_id') ?? readValue(messageRecord, 'conversationId');
 
     return {
       id: String(readValue(messageRecord, 'id') ?? ''),
       sessionId: typeof conversationId === 'string' ? conversationId : sessionId,
       role: readValue(messageRecord, 'role') as Message['role'],
-      content: typeof rawContent === 'string' ? rawContent : String(rawContent ?? ''),
+      content,
       messageMode: typeof readValue(messageRecord, 'message_mode') === 'string'
         ? String(readValue(messageRecord, 'message_mode')).trim()
         : null,

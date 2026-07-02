@@ -134,6 +134,7 @@ impl RunService {
             "prompt_override": input.prompt_override,
             "model_config_id": model_config_id,
             "mcp_config": task.mcp_config,
+            "effective_workspace_dir": effective_workspace_dir.as_str(),
             "execution_environment_mode": execution_environment_mode,
             "sandbox_enabled": sandbox_enabled,
         });
@@ -154,6 +155,10 @@ impl RunService {
             report: None,
             cancel_requested: false,
             summary_job_run_id: None,
+            worker_id: None,
+            claim_token: None,
+            claim_until: None,
+            attempt: 0,
             created_at: now.clone(),
             updated_at: now,
         };
@@ -190,22 +195,6 @@ impl RunService {
                 None,
             ))
             .await?;
-
-        let service = self.clone();
-        let run_for_spawn = run.clone();
-        let input_for_spawn = input.clone();
-        let workspace_dir_for_spawn = effective_workspace_dir.clone();
-        crate::auth::spawn_with_current_access_token(async move {
-            service
-                .execute_run(
-                    task,
-                    model_config,
-                    run_for_spawn,
-                    input_for_spawn,
-                    workspace_dir_for_spawn,
-                )
-                .await;
-        });
 
         Ok(run)
     }

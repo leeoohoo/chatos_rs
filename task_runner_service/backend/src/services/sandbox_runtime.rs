@@ -22,7 +22,12 @@ pub(super) struct SandboxRuntimeContext {
     pub sandbox_id: String,
     pub backend_id: Option<String>,
     pub agent_endpoint: String,
+    pub agent_token: String,
     pub mcp_url: String,
+    #[serde(default, skip_serializing)]
+    pub manager_client_id: Option<String>,
+    #[serde(default, skip_serializing)]
+    pub manager_client_key: Option<String>,
     pub run_workspace: String,
     pub workspace_root: String,
     pub expires_at: String,
@@ -49,6 +54,13 @@ impl SandboxRuntimeContext {
             "X-Chatos-Sandbox-Lease-Id".to_string(),
             self.lease_id.clone(),
         );
+        if let (Some(client_id), Some(client_key)) = (
+            self.manager_client_id.as_deref(),
+            self.manager_client_key.as_deref(),
+        ) {
+            headers.insert("x-sandbox-client-id".to_string(), client_id.to_string());
+            headers.insert("x-sandbox-client-key".to_string(), client_key.to_string());
+        }
         headers.insert("X-Task-Runner-Task-Id".to_string(), task.id.clone());
         headers.insert("X-Task-Runner-Run-Id".to_string(), run.id.clone());
         headers.insert(
@@ -116,8 +128,12 @@ impl RunService {
             }
         };
 
-        let context = match SandboxRuntimeContext::from_response(response, workspace_root.as_path())
-        {
+        let context = match SandboxRuntimeContext::from_response(
+            response,
+            workspace_root.as_path(),
+            client.base_url.as_str(),
+            client.auth.clone(),
+        ) {
             Ok(context) => context,
             Err(err) => {
                 self.append_sandbox_event(
@@ -299,17 +315,35 @@ impl SandboxRuntimeContext {
     fn from_response(
         response: CreateSandboxLeaseResponse,
         workspace_root: &Path,
+        manager_base_url: &str,
+        manager_auth: Option<SandboxManagerAuth>,
     ) -> Result<Self, String> {
         let agent_endpoint = response
             .agent_endpoint
             .map(|value| value.trim().trim_end_matches('/').to_string())
             .filter(|value| !value.is_empty())
-            .ok_or_else(|| "sandbox agent endpoint is empty".to_string())?;
+            .unwrap_or_default();
+        let manager_base_url = manager_base_url.trim().trim_end_matches('/').to_string();
+        if manager_base_url.is_empty() {
+            return Err("sandbox manager base url is empty".to_string());
+        }
+        let lease_id = response.lease_id;
+        let sandbox_id = response.sandbox_id;
+        let agent_token = response
+            .agent_token
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or_else(|| lease_id.clone());
+        let (manager_client_id, manager_client_key) = manager_auth
+            .map(|auth| (Some(auth.client_id), Some(auth.client_key)))
+            .unwrap_or((None, None));
         Ok(Self {
-            lease_id: response.lease_id,
-            sandbox_id: response.sandbox_id,
+            lease_id,
+            sandbox_id: sandbox_id.clone(),
             backend_id: response.backend_id,
-            mcp_url: format!("{agent_endpoint}/mcp"),
+            agent_token,
+            mcp_url: format!("{manager_base_url}/api/sandboxes/{sandbox_id}/mcp"),
+            manager_client_id,
+            manager_client_key,
             agent_endpoint,
             run_workspace: response.run_workspace,
             workspace_root: workspace_root.to_string_lossy().to_string(),
@@ -485,6 +519,7 @@ struct CreateSandboxLeaseResponse {
     sandbox_id: String,
     backend_id: Option<String>,
     agent_endpoint: Option<String>,
+    agent_token: Option<String>,
     run_workspace: String,
     expires_at: String,
 }
@@ -513,6 +548,13 @@ struct SandboxHealthResult {
 struct SandboxManagerClient {
     base_url: String,
     client: reqwest::Client,
+    auth: Option<SandboxManagerAuth>,
+}
+
+#[derive(Debug, Clone)]
+struct SandboxManagerAuth {
+    client_id: String,
+    client_key: String,
 }
 
 impl SandboxManagerClient {
@@ -525,7 +567,11 @@ impl SandboxManagerClient {
             .timeout(Duration::from_secs(120))
             .build()
             .map_err(|err| format!("build sandbox manager http client failed: {err}"))?;
-        Ok(Self { base_url, client })
+        Ok(Self {
+            base_url,
+            client,
+            auth: SandboxManagerAuth::from_env()?,
+        })
     }
 
     async fn create_lease(
@@ -544,26 +590,46 @@ impl SandboxManagerClient {
             tools: vec!["filesystem".to_string(), "terminal".to_string()],
             ttl_seconds,
         };
-        self.client
-            .post(format!("{}/api/sandboxes/leases", self.base_url))
-            .json(&payload)
-            .send()
-            .await
-            .map_err(|err| format!("request sandbox lease failed: {err}"))?
-            .error_for_status()
-            .map_err(|err| format!("sandbox lease request returned error: {err}"))?
-            .json::<CreateSandboxLeaseResponse>()
-            .await
-            .map_err(|err| format!("decode sandbox lease response failed: {err}"))
+        let idempotency_key = format!("sandbox-lease:{}", run.id);
+        let url = format!("{}/api/sandboxes/leases", self.base_url);
+        for attempt in 0..6 {
+            let response = self
+                .apply_auth(self.client.post(url.as_str()))
+                .header("x-idempotency-key", idempotency_key.as_str())
+                .json(&payload)
+                .send()
+                .await
+                .map_err(|err| format!("request sandbox lease failed: {err}"))?;
+            let status = response.status();
+            if status == reqwest::StatusCode::CONFLICT {
+                let body = response
+                    .text()
+                    .await
+                    .unwrap_or_else(|err| format!("read conflict body failed: {err}"));
+                if body.contains("sandbox_lease_idempotency_in_progress") && attempt < 5 {
+                    tokio::time::sleep(Duration::from_secs(2)).await;
+                    continue;
+                }
+                return Err(format!(
+                    "sandbox lease request returned HTTP {status}: {body}"
+                ));
+            }
+            return response
+                .error_for_status()
+                .map_err(|err| format!("sandbox lease request returned error: {err}"))?
+                .json::<CreateSandboxLeaseResponse>()
+                .await
+                .map_err(|err| format!("decode sandbox lease response failed: {err}"));
+        }
+        Err("sandbox lease idempotency retry loop exhausted".to_string())
     }
 
     async fn health(&self, context: &SandboxRuntimeContext) -> Result<SandboxHealthResult, String> {
         let raw = self
-            .client
-            .get(format!(
+            .apply_auth(self.client.get(format!(
                 "{}/api/sandboxes/{}/health",
                 self.base_url, context.sandbox_id
-            ))
+            )))
             .send()
             .await
             .map_err(|err| format!("request sandbox health failed: {err}"))?
@@ -592,19 +658,60 @@ impl SandboxManagerClient {
             export_result,
             destroy,
         };
-        self.client
-            .post(format!(
-                "{}/api/sandboxes/{}/release",
-                self.base_url, context.sandbox_id
-            ))
-            .json(&payload)
-            .send()
-            .await
-            .map_err(|err| format!("request sandbox release failed: {err}"))?
-            .error_for_status()
-            .map_err(|err| format!("sandbox release request returned error: {err}"))?
-            .json::<ReleaseSandboxResponse>()
-            .await
-            .map_err(|err| format!("decode sandbox release response failed: {err}"))
+        self.apply_auth(self.client.post(format!(
+            "{}/api/sandboxes/{}/release",
+            self.base_url, context.sandbox_id
+        )))
+        .json(&payload)
+        .send()
+        .await
+        .map_err(|err| format!("request sandbox release failed: {err}"))?
+        .error_for_status()
+        .map_err(|err| format!("sandbox release request returned error: {err}"))?
+        .json::<ReleaseSandboxResponse>()
+        .await
+        .map_err(|err| format!("decode sandbox release response failed: {err}"))
     }
+
+    fn apply_auth(&self, request: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+        if let Some(auth) = self.auth.as_ref() {
+            request
+                .header("x-sandbox-client-id", auth.client_id.as_str())
+                .header("x-sandbox-client-key", auth.client_key.as_str())
+        } else {
+            request
+        }
+    }
+}
+
+impl SandboxManagerAuth {
+    fn from_env() -> Result<Option<Self>, String> {
+        let client_id = normalized_env("TASK_RUNNER_SANDBOX_MANAGER_CLIENT_ID")
+            .or_else(|| normalized_env("SANDBOX_MANAGER_SYSTEM_CLIENT_ID"));
+        let client_key = normalized_env("TASK_RUNNER_SANDBOX_MANAGER_CLIENT_KEY")
+            .or_else(|| normalized_env("SANDBOX_MANAGER_SYSTEM_CLIENT_KEY"));
+
+        match (client_id, client_key) {
+            (Some(client_id), Some(client_key)) => Ok(Some(Self {
+                client_id,
+                client_key,
+            })),
+            (None, None) => Ok(None),
+            (Some(_), None) => Err(
+                "TASK_RUNNER_SANDBOX_MANAGER_CLIENT_KEY is required when sandbox client id is set"
+                    .to_string(),
+            ),
+            (None, Some(_)) => Err(
+                "TASK_RUNNER_SANDBOX_MANAGER_CLIENT_ID is required when sandbox client key is set"
+                    .to_string(),
+            ),
+        }
+    }
+}
+
+fn normalized_env(key: &str) -> Option<String> {
+    std::env::var(key)
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
 }

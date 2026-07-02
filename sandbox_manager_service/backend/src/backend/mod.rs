@@ -23,6 +23,7 @@ pub struct SandboxCreateSpec {
     pub sandbox_id: String,
     pub run_workspace: String,
     pub image: String,
+    pub agent_token: Option<String>,
     pub resource_limits: ResourceLimits,
     pub network: NetworkPolicy,
 }

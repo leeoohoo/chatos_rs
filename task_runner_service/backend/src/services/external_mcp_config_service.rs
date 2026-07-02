@@ -114,13 +114,6 @@ impl ExternalMcpConfigService {
             record.cwd = normalized_optional(patch.cwd);
         }
         if let Some(enabled) = patch.enabled {
-            if !enabled {
-                if let Some(task_id) = self.first_task_referencing_config(id).await? {
-                    return Err(format!(
-                        "外部 MCP 配置仍被任务引用，暂时不能停用: {task_id}"
-                    ));
-                }
-            }
             record.enabled = enabled;
         }
 
@@ -259,4 +252,156 @@ fn valid_mcp_tool_names(tools: &[Value]) -> Vec<String> {
         .filter_map(parse_tool_definition)
         .map(|definition| definition.name)
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::models::{
+        TaskMcpConfig, TaskScheduleConfig, TaskStatus, TaskToolState, PUBLIC_PROJECT_ID,
+        TASK_PROFILE_DEFAULT,
+    };
+    use crate::store::InMemoryStore;
+    use tokio::sync::broadcast;
+
+    fn test_service() -> ExternalMcpConfigService {
+        let (sender, _) = broadcast::channel(16);
+        let store = AppStore::InMemory(InMemoryStore::new(sender));
+        ExternalMcpConfigService::new(store)
+    }
+
+    fn external_config(id: &str, enabled: bool) -> ExternalMcpConfigRecord {
+        let now = now_rfc3339();
+        ExternalMcpConfigRecord {
+            id: id.to_string(),
+            name: "Test MCP".to_string(),
+            transport: "stdio".to_string(),
+            command: Some("echo".to_string()),
+            args: Vec::new(),
+            url: None,
+            headers: BTreeMap::new(),
+            env: BTreeMap::new(),
+            cwd: None,
+            enabled,
+            creator_user_id: None,
+            creator_username: None,
+            creator_display_name: None,
+            owner_user_id: None,
+            owner_username: None,
+            owner_display_name: None,
+            created_at: now.clone(),
+            updated_at: now,
+        }
+    }
+
+    fn task_with_external_config(task_id: &str, config_id: &str) -> TaskRecord {
+        let now = now_rfc3339();
+        TaskRecord {
+            id: task_id.to_string(),
+            title: "Task".to_string(),
+            description: None,
+            objective: "Do it".to_string(),
+            input_payload: None,
+            status: TaskStatus::Draft,
+            priority: 0,
+            tags: Vec::new(),
+            default_model_config_id: None,
+            memory_thread_id: format!("task-{task_id}"),
+            tenant_id: "tenant".to_string(),
+            subject_id: "subject".to_string(),
+            project_id: PUBLIC_PROJECT_ID.to_string(),
+            task_profile: TASK_PROFILE_DEFAULT.to_string(),
+            creator_user_id: None,
+            creator_username: None,
+            creator_display_name: None,
+            owner_user_id: None,
+            owner_username: None,
+            owner_display_name: None,
+            result_summary: None,
+            process_log: None,
+            last_run_id: None,
+            schedule: TaskScheduleConfig::default(),
+            parent_task_id: None,
+            source_run_id: None,
+            source_session_id: None,
+            source_turn_id: None,
+            source_user_message_id: None,
+            prerequisite_task_ids: Vec::new(),
+            task_tool_state: TaskToolState::default(),
+            mcp_config: TaskMcpConfig {
+                external_mcp_config_ids: vec![config_id.to_string()],
+                ..TaskMcpConfig::default()
+            },
+            created_at: now.clone(),
+            updated_at: now,
+            deleted_at: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn delete_rejects_config_referenced_by_task() {
+        let service = test_service();
+        service
+            .store
+            .save_external_mcp_config(external_config("external-1", true))
+            .await
+            .expect("save config");
+        service
+            .store
+            .save_task(task_with_external_config("task-1", "external-1"))
+            .await
+            .expect("save task");
+
+        let err = service
+            .delete_external_mcp_config("external-1")
+            .await
+            .expect_err("referenced config should not be deleted");
+
+        assert!(err.contains("仍被任务引用"));
+        assert!(service
+            .store
+            .get_external_mcp_config("external-1")
+            .await
+            .expect("get config")
+            .is_some());
+    }
+
+    #[tokio::test]
+    async fn disable_allows_config_referenced_by_task_without_unbinding() {
+        let service = test_service();
+        service
+            .store
+            .save_external_mcp_config(external_config("external-1", true))
+            .await
+            .expect("save config");
+        service
+            .store
+            .save_task(task_with_external_config("task-1", "external-1"))
+            .await
+            .expect("save task");
+
+        let updated = service
+            .update_external_mcp_config(
+                "external-1",
+                UpdateExternalMcpConfigRequest {
+                    enabled: Some(false),
+                    ..UpdateExternalMcpConfigRequest::default()
+                },
+            )
+            .await
+            .expect("disable config")
+            .expect("config exists");
+
+        assert!(!updated.enabled);
+        let task = service
+            .store
+            .get_task("task-1")
+            .await
+            .expect("get task")
+            .expect("task exists");
+        assert_eq!(
+            task.mcp_config.external_mcp_config_ids,
+            vec!["external-1".to_string()]
+        );
+    }
 }

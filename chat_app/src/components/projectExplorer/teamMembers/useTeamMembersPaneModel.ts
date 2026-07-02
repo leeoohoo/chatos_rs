@@ -23,10 +23,14 @@ interface UseTeamMembersPaneModelResult {
     runtimeContextActive: boolean;
     summaryLoading: boolean;
     runtimeContextLoading: boolean;
+    reviewRepairRunning: boolean;
     summaryDisabled: boolean;
     runtimeContextDisabled: boolean;
+    reviewRepairDisabled: boolean;
+    reviewRepairPendingCount: number | null;
     onOpenSummary: () => void;
     onOpenRuntimeContext: () => void;
+    onReviewRepair: () => void;
   };
 }
 
@@ -55,6 +59,16 @@ export const useTeamMembersPaneModel = ({
     void resources.runtimeContext.handleOpenRuntimeContext(selectedContact);
   }, [resources.runtimeContext.handleOpenRuntimeContext, selectedContact]);
 
+  const handleRunSelectedReviewRepair = useCallback(() => {
+    if (!selectedSessionId) {
+      return;
+    }
+    void resources.reviewRepair.handleRunReviewRepair(selectedSessionId);
+  }, [
+    resources.reviewRepair.handleRunReviewRepair,
+    selectedSessionId,
+  ]);
+
   const userMessageSidebarActions = useMemo(() => ({
     summaryActive: Boolean(
       selectedSessionId
@@ -73,17 +87,25 @@ export const useTeamMembersPaneModel = ({
       selectedContact?.id
       && resources.runtimeContext.openingRuntimeContextContactId === selectedContact.id,
     ),
+    reviewRepairRunning: resources.reviewRepair.reviewRepairRunning,
     summaryDisabled: !selectedContact || !selectedSessionId,
     runtimeContextDisabled: !selectedContact || !selectedSessionId,
+    reviewRepairDisabled: !selectedContact || !selectedSessionId || resources.reviewRepair.reviewRepairDisabled,
+    reviewRepairPendingCount: resources.reviewRepair.reviewRepairPendingCount,
     onOpenSummary: handleOpenSelectedSummary,
     onOpenRuntimeContext: handleOpenSelectedRuntimeContext,
+    onReviewRepair: handleRunSelectedReviewRepair,
   }), [
+    handleRunSelectedReviewRepair,
     handleOpenSelectedRuntimeContext,
     handleOpenSelectedSummary,
     resources.conversation.openingSummaryContactId,
     resources.runtimeContext.openingRuntimeContextContactId,
     resources.runtimeContext.runtimeContextOpen,
     resources.runtimeContext.runtimeContextSessionId,
+    resources.reviewRepair.reviewRepairDisabled,
+    resources.reviewRepair.reviewRepairPendingCount,
+    resources.reviewRepair.reviewRepairRunning,
     resources.summary.summaryPaneSessionId,
     selectedContact,
     selectedSessionId,

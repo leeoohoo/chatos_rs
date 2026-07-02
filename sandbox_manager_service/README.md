@@ -41,6 +41,18 @@ SANDBOX_MANAGER_IMAGE_BUILD_CONTEXT=/path/to/chatos_rs
 SANDBOX_MANAGER_IMAGE_DOCKERFILE=/path/to/chatos_rs/sandbox_manager_service/sandbox_agent/Dockerfile
 SANDBOX_MANAGER_FRONTEND_PORT=8096
 SANDBOX_MANAGER_API_PROXY_TARGET=http://127.0.0.1:8095
+SANDBOX_MANAGER_REQUIRE_AUTH=false
+SANDBOX_MANAGER_OPERATOR_TOKEN=chatos-sandbox-manager-dev-operator-token
+SANDBOX_MANAGER_AGENT_TOKEN_SECRET=change_me_sandbox_agent_token_secret
+SANDBOX_MANAGER_USER_SERVICE_BASE_URL=http://127.0.0.1:39190
+SANDBOX_MANAGER_SYSTEM_CLIENT_ID=task_runner
+SANDBOX_MANAGER_SYSTEM_CLIENT_KEY=chatos-task-runner-sandbox-dev-key
+SANDBOX_MANAGER_SYSTEM_CLIENT_SCOPES=sandbox.lease.create,sandbox.lease.read,sandbox.lease.release,sandbox.mcp.tools,sandbox.mcp.call,sandbox.pool.read,sandbox.images.read
+SANDBOX_MANAGER_SYSTEM_CLIENT_ALLOWED_TENANT_IDS=*
+SANDBOX_MANAGER_SYSTEM_CLIENT_ALLOWED_PROJECT_IDS=*
+SANDBOX_MANAGER_SYSTEM_CLIENT_ALLOWED_TOOLS=*
+TASK_RUNNER_SANDBOX_MANAGER_CLIENT_ID=task_runner
+TASK_RUNNER_SANDBOX_MANAGER_CLIENT_KEY=chatos-task-runner-sandbox-dev-key
 ```
 
 `SANDBOX_MANAGER_BACKEND=auto` 时：
@@ -75,6 +87,44 @@ http://127.0.0.1:8096
 
 ```bash
 curl http://127.0.0.1:8095/health
+```
+
+## 认证
+
+`/health` 始终公开。其它 API 可通过 `SANDBOX_MANAGER_REQUIRE_AUTH=true` 启用鉴权。
+当前 P0 支持三种调用方：
+
+- system client：`x-sandbox-client-id` + `x-sandbox-client-key`，Task Runner 默认使用这种方式。
+- operator：`x-sandbox-operator-token`，用于本地调试和运维。
+- user token：`Authorization: Bearer ...`，通过 `user_service /api/auth/verify` 校验。
+
+Task Runner 的沙箱 MCP URL 使用 Sandbox Manager 代理：
+`POST /api/sandboxes/:sandbox_id/mcp`。调用方只需要访问 Sandbox Manager；
+Manager 会校验 lease scope 和 tool policy，再使用租约派生的 agent token 转发到沙箱 agent `/mcp`。
+
+`SANDBOX_MANAGER_POOL_MAX_ACTIVE` 使用 Mongo `sandbox_capacity_slots` 做全局容量抢占；
+多个 Sandbox Manager 实例共享同一组 active slots，`/api/sandbox-pool/status` 返回的是全局 active 数。
+
+创建 lease 支持 `x-idempotency-key`，相同 `tenant_id + project_id + run_id + key`
+会复用已就绪 lease；Task Runner 默认发送 `sandbox-lease:{run_id}`。
+
+启用鉴权后的 Task Runner system 调用示例：
+
+```bash
+curl -X POST http://127.0.0.1:8095/api/sandboxes/leases \
+  -H 'content-type: application/json' \
+  -H 'x-sandbox-client-id: task_runner' \
+  -H 'x-sandbox-client-key: chatos-task-runner-sandbox-dev-key' \
+  -H 'x-idempotency-key: sandbox-lease:run-dev-1' \
+  -d '{
+    "tenant_id": "tenant-dev",
+    "user_id": "user-dev",
+    "project_id": "project-dev",
+    "run_id": "run-dev-1",
+    "workspace_root": "/tmp/chatos-sandbox-demo",
+    "tools": ["filesystem", "terminal"],
+    "ttl_seconds": 3600
+  }'
 ```
 
 ## API 示例

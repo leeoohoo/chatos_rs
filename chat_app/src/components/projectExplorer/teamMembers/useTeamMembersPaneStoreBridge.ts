@@ -18,6 +18,7 @@ const selectTeamMembersPaneStore = (state: ChatState & ChatActions) => ({
   remoteConnections: state.remoteConnections,
   currentRemoteConnection: state.currentRemoteConnection,
   loadContacts: state.loadContacts,
+  loadMessages: state.loadMessages,
   messages: state.messages,
   hasMoreMessages: state.hasMoreMessages,
   sessionMessagePaginationState: state.sessionMessagePaginationState,

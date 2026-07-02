@@ -168,7 +168,7 @@ mod tests {
         assert_schema_snapshot_hash(
             "task_runner_builtin_tools",
             schemas::task_runner_builtin_tool_definitions(None),
-            0xc26d17182739386e,
+            0x421e08d102fb41b2,
         );
     }
 

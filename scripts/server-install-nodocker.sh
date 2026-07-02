@@ -32,6 +32,14 @@ need_cmd sed
 need_cmd systemctl
 need_cmd nginx
 
+resolve_target_dir() {
+  local target_dir="${CARGO_TARGET_DIR:-$SOURCE_ROOT/target-shared}"
+  if [[ "$target_dir" != /* ]]; then
+    target_dir="$SOURCE_ROOT/$target_dir"
+  fi
+  printf '%s\n' "$target_dir"
+}
+
 SOURCE_ROOT="${SOURCE_ROOT:-$(pwd)}"
 APP_ROOT="${APP_ROOT:-/opt/chatos}"
 SERVICE_NAME="${SERVICE_NAME:-chatos-backend}"
@@ -42,7 +50,8 @@ SERVER_NAME="${SERVER_NAME:-_}"
 ENABLE_PROCESS_ISOLATION="${ENABLE_PROCESS_ISOLATION:-0}"
 PROCESS_ISOLATION_PRIVILEGE_MODE="${PROCESS_ISOLATION_PRIVILEGE_MODE:-capabilities}"
 
-BACKEND_BIN_SRC="${BACKEND_BIN_SRC:-$SOURCE_ROOT/chat_app_server_rs/target/release/chat_app_server_rs}"
+BACKEND_TARGET_DIR="${BACKEND_TARGET_DIR:-$(resolve_target_dir)}"
+BACKEND_BIN_SRC="${BACKEND_BIN_SRC:-$BACKEND_TARGET_DIR/release/chat_app_server_rs}"
 BACKEND_CONFIG_SRC="${BACKEND_CONFIG_SRC:-$SOURCE_ROOT/chat_app_server_rs/config}"
 FRONTEND_DIST_SRC="${FRONTEND_DIST_SRC:-$SOURCE_ROOT/chat_app/dist}"
 SERVICE_TEMPLATE="${SERVICE_TEMPLATE:-$SOURCE_ROOT/deploy/linux/systemd/chatos-backend.service.tpl}"

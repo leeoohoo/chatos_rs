@@ -19,6 +19,7 @@ type TeamMemberWorkspaceComposerProps = Pick<
   | 'supportsReasoning'
   | 'reasoningEnabled'
   | 'planModeEnabled'
+  | 'reviewRepairRunning'
   | 'availableRemoteConnections'
   | 'currentRemoteConnectionId'
   | 'onRemoteConnectionChange'
@@ -45,6 +46,7 @@ export const TeamMemberWorkspaceComposer: React.FC<TeamMemberWorkspaceComposerPr
   supportsReasoning,
   reasoningEnabled,
   planModeEnabled,
+  reviewRepairRunning,
   availableRemoteConnections,
   currentRemoteConnectionId,
   onRemoteConnectionChange,
@@ -64,7 +66,7 @@ export const TeamMemberWorkspaceComposer: React.FC<TeamMemberWorkspaceComposerPr
   return (
     <ChatComposerPanel
       onSend={onSend}
-      inputDisabled={selectedProjectSession ? !isSelectedSessionActive : false}
+      inputDisabled={selectedProjectSession ? (!isSelectedSessionActive || reviewRepairRunning) : reviewRepairRunning}
       supportedFileTypes={supportedFileTypes}
       reasoningSupported={supportsReasoning}
       reasoningEnabled={reasoningEnabled}

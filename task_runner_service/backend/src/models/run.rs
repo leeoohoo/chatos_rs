@@ -58,6 +58,14 @@ pub struct TaskRunRecord {
     pub report: Option<Value>,
     pub cancel_requested: bool,
     pub summary_job_run_id: Option<String>,
+    #[serde(default)]
+    pub worker_id: Option<String>,
+    #[serde(default)]
+    pub claim_token: Option<String>,
+    #[serde(default)]
+    pub claim_until: Option<String>,
+    #[serde(default)]
+    pub attempt: i64,
     pub created_at: String,
     pub updated_at: String,
 }

@@ -17,8 +17,14 @@ impl RunService {
         run.error_message = Some(message.clone());
         run.result_summary = Some(message.clone());
         run.cancel_requested = false;
-        if let Err(err) = self.store.save_run(run.clone()).await {
-            warn!("failed to persist blocked task run {}: {}", run.id, err);
+        match self.store.save_run(run.clone()).await {
+            Ok(saved) => {
+                *run = saved;
+            }
+            Err(err) => {
+                warn!("failed to persist blocked task run {}: {}", run.id, err);
+                return;
+            }
         }
         if let Err(err) = self
             .store
@@ -67,8 +73,14 @@ impl RunService {
         run.error_message = Some(message.clone());
         run.result_summary = Some(message.clone());
         run.cancel_requested = false;
-        if let Err(err) = self.store.save_run(run.clone()).await {
-            warn!("failed to persist failed task run {}: {}", run.id, err);
+        match self.store.save_run(run.clone()).await {
+            Ok(saved) => {
+                *run = saved;
+            }
+            Err(err) => {
+                warn!("failed to persist failed task run {}: {}", run.id, err);
+                return;
+            }
         }
         if let Err(err) = self
             .store

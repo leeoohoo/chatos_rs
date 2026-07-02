@@ -17,6 +17,15 @@ pub struct AppState {
 impl AppState {
     pub async fn new(config: AppConfig) -> Result<Self, String> {
         let store = SandboxStore::new(&config.database_url, &config.mongodb_database).await?;
+        let reconciled_slots = store
+            .reconcile_active_capacity_slots(config.pool_max_active)
+            .await?;
+        if reconciled_slots > 0 {
+            tracing::info!(
+                reconciled_slots,
+                "reconciled sandbox active capacity slots on startup"
+            );
+        }
         let backend: SandboxBackendRef = build_backend(&config);
         let pool = Arc::new(SandboxPool::new(
             config.pool_max_active,

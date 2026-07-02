@@ -301,9 +301,14 @@ async fn list_chatos_session_active_message_tasks(
         .iter()
         .filter_map(|item| item.source_user_message_id.clone())
         .collect::<Vec<_>>();
+    let running_source_user_message_ids = items
+        .iter()
+        .filter(|item| item.running_count > 0)
+        .filter_map(|item| item.source_user_message_id.clone())
+        .collect::<Vec<_>>();
     Ok(Json(ChatosSessionActiveMessageTasksResponse {
         source_session_id: source_session_id.to_string(),
-        running_source_user_message_ids: active_source_user_message_ids.clone(),
+        running_source_user_message_ids,
         active_source_user_message_ids,
         items: items
             .into_iter()

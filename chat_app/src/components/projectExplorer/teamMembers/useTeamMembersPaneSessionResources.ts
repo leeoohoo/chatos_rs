@@ -30,5 +30,6 @@ export const useTeamMembersPaneSessionResources = ({
     summary: contactResources.summary,
     composer: runtimeResources.composer,
     runtimeContext: runtimeResources.runtimeContext,
+    reviewRepair: runtimeResources.reviewRepair,
   };
 };

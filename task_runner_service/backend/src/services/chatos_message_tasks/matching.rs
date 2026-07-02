@@ -43,11 +43,16 @@ impl NormalizedChatosSource {
         if task.source_session_id.as_deref() != Some(self.source_session_id.as_str()) {
             return false;
         }
-        if let Some(source_user_message_id) = self.source_user_message_id.as_deref() {
-            return task.source_user_message_id.as_deref() == Some(source_user_message_id);
-        }
-        self.source_turn_id
+        let message_matches =
+            self.source_user_message_id
+                .as_deref()
+                .is_some_and(|source_user_message_id| {
+                    task.source_user_message_id.as_deref() == Some(source_user_message_id)
+                });
+        let turn_matches = self
+            .source_turn_id
             .as_deref()
-            .is_some_and(|source_turn_id| task.source_turn_id.as_deref() == Some(source_turn_id))
+            .is_some_and(|source_turn_id| task.source_turn_id.as_deref() == Some(source_turn_id));
+        message_matches || turn_matches
     }
 }

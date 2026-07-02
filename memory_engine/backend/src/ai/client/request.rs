@@ -197,7 +197,7 @@ async fn read_streamed_text_response(
     let mut stream = response.bytes_stream();
     let mut output = String::new();
     let mut saw_stream_text = false;
-    let mut buffer = String::new();
+    let mut buffer = Vec::new();
 
     while let Some(next_chunk) =
         time::timeout(Duration::from_secs(client.timeout_secs), stream.next())
@@ -210,15 +210,14 @@ async fn read_streamed_text_response(
             })?
     {
         let bytes = next_chunk.map_err(|err| format!("ai stream read failed: {err}"))?;
-        buffer.push_str(String::from_utf8_lossy(&bytes).as_ref());
-        normalize_sse_newlines(&mut buffer);
+        buffer.extend_from_slice(&bytes);
 
         loop {
-            let Some(index) = buffer.find("\n\n") else {
+            let Some((index, delimiter_len)) = find_sse_event_delimiter(buffer.as_slice()) else {
                 break;
             };
-            let raw_event = buffer[..index].to_string();
-            buffer.drain(..index + 2);
+            let raw_event = decode_sse_event_bytes(buffer[..index].to_vec())?;
+            buffer.drain(..index + delimiter_len);
             if process_sse_event(
                 raw_event.as_str(),
                 response_kind,
@@ -230,19 +229,49 @@ async fn read_streamed_text_response(
         }
     }
 
-    normalize_sse_newlines(&mut buffer);
-    if !buffer.trim().is_empty()
-        && process_sse_event(
-            buffer.as_str(),
+    if !bytes_trimmed_empty(buffer.as_slice()) {
+        let raw_event = decode_sse_event_bytes(buffer)?;
+        if process_sse_event(
+            raw_event.as_str(),
             response_kind,
             &mut output,
             &mut saw_stream_text,
-        )?
-    {
-        return finalize_stream_output(output);
+        )? {
+            return finalize_stream_output(output);
+        }
     }
 
     finalize_stream_output(output)
+}
+
+fn decode_sse_event_bytes(bytes: Vec<u8>) -> Result<String, String> {
+    let mut event = String::from_utf8(bytes)
+        .map_err(|err| format!("ai stream event utf-8 decode failed: {err}"))?;
+    normalize_sse_newlines(&mut event);
+    Ok(event)
+}
+
+fn find_sse_event_delimiter(buffer: &[u8]) -> Option<(usize, usize)> {
+    let mut index = 0;
+    while index < buffer.len() {
+        if index + 1 < buffer.len() {
+            if buffer[index] == b'\n' && buffer[index + 1] == b'\n' {
+                return Some((index, 2));
+            }
+            if buffer[index] == b'\r' && buffer[index + 1] == b'\r' {
+                return Some((index, 2));
+            }
+        }
+        if index + 3 < buffer.len() && &buffer[index..index + 4] == b"\r\n\r\n" {
+            return Some((index, 4));
+        }
+        index += 1;
+    }
+    None
+}
+
+fn bytes_trimmed_empty(buffer: &[u8]) -> bool {
+    buffer.iter().all(|byte| byte.is_ascii_whitespace())
 }
 
 fn process_sse_event(
@@ -319,4 +348,61 @@ fn is_terminal_stream_event(value: &Value) -> bool {
         value.get("type").and_then(Value::as_str),
         Some("response.completed") | Some("response.failed")
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn byte_buffer_preserves_multibyte_text_split_across_chunks() {
+        let event = "data: {\"type\":\"response.output_text.delta\",\"delta\":\"你好世界\"}\n\n";
+        let bytes = event.as_bytes();
+        let split_inside_multibyte_char = event.find('好').expect("test fixture has char") + 1;
+
+        let mut buffer = Vec::new();
+        buffer.extend_from_slice(&bytes[..split_inside_multibyte_char]);
+        assert!(find_sse_event_delimiter(buffer.as_slice()).is_none());
+
+        buffer.extend_from_slice(&bytes[split_inside_multibyte_char..]);
+        let (index, delimiter_len) =
+            find_sse_event_delimiter(buffer.as_slice()).expect("complete event delimiter");
+        let raw_event = decode_sse_event_bytes(buffer[..index].to_vec()).expect("valid utf-8");
+        buffer.drain(..index + delimiter_len);
+
+        let mut output = String::new();
+        let mut saw_stream_text = false;
+        let terminal = process_sse_event(
+            raw_event.as_str(),
+            StreamResponseKind::Responses,
+            &mut output,
+            &mut saw_stream_text,
+        )
+        .expect("valid sse event");
+
+        assert!(!terminal);
+        assert_eq!(output, "你好世界");
+        assert!(buffer.is_empty());
+    }
+
+    #[test]
+    fn byte_buffer_accepts_crlf_event_delimiter() {
+        let event = b"data: {\"choices\":[{\"delta\":{\"content\":\"hello\"}}]}\r\n\r\n";
+        let (index, delimiter_len) =
+            find_sse_event_delimiter(event.as_slice()).expect("crlf delimiter");
+        let raw_event = decode_sse_event_bytes(event[..index].to_vec()).expect("valid utf-8");
+
+        let mut output = String::new();
+        let mut saw_stream_text = false;
+        process_sse_event(
+            raw_event.as_str(),
+            StreamResponseKind::ChatCompletions,
+            &mut output,
+            &mut saw_stream_text,
+        )
+        .expect("valid sse event");
+
+        assert_eq!(delimiter_len, 4);
+        assert_eq!(output, "hello");
+    }
 }

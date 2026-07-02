@@ -61,18 +61,6 @@ impl AppState {
             store.clone(),
             ask_user_prompt_service.clone(),
         );
-        match run_service.recover_incomplete_runs().await {
-            Ok(count) if count > 0 => {
-                info!("recovered {} incomplete task runs during startup", count);
-            }
-            Ok(_) => {}
-            Err(err) => {
-                warn!(
-                    "failed to recover incomplete task runs during startup: {}",
-                    err
-                );
-            }
-        }
         let mcp_catalog_service =
             McpCatalogService::new(task_service.clone(), ask_user_prompt_service.clone());
         let tooling_state_service = ToolingStateService::new(config.clone());

@@ -4,7 +4,8 @@
 use tracing_subscriber::EnvFilter;
 
 use task_runner_service_backend::{
-    build_router, load_task_runner_dotenv, scheduler::spawn_task_scheduler, AppConfig, AppState,
+    build_router, load_task_runner_dotenv, scheduler::spawn_task_scheduler,
+    worker::spawn_task_worker, AppConfig, AppState,
 };
 
 const TASK_RUNNER_TOKIO_THREAD_STACK_SIZE: usize = 8 * 1024 * 1024;
@@ -22,17 +23,43 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let config = AppConfig::from_env()?;
-    let bind_addr = config.bind_addr();
     let app_state = AppState::new(config.clone()).await?;
-    let _scheduler_handle = spawn_task_scheduler(
-        config.clone(),
-        app_state.task_service.clone(),
-        app_state.run_service.clone(),
-    );
+    let mut background_handles = Vec::new();
+
+    if config.scheduler_enabled() {
+        background_handles.push(spawn_task_scheduler(
+            config.clone(),
+            app_state.task_service.clone(),
+            app_state.run_service.clone(),
+        ));
+    }
+
+    if config.worker_enabled() {
+        background_handles.push(spawn_task_worker(
+            config.clone(),
+            app_state.run_service.clone(),
+        ));
+    }
+
+    if !config.api_enabled() {
+        tracing::info!(
+            role = config.role.as_str(),
+            worker_id = config.worker_id.as_str(),
+            "task_runner_service_backend running without HTTP API listener"
+        );
+        tokio::signal::ctrl_c().await?;
+        for handle in background_handles {
+            handle.abort();
+        }
+        return Ok(());
+    }
+
+    let bind_addr = config.bind_addr();
     let app = build_router(app_state);
     let listener = tokio::net::TcpListener::bind(bind_addr).await?;
 
     tracing::info!(
+        role = config.role.as_str(),
         "task_runner_service_backend listening on http://{}:{}",
         config.host,
         config.port

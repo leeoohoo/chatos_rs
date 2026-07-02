@@ -4,11 +4,13 @@
 import { useCallback, useMemo } from 'react';
 
 import { useSessionRuntimeSettings } from '../../../features/sessionRuntime/useSessionRuntimeSettings';
+import { countPendingReviewRepairMessages } from '../../../lib/domain/reviewRepair';
+import { useConversationSummariesRealtime } from '../../../lib/realtime/useConversationSummariesRealtime';
+import { useReviewRepairRealtime } from '../../../lib/realtime/useReviewRepairRealtime';
 import type { ContactItem } from './types';
 import { useTeamMemberRuntimeContext } from './useTeamMemberRuntimeContext';
 import { useTeamMembersContactResources } from './useTeamMembersContactResources';
 import { useTeamMembersPaneStoreBridge } from './useTeamMembersPaneStoreBridge';
-import { useConversationSummariesRealtime } from '../../../lib/realtime/useConversationSummariesRealtime';
 
 interface UseTeamMembersRuntimeResourcesOptions {
   store: ReturnType<typeof useTeamMembersPaneStoreBridge>;
@@ -24,9 +26,11 @@ export const useTeamMembersRuntimeResources = ({
     sessions,
     remoteConnections,
     currentRemoteConnection,
+    messages,
     sessionChatState,
     selectRemoteConnection,
     updateSession,
+    loadMessages,
   } = store;
   const {
     normalizedProjectId,
@@ -89,6 +93,62 @@ export const useTeamMembersRuntimeResources = ({
     },
   });
 
+  const selectedReviewRepairSessionId = conversation.selectedProjectSession?.id || null;
+  const {
+    reviewRepairRunning,
+    reviewRepairPendingCount,
+    refreshReviewRepairStatus,
+    markReviewRepairStarting,
+  } = useReviewRepairRealtime({
+    apiClient,
+    sessionId: selectedReviewRepairSessionId,
+    enabled: Boolean(selectedReviewRepairSessionId),
+    messageCountHint: selectedReviewRepairSessionId ? messages.length : undefined,
+    onCompleted: async () => {
+      if (!selectedReviewRepairSessionId) {
+        return;
+      }
+      await loadMessages(selectedReviewRepairSessionId);
+      summary.markSessionSummariesStale(selectedReviewRepairSessionId);
+      summary.hydrateSessionSummariesFromCache(selectedReviewRepairSessionId);
+      if (conversation.sessionSummaryPaneVisible) {
+        await summary.loadSessionSummaries(selectedReviewRepairSessionId, { silent: true, force: true });
+      }
+    },
+    onFailed: (errorMessage) => {
+      console.error('Team member review repair failed:', errorMessage);
+    },
+  });
+
+  const loadedReviewRepairPendingCount = selectedReviewRepairSessionId
+    ? countPendingReviewRepairMessages(messages, selectedReviewRepairSessionId)
+    : 0;
+  const reviewRepairDisabled = !reviewRepairRunning
+    && reviewRepairPendingCount === 0
+    && loadedReviewRepairPendingCount === 0;
+
+  const handleRunReviewRepair = useCallback(async (sessionId: string) => {
+    if (!sessionId) {
+      return;
+    }
+    markReviewRepairStarting();
+    try {
+      const result = await apiClient.runConversationReviewRepair(sessionId);
+      if (result?.success === false) {
+        throw new Error(result.detail || result.error || '执行复盘失败');
+      }
+    } catch (error) {
+      await refreshReviewRepairStatus(sessionId).catch((statusError) => {
+        console.error('Failed to refresh team review repair status after run error:', statusError);
+      });
+      console.error('Failed to run team review repair:', error);
+    }
+  }, [
+    apiClient,
+    markReviewRepairStarting,
+    refreshReviewRepairStatus,
+  ]);
+
   const handleRemoveMember = useCallback(async (contact: ContactItem) => {
     const targetSessionId = members.projectContacts.find(
       (item) => item.contact.id === contact.id,
@@ -127,6 +187,12 @@ export const useTeamMembersRuntimeResources = ({
       currentRemoteConnection,
     },
     runtimeContext,
+    reviewRepair: {
+      handleRunReviewRepair,
+      reviewRepairRunning,
+      reviewRepairPendingCount,
+      reviewRepairDisabled,
+    },
     handleRemoveMember,
   };
 };

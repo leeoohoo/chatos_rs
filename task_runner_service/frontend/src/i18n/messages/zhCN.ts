@@ -192,7 +192,7 @@ export const zhCN: MessageDictionary = {
   'mcpCatalog.externalConfigUpdated': '外部 MCP 配置已更新',
   'mcpCatalog.externalConfigDeleted': '外部 MCP 配置已删除',
   'mcpCatalog.externalConfigDeleteTitle': '删除外部 MCP 配置：{name}',
-  'mcpCatalog.externalConfigDeleteContent': '删除后，未绑定任务的配置会从列表中移除；已被任务引用的配置后端会拒绝删除。',
+  'mcpCatalog.externalConfigDeleteContent': '只有未被任务引用的配置可以删除；如果仍被任务引用，请改为编辑配置并关闭启用状态。',
   'mcpCatalog.externalConfigNameRequired': '请输入名称',
   'mcpCatalog.externalConfigUrlRequired': '请输入 URL',
   'mcpCatalog.externalConfigCommand': '命令',

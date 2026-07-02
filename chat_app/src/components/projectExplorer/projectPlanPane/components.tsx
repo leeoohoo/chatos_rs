@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { ClipboardList, FileText, GitBranch, Play, RefreshCw, X } from 'lucide-react';
 
 import type {
@@ -141,77 +141,144 @@ export const TechnicalDocumentsSection: React.FC<{
   className?: string;
   documents: ProjectRequirementDocumentResponse[];
   loading: boolean;
-}> = ({ className, documents, loading }) => (
-  <section className={cn('mt-5 border-t border-border pt-4', className)}>
-    <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-      <div>
-        <h4 className="text-sm font-semibold text-foreground">技术文档</h4>
-        <div className="mt-0.5 text-xs text-muted-foreground">
-          {loading ? '正在加载技术文档...' : `${documents.length} 份文档`}
+}> = ({ className, documents, loading }) => {
+  const [selectedDocumentId, setSelectedDocumentId] = useState<string | null>(null);
+  const selectedDocument = useMemo(
+    () => documents.find((document) => document.id === selectedDocumentId) || documents[0] || null,
+    [documents, selectedDocumentId],
+  );
+
+  useEffect(() => {
+    if (documents.length === 0) {
+      setSelectedDocumentId(null);
+      return;
+    }
+    if (selectedDocumentId && documents.some((document) => document.id === selectedDocumentId)) {
+      return;
+    }
+    setSelectedDocumentId(documents[0].id);
+  }, [documents, selectedDocumentId]);
+
+  const selectedDocType = selectedDocument
+    ? readText(selectedDocument.doc_type) || readText(selectedDocument.docType)
+    : '';
+  const selectedUpdatedAt = selectedDocument
+    ? readText(selectedDocument.updated_at) || readText(selectedDocument.updatedAt)
+    : '';
+  const selectedContent = selectedDocument ? readText(selectedDocument.content) : '';
+
+  return (
+    <section className={cn('mt-5 border-t border-border pt-4', className)}>
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <h4 className="text-sm font-semibold text-foreground">技术文档</h4>
+          <div className="mt-0.5 text-xs text-muted-foreground">
+            {loading ? '正在加载技术文档...' : `${documents.length} 份文档`}
+          </div>
         </div>
+        {documents.length > 0 ? (
+          <span className="inline-flex items-center gap-1 rounded-full border border-blue-200 bg-blue-50 px-2 py-0.5 text-xs font-medium text-blue-700 dark:border-blue-800 dark:bg-blue-950/30 dark:text-blue-300">
+            <FileText className="h-3.5 w-3.5" />
+            可查看
+          </span>
+        ) : null}
       </div>
-      {documents.length > 0 ? (
-        <span className="inline-flex items-center gap-1 rounded-full border border-blue-200 bg-blue-50 px-2 py-0.5 text-xs font-medium text-blue-700 dark:border-blue-800 dark:bg-blue-950/30 dark:text-blue-300">
-          <FileText className="h-3.5 w-3.5" />
-          可查看
-        </span>
-      ) : null}
-    </div>
-    {loading ? (
-      <div className="rounded-md border border-border bg-muted/20 px-3 py-3 text-sm text-muted-foreground">
-        正在加载技术文档...
-      </div>
-    ) : documents.length === 0 ? (
-      <div className="rounded-md border border-border bg-muted/20 px-3 py-3 text-sm text-muted-foreground">
-        这个需求还没有技术文档。
-      </div>
-    ) : (
-      <div className="space-y-3">
-        {documents.map((document) => {
-          const docType = readText(document.doc_type) || readText(document.docType);
-          const updatedAt = readText(document.updated_at) || readText(document.updatedAt);
-          const content = readText(document.content);
-          return (
-            <article key={document.id} className="overflow-hidden rounded-md border border-border bg-background">
-              <div className="flex flex-wrap items-start justify-between gap-2 border-b border-border bg-muted/20 px-3 py-2">
-                <div className="min-w-0">
-                  <div className="break-words text-sm font-medium text-foreground">
-                    {readText(document.title) || requirementDocumentTypeLabel(docType)}
+      {loading ? (
+        <div className="rounded-md border border-border bg-muted/20 px-3 py-3 text-sm text-muted-foreground">
+          正在加载技术文档...
+        </div>
+      ) : documents.length === 0 ? (
+        <div className="rounded-md border border-border bg-muted/20 px-3 py-3 text-sm text-muted-foreground">
+          这个需求还没有技术文档。
+        </div>
+      ) : (
+        <div className="grid gap-3 lg:grid-cols-[260px_minmax(0,1fr)]">
+          <div className="space-y-2">
+            {documents.map((document, index) => {
+              const docType = readText(document.doc_type) || readText(document.docType);
+              const updatedAt = readText(document.updated_at) || readText(document.updatedAt);
+              const active = document.id === selectedDocument?.id;
+              return (
+                <button
+                  key={document.id}
+                  type="button"
+                  className={cn(
+                    'w-full rounded-md border px-3 py-2 text-left transition-colors',
+                    active
+                      ? 'border-primary/40 bg-primary/10 shadow-sm'
+                      : 'border-border bg-background hover:bg-accent/50',
+                  )}
+                  onClick={() => setSelectedDocumentId(document.id)}
+                >
+                  <div className="flex items-center gap-2">
+                    <span className="rounded-full border border-border bg-muted/20 px-1.5 py-0.5 text-[10px] text-muted-foreground">
+                      {index + 1}
+                    </span>
+                    <span className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">
+                      {readText(document.title) || requirementDocumentTypeLabel(docType)}
+                    </span>
                   </div>
                   <div className="mt-1 flex flex-wrap gap-1.5 text-[11px] text-muted-foreground">
                     <span className="rounded border border-border bg-background px-1.5 py-0.5">
                       {requirementDocumentTypeLabel(docType)}
-                    </span>
-                    <span className="rounded border border-border bg-background px-1.5 py-0.5">
-                      {readText(document.format) || 'markdown'}
                     </span>
                     {typeof document.version === 'number' ? (
                       <span className="rounded border border-border bg-background px-1.5 py-0.5">
                         v{document.version}
                       </span>
                     ) : null}
-                    {updatedAt ? (
+                  </div>
+                  {updatedAt ? (
+                    <div className="mt-1 truncate text-[11px] text-muted-foreground">
+                      更新于 {formatDateTime(updatedAt)}
+                    </div>
+                  ) : null}
+                </button>
+              );
+            })}
+          </div>
+
+          {selectedDocument ? (
+            <article className="overflow-hidden rounded-md border border-border bg-background">
+              <div className="flex flex-wrap items-start justify-between gap-2 border-b border-border bg-muted/20 px-3 py-2">
+                <div className="min-w-0">
+                  <div className="break-words text-sm font-medium text-foreground">
+                    {readText(selectedDocument.title) || requirementDocumentTypeLabel(selectedDocType)}
+                  </div>
+                  <div className="mt-1 flex flex-wrap gap-1.5 text-[11px] text-muted-foreground">
+                    <span className="rounded border border-border bg-background px-1.5 py-0.5">
+                      {requirementDocumentTypeLabel(selectedDocType)}
+                    </span>
+                    <span className="rounded border border-border bg-background px-1.5 py-0.5">
+                      {readText(selectedDocument.format) || 'markdown'}
+                    </span>
+                    {typeof selectedDocument.version === 'number' ? (
                       <span className="rounded border border-border bg-background px-1.5 py-0.5">
-                        更新于 {formatDateTime(updatedAt)}
+                        v{selectedDocument.version}
+                      </span>
+                    ) : null}
+                    {selectedUpdatedAt ? (
+                      <span className="rounded border border-border bg-background px-1.5 py-0.5">
+                        更新于 {formatDateTime(selectedUpdatedAt)}
                       </span>
                     ) : null}
                   </div>
                 </div>
               </div>
               <div className="px-3 py-2">
-                {content ? (
-                  <LazyMarkdownRenderer content={content} className="text-sm" />
+                {selectedContent ? (
+                  <LazyMarkdownRenderer content={selectedContent} className="text-sm" />
                 ) : (
                   <div className="text-sm text-muted-foreground">暂无内容</div>
                 )}
               </div>
             </article>
-          );
-        })}
-      </div>
-    )}
-  </section>
-);
+          ) : null}
+        </div>
+      )}
+    </section>
+  );
+};
 
 const DependencyPill: React.FC<{
   children: React.ReactNode;

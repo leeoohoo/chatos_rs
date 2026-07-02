@@ -1,18 +1,19 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
+use axum::middleware;
 use axum::routing::{get, post};
 use axum::Router;
 use tower_http::cors::{Any, CorsLayer};
 use tower_http::trace::TraceLayer;
 
+use crate::auth;
 use crate::state::AppState;
 
 use super::handlers;
 
 pub fn build_router(state: AppState) -> Router {
-    Router::new()
-        .route("/health", get(handlers::health))
+    let protected_api = Router::new()
         .route("/api/system/config", get(handlers::system_config))
         .route("/api/sandbox-pool/status", get(handlers::pool_status))
         .route("/api/sandbox-images", get(handlers::list_sandbox_images))
@@ -46,6 +47,10 @@ pub fn build_router(state: AppState) -> Router {
             get(handlers::sandbox_mcp_tools),
         )
         .route(
+            "/api/sandboxes/:sandbox_id/mcp",
+            post(handlers::sandbox_mcp_proxy),
+        )
+        .route(
             "/api/sandboxes/:sandbox_id/mcp/call",
             post(handlers::sandbox_mcp_call),
         )
@@ -57,6 +62,14 @@ pub fn build_router(state: AppState) -> Router {
             "/api/sandboxes/:sandbox_id/events",
             get(handlers::list_sandbox_events),
         )
+        .route_layer(middleware::from_fn_with_state(
+            state.clone(),
+            auth::require_sandbox_auth,
+        ));
+
+    Router::new()
+        .route("/health", get(handlers::health))
+        .merge(protected_api)
         .with_state(state)
         .layer(TraceLayer::new_for_http())
         .layer(

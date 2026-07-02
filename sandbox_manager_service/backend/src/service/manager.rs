@@ -5,10 +5,16 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use axum::http::StatusCode;
+use base64::Engine;
 use chrono::{Duration as ChronoDuration, Utc};
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
+use crate::auth::{
+    SandboxAuthContext, SCOPE_IMAGES_READ, SCOPE_IMAGES_WRITE, SCOPE_LEASE_DESTROY,
+    SCOPE_LEASE_READ, SCOPE_LEASE_RELEASE, SCOPE_MCP_CALL, SCOPE_MCP_TOOLS, SCOPE_POOL_READ,
+};
 use crate::backend::{SandboxBackendRef, SandboxCreateSpec};
 use crate::config::AppConfig;
 use crate::error::ApiError;
@@ -21,7 +27,7 @@ use crate::models::{
     SandboxStatus, SystemConfigResponse,
 };
 use crate::pool::SandboxPoolRef;
-use crate::store::SandboxStore;
+use crate::store::{is_duplicate_key_error, SandboxStore};
 
 use super::images;
 
@@ -58,24 +64,47 @@ impl SandboxManager {
 
     pub async fn create_lease(
         &self,
+        auth: &SandboxAuthContext,
         input: CreateSandboxLeaseRequest,
+        idempotency_key: Option<String>,
     ) -> Result<CreateSandboxLeaseResponse, ApiError> {
         validate_required("tenant_id", &input.tenant_id)?;
         validate_required("user_id", &input.user_id)?;
         validate_required("project_id", &input.project_id)?;
         validate_required("run_id", &input.run_id)?;
         validate_required("workspace_root", &input.workspace_root)?;
+        auth.ensure_create_lease_allowed(&input)?;
+        let idempotency_key = normalize_idempotency_key(idempotency_key)?;
+        let tenant_id = input.tenant_id.trim().to_string();
+        let project_id = input.project_id.trim().to_string();
+        let run_id = input.run_id.trim().to_string();
+        if let Some(key) = idempotency_key.as_deref() {
+            if let Some(existing) = self
+                .store
+                .get_by_idempotency_key(
+                    tenant_id.as_str(),
+                    project_id.as_str(),
+                    run_id.as_str(),
+                    key,
+                )
+                .await
+                .map_err(ApiError::internal)?
+            {
+                return self.create_lease_response_from_existing(existing);
+            }
+        }
 
-        let slot = self.pool.try_acquire_active().map_err(ApiError::capacity)?;
         let lease_id = prefixed_id("lease");
         let sandbox_id = prefixed_id("sandbox");
+        let agent_token_nonce = Uuid::new_v4().simple().to_string();
+        let agent_token = self.agent_token(lease_id.as_str(), agent_token_nonce.as_str());
         let now = now_rfc3339();
         let ttl = Duration::from_secs(input.ttl_seconds.unwrap_or(self.config.lease_ttl.as_secs()));
         let expires_at = (Utc::now()
             + ChronoDuration::from_std(ttl).unwrap_or_else(|_| ChronoDuration::seconds(7_200)))
         .to_rfc3339();
         let run_workspace =
-            self.prepare_run_workspace(input.workspace_root.as_str(), input.run_id.as_str())?;
+            self.prepare_run_workspace(input.workspace_root.as_str(), run_id.as_str())?;
         let resource_limits = input.resource_limits.unwrap_or_default();
         let network = input.network.unwrap_or_default();
         let requested_image_id = input.image_id.clone();
@@ -91,14 +120,34 @@ impl SandboxManager {
         } else {
             input.tools
         };
+        for tool in &tools {
+            auth.ensure_tool_allowed(tool)?;
+        }
+        let capacity_claim_until = (Utc::now() + ChronoDuration::minutes(5)).to_rfc3339();
+        let acquired_capacity = self
+            .store
+            .try_acquire_active_slot(
+                self.config.pool_max_active,
+                lease_id.as_str(),
+                sandbox_id.as_str(),
+                capacity_claim_until.as_str(),
+            )
+            .await
+            .map_err(ApiError::internal)?;
+        if !acquired_capacity {
+            return Err(ApiError::capacity(format!(
+                "sandbox global pool is full: max_active={}",
+                self.config.pool_max_active
+            )));
+        }
 
         let mut record = SandboxLeaseRecord {
             id: lease_id.clone(),
             sandbox_id: sandbox_id.clone(),
-            tenant_id: input.tenant_id.trim().to_string(),
+            tenant_id: tenant_id.clone(),
             user_id: input.user_id.trim().to_string(),
-            project_id: input.project_id.trim().to_string(),
-            run_id: input.run_id.trim().to_string(),
+            project_id: project_id.clone(),
+            run_id: run_id.clone(),
             workspace_root: input.workspace_root.trim().to_string(),
             run_workspace: run_workspace.to_string_lossy().to_string(),
             backend: self.backend.kind().to_string(),
@@ -110,16 +159,46 @@ impl SandboxManager {
             resource_limits: resource_limits.clone(),
             network: network.clone(),
             tools,
+            agent_token_nonce: Some(agent_token_nonce),
+            idempotency_key: idempotency_key.clone(),
             created_at: now.clone(),
             updated_at: now.clone(),
             expires_at,
             destroyed_at: None,
             last_error: None,
         };
-        self.store
-            .create_lease(&record)
+        if let Err(err) = self.store.create_lease(&record).await {
+            let _ = self.store.release_active_slot(lease_id.as_str()).await;
+            if idempotency_key.is_some() && is_duplicate_key_error(&err) {
+                if let Some(existing) = self
+                    .store
+                    .get_by_idempotency_key(
+                        tenant_id.as_str(),
+                        project_id.as_str(),
+                        run_id.as_str(),
+                        idempotency_key.as_deref().unwrap_or_default(),
+                    )
+                    .await
+                    .map_err(ApiError::internal)?
+                {
+                    return self.create_lease_response_from_existing(existing);
+                }
+            }
+            return Err(ApiError::internal(err));
+        }
+        if let Err(err) = self
+            .store
+            .extend_active_slot(lease_id.as_str(), record.expires_at.as_str())
             .await
-            .map_err(ApiError::internal)?;
+        {
+            record.status = SandboxStatus::Failed;
+            record.last_error = Some(err.clone());
+            record.idempotency_key = None;
+            record.updated_at = now_rfc3339();
+            let _ = self.store.replace_lease(&record).await;
+            let _ = self.store.release_active_slot(lease_id.as_str()).await;
+            return Err(ApiError::internal(err));
+        }
         self.event(
             &record,
             "lease_created",
@@ -138,6 +217,7 @@ impl SandboxManager {
                 sandbox_id: sandbox_id.clone(),
                 run_workspace: record.run_workspace.clone(),
                 image: record.image_ref.clone().unwrap_or_default(),
+                agent_token: Some(agent_token.clone()),
                 resource_limits,
                 network,
             })
@@ -148,8 +228,10 @@ impl SandboxManager {
                 if let Err(err) = self.backend.start(sandbox_id.as_str()).await {
                     record.status = SandboxStatus::Failed;
                     record.last_error = Some(err.clone());
+                    record.idempotency_key = None;
                     record.updated_at = now_rfc3339();
                     let _ = self.store.replace_lease(&record).await;
+                    let _ = self.store.release_active_slot(lease_id.as_str()).await;
                     self.event(&record, "sandbox_start_failed", Some(&err), None)
                         .await;
                     return Err(ApiError::with_code(
@@ -173,7 +255,6 @@ impl SandboxManager {
                     Some(json!({ "backend_id": instance.backend_id })),
                 )
                 .await;
-                slot.commit();
                 Ok(CreateSandboxLeaseResponse {
                     lease_id,
                     sandbox_id,
@@ -182,6 +263,7 @@ impl SandboxManager {
                     image_ref: record.image_ref,
                     status: record.status,
                     agent_endpoint: record.agent_endpoint,
+                    agent_token,
                     run_workspace: record.run_workspace,
                     expires_at: record.expires_at,
                 })
@@ -189,8 +271,10 @@ impl SandboxManager {
             Err(err) => {
                 record.status = SandboxStatus::Failed;
                 record.last_error = Some(err.clone());
+                record.idempotency_key = None;
                 record.updated_at = now_rfc3339();
                 let _ = self.store.replace_lease(&record).await;
+                let _ = self.store.release_active_slot(lease_id.as_str()).await;
                 self.event(&record, "sandbox_create_failed", Some(&err), None)
                     .await;
                 Err(ApiError::with_code(
@@ -202,12 +286,42 @@ impl SandboxManager {
         }
     }
 
+    fn create_lease_response_from_existing(
+        &self,
+        record: SandboxLeaseRecord,
+    ) -> Result<CreateSandboxLeaseResponse, ApiError> {
+        if !matches!(record.status, SandboxStatus::Ready | SandboxStatus::Running) {
+            return Err(ApiError::with_code(
+                StatusCode::CONFLICT,
+                "sandbox_lease_idempotency_in_progress",
+                format!(
+                    "sandbox lease for idempotency key is not ready yet: status={}",
+                    record.status.as_str()
+                ),
+            ));
+        }
+        Ok(CreateSandboxLeaseResponse {
+            lease_id: record.id.clone(),
+            sandbox_id: record.sandbox_id.clone(),
+            backend_id: record.backend_id.clone(),
+            image_id: record.image_id.clone(),
+            image_ref: record.image_ref.clone(),
+            status: record.status,
+            agent_endpoint: record.agent_endpoint.clone(),
+            agent_token: self.agent_token_for_record(&record),
+            run_workspace: record.run_workspace,
+            expires_at: record.expires_at,
+        })
+    }
+
     pub async fn heartbeat(
         &self,
+        auth: &SandboxAuthContext,
         sandbox_id: &str,
         input: HeartbeatRequest,
     ) -> Result<HeartbeatResponse, ApiError> {
         let mut record = self.require_sandbox(sandbox_id).await?;
+        auth.ensure_lease_access(&record, SCOPE_LEASE_READ)?;
         if record.id != input.lease_id {
             return Err(ApiError::bad_request("lease_id does not match sandbox"));
         }
@@ -228,8 +342,13 @@ impl SandboxManager {
         })
     }
 
-    pub async fn health(&self, sandbox_id: &str) -> Result<SandboxHealthResponse, ApiError> {
+    pub async fn health(
+        &self,
+        auth: &SandboxAuthContext,
+        sandbox_id: &str,
+    ) -> Result<SandboxHealthResponse, ApiError> {
         let record = self.require_sandbox(sandbox_id).await?;
+        auth.ensure_lease_access(&record, SCOPE_LEASE_READ)?;
         let checked_at = now_rfc3339();
 
         let (backend_instance, backend_error) = match self
@@ -339,10 +458,22 @@ impl SandboxManager {
         Ok(response)
     }
 
-    pub async fn mcp_tools(&self, sandbox_id: &str) -> Result<SandboxMcpToolsResponse, ApiError> {
+    pub async fn mcp_tools(
+        &self,
+        auth: &SandboxAuthContext,
+        sandbox_id: &str,
+    ) -> Result<SandboxMcpToolsResponse, ApiError> {
         let record = self.require_sandbox(sandbox_id).await?;
+        auth.ensure_lease_access(&record, SCOPE_MCP_TOOLS)?;
         let agent_endpoint = self.agent_endpoint_for(&record).await?;
-        let result = jsonrpc_agent_call(agent_endpoint.as_str(), "tools/list", json!({})).await?;
+        let agent_token = self.agent_token_for_record(&record);
+        let result = jsonrpc_agent_call(
+            agent_endpoint.as_str(),
+            Some(agent_token.as_str()),
+            "tools/list",
+            json!({}),
+        )
+        .await?;
         let tools = result
             .get("tools")
             .and_then(Value::as_array)
@@ -364,6 +495,7 @@ impl SandboxManager {
 
     pub async fn mcp_call(
         &self,
+        auth: &SandboxAuthContext,
         sandbox_id: &str,
         input: SandboxMcpCallRequest,
     ) -> Result<SandboxMcpCallResponse, ApiError> {
@@ -372,9 +504,13 @@ impl SandboxManager {
             return Err(ApiError::bad_request("tool name is required"));
         }
         let record = self.require_sandbox(sandbox_id).await?;
+        auth.ensure_lease_access(&record, SCOPE_MCP_CALL)?;
+        auth.ensure_tool_allowed(name)?;
         let agent_endpoint = self.agent_endpoint_for(&record).await?;
+        let agent_token = self.agent_token_for_record(&record);
         let result = jsonrpc_agent_call(
             agent_endpoint.as_str(),
+            Some(agent_token.as_str()),
             "tools/call",
             json!({ "name": name, "arguments": input.arguments }),
         )
@@ -387,12 +523,27 @@ impl SandboxManager {
         })
     }
 
+    pub async fn mcp_proxy(
+        &self,
+        auth: &SandboxAuthContext,
+        sandbox_id: &str,
+        payload: Value,
+    ) -> Result<Value, ApiError> {
+        let record = self.require_sandbox(sandbox_id).await?;
+        authorize_mcp_proxy_payload(auth, &record, &payload)?;
+        let agent_endpoint = self.agent_endpoint_for(&record).await?;
+        let agent_token = self.agent_token_for_record(&record);
+        jsonrpc_agent_proxy(agent_endpoint.as_str(), Some(agent_token.as_str()), payload).await
+    }
+
     pub async fn release(
         &self,
+        auth: &SandboxAuthContext,
         sandbox_id: &str,
         input: ReleaseSandboxRequest,
     ) -> Result<ReleaseSandboxResponse, ApiError> {
         let mut record = self.require_sandbox(sandbox_id).await?;
+        auth.ensure_lease_access(&record, SCOPE_LEASE_RELEASE)?;
         if record.id != input.lease_id {
             return Err(ApiError::bad_request("lease_id does not match sandbox"));
         }
@@ -441,8 +592,13 @@ impl SandboxManager {
         }
     }
 
-    pub async fn destroy(&self, sandbox_id: &str) -> Result<DestroySandboxResponse, ApiError> {
+    pub async fn destroy(
+        &self,
+        auth: &SandboxAuthContext,
+        sandbox_id: &str,
+    ) -> Result<DestroySandboxResponse, ApiError> {
         let record = self.require_sandbox(sandbox_id).await?;
+        auth.ensure_lease_access(&record, SCOPE_LEASE_DESTROY)?;
         self.destroy_record(record, "sandbox_destroyed").await?;
         Ok(DestroySandboxResponse {
             ok: true,
@@ -450,36 +606,63 @@ impl SandboxManager {
         })
     }
 
-    pub async fn get(&self, sandbox_id: &str) -> Result<SandboxLeaseRecord, ApiError> {
-        self.require_sandbox(sandbox_id).await
+    pub async fn get(
+        &self,
+        auth: &SandboxAuthContext,
+        sandbox_id: &str,
+    ) -> Result<SandboxLeaseRecord, ApiError> {
+        let record = self.require_sandbox(sandbox_id).await?;
+        auth.ensure_lease_access(&record, SCOPE_LEASE_READ)?;
+        Ok(record)
     }
 
-    pub async fn list(&self, query: ListSandboxQuery) -> Result<Vec<SandboxLeaseRecord>, ApiError> {
+    pub async fn list(
+        &self,
+        auth: &SandboxAuthContext,
+        query: ListSandboxQuery,
+    ) -> Result<Vec<SandboxLeaseRecord>, ApiError> {
+        let query = auth.scoped_list_query(query)?;
         self.store
             .list_leases(query)
             .await
             .map_err(ApiError::internal)
     }
 
-    pub async fn events(&self, sandbox_id: &str) -> Result<Vec<SandboxEventRecord>, ApiError> {
+    pub async fn events(
+        &self,
+        auth: &SandboxAuthContext,
+        sandbox_id: &str,
+    ) -> Result<Vec<SandboxEventRecord>, ApiError> {
+        let record = self.require_sandbox(sandbox_id).await?;
+        auth.ensure_lease_access(&record, SCOPE_LEASE_READ)?;
         self.store
             .list_events(sandbox_id)
             .await
             .map_err(ApiError::internal)
     }
 
-    pub async fn sandbox_images(&self) -> Result<SandboxImageCatalogResponse, ApiError> {
+    pub async fn sandbox_images(
+        &self,
+        auth: &SandboxAuthContext,
+    ) -> Result<SandboxImageCatalogResponse, ApiError> {
+        auth.require_scope(SCOPE_IMAGES_READ)?;
         Ok(images::catalog(&self.config, self.config.backend).await)
     }
 
-    pub async fn sandbox_image_jobs(&self) -> Result<Vec<SandboxImageJobRecord>, ApiError> {
+    pub async fn sandbox_image_jobs(
+        &self,
+        auth: &SandboxAuthContext,
+    ) -> Result<Vec<SandboxImageJobRecord>, ApiError> {
+        auth.require_scope(SCOPE_IMAGES_READ)?;
         Ok(self.image_jobs.list().await)
     }
 
     pub async fn initialize_sandbox_image(
         &self,
+        auth: &SandboxAuthContext,
         input: InitializeSandboxImageRequest,
     ) -> Result<SandboxImageJobRecord, ApiError> {
+        auth.require_scope(SCOPE_IMAGES_WRITE)?;
         images::start_initialize_job(
             self.image_jobs.clone(),
             &self.config,
@@ -491,20 +674,33 @@ impl SandboxManager {
         .map_err(ApiError::bad_request)
     }
 
-    pub fn pool_status(&self) -> PoolStatusResponse {
-        PoolStatusResponse {
+    pub async fn pool_status(
+        &self,
+        auth: &SandboxAuthContext,
+    ) -> Result<PoolStatusResponse, ApiError> {
+        auth.require_scope(SCOPE_POOL_READ)?;
+        let active = self
+            .store
+            .active_capacity_count(self.config.pool_max_active)
+            .await
+            .map_err(ApiError::internal)?;
+        Ok(PoolStatusResponse {
             backend: self.backend.kind().to_string(),
             max_active: self.pool.max_active(),
-            active: self.pool.active(),
+            active,
             max_pending: self.pool.max_pending(),
             pending: self.pool.pending(),
             lease_ttl_seconds: self.config.lease_ttl.as_secs(),
             cleanup_interval_seconds: self.config.cleanup_interval.as_secs(),
-        }
+        })
     }
 
-    pub fn system_config(&self) -> SystemConfigResponse {
-        SystemConfigResponse {
+    pub fn system_config(
+        &self,
+        auth: &SandboxAuthContext,
+    ) -> Result<SystemConfigResponse, ApiError> {
+        auth.require_admin()?;
+        Ok(SystemConfigResponse {
             host: self.config.host.to_string(),
             port: self.config.port,
             backend: self.backend.kind().to_string(),
@@ -527,7 +723,7 @@ impl SandboxManager {
                 .to_string_lossy()
                 .to_string(),
             image_dockerfile: self.config.image_dockerfile.to_string_lossy().to_string(),
-        }
+        })
     }
 
     pub async fn cleanup_expired(&self) -> Result<(), String> {
@@ -593,12 +789,30 @@ impl SandboxManager {
         validate_http_agent_endpoint(endpoint)
     }
 
+    fn agent_token_for_record(&self, record: &SandboxLeaseRecord) -> String {
+        record
+            .agent_token_nonce
+            .as_deref()
+            .map(|nonce| self.agent_token(record.id.as_str(), nonce))
+            .unwrap_or_else(|| record.id.clone())
+    }
+
+    fn agent_token(&self, lease_id: &str, nonce: &str) -> String {
+        let mut hasher = Sha256::new();
+        hasher.update(self.config.agent_token_secret.as_bytes());
+        hasher.update(b":");
+        hasher.update(lease_id.as_bytes());
+        hasher.update(b":");
+        hasher.update(nonce.as_bytes());
+        let signature = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(hasher.finalize());
+        format!("sat_{lease_id}_{nonce}_{signature}")
+    }
+
     async fn destroy_record(
         &self,
         mut record: SandboxLeaseRecord,
         event_type: &str,
     ) -> Result<(), ApiError> {
-        let was_active = record.status.is_active();
         record.status = SandboxStatus::Destroying;
         record.updated_at = now_rfc3339();
         self.store
@@ -638,9 +852,7 @@ impl SandboxManager {
             .replace_lease(&record)
             .await
             .map_err(ApiError::internal)?;
-        if was_active {
-            self.pool.release_active();
-        }
+        let _ = self.store.release_active_slot(record.id.as_str()).await;
         self.event(&record, event_type, Some("sandbox destroyed"), None)
             .await;
         Ok(())
@@ -708,6 +920,77 @@ fn validate_required(name: &'static str, value: &str) -> Result<(), ApiError> {
     Ok(())
 }
 
+fn normalize_idempotency_key(value: Option<String>) -> Result<Option<String>, ApiError> {
+    let Some(value) = value.map(|value| value.trim().to_string()) else {
+        return Ok(None);
+    };
+    if value.is_empty() {
+        return Ok(None);
+    }
+    if value.len() > 160 {
+        return Err(ApiError::bad_request(
+            "x-idempotency-key must be at most 160 bytes",
+        ));
+    }
+    if value.chars().any(char::is_control) {
+        return Err(ApiError::bad_request(
+            "x-idempotency-key must not contain control characters",
+        ));
+    }
+    Ok(Some(value))
+}
+
+fn authorize_mcp_proxy_payload(
+    auth: &SandboxAuthContext,
+    record: &SandboxLeaseRecord,
+    payload: &Value,
+) -> Result<(), ApiError> {
+    match payload {
+        Value::Object(_) => authorize_mcp_proxy_request(auth, record, payload),
+        Value::Array(items) => {
+            if items.is_empty() {
+                return Err(ApiError::bad_request("MCP JSON-RPC batch is empty"));
+            }
+            for item in items {
+                authorize_mcp_proxy_request(auth, record, item)?;
+            }
+            Ok(())
+        }
+        _ => Err(ApiError::bad_request(
+            "MCP JSON-RPC payload must be an object or array",
+        )),
+    }
+}
+
+fn authorize_mcp_proxy_request(
+    auth: &SandboxAuthContext,
+    record: &SandboxLeaseRecord,
+    payload: &Value,
+) -> Result<(), ApiError> {
+    let method = payload
+        .get("method")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| ApiError::bad_request("MCP JSON-RPC method is required"))?;
+
+    match method {
+        "tools/list" => auth.ensure_lease_access(record, SCOPE_MCP_TOOLS),
+        "tools/call" => {
+            auth.ensure_lease_access(record, SCOPE_MCP_CALL)?;
+            let tool_name = payload
+                .get("params")
+                .and_then(|params| params.get("name"))
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .ok_or_else(|| ApiError::bad_request("tools/call.name is required"))?;
+            auth.ensure_tool_allowed(tool_name)
+        }
+        _ => auth.ensure_lease_access(record, SCOPE_MCP_CALL),
+    }
+}
+
 async fn check_agent_health(agent_endpoint: Option<&str>) -> (Option<bool>, String) {
     let Some(endpoint) = agent_endpoint
         .map(str::trim)
@@ -762,6 +1045,7 @@ async fn check_agent_health(agent_endpoint: Option<&str>) -> (Option<bool>, Stri
 
 async fn jsonrpc_agent_call(
     agent_endpoint: &str,
+    agent_token: Option<&str>,
     method: &str,
     params: Value,
 ) -> Result<Value, ApiError> {
@@ -771,8 +1055,11 @@ async fn jsonrpc_agent_call(
         .redirect(reqwest::redirect::Policy::none())
         .build()
         .map_err(|err| ApiError::internal(format!("build MCP client failed: {err}")))?;
-    let response = client
-        .post(url.as_str())
+    let mut request = client.post(url.as_str());
+    if let Some(agent_token) = agent_token.map(str::trim).filter(|value| !value.is_empty()) {
+        request = request.bearer_auth(agent_token);
+    }
+    let response = request
         .json(&json!({
             "jsonrpc": "2.0",
             "id": prefixed_id("mcp"),
@@ -827,6 +1114,56 @@ async fn jsonrpc_agent_call(
     Ok(value.get("result").cloned().unwrap_or(value))
 }
 
+async fn jsonrpc_agent_proxy(
+    agent_endpoint: &str,
+    agent_token: Option<&str>,
+    payload: Value,
+) -> Result<Value, ApiError> {
+    let url = format!("{}/mcp", agent_endpoint.trim_end_matches('/'));
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(15))
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .map_err(|err| ApiError::internal(format!("build MCP proxy client failed: {err}")))?;
+    let mut request = client.post(url.as_str());
+    if let Some(agent_token) = agent_token.map(str::trim).filter(|value| !value.is_empty()) {
+        request = request.bearer_auth(agent_token);
+    }
+    let response = request.json(&payload).send().await.map_err(|err| {
+        ApiError::with_code(
+            StatusCode::BAD_GATEWAY,
+            "sandbox_mcp_proxy_request_failed",
+            format!("MCP proxy request failed: {err}"),
+        )
+    })?;
+
+    let status = response.status();
+    let body = response.text().await.map_err(|err| {
+        ApiError::with_code(
+            StatusCode::BAD_GATEWAY,
+            "sandbox_mcp_proxy_response_failed",
+            format!("MCP proxy response read failed: {err}"),
+        )
+    })?;
+    if !status.is_success() {
+        return Err(ApiError::with_code(
+            StatusCode::BAD_GATEWAY,
+            "sandbox_mcp_proxy_http_error",
+            format!("MCP proxy returned HTTP {status}: {}", preview_text(&body)),
+        ));
+    }
+    serde_json::from_str(body.as_str()).map_err(|err| {
+        ApiError::with_code(
+            StatusCode::BAD_GATEWAY,
+            "sandbox_mcp_proxy_invalid_json",
+            format!(
+                "MCP proxy returned invalid JSON: {err}; body={}",
+                preview_text(&body)
+            ),
+        )
+    })
+}
+
 fn validate_http_agent_endpoint(endpoint: String) -> Result<String, ApiError> {
     if endpoint.starts_with("http://") || endpoint.starts_with("https://") {
         Ok(endpoint)
@@ -864,4 +1201,117 @@ fn sanitize_path_segment(value: &str) -> String {
             }
         })
         .collect::<String>()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::auth::SandboxSystemClient;
+    use crate::models::{NetworkPolicy, ResourceLimits};
+
+    fn lease_record() -> SandboxLeaseRecord {
+        SandboxLeaseRecord {
+            id: "lease-1".to_string(),
+            sandbox_id: "sandbox-1".to_string(),
+            tenant_id: "tenant-1".to_string(),
+            user_id: "user-1".to_string(),
+            project_id: "project-1".to_string(),
+            run_id: "run-1".to_string(),
+            workspace_root: "/tmp/workspace".to_string(),
+            run_workspace: "/tmp/workspace/.chatos/task-runner/runs/run-1".to_string(),
+            backend: "mock".to_string(),
+            backend_id: Some("backend-1".to_string()),
+            image_id: None,
+            image_ref: None,
+            status: SandboxStatus::Ready,
+            agent_endpoint: Some("http://127.0.0.1:49888".to_string()),
+            resource_limits: ResourceLimits::default(),
+            network: NetworkPolicy::default(),
+            tools: vec!["filesystem".to_string(), "terminal".to_string()],
+            agent_token_nonce: Some("nonce-1".to_string()),
+            idempotency_key: None,
+            created_at: "2026-01-01T00:00:00Z".to_string(),
+            updated_at: "2026-01-01T00:00:00Z".to_string(),
+            expires_at: "2026-01-01T01:00:00Z".to_string(),
+            destroyed_at: None,
+            last_error: None,
+        }
+    }
+
+    fn system_auth(scopes: &[&str], tools: &[&str]) -> SandboxAuthContext {
+        SandboxAuthContext::System(SandboxSystemClient {
+            client_id: "task_runner".to_string(),
+            scopes: scopes.iter().map(|value| value.to_string()).collect(),
+            allowed_tenant_ids: vec!["tenant-1".to_string()],
+            allowed_project_ids: vec!["project-1".to_string()],
+            allowed_tools: tools.iter().map(|value| value.to_string()).collect(),
+            max_lease_ttl_seconds: 3_600,
+        })
+    }
+
+    #[test]
+    fn mcp_proxy_authorizes_tools_list_with_tools_scope() {
+        let auth = system_auth(&[SCOPE_MCP_TOOLS], &["sandbox_read_file"]);
+        let payload = json!({
+            "jsonrpc": "2.0",
+            "id": "request-1",
+            "method": "tools/list",
+            "params": {}
+        });
+
+        assert!(authorize_mcp_proxy_payload(&auth, &lease_record(), &payload).is_ok());
+    }
+
+    #[test]
+    fn mcp_proxy_enforces_tools_call_tool_policy() {
+        let auth = system_auth(&[SCOPE_MCP_CALL], &["sandbox_read_file"]);
+        let allowed = json!({
+            "jsonrpc": "2.0",
+            "id": "request-1",
+            "method": "tools/call",
+            "params": { "name": "sandbox_read_file", "arguments": {} }
+        });
+        let denied = json!({
+            "jsonrpc": "2.0",
+            "id": "request-2",
+            "method": "tools/call",
+            "params": { "name": "sandbox_terminal_exec", "arguments": {} }
+        });
+
+        assert!(authorize_mcp_proxy_payload(&auth, &lease_record(), &allowed).is_ok());
+        let err = authorize_mcp_proxy_payload(&auth, &lease_record(), &denied)
+            .expect_err("unexpected allowed tool call");
+        assert_eq!(err.status, StatusCode::FORBIDDEN);
+    }
+
+    #[test]
+    fn mcp_proxy_rejects_payload_without_method() {
+        let auth = system_auth(&[SCOPE_MCP_CALL], &["*"]);
+        let payload = json!({ "jsonrpc": "2.0", "id": "request-1", "params": {} });
+
+        let err = authorize_mcp_proxy_payload(&auth, &lease_record(), &payload)
+            .expect_err("unexpected accepted invalid payload");
+        assert_eq!(err.status, StatusCode::BAD_REQUEST);
+    }
+
+    #[test]
+    fn idempotency_key_is_trimmed_and_optional() {
+        assert_eq!(
+            normalize_idempotency_key(Some("  sandbox-lease:run-1  ".to_string()))
+                .expect("valid key"),
+            Some("sandbox-lease:run-1".to_string())
+        );
+        assert_eq!(
+            normalize_idempotency_key(Some("   ".to_string())).expect("blank key"),
+            None
+        );
+        assert_eq!(normalize_idempotency_key(None).expect("missing key"), None);
+    }
+
+    #[test]
+    fn idempotency_key_rejects_oversized_values() {
+        let err = normalize_idempotency_key(Some("x".repeat(161)))
+            .expect_err("unexpected accepted oversized idempotency key");
+        assert_eq!(err.status, StatusCode::BAD_REQUEST);
+    }
 }

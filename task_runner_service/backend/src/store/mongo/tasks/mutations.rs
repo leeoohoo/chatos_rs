@@ -9,6 +9,36 @@ impl MongoStore {
         Ok(task)
     }
 
+    pub(in crate::store) async fn update_task_schedule_if_next_run_at(
+        &self,
+        task_id: &str,
+        expected_next_run_at: &str,
+        schedule: TaskScheduleConfig,
+        updated_at: &str,
+    ) -> Result<Option<TaskRecord>, String> {
+        let result = self
+            .tasks
+            .update_one(
+                doc! {
+                    "id": task_id,
+                    "schedule.next_run_at": expected_next_run_at,
+                },
+                doc! {
+                    "$set": {
+                        "schedule": bson::to_bson(&schedule).map_err(|err| err.to_string())?,
+                        "updated_at": updated_at,
+                    }
+                },
+                None,
+            )
+            .await
+            .map_err(|err| err.to_string())?;
+        if result.matched_count == 0 {
+            return Ok(None);
+        }
+        self.get_task(task_id).await
+    }
+
     pub(in crate::store) async fn delete_task(&self, id: &str) -> Result<bool, String> {
         if self.find_by_id(&self.tasks, id).await?.is_none() {
             return Ok(false);

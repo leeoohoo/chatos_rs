@@ -71,6 +71,8 @@ impl RunService {
             run.updated_at = now.clone();
             run.result_summary = Some(message.clone());
             run.error_message = error_message;
+            run.claim_token = None;
+            run.claim_until = None;
 
             if let Err(err) = self.store.save_run(run.clone()).await {
                 warn!(
