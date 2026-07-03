@@ -208,10 +208,10 @@ fn target(
         };
     }
 
-    let scheme = normalized_env("OFFICIAL_WEBSITE_STATUS_SCHEME")
-        .unwrap_or_else(|| "http".to_string());
-    let host = normalized_env("OFFICIAL_WEBSITE_STATUS_HOST")
-        .unwrap_or_else(|| "127.0.0.1".to_string());
+    let scheme =
+        normalized_env("OFFICIAL_WEBSITE_STATUS_SCHEME").unwrap_or_else(|| "http".to_string());
+    let host =
+        normalized_env("OFFICIAL_WEBSITE_STATUS_HOST").unwrap_or_else(|| "127.0.0.1".to_string());
     let port = env_u16(port_key, fallback_port);
     StatusTarget {
         order,

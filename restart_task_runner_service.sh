@@ -10,12 +10,18 @@ export PATH="$HOME/.local/bin:$PATH"
 SCRIPT_PATH="${CHATOS_RS_SCRIPT_PATH:-${BASH_SOURCE[0]}}"
 ROOT_DIR="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
 DEV_MONGO_HELPER="$ROOT_DIR/scripts/dev-mongo-common.sh"
+LOCAL_SERVICE_LAUNCHER="$ROOT_DIR/scripts/local-service-launcher.sh"
 
 # shellcheck disable=SC1090
 source "$DEV_MONGO_HELPER"
+# shellcheck disable=SC1090
+source "$LOCAL_SERVICE_LAUNCHER"
 
 load_optional_env() {
   local env_file="$1"
+  if [[ "${CHATOS_SKIP_SERVICE_LOCAL_ENV:-0}" == "1" ]]; then
+    return 0
+  fi
   if [[ -f "$env_file" ]]; then
     set -a
     # shellcheck disable=SC1090
@@ -80,12 +86,13 @@ else
 fi
 
 TASK_RUNNER_RUNTIME_DIR="${TASK_RUNNER_RUNTIME_DIR:-/tmp/chatos_rs_task_runner_${ROOT_HASH}}"
+LOCAL_SERVICE_LAUNCHD_PREFIX="${LOCAL_SERVICE_LAUNCHD_PREFIX:-chatos-rs-task-runner-${ROOT_HASH}}"
 
 TASK_RUNNER_BACKEND_PID_FILE="$TASK_RUNNER_RUNTIME_DIR/backend.pid"
 TASK_RUNNER_FRONTEND_PID_FILE="$TASK_RUNNER_RUNTIME_DIR/frontend.pid"
 TASK_RUNNER_BACKEND_LOG_FILE="$TASK_RUNNER_RUNTIME_DIR/backend.log"
 TASK_RUNNER_FRONTEND_LOG_FILE="$TASK_RUNNER_RUNTIME_DIR/frontend.log"
-TASK_RUNNER_TARGET_DIR="${CARGO_TARGET_DIR:-$ROOT_DIR/target-shared}"
+TASK_RUNNER_TARGET_DIR="${TASK_RUNNER_CARGO_TARGET_DIR:-${CARGO_TARGET_DIR:-$TASK_RUNNER_ROOT_DIR/target}}"
 if [[ "$TASK_RUNNER_TARGET_DIR" != /* ]]; then
   TASK_RUNNER_TARGET_DIR="$ROOT_DIR/$TASK_RUNNER_TARGET_DIR"
 fi
@@ -233,16 +240,24 @@ launch_service() {
   local pid_file="$3"
   local log_file="$4"
   local command="$5"
+  local launchd_label
+  launchd_label="$(local_service_launchd_label "$LOCAL_SERVICE_LAUNCHD_PREFIX" "$name")"
 
+  if local_service_use_launchd; then
+    local_service_stop_launchd_job "$launchd_label"
+  fi
   ensure_port_available "$name" "$port" || return 1
   echo "[INFO] 启动 $name..."
   : >"$log_file"
-  if command -v setsid >/dev/null 2>&1; then
+  if local_service_use_launchd; then
+    local_service_launch_with_launchd "$launchd_label" "$name" "$log_file" "$pid_file" "$command"
+  elif command -v setsid >/dev/null 2>&1; then
     nohup setsid bash -lc "$command" >"$log_file" 2>&1 < /dev/null &
+    echo $! >"$pid_file"
   else
     nohup bash -lc "$command" >"$log_file" 2>&1 < /dev/null &
+    echo $! >"$pid_file"
   fi
-  echo $! >"$pid_file"
 }
 
 check_alive() {
@@ -410,6 +425,9 @@ start_task_runner_frontend() {
 }
 
 do_stop() {
+  local_service_stop_launchd_job "$(local_service_launchd_label "$LOCAL_SERVICE_LAUNCHD_PREFIX" "Task Runner backend")"
+  local_service_stop_launchd_job "$(local_service_launchd_label "$LOCAL_SERVICE_LAUNCHD_PREFIX" "Task Runner frontend")"
+
   stop_from_pid_file "Task Runner backend" "$TASK_RUNNER_BACKEND_PID_FILE"
   stop_from_pid_file "Task Runner frontend" "$TASK_RUNNER_FRONTEND_PID_FILE"
 

@@ -7,6 +7,7 @@ import type { Message } from '../../types';
 import { useI18n } from '../../i18n/I18nProvider';
 import { cn } from '../../lib/utils';
 import { MessageTaskDetailModal, MessageTaskProcessLogModal } from './MessageTaskDetailModal';
+import { MessageTaskChangesModal } from './MessageTaskChangesModal';
 import { MessageTaskGraphPanel } from './MessageTaskGraphPanel';
 import { MessageTaskRunDetailModal } from './MessageTaskRunDetailModal';
 import { formatDateTime, readString } from './utils';
@@ -84,16 +85,25 @@ export const MessageTaskDrawer: FC<MessageTaskDrawerProps> = ({
     detailTask,
     processTask,
     runDetail,
+    changesTask,
+    outputChanges,
+    outputDiff,
+    selectedChangePath,
     loadingProcessTaskId,
     loadingRunId,
+    loadingChangesRunId,
+    loadingDiffPath,
     reloadGraph,
     openDetail,
     openProcessLog,
     openRun,
+    openChanges,
+    selectChangeFile,
     loadMoreRunEvents,
     closeDetail,
     closeProcessLog,
     closeRun,
+    closeChanges,
   } = useMessageTaskGraph({
     open,
     messageId: message.id,
@@ -243,11 +253,13 @@ export const MessageTaskDrawer: FC<MessageTaskDrawerProps> = ({
                 loading={loading}
                 error={error}
                 loadingRunId={loadingRunId}
+                loadingChangesRunId={loadingChangesRunId}
                 loadingProcessTaskId={loadingProcessTaskId}
                 panelWidth={drawerWidth}
                 onOpenDetail={openDetail}
                 onOpenProcessLog={openProcessLog}
                 onOpenRun={openRun}
+                onOpenChanges={openChanges}
               />
             </div>
           </div>
@@ -261,6 +273,17 @@ export const MessageTaskDrawer: FC<MessageTaskDrawerProps> = ({
         loadingMoreEvents={Boolean(runDetail && loadingRunId === runDetail.run?.id)}
         onLoadMoreEvents={loadMoreRunEvents}
         onClose={closeRun}
+      />
+      <MessageTaskChangesModal
+        task={changesTask}
+        changes={outputChanges}
+        diff={outputDiff}
+        selectedPath={selectedChangePath}
+        loadingChanges={Boolean(changesTask?.last_run_id && loadingChangesRunId === changesTask.last_run_id)}
+        loadingDiff={Boolean(selectedChangePath && loadingDiffPath === selectedChangePath)}
+        error={error}
+        onSelectFile={selectChangeFile}
+        onClose={closeChanges}
       />
     </>
   );

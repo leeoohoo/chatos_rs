@@ -24,6 +24,9 @@ REMOTE_REBUILD_OFFICIAL_WEBSITE="${REMOTE_REBUILD_OFFICIAL_WEBSITE:-1}"
 REMOTE_REBUILD_DB_CONNECTION_HUB="${REMOTE_REBUILD_DB_CONNECTION_HUB:-1}"
 REMOTE_NPM_INSTALL_MODE="${REMOTE_NPM_INSTALL_MODE:-install}"
 REMOTE_CLEAN_TARGET="${REMOTE_CLEAN_TARGET:-1}"
+REMOTE_CARGO_RELEASE_LTO="${REMOTE_CARGO_RELEASE_LTO:-false}"
+REMOTE_CARGO_RELEASE_CODEGEN_UNITS="${REMOTE_CARGO_RELEASE_CODEGEN_UNITS:-16}"
+REMOTE_CARGO_BUILD_JOBS="${REMOTE_CARGO_BUILD_JOBS:-}"
 PLAN_ONLY="${PLAN_ONLY:-0}"
 SYNC_ONLY="${SYNC_ONLY:-0}"
 
@@ -72,8 +75,11 @@ SSH_OPTIONS=(
   -o PreferredAuthentications=password
   -o PubkeyAuthentication=no
   -o NumberOfPasswordPrompts=1
+  -o ServerAliveInterval=30
+  -o ServerAliveCountMax=3
+  -o ConnectTimeout=15
 )
-RSYNC_SSH="ssh -p $REMOTE_PORT -o StrictHostKeyChecking=accept-new -o PreferredAuthentications=password -o PubkeyAuthentication=no -o NumberOfPasswordPrompts=1"
+RSYNC_SSH="ssh -p $REMOTE_PORT -o StrictHostKeyChecking=accept-new -o PreferredAuthentications=password -o PubkeyAuthentication=no -o NumberOfPasswordPrompts=1 -o ServerAliveInterval=30 -o ServerAliveCountMax=3 -o ConnectTimeout=15"
 
 remote_run() {
   sshpass -p "$REMOTE_PASSWORD" ssh "${SSH_OPTIONS[@]}" "$REMOTE_USER@$REMOTE_HOST" "$@"
@@ -98,7 +104,8 @@ cat <<EOF
 - 远端 Rust target-dir: $REMOTE_APP_ROOT/target-shared
 - 更新范围: 主服务 + 附属服务(REMOTE_REBUILD_AUX_SERVICES=$REMOTE_REBUILD_AUX_SERVICES, OFFICIAL=$REMOTE_REBUILD_OFFICIAL_WEBSITE, DB_HUB=$REMOTE_REBUILD_DB_CONNECTION_HUB)
 - npm 安装模式: $REMOTE_NPM_INSTALL_MODE
-- 清理远端 Rust target: $REMOTE_CLEAN_TARGET（1=全量重编译，慢但省空间）
+- 清理远端 Rust target: ${REMOTE_CLEAN_TARGET} (1=全量重编译，慢但省空间)
+- Rust release 编译参数: lto=$REMOTE_CARGO_RELEASE_LTO codegen-units=$REMOTE_CARGO_RELEASE_CODEGEN_UNITS jobs=${REMOTE_CARGO_BUILD_JOBS:-auto}
 - 模式: PLAN_ONLY=$PLAN_ONLY SYNC_ONLY=$SYNC_ONLY
 EOF
 
@@ -145,6 +152,9 @@ REMOTE_REBUILD_OFFICIAL_WEBSITE="__REMOTE_REBUILD_OFFICIAL_WEBSITE__"
 REMOTE_REBUILD_DB_CONNECTION_HUB="__REMOTE_REBUILD_DB_CONNECTION_HUB__"
 REMOTE_NPM_INSTALL_MODE="__REMOTE_NPM_INSTALL_MODE__"
 REMOTE_CLEAN_TARGET="__REMOTE_CLEAN_TARGET__"
+REMOTE_CARGO_RELEASE_LTO="__REMOTE_CARGO_RELEASE_LTO__"
+REMOTE_CARGO_RELEASE_CODEGEN_UNITS="__REMOTE_CARGO_RELEASE_CODEGEN_UNITS__"
+REMOTE_CARGO_BUILD_JOBS="__REMOTE_CARGO_BUILD_JOBS__"
 export REMOTE_NPM_INSTALL_MODE
 
 if [[ -d "$HOME/.cargo/bin" ]]; then
@@ -181,6 +191,15 @@ need_cmd nginx
 TARGET_DIR="${CARGO_TARGET_DIR:-$REMOTE_APP_ROOT/target-shared}"
 if [[ "$TARGET_DIR" != /* ]]; then
   TARGET_DIR="$REMOTE_APP_ROOT/$TARGET_DIR"
+fi
+
+export CARGO_PROFILE_RELEASE_LTO="$REMOTE_CARGO_RELEASE_LTO"
+export CARGO_PROFILE_RELEASE_CODEGEN_UNITS="$REMOTE_CARGO_RELEASE_CODEGEN_UNITS"
+if [[ -z "$REMOTE_CARGO_BUILD_JOBS" ]] && command -v nproc >/dev/null 2>&1; then
+  REMOTE_CARGO_BUILD_JOBS="$(nproc)"
+fi
+if [[ -n "$REMOTE_CARGO_BUILD_JOBS" ]]; then
+  export CARGO_BUILD_JOBS="$REMOTE_CARGO_BUILD_JOBS"
 fi
 
 log() { printf '[REMOTE] %s\n' "$*"; }
@@ -297,6 +316,7 @@ install_frontend_deps() {
 prepare_aux_service_env() {
   load_chatos_env
 
+  export CHATOS_SKIP_SERVICE_LOCAL_ENV="${CHATOS_SKIP_SERVICE_LOCAL_ENV:-1}"
   export MAIN_BACKEND_PORT="${EFFECTIVE_BACKEND_PORT}"
   export BACKEND_PORT="${EFFECTIVE_BACKEND_PORT}"
   export START_DEV_MONGO="${START_DEV_MONGO:-auto}"
@@ -320,6 +340,7 @@ prepare_aux_service_env() {
   export PROJECT_SERVICE_BASE_URL="${PROJECT_SERVICE_BASE_URL:-http://127.0.0.1:${PROJECT_SERVICE_PORT}}"
   export CHATOS_PROJECT_SERVICE_BASE_URL="${CHATOS_PROJECT_SERVICE_BASE_URL:-$PROJECT_SERVICE_BASE_URL}"
   export PROJECT_SERVICE_DATABASE_URL="${PROJECT_SERVICE_DATABASE_URL:-$(mongo_url_for project_management_service)}"
+  export PROJECT_SERVICE_CARGO_TARGET_DIR="${PROJECT_SERVICE_CARGO_TARGET_DIR:-$REMOTE_APP_ROOT/project_management_service/target}"
   export PROJECT_SERVICE_SYNC_SECRET="${PROJECT_SERVICE_SYNC_SECRET:-${CHATOS_PROJECT_SERVICE_SYNC_SECRET:-change_me_project_sync_secret}}"
   export CHATOS_PROJECT_SERVICE_SYNC_SECRET="${CHATOS_PROJECT_SERVICE_SYNC_SECRET:-$PROJECT_SERVICE_SYNC_SECRET}"
 
@@ -329,12 +350,14 @@ prepare_aux_service_env() {
   export TASK_RUNNER_BASE_URL="${TASK_RUNNER_BASE_URL:-http://127.0.0.1:${TASK_RUNNER_BACKEND_PORT}}"
   export CHATOS_TASK_RUNNER_BASE_URL="${CHATOS_TASK_RUNNER_BASE_URL:-$TASK_RUNNER_BASE_URL}"
   export TASK_RUNNER_DATABASE_URL="${TASK_RUNNER_DATABASE_URL:-$(mongo_url_for task_runner_service)}"
+  export TASK_RUNNER_CARGO_TARGET_DIR="${TASK_RUNNER_CARGO_TARGET_DIR:-$REMOTE_APP_ROOT/task_runner_service/target}"
   export TASK_RUNNER_CHATOS_CALLBACK_URL="${TASK_RUNNER_CHATOS_CALLBACK_URL:-http://127.0.0.1:${EFFECTIVE_BACKEND_PORT}/api/agent/chat/task-runner/callback}"
   export TASK_RUNNER_CHATOS_CALLBACK_SECRET="${TASK_RUNNER_CHATOS_CALLBACK_SECRET:-${CHATOS_TASK_RUNNER_CALLBACK_SECRET:-change_me_chatos_task_runner_secret}}"
   export CHATOS_TASK_RUNNER_CALLBACK_SECRET="${CHATOS_TASK_RUNNER_CALLBACK_SECRET:-$TASK_RUNNER_CHATOS_CALLBACK_SECRET}"
 
   export SANDBOX_MANAGER_PORT="${SANDBOX_MANAGER_PORT:-8095}"
   export SANDBOX_MANAGER_FRONTEND_PORT="${SANDBOX_MANAGER_FRONTEND_PORT:-8096}"
+  export SANDBOX_MANAGER_CARGO_TARGET_DIR="${SANDBOX_MANAGER_CARGO_TARGET_DIR:-$REMOTE_APP_ROOT/sandbox_manager_service/target}"
 
   export OFFICIAL_WEBSITE_MODE="${OFFICIAL_WEBSITE_MODE:-prod}"
   export OFFICIAL_WEBSITE_PORT="${OFFICIAL_WEBSITE_PORT:-39250}"
@@ -447,6 +470,7 @@ npm --prefix "$REMOTE_APP_ROOT/chat_app" run build
 
 # 仅做最小生产构建：Rust 后端统一使用 target-shared；前端由现有部署流程按需处理。
 log "构建 Rust 后端（target-shared）"
+log "Rust release 编译参数: lto=$CARGO_PROFILE_RELEASE_LTO codegen-units=$CARGO_PROFILE_RELEASE_CODEGEN_UNITS jobs=${CARGO_BUILD_JOBS:-auto}"
 if env_bool "$REMOTE_CLEAN_TARGET"; then
   log "提示：刚清理过 target-shared，这一步是全量 Rust 编译；chat_app_server_rs 编译/链接阶段可能较久没有新输出"
 fi
@@ -476,8 +500,14 @@ rebuild_aux_services
 
 log "最小健康检查"
 if command -v curl >/dev/null 2>&1; then
-  curl -fsS "http://127.0.0.1:${EFFECTIVE_BACKEND_PORT}/health" >/dev/null
-  log "health ok: http://127.0.0.1:${EFFECTIVE_BACKEND_PORT}/health"
+  HEALTH_BODY="$(curl -fsS "http://127.0.0.1:${EFFECTIVE_BACKEND_PORT}/health")"
+  if printf '%s' "$HEALTH_BODY" | grep -q '"ready":[[:space:]]*true'; then
+    log "health ready ok: http://127.0.0.1:${EFFECTIVE_BACKEND_PORT}/health"
+  else
+    echo "$HEALTH_BODY"
+    echo "[ERROR] health returned ready=false"
+    exit 1
+  fi
 else
   warn "curl 不存在，跳过 health 检查"
 fi
@@ -499,6 +529,9 @@ REMOTE_SCRIPT="${REMOTE_SCRIPT/__REMOTE_REBUILD_OFFICIAL_WEBSITE__/$REMOTE_REBUI
 REMOTE_SCRIPT="${REMOTE_SCRIPT/__REMOTE_REBUILD_DB_CONNECTION_HUB__/$REMOTE_REBUILD_DB_CONNECTION_HUB}"
 REMOTE_SCRIPT="${REMOTE_SCRIPT/__REMOTE_NPM_INSTALL_MODE__/$REMOTE_NPM_INSTALL_MODE}"
 REMOTE_SCRIPT="${REMOTE_SCRIPT/__REMOTE_CLEAN_TARGET__/$REMOTE_CLEAN_TARGET}"
+REMOTE_SCRIPT="${REMOTE_SCRIPT/__REMOTE_CARGO_RELEASE_LTO__/$REMOTE_CARGO_RELEASE_LTO}"
+REMOTE_SCRIPT="${REMOTE_SCRIPT/__REMOTE_CARGO_RELEASE_CODEGEN_UNITS__/$REMOTE_CARGO_RELEASE_CODEGEN_UNITS}"
+REMOTE_SCRIPT="${REMOTE_SCRIPT/__REMOTE_CARGO_BUILD_JOBS__/$REMOTE_CARGO_BUILD_JOBS}"
 
 log "执行远端更新与部署"
 sshpass -p "$REMOTE_PASSWORD" ssh -T "${SSH_OPTIONS[@]}" "$REMOTE_USER@$REMOTE_HOST" \

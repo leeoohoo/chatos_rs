@@ -19,6 +19,9 @@ FRONTEND_SESSION="${OFFICIAL_WEBSITE_FRONTEND_SESSION:-chatos_official_website_f
 
 load_optional_env() {
   local env_file="$1"
+  if [[ "${CHATOS_SKIP_SERVICE_LOCAL_ENV:-0}" == "1" ]]; then
+    return 0
+  fi
   if [[ -f "$env_file" ]]; then
     set -a
     # shellcheck disable=SC1090

@@ -2,7 +2,7 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 import { memo, type MouseEvent } from 'react';
-import { Activity, FileText, ScrollText } from 'lucide-react';
+import { Activity, FileDiff, FileText, ScrollText } from 'lucide-react';
 
 import { cn } from '../../lib/utils';
 import { StatusBadge } from './parts';
@@ -74,9 +74,11 @@ export const MessageTaskCardNode = memo(({ node }: { node: PositionedTaskNode })
     graphNode,
     isActive,
     isDimmed,
+    loadingChanges,
     loadingProcessLog,
     loadingRun,
     onOpenDetail,
+    onOpenChanges,
     onOpenProcessLog,
     onOpenRun,
   } = node.data;
@@ -150,7 +152,7 @@ export const MessageTaskCardNode = memo(({ node }: { node: PositionedTaskNode })
             </span>
           </div>
 
-          <div className="mt-3 grid grid-cols-3 gap-2">
+          <div className="mt-3 grid grid-cols-2 gap-2">
             <button
               type="button"
               className="inline-flex items-center justify-center gap-1 rounded-md border border-border bg-background px-2 py-1.5 text-xs text-foreground hover:bg-accent disabled:cursor-wait disabled:opacity-60"
@@ -163,6 +165,19 @@ export const MessageTaskCardNode = memo(({ node }: { node: PositionedTaskNode })
             >
               <ScrollText className="h-3.5 w-3.5" />
               {loadingProcessLog ? '加载中' : '执行过程'}
+            </button>
+            <button
+              type="button"
+              className="inline-flex items-center justify-center gap-1 rounded-md border border-border bg-background px-2 py-1.5 text-xs text-foreground hover:bg-accent disabled:cursor-not-allowed disabled:opacity-60"
+              disabled={loadingChanges || !task.last_run_id}
+              onMouseDown={stopNodeButtonEvent}
+              onClick={(event) => {
+                stopNodeButtonEvent(event);
+                void onOpenChanges(task);
+              }}
+            >
+              <FileDiff className="h-3.5 w-3.5" />
+              {loadingChanges ? '加载中' : '变更'}
             </button>
             <button
               type="button"

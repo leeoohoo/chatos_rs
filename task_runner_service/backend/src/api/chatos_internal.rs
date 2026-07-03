@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 use crate::{
+    models::{RunOutputChangesResponse, RunOutputDiffResponse, TaskRunRecord},
     services::{
         ChatosMessageModelConfigSummary, ChatosMessageRunDetail, ChatosMessageTaskDetail,
         ChatosMessageTaskGraph, ChatosMessageTaskRun, ChatosMessageTaskRunEvent,
@@ -45,6 +46,14 @@ pub fn router() -> Router<AppState> {
             get(get_chatos_message_run),
         )
         .route(
+            "/internal/chatos/message-runs/:run_id/output/changes",
+            get(get_chatos_message_run_output_changes),
+        )
+        .route(
+            "/internal/chatos/message-runs/:run_id/output/diff",
+            get(get_chatos_message_run_output_diff),
+        )
+        .route(
             "/internal/chatos/message-graph/runs/:run_id",
             get(get_chatos_message_graph_run),
         )
@@ -67,6 +76,21 @@ struct ChatosMessageRunQuery {
     source: ChatosMessageTaskQuery,
     event_limit: Option<usize>,
     event_offset: Option<usize>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ChatosMessageRunOutputChangesQuery {
+    #[serde(flatten)]
+    source: ChatosMessageTaskQuery,
+    limit: Option<usize>,
+    offset: Option<usize>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ChatosMessageRunOutputDiffQuery {
+    #[serde(flatten)]
+    source: ChatosMessageTaskQuery,
+    path: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -409,6 +433,81 @@ async fn get_chatos_message_run(
         events_offset: event_offset,
         events_has_more,
     }))
+}
+
+async fn get_chatos_message_run_output_changes(
+    Path(run_id): Path<String>,
+    State(state): State<AppState>,
+    Query(query): Query<ChatosMessageRunOutputChangesQuery>,
+) -> Result<Json<RunOutputChangesResponse>, InternalApiError> {
+    let (source_session_id, source_user_message_id, source_turn_id) =
+        validate_chatos_message_query(&query.source)?;
+    let run = require_chatos_message_run(
+        &state,
+        run_id.trim(),
+        source_session_id,
+        source_user_message_id,
+        source_turn_id,
+    )
+    .await?;
+    let response = state
+        .run_service
+        .get_run_output_changes(run.id.as_str(), query.limit, query.offset)
+        .await
+        .map_err(InternalApiError::internal)?
+        .ok_or_else(|| InternalApiError::not_found("run not found for message"))?;
+    Ok(Json(response))
+}
+
+async fn get_chatos_message_run_output_diff(
+    Path(run_id): Path<String>,
+    State(state): State<AppState>,
+    Query(query): Query<ChatosMessageRunOutputDiffQuery>,
+) -> Result<Json<RunOutputDiffResponse>, InternalApiError> {
+    let (source_session_id, source_user_message_id, source_turn_id) =
+        validate_chatos_message_query(&query.source)?;
+    let run = require_chatos_message_run(
+        &state,
+        run_id.trim(),
+        source_session_id,
+        source_user_message_id,
+        source_turn_id,
+    )
+    .await?;
+    let response = state
+        .run_service
+        .get_run_output_diff(run.id.as_str(), query.path.as_str())
+        .await
+        .map_err(InternalApiError::bad_request)?
+        .ok_or_else(|| InternalApiError::not_found("run not found for message"))?;
+    Ok(Json(response))
+}
+
+async fn require_chatos_message_run(
+    state: &AppState,
+    run_id: &str,
+    source_session_id: &str,
+    source_user_message_id: Option<&str>,
+    source_turn_id: Option<&str>,
+) -> Result<TaskRunRecord, InternalApiError> {
+    let run = state
+        .run_service
+        .get_run(run_id)
+        .await
+        .map_err(InternalApiError::internal)?
+        .ok_or_else(|| InternalApiError::not_found("run not found for message"))?;
+    state
+        .task_service
+        .get_message_task_detail_for_chatos_source(
+            run.task_id.as_str(),
+            source_session_id,
+            source_user_message_id,
+            source_turn_id,
+        )
+        .await
+        .map_err(InternalApiError::internal)?
+        .ok_or_else(|| InternalApiError::not_found("run not found for message"))?;
+    Ok(run)
 }
 
 async fn get_chatos_message_graph_run(

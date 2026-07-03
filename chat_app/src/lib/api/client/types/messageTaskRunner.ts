@@ -147,3 +147,50 @@ export interface MessageTaskRunnerRunDetailResponse {
   events_offset?: number;
   events_has_more?: boolean;
 }
+
+export interface MessageTaskRunnerFileChangeCounts {
+  added?: number;
+  modified?: number;
+  deleted?: number;
+  binary?: number;
+  diff_available?: number;
+  total?: number;
+  [key: string]: unknown;
+}
+
+export interface MessageTaskRunnerFileChange {
+  path: string;
+  status: 'added' | 'modified' | 'deleted' | string;
+  old_size?: number | null;
+  new_size?: number | null;
+  old_sha256?: string | null;
+  new_sha256?: string | null;
+  added_lines?: number;
+  deleted_lines?: number;
+  binary?: boolean;
+  diff_available?: boolean;
+  diff_truncated?: boolean;
+  diff_ref?: string | null;
+  [key: string]: unknown;
+}
+
+export interface MessageTaskRunnerRunOutputChangesResponse {
+  run_id: string;
+  counts: MessageTaskRunnerFileChangeCounts;
+  files: MessageTaskRunnerFileChange[];
+  total: number;
+  limit: number;
+  offset: number;
+  has_more: boolean;
+}
+
+export interface MessageTaskRunnerRunOutputDiffResponse {
+  run_id: string;
+  path: string;
+  status: string;
+  patch?: string | null;
+  binary?: boolean;
+  diff_available?: boolean;
+  diff_truncated?: boolean;
+  message?: string | null;
+}

@@ -43,6 +43,14 @@ pub fn router() -> Router {
             get(get_message_task_runner_run),
         )
         .route(
+            "/api/messages/:message_id/task-runner/runs/:run_id/output/changes",
+            get(get_message_task_runner_run_output_changes),
+        )
+        .route(
+            "/api/messages/:message_id/task-runner/runs/:run_id/output/diff",
+            get(get_message_task_runner_run_output_diff),
+        )
+        .route(
             "/api/messages/:message_id/task-runner/graph/runs/:run_id",
             get(get_message_task_runner_graph_run),
         )
@@ -399,5 +407,84 @@ async fn get_message_task_runner_run(
             Json(json!({"error": "运行记录不属于当前消息"})),
         );
     }
+    (StatusCode::OK, Json(payload))
+}
+
+async fn get_message_task_runner_run_output_changes(
+    auth: AuthUser,
+    Path((message_id, run_id)): Path<(String, String)>,
+    Query(query): Query<MessageTaskRunnerLookupQuery>,
+) -> (StatusCode, Json<Value>) {
+    let context = match resolve_message_task_runner_context(&auth, &message_id, &query).await {
+        Ok(Some(context)) => context,
+        Ok(None) => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(json!({"error": "当前消息没有关联的任务来源"})),
+            );
+        }
+        Err(err) => return err,
+    };
+    let payload = match task_runner_api_client::get_message_run_output_changes(
+        context.base_url.as_str(),
+        run_id.as_str(),
+        context.source_session_id.as_str(),
+        context.source_user_message_id.as_deref(),
+        context.source_turn_id.as_deref(),
+        query.output_limit(),
+        query.output_offset(),
+    )
+    .await
+    {
+        Ok(payload) => payload,
+        Err(err) => {
+            return (
+                StatusCode::BAD_GATEWAY,
+                Json(json!({"error": "读取运行输出变更失败", "detail": err})),
+            );
+        }
+    };
+    (StatusCode::OK, Json(payload))
+}
+
+async fn get_message_task_runner_run_output_diff(
+    auth: AuthUser,
+    Path((message_id, run_id)): Path<(String, String)>,
+    Query(query): Query<MessageTaskRunnerLookupQuery>,
+) -> (StatusCode, Json<Value>) {
+    let Some(diff_path) = query.output_path() else {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": "path is required"})),
+        );
+    };
+    let context = match resolve_message_task_runner_context(&auth, &message_id, &query).await {
+        Ok(Some(context)) => context,
+        Ok(None) => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(json!({"error": "当前消息没有关联的任务来源"})),
+            );
+        }
+        Err(err) => return err,
+    };
+    let payload = match task_runner_api_client::get_message_run_output_diff(
+        context.base_url.as_str(),
+        run_id.as_str(),
+        context.source_session_id.as_str(),
+        context.source_user_message_id.as_deref(),
+        context.source_turn_id.as_deref(),
+        diff_path.as_str(),
+    )
+    .await
+    {
+        Ok(payload) => payload,
+        Err(err) => {
+            return (
+                StatusCode::BAD_GATEWAY,
+                Json(json!({"error": "读取运行输出 diff 失败", "detail": err})),
+            );
+        }
+    };
     (StatusCode::OK, Json(payload))
 }

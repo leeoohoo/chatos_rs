@@ -6,12 +6,17 @@ import { useApiClient } from '../../lib/api/ApiClientContext';
 import {
   getMessageTaskRunnerGraph,
   getMessageTaskRunnerGraphRun,
+  getMessageTaskRunnerRunOutputChanges,
+  getMessageTaskRunnerRunOutputDiff,
   getMessageTaskRunnerTask,
 } from '../../lib/api/client/messages';
 import type { MessageTaskRunnerLookupOptions } from '../../lib/api/client/messages';
 import type {
+  MessageTaskRunnerFileChange,
   MessageTaskRunnerGraphResponse,
   MessageTaskRunnerRunDetailResponse,
+  MessageTaskRunnerRunOutputChangesResponse,
+  MessageTaskRunnerRunOutputDiffResponse,
   MessageTaskRunnerTask,
 } from '../../lib/api/client/types';
 import { readString } from './utils';
@@ -107,8 +112,15 @@ export function useMessageTaskGraph({ open, messageId, lookup }: UseMessageTaskG
   const [detailTask, setDetailTask] = useState<MessageTaskRunnerTask | null>(null);
   const [processTask, setProcessTask] = useState<MessageTaskRunnerTask | null>(null);
   const [runDetail, setRunDetail] = useState<MessageTaskRunnerRunDetailResponse | null>(null);
+  const [changesTask, setChangesTask] = useState<MessageTaskRunnerTask | null>(null);
+  const [changesSource, setChangesSource] = useState<TaskSourceLookup | null>(null);
+  const [outputChanges, setOutputChanges] = useState<MessageTaskRunnerRunOutputChangesResponse | null>(null);
+  const [outputDiff, setOutputDiff] = useState<MessageTaskRunnerRunOutputDiffResponse | null>(null);
+  const [selectedChangePath, setSelectedChangePath] = useState<string | null>(null);
   const [loadingProcessTaskId, setLoadingProcessTaskId] = useState<string | null>(null);
   const [loadingRunId, setLoadingRunId] = useState<string | null>(null);
+  const [loadingChangesRunId, setLoadingChangesRunId] = useState<string | null>(null);
+  const [loadingDiffPath, setLoadingDiffPath] = useState<string | null>(null);
 
   const reloadGraph = useCallback(async () => {
     setLoading(true);
@@ -222,6 +234,84 @@ export function useMessageTaskGraph({ open, messageId, lookup }: UseMessageTaskG
     }
   }, [apiClient, graph, lookup, messageId]);
 
+  const loadChangeDiff = useCallback(async (
+    task: MessageTaskRunnerTask,
+    source: TaskSourceLookup,
+    file: MessageTaskRunnerFileChange,
+  ) => {
+    const runId = readString(task.last_run_id);
+    const path = readString(file.path);
+    if (!runId || !path) {
+      return;
+    }
+    setSelectedChangePath(path);
+    setLoadingDiffPath(path);
+    setError(null);
+    try {
+      const diff = await getMessageTaskRunnerRunOutputDiff(
+        apiClient.getRequestFn(),
+        source.messageId,
+        runId,
+        path,
+        source.lookup,
+      );
+      setOutputDiff(diff);
+    } catch (err) {
+      setOutputDiff(null);
+      setError(err instanceof Error ? err.message : '读取文件 diff 失败');
+    } finally {
+      setLoadingDiffPath(null);
+    }
+  }, [apiClient]);
+
+  const openChanges = useCallback(async (task: MessageTaskRunnerTask) => {
+    const runId = readString(task.last_run_id);
+    if (!runId) {
+      return;
+    }
+    const source = buildTaskSourceLookup({
+      task,
+      graph,
+      fallbackMessageId: messageId,
+      fallbackLookup: lookup,
+    });
+    setChangesTask(task);
+    setChangesSource(source);
+    setOutputChanges(null);
+    setOutputDiff(null);
+    setSelectedChangePath(null);
+    setLoadingChangesRunId(runId);
+    setError(null);
+    try {
+      const changes = await getMessageTaskRunnerRunOutputChanges(
+        apiClient.getRequestFn(),
+        source.messageId,
+        runId,
+        {
+          ...source.lookup,
+          limit: 200,
+          offset: 0,
+        },
+      );
+      setOutputChanges(changes);
+      const firstFile = Array.isArray(changes.files) ? changes.files[0] : null;
+      if (firstFile) {
+        await loadChangeDiff(task, source, firstFile);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '读取文件变更失败');
+    } finally {
+      setLoadingChangesRunId(null);
+    }
+  }, [apiClient, graph, loadChangeDiff, lookup, messageId]);
+
+  const selectChangeFile = useCallback(async (file: MessageTaskRunnerFileChange) => {
+    if (!changesTask || !changesSource) {
+      return;
+    }
+    await loadChangeDiff(changesTask, changesSource, file);
+  }, [changesSource, changesTask, loadChangeDiff]);
+
   const loadMoreRunEvents = useCallback(async () => {
     if (!runDetail?.events_has_more) {
       return;
@@ -270,6 +360,11 @@ export function useMessageTaskGraph({ open, messageId, lookup }: UseMessageTaskG
       setDetailTask(null);
       setProcessTask(null);
       setRunDetail(null);
+      setChangesTask(null);
+      setChangesSource(null);
+      setOutputChanges(null);
+      setOutputDiff(null);
+      setSelectedChangePath(null);
       setError(null);
     }
   }, [open]);
@@ -285,14 +380,29 @@ export function useMessageTaskGraph({ open, messageId, lookup }: UseMessageTaskG
     processTask,
     loadingProcessTaskId,
     runDetail,
+    changesTask,
+    outputChanges,
+    outputDiff,
+    selectedChangePath,
     loadingRunId,
+    loadingChangesRunId,
+    loadingDiffPath,
     reloadGraph,
     openDetail,
     openProcessLog,
     openRun,
+    openChanges,
+    selectChangeFile,
     loadMoreRunEvents,
     closeDetail: () => setDetailTask(null),
     closeProcessLog: () => setProcessTask(null),
     closeRun: () => setRunDetail(null),
+    closeChanges: () => {
+      setChangesTask(null);
+      setChangesSource(null);
+      setOutputChanges(null);
+      setOutputDiff(null);
+      setSelectedChangePath(null);
+    },
   };
 }

@@ -11,12 +11,18 @@ ROOT_DIR="$(cd "$USER_SERVICE_DIR/.." && pwd)"
 BACKEND_DIR="$USER_SERVICE_DIR/backend"
 FRONTEND_DIR="$USER_SERVICE_DIR/frontend"
 DEV_MONGO_HELPER="$ROOT_DIR/scripts/dev-mongo-common.sh"
+LOCAL_SERVICE_LAUNCHER="$ROOT_DIR/scripts/local-service-launcher.sh"
 
 # shellcheck disable=SC1090
 source "$DEV_MONGO_HELPER"
+# shellcheck disable=SC1090
+source "$LOCAL_SERVICE_LAUNCHER"
 
 load_optional_env() {
   local env_file="$1"
+  if [[ "${CHATOS_SKIP_SERVICE_LOCAL_ENV:-0}" == "1" ]]; then
+    return 0
+  fi
   if [[ -f "$env_file" ]]; then
     set -a
     # shellcheck disable=SC1090
@@ -56,6 +62,7 @@ USER_SERVICE_MEMORY_ENGINE_OPERATOR_TOKEN="${MEMORY_ENGINE_OPERATOR_TOKEN:-$MEMO
 USER_SERVICE_TASK_RUNNER_BASE_URL="${TASK_RUNNER_BASE_URL:-${CHATOS_TASK_RUNNER_BASE_URL:-http://127.0.0.1:39090}}"
 USER_SERVICE_TASK_RUNNER_CALLBACK_SECRET="${TASK_RUNNER_CHATOS_CALLBACK_SECRET:-${CHATOS_TASK_RUNNER_CALLBACK_SECRET:-$TASK_RUNNER_CALLBACK_SECRET_DEFAULT}}"
 USER_SERVICE_DOWNSTREAM_REQUEST_TIMEOUT_MS="${USER_SERVICE_DOWNSTREAM_REQUEST_TIMEOUT_MS:-5000}"
+USER_SERVICE_CARGO_TARGET_DIR="${USER_SERVICE_CARGO_TARGET_DIR:-$USER_SERVICE_DIR/target}"
 
 if command -v shasum >/dev/null 2>&1; then
   ROOT_HASH="$(printf '%s' "$ROOT_DIR" | shasum | awk '{print substr($1,1,8)}')"
@@ -66,6 +73,7 @@ else
 fi
 
 USER_SERVICE_RUNTIME_DIR="${USER_SERVICE_RUNTIME_DIR:-/tmp/chatos_rs_user_service_${ROOT_HASH}}"
+LOCAL_SERVICE_LAUNCHD_PREFIX="${LOCAL_SERVICE_LAUNCHD_PREFIX:-chatos-rs-user-service-${ROOT_HASH}}"
 BACKEND_PID_FILE="$USER_SERVICE_RUNTIME_DIR/backend.pid"
 FRONTEND_PID_FILE="$USER_SERVICE_RUNTIME_DIR/frontend.pid"
 BACKEND_LOG_FILE="$USER_SERVICE_RUNTIME_DIR/backend.log"
@@ -180,16 +188,24 @@ launch_service() {
   local pid_file="$3"
   local log_file="$4"
   local command="$5"
+  local launchd_label
+  launchd_label="$(local_service_launchd_label "$LOCAL_SERVICE_LAUNCHD_PREFIX" "$name")"
 
+  if local_service_use_launchd; then
+    local_service_stop_launchd_job "$launchd_label"
+  fi
   ensure_port_available "$name" "$port" || return 1
   echo "[INFO] starting $name..."
   : >"$log_file"
-  if command -v setsid >/dev/null 2>&1; then
+  if local_service_use_launchd; then
+    local_service_launch_with_launchd "$launchd_label" "$name" "$log_file" "$pid_file" "$command"
+  elif command -v setsid >/dev/null 2>&1; then
     nohup setsid bash -lc "$command" >"$log_file" 2>&1 < /dev/null &
+    echo $! >"$pid_file"
   else
     nohup bash -lc "$command" >"$log_file" 2>&1 < /dev/null &
+    echo $! >"$pid_file"
   fi
-  echo $! >"$pid_file"
 }
 
 check_alive() {
@@ -313,7 +329,7 @@ start_backend() {
     "$USER_SERVICE_PORT" \
     "$BACKEND_PID_FILE" \
     "$BACKEND_LOG_FILE" \
-    "cd \"$BACKEND_DIR\" && USER_SERVICE_HOST=\"$USER_SERVICE_HOST\" USER_SERVICE_PORT=\"$USER_SERVICE_PORT\" USER_SERVICE_DATABASE_URL=\"$USER_SERVICE_DATABASE_URL\" USER_SERVICE_MONGODB_DATABASE=\"$USER_SERVICE_MONGODB_DATABASE\" MEMORY_ENGINE_BASE_URL=\"$USER_SERVICE_MEMORY_ENGINE_BASE_URL\" MEMORY_ENGINE_OPERATOR_TOKEN=\"$USER_SERVICE_MEMORY_ENGINE_OPERATOR_TOKEN\" TASK_RUNNER_BASE_URL=\"$USER_SERVICE_TASK_RUNNER_BASE_URL\" CHATOS_TASK_RUNNER_BASE_URL=\"$USER_SERVICE_TASK_RUNNER_BASE_URL\" TASK_RUNNER_CHATOS_CALLBACK_SECRET=\"$USER_SERVICE_TASK_RUNNER_CALLBACK_SECRET\" CHATOS_TASK_RUNNER_CALLBACK_SECRET=\"$USER_SERVICE_TASK_RUNNER_CALLBACK_SECRET\" USER_SERVICE_DOWNSTREAM_REQUEST_TIMEOUT_MS=\"$USER_SERVICE_DOWNSTREAM_REQUEST_TIMEOUT_MS\" exec cargo run"
+    "cd \"$BACKEND_DIR\" && CARGO_TARGET_DIR=\"$USER_SERVICE_CARGO_TARGET_DIR\" USER_SERVICE_HOST=\"$USER_SERVICE_HOST\" USER_SERVICE_PORT=\"$USER_SERVICE_PORT\" USER_SERVICE_DATABASE_URL=\"$USER_SERVICE_DATABASE_URL\" USER_SERVICE_MONGODB_DATABASE=\"$USER_SERVICE_MONGODB_DATABASE\" MEMORY_ENGINE_BASE_URL=\"$USER_SERVICE_MEMORY_ENGINE_BASE_URL\" MEMORY_ENGINE_OPERATOR_TOKEN=\"$USER_SERVICE_MEMORY_ENGINE_OPERATOR_TOKEN\" TASK_RUNNER_BASE_URL=\"$USER_SERVICE_TASK_RUNNER_BASE_URL\" CHATOS_TASK_RUNNER_BASE_URL=\"$USER_SERVICE_TASK_RUNNER_BASE_URL\" TASK_RUNNER_CHATOS_CALLBACK_SECRET=\"$USER_SERVICE_TASK_RUNNER_CALLBACK_SECRET\" CHATOS_TASK_RUNNER_CALLBACK_SECRET=\"$USER_SERVICE_TASK_RUNNER_CALLBACK_SECRET\" USER_SERVICE_DOWNSTREAM_REQUEST_TIMEOUT_MS=\"$USER_SERVICE_DOWNSTREAM_REQUEST_TIMEOUT_MS\" exec cargo run"
 }
 
 start_frontend() {
@@ -328,6 +344,9 @@ start_frontend() {
 }
 
 do_stop() {
+  local_service_stop_launchd_job "$(local_service_launchd_label "$LOCAL_SERVICE_LAUNCHD_PREFIX" "user_service backend")"
+  local_service_stop_launchd_job "$(local_service_launchd_label "$LOCAL_SERVICE_LAUNCHD_PREFIX" "user_service frontend")"
+
   stop_from_pid_file "user_service backend" "$BACKEND_PID_FILE"
   stop_from_pid_file "user_service frontend" "$FRONTEND_PID_FILE"
 

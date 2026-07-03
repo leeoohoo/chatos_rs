@@ -26,6 +26,7 @@ use crate::models::{
 use super::prerequisite_context::{
     attach_prerequisite_context_to_run, build_task_prompt, PrerequisiteTaskContext,
 };
+use super::sandbox_runtime::SandboxOutputReport;
 use super::stream_events::{
     append_pending_stream_event, flush_pending_stream_event, PendingRunStreamEvent,
 };
@@ -112,10 +113,18 @@ impl RunService {
         let report = self
             .execute_prepared_model_run(&task, &run, &model_config, prepared_execution)
             .await;
-        self.finalize_model_phase(&task, &mut run, report, effective_workspace_dir.as_str())
-            .await;
-        if let Some(context) = sandbox_context.as_ref() {
-            self.release_sandbox(&run, context).await;
-        }
+        let sandbox_output = if let Some(context) = sandbox_context.as_ref() {
+            self.release_sandbox(&run, context).await
+        } else {
+            None
+        };
+        self.finalize_model_phase(
+            &task,
+            &mut run,
+            report,
+            effective_workspace_dir.as_str(),
+            sandbox_output,
+        )
+        .await;
     }
 }
