@@ -85,6 +85,13 @@ impl SandboxStore {
         )
         .await?;
         create_index(
+            &self.leases,
+            doc! { "status": 1, "created_at": 1 },
+            Some("idx_sandbox_leases_status_created"),
+            false,
+        )
+        .await?;
+        create_index(
             &self.events,
             doc! { "sandbox_id": 1, "created_at": 1 },
             Some("idx_sandbox_events_sandbox_created"),
@@ -405,6 +412,95 @@ impl SandboxStore {
             .map_err(|err| format!("read expired sandboxes cursor failed: {err}"))
     }
 
+    pub async fn list_expired_pending(
+        &self,
+        now: &str,
+        limit: i64,
+    ) -> Result<Vec<SandboxLeaseRecord>, String> {
+        let options = FindOptions::builder()
+            .sort(doc! { "expires_at": 1 })
+            .limit(limit.clamp(1, 200))
+            .build();
+        self.leases
+            .find(
+                doc! {
+                    "expires_at": { "$lte": now },
+                    "status": SandboxStatus::Pending.as_str(),
+                },
+                options,
+            )
+            .await
+            .map_err(|err| format!("list expired pending sandboxes failed: {err}"))?
+            .try_collect()
+            .await
+            .map_err(|err| format!("read expired pending sandboxes cursor failed: {err}"))
+    }
+
+    pub async fn count_pending_leases(&self, now: &str) -> Result<usize, String> {
+        self.leases
+            .count_documents(
+                doc! {
+                    "status": SandboxStatus::Pending.as_str(),
+                    "expires_at": { "$gt": now },
+                },
+                None,
+            )
+            .await
+            .map(|count| count as usize)
+            .map_err(|err| format!("count pending sandbox leases failed: {err}"))
+    }
+
+    pub async fn list_pending_leases(
+        &self,
+        now: &str,
+        limit: i64,
+    ) -> Result<Vec<SandboxLeaseRecord>, String> {
+        let options = FindOptions::builder()
+            .sort(doc! { "created_at": 1 })
+            .limit(limit.clamp(1, 100))
+            .build();
+        self.leases
+            .find(
+                doc! {
+                    "status": SandboxStatus::Pending.as_str(),
+                    "expires_at": { "$gt": now },
+                },
+                options,
+            )
+            .await
+            .map_err(|err| format!("list pending sandbox leases failed: {err}"))?
+            .try_collect()
+            .await
+            .map_err(|err| format!("read pending sandbox leases cursor failed: {err}"))
+    }
+
+    pub async fn claim_pending_lease(
+        &self,
+        lease_id: &str,
+        now: &str,
+    ) -> Result<Option<SandboxLeaseRecord>, String> {
+        let options = FindOneAndUpdateOptions::builder()
+            .return_document(ReturnDocument::After)
+            .build();
+        self.leases
+            .find_one_and_update(
+                doc! {
+                    "id": lease_id,
+                    "status": SandboxStatus::Pending.as_str(),
+                    "expires_at": { "$gt": now },
+                },
+                doc! {
+                    "$set": {
+                        "status": SandboxStatus::Leasing.as_str(),
+                        "updated_at": now,
+                    },
+                },
+                options,
+            )
+            .await
+            .map_err(|err| format!("claim pending sandbox lease failed: {err}"))
+    }
+
     pub async fn append_event(&self, event: &SandboxEventRecord) -> Result<(), String> {
         self.events
             .insert_one(event, None)
@@ -572,7 +668,6 @@ fn insert_trimmed(filter: &mut Document, key: &str, value: Option<String>) {
 
 fn active_status_strings() -> Vec<&'static str> {
     [
-        SandboxStatus::Pending,
         SandboxStatus::Leasing,
         SandboxStatus::Starting,
         SandboxStatus::Ready,

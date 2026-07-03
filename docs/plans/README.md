@@ -1,0 +1,84 @@
+# Development Plans Archive / 开发方案归档
+
+This directory centralizes historical engineering plans, assessments, contracts, and solution notes.
+本目录集中存放历史开发方案、评估文档、契约说明和优化方案，避免散落在仓库根目录。
+
+## Index / 清单
+- `AI_MODEL_PROVIDER_SELECTION_PLAN_20260603.md`
+- `ASK_USER_TASKRUNNER_CHATOS_INTEGRATION_PLAN.zh-CN.md`
+- `BUILTIN_MCP_DYNAMIC_PROMPT_PLAN.md`
+- `CHATOS_MESSAGE_TASK_DRAWER_PLAN.md`
+- `CHATOS_PLAN_MODE_TASK_RUNNER_INTEGRATION_PLAN.zh-CN.md`
+- `CHATOS_REQUIREMENT_EXECUTION_SIMPLE_PLAN.zh-CN.md`
+- `CHATOS_TASK_RUNNER_ASYNC_CONVERSATION_PLAN.md`
+- `CHATOS_TASK_RUNNER_ONLY_MIGRATION_PLAN.md`
+- `CHATOS_UNIFIED_USER_SERVICE_PLAN_20260619.md`
+- `CHATOS_UNIFIED_USER_SERVICE_STATUS_20260619.md`
+- `CHAT_APP_CHATOS_SERVER_REMEDIATION_PLAN_20260602.md`
+- `DESIGN_PERFORMANCE_FIX_PLAN.zh-CN.md`
+- `DOCKER_KATA_SANDBOX_IMPLEMENTATION_PLAN.zh-CN.md`
+- `INDEPENDENT_TASK_RUNNER_SERVICE_PLAN_20260604.md`
+- `INTERNAL_TASK_MCP_SUBTASK_PLAN.md`
+- `MEMORY_ENGINE_REBUILD_PLAN.md`
+- `MEMORY_HISTORY_CONTEXT_AND_CLEANUP_PLAN.md`
+- `MEMORY_PLATFORM_CONSOLIDATION_PLAN.md`
+- `MEMORY_PLATFORM_PROGRESS_PLAN.md`
+- `MEMORY_REVIEW_REPAIR_PLAN.md`
+- `MEMORY_SUMMARY_RETIREMENT_PLAN.md`
+- `MULTI_USER_WORKSPACE_SANDBOX_ISOLATION_PLAN.zh-CN.md`
+- `NEW_USER_BOOTSTRAP_PLAN.zh-CN.md`
+- `OPTIMIZATION_PROGRESS.zh-CN.md`
+- `PERFORMANCE_FIX_PLAN.zh-CN.md`
+- `PROJECT_EXPLORER_GIT_FEATURE_PLAN.md`
+- `PROJECT_EXPLORER_SEARCH_AND_NAV_PLAN.md`
+- `PROJECT_OPTIMIZATION_PROGRESS_20260616.md`
+- `PROJECT_OPTIMIZATION_PROGRESS_20260617.md`
+- `PROJECT_OPTIMIZATION_REMEDIATION_PLAN.md`
+- `PROJECT_REFACTOR_PERFORMANCE_SOLUTION.zh-CN.md`
+- `PROJECT_REVIEW_20260616.md`
+- `PROJECT_SINGLE_AGENT_MESSAGE_TASKS_PLAN_20260616.md`
+- `PROJECT_TASK_PLANNING_TASK_TYPE_PLAN.zh-CN.md`
+- `REALTIME_PUSH_REFACTOR_PLAN.md`
+- `REALTIME_REMAINING_GAPS_EXECUTION_PLAN.md`
+- `SANDBOX_MANAGER_IMPLEMENTATION_PLAN.zh-CN.md`
+- `SANDBOX_MANAGER_SERVICE_BUILD_PLAN.zh-CN.md`
+- `SERVICE_CLUSTER_AND_SANDBOX_ACCESS_SOLUTION.zh-CN.md`
+- `SHARED_AI_RUNTIME_EXTRACTION_PLAN_20260604.md`
+- `SHARED_AI_RUNTIME_IMPLEMENTATION_FLOW_20260604.md`
+- `TASK_BOARD_FLOWCHART_PROPOSAL_20260615.md`
+- `TASK_MCP_BACKGROUND_WORKER_PLAN_20260604.md`
+- `TASK_OUTCOME_CONTEXT_REMEDIATION_PLAN.md`
+- `TASK_PROJECT_INTEGRATION_PLAN.zh-CN.md`
+- `TASK_RUNNER_AGENT_MCP_AUTH_PLAN.md`
+- `TASK_RUNNER_ASYNC_FEEDBACK_FIX_LOG.md`
+- `TASK_RUNNER_CANCEL_TASK_PLAN_20260616.md`
+- `TASK_RUNNER_MESSAGE_PAYLOAD_CALLBACK_STATUS_FIX_PLAN_20260612.md`
+- `TASK_RUNNER_PREREQUISITE_TASKS_PLAN.md`
+- `TASK_RUNNER_SKILLS_MANAGEMENT_PLAN.zh-CN.md`
+- `TOOL_CARD_REWORK_PLAN.md`
+- `USER_SERVICE_LOCAL_RUNBOOK_20260619.md`
+- `WSL_RUST_DEV_FLOW_20260619.md`
+- `backend_refactor_plan.md`
+- `codex_gateway_rust_integration_plan.md`
+- `contact_agent_commands_chat_runtime_plan.md`
+- `contact_agent_system_skill_mcp_plan.md`
+- `contact_memory_de_sessionization_plan.md`
+- `large_file_refactor_plan.md`
+- `memory_agent_chatos_contact_refactor_plan.md`
+- `memory_project_agent_link_refactor_plan.md`
+- `memory_server_architecture_plan.md`
+- `project_change_marker_plan.md`
+- `project_overall_refactor_assessment_plan.md`
+- `project_workspace_team_members_tab_plan.md`
+- `remote_terminal_sftp_plan.md`
+- `request_body_too_large_optimization_plan.md`
+- `runtime_guidance_non_interrupt_plan.md`
+- `session_runtime_metadata_contract.md`
+- `session_terminal_performance_solution.md`
+- `sub_agent_router_memory_refactor_plan.md`
+- `turn_system_and_tools_inspector_plan.md`
+- `ui_prompt_agent_plan.md`
+
+## Convention / 约定
+- New design/proposal documents should be added under `docs/plans/`.
+- 新的方案类文档统一放在 `docs/plans/`，不再放到根目录。

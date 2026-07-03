@@ -8,9 +8,12 @@ export PATH="$HOME/.local/bin:$PATH"
 SCRIPT_PATH="${BASH_SOURCE[0]}"
 ROOT_DIR="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
 DEV_MONGO_HELPER="$ROOT_DIR/scripts/dev-mongo-common.sh"
+LOCAL_SERVICE_LAUNCHER="$ROOT_DIR/scripts/local-service-launcher.sh"
 
 # shellcheck disable=SC1090
 source "$DEV_MONGO_HELPER"
+# shellcheck disable=SC1090
+source "$LOCAL_SERVICE_LAUNCHER"
 
 load_optional_env() {
   local env_file="$1"
@@ -104,6 +107,8 @@ MAIN_BACKEND_LOG_FILE="$RUNTIME_DIR/backend.log"
 MAIN_FRONTEND_LOG_FILE="$RUNTIME_DIR/frontend.log"
 MAIN_BACKEND_TARGET_DIR="$(resolve_target_dir)"
 MAIN_BACKEND_BINARY="$MAIN_BACKEND_TARGET_DIR/debug/chat_app_server_rs"
+MAIN_BACKEND_LAUNCHD_LABEL="${MAIN_BACKEND_LAUNCHD_LABEL:-chatos-rs-main-backend-dev}"
+MAIN_FRONTEND_LAUNCHD_LABEL="${MAIN_FRONTEND_LAUNCHD_LABEL:-chatos-rs-main-frontend-dev}"
 
 LEGACY_MAIN_BACKEND_PID_FILE="$LEGACY_RUNTIME_DIR/backend.pid"
 LEGACY_MAIN_FRONTEND_PID_FILE="$LEGACY_RUNTIME_DIR/frontend.pid"
@@ -116,6 +121,30 @@ need_cmd() {
   fi
 }
 
+child_pids_of() {
+  local pid="$1"
+  if command -v pgrep >/dev/null 2>&1; then
+    pgrep -P "$pid" 2>/dev/null || true
+    return
+  fi
+  ps -eo pid=,ppid= 2>/dev/null | awk -v ppid="$pid" '$2 == ppid { print $1 }'
+}
+
+kill_process_tree() {
+  local signal="$1"
+  local pid="$2"
+  local child
+
+  if [[ -z "$pid" ]] || ! kill -0 "$pid" >/dev/null 2>&1; then
+    return 0
+  fi
+
+  for child in $(child_pids_of "$pid"); do
+    kill_process_tree "$signal" "$child"
+  done
+  kill "-$signal" "$pid" >/dev/null 2>&1 || true
+}
+
 kill_pid_or_group() {
   local pid="$1"
   if [[ -z "$pid" ]]; then
@@ -124,7 +153,7 @@ kill_pid_or_group() {
   if kill -0 -- "-$pid" >/dev/null 2>&1; then
     kill -- "-$pid" >/dev/null 2>&1 || true
   else
-    kill "$pid" >/dev/null 2>&1 || true
+    kill_process_tree TERM "$pid"
   fi
 }
 
@@ -136,7 +165,75 @@ force_kill_pid_or_group() {
   if kill -0 -- "-$pid" >/dev/null 2>&1; then
     kill -9 -- "-$pid" >/dev/null 2>&1 || true
   else
-    kill -9 "$pid" >/dev/null 2>&1 || true
+    kill_process_tree KILL "$pid"
+  fi
+}
+
+process_parent_pid() {
+  local pid="$1"
+  ps -o ppid= -p "$pid" 2>/dev/null | tr -d '[:space:]'
+}
+
+process_cwd() {
+  local pid="$1"
+  lsof -a -p "$pid" -d cwd -Fn 2>/dev/null | sed -n 's/^n//p' | head -n 1
+}
+
+process_args() {
+  local pid="$1"
+  ps -o args= -p "$pid" 2>/dev/null || true
+}
+
+is_project_owned_process() {
+  local pid="$1"
+  local cwd_path
+  cwd_path="$(process_cwd "$pid")"
+  [[ -n "$cwd_path" && "$cwd_path" == "$ROOT_DIR"* ]]
+}
+
+is_service_launcher_process() {
+  local pid="$1"
+  local args
+  args="$(process_args "$pid")"
+  [[ "$args" == *"$ROOT_DIR"* ||
+    "$args" == *"npm run dev"* ||
+    "$args" == *"vite --host"* ||
+    "$args" == *"cargo run"* ||
+    "$args" == *"chat_app_server_rs"* ]]
+}
+
+related_project_service_pids() {
+  local pid="$1"
+  local parent depth
+
+  printf '%s\n' "$pid"
+  depth=0
+  while (( depth < 8 )); do
+    parent="$(process_parent_pid "$pid")"
+    if [[ -z "$parent" || "$parent" == "1" || "$parent" == "$$" ]]; then
+      break
+    fi
+    if ! is_project_owned_process "$parent" || ! is_service_launcher_process "$parent"; then
+      break
+    fi
+    printf '%s\n' "$parent"
+    pid="$parent"
+    depth=$((depth + 1))
+  done
+}
+
+stop_launchd_job() {
+  local label="$1"
+  if [[ -z "$label" ]] || ! command -v launchctl >/dev/null 2>&1; then
+    return 0
+  fi
+
+  local uid target
+  uid="$(id -u)"
+  target="gui/${uid}/${label}"
+  if launchctl print "$target" >/dev/null 2>&1 || launchctl list "$label" >/dev/null 2>&1; then
+    echo "[INFO] removing launchd job: $label"
+    launchctl bootout "$target" >/dev/null 2>&1 || launchctl remove "$label" >/dev/null 2>&1 || true
   fi
 }
 
@@ -165,17 +262,39 @@ stop_from_port() {
   local port="$2"
 
   if command -v lsof >/dev/null 2>&1; then
-    local pids
-    pids="$(lsof -ti tcp:"$port" -sTCP:LISTEN 2>/dev/null || true)"
-    if [[ -n "$pids" ]]; then
-      echo "[INFO] stopping $name processes on port $port: $pids"
-      kill $pids >/dev/null 2>&1 || true
-      sleep 1
-      local left
-      left="$(lsof -ti tcp:"$port" -sTCP:LISTEN 2>/dev/null || true)"
-      if [[ -n "$left" ]]; then
-        kill -9 $left >/dev/null 2>&1 || true
+    local pids related_pids attempt pid left
+    for attempt in 1 2 3; do
+      pids="$(lsof -ti tcp:"$port" -sTCP:LISTEN 2>/dev/null || true)"
+      if [[ -z "$pids" ]]; then
+        return
       fi
+
+      related_pids="$(
+        for pid in $pids; do
+          related_project_service_pids "$pid"
+        done | awk '!seen[$1]++'
+      )"
+      echo "[INFO] stopping $name processes on port $port: $pids"
+      if [[ "$related_pids" != "$pids" ]]; then
+        echo "[INFO] stopping related $name launcher processes: $related_pids"
+      fi
+      for pid in $related_pids; do
+        kill_pid_or_group "$pid"
+      done
+      sleep 1
+    done
+
+    left="$(lsof -ti tcp:"$port" -sTCP:LISTEN 2>/dev/null || true)"
+    if [[ -n "$left" ]]; then
+      echo "[WARN] force stopping $name processes on port $port: $left"
+      related_pids="$(
+        for pid in $left; do
+          related_project_service_pids "$pid"
+        done | awk '!seen[$1]++'
+      )"
+      for pid in $related_pids; do
+        force_kill_pid_or_group "$pid"
+      done
     fi
   elif command -v fuser >/dev/null 2>&1; then
     if fuser -n tcp "$port" >/dev/null 2>&1; then
@@ -251,16 +370,23 @@ launch_service() {
   local pid_file="$3"
   local log_file="$4"
   local command="$5"
+  local launchd_label="${6:-}"
 
+  if [[ -n "$launchd_label" ]] && local_service_use_launchd; then
+    stop_launchd_job "$launchd_label"
+  fi
   ensure_port_available "$name" "$port" || return 1
   echo "[INFO] starting $name..."
   : >"$log_file"
-  if command -v setsid >/dev/null 2>&1; then
+  if [[ -n "$launchd_label" ]] && local_service_use_launchd; then
+    local_service_launch_with_launchd "$launchd_label" "$name" "$log_file" "$pid_file" "$command"
+  elif command -v setsid >/dev/null 2>&1; then
     nohup setsid bash -lc "$command" >"$log_file" 2>&1 < /dev/null &
+    echo $! >"$pid_file"
   else
     nohup bash -lc "$command" >"$log_file" 2>&1 < /dev/null &
+    echo $! >"$pid_file"
   fi
-  echo $! >"$pid_file"
 }
 
 check_alive() {
@@ -399,7 +525,8 @@ start_main_backend() {
     "$MAIN_BACKEND_PORT" \
     "$MAIN_BACKEND_PID_FILE" \
     "$MAIN_BACKEND_LOG_FILE" \
-    "cd \"$MAIN_BACKEND_DIR\" && if [[ -f .env ]]; then set -a; source .env; set +a; fi; BACKEND_PORT=\"$MAIN_BACKEND_PORT\" DATABASE_TYPE=\"$CHATOS_DATABASE_TYPE_EFFECTIVE\" MONGODB_CONNECTION_STRING=\"$CHATOS_MONGODB_CONNECTION_STRING_EFFECTIVE\" MONGODB_HOST=\"$CHATOS_MONGODB_HOST_EFFECTIVE\" MONGODB_PORT=\"$CHATOS_MONGODB_PORT_EFFECTIVE\" MONGODB_DB=\"$CHATOS_MONGODB_DB_EFFECTIVE\" MONGODB_USER=\"$CHATOS_MONGODB_USER_EFFECTIVE\" MONGODB_PASSWORD=\"$CHATOS_MONGODB_PASSWORD_EFFECTIVE\" MONGODB_AUTH_SOURCE=\"$CHATOS_MONGODB_AUTH_SOURCE_EFFECTIVE\" CHATOS_PROJECT_SERVICE_BASE_URL=\"$CHATOS_PROJECT_SERVICE_BASE_URL_EFFECTIVE\" PROJECT_SERVICE_BASE_URL=\"$CHATOS_PROJECT_SERVICE_BASE_URL_EFFECTIVE\" CHATOS_PROJECT_SERVICE_SYNC_SECRET=\"$PROJECT_SERVICE_SYNC_SECRET_EFFECTIVE\" PROJECT_SERVICE_SYNC_SECRET=\"$PROJECT_SERVICE_SYNC_SECRET_EFFECTIVE\" MEMORY_ENGINE_BASE_URL=\"$MEMORY_ENGINE_BASE_URL_EFFECTIVE\" MEMORY_ENGINE_HOST=\"$MEMORY_ENGINE_HOST_EFFECTIVE\" MEMORY_ENGINE_PORT=\"$MEMORY_ENGINE_PORT_EFFECTIVE\" MEMORY_ENGINE_OPERATOR_TOKEN=\"$MEMORY_ENGINE_OPERATOR_TOKEN_EFFECTIVE\" TASK_RUNNER_CHATOS_CALLBACK_SECRET=\"$CHATOS_TASK_RUNNER_CALLBACK_SECRET\" CHATOS_TASK_RUNNER_CALLBACK_SECRET=\"$CHATOS_TASK_RUNNER_CALLBACK_SECRET\" exec \"$MAIN_BACKEND_BINARY\""
+    "cd \"$MAIN_BACKEND_DIR\" && if [[ -f .env ]]; then set -a; source .env; set +a; fi; BACKEND_PORT=\"$MAIN_BACKEND_PORT\" DATABASE_TYPE=\"$CHATOS_DATABASE_TYPE_EFFECTIVE\" MONGODB_CONNECTION_STRING=\"$CHATOS_MONGODB_CONNECTION_STRING_EFFECTIVE\" MONGODB_HOST=\"$CHATOS_MONGODB_HOST_EFFECTIVE\" MONGODB_PORT=\"$CHATOS_MONGODB_PORT_EFFECTIVE\" MONGODB_DB=\"$CHATOS_MONGODB_DB_EFFECTIVE\" MONGODB_USER=\"$CHATOS_MONGODB_USER_EFFECTIVE\" MONGODB_PASSWORD=\"$CHATOS_MONGODB_PASSWORD_EFFECTIVE\" MONGODB_AUTH_SOURCE=\"$CHATOS_MONGODB_AUTH_SOURCE_EFFECTIVE\" CHATOS_PROJECT_SERVICE_BASE_URL=\"$CHATOS_PROJECT_SERVICE_BASE_URL_EFFECTIVE\" PROJECT_SERVICE_BASE_URL=\"$CHATOS_PROJECT_SERVICE_BASE_URL_EFFECTIVE\" CHATOS_PROJECT_SERVICE_SYNC_SECRET=\"$PROJECT_SERVICE_SYNC_SECRET_EFFECTIVE\" PROJECT_SERVICE_SYNC_SECRET=\"$PROJECT_SERVICE_SYNC_SECRET_EFFECTIVE\" MEMORY_ENGINE_BASE_URL=\"$MEMORY_ENGINE_BASE_URL_EFFECTIVE\" MEMORY_ENGINE_HOST=\"$MEMORY_ENGINE_HOST_EFFECTIVE\" MEMORY_ENGINE_PORT=\"$MEMORY_ENGINE_PORT_EFFECTIVE\" MEMORY_ENGINE_OPERATOR_TOKEN=\"$MEMORY_ENGINE_OPERATOR_TOKEN_EFFECTIVE\" TASK_RUNNER_CHATOS_CALLBACK_SECRET=\"$CHATOS_TASK_RUNNER_CALLBACK_SECRET\" CHATOS_TASK_RUNNER_CALLBACK_SECRET=\"$CHATOS_TASK_RUNNER_CALLBACK_SECRET\" exec \"$MAIN_BACKEND_BINARY\"" \
+    "$MAIN_BACKEND_LAUNCHD_LABEL"
 }
 
 start_main_frontend() {
@@ -408,10 +535,14 @@ start_main_frontend() {
     "$MAIN_FRONTEND_PORT" \
     "$MAIN_FRONTEND_PID_FILE" \
     "$MAIN_FRONTEND_LOG_FILE" \
-    "cd \"$MAIN_FRONTEND_DIR\" && exec npm run dev -- --host 0.0.0.0 --port \"$MAIN_FRONTEND_PORT\""
+    "cd \"$MAIN_FRONTEND_DIR\" && exec npm run dev -- --host 0.0.0.0 --port \"$MAIN_FRONTEND_PORT\"" \
+    "$MAIN_FRONTEND_LAUNCHD_LABEL"
 }
 
 do_stop() {
+  stop_launchd_job "$MAIN_BACKEND_LAUNCHD_LABEL"
+  stop_launchd_job "$MAIN_FRONTEND_LAUNCHD_LABEL"
+
   stop_from_pid_file "main backend" "$MAIN_BACKEND_PID_FILE"
   stop_from_pid_file "main frontend" "$MAIN_FRONTEND_PID_FILE"
 

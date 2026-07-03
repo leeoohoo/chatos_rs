@@ -220,3 +220,90 @@ pub struct SubmitAskUserPromptRequest {
 pub struct CancelAskUserPromptRequest {
     pub reason: Option<String>,
 }
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct RunOutputFileChangeCounts {
+    #[serde(default)]
+    pub added: usize,
+    #[serde(default)]
+    pub modified: usize,
+    #[serde(default)]
+    pub deleted: usize,
+    #[serde(default)]
+    pub binary: usize,
+    #[serde(default)]
+    pub diff_available: usize,
+    #[serde(default)]
+    pub total: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RunOutputFileChange {
+    pub path: String,
+    pub status: String,
+    #[serde(default)]
+    pub old_size: Option<u64>,
+    #[serde(default)]
+    pub new_size: Option<u64>,
+    #[serde(default)]
+    pub old_sha256: Option<String>,
+    #[serde(default)]
+    pub new_sha256: Option<String>,
+    #[serde(default)]
+    pub added_lines: usize,
+    #[serde(default)]
+    pub deleted_lines: usize,
+    #[serde(default)]
+    pub binary: bool,
+    #[serde(default)]
+    pub diff_available: bool,
+    #[serde(default)]
+    pub diff_truncated: bool,
+    #[serde(default)]
+    pub diff_ref: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RunOutputChangeManifest {
+    pub schema_version: u32,
+    pub run_id: String,
+    pub sandbox_id: String,
+    pub lease_id: String,
+    pub generated_at: String,
+    #[serde(default)]
+    pub output_workspace: Option<String>,
+    #[serde(default)]
+    pub manifest_path: Option<String>,
+    #[serde(default)]
+    pub counts: RunOutputFileChangeCounts,
+    #[serde(default)]
+    pub files: Vec<RunOutputFileChange>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RunOutputChangesResponse {
+    pub run_id: String,
+    pub counts: RunOutputFileChangeCounts,
+    pub files: Vec<RunOutputFileChange>,
+    pub total: usize,
+    pub limit: usize,
+    pub offset: usize,
+    pub has_more: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RunOutputDiffResponse {
+    pub run_id: String,
+    pub path: String,
+    pub status: String,
+    #[serde(default)]
+    pub patch: Option<String>,
+    #[serde(default)]
+    pub binary: bool,
+    #[serde(default)]
+    pub diff_available: bool,
+    #[serde(default)]
+    pub diff_truncated: bool,
+    #[serde(default)]
+    pub message: Option<String>,
+}

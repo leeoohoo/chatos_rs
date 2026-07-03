@@ -4,7 +4,7 @@ map $http_upgrade $connection_upgrade {
 }
 
 server {
-    listen 80;
+    listen 80 default_server;
     server_name __SERVER_NAME__;
 
     root __FRONTEND_ROOT__;

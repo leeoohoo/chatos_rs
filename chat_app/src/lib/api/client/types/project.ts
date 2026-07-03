@@ -234,6 +234,8 @@ export type ProjectRequirementStatus =
   | 'reviewing'
   | 'approved'
   | 'in_progress'
+  | 'blocked'
+  | 'failed'
   | 'done'
   | 'cancelled'
   | 'archived';
@@ -245,6 +247,7 @@ export type ProjectWorkItemStatus =
   | 'ready'
   | 'in_progress'
   | 'blocked'
+  | 'failed'
   | 'done'
   | 'cancelled'
   | 'archived';

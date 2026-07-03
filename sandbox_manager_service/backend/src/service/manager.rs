@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -27,12 +28,18 @@ use crate::models::{
     RotateSandboxAccessClientKeyResponse, SandboxAccessClientRecord, SandboxAccessClientResponse,
     SandboxEventRecord, SandboxHealthCheck, SandboxHealthResponse, SandboxImageCatalogResponse,
     SandboxImageJobRecord, SandboxLeaseRecord, SandboxMcpCallRequest, SandboxMcpCallResponse,
-    SandboxMcpToolsResponse, SandboxStatus, SystemConfigResponse, UpdateSandboxAccessClientRequest,
+    SandboxMcpToolsResponse, SandboxOutputChangeManifest, SandboxOutputFileChange,
+    SandboxOutputFileChangeCounts, SandboxStatus, SystemConfigResponse, UpdatePoolConfigRequest,
+    UpdateSandboxAccessClientRequest,
 };
 use crate::pool::SandboxPoolRef;
 use crate::store::{is_duplicate_key_error, SandboxStore};
 
 use super::images;
+
+const OUTPUT_MANIFEST_SCHEMA_VERSION: u32 = 1;
+const OUTPUT_DIFF_MAX_BYTES: usize = 512 * 1024;
+const OUTPUT_TEXT_FILE_MAX_BYTES: u64 = 2 * 1024 * 1024;
 
 #[derive(Clone)]
 pub struct SandboxManager {
@@ -100,7 +107,6 @@ impl SandboxManager {
         let lease_id = prefixed_id("lease");
         let sandbox_id = prefixed_id("sandbox");
         let agent_token_nonce = Uuid::new_v4().simple().to_string();
-        let agent_token = self.agent_token(lease_id.as_str(), agent_token_nonce.as_str());
         let now = now_rfc3339();
         let ttl = Duration::from_secs(input.ttl_seconds.unwrap_or(self.config.lease_ttl.as_secs()));
         let expires_at = (Utc::now()
@@ -126,24 +132,6 @@ impl SandboxManager {
         for tool in &tools {
             auth.ensure_tool_allowed(tool)?;
         }
-        let capacity_claim_until = (Utc::now() + ChronoDuration::minutes(5)).to_rfc3339();
-        let acquired_capacity = self
-            .store
-            .try_acquire_active_slot(
-                self.config.pool_max_active,
-                lease_id.as_str(),
-                sandbox_id.as_str(),
-                capacity_claim_until.as_str(),
-            )
-            .await
-            .map_err(ApiError::internal)?;
-        if !acquired_capacity {
-            return Err(ApiError::capacity(format!(
-                "sandbox global pool is full: max_active={}",
-                self.config.pool_max_active
-            )));
-        }
-
         let mut record = SandboxLeaseRecord {
             id: lease_id.clone(),
             sandbox_id: sandbox_id.clone(),
@@ -157,10 +145,10 @@ impl SandboxManager {
             backend_id: None,
             image_id: Some(image.id.clone()),
             image_ref: Some(image.image_ref.clone()),
-            status: SandboxStatus::Leasing,
+            status: SandboxStatus::Pending,
             agent_endpoint: None,
-            resource_limits: resource_limits.clone(),
-            network: network.clone(),
+            resource_limits,
+            network,
             tools,
             agent_token_nonce: Some(agent_token_nonce),
             idempotency_key: idempotency_key.clone(),
@@ -170,8 +158,40 @@ impl SandboxManager {
             destroyed_at: None,
             last_error: None,
         };
+
+        let capacity_claim_until = (Utc::now() + ChronoDuration::minutes(5)).to_rfc3339();
+        let acquired_capacity = self
+            .store
+            .try_acquire_active_slot(
+                self.pool.max_active(),
+                lease_id.as_str(),
+                sandbox_id.as_str(),
+                capacity_claim_until.as_str(),
+            )
+            .await
+            .map_err(ApiError::internal)?;
+        if acquired_capacity {
+            record.status = SandboxStatus::Leasing;
+        } else {
+            let pending = self
+                .store
+                .count_pending_leases(now.as_str())
+                .await
+                .map_err(ApiError::internal)?;
+            let max_pending = self.pool.max_pending();
+            if pending >= max_pending {
+                return Err(ApiError::capacity(format!(
+                    "sandbox global pool and queue are full: max_active={}, pending={}, max_pending={max_pending}",
+                    self.pool.max_active(),
+                    pending
+                )));
+            }
+        }
+
         if let Err(err) = self.store.create_lease(&record).await {
-            let _ = self.store.release_active_slot(lease_id.as_str()).await;
+            if acquired_capacity {
+                let _ = self.store.release_active_slot(lease_id.as_str()).await;
+            }
             if idempotency_key.is_some() && is_duplicate_key_error(&err) {
                 if let Some(existing) = self
                     .store
@@ -189,19 +209,24 @@ impl SandboxManager {
             }
             return Err(ApiError::internal(err));
         }
-        if let Err(err) = self
-            .store
-            .extend_active_slot(lease_id.as_str(), record.expires_at.as_str())
-            .await
-        {
-            record.status = SandboxStatus::Failed;
-            record.last_error = Some(err.clone());
-            record.idempotency_key = None;
-            record.updated_at = now_rfc3339();
-            let _ = self.store.replace_lease(&record).await;
-            let _ = self.store.release_active_slot(lease_id.as_str()).await;
-            return Err(ApiError::internal(err));
+
+        if !acquired_capacity {
+            self.event(
+                &record,
+                "lease_queued",
+                Some("sandbox lease queued"),
+                Some(json!({
+                    "backend": self.backend.kind(),
+                    "image_id": image.id,
+                    "image_ref": image.image_ref,
+                    "max_active": self.pool.max_active(),
+                    "max_pending": self.pool.max_pending(),
+                })),
+            )
+            .await;
+            return self.create_lease_response_from_existing(record);
         }
+
         self.event(
             &record,
             "lease_created",
@@ -214,27 +239,67 @@ impl SandboxManager {
         )
         .await;
 
+        self.start_claimed_lease(record).await
+    }
+
+    fn create_lease_response_from_existing(
+        &self,
+        record: SandboxLeaseRecord,
+    ) -> Result<CreateSandboxLeaseResponse, ApiError> {
+        Ok(CreateSandboxLeaseResponse {
+            lease_id: record.id.clone(),
+            sandbox_id: record.sandbox_id.clone(),
+            backend_id: record.backend_id.clone(),
+            image_id: record.image_id.clone(),
+            image_ref: record.image_ref.clone(),
+            status: record.status,
+            agent_endpoint: record.agent_endpoint.clone(),
+            agent_token: self.agent_token_for_record(&record),
+            run_workspace: record.run_workspace,
+            expires_at: record.expires_at,
+        })
+    }
+
+    async fn start_claimed_lease(
+        &self,
+        mut record: SandboxLeaseRecord,
+    ) -> Result<CreateSandboxLeaseResponse, ApiError> {
+        if let Err(err) = self
+            .store
+            .extend_active_slot(record.id.as_str(), record.expires_at.as_str())
+            .await
+        {
+            record.status = SandboxStatus::Failed;
+            record.last_error = Some(err.clone());
+            record.idempotency_key = None;
+            record.updated_at = now_rfc3339();
+            let _ = self.store.replace_lease(&record).await;
+            let _ = self.store.release_active_slot(record.id.as_str()).await;
+            return Err(ApiError::internal(err));
+        }
+
+        let agent_token = self.agent_token_for_record(&record);
         let create_result = self
             .backend
             .create(SandboxCreateSpec {
-                sandbox_id: sandbox_id.clone(),
+                sandbox_id: record.sandbox_id.clone(),
                 run_workspace: record.run_workspace.clone(),
                 image: record.image_ref.clone().unwrap_or_default(),
                 agent_token: Some(agent_token.clone()),
-                resource_limits,
-                network,
+                resource_limits: record.resource_limits.clone(),
+                network: record.network.clone(),
             })
             .await;
 
         match create_result {
             Ok(instance) => {
-                if let Err(err) = self.backend.start(sandbox_id.as_str()).await {
+                if let Err(err) = self.backend.start(record.sandbox_id.as_str()).await {
                     record.status = SandboxStatus::Failed;
                     record.last_error = Some(err.clone());
                     record.idempotency_key = None;
                     record.updated_at = now_rfc3339();
                     let _ = self.store.replace_lease(&record).await;
-                    let _ = self.store.release_active_slot(lease_id.as_str()).await;
+                    let _ = self.store.release_active_slot(record.id.as_str()).await;
                     self.event(&record, "sandbox_start_failed", Some(&err), None)
                         .await;
                     return Err(ApiError::with_code(
@@ -259,8 +324,8 @@ impl SandboxManager {
                 )
                 .await;
                 Ok(CreateSandboxLeaseResponse {
-                    lease_id,
-                    sandbox_id,
+                    lease_id: record.id,
+                    sandbox_id: record.sandbox_id,
                     backend_id: record.backend_id,
                     image_id: record.image_id,
                     image_ref: record.image_ref,
@@ -277,7 +342,7 @@ impl SandboxManager {
                 record.idempotency_key = None;
                 record.updated_at = now_rfc3339();
                 let _ = self.store.replace_lease(&record).await;
-                let _ = self.store.release_active_slot(lease_id.as_str()).await;
+                let _ = self.store.release_active_slot(record.id.as_str()).await;
                 self.event(&record, "sandbox_create_failed", Some(&err), None)
                     .await;
                 Err(ApiError::with_code(
@@ -289,32 +354,60 @@ impl SandboxManager {
         }
     }
 
-    fn create_lease_response_from_existing(
-        &self,
-        record: SandboxLeaseRecord,
-    ) -> Result<CreateSandboxLeaseResponse, ApiError> {
-        if !matches!(record.status, SandboxStatus::Ready | SandboxStatus::Running) {
-            return Err(ApiError::with_code(
-                StatusCode::CONFLICT,
-                "sandbox_lease_idempotency_in_progress",
-                format!(
-                    "sandbox lease for idempotency key is not ready yet: status={}",
-                    record.status.as_str()
-                ),
-            ));
+    pub async fn promote_pending_leases(&self) -> Result<usize, String> {
+        let mut promoted = 0usize;
+        loop {
+            let now = now_rfc3339();
+            let pending = self.store.list_pending_leases(now.as_str(), 1).await?;
+            let Some(candidate) = pending.into_iter().next() else {
+                break;
+            };
+            let capacity_claim_until = (Utc::now() + ChronoDuration::minutes(5)).to_rfc3339();
+            let acquired_capacity = self
+                .store
+                .try_acquire_active_slot(
+                    self.pool.max_active(),
+                    candidate.id.as_str(),
+                    candidate.sandbox_id.as_str(),
+                    capacity_claim_until.as_str(),
+                )
+                .await?;
+            if !acquired_capacity {
+                break;
+            }
+
+            let now = now_rfc3339();
+            let Some(record) = self
+                .store
+                .claim_pending_lease(candidate.id.as_str(), now.as_str())
+                .await?
+            else {
+                let _ = self.store.release_active_slot(candidate.id.as_str()).await;
+                continue;
+            };
+
+            self.event(
+                &record,
+                "lease_promoted",
+                Some("queued sandbox lease promoted"),
+                Some(json!({
+                    "max_active": self.pool.max_active(),
+                    "max_pending": self.pool.max_pending(),
+                })),
+            )
+            .await;
+
+            if let Err(err) = self.start_claimed_lease(record.clone()).await {
+                tracing::warn!(
+                    lease_id = record.id.as_str(),
+                    sandbox_id = record.sandbox_id.as_str(),
+                    "promote pending sandbox failed: {}",
+                    err.message
+                );
+            }
+            promoted += 1;
         }
-        Ok(CreateSandboxLeaseResponse {
-            lease_id: record.id.clone(),
-            sandbox_id: record.sandbox_id.clone(),
-            backend_id: record.backend_id.clone(),
-            image_id: record.image_id.clone(),
-            image_ref: record.image_ref.clone(),
-            status: record.status,
-            agent_endpoint: record.agent_endpoint.clone(),
-            agent_token: self.agent_token_for_record(&record),
-            run_workspace: record.run_workspace,
-            expires_at: record.expires_at,
-        })
+        Ok(promoted)
     }
 
     pub async fn heartbeat(
@@ -564,11 +657,40 @@ impl SandboxManager {
         )
         .await;
 
-        let output_workspace = if input.export_result {
-            Some(self.prepare_output_workspace(&record)?)
+        let mut output_error = None;
+        let output_manifest = if input.export_result {
+            match self.export_output_workspace(&record) {
+                Ok(manifest) => Some(manifest),
+                Err(err) => {
+                    let message = format!("sandbox output export failed: {}", err.message);
+                    tracing::warn!(
+                        sandbox_id = record.sandbox_id.as_str(),
+                        lease_id = record.id.as_str(),
+                        run_id = record.run_id.as_str(),
+                        "sandbox output export failed during release: {}",
+                        err.message
+                    );
+                    self.event(
+                        &record,
+                        "sandbox_output_export_failed",
+                        Some(message.as_str()),
+                        Some(json!({
+                            "code": err.code,
+                            "status": err.status.as_u16(),
+                        })),
+                    )
+                    .await;
+                    output_error = Some(message);
+                    None
+                }
+            }
         } else {
             None
         };
+        let output_workspace = output_manifest
+            .as_ref()
+            .and_then(|manifest| manifest.output_workspace.clone());
+        let diff_summary = output_manifest.as_ref().map(summarize_output_manifest);
 
         if input.destroy {
             self.destroy_record(record.clone(), "sandbox_released")
@@ -576,8 +698,10 @@ impl SandboxManager {
             Ok(ReleaseSandboxResponse {
                 ok: true,
                 status: SandboxStatus::Destroyed,
-                output_workspace: output_workspace.map(|path| path.to_string_lossy().to_string()),
-                diff_summary: None,
+                output_workspace,
+                diff_summary,
+                output_error,
+                change_manifest: output_manifest,
             })
         } else {
             record.status = SandboxStatus::Ready;
@@ -589,8 +713,10 @@ impl SandboxManager {
             Ok(ReleaseSandboxResponse {
                 ok: true,
                 status: record.status,
-                output_workspace: output_workspace.map(|path| path.to_string_lossy().to_string()),
-                diff_summary: None,
+                output_workspace,
+                diff_summary,
+                output_error,
+                change_manifest: output_manifest,
             })
         }
     }
@@ -684,7 +810,13 @@ impl SandboxManager {
         auth.require_scope(SCOPE_POOL_READ)?;
         let active = self
             .store
-            .active_capacity_count(self.config.pool_max_active)
+            .active_capacity_count(self.pool.max_active())
+            .await
+            .map_err(ApiError::internal)?;
+        let now = now_rfc3339();
+        let pending = self
+            .store
+            .count_pending_leases(now.as_str())
             .await
             .map_err(ApiError::internal)?;
         Ok(PoolStatusResponse {
@@ -692,10 +824,31 @@ impl SandboxManager {
             max_active: self.pool.max_active(),
             active,
             max_pending: self.pool.max_pending(),
-            pending: self.pool.pending(),
+            pending,
             lease_ttl_seconds: self.config.lease_ttl.as_secs(),
             cleanup_interval_seconds: self.config.cleanup_interval.as_secs(),
         })
+    }
+
+    pub async fn update_pool_config(
+        &self,
+        auth: &SandboxAuthContext,
+        input: UpdatePoolConfigRequest,
+    ) -> Result<PoolStatusResponse, ApiError> {
+        auth.require_admin()?;
+        let max_active = input
+            .max_active
+            .unwrap_or_else(|| self.pool.max_active())
+            .max(1);
+        let max_pending = input.max_pending.unwrap_or_else(|| self.pool.max_pending());
+        self.pool.set_limits(max_active, max_pending);
+        if let Err(err) = self.promote_pending_leases().await {
+            tracing::warn!(
+                "promote pending sandboxes after pool config update failed: {}",
+                err
+            );
+        }
+        self.pool_status(auth).await
     }
 
     pub fn system_config(
@@ -708,8 +861,8 @@ impl SandboxManager {
             port: self.config.port,
             backend: self.backend.kind().to_string(),
             work_root: self.config.work_root.to_string_lossy().to_string(),
-            pool_max_active: self.config.pool_max_active,
-            pool_max_pending: self.config.pool_max_pending,
+            pool_max_active: self.pool.max_active(),
+            pool_max_pending: self.pool.max_pending(),
             lease_ttl_seconds: self.config.lease_ttl.as_secs(),
             cleanup_interval_seconds: self.config.cleanup_interval.as_secs(),
             agent_port: self.config.agent_port,
@@ -932,6 +1085,24 @@ impl SandboxManager {
                 tracing::warn!("destroy expired sandbox failed: {}", err.message);
             }
         }
+        let expired_pending = self.store.list_expired_pending(now.as_str(), 100).await?;
+        for mut record in expired_pending {
+            record.status = SandboxStatus::Expired;
+            record.updated_at = now_rfc3339();
+            record.last_error = Some("queued lease expired".to_string());
+            record.idempotency_key = None;
+            self.store.replace_lease(&record).await?;
+            self.event(
+                &record,
+                "sandbox_expired",
+                Some("queued sandbox lease expired"),
+                None,
+            )
+            .await;
+        }
+        if let Err(err) = self.promote_pending_leases().await {
+            tracing::warn!("promote pending sandboxes after cleanup failed: {}", err);
+        }
         Ok(())
     }
 
@@ -1038,6 +1209,9 @@ impl SandboxManager {
         let _ = self.store.release_active_slot(record.id.as_str()).await;
         self.event(&record, event_type, Some("sandbox destroyed"), None)
             .await;
+        if let Err(err) = self.promote_pending_leases().await {
+            tracing::warn!("promote pending sandboxes after destroy failed: {}", err);
+        }
         Ok(())
     }
 
@@ -1074,6 +1248,37 @@ impl SandboxManager {
         Ok(output)
     }
 
+    fn export_output_workspace(
+        &self,
+        record: &SandboxLeaseRecord,
+    ) -> Result<SandboxOutputChangeManifest, ApiError> {
+        let run_workspace = Path::new(record.run_workspace.as_str());
+        let output_workspace = self.prepare_output_workspace(record)?;
+        clear_directory(output_workspace.as_path())?;
+        copy_directory_contents(run_workspace, output_workspace.as_path(), run_workspace)?;
+
+        let baseline_workspace = baseline_workspace_for_run_workspace(run_workspace)
+            .filter(|path| path.is_dir())
+            .unwrap_or_else(|| output_workspace.clone());
+        let mut manifest = build_output_change_manifest(
+            record,
+            baseline_workspace.as_path(),
+            output_workspace.as_path(),
+        )?;
+        let output_root = output_workspace
+            .parent()
+            .ok_or_else(|| ApiError::internal("invalid output workspace path"))?;
+        let manifest_path = output_root.join("change_manifest.json");
+        manifest.output_workspace = Some(output_workspace.to_string_lossy().to_string());
+        manifest.manifest_path = Some(manifest_path.to_string_lossy().to_string());
+        let manifest_text = serde_json::to_string_pretty(&manifest).map_err(|err| {
+            ApiError::internal(format!("serialize change manifest failed: {err}"))
+        })?;
+        std::fs::write(&manifest_path, manifest_text)
+            .map_err(|err| ApiError::internal(format!("write change manifest failed: {err}")))?;
+        Ok(manifest)
+    }
+
     async fn event(
         &self,
         record: &SandboxLeaseRecord,
@@ -1094,6 +1299,451 @@ impl SandboxManager {
             tracing::warn!("append sandbox event failed: {}", err);
         }
     }
+}
+
+#[derive(Debug, Clone)]
+struct FileSnapshot {
+    path: String,
+    absolute_path: PathBuf,
+    size: u64,
+    sha256: String,
+}
+
+fn baseline_workspace_for_run_workspace(run_workspace: &Path) -> Option<PathBuf> {
+    let run_root = run_workspace.parent()?.parent()?;
+    Some(run_root.join("baseline").join("workspace"))
+}
+
+fn summarize_output_manifest(manifest: &SandboxOutputChangeManifest) -> String {
+    format!(
+        "added={}, modified={}, deleted={}, total={}",
+        manifest.counts.added,
+        manifest.counts.modified,
+        manifest.counts.deleted,
+        manifest.counts.total
+    )
+}
+
+fn build_output_change_manifest(
+    record: &SandboxLeaseRecord,
+    baseline_workspace: &Path,
+    output_workspace: &Path,
+) -> Result<SandboxOutputChangeManifest, ApiError> {
+    let baseline_files = collect_file_index(baseline_workspace)?;
+    let output_files = collect_file_index(output_workspace)?;
+    let paths = baseline_files
+        .keys()
+        .chain(output_files.keys())
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    let output_root = output_workspace
+        .parent()
+        .ok_or_else(|| ApiError::internal("invalid output workspace path"))?;
+    let diff_root = output_root.join("diffs");
+    std::fs::create_dir_all(&diff_root)
+        .map_err(|err| ApiError::internal(format!("create diff output dir failed: {err}")))?;
+
+    let mut files = Vec::new();
+    for relative_path in paths {
+        let old_file = baseline_files.get(relative_path.as_str());
+        let new_file = output_files.get(relative_path.as_str());
+        let status = match (old_file, new_file) {
+            (None, Some(_)) => "added",
+            (Some(_), None) => "deleted",
+            (Some(old), Some(new)) if old.sha256 != new.sha256 => "modified",
+            _ => continue,
+        };
+        files.push(build_output_file_change(
+            relative_path.as_str(),
+            status,
+            old_file,
+            new_file,
+            diff_root.as_path(),
+        )?);
+    }
+
+    let counts = count_output_file_changes(files.as_slice());
+    Ok(SandboxOutputChangeManifest {
+        schema_version: OUTPUT_MANIFEST_SCHEMA_VERSION,
+        run_id: record.run_id.clone(),
+        sandbox_id: record.sandbox_id.clone(),
+        lease_id: record.id.clone(),
+        generated_at: now_rfc3339(),
+        output_workspace: Some(output_workspace.to_string_lossy().to_string()),
+        manifest_path: None,
+        counts,
+        files,
+    })
+}
+
+fn collect_file_index(root: &Path) -> Result<BTreeMap<String, FileSnapshot>, ApiError> {
+    let mut files = BTreeMap::new();
+    if !root.is_dir() {
+        return Ok(files);
+    }
+    collect_file_index_recursive(root, root, &mut files)?;
+    Ok(files)
+}
+
+fn collect_file_index_recursive(
+    root: &Path,
+    current: &Path,
+    files: &mut BTreeMap<String, FileSnapshot>,
+) -> Result<(), ApiError> {
+    for entry in std::fs::read_dir(current)
+        .map_err(|err| ApiError::internal(format!("read workspace dir failed: {err}")))?
+    {
+        let entry = entry
+            .map_err(|err| ApiError::internal(format!("read workspace entry failed: {err}")))?;
+        let path = entry.path();
+        if should_skip_workspace_path(root, path.as_path()) {
+            continue;
+        }
+        let file_type = entry
+            .file_type()
+            .map_err(|err| ApiError::internal(format!("read file type failed: {err}")))?;
+        if file_type.is_symlink() {
+            continue;
+        }
+        if file_type.is_dir() {
+            collect_file_index_recursive(root, path.as_path(), files)?;
+        } else if file_type.is_file() {
+            let relative_path = normalized_relative_path(root, path.as_path())?;
+            let metadata = entry
+                .metadata()
+                .map_err(|err| ApiError::internal(format!("read file metadata failed: {err}")))?;
+            let sha256 = sha256_file(path.as_path())?;
+            files.insert(
+                relative_path.clone(),
+                FileSnapshot {
+                    path: relative_path,
+                    absolute_path: path,
+                    size: metadata.len(),
+                    sha256,
+                },
+            );
+        }
+    }
+    Ok(())
+}
+
+fn build_output_file_change(
+    relative_path: &str,
+    status: &str,
+    old_file: Option<&FileSnapshot>,
+    new_file: Option<&FileSnapshot>,
+    diff_root: &Path,
+) -> Result<SandboxOutputFileChange, ApiError> {
+    let old_text = old_file.map(read_text_file_for_diff).transpose()?.flatten();
+    let new_text = new_file.map(read_text_file_for_diff).transpose()?.flatten();
+    let binary = old_file.is_some_and(|file| old_text.is_none() && file.size > 0)
+        || new_file.is_some_and(|file| new_text.is_none() && file.size > 0);
+    let (mut added_lines, mut deleted_lines, mut diff_available, mut diff_truncated, mut diff_ref) =
+        (0usize, 0usize, false, false, None);
+
+    if !binary {
+        let old_text_ref = old_text.as_deref().unwrap_or("");
+        let new_text_ref = new_text.as_deref().unwrap_or("");
+        let diff = build_unified_diff(relative_path, status, old_text_ref, new_text_ref);
+        added_lines = diff.added_lines;
+        deleted_lines = diff.deleted_lines;
+        if !diff.patch.is_empty() {
+            let truncated = truncate_utf8(diff.patch, OUTPUT_DIFF_MAX_BYTES);
+            diff_truncated = truncated.truncated;
+            let diff_name = format!(
+                "{}.diff",
+                sha256_hex(format!("{status}:{relative_path}").as_bytes())
+            );
+            std::fs::create_dir_all(diff_root).map_err(|err| {
+                ApiError::internal(format!("create diff output dir failed: {err}"))
+            })?;
+            let diff_path = diff_root.join(&diff_name);
+            std::fs::write(&diff_path, truncated.text).map_err(|err| {
+                ApiError::internal(format!(
+                    "write output diff {} failed: {err}",
+                    diff_path.display()
+                ))
+            })?;
+            diff_available = true;
+            diff_ref = Some(format!("diffs/{diff_name}"));
+        }
+    }
+
+    Ok(SandboxOutputFileChange {
+        path: relative_path.to_string(),
+        status: status.to_string(),
+        old_size: old_file.map(|file| file.size),
+        new_size: new_file.map(|file| file.size),
+        old_sha256: old_file.map(|file| file.sha256.clone()),
+        new_sha256: new_file.map(|file| file.sha256.clone()),
+        added_lines,
+        deleted_lines,
+        binary,
+        diff_available,
+        diff_truncated,
+        diff_ref,
+    })
+}
+
+fn count_output_file_changes(files: &[SandboxOutputFileChange]) -> SandboxOutputFileChangeCounts {
+    let mut counts = SandboxOutputFileChangeCounts::default();
+    counts.total = files.len();
+    for file in files {
+        match file.status.as_str() {
+            "added" => counts.added += 1,
+            "modified" => counts.modified += 1,
+            "deleted" => counts.deleted += 1,
+            _ => {}
+        }
+        if file.binary {
+            counts.binary += 1;
+        }
+        if file.diff_available {
+            counts.diff_available += 1;
+        }
+    }
+    counts
+}
+
+struct UnifiedDiff {
+    patch: String,
+    added_lines: usize,
+    deleted_lines: usize,
+}
+
+fn build_unified_diff(
+    relative_path: &str,
+    status: &str,
+    old_text: &str,
+    new_text: &str,
+) -> UnifiedDiff {
+    let old_lines = split_diff_lines(old_text);
+    let new_lines = split_diff_lines(new_text);
+    let mut patch = String::new();
+    patch.push_str(&format!("diff --git a/{relative_path} b/{relative_path}\n"));
+    match status {
+        "added" => {
+            patch.push_str("new file mode 100644\n");
+            patch.push_str("--- /dev/null\n");
+            patch.push_str(&format!("+++ b/{relative_path}\n"));
+            patch.push_str(&format!("@@ -0,0 +1,{} @@\n", new_lines.len()));
+            for line in &new_lines {
+                patch.push('+');
+                patch.push_str(line);
+                patch.push('\n');
+            }
+            UnifiedDiff {
+                patch,
+                added_lines: new_lines.len(),
+                deleted_lines: 0,
+            }
+        }
+        "deleted" => {
+            patch.push_str("deleted file mode 100644\n");
+            patch.push_str(&format!("--- a/{relative_path}\n"));
+            patch.push_str("+++ /dev/null\n");
+            patch.push_str(&format!("@@ -1,{} +0,0 @@\n", old_lines.len()));
+            for line in &old_lines {
+                patch.push('-');
+                patch.push_str(line);
+                patch.push('\n');
+            }
+            UnifiedDiff {
+                patch,
+                added_lines: 0,
+                deleted_lines: old_lines.len(),
+            }
+        }
+        _ => {
+            patch.push_str(&format!("--- a/{relative_path}\n"));
+            patch.push_str(&format!("+++ b/{relative_path}\n"));
+            patch.push_str(&format!(
+                "@@ -1,{} +1,{} @@\n",
+                old_lines.len(),
+                new_lines.len()
+            ));
+            for line in &old_lines {
+                patch.push('-');
+                patch.push_str(line);
+                patch.push('\n');
+            }
+            for line in &new_lines {
+                patch.push('+');
+                patch.push_str(line);
+                patch.push('\n');
+            }
+            UnifiedDiff {
+                patch,
+                added_lines: new_lines.len(),
+                deleted_lines: old_lines.len(),
+            }
+        }
+    }
+}
+
+fn split_diff_lines(value: &str) -> Vec<&str> {
+    if value.is_empty() {
+        Vec::new()
+    } else {
+        value.lines().collect()
+    }
+}
+
+fn read_text_file_for_diff(file: &FileSnapshot) -> Result<Option<String>, ApiError> {
+    if file.size > OUTPUT_TEXT_FILE_MAX_BYTES {
+        return Ok(None);
+    }
+    let bytes = std::fs::read(file.absolute_path.as_path()).map_err(|err| {
+        ApiError::internal(format!("read output file {} failed: {err}", file.path))
+    })?;
+    if bytes.iter().any(|byte| *byte == 0) {
+        return Ok(None);
+    }
+    match String::from_utf8(bytes) {
+        Ok(text) => Ok(Some(text)),
+        Err(_) => Ok(None),
+    }
+}
+
+struct TruncatedText {
+    text: String,
+    truncated: bool,
+}
+
+fn truncate_utf8(mut value: String, max_bytes: usize) -> TruncatedText {
+    if value.len() <= max_bytes {
+        return TruncatedText {
+            text: value,
+            truncated: false,
+        };
+    }
+    let mut end = max_bytes.min(value.len());
+    while end > 0 && !value.is_char_boundary(end) {
+        end -= 1;
+    }
+    value.truncate(end);
+    value.push_str("\n... diff truncated by Sandbox Manager ...\n");
+    TruncatedText {
+        text: value,
+        truncated: true,
+    }
+}
+
+fn clear_directory(path: &Path) -> Result<(), ApiError> {
+    if !path.exists() {
+        std::fs::create_dir_all(path).map_err(|err| {
+            ApiError::internal(format!("create directory {} failed: {err}", path.display()))
+        })?;
+        return Ok(());
+    }
+    for entry in std::fs::read_dir(path).map_err(|err| {
+        ApiError::internal(format!("read directory {} failed: {err}", path.display()))
+    })? {
+        let entry = entry
+            .map_err(|err| ApiError::internal(format!("read directory entry failed: {err}")))?;
+        let entry_path = entry.path();
+        let metadata = entry.metadata().map_err(|err| {
+            ApiError::internal(format!(
+                "read metadata {} failed: {err}",
+                entry_path.display()
+            ))
+        })?;
+        if metadata.is_dir() {
+            std::fs::remove_dir_all(&entry_path).map_err(|err| {
+                ApiError::internal(format!(
+                    "remove directory {} failed: {err}",
+                    entry_path.display()
+                ))
+            })?;
+        } else {
+            std::fs::remove_file(&entry_path).map_err(|err| {
+                ApiError::internal(format!(
+                    "remove file {} failed: {err}",
+                    entry_path.display()
+                ))
+            })?;
+        }
+    }
+    Ok(())
+}
+
+fn copy_directory_contents(source: &Path, destination: &Path, root: &Path) -> Result<(), ApiError> {
+    std::fs::create_dir_all(destination).map_err(|err| {
+        ApiError::internal(format!(
+            "create directory {} failed: {err}",
+            destination.display()
+        ))
+    })?;
+    for entry in std::fs::read_dir(source).map_err(|err| {
+        ApiError::internal(format!("read directory {} failed: {err}", source.display()))
+    })? {
+        let entry = entry
+            .map_err(|err| ApiError::internal(format!("read directory entry failed: {err}")))?;
+        let source_path = entry.path();
+        if should_skip_workspace_path(root, source_path.as_path()) {
+            continue;
+        }
+        let file_type = entry
+            .file_type()
+            .map_err(|err| ApiError::internal(format!("read file type failed: {err}")))?;
+        if file_type.is_symlink() {
+            continue;
+        }
+        let dest_path = destination.join(entry.file_name());
+        if file_type.is_dir() {
+            copy_directory_contents(source_path.as_path(), dest_path.as_path(), root)?;
+        } else if file_type.is_file() {
+            if let Some(parent) = dest_path.parent() {
+                std::fs::create_dir_all(parent).map_err(|err| {
+                    ApiError::internal(format!(
+                        "create directory {} failed: {err}",
+                        parent.display()
+                    ))
+                })?;
+            }
+            std::fs::copy(&source_path, &dest_path).map_err(|err| {
+                ApiError::internal(format!(
+                    "copy file {} to {} failed: {err}",
+                    source_path.display(),
+                    dest_path.display()
+                ))
+            })?;
+        }
+    }
+    Ok(())
+}
+
+fn should_skip_workspace_path(root: &Path, path: &Path) -> bool {
+    let Ok(relative) = path.strip_prefix(root) else {
+        return true;
+    };
+    relative.components().any(|component| {
+        matches!(
+            component,
+            std::path::Component::Normal(name)
+                if name == ".git" || name == ".chatos" || name == ".task-runner"
+        )
+    })
+}
+
+fn normalized_relative_path(root: &Path, path: &Path) -> Result<String, ApiError> {
+    let relative = path
+        .strip_prefix(root)
+        .map_err(|err| ApiError::internal(format!("build relative path failed: {err}")))?;
+    Ok(relative.to_string_lossy().replace('\\', "/"))
+}
+
+fn sha256_file(path: &Path) -> Result<String, ApiError> {
+    let bytes = std::fs::read(path)
+        .map_err(|err| ApiError::internal(format!("read file {} failed: {err}", path.display())))?;
+    Ok(sha256_hex(bytes.as_slice()))
+}
+
+fn sha256_hex(bytes: &[u8]) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(bytes);
+    let digest = hasher.finalize();
+    digest.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
 fn validate_required(name: &'static str, value: &str) -> Result<(), ApiError> {
@@ -1524,6 +2174,60 @@ mod tests {
             allowed_tools: tools.iter().map(|value| value.to_string()).collect(),
             max_lease_ttl_seconds: 3_600,
         })
+    }
+
+    fn temp_test_dir(name: &str) -> PathBuf {
+        let path = std::env::temp_dir().join(format!(
+            "chatos-sandbox-output-test-{name}-{}",
+            Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&path).expect("create temp dir");
+        path
+    }
+
+    #[test]
+    fn output_manifest_tracks_added_modified_and_deleted_files() {
+        let root = temp_test_dir("manifest");
+        let baseline = root.join("baseline").join("workspace");
+        let output = root.join("output").join("workspace");
+        std::fs::create_dir_all(&baseline).expect("baseline");
+        std::fs::create_dir_all(&output).expect("output");
+        std::fs::create_dir_all(baseline.join("src")).expect("baseline src");
+        std::fs::create_dir_all(output.join("src")).expect("output src");
+        std::fs::write(baseline.join("src/modified.rs"), "fn old() {}\n").expect("write old");
+        std::fs::write(output.join("src/modified.rs"), "fn new() {}\n").expect("write new");
+        std::fs::write(baseline.join("src/deleted.rs"), "deleted\n").expect("write deleted");
+        std::fs::write(output.join("src/added.rs"), "added\n").expect("write added");
+
+        let manifest =
+            build_output_change_manifest(&lease_record(), baseline.as_path(), output.as_path())
+                .expect("manifest");
+
+        assert_eq!(manifest.counts.added, 1);
+        assert_eq!(manifest.counts.modified, 1);
+        assert_eq!(manifest.counts.deleted, 1);
+        assert_eq!(manifest.counts.total, 3);
+        assert!(manifest
+            .files
+            .iter()
+            .any(|file| file.path == "src/added.rs" && file.status == "added"));
+        assert!(manifest
+            .files
+            .iter()
+            .any(|file| file.path == "src/modified.rs" && file.diff_available));
+        let modified = manifest
+            .files
+            .iter()
+            .find(|file| file.path == "src/modified.rs")
+            .expect("modified file");
+        let diff_ref = modified.diff_ref.as_deref().expect("diff ref");
+        let diff_path = output.parent().unwrap().join(diff_ref);
+        let diff = std::fs::read_to_string(diff_path).expect("read diff");
+        assert!(diff.contains("diff --git a/src/modified.rs b/src/modified.rs"));
+        assert!(diff.contains("-fn old() {}"));
+        assert!(diff.contains("+fn new() {}"));
+
+        std::fs::remove_dir_all(root).expect("cleanup");
     }
 
     #[test]

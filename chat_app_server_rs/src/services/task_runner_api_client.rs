@@ -516,6 +516,60 @@ pub async fn get_message_run(
     get_internal_json(base_url, path.as_str(), query.as_slice()).await
 }
 
+pub async fn get_message_run_output_changes(
+    base_url: &str,
+    run_id: &str,
+    source_session_id: &str,
+    source_user_message_id: Option<&str>,
+    source_turn_id: Option<&str>,
+    limit: Option<usize>,
+    offset: Option<usize>,
+) -> Result<Value, String> {
+    let path = format!(
+        "/internal/chatos/message-runs/{}/output/changes",
+        urlencoding::encode(run_id.trim())
+    );
+    let mut query = vec![("source_session_id", source_session_id)];
+    if let Some(source_user_message_id) = source_user_message_id {
+        query.push(("source_user_message_id", source_user_message_id));
+    }
+    if let Some(source_turn_id) = source_turn_id {
+        query.push(("source_turn_id", source_turn_id));
+    }
+    let limit = limit.map(|value| value.to_string());
+    let offset = offset.map(|value| value.to_string());
+    if let Some(value) = limit.as_deref() {
+        query.push(("limit", value));
+    }
+    if let Some(value) = offset.as_deref() {
+        query.push(("offset", value));
+    }
+    get_internal_json(base_url, path.as_str(), query.as_slice()).await
+}
+
+pub async fn get_message_run_output_diff(
+    base_url: &str,
+    run_id: &str,
+    source_session_id: &str,
+    source_user_message_id: Option<&str>,
+    source_turn_id: Option<&str>,
+    diff_path: &str,
+) -> Result<Value, String> {
+    let path = format!(
+        "/internal/chatos/message-runs/{}/output/diff",
+        urlencoding::encode(run_id.trim())
+    );
+    let mut query = vec![("source_session_id", source_session_id)];
+    if let Some(source_user_message_id) = source_user_message_id {
+        query.push(("source_user_message_id", source_user_message_id));
+    }
+    if let Some(source_turn_id) = source_turn_id {
+        query.push(("source_turn_id", source_turn_id));
+    }
+    query.push(("path", diff_path));
+    get_internal_json(base_url, path.as_str(), query.as_slice()).await
+}
+
 pub async fn get_message_graph_run(
     base_url: &str,
     run_id: &str,

@@ -10,8 +10,9 @@ impl RunService {
         run: &mut TaskRunRecord,
         report: TaskRunReport,
         effective_workspace_dir: &str,
+        sandbox_output: Option<SandboxOutputReport>,
     ) {
-        let report_json = serde_json::to_value(&report).ok();
+        let report_json = report_json_with_sandbox_output(&report, sandbox_output.as_ref());
         let existing_task = self.store.get_task(&task.id).await.ok().flatten();
         let task_already_succeeded = existing_task
             .as_ref()
@@ -181,6 +182,24 @@ impl RunService {
     }
 }
 
+fn report_json_with_sandbox_output(
+    report: &TaskRunReport,
+    sandbox_output: Option<&SandboxOutputReport>,
+) -> Option<Value> {
+    let mut report_json = serde_json::to_value(report).ok()?;
+    if let Some(output) = sandbox_output {
+        if let Some(object) = report_json.as_object_mut() {
+            object.insert(
+                "output".to_string(),
+                json!({
+                    "sandbox": output,
+                }),
+            );
+        }
+    }
+    Some(report_json)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -326,7 +345,7 @@ mod tests {
         };
 
         run_service
-            .finalize_model_phase(&parent, &mut run, report, ".")
+            .finalize_model_phase(&parent, &mut run, report, ".", None)
             .await;
 
         let saved_run = run_service
@@ -378,7 +397,7 @@ mod tests {
         };
 
         run_service
-            .finalize_model_phase(&parent, &mut run, report, ".")
+            .finalize_model_phase(&parent, &mut run, report, ".", None)
             .await;
 
         let saved_run = run_service

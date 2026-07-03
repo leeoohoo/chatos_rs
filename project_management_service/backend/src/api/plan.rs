@@ -72,6 +72,7 @@ fn work_item_counts_json(counts: &ProjectWorkItemStatusCounts) -> Value {
         "open": counts.open,
         "done": counts.done,
         "blocked": counts.blocked,
+        "failed": counts.failed,
         "by_status": &counts.by_status,
         "byStatus": &counts.by_status,
     })

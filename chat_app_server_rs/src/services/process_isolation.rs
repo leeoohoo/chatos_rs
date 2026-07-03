@@ -133,8 +133,6 @@ pub(crate) fn apply_to_tokio_command(
 
     #[cfg(target_os = "linux")]
     {
-        use std::os::unix::process::CommandExt;
-
         let uid = spec.uid;
         let gid = spec.gid;
         let clear_groups = should_clear_groups_linux();

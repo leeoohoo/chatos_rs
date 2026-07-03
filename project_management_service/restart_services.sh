@@ -11,12 +11,18 @@ ROOT_DIR="$(cd "$PROJECT_SERVICE_DIR/.." && pwd)"
 BACKEND_DIR="$PROJECT_SERVICE_DIR/backend"
 FRONTEND_DIR="$PROJECT_SERVICE_DIR/frontend"
 DEV_MONGO_HELPER="$ROOT_DIR/scripts/dev-mongo-common.sh"
+LOCAL_SERVICE_LAUNCHER="$ROOT_DIR/scripts/local-service-launcher.sh"
 
 # shellcheck disable=SC1090
 source "$DEV_MONGO_HELPER"
+# shellcheck disable=SC1090
+source "$LOCAL_SERVICE_LAUNCHER"
 
 load_optional_env() {
   local env_file="$1"
+  if [[ "${CHATOS_SKIP_SERVICE_LOCAL_ENV:-0}" == "1" ]]; then
+    return 0
+  fi
   if [[ -f "$env_file" ]]; then
     set -a
     # shellcheck disable=SC1090
@@ -49,6 +55,7 @@ PROJECT_SERVICE_TASK_RUNNER_REQUEST_TIMEOUT_MS="${PROJECT_SERVICE_TASK_RUNNER_RE
 PROJECT_SERVICE_SYNC_SECRET="${PROJECT_SERVICE_SYNC_SECRET:-${CHATOS_PROJECT_SERVICE_SYNC_SECRET:-change_me_project_sync_secret}}"
 PROJECT_SERVICE_STOP_BY_PORT="${PROJECT_SERVICE_STOP_BY_PORT:-1}"
 PROJECT_SERVICE_VITE_API_BASE_URL="${PROJECT_SERVICE_VITE_API_BASE_URL:-http://127.0.0.1:${PROJECT_SERVICE_PORT}}"
+PROJECT_SERVICE_CARGO_TARGET_DIR="${PROJECT_SERVICE_CARGO_TARGET_DIR:-$PROJECT_SERVICE_DIR/target}"
 
 if command -v shasum >/dev/null 2>&1; then
   ROOT_HASH="$(printf '%s' "$ROOT_DIR:project-management" | shasum | awk '{print substr($1,1,8)}')"
@@ -59,6 +66,7 @@ else
 fi
 
 PROJECT_SERVICE_RUNTIME_DIR="${PROJECT_SERVICE_RUNTIME_DIR:-/tmp/chatos_rs_project_management_${ROOT_HASH}}"
+LOCAL_SERVICE_LAUNCHD_PREFIX="${LOCAL_SERVICE_LAUNCHD_PREFIX:-chatos-rs-project-management-${ROOT_HASH}}"
 BACKEND_PID_FILE="$PROJECT_SERVICE_RUNTIME_DIR/backend.pid"
 FRONTEND_PID_FILE="$PROJECT_SERVICE_RUNTIME_DIR/frontend.pid"
 BACKEND_LOG_FILE="$PROJECT_SERVICE_RUNTIME_DIR/backend.log"
@@ -173,16 +181,24 @@ launch_service() {
   local pid_file="$3"
   local log_file="$4"
   local command="$5"
+  local launchd_label
+  launchd_label="$(local_service_launchd_label "$LOCAL_SERVICE_LAUNCHD_PREFIX" "$name")"
 
+  if local_service_use_launchd; then
+    local_service_stop_launchd_job "$launchd_label"
+  fi
   ensure_port_available "$name" "$port" || return 1
   echo "[INFO] starting $name..."
   : >"$log_file"
-  if command -v setsid >/dev/null 2>&1; then
+  if local_service_use_launchd; then
+    local_service_launch_with_launchd "$launchd_label" "$name" "$log_file" "$pid_file" "$command"
+  elif command -v setsid >/dev/null 2>&1; then
     nohup setsid bash -lc "$command" >"$log_file" 2>&1 < /dev/null &
+    echo $! >"$pid_file"
   else
     nohup bash -lc "$command" >"$log_file" 2>&1 < /dev/null &
+    echo $! >"$pid_file"
   fi
-  echo $! >"$pid_file"
 }
 
 check_alive() {
@@ -290,10 +306,10 @@ ensure_frontend_deps() {
   echo "[INFO] installing project_management_service frontend dependencies..."
   (
     cd "$FRONTEND_DIR"
-    if [[ -f package-lock.json ]]; then
-      npm ci
+    if [[ "${REMOTE_NPM_INSTALL_MODE:-install}" == "ci" && -f package-lock.json ]]; then
+      npm ci --include=dev
     else
-      npm install
+      npm install --include=dev
     fi
   )
 }
@@ -306,7 +322,7 @@ start_backend() {
     "$PROJECT_SERVICE_PORT" \
     "$BACKEND_PID_FILE" \
     "$BACKEND_LOG_FILE" \
-    "cd \"$ROOT_DIR\" && PROJECT_SERVICE_HOST=\"$PROJECT_SERVICE_HOST\" PROJECT_SERVICE_PORT=\"$PROJECT_SERVICE_PORT\" PROJECT_SERVICE_DATABASE_URL=\"$PROJECT_SERVICE_DATABASE_URL\" PROJECT_SERVICE_MONGODB_DATABASE=\"$PROJECT_SERVICE_MONGODB_DATABASE\" PROJECT_SERVICE_USER_SERVICE_BASE_URL=\"$PROJECT_SERVICE_USER_SERVICE_BASE_URL\" PROJECT_SERVICE_USER_SERVICE_REQUEST_TIMEOUT_MS=\"$PROJECT_SERVICE_USER_SERVICE_REQUEST_TIMEOUT_MS\" PROJECT_SERVICE_TASK_RUNNER_BASE_URL=\"$PROJECT_SERVICE_TASK_RUNNER_BASE_URL\" PROJECT_SERVICE_TASK_RUNNER_REQUEST_TIMEOUT_MS=\"$PROJECT_SERVICE_TASK_RUNNER_REQUEST_TIMEOUT_MS\" PROJECT_SERVICE_SYNC_SECRET=\"$PROJECT_SERVICE_SYNC_SECRET\" exec cargo run -p project_management_service_backend"
+    "cd \"$ROOT_DIR\" && CARGO_TARGET_DIR=\"$PROJECT_SERVICE_CARGO_TARGET_DIR\" PROJECT_SERVICE_HOST=\"$PROJECT_SERVICE_HOST\" PROJECT_SERVICE_PORT=\"$PROJECT_SERVICE_PORT\" PROJECT_SERVICE_DATABASE_URL=\"$PROJECT_SERVICE_DATABASE_URL\" PROJECT_SERVICE_MONGODB_DATABASE=\"$PROJECT_SERVICE_MONGODB_DATABASE\" PROJECT_SERVICE_USER_SERVICE_BASE_URL=\"$PROJECT_SERVICE_USER_SERVICE_BASE_URL\" PROJECT_SERVICE_USER_SERVICE_REQUEST_TIMEOUT_MS=\"$PROJECT_SERVICE_USER_SERVICE_REQUEST_TIMEOUT_MS\" PROJECT_SERVICE_TASK_RUNNER_BASE_URL=\"$PROJECT_SERVICE_TASK_RUNNER_BASE_URL\" PROJECT_SERVICE_TASK_RUNNER_REQUEST_TIMEOUT_MS=\"$PROJECT_SERVICE_TASK_RUNNER_REQUEST_TIMEOUT_MS\" PROJECT_SERVICE_SYNC_SECRET=\"$PROJECT_SERVICE_SYNC_SECRET\" exec cargo run -p project_management_service_backend"
 }
 
 start_frontend() {
@@ -321,6 +337,9 @@ start_frontend() {
 }
 
 do_stop() {
+  local_service_stop_launchd_job "$(local_service_launchd_label "$LOCAL_SERVICE_LAUNCHD_PREFIX" "project_management_service backend")"
+  local_service_stop_launchd_job "$(local_service_launchd_label "$LOCAL_SERVICE_LAUNCHD_PREFIX" "project_management_service frontend")"
+
   stop_from_pid_file "project_management_service backend" "$BACKEND_PID_FILE"
   stop_from_pid_file "project_management_service frontend" "$FRONTEND_PID_FILE"
 

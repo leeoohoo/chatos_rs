@@ -174,7 +174,140 @@ impl MongoStore {
             false,
         )
         .await?;
+        self.repair_failed_work_item_statuses().await?;
+        self.repair_blocked_requirement_statuses().await?;
 
+        Ok(())
+    }
+
+    async fn repair_failed_work_item_statuses(&self) -> Result<(), String> {
+        let mut cursor = self
+            .task_runner_links
+            .find(
+                doc! {
+                    "task_runner_status": {
+                        "$regex": "^(failed|error)$",
+                        "$options": "i",
+                    },
+                },
+                None,
+            )
+            .await
+            .map_err(|err| err.to_string())?;
+        let mut work_item_ids = BTreeSet::new();
+        while let Some(link) = cursor.try_next().await.map_err(|err| err.to_string())? {
+            let work_item_id = link.work_item_id.trim();
+            if !work_item_id.is_empty() {
+                work_item_ids.insert(work_item_id.to_string());
+            }
+        }
+        if work_item_ids.is_empty() {
+            return Ok(());
+        }
+        self.work_items
+            .update_many(
+                doc! {
+                    "id": { "$in": work_item_ids.into_iter().collect::<Vec<_>>() },
+                    "status": ProjectWorkItemStatus::Blocked.as_str(),
+                },
+                doc! {
+                    "$set": {
+                        "status": ProjectWorkItemStatus::Failed.as_str(),
+                        "updated_at": now_rfc3339(),
+                    },
+                },
+                None,
+            )
+            .await
+            .map_err(|err| err.to_string())?;
+        Ok(())
+    }
+
+    async fn repair_blocked_requirement_statuses(&self) -> Result<(), String> {
+        self.repair_requirement_status_from_work_items(
+            ProjectWorkItemStatus::Failed,
+            RequirementStatus::Failed,
+            &[
+                RequirementStatus::Reviewing,
+                RequirementStatus::Approved,
+                RequirementStatus::InProgress,
+                RequirementStatus::Blocked,
+            ],
+        )
+        .await?;
+        self.repair_requirement_status_from_work_items(
+            ProjectWorkItemStatus::Blocked,
+            RequirementStatus::Blocked,
+            &[
+                RequirementStatus::Reviewing,
+                RequirementStatus::Approved,
+                RequirementStatus::InProgress,
+            ],
+        )
+        .await
+    }
+
+    async fn repair_requirement_status_from_work_items(
+        &self,
+        work_item_status: ProjectWorkItemStatus,
+        requirement_status: RequirementStatus,
+        eligible_requirement_statuses: &[RequirementStatus],
+    ) -> Result<(), String> {
+        let mut cursor = self
+            .work_items
+            .find(doc! { "status": work_item_status.as_str() }, None)
+            .await
+            .map_err(|err| err.to_string())?;
+        let mut stack = Vec::new();
+        while let Some(item) = cursor.try_next().await.map_err(|err| err.to_string())? {
+            let requirement_id = item.requirement_id.trim();
+            if !requirement_id.is_empty() {
+                stack.push(requirement_id.to_string());
+            }
+        }
+
+        let mut requirement_ids = BTreeSet::new();
+        while let Some(requirement_id) = stack.pop() {
+            if requirement_id.trim().is_empty() || !requirement_ids.insert(requirement_id.clone()) {
+                continue;
+            }
+            let Some(requirement) = self.get_requirement(requirement_id.as_str()).await? else {
+                continue;
+            };
+            if let Some(parent_requirement_id) = requirement
+                .parent_requirement_id
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+            {
+                stack.push(parent_requirement_id.to_string());
+            }
+        }
+
+        if requirement_ids.is_empty() {
+            return Ok(());
+        }
+        self.requirements
+            .update_many(
+                doc! {
+                    "id": { "$in": requirement_ids.into_iter().collect::<Vec<_>>() },
+                    "status": {
+                        "$in": eligible_requirement_statuses
+                            .iter()
+                            .map(RequirementStatus::as_str)
+                            .collect::<Vec<_>>(),
+                    },
+                },
+                doc! {
+                    "$set": {
+                        "status": requirement_status.as_str(),
+                        "updated_at": now_rfc3339(),
+                    },
+                },
+                None,
+            )
+            .await
+            .map_err(|err| err.to_string())?;
         Ok(())
     }
 

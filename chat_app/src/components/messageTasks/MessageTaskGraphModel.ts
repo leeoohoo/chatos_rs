@@ -23,10 +23,12 @@ export interface TaskGraphNodeData extends Record<string, unknown> {
   isDimmed: boolean;
   loadingProcessLog: boolean;
   loadingRun: boolean;
+  loadingChanges: boolean;
   onSelectTask: (taskId: string) => void;
   onOpenDetail: (task: MessageTaskRunnerTask) => void;
   onOpenProcessLog: (task: MessageTaskRunnerTask) => void | Promise<void>;
   onOpenRun: (task: MessageTaskRunnerTask) => void | Promise<void>;
+  onOpenChanges: (task: MessageTaskRunnerTask) => void | Promise<void>;
 }
 
 export type TaskGraphFlowNode = Node<TaskGraphNodeData, 'task'>;
@@ -169,10 +171,12 @@ export const buildFlowNodes = (
   relatedTaskIds: Set<string> | null,
   loadingProcessTaskId: string | null,
   loadingRunId: string | null,
+  loadingChangesRunId: string | null,
   onSelectTask: (taskId: string | null) => void,
   onOpenDetail: (task: MessageTaskRunnerTask) => void,
   onOpenProcessLog: (task: MessageTaskRunnerTask) => void | Promise<void>,
   onOpenRun: (task: MessageTaskRunnerTask) => void | Promise<void>,
+  onOpenChanges: (task: MessageTaskRunnerTask) => void | Promise<void>,
 ): TaskGraphFlowNode[] => (
   graphNodes.map((graphNode) => ({
     id: graphNode.task.id,
@@ -187,10 +191,12 @@ export const buildFlowNodes = (
       isDimmed: Boolean(activeTaskId && relatedTaskIds && !relatedTaskIds.has(graphNode.task.id)),
       loadingProcessLog: graphNode.task.id === loadingProcessTaskId,
       loadingRun: Boolean(graphNode.task.last_run_id && graphNode.task.last_run_id === loadingRunId),
+      loadingChanges: Boolean(graphNode.task.last_run_id && graphNode.task.last_run_id === loadingChangesRunId),
       onSelectTask: (taskId) => onSelectTask(activeTaskId === taskId ? null : taskId),
       onOpenDetail,
       onOpenProcessLog,
       onOpenRun,
+      onOpenChanges,
     },
     style: {
       width: TASK_GRAPH_NODE_WIDTH,

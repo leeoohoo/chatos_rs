@@ -16,7 +16,7 @@ use crate::models::{
     RotateSandboxAccessClientKeyResponse, SandboxAccessClientResponse, SandboxEventRecord,
     SandboxHealthResponse, SandboxImageCatalogResponse, SandboxImageJobRecord, SandboxLeaseRecord,
     SandboxMcpCallRequest, SandboxMcpCallResponse, SandboxMcpToolsResponse, SystemConfigResponse,
-    UpdateSandboxAccessClientRequest,
+    UpdatePoolConfigRequest, UpdateSandboxAccessClientRequest,
 };
 use crate::state::AppState;
 
@@ -39,6 +39,14 @@ pub async fn pool_status(
     Extension(auth): Extension<SandboxAuthContext>,
 ) -> Result<Json<PoolStatusResponse>, ApiError> {
     Ok(Json(state.manager.pool_status(&auth).await?))
+}
+
+pub async fn update_pool_config(
+    State(state): State<AppState>,
+    Extension(auth): Extension<SandboxAuthContext>,
+    Json(input): Json<UpdatePoolConfigRequest>,
+) -> Result<Json<PoolStatusResponse>, ApiError> {
+    Ok(Json(state.manager.update_pool_config(&auth, input).await?))
 }
 
 pub async fn list_sandbox_images(

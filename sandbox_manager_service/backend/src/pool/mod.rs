@@ -6,8 +6,8 @@ use std::sync::Arc;
 
 #[derive(Debug)]
 pub struct SandboxPool {
-    max_active: usize,
-    max_pending: usize,
+    max_active: AtomicUsize,
+    max_pending: AtomicUsize,
     active: AtomicUsize,
     pending: AtomicUsize,
 }
@@ -17,8 +17,8 @@ pub type SandboxPoolRef = Arc<SandboxPool>;
 impl SandboxPool {
     pub fn new(max_active: usize, max_pending: usize) -> Self {
         Self {
-            max_active: max_active.max(1),
-            max_pending,
+            max_active: AtomicUsize::new(max_active.max(1)),
+            max_pending: AtomicUsize::new(max_pending),
             active: AtomicUsize::new(0),
             pending: AtomicUsize::new(0),
         }
@@ -27,10 +27,10 @@ impl SandboxPool {
     pub fn try_acquire_active(&self) -> Result<PoolSlot<'_>, String> {
         loop {
             let current = self.active.load(Ordering::SeqCst);
-            if current >= self.max_active {
+            let max_active = self.max_active();
+            if current >= max_active {
                 return Err(format!(
-                    "sandbox pool is full: active={current}, max_active={}",
-                    self.max_active
+                    "sandbox pool is full: active={current}, max_active={max_active}"
                 ));
             }
             if self
@@ -63,11 +63,16 @@ impl SandboxPool {
     }
 
     pub fn max_active(&self) -> usize {
-        self.max_active
+        self.max_active.load(Ordering::SeqCst)
     }
 
     pub fn max_pending(&self) -> usize {
-        self.max_pending
+        self.max_pending.load(Ordering::SeqCst)
+    }
+
+    pub fn set_limits(&self, max_active: usize, max_pending: usize) {
+        self.max_active.store(max_active.max(1), Ordering::SeqCst);
+        self.max_pending.store(max_pending, Ordering::SeqCst);
     }
 }
 

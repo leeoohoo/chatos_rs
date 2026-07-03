@@ -10,6 +10,8 @@ pub const REQUIREMENT_STATUS_VALUES: &[&str] = &[
     "reviewing",
     "approved",
     "in_progress",
+    "blocked",
+    "failed",
     "done",
     "cancelled",
 ];
@@ -19,6 +21,7 @@ pub const PROJECT_TASK_STATUS_VALUES: &[&str] = &[
     "ready",
     "in_progress",
     "blocked",
+    "failed",
     "done",
     "cancelled",
 ];

@@ -9,6 +9,9 @@ ROOT_DIR="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
 
 load_optional_env() {
   local env_file="$1"
+  if [[ "${CHATOS_SKIP_SERVICE_LOCAL_ENV:-0}" == "1" ]]; then
+    return 0
+  fi
   if [[ -f "$env_file" ]]; then
     set -a
     # shellcheck disable=SC1090
@@ -31,6 +34,7 @@ PROJECT_MANAGEMENT_SCRIPT="$ROOT_DIR/project_management_service/restart_services
 SANDBOX_MANAGER_SCRIPT="$ROOT_DIR/restart_sandbox_manager_service.sh"
 CHATOS_SCRIPT="$ROOT_DIR/restart_services.sh"
 TASK_RUNNER_SCRIPT="$ROOT_DIR/restart_task_runner_service.sh"
+OFFICIAL_WEBSITE_SCRIPT="$ROOT_DIR/official_website_service/restart_services.sh"
 
 START_MEMORY_ENGINE="${START_MEMORY_ENGINE:-1}"
 START_USER_SERVICE="${START_USER_SERVICE:-1}"
@@ -38,6 +42,7 @@ START_PROJECT_MANAGEMENT="${START_PROJECT_MANAGEMENT:-1}"
 START_SANDBOX_MANAGER="${START_SANDBOX_MANAGER:-${START_SANDBOX_SERVICE:-${START_SANDBOX:-1}}}"
 START_CHATOS="${START_CHATOS:-1}"
 START_TASK_RUNNER="${START_TASK_RUNNER:-1}"
+START_OFFICIAL_WEBSITE="${START_OFFICIAL_WEBSITE:-0}"
 
 sync_memory_engine_operator_token() {
   if [[ -n "${MEMORY_ENGINE_OPERATOR_TOKEN:-}" ]]; then
@@ -105,6 +110,10 @@ do_status() {
   fi
   if run_enabled "$START_TASK_RUNNER"; then
     run_service "task_runner" "$TASK_RUNNER_SCRIPT" status
+    echo
+  fi
+  if run_enabled "$START_OFFICIAL_WEBSITE"; then
+    run_service "official_website_service" "$OFFICIAL_WEBSITE_SCRIPT" status
   fi
 }
 
@@ -113,6 +122,9 @@ do_stop() {
 
   if run_enabled "$START_TASK_RUNNER"; then
     run_service "task_runner" "$TASK_RUNNER_SCRIPT" stop || failed=1
+  fi
+  if run_enabled "$START_OFFICIAL_WEBSITE"; then
+    run_service "official_website_service" "$OFFICIAL_WEBSITE_SCRIPT" stop || failed=1
   fi
   if run_enabled "$START_CHATOS"; then
     run_chatos stop || failed=1
@@ -140,6 +152,7 @@ do_restart() {
   local started_sandbox=0
   local started_chatos=0
   local started_task=0
+  local started_official=0
 
   do_stop || true
 
@@ -167,6 +180,10 @@ do_restart() {
     run_service "task_runner" "$TASK_RUNNER_SCRIPT" restart || return 1
     started_task=1
   fi
+  if run_enabled "$START_OFFICIAL_WEBSITE"; then
+    run_service "official_website_service" "$OFFICIAL_WEBSITE_SCRIPT" restart || return 1
+    started_official=1
+  fi
 
   echo "[OK] full stack is running"
   if (( started_memory == 1 )); then
@@ -192,6 +209,17 @@ do_restart() {
   if (( started_task == 1 )); then
     echo "  task_runner backend: http://localhost:${TASK_RUNNER_BACKEND_PORT:-${TASK_RUNNER_PORT:-39090}}"
     echo "  task_runner frontend: http://localhost:${TASK_RUNNER_FRONTEND_PORT:-39091}"
+  fi
+  if (( started_official == 1 )); then
+    echo "  official_website site: http://localhost:${OFFICIAL_WEBSITE_PORT:-39250}"
+    case "${OFFICIAL_WEBSITE_MODE:-dev}" in
+      dev|development)
+        echo "  official_website dev frontend: http://localhost:${OFFICIAL_WEBSITE_FRONTEND_PORT:-39251}"
+        ;;
+      *)
+        echo "  official_website mode: ${OFFICIAL_WEBSITE_MODE:-prod} (static served by backend)"
+        ;;
+    esac
   fi
 }
 

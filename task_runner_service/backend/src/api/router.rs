@@ -39,8 +39,9 @@ use super::remote_servers::{
     test_remote_server_draft, test_remote_server_saved, update_remote_server,
 };
 use super::runs::{
-    cancel_run, get_run, list_run_events, list_run_index, list_run_summaries, list_runs,
-    list_runs_page, list_task_runs, retry_run, start_task_run, stream_run_events,
+    cancel_run, get_run, get_run_output_changes, get_run_output_diff, list_run_events,
+    list_run_index, list_run_summaries, list_runs, list_runs_page, list_task_runs, retry_run,
+    start_task_run, stream_run_events,
 };
 use super::skills::{
     create_skill, delete_skill, get_skill, install_skill_from_marketplace, list_bundled_skills,
@@ -180,6 +181,8 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/runs/index", get(list_run_index))
         .route("/api/runs/:id", get(get_run))
         .route("/api/runs/:id/events", get(list_run_events))
+        .route("/api/runs/:id/output/changes", get(get_run_output_changes))
+        .route("/api/runs/:id/output/diff", get(get_run_output_diff))
         .route("/api/runs/:id/prompts", get(list_run_prompts))
         .route("/api/runs/:id/stream", get(stream_run_events))
         .route("/api/runs/:id/cancel", post(cancel_run))

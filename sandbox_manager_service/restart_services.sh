@@ -14,6 +14,7 @@ FRONTEND_PORT="${SANDBOX_MANAGER_FRONTEND_PORT:-8096}"
 BACKEND_SESSION="chatos_sandbox_manager_backend"
 FRONTEND_SESSION="chatos_sandbox_manager_frontend"
 ACTION="${1:-restart}"
+SANDBOX_MANAGER_CARGO_TARGET_DIR="${SANDBOX_MANAGER_CARGO_TARGET_DIR:-$SERVICE_DIR/target}"
 
 mkdir -p "$LOG_DIR" "$SERVICE_DIR/data"
 
@@ -52,9 +53,9 @@ start_backend() {
   echo "[INFO] starting sandbox manager backend on :$BACKEND_PORT"
   if command -v tmux >/dev/null 2>&1; then
     tmux new-session -d -s "$BACKEND_SESSION" \
-      "cd '$ROOT_DIR' && SANDBOX_MANAGER_PORT='$BACKEND_PORT' cargo run -p sandbox_manager_service_backend 2>&1 | tee '$LOG_DIR/sandbox_manager_backend.log'"
+      "cd '$ROOT_DIR' && CARGO_TARGET_DIR='$SANDBOX_MANAGER_CARGO_TARGET_DIR' SANDBOX_MANAGER_PORT='$BACKEND_PORT' cargo run -p sandbox_manager_service_backend 2>&1 | tee '$LOG_DIR/sandbox_manager_backend.log'"
   else
-    nohup bash -lc "cd '$ROOT_DIR' && SANDBOX_MANAGER_PORT='$BACKEND_PORT' exec cargo run -p sandbox_manager_service_backend" \
+    nohup bash -lc "cd '$ROOT_DIR' && CARGO_TARGET_DIR='$SANDBOX_MANAGER_CARGO_TARGET_DIR' SANDBOX_MANAGER_PORT='$BACKEND_PORT' exec cargo run -p sandbox_manager_service_backend" \
       >"$LOG_DIR/sandbox_manager_backend.log" 2>&1 < /dev/null &
   fi
 }

@@ -15,17 +15,19 @@ pub enum ProjectWorkItemStatus {
     Ready,
     InProgress,
     Blocked,
+    Failed,
     Done,
     Cancelled,
     Archived,
 }
 
 impl ProjectWorkItemStatus {
-    pub const ALL: [Self; 7] = [
+    pub const ALL: [Self; 8] = [
         Self::Todo,
         Self::Ready,
         Self::InProgress,
         Self::Blocked,
+        Self::Failed,
         Self::Done,
         Self::Cancelled,
         Self::Archived,
@@ -45,6 +47,7 @@ impl DbStatus for ProjectWorkItemStatus {
             Self::Ready => "ready",
             Self::InProgress => "in_progress",
             Self::Blocked => "blocked",
+            Self::Failed => "failed",
             Self::Done => "done",
             Self::Cancelled => "cancelled",
             Self::Archived => "archived",
@@ -56,6 +59,7 @@ impl DbStatus for ProjectWorkItemStatus {
             "ready" => Self::Ready,
             "in_progress" => Self::InProgress,
             "blocked" => Self::Blocked,
+            "failed" => Self::Failed,
             "done" => Self::Done,
             "cancelled" => Self::Cancelled,
             "archived" => Self::Archived,
@@ -70,6 +74,7 @@ pub struct ProjectWorkItemStatusCounts {
     pub open: i64,
     pub done: i64,
     pub blocked: i64,
+    pub failed: i64,
     pub by_status: BTreeMap<String, i64>,
 }
 
@@ -90,6 +95,10 @@ impl ProjectWorkItemStatusCounts {
             }
             ProjectWorkItemStatus::Blocked => {
                 self.blocked += count;
+                self.open += count;
+            }
+            ProjectWorkItemStatus::Failed => {
+                self.failed += count;
                 self.open += count;
             }
             _ => {

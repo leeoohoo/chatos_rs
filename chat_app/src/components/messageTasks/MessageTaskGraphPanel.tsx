@@ -31,11 +31,13 @@ interface MessageTaskGraphPanelProps {
   loading: boolean;
   error: string | null;
   loadingRunId: string | null;
+  loadingChangesRunId: string | null;
   panelWidth: number;
   loadingProcessTaskId: string | null;
   onOpenDetail: (task: MessageTaskRunnerTask) => void;
   onOpenProcessLog: (task: MessageTaskRunnerTask) => void | Promise<void>;
   onOpenRun: (task: MessageTaskRunnerTask) => void | Promise<void>;
+  onOpenChanges: (task: MessageTaskRunnerTask) => void | Promise<void>;
 }
 
 export const MessageTaskGraphPanel: FC<MessageTaskGraphPanelProps> = ({
@@ -43,11 +45,13 @@ export const MessageTaskGraphPanel: FC<MessageTaskGraphPanelProps> = ({
   loading,
   error,
   loadingRunId,
+  loadingChangesRunId,
   loadingProcessTaskId,
   panelWidth,
   onOpenDetail,
   onOpenProcessLog,
   onOpenRun,
+  onOpenChanges,
 }) => {
   const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
 
@@ -101,10 +105,12 @@ export const MessageTaskGraphPanel: FC<MessageTaskGraphPanelProps> = ({
       activeContext?.relatedTaskIds || null,
       loadingProcessTaskId,
       loadingRunId,
+      loadingChangesRunId,
       setActiveTaskId,
       onOpenDetail,
       onOpenProcessLog,
       onOpenRun,
+      onOpenChanges,
     );
     const flowEdges = buildFlowEdges(
       displayEdges,
@@ -119,9 +125,11 @@ export const MessageTaskGraphPanel: FC<MessageTaskGraphPanelProps> = ({
     displayGraph.nodes,
     displayEdges,
     graph.source_user_message_id,
+    loadingChangesRunId,
     loadingProcessTaskId,
     loadingRunId,
     onOpenDetail,
+    onOpenChanges,
     onOpenProcessLog,
     onOpenRun,
     taskById,

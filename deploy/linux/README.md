@@ -38,6 +38,7 @@ sudo ENABLE_PROCESS_ISOLATION=1 \
 - `BACKEND_PORT`：默认 `13001`
 - `SERVER_NAME`：Nginx `server_name`，默认 `_`
 - `FORCE_ENV_REWRITE=1`：覆盖重建 `/etc/chatos/chatos-backend.env`
+- `CHATOS_WORKSPACE_DIR`：用户项目/工作目录根路径，默认 `$APP_ROOT/backend/data/workspace`
 - `ENABLE_PROCESS_ISOLATION=1`：写入 `CHATOS_PROCESS_ISOLATION_ENABLED=true` 并生成 systemd drop-in
 - `PROCESS_ISOLATION_PRIVILEGE_MODE`：默认 `capabilities`，也可设为 `root`
 
@@ -58,6 +59,15 @@ curl http://127.0.0.1:13001/health
 可手动编辑后重启：
 
 ```bash
+sudo systemctl restart chatos-backend
+```
+
+如果注册后选择项目目录时提示“当前用户没有可访问的本地目录”，检查环境文件里
+`CHATOS_WORKSPACE_DIR` 是否存在且服务用户可写：
+
+```bash
+grep '^CHATOS_WORKSPACE_DIR=' /etc/chatos/chatos-backend.env
+sudo -u chatos test -w "$(grep '^CHATOS_WORKSPACE_DIR=' /etc/chatos/chatos-backend.env | cut -d= -f2-)"
 sudo systemctl restart chatos-backend
 ```
 

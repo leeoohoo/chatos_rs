@@ -239,6 +239,68 @@ pub struct ReleaseSandboxResponse {
     pub status: SandboxStatus,
     pub output_workspace: Option<String>,
     pub diff_summary: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub output_error: Option<String>,
+    pub change_manifest: Option<SandboxOutputChangeManifest>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct SandboxOutputFileChangeCounts {
+    #[serde(default)]
+    pub added: usize,
+    #[serde(default)]
+    pub modified: usize,
+    #[serde(default)]
+    pub deleted: usize,
+    #[serde(default)]
+    pub binary: usize,
+    #[serde(default)]
+    pub diff_available: usize,
+    #[serde(default)]
+    pub total: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SandboxOutputFileChange {
+    pub path: String,
+    pub status: String,
+    #[serde(default)]
+    pub old_size: Option<u64>,
+    #[serde(default)]
+    pub new_size: Option<u64>,
+    #[serde(default)]
+    pub old_sha256: Option<String>,
+    #[serde(default)]
+    pub new_sha256: Option<String>,
+    #[serde(default)]
+    pub added_lines: usize,
+    #[serde(default)]
+    pub deleted_lines: usize,
+    #[serde(default)]
+    pub binary: bool,
+    #[serde(default)]
+    pub diff_available: bool,
+    #[serde(default)]
+    pub diff_truncated: bool,
+    #[serde(default)]
+    pub diff_ref: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SandboxOutputChangeManifest {
+    pub schema_version: u32,
+    pub run_id: String,
+    pub sandbox_id: String,
+    pub lease_id: String,
+    pub generated_at: String,
+    #[serde(default)]
+    pub output_workspace: Option<String>,
+    #[serde(default)]
+    pub manifest_path: Option<String>,
+    #[serde(default)]
+    pub counts: SandboxOutputFileChangeCounts,
+    #[serde(default)]
+    pub files: Vec<SandboxOutputFileChange>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -342,6 +404,12 @@ pub struct PoolStatusResponse {
     pub pending: usize,
     pub lease_ttl_seconds: u64,
     pub cleanup_interval_seconds: u64,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct UpdatePoolConfigRequest {
+    pub max_active: Option<usize>,
+    pub max_pending: Option<usize>,
 }
 
 #[derive(Debug, Clone, Serialize)]

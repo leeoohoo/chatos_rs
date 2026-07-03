@@ -4,8 +4,17 @@
 use std::env;
 
 pub const DEFAULT_WORKSPACE_DIR: &str = "~/.chatos_workspace";
+pub const WORKSPACE_DIR_ENV: &str = "CHATOS_WORKSPACE_DIR";
 
 pub fn default_workspace_dir() -> String {
+    let configured = env::var(WORKSPACE_DIR_ENV).ok();
+    default_workspace_dir_for(configured.as_deref())
+}
+
+fn default_workspace_dir_for(configured: Option<&str>) -> String {
+    if let Some(value) = configured.map(str::trim).filter(|value| !value.is_empty()) {
+        return value.to_string();
+    }
     if cfg!(windows) {
         if let Some(home) = home_dir() {
             let mut out = home;
@@ -154,4 +163,35 @@ fn home_dir() -> Option<String> {
         }
     }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{default_workspace_dir_for, normalize_workspace_dir, WORKSPACE_DIR_ENV};
+
+    #[test]
+    fn normalize_workspace_dir_uses_explicit_raw_value_first() {
+        assert_eq!(
+            normalize_workspace_dir(Some(" /srv/chatos/projects ")),
+            "/srv/chatos/projects"
+        );
+    }
+
+    #[test]
+    fn workspace_dir_env_name_is_stable() {
+        assert_eq!(WORKSPACE_DIR_ENV, "CHATOS_WORKSPACE_DIR");
+    }
+
+    #[test]
+    fn configured_workspace_dir_overrides_builtin_default() {
+        assert_eq!(
+            default_workspace_dir_for(Some(" /srv/chatos/workspace ")),
+            "/srv/chatos/workspace"
+        );
+    }
+
+    #[test]
+    fn empty_configured_workspace_dir_falls_back_to_builtin_default() {
+        assert!(!default_workspace_dir_for(Some("   ")).trim().is_empty());
+    }
 }
