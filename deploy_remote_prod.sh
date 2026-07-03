@@ -98,7 +98,7 @@ cat <<EOF
 - 远端 Rust target-dir: $REMOTE_APP_ROOT/target-shared
 - 更新范围: 主服务 + 附属服务(REMOTE_REBUILD_AUX_SERVICES=$REMOTE_REBUILD_AUX_SERVICES, OFFICIAL=$REMOTE_REBUILD_OFFICIAL_WEBSITE, DB_HUB=$REMOTE_REBUILD_DB_CONNECTION_HUB)
 - npm 安装模式: $REMOTE_NPM_INSTALL_MODE
-- 清理远端 Rust target: $REMOTE_CLEAN_TARGET
+- 清理远端 Rust target: $REMOTE_CLEAN_TARGET（1=全量重编译，慢但省空间）
 - 模式: PLAN_ONLY=$PLAN_ONLY SYNC_ONLY=$SYNC_ONLY
 EOF
 
@@ -271,6 +271,7 @@ clean_remote_target_dir() {
   if [[ -e "$TARGET_DIR" ]]; then
     log "清理远端 Rust target: $TARGET_DIR"
     sudo_run rm -rf "$TARGET_DIR"
+    log "已清理 Rust 编译缓存；本次 cargo build 会全量编译，停在最后几个 crate 几分钟通常正常"
   else
     log "远端 Rust target 不存在，跳过清理: $TARGET_DIR"
   fi
@@ -446,6 +447,9 @@ npm --prefix "$REMOTE_APP_ROOT/chat_app" run build
 
 # 仅做最小生产构建：Rust 后端统一使用 target-shared；前端由现有部署流程按需处理。
 log "构建 Rust 后端（target-shared）"
+if env_bool "$REMOTE_CLEAN_TARGET"; then
+  log "提示：刚清理过 target-shared，这一步是全量 Rust 编译；chat_app_server_rs 编译/链接阶段可能较久没有新输出"
+fi
 cargo build --release --manifest-path "$REMOTE_APP_ROOT/chat_app_server_rs/Cargo.toml" --target-dir "$TARGET_DIR"
 
 # 使用现有的无 Docker 生产安装约定（systemd + nginx + /etc/chatos env）。
