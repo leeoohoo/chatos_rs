@@ -22,6 +22,8 @@ REMOTE_STAGE_DIR="${REMOTE_STAGE_DIR:-/tmp/chatos_rs_deploy_staging}"
 REMOTE_REBUILD_AUX_SERVICES="${REMOTE_REBUILD_AUX_SERVICES:-1}"
 REMOTE_REBUILD_OFFICIAL_WEBSITE="${REMOTE_REBUILD_OFFICIAL_WEBSITE:-1}"
 REMOTE_REBUILD_DB_CONNECTION_HUB="${REMOTE_REBUILD_DB_CONNECTION_HUB:-1}"
+REMOTE_NPM_INSTALL_MODE="${REMOTE_NPM_INSTALL_MODE:-install}"
+REMOTE_CLEAN_TARGET="${REMOTE_CLEAN_TARGET:-1}"
 PLAN_ONLY="${PLAN_ONLY:-0}"
 SYNC_ONLY="${SYNC_ONLY:-0}"
 
@@ -92,8 +94,11 @@ cat <<EOF
 - 远端 env: /etc/chatos/chatos-backend.env
 - 远端 workspace: ${REMOTE_CHATOS_WORKSPACE_DIR:-auto}
 - 远端 nginx: /etc/nginx/sites-available/chatos.conf -> /etc/nginx/sites-enabled/chatos.conf
-- Rust target-dir: $TARGET_DIR
+- 本地 Rust target-dir: $TARGET_DIR
+- 远端 Rust target-dir: $REMOTE_APP_ROOT/target-shared
 - 更新范围: 主服务 + 附属服务(REMOTE_REBUILD_AUX_SERVICES=$REMOTE_REBUILD_AUX_SERVICES, OFFICIAL=$REMOTE_REBUILD_OFFICIAL_WEBSITE, DB_HUB=$REMOTE_REBUILD_DB_CONNECTION_HUB)
+- npm 安装模式: $REMOTE_NPM_INSTALL_MODE
+- 清理远端 Rust target: $REMOTE_CLEAN_TARGET
 - 模式: PLAN_ONLY=$PLAN_ONLY SYNC_ONLY=$SYNC_ONLY
 EOF
 
@@ -138,6 +143,9 @@ REMOTE_CHATOS_WORKSPACE_DIR="__REMOTE_CHATOS_WORKSPACE_DIR__"
 REMOTE_REBUILD_AUX_SERVICES="__REMOTE_REBUILD_AUX_SERVICES__"
 REMOTE_REBUILD_OFFICIAL_WEBSITE="__REMOTE_REBUILD_OFFICIAL_WEBSITE__"
 REMOTE_REBUILD_DB_CONNECTION_HUB="__REMOTE_REBUILD_DB_CONNECTION_HUB__"
+REMOTE_NPM_INSTALL_MODE="__REMOTE_NPM_INSTALL_MODE__"
+REMOTE_CLEAN_TARGET="__REMOTE_CLEAN_TARGET__"
+export REMOTE_NPM_INSTALL_MODE
 
 if [[ -d "$HOME/.cargo/bin" ]]; then
   export PATH="$HOME/.cargo/bin:$PATH"
@@ -230,6 +238,44 @@ mongo_admin_uri() {
   printf 'mongodb://%s:%s@%s:%s/%s' "$user" "$password" "$host" "$port" "$auth_source"
 }
 
+clean_remote_target_dir() {
+  if ! env_bool "$REMOTE_CLEAN_TARGET"; then
+    log "跳过远端 Rust target 清理 (REMOTE_CLEAN_TARGET=$REMOTE_CLEAN_TARGET)"
+    return 0
+  fi
+
+  local target_base
+  target_base="${TARGET_DIR##*/}"
+  case "$TARGET_DIR" in
+    ""|"/"|"$REMOTE_APP_ROOT"|"$REMOTE_DEPLOY_ROOT")
+      warn "跳过远端 Rust target 清理：目标目录不安全 ($TARGET_DIR)"
+      return 0
+      ;;
+    "$REMOTE_APP_ROOT"/*)
+      ;;
+    *)
+      warn "跳过远端 Rust target 清理：$TARGET_DIR 不在 $REMOTE_APP_ROOT 下"
+      return 0
+      ;;
+  esac
+
+  case "$target_base" in
+    target|target-*|target_shared|target-shared)
+      ;;
+    *)
+      warn "跳过远端 Rust target 清理：目录名不像 target ($TARGET_DIR)"
+      return 0
+      ;;
+  esac
+
+  if [[ -e "$TARGET_DIR" ]]; then
+    log "清理远端 Rust target: $TARGET_DIR"
+    sudo_run rm -rf "$TARGET_DIR"
+  else
+    log "远端 Rust target 不存在，跳过清理: $TARGET_DIR"
+  fi
+}
+
 install_frontend_deps() {
   local dir="$1"
   local label="$2"
@@ -237,13 +283,13 @@ install_frontend_deps() {
     return 0
   fi
   log "安装/刷新 ${label} 前端依赖"
-  if [[ -f "$dir/package-lock.json" ]]; then
-    if ! npm --prefix "$dir" ci; then
+  if [[ "$REMOTE_NPM_INSTALL_MODE" == "ci" && -f "$dir/package-lock.json" ]]; then
+    if ! npm --prefix "$dir" ci --include=dev; then
       warn "${label} npm ci 失败，回退到 npm install 以刷新不匹配的 lockfile"
-      npm --prefix "$dir" install
+      npm --prefix "$dir" install --include=dev
     fi
   else
-    npm --prefix "$dir" install
+    npm --prefix "$dir" install --include=dev
   fi
 }
 
@@ -369,6 +415,7 @@ log "远端代码目录: $REMOTE_APP_ROOT"
 log "Rust target-dir: $TARGET_DIR"
 log "Chatos workspace: $EFFECTIVE_CHATOS_WORKSPACE_DIR"
 sudo_run mkdir -p "$REMOTE_DEPLOY_ROOT" "$REMOTE_APP_ROOT" /etc/chatos
+clean_remote_target_dir
 sudo_run chown -R "$(id -un)":"$(id -gn)" "$REMOTE_APP_ROOT"
 
 log "从远端暂存目录同步到正式代码目录"
@@ -394,11 +441,7 @@ fi
 
 # 生产前端需要 dist；不走 npm run dev。
 log "构建 chat_app 前端生产 dist"
-if [[ -f "$REMOTE_APP_ROOT/chat_app/package-lock.json" ]]; then
-  npm --prefix "$REMOTE_APP_ROOT/chat_app" ci
-else
-  npm --prefix "$REMOTE_APP_ROOT/chat_app" install
-fi
+install_frontend_deps "$REMOTE_APP_ROOT/chat_app" "chat_app"
 npm --prefix "$REMOTE_APP_ROOT/chat_app" run build
 
 # 仅做最小生产构建：Rust 后端统一使用 target-shared；前端由现有部署流程按需处理。
@@ -450,6 +493,8 @@ REMOTE_SCRIPT="${REMOTE_SCRIPT/__REMOTE_CHATOS_WORKSPACE_DIR__/$REMOTE_CHATOS_WO
 REMOTE_SCRIPT="${REMOTE_SCRIPT/__REMOTE_REBUILD_AUX_SERVICES__/$REMOTE_REBUILD_AUX_SERVICES}"
 REMOTE_SCRIPT="${REMOTE_SCRIPT/__REMOTE_REBUILD_OFFICIAL_WEBSITE__/$REMOTE_REBUILD_OFFICIAL_WEBSITE}"
 REMOTE_SCRIPT="${REMOTE_SCRIPT/__REMOTE_REBUILD_DB_CONNECTION_HUB__/$REMOTE_REBUILD_DB_CONNECTION_HUB}"
+REMOTE_SCRIPT="${REMOTE_SCRIPT/__REMOTE_NPM_INSTALL_MODE__/$REMOTE_NPM_INSTALL_MODE}"
+REMOTE_SCRIPT="${REMOTE_SCRIPT/__REMOTE_CLEAN_TARGET__/$REMOTE_CLEAN_TARGET}"
 
 log "执行远端更新与部署"
 sshpass -p "$REMOTE_PASSWORD" ssh -T "${SSH_OPTIONS[@]}" "$REMOTE_USER@$REMOTE_HOST" \

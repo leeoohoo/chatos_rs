@@ -174,18 +174,88 @@ impl MongoStore {
             false,
         )
         .await?;
+        self.repair_failed_work_item_statuses().await?;
         self.repair_blocked_requirement_statuses().await?;
 
         Ok(())
     }
 
-    async fn repair_blocked_requirement_statuses(&self) -> Result<(), String> {
+    async fn repair_failed_work_item_statuses(&self) -> Result<(), String> {
         let mut cursor = self
-            .work_items
+            .task_runner_links
             .find(
-                doc! { "status": ProjectWorkItemStatus::Blocked.as_str() },
+                doc! {
+                    "task_runner_status": {
+                        "$regex": "^(failed|error)$",
+                        "$options": "i",
+                    },
+                },
                 None,
             )
+            .await
+            .map_err(|err| err.to_string())?;
+        let mut work_item_ids = BTreeSet::new();
+        while let Some(link) = cursor.try_next().await.map_err(|err| err.to_string())? {
+            let work_item_id = link.work_item_id.trim();
+            if !work_item_id.is_empty() {
+                work_item_ids.insert(work_item_id.to_string());
+            }
+        }
+        if work_item_ids.is_empty() {
+            return Ok(());
+        }
+        self.work_items
+            .update_many(
+                doc! {
+                    "id": { "$in": work_item_ids.into_iter().collect::<Vec<_>>() },
+                    "status": ProjectWorkItemStatus::Blocked.as_str(),
+                },
+                doc! {
+                    "$set": {
+                        "status": ProjectWorkItemStatus::Failed.as_str(),
+                        "updated_at": now_rfc3339(),
+                    },
+                },
+                None,
+            )
+            .await
+            .map_err(|err| err.to_string())?;
+        Ok(())
+    }
+
+    async fn repair_blocked_requirement_statuses(&self) -> Result<(), String> {
+        self.repair_requirement_status_from_work_items(
+            ProjectWorkItemStatus::Failed,
+            RequirementStatus::Failed,
+            &[
+                RequirementStatus::Reviewing,
+                RequirementStatus::Approved,
+                RequirementStatus::InProgress,
+                RequirementStatus::Blocked,
+            ],
+        )
+        .await?;
+        self.repair_requirement_status_from_work_items(
+            ProjectWorkItemStatus::Blocked,
+            RequirementStatus::Blocked,
+            &[
+                RequirementStatus::Reviewing,
+                RequirementStatus::Approved,
+                RequirementStatus::InProgress,
+            ],
+        )
+        .await
+    }
+
+    async fn repair_requirement_status_from_work_items(
+        &self,
+        work_item_status: ProjectWorkItemStatus,
+        requirement_status: RequirementStatus,
+        eligible_requirement_statuses: &[RequirementStatus],
+    ) -> Result<(), String> {
+        let mut cursor = self
+            .work_items
+            .find(doc! { "status": work_item_status.as_str() }, None)
             .await
             .map_err(|err| err.to_string())?;
         let mut stack = Vec::new();
@@ -222,16 +292,15 @@ impl MongoStore {
                 doc! {
                     "id": { "$in": requirement_ids.into_iter().collect::<Vec<_>>() },
                     "status": {
-                        "$in": [
-                            RequirementStatus::Reviewing.as_str(),
-                            RequirementStatus::Approved.as_str(),
-                            RequirementStatus::InProgress.as_str(),
-                        ],
+                        "$in": eligible_requirement_statuses
+                            .iter()
+                            .map(RequirementStatus::as_str)
+                            .collect::<Vec<_>>(),
                     },
                 },
                 doc! {
                     "$set": {
-                        "status": RequirementStatus::Blocked.as_str(),
+                        "status": requirement_status.as_str(),
                         "updated_at": now_rfc3339(),
                     },
                 },

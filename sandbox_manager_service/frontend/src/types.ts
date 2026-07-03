@@ -135,6 +135,11 @@ export interface PoolStatusResponse {
   cleanup_interval_seconds: number;
 }
 
+export interface UpdatePoolConfigPayload {
+  max_active?: number;
+  max_pending?: number;
+}
+
 export interface SystemConfigResponse {
   host: string;
   port: number;

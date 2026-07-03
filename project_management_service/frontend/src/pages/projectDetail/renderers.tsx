@@ -248,9 +248,13 @@ export function requirementStatusTag(status: RequirementRecord['status']) {
   const color =
     status === 'done'
       ? 'success'
-      : status === 'cancelled' || status === 'archived'
-        ? 'default'
-        : 'processing';
+      : status === 'failed'
+        ? 'error'
+        : status === 'blocked'
+          ? 'warning'
+          : status === 'cancelled' || status === 'archived'
+            ? 'default'
+            : 'processing';
   return <Tag color={color}>{item?.label || status}</Tag>;
 }
 
@@ -266,11 +270,13 @@ export function workItemStatusTag(status: ProjectWorkItemRecord['status']) {
   const color =
     status === 'done'
       ? 'success'
-      : status === 'blocked'
+      : status === 'failed'
         ? 'error'
-        : status === 'cancelled' || status === 'archived'
-          ? 'default'
-          : 'processing';
+        : status === 'blocked'
+          ? 'warning'
+          : status === 'cancelled' || status === 'archived'
+            ? 'default'
+            : 'processing';
   return <Tag color={color}>{item?.label || status}</Tag>;
 }
 

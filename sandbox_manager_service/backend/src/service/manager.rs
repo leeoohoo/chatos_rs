@@ -27,7 +27,8 @@ use crate::models::{
     RotateSandboxAccessClientKeyResponse, SandboxAccessClientRecord, SandboxAccessClientResponse,
     SandboxEventRecord, SandboxHealthCheck, SandboxHealthResponse, SandboxImageCatalogResponse,
     SandboxImageJobRecord, SandboxLeaseRecord, SandboxMcpCallRequest, SandboxMcpCallResponse,
-    SandboxMcpToolsResponse, SandboxStatus, SystemConfigResponse, UpdateSandboxAccessClientRequest,
+    SandboxMcpToolsResponse, SandboxStatus, SystemConfigResponse, UpdatePoolConfigRequest,
+    UpdateSandboxAccessClientRequest,
 };
 use crate::pool::SandboxPoolRef;
 use crate::store::{is_duplicate_key_error, SandboxStore};
@@ -100,7 +101,6 @@ impl SandboxManager {
         let lease_id = prefixed_id("lease");
         let sandbox_id = prefixed_id("sandbox");
         let agent_token_nonce = Uuid::new_v4().simple().to_string();
-        let agent_token = self.agent_token(lease_id.as_str(), agent_token_nonce.as_str());
         let now = now_rfc3339();
         let ttl = Duration::from_secs(input.ttl_seconds.unwrap_or(self.config.lease_ttl.as_secs()));
         let expires_at = (Utc::now()
@@ -126,24 +126,6 @@ impl SandboxManager {
         for tool in &tools {
             auth.ensure_tool_allowed(tool)?;
         }
-        let capacity_claim_until = (Utc::now() + ChronoDuration::minutes(5)).to_rfc3339();
-        let acquired_capacity = self
-            .store
-            .try_acquire_active_slot(
-                self.config.pool_max_active,
-                lease_id.as_str(),
-                sandbox_id.as_str(),
-                capacity_claim_until.as_str(),
-            )
-            .await
-            .map_err(ApiError::internal)?;
-        if !acquired_capacity {
-            return Err(ApiError::capacity(format!(
-                "sandbox global pool is full: max_active={}",
-                self.config.pool_max_active
-            )));
-        }
-
         let mut record = SandboxLeaseRecord {
             id: lease_id.clone(),
             sandbox_id: sandbox_id.clone(),
@@ -157,10 +139,10 @@ impl SandboxManager {
             backend_id: None,
             image_id: Some(image.id.clone()),
             image_ref: Some(image.image_ref.clone()),
-            status: SandboxStatus::Leasing,
+            status: SandboxStatus::Pending,
             agent_endpoint: None,
-            resource_limits: resource_limits.clone(),
-            network: network.clone(),
+            resource_limits,
+            network,
             tools,
             agent_token_nonce: Some(agent_token_nonce),
             idempotency_key: idempotency_key.clone(),
@@ -170,8 +152,40 @@ impl SandboxManager {
             destroyed_at: None,
             last_error: None,
         };
+
+        let capacity_claim_until = (Utc::now() + ChronoDuration::minutes(5)).to_rfc3339();
+        let acquired_capacity = self
+            .store
+            .try_acquire_active_slot(
+                self.pool.max_active(),
+                lease_id.as_str(),
+                sandbox_id.as_str(),
+                capacity_claim_until.as_str(),
+            )
+            .await
+            .map_err(ApiError::internal)?;
+        if acquired_capacity {
+            record.status = SandboxStatus::Leasing;
+        } else {
+            let pending = self
+                .store
+                .count_pending_leases(now.as_str())
+                .await
+                .map_err(ApiError::internal)?;
+            let max_pending = self.pool.max_pending();
+            if pending >= max_pending {
+                return Err(ApiError::capacity(format!(
+                    "sandbox global pool and queue are full: max_active={}, pending={}, max_pending={max_pending}",
+                    self.pool.max_active(),
+                    pending
+                )));
+            }
+        }
+
         if let Err(err) = self.store.create_lease(&record).await {
-            let _ = self.store.release_active_slot(lease_id.as_str()).await;
+            if acquired_capacity {
+                let _ = self.store.release_active_slot(lease_id.as_str()).await;
+            }
             if idempotency_key.is_some() && is_duplicate_key_error(&err) {
                 if let Some(existing) = self
                     .store
@@ -189,19 +203,24 @@ impl SandboxManager {
             }
             return Err(ApiError::internal(err));
         }
-        if let Err(err) = self
-            .store
-            .extend_active_slot(lease_id.as_str(), record.expires_at.as_str())
-            .await
-        {
-            record.status = SandboxStatus::Failed;
-            record.last_error = Some(err.clone());
-            record.idempotency_key = None;
-            record.updated_at = now_rfc3339();
-            let _ = self.store.replace_lease(&record).await;
-            let _ = self.store.release_active_slot(lease_id.as_str()).await;
-            return Err(ApiError::internal(err));
+
+        if !acquired_capacity {
+            self.event(
+                &record,
+                "lease_queued",
+                Some("sandbox lease queued"),
+                Some(json!({
+                    "backend": self.backend.kind(),
+                    "image_id": image.id,
+                    "image_ref": image.image_ref,
+                    "max_active": self.pool.max_active(),
+                    "max_pending": self.pool.max_pending(),
+                })),
+            )
+            .await;
+            return self.create_lease_response_from_existing(record);
         }
+
         self.event(
             &record,
             "lease_created",
@@ -214,27 +233,67 @@ impl SandboxManager {
         )
         .await;
 
+        self.start_claimed_lease(record).await
+    }
+
+    fn create_lease_response_from_existing(
+        &self,
+        record: SandboxLeaseRecord,
+    ) -> Result<CreateSandboxLeaseResponse, ApiError> {
+        Ok(CreateSandboxLeaseResponse {
+            lease_id: record.id.clone(),
+            sandbox_id: record.sandbox_id.clone(),
+            backend_id: record.backend_id.clone(),
+            image_id: record.image_id.clone(),
+            image_ref: record.image_ref.clone(),
+            status: record.status,
+            agent_endpoint: record.agent_endpoint.clone(),
+            agent_token: self.agent_token_for_record(&record),
+            run_workspace: record.run_workspace,
+            expires_at: record.expires_at,
+        })
+    }
+
+    async fn start_claimed_lease(
+        &self,
+        mut record: SandboxLeaseRecord,
+    ) -> Result<CreateSandboxLeaseResponse, ApiError> {
+        if let Err(err) = self
+            .store
+            .extend_active_slot(record.id.as_str(), record.expires_at.as_str())
+            .await
+        {
+            record.status = SandboxStatus::Failed;
+            record.last_error = Some(err.clone());
+            record.idempotency_key = None;
+            record.updated_at = now_rfc3339();
+            let _ = self.store.replace_lease(&record).await;
+            let _ = self.store.release_active_slot(record.id.as_str()).await;
+            return Err(ApiError::internal(err));
+        }
+
+        let agent_token = self.agent_token_for_record(&record);
         let create_result = self
             .backend
             .create(SandboxCreateSpec {
-                sandbox_id: sandbox_id.clone(),
+                sandbox_id: record.sandbox_id.clone(),
                 run_workspace: record.run_workspace.clone(),
                 image: record.image_ref.clone().unwrap_or_default(),
                 agent_token: Some(agent_token.clone()),
-                resource_limits,
-                network,
+                resource_limits: record.resource_limits.clone(),
+                network: record.network.clone(),
             })
             .await;
 
         match create_result {
             Ok(instance) => {
-                if let Err(err) = self.backend.start(sandbox_id.as_str()).await {
+                if let Err(err) = self.backend.start(record.sandbox_id.as_str()).await {
                     record.status = SandboxStatus::Failed;
                     record.last_error = Some(err.clone());
                     record.idempotency_key = None;
                     record.updated_at = now_rfc3339();
                     let _ = self.store.replace_lease(&record).await;
-                    let _ = self.store.release_active_slot(lease_id.as_str()).await;
+                    let _ = self.store.release_active_slot(record.id.as_str()).await;
                     self.event(&record, "sandbox_start_failed", Some(&err), None)
                         .await;
                     return Err(ApiError::with_code(
@@ -259,8 +318,8 @@ impl SandboxManager {
                 )
                 .await;
                 Ok(CreateSandboxLeaseResponse {
-                    lease_id,
-                    sandbox_id,
+                    lease_id: record.id,
+                    sandbox_id: record.sandbox_id,
                     backend_id: record.backend_id,
                     image_id: record.image_id,
                     image_ref: record.image_ref,
@@ -277,7 +336,7 @@ impl SandboxManager {
                 record.idempotency_key = None;
                 record.updated_at = now_rfc3339();
                 let _ = self.store.replace_lease(&record).await;
-                let _ = self.store.release_active_slot(lease_id.as_str()).await;
+                let _ = self.store.release_active_slot(record.id.as_str()).await;
                 self.event(&record, "sandbox_create_failed", Some(&err), None)
                     .await;
                 Err(ApiError::with_code(
@@ -289,32 +348,60 @@ impl SandboxManager {
         }
     }
 
-    fn create_lease_response_from_existing(
-        &self,
-        record: SandboxLeaseRecord,
-    ) -> Result<CreateSandboxLeaseResponse, ApiError> {
-        if !matches!(record.status, SandboxStatus::Ready | SandboxStatus::Running) {
-            return Err(ApiError::with_code(
-                StatusCode::CONFLICT,
-                "sandbox_lease_idempotency_in_progress",
-                format!(
-                    "sandbox lease for idempotency key is not ready yet: status={}",
-                    record.status.as_str()
-                ),
-            ));
+    pub async fn promote_pending_leases(&self) -> Result<usize, String> {
+        let mut promoted = 0usize;
+        loop {
+            let now = now_rfc3339();
+            let pending = self.store.list_pending_leases(now.as_str(), 1).await?;
+            let Some(candidate) = pending.into_iter().next() else {
+                break;
+            };
+            let capacity_claim_until = (Utc::now() + ChronoDuration::minutes(5)).to_rfc3339();
+            let acquired_capacity = self
+                .store
+                .try_acquire_active_slot(
+                    self.pool.max_active(),
+                    candidate.id.as_str(),
+                    candidate.sandbox_id.as_str(),
+                    capacity_claim_until.as_str(),
+                )
+                .await?;
+            if !acquired_capacity {
+                break;
+            }
+
+            let now = now_rfc3339();
+            let Some(record) = self
+                .store
+                .claim_pending_lease(candidate.id.as_str(), now.as_str())
+                .await?
+            else {
+                let _ = self.store.release_active_slot(candidate.id.as_str()).await;
+                continue;
+            };
+
+            self.event(
+                &record,
+                "lease_promoted",
+                Some("queued sandbox lease promoted"),
+                Some(json!({
+                    "max_active": self.pool.max_active(),
+                    "max_pending": self.pool.max_pending(),
+                })),
+            )
+            .await;
+
+            if let Err(err) = self.start_claimed_lease(record.clone()).await {
+                tracing::warn!(
+                    lease_id = record.id.as_str(),
+                    sandbox_id = record.sandbox_id.as_str(),
+                    "promote pending sandbox failed: {}",
+                    err.message
+                );
+            }
+            promoted += 1;
         }
-        Ok(CreateSandboxLeaseResponse {
-            lease_id: record.id.clone(),
-            sandbox_id: record.sandbox_id.clone(),
-            backend_id: record.backend_id.clone(),
-            image_id: record.image_id.clone(),
-            image_ref: record.image_ref.clone(),
-            status: record.status,
-            agent_endpoint: record.agent_endpoint.clone(),
-            agent_token: self.agent_token_for_record(&record),
-            run_workspace: record.run_workspace,
-            expires_at: record.expires_at,
-        })
+        Ok(promoted)
     }
 
     pub async fn heartbeat(
@@ -684,7 +771,13 @@ impl SandboxManager {
         auth.require_scope(SCOPE_POOL_READ)?;
         let active = self
             .store
-            .active_capacity_count(self.config.pool_max_active)
+            .active_capacity_count(self.pool.max_active())
+            .await
+            .map_err(ApiError::internal)?;
+        let now = now_rfc3339();
+        let pending = self
+            .store
+            .count_pending_leases(now.as_str())
             .await
             .map_err(ApiError::internal)?;
         Ok(PoolStatusResponse {
@@ -692,10 +785,31 @@ impl SandboxManager {
             max_active: self.pool.max_active(),
             active,
             max_pending: self.pool.max_pending(),
-            pending: self.pool.pending(),
+            pending,
             lease_ttl_seconds: self.config.lease_ttl.as_secs(),
             cleanup_interval_seconds: self.config.cleanup_interval.as_secs(),
         })
+    }
+
+    pub async fn update_pool_config(
+        &self,
+        auth: &SandboxAuthContext,
+        input: UpdatePoolConfigRequest,
+    ) -> Result<PoolStatusResponse, ApiError> {
+        auth.require_admin()?;
+        let max_active = input
+            .max_active
+            .unwrap_or_else(|| self.pool.max_active())
+            .max(1);
+        let max_pending = input.max_pending.unwrap_or_else(|| self.pool.max_pending());
+        self.pool.set_limits(max_active, max_pending);
+        if let Err(err) = self.promote_pending_leases().await {
+            tracing::warn!(
+                "promote pending sandboxes after pool config update failed: {}",
+                err
+            );
+        }
+        self.pool_status(auth).await
     }
 
     pub fn system_config(
@@ -708,8 +822,8 @@ impl SandboxManager {
             port: self.config.port,
             backend: self.backend.kind().to_string(),
             work_root: self.config.work_root.to_string_lossy().to_string(),
-            pool_max_active: self.config.pool_max_active,
-            pool_max_pending: self.config.pool_max_pending,
+            pool_max_active: self.pool.max_active(),
+            pool_max_pending: self.pool.max_pending(),
             lease_ttl_seconds: self.config.lease_ttl.as_secs(),
             cleanup_interval_seconds: self.config.cleanup_interval.as_secs(),
             agent_port: self.config.agent_port,
@@ -932,6 +1046,24 @@ impl SandboxManager {
                 tracing::warn!("destroy expired sandbox failed: {}", err.message);
             }
         }
+        let expired_pending = self.store.list_expired_pending(now.as_str(), 100).await?;
+        for mut record in expired_pending {
+            record.status = SandboxStatus::Expired;
+            record.updated_at = now_rfc3339();
+            record.last_error = Some("queued lease expired".to_string());
+            record.idempotency_key = None;
+            self.store.replace_lease(&record).await?;
+            self.event(
+                &record,
+                "sandbox_expired",
+                Some("queued sandbox lease expired"),
+                None,
+            )
+            .await;
+        }
+        if let Err(err) = self.promote_pending_leases().await {
+            tracing::warn!("promote pending sandboxes after cleanup failed: {}", err);
+        }
         Ok(())
     }
 
@@ -1038,6 +1170,9 @@ impl SandboxManager {
         let _ = self.store.release_active_slot(record.id.as_str()).await;
         self.event(&record, event_type, Some("sandbox destroyed"), None)
             .await;
+        if let Err(err) = self.promote_pending_leases().await {
+            tracing::warn!("promote pending sandboxes after destroy failed: {}", err);
+        }
         Ok(())
     }
 

@@ -128,6 +128,33 @@ impl RunService {
                 return Err(err);
             }
         };
+        if response.is_waiting() {
+            self.append_sandbox_event(
+                run,
+                "sandbox_queued",
+                format!("沙箱正在排队或启动中: {}", response.status_label()),
+                Some(json!({
+                    "sandbox_id": response.sandbox_id.as_str(),
+                    "lease_id": response.lease_id.as_str(),
+                    "status": response.status_label(),
+                })),
+            )
+            .await;
+        }
+
+        let response = match client.wait_until_ready(response).await {
+            Ok(response) => response,
+            Err(err) => {
+                self.append_sandbox_event(
+                    run,
+                    "sandbox_failed",
+                    format!("等待沙箱就绪失败: {err}"),
+                    None,
+                )
+                .await;
+                return Err(err);
+            }
+        };
 
         let context = match SandboxRuntimeContext::from_response(
             response,
@@ -326,7 +353,7 @@ impl SandboxRuntimeContext {
             .agent_endpoint
             .map(|value| value.trim().trim_end_matches('/').to_string())
             .filter(|value| !value.is_empty())
-            .unwrap_or_default();
+            .ok_or_else(|| "sandbox agent endpoint is empty".to_string())?;
         let manager_base_url = manager_base_url.trim().trim_end_matches('/').to_string();
         if manager_base_url.is_empty() {
             return Err("sandbox manager base url is empty".to_string());
@@ -522,10 +549,71 @@ struct CreateSandboxLeaseResponse {
     lease_id: String,
     sandbox_id: String,
     backend_id: Option<String>,
+    #[serde(default)]
+    status: Option<String>,
     agent_endpoint: Option<String>,
     agent_token: Option<String>,
     run_workspace: String,
     expires_at: String,
+    #[serde(default)]
+    last_error: Option<String>,
+}
+
+impl CreateSandboxLeaseResponse {
+    fn status_label(&self) -> &str {
+        self.status.as_deref().unwrap_or("unknown")
+    }
+
+    fn is_ready(&self) -> bool {
+        matches!(
+            self.status.as_deref().unwrap_or("ready"),
+            "ready" | "running"
+        ) && self
+            .agent_endpoint
+            .as_deref()
+            .map(str::trim)
+            .is_some_and(|value| !value.is_empty())
+    }
+
+    fn is_waiting(&self) -> bool {
+        if self.status.is_none() {
+            return self
+                .agent_endpoint
+                .as_deref()
+                .map(str::trim)
+                .map_or(true, str::is_empty);
+        }
+        matches!(
+            self.status.as_deref().unwrap_or("leasing"),
+            "pending" | "leasing" | "starting"
+        )
+    }
+
+    fn is_terminal_failure(&self) -> bool {
+        matches!(
+            self.status.as_deref(),
+            Some("failed" | "expired" | "destroyed")
+        )
+    }
+
+    fn apply_record(&mut self, record: SandboxLeaseRecordResponse) {
+        self.backend_id = record.backend_id;
+        self.status = Some(record.status);
+        self.agent_endpoint = record.agent_endpoint;
+        self.run_workspace = record.run_workspace;
+        self.expires_at = record.expires_at;
+        self.last_error = record.last_error;
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct SandboxLeaseRecordResponse {
+    backend_id: Option<String>,
+    status: String,
+    agent_endpoint: Option<String>,
+    run_workspace: String,
+    expires_at: String,
+    last_error: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -626,6 +714,55 @@ impl SandboxManagerClient {
                 .map_err(|err| format!("decode sandbox lease response failed: {err}"));
         }
         Err("sandbox lease idempotency retry loop exhausted".to_string())
+    }
+
+    async fn wait_until_ready(
+        &self,
+        mut response: CreateSandboxLeaseResponse,
+    ) -> Result<CreateSandboxLeaseResponse, String> {
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(300);
+        loop {
+            if response.is_ready() {
+                return Ok(response);
+            }
+            if response.is_terminal_failure() {
+                let detail = response
+                    .last_error
+                    .as_deref()
+                    .filter(|value| !value.trim().is_empty())
+                    .unwrap_or("no error detail");
+                return Err(format!(
+                    "sandbox lease reached terminal status {}: {detail}",
+                    response.status_label()
+                ));
+            }
+            if tokio::time::Instant::now() >= deadline {
+                return Err(format!(
+                    "sandbox lease did not become ready before timeout: sandbox_id={}, lease_id={}, status={}",
+                    response.sandbox_id,
+                    response.lease_id,
+                    response.status_label()
+                ));
+            }
+            tokio::time::sleep(Duration::from_secs(2)).await;
+            let record = self.get_sandbox(response.sandbox_id.as_str()).await?;
+            response.apply_record(record);
+        }
+    }
+
+    async fn get_sandbox(&self, sandbox_id: &str) -> Result<SandboxLeaseRecordResponse, String> {
+        self.apply_auth(
+            self.client
+                .get(format!("{}/api/sandboxes/{}", self.base_url, sandbox_id)),
+        )
+        .send()
+        .await
+        .map_err(|err| format!("request sandbox detail failed: {err}"))?
+        .error_for_status()
+        .map_err(|err| format!("sandbox detail request returned error: {err}"))?
+        .json::<SandboxLeaseRecordResponse>()
+        .await
+        .map_err(|err| format!("decode sandbox detail response failed: {err}"))
     }
 
     async fn health(&self, context: &SandboxRuntimeContext) -> Result<SandboxHealthResult, String> {

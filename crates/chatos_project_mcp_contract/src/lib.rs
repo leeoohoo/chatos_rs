@@ -149,23 +149,23 @@ mod tests {
             Some(super::args::RequirementStatus::Approved)
         );
 
-        let blocked_update = serde_json::from_value::<super::args::UpdateRequirementArgs>(json!({
+        let failed_update = serde_json::from_value::<super::args::UpdateRequirementArgs>(json!({
             "requirement_id": "req-1",
             "patch": {
-                "status": "blocked"
+                "status": "failed"
             }
         }))
-        .expect("blocked requirement update args");
+        .expect("failed requirement update args");
         assert_eq!(
-            blocked_update.patch.status,
-            Some(super::args::RequirementStatus::Blocked)
+            failed_update.patch.status,
+            Some(super::args::RequirementStatus::Failed)
         );
 
         let update = serde_json::from_value::<super::args::UpdateProjectTaskArgs>(json!({
             "project_task_id": "task-1",
             "patch": {
                 "requirement_id": "req-1",
-                "status": "blocked",
+                "status": "failed",
                 "tags": ["backend", "mcp"]
             },
             "prerequisite_project_task_ids": ["task-0"]
@@ -173,7 +173,7 @@ mod tests {
         .expect("update project task args");
         assert_eq!(
             update.patch.status,
-            Some(super::args::ProjectTaskStatus::Blocked)
+            Some(super::args::ProjectTaskStatus::Failed)
         );
         assert_eq!(
             update.patch.tags,
@@ -190,7 +190,7 @@ mod tests {
         assert_schema_snapshot_hash(
             "project_management_server_tools",
             schemas::project_management_server_tool_definitions(None),
-            0x84caccb7f15a604e,
+            0x2d9b70db3feb4710,
         );
     }
 
@@ -199,7 +199,7 @@ mod tests {
         assert_schema_snapshot_hash(
             "task_runner_builtin_tools",
             schemas::task_runner_builtin_tool_definitions(None),
-            0x84caccb7f15a604e,
+            0x2d9b70db3feb4710,
         );
     }
 

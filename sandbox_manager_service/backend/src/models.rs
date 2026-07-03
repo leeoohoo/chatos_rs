@@ -344,6 +344,12 @@ pub struct PoolStatusResponse {
     pub cleanup_interval_seconds: u64,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+pub struct UpdatePoolConfigRequest {
+    pub max_active: Option<usize>,
+    pub max_pending: Option<usize>,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct SystemConfigResponse {
     pub host: String,

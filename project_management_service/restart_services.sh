@@ -290,10 +290,10 @@ ensure_frontend_deps() {
   echo "[INFO] installing project_management_service frontend dependencies..."
   (
     cd "$FRONTEND_DIR"
-    if [[ -f package-lock.json ]]; then
-      npm ci
+    if [[ "${REMOTE_NPM_INSTALL_MODE:-install}" == "ci" && -f package-lock.json ]]; then
+      npm ci --include=dev
     else
-      npm install
+      npm install --include=dev
     fi
   )
 }

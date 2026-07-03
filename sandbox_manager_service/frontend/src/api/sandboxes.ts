@@ -14,6 +14,7 @@ import type {
   SandboxMcpCallPayload,
   SandboxMcpCallResponse,
   SandboxMcpToolsResponse,
+  UpdatePoolConfigPayload,
 } from '../types';
 import { request, withQuery } from './client';
 
@@ -67,4 +68,9 @@ export const sandboxesApi = {
       method: 'DELETE',
     }),
   poolStatus: () => request<PoolStatusResponse>('/api/sandbox-pool/status'),
+  updatePoolConfig: (payload: UpdatePoolConfigPayload) =>
+    request<PoolStatusResponse>('/api/sandbox-pool/config', {
+      method: 'PUT',
+      body: JSON.stringify(payload),
+    }),
 };

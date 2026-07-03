@@ -91,6 +91,9 @@ pub async fn sync_task_runner_work_item_status(
         ProjectWorkItemStatus::Done => {
             complete_related_requirements_if_work_items_done(store, &work_item).await?;
         }
+        ProjectWorkItemStatus::Failed => {
+            fail_related_requirements_if_work_item_failed(store, &work_item).await?;
+        }
         ProjectWorkItemStatus::Blocked => {
             block_related_requirements_if_work_item_blocked(store, &work_item).await?;
         }
@@ -195,10 +198,28 @@ fn project_work_item_status_from_task_runner_status(status: &str) -> Option<Proj
             Some(ProjectWorkItemStatus::InProgress)
         }
         "succeeded" | "success" | "completed" | "done" => Some(ProjectWorkItemStatus::Done),
-        "failed" | "error" | "blocked" => Some(ProjectWorkItemStatus::Blocked),
+        "failed" | "error" => Some(ProjectWorkItemStatus::Failed),
+        "blocked" => Some(ProjectWorkItemStatus::Blocked),
         "cancelled" | "canceled" => Some(ProjectWorkItemStatus::Cancelled),
         _ => None,
     }
+}
+
+async fn fail_related_requirements_if_work_item_failed(
+    store: &AppStore,
+    work_item: &ProjectWorkItemRecord,
+) -> Result<Vec<RequirementRecord>, ExecutionSyncError> {
+    if work_item.status != ProjectWorkItemStatus::Failed {
+        return Ok(Vec::new());
+    }
+
+    update_related_requirements_from_work_item(
+        store,
+        work_item,
+        RequirementStatus::Failed,
+        requirement_status_can_fail_from_work_items,
+    )
+    .await
 }
 
 async fn block_related_requirements_if_work_item_blocked(
@@ -209,6 +230,21 @@ async fn block_related_requirements_if_work_item_blocked(
         return Ok(Vec::new());
     }
 
+    update_related_requirements_from_work_item(
+        store,
+        work_item,
+        RequirementStatus::Blocked,
+        requirement_status_can_block_from_work_items,
+    )
+    .await
+}
+
+async fn update_related_requirements_from_work_item(
+    store: &AppStore,
+    work_item: &ProjectWorkItemRecord,
+    next_status: RequirementStatus,
+    can_update: fn(RequirementStatus) -> bool,
+) -> Result<Vec<RequirementRecord>, ExecutionSyncError> {
     let requirements = store
         .list_requirements(&work_item.project_id, None, None)
         .await
@@ -228,14 +264,14 @@ async fn block_related_requirements_if_work_item_blocked(
             break;
         };
         current_id = requirement.parent_requirement_id.as_deref();
-        if !requirement_status_can_block_from_work_items(requirement.status) {
+        if !can_update(requirement.status) {
             continue;
         }
         if let Some(updated_requirement) = store
             .update_requirement(
                 requirement.id.as_str(),
                 UpdateRequirementRequest {
-                    status: Some(RequirementStatus::Blocked),
+                    status: Some(next_status),
                     ..UpdateRequirementRequest::default()
                 },
             )
@@ -335,6 +371,16 @@ fn requirement_status_can_complete_from_work_items(status: RequirementStatus) ->
     matches!(
         status,
         RequirementStatus::Approved | RequirementStatus::InProgress
+    )
+}
+
+fn requirement_status_can_fail_from_work_items(status: RequirementStatus) -> bool {
+    matches!(
+        status,
+        RequirementStatus::Reviewing
+            | RequirementStatus::Approved
+            | RequirementStatus::InProgress
+            | RequirementStatus::Blocked
     )
 }
 
@@ -640,7 +686,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn failed_work_item_blocks_related_in_progress_requirements() {
+    async fn failed_work_item_fails_related_in_progress_requirements() {
         let store = test_store().await;
         let project = create_test_project(&store).await;
         let parent = create_test_requirement(&store, &project.id, None, "Parent").await;
@@ -672,6 +718,55 @@ mod tests {
         )
         .await
         .expect("sync failed task status");
+
+        assert_eq!(response.work_item.status, ProjectWorkItemStatus::Failed);
+        let child_after = store
+            .get_requirement(&child.id)
+            .await
+            .expect("get child")
+            .expect("child");
+        let parent_after = store
+            .get_requirement(&parent.id)
+            .await
+            .expect("get parent")
+            .expect("parent");
+        assert_eq!(child_after.status, RequirementStatus::Failed);
+        assert_eq!(parent_after.status, RequirementStatus::Failed);
+    }
+
+    #[tokio::test]
+    async fn blocked_work_item_blocks_related_in_progress_requirements() {
+        let store = test_store().await;
+        let project = create_test_project(&store).await;
+        let parent = create_test_requirement(&store, &project.id, None, "Parent").await;
+        let child =
+            create_test_requirement(&store, &project.id, Some(parent.id.clone()), "Child").await;
+        let item = create_test_work_item(&store, &child, "Blocked task").await;
+
+        for requirement in [&parent, &child] {
+            store
+                .update_requirement(
+                    &requirement.id,
+                    UpdateRequirementRequest {
+                        status: Some(RequirementStatus::InProgress),
+                        ..UpdateRequirementRequest::default()
+                    },
+                )
+                .await
+                .expect("mark requirement in progress");
+        }
+
+        let response = sync_task_runner_work_item_status(
+            &store,
+            &item.id,
+            SyncTaskRunnerWorkItemStatusRequest {
+                task_runner_task_id: "task-runner-1".to_string(),
+                task_runner_status: Some("blocked".to_string()),
+                ..SyncTaskRunnerWorkItemStatusRequest::default()
+            },
+        )
+        .await
+        .expect("sync blocked task status");
 
         assert_eq!(response.work_item.status, ProjectWorkItemStatus::Blocked);
         let child_after = store

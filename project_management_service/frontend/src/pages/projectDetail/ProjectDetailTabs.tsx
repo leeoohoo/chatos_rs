@@ -147,21 +147,29 @@ export function ProjectDetailTabs({
                   </Descriptions.Item>
                 </Descriptions>
                 <Row gutter={16}>
-                  <Col xs={24} md={8}>
+                  <Col xs={24} md={6}>
                     <Card>
                       <Statistic title="需求数" value={requirements.length} />
                     </Card>
                   </Col>
-                  <Col xs={24} md={8}>
+                  <Col xs={24} md={6}>
                     <Card>
                       <Statistic title="项目任务数" value={workItems.length} />
                     </Card>
                   </Col>
-                  <Col xs={24} md={8}>
+                  <Col xs={24} md={6}>
                     <Card>
                       <Statistic
                         title="阻塞任务"
                         value={workItems.filter((item) => item.status === 'blocked').length}
+                      />
+                    </Card>
+                  </Col>
+                  <Col xs={24} md={6}>
+                    <Card>
+                      <Statistic
+                        title="失败任务"
+                        value={workItems.filter((item) => item.status === 'failed').length}
                       />
                     </Card>
                   </Col>

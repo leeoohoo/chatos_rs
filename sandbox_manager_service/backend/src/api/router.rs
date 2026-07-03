@@ -16,6 +16,10 @@ pub fn build_router(state: AppState) -> Router {
     let protected_api = Router::new()
         .route("/api/system/config", get(handlers::system_config))
         .route("/api/sandbox-pool/status", get(handlers::pool_status))
+        .route(
+            "/api/sandbox-pool/config",
+            put(handlers::update_pool_config),
+        )
         .route("/api/sandbox-images", get(handlers::list_sandbox_images))
         .route(
             "/api/sandbox-images/jobs",
