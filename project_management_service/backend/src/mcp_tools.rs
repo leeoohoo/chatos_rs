@@ -752,6 +752,7 @@ impl From<McpRequirementStatus> for RequirementStatus {
             McpRequirementStatus::Reviewing => Self::Reviewing,
             McpRequirementStatus::Approved => Self::Approved,
             McpRequirementStatus::InProgress => Self::InProgress,
+            McpRequirementStatus::Blocked => Self::Blocked,
             McpRequirementStatus::Done => Self::Done,
             McpRequirementStatus::Cancelled => Self::Cancelled,
             McpRequirementStatus::Archived => Self::Archived,

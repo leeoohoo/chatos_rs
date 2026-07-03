@@ -8,6 +8,7 @@ export type RequirementStatus =
   | 'reviewing'
   | 'approved'
   | 'in_progress'
+  | 'blocked'
   | 'done'
   | 'cancelled'
   | 'archived';

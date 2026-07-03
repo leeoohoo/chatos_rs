@@ -10,6 +10,7 @@ pub const REQUIREMENT_STATUS_VALUES: &[&str] = &[
     "reviewing",
     "approved",
     "in_progress",
+    "blocked",
     "done",
     "cancelled",
 ];

@@ -149,6 +149,18 @@ mod tests {
             Some(super::args::RequirementStatus::Approved)
         );
 
+        let blocked_update = serde_json::from_value::<super::args::UpdateRequirementArgs>(json!({
+            "requirement_id": "req-1",
+            "patch": {
+                "status": "blocked"
+            }
+        }))
+        .expect("blocked requirement update args");
+        assert_eq!(
+            blocked_update.patch.status,
+            Some(super::args::RequirementStatus::Blocked)
+        );
+
         let update = serde_json::from_value::<super::args::UpdateProjectTaskArgs>(json!({
             "project_task_id": "task-1",
             "patch": {
@@ -178,7 +190,7 @@ mod tests {
         assert_schema_snapshot_hash(
             "project_management_server_tools",
             schemas::project_management_server_tool_definitions(None),
-            0x2998b96aa560a008,
+            0x84caccb7f15a604e,
         );
     }
 
@@ -187,7 +199,7 @@ mod tests {
         assert_schema_snapshot_hash(
             "task_runner_builtin_tools",
             schemas::task_runner_builtin_tool_definitions(None),
-            0x2998b96aa560a008,
+            0x84caccb7f15a604e,
         );
     }
 

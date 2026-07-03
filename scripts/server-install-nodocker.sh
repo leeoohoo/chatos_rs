@@ -86,6 +86,7 @@ ENV_FILE="$ENV_DIR/chatos-backend.env"
 SERVICE_FILE="/etc/systemd/system/${SERVICE_NAME}.service"
 NGINX_SITE="/etc/nginx/sites-available/chatos.conf"
 NGINX_LINK="/etc/nginx/sites-enabled/chatos.conf"
+NGINX_DEFAULT_LINK="/etc/nginx/sites-enabled/default"
 
 EXISTING_CHATOS_WORKSPACE_DIR="$(env_file_value "CHATOS_WORKSPACE_DIR" "$ENV_FILE")"
 CHATOS_WORKSPACE_DIR="${CHATOS_WORKSPACE_DIR:-${EXISTING_CHATOS_WORKSPACE_DIR:-$BACKEND_DIR/data/workspace}}"
@@ -181,6 +182,9 @@ sed \
   -e "s|__FRONTEND_ROOT__|$FRONTEND_DIR|g" \
   "$NGINX_TEMPLATE" > "$NGINX_SITE"
 
+if [[ -e "$NGINX_DEFAULT_LINK" && "$NGINX_DEFAULT_LINK" != "$NGINX_LINK" ]]; then
+  rm -f "$NGINX_DEFAULT_LINK"
+fi
 ln -sfn "$NGINX_SITE" "$NGINX_LINK"
 
 nginx -t

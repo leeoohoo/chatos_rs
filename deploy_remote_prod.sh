@@ -19,6 +19,9 @@ REMOTE_BACKEND_PORT="${REMOTE_BACKEND_PORT:-13001}"
 REMOTE_SERVER_NAME="${REMOTE_SERVER_NAME:-_}"
 REMOTE_CHATOS_WORKSPACE_DIR="${REMOTE_CHATOS_WORKSPACE_DIR:-}"
 REMOTE_STAGE_DIR="${REMOTE_STAGE_DIR:-/tmp/chatos_rs_deploy_staging}"
+REMOTE_REBUILD_AUX_SERVICES="${REMOTE_REBUILD_AUX_SERVICES:-1}"
+REMOTE_REBUILD_OFFICIAL_WEBSITE="${REMOTE_REBUILD_OFFICIAL_WEBSITE:-1}"
+REMOTE_REBUILD_DB_CONNECTION_HUB="${REMOTE_REBUILD_DB_CONNECTION_HUB:-1}"
 PLAN_ONLY="${PLAN_ONLY:-0}"
 SYNC_ONLY="${SYNC_ONLY:-0}"
 
@@ -61,12 +64,21 @@ if [[ "$REMOTE_APP_ROOT" == "$REMOTE_DEPLOY_ROOT" ]]; then
   exit 1
 fi
 
+SSH_OPTIONS=(
+  -p "$REMOTE_PORT"
+  -o StrictHostKeyChecking=accept-new
+  -o PreferredAuthentications=password
+  -o PubkeyAuthentication=no
+  -o NumberOfPasswordPrompts=1
+)
+RSYNC_SSH="ssh -p $REMOTE_PORT -o StrictHostKeyChecking=accept-new -o PreferredAuthentications=password -o PubkeyAuthentication=no -o NumberOfPasswordPrompts=1"
+
 remote_run() {
-  sshpass -p "$REMOTE_PASSWORD" ssh -p "$REMOTE_PORT" -o StrictHostKeyChecking=accept-new "$REMOTE_USER@$REMOTE_HOST" "$@"
+  sshpass -p "$REMOTE_PASSWORD" ssh "${SSH_OPTIONS[@]}" "$REMOTE_USER@$REMOTE_HOST" "$@"
 }
 
 remote_run_bash() {
-  sshpass -p "$REMOTE_PASSWORD" ssh -p "$REMOTE_PORT" -o StrictHostKeyChecking=accept-new "$REMOTE_USER@$REMOTE_HOST" 'bash -s' --
+  sshpass -p "$REMOTE_PASSWORD" ssh "${SSH_OPTIONS[@]}" "$REMOTE_USER@$REMOTE_HOST" 'bash -s' --
 }
 
 cat <<EOF
@@ -81,6 +93,7 @@ cat <<EOF
 - 远端 workspace: ${REMOTE_CHATOS_WORKSPACE_DIR:-auto}
 - 远端 nginx: /etc/nginx/sites-available/chatos.conf -> /etc/nginx/sites-enabled/chatos.conf
 - Rust target-dir: $TARGET_DIR
+- 更新范围: 主服务 + 附属服务(REMOTE_REBUILD_AUX_SERVICES=$REMOTE_REBUILD_AUX_SERVICES, OFFICIAL=$REMOTE_REBUILD_OFFICIAL_WEBSITE, DB_HUB=$REMOTE_REBUILD_DB_CONNECTION_HUB)
 - 模式: PLAN_ONLY=$PLAN_ONLY SYNC_ONLY=$SYNC_ONLY
 EOF
 
@@ -104,7 +117,7 @@ sshpass -p "$REMOTE_PASSWORD" rsync -az --delete \
   --exclude 'logs/' \
   --exclude '.local/' \
   --exclude '.vite/' \
-  -e "ssh -p $REMOTE_PORT -o StrictHostKeyChecking=accept-new" \
+  -e "$RSYNC_SSH" \
   "$ROOT_DIR/" "$REMOTE_USER@$REMOTE_HOST:$REMOTE_STAGE_DIR/"
 
 if [[ "$SYNC_ONLY" == "1" ]]; then
@@ -122,6 +135,9 @@ REMOTE_SERVICE_NAME="__REMOTE_SERVICE_NAME__"
 REMOTE_BACKEND_PORT="__REMOTE_BACKEND_PORT__"
 REMOTE_SERVER_NAME="__REMOTE_SERVER_NAME__"
 REMOTE_CHATOS_WORKSPACE_DIR="__REMOTE_CHATOS_WORKSPACE_DIR__"
+REMOTE_REBUILD_AUX_SERVICES="__REMOTE_REBUILD_AUX_SERVICES__"
+REMOTE_REBUILD_OFFICIAL_WEBSITE="__REMOTE_REBUILD_OFFICIAL_WEBSITE__"
+REMOTE_REBUILD_DB_CONNECTION_HUB="__REMOTE_REBUILD_DB_CONNECTION_HUB__"
 
 if [[ -d "$HOME/.cargo/bin" ]]; then
   export PATH="$HOME/.cargo/bin:$PATH"
@@ -162,6 +178,13 @@ fi
 log() { printf '[REMOTE] %s\n' "$*"; }
 warn() { printf '[REMOTE-WARN] %s\n' "$*"; }
 
+env_bool() {
+  case "${1:-}" in
+    1|true|TRUE|yes|YES|on|ON) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 env_file_value() {
   local key="$1"
   local file="$2"
@@ -176,6 +199,139 @@ env_file_value() {
       exit
     }
   ' "$file"
+}
+
+load_chatos_env() {
+  local env_file="/etc/chatos/chatos-backend.env"
+  if [[ -f "$env_file" ]]; then
+    set -a
+    # shellcheck disable=SC1090
+    source "$env_file"
+    set +a
+  fi
+}
+
+mongo_url_for() {
+  local database="$1"
+  local host="${MONGODB_HOST:-127.0.0.1}"
+  local port="${MONGODB_PORT:-27018}"
+  local user="${MONGODB_USER:-admin}"
+  local password="${MONGODB_PASSWORD:-admin}"
+  local auth_source="${MONGODB_AUTH_SOURCE:-admin}"
+  printf 'mongodb://%s:%s@%s:%s/%s?authSource=%s' "$user" "$password" "$host" "$port" "$database" "$auth_source"
+}
+
+mongo_admin_uri() {
+  local host="${MONGODB_HOST:-127.0.0.1}"
+  local port="${MONGODB_PORT:-27018}"
+  local user="${MONGODB_USER:-admin}"
+  local password="${MONGODB_PASSWORD:-admin}"
+  local auth_source="${MONGODB_AUTH_SOURCE:-admin}"
+  printf 'mongodb://%s:%s@%s:%s/%s' "$user" "$password" "$host" "$port" "$auth_source"
+}
+
+install_frontend_deps() {
+  local dir="$1"
+  local label="$2"
+  if [[ ! -f "$dir/package.json" ]]; then
+    return 0
+  fi
+  log "安装/刷新 ${label} 前端依赖"
+  if [[ -f "$dir/package-lock.json" ]]; then
+    if ! npm --prefix "$dir" ci; then
+      warn "${label} npm ci 失败，回退到 npm install 以刷新不匹配的 lockfile"
+      npm --prefix "$dir" install
+    fi
+  else
+    npm --prefix "$dir" install
+  fi
+}
+
+prepare_aux_service_env() {
+  load_chatos_env
+
+  export MAIN_BACKEND_PORT="${EFFECTIVE_BACKEND_PORT}"
+  export BACKEND_PORT="${EFFECTIVE_BACKEND_PORT}"
+  export START_DEV_MONGO="${START_DEV_MONGO:-auto}"
+
+  export USER_SERVICE_PORT="${USER_SERVICE_PORT:-39190}"
+  export USER_SERVICE_FRONTEND_PORT="${USER_SERVICE_FRONTEND_PORT:-39191}"
+  export CHATOS_USER_SERVICE_BASE_URL="${CHATOS_USER_SERVICE_BASE_URL:-http://127.0.0.1:${USER_SERVICE_PORT}}"
+  export USER_SERVICE_BASE_URL="${USER_SERVICE_BASE_URL:-$CHATOS_USER_SERVICE_BASE_URL}"
+  export USER_SERVICE_DATABASE_URL="${USER_SERVICE_DATABASE_URL:-$(mongo_url_for user_service)}"
+
+  export MEMORY_ENGINE_PORT="${MEMORY_ENGINE_PORT:-7081}"
+  export MEMORY_ENGINE_FRONTEND_PORT="${MEMORY_ENGINE_FRONTEND_PORT:-4178}"
+  export MEMORY_ENGINE_BASE_URL="${MEMORY_ENGINE_BASE_URL:-http://127.0.0.1:${MEMORY_ENGINE_PORT}/api/memory-engine/v1}"
+  export MEMORY_ENGINE_MONGODB_DATABASE="${MEMORY_ENGINE_MONGODB_DATABASE:-memory_engine}"
+  export MEMORY_ENGINE_MONGODB_URI="${MEMORY_ENGINE_MONGODB_URI:-$(mongo_admin_uri)}"
+  export MEMORY_ENGINE_OPERATOR_TOKEN="${MEMORY_ENGINE_OPERATOR_TOKEN:-${TASK_RUNNER_MEMORY_ENGINE_OPERATOR_TOKEN:-chatos-memory-engine-prod-operator-token}}"
+  export TASK_RUNNER_MEMORY_ENGINE_OPERATOR_TOKEN="${TASK_RUNNER_MEMORY_ENGINE_OPERATOR_TOKEN:-$MEMORY_ENGINE_OPERATOR_TOKEN}"
+
+  export PROJECT_SERVICE_PORT="${PROJECT_SERVICE_PORT:-39210}"
+  export PROJECT_SERVICE_FRONTEND_PORT="${PROJECT_SERVICE_FRONTEND_PORT:-39211}"
+  export PROJECT_SERVICE_BASE_URL="${PROJECT_SERVICE_BASE_URL:-http://127.0.0.1:${PROJECT_SERVICE_PORT}}"
+  export CHATOS_PROJECT_SERVICE_BASE_URL="${CHATOS_PROJECT_SERVICE_BASE_URL:-$PROJECT_SERVICE_BASE_URL}"
+  export PROJECT_SERVICE_DATABASE_URL="${PROJECT_SERVICE_DATABASE_URL:-$(mongo_url_for project_management_service)}"
+  export PROJECT_SERVICE_SYNC_SECRET="${PROJECT_SERVICE_SYNC_SECRET:-${CHATOS_PROJECT_SERVICE_SYNC_SECRET:-change_me_project_sync_secret}}"
+  export CHATOS_PROJECT_SERVICE_SYNC_SECRET="${CHATOS_PROJECT_SERVICE_SYNC_SECRET:-$PROJECT_SERVICE_SYNC_SECRET}"
+
+  export TASK_RUNNER_BACKEND_PORT="${TASK_RUNNER_BACKEND_PORT:-${TASK_RUNNER_PORT:-39090}}"
+  export TASK_RUNNER_PORT="${TASK_RUNNER_PORT:-$TASK_RUNNER_BACKEND_PORT}"
+  export TASK_RUNNER_FRONTEND_PORT="${TASK_RUNNER_FRONTEND_PORT:-39091}"
+  export TASK_RUNNER_BASE_URL="${TASK_RUNNER_BASE_URL:-http://127.0.0.1:${TASK_RUNNER_BACKEND_PORT}}"
+  export CHATOS_TASK_RUNNER_BASE_URL="${CHATOS_TASK_RUNNER_BASE_URL:-$TASK_RUNNER_BASE_URL}"
+  export TASK_RUNNER_DATABASE_URL="${TASK_RUNNER_DATABASE_URL:-$(mongo_url_for task_runner_service)}"
+  export TASK_RUNNER_CHATOS_CALLBACK_URL="${TASK_RUNNER_CHATOS_CALLBACK_URL:-http://127.0.0.1:${EFFECTIVE_BACKEND_PORT}/api/agent/chat/task-runner/callback}"
+  export TASK_RUNNER_CHATOS_CALLBACK_SECRET="${TASK_RUNNER_CHATOS_CALLBACK_SECRET:-${CHATOS_TASK_RUNNER_CALLBACK_SECRET:-change_me_chatos_task_runner_secret}}"
+  export CHATOS_TASK_RUNNER_CALLBACK_SECRET="${CHATOS_TASK_RUNNER_CALLBACK_SECRET:-$TASK_RUNNER_CHATOS_CALLBACK_SECRET}"
+
+  export SANDBOX_MANAGER_PORT="${SANDBOX_MANAGER_PORT:-8095}"
+  export SANDBOX_MANAGER_FRONTEND_PORT="${SANDBOX_MANAGER_FRONTEND_PORT:-8096}"
+
+  export OFFICIAL_WEBSITE_MODE="${OFFICIAL_WEBSITE_MODE:-prod}"
+  export OFFICIAL_WEBSITE_PORT="${OFFICIAL_WEBSITE_PORT:-39250}"
+  export OFFICIAL_WEBSITE_FRONTEND_PORT="${OFFICIAL_WEBSITE_FRONTEND_PORT:-39251}"
+
+  export DB_HUB_BACKEND_PORT="${DB_HUB_BACKEND_PORT:-8099}"
+  export DB_HUB_FRONTEND_PORT="${DB_HUB_FRONTEND_PORT:-5174}"
+}
+
+rebuild_aux_services() {
+  if ! env_bool "$REMOTE_REBUILD_AUX_SERVICES"; then
+    log "跳过附属服务重建 (REMOTE_REBUILD_AUX_SERVICES=$REMOTE_REBUILD_AUX_SERVICES)"
+    return 0
+  fi
+
+  prepare_aux_service_env
+
+  install_frontend_deps "$REMOTE_APP_ROOT/memory_engine/frontend" "memory_engine"
+  install_frontend_deps "$REMOTE_APP_ROOT/user_service/frontend" "user_service"
+  install_frontend_deps "$REMOTE_APP_ROOT/project_management_service/frontend" "project_management_service"
+  install_frontend_deps "$REMOTE_APP_ROOT/task_runner_service/frontend" "task_runner_service"
+  install_frontend_deps "$REMOTE_APP_ROOT/sandbox_manager_service/frontend" "sandbox_manager_service"
+
+  if env_bool "$REMOTE_REBUILD_OFFICIAL_WEBSITE"; then
+    install_frontend_deps "$REMOTE_APP_ROOT/official_website_service/frontend" "official_website_service"
+    log "构建 official_website_service 前端静态文件"
+    npm --prefix "$REMOTE_APP_ROOT/official_website_service/frontend" run build
+  fi
+
+  log "重建/重启附属服务（memory/user/project/sandbox/task/official）"
+  START_CHATOS=0 \
+    START_MEMORY_ENGINE=1 \
+    START_USER_SERVICE=1 \
+    START_PROJECT_MANAGEMENT=1 \
+    START_SANDBOX_MANAGER=1 \
+    START_TASK_RUNNER=1 \
+    START_OFFICIAL_WEBSITE="$REMOTE_REBUILD_OFFICIAL_WEBSITE" \
+    "$REMOTE_APP_ROOT/restart_all_services.sh" restart
+
+  if env_bool "$REMOTE_REBUILD_DB_CONNECTION_HUB" && [[ -x "$REMOTE_APP_ROOT/db_connection_hub/restart_services.sh" ]]; then
+    install_frontend_deps "$REMOTE_APP_ROOT/db_connection_hub/frontend" "db_connection_hub"
+    log "重建/重启 db_connection_hub"
+    "$REMOTE_APP_ROOT/db_connection_hub/restart_services.sh" restart
+  fi
 }
 
 ENV_PREEXISTED=0
@@ -269,10 +425,7 @@ if [[ "$ENV_PREEXISTED" == "0" ]]; then
   warn "首次部署已生成 /etc/chatos/chatos-backend.env；如启用 user_service，请手工补齐 CHATOS_ADMIN_PASSWORD / USER_SERVICE_SUPER_ADMIN_PASSWORD 等敏感值后再重跑或重启相关服务"
 fi
 
-# 主要服务重部署路径：
-# - chatos-backend: systemd + nginx
-# - user_service: 依赖 /etc/chatos/chatos-backend.env 内的 USER_SERVICE_* / CHATOS_* env，脚本不覆盖现有敏感值
-# - sandbox_manager_service: 仅在 Docker backend 约定下保留 SANDBOX_MANAGER_BACKEND=docker / SANDBOX_MANAGER_DOCKER_IMAGE / SANDBOX_MANAGER_DOCKER_NETWORK / SANDBOX_MANAGER_IMAGE_DOCKERFILE 等关键 env；如为 Docker 降级模式，需要确保 docker 已安装且沙箱镜像可构建
+rebuild_aux_services
 
 log "最小健康检查"
 if command -v curl >/dev/null 2>&1; then
@@ -294,12 +447,16 @@ REMOTE_SCRIPT="${REMOTE_SCRIPT/__REMOTE_SERVICE_NAME__/$REMOTE_SERVICE_NAME}"
 REMOTE_SCRIPT="${REMOTE_SCRIPT/__REMOTE_BACKEND_PORT__/$REMOTE_BACKEND_PORT}"
 REMOTE_SCRIPT="${REMOTE_SCRIPT/__REMOTE_SERVER_NAME__/$REMOTE_SERVER_NAME}"
 REMOTE_SCRIPT="${REMOTE_SCRIPT/__REMOTE_CHATOS_WORKSPACE_DIR__/$REMOTE_CHATOS_WORKSPACE_DIR}"
+REMOTE_SCRIPT="${REMOTE_SCRIPT/__REMOTE_REBUILD_AUX_SERVICES__/$REMOTE_REBUILD_AUX_SERVICES}"
+REMOTE_SCRIPT="${REMOTE_SCRIPT/__REMOTE_REBUILD_OFFICIAL_WEBSITE__/$REMOTE_REBUILD_OFFICIAL_WEBSITE}"
+REMOTE_SCRIPT="${REMOTE_SCRIPT/__REMOTE_REBUILD_DB_CONNECTION_HUB__/$REMOTE_REBUILD_DB_CONNECTION_HUB}"
 
 log "执行远端更新与部署"
-sshpass -p "$REMOTE_PASSWORD" ssh -tt -p "$REMOTE_PORT" -o StrictHostKeyChecking=accept-new "$REMOTE_USER@$REMOTE_HOST" \
+sshpass -p "$REMOTE_PASSWORD" ssh -T "${SSH_OPTIONS[@]}" "$REMOTE_USER@$REMOTE_HOST" \
   "REMOTE_SUDO_PASSWORD=$(printf '%q' "$REMOTE_SUDO_PASSWORD") bash -s" <<EOF
 $REMOTE_SCRIPT
 EOF
 
 log "完成：可在远端查看 $REMOTE_SERVICE_NAME、nginx 和 /etc/chatos/chatos-backend.env"
+log "说明：已同步并重建主服务；REMOTE_REBUILD_AUX_SERVICES=1 时也会重建 memory/user/project/sandbox/task/official/db_connection_hub。"
 log "提示：若首次生成了 /etc/chatos/chatos-backend.env，请手工确认其中敏感值；如启用 sandbox_manager_service 的 Docker 降级模式，还需确认 SANDBOX_MANAGER_BACKEND=docker、SANDBOX_MANAGER_DOCKER_IMAGE、SANDBOX_MANAGER_DOCKER_NETWORK、SANDBOX_MANAGER_IMAGE_BUILD_CONTEXT、SANDBOX_MANAGER_IMAGE_DOCKERFILE 以及 docker daemon 可用"

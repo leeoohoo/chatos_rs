@@ -49,6 +49,7 @@ impl SqliteStore {
         }
         self.ensure_actor_columns().await?;
         self.ensure_requirement_documents_multiple_rows().await?;
+        self.repair_blocked_requirement_statuses().await?;
         Ok(())
     }
 
@@ -119,6 +120,32 @@ impl SqliteStore {
         sqlx::query(
             "CREATE INDEX IF NOT EXISTS idx_project_work_item_task_runner_links_task_id
              ON project_work_item_task_runner_links(task_runner_task_id)",
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(|err| err.to_string())?;
+        Ok(())
+    }
+
+    async fn repair_blocked_requirement_statuses(&self) -> Result<(), String> {
+        sqlx::query(
+            "WITH RECURSIVE blocked_requirements(id) AS (
+               SELECT DISTINCT requirement_id
+               FROM project_work_items
+               WHERE status = 'blocked'
+               UNION
+               SELECT requirements.parent_requirement_id
+               FROM requirements
+               JOIN blocked_requirements ON requirements.id = blocked_requirements.id
+               WHERE requirements.parent_requirement_id IS NOT NULL
+             )
+             UPDATE requirements
+             SET status = 'blocked',
+                 updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+             WHERE id IN (
+                 SELECT id FROM blocked_requirements WHERE id IS NOT NULL
+             )
+               AND status IN ('reviewing', 'approved', 'in_progress')",
         )
         .execute(&self.pool)
         .await

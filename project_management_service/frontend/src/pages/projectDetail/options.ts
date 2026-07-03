@@ -8,6 +8,7 @@ export const requirementStatusDisplayOptions = [
   { value: 'reviewing', label: '评审中' },
   { value: 'approved', label: '已确认' },
   { value: 'in_progress', label: '实现中' },
+  { value: 'blocked', label: '阻塞' },
   { value: 'done', label: '已完成' },
   { value: 'cancelled', label: '已取消' },
   { value: 'archived', label: '已归档' },

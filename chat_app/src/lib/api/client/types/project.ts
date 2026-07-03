@@ -234,6 +234,7 @@ export type ProjectRequirementStatus =
   | 'reviewing'
   | 'approved'
   | 'in_progress'
+  | 'blocked'
   | 'done'
   | 'cancelled'
   | 'archived';

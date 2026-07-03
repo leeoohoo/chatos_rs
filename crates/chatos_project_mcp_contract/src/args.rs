@@ -11,6 +11,7 @@ pub enum RequirementStatus {
     Reviewing,
     Approved,
     InProgress,
+    Blocked,
     Done,
     Cancelled,
     Archived,

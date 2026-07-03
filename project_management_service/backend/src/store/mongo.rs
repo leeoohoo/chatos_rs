@@ -174,7 +174,71 @@ impl MongoStore {
             false,
         )
         .await?;
+        self.repair_blocked_requirement_statuses().await?;
 
+        Ok(())
+    }
+
+    async fn repair_blocked_requirement_statuses(&self) -> Result<(), String> {
+        let mut cursor = self
+            .work_items
+            .find(
+                doc! { "status": ProjectWorkItemStatus::Blocked.as_str() },
+                None,
+            )
+            .await
+            .map_err(|err| err.to_string())?;
+        let mut stack = Vec::new();
+        while let Some(item) = cursor.try_next().await.map_err(|err| err.to_string())? {
+            let requirement_id = item.requirement_id.trim();
+            if !requirement_id.is_empty() {
+                stack.push(requirement_id.to_string());
+            }
+        }
+
+        let mut requirement_ids = BTreeSet::new();
+        while let Some(requirement_id) = stack.pop() {
+            if requirement_id.trim().is_empty() || !requirement_ids.insert(requirement_id.clone()) {
+                continue;
+            }
+            let Some(requirement) = self.get_requirement(requirement_id.as_str()).await? else {
+                continue;
+            };
+            if let Some(parent_requirement_id) = requirement
+                .parent_requirement_id
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+            {
+                stack.push(parent_requirement_id.to_string());
+            }
+        }
+
+        if requirement_ids.is_empty() {
+            return Ok(());
+        }
+        self.requirements
+            .update_many(
+                doc! {
+                    "id": { "$in": requirement_ids.into_iter().collect::<Vec<_>>() },
+                    "status": {
+                        "$in": [
+                            RequirementStatus::Reviewing.as_str(),
+                            RequirementStatus::Approved.as_str(),
+                            RequirementStatus::InProgress.as_str(),
+                        ],
+                    },
+                },
+                doc! {
+                    "$set": {
+                        "status": RequirementStatus::Blocked.as_str(),
+                        "updated_at": now_rfc3339(),
+                    },
+                },
+                None,
+            )
+            .await
+            .map_err(|err| err.to_string())?;
         Ok(())
     }
 
