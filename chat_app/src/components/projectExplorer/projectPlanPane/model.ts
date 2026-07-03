@@ -62,7 +62,8 @@ export const formatDateTime = (value: string): string => {
 };
 
 export const statusLabel = (status?: string): string => {
-  switch (status) {
+  const normalizedStatus = readText(status).toLowerCase();
+  switch (normalizedStatus) {
     case 'reviewing':
       return '评审中';
     case 'approved':
@@ -73,6 +74,9 @@ export const statusLabel = (status?: string): string => {
       return '就绪';
     case 'blocked':
       return '阻塞';
+    case 'failed':
+    case 'error':
+      return '失败';
     case 'done':
       return '完成';
     case 'cancelled':
@@ -82,8 +86,10 @@ export const statusLabel = (status?: string): string => {
     case 'todo':
       return '待办';
     case 'draft':
-    default:
+    case '':
       return '草稿';
+    default:
+      return readText(status);
   }
 };
 
@@ -132,12 +138,14 @@ export const canShowRequirementExecutionAction = (status?: string): boolean => {
 };
 
 export const statusClassName = (status?: string): string => {
-  switch (status) {
+  switch (readText(status).toLowerCase()) {
     case 'done':
       return 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-300';
     case 'in_progress':
     case 'reviewing':
       return 'border-blue-200 bg-blue-50 text-blue-700 dark:border-blue-800 dark:bg-blue-950/30 dark:text-blue-300';
+    case 'failed':
+    case 'error':
     case 'blocked':
       return 'border-destructive/30 bg-destructive/10 text-destructive';
     case 'cancelled':

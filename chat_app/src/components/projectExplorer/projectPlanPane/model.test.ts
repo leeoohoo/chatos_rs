@@ -9,6 +9,8 @@ import {
   buildVisiblePlanItems,
   canShowRequirementExecutionAction,
   mergeDependencyMaps,
+  statusClassName,
+  statusLabel,
 } from './model';
 
 describe('projectPlanPane model', () => {
@@ -146,5 +148,12 @@ describe('projectPlanPane model', () => {
     expect(canShowRequirementExecutionAction('archived')).toBe(false);
     expect(canShowRequirementExecutionAction('in_progress')).toBe(true);
     expect(canShowRequirementExecutionAction('approved')).toBe(true);
+  });
+
+  it('renders failed statuses without falling back to draft', () => {
+    expect(statusLabel('failed')).toBe('失败');
+    expect(statusLabel('FAILED')).toBe('失败');
+    expect(statusLabel('unexpected_status')).toBe('unexpected_status');
+    expect(statusClassName('failed')).toContain('text-destructive');
   });
 });

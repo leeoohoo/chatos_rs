@@ -7,6 +7,7 @@ use std::path::{Component, Path, PathBuf};
 use std::time::Duration;
 
 use chatos_mcp_runtime::{BuiltinMcpKind, BuiltinMcpPromptLocale, McpHttpServer};
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tracing::{info, warn};
@@ -616,6 +617,22 @@ struct SandboxLeaseRecordResponse {
     last_error: Option<String>,
 }
 
+fn sandbox_wait_deadline(expires_at: &str) -> tokio::time::Instant {
+    let fallback = tokio::time::Instant::now() + Duration::from_secs(7_200);
+    let Ok(expires_at) = DateTime::parse_from_rfc3339(expires_at) else {
+        return fallback;
+    };
+    let remaining = expires_at
+        .with_timezone(&Utc)
+        .signed_duration_since(Utc::now());
+    if remaining <= chrono::Duration::zero() {
+        return tokio::time::Instant::now();
+    }
+    tokio::time::Instant::now()
+        + remaining.to_std().unwrap_or(Duration::from_secs(7_200))
+        + Duration::from_secs(30)
+}
+
 #[derive(Debug, Serialize)]
 struct ReleaseSandboxRequest {
     lease_id: String,
@@ -720,7 +737,7 @@ impl SandboxManagerClient {
         &self,
         mut response: CreateSandboxLeaseResponse,
     ) -> Result<CreateSandboxLeaseResponse, String> {
-        let deadline = tokio::time::Instant::now() + Duration::from_secs(300);
+        let mut deadline = sandbox_wait_deadline(response.expires_at.as_str());
         loop {
             if response.is_ready() {
                 return Ok(response);
@@ -747,6 +764,7 @@ impl SandboxManagerClient {
             tokio::time::sleep(Duration::from_secs(2)).await;
             let record = self.get_sandbox(response.sandbox_id.as_str()).await?;
             response.apply_record(record);
+            deadline = sandbox_wait_deadline(response.expires_at.as_str());
         }
     }
 
