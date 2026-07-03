@@ -4,6 +4,7 @@
 import React from 'react';
 
 import { useI18n } from '../../i18n/I18nProvider';
+import { getUserVisiblePath } from '../../lib/domain/filesystem';
 import {
   DirectoryPickerActionButton,
   DirectoryPickerEntryList,
@@ -42,6 +43,7 @@ export const KeyFilePickerDialog: React.FC<KeyFilePickerDialogProps> = ({
   onSelectFile,
 }) => {
   const { t } = useI18n();
+  const formatPath = React.useCallback((path: string) => getUserVisiblePath(path), []);
 
   if (!isOpen) {
     return null;
@@ -66,6 +68,7 @@ export const KeyFilePickerDialog: React.FC<KeyFilePickerDialogProps> = ({
           currentPath={currentPath}
           emptyText={t('sessionList.picker.chooseDiskOrDirectory')}
           label={t('sessionList.picker.currentPathLabel')}
+          formatPath={formatPath}
         />
         <div className="mt-3 flex items-center gap-2">
           <DirectoryPickerActionButton
@@ -102,7 +105,9 @@ export const KeyFilePickerDialog: React.FC<KeyFilePickerDialogProps> = ({
                     <span className="text-foreground truncate block">
                       {entry.isDir ? '📁' : '🔑'} {entry.name || entry.path}
                     </span>
-                    <span className="text-[11px] text-muted-foreground truncate block">{entry.path}</span>
+                    <span className="text-[11px] text-muted-foreground truncate block">
+                      {formatPath(entry.path)}
+                    </span>
                   </button>
                   {!entry.isDir && (
                     <button
@@ -172,6 +177,7 @@ export const DirPickerDialog: React.FC<DirPickerDialogProps> = ({
   onCreateDir,
 }) => {
   const { t } = useI18n();
+  const formatPath = React.useCallback((path: string) => getUserVisiblePath(path), []);
 
   if (!isOpen) {
     return null;
@@ -200,6 +206,7 @@ export const DirPickerDialog: React.FC<DirPickerDialogProps> = ({
           currentPath={currentPath}
           emptyText={t('sessionList.picker.chooseDriveOrDirectory')}
           label={t('sessionList.picker.currentPathLabel')}
+          formatPath={formatPath}
         />
         {canCreate && currentPath && !writable && (
           <div className="mt-2 text-xs text-amber-600">{t('sessionList.picker.readonlyDirectory')}</div>
@@ -249,6 +256,8 @@ export const DirPickerDialog: React.FC<DirPickerDialogProps> = ({
           className="mt-3 flex-1 overflow-y-auto rounded border border-border"
           listClassName="divide-y divide-border"
           itemClassName="px-4 py-2"
+          formatEntryName={(entry) => getUserVisiblePath(entry.path) || entry.name}
+          formatEntryTitle={(entry) => getUserVisiblePath(entry.path) || entry.name}
         />
         {error && !createModalOpen && (
           <div className="mt-2 text-xs text-red-500">{error}</div>
@@ -260,7 +269,7 @@ export const DirPickerDialog: React.FC<DirPickerDialogProps> = ({
             <div className="relative w-[420px] max-w-[90%] rounded-lg border border-border bg-card p-4 shadow-xl">
               <div className="text-sm font-medium text-foreground mb-2">{t('sessionList.picker.newDirectory')}</div>
               <div className="text-xs text-muted-foreground mb-3 break-all">
-                {t('sessionList.picker.currentPath', { path: currentPath || '-' })}
+                {t('sessionList.picker.currentPath', { path: currentPath ? formatPath(currentPath) : '-' })}
               </div>
               <input
                 autoFocus

@@ -47,6 +47,7 @@ TASK_RUNNER_BACKEND_PORT="${TASK_RUNNER_BACKEND_PORT:-${TASK_RUNNER_PORT:-39090}
 TASK_RUNNER_FRONTEND_PORT="${TASK_RUNNER_FRONTEND_PORT:-39091}"
 TASK_RUNNER_HEALTHCHECK_HOST="${TASK_RUNNER_HEALTHCHECK_HOST:-127.0.0.1}"
 TASK_RUNNER_VITE_API_BASE_URL="${TASK_RUNNER_VITE_API_BASE_URL:-http://127.0.0.1:${TASK_RUNNER_BACKEND_PORT}}"
+TASK_RUNNER_API_PROXY_TARGET="${TASK_RUNNER_API_PROXY_TARGET:-http://127.0.0.1:${TASK_RUNNER_BACKEND_PORT}}"
 TASK_RUNNER_STORE_MODE="${TASK_RUNNER_STORE_MODE:-mongo}"
 TASK_RUNNER_START_DEV_MONGO="${TASK_RUNNER_START_DEV_MONGO:-${START_DEV_MONGO:-auto}}"
 TASK_RUNNER_DEV_MONGO_HOST="${TASK_RUNNER_DEV_MONGO_HOST:-$DEV_MONGO_HOST}"
@@ -421,7 +422,7 @@ start_task_runner_frontend() {
     "$TASK_RUNNER_FRONTEND_PORT" \
     "$TASK_RUNNER_FRONTEND_PID_FILE" \
     "$TASK_RUNNER_FRONTEND_LOG_FILE" \
-    "cd \"$TASK_RUNNER_FRONTEND_DIR\" && VITE_API_BASE_URL=\"$TASK_RUNNER_VITE_API_BASE_URL\" exec npm run dev -- --host 0.0.0.0 --port \"$TASK_RUNNER_FRONTEND_PORT\""
+    "cd \"$TASK_RUNNER_FRONTEND_DIR\" && TASK_RUNNER_API_PROXY_TARGET=\"$TASK_RUNNER_API_PROXY_TARGET\" VITE_API_BASE_URL=\"$TASK_RUNNER_VITE_API_BASE_URL\" exec npm run dev -- --host 0.0.0.0 --port \"$TASK_RUNNER_FRONTEND_PORT\""
 }
 
 do_stop() {
@@ -471,6 +472,8 @@ print_runtime_info() {
   echo
   echo "  Task Runner frontend url: http://localhost:$TASK_RUNNER_FRONTEND_PORT"
   echo "  Task Runner backend url: http://localhost:$TASK_RUNNER_BACKEND_PORT"
+  echo "  Task Runner frontend api base url: $TASK_RUNNER_VITE_API_BASE_URL"
+  echo "  Task Runner api proxy target: $TASK_RUNNER_API_PROXY_TARGET"
   echo "  Task Runner health url: http://${TASK_RUNNER_HEALTHCHECK_HOST}:$TASK_RUNNER_BACKEND_PORT/api/health"
   echo "  Task Runner callback url: $TASK_RUNNER_CHATOS_CALLBACK_URL"
   echo "  Task Runner store mode: $TASK_RUNNER_STORE_MODE"
@@ -492,6 +495,8 @@ status() {
   echo
   echo "  Task Runner frontend url: http://localhost:$TASK_RUNNER_FRONTEND_PORT"
   echo "  Task Runner backend url: http://localhost:$TASK_RUNNER_BACKEND_PORT"
+  echo "  Task Runner frontend api base url: $TASK_RUNNER_VITE_API_BASE_URL"
+  echo "  Task Runner api proxy target: $TASK_RUNNER_API_PROXY_TARGET"
   echo "  Task Runner callback url: $TASK_RUNNER_CHATOS_CALLBACK_URL"
   echo "  Task Runner store mode: $TASK_RUNNER_STORE_MODE"
   echo "  Task Runner database url: $TASK_RUNNER_DATABASE_URL"

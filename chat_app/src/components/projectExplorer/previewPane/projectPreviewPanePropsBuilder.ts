@@ -7,6 +7,7 @@ import { ProjectPreviewPane } from '../PreviewPane';
 import type { UseProjectExplorerPreviewPanePropsParams } from './projectPreviewPanePropTypes';
 
 export const buildProjectExplorerPreviewPaneProps = ({
+  projectRootPath,
   selectedFile,
   selectedPath,
   selectedEntry,
@@ -51,6 +52,7 @@ export const buildProjectExplorerPreviewPaneProps = ({
   handleOpenDocumentSymbol,
   handleSaveFile,
 }: UseProjectExplorerPreviewPanePropsParams): React.ComponentProps<typeof ProjectPreviewPane> => ({
+  projectRootPath,
   selectedFile,
   selectedPath,
   selectedEntry,
@@ -111,6 +113,7 @@ export const buildProjectExplorerPreviewPaneProps = ({
 });
 
 export const buildProjectExplorerPreviewPanePropsDeps = ({
+  projectRootPath,
   activeNavLocationId,
   activeSearchHitId,
   activeSearchHitIndex,
@@ -155,6 +158,7 @@ export const buildProjectExplorerPreviewPanePropsDeps = ({
   selectedToken,
   totalSearchHits,
 }: UseProjectExplorerPreviewPanePropsParams): React.DependencyList => [
+  projectRootPath,
   activeNavLocationId,
   activeSearchHitId,
   activeSearchHitIndex,

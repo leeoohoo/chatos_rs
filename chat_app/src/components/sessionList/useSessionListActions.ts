@@ -3,6 +3,7 @@
 
 import { useCallback } from 'react';
 import type { TranslateFn } from '../../i18n/I18nProvider';
+import { getUserVisiblePath } from '../../lib/domain/filesystem';
 import { deriveNameFromPath, translateSessionListMessage } from './helpers';
 import type { ChatState, SessionSelectOptions } from '../../lib/store/types';
 import type { Project, RemoteConnection, Session, Terminal } from '../../types';
@@ -173,7 +174,7 @@ export const useSessionListActions = ({
       return;
     }
     try {
-      const name = deriveNameFromPath(projectRoot, 'Project');
+      const name = deriveNameFromPath(getUserVisiblePath(projectRoot), 'Project');
       await createProject(name, projectRoot.trim());
       setProjectModalOpen(false);
     } catch (error) {
@@ -187,7 +188,7 @@ export const useSessionListActions = ({
       return;
     }
     try {
-      const name = deriveNameFromPath(terminalRoot, 'Terminal');
+      const name = deriveNameFromPath(getUserVisiblePath(terminalRoot), 'Terminal');
       await createTerminal(terminalRoot.trim(), name);
       setTerminalModalOpen(false);
     } catch (error) {

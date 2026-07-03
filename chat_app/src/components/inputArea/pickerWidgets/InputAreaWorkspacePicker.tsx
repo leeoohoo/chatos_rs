@@ -9,6 +9,7 @@ import {
   DirectoryPickerEntryList,
   DirectoryPickerPathDisplay,
 } from '../../ui/DirectoryPickerShared';
+import { getUserVisiblePath } from '../../../lib/domain/filesystem';
 import { cn } from '../../../lib/utils';
 import type { FsEntry } from '../../../types';
 
@@ -50,6 +51,7 @@ export const InputAreaWorkspacePicker: React.FC<InputAreaWorkspacePickerProps> =
   onSelectWorkspaceRoot,
 }) => {
   const { t } = useI18n();
+  const formatPath = React.useCallback((path: string) => getUserVisiblePath(path), []);
 
   if (!showWorkspaceRootPicker) {
     return null;
@@ -79,6 +81,7 @@ export const InputAreaWorkspacePicker: React.FC<InputAreaWorkspacePickerProps> =
               emptyText={t('inputArea.workspace.chooseDirectory')}
               label={t('inputArea.workspace.currentPath')}
               className="truncate text-[11px]"
+              formatPath={formatPath}
             />
             <div className="flex items-center gap-2">
               <DirectoryPickerActionButton
@@ -122,6 +125,8 @@ export const InputAreaWorkspacePicker: React.FC<InputAreaWorkspacePickerProps> =
             loadingClassName="px-3 py-2 text-xs"
             emptyClassName="px-3 py-2 text-xs"
             itemClassName="px-3 py-1.5 text-sm"
+            formatEntryName={(entry) => getUserVisiblePath(entry.path) || entry.name}
+            formatEntryTitle={(entry) => getUserVisiblePath(entry.path) || entry.name}
           />
         </div>
       )}

@@ -3,6 +3,7 @@
 
 import React from 'react';
 import { useI18n } from '../../../i18n/I18nProvider';
+import { getUserVisiblePath } from '../../../lib/domain/filesystem';
 import { cn } from '../../../lib/utils';
 import type { Terminal } from '../../../types';
 import { DotsVerticalIcon, PlusIcon, TrashIcon } from '../../ui/icons';
@@ -78,23 +79,25 @@ export const TerminalSection: React.FC<TerminalSectionProps> = ({
             </div>
           ) : (
             <div className="p-2 space-y-1">
-              {terminals.map((terminal) => (
-                <div
-                  key={terminal.id}
-                  className={cn(
-                    'group relative flex items-center p-2 rounded-lg cursor-pointer transition-colors',
-                    currentTerminalId === terminal.id
-                      ? 'bg-accent border border-border'
-                      : 'hover:bg-accent/50',
-                  )}
-                  onClick={() => onSelect(terminal.id)}
-                >
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 min-w-0">
-                      {(() => {
-                        const isRunning = terminal.status === 'running';
-                        return (
-                          <>
+              {terminals.map((terminal) => {
+                const visibleCwd = getUserVisiblePath(terminal.cwd);
+                return (
+                  <div
+                    key={terminal.id}
+                    className={cn(
+                      'group relative flex items-center p-2 rounded-lg cursor-pointer transition-colors',
+                      currentTerminalId === terminal.id
+                        ? 'bg-accent border border-border'
+                        : 'hover:bg-accent/50',
+                    )}
+                    onClick={() => onSelect(terminal.id)}
+                  >
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 min-w-0">
+                        {(() => {
+                          const isRunning = terminal.status === 'running';
+                          return (
+                            <>
                       <h3 className="text-sm font-medium text-foreground truncate min-w-0 flex-1">
                         {terminal.name}
                       </h3>
@@ -113,44 +116,45 @@ export const TerminalSection: React.FC<TerminalSectionProps> = ({
                           {terminal.busy ? t('session.busy') : t('session.idle')}
                         </span>
                       )}
-                          </>
-                        );
-                      })()}
-                    </div>
-                    <div className="mt-1 text-xs text-muted-foreground truncate" title={terminal.cwd}>
-                      {terminal.cwd}
-                    </div>
-                    {terminal.lastActiveAt && (
-                      <div className="mt-1 text-[10px] text-muted-foreground/70">
-                        {t('session.lastActive', { time: formatTimeAgo(terminal.lastActiveAt) })}
+                            </>
+                          );
+                        })()}
                       </div>
-                    )}
-                  </div>
-                  <div className="relative" data-action-menu-root="true">
-                    <button
-                      className="p-1 text-muted-foreground hover:text-foreground opacity-0 group-hover:opacity-100 transition-opacity"
-                      onClick={onToggleActionMenu}
-                    >
-                      <DotsVerticalIcon className="w-4 h-4" />
-                    </button>
-                    <div className="js-inline-action-menu hidden absolute right-0 z-10 mt-1 w-32 bg-popover border border-border rounded-md shadow-lg">
-                      <div className="py-1">
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            onDelete(terminal.id);
-                            closeActionMenus();
-                          }}
-                          className="flex items-center w-full px-3 py-2 text-sm text-destructive hover:bg-destructive/10"
-                        >
-                          <TrashIcon className="w-4 h-4 mr-2" />
-                          {t('session.deleteTerminal')}
-                        </button>
+                      <div className="mt-1 text-xs text-muted-foreground truncate" title={visibleCwd}>
+                        {visibleCwd}
+                      </div>
+                      {terminal.lastActiveAt && (
+                        <div className="mt-1 text-[10px] text-muted-foreground/70">
+                          {t('session.lastActive', { time: formatTimeAgo(terminal.lastActiveAt) })}
+                        </div>
+                      )}
+                    </div>
+                    <div className="relative" data-action-menu-root="true">
+                      <button
+                        className="p-1 text-muted-foreground hover:text-foreground opacity-0 group-hover:opacity-100 transition-opacity"
+                        onClick={onToggleActionMenu}
+                      >
+                        <DotsVerticalIcon className="w-4 h-4" />
+                      </button>
+                      <div className="js-inline-action-menu hidden absolute right-0 z-10 mt-1 w-32 bg-popover border border-border rounded-md shadow-lg">
+                        <div className="py-1">
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onDelete(terminal.id);
+                              closeActionMenus();
+                            }}
+                            className="flex items-center w-full px-3 py-2 text-sm text-destructive hover:bg-destructive/10"
+                          >
+                            <TrashIcon className="w-4 h-4 mr-2" />
+                            {t('session.deleteTerminal')}
+                          </button>
+                        </div>
                       </div>
                     </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>

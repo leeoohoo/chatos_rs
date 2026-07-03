@@ -12,6 +12,7 @@ interface DirectoryPickerPathDisplayProps {
   emptyText: string;
   label?: string;
   className?: string;
+  formatPath?: (path: string) => string;
 }
 
 export const DirectoryPickerPathDisplay: React.FC<DirectoryPickerPathDisplayProps> = ({
@@ -19,15 +20,20 @@ export const DirectoryPickerPathDisplay: React.FC<DirectoryPickerPathDisplayProp
   emptyText,
   label = UI_MESSAGES['zh-CN']['sessionList.picker.currentPathLabel'] || 'Current path: ',
   className,
-}) => (
-  <div
-    className={cn('text-xs text-muted-foreground break-all', className)}
-    title={currentPath || emptyText}
-  >
-    {label}
-    <span className="text-foreground">{currentPath || emptyText}</span>
-  </div>
-);
+  formatPath,
+}) => {
+  const displayPath = currentPath ? (formatPath?.(currentPath) || currentPath) : emptyText;
+
+  return (
+    <div
+      className={cn('text-xs text-muted-foreground break-all', className)}
+      title={displayPath}
+    >
+      {label}
+      <span className="text-foreground">{displayPath}</span>
+    </div>
+  );
+};
 
 interface DirectoryPickerEntryListProps {
   loading: boolean;
@@ -42,6 +48,8 @@ interface DirectoryPickerEntryListProps {
   listClassName?: string;
   itemClassName?: string;
   nameClassName?: string;
+  formatEntryName?: (entry: FsEntry) => string;
+  formatEntryTitle?: (entry: FsEntry) => string;
 }
 
 export const DirectoryPickerEntryList: React.FC<DirectoryPickerEntryListProps> = ({
@@ -57,6 +65,8 @@ export const DirectoryPickerEntryList: React.FC<DirectoryPickerEntryListProps> =
   listClassName,
   itemClassName,
   nameClassName,
+  formatEntryName,
+  formatEntryTitle,
 }) => (
   <div className={className}>
     {loading && (
@@ -71,36 +81,40 @@ export const DirectoryPickerEntryList: React.FC<DirectoryPickerEntryListProps> =
     )}
     {!loading && items.length > 0 && (
       <div className={listClassName}>
-        {items.map((entry) => (
-          <button
-            key={entry.path}
-            type="button"
-            onClick={() => onOpenEntry(entry.path)}
-            className={cn(
-              'flex w-full items-center gap-2 text-left hover:bg-accent',
-              itemClassName,
-            )}
-          >
-            {showFolderIcon && (
-              <svg
-                className="h-4 w-4 shrink-0 text-muted-foreground"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth={2}
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V7z"
-                />
-              </svg>
-            )}
-            <span className={cn('truncate text-foreground', nameClassName)}>
-              {entry.name}
-            </span>
-          </button>
-        ))}
+        {items.map((entry) => {
+          const entryName = formatEntryName?.(entry) || entry.name;
+          return (
+            <button
+              key={entry.path}
+              type="button"
+              onClick={() => onOpenEntry(entry.path)}
+              title={formatEntryTitle?.(entry) || entryName}
+              className={cn(
+                'flex w-full items-center gap-2 text-left hover:bg-accent',
+                itemClassName,
+              )}
+            >
+              {showFolderIcon && (
+                <svg
+                  className="h-4 w-4 shrink-0 text-muted-foreground"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth={2}
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V7z"
+                  />
+                </svg>
+              )}
+              <span className={cn('truncate text-foreground', nameClassName)}>
+                {entryName}
+              </span>
+            </button>
+          );
+        })}
       </div>
     )}
   </div>

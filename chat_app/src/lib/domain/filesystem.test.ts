@@ -3,7 +3,7 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { deriveParentPath } from './filesystem';
+import { deriveParentPath, getUserVisiblePath, resolveUserVisiblePathInput } from './filesystem';
 
 describe('domain/filesystem', () => {
   it('derives parent paths for unix and windows directories', () => {
@@ -12,5 +12,22 @@ describe('domain/filesystem', () => {
     expect(deriveParentPath('/')).toBeNull();
     expect(deriveParentPath('C:\\workspace\\demo')).toBe('C:\\workspace');
     expect(deriveParentPath('C:\\')).toBe('C:\\');
+  });
+
+  it('formats user-scoped workspace paths as paths under the user root', () => {
+    const root = '/opt/chatos/backend/data/workspace/users/user-123/workspaces';
+    expect(getUserVisiblePath(root)).toBe('/');
+    expect(getUserVisiblePath(`${root}/demo/src`)).toBe('/demo/src');
+    expect(getUserVisiblePath(`${root}/demo/src`, `${root}/demo`)).toBe('/src');
+  });
+
+  it('converts edited user-visible paths back to the current scoped root', () => {
+    const current = '/opt/chatos/backend/data/workspace/users/user-123/workspaces/demo';
+    expect(resolveUserVisiblePathInput('/next', current)).toBe(
+      '/opt/chatos/backend/data/workspace/users/user-123/workspaces/next',
+    );
+    expect(resolveUserVisiblePathInput('nested/app', current)).toBe(
+      '/opt/chatos/backend/data/workspace/users/user-123/workspaces/nested/app',
+    );
   });
 });

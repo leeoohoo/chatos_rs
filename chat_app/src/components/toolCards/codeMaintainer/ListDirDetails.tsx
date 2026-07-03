@@ -5,6 +5,7 @@ import React from 'react';
 
 import { useI18n } from '../../../i18n/I18nProvider';
 import { translateToolTitle } from '../../../i18n/toolText';
+import { getUserVisiblePath } from '../../../lib/domain/filesystem';
 import { formatToolCardCount, renderCardHeader } from '../shared/primitives';
 import { asArray, asNumber, asRecord, asString, formatDateTime } from '../shared/value';
 
@@ -32,7 +33,7 @@ export const ListDirDetails: React.FC<ListDirDetailsProps> = ({ result }) => {
       <div className="tool-detail-list">
         {entries.map((entry, index) => {
           const name = asString(entry.name).trim() || `entry ${index + 1}`;
-          const path = asString(entry.path).trim();
+          const path = getUserVisiblePath(asString(entry.path).trim());
           const type = asString(entry.type).trim();
           const size = asNumber(entry.size);
           const modified = formatDateTime(entry.mtime_ms ?? entry.mtimeMs);

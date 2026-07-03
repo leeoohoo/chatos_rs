@@ -6,6 +6,7 @@ import React from 'react';
 import { useI18n } from '../../i18n/I18nProvider';
 import { useApiClient } from '../../lib/api/ApiClientContext';
 import { useAuthStoreSelector } from '../../lib/auth/authStore';
+import { getUserVisiblePath } from '../../lib/domain/filesystem';
 import { useTheme } from '../../hooks/useTheme';
 import type { ProjectRunEnvironment, ProjectRunInstance, ProjectRunResolutionSuggestion, ProjectRunState, ProjectRunTarget, ProjectRunToolchainOption, Terminal } from '../../types';
 import EmbeddedTerminalView from '../terminal/EmbeddedTerminalView';
@@ -145,6 +146,18 @@ export const ProjectRunSettingsPanel: React.FC<ProjectRunSettingsPanelProps> = (
     : runStatus === 'error'
       ? 'text-destructive border-destructive/30 bg-destructive/10'
       : 'text-muted-foreground border-border bg-background';
+  const visibleProjectRootPath = projectRootPath
+    ? getUserVisiblePath(projectRootPath)
+    : t('runSettings.noProjectRoot');
+  const visibleSelectedTargetCwd = selectedTarget?.cwd
+    ? getUserVisiblePath(selectedTarget.cwd, projectRootPath)
+    : '';
+  const visibleSelectedTargetEntrypoint = selectedTarget?.entrypoint
+    ? getUserVisiblePath(selectedTarget.entrypoint, projectRootPath)
+    : '';
+  const visibleSelectedTargetManifest = selectedTarget?.manifestPath
+    ? getUserVisiblePath(selectedTarget.manifestPath, projectRootPath)
+    : '';
 
   return (
     <div className="rounded-lg border border-border bg-card">
@@ -154,7 +167,7 @@ export const ProjectRunSettingsPanel: React.FC<ProjectRunSettingsPanelProps> = (
             {projectName || t('runSettings.projectSettings')}
           </div>
           <div className="mt-1 truncate text-xs text-muted-foreground">
-            {projectRootPath || t('runSettings.noProjectRoot')}
+            {visibleProjectRootPath}
           </div>
           <div className="mt-3 flex flex-wrap items-center gap-2 text-[11px]">
             <span className={`rounded border px-2 py-1 ${statusTone}`}>
@@ -244,7 +257,7 @@ export const ProjectRunSettingsPanel: React.FC<ProjectRunSettingsPanelProps> = (
                   <div className="text-sm text-destructive">{issue.message}</div>
                   {issue.path && (
                     <div className="mt-2 break-all font-mono text-[11px] text-muted-foreground">
-                      {issue.path}
+                      {getUserVisiblePath(issue.path, projectRootPath)}
                     </div>
                   )}
                   {issue.hint && (
@@ -268,7 +281,7 @@ export const ProjectRunSettingsPanel: React.FC<ProjectRunSettingsPanelProps> = (
                         </div>
                         {issue.path && (
                           <div className="mt-2 break-all font-mono text-[11px] text-muted-foreground">
-                            {issue.path}
+                            {getUserVisiblePath(issue.path, projectRootPath)}
                           </div>
                         )}
                         {issue.hint && (
@@ -304,8 +317,8 @@ export const ProjectRunSettingsPanel: React.FC<ProjectRunSettingsPanelProps> = (
                     </option>
                   ))}
                 </select>
-                <div className="truncate text-xs text-muted-foreground" title={selectedTarget?.cwd || ''}>
-                  {selectedTarget?.cwd || ''}
+                <div className="truncate text-xs text-muted-foreground" title={visibleSelectedTargetCwd}>
+                  {visibleSelectedTargetCwd}
                 </div>
               </div>
 
@@ -314,14 +327,14 @@ export const ProjectRunSettingsPanel: React.FC<ProjectRunSettingsPanelProps> = (
                   <span className="rounded border border-border px-2 py-1">
                     {formatRunTargetSource(selectedTarget, t)}
                   </span>
-                  {selectedTarget.entrypoint && (
-                    <span className="rounded border border-border px-2 py-1" title={selectedTarget.entrypoint}>
-                      {t('runSettings.entrypoint', { entrypoint: selectedTarget.entrypoint })}
+                  {visibleSelectedTargetEntrypoint && (
+                    <span className="rounded border border-border px-2 py-1" title={visibleSelectedTargetEntrypoint}>
+                      {t('runSettings.entrypoint', { entrypoint: visibleSelectedTargetEntrypoint })}
                     </span>
                   )}
-                  {selectedTarget.manifestPath && (
-                    <span className="rounded border border-border px-2 py-1" title={selectedTarget.manifestPath}>
-                      {t('runSettings.manifest', { manifest: selectedTarget.manifestPath })}
+                  {visibleSelectedTargetManifest && (
+                    <span className="rounded border border-border px-2 py-1" title={visibleSelectedTargetManifest}>
+                      {t('runSettings.manifest', { manifest: visibleSelectedTargetManifest })}
                     </span>
                   )}
                   <span className="rounded border border-border px-2 py-1">
@@ -451,6 +464,7 @@ export const ProjectRunSettingsPanel: React.FC<ProjectRunSettingsPanelProps> = (
         )}
 
         <RunEnvironmentDetails
+          projectRootPath={projectRootPath}
           availableToolchainKinds={availableToolchainKinds}
           commandPreview={commandPreview}
           customToolchainDrafts={customToolchainDrafts}

@@ -5,6 +5,7 @@ import React from 'react';
 
 import { useI18n } from '../../../i18n/I18nProvider';
 import { translateToolTitle } from '../../../i18n/toolText';
+import { getUserVisiblePath } from '../../../lib/domain/filesystem';
 import { RowsCard, TextBlockCard, formatToolCardCount, renderCardHeader } from '../shared/primitives';
 import { asArray, asBoolean, asNumber, asRecord, asString } from '../shared/value';
 
@@ -67,7 +68,7 @@ const TerminalListCard: React.FC<{ title: string; items: unknown[] }> = ({ title
             <div className="tool-detail-item-meta">
               {[
                 asString(terminal.process_status ?? terminal.status).trim(),
-                asString(terminal.cwd).trim(),
+                getUserVisiblePath(asString(terminal.cwd).trim()),
               ].filter(Boolean).join(' · ')}
             </div>
             <div className="tool-detail-item-body">
@@ -111,7 +112,7 @@ export const ProcessToolDetails: React.FC<ProcessToolDetailsProps> = ({
         <RowsCard
           title={translateToolTitle('Command status', locale)}
           rows={[
-            { key: 'path', value: asString(record.path).trim() },
+            { key: 'path', value: getUserVisiblePath(asString(record.path).trim()) },
             { key: 'background', value: asBoolean(record.background) },
             { key: 'busy', value: asBoolean(record.busy) },
             { key: 'reused terminal', value: asBoolean(record.terminal_reused ?? record.terminalReused) },

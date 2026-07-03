@@ -4,6 +4,7 @@
 import React from 'react';
 
 import { useI18n } from '../../../i18n/I18nProvider';
+import { getUserVisiblePath } from '../../../lib/domain/filesystem';
 import type { FsEntry, Project, ProjectSearchHit } from '../../../types';
 import { cn } from '../../../lib/utils';
 import {
@@ -95,6 +96,10 @@ export const ProjectTreeHeader: React.FC<ProjectTreeHeaderProps> = ({
   onClearDragAutoScroll,
 }) => {
   const { t } = useI18n();
+  const visibleRootPath = getUserVisiblePath(project.rootPath);
+  const visibleSelectedPath = selectedEntry
+    ? getUserVisiblePath(selectedEntry.path, project.rootPath)
+    : t('projectExplorer.tree.noSelection');
   const {
     handleRootDragEnter,
     handleRootDragLeave,
@@ -129,15 +134,15 @@ export const ProjectTreeHeader: React.FC<ProjectTreeHeaderProps> = ({
       onDrop={handleRootDrop}
     >
       <div className="text-xs text-muted-foreground">{t('projectExplorer.tree.title')}</div>
-      <div className="truncate text-sm font-medium text-foreground" title={project.rootPath}>
+      <div className="truncate text-sm font-medium text-foreground" title={visibleRootPath}>
         {project.name}
       </div>
-      <div className="truncate text-[11px] text-muted-foreground" title={project.rootPath}>
-        {project.rootPath}
+      <div className="truncate text-[11px] text-muted-foreground" title={visibleRootPath}>
+        {visibleRootPath}
       </div>
-      <div className="truncate text-[11px] text-muted-foreground" title={selectedEntry?.path || ''}>
+      <div className="truncate text-[11px] text-muted-foreground" title={visibleSelectedPath}>
         {t('projectExplorer.tree.currentSelection', {
-          path: selectedEntry ? selectedEntry.path : t('projectExplorer.tree.noSelection'),
+          path: visibleSelectedPath,
         })}
       </div>
       <button

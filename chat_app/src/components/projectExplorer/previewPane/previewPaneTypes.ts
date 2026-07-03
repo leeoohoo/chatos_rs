@@ -18,6 +18,7 @@ export interface PreviewTokenSelection {
 }
 
 export interface ProjectPreviewPaneProps {
+  projectRootPath?: string;
   selectedFile: FsReadResult | null;
   selectedPath: string | null;
   selectedEntry: FsEntry | null;

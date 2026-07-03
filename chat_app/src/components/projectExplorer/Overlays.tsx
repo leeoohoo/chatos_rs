@@ -4,6 +4,7 @@
 import React from 'react';
 
 import { useI18n } from '../../i18n/I18nProvider';
+import { getUserVisiblePath } from '../../lib/domain/filesystem';
 import type { FsEntry } from '../../types';
 
 export interface MoveConflictState {
@@ -102,6 +103,7 @@ interface EntryContextMenuProps {
   contextMenu: EntryContextMenuState | null;
   contextMenuStyle: React.CSSProperties | undefined;
   isContextRootEntry: boolean;
+  projectRootPath: string | null | undefined;
   onCreateDirectory: (path: string) => void;
   onCreateFile: (path: string) => void;
   onDownload: (entry: FsEntry) => void;
@@ -120,6 +122,7 @@ export const EntryContextMenu: React.FC<EntryContextMenuProps> = ({
   contextMenu,
   contextMenuStyle,
   isContextRootEntry,
+  projectRootPath,
   onCreateDirectory,
   onCreateFile,
   onDownload,
@@ -139,6 +142,7 @@ export const EntryContextMenu: React.FC<EntryContextMenuProps> = ({
   }
 
   const { entry } = contextMenu;
+  const visibleEntryPath = getUserVisiblePath(entry.path, projectRootPath);
   const fileExtension = entry.isDir
     ? ''
     : entry.name.includes('.')
@@ -154,7 +158,7 @@ export const EntryContextMenu: React.FC<EntryContextMenuProps> = ({
       onContextMenu={(event) => event.preventDefault()}
     >
       <div className="px-2 py-1 text-[11px] text-muted-foreground truncate">
-        {entry.isDir ? t('projectExplorer.context.folder') : t('projectExplorer.context.file')}：{entry.path}
+        {entry.isDir ? t('projectExplorer.context.folder') : t('projectExplorer.context.file')}：{visibleEntryPath}
       </div>
       {entry.isDir && (
         <button
