@@ -17,6 +17,7 @@ REMOTE_DEPLOY_ROOT="${REMOTE_DEPLOY_ROOT:-/opt/chatos}"
 REMOTE_SERVICE_NAME="${REMOTE_SERVICE_NAME:-chatos-backend}"
 REMOTE_BACKEND_PORT="${REMOTE_BACKEND_PORT:-13001}"
 REMOTE_SERVER_NAME="${REMOTE_SERVER_NAME:-_}"
+REMOTE_CHATOS_WORKSPACE_DIR="${REMOTE_CHATOS_WORKSPACE_DIR:-}"
 REMOTE_STAGE_DIR="${REMOTE_STAGE_DIR:-/tmp/chatos_rs_deploy_staging}"
 PLAN_ONLY="${PLAN_ONLY:-0}"
 SYNC_ONLY="${SYNC_ONLY:-0}"
@@ -77,6 +78,7 @@ cat <<EOF
 - 远端部署根: $REMOTE_DEPLOY_ROOT
 - 远端服务: $REMOTE_SERVICE_NAME
 - 远端 env: /etc/chatos/chatos-backend.env
+- 远端 workspace: ${REMOTE_CHATOS_WORKSPACE_DIR:-auto}
 - 远端 nginx: /etc/nginx/sites-available/chatos.conf -> /etc/nginx/sites-enabled/chatos.conf
 - Rust target-dir: $TARGET_DIR
 - 模式: PLAN_ONLY=$PLAN_ONLY SYNC_ONLY=$SYNC_ONLY
@@ -119,6 +121,7 @@ REMOTE_DEPLOY_ROOT="__REMOTE_DEPLOY_ROOT__"
 REMOTE_SERVICE_NAME="__REMOTE_SERVICE_NAME__"
 REMOTE_BACKEND_PORT="__REMOTE_BACKEND_PORT__"
 REMOTE_SERVER_NAME="__REMOTE_SERVER_NAME__"
+REMOTE_CHATOS_WORKSPACE_DIR="__REMOTE_CHATOS_WORKSPACE_DIR__"
 
 if [[ -d "$HOME/.cargo/bin" ]]; then
   export PATH="$HOME/.cargo/bin:$PATH"
@@ -159,24 +162,56 @@ fi
 log() { printf '[REMOTE] %s\n' "$*"; }
 warn() { printf '[REMOTE-WARN] %s\n' "$*"; }
 
+env_file_value() {
+  local key="$1"
+  local file="$2"
+  if [[ ! -f "$file" ]]; then
+    return 0
+  fi
+  awk -F= -v key="$key" '
+    $1 == key {
+      sub(/^[^=]*=/, "")
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "")
+      print
+      exit
+    }
+  ' "$file"
+}
+
 ENV_PREEXISTED=0
 EFFECTIVE_BACKEND_PORT="$REMOTE_BACKEND_PORT"
+EFFECTIVE_CHATOS_WORKSPACE_DIR="$REMOTE_CHATOS_WORKSPACE_DIR"
 if [[ -f "/etc/chatos/chatos-backend.env" ]]; then
   ENV_PREEXISTED=1
   log "保留已有 /etc/chatos/chatos-backend.env，不覆盖敏感值"
-  EXISTING_BACKEND_PORT="$(awk -F= '$1=="BACKEND_PORT" {gsub(/^[[:space:]]+|[[:space:]]+$/, "", $2); print $2; exit}' /etc/chatos/chatos-backend.env)"
+  EXISTING_BACKEND_PORT="$(env_file_value BACKEND_PORT /etc/chatos/chatos-backend.env)"
   if [[ -n "$EXISTING_BACKEND_PORT" ]]; then
     EFFECTIVE_BACKEND_PORT="$EXISTING_BACKEND_PORT"
     if [[ "$REMOTE_BACKEND_PORT" != "$EXISTING_BACKEND_PORT" ]]; then
       warn "检测到已有 env 中 BACKEND_PORT=$EXISTING_BACKEND_PORT；为避免破坏现网，将忽略传入的 REMOTE_BACKEND_PORT=$REMOTE_BACKEND_PORT。若需改端口，请先手工修改 /etc/chatos/chatos-backend.env 后再重跑。"
     fi
   fi
+  EXISTING_CHATOS_WORKSPACE_DIR="$(env_file_value CHATOS_WORKSPACE_DIR /etc/chatos/chatos-backend.env)"
+  if [[ -n "$EXISTING_CHATOS_WORKSPACE_DIR" ]]; then
+    EFFECTIVE_CHATOS_WORKSPACE_DIR="$EXISTING_CHATOS_WORKSPACE_DIR"
+    if [[ -n "$REMOTE_CHATOS_WORKSPACE_DIR" && "$REMOTE_CHATOS_WORKSPACE_DIR" != "$EXISTING_CHATOS_WORKSPACE_DIR" ]]; then
+      warn "检测到已有 env 中 CHATOS_WORKSPACE_DIR=$EXISTING_CHATOS_WORKSPACE_DIR；将保留现网值，忽略 REMOTE_CHATOS_WORKSPACE_DIR=$REMOTE_CHATOS_WORKSPACE_DIR。若需迁移目录，请先手工修改 /etc/chatos/chatos-backend.env。"
+    fi
+  fi
 else
   warn "首次部署将由现有安装脚本生成 /etc/chatos/chatos-backend.env；完成后请手工确认其中敏感值"
 fi
 
+if [[ -z "$EFFECTIVE_CHATOS_WORKSPACE_DIR" ]]; then
+  EFFECTIVE_CHATOS_WORKSPACE_DIR="$REMOTE_DEPLOY_ROOT/backend/data/workspace"
+fi
+if [[ "$EFFECTIVE_CHATOS_WORKSPACE_DIR" != /* ]]; then
+  EFFECTIVE_CHATOS_WORKSPACE_DIR="$REMOTE_DEPLOY_ROOT/$EFFECTIVE_CHATOS_WORKSPACE_DIR"
+fi
+
 log "远端代码目录: $REMOTE_APP_ROOT"
 log "Rust target-dir: $TARGET_DIR"
+log "Chatos workspace: $EFFECTIVE_CHATOS_WORKSPACE_DIR"
 sudo_run mkdir -p "$REMOTE_DEPLOY_ROOT" "$REMOTE_APP_ROOT" /etc/chatos
 sudo_run chown -R "$(id -un)":"$(id -gn)" "$REMOTE_APP_ROOT"
 
@@ -224,6 +259,7 @@ if [[ -x "$REMOTE_APP_ROOT/scripts/server-install-nodocker.sh" ]]; then
     BACKEND_PORT="$EFFECTIVE_BACKEND_PORT" \
     SERVER_NAME="$REMOTE_SERVER_NAME" \
     CARGO_TARGET_DIR="$TARGET_DIR" \
+    CHATOS_WORKSPACE_DIR="$EFFECTIVE_CHATOS_WORKSPACE_DIR" \
     bash "$REMOTE_APP_ROOT/scripts/server-install-nodocker.sh"
 else
   warn "缺少 scripts/server-install-nodocker.sh，跳过 systemd/nginx 自动安装"
@@ -257,6 +293,7 @@ REMOTE_SCRIPT="${REMOTE_SCRIPT/__REMOTE_DEPLOY_ROOT__/$REMOTE_DEPLOY_ROOT}"
 REMOTE_SCRIPT="${REMOTE_SCRIPT/__REMOTE_SERVICE_NAME__/$REMOTE_SERVICE_NAME}"
 REMOTE_SCRIPT="${REMOTE_SCRIPT/__REMOTE_BACKEND_PORT__/$REMOTE_BACKEND_PORT}"
 REMOTE_SCRIPT="${REMOTE_SCRIPT/__REMOTE_SERVER_NAME__/$REMOTE_SERVER_NAME}"
+REMOTE_SCRIPT="${REMOTE_SCRIPT/__REMOTE_CHATOS_WORKSPACE_DIR__/$REMOTE_CHATOS_WORKSPACE_DIR}"
 
 log "执行远端更新与部署"
 sshpass -p "$REMOTE_PASSWORD" ssh -tt -p "$REMOTE_PORT" -o StrictHostKeyChecking=accept-new "$REMOTE_USER@$REMOTE_HOST" \
