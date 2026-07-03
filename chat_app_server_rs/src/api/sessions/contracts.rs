@@ -76,6 +76,10 @@ pub(super) struct UpdateSessionRuntimeSettingsRequest {
     pub(super) remote_connection_id: Option<Option<String>>,
     #[serde(alias = "workspaceRoot")]
     pub(super) workspace_root: Option<Option<String>>,
+    #[serde(alias = "reasoningEnabled")]
+    pub(super) reasoning_enabled: Option<bool>,
+    #[serde(alias = "planModeEnabled")]
+    pub(super) plan_mode_enabled: Option<bool>,
     #[serde(alias = "mcpEnabled")]
     pub(super) mcp_enabled: Option<bool>,
     #[serde(alias = "enabledMcpIds")]

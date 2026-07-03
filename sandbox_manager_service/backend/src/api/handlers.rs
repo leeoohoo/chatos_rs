@@ -9,11 +9,14 @@ use serde_json::{json, Value};
 use crate::auth::SandboxAuthContext;
 use crate::error::ApiError;
 use crate::models::{
-    CreateSandboxLeaseRequest, CreateSandboxLeaseResponse, DestroySandboxResponse,
+    CreateSandboxAccessClientRequest, CreateSandboxAccessClientResponse, CreateSandboxLeaseRequest,
+    CreateSandboxLeaseResponse, DeleteSandboxAccessClientResponse, DestroySandboxResponse,
     HeartbeatRequest, HeartbeatResponse, InitializeSandboxImageRequest, ListSandboxQuery,
-    PoolStatusResponse, ReleaseSandboxRequest, ReleaseSandboxResponse, SandboxEventRecord,
+    PoolStatusResponse, ReleaseSandboxRequest, ReleaseSandboxResponse,
+    RotateSandboxAccessClientKeyResponse, SandboxAccessClientResponse, SandboxEventRecord,
     SandboxHealthResponse, SandboxImageCatalogResponse, SandboxImageJobRecord, SandboxLeaseRecord,
     SandboxMcpCallRequest, SandboxMcpCallResponse, SandboxMcpToolsResponse, SystemConfigResponse,
+    UpdateSandboxAccessClientRequest,
 };
 use crate::state::AppState;
 
@@ -59,6 +62,63 @@ pub async fn initialize_sandbox_image(
 ) -> Result<Json<SandboxImageJobRecord>, ApiError> {
     Ok(Json(
         state.manager.initialize_sandbox_image(&auth, input).await?,
+    ))
+}
+
+pub async fn list_access_clients(
+    State(state): State<AppState>,
+    Extension(auth): Extension<SandboxAuthContext>,
+) -> Result<Json<Vec<SandboxAccessClientResponse>>, ApiError> {
+    Ok(Json(state.manager.list_access_clients(&auth).await?))
+}
+
+pub async fn create_access_client(
+    State(state): State<AppState>,
+    Extension(auth): Extension<SandboxAuthContext>,
+    Json(input): Json<CreateSandboxAccessClientRequest>,
+) -> Result<Json<CreateSandboxAccessClientResponse>, ApiError> {
+    Ok(Json(
+        state.manager.create_access_client(&auth, input).await?,
+    ))
+}
+
+pub async fn update_access_client(
+    Path(id): Path<String>,
+    State(state): State<AppState>,
+    Extension(auth): Extension<SandboxAuthContext>,
+    Json(input): Json<UpdateSandboxAccessClientRequest>,
+) -> Result<Json<SandboxAccessClientResponse>, ApiError> {
+    Ok(Json(
+        state
+            .manager
+            .update_access_client(&auth, id.as_str(), input)
+            .await?,
+    ))
+}
+
+pub async fn rotate_access_client_key(
+    Path(id): Path<String>,
+    State(state): State<AppState>,
+    Extension(auth): Extension<SandboxAuthContext>,
+) -> Result<Json<RotateSandboxAccessClientKeyResponse>, ApiError> {
+    Ok(Json(
+        state
+            .manager
+            .rotate_access_client_key(&auth, id.as_str())
+            .await?,
+    ))
+}
+
+pub async fn delete_access_client(
+    Path(id): Path<String>,
+    State(state): State<AppState>,
+    Extension(auth): Extension<SandboxAuthContext>,
+) -> Result<Json<DeleteSandboxAccessClientResponse>, ApiError> {
+    Ok(Json(
+        state
+            .manager
+            .delete_access_client(&auth, id.as_str())
+            .await?,
     ))
 }
 

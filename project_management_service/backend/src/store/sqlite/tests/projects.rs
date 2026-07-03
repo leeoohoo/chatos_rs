@@ -80,6 +80,7 @@ async fn agent_created_records_keep_agent_creator_and_real_owner() {
                 due_at: None,
                 sort_order: None,
                 tags: None,
+                is_planning_task: false,
             },
             &agent,
         )

@@ -35,6 +35,7 @@
 ## 架构分层
 - `chat_app/`：主前端交互层
 - `chat_app_server_rs/`：主后端编排层（会话、消息、工具、流式响应）
+- `official_website_service/`：官网微服务（Rust 后端 + React 前端）
 
 ## 本地一键启动
 在仓库根目录执行：
@@ -66,6 +67,34 @@ make smoke
 ```bash
 ./restart_services.sh status
 ./restart_services.sh stop
+```
+
+启动官网微服务：
+
+```bash
+make restart-official-website
+```
+
+官网默认地址：
+
+- 后端/生产静态页：`http://localhost:39250`
+- 前端开发页：`http://localhost:39251`
+
+默认 `OFFICIAL_WEBSITE_MODE=dev` 会同时启动 Rust 后端和 Vite 开发服务。如果要用后端托管
+生产构建，先运行 `make build-official-website`，再执行
+`OFFICIAL_WEBSITE_MODE=prod make restart-official-website`。
+独立生产端口可使用 `make restart-official-website-prod`，Docker 镜像可使用
+`make docker-build-official-website` 构建。
+
+官网后端还提供 `GET /api/site/status`，用于在官网页面展示本机核心微服务健康状态。
+`robots.txt` 和 `sitemap.xml` 会根据 `OFFICIAL_WEBSITE_PUBLIC_BASE_URL` 动态生成；
+运行中站点可用 `make smoke-official-website-live` 验证。公开部署时可以设置
+`OFFICIAL_WEBSITE_ENABLE_LIVE_STATUS=false` 关闭内部服务状态探测。
+
+如果希望全栈启动脚本同时启动官网，可在根目录 `.env` 中设置：
+
+```bash
+START_OFFICIAL_WEBSITE=1
 ```
 
 ## WSL Rust 开发流
@@ -119,6 +148,7 @@ make stop-user-service-wsl
 - [chat_app_server_rs 中文](./chat_app_server_rs/README.zh-CN.md)
 - [db_connection_hub backend](./db_connection_hub/backend/README.md)
 - [db_connection_hub frontend](./db_connection_hub/frontend/README.md)
+- [官网微服务](./official_website_service/README.md)
 
 ## 许可协议
 本项目采用 [PolyForm Noncommercial License 1.0.0](./LICENSE) 以源码可见方式发布。

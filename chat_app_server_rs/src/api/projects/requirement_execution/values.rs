@@ -16,6 +16,10 @@ pub(super) fn value_i64(value: &Value, key: &str) -> Option<i64> {
     value.get(key).and_then(Value::as_i64)
 }
 
+pub(super) fn value_bool(value: &Value, key: &str) -> Option<bool> {
+    value.get(key).and_then(Value::as_bool)
+}
+
 pub(super) fn value_string_vec(value: &Value, key: &str) -> Option<Vec<String>> {
     let items = value.get(key)?.as_array()?;
     Some(normalize_tags(

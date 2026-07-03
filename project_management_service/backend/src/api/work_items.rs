@@ -26,6 +26,7 @@ use crate::task_runner_api_client;
 pub(in crate::api) struct WorkItemListQuery {
     status: Option<ProjectWorkItemStatus>,
     keyword: Option<String>,
+    is_planning_task: Option<bool>,
     include_archived: Option<bool>,
 }
 
@@ -42,7 +43,12 @@ pub(in crate::api) async fn list_project_work_items(
     );
     let mut items = state
         .store
-        .list_work_items_by_project(&project_id, query.status, query.keyword)
+        .list_work_items_by_project(
+            &project_id,
+            query.status,
+            query.is_planning_task,
+            query.keyword,
+        )
         .await
         .map_err(ApiError::bad_request)?;
     if !include_archived {

@@ -56,6 +56,8 @@ pub struct AppConfig {
     pub default_tool_results_model_total_max_chars: usize,
     pub default_execution_environment_mode: String,
     pub default_sandbox_manager_base_url: String,
+    pub sandbox_manager_client_id: Option<String>,
+    pub sandbox_manager_client_key: Option<String>,
     pub default_sandbox_lease_ttl_seconds: u64,
     pub chatos_callback_url: Option<String>,
     pub chatos_callback_secret: Option<String>,

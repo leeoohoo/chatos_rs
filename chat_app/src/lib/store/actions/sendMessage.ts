@@ -4,6 +4,7 @@
 import type { Message } from '../../../types';
 import type { SendMessageRuntimeOptions } from '../../../types';
 import type ApiClient from '../../api/client';
+import type { SessionRuntimeSettingsResponse } from '../../api/client/types';
 import {
   getRealtimeConnectionStateSnapshot,
   waitForRealtimeConnectedSnapshot,
@@ -20,6 +21,7 @@ import { createDraftUserMessage } from './sendMessage/messageFactory';
 import {
   buildChatRequestLogPayload,
   buildStreamChatRuntimeOptions,
+  resolveEffectivePlanMode,
   resolveModelCapabilities,
 } from './sendMessage/requestPayload';
 import {
@@ -27,18 +29,12 @@ import {
   resolveSelectedModelOrThrow,
 } from './sendMessage/runtime';
 import {
-  applySessionRuntimeMetadata,
   beginUserTurnInState,
   createDefaultSessionChatState,
   replaceOptimisticUserMessageId,
   setTaskRunnerAsyncUserMessageStatus,
 } from './sendMessage/sessionState';
 import { normalizePersistedMessage } from './sendMessage/persistedTurnMessages';
-import {
-  mergeSessionRuntimeIntoMetadata,
-  readSessionRuntimeFromMetadata,
-} from '../helpers/sessionRuntime';
-import { PUBLIC_PROJECT_ID } from '../../domain/contactSessions';
 import {
   cloneStreamingMessageDraft,
   extractCompactHistoryMessages,
@@ -52,11 +48,6 @@ import { type StreamingMessage } from './sendMessage/types';
 import { rollbackFailedSendMessage } from './sendMessage/streamExecution';
 
 const REALTIME_STREAM_CONNECT_GRACE_MS = 2200;
-
-const hasConcreteProjectContext = (projectId: string | null | undefined): boolean => {
-  const normalized = typeof projectId === 'string' ? projectId.trim() : '';
-  return normalized.length > 0 && normalized !== '0' && normalized !== PUBLIC_PROJECT_ID;
-};
 
 const mergeMessageByIdAndTime = (messages: Message[] = [], nextMessage: Message): Message[] => {
   const next = [...messages.filter((message) => message.id !== nextMessage.id), nextMessage];
@@ -88,6 +79,65 @@ const loadAttachmentTotalMaxBytes = async (
   }
 };
 
+const normalizeRuntimeText = (value: unknown): string | null => {
+  if (typeof value !== 'string') {
+    return null;
+  }
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+};
+
+interface SessionRuntimeSnapshot {
+  contactAgentId: string | null;
+  contactId: string | null;
+  remoteConnectionId: string | null;
+  selectedModelId: string | null;
+  selectedModelName: string | null;
+  selectedThinkingLevel: string | null;
+  projectId: string | null;
+  projectRoot: string | null;
+  workspaceRoot: string | null;
+  reasoningEnabled: boolean;
+  planModeEnabled: boolean;
+}
+
+const emptyRuntimeSnapshot = (): SessionRuntimeSnapshot => ({
+  contactAgentId: null,
+  contactId: null,
+  remoteConnectionId: null,
+  selectedModelId: null,
+  selectedModelName: null,
+  selectedThinkingLevel: null,
+  projectId: null,
+  projectRoot: null,
+  workspaceRoot: null,
+  reasoningEnabled: false,
+  planModeEnabled: false,
+});
+
+const runtimeSnapshotFromSettings = (
+  settings: SessionRuntimeSettingsResponse,
+): SessionRuntimeSnapshot => {
+  return {
+    ...emptyRuntimeSnapshot(),
+    selectedModelId: normalizeRuntimeText(settings.selected_model_id),
+    selectedModelName: normalizeRuntimeText(settings.selected_model_name),
+    selectedThinkingLevel: normalizeRuntimeText(settings.selected_thinking_level),
+    remoteConnectionId: normalizeRuntimeText(settings.remote_connection_id),
+    workspaceRoot: normalizeRuntimeText(settings.workspace_root),
+    reasoningEnabled: settings.reasoning_enabled === true,
+    planModeEnabled: settings.plan_mode_enabled === true,
+  };
+};
+
+const loadSessionRuntimeSnapshotForSend = async (
+  client: ApiClient,
+  sessionId: string,
+): Promise<SessionRuntimeSnapshot> => {
+  const settings = await client.getConversationRuntimeSettings(sessionId);
+  return runtimeSnapshotFromSettings(settings);
+};
+
 // 工厂函数：创建 sendMessage 处理器，注入依赖以便于在 store 外部维护
 export function createSendMessageHandler({
   set,
@@ -108,14 +158,10 @@ export function createSendMessageHandler({
     const tempAssistantId: string | null = null;
     const {
       currentSessionId,
-      currentSession,
-      selectedModelId,
-      selectedAgentId,
       aiModelConfigs,
       chatConfig,
       sessionChatState,
       activeSystemContext,
-      sessionAiSelectionBySession,
     } = get();
 
     if (!currentSessionId) {
@@ -208,28 +254,17 @@ export function createSendMessageHandler({
       return;
     }
 
-    const sessionAiSelection = sessionAiSelectionBySession?.[currentSessionId];
-    const requestedModelConfigId = typeof runtimeOptions?.modelConfigId === 'string'
-      ? runtimeOptions.modelConfigId.trim()
-      : '';
-    const effectiveSelectedModelId = requestedModelConfigId || sessionAiSelection?.selectedModelId || selectedModelId;
-    const sessionRuntime = readSessionRuntimeFromMetadata(currentSession?.metadata);
-    const fallbackContactAgentId = (
-      typeof runtimeOptions?.contactAgentId === 'string'
+    const sessionRuntime = await loadSessionRuntimeSnapshotForSend(client, currentSessionId);
+    const effectiveSelectedModelId = sessionRuntime.selectedModelId;
+    const runtimeOptionsForResolution: SendMessageRuntimeOptions = {
+      contactAgentId: typeof runtimeOptions?.contactAgentId === 'string'
         ? runtimeOptions.contactAgentId.trim()
-        : ''
-    ) || (
-      typeof sessionAiSelection?.selectedAgentId === 'string'
-        ? sessionAiSelection.selectedAgentId.trim()
-        : ''
-    ) || (
-      typeof selectedAgentId === 'string'
-        ? selectedAgentId.trim()
-        : ''
-    ) || null;
-    const runtimeOptionsWithContactFallback: SendMessageRuntimeOptions = {
-      ...runtimeOptions,
-      contactAgentId: fallbackContactAgentId,
+        : null,
+      contactId: typeof runtimeOptions?.contactId === 'string'
+        ? runtimeOptions.contactId.trim()
+        : null,
+      projectId: runtimeOptions.projectId,
+      projectRoot: runtimeOptions.projectRoot,
     };
     const {
       effectiveContactAgentId,
@@ -237,12 +272,13 @@ export function createSendMessageHandler({
       effectiveModelName,
       effectiveThinkingLevel,
       effectiveProjectId,
-      effectiveProjectRoot,
       effectiveWorkspaceRoot,
       effectiveExecutionRoot,
-    } = resolveRuntimeConfig(sessionRuntime, runtimeOptionsWithContactFallback);
-    const planMode = hasConcreteProjectContext(effectiveProjectId)
-      && (runtimeOptions.planMode === true || chatConfig.planModeEnabled === true);
+    } = resolveRuntimeConfig(sessionRuntime, runtimeOptionsForResolution);
+    const planMode = resolveEffectivePlanMode({
+      projectId: effectiveProjectId,
+      planModeEnabled: sessionRuntime.planModeEnabled,
+    });
     const selectedModel = resolveSelectedModelOrThrow(
       effectiveSelectedModelId,
       aiModelConfigs,
@@ -255,21 +291,6 @@ export function createSendMessageHandler({
     if (!selectedModelForRequest.model_name?.trim()) {
       throw new Error('Please select a concrete runtime model before sending the message.');
     }
-
-    const runtimeMetadata = mergeSessionRuntimeIntoMetadata(currentSession?.metadata, {
-      selectedModelId: selectedModel?.id || null,
-      selectedModelName: selectedModelForRequest.model_name || null,
-      selectedThinkingLevel: selectedModelForRequest.thinking_level || null,
-      contactAgentId: effectiveContactAgentId,
-      remoteConnectionId: effectiveRemoteConnectionId,
-      projectId: effectiveProjectId,
-      projectRoot: effectiveProjectRoot,
-      workspaceRoot: effectiveWorkspaceRoot,
-    });
-    set((state) => {
-      applySessionRuntimeMetadata(state, currentSessionId, runtimeMetadata);
-    });
-    void client.updateSession(currentSessionId, { metadata: runtimeMetadata }).catch(() => {});
 
     const conversationTurnId = createInternalId('turn');
     const streamedTextRef = { value: '' };
@@ -286,7 +307,7 @@ export function createSendMessageHandler({
       const {
         supportsImages,
         reasoningEnabled,
-      } = resolveModelCapabilities(selectedModelForRequest, chatConfig);
+      } = resolveModelCapabilities(selectedModelForRequest, sessionRuntime.reasoningEnabled);
       const userId = getUserIdParam();
       const attachmentTotalMaxBytes = await loadAttachmentTotalMaxBytes(client, userId);
       const { previewAttachments, apiAttachments } = await prepareAttachmentsForStreaming(

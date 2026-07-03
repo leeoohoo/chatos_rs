@@ -351,17 +351,18 @@ impl AppStore {
         &self,
         project_id: &str,
         status: Option<ProjectWorkItemStatus>,
+        is_planning_task: Option<bool>,
         keyword: Option<String>,
     ) -> Result<Vec<ProjectWorkItemRecord>, String> {
         match self {
             Self::Mongo(store) => {
                 store
-                    .list_work_items_by_project(project_id, status, keyword)
+                    .list_work_items_by_project(project_id, status, is_planning_task, keyword)
                     .await
             }
             Self::Sqlite(store) => {
                 store
-                    .list_work_items_by_project(project_id, status, keyword)
+                    .list_work_items_by_project(project_id, status, is_planning_task, keyword)
                     .await
             }
         }
@@ -373,6 +374,7 @@ impl AppStore {
         status: Option<ProjectWorkItemStatus>,
         keyword: Option<String>,
         requirement_id: Option<String>,
+        is_planning_task: Option<bool>,
         include_archived: bool,
         limit: usize,
         offset: usize,
@@ -385,6 +387,7 @@ impl AppStore {
                         status,
                         keyword,
                         requirement_id,
+                        is_planning_task,
                         include_archived,
                         limit,
                         offset,
@@ -398,6 +401,7 @@ impl AppStore {
                         status,
                         keyword,
                         requirement_id,
+                        is_planning_task,
                         include_archived,
                         limit,
                         offset,

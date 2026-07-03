@@ -135,15 +135,12 @@ export const InputArea: React.FC<InputAreaProps> = ({
     onThinkingLevelChange,
     onModelRuntimeChange,
     availableModels,
-    planModeAvailable,
-    planModeEnabled,
     availableProjects,
     selectedProjectId,
     showProjectFileButton,
     showWorkspaceRootPicker,
     workspaceRoot,
     onWorkspaceRootChange,
-    currentRemoteConnectionId,
   });
 
   return (

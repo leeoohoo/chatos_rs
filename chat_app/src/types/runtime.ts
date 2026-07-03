@@ -11,7 +11,6 @@ export interface SendMessageRuntimeOptions {
   projectId?: string | null;
   projectRoot?: string | null;
   workspaceRoot?: string | null;
-  planMode?: boolean;
 }
 
 export type SendMessageHandler = (

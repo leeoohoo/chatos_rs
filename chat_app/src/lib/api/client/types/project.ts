@@ -324,6 +324,8 @@ export interface ProjectWorkItemResponse {
   sort_order?: number;
   sortOrder?: number;
   tags?: string[];
+  is_planning_task?: boolean;
+  isPlanningTask?: boolean;
   creator_user_id?: string | null;
   creatorUserId?: string | null;
   creator_username?: string | null;

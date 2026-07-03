@@ -123,7 +123,6 @@ export const ProjectPlanPane: React.FC<ProjectPlanPaneProps> = ({ project, class
   const [executionPreviewCanConfirm, setExecutionPreviewCanConfirm] = useState(false);
   const [executionMessage, setExecutionMessage] = useState<string | null>(null);
   const [visibleWorkItemLimit, setVisibleWorkItemLimit] = useState(SELECTED_WORK_ITEM_INITIAL_RENDER_LIMIT);
-  const updateChatConfig = useChatStore((state) => state.updateChatConfig);
   const refreshSessionById = useChatStore((state) => state.refreshSessionById);
   const selectSession = useChatStore((state) => state.selectSession);
   const upsertSessionMessage = useChatStore((state) => state.upsertSessionMessage);
@@ -219,7 +218,6 @@ export const ProjectPlanPane: React.FC<ProjectPlanPaneProps> = ({ project, class
     setExecutingRequirementId(requirement.id);
     setExecutionMessage(null);
     setError(null);
-    void updateChatConfig({ planModeEnabled: false });
     try {
       const result = await apiClient.executeProjectRequirement(project.id, requirement.id, {
         include_prerequisite_dependents: Boolean(options?.includePrerequisiteDependents),
@@ -257,7 +255,7 @@ export const ProjectPlanPane: React.FC<ProjectPlanPaneProps> = ({ project, class
     } finally {
       setExecutingRequirementId(null);
     }
-  }, [apiClient, executingRequirementId, loadPlan, project.id, refreshSessionById, selectSession, updateChatConfig, upsertSessionMessage]);
+  }, [apiClient, executingRequirementId, loadPlan, project.id, refreshSessionById, selectSession, upsertSessionMessage]);
 
   const stopRequirementExecution = useCallback(async (requirement: ProjectRequirementResponse) => {
     if (executingRequirementId) {

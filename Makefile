@@ -15,9 +15,12 @@ SHELL := /bin/bash
 .PHONY: restart-memory-engine status-memory-engine stop-memory-engine
 .PHONY: restart-db-hub status-db-hub stop-db-hub
 .PHONY: restart-all status-all stop-all
-.PHONY: build-chat-app-server build-chat-app build-db-hub build-user-service
+.PHONY: restart-official-website status-official-website stop-official-website
+.PHONY: restart-official-website-prod status-official-website-prod stop-official-website-prod
+.PHONY: build-chat-app-server build-chat-app build-db-hub build-user-service build-official-website
 .PHONY: test-chat-app-server test-chat-app test-db-hub test-user-service
-.PHONY: smoke-repo smoke-chat-app-server smoke-chat-app smoke-db-hub smoke-user-service
+.PHONY: smoke-repo smoke-chat-app-server smoke-chat-app smoke-db-hub smoke-user-service smoke-official-website smoke-official-website-live
+.PHONY: docker-build-official-website
 .PHONY: type-check-db-hub-frontend lint-db-hub-frontend type-check-user-service-frontend
 
 help:
@@ -41,9 +44,17 @@ help:
 	@echo "  make restart-all          # restart memory_engine + user_service + chatos + task_runner"
 	@echo "  make status-all           # show full stack status"
 	@echo "  make stop-all             # stop full stack"
+	@echo "  make restart-official-website # restart the official website microservice"
+	@echo "  make status-official-website  # show official website status"
+	@echo "  make stop-official-website    # stop official website services"
+	@echo "  make restart-official-website-prod # restart official website in static prod mode"
+	@echo "  make docker-build-official-website # build the official website Docker image"
 	@echo "  make build               # build key subprojects"
+	@echo "  make build-official-website # build the official website frontend + backend"
 	@echo "  make test                # run repo checks + subproject tests"
 	@echo "  make smoke               # repo governance + lightweight cross-subproject probes"
+	@echo "  make smoke-official-website # check official website script/backend/frontend"
+	@echo "  make smoke-official-website-live # probe a running official website"
 	@echo "  make smoke-user-service-flow # call the live user_service API flow end-to-end"
 	@echo "  make code-size-report    # report source-code file size and line-count hotspots"
 	@echo "  make hotspot-line-warnings # warn on planned refactor hotspot line budgets"
@@ -123,7 +134,25 @@ status-all:
 stop-all:
 	@./restart_all_services.sh stop
 
-build: build-chat-app-server build-chat-app build-db-hub build-user-service
+restart-official-website:
+	@bash official_website_service/restart_services.sh restart
+
+status-official-website:
+	@bash official_website_service/restart_services.sh status
+
+stop-official-website:
+	@bash official_website_service/restart_services.sh stop
+
+restart-official-website-prod:
+	@bash official_website_service/restart_services_prod.sh restart
+
+status-official-website-prod:
+	@bash official_website_service/restart_services_prod.sh status
+
+stop-official-website-prod:
+	@bash official_website_service/restart_services_prod.sh stop
+
+build: build-chat-app-server build-chat-app build-db-hub build-user-service build-official-website
 
 build-chat-app-server:
 	@cd chat_app_server_rs && cargo build
@@ -139,9 +168,16 @@ build-user-service:
 	@cd user_service/backend && cargo build
 	@cd user_service/frontend && npm run build
 
+build-official-website:
+	@cd official_website_service/frontend && npm run build
+	@cd official_website_service/backend && cargo build
+
+docker-build-official-website:
+	@docker build -f official_website_service/Dockerfile -t chatos-rs-official-website:local .
+
 test: smoke test-chat-app-server test-chat-app test-db-hub test-user-service
 
-smoke: smoke-repo smoke-chat-app-server smoke-chat-app smoke-db-hub smoke-user-service
+smoke: smoke-repo smoke-chat-app-server smoke-chat-app smoke-db-hub smoke-user-service smoke-official-website
 
 smoke-repo:
 	@bash scripts/check_api_surface.sh
@@ -150,6 +186,8 @@ smoke-repo:
 	@bash -n restart_services.sh
 	@bash -n db_connection_hub/restart_services.sh
 	@bash -n user_service/restart_services.sh
+	@bash -n official_website_service/restart_services.sh
+	@bash -n official_website_service/restart_services_prod.sh
 	@bash scripts/check-large-files.sh --fail
 
 smoke-chat-app-server:
@@ -165,6 +203,17 @@ smoke-db-hub:
 smoke-user-service:
 	@cd user_service/backend && cargo check
 	@cd user_service/frontend && npm run type-check
+
+smoke-official-website:
+	@bash -n official_website_service/restart_services.sh
+	@bash -n official_website_service/restart_services_prod.sh
+	@bash -n scripts/smoke-official-website.sh
+	@cd official_website_service/backend && cargo check
+	@cd official_website_service/frontend && npm run type-check
+	@cd official_website_service/frontend && npm run build
+
+smoke-official-website-live:
+	@bash scripts/smoke-official-website.sh
 
 smoke-user-service-flow:
 	@powershell.exe -ExecutionPolicy Bypass -File scripts/smoke-user-service-flow.ps1

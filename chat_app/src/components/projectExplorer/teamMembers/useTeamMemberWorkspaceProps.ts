@@ -22,67 +22,80 @@ export const useTeamMemberWorkspaceProps = ({
     selectedRuntimeModelId
     && (store.aiModelConfigs || []).find((item) => item.id === selectedRuntimeModelId)?.supports_reasoning === true,
   );
+  const handleSend: ComponentProps<typeof TeamMemberWorkspace>['onSend'] = async (
+    content,
+    attachments,
+    runtimeOptions,
+  ) => {
+    await resources.composer.flushRuntimeSettings();
+    await resources.conversation.handleSendMessage(content, attachments, runtimeOptions);
+  };
 
   return ({
-  project,
-  selectedContact: resources.conversation.selectedContact,
-  selectedProjectSession: resources.conversation.selectedProjectSession,
-  isSelectedSessionActive: resources.conversation.isSelectedSessionActive,
-  sessionSummaryPaneVisible: resources.conversation.sessionSummaryPaneVisible,
-  summaryItems: resources.summary.summaryItems,
-  summaryLoading: resources.summary.summaryLoading,
-  summaryError: resources.summary.summaryError,
-  clearingSummaries: resources.summary.clearingSummaries,
-  deletingSummaryId: resources.summary.deletingSummaryId,
-  messages: store.messages,
-  hasMoreMessages,
-  selectedModelId: selectedRuntimeModelId,
-  selectedModelName: resources.composer.composerSelectedModelName,
-  selectedThinkingLevel: resources.composer.composerSelectedThinkingLevel,
-  aiModelConfigs: store.aiModelConfigs,
-  supportsReasoning,
-  reasoningEnabled: store.chatConfig?.reasoningEnabled === true,
-  planModeEnabled: store.chatConfig?.planModeEnabled === true,
-  reviewRepairRunning: resources.reviewRepair.reviewRepairRunning,
-  availableRemoteConnections: resources.composer.remoteConnections || [],
-  currentRemoteConnectionId: resources.composer.currentRemoteConnection?.id || null,
-  onRemoteConnectionChange: resources.composer.handleComposerRemoteConnectionChange,
-  onLoadMore: resources.conversation.handleLoadMore,
-  onClearSummaries: () => {
-    void resources.conversation.handleClearSummaries();
-  },
-  onRefreshSummaries: () => {
-    const sessionId = resources.conversation.selectedProjectSession?.id;
-    if (!sessionId) {
-      return;
-    }
-    void resources.summary.loadSessionSummaries(sessionId, { force: true });
-  },
-  onCloseSummary: () => {
-    resources.summary.setSummaryPaneSessionId(null);
-  },
-  onDeleteSummary: (summaryId) => {
-    void resources.conversation.handleDeleteSummary(summaryId);
-  },
-  onSend: resources.conversation.handleSendMessage,
-  onModelChange: resources.composer.handleComposerSelectedModelChange,
-  onModelNameChange: resources.composer.handleComposerSelectedModelNameChange,
-  onThinkingLevelChange: resources.composer.handleComposerSelectedThinkingLevelChange,
-  onModelRuntimeChange: resources.composer.handleComposerModelRuntimeSelectionChange,
-  onReasoningToggle: (enabled) => store.updateChatConfig({ reasoningEnabled: enabled }),
-  onPlanModeToggle: (enabled) => store.updateChatConfig({ planModeEnabled: enabled }),
+    project,
+    selectedContact: resources.conversation.selectedContact,
+    selectedProjectSession: resources.conversation.selectedProjectSession,
+    isSelectedSessionActive: resources.conversation.isSelectedSessionActive,
+    sessionSummaryPaneVisible: resources.conversation.sessionSummaryPaneVisible,
+    summaryItems: resources.summary.summaryItems,
+    summaryLoading: resources.summary.summaryLoading,
+    summaryError: resources.summary.summaryError,
+    clearingSummaries: resources.summary.clearingSummaries,
+    deletingSummaryId: resources.summary.deletingSummaryId,
+    messages: store.messages,
+    hasMoreMessages,
+    selectedModelId: selectedRuntimeModelId,
+    selectedModelName: resources.composer.composerSelectedModelName,
+    selectedThinkingLevel: resources.composer.composerSelectedThinkingLevel,
+    aiModelConfigs: store.aiModelConfigs,
+    supportsReasoning,
+    reasoningEnabled: resources.composer.composerReasoningEnabled,
+    planModeEnabled: resources.composer.composerPlanModeEnabled,
+    reviewRepairRunning: resources.reviewRepair.reviewRepairRunning,
+    availableRemoteConnections: resources.composer.remoteConnections || [],
+    currentRemoteConnectionId: resources.composer.currentRemoteConnection?.id || null,
+    onRemoteConnectionChange: resources.composer.handleComposerRemoteConnectionChange,
+    onLoadMore: resources.conversation.handleLoadMore,
+    onClearSummaries: () => {
+      void resources.conversation.handleClearSummaries();
+    },
+    onRefreshSummaries: () => {
+      const sessionId = resources.conversation.selectedProjectSession?.id;
+      if (!sessionId) {
+        return;
+      }
+      void resources.summary.loadSessionSummaries(sessionId, { force: true });
+    },
+    onCloseSummary: () => {
+      resources.summary.setSummaryPaneSessionId(null);
+    },
+    onDeleteSummary: (summaryId) => {
+      void resources.conversation.handleDeleteSummary(summaryId);
+    },
+    onSend: handleSend,
+    onModelChange: resources.composer.handleComposerSelectedModelChange,
+    onModelNameChange: resources.composer.handleComposerSelectedModelNameChange,
+    onThinkingLevelChange: resources.composer.handleComposerSelectedThinkingLevelChange,
+    onModelRuntimeChange: resources.composer.handleComposerModelRuntimeSelectionChange,
+    onReasoningToggle: resources.composer.handleComposerReasoningToggle,
+    onPlanModeToggle: resources.composer.handleComposerPlanModeToggle,
   });
 }, [
   project,
   resources.composer.composerSelectedModelId,
   resources.composer.composerSelectedModelName,
   resources.composer.composerSelectedThinkingLevel,
+  resources.composer.composerReasoningEnabled,
+  resources.composer.composerPlanModeEnabled,
   resources.composer.handleComposerModelRuntimeSelectionChange,
   resources.composer.handleComposerSelectedModelChange,
   resources.composer.handleComposerSelectedModelNameChange,
   resources.composer.handleComposerSelectedThinkingLevelChange,
   resources.composer.currentRemoteConnection?.id,
   resources.composer.handleComposerRemoteConnectionChange,
+  resources.composer.handleComposerReasoningToggle,
+  resources.composer.handleComposerPlanModeToggle,
+  resources.composer.flushRuntimeSettings,
   resources.composer.remoteConnections,
   resources.conversation.handleClearSummaries,
   resources.conversation.handleDeleteSummary,
@@ -101,9 +114,6 @@ export const useTeamMemberWorkspaceProps = ({
   resources.summary.summaryItems,
   resources.summary.summaryLoading,
   store.aiModelConfigs,
-  store.chatConfig?.reasoningEnabled,
-  store.chatConfig?.planModeEnabled,
   store.messages,
   store.sessionMessagePaginationState,
-  store.updateChatConfig,
 ]);

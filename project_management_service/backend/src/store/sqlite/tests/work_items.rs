@@ -30,6 +30,7 @@ async fn list_work_items_page_supports_requirement_filter_keyword_and_offset() {
             UpdateProjectWorkItemRequest {
                 sort_order: Some(2),
                 tags: Some(vec!["lookup-tag".to_string()]),
+                is_planning_task: Some(true),
                 ..Default::default()
             },
         )
@@ -52,6 +53,7 @@ async fn list_work_items_page_supports_requirement_filter_keyword_and_offset() {
             None,
             None,
             Some(requirement.id.clone()),
+            None,
             false,
             1,
             0,
@@ -64,6 +66,7 @@ async fn list_work_items_page_supports_requirement_filter_keyword_and_offset() {
             None,
             None,
             Some(requirement.id.clone()),
+            None,
             false,
             1,
             1,
@@ -76,12 +79,21 @@ async fn list_work_items_page_supports_requirement_filter_keyword_and_offset() {
             None,
             Some("lookup-tag".to_string()),
             Some(requirement.id.clone()),
+            None,
             false,
             10,
             0,
         )
         .await
         .expect("tagged page");
+    let planning_items = store
+        .list_work_items_by_project_page(&project.id, None, None, None, Some(true), false, 10, 0)
+        .await
+        .expect("planning items");
+    let execution_items = store
+        .list_work_items_by_project_page(&project.id, None, None, None, Some(false), false, 10, 0)
+        .await
+        .expect("execution items");
 
     assert_eq!(first_page.len(), 1);
     assert_eq!(second_page.len(), 1);
@@ -89,6 +101,14 @@ async fn list_work_items_page_supports_requirement_filter_keyword_and_offset() {
     assert_eq!(second_page[0].id, second.id);
     assert_eq!(tagged.len(), 1);
     assert_eq!(tagged[0].id, second.id);
+    assert_eq!(
+        planning_items
+            .iter()
+            .map(|item| item.id.as_str())
+            .collect::<Vec<_>>(),
+        vec![second.id.as_str()]
+    );
+    assert_eq!(execution_items.len(), 2);
 }
 
 #[tokio::test]
@@ -113,6 +133,7 @@ async fn work_item_creation_requires_requirement_technical_document_content() {
                 due_at: None,
                 sort_order: None,
                 tags: None,
+                is_planning_task: false,
             },
             &test_user(),
         )
@@ -152,6 +173,7 @@ async fn work_item_creation_requires_requirement_technical_document_content() {
                 due_at: None,
                 sort_order: None,
                 tags: None,
+                is_planning_task: false,
             },
             &test_user(),
         )
@@ -191,6 +213,7 @@ async fn work_item_creation_requires_requirement_technical_document_content() {
                 due_at: None,
                 sort_order: None,
                 tags: None,
+                is_planning_task: false,
             },
             &test_user(),
         )
@@ -235,6 +258,7 @@ async fn work_item_creation_accepts_any_non_empty_requirement_document() {
                 due_at: None,
                 sort_order: None,
                 tags: None,
+                is_planning_task: false,
             },
             &test_user(),
         )

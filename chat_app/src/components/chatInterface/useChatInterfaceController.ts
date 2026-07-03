@@ -25,11 +25,11 @@ interface UseChatInterfaceControllerParams {
   currentSession: Session | null;
   messages: Message[];
   runtimeContextRefreshNonce: number;
-  currentRemoteConnectionId: string | null;
   summaryPaneSessionId: string | null;
   setSummaryPaneSessionId: (value: string | null | ((prev: string | null) => string | null)) => void;
   onMessageSend?: (content: string, attachments?: File[]) => void;
   sendMessage: SendMessageHandler;
+  flushRuntimeSettings?: () => Promise<void>;
   selectRemoteConnection: (
     connectionId: string | null,
     options?: { activatePanel?: boolean },
@@ -57,11 +57,11 @@ export const useChatInterfaceController = ({
   currentSession,
   messages,
   runtimeContextRefreshNonce,
-  currentRemoteConnectionId,
   summaryPaneSessionId,
   setSummaryPaneSessionId,
   onMessageSend,
   sendMessage,
+  flushRuntimeSettings,
   selectRemoteConnection,
   loadMessages,
   loadMoreMessages,
@@ -147,21 +147,8 @@ export const useChatInterfaceController = ({
     runtimeOptions?: SendMessageRuntimeOptions,
   ) => {
     try {
-      const hasRemoteConnectionIdOverride = Boolean(
-        runtimeOptions
-        && Object.prototype.hasOwnProperty.call(runtimeOptions, 'remoteConnectionId'),
-      );
-      const remoteConnectionIdOverride = hasRemoteConnectionIdOverride
-        ? (typeof runtimeOptions?.remoteConnectionId === 'string'
-          ? runtimeOptions.remoteConnectionId
-          : null)
-        : undefined;
-      await sendMessage(content, attachments, {
-        ...runtimeOptions,
-        remoteConnectionId: hasRemoteConnectionIdOverride
-          ? (remoteConnectionIdOverride ?? null)
-          : (currentRemoteConnectionId || null),
-      });
+      await flushRuntimeSettings?.();
+      await sendMessage(content, attachments, runtimeOptions);
       if (currentSession?.id) {
         void refreshReviewRepairStatus(currentSession.id).catch((statusError) => {
           console.error('Failed to refresh review repair status after send:', statusError);
@@ -172,7 +159,7 @@ export const useChatInterfaceController = ({
       console.error('Failed to send message:', error);
     }
   }, [
-    currentRemoteConnectionId,
+    flushRuntimeSettings,
     currentSession?.id,
     onMessageSend,
     refreshReviewRepairStatus,

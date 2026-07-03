@@ -11,6 +11,8 @@ export interface SessionRuntimeMetadata {
   projectId: string | null;
   projectRoot: string | null;
   workspaceRoot: string | null;
+  reasoningEnabled: boolean;
+  planModeEnabled: boolean;
 }
 
 type MetadataRecord = Record<string, unknown>;
@@ -22,6 +24,10 @@ const normalizeId = (value: unknown): string | null => {
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : null;
 };
+
+const normalizeBool = (value: unknown): boolean | null => (
+  typeof value === 'boolean' ? value : null
+);
 
 const asMetadataRecord = (value: unknown): MetadataRecord => (
   value && typeof value === 'object' && !Array.isArray(value)
@@ -117,6 +123,12 @@ export const readSessionRuntimeFromMetadata = (
   const workspaceRoot = normalizeId(
     runtime.workspace_root ?? runtime.workspaceRoot,
   );
+  const reasoningEnabled = normalizeBool(
+    runtime.reasoning_enabled ?? runtime.reasoningEnabled,
+  ) ?? false;
+  const planModeEnabled = normalizeBool(
+    runtime.plan_mode_enabled ?? runtime.planModeEnabled,
+  ) ?? false;
   if (
     !selectedModelId
     && !selectedModelName
@@ -127,6 +139,8 @@ export const readSessionRuntimeFromMetadata = (
     && !projectId
     && !projectRoot
     && !workspaceRoot
+    && !reasoningEnabled
+    && !planModeEnabled
   ) {
     return null;
   }
@@ -141,6 +155,8 @@ export const readSessionRuntimeFromMetadata = (
     projectId,
     projectRoot,
     workspaceRoot,
+    reasoningEnabled,
+    planModeEnabled,
   };
 };
 
@@ -184,6 +200,12 @@ export const mergeSessionRuntimeIntoMetadata = (
   const workspaceRoot = normalizeId(
     hasOwn('workspaceRoot') ? runtime.workspaceRoot : existingRuntime?.workspaceRoot,
   );
+  const reasoningEnabled = hasOwn('reasoningEnabled')
+    ? runtime.reasoningEnabled === true
+    : existingRuntime?.reasoningEnabled === true;
+  const planModeEnabled = hasOwn('planModeEnabled')
+    ? runtime.planModeEnabled === true
+    : existingRuntime?.planModeEnabled === true;
   source.chat_runtime = {
     selected_model_id: selectedModelId,
     selected_model_name: selectedModelName,
@@ -193,6 +215,8 @@ export const mergeSessionRuntimeIntoMetadata = (
     project_id: projectId,
     project_root: projectRoot,
     workspace_root: workspaceRoot,
+    reasoning_enabled: reasoningEnabled,
+    plan_mode_enabled: planModeEnabled,
   };
   source.contact = {
     type: 'memory_agent',

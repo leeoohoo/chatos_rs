@@ -16,6 +16,22 @@ pub(super) async fn create_tables_sqlite(pool: &SqlitePool) -> Result<(), String
             .map_err(|e| format!("create table failed: {e}"))?;
     }
 
+    ensure_column(
+        pool,
+        "session_runtime_settings",
+        "reasoning_enabled",
+        "INTEGER NOT NULL DEFAULT 0",
+    )
+    .await
+    .ok();
+    ensure_column(
+        pool,
+        "session_runtime_settings",
+        "plan_mode_enabled",
+        "INTEGER NOT NULL DEFAULT 0",
+    )
+    .await
+    .ok();
     ensure_session_runtime_settings_without_session_fk(pool).await?;
     ensure_legacy_ai_model_config_columns_sqlite(pool)
         .await
@@ -309,6 +325,8 @@ async fn ensure_session_runtime_settings_without_session_fk(
                 selected_thinking_level TEXT,
                 remote_connection_id TEXT,
                 workspace_root TEXT,
+                reasoning_enabled INTEGER NOT NULL DEFAULT 0,
+                plan_mode_enabled INTEGER NOT NULL DEFAULT 0,
                 mcp_enabled INTEGER NOT NULL DEFAULT 1,
                 enabled_mcp_ids TEXT NOT NULL DEFAULT '[]',
                 auto_create_task INTEGER NOT NULL DEFAULT 0,
@@ -328,6 +346,8 @@ async fn ensure_session_runtime_settings_without_session_fk(
                 selected_thinking_level,
                 remote_connection_id,
                 workspace_root,
+                reasoning_enabled,
+                plan_mode_enabled,
                 mcp_enabled,
                 enabled_mcp_ids,
                 auto_create_task,
@@ -342,6 +362,8 @@ async fn ensure_session_runtime_settings_without_session_fk(
                 selected_thinking_level,
                 remote_connection_id,
                 workspace_root,
+                COALESCE(reasoning_enabled, 0),
+                COALESCE(plan_mode_enabled, 0),
                 mcp_enabled,
                 enabled_mcp_ids,
                 auto_create_task,

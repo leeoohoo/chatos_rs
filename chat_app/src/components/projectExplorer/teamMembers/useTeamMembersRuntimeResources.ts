@@ -25,11 +25,8 @@ export const useTeamMembersRuntimeResources = ({
     apiClient,
     sessions,
     remoteConnections,
-    currentRemoteConnection,
     messages,
     sessionChatState,
-    selectRemoteConnection,
-    updateSession,
     loadMessages,
   } = store;
   const {
@@ -50,13 +47,19 @@ export const useTeamMembersRuntimeResources = ({
     selectedModelId: composerSelectedModelId,
     selectedModelName: composerSelectedModelName,
     selectedThinkingLevel: composerSelectedThinkingLevel,
+    remoteConnectionId: composerRemoteConnectionId,
+    reasoningEnabled: composerReasoningEnabled,
+    planModeEnabled: composerPlanModeEnabled,
     setSelectedModelId: handleComposerSelectedModelChange,
     setSelectedModelName: handleComposerSelectedModelNameChange,
     setSelectedThinkingLevel: handleComposerSelectedThinkingLevelChange,
     setModelRuntimeSelection: handleComposerModelRuntimeSelectionChange,
+    setRemoteConnectionId: handleComposerRemoteConnectionChange,
+    setReasoningEnabled: handleComposerReasoningToggle,
+    setPlanModeEnabled: handleComposerPlanModeToggle,
+    flushRuntimeSettings,
   } = useSessionRuntimeSettings({
     session: conversation.selectedProjectSession,
-    updateSession,
   });
 
   const runtimeContext = useTeamMemberRuntimeContext({
@@ -67,10 +70,6 @@ export const useTeamMembersRuntimeResources = ({
     ensureContactSession,
     setSelectedContactId: conversation.setSelectedContactId,
   });
-
-  const handleComposerRemoteConnectionChange = useCallback((connectionId: string | null) => {
-    void selectRemoteConnection(connectionId, { activatePanel: false });
-  }, [selectRemoteConnection]);
 
   useConversationSummariesRealtime({
     sessionId: conversation.selectedProjectSession?.id || null,
@@ -178,13 +177,20 @@ export const useTeamMembersRuntimeResources = ({
       composerSelectedModelId,
       composerSelectedModelName,
       composerSelectedThinkingLevel,
+      composerReasoningEnabled,
+      composerPlanModeEnabled,
       handleComposerSelectedModelChange,
       handleComposerSelectedModelNameChange,
       handleComposerSelectedThinkingLevelChange,
       handleComposerModelRuntimeSelectionChange,
       handleComposerRemoteConnectionChange,
+      handleComposerReasoningToggle,
+      handleComposerPlanModeToggle,
+      flushRuntimeSettings,
       remoteConnections,
-      currentRemoteConnection,
+      currentRemoteConnection: (remoteConnections || []).find(
+        (connection) => connection.id === composerRemoteConnectionId,
+      ) || null,
     },
     runtimeContext,
     reviewRepair: {

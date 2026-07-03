@@ -21,6 +21,7 @@ struct CreateTaskRunnerTaskRequest<'a> {
     priority: Option<i32>,
     tags: Option<Vec<String>>,
     default_model_config_id: Option<String>,
+    task_profile: Option<&'a str>,
     mcp_config: Option<TaskRunnerMcpConfig>,
     project_id: Option<&'a str>,
     source_session_id: Option<String>,
@@ -157,6 +158,11 @@ pub async fn create_task_from_work_item(
         execution_options.validate_skill_ids(work_item.task_runner_skill_ids.clone())?;
     let source_session_id = normalized_optional(input.source_session_id);
     let source_user_message_id = normalized_optional(input.source_user_message_id);
+    let task_profile = if work_item.is_planning_task {
+        "chatos_plan"
+    } else {
+        "default"
+    };
     let payload = CreateTaskRunnerTaskRequest {
         title: normalized_optional(input.title).unwrap_or_else(|| work_item.title.clone()),
         description: normalized_optional(input.description)
@@ -168,6 +174,7 @@ pub async fn create_task_from_work_item(
             "project_id": work_item.project_id,
             "requirement_id": work_item.requirement_id,
             "project_work_item_id": work_item.id,
+            "is_planning_task": work_item.is_planning_task,
         })),
         priority: input
             .priority
@@ -176,6 +183,7 @@ pub async fn create_task_from_work_item(
             input.tags.unwrap_or_else(|| work_item.tags.clone()),
         )),
         default_model_config_id,
+        task_profile: Some(task_profile),
         mcp_config: Some(mcp_config),
         project_id: Some(work_item.project_id.as_str()),
         source_session_id: source_session_id.clone(),
@@ -401,9 +409,10 @@ fn normalized_optional(value: Option<String>) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::models::ProjectWorkItemStatus;
     use axum::extract::State;
     use axum::http::{HeaderMap, StatusCode};
-    use axum::{routing::get, Json, Router};
+    use axum::{routing::get, routing::post, Json, Router};
     use serde_json::{json, Value};
     use std::net::{IpAddr, Ipv4Addr};
     use std::sync::Arc;
@@ -412,7 +421,10 @@ mod tests {
     #[derive(Debug, Default)]
     struct CapturedRequest {
         path: Option<String>,
+        post_path: Option<String>,
         internal_secret: Option<String>,
+        authorization: Option<String>,
+        request_body: Option<Value>,
     }
 
     #[derive(Clone)]
@@ -445,6 +457,79 @@ mod tests {
                 get(handler),
             )
             .with_state(TestServerState { captured, body });
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind test server");
+        let addr = listener.local_addr().expect("read test server addr");
+        let handle = tokio::spawn(async move {
+            let _ = axum::serve(listener, app).await;
+        });
+        (format!("http://{addr}"), handle)
+    }
+
+    async fn start_create_task_test_server(
+        captured: Arc<Mutex<CapturedRequest>>,
+    ) -> (String, tokio::task::JoinHandle<()>) {
+        async fn execution_options_handler(
+            State(state): State<TestServerState>,
+            uri: axum::http::Uri,
+            headers: HeaderMap,
+        ) -> (StatusCode, Json<Value>) {
+            let mut captured = state.captured.lock().await;
+            captured.path = Some(uri.path().to_string());
+            captured.internal_secret = headers
+                .get("x-task-runner-internal-secret")
+                .and_then(|value| value.to_str().ok())
+                .map(ToOwned::to_owned);
+            (
+                StatusCode::OK,
+                Json(json!({
+                    "model_config_ids": ["model-1"],
+                    "builtin_tool_ids": ["builtin-code"],
+                    "external_tool_ids": ["external-docs"],
+                    "skill_ids": ["skill-plan"]
+                })),
+            )
+        }
+
+        async fn create_task_handler(
+            State(state): State<TestServerState>,
+            uri: axum::http::Uri,
+            headers: HeaderMap,
+            Json(body): Json<Value>,
+        ) -> (StatusCode, Json<Value>) {
+            let mut captured = state.captured.lock().await;
+            captured.post_path = Some(uri.path().to_string());
+            captured.authorization = headers
+                .get("authorization")
+                .and_then(|value| value.to_str().ok())
+                .map(ToOwned::to_owned);
+            captured.request_body = Some(body);
+            (
+                StatusCode::OK,
+                Json(json!({
+                    "id": "task-runner-task-1",
+                    "title": "继续规划",
+                    "status": "ready",
+                    "project_id": "project-1",
+                    "last_run_id": null,
+                    "created_at": "2026-01-01T00:00:00Z",
+                    "updated_at": "2026-01-01T00:00:00Z"
+                })),
+            )
+        }
+
+        let state = TestServerState {
+            captured,
+            body: json!({}),
+        };
+        let app = Router::new()
+            .route(
+                "/internal/users/:owner_user_id/execution-options",
+                get(execution_options_handler),
+            )
+            .route("/api/tasks", post(create_task_handler))
+            .with_state(state);
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
             .await
             .expect("bind test server");
@@ -538,6 +623,84 @@ mod tests {
         assert_eq!(
             captured.path.as_deref(),
             Some("/internal/users/owner%2Fone/execution-options")
+        );
+
+        handle.abort();
+    }
+
+    #[tokio::test]
+    async fn create_task_from_planning_work_item_uses_plan_profile() {
+        let captured = Arc::new(Mutex::new(CapturedRequest::default()));
+        let (base_url, handle) = start_create_task_test_server(captured.clone()).await;
+
+        let task = create_task_from_work_item(
+            &AppConfig {
+                host: IpAddr::V4(Ipv4Addr::LOCALHOST),
+                port: 0,
+                database_url: "sqlite::memory:".to_string(),
+                user_service_base_url: "http://127.0.0.1:39190".to_string(),
+                user_service_request_timeout: std::time::Duration::from_millis(1_000),
+                task_runner_base_url: Some(base_url),
+                task_runner_request_timeout: std::time::Duration::from_millis(1_000),
+                task_runner_internal_secret: Some("internal-secret".to_string()),
+                sync_secret: None,
+            },
+            "runner-token",
+            &ProjectWorkItemRecord {
+                id: "work-item-1".to_string(),
+                project_id: "project-1".to_string(),
+                requirement_id: "req-1".to_string(),
+                title: "继续规划".to_string(),
+                description: Some("继续拆解后续工作".to_string()),
+                task_runner_default_model_config_id: "model-1".to_string(),
+                task_runner_enabled_tool_ids: vec!["builtin-code".to_string()],
+                task_runner_skill_ids: vec!["skill-plan".to_string()],
+                status: ProjectWorkItemStatus::Todo,
+                priority: 5,
+                assignee_user_id: None,
+                estimate_points: None,
+                due_at: None,
+                sort_order: 0,
+                tags: vec!["planning".to_string()],
+                is_planning_task: true,
+                creator_user_id: Some("owner-1".to_string()),
+                creator_username: None,
+                creator_display_name: None,
+                owner_user_id: Some("owner-1".to_string()),
+                owner_username: None,
+                owner_display_name: None,
+                created_at: "2026-01-01T00:00:00Z".to_string(),
+                updated_at: "2026-01-01T00:00:00Z".to_string(),
+                archived_at: None,
+            },
+            CreateTaskRunnerTaskFromWorkItemRequest::default(),
+        )
+        .await
+        .expect("create task");
+
+        assert_eq!(task.id, "task-runner-task-1");
+        let captured = captured.lock().await;
+        assert_eq!(captured.post_path.as_deref(), Some("/api/tasks"));
+        assert_eq!(
+            captured.authorization.as_deref(),
+            Some("Bearer runner-token")
+        );
+        let body = captured.request_body.as_ref().expect("request body");
+        assert_eq!(
+            body.get("task_profile").and_then(Value::as_str),
+            Some("chatos_plan")
+        );
+        assert_eq!(
+            body.pointer("/input_payload/is_planning_task")
+                .and_then(Value::as_bool),
+            Some(true)
+        );
+        assert_eq!(
+            body.pointer("/mcp_config/skill_ids")
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default(),
+            vec![json!("skill-plan")]
         );
 
         handle.abort();

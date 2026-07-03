@@ -30,15 +30,12 @@ type UseInputAreaControllerParams = Pick<
   | 'onThinkingLevelChange'
   | 'onModelRuntimeChange'
   | 'availableModels'
-  | 'planModeAvailable'
-  | 'planModeEnabled'
   | 'availableProjects'
   | 'selectedProjectId'
   | 'showProjectFileButton'
   | 'showWorkspaceRootPicker'
   | 'workspaceRoot'
   | 'onWorkspaceRootChange'
-  | 'currentRemoteConnectionId'
 >;
 
 const DEFAULT_SUPPORTED_FILE_TYPES = [
@@ -64,15 +61,12 @@ export function useInputAreaController({
   onThinkingLevelChange,
   onModelRuntimeChange,
   availableModels = [],
-  planModeAvailable = false,
-  planModeEnabled = false,
   availableProjects = [],
   selectedProjectId = null,
   showProjectFileButton = true,
   showWorkspaceRootPicker = false,
   workspaceRoot = null,
   onWorkspaceRootChange,
-  currentRemoteConnectionId = null,
 }: UseInputAreaControllerParams) {
   const { t } = useI18n();
   const effectiveAllowAttachments = allowAttachments;
@@ -308,20 +302,13 @@ export function useInputAreaController({
   } = useInputAreaMessageDraft({
     attachments,
     clearAttachments,
-    currentRemoteConnectionId,
     disabled,
     effectiveAllowAttachments,
     maxLength,
-    normalizedWorkspaceRoot,
     onSend,
-    planModeAvailable,
-    planModeEnabled,
     requireModelSelection,
-    selectedModelId,
     selectedProjectId,
     selectedRuntimeProject,
-    effectiveModelName,
-    effectiveThinkingLevel,
   });
 
   return {

@@ -86,7 +86,7 @@ pub async fn project_dependency_graph(
         requirements = non_archived_requirements(requirements);
     }
     let mut work_items = store
-        .list_work_items_by_project(project_id, None, None)
+        .list_work_items_by_project(project_id, None, None, None)
         .await?;
     if !include_archived {
         work_items = retain_project_tasks_for_requirements(

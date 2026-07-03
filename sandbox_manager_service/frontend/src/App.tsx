@@ -4,6 +4,7 @@
 import { Navigate, Route, Routes } from 'react-router-dom';
 
 import { AppShell } from './components/AppShell';
+import { AccessClientsPage } from './pages/AccessClientsPage';
 import { CreateSandboxPage } from './pages/CreateSandboxPage';
 import { DashboardPage } from './pages/DashboardPage';
 import { McpTestPage } from './pages/McpTestPage';
@@ -23,6 +24,7 @@ export function App() {
         <Route path="/sandboxes/:sandboxId" element={<SandboxDetailPage />} />
         <Route path="/pool" element={<PoolPage />} />
         <Route path="/images" element={<SandboxImagesPage />} />
+        <Route path="/access-clients" element={<AccessClientsPage />} />
         <Route path="/mcp-test" element={<McpTestPage />} />
         <Route path="/create" element={<CreateSandboxPage />} />
         <Route path="/settings" element={<SettingsPage />} />

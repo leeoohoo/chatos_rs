@@ -291,21 +291,21 @@ pub async fn require_sandbox_auth(
     if request.method() == Method::OPTIONS {
         return Ok(next.run(request).await);
     }
-    let config = state.manager.config().clone();
-    let auth = authenticate_request(&config, request.headers()).await?;
+    let auth = authenticate_request(&state, request.headers()).await?;
     request.extensions_mut().insert(auth);
     Ok(next.run(request).await)
 }
 
 async fn authenticate_request(
-    config: &AppConfig,
+    state: &AppState,
     headers: &HeaderMap,
 ) -> Result<SandboxAuthContext, ApiError> {
+    let config = state.manager.config();
     if !config.require_auth {
         return Ok(SandboxAuthContext::Disabled);
     }
 
-    if let Some(client) = authenticate_system_client(config, headers)? {
+    if let Some(client) = authenticate_system_client(state, config, headers).await? {
         return Ok(SandboxAuthContext::System(client));
     }
     if authenticate_operator(config, headers)? {
@@ -318,7 +318,8 @@ async fn authenticate_request(
     Err(ApiError::unauthorized("missing sandbox authorization"))
 }
 
-fn authenticate_system_client(
+async fn authenticate_system_client(
+    state: &AppState,
     config: &AppConfig,
     headers: &HeaderMap,
 ) -> Result<Option<SandboxSystemClient>, ApiError> {
@@ -328,6 +329,14 @@ fn authenticate_system_client(
     let Some(client_key) = header_text(headers, "x-sandbox-client-key") else {
         return Err(ApiError::unauthorized("missing x-sandbox-client-key"));
     };
+    if let Some(client) = state
+        .manager
+        .authenticate_access_client(client_id.as_str(), client_key.as_str())
+        .await?
+    {
+        return Ok(Some(client));
+    }
+
     let expected_id = config
         .system_client_id
         .as_deref()

@@ -138,6 +138,7 @@ CREATE TABLE IF NOT EXISTS project_work_items (
   due_at TEXT,
   sort_order INTEGER NOT NULL DEFAULT 0,
   tags_json TEXT NOT NULL DEFAULT '[]',
+  is_planning_task INTEGER NOT NULL DEFAULT 0,
   creator_user_id TEXT,
   creator_username TEXT,
   creator_display_name TEXT,

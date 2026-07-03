@@ -19,6 +19,7 @@ impl SqliteStore {
         &self,
         project_id: &str,
         status: Option<ProjectWorkItemStatus>,
+        is_planning_task: Option<bool>,
         keyword: Option<String>,
     ) -> Result<Vec<ProjectWorkItemRecord>, String> {
         let keyword = normalized_optional(keyword).map(|value| format!("%{value}%"));
@@ -26,21 +27,23 @@ impl SqliteStore {
             "SELECT * FROM project_work_items
              WHERE project_id = ?1
                AND (?2 IS NULL OR status = ?2)
+               AND (?3 IS NULL OR is_planning_task = ?3)
                AND (
-                 ?3 IS NULL
-                 OR id LIKE ?3
-                 OR requirement_id LIKE ?3
-                 OR title LIKE ?3
-                 OR description LIKE ?3
-                 OR tags_json LIKE ?3
-                 OR task_runner_default_model_config_id LIKE ?3
-                 OR task_runner_enabled_tool_ids_json LIKE ?3
-                 OR task_runner_skill_ids_json LIKE ?3
+                 ?4 IS NULL
+                 OR id LIKE ?4
+                 OR requirement_id LIKE ?4
+                 OR title LIKE ?4
+                 OR description LIKE ?4
+                 OR tags_json LIKE ?4
+                 OR task_runner_default_model_config_id LIKE ?4
+                 OR task_runner_enabled_tool_ids_json LIKE ?4
+                 OR task_runner_skill_ids_json LIKE ?4
                )
              ORDER BY sort_order ASC, priority DESC, updated_at DESC",
         )
         .bind(project_id)
         .bind(status.map(|status| status.as_str().to_string()))
+        .bind(is_planning_task)
         .bind(keyword)
         .fetch_all(&self.pool)
         .await
@@ -54,6 +57,7 @@ impl SqliteStore {
         status: Option<ProjectWorkItemStatus>,
         keyword: Option<String>,
         requirement_id: Option<String>,
+        is_planning_task: Option<bool>,
         include_archived: bool,
         limit: usize,
         offset: usize,
@@ -65,24 +69,26 @@ impl SqliteStore {
              WHERE project_id = ?1
                AND (?2 IS NULL OR status = ?2)
                AND (?3 IS NULL OR requirement_id = ?3)
-               AND (?4 OR status <> 'archived')
+               AND (?4 IS NULL OR is_planning_task = ?4)
+               AND (?5 OR status <> 'archived')
                AND (
-                 ?5 IS NULL
-                 OR id LIKE ?5
-                 OR requirement_id LIKE ?5
-                 OR title LIKE ?5
-                 OR description LIKE ?5
-                 OR tags_json LIKE ?5
-                 OR task_runner_default_model_config_id LIKE ?5
-                 OR task_runner_enabled_tool_ids_json LIKE ?5
-                 OR task_runner_skill_ids_json LIKE ?5
+                 ?6 IS NULL
+                 OR id LIKE ?6
+                 OR requirement_id LIKE ?6
+                 OR title LIKE ?6
+                 OR description LIKE ?6
+                 OR tags_json LIKE ?6
+                 OR task_runner_default_model_config_id LIKE ?6
+                 OR task_runner_enabled_tool_ids_json LIKE ?6
+                 OR task_runner_skill_ids_json LIKE ?6
                )
              ORDER BY sort_order ASC, priority DESC, updated_at DESC
-             LIMIT ?6 OFFSET ?7",
+             LIMIT ?7 OFFSET ?8",
         )
         .bind(project_id)
         .bind(status.map(|status| status.as_str().to_string()))
         .bind(requirement_id)
+        .bind(is_planning_task)
         .bind(include_archived)
         .bind(keyword)
         .bind(limit.max(1) as i64)
@@ -185,6 +191,7 @@ impl SqliteStore {
             due_at: normalized_optional(input.due_at),
             sort_order: input.sort_order.unwrap_or_default(),
             tags: normalize_tags(input.tags.unwrap_or_default()),
+            is_planning_task: input.is_planning_task,
             creator_user_id: Some(user.id.clone()),
             creator_username: Some(user.username.clone()),
             creator_display_name: Some(user.display_name.clone()),
@@ -279,6 +286,9 @@ impl SqliteStore {
         }
         if let Some(tags) = patch.tags {
             item.tags = normalize_tags(tags);
+        }
+        if let Some(is_planning_task) = patch.is_planning_task {
+            item.is_planning_task = is_planning_task;
         }
         item.updated_at = now_rfc3339();
         self.save_work_item(&item).await?;
@@ -376,10 +386,11 @@ impl SqliteStore {
                 task_runner_default_model_config_id, task_runner_enabled_tool_ids_json,
                 task_runner_skill_ids_json,
                 status, priority, assignee_user_id, estimate_points, due_at, sort_order, tags_json,
+                is_planning_task,
                 creator_user_id, creator_username, creator_display_name,
                 owner_user_id, owner_username, owner_display_name,
                 created_at, updated_at, archived_at
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24)
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25)
              ON CONFLICT(id) DO UPDATE SET
                 requirement_id = excluded.requirement_id,
                 title = excluded.title,
@@ -394,6 +405,7 @@ impl SqliteStore {
                 due_at = excluded.due_at,
                 sort_order = excluded.sort_order,
                 tags_json = excluded.tags_json,
+                is_planning_task = excluded.is_planning_task,
                 creator_user_id = excluded.creator_user_id,
                 creator_username = excluded.creator_username,
                 creator_display_name = excluded.creator_display_name,
@@ -418,6 +430,7 @@ impl SqliteStore {
         .bind(&item.due_at)
         .bind(item.sort_order)
         .bind(tags_json)
+        .bind(item.is_planning_task)
         .bind(&item.creator_user_id)
         .bind(&item.creator_username)
         .bind(&item.creator_display_name)

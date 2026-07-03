@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use chatos_ai_runtime::ModelRuntimeConfig;
 use chatos_ai_runtime::model_config::{normalize_provider, normalize_thinking_level};
+use chatos_ai_runtime::ModelRuntimeConfig;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
