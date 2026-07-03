@@ -38,6 +38,7 @@ main chat service + external memory platform integration + MCP-style tool orches
 - `user_service/`: unified identity service for real users, agent accounts, and Task Runner delegation tokens
 - `task_runner_service/`: task execution and agent runtime service
 - `memory_engine/`: independent long-term memory microservice
+- `official_website_service/`: official product website microservice
 
 ## Quick Start
 Run from repository root:
@@ -78,6 +79,33 @@ Useful commands:
 ./restart_all_services.sh status
 ./restart_all_services.sh stop
 ```
+
+Run the official website microservice:
+
+```bash
+make restart-official-website
+```
+
+Official website URLs:
+
+- backend/static site: `http://localhost:39250`
+- frontend dev server: `http://localhost:39251`
+
+The default `OFFICIAL_WEBSITE_MODE=dev` runs both Rust and Vite. For static
+production-style serving, run `make build-official-website` first, then start
+with `OFFICIAL_WEBSITE_MODE=prod make restart-official-website`.
+Use `make restart-official-website-prod` for an isolated production-style port
+and `make docker-build-official-website` to build the Docker image.
+
+The website backend also exposes `GET /api/site/status` for local core
+microservice health shown on the website page.
+`robots.txt` and `sitemap.xml` are generated from
+`OFFICIAL_WEBSITE_PUBLIC_BASE_URL`; use `make smoke-official-website-live` to
+probe a running website. For public deployments, set
+`OFFICIAL_WEBSITE_ENABLE_LIVE_STATUS=false` to disable internal service probes.
+
+To include it in the full local stack, set `START_OFFICIAL_WEBSITE=1` before
+running `./restart_all_services.sh restart`.
 
 ## WSL Rust Dev Flow
 If Windows Smart App Control / Code Integrity blocks `cargo run` or `cargo test`,
@@ -154,6 +182,7 @@ Historical plans/assessments/contracts may live in root-level historical files o
 - [chat_app_server_rs 中文](./chat_app_server_rs/README.zh-CN.md)
 - [db_connection_hub backend](./db_connection_hub/backend/README.md)
 - [db_connection_hub frontend](./db_connection_hub/frontend/README.md)
+- [official website](./official_website_service/README.md)
 
 ## Unified User Service Docs
 - [user_service](./user_service/README.md)

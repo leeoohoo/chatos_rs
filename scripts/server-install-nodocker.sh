@@ -26,6 +26,25 @@ generate_secret() {
   echo
 }
 
+env_file_value() {
+  local key="$1"
+  local file="$2"
+  if [[ ! -f "$file" ]]; then
+    return 0
+  fi
+  sed -n "s|^${key}=||p" "$file" | tail -n 1
+}
+
+ensure_env_line() {
+  local key="$1"
+  local value="$2"
+  local file="$3"
+  if grep -q "^${key}=" "$file"; then
+    return 0
+  fi
+  printf '\n%s=%s\n' "$key" "$value" >> "$file"
+}
+
 need_cmd install
 need_cmd rsync
 need_cmd sed
@@ -68,6 +87,12 @@ SERVICE_FILE="/etc/systemd/system/${SERVICE_NAME}.service"
 NGINX_SITE="/etc/nginx/sites-available/chatos.conf"
 NGINX_LINK="/etc/nginx/sites-enabled/chatos.conf"
 
+EXISTING_CHATOS_WORKSPACE_DIR="$(env_file_value "CHATOS_WORKSPACE_DIR" "$ENV_FILE")"
+CHATOS_WORKSPACE_DIR="${CHATOS_WORKSPACE_DIR:-${EXISTING_CHATOS_WORKSPACE_DIR:-$BACKEND_DIR/data/workspace}}"
+if [[ "$CHATOS_WORKSPACE_DIR" != /* ]]; then
+  CHATOS_WORKSPACE_DIR="$APP_ROOT/$CHATOS_WORKSPACE_DIR"
+fi
+
 if [[ ! -f "$BACKEND_BIN_SRC" ]]; then
   echo "[ERROR] 后端二进制不存在: $BACKEND_BIN_SRC"
   echo "        先在源码目录执行: cargo build --release --manifest-path chat_app_server_rs/Cargo.toml"
@@ -101,6 +126,8 @@ fi
 install -d -m 0755 "$APP_ROOT" "$BACKEND_DIR" "$FRONTEND_DIR"
 install -d -m 0755 "$BACKEND_DIR/config" "$BACKEND_DIR/data" "$BACKEND_DIR/logs"
 chown -R "$SERVICE_USER:$SERVICE_GROUP" "$BACKEND_DIR"
+install -d -m 0750 "$CHATOS_WORKSPACE_DIR"
+chown "$SERVICE_USER:$SERVICE_GROUP" "$CHATOS_WORKSPACE_DIR"
 
 install -m 0755 "$BACKEND_BIN_SRC" "$BACKEND_BIN_DEST"
 rsync -a --delete "$BACKEND_CONFIG_SRC"/ "$BACKEND_DIR/config/"
@@ -115,11 +142,13 @@ if [[ ! -f "$ENV_FILE" || "${FORCE_ENV_REWRITE:-0}" == "1" ]]; then
   jwt_secret="$(generate_secret)"
   sed \
     -e "s|__BACKEND_PORT__|$BACKEND_PORT|g" \
+    -e "s|__CHATOS_WORKSPACE_DIR__|$CHATOS_WORKSPACE_DIR|g" \
     -e "s|__JWT_SECRET__|$jwt_secret|g" \
     "$ENV_TEMPLATE" > "$ENV_FILE"
   chmod 0640 "$ENV_FILE"
   chown root:"$SERVICE_GROUP" "$ENV_FILE"
 fi
+ensure_env_line "CHATOS_WORKSPACE_DIR" "$CHATOS_WORKSPACE_DIR" "$ENV_FILE"
 
 sed \
   -e "s|__SERVICE_USER__|$SERVICE_USER|g" \

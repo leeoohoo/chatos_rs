@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Chatos RS">
+  <rect width="64" height="64" rx="14" fill="#b9f8d0"/>
+  <path d="M32 12l3.7 11.5L47 27.1l-11.3 3.7L32 42.2l-3.7-11.4L17 27.1l11.3-3.6L32 12z" fill="#07100c"/>
+  <path d="M45.5 39.5l1.7 5.3 5.3 1.7-5.3 1.7-1.7 5.3-1.7-5.3-5.3-1.7 5.3-1.7 1.7-5.3zM18 8l1.5 4.5L24 14l-4.5 1.5L18 20l-1.5-4.5L12 14l4.5-1.5L18 8z" fill="#07100c" opacity=".82"/>
+</svg>
