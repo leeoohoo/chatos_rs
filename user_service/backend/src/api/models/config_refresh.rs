@@ -11,14 +11,14 @@ use crate::models::{UpdateUserModelConfigRequest, UserModelConfigRecord};
 use crate::state::AppState;
 use crate::store::now_rfc3339;
 
+use super::super::{bad_request, internal_error, not_found, ApiResult};
 use super::access::ensure_model_access;
 use super::model_values::model_config_public_value;
 use super::normalization::{
-    model_config_id_for, normalize_optional_string, normalize_provider_input, normalized_base_url,
-    provider_display_name_prefix,
+    model_config_id_for, normalize_api_key_input, normalize_optional_string,
+    normalize_provider_input, normalized_base_url, provider_display_name_prefix,
 };
 use super::provider_fetch::fetch_provider_model_names;
-use super::super::{bad_request, internal_error, not_found, ApiResult};
 
 pub(in crate::api) async fn refresh_model_config_provider_models(
     State(state): State<AppState>,
@@ -56,7 +56,7 @@ pub(in crate::api) async fn refresh_model_config_provider_models(
     let api_key = if input.clear_api_key.unwrap_or(false) {
         None
     } else if let Some(api_key) = input.api_key {
-        normalize_optional_string(Some(api_key))
+        normalize_api_key_input(Some(api_key))?
     } else {
         existing_record.api_key.clone()
     };

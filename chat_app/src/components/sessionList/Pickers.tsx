@@ -106,7 +106,7 @@ export const KeyFilePickerDialog: React.FC<KeyFilePickerDialogProps> = ({
                       {entry.isDir ? '📁' : '🔑'} {entry.name || entry.path}
                     </span>
                     <span className="text-[11px] text-muted-foreground truncate block">
-                      {formatPath(entry.path)}
+                      {entry.displayPath || formatPath(entry.path)}
                     </span>
                   </button>
                   {!entry.isDir && (
@@ -256,8 +256,8 @@ export const DirPickerDialog: React.FC<DirPickerDialogProps> = ({
           className="mt-3 flex-1 overflow-y-auto rounded border border-border"
           listClassName="divide-y divide-border"
           itemClassName="px-4 py-2"
-          formatEntryName={(entry) => getUserVisiblePath(entry.path) || entry.name}
-          formatEntryTitle={(entry) => getUserVisiblePath(entry.path) || entry.name}
+          formatEntryName={(entry) => entry.displayPath || getUserVisiblePath(entry.path) || entry.name}
+          formatEntryTitle={(entry) => entry.displayPath || getUserVisiblePath(entry.path) || entry.name}
         />
         {error && !createModalOpen && (
           <div className="mt-2 text-xs text-red-500">{error}</div>

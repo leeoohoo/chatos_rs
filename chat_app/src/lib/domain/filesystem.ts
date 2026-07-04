@@ -31,6 +31,7 @@ export const normalizeFsEntry = (
   return {
     name: readStringFirst(record, ['name']),
     path: readStringFirst(record, ['path']),
+    displayPath: (readFirst(record, ['display_path', 'displayPath']) ?? null) as FsEntry['displayPath'],
     isDir: readBooleanFirst(record, ['is_dir', 'isDir'], options.fallbackIsDir ?? false),
     writable: (readFirst(record, ['writable']) ?? null) as FsEntry['writable'],
     size: (readFirst(record, ['size']) ?? null) as FsEntry['size'],

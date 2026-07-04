@@ -9,13 +9,26 @@ function parsePort(rawValue: string | undefined, fallback: number): number {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }
 
+function normalizeBasePath(rawValue: string | undefined): string {
+  const value = (rawValue || '').trim();
+  if (!value || value === '/') {
+    return '/';
+  }
+  const withLeadingSlash = value.startsWith('/') ? value : `/${value}`;
+  return withLeadingSlash.endsWith('/') ? withLeadingSlash : `${withLeadingSlash}/`;
+}
+
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '');
+  const frontendPort = parsePort(env.TASK_RUNNER_FRONTEND_PORT, 39091);
   const backendPort = parsePort(env.TASK_RUNNER_BACKEND_PORT || env.TASK_RUNNER_PORT, 39090);
+  const base = normalizeBasePath(env.VITE_BASE_PATH || env.TASK_RUNNER_FRONTEND_BASE_PATH);
+  const basePrefix = base === '/' ? '' : base.replace(/\/+$/, '');
   const apiProxyTarget =
     env.TASK_RUNNER_API_PROXY_TARGET?.trim() || `http://127.0.0.1:${backendPort}`;
 
   return {
+    base,
     plugins: [react()],
     build: {
       chunkSizeWarningLimit: 700,
@@ -51,12 +64,21 @@ export default defineConfig(({ mode }) => {
       },
     },
     server: {
-      port: 39091,
+      port: frontendPort,
       proxy: {
         '/api': {
           target: apiProxyTarget,
           changeOrigin: true,
         },
+        ...(basePrefix
+          ? {
+              [`${basePrefix}/api`]: {
+                target: apiProxyTarget,
+                changeOrigin: true,
+                rewrite: (path) => path.slice(basePrefix.length),
+              },
+            }
+          : {}),
       },
     },
   };

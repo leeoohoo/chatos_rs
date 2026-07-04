@@ -30,7 +30,7 @@ pub(super) fn run_tool_definitions() -> Vec<Value> {
         ),
         tool_definition(
             "start_task_run",
-            "Start a new run for a Task Runner task.",
+            "Start a newly created Task Runner task that has not run before. Historical tasks are read-only; create a new task for new work or use cancel_task for obsolete work.",
             required_object_schema(
                 json!({
                     "task_id": { "type": "string", "minLength": 1 },
@@ -41,7 +41,7 @@ pub(super) fn run_tool_definitions() -> Vec<Value> {
         ),
         tool_definition(
             "batch_start_task_runs",
-            "Start new runs for multiple Task Runner tasks.",
+            "Start newly created Task Runner tasks that have not run before.",
             required_object_schema(
                 json!({
                     "task_ids": {
@@ -107,7 +107,7 @@ pub(super) fn run_tool_definitions() -> Vec<Value> {
         ),
         tool_definition(
             "retry_run",
-            "Create a new retry run using the previous run's task and model config.",
+            "Admin-only run maintenance tool. Chatos agents should create a new task instead of retrying a historical run.",
             required_object_schema(
                 json!({
                     "run_id": { "type": "string", "minLength": 1 }

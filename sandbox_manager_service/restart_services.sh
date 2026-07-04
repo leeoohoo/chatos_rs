@@ -11,6 +11,8 @@ FRONTEND_DIR="$SERVICE_DIR/frontend"
 LOG_DIR="$ROOT_DIR/logs"
 BACKEND_PORT="${SANDBOX_MANAGER_PORT:-8095}"
 FRONTEND_PORT="${SANDBOX_MANAGER_FRONTEND_PORT:-8096}"
+FRONTEND_BASE_PATH="${SANDBOX_MANAGER_FRONTEND_BASE_PATH:-${VITE_BASE_PATH:-/}}"
+FRONTEND_API_BASE_URL="${SANDBOX_MANAGER_FRONTEND_API_BASE_URL:-${VITE_API_BASE_URL:-}}"
 BACKEND_SESSION="chatos_sandbox_manager_backend"
 FRONTEND_SESSION="chatos_sandbox_manager_frontend"
 ACTION="${1:-restart}"
@@ -64,9 +66,9 @@ start_frontend() {
   echo "[INFO] starting sandbox manager frontend on :$FRONTEND_PORT"
   if command -v tmux >/dev/null 2>&1; then
     tmux new-session -d -s "$FRONTEND_SESSION" \
-      "cd '$FRONTEND_DIR' && SANDBOX_MANAGER_FRONTEND_PORT='$FRONTEND_PORT' SANDBOX_MANAGER_API_PROXY_TARGET='http://127.0.0.1:$BACKEND_PORT' npm run dev -- --host 0.0.0.0 --port '$FRONTEND_PORT' 2>&1 | tee '$LOG_DIR/sandbox_manager_frontend.log'"
+      "cd '$FRONTEND_DIR' && SANDBOX_MANAGER_FRONTEND_PORT='$FRONTEND_PORT' SANDBOX_MANAGER_API_PROXY_TARGET='http://127.0.0.1:$BACKEND_PORT' VITE_BASE_PATH='$FRONTEND_BASE_PATH' VITE_API_BASE_URL='$FRONTEND_API_BASE_URL' npm run dev -- --host 0.0.0.0 --port '$FRONTEND_PORT' 2>&1 | tee '$LOG_DIR/sandbox_manager_frontend.log'"
   else
-    nohup bash -lc "cd '$FRONTEND_DIR' && SANDBOX_MANAGER_FRONTEND_PORT='$FRONTEND_PORT' SANDBOX_MANAGER_API_PROXY_TARGET='http://127.0.0.1:$BACKEND_PORT' exec npm run dev -- --host 0.0.0.0 --port '$FRONTEND_PORT'" \
+    nohup bash -lc "cd '$FRONTEND_DIR' && SANDBOX_MANAGER_FRONTEND_PORT='$FRONTEND_PORT' SANDBOX_MANAGER_API_PROXY_TARGET='http://127.0.0.1:$BACKEND_PORT' VITE_BASE_PATH='$FRONTEND_BASE_PATH' VITE_API_BASE_URL='$FRONTEND_API_BASE_URL' exec npm run dev -- --host 0.0.0.0 --port '$FRONTEND_PORT'" \
       >"$LOG_DIR/sandbox_manager_frontend.log" 2>&1 < /dev/null &
   fi
 }

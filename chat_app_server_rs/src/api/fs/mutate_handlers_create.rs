@@ -71,11 +71,13 @@ pub(in super::super) async fn create_dir(
     let target = parent.path.join(&name);
     if target.exists() {
         if target.is_dir() {
+            let display_target = policy.display_path(target.as_path());
             return (
                 StatusCode::OK,
                 Json(json!({
-                    "path": target.to_string_lossy(),
-                    "parent": parent.path.to_string_lossy(),
+                    "path": display_target,
+                    "display_path": display_target,
+                    "parent": policy.display_path(parent.path.as_path()),
                     "name": name,
                     "created": false
                 })),
@@ -101,14 +103,16 @@ pub(in super::super) async fn create_dir(
         );
     }
     let target_path = target.to_string_lossy().to_string();
+    let display_target_path = policy.display_path(target.as_path());
     suppress_logged_path(target_path.as_str());
     note_workspace_path_changed(target_path.as_str());
 
     (
         StatusCode::CREATED,
         Json(json!({
-            "path": target_path,
-            "parent": parent.path.to_string_lossy(),
+            "path": display_target_path,
+            "display_path": display_target_path,
+            "parent": policy.display_path(parent.path.as_path()),
             "name": name,
             "created": true
         })),
@@ -167,11 +171,13 @@ pub(in super::super) async fn create_file(
     if target.exists() {
         if target.is_file() {
             let size = fs::metadata(&target).map(|meta| meta.len()).unwrap_or(0);
+            let display_target = policy.display_path(target.as_path());
             return (
                 StatusCode::OK,
                 Json(json!({
-                    "path": target.to_string_lossy(),
-                    "parent": parent.path.to_string_lossy(),
+                    "path": display_target,
+                    "display_path": display_target,
+                    "parent": policy.display_path(parent.path.as_path()),
                     "name": name,
                     "size": size,
                     "created": false
@@ -217,13 +223,15 @@ pub(in super::super) async fn create_file(
         );
     }
     let target_path = target.to_string_lossy().to_string();
+    let display_target_path = policy.display_path(target.as_path());
     suppress_logged_path(target_path.as_str());
     note_workspace_path_changed(target_path.as_str());
     (
         StatusCode::CREATED,
         Json(json!({
-            "path": target_path,
-            "parent": parent.path.to_string_lossy(),
+            "path": display_target_path,
+            "display_path": display_target_path,
+            "parent": policy.display_path(parent.path.as_path()),
             "name": name,
             "size": size,
             "created": true
@@ -303,6 +311,7 @@ pub(in super::super) async fn write_file(
         );
     }
     let target_path = authorized.path.to_string_lossy().to_string();
+    let display_target_path = policy.display_path(authorized.path.as_path());
     suppress_logged_path(target_path.as_str());
     note_workspace_path_changed(target_path.as_str());
 
@@ -310,7 +319,8 @@ pub(in super::super) async fn write_file(
         StatusCode::OK,
         Json(json!({
             "success": true,
-            "path": target_path,
+            "path": display_target_path,
+            "display_path": display_target_path,
             "name": authorized.path.file_name().and_then(|value| value.to_str()).unwrap_or(""),
             "size": meta.len(),
             "modified_at": meta.modified().ok().and_then(super::super::helpers::format_system_time),

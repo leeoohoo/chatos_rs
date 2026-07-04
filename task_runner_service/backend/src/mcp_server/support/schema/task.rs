@@ -43,7 +43,6 @@ pub(crate) fn update_task_schema() -> Value {
             "description": { "type": "string" },
             "objective": { "type": "string" },
             "input_payload": {},
-            "status": { "type": "string", "enum": task_status_values() },
             "priority": { "type": "integer" },
             "tags": { "type": "array", "items": { "type": "string" } },
             "schedule": { "type": "object" },

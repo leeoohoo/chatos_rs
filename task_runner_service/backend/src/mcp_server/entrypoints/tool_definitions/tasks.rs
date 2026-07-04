@@ -87,7 +87,7 @@ pub(super) fn task_tool_definitions() -> Vec<Value> {
         ),
         tool_definition(
             "update_task",
-            "Update an existing Task Runner task.",
+            "Update metadata for an existing Task Runner task. Do not use this to change execution status; create a new task for new work or use cancel_task for obsolete work.",
             required_object_schema(
                 json!({
                     "task_id": { "type": "string", "minLength": 1 },
@@ -155,7 +155,7 @@ pub(super) fn task_tool_definitions() -> Vec<Value> {
         ),
         tool_definition(
             "batch_update_task_status",
-            "Update the status of multiple Task Runner tasks in one call.",
+            "Admin-only status maintenance tool. Chatos agents should not call this; create new tasks for new work or use cancel_task for obsolete work.",
             required_object_schema(
                 json!({
                     "task_ids": {

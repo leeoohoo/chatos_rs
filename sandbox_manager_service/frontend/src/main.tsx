@@ -21,6 +21,10 @@ const queryClient = new QueryClient({
     },
   },
 });
+const routerBasename =
+  import.meta.env.BASE_URL && import.meta.env.BASE_URL !== '/'
+    ? import.meta.env.BASE_URL.replace(/\/+$/, '')
+    : undefined;
 
 function Root() {
   const { language } = useI18n();
@@ -29,7 +33,7 @@ function Root() {
     <ConfigProvider locale={language === 'zh' ? zhCN : enUS}>
       <AntdApp>
         <QueryClientProvider client={queryClient}>
-          <BrowserRouter>
+          <BrowserRouter basename={routerBasename}>
             <App />
           </BrowserRouter>
         </QueryClientProvider>

@@ -45,7 +45,27 @@ function normalizeApiBaseUrl(value: string): string {
   return value.replace(/\/+$/, '');
 }
 
+function resolveMountedBasePath(): string {
+  const viteBaseUrl = (import.meta.env.BASE_URL || '').trim();
+  if (viteBaseUrl && viteBaseUrl !== '/') {
+    return viteBaseUrl.replace(/\/+$/, '');
+  }
+
+  if (typeof window !== 'undefined') {
+    const { pathname } = window.location;
+    if (pathname === '/memory-engine' || pathname.startsWith('/memory-engine/')) {
+      return '/memory-engine';
+    }
+  }
+
+  return '';
+}
+
 function resolveDefaultBaseUrl(): string {
+  if (resolveMountedBasePath()) {
+    return '/user-service';
+  }
+
   const host =
     typeof window !== 'undefined' && window.location.hostname
       ? window.location.hostname

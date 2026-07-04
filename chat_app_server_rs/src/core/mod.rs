@@ -35,6 +35,7 @@ pub mod tool_call;
 pub mod turn_runtime_snapshot;
 pub mod update_fields;
 pub mod user_scope;
+pub mod user_visible_path;
 pub mod validation;
 pub mod values;
 pub mod websocket_ticket;

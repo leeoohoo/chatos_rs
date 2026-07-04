@@ -20,6 +20,20 @@ load_optional_env() {
   fi
 }
 
+load_shared_env() {
+  local env_file="${CHATOS_SHARED_ENV_FILE:-}"
+  if [[ -z "$env_file" && "$ROOT_DIR" == /opt/chatos/* ]]; then
+    env_file="/etc/chatos/chatos-backend.env"
+  fi
+  if [[ -n "$env_file" && -f "$env_file" ]]; then
+    set -a
+    # shellcheck disable=SC1090
+    source "$env_file"
+    set +a
+  fi
+}
+
+load_shared_env
 load_optional_env "$ROOT_DIR/.env"
 # The full-stack launcher starts memory_engine before task_runner, so shared
 # credentials from service-local env files must be reconciled here.

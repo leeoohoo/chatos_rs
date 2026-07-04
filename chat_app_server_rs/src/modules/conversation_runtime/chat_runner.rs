@@ -402,10 +402,11 @@ pub async fn finalize_chat_result<FC, FE>(
     FE: FnMut(&str),
 {
     if mark_task_runner_async_completed {
+        let overall_status = task_runner_async_status_for_result(session_id, &result);
         match set_task_runner_async_overall_status_for_session(
             session_id,
             user_message_id,
-            "completed",
+            overall_status,
         )
         .await
         {
@@ -522,6 +523,23 @@ fn resolve_terminal_snapshot_status(
     {
         "cancelled"
     } else if result.is_ok() {
+        "completed"
+    } else {
+        "failed"
+    }
+}
+
+fn task_runner_async_status_for_result(
+    session_id: &str,
+    result: &Result<Value, String>,
+) -> &'static str {
+    if abort_registry::is_aborted(session_id)
+        || matches!(result, Err(err) if err.trim().eq_ignore_ascii_case("aborted"))
+    {
+        return "cancelled";
+    }
+
+    if result.is_ok() {
         "completed"
     } else {
         "failed"

@@ -11,7 +11,9 @@ use crate::api::fs::policy::{FsPathPolicy, FsPolicyError};
 use crate::core::auth::AuthUser;
 use crate::core::path_guard::path_is_within_root;
 use crate::services::code_nav::manager::CodeNavManager;
-use crate::services::code_nav::types::{DocumentSymbolsRequest, NavPositionRequest};
+use crate::services::code_nav::types::{
+    DocumentSymbolsRequest, NavLocationsResponse, NavPositionRequest,
+};
 
 static CODE_NAV_MANAGER: Lazy<CodeNavManager> = Lazy::new(CodeNavManager::default);
 
@@ -49,7 +51,10 @@ async fn definition(
         Err(err) => return err,
     };
     match CODE_NAV_MANAGER.definition(&request).await {
-        Ok(response) => (StatusCode::OK, Json(json!(response))),
+        Ok(response) => (
+            StatusCode::OK,
+            Json(json!(visible_nav_locations_response(response))),
+        ),
         Err(message) => error_response(message),
     }
 }
@@ -63,7 +68,10 @@ async fn references(
         Err(err) => return err,
     };
     match CODE_NAV_MANAGER.references(&request).await {
-        Ok(response) => (StatusCode::OK, Json(json!(response))),
+        Ok(response) => (
+            StatusCode::OK,
+            Json(json!(visible_nav_locations_response(response))),
+        ),
         Err(message) => error_response(message),
     }
 }
@@ -87,6 +95,13 @@ fn fs_policy_error_tuple(err: FsPolicyError) -> (StatusCode, Json<Value>) {
         err.status_code(),
         Json(serde_json::json!({ "error": err.message() })),
     )
+}
+
+fn visible_nav_locations_response(mut response: NavLocationsResponse) -> NavLocationsResponse {
+    for location in &mut response.locations {
+        location.path = crate::core::user_visible_path::display_path(location.path.as_str());
+    }
+    response
 }
 
 async fn authorize_code_nav_paths(

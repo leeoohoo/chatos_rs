@@ -6,16 +6,24 @@ use axum::{Extension, Json};
 
 use crate::auth::CurrentPrincipal;
 use crate::integrations::sync_model_config_delete;
-use crate::models::{CreateUserModelProviderRequest, UpdateUserModelProviderRequest, UserModelProviderRecord};
+use crate::models::{
+    CreateUserModelProviderRequest, UpdateUserModelProviderRequest, UserModelProviderRecord,
+};
 use crate::state::AppState;
 use crate::store::now_rfc3339;
 
+use super::super::{bad_request, internal_error, not_found, ApiResult, ApiStatusResult};
 use super::access::{ensure_owner_user_exists, ensure_provider_access, resolve_target_user_id};
 use super::contracts::{ModelConfigGetQuery, UserScopeQuery};
 use super::model_values::model_provider_public_value;
-use super::normalization::{normalize_optional_string, normalize_provider_input, normalized_base_url};
-use super::provider_sync::{apply_model_provider_update, refresh_provider_models_from_record};
-use super::super::{bad_request, internal_error, not_found, ApiResult, ApiStatusResult};
+use super::normalization::{
+    normalize_api_key_input, normalize_optional_string, normalize_provider_input,
+    normalized_base_url,
+};
+use super::provider_sync::{
+    apply_model_provider_update, refresh_provider_models_from_record,
+    sync_imported_models_from_provider_state,
+};
 
 pub(in crate::api) async fn list_model_providers(
     State(state): State<AppState>,
@@ -54,7 +62,7 @@ pub(in crate::api) async fn create_model_provider(
         return Err(bad_request("name is required"));
     };
     let provider = normalize_provider_input(input.provider)?;
-    let api_key = normalize_optional_string(input.api_key);
+    let api_key = normalize_api_key_input(input.api_key)?;
     if api_key.is_none() {
         return Err(bad_request("api_key is required"));
     }
@@ -155,7 +163,12 @@ pub(in crate::api) async fn update_model_provider(
         .save_user_model_provider(&record)
         .await
         .map_err(internal_error)?;
-    Ok(Json(model_provider_public_value(saved, false, None)))
+    let sync_warnings = sync_imported_models_from_provider_state(&state, &saved).await?;
+    Ok(Json(model_provider_public_value(
+        saved,
+        false,
+        Some(sync_warnings),
+    )))
 }
 
 pub(in crate::api) async fn refresh_model_provider_models(

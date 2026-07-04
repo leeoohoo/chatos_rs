@@ -62,7 +62,7 @@ export const applySessionRuntimeMetadata = (
 export const setTaskRunnerAsyncUserMessageStatus = (
   state: ChatStoreDraft,
   userMessageId: string | null | undefined,
-  overallStatus: 'pending' | 'processing' | 'completed',
+  overallStatus: 'pending' | 'processing' | 'completed' | 'failed' | 'cancelled',
 ) => {
   const normalizedUserMessageId = typeof userMessageId === 'string'
     ? userMessageId.trim()

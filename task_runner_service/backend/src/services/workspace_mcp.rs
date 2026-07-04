@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use chatos_mcp_runtime::{builtin_kind_by_any, complete_builtin_kind_dependencies, BuiltinMcpKind};
 
@@ -102,12 +102,18 @@ pub(super) fn ensure_effective_task_workspace_dir(
     task: &TaskRecord,
     model_config: &ModelConfigRecord,
 ) -> Result<String, String> {
-    ensure_workspace_dir_available(
+    let configured = task
+        .mcp_config
+        .workspace_dir
+        .as_deref()
+        .or(model_config.request_cwd.as_deref());
+    if configured.is_some() {
+        return ensure_workspace_dir_available(config.default_workspace_dir.as_str(), configured);
+    }
+
+    ensure_default_user_workspace_dir_available(
         config.default_workspace_dir.as_str(),
-        task.mcp_config
-            .workspace_dir
-            .as_deref()
-            .or(model_config.request_cwd.as_deref()),
+        task.subject_id.as_str(),
     )
 }
 
@@ -133,6 +139,7 @@ pub(super) fn ensure_workspace_dir_available(
     configured: Option<&str>,
 ) -> Result<String, String> {
     let resolved = resolve_workspace_dir_with_base(base_dir, configured);
+    ensure_workspace_is_inside_base(base_dir, resolved.as_str())?;
     let path = PathBuf::from(&resolved);
 
     match std::fs::metadata(&path) {
@@ -164,6 +171,94 @@ pub(super) fn ensure_workspace_dir_available(
         .unwrap_or(path)
         .to_string_lossy()
         .to_string())
+}
+
+pub(super) fn ensure_default_user_workspace_dir_available(
+    base_dir: &str,
+    subject_id: &str,
+) -> Result<String, String> {
+    let user_component = user_workspace_component(subject_id);
+    let relative = PathBuf::from("users")
+        .join(user_component)
+        .join("workspaces")
+        .join("default");
+    ensure_workspace_dir_available(base_dir, relative.to_str())
+}
+
+pub(super) fn default_user_workspace_dir(base_dir: &str, subject_id: Option<&str>) -> PathBuf {
+    let subject_id = subject_id
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("task_runner");
+    PathBuf::from(base_dir)
+        .join("users")
+        .join(user_workspace_component(subject_id))
+        .join("workspaces")
+        .join("default")
+}
+
+fn ensure_workspace_is_inside_base(base_dir: &str, workspace_dir: &str) -> Result<(), String> {
+    let base = canonical_or_self(Path::new(base_dir));
+    let workspace = canonical_or_self(Path::new(workspace_dir));
+    if path_is_within_root(workspace.as_path(), base.as_path()) {
+        Ok(())
+    } else {
+        Err(format!(
+            "workspace dir is outside task runner workspace base: {}",
+            workspace.display()
+        ))
+    }
+}
+
+fn canonical_or_self(path: &Path) -> PathBuf {
+    std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
+}
+
+fn path_is_within_root(candidate: &Path, root: &Path) -> bool {
+    let candidate = normalize_path_for_compare(candidate);
+    let root = normalize_path_for_compare(root);
+    candidate == root || candidate.starts_with(format!("{root}/").as_str())
+}
+
+fn user_workspace_component(value: &str) -> String {
+    let normalized = value
+        .trim()
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.') {
+                ch
+            } else {
+                '_'
+            }
+        })
+        .collect::<String>()
+        .trim_matches(['.', '_', '-'])
+        .chars()
+        .take(80)
+        .collect::<String>();
+    let prefix = if normalized.is_empty() {
+        "user".to_string()
+    } else {
+        normalized
+    };
+    format!("{prefix}-{:016x}", stable_hash64(value.trim().as_bytes()))
+}
+
+fn stable_hash64(bytes: &[u8]) -> u64 {
+    let mut hash = 0xcbf2_9ce4_8422_2325u64;
+    for byte in bytes {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    hash
+}
+
+fn normalize_path_for_compare(path: &Path) -> String {
+    let mut value = path.to_string_lossy().replace('\\', "/");
+    while value.ends_with('/') && value.len() > 1 {
+        value.pop();
+    }
+    value
 }
 
 #[cfg(test)]

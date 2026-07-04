@@ -6,11 +6,15 @@ use axum::http::StatusCode;
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde_json::{json, Value};
+use std::path::Path;
 
+use crate::api::fs::policy::{FsPathPolicy, FsPolicyError};
+use crate::core::auth::AuthUser;
 use crate::services::git;
 use crate::services::git::{
-    GitCheckoutRequest, GitCommitRequest, GitCompareQuery, GitCreateBranchRequest, GitDiffQuery,
-    GitFetchRequest, GitMergeRequest, GitPathRequest, GitPullRequest, GitPushRequest, GitRootQuery,
+    GitActionResult, GitCheckoutRequest, GitCommitRequest, GitCompareQuery, GitCreateBranchRequest,
+    GitDiffQuery, GitFetchRequest, GitMergeRequest, GitPathRequest, GitPullRequest, GitPushRequest,
+    GitRepositoryCandidate, GitRootQuery, GitSummary,
 };
 
 pub fn router() -> Router {
@@ -37,115 +41,380 @@ async fn client() -> (StatusCode, Json<Value>) {
     (StatusCode::OK, Json(json!(git::client_info().await)))
 }
 
-async fn summary(Query(query): Query<GitRootQuery>) -> (StatusCode, Json<Value>) {
+async fn summary(auth: AuthUser, Query(query): Query<GitRootQuery>) -> (StatusCode, Json<Value>) {
+    let policy = match git_path_policy(&auth).await {
+        Ok(policy) => policy,
+        Err(err) => return err,
+    };
+    let root = match authorize_git_root(&policy, query.root.as_str(), false) {
+        Ok(root) => root,
+        Err(err) => return err,
+    };
+    let preferred_repo_root =
+        match authorize_optional_git_root(&policy, query.preferred_repo_root.as_deref(), false) {
+            Ok(root) => root,
+            Err(err) => return err,
+        };
     match git::summary(
-        &query.root,
-        query.preferred_repo_root.as_deref(),
+        root.as_str(),
+        preferred_repo_root.as_deref(),
         query.force_refresh.unwrap_or(false),
     )
     .await
     {
+        Ok(response) => (
+            StatusCode::OK,
+            Json(json!(visible_git_summary(&policy, response))),
+        ),
+        Err(message) => error_response(message),
+    }
+}
+
+async fn branches(auth: AuthUser, Query(query): Query<GitRootQuery>) -> (StatusCode, Json<Value>) {
+    let policy = match git_path_policy(&auth).await {
+        Ok(policy) => policy,
+        Err(err) => return err,
+    };
+    let root = match authorize_git_root(&policy, query.root.as_str(), false) {
+        Ok(root) => root,
+        Err(err) => return err,
+    };
+    match git::branches(root.as_str(), query.force_refresh.unwrap_or(false)).await {
         Ok(response) => (StatusCode::OK, Json(json!(response))),
         Err(message) => error_response(message),
     }
 }
 
-async fn branches(Query(query): Query<GitRootQuery>) -> (StatusCode, Json<Value>) {
-    match git::branches(&query.root, query.force_refresh.unwrap_or(false)).await {
+async fn status(auth: AuthUser, Query(query): Query<GitRootQuery>) -> (StatusCode, Json<Value>) {
+    let policy = match git_path_policy(&auth).await {
+        Ok(policy) => policy,
+        Err(err) => return err,
+    };
+    let root = match authorize_git_root(&policy, query.root.as_str(), false) {
+        Ok(root) => root,
+        Err(err) => return err,
+    };
+    match git::status(root.as_str(), query.force_refresh.unwrap_or(false)).await {
         Ok(response) => (StatusCode::OK, Json(json!(response))),
         Err(message) => error_response(message),
     }
 }
 
-async fn status(Query(query): Query<GitRootQuery>) -> (StatusCode, Json<Value>) {
-    match git::status(&query.root, query.force_refresh.unwrap_or(false)).await {
-        Ok(response) => (StatusCode::OK, Json(json!(response))),
-        Err(message) => error_response(message),
-    }
-}
-
-async fn compare(Query(query): Query<GitCompareQuery>) -> (StatusCode, Json<Value>) {
+async fn compare(
+    auth: AuthUser,
+    Query(mut query): Query<GitCompareQuery>,
+) -> (StatusCode, Json<Value>) {
+    let policy = match git_path_policy(&auth).await {
+        Ok(policy) => policy,
+        Err(err) => return err,
+    };
+    query.root = match authorize_git_root(&policy, query.root.as_str(), false) {
+        Ok(root) => root,
+        Err(err) => return err,
+    };
     match git::compare(query).await {
         Ok(response) => (StatusCode::OK, Json(json!(response))),
         Err(message) => error_response(message),
     }
 }
 
-async fn diff(Query(query): Query<GitDiffQuery>) -> (StatusCode, Json<Value>) {
+async fn diff(auth: AuthUser, Query(mut query): Query<GitDiffQuery>) -> (StatusCode, Json<Value>) {
+    let policy = match git_path_policy(&auth).await {
+        Ok(policy) => policy,
+        Err(err) => return err,
+    };
+    query.root = match authorize_git_root(&policy, query.root.as_str(), false) {
+        Ok(root) => root,
+        Err(err) => return err,
+    };
     match git::file_diff(query).await {
         Ok(response) => (StatusCode::OK, Json(json!(response))),
         Err(message) => error_response(message),
     }
 }
 
-async fn fetch(Json(request): Json<GitFetchRequest>) -> (StatusCode, Json<Value>) {
+async fn fetch(
+    auth: AuthUser,
+    Json(mut request): Json<GitFetchRequest>,
+) -> (StatusCode, Json<Value>) {
+    let policy = match git_path_policy(&auth).await {
+        Ok(policy) => policy,
+        Err(err) => return err,
+    };
+    request.root = match authorize_git_root(&policy, request.root.as_str(), true) {
+        Ok(root) => root,
+        Err(err) => return err,
+    };
     match git::fetch(request).await {
-        Ok(response) => (StatusCode::OK, Json(json!(response))),
+        Ok(response) => (
+            StatusCode::OK,
+            Json(json!(visible_git_action_result(&policy, response))),
+        ),
         Err(message) => error_response(message),
     }
 }
 
-async fn pull(Json(request): Json<GitPullRequest>) -> (StatusCode, Json<Value>) {
+async fn pull(
+    auth: AuthUser,
+    Json(mut request): Json<GitPullRequest>,
+) -> (StatusCode, Json<Value>) {
+    let policy = match git_path_policy(&auth).await {
+        Ok(policy) => policy,
+        Err(err) => return err,
+    };
+    request.root = match authorize_git_root(&policy, request.root.as_str(), true) {
+        Ok(root) => root,
+        Err(err) => return err,
+    };
     match git::pull(request).await {
-        Ok(response) => (StatusCode::OK, Json(json!(response))),
+        Ok(response) => (
+            StatusCode::OK,
+            Json(json!(visible_git_action_result(&policy, response))),
+        ),
         Err(message) => error_response(message),
     }
 }
 
-async fn push(Json(request): Json<GitPushRequest>) -> (StatusCode, Json<Value>) {
+async fn push(
+    auth: AuthUser,
+    Json(mut request): Json<GitPushRequest>,
+) -> (StatusCode, Json<Value>) {
+    let policy = match git_path_policy(&auth).await {
+        Ok(policy) => policy,
+        Err(err) => return err,
+    };
+    request.root = match authorize_git_root(&policy, request.root.as_str(), true) {
+        Ok(root) => root,
+        Err(err) => return err,
+    };
     match git::push(request).await {
-        Ok(response) => (StatusCode::OK, Json(json!(response))),
+        Ok(response) => (
+            StatusCode::OK,
+            Json(json!(visible_git_action_result(&policy, response))),
+        ),
         Err(message) => error_response(message),
     }
 }
 
-async fn checkout(Json(request): Json<GitCheckoutRequest>) -> (StatusCode, Json<Value>) {
+async fn checkout(
+    auth: AuthUser,
+    Json(mut request): Json<GitCheckoutRequest>,
+) -> (StatusCode, Json<Value>) {
+    let policy = match git_path_policy(&auth).await {
+        Ok(policy) => policy,
+        Err(err) => return err,
+    };
+    request.root = match authorize_git_root(&policy, request.root.as_str(), true) {
+        Ok(root) => root,
+        Err(err) => return err,
+    };
     match git::checkout(request).await {
-        Ok(response) => (StatusCode::OK, Json(json!(response))),
+        Ok(response) => (
+            StatusCode::OK,
+            Json(json!(visible_git_action_result(&policy, response))),
+        ),
         Err(message) => error_response(message),
     }
 }
 
-async fn create_branch(Json(request): Json<GitCreateBranchRequest>) -> (StatusCode, Json<Value>) {
+async fn create_branch(
+    auth: AuthUser,
+    Json(mut request): Json<GitCreateBranchRequest>,
+) -> (StatusCode, Json<Value>) {
+    let policy = match git_path_policy(&auth).await {
+        Ok(policy) => policy,
+        Err(err) => return err,
+    };
+    request.root = match authorize_git_root(&policy, request.root.as_str(), true) {
+        Ok(root) => root,
+        Err(err) => return err,
+    };
     match git::create_branch(request).await {
-        Ok(response) => (StatusCode::OK, Json(json!(response))),
+        Ok(response) => (
+            StatusCode::OK,
+            Json(json!(visible_git_action_result(&policy, response))),
+        ),
         Err(message) => error_response(message),
     }
 }
 
-async fn merge_branch(Json(request): Json<GitMergeRequest>) -> (StatusCode, Json<Value>) {
+async fn merge_branch(
+    auth: AuthUser,
+    Json(mut request): Json<GitMergeRequest>,
+) -> (StatusCode, Json<Value>) {
+    let policy = match git_path_policy(&auth).await {
+        Ok(policy) => policy,
+        Err(err) => return err,
+    };
+    request.root = match authorize_git_root(&policy, request.root.as_str(), true) {
+        Ok(root) => root,
+        Err(err) => return err,
+    };
     match git::merge(request).await {
-        Ok(response) => (StatusCode::OK, Json(json!(response))),
+        Ok(response) => (
+            StatusCode::OK,
+            Json(json!(visible_git_action_result(&policy, response))),
+        ),
         Err(message) => error_response(message),
     }
 }
 
-async fn stage(Json(request): Json<GitPathRequest>) -> (StatusCode, Json<Value>) {
+async fn stage(
+    auth: AuthUser,
+    Json(mut request): Json<GitPathRequest>,
+) -> (StatusCode, Json<Value>) {
+    let policy = match git_path_policy(&auth).await {
+        Ok(policy) => policy,
+        Err(err) => return err,
+    };
+    request.root = match authorize_git_root(&policy, request.root.as_str(), true) {
+        Ok(root) => root,
+        Err(err) => return err,
+    };
     match git::stage(request).await {
-        Ok(response) => (StatusCode::OK, Json(json!(response))),
+        Ok(response) => (
+            StatusCode::OK,
+            Json(json!(visible_git_action_result(&policy, response))),
+        ),
         Err(message) => error_response(message),
     }
 }
 
-async fn unstage(Json(request): Json<GitPathRequest>) -> (StatusCode, Json<Value>) {
+async fn unstage(
+    auth: AuthUser,
+    Json(mut request): Json<GitPathRequest>,
+) -> (StatusCode, Json<Value>) {
+    let policy = match git_path_policy(&auth).await {
+        Ok(policy) => policy,
+        Err(err) => return err,
+    };
+    request.root = match authorize_git_root(&policy, request.root.as_str(), true) {
+        Ok(root) => root,
+        Err(err) => return err,
+    };
     match git::unstage(request).await {
-        Ok(response) => (StatusCode::OK, Json(json!(response))),
+        Ok(response) => (
+            StatusCode::OK,
+            Json(json!(visible_git_action_result(&policy, response))),
+        ),
         Err(message) => error_response(message),
     }
 }
 
-async fn commit(Json(request): Json<GitCommitRequest>) -> (StatusCode, Json<Value>) {
+async fn commit(
+    auth: AuthUser,
+    Json(mut request): Json<GitCommitRequest>,
+) -> (StatusCode, Json<Value>) {
+    let policy = match git_path_policy(&auth).await {
+        Ok(policy) => policy,
+        Err(err) => return err,
+    };
+    request.root = match authorize_git_root(&policy, request.root.as_str(), true) {
+        Ok(root) => root,
+        Err(err) => return err,
+    };
     match git::commit(request).await {
-        Ok(response) => (StatusCode::OK, Json(json!(response))),
+        Ok(response) => (
+            StatusCode::OK,
+            Json(json!(visible_git_action_result(&policy, response))),
+        ),
         Err(message) => error_response(message),
     }
 }
 
-async fn discard(Json(request): Json<GitPathRequest>) -> (StatusCode, Json<Value>) {
+async fn discard(
+    auth: AuthUser,
+    Json(mut request): Json<GitPathRequest>,
+) -> (StatusCode, Json<Value>) {
+    let policy = match git_path_policy(&auth).await {
+        Ok(policy) => policy,
+        Err(err) => return err,
+    };
+    request.root = match authorize_git_root(&policy, request.root.as_str(), true) {
+        Ok(root) => root,
+        Err(err) => return err,
+    };
     match git::discard(request).await {
-        Ok(response) => (StatusCode::OK, Json(json!(response))),
+        Ok(response) => (
+            StatusCode::OK,
+            Json(json!(visible_git_action_result(&policy, response))),
+        ),
         Err(message) => error_response(message),
     }
+}
+
+async fn git_path_policy(auth: &AuthUser) -> Result<FsPathPolicy, (StatusCode, Json<Value>)> {
+    FsPathPolicy::for_user(auth)
+        .await
+        .map_err(fs_policy_error_tuple)
+}
+
+fn fs_policy_error_tuple(err: FsPolicyError) -> (StatusCode, Json<Value>) {
+    (
+        err.status_code(),
+        Json(serde_json::json!({ "error": err.message() })),
+    )
+}
+
+fn authorize_git_root(
+    policy: &FsPathPolicy,
+    raw: &str,
+    write: bool,
+) -> Result<String, (StatusCode, Json<Value>)> {
+    let authorized = policy
+        .authorize_existing_dir(raw, "root 路径不存在", "root 不是目录")
+        .map_err(fs_policy_error_tuple)?;
+    if write {
+        policy
+            .require_write(&authorized)
+            .map_err(fs_policy_error_tuple)?;
+    }
+    Ok(authorized.path.to_string_lossy().to_string())
+}
+
+fn authorize_optional_git_root(
+    policy: &FsPathPolicy,
+    raw: Option<&str>,
+    write: bool,
+) -> Result<Option<String>, (StatusCode, Json<Value>)> {
+    let Some(raw) = raw.map(str::trim).filter(|value| !value.is_empty()) else {
+        return Ok(None);
+    };
+    authorize_git_root(policy, raw, write).map(Some)
+}
+
+fn visible_optional_path(policy: &FsPathPolicy, path: Option<String>) -> Option<String> {
+    path.map(|path| policy.display_path(Path::new(path.as_str())))
+}
+
+fn visible_repository_candidate(
+    policy: &FsPathPolicy,
+    mut candidate: GitRepositoryCandidate,
+) -> GitRepositoryCandidate {
+    candidate.root = policy.display_path(Path::new(candidate.root.as_str()));
+    candidate
+}
+
+fn visible_git_summary(policy: &FsPathPolicy, mut summary: GitSummary) -> GitSummary {
+    summary.root = visible_optional_path(policy, summary.root);
+    summary.worktree_root = visible_optional_path(policy, summary.worktree_root);
+    summary.query_root = visible_optional_path(policy, summary.query_root);
+    summary.resolved_root = visible_optional_path(policy, summary.resolved_root);
+    summary.selected_root = visible_optional_path(policy, summary.selected_root);
+    summary.available_repositories = summary
+        .available_repositories
+        .into_iter()
+        .map(|candidate| visible_repository_candidate(policy, candidate))
+        .collect();
+    summary
+}
+
+fn visible_git_action_result(
+    policy: &FsPathPolicy,
+    mut result: GitActionResult,
+) -> GitActionResult {
+    result.summary = visible_git_summary(policy, result.summary);
+    result
 }
 
 fn error_response(message: String) -> (StatusCode, Json<Value>) {

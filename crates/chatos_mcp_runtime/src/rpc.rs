@@ -3,6 +3,8 @@
 
 use std::collections::HashMap;
 use std::error::Error as StdError;
+use std::ffi::OsString;
+use std::path::Path;
 use std::process::Stdio;
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
@@ -545,24 +547,7 @@ fn maybe_remove_stdio_session_start_lock(session_key: &str, start_lock: &Arc<Asy
 }
 
 async fn spawn_stdio_session(cfg: &McpStdioServer) -> Result<StdioRpcSession, String> {
-    let mut cmd = tokio::process::Command::new(&cfg.command);
-    if let Some(args) = &cfg.args {
-        cmd.args(args);
-    }
-    if let Some(env) = &cfg.env {
-        cmd.envs(env);
-    }
-    if let Some(cwd) = &cfg.cwd {
-        cmd.current_dir(cwd);
-    }
-    let isolation = process_isolation::resolve_for_user(cfg.user_id.as_deref())?;
-    if let Some(cwd) = &cfg.cwd {
-        process_isolation::prepare_workspace_for_user(
-            std::path::Path::new(cwd),
-            isolation.as_ref(),
-        )?;
-    }
-    process_isolation::apply_to_tokio_command(&mut cmd, isolation.as_ref())?;
+    let mut cmd = build_stdio_command(cfg)?;
     cmd.stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null());
@@ -578,6 +563,46 @@ async fn spawn_stdio_session(cfg: &McpStdioServer) -> Result<StdioRpcSession, St
         stdin,
         reader,
     })
+}
+
+fn build_stdio_command(cfg: &McpStdioServer) -> Result<tokio::process::Command, String> {
+    let isolation = process_isolation::resolve_for_user(cfg.user_id.as_deref())?;
+    let fs_view_enabled = process_isolation::filesystem_view_enabled(isolation.as_ref())?;
+    let cwd = cfg.cwd.as_deref().map(Path::new);
+    if let Some(cwd) = cwd {
+        process_isolation::prepare_workspace_for_user(cwd, isolation.as_ref())?;
+    }
+
+    let mut cmd = if isolation.is_some() {
+        let (command, mut args) = process_isolation::terminal_helper_command(
+            &cfg.command,
+            isolation.as_ref(),
+            cwd,
+            None,
+        )?;
+        if let Some(config_args) = &cfg.args {
+            args.extend(config_args.iter().map(OsString::from));
+        }
+        let mut cmd = tokio::process::Command::new(command);
+        cmd.args(args);
+        cmd
+    } else {
+        let mut cmd = tokio::process::Command::new(&cfg.command);
+        if let Some(args) = &cfg.args {
+            cmd.args(args);
+        }
+        cmd
+    };
+
+    if let Some(env) = &cfg.env {
+        cmd.envs(env);
+    }
+    if let Some(cwd) = &cfg.cwd {
+        if isolation.is_none() || !fs_view_enabled {
+            cmd.current_dir(cwd);
+        }
+    }
+    Ok(cmd)
 }
 
 impl StdioRpcSession {

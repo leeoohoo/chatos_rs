@@ -9,6 +9,8 @@ use std::time::SystemTime;
 use walkdir::WalkDir;
 use zip::write::FileOptions;
 
+use crate::core::user_visible_path::display_path;
+
 use super::policy::normalize_path_for_compare;
 
 const MAX_DOWNLOAD_FILES: usize = 5_000;
@@ -86,11 +88,13 @@ pub(super) fn read_dir_entries(
         }
         let name = entry.file_name().to_string_lossy().to_string();
         let p = entry_path.to_string_lossy().to_string();
+        let display_path = display_path(p.as_str());
         let size = if is_dir { None } else { Some(meta.len()) };
         let modified_at = meta.modified().ok().and_then(format_system_time);
         out.push(json!({
             "name": name,
-            "path": p,
+            "path": display_path,
+            "display_path": display_path,
             "is_dir": is_dir,
             "size": size,
             "modified_at": modified_at

@@ -213,7 +213,7 @@ mod tests {
         .await;
 
         assert_eq!(response.name, "task-runner-plan-task-zh-cn");
-        assert!(response.content.contains("视为已经授权创建或调整"));
+        assert!(response.content.contains("视为已经授权创建新的"));
         assert!(response.content.contains("Task Runner 规划任务"));
         assert!(response.content.contains("主对话不具备项目探索"));
         assert!(response.content.contains("已经成为事实"));

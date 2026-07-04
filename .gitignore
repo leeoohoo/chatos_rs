@@ -5,6 +5,7 @@ build/
 coverage/
 target/
 target-shared/
+target-*/
 target-*-run/
 target-*-test/
 

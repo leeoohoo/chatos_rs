@@ -42,13 +42,14 @@ DEV_MONGO_CONTAINER_NAME="${DEV_MONGO_CONTAINER_NAME:-chatos-dev-mongo}"
 MEMORY_ENGINE_HOST="${MEMORY_ENGINE_HOST:-127.0.0.1}"
 MEMORY_ENGINE_PORT="${MEMORY_ENGINE_PORT:-7081}"
 MEMORY_ENGINE_FRONTEND_PORT="${MEMORY_ENGINE_FRONTEND_PORT:-4178}"
+MEMORY_ENGINE_FRONTEND_BASE_PATH="${MEMORY_ENGINE_FRONTEND_BASE_PATH:-${VITE_BASE_PATH:-/}}"
 MEMORY_ENGINE_BASE_URL="${MEMORY_ENGINE_BASE_URL:-http://127.0.0.1:${MEMORY_ENGINE_PORT}/api/memory-engine/v1}"
 MEMORY_ENGINE_OPERATOR_TOKEN_DEFAULT="${MEMORY_ENGINE_OPERATOR_TOKEN_DEFAULT:-chatos-memory-engine-dev-operator-token}"
 MEMORY_ENGINE_OPERATOR_TOKEN="${MEMORY_ENGINE_OPERATOR_TOKEN:-$MEMORY_ENGINE_OPERATOR_TOKEN_DEFAULT}"
 MEMORY_ENGINE_USER_SERVICE_BASE_URL="${MEMORY_ENGINE_USER_SERVICE_BASE_URL:-${MEMORY_ENGINE_USER_SERVICE_API_BASE:-${CHATOS_USER_SERVICE_BASE_URL:-${USER_SERVICE_BASE_URL:-http://127.0.0.1:39190}}}}"
 MEMORY_ENGINE_USER_SERVICE_REQUEST_TIMEOUT_MS="${MEMORY_ENGINE_USER_SERVICE_REQUEST_TIMEOUT_MS:-${CHATOS_USER_SERVICE_REQUEST_TIMEOUT_MS:-${USER_SERVICE_DOWNSTREAM_REQUEST_TIMEOUT_MS:-5000}}}"
-MEMORY_ENGINE_FRONTEND_API_BASE="${VITE_MEMORY_ENGINE_API_BASE:-$MEMORY_ENGINE_BASE_URL}"
-MEMORY_ENGINE_FRONTEND_USER_SERVICE_API_BASE="${VITE_USER_SERVICE_API_BASE:-$MEMORY_ENGINE_USER_SERVICE_BASE_URL}"
+MEMORY_ENGINE_FRONTEND_API_BASE="${VITE_MEMORY_ENGINE_API_BASE:-/api/memory-engine/v1}"
+MEMORY_ENGINE_FRONTEND_USER_SERVICE_API_BASE="${VITE_USER_SERVICE_API_BASE:-/}"
 MEMORY_ENGINE_API_PROXY_TARGET="${MEMORY_ENGINE_API_PROXY_TARGET:-http://127.0.0.1:${MEMORY_ENGINE_PORT}}"
 USER_SERVICE_API_PROXY_TARGET="${USER_SERVICE_API_PROXY_TARGET:-http://127.0.0.1:${USER_SERVICE_PORT:-39190}}"
 MEMORY_ENGINE_MONGODB_DATABASE="${MEMORY_ENGINE_MONGODB_DATABASE:-memory_engine}"
@@ -157,21 +158,25 @@ stop_from_port() {
   local port="$2"
 
   if command -v lsof >/dev/null 2>&1; then
-    local pids
-    pids="$(lsof -ti tcp:"$port" -sTCP:LISTEN 2>/dev/null || true)"
-    if [[ -n "$pids" ]]; then
+    local pids attempt
+    for attempt in 1 2 3 4 5; do
+      pids="$(lsof -ti tcp:"$port" -sTCP:LISTEN 2>/dev/null || true)"
+      if [[ -z "$pids" ]]; then
+        return
+      fi
       echo "[INFO] stopping $name processes on port $port: $pids"
       kill $pids >/dev/null 2>&1 || true
       sleep 1
-      local left
-      left="$(lsof -ti tcp:"$port" -sTCP:LISTEN 2>/dev/null || true)"
-      if [[ -n "$left" ]]; then
-        kill -9 $left >/dev/null 2>&1 || true
-      fi
+    done
+    pids="$(lsof -ti tcp:"$port" -sTCP:LISTEN 2>/dev/null || true)"
+    if [[ -n "$pids" ]]; then
+      kill -9 $pids >/dev/null 2>&1 || true
     fi
   elif command -v fuser >/dev/null 2>&1; then
     if fuser -n tcp "$port" >/dev/null 2>&1; then
       echo "[INFO] stopping $name process on port $port"
+      fuser -k -n tcp "$port" >/dev/null 2>&1 || true
+      sleep 1
       fuser -k -n tcp "$port" >/dev/null 2>&1 || true
     fi
   fi
@@ -260,7 +265,7 @@ wait_http_ready() {
 wait_port_released() {
   local name="$1"
   local port="$2"
-  local timeout_sec="${3:-15}"
+  local timeout_sec="${3:-30}"
 
   local start_ts now_ts elapsed
   start_ts="$(date +%s)"
@@ -358,7 +363,7 @@ start_frontend() {
     "$MEMORY_ENGINE_FRONTEND_PORT" \
     "$FRONTEND_PID_FILE" \
     "$FRONTEND_LOG_FILE" \
-    "cd \"$FRONTEND_DIR\" && MEMORY_ENGINE_API_PROXY_TARGET=\"$MEMORY_ENGINE_API_PROXY_TARGET\" USER_SERVICE_API_PROXY_TARGET=\"$USER_SERVICE_API_PROXY_TARGET\" VITE_MEMORY_ENGINE_API_BASE=\"$MEMORY_ENGINE_FRONTEND_API_BASE\" VITE_MEMORY_ENGINE_PORT=\"$MEMORY_ENGINE_PORT\" VITE_MEMORY_ENGINE_OPERATOR_TOKEN=\"$MEMORY_ENGINE_OPERATOR_TOKEN\" VITE_USER_SERVICE_API_BASE=\"$MEMORY_ENGINE_FRONTEND_USER_SERVICE_API_BASE\" exec npm run dev -- --host 0.0.0.0 --port \"$MEMORY_ENGINE_FRONTEND_PORT\" --strictPort"
+    "cd \"$FRONTEND_DIR\" && MEMORY_ENGINE_FRONTEND_PORT=\"$MEMORY_ENGINE_FRONTEND_PORT\" MEMORY_ENGINE_API_PROXY_TARGET=\"$MEMORY_ENGINE_API_PROXY_TARGET\" USER_SERVICE_API_PROXY_TARGET=\"$USER_SERVICE_API_PROXY_TARGET\" VITE_BASE_PATH=\"$MEMORY_ENGINE_FRONTEND_BASE_PATH\" VITE_MEMORY_ENGINE_API_BASE=\"$MEMORY_ENGINE_FRONTEND_API_BASE\" VITE_MEMORY_ENGINE_PORT=\"$MEMORY_ENGINE_PORT\" VITE_MEMORY_ENGINE_OPERATOR_TOKEN=\"$MEMORY_ENGINE_OPERATOR_TOKEN\" VITE_USER_SERVICE_API_BASE=\"$MEMORY_ENGINE_FRONTEND_USER_SERVICE_API_BASE\" exec npm run dev -- --host 0.0.0.0 --port \"$MEMORY_ENGINE_FRONTEND_PORT\" --strictPort"
 }
 
 do_stop() {

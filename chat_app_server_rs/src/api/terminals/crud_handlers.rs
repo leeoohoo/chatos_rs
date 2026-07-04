@@ -13,6 +13,7 @@ use crate::core::path_guard::{canonicalize_existing_dir, path_is_within_root};
 use crate::core::project_access::{ensure_owned_project, map_project_access_error};
 use crate::core::terminal_access::{ensure_owned_terminal, map_terminal_access_error};
 use crate::core::user_scope::resolve_user_id;
+use crate::core::user_visible_path::display_path;
 use crate::core::validation::normalize_non_empty;
 use crate::models::terminal::{Terminal, TerminalService, TERMINAL_KIND_SHARED};
 use crate::models::terminal_log::{TerminalLog, TerminalLogService};
@@ -396,7 +397,8 @@ pub(super) async fn dispatch_terminal_command(
             "terminal_id": terminal.id,
             "terminal_name": terminal.name,
             "terminal_reused": reused,
-            "cwd": terminal.cwd,
+            "cwd": display_path(terminal.cwd.as_str()),
+            "display_cwd": display_path(terminal.cwd.as_str()),
             "executed_command": command,
         })),
     )

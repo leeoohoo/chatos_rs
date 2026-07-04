@@ -108,12 +108,15 @@ pub(in super::super) async fn move_entry(
     }
     let source_norm = source_path.path.to_string_lossy().to_string();
     let target_norm = target_path.to_string_lossy().to_string();
+    let source_display = policy.display_path(source_path.path.as_path());
+    let target_display = policy.display_path(target_path.as_path());
     if source_norm == target_norm {
         return (
             StatusCode::OK,
             Json(json!({
-                "from_path": source_norm,
-                "to_path": target_norm,
+                "from_path": source_display,
+                "to_path": target_display,
+                "display_path": target_display,
                 "replaced": false,
                 "moved": false
             })),
@@ -225,8 +228,9 @@ pub(in super::super) async fn move_entry(
     (
         StatusCode::OK,
         Json(json!({
-            "from_path": source_norm,
-            "to_path": target_norm,
+            "from_path": source_display,
+            "to_path": target_display,
+            "display_path": target_display,
             "name": target_name,
             "replaced": replaced,
             "is_dir": source_is_dir,

@@ -74,6 +74,7 @@ export const EmbeddedTerminalView: React.FC<EmbeddedTerminalViewProps> = ({
       <TerminalHeader
         terminalTitle={terminal.name || t('terminal.titleFallback')}
         terminalCwd={terminal.cwd || ''}
+        terminalDisplayCwd={terminal.displayCwd || null}
         connectionState={connectionState}
         terminalStatus={terminal.status || 'unknown'}
         historyState={historyState}

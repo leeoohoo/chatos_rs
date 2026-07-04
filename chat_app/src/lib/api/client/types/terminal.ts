@@ -5,6 +5,8 @@ export interface TerminalResponse {
   id: string;
   name?: string;
   cwd?: string;
+  display_cwd?: string | null;
+  displayCwd?: string | null;
   kind?: string | null;
   user_id?: string | null;
   userId?: string | null;

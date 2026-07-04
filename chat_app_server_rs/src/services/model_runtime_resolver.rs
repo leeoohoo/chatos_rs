@@ -132,6 +132,27 @@ pub fn runtime_value_from_engine_profile(profile: &AiModelConfig) -> Value {
     })
 }
 
+fn ensure_profile_api_key_is_usable(profile: &AiModelConfig) -> Result<(), String> {
+    let api_key = profile
+        .api_key
+        .as_deref()
+        .map(str::trim)
+        .unwrap_or_default();
+    if api_key.starts_with("enc:v1:") {
+        return Err(format!(
+            "model config {} api_key is still encrypted; update the provider credentials or run the secret migration",
+            profile.id
+        ));
+    }
+    if profile.has_api_key && api_key.is_empty() {
+        return Err(format!(
+            "model config {} api_key could not be decrypted; update the provider credentials or run the secret migration",
+            profile.id
+        ));
+    }
+    Ok(())
+}
+
 fn merge_safe_request_overrides(base: &mut Value, request_model_cfg: &Value) {
     let Some(base_map) = base.as_object_mut() else {
         return;
@@ -225,6 +246,7 @@ pub async fn resolve_model_runtime_for_request(
     } else {
         load_default_profile(cfg, user_id).await?
     };
+    ensure_profile_api_key_is_usable(&profile)?;
 
     let mut model_cfg = runtime_value_from_engine_profile(&profile);
     if let Some(request_model_cfg) = request_model_cfg {

@@ -80,7 +80,7 @@ export const TerminalSection: React.FC<TerminalSectionProps> = ({
           ) : (
             <div className="p-2 space-y-1">
               {terminals.map((terminal) => {
-                const visibleCwd = getUserVisiblePath(terminal.cwd);
+                const visibleCwd = terminal.displayCwd || getUserVisiblePath(terminal.cwd);
                 return (
                   <div
                     key={terminal.id}

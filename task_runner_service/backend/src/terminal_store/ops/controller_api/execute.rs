@@ -13,17 +13,15 @@ impl TaskRunnerTerminalControllerStore {
     ) -> Result<Value, String> {
         let project_root = canonicalize_existing(context.root.as_path())?;
         let target_path = resolve_target_path(project_root.as_path(), path.as_str())?;
-        let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".to_string());
+        let shell = select_shell();
 
-        let mut process = Command::new(shell);
-        process
-            .arg("-lc")
-            .arg(command.as_str())
-            .current_dir(&target_path)
-            .stdin(std::process::Stdio::piped())
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped());
-        apply_bundled_tools_path(&mut process);
+        let mut process = build_task_shell_command(
+            &context,
+            project_root.as_path(),
+            target_path.as_path(),
+            shell.as_str(),
+            vec![OsString::from("-lc"), OsString::from(command.as_str())],
+        )?;
         let child = process.spawn().map_err(|err| err.to_string())?;
 
         let session =

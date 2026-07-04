@@ -10,7 +10,7 @@ use crate::models::{
 use super::chatos_async_planner::require_chatos_async_source_context;
 use super::support::{
     effective_owner_user_id, enabled_model_configs_for_user, ensure_task_owner,
-    model_visible_to_user, select_model_config_id_for_task,
+    model_visible_to_user, reusable_chatos_async_task, select_model_config_id_for_task,
 };
 use super::{McpRequestContext, McpToolProfile, TaskRunnerMcpService};
 
@@ -153,6 +153,7 @@ impl TaskRunnerMcpService {
             .existing_chatos_async_tasks(current_user, request_context)
             .await?
             .into_iter()
+            .filter(reusable_chatos_async_task)
             .next())
     }
 

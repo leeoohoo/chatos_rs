@@ -41,6 +41,9 @@ sudo ENABLE_PROCESS_ISOLATION=1 \
 - `CHATOS_WORKSPACE_DIR`：用户项目/工作目录根路径，默认 `$APP_ROOT/backend/data/workspace`
 - `ENABLE_PROCESS_ISOLATION=1`：写入 `CHATOS_PROCESS_ISOLATION_ENABLED=true` 并生成 systemd drop-in
 - `PROCESS_ISOLATION_PRIVILEGE_MODE`：默认 `capabilities`，也可设为 `root`
+- `PROCESS_ISOLATION_FS_ENABLED`：启用进程隔离时默认 `true`，写入 `CHATOS_PROCESS_ISOLATION_FS_ENABLED`
+- `PROCESS_ISOLATION_FS_ROOT`：FS 视图运行根目录，默认 `/tmp/chatos-process-isolation`
+- `PROCESS_ISOLATION_FS_MOUNT_PROC`：默认 `false`；除非明确需要 `/proc`，否则不要开启
 
 ## 4) 部署后检查
 
@@ -82,8 +85,13 @@ sudo SERVICE_NAME=chatos-backend bash scripts/configure-linux-process-isolation.
 ```
 
 默认使用 `capabilities` 模式，让服务继续以 `chatos` 用户运行，同时授予
-`CAP_SETUID`、`CAP_SETGID`、`CAP_CHOWN`。这是终端和 stdio MCP 降权到用户 UID/GID
-所必需的能力。
+`CAP_SETUID`、`CAP_SETGID`、`CAP_CHOWN`、`CAP_FOWNER`。启用 FS 视图隔离时还会授予 `CAP_SYS_ADMIN` 和 `CAP_DAC_READ_SEARCH`，
+用于在子进程降权前创建 mount namespace 并执行 `pivot_root`。
+
+FS 视图隔离开启后，终端和 stdio MCP 子进程只看到 `/workspace`、`/home/chatos`、私有
+`/tmp`、少量 `/dev/*`，以及终端启动所需的 shell 运行时。默认不会把宿主机
+Node/Python/Git/Java/Go/Maven 工具链或证书目录挂进去；用户需要在自己的
+`/home/chatos` 或 `/workspace` 下安装和配置运行时依赖。
 
 ## 6) HTTPS（推荐）
 

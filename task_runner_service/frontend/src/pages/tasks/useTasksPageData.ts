@@ -307,11 +307,12 @@ export function useTasksPageData({
 
   const modelOptions = useMemo(
     () =>
-      (modelsQuery.data || []).map((model) => ({
-        label: taskModelOptionLabel(model, t),
-        value: model.id,
-        disabled: !model.enabled,
-      })),
+      (modelsQuery.data || [])
+        .filter((model) => model.enabled)
+        .map((model) => ({
+          label: taskModelOptionLabel(model, t),
+          value: model.id,
+        })),
     [modelsQuery.data, t],
   );
 

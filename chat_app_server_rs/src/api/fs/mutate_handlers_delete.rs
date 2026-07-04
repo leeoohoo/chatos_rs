@@ -87,13 +87,15 @@ pub(in super::super) async fn delete_entry(
         );
     }
     let deleted_path = path.path.to_string_lossy().to_string();
+    let display_deleted_path = policy.display_path(path.path.as_path());
     suppress_logged_path(deleted_path.as_str());
     note_workspace_path_changed(deleted_path.as_str());
 
     (
         StatusCode::OK,
         Json(json!({
-            "path": deleted_path,
+            "path": display_deleted_path,
+            "display_path": display_deleted_path,
             "is_dir": is_dir,
             "recursive": recursive,
             "deleted": true

@@ -11,6 +11,15 @@ use task_runner_service_backend::{
 const TASK_RUNNER_TOKIO_THREAD_STACK_SIZE: usize = 8 * 1024 * 1024;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    match chatos_mcp_runtime::process_isolation::maybe_run_exec_helper_from_env() {
+        Ok(false) => {}
+        Ok(true) => return Ok(()),
+        Err(err) => {
+            eprintln!("{err}");
+            std::process::exit(126);
+        }
+    }
+
     load_task_runner_dotenv();
     init_tracing();
 

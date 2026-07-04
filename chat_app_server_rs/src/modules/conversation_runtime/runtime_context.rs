@@ -178,6 +178,9 @@ pub async fn resolve_runtime_context(
     let mut task_runner_skill_prompt = None;
     let mut runtime_error = None;
 
+    let task_runner_required = req.plan_mode || runtime_metadata.auto_create_task == Some(true);
+    let has_task_runner_contact_context =
+        runtime_metadata.contact_id.is_some() || contact_agent_id.is_some();
     let task_runner_project_id = if req.plan_mode {
         resolved_project_id
             .as_deref()
@@ -187,7 +190,7 @@ pub async fn resolve_runtime_context(
     };
     if req.plan_mode && task_runner_project_id.is_none() {
         runtime_error = Some("Plan 模式需要先选择一个有效项目。".to_string());
-    } else {
+    } else if task_runner_required || has_task_runner_contact_context {
         match build_contact_task_runner_runtime(
             effective_user_id.as_deref(),
             runtime_metadata.contact_id.as_deref(),
@@ -210,7 +213,16 @@ pub async fn resolve_runtime_context(
                 http_servers.push(runtime.server);
             }
             None => {
-                runtime_error = Some("当前联系人未配置 Task Runner，无法创建任务。".to_string());
+                if task_runner_required {
+                    runtime_error = Some("当前联系人未配置 Task Runner，无法创建任务。".to_string());
+                } else {
+                    warn!(
+                        "task runner runtime skipped for optional chat tools: session_id={} contact_id={} contact_agent_id={}",
+                        session_id,
+                        runtime_metadata.contact_id.as_deref().unwrap_or_default(),
+                        contact_agent_id.as_deref().unwrap_or_default()
+                    );
+                }
             }
         }
     }

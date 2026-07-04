@@ -12,7 +12,9 @@ use super::chatos_async_planner::{
     planner_prerequisite_create_request, planner_root_create_request,
     require_chatos_async_source_context,
 };
-use super::support::{ensure_client_ref_graph_acyclic, normalize_mcp_builtin_kind_names};
+use super::support::{
+    ensure_client_ref_graph_acyclic, normalize_mcp_builtin_kind_names, reusable_chatos_async_task,
+};
 use super::{
     normalize_external_mcp_config_ids, normalize_skill_ids,
     task_mcp_config_for_explicit_tool_selection, CreateTasksWithPrerequisitesArgs,
@@ -30,7 +32,10 @@ impl TaskRunnerMcpService {
             let _ = require_chatos_async_source_context(request_context)?;
             let existing = self
                 .existing_chatos_async_tasks(current_user, request_context)
-                .await?;
+                .await?
+                .into_iter()
+                .filter(reusable_chatos_async_task)
+                .collect::<Vec<_>>();
             if !existing.is_empty() {
                 let auto_started_runs = self
                     .dispatch_chatos_async_tasks(existing.as_slice())

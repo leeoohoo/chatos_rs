@@ -76,12 +76,14 @@ async fn list_entries_impl(
             );
         }
     };
-    let parent = policy.parent_for(&path);
+    let parent = policy
+        .parent_for(&path)
+        .map(|parent| policy.display_path(std::path::Path::new(parent.as_str())));
 
     (
         StatusCode::OK,
         Json(json!({
-            "path": path.path.to_string_lossy(),
+            "path": policy.display_path(path.path.as_path()),
             "parent": parent,
             "writable": path.can_write,
             "entries": entries,

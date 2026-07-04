@@ -39,6 +39,11 @@ fn secret_key() -> &'static [u8; 32] {
 }
 
 pub fn encrypt_secret(plain_text: &str) -> Result<String, String> {
+    if is_secret_encrypted(plain_text) {
+        return Err(
+            "encrypt secret failed: refusing to encrypt an already encrypted secret".to_string(),
+        );
+    }
     let mut nonce = [0u8; NONCE_SIZE];
     OsRng.fill_bytes(&mut nonce);
     let cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(secret_key()));

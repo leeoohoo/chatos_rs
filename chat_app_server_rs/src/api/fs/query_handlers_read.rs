@@ -94,7 +94,8 @@ pub(in super::super) async fn read_file(
     (
         StatusCode::OK,
         Json(json!({
-            "path": path.path.to_string_lossy(),
+            "path": policy.display_path(path.path.as_path()),
+            "display_path": policy.display_path(path.path.as_path()),
             "name": path.path.file_name().and_then(|n| n.to_str()).unwrap_or(""),
             "size": size,
             "content_type": content_type,

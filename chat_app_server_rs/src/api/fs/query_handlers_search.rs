@@ -15,6 +15,7 @@ use super::super::helpers::format_system_time;
 use super::super::policy::FsPathPolicy;
 use super::super::search::{is_search_match, normalize_search_keyword};
 use super::policy_error_tuple;
+use crate::core::user_visible_path::display_path;
 use crate::services::workspace_search::{
     search_text as search_workspace_text, TextSearchRequest, DEFAULT_MAX_FILE_BYTES,
     DEFAULT_MAX_VISITS,
@@ -76,7 +77,7 @@ pub(in super::super) async fn search_entries(
         .clamp(1, MAX_SEARCH_LIMIT);
     let keyword = normalize_search_keyword(&raw_keyword);
     let root = path.path.clone();
-    let root_display = root.to_string_lossy().to_string();
+    let root_display = policy.display_path(root.as_path());
 
     let result = match tokio::task::spawn_blocking({
         let root = root.clone();
@@ -180,7 +181,8 @@ fn search_entries_sync(
             let modified_at = meta.modified().ok().and_then(format_system_time);
             entries.push(json!({
                 "name": name,
-                "path": full_path.to_string_lossy(),
+                "path": display_path(full_path.to_string_lossy().as_ref()),
+                "display_path": display_path(full_path.to_string_lossy().as_ref()),
                 "relative_path": relative_path,
                 "is_dir": false,
                 "size": Some(meta.len()),
@@ -287,16 +289,21 @@ pub(in super::super) async fn search_content(
     };
 
     match result {
-        Ok(result) => (
-            StatusCode::OK,
-            Json(json!({
-                "path": path.path.to_string_lossy(),
-                "query": query_text,
-                "entries": result.entries,
-                "truncated": result.truncated,
-                "visited_dirs": result.visited_dirs
-            })),
-        ),
+        Ok(mut result) => {
+            for entry in &mut result.entries {
+                entry.path = display_path(entry.path.as_str());
+            }
+            (
+                StatusCode::OK,
+                Json(json!({
+                    "path": policy.display_path(path.path.as_path()),
+                    "query": query_text,
+                    "entries": result.entries,
+                    "truncated": result.truncated,
+                    "visited_dirs": result.visited_dirs
+                })),
+            )
+        }
         Err(message) if message == "路径不存在" || message == "路径不是目录" => {
             (StatusCode::BAD_REQUEST, Json(json!({ "error": message })))
         }

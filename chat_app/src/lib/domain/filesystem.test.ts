@@ -3,7 +3,12 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { deriveParentPath, getUserVisiblePath, resolveUserVisiblePathInput } from './filesystem';
+import {
+  deriveParentPath,
+  getUserVisiblePath,
+  normalizeFsEntry,
+  resolveUserVisiblePathInput,
+} from './filesystem';
 
 describe('domain/filesystem', () => {
   it('derives parent paths for unix and windows directories', () => {
@@ -29,5 +34,19 @@ describe('domain/filesystem', () => {
     expect(resolveUserVisiblePathInput('nested/app', current)).toBe(
       '/opt/chatos/backend/data/workspace/users/user-123/workspaces/nested/app',
     );
+  });
+
+  it('keeps backend-provided display paths on filesystem entries', () => {
+    expect(normalizeFsEntry({
+      name: 'demo',
+      path: '/opt/chatos/backend/data/workspace/users/user-123/workspaces/demo',
+      display_path: '/demo',
+      is_dir: true,
+    })).toMatchObject({
+      name: 'demo',
+      path: '/opt/chatos/backend/data/workspace/users/user-123/workspaces/demo',
+      displayPath: '/demo',
+      isDir: true,
+    });
   });
 });

@@ -63,7 +63,7 @@ export const ProjectSection: React.FC<ProjectSectionProps> = ({
           ) : (
             <div className="p-2 space-y-1">
               {projects.map((project) => {
-                const visiblePath = getUserVisiblePath(project.rootPath);
+                const visiblePath = project.displayRootPath || getUserVisiblePath(project.rootPath);
                 return (
                   <div
                     key={project.id}
