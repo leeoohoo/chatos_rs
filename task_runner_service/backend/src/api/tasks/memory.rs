@@ -18,7 +18,7 @@ pub(in crate::api) async fn get_task_memory_context(
         .await
         .map_err(ApiError::bad_request)?
         .ok_or_else(|| ApiError::not_found(format!("任务不存在: {id}")))?;
-    Ok(Json(response))
+    Ok(Json(redact_workspace_paths(&state, response)?))
 }
 
 pub(in crate::api) async fn get_task_memory_records(
@@ -36,7 +36,7 @@ pub(in crate::api) async fn get_task_memory_records(
         .await
         .map_err(ApiError::bad_request)?
         .ok_or_else(|| ApiError::not_found(format!("任务不存在: {id}")))?;
-    Ok(Json(response))
+    Ok(Json(redact_workspace_paths(&state, response)?))
 }
 
 pub(in crate::api) async fn summarize_task_memory(
@@ -53,5 +53,5 @@ pub(in crate::api) async fn summarize_task_memory(
         .await
         .map_err(ApiError::bad_request)?
         .ok_or_else(|| ApiError::not_found(format!("任务不存在: {id}")))?;
-    Ok(Json(response))
+    Ok(Json(redact_workspace_paths(&state, response)?))
 }

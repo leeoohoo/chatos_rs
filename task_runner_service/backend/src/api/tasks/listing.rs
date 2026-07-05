@@ -13,7 +13,7 @@ pub(in crate::api) async fn list_tasks(
         .list_tasks_filtered(task_filters_for_user(query.into_filters(), &current_user)?)
         .await
         .map_err(ApiError::bad_request)?;
-    Ok(Json(tasks))
+    Ok(Json(redact_workspace_paths(&state, tasks)?))
 }
 
 pub(in crate::api) async fn list_tasks_page(
@@ -26,7 +26,7 @@ pub(in crate::api) async fn list_tasks_page(
         .list_tasks_page(task_filters_for_user(query.into_filters(), &current_user)?)
         .await
         .map_err(ApiError::bad_request)?;
-    Ok(Json(page))
+    Ok(Json(redact_workspace_paths(&state, page)?))
 }
 
 pub(in crate::api) async fn list_task_summaries(

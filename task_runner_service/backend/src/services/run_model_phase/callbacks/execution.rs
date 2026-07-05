@@ -20,6 +20,11 @@ impl RunService {
             model_config,
             &prepared_execution.run_spec,
             prepared_execution.tool_result_model_budget_limits,
+            prepared_execution.effective_workspace_dir.as_str(),
+        );
+        let path_redactor = crate::services::path_redaction::WorkspacePathRedactor::for_workspace(
+            self.config.default_workspace_dir.as_str(),
+            prepared_execution.effective_workspace_dir.as_str(),
         );
         let execution_timeout = match self.effective_execution_timeout().await {
             Ok(timeout) => timeout,
@@ -56,7 +61,10 @@ impl RunService {
                         task.id.clone(),
                         run.id.clone(),
                         Some(model_config.id.clone()),
-                        AiTurnReport::failed(format!("runtime init failed: {err}")),
+                        AiTurnReport::failed(
+                            path_redactor
+                                .redact_text(format!("runtime init failed: {err}").as_str()),
+                        ),
                     );
                 }
             };
@@ -168,6 +176,7 @@ impl RunService {
             &self.store,
             run.id.as_str(),
             &runtime_execution.pending_stream_event,
+            Some(&path_redactor),
         );
         if report.is_aborted()
             && (runtime_execution
@@ -184,7 +193,7 @@ impl RunService {
                 .and_then(|task| task.result_summary)
                 .unwrap_or_else(|| "任务已通过 TaskManager 标记为成功。".to_string());
             report.status = chatos_ai_runtime::AiTurnStatus::Completed;
-            report.content = Some(content);
+            report.content = Some(path_redactor.redact_text(content.as_str()));
             report.error = None;
         }
         report

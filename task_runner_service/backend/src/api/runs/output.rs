@@ -33,7 +33,7 @@ pub(in crate::api) async fn get_run_output_changes(
         .await
         .map_err(ApiError::bad_request)?
         .ok_or_else(|| ApiError::not_found(format!("运行记录不存在: {id}")))?;
-    Ok(Json(response))
+    Ok(Json(redact_workspace_paths(&state, response)?))
 }
 
 pub(in crate::api) async fn get_run_output_diff(
@@ -55,5 +55,5 @@ pub(in crate::api) async fn get_run_output_diff(
         .await
         .map_err(ApiError::bad_request)?
         .ok_or_else(|| ApiError::not_found(format!("运行记录不存在: {id}")))?;
-    Ok(Json(response))
+    Ok(Json(redact_workspace_paths(&state, response)?))
 }

@@ -16,6 +16,7 @@ import type { UserMessageTaskState, UserMessageTurn } from './types';
 const PAGE_SIZE = 10;
 const LIVE_TASK_POLL_INTERVAL_MS = 12000;
 const EXTERNAL_REFRESH_DELAY_MS = 350;
+const EXTERNAL_REFRESH_RETRY_DELAYS_MS = [600, 1400, 3000, 5000];
 
 interface UseConversationUserMessagesOptions {
   refreshKey?: string | number | null;
@@ -205,6 +206,14 @@ const sameTaskState = (
   && left.runningCount === right.runningCount
 );
 
+const containsUserMessageId = (
+  items: UserMessageTurn[],
+  messageId: string,
+): boolean => (
+  Boolean(messageId)
+  && items.some((item) => item.userMessage.id === messageId)
+);
+
 const normalizeTurn = (
   sessionId: string,
   item: UserMessageTurnResponse,
@@ -392,10 +401,37 @@ export const useConversationUserMessages = (
       return undefined;
     }
 
-    const timeoutId = window.setTimeout(() => {
-      void loadPage(null, 'replace');
-    }, externalRefreshDelayMs);
-    return () => window.clearTimeout(timeoutId);
+    let cancelled = false;
+    let timeoutId: number | null = null;
+
+    const scheduleAttempt = (attempt: number, delayMs: number) => {
+      timeoutId = window.setTimeout(() => {
+        void (async () => {
+          const loadedItems = await loadPage(null, 'replace');
+          if (cancelled) {
+            return;
+          }
+          if (
+            containsUserMessageId(loadedItems, externalRefreshKey)
+            || containsUserMessageId(itemsRef.current, externalRefreshKey)
+          ) {
+            return;
+          }
+          const retryDelayMs = EXTERNAL_REFRESH_RETRY_DELAYS_MS[attempt];
+          if (typeof retryDelayMs === 'number') {
+            scheduleAttempt(attempt + 1, retryDelayMs);
+          }
+        })();
+      }, delayMs);
+    };
+
+    scheduleAttempt(0, externalRefreshDelayMs);
+    return () => {
+      cancelled = true;
+      if (timeoutId !== null) {
+        window.clearTimeout(timeoutId);
+      }
+    };
   }, [externalRefreshDelayMs, externalRefreshKey, loadPage, sessionId]);
 
   useEffect(() => {

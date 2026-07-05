@@ -148,6 +148,24 @@ pub fn resolve_for_user(user_id: Option<&str>) -> Result<Option<ProcessIsolation
     Ok(Some(spec))
 }
 
+pub fn resolve_required_filesystem_view_for_user(
+    user_id: Option<&str>,
+) -> Result<Option<ProcessIsolationSpec>, String> {
+    let cfg = ProcessIsolationConfig::from_env()?;
+    if !cfg.enabled {
+        return Ok(None);
+    }
+    if !cfg.fs_enabled {
+        return Err(
+            "filesystem view isolation is required when process isolation is enabled".to_string(),
+        );
+    }
+    let spec = resolve_for_user(user_id)?.ok_or_else(|| {
+        "process isolation is enabled but no user isolation spec was resolved".to_string()
+    })?;
+    Ok(Some(spec))
+}
+
 pub fn filesystem_view_enabled(spec: Option<&ProcessIsolationSpec>) -> Result<bool, String> {
     if spec.is_none() {
         return Ok(false);
@@ -1413,7 +1431,49 @@ fn parse_flag_u32(args: &[OsString], index: &mut usize, flag: &str) -> Result<u3
 
 #[cfg(test)]
 mod tests {
-    use super::{map_id, stable_user_hash, DEFAULT_UID_BASE, DEFAULT_UID_SPAN};
+    use std::ffi::OsString;
+    use std::sync::Mutex;
+
+    use super::{
+        map_id, resolve_required_filesystem_view_for_user, stable_user_hash, DEFAULT_UID_BASE,
+        DEFAULT_UID_SPAN, HELPER_ENV_KEYS,
+    };
+
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    struct EnvSnapshot(Vec<(&'static str, Option<OsString>)>);
+
+    impl Drop for EnvSnapshot {
+        fn drop(&mut self) {
+            for (key, value) in &self.0 {
+                if let Some(value) = value {
+                    std::env::set_var(key, value);
+                } else {
+                    std::env::remove_var(key);
+                }
+            }
+        }
+    }
+
+    fn with_process_isolation_env<R>(
+        vars: &[(&'static str, &'static str)],
+        f: impl FnOnce() -> R,
+    ) -> R {
+        let _guard = ENV_LOCK.lock().expect("process isolation env lock");
+        let _snapshot = EnvSnapshot(
+            HELPER_ENV_KEYS
+                .iter()
+                .map(|key| (*key, std::env::var_os(key)))
+                .collect(),
+        );
+        for key in HELPER_ENV_KEYS {
+            std::env::remove_var(key);
+        }
+        for (key, value) in vars {
+            std::env::set_var(key, value);
+        }
+        f()
+    }
 
     #[test]
     fn process_isolation_user_hash_is_stable() {
@@ -1430,5 +1490,51 @@ mod tests {
         );
         assert!(uid >= DEFAULT_UID_BASE);
         assert!(uid < DEFAULT_UID_BASE + DEFAULT_UID_SPAN);
+    }
+
+    #[test]
+    fn required_filesystem_view_allows_disabled_isolation() {
+        with_process_isolation_env(&[], || {
+            let spec = resolve_required_filesystem_view_for_user(None)
+                .expect("disabled isolation should not require user context");
+
+            assert_eq!(spec, None);
+        });
+    }
+
+    #[test]
+    fn required_filesystem_view_rejects_enabled_isolation_without_fs_view() {
+        with_process_isolation_env(
+            &[
+                ("CHATOS_PROCESS_ISOLATION_ENABLED", "true"),
+                ("CHATOS_PROCESS_ISOLATION_FS_ENABLED", "false"),
+            ],
+            || {
+                let err = resolve_required_filesystem_view_for_user(Some("user-a"))
+                    .expect_err("enabled isolation must require filesystem view");
+
+                assert!(err.contains("filesystem view isolation is required"));
+            },
+        );
+    }
+
+    #[test]
+    fn required_filesystem_view_rejects_missing_user_context() {
+        with_process_isolation_env(
+            &[
+                ("CHATOS_PROCESS_ISOLATION_ENABLED", "true"),
+                ("CHATOS_PROCESS_ISOLATION_FS_ENABLED", "true"),
+            ],
+            || {
+                let err = resolve_required_filesystem_view_for_user(None)
+                    .expect_err("enabled isolation must require user context");
+
+                if cfg!(target_os = "linux") {
+                    assert!(err.contains("user_id"));
+                } else {
+                    assert!(err.contains("Linux"));
+                }
+            },
+        );
     }
 }

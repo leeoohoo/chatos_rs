@@ -37,7 +37,7 @@ pub(super) async fn list_model_configs(
         })
         .collect::<Vec<_>>();
     let models = attach_model_owner_labels(&state, &current_user, models).await;
-    Ok(Json(models))
+    Ok(Json(redact_workspace_paths(&state, models)?))
 }
 
 pub(super) async fn create_model_config(
@@ -51,7 +51,10 @@ pub(super) async fn create_model_config(
         .create_model_config(input)
         .await
         .map_err(ApiError::bad_request)?;
-    Ok((StatusCode::CREATED, Json(model)))
+    Ok((
+        StatusCode::CREATED,
+        Json(redact_workspace_paths(&state, model)?),
+    ))
 }
 
 pub(super) async fn get_model_config(
@@ -71,7 +74,7 @@ pub(super) async fn get_model_config(
         .into_iter()
         .next()
         .ok_or_else(|| ApiError::not_found(format!("模型配置不存在: {id}")))?;
-    Ok(Json(model))
+    Ok(Json(redact_workspace_paths(&state, model)?))
 }
 
 pub(super) async fn update_model_config(
@@ -98,7 +101,7 @@ pub(super) async fn update_model_config(
         .into_iter()
         .next()
         .ok_or_else(|| ApiError::not_found(format!("模型配置不存在: {id}")))?;
-    Ok(Json(model))
+    Ok(Json(redact_workspace_paths(&state, model)?))
 }
 
 pub(super) async fn delete_model_config(
@@ -144,7 +147,7 @@ pub(super) async fn test_model_config(
         .await
         .map_err(ApiError::bad_request)?
         .ok_or_else(|| ApiError::not_found(format!("模型配置不存在: {id}")))?;
-    Ok(Json(result))
+    Ok(Json(redact_workspace_paths(&state, result)?))
 }
 
 pub(super) async fn list_model_catalog(
@@ -165,7 +168,7 @@ pub(super) async fn list_model_catalog(
         .await
         .map_err(ApiError::bad_request)?
         .ok_or_else(|| ApiError::not_found(format!("模型配置不存在: {id}")))?;
-    Ok(Json(result))
+    Ok(Json(redact_workspace_paths(&state, result)?))
 }
 
 pub(super) async fn preview_model_catalog(
@@ -179,7 +182,7 @@ pub(super) async fn preview_model_catalog(
         .preview_model_catalog(input)
         .await
         .map_err(ApiError::bad_request)?;
-    Ok(Json(result))
+    Ok(Json(redact_workspace_paths(&state, result)?))
 }
 
 pub(super) async fn list_model_config_usage(

@@ -16,7 +16,7 @@ pub(in crate::api) async fn list_task_prerequisites(
         .list_task_prerequisites(&id)
         .await
         .map_err(ApiError::bad_request)?;
-    Ok(Json(tasks))
+    Ok(Json(redact_workspace_paths(&state, tasks)?))
 }
 
 pub(in crate::api) async fn set_task_prerequisites(
@@ -34,7 +34,7 @@ pub(in crate::api) async fn set_task_prerequisites(
         .await
         .map_err(ApiError::bad_request)?
         .ok_or_else(|| ApiError::not_found(format!("任务不存在: {id}")))?;
-    Ok(Json(task))
+    Ok(Json(redact_workspace_paths(&state, task)?))
 }
 
 pub(in crate::api) async fn get_task_dependency_graph(
@@ -51,5 +51,5 @@ pub(in crate::api) async fn get_task_dependency_graph(
         .await
         .map_err(ApiError::bad_request)?
         .ok_or_else(|| ApiError::not_found(format!("任务不存在: {id}")))?;
-    Ok(Json(graph))
+    Ok(Json(redact_workspace_paths(&state, graph)?))
 }

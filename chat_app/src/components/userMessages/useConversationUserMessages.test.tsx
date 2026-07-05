@@ -389,4 +389,96 @@ describe('useConversationUserMessages', () => {
       unmount();
     }
   });
+
+  it('retries external refresh when the new user message is not visible yet', async () => {
+    const oldTurn = {
+      turn_id: 'turn-1',
+      user_message: {
+        id: 'user-1',
+        conversation_id: 'session-1',
+        role: 'user',
+        content: 'old message',
+        status: 'completed',
+        created_at: '2026-06-16T07:20:00.000Z',
+        metadata: { conversation_turn_id: 'turn-1' },
+      },
+      final_assistant_message: null,
+      has_process: false,
+      process_message_count: 0,
+    };
+    const newTurn = {
+      turn_id: 'turn-2',
+      user_message: {
+        id: 'user-2',
+        conversation_id: 'session-1',
+        role: 'user',
+        content: 'new message',
+        status: 'completed',
+        created_at: '2026-06-16T07:21:00.000Z',
+        metadata: { conversation_turn_id: 'turn-2' },
+      },
+      final_assistant_message: null,
+      has_process: false,
+      process_message_count: 0,
+    };
+    const client = {
+      getConversationUserMessageTurns: vi.fn()
+        .mockResolvedValueOnce({
+          items: [oldTurn],
+          has_more: false,
+          next_before: null,
+        })
+        .mockResolvedValueOnce({
+          items: [oldTurn],
+          has_more: false,
+          next_before: null,
+        })
+        .mockResolvedValueOnce({
+          items: [newTurn, oldTurn],
+          has_more: false,
+          next_before: null,
+        }),
+      getConversationTaskRunnerActiveMessageTasks: vi.fn().mockResolvedValue({
+        active_source_user_message_ids: [],
+        running_source_user_message_ids: [],
+        items: [],
+      }),
+    };
+
+    const { result, rerender, unmount } = renderHook(
+      ({ refreshKey }) => useConversationUserMessages('session-1', {
+        refreshKey,
+      }),
+      {
+        wrapper: wrapperForClient(client),
+        initialProps: { refreshKey: 'user-1' },
+      },
+    );
+
+    try {
+      await waitFor(() => {
+        expect(result.current.items.map((item) => item.userMessage.id)).toEqual(['user-1']);
+      });
+
+      vi.useFakeTimers();
+      rerender({ refreshKey: 'user-2' });
+
+      await act(async () => {
+        vi.advanceTimersByTime(350);
+        await flushPromises();
+      });
+      expect(client.getConversationUserMessageTurns).toHaveBeenCalledTimes(2);
+      expect(result.current.items.map((item) => item.userMessage.id)).toEqual(['user-1']);
+
+      await act(async () => {
+        vi.advanceTimersByTime(600);
+        await flushPromises();
+      });
+      expect(client.getConversationUserMessageTurns).toHaveBeenCalledTimes(3);
+      expect(result.current.items.map((item) => item.userMessage.id)).toEqual(['user-2', 'user-1']);
+    } finally {
+      unmount();
+      vi.useRealTimers();
+    }
+  });
 });

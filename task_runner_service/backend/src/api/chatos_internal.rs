@@ -12,11 +12,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 use crate::{
-    models::{RunOutputChangesResponse, RunOutputDiffResponse, TaskRunRecord},
+    models::TaskRunRecord,
     services::{
-        ChatosMessageModelConfigSummary, ChatosMessageRunDetail, ChatosMessageTaskDetail,
-        ChatosMessageTaskGraph, ChatosMessageTaskRun, ChatosMessageTaskRunEvent,
-        ChatosMessageTaskSummary,
+        ChatosMessageModelConfigSummary, ChatosMessageRunDetail, ChatosMessageTaskRun,
+        ChatosMessageTaskRunEvent, ChatosMessageTaskSummary,
     },
     state::AppState,
 };
@@ -241,6 +240,19 @@ fn truncate_json_value(value: Value, max_bytes: usize) -> Value {
     })
 }
 
+fn redact_workspace_paths_internal<T>(state: &AppState, value: T) -> Result<Value, InternalApiError>
+where
+    T: Serialize,
+{
+    let redactor = crate::services::path_redaction::WorkspacePathRedactor::for_workspace_base(
+        state.config.default_workspace_dir.as_str(),
+    );
+    let mut json =
+        serde_json::to_value(value).map_err(|err| InternalApiError::internal(err.to_string()))?;
+    redactor.redact_value(&mut json);
+    Ok(json)
+}
+
 fn trim_run_for_chatos_detail(
     mut run: crate::models::TaskRunRecord,
 ) -> crate::models::TaskRunRecord {
@@ -287,7 +299,7 @@ fn paginate_run_events(
 async fn list_chatos_message_tasks(
     State(state): State<AppState>,
     Query(query): Query<ChatosMessageTaskQuery>,
-) -> Result<Json<ChatosMessageTasksResponse>, InternalApiError> {
+) -> Result<Json<Value>, InternalApiError> {
     let (source_session_id, source_user_message_id, source_turn_id) =
         validate_chatos_message_query(&query)?;
     let items = state
@@ -299,13 +311,16 @@ async fn list_chatos_message_tasks(
         )
         .await
         .map_err(InternalApiError::internal)?;
-    Ok(Json(ChatosMessageTasksResponse { items }))
+    Ok(Json(redact_workspace_paths_internal(
+        &state,
+        ChatosMessageTasksResponse { items },
+    )?))
 }
 
 async fn list_chatos_session_active_message_tasks(
     State(state): State<AppState>,
     Json(request): Json<ChatosSessionActiveMessageTasksRequest>,
-) -> Result<Json<ChatosSessionActiveMessageTasksResponse>, InternalApiError> {
+) -> Result<Json<Value>, InternalApiError> {
     let source_session_id = request.source_session_id.trim();
     if source_session_id.is_empty() {
         return Err(InternalApiError::bad_request(
@@ -330,30 +345,33 @@ async fn list_chatos_session_active_message_tasks(
         .filter(|item| item.running_count > 0)
         .filter_map(|item| item.source_user_message_id.clone())
         .collect::<Vec<_>>();
-    Ok(Json(ChatosSessionActiveMessageTasksResponse {
-        source_session_id: source_session_id.to_string(),
-        running_source_user_message_ids,
-        active_source_user_message_ids,
-        items: items
-            .into_iter()
-            .map(|item| ChatosActiveMessageTaskSource {
-                source_user_message_id: item.source_user_message_id,
-                source_turn_id: item.source_turn_id,
-                running_count: item.running_count,
-                active_count: item.active_count,
-            })
-            .collect(),
-    }))
+    Ok(Json(redact_workspace_paths_internal(
+        &state,
+        ChatosSessionActiveMessageTasksResponse {
+            source_session_id: source_session_id.to_string(),
+            running_source_user_message_ids,
+            active_source_user_message_ids,
+            items: items
+                .into_iter()
+                .map(|item| ChatosActiveMessageTaskSource {
+                    source_user_message_id: item.source_user_message_id,
+                    source_turn_id: item.source_turn_id,
+                    running_count: item.running_count,
+                    active_count: item.active_count,
+                })
+                .collect(),
+        },
+    )?))
 }
 
 async fn get_chatos_message_task(
     Path(task_id): Path<String>,
     State(state): State<AppState>,
     Query(query): Query<ChatosMessageTaskQuery>,
-) -> Result<Json<ChatosMessageTaskDetail>, InternalApiError> {
+) -> Result<Json<Value>, InternalApiError> {
     let (source_session_id, source_user_message_id, source_turn_id) =
         validate_chatos_message_query(&query)?;
-    state
+    let detail = state
         .task_service
         .get_message_task_detail_for_chatos_source(
             task_id.trim(),
@@ -363,14 +381,14 @@ async fn get_chatos_message_task(
         )
         .await
         .map_err(InternalApiError::internal)?
-        .map(Json)
-        .ok_or_else(|| InternalApiError::not_found("task not found for message"))
+        .ok_or_else(|| InternalApiError::not_found("task not found for message"))?;
+    Ok(Json(redact_workspace_paths_internal(&state, detail)?))
 }
 
 async fn get_chatos_message_graph(
     State(state): State<AppState>,
     Query(query): Query<ChatosMessageTaskQuery>,
-) -> Result<Json<ChatosMessageTaskGraph>, InternalApiError> {
+) -> Result<Json<Value>, InternalApiError> {
     let (source_session_id, source_user_message_id, source_turn_id) =
         validate_chatos_message_query(&query)?;
     let graph = state
@@ -382,14 +400,14 @@ async fn get_chatos_message_graph(
         )
         .await
         .map_err(InternalApiError::internal)?;
-    Ok(Json(graph))
+    Ok(Json(redact_workspace_paths_internal(&state, graph)?))
 }
 
 async fn get_chatos_message_run(
     Path(run_id): Path<String>,
     State(state): State<AppState>,
     Query(query): Query<ChatosMessageRunQuery>,
-) -> Result<Json<ChatosMessageRunDetail>, InternalApiError> {
+) -> Result<Json<Value>, InternalApiError> {
     let (source_session_id, source_user_message_id, source_turn_id) =
         validate_chatos_message_query(&query.source)?;
     let (event_limit, event_offset) = run_event_page(&query);
@@ -423,23 +441,26 @@ async fn get_chatos_message_run(
         .await
         .map_err(InternalApiError::internal)?
         .map(ChatosMessageModelConfigSummary::from);
-    Ok(Json(ChatosMessageRunDetail {
-        task,
-        run: ChatosMessageTaskRun::from(trim_run_for_chatos_detail(run)),
-        model_config,
-        events,
-        events_total,
-        events_limit: event_limit,
-        events_offset: event_offset,
-        events_has_more,
-    }))
+    Ok(Json(redact_workspace_paths_internal(
+        &state,
+        ChatosMessageRunDetail {
+            task,
+            run: ChatosMessageTaskRun::from(trim_run_for_chatos_detail(run)),
+            model_config,
+            events,
+            events_total,
+            events_limit: event_limit,
+            events_offset: event_offset,
+            events_has_more,
+        },
+    )?))
 }
 
 async fn get_chatos_message_run_output_changes(
     Path(run_id): Path<String>,
     State(state): State<AppState>,
     Query(query): Query<ChatosMessageRunOutputChangesQuery>,
-) -> Result<Json<RunOutputChangesResponse>, InternalApiError> {
+) -> Result<Json<Value>, InternalApiError> {
     let (source_session_id, source_user_message_id, source_turn_id) =
         validate_chatos_message_query(&query.source)?;
     let run = require_chatos_message_run(
@@ -456,14 +477,14 @@ async fn get_chatos_message_run_output_changes(
         .await
         .map_err(InternalApiError::internal)?
         .ok_or_else(|| InternalApiError::not_found("run not found for message"))?;
-    Ok(Json(response))
+    Ok(Json(redact_workspace_paths_internal(&state, response)?))
 }
 
 async fn get_chatos_message_run_output_diff(
     Path(run_id): Path<String>,
     State(state): State<AppState>,
     Query(query): Query<ChatosMessageRunOutputDiffQuery>,
-) -> Result<Json<RunOutputDiffResponse>, InternalApiError> {
+) -> Result<Json<Value>, InternalApiError> {
     let (source_session_id, source_user_message_id, source_turn_id) =
         validate_chatos_message_query(&query.source)?;
     let run = require_chatos_message_run(
@@ -480,7 +501,7 @@ async fn get_chatos_message_run_output_diff(
         .await
         .map_err(InternalApiError::bad_request)?
         .ok_or_else(|| InternalApiError::not_found("run not found for message"))?;
-    Ok(Json(response))
+    Ok(Json(redact_workspace_paths_internal(&state, response)?))
 }
 
 async fn require_chatos_message_run(
@@ -514,7 +535,7 @@ async fn get_chatos_message_graph_run(
     Path(run_id): Path<String>,
     State(state): State<AppState>,
     Query(query): Query<ChatosMessageRunQuery>,
-) -> Result<Json<ChatosMessageRunDetail>, InternalApiError> {
+) -> Result<Json<Value>, InternalApiError> {
     let (source_session_id, source_user_message_id, source_turn_id) =
         validate_chatos_message_query(&query.source)?;
     let (event_limit, event_offset) = run_event_page(&query);
@@ -552,14 +573,17 @@ async fn get_chatos_message_graph_run(
         .await
         .map_err(InternalApiError::internal)?
         .map(ChatosMessageModelConfigSummary::from);
-    Ok(Json(ChatosMessageRunDetail {
-        task,
-        run: ChatosMessageTaskRun::from(trim_run_for_chatos_detail(run)),
-        model_config,
-        events,
-        events_total,
-        events_limit: event_limit,
-        events_offset: event_offset,
-        events_has_more,
-    }))
+    Ok(Json(redact_workspace_paths_internal(
+        &state,
+        ChatosMessageRunDetail {
+            task,
+            run: ChatosMessageTaskRun::from(trim_run_for_chatos_detail(run)),
+            model_config,
+            events,
+            events_total,
+            events_limit: event_limit,
+            events_offset: event_offset,
+            events_has_more,
+        },
+    )?))
 }

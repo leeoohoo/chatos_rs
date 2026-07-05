@@ -23,7 +23,7 @@ pub(super) async fn list_projects(
         .filter(|project| query.status.is_none_or(|status| project.status == status))
         .filter(|project| project_visible_to_user(project, &current_user).unwrap_or(false))
         .collect::<Vec<_>>();
-    Ok(Json(projects))
+    Ok(Json(redact_workspace_paths(&state, projects)?))
 }
 
 pub(super) async fn create_project(
@@ -36,7 +36,10 @@ pub(super) async fn create_project(
         .create_project(input, &current_user)
         .await
         .map_err(ApiError::bad_request)?;
-    Ok((StatusCode::CREATED, Json(project)))
+    Ok((
+        StatusCode::CREATED,
+        Json(redact_workspace_paths(&state, project)?),
+    ))
 }
 
 pub(super) async fn get_project(
@@ -51,7 +54,7 @@ pub(super) async fn get_project(
         .map_err(ApiError::bad_request)?
         .ok_or_else(|| ApiError::not_found(format!("项目不存在: {id}")))?;
     ensure_project_access(&project, &current_user)?;
-    Ok(Json(project))
+    Ok(Json(redact_workspace_paths(&state, project)?))
 }
 
 pub(super) async fn update_project(
@@ -73,7 +76,7 @@ pub(super) async fn update_project(
         .await
         .map_err(ApiError::bad_request)?
         .ok_or_else(|| ApiError::not_found(format!("项目不存在: {id}")))?;
-    Ok(Json(project))
+    Ok(Json(redact_workspace_paths(&state, project)?))
 }
 
 pub(super) async fn delete_project(
@@ -94,7 +97,7 @@ pub(super) async fn delete_project(
         .await
         .map_err(ApiError::bad_request)?
         .ok_or_else(|| ApiError::not_found(format!("项目不存在: {id}")))?;
-    Ok(Json(project))
+    Ok(Json(redact_workspace_paths(&state, project)?))
 }
 
 pub(super) async fn list_project_tasks(
@@ -121,7 +124,7 @@ pub(super) async fn list_project_tasks(
         .list_tasks_filtered(filters)
         .await
         .map_err(ApiError::bad_request)?;
-    Ok(Json(tasks))
+    Ok(Json(redact_workspace_paths(&state, tasks)?))
 }
 
 pub(super) async fn import_chatos_project(

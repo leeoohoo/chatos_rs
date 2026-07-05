@@ -10,6 +10,7 @@ use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
 use axum::{Extension, Json};
 use futures_util::stream;
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -76,6 +77,29 @@ fn parse_csv_ids(value: &str) -> Vec<String> {
         .filter(|item| !item.is_empty())
         .take(200)
         .collect()
+}
+
+fn redact_workspace_paths<T>(state: &AppState, value: T) -> Result<T, ApiError>
+where
+    T: Serialize + DeserializeOwned,
+{
+    let redactor = crate::services::path_redaction::WorkspacePathRedactor::for_workspace_base(
+        state.config.default_workspace_dir.as_str(),
+    );
+    redact_with_workspace_redactor(redactor, value)
+        .map_err(|err| ApiError::internal(format!("redact response workspace paths failed: {err}")))
+}
+
+fn redact_with_workspace_redactor<T>(
+    redactor: crate::services::path_redaction::WorkspacePathRedactor,
+    value: T,
+) -> Result<T, serde_json::Error>
+where
+    T: Serialize + DeserializeOwned,
+{
+    let mut json = serde_json::to_value(value)?;
+    redactor.redact_value(&mut json);
+    serde_json::from_value(json)
 }
 
 #[derive(Debug)]

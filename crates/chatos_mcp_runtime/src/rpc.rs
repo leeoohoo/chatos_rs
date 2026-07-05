@@ -566,7 +566,8 @@ async fn spawn_stdio_session(cfg: &McpStdioServer) -> Result<StdioRpcSession, St
 }
 
 fn build_stdio_command(cfg: &McpStdioServer) -> Result<tokio::process::Command, String> {
-    let isolation = process_isolation::resolve_for_user(cfg.user_id.as_deref())?;
+    let isolation =
+        process_isolation::resolve_required_filesystem_view_for_user(cfg.user_id.as_deref())?;
     let fs_view_enabled = process_isolation::filesystem_view_enabled(isolation.as_ref())?;
     let cwd = cfg.cwd.as_deref().map(Path::new);
     if let Some(cwd) = cwd {

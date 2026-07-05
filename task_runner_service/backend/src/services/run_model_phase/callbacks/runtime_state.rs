@@ -11,7 +11,12 @@ impl RunService {
         model_config: &ModelConfigRecord,
         run_spec: &TaskRunSpec,
         tool_result_model_budget_limits: ToolResultModelBudgetLimits,
+        effective_workspace_dir: &str,
     ) -> RuntimeExecutionState {
+        let path_redactor = crate::services::path_redaction::WorkspacePathRedactor::for_workspace(
+            self.config.default_workspace_dir.as_str(),
+            effective_workspace_dir,
+        );
         let task_completed_abort = Arc::new(AtomicBool::new(false));
         let pending_stream_event =
             Arc::new(parking_lot::Mutex::new(PendingRunStreamEvent::default()));
@@ -20,6 +25,7 @@ impl RunService {
             run.id.clone(),
             Arc::clone(&pending_stream_event),
             Arc::clone(&task_completed_abort),
+            path_redactor.clone(),
         );
         let cancel_requested = Arc::new(AtomicBool::new(self.store.is_cancel_requested(&run.id)));
         let (stop_cancel_poll, cancel_poll_handle) = self.start_runtime_abort_polling(
@@ -57,6 +63,7 @@ impl RunService {
         run_id: String,
         pending_stream_event: PendingRunStreamState,
         task_completed_abort: Arc<AtomicBool>,
+        path_redactor: crate::services::path_redaction::WorkspacePathRedactor,
     ) -> RuntimeCallbacks {
         let store_for_callbacks = self.store.clone();
         let run_id_for_chunk = run_id.clone();
@@ -66,6 +73,7 @@ impl RunService {
                 let store = store_for_callbacks.clone();
                 let run_id = run_id_for_chunk.clone();
                 let pending = Arc::clone(&pending_stream_event);
+                let path_redactor = path_redactor.clone();
                 move |chunk| {
                     if chunk.is_empty() {
                         return;
@@ -75,7 +83,12 @@ impl RunService {
                         state.push("chunk", &chunk)
                     };
                     if let Some(flushed) = flushed {
-                        append_pending_stream_event(&store, run_id.as_str(), flushed);
+                        append_pending_stream_event(
+                            &store,
+                            run_id.as_str(),
+                            flushed,
+                            Some(&path_redactor),
+                        );
                     }
                 }
             })),
@@ -83,6 +96,7 @@ impl RunService {
                 let store = store_for_callbacks.clone();
                 let run_id = run_id.clone();
                 let pending = Arc::clone(&pending_stream_event);
+                let path_redactor = path_redactor.clone();
                 move |chunk| {
                     if chunk.is_empty() {
                         return;
@@ -92,7 +106,12 @@ impl RunService {
                         state.push("thinking", &chunk)
                     };
                     if let Some(flushed) = flushed {
-                        append_pending_stream_event(&store, run_id.as_str(), flushed);
+                        append_pending_stream_event(
+                            &store,
+                            run_id.as_str(),
+                            flushed,
+                            Some(&path_redactor),
+                        );
                     }
                 }
             })),
@@ -100,8 +119,16 @@ impl RunService {
                 let store = store_for_callbacks.clone();
                 let run_id = run_id.clone();
                 let pending = Arc::clone(&pending_stream_event);
+                let path_redactor = path_redactor.clone();
                 move |payload| {
-                    flush_pending_stream_event(&store, run_id.as_str(), &pending);
+                    flush_pending_stream_event(
+                        &store,
+                        run_id.as_str(),
+                        &pending,
+                        Some(&path_redactor),
+                    );
+                    let mut payload = sanitize_runtime_event_payload(payload);
+                    path_redactor.redact_value(&mut payload);
                     store.append_run_event_sync(TaskRunEventRecord::new(
                         run_id.clone(),
                         "tools_start",
@@ -115,27 +142,33 @@ impl RunService {
                 let run_id = run_id.clone();
                 let task_id = task_id.clone();
                 let task_completed_abort = Arc::clone(&task_completed_abort);
+                let path_redactor = path_redactor.clone();
                 move |payload| {
                     if tool_result_marks_root_task_done(&payload, task_id.as_str()) {
                         task_completed_abort.store(true, Ordering::Relaxed);
                     }
+                    let mut payload = sanitize_runtime_event_payload(payload);
+                    path_redactor.redact_value(&mut payload);
                     store.append_run_event_sync(TaskRunEventRecord::new(
                         run_id.clone(),
                         "tool_stream",
                         None,
-                        Some(sanitize_runtime_event_payload(payload)),
+                        Some(payload),
                     ));
                 }
             })),
             on_tools_end: Some(Arc::new({
                 let store = store_for_callbacks.clone();
                 let run_id = run_id.clone();
+                let path_redactor = path_redactor.clone();
                 move |payload| {
+                    let mut payload = sanitize_runtime_event_payload(payload);
+                    path_redactor.redact_value(&mut payload);
                     store.append_run_event_sync(TaskRunEventRecord::new(
                         run_id.clone(),
                         "tools_end",
                         Some("工具调用结束".to_string()),
-                        Some(sanitize_runtime_event_payload(payload)),
+                        Some(payload),
                     ));
                 }
             })),
@@ -143,13 +176,21 @@ impl RunService {
                 let store = store_for_callbacks;
                 let run_id = run_id.clone();
                 let pending = Arc::clone(&pending_stream_event);
+                let path_redactor = path_redactor.clone();
                 move |payload| {
-                    flush_pending_stream_event(&store, run_id.as_str(), &pending);
+                    flush_pending_stream_event(
+                        &store,
+                        run_id.as_str(),
+                        &pending,
+                        Some(&path_redactor),
+                    );
+                    let mut payload = sanitize_runtime_event_payload(payload);
+                    path_redactor.redact_value(&mut payload);
                     store.append_run_event_sync(TaskRunEventRecord::new(
                         run_id.clone(),
                         "model_request",
                         Some("即将发起模型请求".to_string()),
-                        Some(sanitize_runtime_event_payload(payload)),
+                        Some(payload),
                     ));
                 }
             })),

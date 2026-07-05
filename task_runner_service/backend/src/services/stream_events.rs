@@ -6,6 +6,7 @@ use std::sync::Arc;
 use serde_json::json;
 
 use crate::models::TaskRunEventRecord;
+use crate::services::path_redaction::WorkspacePathRedactor;
 use crate::store::AppStore;
 
 #[derive(Debug, Default)]
@@ -61,21 +62,26 @@ pub(super) fn flush_pending_stream_event(
     store: &AppStore,
     run_id: &str,
     pending: &Arc<parking_lot::Mutex<PendingRunStreamEvent>>,
+    redactor: Option<&WorkspacePathRedactor>,
 ) {
     let flushed = {
         let mut state = pending.lock();
         state.take()
     };
     if let Some(flushed) = flushed {
-        append_pending_stream_event(store, run_id, flushed);
+        append_pending_stream_event(store, run_id, flushed, redactor);
     }
 }
 
 pub(super) fn append_pending_stream_event(
     store: &AppStore,
     run_id: &str,
-    event: FlushedRunStreamEvent,
+    mut event: FlushedRunStreamEvent,
+    redactor: Option<&WorkspacePathRedactor>,
 ) {
+    if let Some(redactor) = redactor {
+        event.text = redactor.redact_text(event.text.as_str());
+    }
     let chunk_chars = event.text.chars().count();
     store.append_run_event_sync(TaskRunEventRecord::new(
         run_id.to_string(),

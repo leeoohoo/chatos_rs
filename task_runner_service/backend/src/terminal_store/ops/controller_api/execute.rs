@@ -13,6 +13,10 @@ impl TaskRunnerTerminalControllerStore {
     ) -> Result<Value, String> {
         let project_root = canonicalize_existing(context.root.as_path())?;
         let target_path = resolve_target_path(project_root.as_path(), path.as_str())?;
+        let display_project_root =
+            display_workspace_path(project_root.as_path(), project_root.as_path());
+        let display_target_path =
+            display_workspace_path(project_root.as_path(), target_path.as_path());
         let shell = select_shell();
 
         let mut process = build_task_shell_command(
@@ -31,10 +35,10 @@ impl TaskRunnerTerminalControllerStore {
 
         if background {
             return Ok(json!({
-                "project_root": project_root.to_string_lossy(),
+                "project_root": display_project_root,
                 "terminal_id": session_id,
                 "process_id": session_id,
-                "path": target_path.to_string_lossy(),
+                "path": display_target_path,
                 "common": command,
                 "background": true,
                 "busy": true,
@@ -51,10 +55,10 @@ impl TaskRunnerTerminalControllerStore {
         let wait_result = wait_for_session(session.clone(), context.max_wait_ms).await?;
         let output = collect_output(&session, context.max_output_chars).await;
         Ok(json!({
-            "project_root": project_root.to_string_lossy(),
+            "project_root": display_project_root,
             "terminal_id": session_id.clone(),
             "process_id": session_id,
-            "path": target_path.to_string_lossy(),
+            "path": display_target_path,
             "common": command,
             "background": false,
             "busy": wait_result.busy,

@@ -198,8 +198,8 @@ pub(super) fn default_user_workspace_dir(base_dir: &str, subject_id: Option<&str
 }
 
 fn ensure_workspace_is_inside_base(base_dir: &str, workspace_dir: &str) -> Result<(), String> {
-    let base = canonical_or_self(Path::new(base_dir));
-    let workspace = canonical_or_self(Path::new(workspace_dir));
+    let base = canonical_or_absolute(Path::new(base_dir));
+    let workspace = canonical_or_absolute(Path::new(workspace_dir));
     if path_is_within_root(workspace.as_path(), base.as_path()) {
         Ok(())
     } else {
@@ -210,8 +210,15 @@ fn ensure_workspace_is_inside_base(base_dir: &str, workspace_dir: &str) -> Resul
     }
 }
 
-fn canonical_or_self(path: &Path) -> PathBuf {
-    std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
+fn canonical_or_absolute(path: &Path) -> PathBuf {
+    let absolute = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        std::env::current_dir()
+            .map(|cwd| cwd.join(path))
+            .unwrap_or_else(|_| path.to_path_buf())
+    };
+    std::fs::canonicalize(&absolute).unwrap_or(absolute)
 }
 
 fn path_is_within_root(candidate: &Path, root: &Path) -> bool {
@@ -255,10 +262,42 @@ fn stable_hash64(bytes: &[u8]) -> u64 {
 
 fn normalize_path_for_compare(path: &Path) -> String {
     let mut value = path.to_string_lossy().replace('\\', "/");
-    while value.ends_with('/') && value.len() > 1 {
-        value.pop();
+    if cfg!(windows) {
+        if let Some(stripped) = value.strip_prefix("//?/UNC/") {
+            value = format!("//{stripped}");
+        } else if let Some(stripped) = value.strip_prefix("//?/") {
+            value = stripped.to_string();
+        }
     }
-    value
+    let (prefix, rest) = if value.len() >= 2 && value.as_bytes()[1] == b':' {
+        (value[..2].to_string(), &value[2..])
+    } else {
+        (String::new(), value.as_str())
+    };
+    let absolute = rest.starts_with('/');
+    let mut segments: Vec<&str> = Vec::new();
+    for segment in rest.split('/') {
+        match segment {
+            "" | "." => {}
+            ".." => {
+                let _ = segments.pop();
+            }
+            value => segments.push(value),
+        }
+    }
+    let mut out = String::new();
+    out.push_str(prefix.as_str());
+    if absolute {
+        out.push('/');
+    }
+    out.push_str(segments.join("/").as_str());
+    while out.ends_with('/') && out.len() > 1 {
+        out.pop();
+    }
+    if cfg!(windows) {
+        out.make_ascii_lowercase();
+    }
+    out
 }
 
 #[cfg(test)]
@@ -268,7 +307,9 @@ mod tests {
         TASK_PROFILE_CHATOS_PLAN, TASK_PROFILE_DEFAULT,
     };
 
-    use super::{runtime_selected_builtin_kinds, selected_builtin_kinds};
+    use super::{
+        ensure_workspace_is_inside_base, runtime_selected_builtin_kinds, selected_builtin_kinds,
+    };
     use chatos_mcp_runtime::BuiltinMcpKind;
 
     #[test]
@@ -319,6 +360,21 @@ mod tests {
 
         assert!(selected.contains(&BuiltinMcpKind::CodeMaintainerWrite));
         assert!(selected.contains(&BuiltinMcpKind::CodeMaintainerRead));
+    }
+
+    #[test]
+    fn workspace_base_check_accepts_relative_child_under_relative_base() {
+        assert!(
+            ensure_workspace_is_inside_base(".", ".\\users\\subject\\workspaces\\default").is_ok()
+        );
+    }
+
+    #[test]
+    fn workspace_base_check_rejects_relative_parent_escape() {
+        let err = ensure_workspace_is_inside_base(".", "..\\outside")
+            .expect_err("parent traversal should be outside workspace base");
+
+        assert!(err.contains("workspace dir is outside"));
     }
 
     #[test]

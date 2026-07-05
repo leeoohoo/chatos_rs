@@ -16,7 +16,7 @@ use super::output::{
     collect_output, collect_output_from_logs, derive_terminal_name, log_value_content, select_logs,
     take_recent_logs,
 };
-use super::pathing::{canonicalize_existing, resolve_target_path};
+use super::pathing::{canonicalize_existing, display_workspace_path, resolve_target_path};
 use super::runtime::{
     append_log, mark_session_exited, refresh_session_status, register_session, session_for_context,
     sessions_for_context, wait_for_session,
@@ -50,7 +50,8 @@ fn build_task_shell_command(
     shell: &str,
     shell_args: Vec<OsString>,
 ) -> Result<Command, String> {
-    let isolation = process_isolation::resolve_for_user(context.user_id.as_deref())?;
+    let isolation =
+        process_isolation::resolve_required_filesystem_view_for_user(context.user_id.as_deref())?;
     let fs_view_enabled = process_isolation::filesystem_view_enabled(isolation.as_ref())?;
     let terminal_home = if cfg!(windows) {
         None

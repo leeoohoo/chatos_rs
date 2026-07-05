@@ -38,11 +38,18 @@ pub(in crate::api) async fn stream_run_events(
             seen_event_ids,
             pending_events: VecDeque::new(),
             receiver_closed: false,
+            path_redactor:
+                crate::services::path_redaction::WorkspacePathRedactor::for_workspace_base(
+                    state.config.default_workspace_dir.as_str(),
+                ),
         },
         |mut stream_state| async move {
             loop {
                 if let Some(event) = stream_state.pending_events.pop_front() {
-                    return Some((Ok(run_event_sse_event(&event)), stream_state));
+                    return Some((
+                        Ok(run_event_sse_event(&event, &stream_state.path_redactor)),
+                        stream_state,
+                    ));
                 }
 
                 if stream_state.receiver_closed {
@@ -55,7 +62,10 @@ pub(in crate::api) async fn stream_run_events(
                                     if event.run_id == stream_state.run_id
                                         && stream_state.seen_event_ids.insert(event.id.clone())
                                     {
-                                        return Some((Ok(run_event_sse_event(&event)), stream_state));
+                                        return Some((
+                                            Ok(run_event_sse_event(&event, &stream_state.path_redactor)),
+                                            stream_state,
+                                        ));
                                     }
                                 }
                                 Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
@@ -106,10 +116,21 @@ struct RunEventStreamState {
     seen_event_ids: HashSet<String>,
     pending_events: VecDeque<TaskRunEventRecord>,
     receiver_closed: bool,
+    path_redactor: crate::services::path_redaction::WorkspacePathRedactor,
 }
 
-fn run_event_sse_event(event: &TaskRunEventRecord) -> Event {
+fn run_event_sse_event(
+    event: &TaskRunEventRecord,
+    redactor: &crate::services::path_redaction::WorkspacePathRedactor,
+) -> Event {
+    let mut event = event.clone();
+    if let Some(message) = event.message.as_mut() {
+        *message = redactor.redact_text(message);
+    }
+    if let Some(payload) = event.payload.as_mut() {
+        redactor.redact_value(payload);
+    }
     Event::default()
         .event("run_event")
-        .data(serde_json::to_string(event).unwrap_or_else(|_| "{}".to_string()))
+        .data(serde_json::to_string(&event).unwrap_or_else(|_| "{}".to_string()))
 }

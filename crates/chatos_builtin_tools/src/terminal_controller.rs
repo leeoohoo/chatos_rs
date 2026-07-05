@@ -159,8 +159,7 @@ impl TerminalControllerService {
             max_output_chars: opts.max_output_chars.max(1_000),
         };
 
-        let root_for_desc = root.to_string_lossy().to_string();
-        service.register_execute_command(bound.clone(), opts.store.clone(), root_for_desc.as_str());
+        service.register_execute_command(bound.clone(), opts.store.clone());
         service.register_get_recent_logs(bound.clone(), opts.store.clone());
         service.register_process_list(bound.clone(), opts.store.clone());
         service.register_process_poll(bound.clone(), opts.store.clone());
@@ -204,13 +203,10 @@ impl TerminalControllerService {
         &mut self,
         bound: TerminalControllerContext,
         store: TerminalControllerStoreRef,
-        root_for_desc: &str,
     ) {
         self.register_tool(
             "execute_command",
-            &format!(
-                "LOCAL ONLY: execute shell command in the local project terminal with path switching. Relative path is resolved from project root ({root_for_desc}). This tool does NOT execute on remote SSH hosts. For remote servers, use builtin_remote_connection_controller.run_command instead."
-            ),
+            "LOCAL ONLY: execute shell command in the local project terminal with path switching. Relative path is resolved from the current project workspace (`/workspace`). This tool does NOT execute on remote SSH hosts. For remote servers, use builtin_remote_connection_controller.run_command instead.",
             execute_command_schema(),
             async_text_tool_handler(move |args| {
                 let path = args

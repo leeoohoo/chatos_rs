@@ -216,9 +216,12 @@ async fn test_external_mcp_config(record: &ExternalMcpConfigRecord) -> Result<()
                 })?
         }
         "stdio" => {
-            let server = record
+            let mut server = record
                 .to_stdio_server()
                 .ok_or_else(|| "外部 MCP 配置无效: stdio 类型需要可用 command".to_string())?;
+            if let Some(user_id) = external_mcp_process_user_id(record) {
+                server = server.with_user_id(user_id.to_string());
+            }
             list_tools_stdio(&server).await.map_err(|err| {
                 format!(
                     "外部 MCP 连通性测试失败: {} ({}) tools/list 调用失败: {err}",
@@ -244,6 +247,15 @@ async fn test_external_mcp_config(record: &ExternalMcpConfigRecord) -> Result<()
         "external MCP config connectivity test passed"
     );
     Ok(())
+}
+
+fn external_mcp_process_user_id(record: &ExternalMcpConfigRecord) -> Option<&str> {
+    record
+        .owner_user_id
+        .as_deref()
+        .or(record.creator_user_id.as_deref())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
 }
 
 fn valid_mcp_tool_names(tools: &[Value]) -> Vec<String> {
