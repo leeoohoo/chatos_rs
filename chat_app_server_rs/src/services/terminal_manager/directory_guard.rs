@@ -69,13 +69,10 @@ pub(super) fn validate_directory_change_command(
                 }
                 return None;
             }
-        };
+    };
 
     if !path_is_within_root(resolved.as_path(), root_cwd) {
-        let root = root_cwd.display();
-        return Some(format!(
-            "Blocked: cannot leave terminal root directory: {root}"
-        ));
+        return Some("Blocked: cannot leave terminal workspace.".to_string());
     }
 
     *current_cwd = resolved;

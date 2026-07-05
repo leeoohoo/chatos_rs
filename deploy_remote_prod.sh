@@ -474,6 +474,24 @@ prepare_aux_service_env() {
   export SANDBOX_MANAGER_FRONTEND_PORT="${SANDBOX_MANAGER_FRONTEND_PORT:-8096}"
   export SANDBOX_MANAGER_FRONTEND_BASE_PATH="${SANDBOX_MANAGER_FRONTEND_BASE_PATH:-/sandbox-manager/}"
   export SANDBOX_MANAGER_FRONTEND_API_BASE_URL="${SANDBOX_MANAGER_FRONTEND_API_BASE_URL:-/sandbox-manager}"
+  local sandbox_env="/etc/chatos/sandbox-manager-service.env"
+  local existing_sandbox_backend existing_sandbox_docker_image existing_sandbox_docker_network
+  local existing_sandbox_image_context existing_sandbox_image_dockerfile
+  local existing_sandbox_require_auth existing_sandbox_user_service_base_url
+  existing_sandbox_backend="$(env_file_value SANDBOX_MANAGER_BACKEND "$sandbox_env")"
+  existing_sandbox_docker_image="$(env_file_value SANDBOX_MANAGER_DOCKER_IMAGE "$sandbox_env")"
+  existing_sandbox_docker_network="$(env_file_value SANDBOX_MANAGER_DOCKER_NETWORK "$sandbox_env")"
+  existing_sandbox_image_context="$(env_file_value SANDBOX_MANAGER_IMAGE_BUILD_CONTEXT "$sandbox_env")"
+  existing_sandbox_image_dockerfile="$(env_file_value SANDBOX_MANAGER_IMAGE_DOCKERFILE "$sandbox_env")"
+  existing_sandbox_require_auth="$(env_file_value SANDBOX_MANAGER_REQUIRE_AUTH "$sandbox_env")"
+  existing_sandbox_user_service_base_url="$(env_file_value SANDBOX_MANAGER_USER_SERVICE_BASE_URL "$sandbox_env")"
+  export SANDBOX_MANAGER_BACKEND="${SANDBOX_MANAGER_BACKEND:-${existing_sandbox_backend:-auto}}"
+  export SANDBOX_MANAGER_DOCKER_IMAGE="${SANDBOX_MANAGER_DOCKER_IMAGE:-${existing_sandbox_docker_image:-chatos-sandbox-agent:latest}}"
+  export SANDBOX_MANAGER_DOCKER_NETWORK="${SANDBOX_MANAGER_DOCKER_NETWORK:-${existing_sandbox_docker_network:-bridge}}"
+  export SANDBOX_MANAGER_IMAGE_BUILD_CONTEXT="${SANDBOX_MANAGER_IMAGE_BUILD_CONTEXT:-${existing_sandbox_image_context:-$REMOTE_APP_ROOT}}"
+  export SANDBOX_MANAGER_IMAGE_DOCKERFILE="${SANDBOX_MANAGER_IMAGE_DOCKERFILE:-${existing_sandbox_image_dockerfile:-$REMOTE_APP_ROOT/sandbox_manager_service/sandbox_agent/Dockerfile}}"
+  export SANDBOX_MANAGER_REQUIRE_AUTH="${SANDBOX_MANAGER_REQUIRE_AUTH:-${existing_sandbox_require_auth:-true}}"
+  export SANDBOX_MANAGER_USER_SERVICE_BASE_URL="${SANDBOX_MANAGER_USER_SERVICE_BASE_URL:-${existing_sandbox_user_service_base_url:-$CHATOS_USER_SERVICE_BASE_URL}}"
   export SANDBOX_MANAGER_CARGO_TARGET_DIR="${SANDBOX_MANAGER_CARGO_TARGET_DIR:-$REMOTE_APP_ROOT/sandbox_manager_service/target}"
 
   export OFFICIAL_WEBSITE_MODE="${OFFICIAL_WEBSITE_MODE:-prod}"
@@ -505,6 +523,7 @@ sync_aux_systemd_env() {
   local memory_env="/etc/chatos/memory-engine.env"
   local user_env="/etc/chatos/user-service.env"
   local task_env="/etc/chatos/task-runner-service.env"
+  local sandbox_env="/etc/chatos/sandbox-manager-service.env"
   local workspace_dir="${TASK_RUNNER_WORKSPACE_DIR:-${CHATOS_WORKSPACE_DIR:-$EFFECTIVE_CHATOS_WORKSPACE_DIR}}"
 
   if [[ -f "$memory_env" ]]; then
@@ -533,6 +552,15 @@ sync_aux_systemd_env() {
     remote_ensure_env_line CHATOS_PROCESS_ISOLATION_FS_ENABLED "$REMOTE_PROCESS_ISOLATION_FS_ENABLED" "$task_env"
     remote_ensure_env_line CHATOS_PROCESS_ISOLATION_FS_ROOT "$REMOTE_PROCESS_ISOLATION_FS_ROOT" "$task_env"
     remote_ensure_env_line CHATOS_PROCESS_ISOLATION_FS_MOUNT_PROC "$REMOTE_PROCESS_ISOLATION_FS_MOUNT_PROC" "$task_env"
+  fi
+  if [[ -f "$sandbox_env" ]]; then
+    remote_ensure_env_line SANDBOX_MANAGER_BACKEND "$SANDBOX_MANAGER_BACKEND" "$sandbox_env"
+    remote_ensure_env_line SANDBOX_MANAGER_DOCKER_IMAGE "$SANDBOX_MANAGER_DOCKER_IMAGE" "$sandbox_env"
+    remote_ensure_env_line SANDBOX_MANAGER_DOCKER_NETWORK "$SANDBOX_MANAGER_DOCKER_NETWORK" "$sandbox_env"
+    remote_ensure_env_line SANDBOX_MANAGER_IMAGE_BUILD_CONTEXT "$SANDBOX_MANAGER_IMAGE_BUILD_CONTEXT" "$sandbox_env"
+    remote_ensure_env_line SANDBOX_MANAGER_IMAGE_DOCKERFILE "$SANDBOX_MANAGER_IMAGE_DOCKERFILE" "$sandbox_env"
+    remote_ensure_env_line SANDBOX_MANAGER_REQUIRE_AUTH "$SANDBOX_MANAGER_REQUIRE_AUTH" "$sandbox_env"
+    remote_ensure_env_line SANDBOX_MANAGER_USER_SERVICE_BASE_URL "$SANDBOX_MANAGER_USER_SERVICE_BASE_URL" "$sandbox_env"
   fi
 
   if systemctl list-unit-files task-runner-service-backend.service >/dev/null 2>&1; then

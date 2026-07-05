@@ -291,8 +291,20 @@ fn default_image_build_context() -> PathBuf {
 
 fn default_backend_for_current_os() -> SandboxBackendKind {
     match std::env::consts::OS {
+        "linux" if command_exists("nerdctl") => SandboxBackendKind::Kata,
+        "linux" if command_exists("docker") => SandboxBackendKind::Docker,
         "linux" => SandboxBackendKind::Kata,
         "macos" | "windows" => SandboxBackendKind::Docker,
         _ => SandboxBackendKind::Docker,
     }
+}
+
+fn command_exists(command: &str) -> bool {
+    std::env::var_os("PATH")
+        .and_then(|paths| {
+            std::env::split_paths(&paths)
+                .map(|path| path.join(command))
+                .find(|candidate| candidate.is_file())
+        })
+        .is_some()
 }
