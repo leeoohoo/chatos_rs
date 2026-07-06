@@ -13,7 +13,7 @@ mod persistence;
 const RUN_KEYWORD_FILTER_CLAUSE: &str =
     "(LOWER(id) LIKE ? OR LOWER(task_id) LIKE ? OR LOWER(model_config_id) LIKE ? OR LOWER(COALESCE(result_summary, '')) LIKE ? OR LOWER(COALESCE(error_message, '')) LIKE ?)";
 
-type SqliteQuery<'a> = Query<'a, Sqlite, SqliteArguments<'a>>;
+type SqliteQuery<'a> = Query<'a, Sqlite, SqliteArguments>;
 
 impl SqliteStore {
     fn filtered_run_sql(

@@ -7,7 +7,7 @@ use std::io::{Seek, Write};
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 use walkdir::WalkDir;
-use zip::write::FileOptions;
+use zip::write::SimpleFileOptions;
 
 use crate::core::user_visible_path::display_path;
 
@@ -152,10 +152,10 @@ where
 {
     let root_name = infer_download_name(path);
     let mut zip = zip::ZipWriter::new(writer);
-    let dir_options = FileOptions::default()
+    let dir_options = SimpleFileOptions::default()
         .compression_method(zip::CompressionMethod::Deflated)
         .unix_permissions(0o755);
-    let file_options = FileOptions::default()
+    let file_options = SimpleFileOptions::default()
         .compression_method(zip::CompressionMethod::Deflated)
         .unix_permissions(0o644);
 

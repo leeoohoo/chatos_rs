@@ -67,9 +67,12 @@ async fn configure_sqlite_runtime(pool: &SqlitePool, cfg: &SqliteConfig) {
         .await
         .ok();
     if let Some(busy) = cfg.busy_timeout {
-        let _ = sqlx::query(&format!("PRAGMA busy_timeout = {}", busy))
-            .execute(pool)
-            .await;
+        let _ = sqlx::query(sqlx::AssertSqlSafe(format!(
+            "PRAGMA busy_timeout = {}",
+            busy
+        )))
+        .execute(pool)
+        .await;
     }
 }
 

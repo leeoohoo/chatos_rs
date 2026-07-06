@@ -137,7 +137,7 @@ pub async fn list_ai_model_configs(user_id: Option<&str>) -> Result<Vec<AiModelC
                     user_id.is_some(),
                     true,
                 );
-                let mut sql = sqlx::query_as::<_, AiModelConfigRow>(&query);
+                let mut sql = sqlx::query_as::<_, AiModelConfigRow>(sqlx::AssertSqlSafe(query));
                 if let Some(user_id) = user_id {
                     sql = sql.bind(user_id);
                 }

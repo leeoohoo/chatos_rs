@@ -57,7 +57,7 @@ pub async fn list_agents_by_user_ids(
                 }
                 sql.push_str(" ORDER BY updated_at DESC, created_at DESC LIMIT ? OFFSET ?");
 
-                let mut query = sqlx::query_as::<_, AgentRow>(&sql);
+                let mut query = sqlx::query_as::<_, AgentRow>(sqlx::AssertSqlSafe(sql));
                 for user_id in &user_ids {
                     query = query.bind(user_id);
                 }

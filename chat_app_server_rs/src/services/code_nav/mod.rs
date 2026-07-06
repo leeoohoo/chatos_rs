@@ -17,7 +17,7 @@ use self::types::{
     NavPositionRequest, ProjectContext,
 };
 
-#[axum::async_trait]
+#[async_trait::async_trait]
 pub trait CodeNavProvider: Send + Sync {
     fn provider_id(&self) -> &'static str;
 

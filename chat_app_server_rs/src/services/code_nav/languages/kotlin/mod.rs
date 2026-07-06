@@ -75,7 +75,7 @@ struct KotlinTypeScope {
 #[derive(Default)]
 pub struct KotlinCodeNavProvider;
 
-#[axum::async_trait]
+#[async_trait::async_trait]
 impl CodeNavProvider for KotlinCodeNavProvider {
     fn provider_id(&self) -> &'static str {
         SPEC.provider_id

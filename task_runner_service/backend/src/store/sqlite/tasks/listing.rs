@@ -17,7 +17,7 @@ impl SqliteStore {
         filters: &TaskListFilters,
     ) -> Result<Vec<TaskRecord>, String> {
         let sql = Self::filtered_task_sql("SELECT * FROM tasks", filters, true, true);
-        let query = Self::bind_task_filters(sqlx::query(&sql), filters, true);
+        let query = Self::bind_task_filters(sqlx::query(sqlx::AssertSqlSafe(sql)), filters, true);
         let rows = query
             .fetch_all(&self.pool)
             .await
@@ -168,7 +168,7 @@ impl SqliteStore {
     ) -> Result<usize, String> {
         let sql =
             Self::filtered_task_sql("SELECT COUNT(1) AS total FROM tasks", filters, false, false);
-        let query = Self::bind_task_filters(sqlx::query(&sql), filters, false);
+        let query = Self::bind_task_filters(sqlx::query(sqlx::AssertSqlSafe(sql)), filters, false);
         let row = query
             .fetch_one(&self.pool)
             .await

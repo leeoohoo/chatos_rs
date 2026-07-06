@@ -35,7 +35,7 @@ pub async fn list_mcp_configs(user_id: Option<String>) -> Result<Vec<McpConfig>,
             Box::pin(async move {
                 let query =
                     build_select_all_with_optional_user_id("mcp_configs", user_id.is_some(), true);
-                let mut q = sqlx::query_as::<_, McpConfigRow>(&query);
+                let mut q = sqlx::query_as::<_, McpConfigRow>(sqlx::AssertSqlSafe(query));
                 if let Some(uid) = user_id {
                     q = q.bind(uid);
                 }
@@ -67,7 +67,7 @@ pub async fn list_enabled_mcp_configs(user_id: Option<String>) -> Result<Vec<Mcp
             Box::pin(async move {
                 let query =
                     build_select_all_with_optional_user_id("mcp_configs", user_id.is_some(), false);
-                let mut q = sqlx::query_as::<_, McpConfigRow>(&query);
+                let mut q = sqlx::query_as::<_, McpConfigRow>(sqlx::AssertSqlSafe(query));
                 if let Some(uid) = user_id {
                     q = q.bind(uid);
                 }
@@ -109,7 +109,7 @@ pub async fn list_enabled_mcp_configs_by_ids(
                 let placeholders = ids.iter().map(|_| "?").collect::<Vec<_>>().join(", ");
                 let mut query = format!("SELECT * FROM mcp_configs WHERE id IN ({})", placeholders);
                 append_optional_user_id_filter(&mut query, user_id.is_some(), true);
-                let mut q = sqlx::query_as::<_, McpConfigRow>(&query);
+                let mut q = sqlx::query_as::<_, McpConfigRow>(sqlx::AssertSqlSafe(query));
                 for id in &ids {
                     q = q.bind(id);
                 }

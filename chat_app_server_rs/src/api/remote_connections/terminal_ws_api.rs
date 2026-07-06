@@ -34,7 +34,7 @@ pub(super) async fn send_startup_error_and_shutdown(
 ) {
     let _ = ws_outbound::try_send(
         &outbound_tx,
-        Message::Text(payload),
+        Message::text(payload),
         REMOTE_TERMINAL_WS_CHANNEL,
     );
     challenge_task.abort();
@@ -119,7 +119,7 @@ async fn handle_remote_terminal_socket(
             .unwrap_or_else(|_| "{}".to_string());
             if !ws_outbound::try_send_or_close(
                 &challenge_outbound_tx,
-                Message::Text(payload),
+                Message::text(payload),
                 REMOTE_TERMINAL_WS_CHANNEL,
                 &challenge_shutdown,
             ) {
@@ -224,7 +224,7 @@ async fn handle_remote_terminal_socket(
                                     .unwrap_or_else(|_| "{}".to_string());
                                 if !ws_outbound::try_send_or_close(
                                     &outbound_tx,
-                                    Message::Text(payload),
+                                    Message::text(payload),
                                     REMOTE_TERMINAL_WS_CHANNEL,
                                     &shutdown,
                                 ) {
@@ -241,7 +241,7 @@ async fn handle_remote_terminal_socket(
                                 .unwrap_or_else(|_| "{}".to_string());
                                 if !ws_outbound::try_send_or_close(
                                     &outbound_tx,
-                                    Message::Text(payload),
+                                    Message::text(payload),
                                     REMOTE_TERMINAL_WS_CHANNEL,
                                     &shutdown,
                                 ) {
@@ -301,7 +301,7 @@ async fn run_connected_remote_terminal_socket(
             .unwrap_or_else(|_| "{}".to_string());
         if !ws_outbound::try_send_or_close(
             &tx,
-            Message::Text(payload),
+            Message::text(payload),
             REMOTE_TERMINAL_WS_CHANNEL,
             &shutdown,
         ) {
@@ -318,7 +318,7 @@ async fn run_connected_remote_terminal_socket(
     .unwrap_or_else(|_| "{}".to_string());
     if !ws_outbound::try_send_or_close(
         &tx,
-        Message::Text(payload),
+        Message::text(payload),
         REMOTE_TERMINAL_WS_CHANNEL,
         &shutdown,
     ) {
@@ -343,7 +343,7 @@ async fn run_connected_remote_terminal_socket(
                         .unwrap_or_else(|_| "{}".to_string());
                     if !ws_outbound::try_send_or_close(
                         &tx_events,
-                        Message::Text(text),
+                        Message::text(text),
                         REMOTE_TERMINAL_WS_CHANNEL,
                         &event_shutdown,
                     ) {
@@ -355,7 +355,7 @@ async fn run_connected_remote_terminal_socket(
                         .unwrap_or_else(|_| "{}".to_string());
                     let _ = ws_outbound::try_send_or_close(
                         &tx_events,
-                        Message::Text(text),
+                        Message::text(text),
                         REMOTE_TERMINAL_WS_CHANNEL,
                         &event_shutdown,
                     );
@@ -366,7 +366,7 @@ async fn run_connected_remote_terminal_socket(
                         .unwrap_or_else(|_| "{}".to_string());
                     if !ws_outbound::try_send_or_close(
                         &tx_events,
-                        Message::Text(text),
+                        Message::text(text),
                         REMOTE_TERMINAL_WS_CHANNEL,
                         &event_shutdown,
                     ) {
@@ -397,7 +397,7 @@ async fn run_connected_remote_terminal_socket(
                                 .unwrap_or_else(|_| "{}".to_string());
                             if !ws_outbound::try_send_or_close(
                                 &tx,
-                                Message::Text(payload),
+                                Message::text(payload),
                                 REMOTE_TERMINAL_WS_CHANNEL,
                                 &shutdown,
                             ) {
@@ -417,7 +417,7 @@ async fn run_connected_remote_terminal_socket(
                                 .unwrap_or_else(|_| "{}".to_string());
                             if !ws_outbound::try_send_or_close(
                                 &tx,
-                                Message::Text(payload),
+                                Message::text(payload),
                                 REMOTE_TERMINAL_WS_CHANNEL,
                                 &shutdown,
                             ) {
@@ -433,7 +433,7 @@ async fn run_connected_remote_terminal_socket(
                                 .unwrap_or_else(|_| "{}".to_string());
                             if !ws_outbound::try_send_or_close(
                                 &tx,
-                                Message::Text(payload),
+                                Message::text(payload),
                                 REMOTE_TERMINAL_WS_CHANNEL,
                                 &shutdown,
                             ) {
@@ -449,7 +449,7 @@ async fn run_connected_remote_terminal_socket(
                             .unwrap_or_else(|_| "{}".to_string());
                         if !ws_outbound::try_send_or_close(
                             &tx,
-                            Message::Text(payload),
+                            Message::text(payload),
                             REMOTE_TERMINAL_WS_CHANNEL,
                             &shutdown,
                         ) {
@@ -463,7 +463,7 @@ async fn run_connected_remote_terminal_socket(
                         .unwrap_or_else(|_| "{}".to_string());
                         if !ws_outbound::try_send_or_close(
                             &tx,
-                            Message::Text(payload),
+                            Message::text(payload),
                             REMOTE_TERMINAL_WS_CHANNEL,
                             &shutdown,
                         ) {

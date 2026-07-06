@@ -59,7 +59,7 @@ fn parse_maven_pom(pom_path: &Path) -> MavenPomInfo {
     };
 
     let mut reader = Reader::from_str(&content);
-    reader.trim_text(true);
+    reader.config_mut().trim_text(true);
     let mut buf = Vec::new();
     let mut stack: Vec<String> = Vec::new();
     let mut info = MavenPomInfo::default();
@@ -75,8 +75,13 @@ fn parse_maven_pom(pom_path: &Path) -> MavenPomInfo {
             }
             Ok(Event::Text(event)) => {
                 let value = event
-                    .unescape()
-                    .map(|value| value.trim().to_string())
+                    .decode()
+                    .ok()
+                    .and_then(|value| {
+                        quick_xml::escape::unescape(value.as_ref())
+                            .ok()
+                            .map(|value| value.trim().to_string())
+                    })
                     .unwrap_or_default();
                 if value.is_empty() {
                     buf.clear();

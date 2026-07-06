@@ -274,7 +274,7 @@ impl SqliteStore {
 
     async fn ensure_text_column(&self, table: &str, column: &str) -> Result<(), String> {
         let pragma = format!("PRAGMA table_info({table})");
-        let rows = sqlx::query(pragma.as_str())
+        let rows = sqlx::query(sqlx::AssertSqlSafe(pragma.as_str()))
             .fetch_all(&self.pool)
             .await
             .map_err(|err| err.to_string())?;
@@ -285,7 +285,7 @@ impl SqliteStore {
             return Ok(());
         }
         let statement = format!("ALTER TABLE {table} ADD COLUMN {column} TEXT");
-        sqlx::query(statement.as_str())
+        sqlx::query(sqlx::AssertSqlSafe(statement.as_str()))
             .execute(&self.pool)
             .await
             .map_err(|err| format!("migration failed: {err}; sql={statement}"))?;
@@ -299,7 +299,7 @@ impl SqliteStore {
         default_value: i64,
     ) -> Result<(), String> {
         let pragma = format!("PRAGMA table_info({table})");
-        let rows = sqlx::query(pragma.as_str())
+        let rows = sqlx::query(sqlx::AssertSqlSafe(pragma.as_str()))
             .fetch_all(&self.pool)
             .await
             .map_err(|err| err.to_string())?;
@@ -312,7 +312,7 @@ impl SqliteStore {
         let statement = format!(
             "ALTER TABLE {table} ADD COLUMN {column} INTEGER NOT NULL DEFAULT {default_value}"
         );
-        sqlx::query(statement.as_str())
+        sqlx::query(sqlx::AssertSqlSafe(statement.as_str()))
             .execute(&self.pool)
             .await
             .map_err(|err| format!("migration failed: {err}; sql={statement}"))?;

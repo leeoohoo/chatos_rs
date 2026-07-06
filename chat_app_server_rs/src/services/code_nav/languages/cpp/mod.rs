@@ -77,7 +77,7 @@ struct CppTypeScope {
 #[derive(Default)]
 pub struct CppCodeNavProvider;
 
-#[axum::async_trait]
+#[async_trait::async_trait]
 impl CodeNavProvider for CppCodeNavProvider {
     fn provider_id(&self) -> &'static str {
         SPEC.provider_id

@@ -80,7 +80,9 @@ pub async fn list_terminal_logs(
             Box::pin(async move {
                 let mut query = "SELECT id, terminal_id, type as log_type, content, created_at FROM terminal_logs WHERE terminal_id = ? ORDER BY created_at ASC".to_string();
                 append_limit_offset_clause(&mut query, limit, offset);
-                let mut q = sqlx::query_as::<_, TerminalLogRow>(&query).bind(&terminal_id);
+                let mut q =
+                    sqlx::query_as::<_, TerminalLogRow>(sqlx::AssertSqlSafe(query))
+                        .bind(&terminal_id);
                 if let Some(l) = limit {
                     q = q.bind(l);
                     if offset > 0 { q = q.bind(offset); }

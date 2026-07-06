@@ -43,7 +43,7 @@ pub(crate) trait HeuristicNavLanguage: Send + Sync {
     fn analyze_document_symbols(file_path: &Path) -> Result<Vec<Self::Symbol>, String>;
 }
 
-#[axum::async_trait]
+#[async_trait::async_trait]
 impl<T> CodeNavProvider for T
 where
     T: HeuristicNavLanguage + 'static,

@@ -403,7 +403,7 @@ async fn ensure_column_sqlite(
     column: &str,
     ddl: &str,
 ) -> Result<(), String> {
-    let rows = sqlx::query(&format!("PRAGMA table_info({table})"))
+    let rows = sqlx::query(sqlx::AssertSqlSafe(format!("PRAGMA table_info({table})")))
         .fetch_all(pool)
         .await
         .map_err(|err| err.to_string())?;
@@ -413,7 +413,7 @@ async fn ensure_column_sqlite(
     });
     if !exists {
         let sql = format!("ALTER TABLE {table} ADD COLUMN {column} {ddl}");
-        sqlx::query(&sql)
+        sqlx::query(sqlx::AssertSqlSafe(sql))
             .execute(pool)
             .await
             .map_err(|err| err.to_string())?;
@@ -427,7 +427,7 @@ async fn rename_column_sqlite_if_needed(
     from_column: &str,
     to_column: &str,
 ) -> Result<(), String> {
-    let rows = sqlx::query(&format!("PRAGMA table_info({table})"))
+    let rows = sqlx::query(sqlx::AssertSqlSafe(format!("PRAGMA table_info({table})")))
         .fetch_all(pool)
         .await
         .map_err(|err| err.to_string())?;
@@ -444,7 +444,7 @@ async fn rename_column_sqlite_if_needed(
     }
     if has_from && !has_to {
         let sql = format!("ALTER TABLE {table} RENAME COLUMN {from_column} TO {to_column}");
-        sqlx::query(&sql)
+        sqlx::query(sqlx::AssertSqlSafe(sql))
             .execute(pool)
             .await
             .map_err(|err| err.to_string())?;

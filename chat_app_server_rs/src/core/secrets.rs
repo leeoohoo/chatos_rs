@@ -6,8 +6,6 @@ use aes_gcm::{Aes256Gcm, Key, Nonce};
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
 use once_cell::sync::OnceCell;
-use rand::rngs::OsRng;
-use rand::RngCore;
 use sha2::{Digest, Sha256};
 
 const SECRET_PREFIX: &str = "enc:v1:";
@@ -41,7 +39,7 @@ fn secret_key() -> &'static [u8; 32] {
 
 pub fn encrypt_secret(plain_text: &str) -> Result<String, String> {
     let mut nonce = [0u8; NONCE_SIZE];
-    OsRng.fill_bytes(&mut nonce);
+    rand::fill(&mut nonce);
     let cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(secret_key()));
     let encrypted = cipher
         .encrypt(Nonce::from_slice(&nonce), plain_text.as_bytes())

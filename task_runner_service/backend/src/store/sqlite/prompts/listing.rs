@@ -28,7 +28,7 @@ impl SqliteStore {
         }
         sql.push_str(" ORDER BY datetime(updated_at) DESC, id DESC");
 
-        let mut query = sqlx::query(&sql);
+        let mut query = sqlx::query(sqlx::AssertSqlSafe(sql));
         if let Some(task_id) = task_id {
             query = query.bind(task_id);
         }
@@ -91,7 +91,7 @@ impl SqliteStore {
             sql.push_str(" OFFSET ?");
         }
 
-        let mut query = sqlx::query(&sql);
+        let mut query = sqlx::query(sqlx::AssertSqlSafe(sql));
         if let Some(task_id) = filters.task_id.as_deref() {
             query = query.bind(task_id);
         }

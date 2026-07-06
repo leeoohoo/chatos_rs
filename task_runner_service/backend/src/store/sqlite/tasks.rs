@@ -15,7 +15,7 @@ const TASK_KEYWORD_FILTER_CLAUSE: &str =
 const TASK_TAG_FILTER_CLAUSE: &str =
     "EXISTS (SELECT 1 FROM json_each(tasks.tags_json) WHERE CAST(json_each.value AS TEXT) = ?)";
 
-type SqliteQuery<'a> = Query<'a, Sqlite, SqliteArguments<'a>>;
+type SqliteQuery<'a> = Query<'a, Sqlite, SqliteArguments>;
 
 fn sqlite_placeholders(count: usize) -> String {
     std::iter::repeat("?")

@@ -15,7 +15,7 @@ use std::path::Path;
 #[derive(Default)]
 pub struct TypeScriptCodeNavProvider;
 
-#[axum::async_trait]
+#[async_trait::async_trait]
 impl CodeNavProvider for TypeScriptCodeNavProvider {
     fn provider_id(&self) -> &'static str {
         "typescript"
