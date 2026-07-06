@@ -34,17 +34,17 @@ pub fn build_router(state: AppState) -> Router {
             "/api/users",
             get(users::list_users).post(users::create_user),
         )
-        .route("/api/users/{id}", patch(users::update_user))
+        .route("/api/users/:id", patch(users::update_user))
         .route(
             "/api/agent-accounts",
             get(agents::list_agent_accounts).post(agents::create_agent_account),
         )
         .route(
-            "/api/agent-accounts/{id}",
+            "/api/agent-accounts/:id",
             patch(agents::update_agent_account),
         )
         .route(
-            "/api/agent-accounts/{id}/reset-password",
+            "/api/agent-accounts/:id/reset-password",
             post(agents::reset_agent_password),
         )
         .route(
@@ -56,13 +56,13 @@ pub fn build_router(state: AppState) -> Router {
             get(models::list_model_providers).post(models::create_model_provider),
         )
         .route(
-            "/api/model-providers/{id}",
+            "/api/model-providers/:id",
             get(models::get_model_provider)
                 .patch(models::update_model_provider)
                 .delete(models::delete_model_provider),
         )
         .route(
-            "/api/model-providers/{id}/refresh",
+            "/api/model-providers/:id/refresh",
             post(models::refresh_model_provider_models),
         )
         .route(
@@ -70,13 +70,13 @@ pub fn build_router(state: AppState) -> Router {
             get(models::get_model_settings).put(models::put_model_settings),
         )
         .route(
-            "/api/model-configs/{id}",
+            "/api/model-configs/:id",
             get(models::get_model_config)
                 .patch(models::update_model_config)
                 .delete(models::delete_model_config),
         )
         .route(
-            "/api/model-configs/{id}/refresh",
+            "/api/model-configs/:id/refresh",
             post(models::refresh_model_config_provider_models),
         )
         .route(

@@ -453,7 +453,7 @@ mod tests {
 
         let app = Router::new()
             .route(
-                "/internal/users/{owner_user_id}/execution-options",
+                "/internal/users/:owner_user_id/execution-options",
                 get(handler),
             )
             .with_state(TestServerState { captured, body });
@@ -464,7 +464,7 @@ mod tests {
         let handle = tokio::spawn(async move {
             let _ = axum::serve(listener, app).await;
         });
-        (format!("http://{addr}"), handle)
+        (format!("http://:addr"), handle)
     }
 
     async fn start_create_task_test_server(
@@ -525,7 +525,7 @@ mod tests {
         };
         let app = Router::new()
             .route(
-                "/internal/users/{owner_user_id}/execution-options",
+                "/internal/users/:owner_user_id/execution-options",
                 get(execution_options_handler),
             )
             .route("/api/tasks", post(create_task_handler))
@@ -537,7 +537,7 @@ mod tests {
         let handle = tokio::spawn(async move {
             let _ = axum::serve(listener, app).await;
         });
-        (format!("http://{addr}"), handle)
+        (format!("http://:addr"), handle)
     }
 
     #[tokio::test]

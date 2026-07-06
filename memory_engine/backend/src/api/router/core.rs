@@ -21,7 +21,7 @@ pub fn public_routes() -> Router<Arc<AppState>> {
 pub fn operator_routes() -> Router<Arc<AppState>> {
     Router::new()
         .route(
-            "/api/memory-engine/v1/sources/{source_id}",
+            "/api/memory-engine/v1/sources/:source_id",
             put(sources_api::upsert_source),
         )
         .route(
@@ -45,7 +45,7 @@ pub fn operator_routes() -> Router<Arc<AppState>> {
 pub fn data_routes() -> Router<Arc<AppState>> {
     Router::new()
         .route(
-            "/api/memory-engine/v1/subjects/{subject_id}",
+            "/api/memory-engine/v1/subjects/:subject_id",
             put(subjects_api::upsert_subject),
         )
         .route(
@@ -53,19 +53,19 @@ pub fn data_routes() -> Router<Arc<AppState>> {
             get(subject_memory_scopes_api::list_subject_memory_scopes),
         )
         .route(
-            "/api/memory-engine/v1/subject-memory-scopes/{scope_key}",
+            "/api/memory-engine/v1/subject-memory-scopes/:scope_key",
             put(subject_memory_scopes_api::upsert_subject_memory_scope),
         )
         .route(
-            "/api/memory-engine/v1/subjects/{subject_id}/memories/{memory_key}",
+            "/api/memory-engine/v1/subjects/:subject_id/memories/:memory_key",
             put(subject_memories_api::upsert_subject_memory),
         )
         .route(
-            "/api/memory-engine/v1/subjects/{subject_id}/memories",
+            "/api/memory-engine/v1/subjects/:subject_id/memories",
             get(subject_memories_api::list_subject_memories),
         )
         .route(
-            "/api/memory-engine/v1/subjects/{subject_id}/memories/mark-rolled-up",
+            "/api/memory-engine/v1/subjects/:subject_id/memories/mark-rolled-up",
             post(subject_memories_api::mark_subject_memories_rolled_up),
         )
         .route(
@@ -73,7 +73,7 @@ pub fn data_routes() -> Router<Arc<AppState>> {
             post(subject_memories_api::query_subject_memories),
         )
         .route(
-            "/api/memory-engine/v1/threads/{thread_id}",
+            "/api/memory-engine/v1/threads/:thread_id",
             get(threads_api::get_thread)
                 .put(threads_api::upsert_thread)
                 .delete(threads_api::delete_thread),
@@ -87,52 +87,52 @@ pub fn data_routes() -> Router<Arc<AppState>> {
             post(threads_api::list_threads_by_label),
         )
         .route(
-            "/api/memory-engine/v1/threads/{thread_id}/records",
+            "/api/memory-engine/v1/threads/:thread_id/records",
             get(threads_api::list_records).delete(threads_api::delete_records),
         )
         .route(
-            "/api/memory-engine/v1/threads/{thread_id}/records/count",
+            "/api/memory-engine/v1/threads/:thread_id/records/count",
             get(threads_api::count_records),
         )
         .route(
-            "/api/memory-engine/v1/threads/{thread_id}/compact-turns",
+            "/api/memory-engine/v1/threads/:thread_id/compact-turns",
             get(threads_api::list_compact_turns),
         )
         .route(
-            "/api/memory-engine/v1/threads/{thread_id}/turns/{turn_id}/process-records",
+            "/api/memory-engine/v1/threads/:thread_id/turns/:turn_id/process-records",
             get(threads_api::get_turn_process_records),
         )
         .route(
-            "/api/memory-engine/v1/records/{record_id}",
+            "/api/memory-engine/v1/records/:record_id",
             get(records_api::get_record).delete(records_api::delete_record),
         )
         .route(
-            "/api/memory-engine/v1/threads/{thread_id}/records/batch-sync",
+            "/api/memory-engine/v1/threads/:thread_id/records/batch-sync",
             put(threads_api::batch_sync_records),
         )
         .route(
-            "/api/memory-engine/v1/threads/{thread_id}/snapshots/{snapshot_type}/turns/{turn_id}",
+            "/api/memory-engine/v1/threads/:thread_id/snapshots/:snapshot_type/turns/:turn_id",
             put(thread_snapshots_api::upsert_thread_snapshot)
                 .get(thread_snapshots_api::get_thread_snapshot_by_turn),
         )
         .route(
-            "/api/memory-engine/v1/threads/{thread_id}/snapshots/{snapshot_type}/latest",
+            "/api/memory-engine/v1/threads/:thread_id/snapshots/:snapshot_type/latest",
             get(thread_snapshots_api::get_latest_thread_snapshot),
         )
         .route(
-            "/api/memory-engine/v1/threads/{thread_id}/summaries/run",
+            "/api/memory-engine/v1/threads/:thread_id/summaries/run",
             post(summaries_api::run_thread_summary),
         )
         .route(
-            "/api/memory-engine/v1/threads/{thread_id}/active-summary/run",
+            "/api/memory-engine/v1/threads/:thread_id/active-summary/run",
             post(summaries_api::run_thread_active_summary),
         )
         .route(
-            "/api/memory-engine/v1/threads/{thread_id}/active-summary/status",
+            "/api/memory-engine/v1/threads/:thread_id/active-summary/status",
             get(summaries_api::get_thread_active_summary_status),
         )
         .route(
-            "/api/memory-engine/v1/threads/{thread_id}/summaries",
+            "/api/memory-engine/v1/threads/:thread_id/summaries",
             get(summaries_api::list_thread_summaries),
         )
         .route(
@@ -140,15 +140,15 @@ pub fn data_routes() -> Router<Arc<AppState>> {
             post(summaries_api::list_summaries_by_thread_label),
         )
         .route(
-            "/api/memory-engine/v1/threads/{thread_id}/summaries/{summary_id}",
+            "/api/memory-engine/v1/threads/:thread_id/summaries/:summary_id",
             put(summaries_api::upsert_thread_summary).delete(summaries_api::delete_thread_summary),
         )
         .route(
-            "/api/memory-engine/v1/threads/{thread_id}/summaries/mark-subject-memory",
+            "/api/memory-engine/v1/threads/:thread_id/summaries/mark-subject-memory",
             post(summaries_api::mark_subject_memory_summarized),
         )
         .route(
-            "/api/memory-engine/v1/threads/{thread_id}/repair-summaries/run",
+            "/api/memory-engine/v1/threads/:thread_id/repair-summaries/run",
             post(summaries_api::run_thread_repair_summary),
         )
         .route(

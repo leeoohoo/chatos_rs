@@ -58,86 +58,86 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/agent-accounts", get(list_agent_accounts))
         .route("/api/projects", get(list_projects).post(create_project))
         .route(
-            "/api/projects/{project_id}",
+            "/api/projects/:project_id",
             get(get_project)
                 .patch(update_project)
                 .delete(delete_project),
         )
         .route(
-            "/api/projects/{project_id}/profile",
+            "/api/projects/:project_id/profile",
             get(get_project_profile).put(upsert_project_profile),
         )
         .route(
-            "/api/projects/{project_id}/requirements",
+            "/api/projects/:project_id/requirements",
             get(list_project_requirements).post(create_requirement),
         )
         .route(
-            "/api/projects/{project_id}/work-items",
+            "/api/projects/:project_id/work-items",
             get(list_project_work_items),
         )
         .route(
-            "/api/projects/{project_id}/requirements/{requirement_id}/work-items",
+            "/api/projects/:project_id/requirements/:requirement_id/work-items",
             get(list_project_requirement_work_items),
         )
         .route(
-            "/api/projects/{project_id}/dependency-graph",
+            "/api/projects/:project_id/dependency-graph",
             get(get_project_dependency_graph),
         )
-        .route("/api/projects/{project_id}/plan", get(get_project_plan))
+        .route("/api/projects/:project_id/plan", get(get_project_plan))
         .route(
-            "/api/requirements/{requirement_id}",
+            "/api/requirements/:requirement_id",
             get(get_requirement)
                 .patch(update_requirement)
                 .delete(delete_requirement),
         )
         .route(
-            "/api/requirements/{requirement_id}/dependencies",
+            "/api/requirements/:requirement_id/dependencies",
             get(list_requirement_dependencies).put(set_requirement_dependencies),
         )
         .route(
-            "/api/requirements/{requirement_id}/dependency-graph",
+            "/api/requirements/:requirement_id/dependency-graph",
             get(get_requirement_dependency_graph),
         )
         .route(
-            "/api/requirements/{requirement_id}/technical-overview",
+            "/api/requirements/:requirement_id/technical-overview",
             get(get_requirement_technical_overview).put(upsert_requirement_technical_overview),
         )
         .route(
-            "/api/requirements/{requirement_id}/documents",
+            "/api/requirements/:requirement_id/documents",
             get(list_requirement_documents).post(create_requirement_document),
         )
         .route(
-            "/api/requirements/{requirement_id}/documents/{document_id}",
+            "/api/requirements/:requirement_id/documents/:document_id",
             get(get_requirement_document).put(update_requirement_document),
         )
         .route(
-            "/api/requirements/{requirement_id}/work-items",
+            "/api/requirements/:requirement_id/work-items",
             get(list_requirement_work_items).post(create_work_item),
         )
         .route(
-            "/api/work-items/{work_item_id}",
+            "/api/work-items/:work_item_id",
             get(get_work_item)
                 .patch(update_work_item)
                 .delete(delete_work_item),
         )
         .route(
-            "/api/work-items/{work_item_id}/dependencies",
+            "/api/work-items/:work_item_id/dependencies",
             get(list_work_item_dependencies).put(set_work_item_dependencies),
         )
         .route(
-            "/api/work-items/{work_item_id}/dependency-graph",
+            "/api/work-items/:work_item_id/dependency-graph",
             get(get_work_item_dependency_graph),
         )
         .route(
-            "/api/work-items/{work_item_id}/task-runner-links",
+            "/api/work-items/:work_item_id/task-runner-links",
             get(list_task_runner_links).post(link_task_runner_task),
         )
         .route(
-            "/api/work-items/{work_item_id}/task-runner-links/{link_id}",
+            "/api/work-items/:work_item_id/task-runner-links/:link_id",
             axum::routing::delete(delete_task_runner_link),
         )
         .route(
-            "/api/work-items/{work_item_id}/task-runner-task",
+            "/api/work-items/:work_item_id/task-runner-task",
             post(create_task_runner_task_from_work_item),
         )
         .route(
@@ -161,15 +161,15 @@ pub fn build_router(state: AppState) -> Router {
             get(sync_list_projects).post(sync_import_project),
         )
         .route(
-            "/api/chatos-sync/projects/{project_id}",
+            "/api/chatos-sync/projects/:project_id",
             get(sync_get_project),
         )
         .route(
-            "/api/chatos-sync/work-items/{work_item_id}/task-runner-status",
+            "/api/chatos-sync/work-items/:work_item_id/task-runner-status",
             post(sync_task_runner_work_item_status),
         )
         .route(
-            "/api/chatos-sync/requirements/{requirement_id}/execution-state",
+            "/api/chatos-sync/requirements/:requirement_id/execution-state",
             post(sync_requirement_execution_state),
         )
         .merge(protected_api)
