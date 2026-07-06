@@ -2,7 +2,7 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use aes_gcm::aead::{Aead, KeyInit};
-use aes_gcm::{Aes256Gcm, Key, Nonce};
+use aes_gcm::{Aes256Gcm, Nonce};
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
 use once_cell::sync::OnceCell;
@@ -40,9 +40,12 @@ fn secret_key() -> &'static [u8; 32] {
 pub fn encrypt_secret(plain_text: &str) -> Result<String, String> {
     let mut nonce = [0u8; NONCE_SIZE];
     rand::fill(&mut nonce);
-    let cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(secret_key()));
+    let cipher =
+        Aes256Gcm::new_from_slice(secret_key()).map_err(|e| format!("初始化密钥失败: {e}"))?;
+    let nonce_ref = <&Nonce<_>>::try_from(nonce.as_slice())
+        .map_err(|_| "加密敏感字段失败: nonce 长度无效".to_string())?;
     let encrypted = cipher
-        .encrypt(Nonce::from_slice(&nonce), plain_text.as_bytes())
+        .encrypt(nonce_ref, plain_text.as_bytes())
         .map_err(|e| format!("加密敏感字段失败: {e}"))?;
     Ok(format!(
         "{}{}:{}",
@@ -79,9 +82,12 @@ pub fn decrypt_secret(value: &str) -> Result<String, String> {
         .decode(data_b64)
         .map_err(|e| format!("敏感字段解密失败: 密文无效: {e}"))?;
 
-    let cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(secret_key()));
+    let cipher =
+        Aes256Gcm::new_from_slice(secret_key()).map_err(|e| format!("初始化密钥失败: {e}"))?;
+    let nonce_ref = <&Nonce<_>>::try_from(nonce.as_slice())
+        .map_err(|_| "敏感字段解密失败: nonce 长度无效".to_string())?;
     let plain = cipher
-        .decrypt(Nonce::from_slice(&nonce), encrypted.as_ref())
+        .decrypt(nonce_ref, encrypted.as_ref())
         .map_err(|_| "敏感字段解密失败: 密钥不匹配或数据损坏".to_string())?;
     String::from_utf8(plain).map_err(|e| format!("敏感字段解密失败: 文本无效: {e}"))
 }
