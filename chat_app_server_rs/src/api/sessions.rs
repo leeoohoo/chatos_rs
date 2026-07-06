@@ -45,59 +45,59 @@ pub fn router() -> Router {
             get(list_sessions).post(create_session),
         )
         .route(
-            "/api/conversations/:id",
+            "/api/conversations/{id}",
             get(get_session).put(update_session).delete(delete_session),
         )
         .route(
-            "/api/conversations/:conversation_id/runtime-settings",
+            "/api/conversations/{conversation_id}/runtime-settings",
             get(get_session_runtime_settings).put(update_session_runtime_settings),
         )
         .route(
-            "/api/conversations/:conversation_id/mcp-servers",
+            "/api/conversations/{conversation_id}/mcp-servers",
             get(list_mcp_servers).post(add_mcp_server),
         )
         .route(
-            "/api/conversations/:conversation_id/mcp-servers/:mcp_config_id",
+            "/api/conversations/{conversation_id}/mcp-servers/{mcp_config_id}",
             delete(delete_mcp_server),
         )
         .route(
-            "/api/conversations/:conversation_id/messages",
+            "/api/conversations/{conversation_id}/messages",
             get(get_session_messages).post(create_session_message),
         )
         .route(
-            "/api/conversations/:conversation_id/compact-history",
+            "/api/conversations/{conversation_id}/compact-history",
             get(get_session_compact_history),
         )
         .route(
-            "/api/conversations/:conversation_id/user-message-turns",
+            "/api/conversations/{conversation_id}/user-message-turns",
             get(get_session_user_message_turns),
         )
         .route(
-            "/api/conversations/:conversation_id/turns/:user_message_id/messages",
+            "/api/conversations/{conversation_id}/turns/{user_message_id}/messages",
             get(get_session_turn_display_messages),
         )
         .route(
-            "/api/conversations/:conversation_id/turns/by-turn/:turn_id/messages",
+            "/api/conversations/{conversation_id}/turns/by-turn/{turn_id}/messages",
             get(get_session_turn_display_messages_by_turn),
         )
         .route(
-            "/api/conversations/:conversation_id/turns/latest/runtime-context",
+            "/api/conversations/{conversation_id}/turns/latest/runtime-context",
             get(get_session_turn_runtime_context_latest),
         )
         .route(
-            "/api/conversations/:conversation_id/turns/by-turn/:turn_id/runtime-context",
+            "/api/conversations/{conversation_id}/turns/by-turn/{turn_id}/runtime-context",
             get(get_session_turn_runtime_context_by_turn),
         )
         .route(
-            "/api/conversations/:conversation_id/summaries",
+            "/api/conversations/{conversation_id}/summaries",
             get(list_session_memory_summaries).delete(clear_session_memory_summaries),
         )
         .route(
-            "/api/conversations/:conversation_id/review-repair",
+            "/api/conversations/{conversation_id}/review-repair",
             axum::routing::post(run_session_review_repair).get(get_session_review_repair_status),
         )
         .route(
-            "/api/conversations/:conversation_id/summaries/:summary_id",
+            "/api/conversations/{conversation_id}/summaries/{summary_id}",
             delete(delete_session_memory_summary),
         )
 }

@@ -71,15 +71,15 @@ pub fn build_router(state: AppState) -> Router {
             get(task_runner_internal_prompt_preview_handler),
         )
         .route("/api/users", get(list_users).post(create_user))
-        .route("/api/users/:id", patch(update_user).delete(delete_user))
+        .route("/api/users/{id}", patch(update_user).delete(delete_user))
         .route("/api/projects", get(list_projects).post(create_project))
         .route(
-            "/api/projects/:id",
+            "/api/projects/{id}",
             get(get_project)
                 .patch(update_project)
                 .delete(delete_project),
         )
-        .route("/api/projects/:id/tasks", get(list_project_tasks))
+        .route("/api/projects/{id}/tasks", get(list_project_tasks))
         .route("/api/tasks", get(list_tasks).post(create_task))
         .route("/api/tasks/summaries", get(list_task_summaries))
         .route("/api/tasks/page", get(list_tasks_page))
@@ -89,38 +89,38 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/tasks/batch/delete", post(batch_delete_tasks))
         .route("/api/tasks/batch/runs", post(batch_start_task_runs))
         .route(
-            "/api/tasks/:id",
+            "/api/tasks/{id}",
             get(get_task).patch(update_task).delete(delete_task),
         )
-        .route("/api/tasks/:id/cancel", post(cancel_task))
+        .route("/api/tasks/{id}/cancel", post(cancel_task))
         .route(
-            "/api/tasks/:id/runs",
+            "/api/tasks/{id}/runs",
             get(list_task_runs).post(start_task_run),
         )
-        .route("/api/tasks/:id/mcp", patch(update_task_mcp))
+        .route("/api/tasks/{id}/mcp", patch(update_task_mcp))
         .route(
-            "/api/tasks/:id/prerequisites",
+            "/api/tasks/{id}/prerequisites",
             get(list_task_prerequisites).put(set_task_prerequisites),
         )
         .route(
-            "/api/tasks/:id/dependency-graph",
+            "/api/tasks/{id}/dependency-graph",
             get(get_task_dependency_graph),
         )
-        .route("/api/tasks/:id/process-log", patch(record_task_process))
+        .route("/api/tasks/{id}/process-log", patch(record_task_process))
         .route(
-            "/api/tasks/:id/mcp/prompt-preview",
+            "/api/tasks/{id}/mcp/prompt-preview",
             get(preview_task_mcp_prompt),
         )
         .route(
-            "/api/tasks/:id/memory/context",
+            "/api/tasks/{id}/memory/context",
             get(get_task_memory_context),
         )
         .route(
-            "/api/tasks/:id/memory/records",
+            "/api/tasks/{id}/memory/records",
             get(get_task_memory_records),
         )
         .route(
-            "/api/tasks/:id/memory/summarize",
+            "/api/tasks/{id}/memory/summarize",
             post(summarize_task_memory),
         )
         .route(
@@ -132,13 +132,13 @@ pub fn build_router(state: AppState) -> Router {
             post(preview_model_catalog),
         )
         .route(
-            "/api/model-configs/:id",
+            "/api/model-configs/{id}",
             get(get_model_config)
                 .patch(update_model_config)
                 .delete(delete_model_config),
         )
-        .route("/api/model-configs/:id/models", get(list_model_catalog))
-        .route("/api/model-configs/:id/test", post(test_model_config))
+        .route("/api/model-configs/{id}/models", get(list_model_catalog))
+        .route("/api/model-configs/{id}/test", post(test_model_config))
         .route("/api/model-configs/usage", get(list_model_config_usage))
         .route(
             "/api/remote-servers",
@@ -146,13 +146,13 @@ pub fn build_router(state: AppState) -> Router {
         )
         .route("/api/remote-servers/test", post(test_remote_server_draft))
         .route(
-            "/api/remote-servers/:id",
+            "/api/remote-servers/{id}",
             get(get_remote_server)
                 .patch(update_remote_server)
                 .delete(delete_remote_server),
         )
         .route(
-            "/api/remote-servers/:id/test",
+            "/api/remote-servers/{id}/test",
             post(test_remote_server_saved),
         )
         .route(
@@ -160,7 +160,7 @@ pub fn build_router(state: AppState) -> Router {
             get(list_external_mcp_configs).post(create_external_mcp_config),
         )
         .route(
-            "/api/external-mcp-configs/:id",
+            "/api/external-mcp-configs/{id}",
             get(get_external_mcp_config)
                 .patch(update_external_mcp_config)
                 .delete(delete_external_mcp_config),
@@ -172,45 +172,45 @@ pub fn build_router(state: AppState) -> Router {
             get(search_skill_marketplace).post(install_skill_from_marketplace),
         )
         .route(
-            "/api/skills/:id",
+            "/api/skills/{id}",
             get(get_skill).patch(update_skill).delete(delete_skill),
         )
         .route("/api/runs", get(list_runs))
         .route("/api/runs/summaries", get(list_run_summaries))
         .route("/api/runs/page", get(list_runs_page))
         .route("/api/runs/index", get(list_run_index))
-        .route("/api/runs/:id", get(get_run))
-        .route("/api/runs/:id/events", get(list_run_events))
-        .route("/api/runs/:id/output/changes", get(get_run_output_changes))
-        .route("/api/runs/:id/output/diff", get(get_run_output_diff))
-        .route("/api/runs/:id/prompts", get(list_run_prompts))
-        .route("/api/runs/:id/stream", get(stream_run_events))
-        .route("/api/runs/:id/cancel", post(cancel_run))
-        .route("/api/runs/:id/retry", post(retry_run))
+        .route("/api/runs/{id}", get(get_run))
+        .route("/api/runs/{id}/events", get(list_run_events))
+        .route("/api/runs/{id}/output/changes", get(get_run_output_changes))
+        .route("/api/runs/{id}/output/diff", get(get_run_output_diff))
+        .route("/api/runs/{id}/prompts", get(list_run_prompts))
+        .route("/api/runs/{id}/stream", get(stream_run_events))
+        .route("/api/runs/{id}/cancel", post(cancel_run))
+        .route("/api/runs/{id}/retry", post(retry_run))
         .route("/api/prompts", get(list_prompts))
         .route("/api/prompts/page", get(list_prompts_page))
         .route("/api/prompts/task-counts", get(list_prompt_task_counts))
-        .route("/api/prompts/:id", get(get_prompt))
-        .route("/api/prompts/:id/submit", post(submit_prompt))
-        .route("/api/prompts/:id/cancel", post(cancel_prompt))
+        .route("/api/prompts/{id}", get(get_prompt))
+        .route("/api/prompts/{id}/submit", post(submit_prompt))
+        .route("/api/prompts/{id}/cancel", post(cancel_prompt))
         .route("/api/tooling/notepad/folders", get(list_notepad_folders))
         .route("/api/tooling/notepad/tags", get(list_notepad_tags))
         .route("/api/tooling/notepad/notes", get(list_notepad_notes))
-        .route("/api/tooling/notepad/notes/:id", get(read_notepad_note))
+        .route("/api/tooling/notepad/notes/{id}", get(read_notepad_note))
         .route(
             "/api/tooling/terminal/processes",
             get(list_terminal_processes),
         )
         .route(
-            "/api/tooling/terminal/processes/:id/logs",
+            "/api/tooling/terminal/processes/{id}/logs",
             get(get_terminal_process_logs),
         )
         .route(
-            "/api/tooling/terminal/processes/:id/kill",
+            "/api/tooling/terminal/processes/{id}/kill",
             post(kill_terminal_process),
         )
         .route(
-            "/api/tooling/terminal/processes/:id/write",
+            "/api/tooling/terminal/processes/{id}/write",
             post(write_terminal_process),
         )
         .route("/api/mcp/server", get(get_mcp_server_info))
@@ -232,13 +232,13 @@ pub fn build_router(state: AppState) -> Router {
             "/api/chatos-sync/projects",
             get(sync_list_projects).post(import_chatos_project),
         )
-        .route("/api/chatos-sync/projects/:id", get(sync_get_project))
+        .route("/api/chatos-sync/projects/{id}", get(sync_get_project))
         .route(
-            "/api/chatos-sync/model-configs/:id",
+            "/api/chatos-sync/model-configs/{id}",
             delete(chatos_sync_delete_model_config),
         )
         .route(
-            "/internal/users/:owner_user_id/execution-options",
+            "/internal/users/{owner_user_id}/execution-options",
             get(get_user_execution_options),
         )
         .merge(chatos_internal::router())

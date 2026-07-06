@@ -28,11 +28,11 @@ pub fn router() -> Router {
     Router::new()
         .route("/api/ask-user-prompts", get(list_ask_user_prompts))
         .route(
-            "/api/ask-user-prompts/:prompt_id/submit",
+            "/api/ask-user-prompts/{prompt_id}/submit",
             post(submit_ask_user_prompt),
         )
         .route(
-            "/api/ask-user-prompts/:prompt_id/cancel",
+            "/api/ask-user-prompts/{prompt_id}/cancel",
             post(cancel_ask_user_prompt),
         )
 }

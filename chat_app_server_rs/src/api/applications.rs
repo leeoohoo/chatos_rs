@@ -43,7 +43,7 @@ pub fn router() -> Router {
     Router::new()
         .route("/", get(list_apps).post(create_app))
         .route(
-            "/:application_id",
+            "/{application_id}",
             get(get_app).put(update_app).delete(delete_app),
         )
 }

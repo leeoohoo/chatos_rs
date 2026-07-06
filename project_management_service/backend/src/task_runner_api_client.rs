@@ -453,7 +453,7 @@ mod tests {
 
         let app = Router::new()
             .route(
-                "/internal/users/:owner_user_id/execution-options",
+                "/internal/users/{owner_user_id}/execution-options",
                 get(handler),
             )
             .with_state(TestServerState { captured, body });
@@ -525,7 +525,7 @@ mod tests {
         };
         let app = Router::new()
             .route(
-                "/internal/users/:owner_user_id/execution-options",
+                "/internal/users/{owner_user_id}/execution-options",
                 get(execution_options_handler),
             )
             .route("/api/tasks", post(create_task_handler))

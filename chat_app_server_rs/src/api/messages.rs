@@ -46,7 +46,10 @@ struct CreateMessageRequest {
 pub fn router() -> Router {
     Router::new()
         .route("/api/messages", get(list_messages).post(create_message))
-        .route("/api/messages/:id", get(get_message).delete(delete_message))
+        .route(
+            "/api/messages/{id}",
+            get(get_message).delete(delete_message),
+        )
 }
 
 async fn list_messages(

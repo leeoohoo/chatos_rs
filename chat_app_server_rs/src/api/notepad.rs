@@ -84,7 +84,7 @@ pub fn router() -> Router {
         )
         .route("/api/notepad/notes", get(list_notes).post(create_note))
         .route(
-            "/api/notepad/notes/:note_id",
+            "/api/notepad/notes/{note_id}",
             get(get_note).patch(update_note).delete(delete_note_by_id),
         )
         .route("/api/notepad/tags", get(list_tags))

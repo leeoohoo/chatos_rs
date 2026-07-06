@@ -38,7 +38,7 @@ pub fn router() -> Router {
         .route("/api/memory/projects", get(list_memory_projects))
         .route("/api/memory/projects/sync", post(sync_memory_project))
         .route(
-            "/api/memory/projects/:project_id/contacts",
+            "/api/memory/projects/{project_id}/contacts",
             get(list_memory_project_contacts),
         )
         .route(

@@ -86,11 +86,11 @@ pub fn router() -> Router {
             get(list_mcp_configs).post(create_mcp_config),
         )
         .route(
-            "/api/mcp-configs/:config_id",
+            "/api/mcp-configs/{config_id}",
             put(update_mcp_config).delete(delete_mcp_config),
         )
         .route(
-            "/api/mcp-configs/:config_id/resource/config",
+            "/api/mcp-configs/{config_id}/resource/config",
             get(mcp_resource::get_mcp_resource_config),
         )
         .route(
@@ -106,13 +106,13 @@ pub fn router() -> Router {
             get(ai_model::list_ai_model_providers).post(ai_model::create_ai_model_provider),
         )
         .route(
-            "/api/ai-model-providers/:provider_id",
+            "/api/ai-model-providers/{provider_id}",
             get(ai_model::get_ai_model_provider)
                 .put(ai_model::update_ai_model_provider)
                 .delete(ai_model::delete_ai_model_provider),
         )
         .route(
-            "/api/ai-model-providers/:provider_id/refresh",
+            "/api/ai-model-providers/{provider_id}/refresh",
             post(ai_model::refresh_ai_model_provider),
         )
         .route(
@@ -120,17 +120,17 @@ pub fn router() -> Router {
             get(ai_model::get_ai_model_settings).put(ai_model::put_ai_model_settings),
         )
         .route(
-            "/api/ai-model-configs/:config_id/models",
+            "/api/ai-model-configs/{config_id}/models",
             get(ai_model::list_ai_provider_models),
         )
         .route(
-            "/api/ai-model-configs/:config_id",
+            "/api/ai-model-configs/{config_id}",
             get(ai_model::get_ai_model_config)
                 .put(ai_model::update_ai_model_config)
                 .delete(ai_model::delete_ai_model_config),
         )
         .route(
-            "/api/ai-model-configs/:config_id/refresh",
+            "/api/ai-model-configs/{config_id}/refresh",
             post(ai_model::refresh_ai_model_config),
         )
 }

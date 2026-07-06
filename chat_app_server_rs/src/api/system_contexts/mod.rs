@@ -26,11 +26,11 @@ pub fn router() -> Router {
             get(list_system_contexts).post(create_system_context),
         )
         .route(
-            "/api/system-contexts/:context_id",
+            "/api/system-contexts/{context_id}",
             put(update_system_context).delete(delete_system_context),
         )
         .route(
-            "/api/system-contexts/:context_id/activate",
+            "/api/system-contexts/{context_id}/activate",
             post(activate_system_context),
         )
         .route(

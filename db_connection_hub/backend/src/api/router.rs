@@ -39,29 +39,29 @@ pub fn build_router(app_state: AppState) -> Router {
                 .post(handlers::datasources::create_datasource),
         )
         .route(
-            "/api/v1/datasources/:id",
+            "/api/v1/datasources/{id}",
             get(handlers::datasources::get_datasource)
                 .put(handlers::datasources::update_datasource)
                 .delete(handlers::datasources::delete_datasource),
         )
         .route(
-            "/api/v1/datasources/:id/test",
+            "/api/v1/datasources/{id}/test",
             post(handlers::datasources::test_datasource),
         )
         .route(
-            "/api/v1/datasources/:id/health",
+            "/api/v1/datasources/{id}/health",
             get(handlers::datasources::datasource_health),
         )
         .route(
-            "/api/v1/datasources/:id/databases/summary",
+            "/api/v1/datasources/{id}/databases/summary",
             get(handlers::datasources::database_summary),
         )
         .route(
-            "/api/v1/datasources/:id/databases",
+            "/api/v1/datasources/{id}/databases",
             get(handlers::datasources::list_databases),
         )
         .route(
-            "/api/v1/datasources/:id/databases/:database/object-stats",
+            "/api/v1/datasources/{id}/databases/{database}/object-stats",
             get(handlers::datasources::object_stats),
         )
         .route(
@@ -77,7 +77,7 @@ pub fn build_router(app_state: AppState) -> Router {
             post(handlers::queries::execute_query),
         )
         .route(
-            "/api/v1/queries/:id/cancel",
+            "/api/v1/queries/{id}/cancel",
             post(handlers::queries::cancel_query),
         )
         .layer(cors)

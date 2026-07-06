@@ -35,51 +35,51 @@ pub fn router() -> Router {
     Router::new()
         .route("/api/projects", get(list_projects).post(create_project))
         .route(
-            "/api/projects/:id",
+            "/api/projects/{id}",
             get(get_project).put(update_project).delete(delete_project),
         )
-        .route("/api/projects/:id/plan", get(get_project_plan))
+        .route("/api/projects/{id}/plan", get(get_project_plan))
         .route(
-            "/api/projects/:id/requirements/:requirement_id/work-items",
+            "/api/projects/{id}/requirements/{requirement_id}/work-items",
             get(list_requirement_work_items),
         )
         .route(
-            "/api/projects/:id/requirements/:requirement_id/documents",
+            "/api/projects/{id}/requirements/{requirement_id}/documents",
             get(list_requirement_documents),
         )
         .route(
-            "/api/projects/:id/requirements/:requirement_id/execute",
+            "/api/projects/{id}/requirements/{requirement_id}/execute",
             post(execute_requirement),
         )
         .route(
-            "/api/projects/:id/requirements/:requirement_id/stop",
+            "/api/projects/{id}/requirements/{requirement_id}/stop",
             post(stop_requirement_execution),
         )
         .route(
-            "/api/projects/:id/contacts",
+            "/api/projects/{id}/contacts",
             get(list_project_contacts).post(add_project_contact),
         )
         .route(
-            "/api/projects/:id/contacts/lock",
+            "/api/projects/{id}/contacts/lock",
             get(get_project_contact_lock),
         )
         .route(
-            "/api/projects/:id/contacts/:contact_id",
+            "/api/projects/{id}/contacts/{contact_id}",
             delete(remove_project_contact),
         )
-        .route("/api/projects/:id/run/analyze", post(analyze_project_run))
+        .route("/api/projects/{id}/run/analyze", post(analyze_project_run))
         .route(
-            "/api/projects/:id/run/catalog",
+            "/api/projects/{id}/run/catalog",
             get(get_project_run_catalog),
         )
-        .route("/api/projects/:id/run/execute", post(execute_project_run))
-        .route("/api/projects/:id/run/state", get(get_project_run_state))
+        .route("/api/projects/{id}/run/execute", post(execute_project_run))
+        .route("/api/projects/{id}/run/state", get(get_project_run_state))
         .route(
-            "/api/projects/:id/run/default",
+            "/api/projects/{id}/run/default",
             post(set_project_run_default),
         )
         .route(
-            "/api/projects/:id/run/environment",
+            "/api/projects/{id}/run/environment",
             get(get_project_run_environment).put(update_project_run_environment),
         )
 }

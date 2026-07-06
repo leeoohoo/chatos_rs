@@ -89,54 +89,54 @@ pub fn router() -> Router {
             axum::routing::post(test_remote_connection_draft),
         )
         .route(
-            "/api/remote-connections/:id",
+            "/api/remote-connections/{id}",
             get(get_remote_connection)
                 .put(update_remote_connection)
                 .delete(delete_remote_connection),
         )
         .route(
-            "/api/remote-connections/:id/test",
+            "/api/remote-connections/{id}/test",
             axum::routing::post(test_remote_connection_saved),
         )
         .route(
-            "/api/remote-connections/:id/disconnect",
+            "/api/remote-connections/{id}/disconnect",
             axum::routing::post(disconnect_remote_terminal),
         )
-        .route("/api/remote-connections/:id/ws", get(remote_terminal_ws))
+        .route("/api/remote-connections/{id}/ws", get(remote_terminal_ws))
         .route(
-            "/api/remote-connections/:id/sftp/list",
+            "/api/remote-connections/{id}/sftp/list",
             get(list_remote_sftp_entries),
         )
         .route(
-            "/api/remote-connections/:id/sftp/upload",
+            "/api/remote-connections/{id}/sftp/upload",
             axum::routing::post(upload_file_to_remote),
         )
         .route(
-            "/api/remote-connections/:id/sftp/download",
+            "/api/remote-connections/{id}/sftp/download",
             axum::routing::post(download_file_from_remote),
         )
         .route(
-            "/api/remote-connections/:id/sftp/transfer/start",
+            "/api/remote-connections/{id}/sftp/transfer/start",
             axum::routing::post(start_sftp_transfer),
         )
         .route(
-            "/api/remote-connections/:id/sftp/transfer/:transfer_id",
+            "/api/remote-connections/{id}/sftp/transfer/{transfer_id}",
             get(get_sftp_transfer_status),
         )
         .route(
-            "/api/remote-connections/:id/sftp/transfer/:transfer_id/cancel",
+            "/api/remote-connections/{id}/sftp/transfer/{transfer_id}/cancel",
             axum::routing::post(cancel_sftp_transfer),
         )
         .route(
-            "/api/remote-connections/:id/sftp/mkdir",
+            "/api/remote-connections/{id}/sftp/mkdir",
             axum::routing::post(create_remote_directory),
         )
         .route(
-            "/api/remote-connections/:id/sftp/rename",
+            "/api/remote-connections/{id}/sftp/rename",
             axum::routing::post(rename_remote_entry),
         )
         .route(
-            "/api/remote-connections/:id/sftp/delete",
+            "/api/remote-connections/{id}/sftp/delete",
             axum::routing::post(delete_remote_entry),
         )
 }

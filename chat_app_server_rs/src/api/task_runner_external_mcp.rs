@@ -28,7 +28,7 @@ pub fn router() -> Router {
             get(list_external_mcp_configs).post(create_external_mcp_config),
         )
         .route(
-            "/api/task-runner/external-mcp-configs/:id",
+            "/api/task-runner/external-mcp-configs/{id}",
             get(get_external_mcp_config)
                 .patch(update_external_mcp_config)
                 .delete(delete_external_mcp_config),

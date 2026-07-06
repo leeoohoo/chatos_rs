@@ -89,18 +89,18 @@ pub fn router() -> Router {
     Router::new()
         .route("/api/agents", get(list_agents).post(create_agent))
         .route(
-            "/api/agents/:agent_id",
+            "/api/agents/{agent_id}",
             get(get_agent).patch(update_agent).delete(delete_agent),
         )
         .route(
-            "/api/agents/:agent_id/runtime-context",
+            "/api/agents/{agent_id}/runtime-context",
             get(get_agent_runtime_context),
         )
-        .route("/api/agents/:agent_id/sessions", get(list_agent_sessions))
+        .route("/api/agents/{agent_id}/sessions", get(list_agent_sessions))
         .route("/api/agents/ai-create", axum::routing::post(ai_create))
         .route("/api/skills", get(skills::list_skills))
         .route("/api/skills/plugins", get(skills::list_skill_plugins))
-        .route("/api/skills/:skill_id", get(skills::get_skill))
+        .route("/api/skills/{skill_id}", get(skills::get_skill))
         .route("/api/skills/plugins/detail", get(skills::get_skill_plugin))
         .route(
             "/api/skills/import-git",
@@ -114,15 +114,15 @@ pub fn router() -> Router {
         // moves to the chatos API surface.
         .route("/api/memory-agents", get(list_agents).post(create_agent))
         .route(
-            "/api/memory-agents/:agent_id",
+            "/api/memory-agents/{agent_id}",
             get(get_agent).patch(update_agent).delete(delete_agent),
         )
         .route(
-            "/api/memory-agents/:agent_id/runtime-context",
+            "/api/memory-agents/{agent_id}/runtime-context",
             get(get_agent_runtime_context),
         )
         .route(
-            "/api/memory-agents/:agent_id/sessions",
+            "/api/memory-agents/{agent_id}/sessions",
             get(list_agent_sessions),
         )
         .route(

@@ -41,13 +41,13 @@ pub fn router() -> Router {
             post(dispatch_terminal_command),
         )
         .route(
-            "/api/terminals/:id/interrupt",
+            "/api/terminals/{id}/interrupt",
             post(interrupt_terminal_command),
         )
         .route(
-            "/api/terminals/:id",
+            "/api/terminals/{id}",
             get(get_terminal).delete(delete_terminal),
         )
-        .route("/api/terminals/:id/history", get(list_terminal_logs))
-        .route("/api/terminals/:id/ws", get(terminal_ws))
+        .route("/api/terminals/{id}/history", get(list_terminal_logs))
+        .route("/api/terminals/{id}/ws", get(terminal_ws))
 }

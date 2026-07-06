@@ -51,7 +51,7 @@ pub fn router() -> Router {
         .route("/api/agent/tools", get(agent_tools))
         .route("/api/agent/status", get(agent_status))
         .route(
-            "/api/agent/conversation/:conversation_id/reset",
+            "/api/agent/conversation/{conversation_id}/reset",
             post(reset_conversation),
         )
 }

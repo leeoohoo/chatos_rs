@@ -34,11 +34,11 @@ pub fn build_router(state: AppState) -> Router {
             get(handlers::list_access_clients).post(handlers::create_access_client),
         )
         .route(
-            "/api/access-clients/:id",
+            "/api/access-clients/{id}",
             put(handlers::update_access_client).delete(handlers::delete_access_client),
         )
         .route(
-            "/api/access-clients/:id/rotate-key",
+            "/api/access-clients/{id}/rotate-key",
             post(handlers::rotate_access_client_key),
         )
         .route(
@@ -47,35 +47,35 @@ pub fn build_router(state: AppState) -> Router {
         )
         .route("/api/sandboxes", get(handlers::list_sandboxes))
         .route(
-            "/api/sandboxes/:sandbox_id",
+            "/api/sandboxes/{sandbox_id}",
             get(handlers::get_sandbox).delete(handlers::destroy_sandbox),
         )
         .route(
-            "/api/sandboxes/:sandbox_id/heartbeat",
+            "/api/sandboxes/{sandbox_id}/heartbeat",
             post(handlers::heartbeat_sandbox),
         )
         .route(
-            "/api/sandboxes/:sandbox_id/health",
+            "/api/sandboxes/{sandbox_id}/health",
             get(handlers::health_sandbox),
         )
         .route(
-            "/api/sandboxes/:sandbox_id/mcp/tools",
+            "/api/sandboxes/{sandbox_id}/mcp/tools",
             get(handlers::sandbox_mcp_tools),
         )
         .route(
-            "/api/sandboxes/:sandbox_id/mcp",
+            "/api/sandboxes/{sandbox_id}/mcp",
             post(handlers::sandbox_mcp_proxy),
         )
         .route(
-            "/api/sandboxes/:sandbox_id/mcp/call",
+            "/api/sandboxes/{sandbox_id}/mcp/call",
             post(handlers::sandbox_mcp_call),
         )
         .route(
-            "/api/sandboxes/:sandbox_id/release",
+            "/api/sandboxes/{sandbox_id}/release",
             post(handlers::release_sandbox),
         )
         .route(
-            "/api/sandboxes/:sandbox_id/events",
+            "/api/sandboxes/{sandbox_id}/events",
             get(handlers::list_sandbox_events),
         )
         .layer(middleware::from_fn_with_state(

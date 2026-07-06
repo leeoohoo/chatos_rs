@@ -42,27 +42,27 @@ pub fn router() -> Router {
     Router::new()
         .route("/api/contacts", get(list_contacts).post(create_contact))
         .route(
-            "/api/contacts/:contact_id",
+            "/api/contacts/{contact_id}",
             get(get_contact).delete(delete_contact),
         )
         .route(
-            "/api/contacts/:contact_id/task-runner",
+            "/api/contacts/{contact_id}/task-runner",
             patch(update_contact_task_runner),
         )
         .route(
-            "/api/contacts/:contact_id/project-memories",
+            "/api/contacts/{contact_id}/project-memories",
             get(list_contact_project_memories_by_contact),
         )
         .route(
-            "/api/contacts/:contact_id/projects",
+            "/api/contacts/{contact_id}/projects",
             get(list_contact_projects),
         )
         .route(
-            "/api/contacts/:contact_id/project-memories/:project_id",
+            "/api/contacts/{contact_id}/project-memories/{project_id}",
             get(list_contact_project_memories),
         )
         .route(
-            "/api/contacts/:contact_id/agent-recalls",
+            "/api/contacts/{contact_id}/agent-recalls",
             get(list_contact_agent_recalls),
         )
 }

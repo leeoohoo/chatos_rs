@@ -35,51 +35,51 @@ pub fn router() -> Router {
             get(list_sessions).post(create_session),
         )
         .route(
-            "/api/memory/v1/sessions/:session_id",
+            "/api/memory/v1/sessions/{session_id}",
             get(get_session)
                 .patch(update_session)
                 .delete(delete_session),
         )
         .route(
-            "/api/memory/v1/sessions/:session_id/sync",
+            "/api/memory/v1/sessions/{session_id}/sync",
             put(sync_session),
         )
         .route(
-            "/api/memory/v1/sessions/:session_id/messages",
+            "/api/memory/v1/sessions/{session_id}/messages",
             get(list_messages)
                 .post(create_message)
                 .delete(clear_session_messages),
         )
         .route(
-            "/api/memory/v1/sessions/:session_id/messages/batch",
+            "/api/memory/v1/sessions/{session_id}/messages/batch",
             post(batch_create_messages),
         )
         .route(
-            "/api/memory/v1/sessions/:session_id/messages/:message_id/sync",
+            "/api/memory/v1/sessions/{session_id}/messages/{message_id}/sync",
             put(sync_message),
         )
         .route(
-            "/api/memory/v1/messages/:message_id",
+            "/api/memory/v1/messages/{message_id}",
             get(get_message).delete(delete_message),
         )
         .route(
-            "/api/memory/v1/sessions/:session_id/summaries",
+            "/api/memory/v1/sessions/{session_id}/summaries",
             get(list_summaries),
         )
         .route(
-            "/api/memory/v1/sessions/:session_id/summaries/:summary_id",
+            "/api/memory/v1/sessions/{session_id}/summaries/{summary_id}",
             delete(delete_summary),
         )
         .route(
-            "/api/memory/v1/sessions/:session_id/turn-runtime-snapshots/:turn_id/sync",
+            "/api/memory/v1/sessions/{session_id}/turn-runtime-snapshots/{turn_id}/sync",
             put(sync_turn_runtime_snapshot),
         )
         .route(
-            "/api/memory/v1/sessions/:session_id/turn-runtime-snapshots/latest",
+            "/api/memory/v1/sessions/{session_id}/turn-runtime-snapshots/latest",
             get(get_latest_turn_runtime_snapshot),
         )
         .route(
-            "/api/memory/v1/sessions/:session_id/turn-runtime-snapshots/by-turn/:turn_id",
+            "/api/memory/v1/sessions/{session_id}/turn-runtime-snapshots/by-turn/{turn_id}",
             get(get_turn_runtime_snapshot_by_turn),
         )
         .route("/api/memory/v1/context/compose", post(compose_context))

@@ -27,35 +27,35 @@ use self::graph::normalize_message_task_graph_payload_edges_with_tasks;
 pub fn router() -> Router {
     Router::new()
         .route(
-            "/api/messages/:id/task-runner/tasks",
+            "/api/messages/{id}/task-runner/tasks",
             get(list_message_task_runner_tasks),
         )
         .route(
-            "/api/messages/:id/task-runner/graph",
+            "/api/messages/{id}/task-runner/graph",
             get(get_message_task_runner_graph),
         )
         .route(
-            "/api/messages/:message_id/task-runner/tasks/:task_id",
+            "/api/messages/{message_id}/task-runner/tasks/{task_id}",
             get(get_message_task_runner_task),
         )
         .route(
-            "/api/messages/:message_id/task-runner/runs/:run_id",
+            "/api/messages/{message_id}/task-runner/runs/{run_id}",
             get(get_message_task_runner_run),
         )
         .route(
-            "/api/messages/:message_id/task-runner/runs/:run_id/output/changes",
+            "/api/messages/{message_id}/task-runner/runs/{run_id}/output/changes",
             get(get_message_task_runner_run_output_changes),
         )
         .route(
-            "/api/messages/:message_id/task-runner/runs/:run_id/output/diff",
+            "/api/messages/{message_id}/task-runner/runs/{run_id}/output/diff",
             get(get_message_task_runner_run_output_diff),
         )
         .route(
-            "/api/messages/:message_id/task-runner/graph/runs/:run_id",
+            "/api/messages/{message_id}/task-runner/graph/runs/{run_id}",
             get(get_message_task_runner_graph_run),
         )
         .route(
-            "/api/conversations/:conversation_id/task-runner/active-message-tasks",
+            "/api/conversations/{conversation_id}/task-runner/active-message-tasks",
             post(get_conversation_task_runner_active_message_tasks),
         )
 }
