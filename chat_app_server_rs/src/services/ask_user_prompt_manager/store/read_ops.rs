@@ -41,7 +41,7 @@ pub async fn get_ask_user_prompt_record(
                 let query = format!(
                     "SELECT {ASK_USER_PROMPT_SELECT_COLUMNS} FROM ask_user_prompt_requests WHERE id = ? LIMIT 1"
                 );
-                let row = sqlx::query_as::<_, AskUserPromptRow>(query.as_str())
+                let row = sqlx::query_as::<_, AskUserPromptRow>(sqlx::AssertSqlSafe(query))
                     .bind(prompt_id)
                     .fetch_optional(pool)
                     .await

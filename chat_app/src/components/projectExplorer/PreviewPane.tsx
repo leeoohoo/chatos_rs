@@ -44,6 +44,7 @@ const copyTextToClipboard = async (value: string): Promise<void> => {
 };
 
 export const ProjectPreviewPane: React.FC<ProjectPreviewPaneProps> = ({
+  projectRootPath = '',
   selectedFile,
   selectedPath,
   selectedEntry,
@@ -156,6 +157,7 @@ export const ProjectPreviewPane: React.FC<ProjectPreviewPaneProps> = ({
   return (
     <div className="flex flex-1 flex-col overflow-hidden">
       <ProjectPreviewHeader
+        projectRootPath={projectRootPath}
         selectedFile={selectedFile}
         selectedPath={selectedPath}
         canCopyCurrentContent={canCopyCurrentContent}

@@ -96,19 +96,26 @@ impl AppStore {
         Ok(())
     }
 
-    fn decrypt_optional_secret_lossy(value: Option<String>) -> Option<String> {
-        let fallback = value.clone();
-        decrypt_optional_secret(value).unwrap_or(fallback)
+    fn decrypt_model_secret(
+        value: Option<String>,
+        record_type: &str,
+        id: &str,
+    ) -> Result<Option<String>, String> {
+        decrypt_optional_secret(value)
+            .map_err(|err| format!("decrypt {record_type} api_key failed for {id}: {err}"))
     }
 
-    fn decrypt_user_model_config(mut config: UserModelConfigRecord) -> UserModelConfigRecord {
+    fn decrypt_user_model_config(
+        mut config: UserModelConfigRecord,
+    ) -> Result<UserModelConfigRecord, String> {
         config.has_api_key = config
             .api_key
             .as_deref()
             .map(str::trim)
             .is_some_and(|value| !value.is_empty());
-        config.api_key = Self::decrypt_optional_secret_lossy(config.api_key);
-        config
+        config.api_key =
+            Self::decrypt_model_secret(config.api_key, "user_model_config", config.id.as_str())?;
+        Ok(config)
     }
 
     fn encrypt_user_model_config(
@@ -125,14 +132,18 @@ impl AppStore {
 
     fn decrypt_user_model_provider(
         mut provider: UserModelProviderRecord,
-    ) -> UserModelProviderRecord {
+    ) -> Result<UserModelProviderRecord, String> {
         provider.has_api_key = provider
             .api_key
             .as_deref()
             .map(str::trim)
             .is_some_and(|value| !value.is_empty());
-        provider.api_key = Self::decrypt_optional_secret_lossy(provider.api_key);
-        provider
+        provider.api_key = Self::decrypt_model_secret(
+            provider.api_key,
+            "user_model_provider",
+            provider.id.as_str(),
+        )?;
+        Ok(provider)
     }
 
     fn encrypt_user_model_provider(
@@ -467,10 +478,9 @@ impl AppStore {
             .try_collect()
             .await
             .map_err(|err| err.to_string())?;
-        Ok(rows
-            .into_iter()
+        rows.into_iter()
             .map(Self::decrypt_user_model_config)
-            .collect())
+            .collect()
     }
 
     pub async fn find_user_model_config_by_id(
@@ -482,7 +492,7 @@ impl AppStore {
             .find_one(doc! { "id": id }, None)
             .await
             .map_err(|err| err.to_string())?;
-        Ok(row.map(Self::decrypt_user_model_config))
+        row.map(Self::decrypt_user_model_config).transpose()
     }
 
     pub async fn save_user_model_config(
@@ -498,7 +508,7 @@ impl AppStore {
             )
             .await
             .map_err(|err| err.to_string())?;
-        Ok(Self::decrypt_user_model_config(stored))
+        Self::decrypt_user_model_config(stored)
     }
 
     pub async fn delete_user_model_config(&self, id: &str) -> Result<bool, String> {
@@ -537,10 +547,9 @@ impl AppStore {
             .try_collect()
             .await
             .map_err(|err| err.to_string())?;
-        Ok(rows
-            .into_iter()
+        rows.into_iter()
             .map(Self::decrypt_user_model_provider)
-            .collect())
+            .collect()
     }
 
     pub async fn find_user_model_provider_by_id(
@@ -552,7 +561,7 @@ impl AppStore {
             .find_one(doc! { "id": id }, None)
             .await
             .map_err(|err| err.to_string())?;
-        Ok(row.map(Self::decrypt_user_model_provider))
+        row.map(Self::decrypt_user_model_provider).transpose()
     }
 
     pub async fn save_user_model_provider(
@@ -568,7 +577,7 @@ impl AppStore {
             )
             .await
             .map_err(|err| err.to_string())?;
-        Ok(Self::decrypt_user_model_provider(stored))
+        Self::decrypt_user_model_provider(stored)
     }
 
     pub async fn delete_user_model_provider(&self, id: &str) -> Result<bool, String> {

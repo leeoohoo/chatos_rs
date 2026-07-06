@@ -10,7 +10,7 @@ mod statements;
 
 pub(super) async fn create_tables_sqlite(pool: &SqlitePool) -> Result<(), String> {
     for sql in statements::CREATE_TABLES {
-        sqlx::query(sql)
+        sqlx::query(*sql)
             .execute(pool)
             .await
             .map_err(|e| format!("create table failed: {e}"))?;
@@ -236,7 +236,7 @@ pub(super) async fn create_tables_sqlite(pool: &SqlitePool) -> Result<(), String
     .map_err(|e| format!("create project contact unique index failed: {e}"))?;
 
     for sql in statements::INDEXES {
-        let _ = sqlx::query(sql).execute(pool).await;
+        let _ = sqlx::query(*sql).execute(pool).await;
     }
 
     Ok(())
@@ -465,7 +465,7 @@ async fn ensure_column(
     column: &str,
     ddl: &str,
 ) -> Result<(), String> {
-    let rows = sqlx::query(&format!("PRAGMA table_info({})", table))
+    let rows = sqlx::query(sqlx::AssertSqlSafe(format!("PRAGMA table_info({})", table)))
         .fetch_all(pool)
         .await
         .map_err(|e| e.to_string())?;
@@ -479,7 +479,7 @@ async fn ensure_column(
     }
     if !exists {
         let sql = format!("ALTER TABLE {} ADD COLUMN {} {}", table, column, ddl);
-        sqlx::query(&sql)
+        sqlx::query(sqlx::AssertSqlSafe(sql))
             .execute(pool)
             .await
             .map_err(|e| e.to_string())?;
@@ -493,7 +493,7 @@ async fn rename_column_if_needed(
     from_column: &str,
     to_column: &str,
 ) -> Result<(), String> {
-    let rows = sqlx::query(&format!("PRAGMA table_info({})", table))
+    let rows = sqlx::query(sqlx::AssertSqlSafe(format!("PRAGMA table_info({})", table)))
         .fetch_all(pool)
         .await
         .map_err(|e| e.to_string())?;
@@ -515,7 +515,7 @@ async fn rename_column_if_needed(
             "ALTER TABLE {} RENAME COLUMN {} TO {}",
             table, from_column, to_column
         );
-        sqlx::query(&sql)
+        sqlx::query(sqlx::AssertSqlSafe(sql))
             .execute(pool)
             .await
             .map_err(|e| e.to_string())?;

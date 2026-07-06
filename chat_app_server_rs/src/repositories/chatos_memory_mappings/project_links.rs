@@ -411,9 +411,10 @@ pub async fn list_project_agent_links_by_contact(
                     sql.push_str(" AND status = ?");
                 }
                 sql.push_str(" ORDER BY last_bound_at DESC, updated_at DESC LIMIT ? OFFSET ?");
-                let mut query = sqlx::query_as::<_, ChatosProjectAgentLinkRow>(&sql)
-                    .bind(&user_id)
-                    .bind(&contact_id);
+                let mut query =
+                    sqlx::query_as::<_, ChatosProjectAgentLinkRow>(sqlx::AssertSqlSafe(sql))
+                        .bind(&user_id)
+                        .bind(&contact_id);
                 if let Some(status) = status.as_deref() {
                     query = query.bind(status);
                 }
@@ -478,9 +479,10 @@ pub async fn list_project_agent_links_by_project(
                     sql.push_str(" AND status = ?");
                 }
                 sql.push_str(" ORDER BY last_bound_at DESC, updated_at DESC LIMIT ? OFFSET ?");
-                let mut query = sqlx::query_as::<_, ChatosProjectAgentLinkRow>(&sql)
-                    .bind(&user_id)
-                    .bind(&project_id);
+                let mut query =
+                    sqlx::query_as::<_, ChatosProjectAgentLinkRow>(sqlx::AssertSqlSafe(sql))
+                        .bind(&user_id)
+                        .bind(&project_id);
                 if let Some(status) = status.as_deref() {
                     query = query.bind(status);
                 }

@@ -66,7 +66,6 @@ impl AuthResolveError {
     }
 }
 
-#[axum::async_trait]
 impl<S> FromRequestParts<S> for AuthUser
 where
     S: Send + Sync,

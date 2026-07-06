@@ -4,6 +4,7 @@
 import { useCallback, useMemo } from 'react';
 
 import { useI18n } from '../../i18n/I18nProvider';
+import { getUserVisiblePath } from '../../lib/domain/filesystem';
 import type { AiModelConfig, Project } from '../../types';
 
 interface UseInputAreaContextModelOptions {
@@ -90,7 +91,7 @@ export const useInputAreaContextModel = ({
       return t('inputArea.workspace.empty');
     }
 
-    const normalized = normalizePath(normalizedWorkspaceRoot);
+    const normalized = getUserVisiblePath(normalizePath(normalizedWorkspaceRoot));
     const segments = normalized.split('/').filter((segment) => segment.length > 0);
     if (segments.length === 0) {
       return normalized;

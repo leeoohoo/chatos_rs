@@ -114,6 +114,7 @@ export const ProjectExplorerFilesWorkspace: React.FC<ProjectExplorerFilesWorkspa
         contextMenu={contextMenu}
         contextMenuStyle={contextMenuStyle}
         isContextRootEntry={isContextRootEntry}
+        projectRootPath={treePaneProps.project.rootPath}
         onCreateDirectory={(path) => {
           runMenuAction(() => onCreateDirectory(path));
         }}

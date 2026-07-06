@@ -129,5 +129,5 @@ async fn startup_error_shutdown_flushes_error_message_before_exit() {
     let messages = done_rx
         .await
         .expect("forward task should flush queued messages");
-    assert_eq!(messages, vec![Message::Text("startup failed".to_string())]);
+    assert_eq!(messages, vec![Message::text("startup failed")]);
 }

@@ -12,12 +12,16 @@ import { App } from './App';
 import './styles.css';
 
 const queryClient = new QueryClient();
+const routerBasename =
+  import.meta.env.BASE_URL && import.meta.env.BASE_URL !== '/'
+    ? import.meta.env.BASE_URL.replace(/\/+$/, '')
+    : undefined;
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <ConfigProvider locale={zhCN}>
       <QueryClientProvider client={queryClient}>
-        <BrowserRouter>
+        <BrowserRouter basename={routerBasename}>
           <App />
         </BrowserRouter>
       </QueryClientProvider>

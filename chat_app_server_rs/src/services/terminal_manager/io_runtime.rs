@@ -81,13 +81,29 @@ pub(super) fn spawn_shell(
 ) -> Result<Box<dyn portable_pty::Child + Send + Sync>, String> {
     let shell = select_shell();
     let isolation = process_isolation::resolve_for_user(user_id)?;
-    let (command, args) =
-        process_isolation::terminal_helper_command(shell.as_str(), isolation.as_ref())?;
+    let terminal_home = if cfg!(windows) {
+        None
+    } else {
+        Some(terminal_home_for(cwd))
+    };
+    let fs_view_enabled = process_isolation::filesystem_view_enabled(isolation.as_ref())?;
+    let (command, args) = process_isolation::terminal_helper_command(
+        shell.as_str(),
+        isolation.as_ref(),
+        Some(cwd),
+        terminal_home.as_deref(),
+    )?;
     let mut cmd = CommandBuilder::new(command);
     cmd.args(args);
     cmd.env_clear();
+    for (key, value) in process_isolation::helper_env_vars() {
+        cmd.env(key, value);
+    }
     cmd.cwd(cwd);
-    cmd.env("PWD", cwd.to_string_lossy().to_string());
+    cmd.env(
+        "PWD",
+        process_isolation::child_cwd_for(isolation.as_ref(), cwd)?,
+    );
     cmd.env("TERM", "xterm-256color");
     cmd.env("COLORTERM", "truecolor");
 
@@ -108,61 +124,80 @@ pub(super) fn spawn_shell(
             }
         }
     } else {
-        let terminal_home = terminal_home_for(cwd);
+        let terminal_home = terminal_home
+            .as_ref()
+            .ok_or_else(|| "missing terminal home".to_string())?;
+        process_isolation::prepare_workspace_for_user(terminal_home, isolation.as_ref())?;
         process_isolation::prepare_workspace_for_user(cwd, isolation.as_ref())?;
-        let home = terminal_home.to_string_lossy().to_string();
-        let path = path_env_with_bundled_tools(Some(build_default_posix_path(home.as_str())))
-            .unwrap_or_else(|| {
-                build_default_posix_path(home.as_str())
-                    .to_string_lossy()
-                    .into_owned()
-            });
+        let home = process_isolation::child_home_for(isolation.as_ref(), terminal_home)?;
+        let base_path = build_default_posix_path(home.as_str());
+        let path = if fs_view_enabled {
+            base_path.to_string_lossy().into_owned()
+        } else {
+            path_env_with_bundled_tools(Some(base_path.clone()))
+                .unwrap_or_else(|| base_path.to_string_lossy().into_owned())
+        };
 
         cmd.env("HOME", home.as_str());
         cmd.env(
             "XDG_CACHE_HOME",
-            terminal_home.join(".cache").to_string_lossy().to_string(),
+            Path::new(home.as_str())
+                .join(".cache")
+                .to_string_lossy()
+                .to_string(),
         );
         cmd.env(
             "XDG_CONFIG_HOME",
-            terminal_home.join(".config").to_string_lossy().to_string(),
+            Path::new(home.as_str())
+                .join(".config")
+                .to_string_lossy()
+                .to_string(),
         );
         cmd.env(
             "XDG_DATA_HOME",
-            terminal_home
+            Path::new(home.as_str())
                 .join(".local/share")
                 .to_string_lossy()
                 .to_string(),
         );
         cmd.env(
             "npm_config_prefix",
-            terminal_home.join(".local").to_string_lossy().to_string(),
+            Path::new(home.as_str())
+                .join(".local")
+                .to_string_lossy()
+                .to_string(),
         );
         cmd.env(
             "PIP_CACHE_DIR",
-            terminal_home
+            Path::new(home.as_str())
                 .join(".cache/pip")
                 .to_string_lossy()
                 .to_string(),
         );
         cmd.env(
             "CARGO_HOME",
-            terminal_home.join(".cargo").to_string_lossy().to_string(),
+            Path::new(home.as_str())
+                .join(".cargo")
+                .to_string_lossy()
+                .to_string(),
         );
         cmd.env(
             "RUSTUP_HOME",
-            terminal_home.join(".rustup").to_string_lossy().to_string(),
+            Path::new(home.as_str())
+                .join(".rustup")
+                .to_string_lossy()
+                .to_string(),
         );
         cmd.env(
             "GOMODCACHE",
-            terminal_home
+            Path::new(home.as_str())
                 .join(".cache/go/pkg/mod")
                 .to_string_lossy()
                 .to_string(),
         );
         cmd.env(
             "GOCACHE",
-            terminal_home
+            Path::new(home.as_str())
                 .join(".cache/go-build")
                 .to_string_lossy()
                 .to_string(),
@@ -192,9 +227,10 @@ pub(super) fn spawn_shell(
                 cmd.env("LC_CTYPE", lc_ctype.as_str());
             }
         }
+        let host_tmp = terminal_home.join("tmp");
         cmd.env(
             "TMPDIR",
-            terminal_home.join("tmp").to_string_lossy().to_string(),
+            process_isolation::child_tmp_for(isolation.as_ref(), host_tmp.as_path())?,
         );
     }
 

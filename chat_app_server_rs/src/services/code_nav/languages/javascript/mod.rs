@@ -15,7 +15,7 @@ use std::path::Path;
 #[derive(Default)]
 pub struct JavaScriptCodeNavProvider;
 
-#[axum::async_trait]
+#[async_trait::async_trait]
 impl CodeNavProvider for JavaScriptCodeNavProvider {
     fn provider_id(&self) -> &'static str {
         "javascript"

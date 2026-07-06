@@ -5,7 +5,28 @@ import axios, { AxiosHeaders } from 'axios';
 
 import { getAuthToken } from './userService';
 
+const resolveMountedBasePath = () => {
+  const viteBaseUrl = (import.meta.env.BASE_URL || '').trim();
+  if (viteBaseUrl && viteBaseUrl !== '/') {
+    return viteBaseUrl.replace(/\/+$/, '');
+  }
+
+  if (typeof window !== 'undefined') {
+    const { pathname } = window.location;
+    if (pathname === '/memory-engine' || pathname.startsWith('/memory-engine/')) {
+      return '/memory-engine';
+    }
+  }
+
+  return '';
+};
+
 const resolveDefaultBaseUrl = () => {
+  const mountedBasePath = resolveMountedBasePath();
+  if (mountedBasePath) {
+    return `${mountedBasePath}/api/memory-engine/v1`;
+  }
+
   const host =
     typeof window !== 'undefined' && window.location.hostname
       ? window.location.hostname
@@ -14,7 +35,7 @@ const resolveDefaultBaseUrl = () => {
   return `http://${host}:${port}/api/memory-engine/v1`;
 };
 
-const baseURL = import.meta.env.VITE_MEMORY_ENGINE_API_BASE ?? resolveDefaultBaseUrl();
+const baseURL = (import.meta.env.VITE_MEMORY_ENGINE_API_BASE || '').trim() || resolveDefaultBaseUrl();
 const operatorToken = import.meta.env.VITE_MEMORY_ENGINE_OPERATOR_TOKEN;
 
 export const client = axios.create({

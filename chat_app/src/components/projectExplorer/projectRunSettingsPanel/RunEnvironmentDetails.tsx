@@ -4,6 +4,7 @@
 import React from 'react';
 
 import type { TranslateFn } from '../../../i18n/I18nProvider';
+import { getUserVisiblePath } from '../../../lib/domain/filesystem';
 import type {
   ProjectRunEnvironment,
   ProjectRunTarget,
@@ -27,6 +28,7 @@ interface ProjectRunConfigFile {
 }
 
 interface RunEnvironmentDetailsProps {
+  projectRootPath?: string | null;
   availableToolchainKinds: string[];
   commandPreview: string;
   customToolchainDrafts: Record<string, string>;
@@ -53,6 +55,7 @@ interface RunEnvironmentDetailsProps {
 }
 
 export const RunEnvironmentDetails: React.FC<RunEnvironmentDetailsProps> = ({
+  projectRootPath,
   availableToolchainKinds,
   commandPreview,
   customToolchainDrafts,
@@ -122,7 +125,7 @@ export const RunEnvironmentDetails: React.FC<RunEnvironmentDetailsProps> = ({
                   onChange={(event) => onSelectToolchain(kind, event.target.value)}
                   disabled={options.length === 0 || starting || stopping || restarting || deleting || runEnvironmentLoading}
                   className="h-9 w-full rounded border border-border bg-background px-2 text-sm text-foreground disabled:cursor-not-allowed disabled:opacity-50"
-                  title={selectedOption?.path || kind}
+                  title={selectedOption?.path ? getUserVisiblePath(selectedOption.path, projectRootPath) : kind}
                 >
                   {options.length === 0 ? (
                     <option value="">{t('runSettings.notFoundToolchain', { name: formatToolchainKind(kind) })}</option>
@@ -135,8 +138,13 @@ export const RunEnvironmentDetails: React.FC<RunEnvironmentDetailsProps> = ({
                   )}
                 </select>
                 <div className="mt-2 space-y-2">
-                  <div className="truncate text-[11px] text-muted-foreground" title={selectedOption?.path || ''}>
-                    {selectedOption?.path || (isMissing ? t('runSettings.missingToolchainPath', { name: formatToolchainKind(kind) }) : '')}
+                  <div
+                    className="truncate text-[11px] text-muted-foreground"
+                    title={selectedOption?.path ? getUserVisiblePath(selectedOption.path, projectRootPath) : ''}
+                  >
+                    {selectedOption?.path
+                      ? getUserVisiblePath(selectedOption.path, projectRootPath)
+                      : (isMissing ? t('runSettings.missingToolchainPath', { name: formatToolchainKind(kind) }) : '')}
                   </div>
                   {selectedOption && (
                     <div className="flex flex-wrap gap-2 text-[11px] text-muted-foreground">
@@ -201,7 +209,7 @@ export const RunEnvironmentDetails: React.FC<RunEnvironmentDetailsProps> = ({
                   </span>
                 </div>
                 <div className="mt-2 break-all font-mono text-[11px] text-muted-foreground">
-                  {file.path}
+                  {getUserVisiblePath(file.path, projectRootPath)}
                 </div>
                 {file.preview && (
                   <div className="mt-2 rounded border border-border/60 bg-background px-2 py-2 font-mono text-[11px] text-foreground">

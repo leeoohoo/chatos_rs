@@ -59,6 +59,9 @@ PROCESS_ISOLATION_GID_BASE="${PROCESS_ISOLATION_GID_BASE:-200000}"
 PROCESS_ISOLATION_GID_SPAN="${PROCESS_ISOLATION_GID_SPAN:-1000000000}"
 PROCESS_ISOLATION_CHOWN_WORKSPACE="${PROCESS_ISOLATION_CHOWN_WORKSPACE:-true}"
 PROCESS_ISOLATION_CHOWN_MAX_ENTRIES="${PROCESS_ISOLATION_CHOWN_MAX_ENTRIES:-200000}"
+PROCESS_ISOLATION_FS_ENABLED="${PROCESS_ISOLATION_FS_ENABLED:-true}"
+PROCESS_ISOLATION_FS_ROOT="${PROCESS_ISOLATION_FS_ROOT:-/tmp/chatos-process-isolation}"
+PROCESS_ISOLATION_FS_MOUNT_PROC="${PROCESS_ISOLATION_FS_MOUNT_PROC:-false}"
 
 SERVICE_FILE="/etc/systemd/system/${SERVICE_NAME}.service"
 DROPIN_DIR="/etc/systemd/system/${SERVICE_NAME}.service.d"
@@ -82,6 +85,9 @@ upsert_env "CHATOS_PROCESS_ISOLATION_GID_BASE" "$PROCESS_ISOLATION_GID_BASE" "$E
 upsert_env "CHATOS_PROCESS_ISOLATION_GID_SPAN" "$PROCESS_ISOLATION_GID_SPAN" "$ENV_FILE"
 upsert_env "CHATOS_PROCESS_ISOLATION_CHOWN_WORKSPACE" "$PROCESS_ISOLATION_CHOWN_WORKSPACE" "$ENV_FILE"
 upsert_env "CHATOS_PROCESS_ISOLATION_CHOWN_MAX_ENTRIES" "$PROCESS_ISOLATION_CHOWN_MAX_ENTRIES" "$ENV_FILE"
+upsert_env "CHATOS_PROCESS_ISOLATION_FS_ENABLED" "$PROCESS_ISOLATION_FS_ENABLED" "$ENV_FILE"
+upsert_env "CHATOS_PROCESS_ISOLATION_FS_ROOT" "$PROCESS_ISOLATION_FS_ROOT" "$ENV_FILE"
+upsert_env "CHATOS_PROCESS_ISOLATION_FS_MOUNT_PROC" "$PROCESS_ISOLATION_FS_MOUNT_PROC" "$ENV_FILE"
 
 if getent group "$SERVICE_GROUP" >/dev/null 2>&1; then
   chown root:"$SERVICE_GROUP" "$ENV_FILE"
@@ -90,15 +96,41 @@ else
 fi
 chmod 0640 "$ENV_FILE"
 
+if env_bool "$PROCESS_ISOLATION_FS_ENABLED"; then
+  if [[ "$PROCESS_ISOLATION_FS_ROOT" != /* ]]; then
+    echo "[ERROR] PROCESS_ISOLATION_FS_ROOT must be an absolute path"
+    exit 1
+  fi
+  case "$PROCESS_ISOLATION_FS_ROOT" in
+    /|/bin|/boot|/dev|/etc|/home|/lib|/lib64|/opt|/proc|/root|/run|/sbin|/sys|/tmp|/usr|/var)
+      echo "[ERROR] Refusing unsafe PROCESS_ISOLATION_FS_ROOT: $PROCESS_ISOLATION_FS_ROOT"
+      exit 1
+      ;;
+  esac
+  if ! id -u "$SERVICE_USER" >/dev/null 2>&1; then
+    echo "[ERROR] service user does not exist: $SERVICE_USER"
+    exit 1
+  fi
+  if ! getent group "$SERVICE_GROUP" >/dev/null 2>&1; then
+    echo "[ERROR] service group does not exist: $SERVICE_GROUP"
+    exit 1
+  fi
+  install -d -m 0700 -o "$SERVICE_USER" -g "$SERVICE_GROUP" "$PROCESS_ISOLATION_FS_ROOT"
+fi
+
 install -d -m 0755 "$DROPIN_DIR"
+CAPABILITIES="CAP_SETUID CAP_SETGID CAP_CHOWN CAP_FOWNER"
+if env_bool "$PROCESS_ISOLATION_FS_ENABLED"; then
+  CAPABILITIES="$CAPABILITIES CAP_SYS_ADMIN CAP_DAC_READ_SEARCH"
+fi
 case "$PRIVILEGE_MODE" in
   capabilities)
     cat > "$DROPIN_FILE" <<EOF
 [Service]
 User=${SERVICE_USER}
 Group=${SERVICE_GROUP}
-CapabilityBoundingSet=CAP_SETUID CAP_SETGID CAP_CHOWN
-AmbientCapabilities=CAP_SETUID CAP_SETGID CAP_CHOWN
+CapabilityBoundingSet=${CAPABILITIES}
+AmbientCapabilities=${CAPABILITIES}
 NoNewPrivileges=false
 EOF
     ;;
@@ -107,7 +139,7 @@ EOF
 [Service]
 User=root
 Group=root
-CapabilityBoundingSet=CAP_SETUID CAP_SETGID CAP_CHOWN
+CapabilityBoundingSet=${CAPABILITIES}
 AmbientCapabilities=
 NoNewPrivileges=false
 EOF
@@ -133,6 +165,7 @@ echo "- 服务: $SERVICE_NAME"
 echo "- 环境文件: $ENV_FILE"
 echo "- systemd drop-in: $DROPIN_FILE"
 echo "- 权限模式: $PRIVILEGE_MODE"
+echo "- FS view isolation: $PROCESS_ISOLATION_FS_ENABLED"
 echo
 echo "检查命令:"
 echo "  systemctl cat $SERVICE_NAME"

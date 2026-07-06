@@ -40,7 +40,7 @@ async fn handle_terminal_socket(id: String, mut socket: WebSocket) {
                 Ok(session) => Some(session),
                 Err(err) => {
                     let _ = socket
-                        .send(Message::Text(
+                        .send(Message::text(
                             serde_json::to_string(&WsOutput::Error { error: err })
                                 .unwrap_or_default(),
                         ))
@@ -50,7 +50,7 @@ async fn handle_terminal_socket(id: String, mut socket: WebSocket) {
             },
             Ok(None) => {
                 let _ = socket
-                    .send(Message::Text(
+                    .send(Message::text(
                         serde_json::to_string(&WsOutput::Error {
                             error: "终端不存在".to_string(),
                         })
@@ -61,7 +61,7 @@ async fn handle_terminal_socket(id: String, mut socket: WebSocket) {
             }
             Err(err) => {
                 let _ = socket
-                    .send(Message::Text(
+                    .send(Message::text(
                         serde_json::to_string(&WsOutput::Error { error: err }).unwrap_or_default(),
                     ))
                     .await;
@@ -78,7 +78,7 @@ async fn handle_terminal_socket(id: String, mut socket: WebSocket) {
     let snapshot = session.output_snapshot_tail_lines(WS_DEFAULT_SNAPSHOT_LINES);
     if !snapshot.is_empty() {
         if socket
-            .send(Message::Text(
+            .send(Message::text(
                 serde_json::to_string(&WsOutput::Snapshot { data: snapshot }).unwrap_or_default(),
             ))
             .await
@@ -89,7 +89,7 @@ async fn handle_terminal_socket(id: String, mut socket: WebSocket) {
     }
 
     if socket
-        .send(Message::Text(
+        .send(Message::text(
             serde_json::to_string(&WsOutput::State {
                 busy: session.is_busy(),
                 snapshot_paging: true,
@@ -155,7 +155,7 @@ async fn handle_terminal_socket(id: String, mut socket: WebSocket) {
                 let text = serde_json::to_string(&payload).unwrap_or_default();
                 if !ws_outbound::try_send_or_close(
                     &out_tx,
-                    Message::Text(text),
+                    Message::text(text),
                     TERMINAL_WS_CHANNEL,
                     &shutdown,
                 ) {
@@ -193,7 +193,7 @@ async fn handle_terminal_socket(id: String, mut socket: WebSocket) {
                         let snapshot = session.output_snapshot_tail_lines(normalized);
                         if !ws_outbound::try_send_or_close(
                             &out_tx,
-                            Message::Text(
+                            Message::text(
                                 serde_json::to_string(&WsOutput::Snapshot { data: snapshot })
                                     .unwrap_or_default(),
                             ),
@@ -206,7 +206,7 @@ async fn handle_terminal_socket(id: String, mut socket: WebSocket) {
                     Ok(WsInput::Ping) => {
                         if !ws_outbound::try_send_or_close(
                             &out_tx,
-                            Message::Text(
+                            Message::text(
                                 serde_json::to_string(&WsOutput::Pong {
                                     timestamp: crate::core::time::now_rfc3339(),
                                 })
@@ -241,7 +241,7 @@ async fn handle_terminal_socket(id: String, mut socket: WebSocket) {
             Some(Ok(Message::Ping(_))) => {
                 if !ws_outbound::try_send_or_close(
                     &out_tx,
-                    Message::Pong(vec![]),
+                    Message::Pong(Vec::new().into()),
                     TERMINAL_WS_CHANNEL,
                     &shutdown,
                 ) {

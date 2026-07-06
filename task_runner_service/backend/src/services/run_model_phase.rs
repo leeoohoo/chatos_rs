@@ -54,6 +54,7 @@ pub(in crate::services) struct PreparedModelExecution {
     mcp_builder: McpExecutorBuilder,
     tool_result_model_budget_limits: ToolResultModelBudgetLimits,
     sandbox_context: Option<crate::services::sandbox_runtime::SandboxRuntimeContext>,
+    effective_workspace_dir: String,
 }
 
 impl RunService {

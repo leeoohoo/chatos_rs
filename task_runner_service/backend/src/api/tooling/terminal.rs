@@ -47,7 +47,7 @@ pub(in crate::api) async fn list_terminal_processes(
         )
         .await
         .map_err(ApiError::bad_request)?;
-    Ok(Json(response))
+    Ok(Json(redact_workspace_paths(&state, response)?))
 }
 
 pub(in crate::api) async fn get_terminal_process_logs(
@@ -66,7 +66,7 @@ pub(in crate::api) async fn get_terminal_process_logs(
         )
         .await
         .map_err(ApiError::bad_request)?;
-    Ok(Json(response))
+    Ok(Json(redact_workspace_paths(&state, response)?))
 }
 
 pub(in crate::api) async fn kill_terminal_process(
@@ -79,7 +79,7 @@ pub(in crate::api) async fn kill_terminal_process(
         .kill_terminal_process(&id, input.user_id, input.project_id)
         .await
         .map_err(ApiError::bad_request)?;
-    Ok(Json(response))
+    Ok(Json(redact_workspace_paths(&state, response)?))
 }
 
 pub(in crate::api) async fn write_terminal_process(
@@ -98,5 +98,5 @@ pub(in crate::api) async fn write_terminal_process(
         )
         .await
         .map_err(ApiError::bad_request)?;
-    Ok(Json(response))
+    Ok(Json(redact_workspace_paths(&state, response)?))
 }

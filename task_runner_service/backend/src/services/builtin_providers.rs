@@ -151,7 +151,8 @@ mod tests {
             .and_then(Value::as_str)
             .expect("tool description");
 
-        assert!(description.contains(task_workspace.to_string_lossy().as_ref()));
+        assert!(description.contains("/workspace"));
+        assert!(!description.contains(task_workspace.to_string_lossy().as_ref()));
         assert!(!description.contains(default_workspace.to_string_lossy().as_ref()));
     }
 

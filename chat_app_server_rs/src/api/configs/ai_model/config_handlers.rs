@@ -248,10 +248,42 @@ pub(in crate::api::configs) async fn update_ai_model_config(
         Ok(item) => item,
         Err(err) => return map_ai_model_config_access_error(err),
     };
+    let merged_req = AiModelConfigRequest {
+        id: Some(existing.id.clone()),
+        name: req.name.or_else(|| Some(existing.name.clone())),
+        provider: req.provider.or_else(|| Some(existing.provider.clone())),
+        model: req.model.or_else(|| Some(existing.model.clone())),
+        thinking_level: if req.thinking_level.is_some() {
+            req.thinking_level
+        } else {
+            existing.thinking_level.clone()
+        },
+        task_usage_scenario: if req.task_usage_scenario.is_some() {
+            req.task_usage_scenario
+        } else {
+            existing.task_usage_scenario.clone()
+        },
+        task_thinking_level: if req.task_thinking_level.is_some() {
+            req.task_thinking_level
+        } else {
+            existing.task_thinking_level.clone()
+        },
+        api_key: req.api_key,
+        clear_api_key: req.clear_api_key,
+        base_url: if req.base_url.is_some() {
+            req.base_url
+        } else {
+            existing.base_url.clone()
+        },
+        enabled: req.enabled.or(Some(existing.enabled)),
+        supports_images: req.supports_images.or(Some(existing.supports_images)),
+        supports_reasoning: req.supports_reasoning.or(Some(existing.supports_reasoning)),
+        supports_responses: req.supports_responses.or(Some(existing.supports_responses)),
+    };
     let config = match build_model_config(
         auth.user_id.clone(),
         existing.id.clone(),
-        req,
+        merged_req,
         existing.api_key.clone(),
         false,
     ) {

@@ -9,6 +9,7 @@ use crate::models::{
     TaskMemoryRecordsOptions,
 };
 
+use super::support::ensure_task_startable_from_mcp;
 use super::{
     decode_args, text_result, BatchTaskRunArgs, GetTaskMemoryContextArgs, ListRunsArgs,
     ListTaskMemoryRecordsArgs, McpRequestContext, RunIdArgs, StartTaskRunArgs, TaskIdArgs,
@@ -59,12 +60,14 @@ impl TaskRunnerMcpService {
             }
             "start_task_run" => {
                 let args: StartTaskRunArgs = decode_args(args)?;
-                self.require_task_for_user_in_context(
-                    args.task_id.as_str(),
-                    current_user,
-                    request_context,
-                )
-                .await?;
+                let task = self
+                    .require_task_for_user_in_context(
+                        args.task_id.as_str(),
+                        current_user,
+                        request_context,
+                    )
+                    .await?;
+                ensure_task_startable_from_mcp(&task, request_context)?;
                 let run = self
                     .run_service
                     .start_run_for_user(
@@ -80,12 +83,16 @@ impl TaskRunnerMcpService {
             }
             "batch_start_task_runs" => {
                 let args: BatchTaskRunArgs = decode_args(args)?;
-                self.require_tasks_for_user_in_context(
-                    args.task_ids.as_slice(),
-                    current_user,
-                    request_context,
-                )
-                .await?;
+                for task_id in &args.task_ids {
+                    let task = self
+                        .require_task_for_user_in_context(
+                            task_id.as_str(),
+                            current_user,
+                            request_context,
+                        )
+                        .await?;
+                    ensure_task_startable_from_mcp(&task, request_context)?;
+                }
                 let result = self
                     .run_service
                     .batch_start_runs_for_user(
@@ -180,12 +187,21 @@ impl TaskRunnerMcpService {
             }
             "retry_run" => {
                 let args: RunIdArgs = decode_args(args)?;
-                self.require_run_for_user_in_context(
-                    args.run_id.as_str(),
-                    current_user,
-                    request_context,
-                )
-                .await?;
+                let run = self
+                    .require_run_for_user_in_context(
+                        args.run_id.as_str(),
+                        current_user,
+                        request_context,
+                    )
+                    .await?;
+                let task = self
+                    .require_task_for_user_in_context(
+                        run.task_id.as_str(),
+                        current_user,
+                        request_context,
+                    )
+                    .await?;
+                ensure_task_startable_from_mcp(&task, request_context)?;
                 let run = self
                     .run_service
                     .retry_run_for_user(args.run_id.as_str(), current_user)

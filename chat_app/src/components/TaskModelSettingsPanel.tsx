@@ -3,9 +3,11 @@
 
 import React, { useEffect, useMemo, useState } from 'react';
 
+import { useApiClient } from '../lib/api/ApiClientContext';
 import { useChatStoreResolved } from '../lib/store/ChatStoreContext';
 import { useI18n } from '../i18n/I18nProvider';
 import { thinkingOptionsForProvider } from '../lib/modelThinkingOptions';
+import type { AiModelConfigUpdatePayload } from '../lib/api/client/types';
 import type { AiModelConfig } from '../types';
 import ManagerFormDialog from './ui/ManagerFormDialog';
 
@@ -92,7 +94,8 @@ const TaskModelRow = ({
 
 const TaskModelSettingsPanel: React.FC<Props> = ({ onClose }) => {
   const { t } = useI18n();
-  const { aiModelConfigs, loadAiModelConfigs, updateAiModelConfig } = useChatStoreResolved();
+  const apiClient = useApiClient();
+  const { aiModelConfigs, loadAiModelConfigs } = useChatStoreResolved();
   const [drafts, setDrafts] = useState<Record<string, Draft>>({});
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -123,17 +126,15 @@ const TaskModelSettingsPanel: React.FC<Props> = ({ onClose }) => {
   }, [loadAiModelConfigs, t]);
 
   useEffect(() => {
-    setDrafts((current) => {
-      const next: Record<string, Draft> = {};
-      concreteModels.forEach((model) => {
-        next[model.id] = current[model.id] || {
-          usage: model.task_usage_scenario || '',
-          thinking: model.task_thinking_level || '',
-          enabled: model.enabled,
-        };
-      });
-      return next;
+    const next: Record<string, Draft> = {};
+    concreteModels.forEach((model) => {
+      next[model.id] = {
+        usage: model.task_usage_scenario || '',
+        thinking: model.task_thinking_level || '',
+        enabled: model.enabled,
+      };
     });
+    setDrafts(next);
   }, [concreteModels]);
 
   const save = async () => {
@@ -147,19 +148,22 @@ const TaskModelSettingsPanel: React.FC<Props> = ({ onClose }) => {
         }
         const usage = draft.usage.trim();
         const thinking = draft.thinking.trim();
-        if ((model.task_usage_scenario || '') === usage
-          && (model.task_thinking_level || '') === thinking
-          && model.enabled === draft.enabled) {
+        const patch: AiModelConfigUpdatePayload = {};
+        if ((model.task_usage_scenario || '') !== usage) {
+          patch.task_usage_scenario = usage;
+        }
+        if ((model.task_thinking_level || '') !== thinking) {
+          patch.task_thinking_level = thinking;
+        }
+        if (model.enabled !== draft.enabled) {
+          patch.enabled = draft.enabled;
+        }
+        if (Object.keys(patch).length === 0) {
           continue;
         }
-        await updateAiModelConfig({
-          ...model,
-          enabled: draft.enabled,
-          task_usage_scenario: usage || null,
-          task_thinking_level: thinking || null,
-          updatedAt: new Date(),
-        });
+        await apiClient.updateAiModelConfig(model.id, patch);
       }
+      await loadAiModelConfigs({ force: true });
       onClose();
     } catch (err) {
       setError(err instanceof Error ? err.message : t('modelSettings.error.save'));

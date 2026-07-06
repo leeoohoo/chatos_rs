@@ -45,6 +45,27 @@ ensure_env_line() {
   printf '\n%s=%s\n' "$key" "$value" >> "$file"
 }
 
+upsert_env_line() {
+  local key="$1"
+  local value="$2"
+  local file="$3"
+  if grep -q "^${key}=" "$file"; then
+    sed -i "s|^${key}=.*|${key}=${value}|g" "$file"
+  else
+    printf '\n%s=%s\n' "$key" "$value" >> "$file"
+  fi
+}
+
+ensure_secret_env_line() {
+  local key="$1"
+  local file="$2"
+  local value
+  value="$(env_file_value "$key" "$file")"
+  if [[ -z "$value" ]]; then
+    upsert_env_line "$key" "$(generate_secret)" "$file"
+  fi
+}
+
 need_cmd install
 need_cmd rsync
 need_cmd sed
@@ -66,6 +87,16 @@ SERVICE_USER="${SERVICE_USER:-chatos}"
 SERVICE_GROUP="${SERVICE_GROUP:-chatos}"
 BACKEND_PORT="${BACKEND_PORT:-13001}"
 SERVER_NAME="${SERVER_NAME:-_}"
+USER_SERVICE_PORT="${USER_SERVICE_PORT:-39190}"
+USER_SERVICE_FRONTEND_PORT="${USER_SERVICE_FRONTEND_PORT:-39191}"
+MEMORY_ENGINE_PORT="${MEMORY_ENGINE_PORT:-7081}"
+MEMORY_ENGINE_FRONTEND_PORT="${MEMORY_ENGINE_FRONTEND_PORT:-4178}"
+PROJECT_SERVICE_PORT="${PROJECT_SERVICE_PORT:-39210}"
+PROJECT_SERVICE_FRONTEND_PORT="${PROJECT_SERVICE_FRONTEND_PORT:-39211}"
+TASK_RUNNER_PORT="${TASK_RUNNER_BACKEND_PORT:-${TASK_RUNNER_PORT:-39090}}"
+TASK_RUNNER_FRONTEND_PORT="${TASK_RUNNER_FRONTEND_PORT:-39091}"
+SANDBOX_MANAGER_PORT="${SANDBOX_MANAGER_PORT:-8095}"
+SANDBOX_MANAGER_FRONTEND_PORT="${SANDBOX_MANAGER_FRONTEND_PORT:-8096}"
 ENABLE_PROCESS_ISOLATION="${ENABLE_PROCESS_ISOLATION:-0}"
 PROCESS_ISOLATION_PRIVILEGE_MODE="${PROCESS_ISOLATION_PRIVILEGE_MODE:-capabilities}"
 
@@ -157,6 +188,7 @@ if [[ ! -f "$ENV_FILE" || "${FORCE_ENV_REWRITE:-0}" == "1" ]]; then
   chown root:"$SERVICE_GROUP" "$ENV_FILE"
 fi
 ensure_env_line "CHATOS_WORKSPACE_DIR" "$CHATOS_WORKSPACE_DIR" "$ENV_FILE"
+ensure_secret_env_line "MEMORY_ENGINE_OPERATOR_TOKEN" "$ENV_FILE"
 
 sed \
   -e "s|__SERVICE_USER__|$SERVICE_USER|g" \
@@ -186,6 +218,16 @@ fi
 sed \
   -e "s|__SERVER_NAME__|$SERVER_NAME|g" \
   -e "s|__BACKEND_PORT__|$BACKEND_PORT|g" \
+  -e "s|__USER_SERVICE_PORT__|$USER_SERVICE_PORT|g" \
+  -e "s|__USER_SERVICE_FRONTEND_PORT__|$USER_SERVICE_FRONTEND_PORT|g" \
+  -e "s|__MEMORY_ENGINE_PORT__|$MEMORY_ENGINE_PORT|g" \
+  -e "s|__MEMORY_ENGINE_FRONTEND_PORT__|$MEMORY_ENGINE_FRONTEND_PORT|g" \
+  -e "s|__PROJECT_SERVICE_PORT__|$PROJECT_SERVICE_PORT|g" \
+  -e "s|__PROJECT_SERVICE_FRONTEND_PORT__|$PROJECT_SERVICE_FRONTEND_PORT|g" \
+  -e "s|__TASK_RUNNER_PORT__|$TASK_RUNNER_PORT|g" \
+  -e "s|__TASK_RUNNER_FRONTEND_PORT__|$TASK_RUNNER_FRONTEND_PORT|g" \
+  -e "s|__SANDBOX_MANAGER_PORT__|$SANDBOX_MANAGER_PORT|g" \
+  -e "s|__SANDBOX_MANAGER_FRONTEND_PORT__|$SANDBOX_MANAGER_FRONTEND_PORT|g" \
   -e "s|__FRONTEND_ROOT__|$FRONTEND_DIR|g" \
   "$NGINX_TEMPLATE" > "$NGINX_SITE"
 

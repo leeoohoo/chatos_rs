@@ -309,7 +309,9 @@ pub async fn list_memory_projects(
                     sql.push_str(" AND is_virtual = 0");
                 }
                 sql.push_str(" ORDER BY updated_at DESC, created_at DESC LIMIT ? OFFSET ?");
-                let mut query = sqlx::query_as::<_, ChatosMemoryProjectRow>(&sql).bind(&user_id);
+                let mut query =
+                    sqlx::query_as::<_, ChatosMemoryProjectRow>(sqlx::AssertSqlSafe(sql))
+                        .bind(&user_id);
                 if let Some(status) = status.as_deref() {
                     query = query.bind(status);
                 }

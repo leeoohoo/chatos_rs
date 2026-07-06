@@ -10,11 +10,11 @@ use crate::models::{UpdateUserModelSettingsRequest, UserModelSettingsRecord};
 use crate::state::AppState;
 use crate::store::now_rfc3339;
 
+use super::super::{bad_request, forbidden, internal_error, ApiResult};
 use super::access::{ensure_owner_user_exists, resolve_target_user_id};
 use super::contracts::UserScopeQuery;
 use super::model_values::model_settings_public_value;
 use super::normalization::{normalize_optional_string, normalize_thinking_level_input};
-use super::super::{bad_request, forbidden, internal_error, ApiResult};
 
 pub(in crate::api) async fn get_model_settings(
     State(state): State<AppState>,

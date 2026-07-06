@@ -223,6 +223,7 @@ pub(in super::super) async fn append_gitignore_entry(
         );
     }
     let gitignore_path_text = gitignore_path.to_string_lossy().to_string();
+    let gitignore_display_path = policy.display_path(gitignore_path.as_path());
     suppress_logged_path(gitignore_path_text.as_str());
     note_workspace_path_changed(gitignore_path_text.as_str());
 
@@ -230,7 +231,8 @@ pub(in super::super) async fn append_gitignore_entry(
         StatusCode::OK,
         Json(json!({
             "success": true,
-            "path": gitignore_path_text,
+            "path": gitignore_display_path,
+            "display_path": gitignore_display_path,
             "pattern": pattern,
             "created": created,
             "appended": appended,
@@ -288,7 +290,8 @@ pub(in super::super) async fn open_path_externally(
         StatusCode::OK,
         Json(json!({
             "success": true,
-            "path": authorized.path.to_string_lossy().to_string(),
+            "path": policy.display_path(authorized.path.as_path()),
+            "display_path": policy.display_path(authorized.path.as_path()),
             "mode": mode,
         })),
     )
@@ -364,6 +367,7 @@ pub(in super::super) async fn discard_git_changes(
         );
     }
     let target_path = authorized.path.to_string_lossy().to_string();
+    let display_target_path = policy.display_path(authorized.path.as_path());
     suppress_logged_path(target_path.as_str());
     note_workspace_path_changed(target_path.as_str());
 
@@ -371,7 +375,8 @@ pub(in super::super) async fn discard_git_changes(
         StatusCode::OK,
         Json(json!({
             "success": result.success,
-            "path": target_path,
+            "path": display_target_path,
+            "display_path": display_target_path,
             "stdout": result.stdout,
             "stderr": result.stderr,
             "summary": result.summary,

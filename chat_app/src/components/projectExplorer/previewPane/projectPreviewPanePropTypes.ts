@@ -12,6 +12,7 @@ import type {
 import { ProjectPreviewPane } from '../PreviewPane';
 
 export interface UseProjectExplorerPreviewPanePropsParams {
+  projectRootPath?: string;
   selectedFile: FsReadResult | null;
   selectedPath: string | null;
   selectedEntry: FsEntry | null;

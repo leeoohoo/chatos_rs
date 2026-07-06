@@ -4,10 +4,12 @@
 import React from 'react';
 
 import { useI18n } from '../../../i18n/I18nProvider';
+import { getUserVisiblePath } from '../../../lib/domain/filesystem';
 import { formatFileSize } from '../../../lib/utils';
 import type { FsReadResult } from '../../../types';
 
 interface ProjectPreviewHeaderProps {
+  projectRootPath?: string;
   selectedFile: FsReadResult | null;
   selectedPath: string | null;
   canCopyCurrentContent?: boolean;
@@ -23,6 +25,7 @@ interface ProjectPreviewHeaderProps {
 }
 
 export const ProjectPreviewHeader: React.FC<ProjectPreviewHeaderProps> = ({
+  projectRootPath = '',
   selectedFile,
   selectedPath,
   canCopyCurrentContent = false,
@@ -42,6 +45,11 @@ export const ProjectPreviewHeader: React.FC<ProjectPreviewHeaderProps> = ({
     : copyStatus === 'error'
       ? t('projectExplorer.preview.header.copyFailed')
       : t('projectExplorer.preview.header.copy');
+  const visiblePath = selectedFile?.path
+    ? getUserVisiblePath(selectedFile.path, projectRootPath)
+    : selectedPath
+      ? getUserVisiblePath(selectedPath, projectRootPath)
+      : t('projectExplorer.preview.header.selectFile');
 
   return (
     <div className="border-b border-border bg-card px-4 py-3">
@@ -52,7 +60,7 @@ export const ProjectPreviewHeader: React.FC<ProjectPreviewHeaderProps> = ({
           </div>
           <div className="mt-1 flex items-center justify-between gap-4">
             <div className="min-w-0 truncate text-[11px] text-muted-foreground">
-              {selectedFile?.path || selectedPath || t('projectExplorer.preview.header.selectFile')}
+              {visiblePath}
             </div>
             {selectedFile && (
               <div className="whitespace-nowrap text-[11px] text-muted-foreground">

@@ -7,7 +7,7 @@ pub mod builtin_prompt;
 pub mod executor;
 pub mod naming;
 pub mod parallelism;
-mod process_isolation;
+pub mod process_isolation;
 pub mod registry;
 pub mod rpc;
 pub mod schema;

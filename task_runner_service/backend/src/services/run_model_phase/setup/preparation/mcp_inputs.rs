@@ -3,6 +3,8 @@
 
 use super::*;
 
+use crate::models::ExternalMcpConfigRecord;
+
 #[derive(Debug, Clone)]
 pub(super) struct LoadedExternalMcpServers {
     pub(super) http_servers: Vec<McpHttpServer>,
@@ -20,6 +22,7 @@ pub(super) struct ExternalMcpRuntimeSummary {
 pub(super) async fn load_external_mcp_servers(
     service: &RunService,
     task: &TaskRecord,
+    effective_workspace_dir: &str,
 ) -> Result<LoadedExternalMcpServers, String> {
     if !task.mcp_config.enabled || task.mcp_config.external_mcp_config_ids.is_empty() {
         return Ok(LoadedExternalMcpServers {
@@ -43,7 +46,11 @@ pub(super) async fn load_external_mcp_servers(
         }
         if let Some(server) = config.to_http_server() {
             http_servers.push(server);
-        } else if let Some(server) = config.to_stdio_server() {
+        } else if let Some(server) = task_stdio_server_for_config(
+            &config,
+            task.subject_id.as_str(),
+            effective_workspace_dir,
+        )? {
             stdio_servers.push(server);
         } else {
             return Err(format!("外部 MCP 配置无效: {config_id}"));
@@ -59,6 +66,35 @@ pub(super) async fn load_external_mcp_servers(
         stdio_servers,
         summaries,
     })
+}
+
+fn task_stdio_server_for_config(
+    config: &ExternalMcpConfigRecord,
+    task_subject_id: &str,
+    effective_workspace_dir: &str,
+) -> Result<Option<McpStdioServer>, String> {
+    let Some(server) = config.to_stdio_server() else {
+        return Ok(None);
+    };
+    let user_id = task_subject_id.trim();
+    if user_id.is_empty() {
+        return Err(format!(
+            "external MCP stdio config {} cannot run without a task subject user id",
+            config.id
+        ));
+    }
+    let workspace_dir = effective_workspace_dir.trim();
+    if workspace_dir.is_empty() {
+        return Err(format!(
+            "external MCP stdio config {} cannot run without an effective workspace",
+            config.id
+        ));
+    }
+    Ok(Some(
+        server
+            .with_user_id(user_id.to_string())
+            .with_cwd(workspace_dir.to_string()),
+    ))
 }
 
 pub(super) fn load_system_http_mcp_servers(
@@ -251,4 +287,68 @@ fn user_skill_prefixed_input_item(
             "text": text
         }]
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn external_stdio_config(cwd: Option<&str>) -> ExternalMcpConfigRecord {
+        ExternalMcpConfigRecord {
+            id: "external-stdio-1".to_string(),
+            name: "Local Tool".to_string(),
+            transport: "stdio".to_string(),
+            command: Some("node".to_string()),
+            args: vec!["server.js".to_string()],
+            url: None,
+            headers: Default::default(),
+            env: Default::default(),
+            cwd: cwd.map(ToOwned::to_owned),
+            enabled: true,
+            creator_user_id: Some("creator-user".to_string()),
+            creator_username: Some("creator".to_string()),
+            creator_display_name: Some("Creator".to_string()),
+            owner_user_id: Some("owner-user".to_string()),
+            owner_username: Some("owner".to_string()),
+            owner_display_name: Some("Owner".to_string()),
+            created_at: "2026-01-01T00:00:00Z".to_string(),
+            updated_at: "2026-01-01T00:00:00Z".to_string(),
+        }
+    }
+
+    #[test]
+    fn task_stdio_server_binds_task_user_and_effective_workspace() {
+        let config = external_stdio_config(Some("/opt/chatos/internal/workspace"));
+
+        let server =
+            task_stdio_server_for_config(&config, " user-123 ", "/srv/chatos/workspaces/user-123")
+                .expect("stdio server should be valid")
+                .expect("stdio server");
+
+        assert_eq!(server.user_id.as_deref(), Some("user-123"));
+        assert_eq!(
+            server.cwd.as_deref(),
+            Some("/srv/chatos/workspaces/user-123")
+        );
+    }
+
+    #[test]
+    fn task_stdio_server_rejects_missing_task_user() {
+        let config = external_stdio_config(None);
+
+        let err = task_stdio_server_for_config(&config, " ", "/srv/chatos/workspaces/user-123")
+            .expect_err("stdio server should require task user");
+
+        assert!(err.contains("task subject user id"));
+    }
+
+    #[test]
+    fn task_stdio_server_rejects_missing_workspace() {
+        let config = external_stdio_config(None);
+
+        let err = task_stdio_server_for_config(&config, "user-123", " ")
+            .expect_err("stdio server should require workspace");
+
+        assert!(err.contains("effective workspace"));
+    }
 }

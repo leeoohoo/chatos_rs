@@ -395,18 +395,13 @@ impl TerminalSession {
         true
     }
 
-    fn reset_shell_to_root(&self, escaped_cwd: &Path) {
+    fn reset_shell_to_root(&self, _escaped_cwd: &Path) {
         if self.root_reset_in_progress.swap(true, Ordering::Relaxed) {
             return;
         }
 
         self.emit_guard_output(
-            format!(
-                "Blocked: path escaped terminal root ({}). Resetting to {}",
-                escaped_cwd.display(),
-                self.root_cwd.display()
-            )
-            .as_str(),
+            "Blocked: terminal path left the workspace. Resetting to workspace root.",
         );
 
         if let Ok(mut line) = self.input_line.lock() {

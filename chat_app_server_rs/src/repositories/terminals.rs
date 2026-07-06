@@ -63,7 +63,7 @@ pub async fn list_terminals_by_kind(
                     query.push_str(" AND user_id = ?");
                 }
                 query.push_str(" ORDER BY created_at DESC");
-                let mut q = sqlx::query_as::<_, TerminalRow>(&query);
+                let mut q = sqlx::query_as::<_, TerminalRow>(sqlx::AssertSqlSafe(query));
                 q = q.bind(kind);
                 if let Some(uid) = user_id {
                     q = q.bind(uid);
@@ -134,7 +134,7 @@ pub async fn get_project_run_terminal_by_project_id(
                     query.push_str(" AND user_id = ?");
                 }
                 query.push_str(" ORDER BY last_active_at DESC LIMIT 1");
-                let mut q = sqlx::query_as::<_, TerminalRow>(&query)
+                let mut q = sqlx::query_as::<_, TerminalRow>(sqlx::AssertSqlSafe(query))
                     .bind(&project_id)
                     .bind(TERMINAL_KIND_PROJECT_RUN);
                 if let Some(uid) = user_id {
@@ -190,7 +190,7 @@ pub async fn list_project_run_terminals_by_project_id(
                     query.push_str(" AND user_id = ?");
                 }
                 query.push_str(" ORDER BY last_active_at DESC, created_at DESC");
-                let mut q = sqlx::query_as::<_, TerminalRow>(&query)
+                let mut q = sqlx::query_as::<_, TerminalRow>(sqlx::AssertSqlSafe(query))
                     .bind(&project_id)
                     .bind(TERMINAL_KIND_PROJECT_RUN);
                 if let Some(uid) = user_id {
@@ -294,7 +294,7 @@ pub async fn update_terminal_status(
                 fields.push("updated_at = ?".to_string());
                 fields.push("last_active_at = ?".to_string());
                 let query_sql = format!("UPDATE terminals SET {} WHERE id = ?", fields.join(", "));
-                let mut q = sqlx::query(&query_sql);
+                let mut q = sqlx::query(sqlx::AssertSqlSafe(query_sql));
                 for b in binds {
                     q = q.bind(b);
                 }

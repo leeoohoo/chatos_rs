@@ -102,7 +102,7 @@ pub async fn list_skills(
                 }
                 sql.push_str(" ORDER BY updated_at DESC LIMIT ? OFFSET ?");
 
-                let mut sql_query = sqlx::query_as::<_, MemorySkillRow>(&sql);
+                let mut sql_query = sqlx::query_as::<_, MemorySkillRow>(sqlx::AssertSqlSafe(sql));
                 for user_id in &user_ids {
                     sql_query = sql_query.bind(user_id);
                 }
@@ -167,7 +167,8 @@ pub async fn get_skill_by_id(
                 sql.push_str(&vec!["?"; user_ids.len()].join(","));
                 sql.push(')');
                 sql.push_str(" ORDER BY updated_at DESC LIMIT 1");
-                let mut query = sqlx::query_as::<_, MemorySkillRow>(&sql).bind(&skill_id);
+                let mut query =
+                    sqlx::query_as::<_, MemorySkillRow>(sqlx::AssertSqlSafe(sql)).bind(&skill_id);
                 for user_id in &user_ids {
                     query = query.bind(user_id);
                 }
@@ -222,7 +223,7 @@ pub async fn list_plugins_by_user_ids(
                 let mut sql = "SELECT * FROM memory_skill_plugins WHERE user_id IN (".to_string();
                 sql.push_str(&vec!["?"; user_ids.len()].join(","));
                 sql.push_str(") ORDER BY updated_at DESC LIMIT ? OFFSET ?");
-                let mut query = sqlx::query_as::<_, MemorySkillPluginRow>(&sql);
+                let mut query = sqlx::query_as::<_, MemorySkillPluginRow>(sqlx::AssertSqlSafe(sql));
                 for user_id in &user_ids {
                     query = query.bind(user_id);
                 }
@@ -280,7 +281,7 @@ pub async fn get_plugins_by_sources_for_user_ids(
                 sql.push_str(") AND source IN (");
                 sql.push_str(&vec!["?"; sources.len()].join(","));
                 sql.push(')');
-                let mut query = sqlx::query_as::<_, MemorySkillPluginRow>(&sql);
+                let mut query = sqlx::query_as::<_, MemorySkillPluginRow>(sqlx::AssertSqlSafe(sql));
                 for user_id in &user_ids {
                     query = query.bind(user_id);
                 }

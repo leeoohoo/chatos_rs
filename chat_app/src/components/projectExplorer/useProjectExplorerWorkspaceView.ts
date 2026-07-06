@@ -95,6 +95,7 @@ export const useProjectExplorerWorkspaceView = ({
   });
 
   const previewPaneProps = useProjectExplorerPreviewPaneProps({
+    projectRootPath: project.rootPath,
     selectedFile: preview.selectedFile,
     selectedPath: tree.selectedPath,
     selectedEntry: tree.selectedEntry,

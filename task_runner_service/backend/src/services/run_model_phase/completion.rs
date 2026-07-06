@@ -12,7 +12,22 @@ impl RunService {
         effective_workspace_dir: &str,
         sandbox_output: Option<SandboxOutputReport>,
     ) {
-        let report_json = report_json_with_sandbox_output(&report, sandbox_output.as_ref());
+        let path_redactor = crate::services::path_redaction::WorkspacePathRedactor::for_workspace(
+            self.config.default_workspace_dir.as_str(),
+            effective_workspace_dir,
+        );
+        let mut report = report;
+        report.content = report
+            .content
+            .map(|content| path_redactor.redact_text(content.as_str()));
+        report.error = report
+            .error
+            .map(|error| path_redactor.redact_text(error.as_str()));
+        let report_json =
+            report_json_with_sandbox_output(&report, sandbox_output.as_ref()).map(|mut value| {
+                path_redactor.redact_value(&mut value);
+                value
+            });
         let existing_task = self.store.get_task(&task.id).await.ok().flatten();
         let task_already_succeeded = existing_task
             .as_ref()

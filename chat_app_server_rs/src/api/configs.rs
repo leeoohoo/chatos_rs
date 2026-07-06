@@ -14,6 +14,7 @@ use uuid::Uuid;
 use crate::core::auth::AuthUser;
 use crate::core::mcp_config_access::{ensure_owned_mcp_config, map_mcp_config_access_error};
 use crate::core::user_scope::resolve_user_id;
+use crate::core::user_visible_path::display_path;
 use crate::models::mcp_config::McpConfig;
 use crate::repositories::mcp_configs as mcp_repo;
 use crate::services::builtin_mcp::{
@@ -164,6 +165,7 @@ async fn list_mcp_configs(
                 );
             }
         };
+        let display_cwd = cfg.cwd.as_ref().map(|cwd| display_path(cwd.as_str()));
         out.push(json!({
             "id": cfg.id,
             "name": cfg.name,
@@ -171,7 +173,8 @@ async fn list_mcp_configs(
             "type": cfg.r#type,
             "args": cfg.args,
             "env": cfg.env,
-            "cwd": cfg.cwd,
+            "cwd": display_cwd.clone(),
+            "display_cwd": display_cwd,
             "user_id": cfg.user_id,
             "enabled": cfg.enabled,
             "created_at": cfg.created_at,
@@ -469,7 +472,8 @@ fn mcp_config_value(cfg: &McpConfig) -> Value {
         "type": cfg.r#type.clone(),
         "args": cfg.args.clone(),
         "env": cfg.env.clone(),
-        "cwd": cfg.cwd.clone(),
+        "cwd": cfg.cwd.as_ref().map(|cwd| display_path(cwd.as_str())),
+        "display_cwd": cfg.cwd.as_ref().map(|cwd| display_path(cwd.as_str())),
         "user_id": cfg.user_id.clone(),
         "enabled": cfg.enabled,
         "created_at": cfg.created_at.clone(),

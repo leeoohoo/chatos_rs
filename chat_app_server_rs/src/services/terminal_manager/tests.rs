@@ -98,15 +98,25 @@ fn directory_guard_allows_descendants_and_blocks_escape() {
     assert!(path_is_within_root(current.as_path(), root.as_path()));
 
     assert!(validate_directory_change_command("cd ..", root.as_path(), &mut current).is_none());
-    assert_eq!(current, root);
+    assert_eq!(
+        normalize_path_for_compare(current.as_path()),
+        normalize_path_for_compare(root.as_path())
+    );
 
     let blocked_root_parent =
         validate_directory_change_command("cd ..", root.as_path(), &mut current);
-    assert!(blocked_root_parent.is_some());
+    let blocked_root_parent = blocked_root_parent.expect("root parent should be blocked");
+    assert!(!blocked_root_parent.contains(root.to_string_lossy().as_ref()));
+    assert_eq!(
+        blocked_root_parent,
+        "Blocked: cannot leave terminal workspace."
+    );
 
     let escape = format!("cd ..{}..", std::path::MAIN_SEPARATOR);
     let blocked = validate_directory_change_command(escape.as_str(), root.as_path(), &mut current);
-    assert!(blocked.is_some());
+    let blocked = blocked.expect("root escape should be blocked");
+    assert!(!blocked.contains(root.to_string_lossy().as_ref()));
+    assert_eq!(blocked, "Blocked: cannot leave terminal workspace.");
 
     let _ = std::fs::remove_dir_all(base);
 }
@@ -154,13 +164,15 @@ fn directory_guard_blocks_escape_when_cd_is_pasted_with_ansi_wrapper() {
 fn directory_guard_blocks_unresolvable_absolute_target() {
     let root = std::fs::canonicalize(".").unwrap();
     let mut current = root.clone();
-    let candidate = format!(
-        "/chatos-restricted-terminal-unresolvable-{}",
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    );
+    let unique = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let candidate = if cfg!(windows) {
+        format!(r"C:\chatos-restricted-terminal-unresolvable-{unique}")
+    } else {
+        format!("/chatos-restricted-terminal-unresolvable-{unique}")
+    };
 
     let command = format!("cd {candidate}");
     let blocked = validate_directory_change_command(command.as_str(), root.as_path(), &mut current);

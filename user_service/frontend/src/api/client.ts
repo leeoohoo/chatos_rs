@@ -25,7 +25,7 @@ import type {
 } from '../types';
 
 const RAW_API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || '').trim();
-const API_BASE_URL = normalizeApiBaseUrl(RAW_API_BASE_URL);
+const API_BASE_URL = normalizeApiBaseUrl(RAW_API_BASE_URL || resolveDefaultApiBaseUrl());
 const AUTH_TOKEN_STORAGE_KEY = 'user_service_auth_token';
 
 export function getAuthToken(): string | null {
@@ -61,6 +61,14 @@ function normalizeApiBaseUrl(value: string): string {
     return '';
   }
   return value.replace(/\/+$/, '');
+}
+
+function resolveDefaultApiBaseUrl(): string {
+  const baseUrl = (import.meta.env.BASE_URL || '').trim();
+  if (!baseUrl || baseUrl === '/') {
+    return '';
+  }
+  return baseUrl.replace(/\/+$/, '');
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {

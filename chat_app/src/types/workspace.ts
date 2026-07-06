@@ -5,6 +5,7 @@ export interface Project {
   id: string;
   name: string;
   rootPath: string;
+  displayRootPath?: string | null;
   gitUrl?: string | null;
   description?: string | null;
   userId?: string | null;
@@ -121,6 +122,7 @@ export interface Terminal {
   id: string;
   name: string;
   cwd: string;
+  displayCwd?: string | null;
   kind?: string | null;
   userId?: string | null;
   projectId?: string | null;
@@ -184,6 +186,7 @@ export interface ContactRecord {
 export interface FsEntry {
   name: string;
   path: string;
+  displayPath?: string | null;
   isDir: boolean;
   writable?: boolean | null;
   size?: number | null;

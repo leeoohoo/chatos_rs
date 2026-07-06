@@ -11,6 +11,7 @@ use crate::config::AppConfig;
 use crate::notepad_store::TaskRunnerNotepadStore;
 use crate::terminal_store::TaskRunnerTerminalControllerStore;
 
+use super::workspace_mcp::default_user_workspace_dir;
 use super::{normalized_optional, ToolingStateService};
 
 impl ToolingStateService {
@@ -134,9 +135,15 @@ impl ToolingStateService {
         user_id: Option<String>,
         project_id: Option<String>,
     ) -> TerminalControllerContext {
+        let normalized_user_id = normalized_optional(user_id);
+        let root = default_user_workspace_dir(
+            self.config.default_workspace_dir.as_str(),
+            normalized_user_id.as_deref(),
+        );
+        let _ = std::fs::create_dir_all(root.as_path());
         TerminalControllerContext {
-            root: PathBuf::from(&self.config.default_workspace_dir),
-            user_id: normalized_optional(user_id),
+            root,
+            user_id: normalized_user_id,
             project_id: normalized_optional(project_id),
             idle_timeout_ms: 5_000,
             max_wait_ms: 60_000,

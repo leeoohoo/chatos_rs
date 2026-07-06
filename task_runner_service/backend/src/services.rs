@@ -45,6 +45,7 @@ mod mcp_catalog_service;
 mod memory_options;
 mod model_catalog;
 mod model_config_service;
+pub(crate) mod path_redaction;
 mod prerequisite_context;
 mod process_log_text;
 mod project_management_api_client;

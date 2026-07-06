@@ -78,7 +78,7 @@ pub fn build_router(state: AppState) -> Router {
             "/api/sandboxes/:sandbox_id/events",
             get(handlers::list_sandbox_events),
         )
-        .route_layer(middleware::from_fn_with_state(
+        .layer(middleware::from_fn_with_state(
             state.clone(),
             auth::require_sandbox_auth,
         ));

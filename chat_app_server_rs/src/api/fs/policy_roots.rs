@@ -139,13 +139,26 @@ fn ensure_user_scoped_roots(auth: &AuthUser) -> Option<UserScopedRoots> {
     let user_root = base.join("users").join(user_component);
     let workspaces_root = user_root.join("workspaces");
     let public_root = user_root.join("public");
+    fs::create_dir_all(user_root.as_path()).ok()?;
     fs::create_dir_all(workspaces_root.as_path()).ok()?;
     fs::create_dir_all(public_root.as_path()).ok()?;
+    set_private_dir_permissions(user_root.as_path()).ok()?;
+    set_private_dir_permissions(workspaces_root.as_path()).ok()?;
+    set_private_dir_permissions(public_root.as_path()).ok()?;
     Some(UserScopedRoots {
         user_root,
         workspaces_root,
         public_root,
     })
+}
+
+fn set_private_dir_permissions(_path: &Path) -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(_path, fs::Permissions::from_mode(0o700))?;
+    }
+    Ok(())
 }
 
 fn path_is_within_user_scope(candidate: &Path, scope: &UserScopedRoots) -> bool {

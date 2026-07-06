@@ -84,7 +84,6 @@ impl AppConfig {
         let operator_token = env_text("MEMORY_ENGINE_OPERATOR_TOKEN");
         let user_service_base_url = env_text("MEMORY_ENGINE_USER_SERVICE_BASE_URL")
             .or_else(|| env_text("MEMORY_ENGINE_USER_SERVICE_API_BASE"))
-            .or_else(|| env_text("VITE_USER_SERVICE_API_BASE"))
             .or_else(|| env_text("CHATOS_USER_SERVICE_BASE_URL"))
             .or_else(|| env_text("USER_SERVICE_BASE_URL"))
             .unwrap_or_else(|| "http://127.0.0.1:39190".to_string());

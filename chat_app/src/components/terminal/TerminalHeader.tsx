@@ -3,6 +3,7 @@
 
 import React from 'react';
 
+import { getUserVisiblePath } from '../../lib/domain/filesystem';
 import { cn } from '../../lib/utils';
 import { useI18n } from '../../i18n/I18nProvider';
 
@@ -12,6 +13,7 @@ export type TerminalHistoryState = 'idle' | 'loading' | 'ready' | 'error';
 interface TerminalHeaderProps {
   terminalTitle: string;
   terminalCwd: string;
+  terminalDisplayCwd?: string | null;
   connectionState: TerminalConnectionState;
   terminalStatus: string;
   historyState: TerminalHistoryState;
@@ -24,6 +26,7 @@ interface TerminalHeaderProps {
 const TerminalHeader: React.FC<TerminalHeaderProps> = ({
   terminalTitle,
   terminalCwd,
+  terminalDisplayCwd,
   connectionState,
   terminalStatus,
   historyState,
@@ -47,12 +50,15 @@ const TerminalHeader: React.FC<TerminalHeaderProps> = ({
       : connectionState === 'error'
         ? t('terminal.connection.error')
         : t('terminal.connection.disconnected');
+  const visibleTerminalCwd = terminalDisplayCwd || getUserVisiblePath(terminalCwd);
 
   return (
     <div className="flex items-center justify-between border-b border-border px-4 py-2">
       <div className="min-w-0">
         <div className="text-sm font-medium text-foreground truncate">{terminalTitle}</div>
-        <div className="text-xs text-muted-foreground truncate">{terminalCwd}</div>
+        <div className="text-xs text-muted-foreground truncate" title={visibleTerminalCwd}>
+          {visibleTerminalCwd}
+        </div>
       </div>
       <div className="flex items-center gap-3 text-xs text-muted-foreground">
         <span className={cn(

@@ -68,7 +68,7 @@ struct CSharpTypeScope {
 #[derive(Default)]
 pub struct CSharpCodeNavProvider;
 
-#[axum::async_trait]
+#[async_trait::async_trait]
 impl CodeNavProvider for CSharpCodeNavProvider {
     fn provider_id(&self) -> &'static str {
         SPEC.provider_id

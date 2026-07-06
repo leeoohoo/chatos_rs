@@ -5,15 +5,18 @@ use axum::Json;
 use tracing::{info, warn};
 
 use crate::integrations::{sync_model_config_delete, sync_model_config_upsert};
-use crate::models::{UpdateUserModelProviderRequest, UserModelConfigRecord, UserModelProviderRecord};
+use crate::models::{
+    UpdateUserModelProviderRequest, UserModelConfigRecord, UserModelProviderRecord,
+};
 use crate::state::AppState;
 use crate::store::now_rfc3339;
 
+use super::super::{bad_request, internal_error};
 use super::normalization::{
-    model_config_id_for, normalize_optional_string, normalize_provider_input, normalized_base_url,
+    model_config_id_for, normalize_api_key_input, normalize_optional_string,
+    normalize_provider_input, normalized_base_url,
 };
 use super::provider_fetch::fetch_provider_model_names;
-use super::super::{bad_request, internal_error};
 
 pub(super) fn apply_model_provider_update(
     record: &mut UserModelProviderRecord,
@@ -31,7 +34,7 @@ pub(super) fn apply_model_provider_update(
     if input.clear_api_key.unwrap_or(false) {
         record.api_key = None;
     } else if let Some(api_key) = input.api_key {
-        record.api_key = normalize_optional_string(Some(api_key));
+        record.api_key = normalize_api_key_input(Some(api_key))?;
     }
     if let Some(base_url) = input.base_url {
         record.base_url = normalize_optional_string(Some(base_url));
@@ -49,6 +52,55 @@ pub(super) fn apply_model_provider_update(
         record.supports_responses = supports_responses;
     }
     Ok(())
+}
+
+pub(super) async fn sync_imported_models_from_provider_state(
+    state: &AppState,
+    provider_record: &UserModelProviderRecord,
+) -> Result<Vec<String>, (axum::http::StatusCode, Json<serde_json::Value>)> {
+    let owner_models = state
+        .store
+        .list_user_model_configs(Some(provider_record.owner_user_id.as_str()))
+        .await
+        .map_err(internal_error)?;
+    let mut sync_warnings = Vec::new();
+    let now = now_rfc3339();
+
+    for mut model in owner_models {
+        if model.provider.as_str() != provider_record.provider.as_str()
+            || normalized_base_url(model.base_url.as_deref())
+                != normalized_base_url(provider_record.base_url.as_deref())
+            || model.model.trim().is_empty()
+        {
+            continue;
+        }
+
+        let changed = model.api_key != provider_record.api_key
+            || model.enabled != provider_record.enabled
+            || model.supports_images != provider_record.supports_images
+            || model.supports_reasoning != provider_record.supports_reasoning
+            || model.supports_responses != provider_record.supports_responses;
+        if !changed {
+            continue;
+        }
+
+        model.api_key = provider_record.api_key.clone();
+        model.has_api_key = false;
+        model.enabled = provider_record.enabled;
+        model.supports_images = provider_record.supports_images;
+        model.supports_reasoning = provider_record.supports_reasoning;
+        model.supports_responses = provider_record.supports_responses;
+        model.updated_at = now.clone();
+
+        let saved = state
+            .store
+            .save_user_model_config(&model)
+            .await
+            .map_err(internal_error)?;
+        sync_warnings.extend(sync_model_config_upsert(state, &saved).await);
+    }
+
+    Ok(sync_warnings)
 }
 
 pub(super) async fn refresh_provider_models_from_record(

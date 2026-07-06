@@ -20,7 +20,7 @@ pub(super) async fn preview_mcp_prompt(
         .mcp_catalog_service
         .preview_prompt(input)
         .map_err(ApiError::bad_request)?;
-    Ok(Json(preview))
+    Ok(Json(redact_workspace_paths(&state, preview)?))
 }
 
 pub(super) async fn mcp_entrypoint(

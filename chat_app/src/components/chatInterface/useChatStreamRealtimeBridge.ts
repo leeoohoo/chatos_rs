@@ -9,6 +9,7 @@ import {
   useRealtimeTopics,
 } from '../../lib/realtime/RealtimeProvider';
 import { useConversationChatStreamRealtime } from '../../lib/realtime/useConversationChatStreamRealtime';
+import { formatAssistantFailureContent } from '../../lib/store/actions/sendMessage/errorParsing';
 import { normalizePersistedMessage } from '../../lib/store/actions/sendMessage/persistedTurnMessages';
 import { createDefaultSessionChatState } from '../../lib/store/actions/sendMessage/sessionState';
 import {
@@ -34,6 +35,106 @@ const readTurnId = (message: Message | null | undefined): string => {
     || taskRunnerRecord.sourceTurnId
   );
   return typeof value === 'string' ? value.trim() : '';
+};
+
+const readString = (value: unknown): string => (
+  typeof value === 'string' ? value.trim() : ''
+);
+
+const normalizeEventType = (
+  payload: Parameters<Parameters<typeof useConversationChatStreamRealtime>[0]['onEvent']>[0],
+  eventName?: string,
+): string => String(payload.raw?.type || payload.stream_type || eventName || '').trim().toLowerCase();
+
+const isCancelledEventType = (eventType: string): boolean => (
+  eventType === 'cancelled'
+  || eventType === 'canceled'
+  || eventType.endsWith('.cancelled')
+  || eventType.endsWith('.canceled')
+);
+
+const isFailedEventType = (eventType: string): boolean => (
+  eventType === 'error'
+  || eventType === 'failed'
+  || eventType.endsWith('.failed')
+  || eventType.endsWith('.error')
+);
+
+const isTerminalErrorEventType = (eventType: string): boolean => (
+  isFailedEventType(eventType) || isCancelledEventType(eventType)
+);
+
+const readRealtimeErrorMessage = (
+  payload: Parameters<Parameters<typeof useConversationChatStreamRealtime>[0]['onEvent']>[0],
+): string | null => {
+  const direct = readString(payload.raw?.message);
+  if (direct) {
+    return direct;
+  }
+  const data = payload.raw?.data;
+  if (data && typeof data === 'object' && !Array.isArray(data)) {
+    const record = data as Record<string, unknown>;
+    return readString(record.message) || readString(record.error) || null;
+  }
+  return null;
+};
+
+const sanitizeMessageIdPart = (value: string): string => (
+  value.replace(/[^A-Za-z0-9_-]/g, '_')
+);
+
+const markUserMessageTurnFailed = (
+  messages: Message[],
+  turnId: string,
+  status: 'failed' | 'cancelled',
+): Message[] => {
+  if (!turnId) {
+    return messages;
+  }
+  return messages.map((message) => {
+    if (message.role !== 'user' || readTurnId(message) !== turnId) {
+      return message;
+    }
+    const metadata = message.metadata || {};
+    const taskRunnerAsync = metadata.task_runner_async && typeof metadata.task_runner_async === 'object'
+      ? metadata.task_runner_async
+      : {};
+    return {
+      ...message,
+      metadata: {
+        ...metadata,
+        task_runner_async: {
+          ...taskRunnerAsync,
+          mode: 'contact_async',
+          overall_status: status,
+        },
+      },
+    };
+  });
+};
+
+const buildRealtimeFailureMessage = (
+  sessionId: string,
+  turnId: string,
+  message: string,
+): Message => {
+  const normalizedTurnId = turnId || `unknown_${Date.now()}`;
+  const readableError = message || 'Chat turn failed';
+  const content = formatAssistantFailureContent(readableError, '');
+  return {
+    id: `realtime_error_${sanitizeMessageIdPart(sessionId)}_${sanitizeMessageIdPart(normalizedTurnId)}`,
+    sessionId,
+    role: 'assistant',
+    content,
+    status: 'error',
+    createdAt: new Date(),
+    metadata: {
+      ...(turnId ? { conversation_turn_id: turnId } : {}),
+      contentSegments: [{ content, type: 'text' }],
+      currentSegmentIndex: 0,
+      requestError: readableError,
+    },
+  };
 };
 
 const mergeRealtimeMessage = (
@@ -141,7 +242,24 @@ const applyTaskRunnerRealtimeError = (
   state: ChatStoreDraft,
   sessionId: string,
   message: string | null,
+  turnId: string,
+  eventType: string,
 ) => {
+  const isCancelled = isCancelledEventType(eventType);
+  const terminalStatus = isCancelled ? 'cancelled' : 'failed';
+  const readableMessage = message || (isCancelled ? 'Chat turn cancelled' : 'Chat turn failed');
+  const failureMessage = buildRealtimeFailureMessage(sessionId, turnId, readableMessage);
+  if (state.currentSessionId === sessionId) {
+    state.messages = markUserMessageTurnFailed(state.messages || [], turnId, terminalStatus);
+    state.messages = upsertRealtimeMessage(state.messages || [], failureMessage);
+  }
+
+  const cachedEntry = state.sessionMessagesCache?.[sessionId];
+  if (cachedEntry && Array.isArray(cachedEntry.messages)) {
+    cachedEntry.messages = markUserMessageTurnFailed(cachedEntry.messages, turnId, terminalStatus);
+    cachedEntry.messages = upsertRealtimeMessage(cachedEntry.messages, failureMessage);
+  }
+
   const prev = state.sessionChatState?.[sessionId] || createDefaultSessionChatState();
   state.sessionChatState[sessionId] = {
     ...prev,
@@ -158,9 +276,7 @@ const applyTaskRunnerRealtimeError = (
     state.isLoading = false;
     state.isStreaming = false;
     state.streamingMessageId = null;
-    if (message) {
-      state.error = message;
-    }
+    state.error = readableMessage;
   }
 };
 
@@ -241,7 +357,7 @@ export const useChatStreamRealtimeBridge = () => {
 
   useConversationChatStreamRealtime({
     enabled,
-    onEvent: async (payload) => {
+    onEvent: async (payload, eventName) => {
       const {
         sessionId,
         persistedUserMessage,
@@ -250,6 +366,12 @@ export const useChatStreamRealtimeBridge = () => {
       if (!sessionId) {
         return;
       }
+
+      const eventType = normalizeEventType(payload, eventName);
+      const isTerminalError = isTerminalErrorEventType(eventType);
+      const turnId = readString(payload.conversation_turn_id)
+        || readTurnId(persistedUserMessage)
+        || readTurnId(persistedAssistantMessage);
 
       if (persistedUserMessage || persistedAssistantMessage) {
         const state = store.getState();
@@ -260,18 +382,28 @@ export const useChatStreamRealtimeBridge = () => {
             persistedUserMessage,
             persistedAssistantMessage,
           );
+          if (isTerminalError && !persistedAssistantMessage) {
+            applyTaskRunnerRealtimeError(
+              draft,
+              sessionId,
+              readRealtimeErrorMessage(payload),
+              turnId,
+              eventType,
+            );
+          }
         });
         void state.syncSessionMessagesInBackground(sessionId);
         return;
       }
 
-      const eventType = String(payload.raw?.type || payload.stream_type || '').trim().toLowerCase();
-      if (eventType === 'error' || eventType === 'cancelled') {
+      if (isTerminalError) {
         chatStoreSet((draft) => {
           applyTaskRunnerRealtimeError(
             draft,
             sessionId,
-            typeof payload.raw?.message === 'string' ? payload.raw.message : null,
+            readRealtimeErrorMessage(payload),
+            turnId,
+            eventType,
           );
         });
       }

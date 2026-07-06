@@ -38,7 +38,7 @@ pub async fn list_remote_connections(
                     user_id.is_some(),
                     true,
                 );
-                let mut q = sqlx::query_as::<_, RemoteConnectionRow>(&query);
+                let mut q = sqlx::query_as::<_, RemoteConnectionRow>(sqlx::AssertSqlSafe(query));
                 if let Some(uid) = user_id {
                     q = q.bind(uid);
                 }

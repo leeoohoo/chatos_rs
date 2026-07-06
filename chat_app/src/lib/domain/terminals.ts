@@ -23,6 +23,7 @@ export const normalizeTerminal = (raw: TerminalResponse | unknown): Terminal => 
     id: (readValue(record, 'id') ?? '') as Terminal['id'],
     name: (readValue(record, 'name') ?? '') as Terminal['name'],
     cwd: (readValue(record, 'cwd') ?? '') as Terminal['cwd'],
+    displayCwd: (readValue(record, 'display_cwd') ?? readValue(record, 'displayCwd') ?? null) as Terminal['displayCwd'],
     kind: (readValue(record, 'kind') ?? null) as Terminal['kind'],
     userId: (readValue(record, 'user_id') ?? readValue(record, 'userId') ?? null) as Terminal['userId'],
     projectId: (readValue(record, 'project_id') ?? readValue(record, 'projectId') ?? null) as Terminal['projectId'],

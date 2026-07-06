@@ -87,7 +87,7 @@ async fn handle_realtime_socket(user_id: String, socket: WebSocket) {
                         };
                         if !ws_outbound::try_send_or_close(
                             &outbound_tx,
-                            Message::Text(payload),
+                            Message::text(payload),
                             REALTIME_WS_CHANNEL,
                             &shutdown,
                         ) {
@@ -116,7 +116,7 @@ async fn handle_realtime_socket(user_id: String, socket: WebSocket) {
                     });
                     if !ws_outbound::try_send_or_close(
                         &outbound_tx,
-                        Message::Text(pong.to_string()),
+                        Message::text(pong.to_string()),
                         REALTIME_WS_CHANNEL,
                         &shutdown,
                     ) {
@@ -212,7 +212,7 @@ fn send_control_response(
     match payload {
         Ok(Ok(text)) => ws_outbound::try_send_or_close(
             outbound_tx,
-            Message::Text(text),
+            Message::text(text),
             REALTIME_WS_CHANNEL,
             shutdown,
         ),
@@ -225,7 +225,7 @@ fn send_control_response(
             if let Ok(text) = serde_json::to_string(&error) {
                 return ws_outbound::try_send_or_close(
                     outbound_tx,
-                    Message::Text(text),
+                    Message::text(text),
                     REALTIME_WS_CHANNEL,
                     shutdown,
                 );
@@ -241,7 +241,7 @@ fn send_control_response(
             if let Ok(text) = serde_json::to_string(&error) {
                 return ws_outbound::try_send_or_close(
                     outbound_tx,
-                    Message::Text(text),
+                    Message::text(text),
                     REALTIME_WS_CHANNEL,
                     shutdown,
                 );

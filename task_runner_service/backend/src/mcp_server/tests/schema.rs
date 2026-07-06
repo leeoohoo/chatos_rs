@@ -74,6 +74,17 @@ fn task_mcp_config_schema_hides_host_passthrough_fields() {
 }
 
 #[test]
+fn update_task_schema_hides_execution_status() {
+    let schema = update_task_schema();
+    let properties = schema
+        .get("properties")
+        .and_then(|value| value.as_object())
+        .expect("object properties");
+
+    assert!(!properties.contains_key("status"));
+}
+
+#[test]
 fn normalizes_code_maintainer_write_with_required_read_kind() {
     let normalized = normalize_mcp_builtin_kind_names(vec!["CodeMaintainerWrite".to_string()])
         .expect("normalized kinds");
@@ -91,6 +102,14 @@ fn external_mcp_tools_hide_internal_process_recorder() {
     assert!(!agent_tool_allowed("record_task_process"));
     assert!(!agent_tool_allowed("list_model_configs"));
     assert!(!agent_tool_allowed("get_model_config"));
+}
+
+#[test]
+fn default_agent_hides_direct_history_status_tools() {
+    assert!(!agent_tool_allowed("batch_update_task_status"));
+    assert!(!agent_tool_allowed("retry_run"));
+    assert!(agent_tool_allowed("start_task_run"));
+    assert!(agent_tool_allowed("cancel_task"));
 }
 
 #[test]

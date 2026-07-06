@@ -5,6 +5,7 @@ use tokio::time::{sleep, Duration};
 use tracing::warn;
 
 const RATE_LIMITED_ERROR_CODE: &str = "RATE_LIMITED";
+const AUTH_INVALID_ERROR_CODE: &str = "AUTH_INVALID";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RequestErrorReplay {
@@ -122,7 +123,24 @@ pub fn is_retryable_provider_backpressure_error(err: &str) -> bool {
     is_rate_limited_provider_error(err) || is_retryable_provider_overload_error(err)
 }
 
+pub fn is_provider_authentication_error(err: &str) -> bool {
+    let message = err.to_lowercase();
+    message.contains("status 401")
+        || message.contains("unauthorized")
+        || message.contains("invalid token")
+        || message.contains("invalid api key")
+        || message.contains("incorrect api key")
+}
+
 pub fn classify_user_facing_ai_error(err: &str) -> Option<(&'static str, String)> {
+    if is_provider_authentication_error(err) {
+        return Some((
+            AUTH_INVALID_ERROR_CODE,
+            "\u{6a21}\u{578b}\u{670d}\u{52a1}\u{8ba4}\u{8bc1}\u{5931}\u{8d25}\u{ff1a}API Key/Token \u{65e0}\u{6548}\u{6216}\u{5df2}\u{8fc7}\u{671f}\u{ff0c}\u{8bf7}\u{5728}\u{6a21}\u{578b}\u{914d}\u{7f6e}\u{4e2d}\u{66f4}\u{65b0}\u{5bc6}\u{94a5}\u{540e}\u{91cd}\u{8bd5}\u{3002}"
+                .to_string(),
+        ));
+    }
+
     if is_rate_limited_provider_error(err) {
         return Some((
             RATE_LIMITED_ERROR_CODE,
@@ -238,8 +256,8 @@ fn is_non_retryable_quota_error(message: &str) -> bool {
 mod tests {
     use super::{
         classify_transient_retry, classify_user_facing_ai_error, exhausted_transient_retry_message,
-        handle_transient_retry, is_context_length_exceeded_error, is_rate_limited_provider_error,
-        is_request_body_too_large_error, is_response_parse_error,
+        handle_transient_retry, is_context_length_exceeded_error, is_provider_authentication_error,
+        is_rate_limited_provider_error, is_request_body_too_large_error, is_response_parse_error,
         is_retryable_provider_backpressure_error, is_retryable_provider_overload_error,
         is_transient_network_error, is_transient_transport_or_parse_error,
         replay_request_error_policy, transient_retry_backoff_ms, transient_retry_kind_label,
@@ -370,6 +388,17 @@ mod tests {
     }
 
     #[test]
+    fn detects_provider_authentication_errors() {
+        assert!(is_provider_authentication_error(
+            "status 401 Unauthorized: {\"error\":{\"message\":\"Invalid token\"}}"
+        ));
+        assert!(is_provider_authentication_error("invalid api key"));
+        assert!(!is_provider_authentication_error(
+            "status 429 Too Many Requests"
+        ));
+    }
+
+    #[test]
     fn combines_transient_network_and_parse_detection() {
         assert!(is_transient_transport_or_parse_error(
             "invalid JSON response (status 200): expected value"
@@ -481,6 +510,16 @@ mod tests {
 
         assert!(err.contains("AI 请求失败"));
         assert!(err.contains("status 503: service unavailable"));
+    }
+
+    #[test]
+    fn classifies_user_facing_auth_errors() {
+        let classified = classify_user_facing_ai_error(
+            "status 401 Unauthorized: {\"error\":{\"message\":\"Invalid token\"}}",
+        )
+        .expect("should classify auth error");
+        assert_eq!(classified.0, "AUTH_INVALID");
+        assert!(classified.1.contains("API Key/Token"));
     }
 
     #[test]

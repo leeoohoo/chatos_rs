@@ -105,17 +105,25 @@ pub async fn jsonrpc_stdio_call(
     if let Some(env) = &cfg.env {
         cmd.envs(env);
     }
-    if let Some(cwd) = &cfg.cwd {
-        cmd.current_dir(cwd);
-    }
     let isolation = process_isolation::resolve_for_user(cfg.user_id.as_deref())?;
+    let fs_view_enabled = process_isolation::filesystem_view_enabled(isolation.as_ref())?;
+    if let Some(cwd) = &cfg.cwd {
+        if !fs_view_enabled {
+            cmd.current_dir(cwd);
+        }
+    }
     if let Some(cwd) = &cfg.cwd {
         process_isolation::prepare_workspace_for_user(
             std::path::Path::new(cwd),
             isolation.as_ref(),
         )?;
     }
-    process_isolation::apply_to_tokio_command(&mut cmd, isolation.as_ref())?;
+    process_isolation::apply_to_tokio_command(
+        &mut cmd,
+        isolation.as_ref(),
+        cfg.cwd.as_deref().map(std::path::Path::new),
+        None,
+    )?;
 
     cmd.stdin(Stdio::piped())
         .stdout(Stdio::piped())

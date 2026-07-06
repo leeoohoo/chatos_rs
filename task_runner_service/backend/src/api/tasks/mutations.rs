@@ -15,7 +15,10 @@ pub(in crate::api) async fn create_task(
         .create_task(input, Some(&current_user), source_context)
         .await
         .map_err(ApiError::bad_request)?;
-    Ok((StatusCode::CREATED, Json(task)))
+    Ok((
+        StatusCode::CREATED,
+        Json(redact_workspace_paths(&state, task)?),
+    ))
 }
 
 fn task_source_context_from_headers(
@@ -153,7 +156,7 @@ pub(in crate::api) async fn batch_start_task_runs(
         .batch_start_runs_for_user(input, &current_user)
         .await
         .map_err(ApiError::bad_request)?;
-    Ok(Json(result))
+    Ok(Json(redact_workspace_paths(&state, result)?))
 }
 
 pub(in crate::api) async fn get_task(
@@ -163,7 +166,8 @@ pub(in crate::api) async fn get_task(
 ) -> Result<Json<TaskRecord>, ApiError> {
     get_task_for_user(&state, &id, &current_user)
         .await?
-        .map(Json)
+        .map(|task| redact_workspace_paths(&state, task).map(Json))
+        .transpose()?
         .ok_or_else(|| ApiError::not_found(format!("task not found: {id}")))
 }
 
@@ -182,7 +186,7 @@ pub(in crate::api) async fn update_task(
         .await
         .map_err(ApiError::bad_request)?
         .ok_or_else(|| ApiError::not_found(format!("task not found: {id}")))?;
-    Ok(Json(task))
+    Ok(Json(redact_workspace_paths(&state, task)?))
 }
 
 pub(in crate::api) async fn delete_task(
@@ -220,7 +224,7 @@ pub(in crate::api) async fn cancel_task(
         .await
         .map_err(ApiError::bad_request)?
         .ok_or_else(|| ApiError::not_found(format!("task not found: {id}")))?;
-    Ok(Json(result))
+    Ok(Json(redact_workspace_paths(&state, result)?))
 }
 
 pub(in crate::api) async fn update_task_mcp(
@@ -238,7 +242,7 @@ pub(in crate::api) async fn update_task_mcp(
         .await
         .map_err(ApiError::bad_request)?
         .ok_or_else(|| ApiError::not_found(format!("task not found: {id}")))?;
-    Ok(Json(task))
+    Ok(Json(redact_workspace_paths(&state, task)?))
 }
 
 pub(in crate::api) async fn record_task_process(
@@ -256,7 +260,7 @@ pub(in crate::api) async fn record_task_process(
         .await
         .map_err(ApiError::bad_request)?
         .ok_or_else(|| ApiError::not_found(format!("task not found: {id}")))?;
-    Ok(Json(task))
+    Ok(Json(redact_workspace_paths(&state, task)?))
 }
 
 pub(in crate::api) async fn preview_task_mcp_prompt(
@@ -273,7 +277,7 @@ pub(in crate::api) async fn preview_task_mcp_prompt(
         .await
         .map_err(ApiError::bad_request)?
         .ok_or_else(|| ApiError::not_found(format!("task not found: {id}")))?;
-    Ok(Json(preview))
+    Ok(Json(redact_workspace_paths(&state, preview)?))
 }
 
 fn batch_result(

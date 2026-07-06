@@ -6,18 +6,20 @@ use axum::{Extension, Json};
 
 use crate::auth::CurrentPrincipal;
 use crate::integrations::{sync_model_config_delete, sync_model_config_upsert};
-use crate::models::{CreateUserModelConfigRequest, UpdateUserModelConfigRequest, UserModelConfigRecord};
+use crate::models::{
+    CreateUserModelConfigRequest, UpdateUserModelConfigRequest, UserModelConfigRecord,
+};
 use crate::state::AppState;
 use crate::store::now_rfc3339;
 
+use super::super::{bad_request, internal_error, not_found, ApiResult, ApiStatusResult};
 use super::access::{ensure_model_access, ensure_owner_user_exists, resolve_target_user_id};
 use super::contracts::{ModelConfigGetQuery, UserScopeQuery};
 use super::model_values::model_config_public_value;
 use super::normalization::{
-    model_config_id_for, normalize_optional_string, normalize_provider_input,
-    normalize_thinking_level_input,
+    model_config_id_for, normalize_api_key_input, normalize_optional_string,
+    normalize_provider_input, normalize_thinking_level_input,
 };
-use super::super::{bad_request, internal_error, not_found, ApiResult, ApiStatusResult};
 
 pub(in crate::api) async fn list_model_configs(
     State(state): State<AppState>,
@@ -57,7 +59,7 @@ pub(in crate::api) async fn create_model_config(
         return Err(bad_request("name is required"));
     };
     let provider = normalize_provider_input(input.provider)?;
-    let api_key = normalize_optional_string(input.api_key);
+    let api_key = normalize_api_key_input(input.api_key)?;
     if api_key.is_none() {
         return Err(bad_request("api_key is required"));
     }
@@ -185,7 +187,7 @@ pub(in crate::api) async fn update_model_config(
     if input.clear_api_key.unwrap_or(false) {
         record.api_key = None;
     } else if let Some(api_key) = input.api_key {
-        record.api_key = normalize_optional_string(Some(api_key));
+        record.api_key = normalize_api_key_input(Some(api_key))?;
     }
     if let Some(base_url) = input.base_url {
         record.base_url = normalize_optional_string(Some(base_url));

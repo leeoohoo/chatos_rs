@@ -2,7 +2,7 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use std::io::ErrorKind;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 #[path = "policy_paths.rs"]
 mod policy_paths;
@@ -13,6 +13,7 @@ use axum::http::StatusCode;
 use serde_json::{json, Value};
 
 use crate::core::auth::AuthUser;
+use crate::core::user_visible_path::display_path;
 
 pub(crate) const PATH_OUTSIDE_ALLOWED_ROOTS: &str = "路径超出允许范围";
 pub(crate) const PATH_TRAVERSAL_BLOCKED: &str = "路径不能包含 ..";
@@ -137,16 +138,35 @@ impl FsPathPolicy {
         self.roots
             .iter()
             .map(|root| {
-                let path = root.path.to_string_lossy().to_string();
+                let display = self.display_path(root.path.as_path());
                 json!({
-                    "name": path,
-                    "path": path,
+                    "name": display,
+                    "path": display,
+                    "display_path": display,
                     "is_dir": true,
                     "kind": root.kind.as_str(),
                     "writable": root.kind.can_write(),
                 })
             })
             .collect()
+    }
+
+    pub(crate) fn display_path(&self, path: &Path) -> String {
+        display_path(path.to_string_lossy().as_ref())
+    }
+
+    pub(crate) fn expand_user_visible_path(&self, raw: &str) -> Result<String, FsPolicyError> {
+        let trimmed = raw.trim();
+        if trimmed.is_empty() {
+            return Ok(String::new());
+        }
+        if contains_parent_dir(Path::new(trimmed)) {
+            return Err(FsPolicyError::Forbidden(PATH_TRAVERSAL_BLOCKED.to_string()));
+        }
+        if let Some(resolved) = self.resolve_user_visible_path(trimmed) {
+            return Ok(resolved.to_string_lossy().to_string());
+        }
+        Ok(trimmed.to_string())
     }
 
     pub(crate) fn default_workspace_dir(&self) -> Option<&Path> {
@@ -167,7 +187,7 @@ impl FsPathPolicy {
         &self,
         raw: &str,
     ) -> Result<AuthorizedPath, FsPolicyError> {
-        let resolved = policy_paths::resolve_input_path(raw)?;
+        let resolved = self.resolve_input_path(raw)?;
         let canonical = policy_paths::canonicalize_existing_path(resolved.as_path(), "路径不存在")?;
         self.authorized_path_for(canonical)
     }
@@ -204,7 +224,7 @@ impl FsPathPolicy {
         missing_message: &str,
         invalid_message: &str,
     ) -> Result<AuthorizedPath, FsPolicyError> {
-        let resolved = policy_paths::resolve_input_path(raw)?;
+        let resolved = self.resolve_input_path(raw)?;
         let metadata = match std::fs::symlink_metadata(&resolved) {
             Ok(value) => value,
             Err(err) if err.kind() == ErrorKind::NotFound => {
@@ -280,10 +300,73 @@ impl FsPathPolicy {
         raw: &str,
         missing_message: &str,
     ) -> Result<AuthorizedPath, FsPolicyError> {
-        let resolved = policy_paths::resolve_input_path(raw)?;
+        let resolved = self.resolve_input_path(raw)?;
         let canonical =
             policy_paths::canonicalize_existing_path(resolved.as_path(), missing_message)?;
         self.authorized_path_for(canonical)
+    }
+
+    fn resolve_input_path(&self, raw: &str) -> Result<PathBuf, FsPolicyError> {
+        let trimmed = raw.trim();
+        if trimmed.is_empty() {
+            return Err(FsPolicyError::BadRequest("路径不能为空".to_string()));
+        }
+        if contains_parent_dir(Path::new(trimmed)) {
+            return Err(FsPolicyError::Forbidden(PATH_TRAVERSAL_BLOCKED.to_string()));
+        }
+
+        let candidate = PathBuf::from(trimmed);
+        if candidate.is_absolute() && self.raw_path_points_inside_allowed_root(trimmed) {
+            return policy_paths::resolve_input_path(raw);
+        }
+
+        if let Some(resolved) = self.resolve_user_visible_path(trimmed) {
+            return Ok(resolved);
+        }
+
+        policy_paths::resolve_input_path(raw)
+    }
+
+    fn raw_path_points_inside_allowed_root(&self, raw: &str) -> bool {
+        let candidate = PathBuf::from(raw);
+        self.roots
+            .iter()
+            .any(|root| policy_paths::path_is_within_root(candidate.as_path(), root.path.as_path()))
+    }
+
+    fn resolve_user_visible_path(&self, raw: &str) -> Option<PathBuf> {
+        let normalized = raw.trim().replace('\\', "/");
+        if normalized.is_empty() {
+            return None;
+        }
+
+        let public_root = self
+            .roots
+            .iter()
+            .find(|root| root.kind == FsAllowedRootKind::Public)
+            .map(|root| root.path.clone());
+        let workspace_root = self
+            .roots
+            .iter()
+            .find(|root| root.kind == FsAllowedRootKind::Workspace)
+            .map(|root| root.path.clone());
+
+        if normalized == "/public" {
+            return public_root;
+        }
+        if let Some(relative) = normalized.strip_prefix("/public/") {
+            return public_root.map(|root| root.join(relative));
+        }
+        if normalized == "/" {
+            return workspace_root;
+        }
+        if let Some(relative) = normalized.strip_prefix('/') {
+            return workspace_root.map(|root| root.join(relative));
+        }
+        if !Path::new(raw).is_absolute() {
+            return workspace_root.map(|root| root.join(normalized));
+        }
+        None
     }
 
     fn authorized_path_for(&self, path: PathBuf) -> Result<AuthorizedPath, FsPolicyError> {
@@ -327,6 +410,11 @@ impl FsPathPolicy {
     }
 }
 
+fn contains_parent_dir(path: &Path) -> bool {
+    path.components()
+        .any(|component| matches!(component, Component::ParentDir))
+}
+
 #[cfg(test)]
 mod tests {
     use super::policy_paths::normalize_path_for_compare;
@@ -347,6 +435,25 @@ mod tests {
                 path: fs::canonicalize(root).expect("canonicalize root"),
                 kind: super::FsAllowedRootKind::Configured,
             }],
+        }
+    }
+
+    fn user_scoped_policy(root: &Path) -> FsPathPolicy {
+        let workspaces = root.join("users").join("user-123").join("workspaces");
+        let public = root.join("users").join("user-123").join("public");
+        fs::create_dir_all(&workspaces).expect("create workspace root");
+        fs::create_dir_all(&public).expect("create public root");
+        FsPathPolicy {
+            roots: vec![
+                super::FsAllowedRoot {
+                    path: fs::canonicalize(workspaces).expect("canonicalize workspace root"),
+                    kind: super::FsAllowedRootKind::Workspace,
+                },
+                super::FsAllowedRoot {
+                    path: fs::canonicalize(public).expect("canonicalize public root"),
+                    kind: super::FsAllowedRootKind::Public,
+                },
+            ],
         }
     }
 
@@ -380,6 +487,96 @@ mod tests {
             normalize_path_for_compare(PathBuf::from("/").as_path()),
             "/"
         );
+    }
+
+    #[test]
+    fn roots_json_returns_user_visible_paths_for_user_scoped_roots() {
+        let root = make_temp_dir("fs_policy_visible_roots");
+        let policy = user_scoped_policy(root.as_path());
+
+        let roots = policy.roots_json();
+        let paths = roots
+            .iter()
+            .filter_map(|value| value.get("path").and_then(|path| path.as_str()))
+            .collect::<Vec<_>>();
+
+        assert!(paths.contains(&"/"));
+        assert!(paths.contains(&"/public"));
+        assert!(paths.iter().all(|path| !path.contains("/users/user-123/")));
+
+        fs::remove_dir_all(root).expect("cleanup temp dir");
+    }
+
+    #[test]
+    fn authorize_existing_path_accepts_user_visible_workspace_paths() {
+        let root = make_temp_dir("fs_policy_visible_workspace");
+        let demo = root
+            .join("users")
+            .join("user-123")
+            .join("workspaces")
+            .join("demo");
+        fs::create_dir_all(&demo).expect("create demo");
+        let policy = user_scoped_policy(root.as_path());
+        let expected = fs::canonicalize(&demo).expect("canonicalize demo");
+
+        let authorized = policy
+            .authorize_existing_dir("/demo", "missing", "not dir")
+            .expect("authorize virtual workspace path");
+        assert_eq!(
+            normalize_path_for_compare(authorized.path.as_path()),
+            normalize_path_for_compare(expected.as_path())
+        );
+
+        fs::remove_dir_all(root).expect("cleanup temp dir");
+    }
+
+    #[test]
+    fn authorize_existing_path_accepts_user_visible_public_paths() {
+        let root = make_temp_dir("fs_policy_visible_public");
+        let keys = root
+            .join("users")
+            .join("user-123")
+            .join("public")
+            .join("keys");
+        fs::create_dir_all(&keys).expect("create keys");
+        let policy = user_scoped_policy(root.as_path());
+        let expected = fs::canonicalize(&keys).expect("canonicalize keys");
+
+        let authorized = policy
+            .authorize_existing_dir("/public/keys", "missing", "not dir")
+            .expect("authorize virtual public path");
+        assert_eq!(
+            normalize_path_for_compare(authorized.path.as_path()),
+            normalize_path_for_compare(expected.as_path())
+        );
+
+        fs::remove_dir_all(root).expect("cleanup temp dir");
+    }
+
+    #[test]
+    fn expand_user_visible_path_maps_existing_virtual_input() {
+        let root = make_temp_dir("fs_policy_expand_visible");
+        let bin = root
+            .join("users")
+            .join("user-123")
+            .join("workspaces")
+            .join("demo")
+            .join(".venv")
+            .join("bin");
+        fs::create_dir_all(&bin).expect("create bin");
+        let python = bin.join("python");
+        fs::write(&python, "").expect("create python");
+        let policy = user_scoped_policy(root.as_path());
+
+        let expanded = policy
+            .expand_user_visible_path("/demo/.venv/bin/python")
+            .expect("expand virtual path");
+        assert_eq!(
+            normalize_path_for_compare(Path::new(expanded.as_str())),
+            normalize_path_for_compare(python.as_path())
+        );
+
+        fs::remove_dir_all(root).expect("cleanup temp dir");
     }
 
     #[test]

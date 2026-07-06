@@ -13,6 +13,8 @@ use crate::registry::BuiltinToolRegistry;
 use crate::tool_call::extract_tool_call_name;
 use crate::types::{McpBuiltinServer, McpHttpServer, McpStdioServer, ToolInfo};
 
+const PUBLIC_ISOLATED_WORKSPACE_CWD: &str = "/workspace";
+
 #[derive(Clone, Default)]
 pub struct McpExecutor {
     http_servers: Vec<McpHttpServer>,
@@ -219,7 +221,7 @@ impl McpExecutor {
             if let Some(args) = &server.args {
                 item["args"] = json!(args);
             }
-            if let Some(cwd) = &server.cwd {
+            if let Some(cwd) = public_stdio_cwd(server) {
                 item["cwd"] = json!(cwd);
             }
             if let Some(env) = &server.env {
@@ -250,6 +252,18 @@ impl McpExecutor {
     }
 }
 
+fn public_stdio_cwd(server: &McpStdioServer) -> Option<&str> {
+    if server
+        .user_id
+        .as_deref()
+        .is_some_and(|value| !value.trim().is_empty())
+        && server.cwd.is_some()
+    {
+        return Some(PUBLIC_ISOLATED_WORKSPACE_CWD);
+    }
+    server.cwd.as_deref()
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -261,8 +275,8 @@ mod tests {
 
     use crate::{
         BuiltinMcpKind, BuiltinMcpPromptLocale, BuiltinMcpServerOptions, BuiltinToolProvider,
-        BuiltinToolRegistry, McpBuiltinServer, McpExecutor, ToolCallContext, ToolResult,
-        ToolResultCallback, ToolStreamChunkCallback,
+        BuiltinToolRegistry, McpBuiltinServer, McpExecutor, McpStdioServer, ToolCallContext,
+        ToolResult, ToolResultCallback, ToolStreamChunkCallback,
     };
 
     #[tokio::test]
@@ -355,6 +369,55 @@ mod tests {
         assert!(executor
             .compose_effective_builtin_mcp_system_prompt(BuiltinMcpPromptLocale::ZhCn)
             .is_none());
+    }
+
+    #[test]
+    fn codex_gateway_request_tools_uses_virtual_cwd_for_user_isolated_stdio() {
+        let executor = McpExecutor::new(
+            Vec::new(),
+            vec![McpStdioServer {
+                name: "local".to_string(),
+                command: "node".to_string(),
+                args: Some(vec!["server.js".to_string()]),
+                cwd: Some("/opt/chatos/backend/data/workspace/users/u1/project".to_string()),
+                env: None,
+                user_id: Some("user-1".to_string()),
+            }],
+            Vec::new(),
+            BuiltinToolRegistry::new(),
+        );
+
+        let tools = executor.codex_gateway_request_tools();
+
+        assert_eq!(
+            tools[0].get("cwd").and_then(Value::as_str),
+            Some("/workspace")
+        );
+        assert!(!tools[0].to_string().contains("/opt/chatos"));
+    }
+
+    #[test]
+    fn codex_gateway_request_tools_keeps_stdio_cwd_without_user_isolation() {
+        let executor = McpExecutor::new(
+            Vec::new(),
+            vec![McpStdioServer {
+                name: "local".to_string(),
+                command: "node".to_string(),
+                args: None,
+                cwd: Some("/tmp/project".to_string()),
+                env: None,
+                user_id: None,
+            }],
+            Vec::new(),
+            BuiltinToolRegistry::new(),
+        );
+
+        let tools = executor.codex_gateway_request_tools();
+
+        assert_eq!(
+            tools[0].get("cwd").and_then(Value::as_str),
+            Some("/tmp/project")
+        );
     }
 
     struct DisabledToolProvider;

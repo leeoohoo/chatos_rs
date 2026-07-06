@@ -4,12 +4,29 @@
 use axum::Json;
 use sha2::{Digest, Sha256};
 
+use crate::secrets::is_secret_encrypted;
+
 use super::super::bad_request;
 
 pub(super) fn normalize_optional_string(value: Option<String>) -> Option<String> {
     value
         .map(|item| item.trim().to_string())
         .filter(|item| !item.is_empty())
+}
+
+pub(super) fn normalize_api_key_input(
+    value: Option<String>,
+) -> Result<Option<String>, (axum::http::StatusCode, Json<serde_json::Value>)> {
+    let value = normalize_optional_string(value);
+    if value
+        .as_deref()
+        .is_some_and(|item| is_secret_encrypted(item.trim()))
+    {
+        return Err(bad_request(
+            "api_key must be a plain provider token, not an encrypted secret",
+        ));
+    }
+    Ok(value)
 }
 
 pub(super) fn model_config_id_for(

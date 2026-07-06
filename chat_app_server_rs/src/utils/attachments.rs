@@ -188,15 +188,19 @@ fn extract_docx_text(data: &[u8]) -> Option<String> {
     }
 
     let mut reader = quick_xml::Reader::from_str(&xml);
-    reader.trim_text(true);
+    reader.config_mut().trim_text(true);
     let mut buf = Vec::new();
     let mut out = String::new();
 
     loop {
         match reader.read_event_into(&mut buf) {
             Ok(quick_xml::events::Event::Text(e)) => {
-                if let Ok(t) = e.unescape() {
-                    out.push_str(&t);
+                if let Some(text) = e.decode().ok().and_then(|value| {
+                    quick_xml::escape::unescape(value.as_ref())
+                        .ok()
+                        .map(|value| value.into_owned())
+                }) {
+                    out.push_str(&text);
                 }
             }
             Ok(quick_xml::events::Event::Eof) => break,

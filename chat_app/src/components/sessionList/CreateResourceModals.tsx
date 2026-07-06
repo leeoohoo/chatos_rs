@@ -4,6 +4,7 @@
 import React from 'react';
 
 import { useI18n } from '../../i18n/I18nProvider';
+import { getUserVisiblePath, resolveUserVisiblePathInput } from '../../lib/domain/filesystem';
 import ManagerFormDialog from '../ui/ManagerFormDialog';
 import { deriveNameFromPath } from './helpers';
 
@@ -35,6 +36,8 @@ const CreateResourceModal: React.FC<CreateResourceModalProps> = ({
   onSubmit,
 }) => {
   const { t } = useI18n();
+  const displayPathValue = getUserVisiblePath(pathValue);
+  const displayName = deriveNameFromPath(displayPathValue, fallbackName);
 
   return (
     <ManagerFormDialog
@@ -55,8 +58,8 @@ const CreateResourceModal: React.FC<CreateResourceModalProps> = ({
             <label className="text-sm text-muted-foreground">{pathLabel}</label>
             <div className="mt-1 flex items-center gap-2">
               <input
-                value={pathValue}
-                onChange={(e) => onPathChange(e.target.value)}
+                value={displayPathValue}
+                onChange={(e) => onPathChange(resolveUserVisiblePathInput(e.target.value, pathValue))}
                 className="flex-1 rounded border border-border bg-background px-3 py-2 text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
                 placeholder={t('sessionList.resource.pathPlaceholder')}
                 autoFocus
@@ -73,7 +76,8 @@ const CreateResourceModal: React.FC<CreateResourceModalProps> = ({
           {pathValue.trim() ? (
             <div className="text-xs text-muted-foreground">
               {previewLabel}
-              <span className="text-foreground">{deriveNameFromPath(pathValue, fallbackName)}</span>
+              <span className="text-foreground">{displayName}</span>
+              <span className="ml-2 text-muted-foreground">{displayPathValue}</span>
             </div>
           ) : null}
           {error ? (

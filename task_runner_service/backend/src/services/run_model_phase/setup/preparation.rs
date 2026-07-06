@@ -24,7 +24,8 @@ pub(super) async fn prepare_model_execution(
     effective_workspace_dir: &str,
     prerequisite_context: &[PrerequisiteTaskContext],
 ) -> Result<PreparedModelExecution, String> {
-    let loaded_external_mcp = load_external_mcp_servers(service, task).await?;
+    let loaded_external_mcp =
+        load_external_mcp_servers(service, task, effective_workspace_dir).await?;
     let sandbox_context = service
         .prepare_sandbox_if_needed(task, run, effective_workspace_dir)
         .await?;
@@ -121,6 +122,7 @@ pub(super) async fn prepare_model_execution(
         mcp_builder,
         tool_result_model_budget_limits,
         sandbox_context,
+        effective_workspace_dir: effective_workspace_dir.to_string(),
     })
 }
 
@@ -149,16 +151,15 @@ fn build_run_spec(
     task: &TaskRecord,
     run: &TaskRunRecord,
     model_config: &ModelConfigRecord,
-    effective_workspace_dir: &str,
+    _effective_workspace_dir: &str,
     prompt: String,
     metadata: serde_json::Value,
     task_process_logging_enabled: bool,
     external_mcp_prefixed_input_items: Vec<Value>,
 ) -> TaskRunSpec {
     let mut effective_model_config = model_config.clone();
-    effective_model_config.request_cwd = Some(effective_workspace_dir.to_string());
-    let model_runtime_config =
-        effective_model_config.to_runtime_config(Some(effective_workspace_dir.to_string()));
+    effective_model_config.request_cwd = None;
+    let model_runtime_config = effective_model_config.to_runtime_config(None);
 
     let mut run_spec = TaskRunSpec::new(
         task.id.clone(),

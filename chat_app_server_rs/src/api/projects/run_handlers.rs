@@ -4,11 +4,16 @@
 use axum::{extract::Path, http::StatusCode, Json};
 use serde_json::{json, Value};
 use std::collections::HashMap;
+use std::path::Path as FsPath;
 
+use crate::api::fs::policy::{FsPathPolicy, FsPolicyError};
 use crate::core::auth::AuthUser;
 use crate::core::project_access::{ensure_owned_project, map_project_access_error};
+use crate::core::user_visible_path::display_path;
 use crate::models::project_run::ProjectRunCatalog;
-use crate::models::project_run_environment::ProjectRunCustomToolchain;
+use crate::models::project_run_environment::{
+    ProjectRunCustomToolchain, ProjectRunEnvironmentSnapshot, ProjectRunValidationIssue,
+};
 use crate::models::terminal::TerminalService;
 use crate::repositories::project_run_catalogs;
 use crate::services::project_run::{
@@ -31,6 +36,9 @@ fn serialize_project_run_terminal(
 ) -> Value {
     let mut serialized = serde_json::to_value(terminal).unwrap_or(Value::Null);
     if let Value::Object(ref mut map) = serialized {
+        let display_cwd = display_path(terminal.cwd.as_str());
+        map.insert("cwd".to_string(), Value::String(display_cwd.clone()));
+        map.insert("display_cwd".to_string(), Value::String(display_cwd));
         map.insert("busy".to_string(), Value::Bool(busy));
         map.insert(
             "running".to_string(),
@@ -42,6 +50,7 @@ fn serialize_project_run_terminal(
 
 fn normalize_custom_toolchains(
     raw: Option<HashMap<String, super::contracts::ProjectRunCustomToolchainRequest>>,
+    policy: Option<&FsPathPolicy>,
 ) -> HashMap<String, ProjectRunCustomToolchain> {
     raw.unwrap_or_default()
         .into_iter()
@@ -56,12 +65,98 @@ fn normalize_custom_toolchains(
             if kind.is_empty() || path.is_empty() {
                 return None;
             }
+            let path = policy
+                .and_then(|policy| policy.expand_user_visible_path(path.as_str()).ok())
+                .filter(|expanded| FsPath::new(expanded.as_str()).exists())
+                .unwrap_or(path);
             let label = toolchain.label.unwrap_or_default().trim().to_string();
             Some((
                 kind.clone(),
                 ProjectRunCustomToolchain { kind, label, path },
             ))
         })
+        .collect()
+}
+
+fn fs_policy_error_tuple(err: FsPolicyError) -> (StatusCode, Json<Value>) {
+    (
+        err.status_code(),
+        Json(serde_json::json!({ "error": err.message() })),
+    )
+}
+
+async fn authorize_project_run_cwd(
+    auth: &AuthUser,
+    raw: &str,
+) -> Result<String, (StatusCode, Json<Value>)> {
+    let policy = FsPathPolicy::for_user(auth)
+        .await
+        .map_err(fs_policy_error_tuple)?;
+    let authorized = policy
+        .authorize_existing_dir(raw, "运行目录不存在或不是目录", "运行目录不存在或不是目录")
+        .map_err(fs_policy_error_tuple)?;
+    policy
+        .require_write(&authorized)
+        .map_err(fs_policy_error_tuple)?;
+    Ok(authorized.path.to_string_lossy().to_string())
+}
+
+fn visible_project_run_catalog(mut catalog: ProjectRunCatalog) -> ProjectRunCatalog {
+    for target in &mut catalog.targets {
+        target.cwd = display_path(target.cwd.as_str());
+        target.manifest_path = target
+            .manifest_path
+            .as_ref()
+            .map(|path| display_path(path.as_str()));
+    }
+    catalog
+}
+
+fn visible_validation_issues(
+    issues: Vec<ProjectRunValidationIssue>,
+) -> Vec<ProjectRunValidationIssue> {
+    issues
+        .into_iter()
+        .map(|mut issue| {
+            issue.path = issue.path.as_ref().map(|path| display_path(path.as_str()));
+            issue
+        })
+        .collect()
+}
+
+fn visible_project_run_environment(
+    mut snapshot: ProjectRunEnvironmentSnapshot,
+) -> ProjectRunEnvironmentSnapshot {
+    for rows in snapshot.options_by_kind.values_mut() {
+        for option in rows {
+            option.path = display_path(option.path.as_str());
+        }
+    }
+    for config in &mut snapshot.config_files {
+        config.path = display_path(config.path.as_str());
+    }
+    snapshot.validation_issues = visible_validation_issues(snapshot.validation_issues);
+    for custom in snapshot.custom_toolchains.values_mut() {
+        custom.path = display_path(custom.path.as_str());
+    }
+    snapshot
+}
+
+fn visible_env_value(value: &str) -> String {
+    if value.contains(':') {
+        return value
+            .split(':')
+            .map(display_path)
+            .collect::<Vec<_>>()
+            .join(":");
+    }
+    display_path(value)
+}
+
+fn visible_env_overrides(env_overrides: HashMap<String, String>) -> HashMap<String, String> {
+    env_overrides
+        .into_iter()
+        .map(|(key, value)| (key, visible_env_value(value.as_str())))
         .collect()
 }
 
@@ -108,7 +203,7 @@ pub(super) async fn analyze_project_run(
     let _ = clear_cached_environment_snapshot(project.root_path.as_str());
     (
         StatusCode::OK,
-        Json(serde_json::to_value(analyzed).unwrap_or(Value::Null)),
+        Json(serde_json::to_value(visible_project_run_catalog(analyzed)).unwrap_or(Value::Null)),
     )
 }
 
@@ -123,7 +218,7 @@ pub(super) async fn get_project_run_catalog(
     match load_or_analyze_catalog(&project).await {
         Ok(catalog) => (
             StatusCode::OK,
-            Json(serde_json::to_value(catalog).unwrap_or(Value::Null)),
+            Json(serde_json::to_value(visible_project_run_catalog(catalog)).unwrap_or(Value::Null)),
         ),
         Err(err) => (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -157,7 +252,7 @@ pub(super) async fn set_project_run_default(
     match project_run_catalogs::upsert_catalog(&updated).await {
         Ok(_) => (
             StatusCode::OK,
-            Json(serde_json::to_value(updated).unwrap_or(Value::Null)),
+            Json(serde_json::to_value(visible_project_run_catalog(updated)).unwrap_or(Value::Null)),
         ),
         Err(err) => (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -193,6 +288,10 @@ pub(super) async fn execute_project_run(
     let (cwd, command) = match resolve_execution(&catalog, input.clone()) {
         Ok(v) => v,
         Err(err) => return (StatusCode::BAD_REQUEST, Json(json!({"error": err}))),
+    };
+    let cwd = match authorize_project_run_cwd(&auth, cwd.as_str()).await {
+        Ok(path) => path,
+        Err(err) => return err,
     };
     let target = input
         .target_id
@@ -244,13 +343,15 @@ pub(super) async fn execute_project_run(
             saved_selection.as_ref(),
             &environment_snapshot.options_by_kind,
         );
-        if let Some(issue) = issues.first() {
+        if !issues.is_empty() {
+            let visible_issues = visible_validation_issues(issues);
+            let visible_issue = visible_issues.first().cloned().unwrap_or_default();
             return (
                 StatusCode::BAD_REQUEST,
                 Json(json!({
-                    "error": issue.message,
-                    "validation_issue": issue,
-                    "validation_issues": issues,
+                    "error": visible_issue.message,
+                    "validation_issue": visible_issue,
+                    "validation_issues": visible_issues,
                 })),
             );
         }
@@ -282,10 +383,11 @@ pub(super) async fn execute_project_run(
             "terminal_name": run.terminal_name,
             "terminal_reused": run.terminal_reused,
             "status": run.terminal_status,
-            "cwd": run.cwd,
+            "cwd": display_path(run.cwd.as_str()),
+            "display_cwd": display_path(run.cwd.as_str()),
             "executed_command": run.executed_command,
             "project_id": project.id,
-            "env_overrides": env_overrides,
+            "env_overrides": visible_env_overrides(env_overrides),
         })),
     )
 }
@@ -334,7 +436,8 @@ pub(super) async fn get_project_run_state(
             json!({
                 "terminal_id": value.id,
                 "terminal_name": value.name,
-                "cwd": value.cwd,
+                "cwd": display_path(value.cwd.as_str()),
+                "display_cwd": display_path(value.cwd.as_str()),
                 "status": value.status,
                 "busy": busy,
                 "running": value.status == "running",
@@ -366,7 +469,8 @@ pub(super) async fn get_project_run_state(
             "status": aggregate_status,
             "terminal_id": terminal.as_ref().map(|value| value.id.clone()),
             "terminal_name": terminal.as_ref().map(|value| value.name.clone()),
-            "cwd": terminal.as_ref().map(|value| value.cwd.clone()),
+            "cwd": terminal.as_ref().map(|value| display_path(value.cwd.as_str())),
+            "display_cwd": terminal.as_ref().map(|value| display_path(value.cwd.as_str())),
             "terminal": terminal_value,
             "instances": terminal_entries,
         })),
@@ -384,7 +488,10 @@ pub(super) async fn get_project_run_environment(
     match load_environment_snapshot(&project).await {
         Ok(snapshot) => (
             StatusCode::OK,
-            Json(serde_json::to_value(snapshot).unwrap_or(Value::Null)),
+            Json(
+                serde_json::to_value(visible_project_run_environment(snapshot))
+                    .unwrap_or(Value::Null),
+            ),
         ),
         Err(err) => (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -402,6 +509,7 @@ pub(super) async fn update_project_run_environment(
         Ok(project) => project,
         Err(err) => return map_project_access_error(err),
     };
+    let path_policy = FsPathPolicy::for_user(&auth).await.ok();
 
     let terminal_ui_enabled = match load_environment_selection(project.id.as_str()).await {
         Ok(selection) => req.terminal_ui_enabled.unwrap_or_else(|| {
@@ -420,7 +528,7 @@ pub(super) async fn update_project_run_environment(
     match save_environment_selection(
         &project,
         req.selected_toolchains.unwrap_or_default(),
-        normalize_custom_toolchains(req.custom_toolchains),
+        normalize_custom_toolchains(req.custom_toolchains, path_policy.as_ref()),
         req.env_vars.unwrap_or_default(),
         terminal_ui_enabled,
     )
@@ -436,7 +544,10 @@ pub(super) async fn update_project_run_environment(
                 );
                 (
                     StatusCode::OK,
-                    Json(serde_json::to_value(snapshot).unwrap_or(Value::Null)),
+                    Json(
+                        serde_json::to_value(visible_project_run_environment(snapshot))
+                            .unwrap_or(Value::Null),
+                    ),
                 )
             }
             Err(err) => (

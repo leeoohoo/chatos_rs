@@ -4,6 +4,8 @@
 export interface FsEntryResponse {
   name?: string;
   path?: string;
+  display_path?: string | null;
+  displayPath?: string | null;
   is_dir?: boolean;
   isDir?: boolean;
   writable?: boolean;

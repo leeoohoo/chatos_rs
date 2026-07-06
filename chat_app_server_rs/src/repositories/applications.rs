@@ -46,7 +46,7 @@ pub async fn list_applications(user_id: Option<String>) -> Result<Vec<Applicatio
             Box::pin(async move {
                 let query =
                     build_select_all_with_optional_user_id("applications", user_id.is_some(), true);
-                let mut q = sqlx::query_as::<_, ApplicationRow>(&query);
+                let mut q = sqlx::query_as::<_, ApplicationRow>(sqlx::AssertSqlSafe(query));
                 if let Some(uid) = user_id {
                     q = q.bind(uid);
                 }

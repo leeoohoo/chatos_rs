@@ -1,8 +1,19 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-const RAW_API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || '').trim();
+const RAW_API_BASE_URL = (
+  import.meta.env.VITE_API_BASE_URL ||
+  (import.meta.env.BASE_URL && import.meta.env.BASE_URL !== '/' ? import.meta.env.BASE_URL : '')
+).trim();
 const API_BASE_URL = RAW_API_BASE_URL.replace(/\/+$/, '').replace(/\/api$/, '');
+const AUTH_TOKEN_STORAGE_KEY = 'user_service_auth_token';
+
+function getAuthToken(): string | null {
+  if (typeof window === 'undefined') {
+    return null;
+  }
+  return window.localStorage.getItem(AUTH_TOKEN_STORAGE_KEY);
+}
 
 function buildApiUrl(path: string): string {
   const normalizedPath = path.startsWith('/') ? path : `/${path}`;
@@ -30,6 +41,10 @@ export async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const headers = new Headers(init?.headers);
   if (!headers.has('Content-Type')) {
     headers.set('Content-Type', 'application/json');
+  }
+  const authToken = getAuthToken()?.trim();
+  if (authToken && !headers.has('Authorization')) {
+    headers.set('Authorization', `Bearer ${authToken}`);
   }
   const response = await fetch(buildApiUrl(path), { ...init, headers });
   if (!response.ok) {

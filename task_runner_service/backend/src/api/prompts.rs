@@ -23,7 +23,7 @@ pub(super) async fn list_prompts(
     Query(query): Query<PromptListQuery>,
 ) -> Result<Json<Vec<AskUserPromptRecord>>, ApiError> {
     let page = list_prompts_page_for_user(&state, &current_user, query.into_filters()).await?;
-    Ok(Json(page.items))
+    Ok(Json(redact_workspace_paths(&state, page.items)?))
 }
 
 pub(super) async fn list_prompts_page(
@@ -32,7 +32,7 @@ pub(super) async fn list_prompts_page(
     Query(query): Query<PromptListQuery>,
 ) -> Result<Json<PaginatedResponse<AskUserPromptRecord>>, ApiError> {
     let page = list_prompts_page_for_user(&state, &current_user, query.into_filters()).await?;
-    Ok(Json(page))
+    Ok(Json(redact_workspace_paths(&state, page)?))
 }
 
 pub(super) async fn list_prompt_task_counts(
@@ -71,7 +71,7 @@ pub(super) async fn get_prompt(
         .map_err(ApiError::bad_request)?
         .ok_or_else(|| ApiError::not_found(format!("提示不存在: {id}")))?;
     ensure_prompt_access(&state, &prompt, &current_user).await?;
-    Ok(Json(prompt))
+    Ok(Json(redact_workspace_paths(&state, prompt)?))
 }
 
 pub(super) async fn submit_prompt(
@@ -93,7 +93,7 @@ pub(super) async fn submit_prompt(
         .await
         .map_err(ApiError::bad_request)?
         .ok_or_else(|| ApiError::not_found(format!("提示不存在: {id}")))?;
-    Ok(Json(prompt))
+    Ok(Json(redact_workspace_paths(&state, prompt)?))
 }
 
 pub(super) async fn cancel_prompt(
@@ -115,7 +115,7 @@ pub(super) async fn cancel_prompt(
         .await
         .map_err(ApiError::bad_request)?
         .ok_or_else(|| ApiError::not_found(format!("提示不存在: {id}")))?;
-    Ok(Json(prompt))
+    Ok(Json(redact_workspace_paths(&state, prompt)?))
 }
 
 pub(super) async fn list_run_prompts(
@@ -143,7 +143,7 @@ pub(super) async fn list_run_prompts(
         },
     )
     .await?;
-    Ok(Json(page.items))
+    Ok(Json(redact_workspace_paths(&state, page.items)?))
 }
 
 impl PromptListQuery {

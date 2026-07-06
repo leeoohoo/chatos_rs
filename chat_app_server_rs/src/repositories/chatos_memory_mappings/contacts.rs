@@ -62,7 +62,8 @@ pub async fn list_contacts(
                     sql.push_str(" AND status = ?");
                 }
                 sql.push_str(" ORDER BY updated_at DESC, created_at DESC LIMIT ? OFFSET ?");
-                let mut query = sqlx::query_as::<_, ChatosContactRow>(&sql).bind(&user_id);
+                let mut query =
+                    sqlx::query_as::<_, ChatosContactRow>(sqlx::AssertSqlSafe(sql)).bind(&user_id);
                 if let Some(status) = status.as_deref() {
                     query = query.bind(status);
                 }

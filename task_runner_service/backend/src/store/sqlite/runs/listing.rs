@@ -35,7 +35,7 @@ impl SqliteStore {
             " ORDER BY datetime(created_at) DESC, id DESC",
             true,
         );
-        let query = Self::bind_run_filters(sqlx::query(&sql), filters, true);
+        let query = Self::bind_run_filters(sqlx::query(sqlx::AssertSqlSafe(sql)), filters, true);
         let rows = query
             .fetch_all(&self.pool)
             .await
@@ -67,7 +67,7 @@ impl SqliteStore {
             " ORDER BY datetime(updated_at) DESC, id DESC",
             true,
         );
-        let query = Self::bind_run_filters(sqlx::query(&sql), filters, true);
+        let query = Self::bind_run_filters(sqlx::query(sqlx::AssertSqlSafe(sql)), filters, true);
         let rows = query
             .fetch_all(&self.pool)
             .await
@@ -111,7 +111,7 @@ impl SqliteStore {
             "",
             false,
         );
-        let query = Self::bind_run_filters(sqlx::query(&sql), filters, false);
+        let query = Self::bind_run_filters(sqlx::query(sqlx::AssertSqlSafe(sql)), filters, false);
         let row = query
             .fetch_one(&self.pool)
             .await

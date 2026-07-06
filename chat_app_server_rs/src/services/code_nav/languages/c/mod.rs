@@ -63,7 +63,7 @@ const SPEC: BasicLanguageSpec = BasicLanguageSpec {
 #[derive(Default)]
 pub struct CCodeNavProvider;
 
-#[axum::async_trait]
+#[async_trait::async_trait]
 impl CodeNavProvider for CCodeNavProvider {
     fn provider_id(&self) -> &'static str {
         SPEC.provider_id

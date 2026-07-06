@@ -17,7 +17,10 @@ pub(in crate::api) async fn start_task_run(
         .start_run_for_user(&id, input, &current_user)
         .await
         .map_err(ApiError::bad_request)?;
-    Ok((StatusCode::CREATED, Json(run)))
+    Ok((
+        StatusCode::CREATED,
+        Json(redact_workspace_paths(&state, run)?),
+    ))
 }
 
 pub(in crate::api) async fn get_run(
@@ -32,7 +35,7 @@ pub(in crate::api) async fn get_run(
         .map_err(ApiError::bad_request)?
         .ok_or_else(|| ApiError::not_found(format!("运行记录不存在: {id}")))?;
     ensure_run_access(&state, &run, &current_user).await?;
-    Ok(Json(run))
+    Ok(Json(redact_workspace_paths(&state, run)?))
 }
 
 pub(in crate::api) async fn list_run_events(
@@ -52,7 +55,7 @@ pub(in crate::api) async fn list_run_events(
         .list_run_events(&id)
         .await
         .map_err(ApiError::bad_request)?;
-    Ok(Json(events))
+    Ok(Json(redact_workspace_paths(&state, events)?))
 }
 
 pub(in crate::api) async fn cancel_run(
@@ -73,7 +76,7 @@ pub(in crate::api) async fn cancel_run(
         .await
         .map_err(ApiError::bad_request)?
         .ok_or_else(|| ApiError::not_found(format!("运行记录不存在: {id}")))?;
-    Ok(Json(run))
+    Ok(Json(redact_workspace_paths(&state, run)?))
 }
 
 pub(in crate::api) async fn retry_run(
@@ -94,5 +97,8 @@ pub(in crate::api) async fn retry_run(
         .await
         .map_err(ApiError::bad_request)?
         .ok_or_else(|| ApiError::not_found(format!("运行记录不存在: {id}")))?;
-    Ok((StatusCode::CREATED, Json(run)))
+    Ok((
+        StatusCode::CREATED,
+        Json(redact_workspace_paths(&state, run)?),
+    ))
 }

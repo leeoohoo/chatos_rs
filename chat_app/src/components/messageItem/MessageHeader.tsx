@@ -35,6 +35,12 @@ export const MessageHeader: FC<MessageHeaderProps> = ({
       : taskRunnerStatus === 'pending'
         ? { label: '待处理', className: 'text-sky-700 bg-sky-50 border border-sky-200' }
         : null;
+  const terminalTaskRunnerStatusConfig = taskRunnerStatus === 'failed'
+    ? { label: '\u5931\u8d25', className: 'text-red-700 bg-red-50 border border-red-200' }
+    : taskRunnerStatus === 'cancelled' || taskRunnerStatus === 'canceled'
+      ? { label: '\u5df2\u53d6\u6d88', className: 'text-slate-700 bg-slate-50 border border-slate-200' }
+      : null;
+  const effectiveTaskRunnerStatusConfig = taskRunnerStatusConfig ?? terminalTaskRunnerStatusConfig;
 
   return (
     <div className="flex items-center gap-2 mb-1">
@@ -44,9 +50,9 @@ export const MessageHeader: FC<MessageHeaderProps> = ({
       <span className="text-xs text-muted-foreground">
         {formatTime(message.createdAt)}
       </span>
-      {taskRunnerStatusConfig && (
-        <span className={`text-[11px] px-1.5 py-0.5 rounded ${taskRunnerStatusConfig.className}`}>
-          {taskRunnerStatusConfig.label}
+      {effectiveTaskRunnerStatusConfig && (
+        <span className={`text-[11px] px-1.5 py-0.5 rounded ${effectiveTaskRunnerStatusConfig.className}`}>
+          {effectiveTaskRunnerStatusConfig.label}
         </span>
       )}
       {message.metadata?.model && (

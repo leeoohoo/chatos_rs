@@ -14,8 +14,9 @@ use super::chatos_async_planner::{
     require_chatos_async_source_context,
 };
 use super::support::{
-    external_mcp_configs_for_user, remove_internal_task_fields, task_creator_filter,
-    task_for_external_mcp, tasks_for_external_mcp,
+    ensure_task_status_update_allowed_from_mcp, external_mcp_configs_for_user,
+    remove_internal_task_fields, task_creator_filter, task_for_external_mcp,
+    tasks_for_external_mcp,
 };
 use super::{
     decode_args, text_result, BatchTaskDeleteArgs, BatchTaskStatusUpdateArgs, CancelTaskArgs,
@@ -171,6 +172,9 @@ impl TaskRunnerMcpService {
             }
             "update_task" => {
                 let mut args: UpdateTaskArgs = decode_args(args)?;
+                if args.patch.status.is_some() {
+                    ensure_task_status_update_allowed_from_mcp(current_user)?;
+                }
                 if request_context.tool_profile() == McpToolProfile::ChatosAsyncPlanner {
                     args.patch = planner_update_task_request(args.patch)?;
                 }
@@ -266,6 +270,7 @@ impl TaskRunnerMcpService {
                 })))
             }
             "batch_update_task_status" => {
+                ensure_task_status_update_allowed_from_mcp(current_user)?;
                 let args: BatchTaskStatusUpdateArgs = decode_args(args)?;
                 self.require_tasks_for_user_in_context(
                     args.task_ids.as_slice(),

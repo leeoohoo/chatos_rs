@@ -7,6 +7,7 @@ use once_cell::sync::Lazy;
 use tokio::sync::broadcast;
 
 use crate::core::time::now_rfc3339;
+use crate::core::user_visible_path::display_path;
 use crate::models::memory_mapping_types::MemoryContactDto;
 use crate::models::memory_runtime_types::{
     ReviewRepairStatusDto, RunReviewRepairSummaryRequestDto,
@@ -54,6 +55,17 @@ static REALTIME_HUB: Lazy<RealtimeHub> = Lazy::new(RealtimeHub::new);
 
 pub fn subscribe_user_events() -> broadcast::Receiver<Arc<RealtimeEventEnvelope>> {
     REALTIME_HUB.subscribe()
+}
+
+fn project_for_realtime(mut project: Project) -> Project {
+    project.root_path = display_path(project.root_path.as_str());
+    project
+}
+
+fn terminal_for_realtime(terminal: &Terminal) -> Terminal {
+    let mut out = terminal.clone();
+    out.cwd = display_path(out.cwd.as_str());
+    out
 }
 
 pub fn publish_review_repair_started_pending(
@@ -204,7 +216,7 @@ pub fn publish_project_change_summary_updated(
             project_id: project_id.to_string(),
             reason: reason.to_string(),
             conversation_id: conversation_id.map(|value| value.to_string()),
-            path: path.map(|value| value.to_string()),
+            path: path.map(display_path),
         }),
         ts: now_rfc3339(),
     });
@@ -271,7 +283,7 @@ pub fn publish_projects_updated(
         payload: RealtimeEventPayload::ProjectsUpdated(ProjectsUpdatedRealtimePayload {
             reason: reason.to_string(),
             project_id: project_id.map(|value| value.to_string()),
-            project,
+            project: project.map(project_for_realtime),
         }),
         ts: now_rfc3339(),
     });
@@ -335,7 +347,7 @@ pub fn publish_terminal_state_changed(
         terminal_id: terminal.id.clone(),
         project_id: terminal.project_id.clone(),
         terminal_name: Some(terminal.name.clone()),
-        cwd: Some(terminal.cwd.clone()),
+        cwd: Some(display_path(terminal.cwd.as_str())),
         status: if status.is_empty() {
             "unknown".to_string()
         } else {
@@ -374,7 +386,7 @@ pub fn publish_terminal_list_invalidated(
                 terminal_id: terminal_id.map(|value| value.to_string()),
                 project_id: project_id.map(|value| value.to_string()),
                 reason: reason.to_string(),
-                terminal: terminal.cloned(),
+                terminal: terminal.map(terminal_for_realtime),
             },
         ),
         ts: now_rfc3339(),
@@ -395,7 +407,7 @@ pub fn publish_project_run_state_changed(
         project_id: project_id.to_string(),
         terminal_id: terminal.map(|value| value.id.clone()),
         terminal_name: terminal.map(|value| value.name.clone()),
-        cwd: terminal.map(|value| value.cwd.clone()),
+        cwd: terminal.map(|value| display_path(value.cwd.as_str())),
         status: status.to_string(),
         busy,
         running,
@@ -427,7 +439,7 @@ pub fn publish_project_run_instance_changed(
         project_id: project_id.to_string(),
         terminal_id: terminal.id.clone(),
         terminal_name: terminal.name.clone(),
-        cwd: terminal.cwd.clone(),
+        cwd: display_path(terminal.cwd.as_str()),
         status: status.to_string(),
         busy,
         running,
@@ -460,7 +472,7 @@ pub fn publish_project_run_catalog_updated(
         payload: RealtimeEventPayload::ProjectRunCatalog(ProjectRunCatalogRealtimePayload {
             project_id: project_id.to_string(),
             reason: reason.to_string(),
-            path: path.map(|value| value.to_string()),
+            path: path.map(display_path),
         }),
         ts: now_rfc3339(),
     });

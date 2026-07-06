@@ -16,7 +16,7 @@ impl SqliteStore {
         }
         sql.push_str(" GROUP BY task_id ORDER BY prompt_count DESC, task_id ASC");
 
-        let mut query = sqlx::query(&sql);
+        let mut query = sqlx::query(sqlx::AssertSqlSafe(sql));
         if let Some(status) = status {
             query = query.bind(ask_user_prompt_status_to_str(status));
         }
@@ -54,7 +54,7 @@ impl SqliteStore {
             sql.push_str(&clauses.join(" AND "));
         }
 
-        let mut query = sqlx::query(&sql);
+        let mut query = sqlx::query(sqlx::AssertSqlSafe(sql));
         if let Some(task_id) = filters.task_id.as_deref() {
             query = query.bind(task_id);
         }

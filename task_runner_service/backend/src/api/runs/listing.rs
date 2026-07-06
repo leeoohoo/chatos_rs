@@ -44,7 +44,7 @@ pub(in crate::api) async fn list_task_runs(
         })
         .await
         .map_err(ApiError::bad_request)?;
-    Ok(Json(runs))
+    Ok(Json(redact_workspace_paths(&state, runs)?))
 }
 
 pub(in crate::api) async fn list_runs(
@@ -53,7 +53,7 @@ pub(in crate::api) async fn list_runs(
     Query(query): Query<RunListQuery>,
 ) -> Result<Json<Vec<TaskRunRecord>>, ApiError> {
     let runs = list_runs_for_user(&state, &current_user, query.into_filters()).await?;
-    Ok(Json(runs))
+    Ok(Json(redact_workspace_paths(&state, runs)?))
 }
 
 pub(in crate::api) async fn list_runs_page(
@@ -67,7 +67,7 @@ pub(in crate::api) async fn list_runs_page(
             .list_runs_page(query.into_filters())
             .await
             .map_err(ApiError::bad_request)?;
-        return Ok(Json(page));
+        return Ok(Json(redact_workspace_paths(&state, page)?));
     }
     let filters = query.into_filters();
     let offset = filters.offset.unwrap_or(0);
@@ -89,7 +89,7 @@ pub(in crate::api) async fn list_runs_page(
         limit,
         offset,
     };
-    Ok(Json(page))
+    Ok(Json(redact_workspace_paths(&state, page)?))
 }
 
 pub(in crate::api) async fn list_run_index(

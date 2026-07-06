@@ -10,11 +10,15 @@ import 'antd/dist/reset.css';
 import App from './App';
 
 const queryClient = new QueryClient();
+const routerBasename =
+  import.meta.env.BASE_URL && import.meta.env.BASE_URL !== '/'
+    ? import.meta.env.BASE_URL.replace(/\/+$/, '')
+    : undefined;
 
 ReactDOM.createRoot(document.getElementById('root') as HTMLElement).render(
   <React.StrictMode>
     <QueryClientProvider client={queryClient}>
-      <BrowserRouter>
+      <BrowserRouter basename={routerBasename}>
         <App />
       </BrowserRouter>
     </QueryClientProvider>
