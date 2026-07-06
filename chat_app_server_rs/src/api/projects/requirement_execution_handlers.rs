@@ -371,12 +371,33 @@ async fn stop_requirement_execution_inner(
         access_token.as_str(),
     )
     .await?;
-    let links = load_execution_links_for_work_items(
+    let mut links = load_execution_links_for_work_items(
         cfg.project_service_base_url.as_str(),
         access_token.as_str(),
         &selected_work_items,
     )
     .await?;
+    for link in links
+        .iter_mut()
+        .filter(|link| task_runner_status_is_active(link.task_runner_status.as_deref()))
+    {
+        let task = task_runner_api_client::get_task_runner_task(
+            contact_runtime.task_runner_base_url.as_str(),
+            contact_runtime.task_runner_agent_token.as_str(),
+            link.task_runner_task_id.as_str(),
+        )
+        .await
+        .map_err(|err| HandlerError::bad_gateway("校验 Task Runner 任务状态失败", err))?;
+        link.task_runner_status = Some(task.status.clone());
+        sync_execution_link_status(
+            cfg.project_service_base_url.as_str(),
+            project_sync_secret.as_str(),
+            link,
+            task.status.as_str(),
+            task_runner_callback_event_for_status(task.status.as_str()),
+        )
+        .await?;
+    }
     let active_links = links
         .iter()
         .filter(|link| task_runner_status_is_active(link.task_runner_status.as_deref()))
