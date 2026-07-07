@@ -11,9 +11,8 @@ import type {
   SandboxEventRecord,
   SandboxHealthResponse,
   SandboxLeaseRecord,
-  SandboxMcpCallPayload,
-  SandboxMcpCallResponse,
-  SandboxMcpToolsResponse,
+  SandboxMcpJsonRpcRequest,
+  SandboxMcpJsonRpcResponse,
   UpdatePoolConfigPayload,
 } from '../types';
 import { request, withQuery } from './client';
@@ -51,10 +50,8 @@ export const sandboxesApi = {
     request<SandboxEventRecord[]>(`/api/sandboxes/${sandboxId}/events`),
   health: (sandboxId: string) =>
     request<SandboxHealthResponse>(`/api/sandboxes/${sandboxId}/health`),
-  mcpTools: (sandboxId: string) =>
-    request<SandboxMcpToolsResponse>(`/api/sandboxes/${sandboxId}/mcp/tools`),
-  mcpCall: (sandboxId: string, payload: SandboxMcpCallPayload) =>
-    request<SandboxMcpCallResponse>(`/api/sandboxes/${sandboxId}/mcp/call`, {
+  mcpProxy: (sandboxId: string, payload: SandboxMcpJsonRpcRequest) =>
+    request<SandboxMcpJsonRpcResponse>(`/api/sandboxes/${sandboxId}/mcp`, {
       method: 'POST',
       body: JSON.stringify(payload),
     }),

@@ -36,13 +36,6 @@ Endpoints:
 ```text
 GET  /health
 POST /mcp        # JSON-RPC: tools/list, tools/call
-GET  /mcp/tools  # compatibility helper
-POST /mcp/call   # compatibility helper
-POST /terminal/exec
-POST /files/read
-POST /files/write
-POST /files/list
-POST /files/mkdir
 ```
 
-The JSON-RPC endpoint exposes the reused built-in file/code maintainer tools and terminal controller tools. All file paths and terminal working directories are resolved under `/workspace`.
+The JSON-RPC endpoint exposes the reused built-in file/code maintainer tools and terminal controller tools. All file paths and terminal working directories are resolved under `/workspace`; legacy helper routes are intentionally not exposed.

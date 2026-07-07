@@ -15,8 +15,7 @@ use crate::models::{
     PoolStatusResponse, ReleaseSandboxRequest, ReleaseSandboxResponse,
     RotateSandboxAccessClientKeyResponse, SandboxAccessClientResponse, SandboxEventRecord,
     SandboxHealthResponse, SandboxImageCatalogResponse, SandboxImageJobRecord, SandboxLeaseRecord,
-    SandboxMcpCallRequest, SandboxMcpCallResponse, SandboxMcpToolsResponse, SystemConfigResponse,
-    UpdatePoolConfigRequest, UpdateSandboxAccessClientRequest,
+    SystemConfigResponse, UpdatePoolConfigRequest, UpdateSandboxAccessClientRequest,
 };
 use crate::state::AppState;
 
@@ -181,30 +180,6 @@ pub async fn health_sandbox(
 ) -> Result<Json<SandboxHealthResponse>, ApiError> {
     Ok(Json(
         state.manager.health(&auth, sandbox_id.as_str()).await?,
-    ))
-}
-
-pub async fn sandbox_mcp_tools(
-    Path(sandbox_id): Path<String>,
-    State(state): State<AppState>,
-    Extension(auth): Extension<SandboxAuthContext>,
-) -> Result<Json<SandboxMcpToolsResponse>, ApiError> {
-    Ok(Json(
-        state.manager.mcp_tools(&auth, sandbox_id.as_str()).await?,
-    ))
-}
-
-pub async fn sandbox_mcp_call(
-    Path(sandbox_id): Path<String>,
-    State(state): State<AppState>,
-    Extension(auth): Extension<SandboxAuthContext>,
-    Json(input): Json<SandboxMcpCallRequest>,
-) -> Result<Json<SandboxMcpCallResponse>, ApiError> {
-    Ok(Json(
-        state
-            .manager
-            .mcp_call(&auth, sandbox_id.as_str(), input)
-            .await?,
     ))
 }
 

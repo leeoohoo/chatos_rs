@@ -256,7 +256,7 @@ impl ConnectorRelay {
         if !matches!(
             message_type,
             "sandbox_response"
-                | "mcp_response"
+                | "mcp"
                 | "terminal_response"
                 | "terminal_session_create_response"
                 | "terminal_close_response"

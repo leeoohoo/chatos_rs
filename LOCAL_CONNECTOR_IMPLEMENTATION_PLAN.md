@@ -248,8 +248,7 @@ MVP 不需要先重写 Task Runner 执行器。当前落地路径是把 Local Co
 Local Connector 提供：
 
 ```text
-POST /mcp
-GET  /mcp/tools
+POST /mcp  # JSON-RPC: initialize, ping, tools/list, tools/call
 ```
 
 ChatOS 创建本地 Connector 项目时，项目 root 使用逻辑路径：
@@ -344,9 +343,7 @@ POST /api/sandboxes/leases
 GET  /api/sandboxes
 GET  /api/sandboxes/:sandbox_id
 GET  /api/sandboxes/:sandbox_id/health
-GET  /api/sandboxes/:sandbox_id/mcp/tools
 POST /api/sandboxes/:sandbox_id/mcp
-POST /api/sandboxes/:sandbox_id/mcp/call
 POST /api/sandboxes/:sandbox_id/release
 ```
 
@@ -505,7 +502,7 @@ Connector 长连接消息约定：
 
 ```json
 {
-  "type": "mcp_request",
+  "type": "mcp",
   "request_id": "req_uuid",
   "owner_user_id": "user_1",
   "device_id": "device_1",
@@ -519,7 +516,7 @@ Connector 长连接消息约定：
 
 ```json
 {
-  "type": "mcp_response",
+  "type": "mcp",
   "request_id": "req_uuid",
   "status": 200,
   "headers": {},
@@ -536,7 +533,7 @@ Connector 长连接消息约定：
 3. 复用 `user_service /api/auth/verify` 做鉴权。
 4. `GET /api/local-connectors/devices/{id}/connect` 接受 Connector 主动发起的 WebSocket 长连接，并维护在线/心跳/断开状态。
 5. 内存 relay registry 管理在线 device session、pending request、timeout 和 offline 错误。
-6. `POST /api/local-connectors/relay/{device_id}/mcp?workspace_id=...` 已经能把 MCP HTTP 请求包装成 `mcp_request` 并等待 `mcp_response`。
+6. `POST /api/local-connectors/relay/{device_id}/mcp?workspace_id=...` 已经能把 MCP HTTP 请求包装成 `type: "mcp"` relay 消息并等待同类型响应。
 7. `POST /api/local-connectors/relay/{device_id}/terminal/exec` 已经能把命令执行请求包装成 `terminal_exec_request` 并等待 `terminal_response`。
 8. `sandbox-facade` 已经能把 HTTP 请求包装成 `sandbox_request` 并等待 `sandbox_response`。
 9. 支持内部服务鉴权：Task Runner 可使用 `x-local-connector-internal-secret` 和 `x-local-connector-owner-user-id` 调用 relay / facade，避免把用户 token 持久化到任务配置。
@@ -548,7 +545,7 @@ Connector 长连接消息约定：
 3. UI 登录后，core 调用 `user_service /api/auth/login` 或 `/api/auth/register` 获取 token，再调用 `local_connector_service` 注册 device。
 4. UI 目录授权默认关闭；用户点击开放目录后，通过 core 的本机目录浏览 API 多选目录，并由 core 注册 cloud workspace，同时在本机 state file 保存 `workspace_id -> absolute_local_root`。
 5. core 主动连接 `GET /api/local-connectors/devices/{id}/connect` WebSocket。
-6. 已能处理 `mcp_request`，支持 `tools/list`、`local_environment_probe`、`local_fs_list`、`local_fs_read`、`local_fs_search`、`local_fs_write`、`local_git_status`、`local_git_diff`、`local_terminal_exec` MVP 工具。
+6. 已能处理 `type: "mcp"` relay 消息，支持标准 `initialize`、`ping`、`tools/list`、`tools/call`，工具目录来自内置 code maintainer、terminal controller 和 browser tools provider。
 7. 已能处理 `terminal_exec_request`，在授权 workspace 内直接执行 `command + args`，返回退出码、stdout/stderr、超时和截断信息。
 8. UI 的终端测试会调用 core，再经 `local_connector_service` relay 回到本机执行，用于验证 ChatOS 后续接入路径。
 9. UI 的本地沙箱开关默认关闭；开启时 core 会检查 Docker 是否安装和运行，未运行时会尝试启动 Docker Desktop，然后同步 Local Connector sandbox pairing 元数据。

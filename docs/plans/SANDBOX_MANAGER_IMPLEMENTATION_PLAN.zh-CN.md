@@ -382,47 +382,36 @@ GET /health
 }
 ```
 
-### 列出工具
+### MCP JSON-RPC
 
 ```http
-GET /mcp/tools
+POST /mcp
 ```
 
-返回：
+列出工具请求：
 
 ```json
 {
-  "tools": [
-    "sandbox_filesystem_read_file",
-    "sandbox_filesystem_write_file",
-    "sandbox_filesystem_list_dir",
-    "sandbox_filesystem_search_text",
-    "sandbox_filesystem_apply_patch",
-    "sandbox_terminal_execute_command",
-    "sandbox_terminal_process_list",
-    "sandbox_terminal_process_poll",
-    "sandbox_terminal_process_write",
-    "sandbox_terminal_process_kill",
-    "sandbox_workspace_diff"
-  ]
+  "jsonrpc": "2.0",
+  "id": "tools-1",
+  "method": "tools/list",
+  "params": {}
 }
 ```
 
-### 调用工具
-
-```http
-POST /mcp/call
-```
-
-请求：
+调用工具请求：
 
 ```json
 {
-  "tool": "sandbox_terminal_execute_command",
-  "arguments": {
-    "path": ".",
-    "command": "npm test",
-    "background": false
+  "jsonrpc": "2.0",
+  "id": "call-1",
+  "method": "tools/call",
+  "params": {
+    "name": "execute_command",
+    "arguments": {
+      "command": "npm test",
+      "cwd": "."
+    }
   }
 }
 ```
@@ -431,12 +420,11 @@ POST /mcp/call
 
 ```json
 {
-  "ok": true,
   "result": {
-    "exit_code": 0,
-    "output": "...",
-    "truncated": false
-  }
+    "content": [{ "type": "text", "text": "..." }]
+  },
+  "jsonrpc": "2.0",
+  "id": "call-1"
 }
 ```
 
@@ -597,7 +585,7 @@ task_runner_service/backend/src/services/sandbox_tool_proxy.rs
 - `TerminalControllerStore`
 - CodeMaintainer 文件读写 store 或一个新的 `SandboxCodeMaintainerProvider`
 
-调用时不再访问本地文件系统，而是 HTTP 调用 `sandbox-agent /mcp/call`。
+调用时不再访问本地文件系统，而是 HTTP 调用 `sandbox-agent /mcp` JSON-RPC。
 
 ### 3. Run 结束时释放沙箱
 
@@ -777,8 +765,8 @@ MVP 必须做到：
 
 1. 新增 `crates/chatos_sandbox_agent` 或 `sandbox_agent` binary。
 2. 实现 `/health`。
-3. 实现 `/mcp/tools`。
-4. 实现 `/mcp/call`。
+3. 实现 `/mcp` JSON-RPC。
+4. 实现 `initialize`、`ping`、`tools/list`、`tools/call`。
 5. 实现文件工具：
    - read_file
    - write_file

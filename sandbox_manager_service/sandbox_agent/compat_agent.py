@@ -11,7 +11,7 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-VERSION = "0.2.0-mcp-compat"
+VERSION = "0.3.0-mcp"
 HOST = os.environ.get("CHATOS_AGENT_HOST", "0.0.0.0")
 PORT = int(os.environ.get("CHATOS_AGENT_PORT", "49888"))
 WORKSPACE = Path(os.environ.get("CHATOS_WORKSPACE", "/workspace")).resolve()
@@ -101,14 +101,6 @@ TOOLS = [
         },
     ),
 ]
-
-TOOL_ALIASES = {
-    "sandbox_filesystem_read_file": "read_file_raw",
-    "sandbox_filesystem_write_file": "write_file",
-    "sandbox_filesystem_list_dir": "list_dir",
-    "sandbox_terminal_execute_command": "execute_command",
-}
-
 
 def ensure_workspace():
     WORKSPACE.mkdir(parents=True, exist_ok=True)
@@ -320,7 +312,6 @@ def execute_command(args):
 
 
 def call_tool(name, args):
-    name = TOOL_ALIASES.get(name, name)
     args = args or {}
     if name == "read_file_raw":
         return read_file_raw(args)
@@ -342,7 +333,7 @@ def call_tool(name, args):
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = f"chatos-sandbox-mcp-compat-agent/{VERSION}"
+    server_version = f"chatos-sandbox-agent/{VERSION}"
 
     def log_message(self, fmt, *args):
         print(f"{self.address_string()} - {fmt % args}", flush=True)
@@ -373,7 +364,7 @@ class Handler(BaseHTTPRequestHandler):
                     HTTPStatus.OK,
                     {
                         "ok": True,
-                        "service": "chatos-sandbox-mcp-compat-agent",
+                        "service": "chatos-sandbox-agent",
                         "agent_version": VERSION,
                         "workspace": str(WORKSPACE),
                         "workspace_writable": True,
@@ -381,9 +372,6 @@ class Handler(BaseHTTPRequestHandler):
                         "tools_count": len(TOOLS),
                     },
                 )
-                return
-            if self.path == "/mcp/tools":
-                self.send_json(HTTPStatus.OK, {"tools": [tool["name"] for tool in TOOLS], "tool_definitions": TOOLS})
                 return
             self.send_json(HTTPStatus.NOT_FOUND, {"ok": False, "error": "route not found"})
         except Exception as error:
@@ -397,6 +385,29 @@ class Handler(BaseHTTPRequestHandler):
                 request_id = payload.get("id")
                 method = payload.get("method")
                 params = payload.get("params") or {}
+                if method == "initialize":
+                    self.send_json(
+                        HTTPStatus.OK,
+                        {
+                            "jsonrpc": "2.0",
+                            "id": request_id,
+                            "result": {
+                                "protocolVersion": "2024-11-05",
+                                "capabilities": {"tools": {}},
+                                "serverInfo": {
+                                    "name": "sandbox_agent",
+                                    "version": VERSION,
+                                },
+                            },
+                        },
+                    )
+                    return
+                if method in ("notifications/initialized", "ping"):
+                    self.send_json(
+                        HTTPStatus.OK,
+                        {"jsonrpc": "2.0", "id": request_id, "result": {}},
+                    )
+                    return
                 if method == "tools/list":
                     self.send_json(HTTPStatus.OK, {"jsonrpc": "2.0", "id": request_id, "result": {"tools": TOOLS}})
                     return
@@ -419,11 +430,6 @@ class Handler(BaseHTTPRequestHandler):
                     return
                 self.send_json(HTTPStatus.OK, jsonrpc_error(request_id, -32601, f"method not found: {method}"))
                 return
-            if self.path == "/mcp/call":
-                name = payload.get("tool") or payload.get("name")
-                result = call_tool(name, payload.get("arguments") or {})
-                self.send_json(HTTPStatus.OK, {"ok": True, "result": result})
-                return
             self.send_json(HTTPStatus.NOT_FOUND, {"ok": False, "error": "route not found"})
         except ValueError as error:
             if self.path == "/mcp":
@@ -444,7 +450,7 @@ def main():
     print(
         json.dumps(
             {
-                "service": "chatos-sandbox-mcp-compat-agent",
+                "service": "chatos-sandbox-agent",
                 "version": VERSION,
                 "host": HOST,
                 "port": PORT,

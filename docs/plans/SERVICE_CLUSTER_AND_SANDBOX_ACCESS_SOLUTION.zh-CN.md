@@ -406,9 +406,7 @@ GET  /api/sandboxes                               sandbox.lease.read, scoped by 
 GET  /api/sandboxes/:sandbox_id                   sandbox.lease.read, lease scope required
 POST /api/sandboxes/:sandbox_id/heartbeat         sandbox.lease.create or lease owner
 GET  /api/sandboxes/:sandbox_id/health            sandbox.lease.read, lease scope required
-GET  /api/sandboxes/:sandbox_id/mcp/tools         sandbox.mcp.tools, lease scope required
 POST /api/sandboxes/:sandbox_id/mcp               sandbox.mcp.tools or sandbox.mcp.call, lease scope + tool policy
-POST /api/sandboxes/:sandbox_id/mcp/call          sandbox.mcp.call, lease scope + tool policy
 POST /api/sandboxes/:sandbox_id/release           sandbox.lease.release, lease scope required
 DELETE /api/sandboxes/:sandbox_id                 sandbox.lease.destroy or admin
 GET  /api/sandboxes/:sandbox_id/events            sandbox.lease.read, lease scope required

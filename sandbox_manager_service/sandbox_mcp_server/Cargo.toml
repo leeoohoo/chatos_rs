@@ -11,6 +11,7 @@ async-trait = "0.1"
 axum = { version = "0.7", features = ["json"] }
 chrono = { version = "0.4", features = ["clock", "serde"] }
 chatos_builtin_tools = { path = "../../crates/chatos_builtin_tools" }
+chatos_mcp_service = { path = "../../crates/chatos_mcp_service" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["full"] }

@@ -829,7 +829,7 @@ async fn mcp_relay(
         relay_headers.insert("x-local-connector-cwd".to_string(), cwd);
     }
     let request = RelayRequest {
-        message_type: "mcp_request".to_string(),
+        message_type: "mcp".to_string(),
         request_id: Uuid::new_v4().to_string(),
         owner_user_id: user.effective_owner_user_id().to_string(),
         device_id,
