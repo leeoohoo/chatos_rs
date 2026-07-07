@@ -20,6 +20,10 @@ import {
   type WorkspaceGitFacade,
 } from './workspace/gitFacade';
 import {
+  workspaceLocalConnectorFacade,
+  type WorkspaceLocalConnectorFacade,
+} from './workspace/localConnectorsFacade';
+import {
   workspaceProjectFacade,
   type WorkspaceProjectFacade,
 } from './workspace/projectsFacade';
@@ -44,6 +48,7 @@ export interface WorkspaceFacade
     WorkspaceRemoteConnectionFacade,
     WorkspaceFilesystemFacade,
     WorkspaceCodeNavFacade,
+    WorkspaceLocalConnectorFacade,
     WorkspaceGitFacade {}
 
 export const workspaceFacade = Object.assign(
@@ -55,5 +60,6 @@ export const workspaceFacade = Object.assign(
   workspaceRemoteConnectionFacade,
   workspaceFilesystemFacade,
   workspaceCodeNavFacade,
+  workspaceLocalConnectorFacade,
   workspaceGitFacade,
 ) as WorkspaceFacade & ThisType<ApiClient>;

@@ -36,6 +36,9 @@ pub(in super::super) async fn read_file(
             Json(json!({ "error": "路径不能为空" })),
         );
     };
+    if let Some(response) = super::super::local_connector_bridge::read_file(raw.as_str()).await {
+        return response;
+    }
     let path = match policy.authorize_existing_file(raw.as_str(), "路径不存在", "路径不是文件")
     {
         Ok(value) => value,

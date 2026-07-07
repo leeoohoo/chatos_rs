@@ -21,6 +21,7 @@ tower-http = { version = "0.6", features = ["cors", "trace", "request-id"] }
 reqwest = { version = "0.12", features = ["json", "stream", "gzip", "brotli", "deflate", "rustls-tls"] }
 futures = "0.3"
 tokio-stream = "0.1"
+tokio-tungstenite = { version = "0.29", features = ["rustls-tls-webpki-roots"] }
 bytes = "1"
 once_cell = "1"
 base64 = "0.22"

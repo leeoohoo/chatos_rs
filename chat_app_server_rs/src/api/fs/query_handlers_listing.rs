@@ -53,6 +53,11 @@ async fn list_entries_impl(
             })),
         );
     };
+    if let Some(response) =
+        super::super::local_connector_bridge::list_entries(raw.as_str(), include_files).await
+    {
+        return response;
+    }
 
     let path = match policy.authorize_existing_dir(raw.as_str(), "路径不存在", "路径不是目录")
     {

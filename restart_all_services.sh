@@ -41,11 +41,17 @@ load_optional_env "$ROOT_DIR/memory_engine/.env"
 load_optional_env "$ROOT_DIR/task_runner_service/.env"
 load_optional_env "$ROOT_DIR/sandbox_manager_service/.env"
 load_optional_env "$ROOT_DIR/sandbox_manager_service/backend/.env"
+load_optional_env "$ROOT_DIR/local_connector_service/.env"
+load_optional_env "$ROOT_DIR/local_connector_service/backend/.env"
+load_optional_env "$ROOT_DIR/local_connector_client/.env"
+load_optional_env "$ROOT_DIR/local_connector_client/core/.env"
 
 MEMORY_ENGINE_SCRIPT="$ROOT_DIR/memory_engine/restart_services.sh"
 USER_SERVICE_SCRIPT="$ROOT_DIR/user_service/restart_services.sh"
 PROJECT_MANAGEMENT_SCRIPT="$ROOT_DIR/project_management_service/restart_services.sh"
 SANDBOX_MANAGER_SCRIPT="$ROOT_DIR/restart_sandbox_manager_service.sh"
+LOCAL_CONNECTOR_SERVICE_SCRIPT="$ROOT_DIR/local_connector_service/restart_services.sh"
+LOCAL_CONNECTOR_CLIENT_SCRIPT="$ROOT_DIR/local_connector_client/restart_services.sh"
 CHATOS_SCRIPT="$ROOT_DIR/restart_services.sh"
 TASK_RUNNER_SCRIPT="$ROOT_DIR/restart_task_runner_service.sh"
 OFFICIAL_WEBSITE_SCRIPT="$ROOT_DIR/official_website_service/restart_services.sh"
@@ -54,6 +60,8 @@ START_MEMORY_ENGINE="${START_MEMORY_ENGINE:-1}"
 START_USER_SERVICE="${START_USER_SERVICE:-1}"
 START_PROJECT_MANAGEMENT="${START_PROJECT_MANAGEMENT:-1}"
 START_SANDBOX_MANAGER="${START_SANDBOX_MANAGER:-${START_SANDBOX_SERVICE:-${START_SANDBOX:-1}}}"
+START_LOCAL_CONNECTOR_SERVICE="${START_LOCAL_CONNECTOR_SERVICE:-1}"
+START_LOCAL_CONNECTOR_CLIENT="${START_LOCAL_CONNECTOR_CLIENT:-1}"
 START_CHATOS="${START_CHATOS:-1}"
 START_TASK_RUNNER="${START_TASK_RUNNER:-1}"
 START_OFFICIAL_WEBSITE="${START_OFFICIAL_WEBSITE:-0}"
@@ -66,7 +74,44 @@ sync_memory_engine_operator_token() {
   fi
 }
 
+client_accessible_host() {
+  local host="$1"
+  case "$host" in
+    ""|"0.0.0.0"|"::"|"[::]")
+      printf '%s\n' "127.0.0.1"
+      ;;
+    *)
+      printf '%s\n' "$host"
+      ;;
+  esac
+}
+
+sync_local_connector_defaults() {
+  local service_host
+  local service_port
+  local service_base_url
+  local user_service_base_url
+  local internal_secret
+
+  service_host="$(client_accessible_host "${LOCAL_CONNECTOR_SERVICE_HOST:-127.0.0.1}")"
+  service_port="${LOCAL_CONNECTOR_SERVICE_PORT:-39230}"
+  service_base_url="${LOCAL_CONNECTOR_SERVICE_BASE_URL:-${CHATOS_LOCAL_CONNECTOR_SERVICE_BASE_URL:-http://${service_host}:${service_port}}}"
+  user_service_base_url="${LOCAL_CONNECTOR_USER_SERVICE_BASE_URL:-${CHATOS_USER_SERVICE_BASE_URL:-${USER_SERVICE_BASE_URL:-http://127.0.0.1:${USER_SERVICE_PORT:-39190}}}}"
+  internal_secret="${LOCAL_CONNECTOR_INTERNAL_API_SECRET:-${CHATOS_LOCAL_CONNECTOR_INTERNAL_API_SECRET:-${TASK_RUNNER_LOCAL_CONNECTOR_INTERNAL_API_SECRET:-chatos-local-connector-dev-secret}}}"
+
+  export LOCAL_CONNECTOR_SERVICE_PORT="$service_port"
+  export LOCAL_CONNECTOR_SERVICE_BASE_URL="$service_base_url"
+  export CHATOS_LOCAL_CONNECTOR_SERVICE_BASE_URL="$service_base_url"
+  export LOCAL_CONNECTOR_PUBLIC_BASE_URL="${LOCAL_CONNECTOR_PUBLIC_BASE_URL:-$service_base_url}"
+  export LOCAL_CONNECTOR_CLOUD_BASE_URL="${LOCAL_CONNECTOR_CLOUD_BASE_URL:-$service_base_url}"
+  export LOCAL_CONNECTOR_USER_SERVICE_BASE_URL="$user_service_base_url"
+  export LOCAL_CONNECTOR_INTERNAL_API_SECRET="$internal_secret"
+  export CHATOS_LOCAL_CONNECTOR_INTERNAL_API_SECRET="$internal_secret"
+  export TASK_RUNNER_LOCAL_CONNECTOR_INTERNAL_API_SECRET="$internal_secret"
+}
+
 sync_memory_engine_operator_token
+sync_local_connector_defaults
 
 run_enabled() {
   local flag="$1"
@@ -118,12 +163,20 @@ do_status() {
     run_service "sandbox_manager_service" "$SANDBOX_MANAGER_SCRIPT" status
     echo
   fi
+  if run_enabled "$START_LOCAL_CONNECTOR_SERVICE"; then
+    run_service "local_connector_service" "$LOCAL_CONNECTOR_SERVICE_SCRIPT" status
+    echo
+  fi
   if run_enabled "$START_CHATOS"; then
     run_chatos status
     echo
   fi
   if run_enabled "$START_TASK_RUNNER"; then
     run_service "task_runner" "$TASK_RUNNER_SCRIPT" status
+    echo
+  fi
+  if run_enabled "$START_LOCAL_CONNECTOR_CLIENT"; then
+    run_service "local_connector_client" "$LOCAL_CONNECTOR_CLIENT_SCRIPT" status
     echo
   fi
   if run_enabled "$START_OFFICIAL_WEBSITE"; then
@@ -142,6 +195,12 @@ do_stop() {
   fi
   if run_enabled "$START_CHATOS"; then
     run_chatos stop || failed=1
+  fi
+  if run_enabled "$START_LOCAL_CONNECTOR_CLIENT"; then
+    run_service "local_connector_client" "$LOCAL_CONNECTOR_CLIENT_SCRIPT" stop || failed=1
+  fi
+  if run_enabled "$START_LOCAL_CONNECTOR_SERVICE"; then
+    run_service "local_connector_service" "$LOCAL_CONNECTOR_SERVICE_SCRIPT" stop || failed=1
   fi
   if run_enabled "$START_SANDBOX_MANAGER"; then
     run_service "sandbox_manager_service" "$SANDBOX_MANAGER_SCRIPT" stop || failed=1
@@ -164,6 +223,8 @@ do_restart() {
   local started_user=0
   local started_project=0
   local started_sandbox=0
+  local started_local_connector_service=0
+  local started_local_connector_client=0
   local started_chatos=0
   local started_task=0
   local started_official=0
@@ -186,6 +247,10 @@ do_restart() {
     run_service "sandbox_manager_service" "$SANDBOX_MANAGER_SCRIPT" restart || return 1
     started_sandbox=1
   fi
+  if run_enabled "$START_LOCAL_CONNECTOR_SERVICE"; then
+    run_service "local_connector_service" "$LOCAL_CONNECTOR_SERVICE_SCRIPT" restart || return 1
+    started_local_connector_service=1
+  fi
   if run_enabled "$START_CHATOS"; then
     run_chatos restart || return 1
     started_chatos=1
@@ -193,6 +258,10 @@ do_restart() {
   if run_enabled "$START_TASK_RUNNER"; then
     run_service "task_runner" "$TASK_RUNNER_SCRIPT" restart || return 1
     started_task=1
+  fi
+  if run_enabled "$START_LOCAL_CONNECTOR_CLIENT"; then
+    run_service "local_connector_client" "$LOCAL_CONNECTOR_CLIENT_SCRIPT" restart || return 1
+    started_local_connector_client=1
   fi
   if run_enabled "$START_OFFICIAL_WEBSITE"; then
     run_service "official_website_service" "$OFFICIAL_WEBSITE_SCRIPT" restart || return 1
@@ -216,6 +285,9 @@ do_restart() {
     echo "  sandbox_manager backend: http://localhost:${SANDBOX_MANAGER_PORT:-8095}"
     echo "  sandbox_manager frontend: http://localhost:${SANDBOX_MANAGER_FRONTEND_PORT:-8096}"
   fi
+  if (( started_local_connector_service == 1 )); then
+    echo "  local_connector service backend: ${LOCAL_CONNECTOR_SERVICE_BASE_URL:-http://localhost:${LOCAL_CONNECTOR_SERVICE_PORT:-39230}}"
+  fi
   if (( started_chatos == 1 )); then
     echo "  chatos backend: http://localhost:${MAIN_BACKEND_PORT:-${BACKEND_PORT:-3997}}"
     echo "  chatos frontend: http://localhost:${FRONTEND_PORT:-8088}"
@@ -223,6 +295,10 @@ do_restart() {
   if (( started_task == 1 )); then
     echo "  task_runner backend: http://localhost:${TASK_RUNNER_BACKEND_PORT:-${TASK_RUNNER_PORT:-39090}}"
     echo "  task_runner frontend: http://localhost:${TASK_RUNNER_FRONTEND_PORT:-39091}"
+  fi
+  if (( started_local_connector_client == 1 )); then
+    echo "  local_connector client core: http://localhost:${LOCAL_CONNECTOR_CORE_API_PORT:-39232}"
+    echo "  local_connector client frontend: http://localhost:${LOCAL_CONNECTOR_CLIENT_FRONTEND_PORT:-39233}"
   fi
   if (( started_official == 1 )); then
     echo "  official_website site: http://localhost:${OFFICIAL_WEBSITE_PORT:-39250}"

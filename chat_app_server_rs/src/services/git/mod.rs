@@ -4,6 +4,7 @@
 pub mod contracts;
 
 mod inspection;
+mod local_connector;
 mod parsing;
 mod process;
 mod query_ops;

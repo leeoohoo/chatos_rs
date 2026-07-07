@@ -42,6 +42,7 @@ pub mod contacts;
 mod conversation_semantics;
 pub mod fs;
 pub mod git;
+pub mod local_connectors;
 pub mod memory_compat;
 pub mod memory_mappings;
 pub mod message_task_runner;

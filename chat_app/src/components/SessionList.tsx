@@ -193,16 +193,39 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
         projectModalOpen={controller.projectModalOpen}
         projectRoot={controller.projectRoot}
         projectError={controller.projectError}
+        projectSourceMode={controller.projectSourceMode}
+        localConnectorWorkspaces={controller.localConnectorWorkspaces}
+        localConnectorLoading={controller.localConnectorLoading}
+        localConnectorError={controller.localConnectorError}
+        localConnectorDirectoryPath={controller.localConnectorDirectoryPath}
+        localConnectorDirectoryParent={controller.localConnectorDirectoryParent}
+        localConnectorDirectoryEntries={controller.localConnectorDirectoryEntries}
+        localConnectorDirectoryLoading={controller.localConnectorDirectoryLoading}
+        localConnectorDirectoryError={controller.localConnectorDirectoryError}
+        selectedLocalConnectorDirectoryPath={controller.selectedLocalConnectorDirectoryPath}
+        selectedLocalConnectorWorkspaceId={controller.selectedLocalConnectorWorkspaceId}
         setProjectModalOpen={controller.setProjectModalOpen}
+        setProjectSourceMode={controller.setProjectSourceMode}
         setProjectRoot={controller.setProjectRoot}
         openDirPickerForProject={() => {
           void controller.localFsPickers.openDirPicker('project');
         }}
+        refreshLocalConnectorWorkspaces={controller.refreshLocalConnectorWorkspaces}
+        setSelectedLocalConnectorWorkspaceId={controller.setSelectedLocalConnectorWorkspaceId}
+        browseLocalConnectorDirectory={controller.browseLocalConnectorDirectory}
+        setSelectedLocalConnectorDirectoryPath={controller.setSelectedLocalConnectorDirectoryPath}
+        createLocalConnectorDirectory={controller.createLocalConnectorDirectory}
         handleCreateProject={controller.sessionListActions.handleCreateProject}
         terminalModalOpen={controller.terminalModalOpen}
         terminalRoot={controller.terminalRoot}
         terminalError={controller.terminalError}
+        terminalSourceMode={controller.terminalSourceMode}
+        terminalCommand={controller.terminalCommand}
+        terminalArgs={controller.terminalArgs}
+        terminalOutput={controller.terminalOutput}
+        terminalExecuting={controller.terminalExecuting}
         setTerminalModalOpen={controller.setTerminalModalOpen}
+        setTerminalSourceMode={controller.setTerminalSourceMode}
         setTerminalRoot={controller.setTerminalRoot}
         openDirPickerForTerminal={() => {
           void controller.localFsPickers.openDirPicker('terminal');

@@ -144,6 +144,15 @@ impl AppConfig {
             .or_else(|| normalized_env("CHATOS_ADMIN_DISPLAY_NAME"))
             .unwrap_or_else(|| "System Admin".to_string());
 
+        let internal_api_secret = normalized_env("TASK_RUNNER_INTERNAL_API_SECRET")
+            .or_else(|| normalized_env("PROJECT_SERVICE_SYNC_SECRET"))
+            .or_else(|| normalized_env("TASK_RUNNER_PROJECT_SERVICE_SYNC_SECRET"));
+        let local_connector_internal_api_secret =
+            normalized_env("TASK_RUNNER_LOCAL_CONNECTOR_INTERNAL_API_SECRET")
+                .or_else(|| normalized_env("LOCAL_CONNECTOR_INTERNAL_API_SECRET"))
+                .or_else(|| normalized_env("CHATOS_LOCAL_CONNECTOR_INTERNAL_API_SECRET"))
+                .or_else(|| internal_api_secret.clone());
+
         Ok(Self {
             host,
             port,
@@ -186,9 +195,8 @@ impl AppConfig {
             default_sandbox_lease_ttl_seconds,
             chatos_callback_url: normalized_env("TASK_RUNNER_CHATOS_CALLBACK_URL"),
             chatos_callback_secret: normalized_env("TASK_RUNNER_CHATOS_CALLBACK_SECRET"),
-            internal_api_secret: normalized_env("TASK_RUNNER_INTERNAL_API_SECRET")
-                .or_else(|| normalized_env("PROJECT_SERVICE_SYNC_SECRET"))
-                .or_else(|| normalized_env("TASK_RUNNER_PROJECT_SERVICE_SYNC_SECRET")),
+            internal_api_secret,
+            local_connector_internal_api_secret,
             callback_timeout: Duration::from_millis(callback_timeout_ms.max(1_000)),
             admin_username,
             admin_password,

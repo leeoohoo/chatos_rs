@@ -64,7 +64,20 @@ impl RunService {
             .get_task(task_id)
             .await?
             .ok_or_else(|| format!("task not found: {task_id}"))?;
-        let task = save_task_if_tenant_aligned(&self.store, task).await?;
+        let mut task = save_task_if_tenant_aligned(&self.store, task).await?;
+        if let Some(project_root) =
+            resolve_project_root_for_task(&self.config, &self.store, &task).await?
+        {
+            if apply_local_connector_routing_to_task(&mut task, project_root.as_str()) {
+                task.updated_at = now_rfc3339();
+                task = self.store.save_task(task).await?;
+                info!(
+                    task_id = task.id.as_str(),
+                    project_root = project_root.as_str(),
+                    "task runner applied Local Connector routing before run"
+                );
+            }
+        }
         info!(
             task_id = task.id.as_str(),
             task_title = task.title.as_str(),
@@ -122,7 +135,10 @@ impl RunService {
             .effective_execution_environment_mode()
             .await
             .unwrap_or_else(|_| self.config.default_execution_environment_mode.clone());
-        let sandbox_enabled = self.effective_sandbox_enabled().await.unwrap_or(false);
+        let sandbox_enabled = match task.mcp_config.sandbox_enabled {
+            Some(value) => value,
+            None => self.effective_sandbox_enabled().await.unwrap_or(false),
+        };
 
         let run_id = Uuid::new_v4().to_string();
         let input_snapshot = json!({

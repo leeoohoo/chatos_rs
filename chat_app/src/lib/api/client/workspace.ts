@@ -12,6 +12,7 @@ export * from './workspace/codeNav';
 export * from './workspace/contacts';
 export * from './workspace/filesystem';
 export * from './workspace/git';
+export * from './workspace/localConnectors';
 export * from './workspace/projects';
 export * from './workspace/remoteConnections';
 export * from './workspace/sessions';

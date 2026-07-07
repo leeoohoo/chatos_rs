@@ -10,6 +10,7 @@ pub fn routes() -> Router {
         .merge(api::code_nav::router())
         .merge(api::fs::router())
         .merge(api::git::router())
+        .merge(api::local_connectors::router())
         .merge(api::notepad::router())
         .merge(api::projects::router())
 }

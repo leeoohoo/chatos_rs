@@ -35,6 +35,8 @@ pub struct Config {
     pub project_service_sync_secret: Option<String>,
     pub task_runner_base_url: String,
     pub task_runner_request_timeout_ms: i64,
+    pub local_connector_service_base_url: String,
+    pub local_connector_service_request_timeout_ms: i64,
     pub memory_engine_base_url: String,
     pub memory_engine_operator_token: Option<String>,
     pub memory_engine_request_timeout_ms: i64,
@@ -159,6 +161,16 @@ impl Config {
                 .and_then(|value| value.parse::<i64>().ok())
                 .unwrap_or(30_000)
                 .max(300);
+        let local_connector_service_base_url =
+            read_optional_env("CHATOS_LOCAL_CONNECTOR_SERVICE_BASE_URL")
+                .or_else(|| read_optional_env("LOCAL_CONNECTOR_SERVICE_BASE_URL"))
+                .unwrap_or_else(default_local_connector_service_base_url);
+        let local_connector_service_request_timeout_ms =
+            read_optional_env("CHATOS_LOCAL_CONNECTOR_SERVICE_REQUEST_TIMEOUT_MS")
+                .or_else(|| read_optional_env("LOCAL_CONNECTOR_SERVICE_REQUEST_TIMEOUT_MS"))
+                .and_then(|value| value.parse::<i64>().ok())
+                .unwrap_or(30_000)
+                .max(300);
         let memory_engine_base_url = std::env::var("MEMORY_ENGINE_BASE_URL")
             .unwrap_or_else(|_| default_memory_engine_base_url());
         let memory_engine_operator_token = read_optional_env("MEMORY_ENGINE_OPERATOR_TOKEN");
@@ -177,6 +189,7 @@ impl Config {
             port,
             host.as_str(),
             task_runner_base_url.as_str(),
+            local_connector_service_base_url.as_str(),
             memory_engine_base_url.as_str(),
         )?;
         Ok(Config {
@@ -210,6 +223,8 @@ impl Config {
             project_service_sync_secret,
             task_runner_base_url,
             task_runner_request_timeout_ms,
+            local_connector_service_base_url,
+            local_connector_service_request_timeout_ms,
             memory_engine_base_url,
             memory_engine_operator_token,
             memory_engine_request_timeout_ms,
@@ -243,7 +258,7 @@ impl Config {
         };
 
         tracing::info!(
-            "当前配置:\n  - NODE_ENV: {}\n  - BACKEND_PORT: {}\n  - HOST: {}\n  - OPENAI_BASE_URL: {}\n  - OPENAI_API_KEY: {}\n  - LOG_LEVEL: {}\n  - 摘要配置:\n    • SUMMARY_ENABLED: {}\n    • DYNAMIC_SUMMARY_ENABLED: {}\n    • SUMMARY_MESSAGE_LIMIT: {}\n    • SUMMARY_MAX_CONTEXT_TOKENS: {}\n    • SUMMARY_KEEP_LAST_N: {}\n    • SUMMARY_TARGET_TOKENS: {}\n    • SUMMARY_MERGE_TARGET_TOKENS: {}\n    • SUMMARY_TEMPERATURE: {}\n    • SUMMARY_COOLDOWN_SECONDS: {}\n    • SUMMARY_BISECT_ENABLED: {}\n    • SUMMARY_BISECT_MAX_DEPTH: {}\n    • SUMMARY_BISECT_MIN_MESSAGES: {}\n    • SUMMARY_RETRY_ON_CONTEXT_OVERFLOW: {}\n  - 认证配置:\n    • AUTH_JWT_SECRET: {}\n    • AUTH_ACCESS_TOKEN_TTL_SECONDS: {}\n    • AUTH_COMPAT_SECRET: {}\n  - Memory Engine 配置:\n    • PROJECT_SERVICE_BASE_URL: {}\n    • TASK_RUNNER_BASE_URL: {}\n    • CHATOS_TASK_RUNNER_REQUEST_TIMEOUT_MS: {}\n    • MEMORY_ENGINE_BASE_URL: {}\n    • MEMORY_ENGINE_OPERATOR_TOKEN: {}\n    • MEMORY_ENGINE_REQUEST_TIMEOUT_MS: {}\n    • MEMORY_ENGINE_ACTIVE_SUMMARY_TRIGGER_TIMEOUT_MS: {}\n    • MEMORY_ENGINE_ACTIVE_SUMMARY_POLL_INTERVAL_MS: {}\n    • MEMORY_ENGINE_ACTIVE_SUMMARY_POLL_TIMEOUT_MS: {}",
+            "当前配置:\n  - NODE_ENV: {}\n  - BACKEND_PORT: {}\n  - HOST: {}\n  - OPENAI_BASE_URL: {}\n  - OPENAI_API_KEY: {}\n  - LOG_LEVEL: {}\n  - 摘要配置:\n    • SUMMARY_ENABLED: {}\n    • DYNAMIC_SUMMARY_ENABLED: {}\n    • SUMMARY_MESSAGE_LIMIT: {}\n    • SUMMARY_MAX_CONTEXT_TOKENS: {}\n    • SUMMARY_KEEP_LAST_N: {}\n    • SUMMARY_TARGET_TOKENS: {}\n    • SUMMARY_MERGE_TARGET_TOKENS: {}\n    • SUMMARY_TEMPERATURE: {}\n    • SUMMARY_COOLDOWN_SECONDS: {}\n    • SUMMARY_BISECT_ENABLED: {}\n    • SUMMARY_BISECT_MAX_DEPTH: {}\n    • SUMMARY_BISECT_MIN_MESSAGES: {}\n    • SUMMARY_RETRY_ON_CONTEXT_OVERFLOW: {}\n  - 认证配置:\n    • AUTH_JWT_SECRET: {}\n    • AUTH_ACCESS_TOKEN_TTL_SECONDS: {}\n    • AUTH_COMPAT_SECRET: {}\n  - Memory Engine 配置:\n    • PROJECT_SERVICE_BASE_URL: {}\n    • TASK_RUNNER_BASE_URL: {}\n    • CHATOS_TASK_RUNNER_REQUEST_TIMEOUT_MS: {}\n    • LOCAL_CONNECTOR_SERVICE_BASE_URL: {}\n    • CHATOS_LOCAL_CONNECTOR_SERVICE_REQUEST_TIMEOUT_MS: {}\n    • MEMORY_ENGINE_BASE_URL: {}\n    • MEMORY_ENGINE_OPERATOR_TOKEN: {}\n    • MEMORY_ENGINE_REQUEST_TIMEOUT_MS: {}\n    • MEMORY_ENGINE_ACTIVE_SUMMARY_TRIGGER_TIMEOUT_MS: {}\n    • MEMORY_ENGINE_ACTIVE_SUMMARY_POLL_INTERVAL_MS: {}\n    • MEMORY_ENGINE_ACTIVE_SUMMARY_POLL_TIMEOUT_MS: {}",
             self.node_env,
             self.port,
             self.host,
@@ -269,6 +284,8 @@ impl Config {
             self.project_service_base_url,
             self.task_runner_base_url,
             self.task_runner_request_timeout_ms,
+            self.local_connector_service_base_url,
+            self.local_connector_service_request_timeout_ms,
             self.memory_engine_base_url,
             memory_engine_operator_token_status,
             self.memory_engine_request_timeout_ms,
@@ -317,6 +334,12 @@ fn default_task_runner_base_url() -> String {
     build_task_runner_base_url(host.as_str(), port)
 }
 
+fn default_local_connector_service_base_url() -> String {
+    let host = client_accessible_host(read_optional_env("LOCAL_CONNECTOR_SERVICE_HOST"));
+    let port = read_optional_u16_env("LOCAL_CONNECTOR_SERVICE_PORT").unwrap_or(39230);
+    build_local_connector_service_base_url(host.as_str(), port)
+}
+
 fn default_project_service_base_url() -> String {
     let host = client_accessible_host(read_optional_env("PROJECT_SERVICE_HOST"));
     let port = read_optional_u16_env("PROJECT_SERVICE_PORT").unwrap_or(39210);
@@ -332,6 +355,10 @@ fn build_user_service_base_url(host: &str, port: u16) -> String {
 }
 
 fn build_task_runner_base_url(host: &str, port: u16) -> String {
+    format!("http://{host}:{port}")
+}
+
+fn build_local_connector_service_base_url(host: &str, port: u16) -> String {
     format!("http://{host}:{port}")
 }
 
@@ -369,6 +396,7 @@ fn validate_config(
     port: u16,
     host: &str,
     task_runner_base_url: &str,
+    local_connector_service_base_url: &str,
     memory_engine_base_url: &str,
 ) -> Result<(), String> {
     if port == 0 {
@@ -379,6 +407,9 @@ fn validate_config(
     }
     if task_runner_base_url.trim().is_empty() {
         return Err("TASK_RUNNER_BASE_URL must not be empty".to_string());
+    }
+    if local_connector_service_base_url.trim().is_empty() {
+        return Err("LOCAL_CONNECTOR_SERVICE_BASE_URL must not be empty".to_string());
     }
     if memory_engine_base_url.trim().is_empty() {
         return Err("MEMORY_ENGINE_BASE_URL must not be empty".to_string());
@@ -430,6 +461,7 @@ mod tests {
             0,
             "0.0.0.0",
             "http://127.0.0.1:39090",
+            "http://127.0.0.1:39230",
             "http://127.0.0.1:7081/api/memory-engine/v1",
         )
         .expect_err("zero port must fail");
@@ -443,6 +475,7 @@ mod tests {
             3997,
             "0.0.0.0",
             "http://127.0.0.1:39090",
+            "http://127.0.0.1:39230",
             "memory-engine.internal",
         )
         .expect_err("invalid production url must fail");
@@ -456,6 +489,7 @@ mod tests {
             3997,
             "0.0.0.0",
             "https://task-runner.example.com",
+            "https://local-connector.example.com",
             "https://memory.example.com/api/memory-engine/v1",
         )
         .expect("valid production config");

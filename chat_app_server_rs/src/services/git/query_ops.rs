@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 
 use super::contracts::*;
 use super::inspection::{ahead_behind, is_tracked_path, untracked_file_patch};
+use super::local_connector;
 use super::parsing::{
     non_empty, non_repo_summary, parse_compare_commits, parse_name_status_z, parse_status_files,
     split_remote_branch,
@@ -16,6 +17,7 @@ use super::validation::{
     discover_child_repo_roots, discover_repo_root, parse_optional_root, parse_root,
     require_repo_root, validate_relative_paths,
 };
+use crate::services::project_local_cache::is_local_connector_project_root;
 use crate::services::project_local_cache::{cache_key, read_cache_json, write_cache_json};
 
 const CHILD_REPO_DISCOVERY_LIMIT: usize = 32;
@@ -88,6 +90,9 @@ pub async fn summary(
     preferred_repo_root: Option<&str>,
     force_refresh: bool,
 ) -> Result<GitSummary, String> {
+    if is_local_connector_project_root(root) {
+        return local_connector::summary(root, preferred_repo_root, force_refresh).await;
+    }
     let preferred_repo_root_text = preferred_repo_root.map(|value| value.trim().to_string());
     if !force_refresh {
         if let Some(cached) = read_cache_json::<GitSummaryCacheEntry>(
@@ -237,6 +242,9 @@ fn normalize_path_string(path: &Path) -> String {
 }
 
 pub async fn branches(root: &str, force_refresh: bool) -> Result<GitBranches, String> {
+    if is_local_connector_project_root(root) {
+        return local_connector::branches(root, force_refresh).await;
+    }
     if !force_refresh {
         if let Some(cached) =
             read_cache_json::<GitBranchesCacheEntry>(root, git_branches_cache_path(root).as_str())?
@@ -353,6 +361,9 @@ pub async fn branches(root: &str, force_refresh: bool) -> Result<GitBranches, St
 }
 
 pub async fn status(root: &str, force_refresh: bool) -> Result<GitStatus, String> {
+    if is_local_connector_project_root(root) {
+        return local_connector::status(root, force_refresh).await;
+    }
     if !force_refresh {
         if let Some(cached) =
             read_cache_json::<GitStatusCacheEntry>(root, git_status_cache_path(root).as_str())?
@@ -381,6 +392,9 @@ pub async fn status(root: &str, force_refresh: bool) -> Result<GitStatus, String
 }
 
 pub async fn compare(query: GitCompareQuery) -> Result<GitCompareResult, String> {
+    if is_local_connector_project_root(query.root.as_str()) {
+        return local_connector::compare(query).await;
+    }
     let repo_root = require_repo_root(&query.root).await?;
     let (current, target, range) =
         comparison_range(repo_root.as_path(), query.target.trim()).await?;
@@ -413,6 +427,9 @@ pub async fn compare(query: GitCompareQuery) -> Result<GitCompareResult, String>
 }
 
 pub async fn file_diff(query: GitDiffQuery) -> Result<GitFileDiff, String> {
+    if is_local_connector_project_root(query.root.as_str()) {
+        return local_connector::file_diff(query).await;
+    }
     let repo_root = require_repo_root(&query.root).await?;
     let paths = validate_relative_paths(&[query.path.clone()])?;
     let path = paths

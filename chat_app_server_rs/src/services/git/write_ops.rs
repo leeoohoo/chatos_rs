@@ -2,6 +2,7 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use super::contracts::*;
+use super::local_connector;
 use super::process::{git_output, git_output_with_status, DEFAULT_GIT_TIMEOUT, REMOTE_GIT_TIMEOUT};
 use super::shared::{
     action_result, action_result_with_status, discard_paths, read_repo_summary,
@@ -10,8 +11,12 @@ use super::shared::{
 use super::validation::{
     ensure_safe_ref, merge_args, require_repo_root, validate_branch_name, validate_relative_paths,
 };
+use crate::services::project_local_cache::is_local_connector_project_root;
 
 pub async fn fetch(request: GitFetchRequest) -> Result<GitActionResult, String> {
+    if is_local_connector_project_root(request.root.as_str()) {
+        return local_connector::fetch(request).await;
+    }
     let repo_root = require_repo_root(&request.root).await?;
     let remote = request.remote.as_deref().unwrap_or("origin").trim();
     ensure_safe_ref(remote, "remote")?;
@@ -25,6 +30,9 @@ pub async fn fetch(request: GitFetchRequest) -> Result<GitActionResult, String> 
 }
 
 pub async fn pull(request: GitPullRequest) -> Result<GitActionResult, String> {
+    if is_local_connector_project_root(request.root.as_str()) {
+        return local_connector::pull(request).await;
+    }
     let repo_root = require_repo_root(&request.root).await?;
     let mode = request.mode.as_deref().unwrap_or("ff-only").trim();
     let args: Vec<&str> = match mode {
@@ -37,6 +45,9 @@ pub async fn pull(request: GitPullRequest) -> Result<GitActionResult, String> {
 }
 
 pub async fn push(request: GitPushRequest) -> Result<GitActionResult, String> {
+    if is_local_connector_project_root(request.root.as_str()) {
+        return local_connector::push(request).await;
+    }
     let repo_root = require_repo_root(&request.root).await?;
     let remote = request.remote.as_deref().unwrap_or("origin").trim();
     ensure_safe_ref(remote, "remote")?;
@@ -60,6 +71,9 @@ pub async fn push(request: GitPushRequest) -> Result<GitActionResult, String> {
 }
 
 pub async fn checkout(request: GitCheckoutRequest) -> Result<GitActionResult, String> {
+    if is_local_connector_project_root(request.root.as_str()) {
+        return local_connector::checkout(request).await;
+    }
     let repo_root = require_repo_root(&request.root).await?;
     let output = if request.create_tracking.unwrap_or(false) {
         let remote_branch = request
@@ -114,6 +128,9 @@ pub async fn checkout(request: GitCheckoutRequest) -> Result<GitActionResult, St
 }
 
 pub async fn create_branch(request: GitCreateBranchRequest) -> Result<GitActionResult, String> {
+    if is_local_connector_project_root(request.root.as_str()) {
+        return local_connector::create_branch(request).await;
+    }
     let repo_root = require_repo_root(&request.root).await?;
     let name = request.name.trim();
     validate_branch_name(repo_root.as_path(), name).await?;
@@ -142,6 +159,9 @@ pub async fn create_branch(request: GitCreateBranchRequest) -> Result<GitActionR
 }
 
 pub async fn merge(request: GitMergeRequest) -> Result<GitActionResult, String> {
+    if is_local_connector_project_root(request.root.as_str()) {
+        return local_connector::merge(request).await;
+    }
     let repo_root = require_repo_root(&request.root).await?;
     let branch = request.branch.trim();
     if branch.is_empty() {
@@ -171,6 +191,9 @@ pub async fn merge(request: GitMergeRequest) -> Result<GitActionResult, String> 
 }
 
 pub async fn stage(request: GitPathRequest) -> Result<GitActionResult, String> {
+    if is_local_connector_project_root(request.root.as_str()) {
+        return local_connector::stage(request).await;
+    }
     let repo_root = require_repo_root(&request.root).await?;
     let paths = validate_relative_paths(&request.paths)?;
     let output = stage_paths(repo_root.as_path(), &paths).await?;
@@ -178,6 +201,9 @@ pub async fn stage(request: GitPathRequest) -> Result<GitActionResult, String> {
 }
 
 pub async fn unstage(request: GitPathRequest) -> Result<GitActionResult, String> {
+    if is_local_connector_project_root(request.root.as_str()) {
+        return local_connector::unstage(request).await;
+    }
     let repo_root = require_repo_root(&request.root).await?;
     let paths = validate_relative_paths(&request.paths)?;
     let output = unstage_paths(repo_root.as_path(), &paths).await?;
@@ -185,6 +211,9 @@ pub async fn unstage(request: GitPathRequest) -> Result<GitActionResult, String>
 }
 
 pub async fn commit(request: GitCommitRequest) -> Result<GitActionResult, String> {
+    if is_local_connector_project_root(request.root.as_str()) {
+        return local_connector::commit(request).await;
+    }
     let repo_root = require_repo_root(&request.root).await?;
     let message = request.message.trim();
     if message.is_empty() {
@@ -204,6 +233,9 @@ pub async fn commit(request: GitCommitRequest) -> Result<GitActionResult, String
 }
 
 pub async fn discard(request: GitPathRequest) -> Result<GitActionResult, String> {
+    if is_local_connector_project_root(request.root.as_str()) {
+        return local_connector::discard(request).await;
+    }
     let repo_root = require_repo_root(&request.root).await?;
     let paths = validate_relative_paths(&request.paths)?;
     let output = discard_paths(repo_root.as_path(), &paths).await?;

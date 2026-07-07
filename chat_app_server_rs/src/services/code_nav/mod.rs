@@ -4,6 +4,7 @@
 pub mod fallback;
 pub(crate) mod file_limits;
 pub mod languages;
+pub mod local_connector;
 pub mod manager;
 pub mod registry;
 pub mod symbol_index;

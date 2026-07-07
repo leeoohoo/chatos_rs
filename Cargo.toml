@@ -11,6 +11,8 @@ members = [
   "crates/chatos_mcp_runtime",
   "task_runner_service/backend",
   "project_management_service/backend",
+  "local_connector_service/backend",
+  "local_connector_client/core",
   "official_website_service/backend",
   "sandbox_manager_service/backend",
   "sandbox_manager_service/sandbox_mcp_server"

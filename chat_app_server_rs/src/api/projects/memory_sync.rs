@@ -19,7 +19,7 @@ async fn sync_memory_project_state(project: &Project, status: &str) -> Result<()
     .map(|_| ())
 }
 
-pub(super) async fn sync_active_project(project: &Project) -> Result<(), String> {
+pub(crate) async fn sync_active_project(project: &Project) -> Result<(), String> {
     sync_memory_project_state(project, "active").await
 }
 

@@ -8,6 +8,7 @@ use axum::{
 
 mod contracts;
 mod helpers;
+mod local_connector_bridge;
 mod mutate_handlers;
 pub(crate) mod policy;
 mod query_handlers;

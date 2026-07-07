@@ -7,6 +7,10 @@ use std::collections::HashMap;
 use std::path::Path as FsPath;
 
 use crate::api::fs::policy::{FsPathPolicy, FsPolicyError};
+use crate::api::local_connectors::{
+    create_local_terminal_session, parse_local_connector_root_path, send_local_terminal_input,
+    LocalConnectorRootRef,
+};
 use crate::core::auth::AuthUser;
 use crate::core::project_access::{ensure_owned_project, map_project_access_error};
 use crate::core::user_visible_path::display_path;
@@ -14,8 +18,11 @@ use crate::models::project_run::ProjectRunCatalog;
 use crate::models::project_run_environment::{
     ProjectRunCustomToolchain, ProjectRunEnvironmentSnapshot, ProjectRunValidationIssue,
 };
-use crate::models::terminal::TerminalService;
+use crate::models::terminal::{Terminal, TerminalService, TERMINAL_KIND_PROJECT_RUN};
+use crate::models::terminal_log::{TerminalLog, TerminalLogService};
 use crate::repositories::project_run_catalogs;
+use crate::repositories::terminals;
+use crate::services::project_local_cache::is_local_connector_project_root;
 use crate::services::project_run::{
     analyze_project, apply_default_target, clear_cached_environment_snapshot, dispatch_command,
     env_overrides_for_target, load_environment_selection, load_environment_snapshot,
@@ -24,6 +31,9 @@ use crate::services::project_run::{
     write_cached_catalog, RunExecutionInput,
 };
 use crate::services::realtime::publish_project_run_catalog_updated;
+use crate::services::realtime::{
+    publish_project_run_instance_changed, publish_project_run_state_changed,
+};
 use crate::services::terminal_manager::get_terminal_manager;
 
 use super::contracts::{
@@ -101,7 +111,194 @@ async fn authorize_project_run_cwd(
     Ok(authorized.path.to_string_lossy().to_string())
 }
 
+fn local_connector_refs_match(
+    project_root: &LocalConnectorRootRef,
+    cwd: &LocalConnectorRootRef,
+) -> bool {
+    if project_root.device_id != cwd.device_id || project_root.workspace_id != cwd.workspace_id {
+        return false;
+    }
+    let project_relative = project_root.relative_path.as_deref().unwrap_or("");
+    let cwd_relative = cwd.relative_path.as_deref().unwrap_or("");
+    project_relative.is_empty()
+        || cwd_relative == project_relative
+        || cwd_relative.starts_with(format!("{project_relative}/").as_str())
+}
+
+fn shell_quote_local_value(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\"'\"'"))
+}
+
+fn build_local_connector_project_run_input(
+    command: &str,
+    env_overrides: &HashMap<String, String>,
+) -> String {
+    let mut entries = env_overrides.iter().collect::<Vec<_>>();
+    entries.sort_by(|(left, _), (right, _)| left.cmp(right));
+    let mut input = String::new();
+    for (key, value) in entries {
+        let key = key.trim();
+        if key.is_empty() {
+            continue;
+        }
+        input.push_str(
+            format!("export {key}={}\n", shell_quote_local_value(value.as_str())).as_str(),
+        );
+    }
+    input.push_str(command.trim());
+    input.push('\n');
+    input
+}
+
+fn connector_error_response_message(err: (StatusCode, Json<Value>)) -> String {
+    let (status, Json(value)) = err;
+    value
+        .get("error")
+        .and_then(Value::as_str)
+        .map(|message| format!("{message} ({status})"))
+        .unwrap_or_else(|| format!("{value} ({status})"))
+}
+
+async fn dispatch_local_connector_project_run(
+    user_id: &str,
+    project_id: &str,
+    project_name: &str,
+    project_root: &str,
+    cwd: &str,
+    command: &str,
+    create_if_missing: bool,
+    env_overrides: HashMap<String, String>,
+    preferred_terminal_id: Option<&str>,
+) -> Result<crate::services::project_run::RunDispatchResult, String> {
+    let project_ref = parse_local_connector_root_path(project_root)
+        .ok_or_else(|| "Local Connector 项目根目录格式错误".to_string())?;
+    let cwd_ref = parse_local_connector_root_path(cwd)
+        .ok_or_else(|| "Local Connector 运行目录格式错误".to_string())?;
+    if !local_connector_refs_match(&project_ref, &cwd_ref) {
+        return Err("Local Connector 运行目录必须位于项目目录内".to_string());
+    }
+    if command.trim().is_empty() {
+        return Err("运行命令不能为空".to_string());
+    }
+
+    let reusable = if let Some(terminal_id) = preferred_terminal_id
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        let terminal = TerminalService::get_by_id(terminal_id).await?;
+        terminal.filter(|item| {
+            item.kind == TERMINAL_KIND_PROJECT_RUN
+                && item.user_id.as_deref() == Some(user_id)
+                && item.project_id.as_deref() == Some(project_id)
+                && item.status == "running"
+        })
+    } else {
+        None
+    };
+
+    let (terminal, reused) = if let Some(terminal) = reusable {
+        (terminal, true)
+    } else if create_if_missing {
+        let terminal_name = if project_name.trim().is_empty() {
+            "Local Connector 运行实例".to_string()
+        } else {
+            format!("{} 运行实例", project_name.trim())
+        };
+        let terminal = Terminal::new(
+            terminal_name,
+            cwd.trim().to_string(),
+            TERMINAL_KIND_PROJECT_RUN.to_string(),
+            Some(user_id.to_string()),
+            Some(project_id.to_string()),
+        );
+        terminals::create_terminal(&terminal).await?;
+        publish_project_run_instance_changed(
+            user_id, project_id, &terminal, false, true, "running", "created", None,
+        );
+        publish_project_run_state_changed(
+            user_id,
+            project_id,
+            Some(&terminal),
+            false,
+            true,
+            "running",
+            "created",
+            None,
+        );
+        (terminal, false)
+    } else {
+        return Err("未找到可复用终端，且未允许自动创建".to_string());
+    };
+
+    create_local_terminal_session(
+        cwd_ref.device_id.as_str(),
+        cwd_ref.workspace_id.as_str(),
+        terminal.id.as_str(),
+        cwd_ref.relative_path.as_deref(),
+        120,
+        32,
+    )
+    .await
+    .map_err(connector_error_response_message)?;
+
+    let input = build_local_connector_project_run_input(command, &env_overrides);
+    send_local_terminal_input(
+        cwd_ref.device_id.as_str(),
+        cwd_ref.workspace_id.as_str(),
+        terminal.id.as_str(),
+        input.as_str(),
+    )
+    .await
+    .map_err(connector_error_response_message)?;
+
+    let _ = TerminalLogService::create(TerminalLog::new(
+        terminal.id.clone(),
+        "command".to_string(),
+        command.trim().to_string(),
+    ))
+    .await;
+    let _ = TerminalLogService::create(TerminalLog::new(
+        terminal.id.clone(),
+        "input".to_string(),
+        input,
+    ))
+    .await;
+    let _ = TerminalService::touch(terminal.id.as_str()).await;
+    publish_project_run_instance_changed(
+        user_id,
+        project_id,
+        &terminal,
+        true,
+        true,
+        "running",
+        "command_dispatched",
+        None,
+    );
+    publish_project_run_state_changed(
+        user_id,
+        project_id,
+        Some(&terminal),
+        true,
+        true,
+        "running",
+        "command_dispatched",
+        None,
+    );
+
+    Ok(crate::services::project_run::RunDispatchResult {
+        terminal_id: terminal.id,
+        terminal_name: terminal.name,
+        terminal_reused: reused,
+        terminal_status: terminal.status,
+        cwd: cwd.trim().to_string(),
+        executed_command: command.trim().to_string(),
+    })
+}
+
 fn visible_project_run_catalog(mut catalog: ProjectRunCatalog) -> ProjectRunCatalog {
+    if catalog.status != "error" {
+        catalog.error_message = None;
+    }
     for target in &mut catalog.targets {
         target.cwd = display_path(target.cwd.as_str());
         target.manifest_path = target
@@ -163,16 +360,20 @@ fn visible_env_overrides(env_overrides: HashMap<String, String>) -> HashMap<Stri
 async fn load_or_analyze_catalog(
     project: &crate::models::project::Project,
 ) -> Result<ProjectRunCatalog, String> {
+    let is_local_connector = is_local_connector_project_root(project.root_path.as_str());
+    let should_reanalyze_local_connector = |catalog: &ProjectRunCatalog| {
+        is_local_connector && (catalog.status == "error" || catalog.error_message.is_some())
+    };
     if let Some(cached) =
         project_run_catalogs::get_catalog_by_project_id(project.id.as_str()).await?
     {
-        if cached.analyzed_at.is_some() {
+        if cached.analyzed_at.is_some() && !should_reanalyze_local_connector(&cached) {
             let _ = write_cached_catalog(project.root_path.as_str(), &cached);
             return Ok(cached);
         }
     }
     if let Some(cached) = read_cached_catalog(project.root_path.as_str())? {
-        if cached.analyzed_at.is_some() {
+        if cached.analyzed_at.is_some() && !should_reanalyze_local_connector(&cached) {
             let _ = project_run_catalogs::upsert_catalog(&cached).await;
             return Ok(cached);
         }
@@ -289,10 +490,6 @@ pub(super) async fn execute_project_run(
         Ok(v) => v,
         Err(err) => return (StatusCode::BAD_REQUEST, Json(json!({"error": err}))),
     };
-    let cwd = match authorize_project_run_cwd(&auth, cwd.as_str()).await {
-        Ok(path) => path,
-        Err(err) => return err,
-    };
     let target = input
         .target_id
         .as_deref()
@@ -336,6 +533,49 @@ pub(super) async fn execute_project_run(
             )
         })
         .unwrap_or(command.clone());
+
+    if is_local_connector_project_root(project.root_path.as_str()) {
+        let run = match dispatch_local_connector_project_run(
+            auth.user_id.as_str(),
+            project.id.as_str(),
+            project.name.as_str(),
+            project.root_path.as_str(),
+            cwd.as_str(),
+            resolved_command.as_str(),
+            input.create_if_missing,
+            env_overrides.clone(),
+            req.terminal_id.as_deref(),
+        )
+        .await
+        {
+            Ok(result) => result,
+            Err(err) => {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({"error": err})),
+                );
+            }
+        };
+        return (
+            StatusCode::OK,
+            Json(json!({
+                "terminal_id": run.terminal_id,
+                "terminal_name": run.terminal_name,
+                "terminal_reused": run.terminal_reused,
+                "status": run.terminal_status,
+                "cwd": display_path(run.cwd.as_str()),
+                "display_cwd": display_path(run.cwd.as_str()),
+                "executed_command": run.executed_command,
+                "project_id": project.id,
+                "env_overrides": visible_env_overrides(env_overrides),
+            })),
+        );
+    }
+
+    let cwd = match authorize_project_run_cwd(&auth, cwd.as_str()).await {
+        Ok(path) => path,
+        Err(err) => return err,
+    };
     if let Some(target) = target.as_ref() {
         let issues = validate_project_run_target(
             std::path::Path::new(project.root_path.as_str()),

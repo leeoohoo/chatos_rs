@@ -214,7 +214,8 @@ pub async fn resolve_runtime_context(
             }
             None => {
                 if task_runner_required {
-                    runtime_error = Some("当前联系人未配置 Task Runner，无法创建任务。".to_string());
+                    runtime_error =
+                        Some("当前联系人未配置 Task Runner，无法创建任务。".to_string());
                 } else {
                     warn!(
                         "task runner runtime skipped for optional chat tools: session_id={} contact_id={} contact_agent_id={}",

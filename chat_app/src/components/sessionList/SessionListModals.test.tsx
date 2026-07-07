@@ -93,7 +93,7 @@ describe('SessionList modals', () => {
     );
 
     const projectDialogLayer = screen.getByRole('dialog', { name: '新增项目' }).parentElement;
-    const pickerLayer = screen.getByText('选择项目目录').closest('.fixed');
+    const pickerLayer = screen.getByText('/Users/demo').closest('.fixed');
 
     expect(projectDialogLayer).toHaveClass('z-[70]');
     expect(pickerLayer).toHaveClass('z-[80]');

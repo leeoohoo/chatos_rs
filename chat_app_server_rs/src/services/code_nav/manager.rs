@@ -4,6 +4,7 @@
 use std::sync::Arc;
 
 use super::fallback::{fallback_definition, fallback_document_symbols, fallback_references};
+use super::local_connector;
 use super::registry::default_providers;
 use super::types::{
     DocumentSymbolsRequest, DocumentSymbolsResponse, NavCapabilitiesResponse, NavLocationsResponse,
@@ -33,6 +34,10 @@ impl CodeNavManager {
         project_root: &str,
         file_path: &str,
     ) -> Result<NavCapabilitiesResponse, String> {
+        if local_connector::is_local_connector_request(project_root) {
+            return local_connector::capabilities(project_root, file_path).await;
+        }
+
         let ctx = build_project_context(project_root, file_path)?;
         let provider = self.resolve_provider(&ctx);
         let capabilities = provider
@@ -61,6 +66,10 @@ impl CodeNavManager {
         &self,
         request: &NavPositionRequest,
     ) -> Result<NavLocationsResponse, String> {
+        if local_connector::is_local_connector_request(request.project_root.as_str()) {
+            return local_connector::definition(request).await;
+        }
+
         let ctx = build_project_context(&request.project_root, &request.file_path)?;
         let provider = self.resolve_provider(&ctx);
 
@@ -92,6 +101,10 @@ impl CodeNavManager {
         &self,
         request: &NavPositionRequest,
     ) -> Result<NavLocationsResponse, String> {
+        if local_connector::is_local_connector_request(request.project_root.as_str()) {
+            return local_connector::references(request).await;
+        }
+
         let ctx = build_project_context(&request.project_root, &request.file_path)?;
         let provider = self.resolve_provider(&ctx);
 
@@ -123,6 +136,10 @@ impl CodeNavManager {
         &self,
         request: &DocumentSymbolsRequest,
     ) -> Result<DocumentSymbolsResponse, String> {
+        if local_connector::is_local_connector_request(request.project_root.as_str()) {
+            return local_connector::document_symbols(request).await;
+        }
+
         let ctx = build_project_context(&request.project_root, &request.file_path)?;
         let provider = self.resolve_provider(&ctx);
 

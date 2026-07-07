@@ -3,7 +3,7 @@
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 #[derive(Debug, Clone)]
 pub struct UserServiceTaskRunnerExchange {
@@ -37,9 +37,25 @@ pub struct TaskRunnerMcpConfigRequest {
     pub builtin_prompt_locale: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub workspace_dir: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sandbox_enabled: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sandbox_manager_base_url: Option<String>,
     pub external_mcp_config_ids: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub ephemeral_http_servers: Vec<TaskRunnerEphemeralHttpMcpServerRequest>,
     #[serde(default)]
     pub skill_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct TaskRunnerEphemeralHttpMcpServerRequest {
+    pub name: String,
+    pub url: String,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub headers: BTreeMap<String, String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub auth_mode: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize)]
@@ -124,7 +140,10 @@ impl TaskRunnerExecutionOptions {
             enabled_builtin_kinds,
             builtin_prompt_locale: None,
             workspace_dir: None,
+            sandbox_enabled: None,
+            sandbox_manager_base_url: None,
             external_mcp_config_ids,
+            ephemeral_http_servers: Vec::new(),
             skill_ids: Vec::new(),
         })
     }

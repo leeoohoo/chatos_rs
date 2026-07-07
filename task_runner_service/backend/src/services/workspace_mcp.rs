@@ -1,15 +1,33 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
 use chatos_mcp_runtime::{builtin_kind_by_any, complete_builtin_kind_dependencies, BuiltinMcpKind};
+use serde_json::{json, Value};
 
 use crate::config::AppConfig;
-use crate::models::{ModelConfigRecord, TaskMcpConfig, TaskRecord, TASK_PROFILE_CHATOS_PLAN};
+use crate::models::{
+    ModelConfigRecord, TaskEphemeralHttpMcpServer, TaskMcpConfig, TaskRecord, PUBLIC_PROJECT_ID,
+    TASK_MCP_HTTP_AUTH_LOCAL_CONNECTOR_INTERNAL, TASK_PROFILE_CHATOS_PLAN,
+};
+use crate::store::AppStore;
 
 use super::normalize_strings;
 use super::normalized_optional;
+
+const LOCAL_CONNECTOR_ROOT_PREFIX: &str = "local://connector/";
+const LOCAL_CONNECTOR_MCP_SERVER_NAME: &str = "local_connector";
+pub(super) const LOCAL_CONNECTOR_ENABLED_BUILTIN_KINDS_HEADER: &str =
+    "x-local-connector-enabled-builtin-kinds";
+
+#[derive(Debug, Clone)]
+struct LocalConnectorProjectRef {
+    device_id: String,
+    workspace_id: String,
+    relative_path: Option<String>,
+}
 
 pub(super) fn selected_builtin_kinds(mcp_config: &TaskMcpConfig) -> Vec<BuiltinMcpKind> {
     let kinds = mcp_config
@@ -21,15 +39,327 @@ pub(super) fn selected_builtin_kinds(mcp_config: &TaskMcpConfig) -> Vec<BuiltinM
 }
 
 pub(super) fn runtime_selected_builtin_kinds(task: &TaskRecord) -> Vec<BuiltinMcpKind> {
-    if is_chatos_plan_task(task) {
-        return plan_task_runtime_builtin_kinds();
-    }
-    let mut kinds = selected_builtin_kinds(&task.mcp_config);
-    kinds.retain(|kind| !matches!(kind, BuiltinMcpKind::ProjectManagement));
+    let mut kinds = if is_chatos_plan_task(task) {
+        plan_task_runtime_builtin_kinds()
+    } else {
+        let mut kinds = selected_builtin_kinds(&task.mcp_config);
+        kinds.retain(|kind| !matches!(kind, BuiltinMcpKind::ProjectManagement));
+        kinds
+    };
     if is_chatos_async_task(task) {
         ensure_system_injected_builtin_kinds(&mut kinds);
     }
+    let uses_local_connector = task_uses_local_connector(task);
+    if uses_local_connector {
+        kinds.retain(|kind| !local_connector_replaces_builtin_kind(*kind));
+    }
+    let mut kinds = complete_builtin_kind_dependencies(kinds);
+    if uses_local_connector {
+        kinds.retain(|kind| !local_connector_replaces_builtin_kind(*kind));
+    }
+    kinds
+}
+
+pub(super) fn task_uses_local_connector(task: &TaskRecord) -> bool {
+    task.mcp_config
+        .ephemeral_http_servers
+        .iter()
+        .any(is_local_connector_ephemeral_server)
+}
+
+pub(super) async fn resolve_project_root_for_project_id(
+    config: &AppConfig,
+    store: &AppStore,
+    project_id: &str,
+) -> Result<Option<String>, String> {
+    let project_id = project_id.trim();
+    if project_id.is_empty() || project_id == PUBLIC_PROJECT_ID {
+        return Ok(None);
+    }
+    if config
+        .project_service_base_url
+        .as_deref()
+        .map(str::trim)
+        .is_some_and(|value| !value.is_empty())
+    {
+        return Ok(
+            super::project_management_api_client::get_project_from_project_service(
+                config, project_id,
+            )
+            .await?
+            .and_then(|project| project.root_path),
+        );
+    }
+    store
+        .get_task_project(project_id)
+        .await
+        .map(|project| project.and_then(|project| project.root_path))
+}
+
+pub(super) async fn resolve_project_root_for_task(
+    config: &AppConfig,
+    store: &AppStore,
+    task: &TaskRecord,
+) -> Result<Option<String>, String> {
+    if let Some(root) = project_root_from_payload(task.input_payload.as_ref()) {
+        return Ok(Some(root));
+    }
+    resolve_project_root_for_project_id(config, store, task.project_id.as_str()).await
+}
+
+pub(super) fn project_root_from_payload(value: Option<&Value>) -> Option<String> {
+    value
+        .and_then(|value| {
+            value
+                .get("project_root")
+                .or_else(|| value.get("projectRoot"))
+        })
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+}
+
+pub(super) fn apply_local_connector_routing_to_task(
+    task: &mut TaskRecord,
+    project_root: &str,
+) -> bool {
+    let local_kinds = selected_local_connector_builtin_kinds_for_task(task);
+    apply_local_connector_routing(
+        &mut task.mcp_config,
+        &mut task.input_payload,
+        project_root,
+        local_kinds.as_slice(),
+    )
+}
+
+pub(super) fn apply_local_connector_routing(
+    mcp_config: &mut TaskMcpConfig,
+    input_payload: &mut Option<Value>,
+    project_root: &str,
+    local_kinds: &[BuiltinMcpKind],
+) -> bool {
+    let Some(project) = parse_local_connector_project_root(project_root) else {
+        return false;
+    };
+    let before_config = serde_json::to_value(&*mcp_config).ok();
+    let before_payload = input_payload.clone();
+
+    mcp_config
+        .ephemeral_http_servers
+        .retain(|server| !is_local_connector_ephemeral_server(server));
+    let local_kinds = normalize_local_connector_builtin_kinds(local_kinds.iter().copied());
+    if !local_kinds.is_empty() {
+        mcp_config.workspace_dir = None;
+        mcp_config
+            .enabled_builtin_kinds
+            .retain(|kind| !is_server_local_builtin_kind_name(kind));
+        let mut headers = std::collections::BTreeMap::new();
+        headers.insert(
+            LOCAL_CONNECTOR_ENABLED_BUILTIN_KINDS_HEADER.to_string(),
+            local_connector_builtin_kinds_header_value(local_kinds.as_slice()),
+        );
+        mcp_config
+            .ephemeral_http_servers
+            .push(TaskEphemeralHttpMcpServer {
+                name: LOCAL_CONNECTOR_MCP_SERVER_NAME.to_string(),
+                url: local_connector_mcp_url(&project),
+                headers,
+                auth_mode: Some(TASK_MCP_HTTP_AUTH_LOCAL_CONNECTOR_INTERNAL.to_string()),
+            });
+    }
+    ensure_input_payload_project_root(input_payload, project_root.trim());
+
+    before_config != serde_json::to_value(&*mcp_config).ok() || before_payload != *input_payload
+}
+
+fn selected_local_connector_builtin_kinds_for_task(task: &TaskRecord) -> Vec<BuiltinMcpKind> {
+    selected_local_connector_builtin_kinds_for_config(&task.mcp_config, task.task_profile.as_str())
+}
+
+pub(super) fn selected_local_connector_builtin_kinds_for_config(
+    mcp_config: &TaskMcpConfig,
+    _task_profile: &str,
+) -> Vec<BuiltinMcpKind> {
+    let kinds = selected_builtin_kinds(mcp_config);
+    normalize_local_connector_builtin_kinds(
+        kinds
+            .into_iter()
+            .filter(|kind| local_connector_replaces_builtin_kind(*kind)),
+    )
+}
+
+fn normalize_local_connector_builtin_kinds<I>(kinds: I) -> Vec<BuiltinMcpKind>
+where
+    I: IntoIterator<Item = BuiltinMcpKind>,
+{
     complete_builtin_kind_dependencies(kinds)
+        .into_iter()
+        .filter(|kind| local_connector_replaces_builtin_kind(*kind))
+        .fold(Vec::new(), |mut out, kind| {
+            if !out.contains(&kind) {
+                out.push(kind);
+            }
+            out
+        })
+}
+
+fn local_connector_builtin_kinds_header_value(kinds: &[BuiltinMcpKind]) -> String {
+    kinds
+        .iter()
+        .map(|kind| kind.kind_name())
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+pub(super) fn local_connector_replaces_builtin_kind(kind: BuiltinMcpKind) -> bool {
+    matches!(
+        kind,
+        BuiltinMcpKind::CodeMaintainerRead
+            | BuiltinMcpKind::CodeMaintainerWrite
+            | BuiltinMcpKind::TerminalController
+            | BuiltinMcpKind::BrowserTools
+    )
+}
+
+fn is_local_connector_ephemeral_server(server: &TaskEphemeralHttpMcpServer) -> bool {
+    server
+        .auth_mode
+        .as_deref()
+        .map(str::trim)
+        .is_some_and(|value| {
+            value.eq_ignore_ascii_case(TASK_MCP_HTTP_AUTH_LOCAL_CONNECTOR_INTERNAL)
+        })
+        || server.name.trim().eq_ignore_ascii_case("local_connector")
+}
+
+pub(super) fn task_uses_local_connector_builtin_kind(
+    task: &TaskRecord,
+    kind: BuiltinMcpKind,
+) -> bool {
+    task.mcp_config
+        .ephemeral_http_servers
+        .iter()
+        .filter(|server| is_local_connector_ephemeral_server(server))
+        .any(|server| local_connector_server_enables_builtin_kind(server, kind))
+}
+
+pub(super) fn local_connector_server_enables_builtin_kind(
+    server: &TaskEphemeralHttpMcpServer,
+    kind: BuiltinMcpKind,
+) -> bool {
+    let Some(raw) = server
+        .headers
+        .get(LOCAL_CONNECTOR_ENABLED_BUILTIN_KINDS_HEADER)
+    else {
+        return false;
+    };
+    let kinds = normalize_local_connector_builtin_kinds(
+        raw.split([',', ';', '|', ' '])
+            .filter_map(|value| builtin_kind_by_any(value.trim())),
+    );
+    kinds.contains(&kind)
+}
+
+fn is_server_local_builtin_kind_name(value: &str) -> bool {
+    builtin_kind_by_any(value).is_some_and(local_connector_replaces_builtin_kind)
+}
+
+fn ensure_input_payload_project_root(input_payload: &mut Option<Value>, project_root: &str) {
+    let project_root = project_root.trim();
+    if project_root.is_empty() {
+        return;
+    }
+    match input_payload {
+        Some(Value::Object(map)) => {
+            map.insert("project_root".to_string(), json!(project_root));
+        }
+        None => {
+            *input_payload = Some(json!({ "project_root": project_root }));
+        }
+        Some(_) => {}
+    }
+}
+
+fn parse_local_connector_project_root(project_root: &str) -> Option<LocalConnectorProjectRef> {
+    let rest = project_root
+        .trim()
+        .strip_prefix(LOCAL_CONNECTOR_ROOT_PREFIX)?;
+    let mut parts = rest.splitn(3, '/');
+    let device_id = normalized_optional(parts.next().map(ToOwned::to_owned))?;
+    let workspace_id = normalized_optional(parts.next().map(ToOwned::to_owned))?;
+    let relative_path = match parts.next() {
+        Some(path) => Some(decode_local_connector_relative_path(path)?),
+        None => None,
+    };
+    Some(LocalConnectorProjectRef {
+        device_id,
+        workspace_id,
+        relative_path,
+    })
+}
+
+fn local_connector_mcp_url(project: &LocalConnectorProjectRef) -> String {
+    let mut url = format!(
+        "{}/api/local-connectors/relay/{}/mcp?workspace_id={}",
+        local_connector_service_base_url().trim_end_matches('/'),
+        urlencoding::encode(project.device_id.as_str()),
+        urlencoding::encode(project.workspace_id.as_str())
+    );
+    if let Some(relative_path) = project.relative_path.as_deref() {
+        url.push_str("&cwd=");
+        url.push_str(urlencoding::encode(relative_path).as_ref());
+    }
+    url
+}
+
+fn local_connector_service_base_url() -> String {
+    std::env::var("TASK_RUNNER_LOCAL_CONNECTOR_SERVICE_BASE_URL")
+        .ok()
+        .or_else(|| std::env::var("LOCAL_CONNECTOR_SERVICE_BASE_URL").ok())
+        .or_else(|| std::env::var("CHATOS_LOCAL_CONNECTOR_SERVICE_BASE_URL").ok())
+        .map(|value| value.trim().trim_end_matches('/').to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "http://127.0.0.1:39230".to_string())
+}
+
+fn decode_local_connector_relative_path(path: &str) -> Option<String> {
+    let mut parts = Vec::new();
+    for part in path.split('/').filter(|part| !part.trim().is_empty()) {
+        let decoded = urlencoding::decode(part).ok()?.into_owned();
+        parts.push(decoded);
+    }
+    let joined = parts.join("/");
+    normalize_local_relative_path(joined.as_str()).filter(|path| local_relative_path_is_safe(path))
+}
+
+fn normalize_local_relative_path(value: &str) -> Option<String> {
+    let value = value.trim().replace('\\', "/");
+    let value = value.trim_matches('/');
+    if value.is_empty() || value == "." {
+        return None;
+    }
+    let parts = value
+        .split('/')
+        .map(str::trim)
+        .filter(|part| !part.is_empty() && *part != ".")
+        .collect::<Vec<_>>();
+    if parts.is_empty() {
+        None
+    } else {
+        Some(parts.join("/"))
+    }
+}
+
+fn local_relative_path_is_safe(path: &str) -> bool {
+    let path = path.trim();
+    !path.is_empty()
+        && !path.starts_with('/')
+        && !path.starts_with('\\')
+        && path.split('/').all(|part| {
+            let part = part.trim();
+            !part.is_empty() && part != "." && part != ".."
+        })
 }
 
 fn plan_task_runtime_builtin_kinds() -> Vec<BuiltinMcpKind> {
@@ -91,10 +421,42 @@ pub(super) fn sanitize_task_mcp_config(mut config: TaskMcpConfig) -> TaskMcpConf
         .unwrap_or_else(|| chatos_mcp_runtime::BuiltinMcpPromptLocale::DEFAULT_KEY.to_string());
     config.enabled_builtin_kinds = normalize_builtin_kind_names(config.enabled_builtin_kinds);
     config.workspace_dir = normalized_optional(config.workspace_dir);
+    config.sandbox_manager_base_url = normalized_optional(config.sandbox_manager_base_url)
+        .map(|value| value.trim_end_matches('/').to_string());
     config.default_remote_server_id = normalized_optional(config.default_remote_server_id);
     config.external_mcp_config_ids = normalize_strings(config.external_mcp_config_ids);
+    config.ephemeral_http_servers = normalize_ephemeral_http_servers(config.ephemeral_http_servers);
     config.skill_ids = normalize_strings(config.skill_ids);
     config
+}
+
+fn normalize_ephemeral_http_servers(
+    values: Vec<TaskEphemeralHttpMcpServer>,
+) -> Vec<TaskEphemeralHttpMcpServer> {
+    values
+        .into_iter()
+        .filter_map(|mut server| {
+            server.name = normalized_optional(Some(server.name))?;
+            server.url = normalized_optional(Some(server.url))?;
+            server.auth_mode = normalized_optional(server.auth_mode).map(|value| {
+                if value.eq_ignore_ascii_case(TASK_MCP_HTTP_AUTH_LOCAL_CONNECTOR_INTERNAL) {
+                    TASK_MCP_HTTP_AUTH_LOCAL_CONNECTOR_INTERNAL.to_string()
+                } else {
+                    value
+                }
+            });
+            server.headers = server
+                .headers
+                .into_iter()
+                .filter_map(|(key, value)| {
+                    let key = normalized_optional(Some(key))?;
+                    let value = normalized_optional(Some(value))?;
+                    Some((key, value))
+                })
+                .collect();
+            Some(server)
+        })
+        .collect()
 }
 
 pub(super) fn ensure_effective_task_workspace_dir(
@@ -218,7 +580,27 @@ fn canonical_or_absolute(path: &Path) -> PathBuf {
             .map(|cwd| cwd.join(path))
             .unwrap_or_else(|_| path.to_path_buf())
     };
-    std::fs::canonicalize(&absolute).unwrap_or(absolute)
+    canonicalize_existing_prefix(&absolute)
+}
+
+fn canonicalize_existing_prefix(path: &Path) -> PathBuf {
+    let mut current = path.to_path_buf();
+    let mut missing = Vec::<OsString>::new();
+    while !current.exists() {
+        let Some(file_name) = current.file_name() else {
+            break;
+        };
+        missing.push(file_name.to_os_string());
+        let Some(parent) = current.parent() else {
+            break;
+        };
+        current = parent.to_path_buf();
+    }
+    let mut resolved = std::fs::canonicalize(&current).unwrap_or(current);
+    for component in missing.into_iter().rev() {
+        resolved.push(component);
+    }
+    resolved
 }
 
 fn path_is_within_root(candidate: &Path, root: &Path) -> bool {
@@ -303,12 +685,14 @@ fn normalize_path_for_compare(path: &Path) -> String {
 #[cfg(test)]
 mod tests {
     use crate::models::{
-        now_rfc3339, TaskMcpConfig, TaskRecord, TaskScheduleConfig, TaskStatus,
-        TASK_PROFILE_CHATOS_PLAN, TASK_PROFILE_DEFAULT,
+        now_rfc3339, TaskEphemeralHttpMcpServer, TaskMcpConfig, TaskRecord, TaskScheduleConfig,
+        TaskStatus, TASK_MCP_HTTP_AUTH_LOCAL_CONNECTOR_INTERNAL, TASK_PROFILE_CHATOS_PLAN,
+        TASK_PROFILE_DEFAULT,
     };
 
     use super::{
         ensure_workspace_is_inside_base, runtime_selected_builtin_kinds, selected_builtin_kinds,
+        LOCAL_CONNECTOR_ENABLED_BUILTIN_KINDS_HEADER,
     };
     use chatos_mcp_runtime::BuiltinMcpKind;
 
@@ -360,6 +744,200 @@ mod tests {
 
         assert!(selected.contains(&BuiltinMcpKind::CodeMaintainerWrite));
         assert!(selected.contains(&BuiltinMcpKind::CodeMaintainerRead));
+    }
+
+    #[test]
+    fn local_connector_task_removes_server_local_builtin_kinds() {
+        let mut task = sample_task(
+            TASK_PROFILE_DEFAULT,
+            vec![
+                "CodeMaintainerWrite".to_string(),
+                "TerminalController".to_string(),
+                "BrowserTools".to_string(),
+                "WebTools".to_string(),
+            ],
+        );
+        task.mcp_config
+            .ephemeral_http_servers
+            .push(local_connector_server());
+
+        let selected = runtime_selected_builtin_kinds(&task);
+
+        assert!(!selected.contains(&BuiltinMcpKind::CodeMaintainerRead));
+        assert!(!selected.contains(&BuiltinMcpKind::CodeMaintainerWrite));
+        assert!(!selected.contains(&BuiltinMcpKind::TerminalController));
+        assert!(!selected.contains(&BuiltinMcpKind::BrowserTools));
+        assert!(selected.contains(&BuiltinMcpKind::WebTools));
+    }
+
+    #[test]
+    fn local_connector_plan_task_removes_fixed_server_local_builtin_kinds() {
+        let mut task = sample_task(TASK_PROFILE_CHATOS_PLAN, Vec::new());
+        task.mcp_config
+            .ephemeral_http_servers
+            .push(local_connector_server());
+
+        let selected = runtime_selected_builtin_kinds(&task);
+
+        assert!(!selected.contains(&BuiltinMcpKind::CodeMaintainerRead));
+        assert!(!selected.contains(&BuiltinMcpKind::CodeMaintainerWrite));
+        assert!(!selected.contains(&BuiltinMcpKind::TerminalController));
+        assert!(!selected.contains(&BuiltinMcpKind::BrowserTools));
+        assert!(selected.contains(&BuiltinMcpKind::TaskManager));
+        assert!(selected.contains(&BuiltinMcpKind::ProjectManagement));
+    }
+
+    #[test]
+    fn local_connector_routing_rewrites_mcp_config_and_payload() {
+        let mut task = sample_task(
+            TASK_PROFILE_DEFAULT,
+            vec![
+                "CodeMaintainerRead".to_string(),
+                "TerminalController".to_string(),
+                "BrowserTools".to_string(),
+                "TaskManager".to_string(),
+            ],
+        );
+        task.input_payload = Some(serde_json::json!({ "source": "test" }));
+
+        let changed = super::apply_local_connector_routing_to_task(
+            &mut task,
+            "local://connector/device-1/workspace-1/apps/web",
+        );
+
+        assert!(changed);
+        assert_eq!(
+            task.input_payload
+                .as_ref()
+                .and_then(|value| value.get("project_root"))
+                .and_then(serde_json::Value::as_str),
+            Some("local://connector/device-1/workspace-1/apps/web")
+        );
+        assert_eq!(
+            task.mcp_config.enabled_builtin_kinds,
+            vec!["TaskManager".to_string()]
+        );
+        let server = task
+            .mcp_config
+            .ephemeral_http_servers
+            .first()
+            .expect("local connector server");
+        assert_eq!(server.name, "local_connector");
+        assert_eq!(
+            server.auth_mode.as_deref(),
+            Some(TASK_MCP_HTTP_AUTH_LOCAL_CONNECTOR_INTERNAL)
+        );
+        assert_eq!(
+            server
+                .headers
+                .get(LOCAL_CONNECTOR_ENABLED_BUILTIN_KINDS_HEADER)
+                .map(String::as_str),
+            Some("CodeMaintainerRead,TerminalController,BrowserTools")
+        );
+        assert!(server
+            .url
+            .contains("/api/local-connectors/relay/device-1/mcp"));
+        assert!(server.url.contains("workspace_id=workspace-1"));
+        assert!(server.url.contains("cwd=apps%2Fweb"));
+    }
+
+    #[test]
+    fn local_connector_routing_passes_only_selected_local_capabilities() {
+        let mut task = sample_task(
+            TASK_PROFILE_DEFAULT,
+            vec!["BrowserTools".to_string(), "TaskManager".to_string()],
+        );
+
+        let changed = super::apply_local_connector_routing_to_task(
+            &mut task,
+            "local://connector/device-1/workspace-1/apps/web",
+        );
+
+        assert!(changed);
+        assert_eq!(
+            task.mcp_config.enabled_builtin_kinds,
+            vec!["TaskManager".to_string()]
+        );
+        let server = task
+            .mcp_config
+            .ephemeral_http_servers
+            .first()
+            .expect("local connector server");
+        assert_eq!(
+            server
+                .headers
+                .get(LOCAL_CONNECTOR_ENABLED_BUILTIN_KINDS_HEADER)
+                .map(String::as_str),
+            Some("BrowserTools")
+        );
+        assert!(super::local_connector_server_enables_builtin_kind(
+            server,
+            BuiltinMcpKind::BrowserTools
+        ));
+        assert!(!super::local_connector_server_enables_builtin_kind(
+            server,
+            BuiltinMcpKind::TerminalController
+        ));
+        assert!(!super::local_connector_server_enables_builtin_kind(
+            &local_connector_server(),
+            BuiltinMcpKind::BrowserTools
+        ));
+    }
+
+    #[test]
+    fn local_connector_plan_routing_does_not_add_profile_defaults() {
+        let mut task = sample_task(TASK_PROFILE_CHATOS_PLAN, Vec::new());
+
+        let changed = super::apply_local_connector_routing_to_task(
+            &mut task,
+            "local://connector/device-1/workspace-1/apps/web",
+        );
+
+        assert!(changed);
+        assert!(task.mcp_config.ephemeral_http_servers.is_empty());
+        assert_eq!(
+            task.input_payload
+                .as_ref()
+                .and_then(|value| value.get("project_root"))
+                .and_then(serde_json::Value::as_str),
+            Some("local://connector/device-1/workspace-1/apps/web")
+        );
+    }
+
+    #[test]
+    fn local_connector_plan_routing_uses_selected_capabilities_only() {
+        let mut task = sample_task(TASK_PROFILE_CHATOS_PLAN, vec!["BrowserTools".to_string()]);
+
+        let changed = super::apply_local_connector_routing_to_task(
+            &mut task,
+            "local://connector/device-1/workspace-1/apps/web",
+        );
+
+        assert!(changed);
+        let server = task
+            .mcp_config
+            .ephemeral_http_servers
+            .first()
+            .expect("local connector server");
+        assert_eq!(
+            server
+                .headers
+                .get(LOCAL_CONNECTOR_ENABLED_BUILTIN_KINDS_HEADER)
+                .map(String::as_str),
+            Some("BrowserTools")
+        );
+        assert!(super::local_connector_server_enables_builtin_kind(
+            server,
+            BuiltinMcpKind::BrowserTools
+        ));
+        assert!(!super::local_connector_server_enables_builtin_kind(
+            server,
+            BuiltinMcpKind::TerminalController
+        ));
+        assert!(!super::local_connector_server_enables_builtin_kind(
+            server,
+            BuiltinMcpKind::CodeMaintainerRead
+        ));
     }
 
     #[test]
@@ -441,6 +1019,15 @@ mod tests {
             created_at: now.clone(),
             updated_at: now,
             deleted_at: None,
+        }
+    }
+
+    fn local_connector_server() -> TaskEphemeralHttpMcpServer {
+        TaskEphemeralHttpMcpServer {
+            name: "local_connector".to_string(),
+            url: "http://127.0.0.1:39230/internal/mcp".to_string(),
+            headers: Default::default(),
+            auth_mode: Some(TASK_MCP_HTTP_AUTH_LOCAL_CONNECTOR_INTERNAL.to_string()),
         }
     }
 }

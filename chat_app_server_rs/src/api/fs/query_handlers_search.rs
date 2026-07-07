@@ -37,10 +37,6 @@ pub(in super::super) async fn search_entries(
     auth: AuthUser,
     Query(query): Query<FsSearchQuery>,
 ) -> (StatusCode, Json<Value>) {
-    let policy = match FsPathPolicy::for_user(&auth).await {
-        Ok(value) => value,
-        Err(err) => return policy_error_tuple(err),
-    };
     let raw_path = query
         .path
         .as_ref()
@@ -65,16 +61,30 @@ pub(in super::super) async fn search_entries(
         );
     };
 
+    let limit = query
+        .limit
+        .unwrap_or(DEFAULT_SEARCH_LIMIT)
+        .clamp(1, MAX_SEARCH_LIMIT);
+    if let Some(response) = super::super::local_connector_bridge::search_entries(
+        raw_path.as_str(),
+        raw_keyword.as_str(),
+        limit,
+    )
+    .await
+    {
+        return response;
+    }
+
+    let policy = match FsPathPolicy::for_user(&auth).await {
+        Ok(value) => value,
+        Err(err) => return policy_error_tuple(err),
+    };
     let path = match policy.authorize_existing_dir(raw_path.as_str(), "路径不存在", "路径不是目录")
     {
         Ok(value) => value,
         Err(err) => return policy_error_tuple(err),
     };
 
-    let limit = query
-        .limit
-        .unwrap_or(DEFAULT_SEARCH_LIMIT)
-        .clamp(1, MAX_SEARCH_LIMIT);
     let keyword = normalize_search_keyword(&raw_keyword);
     let root = path.path.clone();
     let root_display = policy.display_path(root.as_path());
@@ -220,10 +230,6 @@ pub(in super::super) async fn search_content(
     auth: AuthUser,
     Query(query): Query<FsContentSearchQuery>,
 ) -> (StatusCode, Json<Value>) {
-    let policy = match FsPathPolicy::for_user(&auth).await {
-        Ok(value) => value,
-        Err(err) => return policy_error_tuple(err),
-    };
     let raw_path = query
         .path
         .as_ref()
@@ -248,16 +254,30 @@ pub(in super::super) async fn search_content(
         );
     };
 
+    let limit = query
+        .limit
+        .unwrap_or(DEFAULT_SEARCH_LIMIT)
+        .clamp(1, MAX_SEARCH_LIMIT);
+    if let Some(response) = super::super::local_connector_bridge::search_content(
+        raw_path.as_str(),
+        raw_keyword.as_str(),
+        limit,
+    )
+    .await
+    {
+        return response;
+    }
+
+    let policy = match FsPathPolicy::for_user(&auth).await {
+        Ok(value) => value,
+        Err(err) => return policy_error_tuple(err),
+    };
     let path = match policy.authorize_existing_dir(raw_path.as_str(), "路径不存在", "路径不是目录")
     {
         Ok(value) => value,
         Err(err) => return policy_error_tuple(err),
     };
     let query_text = raw_keyword;
-    let limit = query
-        .limit
-        .unwrap_or(DEFAULT_SEARCH_LIMIT)
-        .clamp(1, MAX_SEARCH_LIMIT);
 
     let search_result = tokio::task::spawn_blocking({
         let root = path.path.clone();

@@ -8,6 +8,7 @@ use once_cell::sync::Lazy;
 use serde_json::{json, Value};
 
 use crate::api::fs::policy::{FsPathPolicy, FsPolicyError};
+use crate::api::local_connectors::parse_local_connector_root_path;
 use crate::core::auth::AuthUser;
 use crate::core::path_guard::path_is_within_root;
 use crate::services::code_nav::manager::CodeNavManager;
@@ -109,6 +110,12 @@ async fn authorize_code_nav_paths(
     project_root: &str,
     file_path: &str,
 ) -> Result<(String, String), (StatusCode, Json<Value>)> {
+    if parse_local_connector_root_path(project_root).is_some()
+        || parse_local_connector_root_path(file_path).is_some()
+    {
+        return authorize_local_connector_code_nav_paths(project_root, file_path);
+    }
+
     let policy = FsPathPolicy::for_user(auth)
         .await
         .map_err(fs_policy_error_tuple)?;
@@ -128,6 +135,54 @@ async fn authorize_code_nav_paths(
         root.path.to_string_lossy().to_string(),
         file.path.to_string_lossy().to_string(),
     ))
+}
+
+fn authorize_local_connector_code_nav_paths(
+    project_root: &str,
+    file_path: &str,
+) -> Result<(String, String), (StatusCode, Json<Value>)> {
+    let project_root = project_root.trim();
+    let file_path = file_path.trim();
+    let Some(root_ref) = parse_local_connector_root_path(project_root) else {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "project_root 格式错误" })),
+        ));
+    };
+    let Some(file_ref) = parse_local_connector_root_path(file_path) else {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "file_path 格式错误" })),
+        ));
+    };
+    if root_ref.device_id != file_ref.device_id || root_ref.workspace_id != file_ref.workspace_id {
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json(json!({ "error": "file_path 超出项目根目录" })),
+        ));
+    }
+
+    let root_relative = root_ref.relative_path.unwrap_or_default();
+    let file_relative = file_ref.relative_path.unwrap_or_default();
+    let in_project = root_relative.is_empty()
+        || file_relative == root_relative
+        || file_relative
+            .strip_prefix(root_relative.as_str())
+            .is_some_and(|rest| rest.starts_with('/'));
+    if !in_project {
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json(json!({ "error": "file_path 超出项目根目录" })),
+        ));
+    }
+    if file_relative.is_empty() || file_relative == root_relative {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "file_path 不是文件" })),
+        ));
+    }
+
+    Ok((project_root.to_string(), file_path.to_string()))
 }
 
 async fn authorize_document_symbols_request(

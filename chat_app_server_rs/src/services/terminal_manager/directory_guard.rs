@@ -69,7 +69,7 @@ pub(super) fn validate_directory_change_command(
                 }
                 return None;
             }
-    };
+        };
 
     if !path_is_within_root(resolved.as_path(), root_cwd) {
         return Some("Blocked: cannot leave terminal workspace.".to_string());

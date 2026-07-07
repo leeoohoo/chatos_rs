@@ -34,6 +34,8 @@ pub(super) struct SandboxRuntimeContext {
     pub manager_client_id: Option<String>,
     #[serde(default, skip_serializing)]
     pub manager_client_key: Option<String>,
+    #[serde(default)]
+    pub manager_base_url: String,
     pub run_workspace: String,
     pub workspace_root: String,
     pub expires_at: String,
@@ -184,6 +186,7 @@ impl SandboxRuntimeContext {
             "backend_id": self.backend_id,
             "agent_endpoint": self.agent_endpoint,
             "mcp_url": self.mcp_url,
+            "manager_base_url": self.manager_base_url,
             "run_workspace": self.run_workspace,
             "workspace_root": self.workspace_root,
             "expires_at": self.expires_at,
@@ -224,6 +227,12 @@ impl RunService {
         &self,
         task: &TaskRecord,
     ) -> Result<bool, String> {
+        if !task.mcp_config.enabled {
+            return Ok(false);
+        }
+        if let Some(enabled) = task.mcp_config.sandbox_enabled {
+            return Ok(enabled);
+        }
         let sandbox_enabled = self.effective_sandbox_enabled().await?;
         Ok(sandbox_enabled && task_requires_sandbox(task))
     }
@@ -239,7 +248,7 @@ impl RunService {
         }
 
         let workspace_root = sandbox_workspace_root(effective_workspace_dir)?;
-        let base_url = self.effective_sandbox_manager_base_url().await?;
+        let base_url = self.sandbox_manager_base_url_for_task(task).await?;
         let ttl_seconds = self.effective_sandbox_lease_ttl_seconds().await?;
         let client =
             SandboxManagerClient::new(base_url, SandboxManagerAuth::from_config(&self.config))?;
@@ -318,6 +327,8 @@ impl RunService {
             }
         };
 
+        let should_copy_workspace =
+            !is_local_connector_sandbox_manager(context.manager_base_url.as_str());
         let baseline_workspace = match sandbox_baseline_workspace(&context.run_workspace) {
             Ok(path) => path,
             Err(err) => {
@@ -332,30 +343,33 @@ impl RunService {
                 return Err(err);
             }
         };
-        if let Err(err) =
-            copy_workspace_to_sandbox(effective_workspace_dir, baseline_workspace.as_str())
-        {
-            let _ = client.release(&context, true, true).await;
-            self.append_sandbox_event(
-                run,
-                "sandbox_failed",
-                format!("复制工作区 baseline 失败: {err}"),
-                Some(context.to_metadata()),
-            )
-            .await;
-            return Err(err);
-        }
-        if let Err(err) = copy_workspace_to_sandbox(effective_workspace_dir, &context.run_workspace)
-        {
-            let _ = client.release(&context, true, true).await;
-            self.append_sandbox_event(
-                run,
-                "sandbox_failed",
-                format!("复制工作区到沙箱失败: {err}"),
-                Some(context.to_metadata()),
-            )
-            .await;
-            return Err(err);
+        if should_copy_workspace {
+            if let Err(err) =
+                copy_workspace_to_sandbox(effective_workspace_dir, baseline_workspace.as_str())
+            {
+                let _ = client.release(&context, true, true).await;
+                self.append_sandbox_event(
+                    run,
+                    "sandbox_failed",
+                    format!("复制工作区 baseline 失败: {err}"),
+                    Some(context.to_metadata()),
+                )
+                .await;
+                return Err(err);
+            }
+            if let Err(err) =
+                copy_workspace_to_sandbox(effective_workspace_dir, &context.run_workspace)
+            {
+                let _ = client.release(&context, true, true).await;
+                self.append_sandbox_event(
+                    run,
+                    "sandbox_failed",
+                    format!("复制工作区到沙箱失败: {err}"),
+                    Some(context.to_metadata()),
+                )
+                .await;
+                return Err(err);
+            }
         }
 
         match client.health(&context).await {
@@ -413,21 +427,38 @@ impl RunService {
         Ok(Some(context))
     }
 
+    async fn sandbox_manager_base_url_for_task(&self, task: &TaskRecord) -> Result<String, String> {
+        if let Some(base_url) = task
+            .mcp_config
+            .sandbox_manager_base_url
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            return Ok(base_url.trim_end_matches('/').to_string());
+        }
+        self.effective_sandbox_manager_base_url().await
+    }
+
     pub(super) async fn release_sandbox(
         &self,
         run: &TaskRunRecord,
         context: &SandboxRuntimeContext,
     ) -> Option<SandboxOutputReport> {
-        let base_url = match self.effective_sandbox_manager_base_url().await {
-            Ok(base_url) => base_url,
-            Err(err) => {
-                warn!(
-                    run_id = run.id.as_str(),
-                    sandbox_id = context.sandbox_id.as_str(),
-                    "failed to load sandbox manager base url for release: {err}"
-                );
-                return None;
+        let base_url = if context.manager_base_url.trim().is_empty() {
+            match self.effective_sandbox_manager_base_url().await {
+                Ok(base_url) => base_url,
+                Err(err) => {
+                    warn!(
+                        run_id = run.id.as_str(),
+                        sandbox_id = context.sandbox_id.as_str(),
+                        "failed to load sandbox manager base url for release: {err}"
+                    );
+                    return None;
+                }
             }
+        } else {
+            context.manager_base_url.clone()
         };
         let client = match SandboxManagerClient::new(
             base_url,
@@ -697,6 +728,7 @@ impl SandboxRuntimeContext {
             mcp_url: format!("{manager_base_url}/api/sandboxes/{sandbox_id}/mcp"),
             manager_client_id,
             manager_client_key,
+            manager_base_url,
             agent_endpoint,
             run_workspace: response.run_workspace,
             workspace_root: workspace_root.to_string_lossy().to_string(),
@@ -770,6 +802,10 @@ fn sandbox_workspace_root(workspace_dir: &str) -> Result<PathBuf, String> {
         )
     })?;
     Ok(root)
+}
+
+fn is_local_connector_sandbox_manager(base_url: &str) -> bool {
+    base_url.contains("/api/local-connectors/sandbox-facade/")
 }
 
 fn sandbox_baseline_workspace(run_workspace: &str) -> Result<String, String> {

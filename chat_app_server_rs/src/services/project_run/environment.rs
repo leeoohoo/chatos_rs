@@ -12,6 +12,7 @@ use crate::models::project_run_environment::{
 };
 use crate::repositories::project_run_catalogs;
 use crate::repositories::project_run_environment_settings;
+use crate::services::project_local_cache::is_local_connector_project_root;
 
 use super::cache::{
     read_cached_catalog, read_cached_environment_selection, read_cached_environment_snapshot,
@@ -28,6 +29,33 @@ fn build_environment_snapshot(
     selection: Option<ProjectRunEnvironmentSelection>,
     analyzed: ProjectRunCatalog,
 ) -> Result<ProjectRunEnvironmentSnapshot, String> {
+    if is_local_connector_project_root(project.root_path.as_str()) {
+        return Ok(ProjectRunEnvironmentSnapshot {
+            project_id: project.id.clone(),
+            user_id: project.user_id.clone(),
+            options_by_kind: HashMap::new(),
+            config_files: Vec::new(),
+            validation_issues: Vec::new(),
+            selected_toolchains: selection
+                .as_ref()
+                .map(|value| value.selected_toolchains.clone())
+                .unwrap_or_default(),
+            custom_toolchains: selection
+                .as_ref()
+                .map(|value| value.custom_toolchains.clone())
+                .unwrap_or_default(),
+            env_vars: selection
+                .as_ref()
+                .map(|value| value.env_vars.clone())
+                .unwrap_or_default(),
+            terminal_ui_enabled: selection
+                .as_ref()
+                .map(|value| value.terminal_ui_enabled)
+                .unwrap_or(true),
+            updated_at: selection.map(|value| value.updated_at),
+        });
+    }
+
     let options_by_kind = discover_toolchain_options(project, selection.as_ref());
     let project_root = PathBuf::from(resolve_user_path(project.root_path.as_str()));
     let config_files =

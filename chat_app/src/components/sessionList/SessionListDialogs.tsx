@@ -6,7 +6,13 @@ import React from 'react';
 import type { AgentConfig, FsEntry } from '../../types';
 import type { TaskRunnerAgentAccountResponse } from '../../lib/api/client/types';
 import { CreateContactModal } from './CreateContactModal';
-import { CreateProjectModal, CreateTerminalModal } from './CreateResourceModals';
+import {
+  CreateProjectModal,
+  CreateTerminalModal,
+  type LocalConnectorDirectoryEntryOption,
+  type LocalConnectorWorkspaceOption,
+  type ResourceSourceMode,
+} from './CreateResourceModals';
 import { DirPickerDialog, KeyFilePickerDialog } from './Pickers';
 import { RemoteConnectionModal } from './RemoteConnectionModal';
 import { TaskRunnerConfigModal } from './TaskRunnerConfigModal';
@@ -44,15 +50,38 @@ interface SessionListDialogsProps {
   projectModalOpen: boolean;
   projectRoot: string;
   projectError: string | null;
+  projectSourceMode: ResourceSourceMode;
+  localConnectorWorkspaces: LocalConnectorWorkspaceOption[];
+  localConnectorLoading: boolean;
+  localConnectorError: string | null;
+  localConnectorDirectoryPath: string;
+  localConnectorDirectoryParent: string | null;
+  localConnectorDirectoryEntries: LocalConnectorDirectoryEntryOption[];
+  localConnectorDirectoryLoading: boolean;
+  localConnectorDirectoryError: string | null;
+  selectedLocalConnectorDirectoryPath: string;
+  selectedLocalConnectorWorkspaceId: string;
   setProjectModalOpen: (value: boolean) => void;
+  setProjectSourceMode: (value: ResourceSourceMode) => void;
   setProjectRoot: (value: string) => void;
   openDirPickerForProject: () => void;
+  refreshLocalConnectorWorkspaces: () => Promise<void> | void;
+  setSelectedLocalConnectorWorkspaceId: (value: string) => void;
+  browseLocalConnectorDirectory: (path: string) => void;
+  setSelectedLocalConnectorDirectoryPath: (value: string) => void;
+  createLocalConnectorDirectory: (name: string) => Promise<void> | void;
   handleCreateProject: () => Promise<void> | void;
 
   terminalModalOpen: boolean;
   terminalRoot: string;
   terminalError: string | null;
+  terminalSourceMode: ResourceSourceMode;
+  terminalCommand: string;
+  terminalArgs: string;
+  terminalOutput: string | null;
+  terminalExecuting: boolean;
   setTerminalModalOpen: (value: boolean) => void;
+  setTerminalSourceMode: (value: ResourceSourceMode) => void;
   setTerminalRoot: (value: string) => void;
   openDirPickerForTerminal: () => void;
   handleCreateTerminal: () => Promise<void> | void;
@@ -167,14 +196,37 @@ export const SessionListDialogs: React.FC<SessionListDialogsProps> = ({
   projectModalOpen,
   projectRoot,
   projectError,
+  projectSourceMode,
+  localConnectorWorkspaces,
+  localConnectorLoading,
+  localConnectorError,
+  localConnectorDirectoryPath,
+  localConnectorDirectoryParent,
+  localConnectorDirectoryEntries,
+  localConnectorDirectoryLoading,
+  localConnectorDirectoryError,
+  selectedLocalConnectorDirectoryPath,
+  selectedLocalConnectorWorkspaceId,
   setProjectModalOpen,
+  setProjectSourceMode,
   setProjectRoot,
   openDirPickerForProject,
+  refreshLocalConnectorWorkspaces,
+  setSelectedLocalConnectorWorkspaceId,
+  browseLocalConnectorDirectory,
+  setSelectedLocalConnectorDirectoryPath,
+  createLocalConnectorDirectory,
   handleCreateProject,
   terminalModalOpen,
   terminalRoot,
   terminalError,
+  terminalSourceMode,
+  terminalCommand,
+  terminalArgs,
+  terminalOutput,
+  terminalExecuting,
   setTerminalModalOpen,
+  setTerminalSourceMode,
   setTerminalRoot,
   openDirPickerForTerminal,
   handleCreateTerminal,
@@ -297,9 +349,26 @@ export const SessionListDialogs: React.FC<SessionListDialogsProps> = ({
       isOpen={projectModalOpen}
       projectRoot={projectRoot}
       projectError={projectError}
+      sourceMode={projectSourceMode}
+      localConnectorWorkspaces={localConnectorWorkspaces}
+      localConnectorLoading={localConnectorLoading}
+      localConnectorError={localConnectorError}
+      localConnectorDirectoryPath={localConnectorDirectoryPath}
+      localConnectorDirectoryParent={localConnectorDirectoryParent}
+      localConnectorDirectoryEntries={localConnectorDirectoryEntries}
+      localConnectorDirectoryLoading={localConnectorDirectoryLoading}
+      localConnectorDirectoryError={localConnectorDirectoryError}
+      selectedLocalDirectoryPath={selectedLocalConnectorDirectoryPath}
+      selectedLocalWorkspaceId={selectedLocalConnectorWorkspaceId}
       onClose={() => setProjectModalOpen(false)}
+      onSourceModeChange={setProjectSourceMode}
       onProjectRootChange={setProjectRoot}
       onOpenPicker={openDirPickerForProject}
+      onRefreshLocalConnector={refreshLocalConnectorWorkspaces}
+      onSelectedLocalWorkspaceChange={setSelectedLocalConnectorWorkspaceId}
+      onBrowseLocalConnectorDirectory={browseLocalConnectorDirectory}
+      onSelectLocalConnectorDirectory={setSelectedLocalConnectorDirectoryPath}
+      onCreateLocalConnectorDirectory={createLocalConnectorDirectory}
       onCreate={() => {
         void handleCreateProject();
       }}
@@ -309,9 +378,30 @@ export const SessionListDialogs: React.FC<SessionListDialogsProps> = ({
       isOpen={terminalModalOpen}
       terminalRoot={terminalRoot}
       terminalError={terminalError}
+      sourceMode={terminalSourceMode}
+      localConnectorWorkspaces={localConnectorWorkspaces}
+      localConnectorLoading={localConnectorLoading}
+      localConnectorError={localConnectorError}
+      localConnectorDirectoryPath={localConnectorDirectoryPath}
+      localConnectorDirectoryParent={localConnectorDirectoryParent}
+      localConnectorDirectoryEntries={localConnectorDirectoryEntries}
+      localConnectorDirectoryLoading={localConnectorDirectoryLoading}
+      localConnectorDirectoryError={localConnectorDirectoryError}
+      selectedLocalDirectoryPath={selectedLocalConnectorDirectoryPath}
+      selectedLocalWorkspaceId={selectedLocalConnectorWorkspaceId}
+      terminalCommand={terminalCommand}
+      terminalArgs={terminalArgs}
+      terminalOutput={terminalOutput}
+      terminalExecuting={terminalExecuting}
       onClose={() => setTerminalModalOpen(false)}
+      onSourceModeChange={setTerminalSourceMode}
       onTerminalRootChange={setTerminalRoot}
       onOpenPicker={openDirPickerForTerminal}
+      onRefreshLocalConnector={refreshLocalConnectorWorkspaces}
+      onSelectedLocalWorkspaceChange={setSelectedLocalConnectorWorkspaceId}
+      onBrowseLocalConnectorDirectory={browseLocalConnectorDirectory}
+      onSelectLocalConnectorDirectory={setSelectedLocalConnectorDirectoryPath}
+      onCreateLocalConnectorDirectory={createLocalConnectorDirectory}
       onCreate={() => {
         void handleCreateTerminal();
       }}

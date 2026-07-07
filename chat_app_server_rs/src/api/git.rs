@@ -9,6 +9,7 @@ use serde_json::{json, Value};
 use std::path::Path;
 
 use crate::api::fs::policy::{FsPathPolicy, FsPolicyError};
+use crate::api::local_connectors::parse_local_connector_root_path;
 use crate::core::auth::AuthUser;
 use crate::services::git;
 use crate::services::git::{
@@ -361,6 +362,10 @@ fn authorize_git_root(
     raw: &str,
     write: bool,
 ) -> Result<String, (StatusCode, Json<Value>)> {
+    let trimmed = raw.trim();
+    if parse_local_connector_root_path(trimmed).is_some() {
+        return Ok(trimmed.to_string());
+    }
     let authorized = policy
         .authorize_existing_dir(raw, "root 路径不存在", "root 不是目录")
         .map_err(fs_policy_error_tuple)?;

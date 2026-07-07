@@ -99,7 +99,9 @@ use self::task_tenant_scope::{
     align_task_tenant_to_owner, resolve_task_tenant_id, save_task_if_tenant_aligned,
 };
 use self::workspace_mcp::{
-    ensure_workspace_dir_available, normalize_builtin_kind_names, sanitize_task_mcp_config,
+    apply_local_connector_routing, ensure_workspace_dir_available, normalize_builtin_kind_names,
+    project_root_from_payload, resolve_project_root_for_project_id, sanitize_task_mcp_config,
+    selected_local_connector_builtin_kinds_for_config,
 };
 
 const RUN_CANCEL_POLL_INTERVAL: Duration = Duration::from_millis(300);

@@ -9,7 +9,7 @@ use axum::{
 mod contact_handlers;
 mod contracts;
 mod crud_handlers;
-mod memory_sync;
+pub(crate) mod memory_sync;
 mod plan_handlers;
 mod requirement_execution;
 mod requirement_execution_handlers;

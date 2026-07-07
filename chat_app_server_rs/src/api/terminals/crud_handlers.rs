@@ -17,9 +17,16 @@ use crate::core::user_visible_path::display_path;
 use crate::core::validation::normalize_non_empty;
 use crate::models::terminal::{Terminal, TerminalService, TERMINAL_KIND_SHARED};
 use crate::models::terminal_log::{TerminalLog, TerminalLogService};
+use crate::repositories::terminals;
 use crate::services::project_run::validate_command_preflight;
-use crate::services::realtime::publish_terminal_list_invalidated;
+use crate::services::realtime::{
+    publish_terminal_list_invalidated, publish_terminal_state_changed,
+};
 use crate::services::terminal_manager::get_terminal_manager;
+
+use crate::api::local_connectors::{
+    parse_local_connector_root_path, validate_local_connector_workspace_ref,
+};
 
 use super::contracts::InterruptTerminalRequest;
 use super::{
@@ -80,6 +87,26 @@ async fn ensure_cwd_matches_project(
         return Err((
             StatusCode::FORBIDDEN,
             Json(serde_json::json!({ "error": "终端目录必须位于当前项目目录内" })),
+        ));
+    }
+    Ok(())
+}
+
+async fn ensure_local_cwd_matches_project(
+    auth: &AuthUser,
+    project_id: Option<&str>,
+    cwd: &str,
+) -> Result<(), (StatusCode, Json<Value>)> {
+    let Some(project_id) = project_id else {
+        return Ok(());
+    };
+    let project = ensure_owned_project(project_id, auth)
+        .await
+        .map_err(map_project_access_error)?;
+    if project.root_path.trim() != cwd.trim() {
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({ "error": "本地 Connector 终端必须绑定当前本地项目目录" })),
         ));
     }
     Ok(())
@@ -146,6 +173,47 @@ pub(super) async fn create_terminal(
         Ok(user_id) => user_id,
         Err(err) => return err,
     };
+    let normalized_project_id = normalize_non_empty(project_id);
+
+    if let Some(raw_cwd) = cwd.as_deref() {
+        if let Some(root_ref) = parse_local_connector_root_path(raw_cwd) {
+            let alias = match validate_local_connector_workspace_ref(&root_ref).await {
+                Ok(alias) => alias,
+                Err(err) => return err,
+            };
+            if let Err(err) =
+                ensure_local_cwd_matches_project(&auth, normalized_project_id.as_deref(), raw_cwd)
+                    .await
+            {
+                return err;
+            }
+            let terminal_name =
+                normalize_non_empty(name).unwrap_or_else(|| derive_terminal_name(alias.as_str()));
+            let terminal = Terminal::new(
+                terminal_name,
+                raw_cwd.trim().to_string(),
+                TERMINAL_KIND_SHARED.to_string(),
+                Some(user_id.clone()),
+                normalized_project_id,
+            );
+            if let Err(err) = terminals::create_terminal(&terminal).await {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(serde_json::json!({ "error": err })),
+                );
+            }
+            publish_terminal_list_invalidated(
+                user_id.as_str(),
+                Some(terminal.id.as_str()),
+                terminal.project_id.as_deref(),
+                "created",
+                Some(&terminal),
+            );
+            publish_terminal_state_changed(user_id.as_str(), &terminal, false, "created", None);
+            let manager = get_terminal_manager();
+            return (StatusCode::CREATED, Json(attach_busy(&manager, terminal)));
+        }
+    }
 
     let cwd = match authorize_terminal_cwd(
         &auth,
@@ -158,7 +226,6 @@ pub(super) async fn create_terminal(
         Ok(path) => path,
         Err(err) => return err,
     };
-    let normalized_project_id = normalize_non_empty(project_id);
     if let Err(err) =
         ensure_cwd_matches_project(&auth, normalized_project_id.as_deref(), cwd.path.as_path())
             .await
