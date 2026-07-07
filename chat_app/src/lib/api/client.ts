@@ -85,7 +85,8 @@ class ApiClient {
   private async request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
     const url = `${this.baseUrl}${endpoint}`;
     const headers = new Headers(options.headers || {});
-    if (!headers.has('Content-Type')) {
+    const bodyIsFormData = typeof FormData !== 'undefined' && options.body instanceof FormData;
+    if (!headers.has('Content-Type') && !bodyIsFormData) {
       headers.set('Content-Type', 'application/json');
     }
     if (this.accessToken && !headers.has('Authorization')) {

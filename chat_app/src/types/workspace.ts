@@ -7,6 +7,18 @@ export interface Project {
   rootPath: string;
   displayRootPath?: string | null;
   gitUrl?: string | null;
+  sourceType?: 'local' | 'local_connector' | 'cloud' | string | null;
+  cloudImportSource?: 'none' | 'empty' | 'git' | 'zip' | string | null;
+  importStatus?: 'none' | 'pending' | 'importing' | 'ready' | 'failed' | string | null;
+  sourceGitUrl?: string | null;
+  harnessSpaceIdentifier?: string | null;
+  harnessRepoIdentifier?: string | null;
+  harnessRepoPath?: string | null;
+  harnessGitUrl?: string | null;
+  harnessGitSshUrl?: string | null;
+  importError?: string | null;
+  importStartedAt?: string | null;
+  importFinishedAt?: string | null;
   description?: string | null;
   userId?: string | null;
   latestSessionId?: string | null;

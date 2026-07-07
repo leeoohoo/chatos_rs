@@ -282,6 +282,39 @@ export function createProjectActions({ set, get, client, getUserIdParam }: Deps)
       return project;
     },
 
+    createCloudProject: async (input: {
+      name: string;
+      gitUrl?: string;
+      zipFile?: File | null;
+      description?: string;
+    }) => {
+      const uid = getUserIdParam();
+      const form = new FormData();
+      form.set('name', input.name.trim());
+      const gitUrl = input.gitUrl?.trim();
+      if (gitUrl) {
+        form.set('git_url', gitUrl);
+      }
+      const description = input.description?.trim();
+      if (description) {
+        form.set('description', description);
+      }
+      if (input.zipFile) {
+        form.set('zip', input.zipFile, input.zipFile.name || 'project.zip');
+      }
+      const created = await client.createCloudProject(form);
+      const project = normalizeProject(created);
+      upsertProjectCaches(project);
+      set((state: ChatStoreDraft) => {
+        state.projects = upsertProject(state.projects, project);
+        state.currentProjectId = project.id;
+        state.currentProject = project;
+        state.activePanel = 'project';
+      });
+      localStorage.setItem(`lastProjectId_${uid}`, project.id);
+      return project;
+    },
+
     updateProject: async (projectId: string, updates: Partial<Project>) => {
       try {
         const payload: { name?: string; root_path?: string; git_url?: string; description?: string } = {};

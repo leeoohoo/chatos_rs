@@ -15,19 +15,27 @@ import { useProjectExplorerSelection } from './useProjectExplorerSelection';
 import { useProjectExplorerState } from './useProjectExplorerState';
 import { useProjectExplorerTreeStateOps } from './useProjectExplorerTreeStateOps';
 import { useProjectExplorerWorkspaceModel } from './useProjectExplorerWorkspaceModel';
+import type { WorkspaceTab } from './WorkspaceTabs';
 
 interface UseProjectExplorerViewModelParams {
   project: Project | null;
+  allowedTabs?: WorkspaceTab[];
+  fallbackTab?: WorkspaceTab;
 }
 
 export const useProjectExplorerViewModel = ({
   project,
+  allowedTabs,
+  fallbackTab,
 }: UseProjectExplorerViewModelParams) => {
   const client = useApiClient();
 
   const state = useProjectExplorerState(project?.id);
-  const filesTabActive = state.workspaceTab === 'files';
-  const settingsTabActive = state.workspaceTab === 'settings';
+  const workspaceTab = allowedTabs && allowedTabs.length > 0 && !allowedTabs.includes(state.workspaceTab)
+    ? fallbackTab || allowedTabs[0]
+    : state.workspaceTab;
+  const filesTabActive = workspaceTab === 'files';
+  const settingsTabActive = workspaceTab === 'settings';
   const { terminalUiEnabled } = useTerminalUiSetting();
 
   const pathHelpers = useProjectExplorerPathHelpers(project?.rootPath);
@@ -142,7 +150,8 @@ export const useProjectExplorerViewModel = ({
   return {
     client,
     containerRef: state.containerRef,
-    workspaceTab: state.workspaceTab,
+    workspaceTab,
+    storedWorkspaceTab: state.workspaceTab,
     setWorkspaceTab: state.setWorkspaceTab,
     handleGitRepositoryChanged: treeStateOps.handleGitRepositoryChanged,
     treePaneProps,

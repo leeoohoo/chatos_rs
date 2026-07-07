@@ -49,6 +49,9 @@ interface SessionListDialogsProps {
 
   projectModalOpen: boolean;
   projectRoot: string;
+  cloudProjectName: string;
+  cloudProjectGitUrl: string;
+  cloudProjectZipFile: File | null;
   projectError: string | null;
   projectSourceMode: ResourceSourceMode;
   localConnectorWorkspaces: LocalConnectorWorkspaceOption[];
@@ -64,6 +67,9 @@ interface SessionListDialogsProps {
   setProjectModalOpen: (value: boolean) => void;
   setProjectSourceMode: (value: ResourceSourceMode) => void;
   setProjectRoot: (value: string) => void;
+  setCloudProjectName: (value: string) => void;
+  setCloudProjectGitUrl: (value: string) => void;
+  setCloudProjectZipFile: (value: File | null) => void;
   openDirPickerForProject: () => void;
   refreshLocalConnectorWorkspaces: () => Promise<void> | void;
   setSelectedLocalConnectorWorkspaceId: (value: string) => void;
@@ -195,6 +201,9 @@ export const SessionListDialogs: React.FC<SessionListDialogsProps> = ({
   saveTaskRunnerConfig,
   projectModalOpen,
   projectRoot,
+  cloudProjectName,
+  cloudProjectGitUrl,
+  cloudProjectZipFile,
   projectError,
   projectSourceMode,
   localConnectorWorkspaces,
@@ -210,6 +219,9 @@ export const SessionListDialogs: React.FC<SessionListDialogsProps> = ({
   setProjectModalOpen,
   setProjectSourceMode,
   setProjectRoot,
+  setCloudProjectName,
+  setCloudProjectGitUrl,
+  setCloudProjectZipFile,
   openDirPickerForProject,
   refreshLocalConnectorWorkspaces,
   setSelectedLocalConnectorWorkspaceId,
@@ -348,6 +360,9 @@ export const SessionListDialogs: React.FC<SessionListDialogsProps> = ({
     <CreateProjectModal
       isOpen={projectModalOpen}
       projectRoot={projectRoot}
+      cloudProjectName={cloudProjectName}
+      cloudProjectGitUrl={cloudProjectGitUrl}
+      cloudProjectZipFile={cloudProjectZipFile}
       projectError={projectError}
       sourceMode={projectSourceMode}
       localConnectorWorkspaces={localConnectorWorkspaces}
@@ -363,6 +378,9 @@ export const SessionListDialogs: React.FC<SessionListDialogsProps> = ({
       onClose={() => setProjectModalOpen(false)}
       onSourceModeChange={setProjectSourceMode}
       onProjectRootChange={setProjectRoot}
+      onCloudProjectNameChange={setCloudProjectName}
+      onCloudProjectGitUrlChange={setCloudProjectGitUrl}
+      onCloudProjectZipFileChange={setCloudProjectZipFile}
       onOpenPicker={openDirPickerForProject}
       onRefreshLocalConnector={refreshLocalConnectorWorkspaces}
       onSelectedLocalWorkspaceChange={setSelectedLocalConnectorWorkspaceId}

@@ -11,6 +11,7 @@ import { MessageTaskDrawer } from '../messageTasks/MessageTaskDrawer';
 import ConversationUserMessagesSidebar from '../userMessages/ConversationUserMessagesSidebar';
 import { getLatestUserMessageRefreshKey } from '../userMessages/userMessageRefreshKey';
 import { useUserMessageHistoryAnchor } from '../userMessages/useUserMessageHistoryAnchor';
+import ProjectContactSettingsCard from './ProjectContactSettingsCard';
 import TeamMemberWorkspace from './teamMembers/TeamMemberWorkspace';
 import { useTeamMembersPaneModel } from './teamMembers/useTeamMembersPaneModel';
 
@@ -54,42 +55,47 @@ const TeamMembersPane: React.FC<TeamMembersPaneProps> = ({ project, className })
   }
 
   return (
-    <div className={cn('flex h-full overflow-hidden', className)}>
-      <ConversationUserMessagesSidebar
-        sessionId={activeSessionId}
-        hasProjectContact={Boolean(workspaceProps.selectedContact)}
-        refreshKey={userMessagesRefreshKey}
-        className="w-[400px]"
-        summaryActive={userMessageSidebarActions.summaryActive}
-        runtimeContextActive={userMessageSidebarActions.runtimeContextActive}
-        summaryLoading={userMessageSidebarActions.summaryLoading}
-        runtimeContextLoading={userMessageSidebarActions.runtimeContextLoading}
-        reviewRepairRunning={userMessageSidebarActions.reviewRepairRunning}
-        summaryDisabled={userMessageSidebarActions.summaryDisabled}
-        runtimeContextDisabled={userMessageSidebarActions.runtimeContextDisabled}
-        reviewRepairDisabled={userMessageSidebarActions.reviewRepairDisabled}
-        reviewRepairPendingCount={userMessageSidebarActions.reviewRepairPendingCount}
-        onOpenSummary={userMessageSidebarActions.onOpenSummary}
-        onOpenRuntimeContext={userMessageSidebarActions.onOpenRuntimeContext}
-        onReviewRepair={userMessageSidebarActions.onReviewRepair}
-        onSelectMessage={handleSelectUserMessage}
-        onLoadMoreHistory={handleLoadMoreUserMessagesHistory}
-        onOpenTasks={setTaskMessage}
-      />
-      <TeamMemberWorkspace
-        {...workspaceProps}
-        anchorMessageId={anchorMessageId}
-        anchorRequestKey={anchorRequestKey}
-        onAnchorClear={handleClearAnchor}
-      />
-      <TurnRuntimeContextDrawer {...runtimeContextDrawerProps} />
-      {taskMessage ? (
-        <MessageTaskDrawer
-          open
-          message={taskMessage}
-          onClose={() => setTaskMessage(null)}
+    <div className={cn('flex h-full flex-col overflow-hidden', className)}>
+      <div className="shrink-0 px-3 pt-3">
+        <ProjectContactSettingsCard project={project} />
+      </div>
+      <div className="flex min-h-0 flex-1 overflow-hidden">
+        <ConversationUserMessagesSidebar
+          sessionId={activeSessionId}
+          hasProjectContact={Boolean(workspaceProps.selectedContact)}
+          refreshKey={userMessagesRefreshKey}
+          className="w-[400px]"
+          summaryActive={userMessageSidebarActions.summaryActive}
+          runtimeContextActive={userMessageSidebarActions.runtimeContextActive}
+          summaryLoading={userMessageSidebarActions.summaryLoading}
+          runtimeContextLoading={userMessageSidebarActions.runtimeContextLoading}
+          reviewRepairRunning={userMessageSidebarActions.reviewRepairRunning}
+          summaryDisabled={userMessageSidebarActions.summaryDisabled}
+          runtimeContextDisabled={userMessageSidebarActions.runtimeContextDisabled}
+          reviewRepairDisabled={userMessageSidebarActions.reviewRepairDisabled}
+          reviewRepairPendingCount={userMessageSidebarActions.reviewRepairPendingCount}
+          onOpenSummary={userMessageSidebarActions.onOpenSummary}
+          onOpenRuntimeContext={userMessageSidebarActions.onOpenRuntimeContext}
+          onReviewRepair={userMessageSidebarActions.onReviewRepair}
+          onSelectMessage={handleSelectUserMessage}
+          onLoadMoreHistory={handleLoadMoreUserMessagesHistory}
+          onOpenTasks={setTaskMessage}
         />
-      ) : null}
+        <TeamMemberWorkspace
+          {...workspaceProps}
+          anchorMessageId={anchorMessageId}
+          anchorRequestKey={anchorRequestKey}
+          onAnchorClear={handleClearAnchor}
+        />
+        <TurnRuntimeContextDrawer {...runtimeContextDrawerProps} />
+        {taskMessage ? (
+          <MessageTaskDrawer
+            open
+            message={taskMessage}
+            onClose={() => setTaskMessage(null)}
+          />
+        ) : null}
+      </div>
     </div>
   );
 };

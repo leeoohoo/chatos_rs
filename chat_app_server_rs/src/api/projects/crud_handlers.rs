@@ -2,7 +2,7 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use axum::{
-    extract::{Path, Query},
+    extract::{Multipart, Path, Query},
     http::StatusCode,
     Json,
 };
@@ -214,6 +214,63 @@ pub(super) async fn create_project(
     })
 }
 
+pub(super) async fn create_cloud_project(
+    auth: AuthUser,
+    multipart: Multipart,
+) -> (StatusCode, Json<Value>) {
+    let input = match parse_cloud_project_multipart(multipart).await {
+        Ok(input) => input,
+        Err(err) => return err,
+    };
+    let Some(name) = normalize_non_empty(Some(input.name)) else {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error": "项目名称不能为空"})),
+        );
+    };
+    if input
+        .git_url
+        .as_deref()
+        .is_some_and(|value| !value.trim().is_empty())
+        && input
+            .zip
+            .as_ref()
+            .is_some_and(|(_, bytes)| !bytes.is_empty())
+    {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error": "Git 地址和 ZIP 文件不能同时填写"})),
+        );
+    }
+
+    let saved =
+        match ProjectService::create_cloud(name, input.git_url, input.zip, input.description).await
+        {
+            Ok(project) => project,
+            Err(err) => {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(serde_json::json!({"error": err})),
+                );
+            }
+        };
+    if let Err(err) = sync_active_project(&saved).await {
+        warn!(
+            project_id = saved.id.as_str(),
+            error = err.as_str(),
+            "sync memory project failed after cloud create"
+        );
+    }
+
+    publish_projects_updated(
+        auth.user_id.as_str(),
+        "project_created",
+        Some(saved.id.as_str()),
+        Some(saved.clone()),
+    );
+    (StatusCode::CREATED, Json(project_value(saved)))
+}
+
 pub(super) async fn get_project(
     auth: AuthUser,
     Path(id): Path<String>,
@@ -225,6 +282,81 @@ pub(super) async fn get_project(
         }
         Err(err) => map_project_access_error(err),
     }
+}
+
+struct CloudProjectCreateInput {
+    name: String,
+    git_url: Option<String>,
+    zip: Option<(String, Vec<u8>)>,
+    description: Option<String>,
+}
+
+async fn parse_cloud_project_multipart(
+    mut multipart: Multipart,
+) -> Result<CloudProjectCreateInput, (StatusCode, Json<Value>)> {
+    let mut name = None;
+    let mut git_url = None;
+    let mut description = None;
+    let mut zip = None;
+
+    while let Some(field) = multipart.next_field().await.map_err(|err| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error": format!("invalid multipart form: {err}")})),
+        )
+    })? {
+        let field_name = field.name().unwrap_or_default().to_string();
+        match field_name.as_str() {
+            "name" | "project_name" => {
+                name = Some(read_multipart_text(field).await?);
+            }
+            "git_url" | "source_git_url" => {
+                git_url = normalize_non_empty(Some(read_multipart_text(field).await?));
+            }
+            "description" => {
+                description = normalize_non_empty(Some(read_multipart_text(field).await?));
+            }
+            "zip" | "archive" | "file" => {
+                let filename = field
+                    .file_name()
+                    .map(str::to_string)
+                    .filter(|value| !value.trim().is_empty())
+                    .unwrap_or_else(|| "project.zip".to_string());
+                let bytes = field.bytes().await.map_err(|err| {
+                    (
+                        StatusCode::BAD_REQUEST,
+                        Json(
+                            serde_json::json!({"error": format!("read zip upload failed: {err}")}),
+                        ),
+                    )
+                })?;
+                if !bytes.is_empty() {
+                    zip = Some((filename, bytes.to_vec()));
+                }
+            }
+            _ => {
+                let _ = field.bytes().await;
+            }
+        }
+    }
+
+    Ok(CloudProjectCreateInput {
+        name: name.unwrap_or_default(),
+        git_url,
+        zip,
+        description,
+    })
+}
+
+async fn read_multipart_text(
+    field: axum::extract::multipart::Field<'_>,
+) -> Result<String, (StatusCode, Json<Value>)> {
+    field.text().await.map_err(|err| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error": format!("read multipart text field failed: {err}")})),
+        )
+    })
 }
 
 pub(super) async fn update_project(

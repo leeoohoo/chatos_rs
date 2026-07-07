@@ -11,27 +11,32 @@ export type WorkspaceTab = 'files' | 'team' | 'plan' | 'settings';
 interface WorkspaceTabsProps {
   activeTab: WorkspaceTab;
   onChange: (tab: WorkspaceTab) => void;
+  tabs?: WorkspaceTab[];
   rightActions?: React.ReactNode;
 }
 
 export const WorkspaceTabs: React.FC<WorkspaceTabsProps> = ({
   activeTab,
   onChange,
+  tabs,
   rightActions,
 }) => {
   const { t } = useI18n();
-  const tabs: Array<{ id: WorkspaceTab; label: string }> = [
+  const allTabs: Array<{ id: WorkspaceTab; label: string }> = [
     { id: 'files', label: t('projectExplorer.tab.files') },
     { id: 'team', label: t('projectExplorer.tab.team') },
     { id: 'plan', label: t('projectExplorer.tab.plan') },
     { id: 'settings', label: t('projectExplorer.tab.settings') },
   ];
+  const visibleTabs = tabs && tabs.length > 0
+    ? allTabs.filter((tab) => tabs.includes(tab.id))
+    : allTabs;
 
   return (
     <div className="border-b border-border bg-card px-3 py-2">
       <div className="flex items-center justify-between gap-3">
         <div className="inline-flex items-center gap-1 rounded-md border border-border bg-background p-1">
-          {tabs.map((tab) => (
+          {visibleTabs.map((tab) => (
             <button
               key={tab.id}
               type="button"

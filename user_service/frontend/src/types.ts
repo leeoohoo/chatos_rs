@@ -36,6 +36,19 @@ export interface UserSummaryRecord {
   updated_at: string;
   last_login_at?: string | null;
   agent_count: number;
+  harness_provisioning?: HarnessProvisioningSummaryRecord | null;
+}
+
+export interface HarnessProvisioningSummaryRecord {
+  status: 'pending' | 'provisioned' | 'failed' | string;
+  harness_uid: string;
+  harness_email: string;
+  space_identifier: string;
+  attempts: number;
+  last_error?: string | null;
+  last_attempt_at?: string | null;
+  provisioned_at?: string | null;
+  updated_at: string;
 }
 
 export interface CreateUserPayload {

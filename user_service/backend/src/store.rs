@@ -12,8 +12,9 @@ use uuid::Uuid;
 use crate::auth::{hash_password, normalize_display_name, normalize_username};
 use crate::config::AppConfig;
 use crate::models::{
-    AgentAccountListItem, AgentAccountRecord, UserModelConfigRecord, UserModelProviderRecord,
-    UserModelSettingsRecord, UserRecord, UserSummaryRecord, USER_ROLE_SUPER_ADMIN,
+    AgentAccountListItem, AgentAccountRecord, HarnessProvisioningRecord, UserModelConfigRecord,
+    UserModelProviderRecord, UserModelSettingsRecord, UserRecord, UserSummaryRecord,
+    USER_ROLE_SUPER_ADMIN,
 };
 use crate::secrets::{decrypt_optional_secret, encrypt_optional_secret};
 
@@ -25,6 +26,7 @@ pub struct AppStore {
     user_model_configs: Collection<UserModelConfigRecord>,
     user_model_providers: Collection<UserModelProviderRecord>,
     user_model_settings: Collection<UserModelSettingsRecord>,
+    harness_provisioning: Collection<HarnessProvisioningRecord>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -44,6 +46,7 @@ impl AppStore {
             user_model_configs: db.collection("user_model_configs"),
             user_model_providers: db.collection("user_model_providers"),
             user_model_settings: db.collection("user_model_settings"),
+            harness_provisioning: db.collection("harness_provisioning"),
         }
     }
 
@@ -60,6 +63,10 @@ impl AppStore {
         self.create_index(&self.user_model_providers, "owner_user_id")
             .await?;
         self.create_unique_index(&self.user_model_settings, "user_id")
+            .await?;
+        self.create_unique_index(&self.harness_provisioning, "user_id")
+            .await?;
+        self.create_index(&self.harness_provisioning, "status")
             .await?;
         Ok(())
     }
@@ -245,6 +252,10 @@ impl AppStore {
         user: UserRecord,
     ) -> Result<UserSummaryRecord, String> {
         let agent_count = self.count_agents_by_owner(user.id.as_str()).await?;
+        let harness_provisioning = self
+            .find_harness_provisioning_by_user_id(user.id.as_str())
+            .await?
+            .map(Into::into);
         Ok(UserSummaryRecord {
             id: user.id,
             username: user.username,
@@ -255,6 +266,7 @@ impl AppStore {
             updated_at: user.updated_at,
             last_login_at: user.last_login_at,
             agent_count,
+            harness_provisioning,
         })
     }
 
@@ -612,6 +624,31 @@ impl AppStore {
             .await
             .map_err(|err| err.to_string())?;
         Ok(settings.clone())
+    }
+
+    pub async fn find_harness_provisioning_by_user_id(
+        &self,
+        user_id: &str,
+    ) -> Result<Option<HarnessProvisioningRecord>, String> {
+        self.harness_provisioning
+            .find_one(doc! { "user_id": user_id }, None)
+            .await
+            .map_err(|err| err.to_string())
+    }
+
+    pub async fn save_harness_provisioning(
+        &self,
+        record: &HarnessProvisioningRecord,
+    ) -> Result<HarnessProvisioningRecord, String> {
+        self.harness_provisioning
+            .update_one(
+                doc! { "user_id": &record.user_id },
+                to_set_document(record)?,
+                UpdateOptions::builder().upsert(true).build(),
+            )
+            .await
+            .map_err(|err| err.to_string())?;
+        Ok(record.clone())
     }
 }
 

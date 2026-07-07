@@ -60,6 +60,7 @@ pub mod user_settings;
 
 pub fn router() -> Result<Router, String> {
     let cfg = Config::try_get()?;
+    let request_body_limit = default_request_body_limit_bytes();
 
     let allowed_headers = [
         ACCEPT,
@@ -137,13 +138,23 @@ pub fn router() -> Result<Router, String> {
         .route("/", axum::routing::get(root))
         .fallback(fallback_404)
         .layer(cors)
-        .layer(DefaultBodyLimit::max(50 * 1024 * 1024))
+        .layer(DefaultBodyLimit::max(request_body_limit))
         .layer(trace)
         .layer(PropagateRequestIdLayer::new(REQUEST_ID_HEADER.clone()))
         .layer(SetRequestIdLayer::new(
             REQUEST_ID_HEADER.clone(),
             MakeRequestUuid,
         )))
+}
+
+fn default_request_body_limit_bytes() -> usize {
+    const BASE_LIMIT: usize = 50 * 1024 * 1024;
+    let cloud_zip_limit = std::env::var("PROJECT_SERVICE_CLOUD_PROJECT_MAX_ZIP_BYTES")
+        .ok()
+        .and_then(|value| value.trim().parse::<usize>().ok())
+        .unwrap_or(100 * 1024 * 1024)
+        .saturating_add(1024 * 1024);
+    BASE_LIMIT.max(cloud_zip_limit)
 }
 
 fn build_health_payload() -> serde_json::Value {

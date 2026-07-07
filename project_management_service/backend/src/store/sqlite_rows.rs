@@ -18,6 +18,33 @@ pub(super) fn project_from_row(row: &SqliteRow) -> ProjectRecord {
         name: row.get("name"),
         root_path: row.get("root_path"),
         git_url: row.get("git_url"),
+        source_type: row
+            .try_get::<Option<String>, _>("source_type")
+            .ok()
+            .flatten()
+            .map(|value| ProjectSourceType::from_db(value.as_str()))
+            .unwrap_or_default(),
+        cloud_import_source: row
+            .try_get::<Option<String>, _>("cloud_import_source")
+            .ok()
+            .flatten()
+            .map(|value| CloudImportSource::from_db(value.as_str()))
+            .unwrap_or_default(),
+        import_status: row
+            .try_get::<Option<String>, _>("import_status")
+            .ok()
+            .flatten()
+            .map(|value| ProjectImportStatus::from_db(value.as_str()))
+            .unwrap_or_default(),
+        source_git_url: row.try_get("source_git_url").ok().flatten(),
+        harness_space_identifier: row.try_get("harness_space_identifier").ok().flatten(),
+        harness_repo_identifier: row.try_get("harness_repo_identifier").ok().flatten(),
+        harness_repo_path: row.try_get("harness_repo_path").ok().flatten(),
+        harness_git_url: row.try_get("harness_git_url").ok().flatten(),
+        harness_git_ssh_url: row.try_get("harness_git_ssh_url").ok().flatten(),
+        import_error: row.try_get("import_error").ok().flatten(),
+        import_started_at: row.try_get("import_started_at").ok().flatten(),
+        import_finished_at: row.try_get("import_finished_at").ok().flatten(),
         description: row.get("description"),
         status: ProjectStatus::from_db(row.get::<String, _>("status").as_str()),
         created_at: row.get("created_at"),

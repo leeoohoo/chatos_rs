@@ -9,6 +9,9 @@ use crate::auth::{
     encode_user_token, hash_password, normalize_display_name, normalize_username, verify_password,
     CurrentPrincipal,
 };
+use crate::integrations::{
+    ensure_harness_user_public_register_on_login, provision_harness_user_public_register,
+};
 use crate::models::{
     CurrentUserResponse, LoginRequest, LoginResponse, RegisterRequest, TokenVerifyResponse,
     UserRecord, VerifiedPrincipal, USER_ROLE_USER,
@@ -47,6 +50,8 @@ pub async fn login(
         .touch_user_last_login(user.id.as_str())
         .await
         .map_err(internal_error)?;
+    let _ =
+        ensure_harness_user_public_register_on_login(&state, &user, input.password.as_str()).await;
     let token = encode_user_token(&state.config, &user).map_err(internal_error)?;
 
     Ok(Json(LoginResponse {
@@ -97,6 +102,7 @@ pub async fn register(
         .insert_user_record(&user)
         .await
         .map_err(internal_error)?;
+    let _ = provision_harness_user_public_register(&state, &user, input.password.as_str()).await;
     state
         .store
         .touch_user_last_login(user.id.as_str())

@@ -19,6 +19,18 @@ pub struct ProjectServiceProjectRecord {
     pub name: String,
     pub root_path: Option<String>,
     pub git_url: Option<String>,
+    pub source_type: Option<String>,
+    pub cloud_import_source: Option<String>,
+    pub import_status: Option<String>,
+    pub source_git_url: Option<String>,
+    pub harness_space_identifier: Option<String>,
+    pub harness_repo_identifier: Option<String>,
+    pub harness_repo_path: Option<String>,
+    pub harness_git_url: Option<String>,
+    pub harness_git_ssh_url: Option<String>,
+    pub import_error: Option<String>,
+    pub import_started_at: Option<String>,
+    pub import_finished_at: Option<String>,
     pub description: Option<String>,
     pub created_at: String,
     pub updated_at: String,
@@ -30,6 +42,13 @@ pub struct CreateProjectServiceProjectRequest {
     pub root_path: Option<String>,
     pub git_url: Option<String>,
     pub description: Option<String>,
+}
+
+pub struct CreateCloudProjectServiceProjectRequest {
+    pub name: String,
+    pub git_url: Option<String>,
+    pub description: Option<String>,
+    pub zip: Option<(String, Vec<u8>)>,
 }
 
 #[derive(Debug, Default, Serialize)]
@@ -84,6 +103,50 @@ pub async fn create_project_service_project(
             .post(endpoint)
             .bearer_auth(access_token.trim())
             .json(request),
+    )
+    .await
+}
+
+pub async fn create_cloud_project_service_project(
+    base_url: &str,
+    access_token: &str,
+    request: &CreateCloudProjectServiceProjectRequest,
+) -> Result<ProjectServiceProjectRecord, String> {
+    let endpoint = format!(
+        "{}/api/projects/cloud",
+        base_url.trim().trim_end_matches('/')
+    );
+    let mut form = reqwest::multipart::Form::new().text("name", request.name.clone());
+    if let Some(git_url) = request
+        .git_url
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        form = form.text("git_url", git_url.to_string());
+    }
+    if let Some(description) = request
+        .description
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        form = form.text("description", description.to_string());
+    }
+    if let Some((filename, bytes)) = request.zip.as_ref() {
+        if !bytes.is_empty() {
+            let part = reqwest::multipart::Part::bytes(bytes.clone())
+                .file_name(filename.clone())
+                .mime_str("application/zip")
+                .map_err(|err| err.to_string())?;
+            form = form.part("zip", part);
+        }
+    }
+    send_json(
+        reqwest::Client::new()
+            .post(endpoint)
+            .bearer_auth(access_token.trim())
+            .multipart(form),
     )
     .await
 }

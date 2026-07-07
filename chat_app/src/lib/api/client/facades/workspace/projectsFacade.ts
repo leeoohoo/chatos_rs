@@ -25,6 +25,7 @@ import type ApiClient from '../../../client';
 export interface WorkspaceProjectFacade {
   listProjects(userId?: string): Promise<ProjectResponse[]>;
   createProject(data: { name: string; root_path: string; git_url?: string; description?: string; user_id?: string }): Promise<ProjectResponse>;
+  createCloudProject(data: FormData): Promise<ProjectResponse>;
   updateProject(id: string, data: { name?: string; root_path?: string; git_url?: string; description?: string }): Promise<ProjectResponse>;
   deleteProject(id: string): Promise<DeleteSuccessResponse>;
   getProject(id: string): Promise<ProjectResponse>;
@@ -84,6 +85,9 @@ export const workspaceProjectFacade: WorkspaceProjectFacade & ThisType<ApiClient
   },
   async createProject(data) {
     return workspaceApi.createProject(this.getRequestFn(), data);
+  },
+  async createCloudProject(data) {
+    return workspaceApi.createCloudProject(this.getRequestFn(), data);
   },
   async updateProject(id, data) {
     return workspaceApi.updateProject(this.getRequestFn(), id, data);

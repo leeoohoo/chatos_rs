@@ -216,7 +216,7 @@ export const useSessionListController = ({
     projects,
     currentProject,
     loadProjects,
-    createProject,
+    createCloudProject,
     selectProject,
     deleteProject,
     markProjectsStale,
@@ -254,6 +254,9 @@ export const useSessionListController = ({
 
   const [projectModalOpen, setProjectModalOpen] = useState(false);
   const [projectRoot, setProjectRoot] = useState('');
+  const [cloudProjectName, setCloudProjectName] = useState('');
+  const [cloudProjectGitUrl, setCloudProjectGitUrl] = useState('');
+  const [cloudProjectZipFile, setCloudProjectZipFile] = useState<File | null>(null);
   const [projectError, setProjectError] = useState<string | null>(null);
   const [projectSourceMode, setProjectSourceMode] = useState<ResourceSourceMode>('server');
 
@@ -529,6 +532,9 @@ export const useSessionListController = ({
     setIsRefreshingTerminals,
     setIsRefreshingRemote,
     setProjectRoot,
+    setCloudProjectName,
+    setCloudProjectGitUrl,
+    setCloudProjectZipFile,
     setProjectError,
     setProjectModalOpen,
     setProjectSourceMode,
@@ -540,7 +546,7 @@ export const useSessionListController = ({
     setTerminalArgs,
     setKeyFilePickerOpen: localFsPickers.setKeyFilePickerOpen,
     openRemoteModalBase: remoteForm.openRemoteModal,
-    createProject,
+    createCloudProject,
     createTerminal,
     selectProject,
     selectTerminal,
@@ -557,7 +563,9 @@ export const useSessionListController = ({
     setTerminalExecuting,
     selectRemoteConnection,
     openRemoteSftp,
-    projectRoot,
+    cloudProjectName,
+    cloudProjectGitUrl,
+    cloudProjectZipFile,
     terminalRoot,
   });
 
@@ -830,6 +838,9 @@ export const useSessionListController = ({
     projectError,
     projectModalOpen,
     projectRoot,
+    cloudProjectName,
+    cloudProjectGitUrl,
+    cloudProjectZipFile,
     projectSourceMode,
     projects,
     remoteConnections,
@@ -840,6 +851,9 @@ export const useSessionListController = ({
     sessions,
     setProjectModalOpen,
     setProjectRoot,
+    setCloudProjectName,
+    setCloudProjectGitUrl,
+    setCloudProjectZipFile,
     setProjectSourceMode,
     setTerminalModalOpen,
     setTerminalRoot,

@@ -7,7 +7,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-axum = { version = "0.7", features = ["json"] }
+axum = { version = "0.7", features = ["json", "multipart"] }
 chrono = { version = "0.4", features = ["clock", "serde"] }
 chatos_project_mcp_contract = { path = "../../crates/chatos_project_mcp_contract" }
 dotenvy = "0.15"
@@ -21,4 +21,7 @@ tokio = { version = "1", features = ["full"] }
 tower-http = { version = "0.5", features = ["cors", "trace"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+urlencoding = "2"
 uuid = { version = "1", features = ["serde", "v4"] }
+walkdir = "2"
+zip = "2"

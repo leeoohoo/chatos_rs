@@ -53,6 +53,9 @@ interface SessionListActionsParams {
   setIsRefreshingTerminals: (value: boolean) => void;
   setIsRefreshingRemote: (value: boolean) => void;
   setProjectRoot: (value: string) => void;
+  setCloudProjectName: (value: string) => void;
+  setCloudProjectGitUrl: (value: string) => void;
+  setCloudProjectZipFile: (value: File | null) => void;
   setProjectError: (value: string | null) => void;
   setProjectModalOpen: (value: boolean) => void;
   setProjectSourceMode: (value: ResourceSourceMode) => void;
@@ -66,7 +69,12 @@ interface SessionListActionsParams {
   setTerminalExecuting: (value: boolean) => void;
   setKeyFilePickerOpen: (value: boolean) => void;
   openRemoteModalBase: () => void;
-  createProject: (name: string, rootPath: string, description?: string, gitUrl?: string) => Promise<Project>;
+  createCloudProject: (input: {
+    name: string;
+    gitUrl?: string;
+    zipFile?: File | null;
+    description?: string;
+  }) => Promise<Project>;
   createTerminal: (cwd: string, name: string) => Promise<Terminal>;
   selectProject: (projectId: string) => Promise<void>;
   selectTerminal: (terminalId: string) => Promise<void>;
@@ -80,7 +88,9 @@ interface SessionListActionsParams {
   terminalArgs: string;
   selectRemoteConnection: (connectionId: string) => Promise<void>;
   openRemoteSftp: (connectionId: string) => Promise<void>;
-  projectRoot: string;
+  cloudProjectName: string;
+  cloudProjectGitUrl: string;
+  cloudProjectZipFile: File | null;
   terminalRoot: string;
 }
 
@@ -105,6 +115,9 @@ export const useSessionListActions = ({
   setIsRefreshingTerminals,
   setIsRefreshingRemote,
   setProjectRoot,
+  setCloudProjectName,
+  setCloudProjectGitUrl,
+  setCloudProjectZipFile,
   setProjectError,
   setProjectModalOpen,
   setProjectSourceMode,
@@ -118,7 +131,7 @@ export const useSessionListActions = ({
   setTerminalExecuting,
   setKeyFilePickerOpen,
   openRemoteModalBase,
-  createProject,
+  createCloudProject,
   createTerminal,
   selectProject,
   selectTerminal,
@@ -130,7 +143,9 @@ export const useSessionListActions = ({
   selectedLocalConnectorDirectoryPath = '',
   selectRemoteConnection,
   openRemoteSftp,
-  projectRoot,
+  cloudProjectName,
+  cloudProjectGitUrl,
+  cloudProjectZipFile,
   terminalRoot,
 }: SessionListActionsParams) => {
   const localConnectorRelativePath = selectedLocalConnectorDirectoryPath.trim().replace(/\\/g, '/').replace(/^\/+|\/+$/g, '');
@@ -204,10 +219,21 @@ export const useSessionListActions = ({
 
   const openProjectModal = useCallback(() => {
     setProjectRoot('');
+    setCloudProjectName('');
+    setCloudProjectGitUrl('');
+    setCloudProjectZipFile(null);
     setProjectError(null);
     setProjectSourceMode('server');
     setProjectModalOpen(true);
-  }, [setProjectError, setProjectModalOpen, setProjectRoot, setProjectSourceMode]);
+  }, [
+    setCloudProjectGitUrl,
+    setCloudProjectName,
+    setCloudProjectZipFile,
+    setProjectError,
+    setProjectModalOpen,
+    setProjectRoot,
+    setProjectSourceMode,
+  ]);
 
   const openTerminalModal = useCallback(() => {
     setTerminalRoot('');
@@ -257,24 +283,35 @@ export const useSessionListActions = ({
       }
       return;
     }
-    if (!projectRoot.trim()) {
-      setProjectError(translateSessionListMessage(t, 'sessionList.resource.error.selectProjectDirectory'));
+    const normalizedName = cloudProjectName.trim();
+    const normalizedGitUrl = cloudProjectGitUrl.trim();
+    if (!normalizedName) {
+      setProjectError(translateSessionListMessage(t, 'sessionList.resource.error.enterProjectName'));
+      return;
+    }
+    if (normalizedGitUrl && cloudProjectZipFile) {
+      setProjectError(translateSessionListMessage(t, 'sessionList.resource.error.gitUrlOrZipOnly'));
       return;
     }
     try {
-      const name = deriveNameFromPath(getUserVisiblePath(projectRoot), 'Project');
-      await createProject(name, projectRoot.trim());
+      await createCloudProject({
+        name: normalizedName,
+        gitUrl: normalizedGitUrl || undefined,
+        zipFile: cloudProjectZipFile,
+      });
       setProjectModalOpen(false);
     } catch (error) {
       setProjectError(error instanceof Error ? error.message : translateSessionListMessage(t, 'sessionList.resource.error.createProjectFailed'));
     }
   }, [
     apiClient,
-    createProject,
+    cloudProjectGitUrl,
+    cloudProjectName,
+    cloudProjectZipFile,
+    createCloudProject,
     loadProjects,
     localConnectorWorkspaces,
     localConnectorRelativePath,
-    projectRoot,
     projectSourceMode,
     selectedLocalConnectorWorkspaceId,
     selectProject,

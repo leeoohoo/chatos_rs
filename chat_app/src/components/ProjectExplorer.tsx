@@ -8,10 +8,9 @@ import type { Project } from '../types';
 import { cn } from '../lib/utils';
 import { ProjectExplorerFilesWorkspace } from './projectExplorer/ProjectExplorerFilesWorkspace';
 import ProjectPlanPane from './projectExplorer/ProjectPlanPane';
-import ProjectContactSettingsCard from './projectExplorer/ProjectContactSettingsCard';
 import ProjectRunSettingsPanel from './projectExplorer/ProjectRunSettingsPanel';
 import TeamMembersPane from './projectExplorer/TeamMembersPane';
-import WorkspaceTabs from './projectExplorer/WorkspaceTabs';
+import WorkspaceTabs, { type WorkspaceTab } from './projectExplorer/WorkspaceTabs';
 import GitBranchButton from './projectExplorer/git/GitBranchButton';
 import { useProjectExplorerViewModel } from './projectExplorer/useProjectExplorerViewModel';
 
@@ -22,10 +21,17 @@ interface ProjectExplorerProps {
 
 export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({ project, className }) => {
   const { t } = useI18n();
+  const isCloudProject = project?.sourceType === 'cloud';
+  const workspaceTabs = React.useMemo<WorkspaceTab[]>(
+    () => (isCloudProject ? ['team', 'plan'] : ['files', 'team', 'plan', 'settings']),
+    [isCloudProject],
+  );
+  const fallbackWorkspaceTab: WorkspaceTab = isCloudProject ? 'team' : 'files';
   const {
     client,
     containerRef,
     workspaceTab,
+    storedWorkspaceTab,
     setWorkspaceTab,
     treeWidth,
     setIsResizing,
@@ -58,7 +64,18 @@ export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({ project, class
     workspaceHandleRevealInFinder,
     workspaceHandleOpenInCode,
     handleGitRepositoryChanged,
-  } = useProjectExplorerViewModel({ project });
+  } = useProjectExplorerViewModel({
+    project,
+    allowedTabs: workspaceTabs,
+    fallbackTab: fallbackWorkspaceTab,
+  });
+
+  React.useEffect(() => {
+    if (!project || workspaceTabs.includes(storedWorkspaceTab)) {
+      return;
+    }
+    setWorkspaceTab(fallbackWorkspaceTab);
+  }, [fallbackWorkspaceTab, project, setWorkspaceTab, storedWorkspaceTab, workspaceTabs]);
 
   if (!project) {
     return (
@@ -73,8 +90,9 @@ export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({ project, class
       <WorkspaceTabs
         activeTab={workspaceTab}
         onChange={setWorkspaceTab}
+        tabs={workspaceTabs}
         rightActions={(
-          workspaceTab === 'files' ? (
+          !isCloudProject && workspaceTab === 'files' ? (
             <GitBranchButton
               client={client}
               projectId={project.id}
@@ -98,7 +116,6 @@ export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({ project, class
           />
         ) : workspaceTab === 'settings' ? (
           <div className="h-full overflow-auto p-4">
-            <ProjectContactSettingsCard project={project} />
             <ProjectRunSettingsPanel {...projectSettingsProps} />
           </div>
         ) : (

@@ -36,6 +36,16 @@ export const createProject = (
   });
 };
 
+export const createCloudProject = (
+  request: ApiRequestFn,
+  data: FormData,
+): Promise<ProjectResponse> => {
+  return request<ProjectResponse>('/projects/cloud', {
+    method: 'POST',
+    body: data,
+  });
+};
+
 export const updateProject = (
   request: ApiRequestFn,
   id: string,

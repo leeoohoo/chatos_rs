@@ -192,6 +192,9 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
         saveTaskRunnerConfig={controller.saveTaskRunnerConfig}
         projectModalOpen={controller.projectModalOpen}
         projectRoot={controller.projectRoot}
+        cloudProjectName={controller.cloudProjectName}
+        cloudProjectGitUrl={controller.cloudProjectGitUrl}
+        cloudProjectZipFile={controller.cloudProjectZipFile}
         projectError={controller.projectError}
         projectSourceMode={controller.projectSourceMode}
         localConnectorWorkspaces={controller.localConnectorWorkspaces}
@@ -207,6 +210,9 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
         setProjectModalOpen={controller.setProjectModalOpen}
         setProjectSourceMode={controller.setProjectSourceMode}
         setProjectRoot={controller.setProjectRoot}
+        setCloudProjectName={controller.setCloudProjectName}
+        setCloudProjectGitUrl={controller.setCloudProjectGitUrl}
+        setCloudProjectZipFile={controller.setCloudProjectZipFile}
         openDirPickerForProject={() => {
           void controller.localFsPickers.openDirPicker('project');
         }}

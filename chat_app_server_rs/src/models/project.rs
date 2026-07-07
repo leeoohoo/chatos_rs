@@ -15,6 +15,18 @@ pub struct Project {
     pub name: String,
     pub root_path: String,
     pub git_url: Option<String>,
+    pub source_type: Option<String>,
+    pub cloud_import_source: Option<String>,
+    pub import_status: Option<String>,
+    pub source_git_url: Option<String>,
+    pub harness_space_identifier: Option<String>,
+    pub harness_repo_identifier: Option<String>,
+    pub harness_repo_path: Option<String>,
+    pub harness_git_url: Option<String>,
+    pub harness_git_ssh_url: Option<String>,
+    pub import_error: Option<String>,
+    pub import_started_at: Option<String>,
+    pub import_finished_at: Option<String>,
     pub description: Option<String>,
     pub user_id: Option<String>,
     pub latest_session_id: Option<String>,
@@ -37,6 +49,18 @@ impl Project {
             name,
             root_path,
             git_url,
+            source_type: Some("local".to_string()),
+            cloud_import_source: Some("none".to_string()),
+            import_status: Some("none".to_string()),
+            source_git_url: None,
+            harness_space_identifier: None,
+            harness_repo_identifier: None,
+            harness_repo_path: None,
+            harness_git_url: None,
+            harness_git_ssh_url: None,
+            import_error: None,
+            import_started_at: None,
+            import_finished_at: None,
             description,
             user_id,
             latest_session_id: None,
@@ -65,6 +89,28 @@ impl ProjectService {
         )
         .await?;
         Ok(project.id)
+    }
+
+    pub async fn create_cloud(
+        name: String,
+        git_url: Option<String>,
+        zip: Option<(String, Vec<u8>)>,
+        description: Option<String>,
+    ) -> Result<Project, String> {
+        let cfg = Config::try_get()?;
+        let access_token = current_access_token_required()?;
+        let project = project_management_api_client::create_cloud_project_service_project(
+            cfg.project_service_base_url.as_str(),
+            access_token.as_str(),
+            &project_management_api_client::CreateCloudProjectServiceProjectRequest {
+                name,
+                git_url: normalize_optional_text(git_url),
+                description: normalize_optional_text(description),
+                zip,
+            },
+        )
+        .await?;
+        Ok(project_from_project_service(project))
     }
 
     pub async fn get_by_id(id: &str) -> Result<Option<Project>, String> {
@@ -171,6 +217,18 @@ fn project_from_project_service(
         name: record.name,
         root_path: record.root_path.unwrap_or_default(),
         git_url: record.git_url,
+        source_type: record.source_type,
+        cloud_import_source: record.cloud_import_source,
+        import_status: record.import_status,
+        source_git_url: record.source_git_url,
+        harness_space_identifier: record.harness_space_identifier,
+        harness_repo_identifier: record.harness_repo_identifier,
+        harness_repo_path: record.harness_repo_path,
+        harness_git_url: record.harness_git_url,
+        harness_git_ssh_url: record.harness_git_ssh_url,
+        import_error: record.import_error,
+        import_started_at: record.import_started_at,
+        import_finished_at: record.import_finished_at,
         description: record.description,
         user_id: record.owner_user_id,
         latest_session_id: None,

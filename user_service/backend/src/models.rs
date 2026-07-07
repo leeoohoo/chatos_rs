@@ -32,6 +32,63 @@ pub struct UserSummaryRecord {
     pub updated_at: String,
     pub last_login_at: Option<String>,
     pub agent_count: i64,
+    pub harness_provisioning: Option<HarnessProvisioningSummaryRecord>,
+}
+
+pub const HARNESS_PROVISIONING_STATUS_PENDING: &str = "pending";
+pub const HARNESS_PROVISIONING_STATUS_PROVISIONED: &str = "provisioned";
+pub const HARNESS_PROVISIONING_STATUS_FAILED: &str = "failed";
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HarnessProvisioningRecord {
+    pub user_id: String,
+    pub username: String,
+    pub harness_uid: String,
+    pub harness_email: String,
+    pub space_identifier: String,
+    pub status: String,
+    pub attempts: i64,
+    pub encrypted_password: Option<String>,
+    #[serde(default)]
+    pub encrypted_access_token: Option<String>,
+    #[serde(default)]
+    pub access_token_identifier: Option<String>,
+    #[serde(default)]
+    pub access_token_created_at: Option<String>,
+    pub last_error: Option<String>,
+    pub last_attempt_at: Option<String>,
+    pub provisioned_at: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HarnessProvisioningSummaryRecord {
+    pub status: String,
+    pub harness_uid: String,
+    pub harness_email: String,
+    pub space_identifier: String,
+    pub attempts: i64,
+    pub last_error: Option<String>,
+    pub last_attempt_at: Option<String>,
+    pub provisioned_at: Option<String>,
+    pub updated_at: String,
+}
+
+impl From<HarnessProvisioningRecord> for HarnessProvisioningSummaryRecord {
+    fn from(value: HarnessProvisioningRecord) -> Self {
+        Self {
+            status: value.status,
+            harness_uid: value.harness_uid,
+            harness_email: value.harness_email,
+            space_identifier: value.space_identifier,
+            attempts: value.attempts,
+            last_error: value.last_error,
+            last_attempt_at: value.last_attempt_at,
+            provisioned_at: value.provisioned_at,
+            updated_at: value.updated_at,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

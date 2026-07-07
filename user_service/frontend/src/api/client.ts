@@ -133,6 +133,10 @@ export const api = {
       method: 'PATCH',
       body: JSON.stringify(payload),
     }),
+  retryHarnessProvisioning: (id: string) =>
+    request<UserSummaryRecord>(`/api/users/${id}/harness-provisioning/retry`, {
+      method: 'POST',
+    }),
   listAgentAccounts: () => request<AgentAccountListItem[]>('/api/agent-accounts'),
   createAgentAccount: (payload: CreateAgentAccountPayload) =>
     request<AgentAccountListItem>('/api/agent-accounts', {

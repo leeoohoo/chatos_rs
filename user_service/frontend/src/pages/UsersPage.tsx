@@ -15,10 +15,11 @@ import {
   Switch,
   Table,
   Tag,
+  Tooltip,
   Typography,
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
-import { EditOutlined, PlusOutlined, ReloadOutlined } from '@ant-design/icons';
+import { EditOutlined, PlusOutlined, ReloadOutlined, SyncOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
 
 import { api } from '../api/client';
@@ -75,6 +76,15 @@ export function UsersPage() {
     onError: showError,
   });
 
+  const retryHarnessMutation = useMutation({
+    mutationFn: (id: string) => api.retryHarnessProvisioning(id),
+    onSuccess: async () => {
+      message.success('Harness sync retried');
+      await queryClient.invalidateQueries({ queryKey: ['users'] });
+    },
+    onError: showError,
+  });
+
   const pending = createUserMutation.isPending || updateUserMutation.isPending;
 
   const columns: ColumnsType<UserSummaryRecord> = [
@@ -115,6 +125,12 @@ export function UsersPage() {
       width: 120,
     },
     {
+      title: 'Harness',
+      dataIndex: 'harness_provisioning',
+      width: 150,
+      render: (_, record) => renderHarnessStatus(record),
+    },
+    {
       title: '最近登录',
       dataIndex: 'last_login_at',
       width: 180,
@@ -129,14 +145,67 @@ export function UsersPage() {
     {
       title: '操作',
       key: 'actions',
-      width: 120,
-      render: (_, record) => (
-        <Button size="small" icon={<EditOutlined />} onClick={() => openEditDrawer(record)}>
-          编辑
-        </Button>
-      ),
+      width: 180,
+      render: (_, record) => {
+        const canRetryHarness =
+          isSuperAdmin && record.harness_provisioning?.status === 'failed';
+        return (
+          <Space size={8}>
+            <Button size="small" icon={<EditOutlined />} onClick={() => openEditDrawer(record)}>
+              编辑
+            </Button>
+            {canRetryHarness ? (
+              <Tooltip title="Retry Harness sync">
+                <Button
+                  size="small"
+                  icon={<SyncOutlined />}
+                  loading={retryHarnessMutation.isPending}
+                  onClick={() => retryHarnessMutation.mutate(record.id)}
+                />
+              </Tooltip>
+            ) : null}
+          </Space>
+        );
+      },
     },
   ];
+
+  function renderHarnessStatus(record: UserSummaryRecord) {
+    const provisioning = record.harness_provisioning;
+    if (!provisioning) {
+      return <Tag>Off</Tag>;
+    }
+
+    const title = provisioning.last_error
+      ? provisioning.last_error
+      : `${provisioning.harness_uid} / ${provisioning.space_identifier}`;
+    if (provisioning.status === 'provisioned') {
+      return (
+        <Tooltip title={title}>
+          <Tag color="success">OK</Tag>
+        </Tooltip>
+      );
+    }
+    if (provisioning.status === 'pending') {
+      return (
+        <Tooltip title={title}>
+          <Tag color="processing">Pending</Tag>
+        </Tooltip>
+      );
+    }
+    if (provisioning.status === 'failed') {
+      return (
+        <Tooltip title={title}>
+          <Tag color="error">Failed</Tag>
+        </Tooltip>
+      );
+    }
+    return (
+      <Tooltip title={title}>
+        <Tag>{provisioning.status}</Tag>
+      </Tooltip>
+    );
+  }
 
   function showError(error: unknown) {
     message.error(error instanceof Error ? error.message : '操作失败');
