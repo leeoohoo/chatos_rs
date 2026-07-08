@@ -11,6 +11,8 @@ use tokio::sync::RwLock;
 pub(crate) struct LocalSandboxState {
     pub(crate) enabled: bool,
     pub(crate) selected_image_ref: Option<String>,
+    #[serde(default)]
+    pub(crate) images: Vec<LocalSandboxImageRecord>,
 }
 
 impl Default for LocalSandboxState {
@@ -18,8 +20,20 @@ impl Default for LocalSandboxState {
         Self {
             enabled: false,
             selected_image_ref: None,
+            images: Vec::new(),
         }
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct LocalSandboxImageRecord {
+    pub(crate) id: String,
+    pub(crate) image_name: String,
+    pub(crate) image_ref: String,
+    pub(crate) features: Vec<String>,
+    pub(crate) backend: String,
+    pub(crate) created_at: String,
+    pub(crate) updated_at: String,
 }
 
 #[derive(Debug, Clone, Default)]

@@ -245,6 +245,11 @@ pub struct UpdateUserRequest {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProvisionHarnessUserRequest {
+    pub password: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateAgentAccountRequest {
     pub username: String,
     pub display_name: Option<String>,

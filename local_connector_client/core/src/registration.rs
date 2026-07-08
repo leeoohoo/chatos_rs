@@ -33,7 +33,10 @@ pub(crate) async fn ensure_device_registered(
     state: &mut LocalState,
 ) -> Result<String> {
     if let Some(device_id) = state.device_id.clone() {
-        return Ok(device_id);
+        if registered_device_exists(client, config, device_id.as_str()).await? {
+            return Ok(device_id);
+        }
+        state.device_id = None;
     }
 
     let public_key = config
@@ -79,7 +82,13 @@ pub(crate) async fn ensure_workspace_registered(
     let existing_index = state.workspace_index_by_fingerprint(fingerprint.as_str());
     if let Some(index) = existing_index {
         if !force_register {
-            return Ok(state.workspaces[index].id.clone());
+            if let Some(workspace) =
+                find_registered_workspace(client, config, device_id, fingerprint.as_str()).await?
+            {
+                state.workspaces[index].id = workspace.id.clone();
+                state.workspaces[index].alias = workspace.local_path_alias;
+                return Ok(workspace.id);
+            }
         }
     }
     let alias = config
@@ -120,6 +129,63 @@ pub(crate) async fn ensure_workspace_registered(
         state.workspaces.push(workspace_state);
     }
     Ok(workspace.id)
+}
+
+async fn registered_device_exists(
+    client: &reqwest::Client,
+    config: &ClientConfig,
+    device_id: &str,
+) -> Result<bool> {
+    let response = client
+        .get(api_url(
+            &config.cloud_base_url,
+            format!(
+                "/api/local-connectors/devices/{}",
+                urlencoding::encode(device_id)
+            )
+            .as_str(),
+        ))
+        .bearer_auth(config.access_token.as_str())
+        .send()
+        .await
+        .context("verify local connector device registration")?;
+    if response.status() == StatusCode::NOT_FOUND {
+        return Ok(false);
+    }
+    ensure_success(
+        response.status(),
+        "verify local connector device registration",
+    )?;
+    Ok(true)
+}
+
+async fn find_registered_workspace(
+    client: &reqwest::Client,
+    config: &ClientConfig,
+    device_id: &str,
+    fingerprint: &str,
+) -> Result<Option<WorkspaceResponse>> {
+    let response = client
+        .get(api_url(
+            &config.cloud_base_url,
+            format!(
+                "/api/local-connectors/workspaces?device_id={}",
+                urlencoding::encode(device_id)
+            )
+            .as_str(),
+        ))
+        .bearer_auth(config.access_token.as_str())
+        .send()
+        .await
+        .context("list local connector workspaces")?;
+    ensure_success(response.status(), "list local connector workspaces")?;
+    let workspaces = response
+        .json::<Vec<WorkspaceResponse>>()
+        .await
+        .context("parse local connector workspace list response")?;
+    Ok(workspaces
+        .into_iter()
+        .find(|workspace| workspace.local_path_fingerprint == fingerprint))
 }
 
 pub(crate) async fn disconnect_device(

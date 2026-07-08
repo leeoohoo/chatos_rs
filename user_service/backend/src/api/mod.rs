@@ -37,6 +37,10 @@ pub fn build_router(state: AppState) -> Router {
         )
         .route("/api/users/:id", patch(users::update_user))
         .route(
+            "/api/users/:id/harness-provisioning",
+            post(users::provision_harness_user),
+        )
+        .route(
             "/api/users/:id/harness-provisioning/retry",
             post(users::retry_harness_provisioning),
         )
@@ -103,6 +107,10 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/health", get(system::health))
         .route("/api/auth/login", post(auth::login))
         .route("/api/auth/register", post(auth::register))
+        .route(
+            "/api/internal/harness/users/:user_id/access",
+            get(harness::get_user_harness_access),
+        )
         .merge(protected)
         .with_state(state)
         .layer(

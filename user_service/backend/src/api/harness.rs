@@ -1,13 +1,14 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use axum::extract::State;
+use axum::extract::{Path, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::{Extension, Json};
 
 use crate::auth::CurrentPrincipal;
 use crate::integrations::{
-    create_harness_project_repo, HarnessProjectRepoCreateRequest, HarnessProjectRepoResponse,
+    create_harness_project_repo, get_harness_api_access_for_user, HarnessApiAccessResponse,
+    HarnessProjectRepoCreateRequest, HarnessProjectRepoResponse,
 };
 use crate::state::AppState;
 
@@ -36,6 +37,18 @@ pub async fn create_project_repo(
         return Err(bad_request("project_name is required"));
     }
     create_harness_project_repo(&state, owner_user_id, input)
+        .await
+        .map(Json)
+        .map_err(internal_error)
+}
+
+pub async fn get_user_harness_access(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(user_id): Path<String>,
+) -> ApiResult<HarnessApiAccessResponse> {
+    require_internal_secret(&state, &headers)?;
+    get_harness_api_access_for_user(&state, user_id.as_str())
         .await
         .map(Json)
         .map_err(internal_error)

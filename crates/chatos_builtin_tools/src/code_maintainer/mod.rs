@@ -14,6 +14,7 @@ mod storage;
 mod tests;
 mod utils;
 
+pub use self::patch::{apply_patch_limited, ApplyPatchResult};
 pub use self::service::{
     CodeMaintainerHooks, CodeMaintainerHooksRef, CodeMaintainerOptions, CodeMaintainerService,
 };

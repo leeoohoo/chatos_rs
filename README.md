@@ -1,182 +1,130 @@
 # Chatos RS
 
-Cross-platform installation guide: [INSTALL_GUIDE.zh-CN.md](./INSTALL_GUIDE.zh-CN.md)
+Chatos RS is an AI platform for engineering workflows. It combines conversational collaboration, tool orchestration, task execution, sandboxed runtimes, and long-term memory in one system.
 
-Chatos RS is an AI platform for engineering workflows.
-It combines conversational collaboration, tool orchestration, and long-term memory in one system.
-
-Chatos RS 是一个面向工程协作场景的 AI 平台，统一了对话协作、工具编排和长期记忆能力。
-
-## Why This System
-- Keep context across sessions with memory and summarization.
-- Reduce context cost with layered summaries and scheduled processing.
-- Make tool execution observable and operable in chat workflows.
-- Keep engineering workflows integrated through MCP-style tool orchestration.
+中文文档: [README.zh-CN.md](./README.zh-CN.md)
+Install guide: [INSTALL_GUIDE.zh-CN.md](./INSTALL_GUIDE.zh-CN.md)
 
 ## Architecture
-- `chat_app/`: Frontend interaction layer
-- `chat_app_server_rs/`: Main orchestration backend
-- `user_service/`: Unified identity service for real users, agent accounts, and Task Runner delegation tokens
-- `task_runner_service/`: Task execution and agent runtime service
-- `memory_engine/`: Independent long-term memory microservice
-- `official_website_service/`: Official product website microservice
 
-## Quick Start
-Run from repository root:
+- `chatos/`: main Chatos service, with `frontend/` and `backend/`
+- `user_service/`: identity, user, and delegation-token service
+- `harness/`: independent upstream Harness checkout, used as the code hosting / DevOps microservice
+- `task_runner_service/`: cloud task execution service
+- `memory_engine/`: long-term memory service
+- `project_management_service/`: project and task metadata service
+- `sandbox_manager_service/`: Docker-backed sandbox manager
+- `local_connector_service/`: cloud relay service for local connector clients
+- `local_connector_client/`: host-side connector client, still run outside Docker
+- `db_connection_hub/`: database connection hub
+- `official_website_service/`: public website service
 
-```bash
-./restart_services.sh restart
-```
+## Docker Quick Start
 
-Run the full local stack:
-
-```bash
-./restart_all_services.sh restart
-```
-
-Unified root tasks:
+All cloud/server services now run through Docker Compose. From the repository root:
 
 ```bash
-make help
-make build
-make test
-make smoke
+cp docker/.env.example docker/.env
+# edit docker/.env for external secrets/API keys; internal service tokens have defaults
+docker/deploy.sh up
 ```
 
-`make smoke` runs repo governance checks plus lightweight cross-subproject probes.
-It also validates root startup script syntax and the Git-relevant large-file policy.
+`docker/deploy.sh up` pulls prebuilt images from GHCR by default; the default Compose file is image-only and does not build from source. To build images from local source instead:
 
-Shared local configuration entrypoint:
+```bash
+docker/deploy.sh dev
+```
 
-- repository root [`.env.example`](./.env.example)
-- `./restart_services.sh` loads root `.env` before applying defaults
-- if `chat_app_server_rs/.env` exists, backend-specific keys there still override the shared root defaults
+Equivalent Make target:
+
+```bash
+make docker-up
+```
+
+For local source builds:
+
+```bash
+make dev
+```
 
 Useful commands:
 
 ```bash
-./restart_services.sh status
-./restart_services.sh stop
-./restart_all_services.sh status
-./restart_all_services.sh stop
+docker/deploy.sh ps
+docker/deploy.sh logs
+docker/deploy.sh restart
+docker/deploy.sh down
+docker/deploy.sh reset
 ```
 
-Run the official website microservice:
+Default URLs:
+
+- Main app: `http://localhost:8088`
+- Main backend: `http://localhost:3997`
+- Harness: `http://localhost:3000`
+- User Service: `http://localhost:39191`
+- Memory Engine: `http://localhost:4178`
+- Task Runner: `http://localhost:39091`
+- Project Management: `http://localhost:39211`
+- Sandbox Manager: `http://localhost:8096`
+- Local Connector Service: `http://localhost:39230`
+- DB Connection Hub: `http://localhost:5174`
+- Official Website: `http://localhost:39251`
+
+## Local Connector Client
+
+The cloud relay service is containerized, but `local_connector_client/` intentionally remains host-side because it needs access to the user's local workspace and local Docker runtime.
 
 ```bash
-make restart-official-website
+make local-connector-client
+make local-connector-client-status
+make local-connector-client-stop
 ```
 
-Official website URLs:
+Host-side connector defaults live in root `.env.example`. Docker stack defaults live in `docker/.env.example`.
 
-- backend/static site: `http://localhost:39250`
-- frontend dev server: `http://localhost:39251`
+## Harness Source
 
-The default `OFFICIAL_WEBSITE_MODE=dev` runs both Rust and Vite. For static
-production-style serving, run `make build-official-website` first, then start
-with `OFFICIAL_WEBSITE_MODE=prod make restart-official-website`.
-Use `make restart-official-website-prod` for an isolated production-style port
-and `make docker-build-official-website` to build the Docker image.
+Harness is checked out at `harness/` from `https://github.com/leeoohoo/harness.git` and keeps its own Git history. The parent Chatos repository ignores that directory, so update it with normal Git commands inside `harness/`.
 
-The website backend also exposes `GET /api/site/status` for local core
-microservice health shown on the website page.
-`robots.txt` and `sitemap.xml` are generated from
-`OFFICIAL_WEBSITE_PUBLIC_BASE_URL`; use `make smoke-official-website-live` to
-probe a running website. For public deployments, set
-`OFFICIAL_WEBSITE_ENABLE_LIVE_STATUS=false` to disable internal service probes.
-
-To include it in the full local stack, set `START_OFFICIAL_WEBSITE=1` before
-running `./restart_all_services.sh restart`.
-
-## WSL Rust Dev Flow
-If Windows Smart App Control / Code Integrity blocks `cargo run` or `cargo test`,
-prefer the WSL-based Rust dev flow instead of running Rust binaries directly on Windows.
-
-Bootstrap WSL once:
-
-```powershell
-wsl.exe --install -d Ubuntu
-make bootstrap-wsl
-```
-
-Run ChatOS inside WSL from Windows:
-
-```powershell
-make restart-wsl
-make status-wsl
-make stop-wsl
-```
-
-Run the full stack inside WSL from Windows:
-
-```powershell
-make restart-all-wsl
-make status-all-wsl
-make stop-all-wsl
-```
-
-Run only `user_service` inside WSL from Windows:
-
-```powershell
-make restart-user-service-wsl
-make status-user-service-wsl
-make stop-user-service-wsl
-```
-
-Optional root `.env` keys for the WSL helper:
-
-- `WSL_DEV_DISTRO`
-- `WSL_CARGO_TARGET_DIR`
-- `WSL_RUNTIME_DIR`
-- `WSL_USER_SERVICE_RUNTIME_DIR`
-- `WSL_TASK_RUNNER_RUNTIME_DIR`
-- `WSL_MEMORY_ENGINE_RUNTIME_DIR`
-
-Unified user-service local run:
+Fresh workspaces can recreate the source checkout with:
 
 ```bash
-bash user_service/restart_services.sh restart
-make status-user-service
-make stop-user-service
+git clone https://github.com/leeoohoo/harness.git harness
 ```
 
-If root `.env` keeps `START_USER_SERVICE=1` and
-`CHATOS_USER_SERVICE_BASE_URL=http://127.0.0.1:39190`, then
-`./restart_services.sh restart` will also start the local `user_service`.
+The Docker stack runs Harness from the `harness/harness` image and stores data in the `harness-data` volume.
 
-Current limitation:
-- On the current Windows machine, Smart App Control / Code Integrity can block Rust-generated EXE/DLL artifacts during `cargo run` or `cargo test`; use the WSL flow above to avoid that execution-policy issue.
+## Sandbox Docker Control
 
-Default logs:
-- `/tmp/chatos_rs_dev_<repo-hash>/backend.log`
-- `/tmp/chatos_rs_dev_<repo-hash>/frontend.log`
-- `/tmp/chatos_rs_user_service_<repo-hash>/backend.log`
-- `/tmp/chatos_rs_user_service_<repo-hash>/frontend.log`
+`sandbox_manager_service` runs inside the Compose stack and controls the host Docker daemon through `/var/run/docker.sock`. Sandbox containers join the same Docker bridge network as the Compose services, so the manager can call sandbox agents by container name instead of publishing each agent port.
 
-## Language Docs
-- [中文](./README.zh-CN.md)
-- [English](./README.en.md)
+This is intentional for the cloud stack, but it is a privileged deployment model: a container with access to the Docker socket effectively has host Docker administration privileges.
 
-## Subproject READMEs
-- [chat_app English](./chat_app/README.en.md)
-- [chat_app 中文](./chat_app/README.zh-CN.md)
-- [chat_app_server_rs English](./chat_app_server_rs/README.en.md)
-- [chat_app_server_rs 中文](./chat_app_server_rs/README.zh-CN.md)
-- [db_connection_hub backend](./db_connection_hub/backend/README.md)
-- [db_connection_hub frontend](./db_connection_hub/frontend/README.md)
-- [official website](./official_website_service/README.md)
+## Checks
 
-## Note
-Development plan documents may live in root-level historical files or local `docs/plans/` archives.
+```bash
+make smoke
+make test
+```
 
-## Unified User Service Docs
-- [user_service](./user_service/README.md)
-- [unified user-service status](./CHATOS_UNIFIED_USER_SERVICE_STATUS_20260619.md)
-- [user_service local runbook](./USER_SERVICE_LOCAL_RUNBOOK_20260619.md)
-- [WSL Rust dev flow](./WSL_RUST_DEV_FLOW_20260619.md)
+`make smoke` validates repository guardrails and Docker Compose configuration.
 
-## License
-This project is source-available under the [PolyForm Noncommercial License 1.0.0](./LICENSE).
-Commercial use is not permitted without a separate written license from the copyright holder.
-Check first-party source headers with `python3 scripts/apply_license_headers.py`.
-Add missing headers with `python3 scripts/apply_license_headers.py --write`.
+## CI Images
+
+GitHub Actions builds and pushes the Chatos service images to GHCR on `main`, `master`, and version tags. The default image namespace is `ghcr.io/leeoohoo`, configured in `docker/.env.example` as:
+
+```env
+CHATOS_IMAGE_NAMESPACE=ghcr.io/leeoohoo
+CHATOS_IMAGE_TAG=latest
+```
+
+Set `CHATOS_IMAGE_TAG=sha-<commit>` to deploy a specific CI build.
+
+If the GHCR packages are not public, run `docker login ghcr.io` on the deployment machine before `docker/deploy.sh up`.
+
+Local source builds are isolated in `docker/compose.build.yml`; CI validates both the image-only runtime Compose file and the local-build overlay.
+
+## Third-Party Notices
+
+See [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).

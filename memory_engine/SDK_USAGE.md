@@ -230,12 +230,12 @@ if resp.accepted && resp.running {
 - 所有接口都返回 `Result<_, String>`
 - 失败时直接读取错误字符串即可
 
-## 7. 本地启动
+## 7. 启动服务
 
 如果你要先启动服务，再接 SDK：
 
 ```bash
-./restart_services.sh restart
+docker/deploy.sh up
 ```
 
 后端默认端口是 `7081`，前端默认端口是 `4178`。

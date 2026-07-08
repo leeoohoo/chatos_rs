@@ -1,0 +1,17 @@
+{
+  "service": {
+    "name": "harness",
+    "id": "harness-docker",
+    "address": "harness",
+    "port": 3000,
+    "tags": ["local"],
+    "checks": [
+      {
+        "name": "harness-http",
+        "http": "http://harness:3000/api/v1/system/health",
+        "interval": "10s",
+        "timeout": "3s"
+      }
+    ]
+  }
+}

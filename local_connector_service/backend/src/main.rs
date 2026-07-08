@@ -12,10 +12,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     load_local_connector_dotenv();
     init_tracing();
 
-    let config = AppConfig::from_env()?;
+    chatos_service_runtime::apply_config_center_env("local-connector-service").await;
+    let mut config = AppConfig::from_env()?;
+    config.user_service_base_url = chatos_service_runtime::resolve_service_base_url(
+        "user-service",
+        config.user_service_base_url.as_str(),
+    )
+    .await;
     let bind_addr = config.bind_addr();
     let state = AppState::new(config.clone()).await?;
     let app = build_router(state);
+    let _service_runtime = chatos_service_runtime::register_current_service(
+        "local-connector-service",
+        config.port,
+        "/api/health",
+    )
+    .await;
     let listener = tokio::net::TcpListener::bind(bind_addr).await?;
 
     tracing::info!(

@@ -1,8 +1,0 @@
-#!/usr/bin/env bash
-# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
-# Required Notice: Copyright (c) 2025 AI Chat Team
-
-set -euo pipefail
-
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-exec "$SCRIPT_DIR/sandbox_manager_service/restart_services.sh" "${1:-restart}"

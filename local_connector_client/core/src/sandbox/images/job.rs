@@ -11,7 +11,7 @@ use tokio::io::{AsyncRead, AsyncReadExt};
 use tokio::sync::RwLock;
 use tokio::task::JoinHandle;
 
-use crate::sandbox::types::LocalSandboxImageJob;
+use crate::sandbox::types::{LocalSandboxImageJob, LocalSandboxImageRecord};
 use crate::{local_now_rfc3339, tracing_stdout, LocalState};
 
 use super::build::{local_sandbox_image_build_context, local_sandbox_image_dockerfile};
@@ -120,6 +120,7 @@ pub(super) async fn run_local_sandbox_image_job(
     finish_local_sandbox_image_job(&jobs, job_id.as_str(), status, error).await;
     if status == "succeeded" {
         let mut state_guard = state.write().await;
+        upsert_local_sandbox_image_record(&mut state_guard, &job);
         state_guard.sandbox.selected_image_ref = Some(job.image_ref);
         if let Err(err) = state_guard.save(state_path.as_path()) {
             tracing_stdout(format!("save selected local sandbox image failed: {err}").as_str());
@@ -213,4 +214,29 @@ fn truncate_local_sandbox_job_output(value: &str) -> String {
         boundary += 1;
     }
     format!("... output truncated ...\n{}", &value[boundary..])
+}
+
+fn upsert_local_sandbox_image_record(state: &mut LocalState, job: &LocalSandboxImageJob) {
+    let now = local_now_rfc3339();
+    let record = LocalSandboxImageRecord {
+        id: job.image_id.clone(),
+        image_name: job.image_name.clone(),
+        image_ref: job.image_ref.clone(),
+        features: job.features.clone(),
+        backend: job.backend.clone(),
+        created_at: job.created_at.clone(),
+        updated_at: now,
+    };
+    if let Some(existing) = state
+        .sandbox
+        .images
+        .iter_mut()
+        .find(|image| image.id == record.id || image.image_ref == record.image_ref)
+    {
+        let created_at = existing.created_at.clone();
+        *existing = record;
+        existing.created_at = created_at;
+    } else {
+        state.sandbox.images.push(record);
+    }
 }

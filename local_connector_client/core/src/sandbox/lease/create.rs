@@ -15,6 +15,7 @@ use crate::sandbox::docker::{
     destroy_local_sandbox_container, ensure_docker_running, published_local_sandbox_agent_endpoint,
     start_local_sandbox_container, wait_for_local_sandbox_agent,
 };
+use crate::sandbox::images::local_sandbox_image_ref_for_id;
 use crate::sandbox::types::{
     CreateLocalSandboxLeaseRequest, LocalSandboxLease, LocalSandboxRuntime,
 };
@@ -129,6 +130,9 @@ async fn select_local_sandbox_image_ref(
             .find(|job| job.image_id == image_id && job.status == "succeeded")
         {
             return job.image_ref.clone();
+        }
+        if let Some(image_ref) = local_sandbox_image_ref_for_id(state, image_id) {
+            return image_ref;
         }
     }
     state

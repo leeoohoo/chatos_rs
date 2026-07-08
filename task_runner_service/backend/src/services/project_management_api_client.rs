@@ -22,8 +22,29 @@ struct ProjectServiceProjectRecord {
     owner_username: Option<String>,
     owner_display_name: Option<String>,
     name: String,
+    #[serde(default)]
     root_path: Option<String>,
+    #[serde(default)]
     git_url: Option<String>,
+    #[serde(default)]
+    source_type: Option<String>,
+    #[serde(default)]
+    cloud_import_source: Option<String>,
+    #[serde(default)]
+    import_status: Option<String>,
+    #[serde(default)]
+    source_git_url: Option<String>,
+    #[serde(default)]
+    harness_space_identifier: Option<String>,
+    #[serde(default)]
+    harness_repo_identifier: Option<String>,
+    #[serde(default)]
+    harness_repo_path: Option<String>,
+    #[serde(default)]
+    harness_git_url: Option<String>,
+    #[serde(default)]
+    harness_git_ssh_url: Option<String>,
+    #[serde(default)]
     description: Option<String>,
     status: TaskProjectStatus,
     created_at: String,
@@ -384,6 +405,15 @@ impl From<ProjectServiceProjectRecord> for TaskProjectRecord {
             name: value.name,
             root_path: value.root_path,
             git_url: value.git_url,
+            source_type: value.source_type,
+            cloud_import_source: value.cloud_import_source,
+            import_status: value.import_status,
+            source_git_url: value.source_git_url,
+            harness_space_identifier: value.harness_space_identifier,
+            harness_repo_identifier: value.harness_repo_identifier,
+            harness_repo_path: value.harness_repo_path,
+            harness_git_url: value.harness_git_url,
+            harness_git_ssh_url: value.harness_git_ssh_url,
             description: value.description,
             status: value.status,
             created_at: value.created_at,

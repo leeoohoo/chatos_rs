@@ -8,6 +8,9 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 THRESHOLD_MB=5
 FAIL_ON_HIT=0
+ALLOWED_LARGE_FILES=(
+  "bundled-tools/linux-x64/rg"
+)
 
 while [[ "$#" -gt 0 ]]; do
   case "$1" in
@@ -62,6 +65,17 @@ human_bytes() {
   }'
 }
 
+is_allowed_large_file() {
+  local rel="$1"
+  local allowed
+  for allowed in "${ALLOWED_LARGE_FILES[@]}"; do
+    if [[ "$rel" == "$allowed" ]]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
 tmp_file="$(mktemp)"
 trap 'rm -f "$tmp_file"' EXIT
 
@@ -79,6 +93,9 @@ if git -C "$ROOT_DIR" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
   while IFS= read -r -d '' rel; do
     file="$ROOT_DIR/$rel"
     [[ -f "$file" ]] || continue
+    if is_allowed_large_file "$rel"; then
+      continue
+    fi
     bytes="$(file_size_bytes "$file")"
     if (( bytes > THRESHOLD_MB * 1024 * 1024 )); then
       printf '%s\t%s\n' "$bytes" "$rel" >> "$tmp_file"
@@ -88,6 +105,9 @@ else
   while IFS= read -r -d '' file; do
     bytes="$(file_size_bytes "$file")"
     rel="${file#$ROOT_DIR/}"
+    if is_allowed_large_file "$rel"; then
+      continue
+    fi
     if (( bytes > THRESHOLD_MB * 1024 * 1024 )); then
       printf '%s\t%s\n' "$bytes" "$rel" >> "$tmp_file"
     fi

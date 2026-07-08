@@ -43,9 +43,9 @@
 
 ### ChatOS 当前状态
 
-- 项目 CRUD 在 `chat_app_server_rs/src/api/projects/crud_handlers.rs`。
-- `chat_app_server_rs/src/models/project.rs` 已改成 TaskRunner Project API adapter，包含 `PUBLIC_PROJECT_ID = "-1"` 和统一 `normalize_project_id`。
-- `chat_app_server_rs/src/repositories/projects.rs` 已从编译路径删除，`repositories/mod.rs` 不再导出本地项目 repository。
+- 项目 CRUD 在 `chatos/backend/src/api/projects/crud_handlers.rs`。
+- `chatos/backend/src/models/project.rs` 已改成 TaskRunner Project API adapter，包含 `PUBLIC_PROJECT_ID = "-1"` 和统一 `normalize_project_id`。
+- `chatos/backend/src/repositories/projects.rs` 已从编译路径删除，`repositories/mod.rs` 不再导出本地项目 repository。
 - 新库 SQLite/Mongo 初始化不再创建 ChatOS 本地 `projects` 表/collection。
 - `ensure_owned_project`、`resolve_project_runtime`、fs policy roots、terminal root、workspace realtime watcher 已改为通过 `ProjectService` 读取 TaskRunner 项目。
 - sessions、terminals、memory mapping、project runner settings 等表里保存 `project_id`，这些是引用关系，可以保留。
@@ -236,8 +236,8 @@ project_id: header_text(headers, "x-chatos-project-id")
 
 移除或停用这些本地源能力：
 
-- `chat_app_server_rs/src/models/project.rs` 不再定义本地持久化模型，可改为 TaskRunner API DTO。
-- `chat_app_server_rs/src/repositories/projects.rs` 删除或改成 TaskRunner client adapter。
+- `chatos/backend/src/models/project.rs` 不再定义本地持久化模型，可改为 TaskRunner API DTO。
+- `chatos/backend/src/repositories/projects.rs` 删除或改成 TaskRunner client adapter。
 - SQLite/Mongo 的 `projects` 表/collection 不再作为运行时读写源。
 - `ProjectService::{create,get_by_id,list,update,delete}` 改为调用 TaskRunner Project API。
 
@@ -253,7 +253,7 @@ project_id: header_text(headers, "x-chatos-project-id")
 
 ### ChatOS 项目 API 变成代理
 
-`chat_app_server_rs/src/api/projects/crud_handlers.rs` 继续保留对前端的 API 形状，但实现改为代理 TaskRunner：
+`chatos/backend/src/api/projects/crud_handlers.rs` 继续保留对前端的 API 形状，但实现改为代理 TaskRunner：
 
 - `list_projects` -> `GET task_runner /api/projects`
 - `create_project` -> 校验 root_path 后 `POST task_runner /api/projects`
@@ -295,7 +295,7 @@ ChatOS 返回给前端的 project DTO 可以保持现有字段：
 
 ### Runtime 透传
 
-在 `chat_app_server_rs/src/modules/conversation_runtime/runtime_context.rs`：
+在 `chatos/backend/src/modules/conversation_runtime/runtime_context.rs`：
 
 - `resolved_project_id` 来自 TaskRunner Project API 校验后的 id。
 - 调用 `build_contact_task_runner_runtime` 时新增 `project_id` 参数。
@@ -384,7 +384,7 @@ project_id: parent.project_id.clone()
 
 1. TaskRunner 先上线 project 模型、Project API、`tasks.project_id`。
 2. 写一次性迁移命令，例如：
-   - `chat_app_server_rs/src/bin/export_projects_to_task_runner.rs`
+   - `chatos/backend/src/bin/export_projects_to_task_runner.rs`
    - 或 TaskRunner 管理命令读取 ChatOS DB。
 3. 迁移命令使用 `x-chatos-callback-secret` 或管理员 token，只在切源窗口运行。
 

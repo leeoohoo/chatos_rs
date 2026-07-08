@@ -9,8 +9,8 @@ use crate::integrations::{
     provision_harness_user_public_register, provision_harness_user_public_register_result,
 };
 use crate::models::{
-    CreateUserRequest, UpdateUserRequest, UserRecord, UserSummaryRecord, USER_ROLE_SUPER_ADMIN,
-    USER_ROLE_USER,
+    CreateUserRequest, ProvisionHarnessUserRequest, UpdateUserRequest, UserRecord,
+    UserSummaryRecord, USER_ROLE_SUPER_ADMIN, USER_ROLE_USER,
 };
 use crate::secrets::decrypt_secret;
 use crate::state::AppState;
@@ -132,6 +132,50 @@ pub async fn retry_harness_provisioning(
     };
     let password = decrypt_secret(encrypted_password).map_err(internal_error)?;
     provision_harness_user_public_register_result(&state, &user, password.as_str())
+        .await
+        .map_err(internal_error)?;
+
+    let summary = state
+        .store
+        .get_user_summary(user.id.as_str())
+        .await
+        .map_err(internal_error)?
+        .ok_or_else(|| internal_error("updated user summary missing"))?;
+    Ok(Json(summary))
+}
+
+pub async fn provision_harness_user(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Extension(principal): Extension<CurrentPrincipal>,
+    Json(input): Json<ProvisionHarnessUserRequest>,
+) -> ApiResult<UserSummaryRecord> {
+    require_super_admin(&principal)?;
+    if !state.config.harness_provisioning_enabled {
+        return Err(bad_request("harness provisioning is disabled"));
+    }
+
+    let Some(mut user) = state
+        .store
+        .find_user_by_id(id.as_str())
+        .await
+        .map_err(internal_error)?
+    else {
+        return Err(not_found("user not found"));
+    };
+    if !user.enabled {
+        return Err(bad_request("cannot provision disabled user"));
+    }
+
+    user.password_hash = hash_password(input.password.as_str()).map_err(bad_request)?;
+    user.updated_at = now_rfc3339();
+    state
+        .store
+        .update_user_record(&user)
+        .await
+        .map_err(internal_error)?;
+
+    provision_harness_user_public_register_result(&state, &user, input.password.as_str())
         .await
         .map_err(internal_error)?;
 

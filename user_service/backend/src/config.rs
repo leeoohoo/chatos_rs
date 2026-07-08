@@ -4,6 +4,8 @@
 use std::env;
 use std::net::{IpAddr, SocketAddr};
 
+use chatos_service_runtime::DEFAULT_MEMORY_ENGINE_OPERATOR_TOKEN;
+
 #[derive(Debug, Clone)]
 pub struct AppConfig {
     pub host: IpAddr,
@@ -87,7 +89,10 @@ impl AppConfig {
                 .or_else(|| read_env("CHATOS_ADMIN_DISPLAY_NAME"))
                 .unwrap_or_else(|| "System Admin".to_string()),
             memory_engine_base_url: read_env("MEMORY_ENGINE_BASE_URL"),
-            memory_engine_operator_token: read_env("MEMORY_ENGINE_OPERATOR_TOKEN"),
+            memory_engine_operator_token: Some(
+                read_env("MEMORY_ENGINE_OPERATOR_TOKEN")
+                    .unwrap_or_else(|| DEFAULT_MEMORY_ENGINE_OPERATOR_TOKEN.to_string()),
+            ),
             task_runner_base_url: read_env("TASK_RUNNER_BASE_URL")
                 .or_else(|| read_env("CHATOS_TASK_RUNNER_BASE_URL")),
             task_runner_callback_secret: read_env("TASK_RUNNER_CHATOS_CALLBACK_SECRET")

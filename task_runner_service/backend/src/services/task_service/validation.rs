@@ -102,7 +102,11 @@ impl TaskService {
                 ));
             }
             if let Some(auth_mode) = server.auth_mode.as_deref() {
-                if auth_mode != crate::models::TASK_MCP_HTTP_AUTH_LOCAL_CONNECTOR_INTERNAL {
+                if !matches!(
+                    auth_mode,
+                    crate::models::TASK_MCP_HTTP_AUTH_LOCAL_CONNECTOR_INTERNAL
+                        | crate::models::TASK_MCP_HTTP_AUTH_PROJECT_SERVICE_SYNC
+                ) {
                     return Err(format!(
                         "unsupported ephemeral HTTP MCP auth_mode for {name}: {auth_mode}"
                     ));

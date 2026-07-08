@@ -13,8 +13,10 @@ axum = { version = "0.7", features = ["json"] }
 base64 = "0.22"
 chatos_ai_runtime = { path = "../../crates/chatos_ai_runtime" }
 chatos_builtin_tools = { path = "../../crates/chatos_builtin_tools" }
+chatos_mcp_service = { path = "../../crates/chatos_mcp_service" }
 chatos_mcp_runtime = { path = "../../crates/chatos_mcp_runtime" }
 chatos_project_mcp_contract = { path = "../../crates/chatos_project_mcp_contract" }
+chatos_service_runtime = { path = "../../crates/chatos_service_runtime" }
 chrono = { version = "0.4", features = ["clock", "serde"] }
 dotenvy = "0.15"
 futures-util = "0.3"

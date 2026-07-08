@@ -65,10 +65,12 @@ impl RunService {
             .await?
             .ok_or_else(|| format!("task not found: {task_id}"))?;
         let mut task = save_task_if_tenant_aligned(&self.store, task).await?;
+        let mut applied_project_mcp_routing = false;
         if let Some(project_root) =
             resolve_project_root_for_task(&self.config, &self.store, &task).await?
         {
             if apply_local_connector_routing_to_task(&mut task, project_root.as_str()) {
+                applied_project_mcp_routing = true;
                 task.updated_at = now_rfc3339();
                 task = self.store.save_task(task).await?;
                 info!(
@@ -77,6 +79,17 @@ impl RunService {
                     "task runner applied Local Connector routing before run"
                 );
             }
+        }
+        if !applied_project_mcp_routing
+            && apply_harness_project_routing_to_task(&self.config, &self.store, &mut task).await?
+        {
+            task.updated_at = now_rfc3339();
+            task = self.store.save_task(task).await?;
+            info!(
+                task_id = task.id.as_str(),
+                project_id = task.project_id.as_str(),
+                "task runner applied Harness MCP routing before run"
+            );
         }
         info!(
             task_id = task.id.as_str(),

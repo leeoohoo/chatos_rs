@@ -1,0 +1,167 @@
+# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+# Required Notice: Copyright (c) 2025 AI Chat Team
+
+name: Docker Images
+
+on:
+  push:
+    branches:
+      - main
+      - master
+      - "2.*"
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: docker-images-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-push:
+    name: ${{ matrix.image }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: chatos-rs-sandbox-agent
+            dockerfile: sandbox_manager_service/sandbox_agent/Dockerfile
+            build_args: ""
+          - image: chatos-rs-user-service-backend
+            dockerfile: docker/Dockerfile.rust-service
+            build_args: |
+              MANIFEST_PATH=user_service/backend/Cargo.toml
+              BIN_NAME=user_service_backend
+          - image: chatos-rs-memory-engine-backend
+            dockerfile: docker/Dockerfile.rust-service
+            build_args: |
+              MANIFEST_PATH=memory_engine/backend/Cargo.toml
+              BIN_NAME=memory_engine
+          - image: chatos-rs-project-management-backend
+            dockerfile: docker/Dockerfile.rust-service
+            build_args: |
+              MANIFEST_PATH=Cargo.toml
+              PACKAGE_NAME=project_management_service_backend
+              BIN_NAME=project_management_service_backend
+          - image: chatos-rs-local-connector-service-backend
+            dockerfile: docker/Dockerfile.rust-service
+            build_args: |
+              MANIFEST_PATH=Cargo.toml
+              PACKAGE_NAME=local_connector_service_backend
+              BIN_NAME=local_connector_service_backend
+          - image: chatos-rs-sandbox-manager-backend
+            dockerfile: docker/Dockerfile.rust-service
+            build_args: |
+              MANIFEST_PATH=Cargo.toml
+              PACKAGE_NAME=sandbox_manager_service_backend
+              BIN_NAME=sandbox_manager_service_backend
+          - image: chatos-rs-task-runner-backend
+            dockerfile: docker/Dockerfile.rust-service
+            build_args: |
+              MANIFEST_PATH=Cargo.toml
+              PACKAGE_NAME=task_runner_service_backend
+              BIN_NAME=task_runner_service_backend
+          - image: chatos-rs-chatos-backend
+            dockerfile: docker/Dockerfile.rust-service
+            build_args: |
+              MANIFEST_PATH=Cargo.toml
+              PACKAGE_NAME=chat_app_server_rs
+              BIN_NAME=chat_app_server_rs
+          - image: chatos-rs-db-connection-hub-backend
+            dockerfile: docker/Dockerfile.rust-service
+            build_args: |
+              MANIFEST_PATH=db_connection_hub/backend/Cargo.toml
+              BIN_NAME=db_connection_hub_backend
+          - image: chatos-rs-official-website-backend
+            dockerfile: docker/Dockerfile.rust-service
+            build_args: |
+              MANIFEST_PATH=Cargo.toml
+              PACKAGE_NAME=official_website_service_backend
+              BIN_NAME=official_website_service_backend
+          - image: chatos-rs-chatos-frontend
+            dockerfile: docker/Dockerfile.frontend
+            build_args: |
+              APP_DIR=chatos/frontend
+          - image: chatos-rs-user-service-frontend
+            dockerfile: docker/Dockerfile.frontend
+            build_args: |
+              APP_DIR=user_service/frontend
+          - image: chatos-rs-memory-engine-frontend
+            dockerfile: docker/Dockerfile.frontend
+            build_args: |
+              APP_DIR=memory_engine/frontend
+              VITE_MEMORY_ENGINE_API_BASE=/api/memory-engine/v1
+              VITE_USER_SERVICE_API_BASE=/user-service
+          - image: chatos-rs-project-management-frontend
+            dockerfile: docker/Dockerfile.frontend
+            build_args: |
+              APP_DIR=project_management_service/frontend
+          - image: chatos-rs-task-runner-frontend
+            dockerfile: docker/Dockerfile.frontend
+            build_args: |
+              APP_DIR=task_runner_service/frontend
+          - image: chatos-rs-sandbox-manager-frontend
+            dockerfile: docker/Dockerfile.frontend
+            build_args: |
+              APP_DIR=sandbox_manager_service/frontend
+          - image: chatos-rs-db-connection-hub-frontend
+            dockerfile: docker/Dockerfile.frontend
+            build_args: |
+              APP_DIR=db_connection_hub/frontend
+          - image: chatos-rs-official-website-frontend
+            dockerfile: docker/Dockerfile.frontend
+            build_args: |
+              APP_DIR=official_website_service/frontend
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set image metadata
+        id: image
+        shell: bash
+        run: |
+          owner="${GITHUB_REPOSITORY_OWNER,,}"
+          image="ghcr.io/${owner}/${{ matrix.image }}"
+          {
+            echo "name=${image}"
+            echo "tags<<EOF"
+            echo "${image}:sha-${GITHUB_SHA}"
+            if [[ "${GITHUB_REF}" == refs/heads/* ]]; then
+              safe_ref="${GITHUB_REF_NAME//\//-}"
+              echo "${image}:${safe_ref}"
+            fi
+            if [[ "${GITHUB_REF}" == "refs/heads/main" || "${GITHUB_REF}" == "refs/heads/master" || "${GITHUB_REF}" == refs/heads/2.* ]]; then
+              echo "${image}:latest"
+            fi
+            if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
+              echo "${image}:${GITHUB_REF_NAME}"
+            fi
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          push: true
+          tags: ${{ steps.image.outputs.tags }}
+          build-args: ${{ matrix.build_args }}
+          cache-from: type=gha,scope=${{ matrix.image }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.image }}

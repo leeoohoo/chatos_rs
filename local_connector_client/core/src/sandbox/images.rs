@@ -2,12 +2,13 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 use crate::sandbox::catalog::local_sandbox_runtime_specs;
-use crate::sandbox::types::LocalSandboxImageJob;
+use crate::sandbox::types::{LocalSandboxImageJob, LocalSandboxImageRecord};
 use crate::{
-    local_now_rfc3339, LocalRuntime, DEFAULT_LOCAL_SANDBOX_IMAGE,
+    local_now_rfc3339, tracing_stdout, LocalRuntime, LocalState, DEFAULT_LOCAL_SANDBOX_IMAGE,
     DEFAULT_LOCAL_SANDBOX_IMAGE_TAG_PREFIX, LOCAL_SANDBOX_BACKEND,
 };
 
@@ -19,6 +20,9 @@ use job::run_local_sandbox_image_job;
 
 pub(crate) async fn local_sandbox_image_catalog(runtime: &LocalRuntime) -> Value {
     let jobs = runtime.sandbox_runtime.jobs.read().await.clone();
+    let stored_images = local_sandbox_stored_images(runtime).await;
+    let mut seen_refs = std::collections::BTreeSet::new();
+    seen_refs.insert(DEFAULT_LOCAL_SANDBOX_IMAGE.to_string());
     let mut images = vec![json!({
         "id": "default",
         "name": DEFAULT_LOCAL_SANDBOX_IMAGE,
@@ -27,7 +31,24 @@ pub(crate) async fn local_sandbox_image_catalog(runtime: &LocalRuntime) -> Value
         "backend": LOCAL_SANDBOX_BACKEND,
         "status": local_docker_image_status(DEFAULT_LOCAL_SANDBOX_IMAGE).await,
     })];
+    for image in stored_images {
+        if !seen_refs.insert(image.image_ref.clone()) {
+            continue;
+        }
+        images.push(json!({
+            "id": image.id,
+            "name": image.image_name,
+            "image_ref": image.image_ref,
+            "features": image.features,
+            "backend": image.backend,
+            "status": local_docker_image_status(image.image_ref.as_str()).await,
+            "created_at": image.created_at,
+        }));
+    }
     for job in jobs.iter().filter(|job| job.status == "succeeded") {
+        if !seen_refs.insert(job.image_ref.clone()) {
+            continue;
+        }
         images.push(json!({
             "id": job.image_id,
             "name": job.image_name,
@@ -45,6 +66,15 @@ pub(crate) async fn local_sandbox_image_catalog(runtime: &LocalRuntime) -> Value
         "features": local_sandbox_runtime_specs(),
         "images": images,
     })
+}
+
+pub(crate) fn local_sandbox_image_ref_for_id(state: &LocalState, image_id: &str) -> Option<String> {
+    state
+        .sandbox
+        .images
+        .iter()
+        .find(|image| image.id == image_id)
+        .map(|image| image.image_ref.clone())
 }
 
 pub(crate) async fn start_local_sandbox_image_job(
@@ -102,4 +132,51 @@ pub(crate) async fn start_local_sandbox_image_job(
         run_local_sandbox_image_job(jobs, state, state_path, job_id).await;
     });
     Ok(job)
+}
+
+async fn local_sandbox_stored_images(runtime: &LocalRuntime) -> Vec<LocalSandboxImageRecord> {
+    let mut state = runtime.state.write().await;
+    if let Some(record) = imported_selected_sandbox_image(&state) {
+        state.sandbox.images.push(record);
+        if let Err(err) = state.save(runtime.state_path.as_path()) {
+            tracing_stdout(format!("save imported local sandbox image failed: {err}").as_str());
+        }
+    }
+    state.sandbox.images.clone()
+}
+
+fn imported_selected_sandbox_image(state: &LocalState) -> Option<LocalSandboxImageRecord> {
+    let image_ref = state.sandbox.selected_image_ref.as_deref()?;
+    if image_ref == DEFAULT_LOCAL_SANDBOX_IMAGE {
+        return None;
+    }
+    if state
+        .sandbox
+        .images
+        .iter()
+        .any(|image| image.image_ref == image_ref)
+    {
+        return None;
+    }
+    let now = local_now_rfc3339();
+    Some(LocalSandboxImageRecord {
+        id: imported_local_sandbox_image_id(image_ref),
+        image_name: image_ref
+            .rsplit_once(':')
+            .map(|(_, tag)| tag)
+            .unwrap_or(image_ref)
+            .to_string(),
+        image_ref: image_ref.to_string(),
+        features: vec!["imported".to_string()],
+        backend: LOCAL_SANDBOX_BACKEND.to_string(),
+        created_at: now.clone(),
+        updated_at: now,
+    })
+}
+
+fn imported_local_sandbox_image_id(image_ref: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(image_ref.as_bytes());
+    let digest = hex::encode(hasher.finalize());
+    format!("local-imported-{}", &digest[..12])
 }

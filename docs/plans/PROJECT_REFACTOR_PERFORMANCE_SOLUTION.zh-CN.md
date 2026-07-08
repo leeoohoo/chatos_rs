@@ -22,26 +22,26 @@
 
 | 文件 | 体积 | 判断 |
 | --- | ---: | --- |
-| `chat_app/src/i18n/messages/enUS.ts` | 104.3 KB | i18n 数据集中，建议按 namespace 拆分 |
+| `chatos/frontend/src/i18n/messages/enUS.ts` | 104.3 KB | i18n 数据集中，建议按 namespace 拆分 |
 | `project_management_service/backend/src/store/sqlite.rs` | 104.0 KB | SQLite CRUD、迁移、映射、测试集中 |
-| `chat_app/src/i18n/messages/zhCN.ts` | 101.9 KB | i18n 数据集中，建议按 namespace 拆分 |
+| `chatos/frontend/src/i18n/messages/zhCN.ts` | 101.9 KB | i18n 数据集中，建议按 namespace 拆分 |
 | `project_management_service/backend/src/api/router.rs` | 71.2 KB | 路由、认证、同步、依赖图、任务联动混合 |
-| `chat_app_server_rs/src/services/agent_runtime/ai_client/tests.rs` | 59.3 KB | AI client 测试集中，可按场景拆 |
-| `chat_app_server_rs/src/api/projects/requirement_execution_handlers.rs` | 59.0 KB | 需求执行 usecase 过载 |
+| `chatos/backend/src/services/agent_runtime/ai_client/tests.rs` | 59.3 KB | AI client 测试集中，可按场景拆 |
+| `chatos/backend/src/api/projects/requirement_execution_handlers.rs` | 59.0 KB | 需求执行 usecase 过载 |
 | `project_management_service/backend/src/store/mongo.rs` | 56.3 KB | Mongo CRUD 与 SQLite 同构重复 |
 | `project_management_service/backend/src/mcp_server.rs` | 56.2 KB | MCP schema、handler、领域逻辑混合 |
 | `user_service/backend/src/api/models.rs` | 50.4 KB | 模型配置、provider catalog、同步、响应投影混合 |
 | `project_management_service/frontend/src/pages/ProjectDetailPage.tsx` | 49.7 KB | 页面容器过载 |
-| `chat_app_server_rs/src/api/configs/ai_model.rs` | 48.7 KB | 与 user_service 模型配置能力重叠 |
-| `chat_app_server_rs/src/api/agent_chat.rs` | 48.4 KB | chat handler 与 Task Runner callback 混合 |
+| `chatos/backend/src/api/configs/ai_model.rs` | 48.7 KB | 与 user_service 模型配置能力重叠 |
+| `chatos/backend/src/api/agent_chat.rs` | 48.4 KB | chat handler 与 Task Runner callback 混合 |
 | `task_runner_service/backend/src/mcp_server/tests.rs` | 46.8 KB | MCP 测试集中 |
 | `crates/chatos_mcp_runtime/src/executor.rs` | 43.6 KB | MCP 注册、调度、解析、结果归并集中 |
-| `chat_app_server_rs/src/services/project_run/analyzer.rs` | 42.7 KB | 多语言运行目标探测集中 |
-| `chat_app/src/components/projectExplorer/ProjectRunSettingsPanel.tsx` | 40.4 KB | props 与 UI 状态过宽 |
-| `chat_app/src/components/projectExplorer/ProjectPlanPane.tsx` | 39.8 KB | 依赖图计算和渲染混合 |
+| `chatos/backend/src/services/project_run/analyzer.rs` | 42.7 KB | 多语言运行目标探测集中 |
+| `chatos/frontend/src/components/projectExplorer/ProjectRunSettingsPanel.tsx` | 40.4 KB | props 与 UI 状态过宽 |
+| `chatos/frontend/src/components/projectExplorer/ProjectPlanPane.tsx` | 39.8 KB | 依赖图计算和渲染混合 |
 | `task_runner_service/frontend/src/i18n/messages/enUS.ts` | 39.5 KB | i18n namespace 未拆 |
 | `task_runner_service/frontend/src/i18n/messages/zhCN.ts` | 39.3 KB | i18n namespace 未拆 |
-| `chat_app/src/components/ToolCallRenderer.test.tsx` | 37.2 KB | 测试集中 |
+| `chatos/frontend/src/components/ToolCallRenderer.test.tsx` | 37.2 KB | 测试集中 |
 
 ### 2.2 按行数排序
 
@@ -49,17 +49,17 @@
 | --- | ---: | --- |
 | `project_management_service/backend/src/store/sqlite.rs` | 2545 | SQLite CRUD、迁移、映射、测试集中 |
 | `project_management_service/backend/src/api/router.rs` | 1914 | 路由、认证、同步、依赖图、任务联动混合 |
-| `chat_app_server_rs/src/services/agent_runtime/ai_client/tests.rs` | 1698 | 测试集中，可按场景拆分 |
-| `chat_app/src/i18n/messages/zhCN.ts` | 1685 | i18n namespace 未拆 |
-| `chat_app/src/i18n/messages/enUS.ts` | 1685 | i18n namespace 未拆 |
-| `chat_app_server_rs/src/api/projects/requirement_execution_handlers.rs` | 1558 | 需求执行 usecase 过载 |
+| `chatos/backend/src/services/agent_runtime/ai_client/tests.rs` | 1698 | 测试集中，可按场景拆分 |
+| `chatos/frontend/src/i18n/messages/zhCN.ts` | 1685 | i18n namespace 未拆 |
+| `chatos/frontend/src/i18n/messages/enUS.ts` | 1685 | i18n namespace 未拆 |
+| `chatos/backend/src/api/projects/requirement_execution_handlers.rs` | 1558 | 需求执行 usecase 过载 |
 | `project_management_service/backend/src/store/mongo.rs` | 1448 | Mongo CRUD 与 SQLite 同构重复 |
 | `project_management_service/backend/src/mcp_server.rs` | 1446 | MCP schema、handler、领域逻辑混合 |
 | `user_service/backend/src/api/models.rs` | 1398 | 模型配置、provider catalog、同步、响应投影混合 |
-| `chat_app_server_rs/src/api/configs/ai_model.rs` | 1369 | 与 user_service 模型配置能力重叠 |
+| `chatos/backend/src/api/configs/ai_model.rs` | 1369 | 与 user_service 模型配置能力重叠 |
 | `project_management_service/frontend/src/pages/ProjectDetailPage.tsx` | 1344 | 页面容器过载 |
-| `chat_app_server_rs/src/services/project_run/analyzer.rs` | 1265 | 多语言运行目标探测集中 |
-| `chat_app_server_rs/src/api/agent_chat.rs` | 1242 | chat handler 与 Task Runner callback 混合 |
+| `chatos/backend/src/services/project_run/analyzer.rs` | 1265 | 多语言运行目标探测集中 |
+| `chatos/backend/src/api/agent_chat.rs` | 1242 | chat handler 与 Task Runner callback 混合 |
 | `crates/chatos_mcp_runtime/src/executor.rs` | 1155 | MCP 注册、调度、解析、结果归并集中 |
 
 ### 2.3 优先处理分组
@@ -70,22 +70,22 @@
 - `project_management_service/backend/src/api/router.rs`
 - `project_management_service/backend/src/store/mongo.rs`
 - `project_management_service/backend/src/mcp_server.rs`
-- `chat_app_server_rs/src/api/projects/requirement_execution_handlers.rs`
+- `chatos/backend/src/api/projects/requirement_execution_handlers.rs`
 - `user_service/backend/src/api/models.rs`
-- `chat_app_server_rs/src/api/configs/ai_model.rs`
+- `chatos/backend/src/api/configs/ai_model.rs`
 
 第二组：前端页面容器热点。
 
 - `project_management_service/frontend/src/pages/ProjectDetailPage.tsx`
-- `chat_app/src/components/projectExplorer/ProjectPlanPane.tsx`
-- `chat_app/src/components/projectExplorer/ProjectRunSettingsPanel.tsx`
+- `chatos/frontend/src/components/projectExplorer/ProjectPlanPane.tsx`
+- `chatos/frontend/src/components/projectExplorer/ProjectRunSettingsPanel.tsx`
 - `task_runner_service/frontend/src/pages/tasks/TaskDetailDrawer.tsx`
 
 第三组：代码数据文件和测试热点。
 
-- `chat_app/src/i18n/messages/*.ts`
+- `chatos/frontend/src/i18n/messages/*.ts`
 - `task_runner_service/frontend/src/i18n/messages/*.ts`
-- `chat_app_server_rs/src/services/agent_runtime/ai_client/tests.rs`
+- `chatos/backend/src/services/agent_runtime/ai_client/tests.rs`
 - `task_runner_service/backend/src/mcp_server/tests.rs`
 
 非代码大文件说明：本地 `target-*` 目录、`bundled-tools/**/rg*`、lockfile 确实占体积，但不属于本次“代码大文件”重构对象。它们只需要独立的仓库治理或本地清理策略。
@@ -99,7 +99,7 @@
 - Axum 通用 router layer：CORS、TraceLayer、request id、health handler。
 - 统一 `ApiError` / `ApiResult` / status 映射。
 - env/config 解析工具，包含 bounded int、URL normalize、secret normalize。
-- pagination parser：当前 `chat_app_server_rs/src/core/pagination.rs` 可作为起点。
+- pagination parser：当前 `chatos/backend/src/core/pagination.rs` 可作为起点。
 
 收益：
 
@@ -117,7 +117,7 @@
 现状：
 
 - `user_service/backend/src/auth.rs` 定义 claim 和 token。
-- `project_management_service/backend/src/auth.rs`、`memory_engine/backend/src/api/memory_auth.rs`、`chat_app_server_rs/src/services/user_service_api_client.rs` 复写了 verify/owner scope 逻辑。
+- `project_management_service/backend/src/auth.rs`、`memory_engine/backend/src/api/memory_auth.rs`、`chatos/backend/src/services/user_service_api_client.rs` 复写了 verify/owner scope 逻辑。
 
 收益：
 
@@ -135,7 +135,7 @@
 现状：
 
 - `user_service/backend/src/api/models.rs` 负责模型配置落库、provider refresh、同步集成。
-- `chat_app_server_rs/src/api/configs/ai_model.rs` 负责兼容旧接口并代理 user_service。
+- `chatos/backend/src/api/configs/ai_model.rs` 负责兼容旧接口并代理 user_service。
 - `task_runner_service` 也有 model catalog 和 model config service。
 
 收益：
@@ -206,13 +206,13 @@
   - `WorkItemTable`
   - `DependencyDrawer`
   - `ProfileEditor`
-- `chat_app/src/components/projectExplorer/ProjectPlanPane.tsx`
+- `chatos/frontend/src/components/projectExplorer/ProjectPlanPane.tsx`
   - `projectPlanGraph.ts`
   - `useProjectPlanData`
   - `RequirementColumns`
   - `WorkItemDependencyList`
   - `ExecutionActions`
-- `chat_app/src/components/projectExplorer/ProjectRunSettingsPanel.tsx`
+- `chatos/frontend/src/components/projectExplorer/ProjectRunSettingsPanel.tsx`
   - 将 40+ props 收敛成 view model。
   - 拆 `RunTargetSelector`、`ToolchainSettings`、`ConfigFilesPanel`、`RunnerTerminalPanel`。
 
@@ -267,7 +267,7 @@ Chat Server / AI Runtime / MCP：
 
 - `McpExecutor::init` 每次运行会注册 HTTP、stdio、builtin tools。外部 MCP tool list 可以按 config id + updated_at + headers hash 做 TTL 缓存。
 - `crates/chatos_ai_runtime/src/tool_runtime.rs` 已有 tool result budget，建议所有入口统一使用同一套 limits，并在 UI 上提示被截断的工具结果。
-- `chat_app_server_rs/src/services/project_run/analyzer.rs` 已有限制 `MAX_SCAN_DIRS`、`MAX_SCAN_DEPTH`、`MAX_TARGETS`，后续可把 Node/Java/Python/Go/Rust detector 拆成独立策略并缓存 manifest hash。
+- `chatos/backend/src/services/project_run/analyzer.rs` 已有限制 `MAX_SCAN_DIRS`、`MAX_SCAN_DEPTH`、`MAX_TARGETS`，后续可把 Node/Java/Python/Go/Rust detector 拆成独立策略并缓存 manifest hash。
 - `requirement_execution_handlers.rs` 可减少三次 project service HTTP 读取，改成一次 plan snapshot。
 
 ### 4.3 前端性能

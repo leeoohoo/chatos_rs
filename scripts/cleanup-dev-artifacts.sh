@@ -18,10 +18,10 @@ for arg in "$@"; do
 Usage: scripts/cleanup-dev-artifacts.sh [--dry-run]
 
 Cleanup common local development artifacts:
-- chat_app/dist
-- chat_app_server_rs/target
+- chatos/frontend/dist
+- chatos/backend/target
 - target-shared
-- chat_app_server_rs logs and sqlite wal/shm files
+- chatos/backend logs and sqlite wal/shm files
 - python __pycache__ / .pyc
 - common .DS_Store files
 EOF
@@ -64,19 +64,19 @@ remove_glob() {
   fi
 }
 
-remove_path "$ROOT_DIR/chat_app/dist"
-remove_path "$ROOT_DIR/chat_app_server_rs/target"
+remove_path "$ROOT_DIR/chatos/frontend/dist"
+remove_path "$ROOT_DIR/chatos/backend/target"
 remove_path "$ROOT_DIR/target-shared"
-remove_glob "$ROOT_DIR/chat_app_server_rs/logs/server.log*"
-remove_glob "$ROOT_DIR/chat_app_server_rs/logs/error.log*"
-remove_path "$ROOT_DIR/chat_app_server_rs/data/chat_app.db-wal"
-remove_path "$ROOT_DIR/chat_app_server_rs/data/chat_app.db-shm"
+remove_glob "$ROOT_DIR/chatos/backend/logs/server.log*"
+remove_glob "$ROOT_DIR/chatos/backend/logs/error.log*"
+remove_path "$ROOT_DIR/chatos/backend/data/chat_app.db-wal"
+remove_path "$ROOT_DIR/chatos/backend/data/chat_app.db-shm"
 
 while IFS= read -r path; do
   remove_path "$path"
 done < <(
   find "$ROOT_DIR" \
-    \( -path "$ROOT_DIR/.git" -o -path "$ROOT_DIR/chat_app/node_modules" -o -path "$ROOT_DIR/chat_app_server_rs/target" -o -path "$ROOT_DIR/target-shared" \) -prune \
+    \( -path "$ROOT_DIR/.git" -o -path "$ROOT_DIR/chatos/frontend/node_modules" -o -path "$ROOT_DIR/chatos/backend/target" -o -path "$ROOT_DIR/target-shared" \) -prune \
     -o \( -name .DS_Store -o -name __pycache__ -o -name '*.pyc' -o -name '*.pyo' \) -print
 )
 

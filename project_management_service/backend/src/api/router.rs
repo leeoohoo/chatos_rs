@@ -19,6 +19,7 @@ use super::dependencies::{
 use super::dependency_graph::{
     get_project_dependency_graph, get_requirement_dependency_graph, get_work_item_dependency_graph,
 };
+use super::harness_mcp::harness_project_mcp_entrypoint;
 use super::plan::get_project_plan;
 use super::projects::{
     create_cloud_project, create_project, delete_project, get_project, get_project_profile,
@@ -168,6 +169,10 @@ pub fn build_router(state: AppState) -> Router {
         .route(
             "/api/chatos-sync/projects/:project_id",
             get(sync_get_project),
+        )
+        .route(
+            "/api/chatos-sync/projects/:project_id/harness/mcp",
+            post(harness_project_mcp_entrypoint),
         )
         .route(
             "/api/chatos-sync/work-items/:work_item_id/task-runner-status",

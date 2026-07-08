@@ -13,6 +13,7 @@ aes-gcm = "0.10"
 argon2 = "0.5"
 axum = { version = "0.7", features = ["json", "macros"] }
 base64 = "0.22"
+chatos_service_runtime = { path = "../../crates/chatos_service_runtime" }
 chrono = { version = "0.4", features = ["clock", "serde"] }
 dotenvy = "0.15"
 futures-util = "0.3"

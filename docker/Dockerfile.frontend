@@ -1,0 +1,40 @@
+# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+# Required Notice: Copyright (c) 2025 AI Chat Team
+
+FROM node:24-bookworm-slim AS builder
+
+WORKDIR /src
+COPY . .
+
+ARG APP_DIR
+ARG VITE_API_BASE_URL=
+ARG VITE_MEMORY_ENGINE_API_BASE=
+ARG VITE_USER_SERVICE_API_BASE=
+ARG VITE_MEMORY_ENGINE_OPERATOR_TOKEN=
+ARG VITE_BASE_PATH=/
+
+ENV VITE_API_BASE_URL=${VITE_API_BASE_URL}
+ENV VITE_MEMORY_ENGINE_API_BASE=${VITE_MEMORY_ENGINE_API_BASE}
+ENV VITE_USER_SERVICE_API_BASE=${VITE_USER_SERVICE_API_BASE}
+ENV VITE_MEMORY_ENGINE_OPERATOR_TOKEN=${VITE_MEMORY_ENGINE_OPERATOR_TOKEN}
+ENV VITE_BASE_PATH=${VITE_BASE_PATH}
+
+WORKDIR /src/${APP_DIR}
+RUN if [ -f package-lock.json ]; then npm ci --legacy-peer-deps; else npm install --legacy-peer-deps; fi
+RUN npm run build
+
+FROM nginx:1.27-alpine
+
+ARG APP_DIR
+
+COPY docker/nginx/default.conf.template /etc/nginx/templates/default.conf.template
+COPY --from=builder /src/${APP_DIR}/dist /usr/share/nginx/html
+
+ENV API_PROXY_PASS=http://127.0.0.1:1
+ENV MEMORY_ENGINE_PROXY_PASS=http://127.0.0.1:1
+ENV USER_SERVICE_PROXY_PASS=http://127.0.0.1:1
+ENV SANDBOX_MANAGER_API_PROXY_CLIENT_ID=
+ENV SANDBOX_MANAGER_API_PROXY_CLIENT_KEY=
+ENV SANDBOX_MANAGER_API_PROXY_OPERATOR_TOKEN=
+
+EXPOSE 80

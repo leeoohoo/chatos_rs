@@ -45,7 +45,7 @@
 ```text
 sandbox_manager_service/
   README.md
-  restart_services.sh
+  # deployment is now handled by docker/compose.yml
   backend/
     Cargo.toml
     src/
@@ -648,18 +648,19 @@ MVP 测试表单：
 }
 ```
 
-## 开发启动脚本
+## Docker 启动入口
 
-新增：
+当前启动入口：
 
 ```text
-sandbox_manager_service/restart_services.sh
+docker/deploy.sh up
 ```
 
 职责：
 
-- 构建/启动后端。
-- 启动前端 Vite。
+- 构建/启动 Sandbox Manager 后端容器。
+- 构建/启动 Sandbox Manager 前端容器。
+- 挂载宿主 Docker socket，创建 Docker-backed sandbox。
 - 默认端口：
   - backend `8095`
   - frontend `8096`
@@ -758,7 +759,7 @@ uuid = { version = "1", features = ["serde", "v4"] }
 4. 后端实现 `/health`。
 5. 前端实现基础 `AppShell`。
 6. 前端实现 Dashboard 空页面。
-7. 增加 `restart_services.sh`。
+7. 纳入 `docker/compose.yml`。
 
 验收：
 
@@ -987,7 +988,8 @@ sandbox_manager_service/frontend/src/pages/SettingsPage.tsx
 
 ```text
 sandbox_manager_service/README.md
-sandbox_manager_service/restart_services.sh
+docker/compose.yml
+docker/deploy.sh
 ```
 
 ## 推荐第一步

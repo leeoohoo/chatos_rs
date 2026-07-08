@@ -5,6 +5,11 @@ use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
 use chatos_mcp_runtime::{builtin_kind_by_any, complete_builtin_kind_dependencies, BuiltinMcpKind};
+use chatos_mcp_service::{
+    builtin_kind_header_value, selected_host_builtin_kind_names, BuiltinHostBackend,
+    HostCapabilityPolicy, HARNESS_CODE_ENABLED_BUILTIN_KINDS_HEADER,
+    LOCAL_CONNECTOR_ENABLED_BUILTIN_KINDS_HEADER,
+};
 use serde_json::{json, Value};
 
 use crate::config::AppConfig;
@@ -19,8 +24,7 @@ use super::normalized_optional;
 
 const LOCAL_CONNECTOR_ROOT_PREFIX: &str = "local://connector/";
 const LOCAL_CONNECTOR_MCP_SERVER_NAME: &str = "local_connector";
-pub(super) const LOCAL_CONNECTOR_ENABLED_BUILTIN_KINDS_HEADER: &str =
-    "x-local-connector-enabled-builtin-kinds";
+const HARNESS_CODE_MCP_SERVER_NAME: &str = "harness_code";
 
 #[derive(Debug, Clone)]
 struct LocalConnectorProjectRef {
@@ -50,12 +54,19 @@ pub(super) fn runtime_selected_builtin_kinds(task: &TaskRecord) -> Vec<BuiltinMc
         ensure_system_injected_builtin_kinds(&mut kinds);
     }
     let uses_local_connector = task_uses_local_connector(task);
+    let uses_harness_code = task_uses_harness_code(task);
     if uses_local_connector {
         kinds.retain(|kind| !local_connector_replaces_builtin_kind(*kind));
+    }
+    if uses_harness_code {
+        kinds.retain(|kind| !harness_code_replaces_builtin_kind(*kind));
     }
     let mut kinds = complete_builtin_kind_dependencies(kinds);
     if uses_local_connector {
         kinds.retain(|kind| !local_connector_replaces_builtin_kind(*kind));
+    }
+    if uses_harness_code {
+        kinds.retain(|kind| !harness_code_replaces_builtin_kind(*kind));
     }
     kinds
 }
@@ -65,6 +76,63 @@ pub(super) fn task_uses_local_connector(task: &TaskRecord) -> bool {
         .ephemeral_http_servers
         .iter()
         .any(is_local_connector_ephemeral_server)
+}
+
+pub(super) fn task_uses_harness_code(task: &TaskRecord) -> bool {
+    task.mcp_config
+        .ephemeral_http_servers
+        .iter()
+        .any(is_harness_code_ephemeral_server)
+}
+
+pub(super) async fn apply_harness_project_routing_to_task(
+    config: &AppConfig,
+    store: &AppStore,
+    task: &mut TaskRecord,
+) -> Result<bool, String> {
+    let project_id = crate::models::normalize_project_id(Some(task.project_id.clone()));
+    if project_id == PUBLIC_PROJECT_ID {
+        return Ok(false);
+    }
+    let Some(project) = resolve_project_for_task(config, store, project_id.as_str()).await? else {
+        return Ok(false);
+    };
+    if !project_is_ready_harness_repo(&project) {
+        return Ok(false);
+    }
+    let harness_kinds = selected_harness_code_builtin_kinds_for_config(&task.mcp_config);
+    if harness_kinds.is_empty() {
+        return Ok(false);
+    }
+
+    let before_config = serde_json::to_value(&task.mcp_config).ok();
+    task.mcp_config
+        .ephemeral_http_servers
+        .retain(|server| !is_harness_code_ephemeral_server(server));
+    task.mcp_config
+        .enabled_builtin_kinds
+        .retain(|kind| !is_harness_code_builtin_kind_name(kind));
+    task.mcp_config.workspace_dir = None;
+
+    let mut headers = std::collections::BTreeMap::new();
+    headers.insert(
+        HARNESS_CODE_ENABLED_BUILTIN_KINDS_HEADER.to_string(),
+        harness_code_builtin_kinds_header_value(harness_kinds.as_slice()),
+    );
+    task.mcp_config
+        .ephemeral_http_servers
+        .push(TaskEphemeralHttpMcpServer {
+            name: HARNESS_CODE_MCP_SERVER_NAME.to_string(),
+            url: harness_code_mcp_url(config, project_id.as_str())?,
+            headers,
+            auth_mode: Some(crate::models::TASK_MCP_HTTP_AUTH_PROJECT_SERVICE_SYNC.to_string()),
+        });
+    ensure_input_payload_project_root(
+        &mut task.input_payload,
+        project_root_hint_for_harness(&project).as_str(),
+    );
+
+    Ok(before_config != serde_json::to_value(&task.mcp_config).ok())
 }
 
 pub(super) async fn resolve_project_root_for_project_id(
@@ -133,6 +201,95 @@ pub(super) fn apply_local_connector_routing_to_task(
     )
 }
 
+async fn resolve_project_for_task(
+    config: &AppConfig,
+    store: &AppStore,
+    project_id: &str,
+) -> Result<Option<crate::models::TaskProjectRecord>, String> {
+    if config
+        .project_service_base_url
+        .as_deref()
+        .map(str::trim)
+        .is_some_and(|value| !value.is_empty())
+    {
+        return super::project_management_api_client::get_project_from_project_service(
+            config, project_id,
+        )
+        .await;
+    }
+    store.get_task_project(project_id).await
+}
+
+fn project_is_ready_harness_repo(project: &crate::models::TaskProjectRecord) -> bool {
+    project
+        .harness_repo_path
+        .as_deref()
+        .map(str::trim)
+        .is_some_and(|value| !value.is_empty())
+        && project
+            .import_status
+            .as_deref()
+            .map(str::trim)
+            .is_some_and(|value| value.eq_ignore_ascii_case("ready"))
+}
+
+fn selected_harness_code_builtin_kinds_for_config(
+    mcp_config: &TaskMcpConfig,
+) -> Vec<BuiltinMcpKind> {
+    selected_host_builtin_kind_names(
+        BuiltinHostBackend::HarnessCode,
+        selected_builtin_kinds(mcp_config)
+            .iter()
+            .map(|kind| kind.kind_name()),
+    )
+    .into_iter()
+    .filter_map(builtin_kind_by_any)
+    .collect()
+}
+
+fn harness_code_replaces_builtin_kind(kind: BuiltinMcpKind) -> bool {
+    BuiltinHostBackend::HarnessCode.replaces_builtin_kind_name(kind.kind_name())
+}
+
+fn is_harness_code_builtin_kind_name(value: &str) -> bool {
+    builtin_kind_by_any(value).is_some_and(harness_code_replaces_builtin_kind)
+}
+
+fn is_harness_code_ephemeral_server(server: &TaskEphemeralHttpMcpServer) -> bool {
+    server
+        .name
+        .trim()
+        .eq_ignore_ascii_case(HARNESS_CODE_MCP_SERVER_NAME)
+}
+
+fn harness_code_builtin_kinds_header_value(kinds: &[BuiltinMcpKind]) -> String {
+    builtin_kind_header_value(kinds.iter().map(|kind| kind.kind_name()))
+}
+
+fn harness_code_mcp_url(config: &AppConfig, project_id: &str) -> Result<String, String> {
+    let base = config
+        .project_service_base_url
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| "project service base url is required for Harness MCP routing".to_string())?
+        .trim_end_matches('/');
+    Ok(format!(
+        "{base}/api/chatos-sync/projects/{}/harness/mcp",
+        urlencoding::encode(project_id.trim())
+    ))
+}
+
+fn project_root_hint_for_harness(project: &crate::models::TaskProjectRecord) -> String {
+    project
+        .harness_repo_path
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| format!("harness://{value}"))
+        .unwrap_or_else(|| format!("harness://{}", project.id))
+}
+
 pub(super) fn apply_local_connector_routing(
     mcp_config: &mut TaskMcpConfig,
     input_payload: &mut Option<Value>,
@@ -193,33 +350,21 @@ fn normalize_local_connector_builtin_kinds<I>(kinds: I) -> Vec<BuiltinMcpKind>
 where
     I: IntoIterator<Item = BuiltinMcpKind>,
 {
-    complete_builtin_kind_dependencies(kinds)
-        .into_iter()
-        .filter(|kind| local_connector_replaces_builtin_kind(*kind))
-        .fold(Vec::new(), |mut out, kind| {
-            if !out.contains(&kind) {
-                out.push(kind);
-            }
-            out
-        })
+    selected_host_builtin_kind_names(
+        BuiltinHostBackend::LocalConnector,
+        kinds.into_iter().map(|kind| kind.kind_name()),
+    )
+    .into_iter()
+    .filter_map(builtin_kind_by_any)
+    .collect()
 }
 
 fn local_connector_builtin_kinds_header_value(kinds: &[BuiltinMcpKind]) -> String {
-    kinds
-        .iter()
-        .map(|kind| kind.kind_name())
-        .collect::<Vec<_>>()
-        .join(",")
+    builtin_kind_header_value(kinds.iter().map(|kind| kind.kind_name()))
 }
 
 pub(super) fn local_connector_replaces_builtin_kind(kind: BuiltinMcpKind) -> bool {
-    matches!(
-        kind,
-        BuiltinMcpKind::CodeMaintainerRead
-            | BuiltinMcpKind::CodeMaintainerWrite
-            | BuiltinMcpKind::TerminalController
-            | BuiltinMcpKind::BrowserTools
-    )
+    BuiltinHostBackend::LocalConnector.replaces_builtin_kind_name(kind.kind_name())
 }
 
 fn is_local_connector_ephemeral_server(server: &TaskEphemeralHttpMcpServer) -> bool {
@@ -254,11 +399,7 @@ pub(super) fn local_connector_server_enables_builtin_kind(
     else {
         return false;
     };
-    let kinds = normalize_local_connector_builtin_kinds(
-        raw.split([',', ';', '|', ' '])
-            .filter_map(|value| builtin_kind_by_any(value.trim())),
-    );
-    kinds.contains(&kind)
+    HostCapabilityPolicy::from_header_value(raw).enables_builtin_kind_name(kind.kind_name())
 }
 
 fn is_server_local_builtin_kind_name(value: &str) -> bool {
@@ -441,6 +582,10 @@ fn normalize_ephemeral_http_servers(
             server.auth_mode = normalized_optional(server.auth_mode).map(|value| {
                 if value.eq_ignore_ascii_case(TASK_MCP_HTTP_AUTH_LOCAL_CONNECTOR_INTERNAL) {
                     TASK_MCP_HTTP_AUTH_LOCAL_CONNECTOR_INTERNAL.to_string()
+                } else if value
+                    .eq_ignore_ascii_case(crate::models::TASK_MCP_HTTP_AUTH_PROJECT_SERVICE_SYNC)
+                {
+                    crate::models::TASK_MCP_HTTP_AUTH_PROJECT_SERVICE_SYNC.to_string()
                 } else {
                     value
                 }
@@ -686,8 +831,8 @@ fn normalize_path_for_compare(path: &Path) -> String {
 mod tests {
     use crate::models::{
         now_rfc3339, TaskEphemeralHttpMcpServer, TaskMcpConfig, TaskRecord, TaskScheduleConfig,
-        TaskStatus, TASK_MCP_HTTP_AUTH_LOCAL_CONNECTOR_INTERNAL, TASK_PROFILE_CHATOS_PLAN,
-        TASK_PROFILE_DEFAULT,
+        TaskStatus, TASK_MCP_HTTP_AUTH_LOCAL_CONNECTOR_INTERNAL,
+        TASK_MCP_HTTP_AUTH_PROJECT_SERVICE_SYNC, TASK_PROFILE_CHATOS_PLAN, TASK_PROFILE_DEFAULT,
     };
 
     use super::{
@@ -783,6 +928,45 @@ mod tests {
         assert!(!selected.contains(&BuiltinMcpKind::CodeMaintainerWrite));
         assert!(!selected.contains(&BuiltinMcpKind::TerminalController));
         assert!(!selected.contains(&BuiltinMcpKind::BrowserTools));
+        assert!(selected.contains(&BuiltinMcpKind::TaskManager));
+        assert!(selected.contains(&BuiltinMcpKind::ProjectManagement));
+    }
+
+    #[test]
+    fn harness_code_task_removes_server_local_code_builtin_kinds() {
+        let mut task = sample_task(
+            TASK_PROFILE_DEFAULT,
+            vec![
+                "CodeMaintainerWrite".to_string(),
+                "TerminalController".to_string(),
+                "WebTools".to_string(),
+            ],
+        );
+        task.mcp_config
+            .ephemeral_http_servers
+            .push(harness_code_server());
+
+        let selected = runtime_selected_builtin_kinds(&task);
+
+        assert!(!selected.contains(&BuiltinMcpKind::CodeMaintainerRead));
+        assert!(!selected.contains(&BuiltinMcpKind::CodeMaintainerWrite));
+        assert!(selected.contains(&BuiltinMcpKind::TerminalController));
+        assert!(selected.contains(&BuiltinMcpKind::WebTools));
+    }
+
+    #[test]
+    fn harness_code_plan_task_removes_fixed_server_local_code_builtin_kinds() {
+        let mut task = sample_task(TASK_PROFILE_CHATOS_PLAN, Vec::new());
+        task.mcp_config
+            .ephemeral_http_servers
+            .push(harness_code_server());
+
+        let selected = runtime_selected_builtin_kinds(&task);
+
+        assert!(!selected.contains(&BuiltinMcpKind::CodeMaintainerRead));
+        assert!(!selected.contains(&BuiltinMcpKind::CodeMaintainerWrite));
+        assert!(selected.contains(&BuiltinMcpKind::TerminalController));
+        assert!(selected.contains(&BuiltinMcpKind::BrowserTools));
         assert!(selected.contains(&BuiltinMcpKind::TaskManager));
         assert!(selected.contains(&BuiltinMcpKind::ProjectManagement));
     }
@@ -1028,6 +1212,21 @@ mod tests {
             url: "http://127.0.0.1:39230/internal/mcp".to_string(),
             headers: Default::default(),
             auth_mode: Some(TASK_MCP_HTTP_AUTH_LOCAL_CONNECTOR_INTERNAL.to_string()),
+        }
+    }
+
+    fn harness_code_server() -> TaskEphemeralHttpMcpServer {
+        let mut headers = std::collections::BTreeMap::new();
+        headers.insert(
+            super::HARNESS_CODE_ENABLED_BUILTIN_KINDS_HEADER.to_string(),
+            "CodeMaintainerRead,CodeMaintainerWrite".to_string(),
+        );
+        TaskEphemeralHttpMcpServer {
+            name: "harness_code".to_string(),
+            url: "http://127.0.0.1:39210/api/chatos-sync/projects/project-1/harness/mcp"
+                .to_string(),
+            headers,
+            auth_mode: Some(TASK_MCP_HTTP_AUTH_PROJECT_SERVICE_SYNC.to_string()),
         }
     }
 }

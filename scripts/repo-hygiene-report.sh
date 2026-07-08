@@ -29,8 +29,7 @@ while IFS= read -r line; do
   [[ -n "$line" ]] && echo "$line"
 done < <(
   du -sh \
-    "$ROOT_DIR/chat_app" \
-    "$ROOT_DIR/chat_app_server_rs" \
+    "$ROOT_DIR/chatos" \
     "$ROOT_DIR/target-shared" \
     "$ROOT_DIR/docs" 2>/dev/null | sort -hr
 )
@@ -40,12 +39,12 @@ while IFS= read -r -d '' path; do
   du -sh "$path" 2>/dev/null || true
 done < <(
   list_existing_paths \
-    "chat_app/node_modules" \
-    "chat_app/dist" \
-    "chat_app_server_rs/target" \
-    "chat_app_server_rs/data" \
-    "chat_app_server_rs/logs" \
-    "chat_app_server_rs/docs" \
+    "chatos/frontend/node_modules" \
+    "chatos/frontend/dist" \
+    "chatos/backend/target" \
+    "chatos/backend/data" \
+    "chatos/backend/logs" \
+    "chatos/backend/docs" \
     "target-shared"
 ) | sort -hr
 
@@ -57,7 +56,7 @@ git -C "$ROOT_DIR" ls-files | rg '(^|/)(__pycache__/|.*\.pyc$|.*\.pyo$|.*\.sqlit
 
 print_header "Local Runtime And Cache Artifacts"
 find "$ROOT_DIR" \
-  \( -path "$ROOT_DIR/.git" -o -path "$ROOT_DIR/chat_app/node_modules" -o -path "$ROOT_DIR/chat_app_server_rs/target" -o -path "$ROOT_DIR/target-shared" \) -prune \
+  \( -path "$ROOT_DIR/.git" -o -path "$ROOT_DIR/chatos/frontend/node_modules" -o -path "$ROOT_DIR/chatos/backend/target" -o -path "$ROOT_DIR/target-shared" \) -prune \
   -o \( -name '.DS_Store' -o -name '__pycache__' -o -name '*.pyc' -o -name '*.pyo' -o -name '*.sqlite3' -o -name '*.sqlite3-shm' -o -name '*.sqlite3-wal' -o -name '*.db' -o -name '*.db-shm' -o -name '*.db-wal' \) -print \
   | sed "s#^$ROOT_DIR/##" | sort | head -n "$TOP_N"
 

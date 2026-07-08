@@ -3,6 +3,8 @@
 
 use std::env;
 
+use chatos_service_runtime::DEFAULT_MEMORY_ENGINE_OPERATOR_TOKEN;
+
 #[derive(Debug, Clone)]
 pub struct AppConfig {
     pub host: String,
@@ -81,7 +83,10 @@ impl AppConfig {
             2,
             1,
         );
-        let operator_token = env_text("MEMORY_ENGINE_OPERATOR_TOKEN");
+        let operator_token = Some(
+            env_text("MEMORY_ENGINE_OPERATOR_TOKEN")
+                .unwrap_or_else(|| DEFAULT_MEMORY_ENGINE_OPERATOR_TOKEN.to_string()),
+        );
         let user_service_base_url = env_text("MEMORY_ENGINE_USER_SERVICE_BASE_URL")
             .or_else(|| env_text("MEMORY_ENGINE_USER_SERVICE_API_BASE"))
             .or_else(|| env_text("CHATOS_USER_SERVICE_BASE_URL"))

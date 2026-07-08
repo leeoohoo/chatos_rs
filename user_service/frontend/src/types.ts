@@ -66,6 +66,10 @@ export interface UpdateUserPayload {
   enabled?: boolean;
 }
 
+export interface ProvisionHarnessPayload {
+  password: string;
+}
+
 export interface AgentAccountListItem {
   id: string;
   username: string;

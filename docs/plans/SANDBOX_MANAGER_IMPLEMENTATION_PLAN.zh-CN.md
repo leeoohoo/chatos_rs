@@ -606,8 +606,8 @@ task_runner_service/backend/src/services/sandbox_tool_proxy.rs
 
 如果 Chatos 主服务也有内置终端：
 
-- `chat_app_server_rs/src/builtin/terminal_controller/actions/actions_execute.rs`
-- `chat_app_server_rs/src/services/terminal_manager/io_runtime.rs`
+- `chatos/backend/src/builtin/terminal_controller/actions/actions_execute.rs`
+- `chatos/backend/src/services/terminal_manager/io_runtime.rs`
 
 建议不要再启动宿主 shell。改为：
 

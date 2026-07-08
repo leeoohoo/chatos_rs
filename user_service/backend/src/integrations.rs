@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use reqwest::{Method, StatusCode};
+use reqwest::{Method, StatusCode, Url};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::fmt;
@@ -75,6 +75,16 @@ struct HarnessTokenRecord {
     identifier: String,
 }
 
+#[derive(Debug, Deserialize)]
+struct HarnessCurrentUserResponse {
+    uid: String,
+}
+
+struct HarnessAuthenticatedUser {
+    access_token: String,
+    resolved_uid: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HarnessProjectRepoCreateRequest {
     pub project_id: String,
@@ -92,6 +102,14 @@ pub struct HarnessProjectRepoResponse {
     pub default_branch: String,
     pub push_username: String,
     pub push_token: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HarnessApiAccessResponse {
+    pub base_url: String,
+    pub access_token: String,
+    pub harness_uid: String,
+    pub space_identifier: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -208,17 +226,12 @@ pub async fn provision_harness_user_public_register_result(
 
     match result {
         Ok(token) => {
-            finish_harness_provisioning_success(
-                state,
-                attempt,
-                token.identifier,
-                token.access_token,
-            )
-            .await?;
+            let resolved_harness_uid = token.resolved_harness_uid.clone();
+            finish_harness_provisioning_success(state, attempt, token).await?;
             info!(
                 user_id = user.id.as_str(),
                 username = user.username.as_str(),
-                harness_uid = identity.uid.as_str(),
+                harness_uid = resolved_harness_uid.as_str(),
                 harness_space = identity.space_identifier.as_str(),
                 "harness user provisioning completed"
             );
@@ -307,14 +320,16 @@ async fn begin_harness_provisioning_attempt(
 async fn finish_harness_provisioning_success(
     state: &AppState,
     mut record: HarnessProvisioningRecord,
-    token_identifier: String,
-    access_token: String,
+    token: HarnessCreatedAccessToken,
 ) -> Result<(), String> {
     let now = now_rfc3339();
     record.status = HARNESS_PROVISIONING_STATUS_PROVISIONED.to_string();
+    if !token.resolved_harness_uid.trim().is_empty() {
+        record.harness_uid = token.resolved_harness_uid;
+    }
     record.encrypted_password = None;
-    record.encrypted_access_token = Some(encrypt_secret(access_token.as_str())?);
-    record.access_token_identifier = Some(token_identifier);
+    record.encrypted_access_token = Some(encrypt_secret(token.access_token.as_str())?);
+    record.access_token_identifier = Some(token.identifier);
     record.access_token_created_at = Some(now.clone());
     record.last_error = None;
     record.provisioned_at = Some(now.clone());
@@ -343,21 +358,29 @@ async fn provision_harness_user_public_register_inner(
     user: &UserRecord,
     password: &str,
 ) -> Result<HarnessCreatedAccessToken, String> {
-    let access_token = register_or_login_harness_user(state, base_url, identity, user, password)
+    let authenticated = register_or_login_harness_user(state, base_url, identity, user, password)
         .await
         .map_err(|err| format!("create or login harness user failed: {err}"))?;
     ensure_harness_root_space(
         state,
         base_url,
-        access_token.as_str(),
+        authenticated.access_token.as_str(),
         identity,
         user.username.as_str(),
     )
     .await
     .map_err(|err| format!("create harness root space failed: {err}"))?;
-    create_harness_project_access_token(state, base_url, access_token.as_str(), identity, user)
-        .await
-        .map_err(|err| format!("create harness project access token failed: {err}"))
+    let mut token = create_harness_project_access_token(
+        state,
+        base_url,
+        authenticated.access_token.as_str(),
+        identity,
+        user,
+    )
+    .await
+    .map_err(|err| format!("create harness project access token failed: {err}"))?;
+    token.resolved_harness_uid = authenticated.resolved_uid;
+    Ok(token)
 }
 
 async fn register_or_login_harness_user(
@@ -366,7 +389,7 @@ async fn register_or_login_harness_user(
     identity: &HarnessProvisioningIdentity,
     user: &UserRecord,
     password: &str,
-) -> Result<String, HarnessRequestError> {
+) -> Result<HarnessAuthenticatedUser, HarnessRequestError> {
     let register_body = HarnessRegisterRequest {
         uid: identity.uid.as_str(),
         email: identity.email.as_str(),
@@ -383,11 +406,46 @@ async fn register_or_login_harness_user(
     )
     .await
     {
-        Ok(response) => non_empty_access_token(response),
+        Ok(response) => Ok(HarnessAuthenticatedUser {
+            access_token: non_empty_access_token(response)?,
+            resolved_uid: identity.uid.clone(),
+        }),
         Err(err) if err.is_already_exists() => {
-            login_harness_user(state, base_url, identity.uid.as_str(), password).await
+            login_existing_harness_user(state, base_url, identity, password).await
         }
         Err(err) => Err(err),
+    }
+}
+
+async fn login_existing_harness_user(
+    state: &AppState,
+    base_url: &str,
+    identity: &HarnessProvisioningIdentity,
+    password: &str,
+) -> Result<HarnessAuthenticatedUser, HarnessRequestError> {
+    match login_harness_user(state, base_url, identity.uid.as_str(), password).await {
+        Ok(access_token) => Ok(HarnessAuthenticatedUser {
+            access_token,
+            resolved_uid: identity.uid.clone(),
+        }),
+        Err(uid_err) => match login_harness_user(state, base_url, identity.email.as_str(), password)
+            .await
+        {
+            Ok(access_token) => {
+                let resolved_uid =
+                    fetch_harness_current_user_uid(state, base_url, access_token.as_str())
+                        .await
+                        .unwrap_or_else(|_| identity.email.clone());
+                Ok(HarnessAuthenticatedUser {
+                    access_token,
+                    resolved_uid,
+                })
+            }
+            Err(email_err) => Err(HarnessRequestError::from_error(format!(
+                "harness user already exists, but login failed with uid '{}' ({}) and email '{}' ({}); use the existing Harness password or reset the Harness account password",
+                identity.uid, uid_err, identity.email, email_err
+            ))),
+        },
     }
 }
 
@@ -413,6 +471,30 @@ async fn login_harness_user(
     non_empty_access_token(response)
 }
 
+async fn fetch_harness_current_user_uid(
+    state: &AppState,
+    base_url: &str,
+    access_token: &str,
+) -> Result<String, HarnessRequestError> {
+    let endpoint = format!("{base_url}/api/v1/user");
+    let response = harness_request_json::<HarnessCurrentUserResponse, ()>(
+        state,
+        Method::GET,
+        endpoint.as_str(),
+        Some(access_token),
+        None,
+    )
+    .await?;
+    let uid = response.uid.trim().to_string();
+    if uid.is_empty() {
+        Err(HarnessRequestError::from_error(
+            "harness current user response missing uid",
+        ))
+    } else {
+        Ok(uid)
+    }
+}
+
 fn non_empty_access_token(response: HarnessTokenResponse) -> Result<String, HarnessRequestError> {
     let token = response.access_token.trim().to_string();
     if token.is_empty() {
@@ -427,6 +509,7 @@ fn non_empty_access_token(response: HarnessTokenResponse) -> Result<String, Harn
 struct HarnessCreatedAccessToken {
     identifier: String,
     access_token: String,
+    resolved_harness_uid: String,
 }
 
 async fn create_harness_project_access_token(
@@ -468,6 +551,7 @@ async fn create_harness_project_access_token(
     Ok(HarnessCreatedAccessToken {
         identifier,
         access_token,
+        resolved_harness_uid: identity.uid.clone(),
     })
 }
 
@@ -586,7 +670,7 @@ pub async fn create_harness_project_repo(
     )
     .await
     .map_err(|err| format!("create harness repo failed: {err}"))?;
-    let git_url = repo.git_url.trim().to_string();
+    let git_url = rewrite_harness_local_url_host(repo.git_url.as_str(), &base_url, true);
     if git_url.is_empty() {
         return Err("harness repo response missing git_url".to_string());
     }
@@ -597,7 +681,7 @@ pub async fn create_harness_project_repo(
         git_url,
         git_ssh_url: repo
             .git_ssh_url
-            .map(|value| value.trim().to_string())
+            .map(|value| rewrite_harness_local_url_host(value.as_str(), &base_url, false))
             .filter(|value| !value.is_empty()),
         default_branch: repo
             .default_branch
@@ -607,6 +691,93 @@ pub async fn create_harness_project_repo(
         push_username: record.harness_uid,
         push_token,
     })
+}
+
+pub async fn get_harness_api_access_for_user(
+    state: &AppState,
+    owner_user_id: &str,
+) -> Result<HarnessApiAccessResponse, String> {
+    if !state.config.harness_provisioning_enabled {
+        return Err("harness provisioning is disabled".to_string());
+    }
+    let base_url = normalized_url(state.config.harness_base_url.as_deref())
+        .ok_or_else(|| "HARNESS_BASE_URL is not configured".to_string())?;
+    let owner_user_id = owner_user_id.trim();
+    if owner_user_id.is_empty() {
+        return Err("owner_user_id is required".to_string());
+    }
+    let record = state
+        .store
+        .find_harness_provisioning_by_user_id(owner_user_id)
+        .await?
+        .ok_or_else(|| "harness provisioning record not found".to_string())?;
+    if record.status != HARNESS_PROVISIONING_STATUS_PROVISIONED {
+        return Err(format!(
+            "harness provisioning is not ready: {}",
+            record.status
+        ));
+    }
+    let encrypted_access_token = record
+        .encrypted_access_token
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| {
+            "harness access token is unavailable; login again or retry provisioning".to_string()
+        })?;
+    Ok(HarnessApiAccessResponse {
+        base_url,
+        access_token: decrypt_secret(encrypted_access_token)?,
+        harness_uid: record.harness_uid,
+        space_identifier: record.space_identifier,
+    })
+}
+
+fn rewrite_harness_local_url_host(
+    raw_url: &str,
+    harness_base_url: &str,
+    rewrite_origin: bool,
+) -> String {
+    let trimmed = raw_url.trim();
+    if trimmed.is_empty() {
+        return String::new();
+    }
+
+    let Ok(mut url) = Url::parse(trimmed) else {
+        return trimmed.to_string();
+    };
+    let Some(current_host) = url.host_str() else {
+        return trimmed.to_string();
+    };
+    if !is_local_harness_host(current_host) {
+        return trimmed.to_string();
+    }
+
+    let Ok(base_url) = Url::parse(harness_base_url) else {
+        return trimmed.to_string();
+    };
+    let Some(base_host) = base_url.host_str() else {
+        return trimmed.to_string();
+    };
+
+    if rewrite_origin {
+        let _ = url.set_scheme(base_url.scheme());
+        let _ = url.set_port(base_url.port());
+    }
+    let _ = url.set_host(Some(base_host));
+    url.to_string()
+}
+
+fn is_local_harness_host(host: &str) -> bool {
+    let normalized = host
+        .trim()
+        .trim_start_matches('[')
+        .trim_end_matches(']')
+        .to_ascii_lowercase();
+    normalized == "localhost"
+        || normalized == "::1"
+        || normalized == "0.0.0.0"
+        || normalized.starts_with("127.")
 }
 
 async fn harness_request_json<TResp, TBody>(
@@ -1322,7 +1493,7 @@ fn ensure_concrete_model(config: &UserModelConfigRecord) -> Result<(), String> {
 mod tests {
     use super::{
         harness_email_for_user, harness_space_identifier_for_user, harness_uid_for_user,
-        is_valid_root_space_identifier,
+        is_valid_root_space_identifier, rewrite_harness_local_url_host,
     };
     use crate::models::{UserRecord, USER_ROLE_USER};
 
@@ -1385,5 +1556,37 @@ mod tests {
         assert!(!is_valid_root_space_identifier("git"));
         assert!(!is_valid_root_space_identifier("project.git"));
         assert!(is_valid_root_space_identifier("u-leeoohoo"));
+    }
+
+    #[test]
+    fn harness_repo_git_url_rewrites_localhost_to_configured_base_url() {
+        assert_eq!(
+            rewrite_harness_local_url_host(
+                "http://localhost:3000/git/u-leeoohoo/project.git",
+                "http://8.155.171.124:3000",
+                true,
+            ),
+            "http://8.155.171.124:3000/git/u-leeoohoo/project.git"
+        );
+        assert_eq!(
+            rewrite_harness_local_url_host(
+                "ssh://git@localhost:3022/u-leeoohoo/project.git",
+                "http://8.155.171.124:3000",
+                false,
+            ),
+            "ssh://git@8.155.171.124:3022/u-leeoohoo/project.git"
+        );
+    }
+
+    #[test]
+    fn harness_repo_git_url_keeps_non_local_hosts() {
+        assert_eq!(
+            rewrite_harness_local_url_host(
+                "https://git.example.com/u-leeoohoo/project.git",
+                "http://8.155.171.124:3000",
+                true,
+            ),
+            "https://git.example.com/u-leeoohoo/project.git"
+        );
     }
 }

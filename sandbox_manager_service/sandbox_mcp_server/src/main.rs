@@ -54,9 +54,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .init();
 
     let config = ServerConfig::from_env()?;
-    std::fs::create_dir_all(&config.workspace)?;
-    std::fs::create_dir_all(&config.state_dir)?;
+    let app = build_app(config.clone())?;
+    let bind_addr = format!("{}:{}", config.host, config.port);
+    let listener = TcpListener::bind(bind_addr.as_str()).await?;
+    info!(
+        service = "chatos-sandbox-mcp-server",
+        version = VERSION,
+        bind_addr = bind_addr.as_str(),
+        workspace = %config.workspace.display(),
+        "sandbox MCP server started"
+    );
+    axum::serve(listener, app).await?;
+    Ok(())
+}
 
+fn build_app(config: ServerConfig) -> Result<Router, String> {
+    std::fs::create_dir_all(&config.workspace).map_err(|err| err.to_string())?;
+    std::fs::create_dir_all(&config.state_dir).map_err(|err| err.to_string())?;
     let file_service = build_file_service(&config)?;
     let terminal_service = build_terminal_service(&config)?;
     let provider = SandboxMcpToolProvider::new(file_service, terminal_service);
@@ -73,22 +87,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         mcp_service,
     };
 
-    let app = Router::new()
+    Ok(Router::new()
         .route("/health", get(health))
         .route("/mcp", post(mcp_entrypoint))
-        .with_state(state);
-
-    let bind_addr = format!("{}:{}", config.host, config.port);
-    let listener = TcpListener::bind(bind_addr.as_str()).await?;
-    info!(
-        service = "chatos-sandbox-mcp-server",
-        version = VERSION,
-        bind_addr = bind_addr.as_str(),
-        workspace = %config.workspace.display(),
-        "sandbox MCP server started"
-    );
-    axum::serve(listener, app).await?;
-    Ok(())
+        .with_state(state))
 }
 
 fn build_file_service(config: &ServerConfig) -> Result<CodeMaintainerService, String> {
@@ -168,5 +170,206 @@ fn probe_workspace_writable(workspace: &Path) -> bool {
             warn!(error = err.to_string(), "workspace health probe failed");
             false
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::body::{to_bytes, Body};
+    use axum::http::{header, Request, StatusCode};
+    use chatos_mcp_service::{MCP_ERROR_AUTH_REQUIRED, METHOD_TOOLS_LIST};
+    use serde_json::json;
+    use tower::ServiceExt;
+
+    fn test_config(name: &str, auth_token: Option<&str>) -> ServerConfig {
+        let root = std::env::temp_dir().join(format!(
+            "chatos-sandbox-mcp-server-test-{name}-{}",
+            uuid::Uuid::new_v4()
+        ));
+        ServerConfig {
+            host: "127.0.0.1".to_string(),
+            port: 0,
+            workspace: root.join("workspace"),
+            state_dir: root.join("state"),
+            auth_token: auth_token.map(ToOwned::to_owned),
+            project_id: Some("project-1".to_string()),
+            user_id: Some("user-1".to_string()),
+            max_file_bytes: 1024 * 1024,
+            max_write_bytes: 1024 * 1024,
+            search_limit: 50,
+            terminal_idle_timeout_ms: 1_000,
+            terminal_max_wait_ms: 1_000,
+            terminal_max_output_chars: 4_000,
+        }
+    }
+
+    fn test_app(name: &str, auth_token: Option<&str>) -> (Router, ServerConfig) {
+        let config = test_config(name, auth_token);
+        let app = build_app(config.clone()).expect("build app");
+        (app, config)
+    }
+
+    async fn post_mcp(
+        app: Router,
+        body: serde_json::Value,
+        headers: &[(&str, &str)],
+    ) -> (StatusCode, serde_json::Value) {
+        let mut builder = Request::builder()
+            .method("POST")
+            .uri("/mcp")
+            .header(header::CONTENT_TYPE, "application/json");
+        for (name, value) in headers {
+            builder = builder.header(*name, *value);
+        }
+        let response = app
+            .oneshot(
+                builder
+                    .body(Body::from(body.to_string()))
+                    .expect("build request"),
+            )
+            .await
+            .expect("handle request");
+        let status = response.status();
+        let bytes = to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("read body");
+        let rpc = serde_json::from_slice::<serde_json::Value>(&bytes).expect("decode JSON-RPC");
+        (status, rpc)
+    }
+
+    fn rpc_request(id: &str, method: &str, params: serde_json::Value) -> serde_json::Value {
+        json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "method": method,
+            "params": params,
+        })
+    }
+
+    #[tokio::test]
+    async fn mcp_entrypoint_returns_jsonrpc_auth_error_for_missing_token() {
+        let (app, _config) = test_app("missing-token", Some("secret"));
+        let (status, rpc) = post_mcp(
+            app,
+            rpc_request("auth-1", METHOD_TOOLS_LIST, json!({})),
+            &[],
+        )
+        .await;
+
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(
+            rpc.get("jsonrpc").and_then(serde_json::Value::as_str),
+            Some("2.0")
+        );
+        assert_eq!(rpc.get("id"), Some(&json!("auth-1")));
+        assert_eq!(
+            rpc.pointer("/error/code")
+                .and_then(serde_json::Value::as_i64),
+            Some(i64::from(MCP_ERROR_AUTH_REQUIRED))
+        );
+        assert!(rpc.get("result").is_none());
+    }
+
+    #[tokio::test]
+    async fn mcp_entrypoint_returns_jsonrpc_auth_error_for_wrong_bearer_token() {
+        let (app, _config) = test_app("wrong-token", Some("secret"));
+        let (status, rpc) = post_mcp(
+            app,
+            rpc_request("auth-2", METHOD_TOOLS_LIST, json!({})),
+            &[(header::AUTHORIZATION.as_str(), "Bearer wrong")],
+        )
+        .await;
+
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(rpc.get("id"), Some(&json!("auth-2")));
+        assert_eq!(
+            rpc.pointer("/error/code")
+                .and_then(serde_json::Value::as_i64),
+            Some(i64::from(MCP_ERROR_AUTH_REQUIRED))
+        );
+    }
+
+    #[tokio::test]
+    async fn mcp_entrypoint_handles_jsonrpc_methods_with_bearer_token() {
+        let (app, config) = test_app("bearer-success", Some("secret"));
+        std::fs::write(config.workspace.join("hello.txt"), "hello from sandbox")
+            .expect("write fixture");
+        let auth = [(header::AUTHORIZATION.as_str(), "Bearer secret")];
+
+        let (_status, initialize) = post_mcp(
+            app.clone(),
+            rpc_request("init-1", "initialize", json!({})),
+            &auth,
+        )
+        .await;
+        assert_eq!(
+            initialize
+                .pointer("/result/serverInfo/name")
+                .and_then(serde_json::Value::as_str),
+            Some("chatos-sandbox-mcp-server")
+        );
+
+        let (_status, ping) =
+            post_mcp(app.clone(), rpc_request("ping-1", "ping", json!({})), &auth).await;
+        assert_eq!(ping.get("result"), Some(&json!({})));
+
+        let (_status, tools) = post_mcp(
+            app.clone(),
+            rpc_request("tools-1", METHOD_TOOLS_LIST, json!({})),
+            &auth,
+        )
+        .await;
+        let tool_names: Vec<&str> = tools
+            .pointer("/result/tools")
+            .and_then(serde_json::Value::as_array)
+            .expect("tools array")
+            .iter()
+            .filter_map(|tool| tool.get("name").and_then(serde_json::Value::as_str))
+            .collect();
+        assert!(tool_names.contains(&"read_file"));
+
+        let (_status, call) = post_mcp(
+            app,
+            rpc_request(
+                "call-1",
+                "tools/call",
+                json!({
+                    "name": "read_file",
+                    "arguments": { "path": "hello.txt" },
+                }),
+            ),
+            &auth,
+        )
+        .await;
+        assert_eq!(call.get("id"), Some(&json!("call-1")));
+        assert!(
+            call.get("error").is_none(),
+            "unexpected error: {:?}",
+            call.get("error")
+        );
+        assert!(
+            call.get("result")
+                .map(|value| value.to_string().contains("hello from sandbox"))
+                .unwrap_or(false),
+            "tools/call result should include fixture content"
+        );
+    }
+
+    #[tokio::test]
+    async fn mcp_entrypoint_accepts_sandbox_token_header() {
+        let (app, _config) = test_app("sandbox-header", Some("secret"));
+        let (_status, rpc) = post_mcp(
+            app,
+            rpc_request("tools-2", METHOD_TOOLS_LIST, json!({})),
+            &[("x-chatos-sandbox-token", "secret")],
+        )
+        .await;
+
+        assert!(rpc.get("error").is_none());
+        assert!(rpc
+            .pointer("/result/tools")
+            .and_then(serde_json::Value::as_array)
+            .is_some());
     }
 }

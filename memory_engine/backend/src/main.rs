@@ -32,7 +32,13 @@ async fn main() -> Result<(), String> {
         )
         .init();
 
-    let config = AppConfig::from_env();
+    chatos_service_runtime::apply_config_center_env("memory-engine").await;
+    let mut config = AppConfig::from_env();
+    config.user_service_base_url = chatos_service_runtime::resolve_service_base_url(
+        "user-service",
+        config.user_service_base_url.as_str(),
+    )
+    .await;
     let pool = db::init_pool(&config).await?;
     db::init_schema(&pool).await?;
 
@@ -60,6 +66,9 @@ async fn main() -> Result<(), String> {
         );
 
     let addr = format!("{}:{}", config.host, config.port);
+    let _service_runtime =
+        chatos_service_runtime::register_current_service("memory-engine", config.port, "/health")
+            .await;
     let listener = TcpListener::bind(addr.as_str())
         .await
         .map_err(|err| format!("bind failed: {err}"))?;

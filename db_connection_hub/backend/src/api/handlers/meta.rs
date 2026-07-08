@@ -46,6 +46,9 @@ pub async fn test_connection(
     State(state): State<AppState>,
     Json(request): Json<DataSourceCreateRequest>,
 ) -> AppResult<Json<ConnectionTestResult>> {
-    let result = state.datasource_service.test_connection_preview(request).await?;
+    let result = state
+        .datasource_service
+        .test_connection_preview(request)
+        .await?;
     Ok(Json(result))
 }

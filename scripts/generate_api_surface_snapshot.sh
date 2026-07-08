@@ -6,7 +6,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-MAIN_API_DIR="chat_app_server_rs/src/api"
+MAIN_API_DIR="chatos/backend/src/api"
 
 normalize_routes() {
   local target_dir="$1"
@@ -46,6 +46,6 @@ total_route_count=${main_count}
 
 EOF
 
-normalize_routes "$MAIN_API_DIR" "chat_app_server_rs/src/api (.route lines)"
+normalize_routes "$MAIN_API_DIR" "chatos/backend/src/api (.route lines)"
 
 popd >/dev/null

@@ -14,9 +14,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     load_official_website_dotenv();
     init_tracing();
 
+    chatos_service_runtime::apply_config_center_env("official-website").await;
     let config = AppConfig::from_env()?;
     let bind_addr = config.bind_addr();
     let app = router::build_router(config.clone());
+    let _service_runtime = chatos_service_runtime::register_current_service(
+        "official-website",
+        config.port,
+        "/health",
+    )
+    .await;
     let listener = tokio::net::TcpListener::bind(bind_addr).await?;
 
     tracing::info!(

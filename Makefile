@@ -3,291 +3,109 @@
 
 SHELL := /bin/bash
 
-.PHONY: help dev restart status stop build test smoke smoke-user-service-flow code-size-report hotspot-line-warnings
-.PHONY: restart-wsl status-wsl stop-wsl bootstrap-wsl
-.PHONY: restart-user-service-wsl status-user-service-wsl stop-user-service-wsl
-.PHONY: restart-task-runner-wsl status-task-runner-wsl stop-task-runner-wsl
-.PHONY: restart-memory-engine-wsl status-memory-engine-wsl stop-memory-engine-wsl
-.PHONY: restart-all-wsl status-all-wsl stop-all-wsl
-.PHONY: restart-all-win status-all-win stop-all-win
-.PHONY: restart-user-service status-user-service stop-user-service
-.PHONY: restart-task-runner status-task-runner stop-task-runner
-.PHONY: restart-memory-engine status-memory-engine stop-memory-engine
-.PHONY: restart-db-hub status-db-hub stop-db-hub
-.PHONY: restart-all status-all stop-all
-.PHONY: restart-official-website status-official-website stop-official-website
-.PHONY: restart-official-website-prod status-official-website-prod stop-official-website-prod
-.PHONY: build-chat-app-server build-chat-app build-db-hub build-user-service build-official-website
+.PHONY: help dev docker-up docker-dev docker-restart docker-restart-dev docker-build docker-down docker-reset docker-logs docker-ps docker-config
+.PHONY: local-connector-client local-connector-client-status local-connector-client-stop
+.PHONY: build build-rust build-frontends test smoke smoke-repo code-size-report hotspot-line-warnings
 .PHONY: test-chat-app-server test-chat-app test-db-hub test-user-service
-.PHONY: smoke-repo smoke-chat-app-server smoke-chat-app smoke-db-hub smoke-user-service smoke-official-website smoke-official-website-live
-.PHONY: docker-build-official-website
-.PHONY: type-check-db-hub-frontend lint-db-hub-frontend type-check-user-service-frontend
+.PHONY: type-check-db-hub-frontend type-check-user-service-frontend
 
 help:
-	@echo "Chatos RS root tasks:"
-	@echo "  make dev                 # same as restart"
-	@echo "  make restart             # restart main backend + frontend via restart_services.sh"
-	@echo "  make status              # show main backend + frontend status"
-	@echo "  make stop                # stop main backend + frontend"
-	@echo "  make restart-user-service # restart user_service backend + frontend"
-	@echo "  make status-user-service  # show user_service status"
-	@echo "  make stop-user-service    # stop user_service backend + frontend"
-	@echo "  make restart-task-runner  # restart task_runner backend + frontend"
-	@echo "  make status-task-runner   # show task_runner status"
-	@echo "  make stop-task-runner     # stop task_runner backend + frontend"
-	@echo "  make restart-memory-engine # restart memory_engine backend + frontend"
-	@echo "  make status-memory-engine  # show memory_engine status"
-	@echo "  make stop-memory-engine    # stop memory_engine backend + frontend"
-	@echo "  make restart-db-hub       # restart db_connection_hub backend + frontend"
-	@echo "  make status-db-hub        # show db_connection_hub status"
-	@echo "  make stop-db-hub          # stop db_connection_hub backend + frontend"
-	@echo "  make restart-all          # restart memory_engine + user_service + chatos + task_runner"
-	@echo "  make status-all           # show full stack status"
-	@echo "  make stop-all             # stop full stack"
-	@echo "  make restart-official-website # restart the official website microservice"
-	@echo "  make status-official-website  # show official website status"
-	@echo "  make stop-official-website    # stop official website services"
-	@echo "  make restart-official-website-prod # restart official website in static prod mode"
-	@echo "  make docker-build-official-website # build the official website Docker image"
-	@echo "  make build               # build key subprojects"
-	@echo "  make build-official-website # build the official website frontend + backend"
-	@echo "  make test                # run repo checks + subproject tests"
-	@echo "  make smoke               # repo governance + lightweight cross-subproject probes"
-	@echo "  make smoke-official-website # check official website script/backend/frontend"
-	@echo "  make smoke-official-website-live # probe a running official website"
-	@echo "  make smoke-user-service-flow # call the live user_service API flow end-to-end"
-	@echo "  make code-size-report    # report source-code file size and line-count hotspots"
-	@echo "  make hotspot-line-warnings # warn on planned refactor hotspot line budgets"
-	@echo "  make bootstrap-wsl       # bootstrap Ubuntu/WSL dependencies for Rust + Node dev"
-	@echo "  make restart-wsl         # run root restart_services.sh inside WSL"
-	@echo "  make status-wsl          # show root service status inside WSL"
-	@echo "  make stop-wsl            # stop root services inside WSL"
-	@echo "  make restart-user-service-wsl # run user_service restart inside WSL"
-	@echo "  make status-user-service-wsl  # show user_service status inside WSL"
-	@echo "  make stop-user-service-wsl    # stop user_service inside WSL"
-	@echo "  make restart-task-runner-wsl  # run task_runner restart inside WSL"
-	@echo "  make status-task-runner-wsl   # show task_runner status inside WSL"
-	@echo "  make stop-task-runner-wsl     # stop task_runner inside WSL"
-	@echo "  make restart-memory-engine-wsl # run memory_engine restart inside WSL"
-	@echo "  make status-memory-engine-wsl  # show memory_engine status inside WSL"
-	@echo "  make stop-memory-engine-wsl    # stop memory_engine inside WSL"
-	@echo "  make restart-all-wsl      # restart the full stack inside WSL"
-	@echo "  make status-all-wsl       # show full stack status inside WSL"
-	@echo "  make stop-all-wsl         # stop full stack inside WSL"
-	@echo "  make restart-all-win      # restart the validated Windows local stack"
-	@echo "  make status-all-win       # show Windows local stack status"
-	@echo "  make stop-all-win         # stop the Windows local stack"
+	@echo "Chatos RS tasks:"
+	@echo "  make dev                    # build/start the Docker stack from local source"
+	@echo "  make docker-up              # pull/start the prebuilt Docker stack"
+	@echo "  make docker-dev             # build/start Docker images from local source"
+	@echo "  make docker-restart         # recreate the prebuilt Docker stack"
+	@echo "  make docker-restart-dev     # recreate with local image builds"
+	@echo "  make docker-build           # build Docker images without starting"
+	@echo "  make docker-down            # stop Docker services"
+	@echo "  make docker-reset           # stop Docker services and remove volumes"
+	@echo "  make docker-logs            # follow Docker service logs"
+	@echo "  make docker-ps              # show Docker service status"
+	@echo "  make local-connector-client # run the host-side Local Connector client"
+	@echo "  make build                  # build Rust services and frontends"
+	@echo "  make test                   # run repo checks and focused tests"
+	@echo "  make smoke                  # run lightweight repo checks"
 
-dev: restart
+dev: docker-dev
 
-restart:
-	@./restart_services.sh restart
+docker-up:
+	@docker/deploy.sh up
 
-status:
-	@./restart_services.sh status
+docker-dev:
+	@docker/deploy.sh dev
 
-stop:
-	@./restart_services.sh stop
+docker-restart:
+	@docker/deploy.sh restart
 
-restart-user-service:
-	@bash user_service/restart_services.sh restart
+docker-restart-dev:
+	@docker/deploy.sh restart-dev
 
-status-user-service:
-	@bash user_service/restart_services.sh status
+docker-build:
+	@docker/deploy.sh build
 
-stop-user-service:
-	@bash user_service/restart_services.sh stop
+docker-down:
+	@docker/deploy.sh down
 
-restart-task-runner:
-	@./restart_task_runner_service.sh restart
+docker-reset:
+	@docker/deploy.sh reset
 
-status-task-runner:
-	@./restart_task_runner_service.sh status
+docker-logs:
+	@docker/deploy.sh logs
 
-stop-task-runner:
-	@./restart_task_runner_service.sh stop
+docker-ps:
+	@docker/deploy.sh ps
 
-restart-memory-engine:
-	@bash memory_engine/restart_services.sh restart
+docker-config:
+	@docker compose -f docker/compose.yml config >/dev/null
+	@docker compose -f docker/compose.yml -f docker/compose.build.yml config >/dev/null
 
-status-memory-engine:
-	@bash memory_engine/restart_services.sh status
+local-connector-client:
+	@bash local_connector_client/restart_services.sh restart
 
-stop-memory-engine:
-	@bash memory_engine/restart_services.sh stop
+local-connector-client-status:
+	@bash local_connector_client/restart_services.sh status
 
-restart-db-hub:
-	@./db_connection_hub/restart_services.sh restart
+local-connector-client-stop:
+	@bash local_connector_client/restart_services.sh stop
 
-status-db-hub:
-	@./db_connection_hub/restart_services.sh status
+build: build-rust build-frontends
 
-stop-db-hub:
-	@./db_connection_hub/restart_services.sh stop
-
-restart-all:
-	@./restart_all_services.sh restart
-
-status-all:
-	@./restart_all_services.sh status
-
-stop-all:
-	@./restart_all_services.sh stop
-
-restart-official-website:
-	@bash official_website_service/restart_services.sh restart
-
-status-official-website:
-	@bash official_website_service/restart_services.sh status
-
-stop-official-website:
-	@bash official_website_service/restart_services.sh stop
-
-restart-official-website-prod:
-	@bash official_website_service/restart_services_prod.sh restart
-
-status-official-website-prod:
-	@bash official_website_service/restart_services_prod.sh status
-
-stop-official-website-prod:
-	@bash official_website_service/restart_services_prod.sh stop
-
-build: build-chat-app-server build-chat-app build-db-hub build-user-service build-official-website
-
-build-chat-app-server:
-	@cd chat_app_server_rs && cargo build
-
-build-chat-app:
-	@cd chat_app && npm run build
-
-build-db-hub:
-	@cd db_connection_hub/backend && cargo build
-	@cd db_connection_hub/frontend && npm run build
-
-build-user-service:
+build-rust:
+	@cargo build
 	@cd user_service/backend && cargo build
+	@cd memory_engine/backend && cargo build
+	@cd db_connection_hub/backend && cargo build
+
+build-frontends:
+	@cd chatos/frontend && npm run build
 	@cd user_service/frontend && npm run build
-
-build-official-website:
+	@cd task_runner_service/frontend && npm run build
+	@cd memory_engine/frontend && npm run build
+	@cd project_management_service/frontend && npm run build
+	@cd sandbox_manager_service/frontend && npm run build
+	@cd db_connection_hub/frontend && npm run build
 	@cd official_website_service/frontend && npm run build
-	@cd official_website_service/backend && cargo build
-
-docker-build-official-website:
-	@docker build -f official_website_service/Dockerfile -t chatos-rs-official-website:local .
 
 test: smoke test-chat-app-server test-chat-app test-db-hub test-user-service
 
-smoke: smoke-repo smoke-chat-app-server smoke-chat-app smoke-db-hub smoke-user-service smoke-official-website
+smoke: smoke-repo
 
 smoke-repo:
 	@bash scripts/check_api_surface.sh
 	@bash scripts/check_api_path_baseline.sh
 	@bash scripts/check-hotspot-line-budgets.sh
-	@bash -n restart_services.sh
-	@bash -n db_connection_hub/restart_services.sh
-	@bash -n user_service/restart_services.sh
-	@bash -n official_website_service/restart_services.sh
-	@bash -n official_website_service/restart_services_prod.sh
+	@bash -n docker/deploy.sh
+	@docker compose -f docker/compose.yml config >/dev/null
+	@docker compose -f docker/compose.yml -f docker/compose.build.yml config >/dev/null
 	@bash scripts/check-large-files.sh --fail
 
-smoke-chat-app-server:
-	@cd chat_app_server_rs && cargo check
-
-smoke-chat-app:
-	@cd chat_app && npm run type-check
-
-smoke-db-hub:
-	@cd db_connection_hub/backend && cargo check
-	@cd db_connection_hub/frontend && npm run type-check
-
-smoke-user-service:
-	@cd user_service/backend && cargo check
-	@cd user_service/frontend && npm run type-check
-
-smoke-official-website:
-	@bash -n official_website_service/restart_services.sh
-	@bash -n official_website_service/restart_services_prod.sh
-	@bash -n scripts/smoke-official-website.sh
-	@cd official_website_service/backend && cargo check
-	@cd official_website_service/frontend && npm run type-check
-	@cd official_website_service/frontend && npm run build
-
-smoke-official-website-live:
-	@bash scripts/smoke-official-website.sh
-
-smoke-user-service-flow:
-	@powershell.exe -ExecutionPolicy Bypass -File scripts/smoke-user-service-flow.ps1
-
-code-size-report:
-	@bash scripts/code-size-report.sh
-
-hotspot-line-warnings:
-	@bash scripts/check-hotspot-line-budgets.sh --warn-planned
-
-bootstrap-wsl:
-	@powershell.exe -ExecutionPolicy Bypass -File scripts/chatos-wsl.ps1 -Action bootstrap -Target main
-
-restart-wsl:
-	@powershell.exe -ExecutionPolicy Bypass -File scripts/chatos-wsl.ps1 -Action restart -Target main
-
-status-wsl:
-	@powershell.exe -ExecutionPolicy Bypass -File scripts/chatos-wsl.ps1 -Action status -Target main
-
-stop-wsl:
-	@powershell.exe -ExecutionPolicy Bypass -File scripts/chatos-wsl.ps1 -Action stop -Target main
-
-restart-user-service-wsl:
-	@powershell.exe -ExecutionPolicy Bypass -File scripts/chatos-wsl.ps1 -Action restart -Target user-service
-
-status-user-service-wsl:
-	@powershell.exe -ExecutionPolicy Bypass -File scripts/chatos-wsl.ps1 -Action status -Target user-service
-
-stop-user-service-wsl:
-	@powershell.exe -ExecutionPolicy Bypass -File scripts/chatos-wsl.ps1 -Action stop -Target user-service
-
-restart-task-runner-wsl:
-	@powershell.exe -ExecutionPolicy Bypass -File scripts/chatos-wsl.ps1 -Action restart -Target task-runner
-
-status-task-runner-wsl:
-	@powershell.exe -ExecutionPolicy Bypass -File scripts/chatos-wsl.ps1 -Action status -Target task-runner
-
-stop-task-runner-wsl:
-	@powershell.exe -ExecutionPolicy Bypass -File scripts/chatos-wsl.ps1 -Action stop -Target task-runner
-
-restart-memory-engine-wsl:
-	@powershell.exe -ExecutionPolicy Bypass -File scripts/chatos-wsl.ps1 -Action restart -Target memory-engine
-
-status-memory-engine-wsl:
-	@powershell.exe -ExecutionPolicy Bypass -File scripts/chatos-wsl.ps1 -Action status -Target memory-engine
-
-stop-memory-engine-wsl:
-	@powershell.exe -ExecutionPolicy Bypass -File scripts/chatos-wsl.ps1 -Action stop -Target memory-engine
-
-restart-all-wsl:
-	@powershell.exe -ExecutionPolicy Bypass -File scripts/chatos-wsl.ps1 -Action restart -Target all
-
-status-all-wsl:
-	@powershell.exe -ExecutionPolicy Bypass -File scripts/chatos-wsl.ps1 -Action status -Target all
-
-stop-all-wsl:
-	@powershell.exe -ExecutionPolicy Bypass -File scripts/chatos-wsl.ps1 -Action stop -Target all
-
-restart-all-win:
-	@powershell.exe -ExecutionPolicy Bypass -File scripts/local-dev-stack.ps1 -Action restart
-
-status-all-win:
-	@powershell.exe -ExecutionPolicy Bypass -File scripts/local-dev-stack.ps1 -Action status
-
-stop-all-win:
-	@powershell.exe -ExecutionPolicy Bypass -File scripts/local-dev-stack.ps1 -Action stop
-
 test-chat-app-server:
-	@cd chat_app_server_rs && cargo test -q
+	@cargo test -p chat_app_server_rs -q
 
 test-chat-app:
-	@cd chat_app && npm run test -- --run
-	@cd chat_app && npm run lint
-	@cd chat_app && npm run type-check
+	@cd chatos/frontend && npm run test -- --run
+	@cd chatos/frontend && npm run lint
+	@cd chatos/frontend && npm run type-check
 
 test-db-hub:
 	@cd db_connection_hub/backend && cargo test -q
@@ -298,3 +116,15 @@ test-user-service:
 	@cd user_service/backend && cargo test -q
 	@cd user_service/frontend && npm run type-check
 	@cd user_service/frontend && npm run build
+
+code-size-report:
+	@bash scripts/code-size-report.sh
+
+hotspot-line-warnings:
+	@bash scripts/check-hotspot-line-budgets.sh --warn-planned
+
+type-check-db-hub-frontend:
+	@cd db_connection_hub/frontend && npm run type-check
+
+type-check-user-service-frontend:
+	@cd user_service/frontend && npm run type-check

@@ -555,6 +555,8 @@ dependencies = [
  "chatos_ai_runtime",
  "chatos_builtin_tools",
  "chatos_mcp_runtime",
+ "chatos_mcp_service",
+ "chatos_service_runtime",
  "chrono",
  "dashmap",
  "dirs 6.0.0",
@@ -649,15 +651,12 @@ name = "chatos_mcp_runtime"
 version = "0.1.0"
 dependencies = [
  "async-trait",
- "libc",
  "reqwest",
  "serde",
  "serde_json",
- "sha2 0.10.9",
  "tokio",
  "tracing",
  "uuid",
- "walkdir",
 ]
 
 [[package]]
@@ -690,9 +689,24 @@ dependencies = [
  "serde",
  "serde_json",
  "tokio",
+ "tower",
  "tracing",
  "tracing-subscriber",
  "uuid",
+]
+
+[[package]]
+name = "chatos_service_runtime"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+ "urlencoding",
 ]
 
 [[package]]
@@ -2309,6 +2323,7 @@ name = "local_connector_service_backend"
 version = "0.1.0"
 dependencies = [
  "axum 0.8.9",
+ "chatos_service_runtime",
  "chrono",
  "dotenvy",
  "futures",
@@ -2742,6 +2757,7 @@ name = "official_website_service_backend"
 version = "0.1.0"
 dependencies = [
  "axum 0.7.9",
+ "chatos_service_runtime",
  "dotenvy",
  "reqwest",
  "serde",
@@ -3159,7 +3175,11 @@ name = "project_management_service_backend"
 version = "0.1.0"
 dependencies = [
  "axum 0.7.9",
+ "base64 0.22.1",
+ "chatos_builtin_tools",
+ "chatos_mcp_service",
  "chatos_project_mcp_contract",
+ "chatos_service_runtime",
  "chrono",
  "dotenvy",
  "futures-util",
@@ -3167,6 +3187,7 @@ dependencies = [
  "reqwest",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
  "sqlx",
  "tokio",
  "tower-http 0.5.2",
@@ -3640,6 +3661,7 @@ dependencies = [
  "async-trait",
  "axum 0.7.9",
  "base64 0.22.1",
+ "chatos_service_runtime",
  "chrono",
  "dotenvy",
  "futures-util",
@@ -4457,7 +4479,9 @@ dependencies = [
  "chatos_ai_runtime",
  "chatos_builtin_tools",
  "chatos_mcp_runtime",
+ "chatos_mcp_service",
  "chatos_project_mcp_contract",
+ "chatos_service_runtime",
  "chrono",
  "dotenvy",
  "futures-util",

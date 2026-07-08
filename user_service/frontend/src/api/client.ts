@@ -13,6 +13,7 @@ import type {
   SystemConfigResponse,
   CreateUserModelConfigPayload,
   CreateUserModelProviderPayload,
+  ProvisionHarnessPayload,
   UpdateUserModelConfigPayload,
   UpdateUserModelProviderPayload,
   UpdateUserModelSettingsPayload,
@@ -131,6 +132,11 @@ export const api = {
   updateUser: (id: string, payload: UpdateUserPayload) =>
     request<UserSummaryRecord>(`/api/users/${id}`, {
       method: 'PATCH',
+      body: JSON.stringify(payload),
+    }),
+  provisionHarnessUser: (id: string, payload: ProvisionHarnessPayload) =>
+    request<UserSummaryRecord>(`/api/users/${id}/harness-provisioning`, {
+      method: 'POST',
       body: JSON.stringify(payload),
     }),
   retryHarnessProvisioning: (id: string) =>

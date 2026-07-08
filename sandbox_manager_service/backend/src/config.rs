@@ -5,6 +5,11 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use chatos_service_runtime::{
+    DEFAULT_SANDBOX_MANAGER_AGENT_TOKEN_SECRET, DEFAULT_SANDBOX_MANAGER_OPERATOR_TOKEN,
+    DEFAULT_SANDBOX_MANAGER_SYSTEM_CLIENT_ID, DEFAULT_SANDBOX_MANAGER_SYSTEM_CLIENT_KEY,
+};
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SandboxBackendKind {
     Mock,
@@ -18,6 +23,21 @@ impl SandboxBackendKind {
             Self::Mock => "mock",
             Self::Docker => "docker",
             Self::Kata => "kata",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DockerAgentEndpointMode {
+    Published,
+    Container,
+}
+
+impl DockerAgentEndpointMode {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Published => "published",
+            Self::Container => "container",
         }
     }
 }
@@ -37,6 +57,10 @@ pub struct AppConfig {
     pub agent_port: u16,
     pub docker_image: String,
     pub docker_network_mode: String,
+    pub docker_agent_endpoint_mode: DockerAgentEndpointMode,
+    pub docker_agent_publish: bool,
+    pub docker_agent_bind_host: String,
+    pub docker_agent_connect_host: String,
     pub kata_container_cli: String,
     pub kata_runtime: String,
     pub kata_image: String,
@@ -78,6 +102,15 @@ impl AppConfig {
             env_parse("SANDBOX_MANAGER_CLEANUP_INTERVAL_SECONDS").unwrap_or(30);
         let docker_image = normalized_env("SANDBOX_MANAGER_DOCKER_IMAGE")
             .unwrap_or_else(|| "chatos-sandbox-agent:latest".to_string());
+        let docker_agent_endpoint_mode =
+            match normalized_env("SANDBOX_MANAGER_DOCKER_AGENT_ENDPOINT_MODE")
+                .unwrap_or_else(|| "published".to_string())
+                .to_ascii_lowercase()
+                .as_str()
+            {
+                "container" | "container_name" | "network" => DockerAgentEndpointMode::Container,
+                _ => DockerAgentEndpointMode::Published,
+            };
         let image_build_context = normalized_env("SANDBOX_MANAGER_IMAGE_BUILD_CONTEXT")
             .map(PathBuf::from)
             .unwrap_or_else(default_image_build_context);
@@ -115,6 +148,13 @@ impl AppConfig {
             docker_image: docker_image.clone(),
             docker_network_mode: normalized_env("SANDBOX_MANAGER_DOCKER_NETWORK")
                 .unwrap_or_else(|| "bridge".to_string()),
+            docker_agent_endpoint_mode,
+            docker_agent_publish: env_bool("SANDBOX_MANAGER_DOCKER_PUBLISH_AGENT", true),
+            docker_agent_bind_host: normalized_env("SANDBOX_MANAGER_DOCKER_AGENT_BIND_HOST")
+                .unwrap_or_else(|| "127.0.0.1".to_string()),
+            docker_agent_connect_host: normalized_env("SANDBOX_MANAGER_DOCKER_AGENT_CONNECT_HOST")
+                .or_else(|| normalized_env("SANDBOX_MANAGER_DOCKER_AGENT_HOST"))
+                .unwrap_or_else(|| "127.0.0.1".to_string()),
             kata_container_cli: normalized_env("SANDBOX_MANAGER_KATA_CONTAINER_CLI")
                 .unwrap_or_else(|| "nerdctl".to_string()),
             kata_runtime: normalized_env("SANDBOX_MANAGER_KATA_RUNTIME")
@@ -127,7 +167,10 @@ impl AppConfig {
             image_build_context,
             image_dockerfile,
             require_auth: env_bool("SANDBOX_MANAGER_REQUIRE_AUTH", false),
-            operator_token: normalized_env("SANDBOX_MANAGER_OPERATOR_TOKEN"),
+            operator_token: Some(
+                normalized_env("SANDBOX_MANAGER_OPERATOR_TOKEN")
+                    .unwrap_or_else(|| DEFAULT_SANDBOX_MANAGER_OPERATOR_TOKEN.to_string()),
+            ),
             user_service_base_url: normalized_env("SANDBOX_MANAGER_USER_SERVICE_BASE_URL")
                 .or_else(|| normalized_env("CHATOS_USER_SERVICE_BASE_URL"))
                 .or_else(|| normalized_env("USER_SERVICE_BASE_URL"))
@@ -139,8 +182,14 @@ impl AppConfig {
             .or_else(|| env_parse("USER_SERVICE_DOWNSTREAM_REQUEST_TIMEOUT_MS"))
             .unwrap_or(5_000)
             .max(300),
-            system_client_id: normalized_env("SANDBOX_MANAGER_SYSTEM_CLIENT_ID"),
-            system_client_key: normalized_env("SANDBOX_MANAGER_SYSTEM_CLIENT_KEY"),
+            system_client_id: Some(
+                normalized_env("SANDBOX_MANAGER_SYSTEM_CLIENT_ID")
+                    .unwrap_or_else(|| DEFAULT_SANDBOX_MANAGER_SYSTEM_CLIENT_ID.to_string()),
+            ),
+            system_client_key: Some(
+                normalized_env("SANDBOX_MANAGER_SYSTEM_CLIENT_KEY")
+                    .unwrap_or_else(|| DEFAULT_SANDBOX_MANAGER_SYSTEM_CLIENT_KEY.to_string()),
+            ),
             system_client_scopes: env_csv(
                 "SANDBOX_MANAGER_SYSTEM_CLIENT_SCOPES",
                 &[
@@ -169,7 +218,7 @@ impl AppConfig {
             agent_token_secret: normalized_env("SANDBOX_MANAGER_AGENT_TOKEN_SECRET")
                 .or_else(|| normalized_env("SANDBOX_MANAGER_SYSTEM_CLIENT_KEY"))
                 .or_else(|| normalized_env("SANDBOX_MANAGER_OPERATOR_TOKEN"))
-                .unwrap_or_else(|| "chatos-sandbox-agent-dev-secret".to_string()),
+                .unwrap_or_else(|| DEFAULT_SANDBOX_MANAGER_AGENT_TOKEN_SECRET.to_string()),
         })
     }
 

@@ -27,6 +27,7 @@ mod workspace;
 use crate::api::serve_local_api;
 use crate::config::{default_state_path, load_dotenv, optional_env, ClientConfig};
 use crate::registration::bootstrap_env_config;
+pub(crate) use chatos_mcp_service::LOCAL_CONNECTOR_ENABLED_BUILTIN_KINDS_HEADER;
 pub(crate) use runtime::LocalRuntime;
 pub(crate) use state::{AuthState, AuthUserState, LocalState, WorkspaceState};
 
@@ -43,8 +44,6 @@ const MAX_LOCAL_MCP_WRITE_BYTES: usize = 1024 * 1024;
 const MAX_LOCAL_MCP_SEARCH_RESULTS: usize = 500;
 const MAX_COMMAND_HISTORY_ENTRIES: usize = 1_000;
 const LOCAL_CONNECTOR_ROOT_PREFIX: &str = "local://connector/";
-const LOCAL_CONNECTOR_ENABLED_BUILTIN_KINDS_HEADER: &str =
-    "x-local-connector-enabled-builtin-kinds";
 
 #[tokio::main]
 async fn main() -> Result<()> {

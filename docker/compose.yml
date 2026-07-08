@@ -1,0 +1,558 @@
+# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+# Required Notice: Copyright (c) 2025 AI Chat Team
+
+name: chatos-rs
+
+x-rust-service: &rust-service
+  restart: unless-stopped
+  depends_on:
+    consul:
+      condition: service_healthy
+    mongodb:
+      condition: service_healthy
+  networks:
+    - cloud
+
+x-service-runtime-env: &service-runtime-env
+  CHATOS_SERVICE_RUNTIME_ENABLED: ${CHATOS_SERVICE_RUNTIME_ENABLED:-true}
+  CHATOS_SERVICE_DISCOVERY_MODE: ${CHATOS_SERVICE_DISCOVERY_MODE:-consul,static}
+  CHATOS_ENV: ${CHATOS_ENV:-local}
+  CHATOS_CONSUL_HTTP_ADDR: ${CHATOS_CONSUL_HTTP_ADDR:-http://consul:8500}
+  CHATOS_SERVICE_RUNTIME_REQUEST_TIMEOUT_MS: ${CHATOS_SERVICE_RUNTIME_REQUEST_TIMEOUT_MS:-3000}
+
+x-frontend-service: &frontend-service
+  restart: unless-stopped
+  networks:
+    - cloud
+
+services:
+  consul:
+    image: ${CONSUL_IMAGE:-hashicorp/consul:1.21}
+    restart: unless-stopped
+    command: ["agent", "-dev", "-client=0.0.0.0", "-ui", "-data-dir=/tmp/consul-data"]
+    ports:
+      - "${CONSUL_HTTP_PORT:-8500}:8500"
+    volumes:
+      - ./consul/services/harness.json:/consul/config/harness.json:ro
+    healthcheck:
+      test: ["CMD", "consul", "members"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+    networks:
+      - cloud
+
+  mongodb:
+    image: mongo:7.0
+    restart: unless-stopped
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGODB_USER:-admin}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGODB_PASSWORD:-admin}
+    ports:
+      - "${MONGODB_HOST_PORT:-27018}:27017"
+    volumes:
+      - mongodb-data:/data/db
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "mongosh --quiet --username \"$${MONGO_INITDB_ROOT_USERNAME}\" --password \"$${MONGO_INITDB_ROOT_PASSWORD}\" --authenticationDatabase admin --eval 'db.adminCommand({ ping: 1 }).ok' | grep 1"
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+    networks:
+      - cloud
+
+  sandbox-agent-image:
+    image: ${SANDBOX_MANAGER_DOCKER_IMAGE:-${CHATOS_IMAGE_NAMESPACE:-ghcr.io/leeoohoo}/chatos-rs-sandbox-agent:${CHATOS_IMAGE_TAG:-latest}}
+    profiles:
+      - image
+    networks:
+      - cloud
+
+  harness:
+    image: ${HARNESS_IMAGE:-harness/harness:latest}
+    restart: unless-stopped
+    environment:
+      GITNESS_HTTP_HOST: 0.0.0.0
+      GITNESS_HTTP_PORT: 3000
+      GITNESS_HTTP_PROTO: http
+      GITNESS_URL_BASE: "${HARNESS_PUBLIC_BASE_URL:-http://localhost:3000}"
+      GITNESS_URL_API: "${HARNESS_PUBLIC_BASE_URL:-http://localhost:3000}/api"
+      GITNESS_URL_UI: "${HARNESS_PUBLIC_BASE_URL:-http://localhost:3000}"
+      GITNESS_URL_INTERNAL: "http://harness:3000"
+      GITNESS_URL_CONTAINER: "http://harness:3000"
+      GITNESS_URL_GIT: "${HARNESS_PUBLIC_BASE_URL:-http://localhost:3000}"
+      GITNESS_URL_GIT_SSH: "ssh://git@${HARNESS_SSH_HOST:-localhost}:${HARNESS_SSH_PORT:-3022}"
+      GITNESS_PRINCIPAL_ADMIN_EMAIL: ${HARNESS_ADMIN_EMAIL:-admin@chatos.local}
+      GITNESS_PRINCIPAL_ADMIN_PASSWORD: ${HARNESS_ADMIN_PASSWORD:-admin123456}
+      GITNESS_METRIC_ENABLED: "false"
+      GITNESS_WEBHOOK_ALLOW_LOOPBACK: "true"
+      GITNESS_SSH_ENABLE: "true"
+      GITNESS_SSH_HOST: ${HARNESS_SSH_HOST:-localhost}
+      GITNESS_SSH_PORT: 3022
+      GITNESS_GITSPACE_ENABLE: "${HARNESS_GITSPACE_ENABLE:-true}"
+      GITNESS_DOCKER_HOST: "unix:///var/run/docker.sock"
+      GITNESS_DATABASE_DRIVER: sqlite3
+      GITNESS_DATABASE_DATASOURCE: /data/database.sqlite
+      GITNESS_GIT_ROOT: /data
+      GITNESS_REGISTRY_STORAGE_TYPE: filesystem
+      GITNESS_REGISTRY_FILESYSTEM_ROOT_DIRECTORY: /data/registry
+      XDG_CACHE_HOME: /data
+    ports:
+      - "${HARNESS_PORT:-3000}:3000"
+      - "${HARNESS_SSH_PORT:-3022}:3022"
+    volumes:
+      - harness-data:/data
+      - /var/run/docker.sock:/var/run/docker.sock
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "wget -q -O /dev/null http://127.0.0.1:3000/api/v1/system/health || exit 1"
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 60
+    networks:
+      - cloud
+
+  user-service-backend:
+    <<: *rust-service
+    image: ${USER_SERVICE_BACKEND_IMAGE:-${CHATOS_IMAGE_NAMESPACE:-ghcr.io/leeoohoo}/chatos-rs-user-service-backend:${CHATOS_IMAGE_TAG:-latest}}
+    environment:
+      <<: *service-runtime-env
+      CHATOS_SERVICE_NAME: user-service
+      CHATOS_SERVICE_ID: user-service-docker
+      CHATOS_SERVICE_ADDRESS: user-service-backend
+      CHATOS_SERVICE_PORT: 39190
+      CHATOS_SERVICE_HEALTH_PATH: /api/health
+      USER_SERVICE_HOST: 0.0.0.0
+      USER_SERVICE_PORT: 39190
+      USER_SERVICE_DATABASE_URL: mongodb://${MONGODB_USER:-admin}:${MONGODB_PASSWORD:-admin}@mongodb:27017/user_service?authSource=admin
+      USER_SERVICE_MONGODB_DATABASE: user_service
+      USER_SERVICE_JWT_SECRET: ${USER_SERVICE_JWT_SECRET:-change_me_user_service_secret}
+      USER_SERVICE_JWT_ISSUER: ${USER_SERVICE_JWT_ISSUER:-user_service}
+      USER_SERVICE_USER_AUDIENCE: ${USER_SERVICE_USER_AUDIENCE:-user_service}
+      USER_SERVICE_TASK_RUNNER_AUDIENCE: ${USER_SERVICE_TASK_RUNNER_AUDIENCE:-task_runner}
+      USER_SERVICE_INTERNAL_API_SECRET: ${USER_SERVICE_INTERNAL_API_SECRET:-change_me_user_service_internal_secret}
+      USER_SERVICE_SUPER_ADMIN_USERNAME: ${CHATOS_ADMIN_USERNAME:-admin}
+      USER_SERVICE_SUPER_ADMIN_PASSWORD: ${CHATOS_ADMIN_PASSWORD:-admin123456}
+      USER_SERVICE_SUPER_ADMIN_DISPLAY_NAME: ${CHATOS_ADMIN_DISPLAY_NAME:-System Admin}
+      MEMORY_ENGINE_BASE_URL: http://memory-engine-backend:7081/api/memory-engine/v1
+      MEMORY_ENGINE_OPERATOR_TOKEN: ${MEMORY_ENGINE_OPERATOR_TOKEN:-chatos-memory-engine-dev-operator-token}
+      TASK_RUNNER_BASE_URL: http://task-runner-backend:39090
+      TASK_RUNNER_CHATOS_CALLBACK_SECRET: ${TASK_RUNNER_CHATOS_CALLBACK_SECRET:-change_me_chatos_task_runner_secret}
+      HARNESS_PROVISIONING_ENABLED: ${HARNESS_PROVISIONING_ENABLED:-true}
+      HARNESS_BASE_URL: ${HARNESS_BASE_URL:-http://harness:3000}
+      HARNESS_SYNTHETIC_EMAIL_DOMAIN: ${HARNESS_SYNTHETIC_EMAIL_DOMAIN:-chatos.local}
+      HARNESS_SPACE_PREFIX: ${HARNESS_SPACE_PREFIX:-u-}
+      HARNESS_PROJECT_PAT_PREFIX: ${HARNESS_PROJECT_PAT_PREFIX:-chatos-project}
+    ports:
+      - "${USER_SERVICE_PORT:-39190}:39190"
+    depends_on:
+      consul:
+        condition: service_healthy
+      mongodb:
+        condition: service_healthy
+      harness:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:39190/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+
+  memory-engine-backend:
+    <<: *rust-service
+    image: ${MEMORY_ENGINE_BACKEND_IMAGE:-${CHATOS_IMAGE_NAMESPACE:-ghcr.io/leeoohoo}/chatos-rs-memory-engine-backend:${CHATOS_IMAGE_TAG:-latest}}
+    environment:
+      <<: *service-runtime-env
+      CHATOS_SERVICE_NAME: memory-engine
+      CHATOS_SERVICE_ID: memory-engine-docker
+      CHATOS_SERVICE_ADDRESS: memory-engine-backend
+      CHATOS_SERVICE_PORT: 7081
+      CHATOS_SERVICE_HEALTH_PATH: /health
+      MEMORY_ENGINE_HOST: 0.0.0.0
+      MEMORY_ENGINE_PORT: 7081
+      MEMORY_ENGINE_MONGODB_URI: mongodb://${MONGODB_USER:-admin}:${MONGODB_PASSWORD:-admin}@mongodb:27017/admin
+      MEMORY_ENGINE_MONGODB_DATABASE: memory_engine
+      MEMORY_ENGINE_OPERATOR_TOKEN: ${MEMORY_ENGINE_OPERATOR_TOKEN:-chatos-memory-engine-dev-operator-token}
+      MEMORY_ENGINE_USER_SERVICE_BASE_URL: http://user-service-backend:39190
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.openai.com/v1}
+    ports:
+      - "${MEMORY_ENGINE_PORT:-7081}:7081"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:7081/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+
+  project-management-backend:
+    <<: *rust-service
+    image: ${PROJECT_MANAGEMENT_BACKEND_IMAGE:-${CHATOS_IMAGE_NAMESPACE:-ghcr.io/leeoohoo}/chatos-rs-project-management-backend:${CHATOS_IMAGE_TAG:-latest}}
+    environment:
+      <<: *service-runtime-env
+      CHATOS_SERVICE_NAME: project-service
+      CHATOS_SERVICE_ID: project-service-docker
+      CHATOS_SERVICE_ADDRESS: project-management-backend
+      CHATOS_SERVICE_PORT: 39210
+      CHATOS_SERVICE_HEALTH_PATH: /api/health
+      PROJECT_SERVICE_HOST: 0.0.0.0
+      PROJECT_SERVICE_PORT: 39210
+      PROJECT_SERVICE_DATABASE_URL: mongodb://${MONGODB_USER:-admin}:${MONGODB_PASSWORD:-admin}@mongodb:27017/project_management_service?authSource=admin
+      PROJECT_SERVICE_USER_SERVICE_BASE_URL: http://user-service-backend:39190
+      PROJECT_SERVICE_TASK_RUNNER_BASE_URL: http://task-runner-backend:39090
+      PROJECT_SERVICE_SYNC_SECRET: ${CHATOS_PROJECT_SERVICE_SYNC_SECRET:-change_me_project_sync_secret}
+      USER_SERVICE_INTERNAL_API_SECRET: ${USER_SERVICE_INTERNAL_API_SECRET:-change_me_user_service_internal_secret}
+      TASK_RUNNER_INTERNAL_API_SECRET: ${TASK_RUNNER_INTERNAL_API_SECRET:-change_me_task_runner_internal_secret}
+    ports:
+      - "${PROJECT_SERVICE_PORT:-39210}:39210"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:39210/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+
+  local-connector-service-backend:
+    <<: *rust-service
+    image: ${LOCAL_CONNECTOR_SERVICE_BACKEND_IMAGE:-${CHATOS_IMAGE_NAMESPACE:-ghcr.io/leeoohoo}/chatos-rs-local-connector-service-backend:${CHATOS_IMAGE_TAG:-latest}}
+    environment:
+      <<: *service-runtime-env
+      CHATOS_SERVICE_NAME: local-connector-service
+      CHATOS_SERVICE_ID: local-connector-service-docker
+      CHATOS_SERVICE_ADDRESS: local-connector-service-backend
+      CHATOS_SERVICE_PORT: 39230
+      CHATOS_SERVICE_HEALTH_PATH: /api/health
+      LOCAL_CONNECTOR_SERVICE_HOST: 0.0.0.0
+      LOCAL_CONNECTOR_SERVICE_PORT: 39230
+      LOCAL_CONNECTOR_DATABASE_URL: sqlite:///data/local_connector/local_connector.db
+      LOCAL_CONNECTOR_USER_SERVICE_BASE_URL: http://user-service-backend:39190
+      LOCAL_CONNECTOR_PUBLIC_BASE_URL: ${LOCAL_CONNECTOR_PUBLIC_BASE_URL:-http://localhost:39230}
+      LOCAL_CONNECTOR_INTERNAL_API_SECRET: ${CHATOS_LOCAL_CONNECTOR_INTERNAL_API_SECRET:-chatos-local-connector-dev-secret}
+    ports:
+      - "${LOCAL_CONNECTOR_SERVICE_PORT:-39230}:39230"
+    volumes:
+      - local-connector-data:/data/local_connector
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:39230/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+
+  sandbox-manager-backend:
+    <<: *rust-service
+    image: ${SANDBOX_MANAGER_BACKEND_IMAGE:-${CHATOS_IMAGE_NAMESPACE:-ghcr.io/leeoohoo}/chatos-rs-sandbox-manager-backend:${CHATOS_IMAGE_TAG:-latest}}
+    environment:
+      <<: *service-runtime-env
+      CHATOS_SERVICE_NAME: sandbox-manager
+      CHATOS_SERVICE_ID: sandbox-manager-docker
+      CHATOS_SERVICE_ADDRESS: sandbox-manager-backend
+      CHATOS_SERVICE_PORT: 8095
+      CHATOS_SERVICE_HEALTH_PATH: /health
+      SANDBOX_MANAGER_HOST: 0.0.0.0
+      SANDBOX_MANAGER_PORT: 8095
+      SANDBOX_MANAGER_DATABASE_URL: mongodb://${MONGODB_USER:-admin}:${MONGODB_PASSWORD:-admin}@mongodb:27017/sandbox_manager_service?authSource=admin
+      SANDBOX_MANAGER_MONGODB_DATABASE: sandbox_manager_service
+      SANDBOX_MANAGER_BACKEND: docker
+      SANDBOX_MANAGER_WORK_ROOT: /data/sandboxes
+      SANDBOX_MANAGER_DOCKER_IMAGE: ${SANDBOX_MANAGER_DOCKER_IMAGE:-${CHATOS_IMAGE_NAMESPACE:-ghcr.io/leeoohoo}/chatos-rs-sandbox-agent:${CHATOS_IMAGE_TAG:-latest}}
+      SANDBOX_MANAGER_DOCKER_NETWORK: ${CHATOS_DOCKER_NETWORK:-chatos-cloud}
+      SANDBOX_MANAGER_DOCKER_AGENT_ENDPOINT_MODE: container
+      SANDBOX_MANAGER_DOCKER_PUBLISH_AGENT: "false"
+      SANDBOX_MANAGER_REQUIRE_AUTH: ${SANDBOX_MANAGER_REQUIRE_AUTH:-false}
+      SANDBOX_MANAGER_OPERATOR_TOKEN: ${SANDBOX_MANAGER_OPERATOR_TOKEN:-chatos-sandbox-manager-dev-operator-token}
+      SANDBOX_MANAGER_AGENT_TOKEN_SECRET: ${SANDBOX_MANAGER_AGENT_TOKEN_SECRET:-chatos-sandbox-agent-dev-secret}
+      SANDBOX_MANAGER_USER_SERVICE_BASE_URL: http://user-service-backend:39190
+      SANDBOX_MANAGER_SYSTEM_CLIENT_ID: ${TASK_RUNNER_SANDBOX_MANAGER_CLIENT_ID:-task_runner}
+      SANDBOX_MANAGER_SYSTEM_CLIENT_KEY: ${TASK_RUNNER_SANDBOX_MANAGER_CLIENT_KEY:-chatos-task-runner-sandbox-dev-key}
+    ports:
+      - "${SANDBOX_MANAGER_PORT:-8095}:8095"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - sandbox-manager-data:/data/sandboxes
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8095/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+
+  task-runner-backend:
+    <<: *rust-service
+    image: ${TASK_RUNNER_BACKEND_IMAGE:-${CHATOS_IMAGE_NAMESPACE:-ghcr.io/leeoohoo}/chatos-rs-task-runner-backend:${CHATOS_IMAGE_TAG:-latest}}
+    environment:
+      <<: *service-runtime-env
+      CHATOS_SERVICE_NAME: task-runner
+      CHATOS_SERVICE_ID: task-runner-docker
+      CHATOS_SERVICE_ADDRESS: task-runner-backend
+      CHATOS_SERVICE_PORT: 39090
+      CHATOS_SERVICE_HEALTH_PATH: /api/health
+      TASK_RUNNER_HOST: 0.0.0.0
+      TASK_RUNNER_PORT: 39090
+      TASK_RUNNER_STORE_MODE: mongo
+      TASK_RUNNER_DATABASE_URL: mongodb://${MONGODB_USER:-admin}:${MONGODB_PASSWORD:-admin}@mongodb:27017/task_runner_service?authSource=admin
+      TASK_RUNNER_WORKSPACE_DIR: /data/task-runner/workspace
+      TASK_RUNNER_USER_SERVICE_BASE_URL: http://user-service-backend:39190
+      TASK_RUNNER_PROJECT_SERVICE_BASE_URL: http://project-management-backend:39210
+      TASK_RUNNER_PROJECT_SERVICE_SYNC_SECRET: ${CHATOS_PROJECT_SERVICE_SYNC_SECRET:-change_me_project_sync_secret}
+      TASK_RUNNER_MEMORY_ENGINE_BASE_URL: http://memory-engine-backend:7081/api/memory-engine/v1
+      TASK_RUNNER_MEMORY_ENGINE_OPERATOR_TOKEN: ${MEMORY_ENGINE_OPERATOR_TOKEN:-chatos-memory-engine-dev-operator-token}
+      TASK_RUNNER_EXECUTION_ENVIRONMENT_MODE: cloud
+      TASK_RUNNER_SANDBOX_MANAGER_BASE_URL: http://sandbox-manager-backend:8095
+      TASK_RUNNER_SANDBOX_MANAGER_CLIENT_ID: ${TASK_RUNNER_SANDBOX_MANAGER_CLIENT_ID:-task_runner}
+      TASK_RUNNER_SANDBOX_MANAGER_CLIENT_KEY: ${TASK_RUNNER_SANDBOX_MANAGER_CLIENT_KEY:-chatos-task-runner-sandbox-dev-key}
+      TASK_RUNNER_CHATOS_CALLBACK_URL: http://chatos-backend:3997/api/agent/chat/task-runner/callback
+      TASK_RUNNER_CHATOS_CALLBACK_SECRET: ${TASK_RUNNER_CHATOS_CALLBACK_SECRET:-change_me_chatos_task_runner_secret}
+      TASK_RUNNER_INTERNAL_API_SECRET: ${TASK_RUNNER_INTERNAL_API_SECRET:-change_me_task_runner_internal_secret}
+      TASK_RUNNER_LOCAL_CONNECTOR_INTERNAL_API_SECRET: ${CHATOS_LOCAL_CONNECTOR_INTERNAL_API_SECRET:-chatos-local-connector-dev-secret}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.openai.com/v1}
+    ports:
+      - "${TASK_RUNNER_BACKEND_PORT:-39090}:39090"
+    volumes:
+      - task-runner-data:/data/task-runner
+    depends_on:
+      consul:
+        condition: service_healthy
+      mongodb:
+        condition: service_healthy
+      sandbox-manager-backend:
+        condition: service_healthy
+      user-service-backend:
+        condition: service_healthy
+      memory-engine-backend:
+        condition: service_healthy
+      project-management-backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:39090/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+
+  chatos-backend:
+    <<: *rust-service
+    image: ${CHATOS_BACKEND_IMAGE:-${CHATOS_IMAGE_NAMESPACE:-ghcr.io/leeoohoo}/chatos-rs-chatos-backend:${CHATOS_IMAGE_TAG:-latest}}
+    environment:
+      <<: *service-runtime-env
+      CHATOS_SERVICE_NAME: chatos-backend
+      CHATOS_SERVICE_ID: chatos-backend-docker
+      CHATOS_SERVICE_ADDRESS: chatos-backend
+      CHATOS_SERVICE_PORT: 3997
+      CHATOS_SERVICE_HEALTH_PATH: /health
+      NODE_ENV: production
+      HOST: 0.0.0.0
+      BACKEND_PORT: 3997
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      CORS_ORIGINS: ${CORS_ORIGINS:-*}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.openai.com/v1}
+      DATABASE_TYPE: mongodb
+      MONGODB_HOST: mongodb
+      MONGODB_PORT: 27017
+      MONGODB_DB: chatos
+      MONGODB_USER: ${MONGODB_USER:-admin}
+      MONGODB_PASSWORD: ${MONGODB_PASSWORD:-admin}
+      MONGODB_AUTH_SOURCE: admin
+      LEGACY_AUTH_MONGODB_URI: mongodb://${MONGODB_USER:-admin}:${MONGODB_PASSWORD:-admin}@mongodb:27017/admin
+      LEGACY_AUTH_MONGODB_DATABASE: ${LEGACY_AUTH_MONGODB_DATABASE:-legacy_auth}
+      AUTH_JWT_SECRET: ${AUTH_JWT_SECRET:-dev-only-change-me-please}
+      AUTH_ACCESS_TOKEN_TTL_SECONDS: ${AUTH_ACCESS_TOKEN_TTL_SECONDS:-43200}
+      CHATOS_WORKSPACE_DIR: /data/chatos/workspace
+      CHATOS_USER_SERVICE_BASE_URL: http://user-service-backend:39190
+      CHATOS_PROJECT_SERVICE_BASE_URL: http://project-management-backend:39210
+      CHATOS_PROJECT_SERVICE_SYNC_SECRET: ${CHATOS_PROJECT_SERVICE_SYNC_SECRET:-change_me_project_sync_secret}
+      CHATOS_TASK_RUNNER_BASE_URL: http://task-runner-backend:39090
+      TASK_RUNNER_CHATOS_CALLBACK_SECRET: ${TASK_RUNNER_CHATOS_CALLBACK_SECRET:-change_me_chatos_task_runner_secret}
+      CHATOS_LOCAL_CONNECTOR_SERVICE_BASE_URL: http://local-connector-service-backend:39230
+      CHATOS_LOCAL_CONNECTOR_INTERNAL_API_SECRET: ${CHATOS_LOCAL_CONNECTOR_INTERNAL_API_SECRET:-chatos-local-connector-dev-secret}
+      MEMORY_ENGINE_BASE_URL: http://memory-engine-backend:7081/api/memory-engine/v1
+      MEMORY_ENGINE_OPERATOR_TOKEN: ${MEMORY_ENGINE_OPERATOR_TOKEN:-chatos-memory-engine-dev-operator-token}
+    ports:
+      - "${MAIN_BACKEND_PORT:-3997}:3997"
+    volumes:
+      - chatos-data:/data/chatos
+    depends_on:
+      consul:
+        condition: service_healthy
+      mongodb:
+        condition: service_healthy
+      user-service-backend:
+        condition: service_healthy
+      task-runner-backend:
+        condition: service_healthy
+      project-management-backend:
+        condition: service_healthy
+      memory-engine-backend:
+        condition: service_healthy
+      local-connector-service-backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:3997/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+
+  db-connection-hub-backend:
+    <<: *rust-service
+    image: ${DB_CONNECTION_HUB_BACKEND_IMAGE:-${CHATOS_IMAGE_NAMESPACE:-ghcr.io/leeoohoo}/chatos-rs-db-connection-hub-backend:${CHATOS_IMAGE_TAG:-latest}}
+    environment:
+      <<: *service-runtime-env
+      CHATOS_SERVICE_NAME: db-connection-hub
+      CHATOS_SERVICE_ID: db-connection-hub-docker
+      CHATOS_SERVICE_ADDRESS: db-connection-hub-backend
+      CHATOS_SERVICE_PORT: 8099
+      CHATOS_SERVICE_HEALTH_PATH: /api/v1/health
+      DB_HUB_HOST: 0.0.0.0
+      DB_HUB_PORT: 8099
+      DB_HUB_STORE_PATH: /data/db-connection-hub/store.sqlite
+      RUST_LOG: ${DB_HUB_BACKEND_RUST_LOG:-info}
+    ports:
+      - "${DB_HUB_BACKEND_PORT:-8099}:8099"
+    volumes:
+      - db-connection-hub-data:/data/db-connection-hub
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8099/api/v1/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+
+  official-website-backend:
+    <<: *rust-service
+    image: ${OFFICIAL_WEBSITE_BACKEND_IMAGE:-${CHATOS_IMAGE_NAMESPACE:-ghcr.io/leeoohoo}/chatos-rs-official-website-backend:${CHATOS_IMAGE_TAG:-latest}}
+    environment:
+      <<: *service-runtime-env
+      CHATOS_SERVICE_NAME: official-website
+      CHATOS_SERVICE_ID: official-website-docker
+      CHATOS_SERVICE_ADDRESS: official-website-backend
+      CHATOS_SERVICE_PORT: 39250
+      CHATOS_SERVICE_HEALTH_PATH: /health
+      OFFICIAL_WEBSITE_HOST: 0.0.0.0
+      OFFICIAL_WEBSITE_PORT: 39250
+      OFFICIAL_WEBSITE_STATUS_HOST: host.docker.internal
+      OFFICIAL_WEBSITE_STATUS_SCHEME: http
+      MAIN_BACKEND_PORT: ${MAIN_BACKEND_PORT:-3997}
+      MEMORY_ENGINE_PORT: ${MEMORY_ENGINE_PORT:-7081}
+      USER_SERVICE_PORT: ${USER_SERVICE_PORT:-39190}
+      PROJECT_SERVICE_PORT: ${PROJECT_SERVICE_PORT:-39210}
+      SANDBOX_MANAGER_PORT: ${SANDBOX_MANAGER_PORT:-8095}
+      TASK_RUNNER_BACKEND_PORT: ${TASK_RUNNER_BACKEND_PORT:-39090}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "${OFFICIAL_WEBSITE_PORT:-39250}:39250"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:39250/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+
+  chatos-frontend:
+    <<: *frontend-service
+    image: ${CHATOS_FRONTEND_IMAGE:-${CHATOS_IMAGE_NAMESPACE:-ghcr.io/leeoohoo}/chatos-rs-chatos-frontend:${CHATOS_IMAGE_TAG:-latest}}
+    environment:
+      API_PROXY_PASS: http://chatos-backend:3997
+    ports:
+      - "${FRONTEND_PORT:-8088}:80"
+    depends_on:
+      chatos-backend:
+        condition: service_healthy
+
+  user-service-frontend:
+    <<: *frontend-service
+    image: ${USER_SERVICE_FRONTEND_IMAGE:-${CHATOS_IMAGE_NAMESPACE:-ghcr.io/leeoohoo}/chatos-rs-user-service-frontend:${CHATOS_IMAGE_TAG:-latest}}
+    environment:
+      API_PROXY_PASS: http://user-service-backend:39190
+    ports:
+      - "${USER_SERVICE_FRONTEND_PORT:-39191}:80"
+    depends_on:
+      user-service-backend:
+        condition: service_healthy
+
+  memory-engine-frontend:
+    <<: *frontend-service
+    image: ${MEMORY_ENGINE_FRONTEND_IMAGE:-${CHATOS_IMAGE_NAMESPACE:-ghcr.io/leeoohoo}/chatos-rs-memory-engine-frontend:${CHATOS_IMAGE_TAG:-latest}}
+    environment:
+      API_PROXY_PASS: http://user-service-backend:39190
+      MEMORY_ENGINE_PROXY_PASS: http://memory-engine-backend:7081
+      USER_SERVICE_PROXY_PASS: http://user-service-backend:39190
+    ports:
+      - "${MEMORY_ENGINE_FRONTEND_PORT:-4178}:80"
+    depends_on:
+      memory-engine-backend:
+        condition: service_healthy
+      user-service-backend:
+        condition: service_healthy
+
+  project-management-frontend:
+    <<: *frontend-service
+    image: ${PROJECT_MANAGEMENT_FRONTEND_IMAGE:-${CHATOS_IMAGE_NAMESPACE:-ghcr.io/leeoohoo}/chatos-rs-project-management-frontend:${CHATOS_IMAGE_TAG:-latest}}
+    environment:
+      API_PROXY_PASS: http://project-management-backend:39210
+    ports:
+      - "${PROJECT_SERVICE_FRONTEND_PORT:-39211}:80"
+    depends_on:
+      project-management-backend:
+        condition: service_healthy
+
+  task-runner-frontend:
+    <<: *frontend-service
+    image: ${TASK_RUNNER_FRONTEND_IMAGE:-${CHATOS_IMAGE_NAMESPACE:-ghcr.io/leeoohoo}/chatos-rs-task-runner-frontend:${CHATOS_IMAGE_TAG:-latest}}
+    environment:
+      API_PROXY_PASS: http://task-runner-backend:39090
+    ports:
+      - "${TASK_RUNNER_FRONTEND_PORT:-39091}:80"
+    depends_on:
+      task-runner-backend:
+        condition: service_healthy
+
+  sandbox-manager-frontend:
+    <<: *frontend-service
+    image: ${SANDBOX_MANAGER_FRONTEND_IMAGE:-${CHATOS_IMAGE_NAMESPACE:-ghcr.io/leeoohoo}/chatos-rs-sandbox-manager-frontend:${CHATOS_IMAGE_TAG:-latest}}
+    environment:
+      API_PROXY_PASS: http://sandbox-manager-backend:8095
+      SANDBOX_MANAGER_API_PROXY_CLIENT_ID: ${TASK_RUNNER_SANDBOX_MANAGER_CLIENT_ID:-task_runner}
+      SANDBOX_MANAGER_API_PROXY_CLIENT_KEY: ${TASK_RUNNER_SANDBOX_MANAGER_CLIENT_KEY:-chatos-task-runner-sandbox-dev-key}
+      SANDBOX_MANAGER_API_PROXY_OPERATOR_TOKEN: ${SANDBOX_MANAGER_OPERATOR_TOKEN:-chatos-sandbox-manager-dev-operator-token}
+    ports:
+      - "${SANDBOX_MANAGER_FRONTEND_PORT:-8096}:80"
+    depends_on:
+      sandbox-manager-backend:
+        condition: service_healthy
+
+  db-connection-hub-frontend:
+    <<: *frontend-service
+    image: ${DB_CONNECTION_HUB_FRONTEND_IMAGE:-${CHATOS_IMAGE_NAMESPACE:-ghcr.io/leeoohoo}/chatos-rs-db-connection-hub-frontend:${CHATOS_IMAGE_TAG:-latest}}
+    environment:
+      API_PROXY_PASS: http://db-connection-hub-backend:8099
+    ports:
+      - "${DB_HUB_FRONTEND_PORT:-5174}:80"
+    depends_on:
+      db-connection-hub-backend:
+        condition: service_healthy
+
+  official-website-frontend:
+    <<: *frontend-service
+    image: ${OFFICIAL_WEBSITE_FRONTEND_IMAGE:-${CHATOS_IMAGE_NAMESPACE:-ghcr.io/leeoohoo}/chatos-rs-official-website-frontend:${CHATOS_IMAGE_TAG:-latest}}
+    environment:
+      API_PROXY_PASS: http://official-website-backend:39250
+    ports:
+      - "${OFFICIAL_WEBSITE_FRONTEND_PORT:-39251}:80"
+    depends_on:
+      official-website-backend:
+        condition: service_healthy
+
+volumes:
+  mongodb-data:
+  chatos-data:
+  task-runner-data:
+  local-connector-data:
+  sandbox-manager-data:
+  db-connection-hub-data:
+  harness-data:
+
+networks:
+  cloud:
+    name: ${CHATOS_DOCKER_NETWORK:-chatos-cloud}

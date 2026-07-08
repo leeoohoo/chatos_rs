@@ -1,172 +1,203 @@
 # API Surface Baseline
 
-main_backend_route_count=165
-total_route_count=165
+main_backend_route_count=196
+total_route_count=196
 
-## chat_app_server_rs/src/api (.route lines)
-chat_app_server_rs/src/api/agents.rs: .route(
-chat_app_server_rs/src/api/agents.rs: .route(
-chat_app_server_rs/src/api/agents.rs: .route(
-chat_app_server_rs/src/api/agents.rs: .route(
-chat_app_server_rs/src/api/agents.rs: .route(
-chat_app_server_rs/src/api/agents.rs: .route(
-chat_app_server_rs/src/api/agents.rs: .route("/api/agent-builder/ai-create", axum::routing::post(ai_create))
-chat_app_server_rs/src/api/agents.rs: .route("/api/agents", get(list_agents).post(create_agent))
-chat_app_server_rs/src/api/agents.rs: .route("/api/agents/:agent_id/sessions", get(list_agent_sessions))
-chat_app_server_rs/src/api/agents.rs: .route("/api/agents/ai-create", axum::routing::post(ai_create))
-chat_app_server_rs/src/api/agents.rs: .route("/api/memory-agents", get(list_agents).post(create_agent))
-chat_app_server_rs/src/api/agents.rs: .route("/api/skills", get(list_skills))
-chat_app_server_rs/src/api/agents.rs: .route("/api/skills/:skill_id", get(get_skill))
-chat_app_server_rs/src/api/agents.rs: .route("/api/skills/import-git", axum::routing::post(import_skills_from_git))
-chat_app_server_rs/src/api/agents.rs: .route("/api/skills/plugins", get(list_skill_plugins))
-chat_app_server_rs/src/api/agents.rs: .route("/api/skills/plugins/detail", get(get_skill_plugin))
-chat_app_server_rs/src/api/applications.rs: .route(
-chat_app_server_rs/src/api/applications.rs: .route("/", get(list_apps).post(create_app))
-chat_app_server_rs/src/api/auth.rs: .route("/api/auth/login", post(login))
-chat_app_server_rs/src/api/auth.rs: .route("/api/auth/me", axum::routing::get(me))
-chat_app_server_rs/src/api/auth.rs: .route("/api/auth/register", post(register))
-chat_app_server_rs/src/api/chat_v2.rs: .route(
-chat_app_server_rs/src/api/chat_v2.rs: .route("/api/agent_v2/chat/send", post(agent_chat_send))
-chat_app_server_rs/src/api/chat_v2.rs: .route("/api/agent_v2/chat/stream", post(agent_chat_stream))
-chat_app_server_rs/src/api/chat_v2.rs: .route("/api/agent_v2/status", get(agent_status))
-chat_app_server_rs/src/api/chat_v2.rs: .route("/api/agent_v2/tools", get(agent_tools))
-chat_app_server_rs/src/api/chat_v2.rs: .route("/api/chat/stop", post(stop_chat))
-chat_app_server_rs/src/api/chat_v3.rs: .route(
-chat_app_server_rs/src/api/chat_v3.rs: .route("/api/agent_v3/chat/guide", post(submit_runtime_guidance))
-chat_app_server_rs/src/api/chat_v3.rs: .route("/api/agent_v3/chat/send", post(agent_chat_send))
-chat_app_server_rs/src/api/chat_v3.rs: .route("/api/agent_v3/chat/stop", post(stop_chat))
-chat_app_server_rs/src/api/chat_v3.rs: .route("/api/agent_v3/chat/stream", post(agent_chat_stream))
-chat_app_server_rs/src/api/chat_v3.rs: .route("/api/agent_v3/status", get(agent_status))
-chat_app_server_rs/src/api/chat_v3.rs: .route("/api/agent_v3/tools", get(agent_tools))
-chat_app_server_rs/src/api/code_nav.rs: .route("/api/code-nav/capabilities", post(capabilities))
-chat_app_server_rs/src/api/code_nav.rs: .route("/api/code-nav/definition", post(definition))
-chat_app_server_rs/src/api/code_nav.rs: .route("/api/code-nav/document-symbols", post(document_symbols))
-chat_app_server_rs/src/api/code_nav.rs: .route("/api/code-nav/references", post(references))
-chat_app_server_rs/src/api/configs.rs: .route(
-chat_app_server_rs/src/api/configs.rs: .route(
-chat_app_server_rs/src/api/configs.rs: .route(
-chat_app_server_rs/src/api/configs.rs: .route(
-chat_app_server_rs/src/api/configs.rs: .route(
-chat_app_server_rs/src/api/configs.rs: .route(
-chat_app_server_rs/src/api/contacts.rs: .route(
-chat_app_server_rs/src/api/contacts.rs: .route(
-chat_app_server_rs/src/api/contacts.rs: .route(
-chat_app_server_rs/src/api/contacts.rs: .route(
-chat_app_server_rs/src/api/contacts.rs: .route(
-chat_app_server_rs/src/api/contacts.rs: .route("/api/contacts", get(list_contacts).post(create_contact))
-chat_app_server_rs/src/api/fs.rs: .route("/api/fs/delete", post(delete_entry))
-chat_app_server_rs/src/api/fs.rs: .route("/api/fs/download", get(download_entry))
-chat_app_server_rs/src/api/fs.rs: .route("/api/fs/entries", get(list_entries))
-chat_app_server_rs/src/api/fs.rs: .route("/api/fs/list", get(list_dirs))
-chat_app_server_rs/src/api/fs.rs: .route("/api/fs/mkdir", post(create_dir))
-chat_app_server_rs/src/api/fs.rs: .route("/api/fs/move", post(move_entry))
-chat_app_server_rs/src/api/fs.rs: .route("/api/fs/read", get(read_file))
-chat_app_server_rs/src/api/fs.rs: .route("/api/fs/search", get(search_entries))
-chat_app_server_rs/src/api/fs.rs: .route("/api/fs/search-content", get(search_content))
-chat_app_server_rs/src/api/fs.rs: .route("/api/fs/touch", post(create_file))
-chat_app_server_rs/src/api/git.rs: .route("/api/git/branch", post(create_branch))
-chat_app_server_rs/src/api/git.rs: .route("/api/git/branches", get(branches))
-chat_app_server_rs/src/api/git.rs: .route("/api/git/checkout", post(checkout))
-chat_app_server_rs/src/api/git.rs: .route("/api/git/client", get(client))
-chat_app_server_rs/src/api/git.rs: .route("/api/git/commit", post(commit))
-chat_app_server_rs/src/api/git.rs: .route("/api/git/compare", get(compare))
-chat_app_server_rs/src/api/git.rs: .route("/api/git/diff", get(diff))
-chat_app_server_rs/src/api/git.rs: .route("/api/git/fetch", post(fetch))
-chat_app_server_rs/src/api/git.rs: .route("/api/git/merge", post(merge_branch))
-chat_app_server_rs/src/api/git.rs: .route("/api/git/pull", post(pull))
-chat_app_server_rs/src/api/git.rs: .route("/api/git/push", post(push))
-chat_app_server_rs/src/api/git.rs: .route("/api/git/stage", post(stage))
-chat_app_server_rs/src/api/git.rs: .route("/api/git/status", get(status))
-chat_app_server_rs/src/api/git.rs: .route("/api/git/summary", get(summary))
-chat_app_server_rs/src/api/git.rs: .route("/api/git/unstage", post(unstage))
-chat_app_server_rs/src/api/memory_compat.rs: .route(
-chat_app_server_rs/src/api/memory_compat.rs: .route(
-chat_app_server_rs/src/api/memory_compat.rs: .route(
-chat_app_server_rs/src/api/memory_compat.rs: .route(
-chat_app_server_rs/src/api/memory_compat.rs: .route(
-chat_app_server_rs/src/api/memory_compat.rs: .route(
-chat_app_server_rs/src/api/memory_compat.rs: .route(
-chat_app_server_rs/src/api/memory_compat.rs: .route(
-chat_app_server_rs/src/api/memory_compat.rs: .route(
-chat_app_server_rs/src/api/memory_compat.rs: .route(
-chat_app_server_rs/src/api/memory_compat.rs: .route(
-chat_app_server_rs/src/api/memory_compat.rs: .route(
-chat_app_server_rs/src/api/memory_compat.rs: .route(
-chat_app_server_rs/src/api/memory_mappings.rs: .route(
-chat_app_server_rs/src/api/memory_mappings.rs: .route(
-chat_app_server_rs/src/api/memory_mappings.rs: .route("/api/memory/projects", get(list_memory_projects))
-chat_app_server_rs/src/api/memory_mappings.rs: .route("/api/memory/projects/sync", post(sync_memory_project))
-chat_app_server_rs/src/api/messages.rs: .route("/api/messages", get(list_messages).post(create_message))
-chat_app_server_rs/src/api/messages.rs: .route("/api/messages/:id", get(get_message).delete(delete_message))
-chat_app_server_rs/src/api/mod.rs: .route("/", axum::routing::get(root))
-chat_app_server_rs/src/api/mod.rs: .route("/health", axum::routing::get(health))
-chat_app_server_rs/src/api/notepad.rs: .route(
-chat_app_server_rs/src/api/notepad.rs: .route(
-chat_app_server_rs/src/api/notepad.rs: .route("/api/notepad/init", get(init_notepad))
-chat_app_server_rs/src/api/notepad.rs: .route("/api/notepad/notes", get(list_notes).post(create_note))
-chat_app_server_rs/src/api/notepad.rs: .route("/api/notepad/search", get(search_notes))
-chat_app_server_rs/src/api/notepad.rs: .route("/api/notepad/tags", get(list_tags))
-chat_app_server_rs/src/api/projects.rs: .route(
-chat_app_server_rs/src/api/projects.rs: .route(
-chat_app_server_rs/src/api/projects.rs: .route(
-chat_app_server_rs/src/api/projects.rs: .route(
-chat_app_server_rs/src/api/projects.rs: .route(
-chat_app_server_rs/src/api/projects.rs: .route(
-chat_app_server_rs/src/api/projects.rs: .route(
-chat_app_server_rs/src/api/projects.rs: .route("/api/projects", get(list_projects).post(create_project))
-chat_app_server_rs/src/api/projects.rs: .route("/api/projects/:id/changes", get(list_project_changes))
-chat_app_server_rs/src/api/projects.rs: .route("/api/projects/:id/run/analyze", post(analyze_project_run))
-chat_app_server_rs/src/api/projects.rs: .route("/api/projects/:id/run/execute", post(execute_project_run))
-chat_app_server_rs/src/api/realtime.rs: axum::Router::new().route("/api/realtime/ws", axum::routing::get(realtime_ws))
-chat_app_server_rs/src/api/remote_connections.rs: .route(
-chat_app_server_rs/src/api/remote_connections.rs: .route(
-chat_app_server_rs/src/api/remote_connections.rs: .route(
-chat_app_server_rs/src/api/remote_connections.rs: .route(
-chat_app_server_rs/src/api/remote_connections.rs: .route(
-chat_app_server_rs/src/api/remote_connections.rs: .route(
-chat_app_server_rs/src/api/remote_connections.rs: .route(
-chat_app_server_rs/src/api/remote_connections.rs: .route(
-chat_app_server_rs/src/api/remote_connections.rs: .route(
-chat_app_server_rs/src/api/remote_connections.rs: .route(
-chat_app_server_rs/src/api/remote_connections.rs: .route(
-chat_app_server_rs/src/api/remote_connections.rs: .route(
-chat_app_server_rs/src/api/remote_connections.rs: .route(
-chat_app_server_rs/src/api/remote_connections.rs: .route(
-chat_app_server_rs/src/api/remote_connections.rs: .route("/api/remote-connections/:id/ws", get(remote_terminal_ws))
-chat_app_server_rs/src/api/sessions.rs: .route(
-chat_app_server_rs/src/api/sessions.rs: .route(
-chat_app_server_rs/src/api/sessions.rs: .route(
-chat_app_server_rs/src/api/sessions.rs: .route(
-chat_app_server_rs/src/api/sessions.rs: .route(
-chat_app_server_rs/src/api/sessions.rs: .route(
-chat_app_server_rs/src/api/sessions.rs: .route(
-chat_app_server_rs/src/api/sessions.rs: .route(
-chat_app_server_rs/src/api/sessions.rs: .route(
-chat_app_server_rs/src/api/sessions.rs: .route(
-chat_app_server_rs/src/api/sessions.rs: .route(
-chat_app_server_rs/src/api/sessions.rs: .route(
-chat_app_server_rs/src/api/sessions.rs: .route(
-chat_app_server_rs/src/api/sessions.rs: .route(
-chat_app_server_rs/src/api/system_contexts/mod.rs: .route(
-chat_app_server_rs/src/api/system_contexts/mod.rs: .route(
-chat_app_server_rs/src/api/system_contexts/mod.rs: .route(
-chat_app_server_rs/src/api/system_contexts/mod.rs: .route(
-chat_app_server_rs/src/api/system_contexts/mod.rs: .route(
-chat_app_server_rs/src/api/system_contexts/mod.rs: .route(
-chat_app_server_rs/src/api/system_contexts/mod.rs: .route("/api/system-context/active", get(get_active_system_context))
-chat_app_server_rs/src/api/task_manager.rs: .route(
-chat_app_server_rs/src/api/task_manager.rs: .route(
-chat_app_server_rs/src/api/task_manager.rs: .route(
-chat_app_server_rs/src/api/task_manager.rs: .route("/api/task-manager/reviews/pending", get(list_pending_reviews))
-chat_app_server_rs/src/api/task_manager.rs: .route("/api/task-manager/tasks", get(list_tasks))
-chat_app_server_rs/src/api/terminals.rs: .route(
-chat_app_server_rs/src/api/terminals.rs: .route(
-chat_app_server_rs/src/api/terminals.rs: .route(
-chat_app_server_rs/src/api/terminals.rs: .route("/api/terminals", get(list_terminals).post(create_terminal))
-chat_app_server_rs/src/api/terminals.rs: .route("/api/terminals/:id/history", get(list_terminal_logs))
-chat_app_server_rs/src/api/terminals.rs: .route("/api/terminals/:id/ws", get(terminal_ws))
-chat_app_server_rs/src/api/ui_prompts.rs: .route(
-chat_app_server_rs/src/api/ui_prompts.rs: .route("/api/ui-prompts/history", get(list_ui_prompt_history))
-chat_app_server_rs/src/api/ui_prompts.rs: .route("/api/ui-prompts/pending", get(list_pending_ui_prompts))
-chat_app_server_rs/src/api/user_settings.rs: Router::new().route(
+## chatos/backend/src/api (.route lines)
+chatos/backend/src/api/agent_chat.rs: .route(
+chatos/backend/src/api/agent_chat.rs: .route("/api/agent/chat/guidance", post(agent_chat_guidance))
+chatos/backend/src/api/agent_chat.rs: .route("/api/agent/chat/send", post(agent_chat_send))
+chatos/backend/src/api/agent_chat.rs: .route("/api/agent/chat/stop", post(stop_chat))
+chatos/backend/src/api/agent_chat.rs: .route("/api/agent/status", get(agent_status))
+chatos/backend/src/api/agent_chat.rs: .route("/api/agent/tools", get(agent_tools))
+chatos/backend/src/api/agent_chat.rs: Router::new().route(
+chatos/backend/src/api/agents.rs: .route(
+chatos/backend/src/api/agents.rs: .route(
+chatos/backend/src/api/agents.rs: .route(
+chatos/backend/src/api/agents.rs: .route(
+chatos/backend/src/api/agents.rs: .route(
+chatos/backend/src/api/agents.rs: .route(
+chatos/backend/src/api/agents.rs: .route(
+chatos/backend/src/api/agents.rs: .route(
+chatos/backend/src/api/agents.rs: .route("/api/agents", get(list_agents).post(create_agent))
+chatos/backend/src/api/agents.rs: .route("/api/agents/ai-create", axum::routing::post(ai_create))
+chatos/backend/src/api/agents.rs: .route("/api/agents/{agent_id}/sessions", get(list_agent_sessions))
+chatos/backend/src/api/agents.rs: .route("/api/memory-agents", get(list_agents).post(create_agent))
+chatos/backend/src/api/agents.rs: .route("/api/skills", get(skills::list_skills))
+chatos/backend/src/api/agents.rs: .route("/api/skills/plugins", get(skills::list_skill_plugins))
+chatos/backend/src/api/agents.rs: .route("/api/skills/plugins/detail", get(skills::get_skill_plugin))
+chatos/backend/src/api/agents.rs: .route("/api/skills/{skill_id}", get(skills::get_skill))
+chatos/backend/src/api/applications.rs: .route(
+chatos/backend/src/api/applications.rs: .route("/", get(list_apps).post(create_app))
+chatos/backend/src/api/ask_user_prompts.rs: .route(
+chatos/backend/src/api/ask_user_prompts.rs: .route(
+chatos/backend/src/api/ask_user_prompts.rs: .route("/api/ask-user-prompts", get(list_ask_user_prompts))
+chatos/backend/src/api/auth.rs: .route("/api/auth/agent-accounts", get(list_agent_accounts))
+chatos/backend/src/api/auth.rs: .route("/api/auth/bootstrap-defaults", post(bootstrap_defaults))
+chatos/backend/src/api/auth.rs: .route("/api/auth/login", post(login))
+chatos/backend/src/api/auth.rs: .route("/api/auth/me", axum::routing::get(me))
+chatos/backend/src/api/auth.rs: .route("/api/auth/register", post(register))
+chatos/backend/src/api/auth.rs: .route("/api/auth/ws-ticket", post(issue_ws_ticket))
+chatos/backend/src/api/code_nav.rs: .route("/api/code-nav/capabilities", post(capabilities))
+chatos/backend/src/api/code_nav.rs: .route("/api/code-nav/definition", post(definition))
+chatos/backend/src/api/code_nav.rs: .route("/api/code-nav/document-symbols", post(document_symbols))
+chatos/backend/src/api/code_nav.rs: .route("/api/code-nav/references", post(references))
+chatos/backend/src/api/configs.rs: .route(
+chatos/backend/src/api/configs.rs: .route(
+chatos/backend/src/api/configs.rs: .route(
+chatos/backend/src/api/configs.rs: .route(
+chatos/backend/src/api/configs.rs: .route(
+chatos/backend/src/api/configs.rs: .route(
+chatos/backend/src/api/configs.rs: .route(
+chatos/backend/src/api/configs.rs: .route(
+chatos/backend/src/api/configs.rs: .route(
+chatos/backend/src/api/configs.rs: .route(
+chatos/backend/src/api/configs.rs: .route(
+chatos/backend/src/api/configs.rs: .route(
+chatos/backend/src/api/contacts.rs: .route(
+chatos/backend/src/api/contacts.rs: .route(
+chatos/backend/src/api/contacts.rs: .route(
+chatos/backend/src/api/contacts.rs: .route(
+chatos/backend/src/api/contacts.rs: .route(
+chatos/backend/src/api/contacts.rs: .route(
+chatos/backend/src/api/contacts.rs: .route("/api/contacts", get(list_contacts).post(create_contact))
+chatos/backend/src/api/fs.rs: .route("/api/fs/delete", post(delete_entry))
+chatos/backend/src/api/fs.rs: .route("/api/fs/discard-git-changes", post(discard_git_changes))
+chatos/backend/src/api/fs.rs: .route("/api/fs/download", get(download_entry))
+chatos/backend/src/api/fs.rs: .route("/api/fs/entries", get(list_entries))
+chatos/backend/src/api/fs.rs: .route("/api/fs/gitignore", post(append_gitignore_entry))
+chatos/backend/src/api/fs.rs: .route("/api/fs/list", get(list_dirs))
+chatos/backend/src/api/fs.rs: .route("/api/fs/mkdir", post(create_dir))
+chatos/backend/src/api/fs.rs: .route("/api/fs/move", post(move_entry))
+chatos/backend/src/api/fs.rs: .route("/api/fs/open", post(open_path_externally))
+chatos/backend/src/api/fs.rs: .route("/api/fs/read", get(read_file))
+chatos/backend/src/api/fs.rs: .route("/api/fs/search", get(search_entries))
+chatos/backend/src/api/fs.rs: .route("/api/fs/search-content", get(search_content))
+chatos/backend/src/api/fs.rs: .route("/api/fs/touch", post(create_file))
+chatos/backend/src/api/fs.rs: .route("/api/fs/write", post(write_file))
+chatos/backend/src/api/git.rs: .route("/api/git/branch", post(create_branch))
+chatos/backend/src/api/git.rs: .route("/api/git/branches", get(branches))
+chatos/backend/src/api/git.rs: .route("/api/git/checkout", post(checkout))
+chatos/backend/src/api/git.rs: .route("/api/git/client", get(client))
+chatos/backend/src/api/git.rs: .route("/api/git/commit", post(commit))
+chatos/backend/src/api/git.rs: .route("/api/git/compare", get(compare))
+chatos/backend/src/api/git.rs: .route("/api/git/diff", get(diff))
+chatos/backend/src/api/git.rs: .route("/api/git/discard", post(discard))
+chatos/backend/src/api/git.rs: .route("/api/git/fetch", post(fetch))
+chatos/backend/src/api/git.rs: .route("/api/git/merge", post(merge_branch))
+chatos/backend/src/api/git.rs: .route("/api/git/pull", post(pull))
+chatos/backend/src/api/git.rs: .route("/api/git/push", post(push))
+chatos/backend/src/api/git.rs: .route("/api/git/stage", post(stage))
+chatos/backend/src/api/git.rs: .route("/api/git/status", get(status))
+chatos/backend/src/api/git.rs: .route("/api/git/summary", get(summary))
+chatos/backend/src/api/git.rs: .route("/api/git/unstage", post(unstage))
+chatos/backend/src/api/local_connectors.rs: .route(
+chatos/backend/src/api/local_connectors.rs: .route("/api/local-connectors/devices", get(list_devices))
+chatos/backend/src/api/local_connectors.rs: .route("/api/local-connectors/fs/list", get(list_directory))
+chatos/backend/src/api/local_connectors.rs: .route("/api/local-connectors/fs/mkdir", post(create_directory))
+chatos/backend/src/api/local_connectors.rs: .route("/api/local-connectors/projects", post(create_project))
+chatos/backend/src/api/local_connectors.rs: .route("/api/local-connectors/workspaces", get(list_workspaces))
+chatos/backend/src/api/memory_compat.rs: .route(
+chatos/backend/src/api/memory_compat.rs: .route(
+chatos/backend/src/api/memory_compat.rs: .route(
+chatos/backend/src/api/memory_compat.rs: .route(
+chatos/backend/src/api/memory_compat.rs: .route(
+chatos/backend/src/api/memory_compat.rs: .route(
+chatos/backend/src/api/memory_compat.rs: .route(
+chatos/backend/src/api/memory_compat.rs: .route(
+chatos/backend/src/api/memory_compat.rs: .route(
+chatos/backend/src/api/memory_compat.rs: .route(
+chatos/backend/src/api/memory_compat.rs: .route(
+chatos/backend/src/api/memory_compat.rs: .route(
+chatos/backend/src/api/memory_compat.rs: .route("/api/memory/v1/context/compose", post(compose_context))
+chatos/backend/src/api/memory_mappings.rs: .route(
+chatos/backend/src/api/memory_mappings.rs: .route(
+chatos/backend/src/api/memory_mappings.rs: .route("/api/memory/projects", get(list_memory_projects))
+chatos/backend/src/api/memory_mappings.rs: .route("/api/memory/projects/sync", post(sync_memory_project))
+chatos/backend/src/api/message_task_runner.rs: .route(
+chatos/backend/src/api/message_task_runner.rs: .route(
+chatos/backend/src/api/message_task_runner.rs: .route(
+chatos/backend/src/api/message_task_runner.rs: .route(
+chatos/backend/src/api/message_task_runner.rs: .route(
+chatos/backend/src/api/message_task_runner.rs: .route(
+chatos/backend/src/api/message_task_runner.rs: .route(
+chatos/backend/src/api/message_task_runner.rs: .route(
+chatos/backend/src/api/messages.rs: .route(
+chatos/backend/src/api/messages.rs: .route("/api/messages", get(list_messages).post(create_message))
+chatos/backend/src/api/mod.rs: .route("/", axum::routing::get(root))
+chatos/backend/src/api/mod.rs: .route("/health", axum::routing::get(health))
+chatos/backend/src/api/mod.rs: .route("/ready", axum::routing::get(ready))
+chatos/backend/src/api/notepad.rs: .route(
+chatos/backend/src/api/notepad.rs: .route(
+chatos/backend/src/api/notepad.rs: .route("/api/notepad/init", get(init_notepad))
+chatos/backend/src/api/notepad.rs: .route("/api/notepad/notes", get(list_notes).post(create_note))
+chatos/backend/src/api/notepad.rs: .route("/api/notepad/search", get(search_notes))
+chatos/backend/src/api/notepad.rs: .route("/api/notepad/tags", get(list_tags))
+chatos/backend/src/api/projects.rs: .route(
+chatos/backend/src/api/projects.rs: .route(
+chatos/backend/src/api/projects.rs: .route(
+chatos/backend/src/api/projects.rs: .route(
+chatos/backend/src/api/projects.rs: .route(
+chatos/backend/src/api/projects.rs: .route(
+chatos/backend/src/api/projects.rs: .route(
+chatos/backend/src/api/projects.rs: .route(
+chatos/backend/src/api/projects.rs: .route(
+chatos/backend/src/api/projects.rs: .route(
+chatos/backend/src/api/projects.rs: .route(
+chatos/backend/src/api/projects.rs: .route("/api/projects", get(list_projects).post(create_project))
+chatos/backend/src/api/projects.rs: .route("/api/projects/cloud", post(create_cloud_project))
+chatos/backend/src/api/projects.rs: .route("/api/projects/{id}/plan", get(get_project_plan))
+chatos/backend/src/api/projects.rs: .route("/api/projects/{id}/run/analyze", post(analyze_project_run))
+chatos/backend/src/api/projects.rs: .route("/api/projects/{id}/run/execute", post(execute_project_run))
+chatos/backend/src/api/projects.rs: .route("/api/projects/{id}/run/state", get(get_project_run_state))
+chatos/backend/src/api/realtime.rs: axum::Router::new().route("/api/realtime/ws", axum::routing::get(realtime_ws))
+chatos/backend/src/api/remote_connections.rs: .route(
+chatos/backend/src/api/remote_connections.rs: .route(
+chatos/backend/src/api/remote_connections.rs: .route(
+chatos/backend/src/api/remote_connections.rs: .route(
+chatos/backend/src/api/remote_connections.rs: .route(
+chatos/backend/src/api/remote_connections.rs: .route(
+chatos/backend/src/api/remote_connections.rs: .route(
+chatos/backend/src/api/remote_connections.rs: .route(
+chatos/backend/src/api/remote_connections.rs: .route(
+chatos/backend/src/api/remote_connections.rs: .route(
+chatos/backend/src/api/remote_connections.rs: .route(
+chatos/backend/src/api/remote_connections.rs: .route(
+chatos/backend/src/api/remote_connections.rs: .route(
+chatos/backend/src/api/remote_connections.rs: .route(
+chatos/backend/src/api/remote_connections.rs: .route("/api/remote-connections/{id}/ws", get(remote_terminal_ws))
+chatos/backend/src/api/sessions.rs: .route(
+chatos/backend/src/api/sessions.rs: .route(
+chatos/backend/src/api/sessions.rs: .route(
+chatos/backend/src/api/sessions.rs: .route(
+chatos/backend/src/api/sessions.rs: .route(
+chatos/backend/src/api/sessions.rs: .route(
+chatos/backend/src/api/sessions.rs: .route(
+chatos/backend/src/api/sessions.rs: .route(
+chatos/backend/src/api/sessions.rs: .route(
+chatos/backend/src/api/sessions.rs: .route(
+chatos/backend/src/api/sessions.rs: .route(
+chatos/backend/src/api/sessions.rs: .route(
+chatos/backend/src/api/sessions.rs: .route(
+chatos/backend/src/api/sessions.rs: .route(
+chatos/backend/src/api/sessions.rs: .route(
+chatos/backend/src/api/system_contexts/mod.rs: .route(
+chatos/backend/src/api/system_contexts/mod.rs: .route(
+chatos/backend/src/api/system_contexts/mod.rs: .route(
+chatos/backend/src/api/system_contexts/mod.rs: .route(
+chatos/backend/src/api/system_contexts/mod.rs: .route(
+chatos/backend/src/api/system_contexts/mod.rs: .route(
+chatos/backend/src/api/system_contexts/mod.rs: .route("/api/system-context/active", get(get_active_system_context))
+chatos/backend/src/api/task_manager.rs: .route(
+chatos/backend/src/api/task_manager.rs: .route(
+chatos/backend/src/api/task_manager.rs: .route("/api/task-manager/tasks", get(list_tasks))
+chatos/backend/src/api/task_runner_external_mcp.rs: .route(
+chatos/backend/src/api/task_runner_external_mcp.rs: .route(
+chatos/backend/src/api/terminals.rs: .route(
+chatos/backend/src/api/terminals.rs: .route(
+chatos/backend/src/api/terminals.rs: .route(
+chatos/backend/src/api/terminals.rs: .route("/api/terminals", get(list_terminals).post(create_terminal))
+chatos/backend/src/api/terminals.rs: .route("/api/terminals/{id}/history", get(list_terminal_logs))
+chatos/backend/src/api/terminals.rs: .route("/api/terminals/{id}/ws", get(terminal_ws))
+chatos/backend/src/api/user_settings.rs: Router::new().route(
 

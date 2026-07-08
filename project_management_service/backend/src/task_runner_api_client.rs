@@ -464,7 +464,7 @@ mod tests {
         let handle = tokio::spawn(async move {
             let _ = axum::serve(listener, app).await;
         });
-        (format!("http://:addr"), handle)
+        (format!("http://{addr}"), handle)
     }
 
     async fn start_create_task_test_server(
@@ -537,7 +537,7 @@ mod tests {
         let handle = tokio::spawn(async move {
             let _ = axum::serve(listener, app).await;
         });
-        (format!("http://:addr"), handle)
+        (format!("http://{addr}"), handle)
     }
 
     #[tokio::test]
@@ -560,6 +560,12 @@ mod tests {
                 database_url: "sqlite::memory:".to_string(),
                 user_service_base_url: "http://127.0.0.1:39190".to_string(),
                 user_service_request_timeout: std::time::Duration::from_millis(1_000),
+                user_service_internal_secret: None,
+                cloud_project_import_enabled: true,
+                cloud_project_max_zip_bytes: 1024 * 1024,
+                cloud_project_max_unpacked_bytes: 1024 * 1024,
+                cloud_project_max_files: 100,
+                cloud_project_git_timeout: std::time::Duration::from_millis(1_000),
                 task_runner_base_url: Some(base_url),
                 task_runner_request_timeout: std::time::Duration::from_millis(1_000),
                 task_runner_internal_secret: Some("internal-secret".to_string()),
@@ -609,6 +615,12 @@ mod tests {
                 database_url: "sqlite::memory:".to_string(),
                 user_service_base_url: "http://127.0.0.1:39190".to_string(),
                 user_service_request_timeout: std::time::Duration::from_millis(1_000),
+                user_service_internal_secret: None,
+                cloud_project_import_enabled: true,
+                cloud_project_max_zip_bytes: 1024 * 1024,
+                cloud_project_max_unpacked_bytes: 1024 * 1024,
+                cloud_project_max_files: 100,
+                cloud_project_git_timeout: std::time::Duration::from_millis(1_000),
                 task_runner_base_url: Some(base_url),
                 task_runner_request_timeout: std::time::Duration::from_millis(1_000),
                 task_runner_internal_secret: Some("internal-secret".to_string()),
@@ -640,6 +652,12 @@ mod tests {
                 database_url: "sqlite::memory:".to_string(),
                 user_service_base_url: "http://127.0.0.1:39190".to_string(),
                 user_service_request_timeout: std::time::Duration::from_millis(1_000),
+                user_service_internal_secret: None,
+                cloud_project_import_enabled: true,
+                cloud_project_max_zip_bytes: 1024 * 1024,
+                cloud_project_max_unpacked_bytes: 1024 * 1024,
+                cloud_project_max_files: 100,
+                cloud_project_git_timeout: std::time::Duration::from_millis(1_000),
                 task_runner_base_url: Some(base_url),
                 task_runner_request_timeout: std::time::Duration::from_millis(1_000),
                 task_runner_internal_secret: Some("internal-secret".to_string()),

@@ -53,30 +53,28 @@ impl LocalRuntime {
         let saved_workspaces = state.workspaces.clone();
         let device_id = ensure_device_registered(&self.http_client, &config, &mut state).await?;
         let device_changed = previous_device_id.as_deref() != Some(device_id.as_str());
-        if device_changed {
-            for workspace in saved_workspaces {
-                let workspace_config = ClientConfig {
-                    workspace_alias: Some(workspace.alias.clone()),
-                    ..config.clone()
-                };
-                if let Err(err) = ensure_workspace_registered(
-                    &self.http_client,
-                    &workspace_config,
-                    &mut state,
-                    device_id.as_str(),
-                    workspace.absolute_root.clone(),
-                    true,
-                )
-                .await
-                {
-                    tracing_stdout(
-                        format!(
-                            "sync saved workspace {} failed: {err}",
-                            workspace.absolute_root.display()
-                        )
-                        .as_str(),
-                    );
-                }
+        for workspace in saved_workspaces {
+            let workspace_config = ClientConfig {
+                workspace_alias: Some(workspace.alias.clone()),
+                ..config.clone()
+            };
+            if let Err(err) = ensure_workspace_registered(
+                &self.http_client,
+                &workspace_config,
+                &mut state,
+                device_id.as_str(),
+                workspace.absolute_root.clone(),
+                device_changed,
+            )
+            .await
+            {
+                tracing_stdout(
+                    format!(
+                        "sync saved workspace {} failed: {err}",
+                        workspace.absolute_root.display()
+                    )
+                    .as_str(),
+                );
             }
         }
         state.save(self.state_path.as_path())?;
@@ -84,6 +82,7 @@ impl LocalRuntime {
     }
 
     pub(crate) async fn start_connector_if_configured(&self) -> Result<()> {
+        self.sync_saved_workspaces_if_needed().await?;
         let config = {
             let state = self.state.read().await;
             ClientConfig::from_state(&state, self.state_path.clone())

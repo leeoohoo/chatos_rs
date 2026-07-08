@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-import { useState } from 'react';
+import { type ReactNode, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   App,
@@ -10,6 +10,7 @@ import {
   Empty,
   Form,
   Input,
+  Modal,
   Select,
   Space,
   Switch,
@@ -23,7 +24,13 @@ import { EditOutlined, PlusOutlined, ReloadOutlined, SyncOutlined } from '@ant-d
 import dayjs from 'dayjs';
 
 import { api } from '../api/client';
-import type { CreateUserPayload, UpdateUserPayload, UserRole, UserSummaryRecord } from '../types';
+import type {
+  CreateUserPayload,
+  ProvisionHarnessPayload,
+  UpdateUserPayload,
+  UserRole,
+  UserSummaryRecord,
+} from '../types';
 
 type UserFormValues = {
   username: string;
@@ -33,12 +40,18 @@ type UserFormValues = {
   enabled: boolean;
 };
 
+type HarnessProvisionFormValues = {
+  password: string;
+};
+
 export function UsersPage() {
   const { message } = App.useApp();
   const queryClient = useQueryClient();
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [editingUser, setEditingUser] = useState<UserSummaryRecord | null>(null);
+  const [harnessProvisionUser, setHarnessProvisionUser] = useState<UserSummaryRecord | null>(null);
   const [form] = Form.useForm<UserFormValues>();
+  const [harnessForm] = Form.useForm<HarnessProvisionFormValues>();
 
   const currentUserQuery = useQuery({
     queryKey: ['current-user'],
@@ -76,13 +89,17 @@ export function UsersPage() {
     onError: showError,
   });
 
-  const retryHarnessMutation = useMutation({
-    mutationFn: (id: string) => api.retryHarnessProvisioning(id),
-    onSuccess: async () => {
-      message.success('Harness sync retried');
-      await queryClient.invalidateQueries({ queryKey: ['users'] });
+  const provisionHarnessMutation = useMutation({
+    mutationFn: ({ id, payload }: { id: string; payload: ProvisionHarnessPayload }) =>
+      api.provisionHarnessUser(id, payload),
+    onSuccess: () => {
+      message.success('Harness 账号已开通');
+      closeHarnessProvisionModal({ force: true });
     },
     onError: showError,
+    onSettled: async () => {
+      await queryClient.invalidateQueries({ queryKey: ['users'] });
+    },
   });
 
   const pending = createUserMutation.isPending || updateUserMutation.isPending;
@@ -127,7 +144,7 @@ export function UsersPage() {
     {
       title: 'Harness',
       dataIndex: 'harness_provisioning',
-      width: 150,
+      width: 190,
       render: (_, record) => renderHarnessStatus(record),
     },
     {
@@ -145,35 +162,24 @@ export function UsersPage() {
     {
       title: '操作',
       key: 'actions',
-      width: 180,
-      render: (_, record) => {
-        const canRetryHarness =
-          isSuperAdmin && record.harness_provisioning?.status === 'failed';
-        return (
-          <Space size={8}>
-            <Button size="small" icon={<EditOutlined />} onClick={() => openEditDrawer(record)}>
-              编辑
-            </Button>
-            {canRetryHarness ? (
-              <Tooltip title="Retry Harness sync">
-                <Button
-                  size="small"
-                  icon={<SyncOutlined />}
-                  loading={retryHarnessMutation.isPending}
-                  onClick={() => retryHarnessMutation.mutate(record.id)}
-                />
-              </Tooltip>
-            ) : null}
-          </Space>
-        );
-      },
+      width: 120,
+      render: (_, record) => (
+        <Button size="small" icon={<EditOutlined />} onClick={() => openEditDrawer(record)}>
+          编辑
+        </Button>
+      ),
     },
   ];
 
   function renderHarnessStatus(record: UserSummaryRecord) {
     const provisioning = record.harness_provisioning;
     if (!provisioning) {
-      return <Tag>Off</Tag>;
+      return (
+        <Space size={4}>
+          <Tag>Off</Tag>
+          {renderHarnessProvisionButton(record, '开通', <PlusOutlined />)}
+        </Space>
+      );
     }
 
     const title = provisioning.last_error
@@ -195,15 +201,39 @@ export function UsersPage() {
     }
     if (provisioning.status === 'failed') {
       return (
-        <Tooltip title={title}>
-          <Tag color="error">Failed</Tag>
-        </Tooltip>
+        <Space size={4}>
+          <Tooltip title={title}>
+            <Tag color="error">Failed</Tag>
+          </Tooltip>
+          {renderHarnessProvisionButton(record, '重试', <SyncOutlined />)}
+        </Space>
       );
     }
     return (
       <Tooltip title={title}>
         <Tag>{provisioning.status}</Tag>
       </Tooltip>
+    );
+  }
+
+  function renderHarnessProvisionButton(
+    record: UserSummaryRecord,
+    label: string,
+    icon: ReactNode,
+  ) {
+    if (!isSuperAdmin || !record.enabled) {
+      return null;
+    }
+    return (
+      <Button
+        type="link"
+        size="small"
+        icon={icon}
+        loading={provisionHarnessMutation.isPending && harnessProvisionUser?.id === record.id}
+        onClick={() => openHarnessProvisionModal(record)}
+      >
+        {label}
+      </Button>
     );
   }
 
@@ -236,6 +266,19 @@ export function UsersPage() {
     form.resetFields();
   }
 
+  function openHarnessProvisionModal(user: UserSummaryRecord) {
+    setHarnessProvisionUser(user);
+    harnessForm.resetFields();
+  }
+
+  function closeHarnessProvisionModal(options?: { force?: boolean }) {
+    if (provisionHarnessMutation.isPending && !options?.force) {
+      return;
+    }
+    setHarnessProvisionUser(null);
+    harnessForm.resetFields();
+  }
+
   function submitUser(values: UserFormValues) {
     if (editingUser) {
       const payload: UpdateUserPayload = {
@@ -258,6 +301,16 @@ export function UsersPage() {
       password: values.password || '',
       role: values.role,
       enabled: values.enabled,
+    });
+  }
+
+  function submitHarnessProvision(values: HarnessProvisionFormValues) {
+    if (!harnessProvisionUser) {
+      return;
+    }
+    provisionHarnessMutation.mutate({
+      id: harnessProvisionUser.id,
+      payload: { password: values.password },
     });
   }
 
@@ -360,6 +413,39 @@ export function UsersPage() {
           </Form.Item>
         </Form>
       </Drawer>
+
+      <Modal
+        title={
+          harnessProvisionUser
+            ? `开通 Harness 账号 ${harnessProvisionUser.username}`
+            : '开通 Harness 账号'
+        }
+        open={Boolean(harnessProvisionUser)}
+        okText={harnessProvisionUser?.harness_provisioning ? '重试开通' : '开通'}
+        cancelText="取消"
+        confirmLoading={provisionHarnessMutation.isPending}
+        onOk={() => harnessForm.submit()}
+        onCancel={() => closeHarnessProvisionModal()}
+        destroyOnClose
+      >
+        <Form<HarnessProvisionFormValues>
+          form={harnessForm}
+          layout="vertical"
+          requiredMark={false}
+          onFinish={submitHarnessProvision}
+        >
+          <Typography.Paragraph type="secondary">
+            这个密码会同时写入 Chatos 和 Harness，保持两个账号登录密码一致。
+          </Typography.Paragraph>
+          <Form.Item
+            name="password"
+            label="Chatos / Harness 密码"
+            rules={[{ required: true, message: '请输入密码' }]}
+          >
+            <Input.Password autoComplete="new-password" />
+          </Form.Item>
+        </Form>
+      </Modal>
     </Space>
   );
 }

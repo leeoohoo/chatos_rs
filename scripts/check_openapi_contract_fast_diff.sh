@@ -155,7 +155,7 @@ for file in "${CHANGED_FILES[@]}"; do
       touches_baseline_scripts="true"
       touches_docs_only="false"
       ;;
-    chat_app_server_rs/src/*|chat_app_server_rs/Cargo.toml|chat_app_server_rs/Cargo.lock)
+    chatos/backend/src/*|chatos/backend/Cargo.toml|chatos/backend/Cargo.lock)
       touches_backend_code="true"
       touches_docs_only="false"
       ;;

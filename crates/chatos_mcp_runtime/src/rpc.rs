@@ -3,8 +3,6 @@
 
 use std::collections::HashMap;
 use std::error::Error as StdError;
-use std::ffi::OsString;
-use std::path::Path;
 use std::process::Stdio;
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
@@ -16,7 +14,6 @@ use tokio::sync::Mutex as AsyncMutex;
 use tracing::{debug, info, warn};
 use uuid::Uuid;
 
-use crate::process_isolation;
 use crate::types::McpStdioServer;
 
 const MCP_RPC_TIMEOUT: Duration = Duration::from_secs(15);
@@ -566,42 +563,16 @@ async fn spawn_stdio_session(cfg: &McpStdioServer) -> Result<StdioRpcSession, St
 }
 
 fn build_stdio_command(cfg: &McpStdioServer) -> Result<tokio::process::Command, String> {
-    let isolation =
-        process_isolation::resolve_required_filesystem_view_for_user(cfg.user_id.as_deref())?;
-    let fs_view_enabled = process_isolation::filesystem_view_enabled(isolation.as_ref())?;
-    let cwd = cfg.cwd.as_deref().map(Path::new);
-    if let Some(cwd) = cwd {
-        process_isolation::prepare_workspace_for_user(cwd, isolation.as_ref())?;
-    }
-
-    let mut cmd = if isolation.is_some() {
-        let (command, mut args) = process_isolation::terminal_helper_command(
-            &cfg.command,
-            isolation.as_ref(),
-            cwd,
-            None,
-        )?;
-        if let Some(config_args) = &cfg.args {
-            args.extend(config_args.iter().map(OsString::from));
-        }
-        let mut cmd = tokio::process::Command::new(command);
+    let mut cmd = tokio::process::Command::new(&cfg.command);
+    if let Some(args) = &cfg.args {
         cmd.args(args);
-        cmd
-    } else {
-        let mut cmd = tokio::process::Command::new(&cfg.command);
-        if let Some(args) = &cfg.args {
-            cmd.args(args);
-        }
-        cmd
-    };
+    }
 
     if let Some(env) = &cfg.env {
         cmd.envs(env);
     }
     if let Some(cwd) = &cfg.cwd {
-        if isolation.is_none() || !fs_view_enabled {
-            cmd.current_dir(cwd);
-        }
+        cmd.current_dir(cwd);
     }
     Ok(cmd)
 }
