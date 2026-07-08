@@ -52,8 +52,10 @@ pub(super) async fn build_mcp_builder_parts(
     let mut builtin_servers =
         builtin_servers_from_kinds(selected_builtin_kinds.clone(), &server_options);
     apply_project_management_builtin_context(&mut builtin_servers, task);
+    let local_connector_routing = task_uses_local_connector(task);
+    let harness_code_routing = task_uses_harness_code(task);
     if super::is_chatos_plan_task(task) {
-        if sandbox_context.is_none() {
+        if sandbox_context.is_none() && !local_connector_routing && !harness_code_routing {
             builtin_servers.push(
                 chatos_mcp_runtime::BuiltinMcpKind::CodeMaintainerWrite
                     .server_with_options(&server_options),
@@ -82,7 +84,7 @@ pub(super) async fn build_mcp_builder_parts(
         );
     let mut builtin_registry = builtin_registry;
     if super::is_chatos_plan_task(task) {
-        if sandbox_context.is_none() {
+        if sandbox_context.is_none() && !local_connector_routing && !harness_code_routing {
             builtin_registry
                 .register(DisabledBuiltinProvider::code_maintainer_write_for_chatos_plan());
         }

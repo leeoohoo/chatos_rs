@@ -18,10 +18,17 @@ use tokio::net::TcpListener;
 async fn main() -> Result<(), std::io::Error> {
     init_tracing();
 
+    chatos_service_runtime::apply_config_center_env("db-connection-hub").await;
     let config = Config::from_env();
     let app_state = bootstrap::build_app_state().await?;
     let app = api::router::build_router(app_state);
 
+    let _service_runtime = chatos_service_runtime::register_current_service(
+        "db-connection-hub",
+        config.port,
+        "/api/v1/health",
+    )
+    .await;
     let listener = TcpListener::bind((config.host.as_str(), config.port)).await?;
     tracing::info!(host = %config.host, port = config.port, "db_connection_hub backend started");
 

@@ -2,6 +2,20 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use super::*;
+use std::collections::BTreeMap;
+
+pub const TASK_MCP_HTTP_AUTH_LOCAL_CONNECTOR_INTERNAL: &str = "local_connector_internal";
+pub const TASK_MCP_HTTP_AUTH_PROJECT_SERVICE_SYNC: &str = "project_service_sync";
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TaskEphemeralHttpMcpServer {
+    pub name: String,
+    pub url: String,
+    #[serde(default)]
+    pub headers: BTreeMap<String, String>,
+    #[serde(default)]
+    pub auth_mode: Option<String>,
+}
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -52,9 +66,15 @@ pub struct TaskMcpConfig {
     #[serde(default)]
     pub workspace_dir: Option<String>,
     #[serde(default)]
+    pub sandbox_enabled: Option<bool>,
+    #[serde(default)]
+    pub sandbox_manager_base_url: Option<String>,
+    #[serde(default)]
     pub default_remote_server_id: Option<String>,
     #[serde(default)]
     pub external_mcp_config_ids: Vec<String>,
+    #[serde(default)]
+    pub ephemeral_http_servers: Vec<TaskEphemeralHttpMcpServer>,
     #[serde(default)]
     pub skill_ids: Vec<String>,
 }
@@ -68,8 +88,11 @@ impl Default for TaskMcpConfig {
             builtin_prompt_locale: task_mcp_locale_default(),
             enabled_builtin_kinds: task_mcp_builtin_kinds_default(),
             workspace_dir: None,
+            sandbox_enabled: None,
+            sandbox_manager_base_url: None,
             default_remote_server_id: None,
             external_mcp_config_ids: Vec::new(),
+            ephemeral_http_servers: Vec::new(),
             skill_ids: Vec::new(),
         }
     }

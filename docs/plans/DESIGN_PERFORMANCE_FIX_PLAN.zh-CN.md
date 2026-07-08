@@ -7,11 +7,11 @@
 ### 2026-06-28 第一批已实施
 
 1. WebSocket 出站背压已落地：
-   - 新增 `chat_app_server_rs/src/utils/ws_outbound.rs`，统一创建 bounded WebSocket 出站队列，并在队列满时记录慢客户端日志、触发连接关闭。
-   - `chat_app_server_rs/src/api/realtime.rs`：`mpsc::unbounded_channel` 改为容量 256 的 bounded channel。
-   - `chat_app_server_rs/src/api/terminals/ws_handlers.rs`：`mpsc::unbounded_channel` 改为容量 512 的 bounded channel。
-   - `chat_app_server_rs/src/api/remote_connections/terminal_ws_api.rs`：`mpsc::unbounded_channel` 改为容量 512 的 bounded channel；二次验证 challenge 的 blocking 线程改用 `try_send`，避免阻塞或无限排队。
-   - `chat_app_server_rs/src/utils/sse.rs`：移除 `UnboundedSender` 类型依赖，改为 bounded `mpsc::Sender` + `try_send`。当前代码未发现实际 SSE sender 创建入口；若恢复 SSE stream endpoint，创建处必须使用 bounded channel，并补上满队列断开逻辑。
+   - 新增 `chatos/backend/src/utils/ws_outbound.rs`，统一创建 bounded WebSocket 出站队列，并在队列满时记录慢客户端日志、触发连接关闭。
+   - `chatos/backend/src/api/realtime.rs`：`mpsc::unbounded_channel` 改为容量 256 的 bounded channel。
+   - `chatos/backend/src/api/terminals/ws_handlers.rs`：`mpsc::unbounded_channel` 改为容量 512 的 bounded channel。
+   - `chatos/backend/src/api/remote_connections/terminal_ws_api.rs`：`mpsc::unbounded_channel` 改为容量 512 的 bounded channel；二次验证 challenge 的 blocking 线程改用 `try_send`，避免阻塞或无限排队。
+   - `chatos/backend/src/utils/sse.rs`：移除 `UnboundedSender` 类型依赖，改为 bounded `mpsc::Sender` + `try_send`。当前代码未发现实际 SSE sender 创建入口；若恢复 SSE stream endpoint，创建处必须使用 bounded channel，并补上满队列断开逻辑。
 2. AI payload 重复序列化已移除：
    - 删除 `chat_app_server_rs` 上层 `validate_request_payload_size(&payload, ...)` 预检，避免请求发送前额外 `serde_json::to_vec`。
    - `request_body_limit_bytes` 现在传入 `chatos_ai_runtime::AiRequestOptions`，保留 shared runtime 内的单次 `serialize_request_payload` + size check。
@@ -35,10 +35,10 @@
    - 增加 idle TTL，默认 10 分钟；后续访问 session 池时会清理超过 TTL 且没有 in-flight 引用的 session。
    - 增加 `spawned`、`reused`、`evicted`、`removed` 相关 tracing 日志。
 2. 长会话 Memory Engine pending 保护已落地：
-   - `chat_app_server_rs/src/services/chatos_memory_engine/sessions.rs` 调用 compose context 时显式设置 `recent_record_limit: Some(200)`。
+   - `chatos/backend/src/services/chatos_memory_engine/sessions.rs` 调用 compose context 时显式设置 `recent_record_limit: Some(200)`。
    - 该限制只作为 summary 异常滞后或 pending records 失控时的保护，不改变正常 `summary + pending tail` 流程判断。
 3. 本地终端 snapshot tail 优化已落地：
-   - `chat_app_server_rs/src/services/terminal_manager/output_history.rs` 的 `snapshot_tail_lines` 改为从尾部 chunk 反向扫描，只拼接最终要返回的尾部内容，避免为了取尾部先构造完整 history 字符串。
+   - `chatos/backend/src/services/terminal_manager/output_history.rs` 的 `snapshot_tail_lines` 改为从尾部 chunk 反向扫描，只拼接最终要返回的尾部内容，避免为了取尾部先构造完整 history 字符串。
    - 增加了 `snapshot_tail_lines` 跨 chunk、边界和 zero limit 单测。
 4. 已完成验证：
    - `cargo fmt --all`
@@ -53,11 +53,11 @@
 ### 2026-06-28 第三批已实施
 
 1. AI tools 大对象 clone 已收敛：
-   - `chat_app_server_rs/src/services/agent_runtime/ai_request_handler/mod.rs` 的 `handle_request` 入参从 `Option<Vec<Value>>` 改为 `Option<&[Value]>`。
-   - `chat_app_server_rs/src/services/agent_runtime/ai_client/execution_loop.rs` 每次模型请求不再提前 `tools.clone()`，只在最终构建 provider payload 时复制一次工具定义。
+   - `chatos/backend/src/services/agent_runtime/ai_request_handler/mod.rs` 的 `handle_request` 入参从 `Option<Vec<Value>>` 改为 `Option<&[Value]>`。
+   - `chatos/backend/src/services/agent_runtime/ai_client/execution_loop.rs` 每次模型请求不再提前 `tools.clone()`，只在最终构建 provider payload 时复制一次工具定义。
 2. live request snapshot 回调 clone 已收敛：
    - `AiClientCallbacks::on_before_model_request` 改为接收 `&Value`。
-   - `chat_app_server_rs/src/modules/conversation_runtime/chat_runner.rs` 在同步 snapshot 前直接从借用的 request input 提取 context items，不再为了回调 clone 整个 request input。
+   - `chatos/backend/src/modules/conversation_runtime/chat_runner.rs` 在同步 snapshot 前直接从借用的 request input 提取 context items，不再为了回调 clone 整个 request input。
 3. stateless context 重复 rebuild 已减少：
    - `process_request` 已经构建 initial stateless input 后，`process_with_tools` 第一轮不再立刻重复 `maybe_refresh_stateless_context`。
    - tool 执行后的 `advance_after_tool_execution` 已经重建 stateless input，下一轮顶部不再重复刷新。
@@ -73,21 +73,21 @@
 ### 2026-06-28 第四批已实施
 
 1. workspace 内容搜索已加 wall-clock deadline：
-   - `chat_app_server_rs/src/services/workspace_search/mod.rs` 增加默认 3 秒 deadline。
+   - `chatos/backend/src/services/workspace_search/mod.rs` 增加默认 3 秒 deadline。
    - 命中 deadline 时沿用现有 `truncated: true`，不改变 API 响应结构。
    - `TextSearchRequest` 增加内部可配置 `deadline` 字段，便于测试和后续工具级差异化配置。
 2. 文件搜索 API 已从 async worker 隔离同步 IO：
-   - `chat_app_server_rs/src/api/fs/query_handlers_search.rs` 的文件名搜索和内容搜索都改为 `tokio::task::spawn_blocking` 执行。
+   - `chatos/backend/src/api/fs/query_handlers_search.rs` 的文件名搜索和内容搜索都改为 `tokio::task::spawn_blocking` 执行。
    - 文件名搜索同样增加 3 秒 deadline，超时返回部分结果并标记 `truncated: true`。
 3. code-nav 同步 fallback / heuristic provider 已纳入 blocking pool：
-   - `chat_app_server_rs/src/services/code_nav/manager.rs` 的 fallback definition / references / document symbols 改为 blocking task。
-   - `chat_app_server_rs/src/services/code_nav/languages/shared_nav.rs` 的共享 heuristic provider wrapper 改为 blocking task。
-   - `chat_app_server_rs/src/services/code_nav/languages/basic.rs` 增加 BasicSpec blocking helper，C / C++ / C# / Kotlin provider 已切换复用。
+   - `chatos/backend/src/services/code_nav/manager.rs` 的 fallback definition / references / document symbols 改为 blocking task。
+   - `chatos/backend/src/services/code_nav/languages/shared_nav.rs` 的共享 heuristic provider wrapper 改为 blocking task。
+   - `chatos/backend/src/services/code_nav/languages/basic.rs` 增加 BasicSpec blocking helper，C / C++ / C# / Kotlin provider 已切换复用。
 4. code-nav symbol index 增加扫描预算：
-   - `chat_app_server_rs/src/services/code_nav/symbol_index.rs` 增加 20000 entry 上限和 5 秒 deadline。
+   - `chatos/backend/src/services/code_nav/symbol_index.rs` 增加 20000 entry 上限和 5 秒 deadline。
    - 超预算时返回错误，不缓存不完整索引；调用方继续走已有文本搜索 fallback。
 5. code-nav 语言级文本搜索增加扫描预算：
-   - `chat_app_server_rs/src/services/code_nav/languages/shared_nav.rs` 增加共享文本搜索预算 helper，默认 20000 entry / 3 秒。
+   - `chatos/backend/src/services/code_nav/languages/shared_nav.rs` 增加共享文本搜索预算 helper，默认 20000 entry / 3 秒。
    - Basic / Rust / Go / Java / Python 搜索路径已接入预算，避免 symbol index fallback 后继续长时间扫仓。
    - Java / Python 的 import 解析兜底 WalkDir 和 Go 包文件枚举也已接入同一预算。
 6. 已完成验证：
@@ -103,7 +103,7 @@
 ### 2026-06-28 第五批已实施
 
 1. 工具执行层重 IO 并发闸门已落地：
-   - `chat_app_server_rs/src/services/mcp_execution_core/execution.rs` 对文件读写、目录列表、文本搜索、patch 等重 IO 工具增加 semaphore 限制。
+   - `chatos/backend/src/services/mcp_execution_core/execution.rs` 对文件读写、目录列表、文本搜索、patch 等重 IO 工具增加 semaphore 限制。
    - 同一 session 默认最多 2 个重 IO 工具并发执行，进程内默认最多 8 个重 IO 工具并发执行。
    - 限制挂在 `call_tool_once` 入口，覆盖串行执行、并行执行、builtin / HTTP / stdio MCP 工具调用。
    - session limiter 使用弱引用缓存，空闲 session 的 limiter 会在后续访问时被清理，避免无界保存历史 session。
@@ -135,8 +135,8 @@
 ### 2026-06-28 第七批已实施
 
 1. Project Run analyzer 扫描预算已落地：
-   - 新增 `chat_app_server_rs/src/services/project_run/analyzer/scan_budget.rs`，统一提供 20000 filesystem entries / 5 秒的项目运行目标分析预算。
-   - `chat_app_server_rs/src/services/project_run/analyzer/scan.rs` 的主 BFS 扫描现在按目录和条目计入预算，超限时返回明确错误，不再静默吞掉分析失败原因。
+   - 新增 `chatos/backend/src/services/project_run/analyzer/scan_budget.rs`，统一提供 20000 filesystem entries / 5 秒的项目运行目标分析预算。
+   - `chatos/backend/src/services/project_run/analyzer/scan.rs` 的主 BFS 扫描现在按目录和条目计入预算，超限时返回明确错误，不再静默吞掉分析失败原因。
    - `analyze_project` 保留 analyzer 内部错误到 `ProjectRunCatalog.error_message`，并增加 `project run target analysis failed` warn 日志，便于定位大仓库超预算或文件系统异常。
 2. Project Run 二级入口探测已加保护：
    - Java 探测现在只有命中 `pom.xml` / Gradle manifest 时才扫描 `src/main/java`，避免普通目录树被无意义 Java WalkDir 放大。
@@ -154,10 +154,10 @@
 ### 2026-06-28 第八批已实施
 
 1. Project Run 环境快照构建已隔离同步 IO：
-   - `chat_app_server_rs/src/services/project_run/environment.rs` 在完成数据库读取后，将 `build_environment_snapshot` 放入 `tokio::task::spawn_blocking`。
+   - `chatos/backend/src/services/project_run/environment.rs` 在完成数据库读取后，将 `build_environment_snapshot` 放入 `tokio::task::spawn_blocking`。
    - 该快照构建包含工具链发现、项目配置文件读取、目标校验等同步文件系统操作；隔离后不会直接占用 async worker。
 2. Project Run 文件读取限幅已统一：
-   - 新增 `chat_app_server_rs/src/services/project_run/file_limits.rs`，集中定义 manifest / source probe / config preview 的最大读取字节数。
+   - 新增 `chatos/backend/src/services/project_run/file_limits.rs`，集中定义 manifest / source probe / config preview 的最大读取字节数。
    - `analyzer/scan_budget.rs` 复用该模块，不再单独维护一份受限读取逻辑。
    - `environment_discovery/config_files.rs` 的配置预览限制为 256KB。
    - `environment_discovery/hints.rs` 的 `.tool-versions`、`go.mod`、`rust-toolchain.toml` 等版本提示读取限制为 1MB。
@@ -172,7 +172,7 @@
 ### 2026-06-28 第九批已实施
 
 1. 前端工具详情大 payload 渲染保护已落地：
-   - 新增 `chat_app/src/components/toolDetails/textPreview.ts`，统一提供长文本截断和 bounded JSON preview。
+   - 新增 `chatos/frontend/src/components/toolDetails/textPreview.ts`，统一提供长文本截断和 bounded JSON preview。
    - JSON preview 按最大深度、数组项数、对象键数、字符串长度做预览对象后再序列化，避免工具详情为了展示任意大对象执行全量 pretty `JSON.stringify`。
    - `TextBlockCard` 和工具输入详情 `renderTextBlock` 现在会在渲染前自动截断长文本，并用 `truncated` badge 标记。
    - `GenericStructuredResultDetails`、`ToolArgumentsDetails`、fallback tool result renderer、browser console result payload 均改用安全 JSON preview。
@@ -186,12 +186,12 @@
 ### 2026-06-28 第十批已实施
 
 1. 前端 realtime 高频失效刷新已合并：
-   - 新增 `chat_app/src/lib/realtime/invalidationQueue.ts`，将同 tick / cooldown 窗口内的重复 invalidation 合并，只保留最后一次 payload。
-   - `chat_app/src/lib/realtime/useProjectRunRealtime.ts` 的 project run state、catalog、members 更新接入 150ms 合并队列，避免 realtime burst 触发连续刷新。
+   - 新增 `chatos/frontend/src/lib/realtime/invalidationQueue.ts`，将同 tick / cooldown 窗口内的重复 invalidation 合并，只保留最后一次 payload。
+   - `chatos/frontend/src/lib/realtime/useProjectRunRealtime.ts` 的 project run state、catalog、members 更新接入 150ms 合并队列，避免 realtime burst 触发连续刷新。
    - `project.run.instance_changed` 仍保持直接回调，避免 terminal instance 退出等关键 payload 被合并延迟。
    - 组件卸载时清理 pending payload 和 timer，避免卸载后刷新。
 2. 前端 realtime debug 渲染隔离已落地：
-   - `chat_app/src/lib/realtime/RealtimeProvider.tsx` 将 `client`、`connectionState`、`debugSnapshot` 拆为独立 context。
+   - `chatos/frontend/src/lib/realtime/RealtimeProvider.tsx` 将 `client`、`connectionState`、`debugSnapshot` 拆为独立 context。
    - `useRealtimeConnectionState` 不再订阅 debug snapshot；debug 事件、topic 同步、ack/pong 更新不会唤起只关心连接状态的组件。
    - 保持 `useRealtimeContext`、`useRealtimeConnectionState`、`useRealtimeDebugSnapshot` 现有导出 API 不变，降低调用侧迁移风险。
 3. 已完成验证：
@@ -202,11 +202,11 @@
 ### 2026-06-28 第十一批已实施
 
 1. 本地终端输出 history 单 chunk 放大已收敛：
-   - `chat_app_server_rs/src/services/terminal_manager/output_history.rs` 在写入 history 前按 64KB / 1024 换行符分片。
+   - `chatos/backend/src/services/terminal_manager/output_history.rs` 在写入 history 前按 64KB / 1024 换行符分片。
    - history 仍按 2MB / 10000 行总上限回收，但不再因为单个异常大 chunk 导致大块长期保留或整块回收过粗。
    - `snapshot_tail_lines` 保持原有接口，只返回请求的尾部行。
 2. 远端终端输出 history 已补齐行数上限：
-   - `chat_app_server_rs/src/api/remote_connections/remote_terminal.rs` 增加 10000 行总上限。
+   - `chatos/backend/src/api/remote_connections/remote_terminal.rs` 增加 10000 行总上限。
    - 远端 history 同样按 64KB / 1024 换行符分片，继续保留 512KB 总字节上限。
    - WebSocket snapshot 响应结构未改变，仍发送 `WsOutput::Snapshot { data }`。
 3. 已完成验证：
@@ -219,11 +219,11 @@
 ### 2026-06-28 第十二批已实施
 
 1. Project Plan 大列表渲染已加窗口保护：
-   - `chat_app/src/components/projectExplorer/ProjectPlanPane.tsx` 对选中需求下的 work item 默认只渲染前 80 个。
+   - `chatos/frontend/src/components/projectExplorer/ProjectPlanPane.tsx` 对选中需求下的 work item 默认只渲染前 80 个。
    - 用户需要查看更多时通过底部按钮每次递增 80 个，顶部统计仍基于完整 work item 数据。
    - 切换需求时重置可见窗口，避免跨需求保留过大的渲染窗口。
 2. Project Plan 依赖标签渲染已限幅：
-   - `chat_app/src/components/projectExplorer/projectPlanPane/components.tsx` 的 `DependencyLine` 最多渲染前 16 个依赖标签。
+   - `chatos/frontend/src/components/projectExplorer/projectPlanPane/components.tsx` 的 `DependencyLine` 最多渲染前 16 个依赖标签。
    - 超出部分用 `+N` 汇总，避免异常依赖图生成大量 pill DOM。
 3. 已完成验证：
    - `npm run test -- projectPlanPane/model.test.ts --run`
@@ -232,11 +232,11 @@
 ### 2026-06-28 第十三批已实施
 
 1. 长会话 Task Board 上下文加载策略已修正：
-   - `chat_app_server_rs/src/modules/conversation_runtime/task_board.rs` 不再用单次 `include_done=true LIMIT 200` 作为运行时 task board 输入。
+   - `chatos/backend/src/modules/conversation_runtime/task_board.rs` 不再用单次 `include_done=true LIMIT 200` 作为运行时 task board 输入。
    - 运行时上下文现在先单独加载非 done 任务，再补充 done 历史并按 id 去重，避免旧 done 任务挤掉当前 todo / doing 任务。
    - 该调整只影响模型运行时 task board 上下文，不改变 `/api/task-manager/tasks` 外部接口。
 2. current task 选择更稳：
-   - `chat_app_server_rs/src/services/task_board_prompt.rs` 选择当前执行任务时改为取最新 `updated_at` / `created_at` 的 `doing` 任务。
+   - `chatos/backend/src/services/task_board_prompt.rs` 选择当前执行任务时改为取最新 `updated_at` / `created_at` 的 `doing` 任务。
    - 不再依赖输入数组顺序，避免查询排序变化时选到旧 doing。
 3. 已完成验证：
    - `cargo fmt --all`
@@ -250,12 +250,12 @@
    - 后端 AI 请求链路日志只记录 transport、model、字节数、耗时、tool call 数等摘要字段，未发现完整 prompt / payload 直接进入 tracing 日志。
    - `println!` 命中点复查后确认是 Rust code-nav 单测 fixture 字符串，不是运行时 stdout 调试输出。
 2. 前端 debug 日志开销已收敛：
-   - `chat_app/src/lib/utils/index.ts` 的 `debugLog` 改为显式开发开关：仅当 `localStorage.chatos.debugLog` 为 `1` 或 `true` 时输出。
+   - `chatos/frontend/src/lib/utils/index.ts` 的 `debugLog` 改为显式开发开关：仅当 `localStorage.chatos.debugLog` 为 `1` 或 `true` 时输出。
    - 新增 `debugLogLazy`，避免未开启 debug 时仍构造日志对象。
    - `sendMessage` 不再默认构造聊天请求调试 payload；只有 debug 开启时才 lazy 构造。
    - session message cache、compact history 的调试日志也改为 lazy 构造。
 3. 调试 payload 已摘要化：
-   - `chat_app/src/lib/store/actions/sendMessage/requestPayload.ts` 不再把完整 message、system context、attachment dataUrl/text 放入日志对象。
+   - `chatos/frontend/src/lib/store/actions/sendMessage/requestPayload.ts` 不再把完整 message、system context、attachment dataUrl/text 放入日志对象。
    - 日志只保留文本 preview、字符数、附件数量、附件总字节数和附件元数据。
 4. 已完成验证：
    - `npm run test -- sendMessage/requestPayload.test.ts --run`
@@ -265,7 +265,7 @@
 ### 2026-06-28 第十五批已实施
 
 1. Project Management 跨服务响应读取已限幅：
-   - `chat_app_server_rs/src/services/project_management_api_client.rs` 的成功响应不再直接 `response.json()`，改为先通过 `bytes_stream()` 有界读取，再 `serde_json::from_slice`。
+   - `chatos/backend/src/services/project_management_api_client.rs` 的成功响应不再直接 `response.json()`，改为先通过 `bytes_stream()` 有界读取，再 `serde_json::from_slice`。
    - 普通 Project Service 响应默认限制为 2MB；Project Plan 详情响应限制为 8MB；错误响应只读取 16KB 预览。
    - 读取前先检查 `content_length()`，流式读取过程中继续按累计 bytes 检查，避免缺失 Content-Length 时仍读入超大 body。
    - `send_json()`、`send_optional_json()`、`get_project_service_plan()` 均接入该限制。
@@ -278,17 +278,17 @@
 ### 2026-06-28 第十六批已实施
 
 1. Task Runner API client 响应读取已限幅：
-   - `chat_app_server_rs/src/services/task_runner_api_client.rs` 的 token exchange、skill fetch、task CRUD、prompt submit/cancel、internal message task 查询均改为有界读取后解析 JSON。
+   - `chatos/backend/src/services/task_runner_api_client.rs` 的 token exchange、skill fetch、task CRUD、prompt submit/cancel、internal message task 查询均改为有界读取后解析 JSON。
    - 普通响应默认限制为 2MB；internal message/task graph 响应限制为 4MB；错误响应只读取 16KB 预览。
 2. User Service client 已收敛响应读取和连接复用：
-   - `chat_app_server_rs/src/services/user_service_api_client/http.rs` 的 `request_json` 改为有界读取成功响应后解析 JSON，错误响应只读取 16KB 预览。
+   - `chatos/backend/src/services/user_service_api_client/http.rs` 的 `request_json` 改为有界读取成功响应后解析 JSON，错误响应只读取 16KB 预览。
    - 原来每次请求都构造新的 `reqwest::Client`，已改为 `OnceLock<reqwest::Client>` 复用连接池；timeout 保持按 request 设置，不改变调用方语义。
 3. 外部 MCP 配置代理已收敛：
-   - `chat_app_server_rs/src/api/task_runner_external_mcp.rs` 不再每次转发都重建 HTTP client。
+   - `chatos/backend/src/api/task_runner_external_mcp.rs` 不再每次转发都重建 HTTP client。
    - 成功响应限制为 2MB，错误响应预览限制为 16KB，继续保留原 API 响应结构。
 4. 模型列表拉取与 MCP HTTP JSON-RPC 已限幅：
-   - `chat_app_server_rs/src/api/configs/ai_model/provider_models.rs` 拉取 `/models` 时成功响应限制为 2MB，错误预览限制为 16KB，并复用 HTTP client。
-   - `chat_app_server_rs/src/core/mcp_tools/rpc.rs` 的 HTTP JSON-RPC 响应限制为 4MB，错误预览限制为 16KB。
+   - `chatos/backend/src/api/configs/ai_model/provider_models.rs` 拉取 `/models` 时成功响应限制为 2MB，错误预览限制为 16KB，并复用 HTTP client。
+   - `chatos/backend/src/core/mcp_tools/rpc.rs` 的 HTTP JSON-RPC 响应限制为 4MB，错误预览限制为 16KB。
 5. 复扫结论：
    - 后端已无剩余无界 `response.text()` / `response.json()` HTTP 解析点。
    - 当前剩余命中为 tracing JSON formatter、code-nav 文本预览，以及新增的有界 `bytes_stream()` 读取。
@@ -302,16 +302,16 @@
 ### 2026-06-28 第十七批已实施
 
 1. MCP stdio 响应读取已加单行上限：
-   - `chat_app_server_rs/src/core/mcp_tools/rpc.rs` 不再使用 `BufReader::lines()` 读取 stdio JSON-RPC 响应，改为 `fill_buf` + `consume` 按缓冲块读取，并在累计单行超过 4MB 前返回错误。
+   - `chatos/backend/src/core/mcp_tools/rpc.rs` 不再使用 `BufReader::lines()` 读取 stdio JSON-RPC 响应，改为 `fill_buf` + `consume` 按缓冲块读取，并在累计单行超过 4MB 前返回错误。
    - `crates/chatos_mcp_runtime/src/rpc.rs` 的 stdio session 池同样改为有界单行读取，避免常驻 session 遇到异常超长 stdout 行时撑大内存。
-   - `chat_app_server_rs/src/api/configs/mcp_resource.rs` 的 MCP 配置资源读取入口补充 15 秒 timeout、2MB stdio 响应单行上限、1MB 配置文本上限。
+   - `chatos/backend/src/api/configs/mcp_resource.rs` 的 MCP 配置资源读取入口补充 15 秒 timeout、2MB stdio 响应单行上限、1MB 配置文本上限。
 2. MCP HTTP tools/list 响应读取已限幅：
    - `crates/chatos_mcp_runtime/src/rpc.rs` 的 HTTP JSON-RPC 响应不再直接 `response.text()`，成功响应限制为 4MB，错误响应预览限制为 16KB。
    - 非 JSON 响应仍保留原有 preview 报错逻辑，但 preview 来自有界读取结果。
 3. stdio 子进程回收更明确：
-   - `chat_app_server_rs/src/core/mcp_tools/rpc.rs` 和 `mcp_resource.rs` 的临时 stdio 子进程设置 `kill_on_drop(true)`，避免超时、超限或提前返回后子进程继续残留。
+   - `chatos/backend/src/core/mcp_tools/rpc.rs` 和 `mcp_resource.rs` 的临时 stdio 子进程设置 `kill_on_drop(true)`，避免超时、超限或提前返回后子进程继续残留。
 4. 复扫结论：
-   - `chat_app_server_rs/src` 与 `crates/chatos_mcp_runtime/src` 已无剩余 `response.text()` / `response.json()` 无界 HTTP 响应解析。
+   - `chatos/backend/src` 与 `crates/chatos_mcp_runtime/src` 已无剩余 `response.text()` / `response.json()` 无界 HTTP 响应解析。
    - 已无核心 stdio JSON-RPC 路径继续使用 `BufReader::new(stdout).lines()` / `next_line()`。
 5. 已完成验证：
    - `cargo fmt --all`
@@ -327,7 +327,7 @@
 ### 2026-06-28 第十八批已实施
 
 1. Git 子进程输出读取已改为有界流式读取：
-   - `chat_app_server_rs/src/services/git/process.rs` 不再使用 `Command::output()` 一次性收集 stdout/stderr。
+   - `chatos/backend/src/services/git/process.rs` 不再使用 `Command::output()` 一次性收集 stdout/stderr。
    - 新增 Git 命令 runner：stdout/stderr 分别并发读取，并在累计输出超过上限时终止子进程。
    - stdout 上限为 16MB，stderr 上限为 4MB；超限返回明确错误，而不是继续把大输出读入内存。
    - runner 设置 `stdin(Stdio::null())`、`kill_on_drop(true)`，超时、读取失败或输出超限时会主动终止子进程。
@@ -342,7 +342,7 @@
 ### 2026-06-28 第十九批已实施
 
 1. native SSH 远程命令输出已限幅：
-   - `chat_app_server_rs/src/api/remote_connections/connectivity.rs` 的 ssh2 native 路径不再对 stdout/stderr 使用无界 `read_to_end`。
+   - `chatos/backend/src/api/remote_connections/connectivity.rs` 的 ssh2 native 路径不再对 stdout/stderr 使用无界 `read_to_end`。
    - stdout 上限为 4MB，stderr 上限为 1MB；超限时返回明确错误，避免远端命令异常输出导致后端内存放大。
    - 覆盖 `run_ssh_command` / `run_ssh_command_with_verification`，包括远程连接 builtin 工具、SFTP 目录操作、连接测试等复用路径。
 2. 已完成验证：
@@ -366,7 +366,7 @@
 ### 2026-06-28 第二十一批已实施
 
 1. TypeScript 语义导航 bridge 子进程已限幅：
-   - `chat_app_server_rs/src/services/code_nav/languages/ts_service.rs` 不再使用 `Command::output()` 全量收集 node bridge 输出。
+   - `chatos/backend/src/services/code_nav/languages/ts_service.rs` 不再使用 `Command::output()` 全量收集 node bridge 输出。
    - stdout 上限为 2MB，stderr 上限为 512KB；输出超限时会主动终止子进程并返回明确错误。
    - bridge 调用增加 20 秒 timeout，避免 TypeScript language service 在异常项目上长期挂住。
 2. 已完成验证：
@@ -396,10 +396,10 @@ Memory Engine 是长会话上下文的正常入口。按正常流程，旧消息
 
 以下路径使用 `mpsc::unbounded_channel` 或 `UnboundedSender` 作为 WebSocket/SSE 出站缓冲：
 
-- `chat_app_server_rs/src/api/realtime.rs`
-- `chat_app_server_rs/src/api/terminals/ws_handlers.rs`
-- `chat_app_server_rs/src/api/remote_connections/terminal_ws_api.rs`
-- `chat_app_server_rs/src/utils/sse.rs`
+- `chatos/backend/src/api/realtime.rs`
+- `chatos/backend/src/api/terminals/ws_handlers.rs`
+- `chatos/backend/src/api/remote_connections/terminal_ws_api.rs`
+- `chatos/backend/src/utils/sse.rs`
 
 终端 session 内部的 broadcast channel 有容量，例如 `broadcast::channel(4096)`，但 WebSocket 出站层仍是无界队列。若浏览器端网络慢、页面挂起、代理阻塞，终端输出、realtime 事件或 SSE chunk 会堆在进程内存里。
 
@@ -435,14 +435,14 @@ Memory Engine 是长会话上下文的正常入口。按正常流程，旧消息
 
 ### 3.1 问题
 
-`chat_app_server_rs/src/services/agent_runtime/ai_client/execution_loop.rs` 每轮会：
+`chatos/backend/src/services/agent_runtime/ai_client/execution_loop.rs` 每轮会：
 
 - `prefixed_input_items.clone()`
 - `input.clone()`
 - `request_input.clone()` 传给 callback
 - `tools.clone()` 传给 request handler
 
-`chat_app_server_rs/src/services/agent_runtime/ai_client/stateless_context.rs` 每次刷新 stateless context 会把历史消息字段 clone 成 `StatelessHistoryMessage`，再构造新的 `Vec<Value>`。
+`chatos/backend/src/services/agent_runtime/ai_client/stateless_context.rs` 每次刷新 stateless context 会把历史消息字段 clone 成 `StatelessHistoryMessage`，再构造新的 `Vec<Value>`。
 
 对短会话影响较小；对长会话、大工具列表、大工具输出或多轮 tool-call 场景，会带来明显 CPU 和内存分配压力。
 
@@ -488,7 +488,7 @@ Memory Engine 是长会话上下文的正常入口。按正常流程，旧消息
 
 ### 4.1 问题
 
-`chat_app_server_rs/src/services/ai_common/request_support/request_transport.rs` 会用 `serde_json::to_vec(payload)` 做预检。
+`chatos/backend/src/services/ai_common/request_support/request_transport.rs` 会用 `serde_json::to_vec(payload)` 做预检。
 
 随后 `crates/chatos_ai_runtime/src/request.rs` 在 `send_payload` 中再次 `serialize_request_payload(&payload)`，并再次校验大小。
 
@@ -557,9 +557,9 @@ Memory Engine 是长会话上下文的正常入口。按正常流程，旧消息
 
 重点路径：
 
-- `chat_app_server_rs/src/services/workspace_search/mod.rs`
-- `chat_app_server_rs/src/services/code_nav/**`
-- `chat_app_server_rs/src/services/project_run/analyzer.rs`
+- `chatos/backend/src/services/workspace_search/mod.rs`
+- `chatos/backend/src/services/code_nav/**`
+- `chatos/backend/src/services/project_run/analyzer.rs`
 - `crates/chatos_builtin_tools/src/code_maintainer/**`
 
 这些工具通常是用户显式触发，风险低于实时通道；但一旦被 agent 高频调用，仍可能抢占 CPU / IO。
@@ -728,7 +728,7 @@ Memory Engine 是长会话上下文的正常入口。按正常流程，旧消息
 验证：
 
 - `cargo fmt --all`
-- `rg -n "\\.output\\(\\)" chat_app_server_rs/src crates project_management_service/backend/src -S`
+- `rg -n "\\.output\\(\\)" chatos/backend/src crates project_management_service/backend/src -S`
 - `cargo check -p chat_app_server_rs`
 - `cargo test -p chat_app_server_rs --lib process_output`
 - `cargo test -p chat_app_server_rs --lib remote_connections`
@@ -748,7 +748,7 @@ Memory Engine 是长会话上下文的正常入口。按正常流程，旧消息
 
 验证：
 
-- `rg -n "response\\.text\\(\\)|response\\.json\\(" project_management_service/backend/src crates/chatos_ai_runtime/src chat_app_server_rs/src -S`
+- `rg -n "response\\.text\\(\\)|response\\.json\\(" project_management_service/backend/src crates/chatos_ai_runtime/src chatos/backend/src -S`
 - `cargo fmt --all`
 - `cargo test -p project_management_service_backend --lib response_body_limit`
 - `cargo test -p project_management_service_backend --lib task_runner`
@@ -830,7 +830,7 @@ Memory Engine 是长会话上下文的正常入口。按正常流程，旧消息
 - `cargo test -p task_runner_service_backend --lib notepad`
 - `cargo test -p chatos_builtin_tools --lib code_maintainer::patch`
 - `cargo check --workspace`
-- `rg -n "response\\.text\\(\\)|response\\.json\\(" task_runner_service/backend/src project_management_service/backend/src crates/chatos_ai_runtime/src chat_app_server_rs/src -S`
-- `rg -n "read_to_end\\(" task_runner_service/backend/src chat_app_server_rs/src/services/code_nav chat_app_server_rs/src/services/chatos_skills_file_limits.rs chat_app_server_rs/src/utils/attachments.rs -S`
-- `rg -n "fs::read_to_string\\(|std::fs::read_to_string\\(|tokio::fs::read\\(" chat_app_server_rs/src/services/notepad task_runner_service/backend/src/notepad_store chat_app_server_rs/src/utils/attachments.rs chat_app_server_rs/src/services/shared_builtin_browser_tools/support.rs -S`
+- `rg -n "response\\.text\\(\\)|response\\.json\\(" task_runner_service/backend/src project_management_service/backend/src crates/chatos_ai_runtime/src chatos/backend/src -S`
+- `rg -n "read_to_end\\(" task_runner_service/backend/src chatos/backend/src/services/code_nav chatos/backend/src/services/chatos_skills_file_limits.rs chatos/backend/src/utils/attachments.rs -S`
+- `rg -n "fs::read_to_string\\(|std::fs::read_to_string\\(|tokio::fs::read\\(" chatos/backend/src/services/notepad task_runner_service/backend/src/notepad_store chatos/backend/src/utils/attachments.rs chatos/backend/src/services/shared_builtin_browser_tools/support.rs -S`
 - `git diff --check`

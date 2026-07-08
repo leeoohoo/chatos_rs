@@ -219,9 +219,9 @@ is_planning_task INTEGER NOT NULL DEFAULT 0
 
 文件：
 
-- `chat_app_server_rs/src/api/projects/requirement_execution/types.rs`
-- `chat_app_server_rs/src/api/projects/requirement_execution/plan.rs`
-- `chat_app_server_rs/src/api/projects/requirement_execution/tasks.rs`
+- `chatos/backend/src/api/projects/requirement_execution/types.rs`
+- `chatos/backend/src/api/projects/requirement_execution/plan.rs`
+- `chatos/backend/src/api/projects/requirement_execution/tasks.rs`
 
 修改：
 
@@ -283,8 +283,8 @@ task_profile: Some("default".to_string()),
 - `project_management_service/frontend/src/pages/projectDetail/ProjectDetailOverlays.tsx`
 - `project_management_service/frontend/src/pages/projectDetail/utils.ts`
 - `project_management_service/frontend/src/pages/projectDetail/columns.tsx`
-- `chat_app/src/lib/api/client/types/project.ts`
-- `chat_app/src/components/projectExplorer/ProjectPlanPane.tsx`
+- `chatos/frontend/src/lib/api/client/types/project.ts`
+- `chatos/frontend/src/components/projectExplorer/ProjectPlanPane.tsx`
 
 修改：
 

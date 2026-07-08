@@ -36,5 +36,5 @@ move_runtime_file() {
 }
 
 move_runtime_file \
-  "$ROOT_DIR/chat_app_server_rs/data/chat_app.db" \
+  "$ROOT_DIR/chatos/backend/data/chat_app.db" \
   "$ROOT_DIR/.local/chat_app_server/data/chat_app.db"

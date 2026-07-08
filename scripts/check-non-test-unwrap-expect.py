@@ -13,12 +13,13 @@ ROOT = Path(__file__).resolve().parent.parent
 PATTERN = re.compile(r"\b(?:unwrap|expect)\s*\(")
 
 TARGET_ROOTS = [
-    ROOT / "chat_app_server_rs" / "src",
+    ROOT / "chatos" / "backend" / "src",
 ]
 
 ALLOWLIST = {
     ROOT
-    / "chat_app_server_rs"
+    / "chatos"
+    / "backend"
     / "src"
     / "services"
     / "v3"

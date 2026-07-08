@@ -87,16 +87,10 @@ const fallbackManifest: SiteManifest = {
   ],
   services: [
     {
-      name: 'chat_app',
-      directory: 'chat_app/',
-      role: '联系人驱动的主交互界面',
-      capability: '选择虚拟联系人、发送消息、查看记忆、任务状态和运行上下文。',
-    },
-    {
-      name: 'chat_app_server_rs',
-      directory: 'chat_app_server_rs/',
-      role: 'Rust 主编排后端',
-      capability: '承载消息、流式响应、工具路由、运行上下文和跨服务编排。',
+      name: 'chatos',
+      directory: 'chatos/',
+      role: '主应用微服务',
+      capability: 'frontend 提供联系人驱动的主交互界面，backend 承载消息、流式响应、工具路由和跨服务编排。',
     },
     {
       name: 'memory_engine',

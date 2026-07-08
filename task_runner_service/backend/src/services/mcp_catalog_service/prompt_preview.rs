@@ -60,8 +60,11 @@ impl McpCatalogService {
             builtin_prompt_locale: builtin_prompt_locale.clone(),
             enabled_builtin_kinds: selected_kind_names,
             workspace_dir: normalized_optional(request.workspace_dir),
+            sandbox_enabled: None,
+            sandbox_manager_base_url: None,
             default_remote_server_id: normalized_optional(request.default_remote_server_id),
             external_mcp_config_ids: Vec::new(),
+            ephemeral_http_servers: Vec::new(),
             skill_ids: Vec::new(),
         };
         let selected_builtin_kinds = if enabled {
@@ -168,6 +171,7 @@ mod tests {
             chatos_callback_url: None,
             chatos_callback_secret: None,
             internal_api_secret: None,
+            local_connector_internal_api_secret: None,
             callback_timeout: Duration::from_millis(1_000),
             admin_username: "admin".to_string(),
             admin_password: "admin".to_string(),

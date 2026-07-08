@@ -68,12 +68,40 @@ impl TaskService {
             task_tool_state.completed_at = Some(now.clone());
         }
 
+        let mut input_payload = tool_subtask_input_payload(&parent);
+        let mut mcp_config = tool_subtask_mcp_config(&parent);
+        let project_root = match project_root_from_payload(input_payload.as_ref())
+            .or_else(|| project_root_from_payload(parent.input_payload.as_ref()))
+        {
+            Some(value) => Some(value),
+            None => {
+                resolve_project_root_for_project_id(
+                    &self.config,
+                    &self.store,
+                    parent.project_id.as_str(),
+                )
+                .await?
+            }
+        };
+        if let Some(project_root) = project_root {
+            let local_kinds = selected_local_connector_builtin_kinds_for_config(
+                &mcp_config,
+                parent.task_profile.as_str(),
+            );
+            apply_local_connector_routing(
+                &mut mcp_config,
+                &mut input_payload,
+                project_root.as_str(),
+                local_kinds.as_slice(),
+            );
+        }
+
         let task = TaskRecord {
             id: id.clone(),
             title,
             description,
             objective,
-            input_payload: None,
+            input_payload,
             status,
             priority: task_priority_from_manager_label(draft.priority.as_str()),
             tags: normalize_strings(draft.tags),
@@ -100,7 +128,7 @@ impl TaskService {
             source_user_message_id: parent.source_user_message_id.clone(),
             prerequisite_task_ids: prerequisite_task_ids.clone(),
             task_tool_state,
-            mcp_config: disabled_tool_subtask_mcp_config(),
+            mcp_config,
             created_at: now.clone(),
             updated_at: now,
             deleted_at: None,
@@ -309,6 +337,20 @@ fn disabled_tool_subtask_mcp_config() -> TaskMcpConfig {
     }
 }
 
+fn tool_subtask_mcp_config(parent: &TaskRecord) -> TaskMcpConfig {
+    if !parent.mcp_config.enabled {
+        return disabled_tool_subtask_mcp_config();
+    }
+    let mut config = parent.mcp_config.clone();
+    config.default_remote_server_id = None;
+    config
+}
+
+fn tool_subtask_input_payload(parent: &TaskRecord) -> Option<Value> {
+    let project_root = project_root_from_payload(parent.input_payload.as_ref())?;
+    Some(json!({ "project_root": project_root }))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -350,6 +392,7 @@ mod tests {
             chatos_callback_url: None,
             chatos_callback_secret: None,
             internal_api_secret: None,
+            local_connector_internal_api_secret: None,
             callback_timeout: Duration::from_millis(1000),
             admin_username: "admin".to_string(),
             admin_password: "admin".to_string(),
@@ -445,6 +488,59 @@ mod tests {
         assert_eq!(child.task_tool_state.blocker_reason, None);
         assert!(child.task_tool_state.blocker_needs.is_empty());
         assert_eq!(child.task_tool_state.blocker_kind, None);
+    }
+
+    #[tokio::test]
+    async fn followup_task_inherits_local_connector_mcp_from_parent() {
+        let service = test_service().await;
+        let mut parent = create_task(&service, "parent", TaskStatus::Ready).await;
+        let project_root = "local://connector/device-1/workspace-1/project-a";
+        parent.project_id = "project-local".to_string();
+        parent.owner_user_id = Some("owner-1".to_string());
+        parent.input_payload = Some(json!({ "project_root": project_root }));
+        parent.mcp_config = TaskMcpConfig {
+            enabled: true,
+            enabled_builtin_kinds: vec![
+                "CodeMaintainerRead".to_string(),
+                "TaskManager".to_string(),
+            ],
+            ..TaskMcpConfig::default()
+        };
+        let parent = service.store.save_task(parent).await.expect("save parent");
+
+        let child = service
+            .create_followup_task_for_tool(parent.id.as_str(), "run-1", task_draft("child", "todo"))
+            .await
+            .expect("create child");
+
+        assert_eq!(
+            child
+                .input_payload
+                .as_ref()
+                .and_then(|value| value.get("project_root"))
+                .and_then(Value::as_str),
+            Some(project_root)
+        );
+        assert!(child.mcp_config.enabled);
+        assert!(child
+            .mcp_config
+            .enabled_builtin_kinds
+            .iter()
+            .all(|kind| kind != "CodeMaintainerRead"));
+        let server = child
+            .mcp_config
+            .ephemeral_http_servers
+            .iter()
+            .find(|server| server.name == "local_connector")
+            .expect("local connector server");
+        assert!(server
+            .url
+            .contains("/api/local-connectors/relay/device-1/mcp"));
+        assert!(server.url.contains("workspace_id=workspace-1"));
+        assert_eq!(
+            server.auth_mode.as_deref(),
+            Some(crate::models::TASK_MCP_HTTP_AUTH_LOCAL_CONNECTOR_INTERNAL)
+        );
     }
 
     #[tokio::test]

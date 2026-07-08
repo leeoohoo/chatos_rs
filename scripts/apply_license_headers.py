@@ -55,7 +55,7 @@ EXCLUDED_DIR_NAMES = {
 }
 
 EXCLUDED_RELATIVE_DIRS = {
-    Path("chat_app_server_rs/docs"),
+    Path("chatos/backend/docs"),
     Path("docs/memory_engine"),
     Path("docs/ponytail"),
 }

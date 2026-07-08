@@ -1,0 +1,440 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Required Notice: Copyright (c) 2025 AI Chat Team
+
+use chrono::Utc;
+use serde::{Deserialize, Serialize};
+use sqlx::FromRow;
+use uuid::Uuid;
+
+pub const DEVICE_STATUS_REGISTERED: &str = "registered";
+pub const DEVICE_STATUS_ONLINE: &str = "online";
+pub const DEVICE_STATUS_OFFLINE: &str = "offline";
+pub const DEVICE_STATUS_REVOKED: &str = "revoked";
+
+pub const WORKSPACE_STATUS_ACTIVE: &str = "active";
+pub const WORKSPACE_STATUS_DISABLED: &str = "disabled";
+
+pub const BINDING_MODE_MCP: &str = "local_mcp";
+pub const BINDING_MODE_TERMINAL: &str = "local_terminal";
+pub const BINDING_MODE_SANDBOX: &str = "local_sandbox";
+
+pub const SANDBOX_MODE_DOCKER: &str = "docker";
+pub const SANDBOX_MODE_LOCAL_PROCESS: &str = "local_process";
+
+pub const SESSION_STATUS_CONNECTED: &str = "connected";
+pub const SESSION_STATUS_DISCONNECTED: &str = "disconnected";
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CurrentUser {
+    pub principal_type: String,
+    pub user_id: String,
+    pub username: Option<String>,
+    pub display_name: Option<String>,
+    pub role: String,
+    pub owner_user_id: Option<String>,
+}
+
+impl CurrentUser {
+    pub fn effective_owner_user_id(&self) -> &str {
+        self.owner_user_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .unwrap_or(self.user_id.as_str())
+    }
+}
+
+#[derive(Debug, Serialize)]
+pub struct HealthResponse {
+    pub ok: bool,
+    pub service: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ErrorResponse {
+    pub error: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LocalConnectorDevice {
+    pub id: String,
+    pub owner_user_id: String,
+    pub display_name: String,
+    pub public_key: String,
+    pub client_version: Option<String>,
+    pub os: Option<String>,
+    pub status: String,
+    pub last_seen_at: Option<String>,
+    pub revoked_at: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, FromRow)]
+pub struct LocalConnectorDeviceRow {
+    pub id: String,
+    pub owner_user_id: String,
+    pub display_name: String,
+    pub public_key: String,
+    pub client_version: Option<String>,
+    pub os: Option<String>,
+    pub status: String,
+    pub last_seen_at: Option<String>,
+    pub revoked_at: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+impl LocalConnectorDeviceRow {
+    pub fn into_model(self) -> LocalConnectorDevice {
+        LocalConnectorDevice {
+            id: self.id,
+            owner_user_id: self.owner_user_id,
+            display_name: self.display_name,
+            public_key: self.public_key,
+            client_version: self.client_version,
+            os: self.os,
+            status: normalize_device_status(Some(self.status)),
+            last_seen_at: self.last_seen_at,
+            revoked_at: self.revoked_at,
+            created_at: self.created_at,
+            updated_at: self.updated_at,
+        }
+    }
+}
+
+impl LocalConnectorDevice {
+    pub fn new(
+        owner_user_id: String,
+        display_name: String,
+        public_key: String,
+        client_version: Option<String>,
+        os: Option<String>,
+    ) -> Self {
+        let now = now_rfc3339();
+        Self {
+            id: Uuid::new_v4().to_string(),
+            owner_user_id,
+            display_name,
+            public_key,
+            client_version,
+            os,
+            status: DEVICE_STATUS_REGISTERED.to_string(),
+            last_seen_at: None,
+            revoked_at: None,
+            created_at: now.clone(),
+            updated_at: now,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LocalConnectorWorkspace {
+    pub id: String,
+    pub owner_user_id: String,
+    pub device_id: String,
+    pub display_name: String,
+    pub local_path_alias: String,
+    pub local_path_fingerprint: String,
+    pub capabilities: Vec<String>,
+    pub status: String,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, FromRow)]
+pub struct LocalConnectorWorkspaceRow {
+    pub id: String,
+    pub owner_user_id: String,
+    pub device_id: String,
+    pub display_name: String,
+    pub local_path_alias: String,
+    pub local_path_fingerprint: String,
+    pub capabilities_json: String,
+    pub status: String,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+impl LocalConnectorWorkspaceRow {
+    pub fn into_model(self) -> LocalConnectorWorkspace {
+        LocalConnectorWorkspace {
+            id: self.id,
+            owner_user_id: self.owner_user_id,
+            device_id: self.device_id,
+            display_name: self.display_name,
+            local_path_alias: self.local_path_alias,
+            local_path_fingerprint: self.local_path_fingerprint,
+            capabilities: capabilities_from_json(self.capabilities_json.as_str()),
+            status: normalize_workspace_status(Some(self.status)),
+            created_at: self.created_at,
+            updated_at: self.updated_at,
+        }
+    }
+}
+
+impl LocalConnectorWorkspace {
+    pub fn new(
+        owner_user_id: String,
+        device_id: String,
+        display_name: String,
+        local_path_alias: String,
+        local_path_fingerprint: String,
+        capabilities: Vec<String>,
+    ) -> Self {
+        let now = now_rfc3339();
+        Self {
+            id: Uuid::new_v4().to_string(),
+            owner_user_id,
+            device_id,
+            display_name,
+            local_path_alias,
+            local_path_fingerprint,
+            capabilities: normalize_capabilities(capabilities),
+            status: WORKSPACE_STATUS_ACTIVE.to_string(),
+            created_at: now.clone(),
+            updated_at: now,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LocalConnectorProjectBinding {
+    pub id: String,
+    pub owner_user_id: String,
+    pub project_id: String,
+    pub device_id: String,
+    pub workspace_id: String,
+    pub mode: String,
+    pub enabled: bool,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, FromRow)]
+pub struct LocalConnectorProjectBindingRow {
+    pub id: String,
+    pub owner_user_id: String,
+    pub project_id: String,
+    pub device_id: String,
+    pub workspace_id: String,
+    pub mode: String,
+    pub enabled: i64,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+impl LocalConnectorProjectBindingRow {
+    pub fn into_model(self) -> LocalConnectorProjectBinding {
+        LocalConnectorProjectBinding {
+            id: self.id,
+            owner_user_id: self.owner_user_id,
+            project_id: self.project_id,
+            device_id: self.device_id,
+            workspace_id: self.workspace_id,
+            mode: normalize_binding_mode(Some(self.mode)),
+            enabled: self.enabled != 0,
+            created_at: self.created_at,
+            updated_at: self.updated_at,
+        }
+    }
+}
+
+impl LocalConnectorProjectBinding {
+    pub fn new(
+        owner_user_id: String,
+        project_id: String,
+        device_id: String,
+        workspace_id: String,
+        mode: String,
+        enabled: bool,
+    ) -> Self {
+        let now = now_rfc3339();
+        Self {
+            id: Uuid::new_v4().to_string(),
+            owner_user_id,
+            project_id,
+            device_id,
+            workspace_id,
+            mode: normalize_binding_mode(Some(mode)),
+            enabled,
+            created_at: now.clone(),
+            updated_at: now,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LocalConnectorSandboxPairing {
+    pub id: String,
+    pub owner_user_id: String,
+    pub device_id: String,
+    pub workspace_id: String,
+    pub enabled: bool,
+    pub sandbox_mode: String,
+    pub facade_base_url: Option<String>,
+    pub access_client_id: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, FromRow)]
+pub struct LocalConnectorSandboxPairingRow {
+    pub id: String,
+    pub owner_user_id: String,
+    pub device_id: String,
+    pub workspace_id: String,
+    pub enabled: i64,
+    pub sandbox_mode: String,
+    pub facade_base_url: Option<String>,
+    pub access_client_id: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+impl LocalConnectorSandboxPairingRow {
+    pub fn into_model(self) -> LocalConnectorSandboxPairing {
+        LocalConnectorSandboxPairing {
+            id: self.id,
+            owner_user_id: self.owner_user_id,
+            device_id: self.device_id,
+            workspace_id: self.workspace_id,
+            enabled: self.enabled != 0,
+            sandbox_mode: normalize_sandbox_mode(Some(self.sandbox_mode)),
+            facade_base_url: self.facade_base_url,
+            access_client_id: self.access_client_id,
+            created_at: self.created_at,
+            updated_at: self.updated_at,
+        }
+    }
+}
+
+impl LocalConnectorSandboxPairing {
+    pub fn new(
+        owner_user_id: String,
+        device_id: String,
+        workspace_id: String,
+        enabled: bool,
+        sandbox_mode: String,
+        facade_base_url: Option<String>,
+        access_client_id: Option<String>,
+    ) -> Self {
+        let now = now_rfc3339();
+        Self {
+            id: Uuid::new_v4().to_string(),
+            owner_user_id,
+            device_id,
+            workspace_id,
+            enabled,
+            sandbox_mode: normalize_sandbox_mode(Some(sandbox_mode)),
+            facade_base_url,
+            access_client_id,
+            created_at: now.clone(),
+            updated_at: now,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LocalConnectorSession {
+    pub id: String,
+    pub owner_user_id: String,
+    pub device_id: String,
+    pub connection_id: String,
+    pub status: String,
+    pub connected_at: String,
+    pub last_heartbeat_at: String,
+    pub disconnected_at: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+impl LocalConnectorSession {
+    pub fn new(owner_user_id: String, device_id: String) -> Self {
+        let now = now_rfc3339();
+        Self {
+            id: Uuid::new_v4().to_string(),
+            owner_user_id,
+            device_id,
+            connection_id: Uuid::new_v4().to_string(),
+            status: SESSION_STATUS_CONNECTED.to_string(),
+            connected_at: now.clone(),
+            last_heartbeat_at: now.clone(),
+            disconnected_at: None,
+            created_at: now.clone(),
+            updated_at: now,
+        }
+    }
+}
+
+pub fn now_rfc3339() -> String {
+    Utc::now().to_rfc3339()
+}
+
+pub fn normalize_optional_text(value: Option<String>) -> Option<String> {
+    value
+        .map(|item| item.trim().to_string())
+        .filter(|item| !item.is_empty())
+}
+
+pub fn normalize_device_status(value: Option<String>) -> String {
+    match value.as_deref().map(str::trim) {
+        Some(DEVICE_STATUS_ONLINE) => DEVICE_STATUS_ONLINE.to_string(),
+        Some(DEVICE_STATUS_OFFLINE) => DEVICE_STATUS_OFFLINE.to_string(),
+        Some(DEVICE_STATUS_REVOKED) => DEVICE_STATUS_REVOKED.to_string(),
+        _ => DEVICE_STATUS_REGISTERED.to_string(),
+    }
+}
+
+pub fn normalize_workspace_status(value: Option<String>) -> String {
+    match value.as_deref().map(str::trim) {
+        Some(WORKSPACE_STATUS_DISABLED) => WORKSPACE_STATUS_DISABLED.to_string(),
+        _ => WORKSPACE_STATUS_ACTIVE.to_string(),
+    }
+}
+
+pub fn normalize_binding_mode(value: Option<String>) -> String {
+    match value.as_deref().map(str::trim) {
+        Some(BINDING_MODE_TERMINAL) => BINDING_MODE_TERMINAL.to_string(),
+        Some(BINDING_MODE_SANDBOX) => BINDING_MODE_SANDBOX.to_string(),
+        _ => BINDING_MODE_MCP.to_string(),
+    }
+}
+
+pub fn normalize_sandbox_mode(value: Option<String>) -> String {
+    match value.as_deref().map(str::trim) {
+        Some(SANDBOX_MODE_LOCAL_PROCESS) => SANDBOX_MODE_LOCAL_PROCESS.to_string(),
+        _ => SANDBOX_MODE_DOCKER.to_string(),
+    }
+}
+
+pub fn normalize_capabilities(values: Vec<String>) -> Vec<String> {
+    let mut out = Vec::new();
+    for value in values {
+        let normalized = value.trim().to_ascii_lowercase();
+        if normalized.is_empty() || out.iter().any(|item: &String| item == &normalized) {
+            continue;
+        }
+        out.push(normalized);
+    }
+    out
+}
+
+pub fn capabilities_to_json(values: &[String]) -> String {
+    serde_json::to_string(&normalize_capabilities(values.to_vec()))
+        .unwrap_or_else(|_| "[]".to_string())
+}
+
+pub fn capabilities_from_json(raw: &str) -> Vec<String> {
+    serde_json::from_str::<Vec<String>>(raw)
+        .map(normalize_capabilities)
+        .unwrap_or_default()
+}
+
+pub fn bool_to_int(value: bool) -> i64 {
+    if value {
+        1
+    } else {
+        0
+    }
+}

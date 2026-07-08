@@ -8,12 +8,12 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 TARGETS=(
-  "chat_app_server_rs/src/api/fs"
-  "chat_app_server_rs/src/services/v2/ai_client/history_tools.rs"
-  "chat_app_server_rs/src/services/v2/ai_client/mod.rs"
-  "chat_app_server_rs/src/services/mcp_loader.rs"
-  "chat_app_server_rs/src/services/user_settings.rs"
-  "chat_app_server_rs/src/utils/model_config.rs"
+  "chatos/backend/src/api/fs"
+  "chatos/backend/src/services/v2/ai_client/history_tools.rs"
+  "chatos/backend/src/services/v2/ai_client/mod.rs"
+  "chatos/backend/src/services/mcp_loader.rs"
+  "chatos/backend/src/services/user_settings.rs"
+  "chatos/backend/src/utils/model_config.rs"
 )
 
 echo "Checking request-path unwrap/expect usage..."

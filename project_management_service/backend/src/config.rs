@@ -12,6 +12,12 @@ pub struct AppConfig {
     pub database_url: String,
     pub user_service_base_url: String,
     pub user_service_request_timeout: Duration,
+    pub user_service_internal_secret: Option<String>,
+    pub cloud_project_import_enabled: bool,
+    pub cloud_project_max_zip_bytes: usize,
+    pub cloud_project_max_unpacked_bytes: u64,
+    pub cloud_project_max_files: usize,
+    pub cloud_project_git_timeout: Duration,
     pub task_runner_base_url: Option<String>,
     pub task_runner_request_timeout: Duration,
     pub task_runner_internal_secret: Option<String>,
@@ -42,6 +48,12 @@ impl AppConfig {
                 .and_then(|value| value.parse::<u64>().ok())
                 .unwrap_or(10_000)
                 .max(300);
+        let cloud_project_git_timeout_ms =
+            std::env::var("PROJECT_SERVICE_CLOUD_PROJECT_GIT_TIMEOUT_MS")
+                .ok()
+                .and_then(|value| value.parse::<u64>().ok())
+                .unwrap_or(120_000)
+                .max(1_000);
 
         Ok(Self {
             host,
@@ -53,6 +65,29 @@ impl AppConfig {
                 .or_else(|| normalized_env("USER_SERVICE_BASE_URL"))
                 .unwrap_or_else(default_user_service_base_url),
             user_service_request_timeout: Duration::from_millis(user_service_request_timeout_ms),
+            user_service_internal_secret: normalized_env(
+                "PROJECT_SERVICE_USER_SERVICE_INTERNAL_SECRET",
+            )
+            .or_else(|| normalized_env("CHATOS_USER_SERVICE_INTERNAL_SECRET"))
+            .or_else(|| normalized_env("USER_SERVICE_INTERNAL_API_SECRET")),
+            cloud_project_import_enabled: read_bool_env(
+                "PROJECT_SERVICE_CLOUD_PROJECT_IMPORT_ENABLED",
+                true,
+            )?,
+            cloud_project_max_zip_bytes: normalized_env(
+                "PROJECT_SERVICE_CLOUD_PROJECT_MAX_ZIP_BYTES",
+            )
+            .and_then(|value| value.parse::<usize>().ok())
+            .unwrap_or(200 * 1024 * 1024),
+            cloud_project_max_unpacked_bytes: normalized_env(
+                "PROJECT_SERVICE_CLOUD_PROJECT_MAX_UNPACKED_BYTES",
+            )
+            .and_then(|value| value.parse::<u64>().ok())
+            .unwrap_or(1024 * 1024 * 1024),
+            cloud_project_max_files: normalized_env("PROJECT_SERVICE_CLOUD_PROJECT_MAX_FILES")
+                .and_then(|value| value.parse::<usize>().ok())
+                .unwrap_or(20_000),
+            cloud_project_git_timeout: Duration::from_millis(cloud_project_git_timeout_ms),
             task_runner_base_url: normalized_env("PROJECT_SERVICE_TASK_RUNNER_BASE_URL"),
             task_runner_request_timeout: Duration::from_millis(task_runner_request_timeout_ms),
             task_runner_internal_secret: normalized_env(
@@ -101,6 +136,17 @@ pub(crate) fn normalized_env(key: &str) -> Option<String> {
         .ok()
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
+}
+
+fn read_bool_env(key: &str, default: bool) -> Result<bool, String> {
+    let Some(value) = normalized_env(key) else {
+        return Ok(default);
+    };
+    match value.to_ascii_lowercase().as_str() {
+        "1" | "true" | "yes" | "on" => Ok(true),
+        "0" | "false" | "no" | "off" => Ok(false),
+        _ => Err(format!("invalid {key}: expected true/false")),
+    }
 }
 
 fn default_database_url() -> String {

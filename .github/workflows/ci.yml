@@ -9,6 +9,7 @@ on:
     branches:
       - main
       - master
+      - "2.*"
 
 permissions:
   contents: read
@@ -56,10 +57,12 @@ jobs:
       - name: OpenAPI contract advisory
         run: bash scripts/check_openapi_contract_advisory.sh
 
-      - name: Root startup scripts syntax
+      - name: Docker deployment config
         run: |
-          bash -n restart_services.sh
-          bash -n db_connection_hub/restart_services.sh
+          bash -n docker/deploy.sh
+          bash -n docker/entrypoint-rust-service.sh
+          docker compose -f docker/compose.yml config >/dev/null
+          docker compose -f docker/compose.yml -f docker/compose.build.yml config >/dev/null
 
       - name: Large file policy
         run: bash scripts/check-large-files.sh --fail
@@ -171,11 +174,11 @@ jobs:
           if-no-files-found: error
 
   chat-app-server-rs:
-    name: chat_app_server_rs (Rust)
+    name: chatos/backend (Rust)
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: chat_app_server_rs
+        working-directory: chatos/backend
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -186,29 +189,29 @@ jobs:
       - name: Cache Rust deps
         uses: Swatinem/rust-cache@v2
         with:
-          workspaces: chat_app_server_rs -> target
+          workspaces: chatos/backend -> target
 
       - name: cargo check
         run: cargo check
 
       - name: request-path panic audit
-        run: bash ../scripts/check-request-path-panics.sh
+        run: bash ../../scripts/check-request-path-panics.sh
 
       - name: non-test unwrap/expect audit
-        run: python ../scripts/check-non-test-unwrap-expect.py
+        run: python ../../scripts/check-non-test-unwrap-expect.py
 
       - name: hotspot line budgets
-        run: bash ../scripts/check-hotspot-line-budgets.sh
+        run: bash ../../scripts/check-hotspot-line-budgets.sh
 
       - name: cargo test
         run: cargo test -q
 
   chat-app-frontend:
-    name: chat_app (TypeScript)
+    name: chatos/frontend (TypeScript)
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: chat_app
+        working-directory: chatos/frontend
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -218,7 +221,7 @@ jobs:
         with:
           node-version: "20"
           cache: npm
-          cache-dependency-path: chat_app/package-lock.json
+          cache-dependency-path: chatos/frontend/package-lock.json
 
       - name: npm ci
         run: npm ci
@@ -236,7 +239,7 @@ jobs:
         run: npm run lint
 
       - name: hotspot line budgets
-        run: bash ../scripts/check-hotspot-line-budgets.sh
+        run: bash ../../scripts/check-hotspot-line-budgets.sh
 
   db-connection-hub-backend:
     name: db_connection_hub backend (Rust)

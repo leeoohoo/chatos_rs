@@ -1,0 +1,144 @@
+# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+# Required Notice: Copyright (c) 2025 AI Chat Team
+
+services:
+  sandbox-agent-image:
+    build:
+      context: ..
+      dockerfile: sandbox_manager_service/sandbox_agent/Dockerfile
+
+  user-service-backend:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.rust-service
+      args:
+        MANIFEST_PATH: user_service/backend/Cargo.toml
+        BIN_NAME: user_service_backend
+
+  memory-engine-backend:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.rust-service
+      args:
+        MANIFEST_PATH: memory_engine/backend/Cargo.toml
+        BIN_NAME: memory_engine
+
+  project-management-backend:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.rust-service
+      args:
+        MANIFEST_PATH: Cargo.toml
+        PACKAGE_NAME: project_management_service_backend
+        BIN_NAME: project_management_service_backend
+
+  local-connector-service-backend:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.rust-service
+      args:
+        MANIFEST_PATH: Cargo.toml
+        PACKAGE_NAME: local_connector_service_backend
+        BIN_NAME: local_connector_service_backend
+
+  sandbox-manager-backend:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.rust-service
+      args:
+        MANIFEST_PATH: Cargo.toml
+        PACKAGE_NAME: sandbox_manager_service_backend
+        BIN_NAME: sandbox_manager_service_backend
+
+  task-runner-backend:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.rust-service
+      args:
+        MANIFEST_PATH: Cargo.toml
+        PACKAGE_NAME: task_runner_service_backend
+        BIN_NAME: task_runner_service_backend
+
+  chatos-backend:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.rust-service
+      args:
+        MANIFEST_PATH: Cargo.toml
+        PACKAGE_NAME: chat_app_server_rs
+        BIN_NAME: chat_app_server_rs
+
+  db-connection-hub-backend:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.rust-service
+      args:
+        MANIFEST_PATH: db_connection_hub/backend/Cargo.toml
+        BIN_NAME: db_connection_hub_backend
+
+  official-website-backend:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.rust-service
+      args:
+        MANIFEST_PATH: Cargo.toml
+        PACKAGE_NAME: official_website_service_backend
+        BIN_NAME: official_website_service_backend
+
+  chatos-frontend:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.frontend
+      args:
+        APP_DIR: chatos/frontend
+
+  user-service-frontend:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.frontend
+      args:
+        APP_DIR: user_service/frontend
+
+  memory-engine-frontend:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.frontend
+      args:
+        APP_DIR: memory_engine/frontend
+        VITE_MEMORY_ENGINE_API_BASE: /api/memory-engine/v1
+        VITE_USER_SERVICE_API_BASE: /user-service
+
+  project-management-frontend:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.frontend
+      args:
+        APP_DIR: project_management_service/frontend
+
+  task-runner-frontend:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.frontend
+      args:
+        APP_DIR: task_runner_service/frontend
+
+  sandbox-manager-frontend:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.frontend
+      args:
+        APP_DIR: sandbox_manager_service/frontend
+
+  db-connection-hub-frontend:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.frontend
+      args:
+        APP_DIR: db_connection_hub/frontend
+
+  official-website-frontend:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.frontend
+      args:
+        APP_DIR: official_website_service/frontend

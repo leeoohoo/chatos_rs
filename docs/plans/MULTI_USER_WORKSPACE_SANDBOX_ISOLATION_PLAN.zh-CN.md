@@ -14,20 +14,20 @@
 ## 当前代码风险点
 
 1. 前端新建项目、终端仍以路径为输入。
-   - `chat_app/src/components/sessionList/useLocalFsPickers.ts` 通过 `/fs/list`、`/fs/entries` 浏览目录。
-   - `chat_app/src/components/sessionList/useSessionListActions.ts` 创建项目传 `rootPath`，创建终端传 `cwd`。
-   - `chat_app/src/lib/api/client/workspace/terminals.ts` 的 `createTerminal` 和 `dispatchTerminalCommand` 都接受原始 `cwd`。
+   - `chatos/frontend/src/components/sessionList/useLocalFsPickers.ts` 通过 `/fs/list`、`/fs/entries` 浏览目录。
+   - `chatos/frontend/src/components/sessionList/useSessionListActions.ts` 创建项目传 `rootPath`，创建终端传 `cwd`。
+   - `chatos/frontend/src/lib/api/client/workspace/terminals.ts` 的 `createTerminal` 和 `dispatchTerminalCommand` 都接受原始 `cwd`。
 
 2. 后端目录授权仍会暴露过多宿主根。
-   - `chat_app_server_rs/src/api/fs/policy_roots.rs` 当前把 `current_dir`、repo parent、workspace、用户 home、`~/.ssh`、`FS_ALLOWED_ROOTS`、项目父目录都放进可访问 roots。
+   - `chatos/backend/src/api/fs/policy_roots.rs` 当前把 `current_dir`、repo parent、workspace、用户 home、`~/.ssh`、`FS_ALLOWED_ROOTS`、项目父目录都放进可访问 roots。
    - 这适合单机开发，但在云服务中会让一个用户看到宿主路径结构，甚至看到不属于自己的路径入口。
 
 3. 项目和终端创建接口还接受任意已存在目录。
-   - `chat_app_server_rs/src/api/projects/crud_handlers.rs#create_project` 对 `root_path` 只做存在性校验。
-   - `chat_app_server_rs/src/api/terminals/crud_handlers.rs#create_terminal` 和 `dispatch_terminal_command` 对 `cwd` 只做存在性校验。
+   - `chatos/backend/src/api/projects/crud_handlers.rs#create_project` 对 `root_path` 只做存在性校验。
+   - `chatos/backend/src/api/terminals/crud_handlers.rs#create_terminal` 和 `dispatch_terminal_command` 对 `cwd` 只做存在性校验。
 
 4. 已有终端 owner 校验只能保护“访问已有 terminal id”。
-   - `chat_app_server_rs/src/core/terminal_access.rs` 已有 `ensure_owned_terminal`，这是好的基础。
+   - `chatos/backend/src/core/terminal_access.rs` 已有 `ensure_owned_terminal`，这是好的基础。
    - 但它不能阻止用户创建一个指向其他目录的终端，也不能阻止终端脚本访问工作区外路径。
 
 ## 目标模型

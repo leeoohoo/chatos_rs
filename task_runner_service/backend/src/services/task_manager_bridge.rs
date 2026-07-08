@@ -17,9 +17,11 @@ use crate::models::{
 };
 
 use super::{
-    align_task_tenant_to_owner, ensure_subtask_can_be_marked_unfinished,
-    ensure_task_has_no_unfinished_subtasks, normalize_prerequisite_task_ids, normalize_strings,
-    normalized_optional, normalized_optional_nested, save_task_if_tenant_aligned,
+    align_task_tenant_to_owner, apply_local_connector_routing,
+    ensure_subtask_can_be_marked_unfinished, ensure_task_has_no_unfinished_subtasks,
+    normalize_prerequisite_task_ids, normalize_strings, normalized_optional,
+    normalized_optional_nested, project_root_from_payload, resolve_project_root_for_project_id,
+    save_task_if_tenant_aligned, selected_local_connector_builtin_kinds_for_config,
     validate_required, TaskService, TaskStatusExt,
 };
 

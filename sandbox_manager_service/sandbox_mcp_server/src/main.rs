@@ -1,89 +1,42 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
+mod auth;
+mod config;
 mod terminal_store;
+mod tools;
 
-use std::collections::HashSet;
-use std::path::{Component, Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
 
 use axum::extract::State;
-use axum::http::{HeaderMap, StatusCode};
+use axum::http::HeaderMap;
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use chatos_builtin_tools::{
     CodeMaintainerHooks, CodeMaintainerHooksRef, CodeMaintainerOptions, CodeMaintainerService,
     TerminalControllerOptions, TerminalControllerService, TerminalControllerStoreRef,
 };
-use serde::{Deserialize, Serialize};
+use chatos_mcp_service::{
+    jsonrpc_error, JsonRpcRequest, JsonRpcResponse, McpJsonRpcService, McpServerInfo,
+    MCP_ERROR_AUTH_REQUIRED,
+};
 use serde_json::{json, Value};
 use tokio::net::TcpListener;
 use tracing::{info, warn};
 
 use crate::terminal_store::SandboxTerminalControllerStore;
+use crate::tools::SandboxMcpToolProvider;
+use crate::{auth::authorize, config::ServerConfig};
 
 const VERSION: &str = "0.1.0";
-
-#[derive(Debug, Clone)]
-struct ServerConfig {
-    host: String,
-    port: u16,
-    workspace: PathBuf,
-    state_dir: PathBuf,
-    auth_token: Option<String>,
-    project_id: Option<String>,
-    user_id: Option<String>,
-    max_file_bytes: i64,
-    max_write_bytes: i64,
-    search_limit: usize,
-    terminal_idle_timeout_ms: u64,
-    terminal_max_wait_ms: u64,
-    terminal_max_output_chars: usize,
-}
 
 #[derive(Clone)]
 struct AppState {
     config: ServerConfig,
     started_at: String,
-    file_service: CodeMaintainerService,
-    terminal_service: TerminalControllerService,
-    file_tool_names: HashSet<String>,
-    terminal_tool_names: HashSet<String>,
     tools: Vec<Value>,
-}
-
-#[derive(Debug, Deserialize)]
-struct JsonRpcRequest {
-    #[allow(dead_code)]
-    jsonrpc: Option<String>,
-    id: Option<Value>,
-    method: String,
-    #[serde(default)]
-    params: Value,
-}
-
-#[derive(Debug, Serialize)]
-struct JsonRpcResponse {
-    jsonrpc: &'static str,
-    id: Value,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    result: Option<Value>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    error: Option<JsonRpcError>,
-}
-
-#[derive(Debug, Serialize)]
-struct JsonRpcError {
-    code: i32,
-    message: String,
-}
-
-#[derive(Debug, Deserialize)]
-struct CompatToolCall {
-    tool: Option<String>,
-    name: Option<String>,
-    #[serde(default)]
-    arguments: Value,
+    mcp_service: McpJsonRpcService,
 }
 
 #[derive(Debug)]
@@ -101,39 +54,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .init();
 
     let config = ServerConfig::from_env()?;
-    std::fs::create_dir_all(&config.workspace)?;
-    std::fs::create_dir_all(&config.state_dir)?;
-
-    let file_service = build_file_service(&config)?;
-    let terminal_service = build_terminal_service(&config)?;
-    let file_tools = sorted_tools(file_service.list_tools());
-    let terminal_tools = sorted_tools(terminal_service.list_tools());
-    let file_tool_names = tool_name_set(&file_tools);
-    let terminal_tool_names = tool_name_set(&terminal_tools);
-    let tools = sorted_tools(file_tools.into_iter().chain(terminal_tools).collect());
-
-    let state = AppState {
-        config: config.clone(),
-        started_at: chrono::Utc::now().to_rfc3339(),
-        file_service,
-        terminal_service,
-        file_tool_names,
-        terminal_tool_names,
-        tools,
-    };
-
-    let app = Router::new()
-        .route("/health", get(health))
-        .route("/mcp", post(mcp_entrypoint))
-        .route("/mcp/tools", get(mcp_tools_compat))
-        .route("/mcp/call", post(mcp_call_compat))
-        .route("/terminal/exec", post(terminal_exec_compat))
-        .route("/files/read", post(files_read_compat))
-        .route("/files/write", post(files_write_compat))
-        .route("/files/list", post(files_list_compat))
-        .route("/files/mkdir", post(files_mkdir_compat))
-        .with_state(state);
-
+    let app = build_app(config.clone())?;
     let bind_addr = format!("{}:{}", config.host, config.port);
     let listener = TcpListener::bind(bind_addr.as_str()).await?;
     info!(
@@ -147,40 +68,29 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-impl ServerConfig {
-    fn from_env() -> Result<Self, String> {
-        let host = env_string("CHATOS_SANDBOX_MCP_HOST")
-            .or_else(|| env_string("CHATOS_AGENT_HOST"))
-            .unwrap_or_else(|| "0.0.0.0".to_string());
-        let port = env_parse("CHATOS_SANDBOX_MCP_PORT")
-            .or_else(|| env_parse("CHATOS_AGENT_PORT"))
-            .unwrap_or(49_888);
-        let workspace = env_string("CHATOS_WORKSPACE")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| PathBuf::from("/workspace"));
-        let state_dir = env_string("CHATOS_SANDBOX_STATE_DIR")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| PathBuf::from("/tmp/chatos-sandbox-mcp"));
-        Ok(Self {
-            host,
-            port,
-            workspace,
-            state_dir,
-            auth_token: env_string("CHATOS_SANDBOX_MCP_TOKEN")
-                .or_else(|| env_string("CHATOS_AGENT_TOKEN")),
-            project_id: env_string("CHATOS_PROJECT_ID"),
-            user_id: env_string("CHATOS_USER_ID"),
-            max_file_bytes: env_parse("CHATOS_SANDBOX_MAX_FILE_BYTES").unwrap_or(8 * 1024 * 1024),
-            max_write_bytes: env_parse("CHATOS_SANDBOX_MAX_WRITE_BYTES").unwrap_or(8 * 1024 * 1024),
-            search_limit: env_parse("CHATOS_SANDBOX_SEARCH_LIMIT").unwrap_or(500),
-            terminal_idle_timeout_ms: env_parse("CHATOS_SANDBOX_TERMINAL_IDLE_TIMEOUT_MS")
-                .unwrap_or(60_000),
-            terminal_max_wait_ms: env_parse("CHATOS_SANDBOX_TERMINAL_MAX_WAIT_MS")
-                .unwrap_or(120_000),
-            terminal_max_output_chars: env_parse("CHATOS_SANDBOX_TERMINAL_MAX_OUTPUT_CHARS")
-                .unwrap_or(64_000),
-        })
-    }
+fn build_app(config: ServerConfig) -> Result<Router, String> {
+    std::fs::create_dir_all(&config.workspace).map_err(|err| err.to_string())?;
+    std::fs::create_dir_all(&config.state_dir).map_err(|err| err.to_string())?;
+    let file_service = build_file_service(&config)?;
+    let terminal_service = build_terminal_service(&config)?;
+    let provider = SandboxMcpToolProvider::new(file_service, terminal_service);
+    let tools = provider.tools();
+    let mcp_service = McpJsonRpcService::new(
+        McpServerInfo::new("chatos-sandbox-mcp-server", VERSION),
+        Arc::new(provider),
+    );
+
+    let state = AppState {
+        config: config.clone(),
+        started_at: chrono::Utc::now().to_rfc3339(),
+        tools,
+        mcp_service,
+    };
+
+    Ok(Router::new()
+        .route("/health", get(health))
+        .route("/mcp", post(mcp_entrypoint))
+        .with_state(state))
 }
 
 fn build_file_service(config: &ServerConfig) -> Result<CodeMaintainerService, String> {
@@ -236,356 +146,10 @@ async fn mcp_entrypoint(
     Json(request): Json<JsonRpcRequest>,
 ) -> Json<JsonRpcResponse> {
     let id = request.id.clone().unwrap_or(Value::Null);
-    if let Err(message) = authorize(&state, &headers) {
-        return Json(jsonrpc_error(id, -32001, message));
+    if let Err(message) = authorize(state.config.auth_token.as_deref(), &headers) {
+        return Json(jsonrpc_error(id, MCP_ERROR_AUTH_REQUIRED, message));
     }
-
-    match request.method.as_str() {
-        "tools/list" => Json(jsonrpc_ok(id, json!({ "tools": state.tools }))),
-        "tools/call" => {
-            let name = request
-                .params
-                .get("name")
-                .and_then(Value::as_str)
-                .map(str::trim)
-                .filter(|value| !value.is_empty());
-            let Some(name) = name else {
-                return Json(jsonrpc_error(id, -32602, "tools/call.name is required"));
-            };
-            let args = request
-                .params
-                .get("arguments")
-                .cloned()
-                .unwrap_or_else(|| json!({}));
-            match call_tool(&state, name, args).await {
-                Ok(result) => Json(jsonrpc_ok(id, result)),
-                Err(message) => Json(jsonrpc_error(id, -32000, message)),
-            }
-        }
-        other => Json(jsonrpc_error(
-            id,
-            -32601,
-            format!("method not found: {other}"),
-        )),
-    }
-}
-
-async fn mcp_tools_compat(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
-    authorize_rest(&state, &headers)?;
-    let names = state
-        .tools
-        .iter()
-        .filter_map(|tool| tool.get("name").and_then(Value::as_str))
-        .collect::<Vec<_>>();
-    Ok(Json(
-        json!({ "tools": names, "tool_definitions": state.tools }),
-    ))
-}
-
-async fn mcp_call_compat(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    Json(payload): Json<CompatToolCall>,
-) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
-    authorize_rest(&state, &headers)?;
-    let tool = payload
-        .tool
-        .or(payload.name)
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
-        .ok_or_else(|| rest_error(StatusCode::BAD_REQUEST, "tool is required"))?;
-    let (tool, args) = normalize_compat_tool_call(tool.as_str(), payload.arguments)?;
-    let result = call_tool(&state, tool.as_str(), args)
-        .await
-        .map(compact_result)
-        .map_err(|message| rest_error(StatusCode::BAD_REQUEST, message))?;
-    Ok(Json(json!({ "ok": true, "result": result })))
-}
-
-async fn terminal_exec_compat(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    Json(payload): Json<Value>,
-) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
-    authorize_rest(&state, &headers)?;
-    let command = payload
-        .get("command")
-        .and_then(Value::as_str)
-        .or_else(|| payload.get("common").and_then(Value::as_str))
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .ok_or_else(|| rest_error(StatusCode::BAD_REQUEST, "command is required"))?;
-    let path = payload
-        .get("cwd")
-        .and_then(Value::as_str)
-        .or_else(|| payload.get("path").and_then(Value::as_str))
-        .unwrap_or(".");
-    let result = call_tool(
-        &state,
-        "execute_command",
-        json!({
-            "common": command,
-            "path": path,
-            "background": payload.get("background").and_then(Value::as_bool).unwrap_or(false)
-        }),
-    )
-    .await
-    .map(compact_result)
-    .map_err(|message| rest_error(StatusCode::BAD_REQUEST, message))?;
-    Ok(Json(json!({ "ok": true, "result": result })))
-}
-
-async fn files_read_compat(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    Json(payload): Json<Value>,
-) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
-    authorize_rest(&state, &headers)?;
-    let path = payload
-        .get("path")
-        .and_then(Value::as_str)
-        .ok_or_else(|| rest_error(StatusCode::BAD_REQUEST, "path is required"))?;
-    let result = call_tool(
-        &state,
-        "read_file_raw",
-        json!({ "path": path, "with_line_numbers": false }),
-    )
-    .await
-    .map(compact_result)
-    .map_err(|message| rest_error(StatusCode::BAD_REQUEST, message))?;
-    Ok(Json(json!({ "ok": true, "result": result })))
-}
-
-async fn files_write_compat(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    Json(payload): Json<Value>,
-) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
-    authorize_rest(&state, &headers)?;
-    if payload
-        .get("base64")
-        .and_then(Value::as_bool)
-        .unwrap_or(false)
-    {
-        return Err(rest_error(
-            StatusCode::BAD_REQUEST,
-            "base64 compatibility writes are not supported by this MCP endpoint",
-        ));
-    }
-    let path = payload
-        .get("path")
-        .and_then(Value::as_str)
-        .ok_or_else(|| rest_error(StatusCode::BAD_REQUEST, "path is required"))?;
-    let content = payload.get("content").and_then(Value::as_str).unwrap_or("");
-    let tool = if payload
-        .get("append")
-        .and_then(Value::as_bool)
-        .unwrap_or(false)
-    {
-        "append_file"
-    } else {
-        "write_file"
-    };
-    let result = call_tool(&state, tool, json!({ "path": path, "content": content }))
-        .await
-        .map(compact_result)
-        .map_err(|message| rest_error(StatusCode::BAD_REQUEST, message))?;
-    Ok(Json(json!({ "ok": true, "result": result })))
-}
-
-async fn files_list_compat(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    Json(payload): Json<Value>,
-) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
-    authorize_rest(&state, &headers)?;
-    let result = call_tool(
-        &state,
-        "list_dir",
-        json!({
-            "path": payload.get("path").and_then(Value::as_str).unwrap_or("."),
-            "max_entries": payload.get("max_entries").and_then(Value::as_u64).unwrap_or(200)
-        }),
-    )
-    .await
-    .map(compact_result)
-    .map_err(|message| rest_error(StatusCode::BAD_REQUEST, message))?;
-    Ok(Json(json!({ "ok": true, "result": result })))
-}
-
-async fn files_mkdir_compat(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    Json(payload): Json<Value>,
-) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
-    authorize_rest(&state, &headers)?;
-    let path = payload
-        .get("path")
-        .and_then(Value::as_str)
-        .ok_or_else(|| rest_error(StatusCode::BAD_REQUEST, "path is required"))?;
-    let target = resolve_relative_workspace_path(state.config.workspace.as_path(), path)
-        .map_err(|message| rest_error(StatusCode::BAD_REQUEST, message))?;
-    std::fs::create_dir_all(&target)
-        .map_err(|err| rest_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))?;
-    Ok(Json(json!({
-        "ok": true,
-        "result": { "path": path }
-    })))
-}
-
-async fn call_tool(state: &AppState, name: &str, args: Value) -> Result<Value, String> {
-    if state.file_tool_names.contains(name) {
-        return state.file_service.call_tool(name, args, None);
-    }
-    if state.terminal_tool_names.contains(name) {
-        return state.terminal_service.call_tool(name, args, None);
-    }
-    Err(format!("tool not found: {name}"))
-}
-
-fn normalize_compat_tool_call(
-    tool: &str,
-    arguments: Value,
-) -> Result<(String, Value), (StatusCode, Json<Value>)> {
-    let mapped = match tool {
-        "sandbox_filesystem_read_file" => (
-            "read_file_raw".to_string(),
-            json!({
-                "path": arguments.get("path").and_then(Value::as_str).unwrap_or("."),
-                "with_line_numbers": false
-            }),
-        ),
-        "sandbox_filesystem_write_file" => {
-            if arguments
-                .get("base64")
-                .and_then(Value::as_bool)
-                .unwrap_or(false)
-            {
-                return Err(rest_error(
-                    StatusCode::BAD_REQUEST,
-                    "base64 compatibility writes are not supported by this MCP endpoint",
-                ));
-            }
-            let tool = if arguments
-                .get("append")
-                .and_then(Value::as_bool)
-                .unwrap_or(false)
-            {
-                "append_file"
-            } else {
-                "write_file"
-            };
-            (
-                tool.to_string(),
-                json!({
-                    "path": arguments.get("path").and_then(Value::as_str).unwrap_or("."),
-                    "content": arguments.get("content").and_then(Value::as_str).unwrap_or("")
-                }),
-            )
-        }
-        "sandbox_filesystem_list_dir" => (
-            "list_dir".to_string(),
-            json!({
-                "path": arguments.get("path").and_then(Value::as_str).unwrap_or("."),
-                "max_entries": arguments.get("max_entries").and_then(Value::as_u64).unwrap_or(200)
-            }),
-        ),
-        "sandbox_terminal_execute_command" => (
-            "execute_command".to_string(),
-            json!({
-                "common": arguments
-                    .get("command")
-                    .and_then(Value::as_str)
-                    .or_else(|| arguments.get("common").and_then(Value::as_str))
-                    .unwrap_or(""),
-                "path": arguments
-                    .get("cwd")
-                    .and_then(Value::as_str)
-                    .or_else(|| arguments.get("path").and_then(Value::as_str))
-                    .unwrap_or("."),
-                "background": arguments.get("background").and_then(Value::as_bool).unwrap_or(false)
-            }),
-        ),
-        other => (other.to_string(), arguments),
-    };
-    Ok(mapped)
-}
-
-fn authorize(state: &AppState, headers: &HeaderMap) -> Result<(), String> {
-    let Some(expected) = state.config.auth_token.as_deref() else {
-        return Ok(());
-    };
-    let bearer_ok = headers
-        .get(axum::http::header::AUTHORIZATION)
-        .and_then(|value| value.to_str().ok())
-        .map(|value| value == format!("Bearer {expected}"))
-        .unwrap_or(false);
-    let token_ok = headers
-        .get("x-chatos-sandbox-token")
-        .and_then(|value| value.to_str().ok())
-        .map(|value| value == expected)
-        .unwrap_or(false);
-    if bearer_ok || token_ok {
-        Ok(())
-    } else {
-        Err("sandbox MCP token is required".to_string())
-    }
-}
-
-fn authorize_rest(state: &AppState, headers: &HeaderMap) -> Result<(), (StatusCode, Json<Value>)> {
-    authorize(state, headers).map_err(|message| rest_error(StatusCode::UNAUTHORIZED, message))
-}
-
-fn jsonrpc_ok(id: Value, result: Value) -> JsonRpcResponse {
-    JsonRpcResponse {
-        jsonrpc: "2.0",
-        id,
-        result: Some(result),
-        error: None,
-    }
-}
-
-fn jsonrpc_error(id: Value, code: i32, message: impl Into<String>) -> JsonRpcResponse {
-    JsonRpcResponse {
-        jsonrpc: "2.0",
-        id,
-        result: None,
-        error: Some(JsonRpcError {
-            code,
-            message: message.into(),
-        }),
-    }
-}
-
-fn rest_error(status: StatusCode, message: impl Into<String>) -> (StatusCode, Json<Value>) {
-    (
-        status,
-        Json(json!({ "ok": false, "error": message.into() })),
-    )
-}
-
-fn compact_result(value: Value) -> Value {
-    value.get("_structured_result").cloned().unwrap_or(value)
-}
-
-fn sorted_tools(mut tools: Vec<Value>) -> Vec<Value> {
-    tools.sort_by(|left, right| {
-        let left_name = left.get("name").and_then(Value::as_str).unwrap_or("");
-        let right_name = right.get("name").and_then(Value::as_str).unwrap_or("");
-        left_name.cmp(right_name)
-    });
-    tools
-}
-
-fn tool_name_set(tools: &[Value]) -> HashSet<String> {
-    tools
-        .iter()
-        .filter_map(|tool| tool.get("name").and_then(Value::as_str))
-        .map(ToOwned::to_owned)
-        .collect()
+    Json(state.mcp_service.handle(request).await)
 }
 
 fn probe_workspace_writable(workspace: &Path) -> bool {
@@ -609,47 +173,203 @@ fn probe_workspace_writable(workspace: &Path) -> bool {
     }
 }
 
-fn resolve_relative_workspace_path(root: &Path, raw_path: &str) -> Result<PathBuf, String> {
-    let trimmed = raw_path.trim();
-    let relative = if trimmed.is_empty() { "." } else { trimmed };
-    let input = Path::new(relative);
-    if input.is_absolute() {
-        return Err("absolute paths are not allowed".to_string());
-    }
-    for component in input.components() {
-        match component {
-            Component::Normal(_) | Component::CurDir => {}
-            Component::ParentDir => return Err("path escapes workspace".to_string()),
-            Component::RootDir | Component::Prefix(_) => {
-                return Err("absolute paths are not allowed".to_string())
-            }
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::body::{to_bytes, Body};
+    use axum::http::{header, Request, StatusCode};
+    use chatos_mcp_service::{MCP_ERROR_AUTH_REQUIRED, METHOD_TOOLS_LIST};
+    use serde_json::json;
+    use tower::ServiceExt;
+
+    fn test_config(name: &str, auth_token: Option<&str>) -> ServerConfig {
+        let root = std::env::temp_dir().join(format!(
+            "chatos-sandbox-mcp-server-test-{name}-{}",
+            uuid::Uuid::new_v4()
+        ));
+        ServerConfig {
+            host: "127.0.0.1".to_string(),
+            port: 0,
+            workspace: root.join("workspace"),
+            state_dir: root.join("state"),
+            auth_token: auth_token.map(ToOwned::to_owned),
+            project_id: Some("project-1".to_string()),
+            user_id: Some("user-1".to_string()),
+            max_file_bytes: 1024 * 1024,
+            max_write_bytes: 1024 * 1024,
+            search_limit: 50,
+            terminal_idle_timeout_ms: 1_000,
+            terminal_max_wait_ms: 1_000,
+            terminal_max_output_chars: 4_000,
         }
     }
-    let root = std::fs::canonicalize(root).map_err(|err| err.to_string())?;
-    let target = root.join(input);
-    let mut probe = target.as_path();
-    while !probe.exists() {
-        probe = probe
-            .parent()
-            .ok_or_else(|| "path has no existing parent".to_string())?;
-    }
-    let canonical_parent = std::fs::canonicalize(probe).map_err(|err| err.to_string())?;
-    if !canonical_parent.starts_with(&root) {
-        return Err("path escapes workspace".to_string());
-    }
-    Ok(target)
-}
 
-fn env_string(name: &str) -> Option<String> {
-    std::env::var(name)
-        .ok()
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
-}
+    fn test_app(name: &str, auth_token: Option<&str>) -> (Router, ServerConfig) {
+        let config = test_config(name, auth_token);
+        let app = build_app(config.clone()).expect("build app");
+        (app, config)
+    }
 
-fn env_parse<T>(name: &str) -> Option<T>
-where
-    T: std::str::FromStr,
-{
-    env_string(name).and_then(|value| value.parse::<T>().ok())
+    async fn post_mcp(
+        app: Router,
+        body: serde_json::Value,
+        headers: &[(&str, &str)],
+    ) -> (StatusCode, serde_json::Value) {
+        let mut builder = Request::builder()
+            .method("POST")
+            .uri("/mcp")
+            .header(header::CONTENT_TYPE, "application/json");
+        for (name, value) in headers {
+            builder = builder.header(*name, *value);
+        }
+        let response = app
+            .oneshot(
+                builder
+                    .body(Body::from(body.to_string()))
+                    .expect("build request"),
+            )
+            .await
+            .expect("handle request");
+        let status = response.status();
+        let bytes = to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("read body");
+        let rpc = serde_json::from_slice::<serde_json::Value>(&bytes).expect("decode JSON-RPC");
+        (status, rpc)
+    }
+
+    fn rpc_request(id: &str, method: &str, params: serde_json::Value) -> serde_json::Value {
+        json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "method": method,
+            "params": params,
+        })
+    }
+
+    #[tokio::test]
+    async fn mcp_entrypoint_returns_jsonrpc_auth_error_for_missing_token() {
+        let (app, _config) = test_app("missing-token", Some("secret"));
+        let (status, rpc) = post_mcp(
+            app,
+            rpc_request("auth-1", METHOD_TOOLS_LIST, json!({})),
+            &[],
+        )
+        .await;
+
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(
+            rpc.get("jsonrpc").and_then(serde_json::Value::as_str),
+            Some("2.0")
+        );
+        assert_eq!(rpc.get("id"), Some(&json!("auth-1")));
+        assert_eq!(
+            rpc.pointer("/error/code")
+                .and_then(serde_json::Value::as_i64),
+            Some(i64::from(MCP_ERROR_AUTH_REQUIRED))
+        );
+        assert!(rpc.get("result").is_none());
+    }
+
+    #[tokio::test]
+    async fn mcp_entrypoint_returns_jsonrpc_auth_error_for_wrong_bearer_token() {
+        let (app, _config) = test_app("wrong-token", Some("secret"));
+        let (status, rpc) = post_mcp(
+            app,
+            rpc_request("auth-2", METHOD_TOOLS_LIST, json!({})),
+            &[(header::AUTHORIZATION.as_str(), "Bearer wrong")],
+        )
+        .await;
+
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(rpc.get("id"), Some(&json!("auth-2")));
+        assert_eq!(
+            rpc.pointer("/error/code")
+                .and_then(serde_json::Value::as_i64),
+            Some(i64::from(MCP_ERROR_AUTH_REQUIRED))
+        );
+    }
+
+    #[tokio::test]
+    async fn mcp_entrypoint_handles_jsonrpc_methods_with_bearer_token() {
+        let (app, config) = test_app("bearer-success", Some("secret"));
+        std::fs::write(config.workspace.join("hello.txt"), "hello from sandbox")
+            .expect("write fixture");
+        let auth = [(header::AUTHORIZATION.as_str(), "Bearer secret")];
+
+        let (_status, initialize) = post_mcp(
+            app.clone(),
+            rpc_request("init-1", "initialize", json!({})),
+            &auth,
+        )
+        .await;
+        assert_eq!(
+            initialize
+                .pointer("/result/serverInfo/name")
+                .and_then(serde_json::Value::as_str),
+            Some("chatos-sandbox-mcp-server")
+        );
+
+        let (_status, ping) =
+            post_mcp(app.clone(), rpc_request("ping-1", "ping", json!({})), &auth).await;
+        assert_eq!(ping.get("result"), Some(&json!({})));
+
+        let (_status, tools) = post_mcp(
+            app.clone(),
+            rpc_request("tools-1", METHOD_TOOLS_LIST, json!({})),
+            &auth,
+        )
+        .await;
+        let tool_names: Vec<&str> = tools
+            .pointer("/result/tools")
+            .and_then(serde_json::Value::as_array)
+            .expect("tools array")
+            .iter()
+            .filter_map(|tool| tool.get("name").and_then(serde_json::Value::as_str))
+            .collect();
+        assert!(tool_names.contains(&"read_file"));
+
+        let (_status, call) = post_mcp(
+            app,
+            rpc_request(
+                "call-1",
+                "tools/call",
+                json!({
+                    "name": "read_file",
+                    "arguments": { "path": "hello.txt" },
+                }),
+            ),
+            &auth,
+        )
+        .await;
+        assert_eq!(call.get("id"), Some(&json!("call-1")));
+        assert!(
+            call.get("error").is_none(),
+            "unexpected error: {:?}",
+            call.get("error")
+        );
+        assert!(
+            call.get("result")
+                .map(|value| value.to_string().contains("hello from sandbox"))
+                .unwrap_or(false),
+            "tools/call result should include fixture content"
+        );
+    }
+
+    #[tokio::test]
+    async fn mcp_entrypoint_accepts_sandbox_token_header() {
+        let (app, _config) = test_app("sandbox-header", Some("secret"));
+        let (_status, rpc) = post_mcp(
+            app,
+            rpc_request("tools-2", METHOD_TOOLS_LIST, json!({})),
+            &[("x-chatos-sandbox-token", "secret")],
+        )
+        .await;
+
+        assert!(rpc.get("error").is_none());
+        assert!(rpc
+            .pointer("/result/tools")
+            .and_then(serde_json::Value::as_array)
+            .is_some());
+    }
 }

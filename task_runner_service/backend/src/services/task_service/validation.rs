@@ -80,6 +80,42 @@ impl TaskService {
         Ok(())
     }
 
+    pub(super) fn validate_task_ephemeral_http_servers(
+        &self,
+        config: &TaskMcpConfig,
+    ) -> Result<(), String> {
+        for server in &config.ephemeral_http_servers {
+            let name = server.name.trim();
+            if name.is_empty() {
+                return Err("ephemeral HTTP MCP server name is required".to_string());
+            }
+            let url = server.url.trim();
+            if url.is_empty() {
+                return Err(format!("ephemeral HTTP MCP server url is required: {name}"));
+            }
+            let parsed = reqwest::Url::parse(url).map_err(|err| {
+                format!("ephemeral HTTP MCP server url is invalid: {name}: {err}")
+            })?;
+            if !matches!(parsed.scheme(), "http" | "https") {
+                return Err(format!(
+                    "ephemeral HTTP MCP server url must use http or https: {name}"
+                ));
+            }
+            if let Some(auth_mode) = server.auth_mode.as_deref() {
+                if !matches!(
+                    auth_mode,
+                    crate::models::TASK_MCP_HTTP_AUTH_LOCAL_CONNECTOR_INTERNAL
+                        | crate::models::TASK_MCP_HTTP_AUTH_PROJECT_SERVICE_SYNC
+                ) {
+                    return Err(format!(
+                        "unsupported ephemeral HTTP MCP auth_mode for {name}: {auth_mode}"
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+
     pub(super) async fn validate_task_skill_ids(
         &self,
         config: &TaskMcpConfig,
@@ -131,6 +167,7 @@ impl TaskService {
         }
         self.validate_task_external_mcp_configs(config, current_user, task_owner_user_id)
             .await?;
+        self.validate_task_ephemeral_http_servers(config)?;
         self.validate_task_skill_ids(config, current_user, task_owner_user_id)
             .await?;
         if config.workspace_dir.is_some() {

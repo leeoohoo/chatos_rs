@@ -59,16 +59,8 @@ pub fn build_router(state: AppState) -> Router {
             get(handlers::health_sandbox),
         )
         .route(
-            "/api/sandboxes/:sandbox_id/mcp/tools",
-            get(handlers::sandbox_mcp_tools),
-        )
-        .route(
             "/api/sandboxes/:sandbox_id/mcp",
             post(handlers::sandbox_mcp_proxy),
-        )
-        .route(
-            "/api/sandboxes/:sandbox_id/mcp/call",
-            post(handlers::sandbox_mcp_call),
         )
         .route(
             "/api/sandboxes/:sandbox_id/release",

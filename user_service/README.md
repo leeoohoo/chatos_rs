@@ -12,7 +12,7 @@ It owns:
 
 ## Stack
 
-- Backend: Rust + Axum + SQLite + JWT
+- Backend: Rust + Axum + MongoDB + JWT
 - Frontend: React + Vite + Ant Design
 
 ## Ownership Model
@@ -57,25 +57,43 @@ If you want model config changes in `user_service` to sync into the other servic
 - `TASK_RUNNER_CHATOS_CALLBACK_SECRET=...`
 - `USER_SERVICE_DOWNSTREAM_REQUEST_TIMEOUT_MS=5000`
 
+## Harness Provisioning
+
+In the Docker stack, Harness runs as the `harness` service and `user_service` points to it with:
+
+- `HARNESS_PROVISIONING_ENABLED=true`
+- `HARNESS_BASE_URL=http://harness:3000`
+
+Harness source lives in a separate ignored Git checkout at repository root `harness/`; the Chatos parent repository does not track it.
+
 Important behavior:
 
 - `model` is optional on create. If omitted, `user_service` imports provider models from `/models`.
 - `model` is required on each concrete stored config and cannot be cleared on update.
 - Downstream sync problems are returned as `sync_warnings` on the save response.
-- The repository startup scripts now default `MEMORY_ENGINE_OPERATOR_TOKEN` to `chatos-memory-engine-dev-operator-token` for local development.
+- Docker deployment defaults `MEMORY_ENGINE_OPERATOR_TOKEN` in `docker/.env.example` for local development.
 
-## Run Backend
+## Docker Stack
+
+From the repository root:
+
+```bash
+docker/deploy.sh up
+```
+
+Default URLs:
+
+- Frontend: `http://127.0.0.1:39191`
+- Backend: `http://127.0.0.1:39190`
+
+## Backend-Only Development
 
 ```bash
 cd user_service/backend
 cargo run
 ```
 
-Default backend address:
-
-- `http://127.0.0.1:39190`
-
-## Run Frontend
+## Frontend-Only Development
 
 ```bash
 cd user_service/frontend
@@ -83,26 +101,7 @@ npm install
 npm run dev
 ```
 
-Default frontend address:
-
-- `http://127.0.0.1:39191`
-
 The frontend uses `/api` proxying to the backend during local development.
-
-On Windows, prefer Git Bash when using the provided `.sh` startup script.
-
-If Windows Smart App Control / Code Integrity blocks Rust execution, prefer WSL:
-
-```powershell
-make bootstrap-wsl
-make restart-user-service-wsl
-make status-user-service-wsl
-make stop-user-service-wsl
-```
-
-When the repository root `.env` keeps `START_USER_SERVICE=1` and
-`CHATOS_USER_SERVICE_BASE_URL=http://127.0.0.1:39190`, the root
-`./restart_services.sh restart` flow will also start the local `user_service`.
 
 ## Default Admin
 
@@ -136,9 +135,8 @@ Change the default password and JWT secret before production use.
 
 ## Validation Notes
 
-Validated in this workspace:
+Recommended checks:
 
-- `cargo check --manifest-path user_service/backend/Cargo.toml`
-- `npm.cmd run build` in `user_service/frontend`
-
-Repository-wide Rust validation is still blocked by an existing missing external dependency under `C:\project\learn\memory_engine\sdk`.
+- `cd user_service/backend && cargo test`
+- `cd user_service/frontend && npm run type-check`
+- `cd user_service/frontend && npm run build`

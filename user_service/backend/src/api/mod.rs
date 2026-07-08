@@ -20,6 +20,7 @@ use crate::state::AppState;
 
 mod agents;
 mod auth;
+mod harness;
 mod models;
 mod system;
 mod token_exchange;
@@ -35,6 +36,14 @@ pub fn build_router(state: AppState) -> Router {
             get(users::list_users).post(users::create_user),
         )
         .route("/api/users/:id", patch(users::update_user))
+        .route(
+            "/api/users/:id/harness-provisioning",
+            post(users::provision_harness_user),
+        )
+        .route(
+            "/api/users/:id/harness-provisioning/retry",
+            post(users::retry_harness_provisioning),
+        )
         .route(
             "/api/agent-accounts",
             get(agents::list_agent_accounts).post(agents::create_agent_account),
@@ -87,6 +96,10 @@ pub fn build_router(state: AppState) -> Router {
             "/api/token/exchange/agent",
             post(token_exchange::exchange_task_runner_token),
         )
+        .route(
+            "/api/internal/harness/repos",
+            post(harness::create_project_repo),
+        )
         .route("/api/system/config", get(system::get_system_config))
         .route_layer(middleware::from_fn_with_state(state.clone(), require_auth));
 
@@ -94,6 +107,10 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/health", get(system::health))
         .route("/api/auth/login", post(auth::login))
         .route("/api/auth/register", post(auth::register))
+        .route(
+            "/api/internal/harness/users/:user_id/access",
+            get(harness::get_user_harness_access),
+        )
         .merge(protected)
         .with_state(state)
         .layer(

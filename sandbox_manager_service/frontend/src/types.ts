@@ -81,23 +81,24 @@ export interface SandboxHealthResponse {
   checks: SandboxHealthCheck[];
 }
 
-export interface SandboxMcpToolsResponse {
-  ok: boolean;
-  sandbox_id: string;
-  agent_endpoint: string;
-  tools: unknown[];
+export interface SandboxMcpJsonRpcRequest {
+  jsonrpc: '2.0';
+  id: string;
+  method: string;
+  params?: unknown;
 }
 
-export interface SandboxMcpCallPayload {
-  name: string;
-  arguments: unknown;
+export interface SandboxMcpJsonRpcError {
+  code: number;
+  message: string;
+  data?: unknown;
 }
 
-export interface SandboxMcpCallResponse {
-  ok: boolean;
-  sandbox_id: string;
-  agent_endpoint: string;
-  result: unknown;
+export interface SandboxMcpJsonRpcResponse {
+  jsonrpc: '2.0';
+  id: unknown;
+  result?: unknown;
+  error?: SandboxMcpJsonRpcError;
 }
 
 export interface CreateSandboxLeasePayload {

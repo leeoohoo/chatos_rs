@@ -328,6 +328,7 @@ mod tests {
             chatos_callback_url: None,
             chatos_callback_secret: None,
             internal_api_secret: Some("internal-secret".to_string()),
+            local_connector_internal_api_secret: None,
             callback_timeout: Duration::from_millis(1_000),
             admin_username: "admin".to_string(),
             admin_password: "admin".to_string(),

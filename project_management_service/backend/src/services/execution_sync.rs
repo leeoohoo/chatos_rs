@@ -459,6 +459,10 @@ mod tests {
                     root_path: None,
                     git_url: None,
                     description: None,
+                    source_type: None,
+                    cloud_import_source: None,
+                    import_status: None,
+                    source_git_url: None,
                 },
                 &test_user(),
             )

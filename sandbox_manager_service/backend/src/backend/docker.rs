@@ -4,7 +4,7 @@
 use async_trait::async_trait;
 use tokio::process::Command;
 
-use crate::config::AppConfig;
+use crate::config::{AppConfig, DockerAgentEndpointMode};
 
 use super::{SandboxBackend, SandboxCreateSpec, SandboxInstance};
 
@@ -36,7 +36,8 @@ impl SandboxBackend for DockerSandboxBackend {
         } else {
             requested_network
         };
-        let publish_agent = network != "none" && self.config.agent_port > 0;
+        let publish_agent =
+            self.config.docker_agent_publish && network != "none" && self.config.agent_port > 0;
         let mut command = Command::new("docker");
         command
             .arg("run")
@@ -68,9 +69,10 @@ impl SandboxBackend for DockerSandboxBackend {
                 .arg(format!("CHATOS_SANDBOX_MCP_TOKEN={agent_token}"));
         }
         if publish_agent {
-            command
-                .arg("-p")
-                .arg(format!("127.0.0.1::{}", self.config.agent_port));
+            command.arg("-p").arg(format!(
+                "{}::{}",
+                self.config.docker_agent_bind_host, self.config.agent_port
+            ));
         }
         command
             .arg("--tmpfs")
@@ -93,11 +95,7 @@ impl SandboxBackend for DockerSandboxBackend {
         Ok(SandboxInstance {
             sandbox_id: spec.sandbox_id,
             backend_id: Some(container_id),
-            agent_endpoint: if publish_agent {
-                published_agent_endpoint("docker", &name, self.config.agent_port).await
-            } else {
-                None
-            },
+            agent_endpoint: self.agent_endpoint(&name, publish_agent).await,
         })
     }
 
@@ -149,8 +147,9 @@ impl SandboxBackend for DockerSandboxBackend {
         if !output.status.success() {
             return Ok(None);
         }
-        let agent_endpoint =
-            published_agent_endpoint("docker", &name, self.config.agent_port).await;
+        let agent_endpoint = self
+            .agent_endpoint(&name, self.config.docker_agent_publish)
+            .await;
         Ok(Some(SandboxInstance {
             sandbox_id: sandbox_id.to_string(),
             backend_id: Some(name),
@@ -159,11 +158,39 @@ impl SandboxBackend for DockerSandboxBackend {
     }
 }
 
+impl DockerSandboxBackend {
+    async fn agent_endpoint(&self, name: &str, publish_agent: bool) -> Option<String> {
+        if self.config.agent_port == 0 {
+            return None;
+        }
+        match self.config.docker_agent_endpoint_mode {
+            DockerAgentEndpointMode::Container => {
+                Some(format!("http://{}:{}", name, self.config.agent_port))
+            }
+            DockerAgentEndpointMode::Published if publish_agent => {
+                published_agent_endpoint(
+                    "docker",
+                    name,
+                    self.config.agent_port,
+                    self.config.docker_agent_connect_host.as_str(),
+                )
+                .await
+            }
+            DockerAgentEndpointMode::Published => None,
+        }
+    }
+}
+
 fn docker_name(sandbox_id: &str) -> String {
     format!("chatos-sandbox-{sandbox_id}")
 }
 
-async fn published_agent_endpoint(cli: &str, name: &str, agent_port: u16) -> Option<String> {
+async fn published_agent_endpoint(
+    cli: &str,
+    name: &str,
+    agent_port: u16,
+    connect_host: &str,
+) -> Option<String> {
     let output = Command::new(cli)
         .arg("port")
         .arg(name)
@@ -180,5 +207,5 @@ async fn published_agent_endpoint(cli: &str, name: &str, agent_port: u16) -> Opt
     if host_port.is_empty() {
         return None;
     }
-    Some(format!("http://127.0.0.1:{host_port}"))
+    Some(format!("http://{connect_host}:{host_port}"))
 }

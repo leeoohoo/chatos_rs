@@ -6,7 +6,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-MAIN_API_DIR="$ROOT_DIR/chat_app_server_rs/src/api"
+MAIN_API_DIR="$ROOT_DIR/chatos/backend/src/api"
 
 extract_endpoints_from_file() {
   local file="$1"
@@ -126,6 +126,6 @@ cat <<EOF
 main_backend_endpoint_count=${main_count}
 total_endpoint_count=${main_count}
 
-## chat_app_server_rs endpoints (method + path)
+## chatos/backend endpoints (method + path)
 ${main_endpoints}
 EOF

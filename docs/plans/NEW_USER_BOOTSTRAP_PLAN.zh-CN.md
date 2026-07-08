@@ -30,18 +30,18 @@
 
 ### 3. 现有代码已经支持“创建 agent 时顺手开通 task 账号”
 
-- `chat_app_server_rs/src/api/agents.rs`
+- `chatos/backend/src/api/agents.rs`
   - 普通创建 agent 时已经强制带 `auto_provision_task_runner_account = Some(true)`
-- `chat_app_server_rs/src/services/chatos_agents.rs`
+- `chatos/backend/src/services/chatos_agents.rs`
   - `provision_task_runner_agent_account()` 会调用 `user_service /api/agent-accounts`
 
 这说明“自动建 task 账号”不需要重新发明，只要复用现有 agent 创建逻辑。
 
 ### 4. 只有 agent 还不够，Task Runner 真正运行还依赖 contact
 
-- `chat_app_server_rs/src/services/chatos_memory_mappings/contacts.rs`
+- `chatos/backend/src/services/chatos_memory_mappings/contacts.rs`
   - `create_memory_contact()` 创建 contact 后，会通过 `auto_bind_contact_task_runner()` 自动把 contact 绑定到 agent 的 task 账号
-- `chat_app_server_rs/src/modules/conversation_runtime/runtime_context.rs`
+- `chatos/backend/src/modules/conversation_runtime/runtime_context.rs`
   - 运行时加载 Task Runner 配置时，最终读的是 contact 绑定信息
 
 结论：如果只创建 `叽咕狸` 和 `agent_account`，但不创建 `contact`，第一次使用时 task 能力仍然起不来。
@@ -50,7 +50,7 @@
 
 推荐把新用户初始化逻辑放在：
 
-- `chat_app_server_rs/src/api/auth.rs`
+- `chatos/backend/src/api/auth.rs`
 - 具体是 `register_via_user_service()` 成功之后
 
 ### 原因
@@ -64,7 +64,7 @@
 
 新增一个专门的引导服务，例如：
 
-- `chat_app_server_rs/src/services/new_user_bootstrap.rs`
+- `chatos/backend/src/services/new_user_bootstrap.rs`
 
 提供一个幂等方法，例如：
 
@@ -193,13 +193,13 @@
 
 预计会涉及：
 
-- `chat_app_server_rs/src/api/auth.rs`
-- `chat_app_server_rs/src/services/mod.rs`
-- `chat_app_server_rs/src/services/new_user_bootstrap.rs`（新增）
+- `chatos/backend/src/api/auth.rs`
+- `chatos/backend/src/services/mod.rs`
+- `chatos/backend/src/services/new_user_bootstrap.rs`（新增）
 - 可能少量复用：
-  - `chat_app_server_rs/src/services/chatos_agents.rs`
-  - `chat_app_server_rs/src/services/chatos_memory_mappings/contacts.rs`
-  - `chat_app_server_rs/src/modules/conversation_runtime/sessions.rs`
+  - `chatos/backend/src/services/chatos_agents.rs`
+  - `chatos/backend/src/services/chatos_memory_mappings/contacts.rs`
+  - `chatos/backend/src/modules/conversation_runtime/sessions.rs`
 
 ## 验收标准
 

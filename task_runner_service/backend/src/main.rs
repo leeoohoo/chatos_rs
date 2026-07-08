@@ -11,15 +11,6 @@ use task_runner_service_backend::{
 const TASK_RUNNER_TOKIO_THREAD_STACK_SIZE: usize = 8 * 1024 * 1024;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    match chatos_mcp_runtime::process_isolation::maybe_run_exec_helper_from_env() {
-        Ok(false) => {}
-        Ok(true) => return Ok(()),
-        Err(err) => {
-            eprintln!("{err}");
-            std::process::exit(126);
-        }
-    }
-
     load_task_runner_dotenv();
     init_tracing();
 
@@ -31,7 +22,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 async fn run() -> Result<(), Box<dyn std::error::Error>> {
-    let config = AppConfig::from_env()?;
+    chatos_service_runtime::apply_config_center_env("task-runner").await;
+    let mut config = AppConfig::from_env()?;
+    resolve_downstream_services(&mut config).await;
     let app_state = AppState::new(config.clone()).await?;
     let mut background_handles = Vec::new();
 
@@ -65,6 +58,9 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     let bind_addr = config.bind_addr();
     let app = build_router(app_state);
+    let _service_runtime =
+        chatos_service_runtime::register_current_service("task-runner", config.port, "/api/health")
+            .await;
     let listener = tokio::net::TcpListener::bind(bind_addr).await?;
 
     tracing::info!(
@@ -76,6 +72,45 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     axum::serve(listener, app).await?;
     Ok(())
+}
+
+async fn resolve_downstream_services(config: &mut AppConfig) {
+    config.user_service_base_url = chatos_service_runtime::resolve_service_base_url(
+        "user-service",
+        config.user_service_base_url.as_str(),
+    )
+    .await;
+    config.default_sandbox_manager_base_url = chatos_service_runtime::resolve_service_base_url(
+        "sandbox-manager",
+        config.default_sandbox_manager_base_url.as_str(),
+    )
+    .await;
+    if let Some(base_url) = config.memory_engine_base_url.clone() {
+        config.memory_engine_base_url = Some(
+            chatos_service_runtime::resolve_service_url(
+                "memory-engine",
+                base_url.as_str(),
+                "/api/memory-engine/v1",
+            )
+            .await,
+        );
+    }
+    if let Some(base_url) = config.project_service_base_url.clone() {
+        config.project_service_base_url = Some(
+            chatos_service_runtime::resolve_service_base_url("project-service", base_url.as_str())
+                .await,
+        );
+    }
+    if let Some(callback_url) = config.chatos_callback_url.clone() {
+        config.chatos_callback_url = Some(
+            chatos_service_runtime::resolve_service_url(
+                "chatos-backend",
+                callback_url.as_str(),
+                "/api/agent/chat/task-runner/callback",
+            )
+            .await,
+        );
+    }
 }
 
 fn init_tracing() {

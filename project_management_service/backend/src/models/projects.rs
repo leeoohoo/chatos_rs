@@ -34,6 +34,111 @@ impl DbStatus for ProjectStatus {
     }
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ProjectSourceType {
+    Local,
+    LocalConnector,
+    Cloud,
+}
+
+impl Default for ProjectSourceType {
+    fn default() -> Self {
+        Self::Local
+    }
+}
+
+impl DbStatus for ProjectSourceType {
+    fn as_str(&self) -> &'static str {
+        match self {
+            Self::Local => "local",
+            Self::LocalConnector => "local_connector",
+            Self::Cloud => "cloud",
+        }
+    }
+
+    fn from_db(value: &str) -> Self {
+        match value.trim() {
+            "cloud" => Self::Cloud,
+            "local_connector" => Self::LocalConnector,
+            _ => Self::Local,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum CloudImportSource {
+    None,
+    Empty,
+    Git,
+    Zip,
+}
+
+impl Default for CloudImportSource {
+    fn default() -> Self {
+        Self::None
+    }
+}
+
+impl DbStatus for CloudImportSource {
+    fn as_str(&self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::Empty => "empty",
+            Self::Git => "git",
+            Self::Zip => "zip",
+        }
+    }
+
+    fn from_db(value: &str) -> Self {
+        match value.trim() {
+            "empty" => Self::Empty,
+            "git" => Self::Git,
+            "zip" => Self::Zip,
+            _ => Self::None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ProjectImportStatus {
+    None,
+    Pending,
+    Importing,
+    Ready,
+    Failed,
+}
+
+impl Default for ProjectImportStatus {
+    fn default() -> Self {
+        Self::None
+    }
+}
+
+impl DbStatus for ProjectImportStatus {
+    fn as_str(&self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::Pending => "pending",
+            Self::Importing => "importing",
+            Self::Ready => "ready",
+            Self::Failed => "failed",
+        }
+    }
+
+    fn from_db(value: &str) -> Self {
+        match value.trim() {
+            "pending" => Self::Pending,
+            "importing" => Self::Importing,
+            "ready" => Self::Ready,
+            "failed" => Self::Failed,
+            _ => Self::None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProjectRecord {
     pub id: String,
@@ -49,6 +154,30 @@ pub struct ProjectRecord {
     pub name: String,
     pub root_path: Option<String>,
     pub git_url: Option<String>,
+    #[serde(default)]
+    pub source_type: ProjectSourceType,
+    #[serde(default)]
+    pub cloud_import_source: CloudImportSource,
+    #[serde(default)]
+    pub import_status: ProjectImportStatus,
+    #[serde(default)]
+    pub source_git_url: Option<String>,
+    #[serde(default)]
+    pub harness_space_identifier: Option<String>,
+    #[serde(default)]
+    pub harness_repo_identifier: Option<String>,
+    #[serde(default)]
+    pub harness_repo_path: Option<String>,
+    #[serde(default)]
+    pub harness_git_url: Option<String>,
+    #[serde(default)]
+    pub harness_git_ssh_url: Option<String>,
+    #[serde(default)]
+    pub import_error: Option<String>,
+    #[serde(default)]
+    pub import_started_at: Option<String>,
+    #[serde(default)]
+    pub import_finished_at: Option<String>,
     pub description: Option<String>,
     pub status: ProjectStatus,
     pub created_at: String,
@@ -62,6 +191,14 @@ pub struct CreateProjectRequest {
     pub root_path: Option<String>,
     pub git_url: Option<String>,
     pub description: Option<String>,
+    #[serde(default)]
+    pub source_type: Option<ProjectSourceType>,
+    #[serde(default)]
+    pub cloud_import_source: Option<CloudImportSource>,
+    #[serde(default)]
+    pub import_status: Option<ProjectImportStatus>,
+    #[serde(default)]
+    pub source_git_url: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -74,6 +211,30 @@ pub struct ImportProjectRequest {
     pub root_path: Option<String>,
     pub git_url: Option<String>,
     pub description: Option<String>,
+    #[serde(default)]
+    pub source_type: Option<ProjectSourceType>,
+    #[serde(default)]
+    pub cloud_import_source: Option<CloudImportSource>,
+    #[serde(default)]
+    pub import_status: Option<ProjectImportStatus>,
+    #[serde(default)]
+    pub source_git_url: Option<String>,
+    #[serde(default)]
+    pub harness_space_identifier: Option<String>,
+    #[serde(default)]
+    pub harness_repo_identifier: Option<String>,
+    #[serde(default)]
+    pub harness_repo_path: Option<String>,
+    #[serde(default)]
+    pub harness_git_url: Option<String>,
+    #[serde(default)]
+    pub harness_git_ssh_url: Option<String>,
+    #[serde(default)]
+    pub import_error: Option<String>,
+    #[serde(default)]
+    pub import_started_at: Option<String>,
+    #[serde(default)]
+    pub import_finished_at: Option<String>,
     pub status: Option<ProjectStatus>,
     pub created_at: Option<String>,
     pub updated_at: Option<String>,

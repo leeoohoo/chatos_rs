@@ -1,157 +1,104 @@
 # Chatos RS
 
-跨系统安装教程见 [INSTALL_GUIDE.zh-CN.md](./INSTALL_GUIDE.zh-CN.md)
+Chatos RS 现在按云端 Docker 部署优先维护。除了 `local_connector_client/` 需要留在用户本机，其它服务都走 Docker Compose。
 
-## 项目定位
-`Chatos RS` 是一个面向开发与工程协作场景的 AI 平台。  
-它把对话交互、工具调用和长期记忆统一到一套系统中，目标是让 AI 能稳定地“持续工作”，而不是只做一次性聊天。
+安装说明: [INSTALL_GUIDE.zh-CN.md](./INSTALL_GUIDE.zh-CN.md)
 
-## 这个项目解决什么问题
-传统聊天式 AI 在工程场景常见问题：
-- 上下文只在当前会话内有效，跨会话信息容易丢失
-- 历史越长 token 成本越高，推理效率下降
-- 工具链路分散，接入和维护成本高
-- 工具执行过程不透明时，工程工作流难以维护和排障
+## 一次启动
 
-`Chatos RS` 的设计就是为了解决这些问题：  
-通过“主对话服务 + 外部记忆平台接入 + MCP 风格工具编排”实现持续上下文、成本控制和可集成性。
-
-## 核心优势
-1. 长期记忆能力
-- 支持会话总结、再总结、记忆沉淀，保留跨会话的关键事实、决策和待办。
-
-2. 上下文成本可控
-- 通过分层总结与定时任务压缩上下文，减少无效 token 消耗，同时保持连续性。
-
-3. 工具协作友好
-- 支持工具调用与 MCP 场景，适合接入工程工作流与外部能力。
-
-4. 架构可扩展
-- 前端、主后端、外部记忆平台解耦，支持独立部署与水平扩展。
-
-5. 工程工作流可运维
-- 让工具调用、任务执行和记忆上下文保持可观察、可维护。
-
-## 架构分层
-- `chat_app/`：主前端交互层
-- `chat_app_server_rs/`：主后端编排层（会话、消息、工具、流式响应）
-- `official_website_service/`：官网微服务（Rust 后端 + React 前端）
-
-## 本地一键启动
 在仓库根目录执行：
 
 ```bash
-./restart_services.sh restart
+cp docker/.env.example docker/.env
+# 修改 docker/.env 里的外部密钥和 API Key；内部服务 token 有默认值
+docker/deploy.sh up
 ```
 
-统一根级任务入口：
+`docker/deploy.sh up` 默认从 GHCR 拉 CI 预构建镜像，不在本机编译。需要用本地源码构建镜像时：
 
 ```bash
-make help
-make build
-make test
+docker/deploy.sh dev
+```
+
+Make 快捷入口：
+
+```bash
+make docker-up  # 拉预构建镜像启动
+make dev        # 用本地源码构建并启动
+```
+
+## 常用命令
+
+```bash
+docker/deploy.sh ps
+docker/deploy.sh logs
+docker/deploy.sh restart
+docker/deploy.sh down
+docker/deploy.sh reset
+```
+
+## 默认访问地址
+
+- 主应用：`http://localhost:8088`
+- 主后端：`http://localhost:3997`
+- Harness：`http://localhost:3000`
+- User Service：`http://localhost:39191`
+- Memory Engine：`http://localhost:4178`
+- Task Runner：`http://localhost:39091`
+- Project Management：`http://localhost:39211`
+- Sandbox Manager：`http://localhost:8096`
+- Local Connector Service：`http://localhost:39230`
+- DB Connection Hub：`http://localhost:5174`
+- Official Website：`http://localhost:39251`
+
+## Local Connector Client
+
+云端 relay service 已经容器化；`local_connector_client/` 仍然在宿主机运行，因为它要访问用户本机工作区和本机 Docker：
+
+```bash
+make local-connector-client
+make local-connector-client-status
+make local-connector-client-stop
+```
+
+Docker 云端配置看 `docker/.env.example`。宿主机 Local Connector Client 的配置看根目录 `.env.example`。
+
+## Harness
+
+`harness/` 是从 `https://github.com/leeoohoo/harness.git` 拉下来的独立 Git 仓库；父级 Chatos 仓库会忽略这个目录。以后更新 Harness，请进入 `harness/` 目录用它自己的 Git 流程处理。
+
+新工作区如果需要源码副本，可以在根目录执行：
+
+```bash
+git clone https://github.com/leeoohoo/harness.git harness
+```
+
+Docker Compose 使用 `harness/harness` 镜像运行 Harness，数据放在 `harness-data` volume。
+
+开源说明见 [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md)。
+
+## CI 镜像
+
+GitHub Actions 会在 `main`、`master` 和版本 tag 上构建并推送所有 Chatos 服务镜像到 GHCR。默认镜像配置在 `docker/.env.example`：
+
+```env
+CHATOS_IMAGE_NAMESPACE=ghcr.io/leeoohoo
+CHATOS_IMAGE_TAG=latest
+```
+
+如果要部署某个固定提交，可以把 `CHATOS_IMAGE_TAG` 改成 `sha-<commit>`。
+
+如果 GHCR package 不是公开可读，部署机器需要先执行 `docker login ghcr.io`。
+
+## 沙箱服务
+
+Sandbox Manager 运行在 Compose 容器里，并挂载宿主机 `/var/run/docker.sock`。所以它可以从容器内控制当前宿主机 Docker，并把创建出来的沙箱容器加入同一个 Docker 网络，用容器名访问 agent。
+
+这个模式可行，但权限很高：拿到 Docker socket 的容器基本等同于拥有宿主机 Docker 管理权限。
+
+## 检查
+
+```bash
 make smoke
+make test
 ```
-
-`make smoke` 会执行仓库治理检查以及轻量级的跨子系统探测。
-其中也包括根级启动脚本语法检查，以及 Git 关注文件的大文件策略检查。
-
-共享本地配置入口：
-
-- 根目录提供 [`.env.example`](./.env.example)
-- `./restart_services.sh` 会先读取根目录 `.env`
-- 如果存在 `chat_app_server_rs/.env`，主后端仍可用它覆盖后端专属配置
-
-常用命令：
-
-```bash
-./restart_services.sh status
-./restart_services.sh stop
-```
-
-启动官网微服务：
-
-```bash
-make restart-official-website
-```
-
-官网默认地址：
-
-- 后端/生产静态页：`http://localhost:39250`
-- 前端开发页：`http://localhost:39251`
-
-默认 `OFFICIAL_WEBSITE_MODE=dev` 会同时启动 Rust 后端和 Vite 开发服务。如果要用后端托管
-生产构建，先运行 `make build-official-website`，再执行
-`OFFICIAL_WEBSITE_MODE=prod make restart-official-website`。
-独立生产端口可使用 `make restart-official-website-prod`，Docker 镜像可使用
-`make docker-build-official-website` 构建。
-
-官网后端还提供 `GET /api/site/status`，用于在官网页面展示本机核心微服务健康状态。
-`robots.txt` 和 `sitemap.xml` 会根据 `OFFICIAL_WEBSITE_PUBLIC_BASE_URL` 动态生成；
-运行中站点可用 `make smoke-official-website-live` 验证。公开部署时可以设置
-`OFFICIAL_WEBSITE_ENABLE_LIVE_STATUS=false` 关闭内部服务状态探测。
-
-如果希望全栈启动脚本同时启动官网，可在根目录 `.env` 中设置：
-
-```bash
-START_OFFICIAL_WEBSITE=1
-```
-
-## WSL Rust 开发流
-如果 Windows 上的 Smart App Control / Code Integrity 会拦截 `cargo run` 或 `cargo test`，
-优先改走 WSL 内运行 Rust，而不是直接在 Windows 上执行 Rust 产物。
-
-一次性初始化：
-
-```powershell
-wsl.exe --install -d Ubuntu
-make bootstrap-wsl
-```
-
-从 Windows 侧启动 ChatOS（实际运行在 WSL 内）：
-
-```powershell
-make restart-wsl
-make status-wsl
-make stop-wsl
-```
-
-只启动 `user_service`：
-
-```powershell
-make restart-user-service-wsl
-make status-user-service-wsl
-make stop-user-service-wsl
-```
-
-根目录 `.env` 可选配置：
-
-- `WSL_DEV_DISTRO`
-- `WSL_CARGO_TARGET_DIR`
-- `WSL_RUNTIME_DIR`
-- `WSL_USER_SERVICE_RUNTIME_DIR`
-
-默认日志路径：
-- `/tmp/chatos_rs_dev_<repo-hash>/backend.log`
-- `/tmp/chatos_rs_dev_<repo-hash>/frontend.log`
-
-## 开发方案归档
-方案/评估/契约文档可能位于根目录历史文档，或本地 `docs/plans/` 归档目录。
-
-## WSL 文档
-- [WSL Rust 开发流](./WSL_RUST_DEV_FLOW_20260619.md)
-
-## 子项目文档
-- [chat_app English](./chat_app/README.en.md)
-- [chat_app 中文](./chat_app/README.zh-CN.md)
-- [chat_app_server_rs English](./chat_app_server_rs/README.en.md)
-- [chat_app_server_rs 中文](./chat_app_server_rs/README.zh-CN.md)
-- [db_connection_hub backend](./db_connection_hub/backend/README.md)
-- [db_connection_hub frontend](./db_connection_hub/frontend/README.md)
-- [官网微服务](./official_website_service/README.md)
-
-## 许可协议
-本项目采用 [PolyForm Noncommercial License 1.0.0](./LICENSE) 以源码可见方式发布。
-未经版权持有人另行书面授权，不允许将本项目用于商业用途。
-可以用 `python3 scripts/apply_license_headers.py` 检查第一方源码头部声明。
-可以用 `python3 scripts/apply_license_headers.py --write` 批量补齐缺失声明。

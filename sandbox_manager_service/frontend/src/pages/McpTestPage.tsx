@@ -106,10 +106,11 @@ export function McpTestPage() {
   });
 
   const toolsMutation = useMutation({
-    mutationFn: (sandboxId: string) => sandboxesApi.mcpTools(sandboxId),
+    mutationFn: (sandboxId: string) => callSandboxMcp(sandboxId, 'tools/list', {}),
     onSuccess: (result) => {
-      setTools(result.tools);
-      const rows = toToolRows(result.tools);
+      const tools = toolsFromResult(result);
+      setTools(tools);
+      const rows = toToolRows(tools);
       const preferred = rows.find((row) => row.name === 'execute_command') ?? rows[0];
       if (preferred) {
         form.setFieldsValue({
@@ -133,7 +134,11 @@ export function McpTestPage() {
       sandboxId: string;
       name: string;
       argumentsValue: unknown;
-    }) => sandboxesApi.mcpCall(sandboxId, { name, arguments: argumentsValue }),
+    }) =>
+      callSandboxMcp(sandboxId, 'tools/call', {
+        name,
+        arguments: argumentsValue,
+      }),
     onSuccess: (result) => {
       setCallResult(result);
       message.success(t('mcp.callSuccess'));
@@ -392,4 +397,28 @@ function toToolRows(tools: unknown[]): McpToolRow[] {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+async function callSandboxMcp(
+  sandboxId: string,
+  method: string,
+  params: unknown,
+): Promise<unknown> {
+  const response = await sandboxesApi.mcpProxy(sandboxId, {
+    jsonrpc: '2.0',
+    id: `mcp-${Date.now()}`,
+    method,
+    params,
+  });
+  if (response.error) {
+    throw new Error(response.error.message);
+  }
+  return response.result;
+}
+
+function toolsFromResult(result: unknown): unknown[] {
+  if (!isRecord(result) || !Array.isArray(result.tools)) {
+    return [];
+  }
+  return result.tools;
 }

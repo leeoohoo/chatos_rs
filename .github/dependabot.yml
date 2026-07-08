@@ -4,7 +4,7 @@
 version: 2
 updates:
   - package-ecosystem: "npm"
-    directory: "/chat_app"
+    directory: "/chatos/frontend"
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 2
@@ -14,7 +14,7 @@ updates:
           - "*"
 
   - package-ecosystem: "cargo"
-    directory: "/chat_app_server_rs"
+    directory: "/chatos/backend"
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 2

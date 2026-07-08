@@ -19,11 +19,11 @@
   - `task_runner_service/backend/src/api/prompts.rs`
   - `task_runner_service/backend/src/mcp_server/prompt_tools.rs`
 - Chatos 本地内置 `AskUser` 已经能创建本地 prompt 记录，并通过工具流发 `ask_user_prompt_required/ask_user_prompt_resolved`：
-  - `chat_app_server_rs/src/services/shared_builtin_ask_user.rs`
-  - `chat_app_server_rs/src/services/ask_user_prompt_manager/*`
+  - `chatos/backend/src/services/shared_builtin_ask_user.rs`
+  - `chatos/backend/src/services/ask_user_prompt_manager/*`
 - Chatos realtime backend 已有 `AskUserPromptRealtimePayload` 和 `publish_ask_user_prompt_updated`，但前端 realtime 类型还没有接入 `conversation.ask_user_prompt.updated`。
 - Chatos 当前 TaskRunner HTTP callback 只处理任务事件，并落成 `task_runner_callback` 助手消息：
-  - `chat_app_server_rs/src/api/agent_chat.rs`
+  - `chatos/backend/src/api/agent_chat.rs`
 - Chatos 发起 TaskRunner async planner 时已经透传：
   - `X-Chatos-Project-Id`
   - `X-Chatos-Session-Id`
@@ -176,7 +176,7 @@ payload 建议：
 
 前端接入点：
 
-- `chat_app/src/lib/realtime/types.ts` 增加 `RealtimeAskUserPromptPayloadWrapper`，并把它加入 `RealtimeEventEnvelope.payload` union。
+- `chatos/frontend/src/lib/realtime/types.ts` 增加 `RealtimeAskUserPromptPayloadWrapper`，并把它加入 `RealtimeEventEnvelope.payload` union。
 - 新增 `useConversationAskUserPromptRealtime`，监听 `conversation.ask_user_prompt.updated`。
 - 在当前会话状态里维护 pending prompt 队列。
 - 复用现有 `askUserPrompt.*` i18n 文案，补 `failed` 状态文案。

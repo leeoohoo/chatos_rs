@@ -5,10 +5,14 @@ use axum::extract::{Path, State};
 use axum::{Extension, Json};
 
 use crate::auth::{hash_password, normalize_display_name, normalize_username, CurrentPrincipal};
-use crate::models::{
-    CreateUserRequest, UpdateUserRequest, UserRecord, UserSummaryRecord, USER_ROLE_SUPER_ADMIN,
-    USER_ROLE_USER,
+use crate::integrations::{
+    provision_harness_user_public_register, provision_harness_user_public_register_result,
 };
+use crate::models::{
+    CreateUserRequest, ProvisionHarnessUserRequest, UpdateUserRequest, UserRecord,
+    UserSummaryRecord, USER_ROLE_SUPER_ADMIN, USER_ROLE_USER,
+};
+use crate::secrets::decrypt_secret;
 use crate::state::AppState;
 use crate::store::now_rfc3339;
 
@@ -77,6 +81,10 @@ pub async fn create_user(
         .insert_user_record(&user)
         .await
         .map_err(internal_error)?;
+    if user.enabled {
+        let _ =
+            provision_harness_user_public_register(&state, &user, input.password.as_str()).await;
+    }
 
     let summary = state
         .store
@@ -84,6 +92,99 @@ pub async fn create_user(
         .await
         .map_err(internal_error)?
         .ok_or_else(|| internal_error("created user summary missing"))?;
+    Ok(Json(summary))
+}
+
+pub async fn retry_harness_provisioning(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Extension(principal): Extension<CurrentPrincipal>,
+) -> ApiResult<UserSummaryRecord> {
+    require_super_admin(&principal)?;
+    if !state.config.harness_provisioning_enabled {
+        return Err(bad_request("harness provisioning is disabled"));
+    }
+
+    let Some(user) = state
+        .store
+        .find_user_by_id(id.as_str())
+        .await
+        .map_err(internal_error)?
+    else {
+        return Err(not_found("user not found"));
+    };
+    if !user.enabled {
+        return Err(bad_request("cannot provision disabled user"));
+    }
+
+    let Some(record) = state
+        .store
+        .find_harness_provisioning_by_user_id(user.id.as_str())
+        .await
+        .map_err(internal_error)?
+    else {
+        return Err(bad_request("harness provisioning record not found"));
+    };
+    let Some(encrypted_password) = record.encrypted_password.as_deref() else {
+        return Err(bad_request(
+            "harness provisioning password is unavailable; reset password before retry",
+        ));
+    };
+    let password = decrypt_secret(encrypted_password).map_err(internal_error)?;
+    provision_harness_user_public_register_result(&state, &user, password.as_str())
+        .await
+        .map_err(internal_error)?;
+
+    let summary = state
+        .store
+        .get_user_summary(user.id.as_str())
+        .await
+        .map_err(internal_error)?
+        .ok_or_else(|| internal_error("updated user summary missing"))?;
+    Ok(Json(summary))
+}
+
+pub async fn provision_harness_user(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Extension(principal): Extension<CurrentPrincipal>,
+    Json(input): Json<ProvisionHarnessUserRequest>,
+) -> ApiResult<UserSummaryRecord> {
+    require_super_admin(&principal)?;
+    if !state.config.harness_provisioning_enabled {
+        return Err(bad_request("harness provisioning is disabled"));
+    }
+
+    let Some(mut user) = state
+        .store
+        .find_user_by_id(id.as_str())
+        .await
+        .map_err(internal_error)?
+    else {
+        return Err(not_found("user not found"));
+    };
+    if !user.enabled {
+        return Err(bad_request("cannot provision disabled user"));
+    }
+
+    user.password_hash = hash_password(input.password.as_str()).map_err(bad_request)?;
+    user.updated_at = now_rfc3339();
+    state
+        .store
+        .update_user_record(&user)
+        .await
+        .map_err(internal_error)?;
+
+    provision_harness_user_public_register_result(&state, &user, input.password.as_str())
+        .await
+        .map_err(internal_error)?;
+
+    let summary = state
+        .store
+        .get_user_summary(user.id.as_str())
+        .await
+        .map_err(internal_error)?
+        .ok_or_else(|| internal_error("updated user summary missing"))?;
     Ok(Json(summary))
 }
 

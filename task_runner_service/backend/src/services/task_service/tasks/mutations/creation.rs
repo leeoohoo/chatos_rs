@@ -56,8 +56,28 @@ impl TaskService {
         .await?;
         let schedule = sanitize_task_schedule_config(input.schedule.unwrap_or_default(), None)?;
         let mut mcp_config = sanitize_task_mcp_config(input.mcp_config.unwrap_or_default());
+        let mut input_payload = input.input_payload;
         if let Some(workspace_dir) = normalized_optional(source_context.workspace_dir.clone()) {
             mcp_config.workspace_dir = Some(workspace_dir);
+        }
+        let project_root = match project_root_from_payload(input_payload.as_ref()) {
+            Some(value) => Some(value),
+            None => {
+                resolve_project_root_for_project_id(&self.config, &self.store, project_id.as_str())
+                    .await?
+            }
+        };
+        if let Some(project_root) = project_root {
+            let local_kinds = selected_local_connector_builtin_kinds_for_config(
+                &mcp_config,
+                task_profile.as_str(),
+            );
+            apply_local_connector_routing(
+                &mut mcp_config,
+                &mut input_payload,
+                project_root.as_str(),
+                local_kinds.as_slice(),
+            );
         }
         if mcp_config.workspace_dir.is_some() {
             let _ = ensure_workspace_dir_available(
@@ -99,6 +119,7 @@ impl TaskService {
                 task_owner_user_id.as_deref(),
             )
             .await?;
+            self.validate_task_ephemeral_http_servers(&mcp_config)?;
             self.validate_task_skill_ids(&mcp_config, creator, task_owner_user_id.as_deref())
                 .await?;
         }
@@ -112,7 +133,7 @@ impl TaskService {
             title: input.title.trim().to_string(),
             description: normalized_optional(input.description),
             objective: input.objective.trim().to_string(),
-            input_payload: input.input_payload,
+            input_payload,
             status: input.status.unwrap_or(TaskStatus::Draft),
             priority: input.priority.unwrap_or(0),
             tags: normalize_tags(input.tags),
@@ -208,6 +229,7 @@ mod tests {
             chatos_callback_url: None,
             chatos_callback_secret: None,
             internal_api_secret: None,
+            local_connector_internal_api_secret: None,
             callback_timeout: Duration::from_millis(1000),
             admin_username: "admin".to_string(),
             admin_password: "admin".to_string(),
@@ -255,6 +277,15 @@ mod tests {
                 name: format!("Project {id}"),
                 root_path: Some(format!("/workspace/{id}")),
                 git_url: Some(format!("https://example.com/{id}.git")),
+                source_type: None,
+                cloud_import_source: None,
+                import_status: None,
+                source_git_url: None,
+                harness_space_identifier: None,
+                harness_repo_identifier: None,
+                harness_repo_path: None,
+                harness_git_url: None,
+                harness_git_ssh_url: None,
                 description: None,
                 status,
                 created_at: now.clone(),

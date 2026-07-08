@@ -67,9 +67,7 @@ mod tests {
     use chrono::Utc;
 
     use crate::domain::{
-        datasource::{
-            AuthConfig, ConnectionStatus, DataSource, DataSourceOptions, NetworkConfig,
-        },
+        datasource::{AuthConfig, ConnectionStatus, DataSource, DataSourceOptions, NetworkConfig},
         meta::{AuthMode, DbType, NetworkMode},
     };
 

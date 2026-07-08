@@ -2,7 +2,6 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -199,29 +198,6 @@ pub struct SandboxHealthResponse {
     pub checked_at: String,
     pub message: String,
     pub checks: Vec<SandboxHealthCheck>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct SandboxMcpToolsResponse {
-    pub ok: bool,
-    pub sandbox_id: String,
-    pub agent_endpoint: String,
-    pub tools: Vec<Value>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct SandboxMcpCallRequest {
-    pub name: String,
-    #[serde(default)]
-    pub arguments: Value,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct SandboxMcpCallResponse {
-    pub ok: bool,
-    pub sandbox_id: String,
-    pub agent_endpoint: String,
-    pub result: Value,
 }
 
 #[derive(Debug, Clone, Deserialize)]

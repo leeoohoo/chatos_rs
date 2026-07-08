@@ -4,6 +4,8 @@
 use std::env;
 use std::net::{IpAddr, SocketAddr};
 
+use chatos_service_runtime::DEFAULT_MEMORY_ENGINE_OPERATOR_TOKEN;
+
 #[derive(Debug, Clone)]
 pub struct AppConfig {
     pub host: IpAddr,
@@ -24,6 +26,13 @@ pub struct AppConfig {
     pub task_runner_base_url: Option<String>,
     pub task_runner_callback_secret: Option<String>,
     pub downstream_request_timeout_ms: i64,
+    pub harness_provisioning_enabled: bool,
+    pub harness_base_url: Option<String>,
+    pub harness_synthetic_email_domain: String,
+    pub harness_space_prefix: String,
+    pub harness_request_timeout_ms: i64,
+    pub harness_project_pat_prefix: String,
+    pub user_service_internal_api_secret: Option<String>,
 }
 
 impl AppConfig {
@@ -80,7 +89,10 @@ impl AppConfig {
                 .or_else(|| read_env("CHATOS_ADMIN_DISPLAY_NAME"))
                 .unwrap_or_else(|| "System Admin".to_string()),
             memory_engine_base_url: read_env("MEMORY_ENGINE_BASE_URL"),
-            memory_engine_operator_token: read_env("MEMORY_ENGINE_OPERATOR_TOKEN"),
+            memory_engine_operator_token: Some(
+                read_env("MEMORY_ENGINE_OPERATOR_TOKEN")
+                    .unwrap_or_else(|| DEFAULT_MEMORY_ENGINE_OPERATOR_TOKEN.to_string()),
+            ),
             task_runner_base_url: read_env("TASK_RUNNER_BASE_URL")
                 .or_else(|| read_env("CHATOS_TASK_RUNNER_BASE_URL")),
             task_runner_callback_secret: read_env("TASK_RUNNER_CHATOS_CALLBACK_SECRET")
@@ -91,6 +103,20 @@ impl AppConfig {
                 .map_err(|err| {
                     format!("invalid USER_SERVICE_DOWNSTREAM_REQUEST_TIMEOUT_MS: {err}")
                 })?,
+            harness_provisioning_enabled: read_bool_env("HARNESS_PROVISIONING_ENABLED", false)?,
+            harness_base_url: read_env("HARNESS_BASE_URL"),
+            harness_synthetic_email_domain: read_env("HARNESS_SYNTHETIC_EMAIL_DOMAIN")
+                .unwrap_or_else(|| "chatos.local".to_string()),
+            harness_space_prefix: read_env("HARNESS_SPACE_PREFIX")
+                .unwrap_or_else(|| "u-".to_string()),
+            harness_request_timeout_ms: read_env("HARNESS_REQUEST_TIMEOUT_MS")
+                .unwrap_or_else(|| "5000".to_string())
+                .parse()
+                .map_err(|err| format!("invalid HARNESS_REQUEST_TIMEOUT_MS: {err}"))?,
+            harness_project_pat_prefix: read_env("HARNESS_PROJECT_PAT_PREFIX")
+                .unwrap_or_else(|| "chatos-project-import".to_string()),
+            user_service_internal_api_secret: read_env("USER_SERVICE_INTERNAL_API_SECRET")
+                .or_else(|| read_env("CHATOS_USER_SERVICE_INTERNAL_SECRET")),
         })
     }
 
@@ -110,6 +136,17 @@ fn read_env(key: &str) -> Option<String> {
         .ok()
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
+}
+
+fn read_bool_env(key: &str, default: bool) -> Result<bool, String> {
+    let Some(value) = read_env(key) else {
+        return Ok(default);
+    };
+    match value.to_ascii_lowercase().as_str() {
+        "1" | "true" | "yes" | "on" => Ok(true),
+        "0" | "false" | "no" | "off" => Ok(false),
+        _ => Err(format!("invalid {key}: expected true/false")),
+    }
 }
 
 fn mongodb_database_from_url(url: &str) -> Option<String> {

@@ -9,6 +9,10 @@ use chatos_ai_runtime::{
     DEFAULT_TOOL_RESULTS_MODEL_TOTAL_MAX_CHARS, DEFAULT_TOOL_RESULT_MODEL_MAX_CHARS,
     TOOL_RESULTS_MODEL_TOTAL_MAX_CHARS_ENV, TOOL_RESULT_MODEL_MAX_CHARS_ENV,
 };
+use chatos_service_runtime::{
+    DEFAULT_MEMORY_ENGINE_OPERATOR_TOKEN, DEFAULT_SANDBOX_MANAGER_SYSTEM_CLIENT_ID,
+    DEFAULT_SANDBOX_MANAGER_SYSTEM_CLIENT_KEY,
+};
 
 use super::database::{default_database_url, normalize_database_url};
 use super::{AppConfig, StoreMode, TaskRunnerRole, DEFAULT_TASK_RUN_EXECUTION_TIMEOUT_MS};
@@ -91,15 +95,11 @@ impl AppConfig {
             normalized_env("TASK_RUNNER_SANDBOX_MANAGER_BASE_URL")
                 .unwrap_or_else(|| "http://127.0.0.1:8095".to_string());
         let sandbox_manager_client_id = normalized_env("TASK_RUNNER_SANDBOX_MANAGER_CLIENT_ID")
-            .or_else(|| normalized_env("SANDBOX_MANAGER_SYSTEM_CLIENT_ID"));
+            .or_else(|| normalized_env("SANDBOX_MANAGER_SYSTEM_CLIENT_ID"))
+            .unwrap_or_else(|| DEFAULT_SANDBOX_MANAGER_SYSTEM_CLIENT_ID.to_string());
         let sandbox_manager_client_key = normalized_env("TASK_RUNNER_SANDBOX_MANAGER_CLIENT_KEY")
-            .or_else(|| normalized_env("SANDBOX_MANAGER_SYSTEM_CLIENT_KEY"));
-        if sandbox_manager_client_id.is_some() != sandbox_manager_client_key.is_some() {
-            return Err(
-                "TASK_RUNNER_SANDBOX_MANAGER_CLIENT_ID and TASK_RUNNER_SANDBOX_MANAGER_CLIENT_KEY must be configured together"
-                    .to_string(),
-            );
-        }
+            .or_else(|| normalized_env("SANDBOX_MANAGER_SYSTEM_CLIENT_KEY"))
+            .unwrap_or_else(|| DEFAULT_SANDBOX_MANAGER_SYSTEM_CLIENT_KEY.to_string());
         let default_sandbox_lease_ttl_seconds =
             env_u64("TASK_RUNNER_SANDBOX_LEASE_TTL_SECONDS", 7_200).max(60);
         let callback_timeout_ms = std::env::var("TASK_RUNNER_CALLBACK_TIMEOUT_MS")
@@ -144,6 +144,15 @@ impl AppConfig {
             .or_else(|| normalized_env("CHATOS_ADMIN_DISPLAY_NAME"))
             .unwrap_or_else(|| "System Admin".to_string());
 
+        let internal_api_secret = normalized_env("TASK_RUNNER_INTERNAL_API_SECRET")
+            .or_else(|| normalized_env("PROJECT_SERVICE_SYNC_SECRET"))
+            .or_else(|| normalized_env("TASK_RUNNER_PROJECT_SERVICE_SYNC_SECRET"));
+        let local_connector_internal_api_secret =
+            normalized_env("TASK_RUNNER_LOCAL_CONNECTOR_INTERNAL_API_SECRET")
+                .or_else(|| normalized_env("LOCAL_CONNECTOR_INTERNAL_API_SECRET"))
+                .or_else(|| normalized_env("CHATOS_LOCAL_CONNECTOR_INTERNAL_API_SECRET"))
+                .or_else(|| internal_api_secret.clone());
+
         Ok(Self {
             host,
             port,
@@ -162,7 +171,8 @@ impl AppConfig {
                 .or_else(|| normalized_env("TASK_RUNNER_MEMORY_ENGINE_SOURCE_ID"))
                 .unwrap_or_else(|| "task".to_string()),
             memory_engine_operator_token: normalized_env("MEMORY_ENGINE_OPERATOR_TOKEN")
-                .or_else(|| normalized_env("TASK_RUNNER_MEMORY_ENGINE_OPERATOR_TOKEN")),
+                .or_else(|| normalized_env("TASK_RUNNER_MEMORY_ENGINE_OPERATOR_TOKEN"))
+                .or_else(|| Some(DEFAULT_MEMORY_ENGINE_OPERATOR_TOKEN.to_string())),
             default_tenant_id: normalized_env("TASK_RUNNER_TENANT_ID")
                 .unwrap_or_else(|| "default_tenant".to_string()),
             default_subject_id: normalized_env("TASK_RUNNER_SUBJECT_ID")
@@ -181,14 +191,13 @@ impl AppConfig {
             default_tool_results_model_total_max_chars,
             default_execution_environment_mode,
             default_sandbox_manager_base_url,
-            sandbox_manager_client_id,
-            sandbox_manager_client_key,
+            sandbox_manager_client_id: Some(sandbox_manager_client_id),
+            sandbox_manager_client_key: Some(sandbox_manager_client_key),
             default_sandbox_lease_ttl_seconds,
             chatos_callback_url: normalized_env("TASK_RUNNER_CHATOS_CALLBACK_URL"),
             chatos_callback_secret: normalized_env("TASK_RUNNER_CHATOS_CALLBACK_SECRET"),
-            internal_api_secret: normalized_env("TASK_RUNNER_INTERNAL_API_SECRET")
-                .or_else(|| normalized_env("PROJECT_SERVICE_SYNC_SECRET"))
-                .or_else(|| normalized_env("TASK_RUNNER_PROJECT_SERVICE_SYNC_SECRET")),
+            internal_api_secret,
+            local_connector_internal_api_secret,
             callback_timeout: Duration::from_millis(callback_timeout_ms.max(1_000)),
             admin_username,
             admin_password,

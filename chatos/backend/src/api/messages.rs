@@ -1,0 +1,200 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Required Notice: Copyright (c) 2025 AI Chat Team
+
+use axum::http::StatusCode;
+use axum::{
+    extract::{Path, Query},
+    routing::get,
+    Json, Router,
+};
+use serde::Deserialize;
+use serde_json::Value;
+
+use crate::core::auth::AuthUser;
+use crate::core::messages::{
+    build_message, create_message_and_maybe_rename, MessageOut, NewMessageFields,
+};
+use crate::core::pagination::{parse_non_negative_offset, parse_positive_limit};
+use crate::core::session_access::{ensure_owned_session, map_session_access_error};
+use crate::modules::conversation_runtime::messages as conversation_messages;
+
+#[derive(Debug, Deserialize)]
+struct MessagesQuery {
+    #[serde(rename = "conversation_id", alias = "conversationId")]
+    conversation_id: Option<String>,
+    limit: Option<String>,
+    offset: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct CreateMessageRequest {
+    #[serde(rename = "conversation_id", alias = "conversationId")]
+    conversation_id: Option<String>,
+    role: Option<String>,
+    content: Option<String>,
+    #[serde(alias = "messageMode")]
+    message_mode: Option<String>,
+    #[serde(alias = "messageSource")]
+    message_source: Option<String>,
+    #[serde(rename = "toolCalls")]
+    tool_calls: Option<Value>,
+    tool_call_id: Option<String>,
+    reasoning: Option<String>,
+    metadata: Option<Value>,
+}
+
+pub fn router() -> Router {
+    Router::new()
+        .route("/api/messages", get(list_messages).post(create_message))
+        .route(
+            "/api/messages/{id}",
+            get(get_message).delete(delete_message),
+        )
+}
+
+async fn list_messages(
+    auth: AuthUser,
+    Query(query): Query<MessagesQuery>,
+) -> (StatusCode, Json<Value>) {
+    let Some(conversation_id) = query.conversation_id else {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error": "必须提供 conversation_id"})),
+        );
+    };
+    if let Err(err) = ensure_owned_session(&conversation_id, &auth).await {
+        return map_session_access_error(err);
+    }
+    let limit = parse_positive_limit(query.limit);
+    let offset = parse_non_negative_offset(query.offset);
+    let result = conversation_messages::list_messages(&conversation_id, limit, offset, true).await;
+    match result {
+        Ok(messages) => {
+            let out: Vec<Value> = messages
+                .into_iter()
+                .map(|m| serde_json::to_value(MessageOut::from(m)).unwrap_or(Value::Null))
+                .collect();
+            (StatusCode::OK, Json(Value::Array(out)))
+        }
+        Err(err) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": err})),
+        ),
+    }
+}
+
+async fn create_message(
+    auth: AuthUser,
+    Json(req): Json<CreateMessageRequest>,
+) -> (StatusCode, Json<Value>) {
+    let conversation_id = req.conversation_id.unwrap_or_default();
+    let role = req.role.unwrap_or_default();
+    let content = req.content.unwrap_or_default();
+    if conversation_id.is_empty() || role.is_empty() || content.is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error": "conversationId, role 和 content 不能为空"})),
+        );
+    }
+    if let Err(err) = ensure_owned_session(&conversation_id, &auth).await {
+        return map_session_access_error(err);
+    }
+    let message = build_message(
+        conversation_id,
+        NewMessageFields {
+            role: Some(role),
+            content: Some(content),
+            message_mode: req.message_mode,
+            message_source: req.message_source,
+            tool_calls: req.tool_calls,
+            tool_call_id: req.tool_call_id,
+            reasoning: req.reasoning,
+            metadata: req.metadata,
+        },
+        "user",
+    );
+
+    let saved = match create_message_and_maybe_rename(message).await {
+        Ok(msg) => msg,
+        Err(err) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": "创建对话消息失败", "detail": err})),
+            );
+        }
+    };
+
+    (
+        StatusCode::CREATED,
+        Json(serde_json::to_value(MessageOut::from(saved)).unwrap_or(Value::Null)),
+    )
+}
+
+async fn get_message(auth: AuthUser, Path(id): Path<String>) -> (StatusCode, Json<Value>) {
+    let result =
+        conversation_messages::get_message_by_id_for_user(&id, auth.user_id.as_str()).await;
+
+    match result {
+        Ok(Some(msg)) => {
+            if let Err(err) = ensure_owned_session(&msg.session_id, &auth).await {
+                return map_session_access_error(err);
+            }
+            (
+                StatusCode::OK,
+                Json(serde_json::to_value(MessageOut::from(msg)).unwrap_or(Value::Null)),
+            )
+        }
+        Ok(None) => (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({"error": "消息不存在"})),
+        ),
+        Err(err) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": err})),
+        ),
+    }
+}
+
+async fn delete_message(auth: AuthUser, Path(id): Path<String>) -> (StatusCode, Json<Value>) {
+    let load_result =
+        conversation_messages::get_message_by_id_for_user(&id, auth.user_id.as_str()).await;
+
+    let message = match load_result {
+        Ok(Some(msg)) => msg,
+        Ok(None) => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(serde_json::json!({"error": "消息不存在"})),
+            );
+        }
+        Err(err) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": err})),
+            );
+        }
+    };
+    if let Err(err) = ensure_owned_session(&message.session_id, &auth).await {
+        return map_session_access_error(err);
+    }
+    let delete_result = match conversation_messages::delete_message_by_id_for_user(
+        &id,
+        auth.user_id.as_str(),
+    )
+    .await
+    {
+        Ok(true) => Ok(()),
+        Ok(false) => Err("消息不存在".to_string()),
+        Err(err) => Err(err),
+    };
+    match delete_result {
+        Ok(_) => (
+            StatusCode::OK,
+            Json(serde_json::json!({"success": true, "message": "消息已删除"})),
+        ),
+        Err(err) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": err})),
+        ),
+    }
+}

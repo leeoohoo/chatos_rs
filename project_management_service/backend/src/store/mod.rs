@@ -70,6 +70,13 @@ impl AppStore {
         }
     }
 
+    pub async fn save_project_record(&self, project: &ProjectRecord) -> Result<(), String> {
+        match self {
+            Self::Mongo(store) => store.save_project_record(project).await,
+            Self::Sqlite(store) => store.save_project_record(project).await,
+        }
+    }
+
     pub async fn get_project(&self, id: &str) -> Result<Option<ProjectRecord>, String> {
         match self {
             Self::Mongo(store) => store.get_project(id).await,

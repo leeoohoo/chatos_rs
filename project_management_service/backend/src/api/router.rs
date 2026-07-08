@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use axum::extract::{Query, State};
+use axum::extract::{DefaultBodyLimit, Query, State};
 use axum::http::{Method, Request};
 use axum::middleware::{self, Next};
 use axum::response::Response;
@@ -19,10 +19,11 @@ use super::dependencies::{
 use super::dependency_graph::{
     get_project_dependency_graph, get_requirement_dependency_graph, get_work_item_dependency_graph,
 };
+use super::harness_mcp::harness_project_mcp_entrypoint;
 use super::plan::get_project_plan;
 use super::projects::{
-    create_project, delete_project, get_project, get_project_profile, list_projects,
-    update_project, upsert_project_profile,
+    create_cloud_project, create_project, delete_project, get_project, get_project_profile,
+    list_projects, update_project, upsert_project_profile,
 };
 use super::requirements::{
     create_requirement, create_requirement_document, delete_requirement, get_requirement,
@@ -53,10 +54,15 @@ use crate::state::AppState;
 mod mcp;
 
 pub fn build_router(state: AppState) -> Router {
+    let cloud_project_body_limit = state
+        .config
+        .cloud_project_max_zip_bytes
+        .saturating_add(1024 * 1024);
     let protected_api = Router::new()
         .route("/api/auth/me", get(current_user_handler))
         .route("/api/agent-accounts", get(list_agent_accounts))
         .route("/api/projects", get(list_projects).post(create_project))
+        .route("/api/projects/cloud", post(create_cloud_project))
         .route(
             "/api/projects/:project_id",
             get(get_project)
@@ -165,6 +171,10 @@ pub fn build_router(state: AppState) -> Router {
             get(sync_get_project),
         )
         .route(
+            "/api/chatos-sync/projects/:project_id/harness/mcp",
+            post(harness_project_mcp_entrypoint),
+        )
+        .route(
             "/api/chatos-sync/work-items/:work_item_id/task-runner-status",
             post(sync_task_runner_work_item_status),
         )
@@ -187,6 +197,7 @@ pub fn build_router(state: AppState) -> Router {
                 .allow_methods(Any)
                 .allow_headers(Any),
         )
+        .layer(DefaultBodyLimit::max(cloud_project_body_limit))
 }
 
 async fn require_auth(

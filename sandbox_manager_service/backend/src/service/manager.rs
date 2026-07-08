@@ -27,10 +27,9 @@ use crate::models::{
     PoolStatusResponse, ReleaseSandboxRequest, ReleaseSandboxResponse,
     RotateSandboxAccessClientKeyResponse, SandboxAccessClientRecord, SandboxAccessClientResponse,
     SandboxEventRecord, SandboxHealthCheck, SandboxHealthResponse, SandboxImageCatalogResponse,
-    SandboxImageJobRecord, SandboxLeaseRecord, SandboxMcpCallRequest, SandboxMcpCallResponse,
-    SandboxMcpToolsResponse, SandboxOutputChangeManifest, SandboxOutputFileChange,
-    SandboxOutputFileChangeCounts, SandboxStatus, SystemConfigResponse, UpdatePoolConfigRequest,
-    UpdateSandboxAccessClientRequest,
+    SandboxImageJobRecord, SandboxLeaseRecord, SandboxOutputChangeManifest,
+    SandboxOutputFileChange, SandboxOutputFileChangeCounts, SandboxStatus, SystemConfigResponse,
+    UpdatePoolConfigRequest, UpdateSandboxAccessClientRequest,
 };
 use crate::pool::SandboxPoolRef;
 use crate::store::{is_duplicate_key_error, SandboxStore};
@@ -552,71 +551,6 @@ impl SandboxManager {
         .await;
 
         Ok(response)
-    }
-
-    pub async fn mcp_tools(
-        &self,
-        auth: &SandboxAuthContext,
-        sandbox_id: &str,
-    ) -> Result<SandboxMcpToolsResponse, ApiError> {
-        let record = self.require_sandbox(sandbox_id).await?;
-        auth.ensure_lease_access(&record, SCOPE_MCP_TOOLS)?;
-        let agent_endpoint = self.agent_endpoint_for(&record).await?;
-        let agent_token = self.agent_token_for_record(&record);
-        let result = jsonrpc_agent_call(
-            agent_endpoint.as_str(),
-            Some(agent_token.as_str()),
-            "tools/list",
-            json!({}),
-        )
-        .await?;
-        let tools = result
-            .get("tools")
-            .and_then(Value::as_array)
-            .cloned()
-            .ok_or_else(|| {
-                ApiError::with_code(
-                    StatusCode::BAD_GATEWAY,
-                    "sandbox_mcp_invalid_response",
-                    "sandbox MCP tools/list response did not contain tools",
-                )
-            })?;
-        Ok(SandboxMcpToolsResponse {
-            ok: true,
-            sandbox_id: record.sandbox_id,
-            agent_endpoint,
-            tools,
-        })
-    }
-
-    pub async fn mcp_call(
-        &self,
-        auth: &SandboxAuthContext,
-        sandbox_id: &str,
-        input: SandboxMcpCallRequest,
-    ) -> Result<SandboxMcpCallResponse, ApiError> {
-        let name = input.name.trim();
-        if name.is_empty() {
-            return Err(ApiError::bad_request("tool name is required"));
-        }
-        let record = self.require_sandbox(sandbox_id).await?;
-        auth.ensure_lease_access(&record, SCOPE_MCP_CALL)?;
-        auth.ensure_tool_allowed(name)?;
-        let agent_endpoint = self.agent_endpoint_for(&record).await?;
-        let agent_token = self.agent_token_for_record(&record);
-        let result = jsonrpc_agent_call(
-            agent_endpoint.as_str(),
-            Some(agent_token.as_str()),
-            "tools/call",
-            json!({ "name": name, "arguments": input.arguments }),
-        )
-        .await?;
-        Ok(SandboxMcpCallResponse {
-            ok: true,
-            sandbox_id: record.sandbox_id,
-            agent_endpoint,
-            result,
-        })
     }
 
     pub async fn mcp_proxy(
@@ -1876,77 +1810,6 @@ async fn check_agent_health(agent_endpoint: Option<&str>) -> (Option<bool>, Stri
     }
 }
 
-async fn jsonrpc_agent_call(
-    agent_endpoint: &str,
-    agent_token: Option<&str>,
-    method: &str,
-    params: Value,
-) -> Result<Value, ApiError> {
-    let url = format!("{}/mcp", agent_endpoint.trim_end_matches('/'));
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(15))
-        .redirect(reqwest::redirect::Policy::none())
-        .build()
-        .map_err(|err| ApiError::internal(format!("build MCP client failed: {err}")))?;
-    let mut request = client.post(url.as_str());
-    if let Some(agent_token) = agent_token.map(str::trim).filter(|value| !value.is_empty()) {
-        request = request.bearer_auth(agent_token);
-    }
-    let response = request
-        .json(&json!({
-            "jsonrpc": "2.0",
-            "id": prefixed_id("mcp"),
-            "method": method,
-            "params": params,
-        }))
-        .send()
-        .await
-        .map_err(|err| {
-            ApiError::with_code(
-                StatusCode::BAD_GATEWAY,
-                "sandbox_mcp_request_failed",
-                format!("{method} request failed: {err}"),
-            )
-        })?;
-
-    let status = response.status();
-    let body = response.text().await.map_err(|err| {
-        ApiError::with_code(
-            StatusCode::BAD_GATEWAY,
-            "sandbox_mcp_response_failed",
-            format!("{method} response read failed: {err}"),
-        )
-    })?;
-    if !status.is_success() {
-        return Err(ApiError::with_code(
-            StatusCode::BAD_GATEWAY,
-            "sandbox_mcp_http_error",
-            format!("{method} returned HTTP {status}: {}", preview_text(&body)),
-        ));
-    }
-    let value: Value = serde_json::from_str(body.as_str()).map_err(|err| {
-        ApiError::with_code(
-            StatusCode::BAD_GATEWAY,
-            "sandbox_mcp_invalid_json",
-            format!(
-                "{method} returned invalid JSON: {err}; body={}",
-                preview_text(&body)
-            ),
-        )
-    })?;
-    if let Some(error) = value.get("error") {
-        return Err(ApiError::with_code(
-            StatusCode::BAD_GATEWAY,
-            "sandbox_mcp_jsonrpc_error",
-            format!(
-                "{method} returned JSON-RPC error: {}",
-                preview_text(&error.to_string())
-            ),
-        ));
-    }
-    Ok(value.get("result").cloned().unwrap_or(value))
-}
-
 async fn jsonrpc_agent_proxy(
     agent_endpoint: &str,
     agent_token: Option<&str>,
@@ -2232,7 +2095,7 @@ mod tests {
 
     #[test]
     fn mcp_proxy_authorizes_tools_list_with_tools_scope() {
-        let auth = system_auth(&[SCOPE_MCP_TOOLS], &["sandbox_read_file"]);
+        let auth = system_auth(&[SCOPE_MCP_TOOLS], &["read_file_raw"]);
         let payload = json!({
             "jsonrpc": "2.0",
             "id": "request-1",
@@ -2245,18 +2108,18 @@ mod tests {
 
     #[test]
     fn mcp_proxy_enforces_tools_call_tool_policy() {
-        let auth = system_auth(&[SCOPE_MCP_CALL], &["sandbox_read_file"]);
+        let auth = system_auth(&[SCOPE_MCP_CALL], &["read_file_raw"]);
         let allowed = json!({
             "jsonrpc": "2.0",
             "id": "request-1",
             "method": "tools/call",
-            "params": { "name": "sandbox_read_file", "arguments": {} }
+            "params": { "name": "read_file_raw", "arguments": {} }
         });
         let denied = json!({
             "jsonrpc": "2.0",
             "id": "request-2",
             "method": "tools/call",
-            "params": { "name": "sandbox_terminal_exec", "arguments": {} }
+            "params": { "name": "execute_command", "arguments": {} }
         });
 
         assert!(authorize_mcp_proxy_payload(&auth, &lease_record(), &allowed).is_ok());

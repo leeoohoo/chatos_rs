@@ -372,7 +372,7 @@ mod tests {
     }
 
     #[test]
-    fn codex_gateway_request_tools_uses_virtual_cwd_for_user_isolated_stdio() {
+    fn codex_gateway_request_tools_uses_virtual_cwd_for_user_scoped_stdio() {
         let executor = McpExecutor::new(
             Vec::new(),
             vec![McpStdioServer {
@@ -397,7 +397,7 @@ mod tests {
     }
 
     #[test]
-    fn codex_gateway_request_tools_keeps_stdio_cwd_without_user_isolation() {
+    fn codex_gateway_request_tools_keeps_stdio_cwd_without_user_scope() {
         let executor = McpExecutor::new(
             Vec::new(),
             vec![McpStdioServer {

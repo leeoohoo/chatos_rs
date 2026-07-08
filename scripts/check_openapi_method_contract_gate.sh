@@ -166,7 +166,7 @@ validate_waiver_if_present() {
 extract_baseline_methods() {
   local section="$1"
   awk -v section="$section" '
-    /^## chat_app_server_rs endpoints/ { active=(section=="main"); next }
+    /^## chatos\/backend endpoints/ { active=(section=="main"); next }
     /^## / { active=0 }
     active && /^[A-Z]+ / { print }
   ' "$BASELINE_FILE" \

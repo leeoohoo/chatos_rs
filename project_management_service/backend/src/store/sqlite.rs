@@ -48,6 +48,7 @@ impl SqliteStore {
                 .map_err(|err| format!("migration failed: {err}; sql={statement}"))?;
         }
         self.ensure_actor_columns().await?;
+        self.ensure_project_cloud_columns().await?;
         self.ensure_requirement_documents_multiple_rows().await?;
         self.repair_failed_work_item_statuses().await?;
         self.repair_blocked_requirement_statuses().await?;
@@ -125,6 +126,26 @@ impl SqliteStore {
         .execute(&self.pool)
         .await
         .map_err(|err| err.to_string())?;
+        Ok(())
+    }
+
+    async fn ensure_project_cloud_columns(&self) -> Result<(), String> {
+        for column in [
+            "source_type",
+            "cloud_import_source",
+            "import_status",
+            "source_git_url",
+            "harness_space_identifier",
+            "harness_repo_identifier",
+            "harness_repo_path",
+            "harness_git_url",
+            "harness_git_ssh_url",
+            "import_error",
+            "import_started_at",
+            "import_finished_at",
+        ] {
+            self.ensure_text_column("projects", column).await?;
+        }
         Ok(())
     }
 

@@ -50,8 +50,8 @@ __pycache__/
 *.sln
 *.sw?
 
-/chat_app_server_rs/docs
-/chat_app_server_rs/docs/*
+/chatos/backend/docs
+/chatos/backend/docs/*
 /docs/
 !/docs/
 /docs/*
@@ -66,7 +66,6 @@ __pycache__/
 !/docs/plans/INTERNAL_TASK_MCP_SUBTASK_PLAN.md
 !/docs/plans/MULTI_USER_WORKSPACE_SANDBOX_ISOLATION_PLAN.zh-CN.md
 !/docs/plans/NEW_USER_BOOTSTRAP_PLAN.zh-CN.md
-!/docs/plans/OPTIMIZATION_PROGRESS.zh-CN.md
 !/docs/plans/PERFORMANCE_FIX_PLAN.zh-CN.md
 !/docs/plans/PROJECT_REFACTOR_PERFORMANCE_SOLUTION.zh-CN.md
 !/docs/plans/PROJECT_TASK_PLANNING_TASK_TYPE_PLAN.zh-CN.md
@@ -76,6 +75,7 @@ __pycache__/
 !/docs/plans/TASK_PROJECT_INTEGRATION_PLAN.zh-CN.md
 !/docs/plans/TASK_RUNNER_SKILLS_MANAGEMENT_PLAN.zh-CN.md
 /memory_engine_ext/*
+/harness/
 /image.png
 /image copy.png
 /image copy 2.png

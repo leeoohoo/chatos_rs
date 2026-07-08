@@ -60,6 +60,12 @@ impl MongoStore {
             .map(ToOwned::to_owned)
             .ok_or_else(|| "当前登录态缺少用户归属信息，无法创建项目".to_string())?;
         let now = now_rfc3339();
+        let root_path = normalized_optional(input.root_path);
+        let git_url = normalize_git_url(input.git_url)?;
+        let source_git_url = normalize_git_url(input.source_git_url)?;
+        let source_type = input
+            .source_type
+            .unwrap_or_else(|| project_source_type_from_root(root_path.as_deref()));
         let project = ProjectRecord {
             id: Uuid::new_v4().to_string(),
             creator_user_id: Some(user.id.clone()),
@@ -72,8 +78,20 @@ impl MongoStore {
                 .map(ToOwned::to_owned)
                 .or_else(|| user.effective_owner_username().map(ToOwned::to_owned)),
             name: input.name.trim().to_string(),
-            root_path: normalized_optional(input.root_path),
-            git_url: normalize_git_url(input.git_url)?,
+            root_path,
+            git_url,
+            source_type,
+            cloud_import_source: input.cloud_import_source.unwrap_or_default(),
+            import_status: input.import_status.unwrap_or_default(),
+            source_git_url,
+            harness_space_identifier: None,
+            harness_repo_identifier: None,
+            harness_repo_path: None,
+            harness_git_url: None,
+            harness_git_ssh_url: None,
+            import_error: None,
+            import_started_at: None,
+            import_finished_at: None,
             description: normalized_optional(input.description),
             status: ProjectStatus::Active,
             created_at: now.clone(),
@@ -93,6 +111,13 @@ impl MongoStore {
         validate_required("name", &input.name)?;
         let now = now_rfc3339();
         let status = input.status.unwrap_or(ProjectStatus::Active);
+        let root_path = normalized_optional(input.root_path);
+        let git_url = normalize_git_url(input.git_url)?;
+        let source_git_url = normalize_git_url(input.source_git_url)?;
+        let harness_git_url = normalize_git_url(input.harness_git_url)?;
+        let source_type = input
+            .source_type
+            .unwrap_or_else(|| project_source_type_from_root(root_path.as_deref()));
         let project = ProjectRecord {
             id: id.to_string(),
             creator_user_id: None,
@@ -102,8 +127,20 @@ impl MongoStore {
             owner_username: normalized_optional(input.owner_username),
             owner_display_name: normalized_optional(input.owner_display_name),
             name: input.name.trim().to_string(),
-            root_path: normalized_optional(input.root_path),
-            git_url: normalize_git_url(input.git_url)?,
+            root_path,
+            git_url,
+            source_type,
+            cloud_import_source: input.cloud_import_source.unwrap_or_default(),
+            import_status: input.import_status.unwrap_or_default(),
+            source_git_url,
+            harness_space_identifier: normalized_optional(input.harness_space_identifier),
+            harness_repo_identifier: normalized_optional(input.harness_repo_identifier),
+            harness_repo_path: normalized_optional(input.harness_repo_path),
+            harness_git_url,
+            harness_git_ssh_url: normalized_optional(input.harness_git_ssh_url),
+            import_error: normalized_optional(input.import_error),
+            import_started_at: normalized_optional(input.import_started_at),
+            import_finished_at: normalized_optional(input.import_finished_at),
             description: normalized_optional(input.description),
             status,
             created_at: normalized_optional(input.created_at).unwrap_or_else(|| now.clone()),
@@ -116,6 +153,10 @@ impl MongoStore {
         };
         upsert_by_id(&self.projects, &project.id, &project).await?;
         Ok(project)
+    }
+
+    pub async fn save_project_record(&self, project: &ProjectRecord) -> Result<(), String> {
+        upsert_by_id(&self.projects, &project.id, project).await
     }
 
     pub async fn get_project(&self, id: &str) -> Result<Option<ProjectRecord>, String> {
@@ -226,5 +267,16 @@ impl MongoStore {
         )
         .await?;
         Ok(profile)
+    }
+}
+
+fn project_source_type_from_root(root_path: Option<&str>) -> ProjectSourceType {
+    if root_path
+        .map(str::trim)
+        .is_some_and(|value| value.starts_with("local://connector/"))
+    {
+        ProjectSourceType::LocalConnector
+    } else {
+        ProjectSourceType::Local
     }
 }

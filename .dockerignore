@@ -1,18 +1,31 @@
 # SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 # Required Notice: Copyright (c) 2025 AI Chat Team
 
-**
-!Cargo.lock
-!BUILTIN_MCP_PROMPT.en-US.md
-!BUILTIN_MCP_PROMPT.zh-CN.md
-!crates
-!crates/chatos_builtin_tools
-!crates/chatos_builtin_tools/**
-!crates/chatos_mcp_runtime
-!crates/chatos_mcp_runtime/**
-!sandbox_manager_service
-!sandbox_manager_service/sandbox_agent
-!sandbox_manager_service/sandbox_agent/Cargo.workspace.toml
-!sandbox_manager_service/sandbox_agent/Dockerfile
-!sandbox_manager_service/sandbox_mcp_server
-!sandbox_manager_service/sandbox_mcp_server/**
+.git
+.gitignore
+.DS_Store
+
+target
+target-*
+**/target
+harness
+**/node_modules
+**/dist
+**/.vite
+**/.turbo
+**/.cache
+
+logs
+**/logs
+**/*.log
+**/__pycache__
+**/*.pyc
+
+bundled-tools/windows-*
+
+.env
+**/.env
+*.local
+**/*.local
+
+docker/data

@@ -96,7 +96,10 @@ fn sync_error_to_api_error(error: ExecutionSyncError) -> ApiError {
     }
 }
 
-fn require_project_sync_secret(state: &AppState, headers: &HeaderMap) -> Result<(), ApiError> {
+pub(in crate::api) fn require_project_sync_secret(
+    state: &AppState,
+    headers: &HeaderMap,
+) -> Result<(), ApiError> {
     let Some(expected) = state
         .config
         .sync_secret

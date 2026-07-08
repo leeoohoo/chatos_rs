@@ -1,0 +1,79 @@
+# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+# Required Notice: Copyright (c) 2025 AI Chat Team
+
+map $http_upgrade $connection_upgrade {
+  default upgrade;
+  '' close;
+}
+
+server {
+  listen 80;
+  server_name _;
+
+  resolver 127.0.0.11 valid=10s ipv6=off;
+
+  set $api_proxy_pass "${API_PROXY_PASS}";
+  set $memory_engine_proxy_pass "${MEMORY_ENGINE_PROXY_PASS}";
+  set $user_service_proxy_pass "${USER_SERVICE_PROXY_PASS}";
+
+  root /usr/share/nginx/html;
+  index index.html;
+
+  client_max_body_size 256m;
+
+  location / {
+    try_files $uri $uri/ /index.html;
+  }
+
+  location /api/memory-engine/ {
+    proxy_pass $memory_engine_proxy_pass;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection $connection_upgrade;
+    proxy_buffering off;
+    proxy_read_timeout 3600s;
+  }
+
+  location /user-service/ {
+    rewrite ^/user-service/(.*)$ /$1 break;
+    proxy_pass $user_service_proxy_pass;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection $connection_upgrade;
+    proxy_buffering off;
+    proxy_read_timeout 3600s;
+  }
+
+  location /api/ {
+    proxy_pass $api_proxy_pass;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection $connection_upgrade;
+    proxy_set_header x-sandbox-client-id "${SANDBOX_MANAGER_API_PROXY_CLIENT_ID}";
+    proxy_set_header x-sandbox-client-key "${SANDBOX_MANAGER_API_PROXY_CLIENT_KEY}";
+    proxy_set_header x-sandbox-operator-token "${SANDBOX_MANAGER_API_PROXY_OPERATOR_TOKEN}";
+    proxy_buffering off;
+    proxy_read_timeout 3600s;
+  }
+
+  location /health {
+    proxy_pass $api_proxy_pass;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+  }
+}
