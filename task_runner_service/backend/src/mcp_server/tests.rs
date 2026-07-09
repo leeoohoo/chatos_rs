@@ -27,6 +27,7 @@ use std::time::Duration;
 
 mod plan_profile;
 mod plan_profile_async;
+mod plan_profile_scope;
 mod schema;
 fn valid_planner_create_request() -> CreateTaskRequest {
     CreateTaskRequest {
