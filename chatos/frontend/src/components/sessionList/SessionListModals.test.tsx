@@ -74,7 +74,6 @@ describe('SessionList modals', () => {
         />
         <DirPickerDialog
           isOpen
-          target="project"
           currentPath="/Users/demo"
           parentPath="/Users"
           writable
