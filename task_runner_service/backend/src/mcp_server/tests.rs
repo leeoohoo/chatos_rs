@@ -26,6 +26,7 @@ use std::net::{IpAddr, Ipv4Addr};
 use std::time::Duration;
 
 mod plan_profile;
+mod plan_profile_async;
 mod schema;
 fn valid_planner_create_request() -> CreateTaskRequest {
     CreateTaskRequest {
