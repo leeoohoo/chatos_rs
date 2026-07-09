@@ -20,8 +20,14 @@ use crate::mcp_server::{self, JsonRpcRequest, JsonRpcResponse};
 use crate::models::{ProjectImportStatus, ProjectRecord, ProjectStatus};
 use crate::state::AppState;
 
+mod patch_targets;
+mod path_policy;
+mod text_edit;
 mod tool_definitions;
 
+use self::patch_targets::{collect_patch_targets, patch_error_with_recovery, PatchTarget};
+use self::path_policy::{optional_repo_path, path_matches_scope, path_name, required_file_path};
+use self::text_edit::apply_text_edit;
 use self::tool_definitions::tool_definitions;
 
 const SERVER_NAME: &str = "harness_code";
@@ -117,12 +123,6 @@ struct HarnessFile {
     sha256: String,
     harness_blob_sha: String,
     content: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct PatchTarget {
-    before_path: String,
-    after_path: String,
 }
 
 #[derive(Debug)]
@@ -1199,43 +1199,6 @@ fn ensure_write_allowed(ctx: &HarnessMcpContext) -> Result<(), String> {
     }
 }
 
-fn required_file_path(args: &Value) -> Result<String, String> {
-    let value = args.get("path").and_then(Value::as_str);
-    optional_repo_path(value, false)
-}
-
-fn optional_repo_path(value: Option<&str>, allow_root: bool) -> Result<String, String> {
-    let raw = value.unwrap_or(".");
-    let trimmed = raw.trim();
-    if trimmed.starts_with('/') || trimmed.starts_with('\\') {
-        return Err("path must be relative to the Harness repo root".to_string());
-    }
-    if trimmed.contains('\0') {
-        return Err("path contains a null byte".to_string());
-    }
-    let normalized = trimmed.replace('\\', "/");
-    let mut parts = Vec::new();
-    for part in normalized.split('/') {
-        let part = part.trim();
-        if part.is_empty() || part == "." {
-            continue;
-        }
-        if part == ".." {
-            return Err("path must not contain ..".to_string());
-        }
-        parts.push(part.to_string());
-    }
-    if parts.is_empty() {
-        if allow_root {
-            Ok(String::new())
-        } else {
-            Err("path is required".to_string())
-        }
-    } else {
-        Ok(parts.join("/"))
-    }
-}
-
 fn required_string<'a>(args: &'a Value, key: &str) -> Result<&'a str, String> {
     args.get(key)
         .and_then(Value::as_str)
@@ -1247,110 +1210,6 @@ fn ensure_write_size(content: &str) -> Result<(), String> {
         Err("Write exceeds max-write-bytes limit.".to_string())
     } else {
         Ok(())
-    }
-}
-
-fn collect_patch_targets(patch: &str) -> Result<Vec<PatchTarget>, String> {
-    let text = patch.replace("\r\n", "\n");
-    let lines = text.split('\n').collect::<Vec<_>>();
-    let mut targets = Vec::new();
-    let mut i = 0usize;
-    while i < lines.len() {
-        let line = lines[i];
-        if let Some(path) = line.strip_prefix("*** Update File: ") {
-            let before_path = optional_repo_path(Some(path), false)?;
-            let mut after_path = before_path.clone();
-            i += 1;
-            while i < lines.len() {
-                let current = lines[i];
-                if is_patch_boundary(current) {
-                    break;
-                }
-                if let Some(dest) = current.strip_prefix("*** Move to: ") {
-                    after_path = optional_repo_path(Some(dest), false)?;
-                }
-                i += 1;
-            }
-            targets.push(PatchTarget {
-                before_path,
-                after_path,
-            });
-            continue;
-        }
-        if let Some(path) = line.strip_prefix("*** Add File: ") {
-            let path = optional_repo_path(Some(path), false)?;
-            targets.push(PatchTarget {
-                before_path: path.clone(),
-                after_path: path,
-            });
-            i += 1;
-            continue;
-        }
-        if let Some(path) = line.strip_prefix("*** Delete File: ") {
-            let path = optional_repo_path(Some(path), false)?;
-            targets.push(PatchTarget {
-                before_path: path.clone(),
-                after_path: path,
-            });
-            i += 1;
-            continue;
-        }
-        if let Some(path) = parse_loose_update_header(line) {
-            let path = optional_repo_path(Some(path.as_str()), false)?;
-            targets.push(PatchTarget {
-                before_path: path.clone(),
-                after_path: path,
-            });
-            i += 1;
-            continue;
-        }
-        i += 1;
-    }
-    targets.sort_by(|left, right| {
-        (&left.before_path, &left.after_path).cmp(&(&right.before_path, &right.after_path))
-    });
-    targets.dedup();
-    Ok(targets)
-}
-
-fn parse_loose_update_header(line: &str) -> Option<String> {
-    let trimmed = line.trim();
-    for prefix in ["Update File --- ", "Update File: "] {
-        let Some(path) = trimmed.strip_prefix(prefix) else {
-            continue;
-        };
-        let path = path.trim();
-        if !path.is_empty() {
-            return Some(path.to_string());
-        }
-    }
-    None
-}
-
-fn is_patch_boundary(line: &str) -> bool {
-    line.starts_with("*** Update File: ")
-        || line.starts_with("*** Add File: ")
-        || line.starts_with("*** Delete File: ")
-        || line.starts_with("*** End Patch")
-}
-
-fn patch_error_with_recovery(error: &str) -> String {
-    if error.contains("Patch context not found in file.")
-        || error.contains("old_text not found in file.")
-    {
-        let hint = json!({
-            "error": error,
-            "recovery": {
-                "recommended_next_tools": [
-                    "read_file_raw",
-                    "read_file_range"
-                ],
-                "guidance": "Patch context is stale. Re-read target files from Harness and regenerate the patch with exact current lines."
-            }
-        });
-        serde_json::to_string(&hint).unwrap_or_else(|_| error.to_string())
-    } else {
-        error.to_string()
     }
 }
 
@@ -1473,23 +1332,6 @@ fn sha256_hex(bytes: &[u8]) -> String {
     out
 }
 
-fn path_name(path: &str) -> String {
-    path.rsplit('/')
-        .find(|part| !part.is_empty())
-        .unwrap_or(path)
-        .to_string()
-}
-
-fn path_matches_scope(path: &str, scope: &str) -> bool {
-    if scope.is_empty() {
-        return true;
-    }
-    path == scope
-        || path
-            .strip_prefix(scope)
-            .is_some_and(|rest| rest.starts_with('/'))
-}
-
 fn truncate_search_text(value: &str) -> String {
     const LIMIT: usize = 500;
     if value.chars().count() <= LIMIT {
@@ -1498,99 +1340,6 @@ fn truncate_search_text(value: &str) -> String {
     let mut text = value.chars().take(LIMIT).collect::<String>();
     text.push_str("...");
     text
-}
-
-#[derive(Debug)]
-struct TextEditResult {
-    content: String,
-    info: Value,
-}
-
-fn apply_text_edit(
-    content: &str,
-    args: &Value,
-    old_text: &str,
-    new_text: &str,
-) -> Result<TextEditResult, String> {
-    let start_line = args
-        .get("start_line")
-        .and_then(Value::as_u64)
-        .map(|value| value as usize);
-    let end_line = args
-        .get("end_line")
-        .and_then(Value::as_u64)
-        .map(|value| value as usize);
-    let before_context = args.get("before_context").and_then(Value::as_str);
-    let after_context = args.get("after_context").and_then(Value::as_str);
-    let expected_matches = args
-        .get("expected_matches")
-        .and_then(Value::as_u64)
-        .map(|value| value as usize);
-    let mut matches = Vec::new();
-    for (start, _) in content.match_indices(old_text) {
-        let end = start + old_text.len();
-        if let Some(min_line) = start_line {
-            if byte_line_number(content, start) < min_line {
-                continue;
-            }
-        }
-        if let Some(max_line) = end_line {
-            if byte_line_number(content, end) > max_line {
-                continue;
-            }
-        }
-        if let Some(before) = before_context {
-            if !content[..start].ends_with(before) {
-                continue;
-            }
-        }
-        if let Some(after) = after_context {
-            if !content[end..].starts_with(after) {
-                continue;
-            }
-        }
-        matches.push((start, end));
-    }
-    if let Some(expected) = expected_matches {
-        if matches.len() != expected {
-            return Err(format!(
-                "expected_matches mismatch: expected {expected}, found {}",
-                matches.len()
-            ));
-        }
-    }
-    if matches.is_empty() {
-        return Err("old_text not found in file.".to_string());
-    }
-    if matches.len() > 1 {
-        return Err(format!(
-            "old_text matched {} locations; provide before_context/after_context or start_line/end_line",
-            matches.len()
-        ));
-    }
-    let (start, end) = matches[0];
-    let mut next = String::with_capacity(content.len() - old_text.len() + new_text.len());
-    next.push_str(&content[..start]);
-    next.push_str(new_text);
-    next.push_str(&content[end..]);
-    Ok(TextEditResult {
-        content: next,
-        info: json!({
-            "replacements": 1,
-            "start_line": byte_line_number(content, start),
-            "end_line": byte_line_number(content, end),
-            "old_text_bytes": old_text.len(),
-            "new_text_bytes": new_text.len()
-        }),
-    })
-}
-
-fn byte_line_number(content: &str, byte_idx: usize) -> usize {
-    content[..byte_idx.min(content.len())]
-        .bytes()
-        .filter(|byte| *byte == b'\n')
-        .count()
-        + 1
 }
 
 fn tool_text_result(payload: Value) -> Value {
@@ -1640,16 +1389,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn repo_paths_reject_parent_traversal() {
-        assert!(optional_repo_path(Some("../secret"), false).is_err());
-        assert!(optional_repo_path(Some("/secret"), false).is_err());
-        assert_eq!(
-            optional_repo_path(Some("src/./main.rs"), false).unwrap(),
-            "src/main.rs"
-        );
-    }
-
-    #[test]
     fn enabled_tools_write_implies_read() {
         let mut headers = HeaderMap::new();
         headers.insert(
@@ -1659,59 +1398,6 @@ mod tests {
         let enabled = enabled_harness_tools_from_headers(&headers);
         assert!(enabled.code_read);
         assert!(enabled.code_write);
-    }
-
-    #[test]
-    fn edit_requires_unique_match() {
-        let args = json!({
-            "old_text": "hello",
-            "new_text": "hi"
-        });
-        let err = apply_text_edit("hello\nhello\n", &args, "hello", "hi").unwrap_err();
-        assert!(err.contains("matched 2 locations"));
-    }
-
-    #[test]
-    fn patch_targets_include_multiple_sections_and_moves() {
-        let patch = r#"*** Begin Patch
-*** Update File: src/a.rs
-@@
--old
-+new
-*** Update File: src/b.rs
-*** Move to: src/c.rs
-@@
--b
-+c
-*** Add File: src/d.rs
-+hello
-*** Delete File: src/e.rs
-*** End Patch
-"#;
-
-        let targets = collect_patch_targets(patch).expect("targets");
-
-        assert_eq!(
-            targets,
-            vec![
-                PatchTarget {
-                    before_path: "src/a.rs".to_string(),
-                    after_path: "src/a.rs".to_string(),
-                },
-                PatchTarget {
-                    before_path: "src/b.rs".to_string(),
-                    after_path: "src/c.rs".to_string(),
-                },
-                PatchTarget {
-                    before_path: "src/d.rs".to_string(),
-                    after_path: "src/d.rs".to_string(),
-                },
-                PatchTarget {
-                    before_path: "src/e.rs".to_string(),
-                    after_path: "src/e.rs".to_string(),
-                },
-            ]
-        );
     }
 
     #[test]
