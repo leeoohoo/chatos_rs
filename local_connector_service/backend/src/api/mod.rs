@@ -19,8 +19,8 @@ use serde_json::{json, Value};
 use uuid::Uuid;
 
 use crate::models::{
-    normalize_optional_text, normalize_sandbox_mode, CurrentUser, HealthResponse,
-    LocalConnectorSandboxPairing, DEVICE_STATUS_ONLINE, WORKSPACE_STATUS_DISABLED,
+    normalize_optional_text, CurrentUser, HealthResponse, DEVICE_STATUS_ONLINE,
+    WORKSPACE_STATUS_DISABLED,
 };
 use crate::relay::{RelayError, RelayRequest, RelayResponse};
 use crate::state::AppState;
@@ -32,6 +32,7 @@ mod auth_middleware;
 mod devices;
 mod project_bindings;
 mod router;
+mod sandbox_pairings;
 mod workspaces;
 
 use self::auth_middleware::require_auth;
@@ -44,15 +45,13 @@ use self::project_bindings::{
     create_project_binding, delete_project_binding, list_project_bindings, update_project_binding,
 };
 pub use self::router::build_router;
+use self::sandbox_pairings::{
+    create_sandbox_pairing, delete_sandbox_pairing, list_sandbox_pairings,
+    load_owned_sandbox_pairing, update_sandbox_pairing,
+};
 use self::workspaces::{
     create_workspace, delete_workspace, list_workspaces, load_owned_workspace, update_workspace,
 };
-
-#[derive(Debug, Deserialize)]
-struct SandboxPairingQuery {
-    device_id: Option<String>,
-    workspace_id: Option<String>,
-}
 
 #[derive(Debug, Deserialize)]
 struct McpRelayQuery {
@@ -94,23 +93,6 @@ struct TerminalWsRelayQuery {
     cwd: Option<String>,
     cols: Option<u16>,
     rows: Option<u16>,
-}
-
-#[derive(Debug, Deserialize)]
-struct CreateSandboxPairingRequest {
-    device_id: Option<String>,
-    workspace_id: Option<String>,
-    sandbox_mode: Option<String>,
-    enabled: Option<bool>,
-    access_client_id: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-struct UpdateSandboxPairingRequest {
-    workspace_id: Option<String>,
-    sandbox_mode: Option<String>,
-    enabled: Option<bool>,
-    access_client_id: Option<String>,
 }
 
 async fn health_handler() -> Json<HealthResponse> {
@@ -198,102 +180,6 @@ async fn memory_engine_proxy(
     builder.body(Body::from(bytes)).map_err(|err| {
         ApiError::internal(format!("build Memory Engine proxy response failed: {err}"))
     })
-}
-
-async fn list_sandbox_pairings(
-    State(state): State<AppState>,
-    Extension(user): Extension<CurrentUser>,
-    Query(query): Query<SandboxPairingQuery>,
-) -> Result<Json<Vec<LocalConnectorSandboxPairing>>, ApiError> {
-    state
-        .store
-        .list_sandbox_pairings(
-            user.effective_owner_user_id(),
-            normalize_optional_text(query.device_id),
-            normalize_optional_text(query.workspace_id),
-        )
-        .await
-        .map(Json)
-        .map_err(ApiError::internal)
-}
-
-async fn create_sandbox_pairing(
-    State(state): State<AppState>,
-    Extension(user): Extension<CurrentUser>,
-    Json(req): Json<CreateSandboxPairingRequest>,
-) -> Result<(StatusCode, Json<LocalConnectorSandboxPairing>), ApiError> {
-    let device_id = required_text(req.device_id, "device_id")?;
-    let workspace_id = required_text(req.workspace_id, "workspace_id")?;
-    validate_device_workspace(&state, &user, device_id.as_str(), workspace_id.as_str()).await?;
-    let mut pairing = LocalConnectorSandboxPairing::new(
-        user.effective_owner_user_id().to_string(),
-        device_id,
-        workspace_id,
-        req.enabled.unwrap_or(false),
-        normalize_sandbox_mode(req.sandbox_mode),
-        None,
-        normalize_optional_text(req.access_client_id),
-    );
-    pairing.facade_base_url = Some(state.config.sandbox_facade_base_url(pairing.id.as_str()));
-    let saved = state
-        .store
-        .upsert_sandbox_pairing(&pairing)
-        .await
-        .map_err(ApiError::internal)?;
-    Ok((StatusCode::CREATED, Json(saved)))
-}
-
-async fn update_sandbox_pairing(
-    State(state): State<AppState>,
-    Extension(user): Extension<CurrentUser>,
-    Path(id): Path<String>,
-    Json(req): Json<UpdateSandboxPairingRequest>,
-) -> Result<Json<LocalConnectorSandboxPairing>, ApiError> {
-    let mut pairing = load_owned_sandbox_pairing(&state, &user, id.as_str()).await?;
-    if let Some(workspace_id) = normalize_optional_text(req.workspace_id) {
-        pairing.workspace_id = workspace_id;
-    }
-    validate_device_workspace(
-        &state,
-        &user,
-        pairing.device_id.as_str(),
-        pairing.workspace_id.as_str(),
-    )
-    .await?;
-    if let Some(mode) = normalize_optional_text(req.sandbox_mode) {
-        pairing.sandbox_mode = normalize_sandbox_mode(Some(mode));
-    }
-    if let Some(enabled) = req.enabled {
-        pairing.enabled = enabled;
-    }
-    if let Some(access_client_id) = normalize_optional_text(req.access_client_id) {
-        pairing.access_client_id = Some(access_client_id);
-    }
-    if pairing.facade_base_url.is_none() {
-        pairing.facade_base_url = Some(state.config.sandbox_facade_base_url(pairing.id.as_str()));
-    }
-    state
-        .store
-        .update_sandbox_pairing(&pairing)
-        .await
-        .map_err(ApiError::internal)?;
-    load_owned_sandbox_pairing(&state, &user, id.as_str())
-        .await
-        .map(Json)
-}
-
-async fn delete_sandbox_pairing(
-    State(state): State<AppState>,
-    Extension(user): Extension<CurrentUser>,
-    Path(id): Path<String>,
-) -> Result<Json<Value>, ApiError> {
-    load_owned_sandbox_pairing(&state, &user, id.as_str()).await?;
-    state
-        .store
-        .delete_sandbox_pairing(user.effective_owner_user_id(), id.as_str())
-        .await
-        .map_err(ApiError::internal)?;
-    Ok(Json(json!({ "success": true })))
 }
 
 async fn mcp_relay(
@@ -930,25 +816,6 @@ async fn sandbox_facade_impl(
         .await
         .map_err(relay_error_to_api_error)?;
     Ok(relay_response_to_http(response))
-}
-
-async fn load_owned_sandbox_pairing(
-    state: &AppState,
-    user: &CurrentUser,
-    id: &str,
-) -> Result<LocalConnectorSandboxPairing, ApiError> {
-    let pairing = state
-        .store
-        .get_sandbox_pairing(id)
-        .await
-        .map_err(ApiError::internal)?
-        .ok_or_else(|| ApiError::not_found("Local Connector sandbox pairing not found"))?;
-    if pairing.owner_user_id != user.effective_owner_user_id() {
-        return Err(ApiError::forbidden(
-            "Local Connector sandbox pairing does not belong to current user",
-        ));
-    }
-    Ok(pairing)
 }
 
 async fn validate_device_workspace(
