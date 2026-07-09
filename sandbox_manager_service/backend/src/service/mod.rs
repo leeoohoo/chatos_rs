@@ -4,5 +4,6 @@
 mod cleanup;
 mod images;
 mod manager;
+mod output_manifest;
 
 pub use manager::SandboxManager;
