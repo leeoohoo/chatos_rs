@@ -20,16 +20,15 @@ use tokio::sync::{Mutex, RwLock};
 use tokio::time::{sleep, Duration, Instant};
 use uuid::Uuid;
 
+mod logs;
+
+use logs::{
+    append_log, collect_output, collect_output_from_logs, log_value_content, select_logs,
+    take_recent_logs, TerminalLogEntry,
+};
+
 #[derive(Debug, Clone, Default)]
 pub struct SandboxTerminalControllerStore;
-
-#[derive(Debug, Clone)]
-struct TerminalLogEntry {
-    offset: i64,
-    kind: String,
-    content: String,
-    created_at: String,
-}
 
 #[derive(Debug, Clone)]
 struct TerminalSessionMeta {
@@ -54,12 +53,6 @@ struct TerminalSession {
 #[derive(Default)]
 struct TerminalRuntimeState {
     sessions: RwLock<HashMap<String, Arc<TerminalSession>>>,
-}
-
-struct OutputCapture {
-    text: String,
-    char_count: usize,
-    truncated: bool,
 }
 
 struct WaitResult {
@@ -454,29 +447,6 @@ where
     });
 }
 
-async fn append_log(session: Arc<TerminalSession>, kind: &str, content: String) {
-    if content.is_empty() {
-        return;
-    }
-    let now = now_rfc3339();
-    {
-        let mut logs = session.logs.lock().await;
-        let offset = logs.last().map(|entry| entry.offset + 1).unwrap_or(0);
-        logs.push(TerminalLogEntry {
-            offset,
-            kind: kind.to_string(),
-            content,
-            created_at: now.clone(),
-        });
-        if logs.len() > 4_000 {
-            let drain = logs.len() - 4_000;
-            logs.drain(0..drain);
-        }
-    }
-    let mut meta = session.meta.lock().await;
-    meta.last_active_at = now;
-}
-
 async fn refresh_session_status(session: &Arc<TerminalSession>) -> Result<(), String> {
     {
         let meta = session.meta.lock().await;
@@ -585,76 +555,6 @@ async fn wait_for_session(
         finished_by: "timeout",
         exit_code: meta.exit_code,
     })
-}
-
-async fn collect_output(session: &Arc<TerminalSession>, max_chars: usize) -> OutputCapture {
-    let logs = session.logs.lock().await;
-    collect_output_from_logs(logs.iter().map(|entry| entry.content.as_str()), max_chars)
-}
-
-fn collect_output_from_logs<'a, I>(items: I, max_chars: usize) -> OutputCapture
-where
-    I: Iterator<Item = &'a str>,
-{
-    let full = items.collect::<Vec<_>>().join("");
-    let char_count = full.chars().count();
-    if char_count <= max_chars {
-        return OutputCapture {
-            text: full,
-            char_count,
-            truncated: false,
-        };
-    }
-    let text = full
-        .chars()
-        .skip(char_count.saturating_sub(max_chars))
-        .collect::<String>();
-    OutputCapture {
-        text,
-        char_count,
-        truncated: true,
-    }
-}
-
-fn select_logs(logs: &[TerminalLogEntry], offset: Option<i64>, limit: usize) -> Vec<Value> {
-    let selected = if let Some(offset) = offset {
-        logs.iter()
-            .filter(|entry| entry.offset >= offset.max(0))
-            .take(limit)
-            .collect::<Vec<_>>()
-    } else {
-        logs.iter().rev().take(limit).collect::<Vec<_>>()
-    };
-    let ordered = if offset.is_some() {
-        selected
-    } else {
-        selected.into_iter().rev().collect::<Vec<_>>()
-    };
-    ordered.into_iter().map(log_to_value).collect()
-}
-
-fn take_recent_logs(logs: &[TerminalLogEntry], limit: usize) -> Vec<Value> {
-    logs.iter()
-        .rev()
-        .take(limit)
-        .collect::<Vec<_>>()
-        .into_iter()
-        .rev()
-        .map(log_to_value)
-        .collect()
-}
-
-fn log_to_value(entry: &TerminalLogEntry) -> Value {
-    json!({
-        "offset": entry.offset,
-        "kind": entry.kind,
-        "content": entry.content,
-        "created_at": entry.created_at,
-    })
-}
-
-fn log_value_content(value: &Value) -> Option<&str> {
-    value.get("content").and_then(Value::as_str)
 }
 
 fn derive_terminal_name(cwd: &str) -> String {
