@@ -48,6 +48,25 @@ import {
   type SandboxLease,
 } from './api';
 import {
+  approvalDecisionClass,
+  approvalDecisionLabel,
+  approvalModeDescription,
+  approvalModeLabel,
+  decisionSourceLabel,
+  projectLabel,
+  riskLabel,
+  riskStatusClass,
+} from './utils/approvalFormat';
+import {
+  formatHistoryTime,
+  formatTerminalResult,
+  historyStatusClass,
+  sourceGroup,
+  sourceLabel,
+  splitArgs,
+  statusLabel,
+} from './utils/terminalFormat';
+import {
   buildImportedModelConfigPayload,
   buildModelConfigPayload,
   buildProviderPreviewPayload,
@@ -2057,137 +2076,6 @@ function StatusTile({
       {detail ? <small>{detail}</small> : null}
     </div>
   );
-}
-
-function splitArgs(value: string): string[] {
-  return value
-    .split(/\s+/)
-    .map((item) => item.trim())
-    .filter(Boolean);
-}
-
-function sourceLabel(source: string) {
-  const labels: Record<string, string> = {
-    chatos_terminal_exec: 'ChatOS 终端',
-    chatos_terminal_session: 'ChatOS 终端',
-    local_mcp: 'Task Runner',
-    task_runner_sandbox: 'Task Runner',
-    local_connector_ui: 'Local Connector 页面',
-  };
-  return labels[source] || source;
-}
-
-function sourceGroup(source: string) {
-  if (source === 'chatos_terminal_exec' || source === 'chatos_terminal_session') {
-    return 'chatos_terminal';
-  }
-  if (source === 'local_mcp' || source === 'task_runner_sandbox') {
-    return 'task_runner';
-  }
-  return source;
-}
-
-function statusLabel(status: string) {
-  const labels: Record<string, string> = {
-    succeeded: '成功',
-    failed: '失败',
-    timed_out: '超时',
-    submitted: '已提交',
-    blocked: '已拦截',
-  };
-  return labels[status] || status;
-}
-
-function historyStatusClass(status: string) {
-  if (status === 'succeeded' || status === 'submitted') {
-    return 'status ok';
-  }
-  if (status === 'failed' || status === 'timed_out' || status === 'blocked') {
-    return 'status bad';
-  }
-  return 'status warn';
-}
-
-function formatHistoryTime(value: string) {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return value;
-  }
-  return date.toLocaleString();
-}
-
-function formatTerminalResult(result: { stdout: string; stderr: string; exit_code?: number | null; success: boolean }) {
-  return [
-    `exit_code: ${result.exit_code ?? '-'}`,
-    `success: ${result.success}`,
-    '',
-    result.stdout ? `stdout:\n${result.stdout}` : 'stdout: <empty>',
-    result.stderr ? `stderr:\n${result.stderr}` : 'stderr: <empty>',
-  ].join('\n');
-}
-
-function approvalModeLabel(mode: ApprovalMode) {
-  const labels: Record<ApprovalMode, string> = {
-    request_approval: '请求审批',
-    auto_approval: '自动审批',
-    full_control: '完全控制',
-  };
-  return labels[mode] || mode;
-}
-
-function approvalModeDescription(mode: ApprovalMode) {
-  const labels: Record<ApprovalMode, string> = {
-    request_approval: '每条命令等待用户通过',
-    auto_approval: '由本机 AI 审批命令',
-    full_control: '命令直接执行',
-  };
-  return labels[mode] || mode;
-}
-
-function approvalDecisionLabel(decision: string) {
-  const labels: Record<string, string> = {
-    approved: '通过',
-    denied: '拒绝',
-  };
-  return labels[decision] || decision;
-}
-
-function approvalDecisionClass(decision: string) {
-  return decision === 'approved' ? 'status ok' : decision === 'denied' ? 'status bad' : 'status warn';
-}
-
-function riskLabel(risk: string) {
-  const labels: Record<string, string> = {
-    low: '低风险',
-    medium: '中风险',
-    high: '高风险',
-  };
-  return labels[risk] || risk;
-}
-
-function riskStatusClass(risk: string) {
-  if (risk === 'low') {
-    return 'status ok';
-  }
-  if (risk === 'high') {
-    return 'status bad';
-  }
-  return 'status warn';
-}
-
-function decisionSourceLabel(source: string) {
-  const labels: Record<string, string> = {
-    whitelist: '白名单',
-    user: '用户',
-    ai: 'AI',
-    full_control: '完全控制',
-    static_rule: '静态规则',
-  };
-  return labels[source] || source;
-}
-
-function projectLabel(projectKey: { project_root_relative_path: string; project_anchor_relative_path?: string | null }) {
-  return projectKey.project_anchor_relative_path || projectKey.project_root_relative_path || '.';
 }
 
 function defaultDeviceName(): string {
