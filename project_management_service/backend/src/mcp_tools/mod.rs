@@ -3,7 +3,7 @@
 
 use chatos_project_mcp_contract::{
     args::{
-        CreateProjectTaskArgs, CreateRequirementArgs, InitProjectArgs, ListProjectTasksArgs,
+        CreateProjectTaskArgs, CreateRequirementArgs, ListProjectTasksArgs,
         ListRequirementTechnicalDocumentsArgs, ListRequirementsArgs, ProjectTaskIdArgs,
         RequirementIdArgs, RequirementTechnicalDocumentIdArgs, SetProjectTaskDependenciesArgs,
         SetRequirementDependenciesArgs, ToolCallParams, UpdateProjectTaskArgs,
@@ -26,6 +26,7 @@ use crate::task_runner_api_client;
 
 mod conversions;
 mod pagination;
+mod project;
 
 use self::pagination::{mcp_list_page, paginated_list_payload};
 
@@ -47,71 +48,10 @@ async fn call_tool(
 ) -> Result<Value, String> {
     match params.name.as_str() {
         tools::GET_PROJECT_OVERVIEW => {
-            let project = require_project_access(state, project_id, current_user).await?;
-            let profile = state
-                .store
-                .get_project_profile(project_id)
-                .await?
-                .unwrap_or_else(|| {
-                    let now = now_rfc3339();
-                    ProjectProfileRecord {
-                        project_id: project_id.to_string(),
-                        creator_user_id: None,
-                        creator_username: None,
-                        creator_display_name: None,
-                        owner_user_id: None,
-                        owner_username: None,
-                        owner_display_name: None,
-                        background: None,
-                        introduction: None,
-                        created_at: now.clone(),
-                        updated_at: now,
-                    }
-                });
-            Ok(tool_text_result(
-                json!({ "project": project, "profile": profile }),
-            ))
+            project::get_project_overview(state, current_user, project_id).await
         }
         tools::INITIALIZE_PROJECT => {
-            let args: InitProjectArgs = decode_value(params.arguments)?;
-            let project = require_project_access(state, project_id, current_user).await?;
-            ensure_project_writable(&project)?;
-            let project = state
-                .store
-                .update_project(
-                    project_id,
-                    UpdateProjectRequest {
-                        name: args.name,
-                        root_path: args.root_path,
-                        git_url: args.git_url,
-                        description: args.description,
-                    },
-                )
-                .await?
-                .ok_or_else(|| format!("项目不存在: {project_id}"))?;
-            let existing_profile = state.store.get_project_profile(project_id).await?;
-            let profile = state
-                .store
-                .upsert_project_profile(
-                    project_id,
-                    UpsertProjectProfileRequest {
-                        background: args.background.or_else(|| {
-                            existing_profile
-                                .as_ref()
-                                .and_then(|profile| profile.background.clone())
-                        }),
-                        introduction: args.introduction.or_else(|| {
-                            existing_profile
-                                .as_ref()
-                                .and_then(|profile| profile.introduction.clone())
-                        }),
-                    },
-                    current_user,
-                )
-                .await?;
-            Ok(tool_text_result(
-                json!({ "project": project, "profile": profile }),
-            ))
+            project::initialize_project(state, current_user, project_id, params.arguments).await
         }
         tools::LIST_REQUIREMENTS => {
             let args: ListRequirementsArgs = decode_value(params.arguments)?;
@@ -564,10 +504,7 @@ async fn call_tool(
             Ok(tool_text_result(json!(dependencies)))
         }
         tools::GET_PROJECT_DEPENDENCY_GRAPH => {
-            require_project_access(state, project_id, current_user).await?;
-            let graph =
-                dependency_graph::project_dependency_graph(&state.store, project_id, false).await?;
-            Ok(tool_text_result(json!(graph)))
+            project::get_project_dependency_graph(state, current_user, project_id).await
         }
         name => Err(format!("unknown project management MCP tool: {name}")),
     }
