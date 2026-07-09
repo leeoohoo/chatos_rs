@@ -5,16 +5,13 @@ use chatos_project_mcp_contract::{
     args::{
         CreateProjectTaskArgs, CreateRequirementArgs, InitProjectArgs, ListProjectTasksArgs,
         ListRequirementTechnicalDocumentsArgs, ListRequirementsArgs, ProjectTaskIdArgs,
-        ProjectTaskStatus as McpProjectTaskStatus, RequirementIdArgs,
-        RequirementStatus as McpRequirementStatus, RequirementTechnicalDocumentIdArgs,
-        RequirementType as McpRequirementType, SetProjectTaskDependenciesArgs,
+        RequirementIdArgs, RequirementTechnicalDocumentIdArgs, SetProjectTaskDependenciesArgs,
         SetRequirementDependenciesArgs, ToolCallParams, UpdateProjectTaskArgs,
-        UpdateProjectTaskPatch, UpdateRequirementArgs, UpdateRequirementPatch,
-        UpsertRequirementTechnicalDocumentArgs,
+        UpdateRequirementArgs, UpsertRequirementTechnicalDocumentArgs,
     },
     tools,
 };
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use serde_json::{json, Value};
 
 use crate::auth::CurrentUser;
@@ -27,23 +24,10 @@ use crate::services::dependency_graph;
 use crate::state::AppState;
 use crate::task_runner_api_client;
 
-const DEFAULT_MCP_LIST_LIMIT: usize = 50;
-const MAX_MCP_LIST_LIMIT: usize = 100;
+mod conversions;
+mod pagination;
 
-#[derive(Debug, Clone, Copy)]
-struct McpListPageRequest {
-    limit: usize,
-    offset: usize,
-}
-
-#[derive(Debug, Serialize)]
-struct McpListPageMeta {
-    limit: usize,
-    offset: usize,
-    returned: usize,
-    has_more: bool,
-    next_offset: Option<usize>,
-}
+use self::pagination::{mcp_list_page, paginated_list_payload};
 
 pub(crate) async fn call_tool_from_value(
     state: &AppState,
@@ -706,118 +690,8 @@ fn tool_text_result(payload: Value) -> Value {
     })
 }
 
-impl McpListPageRequest {
-    fn fetch_limit(&self) -> usize {
-        self.limit.saturating_add(1)
-    }
-}
-
-fn mcp_list_page(limit: Option<usize>, offset: Option<usize>) -> McpListPageRequest {
-    McpListPageRequest {
-        limit: limit
-            .unwrap_or(DEFAULT_MCP_LIST_LIMIT)
-            .clamp(1, MAX_MCP_LIST_LIMIT),
-        offset: offset.unwrap_or_default(),
-    }
-}
-
-fn paginated_list_payload<T: Serialize>(
-    items: Vec<T>,
-    page: McpListPageRequest,
-    has_more: bool,
-) -> Value {
-    let returned = items.len();
-    json!({
-        "items": items,
-        "page": McpListPageMeta {
-            limit: page.limit,
-            offset: page.offset,
-            returned,
-            has_more,
-            next_offset: has_more.then_some(page.offset.saturating_add(page.limit)),
-        }
-    })
-}
-
 fn decode_value<T: for<'de> Deserialize<'de>>(value: Value) -> Result<T, String> {
     serde_json::from_value(value).map_err(|err| err.to_string())
-}
-
-impl From<McpRequirementStatus> for RequirementStatus {
-    fn from(value: McpRequirementStatus) -> Self {
-        match value {
-            McpRequirementStatus::Draft => Self::Draft,
-            McpRequirementStatus::Reviewing => Self::Reviewing,
-            McpRequirementStatus::Approved => Self::Approved,
-            McpRequirementStatus::InProgress => Self::InProgress,
-            McpRequirementStatus::Blocked => Self::Blocked,
-            McpRequirementStatus::Failed => Self::Failed,
-            McpRequirementStatus::Done => Self::Done,
-            McpRequirementStatus::Cancelled => Self::Cancelled,
-            McpRequirementStatus::Archived => Self::Archived,
-        }
-    }
-}
-
-impl From<McpRequirementType> for RequirementType {
-    fn from(value: McpRequirementType) -> Self {
-        match value {
-            McpRequirementType::Requirement => Self::Requirement,
-            McpRequirementType::Change => Self::Change,
-            McpRequirementType::BugFix => Self::BugFix,
-        }
-    }
-}
-
-impl From<McpProjectTaskStatus> for ProjectWorkItemStatus {
-    fn from(value: McpProjectTaskStatus) -> Self {
-        match value {
-            McpProjectTaskStatus::Todo => Self::Todo,
-            McpProjectTaskStatus::Ready => Self::Ready,
-            McpProjectTaskStatus::InProgress => Self::InProgress,
-            McpProjectTaskStatus::Blocked => Self::Blocked,
-            McpProjectTaskStatus::Failed => Self::Failed,
-            McpProjectTaskStatus::Done => Self::Done,
-            McpProjectTaskStatus::Cancelled => Self::Cancelled,
-            McpProjectTaskStatus::Archived => Self::Archived,
-        }
-    }
-}
-
-impl From<UpdateRequirementPatch> for UpdateRequirementRequest {
-    fn from(value: UpdateRequirementPatch) -> Self {
-        Self {
-            parent_requirement_id: value.parent_requirement_id,
-            requirement_type: value.requirement_type.map(RequirementType::from),
-            title: value.title,
-            summary: value.summary,
-            detail: value.detail,
-            business_value: value.business_value,
-            acceptance_criteria: value.acceptance_criteria,
-            source: value.source,
-            priority: value.priority,
-            status: value.status.map(RequirementStatus::from),
-            assignee_user_id: value.assignee_user_id,
-        }
-    }
-}
-
-impl From<UpdateProjectTaskPatch> for UpdateProjectWorkItemRequest {
-    fn from(value: UpdateProjectTaskPatch) -> Self {
-        Self {
-            requirement_id: value.requirement_id,
-            title: value.title,
-            description: value.description,
-            status: value.status.map(ProjectWorkItemStatus::from),
-            priority: value.priority,
-            assignee_user_id: value.assignee_user_id,
-            estimate_points: value.estimate_points,
-            due_at: value.due_at,
-            sort_order: value.sort_order,
-            tags: value.tags,
-            is_planning_task: value.is_planning_task,
-        }
-    }
 }
 
 #[cfg(test)]
