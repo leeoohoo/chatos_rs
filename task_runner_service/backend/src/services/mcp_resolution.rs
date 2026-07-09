@@ -228,7 +228,6 @@ pub(super) fn task_mcp_resolution_response(
             .collect(),
         server_local_builtin_kinds: kind_names(resolution.server_local_builtin_kinds),
         external_mcp_config_ids: task.mcp_config.external_mcp_config_ids.clone(),
-        skill_ids: task.mcp_config.skill_ids.clone(),
     }
 }
 

@@ -12,8 +12,7 @@ use tracing::Level;
 use super::core::{
     agent_token_handler, create_user, current_user_handler, delete_user, health_handler,
     list_users, login_handler, logout_handler, require_auth, system_config_handler,
-    task_runner_internal_prompt_preview_handler, task_runner_skill_handler,
-    update_system_config_handler, update_user,
+    task_runner_internal_prompt_preview_handler, update_system_config_handler, update_user,
 };
 use super::external_mcp_configs::{
     create_external_mcp_config, delete_external_mcp_config, get_external_mcp_config,
@@ -42,10 +41,6 @@ use super::runs::{
     cancel_run, get_run, get_run_output_changes, get_run_output_diff, list_run_events,
     list_run_index, list_run_summaries, list_runs, list_runs_page, list_task_runs, retry_run,
     start_task_run, stream_run_events,
-};
-use super::skills::{
-    create_skill, delete_skill, get_skill, install_skill_from_marketplace, list_bundled_skills,
-    list_skills, search_skill_marketplace, update_skill,
 };
 use super::tasks::{
     batch_delete_tasks, batch_start_task_runs, batch_update_task_status, cancel_task, create_task,
@@ -169,16 +164,6 @@ pub fn build_router(state: AppState) -> Router {
                 .patch(update_external_mcp_config)
                 .delete(delete_external_mcp_config),
         )
-        .route("/api/skills", get(list_skills).post(create_skill))
-        .route("/api/skills/bundled", get(list_bundled_skills))
-        .route(
-            "/api/skills/marketplace",
-            get(search_skill_marketplace).post(install_skill_from_marketplace),
-        )
-        .route(
-            "/api/skills/:id",
-            get(get_skill).patch(update_skill).delete(delete_skill),
-        )
         .route("/api/runs", get(list_runs))
         .route("/api/runs/summaries", get(list_run_summaries))
         .route("/api/runs/page", get(list_runs_page))
@@ -225,7 +210,6 @@ pub fn build_router(state: AppState) -> Router {
     Router::new()
         .route("/api/health", get(health_handler))
         .route("/api/system/config", get(system_config_handler))
-        .route("/api/skills/task-runner", get(task_runner_skill_handler))
         .route("/api/auth/login", post(login_handler))
         .route("/api/auth/agent-token", post(agent_token_handler))
         .route(

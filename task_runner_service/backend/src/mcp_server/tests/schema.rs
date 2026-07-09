@@ -129,7 +129,6 @@ fn create_task_args_preserve_external_mcp_ids_without_implicit_builtin_selection
             String::new(),
             "external-mcp-1".to_string(),
         ]),
-        skill_ids: None,
         prerequisite_task_ids: None,
         mcp_config: None,
     }

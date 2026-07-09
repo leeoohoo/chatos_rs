@@ -28,8 +28,7 @@ pub use types::{
 };
 
 use types::{
-    TaskRunnerExternalMcpConfig, TaskRunnerMcpCatalogEntry, TaskRunnerSkillListItem,
-    TaskRunnerSkillResponse, UserServiceTaskRunnerTokenResponse,
+    TaskRunnerExternalMcpConfig, TaskRunnerMcpCatalogEntry, UserServiceTaskRunnerTokenResponse,
 };
 
 pub async fn exchange_task_runner_token_via_user_service(
@@ -57,39 +56,6 @@ pub async fn exchange_task_runner_token_via_user_service(
         return Err("User service task runner token exchange returned empty token".to_string());
     }
     Ok(token.to_string())
-}
-
-pub async fn fetch_task_runner_skill(
-    base_url: &str,
-    lang: &str,
-    profile: Option<&str>,
-) -> Result<String, String> {
-    let normalized_lang = match lang.trim() {
-        "en" | "en-US" | "english" => "en-US",
-        _ => "zh-CN",
-    };
-    let base_url = resolve_task_runner_base_url(base_url).await;
-    let endpoint = format!(
-        "{}/api/skills/task-runner",
-        base_url.trim().trim_end_matches('/')
-    );
-    let mut request = task_runner_http_client()
-        .get(endpoint)
-        .query(&[("lang", normalized_lang)]);
-    if let Some(profile) = profile.map(str::trim).filter(|value| !value.is_empty()) {
-        request = request.query(&[("profile", profile)]);
-    }
-    let payload: TaskRunnerSkillResponse = send_task_runner_response_with_limit(
-        request,
-        TASK_RUNNER_DEFAULT_RESPONSE_LIMIT_BYTES,
-        "Task Runner skill request failed",
-    )
-    .await?;
-    let content = payload.content.trim();
-    if content.is_empty() {
-        return Err("Task Runner skill request returned empty content".to_string());
-    }
-    Ok(content.to_string())
 }
 
 pub async fn fetch_task_runner_execution_options(
@@ -131,48 +97,10 @@ pub async fn fetch_task_runner_execution_options(
         .filter(|item| item.enabled)
         .filter_map(|item| normalize_optional(Some(item.id)))
         .collect::<BTreeSet<_>>();
-    let skill_ids = fetch_task_runner_skill_ids(base_url, access_token).await;
-
     Ok(TaskRunnerExecutionOptions {
         builtin_tool_ids,
         external_tool_ids,
-        skill_ids,
     })
-}
-
-async fn fetch_task_runner_skill_ids(base_url: &str, access_token: &str) -> BTreeSet<String> {
-    let mut skills = task_runner_json::<Vec<TaskRunnerSkillListItem>, ()>(
-        base_url,
-        access_token,
-        reqwest::Method::GET,
-        "/api/skills",
-        None::<&()>,
-    )
-    .await
-    .unwrap_or_default();
-    skills.extend(
-        task_runner_json::<Vec<TaskRunnerSkillListItem>, ()>(
-            base_url,
-            access_token,
-            reqwest::Method::GET,
-            "/api/skills/bundled",
-            None::<&()>,
-        )
-        .await
-        .unwrap_or_default(),
-    );
-    skills
-        .into_iter()
-        .filter(|skill| skill.enabled)
-        .filter(|skill| {
-            skill
-                .install_status
-                .as_deref()
-                .map(|value| value.trim().eq_ignore_ascii_case("installed"))
-                .unwrap_or(true)
-        })
-        .filter_map(|skill| normalize_optional(Some(skill.id)))
-        .collect()
 }
 
 pub async fn create_task_runner_task(

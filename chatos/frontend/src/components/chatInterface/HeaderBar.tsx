@@ -12,7 +12,6 @@ interface HeaderBarProps {
   onToggleSidebar: () => void;
   onOpenNotepad: () => void;
   onOpenApplications: () => void;
-  onOpenTaskRunnerExternalMcpManager: () => void;
   onOpenAgentManager: () => void;
   onOpenSystemContextEditor: () => void;
   onOpenUserSettings: () => void;
@@ -26,7 +25,6 @@ const HeaderBar: React.FC<HeaderBarProps> = ({
   onToggleSidebar,
   onOpenNotepad,
   onOpenApplications,
-  onOpenTaskRunnerExternalMcpManager,
   onOpenAgentManager,
   onOpenSystemContextEditor,
   onOpenUserSettings,
@@ -140,15 +138,6 @@ const HeaderBar: React.FC<HeaderBarProps> = ({
                 className="w-full text-left px-3 py-2 text-sm hover:bg-accent"
               >
                 {t('header.agentManager')}
-              </button>
-              <button
-                onClick={() => {
-                  setShowUserMenu(false);
-                  onOpenTaskRunnerExternalMcpManager();
-                }}
-                className="w-full px-3 py-2 text-left text-sm hover:bg-accent"
-              >
-                {t('header.taskRunnerExternalMcpManager')}
               </button>
               <button
                 onClick={() => {

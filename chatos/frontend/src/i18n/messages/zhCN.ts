@@ -161,7 +161,6 @@ export const zhCN: MessageDictionary = {
   'header.memoryModelSettings': 'Memory 总结模型',
   'header.taskModelSettings': 'Task 模型设置',
   'header.projectManagementAgentModelSettings': '项目管理 Agent 模型',
-  'header.taskRunnerExternalMcpManager': '外部 MCP 管理',
   'header.systemContext': '系统上下文设置',
   'header.userSettings': '运行参数',
   'header.logout': '退出登录',

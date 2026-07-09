@@ -22,25 +22,24 @@ use crate::models::{
     BatchTaskOperationItem, BatchTaskOperationResponse, BatchTaskRunRequest,
     BatchTaskStatusUpdateRequest, CancelAskUserPromptRequest, CancelTaskRequest,
     CancelTaskResponse, ChatosProjectImportRequest, CreateExternalMcpConfigRequest,
-    CreateModelConfigRequest, CreateRemoteServerRequest, CreateSkillRequest,
-    CreateTaskProjectRequest, CreateTaskRequest, CreateUserRequest, CurrentUserResponse,
-    ExternalMcpConfigRecord, HealthResponse, InstallSkillRequest, LoginRequest, LoginResponse,
-    McpCatalogEntry, McpPromptPreviewRequest, McpPromptPreviewResponse, McpServerInfo,
-    ModelCatalogResponse, ModelConfigRecord, ModelConfigTestResponse, ModelConfigUsageRecord,
-    PaginatedResponse, PreviewModelCatalogRequest, PromptListFilters, RecordTaskProcessRequest,
-    RemoteServerRecord, RemoteServerTestResponse, RunListFilters, RunOutputChangesResponse,
-    RunOutputDiffResponse, RunSummaryRecord, SetTaskPrerequisitesRequest, SkillListFilters,
-    SkillMarketplaceEntry, SkillMarketplaceQuery, SkillRecord, SkillSource, StartTaskRunRequest,
-    SubmitAskUserPromptRequest, SystemConfigResponse, TaskDependencyGraph, TaskIndexResponse,
-    TaskListFilters, TaskMcpResolutionResponse, TaskMemoryContextOptions,
-    TaskMemoryContextResponse, TaskMemoryRecordsOptions, TaskMemoryRecordsResponse,
-    TaskMemorySummaryResponse, TaskProjectRecord, TaskProjectStatus, TaskRecord,
-    TaskRunEventRecord, TaskRunRecord, TaskRunStatus, TaskRunnerInternalPromptPreviewResponse,
-    TaskScheduleMode, TaskSourceContext, TaskStatsResponse, TaskStatus, TaskSummaryRecord,
-    TestModelConfigRequest, TestRemoteServerRequest, UpdateExternalMcpConfigRequest,
-    UpdateModelConfigRequest, UpdateRemoteServerRequest, UpdateRuntimeSettingsRequest,
-    UpdateSkillRequest, UpdateTaskMcpRequest, UpdateTaskProjectRequest, UpdateTaskRequest,
-    UpdateUserRequest, UserRole, UserSummaryRecord, PUBLIC_PROJECT_ID,
+    CreateModelConfigRequest, CreateRemoteServerRequest, CreateTaskProjectRequest,
+    CreateTaskRequest, CreateUserRequest, CurrentUserResponse, ExternalMcpConfigRecord,
+    HealthResponse, LoginRequest, LoginResponse, McpCatalogEntry, McpPromptPreviewRequest,
+    McpPromptPreviewResponse, McpServerInfo, ModelCatalogResponse, ModelConfigRecord,
+    ModelConfigTestResponse, ModelConfigUsageRecord, PaginatedResponse, PreviewModelCatalogRequest,
+    PromptListFilters, RecordTaskProcessRequest, RemoteServerRecord, RemoteServerTestResponse,
+    RunListFilters, RunOutputChangesResponse, RunOutputDiffResponse, RunSummaryRecord,
+    SetTaskPrerequisitesRequest, StartTaskRunRequest, SubmitAskUserPromptRequest,
+    SystemConfigResponse, TaskDependencyGraph, TaskIndexResponse, TaskListFilters,
+    TaskMcpResolutionResponse, TaskMemoryContextOptions, TaskMemoryContextResponse,
+    TaskMemoryRecordsOptions, TaskMemoryRecordsResponse, TaskMemorySummaryResponse,
+    TaskProjectRecord, TaskProjectStatus, TaskRecord, TaskRunEventRecord, TaskRunRecord,
+    TaskRunStatus, TaskRunnerInternalPromptPreviewResponse, TaskScheduleMode, TaskSourceContext,
+    TaskStatsResponse, TaskStatus, TaskSummaryRecord, TestModelConfigRequest,
+    TestRemoteServerRequest, UpdateExternalMcpConfigRequest, UpdateModelConfigRequest,
+    UpdateRemoteServerRequest, UpdateRuntimeSettingsRequest, UpdateTaskMcpRequest,
+    UpdateTaskProjectRequest, UpdateTaskRequest, UpdateUserRequest, UserRole, UserSummaryRecord,
+    PUBLIC_PROJECT_ID,
 };
 use crate::services::{health, system_config};
 use crate::state::AppState;
@@ -56,19 +55,12 @@ mod prompts;
 mod remote_servers;
 mod router;
 mod runs;
-mod skills;
 mod tasks;
 mod tooling;
 
 pub use self::router::build_router;
 
 const RUN_EVENT_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(750);
-const TASK_RUNNER_SKILL_ZH_CN: &str = include_str!("../../../TASK_RUNNER_AI_SKILL.zh-CN.md");
-const TASK_RUNNER_SKILL_EN_US: &str = include_str!("../../../TASK_RUNNER_AI_SKILL.en-US.md");
-const TASK_RUNNER_PLAN_SKILL_ZH_CN: &str =
-    include_str!("../../../TASK_RUNNER_PLAN_TASK_SKILL.zh-CN.md");
-const TASK_RUNNER_PLAN_SKILL_EN_US: &str =
-    include_str!("../../../TASK_RUNNER_PLAN_TASK_SKILL.en-US.md");
 
 fn parse_csv_ids(value: &str) -> Vec<String> {
     value

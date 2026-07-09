@@ -20,11 +20,6 @@ pub(super) struct UserServiceTaskRunnerTokenResponse {
     pub(super) access_token: String,
 }
 
-#[derive(Debug, Deserialize)]
-pub(super) struct TaskRunnerSkillResponse {
-    pub(super) content: String,
-}
-
 #[derive(Debug, Clone, Deserialize)]
 pub struct TaskRunnerTaskRecord {
     pub id: String,
@@ -46,8 +41,6 @@ pub struct TaskRunnerMcpConfigRequest {
     pub external_mcp_config_ids: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub ephemeral_http_servers: Vec<TaskRunnerEphemeralHttpMcpServerRequest>,
-    #[serde(default)]
-    pub skill_ids: Vec<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize)]
@@ -102,20 +95,10 @@ pub(super) struct TaskRunnerExternalMcpConfig {
     pub(super) enabled: bool,
 }
 
-#[derive(Debug, Clone, Deserialize)]
-pub(super) struct TaskRunnerSkillListItem {
-    pub(super) id: String,
-    #[serde(default)]
-    pub(super) enabled: bool,
-    #[serde(default)]
-    pub(super) install_status: Option<String>,
-}
-
 #[derive(Debug, Clone, Default)]
 pub struct TaskRunnerExecutionOptions {
     pub(super) builtin_tool_ids: BTreeSet<String>,
     pub(super) external_tool_ids: BTreeSet<String>,
-    pub(super) skill_ids: BTreeSet<String>,
 }
 
 impl TaskRunnerExecutionOptions {
@@ -146,18 +129,7 @@ impl TaskRunnerExecutionOptions {
             sandbox_manager_base_url: None,
             external_mcp_config_ids,
             ephemeral_http_servers: Vec::new(),
-            skill_ids: Vec::new(),
         })
-    }
-
-    pub fn validate_skill_ids(&self, values: Vec<String>) -> Result<Vec<String>, String> {
-        let values = normalize_id_list(values);
-        for value in &values {
-            if !self.skill_ids.contains(value.as_str()) {
-                return Err(format!("Task Runner Skill 不可用或无权限访问: {value}"));
-            }
-        }
-        Ok(values)
     }
 }
 
@@ -181,16 +153,6 @@ fn normalize_id_list_with_aliases(values: Vec<String>) -> Vec<String> {
     let mut out = values
         .into_iter()
         .filter_map(normalize_tool_id_with_legacy_alias)
-        .collect::<Vec<_>>();
-    out.sort();
-    out.dedup();
-    out
-}
-
-fn normalize_id_list(values: Vec<String>) -> Vec<String> {
-    let mut out = values
-        .into_iter()
-        .filter_map(|value| normalize_optional(Some(value)))
         .collect::<Vec<_>>();
     out.sort();
     out.dedup();

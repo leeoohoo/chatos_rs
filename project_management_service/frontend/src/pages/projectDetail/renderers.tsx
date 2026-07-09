@@ -128,13 +128,11 @@ export function WorkItemDetailPreview({
   requirementTitle,
   modelLabelMap,
   toolLabelMap,
-  skillLabelMap,
 }: {
   workItem: ProjectWorkItemRecord;
   requirementTitle: string;
   modelLabelMap: ExecutionOptionLabelMap;
   toolLabelMap: ExecutionOptionLabelMap;
-  skillLabelMap: ExecutionOptionLabelMap;
 }) {
   return (
     <div style={detailPreviewShellStyle}>
@@ -168,9 +166,6 @@ export function WorkItemDetailPreview({
           </Descriptions.Item>
           <Descriptions.Item label="工具集">
             {renderExecutionToolTags(workItem.task_runner_enabled_tool_ids, toolLabelMap)}
-          </Descriptions.Item>
-          <Descriptions.Item label="Skills">
-            {renderExecutionToolTags(workItem.task_runner_skill_ids, skillLabelMap)}
           </Descriptions.Item>
           <Descriptions.Item label="创建时间">{formatDateTime(workItem.created_at)}</Descriptions.Item>
           <Descriptions.Item label="更新时间">{formatDateTime(workItem.updated_at)}</Descriptions.Item>

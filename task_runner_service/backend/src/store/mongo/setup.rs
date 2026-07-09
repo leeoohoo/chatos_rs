@@ -22,7 +22,6 @@ impl MongoStore {
             remote_servers: database.collection::<RemoteServerRecord>("remote_servers"),
             external_mcp_configs: database
                 .collection::<ExternalMcpConfigRecord>("external_mcp_configs"),
-            skills: database.collection::<SkillRecord>("skills"),
             runs: database.collection::<TaskRunRecord>("task_runs"),
             run_events: database.collection::<TaskRunEventRecord>("task_run_events"),
             ask_user_prompts: database.collection::<AskUserPromptRecord>("ask_user_prompts"),
@@ -139,23 +138,6 @@ impl MongoStore {
         .await?;
         self.ensure_index(&self.external_mcp_configs, doc! { "updated_at": -1 }, false)
             .await?;
-
-        self.ensure_index(&self.skills, doc! { "id": 1 }, true)
-            .await?;
-        self.ensure_index(&self.skills, doc! { "enabled": 1 }, false)
-            .await?;
-        self.ensure_index(&self.skills, doc! { "auto_inject": 1 }, false)
-            .await?;
-        self.ensure_index(&self.skills, doc! { "owner_user_id": 1 }, false)
-            .await?;
-        self.ensure_index(&self.skills, doc! { "updated_at": -1 }, false)
-            .await?;
-        self.ensure_index(
-            &self.skills,
-            doc! { "source_registry": 1, "source_package_id": 1 },
-            false,
-        )
-        .await?;
 
         self.ensure_index(&self.runs, doc! { "id": 1 }, true)
             .await?;

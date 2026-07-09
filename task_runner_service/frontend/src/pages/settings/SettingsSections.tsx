@@ -24,7 +24,6 @@ import type {
   McpServerInfo,
   SystemConfigResponse,
   TaskRunnerInternalPromptPreviewResponse,
-  TaskRunnerSkillResponse,
 } from '../../types';
 import {
   errorMessage,
@@ -328,72 +327,6 @@ function RuntimeSettingsForm({ t, form, saveLoading, onSubmit }: RuntimeSettings
           </Button>
         </Space>
       </Form>
-    </Space>
-  );
-}
-
-type SettingsSkillTabProps = {
-  t: TranslateFn;
-  locale: string;
-  endpoint: string;
-  title: string;
-  subtitle: string;
-  contentTitle: string;
-  data?: TaskRunnerSkillResponse;
-  error: unknown;
-  refreshLoading: boolean;
-  onLocaleChange: (value: SettingsPromptLocale) => void;
-  onRefresh: () => void;
-};
-
-export function SettingsSkillTab({
-  t,
-  locale,
-  endpoint,
-  title,
-  subtitle,
-  contentTitle,
-  data,
-  error,
-  refreshLoading,
-  onLocaleChange,
-  onRefresh,
-}: SettingsSkillTabProps) {
-  return (
-    <Space direction="vertical" size="large" style={{ width: '100%' }}>
-      <SettingsPromptToolbar
-        t={t}
-        locale={locale}
-        title={title}
-        subtitle={subtitle}
-        refreshLoading={refreshLoading}
-        onLocaleChange={onLocaleChange}
-        onRefresh={onRefresh}
-      />
-
-      <Alert message={t('settings.externalSkillLocaleNote')} type="info" showIcon />
-
-      <Descriptions bordered column={1} size="small">
-        <Descriptions.Item label={t('settings.externalSkillEndpoint')}>
-          <Typography.Text code copyable>
-            {endpoint}
-          </Typography.Text>
-        </Descriptions.Item>
-        <Descriptions.Item label={t('settings.externalSkillName')}>
-          {data?.name || '-'}
-        </Descriptions.Item>
-        <Descriptions.Item label={t('settings.externalSkillLocale')}>
-          {data?.locale || locale}
-        </Descriptions.Item>
-      </Descriptions>
-
-      {error ? <Alert type="error" showIcon message={errorMessage(error)} /> : null}
-
-      <PromptContentCard
-        title={contentTitle}
-        content={data?.content}
-        emptyText={t('settings.noPreview')}
-      />
     </Space>
   );
 }

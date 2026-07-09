@@ -13,6 +13,6 @@ pub(super) use self::auth::{
 };
 pub(super) use self::system::{
     health_handler, system_config_handler, task_runner_internal_prompt_preview_handler,
-    task_runner_skill_handler, update_system_config_handler,
+    update_system_config_handler,
 };
 pub(super) use self::users::{create_user, delete_user, list_users, update_user};

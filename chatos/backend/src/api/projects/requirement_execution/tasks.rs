@@ -77,9 +77,6 @@ pub(in crate::api::projects) async fn create_and_start_execution_tasks(
         let mut mcp_config = execution_options
             .mcp_config_for_tool_ids(&work_item.task_runner_enabled_tool_ids)
             .map_err(HandlerError::bad_request)?;
-        mcp_config.skill_ids = execution_options
-            .validate_skill_ids(work_item.task_runner_skill_ids.clone())
-            .map_err(HandlerError::bad_request)?;
         mcp_config.builtin_prompt_locale = Some(builtin_prompt_locale.to_string());
         let task_profile = task_profile_for_work_item(work_item);
         let tags = execution_tags_for_work_item(work_item);
@@ -422,7 +419,6 @@ mod tests {
             description: None,
             task_runner_default_model_config_id: "model-1".to_string(),
             task_runner_enabled_tool_ids: vec!["tool-1".to_string()],
-            task_runner_skill_ids: Vec::new(),
             status: "todo".to_string(),
             priority: 0,
             tags: vec!["custom".to_string()],

@@ -19,7 +19,6 @@ pub(in crate::api::projects) struct WorkItemPlanItem {
     pub(in crate::api::projects) description: Option<String>,
     pub(in crate::api::projects) task_runner_default_model_config_id: String,
     pub(in crate::api::projects) task_runner_enabled_tool_ids: Vec<String>,
-    pub(in crate::api::projects) task_runner_skill_ids: Vec<String>,
     pub(in crate::api::projects) status: String,
     pub(in crate::api::projects) priority: i32,
     pub(in crate::api::projects) tags: Vec<String>,

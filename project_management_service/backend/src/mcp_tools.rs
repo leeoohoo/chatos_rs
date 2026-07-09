@@ -422,8 +422,6 @@ async fn call_tool(
             let task_runner_enabled_tool_ids =
                 task_runner_api_client::normalize_tool_ids(args.task_runner_enabled_tool_ids)?;
             let _ = execution_options.mcp_config_for_tool_ids(&task_runner_enabled_tool_ids)?;
-            let task_runner_skill_ids =
-                execution_options.validate_skill_ids(args.task_runner_skill_ids)?;
             let item = state
                 .store
                 .create_work_item(
@@ -433,7 +431,7 @@ async fn call_tool(
                         description: args.description,
                         task_runner_default_model_config_id,
                         task_runner_enabled_tool_ids,
-                        task_runner_skill_ids,
+                        task_runner_skill_ids: Vec::new(),
                         status,
                         priority: args.priority,
                         assignee_user_id: args.assignee_user_id,

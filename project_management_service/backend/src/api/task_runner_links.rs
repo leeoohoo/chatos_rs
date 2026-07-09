@@ -141,11 +141,6 @@ pub(in crate::api) async fn get_task_runner_execution_options(
             .into_iter()
             .map(execution_option_record)
             .collect(),
-        skills: options
-            .skill_ids()
-            .into_iter()
-            .map(execution_option_record)
-            .collect(),
     }))
 }
 

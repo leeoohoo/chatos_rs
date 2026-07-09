@@ -50,9 +50,9 @@ pub(super) async fn load_external_mcp_servers(
             .store
             .get_external_mcp_config(config_id)
             .await?
-            .ok_or_else(|| format!("外部 MCP 配置不存在: {config_id}"))?;
+            .ok_or_else(|| format!("澶栭儴 MCP 閰嶇疆涓嶅瓨鍦? {config_id}"))?;
         if !config.enabled {
-            return Err(format!("外部 MCP 配置未启用: {config_id}"));
+            return Err(format!("澶栭儴 MCP 閰嶇疆鏈惎鐢? {config_id}"));
         }
         if let Some(server) = config.to_http_server() {
             http_servers.push(server);
@@ -63,7 +63,7 @@ pub(super) async fn load_external_mcp_servers(
         )? {
             stdio_servers.push(server);
         } else {
-            return Err(format!("外部 MCP 配置无效: {config_id}"));
+            return Err(format!("澶栭儴 MCP 閰嶇疆鏃犳晥: {config_id}"));
         }
         summaries.push(ExternalMcpRuntimeSummary {
             id: config.id,
@@ -213,7 +213,7 @@ pub(super) fn load_system_http_mcp_servers(
 
 pub(super) fn external_mcp_prefixed_input_items(
     summaries: &[ExternalMcpRuntimeSummary],
-    locale: BuiltinMcpPromptLocale,
+    _locale: BuiltinMcpPromptLocale,
 ) -> Vec<Value> {
     let summaries = summaries
         .iter()
@@ -233,16 +233,9 @@ pub(super) fn external_mcp_prefixed_input_items(
         })
         .collect::<Vec<_>>()
         .join("\n");
-    let text = if locale.is_english() {
-        format!(
-            "[External MCP]\nTask Runner has loaded these user-configured external MCP servers for this task:\n{list}\n\nIf the task objective asks you to use these external systems, directly call the corresponding tools currently exposed to you. External MCP tool names usually use the config name as their prefix. Do not inspect local Gemini/Codex/Claude MCP config files to decide whether these MCP servers exist; they are injected by Task Runner for this run. Use builtin tools only when the task also needs code, terminal, browser, or other builtin capabilities."
-        )
-    } else {
-        format!(
-            "[外部 MCP]\nTask Runner 已为当前任务加载这些用户配置的外部 MCP：\n{list}\n\n如果任务目标要求使用这些外部系统，请直接调用当前暴露给你的对应工具。外部 MCP 工具名通常会以配置名称作为前缀。不要检查本机 Gemini/Codex/Claude 的 MCP 配置文件来判断这些 MCP 是否存在；它们已经由 Task Runner 在本次运行中注入。只有当任务同时需要代码、终端、浏览器或其他 builtin 能力时，才使用 builtin 工具。"
-        )
-    };
-
+    let text = format!(
+        "[External MCP]\nTask Runner has loaded these user-configured external MCP servers for this task:\n{list}\n\nIf the task objective asks you to use these external systems, directly call the corresponding tools currently exposed to you. External MCP tool names usually use the config name as their prefix. Do not inspect local Gemini/Codex/Claude MCP config files to decide whether these MCP servers exist; they are injected by Task Runner for this run. Use builtin tools only when the task also needs code, terminal, browser, or other builtin capabilities."
+    );
     vec![json!({
         "type": "message",
         "role": "system",
@@ -368,146 +361,6 @@ const BROWSER_TOOL_NAMES: &[&str] = &[
     "browser_research",
     "browser_vision",
 ];
-
-pub(super) async fn project_management_skill_prefixed_input_items(
-    service: &RunService,
-    task: &TaskRecord,
-    locale: BuiltinMcpPromptLocale,
-) -> Vec<Value> {
-    if !super::is_chatos_plan_task(task) {
-        return Vec::new();
-    }
-    match crate::services::project_management_api_client::get_project_management_skill(
-        &service.config,
-        locale,
-    )
-    .await
-    {
-        Ok(Some(skill)) => project_management_skill_prefixed_input_item(skill, locale)
-            .into_iter()
-            .collect(),
-        Ok(None) => Vec::new(),
-        Err(err) => {
-            warn!(
-                task_id = task.id.as_str(),
-                "failed to load project management skill for plan task: {err}"
-            );
-            Vec::new()
-        }
-    }
-}
-
-pub(super) fn project_management_skill_prefixed_input_item(
-    skill: crate::services::project_management_api_client::ProjectManagementSkillDocument,
-    locale: BuiltinMcpPromptLocale,
-) -> Option<Value> {
-    let crate::services::project_management_api_client::ProjectManagementSkillDocument {
-        name,
-        locale: skill_locale,
-        content,
-    } = skill;
-    let content = content.trim();
-    if content.is_empty() {
-        return None;
-    }
-    let text = if locale.is_english() {
-        format!(
-            "[Project Management MCP Skill]\nTask Runner loaded this skill from the Project Management service. Follow it whenever you use `project_management_service_*` tools. The skill may mention unprefixed tool names such as `list_project_tasks`; in this Task Runner run, call the exposed prefixed form such as `project_management_service_list_project_tasks`. Skill: {name} ({skill_locale}).\n\n{content}"
-        )
-    } else {
-        format!(
-            "[Project Management MCP Skill]\nTask Runner 已从 Project Management 服务加载以下 skill。只要使用 `project_management_service_*` 工具，就必须遵循它。skill 中可能写的是 `list_project_tasks` 这类未加服务前缀的工具名；在本次 Task Runner 运行里，要调用实际暴露的前缀形式，例如 `project_management_service_list_project_tasks`。Skill: {name} ({skill_locale})。\n\n{content}"
-        )
-    };
-
-    Some(json!({
-        "type": "message",
-        "role": "system",
-        "content": [{
-            "type": "input_text",
-            "text": text
-        }]
-    }))
-}
-
-pub(super) async fn user_skill_prefixed_input_items(
-    service: &RunService,
-    task: &TaskRecord,
-    locale: BuiltinMcpPromptLocale,
-    workspace_dir: &str,
-) -> Vec<Value> {
-    let skill_contexts = match service
-        .runtime_skill_contexts_for_task(task, workspace_dir)
-        .await
-    {
-        Ok(skill_contexts) => skill_contexts,
-        Err(err) => {
-            warn!(
-                task_id = task.id.as_str(),
-                "failed to load user skills for task run: {err}"
-            );
-            return Vec::new();
-        }
-    };
-    user_skill_prefixed_input_item(skill_contexts.as_slice(), locale)
-        .into_iter()
-        .collect()
-}
-
-fn user_skill_prefixed_input_item(
-    skill_contexts: &[crate::services::RuntimeSkillContext],
-    locale: BuiltinMcpPromptLocale,
-) -> Option<Value> {
-    if skill_contexts.is_empty() {
-        return None;
-    }
-    let body = skill_contexts
-        .iter()
-        .filter_map(|context| {
-            let skill = &context.skill;
-            let content = skill.content.trim();
-            if content.is_empty() {
-                return None;
-            }
-            let asset_note = context
-                .package_runtime_path
-                .as_deref()
-                .map(|path| {
-                    format!(
-                        "\n\nAssets path: `{path}`\nPackage files: {} files, {} bytes.\nScripts and supporting files are available there, but Task Runner did not execute them during installation. Inspect scripts before running them.",
-                        skill.package_file_count, skill.package_total_bytes
-                    )
-                })
-                .unwrap_or_default();
-            Some(format!(
-                "## {} ({}, id: {}, locale: {}){}\n\n{}",
-                skill.display_name, skill.name, skill.id, skill.locale, asset_note, content
-            ))
-        })
-        .collect::<Vec<_>>()
-        .join("\n\n---\n\n");
-    if body.trim().is_empty() {
-        return None;
-    }
-    let text = if locale.is_english() {
-        format!(
-            "[Task Runner Skills]\nTask Runner has loaded these skills for this run because they were explicitly selected on the task or are enabled with auto injection. Follow them when they are relevant to the task objective.\n\n{body}"
-        )
-    } else {
-        format!(
-            "[Task Runner Skills]\nTask Runner 已为本次运行加载以下 skills，因为它们被任务显式选择，或处于启用状态并开启了自动注入。当它们和任务目标相关时，请遵循这些说明。\n\n{body}"
-        )
-    };
-
-    Some(json!({
-        "type": "message",
-        "role": "system",
-        "content": [{
-            "type": "input_text",
-            "text": text
-        }]
-    }))
-}
 
 #[cfg(test)]
 mod tests {

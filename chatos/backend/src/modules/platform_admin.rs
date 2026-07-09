@@ -19,6 +19,5 @@ pub fn protected_routes() -> Router {
         .merge(api::configs::router())
         .merge(api::contacts::router())
         .merge(api::system_contexts::router())
-        .merge(api::task_runner_external_mcp::router())
         .merge(api::user_settings::router())
 }

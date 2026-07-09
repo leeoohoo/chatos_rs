@@ -116,45 +116,6 @@ impl TaskService {
         Ok(())
     }
 
-    pub(super) async fn validate_task_skill_ids(
-        &self,
-        config: &TaskMcpConfig,
-        current_user: Option<&CurrentUser>,
-        task_owner_user_id: Option<&str>,
-    ) -> Result<(), String> {
-        for skill_id in &config.skill_ids {
-            self.ensure_skill_available_for_task(skill_id, current_user, task_owner_user_id)
-                .await?;
-        }
-        Ok(())
-    }
-
-    async fn ensure_skill_available_for_task(
-        &self,
-        id: &str,
-        current_user: Option<&CurrentUser>,
-        task_owner_user_id: Option<&str>,
-    ) -> Result<(), String> {
-        let skill = self
-            .store
-            .get_skill(id)
-            .await?
-            .ok_or_else(|| format!("skill not found: {id}"))?;
-        if !skill.enabled || skill.install_status != SkillInstallStatus::Installed {
-            return Err(format!("skill is disabled or unavailable: {id}"));
-        }
-        if skill.scope == SkillScope::AdminGlobal {
-            return Ok(());
-        }
-
-        let skill_owner_user_id = resource_owner_or_creator(
-            skill.owner_user_id.as_deref(),
-            skill.creator_user_id.as_deref(),
-        );
-        ensure_owned_service_resource_access(skill_owner_user_id, current_user)?;
-        ensure_skill_owner_matches_task(id, skill_owner_user_id, task_owner_user_id)
-    }
-
     pub(super) async fn validate_task_mcp_config(
         &self,
         config: &TaskMcpConfig,
@@ -168,8 +129,6 @@ impl TaskService {
         self.validate_task_external_mcp_configs(config, current_user, task_owner_user_id)
             .await?;
         self.validate_task_ephemeral_http_servers(config)?;
-        self.validate_task_skill_ids(config, current_user, task_owner_user_id)
-            .await?;
         if config.workspace_dir.is_some() {
             let _ = ensure_workspace_dir_available(
                 self.config.default_workspace_dir.as_str(),
@@ -177,33 +136,6 @@ impl TaskService {
             )?;
         }
         Ok(())
-    }
-}
-
-fn ensure_skill_owner_matches_task(
-    skill_id: &str,
-    skill_owner_user_id: Option<&str>,
-    task_owner_user_id: Option<&str>,
-) -> Result<(), String> {
-    let skill_owner_user_id = skill_owner_user_id
-        .map(str::trim)
-        .filter(|value| !value.is_empty());
-    let task_owner_user_id = task_owner_user_id
-        .map(str::trim)
-        .filter(|value| !value.is_empty());
-
-    if let (Some(skill_owner_user_id), Some(task_owner_user_id)) =
-        (skill_owner_user_id, task_owner_user_id)
-    {
-        if skill_owner_user_id == task_owner_user_id {
-            Ok(())
-        } else {
-            Err(format!("skill owner does not match task owner: {skill_id}"))
-        }
-    } else if skill_owner_user_id.is_none() && task_owner_user_id.is_some() {
-        Err(format!("skill is missing owner information: {skill_id}"))
-    } else {
-        Err(format!("user skill requires a task owner: {skill_id}"))
     }
 }
 

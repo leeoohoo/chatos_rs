@@ -130,14 +130,6 @@ export function ProjectDetailPage() {
       })),
     [executionOptionsQuery.data?.tools],
   );
-  const taskRunnerSkillOptions = useMemo(
-    () =>
-      (executionOptionsQuery.data?.skills || []).map((item) => ({
-        value: item.id,
-        label: item.label || item.id,
-      })),
-    [executionOptionsQuery.data?.skills],
-  );
   const taskRunnerModelLabelMap = useMemo(
     () =>
       new Map(
@@ -157,16 +149,6 @@ export function ProjectDetailPage() {
         ]),
       ),
     [executionOptionsQuery.data?.tools],
-  );
-  const taskRunnerSkillLabelMap = useMemo(
-    () =>
-      new Map(
-        (executionOptionsQuery.data?.skills || []).map((item) => [
-          item.id,
-          item.label || item.id,
-        ]),
-      ),
-    [executionOptionsQuery.data?.skills],
   );
   const selectableRequirementIds = useMemo(
     () => new Set(selectableRequirements.map((item) => item.id)),
@@ -343,7 +325,6 @@ export function ProjectDetailPage() {
     requirements,
     taskRunnerModelLabelMap,
     taskRunnerToolLabelMap,
-    taskRunnerSkillLabelMap,
     onShowRequirementDetail: setRequirementDetailTarget,
     onShowRequirementDeps: setRequirementDepTarget,
     onShowRequirementDoc: setDocTarget,
@@ -435,7 +416,6 @@ export function ProjectDetailPage() {
         onCreateWorkItem={(values) => createWorkItemMutation.mutate(values)}
         taskRunnerModelOptions={taskRunnerModelOptions}
         taskRunnerToolOptions={taskRunnerToolOptions}
-        taskRunnerSkillOptions={taskRunnerSkillOptions}
         executionOptionsLoading={executionOptionsQuery.isLoading}
         executionOptionsErrorMessage={
           executionOptionsQuery.isError ? (executionOptionsQuery.error as Error).message : undefined
@@ -454,7 +434,6 @@ export function ProjectDetailPage() {
         onCloseWorkItemDetail={() => setWorkItemDetailTarget(null)}
         taskRunnerModelLabelMap={taskRunnerModelLabelMap}
         taskRunnerToolLabelMap={taskRunnerToolLabelMap}
-        taskRunnerSkillLabelMap={taskRunnerSkillLabelMap}
         requirements={requirements}
       />
     </div>

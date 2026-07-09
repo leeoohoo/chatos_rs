@@ -9,15 +9,12 @@ import { useI18n } from '../../i18n/I18nProvider';
 const AgentManager = lazy(() => import('../AgentManager'));
 const ApplicationsPanel = lazy(() => import('../ApplicationsPanel'));
 const NotepadPanel = lazy(() => import('../NotepadPanel'));
-const TaskRunnerExternalMcpManager = lazy(() => import('../TaskRunnerExternalMcpManager'));
 const UserSettingsPanel = lazy(() => import('../UserSettingsPanel'));
 
 interface ChatInterfaceOverlaysProps {
   runtimeContextProps: ComponentProps<typeof TurnRuntimeContextDrawer>;
   showNotepadPanel: boolean;
   setShowNotepadPanel: (value: boolean) => void;
-  showTaskRunnerExternalMcpManager: boolean;
-  setShowTaskRunnerExternalMcpManager: (value: boolean) => void;
   showAgentManager: boolean;
   setShowAgentManager: (value: boolean) => void;
   showUserSettings: boolean;
@@ -48,8 +45,6 @@ export default function ChatInterfaceOverlays({
   runtimeContextProps,
   showNotepadPanel,
   setShowNotepadPanel,
-  showTaskRunnerExternalMcpManager,
-  setShowTaskRunnerExternalMcpManager,
   showAgentManager,
   setShowAgentManager,
   showUserSettings,
@@ -68,10 +63,6 @@ export default function ChatInterfaceOverlays({
           isOpen={showNotepadPanel}
           onClose={() => setShowNotepadPanel(false)}
         />
-      </LazyOverlay>
-
-      <LazyOverlay open={showTaskRunnerExternalMcpManager}>
-        <TaskRunnerExternalMcpManager onClose={() => setShowTaskRunnerExternalMcpManager(false)} />
       </LazyOverlay>
 
       <LazyOverlay open={showAgentManager}>

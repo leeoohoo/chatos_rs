@@ -71,16 +71,6 @@ pub(super) fn task_tool_definitions() -> Vec<Value> {
             empty_object_schema(),
         ),
         tool_definition(
-            "search_installed_skills",
-            "Search installed Task Runner skills visible to the current authenticated user, including bundled global skills and that user's installed skills. Use returned id values as skill_ids when creating tasks.",
-            search_installed_skills_schema(),
-        ),
-        tool_definition(
-            "get_skill_detail",
-            "Get full details for one installed Task Runner skill visible to the current authenticated user, including instructions and package file metadata.",
-            get_skill_detail_schema(),
-        ),
-        tool_definition(
             "create_tasks_with_prerequisites",
             "Create multiple Task Runner tasks in one call and connect prerequisite edges using temporary client_ref values plus existing prerequisite_task_ids. Use this when new prerequisite tasks do not have real task ids yet.",
             create_tasks_with_prerequisites_schema(),

@@ -476,7 +476,6 @@ pub(super) fn sanitize_task_mcp_config(mut config: TaskMcpConfig) -> TaskMcpConf
     config.default_remote_server_id = normalized_optional(config.default_remote_server_id);
     config.external_mcp_config_ids = normalize_strings(config.external_mcp_config_ids);
     config.ephemeral_http_servers = normalize_ephemeral_http_servers(config.ephemeral_http_servers);
-    config.skill_ids = normalize_strings(config.skill_ids);
     config
 }
 

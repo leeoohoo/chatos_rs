@@ -75,8 +75,6 @@ pub struct TaskMcpConfig {
     pub external_mcp_config_ids: Vec<String>,
     #[serde(default)]
     pub ephemeral_http_servers: Vec<TaskEphemeralHttpMcpServer>,
-    #[serde(default)]
-    pub skill_ids: Vec<String>,
 }
 
 impl Default for TaskMcpConfig {
@@ -93,7 +91,6 @@ impl Default for TaskMcpConfig {
             default_remote_server_id: None,
             external_mcp_config_ids: Vec::new(),
             ephemeral_http_servers: Vec::new(),
-            skill_ids: Vec::new(),
         }
     }
 }

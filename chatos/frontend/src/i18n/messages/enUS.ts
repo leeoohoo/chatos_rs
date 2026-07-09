@@ -161,7 +161,6 @@ export const enUS: MessageDictionary = {
   'header.memoryModelSettings': 'Memory summary model',
   'header.taskModelSettings': 'Task model settings',
   'header.projectManagementAgentModelSettings': 'Project agent model',
-  'header.taskRunnerExternalMcpManager': 'External MCP manager',
   'header.systemContext': 'System context settings',
   'header.userSettings': 'Runtime settings',
   'header.logout': 'Sign out',

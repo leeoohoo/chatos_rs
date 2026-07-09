@@ -6,7 +6,6 @@ import { Button, Layout, Menu, Segmented, Space, Typography } from 'antd';
 import {
   AppstoreOutlined,
   BellOutlined,
-  BookOutlined,
   DatabaseOutlined,
   DeploymentUnitOutlined,
   FolderOpenOutlined,
@@ -70,11 +69,6 @@ export function AppShell({ currentUser, logoutLoading, onLogout }: AppShellProps
       key: '/mcp',
       label: t('nav.mcp'),
       icon: <ToolOutlined />,
-    },
-    {
-      key: '/skills',
-      label: t('nav.skills'),
-      icon: <BookOutlined />,
     },
     {
       key: '/tooling',

@@ -7,13 +7,9 @@ import { useNavigate } from 'react-router-dom';
 import { Alert, Form, Space, Tabs, Typography, message } from 'antd';
 import dayjs from 'dayjs';
 
-import { api, buildApiUrl } from '../api/client';
+import { api } from '../api/client';
 import { useI18n } from '../i18n/I18nProvider';
-import {
-  SettingsInternalPromptsTab,
-  SettingsOverviewTab,
-  SettingsSkillTab,
-} from './settings/SettingsSections';
+import { SettingsInternalPromptsTab, SettingsOverviewTab } from './settings/SettingsSections';
 import {
   millisecondsToWholeSeconds,
   type RuntimeSettingsFormValues,
@@ -28,7 +24,6 @@ export function SettingsPage() {
   const [messageApi, contextHolder] = message.useMessage();
   const [form] = Form.useForm<RuntimeSettingsFormValues>();
   const [activeTab, setActiveTab] = useState<SettingsTabKey>('overview');
-  const [skillLocale, setSkillLocale] = useState(locale);
   const [internalPromptLocale, setInternalPromptLocale] = useState(locale);
 
   const healthQuery = useQuery({
@@ -46,16 +41,6 @@ export function SettingsPage() {
   const mcpCatalogQuery = useQuery({
     queryKey: ['mcp-catalog'],
     queryFn: api.listMcpCatalog,
-  });
-  const skillQuery = useQuery({
-    queryKey: ['task-runner-skill', skillLocale],
-    queryFn: () => api.getTaskRunnerSkill(skillLocale),
-    enabled: activeTab === 'external-skill',
-  });
-  const planSkillQuery = useQuery({
-    queryKey: ['task-runner-plan-skill', skillLocale],
-    queryFn: () => api.getTaskRunnerSkill(skillLocale, 'chatos_plan'),
-    enabled: activeTab === 'plan-skill',
   });
   const internalPromptsQuery = useQuery({
     queryKey: ['task-runner-internal-prompts', internalPromptLocale],
@@ -89,10 +74,6 @@ export function SettingsPage() {
   const mcpCatalog = mcpCatalogQuery.data || [];
   const implementedBuiltinCount = mcpCatalog.filter((entry) => entry.implemented).length;
   const runtimeDefaultCount = mcpCatalog.filter((entry) => entry.runtime_default).length;
-  const skillEndpoint = buildApiUrl(`/api/skills/task-runner?lang=${encodeURIComponent(skillLocale)}`);
-  const planSkillEndpoint = buildApiUrl(
-    `/api/skills/task-runner?lang=${encodeURIComponent(skillLocale)}&profile=chatos_plan`,
-  );
 
   useEffect(() => {
     if (!config) {
@@ -124,10 +105,6 @@ export function SettingsPage() {
     });
   }
 
-  function handleSkillLocaleChange(value: SettingsPromptLocale) {
-    setSkillLocale(value);
-  }
-
   function handleInternalPromptLocaleChange(value: SettingsPromptLocale) {
     setInternalPromptLocale(value);
   }
@@ -147,48 +124,6 @@ export function SettingsPage() {
           saveLoading={updateSystemConfigMutation.isPending}
           onOpenMcpCatalog={() => navigate('/mcp')}
           onSubmit={handleRuntimeSettingsSubmit}
-        />
-      ),
-    },
-    {
-      key: 'external-skill',
-      label: t('settings.tabs.externalSkill'),
-      children: (
-        <SettingsSkillTab
-          t={t}
-          locale={skillLocale}
-          endpoint={skillEndpoint}
-          title={t('settings.externalSkillTitle')}
-          subtitle={t('settings.externalSkillSubtitle')}
-          contentTitle={t('settings.externalSkillContent')}
-          data={skillQuery.data}
-          error={skillQuery.error}
-          refreshLoading={skillQuery.isFetching}
-          onLocaleChange={handleSkillLocaleChange}
-          onRefresh={() => {
-            skillQuery.refetch();
-          }}
-        />
-      ),
-    },
-    {
-      key: 'plan-skill',
-      label: t('settings.tabs.planSkill'),
-      children: (
-        <SettingsSkillTab
-          t={t}
-          locale={skillLocale}
-          endpoint={planSkillEndpoint}
-          title={t('settings.planSkillTitle')}
-          subtitle={t('settings.planSkillSubtitle')}
-          contentTitle={t('settings.planSkillContent')}
-          data={planSkillQuery.data}
-          error={planSkillQuery.error}
-          refreshLoading={planSkillQuery.isFetching}
-          onLocaleChange={handleSkillLocaleChange}
-          onRefresh={() => {
-            planSkillQuery.refetch();
-          }}
         />
       ),
     },

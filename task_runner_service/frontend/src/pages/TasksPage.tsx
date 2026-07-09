@@ -110,8 +110,6 @@ export function TasksPage() {
     tagOptions,
     remoteServerMap,
     externalMcpConfigMap,
-    taskEditorSkills,
-    skillLabelMap,
     selectedTask,
     detailResultSummary,
     detailRemoteOperations,
@@ -228,7 +226,6 @@ export function TasksPage() {
     modelNameMap,
     projectNameMap,
     externalMcpConfigMap,
-    skillLabelMap,
     pendingPromptCountByTaskId,
     scheduleModeLabels,
     taskRowRemoteActivityByTaskId,
@@ -537,7 +534,6 @@ export function TasksPage() {
         taskSummaryMap={taskSummaryMap}
         remoteServerMap={remoteServerMap}
         externalMcpConfigMap={externalMcpConfigMap}
-        skillLabelMap={skillLabelMap}
         taskStatusLabel={taskStatusLabel}
         onClose={closeDetailDrawer}
         onEditTask={openEditDrawer}
@@ -577,7 +573,6 @@ export function TasksPage() {
         mcpCatalogEntries={mcpCatalogQuery.data}
         remoteServers={remoteServersQuery.data}
         externalMcpConfigs={externalMcpConfigsQuery.data}
-        skills={taskEditorSkills}
         onClose={closeTaskDrawer}
         onSubmit={handleSubmit}
         onPreviewPrompt={openDraftMcpPreviewModal}

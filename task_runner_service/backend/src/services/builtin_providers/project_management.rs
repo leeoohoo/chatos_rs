@@ -141,7 +141,6 @@ pub(in crate::services) struct ProjectManagementExecutionOptions {
     pub(in crate::services) model_config_ids: Vec<String>,
     pub(in crate::services) preferred_model_config_id: Option<String>,
     pub(in crate::services) tool_ids: Vec<String>,
-    pub(in crate::services) skill_ids: Vec<String>,
 }
 
 fn normalize_optional(value: Option<String>) -> Option<String> {
@@ -169,7 +168,6 @@ fn project_management_execution_schema_options(
         model_config_ids: options.model_config_ids.clone(),
         default_model_config_id,
         tool_ids: options.tool_ids.clone(),
-        skill_ids: options.skill_ids.clone(),
     }
 }
 
@@ -361,7 +359,6 @@ mod tests {
                 "TerminalController".to_string(),
                 "external-tool-1".to_string(),
             ],
-            skill_ids: vec!["skill-1".to_string()],
         };
         let definitions = tool_definitions(Some(&execution_options));
         let create_task = definitions

@@ -26,13 +26,12 @@ use crate::remote_server_runtime::TaskRunnerRemoteConnectionStore;
 use crate::terminal_store::TaskRunnerTerminalControllerStore;
 
 use super::task_manager_bridge::TaskRunnerTaskManagerStore;
-use super::{SkillService, TaskService};
+use super::TaskService;
 
 mod builders;
 mod project_management;
 mod provider;
 mod registry;
-mod task_runner_skills;
 
 pub(super) use self::builders::build_task_runner_builtin_provider;
 pub(super) use self::project_management::ProjectManagementExecutionOptions;
@@ -41,7 +40,6 @@ pub(super) use self::provider::DisabledBuiltinProvider;
 pub(super) use self::registry::{
     build_builtin_registry, build_builtin_registry_with_project_management_options,
 };
-pub(super) use self::task_runner_skills::TaskRunnerSkillLookupProvider;
 
 #[cfg(test)]
 mod tests {

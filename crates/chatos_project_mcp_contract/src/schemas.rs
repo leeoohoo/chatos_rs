@@ -31,7 +31,6 @@ pub struct TaskRunnerExecutionSchemaOptions {
     pub model_config_ids: Vec<String>,
     pub default_model_config_id: Option<String>,
     pub tool_ids: Vec<String>,
-    pub skill_ids: Vec<String>,
 }
 
 pub fn project_management_server_tool_definitions(
@@ -247,7 +246,6 @@ fn tool_definitions(
                     optional_string_field("description", "Project task description."),
                     task_runner_model_config_field(execution_options),
                     task_runner_tool_ids_field(execution_options),
-                    task_runner_skill_ids_field(execution_options),
                     enum_field(
                         "status",
                         "Optional project task status.",
@@ -539,29 +537,6 @@ fn task_runner_tool_ids_field(
             "type": "array",
             "items": item_schema,
             "minItems": 1,
-            "uniqueItems": true,
-            "description": description
-        }),
-    )
-}
-
-fn task_runner_skill_ids_field(
-    execution_options: Option<&TaskRunnerExecutionSchemaOptions>,
-) -> (&'static str, Value) {
-    let mut item_schema = json!({ "type": "string" });
-    let mut description = "Optional execution skill id multi-select. Use only visible skill ids. Choose skills that match the project task's execution workflow, such as document/PDF/spreadsheet/browser/image/review skills. Omit when no relevant skill is needed."
-        .to_string();
-    if let Some(options) = execution_options {
-        if !options.skill_ids.is_empty() {
-            description.push_str(" Available skill ids are exposed in the item enum.");
-            item_schema["enum"] = json!(&options.skill_ids);
-        }
-    }
-    (
-        "task_runner_skill_ids",
-        json!({
-            "type": "array",
-            "items": item_schema,
             "uniqueItems": true,
             "description": description
         }),
