@@ -3,6 +3,7 @@
 
 use std::collections::HashSet;
 
+use super::local_connector::{push_local_connector_maven_targets, sort_local_connector_targets};
 use super::*;
 
 fn local_connector_project() -> Project {
