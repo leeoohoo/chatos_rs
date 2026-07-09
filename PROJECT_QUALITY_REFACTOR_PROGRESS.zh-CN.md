@@ -6,7 +6,7 @@
 | 顺序 | 计划项 | 状态 | 本次处理 | 验证 |
 | --- | --- | --- | --- | --- |
 | 0 | Phase 0：治理脚本基线 | 已完成 | 新增 `.gitattributes` 固定文本换行为 LF；修复 `scripts/check-non-test-unwrap-expect.py` 显式 UTF-8 读取；规整治理脚本工作区换行；扩展 `scripts/check-large-files.sh` 对多平台 `bundled-tools/*/rg` 的 allowlist。 | `bash scripts/code-size-report.sh --top 50`；`bash scripts/check-hotspot-line-budgets.sh --warn-planned`；`bash scripts/check-large-files.sh --threshold 1 --fail`；`python scripts/check-non-test-unwrap-expect.py`；`git diff --check` |
-| 1 | Phase 1.1：HTTP response body 限流下沉 | 待处理 | - | - |
+| 1 | Phase 1.1：HTTP response body 限流下沉 | 已完成 | 在 `crates/chatos_service_runtime/src/http_body.rs` 增加共享流式 body 限流读取 helper；Task Runner 和 Project Management 的本地 `http_body` 模块改为薄 re-export；`chatos_ai_runtime` 复用 preview body helper；保留普通 limit 与 preview limit 两类错误文案。 | `cargo test -p chatos_service_runtime --locked --ignore-rust-version`；`cargo check -p chatos_ai_runtime --locked --ignore-rust-version`；`cargo check -p task_runner_service_backend --locked --ignore-rust-version`；`cargo check -p project_management_service_backend --locked --ignore-rust-version` |
 | 2 | Phase 1.2：Frontend Vite 共享 helper | 待处理 | - | - |
 | 3 | Phase 1.3：Remote connection payload 类型统一 | 待处理 | - | - |
 | 4 | Phase 1.4：Code nav 文本搜索共用循环 | 待处理 | - | - |

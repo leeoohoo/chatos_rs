@@ -11,6 +11,8 @@ use std::time::Duration;
 use thiserror::Error;
 use tokio::sync::Mutex;
 
+pub mod http_body;
+
 static CLIENT_RUNTIME: OnceLock<ChatosServiceRuntime> = OnceLock::new();
 
 pub const DEFAULT_MEMORY_ENGINE_OPERATOR_TOKEN: &str = "chatos-memory-engine-dev-operator-token";
