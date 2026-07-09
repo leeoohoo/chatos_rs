@@ -3,7 +3,9 @@
 
 use std::path::Path;
 
-use chatos_builtin_tools::TerminalControllerContext;
+use chatos_builtin_tools::{
+    terminal_process_wait_response, TerminalControllerContext, TerminalProcessWaitResponse,
+};
 use serde_json::{json, Value};
 use tokio::io::AsyncWriteExt;
 
@@ -28,25 +30,33 @@ pub(in crate::terminal::controller::store) async fn process_wait(
     let project_root = canonicalize_terminal_root(context.root.as_path())?;
     let cwd =
         display_local_mcp_workspace_path(project_root.as_path(), Path::new(meta.cwd.as_str()));
-    Ok(json!({
-        "terminal_id": meta.id,
-        "process_id": meta.id,
-        "terminal_name": derive_local_mcp_terminal_name(cwd.as_str()),
-        "status": meta.status,
-        "wait_status": if result.timed_out { "timeout" } else if meta.status == "exited" { "exited" } else { "running" },
-        "busy": result.busy,
-        "exited": meta.status == "exited",
-        "completed": !result.timed_out,
-        "timed_out": result.timed_out,
-        "finished_by": result.finished_by,
-        "exit_code": result.exit_code,
-        "timeout_ms": timeout_ms,
-        "waited_ms": result.waited_ms,
-        "output": output.text,
-        "output_preview": output.text,
-        "output_chars": output.char_count,
-        "truncated": output.truncated,
-    }))
+    let is_exited = meta.status == "exited";
+    Ok(terminal_process_wait_response(
+        TerminalProcessWaitResponse {
+            terminal_id: meta.id,
+            terminal_name: derive_local_mcp_terminal_name(cwd.as_str()),
+            status: meta.status,
+            wait_status: if result.timed_out {
+                "timeout"
+            } else if is_exited {
+                "exited"
+            } else {
+                "running"
+            }
+            .to_string(),
+            busy: result.busy,
+            exited: is_exited,
+            completed: !result.timed_out,
+            timed_out: result.timed_out,
+            finished_by: result.finished_by.to_string(),
+            exit_code: result.exit_code,
+            timeout_ms,
+            waited_ms: result.waited_ms,
+            output: output.text,
+            output_chars: output.char_count,
+            truncated: output.truncated,
+        },
+    ))
 }
 
 pub(in crate::terminal::controller::store) async fn process_write(

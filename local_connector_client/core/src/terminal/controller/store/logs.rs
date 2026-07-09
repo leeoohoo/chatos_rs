@@ -3,8 +3,11 @@
 
 use std::path::Path;
 
-use chatos_builtin_tools::TerminalControllerContext;
-use serde_json::{json, Value};
+use chatos_builtin_tools::{
+    terminal_recent_logs_entry, terminal_recent_logs_response, TerminalControllerContext,
+    TerminalRecentLogsEntry,
+};
+use serde_json::Value;
 
 use super::super::output::take_recent_local_mcp_logs;
 use super::super::registry::{
@@ -30,27 +33,21 @@ pub(super) async fn get_recent_logs(
         let recent = take_recent_local_mcp_logs(&logs, per_terminal_limit.max(1) as usize);
         let cwd =
             display_local_mcp_workspace_path(project_root.as_path(), Path::new(meta.cwd.as_str()));
-        terminals.push(json!({
-            "terminal_id": meta.id,
-            "terminal_name": derive_local_mcp_terminal_name(cwd.as_str()),
-            "status": meta.status,
-            "cwd": cwd,
-            "project_id": meta.project_id,
-            "last_active_at": meta.last_active_at,
-            "log_count": logs.len(),
-            "returned_log_count": recent.len(),
-            "truncated": false,
-            "truncation": { "truncated": false },
-            "logs": recent,
+        terminals.push(terminal_recent_logs_entry(TerminalRecentLogsEntry {
+            terminal_id: meta.id,
+            terminal_name: derive_local_mcp_terminal_name(cwd.as_str()),
+            status: meta.status,
+            cwd,
+            project_id: meta.project_id,
+            last_active_at: meta.last_active_at,
+            log_count: logs.len(),
+            logs: recent,
         }));
     }
-    Ok(json!({
-        "result_scope": if terminals.len() > 1 { "multiple_terminals" } else if terminals.is_empty() { "no_terminal" } else { "single_terminal" },
-        "is_multiple_terminals": terminals.len() > 1,
-        "terminal_count": terminals.len(),
-        "total_terminals": total,
-        "per_terminal_limit": per_terminal_limit,
-        "terminal_limit": terminal_limit,
-        "terminals": terminals,
-    }))
+    Ok(terminal_recent_logs_response(
+        terminals,
+        total,
+        per_terminal_limit,
+        terminal_limit,
+    ))
 }
