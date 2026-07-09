@@ -22,13 +22,13 @@ import type {
   TaskRunRecord,
   TaskStatus,
   AskUserPromptRecord,
+  TaskMcpResolutionResponse,
 } from '../../types';
 import {
   describeTaskSchedule,
   isSchedulerOnlyTask,
   JsonBlock,
   statusColorMap,
-  systemInjectedMcpServerNames,
   taskCreatorLabel,
   taskProfileColorMap,
   taskProfileLabel,
@@ -59,6 +59,8 @@ type TaskDetailDrawerProps = {
   recentRunsLoading: boolean;
   prompts?: PaginatedResponse<AskUserPromptRecord>;
   promptsLoading: boolean;
+  mcpResolution?: TaskMcpResolutionResponse;
+  mcpResolutionLoading: boolean;
   followUps?: TaskRecord[];
   followUpsLoading: boolean;
   runDerivedTasks?: TaskRecord[];
@@ -97,6 +99,8 @@ export function TaskDetailDrawer({
   recentRunsLoading,
   prompts,
   promptsLoading,
+  mcpResolution,
+  mcpResolutionLoading,
   followUps,
   followUpsLoading,
   runDerivedTasks,
@@ -118,8 +122,6 @@ export function TaskDetailDrawer({
   onOpenServers,
   onOpenDetail,
 }: TaskDetailDrawerProps) {
-  const systemMcpServers = task ? systemInjectedMcpServerNames(task) : [];
-
   return (
     <Drawer
       title={task ? t('tasks.detail.titleWithName', { title: task.title }) : t('tasks.detail.title')}
@@ -262,17 +264,56 @@ export function TaskDetailDrawer({
                 t('common.noData')
               )}
             </Descriptions.Item>
-            <Descriptions.Item label={t('tasks.detail.systemMcpServers')}>
-              {systemMcpServers.length ? (
+            <Descriptions.Item label={t('tasks.detail.mcpRequestedCapabilities')}>
+              {renderStringTags(
+                mcpResolution?.requested_builtin_kinds,
+                'blue',
+                mcpResolutionLoading ? t('common.loading') : t('common.noData'),
+              )}
+            </Descriptions.Item>
+            <Descriptions.Item label={t('tasks.detail.mcpRequiredCapabilities')}>
+              {mcpResolutionLoading ? (
+                t('common.loading')
+              ) : mcpResolution?.required_builtin_kinds.length ? (
                 <Space wrap>
-                  {systemMcpServers.map((serverName) => (
-                    <Tag key={serverName} color="geekblue">
-                      {serverName}
+                  {mcpResolution.required_builtin_kinds.map((item) => (
+                    <Tag key={`${item.source}:${item.kind}`} color="geekblue">
+                      {item.kind} / {item.source}
                     </Tag>
                   ))}
                 </Space>
               ) : (
                 t('common.noData')
+              )}
+            </Descriptions.Item>
+            <Descriptions.Item label={t('tasks.detail.mcpHostedRoutes')}>
+              {mcpResolutionLoading ? (
+                t('common.loading')
+              ) : mcpResolution?.hosted_builtin_routes.length ? (
+                <Space direction="vertical" size={4}>
+                  {mcpResolution.hosted_builtin_routes.map((route) => (
+                    <Space key={route.host} wrap>
+                      <Tag color="purple">{route.host}</Tag>
+                      {route.public_server_names.map((serverName) => (
+                        <Tag key={`${route.host}:${serverName}`} color="cyan">
+                          {serverName}
+                        </Tag>
+                      ))}
+                      {route.builtin_kinds.map((kind) => (
+                        <Tag key={`${route.host}:${kind}`}>{kind}</Tag>
+                      ))}
+                    </Space>
+                  ))}
+                </Space>
+              ) : (
+                t('common.noData')
+              )}
+            </Descriptions.Item>
+            <Descriptions.Item label={t('tasks.detail.mcpServerLocalCapabilities')}>
+              {renderStringTags(
+                mcpResolution?.server_local_builtin_kinds,
+                'cyan',
+                mcpResolutionLoading ? t('common.loading') : t('common.noData'),
               )}
             </Descriptions.Item>
             <Descriptions.Item label={t('tasks.detail.createdAt')}>
@@ -389,5 +430,20 @@ export function TaskDetailDrawer({
         <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} />
       )}
     </Drawer>
+  );
+}
+
+function renderStringTags(values: string[] | undefined, color: string, emptyText: string) {
+  if (!values?.length) {
+    return emptyText;
+  }
+  return (
+    <Space wrap>
+      {values.map((value) => (
+        <Tag key={value} color={color}>
+          {value}
+        </Tag>
+      ))}
+    </Space>
   );
 }

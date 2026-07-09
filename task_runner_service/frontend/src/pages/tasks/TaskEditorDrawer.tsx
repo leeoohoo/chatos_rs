@@ -33,7 +33,6 @@ import {
   completeEnabledBuiltinKindDependencies,
   scheduleModeDescriptionKeys,
   scheduleModeLabelKeys,
-  systemInjectedMcpServerNames,
   taskProfileLabel,
   taskProfileValues,
   taskStatusValues,
@@ -86,9 +85,7 @@ export function TaskEditorDrawer({
   const mcpEnabled = Form.useWatch('mcpEnabled', form);
   const enabledBuiltinKinds = Form.useWatch('enabledBuiltinKinds', form) || [];
   const defaultRemoteServerId = Form.useWatch('defaultRemoteServerId', form);
-  const taskProfile = Form.useWatch('taskProfile', form);
   const scheduleMode = Form.useWatch('scheduleMode', form);
-  const systemMcpServers = systemInjectedMcpServerNames(taskProfile);
   const effectiveScheduleMode = scheduleMode ?? 'manual';
   const scheduleModeLabels = useMemo(
     () =>
@@ -428,19 +425,6 @@ export function TaskEditorDrawer({
             </Space>
           </Checkbox.Group>
         </Form.Item>
-
-        {systemMcpServers.length ? (
-          <Space direction="vertical" size={4} style={{ marginBottom: 16, width: '100%' }}>
-            <Typography.Text type="secondary">{t('tasks.form.systemMcpServers')}</Typography.Text>
-            <Space wrap>
-              {systemMcpServers.map((serverName) => (
-                <Tag key={serverName} color="geekblue">
-                  {serverName}
-                </Tag>
-              ))}
-            </Space>
-          </Space>
-        ) : null}
 
         <Form.Item name="workspaceDir" label={t('tasks.form.workspaceDir')}>
           <Input

@@ -64,33 +64,7 @@ impl RunService {
             .get_task(task_id)
             .await?
             .ok_or_else(|| format!("task not found: {task_id}"))?;
-        let mut task = save_task_if_tenant_aligned(&self.store, task).await?;
-        let mut applied_project_mcp_routing = false;
-        if let Some(project_root) =
-            resolve_project_root_for_task(&self.config, &self.store, &task).await?
-        {
-            if apply_local_connector_routing_to_task(&mut task, project_root.as_str()) {
-                applied_project_mcp_routing = true;
-                task.updated_at = now_rfc3339();
-                task = self.store.save_task(task).await?;
-                info!(
-                    task_id = task.id.as_str(),
-                    project_root = project_root.as_str(),
-                    "task runner applied Local Connector routing before run"
-                );
-            }
-        }
-        if !applied_project_mcp_routing
-            && apply_harness_project_routing_to_task(&self.config, &self.store, &mut task).await?
-        {
-            task.updated_at = now_rfc3339();
-            task = self.store.save_task(task).await?;
-            info!(
-                task_id = task.id.as_str(),
-                project_id = task.project_id.as_str(),
-                "task runner applied Harness MCP routing before run"
-            );
-        }
+        let task = save_task_if_tenant_aligned(&self.store, task).await?;
         info!(
             task_id = task.id.as_str(),
             task_title = task.title.as_str(),
@@ -142,13 +116,15 @@ impl RunService {
                 return Err(format!("model config not found: {model_config_id}"));
             }
         }
+        let runtime_task =
+            task_with_runtime_mcp_routing(&self.config, &self.store, task.clone()).await?;
         let effective_workspace_dir =
-            ensure_effective_task_workspace_dir(&self.config, &task, &model_config)?;
+            ensure_effective_task_workspace_dir(&self.config, &runtime_task, &model_config)?;
         let execution_environment_mode = self
             .effective_execution_environment_mode()
             .await
             .unwrap_or_else(|_| self.config.default_execution_environment_mode.clone());
-        let sandbox_enabled = match task.mcp_config.sandbox_enabled {
+        let sandbox_enabled = match runtime_task.mcp_config.sandbox_enabled {
             Some(value) => value,
             None => self.effective_sandbox_enabled().await.unwrap_or(false),
         };
@@ -162,7 +138,7 @@ impl RunService {
             "input_payload": task.input_payload,
             "prompt_override": input.prompt_override,
             "model_config_id": model_config_id,
-            "mcp_config": task.mcp_config,
+            "mcp_config": runtime_task.mcp_config,
             "effective_workspace_dir": effective_workspace_dir.as_str(),
             "execution_environment_mode": execution_environment_mode,
             "sandbox_enabled": sandbox_enabled,

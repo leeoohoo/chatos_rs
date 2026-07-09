@@ -24,7 +24,7 @@ pub(in crate::mcp_server) fn enrich_tool_schemas_for_async_planner(
                     &["inputSchema", "properties", "enabled_builtin_kinds"],
                     builtin_description.clone(),
                 );
-                remove_system_injected_builtins_from_enum(
+                remove_planner_required_builtins_from_enum(
                     tool,
                     &["inputSchema", "properties", "enabled_builtin_kinds"],
                 );
@@ -59,7 +59,7 @@ pub(in crate::mcp_server) fn enrich_tool_schemas_for_async_planner(
                     "enabled_builtin_kinds",
                 ];
                 set_tool_property_description(tool, builtin_path, builtin_description.clone());
-                remove_system_injected_builtins_from_enum(tool, builtin_path);
+                remove_planner_required_builtins_from_enum(tool, builtin_path);
                 set_tool_property_description(
                     tool,
                     &[
@@ -115,7 +115,7 @@ pub(in crate::mcp_server) fn enrich_tool_schemas_for_async_planner(
                     ],
                     "init_mode",
                 );
-                remove_system_injected_builtins_from_enum(
+                remove_planner_required_builtins_from_enum(
                     tool,
                     &[
                         "inputSchema",
@@ -133,7 +133,7 @@ pub(in crate::mcp_server) fn enrich_tool_schemas_for_async_planner(
     }
 }
 
-fn remove_system_injected_builtins_from_enum(tool: &mut Value, path: &[&str]) {
+fn remove_planner_required_builtins_from_enum(tool: &mut Value, path: &[&str]) {
     let mut current = tool;
     for segment in path {
         let Some(object) = current.as_object_mut() else {
@@ -154,7 +154,7 @@ fn remove_system_injected_builtins_from_enum(tool: &mut Value, path: &[&str]) {
     values.retain(|value| {
         value
             .as_str()
-            .is_none_or(|kind| !is_system_injected_builtin_kind(kind))
+            .is_none_or(|kind| !is_planner_required_builtin_kind(kind))
     });
 }
 
@@ -174,7 +174,7 @@ fn planner_builtin_mcp_kind_schema_description() -> String {
             .to_string(),
     ];
     for value in mcp_builtin_kind_values() {
-        if is_system_injected_builtin_kind(value.as_str()) {
+        if is_planner_required_builtin_kind(value.as_str()) {
             continue;
         }
         if let Some(kind) = builtin_kind_by_any(value.as_str()) {

@@ -49,9 +49,9 @@ use super::skills::{
 };
 use super::tasks::{
     batch_delete_tasks, batch_start_task_runs, batch_update_task_status, cancel_task, create_task,
-    delete_task, get_task, get_task_dependency_graph, get_task_index, get_task_memory_context,
-    get_task_memory_records, get_task_stats, list_task_prerequisites, list_task_summaries,
-    list_tasks, list_tasks_page, preview_task_mcp_prompt, record_task_process,
+    delete_task, get_task, get_task_dependency_graph, get_task_index, get_task_mcp_resolution,
+    get_task_memory_context, get_task_memory_records, get_task_stats, list_task_prerequisites,
+    list_task_summaries, list_tasks, list_tasks_page, preview_task_mcp_prompt, record_task_process,
     set_task_prerequisites, summarize_task_memory, update_task, update_task_mcp,
 };
 use super::tooling::{
@@ -98,6 +98,10 @@ pub fn build_router(state: AppState) -> Router {
             get(list_task_runs).post(start_task_run),
         )
         .route("/api/tasks/:id/mcp", patch(update_task_mcp))
+        .route(
+            "/api/tasks/:id/mcp/resolution",
+            get(get_task_mcp_resolution),
+        )
         .route(
             "/api/tasks/:id/prerequisites",
             get(list_task_prerequisites).put(set_task_prerequisites),

@@ -95,6 +95,8 @@ export function TasksPage() {
     taskMemoryContextQuery,
     taskMemoryRecordsQuery,
     taskMcpPromptPreviewQuery,
+    taskMcpResolutionQuery,
+    taskEditorMcpResolutionQuery,
     scheduleModeLabels,
     statusFilterOptions,
     taskStatusLabel,
@@ -176,6 +178,24 @@ export function TasksPage() {
     setDetailTaskId(null);
     setDetailTaskPreview(null);
   }, [routeTaskId, tasksQuery.data]);
+
+  useEffect(() => {
+    const resolution = taskEditorMcpResolutionQuery.data;
+    if (!drawerOpen || !editingTask || !resolution) {
+      return;
+    }
+    const current = form.getFieldValue('enabledBuiltinKinds') || [];
+    const stored = buildEditTaskFormValues(editingTask).enabledBuiltinKinds || [];
+    if (!sameStringArray(current, stored)) {
+      return;
+    }
+    const requested = completeEnabledBuiltinKindDependencies(
+      resolution.requested_builtin_kinds,
+    );
+    if (!sameStringArray(current, requested)) {
+      form.setFieldsValue({ enabledBuiltinKinds: requested });
+    }
+  }, [drawerOpen, editingTask, form, taskEditorMcpResolutionQuery.data]);
 
   const {
     createTaskMutation,
@@ -507,6 +527,8 @@ export function TasksPage() {
         recentRunsLoading={taskRecentRunsQuery.isLoading}
         prompts={taskPromptsQuery.data}
         promptsLoading={taskPromptsQuery.isLoading}
+        mcpResolution={taskMcpResolutionQuery.data}
+        mcpResolutionLoading={taskMcpResolutionQuery.isLoading}
         followUps={taskFollowUpQuery.data}
         followUpsLoading={taskFollowUpQuery.isLoading}
         runDerivedTasks={taskRunDerivedQuery.data}
@@ -641,4 +663,11 @@ export function TasksPage() {
       />
     </>
   );
+}
+
+function sameStringArray(left: string[], right: string[]) {
+  if (left.length !== right.length) {
+    return false;
+  }
+  return left.every((value, index) => value === right[index]);
 }

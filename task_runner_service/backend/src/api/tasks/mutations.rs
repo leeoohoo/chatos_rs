@@ -245,6 +245,17 @@ pub(in crate::api) async fn update_task_mcp(
     Ok(Json(redact_workspace_paths(&state, task)?))
 }
 
+pub(in crate::api) async fn get_task_mcp_resolution(
+    Path(id): Path<String>,
+    State(state): State<AppState>,
+    Extension(current_user): Extension<CurrentUser>,
+) -> Result<Json<TaskMcpResolutionResponse>, ApiError> {
+    let task = get_task_for_user(&state, &id, &current_user)
+        .await?
+        .ok_or_else(|| ApiError::not_found(format!("task not found: {id}")))?;
+    Ok(Json(state.task_service.resolve_task_mcp(&task)))
+}
+
 pub(in crate::api) async fn record_task_process(
     Path(id): Path<String>,
     State(state): State<AppState>,

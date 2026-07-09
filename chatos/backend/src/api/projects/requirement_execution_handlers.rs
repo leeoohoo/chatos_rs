@@ -253,7 +253,6 @@ async fn execute_requirement_inner(
         &session,
         &message,
         project.id.as_str(),
-        project.root_path.as_str(),
         &selected_work_items,
         &creation_order,
         &dependency_map,

@@ -6,7 +6,7 @@ use std::fs;
 use std::path::{Component, Path, PathBuf};
 use std::time::Duration;
 
-use chatos_mcp_runtime::{BuiltinMcpKind, BuiltinMcpPromptLocale, McpHttpServer};
+use chatos_mcp_runtime::{BuiltinMcpKind, McpHttpServer};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -758,32 +758,6 @@ pub(super) fn sandbox_replaces_builtin_kind(kind: BuiltinMcpKind) -> bool {
             | BuiltinMcpKind::CodeMaintainerWrite
             | BuiltinMcpKind::TerminalController
     )
-}
-
-pub(super) fn sandbox_mcp_prefixed_input_items(
-    context: &SandboxRuntimeContext,
-    locale: BuiltinMcpPromptLocale,
-) -> Vec<Value> {
-    let text = if locale.is_english() {
-        format!(
-            "[Sandbox]\nTask Runner created an isolated sandbox for this run. File and terminal operations must use the `sandbox_*` MCP tools exposed by the sandbox service. Treat paths as relative to the sandbox workspace unless a tool asks otherwise. Sandbox id: `{}`. Lease id: `{}`. Host-side run workspace copy: `{}`.",
-            context.sandbox_id, context.lease_id, context.run_workspace
-        )
-    } else {
-        format!(
-            "[沙箱]\nTask Runner 已为本次运行创建隔离沙箱。文件读写和终端命令必须使用沙箱服务暴露的 `sandbox_*` MCP 工具。除非工具参数另有说明，路径都按沙箱工作区的相对路径处理。Sandbox ID：`{}`。Lease ID：`{}`。宿主机 `.chatos` 运行副本：`{}`。",
-            context.sandbox_id, context.lease_id, context.run_workspace
-        )
-    };
-
-    vec![json!({
-        "type": "message",
-        "role": "system",
-        "content": [{
-            "type": "input_text",
-            "text": text
-        }]
-    })]
 }
 
 fn attach_sandbox_context_to_run(run: &mut TaskRunRecord, context: &SandboxRuntimeContext) {

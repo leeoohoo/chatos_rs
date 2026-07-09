@@ -155,7 +155,6 @@ export function buildTaskPayload(
 export const CODE_MAINTAINER_READ_KIND = 'CodeMaintainerRead';
 export const CODE_MAINTAINER_WRITE_KIND = 'CodeMaintainerWrite';
 export const PROJECT_MANAGEMENT_KIND = 'ProjectManagement';
-export const PROJECT_MANAGEMENT_MCP_SERVER_NAME = 'project_management_service';
 export const taskProfileValues: TaskProfile[] = ['default', 'chatos_plan'];
 
 export const taskProfileColorMap: Record<TaskProfile, string> = {
@@ -168,16 +167,6 @@ export function taskProfileLabel(profile: string | undefined, t: TranslateFn): s
     return t('tasks.profile.chatosPlan');
   }
   return t('tasks.profile.default');
-}
-
-export function systemInjectedMcpServerNames(
-  taskOrProfile: Pick<TaskRecord, 'task_profile'> | TaskProfile | string | undefined,
-): string[] {
-  const profile =
-    typeof taskOrProfile === 'string' || taskOrProfile === undefined
-      ? taskOrProfile
-      : taskOrProfile.task_profile;
-  return profile === 'chatos_plan' ? [PROJECT_MANAGEMENT_MCP_SERVER_NAME] : [];
 }
 
 export function completeEnabledBuiltinKindDependencies(values?: string[]): string[] {

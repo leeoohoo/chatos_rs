@@ -733,8 +733,8 @@ mod tests {
         ]);
 
         assert_eq!(
-            tools_list_http_cache_key("https://example.test/mcp", Some(&headers_a)),
-            tools_list_http_cache_key("https://example.test/mcp", Some(&headers_b))
+            tools_list_http_cache_key("https://example.test/mcp", Some(&headers_a), None),
+            tools_list_http_cache_key("https://example.test/mcp", Some(&headers_b), None)
         );
     }
 
