@@ -68,7 +68,6 @@ mod tests {
             Some("contact".to_string()),
             None,
             None,
-            None,
         );
 
         assert!(store.snapshot().is_none());
@@ -105,7 +104,6 @@ mod tests {
             Some("session-1".to_string()),
             Some("   ".to_string()),
             InternalContextLocale::ZhCn,
-            None,
             None,
             None,
             None,

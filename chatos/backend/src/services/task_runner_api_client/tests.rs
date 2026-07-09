@@ -18,7 +18,7 @@ struct CapturedExchange {
     body: Option<Value>,
 }
 
-#[derive(Debug, Default)]
+#[derive(Clone, Debug, Default)]
 struct ExchangeServerState {
     captured: Arc<Mutex<CapturedExchange>>,
     response_status: StatusCode,
