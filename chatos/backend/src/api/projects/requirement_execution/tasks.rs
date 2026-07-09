@@ -1,18 +1,12 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use serde::Deserialize;
 use serde_json::json;
 use std::collections::{BTreeMap, BTreeSet};
-
-use chatos_mcp_runtime::{
-    CODE_MAINTAINER_READ_MCP_ID, CODE_MAINTAINER_WRITE_MCP_ID, TERMINAL_CONTROLLER_MCP_ID,
-};
 
 use crate::config::Config;
 use crate::core::messages::message_turn_id;
 use crate::core::time::now_rfc3339;
-use crate::core::validation::normalize_non_empty;
 use crate::models::message::Message;
 use crate::models::session::Session;
 use crate::services::{project_management_api_client, task_runner_api_client};
@@ -29,26 +23,6 @@ use super::types::{
 };
 use super::values::{normalize_tags, value_string};
 
-const LOCAL_CONNECTOR_ROOT_PREFIX: &str = "local://connector/";
-const LOCAL_CONNECTOR_MCP_SERVER_NAME: &str = "local_connector";
-const LOCAL_CONNECTOR_MCP_AUTH_MODE: &str = "local_connector_internal";
-
-#[derive(Debug, Clone)]
-struct LocalConnectorProjectRef {
-    device_id: String,
-    workspace_id: String,
-    relative_path: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-struct LocalConnectorSandboxPairingResponse {
-    id: String,
-    device_id: String,
-    workspace_id: String,
-    enabled: bool,
-    facade_base_url: Option<String>,
-}
-
 pub(in crate::api::projects) async fn create_and_start_execution_tasks(
     cfg: &Config,
     project_sync_secret: &str,
@@ -57,7 +31,6 @@ pub(in crate::api::projects) async fn create_and_start_execution_tasks(
     session: &Session,
     message: &Message,
     project_id: &str,
-    project_root: &str,
     work_items: &[WorkItemPlanItem],
     creation_order: &[String],
     dependency_map: &BTreeMap<String, Vec<String>>,
@@ -107,30 +80,6 @@ pub(in crate::api::projects) async fn create_and_start_execution_tasks(
         mcp_config.skill_ids = execution_options
             .validate_skill_ids(work_item.task_runner_skill_ids.clone())
             .map_err(HandlerError::bad_request)?;
-        if let Some(local_connector_project) = parse_local_connector_project_root(project_root) {
-            mcp_config.workspace_dir = None;
-            remove_server_local_builtin_tools_for_local_connector(&mut mcp_config);
-            mcp_config.ephemeral_http_servers.push(
-                task_runner_api_client::TaskRunnerEphemeralHttpMcpServerRequest {
-                    name: LOCAL_CONNECTOR_MCP_SERVER_NAME.to_string(),
-                    url: local_connector_mcp_url(cfg, &local_connector_project),
-                    headers: BTreeMap::new(),
-                    auth_mode: Some(LOCAL_CONNECTOR_MCP_AUTH_MODE.to_string()),
-                },
-            );
-            if let Some(sandbox_manager_base_url) = local_connector_sandbox_manager_url(
-                cfg,
-                user_access_token,
-                &local_connector_project,
-            )
-            .await?
-            {
-                mcp_config.sandbox_enabled = Some(true);
-                mcp_config.sandbox_manager_base_url = Some(sandbox_manager_base_url);
-            }
-        } else if let Some(workspace_dir) = normalize_non_empty(Some(project_root.to_string())) {
-            mcp_config.workspace_dir = Some(workspace_dir);
-        }
         mcp_config.builtin_prompt_locale = Some(builtin_prompt_locale.to_string());
         let task_profile = task_profile_for_work_item(work_item);
         let tags = execution_tags_for_work_item(work_item);
@@ -141,7 +90,6 @@ pub(in crate::api::projects) async fn create_and_start_execution_tasks(
             input_payload: Some(json!({
                 "source": "chatos_project_requirement_execution",
                 "project_id": project_id,
-                "project_root": project_root,
                 "requirement_id": work_item.requirement_id,
                 "project_task_id": work_item.id,
                 "is_planning_task": work_item.is_planning_task,
@@ -228,156 +176,6 @@ pub(in crate::api::projects) async fn create_and_start_execution_tasks(
         .iter()
         .filter_map(|item| created_by_work_item.get(item.id.as_str()).cloned())
         .collect())
-}
-
-fn parse_local_connector_project_root(project_root: &str) -> Option<LocalConnectorProjectRef> {
-    let rest = project_root
-        .trim()
-        .strip_prefix(LOCAL_CONNECTOR_ROOT_PREFIX)?;
-    let mut parts = rest.splitn(3, '/');
-    let device_id = normalize_non_empty(parts.next().map(ToOwned::to_owned))?;
-    let workspace_id = normalize_non_empty(parts.next().map(ToOwned::to_owned))?;
-    let relative_path = match parts.next() {
-        Some(path) => Some(decode_local_connector_relative_path(path)?),
-        None => None,
-    };
-    Some(LocalConnectorProjectRef {
-        device_id,
-        workspace_id,
-        relative_path,
-    })
-}
-
-fn local_connector_mcp_url(cfg: &Config, project: &LocalConnectorProjectRef) -> String {
-    let mut url = format!(
-        "{}/api/local-connectors/relay/{}/mcp?workspace_id={}",
-        cfg.local_connector_service_base_url
-            .trim()
-            .trim_end_matches('/'),
-        urlencoding::encode(project.device_id.as_str()),
-        urlencoding::encode(project.workspace_id.as_str())
-    );
-    if let Some(relative_path) = project.relative_path.as_deref() {
-        url.push_str("&cwd=");
-        url.push_str(urlencoding::encode(relative_path).as_ref());
-    }
-    url
-}
-
-fn decode_local_connector_relative_path(path: &str) -> Option<String> {
-    let mut parts = Vec::new();
-    for part in path.split('/').filter(|part| !part.trim().is_empty()) {
-        let decoded = urlencoding::decode(part).ok()?.into_owned();
-        parts.push(decoded);
-    }
-    let joined = parts.join("/");
-    normalize_local_relative_path(joined.as_str()).filter(|path| local_relative_path_is_safe(path))
-}
-
-fn normalize_local_relative_path(value: &str) -> Option<String> {
-    let value = value.trim().replace('\\', "/");
-    let value = value.trim_matches('/');
-    if value.is_empty() || value == "." {
-        return None;
-    }
-    let parts = value
-        .split('/')
-        .map(str::trim)
-        .filter(|part| !part.is_empty() && *part != ".")
-        .collect::<Vec<_>>();
-    if parts.is_empty() {
-        None
-    } else {
-        Some(parts.join("/"))
-    }
-}
-
-fn local_relative_path_is_safe(path: &str) -> bool {
-    let path = path.trim();
-    !path.is_empty()
-        && !path.starts_with('/')
-        && !path.starts_with('\\')
-        && path.split('/').all(|part| {
-            let part = part.trim();
-            !part.is_empty() && part != "." && part != ".."
-        })
-}
-
-async fn local_connector_sandbox_manager_url(
-    cfg: &Config,
-    user_access_token: &str,
-    project: &LocalConnectorProjectRef,
-) -> Result<Option<String>, HandlerError> {
-    let base = cfg
-        .local_connector_service_base_url
-        .trim()
-        .trim_end_matches('/');
-    let response = reqwest::Client::new()
-        .get(format!("{base}/api/local-connectors/sandbox-pairings"))
-        .bearer_auth(user_access_token)
-        .query(&[
-            ("device_id", project.device_id.as_str()),
-            ("workspace_id", project.workspace_id.as_str()),
-        ])
-        .timeout(std::time::Duration::from_millis(
-            cfg.local_connector_service_request_timeout_ms.max(300) as u64,
-        ))
-        .send()
-        .await
-        .map_err(|err| {
-            HandlerError::bad_gateway("查询 Local Connector 沙箱配对失败", err.to_string())
-        })?;
-    let status = response.status();
-    let text = response.text().await.map_err(|err| {
-        HandlerError::bad_gateway("读取 Local Connector 沙箱配对响应失败", err.to_string())
-    })?;
-    if !status.is_success() {
-        return Err(HandlerError::bad_gateway(
-            "查询 Local Connector 沙箱配对失败",
-            format!("HTTP {status}: {text}"),
-        ));
-    }
-    let pairings = serde_json::from_str::<Vec<LocalConnectorSandboxPairingResponse>>(text.as_str())
-        .map_err(|err| {
-            HandlerError::bad_gateway("解析 Local Connector 沙箱配对响应失败", err.to_string())
-        })?;
-    let pairing = pairings.into_iter().find(|pairing| {
-        pairing.enabled
-            && pairing.device_id == project.device_id
-            && pairing.workspace_id == project.workspace_id
-    });
-    let Some(pairing) = pairing else {
-        return Ok(None);
-    };
-    Ok(pairing
-        .facade_base_url
-        .and_then(|value| normalize_non_empty(Some(value)))
-        .or_else(|| {
-            Some(format!(
-                "{base}/api/local-connectors/sandbox-facade/{}",
-                urlencoding::encode(pairing.id.as_str())
-            ))
-        }))
-}
-
-fn remove_server_local_builtin_tools_for_local_connector(
-    mcp_config: &mut task_runner_api_client::TaskRunnerMcpConfigRequest,
-) {
-    mcp_config
-        .enabled_builtin_kinds
-        .retain(|kind| !is_server_local_builtin_tool(kind));
-}
-
-fn is_server_local_builtin_tool(value: &str) -> bool {
-    matches!(
-        value.trim(),
-        "CodeMaintainerRead"
-            | "CodeMaintainerWrite"
-            | "TerminalController"
-            | CODE_MAINTAINER_READ_MCP_ID
-            | CODE_MAINTAINER_WRITE_MCP_ID
-            | TERMINAL_CONTROLLER_MCP_ID
-    )
 }
 
 pub(in crate::api::projects) async fn load_external_prerequisite_task_ids(
@@ -664,48 +462,26 @@ mod tests {
     }
 
     #[test]
-    fn parses_local_connector_project_root() {
-        let parsed = parse_local_connector_project_root("local://connector/device-1/workspace-1")
-            .expect("local connector root");
-
-        assert_eq!(parsed.device_id, "device-1");
-        assert_eq!(parsed.workspace_id, "workspace-1");
-        assert_eq!(parsed.relative_path, None);
-
-        let parsed =
-            parse_local_connector_project_root("local://connector/device-1/workspace-1/apps/web")
-                .expect("local connector subdir");
-
-        assert_eq!(parsed.device_id, "device-1");
-        assert_eq!(parsed.workspace_id, "workspace-1");
-        assert_eq!(parsed.relative_path.as_deref(), Some("apps/web"));
-    }
-
-    #[test]
-    fn rejects_malformed_local_connector_project_root() {
-        assert!(parse_local_connector_project_root("/tmp/project").is_none());
-        assert!(parse_local_connector_project_root("local://connector/device-only").is_none());
-        assert!(
-            parse_local_connector_project_root("local://connector/device/workspace/../extra")
-                .is_none()
-        );
-    }
-
-    #[test]
-    fn local_connector_tasks_remove_server_local_builtin_tools() {
-        let mut config = task_runner_api_client::TaskRunnerMcpConfigRequest {
+    fn execution_task_mcp_config_keeps_requested_builtin_tools() {
+        let config = task_runner_api_client::TaskRunnerMcpConfigRequest {
             enabled_builtin_kinds: vec![
                 "CodeMaintainerRead".to_string(),
-                CODE_MAINTAINER_WRITE_MCP_ID.to_string(),
+                "CodeMaintainerWrite".to_string(),
                 "TerminalController".to_string(),
                 "WebTools".to_string(),
             ],
             ..task_runner_api_client::TaskRunnerMcpConfigRequest::default()
         };
 
-        remove_server_local_builtin_tools_for_local_connector(&mut config);
-
-        assert_eq!(config.enabled_builtin_kinds, vec!["WebTools".to_string()]);
+        assert_eq!(
+            config.enabled_builtin_kinds,
+            vec![
+                "CodeMaintainerRead".to_string(),
+                "CodeMaintainerWrite".to_string(),
+                "TerminalController".to_string(),
+                "WebTools".to_string(),
+            ]
+        );
     }
 
     #[test]

@@ -56,28 +56,9 @@ impl TaskService {
         .await?;
         let schedule = sanitize_task_schedule_config(input.schedule.unwrap_or_default(), None)?;
         let mut mcp_config = sanitize_task_mcp_config(input.mcp_config.unwrap_or_default());
-        let mut input_payload = input.input_payload;
+        let input_payload = input.input_payload;
         if let Some(workspace_dir) = normalized_optional(source_context.workspace_dir.clone()) {
             mcp_config.workspace_dir = Some(workspace_dir);
-        }
-        let project_root = match project_root_from_payload(input_payload.as_ref()) {
-            Some(value) => Some(value),
-            None => {
-                resolve_project_root_for_project_id(&self.config, &self.store, project_id.as_str())
-                    .await?
-            }
-        };
-        if let Some(project_root) = project_root {
-            let local_kinds = selected_local_connector_builtin_kinds_for_config(
-                &mcp_config,
-                task_profile.as_str(),
-            );
-            apply_local_connector_routing(
-                &mut mcp_config,
-                &mut input_payload,
-                project_root.as_str(),
-                local_kinds.as_slice(),
-            );
         }
         if mcp_config.workspace_dir.is_some() {
             let _ = ensure_workspace_dir_available(

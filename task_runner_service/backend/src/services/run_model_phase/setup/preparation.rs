@@ -6,7 +6,6 @@ use super::*;
 mod mcp_builder;
 mod mcp_inputs;
 
-use crate::services::sandbox_runtime::sandbox_mcp_prefixed_input_items;
 use mcp_builder::build_mcp_builder_parts;
 #[cfg(test)]
 use mcp_inputs::project_management_skill_prefixed_input_item;
@@ -53,12 +52,6 @@ pub(super) async fn prepare_model_execution(
         loaded_external_mcp.summaries.as_slice(),
         task.mcp_config.locale(),
     ));
-    if let Some(context) = sandbox_context.as_ref() {
-        prefixed_input_items.extend(sandbox_mcp_prefixed_input_items(
-            context,
-            task.mcp_config.locale(),
-        ));
-    }
     let resolved_model_config =
         crate::services::model_runtime_resolver::resolve_model_runtime_for_task(
             &service.config,

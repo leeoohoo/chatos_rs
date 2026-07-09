@@ -23,9 +23,8 @@ mod tests;
 pub use types::TaskRunnerMcpConfigRequest;
 pub use types::{
     CancelTaskRunnerPromptRequest, CancelTaskRunnerTaskRequest, CreateTaskRunnerTaskRequest,
-    SubmitTaskRunnerPromptRequest, TaskRunnerEphemeralHttpMcpServerRequest,
-    TaskRunnerExecutionOptions, TaskRunnerTaskRecord, TaskRunnerTaskScheduleRequest,
-    UserServiceTaskRunnerExchange,
+    SubmitTaskRunnerPromptRequest, TaskRunnerExecutionOptions, TaskRunnerTaskRecord,
+    TaskRunnerTaskScheduleRequest, UserServiceTaskRunnerExchange,
 };
 
 use types::{

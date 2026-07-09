@@ -31,6 +31,27 @@ export interface TaskMcpConfig {
   skill_ids: string[];
 }
 
+export interface TaskMcpRequiredBuiltinCapability {
+  kind: string;
+  source: string;
+}
+
+export interface TaskMcpHostedBuiltinRoute {
+  host: string;
+  server_name: string;
+  builtin_kinds: string[];
+  public_server_names: string[];
+}
+
+export interface TaskMcpResolutionResponse {
+  requested_builtin_kinds: string[];
+  required_builtin_kinds: TaskMcpRequiredBuiltinCapability[];
+  hosted_builtin_routes: TaskMcpHostedBuiltinRoute[];
+  server_local_builtin_kinds: string[];
+  external_mcp_config_ids: string[];
+  skill_ids: string[];
+}
+
 export interface TaskScheduleConfig {
   mode: TaskScheduleMode;
   run_at?: string | null;

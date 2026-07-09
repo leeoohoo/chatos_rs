@@ -19,6 +19,7 @@ impl McpExecutor {
     fn register_available_tool(
         &mut self,
         server_name: &str,
+        public_server_name: &str,
         server_type: &str,
         server_url: Option<String>,
         server_headers: Option<HashMap<String, String>>,
@@ -27,8 +28,11 @@ impl McpExecutor {
         def: ParsedToolDefinition,
         tool: Value,
     ) {
-        let public_name = self.reserve_tool_name(server_name, def.name.as_str());
+        let public_name = self.reserve_tool_name(public_server_name, def.name.as_str());
         self.register_tool_aliases(server_name, def.name.as_str(), public_name.as_str());
+        if public_server_name != server_name {
+            self.register_tool_aliases(public_server_name, def.name.as_str(), public_name.as_str());
+        }
         self.available_tools.push(build_function_tool_schema(
             public_name.as_str(),
             def.description.as_str(),
@@ -110,8 +114,12 @@ impl McpExecutor {
                 Ok(tools) => {
                     for tool in tools {
                         if let Some(def) = parse_tool_definition(&tool) {
+                            if !server.allows_tool_name(def.name.as_str()) {
+                                continue;
+                            }
                             self.register_available_tool(
                                 server.name.as_str(),
+                                server.public_server_name_for_tool(def.name.as_str()),
                                 "http",
                                 Some(server.url.clone()),
                                 server.headers.clone(),
@@ -166,6 +174,7 @@ impl McpExecutor {
                         if let Some(def) = parse_tool_definition(&tool) {
                             self.register_available_tool(
                                 server.name.as_str(),
+                                server.name.as_str(),
                                 "stdio",
                                 None,
                                 None,
@@ -215,6 +224,7 @@ impl McpExecutor {
                 if let Some(def) = parse_tool_definition(&tool) {
                     self.register_available_tool(
                         server.name.as_str(),
+                        server.name.as_str(),
                         "builtin",
                         None,
                         None,
@@ -252,4 +262,53 @@ fn unavailable_server(server_name: &str, server_type: &str, reason: &str) -> Val
         "server_type": server_type,
         "reason": reason
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use crate::{BuiltinToolRegistry, McpExecutor, ParsedToolDefinition};
+
+    #[test]
+    fn public_server_name_override_keeps_actual_execution_metadata() {
+        let mut executor = McpExecutor::new(
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            BuiltinToolRegistry::new(),
+        );
+
+        executor.register_available_tool(
+            "local_connector",
+            "code_maintainer_read",
+            "http",
+            Some("http://127.0.0.1:9000/mcp".to_string()),
+            None,
+            None,
+            None,
+            ParsedToolDefinition {
+                name: "read_file_raw".to_string(),
+                description: "Read file".to_string(),
+                parameters: json!({"type": "object"}),
+            },
+            json!({"name": "read_file_raw"}),
+        );
+
+        let tools = executor.available_tools();
+        assert_eq!(
+            tools[0].get("name").and_then(|value| value.as_str()),
+            Some("code_maintainer_read_read_file_raw")
+        );
+        assert_eq!(
+            executor.resolve_tool_name("local_connector_read_file_raw"),
+            Some("code_maintainer_read_read_file_raw")
+        );
+        let metadata = executor
+            .tool_metadata()
+            .get("code_maintainer_read_read_file_raw")
+            .expect("tool metadata");
+        assert_eq!(metadata.server_name, "local_connector");
+        assert_eq!(metadata.original_name, "read_file_raw");
+    }
 }

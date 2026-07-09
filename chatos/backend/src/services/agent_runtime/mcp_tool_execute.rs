@@ -116,6 +116,9 @@ mod tests {
                 name: "alpha_http".to_string(),
                 url: "http://127.0.0.1:9000/mcp".to_string(),
                 headers: None,
+                timeout_ms: None,
+                tool_name_aliases: Vec::new(),
+                allowed_tool_names: None,
             }],
             vec![McpStdioServer {
                 name: "beta_stdio".to_string(),

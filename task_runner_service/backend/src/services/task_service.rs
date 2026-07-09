@@ -12,4 +12,8 @@ impl TaskService {
     pub(crate) fn new(config: AppConfig, store: AppStore) -> Self {
         Self { config, store }
     }
+
+    pub fn resolve_task_mcp(&self, task: &TaskRecord) -> TaskMcpResolutionResponse {
+        task_mcp_resolution_response(task)
+    }
 }

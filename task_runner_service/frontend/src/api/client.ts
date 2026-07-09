@@ -50,6 +50,7 @@ import type {
   TaskMemoryRecordsPayload,
   TaskMemoryRecordsResponse,
   TaskMemorySummaryResponse,
+  TaskMcpResolutionResponse,
   TaskSummaryRecord,
   TaskListFilters,
   TaskProjectRecord,
@@ -238,6 +239,8 @@ export const api = {
       method: 'PATCH',
       body: JSON.stringify(payload),
     }),
+  getTaskMcpResolution: (id: string) =>
+    request<TaskMcpResolutionResponse>(`/api/tasks/${id}/mcp/resolution`),
   previewTaskMcpPrompt: (taskId: string) =>
     request<McpPromptPreviewResponse>(`/api/tasks/${taskId}/mcp/prompt-preview`),
   listModelConfigs: () => request<ModelConfigRecord[]>('/api/model-configs'),

@@ -8,6 +8,12 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct McpToolNameAlias {
+    pub tool_name: String,
+    pub public_server_name: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct McpHttpServer {
     pub name: String,
@@ -16,6 +22,10 @@ pub struct McpHttpServer {
     pub headers: Option<HashMap<String, String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub timeout_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tool_name_aliases: Vec<McpToolNameAlias>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub allowed_tool_names: Option<Vec<String>>,
 }
 
 impl McpHttpServer {
@@ -25,6 +35,8 @@ impl McpHttpServer {
             url: url.into(),
             headers: None,
             timeout_ms: None,
+            tool_name_aliases: Vec::new(),
+            allowed_tool_names: None,
         }
     }
 
@@ -38,8 +50,53 @@ impl McpHttpServer {
         self
     }
 
+    pub fn with_tool_name_aliases<I>(mut self, aliases: I) -> Self
+    where
+        I: IntoIterator<Item = McpToolNameAlias>,
+    {
+        self.tool_name_aliases = aliases.into_iter().collect();
+        self
+    }
+
+    pub fn with_allowed_tool_names<I, S>(mut self, tool_names: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.allowed_tool_names = Some(
+            tool_names
+                .into_iter()
+                .map(Into::into)
+                .map(|value: String| value.trim().to_string())
+                .filter(|value| !value.is_empty())
+                .collect(),
+        );
+        self
+    }
+
     pub fn timeout_duration(&self) -> Option<Duration> {
         self.timeout_ms.map(Duration::from_millis)
+    }
+
+    pub fn public_server_name_for_tool<'a>(&'a self, tool_name: &str) -> &'a str {
+        self.tool_name_aliases
+            .iter()
+            .find(|alias| alias.tool_name.trim() == tool_name.trim())
+            .and_then(|alias| {
+                let public_server_name = alias.public_server_name.trim();
+                (!public_server_name.is_empty()).then_some(public_server_name)
+            })
+            .unwrap_or(self.name.as_str())
+    }
+
+    pub fn allows_tool_name(&self, tool_name: &str) -> bool {
+        self.allowed_tool_names
+            .as_ref()
+            .is_none_or(|allowed_names| {
+                allowed_names
+                    .iter()
+                    .any(|allowed| allowed.trim() == tool_name.trim())
+            })
     }
 }
 
@@ -312,7 +369,9 @@ pub type ToolAbortCheckCallback = Arc<dyn Fn(&str) -> bool + Send + Sync>;
 mod tests {
     use std::collections::HashMap;
 
-    use super::{McpHttpServer, McpStdioServer, ToolCallContext, ToolCallerModelRuntime};
+    use super::{
+        McpHttpServer, McpStdioServer, McpToolNameAlias, ToolCallContext, ToolCallerModelRuntime,
+    };
 
     #[test]
     fn server_config_builders_fill_common_fields() {
@@ -335,6 +394,40 @@ mod tests {
             stdio.env.as_ref().and_then(|env| env.get("TOKEN")),
             Some(&"secret".to_string())
         );
+    }
+
+    #[test]
+    fn http_server_can_override_public_tool_server_name() {
+        let http = McpHttpServer::new("local_connector", "http://127.0.0.1:9000/mcp")
+            .with_tool_name_aliases([McpToolNameAlias {
+                tool_name: "read_file_raw".to_string(),
+                public_server_name: "code_maintainer_read".to_string(),
+            }]);
+
+        assert_eq!(
+            http.public_server_name_for_tool("read_file_raw"),
+            "code_maintainer_read"
+        );
+        assert_eq!(
+            http.public_server_name_for_tool("execute_command"),
+            "local_connector"
+        );
+    }
+
+    #[test]
+    fn http_server_allowed_tool_names_are_optional() {
+        let unrestricted = McpHttpServer::new("remote", "http://127.0.0.1:9000/mcp");
+        assert!(unrestricted.allows_tool_name("anything"));
+
+        let restricted = McpHttpServer::new("remote", "http://127.0.0.1:9000/mcp")
+            .with_allowed_tool_names([" read_file_raw ", "execute_command"]);
+        assert!(restricted.allows_tool_name("read_file_raw"));
+        assert!(restricted.allows_tool_name("execute_command"));
+        assert!(!restricted.allows_tool_name("write_file"));
+
+        let empty = McpHttpServer::new("remote", "http://127.0.0.1:9000/mcp")
+            .with_allowed_tool_names(std::iter::empty::<String>());
+        assert!(!empty.allows_tool_name("anything"));
     }
 
     #[test]

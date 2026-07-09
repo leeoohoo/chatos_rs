@@ -105,6 +105,30 @@ pub struct UpdateTaskMcpRequest {
     pub skill_ids: Option<Vec<String>>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TaskMcpResolutionResponse {
+    pub requested_builtin_kinds: Vec<String>,
+    pub required_builtin_kinds: Vec<TaskMcpRequiredBuiltinCapability>,
+    pub hosted_builtin_routes: Vec<TaskMcpHostedBuiltinRoute>,
+    pub server_local_builtin_kinds: Vec<String>,
+    pub external_mcp_config_ids: Vec<String>,
+    pub skill_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TaskMcpRequiredBuiltinCapability {
+    pub kind: String,
+    pub source: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TaskMcpHostedBuiltinRoute {
+    pub host: String,
+    pub server_name: String,
+    pub builtin_kinds: Vec<String>,
+    pub public_server_names: Vec<String>,
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct TaskListFilters {
     pub status: Option<TaskStatus>,

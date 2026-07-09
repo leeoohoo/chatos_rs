@@ -10,15 +10,19 @@ use chatos_mcp_service::{
     HostCapabilityPolicy, HARNESS_CODE_ENABLED_BUILTIN_KINDS_HEADER,
     LOCAL_CONNECTOR_ENABLED_BUILTIN_KINDS_HEADER,
 };
-use serde_json::{json, Value};
+use serde_json::Value;
 
 use crate::config::AppConfig;
 use crate::models::{
-    ModelConfigRecord, TaskEphemeralHttpMcpServer, TaskMcpConfig, TaskRecord, PUBLIC_PROJECT_ID,
-    TASK_MCP_HTTP_AUTH_LOCAL_CONNECTOR_INTERNAL, TASK_PROFILE_CHATOS_PLAN,
+    ModelConfigRecord, TaskEphemeralHttpMcpServer, TaskMcpConfig, TaskMcpResolutionResponse,
+    TaskRecord, PUBLIC_PROJECT_ID, TASK_MCP_HTTP_AUTH_LOCAL_CONNECTOR_INTERNAL,
 };
 use crate::store::AppStore;
 
+use super::mcp_resolution::{
+    hosted_builtin_kinds_for, resolve_task_mcp, selected_builtin_kinds_from_config,
+    task_mcp_resolution_response as build_mcp_resolution_response,
+};
 use super::normalize_strings;
 use super::normalized_optional;
 
@@ -34,41 +38,36 @@ struct LocalConnectorProjectRef {
 }
 
 pub(super) fn selected_builtin_kinds(mcp_config: &TaskMcpConfig) -> Vec<BuiltinMcpKind> {
-    let kinds = mcp_config
-        .enabled_builtin_kinds
-        .iter()
-        .filter_map(|value| builtin_kind_by_any(value))
-        .collect::<Vec<_>>();
-    complete_builtin_kind_dependencies(kinds)
+    selected_builtin_kinds_from_config(mcp_config)
 }
 
 pub(super) fn runtime_selected_builtin_kinds(task: &TaskRecord) -> Vec<BuiltinMcpKind> {
-    let mut kinds = if is_chatos_plan_task(task) {
-        plan_task_runtime_builtin_kinds()
-    } else {
-        let mut kinds = selected_builtin_kinds(&task.mcp_config);
-        kinds.retain(|kind| !matches!(kind, BuiltinMcpKind::ProjectManagement));
-        kinds
-    };
-    if is_chatos_async_task(task) {
-        ensure_system_injected_builtin_kinds(&mut kinds);
+    resolve_task_mcp(task, active_host_backends_for_task(task).as_slice())
+        .server_local_builtin_kinds
+}
+
+pub(super) fn task_mcp_resolution_response(task: &TaskRecord) -> TaskMcpResolutionResponse {
+    build_mcp_resolution_response(task, active_host_backends_for_task(task).as_slice())
+}
+
+pub(super) async fn task_with_runtime_mcp_routing(
+    config: &AppConfig,
+    store: &AppStore,
+    mut task: TaskRecord,
+) -> Result<TaskRecord, String> {
+    if !task.mcp_config.enabled {
+        return Ok(task);
     }
-    let uses_local_connector = task_uses_local_connector(task);
-    let uses_harness_code = task_uses_harness_code(task);
-    if uses_local_connector {
-        kinds.retain(|kind| !local_connector_replaces_builtin_kind(*kind));
+
+    if let Some(project_root) = resolve_project_root_for_task(config, store, &task).await? {
+        if parse_local_connector_project_root(project_root.as_str()).is_some() {
+            apply_local_connector_runtime_routing_to_task(&mut task, project_root.as_str());
+            return Ok(task);
+        }
     }
-    if uses_harness_code {
-        kinds.retain(|kind| !harness_code_replaces_builtin_kind(*kind));
-    }
-    let mut kinds = complete_builtin_kind_dependencies(kinds);
-    if uses_local_connector {
-        kinds.retain(|kind| !local_connector_replaces_builtin_kind(*kind));
-    }
-    if uses_harness_code {
-        kinds.retain(|kind| !harness_code_replaces_builtin_kind(*kind));
-    }
-    kinds
+
+    apply_harness_project_runtime_routing_to_task(config, store, &mut task).await?;
+    Ok(task)
 }
 
 pub(super) fn task_uses_local_connector(task: &TaskRecord) -> bool {
@@ -85,7 +84,18 @@ pub(super) fn task_uses_harness_code(task: &TaskRecord) -> bool {
         .any(is_harness_code_ephemeral_server)
 }
 
-pub(super) async fn apply_harness_project_routing_to_task(
+fn active_host_backends_for_task(task: &TaskRecord) -> Vec<BuiltinHostBackend> {
+    let mut hosts = Vec::new();
+    if task_uses_local_connector(task) {
+        hosts.push(BuiltinHostBackend::LocalConnector);
+    }
+    if task_uses_harness_code(task) {
+        hosts.push(BuiltinHostBackend::HarnessCode);
+    }
+    hosts
+}
+
+async fn apply_harness_project_runtime_routing_to_task(
     config: &AppConfig,
     store: &AppStore,
     task: &mut TaskRecord,
@@ -100,37 +110,14 @@ pub(super) async fn apply_harness_project_routing_to_task(
     if !project_is_ready_harness_repo(&project) {
         return Ok(false);
     }
-    let harness_kinds = selected_harness_code_builtin_kinds_for_config(&task.mcp_config);
-    if harness_kinds.is_empty() {
+    let Some(server) = harness_code_runtime_server(config, task, &project)? else {
         return Ok(false);
-    }
+    };
 
     let before_config = serde_json::to_value(&task.mcp_config).ok();
-    task.mcp_config
-        .ephemeral_http_servers
-        .retain(|server| !is_harness_code_ephemeral_server(server));
-    task.mcp_config
-        .enabled_builtin_kinds
-        .retain(|kind| !is_harness_code_builtin_kind_name(kind));
+    remove_internal_host_ephemeral_servers(&mut task.mcp_config);
     task.mcp_config.workspace_dir = None;
-
-    let mut headers = std::collections::BTreeMap::new();
-    headers.insert(
-        HARNESS_CODE_ENABLED_BUILTIN_KINDS_HEADER.to_string(),
-        harness_code_builtin_kinds_header_value(harness_kinds.as_slice()),
-    );
-    task.mcp_config
-        .ephemeral_http_servers
-        .push(TaskEphemeralHttpMcpServer {
-            name: HARNESS_CODE_MCP_SERVER_NAME.to_string(),
-            url: harness_code_mcp_url(config, project_id.as_str())?,
-            headers,
-            auth_mode: Some(crate::models::TASK_MCP_HTTP_AUTH_PROJECT_SERVICE_SYNC.to_string()),
-        });
-    ensure_input_payload_project_root(
-        &mut task.input_payload,
-        project_root_hint_for_harness(&project).as_str(),
-    );
+    task.mcp_config.ephemeral_http_servers.push(server);
 
     Ok(before_config != serde_json::to_value(&task.mcp_config).ok())
 }
@@ -188,17 +175,18 @@ pub(super) fn project_root_from_payload(value: Option<&Value>) -> Option<String>
         .map(ToOwned::to_owned)
 }
 
-pub(super) fn apply_local_connector_routing_to_task(
+fn apply_local_connector_runtime_routing_to_task(
     task: &mut TaskRecord,
     project_root: &str,
 ) -> bool {
-    let local_kinds = selected_local_connector_builtin_kinds_for_task(task);
-    apply_local_connector_routing(
-        &mut task.mcp_config,
-        &mut task.input_payload,
-        project_root,
-        local_kinds.as_slice(),
-    )
+    let Some(server) = local_connector_runtime_server(task, project_root) else {
+        return false;
+    };
+    let before_config = serde_json::to_value(&task.mcp_config).ok();
+    remove_internal_host_ephemeral_servers(&mut task.mcp_config);
+    task.mcp_config.workspace_dir = None;
+    task.mcp_config.ephemeral_http_servers.push(server);
+    before_config != serde_json::to_value(&task.mcp_config).ok()
 }
 
 async fn resolve_project_for_task(
@@ -233,26 +221,31 @@ fn project_is_ready_harness_repo(project: &crate::models::TaskProjectRecord) -> 
             .is_some_and(|value| value.eq_ignore_ascii_case("ready"))
 }
 
-fn selected_harness_code_builtin_kinds_for_config(
-    mcp_config: &TaskMcpConfig,
-) -> Vec<BuiltinMcpKind> {
-    selected_host_builtin_kind_names(
-        BuiltinHostBackend::HarnessCode,
-        selected_builtin_kinds(mcp_config)
-            .iter()
-            .map(|kind| kind.kind_name()),
-    )
-    .into_iter()
-    .filter_map(builtin_kind_by_any)
-    .collect()
+fn selected_harness_code_builtin_kinds_for_task(task: &TaskRecord) -> Vec<BuiltinMcpKind> {
+    let resolution = resolve_task_mcp(task, &[BuiltinHostBackend::HarnessCode]);
+    hosted_builtin_kinds_for(&resolution, BuiltinHostBackend::HarnessCode)
 }
 
-fn harness_code_replaces_builtin_kind(kind: BuiltinMcpKind) -> bool {
-    BuiltinHostBackend::HarnessCode.replaces_builtin_kind_name(kind.kind_name())
-}
-
-fn is_harness_code_builtin_kind_name(value: &str) -> bool {
-    builtin_kind_by_any(value).is_some_and(harness_code_replaces_builtin_kind)
+fn harness_code_runtime_server(
+    config: &AppConfig,
+    task: &TaskRecord,
+    project: &crate::models::TaskProjectRecord,
+) -> Result<Option<TaskEphemeralHttpMcpServer>, String> {
+    let harness_kinds = selected_harness_code_builtin_kinds_for_task(task);
+    if harness_kinds.is_empty() {
+        return Ok(None);
+    }
+    let mut headers = std::collections::BTreeMap::new();
+    headers.insert(
+        HARNESS_CODE_ENABLED_BUILTIN_KINDS_HEADER.to_string(),
+        harness_code_builtin_kinds_header_value(harness_kinds.as_slice()),
+    );
+    Ok(Some(TaskEphemeralHttpMcpServer {
+        name: HARNESS_CODE_MCP_SERVER_NAME.to_string(),
+        url: harness_code_mcp_url(config, project.id.as_str())?,
+        headers,
+        auth_mode: Some(crate::models::TASK_MCP_HTTP_AUTH_PROJECT_SERVICE_SYNC.to_string()),
+    }))
 }
 
 fn is_harness_code_ephemeral_server(server: &TaskEphemeralHttpMcpServer) -> bool {
@@ -280,70 +273,34 @@ fn harness_code_mcp_url(config: &AppConfig, project_id: &str) -> Result<String, 
     ))
 }
 
-fn project_root_hint_for_harness(project: &crate::models::TaskProjectRecord) -> String {
-    project
-        .harness_repo_path
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(|value| format!("harness://{value}"))
-        .unwrap_or_else(|| format!("harness://{}", project.id))
-}
-
-pub(super) fn apply_local_connector_routing(
-    mcp_config: &mut TaskMcpConfig,
-    input_payload: &mut Option<Value>,
+fn local_connector_runtime_server(
+    task: &TaskRecord,
     project_root: &str,
-    local_kinds: &[BuiltinMcpKind],
-) -> bool {
+) -> Option<TaskEphemeralHttpMcpServer> {
     let Some(project) = parse_local_connector_project_root(project_root) else {
-        return false;
+        return None;
     };
-    let before_config = serde_json::to_value(&*mcp_config).ok();
-    let before_payload = input_payload.clone();
-
-    mcp_config
-        .ephemeral_http_servers
-        .retain(|server| !is_local_connector_ephemeral_server(server));
+    let local_kinds = selected_local_connector_builtin_kinds_for_task(task);
     let local_kinds = normalize_local_connector_builtin_kinds(local_kinds.iter().copied());
-    if !local_kinds.is_empty() {
-        mcp_config.workspace_dir = None;
-        mcp_config
-            .enabled_builtin_kinds
-            .retain(|kind| !is_server_local_builtin_kind_name(kind));
-        let mut headers = std::collections::BTreeMap::new();
-        headers.insert(
-            LOCAL_CONNECTOR_ENABLED_BUILTIN_KINDS_HEADER.to_string(),
-            local_connector_builtin_kinds_header_value(local_kinds.as_slice()),
-        );
-        mcp_config
-            .ephemeral_http_servers
-            .push(TaskEphemeralHttpMcpServer {
-                name: LOCAL_CONNECTOR_MCP_SERVER_NAME.to_string(),
-                url: local_connector_mcp_url(&project),
-                headers,
-                auth_mode: Some(TASK_MCP_HTTP_AUTH_LOCAL_CONNECTOR_INTERNAL.to_string()),
-            });
+    if local_kinds.is_empty() {
+        return None;
     }
-    ensure_input_payload_project_root(input_payload, project_root.trim());
-
-    before_config != serde_json::to_value(&*mcp_config).ok() || before_payload != *input_payload
+    let mut headers = std::collections::BTreeMap::new();
+    headers.insert(
+        LOCAL_CONNECTOR_ENABLED_BUILTIN_KINDS_HEADER.to_string(),
+        local_connector_builtin_kinds_header_value(local_kinds.as_slice()),
+    );
+    Some(TaskEphemeralHttpMcpServer {
+        name: LOCAL_CONNECTOR_MCP_SERVER_NAME.to_string(),
+        url: local_connector_mcp_url(&project),
+        headers,
+        auth_mode: Some(TASK_MCP_HTTP_AUTH_LOCAL_CONNECTOR_INTERNAL.to_string()),
+    })
 }
 
 fn selected_local_connector_builtin_kinds_for_task(task: &TaskRecord) -> Vec<BuiltinMcpKind> {
-    selected_local_connector_builtin_kinds_for_config(&task.mcp_config, task.task_profile.as_str())
-}
-
-pub(super) fn selected_local_connector_builtin_kinds_for_config(
-    mcp_config: &TaskMcpConfig,
-    _task_profile: &str,
-) -> Vec<BuiltinMcpKind> {
-    let kinds = selected_builtin_kinds(mcp_config);
-    normalize_local_connector_builtin_kinds(
-        kinds
-            .into_iter()
-            .filter(|kind| local_connector_replaces_builtin_kind(*kind)),
-    )
+    let resolution = resolve_task_mcp(task, &[BuiltinHostBackend::LocalConnector]);
+    hosted_builtin_kinds_for(&resolution, BuiltinHostBackend::LocalConnector)
 }
 
 fn normalize_local_connector_builtin_kinds<I>(kinds: I) -> Vec<BuiltinMcpKind>
@@ -363,10 +320,6 @@ fn local_connector_builtin_kinds_header_value(kinds: &[BuiltinMcpKind]) -> Strin
     builtin_kind_header_value(kinds.iter().map(|kind| kind.kind_name()))
 }
 
-pub(super) fn local_connector_replaces_builtin_kind(kind: BuiltinMcpKind) -> bool {
-    BuiltinHostBackend::LocalConnector.replaces_builtin_kind_name(kind.kind_name())
-}
-
 fn is_local_connector_ephemeral_server(server: &TaskEphemeralHttpMcpServer) -> bool {
     server
         .auth_mode
@@ -376,6 +329,16 @@ fn is_local_connector_ephemeral_server(server: &TaskEphemeralHttpMcpServer) -> b
             value.eq_ignore_ascii_case(TASK_MCP_HTTP_AUTH_LOCAL_CONNECTOR_INTERNAL)
         })
         || server.name.trim().eq_ignore_ascii_case("local_connector")
+}
+
+fn is_internal_host_ephemeral_server(server: &TaskEphemeralHttpMcpServer) -> bool {
+    is_local_connector_ephemeral_server(server) || is_harness_code_ephemeral_server(server)
+}
+
+fn remove_internal_host_ephemeral_servers(mcp_config: &mut TaskMcpConfig) {
+    mcp_config
+        .ephemeral_http_servers
+        .retain(|server| !is_internal_host_ephemeral_server(server));
 }
 
 pub(super) fn task_uses_local_connector_builtin_kind(
@@ -400,26 +363,6 @@ pub(super) fn local_connector_server_enables_builtin_kind(
         return false;
     };
     HostCapabilityPolicy::from_header_value(raw).enables_builtin_kind_name(kind.kind_name())
-}
-
-fn is_server_local_builtin_kind_name(value: &str) -> bool {
-    builtin_kind_by_any(value).is_some_and(local_connector_replaces_builtin_kind)
-}
-
-fn ensure_input_payload_project_root(input_payload: &mut Option<Value>, project_root: &str) {
-    let project_root = project_root.trim();
-    if project_root.is_empty() {
-        return;
-    }
-    match input_payload {
-        Some(Value::Object(map)) => {
-            map.insert("project_root".to_string(), json!(project_root));
-        }
-        None => {
-            *input_payload = Some(json!({ "project_root": project_root }));
-        }
-        Some(_) => {}
-    }
 }
 
 fn parse_local_connector_project_root(project_root: &str) -> Option<LocalConnectorProjectRef> {
@@ -503,52 +446,18 @@ fn local_relative_path_is_safe(path: &str) -> bool {
         })
 }
 
-fn plan_task_runtime_builtin_kinds() -> Vec<BuiltinMcpKind> {
-    vec![
-        BuiltinMcpKind::CodeMaintainerRead,
-        BuiltinMcpKind::TerminalController,
-        BuiltinMcpKind::TaskManager,
-        BuiltinMcpKind::ProjectManagement,
-        BuiltinMcpKind::Notepad,
-        BuiltinMcpKind::AskUser,
-        BuiltinMcpKind::RemoteConnectionController,
-        BuiltinMcpKind::WebTools,
-        BuiltinMcpKind::BrowserTools,
-        BuiltinMcpKind::MemorySkillReader,
-        BuiltinMcpKind::MemoryCommandReader,
-        BuiltinMcpKind::MemoryPluginReader,
-    ]
-}
-
-fn ensure_system_injected_builtin_kinds(kinds: &mut Vec<BuiltinMcpKind>) {
-    for kind in [BuiltinMcpKind::TaskManager, BuiltinMcpKind::AskUser] {
-        if !kinds.contains(&kind) {
-            kinds.push(kind);
-        }
-    }
-}
-
-fn is_chatos_async_task(task: &TaskRecord) -> bool {
-    task.schedule.mode == crate::models::TaskScheduleMode::ContactAsync
-        || (has_non_empty_text(task.source_session_id.as_deref())
-            && has_non_empty_text(task.source_user_message_id.as_deref()))
-}
-
-fn is_chatos_plan_task(task: &TaskRecord) -> bool {
-    task.task_profile
-        .trim()
-        .eq_ignore_ascii_case(TASK_PROFILE_CHATOS_PLAN)
-}
-
-fn has_non_empty_text(value: Option<&str>) -> bool {
-    value.map(str::trim).is_some_and(|value| !value.is_empty())
-}
-
 pub(super) fn normalize_builtin_kind_names(values: Vec<String>) -> Vec<String> {
     let kinds = values
         .into_iter()
         .filter_map(|value| builtin_kind_by_any(&value))
-        .filter(|kind| !matches!(kind, BuiltinMcpKind::ProjectManagement))
+        .filter(|kind| {
+            !matches!(
+                kind,
+                BuiltinMcpKind::ProjectManagement
+                    | BuiltinMcpKind::TaskManager
+                    | BuiltinMcpKind::AskUser
+            )
+        })
         .collect::<Vec<_>>();
     complete_builtin_kind_dependencies(kinds)
         .into_iter()
@@ -892,6 +801,18 @@ mod tests {
     }
 
     #[test]
+    fn contact_async_task_adds_required_task_manager_and_ask_user_at_runtime() {
+        let mut task = sample_task(TASK_PROFILE_DEFAULT, Vec::new());
+        task.schedule.mode = crate::models::TaskScheduleMode::ContactAsync;
+
+        let selected = runtime_selected_builtin_kinds(&task);
+
+        assert!(task.mcp_config.enabled_builtin_kinds.is_empty());
+        assert!(selected.contains(&BuiltinMcpKind::TaskManager));
+        assert!(selected.contains(&BuiltinMcpKind::AskUser));
+    }
+
+    #[test]
     fn local_connector_task_removes_server_local_builtin_kinds() {
         let mut task = sample_task(
             TASK_PROFILE_DEFAULT,
@@ -972,7 +893,7 @@ mod tests {
     }
 
     #[test]
-    fn local_connector_routing_rewrites_mcp_config_and_payload() {
+    fn local_connector_runtime_routing_keeps_requested_config_and_payload() {
         let mut task = sample_task(
             TASK_PROFILE_DEFAULT,
             vec![
@@ -984,22 +905,24 @@ mod tests {
         );
         task.input_payload = Some(serde_json::json!({ "source": "test" }));
 
-        let changed = super::apply_local_connector_routing_to_task(
+        let changed = super::apply_local_connector_runtime_routing_to_task(
             &mut task,
             "local://connector/device-1/workspace-1/apps/web",
         );
 
         assert!(changed);
         assert_eq!(
-            task.input_payload
-                .as_ref()
-                .and_then(|value| value.get("project_root"))
-                .and_then(serde_json::Value::as_str),
-            Some("local://connector/device-1/workspace-1/apps/web")
+            task.input_payload,
+            Some(serde_json::json!({ "source": "test" }))
         );
         assert_eq!(
             task.mcp_config.enabled_builtin_kinds,
-            vec!["TaskManager".to_string()]
+            vec![
+                "CodeMaintainerRead".to_string(),
+                "TerminalController".to_string(),
+                "BrowserTools".to_string(),
+                "TaskManager".to_string(),
+            ]
         );
         let server = task
             .mcp_config
@@ -1032,7 +955,7 @@ mod tests {
             vec!["BrowserTools".to_string(), "TaskManager".to_string()],
         );
 
-        let changed = super::apply_local_connector_routing_to_task(
+        let changed = super::apply_local_connector_runtime_routing_to_task(
             &mut task,
             "local://connector/device-1/workspace-1/apps/web",
         );
@@ -1040,7 +963,7 @@ mod tests {
         assert!(changed);
         assert_eq!(
             task.mcp_config.enabled_builtin_kinds,
-            vec!["TaskManager".to_string()]
+            vec!["BrowserTools".to_string(), "TaskManager".to_string()]
         );
         let server = task
             .mcp_config
@@ -1069,30 +992,35 @@ mod tests {
     }
 
     #[test]
-    fn local_connector_plan_routing_does_not_add_profile_defaults() {
+    fn local_connector_plan_routing_routes_profile_required_capabilities() {
         let mut task = sample_task(TASK_PROFILE_CHATOS_PLAN, Vec::new());
 
-        let changed = super::apply_local_connector_routing_to_task(
+        let changed = super::apply_local_connector_runtime_routing_to_task(
             &mut task,
             "local://connector/device-1/workspace-1/apps/web",
         );
 
         assert!(changed);
-        assert!(task.mcp_config.ephemeral_http_servers.is_empty());
+        assert!(task.input_payload.is_none());
+        let server = task
+            .mcp_config
+            .ephemeral_http_servers
+            .first()
+            .expect("local connector server");
         assert_eq!(
-            task.input_payload
-                .as_ref()
-                .and_then(|value| value.get("project_root"))
-                .and_then(serde_json::Value::as_str),
-            Some("local://connector/device-1/workspace-1/apps/web")
+            server
+                .headers
+                .get(LOCAL_CONNECTOR_ENABLED_BUILTIN_KINDS_HEADER)
+                .map(String::as_str),
+            Some("CodeMaintainerRead,TerminalController,BrowserTools")
         );
     }
 
     #[test]
-    fn local_connector_plan_routing_uses_selected_capabilities_only() {
+    fn local_connector_plan_routing_merges_profile_and_selected_capabilities() {
         let mut task = sample_task(TASK_PROFILE_CHATOS_PLAN, vec!["BrowserTools".to_string()]);
 
-        let changed = super::apply_local_connector_routing_to_task(
+        let changed = super::apply_local_connector_runtime_routing_to_task(
             &mut task,
             "local://connector/device-1/workspace-1/apps/web",
         );
@@ -1108,17 +1036,17 @@ mod tests {
                 .headers
                 .get(LOCAL_CONNECTOR_ENABLED_BUILTIN_KINDS_HEADER)
                 .map(String::as_str),
-            Some("BrowserTools")
+            Some("CodeMaintainerRead,TerminalController,BrowserTools")
         );
         assert!(super::local_connector_server_enables_builtin_kind(
             server,
             BuiltinMcpKind::BrowserTools
         ));
-        assert!(!super::local_connector_server_enables_builtin_kind(
+        assert!(super::local_connector_server_enables_builtin_kind(
             server,
             BuiltinMcpKind::TerminalController
         ));
-        assert!(!super::local_connector_server_enables_builtin_kind(
+        assert!(super::local_connector_server_enables_builtin_kind(
             server,
             BuiltinMcpKind::CodeMaintainerRead
         ));
@@ -1144,6 +1072,8 @@ mod tests {
         let config = TaskMcpConfig {
             enabled_builtin_kinds: vec![
                 "ProjectManagement".to_string(),
+                "TaskManager".to_string(),
+                "AskUser".to_string(),
                 "CodeMaintainerWrite".to_string(),
             ],
             ..TaskMcpConfig::default()
@@ -1154,6 +1084,12 @@ mod tests {
         assert!(!sanitized
             .enabled_builtin_kinds
             .contains(&"ProjectManagement".to_string()));
+        assert!(!sanitized
+            .enabled_builtin_kinds
+            .contains(&"TaskManager".to_string()));
+        assert!(!sanitized
+            .enabled_builtin_kinds
+            .contains(&"AskUser".to_string()));
         assert!(sanitized
             .enabled_builtin_kinds
             .contains(&"CodeMaintainerWrite".to_string()));

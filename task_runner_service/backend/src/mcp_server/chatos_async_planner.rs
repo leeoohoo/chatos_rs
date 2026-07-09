@@ -19,10 +19,10 @@ mod access;
 mod request_guards;
 mod schema;
 
-const SYSTEM_INJECTED_BUILTIN_KINDS: &[&str] = &["TaskManager", "AskUser"];
+const PLANNER_REQUIRED_BUILTIN_KINDS: &[&str] = &["TaskManager", "AskUser"];
 
-pub(in crate::mcp_server) fn is_system_injected_builtin_kind(value: &str) -> bool {
-    SYSTEM_INJECTED_BUILTIN_KINDS
+pub(in crate::mcp_server) fn is_planner_required_builtin_kind(value: &str) -> bool {
+    PLANNER_REQUIRED_BUILTIN_KINDS
         .iter()
         .any(|kind| kind.eq_ignore_ascii_case(value.trim()))
 }

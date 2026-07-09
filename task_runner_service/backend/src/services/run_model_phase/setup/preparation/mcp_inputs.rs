@@ -3,6 +3,13 @@
 
 use super::*;
 
+use std::collections::BTreeSet;
+
+use chatos_mcp_runtime::{
+    BuiltinMcpKind, McpToolNameAlias, BROWSER_TOOLS_SERVER_NAME, CODE_MAINTAINER_READ_SERVER_NAME,
+    CODE_MAINTAINER_WRITE_SERVER_NAME, TERMINAL_CONTROLLER_SERVER_NAME,
+};
+
 use crate::models::ExternalMcpConfigRecord;
 
 #[derive(Debug, Clone)]
@@ -121,7 +128,9 @@ pub(super) async fn load_external_mcp_servers(
                 task.project_id.clone(),
             );
         }
-        let mut http_server = McpHttpServer::new(server.name.clone(), server.url.clone());
+        let tool_name_aliases = hosted_builtin_tool_name_aliases(server.name.as_str(), &headers);
+        let mut http_server = McpHttpServer::new(server.name.clone(), server.url.clone())
+            .with_tool_name_aliases(tool_name_aliases);
         if !headers.is_empty() {
             http_server = http_server.with_headers(headers.into_iter().collect());
         }
@@ -187,7 +196,17 @@ pub(super) fn load_system_http_mcp_servers(
     let _ = service;
     let mut servers = Vec::new();
     if let Some(context) = sandbox_context {
-        servers.push(context.to_mcp_server(task, run));
+        let aliases = sandbox_tool_name_aliases(task);
+        let allowed_tool_names = aliases
+            .iter()
+            .map(|alias| alias.tool_name.clone())
+            .collect::<Vec<_>>();
+        servers.push(
+            context
+                .to_mcp_server(task, run)
+                .with_tool_name_aliases(aliases)
+                .with_allowed_tool_names(allowed_tool_names),
+        );
     }
     Ok(servers)
 }
@@ -196,6 +215,10 @@ pub(super) fn external_mcp_prefixed_input_items(
     summaries: &[ExternalMcpRuntimeSummary],
     locale: BuiltinMcpPromptLocale,
 ) -> Vec<Value> {
+    let summaries = summaries
+        .iter()
+        .filter(|summary| !is_internal_host_mcp_summary(summary))
+        .collect::<Vec<_>>();
     if summaries.is_empty() {
         return Vec::new();
     }
@@ -210,39 +233,13 @@ pub(super) fn external_mcp_prefixed_input_items(
         })
         .collect::<Vec<_>>()
         .join("\n");
-    let has_local_connector = summaries
-        .iter()
-        .any(|summary| summary.name.trim().eq_ignore_ascii_case("local_connector"));
-    let has_harness_code = summaries
-        .iter()
-        .any(|summary| summary.name.trim().eq_ignore_ascii_case("harness_code"));
     let text = if locale.is_english() {
-        let local_note = if has_local_connector {
-            "\n\n[Local Connector]\nThis task is bound to the user's authorized local project through `local_connector`. Only the selected local capabilities are exposed. For project files, local commands, and browser automation, use the currently available `local_connector_*` tools with the same names and arguments as the builtin MCP tools, such as `local_connector_read_file_raw`, `local_connector_list_dir`, `local_connector_search_text`, `local_connector_write_file`, `local_connector_edit_file`, `local_connector_execute_command`, `local_connector_get_recent_logs`, `local_connector_process_list`, `local_connector_process_poll`, `local_connector_process_log`, `local_connector_process_wait`, `local_connector_process_write`, `local_connector_process_kill`, `local_connector_browser_navigate`, `local_connector_browser_snapshot`, `local_connector_browser_click`, `local_connector_browser_type`, `local_connector_browser_console`, `local_connector_browser_inspect`, and `local_connector_browser_research`. Use `local_connector_execute_command` for git commands such as `git status` or `git diff`; normal foreground commands reuse the task's primary local shell. For long-running commands such as dev servers, watchers, Docker Compose, or service startup, call `local_connector_execute_command` with `background=true`, then use the `local_connector_process_*` tools to inspect or control them. Browser tools operate on the user's paired local browser backend, not on the Task Runner server. Do not use server-local code, terminal, or browser tools for the project workspace unless the objective explicitly asks about the Task Runner server."
-        } else {
-            ""
-        };
-        let harness_note = if has_harness_code {
-            "\n\n[Harness Code]\nThis task is bound to a cloud project whose files live in Harness. For project file reads and writes, use the currently available `harness_code_*` tools with the same names and arguments as the builtin CodeMaintainer tools, such as `harness_code_read_file_raw`, `harness_code_read_file_range`, `harness_code_list_dir`, `harness_code_search_text`, `harness_code_write_file`, `harness_code_edit_file`, `harness_code_append_file`, `harness_code_delete_path`, and `harness_code_apply_patch`. These tools read from and commit changes to the Harness repo. Do not use server-local CodeMaintainer tools for the project workspace unless the objective explicitly asks about the Task Runner server."
-        } else {
-            ""
-        };
         format!(
-            "[External MCP]\nTask Runner has loaded these user-configured external MCP servers for this task:\n{list}\n\nIf the task objective asks you to use these external systems, directly call the corresponding tools currently exposed to you. External MCP tool names usually use the config name as their prefix. Do not inspect local Gemini/Codex/Claude MCP config files to decide whether these MCP servers exist; they are injected by Task Runner for this run. Use builtin tools only when the task also needs local code, terminal, browser, or other builtin capabilities.{local_note}{harness_note}"
+            "[External MCP]\nTask Runner has loaded these user-configured external MCP servers for this task:\n{list}\n\nIf the task objective asks you to use these external systems, directly call the corresponding tools currently exposed to you. External MCP tool names usually use the config name as their prefix. Do not inspect local Gemini/Codex/Claude MCP config files to decide whether these MCP servers exist; they are injected by Task Runner for this run. Use builtin tools only when the task also needs code, terminal, browser, or other builtin capabilities."
         )
     } else {
-        let local_note = if has_local_connector {
-            "\n\n[Local Connector]\n当前任务已通过 `local_connector` 绑定到用户授权的本地项目。只会暴露本次任务已选择的本地能力。涉及项目文件、本地命令和浏览器自动化时，使用当前可用的 `local_connector_*` 工具；这些工具名和入参与 builtin MCP 保持一致，例如 `local_connector_read_file_raw`、`local_connector_list_dir`、`local_connector_search_text`、`local_connector_write_file`、`local_connector_edit_file`、`local_connector_execute_command`、`local_connector_get_recent_logs`、`local_connector_process_list`、`local_connector_process_poll`、`local_connector_process_log`、`local_connector_process_wait`、`local_connector_process_write`、`local_connector_process_kill`、`local_connector_browser_navigate`、`local_connector_browser_snapshot`、`local_connector_browser_click`、`local_connector_browser_type`、`local_connector_browser_console`、`local_connector_browser_inspect`、`local_connector_browser_research`。Git 状态或 diff 请通过 `local_connector_execute_command` 执行 `git status`、`git diff` 等命令；普通前台命令会复用当前任务的本地主 shell。对于 dev server、watch、Docker Compose、服务启动等长时间运行命令，调用 `local_connector_execute_command` 时必须设置 `background=true`，然后使用 `local_connector_process_*` 工具查看或控制它们。浏览器工具操作的是用户配对的本地浏览器后端，不是 Task Runner 服务器上的浏览器。除非任务明确要求检查 Task Runner 服务器本身，否则不要使用服务器本机的代码、终端或浏览器工具操作项目工作区。"
-        } else {
-            ""
-        };
-        let harness_note = if has_harness_code {
-            "\n\n[Harness Code]\n当前任务绑定的是云端项目，项目文件位于 Harness 仓库。涉及项目文件读写时，使用当前可用的 `harness_code_*` 工具；这些工具名和入参与 builtin CodeMaintainer 保持一致，例如 `harness_code_read_file_raw`、`harness_code_read_file_range`、`harness_code_list_dir`、`harness_code_search_text`、`harness_code_write_file`、`harness_code_edit_file`、`harness_code_append_file`、`harness_code_delete_path`、`harness_code_apply_patch`。这些工具会从 Harness repo 读取文件，并把写入提交为 Harness commit。除非任务明确要求检查 Task Runner 服务器本身，否则不要使用服务器本机 CodeMaintainer 工具操作项目工作区。"
-        } else {
-            ""
-        };
         format!(
-            "[外部 MCP]\nTask Runner 已为当前任务加载这些用户配置的外部 MCP：\n{list}\n\n如果任务目标要求使用这些外部系统，请直接调用当前暴露给你的对应工具。外部 MCP 工具名通常会以配置名称作为前缀。不要检查本机 Gemini/Codex/Claude 的 MCP 配置文件来判断这些 MCP 是否存在；它们已经由 Task Runner 在本次运行中注入。只有当任务同时需要本地代码、终端、浏览器或其他 builtin 能力时，才使用 builtin 工具。{local_note}{harness_note}"
+            "[外部 MCP]\nTask Runner 已为当前任务加载这些用户配置的外部 MCP：\n{list}\n\n如果任务目标要求使用这些外部系统，请直接调用当前暴露给你的对应工具。外部 MCP 工具名通常会以配置名称作为前缀。不要检查本机 Gemini/Codex/Claude 的 MCP 配置文件来判断这些 MCP 是否存在；它们已经由 Task Runner 在本次运行中注入。只有当任务同时需要代码、终端、浏览器或其他 builtin 能力时，才使用 builtin 工具。"
         )
     };
 
@@ -255,6 +252,122 @@ pub(super) fn external_mcp_prefixed_input_items(
         }]
     })]
 }
+
+fn is_internal_host_mcp_summary(summary: &ExternalMcpRuntimeSummary) -> bool {
+    summary.id.trim().starts_with("ephemeral:")
+        && ["local_connector", "harness_code"]
+            .iter()
+            .any(|name| summary.name.trim().eq_ignore_ascii_case(name))
+}
+
+fn hosted_builtin_tool_name_aliases(
+    server_name: &str,
+    headers: &std::collections::BTreeMap<String, String>,
+) -> Vec<McpToolNameAlias> {
+    let header_value = if server_name.trim().eq_ignore_ascii_case("local_connector") {
+        headers.get(chatos_mcp_service::LOCAL_CONNECTOR_ENABLED_BUILTIN_KINDS_HEADER)
+    } else if server_name.trim().eq_ignore_ascii_case("harness_code") {
+        headers.get(chatos_mcp_service::HARNESS_CODE_ENABLED_BUILTIN_KINDS_HEADER)
+    } else {
+        None
+    };
+    let Some(header_value) = header_value else {
+        return Vec::new();
+    };
+    let kinds = chatos_mcp_service::split_builtin_kind_header(header_value)
+        .filter_map(chatos_mcp_runtime::builtin_kind_by_any)
+        .collect::<Vec<_>>();
+    tool_name_aliases_for_builtin_kinds(kinds.as_slice())
+}
+
+fn tool_name_aliases_for_builtin_kinds(kinds: &[BuiltinMcpKind]) -> Vec<McpToolNameAlias> {
+    let mut aliases = Vec::new();
+    let mut seen = BTreeSet::new();
+    let mut push_aliases = |tool_names: &[&str], public_server_name: &str| {
+        for tool_name in tool_names {
+            let key = ((*tool_name).to_string(), public_server_name.to_string());
+            if seen.insert(key) {
+                aliases.push(McpToolNameAlias {
+                    tool_name: (*tool_name).to_string(),
+                    public_server_name: public_server_name.to_string(),
+                });
+            }
+        }
+    };
+
+    if kinds.contains(&BuiltinMcpKind::CodeMaintainerRead) {
+        push_aliases(
+            CODE_MAINTAINER_READ_TOOL_NAMES,
+            CODE_MAINTAINER_READ_SERVER_NAME,
+        );
+    }
+    if kinds.contains(&BuiltinMcpKind::CodeMaintainerWrite) {
+        push_aliases(
+            CODE_MAINTAINER_WRITE_TOOL_NAMES,
+            CODE_MAINTAINER_WRITE_SERVER_NAME,
+        );
+    }
+    if kinds.contains(&BuiltinMcpKind::TerminalController) {
+        push_aliases(
+            TERMINAL_CONTROLLER_TOOL_NAMES,
+            TERMINAL_CONTROLLER_SERVER_NAME,
+        );
+    }
+    if kinds.contains(&BuiltinMcpKind::BrowserTools) {
+        push_aliases(BROWSER_TOOL_NAMES, BROWSER_TOOLS_SERVER_NAME);
+    }
+    aliases
+}
+
+fn sandbox_tool_name_aliases(task: &TaskRecord) -> Vec<McpToolNameAlias> {
+    let kinds = runtime_selected_builtin_kinds(task)
+        .into_iter()
+        .filter(|kind| crate::services::sandbox_runtime::sandbox_replaces_builtin_kind(*kind))
+        .collect::<Vec<_>>();
+    tool_name_aliases_for_builtin_kinds(kinds.as_slice())
+}
+
+const CODE_MAINTAINER_READ_TOOL_NAMES: &[&str] = &[
+    "read_file_raw",
+    "read_file_range",
+    "read_file",
+    "list_dir",
+    "search_text",
+    "search_files",
+];
+const CODE_MAINTAINER_WRITE_TOOL_NAMES: &[&str] = &[
+    "write_file",
+    "edit_file",
+    "append_file",
+    "delete_path",
+    "apply_patch",
+    "patch",
+];
+const TERMINAL_CONTROLLER_TOOL_NAMES: &[&str] = &[
+    "execute_command",
+    "get_recent_logs",
+    "process_list",
+    "process_poll",
+    "process_log",
+    "process_wait",
+    "process_write",
+    "process_kill",
+    "process",
+];
+const BROWSER_TOOL_NAMES: &[&str] = &[
+    "browser_navigate",
+    "browser_snapshot",
+    "browser_click",
+    "browser_type",
+    "browser_scroll",
+    "browser_back",
+    "browser_press",
+    "browser_console",
+    "browser_get_images",
+    "browser_inspect",
+    "browser_research",
+    "browser_vision",
+];
 
 pub(super) async fn project_management_skill_prefixed_input_items(
     service: &RunService,
@@ -399,6 +512,54 @@ fn user_skill_prefixed_input_item(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::models::{TaskMcpConfig, TaskScheduleConfig};
+
+    fn sample_task(enabled_builtin_kinds: Vec<&str>) -> TaskRecord {
+        let now = now_rfc3339();
+        let mut mcp_config = TaskMcpConfig::default();
+        mcp_config.enabled = true;
+        mcp_config.enabled_builtin_kinds = enabled_builtin_kinds
+            .into_iter()
+            .map(ToOwned::to_owned)
+            .collect();
+        TaskRecord {
+            id: "task-1".to_string(),
+            title: "task".to_string(),
+            description: None,
+            objective: "objective".to_string(),
+            input_payload: None,
+            status: TaskStatus::Ready,
+            priority: 0,
+            tags: Vec::new(),
+            default_model_config_id: None,
+            memory_thread_id: "memory-1".to_string(),
+            tenant_id: "tenant".to_string(),
+            subject_id: "subject".to_string(),
+            project_id: "project-1".to_string(),
+            task_profile: "default".to_string(),
+            creator_user_id: None,
+            creator_username: None,
+            creator_display_name: None,
+            owner_user_id: Some("owner-1".to_string()),
+            owner_username: Some("owner".to_string()),
+            owner_display_name: Some("Owner".to_string()),
+            result_summary: None,
+            process_log: None,
+            last_run_id: None,
+            schedule: TaskScheduleConfig::default(),
+            parent_task_id: None,
+            source_run_id: None,
+            source_session_id: None,
+            source_turn_id: None,
+            source_user_message_id: None,
+            prerequisite_task_ids: Vec::new(),
+            task_tool_state: Default::default(),
+            mcp_config,
+            created_at: now.clone(),
+            updated_at: now,
+            deleted_at: None,
+        }
+    }
 
     fn external_stdio_config(cwd: Option<&str>) -> ExternalMcpConfigRecord {
         ExternalMcpConfigRecord {
@@ -460,7 +621,7 @@ mod tests {
     }
 
     #[test]
-    fn external_mcp_prompt_mentions_local_connector_tools() {
+    fn internal_host_mcp_prompt_is_not_exposed_as_external_mcp() {
         let items = external_mcp_prefixed_input_items(
             &[ExternalMcpRuntimeSummary {
                 id: "ephemeral:local_connector".to_string(),
@@ -470,14 +631,94 @@ mod tests {
             BuiltinMcpPromptLocale::ZhCn,
         );
 
+        assert!(items.is_empty());
+    }
+
+    #[test]
+    fn external_mcp_prompt_omits_internal_host_tool_names() {
+        let items = external_mcp_prefixed_input_items(
+            &[
+                ExternalMcpRuntimeSummary {
+                    id: "ephemeral:local_connector".to_string(),
+                    name: "local_connector".to_string(),
+                    transport: "http".to_string(),
+                },
+                ExternalMcpRuntimeSummary {
+                    id: "external-1".to_string(),
+                    name: "Issue Tracker".to_string(),
+                    transport: "stdio".to_string(),
+                },
+            ],
+            BuiltinMcpPromptLocale::ZhCn,
+        );
+
         let text = items[0]
             .pointer("/content/0/text")
             .and_then(Value::as_str)
             .expect("prompt text");
 
-        assert!(text.contains("local_connector_read_file_raw"));
-        assert!(text.contains("local_connector_execute_command"));
-        assert!(text.contains("local_connector_browser_navigate"));
-        assert!(text.contains("不要使用服务器本机"));
+        assert!(text.contains("Issue Tracker"));
+        assert!(!text.contains("local_connector"));
+        assert!(!text.contains("harness_code"));
+        assert!(!text.contains("local_connector_read_file_raw"));
+        assert!(!text.contains("harness_code_read_file_raw"));
+    }
+
+    #[test]
+    fn internal_host_tool_aliases_use_stable_builtin_server_prefixes() {
+        let headers = std::collections::BTreeMap::from([(
+            chatos_mcp_service::LOCAL_CONNECTOR_ENABLED_BUILTIN_KINDS_HEADER.to_string(),
+            "CodeMaintainerRead,TerminalController,BrowserTools".to_string(),
+        )]);
+
+        let aliases = hosted_builtin_tool_name_aliases("local_connector", &headers);
+
+        assert!(aliases.iter().any(|alias| {
+            alias.tool_name == "read_file_raw"
+                && alias.public_server_name == chatos_mcp_runtime::CODE_MAINTAINER_READ_SERVER_NAME
+        }));
+        assert!(aliases.iter().any(|alias| {
+            alias.tool_name == "execute_command"
+                && alias.public_server_name == chatos_mcp_runtime::TERMINAL_CONTROLLER_SERVER_NAME
+        }));
+        assert!(aliases.iter().any(|alias| {
+            alias.tool_name == "browser_navigate"
+                && alias.public_server_name == chatos_mcp_runtime::BROWSER_TOOLS_SERVER_NAME
+        }));
+    }
+
+    #[test]
+    fn sandbox_terminal_aliases_use_stable_builtin_server_prefixes() {
+        let task = sample_task(vec!["TerminalController"]);
+
+        let aliases = sandbox_tool_name_aliases(&task);
+
+        assert!(aliases.iter().any(|alias| {
+            alias.tool_name == "execute_command"
+                && alias.public_server_name == chatos_mcp_runtime::TERMINAL_CONTROLLER_SERVER_NAME
+        }));
+        assert!(!aliases
+            .iter()
+            .any(|alias| alias.tool_name == "read_file_raw"));
+        assert!(!aliases.iter().any(|alias| alias.tool_name == "write_file"));
+    }
+
+    #[test]
+    fn sandbox_write_aliases_include_read_dependency() {
+        let task = sample_task(vec!["CodeMaintainerWrite"]);
+
+        let aliases = sandbox_tool_name_aliases(&task);
+
+        assert!(aliases.iter().any(|alias| {
+            alias.tool_name == "read_file_raw"
+                && alias.public_server_name == chatos_mcp_runtime::CODE_MAINTAINER_READ_SERVER_NAME
+        }));
+        assert!(aliases.iter().any(|alias| {
+            alias.tool_name == "write_file"
+                && alias.public_server_name == chatos_mcp_runtime::CODE_MAINTAINER_WRITE_SERVER_NAME
+        }));
+        assert!(!aliases
+            .iter()
+            .any(|alias| alias.tool_name == "execute_command"));
     }
 }

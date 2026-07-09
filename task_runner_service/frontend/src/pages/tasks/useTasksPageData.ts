@@ -275,6 +275,16 @@ export function useTasksPageData({
     queryFn: () => api.previewTaskMcpPrompt(mcpPreviewTask!.id),
     enabled: Boolean(mcpPreviewTask),
   });
+  const taskMcpResolutionQuery = useQuery({
+    queryKey: ['task-mcp-resolution', detailTaskId],
+    queryFn: () => api.getTaskMcpResolution(detailTaskId!),
+    enabled: Boolean(detailTaskId),
+  });
+  const taskEditorMcpResolutionQuery = useQuery({
+    queryKey: ['task-mcp-resolution', editingTaskId],
+    queryFn: () => api.getTaskMcpResolution(editingTaskId!),
+    enabled: Boolean(editingTaskId),
+  });
   const visibleTaskLastRunIds = useMemo(
     () =>
       Array.from(
@@ -499,6 +509,8 @@ export function useTasksPageData({
     taskMemoryContextQuery,
     taskMemoryRecordsQuery,
     taskMcpPromptPreviewQuery,
+    taskMcpResolutionQuery,
+    taskEditorMcpResolutionQuery,
     scheduleModeLabels,
     statusFilterOptions,
     taskStatusLabel,

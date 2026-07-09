@@ -261,7 +261,10 @@ fn async_planner_update_task_cannot_change_status() {
     let patch = UpdateTaskRequest {
         mcp_config: Some(TaskMcpConfig {
             enabled: false,
-            enabled_builtin_kinds: vec!["CodeMaintainerRead".to_string()],
+            enabled_builtin_kinds: vec![
+                "CodeMaintainerRead".to_string(),
+                "TaskManager".to_string(),
+            ],
             external_mcp_config_ids: vec!["external-mcp-1".to_string()],
             ..TaskMcpConfig::default()
         }),
@@ -273,7 +276,7 @@ fn async_planner_update_task_cannot_change_status() {
     assert!(config
         .enabled_builtin_kinds
         .contains(&"CodeMaintainerRead".to_string()));
-    assert!(config
+    assert!(!config
         .enabled_builtin_kinds
         .contains(&"TaskManager".to_string()));
     assert_eq!(
@@ -283,7 +286,7 @@ fn async_planner_update_task_cannot_change_status() {
 }
 
 #[test]
-fn async_planner_tasks_allow_free_mcp_combinations_and_auto_task_manager() {
+fn async_planner_tasks_keep_fixed_mcp_out_of_stored_selection() {
     let builtin_without_model_id = CreateTaskRequest {
         title: "task".to_string(),
         description: None,
@@ -317,7 +320,7 @@ fn async_planner_tasks_allow_free_mcp_combinations_and_auto_task_manager() {
         .expect("mcp config")
         .enabled_builtin_kinds;
     assert!(planned_builtin_kinds.contains(&"CodeMaintainerRead".to_string()));
-    assert!(planned_builtin_kinds.contains(&"TaskManager".to_string()));
+    assert!(!planned_builtin_kinds.contains(&"TaskManager".to_string()));
 
     let external_without_model_id = CreateTaskRequest {
         mcp_config: Some(TaskMcpConfig {
@@ -340,10 +343,7 @@ fn async_planner_tasks_allow_free_mcp_combinations_and_auto_task_manager() {
         planned_external_mcp.external_mcp_config_ids,
         vec!["external-mcp-1".to_string()]
     );
-    assert_eq!(
-        planned_external_mcp.enabled_builtin_kinds,
-        vec!["TaskManager".to_string(), "AskUser".to_string()]
-    );
+    assert!(planned_external_mcp.enabled_builtin_kinds.is_empty());
 
     let no_explicit_tool_source = CreateTaskRequest {
         default_model_config_id: Some("model-1".to_string()),
@@ -361,7 +361,7 @@ fn async_planner_tasks_allow_free_mcp_combinations_and_auto_task_manager() {
             .mcp_config
             .expect("mcp config")
             .enabled_builtin_kinds,
-        vec!["TaskManager".to_string(), "AskUser".to_string()]
+        Vec::<String>::new()
     );
 
     let combined = CreateTaskRequest {
@@ -381,7 +381,7 @@ fn async_planner_tasks_allow_free_mcp_combinations_and_auto_task_manager() {
     assert!(planned_combined_mcp
         .enabled_builtin_kinds
         .contains(&"CodeMaintainerWrite".to_string()));
-    assert!(planned_combined_mcp
+    assert!(!planned_combined_mcp
         .enabled_builtin_kinds
         .contains(&"TaskManager".to_string()));
     assert_eq!(

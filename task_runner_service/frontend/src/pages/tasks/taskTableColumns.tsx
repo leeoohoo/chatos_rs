@@ -17,7 +17,6 @@ import type {
 import {
   isSchedulerOnlyTask,
   statusColorMap,
-  systemInjectedMcpServerNames,
   taskCreatorLabel,
   taskOwnerLabel,
   taskProfileColorMap,
@@ -202,11 +201,10 @@ export function buildTaskTableColumns({
       title: t('tasks.column.mcp'),
       dataIndex: 'mcp_config',
       width: 220,
-      render: (mcpConfig: TaskMcpConfig, record) => {
+      render: (mcpConfig: TaskMcpConfig) => {
         const builtinCount = mcpConfig.enabled_builtin_kinds.length;
         const externalConfigIds = mcpConfig.external_mcp_config_ids || [];
         const skillIds = mcpConfig.skill_ids || [];
-        const systemMcpServers = systemInjectedMcpServerNames(record);
         const visibleExternalConfigs = externalConfigIds.slice(0, 2);
         const visibleSkillIds = skillIds.slice(0, 2);
         const hiddenExternalCount = Math.max(
@@ -226,11 +224,6 @@ export function buildTaskTableColumns({
             <Tag color={skillIds.length ? 'purple' : undefined}>
               {t('tasks.mcpSkillCount', { count: skillIds.length })}
             </Tag>
-            {systemMcpServers.map((serverName) => (
-              <Tag key={serverName} color="geekblue">
-                {t('tasks.mcpSystemServer', { name: serverName })}
-              </Tag>
-            ))}
             {visibleExternalConfigs.map((configId) => {
               const config = externalMcpConfigMap.get(configId);
               return (

@@ -10,7 +10,7 @@ use crate::models::{
 };
 
 use super::chatos_async_planner::{
-    is_system_injected_builtin_kind, planner_root_create_request, planner_update_task_request,
+    is_planner_required_builtin_kind, planner_root_create_request, planner_update_task_request,
     require_chatos_async_source_context,
 };
 use super::support::{
@@ -131,7 +131,7 @@ impl TaskRunnerMcpService {
                 let _ = decode_args::<Value>(args).ok();
                 let mut catalog = self.mcp_catalog_service.list_catalog();
                 if request_context.tool_profile() == McpToolProfile::ChatosAsyncPlanner {
-                    catalog.retain(|item| !is_system_injected_builtin_kind(item.kind.as_str()));
+                    catalog.retain(|item| !is_planner_required_builtin_kind(item.kind.as_str()));
                 }
                 Ok(text_result(json!(catalog)))
             }
