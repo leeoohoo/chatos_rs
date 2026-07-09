@@ -1,0 +1,57 @@
+/* SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0 */
+/* Required Notice: Copyright (c) 2025 AI Chat Team */
+
+@media (max-width: 920px) {
+  .layout,
+  .tabGrid,
+  .sandboxContentGrid,
+  .sandboxBoundary,
+  .sandboxStatusGrid,
+  .modelLayout,
+  .runtimeGrid,
+  .approvalModeGrid,
+  .approvalConfigGrid,
+  .approvalFormGrid,
+  .settingsFormGrid,
+  .taskModelGrid,
+  .twoCols,
+  .metaGrid,
+  .terminalForm {
+    grid-template-columns: 1fr;
+  }
+
+  .approvalActions {
+    grid-template-columns: 1fr;
+  }
+
+  .modelSelectRow {
+    flex-direction: column;
+  }
+
+  .taskModelRowHeader {
+    flex-direction: column;
+  }
+
+  .tabs {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .leaseHeader,
+  .leaseRow {
+    grid-template-columns: 1fr;
+  }
+
+  .terminalHistoryActions {
+    flex-wrap: wrap;
+    justify-content: flex-start;
+  }
+
+  .terminalHistoryActions select {
+    flex: 1;
+    min-width: 220px;
+  }
+
+  .screen {
+    padding: 18px;
+  }
+}

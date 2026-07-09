@@ -30,6 +30,12 @@ import { RuntimeSettingsPanel } from './components/RuntimeSettingsPanel';
 import { SandboxPanel } from './components/SandboxPanel';
 import { TerminalPanel } from './components/TerminalPanel';
 import './styles.css';
+import './styles-terminal.css';
+import './styles-approval.css';
+import './styles-models.css';
+import './styles-command-history.css';
+import './styles-sandbox.css';
+import './styles-responsive.css';
 
 type AppTab = 'overview' | 'workspaces' | 'terminal' | 'models' | 'approval' | 'settings' | 'sandbox';
 type LocalIcon = typeof Server;

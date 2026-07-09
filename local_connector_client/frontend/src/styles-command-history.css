@@ -1,0 +1,124 @@
+/* SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0 */
+/* Required Notice: Copyright (c) 2025 AI Chat Team */
+
+.compactHeader {
+  margin-bottom: 12px;
+}
+
+.commandHistoryRow summary {
+  align-items: flex-start;
+  cursor: pointer;
+  display: flex;
+  gap: 12px;
+  list-style: none;
+  padding: 12px;
+}
+
+.commandHistoryRow summary::-webkit-details-marker {
+  display: none;
+}
+
+.commandHistoryMain {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.historyMetaLine {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.historySource,
+.historyExit,
+.historyTool {
+  background: #eef3ee;
+  border-radius: 999px;
+  color: #435048;
+  font-size: 12px;
+  padding: 4px 9px;
+}
+
+.commandDisplay {
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.historySubline {
+  color: #65726b;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.historyDetails {
+  border-top: 1px solid #e4eae4;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+}
+
+.historyDetails div {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+  min-width: 0;
+}
+
+.historyDetails span {
+  color: #65726b;
+  font-size: 12px;
+  width: 56px;
+}
+
+.historyDetails code {
+  background: #f4f7f3;
+  border-radius: 5px;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+  padding: 4px 6px;
+}
+
+.historyPreview {
+  background: #16211b;
+  border-radius: 6px;
+  color: #e9f2ea;
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 12px;
+  margin: 0;
+  max-height: 220px;
+  overflow: auto;
+  padding: 10px;
+  white-space: pre-wrap;
+}
+
+.errorPreview {
+  color: #ffd7d7;
+}
+
+.compactEmpty {
+  padding: 10px;
+  text-align: left;
+}
+
+.output,
+.logText {
+  background: #16211b;
+  border-radius: 6px;
+  color: #e9f2ea;
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 12px;
+  margin: 12px 0 0;
+  max-height: 320px;
+  overflow: auto;
+  padding: 12px;
+}
+
+.mono {
+  font-family: "SFMono-Regular", Consolas, monospace;
+}

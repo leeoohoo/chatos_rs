@@ -1,0 +1,30 @@
+/* SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0 */
+/* Required Notice: Copyright (c) 2025 AI Chat Team */
+
+.terminalForm {
+  display: grid;
+  grid-template-columns: 1.2fr 0.8fr 1.2fr auto;
+  gap: 8px;
+}
+
+.terminalPage {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.terminalHistoryActions select {
+  min-width: 170px;
+}
+
+.commandHistoryList {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.commandHistoryRow {
+  border: 1px solid #e4eae4;
+  border-radius: 8px;
+  overflow: hidden;
+}
