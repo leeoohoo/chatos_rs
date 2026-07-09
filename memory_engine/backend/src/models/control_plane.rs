@@ -68,8 +68,8 @@ pub struct UpsertEngineModelProfileRequest {
     pub provider: String,
     #[serde(alias = "model_name")]
     pub model: String,
-    pub base_url: Option<String>,
-    pub api_key: Option<String>,
+    pub base_url: Option<Option<String>>,
+    pub api_key: Option<Option<String>>,
     pub supports_images: Option<bool>,
     pub supports_reasoning: Option<bool>,
     pub supports_responses: Option<bool>,

@@ -13,6 +13,7 @@ use crate::models::{
     SyncTaskRunnerWorkItemStatusResponse,
 };
 use crate::services::execution_sync::{self, ExecutionSyncError};
+use crate::services::runtime_environment::ensure_runtime_environment_for_project;
 use crate::state::AppState;
 
 #[derive(Debug, Default, Deserialize)]
@@ -40,12 +41,16 @@ pub(in crate::api) async fn sync_import_project(
     Json(input): Json<ImportProjectRequest>,
 ) -> Result<Json<ProjectRecord>, ApiError> {
     require_project_sync_secret(&state, &headers)?;
-    state
+    let sandbox_enabled = input.sandbox_enabled;
+    let project = state
         .store
         .import_project(input)
         .await
-        .map(Json)
-        .map_err(ApiError::bad_request)
+        .map_err(ApiError::bad_request)?;
+    ensure_runtime_environment_for_project(&state.store, &project, sandbox_enabled)
+        .await
+        .map_err(ApiError::bad_request)?;
+    Ok(Json(project))
 }
 
 pub(in crate::api) async fn sync_get_project(

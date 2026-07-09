@@ -178,6 +178,8 @@ pub struct UserServiceModelSettingsRecord {
     pub user_id: String,
     pub memory_summary_model_config_id: Option<String>,
     pub memory_summary_thinking_level: Option<String>,
+    pub project_management_agent_model_config_id: Option<String>,
+    pub project_management_agent_thinking_level: Option<String>,
     pub updated_at: String,
     #[serde(default)]
     pub sync_warnings: Vec<String>,
@@ -185,7 +187,14 @@ pub struct UserServiceModelSettingsRecord {
 
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct UpdateUserServiceModelSettingsRequest {
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub user_id: Option<String>,
-    pub memory_summary_model_config_id: Option<String>,
-    pub memory_summary_thinking_level: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub memory_summary_model_config_id: Option<Option<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub memory_summary_thinking_level: Option<Option<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub project_management_agent_model_config_id: Option<Option<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub project_management_agent_thinking_level: Option<Option<String>>,
 }

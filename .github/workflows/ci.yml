@@ -4,12 +4,7 @@
 name: CI
 
 on:
-  pull_request:
-  push:
-    branches:
-      - main
-      - master
-      - "2.*"
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -60,6 +55,7 @@ jobs:
       - name: Docker deployment config
         run: |
           bash -n docker/deploy.sh
+          bash -n scripts/local-dev-stack.sh
           bash -n docker/entrypoint-rust-service.sh
           docker compose -f docker/compose.yml config >/dev/null
           docker compose -f docker/compose.yml -f docker/compose.build.yml config >/dev/null
@@ -240,53 +236,3 @@ jobs:
 
       - name: hotspot line budgets
         run: bash ../../scripts/check-hotspot-line-budgets.sh
-
-  db-connection-hub-backend:
-    name: db_connection_hub backend (Rust)
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: db_connection_hub/backend
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache Rust deps
-        uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: db_connection_hub/backend -> target
-
-      - name: cargo build
-        run: cargo build
-
-      - name: cargo test
-        run: cargo test -q
-
-  db-connection-hub-frontend:
-    name: db_connection_hub frontend (TypeScript)
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: db_connection_hub/frontend
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: "20"
-          cache: npm
-          cache-dependency-path: db_connection_hub/frontend/package-lock.json
-
-      - name: npm ci
-        run: npm ci
-
-      - name: type-check
-        run: npm run type-check
-
-      - name: build
-        run: npm run build

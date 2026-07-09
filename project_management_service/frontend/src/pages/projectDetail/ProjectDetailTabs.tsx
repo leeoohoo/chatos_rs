@@ -11,11 +11,13 @@ import { Link } from 'react-router-dom';
 import type {
   DependencyGraphNode,
   ProjectRecord,
+  ProjectRuntimeEnvironmentResponse,
   ProjectWorkItemRecord,
   RequirementRecord,
   UpsertProjectProfilePayload,
 } from '../../types';
 import { ProfileMarkdownField, graphStatusTag, projectStatusTag, renderGraphNode } from './renderers';
+import { RuntimeEnvironmentPanel } from './RuntimeEnvironmentPanel';
 import { profileFormStyle, profileToolbarStyle } from './styles';
 import type { GraphRelationRow, ProfileMarkdownFieldName, RequirementTableRecord } from './types';
 
@@ -47,6 +49,14 @@ interface ProjectDetailTabsProps {
   graphLoading: boolean;
   blockingRelations: GraphRelationRow[];
   containsRelations: GraphRelationRow[];
+  runtimeEnvironment?: ProjectRuntimeEnvironmentResponse;
+  runtimeEnvironmentLoading: boolean;
+  runtimeEnvironmentErrorMessage?: string;
+  runtimeEnvironmentAnalyzing: boolean;
+  runtimeEnvironmentSettingsSaving: boolean;
+  onRefreshRuntimeEnvironment: () => void;
+  onAnalyzeRuntimeEnvironment: () => void;
+  onRuntimeSandboxEnabledChange: (value: boolean) => void;
 }
 
 const renderRequirementExpandIcon = ({
@@ -104,6 +114,14 @@ export function ProjectDetailTabs({
   graphLoading,
   blockingRelations,
   containsRelations,
+  runtimeEnvironment,
+  runtimeEnvironmentLoading,
+  runtimeEnvironmentErrorMessage,
+  runtimeEnvironmentAnalyzing,
+  runtimeEnvironmentSettingsSaving,
+  onRefreshRuntimeEnvironment,
+  onAnalyzeRuntimeEnvironment,
+  onRuntimeSandboxEnabledChange,
 }: ProjectDetailTabsProps) {
   return (
     <>
@@ -140,6 +158,12 @@ export function ProjectDetailTabs({
                   <Descriptions.Item label="状态">
                     {project ? projectStatusTag(project.status) : '-'}
                   </Descriptions.Item>
+                  <Descriptions.Item label="项目来源">
+                    {projectSourceTag(project?.source_type)}
+                  </Descriptions.Item>
+                  <Descriptions.Item label="云端导入">
+                    {projectImportStatusTag(project?.import_status)}
+                  </Descriptions.Item>
                   <Descriptions.Item label="根目录">{project?.root_path || '-'}</Descriptions.Item>
                   <Descriptions.Item label="Git">{project?.git_url || '-'}</Descriptions.Item>
                   <Descriptions.Item label="短描述" span={2}>
@@ -175,6 +199,22 @@ export function ProjectDetailTabs({
                   </Col>
                 </Row>
               </Space>
+            ),
+          },
+          {
+            key: 'runtime-environment',
+            label: '运行环境',
+            children: (
+              <RuntimeEnvironmentPanel
+                response={runtimeEnvironment}
+                loading={runtimeEnvironmentLoading}
+                errorMessage={runtimeEnvironmentErrorMessage}
+                analyzing={runtimeEnvironmentAnalyzing}
+                settingsSaving={runtimeEnvironmentSettingsSaving}
+                onRefresh={onRefreshRuntimeEnvironment}
+                onAnalyze={onAnalyzeRuntimeEnvironment}
+                onSandboxEnabledChange={onRuntimeSandboxEnabledChange}
+              />
             ),
           },
           {
@@ -363,4 +403,42 @@ export function ProjectDetailTabs({
       />
     </>
   );
+}
+
+function projectSourceTag(source?: ProjectRecord['source_type']) {
+  if (source === 'cloud') {
+    return <Tag color="geekblue">云端项目</Tag>;
+  }
+  if (source === 'local_connector') {
+    return <Tag color="cyan">本地连接器</Tag>;
+  }
+  if (source === 'local') {
+    return <Tag>本地项目</Tag>;
+  }
+  return <Tag>未知</Tag>;
+}
+
+function projectImportStatusTag(status?: ProjectRecord['import_status']) {
+  if (!status || status === 'none') {
+    return <Tag>无</Tag>;
+  }
+  const color =
+    status === 'ready'
+      ? 'success'
+      : status === 'failed'
+        ? 'error'
+        : status === 'pending' || status === 'importing'
+          ? 'processing'
+          : 'default';
+  const label =
+    status === 'ready'
+      ? '已就绪'
+      : status === 'failed'
+        ? '失败'
+        : status === 'pending'
+          ? '等待导入'
+          : status === 'importing'
+            ? '导入中'
+            : status;
+  return <Tag color={color}>{label}</Tag>;
 }

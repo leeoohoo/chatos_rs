@@ -70,21 +70,6 @@ pub(super) fn normalized_base_url(value: Option<&str>) -> String {
         .to_string()
 }
 
-pub(super) fn provider_display_name_prefix(name: &str, model: &str) -> String {
-    let name = name.trim();
-    let model = model.trim();
-    if !model.is_empty() {
-        let suffix = format!(" / {model}");
-        if let Some(prefix) = name.strip_suffix(suffix.as_str()) {
-            let prefix = prefix.trim();
-            if !prefix.is_empty() {
-                return prefix.to_string();
-            }
-        }
-    }
-    name.to_string()
-}
-
 pub(super) fn normalize_provider_input(
     provider: Option<String>,
 ) -> Result<String, (axum::http::StatusCode, Json<serde_json::Value>)> {

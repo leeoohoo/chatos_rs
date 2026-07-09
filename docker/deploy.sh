@@ -9,10 +9,32 @@ ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 COMPOSE_FILE="$SCRIPT_DIR/compose.yml"
 COMPOSE_BUILD_FILE="$SCRIPT_DIR/compose.build.yml"
 ENV_FILE="${CHATOS_DOCKER_ENV_FILE:-$SCRIPT_DIR/.env}"
+EXTRA_COMPOSE_FILES="${CHATOS_DOCKER_EXTRA_COMPOSE_FILES:-${CHATOS_DOCKER_EXTRA_COMPOSE_FILE:-}}"
 ACTION="${1:-up}"
+
+LOCAL_BUILD_SERVICES=(
+  user-service-backend
+  memory-engine-backend
+  project-management-backend
+  local-connector-service-backend
+  sandbox-manager-backend
+  task-runner-backend
+  chatos-backend
+  official-website-backend
+  chatos-frontend
+  user-service-frontend
+  memory-engine-frontend
+  project-management-frontend
+  task-runner-frontend
+  sandbox-manager-frontend
+  official-website-frontend
+)
 
 compose_with_files() {
   local args=()
+  local extra_file
+  local -a extra_files=()
+  local configured_extra_files="$EXTRA_COMPOSE_FILES"
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --)
@@ -25,6 +47,20 @@ compose_with_files() {
         ;;
     esac
   done
+  if [[ -z "$configured_extra_files" ]]; then
+    configured_extra_files="$(env_value CHATOS_DOCKER_EXTRA_COMPOSE_FILES "")"
+  fi
+  if [[ -z "$configured_extra_files" ]]; then
+    configured_extra_files="$(env_value CHATOS_DOCKER_EXTRA_COMPOSE_FILE "")"
+  fi
+  if [[ -n "$configured_extra_files" ]]; then
+    IFS=':' read -r -a extra_files <<< "$configured_extra_files"
+    for extra_file in "${extra_files[@]}"; do
+      if [[ -n "$extra_file" ]]; then
+        args+=(-f "$extra_file")
+      fi
+    done
+  fi
   if [[ -f "$ENV_FILE" ]]; then
     args+=(--env-file "$ENV_FILE")
   fi
@@ -45,6 +81,11 @@ compose_build_limited() {
     export COMPOSE_PARALLEL_LIMIT="$build_parallel_limit"
     compose_build "$@"
   )
+}
+
+print_build_services() {
+  printf '%s\n' sandbox-agent-image
+  printf '%s\n' "${LOCAL_BUILD_SERVICES[@]}"
 }
 
 need_cmd() {
@@ -99,15 +140,29 @@ env_value() {
   fi
 }
 
+env_flag_enabled() {
+  local key="$1"
+  local default_value="$2"
+  case "$(env_value "$key" "$default_value")" in
+    1|true|TRUE|True|yes|YES|Yes|on|ON|On)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
 print_urls() {
   local frontend_port main_backend_port user_service_frontend_port
   local memory_engine_frontend_port task_runner_frontend_port project_service_frontend_port
-  local sandbox_manager_frontend_port local_connector_service_port db_hub_frontend_port
-  local official_website_frontend_port harness_port harness_ssh_port consul_port
+  local sandbox_manager_frontend_port local_connector_service_port
+  local official_website_frontend_port harness_port harness_ssh_host harness_ssh_port consul_port
   frontend_port="$(env_value FRONTEND_PORT 8088)"
   main_backend_port="$(env_value MAIN_BACKEND_PORT 3997)"
   consul_port="$(env_value CONSUL_HTTP_PORT 8500)"
   harness_port="$(env_value HARNESS_PORT 3000)"
+  harness_ssh_host="$(env_value HARNESS_SSH_PUBLIC_HOST "$(env_value HARNESS_SSH_HOST localhost)")"
   harness_ssh_port="$(env_value HARNESS_SSH_PORT 3022)"
   user_service_frontend_port="$(env_value USER_SERVICE_FRONTEND_PORT 39191)"
   memory_engine_frontend_port="$(env_value MEMORY_ENGINE_FRONTEND_PORT 4178)"
@@ -115,7 +170,6 @@ print_urls() {
   project_service_frontend_port="$(env_value PROJECT_SERVICE_FRONTEND_PORT 39211)"
   sandbox_manager_frontend_port="$(env_value SANDBOX_MANAGER_FRONTEND_PORT 8096)"
   local_connector_service_port="$(env_value LOCAL_CONNECTOR_SERVICE_PORT 39230)"
-  db_hub_frontend_port="$(env_value DB_HUB_FRONTEND_PORT 5174)"
   official_website_frontend_port="$(env_value OFFICIAL_WEBSITE_FRONTEND_PORT 39251)"
   cat <<EOF
 
@@ -125,14 +179,13 @@ Main app:                 http://localhost:${frontend_port}
 Main backend:             http://localhost:${main_backend_port}
 Consul:                   http://localhost:${consul_port}
 Harness:                  http://localhost:${harness_port}
-Harness SSH:              ssh://git@localhost:${harness_ssh_port}
+Harness SSH:              ssh://git@${harness_ssh_host}:${harness_ssh_port}
 User Service:             http://localhost:${user_service_frontend_port}
 Memory Engine:            http://localhost:${memory_engine_frontend_port}
 Task Runner:              http://localhost:${task_runner_frontend_port}
 Project Management:       http://localhost:${project_service_frontend_port}
 Sandbox Manager:          http://localhost:${sandbox_manager_frontend_port}
 Local Connector Service:  http://localhost:${local_connector_service_port}
-DB Connection Hub:        http://localhost:${db_hub_frontend_port}
 Official Website:         http://localhost:${official_website_frontend_port}
 
 Logs:    $0 logs
@@ -142,61 +195,106 @@ EOF
 }
 
 build_local_images() {
-  echo "[INFO] building sandbox runtime image"
-  compose_build_limited --profile image build sandbox-agent-image
-  echo "[INFO] building Chatos cloud service images"
-  local services=(
-    user-service-backend
-    memory-engine-backend
-    project-management-backend
-    local-connector-service-backend
-    sandbox-manager-backend
-    task-runner-backend
-    chatos-backend
-    db-connection-hub-backend
-    official-website-backend
-    chatos-frontend
-    user-service-frontend
-    memory-engine-frontend
-    project-management-frontend
-    task-runner-frontend
-    sandbox-manager-frontend
-    db-connection-hub-frontend
-    official-website-frontend
-  )
+  local services=("$@")
+  if [[ ${#services[@]} -eq 0 ]]; then
+    echo "[INFO] building sandbox runtime image"
+    compose_build_limited --profile image build sandbox-agent-image
+    echo "[INFO] building Chatos cloud service images"
+    services=("${LOCAL_BUILD_SERVICES[@]}")
+  else
+    echo "[INFO] building selected Chatos service images"
+  fi
+
   local service
   for service in "${services[@]}"; do
     echo "[INFO] building image: $service"
-    compose_build_limited build "$service"
+    if [[ "$service" == "sandbox-agent-image" ]]; then
+      compose_build_limited --profile image build "$service"
+    else
+      compose_build_limited build "$service"
+    fi
   done
 }
 
 pull_prebuilt_images() {
-  echo "[INFO] pulling prebuilt Chatos cloud images"
-  compose --profile image pull
+  if [[ $# -gt 0 ]]; then
+    echo "[INFO] pulling selected prebuilt Chatos images"
+    compose --profile image pull "$@"
+  else
+    echo "[INFO] pulling prebuilt Chatos cloud images"
+    compose --profile image pull
+  fi
+}
+
+clean_dangling_images() {
+  echo "[INFO] removing dangling Docker images (<none>:<none>)"
+  docker image prune -f
+}
+
+clean_dangling_images_if_enabled() {
+  if ! env_flag_enabled CHATOS_DOCKER_PRUNE_DANGLING_IMAGES true; then
+    return 0
+  fi
+  if [[ -z "$(docker image ls -q --filter dangling=true)" ]]; then
+    return 0
+  fi
+  clean_dangling_images
 }
 
 start_from_prebuilt_images() {
-  pull_prebuilt_images
+  pull_prebuilt_images "$@"
   echo "[INFO] starting Chatos cloud services from prebuilt images"
-  compose up -d --no-build --remove-orphans
+  compose up -d --no-build --remove-orphans "$@"
+  clean_dangling_images_if_enabled
   print_urls
 }
 
 start_from_local_build() {
-  build_local_images
+  build_local_images "$@"
   echo "[INFO] starting Chatos cloud services from local build"
-  compose_build up -d --no-build --remove-orphans
+  compose_build up -d --no-build --remove-orphans "$@"
+  clean_dangling_images_if_enabled
+  print_urls
+}
+
+start_without_refresh() {
+  echo "[INFO] starting Chatos cloud services without pulling or building images"
+  compose up -d --no-build --pull never --remove-orphans "$@"
+  print_urls
+}
+
+restart_without_refresh() {
+  if [[ $# -gt 0 ]]; then
+    echo "[INFO] recreating selected Chatos services without pulling or building images"
+    compose up -d --no-build --pull never --no-deps --force-recreate "$@"
+    print_urls
+  else
+    compose down --remove-orphans
+    start_without_refresh
+  fi
+}
+
+rebuild_services() {
+  local services=("$@")
+  build_local_images "${services[@]}"
+  if [[ ${#services[@]} -eq 0 ]]; then
+    echo "[INFO] starting Chatos cloud services from rebuilt local images"
+    compose_build up -d --no-build --remove-orphans
+  else
+    echo "[INFO] recreating selected Chatos services from rebuilt local images"
+    compose_build up -d --no-build --pull never --no-deps --force-recreate "${services[@]}"
+  fi
+  clean_dangling_images_if_enabled
   print_urls
 }
 
 start_default() {
   case "${CHATOS_DOCKER_MODE:-prebuilt}" in
     build|local|dev)
-      start_from_local_build
+      start_from_local_build "$@"
       ;;
     prebuilt|pull|image|images)
-      start_from_prebuilt_images
+      start_from_prebuilt_images "$@"
       ;;
     *)
       echo "[ERROR] unsupported CHATOS_DOCKER_MODE=${CHATOS_DOCKER_MODE}" >&2
@@ -211,21 +309,39 @@ cd "$ROOT_DIR"
 
 case "$ACTION" in
   up|start)
-    start_default
+    shift || true
+    start_default "$@"
     ;;
   restart)
+    shift || true
     compose down --remove-orphans
-    start_default
+    start_default "$@"
+    ;;
+  fast|quick|up-fast|up-quick)
+    shift || true
+    start_without_refresh "$@"
+    ;;
+  restart-fast|restart-quick)
+    shift || true
+    restart_without_refresh "$@"
     ;;
   dev|local|build-up)
-    start_from_local_build
+    shift || true
+    start_from_local_build "$@"
     ;;
   restart-dev|restart-local)
+    shift || true
     compose down --remove-orphans
-    start_from_local_build
+    start_from_local_build "$@"
+    ;;
+  rebuild)
+    shift || true
+    rebuild_services "$@"
     ;;
   build)
-    build_local_images
+    shift || true
+    build_local_images "$@"
+    clean_dangling_images_if_enabled
     ;;
   down|stop)
     compose down --remove-orphans
@@ -241,12 +357,26 @@ case "$ACTION" in
     compose ps
     ;;
   pull)
-    pull_prebuilt_images
+    shift || true
+    pull_prebuilt_images "$@"
+    ;;
+  clean-images|prune-images)
+    clean_dangling_images
+    ;;
+  services)
+    compose_build config --services
+    ;;
+  build-services)
+    print_build_services
     ;;
   *)
-    echo "Usage: $0 [up|restart|dev|restart-dev|build|down|reset|logs|ps|pull]" >&2
-    echo "  up/restart use CHATOS_DOCKER_MODE=prebuilt by default." >&2
-    echo "  set CHATOS_DOCKER_MODE=build or use dev/restart-dev for local image builds." >&2
+    echo "Usage: $0 [up|fast|restart|restart-fast|dev|restart-dev|rebuild|build|down|reset|logs|ps|pull|clean-images|services|build-services] [service...]" >&2
+    echo "  up/restart pull prebuilt images by default." >&2
+    echo "  fast/restart-fast reuse existing images and skip pull/build." >&2
+    echo "  dev/restart-dev build local images; rebuild builds only the given build-service names." >&2
+    echo "  clean-images removes dangling <none>:<none> images." >&2
+    echo "  service names can be listed with: $0 services" >&2
+    echo "  buildable service names can be listed with: $0 build-services" >&2
     exit 2
     ;;
 esac

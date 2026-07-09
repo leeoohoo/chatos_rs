@@ -11,6 +11,7 @@ import type {
   CreateRequirementPayload,
   DependencyGraphNode,
   ProjectProfileRecord,
+  ProjectRuntimeEnvironmentResponse,
   ProjectWorkItemRecord,
   RequirementRecord,
   UpsertProjectProfilePayload,
@@ -83,6 +84,11 @@ export function ProjectDetailPage() {
   const graphQuery = useQuery({
     queryKey: ['project-graph', projectId, showArchived],
     queryFn: () => api.getProjectDependencyGraph(projectId!, { include_archived: showArchived }),
+    enabled: Boolean(projectId),
+  });
+  const runtimeEnvironmentQuery = useQuery({
+    queryKey: ['project-runtime-environment', projectId],
+    queryFn: () => api.getProjectRuntimeEnvironment(projectId!),
     enabled: Boolean(projectId),
   });
   const requirementDepsQuery = useQuery({
@@ -233,6 +239,10 @@ export function ProjectDetailPage() {
     queryClient.invalidateQueries({ queryKey: ['project-graph', projectId] });
   };
 
+  const setRuntimeEnvironmentCache = (data: ProjectRuntimeEnvironmentResponse) => {
+    queryClient.setQueryData(['project-runtime-environment', projectId], data);
+  };
+
   const profileMutation = useMutation({
     mutationFn: (payload: UpsertProjectProfilePayload) =>
       api.upsertProjectProfile(projectId!, payload),
@@ -305,6 +315,30 @@ export function ProjectDetailPage() {
     onError: (error) => messageApi.error((error as Error).message),
   });
 
+  const updateRuntimeEnvironmentSettingsMutation = useMutation({
+    mutationFn: (sandboxEnabled: boolean) =>
+      api.updateProjectRuntimeEnvironmentSettings(projectId!, {
+        sandbox_enabled: sandboxEnabled,
+      }),
+    onSuccess: (data, sandboxEnabled) => {
+      messageApi.success(sandboxEnabled ? '已启用项目沙箱初始化' : '已停用项目沙箱初始化');
+      setRuntimeEnvironmentCache(data);
+    },
+    onError: (error) => messageApi.error((error as Error).message),
+  });
+
+  const analyzeRuntimeEnvironmentMutation = useMutation({
+    mutationFn: () => api.analyzeProjectRuntimeEnvironment(projectId!),
+    onSuccess: (data) => {
+      messageApi.success('运行环境初始化已完成');
+      setRuntimeEnvironmentCache(data);
+    },
+    onError: (error) => {
+      messageApi.error((error as Error).message);
+      runtimeEnvironmentQuery.refetch();
+    },
+  });
+
   const { requirementColumns, workItemColumns } = buildProjectDetailColumns({
     requirements,
     taskRunnerModelLabelMap,
@@ -337,6 +371,7 @@ export function ProjectDetailPage() {
           requirementsQuery.refetch();
           workItemsQuery.refetch();
           graphQuery.refetch();
+          runtimeEnvironmentQuery.refetch();
         }}
         profileForm={profileForm}
         profileBackground={profileBackground}
@@ -360,6 +395,20 @@ export function ProjectDetailPage() {
         graphLoading={graphQuery.isLoading}
         blockingRelations={blockingRelations}
         containsRelations={containsRelations}
+        runtimeEnvironment={runtimeEnvironmentQuery.data}
+        runtimeEnvironmentLoading={runtimeEnvironmentQuery.isLoading}
+        runtimeEnvironmentErrorMessage={
+          runtimeEnvironmentQuery.isError
+            ? (runtimeEnvironmentQuery.error as Error).message
+            : undefined
+        }
+        runtimeEnvironmentAnalyzing={analyzeRuntimeEnvironmentMutation.isPending}
+        runtimeEnvironmentSettingsSaving={updateRuntimeEnvironmentSettingsMutation.isPending}
+        onRefreshRuntimeEnvironment={() => runtimeEnvironmentQuery.refetch()}
+        onAnalyzeRuntimeEnvironment={() => analyzeRuntimeEnvironmentMutation.mutate()}
+        onRuntimeSandboxEnabledChange={(value) =>
+          updateRuntimeEnvironmentSettingsMutation.mutate(value)
+        }
       />
       <ProjectDetailOverlays
         requirementModalOpen={requirementModalOpen}

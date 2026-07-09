@@ -30,6 +30,10 @@ pub fn build_router(state: AppState) -> Router {
             post(handlers::initialize_sandbox_image),
         )
         .route(
+            "/api/sandbox-images/mcp",
+            post(handlers::sandbox_image_mcp_entrypoint),
+        )
+        .route(
             "/api/access-clients",
             get(handlers::list_access_clients).post(handlers::create_access_client),
         )

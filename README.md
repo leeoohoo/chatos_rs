@@ -16,8 +16,8 @@ Install guide: [INSTALL_GUIDE.zh-CN.md](./INSTALL_GUIDE.zh-CN.md)
 - `sandbox_manager_service/`: Docker-backed sandbox manager
 - `local_connector_service/`: cloud relay service for local connector clients
 - `local_connector_client/`: host-side connector client, still run outside Docker
-- `db_connection_hub/`: database connection hub
 - `official_website_service/`: public website service
+- `docs/db_connection_hub/`: archived database connection hub prototype, not started by default
 
 ## Docker Quick Start
 
@@ -35,17 +35,47 @@ docker/deploy.sh up
 docker/deploy.sh dev
 ```
 
+For faster repeated redeploys, skip pulling and reuse the images already present locally:
+
+```bash
+docker/deploy.sh fast
+```
+
+When only one or two services changed, rebuild and recreate just those Compose services:
+
+```bash
+docker/deploy.sh rebuild task-runner-backend
+docker/deploy.sh rebuild chatos-backend chatos-frontend
+docker/deploy.sh build-services  # list rebuildable service names
+```
+
+After a successful image update, the deploy script prunes dangling `<none>:<none>` images by default. Set `CHATOS_DOCKER_PRUNE_DANGLING_IMAGES=false` in `docker/.env` to disable that.
+
 Equivalent Make target:
 
 ```bash
 make docker-up
+make docker-fast
 ```
 
 For local source builds:
 
 ```bash
 make dev
+make docker-rebuild SERVICES="task-runner-backend"
 ```
+
+## Local Fast Testing
+
+Use the host-side dev stack when Docker image rebuilds are too slow. It keeps infrastructure such as MongoDB/Harness in Docker, then runs Chatos service backends with `cargo run` and frontends with Vite:
+
+```bash
+make local-dev
+make local-dev-status
+make local-dev-stop
+```
+
+DB Connection Hub is archived under `docs/db_connection_hub/` and is not started by the Docker stack or the local dev stack.
 
 Useful commands:
 
@@ -53,6 +83,9 @@ Useful commands:
 docker/deploy.sh ps
 docker/deploy.sh logs
 docker/deploy.sh restart
+docker/deploy.sh fast
+docker/deploy.sh rebuild task-runner-backend
+docker/deploy.sh clean-images  # manually remove dangling images
 docker/deploy.sh down
 docker/deploy.sh reset
 ```
@@ -68,7 +101,6 @@ Default URLs:
 - Project Management: `http://localhost:39211`
 - Sandbox Manager: `http://localhost:8096`
 - Local Connector Service: `http://localhost:39230`
-- DB Connection Hub: `http://localhost:5174`
 - Official Website: `http://localhost:39251`
 
 ## Local Connector Client

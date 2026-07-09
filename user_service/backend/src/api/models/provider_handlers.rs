@@ -62,11 +62,11 @@ pub(in crate::api) async fn create_model_provider(
         return Err(bad_request("name is required"));
     };
     let provider = normalize_provider_input(input.provider)?;
-    let api_key = normalize_api_key_input(input.api_key)?;
-    if api_key.is_none() {
-        return Err(bad_request("api_key is required"));
-    }
-    let base_url = normalize_optional_string(input.base_url);
+    let api_key_present = normalize_api_key_input(input.api_key)?
+        .as_deref()
+        .map(str::trim)
+        .is_some_and(|value| !value.is_empty());
+    let base_url: Option<String> = None;
     let now = now_rfc3339();
     let id = input.id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
     let existing = state
@@ -79,8 +79,8 @@ pub(in crate::api) async fn create_model_provider(
         owner_user_id,
         name,
         provider,
-        api_key,
-        has_api_key: false,
+        api_key: None,
+        has_api_key: input.has_api_key.unwrap_or(api_key_present),
         base_url,
         enabled: input.enabled.unwrap_or(true),
         supports_images: input.supports_images.unwrap_or(false),

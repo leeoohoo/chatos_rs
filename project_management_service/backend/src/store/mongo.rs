@@ -12,12 +12,15 @@ use crate::models::*;
 
 mod projects;
 mod requirements;
+mod runtime_environment;
 mod work_items;
 
 #[derive(Clone)]
 pub struct MongoStore {
     projects: Collection<ProjectRecord>,
     project_profiles: Collection<ProjectProfileRecord>,
+    runtime_environments: Collection<ProjectRuntimeEnvironmentRecord>,
+    runtime_environment_images: Collection<ProjectRuntimeEnvironmentImageRecord>,
     requirements: Collection<RequirementRecord>,
     requirement_dependencies: Collection<RequirementDependencyRecord>,
     requirement_documents: Collection<RequirementDocumentRecord>,
@@ -37,6 +40,8 @@ impl MongoStore {
         let store = Self {
             projects: database.collection("projects"),
             project_profiles: database.collection("project_profiles"),
+            runtime_environments: database.collection("project_runtime_environments"),
+            runtime_environment_images: database.collection("project_runtime_environment_images"),
             requirements: database.collection("requirements"),
             requirement_dependencies: database.collection("requirement_dependencies"),
             requirement_documents: database.collection("requirement_documents"),
@@ -55,6 +60,19 @@ impl MongoStore {
         ensure_index(&self.projects, doc! { "updated_at": -1 }, false).await?;
 
         ensure_index(&self.project_profiles, doc! { "project_id": 1 }, true).await?;
+        ensure_index(&self.runtime_environments, doc! { "project_id": 1 }, true).await?;
+        ensure_index(
+            &self.runtime_environment_images,
+            doc! { "project_id": 1, "environment_key": 1 },
+            true,
+        )
+        .await?;
+        ensure_index(
+            &self.runtime_environment_images,
+            doc! { "project_id": 1 },
+            false,
+        )
+        .await?;
 
         ensure_index(&self.requirements, doc! { "id": 1 }, true).await?;
         ensure_index(&self.requirements, doc! { "project_id": 1 }, false).await?;

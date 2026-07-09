@@ -11,7 +11,6 @@ import {
   DirectoryPickerPathDisplay,
 } from '../ui/DirectoryPickerShared';
 import type { FsEntry } from '../../types';
-import type { DirPickerTarget } from './helpers';
 
 interface KeyFilePickerDialogProps {
   isOpen: boolean;
@@ -131,7 +130,6 @@ export const KeyFilePickerDialog: React.FC<KeyFilePickerDialogProps> = ({
 
 interface DirPickerDialogProps {
   isOpen: boolean;
-  target: DirPickerTarget;
   currentPath: string | null;
   parentPath: string | null;
   writable: boolean;
@@ -155,7 +153,6 @@ interface DirPickerDialogProps {
 
 export const DirPickerDialog: React.FC<DirPickerDialogProps> = ({
   isOpen,
-  target,
   currentPath,
   parentPath,
   writable,
@@ -183,8 +180,7 @@ export const DirPickerDialog: React.FC<DirPickerDialogProps> = ({
     return null;
   }
 
-  const canCreate = target === 'project';
-  const canCreateHere = canCreate && writable;
+  const canCreateHere = writable;
 
   return (
     <div className="fixed inset-0 z-[80] flex items-center justify-center">
@@ -192,9 +188,7 @@ export const DirPickerDialog: React.FC<DirPickerDialogProps> = ({
       <div className="relative bg-card border border-border rounded-lg shadow-xl w-[640px] max-h-[80vh] p-6 flex flex-col">
         <div className="flex items-center justify-between mb-3">
           <h3 className="text-lg font-semibold text-foreground">
-            {target === 'terminal'
-              ? t('sessionList.resource.terminalDirectory')
-              : t('sessionList.resource.projectDirectory')}
+            {t('sessionList.resource.projectDirectory')}
           </h3>
           <button onClick={onClose} className="p-2 text-muted-foreground hover:text-foreground hover:bg-accent rounded-lg transition-colors">
             <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor">
@@ -208,7 +202,7 @@ export const DirPickerDialog: React.FC<DirPickerDialogProps> = ({
           label={t('sessionList.picker.currentPathLabel')}
           formatPath={formatPath}
         />
-        {canCreate && currentPath && !writable && (
+        {currentPath && !writable && (
           <div className="mt-2 text-xs text-amber-600">{t('sessionList.picker.readonlyDirectory')}</div>
         )}
         <div className="mt-3 flex items-center gap-2">
@@ -227,25 +221,21 @@ export const DirPickerDialog: React.FC<DirPickerDialogProps> = ({
           >
             {t('sessionList.picker.selectCurrentDirectory')}
           </button>
-          {canCreate && (
-            <button
-              type="button"
-              onClick={onOpenCreateModal}
-              disabled={!currentPath || !canCreateHere || creatingFolder}
-              className="px-3 py-1.5 rounded bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed"
+          <button
+            type="button"
+            onClick={onOpenCreateModal}
+            disabled={!currentPath || !canCreateHere || creatingFolder}
+            className="px-3 py-1.5 rounded bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed"
           >
-              {creatingFolder ? t('sessionList.picker.creatingDirectory') : t('sessionList.picker.createDirectory')}
-            </button>
-          )}
-          {canCreate && (
-            <button
-              type="button"
-              onClick={onToggleHiddenDirs}
-              className="px-3 py-1.5 rounded bg-muted text-muted-foreground hover:bg-accent"
+            {creatingFolder ? t('sessionList.picker.creatingDirectory') : t('sessionList.picker.createDirectory')}
+          </button>
+          <button
+            type="button"
+            onClick={onToggleHiddenDirs}
+            className="px-3 py-1.5 rounded bg-muted text-muted-foreground hover:bg-accent"
           >
-              {showHiddenDirs ? t('sessionList.picker.hideHiddenDirs') : t('sessionList.picker.showHiddenDirs')}
-            </button>
-          )}
+            {showHiddenDirs ? t('sessionList.picker.hideHiddenDirs') : t('sessionList.picker.showHiddenDirs')}
+          </button>
         </div>
         <DirectoryPickerEntryList
           loading={loading}

@@ -62,8 +62,6 @@ BUDGETS=(
   "chatos/backend/src/services/code_nav/languages/go/mod.rs:520"
   "chatos/backend/src/services/code_nav/languages/python/mod.rs:520"
   "chatos/backend/src/core/chat_runtime.rs:300"
-  "db_connection_hub/backend/src/drivers/sqlserver/metadata/detail.rs:720"
-  "db_connection_hub/frontend/src/App.tsx:440"
 )
 
 PLANNED_BUDGETS=(

@@ -75,7 +75,7 @@ impl AppConfig {
             std::env::var("TASK_RUNNER_MAX_MODEL_REQUEST_ROUNDS")
                 .ok()
                 .and_then(|value| value.parse::<usize>().ok())
-                .unwrap_or(25)
+                .unwrap_or(600)
                 .max(1);
         let default_tool_result_model_max_chars = env_usize(
             TOOL_RESULT_MODEL_MAX_CHARS_ENV,

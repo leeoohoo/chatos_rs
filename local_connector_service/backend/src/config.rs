@@ -15,6 +15,9 @@ pub struct AppConfig {
     pub relay_request_timeout: Duration,
     pub public_base_url: Option<String>,
     pub internal_api_secret: Option<String>,
+    pub memory_engine_base_url: String,
+    pub memory_engine_operator_token: Option<String>,
+    pub memory_engine_request_timeout: Duration,
 }
 
 impl AppConfig {
@@ -39,6 +42,12 @@ impl AppConfig {
             .and_then(|value| value.parse::<u64>().ok())
             .unwrap_or(30_000)
             .max(1_000);
+        let memory_timeout_ms = std::env::var("LOCAL_CONNECTOR_MEMORY_ENGINE_REQUEST_TIMEOUT_MS")
+            .ok()
+            .or_else(|| std::env::var("MEMORY_ENGINE_REQUEST_TIMEOUT_MS").ok())
+            .and_then(|value| value.parse::<u64>().ok())
+            .unwrap_or(30_000)
+            .max(1_000);
 
         Ok(Self {
             host,
@@ -54,8 +63,20 @@ impl AppConfig {
             public_base_url: normalized_env("LOCAL_CONNECTOR_PUBLIC_BASE_URL"),
             internal_api_secret: normalized_env("LOCAL_CONNECTOR_INTERNAL_API_SECRET")
                 .or_else(|| normalized_env("CHATOS_LOCAL_CONNECTOR_INTERNAL_API_SECRET"))
+                .or_else(|| normalized_env("MEMORY_ENGINE_LOCAL_CONNECTOR_INTERNAL_API_SECRET"))
+                .or_else(|| normalized_env("PROJECT_SERVICE_LOCAL_CONNECTOR_INTERNAL_API_SECRET"))
                 .or_else(|| normalized_env("TASK_RUNNER_LOCAL_CONNECTOR_INTERNAL_API_SECRET"))
                 .or_else(|| normalized_env("TASK_RUNNER_INTERNAL_API_SECRET")),
+            memory_engine_base_url: normalize_memory_engine_base_url(
+                normalized_env("LOCAL_CONNECTOR_MEMORY_ENGINE_BASE_URL")
+                    .or_else(|| normalized_env("MEMORY_ENGINE_BASE_URL"))
+                    .unwrap_or_else(default_memory_engine_base_url),
+            ),
+            memory_engine_operator_token: normalized_env(
+                "LOCAL_CONNECTOR_MEMORY_ENGINE_OPERATOR_TOKEN",
+            )
+            .or_else(|| normalized_env("MEMORY_ENGINE_OPERATOR_TOKEN")),
+            memory_engine_request_timeout: Duration::from_millis(memory_timeout_ms),
         })
     }
 
@@ -107,7 +128,7 @@ pub(crate) fn normalized_env(key: &str) -> Option<String> {
 }
 
 fn default_database_url() -> String {
-    "sqlite://local_connector_service/data/local_connector.db".to_string()
+    "mongodb://admin:admin@127.0.0.1:27018/local_connector_service?authSource=admin".to_string()
 }
 
 fn default_user_service_base_url() -> String {
@@ -121,4 +142,28 @@ fn default_user_service_base_url() -> String {
         .and_then(|value| value.parse::<u16>().ok())
         .unwrap_or(39190);
     format!("http://{host}:{port}")
+}
+
+fn default_memory_engine_base_url() -> String {
+    let host = normalized_env("MEMORY_ENGINE_HOST")
+        .map(|value| match value.as_str() {
+            "0.0.0.0" | "::" | "[::]" => "127.0.0.1".to_string(),
+            _ => value,
+        })
+        .unwrap_or_else(|| "127.0.0.1".to_string());
+    let port = normalized_env("MEMORY_ENGINE_PORT")
+        .and_then(|value| value.parse::<u16>().ok())
+        .unwrap_or(7081);
+    format!("http://{host}:{port}/api/memory-engine/v1")
+}
+
+fn normalize_memory_engine_base_url(mut base_url: String) -> String {
+    while base_url.ends_with('/') {
+        base_url.pop();
+    }
+    if base_url.ends_with("/api/memory-engine/v1") || base_url.contains("/api/memory-engine/") {
+        base_url
+    } else {
+        format!("{base_url}/api/memory-engine/v1")
+    }
 }

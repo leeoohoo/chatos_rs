@@ -82,6 +82,8 @@ export interface AiModelSettings {
   user_id: string;
   memory_summary_model_config_id?: string | null;
   memory_summary_thinking_level?: string | null;
+  project_management_agent_model_config_id?: string | null;
+  project_management_agent_thinking_level?: string | null;
   updated_at?: string;
   sync_warnings?: string[];
 }

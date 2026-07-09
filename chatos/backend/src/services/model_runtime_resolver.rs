@@ -1,7 +1,11 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
+use chatos_service_runtime::{
+    resolve_local_connector_model_runtime, LocalConnectorModelRuntimeLookup,
+};
 use serde_json::{json, Value};
+use std::time::Duration;
 
 use crate::config::Config;
 use crate::core::ai_model_config::{resolve_chat_model_config, ResolvedChatModelConfig};
@@ -72,7 +76,7 @@ async fn get_user_service_model_config_by_id(
         base_url.as_str(),
         access_token.as_str(),
         model_id,
-        true,
+        false,
         cfg.user_service_request_timeout_ms,
     )
     .await?;
@@ -151,6 +155,52 @@ fn ensure_profile_api_key_is_usable(profile: &AiModelConfig) -> Result<(), Strin
         ));
     }
     Ok(())
+}
+
+fn local_connector_internal_secret() -> Result<String, String> {
+    std::env::var("CHATOS_LOCAL_CONNECTOR_INTERNAL_API_SECRET")
+        .ok()
+        .or_else(|| std::env::var("LOCAL_CONNECTOR_INTERNAL_API_SECRET").ok())
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| {
+            "CHATOS_LOCAL_CONNECTOR_INTERNAL_API_SECRET is required to resolve local model runtime"
+                .to_string()
+        })
+}
+
+async fn resolve_runtime_via_local_connector(
+    cfg: &Config,
+    profile: &AiModelConfig,
+    user_id: &str,
+) -> Result<Value, String> {
+    let user_id = user_id.trim();
+    if user_id.is_empty() {
+        return Err("owner user id is required for local model runtime lookup".to_string());
+    }
+    let secret = local_connector_internal_secret()?;
+    let runtime = resolve_local_connector_model_runtime(LocalConnectorModelRuntimeLookup {
+        base_url: cfg.local_connector_service_base_url.as_str(),
+        request_timeout: Duration::from_millis(
+            cfg.local_connector_service_request_timeout_ms.max(300) as u64,
+        ),
+        internal_secret: secret.as_str(),
+        owner_user_id: user_id,
+        model_config_id: profile.id.as_str(),
+    })
+    .await
+    .map_err(|err| err.to_string())?;
+    Ok(json!({
+        "provider": runtime.provider,
+        "model_name": runtime.model,
+        "temperature": runtime.temperature.unwrap_or(0.7),
+        "thinking_level": runtime.thinking_level.or_else(|| profile.thinking_level.clone()),
+        "api_key": runtime.api_key,
+        "base_url": runtime.base_url,
+        "supports_images": runtime.supports_images,
+        "supports_reasoning": runtime.supports_reasoning,
+        "supports_responses": runtime.supports_responses,
+    }))
 }
 
 fn merge_safe_request_overrides(base: &mut Value, request_model_cfg: &Value) {
@@ -246,9 +296,18 @@ pub async fn resolve_model_runtime_for_request(
     } else {
         load_default_profile(cfg, user_id).await?
     };
-    ensure_profile_api_key_is_usable(&profile)?;
 
-    let mut model_cfg = runtime_value_from_engine_profile(&profile);
+    let mut model_cfg = if configured_user_service_base_url(cfg).is_some() {
+        if let Some(user_id) = user_id {
+            resolve_runtime_via_local_connector(cfg, &profile, user_id).await?
+        } else {
+            ensure_profile_api_key_is_usable(&profile)?;
+            runtime_value_from_engine_profile(&profile)
+        }
+    } else {
+        ensure_profile_api_key_is_usable(&profile)?;
+        runtime_value_from_engine_profile(&profile)
+    };
     if let Some(request_model_cfg) = request_model_cfg {
         merge_safe_request_overrides(&mut model_cfg, request_model_cfg);
     }

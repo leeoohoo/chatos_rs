@@ -172,8 +172,8 @@ pub async fn create_model_profile(
         name,
         provider,
         model,
-        base_url,
-        api_key,
+        base_url: base_url.unwrap_or(None),
+        api_key: api_key.unwrap_or(None),
         supports_images: supports_images.unwrap_or(false),
         supports_reasoning: supports_reasoning.unwrap_or(false),
         supports_responses: supports_responses.unwrap_or(false),
@@ -215,8 +215,8 @@ pub async fn update_model_profile(
         name: req.name,
         provider: req.provider,
         model: req.model,
-        base_url: req.base_url.or(existing.base_url),
-        api_key: req.api_key.or(existing.api_key),
+        base_url: req.base_url.unwrap_or(existing.base_url),
+        api_key: req.api_key.unwrap_or(existing.api_key),
         supports_images: req.supports_images.unwrap_or(existing.supports_images),
         supports_reasoning: req
             .supports_reasoning

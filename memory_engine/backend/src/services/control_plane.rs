@@ -10,6 +10,8 @@ use crate::models::{EngineJobPolicy, EngineModelProfile};
 use crate::repositories::control_plane;
 use crate::services::summary::RollupSettings;
 
+use super::model_runtime_resolver::resolve_model_runtime_for_profile;
+
 pub async fn get_effective_model_profile_for_job(
     db: &Db,
     job_type: &str,
@@ -47,7 +49,16 @@ pub async fn build_ai_client_for_job(
     owner_user_id: Option<&str>,
 ) -> Result<AiClient, String> {
     let profile = get_effective_model_profile_for_job(db, job_type, owner_user_id).await?;
-    Ok(AiClient::new_with_profile(config, profile.as_ref())?)
+    let runtime_profile = match profile.as_ref() {
+        Some(profile) => {
+            Some(resolve_model_runtime_for_profile(config, profile, owner_user_id).await?)
+        }
+        None => None,
+    };
+    Ok(AiClient::new_with_profile(
+        config,
+        runtime_profile.as_ref(),
+    )?)
 }
 
 pub fn build_rollup_settings_from_policy(policy: &EngineJobPolicy) -> RollupSettings {

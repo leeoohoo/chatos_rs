@@ -192,6 +192,8 @@ pub struct CreateProjectRequest {
     pub git_url: Option<String>,
     pub description: Option<String>,
     #[serde(default)]
+    pub sandbox_enabled: Option<bool>,
+    #[serde(default)]
     pub source_type: Option<ProjectSourceType>,
     #[serde(default)]
     pub cloud_import_source: Option<CloudImportSource>,
@@ -211,6 +213,8 @@ pub struct ImportProjectRequest {
     pub root_path: Option<String>,
     pub git_url: Option<String>,
     pub description: Option<String>,
+    #[serde(default)]
+    pub sandbox_enabled: Option<bool>,
     #[serde(default)]
     pub source_type: Option<ProjectSourceType>,
     #[serde(default)]

@@ -15,6 +15,7 @@ async fn agent_created_records_keep_agent_creator_and_real_owner() {
                 root_path: None,
                 git_url: None,
                 description: None,
+                sandbox_enabled: None,
                 source_type: None,
                 cloud_import_source: None,
                 import_status: None,

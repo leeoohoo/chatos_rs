@@ -59,11 +59,19 @@ pub(super) async fn prepare_model_execution(
             task.mcp_config.locale(),
         ));
     }
+    let resolved_model_config =
+        crate::services::model_runtime_resolver::resolve_model_runtime_for_task(
+            &service.config,
+            task,
+            model_config,
+        )
+        .await?;
     let metadata = build_execution_metadata(task, run, model_config, sandbox_context.as_ref());
     let task_process_logging_enabled = task_process_logging_enabled(&task.mcp_config);
     let mut run_spec = build_run_spec(
         task,
         run,
+        &resolved_model_config,
         model_config,
         effective_workspace_dir,
         prompt,
@@ -150,14 +158,15 @@ fn build_execution_metadata(
 fn build_run_spec(
     task: &TaskRecord,
     run: &TaskRunRecord,
-    model_config: &ModelConfigRecord,
+    runtime_model_config: &ModelConfigRecord,
+    metadata_model_config: &ModelConfigRecord,
     _effective_workspace_dir: &str,
     prompt: String,
     metadata: serde_json::Value,
     task_process_logging_enabled: bool,
     external_mcp_prefixed_input_items: Vec<Value>,
 ) -> TaskRunSpec {
-    let mut effective_model_config = model_config.clone();
+    let mut effective_model_config = runtime_model_config.clone();
     effective_model_config.request_cwd = None;
     let model_runtime_config = effective_model_config.to_runtime_config(None);
 
@@ -167,7 +176,7 @@ fn build_run_spec(
         model_runtime_config,
         prompt.clone(),
     )
-    .with_model_config_id(model_config.id.clone())
+    .with_model_config_id(metadata_model_config.id.clone())
     .with_metadata(Some(metadata.clone()))
     .with_record_options(
         RuntimeRecordOptions::persist_all()

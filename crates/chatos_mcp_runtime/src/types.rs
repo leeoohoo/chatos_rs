@@ -3,6 +3,7 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -13,6 +14,8 @@ pub struct McpHttpServer {
     pub url: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub headers: Option<HashMap<String, String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timeout_ms: Option<u64>,
 }
 
 impl McpHttpServer {
@@ -21,12 +24,22 @@ impl McpHttpServer {
             name: name.into(),
             url: url.into(),
             headers: None,
+            timeout_ms: None,
         }
     }
 
     pub fn with_headers(mut self, headers: HashMap<String, String>) -> Self {
         self.headers = Some(headers);
         self
+    }
+
+    pub fn with_timeout(mut self, timeout: Duration) -> Self {
+        self.timeout_ms = Some(timeout.as_millis().min(u128::from(u64::MAX)) as u64);
+        self
+    }
+
+    pub fn timeout_duration(&self) -> Option<Duration> {
+        self.timeout_ms.map(Duration::from_millis)
     }
 }
 
@@ -101,6 +114,7 @@ pub struct ToolInfo {
     pub server_type: String,
     pub server_url: Option<String>,
     pub server_headers: Option<HashMap<String, String>>,
+    pub server_timeout: Option<Duration>,
     pub server_config: Option<McpStdioServer>,
     pub tool_info: Value,
 }

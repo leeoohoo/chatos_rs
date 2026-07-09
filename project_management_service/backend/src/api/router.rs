@@ -31,6 +31,10 @@ use super::requirements::{
     list_requirement_documents, update_requirement, update_requirement_document,
     upsert_requirement_technical_overview,
 };
+use super::runtime_environment::{
+    analyze_project_runtime_environment_handler, get_project_runtime_environment,
+    update_project_runtime_environment_settings,
+};
 use super::sync::{
     sync_get_project, sync_import_project, sync_list_projects, sync_requirement_execution_state,
     sync_task_runner_work_item_status,
@@ -90,6 +94,18 @@ pub fn build_router(state: AppState) -> Router {
             get(get_project_dependency_graph),
         )
         .route("/api/projects/:project_id/plan", get(get_project_plan))
+        .route(
+            "/api/projects/:project_id/runtime-environment",
+            get(get_project_runtime_environment),
+        )
+        .route(
+            "/api/projects/:project_id/runtime-environment/settings",
+            axum::routing::put(update_project_runtime_environment_settings),
+        )
+        .route(
+            "/api/projects/:project_id/runtime-environment/analyze",
+            post(analyze_project_runtime_environment_handler),
+        )
         .route(
             "/api/requirements/:requirement_id",
             get(get_requirement)

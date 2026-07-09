@@ -67,7 +67,7 @@ pub fn get_default_user_settings() -> Result<Value, String> {
     let max_iterations = std::env::var("MAX_ITERATIONS")
         .ok()
         .and_then(|v| v.parse::<i64>().ok())
-        .unwrap_or(25);
+        .unwrap_or(600);
     let task_follow_up_max_rounds = std::env::var("TASK_FOLLOW_UP_MAX_ROUNDS")
         .ok()
         .and_then(|v| v.parse::<i64>().ok())

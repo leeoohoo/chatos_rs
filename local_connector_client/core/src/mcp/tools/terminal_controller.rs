@@ -6,11 +6,16 @@ use std::path::Path;
 use anyhow::{anyhow, Result};
 use serde_json::{json, Value};
 
+use crate::approval::{
+    approval_project_key_from_request, ApprovalDecision, CommandApprovalRequest,
+    CommandApprovalService,
+};
 use crate::history::{
     command_history_entry_from_exec_result, CommandExecutionContext, CommandHistoryRecorder,
 };
 use crate::relay::RelayRequest;
 use crate::terminal::controller::local_terminal_controller_service_for_root;
+use crate::workspace::paths::relative_to_workspace;
 use crate::{
     local_now_rfc3339, LocalState, WorkspaceState, DEFAULT_TERMINAL_EXEC_TIMEOUT_MS,
     MAX_TERMINAL_EXEC_TIMEOUT_MS,
@@ -44,6 +49,51 @@ pub(crate) async fn call_local_terminal_controller_tool(
     } else {
         None
     };
+    if tool_name == "execute_command" {
+        if let Some(command) = execute_command_text(&arguments) {
+            let cwd_label = normalized_path.clone().unwrap_or_else(|| ".".to_string());
+            let project_key = approval_project_key_from_request(
+                state,
+                request,
+                workspace,
+                relative_to_workspace(workspace, project_root.as_path()),
+            );
+            let approval = CommandApprovalService::new(
+                history_recorder.state_path.clone(),
+                history_recorder.state.clone(),
+            )
+            .approve(CommandApprovalRequest {
+                request_id: request.request_id.clone(),
+                project_key,
+                command: command.clone(),
+                args: Vec::new(),
+                cwd: cwd_label.clone(),
+                source: "local_mcp".to_string(),
+            })
+            .await?;
+            if let ApprovalDecision::Denied { reason, .. } = approval {
+                let body = approval_denied_terminal_body(
+                    command.as_str(),
+                    cwd_label.as_str(),
+                    timeout_ms,
+                    reason.as_str(),
+                );
+                history_recorder
+                    .append(command_history_entry_from_exec_result(
+                        state,
+                        request,
+                        &CommandExecutionContext::local_mcp(request, "execute_command"),
+                        command.as_str(),
+                        &[],
+                        cwd_label.as_str(),
+                        local_now_rfc3339(),
+                        &body,
+                    ))
+                    .await;
+                return Ok(mcp_text_result(body));
+            }
+        }
+    }
     let service =
         local_terminal_controller_service_for_root(project_root.as_path(), request, timeout_ms)?;
     let result = service
@@ -101,4 +151,46 @@ pub(crate) async fn call_local_terminal_controller_tool(
         ))
         .await;
     Ok(result)
+}
+
+fn execute_command_text(arguments: &Value) -> Option<String> {
+    arguments
+        .get("common")
+        .and_then(Value::as_str)
+        .or_else(|| arguments.get("command").and_then(Value::as_str))
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+}
+
+fn approval_denied_terminal_body(
+    command: &str,
+    cwd_label: &str,
+    timeout_ms: u64,
+    reason: &str,
+) -> Value {
+    json!({
+        "command": command,
+        "args": [],
+        "cwd": cwd_label,
+        "success": false,
+        "exit_code": Option::<i32>::None,
+        "timed_out": false,
+        "timeout_ms": timeout_ms,
+        "stdout": "",
+        "stderr": "",
+        "error": reason,
+        "approval_decision": "denied",
+        "approval_reason": reason,
+    })
+}
+
+fn mcp_text_result(payload: Value) -> Value {
+    let text = serde_json::to_string_pretty(&payload).unwrap_or_else(|_| "{}".to_string());
+    json!({
+        "content": [
+            { "type": "text", "text": text }
+        ],
+        "_structured_result": payload
+    })
 }

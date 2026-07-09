@@ -53,9 +53,6 @@ struct AiModelConfigRequest {
     thinking_level: Option<String>,
     task_usage_scenario: Option<String>,
     task_thinking_level: Option<String>,
-    api_key: Option<String>,
-    clear_api_key: Option<bool>,
-    base_url: Option<String>,
     enabled: Option<bool>,
     supports_images: Option<bool>,
     supports_reasoning: Option<bool>,
@@ -65,8 +62,10 @@ struct AiModelConfigRequest {
 #[derive(Debug, Deserialize, Clone)]
 struct AiModelSettingsRequest {
     user_id: Option<String>,
-    memory_summary_model_config_id: Option<String>,
-    memory_summary_thinking_level: Option<String>,
+    memory_summary_model_config_id: Option<Option<String>>,
+    memory_summary_thinking_level: Option<Option<String>>,
+    project_management_agent_model_config_id: Option<Option<String>>,
+    project_management_agent_thinking_level: Option<Option<String>>,
 }
 
 #[derive(Debug, Deserialize)]

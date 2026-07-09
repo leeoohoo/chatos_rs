@@ -19,7 +19,6 @@ import { TaskRunnerConfigModal } from './TaskRunnerConfigModal';
 import type { RemoteConnection } from '../../types';
 import type { ContactItem } from './types';
 import type {
-  DirPickerTarget,
   HostKeyPolicy,
   JumpHostMode,
   KeyFilePickerTarget,
@@ -79,17 +78,9 @@ interface SessionListDialogsProps {
   handleCreateProject: () => Promise<void> | void;
 
   terminalModalOpen: boolean;
-  terminalRoot: string;
   terminalError: string | null;
-  terminalSourceMode: ResourceSourceMode;
-  terminalCommand: string;
-  terminalArgs: string;
-  terminalOutput: string | null;
   terminalExecuting: boolean;
   setTerminalModalOpen: (value: boolean) => void;
-  setTerminalSourceMode: (value: ResourceSourceMode) => void;
-  setTerminalRoot: (value: string) => void;
-  openDirPickerForTerminal: () => void;
   handleCreateTerminal: () => Promise<void> | void;
 
   remoteModalOpen: boolean;
@@ -161,7 +152,6 @@ interface SessionListDialogsProps {
   applySelectedKeyFile: (path: string) => void;
 
   dirPickerOpen: boolean;
-  dirPickerTarget: DirPickerTarget;
   dirPickerPath: string | null;
   dirPickerParent: string | null;
   dirPickerWritable: boolean;
@@ -230,17 +220,9 @@ export const SessionListDialogs: React.FC<SessionListDialogsProps> = ({
   createLocalConnectorDirectory,
   handleCreateProject,
   terminalModalOpen,
-  terminalRoot,
   terminalError,
-  terminalSourceMode,
-  terminalCommand,
-  terminalArgs,
-  terminalOutput,
   terminalExecuting,
   setTerminalModalOpen,
-  setTerminalSourceMode,
-  setTerminalRoot,
-  openDirPickerForTerminal,
   handleCreateTerminal,
   remoteModalOpen,
   editingRemoteConnectionId,
@@ -309,7 +291,6 @@ export const SessionListDialogs: React.FC<SessionListDialogsProps> = ({
   loadKeyFileEntries,
   applySelectedKeyFile,
   dirPickerOpen,
-  dirPickerTarget,
   dirPickerPath,
   dirPickerParent,
   dirPickerWritable,
@@ -422,9 +403,7 @@ export const SessionListDialogs: React.FC<SessionListDialogsProps> = ({
 
     <CreateTerminalModal
       isOpen={terminalModalOpen}
-      terminalRoot={terminalRoot}
       terminalError={terminalError}
-      sourceMode={terminalSourceMode}
       localConnectorWorkspaces={localConnectorWorkspaces}
       localConnectorLoading={localConnectorLoading}
       localConnectorError={localConnectorError}
@@ -435,14 +414,8 @@ export const SessionListDialogs: React.FC<SessionListDialogsProps> = ({
       localConnectorDirectoryError={localConnectorDirectoryError}
       selectedLocalDirectoryPath={selectedLocalConnectorDirectoryPath}
       selectedLocalWorkspaceId={selectedLocalConnectorWorkspaceId}
-      terminalCommand={terminalCommand}
-      terminalArgs={terminalArgs}
-      terminalOutput={terminalOutput}
       terminalExecuting={terminalExecuting}
       onClose={() => setTerminalModalOpen(false)}
-      onSourceModeChange={setTerminalSourceMode}
-      onTerminalRootChange={setTerminalRoot}
-      onOpenPicker={openDirPickerForTerminal}
       onRefreshLocalConnector={refreshLocalConnectorWorkspaces}
       onSelectedLocalWorkspaceChange={setSelectedLocalConnectorWorkspaceId}
       onBrowseLocalConnectorDirectory={browseLocalConnectorDirectory}
@@ -536,7 +509,6 @@ export const SessionListDialogs: React.FC<SessionListDialogsProps> = ({
 
     <DirPickerDialog
       isOpen={dirPickerOpen}
-      target={dirPickerTarget}
       currentPath={dirPickerPath || ''}
       parentPath={dirPickerParent}
       writable={dirPickerWritable}

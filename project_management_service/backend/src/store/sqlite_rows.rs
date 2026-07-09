@@ -69,6 +69,55 @@ pub(super) fn project_profile_from_row(row: &SqliteRow) -> ProjectProfileRecord 
     }
 }
 
+pub(super) fn runtime_environment_from_row(row: &SqliteRow) -> ProjectRuntimeEnvironmentRecord {
+    ProjectRuntimeEnvironmentRecord {
+        project_id: row.get("project_id"),
+        status: ProjectRuntimeEnvironmentStatus::from_db(row.get::<String, _>("status").as_str()),
+        sandbox_enabled: row.get::<i64, _>("sandbox_enabled") != 0,
+        sandbox_provider: RuntimeEnvironmentProvider::from_db(
+            row.get::<String, _>("sandbox_provider").as_str(),
+        ),
+        file_provider: RuntimeEnvironmentProvider::from_db(
+            row.get::<String, _>("file_provider").as_str(),
+        ),
+        analysis_summary: row.get("analysis_summary"),
+        not_runnable_reason: row.get("not_runnable_reason"),
+        detected_stack: parse_json_value(row.get::<String, _>("detected_stack_json").as_str()),
+        required_services: parse_json_value(
+            row.get::<String, _>("required_services_json").as_str(),
+        ),
+        env_vars: parse_json_value(row.get::<String, _>("env_vars_json").as_str()),
+        last_agent_run_id: row.get("last_agent_run_id"),
+        last_error: row.get("last_error"),
+        created_at: row.get("created_at"),
+        updated_at: row.get("updated_at"),
+    }
+}
+
+pub(super) fn runtime_environment_image_from_row(
+    row: &SqliteRow,
+) -> ProjectRuntimeEnvironmentImageRecord {
+    ProjectRuntimeEnvironmentImageRecord {
+        id: row.get("id"),
+        project_id: row.get("project_id"),
+        environment_key: row.get("environment_key"),
+        environment_type: row.get("environment_type"),
+        display_name: row.get("display_name"),
+        image_id: row.get("image_id"),
+        image_ref: row.get("image_ref"),
+        image_provider: RuntimeEnvironmentProvider::from_db(
+            row.get::<String, _>("image_provider").as_str(),
+        ),
+        features: parse_json_value(row.get::<String, _>("features_json").as_str()),
+        ports: parse_json_value(row.get::<String, _>("ports_json").as_str()),
+        env_vars: parse_json_value(row.get::<String, _>("env_vars_json").as_str()),
+        status: row.get("status"),
+        error: row.get("error"),
+        created_at: row.get("created_at"),
+        updated_at: row.get("updated_at"),
+    }
+}
+
 pub(super) fn requirement_from_row(row: &SqliteRow) -> RequirementRecord {
     RequirementRecord {
         id: row.get("id"),
@@ -208,4 +257,8 @@ pub(super) fn task_runner_link_from_row(row: &SqliteRow) -> ProjectWorkItemTaskR
         created_at: row.get("created_at"),
         updated_at: row.get("updated_at"),
     }
+}
+
+fn parse_json_value(value: &str) -> serde_json::Value {
+    serde_json::from_str(value.trim()).unwrap_or(serde_json::Value::Null)
 }

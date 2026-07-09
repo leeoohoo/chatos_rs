@@ -6,6 +6,10 @@ use axum::Json;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
+use crate::approval::{
+    ApprovalAiSettings, ApprovalMemorySettings, ApprovalMode, ProjectApprovalState,
+};
+use crate::model_configs::{LocalModelConfigDraft, LocalModelConfigPublic, LocalModelSettings};
 use crate::AuthUserState;
 
 #[derive(Debug, Deserialize)]
@@ -75,6 +79,64 @@ pub(super) struct LocalTerminalExecRequest {
     pub(super) timeout_ms: Option<u64>,
 }
 
+#[derive(Debug, Deserialize)]
+pub(super) struct UpdateApprovalSettingsRequest {
+    pub(super) default_mode: Option<ApprovalMode>,
+    pub(super) projects: Option<Vec<ProjectApprovalState>>,
+    pub(super) ai: Option<ApprovalAiSettings>,
+    pub(super) memory: Option<ApprovalMemorySettings>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct ResolveApprovalRequest {
+    pub(super) remember_allow: Option<bool>,
+    pub(super) reason: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub(super) struct LocalModelConfigListResponse {
+    pub(super) items: Vec<LocalModelConfigPublic>,
+    pub(super) settings: LocalModelSettings,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct SaveLocalModelConfigRequest {
+    #[serde(flatten)]
+    pub(super) draft: LocalModelConfigDraft,
+    #[serde(default)]
+    pub(super) sync: Option<bool>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct PreviewLocalModelCatalogRequest {
+    #[serde(flatten)]
+    pub(super) draft: LocalModelConfigDraft,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct UpdateLocalModelSettingsRequest {
+    #[serde(default)]
+    pub(super) memory_summary_model_config_id: Option<String>,
+    #[serde(default)]
+    pub(super) memory_summary_thinking_level: Option<String>,
+    #[serde(default)]
+    pub(super) project_management_agent_model_config_id: Option<String>,
+    #[serde(default)]
+    pub(super) project_management_agent_thinking_level: Option<String>,
+    #[serde(default)]
+    pub(super) command_approval_model_config_id: Option<String>,
+    #[serde(default)]
+    pub(super) command_approval_thinking_level: Option<String>,
+    #[serde(default)]
+    pub(super) sync: Option<bool>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct UpdateLocalRuntimeSettingsRequest {
+    #[serde(default)]
+    pub(super) ai_agent_max_iterations: Option<usize>,
+}
+
 #[derive(Debug)]
 pub(super) struct LocalApiError {
     status: axum::http::StatusCode,
@@ -101,6 +163,10 @@ impl LocalApiError {
             status: axum::http::StatusCode::BAD_GATEWAY,
             message: message.into(),
         }
+    }
+
+    pub(super) fn message(&self) -> &str {
+        self.message.as_str()
     }
 }
 

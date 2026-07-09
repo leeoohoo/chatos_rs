@@ -55,6 +55,16 @@ __pycache__/
 /docs/
 !/docs/
 /docs/*
+!/docs/HARNESS_CI.md
+!/docs/db_connection_hub/
+!/docs/db_connection_hub/**
+/docs/db_connection_hub/**/node_modules/
+/docs/db_connection_hub/**/dist/
+/docs/db_connection_hub/**/target/
+/docs/db_connection_hub/**/*.sqlite3
+/docs/db_connection_hub/**/*.sqlite3-shm
+/docs/db_connection_hub/**/*.sqlite3-wal
+/docs/db_connection_hub/**/*.tsbuildinfo
 !/docs/plans/
 /docs/plans/*
 !/docs/plans/README.md
@@ -81,3 +91,5 @@ __pycache__/
 /image copy 2.png
 /rustup-init.exe
 /.chatos
+/.chatos-local-dev
+/docs

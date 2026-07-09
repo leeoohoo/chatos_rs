@@ -362,7 +362,10 @@ async fn load_or_analyze_catalog(
 ) -> Result<ProjectRunCatalog, String> {
     let is_local_connector = is_local_connector_project_root(project.root_path.as_str());
     let should_reanalyze_local_connector = |catalog: &ProjectRunCatalog| {
-        is_local_connector && (catalog.status == "error" || catalog.error_message.is_some())
+        is_local_connector
+            && (catalog.status == "error"
+                || catalog.error_message.is_some()
+                || catalog.targets.is_empty())
     };
     if let Some(cached) =
         project_run_catalogs::get_catalog_by_project_id(project.id.as_str()).await?

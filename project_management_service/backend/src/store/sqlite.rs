@@ -12,6 +12,7 @@ const INIT_SQL: &str = include_str!("../../migrations/0001_init.sql");
 
 mod projects;
 mod requirements;
+mod runtime_environment;
 mod work_items;
 
 #[derive(Clone)]

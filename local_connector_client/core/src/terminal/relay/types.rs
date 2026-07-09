@@ -15,6 +15,13 @@ pub(super) struct TerminalSessionCreateRequest {
 pub(super) struct TerminalSessionInputRequest {
     pub(super) terminal_session_id: String,
     pub(super) data: String,
+    pub(super) command: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct TerminalSessionCommandRequest {
+    pub(super) terminal_session_id: String,
+    pub(super) command: String,
 }
 
 #[derive(Debug, Deserialize)]

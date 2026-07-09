@@ -15,10 +15,16 @@ mod handlers;
 mod types;
 
 use handlers::{
-    local_add_workspace, local_clear_command_history, local_command_history, local_docker_status,
-    local_fs_list_handler, local_initialize_sandbox_image, local_login, local_logout,
-    local_register, local_remove_workspace, local_sandbox_image_jobs, local_sandbox_images,
-    local_sandbox_leases, local_status, local_terminal_exec, local_toggle_sandbox,
+    local_add_workspace, local_approval_settings, local_approve_pending_approval,
+    local_clear_command_history, local_command_history, local_delete_model_config,
+    local_deny_pending_approval, local_docker_status, local_fs_list_handler,
+    local_initialize_sandbox_image, local_login, local_logout, local_model_configs,
+    local_model_settings, local_pending_approvals, local_preview_model_catalog, local_register,
+    local_remove_workspace, local_runtime_settings, local_sandbox_image_jobs,
+    local_sandbox_image_mcp, local_sandbox_images, local_sandbox_leases, local_save_model_config,
+    local_status, local_sync_model_config, local_terminal_exec, local_toggle_sandbox,
+    local_update_approval_settings, local_update_model_config, local_update_model_settings,
+    local_update_runtime_settings,
 };
 
 pub(crate) async fn serve_local_api(runtime: LocalRuntime) -> Result<()> {
@@ -44,8 +50,16 @@ pub(crate) async fn serve_local_api(runtime: LocalRuntime) -> Result<()> {
             get(local_command_history).delete(local_clear_command_history),
         )
         .route("/api/local/docker/status", get(local_docker_status))
+        .route(
+            "/api/local/runtime-settings",
+            get(local_runtime_settings).post(local_update_runtime_settings),
+        )
         .route("/api/local/sandbox/toggle", post(local_toggle_sandbox))
         .route("/api/local/sandbox/images", get(local_sandbox_images))
+        .route(
+            "/api/local/sandbox/images/mcp",
+            post(local_sandbox_image_mcp),
+        )
         .route(
             "/api/local/sandbox/images/jobs",
             get(local_sandbox_image_jobs),
@@ -56,6 +70,39 @@ pub(crate) async fn serve_local_api(runtime: LocalRuntime) -> Result<()> {
             post(local_initialize_sandbox_image),
         )
         .route("/api/local/terminal/exec", post(local_terminal_exec))
+        .route(
+            "/api/local/model-configs",
+            get(local_model_configs).post(local_save_model_config),
+        )
+        .route(
+            "/api/local/model-configs/catalog/preview",
+            post(local_preview_model_catalog),
+        )
+        .route(
+            "/api/local/model-configs/{id}",
+            post(local_update_model_config).delete(local_delete_model_config),
+        )
+        .route(
+            "/api/local/model-configs/{id}/sync",
+            post(local_sync_model_config),
+        )
+        .route(
+            "/api/local/model-settings",
+            get(local_model_settings).post(local_update_model_settings),
+        )
+        .route(
+            "/api/local/approval/settings",
+            get(local_approval_settings).post(local_update_approval_settings),
+        )
+        .route("/api/local/approval/pending", get(local_pending_approvals))
+        .route(
+            "/api/local/approval/pending/{id}/approve",
+            post(local_approve_pending_approval),
+        )
+        .route(
+            "/api/local/approval/pending/{id}/deny",
+            post(local_deny_pending_approval),
+        )
         .with_state(runtime)
         .layer(
             CorsLayer::new()

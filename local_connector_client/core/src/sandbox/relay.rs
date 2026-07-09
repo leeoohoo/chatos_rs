@@ -2,19 +2,24 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 use anyhow::{Context, Result};
+use chatos_sandbox_image_mcp::SandboxImageBackend;
 use reqwest::Method;
 use serde_json::{json, Value};
+use tokio::sync::Mutex;
 
 use crate::history::CommandHistoryRecorder;
 use crate::relay::{relay_error_response, RelayRequest, RelayResponse};
+use crate::sandbox::docker::ensure_docker_running;
+use crate::sandbox::images::{local_sandbox_image_catalog, start_local_sandbox_image_job};
 use crate::sandbox::lease::{
     create_local_sandbox_lease, get_local_sandbox, health_local_sandbox, release_local_sandbox,
 };
 use crate::sandbox::proxy::proxy_local_sandbox_mcp;
 use crate::sandbox::types::LocalSandboxRuntime;
-use crate::LocalState;
+use crate::{LocalRuntime, LocalState};
 
 pub(crate) async fn handle_sandbox_request(
     value: Value,
@@ -71,6 +76,12 @@ async fn handle_local_sandbox_request(
         .parse::<Method>()
         .context("parse sandbox request method")?;
     let path = normalize_sandbox_http_path(request.path.as_deref().unwrap_or("/"));
+    if method == Method::POST && path == "/api/local/sandbox/images/mcp" {
+        let runtime = relay_local_runtime(http_client, sandbox_runtime, history_recorder);
+        let backend = LocalSandboxImageRelayBackend { runtime };
+        let body = chatos_sandbox_image_mcp::handle_jsonrpc(&backend, request.body.clone()).await;
+        return Ok((200, BTreeMap::new(), body));
+    }
     if method == Method::POST && path == "/api/sandboxes/leases" {
         return create_local_sandbox_lease(request, state, http_client, sandbox_runtime).await;
     }
@@ -113,6 +124,62 @@ async fn handle_local_sandbox_request(
         BTreeMap::new(),
         json!({ "error": format!("unsupported local sandbox path: {path}") }),
     ))
+}
+
+fn relay_local_runtime(
+    http_client: &reqwest::Client,
+    sandbox_runtime: &LocalSandboxRuntime,
+    history_recorder: &CommandHistoryRecorder,
+) -> LocalRuntime {
+    LocalRuntime {
+        state_path: history_recorder.state_path.clone(),
+        state: history_recorder.state.clone(),
+        http_client: http_client.clone(),
+        connector_task: Arc::new(Mutex::new(None)),
+        sandbox_runtime: sandbox_runtime.clone(),
+    }
+}
+
+struct LocalSandboxImageRelayBackend {
+    runtime: LocalRuntime,
+}
+
+#[async_trait::async_trait]
+impl SandboxImageBackend for LocalSandboxImageRelayBackend {
+    async fn image_catalog(&self) -> Result<Value, String> {
+        ensure_relay_local_sandbox_enabled(&self.runtime).await?;
+        Ok(local_sandbox_image_catalog(&self.runtime).await)
+    }
+
+    async fn image_jobs(&self) -> Result<Value, String> {
+        ensure_relay_local_sandbox_enabled(&self.runtime).await?;
+        let jobs = self.runtime.sandbox_runtime.jobs.read().await.clone();
+        Ok(json!(jobs))
+    }
+
+    async fn initialize_image(
+        &self,
+        features: Vec<String>,
+        custom_build_script: Option<String>,
+    ) -> Result<Value, String> {
+        ensure_relay_local_sandbox_enabled(&self.runtime).await?;
+        ensure_docker_running()
+            .await
+            .map_err(|err| err.to_string())?;
+        let job = start_local_sandbox_image_job(&self.runtime, features, custom_build_script)
+            .await
+            .map_err(|err| err.to_string())?;
+        Ok(json!(job))
+    }
+}
+
+async fn ensure_relay_local_sandbox_enabled(runtime: &LocalRuntime) -> Result<(), String> {
+    let state = runtime.state.read().await;
+    if state.sandbox.enabled {
+        Ok(())
+    } else {
+        Err("local sandbox is disabled".to_string())
+    }
 }
 
 fn normalize_sandbox_http_path(path: &str) -> String {

@@ -261,12 +261,7 @@ export const useSessionListController = ({
   const [projectSourceMode, setProjectSourceMode] = useState<ResourceSourceMode>('server');
 
   const [terminalModalOpen, setTerminalModalOpen] = useState(false);
-  const [terminalRoot, setTerminalRoot] = useState('');
   const [terminalError, setTerminalError] = useState<string | null>(null);
-  const [terminalSourceMode, setTerminalSourceMode] = useState<ResourceSourceMode>('server');
-  const [terminalCommand, setTerminalCommand] = useState('pwd');
-  const [terminalArgs, setTerminalArgs] = useState('');
-  const [terminalOutput, setTerminalOutput] = useState<string | null>(null);
   const [terminalExecuting, setTerminalExecuting] = useState(false);
   const [localConnectorWorkspaces, setLocalConnectorWorkspaces] = useState<LocalConnectorWorkspaceOption[]>([]);
   const [localConnectorLoading, setLocalConnectorLoading] = useState(false);
@@ -406,13 +401,11 @@ export const useSessionListController = ({
     apiClient,
     t,
     projectRoot,
-    terminalRoot,
     remotePrivateKeyPath: remoteForm.remotePrivateKeyPath,
     remoteCertificatePath: remoteForm.remoteCertificatePath,
     remoteJumpPrivateKeyPath: remoteForm.remoteJumpPrivateKeyPath,
     remoteJumpCertificatePath: remoteForm.remoteJumpCertificatePath,
     onProjectRootChange: setProjectRoot,
-    onTerminalRootChange: setTerminalRoot,
     onRemotePrivateKeyPathChange: remoteForm.setRemotePrivateKeyPath,
     onRemoteCertificatePathChange: remoteForm.setRemoteCertificatePath,
     onRemoteJumpPrivateKeyPathChange: remoteForm.setRemoteJumpPrivateKeyPath,
@@ -538,12 +531,8 @@ export const useSessionListController = ({
     setProjectError,
     setProjectModalOpen,
     setProjectSourceMode,
-    setTerminalRoot,
     setTerminalError,
     setTerminalModalOpen,
-    setTerminalSourceMode,
-    setTerminalCommand,
-    setTerminalArgs,
     setKeyFilePickerOpen: localFsPickers.setKeyFilePickerOpen,
     openRemoteModalBase: remoteForm.openRemoteModal,
     createCloudProject,
@@ -553,20 +542,15 @@ export const useSessionListController = ({
     loadProjects,
     apiClient,
     projectSourceMode,
-    terminalSourceMode,
     localConnectorWorkspaces,
     selectedLocalConnectorWorkspaceId,
     selectedLocalConnectorDirectoryPath,
-    terminalCommand,
-    terminalArgs,
-    setTerminalOutput,
     setTerminalExecuting,
     selectRemoteConnection,
     openRemoteSftp,
     cloudProjectName,
     cloudProjectGitUrl,
     cloudProjectZipFile,
-    terminalRoot,
   });
 
   const sectionExpansion = useSectionExpansion({
@@ -856,10 +840,6 @@ export const useSessionListController = ({
     setCloudProjectZipFile,
     setProjectSourceMode,
     setTerminalModalOpen,
-    setTerminalRoot,
-    setTerminalSourceMode,
-    setTerminalCommand,
-    setTerminalArgs,
     setSelectedLocalConnectorWorkspaceId: handleSelectedLocalConnectorWorkspaceChange,
     taskRunnerContact,
     taskRunnerAgentAccounts,
@@ -872,11 +852,6 @@ export const useSessionListController = ({
     terminalVisibility,
     terminalError,
     terminalModalOpen,
-    terminalRoot,
-    terminalSourceMode,
-    terminalCommand,
-    terminalArgs,
-    terminalOutput,
     terminalExecuting,
     selectedLocalConnectorWorkspaceId,
   };
