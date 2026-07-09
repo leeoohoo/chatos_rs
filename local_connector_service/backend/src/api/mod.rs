@@ -19,9 +19,8 @@ use serde_json::{json, Value};
 use uuid::Uuid;
 
 use crate::models::{
-    normalize_binding_mode, normalize_capabilities, normalize_optional_text,
-    normalize_sandbox_mode, normalize_workspace_status, CurrentUser, HealthResponse,
-    LocalConnectorProjectBinding, LocalConnectorSandboxPairing, LocalConnectorWorkspace,
+    normalize_binding_mode, normalize_optional_text, normalize_sandbox_mode, CurrentUser,
+    HealthResponse, LocalConnectorProjectBinding, LocalConnectorSandboxPairing,
     DEVICE_STATUS_ONLINE, WORKSPACE_STATUS_DISABLED,
 };
 use crate::relay::{RelayError, RelayRequest, RelayResponse};
@@ -33,6 +32,7 @@ const MAX_TERMINAL_EXEC_TIMEOUT_MS: u64 = 10 * 60 * 1000;
 mod auth_middleware;
 mod devices;
 mod router;
+mod workspaces;
 
 use self::auth_middleware::require_auth;
 pub use self::auth_middleware::ApiError;
@@ -41,30 +41,9 @@ use self::devices::{
     load_owned_device, revoke_device,
 };
 pub use self::router::build_router;
-
-#[derive(Debug, Deserialize)]
-struct WorkspaceQuery {
-    device_id: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-struct CreateWorkspaceRequest {
-    device_id: Option<String>,
-    display_name: Option<String>,
-    local_path_alias: Option<String>,
-    local_path_fingerprint: Option<String>,
-    capabilities: Option<Vec<String>>,
-}
-
-#[derive(Debug, Deserialize)]
-struct UpdateWorkspaceRequest {
-    device_id: Option<String>,
-    display_name: Option<String>,
-    local_path_alias: Option<String>,
-    local_path_fingerprint: Option<String>,
-    capabilities: Option<Vec<String>>,
-    status: Option<String>,
-}
+use self::workspaces::{
+    create_workspace, delete_workspace, list_workspaces, load_owned_workspace, update_workspace,
+};
 
 #[derive(Debug, Deserialize)]
 struct ProjectBindingQuery {
@@ -238,92 +217,6 @@ async fn memory_engine_proxy(
     builder.body(Body::from(bytes)).map_err(|err| {
         ApiError::internal(format!("build Memory Engine proxy response failed: {err}"))
     })
-}
-
-async fn list_workspaces(
-    State(state): State<AppState>,
-    Extension(user): Extension<CurrentUser>,
-    Query(query): Query<WorkspaceQuery>,
-) -> Result<Json<Vec<LocalConnectorWorkspace>>, ApiError> {
-    state
-        .store
-        .list_workspaces(user.effective_owner_user_id(), query.device_id)
-        .await
-        .map(Json)
-        .map_err(ApiError::internal)
-}
-
-async fn create_workspace(
-    State(state): State<AppState>,
-    Extension(user): Extension<CurrentUser>,
-    Json(req): Json<CreateWorkspaceRequest>,
-) -> Result<(StatusCode, Json<LocalConnectorWorkspace>), ApiError> {
-    let device_id = required_text(req.device_id, "device_id")?;
-    load_owned_device(&state, &user, device_id.as_str(), true).await?;
-    let workspace = LocalConnectorWorkspace::new(
-        user.effective_owner_user_id().to_string(),
-        device_id,
-        required_text(req.display_name, "display_name")?,
-        required_text(req.local_path_alias, "local_path_alias")?,
-        required_text(req.local_path_fingerprint, "local_path_fingerprint")?,
-        normalize_capabilities(req.capabilities.unwrap_or_else(default_capabilities)),
-    );
-    state
-        .store
-        .create_workspace(&workspace)
-        .await
-        .map_err(ApiError::internal)?;
-    Ok((StatusCode::CREATED, Json(workspace)))
-}
-
-async fn update_workspace(
-    State(state): State<AppState>,
-    Extension(user): Extension<CurrentUser>,
-    Path(id): Path<String>,
-    Json(req): Json<UpdateWorkspaceRequest>,
-) -> Result<Json<LocalConnectorWorkspace>, ApiError> {
-    let mut workspace = load_owned_workspace(&state, &user, id.as_str()).await?;
-    if let Some(device_id) = normalize_optional_text(req.device_id) {
-        load_owned_device(&state, &user, device_id.as_str(), true).await?;
-        workspace.device_id = device_id;
-    }
-    if let Some(display_name) = normalize_optional_text(req.display_name) {
-        workspace.display_name = display_name;
-    }
-    if let Some(alias) = normalize_optional_text(req.local_path_alias) {
-        workspace.local_path_alias = alias;
-    }
-    if let Some(fingerprint) = normalize_optional_text(req.local_path_fingerprint) {
-        workspace.local_path_fingerprint = fingerprint;
-    }
-    if let Some(capabilities) = req.capabilities {
-        workspace.capabilities = normalize_capabilities(capabilities);
-    }
-    if let Some(status) = normalize_optional_text(req.status) {
-        workspace.status = normalize_workspace_status(Some(status));
-    }
-    state
-        .store
-        .update_workspace(&workspace)
-        .await
-        .map_err(ApiError::internal)?;
-    load_owned_workspace(&state, &user, id.as_str())
-        .await
-        .map(Json)
-}
-
-async fn delete_workspace(
-    State(state): State<AppState>,
-    Extension(user): Extension<CurrentUser>,
-    Path(id): Path<String>,
-) -> Result<Json<Value>, ApiError> {
-    load_owned_workspace(&state, &user, id.as_str()).await?;
-    state
-        .store
-        .delete_workspace(user.effective_owner_user_id(), id.as_str())
-        .await
-        .map_err(ApiError::internal)?;
-    Ok(Json(json!({ "success": true })))
 }
 
 async fn list_project_bindings(
@@ -1147,25 +1040,6 @@ async fn sandbox_facade_impl(
     Ok(relay_response_to_http(response))
 }
 
-async fn load_owned_workspace(
-    state: &AppState,
-    user: &CurrentUser,
-    id: &str,
-) -> Result<LocalConnectorWorkspace, ApiError> {
-    let workspace = state
-        .store
-        .get_workspace(id)
-        .await
-        .map_err(ApiError::internal)?
-        .ok_or_else(|| ApiError::not_found("Local Connector workspace not found"))?;
-    if workspace.owner_user_id != user.effective_owner_user_id() {
-        return Err(ApiError::forbidden(
-            "Local Connector workspace does not belong to current user",
-        ));
-    }
-    Ok(workspace)
-}
-
 async fn load_owned_project_binding(
     state: &AppState,
     user: &CurrentUser,
@@ -1403,12 +1277,4 @@ fn relay_response_to_http(response: RelayResponse) -> Response {
 fn required_text(value: Option<String>, field: &str) -> Result<String, ApiError> {
     normalize_optional_text(value)
         .ok_or_else(|| ApiError::bad_request(format!("{field} is required and cannot be empty")))
-}
-
-fn default_capabilities() -> Vec<String> {
-    vec![
-        "mcp".to_string(),
-        "terminal".to_string(),
-        "sandbox".to_string(),
-    ]
 }
