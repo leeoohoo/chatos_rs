@@ -4,14 +4,12 @@
 use serde_json::{json, Value};
 
 use super::super::client::{
-    commit_file_actions, commit_single_file_action, fetch_harness_content, list_harness_paths,
-    read_harness_file, sha256_hex, HarnessCommitAction,
+    commit_file_actions, commit_single_file_action, ensure_action_count, fetch_harness_content,
+    list_harness_paths, read_harness_file, sha256_hex, HarnessCommitAction,
 };
 use super::super::path_policy::{path_matches_scope, required_file_path};
 use super::super::text_edit::apply_text_edit;
-use super::super::{
-    ensure_action_count, ensure_write_size, required_string, tool_text_result, HarnessMcpContext,
-};
+use super::super::{ensure_write_size, required_string, tool_text_result, HarnessMcpContext};
 
 pub(in super::super) async fn tool_write_file(
     ctx: &HarnessMcpContext,
