@@ -19,9 +19,8 @@ use serde_json::{json, Value};
 use uuid::Uuid;
 
 use crate::models::{
-    normalize_binding_mode, normalize_optional_text, normalize_sandbox_mode, CurrentUser,
-    HealthResponse, LocalConnectorProjectBinding, LocalConnectorSandboxPairing,
-    DEVICE_STATUS_ONLINE, WORKSPACE_STATUS_DISABLED,
+    normalize_optional_text, normalize_sandbox_mode, CurrentUser, HealthResponse,
+    LocalConnectorSandboxPairing, DEVICE_STATUS_ONLINE, WORKSPACE_STATUS_DISABLED,
 };
 use crate::relay::{RelayError, RelayRequest, RelayResponse};
 use crate::state::AppState;
@@ -31,6 +30,7 @@ const MAX_TERMINAL_EXEC_TIMEOUT_MS: u64 = 10 * 60 * 1000;
 
 mod auth_middleware;
 mod devices;
+mod project_bindings;
 mod router;
 mod workspaces;
 
@@ -40,32 +40,13 @@ use self::devices::{
     connect_device, create_device, disconnect_device, get_device, heartbeat_device, list_devices,
     load_owned_device, revoke_device,
 };
+use self::project_bindings::{
+    create_project_binding, delete_project_binding, list_project_bindings, update_project_binding,
+};
 pub use self::router::build_router;
 use self::workspaces::{
     create_workspace, delete_workspace, list_workspaces, load_owned_workspace, update_workspace,
 };
-
-#[derive(Debug, Deserialize)]
-struct ProjectBindingQuery {
-    project_id: Option<String>,
-    mode: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-struct CreateProjectBindingRequest {
-    project_id: Option<String>,
-    device_id: Option<String>,
-    workspace_id: Option<String>,
-    mode: Option<String>,
-    enabled: Option<bool>,
-}
-
-#[derive(Debug, Deserialize)]
-struct UpdateProjectBindingRequest {
-    device_id: Option<String>,
-    workspace_id: Option<String>,
-    enabled: Option<bool>,
-}
 
 #[derive(Debug, Deserialize)]
 struct SandboxPairingQuery {
@@ -217,95 +198,6 @@ async fn memory_engine_proxy(
     builder.body(Body::from(bytes)).map_err(|err| {
         ApiError::internal(format!("build Memory Engine proxy response failed: {err}"))
     })
-}
-
-async fn list_project_bindings(
-    State(state): State<AppState>,
-    Extension(user): Extension<CurrentUser>,
-    Query(query): Query<ProjectBindingQuery>,
-) -> Result<Json<Vec<LocalConnectorProjectBinding>>, ApiError> {
-    let mode = normalize_optional_text(query.mode).map(|value| normalize_binding_mode(Some(value)));
-    state
-        .store
-        .list_project_bindings(
-            user.effective_owner_user_id(),
-            normalize_optional_text(query.project_id),
-            mode,
-        )
-        .await
-        .map(Json)
-        .map_err(ApiError::internal)
-}
-
-async fn create_project_binding(
-    State(state): State<AppState>,
-    Extension(user): Extension<CurrentUser>,
-    Json(req): Json<CreateProjectBindingRequest>,
-) -> Result<(StatusCode, Json<LocalConnectorProjectBinding>), ApiError> {
-    let device_id = required_text(req.device_id, "device_id")?;
-    let workspace_id = required_text(req.workspace_id, "workspace_id")?;
-    validate_device_workspace(&state, &user, device_id.as_str(), workspace_id.as_str()).await?;
-    let binding = LocalConnectorProjectBinding::new(
-        user.effective_owner_user_id().to_string(),
-        required_text(req.project_id, "project_id")?,
-        device_id,
-        workspace_id,
-        normalize_binding_mode(req.mode),
-        req.enabled.unwrap_or(true),
-    );
-    let saved = state
-        .store
-        .upsert_project_binding(&binding)
-        .await
-        .map_err(ApiError::internal)?;
-    Ok((StatusCode::CREATED, Json(saved)))
-}
-
-async fn update_project_binding(
-    State(state): State<AppState>,
-    Extension(user): Extension<CurrentUser>,
-    Path(id): Path<String>,
-    Json(req): Json<UpdateProjectBindingRequest>,
-) -> Result<Json<LocalConnectorProjectBinding>, ApiError> {
-    let mut binding = load_owned_project_binding(&state, &user, id.as_str()).await?;
-    if let Some(device_id) = normalize_optional_text(req.device_id) {
-        binding.device_id = device_id;
-    }
-    if let Some(workspace_id) = normalize_optional_text(req.workspace_id) {
-        binding.workspace_id = workspace_id;
-    }
-    validate_device_workspace(
-        &state,
-        &user,
-        binding.device_id.as_str(),
-        binding.workspace_id.as_str(),
-    )
-    .await?;
-    if let Some(enabled) = req.enabled {
-        binding.enabled = enabled;
-    }
-    state
-        .store
-        .update_project_binding(&binding)
-        .await
-        .map_err(ApiError::internal)?;
-    load_owned_project_binding(&state, &user, id.as_str())
-        .await
-        .map(Json)
-}
-
-async fn delete_project_binding(
-    State(state): State<AppState>,
-    Extension(user): Extension<CurrentUser>,
-    Path(id): Path<String>,
-) -> Result<Json<Value>, ApiError> {
-    load_owned_project_binding(&state, &user, id.as_str()).await?;
-    state
-        .store
-        .delete_project_binding(user.effective_owner_user_id(), id.as_str())
-        .await
-        .map_err(ApiError::internal)?;
-    Ok(Json(json!({ "success": true })))
 }
 
 async fn list_sandbox_pairings(
@@ -1038,25 +930,6 @@ async fn sandbox_facade_impl(
         .await
         .map_err(relay_error_to_api_error)?;
     Ok(relay_response_to_http(response))
-}
-
-async fn load_owned_project_binding(
-    state: &AppState,
-    user: &CurrentUser,
-    id: &str,
-) -> Result<LocalConnectorProjectBinding, ApiError> {
-    let binding = state
-        .store
-        .get_project_binding(id)
-        .await
-        .map_err(ApiError::internal)?
-        .ok_or_else(|| ApiError::not_found("Local Connector project binding not found"))?;
-    if binding.owner_user_id != user.effective_owner_user_id() {
-        return Err(ApiError::forbidden(
-            "Local Connector project binding does not belong to current user",
-        ));
-    }
-    Ok(binding)
 }
 
 async fn load_owned_sandbox_pairing(
