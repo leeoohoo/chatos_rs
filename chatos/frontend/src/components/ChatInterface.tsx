@@ -32,16 +32,8 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
     activePanel,
     showSystemContextEditor,
     setShowSystemContextEditor,
-    showAiModelManager,
-    setShowAiModelManager,
-    showMemoryModelSettings,
-    setShowMemoryModelSettings,
-    showTaskModelSettings,
-    setShowTaskModelSettings,
     showTaskRunnerExternalMcpManager,
     setShowTaskRunnerExternalMcpManager,
-    memoryModelAttention,
-    taskModelAttention,
     showAgentManager,
     setShowAgentManager,
     showNotepadPanel,
@@ -87,12 +79,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
         onToggleSidebar={toggleSidebar}
         onOpenNotepad={() => setShowNotepadPanel(true)}
         onOpenApplications={() => setShowApplicationsPanel(true)}
-        onOpenAiModelManager={() => setShowAiModelManager(true)}
-        onOpenMemoryModelSettings={() => setShowMemoryModelSettings(true)}
-        onOpenTaskModelSettings={() => setShowTaskModelSettings(true)}
         onOpenTaskRunnerExternalMcpManager={() => setShowTaskRunnerExternalMcpManager(true)}
-        memoryModelAttention={memoryModelAttention}
-        taskModelAttention={taskModelAttention}
         onOpenAgentManager={() => setShowAgentManager(true)}
         onOpenSystemContextEditor={() => setShowSystemContextEditor(true)}
         onOpenUserSettings={() => setShowUserSettings(true)}
@@ -121,12 +108,6 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
         runtimeContextProps={runtimeContextProps}
         showNotepadPanel={showNotepadPanel}
         setShowNotepadPanel={setShowNotepadPanel}
-        showAiModelManager={showAiModelManager}
-        setShowAiModelManager={setShowAiModelManager}
-        showMemoryModelSettings={showMemoryModelSettings}
-        setShowMemoryModelSettings={setShowMemoryModelSettings}
-        showTaskModelSettings={showTaskModelSettings}
-        setShowTaskModelSettings={setShowTaskModelSettings}
         showTaskRunnerExternalMcpManager={showTaskRunnerExternalMcpManager}
         setShowTaskRunnerExternalMcpManager={setShowTaskRunnerExternalMcpManager}
         showAgentManager={showAgentManager}

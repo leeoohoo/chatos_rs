@@ -3,6 +3,7 @@
 
 use axum::extract::State;
 use axum::Json;
+use chatos_sandbox_image_mcp::SandboxImageBackend;
 use serde_json::{json, Value};
 
 use crate::config::{api_url, normalize_optional};
@@ -83,6 +84,53 @@ pub(crate) async fn local_initialize_sandbox_image(
     .await
     .map_err(LocalApiError::bad_request)?;
     Ok(Json(json!(job)))
+}
+
+pub(crate) async fn local_sandbox_image_mcp(
+    State(runtime): State<LocalRuntime>,
+    Json(payload): Json<Value>,
+) -> Json<Value> {
+    let backend = LocalSandboxImageMcpBackend { runtime };
+    Json(chatos_sandbox_image_mcp::handle_jsonrpc(&backend, payload).await)
+}
+
+struct LocalSandboxImageMcpBackend {
+    runtime: LocalRuntime,
+}
+
+#[async_trait::async_trait]
+impl SandboxImageBackend for LocalSandboxImageMcpBackend {
+    async fn image_catalog(&self) -> Result<Value, String> {
+        ensure_local_sandbox_enabled(&self.runtime)
+            .await
+            .map_err(|err| err.message().to_string())?;
+        Ok(local_sandbox_image_catalog(&self.runtime).await)
+    }
+
+    async fn image_jobs(&self) -> Result<Value, String> {
+        ensure_local_sandbox_enabled(&self.runtime)
+            .await
+            .map_err(|err| err.message().to_string())?;
+        let jobs = self.runtime.sandbox_runtime.jobs.read().await.clone();
+        Ok(json!(jobs))
+    }
+
+    async fn initialize_image(
+        &self,
+        features: Vec<String>,
+        custom_build_script: Option<String>,
+    ) -> Result<Value, String> {
+        ensure_local_sandbox_enabled(&self.runtime)
+            .await
+            .map_err(|err| err.message().to_string())?;
+        ensure_docker_running()
+            .await
+            .map_err(|err| err.to_string())?;
+        let job = start_local_sandbox_image_job(&self.runtime, features, custom_build_script)
+            .await
+            .map_err(|err| err.to_string())?;
+        Ok(json!(job))
+    }
 }
 
 async fn ensure_local_sandbox_enabled(runtime: &LocalRuntime) -> Result<(), LocalApiError> {

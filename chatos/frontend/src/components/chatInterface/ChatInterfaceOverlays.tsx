@@ -6,12 +6,9 @@ import { Suspense, lazy, type ComponentProps, type ReactNode } from 'react';
 import TurnRuntimeContextDrawer from './TurnRuntimeContextDrawer';
 import { useI18n } from '../../i18n/I18nProvider';
 
-const AiModelManager = lazy(() => import('../AiModelManager'));
 const AgentManager = lazy(() => import('../AgentManager'));
 const ApplicationsPanel = lazy(() => import('../ApplicationsPanel'));
-const MemoryModelSettingsPanel = lazy(() => import('../MemoryModelSettingsPanel'));
 const NotepadPanel = lazy(() => import('../NotepadPanel'));
-const TaskModelSettingsPanel = lazy(() => import('../TaskModelSettingsPanel'));
 const TaskRunnerExternalMcpManager = lazy(() => import('../TaskRunnerExternalMcpManager'));
 const UserSettingsPanel = lazy(() => import('../UserSettingsPanel'));
 
@@ -19,12 +16,6 @@ interface ChatInterfaceOverlaysProps {
   runtimeContextProps: ComponentProps<typeof TurnRuntimeContextDrawer>;
   showNotepadPanel: boolean;
   setShowNotepadPanel: (value: boolean) => void;
-  showAiModelManager: boolean;
-  setShowAiModelManager: (value: boolean) => void;
-  showMemoryModelSettings: boolean;
-  setShowMemoryModelSettings: (value: boolean) => void;
-  showTaskModelSettings: boolean;
-  setShowTaskModelSettings: (value: boolean) => void;
   showTaskRunnerExternalMcpManager: boolean;
   setShowTaskRunnerExternalMcpManager: (value: boolean) => void;
   showAgentManager: boolean;
@@ -57,12 +48,6 @@ export default function ChatInterfaceOverlays({
   runtimeContextProps,
   showNotepadPanel,
   setShowNotepadPanel,
-  showAiModelManager,
-  setShowAiModelManager,
-  showMemoryModelSettings,
-  setShowMemoryModelSettings,
-  showTaskModelSettings,
-  setShowTaskModelSettings,
   showTaskRunnerExternalMcpManager,
   setShowTaskRunnerExternalMcpManager,
   showAgentManager,
@@ -83,18 +68,6 @@ export default function ChatInterfaceOverlays({
           isOpen={showNotepadPanel}
           onClose={() => setShowNotepadPanel(false)}
         />
-      </LazyOverlay>
-
-      <LazyOverlay open={showAiModelManager}>
-        <AiModelManager onClose={() => setShowAiModelManager(false)} />
-      </LazyOverlay>
-
-      <LazyOverlay open={showMemoryModelSettings}>
-        <MemoryModelSettingsPanel onClose={() => setShowMemoryModelSettings(false)} />
-      </LazyOverlay>
-
-      <LazyOverlay open={showTaskModelSettings}>
-        <TaskModelSettingsPanel onClose={() => setShowTaskModelSettings(false)} />
       </LazyOverlay>
 
       <LazyOverlay open={showTaskRunnerExternalMcpManager}>

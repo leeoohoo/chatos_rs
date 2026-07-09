@@ -16,14 +16,44 @@ This pulls prebuilt images from GHCR. To build from local source:
 docker/deploy.sh dev
 ```
 
+For repeated redeploys where you do not need to pull newer images, reuse the images already on the machine:
+
+```bash
+docker/deploy.sh fast
+```
+
+When local code changes affect only one or two services, rebuild and recreate only those Compose services:
+
+```bash
+docker/deploy.sh rebuild task-runner-backend
+docker/deploy.sh rebuild chatos-backend chatos-frontend
+docker/deploy.sh build-services  # list rebuildable service names
+```
+
+After a successful image update, the deploy script prunes dangling `<none>:<none>` images by default. Set `CHATOS_DOCKER_PRUNE_DANGLING_IMAGES=false` in `docker/.env` to disable that.
+
 Make shortcuts:
 
 ```bash
 make docker-up
+make docker-fast
 make dev
+make docker-rebuild SERVICES="task-runner-backend"
 ```
 
-`make docker-up` uses prebuilt images; `make dev` builds local images.
+`make docker-up` pulls prebuilt images; `make docker-fast` reuses existing images; `make dev` builds local images.
+
+## Local Fast Testing
+
+Use the host-side dev stack when Docker image rebuilds are too slow. It keeps infrastructure such as MongoDB/Harness in Docker, then runs Chatos service backends with `cargo run` and frontends with Vite:
+
+```bash
+make local-dev
+make local-dev-status
+make local-dev-stop
+```
+
+DB Connection Hub is archived under `docs/db_connection_hub/` and is not started by the Docker stack or the local dev stack.
 
 ## Commands
 
@@ -31,6 +61,9 @@ make dev
 docker/deploy.sh ps
 docker/deploy.sh logs
 docker/deploy.sh restart
+docker/deploy.sh fast
+docker/deploy.sh rebuild task-runner-backend
+docker/deploy.sh clean-images  # manually remove dangling images
 docker/deploy.sh down
 docker/deploy.sh reset
 ```
@@ -46,7 +79,6 @@ docker/deploy.sh reset
 - Project Management: `http://localhost:39211`
 - Sandbox Manager: `http://localhost:8096`
 - Local Connector Service: `http://localhost:39230`
-- DB Connection Hub: `http://localhost:5174`
 - Official Website: `http://localhost:39251`
 
 ## Local Connector Client

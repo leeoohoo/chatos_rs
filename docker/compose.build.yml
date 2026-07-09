@@ -68,14 +68,6 @@ services:
         PACKAGE_NAME: chat_app_server_rs
         BIN_NAME: chat_app_server_rs
 
-  db-connection-hub-backend:
-    build:
-      context: ..
-      dockerfile: docker/Dockerfile.rust-service
-      args:
-        MANIFEST_PATH: db_connection_hub/backend/Cargo.toml
-        BIN_NAME: db_connection_hub_backend
-
   official-website-backend:
     build:
       context: ..
@@ -128,13 +120,6 @@ services:
       dockerfile: docker/Dockerfile.frontend
       args:
         APP_DIR: sandbox_manager_service/frontend
-
-  db-connection-hub-frontend:
-    build:
-      context: ..
-      dockerfile: docker/Dockerfile.frontend
-      args:
-        APP_DIR: db_connection_hub/frontend
 
   official-website-frontend:
     build:

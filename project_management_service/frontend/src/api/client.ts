@@ -16,6 +16,7 @@ import type {
   ProjectManagementSkillLocale,
   ProjectManagementSkillResponse,
   ProjectRecord,
+  ProjectRuntimeEnvironmentResponse,
   ProjectStatus,
   ProjectWorkItemRecord,
   ProjectWorkItemTaskRunnerLinkRecord,
@@ -26,6 +27,7 @@ import type {
   TaskRunnerExecutionOptionsResponse,
   UpdateRequirementDocumentPayload,
   UpdateProjectPayload,
+  UpdateProjectRuntimeEnvironmentSettingsPayload,
   UpdateRequirementPayload,
   UpdateWorkItemPayload,
   UpsertRequirementDocumentPayload,
@@ -154,6 +156,28 @@ export const api = {
       method: 'PUT',
       body: JSON.stringify(payload),
     }),
+  getProjectRuntimeEnvironment: (projectId: string) =>
+    request<ProjectRuntimeEnvironmentResponse>(
+      `/api/projects/${projectId}/runtime-environment`,
+    ),
+  updateProjectRuntimeEnvironmentSettings: (
+    projectId: string,
+    payload: UpdateProjectRuntimeEnvironmentSettingsPayload,
+  ) =>
+    request<ProjectRuntimeEnvironmentResponse>(
+      `/api/projects/${projectId}/runtime-environment/settings`,
+      {
+        method: 'PUT',
+        body: JSON.stringify(payload),
+      },
+    ),
+  analyzeProjectRuntimeEnvironment: (projectId: string) =>
+    request<ProjectRuntimeEnvironmentResponse>(
+      `/api/projects/${projectId}/runtime-environment/analyze`,
+      {
+        method: 'POST',
+      },
+    ),
   listRequirements: (
     projectId: string,
     filters?: { status?: RequirementStatus; keyword?: string; include_archived?: boolean },

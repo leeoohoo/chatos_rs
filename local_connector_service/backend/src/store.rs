@@ -1,96 +1,350 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use std::path::Path;
-use std::str::FromStr;
-
-use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
-use sqlx::SqlitePool;
-
 use crate::models::{
-    bool_to_int, capabilities_to_json, now_rfc3339, LocalConnectorDevice, LocalConnectorDeviceRow,
-    LocalConnectorProjectBinding, LocalConnectorProjectBindingRow, LocalConnectorSandboxPairing,
-    LocalConnectorSandboxPairingRow, LocalConnectorSession, LocalConnectorWorkspace,
-    LocalConnectorWorkspaceRow, DEVICE_STATUS_OFFLINE, DEVICE_STATUS_REVOKED,
-    SESSION_STATUS_CONNECTED, SESSION_STATUS_DISCONNECTED,
+    now_rfc3339, LocalConnectorDevice, LocalConnectorProjectBinding, LocalConnectorSandboxPairing,
+    LocalConnectorSession, LocalConnectorWorkspace, DEVICE_STATUS_OFFLINE, DEVICE_STATUS_ONLINE,
+    DEVICE_STATUS_REVOKED, SESSION_STATUS_CONNECTED, SESSION_STATUS_DISCONNECTED,
 };
+use futures::TryStreamExt;
+use mongodb::bson::doc;
+use mongodb::options::{FindOneAndUpdateOptions, FindOptions, IndexOptions, ReturnDocument};
+use mongodb::{Client, Collection, IndexModel};
 
 #[derive(Clone)]
-pub struct ConnectorStore {
-    pool: SqlitePool,
+pub enum ConnectorStore {
+    Mongo(MongoConnectorStore),
 }
 
 impl ConnectorStore {
     pub async fn connect(database_url: &str) -> Result<Self, String> {
-        ensure_sqlite_parent_dir(database_url)?;
-        let options = SqliteConnectOptions::from_str(database_url)
-            .map_err(|err| format!("parse local connector database url failed: {err}"))?
-            .create_if_missing(true);
-        let pool = SqlitePoolOptions::new()
-            .max_connections(8)
-            .connect_with(options)
-            .await
-            .map_err(|err| format!("connect local connector database failed: {err}"))?;
-        sqlx::migrate!("./migrations")
-            .run(&pool)
-            .await
-            .map_err(|err| format!("run local connector migrations failed: {err}"))?;
-        Ok(Self { pool })
+        let normalized = database_url.trim();
+        if normalized.starts_with("mongodb://") || normalized.starts_with("mongodb+srv://") {
+            return MongoConnectorStore::connect(normalized)
+                .await
+                .map(Self::Mongo);
+        }
+        Err(format!(
+            "unsupported LOCAL_CONNECTOR_DATABASE_URL; expected mongodb:// or mongodb+srv://, got: {normalized}"
+        ))
     }
 
     pub async fn create_device(&self, device: &LocalConnectorDevice) -> Result<(), String> {
-        sqlx::query("INSERT INTO local_connector_devices (id, owner_user_id, display_name, public_key, client_version, os, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
-            .bind(&device.id)
-            .bind(&device.owner_user_id)
-            .bind(&device.display_name)
-            .bind(&device.public_key)
-            .bind(&device.client_version)
-            .bind(&device.os)
-            .bind(&device.status)
-            .bind(&device.created_at)
-            .bind(&device.updated_at)
-            .execute(&self.pool)
-            .await
-            .map_err(|err| err.to_string())?;
-        Ok(())
+        match self {
+            Self::Mongo(store) => store.create_device(device).await,
+        }
     }
 
     pub async fn get_device(&self, id: &str) -> Result<Option<LocalConnectorDevice>, String> {
-        let row = sqlx::query_as::<_, LocalConnectorDeviceRow>(
-            "SELECT * FROM local_connector_devices WHERE id = ?",
-        )
-        .bind(id)
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(|err| err.to_string())?;
-        Ok(row.map(LocalConnectorDeviceRow::into_model))
+        match self {
+            Self::Mongo(store) => store.get_device(id).await,
+        }
     }
 
     pub async fn list_devices(
         &self,
         owner_user_id: &str,
     ) -> Result<Vec<LocalConnectorDevice>, String> {
-        let rows = sqlx::query_as::<_, LocalConnectorDeviceRow>(
-            "SELECT * FROM local_connector_devices WHERE owner_user_id = ? ORDER BY updated_at DESC",
+        match self {
+            Self::Mongo(store) => store.list_devices(owner_user_id).await,
+        }
+    }
+
+    pub async fn mark_device_online(&self, id: &str) -> Result<(), String> {
+        match self {
+            Self::Mongo(store) => store.mark_device_online(id).await,
+        }
+    }
+
+    pub async fn mark_device_offline(&self, id: &str) -> Result<(), String> {
+        match self {
+            Self::Mongo(store) => store.mark_device_offline(id).await,
+        }
+    }
+
+    pub async fn revoke_device(&self, owner_user_id: &str, id: &str) -> Result<(), String> {
+        match self {
+            Self::Mongo(store) => store.revoke_device(owner_user_id, id).await,
+        }
+    }
+
+    pub async fn create_workspace(
+        &self,
+        workspace: &LocalConnectorWorkspace,
+    ) -> Result<(), String> {
+        match self {
+            Self::Mongo(store) => store.create_workspace(workspace).await,
+        }
+    }
+
+    pub async fn get_workspace(&self, id: &str) -> Result<Option<LocalConnectorWorkspace>, String> {
+        match self {
+            Self::Mongo(store) => store.get_workspace(id).await,
+        }
+    }
+
+    pub async fn list_workspaces(
+        &self,
+        owner_user_id: &str,
+        device_id: Option<String>,
+    ) -> Result<Vec<LocalConnectorWorkspace>, String> {
+        match self {
+            Self::Mongo(store) => store.list_workspaces(owner_user_id, device_id).await,
+        }
+    }
+
+    pub async fn update_workspace(
+        &self,
+        workspace: &LocalConnectorWorkspace,
+    ) -> Result<(), String> {
+        match self {
+            Self::Mongo(store) => store.update_workspace(workspace).await,
+        }
+    }
+
+    pub async fn delete_workspace(&self, owner_user_id: &str, id: &str) -> Result<(), String> {
+        match self {
+            Self::Mongo(store) => store.delete_workspace(owner_user_id, id).await,
+        }
+    }
+
+    pub async fn upsert_project_binding(
+        &self,
+        binding: &LocalConnectorProjectBinding,
+    ) -> Result<LocalConnectorProjectBinding, String> {
+        match self {
+            Self::Mongo(store) => store.upsert_project_binding(binding).await,
+        }
+    }
+
+    pub async fn get_project_binding(
+        &self,
+        id: &str,
+    ) -> Result<Option<LocalConnectorProjectBinding>, String> {
+        match self {
+            Self::Mongo(store) => store.get_project_binding(id).await,
+        }
+    }
+
+    pub async fn list_project_bindings(
+        &self,
+        owner_user_id: &str,
+        project_id: Option<String>,
+        mode: Option<String>,
+    ) -> Result<Vec<LocalConnectorProjectBinding>, String> {
+        match self {
+            Self::Mongo(store) => {
+                store
+                    .list_project_bindings(owner_user_id, project_id, mode)
+                    .await
+            }
+        }
+    }
+
+    pub async fn update_project_binding(
+        &self,
+        binding: &LocalConnectorProjectBinding,
+    ) -> Result<(), String> {
+        match self {
+            Self::Mongo(store) => store.update_project_binding(binding).await,
+        }
+    }
+
+    pub async fn delete_project_binding(
+        &self,
+        owner_user_id: &str,
+        id: &str,
+    ) -> Result<(), String> {
+        match self {
+            Self::Mongo(store) => store.delete_project_binding(owner_user_id, id).await,
+        }
+    }
+
+    pub async fn upsert_sandbox_pairing(
+        &self,
+        pairing: &LocalConnectorSandboxPairing,
+    ) -> Result<LocalConnectorSandboxPairing, String> {
+        match self {
+            Self::Mongo(store) => store.upsert_sandbox_pairing(pairing).await,
+        }
+    }
+
+    pub async fn get_sandbox_pairing(
+        &self,
+        id: &str,
+    ) -> Result<Option<LocalConnectorSandboxPairing>, String> {
+        match self {
+            Self::Mongo(store) => store.get_sandbox_pairing(id).await,
+        }
+    }
+
+    pub async fn list_sandbox_pairings(
+        &self,
+        owner_user_id: &str,
+        device_id: Option<String>,
+        workspace_id: Option<String>,
+    ) -> Result<Vec<LocalConnectorSandboxPairing>, String> {
+        match self {
+            Self::Mongo(store) => {
+                store
+                    .list_sandbox_pairings(owner_user_id, device_id, workspace_id)
+                    .await
+            }
+        }
+    }
+
+    pub async fn update_sandbox_pairing(
+        &self,
+        pairing: &LocalConnectorSandboxPairing,
+    ) -> Result<(), String> {
+        match self {
+            Self::Mongo(store) => store.update_sandbox_pairing(pairing).await,
+        }
+    }
+
+    pub async fn delete_sandbox_pairing(
+        &self,
+        owner_user_id: &str,
+        id: &str,
+    ) -> Result<(), String> {
+        match self {
+            Self::Mongo(store) => store.delete_sandbox_pairing(owner_user_id, id).await,
+        }
+    }
+
+    pub async fn open_session(&self, session: &LocalConnectorSession) -> Result<(), String> {
+        match self {
+            Self::Mongo(store) => store.open_session(session).await,
+        }
+    }
+
+    pub async fn heartbeat_session(&self, session_id: &str, device_id: &str) -> Result<(), String> {
+        match self {
+            Self::Mongo(store) => store.heartbeat_session(session_id, device_id).await,
+        }
+    }
+
+    pub async fn close_session(&self, session_id: &str, device_id: &str) -> Result<(), String> {
+        match self {
+            Self::Mongo(store) => store.close_session(session_id, device_id).await,
+        }
+    }
+}
+
+#[derive(Clone)]
+pub struct MongoConnectorStore {
+    devices: Collection<LocalConnectorDevice>,
+    workspaces: Collection<LocalConnectorWorkspace>,
+    project_bindings: Collection<LocalConnectorProjectBinding>,
+    sandbox_pairings: Collection<LocalConnectorSandboxPairing>,
+    sessions: Collection<LocalConnectorSession>,
+}
+
+impl MongoConnectorStore {
+    pub async fn connect(database_url: &str) -> Result<Self, String> {
+        let client = Client::with_uri_str(database_url)
+            .await
+            .map_err(|err| format!("connect local connector mongodb failed: {err}"))?;
+        let database = client.default_database().ok_or_else(|| {
+            "LOCAL_CONNECTOR_DATABASE_URL mongodb connection string must include a database name"
+                .to_string()
+        })?;
+        let store = Self {
+            devices: database.collection("local_connector_devices"),
+            workspaces: database.collection("local_connector_workspaces"),
+            project_bindings: database.collection("local_connector_project_bindings"),
+            sandbox_pairings: database.collection("local_connector_sandbox_pairings"),
+            sessions: database.collection("local_connector_sessions"),
+        };
+        store.ensure_indexes().await?;
+        Ok(store)
+    }
+
+    async fn ensure_indexes(&self) -> Result<(), String> {
+        ensure_mongo_index(&self.devices, doc! { "id": 1 }, true).await?;
+        ensure_mongo_index(
+            &self.devices,
+            doc! { "owner_user_id": 1, "updated_at": -1 },
+            false,
         )
-        .bind(owner_user_id)
-        .fetch_all(&self.pool)
-        .await
-        .map_err(|err| err.to_string())?;
-        Ok(rows
-            .into_iter()
-            .map(LocalConnectorDeviceRow::into_model)
-            .collect())
+        .await?;
+        ensure_mongo_index(&self.devices, doc! { "status": 1 }, false).await?;
+
+        ensure_mongo_index(&self.workspaces, doc! { "id": 1 }, true).await?;
+        ensure_mongo_index(
+            &self.workspaces,
+            doc! { "owner_user_id": 1, "updated_at": -1 },
+            false,
+        )
+        .await?;
+        ensure_mongo_index(&self.workspaces, doc! { "device_id": 1 }, false).await?;
+
+        ensure_mongo_index(&self.project_bindings, doc! { "id": 1 }, true).await?;
+        ensure_mongo_index(
+            &self.project_bindings,
+            doc! { "owner_user_id": 1, "project_id": 1, "mode": 1 },
+            true,
+        )
+        .await?;
+        ensure_mongo_index(&self.project_bindings, doc! { "workspace_id": 1 }, false).await?;
+
+        ensure_mongo_index(&self.sandbox_pairings, doc! { "id": 1 }, true).await?;
+        ensure_mongo_index(
+            &self.sandbox_pairings,
+            doc! { "owner_user_id": 1, "device_id": 1, "workspace_id": 1 },
+            true,
+        )
+        .await?;
+        ensure_mongo_index(
+            &self.sandbox_pairings,
+            doc! { "owner_user_id": 1, "updated_at": -1 },
+            false,
+        )
+        .await?;
+        ensure_mongo_index(&self.sandbox_pairings, doc! { "workspace_id": 1 }, false).await?;
+
+        ensure_mongo_index(&self.sessions, doc! { "id": 1 }, true).await?;
+        ensure_mongo_index(&self.sessions, doc! { "device_id": 1, "status": 1 }, false).await?;
+        ensure_mongo_index(
+            &self.sessions,
+            doc! { "owner_user_id": 1, "updated_at": -1 },
+            false,
+        )
+        .await?;
+        Ok(())
+    }
+
+    pub async fn create_device(&self, device: &LocalConnectorDevice) -> Result<(), String> {
+        self.devices
+            .insert_one(device, None)
+            .await
+            .map_err(|err| err.to_string())?;
+        Ok(())
+    }
+
+    pub async fn get_device(&self, id: &str) -> Result<Option<LocalConnectorDevice>, String> {
+        self.devices
+            .find_one(doc! { "id": id }, None)
+            .await
+            .map_err(|err| err.to_string())
+    }
+
+    pub async fn list_devices(
+        &self,
+        owner_user_id: &str,
+    ) -> Result<Vec<LocalConnectorDevice>, String> {
+        self.find_devices(doc! { "owner_user_id": owner_user_id })
+            .await
     }
 
     pub async fn mark_device_online(&self, id: &str) -> Result<(), String> {
         let now = now_rfc3339();
-        sqlx::query("UPDATE local_connector_devices SET status = 'online', last_seen_at = ?, updated_at = ? WHERE id = ? AND status != ?")
-            .bind(&now)
-            .bind(&now)
-            .bind(id)
-            .bind(DEVICE_STATUS_REVOKED)
-            .execute(&self.pool)
+        self.devices
+            .update_one(
+                doc! { "id": id, "status": { "$ne": DEVICE_STATUS_REVOKED } },
+                doc! { "$set": { "status": DEVICE_STATUS_ONLINE, "last_seen_at": &now, "updated_at": &now } },
+                None,
+            )
             .await
             .map_err(|err| err.to_string())?;
         Ok(())
@@ -98,12 +352,12 @@ impl ConnectorStore {
 
     pub async fn mark_device_offline(&self, id: &str) -> Result<(), String> {
         let now = now_rfc3339();
-        sqlx::query("UPDATE local_connector_devices SET status = ?, updated_at = ? WHERE id = ? AND status != ?")
-            .bind(DEVICE_STATUS_OFFLINE)
-            .bind(&now)
-            .bind(id)
-            .bind(DEVICE_STATUS_REVOKED)
-            .execute(&self.pool)
+        self.devices
+            .update_one(
+                doc! { "id": id, "status": { "$ne": DEVICE_STATUS_REVOKED } },
+                doc! { "$set": { "status": DEVICE_STATUS_OFFLINE, "updated_at": &now } },
+                None,
+            )
             .await
             .map_err(|err| err.to_string())?;
         Ok(())
@@ -111,13 +365,12 @@ impl ConnectorStore {
 
     pub async fn revoke_device(&self, owner_user_id: &str, id: &str) -> Result<(), String> {
         let now = now_rfc3339();
-        sqlx::query("UPDATE local_connector_devices SET status = ?, revoked_at = ?, updated_at = ? WHERE id = ? AND owner_user_id = ?")
-            .bind(DEVICE_STATUS_REVOKED)
-            .bind(&now)
-            .bind(&now)
-            .bind(id)
-            .bind(owner_user_id)
-            .execute(&self.pool)
+        self.devices
+            .update_one(
+                doc! { "id": id, "owner_user_id": owner_user_id },
+                doc! { "$set": { "status": DEVICE_STATUS_REVOKED, "revoked_at": &now, "updated_at": &now } },
+                None,
+            )
             .await
             .map_err(|err| err.to_string())?;
         Ok(())
@@ -127,32 +380,18 @@ impl ConnectorStore {
         &self,
         workspace: &LocalConnectorWorkspace,
     ) -> Result<(), String> {
-        sqlx::query("INSERT INTO local_connector_workspaces (id, owner_user_id, device_id, display_name, local_path_alias, local_path_fingerprint, capabilities_json, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
-            .bind(&workspace.id)
-            .bind(&workspace.owner_user_id)
-            .bind(&workspace.device_id)
-            .bind(&workspace.display_name)
-            .bind(&workspace.local_path_alias)
-            .bind(&workspace.local_path_fingerprint)
-            .bind(capabilities_to_json(&workspace.capabilities))
-            .bind(&workspace.status)
-            .bind(&workspace.created_at)
-            .bind(&workspace.updated_at)
-            .execute(&self.pool)
+        self.workspaces
+            .insert_one(workspace, None)
             .await
             .map_err(|err| err.to_string())?;
         Ok(())
     }
 
     pub async fn get_workspace(&self, id: &str) -> Result<Option<LocalConnectorWorkspace>, String> {
-        let row = sqlx::query_as::<_, LocalConnectorWorkspaceRow>(
-            "SELECT * FROM local_connector_workspaces WHERE id = ?",
-        )
-        .bind(id)
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(|err| err.to_string())?;
-        Ok(row.map(LocalConnectorWorkspaceRow::into_model))
+        self.workspaces
+            .find_one(doc! { "id": id }, None)
+            .await
+            .map_err(|err| err.to_string())
     }
 
     pub async fn list_workspaces(
@@ -160,28 +399,11 @@ impl ConnectorStore {
         owner_user_id: &str,
         device_id: Option<String>,
     ) -> Result<Vec<LocalConnectorWorkspace>, String> {
-        let rows = if let Some(device_id) = device_id {
-            sqlx::query_as::<_, LocalConnectorWorkspaceRow>(
-                "SELECT * FROM local_connector_workspaces WHERE owner_user_id = ? AND device_id = ? ORDER BY updated_at DESC",
-            )
-            .bind(owner_user_id)
-            .bind(device_id)
-            .fetch_all(&self.pool)
-            .await
-            .map_err(|err| err.to_string())?
-        } else {
-            sqlx::query_as::<_, LocalConnectorWorkspaceRow>(
-                "SELECT * FROM local_connector_workspaces WHERE owner_user_id = ? ORDER BY updated_at DESC",
-            )
-            .bind(owner_user_id)
-            .fetch_all(&self.pool)
-            .await
-            .map_err(|err| err.to_string())?
-        };
-        Ok(rows
-            .into_iter()
-            .map(LocalConnectorWorkspaceRow::into_model)
-            .collect())
+        let mut filter = doc! { "owner_user_id": owner_user_id };
+        if let Some(device_id) = device_id {
+            filter.insert("device_id", device_id);
+        }
+        self.find_workspaces(filter).await
     }
 
     pub async fn update_workspace(
@@ -189,27 +411,30 @@ impl ConnectorStore {
         workspace: &LocalConnectorWorkspace,
     ) -> Result<(), String> {
         let now = now_rfc3339();
-        sqlx::query("UPDATE local_connector_workspaces SET device_id = ?, display_name = ?, local_path_alias = ?, local_path_fingerprint = ?, capabilities_json = ?, status = ?, updated_at = ? WHERE id = ? AND owner_user_id = ?")
-            .bind(&workspace.device_id)
-            .bind(&workspace.display_name)
-            .bind(&workspace.local_path_alias)
-            .bind(&workspace.local_path_fingerprint)
-            .bind(capabilities_to_json(&workspace.capabilities))
-            .bind(&workspace.status)
-            .bind(&now)
-            .bind(&workspace.id)
-            .bind(&workspace.owner_user_id)
-            .execute(&self.pool)
+        self.workspaces
+            .update_one(
+                doc! { "id": &workspace.id, "owner_user_id": &workspace.owner_user_id },
+                doc! {
+                    "$set": {
+                        "device_id": &workspace.device_id,
+                        "display_name": &workspace.display_name,
+                        "local_path_alias": &workspace.local_path_alias,
+                        "local_path_fingerprint": &workspace.local_path_fingerprint,
+                        "capabilities": &workspace.capabilities,
+                        "status": &workspace.status,
+                        "updated_at": &now,
+                    }
+                },
+                None,
+            )
             .await
             .map_err(|err| err.to_string())?;
         Ok(())
     }
 
     pub async fn delete_workspace(&self, owner_user_id: &str, id: &str) -> Result<(), String> {
-        sqlx::query("DELETE FROM local_connector_workspaces WHERE id = ? AND owner_user_id = ?")
-            .bind(id)
-            .bind(owner_user_id)
-            .execute(&self.pool)
+        self.workspaces
+            .delete_one(doc! { "id": id, "owner_user_id": owner_user_id }, None)
             .await
             .map_err(|err| err.to_string())?;
         Ok(())
@@ -220,56 +445,47 @@ impl ConnectorStore {
         binding: &LocalConnectorProjectBinding,
     ) -> Result<LocalConnectorProjectBinding, String> {
         let now = now_rfc3339();
-        sqlx::query("INSERT INTO local_connector_project_bindings (id, owner_user_id, project_id, device_id, workspace_id, mode, enabled, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(owner_user_id, project_id, mode) DO UPDATE SET device_id = excluded.device_id, workspace_id = excluded.workspace_id, enabled = excluded.enabled, updated_at = excluded.updated_at")
-            .bind(&binding.id)
-            .bind(&binding.owner_user_id)
-            .bind(&binding.project_id)
-            .bind(&binding.device_id)
-            .bind(&binding.workspace_id)
-            .bind(&binding.mode)
-            .bind(bool_to_int(binding.enabled))
-            .bind(&binding.created_at)
-            .bind(&now)
-            .execute(&self.pool)
+        let options = FindOneAndUpdateOptions::builder()
+            .upsert(true)
+            .return_document(ReturnDocument::After)
+            .build();
+        self.project_bindings
+            .find_one_and_update(
+                doc! {
+                    "owner_user_id": &binding.owner_user_id,
+                    "project_id": &binding.project_id,
+                    "mode": &binding.mode,
+                },
+                doc! {
+                    "$setOnInsert": {
+                        "id": &binding.id,
+                        "created_at": &binding.created_at,
+                    },
+                    "$set": {
+                        "owner_user_id": &binding.owner_user_id,
+                        "project_id": &binding.project_id,
+                        "mode": &binding.mode,
+                        "device_id": &binding.device_id,
+                        "workspace_id": &binding.workspace_id,
+                        "enabled": binding.enabled,
+                        "updated_at": &now,
+                    }
+                },
+                options,
+            )
             .await
-            .map_err(|err| err.to_string())?;
-        self.get_project_binding_by_scope(
-            binding.owner_user_id.as_str(),
-            binding.project_id.as_str(),
-            binding.mode.as_str(),
-        )
-        .await?
-        .ok_or_else(|| "project binding not found after upsert".to_string())
+            .map_err(|err| err.to_string())?
+            .ok_or_else(|| "project binding not found after upsert".to_string())
     }
 
     pub async fn get_project_binding(
         &self,
         id: &str,
     ) -> Result<Option<LocalConnectorProjectBinding>, String> {
-        let row = sqlx::query_as::<_, LocalConnectorProjectBindingRow>(
-            "SELECT * FROM local_connector_project_bindings WHERE id = ?",
-        )
-        .bind(id)
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(|err| err.to_string())?;
-        Ok(row.map(LocalConnectorProjectBindingRow::into_model))
-    }
-
-    async fn get_project_binding_by_scope(
-        &self,
-        owner_user_id: &str,
-        project_id: &str,
-        mode: &str,
-    ) -> Result<Option<LocalConnectorProjectBinding>, String> {
-        let row = sqlx::query_as::<_, LocalConnectorProjectBindingRow>("SELECT * FROM local_connector_project_bindings WHERE owner_user_id = ? AND project_id = ? AND mode = ? LIMIT 1")
-            .bind(owner_user_id)
-            .bind(project_id)
-            .bind(mode)
-            .fetch_optional(&self.pool)
+        self.project_bindings
+            .find_one(doc! { "id": id }, None)
             .await
-            .map_err(|err| err.to_string())?;
-        Ok(row.map(LocalConnectorProjectBindingRow::into_model))
+            .map_err(|err| err.to_string())
     }
 
     pub async fn list_project_bindings(
@@ -278,44 +494,14 @@ impl ConnectorStore {
         project_id: Option<String>,
         mode: Option<String>,
     ) -> Result<Vec<LocalConnectorProjectBinding>, String> {
-        let rows = match (project_id, mode) {
-            (Some(project_id), Some(mode)) => {
-                sqlx::query_as::<_, LocalConnectorProjectBindingRow>("SELECT * FROM local_connector_project_bindings WHERE owner_user_id = ? AND project_id = ? AND mode = ? ORDER BY updated_at DESC")
-                    .bind(owner_user_id)
-                    .bind(project_id)
-                    .bind(mode)
-                    .fetch_all(&self.pool)
-                    .await
-                    .map_err(|err| err.to_string())?
-            }
-            (Some(project_id), None) => {
-                sqlx::query_as::<_, LocalConnectorProjectBindingRow>("SELECT * FROM local_connector_project_bindings WHERE owner_user_id = ? AND project_id = ? ORDER BY updated_at DESC")
-                    .bind(owner_user_id)
-                    .bind(project_id)
-                    .fetch_all(&self.pool)
-                    .await
-                    .map_err(|err| err.to_string())?
-            }
-            (None, Some(mode)) => {
-                sqlx::query_as::<_, LocalConnectorProjectBindingRow>("SELECT * FROM local_connector_project_bindings WHERE owner_user_id = ? AND mode = ? ORDER BY updated_at DESC")
-                    .bind(owner_user_id)
-                    .bind(mode)
-                    .fetch_all(&self.pool)
-                    .await
-                    .map_err(|err| err.to_string())?
-            }
-            (None, None) => {
-                sqlx::query_as::<_, LocalConnectorProjectBindingRow>("SELECT * FROM local_connector_project_bindings WHERE owner_user_id = ? ORDER BY updated_at DESC")
-                    .bind(owner_user_id)
-                    .fetch_all(&self.pool)
-                    .await
-                    .map_err(|err| err.to_string())?
-            }
-        };
-        Ok(rows
-            .into_iter()
-            .map(LocalConnectorProjectBindingRow::into_model)
-            .collect())
+        let mut filter = doc! { "owner_user_id": owner_user_id };
+        if let Some(project_id) = project_id {
+            filter.insert("project_id", project_id);
+        }
+        if let Some(mode) = mode {
+            filter.insert("mode", mode);
+        }
+        self.find_project_bindings(filter).await
     }
 
     pub async fn update_project_binding(
@@ -323,14 +509,19 @@ impl ConnectorStore {
         binding: &LocalConnectorProjectBinding,
     ) -> Result<(), String> {
         let now = now_rfc3339();
-        sqlx::query("UPDATE local_connector_project_bindings SET device_id = ?, workspace_id = ?, enabled = ?, updated_at = ? WHERE id = ? AND owner_user_id = ?")
-            .bind(&binding.device_id)
-            .bind(&binding.workspace_id)
-            .bind(bool_to_int(binding.enabled))
-            .bind(&now)
-            .bind(&binding.id)
-            .bind(&binding.owner_user_id)
-            .execute(&self.pool)
+        self.project_bindings
+            .update_one(
+                doc! { "id": &binding.id, "owner_user_id": &binding.owner_user_id },
+                doc! {
+                    "$set": {
+                        "device_id": &binding.device_id,
+                        "workspace_id": &binding.workspace_id,
+                        "enabled": binding.enabled,
+                        "updated_at": &now,
+                    }
+                },
+                None,
+            )
             .await
             .map_err(|err| err.to_string())?;
         Ok(())
@@ -341,14 +532,10 @@ impl ConnectorStore {
         owner_user_id: &str,
         id: &str,
     ) -> Result<(), String> {
-        sqlx::query(
-            "DELETE FROM local_connector_project_bindings WHERE id = ? AND owner_user_id = ?",
-        )
-        .bind(id)
-        .bind(owner_user_id)
-        .execute(&self.pool)
-        .await
-        .map_err(|err| err.to_string())?;
+        self.project_bindings
+            .delete_one(doc! { "id": id, "owner_user_id": owner_user_id }, None)
+            .await
+            .map_err(|err| err.to_string())?;
         Ok(())
     }
 
@@ -357,57 +544,48 @@ impl ConnectorStore {
         pairing: &LocalConnectorSandboxPairing,
     ) -> Result<LocalConnectorSandboxPairing, String> {
         let now = now_rfc3339();
-        sqlx::query("INSERT INTO local_connector_sandbox_pairings (id, owner_user_id, device_id, workspace_id, enabled, sandbox_mode, facade_base_url, access_client_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(owner_user_id, device_id, workspace_id) DO UPDATE SET enabled = excluded.enabled, sandbox_mode = excluded.sandbox_mode, facade_base_url = excluded.facade_base_url, access_client_id = excluded.access_client_id, updated_at = excluded.updated_at")
-            .bind(&pairing.id)
-            .bind(&pairing.owner_user_id)
-            .bind(&pairing.device_id)
-            .bind(&pairing.workspace_id)
-            .bind(bool_to_int(pairing.enabled))
-            .bind(&pairing.sandbox_mode)
-            .bind(&pairing.facade_base_url)
-            .bind(&pairing.access_client_id)
-            .bind(&pairing.created_at)
-            .bind(&now)
-            .execute(&self.pool)
+        let options = FindOneAndUpdateOptions::builder()
+            .upsert(true)
+            .return_document(ReturnDocument::After)
+            .build();
+        self.sandbox_pairings
+            .find_one_and_update(
+                doc! {
+                    "owner_user_id": &pairing.owner_user_id,
+                    "device_id": &pairing.device_id,
+                    "workspace_id": &pairing.workspace_id,
+                },
+                doc! {
+                    "$setOnInsert": {
+                        "id": &pairing.id,
+                        "created_at": &pairing.created_at,
+                    },
+                    "$set": {
+                        "owner_user_id": &pairing.owner_user_id,
+                        "device_id": &pairing.device_id,
+                        "workspace_id": &pairing.workspace_id,
+                        "enabled": pairing.enabled,
+                        "sandbox_mode": &pairing.sandbox_mode,
+                        "facade_base_url": &pairing.facade_base_url,
+                        "access_client_id": &pairing.access_client_id,
+                        "updated_at": &now,
+                    }
+                },
+                options,
+            )
             .await
-            .map_err(|err| err.to_string())?;
-        self.get_sandbox_pairing_by_scope(
-            pairing.owner_user_id.as_str(),
-            pairing.device_id.as_str(),
-            pairing.workspace_id.as_str(),
-        )
-        .await?
-        .ok_or_else(|| "sandbox pairing not found after upsert".to_string())
+            .map_err(|err| err.to_string())?
+            .ok_or_else(|| "sandbox pairing not found after upsert".to_string())
     }
 
     pub async fn get_sandbox_pairing(
         &self,
         id: &str,
     ) -> Result<Option<LocalConnectorSandboxPairing>, String> {
-        let row = sqlx::query_as::<_, LocalConnectorSandboxPairingRow>(
-            "SELECT * FROM local_connector_sandbox_pairings WHERE id = ?",
-        )
-        .bind(id)
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(|err| err.to_string())?;
-        Ok(row.map(LocalConnectorSandboxPairingRow::into_model))
-    }
-
-    async fn get_sandbox_pairing_by_scope(
-        &self,
-        owner_user_id: &str,
-        device_id: &str,
-        workspace_id: &str,
-    ) -> Result<Option<LocalConnectorSandboxPairing>, String> {
-        let row = sqlx::query_as::<_, LocalConnectorSandboxPairingRow>("SELECT * FROM local_connector_sandbox_pairings WHERE owner_user_id = ? AND device_id = ? AND workspace_id = ? LIMIT 1")
-            .bind(owner_user_id)
-            .bind(device_id)
-            .bind(workspace_id)
-            .fetch_optional(&self.pool)
+        self.sandbox_pairings
+            .find_one(doc! { "id": id }, None)
             .await
-            .map_err(|err| err.to_string())?;
-        Ok(row.map(LocalConnectorSandboxPairingRow::into_model))
+            .map_err(|err| err.to_string())
     }
 
     pub async fn list_sandbox_pairings(
@@ -416,44 +594,14 @@ impl ConnectorStore {
         device_id: Option<String>,
         workspace_id: Option<String>,
     ) -> Result<Vec<LocalConnectorSandboxPairing>, String> {
-        let rows = match (device_id, workspace_id) {
-            (Some(device_id), Some(workspace_id)) => {
-                sqlx::query_as::<_, LocalConnectorSandboxPairingRow>("SELECT * FROM local_connector_sandbox_pairings WHERE owner_user_id = ? AND device_id = ? AND workspace_id = ? ORDER BY updated_at DESC")
-                    .bind(owner_user_id)
-                    .bind(device_id)
-                    .bind(workspace_id)
-                    .fetch_all(&self.pool)
-                    .await
-                    .map_err(|err| err.to_string())?
-            }
-            (Some(device_id), None) => {
-                sqlx::query_as::<_, LocalConnectorSandboxPairingRow>("SELECT * FROM local_connector_sandbox_pairings WHERE owner_user_id = ? AND device_id = ? ORDER BY updated_at DESC")
-                    .bind(owner_user_id)
-                    .bind(device_id)
-                    .fetch_all(&self.pool)
-                    .await
-                    .map_err(|err| err.to_string())?
-            }
-            (None, Some(workspace_id)) => {
-                sqlx::query_as::<_, LocalConnectorSandboxPairingRow>("SELECT * FROM local_connector_sandbox_pairings WHERE owner_user_id = ? AND workspace_id = ? ORDER BY updated_at DESC")
-                    .bind(owner_user_id)
-                    .bind(workspace_id)
-                    .fetch_all(&self.pool)
-                    .await
-                    .map_err(|err| err.to_string())?
-            }
-            (None, None) => {
-                sqlx::query_as::<_, LocalConnectorSandboxPairingRow>("SELECT * FROM local_connector_sandbox_pairings WHERE owner_user_id = ? ORDER BY updated_at DESC")
-                    .bind(owner_user_id)
-                    .fetch_all(&self.pool)
-                    .await
-                    .map_err(|err| err.to_string())?
-            }
-        };
-        Ok(rows
-            .into_iter()
-            .map(LocalConnectorSandboxPairingRow::into_model)
-            .collect())
+        let mut filter = doc! { "owner_user_id": owner_user_id };
+        if let Some(device_id) = device_id {
+            filter.insert("device_id", device_id);
+        }
+        if let Some(workspace_id) = workspace_id {
+            filter.insert("workspace_id", workspace_id);
+        }
+        self.find_sandbox_pairings(filter).await
     }
 
     pub async fn update_sandbox_pairing(
@@ -461,16 +609,21 @@ impl ConnectorStore {
         pairing: &LocalConnectorSandboxPairing,
     ) -> Result<(), String> {
         let now = now_rfc3339();
-        sqlx::query("UPDATE local_connector_sandbox_pairings SET workspace_id = ?, enabled = ?, sandbox_mode = ?, facade_base_url = ?, access_client_id = ?, updated_at = ? WHERE id = ? AND owner_user_id = ?")
-            .bind(&pairing.workspace_id)
-            .bind(bool_to_int(pairing.enabled))
-            .bind(&pairing.sandbox_mode)
-            .bind(&pairing.facade_base_url)
-            .bind(&pairing.access_client_id)
-            .bind(&now)
-            .bind(&pairing.id)
-            .bind(&pairing.owner_user_id)
-            .execute(&self.pool)
+        self.sandbox_pairings
+            .update_one(
+                doc! { "id": &pairing.id, "owner_user_id": &pairing.owner_user_id },
+                doc! {
+                    "$set": {
+                        "workspace_id": &pairing.workspace_id,
+                        "enabled": pairing.enabled,
+                        "sandbox_mode": &pairing.sandbox_mode,
+                        "facade_base_url": &pairing.facade_base_url,
+                        "access_client_id": &pairing.access_client_id,
+                        "updated_at": &now,
+                    }
+                },
+                None,
+            )
             .await
             .map_err(|err| err.to_string())?;
         Ok(())
@@ -481,29 +634,16 @@ impl ConnectorStore {
         owner_user_id: &str,
         id: &str,
     ) -> Result<(), String> {
-        sqlx::query(
-            "DELETE FROM local_connector_sandbox_pairings WHERE id = ? AND owner_user_id = ?",
-        )
-        .bind(id)
-        .bind(owner_user_id)
-        .execute(&self.pool)
-        .await
-        .map_err(|err| err.to_string())?;
+        self.sandbox_pairings
+            .delete_one(doc! { "id": id, "owner_user_id": owner_user_id }, None)
+            .await
+            .map_err(|err| err.to_string())?;
         Ok(())
     }
 
     pub async fn open_session(&self, session: &LocalConnectorSession) -> Result<(), String> {
-        sqlx::query("INSERT INTO local_connector_sessions (id, owner_user_id, device_id, connection_id, status, connected_at, last_heartbeat_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
-            .bind(&session.id)
-            .bind(&session.owner_user_id)
-            .bind(&session.device_id)
-            .bind(&session.connection_id)
-            .bind(&session.status)
-            .bind(&session.connected_at)
-            .bind(&session.last_heartbeat_at)
-            .bind(&session.created_at)
-            .bind(&session.updated_at)
-            .execute(&self.pool)
+        self.sessions
+            .insert_one(session, None)
             .await
             .map_err(|err| err.to_string())?;
         Ok(())
@@ -511,61 +651,104 @@ impl ConnectorStore {
 
     pub async fn heartbeat_session(&self, session_id: &str, device_id: &str) -> Result<(), String> {
         let now = now_rfc3339();
-        sqlx::query("UPDATE local_connector_sessions SET status = ?, last_heartbeat_at = ?, updated_at = ? WHERE id = ?")
-            .bind(SESSION_STATUS_CONNECTED)
-            .bind(&now)
-            .bind(&now)
-            .bind(session_id)
-            .execute(&self.pool)
+        self.sessions
+            .update_one(
+                doc! { "id": session_id },
+                doc! { "$set": { "status": SESSION_STATUS_CONNECTED, "last_heartbeat_at": &now, "updated_at": &now } },
+                None,
+            )
             .await
             .map_err(|err| err.to_string())?;
-        sqlx::query("UPDATE local_connector_devices SET status = 'online', last_seen_at = ?, updated_at = ? WHERE id = ? AND status != ?")
-            .bind(&now)
-            .bind(&now)
-            .bind(device_id)
-            .bind(DEVICE_STATUS_REVOKED)
-            .execute(&self.pool)
-            .await
-            .map_err(|err| err.to_string())?;
-        Ok(())
+        self.mark_device_online(device_id).await
     }
 
     pub async fn close_session(&self, session_id: &str, device_id: &str) -> Result<(), String> {
         let now = now_rfc3339();
-        sqlx::query("UPDATE local_connector_sessions SET status = ?, disconnected_at = ?, updated_at = ? WHERE id = ?")
-            .bind(SESSION_STATUS_DISCONNECTED)
-            .bind(&now)
-            .bind(&now)
-            .bind(session_id)
-            .execute(&self.pool)
+        self.sessions
+            .update_one(
+                doc! { "id": session_id },
+                doc! { "$set": { "status": SESSION_STATUS_DISCONNECTED, "disconnected_at": &now, "updated_at": &now } },
+                None,
+            )
             .await
             .map_err(|err| err.to_string())?;
         self.mark_device_offline(device_id).await
     }
+
+    async fn find_devices(
+        &self,
+        filter: mongodb::bson::Document,
+    ) -> Result<Vec<LocalConnectorDevice>, String> {
+        let options = FindOptions::builder()
+            .sort(doc! { "updated_at": -1 })
+            .build();
+        let cursor = self
+            .devices
+            .find(filter, options)
+            .await
+            .map_err(|err| err.to_string())?;
+        cursor.try_collect().await.map_err(|err| err.to_string())
+    }
+
+    async fn find_workspaces(
+        &self,
+        filter: mongodb::bson::Document,
+    ) -> Result<Vec<LocalConnectorWorkspace>, String> {
+        let options = FindOptions::builder()
+            .sort(doc! { "updated_at": -1 })
+            .build();
+        let cursor = self
+            .workspaces
+            .find(filter, options)
+            .await
+            .map_err(|err| err.to_string())?;
+        cursor.try_collect().await.map_err(|err| err.to_string())
+    }
+
+    async fn find_project_bindings(
+        &self,
+        filter: mongodb::bson::Document,
+    ) -> Result<Vec<LocalConnectorProjectBinding>, String> {
+        let options = FindOptions::builder()
+            .sort(doc! { "updated_at": -1 })
+            .build();
+        let cursor = self
+            .project_bindings
+            .find(filter, options)
+            .await
+            .map_err(|err| err.to_string())?;
+        cursor.try_collect().await.map_err(|err| err.to_string())
+    }
+
+    async fn find_sandbox_pairings(
+        &self,
+        filter: mongodb::bson::Document,
+    ) -> Result<Vec<LocalConnectorSandboxPairing>, String> {
+        let options = FindOptions::builder()
+            .sort(doc! { "updated_at": -1 })
+            .build();
+        let cursor = self
+            .sandbox_pairings
+            .find(filter, options)
+            .await
+            .map_err(|err| err.to_string())?;
+        cursor.try_collect().await.map_err(|err| err.to_string())
+    }
 }
 
-fn ensure_sqlite_parent_dir(database_url: &str) -> Result<(), String> {
-    let Some(path) = sqlite_file_path(database_url) else {
-        return Ok(());
-    };
-    let Some(parent) = Path::new(path.as_str()).parent() else {
-        return Ok(());
-    };
-    if parent.as_os_str().is_empty() {
-        return Ok(());
-    }
-    std::fs::create_dir_all(parent)
-        .map_err(|err| format!("create local connector database dir failed: {err}"))
-}
-
-fn sqlite_file_path(database_url: &str) -> Option<String> {
-    let trimmed = database_url.trim();
-    if trimmed == "sqlite::memory:" || trimmed == "sqlite://:memory:" {
-        return None;
-    }
-    trimmed
-        .strip_prefix("sqlite://")
-        .or_else(|| trimmed.strip_prefix("sqlite:"))
-        .map(ToOwned::to_owned)
-        .filter(|value| !value.is_empty())
+async fn ensure_mongo_index<T>(
+    collection: &Collection<T>,
+    keys: mongodb::bson::Document,
+    unique: bool,
+) -> Result<(), String>
+where
+    T: Send + Sync,
+{
+    let options = IndexOptions::builder().unique(unique).build();
+    let model = IndexModel::builder().keys(keys).options(options).build();
+    collection
+        .create_index(model, None)
+        .await
+        .map_err(|err| err.to_string())?;
+    Ok(())
 }

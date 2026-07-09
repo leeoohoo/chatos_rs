@@ -115,53 +115,71 @@ impl AppStore {
     fn decrypt_user_model_config(
         mut config: UserModelConfigRecord,
     ) -> Result<UserModelConfigRecord, String> {
-        config.has_api_key = config
-            .api_key
-            .as_deref()
-            .map(str::trim)
-            .is_some_and(|value| !value.is_empty());
+        let has_stored_api_key = config.has_api_key
+            || config
+                .api_key
+                .as_deref()
+                .map(str::trim)
+                .is_some_and(|value| !value.is_empty());
         config.api_key =
             Self::decrypt_model_secret(config.api_key, "user_model_config", config.id.as_str())?;
+        config.has_api_key = has_stored_api_key
+            || config
+                .api_key
+                .as_deref()
+                .map(str::trim)
+                .is_some_and(|value| !value.is_empty());
         Ok(config)
     }
 
     fn encrypt_user_model_config(
         mut config: UserModelConfigRecord,
     ) -> Result<UserModelConfigRecord, String> {
+        let has_declared_api_key = config.has_api_key
+            || config
+                .api_key
+                .as_deref()
+                .map(str::trim)
+                .is_some_and(|value| !value.is_empty());
         config.api_key = encrypt_optional_secret(config.api_key)?;
-        config.has_api_key = config
-            .api_key
-            .as_deref()
-            .map(str::trim)
-            .is_some_and(|value| !value.is_empty());
+        config.has_api_key = has_declared_api_key;
         Ok(config)
     }
 
     fn decrypt_user_model_provider(
         mut provider: UserModelProviderRecord,
     ) -> Result<UserModelProviderRecord, String> {
-        provider.has_api_key = provider
-            .api_key
-            .as_deref()
-            .map(str::trim)
-            .is_some_and(|value| !value.is_empty());
+        let has_stored_api_key = provider.has_api_key
+            || provider
+                .api_key
+                .as_deref()
+                .map(str::trim)
+                .is_some_and(|value| !value.is_empty());
         provider.api_key = Self::decrypt_model_secret(
             provider.api_key,
             "user_model_provider",
             provider.id.as_str(),
         )?;
+        provider.has_api_key = has_stored_api_key
+            || provider
+                .api_key
+                .as_deref()
+                .map(str::trim)
+                .is_some_and(|value| !value.is_empty());
         Ok(provider)
     }
 
     fn encrypt_user_model_provider(
         mut provider: UserModelProviderRecord,
     ) -> Result<UserModelProviderRecord, String> {
+        let has_declared_api_key = provider.has_api_key
+            || provider
+                .api_key
+                .as_deref()
+                .map(str::trim)
+                .is_some_and(|value| !value.is_empty());
         provider.api_key = encrypt_optional_secret(provider.api_key)?;
-        provider.has_api_key = provider
-            .api_key
-            .as_deref()
-            .map(str::trim)
-            .is_some_and(|value| !value.is_empty());
+        provider.has_api_key = has_declared_api_key;
         Ok(provider)
     }
 
@@ -535,6 +553,17 @@ impl AppStore {
                 doc! { "$set": {
                     "memory_summary_model_config_id": Bson::Null,
                     "memory_summary_thinking_level": Bson::Null,
+                } },
+                None,
+            )
+            .await
+            .map_err(|err| err.to_string())?;
+        self.user_model_settings
+            .update_many(
+                doc! { "project_management_agent_model_config_id": id },
+                doc! { "$set": {
+                    "project_management_agent_model_config_id": Bson::Null,
+                    "project_management_agent_thinking_level": Bson::Null,
                 } },
                 None,
             )

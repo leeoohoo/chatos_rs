@@ -21,6 +21,7 @@ use crate::state::AppState;
 mod agents;
 mod auth;
 mod harness;
+mod internal_models;
 mod models;
 mod system;
 mod token_exchange;
@@ -110,6 +111,14 @@ pub fn build_router(state: AppState) -> Router {
         .route(
             "/api/internal/harness/users/:user_id/access",
             get(harness::get_user_harness_access),
+        )
+        .route(
+            "/api/internal/users/:user_id/model-configs/:model_config_id/runtime",
+            get(internal_models::get_user_model_runtime_config),
+        )
+        .route(
+            "/api/internal/users/:user_id/model-settings",
+            get(internal_models::get_user_model_settings),
         )
         .merge(protected)
         .with_state(state)

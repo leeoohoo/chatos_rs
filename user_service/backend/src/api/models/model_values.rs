@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use serde_json::{json, Value};
+use serde_json::json;
 
 use crate::models::{UserModelConfigRecord, UserModelProviderRecord, UserModelSettingsRecord};
 
@@ -26,7 +26,7 @@ pub(super) fn model_config_public_value(
                 .as_deref()
                 .map(str::trim)
                 .is_some_and(|value| !value.is_empty()),
-        "base_url": record.base_url,
+        "base_url": serde_json::Value::Null,
         "enabled": record.enabled,
         "supports_images": record.supports_images,
         "supports_reasoning": record.supports_reasoning,
@@ -34,9 +34,7 @@ pub(super) fn model_config_public_value(
         "created_at": record.created_at,
         "updated_at": record.updated_at,
     });
-    if include_secret {
-        value["api_key"] = Value::String(record.api_key.unwrap_or_default());
-    }
+    let _ = include_secret;
     if let Some(sync_warnings) = sync_warnings.filter(|items| !items.is_empty()) {
         value["sync_warnings"] = json!(sync_warnings);
     }
@@ -59,7 +57,7 @@ pub(super) fn model_provider_public_value(
                 .as_deref()
                 .map(str::trim)
                 .is_some_and(|value| !value.is_empty()),
-        "base_url": record.base_url,
+        "base_url": serde_json::Value::Null,
         "enabled": record.enabled,
         "supports_images": record.supports_images,
         "supports_reasoning": record.supports_reasoning,
@@ -71,9 +69,7 @@ pub(super) fn model_provider_public_value(
         "created_at": record.created_at,
         "updated_at": record.updated_at,
     });
-    if include_secret {
-        value["api_key"] = Value::String(record.api_key.unwrap_or_default());
-    }
+    let _ = include_secret;
     if let Some(sync_warnings) = sync_warnings.filter(|items| !items.is_empty()) {
         value["sync_warnings"] = json!(sync_warnings);
     }
@@ -88,6 +84,8 @@ pub(super) fn model_settings_public_value(
         "user_id": record.user_id,
         "memory_summary_model_config_id": record.memory_summary_model_config_id,
         "memory_summary_thinking_level": record.memory_summary_thinking_level,
+        "project_management_agent_model_config_id": record.project_management_agent_model_config_id,
+        "project_management_agent_thinking_level": record.project_management_agent_thinking_level,
         "updated_at": record.updated_at,
     });
     if let Some(sync_warnings) = sync_warnings.filter(|items| !items.is_empty()) {

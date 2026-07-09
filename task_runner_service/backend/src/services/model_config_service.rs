@@ -102,7 +102,7 @@ impl ModelConfigService {
             }),
             name: input.name.trim().to_string(),
             provider: provider.clone(),
-            base_url: normalize_model_base_url_input(provider.as_str(), Some(input.base_url)),
+            base_url: input.base_url.trim().trim_end_matches('/').to_string(),
             api_key: input.api_key.trim().to_string(),
             model: input.model.trim().to_string(),
             usage_scenario: normalized_optional(input.usage_scenario).or_else(|| {

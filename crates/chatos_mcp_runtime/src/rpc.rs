@@ -16,7 +16,7 @@ use uuid::Uuid;
 
 use crate::types::McpStdioServer;
 
-const MCP_RPC_TIMEOUT: Duration = Duration::from_secs(15);
+const DEFAULT_MCP_RPC_TIMEOUT: Duration = Duration::from_secs(15);
 const MCP_TOOLS_LIST_SUCCESS_CACHE_TTL: Duration = Duration::from_secs(60);
 const MCP_TOOLS_LIST_ERROR_CACHE_TTL: Duration = Duration::from_secs(10);
 const MCP_STDIO_SESSION_MAX: usize = 32;
@@ -53,13 +53,14 @@ struct StdioSessionEntry {
 pub async fn list_tools_http(
     url: &str,
     headers: Option<&HashMap<String, String>>,
+    timeout: Option<Duration>,
 ) -> Result<Vec<Value>, String> {
-    let cache_key = tools_list_http_cache_key(url, headers);
+    let cache_key = tools_list_http_cache_key(url, headers, timeout);
     if let Some(cached) = cached_tools_list(cache_key.as_str()) {
         return cached;
     }
     let result = async {
-        let response = jsonrpc_http_call(url, headers, "tools/list", json!({})).await?;
+        let response = jsonrpc_http_call(url, headers, "tools/list", json!({}), timeout).await?;
         extract_tools(&response)
     }
     .await;
@@ -99,11 +100,13 @@ pub async fn jsonrpc_http_call(
     headers: Option<&HashMap<String, String>>,
     method: &str,
     params: Value,
+    timeout: Option<Duration>,
 ) -> Result<Value, String> {
     let id = Uuid::new_v4().to_string();
     let payload = json!({"jsonrpc": "2.0", "id": id, "method": method, "params": params});
     let client = mcp_http_client()?;
-    let mut request = client.post(url).json(&payload);
+    let request_timeout = timeout.unwrap_or(DEFAULT_MCP_RPC_TIMEOUT);
+    let mut request = client.post(url).timeout(request_timeout).json(&payload);
     if let Some(headers) = headers {
         for (key, value) in headers {
             request = request.header(key.as_str(), value.as_str());
@@ -112,7 +115,7 @@ pub async fn jsonrpc_http_call(
     let response = request
         .send()
         .await
-        .map_err(|err| format_http_send_error(method, url, &err))?;
+        .map_err(|err| format_http_send_error(method, url, request_timeout, &err))?;
 
     let status = response.status();
     let redirect_location = response
@@ -157,7 +160,6 @@ fn mcp_http_client() -> Result<reqwest::Client, String> {
     MCP_HTTP_CLIENT
         .get_or_init(|| {
             reqwest::Client::builder()
-                .timeout(MCP_RPC_TIMEOUT)
                 .redirect(reqwest::redirect::Policy::none())
                 .build()
                 .map_err(|err| err.to_string())
@@ -220,8 +222,15 @@ fn store_tools_list_cache(cache_key: String, result: Result<Vec<Value>, String>)
     }
 }
 
-fn tools_list_http_cache_key(url: &str, headers: Option<&HashMap<String, String>>) -> String {
+fn tools_list_http_cache_key(
+    url: &str,
+    headers: Option<&HashMap<String, String>>,
+    timeout: Option<Duration>,
+) -> String {
     let mut parts = vec![format!("http:url={}", url.trim())];
+    if let Some(timeout) = timeout {
+        parts.push(format!("timeout_ms={}", timeout.as_millis()));
+    }
     if let Some(headers) = headers {
         let mut entries = headers.iter().collect::<Vec<_>>();
         entries.sort_by(|left, right| left.0.cmp(right.0));
@@ -263,11 +272,16 @@ fn stdio_session_cache_key(cfg: &McpStdioServer) -> String {
     )
 }
 
-fn format_http_send_error(method: &str, url: &str, err: &reqwest::Error) -> String {
+fn format_http_send_error(
+    method: &str,
+    url: &str,
+    timeout: Duration,
+    err: &reqwest::Error,
+) -> String {
     format!(
         "{method} {url} failed before HTTP response: {}; timeout={}s; source={}",
         classify_http_send_error(err),
-        MCP_RPC_TIMEOUT.as_secs(),
+        timeout.as_secs(),
         error_chain(err)
     )
 }
@@ -346,7 +360,7 @@ pub async fn jsonrpc_stdio_call(
 ) -> Result<Value, String> {
     let session_key = stdio_session_cache_key(cfg);
     tokio::time::timeout(
-        MCP_RPC_TIMEOUT,
+        DEFAULT_MCP_RPC_TIMEOUT,
         jsonrpc_stdio_call_with_session(cfg, session_key.clone(), method, params),
     )
     .await
@@ -355,7 +369,7 @@ pub async fn jsonrpc_stdio_call(
         format!(
             "{method} stdio MCP command `{}` timed out after {}s",
             cfg.command,
-            MCP_RPC_TIMEOUT.as_secs()
+            DEFAULT_MCP_RPC_TIMEOUT.as_secs()
         )
     })?
 }

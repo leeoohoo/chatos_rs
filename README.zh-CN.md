@@ -20,12 +20,42 @@ docker/deploy.sh up
 docker/deploy.sh dev
 ```
 
+日常重复部署如果不需要拉最新镜像，可以跳过 pull，直接复用本机已有镜像：
+
+```bash
+docker/deploy.sh fast
+```
+
+本地只改了某个服务时，可以只重建并重启对应 Compose service：
+
+```bash
+docker/deploy.sh rebuild task-runner-backend
+docker/deploy.sh rebuild chatos-backend chatos-frontend
+docker/deploy.sh build-services  # 查看可重建的 service 名
+```
+
+部署脚本默认会在成功更新镜像后自动清理 `<none>:<none>` dangling 镜像；如果需要临时关闭，可以在 `docker/.env` 设置 `CHATOS_DOCKER_PRUNE_DANGLING_IMAGES=false`。
+
 Make 快捷入口：
 
 ```bash
 make docker-up  # 拉预构建镜像启动
+make docker-fast # 跳过 pull，复用已有镜像
 make dev        # 用本地源码构建并启动
+make docker-rebuild SERVICES="task-runner-backend"
 ```
+
+## 本地快速测试
+
+如果不想每次都走 Docker 镜像部署，可以用本地开发栈。它只用 Docker 启动 MongoDB/Harness 这类基础依赖，业务后端用 `cargo run`，前端用 Vite：
+
+```bash
+make local-dev
+make local-dev-status
+make local-dev-stop
+```
+
+DB Connection Hub 已归档到 `docs/db_connection_hub/`，不再随 Docker 栈或本地开发栈启动。
 
 ## 常用命令
 
@@ -33,6 +63,9 @@ make dev        # 用本地源码构建并启动
 docker/deploy.sh ps
 docker/deploy.sh logs
 docker/deploy.sh restart
+docker/deploy.sh fast
+docker/deploy.sh rebuild task-runner-backend
+docker/deploy.sh clean-images  # 手动清理 dangling 镜像
 docker/deploy.sh down
 docker/deploy.sh reset
 ```
@@ -48,7 +81,6 @@ docker/deploy.sh reset
 - Project Management：`http://localhost:39211`
 - Sandbox Manager：`http://localhost:8096`
 - Local Connector Service：`http://localhost:39230`
-- DB Connection Hub：`http://localhost:5174`
 - Official Website：`http://localhost:39251`
 
 ## Local Connector Client

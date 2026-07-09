@@ -41,17 +41,23 @@ describe('SessionList modals', () => {
     rerender(
       <CreateTerminalModal
         isOpen
-        terminalRoot="/Users/demo/project-a"
         terminalError={null}
+        localConnectorWorkspaces={[{
+          id: 'workspace-1',
+          deviceId: 'device-1',
+          label: 'MacBook / project-a',
+          alias: 'project-a',
+        }]}
+        selectedLocalWorkspaceId="workspace-1"
         onClose={onClose}
-        onTerminalRootChange={vi.fn()}
-        onOpenPicker={vi.fn()}
         onCreate={onCreate}
       />,
     );
 
     expect(screen.getByRole('dialog', { name: '新增终端' })).toBeInTheDocument();
-    expect(screen.getByDisplayValue('/Users/demo/project-a')).toBeInTheDocument();
+    expect(screen.getByRole('combobox')).toHaveValue('workspace-1');
+    expect(screen.queryByRole('button', { name: '云端' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '选择目录' })).not.toBeInTheDocument();
   });
 
   it('layers the directory picker above the project creation dialog', () => {

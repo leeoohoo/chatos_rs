@@ -2,6 +2,7 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use std::collections::HashMap;
+use std::time::Duration;
 
 use serde_json::{json, Value};
 use tokio::task::JoinSet;
@@ -21,6 +22,7 @@ impl McpExecutor {
         server_type: &str,
         server_url: Option<String>,
         server_headers: Option<HashMap<String, String>>,
+        server_timeout: Option<Duration>,
         server_config: Option<McpStdioServer>,
         def: ParsedToolDefinition,
         tool: Value,
@@ -40,6 +42,7 @@ impl McpExecutor {
                 server_type: server_type.to_string(),
                 server_url,
                 server_headers,
+                server_timeout,
                 server_config,
                 tool_info: tool,
             },
@@ -83,7 +86,12 @@ impl McpExecutor {
         let mut joins = JoinSet::new();
         for (index, server) in self.http_servers.clone().into_iter().enumerate() {
             joins.spawn(async move {
-                let tools = list_tools_http(server.url.as_str(), server.headers.as_ref()).await;
+                let tools = list_tools_http(
+                    server.url.as_str(),
+                    server.headers.as_ref(),
+                    server.timeout_duration(),
+                )
+                .await;
                 (index, server, tools)
             });
         }
@@ -107,6 +115,7 @@ impl McpExecutor {
                                 "http",
                                 Some(server.url.clone()),
                                 server.headers.clone(),
+                                server.timeout_duration(),
                                 None,
                                 def,
                                 tool,
@@ -160,6 +169,7 @@ impl McpExecutor {
                                 "stdio",
                                 None,
                                 None,
+                                None,
                                 Some(server.clone()),
                                 def,
                                 tool,
@@ -206,6 +216,7 @@ impl McpExecutor {
                     self.register_available_tool(
                         server.name.as_str(),
                         "builtin",
+                        None,
                         None,
                         None,
                         None,

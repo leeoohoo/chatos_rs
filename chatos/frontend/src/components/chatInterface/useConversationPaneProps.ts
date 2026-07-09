@@ -58,8 +58,6 @@ export const useConversationPaneProps = ({
   availableProjects: conversation.composerAvailableProjects,
   currentProject: conversation.currentProject,
   onProjectChange: actions.handleComposerProjectChange,
-  workspaceRoot: conversation.composerWorkspaceRoot,
-  onWorkspaceRootChange: actions.handleComposerWorkspaceRootChange,
   currentRemoteConnectionId: conversation.currentRemoteConnectionId,
   availableRemoteConnections: conversation.remoteConnections || [],
   onRemoteConnectionChange: actions.handleComposerRemoteConnectionChange,

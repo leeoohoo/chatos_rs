@@ -7,8 +7,12 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
+use crate::approval::ApprovalState;
 use crate::history::CommandHistoryEntry;
+use crate::model_configs::ModelConfigState;
 use crate::sandbox::types::LocalSandboxState;
+
+pub(crate) const DEFAULT_LOCAL_AI_AGENT_MAX_ITERATIONS: usize = 600;
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub(crate) struct LocalState {
@@ -26,6 +30,12 @@ pub(crate) struct LocalState {
     pub(crate) sandbox: LocalSandboxState,
     #[serde(default)]
     pub(crate) command_history: Vec<CommandHistoryEntry>,
+    #[serde(default)]
+    pub(crate) approval: ApprovalState,
+    #[serde(default)]
+    pub(crate) model_configs: ModelConfigState,
+    #[serde(default)]
+    pub(crate) runtime_settings: LocalRuntimeSettings,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -51,6 +61,31 @@ pub(crate) struct WorkspaceState {
     pub(crate) absolute_root: PathBuf,
     pub(crate) alias: String,
     pub(crate) fingerprint: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct LocalRuntimeSettings {
+    #[serde(default = "default_local_ai_agent_max_iterations")]
+    pub(crate) ai_agent_max_iterations: usize,
+}
+
+impl Default for LocalRuntimeSettings {
+    fn default() -> Self {
+        Self {
+            ai_agent_max_iterations: default_local_ai_agent_max_iterations(),
+        }
+    }
+}
+
+impl LocalRuntimeSettings {
+    pub(crate) fn normalized(mut self) -> Self {
+        self.ai_agent_max_iterations = self.ai_agent_max_iterations.max(1);
+        self
+    }
+}
+
+fn default_local_ai_agent_max_iterations() -> usize {
+    DEFAULT_LOCAL_AI_AGENT_MAX_ITERATIONS
 }
 
 impl LocalState {

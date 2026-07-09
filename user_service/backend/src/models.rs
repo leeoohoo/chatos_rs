@@ -166,8 +166,14 @@ pub struct UserModelProviderRecord {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UserModelSettingsRecord {
     pub user_id: String,
+    #[serde(default)]
     pub memory_summary_model_config_id: Option<String>,
+    #[serde(default)]
     pub memory_summary_thinking_level: Option<String>,
+    #[serde(default)]
+    pub project_management_agent_model_config_id: Option<String>,
+    #[serde(default)]
+    pub project_management_agent_thinking_level: Option<String>,
     pub updated_at: String,
 }
 
@@ -281,6 +287,8 @@ pub struct CreateUserModelConfigRequest {
     pub task_usage_scenario: Option<String>,
     pub task_thinking_level: Option<String>,
     pub api_key: Option<String>,
+    #[serde(default)]
+    pub has_api_key: Option<bool>,
     pub base_url: Option<String>,
     pub enabled: Option<bool>,
     pub supports_images: Option<bool>,
@@ -295,6 +303,8 @@ pub struct CreateUserModelProviderRequest {
     pub name: String,
     pub provider: Option<String>,
     pub api_key: Option<String>,
+    #[serde(default)]
+    pub has_api_key: Option<bool>,
     pub base_url: Option<String>,
     pub enabled: Option<bool>,
     pub supports_images: Option<bool>,
@@ -311,6 +321,7 @@ pub struct UpdateUserModelConfigRequest {
     pub task_usage_scenario: Option<String>,
     pub task_thinking_level: Option<String>,
     pub api_key: Option<String>,
+    pub has_api_key: Option<bool>,
     pub clear_api_key: Option<bool>,
     pub base_url: Option<String>,
     pub enabled: Option<bool>,
@@ -324,6 +335,7 @@ pub struct UpdateUserModelProviderRequest {
     pub name: Option<String>,
     pub provider: Option<String>,
     pub api_key: Option<String>,
+    pub has_api_key: Option<bool>,
     pub clear_api_key: Option<bool>,
     pub base_url: Option<String>,
     pub enabled: Option<bool>,
@@ -335,8 +347,10 @@ pub struct UpdateUserModelProviderRequest {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UpdateUserModelSettingsRequest {
     pub user_id: Option<String>,
-    pub memory_summary_model_config_id: Option<String>,
-    pub memory_summary_thinking_level: Option<String>,
+    pub memory_summary_model_config_id: Option<Option<String>>,
+    pub memory_summary_thinking_level: Option<Option<String>>,
+    pub project_management_agent_model_config_id: Option<Option<String>>,
+    pub project_management_agent_thinking_level: Option<Option<String>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

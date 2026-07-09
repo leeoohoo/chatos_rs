@@ -58,6 +58,30 @@ docker/deploy.sh dev
 make dev
 ```
 
+重复部署但不需要拉最新镜像时，用快路径跳过 pull：
+
+```bash
+docker/deploy.sh fast
+# 或
+make docker-fast
+```
+
+本地只改了某个服务时，不要全量 `dev`，直接重建对应 Compose service：
+
+```bash
+docker/deploy.sh rebuild task-runner-backend
+docker/deploy.sh rebuild chatos-backend chatos-frontend
+docker/deploy.sh build-services
+# 或
+make docker-rebuild SERVICES="task-runner-backend"
+```
+
+部署脚本默认会在成功更新镜像后自动清理 `<none>:<none>` dangling 镜像。如果调试时需要保留这些镜像，可以在 `docker/.env` 里设置：
+
+```env
+CHATOS_DOCKER_PRUNE_DANGLING_IMAGES=false
+```
+
 ## 4. 常用运维命令
 
 ```bash
@@ -65,13 +89,26 @@ docker/deploy.sh ps
 docker/deploy.sh logs
 docker/deploy.sh logs task-runner-backend
 docker/deploy.sh restart
+docker/deploy.sh fast
 docker/deploy.sh dev
+docker/deploy.sh rebuild task-runner-backend
 docker/deploy.sh build
+docker/deploy.sh clean-images
 docker/deploy.sh down
 docker/deploy.sh reset
 ```
 
 `reset` 会删除 Compose volumes，包括 MongoDB 数据，仅用于需要清空环境的时候。
+
+本机开发测试如果不想频繁构建 Docker 镜像，可以使用宿主机开发栈：
+
+```bash
+make local-dev
+make local-dev-status
+make local-dev-stop
+```
+
+这个入口只用 Docker 启动 MongoDB/Harness 等基础依赖，业务服务在宿主机运行。DB Connection Hub 已归档到 `docs/db_connection_hub/`，不会启动。
 
 ## 5. 默认端口
 
@@ -90,8 +127,6 @@ docker/deploy.sh reset
 - Sandbox Manager：`8096`
 - Sandbox Manager backend：`8095`
 - Local Connector Service backend：`39230`
-- DB Connection Hub：`5174`
-- DB Connection Hub backend：`8099`
 - Official Website：`39251`
 - Official Website backend：`39250`
 - MongoDB host port：`27018`

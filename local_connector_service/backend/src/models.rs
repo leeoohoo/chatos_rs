@@ -3,7 +3,6 @@
 
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
-use sqlx::FromRow;
 use uuid::Uuid;
 
 pub const DEVICE_STATUS_REGISTERED: &str = "registered";
@@ -70,39 +69,6 @@ pub struct LocalConnectorDevice {
     pub updated_at: String,
 }
 
-#[derive(Debug, FromRow)]
-pub struct LocalConnectorDeviceRow {
-    pub id: String,
-    pub owner_user_id: String,
-    pub display_name: String,
-    pub public_key: String,
-    pub client_version: Option<String>,
-    pub os: Option<String>,
-    pub status: String,
-    pub last_seen_at: Option<String>,
-    pub revoked_at: Option<String>,
-    pub created_at: String,
-    pub updated_at: String,
-}
-
-impl LocalConnectorDeviceRow {
-    pub fn into_model(self) -> LocalConnectorDevice {
-        LocalConnectorDevice {
-            id: self.id,
-            owner_user_id: self.owner_user_id,
-            display_name: self.display_name,
-            public_key: self.public_key,
-            client_version: self.client_version,
-            os: self.os,
-            status: normalize_device_status(Some(self.status)),
-            last_seen_at: self.last_seen_at,
-            revoked_at: self.revoked_at,
-            created_at: self.created_at,
-            updated_at: self.updated_at,
-        }
-    }
-}
-
 impl LocalConnectorDevice {
     pub fn new(
         owner_user_id: String,
@@ -140,37 +106,6 @@ pub struct LocalConnectorWorkspace {
     pub status: String,
     pub created_at: String,
     pub updated_at: String,
-}
-
-#[derive(Debug, FromRow)]
-pub struct LocalConnectorWorkspaceRow {
-    pub id: String,
-    pub owner_user_id: String,
-    pub device_id: String,
-    pub display_name: String,
-    pub local_path_alias: String,
-    pub local_path_fingerprint: String,
-    pub capabilities_json: String,
-    pub status: String,
-    pub created_at: String,
-    pub updated_at: String,
-}
-
-impl LocalConnectorWorkspaceRow {
-    pub fn into_model(self) -> LocalConnectorWorkspace {
-        LocalConnectorWorkspace {
-            id: self.id,
-            owner_user_id: self.owner_user_id,
-            device_id: self.device_id,
-            display_name: self.display_name,
-            local_path_alias: self.local_path_alias,
-            local_path_fingerprint: self.local_path_fingerprint,
-            capabilities: capabilities_from_json(self.capabilities_json.as_str()),
-            status: normalize_workspace_status(Some(self.status)),
-            created_at: self.created_at,
-            updated_at: self.updated_at,
-        }
-    }
 }
 
 impl LocalConnectorWorkspace {
@@ -211,35 +146,6 @@ pub struct LocalConnectorProjectBinding {
     pub updated_at: String,
 }
 
-#[derive(Debug, FromRow)]
-pub struct LocalConnectorProjectBindingRow {
-    pub id: String,
-    pub owner_user_id: String,
-    pub project_id: String,
-    pub device_id: String,
-    pub workspace_id: String,
-    pub mode: String,
-    pub enabled: i64,
-    pub created_at: String,
-    pub updated_at: String,
-}
-
-impl LocalConnectorProjectBindingRow {
-    pub fn into_model(self) -> LocalConnectorProjectBinding {
-        LocalConnectorProjectBinding {
-            id: self.id,
-            owner_user_id: self.owner_user_id,
-            project_id: self.project_id,
-            device_id: self.device_id,
-            workspace_id: self.workspace_id,
-            mode: normalize_binding_mode(Some(self.mode)),
-            enabled: self.enabled != 0,
-            created_at: self.created_at,
-            updated_at: self.updated_at,
-        }
-    }
-}
-
 impl LocalConnectorProjectBinding {
     pub fn new(
         owner_user_id: String,
@@ -276,37 +182,6 @@ pub struct LocalConnectorSandboxPairing {
     pub access_client_id: Option<String>,
     pub created_at: String,
     pub updated_at: String,
-}
-
-#[derive(Debug, FromRow)]
-pub struct LocalConnectorSandboxPairingRow {
-    pub id: String,
-    pub owner_user_id: String,
-    pub device_id: String,
-    pub workspace_id: String,
-    pub enabled: i64,
-    pub sandbox_mode: String,
-    pub facade_base_url: Option<String>,
-    pub access_client_id: Option<String>,
-    pub created_at: String,
-    pub updated_at: String,
-}
-
-impl LocalConnectorSandboxPairingRow {
-    pub fn into_model(self) -> LocalConnectorSandboxPairing {
-        LocalConnectorSandboxPairing {
-            id: self.id,
-            owner_user_id: self.owner_user_id,
-            device_id: self.device_id,
-            workspace_id: self.workspace_id,
-            enabled: self.enabled != 0,
-            sandbox_mode: normalize_sandbox_mode(Some(self.sandbox_mode)),
-            facade_base_url: self.facade_base_url,
-            access_client_id: self.access_client_id,
-            created_at: self.created_at,
-            updated_at: self.updated_at,
-        }
-    }
 }
 
 impl LocalConnectorSandboxPairing {
@@ -419,22 +294,8 @@ pub fn normalize_capabilities(values: Vec<String>) -> Vec<String> {
     }
     out
 }
-
-pub fn capabilities_to_json(values: &[String]) -> String {
-    serde_json::to_string(&normalize_capabilities(values.to_vec()))
-        .unwrap_or_else(|_| "[]".to_string())
-}
-
 pub fn capabilities_from_json(raw: &str) -> Vec<String> {
     serde_json::from_str::<Vec<String>>(raw)
         .map(normalize_capabilities)
         .unwrap_or_default()
-}
-
-pub fn bool_to_int(value: bool) -> i64 {
-    if value {
-        1
-    } else {
-        0
-    }
 }

@@ -5,6 +5,11 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use chatos_service_runtime::{
+    DEFAULT_MEMORY_ENGINE_OPERATOR_TOKEN, DEFAULT_SANDBOX_MANAGER_SYSTEM_CLIENT_ID,
+    DEFAULT_SANDBOX_MANAGER_SYSTEM_CLIENT_KEY,
+};
+
 #[derive(Debug, Clone)]
 pub struct AppConfig {
     pub host: IpAddr,
@@ -13,6 +18,16 @@ pub struct AppConfig {
     pub user_service_base_url: String,
     pub user_service_request_timeout: Duration,
     pub user_service_internal_secret: Option<String>,
+    pub local_connector_service_base_url: String,
+    pub local_connector_service_request_timeout: Duration,
+    pub memory_engine_base_url: String,
+    pub memory_engine_source_id: String,
+    pub memory_engine_operator_token: Option<String>,
+    pub memory_engine_request_timeout: Duration,
+    pub sandbox_manager_base_url: String,
+    pub sandbox_manager_client_id: Option<String>,
+    pub sandbox_manager_client_key: Option<String>,
+    pub sandbox_image_mcp_request_timeout: Duration,
     pub cloud_project_import_enabled: bool,
     pub cloud_project_max_zip_bytes: usize,
     pub cloud_project_max_unpacked_bytes: u64,
@@ -48,6 +63,28 @@ impl AppConfig {
                 .and_then(|value| value.parse::<u64>().ok())
                 .unwrap_or(10_000)
                 .max(300);
+        let local_connector_service_request_timeout_ms =
+            std::env::var("PROJECT_SERVICE_LOCAL_CONNECTOR_SERVICE_REQUEST_TIMEOUT_MS")
+                .ok()
+                .or_else(|| std::env::var("CHATOS_LOCAL_CONNECTOR_SERVICE_REQUEST_TIMEOUT_MS").ok())
+                .or_else(|| std::env::var("LOCAL_CONNECTOR_SERVICE_REQUEST_TIMEOUT_MS").ok())
+                .and_then(|value| value.parse::<u64>().ok())
+                .unwrap_or(5_000)
+                .max(300);
+        let memory_engine_request_timeout_ms =
+            std::env::var("PROJECT_SERVICE_MEMORY_ENGINE_REQUEST_TIMEOUT_MS")
+                .ok()
+                .or_else(|| std::env::var("MEMORY_ENGINE_REQUEST_TIMEOUT_MS").ok())
+                .and_then(|value| value.parse::<u64>().ok())
+                .unwrap_or(30_000)
+                .max(300);
+        let sandbox_image_mcp_request_timeout_ms =
+            std::env::var("PROJECT_SERVICE_SANDBOX_IMAGE_MCP_REQUEST_TIMEOUT_MS")
+                .ok()
+                .or_else(|| std::env::var("SANDBOX_IMAGE_MCP_REQUEST_TIMEOUT_MS").ok())
+                .and_then(|value| value.parse::<u64>().ok())
+                .unwrap_or(2 * 60 * 60 * 1_000)
+                .max(10_000);
         let cloud_project_git_timeout_ms =
             std::env::var("PROJECT_SERVICE_CLOUD_PROJECT_GIT_TIMEOUT_MS")
                 .ok()
@@ -70,6 +107,41 @@ impl AppConfig {
             )
             .or_else(|| normalized_env("CHATOS_USER_SERVICE_INTERNAL_SECRET"))
             .or_else(|| normalized_env("USER_SERVICE_INTERNAL_API_SECRET")),
+            local_connector_service_base_url: normalized_env(
+                "PROJECT_SERVICE_LOCAL_CONNECTOR_SERVICE_BASE_URL",
+            )
+            .or_else(|| normalized_env("CHATOS_LOCAL_CONNECTOR_SERVICE_BASE_URL"))
+            .or_else(|| normalized_env("LOCAL_CONNECTOR_SERVICE_BASE_URL"))
+            .unwrap_or_else(default_local_connector_service_base_url),
+            local_connector_service_request_timeout: Duration::from_millis(
+                local_connector_service_request_timeout_ms,
+            ),
+            memory_engine_base_url: normalized_env("PROJECT_SERVICE_MEMORY_ENGINE_BASE_URL")
+                .or_else(|| normalized_env("MEMORY_ENGINE_BASE_URL"))
+                .unwrap_or_else(default_memory_engine_base_url),
+            memory_engine_source_id: normalized_env("PROJECT_SERVICE_MEMORY_ENGINE_SOURCE_ID")
+                .or_else(|| normalized_env("MEMORY_ENGINE_SOURCE_ID"))
+                .unwrap_or_else(|| "project_management_agent".to_string()),
+            memory_engine_operator_token: normalized_env(
+                "PROJECT_SERVICE_MEMORY_ENGINE_OPERATOR_TOKEN",
+            )
+            .or_else(|| normalized_env("MEMORY_ENGINE_OPERATOR_TOKEN"))
+            .or_else(|| Some(DEFAULT_MEMORY_ENGINE_OPERATOR_TOKEN.to_string())),
+            memory_engine_request_timeout: Duration::from_millis(memory_engine_request_timeout_ms),
+            sandbox_manager_base_url: normalized_env("PROJECT_SERVICE_SANDBOX_MANAGER_BASE_URL")
+                .or_else(|| normalized_env("SANDBOX_MANAGER_BASE_URL"))
+                .unwrap_or_else(default_sandbox_manager_base_url),
+            sandbox_manager_client_id: normalized_env("PROJECT_SERVICE_SANDBOX_MANAGER_CLIENT_ID")
+                .or_else(|| normalized_env("SANDBOX_MANAGER_SYSTEM_CLIENT_ID"))
+                .or_else(|| Some(DEFAULT_SANDBOX_MANAGER_SYSTEM_CLIENT_ID.to_string())),
+            sandbox_manager_client_key: normalized_env(
+                "PROJECT_SERVICE_SANDBOX_MANAGER_CLIENT_KEY",
+            )
+            .or_else(|| normalized_env("SANDBOX_MANAGER_SYSTEM_CLIENT_KEY"))
+            .or_else(|| Some(DEFAULT_SANDBOX_MANAGER_SYSTEM_CLIENT_KEY.to_string())),
+            sandbox_image_mcp_request_timeout: Duration::from_millis(
+                sandbox_image_mcp_request_timeout_ms,
+            ),
             cloud_project_import_enabled: read_bool_env(
                 "PROJECT_SERVICE_CLOUD_PROJECT_IMPORT_ENABLED",
                 true,
@@ -188,5 +260,44 @@ fn default_user_service_base_url() -> String {
     let port = normalized_env("USER_SERVICE_PORT")
         .and_then(|value| value.parse::<u16>().ok())
         .unwrap_or(39190);
+    format!("http://{host}:{port}")
+}
+
+fn default_local_connector_service_base_url() -> String {
+    let host = normalized_env("LOCAL_CONNECTOR_SERVICE_HOST")
+        .map(|value| match value.as_str() {
+            "0.0.0.0" | "::" | "[::]" => "127.0.0.1".to_string(),
+            _ => value,
+        })
+        .unwrap_or_else(|| "127.0.0.1".to_string());
+    let port = normalized_env("LOCAL_CONNECTOR_SERVICE_PORT")
+        .and_then(|value| value.parse::<u16>().ok())
+        .unwrap_or(39230);
+    format!("http://{host}:{port}")
+}
+
+fn default_memory_engine_base_url() -> String {
+    let host = normalized_env("MEMORY_ENGINE_HOST")
+        .map(|value| match value.as_str() {
+            "0.0.0.0" | "::" | "[::]" => "127.0.0.1".to_string(),
+            _ => value,
+        })
+        .unwrap_or_else(|| "127.0.0.1".to_string());
+    let port = normalized_env("MEMORY_ENGINE_PORT")
+        .and_then(|value| value.parse::<u16>().ok())
+        .unwrap_or(7081);
+    format!("http://{host}:{port}/api/memory-engine/v1")
+}
+
+fn default_sandbox_manager_base_url() -> String {
+    let host = normalized_env("SANDBOX_MANAGER_HOST")
+        .map(|value| match value.as_str() {
+            "0.0.0.0" | "::" | "[::]" => "127.0.0.1".to_string(),
+            _ => value,
+        })
+        .unwrap_or_else(|| "127.0.0.1".to_string());
+    let port = normalized_env("SANDBOX_MANAGER_PORT")
+        .and_then(|value| value.parse::<u16>().ok())
+        .unwrap_or(8095);
     format!("http://{host}:{port}")
 }

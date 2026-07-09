@@ -27,13 +27,11 @@ interface UseLocalFsPickersOptions {
   apiClient: FsPickerApiClient;
   t?: TranslateFn;
   projectRoot: string;
-  terminalRoot: string;
   remotePrivateKeyPath: string;
   remoteCertificatePath: string;
   remoteJumpPrivateKeyPath: string;
   remoteJumpCertificatePath: string;
   onProjectRootChange: (path: string) => void;
-  onTerminalRootChange: (path: string) => void;
   onRemotePrivateKeyPathChange: (path: string) => void;
   onRemoteCertificatePathChange: (path: string) => void;
   onRemoteJumpPrivateKeyPathChange: (path: string) => void;
@@ -49,7 +47,6 @@ interface UseLocalFsPickersResult {
   keyFilePickerItems: FsEntry[];
   keyFilePickerError: string | null;
   dirPickerOpen: boolean;
-  dirPickerTarget: DirPickerTarget;
   dirPickerPath: string | null;
   dirPickerParent: string | null;
   dirPickerWritable: boolean;
@@ -84,13 +81,11 @@ export const useLocalFsPickers = ({
   apiClient,
   t,
   projectRoot,
-  terminalRoot,
   remotePrivateKeyPath,
   remoteCertificatePath,
   remoteJumpPrivateKeyPath,
   remoteJumpCertificatePath,
   onProjectRootChange,
-  onTerminalRootChange,
   onRemotePrivateKeyPathChange,
   onRemoteCertificatePathChange,
   onRemoteJumpPrivateKeyPathChange,
@@ -108,7 +103,6 @@ export const useLocalFsPickers = ({
   const [keyFilePickerError, setKeyFilePickerError] = useState<string | null>(null);
 
   const [dirPickerOpen, setDirPickerOpen] = useState(false);
-  const [dirPickerTarget, setDirPickerTarget] = useState<DirPickerTarget>('project');
   const [dirPickerPath, setDirPickerPath] = useState<string | null>(null);
   const [dirPickerParent, setDirPickerParent] = useState<string | null>(null);
   const [dirPickerWritable, setDirPickerWritable] = useState(false);
@@ -148,16 +142,15 @@ export const useLocalFsPickers = ({
     }
   }, [apiClient, tr]);
 
-  const openDirPicker = useCallback(async (target: DirPickerTarget) => {
-    setDirPickerTarget(target);
+  const openDirPicker = useCallback(async (_target: DirPickerTarget) => {
     setShowHiddenDirs(false);
     setDirPickerNewFolderName('');
     setDirPickerCreateModalOpen(false);
     setDirPickerError(null);
     setDirPickerOpen(true);
-    const current = (target === 'project' ? projectRoot : terminalRoot).trim();
+    const current = projectRoot.trim();
     await loadDirEntries(current ? current : null);
-  }, [loadDirEntries, projectRoot, terminalRoot]);
+  }, [loadDirEntries, projectRoot]);
 
   const closeDirPicker = useCallback(() => {
     setDirPickerOpen(false);
@@ -208,11 +201,7 @@ export const useLocalFsPickers = ({
       setDirPickerNewFolderName('');
       setDirPickerCreateModalOpen(false);
 
-      if (dirPickerTarget === 'project') {
-        onProjectRootChange(createdPath);
-      } else {
-        onTerminalRootChange(createdPath);
-      }
+      onProjectRootChange(createdPath);
 
       await loadDirEntries(createdPath);
     } catch (err) {
@@ -224,23 +213,17 @@ export const useLocalFsPickers = ({
     apiClient,
     dirPickerNewFolderName,
     dirPickerPath,
-    dirPickerTarget,
     dirPickerWritable,
     loadDirEntries,
     onProjectRootChange,
-    onTerminalRootChange,
     tr,
   ]);
 
   const chooseDir = useCallback((path: string | null) => {
     if (!path) return;
-    if (dirPickerTarget === 'project') {
-      onProjectRootChange(path);
-    } else {
-      onTerminalRootChange(path);
-    }
+    onProjectRootChange(path);
     closeDirPicker();
-  }, [closeDirPicker, dirPickerTarget, onProjectRootChange, onTerminalRootChange]);
+  }, [closeDirPicker, onProjectRootChange]);
 
   const loadKeyFileEntries = useCallback(async (path?: string | null) => {
     setKeyFilePickerLoading(true);
@@ -337,7 +320,6 @@ export const useLocalFsPickers = ({
     keyFilePickerItems,
     keyFilePickerError,
     dirPickerOpen,
-    dirPickerTarget,
     dirPickerPath,
     dirPickerParent,
     dirPickerWritable,

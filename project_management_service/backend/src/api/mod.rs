@@ -9,6 +9,7 @@ mod plan;
 mod projects;
 mod requirements;
 mod router;
+mod runtime_environment;
 mod sync;
 mod task_runner_links;
 mod work_items;

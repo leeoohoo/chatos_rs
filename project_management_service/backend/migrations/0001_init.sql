@@ -27,6 +27,47 @@ ON projects(owner_user_id);
 CREATE INDEX IF NOT EXISTS idx_projects_status
 ON projects(status);
 
+CREATE TABLE IF NOT EXISTS project_runtime_environments (
+  project_id TEXT PRIMARY KEY,
+  status TEXT NOT NULL DEFAULT 'pending',
+  sandbox_enabled INTEGER NOT NULL DEFAULT 1,
+  sandbox_provider TEXT NOT NULL DEFAULT 'none',
+  file_provider TEXT NOT NULL DEFAULT 'none',
+  analysis_summary TEXT,
+  not_runnable_reason TEXT,
+  detected_stack_json TEXT NOT NULL DEFAULT '{}',
+  required_services_json TEXT NOT NULL DEFAULT '[]',
+  env_vars_json TEXT NOT NULL DEFAULT '{}',
+  last_agent_run_id TEXT,
+  last_error TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS project_runtime_environment_images (
+  id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL,
+  environment_key TEXT NOT NULL,
+  environment_type TEXT NOT NULL,
+  display_name TEXT NOT NULL,
+  image_id TEXT,
+  image_ref TEXT,
+  image_provider TEXT NOT NULL DEFAULT 'none',
+  features_json TEXT NOT NULL DEFAULT '[]',
+  ports_json TEXT NOT NULL DEFAULT '[]',
+  env_vars_json TEXT NOT NULL DEFAULT '{}',
+  status TEXT NOT NULL DEFAULT 'ready',
+  error TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  UNIQUE(project_id, environment_key),
+  FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_project_runtime_environment_images_project_id
+ON project_runtime_environment_images(project_id);
+
 CREATE TABLE IF NOT EXISTS project_profiles (
   project_id TEXT PRIMARY KEY,
   creator_user_id TEXT,

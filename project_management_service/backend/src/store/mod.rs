@@ -124,6 +124,63 @@ impl AppStore {
         }
     }
 
+    pub async fn get_project_runtime_environment(
+        &self,
+        project_id: &str,
+    ) -> Result<Option<ProjectRuntimeEnvironmentRecord>, String> {
+        match self {
+            Self::Mongo(store) => store.get_project_runtime_environment(project_id).await,
+            Self::Sqlite(store) => store.get_project_runtime_environment(project_id).await,
+        }
+    }
+
+    pub async fn upsert_project_runtime_environment(
+        &self,
+        environment: &ProjectRuntimeEnvironmentRecord,
+    ) -> Result<ProjectRuntimeEnvironmentRecord, String> {
+        match self {
+            Self::Mongo(store) => store.upsert_project_runtime_environment(environment).await,
+            Self::Sqlite(store) => store.upsert_project_runtime_environment(environment).await,
+        }
+    }
+
+    pub async fn list_project_runtime_environment_images(
+        &self,
+        project_id: &str,
+    ) -> Result<Vec<ProjectRuntimeEnvironmentImageRecord>, String> {
+        match self {
+            Self::Mongo(store) => {
+                store
+                    .list_project_runtime_environment_images(project_id)
+                    .await
+            }
+            Self::Sqlite(store) => {
+                store
+                    .list_project_runtime_environment_images(project_id)
+                    .await
+            }
+        }
+    }
+
+    pub async fn replace_project_runtime_environment_images(
+        &self,
+        project_id: &str,
+        images: &[ProjectRuntimeEnvironmentImageRecord],
+    ) -> Result<Vec<ProjectRuntimeEnvironmentImageRecord>, String> {
+        match self {
+            Self::Mongo(store) => {
+                store
+                    .replace_project_runtime_environment_images(project_id, images)
+                    .await
+            }
+            Self::Sqlite(store) => {
+                store
+                    .replace_project_runtime_environment_images(project_id, images)
+                    .await
+            }
+        }
+    }
+
     pub async fn list_requirements(
         &self,
         project_id: &str,

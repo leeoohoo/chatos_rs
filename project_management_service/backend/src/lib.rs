@@ -13,6 +13,7 @@ pub mod services;
 pub mod state;
 pub mod store;
 pub mod task_runner_api_client;
+pub mod user_model_runtime_client;
 
 pub use api::build_router;
 pub use config::{load_project_service_dotenv, AppConfig};

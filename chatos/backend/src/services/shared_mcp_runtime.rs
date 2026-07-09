@@ -61,6 +61,7 @@ pub(crate) fn shared_http_server(server: ChatosHttpServer) -> chatos_mcp_runtime
         name: server.name,
         url: server.url,
         headers: server.headers,
+        timeout_ms: None,
     }
 }
 

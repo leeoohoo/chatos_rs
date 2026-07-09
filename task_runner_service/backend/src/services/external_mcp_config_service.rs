@@ -206,14 +206,18 @@ async fn test_external_mcp_config(record: &ExternalMcpConfigRecord) -> Result<()
             let server = record
                 .to_http_server()
                 .ok_or_else(|| "外部 MCP 配置无效: http 类型需要可用 url".to_string())?;
-            list_tools_http(server.url.as_str(), server.headers.as_ref())
-                .await
-                .map_err(|err| {
-                    format!(
-                        "外部 MCP 连通性测试失败: {} ({}) tools/list 调用失败: {err}",
-                        record.name, record.transport
-                    )
-                })?
+            list_tools_http(
+                server.url.as_str(),
+                server.headers.as_ref(),
+                server.timeout_duration(),
+            )
+            .await
+            .map_err(|err| {
+                format!(
+                    "外部 MCP 连通性测试失败: {} ({}) tools/list 调用失败: {err}",
+                    record.name, record.transport
+                )
+            })?
         }
         "stdio" => {
             let mut server = record

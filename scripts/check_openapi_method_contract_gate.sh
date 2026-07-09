@@ -177,12 +177,12 @@ extract_baseline_methods() {
 extract_openapi_methods() {
   local file="$1"
   awk '
-    /^[[:space:]]{2}\/[^:]*:/ {
+    /^[[:space:]][[:space:]]\/[^:]*:/ {
       path=$1
       sub(/:$/, "", path)
       next
     }
-    path != "" && /^[[:space:]]{4}(get|post|put|patch|delete|head|options):/ {
+    path != "" && /^[[:space:]][[:space:]][[:space:]][[:space:]](get|post|put|patch|delete|head|options):/ {
       method=toupper($1)
       sub(/:$/, "", method)
       print method " " path

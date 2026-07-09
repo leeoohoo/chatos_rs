@@ -63,6 +63,7 @@ interface CreateResourceModalProps {
   submittingLabel?: string;
   serverContent?: React.ReactNode;
   hideServerPreview?: boolean;
+  hideSourceModeSwitch?: boolean;
   onClose: () => void;
   onSourceModeChange: (value: ResourceSourceMode) => void;
   onPathChange: (value: string) => void;
@@ -104,6 +105,7 @@ const CreateResourceModal: React.FC<CreateResourceModalProps> = ({
   submittingLabel,
   serverContent,
   hideServerPreview = false,
+  hideSourceModeSwitch = false,
   onClose,
   onSourceModeChange,
   onPathChange,
@@ -156,27 +158,29 @@ const CreateResourceModal: React.FC<CreateResourceModalProps> = ({
         className="space-y-4"
       >
         <div className="space-y-4 rounded-xl border border-border bg-muted/40 p-4">
-          <div className="inline-flex rounded-lg border border-border bg-background p-1">
-            <button
-              type="button"
-              onClick={() => onSourceModeChange('server')}
-              disabled={submitBusy}
-              className={`rounded-md px-3 py-1.5 text-xs transition-colors ${sourceMode === 'server' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:bg-accent'}`}
-            >
-              {t('sessionList.resource.sourceServer')}
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                onSourceModeChange('local_connector');
-                onRefreshLocalConnector();
-              }}
-              disabled={submitBusy}
-              className={`rounded-md px-3 py-1.5 text-xs transition-colors ${sourceMode === 'local_connector' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:bg-accent'}`}
-            >
-              {t('sessionList.resource.sourceLocalConnector')}
-            </button>
-          </div>
+          {!hideSourceModeSwitch ? (
+            <div className="inline-flex rounded-lg border border-border bg-background p-1">
+              <button
+                type="button"
+                onClick={() => onSourceModeChange('server')}
+                disabled={submitBusy}
+                className={`rounded-md px-3 py-1.5 text-xs transition-colors ${sourceMode === 'server' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:bg-accent'}`}
+              >
+                {t('sessionList.resource.sourceServer')}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  onSourceModeChange('local_connector');
+                  onRefreshLocalConnector();
+                }}
+                disabled={submitBusy}
+                className={`rounded-md px-3 py-1.5 text-xs transition-colors ${sourceMode === 'local_connector' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:bg-accent'}`}
+              >
+                {t('sessionList.resource.sourceLocalConnector')}
+              </button>
+            </div>
+          ) : null}
 
           {isLocalConnectorMode ? (
             <div className="space-y-3">
@@ -540,9 +544,7 @@ export const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
 
 interface CreateTerminalModalProps {
   isOpen: boolean;
-  terminalRoot: string;
   terminalError: string | null;
-  sourceMode?: ResourceSourceMode;
   localConnectorWorkspaces?: LocalConnectorWorkspaceOption[];
   localConnectorLoading?: boolean;
   localConnectorError?: string | null;
@@ -553,14 +555,8 @@ interface CreateTerminalModalProps {
   localConnectorDirectoryError?: string | null;
   selectedLocalDirectoryPath?: string;
   selectedLocalWorkspaceId?: string;
-  terminalCommand?: string;
-  terminalArgs?: string;
-  terminalOutput?: string | null;
   terminalExecuting?: boolean;
   onClose: () => void;
-  onSourceModeChange?: (value: ResourceSourceMode) => void;
-  onTerminalRootChange: (value: string) => void;
-  onOpenPicker: () => void;
   onRefreshLocalConnector?: () => void;
   onSelectedLocalWorkspaceChange?: (value: string) => void;
   onBrowseLocalConnectorDirectory?: (path: string) => void;
@@ -573,9 +569,7 @@ interface CreateTerminalModalProps {
 
 export const CreateTerminalModal: React.FC<CreateTerminalModalProps> = ({
   isOpen,
-  terminalRoot,
   terminalError,
-  sourceMode = 'server',
   localConnectorWorkspaces = [],
   localConnectorLoading = false,
   localConnectorError = null,
@@ -586,12 +580,8 @@ export const CreateTerminalModal: React.FC<CreateTerminalModalProps> = ({
   localConnectorDirectoryError = null,
   selectedLocalDirectoryPath = '',
   selectedLocalWorkspaceId = '',
-  terminalOutput = null,
   terminalExecuting = false,
   onClose,
-  onSourceModeChange = () => {},
-  onTerminalRootChange,
-  onOpenPicker,
   onRefreshLocalConnector = () => {},
   onSelectedLocalWorkspaceChange = () => {},
   onBrowseLocalConnectorDirectory = () => {},
@@ -601,16 +591,22 @@ export const CreateTerminalModal: React.FC<CreateTerminalModalProps> = ({
 }) => {
   const { t } = useI18n();
 
+  React.useEffect(() => {
+    if (isOpen) {
+      onRefreshLocalConnector();
+    }
+  }, [isOpen, onRefreshLocalConnector]);
+
   return (
     <CreateResourceModal
       isOpen={isOpen}
       title={t('sessionList.resource.terminalTitle')}
       pathLabel={t('sessionList.resource.terminalDirectory')}
       previewLabel={t('sessionList.resource.terminalDefaultName')}
-      pathValue={terminalRoot}
+      pathValue=""
       error={terminalError}
       fallbackName="Terminal"
-      sourceMode={sourceMode}
+      sourceMode="local_connector"
       localConnectorWorkspaces={localConnectorWorkspaces}
       localConnectorLoading={localConnectorLoading}
       localConnectorError={localConnectorError}
@@ -621,12 +617,12 @@ export const CreateTerminalModal: React.FC<CreateTerminalModalProps> = ({
       localConnectorDirectoryError={localConnectorDirectoryError}
       selectedLocalDirectoryPath={selectedLocalDirectoryPath}
       selectedLocalWorkspaceId={selectedLocalWorkspaceId}
-      terminalOutput={terminalOutput}
       terminalExecuting={terminalExecuting}
+      hideSourceModeSwitch
       onClose={onClose}
-      onSourceModeChange={onSourceModeChange}
-      onPathChange={onTerminalRootChange}
-      onOpenPicker={onOpenPicker}
+      onSourceModeChange={() => {}}
+      onPathChange={() => {}}
+      onOpenPicker={() => {}}
       onRefreshLocalConnector={onRefreshLocalConnector}
       onSelectedLocalWorkspaceChange={onSelectedLocalWorkspaceChange}
       onBrowseLocalConnectorDirectory={onBrowseLocalConnectorDirectory}

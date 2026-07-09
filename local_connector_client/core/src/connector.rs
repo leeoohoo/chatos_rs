@@ -12,12 +12,13 @@ use tokio_tungstenite::tungstenite::Message;
 
 use crate::history::CommandHistoryRecorder;
 use crate::mcp::service::handle_mcp_request;
+use crate::model_configs::handle_model_runtime_request;
 use crate::relay::MCP_RELAY_MESSAGE_TYPE;
 use crate::sandbox::relay::handle_sandbox_request;
 use crate::sandbox::types::LocalSandboxRuntime;
 use crate::terminal::exec::handle_terminal_exec_request;
 use crate::terminal::relay::{
-    handle_terminal_close, handle_terminal_input, handle_terminal_resize,
+    handle_terminal_close, handle_terminal_command, handle_terminal_input, handle_terminal_resize,
     handle_terminal_session_create_request, handle_terminal_snapshot_request,
 };
 use crate::terminal::session::LocalTerminalManager;
@@ -133,6 +134,7 @@ async fn handle_text_message(
         "terminal_exec_request" => {
             Some(handle_terminal_exec_request(value, state, history_recorder).await)
         }
+        "model_runtime_request" => Some(handle_model_runtime_request(value, state).await),
         "terminal_session_create_request" => Some(
             handle_terminal_session_create_request(value, state, terminal_manager, outbound_tx)
                 .await,
@@ -146,6 +148,10 @@ async fn handle_text_message(
                 outbound_tx,
             )
             .await;
+            None
+        }
+        "terminal_command" => {
+            handle_terminal_command(value, terminal_manager).await;
             None
         }
         "terminal_resize" => {

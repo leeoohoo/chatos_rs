@@ -78,6 +78,7 @@ export const buildWorkspaceEffectsParams = (
     clearDragExpandTimer: actions.clearDragExpandTimer,
     clearDragAutoScroll: actions.clearDragAutoScroll,
     setEntriesMap: state.setEntriesMap,
+    setLoadingPaths: state.setLoadingPaths,
     setExpandedPaths: state.setExpandedPaths,
     setSelectedPath: state.setSelectedPath,
     setSelectedFile: state.setSelectedFile,

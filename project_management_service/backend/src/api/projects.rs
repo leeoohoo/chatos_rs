@@ -18,6 +18,7 @@ use crate::services::cloud_import::{
     create_harness_repo_for_project, import_git_url_to_harness, import_zip_to_harness,
     HarnessProjectRepoResponse,
 };
+use crate::services::runtime_environment::ensure_runtime_environment_for_project;
 use crate::state::AppState;
 
 #[derive(Debug, Default, Deserialize)]
@@ -43,9 +44,13 @@ pub(in crate::api) async fn create_project(
     Extension(user): Extension<CurrentUser>,
     Json(input): Json<CreateProjectRequest>,
 ) -> Result<(StatusCode, Json<ProjectRecord>), ApiError> {
+    let sandbox_enabled = input.sandbox_enabled;
     let project = state
         .store
         .create_project(input, &user)
+        .await
+        .map_err(ApiError::bad_request)?;
+    ensure_runtime_environment_for_project(&state.store, &project, sandbox_enabled)
         .await
         .map_err(ApiError::bad_request)?;
     Ok((StatusCode::CREATED, Json(project)))
@@ -75,9 +80,13 @@ pub(in crate::api) async fn create_cloud_project(
                 cloud_import_source: Some(import_source),
                 import_status: Some(ProjectImportStatus::Pending),
                 source_git_url: input.git_url.clone(),
+                sandbox_enabled: Some(true),
             },
             &user,
         )
+        .await
+        .map_err(ApiError::bad_request)?;
+    ensure_runtime_environment_for_project(&state.store, &project, Some(true))
         .await
         .map_err(ApiError::bad_request)?;
 

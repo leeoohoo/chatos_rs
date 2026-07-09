@@ -3,6 +3,22 @@
 
 export type UserRole = 'admin' | 'agent';
 export type ProjectStatus = 'active' | 'archived';
+export type ProjectSourceType = 'local' | 'local_connector' | 'cloud';
+export type CloudImportSource = 'none' | 'empty' | 'git' | 'zip';
+export type ProjectImportStatus = 'none' | 'pending' | 'importing' | 'ready' | 'failed';
+export type ProjectRuntimeEnvironmentStatus =
+  | 'disabled'
+  | 'pending_configuration'
+  | 'pending'
+  | 'analyzing'
+  | 'ready'
+  | 'not_runnable'
+  | 'failed';
+export type RuntimeEnvironmentProvider =
+  | 'none'
+  | 'local_connector'
+  | 'harness'
+  | 'cloud_sandbox_manager';
 export type RequirementStatus =
   | 'draft'
   | 'reviewing'
@@ -70,6 +86,18 @@ export interface ProjectRecord {
   name: string;
   root_path?: string | null;
   git_url?: string | null;
+  source_type?: ProjectSourceType;
+  cloud_import_source?: CloudImportSource;
+  import_status?: ProjectImportStatus;
+  source_git_url?: string | null;
+  harness_space_identifier?: string | null;
+  harness_repo_identifier?: string | null;
+  harness_repo_path?: string | null;
+  harness_git_url?: string | null;
+  harness_git_ssh_url?: string | null;
+  import_error?: string | null;
+  import_started_at?: string | null;
+  import_finished_at?: string | null;
   description?: string | null;
   status: ProjectStatus;
   created_at: string;
@@ -82,6 +110,7 @@ export interface CreateProjectPayload {
   root_path?: string;
   git_url?: string;
   description?: string;
+  sandbox_enabled?: boolean;
 }
 
 export type UpdateProjectPayload = Partial<CreateProjectPayload>;
@@ -97,6 +126,50 @@ export interface ProjectProfileRecord {
 export interface UpsertProjectProfilePayload {
   background?: string;
   introduction?: string;
+}
+
+export interface ProjectRuntimeEnvironmentRecord {
+  project_id: string;
+  status: ProjectRuntimeEnvironmentStatus;
+  sandbox_enabled: boolean;
+  sandbox_provider: RuntimeEnvironmentProvider;
+  file_provider: RuntimeEnvironmentProvider;
+  analysis_summary?: string | null;
+  not_runnable_reason?: string | null;
+  detected_stack: unknown;
+  required_services: unknown;
+  env_vars: unknown;
+  last_agent_run_id?: string | null;
+  last_error?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ProjectRuntimeEnvironmentImageRecord {
+  id: string;
+  project_id: string;
+  environment_key: string;
+  environment_type: string;
+  display_name: string;
+  image_id?: string | null;
+  image_ref?: string | null;
+  image_provider: RuntimeEnvironmentProvider;
+  features: unknown;
+  ports: unknown;
+  env_vars: unknown;
+  status: string;
+  error?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ProjectRuntimeEnvironmentResponse {
+  environment: ProjectRuntimeEnvironmentRecord;
+  images: ProjectRuntimeEnvironmentImageRecord[];
+}
+
+export interface UpdateProjectRuntimeEnvironmentSettingsPayload {
+  sandbox_enabled?: boolean;
 }
 
 export interface RequirementRecord {

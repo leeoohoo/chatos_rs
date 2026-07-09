@@ -8,10 +8,15 @@ use anyhow::{anyhow, Context, Result};
 use serde::Deserialize;
 use serde_json::{json, Value};
 
+use crate::approval::{
+    approval_project_key_from_request, ApprovalDecision, CommandApprovalRequest,
+    CommandApprovalService,
+};
 use crate::history::{
     command_history_entry_from_exec_result, normalize_history_source, output_text,
     CommandExecutionContext, CommandHistoryRecorder,
 };
+use crate::mcp::tools::request_project_root;
 use crate::relay::RelayRequest;
 use crate::workspace::paths::{
     relative_to_workspace, resolve_request_workspace_dir, workspace_for_request,
@@ -57,6 +62,52 @@ pub(super) async fn run_terminal_exec(
         .timeout_ms
         .unwrap_or(DEFAULT_TERMINAL_EXEC_TIMEOUT_MS)
         .clamp(1_000, MAX_TERMINAL_EXEC_TIMEOUT_MS);
+
+    if let Some(recorder) = history_recorder {
+        let project_root = request_project_root(workspace, request)?;
+        let project_root_label = relative_to_workspace(workspace, project_root.as_path());
+        let project_key =
+            approval_project_key_from_request(state, request, workspace, project_root_label);
+        let approval =
+            CommandApprovalService::new(recorder.state_path.clone(), recorder.state.clone())
+                .approve(CommandApprovalRequest {
+                    request_id: request.request_id.clone(),
+                    project_key,
+                    command: command.clone(),
+                    args: args.clone(),
+                    cwd: cwd_label.clone(),
+                    source: context.source.clone(),
+                })
+                .await?;
+        if let ApprovalDecision::Denied { reason, .. } = approval {
+            let reason_text = reason;
+            let body = json!({
+                "command": command,
+                "args": args,
+                "cwd": cwd_label,
+                "workspace_id": request.workspace_id.as_str(),
+                "success": false,
+                "exit_code": Option::<i32>::None,
+                "timed_out": false,
+                "timeout_ms": timeout_ms,
+                "stdout": "",
+                "stderr": "",
+                "error": reason_text.clone(),
+                "approval_decision": "denied",
+                "approval_reason": reason_text,
+            });
+            append_terminal_exec_history_from_body(
+                state,
+                request,
+                &context,
+                started_at,
+                &body,
+                history_recorder,
+            )
+            .await;
+            return Ok(body);
+        }
+    }
 
     let mut child = tokio::process::Command::new(command.as_str());
     child

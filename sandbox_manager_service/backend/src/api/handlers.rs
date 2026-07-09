@@ -4,6 +4,7 @@
 use axum::extract::{Extension, Path, Query, State};
 use axum::http::HeaderMap;
 use axum::Json;
+use chatos_sandbox_image_mcp::SandboxImageBackend;
 use serde_json::{json, Value};
 
 use crate::auth::SandboxAuthContext;
@@ -70,6 +71,60 @@ pub async fn initialize_sandbox_image(
     Ok(Json(
         state.manager.initialize_sandbox_image(&auth, input).await?,
     ))
+}
+
+pub async fn sandbox_image_mcp_entrypoint(
+    State(state): State<AppState>,
+    Extension(auth): Extension<SandboxAuthContext>,
+    Json(payload): Json<Value>,
+) -> Json<Value> {
+    let backend = CloudSandboxImageMcpBackend { state, auth };
+    Json(chatos_sandbox_image_mcp::handle_jsonrpc(&backend, payload).await)
+}
+
+struct CloudSandboxImageMcpBackend {
+    state: AppState,
+    auth: SandboxAuthContext,
+}
+
+#[async_trait::async_trait]
+impl SandboxImageBackend for CloudSandboxImageMcpBackend {
+    async fn image_catalog(&self) -> Result<Value, String> {
+        self.state
+            .manager
+            .sandbox_images(&self.auth)
+            .await
+            .map(|catalog| json!(catalog))
+            .map_err(|err| err.message)
+    }
+
+    async fn image_jobs(&self) -> Result<Value, String> {
+        self.state
+            .manager
+            .sandbox_image_jobs(&self.auth)
+            .await
+            .map(|jobs| json!(jobs))
+            .map_err(|err| err.message)
+    }
+
+    async fn initialize_image(
+        &self,
+        features: Vec<String>,
+        custom_build_script: Option<String>,
+    ) -> Result<Value, String> {
+        self.state
+            .manager
+            .initialize_sandbox_image(
+                &self.auth,
+                InitializeSandboxImageRequest {
+                    features,
+                    custom_build_script,
+                },
+            )
+            .await
+            .map(|job| json!(job))
+            .map_err(|err| err.message)
+    }
 }
 
 pub async fn list_access_clients(

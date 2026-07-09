@@ -92,6 +92,180 @@ export interface CommandHistoryResponse {
   entries: CommandHistoryEntry[];
 }
 
+export type ApprovalMode = 'request_approval' | 'auto_approval' | 'full_control';
+
+export interface ApprovalProjectKey {
+  owner_user_id: string;
+  device_id: string;
+  workspace_id: string;
+  project_id?: string | null;
+  project_root_relative_path: string;
+  project_anchor_relative_path?: string | null;
+}
+
+export interface ApprovalAiSettings {
+  enabled: boolean;
+  base_url?: string | null;
+  api_key?: string | null;
+  has_api_key?: boolean;
+  model?: string | null;
+  provider: string;
+  supports_responses: boolean;
+  temperature?: number | null;
+  max_output_tokens?: number | null;
+  thinking_level?: string | null;
+  request_body_limit_bytes?: number | null;
+}
+
+export interface ApprovalMemorySettings {
+  source_id: string;
+  timeout_ms: number;
+}
+
+export interface ProjectApprovalState {
+  project_key: ApprovalProjectKey;
+  mode?: ApprovalMode | null;
+  ai_enabled: boolean;
+  updated_at: string;
+}
+
+export interface CommandWhitelistEntry {
+  id: string;
+  project_key: ApprovalProjectKey;
+  command_fingerprint: string;
+  command_display: string;
+  normalized_command: string;
+  cwd_scope: string;
+  created_by: string;
+  created_at: string;
+  enabled: boolean;
+}
+
+export interface ApprovalHistoryEntry {
+  id: string;
+  request_id: string;
+  project_key: ApprovalProjectKey;
+  command: string;
+  normalized_command: string;
+  cwd: string;
+  source: string;
+  mode: ApprovalMode;
+  decision: string;
+  decision_source: string;
+  risk: string;
+  reason?: string | null;
+  whitelist_entry_id?: string | null;
+  created_at: string;
+}
+
+export interface PendingApprovalItem {
+  id: string;
+  request_id: string;
+  project_key: ApprovalProjectKey;
+  command: string;
+  cwd: string;
+  source: string;
+  risk: string;
+  reason?: string | null;
+  created_at: string;
+}
+
+export interface ApprovalSettings {
+  default_mode: ApprovalMode;
+  projects: ProjectApprovalState[];
+  whitelist: CommandWhitelistEntry[];
+  history: ApprovalHistoryEntry[];
+  ai: ApprovalAiSettings;
+  memory: ApprovalMemorySettings;
+}
+
+export interface PendingApprovalsResponse {
+  items: PendingApprovalItem[];
+  reviewing?: PendingApprovalItem[];
+}
+
+export interface LocalModelConfig {
+  id: string;
+  server_model_config_id?: string | null;
+  name: string;
+  provider: string;
+  model: string;
+  model_name: string;
+  base_url?: string | null;
+  has_api_key: boolean;
+  enabled: boolean;
+  supports_images: boolean;
+  supports_reasoning: boolean;
+  supports_responses: boolean;
+  thinking_level?: string | null;
+  task_usage_scenario?: string | null;
+  task_thinking_level?: string | null;
+  temperature?: number | null;
+  max_output_tokens?: number | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface LocalModelSettings {
+  memory_summary_model_config_id?: string | null;
+  memory_summary_thinking_level?: string | null;
+  project_management_agent_model_config_id?: string | null;
+  project_management_agent_thinking_level?: string | null;
+  command_approval_model_config_id?: string | null;
+  command_approval_thinking_level?: string | null;
+  updated_at?: string | null;
+}
+
+export interface LocalModelConfigListResponse {
+  items: LocalModelConfig[];
+  settings: LocalModelSettings;
+}
+
+export interface LocalRuntimeSettings {
+  ai_agent_max_iterations: number;
+}
+
+export interface LocalProviderModel {
+  id: string;
+  owned_by?: string | null;
+  context_length?: number | null;
+  supports_images: boolean;
+  supports_reasoning: boolean;
+  supports_responses: boolean;
+}
+
+export interface LocalModelCatalogResponse {
+  provider: string;
+  base_url: string;
+  source: string;
+  fetched_at?: string | null;
+  models: LocalProviderModel[];
+  error?: string | null;
+}
+
+export interface LocalModelConfigDraft {
+  id?: string | null;
+  server_model_config_id?: string | null;
+  name: string;
+  provider?: string | null;
+  model?: string | null;
+  base_url?: string | null;
+  api_key?: string | null;
+  copy_api_key_from_id?: string | null;
+  clear_api_key?: boolean | null;
+  enabled?: boolean | null;
+  supports_images?: boolean | null;
+  supports_reasoning?: boolean | null;
+  supports_responses?: boolean | null;
+  thinking_level?: string | null;
+  task_usage_scenario?: string | null;
+  task_thinking_level?: string | null;
+  temperature?: number | null;
+  clear_temperature?: boolean | null;
+  max_output_tokens?: number | null;
+  clear_max_output_tokens?: boolean | null;
+}
+
 export interface SandboxImageFeature {
   id: string;
   label: string;
@@ -255,5 +429,57 @@ export const api = {
   clearCommandHistory: () =>
     request<CommandHistoryResponse>('/api/local/commands', {
       method: 'DELETE',
+    }),
+  runtimeSettings: () => request<LocalRuntimeSettings>('/api/local/runtime-settings'),
+  updateRuntimeSettings: (payload: Partial<LocalRuntimeSettings>) =>
+    request<LocalRuntimeSettings>('/api/local/runtime-settings', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+  approvalSettings: () => request<ApprovalSettings>('/api/local/approval/settings'),
+  updateApprovalSettings: (payload: Partial<Pick<ApprovalSettings, 'default_mode' | 'projects' | 'ai'>>) =>
+    request<ApprovalSettings>('/api/local/approval/settings', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+  pendingApprovals: () => request<PendingApprovalsResponse>('/api/local/approval/pending'),
+  approvePendingApproval: (id: string, payload: { remember_allow?: boolean } = {}) =>
+    request<{ ok: boolean }>(`/api/local/approval/pending/${encodeURIComponent(id)}/approve`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+  denyPendingApproval: (id: string, payload: { reason?: string } = {}) =>
+    request<{ ok: boolean }>(`/api/local/approval/pending/${encodeURIComponent(id)}/deny`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+  modelConfigs: () => request<LocalModelConfigListResponse>('/api/local/model-configs'),
+  previewModelCatalog: (draft: LocalModelConfigDraft) =>
+    request<LocalModelCatalogResponse>('/api/local/model-configs/catalog/preview', {
+      method: 'POST',
+      body: JSON.stringify(draft),
+    }),
+  saveModelConfig: (draft: LocalModelConfigDraft, sync = true) =>
+    request<LocalModelConfig>('/api/local/model-configs', {
+      method: 'POST',
+      body: JSON.stringify({ ...draft, sync }),
+    }),
+  updateModelConfig: (id: string, draft: LocalModelConfigDraft, sync = true) =>
+    request<LocalModelConfig>(`/api/local/model-configs/${encodeURIComponent(id)}`, {
+      method: 'POST',
+      body: JSON.stringify({ ...draft, sync }),
+    }),
+  deleteModelConfig: (id: string) =>
+    request<{ ok: boolean }>(`/api/local/model-configs/${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+    }),
+  syncModelConfig: (id: string) =>
+    request<LocalModelConfig>(`/api/local/model-configs/${encodeURIComponent(id)}/sync`, {
+      method: 'POST',
+    }),
+  saveModelSettings: (payload: LocalModelSettings, sync = true) =>
+    request<LocalModelSettings>('/api/local/model-settings', {
+      method: 'POST',
+      body: JSON.stringify({ ...payload, sync }),
     }),
 };

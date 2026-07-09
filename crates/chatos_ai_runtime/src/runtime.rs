@@ -63,7 +63,7 @@ impl AiRuntime {
             request_handler: AiRequestHandler::new(),
             tool_executor,
             record_writer: None,
-            max_iterations: 25,
+            max_iterations: 600,
         }
     }
 

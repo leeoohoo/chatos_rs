@@ -79,8 +79,6 @@ interface ChatConversationPaneProps {
   availableProjects: Project[];
   currentProject: Project | null;
   onProjectChange: (projectId: string | null) => void;
-  workspaceRoot: string | null;
-  onWorkspaceRootChange: (path: string | null) => void;
   currentRemoteConnectionId?: string | null;
   availableRemoteConnections?: RemoteConnection[];
   onRemoteConnectionChange?: (connectionId: string | null) => void;
@@ -245,8 +243,6 @@ const ChatConversationPane: React.FC<ChatConversationPaneProps> = ({
   availableProjects,
   currentProject,
   onProjectChange,
-  workspaceRoot,
-  onWorkspaceRootChange,
   currentRemoteConnectionId,
   availableRemoteConnections,
   onRemoteConnectionChange,
@@ -359,12 +355,9 @@ const ChatConversationPane: React.FC<ChatConversationPaneProps> = ({
               onProjectChange={onProjectChange}
               showProjectSelector={false}
               showProjectFileButton={false}
-              workspaceRoot={workspaceRoot}
-              onWorkspaceRootChange={onWorkspaceRootChange}
               currentRemoteConnectionId={currentRemoteConnectionId}
               availableRemoteConnections={availableRemoteConnections}
               onRemoteConnectionChange={onRemoteConnectionChange}
-              showWorkspaceRootPicker={true}
             />
           </>
         )}

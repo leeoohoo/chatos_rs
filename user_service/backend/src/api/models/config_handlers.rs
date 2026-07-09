@@ -59,11 +59,11 @@ pub(in crate::api) async fn create_model_config(
         return Err(bad_request("name is required"));
     };
     let provider = normalize_provider_input(input.provider)?;
-    let api_key = normalize_api_key_input(input.api_key)?;
-    if api_key.is_none() {
-        return Err(bad_request("api_key is required"));
-    }
-    let base_url = normalize_optional_string(input.base_url);
+    let api_key_present = normalize_api_key_input(input.api_key)?
+        .as_deref()
+        .map(str::trim)
+        .is_some_and(|value| !value.is_empty());
+    let base_url: Option<String> = None;
     let task_thinking_level =
         normalize_thinking_level_input(provider.as_str(), input.task_thinking_level.as_deref())?;
     let task_usage_scenario = normalize_optional_string(input.task_usage_scenario);
@@ -98,16 +98,18 @@ pub(in crate::api) async fn create_model_config(
             provider.as_str(),
             input.thinking_level.as_deref(),
         )?,
-        task_usage_scenario: existing
-            .as_ref()
-            .and_then(|item| item.task_usage_scenario.clone())
-            .or_else(|| task_usage_scenario.clone()),
-        task_thinking_level: existing
-            .as_ref()
-            .and_then(|item| item.task_thinking_level.clone())
-            .or_else(|| task_thinking_level.clone()),
-        api_key: api_key.clone(),
-        has_api_key: false,
+        task_usage_scenario: task_usage_scenario.clone().or_else(|| {
+            existing
+                .as_ref()
+                .and_then(|item| item.task_usage_scenario.clone())
+        }),
+        task_thinking_level: task_thinking_level.clone().or_else(|| {
+            existing
+                .as_ref()
+                .and_then(|item| item.task_thinking_level.clone())
+        }),
+        api_key: None,
+        has_api_key: input.has_api_key.unwrap_or(api_key_present),
         base_url: base_url.clone(),
         enabled: input.enabled.unwrap_or(true),
         supports_images: input.supports_images.unwrap_or(false),
@@ -185,13 +187,17 @@ pub(in crate::api) async fn update_model_config(
         record.model = model;
     }
     if input.clear_api_key.unwrap_or(false) {
-        record.api_key = None;
-    } else if let Some(api_key) = input.api_key {
-        record.api_key = normalize_api_key_input(Some(api_key))?;
+        record.has_api_key = false;
+    } else if input.has_api_key.is_some() || input.api_key.is_some() {
+        let api_key_present = normalize_api_key_input(input.api_key)?
+            .as_deref()
+            .map(str::trim)
+            .is_some_and(|value| !value.is_empty());
+        record.has_api_key = input.has_api_key.unwrap_or(api_key_present);
     }
-    if let Some(base_url) = input.base_url {
-        record.base_url = normalize_optional_string(Some(base_url));
-    }
+    record.api_key = None;
+    record.base_url = None;
+    let _ = input.base_url;
     if let Some(enabled) = input.enabled {
         record.enabled = enabled;
     }

@@ -10,10 +10,12 @@ use chrono::Utc;
 use tokio::sync::RwLock;
 
 mod api;
+mod approval;
 mod config;
 mod connector;
 mod history;
 mod mcp;
+mod model_configs;
 mod registration;
 mod relay;
 mod runtime;
@@ -62,7 +64,9 @@ async fn main() -> Result<()> {
     }
 
     let runtime = LocalRuntime::new(state_path, state, http_client);
-    runtime.start_connector_if_configured().await?;
+    if let Err(err) = runtime.start_connector_if_configured().await {
+        tracing_stdout(format!("start connector from saved config failed: {err}").as_str());
+    }
 
     serve_local_api(runtime).await
 }

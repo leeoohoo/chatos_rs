@@ -98,14 +98,18 @@ pub(in crate::api::configs) async fn put_ai_model_settings(
     };
     let payload = user_service_api_client::UpdateUserServiceModelSettingsRequest {
         user_id: Some(auth.user_id.clone()),
-        memory_summary_model_config_id: req
-            .memory_summary_model_config_id
-            .map(|value| value.trim().to_string())
-            .filter(|value| !value.is_empty()),
-        memory_summary_thinking_level: req
-            .memory_summary_thinking_level
-            .map(|value| value.trim().to_string())
-            .filter(|value| !value.is_empty()),
+        memory_summary_model_config_id: normalize_settings_update_value(
+            req.memory_summary_model_config_id,
+        ),
+        memory_summary_thinking_level: normalize_settings_update_value(
+            req.memory_summary_thinking_level,
+        ),
+        project_management_agent_model_config_id: normalize_settings_update_value(
+            req.project_management_agent_model_config_id,
+        ),
+        project_management_agent_thinking_level: normalize_settings_update_value(
+            req.project_management_agent_thinking_level,
+        ),
     };
     match user_service_api_client::update_model_settings(
         base_url.as_str(),
@@ -127,4 +131,12 @@ pub(in crate::api::configs) async fn put_ai_model_settings(
             })),
         ),
     }
+}
+
+fn normalize_settings_update_value(value: Option<Option<String>>) -> Option<Option<String>> {
+    value.map(|inner| {
+        inner
+            .map(|item| item.trim().to_string())
+            .filter(|item| !item.is_empty())
+    })
 }

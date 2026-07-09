@@ -678,6 +678,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "chatos_sandbox_image_mcp"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "serde",
+ "serde_json",
+ "tokio",
+ "uuid",
+]
+
+[[package]]
 name = "chatos_sandbox_mcp_server"
 version = "0.1.0"
 dependencies = [
@@ -2300,12 +2311,16 @@ dependencies = [
  "async-trait",
  "axum 0.8.9",
  "base64 0.22.1",
+ "chatos_ai_runtime",
  "chatos_builtin_tools",
+ "chatos_mcp_runtime",
  "chatos_mcp_service",
+ "chatos_sandbox_image_mcp",
  "chrono",
  "dotenvy",
  "futures-util",
  "hex",
+ "memory_engine_sdk",
  "portable-pty",
  "reqwest",
  "serde",
@@ -2327,10 +2342,10 @@ dependencies = [
  "chrono",
  "dotenvy",
  "futures",
+ "mongodb",
  "reqwest",
  "serde",
  "serde_json",
- "sqlx",
  "tokio",
  "tower-http 0.6.11",
  "tracing",
@@ -3174,15 +3189,19 @@ dependencies = [
 name = "project_management_service_backend"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "axum 0.7.9",
  "base64 0.22.1",
+ "chatos_ai_runtime",
  "chatos_builtin_tools",
+ "chatos_mcp_runtime",
  "chatos_mcp_service",
  "chatos_project_mcp_contract",
  "chatos_service_runtime",
  "chrono",
  "dotenvy",
  "futures-util",
+ "memory_engine_sdk",
  "mongodb",
  "reqwest",
  "serde",
@@ -3661,6 +3680,7 @@ dependencies = [
  "async-trait",
  "axum 0.7.9",
  "base64 0.22.1",
+ "chatos_sandbox_image_mcp",
  "chatos_service_runtime",
  "chrono",
  "dotenvy",

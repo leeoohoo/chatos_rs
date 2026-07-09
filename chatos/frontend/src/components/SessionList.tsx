@@ -223,19 +223,9 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
         createLocalConnectorDirectory={controller.createLocalConnectorDirectory}
         handleCreateProject={controller.sessionListActions.handleCreateProject}
         terminalModalOpen={controller.terminalModalOpen}
-        terminalRoot={controller.terminalRoot}
         terminalError={controller.terminalError}
-        terminalSourceMode={controller.terminalSourceMode}
-        terminalCommand={controller.terminalCommand}
-        terminalArgs={controller.terminalArgs}
-        terminalOutput={controller.terminalOutput}
         terminalExecuting={controller.terminalExecuting}
         setTerminalModalOpen={controller.setTerminalModalOpen}
-        setTerminalSourceMode={controller.setTerminalSourceMode}
-        setTerminalRoot={controller.setTerminalRoot}
-        openDirPickerForTerminal={() => {
-          void controller.localFsPickers.openDirPicker('terminal');
-        }}
         handleCreateTerminal={controller.sessionListActions.handleCreateTerminal}
         remoteModalOpen={controller.remoteForm.remoteModalOpen}
         editingRemoteConnectionId={controller.remoteForm.editingRemoteConnectionId}
@@ -304,7 +294,6 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
         loadKeyFileEntries={controller.localFsPickers.loadKeyFileEntries}
         applySelectedKeyFile={controller.localFsPickers.applySelectedKeyFile}
         dirPickerOpen={controller.localFsPickers.dirPickerOpen}
-        dirPickerTarget={controller.localFsPickers.dirPickerTarget}
         dirPickerPath={controller.localFsPickers.dirPickerPath}
         dirPickerParent={controller.localFsPickers.dirPickerParent}
         dirPickerWritable={controller.localFsPickers.dirPickerWritable}

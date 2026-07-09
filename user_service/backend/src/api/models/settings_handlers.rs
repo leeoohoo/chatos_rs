@@ -6,7 +6,9 @@ use axum::{Extension, Json};
 
 use crate::auth::CurrentPrincipal;
 use crate::integrations::sync_model_settings;
-use crate::models::{UpdateUserModelSettingsRequest, UserModelSettingsRecord};
+use crate::models::{
+    UpdateUserModelSettingsRequest, UserModelConfigRecord, UserModelSettingsRecord,
+};
 use crate::state::AppState;
 use crate::store::now_rfc3339;
 
@@ -34,6 +36,8 @@ pub(in crate::api) async fn get_model_settings(
             user_id: user_id.clone(),
             memory_summary_model_config_id: None,
             memory_summary_thinking_level: None,
+            project_management_agent_model_config_id: None,
+            project_management_agent_thinking_level: None,
             updated_at: now_rfc3339(),
         });
 
@@ -49,42 +53,72 @@ pub(in crate::api) async fn put_model_settings(
         .ok_or_else(|| bad_request("user_id is required"))?;
     ensure_owner_user_exists(&state, user_id.as_str()).await?;
 
-    let mut memory_summary_provider = "gpt".to_string();
-    if let Some(model_config_id) = input
-        .memory_summary_model_config_id
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    {
-        let Some(model_config) = state
-            .store
-            .find_user_model_config_by_id(model_config_id)
-            .await
-            .map_err(internal_error)?
-        else {
-            return Err(bad_request("memory_summary_model_config_id does not exist"));
-        };
-        if model_config.owner_user_id != user_id {
-            return Err(forbidden(
-                "memory_summary_model_config_id does not belong to the target user",
-            ));
-        }
-        if model_config.model.trim().is_empty() {
-            return Err(bad_request(
-                "memory_summary_model_config_id requires a concrete model name",
-            ));
-        }
-        memory_summary_provider = model_config.provider;
-    }
+    let current = state
+        .store
+        .get_user_model_settings(user_id.as_str())
+        .await
+        .map_err(internal_error)?
+        .unwrap_or(UserModelSettingsRecord {
+            user_id: user_id.clone(),
+            memory_summary_model_config_id: None,
+            memory_summary_thinking_level: None,
+            project_management_agent_model_config_id: None,
+            project_management_agent_thinking_level: None,
+            updated_at: now_rfc3339(),
+        });
+    let memory_summary_model_config_id = resolve_optional_update(
+        input.memory_summary_model_config_id,
+        current.memory_summary_model_config_id,
+    );
+    let project_management_agent_model_config_id = resolve_optional_update(
+        input.project_management_agent_model_config_id,
+        current.project_management_agent_model_config_id,
+    );
+    let memory_summary_thinking_level_input = resolve_thinking_level_update(
+        input.memory_summary_thinking_level,
+        current.memory_summary_thinking_level,
+        memory_summary_model_config_id.as_deref(),
+    );
+    let project_management_agent_thinking_level_input = resolve_thinking_level_update(
+        input.project_management_agent_thinking_level,
+        current.project_management_agent_thinking_level,
+        project_management_agent_model_config_id.as_deref(),
+    );
+
+    let memory_summary_model_config = validate_settings_model_config(
+        &state,
+        user_id.as_str(),
+        memory_summary_model_config_id.as_deref(),
+        "memory_summary_model_config_id",
+    )
+    .await?;
+    let project_management_agent_model_config = validate_settings_model_config(
+        &state,
+        user_id.as_str(),
+        project_management_agent_model_config_id.as_deref(),
+        "project_management_agent_model_config_id",
+    )
+    .await?;
+    let memory_summary_provider = memory_summary_model_config
+        .as_ref()
+        .map(|model_config| model_config.provider.as_str())
+        .unwrap_or("gpt");
+    let project_management_agent_provider = project_management_agent_model_config
+        .as_ref()
+        .map(|model_config| model_config.provider.as_str())
+        .unwrap_or("gpt");
 
     let settings = UserModelSettingsRecord {
         user_id,
-        memory_summary_model_config_id: normalize_optional_string(
-            input.memory_summary_model_config_id,
-        ),
+        memory_summary_model_config_id,
         memory_summary_thinking_level: normalize_thinking_level_input(
-            memory_summary_provider.as_str(),
-            input.memory_summary_thinking_level.as_deref(),
+            memory_summary_provider,
+            memory_summary_thinking_level_input.as_deref(),
+        )?,
+        project_management_agent_model_config_id,
+        project_management_agent_thinking_level: normalize_thinking_level_input(
+            project_management_agent_provider,
+            project_management_agent_thinking_level_input.as_deref(),
         )?,
         updated_at: now_rfc3339(),
     };
@@ -98,4 +132,59 @@ pub(in crate::api) async fn put_model_settings(
         saved,
         Some(sync_warnings),
     )))
+}
+
+fn resolve_optional_update(
+    input: Option<Option<String>>,
+    current: Option<String>,
+) -> Option<String> {
+    match input {
+        Some(value) => normalize_optional_string(value),
+        None => current,
+    }
+}
+
+fn resolve_thinking_level_update(
+    input: Option<Option<String>>,
+    current: Option<String>,
+    model_config_id: Option<&str>,
+) -> Option<String> {
+    match input {
+        Some(value) => normalize_optional_string(value),
+        None if model_config_id.is_none() => None,
+        None => current,
+    }
+}
+
+async fn validate_settings_model_config(
+    state: &AppState,
+    user_id: &str,
+    model_config_id: Option<&str>,
+    field_name: &str,
+) -> Result<Option<UserModelConfigRecord>, (axum::http::StatusCode, Json<serde_json::Value>)> {
+    let Some(model_config_id) = model_config_id
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return Ok(None);
+    };
+    let Some(model_config) = state
+        .store
+        .find_user_model_config_by_id(model_config_id)
+        .await
+        .map_err(internal_error)?
+    else {
+        return Err(bad_request(format!("{field_name} does not exist")));
+    };
+    if model_config.owner_user_id != user_id {
+        return Err(forbidden(format!(
+            "{field_name} does not belong to the target user"
+        )));
+    }
+    if model_config.model.trim().is_empty() {
+        return Err(bad_request(format!(
+            "{field_name} requires a concrete model name"
+        )));
+    }
+    Ok(Some(model_config))
 }

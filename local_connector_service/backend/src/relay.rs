@@ -257,6 +257,7 @@ impl ConnectorRelay {
             message_type,
             "sandbox_response"
                 | "mcp"
+                | "model_runtime_response"
                 | "terminal_response"
                 | "terminal_session_create_response"
                 | "terminal_close_response"

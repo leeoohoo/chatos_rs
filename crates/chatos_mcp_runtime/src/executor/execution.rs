@@ -297,6 +297,7 @@ impl McpExecutor {
                     headers.as_ref(),
                     "tools/call",
                     json!({"name": info.original_name, "arguments": args}),
+                    info.server_timeout,
                 )
                 .await?;
                 Ok(to_text_and_structured_result(&result))

@@ -18,9 +18,7 @@ use super::model::{
     build_model_config, from_user_service_model_config, to_response_value,
     to_response_value_with_secret, to_user_service_create_request, to_user_service_update_request,
 };
-use super::provider_models::{
-    fallback_model_list, fetch_provider_models, normalize_base_url_for_models,
-};
+use super::provider_models::fallback_model_list;
 use super::user_service_proxy::{
     configured_user_service_base_url, proxy_status_from_user_service_error,
     user_service_access_token_for_auth, user_service_timeout_ms,
@@ -268,13 +266,6 @@ pub(in crate::api::configs) async fn update_ai_model_config(
         } else {
             existing.task_thinking_level.clone()
         },
-        api_key: req.api_key,
-        clear_api_key: req.clear_api_key,
-        base_url: if req.base_url.is_some() {
-            req.base_url
-        } else {
-            existing.base_url.clone()
-        },
         enabled: req.enabled.or(Some(existing.enabled)),
         supports_images: req.supports_images.or(Some(existing.supports_images)),
         supports_reasoning: req.supports_reasoning.or(Some(existing.supports_reasoning)),
@@ -433,34 +424,18 @@ pub(in crate::api::configs) async fn list_ai_provider_models(
             }
         };
 
-        let base_url =
-            normalize_base_url_for_models(profile.provider.as_str(), profile.base_url.as_deref());
-        return match fetch_provider_models(&profile).await {
-            Ok(models) => (
-                StatusCode::OK,
-                Json(json!({
-                    "provider_config_id": profile.id,
-                    "provider": profile.provider,
-                    "base_url": base_url,
-                    "source": "live",
-                    "fetched_at": crate::core::time::now_rfc3339(),
-                    "models": models,
-                    "error": null
-                })),
-            ),
-            Err(err) => (
-                StatusCode::OK,
-                Json(json!({
-                    "provider_config_id": profile.id,
-                    "provider": profile.provider,
-                    "base_url": base_url,
-                    "source": "fallback",
-                    "fetched_at": null,
-                    "models": fallback_model_list(&profile),
-                    "error": err
-                })),
-            ),
-        };
+        return (
+            StatusCode::OK,
+            Json(json!({
+                "provider_config_id": profile.id,
+                "provider": profile.provider,
+                "base_url": Value::Null,
+                "source": "local_connector_managed",
+                "fetched_at": null,
+                "models": fallback_model_list(&profile),
+                "error": "model credentials are managed by Local Connector Client"
+            })),
+        );
     }
 
     let profile = match ensure_owned_ai_model_config(&config_id, &auth).await {
@@ -468,32 +443,16 @@ pub(in crate::api::configs) async fn list_ai_provider_models(
         Err(err) => return map_ai_model_config_access_error(err),
     };
 
-    let base_url =
-        normalize_base_url_for_models(profile.provider.as_str(), profile.base_url.as_deref());
-    match fetch_provider_models(&profile).await {
-        Ok(models) => (
-            StatusCode::OK,
-            Json(json!({
-                "provider_config_id": profile.id,
-                "provider": profile.provider,
-                "base_url": base_url,
-                "source": "live",
-                "fetched_at": crate::core::time::now_rfc3339(),
-                "models": models,
-                "error": null
-            })),
-        ),
-        Err(err) => (
-            StatusCode::OK,
-            Json(json!({
-                "provider_config_id": profile.id,
-                "provider": profile.provider,
-                "base_url": base_url,
-                "source": "fallback",
-                "fetched_at": null,
-                "models": fallback_model_list(&profile),
-                "error": err
-            })),
-        ),
-    }
+    (
+        StatusCode::OK,
+        Json(json!({
+            "provider_config_id": profile.id,
+            "provider": profile.provider,
+            "base_url": Value::Null,
+            "source": "local_connector_managed",
+            "fetched_at": null,
+            "models": fallback_model_list(&profile),
+            "error": "model credentials are managed by Local Connector Client"
+        })),
+    )
 }

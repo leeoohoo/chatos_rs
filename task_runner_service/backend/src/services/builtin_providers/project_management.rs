@@ -93,6 +93,7 @@ impl ProjectManagementBuiltinService {
                 "name": name,
                 "arguments": args,
             }),
+            None,
         )
         .await?;
         filter_archived_tool_result(name, result)

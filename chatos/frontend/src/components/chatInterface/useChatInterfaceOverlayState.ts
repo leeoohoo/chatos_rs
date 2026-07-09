@@ -4,9 +4,6 @@
 import { useState } from 'react';
 
 export const useChatInterfaceOverlayState = () => {
-  const [showAiModelManager, setShowAiModelManager] = useState(false);
-  const [showMemoryModelSettings, setShowMemoryModelSettings] = useState(false);
-  const [showTaskModelSettings, setShowTaskModelSettings] = useState(false);
   const [showTaskRunnerExternalMcpManager, setShowTaskRunnerExternalMcpManager] = useState(false);
   const [showAgentManager, setShowAgentManager] = useState(false);
   const [showSystemContextEditor, setShowSystemContextEditor] = useState(false);
@@ -15,12 +12,6 @@ export const useChatInterfaceOverlayState = () => {
   const [showUserSettings, setShowUserSettings] = useState(false);
 
   return {
-    showAiModelManager,
-    setShowAiModelManager,
-    showMemoryModelSettings,
-    setShowMemoryModelSettings,
-    showTaskModelSettings,
-    setShowTaskModelSettings,
     showTaskRunnerExternalMcpManager,
     setShowTaskRunnerExternalMcpManager,
     showAgentManager,

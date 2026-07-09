@@ -25,6 +25,14 @@ pub(crate) struct InteractiveCommandSubmission {
     pub(crate) blocked_reason: Option<String>,
 }
 
+#[derive(Debug)]
+pub(crate) struct PreparedTerminalInput {
+    pub(crate) forward_data: String,
+    pub(crate) blocked_messages: Vec<String>,
+    pub(crate) submissions: Vec<InteractiveCommandSubmission>,
+    previous_cwd: PathBuf,
+}
+
 #[derive(Clone, Default)]
 pub(crate) struct LocalTerminalManager {
     sessions: Arc<Mutex<BTreeMap<String, Arc<LocalPtySession>>>>,
@@ -35,6 +43,7 @@ pub(crate) struct LocalPtySession {
     root_cwd: PathBuf,
     current_cwd: StdMutex<PathBuf>,
     input_line: StdMutex<String>,
+    submitted_command: StdMutex<Option<String>>,
     writer: StdMutex<Box<dyn Write + Send>>,
     master: StdMutex<Box<dyn MasterPty + Send>>,
     child_killer: StdMutex<Box<dyn ChildKiller + Send + Sync>>,
@@ -98,6 +107,7 @@ impl LocalTerminalManager {
             root_cwd,
             current_cwd: StdMutex::new(cwd.clone()),
             input_line: StdMutex::new(String::new()),
+            submitted_command: StdMutex::new(None),
             writer: StdMutex::new(writer),
             master: StdMutex::new(pair.master),
             child_killer: StdMutex::new(child_killer),

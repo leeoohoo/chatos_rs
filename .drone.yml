@@ -1,0 +1,371 @@
+---
+kind: pipeline
+type: docker
+name: api-contract
+
+clone:
+  git:
+    image: drone/git:local
+    pull: if-not-exists
+
+steps:
+  - name: api-contract
+    image: python:3.12-bookworm
+    commands:
+      - find /etc/apt -type f \( -name '*.list' -o -name '*.sources' \) -exec sed -i -e 's|http://deb.debian.org/debian|http://mirrors.cloud.aliyuncs.com/debian|g' -e 's|http://deb.debian.org/debian-security|http://mirrors.cloud.aliyuncs.com/debian-security|g' {} + && apt-get update && apt-get install -y --no-install-recommends git bash ca-certificates && rm -rf /var/lib/apt/lists/*
+      - python3 -m pip install --no-cache-dir PyYAML
+      - bash scripts/check_api_surface.sh
+      - bash scripts/check_api_path_baseline.sh
+      - bash scripts/check_openapi_contract_assembly.sh
+      - bash scripts/check-large-files.sh --fail
+      - bash scripts/check_openapi_contract_gate.sh
+      - bash scripts/check_openapi_method_contract_gate.sh
+      - bash scripts/check_openapi_contract_quality_gate.sh
+      - bash scripts/check_openapi_contract_semantic_gate.sh
+
+---
+kind: pipeline
+type: docker
+name: backend-chatos
+
+clone:
+  git:
+    image: drone/git:local
+    pull: if-not-exists
+
+steps:
+  - name: cargo-check
+    image: rust:1-bookworm
+    commands:
+      - find /etc/apt -type f \( -name '*.list' -o -name '*.sources' \) -exec sed -i -e 's|http://deb.debian.org/debian|http://mirrors.cloud.aliyuncs.com/debian|g' -e 's|http://deb.debian.org/debian-security|http://mirrors.cloud.aliyuncs.com/debian-security|g' {} + && apt-get update && apt-get install -y --no-install-recommends git bash python3 build-essential clang cmake libsqlite3-dev libssl-dev pkg-config protobuf-compiler ca-certificates && rm -rf /var/lib/apt/lists/*
+      - cargo check --manifest-path Cargo.toml -p chat_app_server_rs
+      - bash scripts/check-request-path-panics.sh
+      - python3 scripts/check-non-test-unwrap-expect.py
+      - bash scripts/check-hotspot-line-budgets.sh
+
+---
+kind: pipeline
+type: docker
+name: backend-user-service
+
+clone:
+  git:
+    image: drone/git:local
+    pull: if-not-exists
+
+steps:
+  - name: cargo-check
+    image: rust:1-bookworm
+    commands:
+      - find /etc/apt -type f \( -name '*.list' -o -name '*.sources' \) -exec sed -i -e 's|http://deb.debian.org/debian|http://mirrors.cloud.aliyuncs.com/debian|g' -e 's|http://deb.debian.org/debian-security|http://mirrors.cloud.aliyuncs.com/debian-security|g' {} + && apt-get update && apt-get install -y --no-install-recommends git bash python3 build-essential clang cmake libsqlite3-dev libssl-dev pkg-config protobuf-compiler ca-certificates && rm -rf /var/lib/apt/lists/*
+      - cargo check --manifest-path user_service/backend/Cargo.toml
+
+---
+kind: pipeline
+type: docker
+name: backend-memory-engine
+
+clone:
+  git:
+    image: drone/git:local
+    pull: if-not-exists
+
+steps:
+  - name: cargo-check
+    image: rust:1-bookworm
+    commands:
+      - find /etc/apt -type f \( -name '*.list' -o -name '*.sources' \) -exec sed -i -e 's|http://deb.debian.org/debian|http://mirrors.cloud.aliyuncs.com/debian|g' -e 's|http://deb.debian.org/debian-security|http://mirrors.cloud.aliyuncs.com/debian-security|g' {} + && apt-get update && apt-get install -y --no-install-recommends git bash python3 build-essential clang cmake libsqlite3-dev libssl-dev pkg-config protobuf-compiler ca-certificates && rm -rf /var/lib/apt/lists/*
+      - cargo check --manifest-path memory_engine/backend/Cargo.toml
+
+---
+kind: pipeline
+type: docker
+name: backend-project-management
+
+clone:
+  git:
+    image: drone/git:local
+    pull: if-not-exists
+
+steps:
+  - name: cargo-check
+    image: rust:1-bookworm
+    commands:
+      - find /etc/apt -type f \( -name '*.list' -o -name '*.sources' \) -exec sed -i -e 's|http://deb.debian.org/debian|http://mirrors.cloud.aliyuncs.com/debian|g' -e 's|http://deb.debian.org/debian-security|http://mirrors.cloud.aliyuncs.com/debian-security|g' {} + && apt-get update && apt-get install -y --no-install-recommends git bash python3 build-essential clang cmake libsqlite3-dev libssl-dev pkg-config protobuf-compiler ca-certificates && rm -rf /var/lib/apt/lists/*
+      - cargo check --manifest-path Cargo.toml -p project_management_service_backend
+
+---
+kind: pipeline
+type: docker
+name: backend-local-connector-service
+
+clone:
+  git:
+    image: drone/git:local
+    pull: if-not-exists
+
+steps:
+  - name: cargo-check
+    image: rust:1-bookworm
+    commands:
+      - find /etc/apt -type f \( -name '*.list' -o -name '*.sources' \) -exec sed -i -e 's|http://deb.debian.org/debian|http://mirrors.cloud.aliyuncs.com/debian|g' -e 's|http://deb.debian.org/debian-security|http://mirrors.cloud.aliyuncs.com/debian-security|g' {} + && apt-get update && apt-get install -y --no-install-recommends git bash python3 build-essential clang cmake libsqlite3-dev libssl-dev pkg-config protobuf-compiler ca-certificates && rm -rf /var/lib/apt/lists/*
+      - cargo check --manifest-path Cargo.toml -p local_connector_service_backend
+
+---
+kind: pipeline
+type: docker
+name: backend-sandbox-manager
+
+clone:
+  git:
+    image: drone/git:local
+    pull: if-not-exists
+
+steps:
+  - name: cargo-check
+    image: rust:1-bookworm
+    commands:
+      - find /etc/apt -type f \( -name '*.list' -o -name '*.sources' \) -exec sed -i -e 's|http://deb.debian.org/debian|http://mirrors.cloud.aliyuncs.com/debian|g' -e 's|http://deb.debian.org/debian-security|http://mirrors.cloud.aliyuncs.com/debian-security|g' {} + && apt-get update && apt-get install -y --no-install-recommends git bash python3 build-essential clang cmake libsqlite3-dev libssl-dev pkg-config protobuf-compiler ca-certificates && rm -rf /var/lib/apt/lists/*
+      - cargo check --manifest-path Cargo.toml -p sandbox_manager_service_backend
+
+---
+kind: pipeline
+type: docker
+name: backend-task-runner
+
+clone:
+  git:
+    image: drone/git:local
+    pull: if-not-exists
+
+steps:
+  - name: cargo-check
+    image: rust:1-bookworm
+    commands:
+      - find /etc/apt -type f \( -name '*.list' -o -name '*.sources' \) -exec sed -i -e 's|http://deb.debian.org/debian|http://mirrors.cloud.aliyuncs.com/debian|g' -e 's|http://deb.debian.org/debian-security|http://mirrors.cloud.aliyuncs.com/debian-security|g' {} + && apt-get update && apt-get install -y --no-install-recommends git bash python3 build-essential clang cmake libsqlite3-dev libssl-dev pkg-config protobuf-compiler ca-certificates && rm -rf /var/lib/apt/lists/*
+      - cargo check --manifest-path Cargo.toml -p task_runner_service_backend
+
+---
+kind: pipeline
+type: docker
+name: backend-official-website
+
+clone:
+  git:
+    image: drone/git:local
+    pull: if-not-exists
+
+steps:
+  - name: cargo-check
+    image: rust:1-bookworm
+    commands:
+      - find /etc/apt -type f \( -name '*.list' -o -name '*.sources' \) -exec sed -i -e 's|http://deb.debian.org/debian|http://mirrors.cloud.aliyuncs.com/debian|g' -e 's|http://deb.debian.org/debian-security|http://mirrors.cloud.aliyuncs.com/debian-security|g' {} + && apt-get update && apt-get install -y --no-install-recommends git bash python3 build-essential clang cmake libsqlite3-dev libssl-dev pkg-config protobuf-compiler ca-certificates && rm -rf /var/lib/apt/lists/*
+      - cargo check --manifest-path Cargo.toml -p official_website_service_backend
+
+---
+kind: pipeline
+type: docker
+name: frontend-chatos
+
+clone:
+  git:
+    image: drone/git:local
+    pull: if-not-exists
+
+steps:
+  - name: npm-check
+    image: node:24-bookworm
+    commands:
+      - cd chatos/frontend
+      - npm ci --legacy-peer-deps
+      - npm run type-check
+      - npm run build
+      - bash ../../scripts/check-hotspot-line-budgets.sh
+
+---
+kind: pipeline
+type: docker
+name: frontend-user-service
+
+clone:
+  git:
+    image: drone/git:local
+    pull: if-not-exists
+
+steps:
+  - name: npm-check
+    image: node:24-bookworm
+    commands:
+      - cd user_service/frontend
+      - npm ci --legacy-peer-deps
+      - npm run type-check
+      - npm run build
+
+---
+kind: pipeline
+type: docker
+name: frontend-memory-engine
+
+clone:
+  git:
+    image: drone/git:local
+    pull: if-not-exists
+
+steps:
+  - name: npm-check
+    image: node:24-bookworm
+    commands:
+      - cd memory_engine/frontend
+      - npm ci --legacy-peer-deps
+      - npm run type-check
+      - npm run build
+
+---
+kind: pipeline
+type: docker
+name: frontend-project-management
+
+clone:
+  git:
+    image: drone/git:local
+    pull: if-not-exists
+
+steps:
+  - name: npm-check
+    image: node:24-bookworm
+    commands:
+      - cd project_management_service/frontend
+      - npm ci --legacy-peer-deps
+      - npm run type-check
+      - npm run build
+
+---
+kind: pipeline
+type: docker
+name: frontend-task-runner
+
+clone:
+  git:
+    image: drone/git:local
+    pull: if-not-exists
+
+steps:
+  - name: npm-check
+    image: node:24-bookworm
+    commands:
+      - cd task_runner_service/frontend
+      - npm ci --legacy-peer-deps
+      - npm run type-check
+      - npm run build
+
+---
+kind: pipeline
+type: docker
+name: frontend-sandbox-manager
+
+clone:
+  git:
+    image: drone/git:local
+    pull: if-not-exists
+
+steps:
+  - name: npm-check
+    image: node:24-bookworm
+    commands:
+      - cd sandbox_manager_service/frontend
+      - npm ci --legacy-peer-deps
+      - npm run type-check
+      - npm run build
+
+---
+kind: pipeline
+type: docker
+name: frontend-official-website
+
+clone:
+  git:
+    image: drone/git:local
+    pull: if-not-exists
+
+steps:
+  - name: npm-check
+    image: node:24-bookworm
+    commands:
+      - cd official_website_service/frontend
+      - npm ci --legacy-peer-deps
+      - npm run type-check
+      - npm run build
+
+---
+kind: pipeline
+type: docker
+name: sandbox-agent-image
+
+clone:
+  git:
+    image: drone/git:local
+    pull: if-not-exists
+
+steps:
+  - name: dockerfile-check
+    image: docker:27-cli
+    commands:
+      - apk add --no-cache bash
+      - test -f sandbox_manager_service/sandbox_agent/Dockerfile
+      - test -f sandbox_manager_service/sandbox_agent/Cargo.workspace.toml
+      - test -f sandbox_manager_service/sandbox_mcp_server/Cargo.toml
+
+---
+kind: pipeline
+type: docker
+name: docker-stack
+
+clone:
+  git:
+    image: drone/git:local
+    pull: if-not-exists
+
+steps:
+  - name: compose-config
+    image: docker:27-cli
+    commands:
+      - apk add --no-cache bash docker-cli-compose
+      - bash -n docker/deploy.sh
+      - bash -n scripts/local-dev-stack.sh
+      - bash -n docker/entrypoint-rust-service.sh
+      - docker compose -f docker/compose.yml config >/dev/null
+      - docker compose -f docker/compose.yml -f docker/compose.build.yml config >/dev/null
+
+---
+kind: pipeline
+type: docker
+name: docker-images
+
+clone:
+  git:
+    image: drone/git:local
+    pull: if-not-exists
+
+steps:
+  - name: build-local-images
+    image: docker:27-cli
+    environment:
+      CHATOS_DOCKER_BUILD_PARALLEL_LIMIT: "1"
+      CHATOS_DOCKER_MODE: build
+      CHATOS_DOCKER_PRUNE_DANGLING_IMAGES: "true"
+      CHATOS_IMAGE_NAMESPACE: ghcr.io/leeoohoo
+      CHATOS_IMAGE_TAG: harness-ci
+    commands:
+      - apk add --no-cache bash docker-cli-compose
+      - docker info
+      - docker compose version
+      - bash docker/deploy.sh build
+      - docker images --format '{{.Repository}}:{{.Tag}} {{.Size}}' | grep 'chatos-rs-.*:harness-ci' | sort
+    volumes:
+      - name: docker-sock
+        path: /var/run/docker.sock
+
+volumes:
+  - name: docker-sock
+    host:
+      path: /var/run/docker.sock

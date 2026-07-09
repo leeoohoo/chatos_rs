@@ -91,7 +91,7 @@ impl AiClient {
             ai_request_handler,
             mcp_tool_execute,
             message_manager,
-            max_iterations: 25,
+            max_iterations: 600,
             task_follow_up_max_rounds: 3,
             request_body_limit_bytes: Some(request_body_limit_bytes_from_settings(&Value::Null)),
             system_prompt: None,

@@ -4,7 +4,6 @@
 import { useCallback } from 'react';
 import type { TranslateFn } from '../../i18n/I18nProvider';
 import type ApiClient from '../../lib/api/client';
-import { getUserVisiblePath } from '../../lib/domain/filesystem';
 import { deriveNameFromPath, translateSessionListMessage } from './helpers';
 import type { ChatState, SessionSelectOptions } from '../../lib/store/types';
 import type { Project, RemoteConnection, Session, Terminal } from '../../types';
@@ -59,13 +58,8 @@ interface SessionListActionsParams {
   setProjectError: (value: string | null) => void;
   setProjectModalOpen: (value: boolean) => void;
   setProjectSourceMode: (value: ResourceSourceMode) => void;
-  setTerminalRoot: (value: string) => void;
   setTerminalError: (value: string | null) => void;
   setTerminalModalOpen: (value: boolean) => void;
-  setTerminalSourceMode: (value: ResourceSourceMode) => void;
-  setTerminalCommand: (value: string) => void;
-  setTerminalArgs: (value: string) => void;
-  setTerminalOutput: (value: string | null) => void;
   setTerminalExecuting: (value: boolean) => void;
   setKeyFilePickerOpen: (value: boolean) => void;
   openRemoteModalBase: () => void;
@@ -80,18 +74,14 @@ interface SessionListActionsParams {
   selectTerminal: (terminalId: string) => Promise<void>;
   loadProjects: (options?: { force?: boolean }) => Promise<unknown>;
   projectSourceMode: ResourceSourceMode;
-  terminalSourceMode: ResourceSourceMode;
   localConnectorWorkspaces: LocalConnectorWorkspaceOption[];
   selectedLocalConnectorWorkspaceId: string;
   selectedLocalConnectorDirectoryPath?: string;
-  terminalCommand: string;
-  terminalArgs: string;
   selectRemoteConnection: (connectionId: string) => Promise<void>;
   openRemoteSftp: (connectionId: string) => Promise<void>;
   cloudProjectName: string;
   cloudProjectGitUrl: string;
   cloudProjectZipFile: File | null;
-  terminalRoot: string;
 }
 
 export const useSessionListActions = ({
@@ -121,13 +111,8 @@ export const useSessionListActions = ({
   setProjectError,
   setProjectModalOpen,
   setProjectSourceMode,
-  setTerminalRoot,
   setTerminalError,
   setTerminalModalOpen,
-  setTerminalSourceMode,
-  setTerminalCommand,
-  setTerminalArgs,
-  setTerminalOutput,
   setTerminalExecuting,
   setKeyFilePickerOpen,
   openRemoteModalBase,
@@ -137,7 +122,6 @@ export const useSessionListActions = ({
   selectTerminal,
   loadProjects,
   projectSourceMode,
-  terminalSourceMode,
   localConnectorWorkspaces,
   selectedLocalConnectorWorkspaceId,
   selectedLocalConnectorDirectoryPath = '',
@@ -146,7 +130,6 @@ export const useSessionListActions = ({
   cloudProjectName,
   cloudProjectGitUrl,
   cloudProjectZipFile,
-  terminalRoot,
 }: SessionListActionsParams) => {
   const localConnectorRelativePath = selectedLocalConnectorDirectoryPath.trim().replace(/\\/g, '/').replace(/^\/+|\/+$/g, '');
 
@@ -236,21 +219,11 @@ export const useSessionListActions = ({
   ]);
 
   const openTerminalModal = useCallback(() => {
-    setTerminalRoot('');
     setTerminalError(null);
-    setTerminalSourceMode('server');
-    setTerminalCommand('pwd');
-    setTerminalArgs('');
-    setTerminalOutput(null);
     setTerminalModalOpen(true);
   }, [
-    setTerminalArgs,
-    setTerminalCommand,
     setTerminalError,
     setTerminalModalOpen,
-    setTerminalOutput,
-    setTerminalRoot,
-    setTerminalSourceMode,
   ]);
 
   const openRemoteModal = useCallback(() => {
@@ -321,37 +294,22 @@ export const useSessionListActions = ({
   ]);
 
   const handleCreateTerminal = useCallback(async () => {
-    if (terminalSourceMode === 'local_connector') {
-      const workspace = localConnectorWorkspaces.find((item) => item.id === selectedLocalConnectorWorkspaceId);
-      if (!workspace) {
-        setTerminalError(translateSessionListMessage(t, 'sessionList.resource.error.selectLocalConnectorWorkspace'));
-        return;
-      }
-      setTerminalExecuting(true);
-      setTerminalError(null);
-      try {
-        const root = localConnectorRootPath(workspace, localConnectorRelativePath);
-        const name = deriveNameFromPath(localConnectorRelativePath || workspace.alias, 'Terminal');
-        await createTerminal(root, name);
-        setTerminalModalOpen(false);
-        setTerminalOutput(null);
-      } catch (error) {
-        setTerminalError(error instanceof Error ? error.message : translateSessionListMessage(t, 'sessionList.resource.error.createTerminalFailed'));
-      } finally {
-        setTerminalExecuting(false);
-      }
+    const workspace = localConnectorWorkspaces.find((item) => item.id === selectedLocalConnectorWorkspaceId);
+    if (!workspace) {
+      setTerminalError(translateSessionListMessage(t, 'sessionList.resource.error.selectLocalConnectorWorkspace'));
       return;
     }
-    if (!terminalRoot.trim()) {
-      setTerminalError(translateSessionListMessage(t, 'sessionList.resource.error.selectTerminalDirectory'));
-      return;
-    }
+    setTerminalExecuting(true);
+    setTerminalError(null);
     try {
-      const name = deriveNameFromPath(getUserVisiblePath(terminalRoot), 'Terminal');
-      await createTerminal(terminalRoot.trim(), name);
+      const root = localConnectorRootPath(workspace, localConnectorRelativePath);
+      const name = deriveNameFromPath(localConnectorRelativePath || workspace.alias, 'Terminal');
+      await createTerminal(root, name);
       setTerminalModalOpen(false);
     } catch (error) {
       setTerminalError(error instanceof Error ? error.message : translateSessionListMessage(t, 'sessionList.resource.error.createTerminalFailed'));
+    } finally {
+      setTerminalExecuting(false);
     }
   }, [
     createTerminal,
@@ -361,10 +319,7 @@ export const useSessionListActions = ({
     setTerminalError,
     setTerminalExecuting,
     setTerminalModalOpen,
-    setTerminalOutput,
     t,
-    terminalRoot,
-    terminalSourceMode,
   ]);
 
   const handleSelectProject = useCallback(async (projectId: string) => {

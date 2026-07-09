@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-import { useEffect, type Dispatch, type SetStateAction } from 'react';
+import { useEffect, useRef, type Dispatch, type SetStateAction } from 'react';
 import type { FsEntry, FsReadResult } from '../../types';
 import type { MoveConflictState } from './Overlays';
 import type { ExplorerContextMenuState } from './useProjectExplorerState';
@@ -17,6 +17,7 @@ interface UseProjectExplorerProjectLifecycleOptions {
   clearDragExpandTimer: () => void;
   clearDragAutoScroll: () => void;
   setEntriesMap: Dispatch<SetStateAction<Record<string, FsEntry[]>>>;
+  setLoadingPaths: Dispatch<SetStateAction<Set<string>>>;
   setExpandedPaths: Dispatch<SetStateAction<Set<string>>>;
   setSelectedPath: Dispatch<SetStateAction<string | null>>;
   setSelectedFile: Dispatch<SetStateAction<FsReadResult | null>>;
@@ -41,6 +42,7 @@ export const useProjectExplorerProjectLifecycle = ({
   clearDragExpandTimer,
   clearDragAutoScroll,
   setEntriesMap,
+  setLoadingPaths,
   setExpandedPaths,
   setSelectedPath,
   setSelectedFile,
@@ -53,11 +55,15 @@ export const useProjectExplorerProjectLifecycle = ({
   setDropTargetDirPath,
   setExpandedReady,
 }: UseProjectExplorerProjectLifecycleOptions) => {
+  const activeTreeKeyRef = useRef<string | null>(null);
+
   useEffect(() => {
     if (!projectRootPath) {
+      activeTreeKeyRef.current = null;
       clearDragExpandTimer();
       clearDragAutoScroll();
       setEntriesMap({});
+      setLoadingPaths(new Set());
       setExpandedPaths(new Set());
       setSelectedPath(null);
       setSelectedFile(null);
@@ -73,13 +79,21 @@ export const useProjectExplorerProjectLifecycle = ({
     }
 
     if (!filesTabActive) {
+      setLoadingPaths(new Set());
       return;
     }
 
     const root = projectRootPath;
+    const treeKey = `${projectId || ''}:${root}`;
+    const projectChanged = activeTreeKeyRef.current !== treeKey;
+    activeTreeKeyRef.current = treeKey;
+
     clearDragExpandTimer();
     clearDragAutoScroll();
-    setEntriesMap({});
+    setLoadingPaths(new Set());
+    if (projectChanged) {
+      setEntriesMap({});
+    }
 
     const saved = projectId ? localStorage.getItem(`project_explorer_expanded_${projectId}`) : null;
     let nextExpanded = new Set<string>();
@@ -110,7 +124,7 @@ export const useProjectExplorerProjectLifecycle = ({
     setDraggingEntryPath(null);
     setDropTargetDirPath(null);
 
-    void loadEntries(root);
+    void loadEntries(root, { silent: !projectChanged });
     void (async () => {
       const expandedQueue = Array.from(nextExpanded)
         .filter(Boolean)
@@ -166,6 +180,7 @@ export const useProjectExplorerProjectLifecycle = ({
     setEntriesMap,
     setExpandedPaths,
     setExpandedReady,
+    setLoadingPaths,
     setMoveConflict,
     setSelectedFile,
     setSelectedPath,

@@ -4,13 +4,6 @@
 name: Docker Images
 
 on:
-  push:
-    branches:
-      - main
-      - master
-      - "2.*"
-    tags:
-      - "v*"
   workflow_dispatch:
 
 permissions:
@@ -72,11 +65,6 @@ jobs:
               MANIFEST_PATH=Cargo.toml
               PACKAGE_NAME=chat_app_server_rs
               BIN_NAME=chat_app_server_rs
-          - image: chatos-rs-db-connection-hub-backend
-            dockerfile: docker/Dockerfile.rust-service
-            build_args: |
-              MANIFEST_PATH=db_connection_hub/backend/Cargo.toml
-              BIN_NAME=db_connection_hub_backend
           - image: chatos-rs-official-website-backend
             dockerfile: docker/Dockerfile.rust-service
             build_args: |
@@ -109,10 +97,6 @@ jobs:
             dockerfile: docker/Dockerfile.frontend
             build_args: |
               APP_DIR=sandbox_manager_service/frontend
-          - image: chatos-rs-db-connection-hub-frontend
-            dockerfile: docker/Dockerfile.frontend
-            build_args: |
-              APP_DIR=db_connection_hub/frontend
           - image: chatos-rs-official-website-frontend
             dockerfile: docker/Dockerfile.frontend
             build_args: |

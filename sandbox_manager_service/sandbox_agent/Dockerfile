@@ -20,7 +20,23 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 ENV CARGO_REGISTRIES_CRATES_IO_PROTOCOL=sparse
-ENV CARGO_REGISTRIES_CRATES_IO_INDEX=sparse+https://index.crates.io/
+ENV CARGO_REGISTRIES_CRATES_IO_INDEX=sparse+https://rsproxy.cn/index/
+ENV CARGO_NET_RETRY=10
+ENV CARGO_HTTP_TIMEOUT=600
+ENV RUSTUP_DIST_SERVER=https://mirrors.tuna.tsinghua.edu.cn/rustup
+ENV RUSTUP_UPDATE_ROOT=https://mirrors.tuna.tsinghua.edu.cn/rustup/rustup
+
+RUN mkdir -p /root/.cargo \
+    && printf '%s\n' \
+      '[source.crates-io]' \
+      'replace-with = "rsproxy-sparse"' \
+      '' \
+      '[source.rsproxy-sparse]' \
+      'registry = "sparse+https://rsproxy.cn/index/"' \
+      '' \
+      '[net]' \
+      'git-fetch-with-cli = true' \
+      > /root/.cargo/config.toml
 
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
       | sh -s -- -y --profile minimal --default-toolchain stable
@@ -49,6 +65,8 @@ ENV CHATOS_WORKSPACE=/workspace
 ENV DOTNET_ROOT=/usr/local/dotnet
 ENV JAVA_HOME=/usr/lib/jvm/default-jvm
 ENV PATH=/usr/local/go/bin:/usr/local/dotnet:/root/.cargo/bin:/root/.local/bin:$PATH
+ENV RUSTUP_DIST_SERVER=https://mirrors.tuna.tsinghua.edu.cn/rustup
+ENV RUSTUP_UPDATE_ROOT=https://mirrors.tuna.tsinghua.edu.cn/rustup/rustup
 
 RUN set -eux; \
     java_version=""; \
@@ -216,7 +234,9 @@ RUN set -eux; \
     fi
 
 ENV CARGO_REGISTRIES_CRATES_IO_PROTOCOL=sparse
-ENV CARGO_REGISTRIES_CRATES_IO_INDEX=sparse+https://index.crates.io/
+ENV CARGO_REGISTRIES_CRATES_IO_INDEX=sparse+https://rsproxy.cn/index/
+ENV CARGO_NET_RETRY=10
+ENV CARGO_HTTP_TIMEOUT=600
 
 COPY --from=agent-builder /usr/local/bin/chatos-sandbox-mcp-server /usr/local/bin/chatos-sandbox-mcp-server
 
