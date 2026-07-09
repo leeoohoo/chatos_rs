@@ -5,12 +5,14 @@ import { buildQuery } from '../shared';
 import type {
   DeleteSuccessResponse,
   FsMutationResponse,
+  RemoteConnectionDraftPayload,
   RemoteConnectionResponse,
   RemoteConnectionTestResponse,
+  RemoteConnectionUpdatePayload,
   RemoteSftpEntriesResponse,
   RemoteSftpTransferStatusResponse,
 } from '../types';
-import type { ApiRequestFn, RemoteConnectionPayload } from './common';
+import type { ApiRequestFn } from './common';
 import { buildRemoteVerificationHeaders } from './common';
 
 export const listRemoteConnections = (
@@ -23,7 +25,7 @@ export const listRemoteConnections = (
 
 export const createRemoteConnection = (
   request: ApiRequestFn,
-  data: RemoteConnectionPayload,
+  data: RemoteConnectionDraftPayload,
 ): Promise<RemoteConnectionResponse> => {
   return request<RemoteConnectionResponse>('/remote-connections', {
     method: 'POST',
@@ -41,7 +43,7 @@ export const getRemoteConnection = (
 export const updateRemoteConnection = (
   request: ApiRequestFn,
   id: string,
-  data: Omit<RemoteConnectionPayload, 'host' | 'username'> & { host?: string; username?: string },
+  data: RemoteConnectionUpdatePayload,
 ): Promise<RemoteConnectionResponse> => {
   return request<RemoteConnectionResponse>(`/remote-connections/${id}`, {
     method: 'PUT',
@@ -66,7 +68,7 @@ export const disconnectRemoteTerminal = (
 
 export const testRemoteConnectionDraft = (
   request: ApiRequestFn,
-  data: RemoteConnectionPayload,
+  data: RemoteConnectionDraftPayload,
   verificationCode?: string,
 ): Promise<RemoteConnectionTestResponse> => {
   return request<RemoteConnectionTestResponse>('/remote-connections/test', {

@@ -4,51 +4,13 @@
 import type { RemoteConnection } from '../../../types';
 import type ApiClient from '../../api/client';
 import { ApiRequestError } from '../../api/client/shared';
+import type {
+  RemoteConnectionDraftPayload,
+  RemoteConnectionUpdatePayload,
+} from '../../api/client/types';
 import { normalizeRemoteConnection } from '../helpers/remoteConnections';
 import { mergeSessionRuntimeIntoMetadata } from '../helpers/sessionRuntime';
 import type { ChatStoreDraft, ChatStoreGet, ChatStoreSet } from '../types';
-
-interface CreateRemoteConnectionPayload {
-  name?: string;
-  host: string;
-  port?: number;
-  username: string;
-  auth_type?: 'private_key' | 'private_key_cert' | 'password';
-  password?: string;
-  private_key_path?: string;
-  certificate_path?: string;
-  default_remote_path?: string;
-  host_key_policy?: 'strict' | 'accept_new';
-  jump_enabled?: boolean;
-  jump_connection_id?: string;
-  jump_host?: string;
-  jump_port?: number;
-  jump_username?: string;
-  jump_private_key_path?: string;
-  jump_certificate_path?: string;
-  jump_password?: string;
-}
-
-interface UpdateRemoteConnectionPayload {
-  name?: string;
-  host?: string;
-  port?: number;
-  username?: string;
-  auth_type?: 'private_key' | 'private_key_cert' | 'password';
-  password?: string;
-  private_key_path?: string;
-  certificate_path?: string;
-  default_remote_path?: string;
-  host_key_policy?: 'strict' | 'accept_new';
-  jump_enabled?: boolean;
-  jump_connection_id?: string;
-  jump_host?: string;
-  jump_port?: number;
-  jump_username?: string;
-  jump_private_key_path?: string;
-  jump_certificate_path?: string;
-  jump_password?: string;
-}
 
 interface Deps {
   set: ChatStoreSet;
@@ -348,7 +310,7 @@ export function createRemoteConnectionActions({ set, get, client, getUserIdParam
       }
     },
 
-    createRemoteConnection: async (payload: CreateRemoteConnectionPayload) => {
+    createRemoteConnection: async (payload: RemoteConnectionDraftPayload) => {
       const uid = getUserIdParam();
       const created = await client.createRemoteConnection({
         ...payload,
@@ -367,7 +329,7 @@ export function createRemoteConnectionActions({ set, get, client, getUserIdParam
       return connection;
     },
 
-    updateRemoteConnection: async (connectionId: string, payload: UpdateRemoteConnectionPayload) => {
+    updateRemoteConnection: async (connectionId: string, payload: RemoteConnectionUpdatePayload) => {
       try {
         const updated = await client.updateRemoteConnection(connectionId, payload);
         const connection = normalizeRemoteConnection(updated);
