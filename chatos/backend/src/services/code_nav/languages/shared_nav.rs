@@ -5,7 +5,12 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-use crate::services::code_nav::file_limits::read_code_nav_line_preview;
+use regex::RegexBuilder;
+use walkdir::{DirEntry, WalkDir};
+
+use crate::services::code_nav::file_limits::{
+    read_code_nav_file_to_string, read_code_nav_line_preview, truncate_preview,
+};
 use crate::services::code_nav::symbol_index::{
     nav_location_from_indexed_symbol, score_indexed_definition_candidate, IndexedSymbol,
     ProjectIndexedSymbol,
@@ -240,6 +245,110 @@ where
         matches = search(false, true)?;
     }
     Ok(matches)
+}
+
+pub(crate) struct TextSearchLine {
+    pub(crate) searchable_text: String,
+    pub(crate) preview_text: String,
+}
+
+impl TextSearchLine {
+    pub(crate) fn plain(raw_line: &str) -> Self {
+        let line = raw_line.trim_end_matches('\r').to_string();
+        Self {
+            searchable_text: line.clone(),
+            preview_text: line,
+        }
+    }
+}
+
+pub(crate) struct TextSearchMatchParts {
+    pub(crate) path: String,
+    pub(crate) relative_path: String,
+    pub(crate) line: usize,
+    pub(crate) column: usize,
+    pub(crate) text: String,
+}
+
+pub(crate) fn search_text_occurrences<M, FileMatches, LinesForFile, BuildMatch>(
+    root: &Path,
+    query: &str,
+    case_sensitive: bool,
+    whole_word: bool,
+    max_results: usize,
+    ignored_dirs: &[&str],
+    mut file_matches: FileMatches,
+    mut lines_for_file: LinesForFile,
+    mut build_match: BuildMatch,
+) -> Result<Vec<M>, String>
+where
+    FileMatches: FnMut(&Path) -> bool,
+    LinesForFile: FnMut(&Path, &str) -> Vec<TextSearchLine>,
+    BuildMatch: FnMut(TextSearchMatchParts) -> M,
+{
+    let pattern = if whole_word {
+        format!(r"\b{}\b", regex::escape(query))
+    } else {
+        regex::escape(query)
+    };
+    let regex = RegexBuilder::new(&pattern)
+        .case_insensitive(!case_sensitive)
+        .unicode(true)
+        .build()
+        .map_err(|err| err.to_string())?;
+
+    let mut out = Vec::new();
+    let started_at = Instant::now();
+    let mut visited_entries = 0usize;
+
+    for entry in WalkDir::new(root)
+        .into_iter()
+        .filter_entry(|entry| should_visit_code_nav_path(entry, ignored_dirs))
+    {
+        visited_entries = visited_entries.saturating_add(1);
+        ensure_code_nav_text_search_budget(started_at, visited_entries)?;
+
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(_) => continue,
+        };
+        if !entry.file_type().is_file() || !file_matches(entry.path()) {
+            continue;
+        }
+        let content = match read_code_nav_file_to_string(entry.path()) {
+            Ok(content) => content,
+            Err(_) => continue,
+        };
+        let relative_path = pathdiff::diff_paths(entry.path(), root)
+            .unwrap_or_else(|| entry.path().to_path_buf())
+            .to_string_lossy()
+            .replace('\\', "/");
+        let normalized_path = normalize_path(entry.path()).to_string_lossy().to_string();
+        for (index, line) in lines_for_file(entry.path(), &content)
+            .into_iter()
+            .enumerate()
+        {
+            if index % 128 == 0 {
+                ensure_code_nav_text_search_budget(started_at, visited_entries)?;
+            }
+
+            for found in regex.find_iter(&line.searchable_text) {
+                if out.len() >= max_results {
+                    return Ok(out);
+                }
+                let column = line.searchable_text[..found.start()].chars().count() + 1;
+                out.push(build_match(TextSearchMatchParts {
+                    path: normalized_path.clone(),
+                    relative_path: relative_path.clone(),
+                    line: index + 1,
+                    column,
+                    text: truncate_preview(&line.preview_text, MAX_PREVIEW_CHARS),
+                }));
+            }
+        }
+    }
+
+    Ok(out)
 }
 
 pub(crate) fn ensure_code_nav_text_search_budget(
@@ -499,6 +608,16 @@ fn sort_reference_locations(
     if locations.len() > max_results {
         locations.truncate(max_results);
     }
+}
+
+fn should_visit_code_nav_path(entry: &DirEntry, ignored_dirs: &[&str]) -> bool {
+    if entry.depth() == 0 {
+        return true;
+    }
+    let Some(name) = entry.file_name().to_str() else {
+        return true;
+    };
+    !ignored_dirs.contains(&name)
 }
 
 fn nav_location_from_search_match<M: NavSearchMatchLike>(

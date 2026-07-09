@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use super::BasicSymbol;
 use crate::services::code_nav::languages::shared_nav;
@@ -19,10 +19,6 @@ pub fn make_symbol(name: String, kind: &str, line: usize, column: usize) -> Basi
 
 pub fn find_column(line: &str, token: &str) -> Option<usize> {
     shared_nav::find_column(line, token)
-}
-
-pub fn normalize_path(path: &Path) -> PathBuf {
-    shared_nav::normalize_path(path)
 }
 
 pub fn last_identifier(value: &str) -> Option<String> {
