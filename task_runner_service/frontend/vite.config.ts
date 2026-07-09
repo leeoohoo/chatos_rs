@@ -3,27 +3,14 @@
 
 import { defineConfig, loadEnv } from 'vite';
 import react from '@vitejs/plugin-react';
-
-function parsePort(rawValue: string | undefined, fallback: number): number {
-  const parsed = Number.parseInt((rawValue || '').trim(), 10);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
-}
-
-function normalizeBasePath(rawValue: string | undefined): string {
-  const value = (rawValue || '').trim();
-  if (!value || value === '/') {
-    return '/';
-  }
-  const withLeadingSlash = value.startsWith('/') ? value : `/${value}`;
-  return withLeadingSlash.endsWith('/') ? withLeadingSlash : `${withLeadingSlash}/`;
-}
+import { basePrefixFromBase, createBasePathProxy, normalizeBasePath, parsePort } from '../../scripts/frontend/viteShared';
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '');
   const frontendPort = parsePort(env.TASK_RUNNER_FRONTEND_PORT, 39091);
   const backendPort = parsePort(env.TASK_RUNNER_BACKEND_PORT || env.TASK_RUNNER_PORT, 39090);
   const base = normalizeBasePath(env.VITE_BASE_PATH || env.TASK_RUNNER_FRONTEND_BASE_PATH);
-  const basePrefix = base === '/' ? '' : base.replace(/\/+$/, '');
+  const basePrefix = basePrefixFromBase(base);
   const apiProxyTarget =
     env.TASK_RUNNER_API_PROXY_TARGET?.trim() || `http://127.0.0.1:${backendPort}`;
 
@@ -70,15 +57,7 @@ export default defineConfig(({ mode }) => {
           target: apiProxyTarget,
           changeOrigin: true,
         },
-        ...(basePrefix
-          ? {
-              [`${basePrefix}/api`]: {
-                target: apiProxyTarget,
-                changeOrigin: true,
-                rewrite: (path) => path.slice(basePrefix.length),
-              },
-            }
-          : {}),
+        ...createBasePathProxy(basePrefix, '/api', apiProxyTarget),
       },
     },
   };
