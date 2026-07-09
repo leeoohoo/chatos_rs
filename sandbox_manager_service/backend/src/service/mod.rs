@@ -2,6 +2,7 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 mod cleanup;
+mod image_specs;
 mod images;
 mod manager;
 mod output_manifest;
