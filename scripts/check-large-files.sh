@@ -8,10 +8,6 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 THRESHOLD_MB=5
 FAIL_ON_HIT=0
-ALLOWED_LARGE_FILES=(
-  "bundled-tools/linux-x64/rg"
-)
-
 while [[ "$#" -gt 0 ]]; do
   case "$1" in
     --threshold)
@@ -67,13 +63,14 @@ human_bytes() {
 
 is_allowed_large_file() {
   local rel="$1"
-  local allowed
-  for allowed in "${ALLOWED_LARGE_FILES[@]}"; do
-    if [[ "$rel" == "$allowed" ]]; then
+  case "$rel" in
+    bundled-tools/*/rg|bundled-tools/*/rg.exe)
       return 0
-    fi
-  done
-  return 1
+      ;;
+    *)
+      return 1
+      ;;
+  esac
 }
 
 tmp_file="$(mktemp)"

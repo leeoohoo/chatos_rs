@@ -1,0 +1,6 @@
+*.sh text eol=lf
+*.py text eol=lf
+*.rs text eol=lf
+*.ts text eol=lf
+*.tsx text eol=lf
+*.md text eol=lf
