@@ -347,6 +347,7 @@ impl SqliteStore {
 mod tests {
     mod projects;
     mod requirements;
+    mod requirements_repair;
     mod schema;
     mod support;
     mod work_items;
