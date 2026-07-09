@@ -508,3 +508,93 @@ fn sha256_hex(bytes: &[u8]) -> String {
 fn now_rfc3339() -> String {
     Utc::now().to_rfc3339()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::models::{NetworkPolicy, ResourceLimits, SandboxStatus};
+    use uuid::Uuid;
+
+    fn lease_record() -> SandboxLeaseRecord {
+        SandboxLeaseRecord {
+            id: "lease-1".to_string(),
+            sandbox_id: "sandbox-1".to_string(),
+            tenant_id: "tenant-1".to_string(),
+            user_id: "user-1".to_string(),
+            project_id: "project-1".to_string(),
+            run_id: "run-1".to_string(),
+            workspace_root: "/tmp/workspace".to_string(),
+            run_workspace: "/tmp/workspace/.chatos/task-runner/runs/run-1".to_string(),
+            backend: "mock".to_string(),
+            backend_id: Some("backend-1".to_string()),
+            image_id: None,
+            image_ref: None,
+            status: SandboxStatus::Ready,
+            agent_endpoint: Some("http://127.0.0.1:49888".to_string()),
+            resource_limits: ResourceLimits::default(),
+            network: NetworkPolicy::default(),
+            tools: vec!["filesystem".to_string(), "terminal".to_string()],
+            agent_token_nonce: Some("nonce-1".to_string()),
+            idempotency_key: None,
+            created_at: "2026-01-01T00:00:00Z".to_string(),
+            updated_at: "2026-01-01T00:00:00Z".to_string(),
+            expires_at: "2026-01-01T01:00:00Z".to_string(),
+            destroyed_at: None,
+            last_error: None,
+        }
+    }
+
+    fn temp_test_dir(name: &str) -> PathBuf {
+        let path = std::env::temp_dir().join(format!(
+            "chatos-sandbox-output-test-{name}-{}",
+            Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&path).expect("create temp dir");
+        path
+    }
+
+    #[test]
+    fn output_manifest_tracks_added_modified_and_deleted_files() {
+        let root = temp_test_dir("manifest");
+        let baseline = root.join("baseline").join("workspace");
+        let output = root.join("output").join("workspace");
+        std::fs::create_dir_all(&baseline).expect("baseline");
+        std::fs::create_dir_all(&output).expect("output");
+        std::fs::create_dir_all(baseline.join("src")).expect("baseline src");
+        std::fs::create_dir_all(output.join("src")).expect("output src");
+        std::fs::write(baseline.join("src/modified.rs"), "fn old() {}\n").expect("write old");
+        std::fs::write(output.join("src/modified.rs"), "fn new() {}\n").expect("write new");
+        std::fs::write(baseline.join("src/deleted.rs"), "deleted\n").expect("write deleted");
+        std::fs::write(output.join("src/added.rs"), "added\n").expect("write added");
+
+        let manifest =
+            build_output_change_manifest(&lease_record(), baseline.as_path(), output.as_path())
+                .expect("manifest");
+
+        assert_eq!(manifest.counts.added, 1);
+        assert_eq!(manifest.counts.modified, 1);
+        assert_eq!(manifest.counts.deleted, 1);
+        assert_eq!(manifest.counts.total, 3);
+        assert!(manifest
+            .files
+            .iter()
+            .any(|file| file.path == "src/added.rs" && file.status == "added"));
+        assert!(manifest
+            .files
+            .iter()
+            .any(|file| file.path == "src/modified.rs" && file.diff_available));
+        let modified = manifest
+            .files
+            .iter()
+            .find(|file| file.path == "src/modified.rs")
+            .expect("modified file");
+        let diff_ref = modified.diff_ref.as_deref().expect("diff ref");
+        let diff_path = output.parent().unwrap().join(diff_ref);
+        let diff = std::fs::read_to_string(diff_path).expect("read diff");
+        assert!(diff.contains("diff --git a/src/modified.rs b/src/modified.rs"));
+        assert!(diff.contains("-fn old() {}"));
+        assert!(diff.contains("+fn new() {}"));
+
+        std::fs::remove_dir_all(root).expect("cleanup");
+    }
+}
