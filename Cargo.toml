@@ -21,8 +21,7 @@ members = [
   "sandbox_manager_service/sandbox_mcp_server"
 ]
 exclude = [
-  "memory_engine/backend",
-  "memory_engine/sdk"
+  "memory_engine/backend"
 ]
 
 resolver = "2"

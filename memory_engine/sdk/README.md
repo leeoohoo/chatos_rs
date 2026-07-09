@@ -1,9 +1,11 @@
 # memory_engine_sdk
 
-`memory_engine_sdk` 是 Memory 平台的 Rust 客户端。
+`memory_engine_sdk` 的实际 Rust crate 已迁移到仓库根目录下的 `crates/memory_engine_sdk`。
 
-它面向“平台接管线程、消息、总结、上下文能力”的接入模型，供 `chatos` 或其他子系统直接调用。
+这个目录只保留迁移说明，不再包含独立的 Cargo package，也不再维护单独的 `Cargo.lock` 或 `src` 源码树。仓库内服务应统一依赖：
 
-对接方通常只需要把线程和消息直接写入平台，再调用平台提供的总结、记忆和上下文接口；不需要在自己的系统里重复维护另一套历史消息存储。
+```toml
+memory_engine_sdk = { path = "../../crates/memory_engine_sdk" }
+```
 
-当前这个目录已经独立于 `memory_engine/` 代码树，目的是让接入方在平台拆分成独立项目后仍然可以稳定依赖 SDK。
+如果调用方所在目录层级不同，请按实际相对路径指向同一个 `crates/memory_engine_sdk` shared crate。
