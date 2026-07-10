@@ -6,5 +6,7 @@ mod read;
 mod write;
 
 pub(super) use patch::tool_apply_patch;
-pub(super) use read::{tool_list_dir, tool_read_file_range, tool_read_file_raw, tool_search_text};
+pub(super) use read::{
+    tool_list_branches, tool_list_dir, tool_read_file_range, tool_read_file_raw, tool_search_text,
+};
 pub(super) use write::{tool_append_file, tool_delete_path, tool_edit_file, tool_write_file};

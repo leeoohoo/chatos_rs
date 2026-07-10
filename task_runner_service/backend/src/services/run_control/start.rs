@@ -116,18 +116,30 @@ impl RunService {
                 return Err(format!("model config not found: {model_config_id}"));
             }
         }
-        let runtime_task =
-            task_with_runtime_mcp_routing(&self.config, &self.store, task.clone()).await?;
+        let capability_policy = self.resolve_task_runner_policy_for_task(&task).await?;
+        let mut runtime_task = task.clone();
+        if let Some(policy) = capability_policy.as_ref() {
+            policy.apply_to_task(&mut runtime_task)?;
+            runtime_task = task_with_runtime_mcp_routing_authoritative(
+                &self.config,
+                &self.store,
+                runtime_task,
+            )
+            .await?;
+        } else {
+            runtime_task =
+                task_with_runtime_mcp_routing(&self.config, &self.store, runtime_task).await?;
+        }
         let effective_workspace_dir =
             ensure_effective_task_workspace_dir(&self.config, &runtime_task, &model_config)?;
         let execution_environment_mode = self
             .effective_execution_environment_mode()
             .await
             .unwrap_or_else(|_| self.config.default_execution_environment_mode.clone());
-        let sandbox_enabled = match runtime_task.mcp_config.sandbox_enabled {
-            Some(value) => value,
-            None => self.effective_sandbox_enabled().await.unwrap_or(false),
-        };
+        let sandbox_enabled = self
+            .should_route_task_to_sandbox(&runtime_task)
+            .await
+            .unwrap_or(false);
 
         let run_id = Uuid::new_v4().to_string();
         let input_snapshot = json!({

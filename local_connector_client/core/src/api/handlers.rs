@@ -5,6 +5,7 @@ mod approval;
 mod auth;
 mod helpers;
 mod history;
+mod mcp_configs;
 mod model_configs;
 mod runtime_settings;
 mod sandbox;
@@ -18,6 +19,11 @@ pub(super) use approval::{
 };
 pub(super) use auth::{local_login, local_logout, local_register};
 pub(super) use history::{local_clear_command_history, local_command_history};
+pub(super) use mcp_configs::{
+    local_delete_mcp_config, local_disable_mcp_config, local_enable_mcp_config,
+    local_get_mcp_config, local_mcp_configs, local_save_mcp_config, local_sync_mcp_config,
+    local_test_mcp_config, local_update_mcp_config,
+};
 pub(super) use model_configs::{
     local_delete_model_config, local_model_configs, local_model_settings,
     local_preview_model_catalog, local_save_model_config, local_sync_model_config,

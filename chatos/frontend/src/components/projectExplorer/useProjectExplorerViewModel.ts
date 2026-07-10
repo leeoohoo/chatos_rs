@@ -36,6 +36,7 @@ export const useProjectExplorerViewModel = ({
     : state.workspaceTab;
   const filesTabActive = workspaceTab === 'files';
   const settingsTabActive = workspaceTab === 'settings';
+  const isCloudProject = project?.sourceType?.trim().toLowerCase() === 'cloud';
   const { terminalUiEnabled } = useTerminalUiSetting();
 
   const pathHelpers = useProjectExplorerPathHelpers(project?.rootPath);
@@ -81,13 +82,14 @@ export const useProjectExplorerViewModel = ({
   const runState = useProjectExplorerRunState({
     client,
     project,
-    enabled: settingsTabActive,
+    enabled: settingsTabActive && !isCloudProject,
+    sandboxSettingEnabled: Boolean(project?.id) && !isCloudProject,
     terminalUiEnabled,
   });
 
   const codeNav = useProjectExplorerCodeNav({
     client,
-    projectRootPath: project?.rootPath,
+    projectRootPath: isCloudProject ? null : project?.rootPath,
     selectedFilePath: state.selectedFile?.path || null,
     targetLine: search.previewTargetLine,
     openLocation: selection.openCodeNavLocation,

@@ -3,9 +3,6 @@
 
 use std::sync::Arc;
 
-use serde_json::json;
-use uuid::Uuid;
-
 use crate::models::*;
 use crate::state::AppState;
 use crate::user_model_runtime_client::resolve_default_project_agent_model_runtime;
@@ -13,14 +10,23 @@ use chatos_ai_runtime::{
     AiRuntime, ContextualTurnRunner, MemoryContextOverflowRecovery, ModelRuntimeConfig,
     RuntimeRecordOptions, RuntimeTurnSpec, SaveRecordInput,
 };
+use chatos_mcp_runtime::BuiltinMcpKind;
+use chatos_plugin_management_sdk::{
+    ResolveAgentCapabilitiesRequest, ResolvedAgentCapabilities, SystemAgentKey,
+    PROJECT_ENVIRONMENT_MCP_RESOURCE_ID, SANDBOX_IMAGES_MCP_RESOURCE_ID,
+};
+use serde_json::json;
 
 use super::runtime_environment::ensure_runtime_environment_for_project;
 
 mod inspection;
 mod mcp_servers;
 mod memory;
+mod progress;
 mod routing;
 mod tool_provider;
+
+pub use self::progress::get_project_runtime_environment_progress;
 
 use self::inspection::{inspect_local_project, LocalProjectInspection};
 use self::mcp_servers::{
@@ -42,10 +48,11 @@ pub async fn analyze_project_runtime_environment(
     state: &AppState,
     project: &ProjectRecord,
     user_access_token: Option<&str>,
+    run_id: &str,
 ) -> Result<ProjectRuntimeEnvironmentResponse, String> {
     let mut environment =
         ensure_runtime_environment_for_project(&state.store, project, None).await?;
-    let run_id = format!("project_env_agent_{}", Uuid::new_v4());
+    let run_id = run_id.to_string();
 
     if !environment.sandbox_enabled {
         environment.status = ProjectRuntimeEnvironmentStatus::Disabled;
@@ -67,6 +74,41 @@ pub async fn analyze_project_runtime_environment(
             .await?;
         return response_for_project(state, environment).await;
     }
+
+    let owner_user_id = project
+        .owner_user_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    let Some(owner_user_id) = owner_user_id else {
+        environment.status = ProjectRuntimeEnvironmentStatus::Failed;
+        environment.analysis_summary =
+            Some("无法运行项目管理 Agent：项目缺少 owner_user_id。".to_string());
+        environment.last_error = Some("project owner_user_id is required".to_string());
+        environment.updated_at = now_rfc3339();
+        let environment = state
+            .store
+            .upsert_project_runtime_environment(&environment)
+            .await?;
+        return response_for_project(state, environment).await;
+    };
+
+    let capability_policy =
+        match resolve_project_agent_capabilities(state, owner_user_id, user_access_token).await {
+            Ok(policy) => policy,
+            Err(err) => {
+                environment.status = ProjectRuntimeEnvironmentStatus::Failed;
+                environment.analysis_summary =
+                    Some("项目管理 Agent 所需 MCP 能力不可用。".to_string());
+                environment.last_error = Some(err);
+                environment.updated_at = now_rfc3339();
+                let environment = state
+                    .store
+                    .upsert_project_runtime_environment(&environment)
+                    .await?;
+                return response_for_project(state, environment).await;
+            }
+        };
 
     let routing = match resolve_runtime_environment_routing(
         project,
@@ -109,24 +151,6 @@ pub async fn analyze_project_runtime_environment(
         .store
         .upsert_project_runtime_environment(&environment)
         .await?;
-
-    let owner_user_id = project
-        .owner_user_id
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty());
-    let Some(owner_user_id) = owner_user_id else {
-        environment.status = ProjectRuntimeEnvironmentStatus::Failed;
-        environment.analysis_summary =
-            Some("无法运行项目管理 Agent：项目缺少 owner_user_id。".to_string());
-        environment.last_error = Some("project owner_user_id is required".to_string());
-        environment.updated_at = now_rfc3339();
-        let environment = state
-            .store
-            .upsert_project_runtime_environment(&environment)
-            .await?;
-        return response_for_project(state, environment).await;
-    };
 
     let model_runtime = match resolve_default_project_agent_model_runtime(
         &state.config,
@@ -195,6 +219,7 @@ pub async fn analyze_project_runtime_environment(
         &memory,
         user_access_token,
         run_id.as_str(),
+        &capability_policy,
     )
     .await;
 
@@ -271,6 +296,7 @@ async fn run_project_environment_agent(
     memory: &ProjectAgentMemory,
     user_access_token: Option<&str>,
     run_id: &str,
+    capability_policy: &ResolvedAgentCapabilities,
 ) -> Result<(), String> {
     let executor = build_project_environment_mcp_executor(
         state,
@@ -279,6 +305,7 @@ async fn run_project_environment_agent(
         &routing,
         user_access_token,
         run_id,
+        capability_policy,
     )
     .await?;
     ensure_agent_required_tools_available(&executor, project, &routing)?;
@@ -348,6 +375,51 @@ async fn run_project_environment_agent(
     Ok(())
 }
 
+async fn resolve_project_agent_capabilities(
+    state: &AppState,
+    owner_user_id: &str,
+    user_access_token: Option<&str>,
+) -> Result<ResolvedAgentCapabilities, String> {
+    let request =
+        ResolveAgentCapabilitiesRequest::new(SystemAgentKey::ProjectManagementAgent, owner_user_id);
+    let capabilities = if let Some(access_token) = user_access_token
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        state
+            .plugin_management_client
+            .resolve_for_user(&request, access_token)
+            .await
+            .map_err(|err| err.to_string())?
+    } else {
+        state
+            .plugin_management_client
+            .resolve_for_service(&request)
+            .await
+            .map_err(|err| err.to_string())?
+    };
+    capabilities
+        .ensure_required_available()
+        .map_err(|err| err.to_string())?;
+    capabilities
+        .ensure_required_skills_supported(std::iter::empty::<&str>())
+        .map_err(|err| err.to_string())?;
+    let code_read_resource_id = BuiltinMcpKind::CodeMaintainerRead
+        .config_id()
+        .map(ToOwned::to_owned)
+        .unwrap_or_else(|| "system_builtin_code_maintainer_read".to_string());
+    for resource_id in [
+        code_read_resource_id.as_str(),
+        PROJECT_ENVIRONMENT_MCP_RESOURCE_ID,
+        SANDBOX_IMAGES_MCP_RESOURCE_ID,
+    ] {
+        capabilities
+            .require_available_mcp(resource_id)
+            .map_err(|err| err.to_string())?;
+    }
+    Ok(capabilities)
+}
+
 fn project_environment_agent_system_prompt(existing: Option<&str>) -> String {
     let fixed = "你是 Project Management Service 内置的运行环境初始化 Agent。你的业务范围固定：读取当前项目文件，判断项目是否可运行，识别运行时和依赖服务，使用沙箱镜像 MCP 搜索或同步创建所需镜像，然后通过项目环境工具写入当前项目的运行环境结果。不要处理需求拆解、任务执行、代码修改或其它项目管理任务。";
     existing
@@ -397,7 +469,7 @@ fn build_project_environment_agent_prompt(
 工具约束：
 - 项目详情工具只操作当前项目：先调用 `project_environment_get_current_project_runtime_environment`，最后必须调用 `project_environment_update_current_project_runtime_environment` 写入结果。
 - 文件读取工具：{file_tool_hint}
-- 沙箱镜像工具：使用 `sandbox_images_search_images` 搜索已有镜像；没有可用镜像时调用 `sandbox_images_create_image`。创建镜像必须同步等待，调用时传 `timeout_ms: 7200000`，不要做异步轮询或反复查进度。
+- 沙箱镜像工具：使用 `sandbox_images_search_images` 搜索已有镜像；没有可用镜像时调用 `sandbox_images_create_image`。标准 features 无法覆盖项目依赖时，可以在 `custom_build_script` 中提供非交互 Bash 脚本，由镜像构建器在安装标准运行时后以 root 执行。脚本应可重复执行、使用 `set -e`、不得写入密钥，退出非 0 会使镜像创建失败。创建镜像必须同步等待，调用时传 `timeout_ms: 7200000`，不要做异步轮询或反复查进度；成功结果会在顶层返回 `image_id` 和 `image_ref`，必须直接写入镜像记录。
 - 不要臆造文件中没有依据的依赖服务。可以先读 package.json、Cargo.toml、go.mod、pyproject.toml、pom.xml、build.gradle、docker-compose、README、.env.example 等关键文件。
 
 判断规则：

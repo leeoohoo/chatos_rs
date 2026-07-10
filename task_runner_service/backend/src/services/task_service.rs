@@ -10,7 +10,23 @@ mod validation;
 
 impl TaskService {
     pub(crate) fn new(config: AppConfig, store: AppStore) -> Self {
-        Self { config, store }
+        Self {
+            config,
+            store,
+            plugin_management_client: None,
+        }
+    }
+
+    pub(crate) fn new_with_plugin_management(
+        config: AppConfig,
+        store: AppStore,
+        plugin_management_client: PluginManagementClient,
+    ) -> Self {
+        Self {
+            config,
+            store,
+            plugin_management_client: Some(plugin_management_client),
+        }
     }
 
     pub fn resolve_task_mcp(&self, task: &TaskRecord) -> TaskMcpResolutionResponse {

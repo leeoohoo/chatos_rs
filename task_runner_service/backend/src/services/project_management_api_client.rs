@@ -44,11 +44,40 @@ struct ProjectServiceProjectRecord {
     #[serde(default)]
     harness_git_ssh_url: Option<String>,
     #[serde(default)]
+    harness_default_branch: Option<String>,
+    #[serde(default)]
+    harness_provision_status: Option<String>,
+    #[serde(default)]
+    harness_provision_error: Option<String>,
+    #[serde(default)]
+    harness_provisioned_at: Option<String>,
+    #[serde(default)]
     description: Option<String>,
     status: TaskProjectStatus,
     created_at: String,
     updated_at: String,
     archived_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ProjectHarnessGitAccess {
+    pub project_id: String,
+    pub repo_path: String,
+    pub git_url: String,
+    pub default_branch: String,
+    pub space_identifier: String,
+    pub access_username: String,
+    pub access_token: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct ProjectRuntimeEnvironmentResponse {
+    environment: ProjectRuntimeEnvironmentSettings,
+}
+
+#[derive(Debug, Deserialize)]
+struct ProjectRuntimeEnvironmentSettings {
+    sandbox_enabled: bool,
 }
 
 pub async fn get_project_from_project_service(
@@ -196,6 +225,45 @@ pub async fn sync_get_project(
     get_project_with_sync_secret(&client, base_url, sync_secret, project_id)
         .await
         .map(|project| project.map(Into::into))
+}
+
+pub async fn get_project_harness_git_access(
+    config: &AppConfig,
+    project_id: &str,
+) -> Result<ProjectHarnessGitAccess, String> {
+    let base_url = required_project_service_base_url(config)?;
+    let sync_secret = required_sync_secret(config)?;
+    let endpoint = format!(
+        "{}/api/chatos-sync/projects/{}/harness/git-access",
+        base_url.trim().trim_end_matches('/'),
+        urlencoding::encode(project_id.trim())
+    );
+    send_json(
+        project_service_client(config)?
+            .get(endpoint)
+            .header("X-Project-Service-Sync-Secret", sync_secret.trim()),
+    )
+    .await
+}
+
+pub async fn get_project_sandbox_enabled(
+    config: &AppConfig,
+    project_id: &str,
+) -> Result<bool, String> {
+    let base_url = required_project_service_base_url(config)?;
+    let sync_secret = required_sync_secret(config)?;
+    let endpoint = format!(
+        "{}/api/chatos-sync/projects/{}/runtime-environment",
+        base_url.trim().trim_end_matches('/'),
+        urlencoding::encode(project_id.trim())
+    );
+    let response = send_json::<ProjectRuntimeEnvironmentResponse>(
+        project_service_client(config)?
+            .get(endpoint)
+            .header("X-Project-Service-Sync-Secret", sync_secret.trim()),
+    )
+    .await?;
+    Ok(response.environment.sandbox_enabled)
 }
 
 pub async fn import_project(
@@ -381,6 +449,10 @@ impl From<ProjectServiceProjectRecord> for TaskProjectRecord {
             harness_repo_path: value.harness_repo_path,
             harness_git_url: value.harness_git_url,
             harness_git_ssh_url: value.harness_git_ssh_url,
+            harness_default_branch: value.harness_default_branch,
+            harness_provision_status: value.harness_provision_status,
+            harness_provision_error: value.harness_provision_error,
+            harness_provisioned_at: value.harness_provisioned_at,
             description: value.description,
             status: value.status,
             created_at: value.created_at,

@@ -14,6 +14,7 @@ export const BranchSection: React.FC<{
   actionLoading: boolean;
   loadingCompare: boolean;
   operationState?: string | null;
+  readOnly?: boolean;
   onCheckout: (branch: GitBranchInfo) => Promise<void>;
   onMerge: (branch: GitBranchInfo) => Promise<void>;
   onCompare: (branch: GitBranchInfo) => Promise<void>;
@@ -24,6 +25,7 @@ export const BranchSection: React.FC<{
   actionLoading,
   loadingCompare,
   operationState,
+  readOnly = false,
   onCheckout,
   onMerge,
   onCompare,
@@ -61,33 +63,35 @@ export const BranchSection: React.FC<{
                 ↑{branch.ahead} ↓{branch.behind}
               </span>
             )}
-            <span className="flex shrink-0 items-center gap-1">
-              <button
-                type="button"
-                disabled={loadingCompare || branch.current}
-                onClick={() => { void onCompare(branch); }}
-                className="h-7 rounded border border-border px-2 text-[11px] hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                Compare
-              </button>
-              <button
-                type="button"
-                disabled={actionLoading || branch.current || Boolean(operationState)}
-                title={operationState ? t('git.branch.mergeDisabledTitle', { state: operationState }) : undefined}
-                onClick={() => { void onMerge(branch); }}
-                className="h-7 rounded border border-border px-2 text-[11px] hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                Merge
-              </button>
-              <button
-                type="button"
-                disabled={actionLoading || branch.current}
-                onClick={() => { void onCheckout(branch); }}
-                className="h-7 rounded border border-border px-2 text-[11px] hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                Checkout
-              </button>
-            </span>
+            {!readOnly && (
+              <span className="flex shrink-0 items-center gap-1">
+                <button
+                  type="button"
+                  disabled={loadingCompare || branch.current}
+                  onClick={() => { void onCompare(branch); }}
+                  className="h-7 rounded border border-border px-2 text-[11px] hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  Compare
+                </button>
+                <button
+                  type="button"
+                  disabled={actionLoading || branch.current || Boolean(operationState)}
+                  title={operationState ? t('git.branch.mergeDisabledTitle', { state: operationState }) : undefined}
+                  onClick={() => { void onMerge(branch); }}
+                  className="h-7 rounded border border-border px-2 text-[11px] hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  Merge
+                </button>
+                <button
+                  type="button"
+                  disabled={actionLoading || branch.current}
+                  onClick={() => { void onCheckout(branch); }}
+                  className="h-7 rounded border border-border px-2 text-[11px] hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  Checkout
+                </button>
+              </span>
+            )}
           </div>
         ))}
       </div>

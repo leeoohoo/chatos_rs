@@ -1,0 +1,16 @@
+# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+# Required Notice: Copyright (c) 2025 AI Chat Team
+
+[package]
+name = "chatos_plugin_management_sdk"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+chatos_service_runtime = { path = "../chatos_service_runtime" }
+reqwest = { version = "0.12", features = ["json", "rustls-tls"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "1"
+tokio = { version = "1", features = ["sync", "time"] }
+urlencoding = "2"

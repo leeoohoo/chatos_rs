@@ -12,10 +12,12 @@ members = [
   "crates/chatos_mcp_service",
   "crates/chatos_sandbox_image_mcp",
   "crates/chatos_service_runtime",
+  "crates/chatos_plugin_management_sdk",
   "task_runner_service/backend",
   "project_management_service/backend",
   "local_connector_service/backend",
   "local_connector_client/core",
+  "plugin_management_service/backend",
   "official_website_service/backend",
   "sandbox_manager_service/backend",
   "sandbox_manager_service/sandbox_mcp_server"

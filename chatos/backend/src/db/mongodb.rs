@@ -15,10 +15,7 @@ pub(super) async fn init_mongodb(cfg: &MongoConfig) -> Result<Database, String> 
     } else {
         let host = cfg.host.clone().unwrap_or_else(|| "localhost".to_string());
         let port = cfg.port.unwrap_or(27017);
-        let database = cfg
-            .database
-            .clone()
-            .unwrap_or_else(|| "chat_app".to_string());
+        let database = cfg.database.clone().unwrap_or_else(|| "chatos".to_string());
         let cred = match (&cfg.username, &cfg.password) {
             (Some(u), Some(p)) => format!("{}:{}@", urlencoding::encode(u), urlencoding::encode(p)),
             _ => "".to_string(),
@@ -46,10 +43,7 @@ pub(super) async fn init_mongodb(cfg: &MongoConfig) -> Result<Database, String> 
 
     let client =
         Client::with_options(options).map_err(|e| format!("mongodb client failed: {e}"))?;
-    let db_name = cfg
-        .database
-        .clone()
-        .unwrap_or_else(|| "chat_app".to_string());
+    let db_name = cfg.database.clone().unwrap_or_else(|| "chatos".to_string());
     let db = client.database(&db_name);
 
     let collections = vec![

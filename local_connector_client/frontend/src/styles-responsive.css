@@ -1,19 +1,126 @@
 /* SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0 */
 /* Required Notice: Copyright (c) 2025 AI Chat Team */
 
-@media (max-width: 920px) {
-  .layout,
+@media (max-width: 1120px) {
+  .brand {
+    width: 204px;
+  }
+
+  .workbench {
+    grid-template-columns: 204px minmax(0, 1fr);
+  }
+
   .tabGrid,
-  .sandboxContentGrid,
+  .modelLayout,
+  .sandboxContentGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .taskModelGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .authStage {
+    gap: 48px;
+    grid-template-columns: minmax(280px, 0.78fr) minmax(390px, 0.9fr);
+  }
+}
+
+@media (max-width: 840px) {
+  .topbar {
+    padding-left: 0;
+  }
+
+  .brand {
+    border-right: 0;
+    width: auto;
+  }
+
+  .workbench {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .tabs {
+    border-bottom: 1px solid var(--border);
+    border-right: 0;
+    min-height: 0;
+    overflow: hidden;
+    padding: 6px 8px;
+    position: sticky;
+    top: 56px;
+    z-index: 9;
+  }
+
+  .navLabel,
+  .localBoundaryBadge {
+    display: none;
+  }
+
+  .tabList {
+    display: grid;
+    gap: 3px;
+    grid-template-columns: repeat(7, 78px);
+    max-width: 100%;
+    min-width: 0;
+    overflow-x: auto;
+    width: 100%;
+  }
+
+  .tabs button {
+    flex-direction: column;
+    font-size: 9px;
+    gap: 0;
+    justify-content: center;
+    min-height: 48px;
+    padding: 3px 5px;
+    white-space: nowrap;
+  }
+
+  .tabIcon {
+    height: 24px;
+    width: 24px;
+  }
+
+  .contentArea {
+    max-width: 100%;
+    width: 100%;
+  }
+
+  .pageIntro {
+    min-height: 72px;
+    padding: 13px 16px;
+  }
+
+  .contentView {
+    padding: 14px 16px 24px;
+  }
+
+  .authStage {
+    gap: 28px;
+    grid-template-columns: 1fr;
+    max-width: 560px;
+    padding: 42px 22px;
+  }
+
+  .authIntro {
+    text-align: center;
+  }
+
+  .authIntro > p,
+  .authFeatures {
+    margin-left: auto;
+    margin-right: auto;
+  }
+
+  .layout,
   .sandboxBoundary,
   .sandboxStatusGrid,
-  .modelLayout,
   .runtimeGrid,
   .approvalModeGrid,
   .approvalConfigGrid,
   .approvalFormGrid,
   .settingsFormGrid,
-  .taskModelGrid,
   .twoCols,
   .metaGrid,
   .terminalForm {
@@ -24,21 +131,18 @@
     grid-template-columns: 1fr;
   }
 
-  .modelSelectRow {
-    flex-direction: column;
-  }
-
+  .modelSelectRow,
   .taskModelRowHeader {
     flex-direction: column;
-  }
-
-  .tabs {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .leaseHeader,
   .leaseRow {
     grid-template-columns: 1fr;
+  }
+
+  .leaseHeader {
+    display: none;
   }
 
   .terminalHistoryActions {
@@ -48,10 +152,79 @@
 
   .terminalHistoryActions select {
     flex: 1;
-    min-width: 220px;
+    min-width: 210px;
+  }
+}
+
+@media (max-width: 560px) {
+  .brand {
+    padding-left: 12px;
   }
 
-  .screen {
-    padding: 18px;
+  .brandCopy > span,
+  .coreStatus {
+    display: none;
+  }
+
+  .brandCopy h1 {
+    font-size: 13px;
+  }
+
+  .pageIntro {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .pageIntro p {
+    display: none;
+  }
+
+  .pageIntro h2 {
+    font-size: 16px;
+  }
+
+  .panel,
+  .authPanel {
+    padding: 14px;
+  }
+
+  .panelHeader {
+    flex-direction: column;
+  }
+
+  .panelHeader .headerActions,
+  .panelHeader > .primaryButton,
+  .panelHeader > .iconButton {
+    align-self: stretch;
+  }
+
+  .panelHeader > .primaryButton {
+    width: 100%;
+  }
+
+  .taskModelGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .authIntro h2 {
+    font-size: 32px;
+  }
+
+  .authIntro br {
+    display: none;
+  }
+
+  .workspaceRow,
+  .approvalSimpleRow,
+  .imageRow {
+    align-items: flex-start;
+  }
+
+  .workspaceRow span {
+    white-space: normal;
+  }
+
+  .pickerToolbar,
+  .modalActions {
+    flex-wrap: wrap;
   }
 }

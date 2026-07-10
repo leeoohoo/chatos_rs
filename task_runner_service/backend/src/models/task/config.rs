@@ -110,11 +110,7 @@ fn task_mcp_locale_default() -> String {
 }
 
 fn task_mcp_builtin_kinds_default() -> Vec<String> {
-    configurable_builtin_kinds()
-        .into_iter()
-        .filter(|kind| !matches!(kind, chatos_mcp_runtime::BuiltinMcpKind::ProjectManagement))
-        .map(|kind| kind.kind_name().to_string())
-        .collect()
+    Vec::new()
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]

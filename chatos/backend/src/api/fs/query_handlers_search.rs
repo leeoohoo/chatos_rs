@@ -65,6 +65,16 @@ pub(in super::super) async fn search_entries(
         .limit
         .unwrap_or(DEFAULT_SEARCH_LIMIT)
         .clamp(1, MAX_SEARCH_LIMIT);
+    if let Some(response) = super::super::harness_project_bridge::search_entries(
+        &auth,
+        raw_path.as_str(),
+        raw_keyword.as_str(),
+        limit,
+    )
+    .await
+    {
+        return response;
+    }
     if let Some(response) = super::super::local_connector_bridge::search_entries(
         raw_path.as_str(),
         raw_keyword.as_str(),
@@ -258,6 +268,16 @@ pub(in super::super) async fn search_content(
         .limit
         .unwrap_or(DEFAULT_SEARCH_LIMIT)
         .clamp(1, MAX_SEARCH_LIMIT);
+    if let Some(response) = super::super::harness_project_bridge::search_content(
+        &auth,
+        raw_path.as_str(),
+        raw_keyword.as_str(),
+        limit,
+    )
+    .await
+    {
+        return response;
+    }
     if let Some(response) = super::super::local_connector_bridge::search_content(
         raw_path.as_str(),
         raw_keyword.as_str(),

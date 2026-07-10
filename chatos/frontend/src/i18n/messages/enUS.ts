@@ -267,6 +267,8 @@ export const enUS: MessageDictionary = {
   'session.loadMore': 'Load more',
   'session.projects': 'Projects',
   'session.addProject': 'Add project',
+  'session.localProject': 'Local project',
+  'session.cloudProject': 'Cloud project',
   'session.noProjects': 'No projects yet. Click + on the right to create one.',
   'session.archiveProject': 'Archive',
   'session.terminals': 'Terminals',

@@ -4,7 +4,7 @@
 import React from 'react';
 
 import { useI18n } from '../../i18n/I18nProvider';
-import { getUserVisiblePath } from '../../lib/domain/filesystem';
+import { getUserVisiblePath, isHarnessProjectPath } from '../../lib/domain/filesystem';
 import type { FsEntry } from '../../types';
 
 export interface MoveConflictState {
@@ -143,6 +143,7 @@ export const EntryContextMenu: React.FC<EntryContextMenuProps> = ({
 
   const { entry } = contextMenu;
   const visibleEntryPath = getUserVisiblePath(entry.path, projectRootPath);
+  const harnessProject = isHarnessProjectPath(projectRootPath || entry.path);
   const fileExtension = entry.isDir
     ? ''
     : entry.name.includes('.')
@@ -178,7 +179,7 @@ export const EntryContextMenu: React.FC<EntryContextMenuProps> = ({
           {t('projectExplorer.context.createFile')}
         </button>
       )}
-      {entry.isDir ? (
+      {!harnessProject && (entry.isDir ? (
         <button
           type="button"
           onClick={() => onIgnoreFolder(entry)}
@@ -206,7 +207,7 @@ export const EntryContextMenu: React.FC<EntryContextMenuProps> = ({
             </button>
           )}
         </>
-      )}
+      ))}
       <div className="my-1 h-px bg-border" />
       <button
         type="button"
@@ -222,36 +223,42 @@ export const EntryContextMenu: React.FC<EntryContextMenuProps> = ({
       >
         {t('projectExplorer.context.copyRelativePath')}
       </button>
+      {!harnessProject && (
+        <>
+          <div className="my-1 h-px bg-border" />
+          <button
+            type="button"
+            onClick={() => onRevealInFinder(entry)}
+            className="w-full text-left px-2 py-1.5 text-sm rounded hover:bg-accent"
+          >
+            {t('projectExplorer.context.revealInFinder')}
+          </button>
+          <button
+            type="button"
+            onClick={() => onOpenInCode(entry)}
+            className="w-full text-left px-2 py-1.5 text-sm rounded hover:bg-accent"
+          >
+            {t('projectExplorer.context.openInCode')}
+          </button>
+          <button
+            type="button"
+            onClick={() => onOpenPathInDefaultProgram(entry)}
+            className="w-full text-left px-2 py-1.5 text-sm rounded hover:bg-accent"
+          >
+            {t('projectExplorer.context.openDefault')}
+          </button>
+        </>
+      )}
       <div className="my-1 h-px bg-border" />
-      <button
-        type="button"
-        onClick={() => onRevealInFinder(entry)}
-        className="w-full text-left px-2 py-1.5 text-sm rounded hover:bg-accent"
-      >
-        {t('projectExplorer.context.revealInFinder')}
-      </button>
-      <button
-        type="button"
-        onClick={() => onOpenInCode(entry)}
-        className="w-full text-left px-2 py-1.5 text-sm rounded hover:bg-accent"
-      >
-        {t('projectExplorer.context.openInCode')}
-      </button>
-      <button
-        type="button"
-        onClick={() => onOpenPathInDefaultProgram(entry)}
-        className="w-full text-left px-2 py-1.5 text-sm rounded hover:bg-accent"
-      >
-        {t('projectExplorer.context.openDefault')}
-      </button>
-      <div className="my-1 h-px bg-border" />
-      <button
-        type="button"
-        onClick={() => onDownload(entry)}
-        className="w-full text-left px-2 py-1.5 text-sm rounded hover:bg-accent"
-      >
-        {t('projectExplorer.context.download')}
-      </button>
+      {(!harnessProject || !entry.isDir) && (
+        <button
+          type="button"
+          onClick={() => onDownload(entry)}
+          className="w-full text-left px-2 py-1.5 text-sm rounded hover:bg-accent"
+        >
+          {t('projectExplorer.context.download')}
+        </button>
+      )}
       <button
         type="button"
         onClick={() => onDelete(contextMenu.entry)}

@@ -3,28 +3,38 @@
 
 .terminalForm {
   display: grid;
-  grid-template-columns: 1.2fr 0.8fr 1.2fr auto;
   gap: 8px;
+  grid-template-columns: 1.15fr 0.75fr 1.15fr auto;
 }
 
 .terminalPage {
   display: flex;
   flex-direction: column;
-  gap: 18px;
+  gap: 14px;
 }
 
 .terminalHistoryActions select {
-  min-width: 170px;
+  min-width: 164px;
 }
 
 .commandHistoryList {
+  border: 1px solid var(--border);
+  border-radius: 8px;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  overflow: hidden;
 }
 
 .commandHistoryRow {
-  border: 1px solid #e4eae4;
-  border-radius: 8px;
-  overflow: hidden;
+  background: var(--panel-bg);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.commandHistoryRow:last-child {
+  border-bottom: 0;
+}
+
+.commandHistoryRow:hover,
+.commandHistoryRow[open] {
+  background: var(--panel-subtle);
 }

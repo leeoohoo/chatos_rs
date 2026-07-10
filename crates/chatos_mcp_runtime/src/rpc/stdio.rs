@@ -227,6 +227,10 @@ pub(super) fn remove_stdio_session(session_key: &str) {
     }
 }
 
+pub fn invalidate_stdio_session(cfg: &McpStdioServer) {
+    remove_stdio_session(stdio_session_cache_key(cfg).as_str());
+}
+
 fn stdio_session_start_lock(session_key: &str) -> Result<Arc<AsyncMutex<()>>, String> {
     let locks = MCP_STDIO_SESSION_START_LOCKS.get_or_init(|| Mutex::new(HashMap::new()));
     let mut guard = locks.lock().map_err(|err| err.to_string())?;

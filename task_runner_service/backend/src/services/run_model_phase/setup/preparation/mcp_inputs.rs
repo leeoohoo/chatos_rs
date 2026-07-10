@@ -2,6 +2,7 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use super::*;
+use crate::services::TaskRunnerCapabilityPolicy;
 
 use std::collections::BTreeSet;
 
@@ -30,6 +31,7 @@ pub(super) async fn load_external_mcp_servers(
     service: &RunService,
     task: &TaskRecord,
     effective_workspace_dir: &str,
+    capability_policy: Option<&TaskRunnerCapabilityPolicy>,
 ) -> Result<LoadedExternalMcpServers, String> {
     if !task.mcp_config.enabled
         || (task.mcp_config.external_mcp_config_ids.is_empty()
@@ -45,31 +47,49 @@ pub(super) async fn load_external_mcp_servers(
     let mut http_servers = Vec::new();
     let mut stdio_servers = Vec::new();
     let mut summaries = Vec::new();
-    for config_id in &task.mcp_config.external_mcp_config_ids {
-        let config = service
-            .store
-            .get_external_mcp_config(config_id)
-            .await?
-            .ok_or_else(|| format!("澶栭儴 MCP 閰嶇疆涓嶅瓨鍦? {config_id}"))?;
-        if !config.enabled {
-            return Err(format!("澶栭儴 MCP 閰嶇疆鏈惎鐢? {config_id}"));
+    if let Some(policy) = capability_policy {
+        for resource in policy.effective_external_mcps(task)? {
+            let loaded =
+                plugin_mcp_server_for_resource(service, task, resource, effective_workspace_dir)?;
+            if let Some(server) = loaded.http_server {
+                http_servers.push(server);
+            }
+            if let Some(server) = loaded.stdio_server {
+                stdio_servers.push(server);
+            }
+            summaries.push(ExternalMcpRuntimeSummary {
+                id: resource.id.clone(),
+                name: loaded.name,
+                transport: loaded.transport,
+            });
         }
-        if let Some(server) = config.to_http_server() {
-            http_servers.push(server);
-        } else if let Some(server) = task_stdio_server_for_config(
-            &config,
-            task.subject_id.as_str(),
-            effective_workspace_dir,
-        )? {
-            stdio_servers.push(server);
-        } else {
-            return Err(format!("澶栭儴 MCP 閰嶇疆鏃犳晥: {config_id}"));
+    } else {
+        for config_id in &task.mcp_config.external_mcp_config_ids {
+            let config = service
+                .store
+                .get_external_mcp_config(config_id)
+                .await?
+                .ok_or_else(|| format!("external MCP config not found: {config_id}"))?;
+            if !config.enabled {
+                return Err(format!("external MCP config is disabled: {config_id}"));
+            }
+            if let Some(server) = config.to_http_server() {
+                http_servers.push(server);
+            } else if let Some(server) = task_stdio_server_for_config(
+                &config,
+                task.subject_id.as_str(),
+                effective_workspace_dir,
+            )? {
+                stdio_servers.push(server);
+            } else {
+                return Err(format!("external MCP config is invalid: {config_id}"));
+            }
+            summaries.push(ExternalMcpRuntimeSummary {
+                id: config.id,
+                name: config.name,
+                transport: config.transport,
+            });
         }
-        summaries.push(ExternalMcpRuntimeSummary {
-            id: config.id,
-            name: config.name,
-            transport: config.transport,
-        });
     }
     for server in &task.mcp_config.ephemeral_http_servers {
         let mut headers = server.headers.clone();
@@ -146,6 +166,206 @@ pub(super) async fn load_external_mcp_servers(
         stdio_servers,
         summaries,
     })
+}
+
+struct LoadedPluginMcpServer {
+    name: String,
+    transport: String,
+    http_server: Option<McpHttpServer>,
+    stdio_server: Option<McpStdioServer>,
+}
+
+fn plugin_mcp_server_for_resource(
+    service: &RunService,
+    task: &TaskRecord,
+    resource: &chatos_plugin_management_sdk::McpRecord,
+    effective_workspace_dir: &str,
+) -> Result<LoadedPluginMcpServer, String> {
+    let server_name = resource
+        .runtime
+        .server_name
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or(resource.name.as_str())
+        .to_string();
+    match resource.runtime.kind.as_str() {
+        "http" => {
+            let url = resource
+                .runtime
+                .url
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .ok_or_else(|| format!("plugin MCP {} is missing HTTP URL", resource.id))?;
+            let mut server = McpHttpServer::new(server_name.clone(), url.to_string());
+            if !resource.runtime.headers.is_empty() {
+                server =
+                    server.with_headers(resource.runtime.headers.clone().into_iter().collect());
+            }
+            Ok(LoadedPluginMcpServer {
+                name: server_name,
+                transport: "http".to_string(),
+                http_server: Some(server),
+                stdio_server: None,
+            })
+        }
+        "stdio_cloud" => {
+            let command = resource
+                .runtime
+                .command
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .ok_or_else(|| format!("plugin MCP {} is missing stdio command", resource.id))?;
+            let config = ExternalMcpConfigRecord {
+                id: resource.id.clone(),
+                name: server_name.clone(),
+                transport: "stdio".to_string(),
+                command: Some(command.to_string()),
+                args: resource.runtime.args.clone(),
+                url: None,
+                headers: Default::default(),
+                env: resource.runtime.env.clone(),
+                cwd: resource.runtime.cwd.clone(),
+                enabled: true,
+                creator_user_id: None,
+                creator_username: None,
+                creator_display_name: None,
+                owner_user_id: Some(resource.owner_user_id.clone()),
+                owner_username: None,
+                owner_display_name: None,
+                created_at: resource.created_at.clone(),
+                updated_at: resource.updated_at.clone(),
+            };
+            let server = task_stdio_server_for_config(
+                &config,
+                task.subject_id.as_str(),
+                effective_workspace_dir,
+            )?
+            .ok_or_else(|| format!("plugin MCP {} stdio config is invalid", resource.id))?;
+            Ok(LoadedPluginMcpServer {
+                name: server_name,
+                transport: "stdio".to_string(),
+                http_server: None,
+                stdio_server: Some(server),
+            })
+        }
+        "local_connector_stdio" | "local_connector_http" | "local_connector_builtin_proxy" => {
+            let local = resource.runtime.local_connector.as_ref().ok_or_else(|| {
+                format!(
+                    "plugin MCP {} is missing Local Connector reference",
+                    resource.id
+                )
+            })?;
+            let device_id = required_plugin_runtime_text(
+                local.device_id.as_deref(),
+                resource.id.as_str(),
+                "device_id",
+            )?;
+            let builtin_proxy = resource.runtime.kind == "local_connector_builtin_proxy";
+            let workspace_id = if builtin_proxy {
+                Some(required_plugin_runtime_text(
+                    local.workspace_id.as_deref(),
+                    resource.id.as_str(),
+                    "workspace_id",
+                )?)
+            } else {
+                None
+            };
+            let manifest_id = if builtin_proxy {
+                local
+                    .manifest_id
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+            } else {
+                Some(required_plugin_runtime_text(
+                    local.manifest_id.as_deref(),
+                    resource.id.as_str(),
+                    "manifest_id",
+                )?)
+            };
+            let secret = service
+                .config
+                .local_connector_internal_api_secret
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .ok_or_else(|| {
+                    "TASK_RUNNER_LOCAL_CONNECTOR_INTERNAL_API_SECRET is required".to_string()
+                })?;
+            let owner_user_id = normalized_task_owner_user_id(task)
+                .ok_or_else(|| "task owner user id is required".to_string())?;
+            let mut url = format!(
+                "{}/api/local-connectors/relay/{}/mcp",
+                local_connector_service_base_url().trim_end_matches('/'),
+                urlencoding::encode(device_id)
+            );
+            if let Some(workspace_id) = workspace_id {
+                url.push_str("?workspace_id=");
+                url.push_str(urlencoding::encode(workspace_id).as_ref());
+                if let Some(cwd) = local
+                    .relative_path
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                {
+                    url.push_str("&cwd=");
+                    url.push_str(urlencoding::encode(cwd).as_ref());
+                }
+            }
+            let mut headers = resource.runtime.headers.clone();
+            headers.insert(
+                "x-local-connector-internal-secret".to_string(),
+                secret.to_string(),
+            );
+            headers.insert("x-local-connector-owner-user-id".to_string(), owner_user_id);
+            headers.insert(
+                "x-plugin-management-resource-id".to_string(),
+                resource.id.clone(),
+            );
+            if let Some(manifest_id) = manifest_id {
+                headers.insert(
+                    "x-local-connector-mcp-manifest-id".to_string(),
+                    manifest_id.to_string(),
+                );
+            }
+            let server = McpHttpServer::new(server_name.clone(), url)
+                .with_headers(headers.into_iter().collect());
+            Ok(LoadedPluginMcpServer {
+                name: server_name,
+                transport: "local_connector".to_string(),
+                http_server: Some(server),
+                stdio_server: None,
+            })
+        }
+        other => Err(format!(
+            "plugin MCP {} uses unsupported Task Runner runtime kind: {other}",
+            resource.id
+        )),
+    }
+}
+
+fn required_plugin_runtime_text<'a>(
+    value: Option<&'a str>,
+    resource_id: &str,
+    field: &str,
+) -> Result<&'a str, String> {
+    value
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| format!("plugin MCP {resource_id} is missing {field}"))
+}
+
+fn local_connector_service_base_url() -> String {
+    std::env::var("TASK_RUNNER_LOCAL_CONNECTOR_SERVICE_BASE_URL")
+        .ok()
+        .or_else(|| std::env::var("LOCAL_CONNECTOR_SERVICE_BASE_URL").ok())
+        .or_else(|| std::env::var("CHATOS_LOCAL_CONNECTOR_SERVICE_BASE_URL").ok())
+        .map(|value| value.trim().trim_end_matches('/').to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "http://127.0.0.1:39230".to_string())
 }
 
 fn normalized_task_owner_user_id(task: &TaskRecord) -> Option<String> {

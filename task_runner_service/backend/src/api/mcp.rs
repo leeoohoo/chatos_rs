@@ -3,9 +3,41 @@
 
 use super::core::{bearer_token_from_headers, current_user_from_user_service_token};
 use super::*;
+use serde_json::json;
 
 pub(super) async fn list_mcp_catalog(State(state): State<AppState>) -> Json<Vec<McpCatalogEntry>> {
     Json(state.mcp_catalog_service.list_catalog())
+}
+
+pub(super) async fn list_task_capability_catalog(
+    State(state): State<AppState>,
+    Extension(user): Extension<CurrentUser>,
+) -> Result<Json<Value>, ApiError> {
+    let owner_user_id = user
+        .effective_owner_user_id()
+        .ok_or_else(|| ApiError::unauthorized("current user is missing owner scope"))?;
+    let policy = state
+        .task_service
+        .resolve_task_runner_policy(Some(&user), Some(owner_user_id))
+        .await
+        .map_err(ApiError::bad_gateway)?
+        .ok_or_else(|| ApiError::internal("plugin management policy resolver is unavailable"))?;
+    let selectable_builtin_kinds = policy
+        .selectable_builtin_kind_names()
+        .into_iter()
+        .collect::<std::collections::HashSet<_>>();
+    let selectable_builtin_mcps = state
+        .mcp_catalog_service
+        .list_catalog()
+        .into_iter()
+        .filter(|item| selectable_builtin_kinds.contains(item.kind.as_str()))
+        .collect::<Vec<_>>();
+    Ok(Json(json!({
+        "policy_revision": policy.policy_revision(),
+        "selectable_builtin_mcps": selectable_builtin_mcps,
+        "selectable_external_mcps": policy.selectable_external_mcp_views(),
+        "selectable_skills": [],
+    })))
 }
 
 pub(super) async fn get_mcp_server_info(State(state): State<AppState>) -> Json<McpServerInfo> {

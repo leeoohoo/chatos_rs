@@ -113,6 +113,7 @@ build-frontends:
 	@cd task_runner_service/frontend && npm run build
 	@cd memory_engine/frontend && npm run build
 	@cd project_management_service/frontend && npm run build
+	@cd plugin_management_service/frontend && npm run build
 	@cd sandbox_manager_service/frontend && npm run build
 	@cd official_website_service/frontend && npm run build
 

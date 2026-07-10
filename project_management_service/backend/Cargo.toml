@@ -16,7 +16,9 @@ chatos_builtin_tools = { path = "../../crates/chatos_builtin_tools" }
 chatos_mcp_service = { path = "../../crates/chatos_mcp_service" }
 chatos_mcp_runtime = { path = "../../crates/chatos_mcp_runtime" }
 chatos_project_mcp_contract = { path = "../../crates/chatos_project_mcp_contract" }
+chatos_sandbox_image_mcp = { path = "../../crates/chatos_sandbox_image_mcp" }
 chatos_service_runtime = { path = "../../crates/chatos_service_runtime" }
+chatos_plugin_management_sdk = { path = "../../crates/chatos_plugin_management_sdk" }
 dotenvy = "0.15"
 futures-util = "0.3"
 mongodb = { version = "2.8", features = ["tokio-runtime"] }

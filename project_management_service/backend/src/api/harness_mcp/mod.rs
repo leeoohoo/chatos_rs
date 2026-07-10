@@ -24,8 +24,8 @@ mod tools;
 use self::client::HarnessApiAccessResponse;
 use self::tool_definitions::tool_definitions;
 use self::tools::{
-    tool_append_file, tool_apply_patch, tool_delete_path, tool_edit_file, tool_list_dir,
-    tool_read_file_range, tool_read_file_raw, tool_search_text, tool_write_file,
+    tool_append_file, tool_apply_patch, tool_delete_path, tool_edit_file, tool_list_branches,
+    tool_list_dir, tool_read_file_range, tool_read_file_raw, tool_search_text, tool_write_file,
 };
 
 const SERVER_NAME: &str = "harness_code";
@@ -272,6 +272,10 @@ async fn call_harness_tool(ctx: &HarnessMcpContext, params: Value) -> Result<Val
         "list_dir" => {
             ensure_read_allowed(ctx)?;
             tool_list_dir(ctx, &arguments).await
+        }
+        "list_branches" => {
+            ensure_read_allowed(ctx)?;
+            tool_list_branches(ctx, &arguments).await
         }
         "search_text" => {
             ensure_read_allowed(ctx)?;

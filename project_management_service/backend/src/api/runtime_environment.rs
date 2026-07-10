@@ -3,13 +3,18 @@
 
 use axum::extract::{Path, State};
 use axum::{Extension, Json};
+use uuid::Uuid;
 
 use super::access::{ensure_project_writable, require_project_access};
 use super::ApiError;
 use crate::auth::{AccessToken, CurrentUser};
 use crate::models::*;
-use crate::services::environment_agent::analyze_project_runtime_environment;
-use crate::services::runtime_environment::default_runtime_environment_for_project;
+use crate::services::environment_agent::{
+    analyze_project_runtime_environment, get_project_runtime_environment_progress,
+};
+use crate::services::runtime_environment::{
+    default_runtime_environment_for_project, ensure_runtime_environment_for_project,
+};
 use crate::state::AppState;
 
 pub(in crate::api) async fn get_project_runtime_environment(
@@ -33,6 +38,19 @@ pub(in crate::api) async fn get_project_runtime_environment(
         environment,
         images,
     }))
+}
+
+pub(in crate::api) async fn get_project_runtime_environment_progress_handler(
+    Path(project_id): Path<String>,
+    State(state): State<AppState>,
+    Extension(user): Extension<CurrentUser>,
+    Extension(access_token): Extension<AccessToken>,
+) -> Result<Json<ProjectRuntimeEnvironmentProgressResponse>, ApiError> {
+    let project = require_project_access(&state, &project_id, &user).await?;
+    get_project_runtime_environment_progress(&state, &project, Some(access_token.0.as_str()))
+        .await
+        .map(Json)
+        .map_err(ApiError::bad_gateway)
 }
 
 pub(in crate::api) async fn update_project_runtime_environment_settings(
@@ -95,8 +113,142 @@ pub(in crate::api) async fn analyze_project_runtime_environment_handler(
 ) -> Result<Json<ProjectRuntimeEnvironmentResponse>, ApiError> {
     let project = require_project_access(&state, &project_id, &user).await?;
     ensure_project_writable(&project)?;
-    analyze_project_runtime_environment(&state, &project, Some(access_token.0.as_str()))
+
+    {
+        let mut active = state.runtime_environment_analysis_jobs.lock().await;
+        if !active.insert(project_id.clone()) {
+            let environment = state
+                .store
+                .get_project_runtime_environment(&project_id)
+                .await
+                .map_err(ApiError::bad_request)?
+                .unwrap_or_else(|| default_runtime_environment_for_project(&project, None));
+            let images = state
+                .store
+                .list_project_runtime_environment_images(&project_id)
+                .await
+                .map_err(ApiError::bad_request)?;
+            return Ok(Json(ProjectRuntimeEnvironmentResponse {
+                environment,
+                images,
+            }));
+        }
+    }
+
+    let run_id = format!("project_env_agent_{}", Uuid::new_v4());
+    let queued = async {
+        let mut environment =
+            ensure_runtime_environment_for_project(&state.store, &project, None).await?;
+        environment.status = ProjectRuntimeEnvironmentStatus::Analyzing;
+        environment.last_agent_run_id = Some(run_id.clone());
+        environment.last_error = None;
+        environment.updated_at = now_rfc3339();
+        let environment = state
+            .store
+            .upsert_project_runtime_environment(&environment)
+            .await?;
+        let images = state
+            .store
+            .list_project_runtime_environment_images(&project_id)
+            .await?;
+        Ok::<ProjectRuntimeEnvironmentResponse, String>(ProjectRuntimeEnvironmentResponse {
+            environment,
+            images,
+        })
+    }
+    .await;
+    let response = match queued {
+        Ok(response) => response,
+        Err(err) => {
+            state
+                .runtime_environment_analysis_jobs
+                .lock()
+                .await
+                .remove(&project_id);
+            return Err(ApiError::bad_request(err));
+        }
+    };
+
+    let worker_state = state.clone();
+    let worker_project = project.clone();
+    let worker_project_id = project_id.clone();
+    let worker_run_id = run_id.clone();
+    let worker_access_token = access_token.0.clone();
+    tokio::spawn(async move {
+        let task_state = worker_state.clone();
+        let task_project = worker_project.clone();
+        let task_run_id = worker_run_id.clone();
+        let task = tokio::spawn(async move {
+            analyze_project_runtime_environment(
+                &task_state,
+                &task_project,
+                Some(worker_access_token.as_str()),
+                task_run_id.as_str(),
+            )
+            .await
+        });
+        let failure = match task.await {
+            Ok(Ok(_)) => None,
+            Ok(Err(err)) => Some(err),
+            Err(err) => Some(format!("project environment analysis task failed: {err}")),
+        };
+        if let Some(err) = failure {
+            persist_background_analysis_failure(
+                &worker_state,
+                worker_project_id.as_str(),
+                worker_run_id.as_str(),
+                err.as_str(),
+            )
+            .await;
+        }
+        worker_state
+            .runtime_environment_analysis_jobs
+            .lock()
+            .await
+            .remove(worker_project_id.as_str());
+    });
+
+    Ok(Json(response))
+}
+
+async fn persist_background_analysis_failure(
+    state: &AppState,
+    project_id: &str,
+    run_id: &str,
+    error: &str,
+) {
+    let Ok(Some(mut environment)) = state
+        .store
+        .get_project_runtime_environment(project_id)
         .await
-        .map(Json)
-        .map_err(ApiError::bad_request)
+    else {
+        tracing::error!(
+            project_id,
+            run_id,
+            error,
+            "load failed project environment analysis"
+        );
+        return;
+    };
+    if environment.last_agent_run_id.as_deref() != Some(run_id)
+        || environment.status != ProjectRuntimeEnvironmentStatus::Analyzing
+    {
+        return;
+    }
+    environment.status = ProjectRuntimeEnvironmentStatus::Failed;
+    environment.analysis_summary = Some("项目运行环境后台分析失败。".to_string());
+    environment.last_error = Some(error.to_string());
+    environment.updated_at = now_rfc3339();
+    if let Err(persist_error) = state
+        .store
+        .upsert_project_runtime_environment(&environment)
+        .await
+    {
+        tracing::error!(
+            project_id,
+            run_id,
+            error = persist_error.as_str(),
+            "persist failed project environment analysis"
+        );
+    }
 }

@@ -6,6 +6,7 @@ use std::sync::{Arc, Mutex};
 
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine as _;
+use chatos_plugin_management_sdk::{SystemAgentKey, CHATOS_TASK_RUNNER_MCP_RESOURCE_ID};
 use serde::Serialize;
 use tracing::warn;
 
@@ -27,7 +28,7 @@ use crate::models::remote_connection::{RemoteConnection, RemoteConnectionService
 use crate::services::mcp_loader::McpHttpServer;
 use crate::services::{
     access_token_scope, chatos_agents, chatos_memory_engine, chatos_memory_mappings,
-    chatos_sessions, task_runner_api_client,
+    chatos_sessions, plugin_management_capabilities, task_runner_api_client,
 };
 
 const TASK_RUNNER_CONTACT_MCP_SERVER_NAME: &str = "task_runner_service";
@@ -176,9 +177,6 @@ pub async fn resolve_runtime_context(
     let (mut http_servers, stdio_servers, builtin_servers) = empty_mcp_server_bundle();
     let mut runtime_error = None;
 
-    let task_runner_required = req.plan_mode || runtime_metadata.auto_create_task == Some(true);
-    let has_task_runner_contact_context =
-        runtime_metadata.contact_id.is_some() || contact_agent_id.is_some();
     let task_runner_project_id = if req.plan_mode {
         resolved_project_id
             .as_deref()
@@ -188,7 +186,23 @@ pub async fn resolve_runtime_context(
     };
     if req.plan_mode && task_runner_project_id.is_none() {
         runtime_error = Some("Plan 模式需要先选择一个有效项目。".to_string());
-    } else if task_runner_required || has_task_runner_contact_context {
+    }
+
+    if runtime_error.is_none() {
+        let policy_result =
+            resolve_chatos_task_runner_policy(req.plan_mode, effective_user_id.as_deref()).await;
+        if let Err(err) = policy_result {
+            warn!(
+                session_id,
+                plan_mode = req.plan_mode,
+                detail = err.as_str(),
+                "required task runner capability is unavailable"
+            );
+            runtime_error = Some(format!("Task Runner 能力配置不可用：{err}"));
+        }
+    }
+
+    if runtime_error.is_none() {
         match build_contact_task_runner_runtime(
             effective_user_id.as_deref(),
             runtime_metadata.contact_id.as_deref(),
@@ -210,17 +224,8 @@ pub async fn resolve_runtime_context(
                 http_servers.push(runtime.server);
             }
             None => {
-                if task_runner_required {
-                    runtime_error =
-                        Some("当前联系人未配置 Task Runner，无法创建任务。".to_string());
-                } else {
-                    warn!(
-                        "task runner runtime skipped for optional chat tools: session_id={} contact_id={} contact_agent_id={}",
-                        session_id,
-                        runtime_metadata.contact_id.as_deref().unwrap_or_default(),
-                        contact_agent_id.as_deref().unwrap_or_default()
-                    );
-                }
+                runtime_error =
+                    Some("当前对话缺少可用的 Task Runner 账号映射，无法启动智能体。".to_string());
             }
         }
     }
@@ -259,6 +264,39 @@ pub async fn resolve_runtime_context(
         use_tools,
         memory_summary_prompt,
         runtime_error,
+    }
+}
+
+async fn resolve_chatos_task_runner_policy(
+    plan_mode: bool,
+    effective_user_id: Option<&str>,
+) -> Result<(), String> {
+    let owner_user_id = effective_user_id
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| "当前用户身份缺失".to_string())?;
+    let capabilities = plugin_management_capabilities::resolve_for_current_user(
+        chatos_agent_key(plan_mode),
+        owner_user_id,
+    )
+    .await?;
+    capabilities
+        .ensure_required_available()
+        .map_err(|err| err.to_string())?;
+    capabilities
+        .ensure_required_skills_supported(std::iter::empty::<&str>())
+        .map_err(|err| err.to_string())?;
+    capabilities
+        .require_available_mcp(CHATOS_TASK_RUNNER_MCP_RESOURCE_ID)
+        .map(|_| ())
+        .map_err(|err| err.to_string())
+}
+
+fn chatos_agent_key(plan_mode: bool) -> SystemAgentKey {
+    if plan_mode {
+        SystemAgentKey::ChatosPlanningAgent
+    } else {
+        SystemAgentKey::ChatosConversationAgent
     }
 }
 
@@ -400,6 +438,20 @@ fn task_runner_builtin_prompt_lang(locale: InternalContextLocale) -> &'static st
         InternalContextLocale::ENGLISH_KEY
     } else {
         InternalContextLocale::DEFAULT_KEY
+    }
+}
+
+#[cfg(test)]
+mod plugin_policy_tests {
+    use super::*;
+
+    #[test]
+    fn normal_and_plan_modes_use_distinct_system_agent_keys() {
+        assert_eq!(
+            chatos_agent_key(false),
+            SystemAgentKey::ChatosConversationAgent
+        );
+        assert_eq!(chatos_agent_key(true), SystemAgentKey::ChatosPlanningAgent);
     }
 }
 

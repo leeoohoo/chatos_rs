@@ -10,13 +10,17 @@ use std::path::Path;
 
 use crate::api::fs::policy::{FsPathPolicy, FsPolicyError};
 use crate::api::local_connectors::parse_local_connector_root_path;
+use crate::config::Config;
 use crate::core::auth::AuthUser;
+use crate::core::project_access::{ensure_owned_project, map_project_access_error};
+use crate::models::project::harness_project_id_from_root_path;
 use crate::services::git;
 use crate::services::git::{
     GitActionResult, GitCheckoutRequest, GitCommitRequest, GitCompareQuery, GitCreateBranchRequest,
     GitDiffQuery, GitFetchRequest, GitMergeRequest, GitPathRequest, GitPullRequest, GitPushRequest,
     GitRepositoryCandidate, GitRootQuery, GitSummary,
 };
+use crate::services::project_management_api_client;
 
 pub fn router() -> Router {
     Router::new()
@@ -43,6 +47,9 @@ async fn client() -> (StatusCode, Json<Value>) {
 }
 
 async fn summary(auth: AuthUser, Query(query): Query<GitRootQuery>) -> (StatusCode, Json<Value>) {
+    if let Some(project_id) = harness_project_id_from_root_path(query.root.as_str()) {
+        return harness_git_summary(&auth, project_id, query.root.as_str()).await;
+    }
     let policy = match git_path_policy(&auth).await {
         Ok(policy) => policy,
         Err(err) => return err,
@@ -72,6 +79,9 @@ async fn summary(auth: AuthUser, Query(query): Query<GitRootQuery>) -> (StatusCo
 }
 
 async fn branches(auth: AuthUser, Query(query): Query<GitRootQuery>) -> (StatusCode, Json<Value>) {
+    if let Some(project_id) = harness_project_id_from_root_path(query.root.as_str()) {
+        return harness_git_branches(&auth, project_id).await;
+    }
     let policy = match git_path_policy(&auth).await {
         Ok(policy) => policy,
         Err(err) => return err,
@@ -87,6 +97,12 @@ async fn branches(auth: AuthUser, Query(query): Query<GitRootQuery>) -> (StatusC
 }
 
 async fn status(auth: AuthUser, Query(query): Query<GitRootQuery>) -> (StatusCode, Json<Value>) {
+    if let Some(project_id) = harness_project_id_from_root_path(query.root.as_str()) {
+        if let Err(err) = ensure_harness_git_project(&auth, project_id).await {
+            return err;
+        }
+        return (StatusCode::OK, Json(json!({ "files": [] })));
+    }
     let policy = match git_path_policy(&auth).await {
         Ok(policy) => policy,
         Err(err) => return err,
@@ -439,4 +455,192 @@ fn error_response(message: String) -> (StatusCode, Json<Value>) {
         StatusCode::INTERNAL_SERVER_ERROR
     };
     (status, Json(json!({ "error": message })))
+}
+
+#[derive(Debug, Clone)]
+struct HarnessBranchSnapshot {
+    name: String,
+    sha: String,
+    is_default: bool,
+}
+
+#[derive(Debug, Clone)]
+struct HarnessGitSnapshot {
+    current: Option<String>,
+    branches: Vec<HarnessBranchSnapshot>,
+}
+
+async fn ensure_harness_git_project(
+    auth: &AuthUser,
+    project_id: &str,
+) -> Result<(), (StatusCode, Json<Value>)> {
+    let project = ensure_owned_project(project_id, auth)
+        .await
+        .map_err(map_project_access_error)?;
+    let is_cloud = project
+        .source_type
+        .as_deref()
+        .map(str::trim)
+        .is_some_and(|value| value.eq_ignore_ascii_case("cloud"));
+    if !is_cloud {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "该项目不是云端项目" })),
+        ));
+    }
+    Ok(())
+}
+
+async fn load_harness_git_snapshot(
+    auth: &AuthUser,
+    project_id: &str,
+) -> Result<HarnessGitSnapshot, (StatusCode, Json<Value>)> {
+    ensure_harness_git_project(auth, project_id).await?;
+    let cfg = Config::try_get().map_err(|err| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "error": err })),
+        )
+    })?;
+    let sync_secret = cfg
+        .project_service_sync_secret
+        .as_deref()
+        .or(cfg.task_runner_callback_secret.as_deref())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({ "error": "project service sync secret is not configured" })),
+            )
+        })?;
+    let value = project_management_api_client::call_project_harness_tool(
+        cfg.project_service_base_url.as_str(),
+        sync_secret,
+        project_id,
+        "list_branches",
+        json!({}),
+    )
+    .await
+    .map_err(|err| (StatusCode::BAD_GATEWAY, Json(json!({ "error": err }))))?;
+    let branches = value
+        .get("branches")
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| {
+                    let name = item.get("name").and_then(Value::as_str)?.trim();
+                    if name.is_empty() {
+                        return None;
+                    }
+                    Some(HarnessBranchSnapshot {
+                        name: name.to_string(),
+                        sha: item
+                            .get("sha")
+                            .and_then(Value::as_str)
+                            .unwrap_or_default()
+                            .to_string(),
+                        is_default: item
+                            .get("is_default")
+                            .and_then(Value::as_bool)
+                            .unwrap_or(false),
+                    })
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let current = value
+        .get("current")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+        .or_else(|| {
+            branches
+                .iter()
+                .find(|branch| branch.is_default)
+                .or_else(|| branches.first())
+                .map(|branch| branch.name.clone())
+        });
+    Ok(HarnessGitSnapshot { current, branches })
+}
+
+async fn harness_git_summary(
+    auth: &AuthUser,
+    project_id: &str,
+    root: &str,
+) -> (StatusCode, Json<Value>) {
+    let snapshot = match load_harness_git_snapshot(auth, project_id).await {
+        Ok(snapshot) => snapshot,
+        Err(err) => return err,
+    };
+    let head = snapshot.current.as_deref().and_then(|current| {
+        snapshot
+            .branches
+            .iter()
+            .find(|branch| branch.name == current)
+            .map(|branch| branch.sha.clone())
+    });
+    (
+        StatusCode::OK,
+        Json(json!({
+            "is_repo": true,
+            "root": root,
+            "worktree_root": Value::Null,
+            "query_root": root,
+            "resolved_root": root,
+            "selected_root": root,
+            "head": head,
+            "current_branch": snapshot.current,
+            "detached": false,
+            "upstream": "Harness",
+            "ahead": 0,
+            "behind": 0,
+            "dirty": false,
+            "operation_state": Value::Null,
+            "changes": {
+                "staged": 0,
+                "unstaged": 0,
+                "untracked": 0,
+                "conflicted": 0,
+            },
+            "available_repositories": [],
+        })),
+    )
+}
+
+async fn harness_git_branches(auth: &AuthUser, project_id: &str) -> (StatusCode, Json<Value>) {
+    let snapshot = match load_harness_git_snapshot(auth, project_id).await {
+        Ok(snapshot) => snapshot,
+        Err(err) => return err,
+    };
+    let current = snapshot.current.clone();
+    let locals = snapshot
+        .branches
+        .into_iter()
+        .map(|branch| {
+            let is_current = current.as_deref() == Some(branch.name.as_str());
+            json!({
+                "name": branch.name,
+                "short_name": Value::Null,
+                "current": is_current,
+                "upstream": Value::Null,
+                "remote": Value::Null,
+                "tracked_by": Value::Null,
+                "ahead": 0,
+                "behind": 0,
+                "last_commit": branch.sha,
+                "last_commit_subject": Value::Null,
+            })
+        })
+        .collect::<Vec<_>>();
+    (
+        StatusCode::OK,
+        Json(json!({
+            "current": current,
+            "locals": locals,
+            "remotes": [],
+        })),
+    )
 }

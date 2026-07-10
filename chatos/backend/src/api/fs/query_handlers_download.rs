@@ -45,6 +45,12 @@ pub(in super::super) async fn download_entry(
         return json_error_response(StatusCode::BAD_REQUEST, "路径不能为空");
     };
 
+    if let Some(response) =
+        super::super::harness_project_bridge::download_entry(&auth, raw.as_str()).await
+    {
+        return response;
+    }
+
     let authorized = match policy.authorize_existing_path(raw.as_str()) {
         Ok(value) => value,
         Err(err) => return policy_error_response(err),

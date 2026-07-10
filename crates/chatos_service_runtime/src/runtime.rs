@@ -71,7 +71,7 @@ impl ChatosServiceRuntime {
         let endpoint = format!("{}/v1/agent/service/register", consul.trim_end_matches('/'));
         let health_url = format!(
             "http://{}:{}{}",
-            registration.address,
+            self.config.service_check_address,
             registration.port,
             normalize_path(registration.health_path.as_str())
         );

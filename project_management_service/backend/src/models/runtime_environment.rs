@@ -135,6 +135,24 @@ pub struct ProjectRuntimeEnvironmentResponse {
     pub images: Vec<ProjectRuntimeEnvironmentImageRecord>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProjectRuntimeEnvironmentProgressResponse {
+    pub project_id: String,
+    pub run_id: Option<String>,
+    pub phase: String,
+    pub status: String,
+    pub progress_percent: Option<u8>,
+    pub provider: RuntimeEnvironmentProvider,
+    pub job_id: Option<String>,
+    pub image_id: Option<String>,
+    pub image_ref: Option<String>,
+    pub started_at: Option<String>,
+    pub updated_at: String,
+    pub finished_at: Option<String>,
+    pub logs: String,
+    pub error: Option<String>,
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct UpdateProjectRuntimeEnvironmentSettingsRequest {
     pub sandbox_enabled: Option<bool>,

@@ -57,6 +57,10 @@ pub(crate) struct LocalSandboxImageJob {
     pub(crate) finished_at: Option<String>,
     pub(crate) output: String,
     pub(crate) error: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) project_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) run_id: Option<String>,
     #[serde(skip_serializing)]
     pub(crate) custom_build_script: Option<String>,
 }

@@ -36,6 +36,11 @@ pub(in super::super) async fn read_file(
             Json(json!({ "error": "路径不能为空" })),
         );
     };
+    if let Some(response) =
+        super::super::harness_project_bridge::read_file(&auth, raw.as_str()).await
+    {
+        return response;
+    }
     if let Some(response) = super::super::local_connector_bridge::read_file(raw.as_str()).await {
         return response;
     }

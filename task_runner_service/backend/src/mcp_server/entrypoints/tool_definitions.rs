@@ -60,7 +60,7 @@ impl TaskRunnerMcpService {
         &self,
         current_user: &CurrentUser,
         tool_profile: McpToolProfile,
-    ) -> Vec<Value> {
+    ) -> Result<Vec<Value>, String> {
         let mut tools = self.list_tools();
         if let Ok(model_configs) = self.model_config_service.list_model_configs().await {
             let visible_model_configs = filter_model_configs_for_user(model_configs, current_user);
@@ -72,16 +72,30 @@ impl TaskRunnerMcpService {
             enrich_tool_schemas_for_async_planner(&mut tools, &[]);
         }
         if current_user.is_admin() && tool_profile == McpToolProfile::Default {
-            return tools;
+            return Ok(tools);
         }
-        tools
+        let owner_user_id = current_user
+            .effective_owner_user_id()
+            .ok_or_else(|| "current agent token is missing owner scope".to_string())?;
+        if let Some(policy) = self
+            .task_service
+            .resolve_task_runner_policy(Some(current_user), Some(owner_user_id))
+            .await?
+        {
+            restrict_task_capability_selection_schemas(
+                &mut tools,
+                policy.selectable_builtin_kind_names().as_slice(),
+                policy.selectable_external_mcp_ids().as_slice(),
+            );
+        }
+        Ok(tools
             .into_iter()
             .filter(|tool| {
                 tool.get("name")
                     .and_then(Value::as_str)
                     .is_some_and(|name| agent_tool_allowed_for_profile(name, tool_profile))
             })
-            .collect()
+            .collect())
     }
 }
 

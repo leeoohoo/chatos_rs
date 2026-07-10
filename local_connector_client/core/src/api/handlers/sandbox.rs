@@ -80,6 +80,8 @@ pub(crate) async fn local_initialize_sandbox_image(
         &runtime,
         req.features,
         normalize_optional(req.custom_build_script.as_deref()),
+        None,
+        None,
     )
     .await
     .map_err(LocalApiError::bad_request)?;
@@ -126,9 +128,10 @@ impl SandboxImageBackend for LocalSandboxImageMcpBackend {
         ensure_docker_running()
             .await
             .map_err(|err| err.to_string())?;
-        let job = start_local_sandbox_image_job(&self.runtime, features, custom_build_script)
-            .await
-            .map_err(|err| err.to_string())?;
+        let job =
+            start_local_sandbox_image_job(&self.runtime, features, custom_build_script, None, None)
+                .await
+                .map_err(|err| err.to_string())?;
         Ok(json!(job))
     }
 }

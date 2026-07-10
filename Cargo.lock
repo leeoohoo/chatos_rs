@@ -556,6 +556,7 @@ dependencies = [
  "chatos_builtin_tools",
  "chatos_mcp_runtime",
  "chatos_mcp_service",
+ "chatos_plugin_management_sdk",
  "chatos_service_runtime",
  "chrono",
  "dashmap",
@@ -671,6 +672,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "chatos_plugin_management_sdk"
+version = "0.1.0"
+dependencies = [
+ "chatos_service_runtime",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+ "tokio",
+ "urlencoding",
+]
+
+[[package]]
 name = "chatos_project_mcp_contract"
 version = "0.1.0"
 dependencies = [
@@ -685,6 +699,7 @@ dependencies = [
  "async-trait",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
  "tokio",
  "uuid",
 ]
@@ -2340,6 +2355,7 @@ name = "local_connector_service_backend"
 version = "0.1.0"
 dependencies = [
  "axum 0.8.9",
+ "chatos_plugin_management_sdk",
  "chatos_service_runtime",
  "chrono",
  "dotenvy",
@@ -3086,6 +3102,27 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "19f132c84eca552bf34cab8ec81f1c1dcc229b811638f9d283dceabe58c5569e"
 
 [[package]]
+name = "plugin_management_service_backend"
+version = "0.1.0"
+dependencies = [
+ "axum 0.7.9",
+ "chatos_mcp_runtime",
+ "chatos_service_runtime",
+ "chrono",
+ "dotenvy",
+ "futures-util",
+ "mongodb",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tower-http 0.5.2",
+ "tracing",
+ "tracing-subscriber",
+ "uuid",
+]
+
+[[package]]
 name = "polyval"
 version = "0.7.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3198,7 +3235,9 @@ dependencies = [
  "chatos_builtin_tools",
  "chatos_mcp_runtime",
  "chatos_mcp_service",
+ "chatos_plugin_management_sdk",
  "chatos_project_mcp_contract",
+ "chatos_sandbox_image_mcp",
  "chatos_service_runtime",
  "chrono",
  "dotenvy",
@@ -4502,6 +4541,7 @@ dependencies = [
  "chatos_builtin_tools",
  "chatos_mcp_runtime",
  "chatos_mcp_service",
+ "chatos_plugin_management_sdk",
  "chatos_project_mcp_contract",
  "chatos_service_runtime",
  "chrono",

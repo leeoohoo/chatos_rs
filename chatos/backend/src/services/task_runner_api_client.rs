@@ -27,9 +27,7 @@ pub use types::{
     TaskRunnerTaskScheduleRequest, UserServiceTaskRunnerExchange,
 };
 
-use types::{
-    TaskRunnerExternalMcpConfig, TaskRunnerMcpCatalogEntry, UserServiceTaskRunnerTokenResponse,
-};
+use types::{TaskRunnerCapabilityCatalog, UserServiceTaskRunnerTokenResponse};
 
 pub async fn exchange_task_runner_token_via_user_service(
     request: &UserServiceTaskRunnerExchange,
@@ -62,26 +60,17 @@ pub async fn fetch_task_runner_execution_options(
     base_url: &str,
     access_token: &str,
 ) -> Result<TaskRunnerExecutionOptions, String> {
-    let catalog: Vec<TaskRunnerMcpCatalogEntry> = task_runner_json(
+    let catalog: TaskRunnerCapabilityCatalog = task_runner_json(
         base_url,
         access_token,
         reqwest::Method::GET,
-        "/api/mcp/tools",
+        "/api/tasks/capabilities/catalog",
         None::<&()>,
     )
     .await?;
-    let external_configs: Vec<TaskRunnerExternalMcpConfig> = task_runner_json(
-        base_url,
-        access_token,
-        reqwest::Method::GET,
-        "/api/external-mcp-configs",
-        None::<&()>,
-    )
-    .await
-    .unwrap_or_default();
 
     let mut builtin_tool_ids = BTreeSet::new();
-    for item in catalog {
+    for item in catalog.selectable_builtin_mcps {
         if let Some(kind) = normalize_optional(Some(item.kind)) {
             builtin_tool_ids.insert(kind);
         }
@@ -92,9 +81,9 @@ pub async fn fetch_task_runner_execution_options(
             builtin_tool_ids.insert(config_id);
         }
     }
-    let external_tool_ids = external_configs
+    let external_tool_ids = catalog
+        .selectable_external_mcps
         .into_iter()
-        .filter(|item| item.enabled)
         .filter_map(|item| normalize_optional(Some(item.id)))
         .collect::<BTreeSet<_>>();
     Ok(TaskRunnerExecutionOptions {

@@ -1,21 +1,16 @@
 /* SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0 */
 /* Required Notice: Copyright (c) 2025 AI Chat Team */
 
-.approvalPage {
-  display: flex;
-  flex-direction: column;
-  gap: 18px;
-}
-
+.approvalPage,
 .settingsPage {
   display: flex;
   flex-direction: column;
-  gap: 18px;
+  gap: 14px;
 }
 
 .settingsFormGrid {
   display: grid;
-  gap: 12px;
+  gap: 10px;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   margin-bottom: 12px;
 }
@@ -23,7 +18,7 @@
 .approvalModeGrid,
 .approvalConfigGrid {
   display: grid;
-  gap: 12px;
+  gap: 8px;
 }
 
 .approvalModeGrid {
@@ -35,51 +30,86 @@
 }
 
 .approvalMode {
-  background: #fbfcfa;
-  border: 1px solid #dbe5dc;
+  background: var(--panel-subtle);
+  border: 1px solid transparent;
   border-radius: 8px;
-  color: #17211c;
+  color: var(--text);
   display: flex;
   flex-direction: column;
   gap: 4px;
-  min-height: 86px;
-  padding: 14px;
+  min-height: 78px;
+  padding: 12px;
+  position: relative;
   text-align: left;
 }
 
+.approvalMode::before {
+  background: var(--text-tertiary);
+  border-radius: 50%;
+  content: "";
+  height: 5px;
+  position: absolute;
+  right: 12px;
+  top: 12px;
+  width: 5px;
+}
+
+.approvalMode:hover {
+  border-color: var(--border);
+}
+
 .approvalMode.active {
-  background: #edf7f1;
-  border-color: #80bd97;
-  box-shadow: inset 0 0 0 1px #80bd97;
+  background: var(--accent-soft);
+  border-color: color-mix(in srgb, var(--accent) 28%, transparent);
+}
+
+.approvalMode.active::before {
+  background: var(--accent);
+}
+
+.approvalMode strong {
+  font-size: 12px;
 }
 
 .approvalMode span,
 .approvalSubline,
 .approvalReason,
 .approvalSimpleRow span {
-  color: #65726b;
-  font-size: 12px;
+  color: var(--text-tertiary);
+  font-size: 10px;
+  line-height: 1.5;
 }
 
 .approvalList {
+  border: 1px solid var(--border);
+  border-radius: 8px;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  overflow: hidden;
 }
 
 .approvalPendingRow,
 .approvalSimpleRow {
-  border: 1px solid #e4eae4;
-  border-radius: 8px;
+  background: var(--panel-bg);
+  border-bottom: 1px solid var(--border-subtle);
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  padding: 12px;
+  gap: 7px;
+  padding: 11px 12px;
+}
+
+.approvalPendingRow:last-child,
+.approvalSimpleRow:last-child {
+  border-bottom: 0;
+}
+
+.approvalPendingRow:hover,
+.approvalSimpleRow:hover {
+  background: var(--panel-subtle);
 }
 
 .approvalReviewingRow {
-  background: #fffbf1;
-  border-color: #efd69c;
+  background: var(--warning-soft);
 }
 
 .spinIcon {
@@ -87,9 +117,7 @@
 }
 
 @keyframes spin {
-  to {
-    transform: rotate(360deg);
-  }
+  to { transform: rotate(360deg); }
 }
 
 .approvalSimpleRow {
@@ -102,14 +130,16 @@
   display: flex;
   flex: 1;
   flex-direction: column;
-  gap: 5px;
+  gap: 4px;
   min-width: 0;
 }
 
 .approvalSimpleRow strong,
 .approvalCommandLine strong {
+  color: var(--text);
   font-family: "SFMono-Regular", Consolas, monospace;
-  font-size: 13px;
+  font-size: 11px;
+  font-weight: 520;
   overflow-wrap: anywhere;
 }
 
@@ -117,14 +147,14 @@
   align-items: center;
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: 6px;
   min-width: 0;
 }
 
 .approvalActions {
   align-items: center;
   display: grid;
-  gap: 8px;
+  gap: 7px;
   grid-template-columns: auto minmax(180px, 1fr) auto auto;
 }
 
@@ -132,7 +162,7 @@
 .inlineSwitch {
   align-items: center;
   flex-direction: row;
-  gap: 8px;
+  gap: 7px;
 }
 
 .inlineCheck input,
@@ -142,6 +172,6 @@
 
 .approvalFormGrid {
   display: grid;
-  gap: 12px;
+  gap: 10px;
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }

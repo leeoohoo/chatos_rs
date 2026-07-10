@@ -16,6 +16,7 @@ interface GitBranchButtonProps {
   projectId?: string | null;
   projectRoot: string;
   enabled?: boolean;
+  readOnly?: boolean;
   onRepositoryChanged?: () => Promise<void> | void;
   onRepositorySelectionChange?: (repoRoot: string | null) => Promise<void> | void;
 }
@@ -25,6 +26,7 @@ export const GitBranchButton: React.FC<GitBranchButtonProps> = ({
   projectId,
   projectRoot,
   enabled = true,
+  readOnly = false,
   onRepositoryChanged,
   onRepositorySelectionChange,
 }) => {
@@ -33,6 +35,7 @@ export const GitBranchButton: React.FC<GitBranchButtonProps> = ({
     projectId,
     projectRoot,
     enabled,
+    readOnly,
     onRepositoryChanged,
     onRepositorySelectionChange,
   });

@@ -7,6 +7,7 @@ use std::time::Duration;
 
 use chatos_ai_runtime::ToolResultModelBudgetLimits;
 use chatos_mcp_runtime::BuiltinMcpPromptLocale;
+use chatos_plugin_management_sdk::PluginManagementClient;
 use chrono::{DateTime, Utc};
 use tokio::sync::{broadcast, Mutex as AsyncMutex};
 use tracing::info;
@@ -38,6 +39,8 @@ mod chatos_callbacks;
 mod chatos_message_tasks;
 mod external_mcp_config_service;
 mod filter_sanitize;
+mod harness_run_diff;
+mod harness_run_git;
 mod mcp_catalog_service;
 mod mcp_resolution;
 mod memory_options;
@@ -45,6 +48,7 @@ mod model_catalog;
 mod model_config_service;
 mod model_runtime_resolver;
 pub(crate) mod path_redaction;
+mod plugin_management_policy;
 mod prerequisite_context;
 mod process_log_text;
 mod project_management_api_client;
@@ -71,6 +75,7 @@ mod task_threads;
 mod terminal_lifecycle;
 mod tooling_state;
 mod workspace_mcp;
+mod workspace_snapshot;
 
 use self::batch_ops::{
     normalize_batch_task_ids, normalize_prerequisite_task_ids, normalize_tags, sanitize_id_list,
@@ -88,6 +93,7 @@ pub use self::chatos_message_tasks::{
 };
 pub(crate) use self::filter_sanitize::sanitize_prompt_list_filters;
 use self::filter_sanitize::{sanitize_run_list_filters, sanitize_task_list_filters};
+pub(crate) use self::plugin_management_policy::TaskRunnerCapabilityPolicy;
 use self::process_log_text::apply_task_process_log_update;
 use self::remote_servers::{build_remote_server_record, find_reusable_remote_server};
 use self::schedule_helpers::{advance_task_schedule_after_dispatch, sanitize_task_schedule_config};
@@ -114,6 +120,7 @@ enum RunTriggerSource {
 pub struct TaskService {
     config: AppConfig,
     store: AppStore,
+    plugin_management_client: Option<PluginManagementClient>,
 }
 
 #[derive(Clone)]
@@ -141,6 +148,7 @@ pub struct TaskProjectService {
 pub struct RunService {
     config: AppConfig,
     store: AppStore,
+    plugin_management_client: Option<PluginManagementClient>,
     ask_user_prompt_service: AskUserPromptService,
     start_locks: Arc<parking_lot::Mutex<HashMap<String, Arc<AsyncMutex<()>>>>>,
 }

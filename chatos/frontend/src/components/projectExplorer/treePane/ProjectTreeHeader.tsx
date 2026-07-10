@@ -162,7 +162,11 @@ export const ProjectTreeHeader: React.FC<ProjectTreeHeaderProps> = ({
         onCreateFileAtRoot={onCreateFileAtRoot}
         onRefresh={onRefresh}
       />
-      <div className="text-[11px] text-muted-foreground">{t('projectExplorer.tree.gitHint')}</div>
+      <div className="text-[11px] text-muted-foreground">
+        {project.sourceType?.trim().toLowerCase() === 'cloud'
+          ? t('projectExplorer.tree.harnessHint')
+          : t('projectExplorer.tree.gitHint')}
+      </div>
       <ProjectTreeSearchControls
         searchQuery={searchQuery}
         searchCaseSensitive={searchCaseSensitive}

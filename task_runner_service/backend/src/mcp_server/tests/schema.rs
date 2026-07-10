@@ -85,16 +85,10 @@ fn update_task_schema_hides_execution_status() {
 }
 
 #[test]
-fn normalizes_code_maintainer_write_with_required_read_kind() {
+fn normalization_keeps_only_the_ai_explicit_builtin_selection() {
     let normalized = normalize_mcp_builtin_kind_names(vec!["CodeMaintainerWrite".to_string()])
         .expect("normalized kinds");
-    assert_eq!(
-        normalized,
-        vec![
-            "CodeMaintainerRead".to_string(),
-            "CodeMaintainerWrite".to_string(),
-        ]
-    );
+    assert_eq!(normalized, vec!["CodeMaintainerWrite".to_string()]);
 }
 
 #[test]

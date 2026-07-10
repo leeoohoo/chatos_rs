@@ -127,7 +127,7 @@ impl AppConfig {
 
 pub fn load_user_service_dotenv() {
     for file in user_service_dotenv_files() {
-        let _ = dotenvy::from_filename_override(file);
+        let _ = dotenvy::from_filename(file);
     }
 }
 

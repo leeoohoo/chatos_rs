@@ -2,6 +2,7 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use super::*;
+use crate::services::TaskRunnerCapabilityPolicy;
 
 mod mcp_builder;
 mod mcp_inputs;
@@ -19,11 +20,30 @@ pub(super) async fn prepare_model_execution(
     input: &StartTaskRunRequest,
     effective_workspace_dir: &str,
     prerequisite_context: &[PrerequisiteTaskContext],
+    capability_policy: Option<&TaskRunnerCapabilityPolicy>,
 ) -> Result<PreparedModelExecution, String> {
-    let loaded_external_mcp =
-        load_external_mcp_servers(service, task, effective_workspace_dir).await?;
+    let sandbox_required = service.should_route_task_to_sandbox(task).await?;
+    let harness_run_context = if sandbox_required {
+        service
+            .prepare_harness_run_for_sandbox(task, run, effective_workspace_dir)
+            .await
+    } else {
+        None
+    };
+    let effective_workspace_dir = harness_run_context
+        .as_ref()
+        .map(|context| context.effective_workspace_dir.as_str())
+        .unwrap_or(effective_workspace_dir)
+        .to_string();
+    let loaded_external_mcp = load_external_mcp_servers(
+        service,
+        task,
+        effective_workspace_dir.as_str(),
+        capability_policy,
+    )
+    .await?;
     let sandbox_context = service
-        .prepare_sandbox_if_needed(task, run, effective_workspace_dir)
+        .prepare_sandbox_if_needed(task, run, effective_workspace_dir.as_str())
         .await?;
     let system_http_servers =
         load_system_http_mcp_servers(service, task, run, sandbox_context.as_ref())?;
@@ -51,7 +71,7 @@ pub(super) async fn prepare_model_execution(
         run,
         &resolved_model_config,
         model_config,
-        effective_workspace_dir,
+        effective_workspace_dir.as_str(),
         prompt,
         metadata.clone(),
         task_process_logging_enabled,
@@ -75,10 +95,11 @@ pub(super) async fn prepare_model_execution(
         service,
         task,
         run,
-        effective_workspace_dir,
+        effective_workspace_dir.as_str(),
         task_process_logging_enabled,
         task_service.clone(),
         sandbox_context.as_ref(),
+        capability_policy.is_some(),
     )
     .await;
     if !loaded_external_mcp.summaries.is_empty() {
@@ -108,7 +129,8 @@ pub(super) async fn prepare_model_execution(
         mcp_builder,
         tool_result_model_budget_limits,
         sandbox_context,
-        effective_workspace_dir: effective_workspace_dir.to_string(),
+        harness_run_context,
+        effective_workspace_dir,
     })
 }
 
@@ -265,7 +287,8 @@ mod tests {
         let task_service = TaskService::new(service.config.clone(), service.store.clone());
 
         let (builtin_servers, builtin_registry) =
-            build_mcp_builder_parts(&service, &task, &run, ".", false, task_service, None).await;
+            build_mcp_builder_parts(&service, &task, &run, ".", false, task_service, None, false)
+                .await;
         let server = builtin_servers
             .iter()
             .find(|server| server.name == chatos_mcp_runtime::PROJECT_MANAGEMENT_SERVER_NAME)
@@ -310,7 +333,8 @@ mod tests {
         assert!(system_servers.is_empty());
 
         let (builtin_servers, builtin_registry) =
-            build_mcp_builder_parts(&service, &task, &run, ".", false, task_service, None).await;
+            build_mcp_builder_parts(&service, &task, &run, ".", false, task_service, None, false)
+                .await;
         assert!(builtin_servers
             .iter()
             .all(|server| server.name != chatos_mcp_runtime::PROJECT_MANAGEMENT_SERVER_NAME));

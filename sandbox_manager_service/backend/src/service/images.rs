@@ -7,8 +7,8 @@ use std::sync::Arc;
 
 use base64::engine::general_purpose;
 use base64::Engine as _;
+use chatos_sandbox_image_mcp::custom_build_script_hash;
 use chrono::Utc;
-use sha2::{Digest, Sha256};
 use tokio::io::{AsyncBufReadExt, AsyncRead, BufReader};
 use tokio::process::Command;
 use tokio::sync::RwLock;
@@ -42,12 +42,22 @@ impl ImageJobStore {
         jobs
     }
 
-    async fn active_for_image(&self, image_id: &str) -> Option<SandboxImageJobRecord> {
+    async fn active_for_image(
+        &self,
+        image_id: &str,
+        project_id: Option<&str>,
+        run_id: Option<&str>,
+    ) -> Option<SandboxImageJobRecord> {
         self.jobs
             .read()
             .await
             .values()
-            .find(|job| job.image_id == image_id && job.status == JOB_STATUS_RUNNING)
+            .find(|job| {
+                job.image_id == image_id
+                    && job.status == JOB_STATUS_RUNNING
+                    && job.project_id.as_deref() == project_id
+                    && job.run_id.as_deref() == run_id
+            })
             .cloned()
     }
 
@@ -103,6 +113,8 @@ pub(crate) async fn start_initialize_job(
     backend: SandboxBackendKind,
     features: &[String],
     custom_build_script: Option<&str>,
+    project_id: Option<&str>,
+    run_id: Option<&str>,
 ) -> Result<SandboxImageJobRecord, String> {
     let feature_specs = image_specs::canonical_features(features)?;
     let custom_build_script = normalize_custom_build_script(custom_build_script)?;
@@ -118,7 +130,12 @@ pub(crate) async fn start_initialize_job(
         .map(image_specs::selection_feature_token)
         .collect::<Vec<_>>();
 
-    if let Some(job) = jobs.active_for_image(image.id.as_str()).await {
+    let project_id = normalize_job_context(project_id);
+    let run_id = normalize_job_context(run_id);
+    if let Some(job) = jobs
+        .active_for_image(image.id.as_str(), project_id.as_deref(), run_id.as_deref())
+        .await
+    {
         return Ok(job);
     }
 
@@ -137,6 +154,8 @@ pub(crate) async fn start_initialize_job(
         finished_at: None,
         output: String::new(),
         error: None,
+        project_id,
+        run_id,
     };
     jobs.insert(job.clone()).await;
 
@@ -152,6 +171,13 @@ pub(crate) async fn start_initialize_job(
     });
 
     Ok(job)
+}
+
+fn normalize_job_context(value: Option<&str>) -> Option<String> {
+    value
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
 }
 
 async fn run_initialize_job(
@@ -552,15 +578,6 @@ fn normalize_custom_build_script(script: Option<&str>) -> Result<Option<String>,
         return Err("custom build script cannot contain NUL bytes".to_string());
     }
     Ok(Some(script.to_string()))
-}
-
-fn custom_build_script_hash(script: &str) -> String {
-    let digest = Sha256::digest(script.as_bytes());
-    digest
-        .iter()
-        .take(6)
-        .map(|byte| format!("{byte:02x}"))
-        .collect()
 }
 
 fn generated_image_id(feature_ids: &[String], custom_script_hash: Option<&str>) -> String {

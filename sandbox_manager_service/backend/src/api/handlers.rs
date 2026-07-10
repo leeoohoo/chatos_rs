@@ -4,7 +4,9 @@
 use axum::extract::{Extension, Path, Query, State};
 use axum::http::HeaderMap;
 use axum::Json;
-use chatos_sandbox_image_mcp::SandboxImageBackend;
+use chatos_sandbox_image_mcp::{
+    SandboxImageBackend, SANDBOX_IMAGE_PROJECT_ID_HEADER, SANDBOX_IMAGE_RUN_ID_HEADER,
+};
 use serde_json::{json, Value};
 
 use crate::auth::SandboxAuthContext;
@@ -76,15 +78,23 @@ pub async fn initialize_sandbox_image(
 pub async fn sandbox_image_mcp_entrypoint(
     State(state): State<AppState>,
     Extension(auth): Extension<SandboxAuthContext>,
+    headers: HeaderMap,
     Json(payload): Json<Value>,
 ) -> Json<Value> {
-    let backend = CloudSandboxImageMcpBackend { state, auth };
+    let backend = CloudSandboxImageMcpBackend {
+        state,
+        auth,
+        project_id: header_value(&headers, SANDBOX_IMAGE_PROJECT_ID_HEADER),
+        run_id: header_value(&headers, SANDBOX_IMAGE_RUN_ID_HEADER),
+    };
     Json(chatos_sandbox_image_mcp::handle_jsonrpc(&backend, payload).await)
 }
 
 struct CloudSandboxImageMcpBackend {
     state: AppState,
     auth: SandboxAuthContext,
+    project_id: Option<String>,
+    run_id: Option<String>,
 }
 
 #[async_trait::async_trait]
@@ -119,12 +129,23 @@ impl SandboxImageBackend for CloudSandboxImageMcpBackend {
                 InitializeSandboxImageRequest {
                     features,
                     custom_build_script,
+                    project_id: self.project_id.clone(),
+                    run_id: self.run_id.clone(),
                 },
             )
             .await
             .map(|job| json!(job))
             .map_err(|err| err.message)
     }
+}
+
+fn header_value(headers: &HeaderMap, name: &str) -> Option<String> {
+    headers
+        .get(name)
+        .and_then(|value| value.to_str().ok())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
 }
 
 pub async fn list_access_clients(

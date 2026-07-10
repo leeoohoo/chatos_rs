@@ -13,6 +13,7 @@ pub(super) async fn build_mcp_builder_parts(
     task_process_logging_enabled: bool,
     task_service: TaskService,
     sandbox_context: Option<&crate::services::sandbox_runtime::SandboxRuntimeContext>,
+    authoritative_policy: bool,
 ) -> (
     Vec<chatos_mcp_runtime::McpBuiltinServer>,
     chatos_mcp_runtime::BuiltinToolRegistry,
@@ -25,7 +26,11 @@ pub(super) async fn build_mcp_builder_parts(
         server_options = server_options.with_remote_connection_id(remote_server_id);
     }
 
-    let mut selected_builtin_kinds = runtime_selected_builtin_kinds(task);
+    let mut selected_builtin_kinds = if authoritative_policy {
+        runtime_selected_builtin_kinds_authoritative(task)
+    } else {
+        runtime_selected_builtin_kinds(task)
+    };
     if sandbox_context.is_some() {
         selected_builtin_kinds
             .retain(|kind| !crate::services::sandbox_runtime::sandbox_replaces_builtin_kind(*kind));

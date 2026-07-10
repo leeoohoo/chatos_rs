@@ -5,5 +5,6 @@ pub mod cloud_import;
 pub mod dependency_graph;
 pub mod environment_agent;
 pub mod execution_sync;
+pub mod harness_repo;
 pub mod project_plan;
 pub mod runtime_environment;

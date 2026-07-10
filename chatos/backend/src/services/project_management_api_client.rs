@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 const PROJECT_SERVICE_DEFAULT_RESPONSE_LIMIT_BYTES: usize = 2 * 1024 * 1024;
+const PROJECT_SERVICE_HARNESS_FILE_RESPONSE_LIMIT_BYTES: usize = 4 * 1024 * 1024;
 const PROJECT_SERVICE_PLAN_RESPONSE_LIMIT_BYTES: usize = 8 * 1024 * 1024;
 const PROJECT_SERVICE_WORK_ITEMS_RESPONSE_LIMIT_BYTES: usize = 4 * 1024 * 1024;
 const PROJECT_SERVICE_DOCUMENTS_RESPONSE_LIMIT_BYTES: usize = 4 * 1024 * 1024;
@@ -57,6 +58,11 @@ pub struct UpdateProjectServiceProjectRequest {
     pub root_path: Option<String>,
     pub git_url: Option<String>,
     pub description: Option<String>,
+}
+
+#[derive(Debug, Default, Serialize)]
+pub struct UpdateProjectRuntimeEnvironmentSettingsRequest {
+    pub sandbox_enabled: Option<bool>,
 }
 
 pub async fn list_project_service_projects(
@@ -193,6 +199,148 @@ pub async fn archive_project_service_project(
             .bearer_auth(access_token.trim()),
     )
     .await
+}
+
+pub async fn get_project_service_runtime_environment(
+    base_url: &str,
+    access_token: &str,
+    project_id: &str,
+) -> Result<Value, String> {
+    let base_url = resolve_project_service_base_url(base_url).await;
+    let endpoint = format!(
+        "{}/api/projects/{}/runtime-environment",
+        base_url.trim().trim_end_matches('/'),
+        urlencoding::encode(project_id.trim())
+    );
+    send_json(
+        reqwest::Client::new()
+            .get(endpoint)
+            .bearer_auth(access_token.trim()),
+    )
+    .await
+}
+
+pub async fn update_project_service_runtime_environment_settings(
+    base_url: &str,
+    access_token: &str,
+    project_id: &str,
+    request: &UpdateProjectRuntimeEnvironmentSettingsRequest,
+) -> Result<Value, String> {
+    let base_url = resolve_project_service_base_url(base_url).await;
+    let endpoint = format!(
+        "{}/api/projects/{}/runtime-environment/settings",
+        base_url.trim().trim_end_matches('/'),
+        urlencoding::encode(project_id.trim())
+    );
+    send_json(
+        reqwest::Client::new()
+            .put(endpoint)
+            .bearer_auth(access_token.trim())
+            .json(request),
+    )
+    .await
+}
+
+pub async fn analyze_project_service_runtime_environment(
+    base_url: &str,
+    access_token: &str,
+    project_id: &str,
+) -> Result<Value, String> {
+    let base_url = resolve_project_service_base_url(base_url).await;
+    let endpoint = format!(
+        "{}/api/projects/{}/runtime-environment/analyze",
+        base_url.trim().trim_end_matches('/'),
+        urlencoding::encode(project_id.trim())
+    );
+    send_json(
+        reqwest::Client::new()
+            .post(endpoint)
+            .bearer_auth(access_token.trim()),
+    )
+    .await
+}
+
+pub async fn get_project_service_runtime_environment_progress(
+    base_url: &str,
+    access_token: &str,
+    project_id: &str,
+) -> Result<Value, String> {
+    let base_url = resolve_project_service_base_url(base_url).await;
+    let endpoint = format!(
+        "{}/api/projects/{}/runtime-environment/progress",
+        base_url.trim().trim_end_matches('/'),
+        urlencoding::encode(project_id.trim())
+    );
+    send_json(
+        reqwest::Client::new()
+            .get(endpoint)
+            .bearer_auth(access_token.trim()),
+    )
+    .await
+}
+
+pub async fn call_project_harness_tool(
+    base_url: &str,
+    sync_secret: &str,
+    project_id: &str,
+    tool_name: &str,
+    arguments: Value,
+) -> Result<Value, String> {
+    let base_url = resolve_project_service_base_url(base_url).await;
+    let endpoint = format!(
+        "{}/api/chatos-sync/projects/{}/harness/mcp",
+        base_url.trim().trim_end_matches('/'),
+        urlencoding::encode(project_id.trim())
+    );
+    let response: Value = send_json_with_limit(
+        reqwest::Client::new()
+            .post(endpoint)
+            .header("X-Project-Service-Sync-Secret", sync_secret.trim())
+            .header("X-Task-Runner-Project-Id", project_id.trim())
+            .header(
+                "X-Harness-Code-Enabled-Builtin-Kinds",
+                "CodeMaintainerWrite",
+            )
+            .json(&serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": format!("chatos-fs-{}", uuid::Uuid::new_v4()),
+                "method": "tools/call",
+                "params": {
+                    "name": tool_name,
+                    "arguments": arguments,
+                }
+            })),
+        PROJECT_SERVICE_HARNESS_FILE_RESPONSE_LIMIT_BYTES,
+    )
+    .await?;
+    parse_harness_tool_response(response)
+}
+
+fn parse_harness_tool_response(response: Value) -> Result<Value, String> {
+    if let Some(error) = response.get("error") {
+        let message = error
+            .get("message")
+            .and_then(Value::as_str)
+            .unwrap_or("Harness MCP request failed");
+        return Err(message.to_string());
+    }
+    let result = response
+        .get("result")
+        .ok_or_else(|| "Harness MCP response is missing result".to_string())?;
+    if result.get("isError").and_then(Value::as_bool) == Some(true) {
+        let message = result
+            .pointer("/content/0/text")
+            .and_then(Value::as_str)
+            .unwrap_or("Harness MCP tool failed");
+        return Err(message.to_string());
+    }
+    if let Some(structured) = result.get("_structured_result") {
+        return Ok(structured.clone());
+    }
+    let Some(text) = result.pointer("/content/0/text").and_then(Value::as_str) else {
+        return Ok(result.clone());
+    };
+    serde_json::from_str(text).map_err(|err| format!("parse Harness MCP tool result failed: {err}"))
 }
 
 pub async fn get_project_service_plan(
@@ -524,7 +672,8 @@ fn ensure_project_service_body_within_limit(
 
 #[cfg(test)]
 mod tests {
-    use super::ensure_project_service_body_within_limit;
+    use super::{ensure_project_service_body_within_limit, parse_harness_tool_response};
+    use serde_json::{json, Value};
 
     #[test]
     fn project_service_body_limit_accepts_boundary_size() {
@@ -538,5 +687,21 @@ mod tests {
 
         assert!(err.contains("exceeded limit"));
         assert!(err.contains("1025 bytes > 1024 bytes"));
+    }
+
+    #[test]
+    fn harness_tool_response_prefers_structured_result() {
+        let parsed = parse_harness_tool_response(json!({
+            "result": {
+                "content": [{ "type": "text", "text": "ignored" }],
+                "_structured_result": { "entries": [{ "path": "src" }] },
+                "isError": false
+            }
+        }))
+        .expect("parse Harness tool response");
+        assert_eq!(
+            parsed.pointer("/entries/0/path").and_then(Value::as_str),
+            Some("src")
+        );
     }
 }

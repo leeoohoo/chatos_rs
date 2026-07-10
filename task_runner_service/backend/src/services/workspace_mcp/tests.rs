@@ -24,10 +24,10 @@ fn empty_builtin_selection_stays_empty() {
 }
 
 #[test]
-fn default_config_still_selects_builtin_kinds() {
+fn default_config_has_no_optional_builtin_selection() {
     let config = TaskMcpConfig::default();
 
-    assert!(!selected_builtin_kinds(&config).is_empty());
+    assert!(selected_builtin_kinds(&config).is_empty());
 }
 
 #[test]
@@ -171,6 +171,7 @@ fn local_connector_runtime_routing_keeps_requested_config_and_payload() {
     let changed = super::apply_local_connector_runtime_routing_to_task(
         &mut task,
         "local://connector/device-1/workspace-1/apps/web",
+        false,
     );
 
     assert!(changed);
@@ -221,6 +222,7 @@ fn local_connector_routing_passes_only_selected_local_capabilities() {
     let changed = super::apply_local_connector_runtime_routing_to_task(
         &mut task,
         "local://connector/device-1/workspace-1/apps/web",
+        false,
     );
 
     assert!(changed);
@@ -261,6 +263,7 @@ fn local_connector_plan_routing_routes_profile_required_capabilities() {
     let changed = super::apply_local_connector_runtime_routing_to_task(
         &mut task,
         "local://connector/device-1/workspace-1/apps/web",
+        false,
     );
 
     assert!(changed);
@@ -286,6 +289,7 @@ fn local_connector_plan_routing_merges_profile_and_selected_capabilities() {
     let changed = super::apply_local_connector_runtime_routing_to_task(
         &mut task,
         "local://connector/device-1/workspace-1/apps/web",
+        false,
     );
 
     assert!(changed);
@@ -329,7 +333,7 @@ fn workspace_base_check_rejects_relative_parent_escape() {
 }
 
 #[test]
-fn normalized_config_removes_project_management_selection() {
+fn normalized_config_preserves_explicit_selection_for_policy_validation() {
     let config = TaskMcpConfig {
         enabled_builtin_kinds: vec![
             "ProjectManagement".to_string(),
@@ -342,21 +346,15 @@ fn normalized_config_removes_project_management_selection() {
 
     let sanitized = super::sanitize_task_mcp_config(config);
 
-    assert!(!sanitized
-        .enabled_builtin_kinds
-        .contains(&"ProjectManagement".to_string()));
-    assert!(!sanitized
-        .enabled_builtin_kinds
-        .contains(&"TaskManager".to_string()));
-    assert!(!sanitized
-        .enabled_builtin_kinds
-        .contains(&"AskUser".to_string()));
-    assert!(sanitized
-        .enabled_builtin_kinds
-        .contains(&"CodeMaintainerWrite".to_string()));
-    assert!(sanitized
-        .enabled_builtin_kinds
-        .contains(&"CodeMaintainerRead".to_string()));
+    assert_eq!(
+        sanitized.enabled_builtin_kinds,
+        vec![
+            "ProjectManagement".to_string(),
+            "TaskManager".to_string(),
+            "AskUser".to_string(),
+            "CodeMaintainerWrite".to_string(),
+        ]
+    );
 }
 
 fn sample_task(task_profile: &str, enabled_builtin_kinds: Vec<String>) -> TaskRecord {

@@ -22,7 +22,9 @@ use crate::models::{
     now_rfc3339, ModelConfigRecord, StartTaskRunRequest, TaskRecord, TaskRunEventRecord,
     TaskRunRecord, TaskRunStatus, TaskStatus,
 };
+use crate::services::TaskRunnerCapabilityPolicy;
 
+use super::harness_run_git::{HarnessRunContext, HarnessRunOutputReport};
 use super::prerequisite_context::{
     attach_prerequisite_context_to_run, build_task_prompt, PrerequisiteTaskContext,
 };
@@ -36,7 +38,8 @@ use super::task_process_log::{
     TASK_PROCESS_LOG_INTERNAL_SERVER_NAME,
 };
 use super::workspace_mcp::{
-    runtime_selected_builtin_kinds, task_uses_harness_code, task_uses_local_connector,
+    runtime_selected_builtin_kinds, runtime_selected_builtin_kinds_authoritative,
+    task_uses_harness_code, task_uses_local_connector,
 };
 use super::{
     build_builtin_registry_with_project_management_options, summarized_report_content,
@@ -56,6 +59,7 @@ pub(in crate::services) struct PreparedModelExecution {
     mcp_builder: McpExecutorBuilder,
     tool_result_model_budget_limits: ToolResultModelBudgetLimits,
     sandbox_context: Option<crate::services::sandbox_runtime::SandboxRuntimeContext>,
+    harness_run_context: Option<HarnessRunContext>,
     effective_workspace_dir: String,
 }
 
@@ -68,6 +72,7 @@ impl RunService {
         input: StartTaskRunRequest,
         effective_workspace_dir: String,
         prerequisite_context: Vec<PrerequisiteTaskContext>,
+        capability_policy: Option<TaskRunnerCapabilityPolicy>,
     ) {
         self.log_run_model_phase_start(
             &task,
@@ -96,6 +101,7 @@ impl RunService {
                 &input,
                 effective_workspace_dir.as_str(),
                 &prerequisite_context,
+                capability_policy.as_ref(),
             )
             .await
         {
@@ -113,6 +119,8 @@ impl RunService {
         };
 
         let sandbox_context = prepared_execution.sandbox_context.clone();
+        let harness_run_context = prepared_execution.harness_run_context.clone();
+        let finalized_workspace_dir = prepared_execution.effective_workspace_dir.clone();
         let report = self
             .execute_prepared_model_run(&task, &run, &model_config, prepared_execution)
             .await;
@@ -121,13 +129,31 @@ impl RunService {
         } else {
             None
         };
+        let harness_output = if let Some(context) = harness_run_context.as_ref() {
+            Some(
+                self.commit_harness_run_output(
+                    &run,
+                    context,
+                    sandbox_output
+                        .as_ref()
+                        .and_then(|output| output.output_workspace.as_deref()),
+                )
+                .await,
+            )
+        } else {
+            None
+        };
         self.finalize_model_phase(
             &task,
             &mut run,
             report,
-            effective_workspace_dir.as_str(),
+            finalized_workspace_dir.as_str(),
             sandbox_output,
+            harness_output,
         )
         .await;
+        if let Some(context) = harness_run_context.as_ref() {
+            self.cleanup_harness_run_workspace(context);
+        }
     }
 }

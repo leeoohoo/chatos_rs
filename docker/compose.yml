@@ -211,6 +211,8 @@ services:
       PROJECT_SERVICE_USER_SERVICE_BASE_URL: http://user-service-backend:39190
       PROJECT_SERVICE_TASK_RUNNER_BASE_URL: http://task-runner-backend:39090
       PROJECT_SERVICE_LOCAL_CONNECTOR_SERVICE_BASE_URL: http://local-connector-service-backend:39230
+      PLUGIN_MANAGEMENT_SERVICE_URL: http://plugin-management-backend:39260
+      PLUGIN_MANAGEMENT_INTERNAL_API_SECRET: ${PLUGIN_MANAGEMENT_INTERNAL_API_SECRET:-change_me_plugin_management_internal_secret}
       PROJECT_SERVICE_LOCAL_CONNECTOR_INTERNAL_API_SECRET: ${CHATOS_LOCAL_CONNECTOR_INTERNAL_API_SECRET:-chatos-local-connector-dev-secret}
       PROJECT_SERVICE_MEMORY_ENGINE_BASE_URL: http://memory-engine-backend:7081/api/memory-engine/v1
       PROJECT_SERVICE_MEMORY_ENGINE_OPERATOR_TOKEN: ${MEMORY_ENGINE_OPERATOR_TOKEN:-chatos-memory-engine-dev-operator-token}
@@ -220,10 +222,47 @@ services:
       PROJECT_SERVICE_SYNC_SECRET: ${CHATOS_PROJECT_SERVICE_SYNC_SECRET:-change_me_project_sync_secret}
       USER_SERVICE_INTERNAL_API_SECRET: ${USER_SERVICE_INTERNAL_API_SECRET:-change_me_user_service_internal_secret}
       TASK_RUNNER_INTERNAL_API_SECRET: ${TASK_RUNNER_INTERNAL_API_SECRET:-change_me_task_runner_internal_secret}
+    depends_on:
+      plugin-management-backend:
+        condition: service_healthy
     ports:
       - "${PROJECT_SERVICE_PORT:-39210}:39210"
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://127.0.0.1:39210/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+
+  plugin-management-backend:
+    <<: *rust-service
+    image: ${PLUGIN_MANAGEMENT_BACKEND_IMAGE:-${CHATOS_IMAGE_NAMESPACE:-ghcr.io/leeoohoo}/chatos-rs-plugin-management-backend:${CHATOS_IMAGE_TAG:-latest}}
+    environment:
+      <<: *service-runtime-env
+      CHATOS_SERVICE_NAME: plugin-management-service
+      CHATOS_SERVICE_ID: plugin-management-service-docker
+      CHATOS_SERVICE_ADDRESS: plugin-management-backend
+      CHATOS_SERVICE_PORT: 39260
+      CHATOS_SERVICE_HEALTH_PATH: /api/health
+      PLUGIN_MANAGEMENT_SERVICE_HOST: 0.0.0.0
+      PLUGIN_MANAGEMENT_SERVICE_PORT: 39260
+      PLUGIN_MANAGEMENT_SERVICE_DATABASE_URL: mongodb://${MONGODB_USER:-admin}:${MONGODB_PASSWORD:-admin}@mongodb:27017/plugin_management_service?authSource=admin
+      PLUGIN_MANAGEMENT_SERVICE_MONGODB_DATABASE: plugin_management_service
+      PLUGIN_MANAGEMENT_SERVICE_USER_SERVICE_BASE_URL: http://user-service-backend:39190
+      PLUGIN_MANAGEMENT_INTERNAL_API_SECRET: ${PLUGIN_MANAGEMENT_INTERNAL_API_SECRET:-change_me_plugin_management_internal_secret}
+      PLUGIN_MANAGEMENT_SERVICE_SUPER_ADMIN_USERNAME: ${CHATOS_ADMIN_USERNAME:-admin}
+      PLUGIN_MANAGEMENT_SERVICE_SUPER_ADMIN_PASSWORD: ${CHATOS_ADMIN_PASSWORD:-admin123456}
+      PLUGIN_MANAGEMENT_SERVICE_SEED_SYSTEM_RESOURCES: ${PLUGIN_MANAGEMENT_SERVICE_SEED_SYSTEM_RESOURCES:-true}
+    ports:
+      - "${PLUGIN_MANAGEMENT_SERVICE_PORT:-39260}:39260"
+    depends_on:
+      consul:
+        condition: service_healthy
+      mongodb:
+        condition: service_healthy
+      user-service-backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:39260/api/health"]
       interval: 10s
       timeout: 5s
       retries: 30
@@ -244,12 +283,17 @@ services:
       LOCAL_CONNECTOR_USER_SERVICE_BASE_URL: http://user-service-backend:39190
       LOCAL_CONNECTOR_PUBLIC_BASE_URL: ${LOCAL_CONNECTOR_PUBLIC_BASE_URL:-http://localhost:39230}
       LOCAL_CONNECTOR_INTERNAL_API_SECRET: ${CHATOS_LOCAL_CONNECTOR_INTERNAL_API_SECRET:-chatos-local-connector-dev-secret}
+      PLUGIN_MANAGEMENT_SERVICE_URL: http://plugin-management-backend:39260
+      PLUGIN_MANAGEMENT_INTERNAL_API_SECRET: ${PLUGIN_MANAGEMENT_INTERNAL_API_SECRET:-change_me_plugin_management_internal_secret}
       LOCAL_CONNECTOR_MEMORY_ENGINE_BASE_URL: http://memory-engine-backend:7081/api/memory-engine/v1
       LOCAL_CONNECTOR_MEMORY_ENGINE_OPERATOR_TOKEN: ${MEMORY_ENGINE_OPERATOR_TOKEN:-chatos-memory-engine-dev-operator-token}
     ports:
       - "${LOCAL_CONNECTOR_SERVICE_PORT:-39230}:39230"
     volumes:
       - local-connector-data:/data/local_connector
+    depends_on:
+      plugin-management-backend:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://127.0.0.1:39230/api/health"]
       interval: 10s
@@ -315,6 +359,8 @@ services:
       TASK_RUNNER_MEMORY_ENGINE_BASE_URL: http://memory-engine-backend:7081/api/memory-engine/v1
       TASK_RUNNER_MEMORY_ENGINE_OPERATOR_TOKEN: ${MEMORY_ENGINE_OPERATOR_TOKEN:-chatos-memory-engine-dev-operator-token}
       TASK_RUNNER_LOCAL_CONNECTOR_SERVICE_BASE_URL: http://local-connector-service-backend:39230
+      PLUGIN_MANAGEMENT_SERVICE_URL: http://plugin-management-backend:39260
+      PLUGIN_MANAGEMENT_INTERNAL_API_SECRET: ${PLUGIN_MANAGEMENT_INTERNAL_API_SECRET:-change_me_plugin_management_internal_secret}
       TASK_RUNNER_EXECUTION_ENVIRONMENT_MODE: cloud
       TASK_RUNNER_SANDBOX_MANAGER_BASE_URL: http://sandbox-manager-backend:8095
       TASK_RUNNER_SANDBOX_MANAGER_CLIENT_ID: ${TASK_RUNNER_SANDBOX_MANAGER_CLIENT_ID:-task_runner}
@@ -341,6 +387,8 @@ services:
       memory-engine-backend:
         condition: service_healthy
       project-management-backend:
+        condition: service_healthy
+      plugin-management-backend:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://127.0.0.1:39090/api/health"]
@@ -384,6 +432,7 @@ services:
       CHATOS_TASK_RUNNER_BASE_URL: http://task-runner-backend:39090
       TASK_RUNNER_CHATOS_CALLBACK_SECRET: ${TASK_RUNNER_CHATOS_CALLBACK_SECRET:-change_me_chatos_task_runner_secret}
       CHATOS_LOCAL_CONNECTOR_SERVICE_BASE_URL: http://local-connector-service-backend:39230
+      PLUGIN_MANAGEMENT_SERVICE_URL: http://plugin-management-backend:39260
       CHATOS_LOCAL_CONNECTOR_INTERNAL_API_SECRET: ${CHATOS_LOCAL_CONNECTOR_INTERNAL_API_SECRET:-chatos-local-connector-dev-secret}
       MEMORY_ENGINE_BASE_URL: http://memory-engine-backend:7081/api/memory-engine/v1
       MEMORY_ENGINE_OPERATOR_TOKEN: ${MEMORY_ENGINE_OPERATOR_TOKEN:-chatos-memory-engine-dev-operator-token}
@@ -405,6 +454,8 @@ services:
       memory-engine-backend:
         condition: service_healthy
       local-connector-service-backend:
+        condition: service_healthy
+      plugin-management-backend:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://127.0.0.1:3997/health"]
@@ -488,6 +539,17 @@ services:
       - "${PROJECT_SERVICE_FRONTEND_PORT:-39211}:80"
     depends_on:
       project-management-backend:
+        condition: service_healthy
+
+  plugin-management-frontend:
+    <<: *frontend-service
+    image: ${PLUGIN_MANAGEMENT_FRONTEND_IMAGE:-${CHATOS_IMAGE_NAMESPACE:-ghcr.io/leeoohoo}/chatos-rs-plugin-management-frontend:${CHATOS_IMAGE_TAG:-latest}}
+    environment:
+      API_PROXY_PASS: http://plugin-management-backend:39260
+    ports:
+      - "${PLUGIN_MANAGEMENT_FRONTEND_PORT:-39261}:80"
+    depends_on:
+      plugin-management-backend:
         condition: service_healthy
 
   task-runner-frontend:

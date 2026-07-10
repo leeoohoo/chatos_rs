@@ -266,6 +266,45 @@ export interface LocalModelConfigDraft {
   clear_max_output_tokens?: boolean | null;
 }
 
+export type LocalMcpTransport = 'stdio' | 'http';
+
+export interface LocalMcpConfig {
+  manifest_id: string;
+  plugin_mcp_id?: string | null;
+  internal_name: string;
+  display_name: string;
+  description?: string | null;
+  transport: LocalMcpTransport;
+  command?: string | null;
+  args: string[];
+  env: Record<string, string>;
+  url?: string | null;
+  headers: Record<string, string>;
+  timeout_ms?: number | null;
+  enabled: boolean;
+  sync_status: string;
+  last_check_status: string;
+  last_checked_at?: string | null;
+  last_error?: string | null;
+  tool_count: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface LocalMcpConfigDraft {
+  manifest_id?: string | null;
+  display_name: string;
+  description?: string | null;
+  transport: LocalMcpTransport;
+  enabled?: boolean | null;
+  command?: string | null;
+  args?: string[];
+  env?: Record<string, string>;
+  url?: string | null;
+  headers?: Record<string, string>;
+  timeout_ms?: number | null;
+}
+
 export interface SandboxImageFeature {
   id: string;
   label: string;
@@ -481,5 +520,33 @@ export const api = {
     request<LocalModelSettings>('/api/local/model-settings', {
       method: 'POST',
       body: JSON.stringify({ ...payload, sync }),
+    }),
+  mcpConfigs: () => request<LocalMcpConfig[]>('/api/local/mcp-configs'),
+  saveMcpConfig: (draft: LocalMcpConfigDraft) =>
+    request<LocalMcpConfig>('/api/local/mcp-configs', {
+      method: 'POST',
+      body: JSON.stringify(draft),
+    }),
+  updateMcpConfig: (manifestId: string, draft: LocalMcpConfigDraft) =>
+    request<LocalMcpConfig>(`/api/local/mcp-configs/${encodeURIComponent(manifestId)}`, {
+      method: 'POST',
+      body: JSON.stringify(draft),
+    }),
+  testMcpConfig: (manifestId: string) =>
+    request<LocalMcpConfig>(`/api/local/mcp-configs/${encodeURIComponent(manifestId)}/test`, {
+      method: 'POST',
+    }),
+  setMcpConfigEnabled: (manifestId: string, enabled: boolean) =>
+    request<LocalMcpConfig>(
+      `/api/local/mcp-configs/${encodeURIComponent(manifestId)}/${enabled ? 'enable' : 'disable'}`,
+      { method: 'POST' },
+    ),
+  syncMcpConfig: (manifestId: string) =>
+    request<LocalMcpConfig>(`/api/local/mcp-configs/${encodeURIComponent(manifestId)}/sync`, {
+      method: 'POST',
+    }),
+  deleteMcpConfig: (manifestId: string) =>
+    request<{ ok: boolean }>(`/api/local/mcp-configs/${encodeURIComponent(manifestId)}`, {
+      method: 'DELETE',
     }),
 };

@@ -8,12 +8,14 @@ use serde::Deserialize;
 
 use super::ApiError;
 use crate::models::{
-    ImportProjectRequest, ProjectRecord, ProjectStatus, SyncRequirementExecutionStateRequest,
-    SyncRequirementExecutionStateResponse, SyncTaskRunnerWorkItemStatusRequest,
-    SyncTaskRunnerWorkItemStatusResponse,
+    ImportProjectRequest, ProjectRecord, ProjectRuntimeEnvironmentResponse, ProjectStatus,
+    SyncRequirementExecutionStateRequest, SyncRequirementExecutionStateResponse,
+    SyncTaskRunnerWorkItemStatusRequest, SyncTaskRunnerWorkItemStatusResponse,
 };
 use crate::services::execution_sync::{self, ExecutionSyncError};
-use crate::services::runtime_environment::ensure_runtime_environment_for_project;
+use crate::services::runtime_environment::{
+    default_runtime_environment_for_project, ensure_runtime_environment_for_project,
+};
 use crate::state::AppState;
 
 #[derive(Debug, Default, Deserialize)]
@@ -66,6 +68,35 @@ pub(in crate::api) async fn sync_get_project(
         .map_err(ApiError::bad_request)?
         .map(Json)
         .ok_or_else(|| ApiError::not_found(format!("项目不存在: {project_id}")))
+}
+
+pub(in crate::api) async fn sync_get_project_runtime_environment(
+    Path(project_id): Path<String>,
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<ProjectRuntimeEnvironmentResponse>, ApiError> {
+    require_project_sync_secret(&state, &headers)?;
+    let project = state
+        .store
+        .get_project(&project_id)
+        .await
+        .map_err(ApiError::bad_request)?
+        .ok_or_else(|| ApiError::not_found(format!("项目不存在: {project_id}")))?;
+    let environment = state
+        .store
+        .get_project_runtime_environment(&project_id)
+        .await
+        .map_err(ApiError::bad_request)?
+        .unwrap_or_else(|| default_runtime_environment_for_project(&project, None));
+    let images = state
+        .store
+        .list_project_runtime_environment_images(&project_id)
+        .await
+        .map_err(ApiError::bad_request)?;
+    Ok(Json(ProjectRuntimeEnvironmentResponse {
+        environment,
+        images,
+    }))
 }
 
 pub(in crate::api) async fn sync_task_runner_work_item_status(

@@ -10,9 +10,8 @@ fn required_write_adds_required_read_with_same_source() {
         enabled_builtin_kinds: Vec::new(),
         ..TaskMcpConfig::default()
     };
-    let source = McpCapabilityRequirementSource::CallerContract(
-        AgentMcpCaller::LocalConnectorClientAgent,
-    );
+    let source =
+        McpCapabilityRequirementSource::CallerContract(AgentMcpCaller::LocalConnectorClientAgent);
 
     let resolution = resolve_mcp_config(TaskMcpResolutionInput {
         mcp_config: &config,

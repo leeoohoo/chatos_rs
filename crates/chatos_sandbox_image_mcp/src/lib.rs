@@ -7,6 +7,7 @@ use std::time::Duration;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 use tokio::time::{sleep, Instant};
 use uuid::Uuid;
 
@@ -18,6 +19,9 @@ const MAX_CREATE_TIMEOUT: Duration = Duration::from_secs(2 * 60 * 60);
 const DEFAULT_POLL_INTERVAL: Duration = Duration::from_secs(5);
 const MIN_POLL_INTERVAL: Duration = Duration::from_secs(1);
 const MAX_POLL_INTERVAL: Duration = Duration::from_secs(30);
+
+pub const SANDBOX_IMAGE_PROJECT_ID_HEADER: &str = "x-chatos-sandbox-project-id";
+pub const SANDBOX_IMAGE_RUN_ID_HEADER: &str = "x-chatos-sandbox-run-id";
 
 #[async_trait]
 pub trait SandboxImageBackend: Send + Sync {
@@ -117,7 +121,8 @@ pub fn list_tools() -> Value {
                         },
                         "custom_build_script": {
                             "type": "string",
-                            "description": "Optional build script appended by the sandbox image builder."
+                            "maxLength": 131072,
+                            "description": "Optional non-interactive Bash script written by the AI. It runs as root during the Docker image build after requested runtime features are installed. A non-zero exit fails the image build. Do not place secrets in the script or its output."
                         },
                         "timeout_ms": {
                             "type": "integer",
@@ -186,10 +191,7 @@ where
             let images = search_images(&catalog, &args);
             Ok(tool_result(
                 format!("Found {} matching sandbox image(s).", images.len()),
-                json!({
-                    "images": images,
-                    "catalog": catalog,
-                }),
+                json!({ "images": images }),
             ))
         }
         TOOL_CREATE_IMAGE => {
@@ -205,23 +207,24 @@ async fn ensure_image<B>(backend: &B, args: CreateImageArgs) -> Result<Value, St
 where
     B: SandboxImageBackend,
 {
+    let custom_build_script = normalize_optional(args.custom_build_script);
+    let mut requested_features = args.features.clone();
+    if let Some(script) = custom_build_script.as_deref() {
+        requested_features.push(custom_build_script_feature(script));
+    }
     let search_args = SearchImagesArgs {
-        features: args.features.clone(),
+        features: requested_features,
         include_unavailable: false,
         ..SearchImagesArgs::default()
     };
     let catalog = backend.image_catalog().await?;
     let matches = search_images(&catalog, &search_args);
     if let Some(image) = matches.into_iter().find(image_is_available) {
-        return Ok(json!({
-            "reused": true,
-            "image": image,
-            "job": null,
-        }));
+        return Ok(ready_image_result(true, Some(image), None));
     }
 
     let job = backend
-        .initialize_image(args.features, normalize_optional(args.custom_build_script))
+        .initialize_image(args.features, custom_build_script)
         .await?;
     let timeout = timeout_from_ms(args.timeout_ms);
     let poll_interval = poll_interval_from_ms(args.poll_interval_ms);
@@ -241,12 +244,7 @@ where
             .into_iter()
             .find(image_is_available)
     });
-    Ok(json!({
-        "reused": false,
-        "image": image,
-        "job": final_job,
-        "catalog": refreshed,
-    }))
+    Ok(ready_image_result(false, image, Some(final_job)))
 }
 
 async fn wait_for_job<B>(
@@ -295,6 +293,82 @@ fn find_image_by_job(catalog: &Value, job: &Value) -> Option<Value> {
     catalog_images(catalog)
         .into_iter()
         .find(|image| image.get("id").and_then(Value::as_str) == Some(image_id))
+}
+
+fn ready_image_result(reused: bool, image: Option<Value>, job: Option<Value>) -> Value {
+    let image = image.as_ref().map(compact_image);
+    let job = job.as_ref().map(compact_job);
+    let image_id = image
+        .as_ref()
+        .and_then(|value| value.get("id"))
+        .filter(|value| !value.is_null())
+        .cloned()
+        .or_else(|| {
+            job.as_ref()
+                .and_then(|value| value.get("image_id"))
+                .filter(|value| !value.is_null())
+                .cloned()
+        })
+        .unwrap_or(Value::Null);
+    let image_ref = image
+        .as_ref()
+        .and_then(|value| value.get("image_ref"))
+        .filter(|value| !value.is_null())
+        .cloned()
+        .or_else(|| {
+            job.as_ref()
+                .and_then(|value| value.get("image_ref"))
+                .filter(|value| !value.is_null())
+                .cloned()
+        })
+        .unwrap_or(Value::Null);
+    let status = image
+        .as_ref()
+        .and_then(|value| value.get("status"))
+        .filter(|value| !value.is_null())
+        .cloned()
+        .or_else(|| {
+            job.as_ref()
+                .and_then(|value| value.get("status"))
+                .filter(|value| !value.is_null())
+                .cloned()
+        })
+        .unwrap_or(Value::Null);
+    let features = image
+        .as_ref()
+        .and_then(|value| value.get("features"))
+        .cloned()
+        .unwrap_or_else(|| json!([]));
+
+    json!({
+        "reused": reused,
+        "image_id": image_id,
+        "image_ref": image_ref,
+        "status": status,
+        "features": features,
+        "image": image,
+        "job": job,
+    })
+}
+
+fn compact_image(image: &Value) -> Value {
+    json!({
+        "id": image.get("id").cloned().unwrap_or(Value::Null),
+        "image_ref": image.get("image_ref").cloned().unwrap_or(Value::Null),
+        "status": image.get("status").cloned().unwrap_or(Value::Null),
+        "initialized": image.get("initialized").cloned().unwrap_or(Value::Null),
+        "features": image.get("features").cloned().unwrap_or_else(|| json!([])),
+    })
+}
+
+fn compact_job(job: &Value) -> Value {
+    json!({
+        "id": job.get("id").cloned().unwrap_or(Value::Null),
+        "image_id": job.get("image_id").cloned().unwrap_or(Value::Null),
+        "image_ref": job.get("image_ref").cloned().unwrap_or(Value::Null),
+        "status": job.get("status").cloned().unwrap_or(Value::Null),
+        "error": job.get("error").cloned().unwrap_or(Value::Null),
+    })
 }
 
 fn search_images(catalog: &Value, args: &SearchImagesArgs) -> Vec<Value> {
@@ -425,6 +499,19 @@ fn normalize_optional(value: Option<String>) -> Option<String> {
     value.and_then(|value| normalized_value(Some(value.as_str())))
 }
 
+pub fn custom_build_script_hash(script: &str) -> String {
+    let digest = Sha256::digest(script.as_bytes());
+    digest
+        .iter()
+        .take(6)
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
+pub fn custom_build_script_feature(script: &str) -> String {
+    format!("script@{}", custom_build_script_hash(script))
+}
+
 fn normalized_value(value: Option<&str>) -> Option<String> {
     value
         .map(str::trim)
@@ -435,4 +522,126 @@ fn normalized_value(value: Option<&str>) -> Option<String> {
 pub fn server_name(prefix: &str) -> String {
     let suffix = Uuid::new_v4().simple().to_string();
     format!("{prefix}_{suffix}")
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use super::*;
+
+    struct TestBackend {
+        catalog: Value,
+        initialize_calls: AtomicUsize,
+    }
+
+    #[async_trait]
+    impl SandboxImageBackend for TestBackend {
+        async fn image_catalog(&self) -> Result<Value, String> {
+            Ok(self.catalog.clone())
+        }
+
+        async fn image_jobs(&self) -> Result<Value, String> {
+            Ok(json!([]))
+        }
+
+        async fn initialize_image(
+            &self,
+            _features: Vec<String>,
+            _custom_build_script: Option<String>,
+        ) -> Result<Value, String> {
+            self.initialize_calls.fetch_add(1, Ordering::SeqCst);
+            Ok(json!({
+                "id": "job-1",
+                "image_id": "custom-image",
+                "status": "succeeded"
+            }))
+        }
+    }
+
+    fn ready_image(features: Vec<String>) -> Value {
+        json!({
+            "id": "image-1",
+            "features": features,
+            "initialized": true,
+            "status": "ready"
+        })
+    }
+
+    #[tokio::test]
+    async fn custom_script_does_not_reuse_runtime_only_image() {
+        let backend = TestBackend {
+            catalog: json!({ "images": [ready_image(vec!["node@24".to_string()])] }),
+            initialize_calls: AtomicUsize::new(0),
+        };
+
+        ensure_image(
+            &backend,
+            CreateImageArgs {
+                features: vec!["node@24".to_string()],
+                custom_build_script: Some(
+                    "apt-get update && apt-get install -y ffmpeg".to_string(),
+                ),
+                ..CreateImageArgs::default()
+            },
+        )
+        .await
+        .expect("custom image build should start");
+
+        assert_eq!(backend.initialize_calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn custom_script_reuses_only_matching_script_image() {
+        let script = "apt-get update && apt-get install -y ffmpeg";
+        let backend = TestBackend {
+            catalog: json!({
+                "images": [ready_image(vec![
+                    "node@24".to_string(),
+                    custom_build_script_feature(script),
+                ])]
+            }),
+            initialize_calls: AtomicUsize::new(0),
+        };
+
+        let result = ensure_image(
+            &backend,
+            CreateImageArgs {
+                features: vec!["node@24".to_string()],
+                custom_build_script: Some(script.to_string()),
+                ..CreateImageArgs::default()
+            },
+        )
+        .await
+        .expect("matching custom image should be reused");
+
+        assert_eq!(result.get("reused").and_then(Value::as_bool), Some(true));
+        assert_eq!(backend.initialize_calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn ready_image_result_keeps_identity_and_omits_large_job_output() {
+        let result = ready_image_result(
+            false,
+            None,
+            Some(json!({
+                "id": "job-1",
+                "image_id": "custom-image",
+                "image_ref": "chatos/sandbox:custom-image",
+                "status": "succeeded",
+                "output": "x".repeat(20_000),
+            })),
+        );
+
+        assert_eq!(
+            result.get("image_id").and_then(Value::as_str),
+            Some("custom-image")
+        );
+        assert_eq!(
+            result.get("image_ref").and_then(Value::as_str),
+            Some("chatos/sandbox:custom-image")
+        );
+        assert!(!result.to_string().contains(&"x".repeat(1_000)));
+        assert!(result.to_string().chars().count() < 8_000);
+    }
 }

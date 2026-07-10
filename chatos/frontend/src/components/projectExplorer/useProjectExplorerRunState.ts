@@ -11,12 +11,14 @@ import { useProjectRunnerCommands } from './runState/useProjectRunnerCommands';
 import { buildProjectRunResolutionSuggestions } from './runState/projectRunnerResolutionSuggestions';
 import { useProjectRunnerExitInspection } from './runState/useProjectRunnerExitInspection';
 import { useProjectRunnerTerminalPolling } from './runState/useProjectRunnerTerminalPolling';
+import { useProjectRuntimeSandboxSetting } from './runState/useProjectRuntimeSandboxSetting';
 export type { ProjectRunnerActiveTerminal } from '../../lib/domain/projectRunner';
 
 interface UseProjectExplorerRunStateParams {
   client: ApiClient;
   project: Project | null;
   enabled: boolean;
+  sandboxSettingEnabled?: boolean;
   terminalUiEnabled: boolean;
 }
 
@@ -24,10 +26,16 @@ export const useProjectExplorerRunState = ({
   client,
   project,
   enabled,
+  sandboxSettingEnabled = enabled,
   terminalUiEnabled,
 }: UseProjectExplorerRunStateParams) => {
   const { t } = useI18n();
   const runnerCatalog = useProjectRunnerCatalogState({ client, project, enabled });
+  const runtimeSandboxSetting = useProjectRuntimeSandboxSetting({
+    client,
+    project,
+    enabled: sandboxSettingEnabled,
+  });
   const runnerTerminal = useProjectRunnerTerminalPolling({
     client,
     project,
@@ -102,6 +110,12 @@ export const useProjectExplorerRunState = ({
     envPreview: runnerCatalog.envPreview,
     environmentHints: runnerCatalog.environmentHints,
     envVarsPlaceholder: runnerCatalog.envVarsPlaceholder,
+    sandboxToggleVisible: runtimeSandboxSetting.sandboxToggleVisible,
+    sandboxEnabled: runtimeSandboxSetting.sandboxEnabled,
+    sandboxLoading: runtimeSandboxSetting.sandboxLoading,
+    sandboxSaving: runtimeSandboxSetting.sandboxSaving,
+    sandboxError: runtimeSandboxSetting.sandboxError,
+    updateSandboxEnabled: runtimeSandboxSetting.updateSandboxEnabled,
     terminalUiEnabled,
     selectedRunTargetId: runnerCatalog.selectedRunTargetId,
     setSelectedRunTargetId: runnerCatalog.selectRunTarget,

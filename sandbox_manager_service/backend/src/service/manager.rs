@@ -204,6 +204,8 @@ impl SandboxManager {
             self.config.backend,
             &input.features,
             input.custom_build_script.as_deref(),
+            input.project_id.as_deref(),
+            input.run_id.as_deref(),
         )
         .await
         .map_err(ApiError::bad_request)

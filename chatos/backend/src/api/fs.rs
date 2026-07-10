@@ -7,6 +7,7 @@ use axum::{
 };
 
 mod contracts;
+mod harness_project_bridge;
 mod helpers;
 mod local_connector_bridge;
 mod mutate_handlers;

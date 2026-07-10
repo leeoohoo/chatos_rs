@@ -14,6 +14,7 @@ interface UseGitBranchButtonModelOptions {
   projectId?: string | null;
   projectRoot: string;
   enabled?: boolean;
+  readOnly?: boolean;
   onRepositoryChanged?: () => Promise<void> | void;
   onRepositorySelectionChange?: (repoRoot: string | null) => Promise<void> | void;
 }
@@ -23,6 +24,7 @@ export const useGitBranchButtonModel = ({
   projectId,
   projectRoot,
   enabled = true,
+  readOnly = false,
   onRepositoryChanged,
   onRepositorySelectionChange,
 }: UseGitBranchButtonModelOptions) => {
@@ -211,6 +213,7 @@ export const useGitBranchButtonModel = ({
     panelRef,
     projectRoot,
     query,
+    readOnly,
     gitAvailableRepositories: git.availableRepositories,
     activeRepoRoot: git.activeRepoRoot,
     selectableCommitFiles,

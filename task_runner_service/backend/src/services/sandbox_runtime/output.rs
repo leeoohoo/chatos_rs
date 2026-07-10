@@ -34,17 +34,24 @@ impl SandboxOutputReport {
         context: &SandboxRuntimeContext,
         response: &ReleaseSandboxResponse,
     ) -> Option<Self> {
-        let manifest = response.change_manifest.as_ref()?;
+        let manifest = response.change_manifest.as_ref();
+        if manifest.is_none() && response.output_workspace.is_none() {
+            return None;
+        }
         let preview_limit = 20usize;
         Some(Self {
             enabled: true,
             sandbox_id: context.sandbox_id.clone(),
             lease_id: context.lease_id.clone(),
             output_workspace: response.output_workspace.clone(),
-            change_manifest_path: manifest.manifest_path.clone(),
-            file_change_counts: manifest.counts.clone(),
-            file_changes_preview: manifest.files.iter().take(preview_limit).cloned().collect(),
-            truncated: manifest.files.len() > preview_limit,
+            change_manifest_path: manifest.and_then(|value| value.manifest_path.clone()),
+            file_change_counts: manifest
+                .map(|value| value.counts.clone())
+                .unwrap_or_default(),
+            file_changes_preview: manifest
+                .map(|value| value.files.iter().take(preview_limit).cloned().collect())
+                .unwrap_or_default(),
+            truncated: manifest.is_some_and(|value| value.files.len() > preview_limit),
         })
     }
 }

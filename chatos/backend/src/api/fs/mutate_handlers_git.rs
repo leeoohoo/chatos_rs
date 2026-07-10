@@ -153,6 +153,12 @@ pub(in super::super) async fn append_gitignore_entry(
             Json(json!({ "error": "路径不能为空" })),
         );
     };
+    if super::super::harness_project_bridge::is_harness_project_path(raw.as_str()) {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "云端项目请直接编辑 Harness 仓库中的 .gitignore" })),
+        );
+    }
     let mode = req
         .mode
         .as_deref()
@@ -259,6 +265,12 @@ pub(in super::super) async fn open_path_externally(
             Json(json!({ "error": "路径不能为空" })),
         );
     };
+    if super::super::harness_project_bridge::is_harness_project_path(raw.as_str()) {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "云端项目文件不能在本机程序中打开" })),
+        );
+    }
     let mode = req
         .mode
         .as_deref()
@@ -316,6 +328,12 @@ pub(in super::super) async fn discard_git_changes(
             Json(json!({ "error": "路径不能为空" })),
         );
     };
+    if super::super::harness_project_bridge::is_harness_project_path(raw.as_str()) {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "云端项目不支持从本地 Git 工作区回滚" })),
+        );
+    }
 
     let authorized = match policy.authorize_existing_entry(raw.as_str(), "路径不存在", "路径不合法")
     {

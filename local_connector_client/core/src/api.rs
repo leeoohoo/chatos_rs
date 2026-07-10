@@ -16,15 +16,17 @@ mod types;
 
 use handlers::{
     local_add_workspace, local_approval_settings, local_approve_pending_approval,
-    local_clear_command_history, local_command_history, local_delete_model_config,
-    local_deny_pending_approval, local_docker_status, local_fs_list_handler,
-    local_initialize_sandbox_image, local_login, local_logout, local_model_configs,
-    local_model_settings, local_pending_approvals, local_preview_model_catalog, local_register,
-    local_remove_workspace, local_runtime_settings, local_sandbox_image_jobs,
-    local_sandbox_image_mcp, local_sandbox_images, local_sandbox_leases, local_save_model_config,
-    local_status, local_sync_model_config, local_terminal_exec, local_toggle_sandbox,
-    local_update_approval_settings, local_update_model_config, local_update_model_settings,
-    local_update_runtime_settings,
+    local_clear_command_history, local_command_history, local_delete_mcp_config,
+    local_delete_model_config, local_deny_pending_approval, local_disable_mcp_config,
+    local_docker_status, local_enable_mcp_config, local_fs_list_handler, local_get_mcp_config,
+    local_initialize_sandbox_image, local_login, local_logout, local_mcp_configs,
+    local_model_configs, local_model_settings, local_pending_approvals,
+    local_preview_model_catalog, local_register, local_remove_workspace, local_runtime_settings,
+    local_sandbox_image_jobs, local_sandbox_image_mcp, local_sandbox_images, local_sandbox_leases,
+    local_save_mcp_config, local_save_model_config, local_status, local_sync_mcp_config,
+    local_sync_model_config, local_terminal_exec, local_test_mcp_config, local_toggle_sandbox,
+    local_update_approval_settings, local_update_mcp_config, local_update_model_config,
+    local_update_model_settings, local_update_runtime_settings,
 };
 
 pub(crate) async fn serve_local_api(runtime: LocalRuntime) -> Result<()> {
@@ -73,6 +75,32 @@ pub(crate) async fn serve_local_api(runtime: LocalRuntime) -> Result<()> {
         .route(
             "/api/local/model-configs",
             get(local_model_configs).post(local_save_model_config),
+        )
+        .route(
+            "/api/local/mcp-configs",
+            get(local_mcp_configs).post(local_save_mcp_config),
+        )
+        .route(
+            "/api/local/mcp-configs/{manifest_id}",
+            get(local_get_mcp_config)
+                .post(local_update_mcp_config)
+                .delete(local_delete_mcp_config),
+        )
+        .route(
+            "/api/local/mcp-configs/{manifest_id}/test",
+            post(local_test_mcp_config),
+        )
+        .route(
+            "/api/local/mcp-configs/{manifest_id}/enable",
+            post(local_enable_mcp_config),
+        )
+        .route(
+            "/api/local/mcp-configs/{manifest_id}/disable",
+            post(local_disable_mcp_config),
+        )
+        .route(
+            "/api/local/mcp-configs/{manifest_id}/sync",
+            post(local_sync_mcp_config),
         )
         .route(
             "/api/local/model-configs/catalog/preview",

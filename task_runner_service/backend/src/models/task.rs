@@ -2,7 +2,7 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use chatos_ai_runtime::{TaskBuiltinMcpPromptMode, TaskMcpInitMode};
-use chatos_mcp_runtime::{configurable_builtin_kinds, BuiltinMcpPromptLocale};
+use chatos_mcp_runtime::BuiltinMcpPromptLocale;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 

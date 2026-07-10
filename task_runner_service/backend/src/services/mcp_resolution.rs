@@ -16,7 +16,6 @@ use crate::models::{
 #[allow(dead_code)]
 pub(super) enum AgentMcpCaller {
     ChatosAsyncPlanner,
-    ChatosPlanAgent,
     ProjectManagementAgent,
     LocalConnectorClientAgent,
     TaskRunnerRunPhase,
@@ -133,6 +132,22 @@ pub(super) fn resolve_task_mcp(
     resolve_task_mcp_with_requirements(task, active_host_backends, caller_requirements.as_slice())
 }
 
+pub(super) fn resolve_task_mcp_authoritative(
+    task: &TaskRecord,
+    active_host_backends: &[BuiltinHostBackend],
+) -> TaskMcpResolution {
+    let effective_kinds = selected_builtin_kinds_from_config(&task.mcp_config);
+    let hosted_builtin_routes = hosted_builtin_routes(&effective_kinds, active_host_backends);
+    let server_local_builtin_kinds =
+        server_local_builtin_kinds(effective_kinds.clone(), active_host_backends);
+    TaskMcpResolution {
+        requested_builtin_kinds: effective_kinds,
+        required_builtin_kinds: Vec::new(),
+        hosted_builtin_routes,
+        server_local_builtin_kinds,
+    }
+}
+
 pub(super) fn resolve_task_mcp_with_requirements(
     task: &TaskRecord,
     active_host_backends: &[BuiltinHostBackend],
@@ -159,7 +174,6 @@ pub(super) fn resolve_mcp_config(input: TaskMcpResolutionInput<'_>) -> TaskMcpRe
                 | BuiltinMcpKind::AskUser
         )
     });
-
     let required_builtin_kinds = required_builtin_capabilities(input);
     let required_kinds = required_builtin_kinds
         .iter()
@@ -243,9 +257,6 @@ fn requirement_source_key(source: McpCapabilityRequirementSource) -> &'static st
         McpCapabilityRequirementSource::CallerContract(AgentMcpCaller::ChatosAsyncPlanner) => {
             "chatos_async_planner"
         }
-        McpCapabilityRequirementSource::CallerContract(AgentMcpCaller::ChatosPlanAgent) => {
-            "chatos_plan_agent"
-        }
         McpCapabilityRequirementSource::CallerContract(AgentMcpCaller::ProjectManagementAgent) => {
             "project_management_agent"
         }
@@ -304,7 +315,7 @@ pub(super) fn caller_builtin_capability_requirements(
 
     let kinds: &[BuiltinMcpKind] = match caller {
         ChatosAsyncPlanner | TaskRunnerRunPhase => &[TaskManager, AskUser],
-        ChatosPlanAgent | ProjectManagementAgent => &[ProjectManagement],
+        ProjectManagementAgent => &[ProjectManagement],
         LocalConnectorClientAgent => &[],
     };
     kinds

@@ -7,6 +7,7 @@ use std::sync::Arc;
 
 use base64::engine::general_purpose;
 use base64::Engine as _;
+use chatos_sandbox_image_mcp::custom_build_script_feature;
 use tokio::io::{AsyncRead, AsyncReadExt};
 use tokio::sync::RwLock;
 use tokio::task::JoinHandle;
@@ -218,11 +219,15 @@ fn truncate_local_sandbox_job_output(value: &str) -> String {
 
 fn upsert_local_sandbox_image_record(state: &mut LocalState, job: &LocalSandboxImageJob) {
     let now = local_now_rfc3339();
+    let mut features = job.features.clone();
+    if let Some(script) = job.custom_build_script.as_deref() {
+        features.push(custom_build_script_feature(script));
+    }
     let record = LocalSandboxImageRecord {
         id: job.image_id.clone(),
         image_name: job.image_name.clone(),
         image_ref: job.image_ref.clone(),
-        features: job.features.clone(),
+        features,
         backend: job.backend.clone(),
         created_at: job.created_at.clone(),
         updated_at: now,

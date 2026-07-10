@@ -122,12 +122,17 @@ impl TaskService {
         current_user: Option<&CurrentUser>,
         task_owner_user_id: Option<&str>,
     ) -> Result<(), String> {
+        let centralized_policy = self
+            .validate_task_capability_selection(config, current_user, task_owner_user_id)
+            .await?;
         if let Some(remote_server_id) = config.default_remote_server_id.as_deref() {
             self.ensure_remote_server_exists(remote_server_id, current_user)
                 .await?;
         }
-        self.validate_task_external_mcp_configs(config, current_user, task_owner_user_id)
-            .await?;
+        if !centralized_policy {
+            self.validate_task_external_mcp_configs(config, current_user, task_owner_user_id)
+                .await?;
+        }
         self.validate_task_ephemeral_http_servers(config)?;
         if config.workspace_dir.is_some() {
             let _ = ensure_workspace_dir_available(
@@ -136,6 +141,22 @@ impl TaskService {
             )?;
         }
         Ok(())
+    }
+
+    pub(super) async fn validate_task_capability_selection(
+        &self,
+        config: &TaskMcpConfig,
+        current_user: Option<&CurrentUser>,
+        task_owner_user_id: Option<&str>,
+    ) -> Result<bool, String> {
+        let Some(policy) = self
+            .resolve_task_runner_policy(current_user, task_owner_user_id)
+            .await?
+        else {
+            return Ok(false);
+        };
+        policy.validate_optional_config(config)?;
+        Ok(true)
     }
 }
 

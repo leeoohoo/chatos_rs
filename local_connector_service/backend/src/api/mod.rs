@@ -11,7 +11,11 @@ use axum::http::{
 };
 use axum::response::{IntoResponse, Response};
 use axum::{Extension, Json};
+use chatos_plugin_management_sdk::{
+    ResolveAgentCapabilitiesRequest, SystemAgentKey, LOCAL_CONNECTOR_APPROVAL_MCP_RESOURCE_ID,
+};
 use serde::Deserialize;
+use serde::Serialize;
 use serde_json::{json, Value};
 use uuid::Uuid;
 
@@ -24,6 +28,7 @@ use crate::state::AppState;
 
 mod auth_middleware;
 mod devices;
+mod plugin_management_mcps;
 mod project_bindings;
 mod router;
 mod sandbox_pairings;
@@ -35,6 +40,9 @@ pub use self::auth_middleware::ApiError;
 use self::devices::{
     connect_device, create_device, disconnect_device, get_device, heartbeat_device, list_devices,
     load_owned_device, revoke_device,
+};
+use self::plugin_management_mcps::{
+    create_local_mcp, delete_local_mcp, list_local_mcps, update_local_mcp, update_local_mcp_status,
 };
 use self::project_bindings::{
     create_project_binding, delete_project_binding, list_project_bindings, update_project_binding,
@@ -57,6 +65,13 @@ struct McpRelayQuery {
     cwd: Option<String>,
 }
 
+#[derive(Debug, Serialize)]
+struct LocalCommandApprovalCapabilitiesResponse {
+    policy_revision: String,
+    code_maintainer_read: bool,
+    approval_decision: bool,
+}
+
 async fn health_handler() -> Json<HealthResponse> {
     Json(HealthResponse {
         ok: true,
@@ -66,6 +81,47 @@ async fn health_handler() -> Json<HealthResponse> {
 
 async fn current_user_handler(Extension(user): Extension<CurrentUser>) -> Json<CurrentUser> {
     Json(user)
+}
+
+async fn resolve_local_command_approval_capabilities(
+    State(state): State<AppState>,
+    Extension(user): Extension<CurrentUser>,
+) -> Result<Json<LocalCommandApprovalCapabilitiesResponse>, ApiError> {
+    let owner_user_id = user.effective_owner_user_id();
+    let request = ResolveAgentCapabilitiesRequest::new(
+        SystemAgentKey::LocalConnectorCommandApprovalAgent,
+        owner_user_id,
+    );
+    let capabilities = state
+        .plugin_management_client
+        .resolve_for_service(&request)
+        .await
+        .map_err(|err| ApiError::service_unavailable(err.to_string()))?;
+    capabilities
+        .ensure_required_available()
+        .map_err(|err| ApiError::service_unavailable(err.to_string()))?;
+    capabilities
+        .ensure_required_skills_supported(std::iter::empty::<&str>())
+        .map_err(|err| ApiError::service_unavailable(err.to_string()))?;
+    let code_maintainer_read = capabilities.mcps.iter().any(|item| {
+        item.binding.required
+            && item.available
+            && item.resource.runtime.kind == "builtin"
+            && item.resource.runtime.builtin_kind.as_deref() == Some("CodeMaintainerRead")
+    });
+    let approval_decision = capabilities
+        .require_available_mcp(LOCAL_CONNECTOR_APPROVAL_MCP_RESOURCE_ID)
+        .is_ok();
+    if !code_maintainer_read || !approval_decision {
+        return Err(ApiError::service_unavailable(
+            "local command approval agent required capabilities are unavailable",
+        ));
+    }
+    Ok(Json(LocalCommandApprovalCapabilitiesResponse {
+        policy_revision: capabilities.policy_revision,
+        code_maintainer_read,
+        approval_decision,
+    }))
 }
 
 async fn memory_engine_proxy(
@@ -152,18 +208,31 @@ async fn mcp_relay(
     headers: HeaderMap,
     body: Bytes,
 ) -> Result<Response, ApiError> {
-    let workspace_id = required_text(query.workspace_id, "workspace_id")?;
-    validate_device_workspace(&state, &user, device_id.as_str(), workspace_id.as_str()).await?;
+    let workspace_id = normalize_optional_text(query.workspace_id);
+    if let Some(workspace_id) = workspace_id.as_deref() {
+        validate_device_workspace(&state, &user, device_id.as_str(), workspace_id).await?;
+    } else if has_nonempty_header(&headers, "x-local-connector-mcp-manifest-id") {
+        let device = load_owned_device(&state, &user, device_id.as_str(), true).await?;
+        if device.status != DEVICE_STATUS_ONLINE {
+            return Err(ApiError::service_unavailable(
+                "Local Connector device is offline",
+            ));
+        }
+    } else {
+        return Err(ApiError::bad_request("workspace_id is required"));
+    }
     let mut relay_headers = relay_headers(&headers);
-    if let Some(cwd) = normalize_optional_text(query.cwd) {
-        relay_headers.insert("x-local-connector-cwd".to_string(), cwd);
+    if workspace_id.is_some() {
+        if let Some(cwd) = normalize_optional_text(query.cwd) {
+            relay_headers.insert("x-local-connector-cwd".to_string(), cwd);
+        }
     }
     let request = RelayRequest {
         message_type: "mcp".to_string(),
         request_id: Uuid::new_v4().to_string(),
         owner_user_id: user.effective_owner_user_id().to_string(),
         device_id,
-        workspace_id,
+        workspace_id: workspace_id.unwrap_or_default(),
         method: "POST".to_string(),
         path: "/mcp".to_string(),
         headers: relay_headers,
@@ -270,6 +339,12 @@ async fn sandbox_facade_impl(
     )
     .await?;
 
+    let relay_path = normalize_relay_path(path.as_str());
+    let relay_timeout = if relay_path == "/api/local/sandbox/images/mcp" {
+        state.config.sandbox_image_relay_request_timeout
+    } else {
+        state.config.relay_request_timeout
+    };
     let request = RelayRequest {
         message_type: "sandbox_request".to_string(),
         request_id: Uuid::new_v4().to_string(),
@@ -277,14 +352,14 @@ async fn sandbox_facade_impl(
         device_id: pairing.device_id.clone(),
         workspace_id: pairing.workspace_id.clone(),
         method: method.as_str().to_string(),
-        path: normalize_relay_path(path.as_str()),
+        path: relay_path,
         headers: relay_headers(&headers),
         body: relay_body(body.as_ref()),
     };
 
     let response = state
         .relay
-        .dispatch(request, state.config.relay_request_timeout)
+        .dispatch(request, relay_timeout)
         .await
         .map_err(relay_error_to_api_error)?;
     Ok(relay_response_to_http(response))
@@ -461,6 +536,14 @@ fn relay_headers(headers: &HeaderMap) -> BTreeMap<String, String> {
             value.to_str().ok().map(|value| (key, value.to_string()))
         })
         .collect()
+}
+
+fn has_nonempty_header(headers: &HeaderMap, name: &str) -> bool {
+    headers
+        .get(name)
+        .and_then(|value| value.to_str().ok())
+        .map(str::trim)
+        .is_some_and(|value| !value.is_empty())
 }
 
 fn relay_body(body: &[u8]) -> Value {

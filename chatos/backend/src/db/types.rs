@@ -59,7 +59,7 @@ impl Default for MongoConfig {
         Self {
             host: Some("localhost".to_string()),
             port: Some(27017),
-            database: Some("chat_app".to_string()),
+            database: Some("chatos".to_string()),
             username: None,
             password: None,
             connection_string: None,

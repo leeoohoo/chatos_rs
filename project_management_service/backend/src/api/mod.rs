@@ -4,6 +4,7 @@
 mod access;
 mod dependencies;
 mod dependency_graph;
+mod harness_git_access;
 mod harness_mcp;
 mod plan;
 mod projects;

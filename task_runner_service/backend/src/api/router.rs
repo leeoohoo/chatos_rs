@@ -19,7 +19,10 @@ use super::external_mcp_configs::{
     list_external_mcp_configs, update_external_mcp_config,
 };
 use super::internal::get_user_execution_options;
-use super::mcp::{get_mcp_server_info, list_mcp_catalog, mcp_entrypoint, preview_mcp_prompt};
+use super::mcp::{
+    get_mcp_server_info, list_mcp_catalog, list_task_capability_catalog, mcp_entrypoint,
+    preview_mcp_prompt,
+};
 use super::models::{
     create_model_config, delete_model_config, get_model_config, list_model_catalog,
     list_model_config_usage, list_model_configs, preview_model_catalog, test_model_config,
@@ -204,6 +207,10 @@ pub fn build_router(state: AppState) -> Router {
         )
         .route("/api/mcp/server", get(get_mcp_server_info))
         .route("/api/mcp/tools", get(list_mcp_catalog))
+        .route(
+            "/api/tasks/capabilities/catalog",
+            get(list_task_capability_catalog),
+        )
         .route("/api/mcp/prompt-preview", post(preview_mcp_prompt))
         .route_layer(middleware::from_fn_with_state(state.clone(), require_auth));
 

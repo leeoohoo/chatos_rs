@@ -14,6 +14,7 @@ use crate::relay::{relay_error_response, RelayRequest, RelayResponse, MCP_RELAY_
 use crate::LocalState;
 
 use super::provider::LocalConnectorMcpToolProvider;
+use super::user_runtime::{handle_user_mcp_body, is_user_mcp_request};
 
 pub(crate) async fn handle_mcp_request(
     value: Value,
@@ -75,6 +76,9 @@ async fn handle_standard_local_mcp_body(
     state: &LocalState,
     history_recorder: &CommandHistoryRecorder,
 ) -> Result<Value> {
+    if is_user_mcp_request(request) {
+        return handle_user_mcp_body(request, state).await;
+    }
     let rpc_request = serde_json::from_value::<JsonRpcRequest>(request.body.clone())
         .context("parse local connector MCP JSON-RPC request")?;
     let provider = LocalConnectorMcpToolProvider {

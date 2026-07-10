@@ -51,6 +51,15 @@ pub(in super::super) async fn move_entry(
         );
     };
 
+    if super::super::harness_project_bridge::is_harness_project_path(source_raw.as_str())
+        || super::super::harness_project_bridge::is_harness_project_path(target_parent_raw.as_str())
+    {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "云端项目目录暂不支持拖拽移动" })),
+        );
+    }
+
     let source_path =
         match policy.authorize_existing_entry(source_raw.as_str(), "源路径不存在", "源路径不合法")
         {

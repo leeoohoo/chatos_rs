@@ -5,7 +5,9 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
-use chatos_sandbox_image_mcp::SandboxImageBackend;
+use chatos_sandbox_image_mcp::{
+    SandboxImageBackend, SANDBOX_IMAGE_PROJECT_ID_HEADER, SANDBOX_IMAGE_RUN_ID_HEADER,
+};
 use reqwest::Method;
 use serde_json::{json, Value};
 use tokio::sync::Mutex;
@@ -78,9 +80,24 @@ async fn handle_local_sandbox_request(
     let path = normalize_sandbox_http_path(request.path.as_deref().unwrap_or("/"));
     if method == Method::POST && path == "/api/local/sandbox/images/mcp" {
         let runtime = relay_local_runtime(http_client, sandbox_runtime, history_recorder);
-        let backend = LocalSandboxImageRelayBackend { runtime };
+        let backend = LocalSandboxImageRelayBackend {
+            runtime,
+            project_id: relay_header(request, SANDBOX_IMAGE_PROJECT_ID_HEADER),
+            run_id: relay_header(request, SANDBOX_IMAGE_RUN_ID_HEADER),
+        };
         let body = chatos_sandbox_image_mcp::handle_jsonrpc(&backend, request.body.clone()).await;
         return Ok((200, BTreeMap::new(), body));
+    }
+    if method == Method::GET && path == "/api/local/sandbox/images/jobs" {
+        if !state.sandbox.enabled {
+            return Ok((
+                400,
+                BTreeMap::new(),
+                json!({ "error": "local sandbox is disabled" }),
+            ));
+        }
+        let jobs = sandbox_runtime.jobs.read().await.clone();
+        return Ok((200, BTreeMap::new(), json!(jobs)));
     }
     if method == Method::POST && path == "/api/sandboxes/leases" {
         return create_local_sandbox_lease(request, state, http_client, sandbox_runtime).await;
@@ -142,6 +159,8 @@ fn relay_local_runtime(
 
 struct LocalSandboxImageRelayBackend {
     runtime: LocalRuntime,
+    project_id: Option<String>,
+    run_id: Option<String>,
 }
 
 #[async_trait::async_trait]
@@ -166,11 +185,27 @@ impl SandboxImageBackend for LocalSandboxImageRelayBackend {
         ensure_docker_running()
             .await
             .map_err(|err| err.to_string())?;
-        let job = start_local_sandbox_image_job(&self.runtime, features, custom_build_script)
-            .await
-            .map_err(|err| err.to_string())?;
+        let job = start_local_sandbox_image_job(
+            &self.runtime,
+            features,
+            custom_build_script,
+            self.project_id.clone(),
+            self.run_id.clone(),
+        )
+        .await
+        .map_err(|err| err.to_string())?;
         Ok(json!(job))
     }
+}
+
+fn relay_header(request: &RelayRequest, name: &str) -> Option<String> {
+    request
+        .headers
+        .get(name)
+        .map(String::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
 }
 
 async fn ensure_relay_local_sandbox_enabled(runtime: &LocalRuntime) -> Result<(), String> {

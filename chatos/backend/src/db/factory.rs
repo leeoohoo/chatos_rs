@@ -226,7 +226,7 @@ fn apply_env_overrides(mut cfg: DatabaseConfig) -> DatabaseConfig {
             .ok()
             .filter(|v| !v.trim().is_empty())
             .or(mongo.database.clone())
-            .unwrap_or_else(|| "chat_app".to_string());
+            .unwrap_or_else(|| "chatos".to_string());
         let username = std::env::var("MONGODB_USER")
             .ok()
             .filter(|v| !v.trim().is_empty())
@@ -267,4 +267,78 @@ fn apply_env_overrides(mut cfg: DatabaseConfig) -> DatabaseConfig {
     }
 
     cfg
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::{Mutex, OnceLock};
+
+    use super::{apply_env_overrides, DatabaseConfig};
+    use crate::db::types::DatabaseType;
+
+    const MONGO_ENV_KEYS: &[&str] = &[
+        "DATABASE_TYPE",
+        "MONGODB_CONNECTION_STRING",
+        "MONGODB_HOST",
+        "MONGODB_PORT",
+        "MONGODB_DB",
+        "MONGODB_USER",
+        "MONGODB_PASSWORD",
+        "MONGODB_AUTH_SOURCE",
+    ];
+
+    struct EnvRestore {
+        saved: Vec<(&'static str, Option<String>)>,
+    }
+
+    impl EnvRestore {
+        fn capture(keys: &[&'static str]) -> Self {
+            Self {
+                saved: keys
+                    .iter()
+                    .map(|key| (*key, std::env::var(key).ok()))
+                    .collect(),
+            }
+        }
+    }
+
+    impl Drop for EnvRestore {
+        fn drop(&mut self) {
+            for (key, value) in &self.saved {
+                match value {
+                    Some(value) => std::env::set_var(key, value),
+                    None => std::env::remove_var(key),
+                }
+            }
+        }
+    }
+
+    fn env_lock() -> &'static Mutex<()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+    }
+
+    #[test]
+    fn mongo_env_without_database_uses_chatos_default() {
+        let _guard = env_lock().lock().expect("env lock poisoned");
+        let _restore = EnvRestore::capture(MONGO_ENV_KEYS);
+        for key in MONGO_ENV_KEYS {
+            std::env::remove_var(key);
+        }
+        std::env::set_var("MONGODB_HOST", "127.0.0.1");
+        std::env::set_var("MONGODB_PORT", "27018");
+        std::env::set_var("MONGODB_USER", "admin");
+        std::env::set_var("MONGODB_PASSWORD", "admin");
+        std::env::set_var("MONGODB_AUTH_SOURCE", "admin");
+
+        let cfg = apply_env_overrides(DatabaseConfig::default());
+
+        assert!(matches!(cfg.db_type, Some(DatabaseType::Mongodb)));
+        let mongo = cfg.mongodb.expect("mongodb config");
+        assert_eq!(mongo.database.as_deref(), Some("chatos"));
+        assert_eq!(
+            mongo.connection_string.as_deref(),
+            Some("mongodb://admin:admin@127.0.0.1:27018/chatos?authSource=admin"),
+        );
+    }
 }

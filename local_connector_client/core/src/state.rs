@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::approval::ApprovalState;
 use crate::history::CommandHistoryEntry;
+use crate::mcp::manifest::LocalMcpState;
 use crate::model_configs::ModelConfigState;
 use crate::sandbox::types::LocalSandboxState;
 
@@ -34,6 +35,8 @@ pub(crate) struct LocalState {
     pub(crate) approval: ApprovalState,
     #[serde(default)]
     pub(crate) model_configs: ModelConfigState,
+    #[serde(default)]
+    pub(crate) mcp_configs: LocalMcpState,
     #[serde(default)]
     pub(crate) runtime_settings: LocalRuntimeSettings,
 }
@@ -105,7 +108,14 @@ impl LocalState {
                 .with_context(|| format!("create state dir {}", parent.display()))?;
         }
         let content = serde_json::to_string_pretty(self)?;
-        fs::write(path, content).with_context(|| format!("write state file {}", path.display()))
+        fs::write(path, content).with_context(|| format!("write state file {}", path.display()))?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(path, fs::Permissions::from_mode(0o600))
+                .with_context(|| format!("restrict state file permissions {}", path.display()))?;
+        }
+        Ok(())
     }
 
     pub(crate) fn workspace_by_id(&self, workspace_id: &str) -> Option<&WorkspaceState> {

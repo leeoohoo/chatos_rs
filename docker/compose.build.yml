@@ -32,6 +32,15 @@ services:
         PACKAGE_NAME: project_management_service_backend
         BIN_NAME: project_management_service_backend
 
+  plugin-management-backend:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.rust-service
+      args:
+        MANIFEST_PATH: Cargo.toml
+        PACKAGE_NAME: plugin_management_service_backend
+        BIN_NAME: plugin_management_service_backend
+
   local-connector-service-backend:
     build:
       context: ..
@@ -106,6 +115,13 @@ services:
       dockerfile: docker/Dockerfile.frontend
       args:
         APP_DIR: project_management_service/frontend
+
+  plugin-management-frontend:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.frontend
+      args:
+        APP_DIR: plugin_management_service/frontend
 
   task-runner-frontend:
     build:

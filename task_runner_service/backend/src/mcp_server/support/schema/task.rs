@@ -4,7 +4,7 @@
 use serde_json::{json, Value};
 
 use crate::models::{mcp_builtin_kind_guide, mcp_builtin_kind_values};
-use chatos_mcp_runtime::{builtin_kind_by_any, complete_builtin_kind_dependencies};
+use chatos_mcp_runtime::builtin_kind_by_any;
 
 pub(crate) fn create_task_schema() -> Value {
     let enabled_builtin_kinds_description = builtin_mcp_kind_schema_description();
@@ -190,7 +190,7 @@ pub(crate) fn normalize_mcp_builtin_kind_names(values: Vec<String>) -> Result<Ve
             out.push(kind);
         }
     }
-    Ok(complete_builtin_kind_dependencies(out)
+    Ok(out
         .into_iter()
         .map(|kind| kind.kind_name().to_string())
         .collect())
@@ -212,4 +212,123 @@ pub(crate) fn task_status_values() -> Vec<&'static str> {
 
 pub(crate) fn prompt_status_values() -> Vec<&'static str> {
     vec!["pending", "submitted", "cancelled", "timed_out", "failed"]
+}
+
+pub(crate) fn restrict_task_capability_selection_schemas(
+    tools: &mut [Value],
+    selectable_builtin_kinds: &[String],
+    selectable_external_mcp_ids: &[String],
+) {
+    for tool in tools {
+        let Some(name) = tool.get("name").and_then(Value::as_str) else {
+            continue;
+        };
+        let properties_pointer = match name {
+            "create_task" => Some("/inputSchema/properties"),
+            "create_tasks_with_prerequisites" => {
+                Some("/inputSchema/properties/tasks/items/properties")
+            }
+            "update_task" => Some("/inputSchema/properties/patch/properties/mcp_config/properties"),
+            _ => None,
+        };
+        let Some(properties_pointer) = properties_pointer else {
+            continue;
+        };
+        restrict_optional_selection_property(
+            tool,
+            properties_pointer,
+            "enabled_builtin_kinds",
+            selectable_builtin_kinds,
+            "Optional builtin MCP capabilities available for this task. Required and unavailable capabilities are managed by Task Runner and are not selectable.",
+        );
+        restrict_optional_selection_property(
+            tool,
+            properties_pointer,
+            "external_mcp_config_ids",
+            selectable_external_mcp_ids,
+            "Optional external MCP resource ids available for this task. Use only values from this field or list_external_mcp_configs.",
+        );
+    }
+}
+
+fn restrict_optional_selection_property(
+    tool: &mut Value,
+    properties_pointer: &str,
+    property_name: &str,
+    allowed_values: &[String],
+    description: &str,
+) {
+    let Some(properties) = tool
+        .pointer_mut(properties_pointer)
+        .and_then(Value::as_object_mut)
+    else {
+        return;
+    };
+    if allowed_values.is_empty() {
+        properties.remove(property_name);
+        return;
+    }
+    let Some(property) = properties
+        .get_mut(property_name)
+        .and_then(Value::as_object_mut)
+    else {
+        return;
+    };
+    property.insert("description".to_string(), json!(description));
+    let items = property
+        .entry("items".to_string())
+        .or_insert_with(|| json!({ "type": "string" }));
+    if let Some(items) = items.as_object_mut() {
+        items.insert("type".to_string(), json!("string"));
+        items.insert("enum".to_string(), json!(allowed_values));
+    }
+}
+
+#[cfg(test)]
+mod capability_schema_tests {
+    use super::*;
+
+    #[test]
+    fn ai_selection_schema_contains_only_optional_values() {
+        let mut tools = vec![json!({
+            "name": "create_task",
+            "inputSchema": create_task_schema()
+        })];
+        restrict_task_capability_selection_schemas(
+            &mut tools,
+            &["CodeMaintainerRead".to_string()],
+            &["user-mcp-1".to_string()],
+        );
+        assert_eq!(
+            tools[0]
+                .pointer("/inputSchema/properties/enabled_builtin_kinds/items/enum")
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default(),
+            vec![json!("CodeMaintainerRead")]
+        );
+        assert_eq!(
+            tools[0]
+                .pointer("/inputSchema/properties/external_mcp_config_ids/items/enum")
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default(),
+            vec![json!("user-mcp-1")]
+        );
+    }
+
+    #[test]
+    fn empty_optional_sets_remove_ai_selection_fields() {
+        let mut tools = vec![json!({
+            "name": "create_task",
+            "inputSchema": create_task_schema()
+        })];
+        restrict_task_capability_selection_schemas(&mut tools, &[], &[]);
+        assert!(tools[0]
+            .pointer("/inputSchema/properties/enabled_builtin_kinds")
+            .is_none());
+        assert!(tools[0]
+            .pointer("/inputSchema/properties/external_mcp_config_ids")
+            .is_none());
+    }
 }
