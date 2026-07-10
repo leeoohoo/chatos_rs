@@ -32,8 +32,6 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
     activePanel,
     showSystemContextEditor,
     setShowSystemContextEditor,
-    showTaskRunnerExternalMcpManager,
-    setShowTaskRunnerExternalMcpManager,
     showAgentManager,
     setShowAgentManager,
     showNotepadPanel,
@@ -79,7 +77,6 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
         onToggleSidebar={toggleSidebar}
         onOpenNotepad={() => setShowNotepadPanel(true)}
         onOpenApplications={() => setShowApplicationsPanel(true)}
-        onOpenTaskRunnerExternalMcpManager={() => setShowTaskRunnerExternalMcpManager(true)}
         onOpenAgentManager={() => setShowAgentManager(true)}
         onOpenSystemContextEditor={() => setShowSystemContextEditor(true)}
         onOpenUserSettings={() => setShowUserSettings(true)}
@@ -108,8 +105,6 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
         runtimeContextProps={runtimeContextProps}
         showNotepadPanel={showNotepadPanel}
         setShowNotepadPanel={setShowNotepadPanel}
-        showTaskRunnerExternalMcpManager={showTaskRunnerExternalMcpManager}
-        setShowTaskRunnerExternalMcpManager={setShowTaskRunnerExternalMcpManager}
         showAgentManager={showAgentManager}
         setShowAgentManager={setShowAgentManager}
         showUserSettings={showUserSettings}

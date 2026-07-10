@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-import { useEffect, useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   Form,
@@ -35,9 +34,9 @@ import { TaskListToolbar } from './tasks/TaskListToolbar';
 import { TaskListTable } from './tasks/TaskListTable';
 import { TaskMcpPromptPreviewModal } from './tasks/TaskMcpPromptPreviewModal';
 import { TaskSubtasksDrawer } from './tasks/TaskSubtasksDrawer';
+import { useTasksPageEffects } from './tasks/useTasksPageEffects';
 import { useTaskMutations } from './tasks/useTaskMutations';
 import { useTasksPageData } from './tasks/useTasksPageData';
-import { api } from '../api/client';
 import type {
   StartTaskRunPayload,
   TaskRecord,
@@ -110,8 +109,6 @@ export function TasksPage() {
     tagOptions,
     remoteServerMap,
     externalMcpConfigMap,
-    taskEditorSkills,
-    skillLabelMap,
     selectedTask,
     detailResultSummary,
     detailRemoteOperations,
@@ -142,60 +139,25 @@ export function TasksPage() {
     editingTaskId: editingTask?.id,
   });
 
-  const taskSubtasksQuery = useQuery({
-    queryKey: ['task-subtasks', subtasksParentTask?.id],
-    queryFn: () =>
-      api.listTasks({
-        parent_task_id: subtasksParentTask!.id,
-        limit: 100,
-      }),
-    enabled: Boolean(subtasksParentTask),
+  const { taskSubtasksQuery } = useTasksPageEffects({
+    visibleTasks: tasksQuery.data?.items,
+    routeTaskId,
+    statusFilter,
+    keywordFilter,
+    tagFilter,
+    routeModelConfigId,
+    routeProjectId,
+    scheduledOnly,
+    drawerOpen,
+    editingTask,
+    form,
+    taskEditorMcpResolution: taskEditorMcpResolutionQuery.data,
+    subtasksParentTask,
+    setSelectedTaskIds,
+    setTaskPage,
+    setDetailTaskId,
+    setDetailTaskPreview,
   });
-
-  useEffect(() => {
-    if (!tasksQuery.data) {
-      return;
-    }
-    const visibleIds = new Set(tasksQuery.data.items.map((task) => task.id));
-    setSelectedTaskIds((current) => current.filter((taskId) => visibleIds.has(taskId)));
-  }, [tasksQuery.data]);
-
-  useEffect(() => {
-    setTaskPage(1);
-  }, [statusFilter, keywordFilter, tagFilter, routeModelConfigId, routeProjectId, scheduledOnly]);
-
-  useEffect(() => {
-    if (routeTaskId) {
-      setDetailTaskId(routeTaskId);
-      setDetailTaskPreview((current) => {
-        if (current?.id === routeTaskId) {
-          return current;
-        }
-        return tasksQuery.data?.items.find((task) => task.id === routeTaskId) || null;
-      });
-      return;
-    }
-    setDetailTaskId(null);
-    setDetailTaskPreview(null);
-  }, [routeTaskId, tasksQuery.data]);
-
-  useEffect(() => {
-    const resolution = taskEditorMcpResolutionQuery.data;
-    if (!drawerOpen || !editingTask || !resolution) {
-      return;
-    }
-    const current = form.getFieldValue('enabledBuiltinKinds') || [];
-    const stored = buildEditTaskFormValues(editingTask).enabledBuiltinKinds || [];
-    if (!sameStringArray(current, stored)) {
-      return;
-    }
-    const requested = completeEnabledBuiltinKindDependencies(
-      resolution.requested_builtin_kinds,
-    );
-    if (!sameStringArray(current, requested)) {
-      form.setFieldsValue({ enabledBuiltinKinds: requested });
-    }
-  }, [drawerOpen, editingTask, form, taskEditorMcpResolutionQuery.data]);
 
   const {
     createTaskMutation,
@@ -228,7 +190,6 @@ export function TasksPage() {
     modelNameMap,
     projectNameMap,
     externalMcpConfigMap,
-    skillLabelMap,
     pendingPromptCountByTaskId,
     scheduleModeLabels,
     taskRowRemoteActivityByTaskId,
@@ -537,7 +498,6 @@ export function TasksPage() {
         taskSummaryMap={taskSummaryMap}
         remoteServerMap={remoteServerMap}
         externalMcpConfigMap={externalMcpConfigMap}
-        skillLabelMap={skillLabelMap}
         taskStatusLabel={taskStatusLabel}
         onClose={closeDetailDrawer}
         onEditTask={openEditDrawer}
@@ -577,7 +537,6 @@ export function TasksPage() {
         mcpCatalogEntries={mcpCatalogQuery.data}
         remoteServers={remoteServersQuery.data}
         externalMcpConfigs={externalMcpConfigsQuery.data}
-        skills={taskEditorSkills}
         onClose={closeTaskDrawer}
         onSubmit={handleSubmit}
         onPreviewPrompt={openDraftMcpPreviewModal}
@@ -663,11 +622,4 @@ export function TasksPage() {
       />
     </>
   );
-}
-
-function sameStringArray(left: string[], right: string[]) {
-  if (left.length !== right.length) {
-    return false;
-  }
-  return left.every((value, index) => value === right[index]);
 }

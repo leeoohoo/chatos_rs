@@ -28,8 +28,6 @@ impl TaskRunnerMcpService {
             | "create_task"
             | "list_mcp_builtin_catalog"
             | "list_external_mcp_configs"
-            | "search_installed_skills"
-            | "get_skill_detail"
             | "create_tasks_with_prerequisites"
             | "update_task"
             | "set_task_prerequisites"

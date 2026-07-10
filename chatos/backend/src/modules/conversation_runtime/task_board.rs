@@ -50,7 +50,6 @@ pub struct TaskBoardRuntimeContext {
     pub contact_system_prompt: Option<String>,
     pub builtin_mcp_system_prompt: Option<String>,
     pub command_system_prompt: Option<String>,
-    pub task_runner_skill_prompt: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -232,7 +231,6 @@ pub fn build_runtime_context(
     contact_system_prompt: Option<String>,
     builtin_mcp_system_prompt: Option<String>,
     command_system_prompt: Option<String>,
-    task_runner_skill_prompt: Option<String>,
 ) -> Option<TaskBoardRuntimeContext> {
     let session_id = session_id
         .map(|value| value.trim().to_string())
@@ -248,7 +246,6 @@ pub fn build_runtime_context(
         contact_system_prompt,
         builtin_mcp_system_prompt,
         command_system_prompt,
-        task_runner_skill_prompt,
     })
 }
 
@@ -260,7 +257,6 @@ pub async fn load_prefixed_input_items(context: &TaskBoardRuntimeContext) -> Opt
         context.contact_system_prompt.as_deref(),
         context.builtin_mcp_system_prompt.as_deref(),
         context.command_system_prompt.as_deref(),
-        context.task_runner_skill_prompt.as_deref(),
     )
     .await
 }
@@ -272,7 +268,6 @@ pub async fn build_runtime_prefixed_input_items_for_turn(
     contact_system_prompt: Option<&str>,
     builtin_mcp_system_prompt: Option<&str>,
     command_system_prompt: Option<&str>,
-    task_runner_skill_prompt: Option<&str>,
 ) -> Option<Vec<Value>> {
     let task_board_prompt = build_task_board_prompt(session_id, turn_id, locale).await;
     build_runtime_prefixed_input_items(
@@ -280,7 +275,6 @@ pub async fn build_runtime_prefixed_input_items_for_turn(
         contact_system_prompt,
         builtin_mcp_system_prompt,
         command_system_prompt,
-        task_runner_skill_prompt,
     )
 }
 
@@ -461,16 +455,11 @@ mod tests {
             Some("contact".to_string()),
             Some("builtin".to_string()),
             Some("command".to_string()),
-            Some("task runner skill".to_string()),
         )
         .expect("context should be present");
 
         assert_eq!(context.session_id, "session-1");
         assert_eq!(context.turn_id.as_deref(), Some("turn-1"));
-        assert_eq!(
-            context.task_runner_skill_prompt.as_deref(),
-            Some("task runner skill")
-        );
     }
 
     #[test]

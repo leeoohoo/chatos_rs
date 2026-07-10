@@ -35,7 +35,6 @@ type BuildTaskTableColumnsParams = {
   modelNameMap: Map<string, string>;
   projectNameMap: Map<string, string>;
   externalMcpConfigMap: Map<string, ExternalMcpConfigRecord>;
-  skillLabelMap: Map<string, string>;
   pendingPromptCountByTaskId: Map<string, number>;
   scheduleModeLabels: Record<TaskScheduleMode, string>;
   taskRowRemoteActivityByTaskId: Map<string, TaskRowRemoteActivity>;
@@ -53,7 +52,6 @@ export function buildTaskTableColumns({
   modelNameMap,
   projectNameMap,
   externalMcpConfigMap,
-  skillLabelMap,
   pendingPromptCountByTaskId,
   scheduleModeLabels,
   taskRowRemoteActivityByTaskId,
@@ -204,14 +202,11 @@ export function buildTaskTableColumns({
       render: (mcpConfig: TaskMcpConfig) => {
         const builtinCount = mcpConfig.enabled_builtin_kinds.length;
         const externalConfigIds = mcpConfig.external_mcp_config_ids || [];
-        const skillIds = mcpConfig.skill_ids || [];
         const visibleExternalConfigs = externalConfigIds.slice(0, 2);
-        const visibleSkillIds = skillIds.slice(0, 2);
         const hiddenExternalCount = Math.max(
           externalConfigIds.length - visibleExternalConfigs.length,
           0,
         );
-        const hiddenSkillCount = Math.max(skillIds.length - visibleSkillIds.length, 0);
         return (
           <Space size={[4, 4]} wrap>
             <Tag color={mcpConfig.enabled ? 'processing' : 'default'}>
@@ -220,9 +215,6 @@ export function buildTaskTableColumns({
             <Tag>{t('tasks.mcpBuiltinCount', { count: builtinCount })}</Tag>
             <Tag color={externalConfigIds.length ? 'blue' : undefined}>
               {t('tasks.mcpExternalCount', { count: externalConfigIds.length })}
-            </Tag>
-            <Tag color={skillIds.length ? 'purple' : undefined}>
-              {t('tasks.mcpSkillCount', { count: skillIds.length })}
             </Tag>
             {visibleExternalConfigs.map((configId) => {
               const config = externalMcpConfigMap.get(configId);
@@ -233,12 +225,6 @@ export function buildTaskTableColumns({
               );
             })}
             {hiddenExternalCount > 0 ? <Tag>+{hiddenExternalCount}</Tag> : null}
-            {visibleSkillIds.map((skillId) => (
-              <Tag key={skillId} color="purple">
-                {skillLabelMap.get(skillId) || skillId}
-              </Tag>
-            ))}
-            {hiddenSkillCount > 0 ? <Tag color="purple">+{hiddenSkillCount}</Tag> : null}
           </Space>
         );
       },

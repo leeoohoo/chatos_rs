@@ -17,7 +17,7 @@ use crate::models::{
     PUBLIC_PROJECT_ID, TASK_PROFILE_CHATOS_PLAN, TASK_PROFILE_DEFAULT,
 };
 use crate::services::{
-    ExternalMcpConfigService, McpCatalogService, ModelConfigService, RunService, SkillService,
+    ExternalMcpConfigService, McpCatalogService, ModelConfigService, RunService,
     TaskProjectService, TaskService,
 };
 use crate::store::AppStore;
@@ -26,6 +26,8 @@ use std::net::{IpAddr, Ipv4Addr};
 use std::time::Duration;
 
 mod plan_profile;
+mod plan_profile_async;
+mod plan_profile_scope;
 mod schema;
 fn valid_planner_create_request() -> CreateTaskRequest {
     CreateTaskRequest {
@@ -56,7 +58,6 @@ async fn test_mcp_service() -> (TaskRunnerMcpService, TaskService, TaskProjectSe
     let task_service = TaskService::new(config.clone(), store.clone());
     let model_config_service = ModelConfigService::new(store.clone());
     let external_mcp_config_service = ExternalMcpConfigService::new(store.clone());
-    let skill_service = SkillService::new(&config, store.clone());
     let ask_user_prompt_service = AskUserPromptService::new(store.clone());
     let run_service = RunService::new(config, store.clone(), ask_user_prompt_service.clone());
     let mcp_catalog_service =
@@ -67,7 +68,6 @@ async fn test_mcp_service() -> (TaskRunnerMcpService, TaskService, TaskProjectSe
             task_service.clone(),
             model_config_service,
             external_mcp_config_service,
-            skill_service,
             run_service,
             ask_user_prompt_service,
             mcp_catalog_service,

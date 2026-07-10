@@ -80,7 +80,6 @@ interface ProjectDetailOverlaysProps {
   onCreateWorkItem: (values: WorkItemFormValues) => void;
   taskRunnerModelOptions: SelectOption[];
   taskRunnerToolOptions: SelectOption[];
-  taskRunnerSkillOptions: SelectOption[];
   executionOptionsLoading: boolean;
   executionOptionsErrorMessage?: string;
   workItemDepTarget: ProjectWorkItemRecord | null;
@@ -97,7 +96,6 @@ interface ProjectDetailOverlaysProps {
   onCloseWorkItemDetail: () => void;
   taskRunnerModelLabelMap: ExecutionOptionLabelMap;
   taskRunnerToolLabelMap: ExecutionOptionLabelMap;
-  taskRunnerSkillLabelMap: ExecutionOptionLabelMap;
   requirements: RequirementRecord[];
 }
 
@@ -126,7 +124,6 @@ export function ProjectDetailOverlays({
   onCreateWorkItem,
   taskRunnerModelOptions,
   taskRunnerToolOptions,
-  taskRunnerSkillOptions,
   executionOptionsLoading,
   executionOptionsErrorMessage,
   workItemDepTarget,
@@ -143,7 +140,6 @@ export function ProjectDetailOverlays({
   onCloseWorkItemDetail,
   taskRunnerModelLabelMap,
   taskRunnerToolLabelMap,
-  taskRunnerSkillLabelMap,
   requirements,
 }: ProjectDetailOverlaysProps) {
   const [selectedDocumentId, setSelectedDocumentId] = useState<string | undefined>();
@@ -316,7 +312,6 @@ export function ProjectDetailOverlays({
             priority: 0,
             sort_order: 0,
             task_runner_enabled_tool_ids: [],
-            task_runner_skill_ids: [],
             is_planning_task: false,
           }}
           onFinish={onCreateWorkItem}
@@ -391,15 +386,6 @@ export function ProjectDetailOverlays({
               placeholder="选择可用工具"
             />
           </Form.Item>
-          <Form.Item name="task_runner_skill_ids" label="Skills">
-            <Select
-              mode="multiple"
-              showSearch
-              loading={executionOptionsLoading}
-              options={taskRunnerSkillOptions}
-              placeholder="选择执行时加载的 Skill"
-            />
-          </Form.Item>
           <Form.Item name="status" label="状态">
             <Select options={workItemStatusOptions} />
           </Form.Item>
@@ -466,7 +452,6 @@ export function ProjectDetailOverlays({
             workItem={workItemDetailTarget}
             modelLabelMap={taskRunnerModelLabelMap}
             toolLabelMap={taskRunnerToolLabelMap}
-            skillLabelMap={taskRunnerSkillLabelMap}
             requirementTitle={
               requirements.find((item) => item.id === workItemDetailTarget.requirement_id)?.title ||
               workItemDetailTarget.requirement_id

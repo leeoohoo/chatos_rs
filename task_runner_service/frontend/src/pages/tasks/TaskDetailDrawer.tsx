@@ -69,7 +69,6 @@ type TaskDetailDrawerProps = {
   taskSummaryMap: Map<string, string>;
   remoteServerMap: Map<string, RemoteServerRecord>;
   externalMcpConfigMap: Map<string, ExternalMcpConfigRecord>;
-  skillLabelMap: Map<string, string>;
   taskStatusLabel: (status: TaskStatus) => string;
   onClose: () => void;
   onEditTask: (task: TaskRecord) => void;
@@ -109,7 +108,6 @@ export function TaskDetailDrawer({
   taskSummaryMap,
   remoteServerMap,
   externalMcpConfigMap,
-  skillLabelMap,
   taskStatusLabel,
   onClose,
   onEditTask,
@@ -246,19 +244,6 @@ export function TaskDetailDrawer({
                       </Tag>
                     );
                   })}
-                </Space>
-              ) : (
-                t('common.noData')
-              )}
-            </Descriptions.Item>
-            <Descriptions.Item label={t('tasks.detail.skills')}>
-              {task.mcp_config.skill_ids?.length ? (
-                <Space wrap>
-                  {task.mcp_config.skill_ids.map((skillId) => (
-                    <Tag key={skillId} color="purple">
-                      {skillLabelMap.get(skillId) || skillId}
-                    </Tag>
-                  ))}
                 </Space>
               ) : (
                 t('common.noData')

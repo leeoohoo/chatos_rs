@@ -13,6 +13,7 @@ const INIT_SQL: &str = include_str!("../../migrations/0001_init.sql");
 mod projects;
 mod requirements;
 mod runtime_environment;
+mod work_item_links;
 mod work_items;
 
 #[derive(Clone)]
@@ -346,6 +347,7 @@ impl SqliteStore {
 mod tests {
     mod projects;
     mod requirements;
+    mod requirements_repair;
     mod schema;
     mod support;
     mod work_items;

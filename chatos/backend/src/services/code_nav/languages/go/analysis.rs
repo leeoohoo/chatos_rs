@@ -6,15 +6,15 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use once_cell::sync::Lazy;
-use regex::{Regex, RegexBuilder};
+use regex::Regex;
 use walkdir::{DirEntry, WalkDir};
 
-use crate::services::code_nav::file_limits::{read_code_nav_file_to_string, truncate_preview};
+use crate::services::code_nav::file_limits::read_code_nav_file_to_string;
 use crate::services::code_nav::languages::regex_utils::compile_static_regex;
 use crate::services::code_nav::languages::shared_nav::{
     declaration_kind_from_symbol_kind as shared_declaration_kind_from_symbol_kind,
     ensure_code_nav_text_search_budget, find_column, is_type_like, nav_location_from_coordinates,
-    normalize_path,
+    normalize_path, search_text_occurrences, TextSearchLine, TextSearchMatchParts,
 };
 use crate::services::code_nav::types::{NavLocation, NavPositionRequest, ProjectContext};
 
@@ -210,71 +210,34 @@ pub(crate) fn search_go_occurrences(
     whole_word: bool,
     max_results: usize,
 ) -> Result<Vec<GoSearchMatch>, String> {
-    let pattern = if whole_word {
-        format!(r"\b{}\b", regex::escape(query))
-    } else {
-        regex::escape(query)
-    };
-    let regex = RegexBuilder::new(&pattern)
-        .case_insensitive(!case_sensitive)
-        .unicode(true)
-        .build()
-        .map_err(|err| err.to_string())?;
-
-    let mut out = Vec::new();
-    let started_at = Instant::now();
-    let mut visited_entries = 0usize;
-
-    for entry in WalkDir::new(root)
-        .into_iter()
-        .filter_entry(|entry| should_visit_go_path(entry))
-    {
-        visited_entries = visited_entries.saturating_add(1);
-        ensure_code_nav_text_search_budget(started_at, visited_entries)?;
-
-        let entry = match entry {
-            Ok(entry) => entry,
-            Err(_) => continue,
-        };
-        if !entry.file_type().is_file() {
-            continue;
-        }
-        if entry.path().extension().and_then(|value| value.to_str()) != Some("go") {
-            continue;
-        }
-        let content = match read_code_nav_file_to_string(entry.path()) {
-            Ok(content) => content,
-            Err(_) => continue,
-        };
-        let mut in_block_comment = false;
-        for (index, raw_line) in content.lines().enumerate() {
-            if index % 128 == 0 {
-                ensure_code_nav_text_search_budget(started_at, visited_entries)?;
-            }
-
-            let sanitized = strip_go_comments(raw_line, &mut in_block_comment);
-            let normalized = sanitized.trim_end_matches('\r');
-            for found in regex.find_iter(normalized) {
-                if out.len() >= max_results {
-                    return Ok(out);
-                }
-                let column = normalized[..found.start()].chars().count() + 1;
-                let relative_path = pathdiff::diff_paths(entry.path(), root)
-                    .unwrap_or_else(|| entry.path().to_path_buf())
-                    .to_string_lossy()
-                    .replace('\\', "/");
-                out.push(GoSearchMatch {
-                    path: normalize_path(entry.path()).to_string_lossy().to_string(),
-                    relative_path,
-                    line: index + 1,
-                    column,
-                    text: truncate_preview(raw_line.trim_end_matches('\r'), 400),
-                });
-            }
-        }
-    }
-
-    Ok(out)
+    search_text_occurrences(
+        root,
+        query,
+        case_sensitive,
+        whole_word,
+        max_results,
+        GO_IGNORED_DIRS,
+        |path| path.extension().and_then(|value| value.to_str()) == Some("go"),
+        |_path, content| {
+            let mut in_block_comment = false;
+            content
+                .lines()
+                .map(|raw_line| TextSearchLine {
+                    searchable_text: strip_go_comments(raw_line, &mut in_block_comment)
+                        .trim_end_matches('\r')
+                        .to_string(),
+                    preview_text: raw_line.trim_end_matches('\r').to_string(),
+                })
+                .collect()
+        },
+        |parts: TextSearchMatchParts| GoSearchMatch {
+            path: parts.path,
+            relative_path: parts.relative_path,
+            line: parts.line,
+            column: parts.column,
+            text: parts.text,
+        },
+    )
 }
 
 pub(crate) fn nav_location_from_symbol(

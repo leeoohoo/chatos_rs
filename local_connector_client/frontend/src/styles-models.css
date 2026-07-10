@@ -1,0 +1,204 @@
+/* SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0 */
+/* Required Notice: Copyright (c) 2025 AI Chat Team */
+
+.modelPage {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.modelLayout {
+  display: grid;
+  gap: 16px;
+  grid-template-columns: minmax(0, 1fr) minmax(360px, 0.82fr);
+}
+
+.modelList {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+
+.modelSectionTitle {
+  align-items: center;
+  color: #435048;
+  display: flex;
+  font-size: 13px;
+  font-weight: 700;
+  justify-content: space-between;
+  padding: 4px 2px 0;
+}
+
+.modelSectionTitle small {
+  color: #65726b;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.modelRow {
+  align-items: flex-start;
+  border: 1px solid #e4eae4;
+  border-radius: 8px;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+  padding: 12px;
+}
+
+.providerRow {
+  background: #fbfcfa;
+}
+
+.modelRow > div:first-child {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+}
+
+.modelRow span {
+  color: #65726b;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.modelTitleLine,
+.modelActions {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.modelTitleLine strong {
+  overflow-wrap: anywhere;
+}
+
+.modelActions {
+  flex: 0 0 auto;
+}
+
+.providerModelChips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 2px;
+}
+
+.providerModelChips span {
+  background: #eef3ee;
+  border-radius: 6px;
+  color: #435048;
+  font-size: 12px;
+  padding: 4px 7px;
+}
+
+.modelEditor {
+  background: #fbfcfa;
+  border: 1px solid #e4eae4;
+  border-radius: 8px;
+  padding: 14px;
+}
+
+.modelCatalogField {
+  color: #435048;
+  display: flex;
+  flex-direction: column;
+  font-size: 13px;
+  gap: 6px;
+}
+
+.fieldLabel {
+  color: #435048;
+}
+
+.modelSelectRow {
+  display: flex;
+  gap: 8px;
+  min-width: 0;
+}
+
+.modelSelectRow select {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.catalogStatus,
+.catalogError {
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.catalogStatus {
+  color: #65726b;
+}
+
+.catalogError {
+  color: #a32929;
+}
+
+.catalogModelList {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.catalogModelList span {
+  background: #eef3ee;
+  border-radius: 6px;
+  color: #435048;
+  font-size: 12px;
+  padding: 4px 7px;
+}
+
+.taskModelList {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.taskModelRow {
+  background: #fbfcfa;
+  border: 1px solid #e4eae4;
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px;
+}
+
+.taskModelRow.muted {
+  opacity: 0.72;
+}
+
+.taskModelRowHeader {
+  align-items: flex-start;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+}
+
+.taskModelRowHeader > div:first-child {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.taskModelRowHeader strong {
+  overflow-wrap: anywhere;
+}
+
+.taskModelRowHeader span {
+  color: #65726b;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.taskModelGrid {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: minmax(220px, 1fr) minmax(160px, 0.6fr) minmax(120px, 0.4fr) minmax(120px, 0.4fr);
+}

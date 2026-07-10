@@ -9,7 +9,6 @@ import type { TranslateFn } from '../../i18n/I18nProvider';
 import type {
   ExternalMcpConfigRecord,
   RemoteServerRecord,
-  SkillRecord,
   TaskProjectRecord,
   TaskRecord,
   TaskRunEventRecord,
@@ -228,14 +227,6 @@ export function useTasksPageData({
     queryKey: ['external-mcp-configs'],
     queryFn: api.listExternalMcpConfigs,
   });
-  const skillsQuery = useQuery({
-    queryKey: ['skills', 'task-editor'],
-    queryFn: () => api.listSkills(),
-  });
-  const bundledSkillsQuery = useQuery({
-    queryKey: ['skills', 'bundled', 'task-editor'],
-    queryFn: api.listBundledSkills,
-  });
   const pendingPromptTaskCountsQuery = useQuery({
     queryKey: ['prompt-task-counts', 'pending'],
     queryFn: () => api.listPromptTaskCounts({ status: 'pending' }),
@@ -408,22 +399,6 @@ export function useTasksPageData({
     });
     return map;
   }, [externalMcpConfigsQuery.data]);
-  const taskEditorSkills = useMemo(() => {
-    const map = new Map<string, SkillRecord>();
-    [...(bundledSkillsQuery.data || []), ...(skillsQuery.data || [])].forEach((skill) => {
-      map.set(skill.id, skill);
-    });
-    return Array.from(map.values()).sort((left, right) =>
-      (left.display_name || left.name).localeCompare(right.display_name || right.name),
-    );
-  }, [bundledSkillsQuery.data, skillsQuery.data]);
-  const skillLabelMap = useMemo(() => {
-    const map = new Map<string, string>();
-    taskEditorSkills.forEach((skill) => {
-      map.set(skill.id, skill.display_name || skill.name || skill.id);
-    });
-    return map;
-  }, [taskEditorSkills]);
   const selectedTask = useMemo(
     () => selectedTaskQuery.data || detailTaskPreview,
     [detailTaskPreview, selectedTaskQuery.data],
@@ -504,8 +479,6 @@ export function useTasksPageData({
     mcpCatalogQuery,
     remoteServersQuery,
     externalMcpConfigsQuery,
-    skillsQuery,
-    bundledSkillsQuery,
     taskMemoryContextQuery,
     taskMemoryRecordsQuery,
     taskMcpPromptPreviewQuery,
@@ -524,8 +497,6 @@ export function useTasksPageData({
     tagOptions,
     remoteServerMap,
     externalMcpConfigMap,
-    taskEditorSkills,
-    skillLabelMap,
     selectedTask,
     detailResultSummary,
     detailRemoteOperations,

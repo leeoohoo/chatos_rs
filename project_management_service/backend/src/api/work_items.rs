@@ -149,9 +149,7 @@ pub(in crate::api) async fn create_work_item(
     let _ = execution_options
         .mcp_config_for_tool_ids(&input.task_runner_enabled_tool_ids)
         .map_err(ApiError::bad_request)?;
-    input.task_runner_skill_ids = execution_options
-        .validate_skill_ids(input.task_runner_skill_ids)
-        .map_err(ApiError::bad_request)?;
+    input.task_runner_skill_ids = Vec::new();
     let item = state
         .store
         .create_work_item(&requirement, input, &user)

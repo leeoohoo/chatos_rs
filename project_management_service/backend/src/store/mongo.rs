@@ -11,6 +11,7 @@ use mongodb::{Client, Collection, IndexModel};
 use crate::models::*;
 
 mod projects;
+mod requirement_documents;
 mod requirements;
 mod runtime_environment;
 mod work_items;

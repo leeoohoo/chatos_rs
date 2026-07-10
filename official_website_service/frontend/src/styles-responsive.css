@@ -1,0 +1,103 @@
+/* SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0 */
+/* Required Notice: Copyright (c) 2025 AI Chat Team */
+
+@media (max-width: 980px) {
+  .hero {
+    min-height: 76vh;
+  }
+
+  .hero-content {
+    min-height: calc(76vh - 86px);
+  }
+
+  .pain-grid,
+  .runtime-shifts,
+  .status-grid,
+  .contact-flow,
+  .architecture-layout,
+  .split-copy,
+  .run-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .contact-flow,
+  .service-grid,
+  .showcase-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 720px) {
+  .topbar,
+  .footer {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .nav-links {
+    width: 100%;
+    overflow-x: auto;
+    padding-bottom: 4px;
+  }
+
+  .hero {
+    min-height: 86vh;
+    padding-bottom: 48px;
+  }
+
+  .hero-content {
+    min-height: auto;
+    padding-top: 54px;
+  }
+
+  h1 {
+    font-size: 48px;
+  }
+
+  .hero-claim {
+    font-size: 24px;
+  }
+
+  .hero-copy,
+  .section-heading p,
+  .split-copy p {
+    font-size: 16px;
+  }
+
+  .section {
+    padding-top: 58px;
+    padding-bottom: 58px;
+  }
+
+  .section-heading h2,
+  .split-copy h2 {
+    font-size: 28px;
+  }
+
+  .contact-flow,
+  .runtime-shifts,
+  .status-grid,
+  .service-grid,
+  .showcase-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .flow-link,
+  .port-row {
+    grid-template-columns: 1fr;
+  }
+
+  .flow-link svg {
+    transform: rotate(90deg);
+  }
+
+  figcaption {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  pre {
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+}

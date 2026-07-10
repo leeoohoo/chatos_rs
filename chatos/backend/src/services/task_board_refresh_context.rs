@@ -30,7 +30,6 @@ impl TaskBoardRefreshContextStore {
         contact_system_prompt: Option<String>,
         builtin_mcp_system_prompt: Option<String>,
         command_system_prompt: Option<String>,
-        task_runner_skill_prompt: Option<String>,
     ) {
         if let Ok(mut slot) = self.inner.lock() {
             *slot = build_runtime_context(
@@ -40,7 +39,6 @@ impl TaskBoardRefreshContextStore {
                 contact_system_prompt,
                 builtin_mcp_system_prompt,
                 command_system_prompt,
-                task_runner_skill_prompt,
             );
         }
     }
@@ -70,7 +68,6 @@ mod tests {
             Some("contact".to_string()),
             None,
             None,
-            None,
         );
 
         assert!(store.snapshot().is_none());
@@ -86,7 +83,6 @@ mod tests {
             Some("contact".to_string()),
             Some("builtin".to_string()),
             Some("command".to_string()),
-            Some("task runner skill".to_string()),
         );
 
         let snapshot = store.snapshot().expect("context should be present");
@@ -99,10 +95,6 @@ mod tests {
             Some("builtin")
         );
         assert_eq!(snapshot.command_system_prompt.as_deref(), Some("command"));
-        assert_eq!(
-            snapshot.task_runner_skill_prompt.as_deref(),
-            Some("task runner skill")
-        );
     }
 
     #[test]
@@ -112,7 +104,6 @@ mod tests {
             Some("session-1".to_string()),
             Some("   ".to_string()),
             InternalContextLocale::ZhCn,
-            None,
             None,
             None,
             None,

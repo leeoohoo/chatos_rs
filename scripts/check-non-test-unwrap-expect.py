@@ -39,7 +39,7 @@ def should_skip(path: Path) -> bool:
 
 
 def scan_file(path: Path) -> list[tuple[int, str]]:
-    text = path.read_text()
+    text = path.read_text(encoding="utf-8")
     head = text.split("#[cfg(test)]", 1)[0]
     hits: list[tuple[int, str]] = []
     for lineno, line in enumerate(head.splitlines(), 1):

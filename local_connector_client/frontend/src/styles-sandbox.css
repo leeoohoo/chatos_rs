@@ -1,0 +1,315 @@
+/* SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0 */
+/* Required Notice: Copyright (c) 2025 AI Chat Team */
+
+.modalBackdrop {
+  background: rgb(11 20 15 / 42%);
+  inset: 0;
+  position: fixed;
+  z-index: 20;
+}
+
+.modal {
+  background: #fff;
+  border-radius: 8px;
+  box-shadow: 0 24px 70px rgb(0 0 0 / 26%);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  left: 50%;
+  max-height: 82vh;
+  max-width: 720px;
+  padding: 18px;
+  position: absolute;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: min(720px, calc(100vw - 34px));
+}
+
+.pickerToolbar,
+.modalActions {
+  display: flex;
+  gap: 8px;
+  justify-content: space-between;
+}
+
+.dirList {
+  border: 1px solid #e4eae4;
+  border-radius: 6px;
+  max-height: 340px;
+  overflow: auto;
+  padding: 8px;
+}
+
+.dirRow {
+  border: 0;
+  justify-content: flex-start;
+  padding: 6px;
+}
+
+.dirRow button {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  color: #17211c;
+  display: inline-flex;
+  gap: 8px;
+  min-height: 30px;
+}
+
+.selectionSummary {
+  color: #1f6b4a;
+  font-size: 13px;
+}
+
+.switch input {
+  display: none;
+}
+
+.switch span {
+  background: #cbd6cc;
+  border-radius: 999px;
+  display: block;
+  height: 24px;
+  position: relative;
+  width: 44px;
+}
+
+.switch span::after {
+  background: #fff;
+  border-radius: 50%;
+  content: "";
+  height: 18px;
+  left: 3px;
+  position: absolute;
+  top: 3px;
+  transition: transform 140ms ease;
+  width: 18px;
+}
+
+.switch input:checked + span {
+  background: #1f6b4a;
+}
+
+.switch input:checked + span::after {
+  transform: translateX(20px);
+}
+
+.dockerBox {
+  align-items: center;
+  background: #f4f7f3;
+  border-radius: 6px;
+  display: flex;
+  gap: 8px;
+  margin-bottom: 12px;
+  padding: 10px;
+}
+
+.dot {
+  border-radius: 50%;
+  display: inline-block;
+  height: 10px;
+  width: 10px;
+}
+
+.dot.bad {
+  background: #b33a3a;
+}
+
+.boundaryList {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.boundaryList div {
+  align-items: center;
+  background: #f4f7f3;
+  border-radius: 6px;
+  color: #32433a;
+  display: flex;
+  gap: 8px;
+  padding: 10px;
+}
+
+.sandboxPage {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.sandboxHero {
+  background: #ffffff;
+}
+
+.sandboxStatusGrid {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  margin-bottom: 14px;
+}
+
+.statusTile {
+  border: 1px solid #e1e7e1;
+  border-radius: 8px;
+  display: grid;
+  gap: 4px;
+  min-height: 122px;
+  padding: 14px;
+}
+
+.statusTile svg {
+  color: #4155a5;
+}
+
+.statusTile span,
+.statusTile small {
+  color: #65726b;
+  font-size: 12px;
+}
+
+.statusTile strong {
+  display: block;
+  font-size: 16px;
+  overflow-wrap: anywhere;
+}
+
+.statusTile.ok {
+  background: #edf7f1;
+  border-color: #c6e4d0;
+}
+
+.statusTile.warn {
+  background: #fff6e4;
+  border-color: #ecd49a;
+}
+
+.statusTile.muted {
+  background: #f3f5f8;
+  border-color: #d8e0ea;
+}
+
+.sandboxBoundary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin-top: 4px;
+}
+
+.sandboxContentGrid {
+  display: grid;
+  gap: 18px;
+  grid-template-columns: minmax(0, 1.45fr) minmax(360px, 0.8fr);
+}
+
+.runtimeGrid {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.runtimeSelect {
+  background: #fbfcfa;
+  border: 1px solid #e1e7e1;
+  border-radius: 8px;
+  padding: 12px;
+}
+
+.runtimeSelect span {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.runtimeSelect small {
+  color: #65726b;
+  font-size: 12px;
+}
+
+.scriptEditor {
+  margin-top: 14px;
+}
+
+.imageList,
+.jobList {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.imageRow {
+  align-items: center;
+  border: 1px solid #e4eae4;
+  border-radius: 8px;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+  padding: 12px;
+}
+
+.imageRow strong,
+.imageRow span {
+  display: block;
+  overflow-wrap: anywhere;
+}
+
+.imageRow span {
+  color: #65726b;
+  font-size: 12px;
+}
+
+.jobRow {
+  border: 1px solid #e4eae4;
+  border-radius: 8px;
+  padding: 12px;
+}
+
+.jobRow summary {
+  align-items: center;
+  cursor: pointer;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+}
+
+.jobRow summary span {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.jobRow small {
+  color: #65726b;
+  font-size: 12px;
+}
+
+.leaseTable {
+  border: 1px solid #e4eae4;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.leaseHeader,
+.leaseRow {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: minmax(180px, 1fr) minmax(140px, 0.8fr) minmax(180px, 1fr) 92px;
+  padding: 10px 12px;
+}
+
+.leaseHeader {
+  background: #f3f5f8;
+  color: #65726b;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.leaseRow {
+  align-items: center;
+  border-top: 1px solid #e4eae4;
+  font-size: 13px;
+}
+
+.leaseRow span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

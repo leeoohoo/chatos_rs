@@ -7,12 +7,11 @@ use crate::config::AppConfig;
 use crate::mcp_server::TaskRunnerMcpService;
 use crate::services::{
     ExternalMcpConfigService, McpCatalogService, ModelConfigService, RemoteServerService,
-    RunService, SkillService, TaskProjectService, TaskService, ToolingStateService,
+    RunService, TaskProjectService, TaskService, ToolingStateService,
 };
 use crate::store::AppStore;
 use memory_engine_sdk::UpsertSourceRequest;
 use serde_json::json;
-use tracing::{info, warn};
 
 #[derive(Clone)]
 pub struct AppState {
@@ -21,7 +20,6 @@ pub struct AppState {
     pub model_config_service: ModelConfigService,
     pub remote_server_service: RemoteServerService,
     pub external_mcp_config_service: ExternalMcpConfigService,
-    pub skill_service: SkillService,
     pub task_project_service: TaskProjectService,
     pub run_service: RunService,
     pub ask_user_prompt_service: AskUserPromptService,
@@ -44,16 +42,6 @@ impl AppState {
         task_project_service.ensure_public_project().await?;
         let remote_server_service = RemoteServerService::new(store.clone());
         let external_mcp_config_service = ExternalMcpConfigService::new(store.clone());
-        let skill_service = SkillService::new(&config, store.clone());
-        match skill_service.sync_bundled_skills().await {
-            Ok(count) if count > 0 => {
-                info!("synced {} bundled skills during startup", count);
-            }
-            Ok(_) => {}
-            Err(err) => {
-                warn!("failed to sync bundled skills during startup: {}", err);
-            }
-        }
         let ask_user_prompt_service =
             AskUserPromptService::new_with_config(store.clone(), config.clone());
         let run_service = RunService::new(
@@ -68,7 +56,6 @@ impl AppState {
             task_service.clone(),
             model_config_service.clone(),
             external_mcp_config_service.clone(),
-            skill_service.clone(),
             run_service.clone(),
             ask_user_prompt_service.clone(),
             mcp_catalog_service.clone(),
@@ -79,7 +66,6 @@ impl AppState {
             model_config_service,
             remote_server_service,
             external_mcp_config_service,
-            skill_service,
             task_project_service,
             run_service,
             ask_user_prompt_service,

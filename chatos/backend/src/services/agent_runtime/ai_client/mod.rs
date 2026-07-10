@@ -118,7 +118,6 @@ impl AiClient {
         contact_system_prompt: Option<String>,
         builtin_mcp_system_prompt: Option<String>,
         command_system_prompt: Option<String>,
-        task_runner_skill_prompt: Option<String>,
     ) {
         self.task_board_refresh_context.set(
             session_id,
@@ -127,7 +126,6 @@ impl AiClient {
             contact_system_prompt,
             builtin_mcp_system_prompt,
             command_system_prompt,
-            task_runner_skill_prompt,
         );
     }
 

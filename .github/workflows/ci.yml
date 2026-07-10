@@ -63,6 +63,9 @@ jobs:
       - name: Large file policy
         run: bash scripts/check-large-files.sh --fail
 
+      - name: Rust dependency drift
+        run: python scripts/check-rust-dependency-drift.py
+
       - name: OpenAPI contract gate
         run: bash scripts/check_openapi_contract_gate.sh
 

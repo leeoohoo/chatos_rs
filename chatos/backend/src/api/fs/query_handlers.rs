@@ -38,7 +38,9 @@ fn policy_error_response(err: FsPolicyError) -> Response {
 
 #[cfg(test)]
 mod tests {
-    use super::{download_entry, list_entries, read_file};
+    use super::{download_entry, read_file};
+    #[cfg(unix)]
+    use super::list_entries;
     use crate::core::auth::AuthUser;
     use axum::body::to_bytes;
     use axum::extract::Query;
@@ -47,7 +49,9 @@ mod tests {
     use std::fs;
     use std::path::PathBuf;
 
-    use super::super::contracts::{FsDownloadQuery, FsQuery, FsReadQuery};
+    use super::super::contracts::{FsDownloadQuery, FsReadQuery};
+    #[cfg(unix)]
+    use super::super::contracts::FsQuery;
 
     fn make_temp_dir(name: &str) -> PathBuf {
         let root = std::env::current_dir().expect("current dir").join(format!(

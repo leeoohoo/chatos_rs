@@ -20,5 +20,6 @@ mod context;
 mod follow_up;
 mod recovery_http;
 mod recovery_retry;
+mod recovery_stream_tools;
 mod recovery_tools;
 mod transport;

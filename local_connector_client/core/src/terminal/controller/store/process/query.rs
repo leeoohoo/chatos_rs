@@ -3,8 +3,12 @@
 
 use std::path::Path;
 
-use chatos_builtin_tools::TerminalControllerContext;
-use serde_json::{json, Value};
+use chatos_builtin_tools::{
+    terminal_process_list_entry, terminal_process_list_response, terminal_process_log_response,
+    terminal_process_poll_response, TerminalControllerContext, TerminalProcessPollDetails,
+    TerminalProcessSnapshot,
+};
+use serde_json::Value;
 
 use super::super::super::output::{collect_local_mcp_output_from_logs, select_local_mcp_logs};
 use super::super::super::registry::{
@@ -38,43 +42,38 @@ pub(in crate::terminal::controller::store) async fn process_list(
         let output = collect_local_mcp_terminal_output(&session, 1200).await;
         let cwd =
             display_local_mcp_workspace_path(project_root.as_path(), Path::new(meta.cwd.as_str()));
-        processes.push(json!({
-            "terminal_id": meta.id,
-            "process_id": meta.id,
-            "terminal_name": derive_local_mcp_terminal_name(cwd.as_str()),
-            "status": meta.status,
-            "process_status": if meta.status == "exited" { "exited" } else if busy { "running" } else { "idle" },
-            "busy": busy,
-            "has_session": true,
-            "command": meta.command,
-            "pid": Value::Null,
-            "started_at": meta.started_at,
-            "uptime_seconds": Value::Null,
-            "cwd": cwd,
-            "project_id": meta.project_id,
-            "last_active_at": meta.last_active_at,
-            "output_preview": output.text,
-            "output_tail": output.text,
-            "output_tail_chars": output.char_count,
-            "exit_code": meta.exit_code,
+        let is_exited = meta.status == "exited";
+        processes.push(terminal_process_list_entry(TerminalProcessSnapshot {
+            terminal_id: meta.id,
+            terminal_name: derive_local_mcp_terminal_name(cwd.as_str()),
+            status: meta.status,
+            process_status: if is_exited {
+                "exited"
+            } else if busy {
+                "running"
+            } else {
+                "idle"
+            }
+            .to_string(),
+            busy,
+            command: meta.command,
+            started_at: meta.started_at,
+            cwd,
+            project_id: meta.project_id,
+            last_active_at: meta.last_active_at,
+            output_preview: output.text,
+            output_tail_chars: output.char_count,
+            exit_code: meta.exit_code,
         }));
         if processes.len() >= limit {
             break;
         }
     }
-    Ok(json!({
-        "status": "ok",
-        "result_scope": if processes.len() > 1 { "multiple_terminals" } else if processes.is_empty() { "no_terminal" } else { "single_terminal" },
-        "is_multiple_terminals": processes.len() > 1,
-        "terminal_count": processes.len(),
-        "process_count": processes.len(),
-        "visible_total": processes.len(),
-        "total_terminals": processes.len(),
-        "include_exited": include_exited,
-        "limit": limit,
-        "terminals": processes.clone(),
-        "processes": processes,
-    }))
+    Ok(terminal_process_list_response(
+        processes,
+        include_exited,
+        limit,
+    ))
 }
 
 pub(in crate::terminal::controller::store) async fn process_poll(
@@ -103,36 +102,37 @@ pub(in crate::terminal::controller::store) async fn process_poll(
             .filter_map(|value| value.get("content").and_then(Value::as_str)),
         1200,
     );
-    Ok(json!({
-        "terminal_id": meta.id,
-        "process_id": meta.id,
-        "terminal_name": derive_local_mcp_terminal_name(cwd.as_str()),
-        "status": meta.status,
-        "process_status": if meta.status == "exited" { "exited" } else if busy { "running" } else { "idle" },
-        "busy": busy,
-        "has_session": true,
-        "command": meta.command,
-        "pid": Value::Null,
-        "started_at": meta.started_at,
-        "uptime_seconds": Value::Null,
-        "cwd": cwd,
-        "project_id": meta.project_id,
-        "last_active_at": meta.last_active_at,
-        "mode": if offset.is_some() { "offset" } else { "recent" },
-        "requested_offset": offset,
-        "next_offset": selected.last().and_then(|value| value.get("offset")).and_then(Value::as_i64).map(|value| value + 1),
-        "limit": effective_limit,
-        "fetched_log_count": selected.len(),
-        "returned_log_count": selected.len(),
-        "has_more": offset.is_some() && logs.len() > selected.len(),
-        "truncated": false,
-        "truncation": { "truncated": false },
-        "logs": selected,
-        "output_preview": output.text,
-        "output_tail": output.text,
-        "output_tail_chars": output.char_count,
-        "exit_code": meta.exit_code,
-    }))
+    let is_exited = meta.status == "exited";
+    Ok(terminal_process_poll_response(
+        TerminalProcessSnapshot {
+            terminal_id: meta.id,
+            terminal_name: derive_local_mcp_terminal_name(cwd.as_str()),
+            status: meta.status,
+            process_status: if is_exited {
+                "exited"
+            } else if busy {
+                "running"
+            } else {
+                "idle"
+            }
+            .to_string(),
+            busy,
+            command: meta.command,
+            started_at: meta.started_at,
+            cwd,
+            project_id: meta.project_id,
+            last_active_at: meta.last_active_at,
+            output_preview: output.text,
+            output_tail_chars: output.char_count,
+            exit_code: meta.exit_code,
+        },
+        TerminalProcessPollDetails {
+            offset,
+            limit: effective_limit,
+            has_more: offset.is_some() && logs.len() > selected.len(),
+            logs: selected,
+        },
+    ))
 }
 
 pub(in crate::terminal::controller::store) async fn process_log(
@@ -142,24 +142,5 @@ pub(in crate::terminal::controller::store) async fn process_log(
     limit: i64,
 ) -> std::result::Result<Value, String> {
     let poll = process_poll(context, terminal_id, offset, limit).await?;
-    let output = poll
-        .get("logs")
-        .and_then(Value::as_array)
-        .map(|items| {
-            items
-                .iter()
-                .filter_map(|value| value.get("content").and_then(Value::as_str))
-                .collect::<Vec<_>>()
-                .join("")
-        })
-        .unwrap_or_default();
-    Ok(json!({
-        "terminal_id": poll.get("terminal_id").cloned().unwrap_or(Value::Null),
-        "status": poll.get("status").cloned().unwrap_or(Value::String("unknown".to_string())),
-        "output": output,
-        "offset": offset,
-        "limit": limit,
-        "has_more": poll.get("has_more").cloned().unwrap_or(Value::Bool(false)),
-        "next_offset": poll.get("next_offset").cloned().unwrap_or(Value::Null),
-    }))
+    Ok(terminal_process_log_response(&poll, offset, limit))
 }

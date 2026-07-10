@@ -3,20 +3,7 @@
 
 import { defineConfig, loadEnv } from 'vite';
 import react from '@vitejs/plugin-react';
-
-function parsePort(rawValue: string | undefined, fallback: number): number {
-  const parsed = Number.parseInt((rawValue || '').trim(), 10);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
-}
-
-function normalizeBasePath(rawValue: string | undefined): string {
-  const value = (rawValue || '').trim();
-  if (!value || value === '/') {
-    return '/';
-  }
-  const withLeadingSlash = value.startsWith('/') ? value : `/${value}`;
-  return withLeadingSlash.endsWith('/') ? withLeadingSlash : `${withLeadingSlash}/`;
-}
+import { basePrefixFromBase, createBasePathProxy, normalizeBasePath, parsePort } from '../../scripts/frontend/viteShared';
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '');
@@ -24,7 +11,7 @@ export default defineConfig(({ mode }) => {
   const memoryEnginePort = parsePort(env.MEMORY_ENGINE_PORT, 7081);
   const userServicePort = parsePort(env.USER_SERVICE_PORT, 39190);
   const base = normalizeBasePath(env.VITE_BASE_PATH || env.MEMORY_ENGINE_FRONTEND_BASE_PATH);
-  const basePrefix = base === '/' ? '' : base.replace(/\/+$/, '');
+  const basePrefix = basePrefixFromBase(base);
   const memoryEngineProxyTarget =
     env.MEMORY_ENGINE_API_PROXY_TARGET?.trim() || `http://127.0.0.1:${memoryEnginePort}`;
   const userServiceProxyTarget =
@@ -50,25 +37,9 @@ export default defineConfig(({ mode }) => {
           target: userServiceProxyTarget,
           changeOrigin: true,
         },
-        ...(basePrefix
-          ? {
-              [`${basePrefix}/api/memory-engine`]: {
-                target: memoryEngineProxyTarget,
-                changeOrigin: true,
-                rewrite: (path) => path.slice(basePrefix.length),
-              },
-              [`${basePrefix}/api`]: {
-                target: userServiceProxyTarget,
-                changeOrigin: true,
-                rewrite: (path) => path.slice(basePrefix.length),
-              },
-              [`${basePrefix}/health`]: {
-                target: memoryEngineProxyTarget,
-                changeOrigin: true,
-                rewrite: (path) => path.slice(basePrefix.length),
-              },
-            }
-          : {}),
+        ...createBasePathProxy(basePrefix, '/api/memory-engine', memoryEngineProxyTarget),
+        ...createBasePathProxy(basePrefix, '/api', userServiceProxyTarget),
+        ...createBasePathProxy(basePrefix, '/health', memoryEngineProxyTarget),
       },
     },
     test: {

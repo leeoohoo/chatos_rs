@@ -1,0 +1,492 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Required Notice: Copyright (c) 2025 AI Chat Team
+
+use std::collections::BTreeMap;
+
+use axum::body::{Body, Bytes};
+use axum::extract::{Path, Query, State};
+use axum::http::{
+    header::{ACCEPT, CONTENT_TYPE},
+    HeaderMap, Method, StatusCode, Uri,
+};
+use axum::response::{IntoResponse, Response};
+use axum::{Extension, Json};
+use serde::Deserialize;
+use serde_json::{json, Value};
+use uuid::Uuid;
+
+use crate::models::{
+    normalize_optional_text, CurrentUser, HealthResponse, DEVICE_STATUS_ONLINE,
+    WORKSPACE_STATUS_DISABLED,
+};
+use crate::relay::{RelayError, RelayRequest, RelayResponse};
+use crate::state::AppState;
+
+mod auth_middleware;
+mod devices;
+mod project_bindings;
+mod router;
+mod sandbox_pairings;
+mod terminal_relay;
+mod workspaces;
+
+use self::auth_middleware::require_auth;
+pub use self::auth_middleware::ApiError;
+use self::devices::{
+    connect_device, create_device, disconnect_device, get_device, heartbeat_device, list_devices,
+    load_owned_device, revoke_device,
+};
+use self::project_bindings::{
+    create_project_binding, delete_project_binding, list_project_bindings, update_project_binding,
+};
+pub use self::router::build_router;
+use self::sandbox_pairings::{
+    create_sandbox_pairing, delete_sandbox_pairing, list_sandbox_pairings,
+    load_owned_sandbox_pairing, update_sandbox_pairing,
+};
+use self::terminal_relay::{
+    terminal_exec_relay, terminal_input_relay, terminal_session_create_relay, terminal_ws_relay,
+};
+use self::workspaces::{
+    create_workspace, delete_workspace, list_workspaces, load_owned_workspace, update_workspace,
+};
+
+#[derive(Debug, Deserialize)]
+struct McpRelayQuery {
+    workspace_id: Option<String>,
+    cwd: Option<String>,
+}
+
+async fn health_handler() -> Json<HealthResponse> {
+    Json(HealthResponse {
+        ok: true,
+        service: "local_connector_service".to_string(),
+    })
+}
+
+async fn current_user_handler(Extension(user): Extension<CurrentUser>) -> Json<CurrentUser> {
+    Json(user)
+}
+
+async fn memory_engine_proxy(
+    State(state): State<AppState>,
+    Extension(user): Extension<CurrentUser>,
+    Path(path): Path<String>,
+    method: Method,
+    uri: Uri,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Result<Response, ApiError> {
+    let suffix = normalize_memory_engine_proxy_suffix(path.as_str())?;
+    validate_memory_engine_proxy_request(
+        &method,
+        suffix.as_str(),
+        uri.query(),
+        body.as_ref(),
+        &user,
+    )?;
+    let operator_token = state
+        .config
+        .memory_engine_operator_token
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| {
+            ApiError::internal("Local Connector Service Memory Engine secret is not configured")
+        })?;
+    let mut target_url = format!(
+        "{}/{}",
+        state.config.memory_engine_base_url.trim_end_matches('/'),
+        suffix
+    );
+    if let Some(query) = uri.query().map(str::trim).filter(|value| !value.is_empty()) {
+        target_url.push('?');
+        target_url.push_str(query);
+    }
+
+    let client = reqwest::Client::builder()
+        .timeout(state.config.memory_engine_request_timeout)
+        .build()
+        .map_err(|err| ApiError::internal(format!("build Memory Engine client failed: {err}")))?;
+    let mut request = client
+        .request(method.clone(), target_url.as_str())
+        .header("x-memory-operator-token", operator_token);
+    if let Some(content_type) = headers.get(CONTENT_TYPE) {
+        request = request.header(CONTENT_TYPE.as_str(), content_type);
+    }
+    if let Some(accept) = headers.get(ACCEPT) {
+        request = request.header(ACCEPT.as_str(), accept);
+    }
+    if !body.is_empty() {
+        request = request.body(body.clone());
+    }
+    let response = request
+        .send()
+        .await
+        .map_err(|err| ApiError::bad_gateway(format!("Memory Engine request failed: {err}")))?;
+    let status = StatusCode::from_u16(response.status().as_u16()).map_err(|err| {
+        ApiError::bad_gateway(format!("Memory Engine returned invalid status: {err}"))
+    })?;
+    let content_type = response
+        .headers()
+        .get(CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .map(ToOwned::to_owned);
+    let bytes = response.bytes().await.map_err(|err| {
+        ApiError::bad_gateway(format!("read Memory Engine response failed: {err}"))
+    })?;
+    let mut builder = Response::builder().status(status);
+    if let Some(content_type) = content_type {
+        builder = builder.header(CONTENT_TYPE, content_type);
+    }
+    builder.body(Body::from(bytes)).map_err(|err| {
+        ApiError::internal(format!("build Memory Engine proxy response failed: {err}"))
+    })
+}
+
+async fn mcp_relay(
+    State(state): State<AppState>,
+    Extension(user): Extension<CurrentUser>,
+    Path(device_id): Path<String>,
+    Query(query): Query<McpRelayQuery>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Result<Response, ApiError> {
+    let workspace_id = required_text(query.workspace_id, "workspace_id")?;
+    validate_device_workspace(&state, &user, device_id.as_str(), workspace_id.as_str()).await?;
+    let mut relay_headers = relay_headers(&headers);
+    if let Some(cwd) = normalize_optional_text(query.cwd) {
+        relay_headers.insert("x-local-connector-cwd".to_string(), cwd);
+    }
+    let request = RelayRequest {
+        message_type: "mcp".to_string(),
+        request_id: Uuid::new_v4().to_string(),
+        owner_user_id: user.effective_owner_user_id().to_string(),
+        device_id,
+        workspace_id,
+        method: "POST".to_string(),
+        path: "/mcp".to_string(),
+        headers: relay_headers,
+        body: relay_body(body.as_ref()),
+    };
+    let response = state
+        .relay
+        .dispatch(request, state.config.relay_request_timeout)
+        .await
+        .map_err(relay_error_to_api_error)?;
+    Ok(relay_response_to_http(response))
+}
+
+async fn resolve_model_runtime(
+    State(state): State<AppState>,
+    Extension(user): Extension<CurrentUser>,
+    Path(model_config_id): Path<String>,
+) -> Result<Response, ApiError> {
+    let model_config_id = required_text(Some(model_config_id), "model_config_id")?;
+    let owner_user_id = user.effective_owner_user_id().to_string();
+    let device = state
+        .store
+        .list_devices(owner_user_id.as_str())
+        .await
+        .map_err(ApiError::internal)?
+        .into_iter()
+        .find(|device| device.status == DEVICE_STATUS_ONLINE)
+        .ok_or_else(|| {
+            ApiError::service_unavailable(
+                "Local Connector client is offline; model request was terminated",
+            )
+        })?;
+
+    let request = RelayRequest {
+        message_type: "model_runtime_request".to_string(),
+        request_id: Uuid::new_v4().to_string(),
+        owner_user_id,
+        device_id: device.id,
+        workspace_id: String::new(),
+        method: "GET".to_string(),
+        path: format!("/model-runtime/{model_config_id}"),
+        headers: BTreeMap::new(),
+        body: json!({ "model_config_id": model_config_id }),
+    };
+    let response = state
+        .relay
+        .dispatch(request, state.config.relay_request_timeout)
+        .await
+        .map_err(relay_error_to_api_error)?;
+    Ok(relay_response_to_http(response))
+}
+
+async fn sandbox_facade_root(
+    State(state): State<AppState>,
+    Extension(user): Extension<CurrentUser>,
+    Path(pairing_id): Path<String>,
+    method: Method,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Result<Response, ApiError> {
+    sandbox_facade_impl(
+        state,
+        user,
+        pairing_id,
+        String::new(),
+        method,
+        headers,
+        body,
+    )
+    .await
+}
+
+async fn sandbox_facade_path(
+    State(state): State<AppState>,
+    Extension(user): Extension<CurrentUser>,
+    Path((pairing_id, path)): Path<(String, String)>,
+    method: Method,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Result<Response, ApiError> {
+    sandbox_facade_impl(state, user, pairing_id, path, method, headers, body).await
+}
+
+async fn sandbox_facade_impl(
+    state: AppState,
+    user: CurrentUser,
+    pairing_id: String,
+    path: String,
+    method: Method,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Result<Response, ApiError> {
+    let pairing = load_owned_sandbox_pairing(&state, &user, pairing_id.as_str()).await?;
+    if !pairing.enabled {
+        return Err(ApiError::bad_request(
+            "Local Connector sandbox pairing is disabled",
+        ));
+    }
+    validate_device_workspace(
+        &state,
+        &user,
+        pairing.device_id.as_str(),
+        pairing.workspace_id.as_str(),
+    )
+    .await?;
+
+    let request = RelayRequest {
+        message_type: "sandbox_request".to_string(),
+        request_id: Uuid::new_v4().to_string(),
+        owner_user_id: user.effective_owner_user_id().to_string(),
+        device_id: pairing.device_id.clone(),
+        workspace_id: pairing.workspace_id.clone(),
+        method: method.as_str().to_string(),
+        path: normalize_relay_path(path.as_str()),
+        headers: relay_headers(&headers),
+        body: relay_body(body.as_ref()),
+    };
+
+    let response = state
+        .relay
+        .dispatch(request, state.config.relay_request_timeout)
+        .await
+        .map_err(relay_error_to_api_error)?;
+    Ok(relay_response_to_http(response))
+}
+
+async fn validate_device_workspace(
+    state: &AppState,
+    user: &CurrentUser,
+    device_id: &str,
+    workspace_id: &str,
+) -> Result<(), ApiError> {
+    let device = load_owned_device(state, user, device_id, true).await?;
+    if device.status != DEVICE_STATUS_ONLINE {
+        return Err(ApiError::service_unavailable(
+            "Local Connector device is offline",
+        ));
+    }
+    let workspace = load_owned_workspace(state, user, workspace_id).await?;
+    if workspace.device_id != device.id {
+        return Err(ApiError::bad_request(
+            "Local Connector workspace is not attached to the selected device",
+        ));
+    }
+    if workspace.status == WORKSPACE_STATUS_DISABLED {
+        return Err(ApiError::bad_request(
+            "Local Connector workspace is disabled",
+        ));
+    }
+    Ok(())
+}
+
+fn normalize_memory_engine_proxy_suffix(path: &str) -> Result<String, ApiError> {
+    let path = path.trim().trim_start_matches('/');
+    let suffix = path
+        .strip_prefix("api/memory-engine/v1/")
+        .or_else(|| path.strip_prefix("api/memory-engine/v1"))
+        .unwrap_or(path)
+        .trim_start_matches('/');
+    if suffix.is_empty() {
+        return Err(ApiError::bad_request(
+            "Memory Engine proxy path is required",
+        ));
+    }
+    Ok(suffix.to_string())
+}
+
+fn validate_memory_engine_proxy_request(
+    method: &Method,
+    suffix: &str,
+    query: Option<&str>,
+    body: &[u8],
+    user: &CurrentUser,
+) -> Result<(), ApiError> {
+    if !memory_engine_proxy_path_allowed(method, suffix) {
+        return Err(ApiError::forbidden(
+            "Memory Engine proxy path is not allowed for Local Connector approval memory",
+        ));
+    }
+    if suffix == "admin/sources/local_connector_approval" {
+        return Ok(());
+    }
+
+    let parsed_body =
+        if body.is_empty() {
+            None
+        } else {
+            Some(serde_json::from_slice::<Value>(body).map_err(|_| {
+                ApiError::bad_request("Memory Engine proxy body must be valid JSON")
+            })?)
+        };
+    let tenant_id = query_param(query, "tenant_id")
+        .or_else(|| {
+            parsed_body
+                .as_ref()
+                .and_then(|value| json_string_field(value, "tenant_id"))
+        })
+        .ok_or_else(|| ApiError::bad_request("Memory Engine proxy tenant_id is required"))?;
+    if tenant_id != user.effective_owner_user_id() {
+        return Err(ApiError::forbidden(
+            "Memory Engine proxy tenant_id does not match current user",
+        ));
+    }
+
+    if let Some(source_id) = query_param(query, "source_id").or_else(|| {
+        parsed_body
+            .as_ref()
+            .and_then(|value| json_string_field(value, "source_id"))
+    }) {
+        if source_id != "local_connector_approval" {
+            return Err(ApiError::forbidden(
+                "Memory Engine proxy source_id is not allowed",
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn memory_engine_proxy_path_allowed(method: &Method, suffix: &str) -> bool {
+    if method == Method::PUT && suffix == "admin/sources/local_connector_approval" {
+        return true;
+    }
+    if method == Method::POST && suffix == "context/compose" {
+        return true;
+    }
+    let parts = suffix.split('/').collect::<Vec<_>>();
+    if parts.len() < 2 || parts[0] != "threads" || !is_approval_memory_thread_id(parts[1]) {
+        return false;
+    }
+    match (method, parts.as_slice()) {
+        (&Method::PUT, ["threads", _thread_id]) => true,
+        (&Method::GET, ["threads", _thread_id]) => true,
+        (&Method::PUT, ["threads", _thread_id, "records", "batch-sync"]) => true,
+        (&Method::GET, ["threads", _thread_id, "records"]) => true,
+        (&Method::GET, ["threads", _thread_id, "records", "count"]) => true,
+        (&Method::GET, ["threads", _thread_id, "compact-turns"]) => true,
+        (&Method::GET, ["threads", _thread_id, "turns", _turn_id, "process-records"]) => true,
+        (&Method::POST, ["threads", _thread_id, "active-summary", "run"]) => true,
+        (&Method::GET, ["threads", _thread_id, "active-summary", "status"]) => true,
+        (&Method::POST, ["threads", _thread_id, "summaries", "run"]) => true,
+        (&Method::GET, ["threads", _thread_id, "summaries"]) => true,
+        _ => false,
+    }
+}
+
+fn is_approval_memory_thread_id(thread_id: &str) -> bool {
+    thread_id.starts_with("local_connector_command_approval:")
+        || thread_id.starts_with("local_connector_command_approval%3A")
+        || thread_id.starts_with("local_connector_command_approval%3a")
+}
+
+fn query_param(query: Option<&str>, key: &str) -> Option<String> {
+    query?.split('&').find_map(|pair| {
+        let mut parts = pair.splitn(2, '=');
+        let item_key = parts.next()?.trim();
+        let item_value = parts.next().unwrap_or_default().trim();
+        (item_key == key && !item_value.is_empty()).then(|| item_value.to_string())
+    })
+}
+
+fn json_string_field(value: &Value, key: &str) -> Option<String> {
+    value
+        .get(key)
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+}
+
+fn normalize_relay_path(path: &str) -> String {
+    let trimmed = path.trim_matches('/');
+    if trimmed.is_empty() {
+        "/".to_string()
+    } else {
+        format!("/{trimmed}")
+    }
+}
+
+fn relay_headers(headers: &HeaderMap) -> BTreeMap<String, String> {
+    headers
+        .iter()
+        .filter_map(|(key, value)| {
+            let key = key.as_str().to_ascii_lowercase();
+            if matches!(
+                key.as_str(),
+                "authorization"
+                    | "cookie"
+                    | "set-cookie"
+                    | "x-local-connector-internal-secret"
+                    | "x-local-connector-owner-user-id"
+                    | "x-chatos-owner-user-id"
+            ) {
+                return None;
+            }
+            value.to_str().ok().map(|value| (key, value.to_string()))
+        })
+        .collect()
+}
+
+fn relay_body(body: &[u8]) -> Value {
+    if body.is_empty() {
+        return Value::Null;
+    }
+    serde_json::from_slice::<Value>(body)
+        .unwrap_or_else(|_| Value::String(String::from_utf8_lossy(body).into_owned()))
+}
+
+fn relay_error_to_api_error(error: RelayError) -> ApiError {
+    match error {
+        RelayError::Offline => ApiError::service_unavailable(error.message()),
+        RelayError::Timeout => ApiError::gateway_timeout(error.message()),
+        RelayError::RequestEncode(_) | RelayError::ResponseChannelClosed => {
+            ApiError::bad_gateway(error.message())
+        }
+    }
+}
+
+fn relay_response_to_http(response: RelayResponse) -> Response {
+    let status = StatusCode::from_u16(response.status).unwrap_or(StatusCode::BAD_GATEWAY);
+    (status, Json(response.body)).into_response()
+}
+
+fn required_text(value: Option<String>, field: &str) -> Result<String, ApiError> {
+    normalize_optional_text(value)
+        .ok_or_else(|| ApiError::bad_request(format!("{field} is required and cannot be empty")))
+}

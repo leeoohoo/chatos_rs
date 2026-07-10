@@ -179,8 +179,6 @@ export const useChatInterfaceModel = ({
     activePanel: store.activePanel,
     showSystemContextEditor: controller.showSystemContextEditor,
     setShowSystemContextEditor: controller.setShowSystemContextEditor,
-    showTaskRunnerExternalMcpManager: controller.showTaskRunnerExternalMcpManager,
-    setShowTaskRunnerExternalMcpManager: controller.setShowTaskRunnerExternalMcpManager,
     showAgentManager: controller.showAgentManager,
     setShowAgentManager: controller.setShowAgentManager,
     showNotepadPanel: controller.showNotepadPanel,

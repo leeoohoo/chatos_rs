@@ -3,27 +3,14 @@
 
 import { defineConfig, loadEnv } from 'vite';
 import react from '@vitejs/plugin-react';
-
-function parsePort(rawValue: string | undefined, fallback: number): number {
-  const parsed = Number.parseInt((rawValue || '').trim(), 10);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
-}
-
-function normalizeBasePath(rawValue: string | undefined): string {
-  const value = (rawValue || '').trim();
-  if (!value || value === '/') {
-    return '/';
-  }
-  const withLeadingSlash = value.startsWith('/') ? value : `/${value}`;
-  return withLeadingSlash.endsWith('/') ? withLeadingSlash : `${withLeadingSlash}/`;
-}
+import { basePrefixFromBase, createBasePathProxy, normalizeBasePath, parsePort } from '../../scripts/frontend/viteShared';
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '');
   const frontendPort = parsePort(env.PROJECT_SERVICE_FRONTEND_PORT, 39211);
   const backendPort = parsePort(env.PROJECT_SERVICE_PORT, 39210);
   const base = normalizeBasePath(env.VITE_BASE_PATH || env.PROJECT_SERVICE_FRONTEND_BASE_PATH);
-  const basePrefix = base === '/' ? '' : base.replace(/\/+$/, '');
+  const basePrefix = basePrefixFromBase(base);
   const proxyTarget =
     env.PROJECT_SERVICE_API_PROXY_TARGET?.trim() ||
     env.VITE_API_PROXY_TARGET?.trim() ||
@@ -39,15 +26,7 @@ export default defineConfig(({ mode }) => {
           target: proxyTarget,
           changeOrigin: true,
         },
-        ...(basePrefix
-          ? {
-              [`${basePrefix}/api`]: {
-                target: proxyTarget,
-                changeOrigin: true,
-                rewrite: (path) => path.slice(basePrefix.length),
-              },
-            }
-          : {}),
+        ...createBasePathProxy(basePrefix, '/api', proxyTarget),
       },
     },
   };

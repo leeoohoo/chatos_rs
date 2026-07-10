@@ -606,6 +606,7 @@ dependencies = [
  "async-trait",
  "bytes",
  "chatos_mcp_runtime",
+ "chatos_service_runtime",
  "chrono",
  "futures",
  "memory_engine_sdk",
@@ -711,6 +712,7 @@ name = "chatos_service_runtime"
 version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
+ "futures-util",
  "reqwest",
  "serde",
  "serde_json",

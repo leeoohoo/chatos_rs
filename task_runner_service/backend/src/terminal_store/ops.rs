@@ -3,7 +3,11 @@
 
 use async_trait::async_trait;
 use chatos_builtin_tools::{
-    path_with_bundled_tools, TerminalControllerContext, TerminalControllerStore,
+    path_with_bundled_tools, terminal_process_list_entry, terminal_process_list_response,
+    terminal_process_log_response, terminal_process_poll_response, terminal_process_wait_response,
+    terminal_recent_logs_entry, terminal_recent_logs_response, TerminalControllerContext,
+    TerminalControllerStore, TerminalProcessPollDetails, TerminalProcessSnapshot,
+    TerminalProcessWaitResponse, TerminalRecentLogsEntry,
 };
 use serde_json::{json, Value};
 use std::ffi::OsString;

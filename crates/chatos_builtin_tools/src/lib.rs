@@ -14,6 +14,7 @@ pub mod provider;
 pub mod remote_connection_controller;
 pub mod task_manager;
 pub mod terminal_controller;
+pub mod terminal_controller_response;
 pub mod web_tools;
 
 pub(crate) mod browser_page_insights;
@@ -73,5 +74,11 @@ pub use terminal_controller::{
     TerminalControllerStoreRef, PROCESS_LIST_MAX_LIMIT, PROCESS_POLL_MAX_LIMIT,
     PROCESS_WAIT_MAX_TIMEOUT_MS, RECENT_LOGS_MAX_PER_TERMINAL_LIMIT,
     RECENT_LOGS_MAX_TERMINAL_LIMIT,
+};
+pub use terminal_controller_response::{
+    terminal_process_list_entry, terminal_process_list_response, terminal_process_log_response,
+    terminal_process_poll_response, terminal_process_wait_response, terminal_recent_logs_entry,
+    terminal_recent_logs_response, terminal_result_scope, TerminalProcessPollDetails,
+    TerminalProcessSnapshot, TerminalProcessWaitResponse, TerminalRecentLogsEntry,
 };
 pub use web_tools::{WebToolsOptions, WebToolsService};

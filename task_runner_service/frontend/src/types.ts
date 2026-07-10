@@ -10,6 +10,5 @@ export * from './types/prompts';
 export * from './types/models';
 export * from './types/servers';
 export * from './types/mcp';
-export * from './types/skills';
 export * from './types/tooling';
 export * from './types/system';

@@ -46,9 +46,6 @@ const PromptsPage = lazy(async () => ({
 const McpCatalogPage = lazy(async () => ({
   default: (await import('./pages/McpCatalogPage')).McpCatalogPage,
 }));
-const SkillsPage = lazy(async () => ({
-  default: (await import('./pages/SkillsPage')).SkillsPage,
-}));
 const SettingsPage = lazy(async () => ({
   default: (await import('./pages/SettingsPage')).SettingsPage,
 }));
@@ -208,7 +205,7 @@ function AuthGate() {
           <Route path="/runs" element={<RunsPage />} />
           <Route path="/prompts" element={<PromptsPage />} />
           <Route path="/mcp" element={<McpCatalogPage />} />
-          <Route path="/skills" element={<SkillsPage />} />
+          <Route path="/skills" element={<Navigate to="/tasks" replace />} />
           <Route path="/tooling" element={<ToolingPage />} />
           <Route path="/users" element={requireAdmin(<UsersPage />)} />
           <Route path="/settings" element={requireAdmin(<SettingsPage />)} />

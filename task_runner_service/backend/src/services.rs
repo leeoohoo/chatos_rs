@@ -2,7 +2,6 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use std::collections::HashMap;
-use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -21,10 +20,8 @@ use crate::models::{
     BatchTaskDeleteRequest, BatchTaskOperationItem, BatchTaskOperationResponse,
     BatchTaskRunRequest, BatchTaskStatusUpdateRequest, CancelTaskRequest, CancelTaskResponse,
     ChatosProjectImportRequest, CreateExternalMcpConfigRequest, CreateTaskProjectRequest,
-    CreateTaskRequest, ExternalMcpConfigRecord, HealthResponse, InstallSkillRequest,
-    PaginatedResponse, RecordTaskProcessRequest, RunListFilters, RunSummaryRecord,
-    RuntimeSettingsRecord, SkillInstallStatus, SkillListFilters, SkillMarketplaceEntry,
-    SkillMarketplaceQuery, SkillPackageFile, SkillRecord, SkillScope, SkillSource,
+    CreateTaskRequest, ExternalMcpConfigRecord, HealthResponse, PaginatedResponse,
+    RecordTaskProcessRequest, RunListFilters, RunSummaryRecord, RuntimeSettingsRecord,
     StartTaskRunRequest, SystemConfigResponse, TaskIndexResponse, TaskListFilters, TaskMcpConfig,
     TaskMcpResolutionResponse, TaskProjectRecord, TaskProjectStatus, TaskRecord,
     TaskRunEventRecord, TaskRunRecord, TaskRunStatus, TaskRunnerInternalPromptPreviewResponse,
@@ -62,7 +59,6 @@ mod run_recovery;
 mod run_service;
 mod sandbox_runtime;
 mod schedule_helpers;
-mod skill_service;
 mod status_display;
 mod stream_events;
 mod task_dependencies;
@@ -82,7 +78,7 @@ use self::batch_ops::{
 };
 use self::builtin_providers::{
     build_builtin_registry_with_project_management_options, DisabledBuiltinProvider,
-    ProjectManagementExecutionOptions, TaskRunnerSkillLookupProvider,
+    ProjectManagementExecutionOptions,
 };
 pub use self::chatos_message_tasks::{
     ChatosActiveMessageTaskSource, ChatosMessageModelConfigSummary, ChatosMessageRunDetail,
@@ -95,7 +91,6 @@ use self::filter_sanitize::{sanitize_run_list_filters, sanitize_task_list_filter
 use self::process_log_text::apply_task_process_log_update;
 use self::remote_servers::{build_remote_server_record, find_reusable_remote_server};
 use self::schedule_helpers::{advance_task_schedule_after_dispatch, sanitize_task_schedule_config};
-pub(crate) use self::skill_service::RuntimeSkillContext;
 use self::status_display::{TaskScheduleModeExt, TaskStatusExt};
 use self::task_tenant_scope::{
     align_task_tenant_to_owner, resolve_task_tenant_id, save_task_if_tenant_aligned,
@@ -134,12 +129,6 @@ pub struct RemoteServerService {
 #[derive(Clone)]
 pub struct ExternalMcpConfigService {
     store: AppStore,
-}
-
-#[derive(Clone)]
-pub struct SkillService {
-    store: AppStore,
-    package_root: PathBuf,
 }
 
 #[derive(Clone)]

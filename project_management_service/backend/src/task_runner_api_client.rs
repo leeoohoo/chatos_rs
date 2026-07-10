@@ -33,7 +33,6 @@ struct CreateTaskRunnerTaskRequest<'a> {
 struct TaskRunnerMcpConfig {
     enabled_builtin_kinds: Vec<String>,
     external_mcp_config_ids: Vec<String>,
-    skill_ids: Vec<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -44,8 +43,6 @@ struct TaskRunnerInternalExecutionOptions {
     builtin_tool_ids: Vec<String>,
     #[serde(default)]
     external_tool_ids: Vec<String>,
-    #[serde(default)]
-    skill_ids: Vec<String>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -53,7 +50,6 @@ pub struct TaskRunnerExecutionOptions {
     model_config_ids: BTreeSet<String>,
     builtin_tool_ids: BTreeSet<String>,
     external_tool_ids: BTreeSet<String>,
-    skill_ids: BTreeSet<String>,
 }
 
 impl TaskRunnerExecutionOptions {
@@ -62,13 +58,11 @@ impl TaskRunnerExecutionOptions {
         model_config_ids: impl IntoIterator<Item = impl Into<String>>,
         builtin_tool_ids: impl IntoIterator<Item = impl Into<String>>,
         external_tool_ids: impl IntoIterator<Item = impl Into<String>>,
-        skill_ids: impl IntoIterator<Item = impl Into<String>>,
     ) -> Self {
         Self {
             model_config_ids: model_config_ids.into_iter().map(Into::into).collect(),
             builtin_tool_ids: builtin_tool_ids.into_iter().map(Into::into).collect(),
             external_tool_ids: external_tool_ids.into_iter().map(Into::into).collect(),
-            skill_ids: skill_ids.into_iter().map(Into::into).collect(),
         }
     }
 
@@ -82,10 +76,6 @@ impl TaskRunnerExecutionOptions {
             .chain(self.external_tool_ids.iter())
             .cloned()
             .collect()
-    }
-
-    pub fn skill_ids(&self) -> Vec<String> {
-        self.skill_ids.iter().cloned().collect()
     }
 
     pub fn validate_model_config_id(&self, value: &str) -> Result<String, String> {
@@ -113,18 +103,7 @@ impl TaskRunnerExecutionOptions {
         Ok(json!({
             "enabled_builtin_kinds": enabled_builtin_kinds,
             "external_mcp_config_ids": external_mcp_config_ids,
-            "skill_ids": [],
         }))
-    }
-
-    pub fn validate_skill_ids(&self, values: Vec<String>) -> Result<Vec<String>, String> {
-        let values = normalize_id_list(values);
-        for value in &values {
-            if !self.skill_ids.contains(value.as_str()) {
-                return Err(format!("Task Runner Skill 不可用或无权限访问: {value}"));
-            }
-        }
-        Ok(values)
     }
 }
 
@@ -151,11 +130,9 @@ pub async fn create_task_from_work_item(
         .unwrap_or_else(|| work_item.task_runner_default_model_config_id.clone());
     let default_model_config_id =
         Some(execution_options.validate_model_config_id(default_model_config_id.as_str())?);
-    let mut mcp_config = task_runner_mcp_config_from_value(
+    let mcp_config = task_runner_mcp_config_from_value(
         execution_options.mcp_config_for_tool_ids(&work_item.task_runner_enabled_tool_ids)?,
     )?;
-    mcp_config.skill_ids =
-        execution_options.validate_skill_ids(work_item.task_runner_skill_ids.clone())?;
     let source_session_id = normalized_optional(input.source_session_id);
     let source_user_message_id = normalized_optional(input.source_user_message_id);
     let task_profile = if work_item.is_planning_task {
@@ -261,16 +238,10 @@ pub async fn fetch_execution_options(
         .into_iter()
         .filter_map(|item| normalized_optional(Some(item)))
         .collect::<BTreeSet<_>>();
-    let skill_ids = options
-        .skill_ids
-        .into_iter()
-        .filter_map(|item| normalized_optional(Some(item)))
-        .collect::<BTreeSet<_>>();
     Ok(TaskRunnerExecutionOptions {
         model_config_ids,
         builtin_tool_ids,
         external_tool_ids,
-        skill_ids,
     })
 }
 
@@ -347,17 +318,6 @@ fn task_runner_mcp_config_from_value(value: Value) -> Result<TaskRunnerMcpConfig
                     .collect()
             })
             .unwrap_or_default(),
-        skill_ids: value
-            .get("skill_ids")
-            .and_then(Value::as_array)
-            .map(|items| {
-                items
-                    .iter()
-                    .filter_map(Value::as_str)
-                    .map(ToOwned::to_owned)
-                    .collect()
-            })
-            .unwrap_or_default(),
     })
 }
 
@@ -407,353 +367,7 @@ fn normalized_optional(value: Option<String>) -> Option<String> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::models::ProjectWorkItemStatus;
-    use axum::extract::State;
-    use axum::http::{HeaderMap, StatusCode};
-    use axum::{routing::get, routing::post, Json, Router};
-    use serde_json::{json, Value};
-    use std::net::{IpAddr, Ipv4Addr};
-    use std::sync::Arc;
-    use tokio::sync::Mutex;
-
-    #[derive(Debug, Default)]
-    struct CapturedRequest {
-        path: Option<String>,
-        post_path: Option<String>,
-        internal_secret: Option<String>,
-        authorization: Option<String>,
-        request_body: Option<Value>,
-    }
-
-    #[derive(Clone)]
-    struct TestServerState {
-        captured: Arc<Mutex<CapturedRequest>>,
-        body: Value,
-    }
-
-    async fn start_test_server(
-        captured: Arc<Mutex<CapturedRequest>>,
-        body: Value,
-    ) -> (String, tokio::task::JoinHandle<()>) {
-        async fn handler(
-            State(state): State<TestServerState>,
-            uri: axum::http::Uri,
-            headers: HeaderMap,
-        ) -> (StatusCode, Json<Value>) {
-            let mut captured = state.captured.lock().await;
-            captured.path = Some(uri.path().to_string());
-            captured.internal_secret = headers
-                .get("x-task-runner-internal-secret")
-                .and_then(|value| value.to_str().ok())
-                .map(ToOwned::to_owned);
-            (StatusCode::OK, Json(state.body.clone()))
-        }
-
-        let app = Router::new()
-            .route(
-                "/internal/users/:owner_user_id/execution-options",
-                get(handler),
-            )
-            .with_state(TestServerState { captured, body });
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-            .await
-            .expect("bind test server");
-        let addr = listener.local_addr().expect("read test server addr");
-        let handle = tokio::spawn(async move {
-            let _ = axum::serve(listener, app).await;
-        });
-        (format!("http://{addr}"), handle)
-    }
-
-    async fn start_create_task_test_server(
-        captured: Arc<Mutex<CapturedRequest>>,
-    ) -> (String, tokio::task::JoinHandle<()>) {
-        async fn execution_options_handler(
-            State(state): State<TestServerState>,
-            uri: axum::http::Uri,
-            headers: HeaderMap,
-        ) -> (StatusCode, Json<Value>) {
-            let mut captured = state.captured.lock().await;
-            captured.path = Some(uri.path().to_string());
-            captured.internal_secret = headers
-                .get("x-task-runner-internal-secret")
-                .and_then(|value| value.to_str().ok())
-                .map(ToOwned::to_owned);
-            (
-                StatusCode::OK,
-                Json(json!({
-                    "model_config_ids": ["model-1"],
-                    "builtin_tool_ids": ["builtin-code"],
-                    "external_tool_ids": ["external-docs"],
-                    "skill_ids": ["skill-plan"]
-                })),
-            )
-        }
-
-        async fn create_task_handler(
-            State(state): State<TestServerState>,
-            uri: axum::http::Uri,
-            headers: HeaderMap,
-            Json(body): Json<Value>,
-        ) -> (StatusCode, Json<Value>) {
-            let mut captured = state.captured.lock().await;
-            captured.post_path = Some(uri.path().to_string());
-            captured.authorization = headers
-                .get("authorization")
-                .and_then(|value| value.to_str().ok())
-                .map(ToOwned::to_owned);
-            captured.request_body = Some(body);
-            (
-                StatusCode::OK,
-                Json(json!({
-                    "id": "task-runner-task-1",
-                    "title": "继续规划",
-                    "status": "ready",
-                    "project_id": "project-1",
-                    "last_run_id": null,
-                    "created_at": "2026-01-01T00:00:00Z",
-                    "updated_at": "2026-01-01T00:00:00Z"
-                })),
-            )
-        }
-
-        let state = TestServerState {
-            captured,
-            body: json!({}),
-        };
-        let app = Router::new()
-            .route(
-                "/internal/users/:owner_user_id/execution-options",
-                get(execution_options_handler),
-            )
-            .route("/api/tasks", post(create_task_handler))
-            .with_state(state);
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-            .await
-            .expect("bind test server");
-        let addr = listener.local_addr().expect("read test server addr");
-        let handle = tokio::spawn(async move {
-            let _ = axum::serve(listener, app).await;
-        });
-        (format!("http://{addr}"), handle)
-    }
-
-    #[tokio::test]
-    async fn fetch_execution_options_uses_owner_scoped_internal_endpoint() {
-        let captured = Arc::new(Mutex::new(CapturedRequest::default()));
-        let (base_url, handle) = start_test_server(
-            captured.clone(),
-            json!({
-                "model_config_ids": ["model-1"],
-                "builtin_tool_ids": ["CodeMaintainerRead", "builtin_code_maintainer_read"],
-                "external_tool_ids": ["external-1"]
-            }),
-        )
-        .await;
-
-        let options = fetch_execution_options(
-            &AppConfig {
-                host: IpAddr::V4(Ipv4Addr::LOCALHOST),
-                port: 0,
-                database_url: "sqlite::memory:".to_string(),
-                user_service_base_url: "http://127.0.0.1:39190".to_string(),
-                user_service_request_timeout: std::time::Duration::from_millis(1_000),
-                user_service_internal_secret: None,
-                local_connector_service_base_url: "http://127.0.0.1:39230".to_string(),
-                local_connector_service_request_timeout: std::time::Duration::from_millis(1_000),
-                memory_engine_base_url: "http://127.0.0.1:7081/api/memory-engine/v1".to_string(),
-                memory_engine_source_id: "project_management_agent".to_string(),
-                memory_engine_operator_token: None,
-                memory_engine_request_timeout: std::time::Duration::from_millis(1_000),
-                sandbox_manager_base_url: "http://127.0.0.1:8095".to_string(),
-                sandbox_manager_client_id: None,
-                sandbox_manager_client_key: None,
-                sandbox_image_mcp_request_timeout: std::time::Duration::from_millis(1_000),
-                cloud_project_import_enabled: true,
-                cloud_project_max_zip_bytes: 1024 * 1024,
-                cloud_project_max_unpacked_bytes: 1024 * 1024,
-                cloud_project_max_files: 100,
-                cloud_project_git_timeout: std::time::Duration::from_millis(1_000),
-                task_runner_base_url: Some(base_url),
-                task_runner_request_timeout: std::time::Duration::from_millis(1_000),
-                task_runner_internal_secret: Some("internal-secret".to_string()),
-                sync_secret: None,
-            },
-            "owner-1",
-        )
-        .await
-        .expect("fetch execution options");
-
-        assert_eq!(
-            options
-                .validate_model_config_id("model-1")
-                .expect("model id"),
-            "model-1"
-        );
-        assert!(options
-            .mcp_config_for_tool_ids(&["CodeMaintainerRead".to_string(), "external-1".to_string()])
-            .is_ok());
-        let captured = captured.lock().await;
-        assert_eq!(
-            captured.path.as_deref(),
-            Some("/internal/users/owner-1/execution-options")
-        );
-        assert_eq!(captured.internal_secret.as_deref(), Some("internal-secret"));
-
-        handle.abort();
-    }
-
-    #[tokio::test]
-    async fn fetch_execution_options_encodes_owner_id_path_segment() {
-        let captured = Arc::new(Mutex::new(CapturedRequest::default()));
-        let (base_url, handle) = start_test_server(
-            captured.clone(),
-            json!({
-                "model_config_ids": ["model-1"],
-                "builtin_tool_ids": [],
-                "external_tool_ids": []
-            }),
-        )
-        .await;
-
-        fetch_execution_options(
-            &AppConfig {
-                host: IpAddr::V4(Ipv4Addr::LOCALHOST),
-                port: 0,
-                database_url: "sqlite::memory:".to_string(),
-                user_service_base_url: "http://127.0.0.1:39190".to_string(),
-                user_service_request_timeout: std::time::Duration::from_millis(1_000),
-                user_service_internal_secret: None,
-                local_connector_service_base_url: "http://127.0.0.1:39230".to_string(),
-                local_connector_service_request_timeout: std::time::Duration::from_millis(1_000),
-                memory_engine_base_url: "http://127.0.0.1:7081/api/memory-engine/v1".to_string(),
-                memory_engine_source_id: "project_management_agent".to_string(),
-                memory_engine_operator_token: None,
-                memory_engine_request_timeout: std::time::Duration::from_millis(1_000),
-                sandbox_manager_base_url: "http://127.0.0.1:8095".to_string(),
-                sandbox_manager_client_id: None,
-                sandbox_manager_client_key: None,
-                sandbox_image_mcp_request_timeout: std::time::Duration::from_millis(1_000),
-                cloud_project_import_enabled: true,
-                cloud_project_max_zip_bytes: 1024 * 1024,
-                cloud_project_max_unpacked_bytes: 1024 * 1024,
-                cloud_project_max_files: 100,
-                cloud_project_git_timeout: std::time::Duration::from_millis(1_000),
-                task_runner_base_url: Some(base_url),
-                task_runner_request_timeout: std::time::Duration::from_millis(1_000),
-                task_runner_internal_secret: Some("internal-secret".to_string()),
-                sync_secret: None,
-            },
-            "owner/one",
-        )
-        .await
-        .expect("fetch execution options");
-
-        let captured = captured.lock().await;
-        assert_eq!(
-            captured.path.as_deref(),
-            Some("/internal/users/owner%2Fone/execution-options")
-        );
-
-        handle.abort();
-    }
-
-    #[tokio::test]
-    async fn create_task_from_planning_work_item_uses_plan_profile() {
-        let captured = Arc::new(Mutex::new(CapturedRequest::default()));
-        let (base_url, handle) = start_create_task_test_server(captured.clone()).await;
-
-        let task = create_task_from_work_item(
-            &AppConfig {
-                host: IpAddr::V4(Ipv4Addr::LOCALHOST),
-                port: 0,
-                database_url: "sqlite::memory:".to_string(),
-                user_service_base_url: "http://127.0.0.1:39190".to_string(),
-                user_service_request_timeout: std::time::Duration::from_millis(1_000),
-                user_service_internal_secret: None,
-                local_connector_service_base_url: "http://127.0.0.1:39230".to_string(),
-                local_connector_service_request_timeout: std::time::Duration::from_millis(1_000),
-                memory_engine_base_url: "http://127.0.0.1:7081/api/memory-engine/v1".to_string(),
-                memory_engine_source_id: "project_management_agent".to_string(),
-                memory_engine_operator_token: None,
-                memory_engine_request_timeout: std::time::Duration::from_millis(1_000),
-                sandbox_manager_base_url: "http://127.0.0.1:8095".to_string(),
-                sandbox_manager_client_id: None,
-                sandbox_manager_client_key: None,
-                sandbox_image_mcp_request_timeout: std::time::Duration::from_millis(1_000),
-                cloud_project_import_enabled: true,
-                cloud_project_max_zip_bytes: 1024 * 1024,
-                cloud_project_max_unpacked_bytes: 1024 * 1024,
-                cloud_project_max_files: 100,
-                cloud_project_git_timeout: std::time::Duration::from_millis(1_000),
-                task_runner_base_url: Some(base_url),
-                task_runner_request_timeout: std::time::Duration::from_millis(1_000),
-                task_runner_internal_secret: Some("internal-secret".to_string()),
-                sync_secret: None,
-            },
-            "runner-token",
-            &ProjectWorkItemRecord {
-                id: "work-item-1".to_string(),
-                project_id: "project-1".to_string(),
-                requirement_id: "req-1".to_string(),
-                title: "继续规划".to_string(),
-                description: Some("继续拆解后续工作".to_string()),
-                task_runner_default_model_config_id: "model-1".to_string(),
-                task_runner_enabled_tool_ids: vec!["builtin-code".to_string()],
-                task_runner_skill_ids: vec!["skill-plan".to_string()],
-                status: ProjectWorkItemStatus::Todo,
-                priority: 5,
-                assignee_user_id: None,
-                estimate_points: None,
-                due_at: None,
-                sort_order: 0,
-                tags: vec!["planning".to_string()],
-                is_planning_task: true,
-                creator_user_id: Some("owner-1".to_string()),
-                creator_username: None,
-                creator_display_name: None,
-                owner_user_id: Some("owner-1".to_string()),
-                owner_username: None,
-                owner_display_name: None,
-                created_at: "2026-01-01T00:00:00Z".to_string(),
-                updated_at: "2026-01-01T00:00:00Z".to_string(),
-                archived_at: None,
-            },
-            CreateTaskRunnerTaskFromWorkItemRequest::default(),
-        )
-        .await
-        .expect("create task");
-
-        assert_eq!(task.id, "task-runner-task-1");
-        let captured = captured.lock().await;
-        assert_eq!(captured.post_path.as_deref(), Some("/api/tasks"));
-        assert_eq!(
-            captured.authorization.as_deref(),
-            Some("Bearer runner-token")
-        );
-        let body = captured.request_body.as_ref().expect("request body");
-        assert_eq!(
-            body.get("task_profile").and_then(Value::as_str),
-            Some("chatos_plan")
-        );
-        assert_eq!(
-            body.pointer("/input_payload/is_planning_task")
-                .and_then(Value::as_bool),
-            Some(true)
-        );
-        assert_eq!(
-            body.pointer("/mcp_config/skill_ids")
-                .and_then(Value::as_array)
-                .cloned()
-                .unwrap_or_default(),
-            vec![json!("skill-plan")]
-        );
-
-        handle.abort();
-    }
-}
+mod tests;
 
 fn normalize_tags(values: Vec<String>) -> Vec<String> {
     let mut tags = values

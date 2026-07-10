@@ -3,13 +3,7 @@
 
 use std::collections::BTreeSet;
 
-use crate::models::{SkillInstallStatus, SkillScope};
-use crate::services::{SkillService, TaskRunnerSkillLookupProvider};
-
 use super::*;
-
-const TASK_RUNNER_SKILL_LOOKUP_SERVER_NAME: &str = "task_runner_service";
-const TASK_RUNNER_SKILL_LOOKUP_KIND: &str = "TaskRunnerSkillLookup";
 
 pub(super) async fn build_mcp_builder_parts(
     service: &RunService,
@@ -61,13 +55,6 @@ pub(super) async fn build_mcp_builder_parts(
                     .server_with_options(&server_options),
             );
         }
-        if let Some(owner_user_id) = normalized_task_owner_user_id(task) {
-            builtin_servers.push(task_runner_skill_lookup_builtin_server(
-                effective_workspace_dir,
-                owner_user_id,
-                task.id.clone(),
-            ));
-        }
     }
     if task_process_logging_enabled {
         builtin_servers.push(task_process_log_builtin_server());
@@ -88,13 +75,6 @@ pub(super) async fn build_mcp_builder_parts(
             builtin_registry
                 .register(DisabledBuiltinProvider::code_maintainer_write_for_chatos_plan());
         }
-        if let Some(owner_user_id) = normalized_task_owner_user_id(task) {
-            builtin_registry.register(TaskRunnerSkillLookupProvider::new(
-                TASK_RUNNER_SKILL_LOOKUP_SERVER_NAME,
-                SkillService::new(&service.config, service.store.clone()),
-                owner_user_id,
-            ));
-        }
     }
     if task_process_logging_enabled {
         builtin_registry.register(TaskProcessLogBuiltinProvider::new(
@@ -107,27 +87,6 @@ pub(super) async fn build_mcp_builder_parts(
 
     persist_builtin_init_errors(service, run, builtin_init_errors).await;
     (builtin_servers, builtin_registry)
-}
-
-fn task_runner_skill_lookup_builtin_server(
-    workspace_dir: &str,
-    owner_user_id: String,
-    project_id: String,
-) -> chatos_mcp_runtime::McpBuiltinServer {
-    chatos_mcp_runtime::McpBuiltinServer {
-        name: TASK_RUNNER_SKILL_LOOKUP_SERVER_NAME.to_string(),
-        kind: TASK_RUNNER_SKILL_LOOKUP_KIND.to_string(),
-        workspace_dir: workspace_dir.to_string(),
-        user_id: Some(owner_user_id),
-        project_id: Some(project_id),
-        remote_connection_id: None,
-        contact_agent_id: None,
-        auto_create_task: false,
-        allow_writes: false,
-        max_file_bytes: 0,
-        max_write_bytes: 0,
-        search_limit: 0,
-    }
 }
 
 fn apply_project_management_builtin_context(
@@ -218,38 +177,10 @@ async fn project_management_execution_options_for_task(
         }
     }
 
-    let skill_ids = match service.store.list_skills().await {
-        Ok(skills) => skills
-            .into_iter()
-            .filter(|skill| skill.enabled && skill.install_status == SkillInstallStatus::Installed)
-            .filter(|skill| {
-                skill.scope == SkillScope::AdminGlobal
-                    || owns_task_runner_resource(
-                        task_runner_resource_owner_or_creator(
-                            skill.owner_user_id.as_deref(),
-                            skill.creator_user_id.as_deref(),
-                        ),
-                        &owner_user_id,
-                    )
-            })
-            .map(|skill| skill.id)
-            .collect::<BTreeSet<_>>(),
-        Err(err) => {
-            warn!(
-                task_id = task.id.as_str(),
-                owner_user_id = owner_user_id.as_str(),
-                error = err.as_str(),
-                "failed to load skills for Project Management schema enrichment"
-            );
-            BTreeSet::new()
-        }
-    };
-
     Some(ProjectManagementExecutionOptions {
         model_config_ids: model_config_ids.into_iter().collect(),
         preferred_model_config_id: task.default_model_config_id.clone(),
         tool_ids: tool_ids.into_iter().collect(),
-        skill_ids: skill_ids.into_iter().collect(),
     })
 }
 

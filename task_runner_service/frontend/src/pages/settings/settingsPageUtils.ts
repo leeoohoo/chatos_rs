@@ -11,7 +11,7 @@ export type RuntimeSettingsFormValues = {
   sandbox_lease_ttl_seconds?: number;
 };
 
-export type SettingsTabKey = 'overview' | 'external-skill' | 'plan-skill' | 'internal-prompts';
+export type SettingsTabKey = 'overview' | 'internal-prompts';
 
 export type SettingsPromptLocale = 'zh-CN' | 'en-US';
 

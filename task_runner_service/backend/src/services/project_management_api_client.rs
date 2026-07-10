@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use chatos_mcp_runtime::BuiltinMcpPromptLocale;
 use serde::Deserialize;
 
 use crate::auth;
@@ -50,38 +49,6 @@ struct ProjectServiceProjectRecord {
     created_at: String,
     updated_at: String,
     archived_at: Option<String>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct ProjectManagementSkillDocument {
-    pub name: String,
-    pub locale: String,
-    pub content: String,
-}
-
-pub async fn get_project_management_skill(
-    config: &AppConfig,
-    locale: BuiltinMcpPromptLocale,
-) -> Result<Option<ProjectManagementSkillDocument>, String> {
-    let Some(base_url) = project_service_base_url(config) else {
-        return Ok(None);
-    };
-    let lang = if locale.is_english() {
-        BuiltinMcpPromptLocale::ENGLISH_KEY
-    } else {
-        BuiltinMcpPromptLocale::DEFAULT_KEY
-    };
-    let endpoint = format!(
-        "{}/api/skills/project-management",
-        base_url.trim().trim_end_matches('/')
-    );
-    send_json(
-        project_service_client(config)?
-            .get(endpoint)
-            .query(&[("lang", lang)]),
-    )
-    .await
-    .map(Some)
 }
 
 pub async fn get_project_from_project_service(

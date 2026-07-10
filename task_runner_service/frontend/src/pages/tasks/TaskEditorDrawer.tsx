@@ -22,7 +22,6 @@ import type {
   ExternalMcpConfigRecord,
   McpCatalogEntry,
   RemoteServerRecord,
-  SkillRecord,
   TaskRecord,
   TaskScheduleMode,
 } from '../../types';
@@ -56,7 +55,6 @@ type TaskEditorDrawerProps = {
   mcpCatalogEntries?: McpCatalogEntry[];
   remoteServers?: RemoteServerRecord[];
   externalMcpConfigs?: ExternalMcpConfigRecord[];
-  skills?: SkillRecord[];
   onClose: () => void;
   onSubmit: (values: TaskFormValues) => void;
   onPreviewPrompt: () => void;
@@ -75,7 +73,6 @@ export function TaskEditorDrawer({
   mcpCatalogEntries = [],
   remoteServers = [],
   externalMcpConfigs = [],
-  skills = [],
   onClose,
   onSubmit,
   onPreviewPrompt,
@@ -202,27 +199,6 @@ export function TaskEditorDrawer({
         })),
     [externalMcpConfigs],
   );
-  const skillOptions = useMemo(
-    () =>
-      skills.map((skill) => {
-        const baseLabel = skill.display_name || skill.name || skill.id;
-        const suffixes = [
-          skill.source === 'bundled' ? t('tasks.form.skillBundled') : null,
-          !skill.enabled || skill.install_status !== 'installed'
-            ? t('tasks.form.skillUnavailable')
-            : null,
-        ].filter(Boolean);
-        return {
-          label: `${baseLabel} (${skill.name || skill.id})${
-            suffixes.length ? ` / ${suffixes.join(' / ')}` : ''
-          }`,
-          value: skill.id,
-          disabled: !skill.enabled || skill.install_status !== 'installed',
-        };
-      }),
-    [skills, t],
-  );
-
   return (
     <Drawer
       title={editingTask ? t('tasks.drawer.edit') : t('tasks.drawer.create')}
@@ -456,23 +432,6 @@ export function TaskEditorDrawer({
 
         <Typography.Text type="secondary">
           {t('tasks.form.externalMcpConfigsHelp')}
-        </Typography.Text>
-
-        <Form.Item name="skillIds" label={t('tasks.form.skills')} style={{ marginTop: 16 }}>
-          <Select
-            mode="multiple"
-            allowClear
-            showSearch
-            maxTagCount="responsive"
-            disabled={!mcpEnabled}
-            options={skillOptions}
-            optionFilterProp="label"
-            placeholder={t('tasks.form.skillsPlaceholder')}
-          />
-        </Form.Item>
-
-        <Typography.Text type="secondary">
-          {t('tasks.form.skillsHelp')}
         </Typography.Text>
 
         {mcpCatalogEntries.length ? (

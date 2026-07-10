@@ -8,7 +8,7 @@
 
 ```toml
 [dependencies]
-memory_engine_sdk = { path = "../memory_engine/sdk" }
+memory_engine_sdk = { path = "crates/memory_engine_sdk" }
 ```
 
 ## 2. 初始化

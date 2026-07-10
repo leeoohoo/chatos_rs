@@ -7,7 +7,11 @@ use std::sync::{Arc, OnceLock};
 
 use async_trait::async_trait;
 use chatos_builtin_tools::{
-    path_with_bundled_tools, TerminalControllerContext, TerminalControllerStore,
+    path_with_bundled_tools, terminal_process_list_entry, terminal_process_list_response,
+    terminal_process_log_response, terminal_process_poll_response, terminal_process_wait_response,
+    terminal_recent_logs_entry, terminal_recent_logs_response, TerminalControllerContext,
+    TerminalControllerStore, TerminalProcessPollDetails, TerminalProcessSnapshot,
+    TerminalProcessWaitResponse, TerminalRecentLogsEntry,
 };
 use serde_json::{json, Value};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
@@ -16,16 +20,15 @@ use tokio::sync::{Mutex, RwLock};
 use tokio::time::{sleep, Duration, Instant};
 use uuid::Uuid;
 
+mod logs;
+
+use logs::{
+    append_log, collect_output, collect_output_from_logs, log_value_content, select_logs,
+    take_recent_logs, TerminalLogEntry,
+};
+
 #[derive(Debug, Clone, Default)]
 pub struct SandboxTerminalControllerStore;
-
-#[derive(Debug, Clone)]
-struct TerminalLogEntry {
-    offset: i64,
-    kind: String,
-    content: String,
-    created_at: String,
-}
 
 #[derive(Debug, Clone)]
 struct TerminalSessionMeta {
@@ -50,12 +53,6 @@ struct TerminalSession {
 #[derive(Default)]
 struct TerminalRuntimeState {
     sessions: RwLock<HashMap<String, Arc<TerminalSession>>>,
-}
-
-struct OutputCapture {
-    text: String,
-    char_count: usize,
-    truncated: bool,
 }
 
 struct WaitResult {
@@ -156,29 +153,23 @@ impl TerminalControllerStore for SandboxTerminalControllerStore {
             let meta = session.meta.lock().await.clone();
             let logs = session.logs.lock().await;
             let recent = take_recent_logs(&logs, per_terminal_limit.max(1) as usize);
-            terminals.push(json!({
-                "terminal_id": meta.id,
-                "terminal_name": derive_terminal_name(meta.cwd.as_str()),
-                "status": meta.status,
-                "cwd": meta.cwd,
-                "project_id": meta.project_id,
-                "last_active_at": meta.last_active_at,
-                "log_count": logs.len(),
-                "returned_log_count": recent.len(),
-                "truncated": false,
-                "truncation": { "truncated": false },
-                "logs": recent,
+            terminals.push(terminal_recent_logs_entry(TerminalRecentLogsEntry {
+                terminal_id: meta.id,
+                terminal_name: derive_terminal_name(meta.cwd.as_str()),
+                status: meta.status,
+                cwd: meta.cwd,
+                project_id: meta.project_id,
+                last_active_at: meta.last_active_at,
+                log_count: logs.len(),
+                logs: recent,
             }));
         }
-        Ok(json!({
-            "result_scope": if terminals.len() > 1 { "multiple_terminals" } else if terminals.is_empty() { "no_terminal" } else { "single_terminal" },
-            "is_multiple_terminals": terminals.len() > 1,
-            "terminal_count": terminals.len(),
-            "total_terminals": total,
-            "per_terminal_limit": per_terminal_limit,
-            "terminal_limit": terminal_limit,
-            "terminals": terminals,
-        }))
+        Ok(terminal_recent_logs_response(
+            terminals,
+            total,
+            per_terminal_limit,
+            terminal_limit,
+        ))
     }
 
     async fn process_list(
@@ -196,43 +187,31 @@ impl TerminalControllerStore for SandboxTerminalControllerStore {
                 continue;
             }
             let output = collect_output(&session, 1200).await;
-            processes.push(json!({
-                "terminal_id": meta.id,
-                "process_id": meta.id,
-                "terminal_name": derive_terminal_name(meta.cwd.as_str()),
-                "status": meta.status,
-                "process_status": if meta.status == "exited" { "exited" } else { "running" },
-                "busy": meta.status != "exited",
-                "has_session": true,
-                "command": meta.command,
-                "pid": Value::Null,
-                "started_at": meta.started_at,
-                "uptime_seconds": Value::Null,
-                "cwd": meta.cwd,
-                "project_id": meta.project_id,
-                "last_active_at": meta.last_active_at,
-                "output_preview": output.text,
-                "output_tail": output.text,
-                "output_tail_chars": output.char_count,
-                "exit_code": meta.exit_code,
+            let is_exited = meta.status == "exited";
+            processes.push(terminal_process_list_entry(TerminalProcessSnapshot {
+                terminal_id: meta.id,
+                terminal_name: derive_terminal_name(meta.cwd.as_str()),
+                status: meta.status,
+                process_status: if is_exited { "exited" } else { "running" }.to_string(),
+                busy: !is_exited,
+                command: meta.command,
+                started_at: meta.started_at,
+                cwd: meta.cwd,
+                project_id: meta.project_id,
+                last_active_at: meta.last_active_at,
+                output_preview: output.text,
+                output_tail_chars: output.char_count,
+                exit_code: meta.exit_code,
             }));
             if processes.len() >= limit {
                 break;
             }
         }
-        Ok(json!({
-            "status": "ok",
-            "result_scope": if processes.len() > 1 { "multiple_terminals" } else if processes.is_empty() { "no_terminal" } else { "single_terminal" },
-            "is_multiple_terminals": processes.len() > 1,
-            "terminal_count": processes.len(),
-            "process_count": processes.len(),
-            "visible_total": processes.len(),
-            "total_terminals": processes.len(),
-            "include_exited": include_exited,
-            "limit": limit,
-            "terminals": processes.clone(),
-            "processes": processes,
-        }))
+        Ok(terminal_process_list_response(
+            processes,
+            include_exited,
+            limit,
+        ))
     }
 
     async fn process_poll(
@@ -249,36 +228,30 @@ impl TerminalControllerStore for SandboxTerminalControllerStore {
         let effective_limit = limit.clamp(1, 200) as usize;
         let selected = select_logs(&logs, offset, effective_limit);
         let output = collect_output_from_logs(selected.iter().filter_map(log_value_content), 1200);
-        Ok(json!({
-            "terminal_id": meta.id,
-            "process_id": meta.id,
-            "terminal_name": derive_terminal_name(meta.cwd.as_str()),
-            "status": meta.status,
-            "process_status": if meta.status == "exited" { "exited" } else { "running" },
-            "busy": meta.status != "exited",
-            "has_session": true,
-            "command": meta.command,
-            "pid": Value::Null,
-            "started_at": meta.started_at,
-            "uptime_seconds": Value::Null,
-            "cwd": meta.cwd,
-            "project_id": meta.project_id,
-            "last_active_at": meta.last_active_at,
-            "mode": if offset.is_some() { "offset" } else { "recent" },
-            "requested_offset": offset,
-            "next_offset": selected.last().and_then(|value| value.get("offset")).and_then(Value::as_i64).map(|value| value + 1),
-            "limit": effective_limit,
-            "fetched_log_count": selected.len(),
-            "returned_log_count": selected.len(),
-            "has_more": offset.is_some() && logs.len() > selected.len(),
-            "truncated": false,
-            "truncation": { "truncated": false },
-            "logs": selected,
-            "output_preview": output.text,
-            "output_tail": output.text,
-            "output_tail_chars": output.char_count,
-            "exit_code": meta.exit_code,
-        }))
+        let is_exited = meta.status == "exited";
+        Ok(terminal_process_poll_response(
+            TerminalProcessSnapshot {
+                terminal_id: meta.id,
+                terminal_name: derive_terminal_name(meta.cwd.as_str()),
+                status: meta.status,
+                process_status: if is_exited { "exited" } else { "running" }.to_string(),
+                busy: !is_exited,
+                command: meta.command,
+                started_at: meta.started_at,
+                cwd: meta.cwd,
+                project_id: meta.project_id,
+                last_active_at: meta.last_active_at,
+                output_preview: output.text,
+                output_tail_chars: output.char_count,
+                exit_code: meta.exit_code,
+            },
+            TerminalProcessPollDetails {
+                offset,
+                limit: effective_limit,
+                has_more: offset.is_some() && logs.len() > selected.len(),
+                logs: selected,
+            },
+        ))
     }
 
     async fn process_log(
@@ -291,26 +264,7 @@ impl TerminalControllerStore for SandboxTerminalControllerStore {
         let poll = self
             .process_poll(context, terminal_id, offset, limit)
             .await?;
-        let output = poll
-            .get("logs")
-            .and_then(Value::as_array)
-            .map(|items| {
-                items
-                    .iter()
-                    .filter_map(log_value_content)
-                    .collect::<Vec<_>>()
-                    .join("")
-            })
-            .unwrap_or_default();
-        Ok(json!({
-            "terminal_id": poll.get("terminal_id").cloned().unwrap_or(Value::Null),
-            "status": poll.get("status").cloned().unwrap_or(Value::String("unknown".to_string())),
-            "output": output,
-            "offset": offset,
-            "limit": limit,
-            "has_more": poll.get("has_more").cloned().unwrap_or(Value::Bool(false)),
-            "next_offset": poll.get("next_offset").cloned().unwrap_or(Value::Null),
-        }))
+        Ok(terminal_process_log_response(&poll, offset, limit))
     }
 
     async fn process_wait(
@@ -323,25 +277,33 @@ impl TerminalControllerStore for SandboxTerminalControllerStore {
         let result = wait_for_session(session.clone(), timeout_ms).await?;
         let output = collect_output(&session, context.max_output_chars).await;
         let meta = session.meta.lock().await.clone();
-        Ok(json!({
-            "terminal_id": meta.id,
-            "process_id": meta.id,
-            "terminal_name": derive_terminal_name(meta.cwd.as_str()),
-            "status": meta.status,
-            "wait_status": if result.timed_out { "timeout" } else if meta.status == "exited" { "exited" } else { "running" },
-            "busy": result.busy,
-            "exited": meta.status == "exited",
-            "completed": !result.timed_out,
-            "timed_out": result.timed_out,
-            "finished_by": result.finished_by,
-            "exit_code": result.exit_code,
-            "timeout_ms": timeout_ms,
-            "waited_ms": result.waited_ms,
-            "output": output.text,
-            "output_preview": output.text,
-            "output_chars": output.char_count,
-            "truncated": output.truncated,
-        }))
+        let is_exited = meta.status == "exited";
+        Ok(terminal_process_wait_response(
+            TerminalProcessWaitResponse {
+                terminal_id: meta.id,
+                terminal_name: derive_terminal_name(meta.cwd.as_str()),
+                status: meta.status,
+                wait_status: if result.timed_out {
+                    "timeout"
+                } else if is_exited {
+                    "exited"
+                } else {
+                    "running"
+                }
+                .to_string(),
+                busy: result.busy,
+                exited: is_exited,
+                completed: !result.timed_out,
+                timed_out: result.timed_out,
+                finished_by: result.finished_by.to_string(),
+                exit_code: result.exit_code,
+                timeout_ms,
+                waited_ms: result.waited_ms,
+                output: output.text,
+                output_chars: output.char_count,
+                truncated: output.truncated,
+            },
+        ))
     }
 
     async fn process_write(
@@ -485,29 +447,6 @@ where
     });
 }
 
-async fn append_log(session: Arc<TerminalSession>, kind: &str, content: String) {
-    if content.is_empty() {
-        return;
-    }
-    let now = now_rfc3339();
-    {
-        let mut logs = session.logs.lock().await;
-        let offset = logs.last().map(|entry| entry.offset + 1).unwrap_or(0);
-        logs.push(TerminalLogEntry {
-            offset,
-            kind: kind.to_string(),
-            content,
-            created_at: now.clone(),
-        });
-        if logs.len() > 4_000 {
-            let drain = logs.len() - 4_000;
-            logs.drain(0..drain);
-        }
-    }
-    let mut meta = session.meta.lock().await;
-    meta.last_active_at = now;
-}
-
 async fn refresh_session_status(session: &Arc<TerminalSession>) -> Result<(), String> {
     {
         let meta = session.meta.lock().await;
@@ -616,76 +555,6 @@ async fn wait_for_session(
         finished_by: "timeout",
         exit_code: meta.exit_code,
     })
-}
-
-async fn collect_output(session: &Arc<TerminalSession>, max_chars: usize) -> OutputCapture {
-    let logs = session.logs.lock().await;
-    collect_output_from_logs(logs.iter().map(|entry| entry.content.as_str()), max_chars)
-}
-
-fn collect_output_from_logs<'a, I>(items: I, max_chars: usize) -> OutputCapture
-where
-    I: Iterator<Item = &'a str>,
-{
-    let full = items.collect::<Vec<_>>().join("");
-    let char_count = full.chars().count();
-    if char_count <= max_chars {
-        return OutputCapture {
-            text: full,
-            char_count,
-            truncated: false,
-        };
-    }
-    let text = full
-        .chars()
-        .skip(char_count.saturating_sub(max_chars))
-        .collect::<String>();
-    OutputCapture {
-        text,
-        char_count,
-        truncated: true,
-    }
-}
-
-fn select_logs(logs: &[TerminalLogEntry], offset: Option<i64>, limit: usize) -> Vec<Value> {
-    let selected = if let Some(offset) = offset {
-        logs.iter()
-            .filter(|entry| entry.offset >= offset.max(0))
-            .take(limit)
-            .collect::<Vec<_>>()
-    } else {
-        logs.iter().rev().take(limit).collect::<Vec<_>>()
-    };
-    let ordered = if offset.is_some() {
-        selected
-    } else {
-        selected.into_iter().rev().collect::<Vec<_>>()
-    };
-    ordered.into_iter().map(log_to_value).collect()
-}
-
-fn take_recent_logs(logs: &[TerminalLogEntry], limit: usize) -> Vec<Value> {
-    logs.iter()
-        .rev()
-        .take(limit)
-        .collect::<Vec<_>>()
-        .into_iter()
-        .rev()
-        .map(log_to_value)
-        .collect()
-}
-
-fn log_to_value(entry: &TerminalLogEntry) -> Value {
-    json!({
-        "offset": entry.offset,
-        "kind": entry.kind,
-        "content": entry.content,
-        "created_at": entry.created_at,
-    })
-}
-
-fn log_value_content(value: &Value) -> Option<&str> {
-    value.get("content").and_then(Value::as_str)
 }
 
 fn derive_terminal_name(cwd: &str) -> String {

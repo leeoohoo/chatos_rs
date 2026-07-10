@@ -41,12 +41,6 @@ export interface McpServerToolProfileInfo {
   tool_names: string[];
 }
 
-export interface TaskRunnerSkillResponse {
-  name: string;
-  locale: string;
-  content: string;
-}
-
 export interface TaskRunnerInternalPromptPreviewResponse {
   locale: string;
   task_prompt_template: string;

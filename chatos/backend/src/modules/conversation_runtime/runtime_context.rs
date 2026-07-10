@@ -51,7 +51,6 @@ pub struct ResolvedConversationRuntimeContext {
     pub base_system_prompt: Option<String>,
     pub contact_system_prompt: Option<String>,
     pub builtin_mcp_system_prompt: Option<String>,
-    pub task_runner_skill_prompt: Option<String>,
     pub selected_commands_for_snapshot: Arc<Mutex<Vec<TurnRuntimeSnapshotSelectedCommandDto>>>,
     pub resolved_project_id: Option<String>,
     pub resolved_project_root: Option<String>,
@@ -175,7 +174,6 @@ pub async fn resolve_runtime_context(
         authorize_runtime_workspace_dir(effective_user_id.as_deref(), workspace_root).await;
 
     let (mut http_servers, stdio_servers, builtin_servers) = empty_mcp_server_bundle();
-    let mut task_runner_skill_prompt = None;
     let mut runtime_error = None;
 
     let task_runner_required = req.plan_mode || runtime_metadata.auto_create_task == Some(true);
@@ -209,7 +207,6 @@ pub async fn resolve_runtime_context(
         .await
         {
             Some(runtime) => {
-                task_runner_skill_prompt = runtime.skill_prompt;
                 http_servers.push(runtime.server);
             }
             None => {
@@ -251,7 +248,6 @@ pub async fn resolve_runtime_context(
         base_system_prompt,
         contact_system_prompt,
         builtin_mcp_system_prompt,
-        task_runner_skill_prompt,
         selected_commands_for_snapshot,
         resolved_project_id,
         resolved_project_root,
@@ -269,7 +265,6 @@ pub async fn resolve_runtime_context(
 #[derive(Debug)]
 struct ContactTaskRunnerRuntime {
     server: McpHttpServer,
-    skill_prompt: Option<String>,
 }
 
 async fn build_contact_task_runner_runtime(
@@ -359,7 +354,7 @@ async fn build_contact_task_runner_runtime(
     );
     headers.insert(
         "X-Task-Runner-Builtin-Prompt-Locale".to_string(),
-        task_runner_skill_lang(locale).to_string(),
+        task_runner_builtin_prompt_lang(locale).to_string(),
     );
     if plan_mode {
         headers.insert(
@@ -391,58 +386,20 @@ async fn build_contact_task_runner_runtime(
             remote_server_config,
         );
     }
-    let skill_prompt =
-        fetch_contact_task_runner_skill_prompt(config.base_url.as_str(), locale, plan_mode).await;
     Some(ContactTaskRunnerRuntime {
         server: McpHttpServer {
             name: TASK_RUNNER_CONTACT_MCP_SERVER_NAME.to_string(),
             url: format!("{}/mcp", config.base_url.trim().trim_end_matches('/')),
             headers: Some(headers),
         },
-        skill_prompt,
     })
 }
 
-async fn fetch_contact_task_runner_skill_prompt(
-    base_url: &str,
-    locale: InternalContextLocale,
-    plan_mode: bool,
-) -> Option<String> {
-    match task_runner_api_client::fetch_task_runner_skill(
-        base_url,
-        task_runner_skill_lang(locale),
-        plan_mode.then_some("chatos_plan"),
-    )
-    .await
-    {
-        Ok(content) => Some(format_task_runner_skill_prompt(content.as_str(), locale)),
-        Err(err) => {
-            warn!("fetch task runner skill failed: detail={}", err);
-            None
-        }
-    }
-}
-
-fn task_runner_skill_lang(locale: InternalContextLocale) -> &'static str {
+fn task_runner_builtin_prompt_lang(locale: InternalContextLocale) -> &'static str {
     if locale.is_english() {
         InternalContextLocale::ENGLISH_KEY
     } else {
         InternalContextLocale::DEFAULT_KEY
-    }
-}
-
-fn format_task_runner_skill_prompt(content: &str, locale: InternalContextLocale) -> String {
-    let content = content.trim();
-    if locale.is_english() {
-        format!(
-            "[Task Runner Skill]\nThe following guide is provided by the Task Runner service for the Task Runner MCP tools available in this conversation. Follow it when using those tools.\n\n{}",
-            content
-        )
-    } else {
-        format!(
-            "[Task Runner Skill]\n下面的指南由 Task Runner 服务提供，用于当前会话可用的 Task Runner MCP 工具。使用这些工具时请遵循它。\n\n{}",
-            content
-        )
     }
 }
 

@@ -16,9 +16,8 @@ use super::support::{
     ensure_client_ref_graph_acyclic, normalize_mcp_builtin_kind_names, reusable_chatos_async_task,
 };
 use super::{
-    normalize_external_mcp_config_ids, normalize_skill_ids,
-    task_mcp_config_for_explicit_tool_selection, CreateTasksWithPrerequisitesArgs,
-    McpRequestContext, McpToolProfile, TaskRunnerMcpService,
+    normalize_external_mcp_config_ids, task_mcp_config_for_explicit_tool_selection,
+    CreateTasksWithPrerequisitesArgs, McpRequestContext, McpToolProfile, TaskRunnerMcpService,
 };
 
 impl TaskRunnerMcpService {
@@ -125,12 +124,6 @@ impl TaskRunnerMcpService {
                 config.enabled = true;
                 config.external_mcp_config_ids =
                     normalize_external_mcp_config_ids(external_mcp_config_ids);
-            }
-            if let Some(skill_ids) = item.skill_ids {
-                let config =
-                    mcp_config.get_or_insert_with(task_mcp_config_for_explicit_tool_selection);
-                config.enabled = true;
-                config.skill_ids = normalize_skill_ids(skill_ids);
             }
             let is_prerequisite_node = prerequisite_ref_targets.contains(client_ref.as_str());
             let mut request = CreateTaskRequest {

@@ -8,73 +8,10 @@ import { useApiClient } from '../../lib/api/ApiClientContext';
 import { useAuthStoreSelector } from '../../lib/auth/authStore';
 import { getUserVisiblePath } from '../../lib/domain/filesystem';
 import { useTheme } from '../../hooks/useTheme';
-import type { ProjectRunEnvironment, ProjectRunInstance, ProjectRunResolutionSuggestion, ProjectRunState, ProjectRunTarget, ProjectRunToolchainOption, Terminal } from '../../types';
 import EmbeddedTerminalView from '../terminal/EmbeddedTerminalView';
 import { RunEnvironmentDetails } from './projectRunSettingsPanel/RunEnvironmentDetails';
 import { formatRunTargetOptionHint, formatRunTargetSource, getRunStatusLabel, resolveConfigKindsForTarget } from './projectRunSettingsPanel/model';
-
-interface ProjectRunSettingsPanelProps {
-  projectName?: string;
-  projectRootPath?: string;
-  runStatus: string;
-  runCatalogLoading: boolean;
-  runEnvironment: ProjectRunEnvironment | null;
-  runEnvironmentLoading: boolean;
-  runEnvironmentError: string | null;
-  configFiles: Array<{
-    kind: string;
-    label: string;
-    path: string;
-    preview?: string | null;
-    source: string;
-  }>;
-  validationIssues: Array<{
-    kind: string;
-    message: string;
-    targetId?: string | null;
-    targetLabel?: string | null;
-    path?: string | null;
-    hint?: string | null;
-  }>;
-  runTargets: ProjectRunTarget[];
-  availableToolchainKinds: string[];
-  selectedToolchainOptions: Record<string, ProjectRunToolchainOption | null>;
-  missingToolchainKinds: string[];
-  customToolchainDrafts: Record<string, string>;
-  envVarsDraft: string;
-  commandPreview: string;
-  envPreview: string;
-  environmentHints: string[];
-  envVarsPlaceholder: string;
-  showTerminalUi: boolean;
-  selectedRunTargetId: string | null;
-  starting: boolean;
-  stopping: boolean;
-  restarting: boolean;
-  deleting: boolean;
-  runnerMessage?: string | null;
-  runnerError?: string | null;
-  runnerDiagnosis?: string | null;
-  runnerSuggestions?: ProjectRunResolutionSuggestion[];
-  projectRunState: ProjectRunState | null;
-  projectRunInstances: ProjectRunInstance[];
-  selectedRunInstanceId: string | null;
-  projectRunTerminal: Terminal | null;
-  projectRunTerminalBusy: boolean;
-  onSelectRunTarget: (targetId: string) => void;
-  onSelectRunInstance: (terminalId: string | null) => void;
-  onSelectToolchain: (kind: string, optionId: string) => void;
-  onApplySuggestion: (suggestion: ProjectRunResolutionSuggestion) => void;
-  onCustomToolchainDraftChange: (kind: string, value: string) => void;
-  onSaveCustomToolchain: (kind: string) => void;
-  onEnvVarsDraftChange: (value: string) => void;
-  onSaveEnvVarsDraft: () => void;
-  onRunnerStart: () => void;
-  onRunnerStop: () => void;
-  onRunnerRestart: () => void;
-  onRunnerDelete: () => void;
-  onRefreshRunnerState: () => void;
-}
+import type { ProjectRunSettingsPanelProps } from './projectRunSettingsPanel/types';
 
 export const ProjectRunSettingsPanel: React.FC<ProjectRunSettingsPanelProps> = ({
   projectName,

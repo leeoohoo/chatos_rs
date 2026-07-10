@@ -72,9 +72,6 @@ pub(in crate::api::projects) fn parse_work_items(values: Vec<Value>) -> Vec<Work
                 )
                 .or_else(|| value_string_vec(&value, "taskRunnerEnabledToolIds"))
                 .unwrap_or_default(),
-                task_runner_skill_ids: value_string_vec(&value, "task_runner_skill_ids")
-                    .or_else(|| value_string_vec(&value, "taskRunnerSkillIds"))
-                    .unwrap_or_default(),
                 status: value_string(&value, "status")
                     .unwrap_or_default()
                     .to_ascii_lowercase(),

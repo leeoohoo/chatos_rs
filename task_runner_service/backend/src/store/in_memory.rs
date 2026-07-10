@@ -6,7 +6,6 @@ use super::*;
 mod models;
 mod prompts;
 mod runs;
-mod skills;
 mod tasks;
 mod users;
 

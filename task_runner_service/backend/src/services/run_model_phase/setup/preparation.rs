@@ -7,11 +7,8 @@ mod mcp_builder;
 mod mcp_inputs;
 
 use mcp_builder::build_mcp_builder_parts;
-#[cfg(test)]
-use mcp_inputs::project_management_skill_prefixed_input_item;
 use mcp_inputs::{
     external_mcp_prefixed_input_items, load_external_mcp_servers, load_system_http_mcp_servers,
-    project_management_skill_prefixed_input_items, user_skill_prefixed_input_items,
 };
 
 pub(super) async fn prepare_model_execution(
@@ -36,22 +33,10 @@ pub(super) async fn prepare_model_execution(
         prerequisite_context,
         task.mcp_config.locale(),
     );
-    let mut prefixed_input_items =
-        project_management_skill_prefixed_input_items(service, task, task.mcp_config.locale())
-            .await;
-    prefixed_input_items.extend(
-        user_skill_prefixed_input_items(
-            service,
-            task,
-            task.mcp_config.locale(),
-            effective_workspace_dir,
-        )
-        .await,
-    );
-    prefixed_input_items.extend(external_mcp_prefixed_input_items(
+    let prefixed_input_items = external_mcp_prefixed_input_items(
         loaded_external_mcp.summaries.as_slice(),
         task.mcp_config.locale(),
-    ));
+    );
     let resolved_model_config =
         crate::services::model_runtime_resolver::resolve_model_runtime_for_task(
             &service.config,
@@ -267,34 +252,10 @@ mod tests {
 
     use crate::config::{AppConfig, StoreMode};
     use crate::models::{now_rfc3339, TaskMcpConfig, TaskRecord, TaskScheduleConfig, TaskStatus};
-    use crate::services::project_management_api_client::ProjectManagementSkillDocument;
     use serde_json::json;
-    use serde_json::Value;
     use tokio::sync::broadcast;
 
     use super::*;
-
-    #[test]
-    fn project_management_skill_prefixed_item_wraps_service_skill() {
-        let item = project_management_skill_prefixed_input_item(
-            ProjectManagementSkillDocument {
-                name: "project-management-mcp-agent-zh-cn".to_string(),
-                locale: "zh-CN".to_string(),
-                content: "# Project Management MCP Agent Skill\n\nbody".to_string(),
-            },
-            BuiltinMcpPromptLocale::ZhCn,
-        )
-        .expect("prefixed item");
-        let text = item
-            .pointer("/content/0/text")
-            .and_then(Value::as_str)
-            .expect("system text");
-
-        assert!(text.contains("Project Management 服务加载"));
-        assert!(text.contains("project-management-mcp-agent-zh-cn"));
-        assert!(text.contains("# Project Management MCP Agent Skill"));
-    }
-
     #[tokio::test]
     async fn chatos_plan_builtin_servers_include_project_management_provider() {
         let config = test_config();
