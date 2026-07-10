@@ -97,6 +97,23 @@ steps:
 ---
 kind: pipeline
 type: docker
+name: backend-plugin-management
+
+clone:
+  git:
+    image: drone/git:local
+    pull: if-not-exists
+
+steps:
+  - name: cargo-check
+    image: rust:1-bookworm
+    commands:
+      - find /etc/apt -type f \( -name '*.list' -o -name '*.sources' \) -exec sed -i -e 's|http://deb.debian.org/debian|http://mirrors.cloud.aliyuncs.com/debian|g' -e 's|http://deb.debian.org/debian-security|http://mirrors.cloud.aliyuncs.com/debian-security|g' {} + && apt-get update && apt-get install -y --no-install-recommends git bash python3 build-essential clang cmake libsqlite3-dev libssl-dev pkg-config protobuf-compiler ca-certificates && rm -rf /var/lib/apt/lists/*
+      - cargo check --manifest-path Cargo.toml -p plugin_management_service_backend
+
+---
+kind: pipeline
+type: docker
 name: backend-local-connector-service
 
 clone:
@@ -235,6 +252,25 @@ steps:
     image: node:24-bookworm
     commands:
       - cd project_management_service/frontend
+      - npm ci --legacy-peer-deps
+      - npm run type-check
+      - npm run build
+
+---
+kind: pipeline
+type: docker
+name: frontend-plugin-management
+
+clone:
+  git:
+    image: drone/git:local
+    pull: if-not-exists
+
+steps:
+  - name: npm-check
+    image: node:24-bookworm
+    commands:
+      - cd plugin_management_service/frontend
       - npm ci --legacy-peer-deps
       - npm run type-check
       - npm run build

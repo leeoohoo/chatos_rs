@@ -456,6 +456,10 @@ pub struct InitializeSandboxImageRequest {
     pub features: Vec<String>,
     #[serde(default)]
     pub custom_build_script: Option<String>,
+    #[serde(default)]
+    pub project_id: Option<String>,
+    #[serde(default)]
+    pub run_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -473,6 +477,10 @@ pub struct SandboxImageJobRecord {
     pub finished_at: Option<String>,
     pub output: String,
     pub error: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub project_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub run_id: Option<String>,
 }
 
 fn default_true() -> bool {

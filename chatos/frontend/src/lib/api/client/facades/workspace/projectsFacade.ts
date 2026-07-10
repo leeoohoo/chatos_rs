@@ -14,11 +14,14 @@ import type {
   ProjectRequirementWorkItemsResponse,
   ProjectRequirementExecuteResponse,
   ProjectRequirementStopResponse,
+  ProjectRuntimeEnvironmentResponse,
+  ProjectRuntimeEnvironmentProgressResponse,
   ProjectRunEnvironmentResponse,
   ProjectResponse,
   ProjectRunCatalogResponse,
   ProjectRunExecuteResponse,
   ProjectRunStateResponse,
+  UpdateProjectRuntimeEnvironmentSettingsPayload,
 } from '../../types';
 import type ApiClient from '../../../client';
 
@@ -29,6 +32,15 @@ export interface WorkspaceProjectFacade {
   updateProject(id: string, data: { name?: string; root_path?: string; git_url?: string; description?: string }): Promise<ProjectResponse>;
   deleteProject(id: string): Promise<DeleteSuccessResponse>;
   getProject(id: string): Promise<ProjectResponse>;
+  getProjectRuntimeEnvironment(projectId: string): Promise<ProjectRuntimeEnvironmentResponse>;
+  updateProjectRuntimeEnvironmentSettings(
+    projectId: string,
+    data: UpdateProjectRuntimeEnvironmentSettingsPayload,
+  ): Promise<ProjectRuntimeEnvironmentResponse>;
+  analyzeProjectRuntimeEnvironment(projectId: string): Promise<ProjectRuntimeEnvironmentResponse>;
+  getProjectRuntimeEnvironmentProgress(
+    projectId: string,
+  ): Promise<ProjectRuntimeEnvironmentProgressResponse>;
   getProjectPlan(projectId: string, options?: ProjectPlanOptions): Promise<ProjectPlanResponse>;
   listProjectRequirementWorkItems(
     projectId: string,
@@ -97,6 +109,18 @@ export const workspaceProjectFacade: WorkspaceProjectFacade & ThisType<ApiClient
   },
   async getProject(id) {
     return workspaceApi.getProject(this.getRequestFn(), id);
+  },
+  async getProjectRuntimeEnvironment(projectId) {
+    return workspaceApi.getProjectRuntimeEnvironment(this.getRequestFn(), projectId);
+  },
+  async updateProjectRuntimeEnvironmentSettings(projectId, data) {
+    return workspaceApi.updateProjectRuntimeEnvironmentSettings(this.getRequestFn(), projectId, data);
+  },
+  async analyzeProjectRuntimeEnvironment(projectId) {
+    return workspaceApi.analyzeProjectRuntimeEnvironment(this.getRequestFn(), projectId);
+  },
+  async getProjectRuntimeEnvironmentProgress(projectId) {
+    return workspaceApi.getProjectRuntimeEnvironmentProgress(this.getRequestFn(), projectId);
   },
   async getProjectPlan(projectId, options) {
     return workspaceApi.getProjectPlan(this.getRequestFn(), projectId, options);

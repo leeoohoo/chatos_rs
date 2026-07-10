@@ -64,6 +64,8 @@ ENV CHATOS_AGENT_PORT=49888
 ENV CHATOS_WORKSPACE=/workspace
 ENV DOTNET_ROOT=/usr/local/dotnet
 ENV JAVA_HOME=/usr/lib/jvm/default-jvm
+ENV PIP_BREAK_SYSTEM_PACKAGES=1
+ENV UV_BREAK_SYSTEM_PACKAGES=1
 ENV PATH=/usr/local/go/bin:/usr/local/dotnet:/root/.cargo/bin:/root/.local/bin:$PATH
 ENV RUSTUP_DIST_SERVER=https://mirrors.tuna.tsinghua.edu.cn/rustup
 ENV RUSTUP_UPDATE_ROOT=https://mirrors.tuna.tsinghua.edu.cn/rustup/rustup
@@ -133,7 +135,7 @@ RUN set -eux; \
       ln -sf "$python_path" /usr/local/bin/python; \
       ln -sf "$python_path" /usr/local/bin/python3; \
       "$python_path" -m ensurepip --upgrade || true; \
-      "$python_path" -m pip install --upgrade pip setuptools wheel; \
+      uv pip install --system --break-system-packages --python "$python_path" --upgrade pip setuptools wheel; \
       ln -sf "$python_bin_dir/pip" /usr/local/bin/pip || true; \
       ln -sf "$python_bin_dir/pip3" /usr/local/bin/pip3 || true; \
     fi; \

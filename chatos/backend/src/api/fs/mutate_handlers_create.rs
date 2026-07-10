@@ -58,6 +58,12 @@ pub(in super::super) async fn create_dir(
         );
     }
     if let Some(response) =
+        super::super::harness_project_bridge::create_dir(&auth, parent_raw.as_str(), name.as_str())
+            .await
+    {
+        return response;
+    }
+    if let Some(response) =
         super::super::local_connector_bridge::create_dir(parent_raw.as_str(), name.as_str()).await
     {
         return response;
@@ -160,6 +166,16 @@ pub(in super::super) async fn create_file(
             StatusCode::BAD_REQUEST,
             Json(json!({ "error": "文件名称不合法" })),
         );
+    }
+    if let Some(response) = super::super::harness_project_bridge::create_file(
+        &auth,
+        parent_raw.as_str(),
+        name.as_str(),
+        req.content.as_deref().unwrap_or_default(),
+    )
+    .await
+    {
+        return response;
     }
     if let Some(response) = super::super::local_connector_bridge::create_file(
         parent_raw.as_str(),
@@ -289,6 +305,12 @@ pub(in super::super) async fn write_file(
                 "limit": MAX_WRITE_BYTES,
             })),
         );
+    }
+    if let Some(response) =
+        super::super::harness_project_bridge::write_file(&auth, raw.as_str(), content.as_str())
+            .await
+    {
+        return response;
     }
     if let Some(response) =
         super::super::local_connector_bridge::write_file(raw.as_str(), content.as_str()).await

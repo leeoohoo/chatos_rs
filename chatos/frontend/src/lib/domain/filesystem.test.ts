@@ -26,6 +26,13 @@ describe('domain/filesystem', () => {
     expect(getUserVisiblePath(`${root}/demo/src`, `${root}/demo`)).toBe('/src');
   });
 
+  it('hides the internal Harness project URI', () => {
+    const root = 'harness://project/project-1';
+    expect(getUserVisiblePath(root)).toBe('/');
+    expect(getUserVisiblePath(`${root}/src/main.rs`)).toBe('/src/main.rs');
+    expect(getUserVisiblePath(`${root}/src/main.rs`, root)).toBe('/src/main.rs');
+  });
+
   it('converts edited user-visible paths back to the current scoped root', () => {
     const current = '/opt/chatos/backend/data/workspace/users/user-123/workspaces/demo';
     expect(resolveUserVisiblePathInput('/next', current)).toBe(

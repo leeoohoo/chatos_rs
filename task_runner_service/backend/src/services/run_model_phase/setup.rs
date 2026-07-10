@@ -2,6 +2,7 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use super::*;
+use crate::services::TaskRunnerCapabilityPolicy;
 
 mod initialization;
 mod preparation;
@@ -49,6 +50,7 @@ impl RunService {
         input: &StartTaskRunRequest,
         effective_workspace_dir: &str,
         prerequisite_context: &[PrerequisiteTaskContext],
+        capability_policy: Option<&TaskRunnerCapabilityPolicy>,
     ) -> Result<PreparedModelExecution, String> {
         preparation::prepare_model_execution(
             self,
@@ -58,6 +60,7 @@ impl RunService {
             input,
             effective_workspace_dir,
             prerequisite_context,
+            capability_policy,
         )
         .await
     }

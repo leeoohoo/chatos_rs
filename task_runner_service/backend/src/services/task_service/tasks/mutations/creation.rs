@@ -94,12 +94,21 @@ impl TaskService {
             self.validate_task_mcp_config(&mcp_config, creator, task_owner_user_id.as_deref())
                 .await?;
         } else {
-            self.validate_task_external_mcp_configs(
-                &mcp_config,
-                creator,
-                task_owner_user_id.as_deref(),
-            )
-            .await?;
+            let centralized_policy = self
+                .validate_task_capability_selection(
+                    &mcp_config,
+                    creator,
+                    task_owner_user_id.as_deref(),
+                )
+                .await?;
+            if !centralized_policy {
+                self.validate_task_external_mcp_configs(
+                    &mcp_config,
+                    creator,
+                    task_owner_user_id.as_deref(),
+                )
+                .await?;
+            }
             self.validate_task_ephemeral_http_servers(&mcp_config)?;
         }
         let tenant_id = resolve_task_tenant_id(
@@ -264,6 +273,10 @@ mod tests {
                 harness_repo_path: None,
                 harness_git_url: None,
                 harness_git_ssh_url: None,
+                harness_default_branch: None,
+                harness_provision_status: None,
+                harness_provision_error: None,
+                harness_provisioned_at: None,
                 description: None,
                 status,
                 created_at: now.clone(),

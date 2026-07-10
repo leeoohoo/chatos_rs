@@ -97,7 +97,7 @@ pub async fn create_harness_project_repo(
         .as_deref()
         .map(str::trim)
         .filter(|value| !value.is_empty())
-        .unwrap_or("Chatos cloud project");
+        .unwrap_or("Chatos project");
     let body = HarnessCreateRepoRequest {
         parent_ref: record.space_identifier.as_str(),
         identifier: repo_identifier.as_str(),
@@ -107,7 +107,7 @@ pub async fn create_harness_project_repo(
         readme: false,
     };
     let endpoint = format!("{base_url}/api/v1/repos");
-    let repo = harness_request_json::<HarnessRepositoryOutput, _>(
+    let repo = match harness_request_json::<HarnessRepositoryOutput, _>(
         state,
         Method::POST,
         endpoint.as_str(),
@@ -115,7 +115,37 @@ pub async fn create_harness_project_repo(
         Some(&body),
     )
     .await
-    .map_err(|err| format!("create harness repo failed: {err}"))?;
+    {
+        Ok(repo) => repo,
+        Err(err) if err.is_already_exists() => {
+            let endpoint = format!(
+                "{base_url}/api/v1/repos/{}/{}",
+                urlencoding::encode(record.space_identifier.as_str()),
+                urlencoding::encode(repo_identifier.as_str())
+            );
+            harness_request_json::<HarnessRepositoryOutput, ()>(
+                state,
+                Method::GET,
+                endpoint.as_str(),
+                Some(push_token.as_str()),
+                None,
+            )
+            .await
+            .map_err(|fetch_err| {
+                format!(
+                    "create harness repo reported existing, but read existing repo failed: {fetch_err}"
+                )
+            })?
+        }
+        Err(err) => return Err(format!("create harness repo failed: {err}")),
+    };
+    let expected_repo_path = format!("{}/{}", record.space_identifier, repo_identifier);
+    if repo.identifier.trim() != repo_identifier || repo.path.trim() != expected_repo_path {
+        return Err(format!(
+            "existing Harness repo does not match requested user space: expected {expected_repo_path}, got {}",
+            repo.path
+        ));
+    }
     let git_url = rewrite_harness_local_url_host(repo.git_url.as_str(), &base_url, true);
     if git_url.is_empty() {
         return Err("harness repo response missing git_url".to_string());

@@ -267,6 +267,8 @@ export const zhCN: MessageDictionary = {
   'session.loadMore': '加载更多',
   'session.projects': '项目',
   'session.addProject': '新增项目',
+  'session.localProject': '本地项目',
+  'session.cloudProject': '云端项目',
   'session.noProjects': '还没有项目，点击右侧 + 新建。',
   'session.archiveProject': '归档',
   'session.terminals': '终端',

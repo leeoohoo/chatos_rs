@@ -129,21 +129,45 @@ impl TaskRunnerMcpService {
             "list_mcp_builtin_catalog" => {
                 let _ = decode_args::<Value>(args).ok();
                 let mut catalog = self.mcp_catalog_service.list_catalog();
-                if request_context.tool_profile() == McpToolProfile::ChatosAsyncPlanner {
+                let owner_user_id = current_user
+                    .effective_owner_user_id()
+                    .ok_or_else(|| "current agent token is missing owner scope".to_string())?;
+                if let Some(policy) = self
+                    .task_service
+                    .resolve_task_runner_policy(Some(current_user), Some(owner_user_id))
+                    .await?
+                {
+                    let selectable = policy
+                        .selectable_builtin_kind_names()
+                        .into_iter()
+                        .collect::<std::collections::HashSet<_>>();
+                    catalog.retain(|item| selectable.contains(item.kind.as_str()));
+                } else if request_context.tool_profile() == McpToolProfile::ChatosAsyncPlanner {
                     catalog.retain(|item| !is_planner_required_builtin_kind(item.kind.as_str()));
                 }
                 Ok(text_result(json!(catalog)))
             }
             "list_external_mcp_configs" => {
                 let _ = decode_args::<Value>(args).ok();
-                let configs = self
-                    .external_mcp_config_service
-                    .list_external_mcp_configs()
-                    .await?;
-                Ok(text_result(json!(external_mcp_configs_for_user(
-                    configs,
-                    current_user
-                ))))
+                let owner_user_id = current_user
+                    .effective_owner_user_id()
+                    .ok_or_else(|| "current agent token is missing owner scope".to_string())?;
+                if let Some(policy) = self
+                    .task_service
+                    .resolve_task_runner_policy(Some(current_user), Some(owner_user_id))
+                    .await?
+                {
+                    Ok(text_result(json!(policy.selectable_external_mcp_views())))
+                } else {
+                    let configs = self
+                        .external_mcp_config_service
+                        .list_external_mcp_configs()
+                        .await?;
+                    Ok(text_result(json!(external_mcp_configs_for_user(
+                        configs,
+                        current_user
+                    ))))
+                }
             }
             "create_tasks_with_prerequisites" => {
                 let args: CreateTasksWithPrerequisitesArgs = decode_args(args)?;

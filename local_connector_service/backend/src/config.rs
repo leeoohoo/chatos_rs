@@ -13,6 +13,7 @@ pub struct AppConfig {
     pub user_service_base_url: String,
     pub user_service_request_timeout: Duration,
     pub relay_request_timeout: Duration,
+    pub sandbox_image_relay_request_timeout: Duration,
     pub public_base_url: Option<String>,
     pub internal_api_secret: Option<String>,
     pub memory_engine_base_url: String,
@@ -42,6 +43,13 @@ impl AppConfig {
             .and_then(|value| value.parse::<u64>().ok())
             .unwrap_or(30_000)
             .max(1_000);
+        let sandbox_image_relay_timeout_ms =
+            std::env::var("LOCAL_CONNECTOR_SANDBOX_IMAGE_RELAY_REQUEST_TIMEOUT_MS")
+                .ok()
+                .or_else(|| std::env::var("SANDBOX_IMAGE_MCP_REQUEST_TIMEOUT_MS").ok())
+                .and_then(|value| value.parse::<u64>().ok())
+                .unwrap_or(2 * 60 * 60 * 1_000)
+                .max(10_000);
         let memory_timeout_ms = std::env::var("LOCAL_CONNECTOR_MEMORY_ENGINE_REQUEST_TIMEOUT_MS")
             .ok()
             .or_else(|| std::env::var("MEMORY_ENGINE_REQUEST_TIMEOUT_MS").ok())
@@ -60,6 +68,9 @@ impl AppConfig {
                 .unwrap_or_else(default_user_service_base_url),
             user_service_request_timeout: Duration::from_millis(timeout_ms),
             relay_request_timeout: Duration::from_millis(relay_timeout_ms),
+            sandbox_image_relay_request_timeout: Duration::from_millis(
+                sandbox_image_relay_timeout_ms,
+            ),
             public_base_url: normalized_env("LOCAL_CONNECTOR_PUBLIC_BASE_URL"),
             internal_api_secret: normalized_env("LOCAL_CONNECTOR_INTERNAL_API_SECRET")
                 .or_else(|| normalized_env("CHATOS_LOCAL_CONNECTOR_INTERNAL_API_SECRET"))

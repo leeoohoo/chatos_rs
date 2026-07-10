@@ -16,6 +16,7 @@ LOCAL_BUILD_SERVICES=(
   user-service-backend
   memory-engine-backend
   project-management-backend
+  plugin-management-backend
   local-connector-service-backend
   sandbox-manager-backend
   task-runner-backend
@@ -25,6 +26,7 @@ LOCAL_BUILD_SERVICES=(
   user-service-frontend
   memory-engine-frontend
   project-management-frontend
+  plugin-management-frontend
   task-runner-frontend
   sandbox-manager-frontend
   official-website-frontend
@@ -156,7 +158,7 @@ env_flag_enabled() {
 print_urls() {
   local frontend_port main_backend_port user_service_frontend_port
   local memory_engine_frontend_port task_runner_frontend_port project_service_frontend_port
-  local sandbox_manager_frontend_port local_connector_service_port
+  local plugin_management_frontend_port sandbox_manager_frontend_port local_connector_service_port
   local official_website_frontend_port harness_port harness_ssh_host harness_ssh_port consul_port
   frontend_port="$(env_value FRONTEND_PORT 8088)"
   main_backend_port="$(env_value MAIN_BACKEND_PORT 3997)"
@@ -168,6 +170,7 @@ print_urls() {
   memory_engine_frontend_port="$(env_value MEMORY_ENGINE_FRONTEND_PORT 4178)"
   task_runner_frontend_port="$(env_value TASK_RUNNER_FRONTEND_PORT 39091)"
   project_service_frontend_port="$(env_value PROJECT_SERVICE_FRONTEND_PORT 39211)"
+  plugin_management_frontend_port="$(env_value PLUGIN_MANAGEMENT_FRONTEND_PORT 39261)"
   sandbox_manager_frontend_port="$(env_value SANDBOX_MANAGER_FRONTEND_PORT 8096)"
   local_connector_service_port="$(env_value LOCAL_CONNECTOR_SERVICE_PORT 39230)"
   official_website_frontend_port="$(env_value OFFICIAL_WEBSITE_FRONTEND_PORT 39251)"
@@ -184,6 +187,7 @@ User Service:             http://localhost:${user_service_frontend_port}
 Memory Engine:            http://localhost:${memory_engine_frontend_port}
 Task Runner:              http://localhost:${task_runner_frontend_port}
 Project Management:       http://localhost:${project_service_frontend_port}
+Plugin Management:        http://localhost:${plugin_management_frontend_port}
 Sandbox Manager:          http://localhost:${sandbox_manager_frontend_port}
 Local Connector Service:  http://localhost:${local_connector_service_port}
 Official Website:         http://localhost:${official_website_frontend_port}

@@ -6,7 +6,7 @@ import React from 'react';
 import { useI18n } from '../../i18n/I18nProvider';
 import { cn } from '../../lib/utils';
 
-export type WorkspaceTab = 'files' | 'team' | 'plan' | 'settings';
+export type WorkspaceTab = 'files' | 'team' | 'plan' | 'settings' | 'sandbox';
 
 interface WorkspaceTabsProps {
   activeTab: WorkspaceTab;
@@ -27,6 +27,7 @@ export const WorkspaceTabs: React.FC<WorkspaceTabsProps> = ({
     { id: 'team', label: t('projectExplorer.tab.team') },
     { id: 'plan', label: t('projectExplorer.tab.plan') },
     { id: 'settings', label: t('projectExplorer.tab.settings') },
+    { id: 'sandbox', label: t('projectExplorer.tab.sandbox') },
   ];
   const visibleTabs = tabs && tabs.length > 0
     ? allTabs.filter((tab) => tabs.includes(tab.id))

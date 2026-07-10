@@ -11,6 +11,7 @@ impl RunService {
         report: TaskRunReport,
         effective_workspace_dir: &str,
         sandbox_output: Option<SandboxOutputReport>,
+        harness_output: Option<HarnessRunOutputReport>,
     ) {
         let path_redactor = crate::services::path_redaction::WorkspacePathRedactor::for_workspace(
             self.config.default_workspace_dir.as_str(),
@@ -24,10 +25,11 @@ impl RunService {
             .error
             .map(|error| path_redactor.redact_text(error.as_str()));
         let report_json =
-            report_json_with_sandbox_output(&report, sandbox_output.as_ref()).map(|mut value| {
-                path_redactor.redact_value(&mut value);
-                value
-            });
+            report_json_with_outputs(&report, sandbox_output.as_ref(), harness_output.as_ref())
+                .map(|mut value| {
+                    path_redactor.redact_value(&mut value);
+                    value
+                });
         let existing_task = self.store.get_task(&task.id).await.ok().flatten();
         let task_already_succeeded = existing_task
             .as_ref()
@@ -197,20 +199,24 @@ impl RunService {
     }
 }
 
-fn report_json_with_sandbox_output(
+fn report_json_with_outputs(
     report: &TaskRunReport,
     sandbox_output: Option<&SandboxOutputReport>,
+    harness_output: Option<&HarnessRunOutputReport>,
 ) -> Option<Value> {
     let mut report_json = serde_json::to_value(report).ok()?;
-    if let Some(output) = sandbox_output {
-        if let Some(object) = report_json.as_object_mut() {
-            object.insert(
-                "output".to_string(),
-                json!({
-                    "sandbox": output,
-                }),
-            );
+    if sandbox_output.is_none() && harness_output.is_none() {
+        return Some(report_json);
+    }
+    if let Some(object) = report_json.as_object_mut() {
+        let mut output = serde_json::Map::new();
+        if let Some(sandbox) = sandbox_output {
+            output.insert("sandbox".to_string(), serde_json::to_value(sandbox).ok()?);
         }
+        if let Some(harness) = harness_output {
+            output.insert("harness".to_string(), serde_json::to_value(harness).ok()?);
+        }
+        object.insert("output".to_string(), Value::Object(output));
     }
     Some(report_json)
 }
@@ -361,7 +367,7 @@ mod tests {
         };
 
         run_service
-            .finalize_model_phase(&parent, &mut run, report, ".", None)
+            .finalize_model_phase(&parent, &mut run, report, ".", None, None)
             .await;
 
         let saved_run = run_service
@@ -413,7 +419,7 @@ mod tests {
         };
 
         run_service
-            .finalize_model_phase(&parent, &mut run, report, ".", None)
+            .finalize_model_phase(&parent, &mut run, report, ".", None, None)
             .await;
 
         let saved_run = run_service

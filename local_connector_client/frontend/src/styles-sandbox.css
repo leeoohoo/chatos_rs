@@ -2,19 +2,21 @@
 /* Required Notice: Copyright (c) 2025 AI Chat Team */
 
 .modalBackdrop {
-  background: rgb(11 20 15 / 42%);
+  background: rgb(0 0 0 / 50%);
   inset: 0;
   position: fixed;
   z-index: 20;
+  backdrop-filter: blur(3px);
 }
 
 .modal {
-  background: #fff;
-  border-radius: 8px;
-  box-shadow: 0 24px 70px rgb(0 0 0 / 26%);
+  background: var(--panel-bg);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: var(--shadow-menu);
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 11px;
   left: 50%;
   max-height: 82vh;
   max-width: 720px;
@@ -28,37 +30,45 @@
 .pickerToolbar,
 .modalActions {
   display: flex;
-  gap: 8px;
+  gap: 7px;
   justify-content: space-between;
 }
 
 .dirList {
-  border: 1px solid #e4eae4;
-  border-radius: 6px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
   max-height: 340px;
   overflow: auto;
-  padding: 8px;
+  padding: 5px 8px;
 }
 
 .dirRow {
-  border: 0;
+  border-bottom: 1px solid var(--border-subtle);
   justify-content: flex-start;
-  padding: 6px;
+  padding: 5px 2px;
+}
+
+.dirRow:last-child {
+  border-bottom: 0;
 }
 
 .dirRow button {
   align-items: center;
   background: transparent;
   border: 0;
-  color: #17211c;
+  color: var(--text);
   display: inline-flex;
-  gap: 8px;
-  min-height: 30px;
+  gap: 7px;
+  min-height: 28px;
+}
+
+.dirRow button svg {
+  color: var(--accent);
 }
 
 .selectionSummary {
-  color: #1f6b4a;
-  font-size: 13px;
+  color: var(--success);
+  font-size: 11px;
 }
 
 .switch input {
@@ -66,183 +76,187 @@
 }
 
 .switch span {
-  background: #cbd6cc;
+  background: var(--border);
   border-radius: 999px;
   display: block;
-  height: 24px;
+  height: 22px;
   position: relative;
-  width: 44px;
+  transition: background-color 120ms ease;
+  width: 40px;
 }
 
 .switch span::after {
-  background: #fff;
+  background: var(--text-tertiary);
   border-radius: 50%;
+  box-shadow: var(--shadow-sm);
   content: "";
-  height: 18px;
+  height: 16px;
   left: 3px;
   position: absolute;
   top: 3px;
-  transition: transform 140ms ease;
-  width: 18px;
+  transition: transform 120ms ease, background-color 120ms ease;
+  width: 16px;
 }
 
 .switch input:checked + span {
-  background: #1f6b4a;
+  background: var(--accent);
 }
 
 .switch input:checked + span::after {
-  transform: translateX(20px);
+  background: #fff;
+  transform: translateX(18px);
 }
 
 .dockerBox {
   align-items: center;
-  background: #f4f7f3;
-  border-radius: 6px;
+  background: var(--panel-subtle);
+  border-radius: 7px;
   display: flex;
-  gap: 8px;
-  margin-bottom: 12px;
-  padding: 10px;
+  gap: 7px;
+  margin-bottom: 11px;
+  padding: 9px;
 }
 
 .dot {
   border-radius: 50%;
   display: inline-block;
-  height: 10px;
-  width: 10px;
+  height: 7px;
+  width: 7px;
 }
 
 .dot.bad {
-  background: #b33a3a;
+  background: var(--danger);
 }
 
 .boundaryList {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 6px;
 }
 
 .boundaryList div {
   align-items: center;
-  background: #f4f7f3;
-  border-radius: 6px;
-  color: #32433a;
+  color: var(--text-secondary);
   display: flex;
-  gap: 8px;
-  padding: 10px;
+  font-size: 10px;
+  gap: 7px;
+}
+
+.boundaryList div svg {
+  color: var(--success);
+  flex: 0 0 auto;
 }
 
 .sandboxPage {
   display: flex;
   flex-direction: column;
-  gap: 18px;
-}
-
-.sandboxHero {
-  background: #ffffff;
+  gap: 14px;
 }
 
 .sandboxStatusGrid {
   display: grid;
-  gap: 12px;
+  gap: 8px;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  margin-bottom: 14px;
+  margin-bottom: 13px;
 }
 
 .statusTile {
-  border: 1px solid #e1e7e1;
+  background: var(--panel-subtle);
   border-radius: 8px;
   display: grid;
-  gap: 4px;
-  min-height: 122px;
-  padding: 14px;
+  gap: 3px;
+  min-height: 104px;
+  padding: 11px;
 }
 
 .statusTile svg {
-  color: #4155a5;
+  color: var(--text-tertiary);
+  margin-bottom: 3px;
 }
 
 .statusTile span,
 .statusTile small {
-  color: #65726b;
-  font-size: 12px;
+  color: var(--text-tertiary);
+  font-size: 9px;
 }
 
 .statusTile strong {
+  color: var(--text);
   display: block;
-  font-size: 16px;
+  font-size: 12px;
+  font-weight: 620;
   overflow-wrap: anywhere;
 }
 
-.statusTile.ok {
-  background: #edf7f1;
-  border-color: #c6e4d0;
-}
-
-.statusTile.warn {
-  background: #fff6e4;
-  border-color: #ecd49a;
-}
-
-.statusTile.muted {
-  background: #f3f5f8;
-  border-color: #d8e0ea;
-}
+.statusTile.ok svg { color: var(--success); }
+.statusTile.warn svg { color: var(--warning); }
 
 .sandboxBoundary {
+  border-top: 1px solid var(--border-subtle);
   display: grid;
+  gap: 12px;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  margin-top: 4px;
+  padding-top: 12px;
 }
 
 .sandboxContentGrid {
   display: grid;
-  gap: 18px;
+  gap: 14px;
   grid-template-columns: minmax(0, 1.45fr) minmax(360px, 0.8fr);
 }
 
 .runtimeGrid {
   display: grid;
-  gap: 12px;
+  gap: 8px;
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 .runtimeSelect {
-  background: #fbfcfa;
-  border: 1px solid #e1e7e1;
+  background: var(--panel-subtle);
   border-radius: 8px;
-  padding: 12px;
+  padding: 10px;
 }
 
 .runtimeSelect span {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 1px;
+}
+
+.runtimeSelect span strong {
+  color: var(--text);
 }
 
 .runtimeSelect small {
-  color: #65726b;
-  font-size: 12px;
+  color: var(--text-tertiary);
+  font-size: 9px;
+  font-weight: 400;
 }
 
 .scriptEditor {
-  margin-top: 14px;
+  margin-top: 12px;
 }
 
 .imageList,
 .jobList {
+  border: 1px solid var(--border);
+  border-radius: 8px;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  overflow: hidden;
 }
 
 .imageRow {
   align-items: center;
-  border: 1px solid #e4eae4;
-  border-radius: 8px;
+  border-bottom: 1px solid var(--border-subtle);
   display: flex;
-  gap: 12px;
+  gap: 10px;
   justify-content: space-between;
-  padding: 12px;
+  padding: 10px 11px;
+}
+
+.imageRow:last-child {
+  border-bottom: 0;
 }
 
 .imageRow strong,
@@ -251,22 +265,30 @@
   overflow-wrap: anywhere;
 }
 
+.imageRow strong {
+  color: var(--text);
+  font-size: 11px;
+}
+
 .imageRow span {
-  color: #65726b;
-  font-size: 12px;
+  color: var(--text-tertiary);
+  font-size: 9px;
 }
 
 .jobRow {
-  border: 1px solid #e4eae4;
-  border-radius: 8px;
-  padding: 12px;
+  border-bottom: 1px solid var(--border-subtle);
+  padding: 10px 11px;
+}
+
+.jobRow:last-child {
+  border-bottom: 0;
 }
 
 .jobRow summary {
   align-items: center;
   cursor: pointer;
   display: flex;
-  gap: 12px;
+  gap: 10px;
   justify-content: space-between;
 }
 
@@ -277,12 +299,12 @@
 }
 
 .jobRow small {
-  color: #65726b;
-  font-size: 12px;
+  color: var(--text-tertiary);
+  font-size: 9px;
 }
 
 .leaseTable {
-  border: 1px solid #e4eae4;
+  border: 1px solid var(--border);
   border-radius: 8px;
   overflow: hidden;
 }
@@ -290,22 +312,23 @@
 .leaseHeader,
 .leaseRow {
   display: grid;
-  gap: 10px;
+  gap: 9px;
   grid-template-columns: minmax(180px, 1fr) minmax(140px, 0.8fr) minmax(180px, 1fr) 92px;
-  padding: 10px 12px;
+  padding: 9px 11px;
 }
 
 .leaseHeader {
-  background: #f3f5f8;
-  color: #65726b;
-  font-size: 12px;
-  font-weight: 700;
+  background: var(--panel-subtle);
+  color: var(--text-tertiary);
+  font-size: 9px;
+  font-weight: 650;
 }
 
 .leaseRow {
   align-items: center;
-  border-top: 1px solid #e4eae4;
-  font-size: 13px;
+  border-top: 1px solid var(--border-subtle);
+  color: var(--text-secondary);
+  font-size: 10px;
 }
 
 .leaseRow span {

@@ -232,6 +232,117 @@ export interface ProjectRunEnvironmentResponse {
   updatedAt?: string | null;
 }
 
+export type ProjectRuntimeEnvironmentStatus =
+  | 'disabled'
+  | 'pending_configuration'
+  | 'pending'
+  | 'analyzing'
+  | 'ready'
+  | 'not_runnable'
+  | 'failed'
+  | string;
+
+export type ProjectRuntimeEnvironmentProvider =
+  | 'none'
+  | 'local_connector'
+  | 'harness'
+  | 'cloud_sandbox_manager'
+  | string;
+
+export interface ProjectRuntimeEnvironmentRecordResponse {
+  project_id?: string;
+  projectId?: string;
+  status?: ProjectRuntimeEnvironmentStatus;
+  sandbox_enabled?: boolean;
+  sandboxEnabled?: boolean;
+  sandbox_provider?: ProjectRuntimeEnvironmentProvider;
+  sandboxProvider?: ProjectRuntimeEnvironmentProvider;
+  file_provider?: ProjectRuntimeEnvironmentProvider;
+  fileProvider?: ProjectRuntimeEnvironmentProvider;
+  analysis_summary?: string | null;
+  analysisSummary?: string | null;
+  not_runnable_reason?: string | null;
+  notRunnableReason?: string | null;
+  detected_stack?: unknown;
+  detectedStack?: unknown;
+  required_services?: unknown;
+  requiredServices?: unknown;
+  env_vars?: unknown;
+  envVars?: unknown;
+  last_agent_run_id?: string | null;
+  lastAgentRunId?: string | null;
+  last_error?: string | null;
+  lastError?: string | null;
+  created_at?: string;
+  createdAt?: string;
+  updated_at?: string;
+  updatedAt?: string;
+}
+
+export interface ProjectRuntimeEnvironmentImageResponse {
+  id?: string;
+  project_id?: string;
+  projectId?: string;
+  environment_key?: string;
+  environmentKey?: string;
+  environment_type?: string;
+  environmentType?: string;
+  display_name?: string;
+  displayName?: string;
+  image_id?: string | null;
+  imageId?: string | null;
+  image_ref?: string | null;
+  imageRef?: string | null;
+  image_provider?: ProjectRuntimeEnvironmentProvider;
+  imageProvider?: ProjectRuntimeEnvironmentProvider;
+  features?: unknown;
+  ports?: unknown;
+  env_vars?: unknown;
+  envVars?: unknown;
+  status?: string;
+  error?: string | null;
+  created_at?: string;
+  createdAt?: string;
+  updated_at?: string;
+  updatedAt?: string;
+}
+
+export interface ProjectRuntimeEnvironmentResponse {
+  environment?: ProjectRuntimeEnvironmentRecordResponse;
+  images?: ProjectRuntimeEnvironmentImageResponse[];
+}
+
+export interface ProjectRuntimeEnvironmentProgressResponse {
+  project_id?: string;
+  projectId?: string;
+  run_id?: string | null;
+  runId?: string | null;
+  phase?: string;
+  status?: 'idle' | 'running' | 'succeeded' | 'failed' | string;
+  progress_percent?: number | null;
+  progressPercent?: number | null;
+  provider?: ProjectRuntimeEnvironmentProvider;
+  job_id?: string | null;
+  jobId?: string | null;
+  image_id?: string | null;
+  imageId?: string | null;
+  image_ref?: string | null;
+  imageRef?: string | null;
+  started_at?: string | null;
+  startedAt?: string | null;
+  updated_at?: string;
+  updatedAt?: string;
+  finished_at?: string | null;
+  finishedAt?: string | null;
+  logs?: string;
+  error?: string | null;
+}
+
+export interface UpdateProjectRuntimeEnvironmentSettingsPayload {
+  sandbox_enabled?: boolean;
+  sandboxEnabled?: boolean;
+}
+
 export interface ProjectContactLinkResponse {
   contact_id?: string;
   contactId?: string;

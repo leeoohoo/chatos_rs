@@ -2,6 +2,7 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use super::*;
+use crate::services::TaskRunnerCapabilityPolicy;
 
 impl RunService {
     pub async fn execute_claimed_run(&self, mut run: TaskRunRecord) {
@@ -57,15 +58,36 @@ impl RunService {
             .await;
             return;
         }
-        let task =
-            match task_with_runtime_mcp_routing(&self.config, &self.store, task.clone()).await {
-                Ok(task) => task,
-                Err(err) => {
-                    self.finish_failed_before_execution(&task, &mut run, ".", err)
-                        .await;
-                    return;
-                }
-            };
+        let capability_policy = match self.resolve_task_runner_policy_for_task(&task).await {
+            Ok(policy) => policy,
+            Err(err) => {
+                self.finish_failed_before_execution(&task, &mut run, ".", err)
+                    .await;
+                return;
+            }
+        };
+        let mut task = task;
+        if let Some(policy) = capability_policy.as_ref() {
+            if let Err(err) = policy.apply_to_task(&mut task) {
+                self.finish_failed_before_execution(&task, &mut run, ".", err)
+                    .await;
+                return;
+            }
+        }
+        let routed_task = if capability_policy.is_some() {
+            task_with_runtime_mcp_routing_authoritative(&self.config, &self.store, task.clone())
+                .await
+        } else {
+            task_with_runtime_mcp_routing(&self.config, &self.store, task.clone()).await
+        };
+        let task = match routed_task {
+            Ok(task) => task,
+            Err(err) => {
+                self.finish_failed_before_execution(&task, &mut run, ".", err)
+                    .await;
+                return;
+            }
+        };
 
         let input = StartTaskRunRequest {
             model_config_id: Some(run.model_config_id.clone()),
@@ -87,8 +109,15 @@ impl RunService {
             })
             .unwrap_or_else(|| self.config.default_workspace_dir.clone());
 
-        self.execute_run(task, model_config, run, input, effective_workspace_dir)
-            .await;
+        self.execute_run(
+            task,
+            model_config,
+            run,
+            input,
+            effective_workspace_dir,
+            capability_policy,
+        )
+        .await;
     }
 
     pub(super) async fn execute_run(
@@ -98,6 +127,7 @@ impl RunService {
         mut run: TaskRunRecord,
         input: StartTaskRunRequest,
         effective_workspace_dir: String,
+        capability_policy: Option<TaskRunnerCapabilityPolicy>,
     ) {
         let prerequisite_context =
             match self.prepare_prerequisite_context(&task, &run, &input).await {
@@ -120,6 +150,7 @@ impl RunService {
             input,
             effective_workspace_dir,
             prerequisite_context,
+            capability_policy,
         )
         .await;
     }

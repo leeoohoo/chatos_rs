@@ -63,6 +63,7 @@ chatos_builtin_tools = { path = "../../crates/chatos_builtin_tools" }
 chatos_mcp_service = { path = "../../crates/chatos_mcp_service" }
 chatos_mcp_runtime = { path = "../../crates/chatos_mcp_runtime" }
 chatos_service_runtime = { path = "../../crates/chatos_service_runtime" }
+chatos_plugin_management_sdk = { path = "../../crates/chatos_plugin_management_sdk" }
 
 [features]
 pdf = []

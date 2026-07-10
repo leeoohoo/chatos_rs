@@ -26,6 +26,8 @@ pub(super) struct ApprovalToolDecision {
 pub(super) struct ApprovalAgentToolExecutor {
     pub(super) code_service: chatos_builtin_tools::CodeMaintainerService,
     pub(super) decision: Arc<Mutex<Option<ApprovalToolDecision>>>,
+    pub(super) allow_code_tools: bool,
+    pub(super) allow_approval_decision: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -39,26 +41,31 @@ struct ApprovalDecisionToolArgs {
 #[async_trait]
 impl ToolExecutor for ApprovalAgentToolExecutor {
     fn available_tools(&self) -> Vec<Value> {
-        let mut tools = self
-            .code_service
-            .list_tools()
-            .into_iter()
-            .filter_map(|tool| {
-                let def = parse_tool_definition(&tool)?;
-                matches!(
-                    def.name.as_str(),
-                    "read_file_raw" | "read_file_range" | "list_dir" | "search_text"
-                )
-                .then(|| {
-                    build_function_tool_schema(
-                        def.name.as_str(),
-                        def.description.as_str(),
-                        &def.parameters,
-                    )
-                })
-            })
-            .collect::<Vec<_>>();
-        tools.push(approval_decision_tool_schema());
+        let mut tools = Vec::new();
+        if self.allow_code_tools {
+            tools.extend(
+                self.code_service
+                    .list_tools()
+                    .into_iter()
+                    .filter_map(|tool| {
+                        let def = parse_tool_definition(&tool)?;
+                        matches!(
+                            def.name.as_str(),
+                            "read_file_raw" | "read_file_range" | "list_dir" | "search_text"
+                        )
+                        .then(|| {
+                            build_function_tool_schema(
+                                def.name.as_str(),
+                                def.description.as_str(),
+                                &def.parameters,
+                            )
+                        })
+                    }),
+            );
+        }
+        if self.allow_approval_decision {
+            tools.push(approval_decision_tool_schema());
+        }
         tools
     }
 
@@ -101,10 +108,21 @@ impl ToolExecutor for ApprovalAgentToolExecutor {
                     continue;
                 }
             };
-            let result = if name == APPROVAL_DECISION_TOOL {
+            let result = if name == APPROVAL_DECISION_TOOL && self.allow_approval_decision {
                 self.execute_approval_decision(call_id, args, &context)
-            } else {
+            } else if self.allow_code_tools {
                 self.execute_code_tool(name.as_str(), call_id, args, &context)
+            } else {
+                ToolResult {
+                    tool_call_id: call_id,
+                    name,
+                    success: false,
+                    is_error: true,
+                    is_stream: false,
+                    conversation_turn_id: context.conversation_turn_id.clone(),
+                    content: "approval agent capability is not allowed by policy".to_string(),
+                    result: None,
+                }
             };
             push_result(&mut results, result, on_tool_result.as_ref());
         }

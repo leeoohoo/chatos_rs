@@ -20,6 +20,7 @@ pub struct RuntimeConfig {
     pub service_name: String,
     pub service_id: String,
     pub service_address: String,
+    pub service_check_address: String,
     pub service_port: u16,
     pub service_health_path: String,
     pub service_tags: Vec<String>,
@@ -41,6 +42,8 @@ impl RuntimeConfig {
         let service_address = env_text("CHATOS_SERVICE_ADDRESS")
             .or_else(|| env_text("HOSTNAME"))
             .unwrap_or_else(|| service_name.clone());
+        let service_check_address =
+            env_text("CHATOS_SERVICE_CHECK_ADDRESS").unwrap_or_else(|| service_address.clone());
         let env_name = env_text("CHATOS_ENV")
             .or_else(|| env_text("NODE_ENV"))
             .unwrap_or_else(|| "local".to_string());
@@ -74,6 +77,7 @@ impl RuntimeConfig {
             service_name,
             service_id,
             service_address,
+            service_check_address,
             service_port,
             service_health_path,
             service_tags,

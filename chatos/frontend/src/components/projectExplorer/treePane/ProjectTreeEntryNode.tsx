@@ -4,6 +4,7 @@
 import React from 'react';
 
 import type { FsEntry } from '../../../types';
+import { isHarnessProjectPath } from '../../../lib/domain/filesystem';
 import { cn, formatFileSize } from '../../../lib/utils';
 
 interface ProjectTreeEntryNodeProps {
@@ -63,6 +64,7 @@ export const ProjectTreeEntryNode: React.FC<ProjectTreeEntryNodeProps> = ({
   const childEntries = entry.isDir && expandedPaths.has(entryKey)
     ? (entriesMap[entry.path] || [])
     : [];
+  const canDrag = !isHarnessProjectPath(entry.path);
 
   return (
     <div>
@@ -70,8 +72,12 @@ export const ProjectTreeEntryNode: React.FC<ProjectTreeEntryNodeProps> = ({
         type="button"
         onClick={() => (entry.isDir ? onToggleDir(entry) : onOpenFile(entry))}
         onContextMenu={(event) => onOpenContextMenu(event, entry)}
-        draggable
-        onDragStart={(event) => onDragStart(event, entry)}
+        draggable={canDrag}
+        onDragStart={(event) => {
+          if (canDrag) {
+            onDragStart(event, entry);
+          }
+        }}
         onDragEnd={onDragEnd}
         onDragOver={(event) => {
           if (!entry.isDir) return;

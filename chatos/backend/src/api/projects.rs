@@ -2,7 +2,7 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use axum::{
-    routing::{delete, get, post},
+    routing::{delete, get, post, put},
     Router,
 };
 
@@ -14,6 +14,7 @@ mod plan_handlers;
 mod requirement_execution;
 mod requirement_execution_handlers;
 mod run_handlers;
+mod runtime_environment_handlers;
 mod session_resolver;
 
 use self::contact_handlers::{
@@ -30,6 +31,10 @@ use self::requirement_execution_handlers::{execute_requirement, stop_requirement
 use self::run_handlers::{
     analyze_project_run, execute_project_run, get_project_run_catalog, get_project_run_environment,
     get_project_run_state, set_project_run_default, update_project_run_environment,
+};
+use self::runtime_environment_handlers::{
+    analyze_project_runtime_environment, get_project_runtime_environment,
+    get_project_runtime_environment_progress, update_project_runtime_environment_settings,
 };
 
 pub fn router() -> Router {
@@ -83,5 +88,21 @@ pub fn router() -> Router {
         .route(
             "/api/projects/{id}/run/environment",
             get(get_project_run_environment).put(update_project_run_environment),
+        )
+        .route(
+            "/api/projects/{id}/runtime-environment",
+            get(get_project_runtime_environment),
+        )
+        .route(
+            "/api/projects/{id}/runtime-environment/settings",
+            put(update_project_runtime_environment_settings),
+        )
+        .route(
+            "/api/projects/{id}/runtime-environment/analyze",
+            post(analyze_project_runtime_environment),
+        )
+        .route(
+            "/api/projects/{id}/runtime-environment/progress",
+            get(get_project_runtime_environment_progress),
         )
 }

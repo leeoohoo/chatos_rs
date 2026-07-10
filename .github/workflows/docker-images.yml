@@ -41,6 +41,12 @@ jobs:
               MANIFEST_PATH=Cargo.toml
               PACKAGE_NAME=project_management_service_backend
               BIN_NAME=project_management_service_backend
+          - image: chatos-rs-plugin-management-backend
+            dockerfile: docker/Dockerfile.rust-service
+            build_args: |
+              MANIFEST_PATH=Cargo.toml
+              PACKAGE_NAME=plugin_management_service_backend
+              BIN_NAME=plugin_management_service_backend
           - image: chatos-rs-local-connector-service-backend
             dockerfile: docker/Dockerfile.rust-service
             build_args: |
@@ -89,6 +95,10 @@ jobs:
             dockerfile: docker/Dockerfile.frontend
             build_args: |
               APP_DIR=project_management_service/frontend
+          - image: chatos-rs-plugin-management-frontend
+            dockerfile: docker/Dockerfile.frontend
+            build_args: |
+              APP_DIR=plugin_management_service/frontend
           - image: chatos-rs-task-runner-frontend
             dockerfile: docker/Dockerfile.frontend
             build_args: |

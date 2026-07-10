@@ -5,6 +5,7 @@ use axum::extract::{Multipart, Path, Query, State};
 use axum::http::StatusCode;
 use axum::{Extension, Json};
 use serde::Deserialize;
+use tracing::warn;
 
 use super::access::{ensure_project_writable, require_project_access};
 use super::ApiError;
@@ -14,10 +15,8 @@ use crate::models::{
     ProjectProfileRecord, ProjectRecord, ProjectSourceType, ProjectStatus, UpdateProjectRequest,
     UpsertProjectProfileRequest,
 };
-use crate::services::cloud_import::{
-    create_harness_repo_for_project, import_git_url_to_harness, import_zip_to_harness,
-    HarnessProjectRepoResponse,
-};
+use crate::services::cloud_import::{import_git_url_to_harness, import_zip_to_harness};
+use crate::services::harness_repo::ensure_harness_repo_for_project;
 use crate::services::runtime_environment::ensure_runtime_environment_for_project;
 use crate::state::AppState;
 
@@ -42,10 +41,11 @@ pub(in crate::api) async fn list_projects(
 pub(in crate::api) async fn create_project(
     State(state): State<AppState>,
     Extension(user): Extension<CurrentUser>,
+    Extension(access_token): Extension<AccessToken>,
     Json(input): Json<CreateProjectRequest>,
 ) -> Result<(StatusCode, Json<ProjectRecord>), ApiError> {
     let sandbox_enabled = input.sandbox_enabled;
-    let project = state
+    let mut project = state
         .store
         .create_project(input, &user)
         .await
@@ -53,6 +53,16 @@ pub(in crate::api) async fn create_project(
     ensure_runtime_environment_for_project(&state.store, &project, sandbox_enabled)
         .await
         .map_err(ApiError::bad_request)?;
+    if let Err(err) =
+        ensure_harness_repo_for_project(&state, access_token.0.as_str(), &mut project).await
+    {
+        warn!(
+            project_id = project.id.as_str(),
+            source_type = ?project.source_type,
+            error = err.as_str(),
+            "provision internal Harness repo failed during local project creation"
+        );
+    }
     Ok((StatusCode::CREATED, Json(project)))
 }
 
@@ -99,17 +109,17 @@ pub(in crate::api) async fn create_cloud_project(
         .await
         .map_err(ApiError::bad_request)?;
 
-    let repo =
-        match create_harness_repo_for_project(&state.config, access_token.0.as_str(), &project)
-            .await
-        {
-            Ok(repo) => repo,
-            Err(err) => {
-                let failed = mark_cloud_import_failed(state.clone(), project, err).await?;
-                return Ok((StatusCode::BAD_GATEWAY, Json(failed)));
-            }
-        };
-    apply_harness_repo(&mut project, &repo);
+    let repo = match ensure_harness_repo_for_project(&state, access_token.0.as_str(), &mut project)
+        .await
+    {
+        Ok(repo) => repo,
+        Err(err) => {
+            let failed = mark_cloud_import_failed(state.clone(), project, err).await?;
+            return Ok((StatusCode::BAD_GATEWAY, Json(failed)));
+        }
+    };
+    project.git_url = Some(repo.git_url.clone());
+    project.updated_at = now_rfc3339();
     state
         .store
         .save_project_record(&project)
@@ -313,16 +323,6 @@ async fn read_multipart_text(
         .text()
         .await
         .map_err(|err| ApiError::bad_request(format!("read multipart text field failed: {err}")))
-}
-
-fn apply_harness_repo(project: &mut ProjectRecord, repo: &HarnessProjectRepoResponse) {
-    project.harness_space_identifier = Some(repo.space_identifier.clone());
-    project.harness_repo_identifier = Some(repo.repo_identifier.clone());
-    project.harness_repo_path = Some(repo.repo_path.clone());
-    project.harness_git_url = Some(repo.git_url.clone());
-    project.harness_git_ssh_url = repo.git_ssh_url.clone();
-    project.git_url = Some(repo.git_url.clone());
-    project.updated_at = now_rfc3339();
 }
 
 async fn mark_cloud_import_failed(

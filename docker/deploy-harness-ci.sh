@@ -63,6 +63,8 @@ set_env HARNESS_SSH_PUBLIC_HOST "$PUBLIC_HOST"
 set_env HARNESS_BASE_URL "http://harness:3000"
 
 require_local_image "$IMAGE_NAMESPACE/chatos-rs-chatos-backend:$IMAGE_TAG"
+require_local_image "$IMAGE_NAMESPACE/chatos-rs-plugin-management-backend:$IMAGE_TAG"
+require_local_image "$IMAGE_NAMESPACE/chatos-rs-plugin-management-frontend:$IMAGE_TAG"
 require_local_image "$IMAGE_NAMESPACE/chatos-rs-sandbox-agent:$IMAGE_TAG"
 require_local_image "harness/harness:latest"
 

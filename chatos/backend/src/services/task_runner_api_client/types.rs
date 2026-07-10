@@ -92,7 +92,16 @@ pub(super) struct TaskRunnerMcpCatalogEntry {
 #[derive(Debug, Clone, Deserialize)]
 pub(super) struct TaskRunnerExternalMcpConfig {
     pub(super) id: String,
-    pub(super) enabled: bool,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub(super) struct TaskRunnerCapabilityCatalog {
+    #[allow(dead_code)]
+    pub(super) policy_revision: String,
+    #[serde(default)]
+    pub(super) selectable_builtin_mcps: Vec<TaskRunnerMcpCatalogEntry>,
+    #[serde(default)]
+    pub(super) selectable_external_mcps: Vec<TaskRunnerExternalMcpConfig>,
 }
 
 #[derive(Debug, Clone, Default)]

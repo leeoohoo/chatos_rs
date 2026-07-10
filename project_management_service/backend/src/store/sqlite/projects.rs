@@ -102,6 +102,10 @@ impl SqliteStore {
             harness_repo_path: None,
             harness_git_url: None,
             harness_git_ssh_url: None,
+            harness_default_branch: None,
+            harness_provision_status: Some("pending".to_string()),
+            harness_provision_error: None,
+            harness_provisioned_at: None,
             import_error: None,
             import_started_at: None,
             import_finished_at: None,
@@ -151,6 +155,10 @@ impl SqliteStore {
             harness_repo_path: normalized_optional(input.harness_repo_path),
             harness_git_url,
             harness_git_ssh_url: normalized_optional(input.harness_git_ssh_url),
+            harness_default_branch: normalized_optional(input.harness_default_branch),
+            harness_provision_status: normalized_optional(input.harness_provision_status),
+            harness_provision_error: normalized_optional(input.harness_provision_error),
+            harness_provisioned_at: normalized_optional(input.harness_provisioned_at),
             import_error: normalized_optional(input.import_error),
             import_started_at: normalized_optional(input.import_started_at),
             import_finished_at: normalized_optional(input.import_finished_at),
@@ -222,9 +230,11 @@ impl SqliteStore {
                 owner_user_id, owner_username, owner_display_name, name, root_path,
                 git_url, source_type, cloud_import_source, import_status, source_git_url,
                 harness_space_identifier, harness_repo_identifier, harness_repo_path,
-                harness_git_url, harness_git_ssh_url, import_error, import_started_at,
-                import_finished_at, description, status, created_at, updated_at, archived_at
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27)
+                harness_git_url, harness_git_ssh_url, harness_default_branch,
+                harness_provision_status, harness_provision_error, harness_provisioned_at,
+                import_error, import_started_at, import_finished_at, description, status,
+                created_at, updated_at, archived_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30, ?31)
              ON CONFLICT(id) DO UPDATE SET
                 creator_user_id = excluded.creator_user_id,
                 creator_username = excluded.creator_username,
@@ -244,6 +254,10 @@ impl SqliteStore {
                 harness_repo_path = excluded.harness_repo_path,
                 harness_git_url = excluded.harness_git_url,
                 harness_git_ssh_url = excluded.harness_git_ssh_url,
+                harness_default_branch = excluded.harness_default_branch,
+                harness_provision_status = excluded.harness_provision_status,
+                harness_provision_error = excluded.harness_provision_error,
+                harness_provisioned_at = excluded.harness_provisioned_at,
                 import_error = excluded.import_error,
                 import_started_at = excluded.import_started_at,
                 import_finished_at = excluded.import_finished_at,
@@ -271,6 +285,10 @@ impl SqliteStore {
         .bind(&project.harness_repo_path)
         .bind(&project.harness_git_url)
         .bind(&project.harness_git_ssh_url)
+        .bind(&project.harness_default_branch)
+        .bind(&project.harness_provision_status)
+        .bind(&project.harness_provision_error)
+        .bind(&project.harness_provisioned_at)
         .bind(&project.import_error)
         .bind(&project.import_started_at)
         .bind(&project.import_finished_at)

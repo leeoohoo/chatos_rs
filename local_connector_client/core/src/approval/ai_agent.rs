@@ -5,7 +5,8 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
+use serde::Deserialize;
 use serde_json::json;
 use uuid::Uuid;
 
@@ -62,6 +63,7 @@ pub(crate) async fn run_auto_approval_agent(
         request.project_key.owner_user_id.as_str(),
         root.as_path(),
     )?;
+    let capability_policy = resolve_approval_capability_policy(state).await?;
     let code_service = code_maintainer_service_for_root(
         root.as_path(),
         Some(request.project_key.workspace_id.clone()),
@@ -73,6 +75,8 @@ pub(crate) async fn run_auto_approval_agent(
     let executor = ApprovalAgentToolExecutor {
         code_service,
         decision: decision.clone(),
+        allow_code_tools: capability_policy.code_maintainer_read,
+        allow_approval_decision: capability_policy.approval_decision,
     };
     let memory = build_approval_agent_memory(
         &state.approval.memory,
@@ -167,6 +171,55 @@ pub(crate) async fn run_auto_approval_agent(
             reason: format!("AI returned unsupported approval decision: {other}"),
         },
     })
+}
+
+#[derive(Debug, Deserialize)]
+struct ApprovalCapabilityPolicy {
+    policy_revision: String,
+    code_maintainer_read: bool,
+    approval_decision: bool,
+}
+
+async fn resolve_approval_capability_policy(
+    state: &LocalState,
+) -> Result<ApprovalCapabilityPolicy> {
+    let auth = state
+        .auth
+        .as_ref()
+        .ok_or_else(|| anyhow!("Local Connector login is required for command approval policy"))?;
+    let url = format!(
+        "{}/api/plugin-management/agent-capabilities/local-command-approval",
+        auth.cloud_base_url.trim().trim_end_matches('/')
+    );
+    let response = reqwest::Client::builder()
+        .timeout(Duration::from_secs(5))
+        .build()
+        .context("build command approval policy client")?
+        .get(url)
+        .bearer_auth(auth.access_token.trim())
+        .send()
+        .await
+        .context("request command approval capability policy")?;
+    if !response.status().is_success() {
+        let status = response.status();
+        let detail = response.text().await.unwrap_or_default();
+        return Err(anyhow!(
+            "command approval capability policy was rejected: {status}: {detail}"
+        ));
+    }
+    let policy = response
+        .json::<ApprovalCapabilityPolicy>()
+        .await
+        .context("decode command approval capability policy")?;
+    if policy.policy_revision.trim().is_empty()
+        || !policy.code_maintainer_read
+        || !policy.approval_decision
+    {
+        return Err(anyhow!(
+            "command approval required capabilities are unavailable"
+        ));
+    }
+    Ok(policy)
 }
 
 fn approval_project_root(state: &LocalState, request: &CommandApprovalRequest) -> Result<PathBuf> {

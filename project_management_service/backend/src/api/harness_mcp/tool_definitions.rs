@@ -58,6 +58,15 @@ fn read_tool_definitions() -> Vec<Value> {
             }
         }),
         json!({
+            "name": "list_branches",
+            "description": "List branches from the internal Harness repo for this cloud project.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {},
+                "additionalProperties": false
+            }
+        }),
+        json!({
             "name": "search_text",
             "description": "Search text recursively under a directory in the Harness repo for this cloud project.",
             "inputSchema": {

@@ -102,6 +102,12 @@ export interface ProjectExplorerWorkspaceRunState {
   envPreview: string;
   environmentHints: string[];
   envVarsPlaceholder: string;
+  sandboxToggleVisible: boolean;
+  sandboxEnabled: boolean | null;
+  sandboxLoading: boolean;
+  sandboxSaving: boolean;
+  sandboxError: string | null;
+  updateSandboxEnabled: (enabled: boolean) => Promise<void> | void;
   terminalUiEnabled: boolean;
   selectedRunTargetId: string | null;
   setSelectedRunTargetId: (targetId: string) => Promise<void> | void;

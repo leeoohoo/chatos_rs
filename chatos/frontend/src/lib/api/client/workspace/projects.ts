@@ -13,11 +13,14 @@ import type {
   ProjectRequirementDocumentResponse,
   ProjectRequirementExecuteResponse,
   ProjectRequirementStopResponse,
+  ProjectRuntimeEnvironmentResponse,
+  ProjectRuntimeEnvironmentProgressResponse,
   ProjectRunEnvironmentResponse,
   ProjectResponse,
   ProjectRunCatalogResponse,
   ProjectRunExecuteResponse,
   ProjectRunStateResponse,
+  UpdateProjectRuntimeEnvironmentSettingsPayload,
 } from '../types';
 import type { ApiRequestFn, ContactPaging } from './common';
 
@@ -65,6 +68,43 @@ export const deleteProject = (request: ApiRequestFn, id: string): Promise<Delete
 
 export const getProject = (request: ApiRequestFn, id: string): Promise<ProjectResponse> => {
   return request<ProjectResponse>(`/projects/${id}`);
+};
+
+export const getProjectRuntimeEnvironment = (
+  request: ApiRequestFn,
+  projectId: string,
+): Promise<ProjectRuntimeEnvironmentResponse> => {
+  return request<ProjectRuntimeEnvironmentResponse>(`/projects/${encodeURIComponent(projectId)}/runtime-environment`);
+};
+
+export const updateProjectRuntimeEnvironmentSettings = (
+  request: ApiRequestFn,
+  projectId: string,
+  data: UpdateProjectRuntimeEnvironmentSettingsPayload,
+): Promise<ProjectRuntimeEnvironmentResponse> => {
+  return request<ProjectRuntimeEnvironmentResponse>(`/projects/${encodeURIComponent(projectId)}/runtime-environment/settings`, {
+    method: 'PUT',
+    body: JSON.stringify(data),
+  });
+};
+
+export const analyzeProjectRuntimeEnvironment = (
+  request: ApiRequestFn,
+  projectId: string,
+): Promise<ProjectRuntimeEnvironmentResponse> => {
+  return request<ProjectRuntimeEnvironmentResponse>(
+    `/projects/${encodeURIComponent(projectId)}/runtime-environment/analyze`,
+    { method: 'POST' },
+  );
+};
+
+export const getProjectRuntimeEnvironmentProgress = (
+  request: ApiRequestFn,
+  projectId: string,
+): Promise<ProjectRuntimeEnvironmentProgressResponse> => {
+  return request<ProjectRuntimeEnvironmentProgressResponse>(
+    `/projects/${encodeURIComponent(projectId)}/runtime-environment/progress`,
+  );
 };
 
 export const getProjectPlan = (

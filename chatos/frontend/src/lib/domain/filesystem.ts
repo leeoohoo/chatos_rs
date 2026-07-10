@@ -77,6 +77,21 @@ const normalizePathForCompare = (value: string): string => {
   return normalized || '/';
 };
 
+const harnessProjectPathMatch = (path: string): { root: string; relative: string } | null => {
+  const match = path.match(/^(harness:\/\/project\/[^/]+)(?:\/(.*))?$/);
+  if (!match) {
+    return null;
+  }
+  return {
+    root: match[1],
+    relative: match[2] || '',
+  };
+};
+
+export const isHarnessProjectPath = (path: string | null | undefined): boolean => (
+  harnessProjectPathMatch(normalizePathForCompare(path || '')) !== null
+);
+
 const joinDisplayPath = (prefix: string, relative: string): string => {
   const cleanPrefix = prefix === '/' ? '' : prefix.replace(/\/+$/, '');
   const cleanRelative = relative.replace(/^\/+/, '');
@@ -115,6 +130,11 @@ export const getUserVisiblePath = (
   }
   if (normalizedScopeRoot && normalized.startsWith(`${normalizedScopeRoot}/`)) {
     return joinDisplayPath('/', normalized.slice(normalizedScopeRoot.length + 1));
+  }
+
+  const harnessPath = harnessProjectPathMatch(normalized);
+  if (harnessPath) {
+    return joinDisplayPath('/', harnessPath.relative);
   }
 
   const scoped = userScopedRootMatch(normalized);

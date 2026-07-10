@@ -21,9 +21,9 @@ static MCP_TOOLS_LIST_CACHE: OnceLock<Mutex<HashMap<String, ToolsListCacheEntry>
     OnceLock::new();
 mod stdio;
 
-pub use stdio::jsonrpc_stdio_call;
 #[cfg(test)]
 use stdio::{ensure_stdio_response_line_within_limit, stdio_session_cache_key};
+pub use stdio::{invalidate_stdio_session, jsonrpc_stdio_call};
 #[derive(Clone)]
 struct ToolsListCacheEntry {
     expires_at: Instant,

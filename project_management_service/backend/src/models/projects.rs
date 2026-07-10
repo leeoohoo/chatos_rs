@@ -173,6 +173,14 @@ pub struct ProjectRecord {
     #[serde(default)]
     pub harness_git_ssh_url: Option<String>,
     #[serde(default)]
+    pub harness_default_branch: Option<String>,
+    #[serde(default)]
+    pub harness_provision_status: Option<String>,
+    #[serde(default)]
+    pub harness_provision_error: Option<String>,
+    #[serde(default)]
+    pub harness_provisioned_at: Option<String>,
+    #[serde(default)]
     pub import_error: Option<String>,
     #[serde(default)]
     pub import_started_at: Option<String>,
@@ -233,6 +241,14 @@ pub struct ImportProjectRequest {
     pub harness_git_url: Option<String>,
     #[serde(default)]
     pub harness_git_ssh_url: Option<String>,
+    #[serde(default)]
+    pub harness_default_branch: Option<String>,
+    #[serde(default)]
+    pub harness_provision_status: Option<String>,
+    #[serde(default)]
+    pub harness_provision_error: Option<String>,
+    #[serde(default)]
+    pub harness_provisioned_at: Option<String>,
     #[serde(default)]
     pub import_error: Option<String>,
     #[serde(default)]

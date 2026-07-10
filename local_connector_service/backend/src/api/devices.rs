@@ -17,6 +17,9 @@ use crate::models::{
 };
 use crate::state::AppState;
 
+use super::plugin_management_mcps::{
+    is_mcp_manifest_status_message, mark_device_mcps_offline, sync_socket_mcp_statuses,
+};
 use super::{required_text, ApiError};
 
 #[derive(Debug, Deserialize)]
@@ -117,6 +120,15 @@ pub(super) async fn revoke_device(
         .revoke_device(user.effective_owner_user_id(), id.as_str())
         .await
         .map_err(ApiError::internal)?;
+    if let Err(err) =
+        mark_device_mcps_offline(&state, user.effective_owner_user_id(), id.as_str()).await
+    {
+        tracing::warn!(
+            device_id = id,
+            error = err,
+            "mark revoked device MCPs offline failed"
+        );
+    }
     Ok(Json(json!({ "success": true })))
 }
 
@@ -131,6 +143,15 @@ pub(super) async fn disconnect_device(
         .mark_device_offline(device.id.as_str())
         .await
         .map_err(ApiError::internal)?;
+    if let Err(err) =
+        mark_device_mcps_offline(&state, user.effective_owner_user_id(), device.id.as_str()).await
+    {
+        tracing::warn!(
+            device_id = device.id,
+            error = err,
+            "mark disconnected device MCPs offline failed"
+        );
+    }
     load_owned_device(&state, &user, id.as_str(), true)
         .await
         .map(Json)
@@ -239,6 +260,42 @@ async fn handle_connector_socket(
                     {
                         break;
                     }
+                } else if is_mcp_manifest_status_message(text.as_str()) {
+                    match sync_socket_mcp_statuses(
+                        &state,
+                        session.owner_user_id.as_str(),
+                        device_id.as_str(),
+                        text.as_str(),
+                    )
+                    .await
+                    {
+                        Ok(count) => {
+                            if !send_outbound_json(
+                                &outbound_tx,
+                                json!({
+                                    "type": "mcp_manifest_status_ack",
+                                    "count": count,
+                                    "timestamp": crate::models::now_rfc3339(),
+                                }),
+                            )
+                            .await
+                            {
+                                break;
+                            }
+                        }
+                        Err(err) => {
+                            let _ = send_outbound_json(
+                                &outbound_tx,
+                                json!({
+                                    "type": "error",
+                                    "code": "mcp_manifest_status_rejected",
+                                    "message": err,
+                                    "timestamp": crate::models::now_rfc3339(),
+                                }),
+                            )
+                            .await;
+                        }
+                    }
                 } else if let Ok(consumed) = state.relay.handle_inbound_text(text.as_str()).await {
                     if !consumed {
                         let _ = send_outbound_json(
@@ -294,6 +351,15 @@ async fn handle_connector_socket(
         .relay
         .unregister_session(device_id.as_str(), session.id.as_str())
         .await;
+    if let Err(err) =
+        mark_device_mcps_offline(&state, session.owner_user_id.as_str(), device_id.as_str()).await
+    {
+        tracing::warn!(
+            device_id,
+            error = err,
+            "mark socket device MCPs offline failed"
+        );
+    }
     send_task.abort();
 }
 

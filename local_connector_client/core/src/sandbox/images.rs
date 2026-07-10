@@ -81,6 +81,8 @@ pub(crate) async fn start_local_sandbox_image_job(
     runtime: &LocalRuntime,
     features: Vec<String>,
     custom_build_script: Option<String>,
+    project_id: Option<String>,
+    run_id: Option<String>,
 ) -> Result<LocalSandboxImageJob, String> {
     if custom_build_script
         .as_deref()
@@ -91,6 +93,8 @@ pub(crate) async fn start_local_sandbox_image_job(
         return Err("custom build script is too large".to_string());
     }
     let features = normalize_local_sandbox_features(features)?;
+    let project_id = normalize_job_context(project_id);
+    let run_id = normalize_job_context(run_id);
     let image_id = local_sandbox_image_id(features.as_slice(), custom_build_script.as_deref());
     if let Some(existing) = runtime
         .sandbox_runtime
@@ -98,7 +102,12 @@ pub(crate) async fn start_local_sandbox_image_job(
         .read()
         .await
         .iter()
-        .find(|job| job.image_id == image_id && job.status == "running")
+        .find(|job| {
+            job.image_id == image_id
+                && job.status == "running"
+                && job.project_id == project_id
+                && job.run_id == run_id
+        })
         .cloned()
     {
         return Ok(existing);
@@ -120,6 +129,8 @@ pub(crate) async fn start_local_sandbox_image_job(
         finished_at: None,
         output: String::new(),
         error: None,
+        project_id,
+        run_id,
         custom_build_script,
     };
     runtime.sandbox_runtime.jobs.write().await.push(job.clone());
@@ -132,6 +143,13 @@ pub(crate) async fn start_local_sandbox_image_job(
         run_local_sandbox_image_job(jobs, state, state_path, job_id).await;
     });
     Ok(job)
+}
+
+fn normalize_job_context(value: Option<String>) -> Option<String> {
+    value.and_then(|value| {
+        let value = value.trim();
+        (!value.is_empty()).then(|| value.to_string())
+    })
 }
 
 async fn local_sandbox_stored_images(runtime: &LocalRuntime) -> Vec<LocalSandboxImageRecord> {

@@ -12,6 +12,22 @@ impl RunService {
         Self {
             config,
             store,
+            plugin_management_client: None,
+            ask_user_prompt_service,
+            start_locks: Arc::new(parking_lot::Mutex::new(HashMap::new())),
+        }
+    }
+
+    pub(crate) fn new_with_plugin_management(
+        config: AppConfig,
+        store: AppStore,
+        ask_user_prompt_service: AskUserPromptService,
+        plugin_management_client: PluginManagementClient,
+    ) -> Self {
+        Self {
+            config,
+            store,
+            plugin_management_client: Some(plugin_management_client),
             ask_user_prompt_service,
             start_locks: Arc::new(parking_lot::Mutex::new(HashMap::new())),
         }

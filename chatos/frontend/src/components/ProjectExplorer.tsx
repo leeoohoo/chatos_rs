@@ -7,10 +7,12 @@ import { useI18n } from '../i18n/I18nProvider';
 import type { Project } from '../types';
 import { cn } from '../lib/utils';
 import { ProjectExplorerFilesWorkspace } from './projectExplorer/ProjectExplorerFilesWorkspace';
+import CloudProjectRuntimeEnvironmentPanel from './projectExplorer/CloudProjectRuntimeEnvironmentPanel';
 import ProjectPlanPane from './projectExplorer/ProjectPlanPane';
 import ProjectRunSettingsPanel from './projectExplorer/ProjectRunSettingsPanel';
 import TeamMembersPane from './projectExplorer/TeamMembersPane';
 import WorkspaceTabs, { type WorkspaceTab } from './projectExplorer/WorkspaceTabs';
+import { resolveVisibleWorkspaceTabs } from './projectExplorer/workspaceTabsModel';
 import GitBranchButton from './projectExplorer/git/GitBranchButton';
 import { useProjectExplorerViewModel } from './projectExplorer/useProjectExplorerViewModel';
 
@@ -21,12 +23,12 @@ interface ProjectExplorerProps {
 
 export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({ project, className }) => {
   const { t } = useI18n();
-  const isCloudProject = project?.sourceType === 'cloud';
-  const workspaceTabs = React.useMemo<WorkspaceTab[]>(
-    () => (isCloudProject ? ['team', 'plan'] : ['files', 'team', 'plan', 'settings']),
-    [isCloudProject],
+  const isCloudProject = project?.sourceType?.trim().toLowerCase() === 'cloud';
+  const allowedWorkspaceTabs = React.useMemo<WorkspaceTab[]>(
+    () => ['files', 'team', 'plan', 'settings', 'sandbox'],
+    [],
   );
-  const fallbackWorkspaceTab: WorkspaceTab = isCloudProject ? 'team' : 'files';
+  const fallbackWorkspaceTab: WorkspaceTab = 'files';
   const {
     client,
     containerRef,
@@ -66,9 +68,16 @@ export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({ project, class
     handleGitRepositoryChanged,
   } = useProjectExplorerViewModel({
     project,
-    allowedTabs: workspaceTabs,
+    allowedTabs: allowedWorkspaceTabs,
     fallbackTab: fallbackWorkspaceTab,
   });
+  const workspaceTabs = React.useMemo(
+    () => resolveVisibleWorkspaceTabs(
+      isCloudProject,
+      !isCloudProject && projectSettingsProps.sandboxEnabled === true,
+    ),
+    [isCloudProject, projectSettingsProps.sandboxEnabled],
+  );
 
   React.useEffect(() => {
     if (!project || workspaceTabs.includes(storedWorkspaceTab)) {
@@ -92,11 +101,12 @@ export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({ project, class
         onChange={setWorkspaceTab}
         tabs={workspaceTabs}
         rightActions={(
-          !isCloudProject && workspaceTab === 'files' ? (
+          workspaceTab === 'files' ? (
             <GitBranchButton
               client={client}
               projectId={project.id}
               projectRoot={project.rootPath}
+              readOnly={isCloudProject}
               onRepositoryChanged={handleGitRepositoryChanged}
             />
           ) : null
@@ -114,6 +124,14 @@ export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({ project, class
             project={project}
             className="h-full"
           />
+        ) : workspaceTab === 'sandbox' ? (
+          <div className="h-full overflow-auto p-4">
+            <CloudProjectRuntimeEnvironmentPanel
+              projectId={project.id}
+              projectName={project.name}
+              projectSourceType={project.sourceType}
+            />
+          </div>
         ) : workspaceTab === 'settings' ? (
           <div className="h-full overflow-auto p-4">
             <ProjectRunSettingsPanel {...projectSettingsProps} />

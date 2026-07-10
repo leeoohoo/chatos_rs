@@ -38,6 +38,12 @@ pub(in super::super) async fn delete_entry(
         );
     };
 
+    if let Some(response) =
+        super::super::harness_project_bridge::delete_entry(&auth, raw.as_str()).await
+    {
+        return response;
+    }
+
     let path = match policy.authorize_existing_entry(raw.as_str(), "路径不存在", "路径不合法")
     {
         Ok(value) => value,

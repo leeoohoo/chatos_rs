@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use chatos_mcp_runtime::{builtin_kind_by_any, complete_builtin_kind_dependencies, BuiltinMcpKind};
+use chatos_mcp_runtime::{builtin_kind_by_any, BuiltinMcpKind};
 use chatos_mcp_service::{
     builtin_kind_header_value, selected_host_builtin_kind_names, BuiltinHostBackend,
     HostCapabilityPolicy, HARNESS_CODE_ENABLED_BUILTIN_KINDS_HEADER,
@@ -17,7 +17,8 @@ use crate::models::{
 use crate::store::AppStore;
 
 use super::mcp_resolution::{
-    hosted_builtin_kinds_for, resolve_task_mcp, selected_builtin_kinds_from_config,
+    hosted_builtin_kinds_for, resolve_task_mcp, resolve_task_mcp_authoritative,
+    selected_builtin_kinds_from_config,
     task_mcp_resolution_response as build_mcp_resolution_response,
 };
 use super::normalize_strings;
@@ -55,6 +56,13 @@ pub(super) fn runtime_selected_builtin_kinds(task: &TaskRecord) -> Vec<BuiltinMc
         .server_local_builtin_kinds
 }
 
+pub(super) fn runtime_selected_builtin_kinds_authoritative(
+    task: &TaskRecord,
+) -> Vec<BuiltinMcpKind> {
+    resolve_task_mcp_authoritative(task, active_host_backends_for_task(task).as_slice())
+        .server_local_builtin_kinds
+}
+
 pub(super) fn task_mcp_resolution_response(task: &TaskRecord) -> TaskMcpResolutionResponse {
     build_mcp_resolution_response(task, active_host_backends_for_task(task).as_slice())
 }
@@ -62,7 +70,24 @@ pub(super) fn task_mcp_resolution_response(task: &TaskRecord) -> TaskMcpResoluti
 pub(super) async fn task_with_runtime_mcp_routing(
     config: &AppConfig,
     store: &AppStore,
+    task: TaskRecord,
+) -> Result<TaskRecord, String> {
+    task_with_runtime_mcp_routing_impl(config, store, task, false).await
+}
+
+pub(super) async fn task_with_runtime_mcp_routing_authoritative(
+    config: &AppConfig,
+    store: &AppStore,
+    task: TaskRecord,
+) -> Result<TaskRecord, String> {
+    task_with_runtime_mcp_routing_impl(config, store, task, true).await
+}
+
+async fn task_with_runtime_mcp_routing_impl(
+    config: &AppConfig,
+    store: &AppStore,
     mut task: TaskRecord,
+    authoritative: bool,
 ) -> Result<TaskRecord, String> {
     if !task.mcp_config.enabled {
         return Ok(task);
@@ -70,12 +95,16 @@ pub(super) async fn task_with_runtime_mcp_routing(
 
     if let Some(project_root) = resolve_project_root_for_task(config, store, &task).await? {
         if parse_local_connector_project_root(project_root.as_str()).is_some() {
-            apply_local_connector_runtime_routing_to_task(&mut task, project_root.as_str());
+            apply_local_connector_runtime_routing_to_task(
+                &mut task,
+                project_root.as_str(),
+                authoritative,
+            );
             return Ok(task);
         }
     }
 
-    apply_harness_project_runtime_routing_to_task(config, store, &mut task).await?;
+    apply_harness_project_runtime_routing_to_task(config, store, &mut task, authoritative).await?;
     Ok(task)
 }
 
@@ -108,6 +137,7 @@ async fn apply_harness_project_runtime_routing_to_task(
     config: &AppConfig,
     store: &AppStore,
     task: &mut TaskRecord,
+    authoritative: bool,
 ) -> Result<bool, String> {
     let project_id = crate::models::normalize_project_id(Some(task.project_id.clone()));
     if project_id == PUBLIC_PROJECT_ID {
@@ -119,7 +149,7 @@ async fn apply_harness_project_runtime_routing_to_task(
     if !project_is_ready_harness_repo(&project) {
         return Ok(false);
     }
-    let Some(server) = harness_code_runtime_server(config, task, &project)? else {
+    let Some(server) = harness_code_runtime_server(config, task, &project, authoritative)? else {
         return Ok(false);
     };
 
@@ -187,8 +217,9 @@ pub(super) fn project_root_from_payload(value: Option<&Value>) -> Option<String>
 fn apply_local_connector_runtime_routing_to_task(
     task: &mut TaskRecord,
     project_root: &str,
+    authoritative: bool,
 ) -> bool {
-    let Some(server) = local_connector_runtime_server(task, project_root) else {
+    let Some(server) = local_connector_runtime_server(task, project_root, authoritative) else {
         return false;
     };
     let before_config = serde_json::to_value(&task.mcp_config).ok();
@@ -230,8 +261,15 @@ fn project_is_ready_harness_repo(project: &crate::models::TaskProjectRecord) -> 
             .is_some_and(|value| value.eq_ignore_ascii_case("ready"))
 }
 
-fn selected_harness_code_builtin_kinds_for_task(task: &TaskRecord) -> Vec<BuiltinMcpKind> {
-    let resolution = resolve_task_mcp(task, &[BuiltinHostBackend::HarnessCode]);
+fn selected_harness_code_builtin_kinds_for_task(
+    task: &TaskRecord,
+    authoritative: bool,
+) -> Vec<BuiltinMcpKind> {
+    let resolution = if authoritative {
+        resolve_task_mcp_authoritative(task, &[BuiltinHostBackend::HarnessCode])
+    } else {
+        resolve_task_mcp(task, &[BuiltinHostBackend::HarnessCode])
+    };
     hosted_builtin_kinds_for(&resolution, BuiltinHostBackend::HarnessCode)
 }
 
@@ -239,8 +277,9 @@ fn harness_code_runtime_server(
     config: &AppConfig,
     task: &TaskRecord,
     project: &crate::models::TaskProjectRecord,
+    authoritative: bool,
 ) -> Result<Option<TaskEphemeralHttpMcpServer>, String> {
-    let harness_kinds = selected_harness_code_builtin_kinds_for_task(task);
+    let harness_kinds = selected_harness_code_builtin_kinds_for_task(task, authoritative);
     if harness_kinds.is_empty() {
         return Ok(None);
     }
@@ -285,11 +324,12 @@ fn harness_code_mcp_url(config: &AppConfig, project_id: &str) -> Result<String, 
 fn local_connector_runtime_server(
     task: &TaskRecord,
     project_root: &str,
+    authoritative: bool,
 ) -> Option<TaskEphemeralHttpMcpServer> {
     let Some(project) = parse_local_connector_project_root(project_root) else {
         return None;
     };
-    let local_kinds = selected_local_connector_builtin_kinds_for_task(task);
+    let local_kinds = selected_local_connector_builtin_kinds_for_task(task, authoritative);
     let local_kinds = normalize_local_connector_builtin_kinds(local_kinds.iter().copied());
     if local_kinds.is_empty() {
         return None;
@@ -307,8 +347,15 @@ fn local_connector_runtime_server(
     })
 }
 
-fn selected_local_connector_builtin_kinds_for_task(task: &TaskRecord) -> Vec<BuiltinMcpKind> {
-    let resolution = resolve_task_mcp(task, &[BuiltinHostBackend::LocalConnector]);
+fn selected_local_connector_builtin_kinds_for_task(
+    task: &TaskRecord,
+    authoritative: bool,
+) -> Vec<BuiltinMcpKind> {
+    let resolution = if authoritative {
+        resolve_task_mcp_authoritative(task, &[BuiltinHostBackend::LocalConnector])
+    } else {
+        resolve_task_mcp(task, &[BuiltinHostBackend::LocalConnector])
+    };
     hosted_builtin_kinds_for(&resolution, BuiltinHostBackend::LocalConnector)
 }
 
@@ -456,19 +503,16 @@ fn local_relative_path_is_safe(path: &str) -> bool {
 }
 
 pub(super) fn normalize_builtin_kind_names(values: Vec<String>) -> Vec<String> {
-    let kinds = values
-        .into_iter()
-        .filter_map(|value| builtin_kind_by_any(&value))
-        .filter(|kind| {
-            !matches!(
-                kind,
-                BuiltinMcpKind::ProjectManagement
-                    | BuiltinMcpKind::TaskManager
-                    | BuiltinMcpKind::AskUser
-            )
-        })
-        .collect::<Vec<_>>();
-    complete_builtin_kind_dependencies(kinds)
+    let mut kinds = Vec::new();
+    for value in values {
+        let Some(kind) = builtin_kind_by_any(&value) else {
+            continue;
+        };
+        if !kinds.contains(&kind) {
+            kinds.push(kind);
+        }
+    }
+    kinds
         .into_iter()
         .map(|kind| kind.kind_name().to_string())
         .collect()

@@ -4,7 +4,8 @@
 use serde_json::{json, Value};
 
 use super::super::client::{
-    fetch_harness_content, list_harness_paths, read_harness_file, HarnessDirContent, HarnessFile,
+    fetch_harness_content, list_harness_branches, list_harness_paths, read_harness_file,
+    HarnessDirContent, HarnessFile,
 };
 use super::super::path_policy::{
     optional_repo_path, path_matches_scope, path_name, required_file_path,
@@ -119,6 +120,26 @@ pub(in super::super) async fn tool_list_dir(
         })
         .collect::<Vec<_>>();
     Ok(tool_text_result(json!({ "entries": entries })))
+}
+
+pub(in super::super) async fn tool_list_branches(
+    ctx: &HarnessMcpContext,
+    _args: &Value,
+) -> Result<Value, String> {
+    let branches = list_harness_branches(ctx).await?;
+    let current = branches
+        .iter()
+        .find(|branch| branch.is_default)
+        .or_else(|| branches.first())
+        .map(|branch| branch.name.clone());
+    Ok(tool_text_result(json!({
+        "current": current,
+        "branches": branches.into_iter().map(|branch| json!({
+            "name": branch.name,
+            "sha": branch.sha,
+            "is_default": branch.is_default,
+        })).collect::<Vec<_>>()
+    })))
 }
 
 pub(in super::super) async fn tool_search_text(

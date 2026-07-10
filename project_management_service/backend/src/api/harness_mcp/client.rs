@@ -69,6 +69,15 @@ pub(super) struct HarnessListPathsResponse {
     pub(super) files: Vec<String>,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+pub(super) struct HarnessBranch {
+    pub(super) name: String,
+    #[serde(default)]
+    pub(super) sha: String,
+    #[serde(default)]
+    pub(super) is_default: bool,
+}
+
 #[derive(Debug, Serialize)]
 struct HarnessCommitRequest {
     title: String,
@@ -201,6 +210,25 @@ pub(super) async fn list_harness_paths(
         encode_path_segments(ctx.repo_path.as_str())
     );
     harness_request_json::<HarnessListPathsResponse, ()>(
+        &ctx.client,
+        Method::GET,
+        endpoint.as_str(),
+        ctx.access.access_token.as_str(),
+        None,
+    )
+    .await
+    .map_err(|err| err.to_string())
+}
+
+pub(super) async fn list_harness_branches(
+    ctx: &HarnessMcpContext,
+) -> Result<Vec<HarnessBranch>, String> {
+    let endpoint = format!(
+        "{}/api/v1/repos/{}/+/branches",
+        ctx.access.base_url.trim().trim_end_matches('/'),
+        encode_path_segments(ctx.repo_path.as_str())
+    );
+    harness_request_json::<Vec<HarnessBranch>, ()>(
         &ctx.client,
         Method::GET,
         endpoint.as_str(),

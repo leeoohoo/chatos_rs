@@ -1,0 +1,228 @@
+/* SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0 */
+/* Required Notice: Copyright (c) 2025 AI Chat Team */
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: #f5f7fb;
+  color: #1f2937;
+}
+
+.loading-screen,
+.login-page {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  background: #f5f7fb;
+}
+
+.login-panel {
+  width: min(420px, calc(100vw - 32px));
+  padding: 32px;
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  box-shadow: 0 16px 36px rgba(31, 41, 55, 0.08);
+}
+
+.login-language {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 12px;
+}
+
+.login-form {
+  margin-top: 24px;
+}
+
+.app-shell {
+  min-height: 100vh;
+}
+
+.app-sider {
+  border-right: 1px solid #e5e7eb;
+}
+
+.brand {
+  padding: 24px 20px 18px;
+}
+
+.brand h4 {
+  margin: 0 0 4px;
+}
+
+.app-header {
+  height: 64px;
+  padding: 0 24px;
+  background: #fff;
+  border-bottom: 1px solid #e5e7eb;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 16px;
+  line-height: normal;
+}
+
+.header-actions {
+  flex: 0 0 auto;
+}
+
+.header-language-icon {
+  color: #6b7280;
+}
+
+.header-user {
+  width: 148px;
+  min-width: 0;
+  align-items: flex-end;
+  line-height: 1.25;
+  text-align: right;
+}
+
+.header-user .ant-space-item {
+  width: 100%;
+  min-width: 0;
+}
+
+.header-user .ant-typography {
+  display: block;
+  max-width: 100%;
+  margin: 0;
+}
+
+.header-role {
+  font-size: 12px;
+}
+
+.app-content {
+  padding: 24px;
+  min-width: 0;
+  overflow-x: auto;
+}
+
+.page {
+  min-width: 0;
+}
+
+.page-toolbar,
+.panel-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.page-toolbar h3,
+.panel-toolbar h4 {
+  margin: 0;
+}
+
+.form-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 12px 16px;
+}
+
+.form-grid.two {
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+}
+
+.split-grid {
+  display: grid;
+  grid-template-columns: minmax(460px, 0.95fr) minmax(520px, 1.05fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.binding-panel,
+.preview-panel {
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  padding: 16px;
+}
+
+.runtime-results {
+  display: flex;
+  width: 100%;
+  margin-top: 20px;
+}
+
+.runtime-results h4 {
+  margin: 0;
+}
+
+.compact-id {
+  display: block;
+  max-width: 100%;
+  margin: 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.nowrap-cell {
+  display: block;
+  margin: 0;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.table-secondary-nowrap {
+  display: block;
+  max-width: 210px;
+  white-space: nowrap;
+}
+
+.mcp-binding-search {
+  width: 280px;
+  margin-bottom: 14px;
+}
+
+.mcp-binding-table .ant-table-tbody > tr > td {
+  padding-top: 10px;
+  padding-bottom: 10px;
+}
+
+.mcp-mode-control {
+  width: 100%;
+}
+
+.ant-table-wrapper .ant-table-cell {
+  vertical-align: middle;
+}
+
+.ant-table-wrapper .ant-table-tbody > tr > td {
+  padding-top: 13px;
+  padding-bottom: 13px;
+}
+
+@media (max-width: 1100px) {
+  .split-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 760px) {
+  .app-sider {
+    width: 196px !important;
+    min-width: 196px !important;
+    max-width: 196px !important;
+  }
+
+  .app-header {
+    padding: 0 14px;
+  }
+
+  .header-user {
+    display: none;
+  }
+
+  .app-content {
+    padding: 16px;
+  }
+}

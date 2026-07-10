@@ -68,6 +68,7 @@ export const GitBranchDropdown: React.FC<{
     openDiffDialog,
     projectRoot,
     query,
+    readOnly,
     setNewBranchName,
     setQuery,
     selectRepository,
@@ -96,11 +97,13 @@ export const GitBranchDropdown: React.FC<{
             {git.actionMessage}
           </div>
         )}
-        <GitClientInfoBlock
-          clientInfo={git.clientInfo}
-          loading={git.loadingClientInfo}
-          onRefresh={git.refreshClientInfo}
-        />
+        {!readOnly && (
+          <GitClientInfoBlock
+            clientInfo={git.clientInfo}
+            loading={git.loadingClientInfo}
+            onRefresh={git.refreshClientInfo}
+          />
+        )}
 
         {gitAvailableRepositories.length > 0 && (
           <div className="mb-2 rounded-md border border-border bg-background p-3 text-xs">
@@ -158,65 +161,74 @@ export const GitBranchDropdown: React.FC<{
               changeCount={changeCount}
               summary={git.summary}
             />
-            <GitActionRows
-              actionLoading={git.actionLoading}
-              onFetch={git.fetchRemote}
-              onPull={git.pullCurrent}
-              onPush={git.pushCurrent}
-              onOpenCommit={openCommitDialog}
-            />
-            <StatusSection
-              files={allStatusFiles}
-              loading={git.loadingStatus}
-              loadingDiff={git.loadingDiff}
-              actionLoading={git.actionLoading}
-              onLoadDiff={openDiffDialog}
-              onStageFiles={git.stageFiles}
-              onUnstageFiles={git.unstageFiles}
-              onDiscardFiles={git.discardFiles}
-            />
-            <ComparePanel
-              compareResult={git.compareResult}
-              loadingCompare={git.loadingCompare}
-              loadingDiff={git.loadingDiff}
-              onLoadFileDiff={openDiffDialog}
-              onClear={git.clearCompare}
-            />
-            <NewBranchRow
-              value={newBranchName}
-              disabled={git.actionLoading}
-              onChange={setNewBranchName}
-              onCreate={createBranch}
-            />
+            {!readOnly && (
+              <>
+                <GitActionRows
+                  actionLoading={git.actionLoading}
+                  onFetch={git.fetchRemote}
+                  onPull={git.pullCurrent}
+                  onPush={git.pushCurrent}
+                  onOpenCommit={openCommitDialog}
+                />
+                <StatusSection
+                  files={allStatusFiles}
+                  loading={git.loadingStatus}
+                  loadingDiff={git.loadingDiff}
+                  actionLoading={git.actionLoading}
+                  onLoadDiff={openDiffDialog}
+                  onStageFiles={git.stageFiles}
+                  onUnstageFiles={git.unstageFiles}
+                  onDiscardFiles={git.discardFiles}
+                />
+                <ComparePanel
+                  compareResult={git.compareResult}
+                  loadingCompare={git.loadingCompare}
+                  loadingDiff={git.loadingDiff}
+                  onLoadFileDiff={openDiffDialog}
+                  onClear={git.clearCompare}
+                />
+                <NewBranchRow
+                  value={newBranchName}
+                  disabled={git.actionLoading}
+                  onChange={setNewBranchName}
+                  onCreate={createBranch}
+                />
+              </>
+            )}
             <BranchSection
-              title="Local"
+              title={readOnly ? 'Harness' : 'Local'}
               branches={filteredBranches.locals}
               loading={git.loadingBranches}
               actionLoading={git.actionLoading}
               loadingCompare={git.loadingCompare}
               operationState={git.summary?.operationState}
+              readOnly={readOnly}
               onCheckout={git.checkoutBranch}
               onMerge={git.mergeBranch}
               onCompare={git.compareBranch}
             />
-            <BranchSection
-              title="Remote"
-              branches={filteredBranches.remotes}
-              loading={git.loadingBranches}
-              actionLoading={git.actionLoading}
-              loadingCompare={git.loadingCompare}
-              operationState={git.summary?.operationState}
-              onCheckout={git.checkoutBranch}
-              onMerge={git.mergeBranch}
-              onCompare={git.compareBranch}
-            />
+            {!readOnly && (
+              <BranchSection
+                title="Remote"
+                branches={filteredBranches.remotes}
+                loading={git.loadingBranches}
+                actionLoading={git.actionLoading}
+                loadingCompare={git.loadingCompare}
+                operationState={git.summary?.operationState}
+                onCheckout={git.checkoutBranch}
+                onMerge={git.mergeBranch}
+                onCompare={git.compareBranch}
+              />
+            )}
           </>
         )}
       </div>
 
       <div className="flex items-center justify-between border-t border-border px-3 py-2">
         <span className="text-[11px] text-muted-foreground">
-          {git.loadingSummary || git.loadingBranches || git.loadingStatus ? t('git.loading') : activeRepoRoot || projectRoot}
+          {git.loadingSummary || git.loadingBranches || git.loadingStatus
+            ? t('git.loading')
+            : readOnly ? 'Harness Git' : activeRepoRoot || projectRoot}
         </span>
         <button
           type="button"

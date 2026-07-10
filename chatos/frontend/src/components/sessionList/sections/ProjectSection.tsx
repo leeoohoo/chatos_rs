@@ -2,8 +2,8 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 import React from 'react';
+import { Cloud, FolderOpen } from 'lucide-react';
 import { useI18n } from '../../../i18n/I18nProvider';
-import { getUserVisiblePath } from '../../../lib/domain/filesystem';
 import { cn } from '../../../lib/utils';
 import type { Project } from '../../../types';
 import { DotsVerticalIcon, PlusIcon, TrashIcon } from '../../ui/icons';
@@ -63,7 +63,10 @@ export const ProjectSection: React.FC<ProjectSectionProps> = ({
           ) : (
             <div className="p-2 space-y-1">
               {projects.map((project) => {
-                const visiblePath = project.displayRootPath || getUserVisiblePath(project.rootPath);
+                const isCloudProject = project.sourceType?.trim().toLowerCase() === 'cloud';
+                const projectTypeLabel = isCloudProject
+                  ? t('session.cloudProject')
+                  : t('session.localProject');
                 return (
                   <div
                     key={project.id}
@@ -77,13 +80,24 @@ export const ProjectSection: React.FC<ProjectSectionProps> = ({
                       onSelect(project.id);
                     }}
                   >
-                    <div className="flex-1 min-w-0">
+                    <div className="flex flex-1 min-w-0 items-center gap-2">
+                      <span
+                        className={cn(
+                          'flex h-5 w-5 shrink-0 items-center justify-center',
+                          isCloudProject ? 'text-sky-600' : 'text-emerald-600',
+                        )}
+                        title={projectTypeLabel}
+                        aria-label={projectTypeLabel}
+                      >
+                        {isCloudProject ? (
+                          <Cloud className="h-4 w-4" aria-hidden="true" />
+                        ) : (
+                          <FolderOpen className="h-4 w-4" aria-hidden="true" />
+                        )}
+                      </span>
                       <h3 className="text-sm font-medium text-foreground truncate">
                         {project.name}
                       </h3>
-                      <div className="mt-1 text-xs text-muted-foreground truncate" title={visiblePath}>
-                        {visiblePath}
-                      </div>
                     </div>
                     <div className="relative" data-action-menu-root="true">
                       <button

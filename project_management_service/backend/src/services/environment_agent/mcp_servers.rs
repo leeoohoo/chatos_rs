@@ -14,6 +14,10 @@ use chatos_mcp_service::{
     builtin_kind_header_value, HARNESS_CODE_ENABLED_BUILTIN_KINDS_HEADER,
     LOCAL_CONNECTOR_ENABLED_BUILTIN_KINDS_HEADER,
 };
+use chatos_plugin_management_sdk::{
+    ResolvedAgentCapabilities, PROJECT_ENVIRONMENT_MCP_RESOURCE_ID, SANDBOX_IMAGES_MCP_RESOURCE_ID,
+};
+use chatos_sandbox_image_mcp::{SANDBOX_IMAGE_PROJECT_ID_HEADER, SANDBOX_IMAGE_RUN_ID_HEADER};
 
 use crate::config::AppConfig;
 use crate::models::{
@@ -38,62 +42,90 @@ pub(super) async fn build_project_environment_mcp_executor(
     routing: &RoutingPlan,
     user_access_token: Option<&str>,
     run_id: &str,
+    capability_policy: &ResolvedAgentCapabilities,
 ) -> Result<McpExecutor, String> {
-    let mut builder = McpExecutor::builder()
-        .with_builtin_server(project_environment_builtin_server())
-        .with_builtin_provider(ProjectEnvironmentToolProvider {
-            state: state.clone(),
-            project: project.clone(),
-            run_id: run_id.to_string(),
-        });
-
-    match routing.file_provider {
-        RuntimeEnvironmentProvider::Harness => {
-            builder = builder.with_http_server(harness_file_mcp_server(&state.config, project)?);
-        }
-        RuntimeEnvironmentProvider::LocalConnector => {
-            if let Some(project_ref) = project
-                .root_path
-                .as_deref()
-                .and_then(parse_local_connector_project_root)
-            {
-                builder = builder.with_http_server(local_connector_file_mcp_server(
-                    &state.config,
-                    &project_ref,
-                    user_access_token,
-                )?);
-            } else if let Some(root_path) = direct_local_project_root(project) {
-                let server = BuiltinMcpKind::CodeMaintainerRead.server_with_options(
-                    &BuiltinMcpServerOptions::new(root_path)
-                        .with_project_id(project.id.clone())
-                        .with_limits(512 * 1024, 5 * 1024 * 1024, 80),
-                );
-                let provider = chatos_builtin_tools::build_shared_builtin_provider(&server)?
-                    .ok_or_else(|| {
-                        "CodeMaintainerRead builtin provider is unavailable".to_string()
-                    })?;
-                builder = builder
-                    .with_builtin_server(server)
-                    .with_builtin_provider(provider);
-            }
-        }
-        RuntimeEnvironmentProvider::None | RuntimeEnvironmentProvider::CloudSandboxManager => {}
+    let mut builder = McpExecutor::builder();
+    if capability_allows_mcp(capability_policy, PROJECT_ENVIRONMENT_MCP_RESOURCE_ID) {
+        builder = builder
+            .with_builtin_server(project_environment_builtin_server())
+            .with_builtin_provider(ProjectEnvironmentToolProvider {
+                state: state.clone(),
+                project: project.clone(),
+                run_id: run_id.to_string(),
+            });
     }
 
-    let sandbox_server = match routing.sandbox_provider {
-        RuntimeEnvironmentProvider::LocalConnector => {
-            local_connector_sandbox_image_mcp_server(state, project, user_access_token).await?
+    if capability_allows_builtin(capability_policy, BuiltinMcpKind::CodeMaintainerRead) {
+        match routing.file_provider {
+            RuntimeEnvironmentProvider::Harness => {
+                builder =
+                    builder.with_http_server(harness_file_mcp_server(&state.config, project)?);
+            }
+            RuntimeEnvironmentProvider::LocalConnector => {
+                if let Some(project_ref) = project
+                    .root_path
+                    .as_deref()
+                    .and_then(parse_local_connector_project_root)
+                {
+                    builder = builder.with_http_server(local_connector_file_mcp_server(
+                        &state.config,
+                        &project_ref,
+                        user_access_token,
+                    )?);
+                } else if let Some(root_path) = direct_local_project_root(project) {
+                    let server = BuiltinMcpKind::CodeMaintainerRead.server_with_options(
+                        &BuiltinMcpServerOptions::new(root_path)
+                            .with_project_id(project.id.clone())
+                            .with_limits(512 * 1024, 5 * 1024 * 1024, 80),
+                    );
+                    let provider = chatos_builtin_tools::build_shared_builtin_provider(&server)?
+                        .ok_or_else(|| {
+                            "CodeMaintainerRead builtin provider is unavailable".to_string()
+                        })?;
+                    builder = builder
+                        .with_builtin_server(server)
+                        .with_builtin_provider(provider);
+                }
+            }
+            RuntimeEnvironmentProvider::None | RuntimeEnvironmentProvider::CloudSandboxManager => {}
         }
-        RuntimeEnvironmentProvider::CloudSandboxManager => {
-            cloud_sandbox_image_mcp_server(&state.config, environment.sandbox_provider)?
+    }
+
+    if capability_allows_mcp(capability_policy, SANDBOX_IMAGES_MCP_RESOURCE_ID) {
+        let sandbox_server = match routing.sandbox_provider {
+            RuntimeEnvironmentProvider::LocalConnector => {
+                local_connector_sandbox_image_mcp_server(state, project, user_access_token, run_id)
+                    .await?
+            }
+            RuntimeEnvironmentProvider::CloudSandboxManager => cloud_sandbox_image_mcp_server(
+                &state.config,
+                environment.sandbox_provider,
+                project.id.as_str(),
+                run_id,
+            )?,
+            RuntimeEnvironmentProvider::None | RuntimeEnvironmentProvider::Harness => None,
+        };
+        if let Some(server) = sandbox_server {
+            builder = builder.with_http_server(server);
         }
-        RuntimeEnvironmentProvider::None | RuntimeEnvironmentProvider::Harness => None,
-    };
-    if let Some(server) = sandbox_server {
-        builder = builder.with_http_server(server);
     }
 
     builder.build_initialized().await
+}
+
+fn capability_allows_mcp(policy: &ResolvedAgentCapabilities, resource_id: &str) -> bool {
+    policy
+        .mcps
+        .iter()
+        .any(|item| item.resource.id == resource_id && item.available)
+}
+
+fn capability_allows_builtin(policy: &ResolvedAgentCapabilities, kind: BuiltinMcpKind) -> bool {
+    policy.mcps.iter().any(|item| {
+        item.available
+            && item.resource.runtime.kind == "builtin"
+            && item.resource.runtime.builtin_kind.as_deref() == Some(kind.kind_name())
+    })
 }
 
 fn project_environment_builtin_server() -> McpBuiltinServer {
@@ -228,6 +260,8 @@ fn local_connector_file_mcp_server(
 fn cloud_sandbox_image_mcp_server(
     config: &AppConfig,
     provider: RuntimeEnvironmentProvider,
+    project_id: &str,
+    run_id: &str,
 ) -> Result<Option<McpHttpServer>, String> {
     if provider != RuntimeEnvironmentProvider::CloudSandboxManager {
         return Ok(None);
@@ -247,6 +281,11 @@ fn cloud_sandbox_image_mcp_server(
     let mut headers = HashMap::new();
     headers.insert("x-sandbox-client-id".to_string(), client_id.to_string());
     headers.insert("x-sandbox-client-key".to_string(), client_key.to_string());
+    headers.insert(
+        SANDBOX_IMAGE_PROJECT_ID_HEADER.to_string(),
+        project_id.to_string(),
+    );
+    headers.insert(SANDBOX_IMAGE_RUN_ID_HEADER.to_string(), run_id.to_string());
     let url = format!(
         "{}{}",
         config.sandbox_manager_base_url.trim().trim_end_matches('/'),
@@ -263,6 +302,7 @@ async fn local_connector_sandbox_image_mcp_server(
     state: &AppState,
     project: &ProjectRecord,
     user_access_token: Option<&str>,
+    run_id: &str,
 ) -> Result<Option<McpHttpServer>, String> {
     let access_token =
         required_user_access_token(user_access_token, "Local Connector 沙箱镜像 MCP")?;
@@ -302,6 +342,11 @@ async fn local_connector_sandbox_image_mcp_server(
         "authorization".to_string(),
         format!("Bearer {access_token}"),
     );
+    headers.insert(
+        SANDBOX_IMAGE_PROJECT_ID_HEADER.to_string(),
+        project.id.clone(),
+    );
+    headers.insert(SANDBOX_IMAGE_RUN_ID_HEADER.to_string(), run_id.to_string());
     Ok(Some(
         McpHttpServer::new(
             SANDBOX_IMAGE_MCP_SERVER_NAME,

@@ -92,6 +92,64 @@ impl SandboxRuntimeContext {
 }
 
 impl RunService {
+    pub(super) async fn effective_sandbox_policy_for_task(
+        &self,
+        task: &TaskRecord,
+    ) -> Result<bool, String> {
+        if !task.mcp_config.enabled {
+            return Ok(false);
+        }
+        let project_id = crate::models::normalize_project_id(Some(task.project_id.clone()));
+        if project_id != crate::models::PUBLIC_PROJECT_ID
+            && super::project_management_api_client::project_service_enabled(&self.config)
+        {
+            match super::project_management_api_client::sync_get_project(
+                &self.config,
+                project_id.as_str(),
+            )
+            .await
+            {
+                Ok(Some(project)) => {
+                    let source_type = project
+                        .source_type
+                        .as_deref()
+                        .map(str::trim)
+                        .unwrap_or("local");
+                    if source_type.eq_ignore_ascii_case("cloud") {
+                        return Ok(true);
+                    }
+                    if source_type.eq_ignore_ascii_case("local")
+                        || source_type.eq_ignore_ascii_case("local_connector")
+                    {
+                        match super::project_management_api_client::get_project_sandbox_enabled(
+                            &self.config,
+                            project_id.as_str(),
+                        )
+                        .await
+                        {
+                            Ok(enabled) => return Ok(enabled),
+                            Err(err) => warn!(
+                                project_id = project_id.as_str(),
+                                error = err.as_str(),
+                                "failed to load project sandbox policy; falling back to task/runtime settings"
+                            ),
+                        }
+                    }
+                }
+                Ok(None) => {}
+                Err(err) => warn!(
+                    project_id = project_id.as_str(),
+                    error = err.as_str(),
+                    "failed to load project source type for sandbox policy"
+                ),
+            }
+        }
+        if let Some(enabled) = task.mcp_config.sandbox_enabled {
+            return Ok(enabled);
+        }
+        self.effective_sandbox_enabled().await
+    }
+
     pub(super) async fn should_route_task_to_sandbox(
         &self,
         task: &TaskRecord,
@@ -99,10 +157,7 @@ impl RunService {
         if !task.mcp_config.enabled {
             return Ok(false);
         }
-        if let Some(enabled) = task.mcp_config.sandbox_enabled {
-            return Ok(enabled);
-        }
-        let sandbox_enabled = self.effective_sandbox_enabled().await?;
+        let sandbox_enabled = self.effective_sandbox_policy_for_task(task).await?;
         Ok(sandbox_enabled && task_requires_sandbox(task))
     }
 
@@ -456,6 +511,18 @@ impl RunService {
         let Some(run) = self.store.get_run(run_id).await? else {
             return Ok(None);
         };
+        match self
+            .get_harness_run_output_changes(&run, limit, offset)
+            .await
+        {
+            Ok(Some(response)) => return Ok(Some(response)),
+            Ok(None) => {}
+            Err(err) => warn!(
+                run_id = run.id.as_str(),
+                error = err.as_str(),
+                "read Harness run changes failed; falling back to sandbox manifest"
+            ),
+        }
         let Some(manifest) = read_output_change_manifest_for_run(&run)? else {
             return Ok(Some(RunOutputChangesResponse {
                 run_id: run.id,
@@ -495,6 +562,16 @@ impl RunService {
         let Some(run) = self.store.get_run(run_id).await? else {
             return Ok(None);
         };
+        match self.get_harness_run_output_diff(&run, path).await {
+            Ok(Some(response)) => return Ok(Some(response)),
+            Ok(None) => {}
+            Err(err) if err == "文件不在本次运行变更清单中" => return Err(err),
+            Err(err) => warn!(
+                run_id = run.id.as_str(),
+                error = err.as_str(),
+                "read Harness run diff failed; falling back to sandbox manifest"
+            ),
+        }
         let Some(manifest) = read_output_change_manifest_for_run(&run)? else {
             return Ok(Some(RunOutputDiffResponse {
                 run_id: run.id,

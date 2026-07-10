@@ -19,6 +19,7 @@ use super::dependencies::{
 use super::dependency_graph::{
     get_project_dependency_graph, get_requirement_dependency_graph, get_work_item_dependency_graph,
 };
+use super::harness_git_access::sync_get_project_harness_git_access;
 use super::harness_mcp::harness_project_mcp_entrypoint;
 use super::plan::get_project_plan;
 use super::projects::{
@@ -33,11 +34,11 @@ use super::requirements::{
 };
 use super::runtime_environment::{
     analyze_project_runtime_environment_handler, get_project_runtime_environment,
-    update_project_runtime_environment_settings,
+    get_project_runtime_environment_progress_handler, update_project_runtime_environment_settings,
 };
 use super::sync::{
-    sync_get_project, sync_import_project, sync_list_projects, sync_requirement_execution_state,
-    sync_task_runner_work_item_status,
+    sync_get_project, sync_get_project_runtime_environment, sync_import_project,
+    sync_list_projects, sync_requirement_execution_state, sync_task_runner_work_item_status,
 };
 use super::task_runner_links::{
     create_task_runner_task_from_work_item, delete_task_runner_link,
@@ -105,6 +106,10 @@ pub fn build_router(state: AppState) -> Router {
         .route(
             "/api/projects/:project_id/runtime-environment/analyze",
             post(analyze_project_runtime_environment_handler),
+        )
+        .route(
+            "/api/projects/:project_id/runtime-environment/progress",
+            get(get_project_runtime_environment_progress_handler),
         )
         .route(
             "/api/requirements/:requirement_id",
@@ -185,6 +190,14 @@ pub fn build_router(state: AppState) -> Router {
         .route(
             "/api/chatos-sync/projects/:project_id",
             get(sync_get_project),
+        )
+        .route(
+            "/api/chatos-sync/projects/:project_id/runtime-environment",
+            get(sync_get_project_runtime_environment),
+        )
+        .route(
+            "/api/chatos-sync/projects/:project_id/harness/git-access",
+            get(sync_get_project_harness_git_access),
         )
         .route(
             "/api/chatos-sync/projects/:project_id/harness/mcp",

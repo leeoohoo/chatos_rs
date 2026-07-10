@@ -10,6 +10,7 @@ use crate::services::{
     RunService, TaskProjectService, TaskService, ToolingStateService,
 };
 use crate::store::AppStore;
+use chatos_plugin_management_sdk::{PluginManagementClient, PluginManagementClientConfig};
 use memory_engine_sdk::UpsertSourceRequest;
 use serde_json::json;
 
@@ -35,7 +36,15 @@ impl AppState {
         let store = AppStore::new(&config).await?;
         let auth_service = AuthService::new(config.clone(), store.clone());
         auth_service.ensure_default_admin(&config).await?;
-        let task_service = TaskService::new(config.clone(), store.clone());
+        let plugin_management_client = PluginManagementClient::new(
+            PluginManagementClientConfig::from_env("task-runner").await,
+        )
+        .map_err(|err| format!("initialize plugin management client failed: {err}"))?;
+        let task_service = TaskService::new_with_plugin_management(
+            config.clone(),
+            store.clone(),
+            plugin_management_client.clone(),
+        );
         let model_config_service = ModelConfigService::new(store.clone());
         let task_project_service =
             TaskProjectService::new_with_config(store.clone(), config.clone());
@@ -44,10 +53,11 @@ impl AppState {
         let external_mcp_config_service = ExternalMcpConfigService::new(store.clone());
         let ask_user_prompt_service =
             AskUserPromptService::new_with_config(store.clone(), config.clone());
-        let run_service = RunService::new(
+        let run_service = RunService::new_with_plugin_management(
             config.clone(),
             store.clone(),
             ask_user_prompt_service.clone(),
+            plugin_management_client,
         );
         let mcp_catalog_service =
             McpCatalogService::new(task_service.clone(), ask_user_prompt_service.clone());

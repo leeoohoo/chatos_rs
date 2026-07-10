@@ -32,9 +32,23 @@ impl TaskRunnerMcpService {
         match request.method.as_str() {
             "tools/list" => {
                 tracing::info!("task runner mcp tools/list started");
-                let tools = self
+                let tools = match self
                     .list_tools_for_user(&current_user, request_context.tool_profile())
-                    .await;
+                    .await
+                {
+                    Ok(tools) => tools,
+                    Err(message) => {
+                        return JsonRpcResponse {
+                            jsonrpc: "2.0",
+                            id,
+                            result: None,
+                            error: Some(JsonRpcError {
+                                code: -32000,
+                                message,
+                            }),
+                        };
+                    }
+                };
                 tracing::info!(
                     tool_count = tools.len(),
                     "task runner mcp tools/list finished"

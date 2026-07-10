@@ -11,6 +11,8 @@ use tokio::sync::{mpsc, RwLock};
 use tokio_tungstenite::tungstenite::Message;
 
 use crate::history::CommandHistoryRecorder;
+use crate::mcp::configs::refresh_enabled_local_mcp_checks;
+use crate::mcp::manifest::mcp_status_message;
 use crate::mcp::service::handle_mcp_request;
 use crate::model_configs::handle_model_runtime_request;
 use crate::relay::MCP_RELAY_MESSAGE_TYPE;
@@ -25,6 +27,7 @@ use crate::terminal::session::LocalTerminalManager;
 use crate::{config::ClientConfig, tracing_stdout, LocalState};
 
 const HEARTBEAT_INTERVAL_SECONDS: u64 = 15;
+const MCP_CHECK_INTERVAL_SECONDS: u64 = 45;
 
 pub(crate) async fn connect_loop(
     config: ClientConfig,
@@ -52,15 +55,35 @@ pub(crate) async fn connect_loop(
     };
     let (outbound_tx, mut outbound_rx) = mpsc::unbounded_channel::<Value>();
     let mut heartbeat = tokio::time::interval(Duration::from_secs(HEARTBEAT_INTERVAL_SECONDS));
+    let mut mcp_check = tokio::time::interval(Duration::from_secs(MCP_CHECK_INTERVAL_SECONDS));
+    mcp_check.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     tracing_stdout("connected to local_connector_service");
 
     loop {
         tokio::select! {
+            _ = mcp_check.tick() => {
+                if let Err(err) = refresh_enabled_local_mcp_checks(
+                    state.as_ref(),
+                    config.state_path.as_path(),
+                ).await {
+                    tracing_stdout(format!("refresh local MCP checks failed: {err}").as_str());
+                }
+            }
             _ = heartbeat.tick() => {
                 write
                     .send(Message::Text(json!({"type": "heartbeat"}).to_string().into()))
                     .await
                     .context("send heartbeat")?;
+                let mcp_status = {
+                    let state = state.read().await;
+                    mcp_status_message(&state)
+                };
+                if let Some(mcp_status) = mcp_status {
+                    write
+                        .send(Message::Text(mcp_status.to_string().into()))
+                        .await
+                        .context("send MCP manifest status")?;
+                }
             }
             outbound = outbound_rx.recv() => {
                 let Some(outbound) = outbound else {
@@ -122,7 +145,7 @@ async fn handle_text_message(
         .and_then(Value::as_str)
         .unwrap_or_default();
     match message_type {
-        "connected" | "pong" | "ack" => {
+        "connected" | "pong" | "ack" | "mcp_manifest_status_ack" => {
             tracing_stdout(format!("service message: {message_type}").as_str());
             None
         }
