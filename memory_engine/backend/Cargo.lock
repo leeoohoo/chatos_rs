@@ -224,6 +224,7 @@ name = "chatos_service_runtime"
 version = "0.1.0"
 dependencies = [
  "base64",
+ "futures-util",
  "reqwest",
  "serde",
  "serde_json",
