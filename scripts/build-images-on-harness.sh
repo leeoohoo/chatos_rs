@@ -25,5 +25,8 @@ fi
 echo "[INFO] sending current worktree snapshot to Harness CI"
 echo "[INFO] branch: $HARNESS_CI_BRANCH"
 echo "[INFO] pipeline: $HARNESS_CI_PIPELINE"
+if [[ -n "${HARNESS_CI_IMAGE_SERVICES:-${CHATOS_CI_IMAGE_SERVICES:-}}" ]]; then
+  echo "[INFO] image services: ${HARNESS_CI_IMAGE_SERVICES:-${CHATOS_CI_IMAGE_SERVICES:-}}"
+fi
 
 exec bash "$ROOT_DIR/scripts/bootstrap_harness_ci.sh"

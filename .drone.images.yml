@@ -22,9 +22,7 @@ steps:
       - apk add --no-cache bash docker-cli-compose
       - docker info
       - docker compose version
-      - bash docker/deploy.sh build
-      - bash docker/deploy-harness-ci.sh check-images
-      - docker images --format '{{.Repository}}:{{.Tag}} {{.Size}}' | grep 'chatos-rs-.*:harness-ci' | sort
+      - bash scripts/harness_ci_build_images.sh
     volumes:
       - name: docker-sock
         path: /var/run/docker.sock

@@ -19,6 +19,8 @@ HARNESS_CI_PAT_IDENTIFIER="${HARNESS_CI_PAT_IDENTIFIER:-chatos-ci-$(date +%Y%m%d
 HARNESS_CI_BRANCH="${HARNESS_CI_BRANCH:-$(git -C "$ROOT_DIR" branch --show-current 2>/dev/null || true)}"
 HARNESS_GIT_BASE_URL="${HARNESS_GIT_BASE_URL:-}"
 HARNESS_CI_SNAPSHOT_SCOPE="${HARNESS_CI_SNAPSHOT_SCOPE:-ci-files}"
+HARNESS_CI_IMAGE_SERVICES="${HARNESS_CI_IMAGE_SERVICES:-${CHATOS_CI_IMAGE_SERVICES:-}}"
+HARNESS_CI_IMAGE_SERVICES_FILE="docker/.harness-ci-image-services"
 
 if [[ -z "${HARNESS_CI_BRANCH// }" ]]; then
   HARNESS_CI_BRANCH="main"
@@ -42,10 +44,13 @@ esac
 ci_paths=(
   ".gitignore"
   ".drone.yml"
+  ".drone.images.yml"
   "docker/compose.yml"
   "docker/.env.example"
+  "docker/deploy-harness-ci.sh"
   "docs/HARNESS_CI.md"
   "scripts/bootstrap_harness_ci.sh"
+  "scripts/harness_ci_build_images.sh"
   "scripts/local-dev-stack.sh"
   "scripts/check_openapi_method_contract_gate.sh"
 )
@@ -256,6 +261,9 @@ if [[ -z "$push_token" ]]; then
 fi
 
 snapshot_needed=false
+if [[ -n "${HARNESS_CI_IMAGE_SERVICES// }" ]]; then
+  snapshot_needed=true
+fi
 if [[ "$HARNESS_CI_SNAPSHOT_SCOPE" == "all" ]]; then
   if ! git -C "$ROOT_DIR" diff --quiet ||
     ! git -C "$ROOT_DIR" diff --cached --quiet ||
@@ -292,6 +300,13 @@ if [[ "$snapshot_needed" == "true" ]]; then
         GIT_INDEX_FILE="$snapshot_index" git -C "$ROOT_DIR" add -f "$path"
       fi
     done
+  fi
+  if [[ -n "${HARNESS_CI_IMAGE_SERVICES// }" ]]; then
+    printf '%s\n' "$HARNESS_CI_IMAGE_SERVICES" >"$tmp_dir/harness-ci-image-services"
+    services_blob="$(git -C "$ROOT_DIR" hash-object -w "$tmp_dir/harness-ci-image-services")"
+    GIT_INDEX_FILE="$snapshot_index" git -C "$ROOT_DIR" update-index \
+      --add --cacheinfo "100644,$services_blob,$HARNESS_CI_IMAGE_SERVICES_FILE"
+    echo "[INFO] Limiting Harness image build to: $HARNESS_CI_IMAGE_SERVICES"
   fi
   snapshot_tree="$(GIT_INDEX_FILE="$snapshot_index" git -C "$ROOT_DIR" write-tree)"
   push_source="$(
