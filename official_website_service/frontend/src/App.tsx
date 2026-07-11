@@ -1,388 +1,352 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-import { useEffect, useMemo, useState } from 'react';
+import { type FormEvent, useEffect, useMemo, useState } from 'react';
 import {
-  AlertTriangle,
   ArrowRight,
-  Boxes,
-  Brain,
-  CheckCircle2,
-  Clock3,
-  Contact,
-  Cpu,
-  Database,
-  Fingerprint,
-  GitBranch,
-  Layers3,
-  MemoryStick,
-  MessageSquare,
-  Play,
-  RefreshCw,
-  Route,
+  Bot,
+  BrainCircuit,
+  Check,
+  ChevronRight,
+  Cloud,
+  Code2,
+  Download,
+  FolderLock,
+  Laptop,
+  Mail,
+  MessageCircle,
+  MonitorDown,
   ShieldCheck,
   Sparkles,
   TerminalSquare,
+  Workflow,
+  Zap,
 } from 'lucide-react';
-
-type DefaultPort = {
-  name: string;
-  backend?: number | null;
-  frontend?: number | null;
-};
-
-type ServiceInfo = {
-  name: string;
-  directory: string;
-  role: string;
-  capability: string;
-};
-
-type ShowcaseImage = {
-  id: string;
-  title: string;
-  path: string;
-  source_url: string;
-};
 
 type SiteManifest = {
   product_name: string;
   tagline: string;
-  default_ports: DefaultPort[];
-  services: ServiceInfo[];
-  showcase_images: ShowcaseImage[];
+  app_url: string;
+  registration_enabled: boolean;
+  downloads_enabled: boolean;
 };
 
-type ServiceState = 'online' | 'degraded' | 'offline';
-
-type ServiceHealth = {
-  name: string;
-  role: string;
-  url: string;
-  state: ServiceState;
-  status_code?: number | null;
-  latency_ms?: number | null;
-  detail: string;
+type ClientArtifact = {
+  platform: string;
+  label: string;
+  file_name: string;
+  content_type: string;
+  size_bytes: number;
+  sha256: string;
+  download_url: string;
 };
 
-type SiteStatusResponse = {
-  checked_at_ms: number;
-  timeout_ms: number;
-  live_status_enabled: boolean;
-  detail: string;
-  services: ServiceHealth[];
+type ClientRelease = {
+  product: string;
+  channel: string;
+  version: string;
+  published_at: string;
+  artifacts: ClientArtifact[];
+};
+
+type DownloadCatalog = {
+  storage_configured: boolean;
+  available: boolean;
+  message: string;
+  release?: ClientRelease | null;
+};
+
+type RegistrationForm = {
+  email: string;
+  displayName: string;
+  inviteCode: string;
+  verificationCode: string;
+  password: string;
+  confirmPassword: string;
 };
 
 const fallbackManifest: SiteManifest = {
   product_name: 'Chatos RS',
-  tagline: '让 AI 成为可以长期协作的联系人。',
-  default_ports: [
-    { name: 'Chatos main', backend: 3997, frontend: 8088 },
-    { name: 'Memory Engine', backend: 7081, frontend: 4178 },
-    { name: 'Task Runner', backend: 39090, frontend: 39091 },
-    { name: 'User Service', backend: 39190, frontend: 39191 },
-    { name: 'Project Management', backend: 39210, frontend: 39211 },
-    { name: 'Sandbox Manager', backend: 8095, frontend: 8096 },
-    { name: 'Official Website', backend: 39250, frontend: 39251 },
-  ],
-  services: [
-    {
-      name: 'chatos',
-      directory: 'chatos/',
-      role: '主应用微服务',
-      capability: 'frontend 提供联系人驱动的主交互界面，backend 承载消息、流式响应、工具路由和跨服务编排。',
-    },
-    {
-      name: 'memory_engine',
-      directory: 'memory_engine/',
-      role: '长期记忆微服务',
-      capability: '把线程、消息、摘要、主题记忆和上下文组装从主聊天中解耦。',
-    },
-    {
-      name: 'task_runner_service',
-      directory: 'task_runner_service/',
-      role: '异步执行链路',
-      capability: '让复杂任务排队、执行、复核、回调，并保留可观察运行记录。',
-    },
-    {
-      name: 'user_service',
-      directory: 'user_service/',
-      role: '统一身份与模型配置',
-      capability: '管理真实用户、agent account、令牌交换和共享模型配置。',
-    },
-    {
-      name: 'project_management_service',
-      directory: 'project_management_service/',
-      role: '工程计划管理',
-      capability: '沉淀需求、技术方案、项目任务和依赖关系。',
-    },
-    {
-      name: 'sandbox_manager_service',
-      directory: 'sandbox_manager_service/',
-      role: '隔离执行底座',
-      capability: '管理 Docker/Kata 沙箱租约、镜像初始化和沙箱 MCP 代理。',
-    },
-  ],
-  showcase_images: [
-    {
-      id: 'chatos-main',
-      title: '联系人驱动的主聊天',
-      path: '/showcase/chatos-main.png',
-      source_url: 'http://127.0.0.1:8088',
-    },
-    {
-      id: 'memory-engine',
-      title: 'Memory Engine 控制台',
-      path: '/showcase/memory-engine.png',
-      source_url: 'http://127.0.0.1:4178',
-    },
-    {
-      id: 'task-runner',
-      title: 'Task Runner 运行台',
-      path: '/showcase/task-runner.png',
-      source_url: 'http://127.0.0.1:39091',
-    },
-    {
-      id: 'sandbox-manager',
-      title: 'Sandbox Manager 管理台',
-      path: '/showcase/sandbox-manager.png',
-      source_url: 'http://127.0.0.1:8096',
-    },
-    {
-      id: 'project-management',
-      title: 'Project Management 工作台',
-      path: '/showcase/project-management.png',
-      source_url: 'http://127.0.0.1:39211',
-    },
-  ],
+  tagline: '给你的项目一位真正能动手的 AI 搭档。',
+  app_url: 'http://localhost:8088',
+  registration_enabled: true,
+  downloads_enabled: false,
 };
 
-const painPoints = [
+const initialRegistration: RegistrationForm = {
+  email: '',
+  displayName: '',
+  inviteCode: '',
+  verificationCode: '',
+  password: '',
+  confirmPassword: '',
+};
+
+const outcomes = [
   {
-    title: '会话不是协作对象',
-    body: '工程问题往往跨越多天，单次聊天窗口很难承载长期关系、项目状态和角色能力。',
+    icon: BrainCircuit,
+    title: '记得项目来龙去脉',
+    body: '重要决定、项目背景和你的偏好会被持续整理，下次回来不必重新解释。',
   },
   {
-    title: '上下文成本持续膨胀',
-    body: '越想保留历史，越容易把 token 花在重复铺垫上，真正关键的事实反而不稳定。',
+    icon: Code2,
+    title: '不只回答，还能动手',
+    body: '让 AI 读取代码、运行命令、拆解任务并持续汇报进度，把建议真正变成结果。',
   },
   {
-    title: '执行链路难以续接',
-    body: '工具调用、后台执行、复核和回调如果只挂在当前会话里，就很难变成可运维流程。',
+    icon: FolderLock,
+    title: '工作区由你授权',
+    body: '通过桌面连接器只开放指定目录，也可以选择云端隔离沙箱，边界清晰可控。',
   },
 ];
 
-const runtimeShifts = [
+const workflowSteps = [
   {
-    label: '用户入口',
-    title: '稳定联系人',
-    body: '用户回到同一个联系人身上继续推进，而不是在一串会话标题里猜哪一个还保留上下文。',
+    number: '01',
+    title: '告诉 Chatos 你想完成什么',
+    body: '从一句自然语言开始，讨论需求、约束和验收目标。',
   },
   {
-    label: '运行记录',
-    title: '会话退到后台',
-    body: '会话仍然保存消息、工具调用和上下文快照，但它服务于联系人连续性，不再抢占用户心智。',
+    number: '02',
+    title: '确认计划与工作环境',
+    body: '选择云端沙箱或已授权的本机项目，复杂任务会进入可追踪的后台执行。',
   },
   {
-    label: '工程延伸',
-    title: '任务与记忆接管长尾',
-    body: '摘要、主体记忆、异步任务、项目计划和沙箱执行共同接住跨天工作的后半段。',
+    number: '03',
+    title: '随时回来查看结果',
+    body: '进度、工具输出、代码变更和后续问题都保留在同一个协作上下文中。',
   },
 ];
 
-const contactModelSteps = [
-  { icon: Contact, title: '虚拟化联系人', body: '用户选择长期协作对象，而不是翻找一次性的历史会话。' },
-  { icon: Cpu, title: 'Agent 能力绑定', body: '角色定义、技能、MCP 能力和模型配置随联系人进入运行上下文。' },
-  { icon: GitBranch, title: '项目作用域', body: '同一联系人可以在不同项目里继续工作，项目和工作区成为上下文边界。' },
-  { icon: Brain, title: '主体记忆召回', body: 'Memory Engine 从会话摘要继续提炼用户、联系人、agent 和项目记忆。' },
-  { icon: Clock3, title: '异步执行延伸', body: 'Task Runner 把后续执行、复核和回调变成稳定后台链路。' },
+const useCases = [
+  {
+    icon: Workflow,
+    eyebrow: '从想法到任务',
+    title: '把模糊需求变成可执行计划',
+    body: '一起澄清目标、拆分步骤和依赖，再把长耗时工作交给后台任务持续推进。',
+    points: ['需求澄清与方案比较', '任务拆解与依赖管理', '进度与结果集中回看'],
+  },
+  {
+    icon: TerminalSquare,
+    eyebrow: '真实工程环境',
+    title: '让 AI 进入项目，而不是复制粘贴代码',
+    body: '连接本机工作区或使用云端沙箱，让文件、终端、Git 和工具调用发生在正确的环境里。',
+    points: ['明确授权的本机目录', 'Docker 隔离运行环境', '命令输出与改动可追踪'],
+  },
+  {
+    icon: MessageCircle,
+    eyebrow: '长期协作',
+    title: '今天的讨论，明天还能接着做',
+    body: 'Chatos 会把消息、摘要、项目事实和长期记忆组织起来，让合作不被单次会话切断。',
+    points: ['跨会话上下文', '项目与角色记忆', '重要信息按需召回'],
+  },
 ];
 
-const architectureFlow = [
-  ['用户消息', '主聊天前端'],
-  ['主聊天前端', 'Rust 编排后端'],
-  ['Rust 编排后端', 'Memory Engine'],
-  ['Rust 编排后端', 'Task Runner'],
-  ['Task Runner', 'Sandbox Manager'],
-  ['Task Runner', 'Project Management'],
-  ['Memory Engine', '联系人上下文'],
-  ['Task Runner', '联系人上下文'],
+const faqs = [
+  {
+    question: 'Chatos 和普通 AI 聊天工具有什么不同？',
+    answer: 'Chatos 面向持续的工程协作。它不仅生成回答，还能连接项目环境、运行工具、跟踪后台任务，并在后续协作中继续使用已经沉淀的项目上下文。',
+  },
+  {
+    question: '必须把代码上传到云端吗？',
+    answer: '不需要。安装桌面连接器后，你可以只授权本机的指定工作区。云端通过连接器转发请求，不会保存你的本机绝对路径，也不会直接访问你的 localhost。',
+  },
+  {
+    question: '为什么注册需要邀请码？',
+    answer: '当前处于邀请测试阶段，我们希望控制服务容量并及时处理反馈。获得邀请码后，可以在官网直接完成邮箱验证和账号注册。',
+  },
+  {
+    question: '桌面连接器支持哪些系统？',
+    answer: '当前首先提供 Windows 10/11 64 位版本。macOS 和 Linux 客户端会在后续版本中提供。',
+  },
 ];
-
-const serviceIcons = [MessageSquare, Route, MemoryStick, Clock3, Fingerprint, Layers3, ShieldCheck];
 
 function App() {
   const [manifest, setManifest] = useState<SiteManifest>(fallbackManifest);
-  const [siteStatus, setSiteStatus] = useState<SiteStatusResponse | null>(null);
-  const [statusError, setStatusError] = useState<string | null>(null);
-  const [failedImages, setFailedImages] = useState<Record<string, boolean>>({});
+  const [downloads, setDownloads] = useState<DownloadCatalog | null>(null);
+  const [registration, setRegistration] = useState<RegistrationForm>(initialRegistration);
+  const [registrationState, setRegistrationState] = useState<'idle' | 'submitting' | 'success'>('idle');
+  const [codeSending, setCodeSending] = useState(false);
+  const [codeCountdown, setCodeCountdown] = useState(0);
+  const [formMessage, setFormMessage] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
-    fetch('/api/site/manifest')
-      .then((response) => {
-        if (!response.ok) {
-          throw new Error(`manifest request failed: ${response.status}`);
-        }
-        return response.json() as Promise<SiteManifest>;
-      })
-      .then((payload) => {
-        if (!cancelled) {
-          setManifest(payload);
-        }
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setManifest(fallbackManifest);
-        }
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  useEffect(() => {
-    let cancelled = false;
-
-    const loadStatus = async () => {
-      try {
-        const response = await fetch('/api/site/status');
-        if (!response.ok) {
-          throw new Error(`status request failed: ${response.status}`);
-        }
-        const payload = (await response.json()) as SiteStatusResponse;
-        if (!cancelled) {
-          setSiteStatus(payload);
-          setStatusError(null);
-        }
-      } catch (error) {
-        if (!cancelled) {
-          setStatusError(error instanceof Error ? error.message : 'status request failed');
-        }
+    Promise.all([
+      fetch('/api/site/manifest').then((response) => response.ok ? response.json() as Promise<SiteManifest> : fallbackManifest),
+      fetch('/api/site/downloads').then((response) => response.ok ? response.json() as Promise<DownloadCatalog> : null),
+    ]).then(([manifestPayload, downloadPayload]) => {
+      if (!cancelled) {
+        setManifest(manifestPayload);
+        setDownloads(downloadPayload);
       }
-    };
-
-    void loadStatus();
-    const timer = window.setInterval(() => {
-      void loadStatus();
-    }, 15_000);
-
+    }).catch(() => {
+      if (!cancelled) {
+        setManifest(fallbackManifest);
+      }
+    });
     return () => {
       cancelled = true;
-      window.clearInterval(timer);
     };
   }, []);
 
-  const heroStyle = useMemo(
-    () => ({
-      backgroundImage:
-        failedImages['chatos-main']
-          ? undefined
-          : 'linear-gradient(90deg, rgba(5, 8, 7, 0.96) 0%, rgba(5, 8, 7, 0.86) 48%, rgba(5, 8, 7, 0.58) 100%), linear-gradient(180deg, rgba(5, 8, 7, 0.18), rgba(5, 8, 7, 0.96)), url("/showcase/chatos-main.png")',
-    }),
-    [failedImages],
+  useEffect(() => {
+    if (codeCountdown <= 0) return undefined;
+    const timer = window.setInterval(() => {
+      setCodeCountdown((value) => Math.max(0, value - 1));
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [codeCountdown]);
+
+  const windowsArtifact = useMemo(
+    () => downloads?.release?.artifacts.find((artifact) => artifact.platform === 'windows-x64') ?? null,
+    [downloads],
   );
 
-  const setImageFailed = (id: string) => {
-    setFailedImages((current) => ({ ...current, [id]: true }));
+  const updateRegistration = (field: keyof RegistrationForm, value: string) => {
+    setRegistration((current) => ({ ...current, [field]: value }));
+    setFormMessage(null);
   };
 
-  const liveStatusEnabled = siteStatus?.live_status_enabled ?? true;
-  const onlineCount = liveStatusEnabled
-    ? (siteStatus?.services.filter((service) => service.state === 'online').length ?? 0)
-    : 0;
-  const totalCount = liveStatusEnabled ? (siteStatus?.services.length ?? 0) : 0;
+  const sendCode = async () => {
+    if (!registration.email.trim()) {
+      setFormMessage('请先填写邮箱地址。');
+      return;
+    }
+    if (!registration.inviteCode.trim()) {
+      setFormMessage('请先填写邀请码。');
+      return;
+    }
+    setCodeSending(true);
+    setFormMessage(null);
+    try {
+      const response = await fetch('/api/site/auth/register/send-code', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          email: registration.email.trim(),
+          invite_code: registration.inviteCode.trim(),
+        }),
+      });
+      const payload = await response.json() as { error?: string; resend_after_seconds?: number };
+      if (!response.ok) throw new Error(payload.error || '验证码发送失败');
+      setCodeCountdown(payload.resend_after_seconds ?? 60);
+      setFormMessage('验证码已发送，请查看邮箱。');
+    } catch (error) {
+      setFormMessage(toFriendlyRegistrationError(error));
+    } finally {
+      setCodeSending(false);
+    }
+  };
+
+  const submitRegistration = async (event: FormEvent) => {
+    event.preventDefault();
+    setFormMessage(null);
+    if (registration.password.length < 6) {
+      setFormMessage('密码至少需要 6 个字符。');
+      return;
+    }
+    if (registration.password !== registration.confirmPassword) {
+      setFormMessage('两次输入的密码不一致。');
+      return;
+    }
+    setRegistrationState('submitting');
+    try {
+      const response = await fetch('/api/site/auth/register', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          email: registration.email.trim(),
+          display_name: registration.displayName.trim() || null,
+          password: registration.password,
+          invite_code: registration.inviteCode.trim(),
+          verification_code: registration.verificationCode.trim(),
+        }),
+      });
+      const payload = await response.json() as { error?: string };
+      if (!response.ok) throw new Error(payload.error || '注册失败');
+      setRegistrationState('success');
+      setRegistration(initialRegistration);
+      setFormMessage(null);
+    } catch (error) {
+      setRegistrationState('idle');
+      setFormMessage(toFriendlyRegistrationError(error));
+    }
+  };
 
   return (
-    <main>
-      <section className="hero" style={heroStyle}>
-        <nav className="topbar" aria-label="主导航">
-          <a className="brand" href="#top" aria-label="Chatos RS 首页">
-            <span className="brand-mark">
-              <Sparkles size={18} />
-            </span>
-            <span>{manifest.product_name}</span>
-          </a>
-          <div className="nav-links">
-            <a href="#contact-model">联系人模型</a>
-            <a href="#architecture">微服务</a>
-            <a href="#service-status">状态</a>
-            <a href="#showcase">截图</a>
-            <a href="#local-run">本地运行</a>
-          </div>
+    <main id="top">
+      <header className="site-header">
+        <a className="brand" href="#top" aria-label="Chatos RS 首页">
+          <span className="brand-mark"><Sparkles size={19} /></span>
+          <span>{manifest.product_name}</span>
+        </a>
+        <nav className="nav-links" aria-label="主导航">
+          <a href="#why">为什么选择</a>
+          <a href="#how">如何使用</a>
+          <a href="#download">下载客户端</a>
+          <a href="#register">注册</a>
         </nav>
+        <a className="header-login" href={manifest.app_url}>登录 Chatos <ArrowRight size={15} /></a>
+      </header>
 
-        <div className="hero-content" id="top">
-          <p className="eyebrow">AI engineering workflow platform</p>
-          <h1>{manifest.product_name}</h1>
-          <p className="hero-claim">{manifest.tagline}</p>
-          <p className="hero-copy">
-            用虚拟化联系人承载长期关系，用 Memory Engine 跨会话沉淀上下文，
-            用 Task Runner 把后续执行变成可观察、可回调、可复核的后台链路。
-          </p>
+      <section className="hero-section">
+        <div className="hero-glow hero-glow-one" />
+        <div className="hero-glow hero-glow-two" />
+        <div className="hero-copy">
+          <div className="announcement"><Sparkles size={15} /> 面向真实项目的 AI 工作伙伴</div>
+          <h1><span className="hero-line">让 AI 进入项目，</span><span className="hero-highlight">把事情做完。</span></h1>
+          <p>{manifest.tagline} 它能记住背景、理解代码、使用工具，并在你离开页面后继续推进复杂任务。</p>
           <div className="hero-actions">
-            <a className="primary-action" href="#contact-model">
-              <Play size={18} />
-              查看工作模型
-            </a>
-            <a className="secondary-action" href="#local-run">
-              <TerminalSquare size={18} />
-              本地启动
-            </a>
+            <a className="button button-primary" href="#register">免费注册 <ChevronRight size={17} /></a>
+            <a className="button button-secondary" href="#download"><Download size={17} /> 下载桌面连接器</a>
           </div>
-          <div className="hero-metrics" aria-label="平台能力概览">
-            <span><strong>7</strong> 个核心微服务</span>
-            <span><strong>3</strong> 层记忆沉淀</span>
-            <span><strong>1</strong> 个联系人入口</span>
+          <div className="hero-assurances">
+            <span><Check size={15} /> 邀请测试期间免费</span>
+            <span><Check size={15} /> 支持本机工作区</span>
+            <span><Check size={15} /> 云端沙箱可选</span>
+          </div>
+        </div>
+
+        <div className="hero-product" aria-label="Chatos 产品界面预览">
+          <div className="product-window">
+            <div className="window-topbar">
+              <span className="window-dots"><i /><i /><i /></span>
+              <span>Chatos · 项目协作空间</span>
+              <span className="window-secure"><ShieldCheck size={14} /> 已连接</span>
+            </div>
+            <img src="/showcase/chatos-main.png" alt="Chatos 主界面" />
+          </div>
+          <div className="floating-card floating-task">
+            <span className="floating-icon"><Zap size={17} /></span>
+            <span><strong>任务正在后台执行</strong><small>已完成 7 / 10 个步骤</small></span>
+          </div>
+          <div className="floating-card floating-memory">
+            <span className="floating-icon violet"><BrainCircuit size={17} /></span>
+            <span><strong>项目上下文已同步</strong><small>下次回来继续工作</small></span>
           </div>
         </div>
       </section>
 
-      <section className="section intro-band" id="why">
-        <div className="section-heading">
-          <p className="eyebrow">Why it matters</p>
-          <h2>工程协作不能被会话边界切断</h2>
-          <p>
-            Chatos RS 没有否定会话，而是把会话从用户入口退到运行记录层。
-            用户面对稳定联系人，系统在底层维护会话、记忆、任务和工具链路。
-          </p>
-        </div>
-        <div className="pain-grid">
-          {painPoints.map((item) => (
-            <article className="info-tile" key={item.title}>
-              <CheckCircle2 size={20} />
-              <h3>{item.title}</h3>
-              <p>{item.body}</p>
-            </article>
-          ))}
-        </div>
-        <div className="runtime-shifts" aria-label="从会话制到联系人制的变化">
-          {runtimeShifts.map((item) => (
-            <article className="shift-item" key={item.title}>
-              <span>{item.label}</span>
-              <h3>{item.title}</h3>
-              <p>{item.body}</p>
-            </article>
-          ))}
-        </div>
+      <section className="trust-strip" aria-label="核心能力">
+        <span><BrainCircuit size={20} /> 长期项目记忆</span>
+        <span><TerminalSquare size={20} /> 真实工具执行</span>
+        <span><Cloud size={20} /> 云端与本机环境</span>
+        <span><ShieldCheck size={20} /> 明确授权边界</span>
       </section>
 
-      <section className="section contact-model" id="contact-model">
+      <section className="section" id="why">
         <div className="section-heading">
-          <p className="eyebrow">Contact-first runtime</p>
-          <h2>从“打开一个会话”变成“找一个联系人继续做事”</h2>
-          <p>
-            联系人是面向用户的稳定协作对象。Agent、项目、记忆、会话和任务都被挂接到这个对象上，
-            让跨天、跨项目、跨工具的工作自然续接。
-          </p>
+          <span className="section-kicker">不只是聊天</span>
+          <h2>一位能理解上下文、进入环境并持续工作的 AI 搭档</h2>
+          <p>你不需要围绕工具重新组织工作。Chatos 把对话、记忆、任务和执行环境连接起来，让协作自然发生。</p>
         </div>
-        <div className="contact-flow">
-          {contactModelSteps.map((item, index) => {
+        <div className="outcome-grid">
+          {outcomes.map((item) => {
             const Icon = item.icon;
             return (
-              <article className="flow-step" key={item.title}>
-                <div className="step-index">{String(index + 1).padStart(2, '0')}</div>
-                <Icon size={24} />
+              <article className="outcome-card" key={item.title}>
+                <span className="card-icon"><Icon size={24} /></span>
                 <h3>{item.title}</h3>
                 <p>{item.body}</p>
               </article>
@@ -391,257 +355,176 @@ function App() {
         </div>
       </section>
 
-      <section className="section architecture" id="architecture">
-        <div className="section-heading compact">
-          <p className="eyebrow">Microservice architecture</p>
-          <h2>一个入口，多条工程链路协同</h2>
-          <p>
-            主聊天负责实时编排，Memory Engine 负责长期上下文，Task Runner 负责异步执行，
-            User Service、Project Management 和 Sandbox Manager 补齐身份、计划和隔离执行。
-          </p>
+      <section className="section workflow-section" id="how">
+        <div className="section-heading light-heading">
+          <span className="section-kicker">三步开始</span>
+          <h2>从一句话开始，把工作交给可靠的执行链路</h2>
+          <p>简单问题即时回答，复杂任务进入可观察的后台执行；你始终知道它正在做什么。</p>
         </div>
-        <div className="architecture-layout">
-          <div className="flow-map" aria-label="系统流程">
-            {architectureFlow.map(([from, to]) => (
-              <div className="flow-link" key={`${from}-${to}`}>
-                <span>{from}</span>
-                <ArrowRight size={16} />
-                <span>{to}</span>
-              </div>
-            ))}
-          </div>
-          <div className="service-grid">
-            {manifest.services.map((service, index) => {
-              const Icon = serviceIcons[index % serviceIcons.length];
-              return (
-                <article className="service-card" key={service.name}>
-                  <div className="service-card-header">
-                    <Icon size={21} />
-                    <span>{service.directory}</span>
-                  </div>
-                  <h3>{service.name}</h3>
-                  <strong>{service.role}</strong>
-                  <p>{service.capability}</p>
-                </article>
-              );
-            })}
-          </div>
-        </div>
-      </section>
-
-      <section className="section service-status-band" id="service-status">
-        <div className="section-heading compact">
-          <p className="eyebrow">Live local stack</p>
-          <h2>官网也能看见微服务是否在线</h2>
-          <p>
-            官网后端会以短超时探测本机各核心服务的健康检查端点，把本地开发环境的运行状态直接呈现出来。
-          </p>
-        </div>
-        <div className="status-summary" aria-label="本地服务状态汇总">
-          <span>
-            {liveStatusEnabled ? <CheckCircle2 size={17} /> : <ShieldCheck size={17} />}
-            {liveStatusEnabled
-              ? `${onlineCount}/${totalCount || fallbackManifest.default_ports.length} online`
-              : 'live status disabled'}
-          </span>
-          <span>
-            <Clock3 size={17} />
-            timeout {siteStatus?.timeout_ms ?? 800}ms
-          </span>
-          <span>
-            <RefreshCw size={17} />
-            {siteStatus ? formatCheckedTime(siteStatus.checked_at_ms) : 'checking'}
-          </span>
-        </div>
-        {statusError && !siteStatus ? (
-          <div className="status-error">
-            <AlertTriangle size={18} />
-            <span>{statusError}</span>
-          </div>
-        ) : siteStatus && !siteStatus.live_status_enabled ? (
-          <div className="status-disabled">
-            <ShieldCheck size={20} />
-            <div>
-              <strong>Live status is disabled for this deployment.</strong>
-              <p>{siteStatus.detail}</p>
-            </div>
-          </div>
-        ) : (
-          <div className="status-grid">
-            {(siteStatus?.services ?? []).map((service) => {
-              const Icon = service.state === 'online' ? CheckCircle2 : AlertTriangle;
-              return (
-                <article className={`status-card status-${service.state}`} key={service.name}>
-                  <div className="status-card-head">
-                    <span>
-                      <Icon size={17} />
-                      {statusLabel(service.state)}
-                    </span>
-                    <code>{formatLatency(service)}</code>
-                  </div>
-                  <h3>{service.name}</h3>
-                  <p>{service.role}</p>
-                  <small>{service.url}</small>
-                </article>
-              );
-            })}
-            {!siteStatus &&
-              fallbackManifest.default_ports.slice(0, 6).map((service) => (
-                <article className="status-card status-pending" key={service.name}>
-                  <div className="status-card-head">
-                    <span>
-                      <RefreshCw size={17} />
-                      checking
-                    </span>
-                    <code>--</code>
-                  </div>
-                  <h3>{service.name}</h3>
-                  <p>waiting for health probe</p>
-                  <small>{formatPorts(service)}</small>
-                </article>
-              ))}
-          </div>
-        )}
-      </section>
-
-      <section className="section memory-task-band">
-        <div className="split-copy">
-          <div>
-            <p className="eyebrow">Memory</p>
-            <h2>记忆从会话摘要升级为主体记忆</h2>
-            <p>
-              Memory Engine 将消息记录整理为线程摘要，再继续 rollup 成项目级知识和 subject memory。
-              下一轮请求通过 context compose 拉回最近记录、摘要和长期记忆。
-            </p>
-          </div>
-          <div>
-            <p className="eyebrow">Task Runner</p>
-            <h2>后台执行不再丢在当前窗口里</h2>
-            <p>
-              Task Runner 把复杂任务拆成可排队、可执行、可复核的运行链路。结果回到主聊天，
-              用户感知到的是联系人持续推进，而不是另一个割裂系统。
-            </p>
-          </div>
-        </div>
-      </section>
-
-      <section className="section showcase" id="showcase">
-        <div className="section-heading">
-          <p className="eyebrow">Product screens</p>
-          <h2>用真实系统界面说明能力</h2>
-          <p>
-            官网素材来自本地运行的微服务。没有截图时会显示安全占位，截图采集完成后会自动替换为真实界面。
-          </p>
-        </div>
-        <div className="showcase-grid">
-          {manifest.showcase_images.map((image) => (
-            <figure className="showcase-item" key={image.id}>
-              {failedImages[image.id] ? (
-                <div className="screenshot-fallback">
-                  <Boxes size={28} />
-                  <span>{image.title}</span>
-                  <small>{image.source_url}</small>
-                </div>
-              ) : (
-                <img
-                  src={image.path}
-                  alt={image.title}
-                  loading="lazy"
-                  onError={() => setImageFailed(image.id)}
-                />
-              )}
-              <figcaption>
-                <span>{image.title}</span>
-                <a href={image.source_url} target="_blank" rel="noreferrer">打开来源</a>
-              </figcaption>
-            </figure>
+        <div className="workflow-grid">
+          {workflowSteps.map((step) => (
+            <article className="workflow-card" key={step.number}>
+              <span>{step.number}</span>
+              <h3>{step.title}</h3>
+              <p>{step.body}</p>
+            </article>
           ))}
         </div>
       </section>
 
-      <section className="section developer-stack">
-        <div className="section-heading compact">
-          <p className="eyebrow">Developer stack</p>
-          <h2>为工程工作流而不是演示玩具设计</h2>
+      <section className="section use-cases">
+        <div className="section-heading">
+          <span className="section-kicker">为工程协作而生</span>
+          <h2>从讨论到交付，始终在同一个上下文里</h2>
         </div>
-        <div className="stack-row">
-          <span><Database size={18} /> MongoDB / SQLite</span>
-          <span><Cpu size={18} /> Rust / Axum / Tokio</span>
-          <span><Layers3 size={18} /> React / Vite</span>
-          <span><Route size={18} /> MCP-style tooling</span>
-          <span><ShieldCheck size={18} /> Docker / Kata sandbox</span>
+        <div className="use-case-list">
+          {useCases.map((item, index) => {
+            const Icon = item.icon;
+            return (
+              <article className={`use-case-card use-case-${index + 1}`} key={item.title}>
+                <div>
+                  <span className="case-icon"><Icon size={25} /></span>
+                  <small>{item.eyebrow}</small>
+                  <h3>{item.title}</h3>
+                  <p>{item.body}</p>
+                </div>
+                <ul>{item.points.map((point) => <li key={point}><Check size={15} /> {point}</li>)}</ul>
+              </article>
+            );
+          })}
         </div>
       </section>
 
-      <section className="section local-run" id="local-run">
-        <div className="section-heading">
-          <p className="eyebrow">Local run</p>
-          <h2>在本地把整套系统拉起来</h2>
-          <p>
-            官网作为独立微服务运行；主系统仍由已有脚本管理。默认端口来自仓库根目录 `.env.example`。
-          </p>
-        </div>
-        <div className="run-layout">
-          <div className="command-panel">
-            <div className="command-header">
-              <TerminalSquare size={18} />
-              <span>启动命令</span>
-            </div>
-            <pre>{`make restart-all
-make restart-official-website
-
-# production-style website
-make build-official-website
-OFFICIAL_WEBSITE_MODE=prod make restart-official-website`}</pre>
+      <section className="section download-section" id="download">
+        <div className="download-copy">
+          <span className="section-kicker">ChatOS Local Connector</span>
+          <h2>让 Chatos 安全地使用你的本机项目</h2>
+          <p>桌面连接器只访问你明确授权的目录。连接建立后，Chatos 可以在正确的工作区里读取文件、运行终端和管理本机沙箱。</p>
+          <div className="connector-points">
+            <span><ShieldCheck size={18} /> 云端不保存本机绝对路径</span>
+            <span><Laptop size={18} /> 连接器主动建立出站连接</span>
+            <span><FolderLock size={18} /> 每个工作区单独授权</span>
           </div>
-          <div className="port-table" aria-label="默认服务端口">
-            {manifest.default_ports.map((item) => (
-              <div className="port-row" key={item.name}>
-                <span>{item.name}</span>
-                <code>{formatPorts(item)}</code>
+        </div>
+        <div className="download-card">
+          <div className="download-platform">
+            <span className="platform-icon"><MonitorDown size={28} /></span>
+            <div><strong>Windows 客户端</strong><small>Windows 10 / 11 · 64 位</small></div>
+          </div>
+          {windowsArtifact ? (
+            <>
+              <a className="button button-primary download-button" href={windowsArtifact.download_url}>
+                <Download size={18} /> 下载 {downloads?.release?.version}
+              </a>
+              <div className="release-meta">
+                <span>{formatBytes(windowsArtifact.size_bytes)}</span>
+                <span>SHA-256 {windowsArtifact.sha256.slice(0, 12)}…</span>
               </div>
-            ))}
+            </>
+          ) : (
+            <>
+              <button className="button button-muted download-button" type="button" disabled>
+                <Download size={18} /> {downloads?.message ?? '正在读取最新版本'}
+              </button>
+              <div className="release-meta"><span>Windows 版本即将开放下载</span></div>
+            </>
+          )}
+          <ol className="install-steps">
+            <li><span>1</span> 下载并解压客户端</li>
+            <li><span>2</span> 登录你的 Chatos 账号</li>
+            <li><span>3</span> 选择并授权项目目录</li>
+          </ol>
+          <p className="coming-soon">macOS 与 Linux 客户端正在准备中</p>
+        </div>
+      </section>
+
+      <section className="section register-section" id="register">
+        <div className="register-copy">
+          <span className="section-kicker">开始使用</span>
+          <h2>创建账号，和你的 AI 搭档开始第一个项目</h2>
+          <p>注册后可以直接进入 Chatos。当前为邀请测试阶段，需要邀请码和邮箱验证。</p>
+          <div className="register-benefits">
+            <span><Check size={16} /> 一个账号连接 Web 与桌面连接器</span>
+            <span><Check size={16} /> 模型与项目配置随账号同步</span>
+            <span><Check size={16} /> 注册完成后即可登录主应用</span>
           </div>
         </div>
+
+        <div className="register-card">
+          {registrationState === 'success' ? (
+            <div className="registration-success">
+              <span><Check size={28} /></span>
+              <h3>账号创建成功</h3>
+              <p>现在可以打开 Chatos，使用邮箱和密码登录。</p>
+              <a className="button button-primary" href={manifest.app_url}>打开 Chatos <ArrowRight size={17} /></a>
+            </div>
+          ) : (
+            <form onSubmit={submitRegistration}>
+              <div className="form-heading"><Mail size={21} /><div><strong>注册 Chatos</strong><small>注册信息由 Chatos 账号服务处理</small></div></div>
+              <label>邮箱<input type="email" value={registration.email} onChange={(event) => updateRegistration('email', event.target.value)} placeholder="you@example.com" autoComplete="email" required /></label>
+              <label>昵称（选填）<input value={registration.displayName} onChange={(event) => updateRegistration('displayName', event.target.value)} placeholder="希望我们怎么称呼你" autoComplete="name" /></label>
+              <label>邀请码<input value={registration.inviteCode} onChange={(event) => updateRegistration('inviteCode', event.target.value)} placeholder="输入邀请测试码" required /></label>
+              <label>邮箱验证码<span className="code-field"><input inputMode="numeric" value={registration.verificationCode} onChange={(event) => updateRegistration('verificationCode', event.target.value)} placeholder="6 位验证码" required /><button type="button" onClick={() => void sendCode()} disabled={codeSending || codeCountdown > 0}>{codeSending ? '发送中' : codeCountdown > 0 ? `${codeCountdown}s` : '发送验证码'}</button></span></label>
+              <div className="password-row">
+                <label>密码<input type="password" value={registration.password} onChange={(event) => updateRegistration('password', event.target.value)} placeholder="至少 6 个字符" autoComplete="new-password" required /></label>
+                <label>确认密码<input type="password" value={registration.confirmPassword} onChange={(event) => updateRegistration('confirmPassword', event.target.value)} placeholder="再次输入密码" autoComplete="new-password" required /></label>
+              </div>
+              {formMessage && <div className="form-message">{formMessage}</div>}
+              <button className="button button-primary form-submit" type="submit" disabled={registrationState === 'submitting' || !manifest.registration_enabled}>
+                {registrationState === 'submitting' ? '正在创建账号…' : '创建账号'} <ArrowRight size={17} />
+              </button>
+              <p className="form-legal">注册即表示你同意在邀请测试期间遵守平台使用规则与隐私约定。</p>
+            </form>
+          )}
+        </div>
+      </section>
+
+      <section className="section faq-section">
+        <div className="section-heading"><span className="section-kicker">常见问题</span><h2>开始前，你可能还想了解这些</h2></div>
+        <div className="faq-list">
+          {faqs.map((item) => <details key={item.question}><summary>{item.question}<ChevronRight size={18} /></summary><p>{item.answer}</p></details>)}
+        </div>
+      </section>
+
+      <section className="final-cta">
+        <span className="cta-icon"><Bot size={30} /></span>
+        <div><h2>准备好让 AI 真正参与项目了吗？</h2><p>从注册开始，建立一段可以持续推进工作的协作关系。</p></div>
+        <a className="button button-white" href="#register">免费注册 <ArrowRight size={17} /></a>
       </section>
 
       <footer className="footer">
-        <span>{manifest.product_name}</span>
-        <span>Source-available under PolyForm Noncommercial License 1.0.0</span>
+        <div className="footer-brand"><span className="brand-mark"><Sparkles size={18} /></span><div><strong>{manifest.product_name}</strong><small>让 AI 进入项目，把事情做完。</small></div></div>
+        <div className="footer-links"><a href="#why">产品能力</a><a href="#download">客户端下载</a><a href="#register">注册</a><a href={manifest.app_url}>登录</a></div>
+        <span className="copyright">© 2025–2026 Chatos RS</span>
       </footer>
     </main>
   );
 }
 
-function formatPorts(item: DefaultPort) {
-  const backend = item.backend ? `backend:${item.backend}` : '';
-  const frontend = item.frontend ? `frontend:${item.frontend}` : '';
-  return [backend, frontend].filter(Boolean).join(' / ');
+function formatBytes(value: number) {
+  if (!Number.isFinite(value) || value <= 0) return '大小未知';
+  const units = ['B', 'KB', 'MB', 'GB'];
+  let size = value;
+  let unit = 0;
+  while (size >= 1024 && unit < units.length - 1) {
+    size /= 1024;
+    unit += 1;
+  }
+  return `${size.toFixed(unit === 0 ? 0 : 1)} ${units[unit]}`;
 }
 
-function statusLabel(state: ServiceState) {
-  if (state === 'online') {
-    return 'online';
-  }
-  if (state === 'degraded') {
-    return 'degraded';
-  }
-  return 'offline';
-}
-
-function formatLatency(service: ServiceHealth) {
-  if (service.latency_ms == null) {
-    return service.detail;
-  }
-  return `${service.latency_ms}ms`;
-}
-
-function formatCheckedTime(value: number) {
-  return new Date(value).toLocaleTimeString('zh-CN', {
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-  });
+function toFriendlyRegistrationError(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  const translations: Array<[string, string]> = [
+    ['email already registered', '这个邮箱已经注册，可以直接登录。'],
+    ['invite code is invalid', '邀请码无效或已经失效。'],
+    ['verification code is invalid or expired', '邮箱验证码错误或已经过期。'],
+    ['verification code was sent recently', '验证码刚刚发送，请稍后再试。'],
+    ['too many verification emails', '验证码发送次数过多，请稍后再试。'],
+    ['email format is invalid', '请输入有效的邮箱地址。'],
+    ['registration service is temporarily unavailable', '注册服务暂时不可用，请稍后再试。'],
+  ];
+  return translations.find(([source]) => message.toLowerCase().includes(source))?.[1] ?? message;
 }
 
 export default App;

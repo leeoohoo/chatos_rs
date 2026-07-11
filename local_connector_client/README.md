@@ -57,6 +57,19 @@ It writes:
 1. `local_connector_client/dist/electron-windows/ChatOS Local Connector/ChatOS Local Connector.exe`
 2. `local_connector_client/dist/electron-windows/ChatOS-Local-Connector-windows-x64.zip`
 
+To publish the ZIP to the official website's MinIO release bucket:
+
+```powershell
+$env:OFFICIAL_WEBSITE_API_BASE = "https://www.example.com"
+$env:OFFICIAL_WEBSITE_RELEASE_UPLOAD_TOKEN = "replace-with-your-token"
+
+powershell -ExecutionPolicy Bypass `
+  -File .\local_connector_client\publish-release-to-minio.ps1 `
+  -Version "2.0.4"
+```
+
+The publishing script computes SHA-256, uploads the ZIP through a short-lived presigned URL, and publishes the website download manifest only after the artifact upload succeeds.
+
 The Electron desktop app starts `local_connector_client_core` as a bundled local process, loads the React UI in a desktop window, and points the UI at `http://127.0.0.1:39232` for local APIs.
 
 The UI supports:

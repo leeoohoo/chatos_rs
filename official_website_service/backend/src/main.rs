@@ -2,6 +2,8 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 mod config;
+mod registration;
+mod release_storage;
 mod router;
 mod service_status;
 mod site_manifest;

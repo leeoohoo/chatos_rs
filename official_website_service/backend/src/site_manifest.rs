@@ -3,10 +3,15 @@
 
 use serde::Serialize;
 
+use crate::config::AppConfig;
+
 #[derive(Debug, Clone, Serialize)]
 pub struct SiteManifest {
     pub product_name: &'static str,
     pub tagline: &'static str,
+    pub app_url: String,
+    pub registration_enabled: bool,
+    pub downloads_enabled: bool,
     pub default_ports: Vec<DefaultPort>,
     pub services: Vec<ServiceInfo>,
     pub showcase_images: Vec<ShowcaseImage>,
@@ -35,10 +40,13 @@ pub struct ShowcaseImage {
     pub source_url: &'static str,
 }
 
-pub fn site_manifest() -> SiteManifest {
+pub fn site_manifest(config: &AppConfig) -> SiteManifest {
     SiteManifest {
         product_name: "Chatos RS",
-        tagline: "让 AI 成为可以长期协作的联系人。",
+        tagline: "给你的项目一位真正能动手的 AI 搭档。",
+        app_url: config.app_url.clone(),
+        registration_enabled: !config.user_service_base_url.is_empty(),
+        downloads_enabled: config.release_storage.is_some(),
         default_ports: vec![
             DefaultPort {
                 name: "Chatos main",

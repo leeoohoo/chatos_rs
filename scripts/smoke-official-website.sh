@@ -52,11 +52,28 @@ const manifest = JSON.parse(fs.readFileSync(path, 'utf8'));
 if (manifest.product_name !== 'Chatos RS') {
   throw new Error(`unexpected product_name: ${manifest.product_name}`);
 }
+if (!manifest.app_url || manifest.registration_enabled !== true) {
+  throw new Error('manifest public app/registration configuration is missing');
+}
 if (!Array.isArray(manifest.services) || manifest.services.length < 6) {
   throw new Error('manifest.services is missing expected service entries');
 }
 if (!Array.isArray(manifest.showcase_images) || manifest.showcase_images.length < 5) {
   throw new Error('manifest.showcase_images is missing expected screenshots');
+}
+NODE
+
+downloads_file="$tmp_dir/downloads.json"
+fetch "/api/site/downloads" "$downloads_file"
+node - "$downloads_file" <<'NODE'
+const fs = require('fs');
+const path = process.argv[2];
+const payload = JSON.parse(fs.readFileSync(path, 'utf8'));
+if (typeof payload.storage_configured !== 'boolean' || typeof payload.available !== 'boolean') {
+  throw new Error('download catalog flags are missing');
+}
+if (!payload.message) {
+  throw new Error('download catalog message is missing');
 }
 NODE
 

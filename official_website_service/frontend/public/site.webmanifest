@@ -1,11 +1,11 @@
 {
   "name": "Chatos RS",
   "short_name": "Chatos RS",
-  "description": "以虚拟化联系人、长期记忆和异步任务链路构建工程协作 AI 平台。",
+  "description": "一位能理解项目、使用工具并持续推进任务的 AI 工程搭档。",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#080a09",
-  "theme_color": "#080a09",
+  "background_color": "#f7f8fc",
+  "theme_color": "#5b5ce2",
   "icons": [
     {
       "src": "/favicon.svg",

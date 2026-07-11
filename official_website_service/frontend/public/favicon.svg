@@ -1,5 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Chatos RS">
-  <rect width="64" height="64" rx="14" fill="#b9f8d0"/>
-  <path d="M32 12l3.7 11.5L47 27.1l-11.3 3.7L32 42.2l-3.7-11.4L17 27.1l11.3-3.6L32 12z" fill="#07100c"/>
-  <path d="M45.5 39.5l1.7 5.3 5.3 1.7-5.3 1.7-1.7 5.3-1.7-5.3-5.3-1.7 5.3-1.7 1.7-5.3zM18 8l1.5 4.5L24 14l-4.5 1.5L18 20l-1.5-4.5L12 14l4.5-1.5L18 8z" fill="#07100c" opacity=".82"/>
+  <defs><linearGradient id="g" x1="8" y1="8" x2="56" y2="56"><stop stop-color="#5b5ce2"/><stop offset="1" stop-color="#8b5cf6"/></linearGradient></defs>
+  <rect width="64" height="64" rx="15" fill="url(#g)"/>
+  <path d="M32 11l3.8 11.8L47.5 27l-11.7 3.8L32 42.5l-3.8-11.7L16.5 27l11.7-4.2L32 11z" fill="#fff"/>
+  <path d="M46 39l1.8 5.2L53 46l-5.2 1.8L46 53l-1.8-5.2L39 46l5.2-1.8L46 39zM18 8l1.5 4.5L24 14l-4.5 1.5L18 20l-1.5-4.5L12 14l4.5-1.5L18 8z" fill="#fff" opacity=".85"/>
 </svg>

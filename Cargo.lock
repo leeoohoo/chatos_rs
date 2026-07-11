@@ -2797,13 +2797,18 @@ version = "0.1.0"
 dependencies = [
  "axum 0.7.9",
  "chatos_service_runtime",
+ "chrono",
  "dotenvy",
+ "hex",
  "reqwest",
  "serde",
+ "serde_json",
+ "sha2 0.11.0",
  "tokio",
  "tower-http 0.5.2",
  "tracing",
  "tracing-subscriber",
+ "url",
 ]
 
 [[package]]
