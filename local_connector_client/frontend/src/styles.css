@@ -933,6 +933,16 @@ textarea {
   min-height: 38px;
 }
 
+.inlineField {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.inlineField .ghostButton {
+  white-space: nowrap;
+}
+
 .mono {
   font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
 }

@@ -8,12 +8,15 @@ import { useI18n } from '../i18n/I18nProvider';
 type AuthMode = 'login' | 'register';
 
 export function AuthPanel() {
-  const { login, register, loading, error, clearError } = useAuthStoreFromContext();
+  const { login, register, sendRegisterEmailCode, loading, error, clearError } = useAuthStoreFromContext();
   const { t } = useI18n();
   const [mode, setMode] = React.useState<AuthMode>('login');
   const [username, setUsername] = React.useState('');
   const [password, setPassword] = React.useState('');
   const [confirmPassword, setConfirmPassword] = React.useState('');
+  const [inviteCode, setInviteCode] = React.useState('');
+  const [verificationCode, setVerificationCode] = React.useState('');
+  const [codeSending, setCodeSending] = React.useState(false);
   const [localError, setLocalError] = React.useState<string | null>(null);
 
   const isRegister = mode === 'register';
@@ -29,8 +32,32 @@ export function AuthPanel() {
   const switchMode = React.useCallback((nextMode: AuthMode) => {
     setMode(nextMode);
     setConfirmPassword('');
+    setInviteCode('');
+    setVerificationCode('');
     resetErrors();
   }, [resetErrors]);
+
+  const onSendCode = async () => {
+    resetErrors();
+    const email = username.trim();
+    const invite = inviteCode.trim();
+    if (!email) {
+      setLocalError('请输入邮箱');
+      return;
+    }
+    if (!invite) {
+      setLocalError('请输入邀请码');
+      return;
+    }
+    setCodeSending(true);
+    try {
+      await sendRegisterEmailCode(email, invite);
+    } catch {
+      // auth store owns the server error
+    } finally {
+      setCodeSending(false);
+    }
+  };
 
   const onSubmit = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -48,7 +75,15 @@ export function AuthPanel() {
 
     if (isRegister) {
       if (trimmedUsername.length < 3) {
-        setLocalError(t('auth.usernameMinLength'));
+        setLocalError('请输入有效邮箱');
+        return;
+      }
+      if (!inviteCode.trim()) {
+        setLocalError('请输入邀请码');
+        return;
+      }
+      if (!verificationCode.trim()) {
+        setLocalError('请输入邮箱验证码');
         return;
       }
       if (password.length < 6) {
@@ -63,7 +98,7 @@ export function AuthPanel() {
 
     try {
       if (isRegister) {
-        await register(trimmedUsername, password);
+        await register(trimmedUsername, password, inviteCode.trim(), verificationCode.trim());
       } else {
         await login(trimmedUsername, password);
       }
@@ -96,17 +131,57 @@ export function AuthPanel() {
 
         <form onSubmit={onSubmit} className="space-y-3">
           <div>
-            <label className="block text-sm text-gray-700 mb-1">{t('auth.username')}</label>
+            <label className="block text-sm text-gray-700 mb-1">
+              {isRegister ? '邮箱' : t('auth.username')}
+            </label>
             <input
-              type="text"
+              type={isRegister ? 'email' : 'text'}
               className="w-full border border-gray-300 rounded px-3 py-2 text-sm"
-              placeholder={isRegister ? t('auth.usernamePlaceholderRegister') : t('auth.usernamePlaceholder')}
+              placeholder={isRegister ? '请输入邮箱' : t('auth.usernamePlaceholder')}
               value={username}
               onChange={(event) => setUsername(event.target.value)}
               required
               autoComplete="username"
             />
           </div>
+
+          {isRegister && (
+            <>
+              <div>
+                <label className="block text-sm text-gray-700 mb-1">邀请码</label>
+                <input
+                  type="text"
+                  className="w-full border border-gray-300 rounded px-3 py-2 text-sm"
+                  placeholder="请输入邀请码"
+                  value={inviteCode}
+                  onChange={(event) => setInviteCode(event.target.value)}
+                  required
+                />
+              </div>
+              <div>
+                <label className="block text-sm text-gray-700 mb-1">邮箱验证码</label>
+                <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-2">
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    className="w-full border border-gray-300 rounded px-3 py-2 text-sm"
+                    placeholder="6 位验证码"
+                    value={verificationCode}
+                    onChange={(event) => setVerificationCode(event.target.value)}
+                    required
+                  />
+                  <button
+                    type="button"
+                    className="border border-gray-300 rounded px-3 py-2 text-sm text-gray-700 disabled:opacity-60"
+                    disabled={loading || codeSending}
+                    onClick={() => void onSendCode()}
+                  >
+                    {codeSending ? '发送中' : '发送验证码'}
+                  </button>
+                </div>
+              </div>
+            </>
+          )}
           <div>
             <label className="block text-sm text-gray-700 mb-1">{t('auth.password')}</label>
             <input

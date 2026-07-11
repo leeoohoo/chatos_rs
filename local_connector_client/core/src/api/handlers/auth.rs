@@ -7,12 +7,13 @@ use serde_json::{json, Value};
 
 use crate::config::{
     api_url, default_device_name, ensure_remote_url_allowed, normalize_optional, ClientConfig,
-    DEFAULT_USER_SERVICE_BASE_URL,
 };
 use crate::registration::{disconnect_device, ensure_success};
 use crate::{tracing_stdout, AuthState, LocalRuntime};
 
-use super::super::types::{LocalApiError, LocalAuthRequest, LoginResponse};
+use super::super::types::{
+    LocalApiError, LocalAuthRequest, LoginResponse, SendRegisterEmailCodeRequest,
+};
 use super::helpers::normalize_required;
 use super::status::status_payload;
 
@@ -30,6 +31,52 @@ pub(crate) async fn local_register(
     local_auth(runtime, req, true).await
 }
 
+pub(crate) async fn local_send_register_email_code(
+    State(runtime): State<LocalRuntime>,
+    Json(req): Json<SendRegisterEmailCodeRequest>,
+) -> Result<Json<Value>, LocalApiError> {
+    let cloud_base_url = normalize_required(req.cloud_base_url.as_str(), "cloud_base_url")?;
+    ensure_remote_url_allowed("cloud_base_url", cloud_base_url.as_str())
+        .map_err(|err| LocalApiError::bad_request(err.to_string()))?;
+    let email = normalize_required(req.email.as_str(), "email")?;
+    let invite_code = normalize_required(req.invite_code.as_str(), "invite_code")?;
+    let response = runtime
+        .http_client
+        .post(api_url(
+            cloud_base_url.as_str(),
+            "/api/auth/register/send-code",
+        ))
+        .json(&json!({
+            "email": email,
+            "invite_code": invite_code,
+        }))
+        .send()
+        .await
+        .map_err(|err| LocalApiError::bad_gateway(err.to_string()))?;
+    let status = response.status();
+    let text = response.text().await.unwrap_or_default();
+    if !status.is_success() {
+        let message = serde_json::from_str::<Value>(text.as_str())
+            .ok()
+            .and_then(|value| {
+                value
+                    .get("error")
+                    .and_then(Value::as_str)
+                    .or_else(|| value.get("detail").and_then(Value::as_str))
+                    .map(ToOwned::to_owned)
+            })
+            .unwrap_or_else(|| format!("send verification code failed with status {status}"));
+        return Err(LocalApiError::bad_request(message));
+    }
+    let body = if text.trim().is_empty() {
+        json!({ "ok": true })
+    } else {
+        serde_json::from_str::<Value>(text.as_str())
+            .map_err(|err| LocalApiError::bad_gateway(err.to_string()))?
+    };
+    Ok(Json(body))
+}
+
 async fn local_auth(
     runtime: LocalRuntime,
     req: LocalAuthRequest,
@@ -37,7 +84,7 @@ async fn local_auth(
 ) -> Result<Json<Value>, LocalApiError> {
     let cloud_base_url = normalize_required(req.cloud_base_url.as_str(), "cloud_base_url")?;
     let user_service_base_url = normalize_optional(req.user_service_base_url.as_deref())
-        .unwrap_or_else(|| DEFAULT_USER_SERVICE_BASE_URL.to_string());
+        .unwrap_or_else(|| cloud_base_url.clone());
     ensure_remote_url_allowed("cloud_base_url", cloud_base_url.as_str())
         .map_err(|err| LocalApiError::bad_request(err.to_string()))?;
     ensure_remote_url_allowed("user_service_base_url", user_service_base_url.as_str())
@@ -50,11 +97,18 @@ async fn local_auth(
         "/api/auth/login"
     };
     let mut body = json!({
+        "email": username,
         "username": username,
         "password": password,
     });
     if register {
         body["display_name"] = normalize_optional(req.display_name.as_deref())
+            .map(Value::String)
+            .unwrap_or(Value::Null);
+        body["invite_code"] = normalize_optional(req.invite_code.as_deref())
+            .map(Value::String)
+            .unwrap_or(Value::Null);
+        body["verification_code"] = normalize_optional(req.verification_code.as_deref())
             .map(Value::String)
             .unwrap_or(Value::Null);
     }

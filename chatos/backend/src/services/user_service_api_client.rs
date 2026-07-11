@@ -23,6 +23,21 @@ struct UserServiceAuthRequest<'a> {
     password: &'a str,
 }
 
+#[derive(Debug, Serialize)]
+struct UserServiceRegisterRequest<'a> {
+    email: &'a str,
+    username: &'a str,
+    password: &'a str,
+    invite_code: &'a str,
+    verification_code: &'a str,
+}
+
+#[derive(Debug, Serialize)]
+struct UserServiceSendRegisterCodeRequest<'a> {
+    email: &'a str,
+    invite_code: &'a str,
+}
+
 pub async fn login(
     base_url: &str,
     username: &str,
@@ -42,8 +57,10 @@ pub async fn login(
 
 pub async fn register(
     base_url: &str,
-    username: &str,
+    email: &str,
     password: &str,
+    invite_code: &str,
+    verification_code: &str,
     timeout_ms: i64,
 ) -> Result<UserServiceLoginResponse, String> {
     request_json(
@@ -51,7 +68,30 @@ pub async fn register(
         base_url,
         "/api/auth/register",
         None,
-        Some(&UserServiceAuthRequest { username, password }),
+        Some(&UserServiceRegisterRequest {
+            email,
+            username: email,
+            password,
+            invite_code,
+            verification_code,
+        }),
+        timeout_ms,
+    )
+    .await
+}
+
+pub async fn send_register_email_code(
+    base_url: &str,
+    email: &str,
+    invite_code: &str,
+    timeout_ms: i64,
+) -> Result<serde_json::Value, String> {
+    request_json(
+        Method::POST,
+        base_url,
+        "/api/auth/register/send-code",
+        None,
+        Some(&UserServiceSendRegisterCodeRequest { email, invite_code }),
         timeout_ms,
     )
     .await

@@ -22,6 +22,7 @@ mod agents;
 mod auth;
 mod harness;
 mod internal_models;
+mod invite_codes;
 mod models;
 mod system;
 mod token_exchange;
@@ -32,6 +33,14 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/auth/me", get(auth::me))
         .route("/api/auth/verify", get(auth::verify))
         .route("/api/auth/logout", post(auth::logout))
+        .route(
+            "/api/invite-codes",
+            get(invite_codes::list_invite_codes).post(invite_codes::create_invite_code),
+        )
+        .route(
+            "/api/invite-codes/:id/revoke",
+            post(invite_codes::revoke_invite_code),
+        )
         .route(
             "/api/users",
             get(users::list_users).post(users::create_user),
@@ -108,6 +117,10 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/health", get(system::health))
         .route("/api/auth/login", post(auth::login))
         .route("/api/auth/register", post(auth::register))
+        .route(
+            "/api/auth/register/send-code",
+            post(auth::send_register_email_code),
+        )
         .route(
             "/api/internal/harness/users/:user_id/access",
             get(harness::get_user_harness_access),

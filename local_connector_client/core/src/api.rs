@@ -38,10 +38,10 @@ use handlers::{
     local_preview_model_catalog, local_register, local_remove_workspace,
     local_request_system_permission, local_runtime_settings, local_sandbox_image_jobs,
     local_sandbox_image_mcp, local_sandbox_images, local_sandbox_leases, local_save_mcp_config,
-    local_save_model_config, local_status, local_sync_mcp_config, local_sync_model_config,
-    local_system_permissions, local_terminal_exec, local_test_mcp_config, local_toggle_sandbox,
-    local_update_approval_settings, local_update_mcp_config, local_update_model_config,
-    local_update_model_settings, local_update_runtime_settings,
+    local_save_model_config, local_send_register_email_code, local_status, local_sync_mcp_config,
+    local_sync_model_config, local_system_permissions, local_terminal_exec, local_test_mcp_config,
+    local_toggle_sandbox, local_update_approval_settings, local_update_mcp_config,
+    local_update_model_config, local_update_model_settings, local_update_runtime_settings,
 };
 
 pub(crate) async fn serve_local_api(runtime: LocalRuntime) -> Result<()> {
@@ -87,6 +87,10 @@ fn local_api_routes() -> Router<LocalRuntime> {
         .route("/api/local/status", get(local_status))
         .route("/api/local/auth/login", post(local_login))
         .route("/api/local/auth/register", post(local_register))
+        .route(
+            "/api/local/auth/register/send-code",
+            post(local_send_register_email_code),
+        )
         .route("/api/local/auth/logout", post(local_logout))
         .route("/api/local/fs/list", get(local_fs_list_handler))
         .route("/api/local/workspaces", post(local_add_workspace))

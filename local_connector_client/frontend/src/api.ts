@@ -492,11 +492,21 @@ export const api = {
     display_name?: string;
     password: string;
     device_name?: string;
+    invite_code?: string;
+    verification_code?: string;
   }) =>
     request<ConnectorStatus>('/api/local/auth/register', {
       method: 'POST',
       body: JSON.stringify(payload),
     }),
+  sendRegisterEmailCode: (payload: { cloud_base_url: string; email: string; invite_code: string }) =>
+    request<{ ok: boolean; expires_in_seconds?: number; resend_after_seconds?: number }>(
+      '/api/local/auth/register/send-code',
+      {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      },
+    ),
   logout: () =>
     request<ConnectorStatus>('/api/local/auth/logout', {
       method: 'POST',

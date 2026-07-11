@@ -31,7 +31,8 @@ export interface AuthState {
   error: string | null;
   bootstrap: () => Promise<void>;
   login: (username: string, password: string) => Promise<void>;
-  register: (username: string, password: string) => Promise<void>;
+  register: (email: string, password: string, inviteCode: string, verificationCode: string) => Promise<void>;
+  sendRegisterEmailCode: (email: string, inviteCode: string) => Promise<void>;
   logout: () => void;
   clearError: () => void;
 }
@@ -199,11 +200,29 @@ export const createAuthStore = (
           }
         },
 
-        register: async (username: string, password: string) => {
+        sendRegisterEmailCode: async (email: string, inviteCode: string) => {
           const runtimeClient = getClient();
           set({ loading: true, error: null });
           try {
-            const resp = await runtimeClient.register({ username, password });
+            await runtimeClient.sendRegisterEmailCode({ email, invite_code: inviteCode });
+            set({ loading: false, error: null });
+          } catch (error) {
+            set({ loading: false, error: extractErrorMessage(error) });
+            throw error;
+          }
+        },
+
+        register: async (email: string, password: string, inviteCode: string, verificationCode: string) => {
+          const runtimeClient = getClient();
+          set({ loading: true, error: null });
+          try {
+            const resp = await runtimeClient.register({
+              username: email,
+              email,
+              password,
+              invite_code: inviteCode,
+              verification_code: verificationCode,
+            });
             applyAuthSuccess(resp, runtimeClient, set);
           } catch (error) {
             set({ loading: false, error: extractErrorMessage(error) });

@@ -6,7 +6,7 @@ use std::collections::BTreeMap;
 use axum::body::{Body, Bytes};
 use axum::extract::{Path, Query, State};
 use axum::http::{
-    header::{ACCEPT, CONTENT_TYPE},
+    header::{ACCEPT, AUTHORIZATION, CONTENT_TYPE},
     HeaderMap, Method, StatusCode, Uri,
 };
 use axum::response::{IntoResponse, Response};
@@ -59,6 +59,8 @@ use self::workspaces::{
     create_workspace, delete_workspace, list_workspaces, load_owned_workspace, update_workspace,
 };
 
+const MAX_USER_SERVICE_PROXY_BODY_BYTES: usize = 2 * 1024 * 1024;
+
 #[derive(Debug, Deserialize)]
 struct McpRelayQuery {
     workspace_id: Option<String>,
@@ -81,6 +83,125 @@ async fn health_handler() -> Json<HealthResponse> {
 
 async fn current_user_handler(Extension(user): Extension<CurrentUser>) -> Json<CurrentUser> {
     Json(user)
+}
+
+async fn user_service_public_proxy(
+    State(state): State<AppState>,
+    method: Method,
+    uri: Uri,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Result<Response, ApiError> {
+    let path = uri.path();
+    if method != Method::POST
+        || !matches!(
+            path,
+            "/api/auth/login" | "/api/auth/register" | "/api/auth/register/send-code"
+        )
+    {
+        return Err(ApiError::not_found("user_service proxy route not found"));
+    }
+    proxy_user_service_request(&state, method, uri, headers, body, false).await
+}
+
+async fn user_service_protected_proxy(
+    State(state): State<AppState>,
+    method: Method,
+    uri: Uri,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Result<Response, ApiError> {
+    let path = uri.path();
+    if !is_allowed_model_config_proxy_request(&method, path) {
+        return Err(ApiError::not_found("user_service proxy route not found"));
+    }
+    proxy_user_service_request(&state, method, uri, headers, body, true).await
+}
+
+async fn proxy_user_service_request(
+    state: &AppState,
+    method: Method,
+    uri: Uri,
+    headers: HeaderMap,
+    body: Bytes,
+    forward_authorization: bool,
+) -> Result<Response, ApiError> {
+    if body.len() > MAX_USER_SERVICE_PROXY_BODY_BYTES {
+        return Err(ApiError::bad_request(
+            "user_service proxy request body is too large",
+        ));
+    }
+    let mut target_url = format!(
+        "{}{}",
+        state.config.user_service_base_url.trim_end_matches('/'),
+        uri.path()
+    );
+    if let Some(query) = uri.query().map(str::trim).filter(|value| !value.is_empty()) {
+        target_url.push('?');
+        target_url.push_str(query);
+    }
+
+    let client = reqwest::Client::builder()
+        .timeout(state.config.user_service_request_timeout)
+        .build()
+        .map_err(|err| ApiError::internal(format!("build user_service client failed: {err}")))?;
+    let mut request = client.request(method, target_url.as_str());
+    if let Some(content_type) = headers.get(CONTENT_TYPE) {
+        request = request.header(CONTENT_TYPE.as_str(), content_type);
+    }
+    if let Some(accept) = headers.get(ACCEPT) {
+        request = request.header(ACCEPT.as_str(), accept);
+    }
+    if forward_authorization {
+        if let Some(authorization) = headers.get(AUTHORIZATION) {
+            request = request.header(AUTHORIZATION.as_str(), authorization);
+        }
+    }
+    if !body.is_empty() {
+        request = request.body(body.clone());
+    }
+
+    let response = request
+        .send()
+        .await
+        .map_err(|err| ApiError::bad_gateway(format!("user_service request failed: {err}")))?;
+    let status = StatusCode::from_u16(response.status().as_u16()).map_err(|err| {
+        ApiError::bad_gateway(format!("user_service returned invalid status: {err}"))
+    })?;
+    let content_type = response
+        .headers()
+        .get(CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .map(ToOwned::to_owned);
+    let bytes = response.bytes().await.map_err(|err| {
+        ApiError::bad_gateway(format!("read user_service response failed: {err}"))
+    })?;
+    let mut builder = Response::builder().status(status);
+    if let Some(content_type) = content_type {
+        builder = builder.header(CONTENT_TYPE, content_type);
+    }
+    builder.body(Body::from(bytes)).map_err(|err| {
+        ApiError::internal(format!("build user_service proxy response failed: {err}"))
+    })
+}
+
+fn is_allowed_model_config_proxy_request(method: &Method, path: &str) -> bool {
+    if path == "/api/model-configs" {
+        return matches!(method, &Method::GET | &Method::POST);
+    }
+    if path == "/api/model-configs/settings" {
+        return matches!(method, &Method::GET | &Method::PUT);
+    }
+    if path
+        .strip_prefix("/api/model-configs/")
+        .is_some_and(|suffix| !suffix.trim_matches('/').is_empty())
+    {
+        return matches!(
+            method,
+            &Method::GET | &Method::PATCH | &Method::DELETE | &Method::POST
+        );
+    }
+    false
 }
 
 async fn resolve_local_command_approval_capabilities(

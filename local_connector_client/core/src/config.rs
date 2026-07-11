@@ -8,8 +8,7 @@ use url::Url;
 
 use crate::LocalState;
 
-pub(crate) const DEFAULT_CLOUD_BASE_URL: &str = "http://127.0.0.1:39230";
-pub(crate) const DEFAULT_USER_SERVICE_BASE_URL: &str = "http://127.0.0.1:39190";
+pub(crate) const DEFAULT_CLOUD_BASE_URL: &str = "https://local-connector.jgoool.com";
 pub(crate) const DEFAULT_LOCAL_API_PORT: u16 = 39232;
 
 #[derive(Debug, Clone)]

@@ -33,6 +33,16 @@ pub struct AppConfig {
     pub harness_request_timeout_ms: i64,
     pub harness_project_pat_prefix: String,
     pub user_service_internal_api_secret: Option<String>,
+    pub smtp_host: Option<String>,
+    pub smtp_port: u16,
+    pub smtp_username: Option<String>,
+    pub smtp_password: Option<String>,
+    pub email_from: Option<String>,
+    pub email_from_name: String,
+    pub registration_code_ttl_seconds: i64,
+    pub registration_code_resend_seconds: i64,
+    pub registration_code_hourly_limit: i64,
+    pub registration_code_max_attempts: i64,
 }
 
 impl AppConfig {
@@ -117,6 +127,34 @@ impl AppConfig {
                 .unwrap_or_else(|| "chatos-project-import".to_string()),
             user_service_internal_api_secret: read_env("USER_SERVICE_INTERNAL_API_SECRET")
                 .or_else(|| read_env("CHATOS_USER_SERVICE_INTERNAL_SECRET")),
+            smtp_host: read_env("USER_SERVICE_SMTP_HOST"),
+            smtp_port: read_env("USER_SERVICE_SMTP_PORT")
+                .unwrap_or_else(|| "587".to_string())
+                .parse()
+                .map_err(|err| format!("invalid USER_SERVICE_SMTP_PORT: {err}"))?,
+            smtp_username: read_env("USER_SERVICE_SMTP_USERNAME"),
+            smtp_password: read_env("USER_SERVICE_SMTP_PASSWORD"),
+            email_from: read_env("USER_SERVICE_EMAIL_FROM"),
+            email_from_name: read_env("USER_SERVICE_EMAIL_FROM_NAME")
+                .unwrap_or_else(|| "ChatOS".to_string()),
+            registration_code_ttl_seconds: read_env("USER_SERVICE_REGISTER_CODE_TTL_SECONDS")
+                .unwrap_or_else(|| "600".to_string())
+                .parse()
+                .map_err(|err| format!("invalid USER_SERVICE_REGISTER_CODE_TTL_SECONDS: {err}"))?,
+            registration_code_resend_seconds: read_env("USER_SERVICE_REGISTER_CODE_RESEND_SECONDS")
+                .unwrap_or_else(|| "60".to_string())
+                .parse()
+                .map_err(|err| {
+                    format!("invalid USER_SERVICE_REGISTER_CODE_RESEND_SECONDS: {err}")
+                })?,
+            registration_code_hourly_limit: read_env("USER_SERVICE_REGISTER_CODE_HOURLY_LIMIT")
+                .unwrap_or_else(|| "5".to_string())
+                .parse()
+                .map_err(|err| format!("invalid USER_SERVICE_REGISTER_CODE_HOURLY_LIMIT: {err}"))?,
+            registration_code_max_attempts: read_env("USER_SERVICE_REGISTER_CODE_MAX_ATTEMPTS")
+                .unwrap_or_else(|| "5".to_string())
+                .parse()
+                .map_err(|err| format!("invalid USER_SERVICE_REGISTER_CODE_MAX_ATTEMPTS: {err}"))?,
         })
     }
 

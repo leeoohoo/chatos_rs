@@ -10,7 +10,7 @@ use serde::Deserialize;
 use serde_json::json;
 use tokio::sync::RwLock;
 
-use crate::config::{api_url, optional_env, ClientConfig, DEFAULT_USER_SERVICE_BASE_URL};
+use crate::config::{api_url, optional_env, ClientConfig};
 use crate::device_keys::ensure_device_keypair;
 use crate::workspace::paths::{canonicalize_existing_dir, workspace_fingerprint};
 use crate::{AuthState, LocalState, WorkspaceState};
@@ -229,7 +229,7 @@ pub(crate) async fn bootstrap_env_config(
         state_guard.auth = Some(AuthState {
             cloud_base_url: config.cloud_base_url.clone(),
             user_service_base_url: optional_env("LOCAL_CONNECTOR_USER_SERVICE_BASE_URL")
-                .unwrap_or_else(|| DEFAULT_USER_SERVICE_BASE_URL.to_string()),
+                .unwrap_or_else(|| config.cloud_base_url.clone()),
             access_token: config.access_token.clone(),
             device_name: config.device_name.clone(),
             user: None,

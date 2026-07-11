@@ -3,7 +3,7 @@
 
 use chrono::Utc;
 use futures_util::TryStreamExt;
-use mongodb::bson::{doc, to_document};
+use mongodb::bson::{doc, to_document, Bson};
 use mongodb::options::{FindOptions, IndexOptions, UpdateOptions};
 use mongodb::{Collection, Database, IndexModel};
 use serde::{Deserialize, Serialize};
@@ -12,9 +12,9 @@ use uuid::Uuid;
 use crate::auth::{hash_password, normalize_display_name, normalize_username};
 use crate::config::AppConfig;
 use crate::models::{
-    AgentAccountListItem, AgentAccountRecord, HarnessProvisioningRecord, UserModelConfigRecord,
-    UserModelProviderRecord, UserModelSettingsRecord, UserRecord, UserSummaryRecord,
-    USER_ROLE_SUPER_ADMIN,
+    AgentAccountListItem, AgentAccountRecord, HarnessProvisioningRecord, InviteCodePublicRecord,
+    InviteCodeRecord, RegistrationEmailCodeRecord, UserModelConfigRecord, UserModelProviderRecord,
+    UserModelSettingsRecord, UserRecord, UserSummaryRecord, USER_ROLE_SUPER_ADMIN,
 };
 
 mod model_configs;
@@ -28,6 +28,8 @@ pub struct AppStore {
     user_model_providers: Collection<UserModelProviderRecord>,
     user_model_settings: Collection<UserModelSettingsRecord>,
     harness_provisioning: Collection<HarnessProvisioningRecord>,
+    registration_email_codes: Collection<RegistrationEmailCodeRecord>,
+    invite_codes: Collection<InviteCodeRecord>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -48,6 +50,8 @@ impl AppStore {
             user_model_providers: db.collection("user_model_providers"),
             user_model_settings: db.collection("user_model_settings"),
             harness_provisioning: db.collection("harness_provisioning"),
+            registration_email_codes: db.collection("registration_email_codes"),
+            invite_codes: db.collection("invite_codes"),
         }
     }
 
@@ -69,6 +73,11 @@ impl AppStore {
             .await?;
         self.create_index(&self.harness_provisioning, "status")
             .await?;
+        self.create_unique_index(&self.registration_email_codes, "email")
+            .await?;
+        self.create_unique_index(&self.invite_codes, "code_hash")
+            .await?;
+        self.create_index(&self.invite_codes, "created_at").await?;
         Ok(())
     }
 
@@ -436,6 +445,127 @@ impl AppStore {
             .await
             .map_err(|err| err.to_string())?;
         Ok(record.clone())
+    }
+
+    pub async fn find_registration_email_code(
+        &self,
+        email: &str,
+    ) -> Result<Option<RegistrationEmailCodeRecord>, String> {
+        self.registration_email_codes
+            .find_one(doc! { "email": email }, None)
+            .await
+            .map_err(|err| err.to_string())
+    }
+
+    pub async fn save_registration_email_code(
+        &self,
+        record: &RegistrationEmailCodeRecord,
+    ) -> Result<(), String> {
+        self.registration_email_codes
+            .update_one(
+                doc! { "email": &record.email },
+                to_set_document(record)?,
+                UpdateOptions::builder().upsert(true).build(),
+            )
+            .await
+            .map_err(|err| err.to_string())?;
+        Ok(())
+    }
+
+    pub async fn mark_registration_email_code_consumed(&self, email: &str) -> Result<(), String> {
+        let now = now_rfc3339();
+        self.registration_email_codes
+            .update_one(
+                doc! { "email": email },
+                doc! { "$set": { "consumed_at": &now, "updated_at": &now } },
+                None,
+            )
+            .await
+            .map_err(|err| err.to_string())?;
+        Ok(())
+    }
+
+    pub async fn list_invite_codes(&self) -> Result<Vec<InviteCodePublicRecord>, String> {
+        let options = FindOptions::builder()
+            .sort(doc! { "created_at": -1 })
+            .build();
+        let items: Vec<InviteCodeRecord> = self
+            .invite_codes
+            .find(None, options)
+            .await
+            .map_err(|err| err.to_string())?
+            .try_collect()
+            .await
+            .map_err(|err| err.to_string())?;
+        Ok(items.into_iter().map(Into::into).collect())
+    }
+
+    pub async fn insert_invite_code(
+        &self,
+        record: &InviteCodeRecord,
+    ) -> Result<InviteCodePublicRecord, String> {
+        self.invite_codes
+            .insert_one(record, None)
+            .await
+            .map_err(|err| err.to_string())?;
+        Ok(record.clone().into())
+    }
+
+    pub async fn find_invite_code_by_hash(
+        &self,
+        code_hash: &str,
+    ) -> Result<Option<InviteCodeRecord>, String> {
+        self.invite_codes
+            .find_one(doc! { "code_hash": code_hash }, None)
+            .await
+            .map_err(|err| err.to_string())
+    }
+
+    pub async fn find_invite_code_by_id(
+        &self,
+        id: &str,
+    ) -> Result<Option<InviteCodeRecord>, String> {
+        self.invite_codes
+            .find_one(doc! { "id": id }, None)
+            .await
+            .map_err(|err| err.to_string())
+    }
+
+    pub async fn update_invite_code(&self, record: &InviteCodeRecord) -> Result<(), String> {
+        self.invite_codes
+            .update_one(doc! { "id": &record.id }, to_set_document(record)?, None)
+            .await
+            .map_err(|err| err.to_string())?;
+        Ok(())
+    }
+
+    pub async fn consume_invite_code(
+        &self,
+        id: &str,
+        now_unix: i64,
+        now: &str,
+    ) -> Result<bool, String> {
+        let result = self
+            .invite_codes
+            .update_one(
+                doc! {
+                    "id": id,
+                    "revoked_at": Bson::Null,
+                    "$or": [
+                        doc! { "expires_at_unix": Bson::Null },
+                        doc! { "expires_at_unix": { "$gt": now_unix } },
+                    ],
+                    "$expr": { "$lt": ["$used_count", "$max_uses"] },
+                },
+                doc! {
+                    "$inc": { "used_count": 1 },
+                    "$set": { "last_used_at": now, "updated_at": now },
+                },
+                None,
+            )
+            .await
+            .map_err(|err| err.to_string())?;
+        Ok(result.modified_count == 1)
     }
 }
 
