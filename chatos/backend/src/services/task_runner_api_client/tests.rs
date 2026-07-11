@@ -3,11 +3,11 @@
 
 use super::{
     ensure_task_runner_body_within_limit, exchange_task_runner_token_via_user_service,
-    fetch_task_runner_execution_options, UserServiceTaskRunnerExchange,
+    UserServiceTaskRunnerExchange,
 };
 use axum::extract::State;
 use axum::http::{header::AUTHORIZATION, HeaderMap, StatusCode};
-use axum::{routing::get, routing::post, Json, Router};
+use axum::{routing::post, Json, Router};
 use serde_json::{json, Value};
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -127,65 +127,6 @@ async fn exchange_task_runner_token_via_user_service_surfaces_remote_error() {
 
     assert!(error.contains("403"));
     assert!(error.contains("owner mismatch"));
-
-    handle.abort();
-}
-
-#[tokio::test]
-async fn task_runner_execution_options_only_accept_selectable_catalog_entries() {
-    async fn handler(headers: HeaderMap) -> (StatusCode, Json<Value>) {
-        assert_eq!(
-            headers
-                .get(AUTHORIZATION)
-                .and_then(|value| value.to_str().ok()),
-            Some("Bearer task-runner-token")
-        );
-        (
-            StatusCode::OK,
-            Json(json!({
-                "policy_revision": "revision-1",
-                "selectable_builtin_mcps": [
-                    {
-                        "kind": "CodeMaintainerRead",
-                        "config_id": "builtin-code-maintainer-read"
-                    }
-                ],
-                "selectable_external_mcps": [
-                    { "id": "external-1" }
-                ],
-                "selectable_skills": []
-            })),
-        )
-    }
-
-    let app = Router::new().route("/api/tasks/capabilities/catalog", get(handler));
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-        .await
-        .expect("bind capability catalog server");
-    let addr = listener.local_addr().expect("read capability server addr");
-    let handle = tokio::spawn(async move {
-        let _ = axum::serve(listener, app).await;
-    });
-
-    let options =
-        fetch_task_runner_execution_options(format!("http://{addr}").as_str(), "task-runner-token")
-            .await
-            .expect("fetch task runner execution options");
-    let config = options
-        .mcp_config_for_tool_ids(&["CodeMaintainerRead".to_string(), "external-1".to_string()])
-        .expect("select optional capabilities");
-
-    assert_eq!(
-        config.enabled_builtin_kinds,
-        vec!["CodeMaintainerRead".to_string()]
-    );
-    assert_eq!(
-        config.external_mcp_config_ids,
-        vec!["external-1".to_string()]
-    );
-    assert!(options
-        .mcp_config_for_tool_ids(&["TaskManager".to_string()])
-        .is_err());
 
     handle.abort();
 }

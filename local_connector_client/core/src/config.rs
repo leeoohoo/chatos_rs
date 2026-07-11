@@ -4,6 +4,7 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::{anyhow, Result};
+use url::Url;
 
 use crate::LocalState;
 
@@ -35,7 +36,7 @@ impl ClientConfig {
         let state_path = optional_env("LOCAL_CONNECTOR_STATE_PATH")
             .map(PathBuf::from)
             .unwrap_or_else(default_state_path);
-        Ok(Self {
+        let config = Self {
             cloud_base_url,
             access_token,
             device_name,
@@ -43,7 +44,9 @@ impl ClientConfig {
             workspace_path,
             workspace_alias,
             state_path,
-        })
+        };
+        config.ensure_remote_urls_allowed()?;
+        Ok(config)
     }
 
     pub(crate) fn from_state(state: &LocalState, state_path: PathBuf) -> Option<Self> {
@@ -57,6 +60,10 @@ impl ClientConfig {
             workspace_alias: None,
             state_path,
         })
+    }
+
+    pub(crate) fn ensure_remote_urls_allowed(&self) -> Result<()> {
+        ensure_remote_url_allowed("cloud_base_url", self.cloud_base_url.as_str())
     }
 }
 
@@ -80,6 +87,42 @@ pub(crate) fn optional_env(key: &str) -> Option<String> {
         .ok()
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
+}
+
+pub(crate) fn require_secure_remote_urls() -> bool {
+    optional_env("LOCAL_CONNECTOR_REQUIRE_SECURE_REMOTE")
+        .map(|value| {
+            matches!(
+                value.to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes" | "on"
+            )
+        })
+        .unwrap_or(false)
+}
+
+pub(crate) fn ensure_remote_url_allowed(label: &str, value: &str) -> Result<()> {
+    if !require_secure_remote_urls() {
+        return Ok(());
+    }
+    let parsed = Url::parse(value).map_err(|err| {
+        anyhow!("{label} must be a valid URL when secure remote mode is enabled: {err}")
+    })?;
+    match parsed.scheme() {
+        "https" => Ok(()),
+        "http" if parsed.host_str().is_some_and(is_loopback_host) => Ok(()),
+        "http" => Err(anyhow!(
+            "{label} must use https:// for non-localhost services"
+        )),
+        scheme => Err(anyhow!(
+            "{label} must use https://; unsupported scheme: {scheme}"
+        )),
+    }
+}
+
+fn is_loopback_host(host: &str) -> bool {
+    matches!(host, "localhost" | "127.0.0.1" | "::1")
+        || host.starts_with("127.")
+        || host.eq_ignore_ascii_case("[::1]")
 }
 
 pub(crate) fn default_state_path() -> PathBuf {

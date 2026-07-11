@@ -32,8 +32,9 @@ pub(super) use self::run::{
 pub(super) use self::task::{
     normalize_external_mcp_config_ids, task_mcp_config_for_explicit_tool_selection,
     BatchTaskDeleteArgs, BatchTaskRunArgs, BatchTaskStatusUpdateArgs, CancelTaskArgs,
-    CreateTaskArgs, CreateTaskWithPrerequisitesItem, CreateTasksWithPrerequisitesArgs,
-    ListTasksArgs, SetTaskPrerequisitesArgs, TaskIdArgs, UpdateTaskArgs,
+    CreateProjectExecutionTasksArgs, CreateTaskArgs, CreateTaskWithPrerequisitesItem,
+    CreateTasksWithPrerequisitesArgs, ListTasksArgs, SetTaskPrerequisitesArgs, TaskIdArgs,
+    UpdateTaskArgs,
 };
 
 #[allow(dead_code)]

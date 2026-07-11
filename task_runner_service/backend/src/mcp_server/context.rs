@@ -7,12 +7,16 @@ use crate::models::{
 };
 use chatos_mcp_runtime::BuiltinMcpPromptLocale;
 
-use super::{decode_remote_server_config_header, CHATOS_ASYNC_PLANNER_TOOL_PROFILE};
+use super::{
+    decode_remote_server_config_header, CHATOS_ASYNC_PLANNER_TOOL_PROFILE,
+    PROJECT_REQUIREMENT_EXECUTION_PLANNER_TOOL_PROFILE,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum McpToolProfile {
     Default,
     ChatosAsyncPlanner,
+    ProjectRequirementExecutionPlanner,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -70,6 +74,13 @@ impl McpRequestContext {
     }
 
     pub(super) fn tool_profile(&self) -> McpToolProfile {
+        if self.tool_profile.as_deref().is_some_and(|value| {
+            value
+                .trim()
+                .eq_ignore_ascii_case(PROJECT_REQUIREMENT_EXECUTION_PLANNER_TOOL_PROFILE)
+        }) {
+            return McpToolProfile::ProjectRequirementExecutionPlanner;
+        }
         if self.tool_profile.as_deref().is_some_and(|value| {
             value
                 .trim()

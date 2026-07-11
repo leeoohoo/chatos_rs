@@ -60,18 +60,6 @@ pub(in crate::api::projects) fn parse_work_items(values: Vec<Value>) -> Vec<Work
                 title: value_string(&value, "title")
                     .unwrap_or_else(|| "未命名项目任务".to_string()),
                 description: value_string(&value, "description"),
-                task_runner_default_model_config_id: value_string(
-                    &value,
-                    "task_runner_default_model_config_id",
-                )
-                .or_else(|| value_string(&value, "taskRunnerDefaultModelConfigId"))
-                .unwrap_or_default(),
-                task_runner_enabled_tool_ids: value_string_vec(
-                    &value,
-                    "task_runner_enabled_tool_ids",
-                )
-                .or_else(|| value_string_vec(&value, "taskRunnerEnabledToolIds"))
-                .unwrap_or_default(),
                 status: value_string(&value, "status")
                     .unwrap_or_default()
                     .to_ascii_lowercase(),

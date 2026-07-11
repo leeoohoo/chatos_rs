@@ -178,19 +178,36 @@ impl MongoStore {
         .await?;
 
         ensure_index(&self.task_runner_links, doc! { "id": 1 }, true).await?;
-        self.dedupe_task_runner_links_by_work_item().await?;
+        drop_index_if_exists(
+            &self.task_runner_links,
+            "idx_project_work_item_task_runner_links_work_item_unique",
+        )
+        .await?;
         drop_index_if_exists(&self.task_runner_links, "work_item_id_1").await?;
         ensure_named_index(
             &self.task_runner_links,
             doc! { "work_item_id": 1 },
-            true,
-            "idx_project_work_item_task_runner_links_work_item_unique",
+            false,
+            "idx_project_work_item_task_runner_links_work_item",
         )
         .await?;
-        ensure_index(
+        drop_index_if_exists(&self.task_runner_links, "task_runner_task_id_1").await?;
+        ensure_named_index(
             &self.task_runner_links,
             doc! { "task_runner_task_id": 1 },
+            true,
+            "idx_project_work_item_task_runner_links_task_id_unique",
+        )
+        .await?;
+        ensure_named_index(
+            &self.task_runner_links,
+            doc! {
+                "work_item_id": 1,
+                "execution_group_id": 1,
+                "is_current": 1,
+            },
             false,
+            "idx_project_work_item_task_runner_links_current_group",
         )
         .await?;
         self.repair_failed_work_item_statuses().await?;
@@ -325,36 +342,6 @@ impl MongoStore {
                 },
                 None,
             )
-            .await
-            .map_err(|err| err.to_string())?;
-        Ok(())
-    }
-
-    async fn dedupe_task_runner_links_by_work_item(&self) -> Result<(), String> {
-        let find_options = FindOptions::builder()
-            .sort(doc! { "work_item_id": 1, "updated_at": -1, "created_at": -1 })
-            .build();
-        let mut cursor = self
-            .task_runner_links
-            .find(None, find_options)
-            .await
-            .map_err(|err| err.to_string())?;
-        let mut seen_work_items = BTreeSet::new();
-        let mut duplicate_link_ids = Vec::new();
-        while let Some(link) = cursor.try_next().await.map_err(|err| err.to_string())? {
-            let work_item_id = link.work_item_id.trim().to_string();
-            if work_item_id.is_empty() {
-                continue;
-            }
-            if !seen_work_items.insert(work_item_id) {
-                duplicate_link_ids.push(link.id);
-            }
-        }
-        if duplicate_link_ids.is_empty() {
-            return Ok(());
-        }
-        self.task_runner_links
-            .delete_many(doc! { "id": { "$in": duplicate_link_ids } }, None)
             .await
             .map_err(|err| err.to_string())?;
         Ok(())

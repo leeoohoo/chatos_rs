@@ -225,6 +225,34 @@ export interface LocalRuntimeSettings {
   ai_agent_max_iterations: number;
 }
 
+export type SystemPermissionStatus =
+  | 'ready'
+  | 'needs_attention'
+  | 'missing_dependency'
+  | 'not_applicable'
+  | 'unknown';
+
+export interface SystemPermissionItem {
+  id: string;
+  label: string;
+  summary: string;
+  status: SystemPermissionStatus | string;
+  status_label: string;
+  required: boolean;
+  can_request: boolean;
+  request_label: string;
+  settings_target?: string | null;
+  builtin_kinds: string[];
+  note: string;
+  last_error?: string | null;
+}
+
+export interface SystemPermissionsResponse {
+  platform: string;
+  platform_label: string;
+  items: SystemPermissionItem[];
+}
+
 export interface LocalProviderModel {
   id: string;
   owned_by?: string | null;
@@ -364,16 +392,32 @@ export interface SandboxLease {
   last_error?: string | null;
 }
 
+const API_BASE_URL = normalizeApiBaseUrl(import.meta.env.VITE_LOCAL_CONNECTOR_CORE_URL);
+
+interface ApiTransportResponse {
+  ok: boolean;
+  status: number;
+  body: string;
+}
+
+function normalizeApiBaseUrl(value: unknown): string {
+  return typeof value === 'string' ? value.trim().replace(/\/+$/, '') : '';
+}
+
+function apiEndpoint(endpoint: string): string {
+  if (!API_BASE_URL || /^https?:\/\//i.test(endpoint)) {
+    return endpoint;
+  }
+  return `${API_BASE_URL}${endpoint}`;
+}
+
 async function request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
   const headers = new Headers(options.headers || {});
   if (!headers.has('Content-Type')) {
     headers.set('Content-Type', 'application/json');
   }
-  const response = await fetch(endpoint, {
-    ...options,
-    headers,
-  });
-  const text = await response.text();
+  const response = await sendLocalApiRequest(endpoint, options, headers);
+  const text = response.body;
   const body = text ? JSON.parse(text) : null;
   if (!response.ok) {
     const message =
@@ -385,6 +429,47 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
     throw new Error(message);
   }
   return body as T;
+}
+
+async function sendLocalApiRequest(
+  endpoint: string,
+  options: RequestInit,
+  headers: Headers,
+): Promise<ApiTransportResponse> {
+  const bridge = window.chatosLocalConnector?.apiRequest;
+  if (bridge && !/^https?:\/\//i.test(endpoint)) {
+    const response = await bridge({
+      method: options.method || 'GET',
+      endpoint,
+      headers: Object.fromEntries(headers.entries()),
+      body: normalizeBridgeBody(options.body),
+    });
+    return {
+      ok: response.ok,
+      status: response.status,
+      body: response.body,
+    };
+  }
+
+  const response = await fetch(apiEndpoint(endpoint), {
+    ...options,
+    headers,
+  });
+  return {
+    ok: response.ok,
+    status: response.status,
+    body: await response.text(),
+  };
+}
+
+function normalizeBridgeBody(body: BodyInit | null | undefined): string | null {
+  if (body === undefined || body === null) {
+    return null;
+  }
+  if (typeof body === 'string') {
+    return body;
+  }
+  throw new Error('Electron desktop API bridge only supports string request bodies');
 }
 
 export const api = {
@@ -475,6 +560,14 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(payload),
     }),
+  systemPermissions: () => request<SystemPermissionsResponse>('/api/local/system-permissions'),
+  requestSystemPermission: (permissionId: string) =>
+    request<SystemPermissionsResponse>(
+      `/api/local/system-permissions/${encodeURIComponent(permissionId)}/request`,
+      {
+        method: 'POST',
+      },
+    ),
   approvalSettings: () => request<ApprovalSettings>('/api/local/approval/settings'),
   updateApprovalSettings: (payload: Partial<Pick<ApprovalSettings, 'default_mode' | 'projects' | 'ai'>>) =>
     request<ApprovalSettings>('/api/local/approval/settings', {

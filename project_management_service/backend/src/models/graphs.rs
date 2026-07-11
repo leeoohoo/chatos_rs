@@ -28,15 +28,3 @@ pub struct DependencyGraphResponse {
     pub blocked_by: Vec<DependencyGraphNode>,
     pub ready: bool,
 }
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TaskRunnerExecutionOptionRecord {
-    pub id: String,
-    pub label: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TaskRunnerExecutionOptionsResponse {
-    pub model_configs: Vec<TaskRunnerExecutionOptionRecord>,
-    pub tools: Vec<TaskRunnerExecutionOptionRecord>,
-}

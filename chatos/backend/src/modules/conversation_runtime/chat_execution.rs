@@ -107,6 +107,14 @@ pub async fn prepare_mcp_execution(
     }
 }
 
+pub fn effective_codex_gateway_mcp_passthrough(
+    model_runtime: &ResolvedChatModelConfig,
+    runtime_context: &ResolvedConversationRuntimeContext,
+) -> bool {
+    model_runtime.use_codex_gateway_mcp_passthrough
+        && !runtime_context.project_requirement_execution_planner
+}
+
 fn push_optional_system_prompt(items: &mut Vec<Value>, content: Option<&str>) {
     let Some(content) = normalize_prompt_text(content) else {
         return;
@@ -172,6 +180,8 @@ pub fn build_agent_chat_options(
     prefixed_input_items: Vec<Value>,
     input: ChatExecutionInput,
 ) -> AgentChatOptions {
+    let use_codex_gateway_mcp_passthrough =
+        effective_codex_gateway_mcp_passthrough(model_runtime, runtime_context);
     AgentChatOptions {
         model: Some(model_runtime.model.clone()),
         provider: Some(model_runtime.provider.clone()),
@@ -189,11 +199,75 @@ pub fn build_agent_chat_options(
         message_mode: Some(TASK_RUNNER_ASYNC_PLAN_MESSAGE_MODE.to_string()),
         message_source: Some(input.message_source),
         prefixed_input_items: Some(prefixed_input_items),
-        request_cwd: if model_runtime.use_codex_gateway_mcp_passthrough {
+        request_cwd: if use_codex_gateway_mcp_passthrough {
             runtime_context.resolved_project_root.clone()
         } else {
             None
         },
-        use_codex_gateway_mcp_passthrough: Some(model_runtime.use_codex_gateway_mcp_passthrough),
+        use_codex_gateway_mcp_passthrough: Some(use_codex_gateway_mcp_passthrough),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::{Arc, Mutex};
+
+    use super::*;
+    use crate::core::internal_context_locale::InternalContextLocale;
+    use crate::core::mcp_runtime::empty_mcp_server_bundle;
+
+    fn model_runtime(use_codex_gateway_mcp_passthrough: bool) -> ResolvedChatModelConfig {
+        ResolvedChatModelConfig {
+            model: "codex-test".to_string(),
+            provider: "openai".to_string(),
+            thinking_level: None,
+            temperature: 0.2,
+            supports_images: false,
+            supports_responses: true,
+            effective_reasoning: false,
+            api_key: String::new(),
+            base_url: "http://codex-gateway.local".to_string(),
+            system_prompt: None,
+            use_active_system_context: true,
+            use_codex_gateway_mcp_passthrough,
+        }
+    }
+
+    fn runtime_context(
+        project_requirement_execution_planner: bool,
+    ) -> ResolvedConversationRuntimeContext {
+        ResolvedConversationRuntimeContext {
+            internal_context_locale: InternalContextLocale::ZhCn,
+            contact_agent_id: None,
+            base_system_prompt: None,
+            contact_system_prompt: None,
+            builtin_mcp_system_prompt: None,
+            selected_commands_for_snapshot: Arc::new(Mutex::new(Vec::new())),
+            resolved_project_id: Some("project-1".to_string()),
+            resolved_project_root: Some("C:/project/demo".to_string()),
+            default_remote_connection_id: None,
+            workspace_root: Some("C:/project/demo".to_string()),
+            mcp_enabled: true,
+            enabled_mcp_ids_for_snapshot: Vec::new(),
+            mcp_server_bundle: empty_mcp_server_bundle(),
+            use_tools: true,
+            memory_summary_prompt: None,
+            runtime_error: None,
+            project_requirement_execution_planner,
+        }
+    }
+
+    #[test]
+    fn requirement_execution_planner_disables_codex_gateway_mcp_passthrough() {
+        let model = model_runtime(true);
+
+        assert!(effective_codex_gateway_mcp_passthrough(
+            &model,
+            &runtime_context(false)
+        ));
+        assert!(!effective_codex_gateway_mcp_passthrough(
+            &model,
+            &runtime_context(true)
+        ));
     }
 }

@@ -9,6 +9,10 @@ mod tasks;
 mod validation;
 
 impl TaskService {
+    pub(crate) fn config(&self) -> &AppConfig {
+        &self.config
+    }
+
     pub(crate) fn new(config: AppConfig, store: AppStore) -> Self {
         Self {
             config,

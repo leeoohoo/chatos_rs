@@ -63,7 +63,7 @@ pub(crate) fn shared_http_server(server: ChatosHttpServer) -> chatos_mcp_runtime
         headers: server.headers,
         timeout_ms: None,
         tool_name_aliases: Vec::new(),
-        allowed_tool_names: None,
+        allowed_tool_names: server.allowed_tool_names,
     }
 }
 
@@ -276,5 +276,47 @@ impl chatos_mcp_runtime::BuiltinToolProvider for ChatosBuiltinProvider {
 
     fn unavailable_tools(&self) -> Vec<(String, String)> {
         self.service.unavailable_tools()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
+
+    use super::*;
+
+    #[test]
+    fn shared_http_server_preserves_headers_and_allowed_tools() {
+        let server = ChatosHttpServer {
+            name: "project_management_service".to_string(),
+            url: "http://127.0.0.1:3999/mcp".to_string(),
+            headers: Some(HashMap::from([(
+                "X-Chatos-Project-Id".to_string(),
+                "project-1".to_string(),
+            )])),
+            allowed_tool_names: Some(vec![
+                "list_project_tasks".to_string(),
+                "get_project_dependency_graph".to_string(),
+            ]),
+        };
+
+        let shared = shared_http_server(server);
+
+        assert_eq!(shared.name, "project_management_service");
+        assert_eq!(
+            shared
+                .headers
+                .as_ref()
+                .and_then(|headers| headers.get("X-Chatos-Project-Id"))
+                .map(String::as_str),
+            Some("project-1")
+        );
+        assert_eq!(
+            shared.allowed_tool_names,
+            Some(vec![
+                "list_project_tasks".to_string(),
+                "get_project_dependency_graph".to_string(),
+            ])
+        );
     }
 }

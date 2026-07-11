@@ -3,10 +3,14 @@
 
 use axum::extract::ws::{Message, WebSocket};
 use axum::extract::{Path, Query, State, WebSocketUpgrade};
-use axum::http::StatusCode;
+use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::{Extension, Json};
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+use base64::Engine as _;
+use chrono::Utc;
 use futures::{SinkExt, StreamExt};
+use ring::signature::{UnparsedPublicKey, ED25519};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use tokio::sync::mpsc;
@@ -59,10 +63,12 @@ pub(super) async fn create_device(
     Extension(user): Extension<CurrentUser>,
     Json(req): Json<CreateDeviceRequest>,
 ) -> Result<(StatusCode, Json<LocalConnectorDevice>), ApiError> {
+    let public_key = required_text(req.public_key, "public_key")?;
+    device_public_key_bytes(public_key.as_str())?;
     let device = LocalConnectorDevice::new(
         user.effective_owner_user_id().to_string(),
         required_text(req.display_name, "display_name")?,
-        required_text(req.public_key, "public_key")?,
+        public_key,
         normalize_optional_text(req.client_version),
         normalize_optional_text(req.os),
     );
@@ -161,9 +167,11 @@ pub(super) async fn connect_device(
     State(state): State<AppState>,
     Extension(user): Extension<CurrentUser>,
     Path(id): Path<String>,
+    headers: HeaderMap,
     ws: WebSocketUpgrade,
 ) -> Result<Response, ApiError> {
     let device = load_owned_device(&state, &user, id.as_str(), true).await?;
+    verify_device_connect_signature(&state, &headers, &device).await?;
     let owner_user_id = user.effective_owner_user_id().to_string();
     Ok(ws
         .on_upgrade(move |socket| handle_connector_socket(state, owner_user_id, device.id, socket))
@@ -412,4 +420,97 @@ fn is_heartbeat_message(text: &str) -> bool {
             })
         })
         .unwrap_or(false)
+}
+
+async fn verify_device_connect_signature(
+    state: &AppState,
+    headers: &HeaderMap,
+    device: &LocalConnectorDevice,
+) -> Result<(), ApiError> {
+    if !state.config.require_device_connect_signature {
+        return Ok(());
+    }
+    let public_key = device_public_key_bytes(device.public_key.as_str())?;
+    let algorithm = required_header(headers, "x-local-connector-device-signature-alg")?;
+    if algorithm != "ed25519" {
+        return Err(ApiError::unauthorized(
+            "Local Connector device signature algorithm is not supported",
+        ));
+    }
+    let header_device_id = required_header(headers, "x-local-connector-device-id")?;
+    if header_device_id != device.id {
+        return Err(ApiError::unauthorized(
+            "Local Connector device signature device id does not match",
+        ));
+    }
+    let timestamp = required_header(headers, "x-local-connector-device-timestamp")?
+        .parse::<i64>()
+        .map_err(|_| ApiError::unauthorized("Local Connector device timestamp is invalid"))?;
+    let now = Utc::now().timestamp();
+    let max_skew = state
+        .config
+        .device_connect_signature_max_skew
+        .as_secs()
+        .try_into()
+        .unwrap_or(300_i64);
+    if now.saturating_sub(timestamp).abs() > max_skew {
+        return Err(ApiError::unauthorized(
+            "Local Connector device signature timestamp is outside the allowed window",
+        ));
+    }
+    let nonce = required_header(headers, "x-local-connector-device-nonce")?;
+    if nonce.len() < 16 || nonce.len() > 128 {
+        return Err(ApiError::unauthorized(
+            "Local Connector device signature nonce is invalid",
+        ));
+    }
+    if !state
+        .consume_device_connect_nonce(device.id.as_str(), nonce.as_str(), now)
+        .await
+    {
+        return Err(ApiError::unauthorized(
+            "Local Connector device signature nonce was already used",
+        ));
+    }
+    let signature = required_header(headers, "x-local-connector-device-signature")?;
+    let signature = URL_SAFE_NO_PAD.decode(signature.as_bytes()).map_err(|_| {
+        ApiError::unauthorized("Local Connector device signature encoding is invalid")
+    })?;
+    let path = format!("/api/local-connectors/devices/{}/connect", device.id);
+    let payload =
+        device_signature_payload(device.id.as_str(), timestamp, nonce.as_str(), path.as_str());
+    UnparsedPublicKey::new(&ED25519, public_key.as_slice())
+        .verify(payload.as_bytes(), signature.as_slice())
+        .map_err(|_| ApiError::unauthorized("Local Connector device signature is invalid"))
+}
+
+fn device_public_key_bytes(value: &str) -> Result<Vec<u8>, ApiError> {
+    let encoded = value.trim().strip_prefix("ed25519:").ok_or_else(|| {
+        ApiError::unauthorized(
+            "Local Connector device key is not an ed25519 public key; re-register the device",
+        )
+    })?;
+    let bytes = URL_SAFE_NO_PAD.decode(encoded.as_bytes()).map_err(|_| {
+        ApiError::unauthorized("Local Connector device public key encoding is invalid")
+    })?;
+    if bytes.len() != 32 {
+        return Err(ApiError::unauthorized(
+            "Local Connector device public key length is invalid",
+        ));
+    }
+    Ok(bytes)
+}
+
+fn required_header(headers: &HeaderMap, name: &'static str) -> Result<String, ApiError> {
+    headers
+        .get(name)
+        .and_then(|value| value.to_str().ok())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+        .ok_or_else(|| ApiError::unauthorized(format!("{name} is required")))
+}
+
+fn device_signature_payload(device_id: &str, timestamp: i64, nonce: &str, path: &str) -> String {
+    format!("v1\n{device_id}\n{timestamp}\n{nonce}\n{path}")
 }

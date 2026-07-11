@@ -3,9 +3,12 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "main": "electron/main.cjs",
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
+    "build:electron": "tsc && vite build --mode electron",
+    "electron:pack": "electron-builder --win portable",
     "preview": "vite preview",
     "type-check": "tsc --noEmit"
   },
@@ -19,6 +22,42 @@
   },
   "devDependencies": {
     "@types/react": "^18.3.11",
-    "@types/react-dom": "^18.3.1"
+    "@types/react-dom": "^18.3.1",
+    "electron": "^43.1.0",
+    "electron-builder": "^26.15.3"
+  },
+  "build": {
+    "appId": "com.chatos.local-connector",
+    "productName": "ChatOS Local Connector",
+    "directories": {
+      "output": "dist-electron"
+    },
+    "files": [
+      "dist/**/*",
+      "electron/main.cjs",
+      "electron/preload.cjs",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "electron/resources/local_connector_client_core.exe",
+        "to": "local_connector_client_core.exe"
+      },
+      {
+        "from": "electron/resources/bundled-tools",
+        "to": "bundled-tools"
+      }
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "artifactName": "ChatOS-Local-Connector-${version}-${arch}.${ext}"
+    }
   }
 }

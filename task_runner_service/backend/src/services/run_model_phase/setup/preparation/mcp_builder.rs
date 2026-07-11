@@ -1,8 +1,6 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use std::collections::BTreeSet;
-
 use super::*;
 
 pub(super) async fn build_mcp_builder_parts(
@@ -65,15 +63,11 @@ pub(super) async fn build_mcp_builder_parts(
         builtin_servers.push(task_process_log_builtin_server());
     }
 
-    let project_management_execution_options =
-        project_management_execution_options_for_task(service, task).await;
-    let (builtin_registry, builtin_init_errors) =
-        build_builtin_registry_with_project_management_options(
-            &builtin_servers,
-            task_service.clone(),
-            service.ask_user_prompt_service.clone(),
-            project_management_execution_options,
-        );
+    let (builtin_registry, builtin_init_errors) = build_builtin_registry(
+        &builtin_servers,
+        task_service.clone(),
+        service.ask_user_prompt_service.clone(),
+    );
     let mut builtin_registry = builtin_registry;
     if super::is_chatos_plan_task(task) {
         if sandbox_context.is_none() && !local_connector_routing && !harness_code_routing {
@@ -117,97 +111,6 @@ fn normalized_task_owner_user_id(task: &TaskRecord) -> Option<String> {
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(ToOwned::to_owned)
-}
-
-async fn project_management_execution_options_for_task(
-    service: &RunService,
-    task: &TaskRecord,
-) -> Option<ProjectManagementExecutionOptions> {
-    if !super::is_chatos_plan_task(task) {
-        return None;
-    }
-    let owner_user_id = normalized_task_owner_user_id(task)?;
-    let model_config_ids = match service.store.list_model_configs().await {
-        Ok(models) => models
-            .into_iter()
-            .filter(|model| model.enabled)
-            .filter(|model| {
-                owns_task_runner_resource(model.owner_user_id.as_deref(), &owner_user_id)
-            })
-            .map(|model| model.id)
-            .collect::<BTreeSet<_>>(),
-        Err(err) => {
-            warn!(
-                task_id = task.id.as_str(),
-                owner_user_id = owner_user_id.as_str(),
-                error = err.as_str(),
-                "failed to load model configs for Project Management schema enrichment"
-            );
-            return None;
-        }
-    };
-
-    let mut tool_ids = BTreeSet::new();
-    for kind in chatos_mcp_runtime::configurable_builtin_kinds() {
-        tool_ids.insert(kind.kind_name().to_string());
-        if let Some(config_id) = kind.config_id() {
-            tool_ids.insert(config_id.to_string());
-        }
-    }
-    match service.store.list_external_mcp_configs().await {
-        Ok(configs) => {
-            tool_ids.extend(
-                configs
-                    .into_iter()
-                    .filter(|config| config.enabled)
-                    .filter(|config| {
-                        owns_task_runner_resource(
-                            task_runner_resource_owner_or_creator(
-                                config.owner_user_id.as_deref(),
-                                config.creator_user_id.as_deref(),
-                            ),
-                            &owner_user_id,
-                        )
-                    })
-                    .map(|config| config.id),
-            );
-        }
-        Err(err) => {
-            warn!(
-                task_id = task.id.as_str(),
-                owner_user_id = owner_user_id.as_str(),
-                error = err.as_str(),
-                "failed to load external MCP configs for Project Management schema enrichment"
-            );
-        }
-    }
-
-    Some(ProjectManagementExecutionOptions {
-        model_config_ids: model_config_ids.into_iter().collect(),
-        preferred_model_config_id: task.default_model_config_id.clone(),
-        tool_ids: tool_ids.into_iter().collect(),
-    })
-}
-
-fn owns_task_runner_resource(owner_user_id: Option<&str>, expected_owner_user_id: &str) -> bool {
-    owner_user_id
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        == Some(expected_owner_user_id)
-}
-
-fn task_runner_resource_owner_or_creator<'a>(
-    owner_user_id: Option<&'a str>,
-    creator_user_id: Option<&'a str>,
-) -> Option<&'a str> {
-    owner_user_id
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .or_else(|| {
-            creator_user_id
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-        })
 }
 
 async fn persist_builtin_init_errors(

@@ -76,11 +76,6 @@ export function ProjectDetailPage() {
     queryFn: () => api.listProjectWorkItems(projectId!, { include_archived: showArchived }),
     enabled: Boolean(projectId),
   });
-  const executionOptionsQuery = useQuery({
-    queryKey: ['task-runner-execution-options'],
-    queryFn: () => api.getTaskRunnerExecutionOptions(),
-    enabled: Boolean(projectId),
-  });
   const graphQuery = useQuery({
     queryKey: ['project-graph', projectId, showArchived],
     queryFn: () => api.getProjectDependencyGraph(projectId!, { include_archived: showArchived }),
@@ -114,42 +109,6 @@ export function ProjectDetailPage() {
     [requirements],
   );
   const selectableWorkItems = useMemo(() => workItems.filter(isSelectableWorkItem), [workItems]);
-  const taskRunnerModelOptions = useMemo(
-    () =>
-      (executionOptionsQuery.data?.model_configs || []).map((item) => ({
-        value: item.id,
-        label: item.label || item.id,
-      })),
-    [executionOptionsQuery.data?.model_configs],
-  );
-  const taskRunnerToolOptions = useMemo(
-    () =>
-      (executionOptionsQuery.data?.tools || []).map((item) => ({
-        value: item.id,
-        label: item.label || item.id,
-      })),
-    [executionOptionsQuery.data?.tools],
-  );
-  const taskRunnerModelLabelMap = useMemo(
-    () =>
-      new Map(
-        (executionOptionsQuery.data?.model_configs || []).map((item) => [
-          item.id,
-          item.label || item.id,
-        ]),
-      ),
-    [executionOptionsQuery.data?.model_configs],
-  );
-  const taskRunnerToolLabelMap = useMemo(
-    () =>
-      new Map(
-        (executionOptionsQuery.data?.tools || []).map((item) => [
-          item.id,
-          item.label || item.id,
-        ]),
-      ),
-    [executionOptionsQuery.data?.tools],
-  );
   const selectableRequirementIds = useMemo(
     () => new Set(selectableRequirements.map((item) => item.id)),
     [selectableRequirements],
@@ -323,8 +282,6 @@ export function ProjectDetailPage() {
 
   const { requirementColumns, workItemColumns } = buildProjectDetailColumns({
     requirements,
-    taskRunnerModelLabelMap,
-    taskRunnerToolLabelMap,
     onShowRequirementDetail: setRequirementDetailTarget,
     onShowRequirementDeps: setRequirementDepTarget,
     onShowRequirementDoc: setDocTarget,
@@ -414,12 +371,6 @@ export function ProjectDetailPage() {
         workItemForm={workItemForm}
         createWorkItemPending={createWorkItemMutation.isPending}
         onCreateWorkItem={(values) => createWorkItemMutation.mutate(values)}
-        taskRunnerModelOptions={taskRunnerModelOptions}
-        taskRunnerToolOptions={taskRunnerToolOptions}
-        executionOptionsLoading={executionOptionsQuery.isLoading}
-        executionOptionsErrorMessage={
-          executionOptionsQuery.isError ? (executionOptionsQuery.error as Error).message : undefined
-        }
         workItemDepTarget={workItemDepTarget}
         onCloseWorkItemDeps={() => setWorkItemDepTarget(null)}
         onSaveWorkItemDeps={() => saveWorkItemDepsMutation.mutate()}
@@ -432,8 +383,6 @@ export function ProjectDetailPage() {
         onCloseRequirementDetail={() => setRequirementDetailTarget(null)}
         workItemDetailTarget={workItemDetailTarget}
         onCloseWorkItemDetail={() => setWorkItemDetailTarget(null)}
-        taskRunnerModelLabelMap={taskRunnerModelLabelMap}
-        taskRunnerToolLabelMap={taskRunnerToolLabelMap}
         requirements={requirements}
       />
     </div>

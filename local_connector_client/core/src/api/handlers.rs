@@ -10,6 +10,7 @@ mod model_configs;
 mod runtime_settings;
 mod sandbox;
 mod status;
+mod system_permissions;
 mod terminal;
 mod workspace;
 
@@ -35,5 +36,6 @@ pub(super) use sandbox::{
     local_sandbox_image_mcp, local_sandbox_images, local_sandbox_leases, local_toggle_sandbox,
 };
 pub(super) use status::local_status;
+pub(super) use system_permissions::{local_request_system_permission, local_system_permissions};
 pub(super) use terminal::local_terminal_exec;
 pub(super) use workspace::{local_add_workspace, local_fs_list_handler, local_remove_workspace};

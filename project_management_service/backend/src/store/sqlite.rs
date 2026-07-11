@@ -84,15 +84,11 @@ impl SqliteStore {
         }
         self.ensure_text_column("requirements", "requirement_type")
             .await?;
-        self.ensure_text_column("project_work_items", "task_runner_default_model_config_id")
-            .await?;
-        self.ensure_text_column("project_work_items", "task_runner_enabled_tool_ids_json")
-            .await?;
-        self.ensure_text_column("project_work_items", "task_runner_skill_ids_json")
-            .await?;
         self.ensure_integer_column_with_default("project_work_items", "is_planning_task", 0)
             .await?;
         for column in [
+            "execution_group_id",
+            "superseded_at",
             "source_session_id",
             "source_user_message_id",
             "task_runner_status",
@@ -103,31 +99,115 @@ impl SqliteStore {
             self.ensure_text_column("project_work_item_task_runner_links", column)
                 .await?;
         }
+        self.ensure_integer_column_with_default(
+            "project_work_item_task_runner_links",
+            "is_current",
+            1,
+        )
+        .await?;
+        self.ensure_task_runner_links_multiple_rows().await?;
         sqlx::query(
-            "DELETE FROM project_work_item_task_runner_links
-             WHERE rowid NOT IN (
-               SELECT MAX(rowid)
-               FROM project_work_item_task_runner_links
-               GROUP BY work_item_id
-             )",
+            "DROP INDEX IF EXISTS idx_project_work_item_task_runner_links_work_item_unique",
         )
         .execute(&self.pool)
         .await
         .map_err(|err| err.to_string())?;
+        sqlx::query("DROP INDEX IF EXISTS idx_project_work_item_task_runner_links_task_id")
+            .execute(&self.pool)
+            .await
+            .map_err(|err| err.to_string())?;
         sqlx::query(
-            "CREATE UNIQUE INDEX IF NOT EXISTS idx_project_work_item_task_runner_links_work_item_unique
+            "CREATE INDEX IF NOT EXISTS idx_project_work_item_task_runner_links_work_item
              ON project_work_item_task_runner_links(work_item_id)",
         )
         .execute(&self.pool)
         .await
         .map_err(|err| err.to_string())?;
         sqlx::query(
-            "CREATE INDEX IF NOT EXISTS idx_project_work_item_task_runner_links_task_id
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_project_work_item_task_runner_links_task_id_unique
              ON project_work_item_task_runner_links(task_runner_task_id)",
         )
         .execute(&self.pool)
         .await
         .map_err(|err| err.to_string())?;
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_project_work_item_task_runner_links_current_group
+             ON project_work_item_task_runner_links(work_item_id, execution_group_id, is_current)",
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(|err| err.to_string())?;
+        Ok(())
+    }
+
+    async fn ensure_task_runner_links_multiple_rows(&self) -> Result<(), String> {
+        let indexes = sqlx::query("PRAGMA index_list(project_work_item_task_runner_links)")
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|err| err.to_string())?;
+        let has_legacy_unique = indexes.iter().any(|row| {
+            row.get::<i64, _>("unique") == 1 && row.get::<String, _>("origin").as_str() == "u"
+        });
+        if !has_legacy_unique {
+            return Ok(());
+        }
+
+        let mut tx = self.pool.begin().await.map_err(|err| err.to_string())?;
+        sqlx::query(
+            "ALTER TABLE project_work_item_task_runner_links
+             RENAME TO project_work_item_task_runner_links_legacy",
+        )
+        .execute(&mut *tx)
+        .await
+        .map_err(|err| err.to_string())?;
+        sqlx::query(
+            "CREATE TABLE project_work_item_task_runner_links (
+              id TEXT PRIMARY KEY,
+              work_item_id TEXT NOT NULL,
+              task_runner_task_id TEXT NOT NULL,
+              task_runner_run_id TEXT,
+              link_type TEXT NOT NULL DEFAULT 'execution',
+              execution_group_id TEXT,
+              is_current INTEGER NOT NULL DEFAULT 1,
+              superseded_at TEXT,
+              source_session_id TEXT,
+              source_user_message_id TEXT,
+              task_runner_status TEXT,
+              last_callback_event TEXT,
+              last_callback_at TEXT,
+              last_error_message TEXT,
+              created_at TEXT NOT NULL,
+              updated_at TEXT NOT NULL,
+              FOREIGN KEY(work_item_id) REFERENCES project_work_items(id) ON DELETE CASCADE
+            )",
+        )
+        .execute(&mut *tx)
+        .await
+        .map_err(|err| err.to_string())?;
+        sqlx::query(
+            "INSERT OR IGNORE INTO project_work_item_task_runner_links (
+                id, work_item_id, task_runner_task_id, task_runner_run_id,
+                link_type, execution_group_id, is_current, superseded_at,
+                source_session_id, source_user_message_id,
+                task_runner_status, last_callback_event, last_callback_at,
+                last_error_message, created_at, updated_at
+             )
+             SELECT
+                id, work_item_id, task_runner_task_id, task_runner_run_id,
+                link_type, execution_group_id, COALESCE(is_current, 1), superseded_at,
+                source_session_id, source_user_message_id,
+                task_runner_status, last_callback_event, last_callback_at,
+                last_error_message, created_at, updated_at
+             FROM project_work_item_task_runner_links_legacy",
+        )
+        .execute(&mut *tx)
+        .await
+        .map_err(|err| err.to_string())?;
+        sqlx::query("DROP TABLE project_work_item_task_runner_links_legacy")
+            .execute(&mut *tx)
+            .await
+            .map_err(|err| err.to_string())?;
+        tx.commit().await.map_err(|err| err.to_string())?;
         Ok(())
     }
 

@@ -454,44 +454,11 @@ pub async fn list_work_item_task_runner_links(
 }
 
 #[derive(Debug, Default, Serialize)]
-pub struct LinkTaskRunnerTaskRequest {
-    pub task_runner_task_id: String,
-    pub task_runner_run_id: Option<String>,
-    pub link_type: Option<String>,
-    pub source_session_id: Option<String>,
-    pub source_user_message_id: Option<String>,
-    pub task_runner_status: Option<String>,
-    pub last_callback_event: Option<String>,
-    pub last_callback_at: Option<String>,
-    pub last_error_message: Option<String>,
-}
-
-pub async fn link_work_item_task_runner_task(
-    base_url: &str,
-    access_token: &str,
-    work_item_id: &str,
-    request: &LinkTaskRunnerTaskRequest,
-) -> Result<Value, String> {
-    let base_url = resolve_project_service_base_url(base_url).await;
-    let endpoint = format!(
-        "{}/api/work-items/{}/task-runner-links",
-        base_url.trim().trim_end_matches('/'),
-        urlencoding::encode(work_item_id.trim())
-    );
-    send_json(
-        reqwest::Client::new()
-            .post(endpoint)
-            .bearer_auth(access_token.trim())
-            .json(request),
-    )
-    .await
-}
-
-#[derive(Debug, Default, Serialize)]
 pub struct SyncTaskRunnerWorkItemStatusRequest {
     pub task_runner_task_id: String,
     pub task_runner_run_id: Option<String>,
     pub task_runner_status: Option<String>,
+    pub execution_group_id: Option<String>,
     pub last_callback_event: Option<String>,
     pub last_callback_at: Option<String>,
     pub last_error_message: Option<String>,
@@ -518,6 +485,27 @@ pub async fn sync_work_item_task_runner_status(
         "{}/api/chatos-sync/work-items/{}/task-runner-status",
         base_url.trim().trim_end_matches('/'),
         urlencoding::encode(work_item_id.trim())
+    );
+    send_json(
+        reqwest::Client::new()
+            .post(endpoint)
+            .header("X-Project-Service-Sync-Secret", sync_secret.trim())
+            .json(request),
+    )
+    .await
+}
+
+pub async fn sync_task_runner_task_status(
+    base_url: &str,
+    sync_secret: &str,
+    task_runner_task_id: &str,
+    request: &SyncTaskRunnerWorkItemStatusRequest,
+) -> Result<Value, String> {
+    let base_url = resolve_project_service_base_url(base_url).await;
+    let endpoint = format!(
+        "{}/api/chatos-sync/task-runner/tasks/{}/status",
+        base_url.trim().trim_end_matches('/'),
+        urlencoding::encode(task_runner_task_id.trim())
     );
     send_json(
         reqwest::Client::new()

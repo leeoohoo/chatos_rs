@@ -11,8 +11,7 @@ mod types;
 mod values;
 
 pub(super) use context::{
-    create_execution_message, load_task_runner_builtin_prompt_locale,
-    resolve_or_create_execution_session, select_contact_runtime,
+    create_execution_message, resolve_or_create_execution_session, select_contact_runtime,
 };
 pub(super) use errors::HandlerError;
 pub(super) use plan::{
@@ -27,10 +26,8 @@ pub(super) use status::{
 };
 pub(super) use sync::{
     load_execution_links_for_work_items, mark_execution_messages_for_stop,
-    persist_execution_message_links, sync_execution_link_status, sync_requirement_execution_state,
+    sync_execution_link_status, sync_requirement_execution_state,
 };
-pub(super) use tasks::{
-    create_and_start_execution_tasks, ensure_requirement_execution_not_active,
-    load_external_prerequisite_task_ids,
-};
+pub(super) use tasks::ensure_requirement_execution_not_active;
+pub(super) use types::{RequirementPlanItem, WorkItemPlanItem};
 pub(super) use values::value_string;

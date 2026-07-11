@@ -378,9 +378,6 @@ mod tests {
                 CreateProjectWorkItemRequest {
                     title: "Full Maven build".to_string(),
                     description: None,
-                    task_runner_default_model_config_id: "model-config-test".to_string(),
-                    task_runner_enabled_tool_ids: vec!["filesystem".to_string()],
-                    task_runner_skill_ids: Vec::new(),
                     status: None,
                     priority: None,
                     assignee_user_id: None,
@@ -475,9 +472,7 @@ mod tests {
                 tools::CREATE_PROJECT_TASK,
                 json!({
                     "requirement_id": requirement.id,
-                    "title": "Full Maven build",
-                    "task_runner_default_model_config_id": "model-config-test",
-                    "task_runner_enabled_tool_ids": ["filesystem"]
+                    "title": "Full Maven build"
                 }),
             )
             .await,

@@ -8,18 +8,14 @@ import dayjs from 'dayjs';
 
 import type { ProjectWorkItemRecord, RequirementRecord } from '../../types';
 import {
-  renderExecutionToolTags,
   requirementStatusTag,
   requirementTypeTag,
-  resolveExecutionOptionLabel,
   workItemStatusTag,
 } from './renderers';
-import type { ExecutionOptionLabelMap, RequirementTableRecord } from './types';
+import type { RequirementTableRecord } from './types';
 
 interface ProjectDetailColumnsArgs {
   requirements: RequirementRecord[];
-  taskRunnerModelLabelMap: ExecutionOptionLabelMap;
-  taskRunnerToolLabelMap: ExecutionOptionLabelMap;
   onShowRequirementDetail: (record: RequirementRecord) => void;
   onShowRequirementDeps: (record: RequirementRecord) => void;
   onShowRequirementDoc: (record: RequirementRecord) => void;
@@ -31,8 +27,6 @@ interface ProjectDetailColumnsArgs {
 
 export function buildProjectDetailColumns({
   requirements,
-  taskRunnerModelLabelMap,
-  taskRunnerToolLabelMap,
   onShowRequirementDetail,
   onShowRequirementDeps,
   onShowRequirementDoc,
@@ -50,10 +44,14 @@ export function buildProjectDetailColumns({
           className="requirement-title-cell"
           style={{ paddingInlineStart: (record.tree_level || 0) * 28 }}
         >
-          {(record.tree_level || 0) > 0 ? <span className="requirement-title-branch" aria-hidden /> : null}
+          {(record.tree_level || 0) > 0 ? (
+            <span className="requirement-title-branch" aria-hidden />
+          ) : null}
           <Space direction="vertical" size={2} className="requirement-title-content">
             <Typography.Text strong>{record.title}</Typography.Text>
-            {record.summary ? <Typography.Text type="secondary">{record.summary}</Typography.Text> : null}
+            {record.summary ? (
+              <Typography.Text type="secondary">{record.summary}</Typography.Text>
+            ) : null}
           </Space>
         </div>
       ),
@@ -133,28 +131,8 @@ export function buildProjectDetailColumns({
       title: '类型',
       dataIndex: 'is_planning_task',
       width: 100,
-      render: (isPlanningTask: boolean) => (
-        isPlanningTask ? <Tag color="processing">规划</Tag> : <Tag>执行</Tag>
-      ),
-    },
-    {
-      title: '执行模型',
-      dataIndex: 'task_runner_default_model_config_id',
-      width: 200,
-      render: (modelConfigId: string) => (
-        <Typography.Text
-          ellipsis={{ tooltip: resolveExecutionOptionLabel(modelConfigId, taskRunnerModelLabelMap) }}
-          style={{ maxWidth: 176 }}
-        >
-          {resolveExecutionOptionLabel(modelConfigId, taskRunnerModelLabelMap)}
-        </Typography.Text>
-      ),
-    },
-    {
-      title: '工具集',
-      dataIndex: 'task_runner_enabled_tool_ids',
-      width: 240,
-      render: (toolIds: string[]) => renderExecutionToolTags(toolIds, taskRunnerToolLabelMap),
+      render: (isPlanningTask: boolean) =>
+        isPlanningTask ? <Tag color="processing">规划</Tag> : <Tag>执行</Tag>,
     },
     {
       title: '标签',

@@ -37,6 +37,8 @@ const TASK_RUNNER_MCP_STDIO_ARGS: &[&str] = &[
     "task_runner_mcp_stdio",
 ];
 const CHATOS_ASYNC_PLANNER_TOOL_PROFILE: &str = "chatos_async_planner";
+const PROJECT_REQUIREMENT_EXECUTION_PLANNER_TOOL_PROFILE: &str =
+    "project_requirement_execution_planner";
 
 #[derive(Clone)]
 pub struct TaskRunnerMcpService {

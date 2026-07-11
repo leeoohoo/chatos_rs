@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::auth;
 use crate::config::AppConfig;
@@ -264,6 +264,40 @@ pub async fn get_project_sandbox_enabled(
     )
     .await?;
     Ok(response.environment.sandbox_enabled)
+}
+
+#[derive(Debug, Serialize)]
+pub struct SyncTaskRunnerWorkItemStatusRequest {
+    pub task_runner_task_id: String,
+    pub task_runner_run_id: Option<String>,
+    pub task_runner_status: Option<String>,
+    pub execution_group_id: Option<String>,
+    pub last_callback_event: Option<String>,
+    pub last_callback_at: Option<String>,
+    pub last_error_message: Option<String>,
+    pub source_session_id: Option<String>,
+    pub source_user_message_id: Option<String>,
+}
+
+pub async fn sync_work_item_task_runner_status(
+    config: &AppConfig,
+    work_item_id: &str,
+    input: &SyncTaskRunnerWorkItemStatusRequest,
+) -> Result<serde_json::Value, String> {
+    let base_url = required_project_service_base_url(config)?;
+    let sync_secret = required_sync_secret(config)?;
+    let endpoint = format!(
+        "{}/api/chatos-sync/work-items/{}/task-runner-status",
+        base_url.trim().trim_end_matches('/'),
+        urlencoding::encode(work_item_id.trim())
+    );
+    send_json(
+        project_service_client(config)?
+            .post(endpoint)
+            .header("X-Project-Service-Sync-Secret", sync_secret.trim())
+            .json(input),
+    )
+    .await
 }
 
 pub async fn import_project(

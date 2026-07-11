@@ -6,23 +6,23 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet};
 
+use crate::api::chat_stream_common::ChatStreamRequest;
 use crate::config::Config;
 use crate::core::auth::AuthUser;
 use crate::core::project_access::ensure_owned_project;
+use crate::modules::conversation_runtime::chat_usecase::{run_chat_usecase, RunChatUsecaseInput};
 use crate::services::{access_token_scope, project_management_api_client, task_runner_api_client};
 
 use super::requirement_execution::{
     add_requirement_work_item_dependencies, collect_requirement_execution_scope,
-    create_and_start_execution_tasks, create_execution_message,
-    ensure_requirement_execution_not_active, is_done_status, load_execution_links_for_work_items,
-    load_external_prerequisite_task_ids, load_task_runner_builtin_prompt_locale,
-    mark_execution_messages_for_stop, parse_requirements, parse_work_items,
-    persist_execution_message_links, project_plan_array, project_plan_value,
-    requirement_dependency_map, resolve_or_create_execution_session, select_contact_runtime,
-    sync_execution_link_status, sync_requirement_execution_state,
-    task_runner_callback_event_for_status, task_runner_status_is_active,
-    task_runner_status_is_success, topological_work_item_order, validate_requirement_prerequisites,
-    value_string, work_item_dependency_map, HandlerError,
+    create_execution_message, ensure_requirement_execution_not_active, is_done_status,
+    load_execution_links_for_work_items, mark_execution_messages_for_stop, parse_requirements,
+    parse_work_items, project_plan_array, project_plan_value, requirement_dependency_map,
+    resolve_or_create_execution_session, select_contact_runtime, sync_execution_link_status,
+    sync_requirement_execution_state, task_runner_callback_event_for_status,
+    task_runner_status_is_active, task_runner_status_is_success, topological_work_item_order,
+    validate_requirement_prerequisites, value_string, work_item_dependency_map, HandlerError,
+    RequirementPlanItem, WorkItemPlanItem,
 };
 
 #[derive(Debug, Default, Deserialize)]
@@ -178,31 +178,22 @@ async fn execute_requirement_inner(
         &contact_runtime,
     )
     .await?;
-    for item in &selected_work_items {
-        if item.task_runner_default_model_config_id.trim().is_empty() {
-            return Err(HandlerError::bad_request(format!(
-                "项目任务缺少 Task Runner 模型配置: {}",
-                item.title
-            )));
-        }
-        if item.task_runner_enabled_tool_ids.is_empty() {
-            return Err(HandlerError::bad_request(format!(
-                "项目任务缺少 Task Runner 工具集配置: {}",
-                item.title
-            )));
-        }
-    }
-
-    let external_prerequisite_task_ids = load_external_prerequisite_task_ids(
+    let requirement_documents = load_requirement_documents_for_scope(
         cfg.project_service_base_url.as_str(),
         access_token.as_str(),
-        &selected_work_items,
-        &all_work_items,
-        &dependency_map,
-        &requirement_dependency_map,
         &requirement_scope,
     )
     .await?;
+    let planner_prompt = build_requirement_execution_planner_prompt(
+        project.id.as_str(),
+        &root_requirement,
+        &requirement_items,
+        &requirement_scope,
+        &selected_work_items,
+        &creation_order,
+        &dependency_map,
+        &requirement_documents,
+    );
     let session = resolve_or_create_execution_session(
         &auth,
         &project,
@@ -216,17 +207,9 @@ async fn execute_requirement_inner(
         &root_requirement,
         &contact_runtime.contact,
         &selected_work_items,
+        planner_prompt.clone(),
     )
     .await?;
-
-    let execution_options = task_runner_api_client::fetch_task_runner_execution_options(
-        contact_runtime.task_runner_base_url.as_str(),
-        contact_runtime.task_runner_agent_token.as_str(),
-    )
-    .await
-    .map_err(|err| HandlerError::bad_gateway("读取 Task Runner 工具集失败", err))?;
-    let builtin_prompt_locale =
-        load_task_runner_builtin_prompt_locale(auth.user_id.as_str()).await?;
 
     let mut executing_requirement_ids = BTreeSet::from([root_requirement.id.clone()]);
     for item in &selected_work_items {
@@ -245,50 +228,140 @@ async fn execute_requirement_inner(
         .await?;
     }
 
-    let created_tasks = create_and_start_execution_tasks(
-        cfg,
-        project_sync_secret.as_str(),
-        access_token.as_str(),
-        &contact_runtime,
-        &session,
-        &message,
-        project.id.as_str(),
-        &selected_work_items,
-        &creation_order,
-        &dependency_map,
-        &external_prerequisite_task_ids,
-        &execution_options,
-        builtin_prompt_locale.as_str(),
-    )
-    .await?;
-    let final_message = persist_execution_message_links(
-        &session,
-        message,
-        project.id.as_str(),
-        requirement_id.as_str(),
-        &created_tasks,
-    )
-    .await?;
+    let execution_group_id = message.id.clone();
+    let chat_req = ChatStreamRequest {
+        conversation_id: Some(session.id.clone()),
+        content: Some(planner_prompt),
+        model_config_id: None,
+        ai_model_config: None,
+        user_id: Some(auth.user_id.clone()),
+        attachments: None,
+        reasoning_enabled: None,
+        plan_mode: false,
+        turn_id: Some(execution_group_id.clone()),
+        contact_agent_id: Some(contact_runtime.contact.agent_id.clone()),
+        project_id: Some(project.id.clone()),
+        project_root: Some(project.root_path.clone()),
+        workspace_root: Some(project.root_path.clone()),
+        remote_connection_id: None,
+        user_message_id: Some(execution_group_id.clone()),
+        project_requirement_execution_planner: true,
+    };
+    access_token_scope::spawn_with_current_access_token(run_chat_usecase(RunChatUsecaseInput {
+        sender: None,
+        req: chat_req,
+    }));
 
     Ok(json!({
         "success": true,
+        "status": "planning_started",
         "project_id": project.id,
         "requirement_id": requirement_id,
         "contact_id": contact_runtime.contact.contact_id,
         "conversation_id": session.id,
-        "message_id": final_message.id,
-        "message": final_message,
-        "created_tasks": created_tasks.iter().map(|item| {
-            json!({
-                "project_task_id": item.project_task_id,
-                "requirement_id": item.requirement_id,
-                "task_runner_task_id": item.task_runner_task_id,
-                "task_runner_run_id": item.task_runner_run_id,
-                "task_runner_status": item.task_runner_status,
-            })
-        }).collect::<Vec<_>>(),
+        "message_id": execution_group_id.clone(),
+        "message": message,
+        "execution_group_id": execution_group_id,
+        "planner_agent_key": "project_requirement_execution_planner_agent",
         "plan_mode_enabled": false,
     }))
+}
+
+async fn load_requirement_documents_for_scope(
+    base_url: &str,
+    access_token: &str,
+    requirement_scope: &BTreeSet<String>,
+) -> Result<BTreeMap<String, Value>, HandlerError> {
+    let mut out = BTreeMap::new();
+    for requirement_id in requirement_scope {
+        let documents = project_management_api_client::list_project_service_requirement_documents(
+            base_url,
+            access_token,
+            requirement_id.as_str(),
+        )
+        .await
+        .map_err(|err| HandlerError::bad_gateway("读取需求技术文档失败", err))?;
+        out.insert(requirement_id.clone(), documents);
+    }
+    Ok(out)
+}
+
+fn build_requirement_execution_planner_prompt(
+    project_id: &str,
+    root_requirement: &RequirementPlanItem,
+    requirement_items: &[RequirementPlanItem],
+    requirement_scope: &BTreeSet<String>,
+    selected_work_items: &[WorkItemPlanItem],
+    creation_order: &[String],
+    dependency_map: &BTreeMap<String, Vec<String>>,
+    requirement_documents: &BTreeMap<String, Value>,
+) -> String {
+    let scoped_requirements = requirement_items
+        .iter()
+        .filter(|item| requirement_scope.contains(item.id.as_str()))
+        .map(|item| {
+            json!({
+                "id": item.id.as_str(),
+                "title": item.title.as_str(),
+                "status": item.status.as_str(),
+                "parent_requirement_id": item.parent_requirement_id.as_deref(),
+            })
+        })
+        .collect::<Vec<_>>();
+    let work_items = selected_work_items
+        .iter()
+        .map(|item| {
+            json!({
+                "id": item.id.as_str(),
+                "requirement_id": item.requirement_id.as_str(),
+                "title": item.title.as_str(),
+                "description": item.description.as_deref(),
+                "status": item.status.as_str(),
+                "priority": item.priority,
+                "tags": &item.tags,
+                "is_planning_task": item.is_planning_task,
+                "prerequisite_project_task_ids": dependency_map
+                    .get(item.id.as_str())
+                    .cloned()
+                    .unwrap_or_default(),
+            })
+        })
+        .collect::<Vec<_>>();
+    let payload = json!({
+        "project_id": project_id,
+        "requirement": {
+            "id": root_requirement.id.as_str(),
+            "title": root_requirement.title.as_str(),
+            "status": root_requirement.status.as_str(),
+        },
+        "requirements_in_execution_scope": scoped_requirements,
+        "selected_project_tasks": work_items,
+        "recommended_project_task_creation_order": creation_order,
+        "technical_documents_by_requirement": requirement_documents,
+    });
+    let payload = serde_json::to_string_pretty(&payload).unwrap_or_else(|_| "{}".to_string());
+    format!(
+        r#"你是项目需求执行规划 Agent。你的任务是根据下面的需求、技术文档、项目任务和依赖关系，把项目任务拆成具体的 Task Runner 执行任务。
+
+硬性规则：
+1. 只能通过 `create_project_execution_tasks` 创建执行任务。
+2. 每个创建的执行任务都必须填写 `project_task_id`，绑定到对应项目任务。
+3. 一个项目任务可以拆成多个执行任务；不要保持项目任务和执行任务的一对一假设。
+4. 不要调用任何工具把项目任务或需求直接改成 done/failed/blocked；执行完成后的状态传播由程序回调处理。
+5. 创建执行任务时要设置清晰的 title、objective、description，并用 prerequisite_refs 表达执行任务之间的先后关系。
+6. `create_project_execution_tasks.project_id` 必须使用 `{project_id}`，`requirement_id` 必须使用 `{requirement_id}`。
+7. 如果某个项目任务无法拆分或无法创建执行任务，最终总结里说明原因，但不要伪造完成状态。
+
+项目执行上下文 JSON：
+
+```json
+{payload}
+```
+"#,
+        project_id = project_id,
+        requirement_id = root_requirement.id,
+        payload = payload,
+    )
 }
 
 async fn stop_requirement_execution_inner(

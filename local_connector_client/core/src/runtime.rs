@@ -47,6 +47,7 @@ impl LocalRuntime {
         let Some(config) = config else {
             return Ok(());
         };
+        config.ensure_remote_urls_allowed()?;
 
         let mut state = self.state.write().await;
         let previous_device_id = state.device_id.clone();
@@ -90,6 +91,7 @@ impl LocalRuntime {
         let Some(config) = config else {
             return Ok(());
         };
+        config.ensure_remote_urls_allowed()?;
         let device_id = {
             let mut state = self.state.write().await;
             let device_id =

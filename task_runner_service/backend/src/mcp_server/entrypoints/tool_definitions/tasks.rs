@@ -76,6 +76,11 @@ pub(super) fn task_tool_definitions() -> Vec<Value> {
             create_tasks_with_prerequisites_schema(),
         ),
         tool_definition(
+            "create_project_execution_tasks",
+            "Create concrete Task Runner execution tasks for Chatos project requirement execution and bind every created task to its project-management task/work item. Use this instead of create_tasks_with_prerequisites for project requirement execution.",
+            create_project_execution_tasks_schema(),
+        ),
+        tool_definition(
             "update_task",
             "Update metadata for an existing Task Runner task. Do not use this to change execution status; create a new task for new work or use cancel_task for obsolete work.",
             required_object_schema(

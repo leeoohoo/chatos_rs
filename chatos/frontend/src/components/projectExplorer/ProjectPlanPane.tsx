@@ -185,11 +185,10 @@ export const ProjectPlanPane: React.FC<ProjectPlanPaneProps> = ({ project, class
       const result = await apiClient.executeProjectRequirement(project.id, requirement.id, {
         include_prerequisite_dependents: Boolean(options?.includePrerequisiteDependents),
       });
-      const createdTasks = result.created_tasks || result.createdTasks || [];
       await loadPlan();
       const conversationId = readText(result.conversation_id) || readText(result.conversationId);
       if (!conversationId) {
-        setExecutionMessage(`已创建 ${createdTasks.length} 个执行任务，但后端没有返回执行会话`);
+        setExecutionMessage('需求执行规划已启动，但后端没有返回执行会话');
         return;
       }
       try {
@@ -206,12 +205,12 @@ export const ProjectPlanPane: React.FC<ProjectPlanPaneProps> = ({ project, class
             upsertSessionMessage(executionMessage);
           }
         }
-        setExecutionMessage(`已创建 ${createdTasks.length} 个执行任务，已打开执行会话`);
+        setExecutionMessage('需求执行规划已启动，已打开执行会话');
       } catch (navigationErr) {
-        setExecutionMessage(`已创建 ${createdTasks.length} 个执行任务`);
+        setExecutionMessage('需求执行规划已启动');
         setError(navigationErr instanceof Error
-          ? `执行任务已创建，但打开执行会话失败：${navigationErr.message}`
-          : '执行任务已创建，但打开执行会话失败');
+          ? `需求执行规划已启动，但打开执行会话失败：${navigationErr.message}`
+          : '需求执行规划已启动，但打开执行会话失败');
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : '执行需求失败');

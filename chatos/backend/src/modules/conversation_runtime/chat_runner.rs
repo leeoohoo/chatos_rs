@@ -23,7 +23,8 @@ use crate::utils::sse::SseSender;
 
 use super::bootstrap::CommonChatBootstrap;
 use super::chat_execution::{
-    build_agent_chat_options, configure_agent_ai_server, prepare_mcp_execution, ChatExecutionInput,
+    build_agent_chat_options, configure_agent_ai_server, effective_codex_gateway_mcp_passthrough,
+    prepare_mcp_execution, ChatExecutionInput,
 };
 use super::runtime_context::{ResolvedConversationRuntimeContext, ToolMetadataMap};
 use super::snapshot::{sync_chat_turn_snapshot, LiveRequestSnapshotContext};
@@ -265,11 +266,13 @@ pub async fn run_bootstrapped_chat(input: BootstrappedChatInput<'_>) {
         return;
     }
 
+    let use_codex_gateway_mcp_passthrough =
+        effective_codex_gateway_mcp_passthrough(model_runtime, &runtime_context);
     let prepared_mcp = prepare_mcp_execution(
         session_id,
         resolved_turn_id.as_str(),
         &mut runtime_context,
-        model_runtime.use_codex_gateway_mcp_passthrough,
+        use_codex_gateway_mcp_passthrough,
     )
     .await;
     let mut callback_bundle = build_chat_stream_callbacks(&sink, session_id, false);

@@ -112,6 +112,19 @@ pub(in crate::api) async fn sync_task_runner_work_item_status(
         .map_err(sync_error_to_api_error)
 }
 
+pub(in crate::api) async fn sync_task_runner_task_status(
+    Path(task_runner_task_id): Path<String>,
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(input): Json<SyncTaskRunnerWorkItemStatusRequest>,
+) -> Result<Json<SyncTaskRunnerWorkItemStatusResponse>, ApiError> {
+    require_project_sync_secret(&state, &headers)?;
+    execution_sync::sync_task_runner_task_status(&state.store, &task_runner_task_id, input)
+        .await
+        .map(Json)
+        .map_err(sync_error_to_api_error)
+}
+
 pub(in crate::api) async fn sync_requirement_execution_state(
     Path(requirement_id): Path<String>,
     State(state): State<AppState>,

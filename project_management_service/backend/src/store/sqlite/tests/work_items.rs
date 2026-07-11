@@ -123,9 +123,6 @@ async fn work_item_creation_requires_requirement_technical_document_content() {
             CreateProjectWorkItemRequest {
                 title: "Implementation".to_string(),
                 description: None,
-                task_runner_default_model_config_id: "model-config-test".to_string(),
-                task_runner_enabled_tool_ids: vec!["filesystem".to_string()],
-                task_runner_skill_ids: Vec::new(),
                 status: None,
                 priority: None,
                 assignee_user_id: None,
@@ -163,9 +160,6 @@ async fn work_item_creation_requires_requirement_technical_document_content() {
             CreateProjectWorkItemRequest {
                 title: "Implementation".to_string(),
                 description: None,
-                task_runner_default_model_config_id: "model-config-test".to_string(),
-                task_runner_enabled_tool_ids: vec!["filesystem".to_string()],
-                task_runner_skill_ids: Vec::new(),
                 status: None,
                 priority: None,
                 assignee_user_id: None,
@@ -203,9 +197,6 @@ async fn work_item_creation_requires_requirement_technical_document_content() {
             CreateProjectWorkItemRequest {
                 title: "Implementation".to_string(),
                 description: None,
-                task_runner_default_model_config_id: "model-config-test".to_string(),
-                task_runner_enabled_tool_ids: vec!["filesystem".to_string()],
-                task_runner_skill_ids: Vec::new(),
                 status: None,
                 priority: None,
                 assignee_user_id: None,
@@ -248,9 +239,6 @@ async fn work_item_creation_accepts_any_non_empty_requirement_document() {
             CreateProjectWorkItemRequest {
                 title: "Implementation".to_string(),
                 description: None,
-                task_runner_default_model_config_id: "model-config-test".to_string(),
-                task_runner_enabled_tool_ids: vec!["filesystem".to_string()],
-                task_runner_skill_ids: Vec::new(),
                 status: None,
                 priority: None,
                 assignee_user_id: None,
@@ -333,6 +321,9 @@ async fn delete_work_item_removes_dependency_edges_and_rejects_linked_items() {
                 task_runner_task_id: "task-runner-task-1".to_string(),
                 task_runner_run_id: None,
                 link_type: None,
+                execution_group_id: None,
+                is_current: None,
+                superseded_at: None,
                 source_session_id: None,
                 source_user_message_id: None,
                 task_runner_status: Some("ready".to_string()),
@@ -370,6 +361,9 @@ async fn task_runner_links_are_upserted_and_deleted_per_work_item() {
                 task_runner_task_id: "task-runner-task-1".to_string(),
                 task_runner_run_id: Some("run-1".to_string()),
                 link_type: None,
+                execution_group_id: None,
+                is_current: None,
+                superseded_at: None,
                 source_session_id: Some("session-1".to_string()),
                 source_user_message_id: Some("message-1".to_string()),
                 task_runner_status: Some("ready".to_string()),
@@ -387,6 +381,9 @@ async fn task_runner_links_are_upserted_and_deleted_per_work_item() {
                 task_runner_task_id: "task-runner-task-2".to_string(),
                 task_runner_run_id: Some("run-2".to_string()),
                 link_type: Some("execution".to_string()),
+                execution_group_id: None,
+                is_current: None,
+                superseded_at: None,
                 source_session_id: Some("session-1".to_string()),
                 source_user_message_id: Some("message-1".to_string()),
                 task_runner_status: Some("running".to_string()),
@@ -396,25 +393,54 @@ async fn task_runner_links_are_upserted_and_deleted_per_work_item() {
             },
         )
         .await
-        .expect("update link");
+        .expect("insert second link");
+    let updated_second = store
+        .upsert_task_runner_link(
+            &item.id,
+            LinkTaskRunnerTaskRequest {
+                task_runner_task_id: "task-runner-task-2".to_string(),
+                task_runner_run_id: Some("run-3".to_string()),
+                link_type: Some("execution".to_string()),
+                execution_group_id: Some("execution-group-1".to_string()),
+                is_current: Some(true),
+                superseded_at: None,
+                source_session_id: Some("session-2".to_string()),
+                source_user_message_id: Some("message-2".to_string()),
+                task_runner_status: Some("succeeded".to_string()),
+                last_callback_event: Some("task.succeeded".to_string()),
+                last_callback_at: Some("2026-06-25T00:01:00.000Z".to_string()),
+                last_error_message: None,
+            },
+        )
+        .await
+        .expect("update second link");
     let links = store
         .list_task_runner_links(&item.id)
         .await
         .expect("list links");
 
-    assert_eq!(first.id, second.id);
-    assert_eq!(links.len(), 1);
-    assert_eq!(links[0].task_runner_task_id, "task-runner-task-2");
-    assert_eq!(links[0].task_runner_run_id.as_deref(), Some("run-2"));
-    assert_eq!(links[0].task_runner_status.as_deref(), Some("running"));
+    assert_ne!(first.id, second.id);
+    assert_eq!(updated_second.id, second.id);
+    assert_eq!(links.len(), 2);
+    let updated = links
+        .iter()
+        .find(|link| link.task_runner_task_id == "task-runner-task-2")
+        .expect("second link exists");
+    assert_eq!(updated.task_runner_run_id.as_deref(), Some("run-3"));
+    assert_eq!(
+        updated.execution_group_id.as_deref(),
+        Some("execution-group-1")
+    );
+    assert_eq!(updated.task_runner_status.as_deref(), Some("succeeded"));
 
     assert!(store
         .delete_task_runner_link(&item.id, &second.id)
         .await
         .expect("delete link"));
-    assert!(store
+    let remaining = store
         .list_task_runner_links(&item.id)
         .await
-        .expect("list after delete")
-        .is_empty());
+        .expect("list after delete");
+    assert_eq!(remaining.len(), 1);
+    assert_eq!(remaining[0].task_runner_task_id, "task-runner-task-1");
 }

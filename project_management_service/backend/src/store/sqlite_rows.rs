@@ -185,33 +185,12 @@ pub(super) fn requirement_document_from_row(row: &SqliteRow) -> RequirementDocum
 pub(super) fn work_item_from_row(row: &SqliteRow) -> ProjectWorkItemRecord {
     let tags_json = row.get::<String, _>("tags_json").trim().to_string();
     let tags = serde_json::from_str::<Vec<String>>(&tags_json).unwrap_or_default();
-    let task_runner_enabled_tool_ids_json = row
-        .try_get::<Option<String>, _>("task_runner_enabled_tool_ids_json")
-        .ok()
-        .flatten()
-        .unwrap_or_else(|| "[]".to_string());
-    let task_runner_enabled_tool_ids =
-        serde_json::from_str::<Vec<String>>(&task_runner_enabled_tool_ids_json).unwrap_or_default();
-    let task_runner_skill_ids_json = row
-        .try_get::<Option<String>, _>("task_runner_skill_ids_json")
-        .ok()
-        .flatten()
-        .unwrap_or_else(|| "[]".to_string());
-    let task_runner_skill_ids =
-        serde_json::from_str::<Vec<String>>(&task_runner_skill_ids_json).unwrap_or_default();
     ProjectWorkItemRecord {
         id: row.get("id"),
         project_id: row.get("project_id"),
         requirement_id: row.get("requirement_id"),
         title: row.get("title"),
         description: row.get("description"),
-        task_runner_default_model_config_id: row
-            .try_get::<Option<String>, _>("task_runner_default_model_config_id")
-            .ok()
-            .flatten()
-            .unwrap_or_default(),
-        task_runner_enabled_tool_ids,
-        task_runner_skill_ids,
         status: ProjectWorkItemStatus::from_db(row.get::<String, _>("status").as_str()),
         priority: row.get("priority"),
         assignee_user_id: row.get("assignee_user_id"),
@@ -252,6 +231,14 @@ pub(super) fn task_runner_link_from_row(row: &SqliteRow) -> ProjectWorkItemTaskR
         task_runner_task_id: row.get("task_runner_task_id"),
         task_runner_run_id: row.get("task_runner_run_id"),
         link_type: row.get("link_type"),
+        execution_group_id: row.try_get("execution_group_id").ok().flatten(),
+        is_current: row
+            .try_get::<Option<i64>, _>("is_current")
+            .ok()
+            .flatten()
+            .map(|value| value != 0)
+            .unwrap_or(true),
+        superseded_at: row.try_get("superseded_at").ok().flatten(),
         source_session_id: row.try_get("source_session_id").ok().flatten(),
         source_user_message_id: row.try_get("source_user_message_id").ok().flatten(),
         task_runner_status: row.try_get("task_runner_status").ok().flatten(),

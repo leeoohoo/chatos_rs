@@ -34,13 +34,13 @@ mod tests {
 
     #[test]
     fn server_schema_names_match_contract_order() {
-        let names = schema_tool_names(schemas::project_management_server_tool_definitions(None));
+        let names = schema_tool_names(schemas::project_management_server_tool_definitions());
         assert_eq!(names, tools::PROJECT_MANAGEMENT_SERVER_TOOL_NAMES);
     }
 
     #[test]
     fn task_runner_schema_names_match_contract_order() {
-        let names = schema_tool_names(schemas::task_runner_builtin_tool_definitions(None));
+        let names = schema_tool_names(schemas::task_runner_builtin_tool_definitions());
         assert_eq!(names, tools::TASK_RUNNER_BUILTIN_TOOL_NAMES);
     }
 
@@ -51,14 +51,8 @@ mod tests {
     }
 
     #[test]
-    fn execution_options_emit_enum_and_explicit_default() {
-        let definitions = schemas::task_runner_builtin_tool_definitions(Some(
-            &schemas::TaskRunnerExecutionSchemaOptions {
-                model_config_ids: vec!["model-1".to_string(), "model-2".to_string()],
-                default_model_config_id: Some("model-2".to_string()),
-                tool_ids: vec!["tool-a".to_string(), "tool-b".to_string()],
-            },
-        ));
+    fn create_project_task_schema_excludes_task_runner_execution_options() {
+        let definitions = schemas::task_runner_builtin_tool_definitions();
         let create_task = definitions
             .iter()
             .find(|tool| {
@@ -69,29 +63,8 @@ mod tests {
             .pointer("/inputSchema/properties")
             .and_then(Value::as_object)
             .expect("properties");
-        let model_schema = properties
-            .get("task_runner_default_model_config_id")
-            .expect("model schema");
-        assert_eq!(
-            model_schema
-                .get("enum")
-                .and_then(Value::as_array)
-                .cloned()
-                .unwrap_or_default(),
-            vec![json!("model-1"), json!("model-2")]
-        );
-        assert_eq!(
-            model_schema.get("default").and_then(Value::as_str),
-            Some("model-2")
-        );
-        let tool_enum = properties
-            .get("task_runner_enabled_tool_ids")
-            .and_then(|schema| schema.get("items"))
-            .and_then(|items| items.get("enum"))
-            .and_then(Value::as_array)
-            .cloned()
-            .unwrap_or_default();
-        assert_eq!(tool_enum, vec![json!("tool-a"), json!("tool-b")]);
+        assert!(!properties.contains_key("task_runner_default_model_config_id"));
+        assert!(!properties.contains_key("task_runner_enabled_tool_ids"));
         assert!(!properties.contains_key("task_runner_skill_ids"));
         assert!(properties.contains_key("is_planning_task"));
         let list_tasks = definitions
@@ -181,8 +154,8 @@ mod tests {
     fn project_management_server_schema_snapshot_hash() {
         assert_schema_snapshot_hash(
             "project_management_server_tools",
-            schemas::project_management_server_tool_definitions(None),
-            0x2d118fe1cddf67cc,
+            schemas::project_management_server_tool_definitions(),
+            0x87a90c868d590da8,
         );
     }
 
@@ -190,8 +163,8 @@ mod tests {
     fn task_runner_builtin_schema_snapshot_hash() {
         assert_schema_snapshot_hash(
             "task_runner_builtin_tools",
-            schemas::task_runner_builtin_tool_definitions(None),
-            0x2d118fe1cddf67cc,
+            schemas::task_runner_builtin_tool_definitions(),
+            0x87a90c868d590da8,
         );
     }
 

@@ -11,21 +11,6 @@ use crate::store::AppStore;
 
 use super::ExecutionSyncError;
 
-pub(super) fn project_work_item_status_from_task_runner_status(
-    status: &str,
-) -> Option<ProjectWorkItemStatus> {
-    match status.trim().to_ascii_lowercase().as_str() {
-        "queued" | "running" | "processing" | "in_progress" => {
-            Some(ProjectWorkItemStatus::InProgress)
-        }
-        "succeeded" | "success" | "completed" | "done" => Some(ProjectWorkItemStatus::Done),
-        "failed" | "error" => Some(ProjectWorkItemStatus::Failed),
-        "blocked" => Some(ProjectWorkItemStatus::Blocked),
-        "cancelled" | "canceled" => Some(ProjectWorkItemStatus::Cancelled),
-        _ => None,
-    }
-}
-
 pub(super) async fn fail_related_requirements_if_work_item_failed(
     store: &AppStore,
     work_item: &ProjectWorkItemRecord,

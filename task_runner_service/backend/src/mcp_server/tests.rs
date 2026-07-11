@@ -21,8 +21,15 @@ use crate::services::{
     TaskProjectService, TaskService,
 };
 use crate::store::AppStore;
+use axum::{
+    extract::{Path, State},
+    http::HeaderMap,
+    routing::{get, post},
+    Json, Router,
+};
 use serde_json::json;
 use std::net::{IpAddr, Ipv4Addr};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 mod plan_profile;
@@ -54,6 +61,12 @@ fn valid_planner_create_request() -> CreateTaskRequest {
 
 async fn test_mcp_service() -> (TaskRunnerMcpService, TaskService, TaskProjectService) {
     let config = test_config();
+    test_mcp_service_with_config(config).await
+}
+
+async fn test_mcp_service_with_config(
+    config: AppConfig,
+) -> (TaskRunnerMcpService, TaskService, TaskProjectService) {
     let store = AppStore::new(&config).await.expect("store");
     let task_service = TaskService::new(config.clone(), store.clone());
     let model_config_service = ModelConfigService::new(store.clone());
@@ -75,6 +88,85 @@ async fn test_mcp_service() -> (TaskRunnerMcpService, TaskService, TaskProjectSe
         task_service,
         task_project_service,
     )
+}
+
+#[derive(Debug, Clone)]
+struct CapturedProjectSyncCall {
+    work_item_id: String,
+    sync_secret: Option<String>,
+    payload: serde_json::Value,
+}
+
+type CapturedProjectSyncCalls = Arc<Mutex<Vec<CapturedProjectSyncCall>>>;
+
+async fn test_project_sync_server() -> (String, CapturedProjectSyncCalls) {
+    let calls = Arc::new(Mutex::new(Vec::new()));
+    let app = Router::new()
+        .route(
+            "/api/chatos-sync/work-items/:work_item_id/task-runner-status",
+            post(capture_project_sync_status),
+        )
+        .route(
+            "/api/chatos-sync/projects/:project_id",
+            get(get_project_sync_record),
+        )
+        .with_state(calls.clone());
+    let listener = tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+        .await
+        .expect("bind project sync mock");
+    let addr = listener.local_addr().expect("project sync mock addr");
+    tokio::spawn(async move {
+        axum::serve(listener, app)
+            .await
+            .expect("project sync mock server");
+    });
+    (format!("http://{addr}"), calls)
+}
+
+async fn capture_project_sync_status(
+    State(calls): State<CapturedProjectSyncCalls>,
+    Path(work_item_id): Path<String>,
+    headers: HeaderMap,
+    Json(payload): Json<serde_json::Value>,
+) -> Json<serde_json::Value> {
+    let sync_secret = headers
+        .get("X-Project-Service-Sync-Secret")
+        .and_then(|value| value.to_str().ok())
+        .map(ToOwned::to_owned);
+    calls
+        .lock()
+        .expect("project sync calls")
+        .push(CapturedProjectSyncCall {
+            work_item_id,
+            sync_secret,
+            payload,
+        });
+    Json(json!({ "ok": true }))
+}
+
+async fn get_project_sync_record(
+    Path(project_id): Path<String>,
+    headers: HeaderMap,
+) -> Json<serde_json::Value> {
+    let sync_secret = headers
+        .get("X-Project-Service-Sync-Secret")
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or_default();
+    assert_eq!(sync_secret, "project-sync-secret");
+    Json(json!({
+        "id": project_id,
+        "owner_user_id": "owner-a",
+        "owner_username": "owner-a-name",
+        "owner_display_name": "owner-a name",
+        "name": "Project A",
+        "root_path": null,
+        "git_url": null,
+        "description": null,
+        "status": "active",
+        "created_at": "2026-01-01T00:00:00Z",
+        "updated_at": "2026-01-01T00:00:00Z",
+        "archived_at": null
+    }))
 }
 
 fn test_config() -> AppConfig {

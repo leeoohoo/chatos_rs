@@ -17,7 +17,6 @@ use self::status_transition::{
     block_related_requirements_if_work_item_blocked,
     complete_related_requirements_if_work_items_done,
     fail_related_requirements_if_work_item_failed,
-    project_work_item_status_from_task_runner_status,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -62,6 +61,10 @@ pub async fn sync_task_runner_work_item_status(
                 task_runner_task_id: task_runner_task_id.to_string(),
                 task_runner_run_id: input.task_runner_run_id,
                 link_type: Some("execution".to_string()),
+                execution_group_id: normalized_optional(input.execution_group_id)
+                    .or_else(|| normalized_optional(input.source_user_message_id.clone())),
+                is_current: Some(true),
+                superseded_at: None,
                 source_session_id: input.source_session_id,
                 source_user_message_id: input.source_user_message_id,
                 task_runner_status: task_runner_status.clone(),
@@ -73,9 +76,20 @@ pub async fn sync_task_runner_work_item_status(
         .await
         .map_err(ExecutionSyncError::bad_request)?;
 
-    let work_item = if let Some(next_status) = task_runner_status
-        .as_deref()
-        .and_then(project_work_item_status_from_task_runner_status)
+    let current_links = store
+        .list_task_runner_links(work_item_id)
+        .await
+        .map_err(ExecutionSyncError::bad_request)?
+        .into_iter()
+        .filter(|candidate| candidate.is_current)
+        .filter(|candidate| {
+            link.execution_group_id
+                .as_deref()
+                .is_none_or(|group_id| candidate.execution_group_id.as_deref() == Some(group_id))
+        })
+        .collect::<Vec<_>>();
+    let work_item = if let Some(next_status) =
+        aggregate_work_item_status_from_links(current_links.as_slice())
     {
         if item.status == next_status {
             item
@@ -110,6 +124,93 @@ pub async fn sync_task_runner_work_item_status(
     }
 
     Ok(SyncTaskRunnerWorkItemStatusResponse { work_item, link })
+}
+
+pub async fn sync_task_runner_task_status(
+    store: &AppStore,
+    task_runner_task_id: &str,
+    mut input: SyncTaskRunnerWorkItemStatusRequest,
+) -> Result<SyncTaskRunnerWorkItemStatusResponse, ExecutionSyncError> {
+    let task_runner_task_id = task_runner_task_id.trim();
+    if task_runner_task_id.is_empty() {
+        return Err(ExecutionSyncError::bad_request(
+            "task_runner_task_id is required",
+        ));
+    }
+    let request_task_id = input.task_runner_task_id.trim();
+    if request_task_id.is_empty() {
+        input.task_runner_task_id = task_runner_task_id.to_string();
+    } else if request_task_id != task_runner_task_id {
+        return Err(ExecutionSyncError::bad_request(
+            "task_runner_task_id path and body mismatch",
+        ));
+    }
+    let link = store
+        .get_task_runner_link_by_task_id(task_runner_task_id)
+        .await
+        .map_err(ExecutionSyncError::bad_request)?
+        .ok_or_else(|| {
+            ExecutionSyncError::not_found(format!(
+                "Task Runner 执行任务未绑定项目任务: {task_runner_task_id}"
+            ))
+        })?;
+    sync_task_runner_work_item_status(store, &link.work_item_id, input).await
+}
+
+fn aggregate_work_item_status_from_links(
+    links: &[crate::models::ProjectWorkItemTaskRunnerLinkRecord],
+) -> Option<ProjectWorkItemStatus> {
+    if links.is_empty() {
+        return None;
+    }
+    let statuses = links
+        .iter()
+        .filter_map(|link| normalized_optional(link.task_runner_status.clone()))
+        .map(|status| status.to_ascii_lowercase())
+        .collect::<Vec<_>>();
+    if statuses.is_empty() {
+        return None;
+    }
+    if statuses
+        .iter()
+        .any(|status| matches!(status.as_str(), "failed" | "error"))
+    {
+        return Some(ProjectWorkItemStatus::Failed);
+    }
+    if statuses.iter().any(|status| status == "blocked") {
+        return Some(ProjectWorkItemStatus::Blocked);
+    }
+    if statuses.iter().any(|status| {
+        matches!(
+            status.as_str(),
+            "queued" | "running" | "processing" | "in_progress"
+        )
+    }) {
+        return Some(ProjectWorkItemStatus::InProgress);
+    }
+    if statuses.iter().all(|status| {
+        matches!(
+            status.as_str(),
+            "succeeded" | "success" | "completed" | "done"
+        )
+    }) {
+        return Some(ProjectWorkItemStatus::Done);
+    }
+    if statuses
+        .iter()
+        .all(|status| matches!(status.as_str(), "cancelled" | "canceled"))
+    {
+        return Some(ProjectWorkItemStatus::Cancelled);
+    }
+    if statuses.iter().all(|status| {
+        matches!(
+            status.as_str(),
+            "succeeded" | "success" | "completed" | "done" | "cancelled" | "canceled"
+        )
+    }) {
+        return Some(ProjectWorkItemStatus::Cancelled);
+    }
+    None
 }
 
 pub async fn sync_requirement_execution_state(
@@ -311,9 +412,6 @@ mod tests {
                 CreateProjectWorkItemRequest {
                     title: title.to_string(),
                     description: None,
-                    task_runner_default_model_config_id: "model-config-test".to_string(),
-                    task_runner_enabled_tool_ids: vec!["filesystem".to_string()],
-                    task_runner_skill_ids: Vec::new(),
                     status: None,
                     priority: None,
                     assignee_user_id: None,
@@ -574,5 +672,85 @@ mod tests {
             .expect("parent");
         assert_eq!(child_after.status, RequirementStatus::Blocked);
         assert_eq!(parent_after.status, RequirementStatus::Blocked);
+    }
+
+    #[tokio::test]
+    async fn work_item_waits_for_all_current_execution_tasks_before_completion() {
+        let store = test_store().await;
+        let project = create_test_project(&store).await;
+        let requirement = create_test_requirement(&store, &project.id, None, "Requirement").await;
+        store
+            .update_requirement(
+                &requirement.id,
+                UpdateRequirementRequest {
+                    status: Some(RequirementStatus::InProgress),
+                    ..UpdateRequirementRequest::default()
+                },
+            )
+            .await
+            .expect("mark requirement in progress");
+        let item = create_test_work_item(&store, &requirement, "Project task").await;
+
+        for task_id in ["task-runner-1", "task-runner-2"] {
+            let response = sync_task_runner_work_item_status(
+                &store,
+                &item.id,
+                SyncTaskRunnerWorkItemStatusRequest {
+                    task_runner_task_id: task_id.to_string(),
+                    task_runner_status: Some("queued".to_string()),
+                    execution_group_id: Some("execution-group-1".to_string()),
+                    ..SyncTaskRunnerWorkItemStatusRequest::default()
+                },
+            )
+            .await
+            .expect("sync queued task status");
+            assert_eq!(response.work_item.status, ProjectWorkItemStatus::InProgress);
+        }
+
+        let first_done = sync_task_runner_work_item_status(
+            &store,
+            &item.id,
+            SyncTaskRunnerWorkItemStatusRequest {
+                task_runner_task_id: "task-runner-1".to_string(),
+                task_runner_status: Some("succeeded".to_string()),
+                execution_group_id: Some("execution-group-1".to_string()),
+                ..SyncTaskRunnerWorkItemStatusRequest::default()
+            },
+        )
+        .await
+        .expect("sync first done task status");
+        assert_eq!(
+            first_done.work_item.status,
+            ProjectWorkItemStatus::InProgress
+        );
+        let requirement_before_all_done = store
+            .get_requirement(&requirement.id)
+            .await
+            .expect("get requirement")
+            .expect("requirement");
+        assert_eq!(
+            requirement_before_all_done.status,
+            RequirementStatus::InProgress
+        );
+
+        let second_done = sync_task_runner_work_item_status(
+            &store,
+            &item.id,
+            SyncTaskRunnerWorkItemStatusRequest {
+                task_runner_task_id: "task-runner-2".to_string(),
+                task_runner_status: Some("succeeded".to_string()),
+                execution_group_id: Some("execution-group-1".to_string()),
+                ..SyncTaskRunnerWorkItemStatusRequest::default()
+            },
+        )
+        .await
+        .expect("sync second done task status");
+        assert_eq!(second_done.work_item.status, ProjectWorkItemStatus::Done);
+        let requirement_after_all_done = store
+            .get_requirement(&requirement.id)
+            .await
+            .expect("get requirement")
+            .expect("requirement");
+        assert_eq!(requirement_after_all_done.status, RequirementStatus::Done);
     }
 }

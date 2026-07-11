@@ -6,7 +6,8 @@ use axum::Json;
 use serde_json::{json, Value};
 
 use crate::config::{
-    api_url, default_device_name, normalize_optional, ClientConfig, DEFAULT_USER_SERVICE_BASE_URL,
+    api_url, default_device_name, ensure_remote_url_allowed, normalize_optional, ClientConfig,
+    DEFAULT_USER_SERVICE_BASE_URL,
 };
 use crate::registration::{disconnect_device, ensure_success};
 use crate::{tracing_stdout, AuthState, LocalRuntime};
@@ -37,6 +38,10 @@ async fn local_auth(
     let cloud_base_url = normalize_required(req.cloud_base_url.as_str(), "cloud_base_url")?;
     let user_service_base_url = normalize_optional(req.user_service_base_url.as_deref())
         .unwrap_or_else(|| DEFAULT_USER_SERVICE_BASE_URL.to_string());
+    ensure_remote_url_allowed("cloud_base_url", cloud_base_url.as_str())
+        .map_err(|err| LocalApiError::bad_request(err.to_string()))?;
+    ensure_remote_url_allowed("user_service_base_url", user_service_base_url.as_str())
+        .map_err(|err| LocalApiError::bad_request(err.to_string()))?;
     let username = normalize_required(req.username.as_str(), "username")?;
     let password = normalize_required(req.password.as_str(), "password")?;
     let endpoint = if register {

@@ -25,4 +25,6 @@ pub(crate) struct ChatStreamRequest {
     pub remote_connection_id: Option<String>,
     #[serde(skip_deserializing)]
     pub user_message_id: Option<String>,
+    #[serde(skip_deserializing)]
+    pub project_requirement_execution_planner: bool,
 }

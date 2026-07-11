@@ -2,11 +2,25 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::path::PathBuf;
+use std::process::Stdio;
 
 use anyhow::Result;
+use axum::body::Body;
+use axum::extract::State;
+use axum::http::{header, HeaderMap, Method, Request, StatusCode};
+use axum::middleware::{self, Next};
+use axum::response::{IntoResponse, Response};
 use axum::routing::{delete, get, post};
-use axum::Router;
+use axum::{Json, Router};
+use hyper_util::rt::{TokioExecutor, TokioIo};
+use hyper_util::server::conn::auto::Builder as HyperConnectionBuilder;
+use hyper_util::service::TowerToHyperService;
+use serde_json::json;
+use sha2::{Digest, Sha256};
+use tokio::io::{AsyncRead, AsyncWrite};
 use tower_http::cors::{Any, CorsLayer};
+use tower_http::services::{ServeDir, ServeFile};
 
 use crate::config::{optional_env, DEFAULT_LOCAL_API_PORT};
 use crate::{tracing_stdout, LocalRuntime};
@@ -21,22 +35,55 @@ use handlers::{
     local_docker_status, local_enable_mcp_config, local_fs_list_handler, local_get_mcp_config,
     local_initialize_sandbox_image, local_login, local_logout, local_mcp_configs,
     local_model_configs, local_model_settings, local_pending_approvals,
-    local_preview_model_catalog, local_register, local_remove_workspace, local_runtime_settings,
-    local_sandbox_image_jobs, local_sandbox_image_mcp, local_sandbox_images, local_sandbox_leases,
-    local_save_mcp_config, local_save_model_config, local_status, local_sync_mcp_config,
-    local_sync_model_config, local_terminal_exec, local_test_mcp_config, local_toggle_sandbox,
+    local_preview_model_catalog, local_register, local_remove_workspace,
+    local_request_system_permission, local_runtime_settings, local_sandbox_image_jobs,
+    local_sandbox_image_mcp, local_sandbox_images, local_sandbox_leases, local_save_mcp_config,
+    local_save_model_config, local_status, local_sync_mcp_config, local_sync_model_config,
+    local_system_permissions, local_terminal_exec, local_test_mcp_config, local_toggle_sandbox,
     local_update_approval_settings, local_update_mcp_config, local_update_model_config,
     local_update_model_settings, local_update_runtime_settings,
 };
 
 pub(crate) async fn serve_local_api(runtime: LocalRuntime) -> Result<()> {
-    let bind_addr = SocketAddr::new(
-        IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
-        optional_env("LOCAL_CONNECTOR_CORE_API_PORT")
-            .and_then(|value| value.parse::<u16>().ok())
-            .unwrap_or(DEFAULT_LOCAL_API_PORT),
-    );
-    let app = Router::new()
+    let app = local_api_app(runtime);
+    if let Some(endpoint) = optional_env("LOCAL_CONNECTOR_IPC_ENDPOINT")
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+    {
+        if env_flag("LOCAL_CONNECTOR_ENABLE_TCP_API") {
+            let tcp_app = app.clone();
+            tokio::spawn(async move {
+                if let Err(err) = serve_tcp_local_api(tcp_app).await {
+                    tracing_stdout(format!("local connector TCP API failed: {err}").as_str());
+                }
+            });
+        }
+        serve_ipc_local_api(endpoint, app).await
+    } else {
+        serve_tcp_local_api(app).await
+    }
+}
+
+fn local_api_app(runtime: LocalRuntime) -> Router {
+    let frontend_dist_dir =
+        local_frontend_dist_dir().unwrap_or_else(|| PathBuf::from("frontend/dist"));
+    let frontend_service = ServeDir::new(frontend_dist_dir.clone())
+        .not_found_service(ServeFile::new(frontend_dist_dir.join("index.html")));
+    let api_routes = local_api_routes();
+    Router::new()
+        .merge(api_routes)
+        .fallback_service(frontend_service)
+        .with_state(runtime)
+        .layer(
+            CorsLayer::new()
+                .allow_origin(Any)
+                .allow_methods(Any)
+                .allow_headers(Any),
+        )
+}
+
+fn local_api_routes() -> Router<LocalRuntime> {
+    Router::new()
         .route("/api/local/status", get(local_status))
         .route("/api/local/auth/login", post(local_login))
         .route("/api/local/auth/register", post(local_register))
@@ -55,6 +102,14 @@ pub(crate) async fn serve_local_api(runtime: LocalRuntime) -> Result<()> {
         .route(
             "/api/local/runtime-settings",
             get(local_runtime_settings).post(local_update_runtime_settings),
+        )
+        .route(
+            "/api/local/system-permissions",
+            get(local_system_permissions),
+        )
+        .route(
+            "/api/local/system-permissions/{permission_id}/request",
+            post(local_request_system_permission),
         )
         .route("/api/local/sandbox/toggle", post(local_toggle_sandbox))
         .route("/api/local/sandbox/images", get(local_sandbox_images))
@@ -131,15 +186,231 @@ pub(crate) async fn serve_local_api(runtime: LocalRuntime) -> Result<()> {
             "/api/local/approval/pending/{id}/deny",
             post(local_deny_pending_approval),
         )
-        .with_state(runtime)
-        .layer(
-            CorsLayer::new()
-                .allow_origin(Any)
-                .allow_methods(Any)
-                .allow_headers(Any),
-        );
+        .route_layer(middleware::from_fn_with_state(
+            local_desktop_auth_token(),
+            require_local_desktop_auth,
+        ))
+}
+
+async fn serve_tcp_local_api(app: Router) -> Result<()> {
+    let bind_addr = SocketAddr::new(
+        IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
+        optional_env("LOCAL_CONNECTOR_CORE_API_PORT")
+            .and_then(|value| value.parse::<u16>().ok())
+            .unwrap_or(DEFAULT_LOCAL_API_PORT),
+    );
     let listener = tokio::net::TcpListener::bind(bind_addr).await?;
     tracing_stdout(format!("local connector core API listening on http://{bind_addr}").as_str());
+    if should_open_local_ui() {
+        let url = format!("http://{bind_addr}");
+        tokio::spawn(async move {
+            if let Err(err) = open_local_ui(url.as_str()).await {
+                tracing_stdout(format!("open local connector UI failed: {err}").as_str());
+            }
+        });
+    }
     axum::serve(listener, app).await?;
     Ok(())
+}
+
+#[cfg(windows)]
+async fn serve_ipc_local_api(endpoint: String, app: Router) -> Result<()> {
+    use anyhow::Context;
+    use tokio::net::windows::named_pipe::ServerOptions;
+
+    tracing_stdout(format!("local connector core API listening on named pipe {endpoint}").as_str());
+    loop {
+        let server = ServerOptions::new()
+            .create(endpoint.as_str())
+            .with_context(|| format!("create local connector API named pipe {endpoint}"))?;
+        server
+            .connect()
+            .await
+            .with_context(|| format!("accept local connector API named pipe {endpoint}"))?;
+        let app = app.clone();
+        tokio::spawn(async move {
+            if let Err(err) = serve_ipc_connection(server, app).await {
+                tracing_stdout(format!("local connector IPC connection failed: {err}").as_str());
+            }
+        });
+    }
+}
+
+#[cfg(unix)]
+async fn serve_ipc_local_api(endpoint: String, app: Router) -> Result<()> {
+    use anyhow::Context;
+    use std::os::unix::fs::PermissionsExt;
+    use tokio::net::UnixListener;
+
+    let path = PathBuf::from(endpoint);
+    if path.exists() {
+        std::fs::remove_file(&path).with_context(|| {
+            format!("remove stale local connector API socket {}", path.display())
+        })?;
+    }
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).with_context(|| {
+            format!("create local connector API socket dir {}", parent.display())
+        })?;
+    }
+    let listener = UnixListener::bind(&path)
+        .with_context(|| format!("bind local connector API socket {}", path.display()))?;
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))
+        .with_context(|| format!("restrict local connector API socket {}", path.display()))?;
+    tracing_stdout(
+        format!(
+            "local connector core API listening on Unix socket {}",
+            path.display()
+        )
+        .as_str(),
+    );
+    loop {
+        let (stream, _) = listener
+            .accept()
+            .await
+            .with_context(|| format!("accept local connector API socket {}", path.display()))?;
+        let app = app.clone();
+        tokio::spawn(async move {
+            if let Err(err) = serve_ipc_connection(stream, app).await {
+                tracing_stdout(format!("local connector IPC connection failed: {err}").as_str());
+            }
+        });
+    }
+}
+
+async fn serve_ipc_connection<I>(stream: I, app: Router) -> Result<()>
+where
+    I: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+{
+    let builder = HyperConnectionBuilder::new(TokioExecutor::new());
+    builder
+        .serve_connection(TokioIo::new(stream), TowerToHyperService::new(app))
+        .await
+        .map_err(|err| anyhow::anyhow!("serve local connector IPC API connection: {err}"))?;
+    Ok(())
+}
+
+fn local_frontend_dist_dir() -> Option<PathBuf> {
+    if let Some(value) = optional_env("LOCAL_CONNECTOR_FRONTEND_DIST") {
+        let path = PathBuf::from(value);
+        if path.join("index.html").is_file() {
+            return Some(path);
+        }
+    }
+
+    let mut candidates = Vec::new();
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(exe_dir) = exe.parent() {
+            candidates.push(exe_dir.join("frontend").join("dist"));
+            candidates.push(exe_dir.join("resources").join("frontend").join("dist"));
+            if let Some(contents_dir) = exe_dir.parent() {
+                candidates.push(contents_dir.join("Resources").join("frontend").join("dist"));
+            }
+        }
+    }
+    if let Ok(current_dir) = std::env::current_dir() {
+        candidates.push(current_dir.join("frontend").join("dist"));
+        candidates.push(
+            current_dir
+                .join("local_connector_client")
+                .join("frontend")
+                .join("dist"),
+        );
+    }
+    for ancestor in std::path::Path::new(env!("CARGO_MANIFEST_DIR")).ancestors() {
+        candidates.push(ancestor.join("frontend").join("dist"));
+        candidates.push(
+            ancestor
+                .join("local_connector_client")
+                .join("frontend")
+                .join("dist"),
+        );
+    }
+
+    candidates
+        .into_iter()
+        .find(|candidate| candidate.join("index.html").is_file())
+}
+
+fn should_open_local_ui() -> bool {
+    std::env::args().any(|arg| arg == "--open") || env_flag("LOCAL_CONNECTOR_OPEN_UI")
+}
+
+fn env_flag(name: &str) -> bool {
+    optional_env(name)
+        .map(|value| {
+            matches!(
+                value.to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes" | "on"
+            )
+        })
+        .unwrap_or(false)
+}
+
+async fn open_local_ui(url: &str) -> Result<()> {
+    let mut command = match std::env::consts::OS {
+        "macos" => {
+            let mut command = tokio::process::Command::new("open");
+            command.arg(url);
+            command
+        }
+        "windows" => {
+            let mut command = tokio::process::Command::new("cmd");
+            command.args(["/C", "start", "", url]);
+            command
+        }
+        _ => {
+            let mut command = tokio::process::Command::new("xdg-open");
+            command.arg(url);
+            command
+        }
+    };
+    command
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    command.spawn()?.wait().await?;
+    Ok(())
+}
+
+fn local_desktop_auth_token() -> Option<String> {
+    optional_env("LOCAL_CONNECTOR_DESKTOP_AUTH_TOKEN")
+}
+
+async fn require_local_desktop_auth(
+    State(expected_token): State<Option<String>>,
+    request: Request<Body>,
+    next: Next,
+) -> Response {
+    if request.method() == Method::OPTIONS || expected_token.is_none() {
+        return next.run(request).await;
+    }
+    let expected_token = expected_token.unwrap_or_default();
+    if bearer_token_matches(request.headers(), expected_token.as_str()) {
+        return next.run(request).await;
+    }
+    (
+        StatusCode::UNAUTHORIZED,
+        Json(json!({
+            "error": "Local Connector desktop authorization is required"
+        })),
+    )
+        .into_response()
+}
+
+fn bearer_token_matches(headers: &HeaderMap, expected_token: &str) -> bool {
+    let Some(token) = headers
+        .get(header::AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.trim().strip_prefix("Bearer "))
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return false;
+    };
+    token_digest(token) == token_digest(expected_token)
+}
+
+fn token_digest(value: &str) -> Vec<u8> {
+    Sha256::digest(value.as_bytes()).to_vec()
 }

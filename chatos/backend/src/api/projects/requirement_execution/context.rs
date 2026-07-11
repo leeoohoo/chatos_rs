@@ -5,9 +5,6 @@ use serde_json::{json, Value};
 
 use crate::config::Config;
 use crate::core::auth::AuthUser;
-use crate::core::internal_context_locale::{
-    internal_context_locale_from_settings, InternalContextLocale,
-};
 use crate::core::messages::{
     build_message, create_message_and_maybe_rename, ensure_message_metadata_object,
     NewMessageFields,
@@ -16,9 +13,7 @@ use crate::core::validation::normalize_non_empty;
 use crate::models::memory_mapping_types::MemoryProjectContactDto;
 use crate::models::message::Message;
 use crate::models::session::Session;
-use crate::services::{
-    chatos_memory_mappings, chatos_sessions, task_runner_api_client, user_settings,
-};
+use crate::services::{chatos_memory_mappings, chatos_sessions, task_runner_api_client};
 
 use super::super::session_resolver::resolve_project_contact_session_id;
 use super::errors::HandlerError;
@@ -161,11 +156,8 @@ pub(in crate::api::projects) async fn create_execution_message(
     requirement: &RequirementPlanItem,
     contact: &MemoryProjectContactDto,
     work_items: &[WorkItemPlanItem],
+    content: String,
 ) -> Result<Message, HandlerError> {
-    let content = format!(
-        "执行需求：{}\n\n本消息由项目需求执行按钮创建，用于关联 Task Runner 执行任务，不会发送给 AI 对话。",
-        requirement.title
-    );
     let mut message = build_message(
         session.id.clone(),
         NewMessageFields {
@@ -210,18 +202,4 @@ pub(in crate::api::projects) async fn create_execution_message(
     create_message_and_maybe_rename(message)
         .await
         .map_err(|err| HandlerError::internal("创建执行消息失败", err))
-}
-
-pub(in crate::api::projects) async fn load_task_runner_builtin_prompt_locale(
-    user_id: &str,
-) -> Result<String, HandlerError> {
-    let settings = user_settings::get_effective_user_settings(Some(user_id.to_string()))
-        .await
-        .map_err(|err| HandlerError::internal("读取 Chatos 用户设置失败", err))?;
-    let locale = internal_context_locale_from_settings(&settings);
-    Ok(if locale.is_english() {
-        InternalContextLocale::ENGLISH_KEY.to_string()
-    } else {
-        InternalContextLocale::DEFAULT_KEY.to_string()
-    })
 }

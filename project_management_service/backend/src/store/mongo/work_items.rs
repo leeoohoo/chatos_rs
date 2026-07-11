@@ -12,6 +12,19 @@ use crate::auth::CurrentUser;
 use crate::models::*;
 
 impl MongoStore {
+    pub async fn get_task_runner_link_by_task_id(
+        &self,
+        task_runner_task_id: &str,
+    ) -> Result<Option<ProjectWorkItemTaskRunnerLinkRecord>, String> {
+        self.task_runner_links
+            .find_one(
+                doc! { "task_runner_task_id": task_runner_task_id.trim() },
+                None,
+            )
+            .await
+            .map_err(|err| err.to_string())
+    }
+
     pub async fn list_work_items_by_project(
         &self,
         project_id: &str,
@@ -32,16 +45,7 @@ impl MongoStore {
         }
         if let Some(keyword) = keyword_or_filter(
             keyword,
-            &[
-                "id",
-                "requirement_id",
-                "title",
-                "description",
-                "tags",
-                "task_runner_default_model_config_id",
-                "task_runner_enabled_tool_ids",
-                "task_runner_skill_ids",
-            ],
+            &["id", "requirement_id", "title", "description", "tags"],
         ) {
             filter.insert("$or", keyword);
         }
@@ -85,16 +89,7 @@ impl MongoStore {
         }
         if let Some(keyword) = keyword_or_filter(
             keyword,
-            &[
-                "id",
-                "requirement_id",
-                "title",
-                "description",
-                "tags",
-                "task_runner_default_model_config_id",
-                "task_runner_enabled_tool_ids",
-                "task_runner_skill_ids",
-            ],
+            &["id", "requirement_id", "title", "description", "tags"],
         ) {
             filter.insert("$or", keyword);
         }
@@ -153,15 +148,6 @@ impl MongoStore {
         user: &CurrentUser,
     ) -> Result<ProjectWorkItemRecord, String> {
         validate_required("title", &input.title)?;
-        validate_required(
-            "task_runner_default_model_config_id",
-            &input.task_runner_default_model_config_id,
-        )?;
-        let task_runner_enabled_tool_ids = normalize_id_list(input.task_runner_enabled_tool_ids);
-        if task_runner_enabled_tool_ids.is_empty() {
-            return Err("task_runner_enabled_tool_ids is required".to_string());
-        }
-        let task_runner_skill_ids = normalize_id_list(input.task_runner_skill_ids);
         self.ensure_requirement_technical_document_ready(&requirement.id)
             .await?;
         let now = now_rfc3339();
@@ -171,12 +157,6 @@ impl MongoStore {
             requirement_id: requirement.id.clone(),
             title: input.title.trim().to_string(),
             description: normalized_optional(input.description),
-            task_runner_default_model_config_id: input
-                .task_runner_default_model_config_id
-                .trim()
-                .to_string(),
-            task_runner_enabled_tool_ids,
-            task_runner_skill_ids,
             status: input.status.unwrap_or_default(),
             priority: input.priority.unwrap_or_default(),
             assignee_user_id: normalized_optional(input.assignee_user_id),
@@ -495,7 +475,10 @@ impl MongoStore {
         let now = now_rfc3339();
         let existing = self
             .task_runner_links
-            .find_one(doc! { "work_item_id": work_item_id }, None)
+            .find_one(
+                doc! { "task_runner_task_id": task_runner_task_id.as_str() },
+                None,
+            )
             .await
             .map_err(|err| err.to_string())?;
         let link = ProjectWorkItemTaskRunnerLinkRecord {
@@ -507,6 +490,9 @@ impl MongoStore {
             task_runner_task_id,
             task_runner_run_id: normalized_optional(input.task_runner_run_id),
             link_type,
+            execution_group_id: normalized_optional(input.execution_group_id),
+            is_current: input.is_current.unwrap_or(true),
+            superseded_at: normalized_optional(input.superseded_at),
             source_session_id: normalized_optional(input.source_session_id),
             source_user_message_id: normalized_optional(input.source_user_message_id),
             task_runner_status: normalized_optional(input.task_runner_status),
@@ -522,7 +508,7 @@ impl MongoStore {
         upsert_one(
             &self.task_runner_links,
             doc! {
-                "work_item_id": work_item_id,
+                "task_runner_task_id": link.task_runner_task_id.as_str(),
             },
             &link,
         )

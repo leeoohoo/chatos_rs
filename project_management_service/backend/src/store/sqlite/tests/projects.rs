@@ -132,9 +132,6 @@ async fn agent_created_records_keep_agent_creator_and_real_owner() {
             CreateProjectWorkItemRequest {
                 title: "Work item".to_string(),
                 description: None,
-                task_runner_default_model_config_id: "model-config-test".to_string(),
-                task_runner_enabled_tool_ids: vec!["filesystem".to_string()],
-                task_runner_skill_ids: Vec::new(),
                 status: None,
                 priority: None,
                 assignee_user_id: None,

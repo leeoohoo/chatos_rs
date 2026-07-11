@@ -107,6 +107,76 @@ pub(crate) fn create_tasks_with_prerequisites_schema() -> Value {
     })
 }
 
+pub(crate) fn create_project_execution_tasks_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "project_id": {
+                "type": "string",
+                "minLength": 1,
+                "description": "Project id for this requirement execution."
+            },
+            "requirement_id": {
+                "type": "string",
+                "minLength": 1,
+                "description": "Requirement id being executed."
+            },
+            "execution_group_id": {
+                "type": "string",
+                "description": "Execution group id. Use the source_user_message_id provided by Chatos when available."
+            },
+            "tasks": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 50,
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "client_ref": {
+                            "type": "string",
+                            "minLength": 1,
+                            "description": "Temporary reference within this tool call. Task Runner returns real task ids."
+                        },
+                        "project_task_id": {
+                            "type": "string",
+                            "minLength": 1,
+                            "description": "Project-management task/work item id this execution task contributes to."
+                        },
+                        "title": { "type": "string", "minLength": 1 },
+                        "description": { "type": "string" },
+                        "objective": { "type": "string", "minLength": 1 },
+                        "input_payload": {},
+                        "priority": { "type": "integer" },
+                        "tags": { "type": "array", "items": { "type": "string" } },
+                        "default_model_config_id": {
+                            "type": "string",
+                            "description": "Optional Task Runner execution model config id. Omit to use the current user's default."
+                        },
+                        "enabled_builtin_kinds": {
+                            "type": "array",
+                            "items": builtin_mcp_kind_item_schema(),
+                            "uniqueItems": true,
+                            "description": builtin_mcp_kind_schema_description()
+                        },
+                        "external_mcp_config_ids": external_mcp_config_ids_schema(),
+                        "prerequisite_refs": {
+                            "type": "array",
+                            "items": { "type": "string", "minLength": 1 },
+                            "uniqueItems": true,
+                            "description": "References to other client_ref values from this same request."
+                        },
+                        "prerequisite_task_ids": prerequisite_task_ids_schema()
+                    },
+                    "required": ["client_ref", "project_task_id", "title", "objective"],
+                    "additionalProperties": false
+                }
+            }
+        },
+        "required": ["project_id", "requirement_id", "tasks"],
+        "additionalProperties": false
+    })
+}
+
 pub(crate) fn task_mcp_config_schema() -> Value {
     json!({
         "type": "object",

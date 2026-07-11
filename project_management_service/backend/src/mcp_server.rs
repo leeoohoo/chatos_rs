@@ -5,12 +5,10 @@ use axum::http::StatusCode;
 use chatos_project_mcp_contract::{mcp, schemas};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use tracing::warn;
 
 use crate::auth::CurrentUser;
 use crate::mcp_tools;
 use crate::state::AppState;
-use crate::task_runner_api_client;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JsonRpcRequest {
@@ -64,37 +62,7 @@ pub fn server_info() -> McpServerInfo {
 }
 
 pub fn tool_definitions() -> Vec<Value> {
-    schemas::project_management_server_tool_definitions(None)
-}
-
-pub fn tool_definitions_with_execution_options(
-    execution_options: Option<&task_runner_api_client::TaskRunnerExecutionOptions>,
-) -> Vec<Value> {
-    let execution_options =
-        execution_options.map(|options| schemas::TaskRunnerExecutionSchemaOptions {
-            model_config_ids: options.model_config_ids(),
-            default_model_config_id: None,
-            tool_ids: options.tool_ids(),
-        });
-    schemas::project_management_server_tool_definitions(execution_options.as_ref())
-}
-
-async fn tool_definitions_for_user(state: &AppState, current_user: &CurrentUser) -> Vec<Value> {
-    let Some(owner_user_id) = current_user.effective_owner_user_id() else {
-        warn!("project management MCP tools/list cannot enrich Task Runner execution options: missing owner user id");
-        return tool_definitions();
-    };
-    match task_runner_api_client::fetch_execution_options(&state.config, owner_user_id).await {
-        Ok(options) => tool_definitions_with_execution_options(Some(&options)),
-        Err(err) => {
-            warn!(
-                owner_user_id,
-                error = err.as_str(),
-                "project management MCP tools/list failed to fetch Task Runner execution options"
-            );
-            tool_definitions()
-        }
-    }
+    schemas::project_management_server_tool_definitions()
 }
 
 pub async fn handle_jsonrpc(
@@ -117,7 +85,7 @@ pub async fn handle_jsonrpc(
         })),
         mcp::METHOD_PING => Ok(json!({})),
         mcp::METHOD_TOOLS_LIST => {
-            let tools = tool_definitions_for_user(&state, &current_user).await;
+            let tools = tool_definitions();
             Ok(json!({ "tools": tools }))
         }
         mcp::METHOD_TOOLS_CALL => {
@@ -258,13 +226,8 @@ mod tests {
     }
 
     #[test]
-    fn create_project_task_schema_exposes_task_runner_execution_options() {
-        let execution_options = task_runner_api_client::TaskRunnerExecutionOptions::for_test(
-            ["model-1"],
-            ["CodeMaintainerRead", "TerminalController"],
-            ["external-tool-1"],
-        );
-        let tools = tool_definitions_with_execution_options(Some(&execution_options));
+    fn create_project_task_schema_excludes_task_runner_execution_options() {
+        let tools = tool_definitions();
         let create_task = tools
             .iter()
             .find(|tool| {
@@ -276,34 +239,8 @@ mod tests {
             .and_then(Value::as_object)
             .expect("properties");
 
-        assert_eq!(
-            properties
-                .get("task_runner_default_model_config_id")
-                .and_then(|schema| schema.get("enum"))
-                .and_then(Value::as_array)
-                .cloned()
-                .unwrap_or_default(),
-            vec![json!("model-1")]
-        );
-        let tool_items = properties
-            .get("task_runner_enabled_tool_ids")
-            .and_then(|schema| schema.get("items"))
-            .expect("tool items schema");
-        let tool_enum = tool_items
-            .get("enum")
-            .and_then(Value::as_array)
-            .cloned()
-            .unwrap_or_default();
-        assert!(tool_enum.contains(&json!("CodeMaintainerRead")));
-        assert!(tool_enum.contains(&json!("TerminalController")));
-        assert!(tool_enum.contains(&json!("external-tool-1")));
-        assert_eq!(
-            properties
-                .get("task_runner_enabled_tool_ids")
-                .and_then(|schema| schema.get("minItems"))
-                .and_then(Value::as_i64),
-            Some(1)
-        );
+        assert!(!properties.contains_key("task_runner_default_model_config_id"));
+        assert!(!properties.contains_key("task_runner_enabled_tool_ids"));
         assert!(!properties.contains_key("task_runner_skill_ids"));
         assert!(properties.contains_key("is_planning_task"));
     }
@@ -395,9 +332,6 @@ mod tests {
             requirement_id: "req-active".to_string(),
             title: id.to_string(),
             description: None,
-            task_runner_default_model_config_id: "model-config-test".to_string(),
-            task_runner_enabled_tool_ids: vec!["filesystem".to_string()],
-            task_runner_skill_ids: Vec::new(),
             status,
             priority: 0,
             assignee_user_id: None,

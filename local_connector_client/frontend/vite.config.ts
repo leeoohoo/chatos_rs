@@ -9,6 +9,7 @@ export default defineConfig(({ mode }) => {
   const target = env.LOCAL_CONNECTOR_CORE_API_PROXY_TARGET || 'http://127.0.0.1:39232';
 
   return {
+    base: mode === 'electron' ? './' : '/',
     plugins: [react()],
     server: {
       host: '0.0.0.0',

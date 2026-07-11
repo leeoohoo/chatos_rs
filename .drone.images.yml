@@ -23,6 +23,7 @@ steps:
       - docker info
       - docker compose version
       - bash docker/deploy.sh build
+      - bash docker/deploy-harness-ci.sh check-images
       - docker images --format '{{.Repository}}:{{.Tag}} {{.Size}}' | grep 'chatos-rs-.*:harness-ci' | sort
     volumes:
       - name: docker-sock

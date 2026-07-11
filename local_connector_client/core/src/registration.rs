@@ -9,15 +9,16 @@ use reqwest::StatusCode;
 use serde::Deserialize;
 use serde_json::json;
 use tokio::sync::RwLock;
-use uuid::Uuid;
 
 use crate::config::{api_url, optional_env, ClientConfig, DEFAULT_USER_SERVICE_BASE_URL};
+use crate::device_keys::ensure_device_keypair;
 use crate::workspace::paths::{canonicalize_existing_dir, workspace_fingerprint};
 use crate::{AuthState, LocalState, WorkspaceState};
 
 #[derive(Debug, Deserialize)]
 struct DeviceResponse {
     id: String,
+    owner_user_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -32,18 +33,19 @@ pub(crate) async fn ensure_device_registered(
     config: &ClientConfig,
     state: &mut LocalState,
 ) -> Result<String> {
+    let public_key = ensure_device_keypair(
+        config.state_path.as_path(),
+        state,
+        config.public_key.as_deref(),
+    )?;
     if let Some(device_id) = state.device_id.clone() {
-        if registered_device_exists(client, config, device_id.as_str()).await? {
+        if let Some(device) = registered_device(client, config, device_id.as_str()).await? {
+            apply_device_pairing_context(config, state, &device);
             return Ok(device_id);
         }
         state.device_id = None;
     }
 
-    let public_key = config
-        .public_key
-        .clone()
-        .or_else(|| state.device_public_key.clone())
-        .unwrap_or_else(|| format!("dev-public-key-{}", Uuid::new_v4()));
     let response = client
         .post(api_url(
             &config.cloud_base_url,
@@ -66,6 +68,7 @@ pub(crate) async fn ensure_device_registered(
         .context("parse device registration response")?;
     state.device_id = Some(device.id.clone());
     state.device_public_key = Some(public_key);
+    apply_device_pairing_context(config, state, &device);
     Ok(device.id)
 }
 
@@ -131,11 +134,11 @@ pub(crate) async fn ensure_workspace_registered(
     Ok(workspace.id)
 }
 
-async fn registered_device_exists(
+async fn registered_device(
     client: &reqwest::Client,
     config: &ClientConfig,
     device_id: &str,
-) -> Result<bool> {
+) -> Result<Option<DeviceResponse>> {
     let response = client
         .get(api_url(
             &config.cloud_base_url,
@@ -150,13 +153,17 @@ async fn registered_device_exists(
         .await
         .context("verify local connector device registration")?;
     if response.status() == StatusCode::NOT_FOUND {
-        return Ok(false);
+        return Ok(None);
     }
     ensure_success(
         response.status(),
         "verify local connector device registration",
     )?;
-    Ok(true)
+    response
+        .json::<DeviceResponse>()
+        .await
+        .map(Some)
+        .context("parse registered local connector device response")
 }
 
 async fn find_registered_workspace(
@@ -257,4 +264,21 @@ fn display_alias(path: &Path) -> String {
         .and_then(|name| name.to_str())
         .map(ToOwned::to_owned)
         .unwrap_or_else(|| path.display().to_string())
+}
+
+fn apply_device_pairing_context(
+    config: &ClientConfig,
+    state: &mut LocalState,
+    device: &DeviceResponse,
+) {
+    let Some(owner_user_id) = device
+        .owner_user_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return;
+    };
+    state.paired_cloud_base_url = Some(config.cloud_base_url.clone());
+    state.paired_user_id = Some(owner_user_id.to_string());
 }

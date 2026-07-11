@@ -4,15 +4,13 @@
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::core::messages::{ensure_message_metadata_object, message_turn_id};
+use crate::core::messages::ensure_message_metadata_object;
 use crate::core::time::now_rfc3339;
-use crate::models::message::Message;
-use crate::models::session::Session;
 use crate::modules::conversation_runtime::messages as conversation_messages;
 use crate::services::{chatos_sessions, project_management_api_client};
 
 use super::errors::HandlerError;
-use super::types::{CreatedExecutionTask, ExecutionLink, WorkItemPlanItem};
+use super::types::{ExecutionLink, WorkItemPlanItem};
 use super::values::value_string;
 
 pub(in crate::api::projects) async fn load_execution_links_for_work_items(
@@ -86,6 +84,7 @@ pub(in crate::api::projects) async fn sync_execution_link_status(
             task_runner_task_id: link.task_runner_task_id.clone(),
             task_runner_run_id: link.task_runner_run_id.clone(),
             task_runner_status: Some(task_runner_status.to_string()),
+            execution_group_id: link.source_user_message_id.clone(),
             last_callback_event: callback_event.map(ToOwned::to_owned),
             last_callback_at: Some(now_rfc3339()),
             last_error_message: None,
@@ -155,48 +154,4 @@ pub(in crate::api::projects) async fn mark_execution_messages_for_stop(
         }
         let _ = conversation_messages::upsert_message_in_session(&session, &message).await;
     }
-}
-
-pub(in crate::api::projects) async fn persist_execution_message_links(
-    session: &Session,
-    mut message: Message,
-    project_id: &str,
-    requirement_id: &str,
-    created_tasks: &[CreatedExecutionTask],
-) -> Result<Message, HandlerError> {
-    let message_id = message.id.clone();
-    let source_turn_id = message_turn_id(&message).map(ToOwned::to_owned);
-    let metadata = ensure_message_metadata_object(&mut message);
-    metadata.insert(
-        "project_requirement_execution".to_string(),
-        json!({
-            "project_id": project_id,
-            "requirement_id": requirement_id,
-            "task_links": created_tasks.iter().map(|item| {
-                json!({
-                    "project_task_id": item.project_task_id,
-                    "requirement_id": item.requirement_id,
-                    "task_runner_task_id": item.task_runner_task_id,
-                    "task_runner_run_id": item.task_runner_run_id,
-                })
-            }).collect::<Vec<_>>(),
-        }),
-    );
-    metadata.insert(
-        "task_runner_async".to_string(),
-        json!({
-            "mode": "project_requirement_execution",
-            "overall_status": "running",
-            "project_id": project_id,
-            "requirement_id": requirement_id,
-            "source_user_message_id": message_id,
-            "source_turn_id": source_turn_id,
-            "created_task_ids": created_tasks.iter().map(|item| item.task_runner_task_id.clone()).collect::<Vec<_>>(),
-            "running_task_ids": created_tasks.iter().map(|item| item.task_runner_task_id.clone()).collect::<Vec<_>>(),
-            "terminal_task_ids": [],
-        }),
-    );
-    conversation_messages::upsert_message_in_session(session, &message)
-        .await
-        .map_err(|err| HandlerError::internal("更新执行消息失败", err))
 }

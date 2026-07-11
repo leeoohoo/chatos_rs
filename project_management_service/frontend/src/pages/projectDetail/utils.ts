@@ -55,8 +55,6 @@ export function buildCreateWorkItemPayload(values: WorkItemFormValues): CreateWo
   return {
     title: values.title,
     description: values.description,
-    task_runner_default_model_config_id: values.task_runner_default_model_config_id,
-    task_runner_enabled_tool_ids: values.task_runner_enabled_tool_ids,
     status: values.status,
     priority: values.priority,
     assignee_user_id: values.assignee_user_id,
