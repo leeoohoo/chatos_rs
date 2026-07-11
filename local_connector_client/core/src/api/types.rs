@@ -38,6 +38,13 @@ pub(super) struct SendRegisterEmailCodeRequest {
 }
 
 #[derive(Debug, Deserialize)]
+pub(super) struct DesktopTicketAuthRequest {
+    pub(super) cloud_base_url: String,
+    pub(super) ticket: String,
+    pub(super) device_name: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
 pub(super) struct AddWorkspaceRequest {
     pub(super) path: String,
     pub(super) alias: Option<String>,

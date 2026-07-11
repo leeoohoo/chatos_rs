@@ -31,10 +31,10 @@ mod types;
 use handlers::{
     local_add_workspace, local_approval_settings, local_approve_pending_approval,
     local_clear_command_history, local_command_history, local_delete_mcp_config,
-    local_delete_model_config, local_deny_pending_approval, local_disable_mcp_config,
-    local_docker_status, local_enable_mcp_config, local_fs_list_handler, local_get_mcp_config,
-    local_initialize_sandbox_image, local_login, local_logout, local_mcp_configs,
-    local_model_configs, local_model_settings, local_pending_approvals,
+    local_delete_model_config, local_deny_pending_approval, local_desktop_ticket,
+    local_disable_mcp_config, local_docker_status, local_enable_mcp_config, local_fs_list_handler,
+    local_get_mcp_config, local_initialize_sandbox_image, local_login, local_logout,
+    local_mcp_configs, local_model_configs, local_model_settings, local_pending_approvals,
     local_preview_model_catalog, local_register, local_remove_workspace,
     local_request_system_permission, local_runtime_settings, local_sandbox_image_jobs,
     local_sandbox_image_mcp, local_sandbox_images, local_sandbox_leases, local_save_mcp_config,
@@ -92,6 +92,7 @@ fn local_api_routes() -> Router<LocalRuntime> {
             post(local_send_register_email_code),
         )
         .route("/api/local/auth/logout", post(local_logout))
+        .route("/api/local/auth/desktop-ticket", post(local_desktop_ticket))
         .route("/api/local/fs/list", get(local_fs_list_handler))
         .route("/api/local/workspaces", post(local_add_workspace))
         .route(

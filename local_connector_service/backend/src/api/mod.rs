@@ -96,7 +96,10 @@ async fn user_service_public_proxy(
     if method != Method::POST
         || !matches!(
             path,
-            "/api/auth/login" | "/api/auth/register" | "/api/auth/register/send-code"
+            "/api/auth/login"
+                | "/api/auth/register"
+                | "/api/auth/register/send-code"
+                | "/api/auth/local-connector-ticket/exchange"
         )
     {
         return Err(ApiError::not_found("user_service proxy route not found"));

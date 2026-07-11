@@ -51,6 +51,19 @@ pub struct RegistrationEmailCodeRecord {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LocalConnectorAuthTicketRecord {
+    pub id: String,
+    pub ticket_hash: String,
+    pub user_id: String,
+    pub audience: String,
+    pub scope: String,
+    pub expires_at_unix: i64,
+    pub consumed_at: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InviteCodeRecord {
     pub id: String,
     pub code_hash: String,
@@ -274,6 +287,20 @@ pub struct RegisterRequest {
     pub password: String,
     pub invite_code: Option<String>,
     pub verification_code: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IssueLocalConnectorTicketResponse {
+    pub ticket: String,
+    pub expires_in_seconds: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExchangeLocalConnectorTicketRequest {
+    pub ticket: String,
+    pub device_name: Option<String>,
+    pub public_key: Option<String>,
+    pub client_version: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

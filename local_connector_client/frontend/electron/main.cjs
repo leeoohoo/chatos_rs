@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-const { app, BrowserWindow, Menu, ipcMain, shell } = require('electron');
+const { app, BrowserWindow, Menu, WebContentsView, ipcMain, session, shell } = require('electron');
 const { spawn } = require('node:child_process');
 const crypto = require('node:crypto');
 const fs = require('node:fs');
@@ -9,15 +9,19 @@ const http = require('node:http');
 const path = require('node:path');
 
 let mainWindow = null;
+let settingsWindow = null;
+let chatosView = null;
 let coreProcess = null;
 const desktopAuthToken = crypto.randomBytes(32).toString('base64url');
 let ipcEndpoint = null;
 let ipcSocketDir = null;
+const trustedLocalWebContents = new Set();
 const MAX_API_ENDPOINT_LENGTH = 4096;
 const MAX_API_REQUEST_BODY_BYTES = 2 * 1024 * 1024;
 const MAX_API_RESPONSE_BODY_BYTES = 8 * 1024 * 1024;
 const ALLOWED_API_METHODS = new Set(['GET', 'POST', 'DELETE', 'PUT', 'PATCH']);
 const FORWARDED_RENDERER_HEADERS = new Set(['accept', 'content-type']);
+const SHELL_HEIGHT = 52;
 
 function resourcePath(...segments) {
   const packagedPath = path.join(process.resourcesPath, ...segments);
@@ -139,7 +143,7 @@ function delay(ms) {
 }
 
 async function requestLocalApiOverIpc(payload) {
-  if (!mainWindow || payload?.sender !== mainWindow.webContents) {
+  if (!isTrustedLocalSender(payload?.sender)) {
     throw new Error('Local API access is only available to the main connector window');
   }
 
@@ -161,6 +165,10 @@ async function requestLocalApiOverIpc(payload) {
     }
   }
   throw lastError || new Error('Local connector core is not available');
+}
+
+function isTrustedLocalSender(sender) {
+  return Boolean(sender && trustedLocalWebContents.has(sender.id));
 }
 
 function sendIpcHttpRequest({ endpoint, method, headers, body }) {
@@ -237,12 +245,199 @@ function createWindow() {
       sandbox: true,
     },
   });
+  trustedLocalWebContents.add(mainWindow.webContents.id);
 
-  mainWindow.loadFile(path.join(__dirname, '..', 'dist', 'index.html'));
+  mainWindow.loadFile(path.join(__dirname, '..', 'dist', 'index.html'), {
+    query: { view: 'shell' },
+  });
+  mainWindow.on('resize', layoutChatosView);
+  mainWindow.on('closed', () => {
+    trustedLocalWebContents.delete(mainWindow?.webContents?.id);
+    mainWindow = null;
+  });
+  createChatosView();
 
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     shell.openExternal(url);
     return { action: 'deny' };
+  });
+}
+
+function createChatosView() {
+  const partition = 'persist:chatos-web';
+  session.fromPartition(partition).setPermissionRequestHandler((_webContents, _permission, callback) => {
+    callback(false);
+  });
+  chatosView = new WebContentsView({
+    webPreferences: {
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+      partition,
+    },
+  });
+  mainWindow.contentView.addChildView(chatosView);
+  layoutChatosView();
+
+  chatosView.webContents.on('will-navigate', (event, url) => {
+    if (handleChatosProtocolNavigation(url)) {
+      event.preventDefault();
+      return;
+    }
+    if (!isAllowedChatosUrl(url)) {
+      event.preventDefault();
+      openExternalIfSafe(url);
+    }
+  });
+  chatosView.webContents.setWindowOpenHandler(({ url }) => {
+    if (handleChatosProtocolNavigation(url)) {
+      return { action: 'deny' };
+    }
+    openExternalIfSafe(url);
+    return { action: 'deny' };
+  });
+  chatosView.webContents.loadURL(chatosUrlWithDesktopParam());
+}
+
+function layoutChatosView() {
+  if (!mainWindow || !chatosView) {
+    return;
+  }
+  const bounds = mainWindow.getContentBounds();
+  chatosView.setBounds({
+    x: 0,
+    y: SHELL_HEIGHT,
+    width: bounds.width,
+    height: Math.max(0, bounds.height - SHELL_HEIGHT),
+  });
+}
+
+function chatosWebUrl() {
+  return (
+    process.env.LOCAL_CONNECTOR_CHATOS_WEB_URL ||
+    process.env.CHATOS_WEB_URL ||
+    'https://app.jgoool.com'
+  ).trim();
+}
+
+function localConnectorCloudBaseUrl() {
+  return (
+    process.env.LOCAL_CONNECTOR_CLOUD_BASE_URL ||
+    'https://local-connector.jgoool.com'
+  ).trim();
+}
+
+function chatosUrlWithDesktopParam() {
+  const url = new URL(chatosWebUrl());
+  url.searchParams.set('desktop', 'local-connector');
+  return url.toString();
+}
+
+function chatosOrigin() {
+  return new URL(chatosWebUrl()).origin;
+}
+
+function isAllowedChatosUrl(url) {
+  try {
+    const parsed = new URL(url);
+    return parsed.origin === chatosOrigin();
+  } catch {
+    return false;
+  }
+}
+
+function handleChatosProtocolNavigation(url) {
+  if (!url.startsWith('chatos-local-connector://')) {
+    return false;
+  }
+  try {
+    const parsed = new URL(url);
+    if (parsed.hostname === 'auth') {
+      const ticket = parsed.searchParams.get('ticket') || '';
+      void authenticateDesktopTicket(ticket);
+      return true;
+    }
+    if (parsed.hostname === 'logout') {
+      void sendIpcHttpRequest({
+        endpoint: '/api/local/auth/logout',
+        method: 'POST',
+        headers: localApiHeaders(true),
+        body: '{}',
+      }).catch(() => undefined);
+      return true;
+    }
+  } catch {
+    return true;
+  }
+  return true;
+}
+
+async function authenticateDesktopTicket(ticket) {
+  const trimmed = String(ticket || '').trim();
+  if (!trimmed) {
+    return;
+  }
+  await sendIpcHttpRequest({
+    endpoint: '/api/local/auth/desktop-ticket',
+    method: 'POST',
+    headers: localApiHeaders(true),
+    body: JSON.stringify({
+      cloud_base_url: localConnectorCloudBaseUrl(),
+      ticket: trimmed,
+    }),
+  });
+}
+
+function localApiHeaders(hasBody) {
+  const headers = {
+    Accept: 'application/json',
+    Host: 'local-connector.ipc',
+    Authorization: `Bearer ${desktopAuthToken}`,
+  };
+  if (hasBody) {
+    headers['Content-Type'] = 'application/json';
+  }
+  return headers;
+}
+
+function openExternalIfSafe(url) {
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol === 'https:' || parsed.protocol === 'http:') {
+      shell.openExternal(url);
+    }
+  } catch {
+    // Ignore invalid URLs from remote content.
+  }
+}
+
+function openSettingsWindow() {
+  if (settingsWindow && !settingsWindow.isDestroyed()) {
+    settingsWindow.focus();
+    return;
+  }
+  settingsWindow = new BrowserWindow({
+    width: 1180,
+    height: 780,
+    minWidth: 920,
+    minHeight: 620,
+    title: 'ChatOS Local Connector Settings',
+    parent: mainWindow || undefined,
+    backgroundColor: '#121214',
+    webPreferences: {
+      contextIsolation: true,
+      nodeIntegration: false,
+      preload: path.join(__dirname, 'preload.cjs'),
+      sandbox: true,
+    },
+  });
+  trustedLocalWebContents.add(settingsWindow.webContents.id);
+  settingsWindow.loadFile(path.join(__dirname, '..', 'dist', 'index.html'), {
+    query: { view: 'settings' },
+  });
+  settingsWindow.on('closed', () => {
+    trustedLocalWebContents.delete(settingsWindow?.webContents?.id);
+    settingsWindow = null;
   });
 }
 
@@ -251,6 +446,14 @@ app.whenReady().then(() => {
   ipcMain.handle('local-connector:api-request', (event, request) => {
     const rendererRequest = request && typeof request === 'object' ? request : {};
     return requestLocalApiOverIpc({ ...rendererRequest, sender: event.sender });
+  });
+  ipcMain.handle('local-connector:settings-open', () => {
+    openSettingsWindow();
+  });
+  ipcMain.handle('local-connector:chatos-reload', () => {
+    if (chatosView) {
+      chatosView.webContents.reload();
+    }
   });
   startCore();
   createWindow();

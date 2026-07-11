@@ -3,6 +3,7 @@
 
 import type {
   AuthResponse,
+  LocalConnectorTicketResponse,
   MeResponse,
   RegisterPayload,
   SendRegisterCodePayload,
@@ -45,6 +46,14 @@ export const login = (
 
 export const getMe = (request: ApiRequestFn): Promise<MeResponse> => {
   return request<MeResponse>('/auth/me');
+};
+
+export const issueLocalConnectorTicket = (
+  request: ApiRequestFn,
+): Promise<LocalConnectorTicketResponse> => {
+  return request<LocalConnectorTicketResponse>('/auth/local-connector-ticket', {
+    method: 'POST',
+  });
 };
 
 export const listTaskRunnerAgentAccounts = (

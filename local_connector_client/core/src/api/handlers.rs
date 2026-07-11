@@ -18,7 +18,9 @@ pub(super) use approval::{
     local_approval_settings, local_approve_pending_approval, local_deny_pending_approval,
     local_pending_approvals, local_update_approval_settings,
 };
-pub(super) use auth::{local_login, local_logout, local_register, local_send_register_email_code};
+pub(super) use auth::{
+    local_desktop_ticket, local_login, local_logout, local_register, local_send_register_email_code,
+};
 pub(super) use history::{local_clear_command_history, local_command_history};
 pub(super) use mcp_configs::{
     local_delete_mcp_config, local_disable_mcp_config, local_enable_mcp_config,

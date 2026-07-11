@@ -12,7 +12,8 @@ use crate::registration::{disconnect_device, ensure_success};
 use crate::{tracing_stdout, AuthState, LocalRuntime};
 
 use super::super::types::{
-    LocalApiError, LocalAuthRequest, LoginResponse, SendRegisterEmailCodeRequest,
+    DesktopTicketAuthRequest, LocalApiError, LocalAuthRequest, LoginResponse,
+    SendRegisterEmailCodeRequest,
 };
 use super::helpers::normalize_required;
 use super::status::status_payload;
@@ -77,6 +78,45 @@ pub(crate) async fn local_send_register_email_code(
     Ok(Json(body))
 }
 
+pub(crate) async fn local_desktop_ticket(
+    State(runtime): State<LocalRuntime>,
+    Json(req): Json<DesktopTicketAuthRequest>,
+) -> Result<Json<Value>, LocalApiError> {
+    let cloud_base_url = normalize_required(req.cloud_base_url.as_str(), "cloud_base_url")?;
+    ensure_remote_url_allowed("cloud_base_url", cloud_base_url.as_str())
+        .map_err(|err| LocalApiError::bad_request(err.to_string()))?;
+    let ticket = normalize_required(req.ticket.as_str(), "ticket")?;
+    let response = runtime
+        .http_client
+        .post(api_url(
+            cloud_base_url.as_str(),
+            "/api/auth/local-connector-ticket/exchange",
+        ))
+        .json(&json!({
+            "ticket": ticket,
+            "device_name": normalize_optional(req.device_name.as_deref())
+                .unwrap_or_else(default_device_name),
+            "client_version": env!("CARGO_PKG_VERSION"),
+        }))
+        .send()
+        .await
+        .map_err(|err| LocalApiError::bad_gateway(err.to_string()))?;
+    ensure_success(response.status(), "exchange local connector ticket")
+        .map_err(|err| LocalApiError::bad_request(err.to_string()))?;
+    let login = response
+        .json::<LoginResponse>()
+        .await
+        .map_err(|err| LocalApiError::bad_gateway(err.to_string()))?;
+    apply_login(
+        runtime,
+        cloud_base_url,
+        None,
+        login,
+        normalize_optional(req.device_name.as_deref()),
+    )
+    .await
+}
+
 async fn local_auth(
     runtime: LocalRuntime,
     req: LocalAuthRequest,
@@ -125,16 +165,34 @@ async fn local_auth(
         .json::<LoginResponse>()
         .await
         .map_err(|err| LocalApiError::bad_gateway(err.to_string()))?;
+    apply_login(
+        runtime,
+        cloud_base_url,
+        Some(user_service_base_url),
+        login,
+        normalize_optional(req.device_name.as_deref()),
+    )
+    .await
+}
+
+async fn apply_login(
+    runtime: LocalRuntime,
+    cloud_base_url: String,
+    user_service_base_url: Option<String>,
+    login: LoginResponse,
+    device_name: Option<String>,
+) -> Result<Json<Value>, LocalApiError> {
+    let resolved_user_service_base_url =
+        user_service_base_url.unwrap_or_else(|| cloud_base_url.clone());
     {
         let mut state = runtime.state.write().await;
         let pairing_changed = state.device_id.is_some()
             && !state.pairing_context_matches(cloud_base_url.as_str(), login.user.id.as_str());
         state.auth = Some(AuthState {
             cloud_base_url: cloud_base_url.clone(),
-            user_service_base_url,
+            user_service_base_url: resolved_user_service_base_url,
             access_token: login.token,
-            device_name: normalize_optional(req.device_name.as_deref())
-                .unwrap_or_else(default_device_name),
+            device_name: device_name.unwrap_or_else(default_device_name),
             user: Some(login.user.clone()),
         });
         state.paired_cloud_base_url = Some(cloud_base_url);

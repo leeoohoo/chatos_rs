@@ -20,6 +20,11 @@ export interface SendRegisterCodeResponse {
   resend_after_seconds?: number;
 }
 
+export interface LocalConnectorTicketResponse {
+  ticket?: string;
+  expires_in_seconds?: number;
+}
+
 export interface AuthResponse {
   token?: string;
   access_token?: string;

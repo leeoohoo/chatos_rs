@@ -138,6 +138,10 @@ pub fn build_router(state: AppState) -> Router {
             "/api/auth/register/send-code",
             post(user_service_public_proxy),
         )
+        .route(
+            "/api/auth/local-connector-ticket/exchange",
+            post(user_service_public_proxy),
+        )
         .merge(protected_api)
         .with_state(state)
         .layer(

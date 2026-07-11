@@ -87,6 +87,70 @@ body {
   overflow-x: hidden;
 }
 
+.desktopShell {
+  height: 52px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 0 12px;
+  background: color-mix(in srgb, var(--panel-bg) 96%, transparent);
+  border-bottom: 1px solid var(--border);
+  user-select: none;
+}
+
+.desktopShellBrand,
+.desktopShellStatus,
+.desktopShellActions {
+  display: flex;
+  align-items: center;
+}
+
+.desktopShellBrand {
+  min-width: 118px;
+  gap: 8px;
+  font-weight: 800;
+}
+
+.desktopShellStatus {
+  min-width: 0;
+  flex: 1;
+  gap: 8px;
+  color: var(--text-secondary);
+}
+
+.desktopShellStatus strong {
+  color: var(--text);
+  font-size: 13px;
+}
+
+.desktopShellStatus small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.desktopShellActions {
+  gap: 8px;
+}
+
+.shellSettingsButton {
+  height: 34px;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0 12px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--panel-subtle);
+  color: var(--text);
+  font-weight: 700;
+}
+
+.desktopAuthNotice {
+  align-self: center;
+  max-width: 420px;
+}
+
 ::selection {
   background: var(--accent-soft);
   color: var(--text);

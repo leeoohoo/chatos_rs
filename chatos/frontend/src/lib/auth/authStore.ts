@@ -101,6 +101,34 @@ function applyAuthSuccess(
   });
 }
 
+function isLocalConnectorDesktopHost(): boolean {
+  if (typeof window === 'undefined') {
+    return false;
+  }
+  try {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('desktop') === 'local-connector') {
+      window.sessionStorage.setItem('chatos-local-connector-desktop', '1');
+      return true;
+    }
+    return window.sessionStorage.getItem('chatos-local-connector-desktop') === '1';
+  } catch {
+    return false;
+  }
+}
+
+async function syncLocalConnectorDesktop(client: ApiClient): Promise<void> {
+  if (!isLocalConnectorDesktopHost()) {
+    return;
+  }
+  const response = await client.issueLocalConnectorTicket();
+  const ticket = String(response?.ticket || '').trim();
+  if (!ticket) {
+    throw new Error('Local Connector 授权票据为空');
+  }
+  window.location.href = `chatos-local-connector://auth?ticket=${encodeURIComponent(ticket)}`;
+}
+
 const AUTH_STORE_KEY = 'chat-auth-store';
 
 const sanitizeStorageSegment = (value: string): string => (
@@ -175,6 +203,9 @@ export const createAuthStore = (
             if (!user?.id) {
               throw new Error('登录状态已失效');
             }
+            void syncLocalConnectorDesktop(runtimeClient).catch((error) => {
+              console.warn('Local Connector desktop sync failed:', error);
+            });
             set({ user, initialized: true, loading: false, error: null });
           } catch (error) {
             runtimeClient.setAccessToken(null);
@@ -194,6 +225,9 @@ export const createAuthStore = (
           try {
             const resp = await runtimeClient.login({ username, password });
             applyAuthSuccess(resp, runtimeClient, set);
+            void syncLocalConnectorDesktop(runtimeClient).catch((error) => {
+              console.warn('Local Connector desktop sync failed:', error);
+            });
           } catch (error) {
             set({ loading: false, error: extractErrorMessage(error) });
             throw error;
@@ -224,6 +258,9 @@ export const createAuthStore = (
               verification_code: verificationCode,
             });
             applyAuthSuccess(resp, runtimeClient, set);
+            void syncLocalConnectorDesktop(runtimeClient).catch((error) => {
+              console.warn('Local Connector desktop sync failed:', error);
+            });
           } catch (error) {
             set({ loading: false, error: extractErrorMessage(error) });
             throw error;

@@ -18,6 +18,12 @@ pub struct UserServiceLoginResponse {
 }
 
 #[derive(Debug, Deserialize)]
+pub struct UserServiceLocalConnectorTicketResponse {
+    pub ticket: String,
+    pub expires_in_seconds: i64,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct UserServiceMeResponse {
     pub user: UserServiceAuthUser,
 }

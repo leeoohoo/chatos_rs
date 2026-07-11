@@ -92,8 +92,48 @@ async fn send_register_code(Json(req): Json<SendRegisterCodeRequest>) -> (Status
 pub fn protected_router() -> Router {
     Router::new()
         .route("/api/auth/ws-ticket", post(issue_ws_ticket))
+        .route(
+            "/api/auth/local-connector-ticket",
+            post(issue_local_connector_ticket),
+        )
         .route("/api/auth/bootstrap-defaults", post(bootstrap_defaults))
         .route("/api/auth/agent-accounts", get(list_agent_accounts))
+}
+
+async fn issue_local_connector_ticket(
+    _auth: AuthUser,
+    headers: HeaderMap,
+) -> (StatusCode, Json<Value>) {
+    let base_url = match required_user_service_base_url() {
+        Ok(value) => value,
+        Err(response) => return response,
+    };
+    let access_token = match access_token_from_headers(&headers) {
+        Ok(token) => token,
+        Err(err) => return err.into_response(),
+    };
+    match user_service_api_client::issue_local_connector_ticket(
+        base_url.as_str(),
+        access_token.as_str(),
+        Config::get().user_service_request_timeout_ms,
+    )
+    .await
+    {
+        Ok(payload) => (
+            StatusCode::OK,
+            Json(json!({
+                "ticket": payload.ticket,
+                "expires_in_seconds": payload.expires_in_seconds,
+            })),
+        ),
+        Err(err) => (
+            proxy_status_from_user_service_error(err.as_str()),
+            Json(json!({
+                "error": "issue local connector ticket via user_service failed",
+                "detail": err
+            })),
+        ),
+    }
 }
 
 async fn register(Json(req): Json<RegisterRequest>) -> (StatusCode, Json<Value>) {

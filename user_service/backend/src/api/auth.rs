@@ -4,7 +4,7 @@
 use axum::extract::State;
 use axum::{Extension, Json};
 use chrono::Utc;
-use rand::Rng;
+use rand::{Rng, RngCore};
 use serde_json::json;
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
@@ -18,14 +18,19 @@ use crate::integrations::{
     ensure_harness_user_public_register_on_login, provision_harness_user_public_register,
 };
 use crate::models::{
-    CurrentUserResponse, LoginRequest, LoginResponse, RegisterRequest, RegistrationEmailCodeRecord,
-    SendRegisterEmailCodeRequest, SendRegisterEmailCodeResponse, TokenVerifyResponse, UserRecord,
-    VerifiedPrincipal, USER_ROLE_USER,
+    CurrentUserResponse, ExchangeLocalConnectorTicketRequest, IssueLocalConnectorTicketResponse,
+    LocalConnectorAuthTicketRecord, LoginRequest, LoginResponse, RegisterRequest,
+    RegistrationEmailCodeRecord, SendRegisterEmailCodeRequest, SendRegisterEmailCodeResponse,
+    TokenVerifyResponse, UserRecord, VerifiedPrincipal, USER_ROLE_USER,
 };
 use crate::state::AppState;
 use crate::store::now_rfc3339;
 
 use super::{bad_request, internal_error, not_found, ApiResult, ApiStatusResult};
+
+const LOCAL_CONNECTOR_TICKET_AUDIENCE: &str = "local_connector_client";
+const LOCAL_CONNECTOR_TICKET_SCOPE: &str = "local_connector_pair";
+const LOCAL_CONNECTOR_TICKET_TTL_SECONDS: i64 = 60;
 
 pub async fn login(
     State(state): State<AppState>,
@@ -254,6 +259,106 @@ pub async fn register(
     }))
 }
 
+pub async fn issue_local_connector_ticket(
+    State(state): State<AppState>,
+    Extension(principal): Extension<CurrentPrincipal>,
+) -> ApiResult<IssueLocalConnectorTicketResponse> {
+    let user_id = principal
+        .user_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| bad_request("human user is required"))?;
+    let Some(user) = state
+        .store
+        .find_user_by_id(user_id)
+        .await
+        .map_err(internal_error)?
+    else {
+        return Err(not_found("current user not found"));
+    };
+    if !user.enabled {
+        return Err(bad_request("account has been disabled"));
+    }
+
+    let ticket = generate_local_connector_ticket();
+    let now_unix = Utc::now().timestamp();
+    let now = now_rfc3339();
+    let record = LocalConnectorAuthTicketRecord {
+        id: Uuid::new_v4().to_string(),
+        ticket_hash: local_connector_ticket_hash(ticket.as_str(), state.config.jwt_secret.as_str()),
+        user_id: user.id,
+        audience: LOCAL_CONNECTOR_TICKET_AUDIENCE.to_string(),
+        scope: LOCAL_CONNECTOR_TICKET_SCOPE.to_string(),
+        expires_at_unix: now_unix + LOCAL_CONNECTOR_TICKET_TTL_SECONDS,
+        consumed_at: None,
+        created_at: now.clone(),
+        updated_at: now,
+    };
+    state
+        .store
+        .insert_local_connector_auth_ticket(&record)
+        .await
+        .map_err(internal_error)?;
+    Ok(Json(IssueLocalConnectorTicketResponse {
+        ticket,
+        expires_in_seconds: LOCAL_CONNECTOR_TICKET_TTL_SECONDS,
+    }))
+}
+
+pub async fn exchange_local_connector_ticket(
+    State(state): State<AppState>,
+    Json(input): Json<ExchangeLocalConnectorTicketRequest>,
+) -> ApiResult<LoginResponse> {
+    let ticket = input.ticket.trim();
+    if ticket.is_empty() || ticket.len() > 512 {
+        return Err(bad_request("local connector ticket is invalid"));
+    }
+    let ticket_hash = local_connector_ticket_hash(ticket, state.config.jwt_secret.as_str());
+    let now_unix = Utc::now().timestamp();
+    let now = now_rfc3339();
+    let record = state
+        .store
+        .consume_local_connector_auth_ticket(ticket_hash.as_str(), now_unix, now.as_str())
+        .await
+        .map_err(internal_error)?
+        .ok_or_else(|| bad_request("local connector ticket is invalid or expired"))?;
+    if record.audience != LOCAL_CONNECTOR_TICKET_AUDIENCE
+        || record.scope != LOCAL_CONNECTOR_TICKET_SCOPE
+    {
+        return Err(bad_request("local connector ticket is invalid"));
+    }
+    let Some(user) = state
+        .store
+        .find_user_by_id(record.user_id.as_str())
+        .await
+        .map_err(internal_error)?
+    else {
+        return Err(not_found("current user not found"));
+    };
+    if !user.enabled {
+        return Err(bad_request("account has been disabled"));
+    }
+
+    state
+        .store
+        .touch_user_last_login(user.id.as_str())
+        .await
+        .map_err(internal_error)?;
+    let token = encode_user_token(&state.config, &user).map_err(internal_error)?;
+    Ok(Json(LoginResponse {
+        token,
+        user: current_auth_user(
+            user.id,
+            user.username,
+            user.display_name,
+            user.role,
+            String::new(),
+            0,
+        ),
+    }))
+}
+
 fn normalize_register_email(input: &RegisterRequest) -> Result<String, String> {
     input
         .email
@@ -367,6 +472,16 @@ fn registration_code_hash(email: &str, code: &str, secret: &str) -> String {
 
 fn hash_text(value: &str) -> String {
     hex::encode(Sha256::digest(value.as_bytes()))
+}
+
+fn local_connector_ticket_hash(ticket: &str, secret: &str) -> String {
+    hash_text(format!("local-connector-ticket:{secret}:{ticket}").as_str())
+}
+
+fn generate_local_connector_ticket() -> String {
+    let mut bytes = [0_u8; 32];
+    rand::thread_rng().fill_bytes(&mut bytes);
+    hex::encode(bytes)
 }
 
 pub(crate) fn generate_invite_code() -> String {

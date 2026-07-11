@@ -34,6 +34,10 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/auth/verify", get(auth::verify))
         .route("/api/auth/logout", post(auth::logout))
         .route(
+            "/api/auth/local-connector-ticket",
+            post(auth::issue_local_connector_ticket),
+        )
+        .route(
             "/api/invite-codes",
             get(invite_codes::list_invite_codes).post(invite_codes::create_invite_code),
         )
@@ -120,6 +124,10 @@ pub fn build_router(state: AppState) -> Router {
         .route(
             "/api/auth/register/send-code",
             post(auth::send_register_email_code),
+        )
+        .route(
+            "/api/auth/local-connector-ticket/exchange",
+            post(auth::exchange_local_connector_ticket),
         )
         .route(
             "/api/internal/harness/users/:user_id/access",

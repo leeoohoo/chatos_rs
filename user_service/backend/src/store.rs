@@ -13,8 +13,9 @@ use crate::auth::{hash_password, normalize_display_name, normalize_username};
 use crate::config::AppConfig;
 use crate::models::{
     AgentAccountListItem, AgentAccountRecord, HarnessProvisioningRecord, InviteCodePublicRecord,
-    InviteCodeRecord, RegistrationEmailCodeRecord, UserModelConfigRecord, UserModelProviderRecord,
-    UserModelSettingsRecord, UserRecord, UserSummaryRecord, USER_ROLE_SUPER_ADMIN,
+    InviteCodeRecord, LocalConnectorAuthTicketRecord, RegistrationEmailCodeRecord,
+    UserModelConfigRecord, UserModelProviderRecord, UserModelSettingsRecord, UserRecord,
+    UserSummaryRecord, USER_ROLE_SUPER_ADMIN,
 };
 
 mod model_configs;
@@ -30,6 +31,7 @@ pub struct AppStore {
     harness_provisioning: Collection<HarnessProvisioningRecord>,
     registration_email_codes: Collection<RegistrationEmailCodeRecord>,
     invite_codes: Collection<InviteCodeRecord>,
+    local_connector_auth_tickets: Collection<LocalConnectorAuthTicketRecord>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -52,6 +54,7 @@ impl AppStore {
             harness_provisioning: db.collection("harness_provisioning"),
             registration_email_codes: db.collection("registration_email_codes"),
             invite_codes: db.collection("invite_codes"),
+            local_connector_auth_tickets: db.collection("local_connector_auth_tickets"),
         }
     }
 
@@ -78,6 +81,10 @@ impl AppStore {
         self.create_unique_index(&self.invite_codes, "code_hash")
             .await?;
         self.create_index(&self.invite_codes, "created_at").await?;
+        self.create_unique_index(&self.local_connector_auth_tickets, "ticket_hash")
+            .await?;
+        self.create_index(&self.local_connector_auth_tickets, "expires_at_unix")
+            .await?;
         Ok(())
     }
 
@@ -483,6 +490,51 @@ impl AppStore {
             .await
             .map_err(|err| err.to_string())?;
         Ok(())
+    }
+
+    pub async fn insert_local_connector_auth_ticket(
+        &self,
+        record: &LocalConnectorAuthTicketRecord,
+    ) -> Result<(), String> {
+        self.local_connector_auth_tickets
+            .insert_one(record, None)
+            .await
+            .map_err(|err| err.to_string())?;
+        Ok(())
+    }
+
+    pub async fn consume_local_connector_auth_ticket(
+        &self,
+        ticket_hash: &str,
+        now_unix: i64,
+        now: &str,
+    ) -> Result<Option<LocalConnectorAuthTicketRecord>, String> {
+        let Some(record) = self
+            .local_connector_auth_tickets
+            .find_one(doc! { "ticket_hash": ticket_hash }, None)
+            .await
+            .map_err(|err| err.to_string())?
+        else {
+            return Ok(None);
+        };
+        let result = self
+            .local_connector_auth_tickets
+            .update_one(
+                doc! {
+                    "id": &record.id,
+                    "consumed_at": Bson::Null,
+                    "expires_at_unix": { "$gt": now_unix },
+                },
+                doc! { "$set": { "consumed_at": now, "updated_at": now } },
+                None,
+            )
+            .await
+            .map_err(|err| err.to_string())?;
+        if result.modified_count == 1 {
+            Ok(Some(record))
+        } else {
+            Ok(None)
+        }
     }
 
     pub async fn list_invite_codes(&self) -> Result<Vec<InviteCodePublicRecord>, String> {

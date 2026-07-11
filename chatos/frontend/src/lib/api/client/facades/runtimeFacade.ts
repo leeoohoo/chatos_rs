@@ -10,6 +10,7 @@ import * as askUserPromptsApi from '../askUserPrompts';
 import { buildQuery } from '../shared';
 import type {
   AuthResponse,
+  LocalConnectorTicketResponse,
   MeResponse,
   NotepadCreatePayload,
   NotepadDeleteNoteResponse,
@@ -127,6 +128,7 @@ export interface RuntimeFacade {
   sendRegisterEmailCode(data: SendRegisterCodePayload): Promise<SendRegisterCodeResponse>;
   login(data: RegisterPayload): Promise<AuthResponse>;
   getMe(): Promise<MeResponse>;
+  issueLocalConnectorTicket(): Promise<LocalConnectorTicketResponse>;
   listTaskRunnerAgentAccounts(): Promise<TaskRunnerAgentAccountResponse[]>;
   getUserSettings(userId?: string): Promise<UserSettingsResponse>;
   updateUserSettings(userId: string, settings: Record<string, unknown>): Promise<UserSettingsResponse>;
@@ -265,6 +267,9 @@ export const runtimeFacade: RuntimeFacade & ThisType<ApiClient> = {
   },
   async getMe() {
     return accountApi.getMe(this.getRequestFn());
+  },
+  async issueLocalConnectorTicket() {
+    return accountApi.issueLocalConnectorTicket(this.getRequestFn());
   },
   async listTaskRunnerAgentAccounts() {
     return accountApi.listTaskRunnerAgentAccounts(this.getRequestFn());
