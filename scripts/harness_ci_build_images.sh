@@ -6,6 +6,15 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SERVICES_FILE="$ROOT_DIR/docker/.harness-ci-image-services"
+AVAILABLE_FILE=""
+
+cleanup() {
+  if [[ -n "$AVAILABLE_FILE" ]]; then
+    rm -f "$AVAILABLE_FILE"
+  fi
+}
+
+trap cleanup EXIT
 
 read_selected_services() {
   local services="${CHATOS_CI_IMAGE_SERVICES:-}"
@@ -33,10 +42,8 @@ validate_services() {
 main() {
   cd "$ROOT_DIR"
 
-  local available_file
-  available_file="$(mktemp)"
-  trap 'rm -f "$available_file"' EXIT
-  bash docker/deploy.sh build-services >"$available_file"
+  AVAILABLE_FILE="$(mktemp)"
+  bash docker/deploy.sh build-services >"$AVAILABLE_FILE"
 
   local -a selected_services=()
   while IFS= read -r service; do
@@ -45,7 +52,7 @@ main() {
     fi
   done < <(read_selected_services)
 
-  validate_services "$available_file" "${selected_services[@]}"
+  validate_services "$AVAILABLE_FILE" "${selected_services[@]}"
 
   if [[ ${#selected_services[@]} -eq 0 ]]; then
     echo "[INFO] Harness image build scope: all services"
