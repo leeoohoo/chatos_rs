@@ -35,6 +35,7 @@ pub(crate) mod message_manager_common;
 pub mod model_runtime_resolver;
 pub mod new_user_bootstrap;
 pub mod notepad;
+pub mod object_storage;
 pub(crate) mod plugin_management_capabilities;
 pub mod project_fs_cache;
 pub mod project_local_cache;

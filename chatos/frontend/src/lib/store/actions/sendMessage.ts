@@ -44,7 +44,10 @@ import type {
   ChatStoreGet,
   ChatStoreSet,
 } from '../types';
-import { type StreamingMessage } from './sendMessage/types';
+import {
+  type ApiAttachmentPayload,
+  type StreamingMessage,
+} from './sendMessage/types';
 import { rollbackFailedSendMessage } from './sendMessage/streamExecution';
 
 const REALTIME_STREAM_CONNECT_GRACE_MS = 2200;
@@ -85,6 +88,85 @@ const normalizeRuntimeText = (value: unknown): string | null => {
   }
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : null;
+};
+
+const attachmentTypeForFile = (file: File): ApiAttachmentPayload['type'] => {
+  if (file.type.startsWith('image/')) {
+    return 'image';
+  }
+  if (file.type.startsWith('audio/')) {
+    return 'audio';
+  }
+  return 'file';
+};
+
+const uploadHeadersForTarget = (
+  uploadHeaders: Record<string, string> | undefined,
+  mimeType: string,
+): Headers => {
+  const headers = new Headers();
+  Object.entries(uploadHeaders || {}).forEach(([key, value]) => {
+    const lowerKey = key.toLowerCase();
+    if (lowerKey === 'host' || lowerKey === 'content-length') {
+      return;
+    }
+    headers.set(key, value);
+  });
+  if (!headers.has('Content-Type')) {
+    headers.set('Content-Type', mimeType || 'application/octet-stream');
+  }
+  return headers;
+};
+
+const uploadAttachmentsToObjectStorage = async (
+  client: ApiClient,
+  conversationId: string,
+  files: File[],
+): Promise<ApiAttachmentPayload[]> => {
+  if (!files.length) {
+    return [];
+  }
+
+  const requestItems = files.map((file) => ({
+    name: file.name || 'attachment',
+    mimeType: file.type || 'application/octet-stream',
+    size: file.size,
+    type: attachmentTypeForFile(file),
+  }));
+  const response = await client.createAttachmentUploads(conversationId, requestItems);
+  const uploads = Array.isArray(response?.uploads) ? response.uploads : [];
+  if (uploads.length !== files.length) {
+    throw new Error('附件上传签名数量与文件数量不一致');
+  }
+
+  await Promise.all(uploads.map(async (upload, index) => {
+    const file = files[index];
+    const target = String(upload.uploadUrl || '').trim();
+    if (!target) {
+      throw new Error(`附件上传地址缺失: ${file.name || `#${index + 1}`}`);
+    }
+    const putResponse = await fetch(target, {
+      method: 'PUT',
+      headers: uploadHeadersForTarget(upload.uploadHeaders, requestItems[index].mimeType),
+      body: file,
+    });
+    if (!putResponse.ok) {
+      throw new Error(`附件上传失败: ${file.name || `#${index + 1}`} (${putResponse.status})`);
+    }
+  }));
+
+  return uploads.map((upload, index) => ({
+    id: upload.id,
+    name: upload.name || requestItems[index].name,
+    mimeType: upload.mimeType || requestItems[index].mimeType,
+    size: typeof upload.size === 'number' ? upload.size : requestItems[index].size,
+    type: upload.type || requestItems[index].type,
+    storageProvider: upload.storageProvider || 'minio',
+    bucket: upload.bucket,
+    objectKey: upload.objectKey,
+    url: upload.viewUrl || upload.url,
+    viewUrl: upload.viewUrl || upload.url,
+  }));
 };
 
 interface SessionRuntimeSnapshot {
@@ -188,6 +270,11 @@ export function createSendMessageHandler({
           {
             dropImagesWhenUnsupported: false,
             maxTotalBytes: attachmentTotalMaxBytes,
+            uploadAttachments: (files) => uploadAttachmentsToObjectStorage(
+              client,
+              currentSessionId,
+              files,
+            ),
           },
         );
         assertPayloadWithinTransportBudget({
@@ -313,7 +400,14 @@ export function createSendMessageHandler({
       const { previewAttachments, apiAttachments } = await prepareAttachmentsForStreaming(
         attachments,
         supportsImages,
-        { maxTotalBytes: attachmentTotalMaxBytes },
+        {
+          maxTotalBytes: attachmentTotalMaxBytes,
+          uploadAttachments: (files) => uploadAttachmentsToObjectStorage(
+            client,
+            currentSessionId,
+            files,
+          ),
+        },
       );
 
       // 创建用户消息（仅前端展示，不立即保存数据库）

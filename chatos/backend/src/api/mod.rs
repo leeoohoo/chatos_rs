@@ -34,6 +34,7 @@ pub mod agent_chat;
 pub mod agents;
 pub mod applications;
 pub mod ask_user_prompts;
+pub mod attachments;
 pub mod auth;
 pub(crate) mod chat_stream_common;
 pub mod code_nav;

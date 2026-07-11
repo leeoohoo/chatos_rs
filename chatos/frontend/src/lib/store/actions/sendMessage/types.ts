@@ -59,12 +59,18 @@ export type StreamingMessage = Message;
 export interface PreviewAttachment extends Attachment {}
 
 export interface ApiAttachmentPayload {
+  id?: string;
   name: string;
   mimeType: string;
   size: number;
-  type: 'image' | 'file';
+  type: 'image' | 'file' | 'audio';
   dataUrl?: string;
   text?: string;
+  storageProvider?: string;
+  bucket?: string;
+  objectKey?: string;
+  url?: string;
+  viewUrl?: string;
 }
 
 export interface StreamChatLogPayload {

@@ -23,6 +23,8 @@ import type {
   NotepadTagsResponse,
   NotepadUpdatePayload,
   RegisterPayload,
+  SendRegisterCodePayload,
+  SendRegisterCodeResponse,
   AgentToolsResponse,
   ReviewRepairResponse,
   ReviewRepairStatusResponse,
@@ -32,6 +34,8 @@ import type {
   StreamChatCommandResponse,
   StreamChatModelConfigPayload,
   StreamChatOptions,
+  AttachmentUploadRequestItem,
+  AttachmentUploadsResponse,
   TaskManagerTaskResponse,
   TaskRunnerAgentAccountResponse,
   TaskManagerUpdatePayload,
@@ -58,6 +62,10 @@ export interface RuntimeFacade {
     content: string,
     attachments?: StreamChatAttachmentPayload[],
   ): Promise<RuntimeGuidanceCommandResponse>;
+  createAttachmentUploads(
+    conversationId: string,
+    attachments: AttachmentUploadRequestItem[],
+  ): Promise<AttachmentUploadsResponse>;
   getAgentTools(options?: {
     conversationId?: string | null;
     mcpEnabled?: boolean;
@@ -116,6 +124,7 @@ export interface RuntimeFacade {
   runConversationReviewRepair(conversationId: string): Promise<ReviewRepairResponse>;
   getConversationReviewRepairStatus(conversationId: string): Promise<ReviewRepairStatusResponse>;
   register(data: RegisterPayload): Promise<AuthResponse>;
+  sendRegisterEmailCode(data: SendRegisterCodePayload): Promise<SendRegisterCodeResponse>;
   login(data: RegisterPayload): Promise<AuthResponse>;
   getMe(): Promise<MeResponse>;
   listTaskRunnerAgentAccounts(): Promise<TaskRunnerAgentAccountResponse[]>;
@@ -144,6 +153,15 @@ export const runtimeFacade: RuntimeFacade & ThisType<ApiClient> = {
         turn_id: turnId,
         content,
         attachments: attachments || [],
+      }),
+    });
+  },
+  async createAttachmentUploads(conversationId, attachments) {
+    return this.getRequestFn()<AttachmentUploadsResponse>('/attachments/uploads', {
+      method: 'POST',
+      body: JSON.stringify({
+        conversation_id: conversationId,
+        attachments,
       }),
     });
   },
@@ -238,6 +256,9 @@ export const runtimeFacade: RuntimeFacade & ThisType<ApiClient> = {
   },
   async register(data) {
     return accountApi.register(this.getRequestFn(), data);
+  },
+  async sendRegisterEmailCode(data) {
+    return accountApi.sendRegisterEmailCode(this.getRequestFn(), data);
   },
   async login(data) {
     return accountApi.login(this.getRequestFn(), data);
