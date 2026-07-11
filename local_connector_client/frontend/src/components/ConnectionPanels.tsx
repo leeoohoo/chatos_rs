@@ -15,19 +15,37 @@ import {
 
 import { api, type ConnectorStatus, type FsEntry } from '../api';
 
-const DEFAULT_CLOUD_URL = 'http://127.0.0.1:39230';
-const DEFAULT_USER_SERVICE_URL = 'http://127.0.0.1:39190';
+const DEFAULT_CLOUD_URL =
+  import.meta.env.VITE_LOCAL_CONNECTOR_CLOUD_BASE_URL || 'https://local-connector.jgoool.com';
 
 export function AuthPanel({ onDone }: { onDone: (status: ConnectorStatus) => void }) {
   const [mode, setMode] = React.useState<'login' | 'register'>('login');
   const [cloudBaseUrl, setCloudBaseUrl] = React.useState(DEFAULT_CLOUD_URL);
-  const [userServiceBaseUrl, setUserServiceBaseUrl] = React.useState(DEFAULT_USER_SERVICE_URL);
   const [username, setUsername] = React.useState('');
   const [displayName, setDisplayName] = React.useState('');
   const [password, setPassword] = React.useState('');
+  const [inviteCode, setInviteCode] = React.useState('');
+  const [verificationCode, setVerificationCode] = React.useState('');
   const [deviceName, setDeviceName] = React.useState(defaultDeviceName());
   const [submitting, setSubmitting] = React.useState(false);
+  const [sendingCode, setSendingCode] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
+
+  const sendCode = async () => {
+    setSendingCode(true);
+    setError(null);
+    try {
+      await api.sendRegisterEmailCode({
+        cloud_base_url: cloudBaseUrl,
+        email: username,
+        invite_code: inviteCode,
+      });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '验证码发送失败');
+    } finally {
+      setSendingCode(false);
+    }
+  };
 
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -36,7 +54,7 @@ export function AuthPanel({ onDone }: { onDone: (status: ConnectorStatus) => voi
     try {
       const payload = {
         cloud_base_url: cloudBaseUrl,
-        user_service_base_url: userServiceBaseUrl,
+        user_service_base_url: cloudBaseUrl,
         username,
         password,
         device_name: deviceName,
@@ -47,6 +65,8 @@ export function AuthPanel({ onDone }: { onDone: (status: ConnectorStatus) => voi
           : await api.register({
               ...payload,
               display_name: displayName,
+              invite_code: inviteCode,
+              verification_code: verificationCode,
             });
       onDone(next);
     } catch (err) {
@@ -70,10 +90,6 @@ export function AuthPanel({ onDone }: { onDone: (status: ConnectorStatus) => voi
         Local Connector Service
         <input value={cloudBaseUrl} onChange={(event) => setCloudBaseUrl(event.target.value)} />
       </label>
-      <label>
-        User Service
-        <input value={userServiceBaseUrl} onChange={(event) => setUserServiceBaseUrl(event.target.value)} />
-      </label>
       <div className="twoCols">
         <label>
           用户名
@@ -89,6 +105,28 @@ export function AuthPanel({ onDone }: { onDone: (status: ConnectorStatus) => voi
           显示名
           <input value={displayName} onChange={(event) => setDisplayName(event.target.value)} />
         </label>
+      ) : null}
+      {mode === 'register' ? (
+        <>
+          <label>
+            邀请码
+            <input value={inviteCode} onChange={(event) => setInviteCode(event.target.value)} />
+          </label>
+          <label>
+            邮箱验证码
+            <div className="inlineField">
+              <input value={verificationCode} onChange={(event) => setVerificationCode(event.target.value)} />
+              <button
+                type="button"
+                className="ghostButton compact"
+                disabled={sendingCode}
+                onClick={() => void sendCode()}
+              >
+                {sendingCode ? '发送中' : '发送验证码'}
+              </button>
+            </div>
+          </label>
+        </>
       ) : null}
       <label>
         密码

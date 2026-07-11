@@ -100,21 +100,9 @@ export interface ProjectRunExecuteResponse {
   envOverrides?: Record<string, string>;
 }
 
-export interface ProjectRequirementExecutionTaskResponse {
-  project_task_id?: string;
-  projectTaskId?: string;
-  requirement_id?: string;
-  requirementId?: string;
-  task_runner_task_id?: string;
-  taskRunnerTaskId?: string;
-  task_runner_run_id?: string | null;
-  taskRunnerRunId?: string | null;
-  task_runner_status?: string;
-  taskRunnerStatus?: string;
-}
-
 export interface ProjectRequirementExecuteResponse {
   success?: boolean;
+  status?: string;
   project_id?: string;
   projectId?: string;
   requirement_id?: string;
@@ -126,8 +114,10 @@ export interface ProjectRequirementExecuteResponse {
   message_id?: string;
   messageId?: string;
   message?: SessionMessageResponse | null;
-  created_tasks?: ProjectRequirementExecutionTaskResponse[];
-  createdTasks?: ProjectRequirementExecutionTaskResponse[];
+  execution_group_id?: string;
+  executionGroupId?: string;
+  planner_agent_key?: string;
+  plannerAgentKey?: string;
   plan_mode_enabled?: boolean;
   planModeEnabled?: boolean;
 }

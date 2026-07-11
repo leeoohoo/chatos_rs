@@ -42,9 +42,8 @@ use super::workspace_mcp::{
     task_uses_harness_code, task_uses_local_connector,
 };
 use super::{
-    build_builtin_registry_with_project_management_options, summarized_report_content,
-    unfinished_subtasks_error, unfinished_subtasks_for_task, DisabledBuiltinProvider,
-    ProjectManagementExecutionOptions, RunService, TaskService,
+    build_builtin_registry, summarized_report_content, unfinished_subtasks_error,
+    unfinished_subtasks_for_task, DisabledBuiltinProvider, RunService, TaskService,
 };
 
 mod callbacks;

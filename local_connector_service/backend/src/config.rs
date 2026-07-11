@@ -19,6 +19,9 @@ pub struct AppConfig {
     pub memory_engine_base_url: String,
     pub memory_engine_operator_token: Option<String>,
     pub memory_engine_request_timeout: Duration,
+    pub require_device_connect_signature: bool,
+    pub allow_device_connect_query_token: bool,
+    pub device_connect_signature_max_skew: Duration,
 }
 
 impl AppConfig {
@@ -56,6 +59,11 @@ impl AppConfig {
             .and_then(|value| value.parse::<u64>().ok())
             .unwrap_or(30_000)
             .max(1_000);
+        let signature_skew_seconds =
+            normalized_env("LOCAL_CONNECTOR_DEVICE_SIGNATURE_MAX_SKEW_SECONDS")
+                .and_then(|value| value.parse::<u64>().ok())
+                .unwrap_or(300)
+                .clamp(30, 3600);
 
         Ok(Self {
             host,
@@ -88,6 +96,15 @@ impl AppConfig {
             )
             .or_else(|| normalized_env("MEMORY_ENGINE_OPERATOR_TOKEN")),
             memory_engine_request_timeout: Duration::from_millis(memory_timeout_ms),
+            require_device_connect_signature: env_flag(
+                "LOCAL_CONNECTOR_REQUIRE_DEVICE_CONNECT_SIGNATURE",
+                true,
+            ),
+            allow_device_connect_query_token: env_flag(
+                "LOCAL_CONNECTOR_ALLOW_DEVICE_CONNECT_QUERY_TOKEN",
+                false,
+            ),
+            device_connect_signature_max_skew: Duration::from_secs(signature_skew_seconds),
         })
     }
 
@@ -136,6 +153,17 @@ pub(crate) fn normalized_env(key: &str) -> Option<String> {
         .ok()
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
+}
+
+fn env_flag(key: &str, default: bool) -> bool {
+    normalized_env(key)
+        .map(|value| {
+            matches!(
+                value.to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes" | "on"
+            )
+        })
+        .unwrap_or(default)
 }
 
 fn default_database_url() -> String {

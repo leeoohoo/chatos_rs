@@ -5,7 +5,6 @@ use bytes::BytesMut;
 use futures::StreamExt;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::collections::BTreeSet;
 use std::sync::OnceLock;
 
 static TASK_RUNNER_HTTP_CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
@@ -19,15 +18,12 @@ mod types;
 #[cfg(test)]
 mod tests;
 
-#[allow(unused_imports)]
-pub use types::TaskRunnerMcpConfigRequest;
 pub use types::{
-    CancelTaskRunnerPromptRequest, CancelTaskRunnerTaskRequest, CreateTaskRunnerTaskRequest,
-    SubmitTaskRunnerPromptRequest, TaskRunnerExecutionOptions, TaskRunnerTaskRecord,
-    TaskRunnerTaskScheduleRequest, UserServiceTaskRunnerExchange,
+    CancelTaskRunnerPromptRequest, CancelTaskRunnerTaskRequest, SubmitTaskRunnerPromptRequest,
+    TaskRunnerTaskRecord, UserServiceTaskRunnerExchange,
 };
 
-use types::{TaskRunnerCapabilityCatalog, UserServiceTaskRunnerTokenResponse};
+use types::UserServiceTaskRunnerTokenResponse;
 
 pub async fn exchange_task_runner_token_via_user_service(
     request: &UserServiceTaskRunnerExchange,
@@ -54,70 +50,6 @@ pub async fn exchange_task_runner_token_via_user_service(
         return Err("User service task runner token exchange returned empty token".to_string());
     }
     Ok(token.to_string())
-}
-
-pub async fn fetch_task_runner_execution_options(
-    base_url: &str,
-    access_token: &str,
-) -> Result<TaskRunnerExecutionOptions, String> {
-    let catalog: TaskRunnerCapabilityCatalog = task_runner_json(
-        base_url,
-        access_token,
-        reqwest::Method::GET,
-        "/api/tasks/capabilities/catalog",
-        None::<&()>,
-    )
-    .await?;
-
-    let mut builtin_tool_ids = BTreeSet::new();
-    for item in catalog.selectable_builtin_mcps {
-        if let Some(kind) = normalize_optional(Some(item.kind)) {
-            builtin_tool_ids.insert(kind);
-        }
-        if let Some(config_id) = item
-            .config_id
-            .and_then(|value| normalize_optional(Some(value)))
-        {
-            builtin_tool_ids.insert(config_id);
-        }
-    }
-    let external_tool_ids = catalog
-        .selectable_external_mcps
-        .into_iter()
-        .filter_map(|item| normalize_optional(Some(item.id)))
-        .collect::<BTreeSet<_>>();
-    Ok(TaskRunnerExecutionOptions {
-        builtin_tool_ids,
-        external_tool_ids,
-    })
-}
-
-pub async fn create_task_runner_task(
-    base_url: &str,
-    access_token: &str,
-    user_access_token: Option<&str>,
-    source_session_id: Option<&str>,
-    source_user_message_id: Option<&str>,
-    source_turn_id: Option<&str>,
-    request: &CreateTaskRunnerTaskRequest,
-) -> Result<TaskRunnerTaskRecord, String> {
-    let mut builder =
-        task_runner_request(base_url, access_token, reqwest::Method::POST, "/api/tasks")
-            .await
-            .json(request);
-    if let Some(value) = normalize_optional(source_session_id.map(ToOwned::to_owned)) {
-        builder = builder.header("X-Chatos-Session-Id", value);
-    }
-    if let Some(value) = normalize_optional(source_user_message_id.map(ToOwned::to_owned)) {
-        builder = builder.header("X-Chatos-User-Message-Id", value);
-    }
-    if let Some(value) = normalize_optional(source_turn_id.map(ToOwned::to_owned)) {
-        builder = builder.header("X-Chatos-Turn-Id", value);
-    }
-    if let Some(value) = normalize_optional(user_access_token.map(ToOwned::to_owned)) {
-        builder = builder.header("X-Chatos-User-Authorization", format!("Bearer {value}"));
-    }
-    send_task_runner_response(builder).await
 }
 
 pub async fn get_task_runner_task(

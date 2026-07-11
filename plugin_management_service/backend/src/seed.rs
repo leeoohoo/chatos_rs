@@ -238,7 +238,7 @@ async fn seed_agents(store: &AppStore) -> Result<(), String> {
     Ok(())
 }
 
-fn system_agent_specs() -> [(&'static str, &'static str, &'static str, &'static str, bool); 5] {
+fn system_agent_specs() -> [(&'static str, &'static str, &'static str, &'static str, bool); 6] {
     [
         (
             "chatos_conversation_agent",
@@ -253,6 +253,13 @@ fn system_agent_specs() -> [(&'static str, &'static str, &'static str, &'static 
             "chatos",
             "Runs Chatos plan mode and requires the Task Runner MCP with the chatos_plan task profile.",
             false,
+        ),
+        (
+            "project_requirement_execution_planner_agent",
+            "Project Requirement Execution Planner Agent",
+            "chatos",
+            "Splits project-management work items into concrete Task Runner execution tasks for Chatos project requirement execution.",
+            true,
         ),
         (
             "task_runner_run_phase",
@@ -295,6 +302,24 @@ async fn seed_agent_bindings(store: &AppStore, admin_user_id: &str) -> Result<()
         CHATOS_TASK_RUNNER_MCP_RESOURCE_ID,
         true,
         10,
+    )
+    .await?;
+    seed_agent_mcp_binding(
+        store,
+        admin_user_id,
+        "project_requirement_execution_planner_agent",
+        CHATOS_TASK_RUNNER_MCP_RESOURCE_ID,
+        true,
+        10,
+    )
+    .await?;
+    seed_agent_mcp_binding(
+        store,
+        admin_user_id,
+        "project_requirement_execution_planner_agent",
+        builtin_resource_id(BuiltinMcpKind::ProjectManagement).as_str(),
+        true,
+        20,
     )
     .await?;
     for (agent_key, kind, required, priority) in [

@@ -20,7 +20,6 @@ use crate::models::{
 };
 use crate::services::project_plan;
 use crate::state::AppState;
-use crate::task_runner_api_client;
 
 #[derive(Debug, Default, Deserialize)]
 pub(in crate::api) struct WorkItemListQuery {
@@ -128,28 +127,11 @@ pub(in crate::api) async fn create_work_item(
     Path(requirement_id): Path<String>,
     State(state): State<AppState>,
     Extension(user): Extension<CurrentUser>,
-    Json(mut input): Json<CreateProjectWorkItemRequest>,
+    Json(input): Json<CreateProjectWorkItemRequest>,
 ) -> Result<(StatusCode, Json<ProjectWorkItemRecord>), ApiError> {
     let requirement = require_requirement_access(&state, &requirement_id, &user).await?;
     let project = require_project_access(&state, &requirement.project_id, &user).await?;
     ensure_project_writable(&project)?;
-    let owner_user_id = user
-        .effective_owner_user_id()
-        .ok_or_else(|| ApiError::unauthorized("当前登录态缺少用户归属信息"))?;
-    let execution_options =
-        task_runner_api_client::fetch_execution_options(&state.config, owner_user_id)
-            .await
-            .map_err(ApiError::bad_gateway)?;
-    input.task_runner_default_model_config_id = execution_options
-        .validate_model_config_id(input.task_runner_default_model_config_id.as_str())
-        .map_err(ApiError::bad_request)?;
-    input.task_runner_enabled_tool_ids =
-        task_runner_api_client::normalize_tool_ids(input.task_runner_enabled_tool_ids)
-            .map_err(ApiError::bad_request)?;
-    let _ = execution_options
-        .mcp_config_for_tool_ids(&input.task_runner_enabled_tool_ids)
-        .map_err(ApiError::bad_request)?;
-    input.task_runner_skill_ids = Vec::new();
     let item = state
         .store
         .create_work_item(&requirement, input, &user)

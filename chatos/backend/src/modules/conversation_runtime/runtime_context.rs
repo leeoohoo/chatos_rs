@@ -6,6 +6,7 @@ use std::sync::{Arc, Mutex};
 
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine as _;
+use chatos_mcp_runtime::{PROJECT_MANAGEMENT_MCP_ID, PROJECT_MANAGEMENT_SERVER_NAME};
 use chatos_plugin_management_sdk::{SystemAgentKey, CHATOS_TASK_RUNNER_MCP_RESOURCE_ID};
 use serde::Serialize;
 use tracing::warn;
@@ -32,6 +33,17 @@ use crate::services::{
 };
 
 const TASK_RUNNER_CONTACT_MCP_SERVER_NAME: &str = "task_runner_service";
+const PROJECT_MANAGEMENT_MCP_ENDPOINT_PATH: &str = "/mcp";
+const PROJECT_REQUIREMENT_EXECUTION_PLANNER_TOOL_PROFILE: &str =
+    "project_requirement_execution_planner";
+const PROJECT_REQUIREMENT_PLANNER_PROJECT_MCP_READ_TOOLS: &[&str] = &[
+    "get_project_overview",
+    "list_requirements",
+    "list_requirement_technical_documents",
+    "get_requirement_technical_document",
+    "list_project_tasks",
+    "get_project_dependency_graph",
+];
 #[derive(Debug, Clone)]
 pub struct ConversationRuntimeRequest {
     pub effective_user_id: Option<String>,
@@ -41,6 +53,7 @@ pub struct ConversationRuntimeRequest {
     pub workspace_root: Option<String>,
     pub remote_connection_id: Option<String>,
     pub plan_mode: bool,
+    pub project_requirement_execution_planner: bool,
     pub conversation_turn_id: Option<String>,
     pub source_user_message_id: Option<String>,
 }
@@ -63,6 +76,7 @@ pub struct ResolvedConversationRuntimeContext {
     pub use_tools: bool,
     pub memory_summary_prompt: Option<String>,
     pub runtime_error: Option<String>,
+    pub project_requirement_execution_planner: bool,
 }
 
 pub type ToolMetadataMap = std::collections::HashMap<String, ToolInfo>;
@@ -177,20 +191,25 @@ pub async fn resolve_runtime_context(
     let (mut http_servers, stdio_servers, builtin_servers) = empty_mcp_server_bundle();
     let mut runtime_error = None;
 
-    let task_runner_project_id = if req.plan_mode {
+    let requires_concrete_project = req.plan_mode || req.project_requirement_execution_planner;
+    let task_runner_project_id = if requires_concrete_project {
         resolved_project_id
             .as_deref()
             .filter(|project_id| is_concrete_project_id(project_id))
     } else {
         resolved_project_id.as_deref().or(Some(PUBLIC_PROJECT_ID))
     };
-    if req.plan_mode && task_runner_project_id.is_none() {
-        runtime_error = Some("Plan 模式需要先选择一个有效项目。".to_string());
+    if requires_concrete_project && task_runner_project_id.is_none() {
+        runtime_error = Some("当前智能体运行需要先选择一个有效项目。".to_string());
     }
 
     if runtime_error.is_none() {
-        let policy_result =
-            resolve_chatos_task_runner_policy(req.plan_mode, effective_user_id.as_deref()).await;
+        let policy_result = resolve_chatos_task_runner_policy(
+            req.plan_mode,
+            req.project_requirement_execution_planner,
+            effective_user_id.as_deref(),
+        )
+        .await;
         if let Err(err) = policy_result {
             warn!(
                 session_id,
@@ -217,6 +236,7 @@ pub async fn resolve_runtime_context(
             req.source_user_message_id.as_deref(),
             internal_context_locale,
             req.plan_mode,
+            req.project_requirement_execution_planner,
         )
         .await
         {
@@ -226,6 +246,25 @@ pub async fn resolve_runtime_context(
             None => {
                 runtime_error =
                     Some("当前对话缺少可用的 Task Runner 账号映射，无法启动智能体。".to_string());
+            }
+        }
+    }
+
+    if runtime_error.is_none() && req.project_requirement_execution_planner {
+        match Config::try_get()
+            .map_err(|err| err.to_string())
+            .and_then(|cfg| {
+                build_project_management_mcp_runtime(
+                    cfg,
+                    effective_user_id.as_deref(),
+                    task_runner_project_id,
+                )
+            }) {
+            Ok(server) => {
+                http_servers.push(server);
+            }
+            Err(err) => {
+                runtime_error = Some(format!("Project Management MCP 配置不可用：{err}"));
             }
         }
     }
@@ -264,11 +303,13 @@ pub async fn resolve_runtime_context(
         use_tools,
         memory_summary_prompt,
         runtime_error,
+        project_requirement_execution_planner: req.project_requirement_execution_planner,
     }
 }
 
 async fn resolve_chatos_task_runner_policy(
     plan_mode: bool,
+    project_requirement_execution_planner: bool,
     effective_user_id: Option<&str>,
 ) -> Result<(), String> {
     let owner_user_id = effective_user_id
@@ -276,7 +317,7 @@ async fn resolve_chatos_task_runner_policy(
         .filter(|value| !value.is_empty())
         .ok_or_else(|| "当前用户身份缺失".to_string())?;
     let capabilities = plugin_management_capabilities::resolve_for_current_user(
-        chatos_agent_key(plan_mode),
+        chatos_agent_key(plan_mode, project_requirement_execution_planner),
         owner_user_id,
     )
     .await?;
@@ -288,12 +329,22 @@ async fn resolve_chatos_task_runner_policy(
         .map_err(|err| err.to_string())?;
     capabilities
         .require_available_mcp(CHATOS_TASK_RUNNER_MCP_RESOURCE_ID)
-        .map(|_| ())
-        .map_err(|err| err.to_string())
+        .map_err(|err| err.to_string())?;
+    if project_requirement_execution_planner {
+        capabilities
+            .require_available_mcp(PROJECT_MANAGEMENT_MCP_ID)
+            .map_err(|err| err.to_string())?;
+    }
+    Ok(())
 }
 
-fn chatos_agent_key(plan_mode: bool) -> SystemAgentKey {
-    if plan_mode {
+fn chatos_agent_key(
+    plan_mode: bool,
+    project_requirement_execution_planner: bool,
+) -> SystemAgentKey {
+    if project_requirement_execution_planner {
+        SystemAgentKey::ProjectRequirementExecutionPlannerAgent
+    } else if plan_mode {
         SystemAgentKey::ChatosPlanningAgent
     } else {
         SystemAgentKey::ChatosConversationAgent
@@ -303,6 +354,68 @@ fn chatos_agent_key(plan_mode: bool) -> SystemAgentKey {
 #[derive(Debug)]
 struct ContactTaskRunnerRuntime {
     server: McpHttpServer,
+}
+
+fn build_project_management_mcp_runtime(
+    config: &Config,
+    effective_user_id: Option<&str>,
+    project_id: Option<&str>,
+) -> Result<McpHttpServer, String> {
+    let sync_secret = config
+        .project_service_sync_secret
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| {
+            "CHATOS_PROJECT_SERVICE_SYNC_SECRET / PROJECT_SERVICE_SYNC_SECRET is required"
+                .to_string()
+        })?;
+    let owner_user_id = effective_user_id
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| "current user id is required".to_string())?;
+    let project_id = project_id
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .filter(|value| is_concrete_project_id(value))
+        .ok_or_else(|| "concrete project_id is required".to_string())?;
+
+    let mut headers = HashMap::new();
+    headers.insert(
+        "X-Project-Service-Sync-Secret".to_string(),
+        sync_secret.to_string(),
+    );
+    headers.insert(
+        "X-Task-Runner-Task-Profile".to_string(),
+        "chatos_plan".to_string(),
+    );
+    headers.insert(
+        "X-Task-Runner-Owner-User-Id".to_string(),
+        owner_user_id.to_string(),
+    );
+    headers.insert("X-Chatos-Project-Id".to_string(), project_id.to_string());
+    if let Some(access_token) = access_token_scope::get_current_access_token() {
+        headers.insert(
+            "X-Chatos-User-Authorization".to_string(),
+            format!("Bearer {access_token}"),
+        );
+    }
+
+    Ok(McpHttpServer {
+        name: PROJECT_MANAGEMENT_SERVER_NAME.to_string(),
+        url: format!(
+            "{}{}",
+            config.project_service_base_url.trim_end_matches('/'),
+            PROJECT_MANAGEMENT_MCP_ENDPOINT_PATH
+        ),
+        headers: Some(headers),
+        allowed_tool_names: Some(
+            PROJECT_REQUIREMENT_PLANNER_PROJECT_MCP_READ_TOOLS
+                .iter()
+                .map(|name| (*name).to_string())
+                .collect(),
+        ),
+    })
 }
 
 async fn build_contact_task_runner_runtime(
@@ -317,6 +430,7 @@ async fn build_contact_task_runner_runtime(
     source_user_message_id: Option<&str>,
     locale: InternalContextLocale,
     plan_mode: bool,
+    project_requirement_execution_planner: bool,
 ) -> Option<ContactTaskRunnerRuntime> {
     let config = match chatos_memory_mappings::get_contact_task_runner_runtime_config(
         effective_user_id,
@@ -388,7 +502,12 @@ async fn build_contact_task_runner_runtime(
     );
     headers.insert(
         "X-Task-Runner-Tool-Profile".to_string(),
-        "chatos_async_planner".to_string(),
+        if project_requirement_execution_planner {
+            PROJECT_REQUIREMENT_EXECUTION_PLANNER_TOOL_PROFILE
+        } else {
+            "chatos_async_planner"
+        }
+        .to_string(),
     );
     headers.insert(
         "X-Task-Runner-Builtin-Prompt-Locale".to_string(),
@@ -429,6 +548,7 @@ async fn build_contact_task_runner_runtime(
             name: TASK_RUNNER_CONTACT_MCP_SERVER_NAME.to_string(),
             url: format!("{}/mcp", config.base_url.trim().trim_end_matches('/')),
             headers: Some(headers),
+            allowed_tool_names: None,
         },
     })
 }
@@ -445,13 +565,108 @@ fn task_runner_builtin_prompt_lang(locale: InternalContextLocale) -> &'static st
 mod plugin_policy_tests {
     use super::*;
 
+    fn test_config() -> Config {
+        Config {
+            openai_api_key: String::new(),
+            openai_base_url: "https://api.openai.com/v1".to_string(),
+            port: 3997,
+            node_env: "test".to_string(),
+            host: "127.0.0.1".to_string(),
+            log_level: "info".to_string(),
+            log_max_files: "7d".to_string(),
+            cors_origins: vec!["*".to_string()],
+            summary_enabled: true,
+            summary_message_limit: 40,
+            summary_max_context_tokens: 6000,
+            summary_keep_last_n: 6,
+            summary_target_tokens: 700,
+            summary_merge_target_tokens: 700,
+            summary_temperature: 0.2,
+            summary_cooldown_seconds: 60,
+            dynamic_summary_enabled: true,
+            summary_bisect_enabled: true,
+            summary_bisect_max_depth: 6,
+            summary_bisect_min_messages: 4,
+            summary_retry_on_context_overflow: true,
+            auth_jwt_secret: "test-secret".to_string(),
+            auth_compat_secret: None,
+            auth_access_token_ttl_seconds: 43_200,
+            user_service_base_url: Some("http://127.0.0.1:3998".to_string()),
+            user_service_request_timeout_ms: 10_000,
+            project_service_base_url: "http://127.0.0.1:3999/".to_string(),
+            project_service_sync_secret: Some("project-sync-secret".to_string()),
+            task_runner_base_url: "http://127.0.0.1:4000".to_string(),
+            task_runner_request_timeout_ms: 10_000,
+            local_connector_service_base_url: "http://127.0.0.1:4001".to_string(),
+            local_connector_service_request_timeout_ms: 10_000,
+            memory_engine_base_url: "http://127.0.0.1:4002".to_string(),
+            memory_engine_operator_token: None,
+            memory_engine_request_timeout_ms: 10_000,
+            memory_engine_active_summary_trigger_timeout_ms: 30_000,
+            memory_engine_active_summary_poll_interval_ms: 1_000,
+            memory_engine_active_summary_poll_timeout_ms: 120_000,
+            task_runner_callback_secret: None,
+        }
+    }
+
     #[test]
     fn normal_and_plan_modes_use_distinct_system_agent_keys() {
         assert_eq!(
-            chatos_agent_key(false),
+            chatos_agent_key(false, false),
             SystemAgentKey::ChatosConversationAgent
         );
-        assert_eq!(chatos_agent_key(true), SystemAgentKey::ChatosPlanningAgent);
+        assert_eq!(
+            chatos_agent_key(true, false),
+            SystemAgentKey::ChatosPlanningAgent
+        );
+        assert_eq!(
+            chatos_agent_key(false, true),
+            SystemAgentKey::ProjectRequirementExecutionPlannerAgent
+        );
+    }
+
+    #[test]
+    fn project_planner_project_mcp_is_project_scoped_and_read_only() {
+        let server =
+            build_project_management_mcp_runtime(&test_config(), Some("user-1"), Some("project-1"))
+                .expect("build project mcp runtime");
+
+        assert_eq!(server.name, PROJECT_MANAGEMENT_SERVER_NAME);
+        assert_eq!(server.url, "http://127.0.0.1:3999/mcp");
+        let headers = server.headers.expect("headers");
+        assert_eq!(
+            headers
+                .get("X-Project-Service-Sync-Secret")
+                .map(String::as_str),
+            Some("project-sync-secret")
+        );
+        assert_eq!(
+            headers
+                .get("X-Task-Runner-Owner-User-Id")
+                .map(String::as_str),
+            Some("user-1")
+        );
+        assert_eq!(
+            headers.get("X-Chatos-Project-Id").map(String::as_str),
+            Some("project-1")
+        );
+
+        let tools = server.allowed_tool_names.expect("tool allowlist");
+        assert!(tools.contains(&"list_project_tasks".to_string()));
+        assert!(tools.contains(&"get_requirement_technical_document".to_string()));
+        assert!(!tools.contains(&"create_project_task".to_string()));
+        assert!(!tools.contains(&"update_requirement".to_string()));
+        assert!(!tools.contains(&"delete_project_task".to_string()));
+    }
+
+    #[test]
+    fn project_planner_project_mcp_requires_sync_secret() {
+        let mut config = test_config();
+        config.project_service_sync_secret = None;
+        let err = build_project_management_mcp_runtime(&config, Some("user-1"), Some("project-1"))
+            .expect_err("missing sync secret should fail");
+
+        assert!(err.contains("PROJECT_SERVICE_SYNC_SECRET"));
     }
 }
 

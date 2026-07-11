@@ -308,6 +308,11 @@ start_default() {
   esac
 }
 
+if [[ "$ACTION" == "build-services" ]]; then
+  print_build_services
+  exit 0
+fi
+
 ensure_docker_ready
 cd "$ROOT_DIR"
 

@@ -25,7 +25,7 @@ import {
   profilePreviewOnlyStyle,
   profileTextAreaStyle,
 } from './styles';
-import type { ExecutionOptionLabelMap, ProfileMarkdownFieldName } from './types';
+import type { ProfileMarkdownFieldName } from './types';
 
 export function ProfileMarkdownField({
   title,
@@ -126,13 +126,9 @@ export function RequirementDetailPreview({ requirement }: { requirement: Require
 export function WorkItemDetailPreview({
   workItem,
   requirementTitle,
-  modelLabelMap,
-  toolLabelMap,
 }: {
   workItem: ProjectWorkItemRecord;
   requirementTitle: string;
-  modelLabelMap: ExecutionOptionLabelMap;
-  toolLabelMap: ExecutionOptionLabelMap;
 }) {
   return (
     <div style={detailPreviewShellStyle}>
@@ -161,12 +157,6 @@ export function WorkItemDetailPreview({
           <Descriptions.Item label="计划完成">{formatDateTime(workItem.due_at)}</Descriptions.Item>
           <Descriptions.Item label="排序">{workItem.sort_order}</Descriptions.Item>
           <Descriptions.Item label="负责人">{workItem.assignee_user_id || '-'}</Descriptions.Item>
-          <Descriptions.Item label="执行模型">
-            {resolveExecutionOptionLabel(workItem.task_runner_default_model_config_id, modelLabelMap)}
-          </Descriptions.Item>
-          <Descriptions.Item label="工具集">
-            {renderExecutionToolTags(workItem.task_runner_enabled_tool_ids, toolLabelMap)}
-          </Descriptions.Item>
           <Descriptions.Item label="创建时间">{formatDateTime(workItem.created_at)}</Descriptions.Item>
           <Descriptions.Item label="更新时间">{formatDateTime(workItem.updated_at)}</Descriptions.Item>
           <Descriptions.Item label="归档时间">{formatDateTime(workItem.archived_at)}</Descriptions.Item>
@@ -185,31 +175,6 @@ export function projectStatusTag(status: 'active' | 'archived') {
     <Tag color={status === 'active' ? 'success' : 'default'}>
       {status === 'active' ? '进行中' : '已归档'}
     </Tag>
-  );
-}
-
-export function resolveExecutionOptionLabel(
-  value: string | null | undefined,
-  labelMap: ExecutionOptionLabelMap,
-) {
-  const id = value?.trim();
-  return id ? labelMap.get(id) || id : '-';
-}
-
-export function renderExecutionToolTags(
-  values: string[] | null | undefined,
-  labelMap: ExecutionOptionLabelMap,
-) {
-  const ids = values?.filter((value) => value.trim()) || [];
-  if (ids.length === 0) {
-    return <Typography.Text type="secondary">-</Typography.Text>;
-  }
-  return (
-    <Space size={[4, 4]} wrap>
-      {ids.map((id) => (
-        <Tag key={id}>{resolveExecutionOptionLabel(id, labelMap)}</Tag>
-      ))}
-    </Space>
   );
 }
 

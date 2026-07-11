@@ -35,6 +35,80 @@ pub struct UserSummaryRecord {
     pub harness_provisioning: Option<HarnessProvisioningSummaryRecord>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RegistrationEmailCodeRecord {
+    pub email: String,
+    pub code_hash: String,
+    pub invite_code_hash: String,
+    pub expires_at_unix: i64,
+    pub resend_after_unix: i64,
+    pub attempts: i64,
+    pub send_count: i64,
+    pub window_start_unix: i64,
+    pub consumed_at: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LocalConnectorAuthTicketRecord {
+    pub id: String,
+    pub ticket_hash: String,
+    pub user_id: String,
+    pub audience: String,
+    pub scope: String,
+    pub expires_at_unix: i64,
+    pub consumed_at: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InviteCodeRecord {
+    pub id: String,
+    pub code_hash: String,
+    pub label: Option<String>,
+    pub created_by_user_id: String,
+    pub max_uses: i64,
+    pub used_count: i64,
+    pub expires_at_unix: Option<i64>,
+    pub revoked_at: Option<String>,
+    pub last_used_at: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InviteCodePublicRecord {
+    pub id: String,
+    pub label: Option<String>,
+    pub created_by_user_id: String,
+    pub max_uses: i64,
+    pub used_count: i64,
+    pub expires_at_unix: Option<i64>,
+    pub revoked_at: Option<String>,
+    pub last_used_at: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+impl From<InviteCodeRecord> for InviteCodePublicRecord {
+    fn from(value: InviteCodeRecord) -> Self {
+        Self {
+            id: value.id,
+            label: value.label,
+            created_by_user_id: value.created_by_user_id,
+            max_uses: value.max_uses,
+            used_count: value.used_count,
+            expires_at_unix: value.expires_at_unix,
+            revoked_at: value.revoked_at,
+            last_used_at: value.last_used_at,
+            created_at: value.created_at,
+            updated_at: value.updated_at,
+        }
+    }
+}
+
 pub const HARNESS_PROVISIONING_STATUS_PENDING: &str = "pending";
 pub const HARNESS_PROVISIONING_STATUS_PROVISIONED: &str = "provisioned";
 pub const HARNESS_PROVISIONING_STATUS_FAILED: &str = "failed";
@@ -193,10 +267,53 @@ pub struct LoginRequest {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SendRegisterEmailCodeRequest {
+    pub email: String,
+    pub invite_code: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SendRegisterEmailCodeResponse {
+    pub ok: bool,
+    pub expires_in_seconds: i64,
+    pub resend_after_seconds: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RegisterRequest {
-    pub username: String,
+    pub username: Option<String>,
+    pub email: Option<String>,
     pub display_name: Option<String>,
     pub password: String,
+    pub invite_code: Option<String>,
+    pub verification_code: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IssueLocalConnectorTicketResponse {
+    pub ticket: String,
+    pub expires_in_seconds: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExchangeLocalConnectorTicketRequest {
+    pub ticket: String,
+    pub device_name: Option<String>,
+    pub public_key: Option<String>,
+    pub client_version: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CreateInviteCodeRequest {
+    pub label: Option<String>,
+    pub max_uses: Option<i64>,
+    pub expires_in_days: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CreateInviteCodeResponse {
+    pub code: String,
+    pub invite: InviteCodePublicRecord,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

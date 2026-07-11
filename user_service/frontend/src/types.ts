@@ -39,6 +39,30 @@ export interface UserSummaryRecord {
   harness_provisioning?: HarnessProvisioningSummaryRecord | null;
 }
 
+export interface InviteCodeRecord {
+  id: string;
+  label?: string | null;
+  created_by_user_id: string;
+  max_uses: number;
+  used_count: number;
+  expires_at_unix?: number | null;
+  revoked_at?: string | null;
+  last_used_at?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CreateInviteCodePayload {
+  label?: string;
+  max_uses?: number;
+  expires_in_days?: number;
+}
+
+export interface CreateInviteCodeResponse {
+  code: string;
+  invite: InviteCodeRecord;
+}
+
 export interface HarnessProvisioningSummaryRecord {
   status: 'pending' | 'provisioned' | 'failed' | string;
   harness_uid: string;

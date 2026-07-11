@@ -27,7 +27,6 @@ export type RequirementTableRecord = RequirementRecord & {
 };
 
 export type ProfileMarkdownFieldName = 'background' | 'introduction';
-export type ExecutionOptionLabelMap = Map<string, string>;
 
 export const emptyRequirements: RequirementRecord[] = [];
 export const emptyWorkItems: ProjectWorkItemRecord[] = [];

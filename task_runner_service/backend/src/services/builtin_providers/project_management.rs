@@ -15,7 +15,6 @@ pub(in crate::services) struct ProjectManagementBuiltinService {
     sync_secret: Option<String>,
     owner_user_id: Option<String>,
     project_id: Option<String>,
-    execution_options: ProjectManagementExecutionOptions,
 }
 
 impl ProjectManagementBuiltinService {
@@ -26,12 +25,11 @@ impl ProjectManagementBuiltinService {
             sync_secret: normalize_optional(options.sync_secret),
             owner_user_id: normalize_optional(options.owner_user_id),
             project_id: normalize_optional(options.project_id),
-            execution_options: options.execution_options.unwrap_or_default(),
         }
     }
 
     pub(in crate::services) fn list_tools(&self) -> Vec<Value> {
-        tool_definitions(Some(&self.execution_options))
+        tool_definitions()
     }
 
     pub(in crate::services) async fn call_tool(
@@ -115,7 +113,7 @@ impl ProjectManagementBuiltinService {
         let Some(reason) = reason else {
             return Vec::new();
         };
-        tool_definitions(Some(&self.execution_options))
+        tool_definitions()
             .into_iter()
             .filter_map(|tool| {
                 tool.get("name")
@@ -133,14 +131,6 @@ pub(in crate::services) struct ProjectManagementOptions {
     pub(in crate::services) sync_secret: Option<String>,
     pub(in crate::services) owner_user_id: Option<String>,
     pub(in crate::services) project_id: Option<String>,
-    pub(in crate::services) execution_options: Option<ProjectManagementExecutionOptions>,
-}
-
-#[derive(Clone, Debug, Default)]
-pub(in crate::services) struct ProjectManagementExecutionOptions {
-    pub(in crate::services) model_config_ids: Vec<String>,
-    pub(in crate::services) preferred_model_config_id: Option<String>,
-    pub(in crate::services) tool_ids: Vec<String>,
 }
 
 fn normalize_optional(value: Option<String>) -> Option<String> {
@@ -149,26 +139,8 @@ fn normalize_optional(value: Option<String>) -> Option<String> {
         .filter(|value| !value.is_empty())
 }
 
-fn tool_definitions(execution_options: Option<&ProjectManagementExecutionOptions>) -> Vec<Value> {
-    let execution_options = execution_options.map(project_management_execution_schema_options);
-    schemas::task_runner_builtin_tool_definitions(execution_options.as_ref())
-}
-
-fn project_management_execution_schema_options(
-    options: &ProjectManagementExecutionOptions,
-) -> schemas::TaskRunnerExecutionSchemaOptions {
-    let default_model_config_id =
-        options.preferred_model_config_id.clone().or_else(|| {
-            match options.model_config_ids.as_slice() {
-                [only] => Some(only.clone()),
-                _ => None,
-            }
-        });
-    schemas::TaskRunnerExecutionSchemaOptions {
-        model_config_ids: options.model_config_ids.clone(),
-        default_model_config_id,
-        tool_ids: options.tool_ids.clone(),
-    }
+fn tool_definitions() -> Vec<Value> {
+    schemas::task_runner_builtin_tool_definitions()
 }
 
 fn archived_status_short_circuit(name: &str, args: &Value) -> Result<Option<Value>, String> {
@@ -341,7 +313,7 @@ mod tests {
             .iter()
             .copied()
             .collect::<BTreeSet<_>>();
-        let definitions = tool_definitions(None);
+        let definitions = tool_definitions();
         let actual = definitions
             .iter()
             .filter_map(|tool| tool.get("name").and_then(Value::as_str))
@@ -350,17 +322,8 @@ mod tests {
     }
 
     #[test]
-    fn create_project_task_schema_exposes_execution_options() {
-        let execution_options = ProjectManagementExecutionOptions {
-            model_config_ids: vec!["model-1".to_string(), "model-2".to_string()],
-            preferred_model_config_id: Some("model-2".to_string()),
-            tool_ids: vec![
-                "CodeMaintainerRead".to_string(),
-                "TerminalController".to_string(),
-                "external-tool-1".to_string(),
-            ],
-        };
-        let definitions = tool_definitions(Some(&execution_options));
+    fn create_project_task_schema_excludes_execution_options() {
+        let definitions = tool_definitions();
         let create_task = definitions
             .iter()
             .find(|tool| {
@@ -372,32 +335,8 @@ mod tests {
             .and_then(Value::as_object)
             .expect("properties");
 
-        let model_schema = properties
-            .get("task_runner_default_model_config_id")
-            .expect("model schema");
-        assert_eq!(
-            model_schema.get("default").and_then(Value::as_str),
-            Some("model-2")
-        );
-        assert_eq!(
-            model_schema
-                .get("enum")
-                .and_then(Value::as_array)
-                .cloned()
-                .unwrap_or_default(),
-            vec![json!("model-1"), json!("model-2")]
-        );
-
-        let tool_enum = properties
-            .get("task_runner_enabled_tool_ids")
-            .and_then(|schema| schema.get("items"))
-            .and_then(|items| items.get("enum"))
-            .and_then(Value::as_array)
-            .cloned()
-            .unwrap_or_default();
-        assert!(tool_enum.contains(&json!("CodeMaintainerRead")));
-        assert!(tool_enum.contains(&json!("TerminalController")));
-        assert!(tool_enum.contains(&json!("external-tool-1")));
+        assert!(!properties.contains_key("task_runner_default_model_config_id"));
+        assert!(!properties.contains_key("task_runner_enabled_tool_ids"));
     }
 
     #[test]

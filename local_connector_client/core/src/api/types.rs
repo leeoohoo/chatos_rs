@@ -26,6 +26,22 @@ pub(super) struct LocalAuthRequest {
     pub(super) password: String,
     pub(super) display_name: Option<String>,
     pub(super) device_name: Option<String>,
+    pub(super) invite_code: Option<String>,
+    pub(super) verification_code: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct SendRegisterEmailCodeRequest {
+    pub(super) cloud_base_url: String,
+    pub(super) email: String,
+    pub(super) invite_code: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct DesktopTicketAuthRequest {
+    pub(super) cloud_base_url: String,
+    pub(super) ticket: String,
+    pub(super) device_name: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]

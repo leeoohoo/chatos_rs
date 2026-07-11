@@ -90,7 +90,6 @@ sequenceDiagram
 - 技术文档应按关注点拆分，避免单篇过长影响 AI 读取和维护。常用 `doc_type` 包括 `technical_overview`、`implementation_plan`、`ui_svg_preview`、`architecture_diagram`、`flowchart`、`sequence_diagram`、`api_design`、`data_model`、`risk_notes`、`other`。
 - 创建项目任务前，必须确保该需求尚未完成，并且至少有一份非空技术文档；如果文档为空，先调用 `upsert_requirement_technical_document` 补齐，再调用 `create_project_task`。
 - 创建项目任务时必须判断任务类型：如果该项目任务的目标是继续规划、继续拆解需求、补充技术方案、创建更多项目任务或调整依赖，调用 `create_project_task` 时设置 `is_planning_task: true`；如果任务目标是编码、测试、修复、文档落地、部署或其他具体执行工作，设置为 `false` 或省略。
-- 创建项目任务时，如果当前规划运行环境中有与任务强相关的 skill，先调用 `task_runner_service_search_installed_skills` 按关键词搜索当前可用 skills，必要时调用 `task_runner_service_get_skill_detail` 阅读完整说明；只能把返回的真实 id 写入 `create_project_task.task_runner_skill_ids`，不要根据名称猜测或编造 id。没有相关 skill 时省略或传空数组。
 - 不要创建无效分组：如果一个父需求下面的“子需求”只是执行步骤、模块拆分或任务清单，直接在父需求下创建多个 `project_task`。例如“父需求 A + 3 个子需求 + 只有 1 个子需求有任务”是无效结构；应改为“需求 A + 3 个项目任务”，必要时用项目任务前置关系表达顺序。
 - 只有当子需求本身是独立可交付范围时才创建子需求；每个可执行子需求仍然必须有项目任务覆盖。如果某个父需求只是汇总、里程碑或纯资料整理，不能直接执行，例外理由只用于内部覆盖矩阵；如必须写入业务文档，只能转译成业务范围说明，例如“本项为阶段汇总，实际落地由下列子范围承载”，不要写“无直接项目任务”或类似工具层表述。
 - 当项目描述、项目背景或项目介绍为空、明显过短或已经落后于当前需求时，要主动维护这些项目资料。优先基于用户已提供的信息、项目名、根目录、Git 地址、已有需求、已有项目任务、需求技术文档以及当前上下文中可见的 README/docs/配置文件等线索整理；能确认的内容直接调用 `initialize_project` 补充，不能确认时先向用户提出关键问题，不要编造。
@@ -148,7 +147,7 @@ sequenceDiagram
 - `get_requirement_technical_document`: 按 `document_id` 读取某个需求下的一份技术文档。
 - `upsert_requirement_technical_document`: 创建一份新的需求技术文档；传入 `document_id` 时更新已有文档。
 - `list_project_tasks`: 查询项目管理任务/工作项；支持 `keyword` 模糊匹配、`status`/`requirement_id`/`is_planning_task` 过滤、`limit`/`offset` 分页。
-- `create_project_task`: 在某个需求下创建项目管理任务/工作项；要求该需求至少已有一份非空技术文档。规划型项目任务必须传 `is_planning_task: true`，普通执行任务保持 `false`。可通过 `task_runner_skill_ids` 绑定当前可见的 skills。
+- `create_project_task`: 在某个需求下创建项目管理任务/工作项；要求该需求至少已有一份非空技术文档。规划型项目任务必须传 `is_planning_task: true`，普通执行任务保持 `false`。项目任务不再绑定 Task Runner 模型、工具或 skill；执行阶段由专门的需求执行规划 Agent 拆分并选择执行配置。
 - `update_project_task`: 更新项目管理任务/工作项，并可同时替换前置项目任务；可用 `patch.is_planning_task` 修正尚未完成项目任务的规划/执行类型。
 - `delete_project_task`: 删除尚未被执行的项目任务；规划阶段删除误建任务时使用。
 - `set_project_task_dependencies`: 替换某个项目任务的前置项目任务列表。
@@ -163,6 +162,6 @@ sequenceDiagram
 5. 创建需求前先过“建模阶梯”：能作为已有需求下的项目任务表达时，直接创建/更新 `project_task`，不要创建子需求。
 6. 只有确实需要独立交付范围时，才使用 `create_requirement` 创建新需求，或用 `update_requirement` 调整已有需求。
 7. 对每个新建或本轮更新的可执行需求，调用 `list_requirement_technical_documents` 读取或维护该需求的技术文档列表；没有非空文档时，先调用 `upsert_requirement_technical_document`。按“技术文档选择指南”补齐匹配类型；文档超过长度阈值或关注点混杂时，拆成多份文档。
-8. 对每个可执行需求调用 `list_project_tasks` 并传 `requirement_id` 检查已有覆盖；缺少项目任务时，用 `create_project_task` 至少创建一个可执行项目任务。如任务需要特定技能，先用当前规划运行环境中可见的 `task_runner_service_search_installed_skills` / `task_runner_service_get_skill_detail` 确认真实 skill id，再写入 `task_runner_skill_ids`。这一步是内部工具自检，不得把“至少一个技术文档/项目任务”等要求写入业务验收标准或技术文档。
+8. 对每个可执行需求调用 `list_project_tasks` 并传 `requirement_id` 检查已有覆盖；缺少项目任务时，用 `create_project_task` 至少创建一个可执行项目任务。这一步是内部工具自检，不得把“至少一个技术文档/项目任务”等要求写入业务验收标准或技术文档。
 9. 使用 `set_requirement_dependencies` 和 `set_project_task_dependencies` 建立前置关系。
 10. 调用 `get_project_dependency_graph` 复核依赖图是否符合用户意图，并确认每个可执行需求都能在图中看到对应项目任务；如果图里出现任务式子需求，先改成父需求下的项目任务，再结束。

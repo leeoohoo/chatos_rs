@@ -46,12 +46,7 @@ import {
   technicalOverviewPreviewHeaderStyle,
   technicalOverviewPreviewPaneStyle,
 } from './styles';
-import type { ExecutionOptionLabelMap, WorkItemFormValues } from './types';
-
-interface SelectOption {
-  value: string;
-  label: string;
-}
+import type { WorkItemFormValues } from './types';
 
 const emptyRequirementDocuments: RequirementDocumentRecord[] = [];
 
@@ -78,10 +73,6 @@ interface ProjectDetailOverlaysProps {
   workItemForm: FormInstance<WorkItemFormValues>;
   createWorkItemPending: boolean;
   onCreateWorkItem: (values: WorkItemFormValues) => void;
-  taskRunnerModelOptions: SelectOption[];
-  taskRunnerToolOptions: SelectOption[];
-  executionOptionsLoading: boolean;
-  executionOptionsErrorMessage?: string;
   workItemDepTarget: ProjectWorkItemRecord | null;
   onCloseWorkItemDeps: () => void;
   onSaveWorkItemDeps: () => void;
@@ -94,8 +85,6 @@ interface ProjectDetailOverlaysProps {
   onCloseRequirementDetail: () => void;
   workItemDetailTarget: ProjectWorkItemRecord | null;
   onCloseWorkItemDetail: () => void;
-  taskRunnerModelLabelMap: ExecutionOptionLabelMap;
-  taskRunnerToolLabelMap: ExecutionOptionLabelMap;
   requirements: RequirementRecord[];
 }
 
@@ -122,10 +111,6 @@ export function ProjectDetailOverlays({
   workItemForm,
   createWorkItemPending,
   onCreateWorkItem,
-  taskRunnerModelOptions,
-  taskRunnerToolOptions,
-  executionOptionsLoading,
-  executionOptionsErrorMessage,
   workItemDepTarget,
   onCloseWorkItemDeps,
   onSaveWorkItemDeps,
@@ -138,8 +123,6 @@ export function ProjectDetailOverlays({
   onCloseRequirementDetail,
   workItemDetailTarget,
   onCloseWorkItemDetail,
-  taskRunnerModelLabelMap,
-  taskRunnerToolLabelMap,
   requirements,
 }: ProjectDetailOverlaysProps) {
   const [selectedDocumentId, setSelectedDocumentId] = useState<string | undefined>();
@@ -261,9 +244,7 @@ export function ProjectDetailOverlays({
                           <Tag color={selected ? 'blue' : 'default'}>
                             {requirementDocumentTypeLabel(item.doc_type)}
                           </Tag>
-                          <Typography.Text type="secondary">
-                            v{item.version}
-                          </Typography.Text>
+                          <Typography.Text type="secondary">v{item.version}</Typography.Text>
                         </Space>
                       </Space>
                     </List.Item>
@@ -311,7 +292,6 @@ export function ProjectDetailOverlays({
             status: 'todo',
             priority: 0,
             sort_order: 0,
-            task_runner_enabled_tool_ids: [],
             is_planning_task: false,
           }}
           onFinish={onCreateWorkItem}
@@ -342,49 +322,8 @@ export function ProjectDetailOverlays({
           <Form.Item name="description" label="描述">
             <Input.TextArea rows={4} />
           </Form.Item>
-          <Form.Item
-            name="is_planning_task"
-            label="规划任务"
-            valuePropName="checked"
-          >
+          <Form.Item name="is_planning_task" label="规划任务" valuePropName="checked">
             <Switch />
-          </Form.Item>
-          {executionOptionsErrorMessage ? (
-            <Typography.Text type="danger">{executionOptionsErrorMessage}</Typography.Text>
-          ) : null}
-          <Form.Item
-            name="task_runner_default_model_config_id"
-            label="执行模型"
-            rules={[{ required: true, message: '请选择执行模型' }]}
-          >
-            <Select
-              showSearch
-              loading={executionOptionsLoading}
-              options={taskRunnerModelOptions}
-              placeholder="选择 Task Runner 模型配置"
-            />
-          </Form.Item>
-          <Form.Item
-            name="task_runner_enabled_tool_ids"
-            label="工具集"
-            rules={[
-              {
-                validator: async (_, value?: string[]) => {
-                  if (value?.length) {
-                    return;
-                  }
-                  throw new Error('请选择工具集');
-                },
-              },
-            ]}
-          >
-            <Select
-              mode="multiple"
-              showSearch
-              loading={executionOptionsLoading}
-              options={taskRunnerToolOptions}
-              placeholder="选择可用工具"
-            />
           </Form.Item>
           <Form.Item name="status" label="状态">
             <Select options={workItemStatusOptions} />
@@ -450,8 +389,6 @@ export function ProjectDetailOverlays({
         {workItemDetailTarget ? (
           <WorkItemDetailPreview
             workItem={workItemDetailTarget}
-            modelLabelMap={taskRunnerModelLabelMap}
-            toolLabelMap={taskRunnerToolLabelMap}
             requirementTitle={
               requirements.find((item) => item.id === workItemDetailTarget.requirement_id)?.title ||
               workItemDetailTarget.requirement_id

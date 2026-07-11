@@ -26,23 +26,12 @@ pub const PROJECT_TASK_STATUS_VALUES: &[&str] = &[
     "cancelled",
 ];
 
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct TaskRunnerExecutionSchemaOptions {
-    pub model_config_ids: Vec<String>,
-    pub default_model_config_id: Option<String>,
-    pub tool_ids: Vec<String>,
+pub fn project_management_server_tool_definitions() -> Vec<Value> {
+    tool_definitions(true)
 }
 
-pub fn project_management_server_tool_definitions(
-    execution_options: Option<&TaskRunnerExecutionSchemaOptions>,
-) -> Vec<Value> {
-    tool_definitions(execution_options, true)
-}
-
-pub fn task_runner_builtin_tool_definitions(
-    execution_options: Option<&TaskRunnerExecutionSchemaOptions>,
-) -> Vec<Value> {
-    tool_definitions(execution_options, true)
+pub fn task_runner_builtin_tool_definitions() -> Vec<Value> {
+    tool_definitions(true)
 }
 
 pub fn requirement_status_values() -> Vec<&'static str> {
@@ -53,10 +42,7 @@ pub fn project_task_status_values() -> Vec<&'static str> {
     PROJECT_TASK_STATUS_VALUES.to_vec()
 }
 
-fn tool_definitions(
-    execution_options: Option<&TaskRunnerExecutionSchemaOptions>,
-    include_delete_tools: bool,
-) -> Vec<Value> {
+fn tool_definitions(include_delete_tools: bool) -> Vec<Value> {
     let mut definitions = vec![
         tool_definition(
             tools::GET_PROJECT_OVERVIEW,
@@ -244,8 +230,6 @@ fn tool_definitions(
                     string_field("requirement_id", "Requirement id this project task belongs to."),
                     string_field("title", "Project task title."),
                     optional_string_field("description", "Project task description."),
-                    task_runner_model_config_field(execution_options),
-                    task_runner_tool_ids_field(execution_options),
                     enum_field(
                         "status",
                         "Optional project task status.",
@@ -266,12 +250,7 @@ fn tool_definitions(
                         "Optional full list of prerequisite project task ids.",
                     ),
                 ],
-                vec![
-                    "requirement_id",
-                    "title",
-                    "task_runner_default_model_config_id",
-                    "task_runner_enabled_tool_ids",
-                ],
+                vec!["requirement_id", "title"],
             ),
         ),
         tool_definition(
@@ -497,48 +476,5 @@ fn project_task_patch_field() -> (&'static str, Value) {
             ],
             vec![],
         ),
-    )
-}
-
-fn task_runner_model_config_field(
-    execution_options: Option<&TaskRunnerExecutionSchemaOptions>,
-) -> (&'static str, Value) {
-    let mut schema = json!({
-        "type": "string",
-        "minLength": 1,
-        "description": "Required execution model config id. Use one of the enum values when present; if multiple are available, choose the model best suited for the project task instead of asking the user for an internal id."
-    });
-    if let Some(options) = execution_options {
-        if !options.model_config_ids.is_empty() {
-            schema["enum"] = json!(&options.model_config_ids);
-        }
-        if let Some(default_id) = options.default_model_config_id.as_deref() {
-            schema["default"] = json!(default_id);
-        }
-    }
-    ("task_runner_default_model_config_id", schema)
-}
-
-fn task_runner_tool_ids_field(
-    execution_options: Option<&TaskRunnerExecutionSchemaOptions>,
-) -> (&'static str, Value) {
-    let mut item_schema = json!({ "type": "string" });
-    let mut description = "Required execution tool id multi-select. Use only visible tool ids. Choose tools according to the work item's execution needs; for code implementation tasks, include appropriate code reading and terminal tools when available."
-        .to_string();
-    if let Some(options) = execution_options {
-        if !options.tool_ids.is_empty() {
-            description.push_str(" Available tool ids are exposed in the item enum.");
-            item_schema["enum"] = json!(&options.tool_ids);
-        }
-    }
-    (
-        "task_runner_enabled_tool_ids",
-        json!({
-            "type": "array",
-            "items": item_schema,
-            "minItems": 1,
-            "uniqueItems": true,
-            "description": description
-        }),
     )
 }

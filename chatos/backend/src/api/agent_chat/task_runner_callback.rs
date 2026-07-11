@@ -435,11 +435,6 @@ async fn sync_project_requirement_execution_status(
     if should_ignore_stopped_task_cancel_callback(message.metadata.as_ref(), payload) {
         return Ok(());
     }
-    let Some(work_item_id) =
-        project_work_item_id_for_task(message.metadata.as_ref(), payload.task_id.as_str())
-    else {
-        return Ok(());
-    };
     let cfg = Config::try_get().map_err(|err| err.to_string())?;
     let Some(sync_secret) = cfg
         .project_service_sync_secret
@@ -453,14 +448,15 @@ async fn sync_project_requirement_execution_status(
         .task_status
         .clone()
         .or_else(|| Some(payload.status.clone()));
-    project_management_api_client::sync_work_item_task_runner_status(
+    project_management_api_client::sync_task_runner_task_status(
         cfg.project_service_base_url.as_str(),
         sync_secret,
-        work_item_id.as_str(),
+        payload.task_id.as_str(),
         &project_management_api_client::SyncTaskRunnerWorkItemStatusRequest {
             task_runner_task_id: payload.task_id.clone(),
             task_runner_run_id: payload.run_id.clone(),
             task_runner_status,
+            execution_group_id: payload.source_user_message_id.clone(),
             last_callback_event: Some(payload.event.clone()),
             last_callback_at: payload.callback_at.clone(),
             last_error_message: payload.error_message.clone(),
@@ -493,29 +489,6 @@ fn should_ignore_stopped_task_cancel_callback(
                 .filter_map(Value::as_str)
                 .any(|value| value.trim() == task_id)
         })
-}
-
-fn project_work_item_id_for_task(metadata: Option<&Value>, task_id: &str) -> Option<String> {
-    let normalized_task_id = task_id.trim();
-    if normalized_task_id.is_empty() {
-        return None;
-    }
-    metadata?
-        .get("project_requirement_execution")?
-        .get("task_links")?
-        .as_array()?
-        .iter()
-        .find(|item| {
-            item.get("task_runner_task_id")
-                .and_then(Value::as_str)
-                .map(str::trim)
-                == Some(normalized_task_id)
-        })
-        .and_then(|item| item.get("project_task_id"))
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(ToOwned::to_owned)
 }
 
 fn normalize_callback_value(value: Option<&str>) -> Option<String> {

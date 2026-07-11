@@ -5,6 +5,7 @@ mod api;
 mod auth;
 mod config;
 mod db;
+mod email;
 mod integrations;
 mod models;
 mod secrets;

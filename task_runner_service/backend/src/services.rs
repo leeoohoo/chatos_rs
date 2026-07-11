@@ -51,7 +51,7 @@ pub(crate) mod path_redaction;
 mod plugin_management_policy;
 mod prerequisite_context;
 mod process_log_text;
-mod project_management_api_client;
+pub(crate) mod project_management_api_client;
 mod project_service;
 mod remote_server_service;
 mod remote_servers;
@@ -81,10 +81,7 @@ use self::batch_ops::{
     normalize_batch_task_ids, normalize_prerequisite_task_ids, normalize_tags, sanitize_id_list,
     summarize_batch_results,
 };
-use self::builtin_providers::{
-    build_builtin_registry_with_project_management_options, DisabledBuiltinProvider,
-    ProjectManagementExecutionOptions,
-};
+use self::builtin_providers::{build_builtin_registry, DisabledBuiltinProvider};
 pub use self::chatos_message_tasks::{
     ChatosActiveMessageTaskSource, ChatosMessageModelConfigSummary, ChatosMessageRunDetail,
     ChatosMessageTaskDetail, ChatosMessageTaskGraph, ChatosMessageTaskGraphEdge,

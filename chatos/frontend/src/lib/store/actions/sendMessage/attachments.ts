@@ -21,6 +21,7 @@ const INLINE_IMAGE_QUALITY_STEPS = [0.84, 0.72, 0.6, 0.48, 0.36];
 interface PrepareAttachmentsOptions {
   dropImagesWhenUnsupported?: boolean;
   maxTotalBytes?: number;
+  uploadAttachments?: (files: File[]) => Promise<ApiAttachmentPayload[]>;
 }
 
 const readFileAsDataUrl = (file: File) => new Promise<string>((resolve, reject) => {
@@ -347,6 +348,11 @@ export async function prepareAttachmentsForStreaming(
   );
 
   const previewAttachments = await Promise.all((safeAttachments || []).map(makePreviewAttachment));
+  if (safeAttachments.length > 0 && options.uploadAttachments) {
+    const apiAttachments = await options.uploadAttachments(safeAttachments);
+    return { previewAttachments, apiAttachments };
+  }
+
   const transportAttachments = await Promise.all(
     (safeAttachments || []).map(prepareFileForInlineTransport),
   );

@@ -31,7 +31,8 @@ export interface AuthState {
   error: string | null;
   bootstrap: () => Promise<void>;
   login: (username: string, password: string) => Promise<void>;
-  register: (username: string, password: string) => Promise<void>;
+  register: (email: string, password: string, inviteCode: string, verificationCode: string) => Promise<void>;
+  sendRegisterEmailCode: (email: string, inviteCode: string) => Promise<void>;
   logout: () => void;
   clearError: () => void;
 }
@@ -98,6 +99,34 @@ function applyAuthSuccess(
     loading: false,
     error: null,
   });
+}
+
+function isLocalConnectorDesktopHost(): boolean {
+  if (typeof window === 'undefined') {
+    return false;
+  }
+  try {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('desktop') === 'local-connector') {
+      window.sessionStorage.setItem('chatos-local-connector-desktop', '1');
+      return true;
+    }
+    return window.sessionStorage.getItem('chatos-local-connector-desktop') === '1';
+  } catch {
+    return false;
+  }
+}
+
+async function syncLocalConnectorDesktop(client: ApiClient): Promise<void> {
+  if (!isLocalConnectorDesktopHost()) {
+    return;
+  }
+  const response = await client.issueLocalConnectorTicket();
+  const ticket = String(response?.ticket || '').trim();
+  if (!ticket) {
+    throw new Error('Local Connector 授权票据为空');
+  }
+  window.location.href = `chatos-local-connector://auth?ticket=${encodeURIComponent(ticket)}`;
 }
 
 const AUTH_STORE_KEY = 'chat-auth-store';
@@ -174,6 +203,9 @@ export const createAuthStore = (
             if (!user?.id) {
               throw new Error('登录状态已失效');
             }
+            void syncLocalConnectorDesktop(runtimeClient).catch((error) => {
+              console.warn('Local Connector desktop sync failed:', error);
+            });
             set({ user, initialized: true, loading: false, error: null });
           } catch (error) {
             runtimeClient.setAccessToken(null);
@@ -193,18 +225,42 @@ export const createAuthStore = (
           try {
             const resp = await runtimeClient.login({ username, password });
             applyAuthSuccess(resp, runtimeClient, set);
+            void syncLocalConnectorDesktop(runtimeClient).catch((error) => {
+              console.warn('Local Connector desktop sync failed:', error);
+            });
           } catch (error) {
             set({ loading: false, error: extractErrorMessage(error) });
             throw error;
           }
         },
 
-        register: async (username: string, password: string) => {
+        sendRegisterEmailCode: async (email: string, inviteCode: string) => {
           const runtimeClient = getClient();
           set({ loading: true, error: null });
           try {
-            const resp = await runtimeClient.register({ username, password });
+            await runtimeClient.sendRegisterEmailCode({ email, invite_code: inviteCode });
+            set({ loading: false, error: null });
+          } catch (error) {
+            set({ loading: false, error: extractErrorMessage(error) });
+            throw error;
+          }
+        },
+
+        register: async (email: string, password: string, inviteCode: string, verificationCode: string) => {
+          const runtimeClient = getClient();
+          set({ loading: true, error: null });
+          try {
+            const resp = await runtimeClient.register({
+              username: email,
+              email,
+              password,
+              invite_code: inviteCode,
+              verification_code: verificationCode,
+            });
             applyAuthSuccess(resp, runtimeClient, set);
+            void syncLocalConnectorDesktop(runtimeClient).catch((error) => {
+              console.warn('Local Connector desktop sync failed:', error);
+            });
           } catch (error) {
             set({ loading: false, error: extractErrorMessage(error) });
             throw error;

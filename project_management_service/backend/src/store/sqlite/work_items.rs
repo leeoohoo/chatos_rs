@@ -33,9 +33,6 @@ impl SqliteStore {
                  OR title LIKE ?4
                  OR description LIKE ?4
                  OR tags_json LIKE ?4
-                 OR task_runner_default_model_config_id LIKE ?4
-                 OR task_runner_enabled_tool_ids_json LIKE ?4
-                 OR task_runner_skill_ids_json LIKE ?4
                )
              ORDER BY sort_order ASC, priority DESC, updated_at DESC",
         )
@@ -76,9 +73,6 @@ impl SqliteStore {
                  OR title LIKE ?6
                  OR description LIKE ?6
                  OR tags_json LIKE ?6
-                 OR task_runner_default_model_config_id LIKE ?6
-                 OR task_runner_enabled_tool_ids_json LIKE ?6
-                 OR task_runner_skill_ids_json LIKE ?6
                )
              ORDER BY sort_order ASC, priority DESC, updated_at DESC
              LIMIT ?7 OFFSET ?8",
@@ -158,15 +152,6 @@ impl SqliteStore {
         user: &CurrentUser,
     ) -> Result<ProjectWorkItemRecord, String> {
         validate_required("title", &input.title)?;
-        validate_required(
-            "task_runner_default_model_config_id",
-            &input.task_runner_default_model_config_id,
-        )?;
-        let task_runner_enabled_tool_ids = normalize_tags(input.task_runner_enabled_tool_ids);
-        if task_runner_enabled_tool_ids.is_empty() {
-            return Err("task_runner_enabled_tool_ids is required".to_string());
-        }
-        let task_runner_skill_ids = normalize_tags(input.task_runner_skill_ids);
         self.ensure_requirement_technical_document_ready(&requirement.id)
             .await?;
         let now = now_rfc3339();
@@ -176,12 +161,6 @@ impl SqliteStore {
             requirement_id: requirement.id.clone(),
             title: input.title.trim().to_string(),
             description: normalized_optional(input.description),
-            task_runner_default_model_config_id: input
-                .task_runner_default_model_config_id
-                .trim()
-                .to_string(),
-            task_runner_enabled_tool_ids,
-            task_runner_skill_ids,
             status: input.status.unwrap_or_default(),
             priority: input.priority.unwrap_or_default(),
             assignee_user_id: normalized_optional(input.assignee_user_id),
@@ -373,29 +352,19 @@ impl SqliteStore {
 
     async fn save_work_item(&self, item: &ProjectWorkItemRecord) -> Result<(), String> {
         let tags_json = serde_json::to_string(&item.tags).map_err(|err| err.to_string())?;
-        let task_runner_enabled_tool_ids_json =
-            serde_json::to_string(&item.task_runner_enabled_tool_ids)
-                .map_err(|err| err.to_string())?;
-        let task_runner_skill_ids_json =
-            serde_json::to_string(&item.task_runner_skill_ids).map_err(|err| err.to_string())?;
         sqlx::query(
             "INSERT INTO project_work_items (
                 id, project_id, requirement_id, title, description,
-                task_runner_default_model_config_id, task_runner_enabled_tool_ids_json,
-                task_runner_skill_ids_json,
                 status, priority, assignee_user_id, estimate_points, due_at, sort_order, tags_json,
                 is_planning_task,
                 creator_user_id, creator_username, creator_display_name,
                 owner_user_id, owner_username, owner_display_name,
                 created_at, updated_at, archived_at
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25)
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22)
              ON CONFLICT(id) DO UPDATE SET
                 requirement_id = excluded.requirement_id,
                 title = excluded.title,
                 description = excluded.description,
-                task_runner_default_model_config_id = excluded.task_runner_default_model_config_id,
-                task_runner_enabled_tool_ids_json = excluded.task_runner_enabled_tool_ids_json,
-                task_runner_skill_ids_json = excluded.task_runner_skill_ids_json,
                 status = excluded.status,
                 priority = excluded.priority,
                 assignee_user_id = excluded.assignee_user_id,
@@ -418,9 +387,6 @@ impl SqliteStore {
         .bind(&item.requirement_id)
         .bind(&item.title)
         .bind(&item.description)
-        .bind(&item.task_runner_default_model_config_id)
-        .bind(task_runner_enabled_tool_ids_json)
-        .bind(task_runner_skill_ids_json)
         .bind(item.status.as_str())
         .bind(item.priority)
         .bind(&item.assignee_user_id)

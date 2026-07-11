@@ -185,9 +185,6 @@ CREATE TABLE IF NOT EXISTS project_work_items (
   requirement_id TEXT NOT NULL,
   title TEXT NOT NULL,
   description TEXT,
-  task_runner_default_model_config_id TEXT NOT NULL,
-  task_runner_enabled_tool_ids_json TEXT NOT NULL DEFAULT '[]',
-  task_runner_skill_ids_json TEXT NOT NULL DEFAULT '[]',
   status TEXT NOT NULL DEFAULT 'todo',
   priority INTEGER NOT NULL DEFAULT 0,
   assignee_user_id TEXT,
@@ -249,6 +246,9 @@ CREATE TABLE IF NOT EXISTS project_work_item_task_runner_links (
   task_runner_task_id TEXT NOT NULL,
   task_runner_run_id TEXT,
   link_type TEXT NOT NULL DEFAULT 'execution',
+  execution_group_id TEXT,
+  is_current INTEGER NOT NULL DEFAULT 1,
+  superseded_at TEXT,
   source_session_id TEXT,
   source_user_message_id TEXT,
   task_runner_status TEXT,
@@ -257,9 +257,11 @@ CREATE TABLE IF NOT EXISTS project_work_item_task_runner_links (
   last_error_message TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
-  UNIQUE(work_item_id),
   FOREIGN KEY(work_item_id) REFERENCES project_work_items(id) ON DELETE CASCADE
 );
 
-CREATE INDEX IF NOT EXISTS idx_project_work_item_task_runner_links_task_id
+CREATE INDEX IF NOT EXISTS idx_project_work_item_task_runner_links_work_item
+ON project_work_item_task_runner_links(work_item_id);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_project_work_item_task_runner_links_task_id_unique
 ON project_work_item_task_runner_links(task_runner_task_id);

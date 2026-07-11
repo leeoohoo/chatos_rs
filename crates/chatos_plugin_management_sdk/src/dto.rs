@@ -17,6 +17,7 @@ pub const LOCAL_CONNECTOR_APPROVAL_MCP_RESOURCE_ID: &str = "system_mcp_local_con
 pub enum SystemAgentKey {
     ChatosConversationAgent,
     ChatosPlanningAgent,
+    ProjectRequirementExecutionPlannerAgent,
     TaskRunnerRunPhase,
     ProjectManagementAgent,
     LocalConnectorCommandApprovalAgent,
@@ -27,6 +28,9 @@ impl SystemAgentKey {
         match self {
             Self::ChatosConversationAgent => "chatos_conversation_agent",
             Self::ChatosPlanningAgent => "chatos_planning_agent",
+            Self::ProjectRequirementExecutionPlannerAgent => {
+                "project_requirement_execution_planner_agent"
+            }
             Self::TaskRunnerRunPhase => "task_runner_run_phase",
             Self::ProjectManagementAgent => "project_management_agent",
             Self::LocalConnectorCommandApprovalAgent => "local_connector_command_approval_agent",

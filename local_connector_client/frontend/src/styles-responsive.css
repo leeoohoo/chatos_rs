@@ -215,8 +215,24 @@
 
   .workspaceRow,
   .approvalSimpleRow,
+  .permissionRow,
   .imageRow {
     align-items: flex-start;
+  }
+
+  .permissionRow {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .permissionAction {
+    align-items: flex-start;
+    grid-column: 1 / -1;
+    min-width: 0;
+  }
+
+  .permissionAction .ghostButton {
+    max-width: none;
+    width: 100%;
   }
 
   .workspaceRow span {

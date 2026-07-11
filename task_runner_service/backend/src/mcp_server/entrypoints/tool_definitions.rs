@@ -44,6 +44,15 @@ impl TaskRunnerMcpService {
                         .to_string(),
                     tool_names: tool_names_for_profile(&tools, McpToolProfile::ChatosAsyncPlanner),
                 },
+                McpServerToolProfileInfo {
+                    key: PROJECT_REQUIREMENT_EXECUTION_PLANNER_TOOL_PROFILE.to_string(),
+                    label: "Project requirement execution planner".to_string(),
+                    description: "Tools used by Chatos to split project tasks into concrete Task Runner execution tasks.".to_string(),
+                    tool_names: tool_names_for_profile(
+                        &tools,
+                        McpToolProfile::ProjectRequirementExecutionPlanner,
+                    ),
+                },
             ],
         }
     }

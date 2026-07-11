@@ -4,6 +4,8 @@
 import type {
   AgentAccountListItem,
   CreateAgentAccountPayload,
+  CreateInviteCodePayload,
+  CreateInviteCodeResponse,
   CreateUserPayload,
   CurrentUserResponse,
   HealthResponse,
@@ -23,6 +25,7 @@ import type {
   UserModelProviderRecord,
   UserModelSettingsRecord,
   UserSummaryRecord,
+  InviteCodeRecord,
 } from '../types';
 
 const RAW_API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || '').trim();
@@ -124,6 +127,16 @@ export const api = {
     }),
   getSystemConfig: () => request<SystemConfigResponse>('/api/system/config'),
   listUsers: () => request<UserSummaryRecord[]>('/api/users'),
+  listInviteCodes: () => request<InviteCodeRecord[]>('/api/invite-codes'),
+  createInviteCode: (payload: CreateInviteCodePayload) =>
+    request<CreateInviteCodeResponse>('/api/invite-codes', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+  revokeInviteCode: (id: string) =>
+    request<InviteCodeRecord>(`/api/invite-codes/${id}/revoke`, {
+      method: 'POST',
+    }),
   createUser: (payload: CreateUserPayload) =>
     request<UserSummaryRecord>('/api/users', {
       method: 'POST',

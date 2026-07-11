@@ -13,6 +13,8 @@ Current status:
 
 ## Run the Local Client
 
+Development mode runs the Rust core and the Vite UI separately:
+
 ```bash
 cargo run -p local_connector_client_core
 ```
@@ -28,6 +30,34 @@ npm run dev
 ```
 
 Open the Vite URL, usually `http://127.0.0.1:39233`.
+
+Packaged/client mode lets the Rust core serve the built React UI itself:
+
+```bash
+cd local_connector_client/frontend
+npm install
+npm run build
+
+cd ../..
+cargo run -p local_connector_client_core -- --open
+```
+
+The core listens on `http://127.0.0.1:39232`, serves `frontend/dist`, and opens the client UI when `--open` or `LOCAL_CONNECTOR_OPEN_UI=1` is set.
+
+## Package the Desktop Client
+
+Windows desktop packaging must run in PowerShell on Windows:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\local_connector_client\package-electron-windows-client.ps1
+```
+
+It writes:
+
+1. `local_connector_client/dist/electron-windows/ChatOS Local Connector/ChatOS Local Connector.exe`
+2. `local_connector_client/dist/electron-windows/ChatOS-Local-Connector-windows-x64.zip`
+
+The Electron desktop app starts `local_connector_client_core` as a bundled local process, loads the React UI in a desktop window, and points the UI at `http://127.0.0.1:39232` for local APIs.
 
 The UI supports:
 

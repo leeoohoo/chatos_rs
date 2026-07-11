@@ -20,8 +20,9 @@ use super::support::{
 };
 use super::{
     decode_args, text_result, BatchTaskDeleteArgs, BatchTaskStatusUpdateArgs, CancelTaskArgs,
-    CreateTaskArgs, CreateTasksWithPrerequisitesArgs, McpRequestContext, McpToolProfile,
-    SetTaskPrerequisitesArgs, TaskIdArgs, TaskRunnerMcpService, UpdateTaskArgs,
+    CreateProjectExecutionTasksArgs, CreateTaskArgs, CreateTasksWithPrerequisitesArgs,
+    McpRequestContext, McpToolProfile, SetTaskPrerequisitesArgs, TaskIdArgs, TaskRunnerMcpService,
+    UpdateTaskArgs,
 };
 
 impl TaskRunnerMcpService {
@@ -173,6 +174,13 @@ impl TaskRunnerMcpService {
                 let args: CreateTasksWithPrerequisitesArgs = decode_args(args)?;
                 let result = self
                     .create_tasks_with_prerequisites(args, current_user, request_context)
+                    .await?;
+                Ok(text_result(result))
+            }
+            "create_project_execution_tasks" => {
+                let args: CreateProjectExecutionTasksArgs = decode_args(args)?;
+                let result = self
+                    .create_project_execution_tasks(args, current_user, request_context)
                     .await?;
                 Ok(text_result(result))
             }

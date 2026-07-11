@@ -26,20 +26,114 @@ struct RegisterRequest {
     #[serde(alias = "email")]
     email: Option<String>,
     password: Option<String>,
+    invite_code: Option<String>,
+    verification_code: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SendRegisterCodeRequest {
+    #[serde(alias = "username")]
+    email: Option<String>,
+    invite_code: Option<String>,
 }
 
 pub fn router() -> Router {
     Router::new()
         .route("/api/auth/register", post(register))
+        .route("/api/auth/register/send-code", post(send_register_code))
         .route("/api/auth/login", post(login))
         .route("/api/auth/me", axum::routing::get(me))
+}
+
+async fn send_register_code(Json(req): Json<SendRegisterCodeRequest>) -> (StatusCode, Json<Value>) {
+    let base_url = match required_user_service_base_url() {
+        Ok(base_url) => base_url,
+        Err(response) => return response,
+    };
+    let email = req
+        .email
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    let invite_code = req
+        .invite_code
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    let Some(email) = email else {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": "email is required"})),
+        );
+    };
+    let Some(invite_code) = invite_code else {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": "invite_code is required"})),
+        );
+    };
+    match user_service_api_client::send_register_email_code(
+        base_url.as_str(),
+        email.as_str(),
+        invite_code.as_str(),
+        Config::get().user_service_request_timeout_ms,
+    )
+    .await
+    {
+        Ok(payload) => (StatusCode::OK, Json(payload)),
+        Err(err) => (
+            proxy_status_from_user_service_error(err.as_str()),
+            Json(json!({
+                "error": "send register verification code via user_service failed",
+                "detail": err,
+            })),
+        ),
+    }
 }
 
 pub fn protected_router() -> Router {
     Router::new()
         .route("/api/auth/ws-ticket", post(issue_ws_ticket))
+        .route(
+            "/api/auth/local-connector-ticket",
+            post(issue_local_connector_ticket),
+        )
         .route("/api/auth/bootstrap-defaults", post(bootstrap_defaults))
         .route("/api/auth/agent-accounts", get(list_agent_accounts))
+}
+
+async fn issue_local_connector_ticket(
+    _auth: AuthUser,
+    headers: HeaderMap,
+) -> (StatusCode, Json<Value>) {
+    let base_url = match required_user_service_base_url() {
+        Ok(value) => value,
+        Err(response) => return response,
+    };
+    let access_token = match access_token_from_headers(&headers) {
+        Ok(token) => token,
+        Err(err) => return err.into_response(),
+    };
+    match user_service_api_client::issue_local_connector_ticket(
+        base_url.as_str(),
+        access_token.as_str(),
+        Config::get().user_service_request_timeout_ms,
+    )
+    .await
+    {
+        Ok(payload) => (
+            StatusCode::OK,
+            Json(json!({
+                "ticket": payload.ticket,
+                "expires_in_seconds": payload.expires_in_seconds,
+            })),
+        ),
+        Err(err) => (
+            proxy_status_from_user_service_error(err.as_str()),
+            Json(json!({
+                "error": "issue local connector ticket via user_service failed",
+                "detail": err
+            })),
+        ),
+    }
 }
 
 async fn register(Json(req): Json<RegisterRequest>) -> (StatusCode, Json<Value>) {
@@ -237,10 +331,32 @@ async fn register_via_user_service(
             Json(json!({"error": "password is required"})),
         );
     };
+    let invite_code = req
+        .invite_code
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    let verification_code = req
+        .verification_code
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    let Some(invite_code) = invite_code else {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": "invite_code is required"})),
+        );
+    };
+    let Some(verification_code) = verification_code else {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": "verification_code is required"})),
+        );
+    };
     match user_service_api_client::register(
         base_url,
         username.as_str(),
         password.as_str(),
+        invite_code.as_str(),
+        verification_code.as_str(),
         Config::get().user_service_request_timeout_ms,
     )
     .await

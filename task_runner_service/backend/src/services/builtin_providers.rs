@@ -34,12 +34,9 @@ mod provider;
 mod registry;
 
 pub(super) use self::builders::build_task_runner_builtin_provider;
-pub(super) use self::project_management::ProjectManagementExecutionOptions;
 use self::project_management::{ProjectManagementBuiltinService, ProjectManagementOptions};
 pub(super) use self::provider::DisabledBuiltinProvider;
-pub(super) use self::registry::{
-    build_builtin_registry, build_builtin_registry_with_project_management_options,
-};
+pub(super) use self::registry::build_builtin_registry;
 
 #[cfg(test)]
 mod tests {

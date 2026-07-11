@@ -10,6 +10,7 @@ import {
   Empty,
   Form,
   Input,
+  InputNumber,
   Modal,
   Select,
   Space,
@@ -25,7 +26,9 @@ import dayjs from 'dayjs';
 
 import { api } from '../api/client';
 import type {
+  CreateInviteCodePayload,
   CreateUserPayload,
+  InviteCodeRecord,
   ProvisionHarnessPayload,
   UpdateUserPayload,
   UserRole,
@@ -44,14 +47,22 @@ type HarnessProvisionFormValues = {
   password: string;
 };
 
+type InviteCodeFormValues = {
+  label?: string;
+  max_uses?: number;
+  expires_in_days?: number;
+};
+
 export function UsersPage() {
   const { message } = App.useApp();
   const queryClient = useQueryClient();
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [editingUser, setEditingUser] = useState<UserSummaryRecord | null>(null);
   const [harnessProvisionUser, setHarnessProvisionUser] = useState<UserSummaryRecord | null>(null);
+  const [inviteModalOpen, setInviteModalOpen] = useState(false);
   const [form] = Form.useForm<UserFormValues>();
   const [harnessForm] = Form.useForm<HarnessProvisionFormValues>();
+  const [inviteForm] = Form.useForm<InviteCodeFormValues>();
 
   const currentUserQuery = useQuery({
     queryKey: ['current-user'],
@@ -64,6 +75,12 @@ export function UsersPage() {
 
   const currentUser = currentUserQuery.data?.user;
   const isSuperAdmin = currentUser?.role === 'super_admin';
+
+  const inviteCodesQuery = useQuery({
+    queryKey: ['invite-codes'],
+    queryFn: () => api.listInviteCodes(),
+    enabled: isSuperAdmin,
+  });
 
   const createUserMutation = useMutation({
     mutationFn: (payload: CreateUserPayload) => api.createUser(payload),
@@ -102,7 +119,82 @@ export function UsersPage() {
     },
   });
 
+  const createInviteCodeMutation = useMutation({
+    mutationFn: (payload: CreateInviteCodePayload) => api.createInviteCode(payload),
+    onSuccess: async (response) => {
+      setInviteModalOpen(false);
+      inviteForm.resetFields();
+      Modal.info({
+        title: '新邀请码',
+        content: (
+          <Space direction="vertical" style={{ width: '100%' }}>
+            <Typography.Text copyable={{ text: response.code }} code>
+              {response.code}
+            </Typography.Text>
+            <Typography.Text type="secondary">邀请码只在生成时显示一次，请现在复制保存。</Typography.Text>
+          </Space>
+        ),
+      });
+      await queryClient.invalidateQueries({ queryKey: ['invite-codes'] });
+    },
+    onError: showError,
+  });
+
+  const revokeInviteCodeMutation = useMutation({
+    mutationFn: (id: string) => api.revokeInviteCode(id),
+    onSuccess: async () => {
+      message.success('邀请码已撤销');
+      await queryClient.invalidateQueries({ queryKey: ['invite-codes'] });
+    },
+    onError: showError,
+  });
+
   const pending = createUserMutation.isPending || updateUserMutation.isPending;
+
+  const inviteColumns: ColumnsType<InviteCodeRecord> = [
+    {
+      title: '标签',
+      dataIndex: 'label',
+      render: (value?: string | null) => value || '-',
+    },
+    {
+      title: '使用',
+      width: 120,
+      render: (_, record) => `${record.used_count}/${record.max_uses}`,
+    },
+    {
+      title: '状态',
+      width: 120,
+      render: (_, record) => renderInviteStatus(record),
+    },
+    {
+      title: '过期时间',
+      dataIndex: 'expires_at_unix',
+      width: 180,
+      render: (value?: number | null) => (value ? dayjs.unix(value).format('YYYY-MM-DD HH:mm:ss') : '-'),
+    },
+    {
+      title: '创建时间',
+      dataIndex: 'created_at',
+      width: 180,
+      render: (value: string) => dayjs(value).format('YYYY-MM-DD HH:mm:ss'),
+    },
+    {
+      title: '操作',
+      width: 120,
+      render: (_, record) => (
+        <Button
+          danger
+          size="small"
+          disabled={Boolean(record.revoked_at)}
+          loading={revokeInviteCodeMutation.isPending}
+          onClick={() => revokeInviteCodeMutation.mutate(record.id)}
+        >
+          撤销
+        </Button>
+      ),
+    },
+  ];
 
   const columns: ColumnsType<UserSummaryRecord> = [
     {
@@ -216,6 +308,19 @@ export function UsersPage() {
     );
   }
 
+  function renderInviteStatus(record: InviteCodeRecord) {
+    if (record.revoked_at) {
+      return <Tag color="default">Revoked</Tag>;
+    }
+    if (record.used_count >= record.max_uses) {
+      return <Tag color="warning">Used</Tag>;
+    }
+    if (record.expires_at_unix && record.expires_at_unix < Math.floor(Date.now() / 1000)) {
+      return <Tag color="error">Expired</Tag>;
+    }
+    return <Tag color="success">Active</Tag>;
+  }
+
   function renderHarnessProvisionButton(
     record: UserSummaryRecord,
     label: string,
@@ -314,6 +419,14 @@ export function UsersPage() {
     });
   }
 
+  function submitInviteCode(values: InviteCodeFormValues) {
+    createInviteCodeMutation.mutate({
+      label: values.label,
+      max_uses: values.max_uses,
+      expires_in_days: values.expires_in_days,
+    });
+  }
+
   return (
     <Space direction="vertical" size="large" style={{ width: '100%' }}>
       <div
@@ -341,6 +454,7 @@ export function UsersPage() {
           >
             刷新
           </Button>
+          {isSuperAdmin ? <Button onClick={() => setInviteModalOpen(true)}>生成邀请码</Button> : null}
           {isSuperAdmin ? (
             <Button type="primary" icon={<PlusOutlined />} onClick={openCreateDrawer}>
               新建用户
@@ -359,6 +473,17 @@ export function UsersPage() {
           emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无用户" />,
         }}
       />
+
+      {isSuperAdmin ? (
+        <Table<InviteCodeRecord>
+          rowKey="id"
+          title={() => '邀请码'}
+          columns={inviteColumns}
+          dataSource={inviteCodesQuery.data || []}
+          loading={inviteCodesQuery.isLoading}
+          pagination={{ pageSize: 5, showSizeChanger: true }}
+        />
+      ) : null}
 
       <Drawer
         title={editingUser ? `编辑用户 ${editingUser.username}` : '新建用户'}
@@ -443,6 +568,35 @@ export function UsersPage() {
             rules={[{ required: true, message: '请输入密码' }]}
           >
             <Input.Password autoComplete="new-password" />
+          </Form.Item>
+        </Form>
+      </Modal>
+
+      <Modal
+        title="生成邀请码"
+        open={inviteModalOpen}
+        okText="生成"
+        cancelText="取消"
+        confirmLoading={createInviteCodeMutation.isPending}
+        onOk={() => inviteForm.submit()}
+        onCancel={() => setInviteModalOpen(false)}
+        destroyOnClose
+      >
+        <Form<InviteCodeFormValues>
+          form={inviteForm}
+          layout="vertical"
+          requiredMark={false}
+          initialValues={{ max_uses: 1, expires_in_days: 30 }}
+          onFinish={submitInviteCode}
+        >
+          <Form.Item name="label" label="标签">
+            <Input placeholder="例如：内测用户 / 客户 A" />
+          </Form.Item>
+          <Form.Item name="max_uses" label="可使用次数" rules={[{ required: true }]}>
+            <InputNumber min={1} max={10000} style={{ width: '100%' }} />
+          </Form.Item>
+          <Form.Item name="expires_in_days" label="有效天数">
+            <InputNumber min={1} max={3650} style={{ width: '100%' }} />
           </Form.Item>
         </Form>
       </Modal>

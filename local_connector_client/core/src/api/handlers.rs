@@ -10,6 +10,7 @@ mod model_configs;
 mod runtime_settings;
 mod sandbox;
 mod status;
+mod system_permissions;
 mod terminal;
 mod workspace;
 
@@ -17,7 +18,9 @@ pub(super) use approval::{
     local_approval_settings, local_approve_pending_approval, local_deny_pending_approval,
     local_pending_approvals, local_update_approval_settings,
 };
-pub(super) use auth::{local_login, local_logout, local_register};
+pub(super) use auth::{
+    local_desktop_ticket, local_login, local_logout, local_register, local_send_register_email_code,
+};
 pub(super) use history::{local_clear_command_history, local_command_history};
 pub(super) use mcp_configs::{
     local_delete_mcp_config, local_disable_mcp_config, local_enable_mcp_config,
@@ -35,5 +38,6 @@ pub(super) use sandbox::{
     local_sandbox_image_mcp, local_sandbox_images, local_sandbox_leases, local_toggle_sandbox,
 };
 pub(super) use status::local_status;
+pub(super) use system_permissions::{local_request_system_permission, local_system_permissions};
 pub(super) use terminal::local_terminal_exec;
 pub(super) use workspace::{local_add_workspace, local_fs_list_handler, local_remove_workspace};

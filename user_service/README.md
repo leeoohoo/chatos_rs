@@ -86,6 +86,24 @@ Default URLs:
 - Frontend: `http://127.0.0.1:39191`
 - Backend: `http://127.0.0.1:39190`
 
+## Email Registration
+
+Public registration now uses email as the login username and requires both an invite code and an email verification code.
+
+- Super admins generate invite codes from the User Service users page.
+- Invite code plaintext is shown only once when generated; the database stores only a hash.
+- Registration email codes are 6 digits, expire after 10 minutes by default, and are rate-limited per email address.
+- Do not commit SMTP authorization codes. Set `USER_SERVICE_SMTP_PASSWORD` through deployment secrets or `docker/.env`.
+
+Required SMTP environment variables:
+
+- `USER_SERVICE_SMTP_HOST=smtp.qq.com`
+- `USER_SERVICE_SMTP_PORT=587`
+- `USER_SERVICE_SMTP_USERNAME=...`
+- `USER_SERVICE_SMTP_PASSWORD=...`
+- `USER_SERVICE_EMAIL_FROM=...`
+- `USER_SERVICE_EMAIL_FROM_NAME=ChatOS`
+
 ## Backend-Only Development
 
 ```bash
@@ -115,9 +133,13 @@ Change the default password and JWT secret before production use.
 ## Main API Areas
 
 - `POST /api/auth/register`
+- `POST /api/auth/register/send-code`
 - `POST /api/auth/login`
 - `GET /api/auth/me`
 - `POST /api/auth/logout`
+- `GET /api/invite-codes`
+- `POST /api/invite-codes`
+- `POST /api/invite-codes/:id/revoke`
 - `GET /api/users`
 - `POST /api/users`
 - `PATCH /api/users/:id`

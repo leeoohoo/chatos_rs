@@ -593,6 +593,24 @@ impl AppStore {
         }
     }
 
+    pub async fn get_task_runner_link_by_task_id(
+        &self,
+        task_runner_task_id: &str,
+    ) -> Result<Option<ProjectWorkItemTaskRunnerLinkRecord>, String> {
+        match self {
+            Self::Mongo(store) => {
+                store
+                    .get_task_runner_link_by_task_id(task_runner_task_id)
+                    .await
+            }
+            Self::Sqlite(store) => {
+                store
+                    .get_task_runner_link_by_task_id(task_runner_task_id)
+                    .await
+            }
+        }
+    }
+
     pub async fn upsert_task_runner_link(
         &self,
         work_item_id: &str,

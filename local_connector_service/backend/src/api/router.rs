@@ -20,11 +20,17 @@ use super::{
     revoke_device, sandbox_facade_path, sandbox_facade_root, terminal_exec_relay,
     terminal_input_relay, terminal_session_create_relay, terminal_ws_relay, update_local_mcp,
     update_local_mcp_status, update_project_binding, update_sandbox_pairing, update_workspace,
+    user_service_protected_proxy, user_service_public_proxy,
 };
 
 pub fn build_router(state: AppState) -> Router {
     let protected_api = Router::new()
         .route("/api/auth/me", get(current_user_handler))
+        .route("/api/model-configs", any(user_service_protected_proxy))
+        .route(
+            "/api/model-configs/{*path}",
+            any(user_service_protected_proxy),
+        )
         .route(
             "/api/local-connectors/devices",
             get(list_devices).post(create_device),
@@ -126,6 +132,16 @@ pub fn build_router(state: AppState) -> Router {
 
     Router::new()
         .route("/api/health", get(health_handler))
+        .route("/api/auth/login", post(user_service_public_proxy))
+        .route("/api/auth/register", post(user_service_public_proxy))
+        .route(
+            "/api/auth/register/send-code",
+            post(user_service_public_proxy),
+        )
+        .route(
+            "/api/auth/local-connector-ticket/exchange",
+            post(user_service_public_proxy),
+        )
         .merge(protected_api)
         .with_state(state)
         .layer(

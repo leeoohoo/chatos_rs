@@ -233,12 +233,37 @@ export interface StreamChatModelConfigPayload {
 }
 
 export interface StreamChatAttachmentPayload {
+  id?: string;
   name: string;
   mimeType: string;
   size: number;
-  type: 'image' | 'file';
+  type: 'image' | 'file' | 'audio';
   dataUrl?: string;
   text?: string;
+  storageProvider?: string;
+  bucket?: string;
+  objectKey?: string;
+  url?: string;
+  viewUrl?: string;
+}
+
+export interface AttachmentUploadRequestItem {
+  name: string;
+  mimeType: string;
+  size: number;
+  type: 'image' | 'file' | 'audio';
+}
+
+export interface AttachmentUploadTarget extends StreamChatAttachmentPayload {
+  uploadUrl: string;
+  uploadHeaders?: Record<string, string>;
+  expiresInSeconds?: number;
+}
+
+export interface AttachmentUploadsResponse {
+  bucket?: string;
+  maxUploadBytes?: number;
+  uploads: AttachmentUploadTarget[];
 }
 
 export interface ConversationDetailsResponse {

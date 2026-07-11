@@ -38,11 +38,11 @@ use super::runtime_environment::{
 };
 use super::sync::{
     sync_get_project, sync_get_project_runtime_environment, sync_import_project,
-    sync_list_projects, sync_requirement_execution_state, sync_task_runner_work_item_status,
+    sync_list_projects, sync_requirement_execution_state, sync_task_runner_task_status,
+    sync_task_runner_work_item_status,
 };
 use super::task_runner_links::{
-    create_task_runner_task_from_work_item, delete_task_runner_link,
-    get_task_runner_execution_options, link_task_runner_task, list_task_runner_links,
+    delete_task_runner_link, link_task_runner_task, list_task_runner_links,
 };
 use super::work_items::{
     create_work_item, delete_work_item, get_work_item, list_project_requirement_work_items,
@@ -163,14 +163,6 @@ pub fn build_router(state: AppState) -> Router {
             "/api/work-items/:work_item_id/task-runner-links/:link_id",
             axum::routing::delete(delete_task_runner_link),
         )
-        .route(
-            "/api/work-items/:work_item_id/task-runner-task",
-            post(create_task_runner_task_from_work_item),
-        )
-        .route(
-            "/api/task-runner/execution-options",
-            get(get_task_runner_execution_options),
-        )
         .route("/api/mcp/server", get(mcp::get_mcp_server_info))
         .route("/api/mcp/tools", get(mcp::list_mcp_tools))
         .route_layer(middleware::from_fn_with_state(state.clone(), require_auth));
@@ -206,6 +198,10 @@ pub fn build_router(state: AppState) -> Router {
         .route(
             "/api/chatos-sync/work-items/:work_item_id/task-runner-status",
             post(sync_task_runner_work_item_status),
+        )
+        .route(
+            "/api/chatos-sync/task-runner/tasks/:task_runner_task_id/status",
+            post(sync_task_runner_task_status),
         )
         .route(
             "/api/chatos-sync/requirements/:requirement_id/execution-state",

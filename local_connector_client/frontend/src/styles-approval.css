@@ -175,3 +175,104 @@
   gap: 10px;
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
+
+.permissionList {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.permissionRow {
+  align-items: flex-start;
+  background: var(--panel-bg);
+  border-bottom: 1px solid var(--border-subtle);
+  display: grid;
+  gap: 12px;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  padding: 13px;
+}
+
+.permissionRow:last-child {
+  border-bottom: 0;
+}
+
+.permissionRow:hover {
+  background: var(--panel-subtle);
+}
+
+.permissionIcon {
+  align-items: center;
+  background: var(--accent-soft);
+  border-radius: 8px;
+  color: var(--accent);
+  display: flex;
+  height: 34px;
+  justify-content: center;
+  width: 34px;
+}
+
+.permissionBody {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+}
+
+.permissionTitleLine {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.permissionTitleLine strong {
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.permissionBody > span,
+.permissionBody small,
+.permissionBody em {
+  color: var(--text-tertiary);
+  font-size: 10px;
+  font-style: normal;
+  line-height: 1.5;
+}
+
+.permissionBody em {
+  color: var(--warning);
+  overflow-wrap: anywhere;
+}
+
+.permissionKinds {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 1px;
+}
+
+.permissionKinds code {
+  background: var(--panel-subtle);
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  color: var(--text-secondary);
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 9px;
+  padding: 2px 5px;
+}
+
+.permissionAction {
+  align-items: flex-end;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 152px;
+}
+
+.permissionAction .ghostButton {
+  max-width: 220px;
+  white-space: normal;
+}

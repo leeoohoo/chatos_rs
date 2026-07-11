@@ -126,8 +126,6 @@ pub struct CreateProjectTaskArgs {
     pub requirement_id: String,
     pub title: String,
     pub description: Option<String>,
-    pub task_runner_default_model_config_id: String,
-    pub task_runner_enabled_tool_ids: Vec<String>,
     pub status: Option<ProjectTaskStatus>,
     pub priority: Option<i64>,
     pub assignee_user_id: Option<String>,

@@ -115,12 +115,6 @@ pub struct ProjectWorkItemRecord {
     pub requirement_id: String,
     pub title: String,
     pub description: Option<String>,
-    #[serde(default)]
-    pub task_runner_default_model_config_id: String,
-    #[serde(default)]
-    pub task_runner_enabled_tool_ids: Vec<String>,
-    #[serde(default)]
-    pub task_runner_skill_ids: Vec<String>,
     pub status: ProjectWorkItemStatus,
     pub priority: i64,
     pub assignee_user_id: Option<String>,
@@ -151,10 +145,6 @@ pub struct ProjectWorkItemRecord {
 pub struct CreateProjectWorkItemRequest {
     pub title: String,
     pub description: Option<String>,
-    pub task_runner_default_model_config_id: String,
-    pub task_runner_enabled_tool_ids: Vec<String>,
-    #[serde(default)]
-    pub task_runner_skill_ids: Vec<String>,
     pub status: Option<ProjectWorkItemStatus>,
     pub priority: Option<i64>,
     pub assignee_user_id: Option<String>,
@@ -202,6 +192,12 @@ pub struct ProjectWorkItemTaskRunnerLinkRecord {
     pub task_runner_run_id: Option<String>,
     pub link_type: String,
     #[serde(default)]
+    pub execution_group_id: Option<String>,
+    #[serde(default = "default_true")]
+    pub is_current: bool,
+    #[serde(default)]
+    pub superseded_at: Option<String>,
+    #[serde(default)]
     pub source_session_id: Option<String>,
     #[serde(default)]
     pub source_user_message_id: Option<String>,
@@ -222,6 +218,9 @@ pub struct LinkTaskRunnerTaskRequest {
     pub task_runner_task_id: String,
     pub task_runner_run_id: Option<String>,
     pub link_type: Option<String>,
+    pub execution_group_id: Option<String>,
+    pub is_current: Option<bool>,
+    pub superseded_at: Option<String>,
     pub source_session_id: Option<String>,
     pub source_user_message_id: Option<String>,
     pub task_runner_status: Option<String>,
@@ -231,40 +230,11 @@ pub struct LinkTaskRunnerTaskRequest {
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct CreateTaskRunnerTaskFromWorkItemRequest {
-    pub title: Option<String>,
-    pub description: Option<String>,
-    pub objective: Option<String>,
-    pub priority: Option<i32>,
-    pub tags: Option<Vec<String>>,
-    pub default_model_config_id: Option<String>,
-    pub prerequisite_task_ids: Option<Vec<String>>,
-    pub source_session_id: Option<String>,
-    pub source_user_message_id: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TaskRunnerTaskRecord {
-    pub id: String,
-    pub title: String,
-    pub status: String,
-    pub project_id: String,
-    pub last_run_id: Option<String>,
-    pub created_at: String,
-    pub updated_at: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CreateTaskRunnerTaskFromWorkItemResponse {
-    pub task: TaskRunnerTaskRecord,
-    pub link: ProjectWorkItemTaskRunnerLinkRecord,
-}
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct SyncTaskRunnerWorkItemStatusRequest {
     pub task_runner_task_id: String,
     pub task_runner_run_id: Option<String>,
     pub task_runner_status: Option<String>,
+    pub execution_group_id: Option<String>,
     pub last_callback_event: Option<String>,
     pub last_callback_at: Option<String>,
     pub last_error_message: Option<String>,
@@ -276,6 +246,10 @@ pub struct SyncTaskRunnerWorkItemStatusRequest {
 pub struct SyncTaskRunnerWorkItemStatusResponse {
     pub work_item: ProjectWorkItemRecord,
     pub link: ProjectWorkItemTaskRunnerLinkRecord,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

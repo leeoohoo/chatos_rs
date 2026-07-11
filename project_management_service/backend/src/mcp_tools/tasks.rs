@@ -14,7 +14,6 @@ use crate::models::{
 };
 use crate::services::dependency_graph;
 use crate::state::AppState;
-use crate::task_runner_api_client;
 
 use super::pagination::{mcp_list_page, paginated_list_payload};
 use super::{
@@ -80,16 +79,6 @@ pub(super) async fn create_project_task(
     let project = require_project_access(state, &requirement.project_id, current_user).await?;
     ensure_project_writable(&project)?;
     ensure_requirement_mutable_for_mcp(&requirement)?;
-    let owner_user_id = current_user.effective_owner_user_id().ok_or_else(|| {
-        "project management MCP create_project_task requires owner user id for Task Runner model/tool validation".to_string()
-    })?;
-    let execution_options =
-        task_runner_api_client::fetch_execution_options(&state.config, owner_user_id).await?;
-    let task_runner_default_model_config_id = execution_options
-        .validate_model_config_id(args.task_runner_default_model_config_id.as_str())?;
-    let task_runner_enabled_tool_ids =
-        task_runner_api_client::normalize_tool_ids(args.task_runner_enabled_tool_ids)?;
-    let _ = execution_options.mcp_config_for_tool_ids(&task_runner_enabled_tool_ids)?;
     let item = state
         .store
         .create_work_item(
@@ -97,9 +86,6 @@ pub(super) async fn create_project_task(
             CreateProjectWorkItemRequest {
                 title: args.title,
                 description: args.description,
-                task_runner_default_model_config_id,
-                task_runner_enabled_tool_ids,
-                task_runner_skill_ids: Vec::new(),
                 status,
                 priority: args.priority,
                 assignee_user_id: args.assignee_user_id,

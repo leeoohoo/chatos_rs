@@ -29,6 +29,20 @@ impl TaskRunnerMcpService {
                 }),
             };
         }
+        if request_context.tool_profile() == McpToolProfile::ProjectRequirementExecutionPlanner
+            && !request_context.has_concrete_project_scope()
+        {
+            return JsonRpcResponse {
+                jsonrpc: "2.0",
+                id,
+                result: None,
+                error: Some(JsonRpcError {
+                    code: -32000,
+                    message: "Project requirement execution planner requires concrete project_id"
+                        .to_string(),
+                }),
+            };
+        }
         match request.method.as_str() {
             "tools/list" => {
                 tracing::info!("task runner mcp tools/list started");

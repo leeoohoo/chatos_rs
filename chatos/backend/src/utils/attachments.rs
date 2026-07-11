@@ -18,6 +18,11 @@ pub struct Attachment {
     pub data_url: Option<String>,
     pub text: Option<String>,
     pub r#type: Option<String>,
+    pub storage_provider: Option<String>,
+    pub bucket: Option<String>,
+    pub object_key: Option<String>,
+    pub url: Option<String>,
+    pub view_url: Option<String>,
 }
 
 fn get_str(v: &Value, key: &str) -> Option<String> {
@@ -38,6 +43,12 @@ pub fn parse_attachments(list: &[Value]) -> Vec<Attachment> {
             data_url: get_str(v, "dataUrl"),
             text: get_str(v, "text"),
             r#type: get_str(v, "type"),
+            storage_provider: get_str(v, "storageProvider")
+                .or_else(|| get_str(v, "storage_provider")),
+            bucket: get_str(v, "bucket"),
+            object_key: get_str(v, "objectKey").or_else(|| get_str(v, "object_key")),
+            url: get_str(v, "url"),
+            view_url: get_str(v, "viewUrl").or_else(|| get_str(v, "view_url")),
         })
         .collect()
 }
@@ -58,12 +69,26 @@ pub async fn build_content_parts_async(user_text: &str, attachments: &[Attachmen
             .clone()
             .unwrap_or_else(|| "application/octet-stream".to_string());
         let size = att.size.unwrap_or(0);
-        let meta_line = format!("Attachment: {} ({}, {} bytes)", name, mime, size);
+        let public_url = attachment_public_url(att).await;
+        let meta_line = match public_url.as_deref() {
+            Some(url) => format!(
+                "Attachment: {} ({}, {} bytes)\nURL: {}",
+                name, mime, size, url
+            ),
+            None => format!("Attachment: {} ({}, {} bytes)", name, mime, size),
+        };
 
         if mime.starts_with("image/") && att.data_url.is_some() {
             parts.push(json!({"type": "image_url", "image_url": {"url": att.data_url.clone().unwrap_or_default()}}));
             parts.push(json!({"type": "text", "text": meta_line}));
             continue;
+        }
+        if mime.starts_with("image/") {
+            if let Some(url) = public_url {
+                parts.push(json!({"type": "image_url", "image_url": {"url": url}}));
+                parts.push(json!({"type": "text", "text": meta_line}));
+                continue;
+            }
         }
 
         if let Some(text) = &att.text {
@@ -131,6 +156,62 @@ pub async fn build_content_parts_async(user_text: &str, attachments: &[Attachmen
             }
         }
 
+        if let Some(object_data) = load_object_attachment_bytes(att).await {
+            match object_data {
+                Ok(bytes) => {
+                    if is_text_like_mime(mime.as_str()) {
+                        let body = String::from_utf8_lossy(bytes.as_ref()).to_string();
+                        let body = if body.chars().count() > max_chars {
+                            format!(
+                                "{}\n...[truncated]",
+                                truncate_chars(body.as_str(), max_chars)
+                            )
+                        } else {
+                            body
+                        };
+                        parts.push(
+                            json!({"type": "text", "text": format!("{}\n\n{}", meta_line, body)}),
+                        );
+                        continue;
+                    }
+                    if mime == "application/pdf" {
+                        if let Some(text) = extract_pdf_text(bytes.as_ref()) {
+                            let body = if text.chars().count() > max_chars {
+                                format!(
+                                    "{}\n...[truncated]",
+                                    truncate_chars(text.as_str(), max_chars)
+                                )
+                            } else {
+                                text
+                            };
+                            parts.push(json!({"type": "text", "text": format!("{}\n\n[Extracted from PDF]\n\n{}", meta_line, body)}));
+                            continue;
+                        }
+                    }
+                    if mime
+                        == "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                    {
+                        if let Some(text) = extract_docx_text(bytes.as_ref()) {
+                            let body = if text.chars().count() > max_chars {
+                                format!(
+                                    "{}\n...[truncated]",
+                                    truncate_chars(text.as_str(), max_chars)
+                                )
+                            } else {
+                                text
+                            };
+                            parts.push(json!({"type": "text", "text": format!("{}\n\n[Extracted from DOCX]\n\n{}", meta_line, body)}));
+                            continue;
+                        }
+                    }
+                }
+                Err(err) => {
+                    parts.push(json!({"type": "text", "text": format!("{} [content not included: {}]", meta_line, err)}));
+                    continue;
+                }
+            }
+        }
+
         parts
             .push(json!({"type": "text", "text": format!("{} [content not included]", meta_line)}));
     }
@@ -140,6 +221,81 @@ pub async fn build_content_parts_async(user_text: &str, attachments: &[Attachmen
     } else {
         Value::Array(parts)
     }
+}
+
+async fn attachment_public_url(att: &Attachment) -> Option<String> {
+    if let Some(url) = att
+        .view_url
+        .as_deref()
+        .or(att.url.as_deref())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        return Some(url.to_string());
+    }
+
+    let object_key = att.object_key.as_deref()?.trim();
+    if object_key.is_empty() {
+        return None;
+    }
+    let storage = crate::services::object_storage::service().await.ok()?;
+    storage
+        .signed_object_url(crate::services::object_storage::SignedObject {
+            object_ref: crate::services::object_storage::StoredObjectRef {
+                bucket: att.bucket.clone(),
+                object_key: object_key.to_string(),
+                name: att.name.clone(),
+                mime_type: att.mime_type.clone(),
+            },
+            content_type: att
+                .mime_type
+                .clone()
+                .unwrap_or_else(|| "application/octet-stream".to_string()),
+            file_name: att.name.clone().unwrap_or_else(|| "attachment".to_string()),
+        })
+        .ok()
+}
+
+async fn load_object_attachment_bytes(att: &Attachment) -> Option<Result<bytes::Bytes, String>> {
+    let object_key = att.object_key.as_deref()?.trim();
+    if object_key.is_empty() {
+        return None;
+    }
+    let storage = match crate::services::object_storage::service().await {
+        Ok(storage) => storage,
+        Err(err) => return Some(Err(err)),
+    };
+    Some(
+        storage
+            .get_object_bytes(
+                &crate::services::object_storage::StoredObjectRef {
+                    bucket: att.bucket.clone(),
+                    object_key: object_key.to_string(),
+                    name: att.name.clone(),
+                    mime_type: att.mime_type.clone(),
+                },
+                Some(storage.max_read_bytes()),
+            )
+            .await
+            .map(|object| object.bytes),
+    )
+}
+
+fn is_text_like_mime(mime: &str) -> bool {
+    mime.starts_with("text/")
+        || matches!(
+            mime,
+            "application/json"
+                | "application/xml"
+                | "application/javascript"
+                | "application/x-javascript"
+                | "application/x-ndjson"
+                | "application/yaml"
+                | "application/toml"
+                | "text/markdown"
+        )
+        || mime.ends_with("+json")
+        || mime.ends_with("+xml")
 }
 
 fn decode_data_url(data_url: &str) -> Option<Vec<u8>> {
@@ -234,6 +390,21 @@ pub fn sanitize_attachments_for_db(attachments: &[Attachment]) -> Vec<Value> {
             "size": att.size,
             "mimeType": att.mime_type,
         });
+        if let Some(map) = obj.as_object_mut() {
+            if let Some(storage_provider) = &att.storage_provider {
+                map.insert("storageProvider".to_string(), Value::String(storage_provider.clone()));
+            }
+            if let Some(bucket) = &att.bucket {
+                map.insert("bucket".to_string(), Value::String(bucket.clone()));
+            }
+            if let Some(object_key) = &att.object_key {
+                map.insert("objectKey".to_string(), Value::String(object_key.clone()));
+            }
+            if let Some(url) = att.view_url.as_ref().or(att.url.as_ref()) {
+                map.insert("url".to_string(), Value::String(url.clone()));
+                map.insert("viewUrl".to_string(), Value::String(url.clone()));
+            }
+        }
         if let Some(data_url) = &att.data_url {
             if data_url.len() <= max_inline {
                 if let Some(map) = obj.as_object_mut() {

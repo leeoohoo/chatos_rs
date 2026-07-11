@@ -106,7 +106,8 @@ pub(super) async fn require_auth(
         request.extensions_mut().insert(user);
         return Ok(next.run(request).await);
     }
-    let token = bearer_token_from_request(&request).map_err(ApiError::unauthorized)?;
+    let token = bearer_token_from_request(&request, state.config.allow_device_connect_query_token)
+        .map_err(ApiError::unauthorized)?;
     let user = verify_token_via_user_service(&state.config, token.as_str())
         .await
         .map_err(ApiError::unauthorized)?;
@@ -146,12 +147,31 @@ fn internal_service_user_from_headers(
     }))
 }
 
-fn bearer_token_from_request(request: &Request<axum::body::Body>) -> Result<String, String> {
+fn bearer_token_from_request(
+    request: &Request<axum::body::Body>,
+    allow_device_connect_query_token: bool,
+) -> Result<String, String> {
+    if bearer_token_from_headers(request.headers()).is_err()
+        && is_device_connect_path(request.uri().path())
+        && !allow_device_connect_query_token
+    {
+        return Err(
+            "Local Connector device websocket auth must use Authorization header".to_string(),
+        );
+    }
     bearer_token_from_headers(request.headers())
         .map(ToOwned::to_owned)
         .or_else(|_| {
             token_from_query(request.uri().query()).ok_or_else(|| "缺少登录令牌".to_string())
         })
+}
+
+fn is_device_connect_path(path: &str) -> bool {
+    let parts = path.trim_matches('/').split('/').collect::<Vec<_>>();
+    matches!(
+        parts.as_slice(),
+        ["api", "local-connectors", "devices", _, "connect"]
+    )
 }
 
 fn token_from_query(query: Option<&str>) -> Option<String> {

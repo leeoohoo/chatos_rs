@@ -3,7 +3,26 @@
 
 export interface RegisterPayload {
   username: string;
+  email?: string;
   password: string;
+  invite_code?: string;
+  verification_code?: string;
+}
+
+export interface SendRegisterCodePayload {
+  email: string;
+  invite_code: string;
+}
+
+export interface SendRegisterCodeResponse {
+  ok?: boolean;
+  expires_in_seconds?: number;
+  resend_after_seconds?: number;
+}
+
+export interface LocalConnectorTicketResponse {
+  ticket?: string;
+  expires_in_seconds?: number;
 }
 
 export interface AuthResponse {

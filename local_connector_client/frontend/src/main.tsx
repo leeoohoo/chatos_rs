@@ -26,7 +26,6 @@ import {
 } from './api';
 import { ApprovalPanel } from './components/ApprovalPanel';
 import {
-  AuthPanel,
   ConnectionCard,
   LocalBoundaryPanel,
   WorkspacePanel,
@@ -114,7 +113,71 @@ const TABS: Array<{
   },
 ];
 
-function App() {
+function ShellApp() {
+  const [status, setStatus] = React.useState<ConnectorStatus | null>(null);
+  const [refreshing, setRefreshing] = React.useState(false);
+
+  const refresh = React.useCallback(async () => {
+    setRefreshing(true);
+    try {
+      setStatus(await api.status());
+    } catch {
+      setStatus(null);
+    } finally {
+      setRefreshing(false);
+    }
+  }, []);
+
+  React.useEffect(() => {
+    void refresh();
+    const timer = window.setInterval(() => void refresh(), 5000);
+    return () => window.clearInterval(timer);
+  }, [refresh]);
+
+  return (
+    <div className="desktopShell">
+      <div className="desktopShellBrand">
+        <Cpu size={18} />
+        <span>ChatOS</span>
+      </div>
+      <div className="desktopShellStatus">
+        <span className={status?.connector_running ? 'coreStatusDot online' : 'coreStatusDot'} />
+        <strong>{status?.connector_running ? '本机已连接' : status?.configured ? '等待连接' : '未授权本机'}</strong>
+        {status?.user?.username ? <small>{status.user.username}</small> : null}
+      </div>
+      <div className="desktopShellActions">
+        <button
+          type="button"
+          className="iconButton"
+          title="刷新 ChatOS"
+          aria-label="刷新 ChatOS"
+          onClick={() => window.chatosLocalConnector?.reloadChatOS?.()}
+        >
+          <RefreshCw size={16} />
+        </button>
+        <button
+          type="button"
+          className="iconButton"
+          title="刷新本机状态"
+          aria-label="刷新本机状态"
+          onClick={() => void refresh()}
+        >
+          <Wifi className={refreshing ? 'spinIcon' : ''} size={16} />
+        </button>
+        <button
+          type="button"
+          className="shellSettingsButton"
+          onClick={() => window.chatosLocalConnector?.openSettings?.()}
+        >
+          <Settings2 size={16} />
+          <span>设置</span>
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function SettingsApp() {
   const [status, setStatus] = React.useState<ConnectorStatus | null>(null);
   const [loading, setLoading] = React.useState(true);
   const [refreshing, setRefreshing] = React.useState(false);
@@ -226,7 +289,16 @@ function App() {
               </div>
             </div>
           </section>
-          <AuthPanel onDone={setStatus} />
+          <section className="authPanel desktopAuthNotice">
+            <span className="pageEyebrow">SINGLE SIGN-ON</span>
+            <h3>请先在 ChatOS 页面登录</h3>
+            <p>
+              桌面端只保留 ChatOS 一个登录入口。登录成功后，本机会通过一次性授权票据自动完成 Local Connector 配对。
+            </p>
+            <button type="button" className="primaryButton" onClick={() => void refresh()}>
+              刷新本机状态
+            </button>
+          </section>
         </main>
       ) : (
         <main className="workbench">
@@ -262,6 +334,11 @@ function App() {
       )}
     </div>
   );
+}
+
+function Root() {
+  const params = new URLSearchParams(window.location.search);
+  return params.get('view') === 'shell' ? <ShellApp /> : <SettingsApp />;
 }
 
 function initialTheme(): ThemeMode {
@@ -315,6 +392,6 @@ function TabNav({
 
 ReactDOM.createRoot(document.getElementById('root') as HTMLElement).render(
   <React.StrictMode>
-    <App />
+    <Root />
   </React.StrictMode>,
 );

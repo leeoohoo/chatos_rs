@@ -19,6 +19,7 @@ pub struct McpHttpServer {
     pub name: String,
     pub url: String,
     pub headers: Option<std::collections::HashMap<String, String>>,
+    pub allowed_tool_names: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone)]
@@ -121,6 +122,7 @@ fn build_servers_from_configs(
                 name: server_name,
                 url: cfg.command,
                 headers: None,
+                allowed_tool_names: None,
             });
         } else if cfg.r#type == "stdio" {
             let args = parse_args_json_array_or_whitespace(&cfg.args);
