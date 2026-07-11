@@ -5,6 +5,8 @@ import type {
   AuthResponse,
   MeResponse,
   RegisterPayload,
+  SendRegisterCodePayload,
+  SendRegisterCodeResponse,
   TaskRunnerAgentAccountResponse,
   UserSettingsResponse,
   UserSettingsUpdatePayload,
@@ -16,6 +18,16 @@ export const register = (
   data: RegisterPayload,
 ): Promise<AuthResponse> => {
   return request<AuthResponse>('/auth/register', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+};
+
+export const sendRegisterEmailCode = (
+  request: ApiRequestFn,
+  data: SendRegisterCodePayload,
+): Promise<SendRegisterCodeResponse> => {
+  return request<SendRegisterCodeResponse>('/auth/register/send-code', {
     method: 'POST',
     body: JSON.stringify(data),
   });
