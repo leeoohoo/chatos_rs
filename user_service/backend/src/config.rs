@@ -136,7 +136,7 @@ impl AppConfig {
             smtp_password: read_env("USER_SERVICE_SMTP_PASSWORD"),
             email_from: read_env("USER_SERVICE_EMAIL_FROM"),
             email_from_name: read_env("USER_SERVICE_EMAIL_FROM_NAME")
-                .unwrap_or_else(|| "ChatOS".to_string()),
+                .unwrap_or_else(|| "Chat OS".to_string()),
             registration_code_ttl_seconds: read_env("USER_SERVICE_REGISTER_CODE_TTL_SECONDS")
                 .unwrap_or_else(|| "600".to_string())
                 .parse()

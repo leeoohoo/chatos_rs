@@ -66,7 +66,7 @@ const TABS: Array<{
     id: 'workspaces',
     label: '开放目录',
     eyebrow: 'WORKSPACES',
-    description: '管理 ChatOS 可以访问的本地工作目录。',
+    description: '管理 Chat OS 可以访问的本地工作目录。',
     icon: FolderOpen,
   },
   {
@@ -138,7 +138,7 @@ function ShellApp() {
     <div className="desktopShell">
       <div className="desktopShellBrand">
         <Cpu size={18} />
-        <span>ChatOS</span>
+        <span>Chat OS</span>
       </div>
       <div className="desktopShellStatus">
         <span className={status?.connector_running ? 'coreStatusDot online' : 'coreStatusDot'} />
@@ -149,8 +149,8 @@ function ShellApp() {
         <button
           type="button"
           className="iconButton"
-          title="刷新 ChatOS"
-          aria-label="刷新 ChatOS"
+          title="刷新 Chat OS"
+          aria-label="刷新 Chat OS"
           onClick={() => window.chatosLocalConnector?.reloadChatOS?.()}
         >
           <RefreshCw size={16} />
@@ -234,7 +234,7 @@ function SettingsApp() {
         <div className="brand">
           <div className="brandMark"><Cpu size={22} /></div>
           <div className="brandCopy">
-            <span>ChatOS</span>
+            <span>Chat OS</span>
             <h1>Local Connector</h1>
           </div>
         </div>
@@ -272,7 +272,7 @@ function SettingsApp() {
         <main className="authStage">
           <section className="authIntro">
             <span className="pageEyebrow">SECURE DEVICE BRIDGE</span>
-            <h2>让 ChatOS 安全地连接<br />这台电脑。</h2>
+            <h2>让 Chat OS 安全地连接<br />这台电脑。</h2>
             <p>本地目录、终端与 Docker 沙箱始终留在当前设备。云端只能通过已配对连接发起受控请求。</p>
             <div className="authFeatures">
               <div>
@@ -291,9 +291,9 @@ function SettingsApp() {
           </section>
           <section className="authPanel desktopAuthNotice">
             <span className="pageEyebrow">SINGLE SIGN-ON</span>
-            <h3>请先在 ChatOS 页面登录</h3>
+            <h3>请先在 Chat OS 页面登录</h3>
             <p>
-              桌面端只保留 ChatOS 一个登录入口。登录成功后，本机会通过一次性授权票据自动完成 Local Connector 配对。
+              桌面端只保留 Chat OS 一个登录入口。登录成功后，本机会通过一次性授权票据自动完成 Local Connector 配对。
             </p>
             <button type="button" className="primaryButton" onClick={() => void refresh()}>
               刷新本机状态

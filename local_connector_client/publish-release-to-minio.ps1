@@ -18,7 +18,7 @@ $ErrorActionPreference = "Stop"
 
 $ClientDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 if ([string]::IsNullOrWhiteSpace($ArtifactPath)) {
-  $ArtifactPath = Join-Path $ClientDir "dist\electron-windows\ChatOS-Local-Connector-windows-x64.zip"
+  $ArtifactPath = Join-Path $ClientDir "dist\electron-windows\Chat-OS-Local-Connector-windows-x64.zip"
 }
 if ([string]::IsNullOrWhiteSpace($WebsiteApiBase)) {
   $WebsiteApiBase = "http://127.0.0.1:39250"
@@ -78,6 +78,6 @@ Invoke-WebRequest `
   -ContentType "application/json; charset=utf-8" `
   -UseBasicParsing | Out-Null
 
-Write-Host "[OK] Published ChatOS Local Connector $Version"
+Write-Host "[OK] Published Chat OS Local Connector $Version"
 Write-Host "[OK] Artifact SHA-256: $sha256"
 Write-Host "[OK] Download catalog: $apiBase/api/site/downloads"

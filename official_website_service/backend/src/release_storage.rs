@@ -300,7 +300,7 @@ impl ReleaseStorage {
         }
 
         let manifest = ClientReleaseManifest {
-            product: "ChatOS Local Connector".to_string(),
+            product: "Chat OS Local Connector".to_string(),
             channel: self.config.channel.clone(),
             version: request.version,
             published_at: Utc::now().to_rfc3339(),
@@ -582,7 +582,7 @@ mod tests {
     fn accepts_release_segments_and_artifact_names() {
         assert!(validate_segment("2.0.4", "version").is_ok());
         assert!(validate_segment("windows-x64", "platform").is_ok());
-        assert!(validate_file_name("ChatOS-Local-Connector-windows-x64.zip").is_ok());
+        assert!(validate_file_name("Chat-OS-Local-Connector-windows-x64.zip").is_ok());
     }
 
     #[test]
@@ -610,7 +610,7 @@ mod tests {
                 artifacts: vec![PresignArtifactRequest {
                     platform: "windows-x64".to_string(),
                     label: "Windows 10/11 (64-bit)".to_string(),
-                    file_name: "ChatOS-Local-Connector-windows-x64.zip".to_string(),
+                    file_name: "Chat-OS-Local-Connector-windows-x64.zip".to_string(),
                     content_type: Some("application/zip".to_string()),
                     size_bytes: 1024,
                     sha256: "a".repeat(64),
@@ -620,7 +620,7 @@ mod tests {
 
         assert_eq!(
             response.manifest.artifacts[0].object_key,
-            "releases/local-connector/stable/2.0.4/ChatOS-Local-Connector-windows-x64.zip"
+            "releases/local-connector/stable/2.0.4/Chat-OS-Local-Connector-windows-x64.zip"
         );
         assert_eq!(
             response.manifest_upload.object_key,

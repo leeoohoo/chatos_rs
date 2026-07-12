@@ -1,6 +1,6 @@
 # chatos/frontend
 
-Chatos RS 主 React 前端。
+Chat OS 主 React 前端。
 
 ## Docker 栈启动
 

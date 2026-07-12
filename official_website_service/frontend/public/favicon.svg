@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Chatos RS">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Chat OS">
   <defs><linearGradient id="g" x1="8" y1="8" x2="56" y2="56"><stop stop-color="#5b5ce2"/><stop offset="1" stop-color="#8b5cf6"/></linearGradient></defs>
   <rect width="64" height="64" rx="15" fill="url(#g)"/>
   <path d="M32 11l3.8 11.8L47.5 27l-11.7 3.8L32 42.5l-3.8-11.7L16.5 27l11.7-4.2L32 11z" fill="#fff"/>

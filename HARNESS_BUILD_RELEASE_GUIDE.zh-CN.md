@@ -1,6 +1,6 @@
 # Harness 构建发布说明
 
-本文档记录 Chatos RS 使用 Harness 构建镜像、发布服务，以及只选择部分服务构建发布的常用步骤。
+本文档记录 Chat OS 使用 Harness 构建镜像、发布服务，以及只选择部分服务构建发布的常用步骤。
 
 ## 前置要求
 
@@ -72,7 +72,7 @@ bash ./scripts/build-images-on-harness.sh
 
 通过 `HARNESS_CI_IMAGE_SERVICES` 指定服务名，多个服务用空格分隔。
 
-示例：只构建注册流程和 Chatos 主前端/后端相关镜像：
+示例：只构建注册流程和 Chat OS 主前端/后端相关镜像：
 
 ```bash
 export HARNESS_ADMIN_PASSWORD='<Harness admin password>'
@@ -139,7 +139,7 @@ export CHATOS_IMAGE_NAMESPACE=ghcr.io/leeoohoo
 ./docker/deploy-harness-ci.sh user-service-backend user-service-frontend local-connector-service-backend chatos-backend chatos-frontend
 ```
 
-只改 Chatos 主应用：
+只改 Chat OS 主应用：
 
 ```bash
 export HARNESS_CI_IMAGE_SERVICES='chatos-backend chatos-frontend'

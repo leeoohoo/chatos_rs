@@ -1,4 +1,4 @@
-# ChatOS Sandbox Agent Image
+# Chat OS Sandbox Agent Image
 
 This image is the first Docker/Kata sandbox runtime for `sandbox_manager_service`.
 

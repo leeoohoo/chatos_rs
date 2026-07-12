@@ -63,7 +63,7 @@ export function SourceModal(props: SourceModalProps) {
               name="name"
               rules={[{ required: true, message: '请输入系统名称' }]}
             >
-              <Input placeholder="例如：ChatOS" />
+              <Input placeholder="例如：Chat OS" />
             </Form.Item>
           </Col>
           <Col span={24}>

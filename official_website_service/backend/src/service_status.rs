@@ -126,7 +126,7 @@ fn status_targets() -> Vec<StatusTarget> {
     vec![
         target(
             0,
-            "Chatos main",
+            "Chat OS main",
             "联系人驱动主聊天",
             "OFFICIAL_WEBSITE_STATUS_CHATOS_URL",
             "MAIN_BACKEND_PORT",

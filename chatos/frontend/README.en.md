@@ -1,6 +1,6 @@
 # chatos/frontend
 
-Main React frontend for Chatos RS.
+Main React frontend for Chat OS.
 
 ## Docker Stack
 

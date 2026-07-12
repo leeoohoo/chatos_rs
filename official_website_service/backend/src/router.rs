@@ -136,7 +136,7 @@ async fn robots(State(config): State<AppConfig>) -> impl IntoResponse {
     (
         [(CONTENT_TYPE, "text/plain; charset=utf-8")],
         format!(
-            "User-agent: *\nAllow: /\nSitemap: {}/sitemap.xml\n",
+            "User-agent: *\nAllow: /\nDisallow: /admin/\nSitemap: {}/sitemap.xml\n",
             config.public_base_url
         ),
     )

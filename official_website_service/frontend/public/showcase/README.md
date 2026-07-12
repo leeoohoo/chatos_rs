@@ -1,6 +1,6 @@
 # Showcase Images
 
-This directory stores website showcase screenshots captured from local Chatos RS services.
+This directory stores website showcase screenshots captured from local Chat OS services.
 
 Recommended filenames:
 

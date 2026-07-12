@@ -66,7 +66,7 @@ type RegistrationForm = {
 };
 
 const fallbackManifest: SiteManifest = {
-  product_name: 'Chatos RS',
+  product_name: 'Chat OS',
   tagline: '给你的项目一位真正能动手的 AI 搭档。',
   app_url: 'http://localhost:8088',
   registration_enabled: true,
@@ -103,7 +103,7 @@ const outcomes = [
 const workflowSteps = [
   {
     number: '01',
-    title: '告诉 Chatos 你想完成什么',
+    title: '告诉 Chat OS 你想完成什么',
     body: '从一句自然语言开始，讨论需求、约束和验收目标。',
   },
   {
@@ -137,15 +137,15 @@ const useCases = [
     icon: MessageCircle,
     eyebrow: '长期协作',
     title: '今天的讨论，明天还能接着做',
-    body: 'Chatos 会把消息、摘要、项目事实和长期记忆组织起来，让合作不被单次会话切断。',
+    body: 'Chat OS 会把消息、摘要、项目事实和长期记忆组织起来，让合作不被单次会话切断。',
     points: ['跨会话上下文', '项目与角色记忆', '重要信息按需召回'],
   },
 ];
 
 const faqs = [
   {
-    question: 'Chatos 和普通 AI 聊天工具有什么不同？',
-    answer: 'Chatos 面向持续的工程协作。它不仅生成回答，还能连接项目环境、运行工具、跟踪后台任务，并在后续协作中继续使用已经沉淀的项目上下文。',
+    question: 'Chat OS 和普通 AI 聊天工具有什么不同？',
+    answer: 'Chat OS 面向持续的工程协作。它不仅生成回答，还能连接项目环境、运行工具、跟踪后台任务，并在后续协作中继续使用已经沉淀的项目上下文。',
   },
   {
     question: '必须把代码上传到云端吗？',
@@ -277,7 +277,7 @@ function App() {
   return (
     <main id="top">
       <header className="site-header">
-        <a className="brand" href="#top" aria-label="Chatos RS 首页">
+        <a className="brand" href="#top" aria-label="Chat OS 首页">
           <span className="brand-mark"><Sparkles size={19} /></span>
           <span>{manifest.product_name}</span>
         </a>
@@ -287,7 +287,7 @@ function App() {
           <a href="#download">下载客户端</a>
           <a href="#register">注册</a>
         </nav>
-        <a className="header-login" href={manifest.app_url}>登录 Chatos <ArrowRight size={15} /></a>
+        <a className="header-login" href={manifest.app_url}>登录 Chat OS <ArrowRight size={15} /></a>
       </header>
 
       <section className="hero-section">
@@ -308,14 +308,14 @@ function App() {
           </div>
         </div>
 
-        <div className="hero-product" aria-label="Chatos 产品界面预览">
+        <div className="hero-product" aria-label="Chat OS 产品界面预览">
           <div className="product-window">
             <div className="window-topbar">
               <span className="window-dots"><i /><i /><i /></span>
-              <span>Chatos · 项目协作空间</span>
+              <span>Chat OS · 项目协作空间</span>
               <span className="window-secure"><ShieldCheck size={14} /> 已连接</span>
             </div>
-            <img src="/showcase/chatos-main.png" alt="Chatos 主界面" />
+            <img src="/showcase/chatos-main.png" alt="Chat OS 主界面" />
           </div>
           <div className="floating-card floating-task">
             <span className="floating-icon"><Zap size={17} /></span>
@@ -339,7 +339,7 @@ function App() {
         <div className="section-heading">
           <span className="section-kicker">不只是聊天</span>
           <h2>一位能理解上下文、进入环境并持续工作的 AI 搭档</h2>
-          <p>你不需要围绕工具重新组织工作。Chatos 把对话、记忆、任务和执行环境连接起来，让协作自然发生。</p>
+          <p>你不需要围绕工具重新组织工作。Chat OS 把对话、记忆、任务和执行环境连接起来，让协作自然发生。</p>
         </div>
         <div className="outcome-grid">
           {outcomes.map((item) => {
@@ -397,9 +397,9 @@ function App() {
 
       <section className="section download-section" id="download">
         <div className="download-copy">
-          <span className="section-kicker">ChatOS Local Connector</span>
-          <h2>让 Chatos 安全地使用你的本机项目</h2>
-          <p>桌面连接器只访问你明确授权的目录。连接建立后，Chatos 可以在正确的工作区里读取文件、运行终端和管理本机沙箱。</p>
+          <span className="section-kicker">Chat OS Local Connector</span>
+          <h2>让 Chat OS 安全地使用你的本机项目</h2>
+          <p>桌面连接器只访问你明确授权的目录。连接建立后，Chat OS 可以在正确的工作区里读取文件、运行终端和管理本机沙箱。</p>
           <div className="connector-points">
             <span><ShieldCheck size={18} /> 云端不保存本机绝对路径</span>
             <span><Laptop size={18} /> 连接器主动建立出站连接</span>
@@ -431,7 +431,7 @@ function App() {
           )}
           <ol className="install-steps">
             <li><span>1</span> 下载并解压客户端</li>
-            <li><span>2</span> 登录你的 Chatos 账号</li>
+            <li><span>2</span> 登录你的 Chat OS 账号</li>
             <li><span>3</span> 选择并授权项目目录</li>
           </ol>
           <p className="coming-soon">macOS 与 Linux 客户端正在准备中</p>
@@ -442,7 +442,7 @@ function App() {
         <div className="register-copy">
           <span className="section-kicker">开始使用</span>
           <h2>创建账号，和你的 AI 搭档开始第一个项目</h2>
-          <p>注册后可以直接进入 Chatos。当前为邀请测试阶段，需要邀请码和邮箱验证。</p>
+          <p>注册后可以直接进入 Chat OS。当前为邀请测试阶段，需要邀请码和邮箱验证。</p>
           <div className="register-benefits">
             <span><Check size={16} /> 一个账号连接 Web 与桌面连接器</span>
             <span><Check size={16} /> 模型与项目配置随账号同步</span>
@@ -455,12 +455,12 @@ function App() {
             <div className="registration-success">
               <span><Check size={28} /></span>
               <h3>账号创建成功</h3>
-              <p>现在可以打开 Chatos，使用邮箱和密码登录。</p>
-              <a className="button button-primary" href={manifest.app_url}>打开 Chatos <ArrowRight size={17} /></a>
+              <p>现在可以打开 Chat OS，使用邮箱和密码登录。</p>
+              <a className="button button-primary" href={manifest.app_url}>打开 Chat OS <ArrowRight size={17} /></a>
             </div>
           ) : (
             <form onSubmit={submitRegistration}>
-              <div className="form-heading"><Mail size={21} /><div><strong>注册 Chatos</strong><small>注册信息由 Chatos 账号服务处理</small></div></div>
+              <div className="form-heading"><Mail size={21} /><div><strong>注册 Chat OS</strong><small>注册信息由 Chat OS 账号服务处理</small></div></div>
               <label>邮箱<input type="email" value={registration.email} onChange={(event) => updateRegistration('email', event.target.value)} placeholder="you@example.com" autoComplete="email" required /></label>
               <label>昵称（选填）<input value={registration.displayName} onChange={(event) => updateRegistration('displayName', event.target.value)} placeholder="希望我们怎么称呼你" autoComplete="name" /></label>
               <label>邀请码<input value={registration.inviteCode} onChange={(event) => updateRegistration('inviteCode', event.target.value)} placeholder="输入邀请测试码" required /></label>
@@ -494,8 +494,8 @@ function App() {
 
       <footer className="footer">
         <div className="footer-brand"><span className="brand-mark"><Sparkles size={18} /></span><div><strong>{manifest.product_name}</strong><small>让 AI 进入项目，把事情做完。</small></div></div>
-        <div className="footer-links"><a href="#why">产品能力</a><a href="#download">客户端下载</a><a href="#register">注册</a><a href={manifest.app_url}>登录</a></div>
-        <span className="copyright">© 2025–2026 Chatos RS</span>
+        <div className="footer-links"><a href="#why">产品能力</a><a href="#download">客户端下载</a><a href="#register">注册</a><a href={manifest.app_url}>登录</a><a href="/admin/releases">发布管理</a></div>
+        <span className="copyright">© 2025–2026 Chat OS</span>
       </footer>
     </main>
   );

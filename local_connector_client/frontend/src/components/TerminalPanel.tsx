@@ -105,7 +105,7 @@ export function TerminalPanel({ status }: { status: ConnectorStatus }) {
         <div className="panelHeader">
           <div>
             <h2><Terminal size={18} />终端执行</h2>
-            <p>这里通过云端 relay 回到本机执行，用来验证 ChatOS 侧终端链路。</p>
+            <p>这里通过云端 relay 回到本机执行，用来验证 Chat OS 侧终端链路。</p>
           </div>
         </div>
         <div className="terminalForm">
@@ -127,12 +127,12 @@ export function TerminalPanel({ status }: { status: ConnectorStatus }) {
         <div className="panelHeader">
           <div>
             <h2><ListChecks size={18} />命令历史</h2>
-            <p>展示 ChatOS、Task Runner 和当前页面触发过的本机执行记录。</p>
+            <p>展示 Chat OS、Task Runner 和当前页面触发过的本机执行记录。</p>
           </div>
           <div className="headerActions terminalHistoryActions">
             <select value={sourceFilter} onChange={(event) => setSourceFilter(event.target.value)}>
               <option value="all">全部来源</option>
-              <option value="chatos_terminal">ChatOS 终端</option>
+              <option value="chatos_terminal">Chat OS 终端</option>
               <option value="task_runner">Task Runner</option>
               <option value="local_connector_ui">Local Connector 页面</option>
             </select>

@@ -1,6 +1,6 @@
 # chatos/backend
 
-Chatos RS 主编排后端，负责会话、消息、模型流式输出、工具路由，以及 User Service、Task Runner、Project Management、Local Connector Service、Memory Engine 的集成。
+Chat OS 主编排后端，负责会话、消息、模型流式输出、工具路由，以及 User Service、Task Runner、Project Management、Local Connector Service、Memory Engine 的集成。
 
 ## Docker 栈启动
 

@@ -19,7 +19,7 @@ export const zhCNManagementMessages: MessageDictionary = {
   'settings.logLevelPlaceholder': 'info|warn|error|debug',
   'settings.logLevelHelp': '仅作为本用户偏好保存，不修改服务器全局日志。',
   'settings.internalContextLocale': '内部上下文语言',
-  'settings.internalContextLocaleHelp': '仅影响 Chatos 系统内部生成的上下文语言；用户输入、工具输出、外部内容，以及 memory engine 返回的压缩记忆原文都保持原样。',
+  'settings.internalContextLocaleHelp': '仅影响 Chat OS 系统内部生成的上下文语言；用户输入、工具输出、外部内容，以及 memory engine 返回的压缩记忆原文都保持原样。',
   'settings.uiLocale': '界面语言',
   'settings.uiLocaleHelp': '影响前端界面文案、弹窗、按钮和状态提示，不改写用户内容和工具输出。',
   'settings.terminalUiEnabled': '显示终端菜单与运行终端视图',

@@ -49,7 +49,7 @@ node - "$manifest_file" <<'NODE'
 const fs = require('fs');
 const path = process.argv[2];
 const manifest = JSON.parse(fs.readFileSync(path, 'utf8'));
-if (manifest.product_name !== 'Chatos RS') {
+if (manifest.product_name !== 'Chat OS') {
   throw new Error(`unexpected product_name: ${manifest.product_name}`);
 }
 if (!manifest.app_url || manifest.registration_enabled !== true) {
@@ -114,6 +114,19 @@ fetch "/robots.txt" "$robots_file"
 if ! grep -Eq '^Sitemap: https?://.*/sitemap\.xml$' "$robots_file"; then
   echo "[ERROR] robots.txt does not contain an absolute sitemap URL" >&2
   cat "$robots_file" >&2
+  exit 1
+fi
+if ! grep -q '^Disallow: /admin/$' "$robots_file"; then
+  echo "[ERROR] robots.txt does not protect the admin route from indexing" >&2
+  cat "$robots_file" >&2
+  exit 1
+fi
+
+admin_headers_file="$tmp_dir/admin.headers"
+curl -fsSI --max-time 5 "$BASE_URL/admin/releases" -o "$admin_headers_file"
+if ! grep -qi '^content-type: text/html' "$admin_headers_file"; then
+  echo "[ERROR] /admin/releases did not return the management page shell" >&2
+  cat "$admin_headers_file" >&2
   exit 1
 fi
 

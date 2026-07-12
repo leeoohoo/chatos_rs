@@ -54,8 +54,8 @@ powershell -ExecutionPolicy Bypass -File .\local_connector_client\package-electr
 
 It writes:
 
-1. `local_connector_client/dist/electron-windows/ChatOS Local Connector/ChatOS Local Connector.exe`
-2. `local_connector_client/dist/electron-windows/ChatOS-Local-Connector-windows-x64.zip`
+1. `local_connector_client/dist/electron-windows/Chat OS Local Connector/Chat OS Local Connector.exe`
+2. `local_connector_client/dist/electron-windows/Chat-OS-Local-Connector-windows-x64.zip`
 
 To publish the ZIP to the official website's MinIO release bucket:
 
@@ -101,8 +101,8 @@ The local state file stores `device_id` and the local-only mapping from cloud `w
 
 Terminal support:
 
-1. ChatOS creates local connector terminals with `cwd=local://connector/{device_id}/{workspace_id}`.
-2. ChatOS proxies `/api/terminals/{id}/ws` to `local_connector_service`.
+1. Chat OS creates local connector terminals with `cwd=local://connector/{device_id}/{workspace_id}`.
+2. Chat OS proxies `/api/terminals/{id}/ws` to `local_connector_service`.
 3. The service sends `terminal_session_create_request`, `terminal_input`, `terminal_resize`, `terminal_snapshot_request`, and `terminal_close` over the Connector outbound WebSocket.
 4. The local core starts a PTY shell inside the authorized workspace and streams `terminal_output`, `terminal_snapshot`, `terminal_state`, and `terminal_exit` events back through the same connection.
 

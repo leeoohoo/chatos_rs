@@ -236,7 +236,7 @@ function createWindow() {
     height: 780,
     minWidth: 920,
     minHeight: 620,
-    title: 'ChatOS Local Connector',
+    title: 'Chat OS Local Connector',
     backgroundColor: '#121214',
     webPreferences: {
       contextIsolation: true,
@@ -421,7 +421,7 @@ function openSettingsWindow() {
     height: 780,
     minWidth: 920,
     minHeight: 620,
-    title: 'ChatOS Local Connector Settings',
+    title: 'Chat OS Local Connector Settings',
     parent: mainWindow || undefined,
     backgroundColor: '#121214',
     webPreferences: {

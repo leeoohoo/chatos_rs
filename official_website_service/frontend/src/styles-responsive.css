@@ -12,6 +12,8 @@
   .download-copy, .register-copy { max-width: 760px; text-align: center; margin: 0 auto; }
   .connector-points, .register-benefits { justify-content: center; }
   .download-card, .register-card { width: min(620px, 100%); margin: 0 auto; }
+  .admin-layout { grid-template-columns: 1fr; }
+  .admin-sidebar { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
 @media (max-width: 860px) {
@@ -24,6 +26,9 @@
   .final-cta .button { grid-column: 1 / -1; width: 100%; }
   .footer { grid-template-columns: 1fr auto; }
   .footer-links { grid-column: 1 / -1; grid-row: 2; }
+  .admin-hero { grid-template-columns: 1fr; }
+  .artifact-fields { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .artifact-file-field { grid-column: 1 / -1; }
 }
 
 @media (max-width: 620px) {
@@ -55,4 +60,21 @@
   .footer { grid-template-columns: 1fr; text-align: center; }
   .footer-brand, .footer-links { justify-content: center; }
   .footer-links { grid-column: auto; grid-row: auto; }
+  .admin-header { grid-template-columns: 1fr auto; min-height: 62px; padding: 0 16px; }
+  .admin-header-title { display: none; }
+  .admin-back-link { font-size: 11px; }
+  .admin-hero { padding: 42px 18px 25px; }
+  .admin-hero h1 { font-size: 38px; }
+  .admin-hero p { font-size: 15px; }
+  .admin-security-note { padding: 16px; }
+  .admin-layout { padding: 0 14px 50px; }
+  .release-form, .current-release-card, .publish-guide-card { padding: 20px; border-radius: 18px; }
+  .admin-field-grid, .artifact-fields, .admin-sidebar { grid-template-columns: 1fr; }
+  .artifact-file-field { grid-column: auto; }
+  .artifact-row { grid-template-columns: auto minmax(0, 1fr); }
+  .artifact-remove { grid-column: 2; justify-self: end; margin-top: 0; }
+  .artifact-heading { align-items: flex-start; }
+  .artifact-heading small { display: none; }
+  .publish-status { grid-template-columns: auto 1fr; }
+  .publish-progress-value { display: none; }
 }

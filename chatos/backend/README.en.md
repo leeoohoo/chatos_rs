@@ -1,6 +1,6 @@
 # chatos/backend
 
-Main orchestration backend for Chatos RS. It handles sessions, messages, model streaming, tool routing, and integrations with User Service, Task Runner, Project Management, Local Connector Service, and Memory Engine.
+Main orchestration backend for Chat OS. It handles sessions, messages, model streaming, tool routing, and integrations with User Service, Task Runner, Project Management, Local Connector Service, and Memory Engine.
 
 ## Docker Stack
 

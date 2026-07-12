@@ -162,7 +162,7 @@ mod secret_store {
                 "-a",
                 account.as_str(),
                 "-s",
-                "ChatOS Local Connector Device Key",
+                "Chat OS Local Connector Device Key",
                 "-w",
             ])
             .output()?;
@@ -188,7 +188,7 @@ mod secret_store {
                 "-a",
                 account.as_str(),
                 "-s",
-                "ChatOS Local Connector Device Key",
+                "Chat OS Local Connector Device Key",
                 "-w",
                 encoded.as_str(),
                 "-U",

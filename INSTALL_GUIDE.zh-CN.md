@@ -1,4 +1,4 @@
-# Chatos RS 安装与部署指南
+# Chat OS 安装与部署指南
 
 当前项目以 Docker Compose 作为云端/服务器部署入口。旧的宿主机 systemd、nginx 模板、远程 rsync 脚本、Windows/WSL 启动脚本已经不再维护。
 

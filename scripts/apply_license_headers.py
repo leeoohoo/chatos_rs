@@ -157,7 +157,7 @@ def add_header(path: Path) -> bool:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Check or add Chatos RS license headers.")
+    parser = argparse.ArgumentParser(description="Check or add Chat OS license headers.")
     parser.add_argument("--write", action="store_true", help="Add missing license headers.")
     args = parser.parse_args()
 

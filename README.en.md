@@ -1,6 +1,6 @@
-# Chatos RS
+# Chat OS
 
-Chatos RS is Docker-first for cloud/server deployment. The only component that remains host-side by design is `local_connector_client/`.
+Chat OS is Docker-first for cloud/server deployment. The only component that remains host-side by design is `local_connector_client/`.
 
 ## Start The Stack
 
@@ -45,7 +45,7 @@ make docker-rebuild SERVICES="task-runner-backend"
 
 ## Local Fast Testing
 
-Use the host-side dev stack when Docker image rebuilds are too slow. It keeps infrastructure such as MongoDB/Harness in Docker, then runs Chatos service backends with `cargo run` and frontends with Vite:
+Use the host-side dev stack when Docker image rebuilds are too slow. It keeps infrastructure such as MongoDB/Harness in Docker, then runs Chat OS service backends with `cargo run` and frontends with Vite:
 
 ```bash
 make local-dev
@@ -93,7 +93,7 @@ make local-connector-client-stop
 
 ## Harness
 
-`harness/` is an independent upstream Git checkout from `https://github.com/leeoohoo/harness.git`; it is ignored by the parent Chatos repository. Fresh workspaces can recreate it with `git clone https://github.com/leeoohoo/harness.git harness`.
+`harness/` is an independent upstream Git checkout from `https://github.com/leeoohoo/harness.git`; it is ignored by the parent Chat OS repository. Fresh workspaces can recreate it with `git clone https://github.com/leeoohoo/harness.git harness`.
 
 Docker Compose runs Harness with the `harness/harness` image.
 

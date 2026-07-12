@@ -1,7 +1,7 @@
 {
   "name": "chatos-rs-chat-app",
   "version": "1.0.10",
-  "description": "Primary React frontend for Chatos RS engineering workflows",
+  "description": "Primary React frontend for Chat OS engineering workflows",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -102,7 +102,7 @@
     "typescript",
     "frontend"
   ],
-  "author": "Chatos RS Team",
+  "author": "Chat OS Team",
   "license": "PolyForm-Noncommercial-1.0.0",
   "repository": {
     "type": "git",

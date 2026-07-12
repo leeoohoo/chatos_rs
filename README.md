@@ -1,6 +1,6 @@
-# Chatos RS
+# Chat OS
 
-Chatos RS 是一个面向软件工程场景的 AI 协作与任务执行平台。它把对话式协作、项目管理、模型与插件配置、长期记忆、异步任务编排、云端沙箱和本机工作区连接整合在同一套系统中。
+Chat OS 是一个面向软件工程场景的 AI 协作与任务执行平台。它把对话式协作、项目管理、模型与插件配置、长期记忆、异步任务编排、云端沙箱和本机工作区连接整合在同一套系统中。
 
 > 当前仓库采用“云端服务 Docker Compose 部署、本机 Connector 独立运行”的形态。主应用负责交互和编排，真正的工程任务可以按项目配置进入云端沙箱或用户本机执行。
 
@@ -8,9 +8,9 @@ Chatos RS 是一个面向软件工程场景的 AI 协作与任务执行平台。
 
 ## 项目解决什么问题
 
-Chatos RS 不只是聊天界面，而是一套围绕“理解需求、形成计划、调用工具、执行代码、沉淀上下文”构建的工程协作平台：
+Chat OS 不只是聊天界面，而是一套围绕“理解需求、形成计划、调用工具、执行代码、沉淀上下文”构建的工程协作平台：
 
-- 在 Chatos 中进行普通对话、规划对话和工程任务协作。
+- 在 Chat OS 中进行普通对话、规划对话和工程任务协作。
 - 将长耗时工作交给 Task Runner，通过事件流和回调持续同步结果。
 - 用 Project Management Service 管理项目、需求、项目任务及其执行映射。
 - 在云端 Docker 沙箱或用户本机工作区中运行终端、文件和 MCP 工具。
@@ -29,9 +29,9 @@ flowchart LR
     minio[("MinIO / S3<br/>客户端发布包")]
 
     subgraph cloud["云端 Docker Compose"]
-        website["Official Website<br/>产品介绍、注册、下载"]
-        web["Chatos Web 与领域管理台"]
-        api["Chatos 与领域 API<br/>User / Project / Plugin / Memory"]
+        website["Official Website<br/>产品介绍、注册、下载与发布管理"]
+        web["Chat OS Web 与领域管理台"]
+        api["Chat OS 与领域 API<br/>User / Project / Plugin / Memory"]
         runner["Task Runner<br/>Queue、Worker、AI/MCP Runtime"]
         relay["Local Connector Service<br/>设备、工作区与 WebSocket 中继"]
         sandbox["Sandbox Manager"]
@@ -61,7 +61,7 @@ flowchart LR
     runner -. "注册 / 发现" .-> consul
     relay -. "注册 / 发现" .-> consul
     runner --> model
-    api -->|"Chatos / Memory"| model
+    api -->|"Chat OS / Memory"| model
     api -->|"User Service"| harness
     sandbox --> cloudDocker
     cloudDocker --> cloudAgent
@@ -75,8 +75,8 @@ flowchart LR
 
 | 层次 | 核心组件 | 主要职责 |
 | --- | --- | --- |
-| 产品接入 | Official Website、Chatos Web、领域管理台、Connector Desktop UI | 产品介绍、注册下载、会话交互、管理配置、本机授权 |
-| 业务控制 | Chatos、User、Project、Plugin、Memory | 身份与模型元数据、会话编排、项目领域数据、能力策略、上下文治理 |
+| 产品接入 | Official Website、Chat OS Web、领域管理台、Connector Desktop UI | 产品介绍、注册下载、会话交互、管理配置、本机授权 |
+| 业务控制 | Chat OS、User、Project、Plugin、Memory | 身份与模型元数据、会话编排、项目领域数据、能力策略、上下文治理 |
 | 任务执行 | Task Runner、Sandbox Manager、Local Connector、Sandbox Agent | 队列与 Worker、模型工具循环、工作区访问、沙箱生命周期、结果回传 |
 | 数据与基础设施 | MongoDB、Consul、Harness、MinIO/S3、Docker | 业务持久化、服务发现、代码托管、客户端分发、隔离运行环境 |
 
@@ -87,7 +87,7 @@ flowchart LR
 ```mermaid
 flowchart LR
     W["Official Website"]
-    C["Chatos"]
+    C["Chat OS"]
     U["User Service"]
     P["Project Management"]
     T["Task Runner"]
@@ -141,14 +141,14 @@ flowchart LR
 
 ## 交互式对话链路
 
-`/api/agent/chat/send` 接收请求后返回 `202 Accepted`，实际运行在后台继续。普通对话直接由 Chatos 完成模型与工具循环；Task Runner 只是可选的异步能力，不是每轮对话的固定下一跳。
+`/api/agent/chat/send` 接收请求后返回 `202 Accepted`，实际运行在后台继续。普通对话直接由 Chat OS 完成模型与工具循环；Task Runner 只是可选的异步能力，不是每轮对话的固定下一跳。
 
 ```mermaid
 sequenceDiagram
     autonumber
     actor User as 用户
-    participant Web as Chatos Frontend
-    participant C as Chatos Backend
+    participant Web as Chat OS Frontend
+    participant C as Chat OS Backend
     participant U as User Service
     participant L as Local Connector Service
     participant LC as Connector Client
@@ -181,7 +181,7 @@ sequenceDiagram
     Web-->>User: 展示过程与结果
 ```
 
-模型配置元数据由 User Service 管理；在启用 Local Connector 的正常链路中，实际 API Key 与 Base URL 由在线 Connector Client 在运行时返回。Chatos 和 Task Runner 拿到临时运行时配置后直接请求模型服务，Local Connector 不代理模型响应流量。
+模型配置元数据由 User Service 管理；在启用 Local Connector 的正常链路中，实际 API Key 与 Base URL 由在线 Connector Client 在运行时返回。Chat OS 和 Task Runner 拿到临时运行时配置后直接请求模型服务，Local Connector 不代理模型响应流量。
 
 ## Task Runner 生命周期
 
@@ -203,7 +203,7 @@ flowchart LR
     loop --> finish["保存报告、状态与运行事件"]
     finish --> release["释放沙箱并收集输出"]
     release --> commit["按需提交 Harness 输出"]
-    commit --> callback["回调 Chatos / 同步 Project"]
+    commit --> callback["回调 Chat OS / 同步 Project"]
     callback --> memory["按配置触发 Memory Summary"]
 ```
 
@@ -249,7 +249,7 @@ flowchart TB
 ```mermaid
 flowchart LR
     subgraph services["服务边界"]
-        C["Chatos DB"]
+        C["Chat OS DB"]
         U["User DB"]
         P["Project DB"]
         T["Task Runner DB"]
@@ -285,7 +285,7 @@ MongoDB 是主要业务存储，但各服务保持独立数据库边界，不共
 
 | 组件 | 默认地址 | 代码位置 | 职责 |
 | --- | --- | --- | --- |
-| Chatos | Web `8088` / API `3997` | `chatos/` | 主应用、会话、Agent 编排、实时事件、项目入口 |
+| Chat OS | Web `8088` / API `3997` | `chatos/` | 主应用、会话、Agent 编排、实时事件、项目入口 |
 | User Service | Web `39191` / API `39190` | `user_service/` | 用户与 Agent 账号、认证、模型配置、令牌交换、Harness 资源 |
 | Memory Engine | Web `4178` / API `7081` | `memory_engine/` | 线程记录、摘要、上下文组装、长期记忆、后台记忆任务 |
 | Task Runner | Web `39091` / API `39090` | `task_runner_service/` | 任务、调度、Worker、AI/MCP 执行循环、运行事件 |
@@ -294,7 +294,7 @@ MongoDB 是主要业务存储，但各服务保持独立数据库边界，不共
 | Sandbox Manager | Web `8096` / API `8095` | `sandbox_manager_service/` | 云端沙箱、租约、池、镜像与 Sandbox Agent 代理 |
 | Local Connector Service | API `39230` | `local_connector_service/` | 设备注册、工作区映射、云端到本机的中继 |
 | Local Connector Client | Core `39232` / Dev UI `39233` | `local_connector_client/` | 本机授权、PTY、命令、文件、MCP 与本机 Docker 沙箱 |
-| Official Website | Web `39251` / API `39250` | `official_website_service/` | 面向最终用户的产品官网、注册代理、客户端版本目录与 MinIO/S3 签名下载 |
+| Official Website | Web `39251` / API `39250` | `official_website_service/` | 产品官网、注册代理、客户端版本目录、MinIO/S3 签名下载与 `/admin/releases` 发布管理 |
 | Harness | HTTP `3000` / SSH `3022` | 外部镜像 / 独立源码 | Git 仓库、代码托管与 CI |
 | Consul | `8500` | Docker Compose | 服务注册、发现和配置中心 |
 | MongoDB | 宿主机 `27018` | Docker Compose | 各领域服务的业务持久化 |
@@ -305,7 +305,7 @@ MongoDB 是主要业务存储，但各服务保持独立数据库边界，不共
 
 | 应用 / 服务 | AI Runtime | Builtin Tools | MCP Runtime / Service | Service Runtime | Plugin SDK | Memory SDK | Project Contract | Sandbox Image MCP |
 | --- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
-| Chatos Backend | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |  |  |
+| Chat OS Backend | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |  |  |
 | Task Runner | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |  |
 | Project Management | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Local Connector Client Core | ✓ | ✓ | ✓ |  |  | ✓ |  | ✓ |
@@ -319,7 +319,7 @@ flowchart LR
     AI["chatos_ai_runtime<br/>模型请求与迭代循环"] --> MCP["chatos_mcp_runtime / service<br/>工具注册、RPC 与执行策略"]
     Builtin["chatos_builtin_tools<br/>终端、浏览器、任务等内置工具"] --> MCP
     Plugin["chatos_plugin_management_sdk<br/>能力查询与策略"] --> MCP
-    Memory["memory_engine_sdk<br/>记录、摘要与上下文客户端"] --> Apps["Chatos / Task Runner / Project / Connector Core"]
+    Memory["memory_engine_sdk<br/>记录、摘要与上下文客户端"] --> Apps["Chat OS / Task Runner / Project / Connector Core"]
     MCP --> Apps
     Service["chatos_service_runtime<br/>Consul、配置、服务发现、公共客户端"] --> Services["各云端服务"]
     Project["chatos_project_mcp_contract<br/>项目 MCP 契约"] --> ProjectUsers["Task Runner / Project Management"]
@@ -449,7 +449,7 @@ make test
 
 - `make build`：构建 Rust 服务与所有前端。
 - `make smoke`：执行 API surface、路径基线、热点文件、Compose 和大文件检查。
-- `make test`：在 smoke 基础上运行 Chatos 与 User Service 的重点测试、Lint 和类型检查。
+- `make test`：在 smoke 基础上运行 Chat OS 与 User Service 的重点测试、Lint 和类型检查。
 
 仓库还维护 OpenAPI 契约装配、API 变更基线、依赖漂移、非测试 `unwrap/expect`、请求路径 panic 和代码体积检查，相关脚本位于 `scripts/`。
 

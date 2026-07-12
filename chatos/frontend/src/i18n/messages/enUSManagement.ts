@@ -5,7 +5,7 @@ import type { MessageDictionary } from './types';
 
 export const enUSManagementMessages: MessageDictionary = {
   'settings.title': 'Runtime settings',
-  'settings.subtitle': 'Manage runtime settings for your current Chatos account',
+  'settings.subtitle': 'Manage runtime settings for your current Chat OS account',
   'settings.section.runtime': 'Runtime and interface',
   'settings.chatMaxTokens': 'Max output tokens per reply',
   'settings.chatMaxTokensHelp': 'Read only by the backend. Leave empty for the model default.',
@@ -19,7 +19,7 @@ export const enUSManagementMessages: MessageDictionary = {
   'settings.logLevelPlaceholder': 'info|warn|error|debug',
   'settings.logLevelHelp': 'Saved only as a user preference and does not change server-wide logging.',
   'settings.internalContextLocale': 'Internal context language',
-  'settings.internalContextLocaleHelp': 'Only affects Chatos-generated internal context. User input, tool output, external content, and memory engine summaries stay unchanged.',
+  'settings.internalContextLocaleHelp': 'Only affects Chat OS-generated internal context. User input, tool output, external content, and memory engine summaries stay unchanged.',
   'settings.uiLocale': 'Interface language',
   'settings.uiLocaleHelp': 'Affects frontend UI copy, dialogs, buttons, and status text. It does not rewrite user content or tool output.',
   'settings.terminalUiEnabled': 'Show terminal menu and run terminal views',

@@ -388,7 +388,7 @@ function LoginPage({ loading, onLogin }: LoginPageProps) {
               Memory Engine Sign In
             </Title>
             <Text type="secondary">
-              Sign in with your ChatOS user account. Regular users manage only their own model
+              Sign in with your Chat OS user account. Regular users manage only their own model
               profiles and tenant data. Super admins can view all tenants.
             </Text>
           </Space>
