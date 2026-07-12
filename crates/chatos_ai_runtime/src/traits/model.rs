@@ -251,5 +251,15 @@ pub struct RuntimeCallbacks {
     pub on_tools_start: Option<std::sync::Arc<dyn Fn(Value) + Send + Sync>>,
     pub on_tools_stream: Option<std::sync::Arc<dyn Fn(Value) + Send + Sync>>,
     pub on_tools_end: Option<std::sync::Arc<dyn Fn(Value) + Send + Sync>>,
+    pub on_turn_phase: Option<std::sync::Arc<dyn Fn(Value) + Send + Sync>>,
+    pub on_runtime_guidance_applied: Option<std::sync::Arc<dyn Fn(Value) + Send + Sync>>,
+    pub on_context_summarized_start: Option<std::sync::Arc<dyn Fn(Value) + Send + Sync>>,
+    pub on_context_summarized_stream: Option<std::sync::Arc<dyn Fn(Value) + Send + Sync>>,
+    pub on_context_summarized_end: Option<std::sync::Arc<dyn Fn(Value) + Send + Sync>>,
+    /// Called with the logical model input before a provider payload is built.
+    pub on_before_model_input: Option<std::sync::Arc<dyn Fn(Value) + Send + Sync>>,
+    /// Legacy payload observer. Receives the provider payload plus runtime debug metadata.
     pub on_before_model_request: Option<std::sync::Arc<dyn Fn(Value) + Send + Sync>>,
+    /// Called with the exact provider payload immediately before it is sent.
+    pub on_before_send_model_request: Option<std::sync::Arc<dyn Fn(Value) + Send + Sync>>,
 }

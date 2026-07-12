@@ -80,9 +80,13 @@ impl RunService {
             append_external_mcp_runtime_notice(&mut run_spec, task, &runtime);
             let mut completion_gate_attempts = 0usize;
             loop {
-                let execution = TaskRunExecution::new(runtime_config.clone(), run_spec.clone());
-                let report = execution
-                    .run_report_with_runtime_options(&runtime, runtime_options.clone())
+                let report = TASK_RUNNER_AGENT
+                    .run_report_with_runtime_options(
+                        runtime_config.clone(),
+                        run_spec.clone(),
+                        &runtime,
+                        runtime_options.clone(),
+                    )
                     .await;
                 if !report.is_completed() {
                     return report;

@@ -127,7 +127,7 @@ async fn seed_system_routed_mcps(store: &AppStore, admin_user_id: &str) -> Resul
         CHATOS_TASK_RUNNER_MCP_RESOURCE_ID,
         CHATOS_TASK_RUNNER_MCP_SERVER_NAME,
         "Task Runner Service",
-        "Task Runner MCP entry used by Chatos to create and manage asynchronous tasks.",
+        "Task Runner MCP entry used by Chat OS to create and manage asynchronous tasks.",
         true,
         &["system", "chatos", "task_runner"],
         "chatos",
@@ -238,51 +238,19 @@ async fn seed_agents(store: &AppStore) -> Result<(), String> {
     Ok(())
 }
 
-fn system_agent_specs() -> [(&'static str, &'static str, &'static str, &'static str, bool); 6] {
-    [
-        (
-            "chatos_conversation_agent",
-            "Chatos Conversation Agent",
-            "chatos",
-            "Runs normal Chatos conversations while applying the selected contact as user-specific role context.",
-            false,
-        ),
-        (
-            "chatos_planning_agent",
-            "Chatos Planning Agent",
-            "chatos",
-            "Runs Chatos plan mode and requires the Task Runner MCP with the chatos_plan task profile.",
-            false,
-        ),
-        (
-            "project_requirement_execution_planner_agent",
-            "Project Requirement Execution Planner Agent",
-            "chatos",
-            "Splits project-management work items into concrete Task Runner execution tasks for Chatos project requirement execution.",
-            true,
-        ),
-        (
-            "task_runner_run_phase",
-            "Task Runner Agent",
-            "task-runner",
-            "Runs both default and chatos_plan task profiles through the same model and tool loop.",
-            true,
-        ),
-        (
-            "project_management_agent",
-            "Project Runtime Environment Agent",
-            "project-service",
-            "Inspects project files, resolves sandbox images, and persists the project runtime environment.",
-            false,
-        ),
-        (
-            "local_connector_command_approval_agent",
-            "Local Command Approval Agent",
-            "local-connector-client",
-            "Reviews local shell commands with read-only project tools and returns an approval decision.",
-            false,
-        ),
-    ]
+fn system_agent_specs() -> Vec<(&'static str, &'static str, &'static str, &'static str, bool)> {
+    chatos_agent::system_agent_catalog()
+        .iter()
+        .map(|descriptor| {
+            (
+                descriptor.key.as_str(),
+                descriptor.display_name,
+                descriptor.service_name,
+                descriptor.description,
+                descriptor.include_user_resources,
+            )
+        })
+        .collect()
 }
 
 async fn seed_agent_bindings(store: &AppStore, admin_user_id: &str) -> Result<(), String> {
@@ -579,7 +547,7 @@ mod tests {
     }
 
     #[test]
-    fn system_agent_registry_contains_the_five_capability_roles() {
+    fn system_agent_registry_contains_all_six_capability_roles() {
         let keys = system_agent_specs()
             .into_iter()
             .map(|(agent_key, _, _, _, _)| agent_key)
@@ -590,6 +558,7 @@ mod tests {
             vec![
                 "chatos_conversation_agent",
                 "chatos_planning_agent",
+                "project_requirement_execution_planner_agent",
                 "task_runner_run_phase",
                 "project_management_agent",
                 "local_connector_command_approval_agent",

@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
+#[cfg(test)]
 use std::future::Future;
 
 use serde_json::Value;
+#[cfg(test)]
 use tracing::error;
 
 use crate::utils::attachments::{self, Attachment};
@@ -50,11 +52,13 @@ pub(crate) async fn build_user_content_parts(
     attachments::adapt_parts_for_model(model, &content_parts, supports_images)
 }
 
+#[cfg(test)]
 pub(crate) struct PreparedUserMessageInput {
     pub turn_id: Option<String>,
     pub content_parts: Value,
 }
 
+#[cfg(test)]
 pub(crate) async fn persist_user_message_and_build_content_parts<F, Fut, T>(
     session_id: &str,
     user_message: &str,

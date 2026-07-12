@@ -141,6 +141,7 @@ pub fn text_has_content(value: &str) -> bool {
     !value.trim().is_empty()
 }
 
+#[cfg(test)]
 pub fn optional_text_has_content(value: Option<&str>) -> bool {
     value.map(text_has_content).unwrap_or(false)
 }
@@ -198,6 +199,7 @@ pub fn extract_message_tool_calls_for_display(message: &Message) -> Vec<Value> {
     extract_message_tool_calls(message.tool_calls.as_ref(), message.metadata.as_ref())
 }
 
+#[cfg(test)]
 pub fn select_preferred_text<'a>(content: &'a str, reasoning: Option<&'a str>) -> Option<&'a str> {
     chatos_ai_runtime::select_preferred_response_text(content, reasoning)
 }

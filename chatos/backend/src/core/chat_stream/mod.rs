@@ -10,7 +10,7 @@ mod text;
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 
-use crate::services::agent_runtime::ai_client::AiClientCallbacks as AgentAiClientCallbacks;
+use crate::services::ai_client_common::AiClientCallbacks as AgentAiClientCallbacks;
 
 pub use self::callbacks::build_chat_stream_callbacks;
 pub use self::events::{

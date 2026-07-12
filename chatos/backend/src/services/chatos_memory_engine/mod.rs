@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-mod active_summary;
 mod client;
 mod mappers;
 mod mapping;
@@ -11,9 +10,6 @@ mod sessions;
 mod snapshots;
 mod types;
 
-pub use self::active_summary::{
-    try_start_chatos_active_summary, wait_for_existing_chatos_active_summary_completion,
-};
 pub(crate) use self::mappers::engine_record_to_message;
 pub use self::mapping::CHATOS_COMPAT_SOURCE_ID;
 pub use self::memories::{
@@ -44,6 +40,25 @@ pub use self::types::{
 use self::memories::register_subject_memory_scopes;
 
 const CHATOS_TURN_RUNTIME_SNAPSHOT_TYPE: &str = "turn_runtime";
+
+pub async fn resolve_chatos_memory_scope(
+    session_id: &str,
+) -> Result<Option<chatos_ai_runtime::MemoryScope>, String> {
+    let Some(session) = crate::services::chatos_sessions::get_session_by_id(session_id).await?
+    else {
+        return Ok(None);
+    };
+    let mapping = mapping::build_thread_mapping(&session)?;
+    Ok(Some(
+        chatos_ai_runtime::MemoryScope::thread(
+            mapping.tenant_id,
+            CHATOS_COMPAT_SOURCE_ID,
+            mapping.thread_id,
+        )
+        .with_subject_id(mapping.subject_id)
+        .with_related_subject_ids(mapping.related_subject_ids),
+    ))
+}
 
 fn normalize_non_empty(value: Option<&str>) -> Option<String> {
     value

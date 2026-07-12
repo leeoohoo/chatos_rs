@@ -18,6 +18,7 @@ struct AbortEntry {
 static ABORT_REGISTRY: Lazy<Arc<Mutex<HashMap<String, AbortEntry>>>> =
     Lazy::new(|| Arc::new(Mutex::new(HashMap::new())));
 
+#[cfg(test)]
 pub fn set_controller(session_id: &str, turn_id: Option<&str>, token: CancellationToken) {
     if session_id.is_empty() {
         return;

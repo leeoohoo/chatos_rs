@@ -4,13 +4,14 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use serde_json::Value;
+use serde_json::{json, Value};
 
 use chatos_mcp_runtime::{ToolAbortCheckCallback, ToolCallContext, ToolCallerModelRuntime};
 
 use crate::memory_context::{MemoryContextComposer, MemoryScope};
 use crate::tool_runtime::ToolResultModelBudgetLimits;
 use crate::traits::{RuntimeCallbacks, RuntimeRecordOptions};
+use crate::RuntimeLifecycleHook;
 
 #[derive(Clone)]
 pub struct AiRuntimeOptions {
@@ -21,6 +22,7 @@ pub struct AiRuntimeOptions {
     pub abort_checker: Option<ToolAbortCheckCallback>,
     pub tool_result_model_budget_limits: Option<ToolResultModelBudgetLimits>,
     pub callbacks: RuntimeCallbacks,
+    pub lifecycle_hook: Option<Arc<dyn RuntimeLifecycleHook>>,
     pub record_options: RuntimeRecordOptions,
     pub iterative_context_refresh: Option<IterativeContextRefresh>,
 }
@@ -117,14 +119,38 @@ impl IterativeContextRefresh {
         let initial = composer
             .run_active_summary(scope, recovery.trigger_reason.as_deref())
             .await?;
-        let status = composer
+        notify_context_summary_callback(
+            callbacks.on_context_summarized_start.as_ref(),
+            context_summary_payload("start", scope, &initial, None),
+        );
+        let status = match composer
             .wait_for_active_summary_completion(
                 scope,
                 initial,
                 recovery.poll_interval,
                 recovery.poll_timeout,
             )
-            .await?;
+            .await
+        {
+            Ok(status) => status,
+            Err(error) => {
+                notify_context_summary_callback(
+                    callbacks.on_context_summarized_end.as_ref(),
+                    json!({
+                        "kind": "active_summary_progress",
+                        "phase": "end",
+                        "thread_id": scope.thread_id,
+                        "failed": true,
+                        "error_message": error,
+                    }),
+                );
+                return Err(error);
+            }
+        };
+        notify_context_summary_callback(
+            callbacks.on_context_summarized_end.as_ref(),
+            context_summary_payload("end", scope, &status, None),
+        );
         if status.failed || (!status.generated && !status.compacted) {
             return Ok(false);
         }
@@ -174,6 +200,7 @@ impl AiRuntimeOptions {
             abort_checker: None,
             tool_result_model_budget_limits: None,
             callbacks: RuntimeCallbacks::default(),
+            lifecycle_hook: None,
             record_options: RuntimeRecordOptions::default(),
             iterative_context_refresh: None,
         }
@@ -225,6 +252,14 @@ impl AiRuntimeOptions {
         self
     }
 
+    pub fn with_lifecycle_hook(
+        mut self,
+        lifecycle_hook: Option<Arc<dyn RuntimeLifecycleHook>>,
+    ) -> Self {
+        self.lifecycle_hook = lifecycle_hook;
+        self
+    }
+
     pub fn with_record_options(mut self, record_options: RuntimeRecordOptions) -> Self {
         self.record_options = record_options;
         self
@@ -271,5 +306,76 @@ impl Default for AiRuntimeOptions {
 fn notify_context_overflow_recovery(callbacks: &RuntimeCallbacks, message: &str) {
     if let Some(cb) = &callbacks.on_thinking {
         cb(message.to_string());
+    }
+}
+
+fn notify_context_summary_callback(
+    callback: Option<&Arc<dyn Fn(Value) + Send + Sync>>,
+    payload: Value,
+) {
+    if let Some(callback) = callback {
+        callback(payload);
+    }
+}
+
+fn context_summary_payload(
+    phase: &str,
+    scope: &MemoryScope,
+    status: &memory_engine_sdk::RunThreadActiveSummaryResponse,
+    message: Option<&str>,
+) -> Value {
+    json!({
+        "kind": "active_summary_progress",
+        "phase": phase,
+        "message": message,
+        "tenant_id": scope.tenant_id,
+        "source_id": scope.source_id,
+        "thread_id": status.thread_id,
+        "subject_id": scope.subject_id,
+        "job_run_id": status.job_run_id,
+        "pending_before_count": status.pending_before_count,
+        "pending_after_count": status.pending_after_count,
+        "running": status.running,
+        "completed": status.completed,
+        "failed": status.failed,
+        "generated": status.generated,
+        "compacted": status.compacted,
+        "error_message": status.error_message,
+    })
+}
+
+#[cfg(test)]
+mod callback_tests {
+    use memory_engine_sdk::RunThreadActiveSummaryResponse;
+
+    use super::*;
+
+    #[test]
+    fn context_summary_payload_contains_scope_and_status() {
+        let scope =
+            MemoryScope::thread("tenant-1", "source-1", "thread-1").with_subject_id("subject-1");
+        let status = RunThreadActiveSummaryResponse {
+            thread_id: "thread-1".to_string(),
+            accepted: true,
+            running: false,
+            completed: true,
+            failed: false,
+            job_run_id: Some("job-1".to_string()),
+            generated: true,
+            summary_id: Some("summary-1".to_string()),
+            source_record_count: 12,
+            pending_before_count: Some(8),
+            pending_after_count: Some(0),
+            compacted: true,
+            error_message: None,
+        };
+
+        let payload = context_summary_payload("end", &scope, &status, None);
+
+        assert_eq!(payload["phase"], "end");
+        assert_eq!(payload["tenant_id"], "tenant-1");
+        assert_eq!(payload["subject_id"], "subject-1");
+        assert_eq!(payload["job_run_id"], "job-1");
+        assert_eq!(payload["compacted"], true);
     }
 }

@@ -1,27 +1,39 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
+#[cfg(test)]
 use std::collections::HashSet;
+#[cfg(test)]
 use std::future::Future;
+#[cfg(test)]
 use std::sync::Arc;
 
 #[cfg(test)]
 use futures::{Stream, StreamExt};
-use serde_json::{json, Value};
+#[cfg(test)]
+use serde_json::json;
+use serde_json::Value;
 #[cfg(test)]
 use tokio_util::sync::CancellationToken;
 
-use crate::core::mcp_tools::{ToolResult, ToolResultCallback};
+use crate::core::mcp_tools::ToolResult;
+#[cfg(test)]
+use crate::core::mcp_tools::ToolResultCallback;
 #[cfg(test)]
 use crate::core::messages::text_has_content;
+#[cfg(test)]
 use crate::core::tool_call::{extract_tool_call_id, extract_tool_call_name};
+#[cfg(test)]
 use crate::services::ai_client_common::AiClientCallbacks;
+#[cfg(test)]
 use crate::utils::abort_registry;
 
+#[cfg(test)]
 pub(crate) struct ToolExecutionOutcome {
     pub persisted_results: Vec<ToolResult>,
 }
 
+#[cfg(test)]
 #[derive(Clone, Default)]
 pub(crate) struct AiStreamCallbacks {
     pub on_chunk: Option<Arc<dyn Fn(String) + Send + Sync>>,
@@ -235,6 +247,7 @@ pub(crate) fn build_tool_result_metadata(result: &ToolResult) -> Value {
     Value::Object(map)
 }
 
+#[cfg(test)]
 pub(crate) fn build_tool_stream_callback(
     callback: Option<Arc<dyn Fn(Value) + Send + Sync>>,
     session_id: Option<String>,
@@ -253,6 +266,7 @@ pub(crate) fn build_tool_stream_callback(
     })
 }
 
+#[cfg(test)]
 pub(crate) fn build_aborted_tool_results(
     tool_calls: &[Value],
     existing: Option<&[ToolResult]>,
@@ -289,6 +303,7 @@ pub(crate) fn build_aborted_tool_results(
     results
 }
 
+#[cfg(test)]
 pub(crate) fn aborted_tool_results_if_needed(
     session_id: Option<&str>,
     persist_tool_messages: bool,
@@ -304,6 +319,7 @@ pub(crate) fn aborted_tool_results_if_needed(
     Some(build_aborted_tool_results(tool_calls, existing))
 }
 
+#[cfg(test)]
 pub(crate) fn build_tools_end_payload(tool_results: &[ToolResult]) -> Value {
     json!({
         "tool_results": tool_results,
@@ -342,6 +358,7 @@ pub(crate) fn parsed_stream_response_is_empty(
         && !has_auxiliary_payload
 }
 
+#[cfg(test)]
 pub(crate) async fn execute_tool_lifecycle<Exec, ExecFut, Finalize, Persist, PersistFut>(
     requested_tool_calls: &[Value],
     display_tool_calls: Value,

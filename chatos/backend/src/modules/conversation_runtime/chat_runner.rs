@@ -14,7 +14,6 @@ use crate::core::chat_stream::{
     send_tools_unavailable_event, ChatEventSink, ChatRealtimeStreamContext,
 };
 use crate::core::messages::set_task_runner_async_overall_status_for_session;
-use crate::services::agent_runtime::ai_server::AiServer as AgentAiServer;
 use crate::services::ai_client_common::AiClientCallbacks;
 use crate::utils::abort_registry;
 use crate::utils::attachments::Attachment;
@@ -23,8 +22,9 @@ use crate::utils::sse::SseSender;
 
 use super::bootstrap::CommonChatBootstrap;
 use super::chat_execution::{
-    build_agent_chat_options, configure_agent_ai_server, effective_codex_gateway_mcp_passthrough,
-    prepare_mcp_execution, ChatExecutionInput,
+    build_agent_chat_options, configure_chatos_stream_agent,
+    effective_codex_gateway_mcp_passthrough, prepare_mcp_execution, ChatExecutionInput,
+    ChatosAgentAiServer,
 };
 use super::runtime_context::{ResolvedConversationRuntimeContext, ToolMetadataMap};
 use super::snapshot::{sync_chat_turn_snapshot, LiveRequestSnapshotContext};
@@ -71,7 +71,7 @@ pub struct BootstrappedChatInput<'a> {
     pub session_id: &'a str,
     pub content: &'a str,
     pub model_runtime: &'a ResolvedChatModelConfig,
-    pub ai_server: AgentAiServer,
+    pub agent: ChatosAgentAiServer,
     pub bootstrap: CommonChatBootstrap,
 }
 
@@ -202,7 +202,7 @@ pub async fn run_bootstrapped_chat(input: BootstrappedChatInput<'_>) {
         session_id,
         content,
         model_runtime,
-        ai_server,
+        agent,
         bootstrap,
     } = input;
     let CommonChatBootstrap {
@@ -301,9 +301,9 @@ pub async fn run_bootstrapped_chat(input: BootstrappedChatInput<'_>) {
         }),
         "responses",
     );
-    let mut ai_server = ai_server;
-    configure_agent_ai_server(
-        &mut ai_server,
+    let mut agent = agent;
+    configure_chatos_stream_agent(
+        &mut agent,
         session_id,
         resolved_turn_id.as_str(),
         &runtime_context,
@@ -312,8 +312,10 @@ pub async fn run_bootstrapped_chat(input: BootstrappedChatInput<'_>) {
     );
     let unavailable_tools = prepared_mcp.unavailable_tools.clone();
     let chat_options = build_agent_chat_options(
+        session_id,
         model_runtime,
         &runtime_context,
+        &effective_settings,
         prepared_mcp.prefixed_input_items,
         ChatExecutionInput {
             use_tools,
@@ -336,7 +338,7 @@ pub async fn run_bootstrapped_chat(input: BootstrappedChatInput<'_>) {
             runtime_context: &runtime_context,
             tool_metadata: &prepared.mcp_tool_metadata,
         },
-        ai_server.chat(session_id, content, chat_options),
+        agent.execute(session_id, content, chat_options),
     )
     .await;
 

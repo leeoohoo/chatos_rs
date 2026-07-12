@@ -149,11 +149,3 @@ pub async fn patch_user_settings(user_id: &str, patch: &Value) -> Result<Value, 
     let _ = repo::update_user_settings(user_id, &val).await?;
     get_effective_user_settings(Some(user_id.to_string())).await
 }
-
-pub trait AiClientSettings {
-    fn apply_settings(&mut self, effective: &Value);
-}
-
-pub fn apply_settings_to_ai_client<T: AiClientSettings>(ai_client: &mut T, effective: &Value) {
-    ai_client.apply_settings(effective);
-}

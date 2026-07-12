@@ -170,40 +170,23 @@ fn build_run_spec(
     effective_model_config.request_cwd = None;
     let model_runtime_config = effective_model_config.to_runtime_config(None);
 
-    let mut run_spec = TaskRunSpec::new(
-        task.id.clone(),
-        run.id.clone(),
-        model_runtime_config,
-        prompt.clone(),
-    )
-    .with_model_config_id(metadata_model_config.id.clone())
-    .with_metadata(Some(metadata.clone()))
-    .with_record_options(
-        RuntimeRecordOptions::persist_all()
-            .with_assistant_message_mode("task_run")
-            .with_assistant_message_source("task_runner")
-            .with_tool_message_mode("task_tool")
-            .with_tool_message_source("task_runner")
-            .with_assistant_metadata(metadata.clone())
-            .with_tool_metadata(metadata.clone()),
-    )
-    .with_user_record(Some(
-        SaveRecordInput::user_message(run.id.clone(), prompt)
-            .with_conversation_turn_id(run.id.clone())
-            .with_message_mode("task_run")
-            .with_message_source("task_runner")
-            .with_metadata(metadata),
-    ));
     let mut prefixed_input_items = external_mcp_prefixed_input_items;
     if task_process_logging_enabled {
         prefixed_input_items.extend(task_process_log_prefixed_input_items(
             task.mcp_config.locale(),
         ));
     }
-    if !prefixed_input_items.is_empty() {
-        run_spec = run_spec.with_prefixed_input_items(prefixed_input_items);
-    }
-    run_spec
+    TASK_RUNNER_AGENT.build_run_spec(
+        TaskRunnerRunSpecInput::new(
+            task.id.clone(),
+            run.id.clone(),
+            model_runtime_config,
+            metadata_model_config.id.clone(),
+            prompt,
+            metadata,
+        )
+        .with_prefixed_input_items(prefixed_input_items),
+    )
 }
 
 fn build_memory_scope(service: &RunService, task: &TaskRecord) -> MemoryScope {

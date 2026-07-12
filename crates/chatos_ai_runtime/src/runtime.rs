@@ -15,6 +15,10 @@ use crate::traits::{
     MemoryRecordWriter, ModelRequest, SaveAssistantRecordInput, SaveRecordInput,
     SaveToolRecordInput, ToolExecutor,
 };
+use crate::{
+    RuntimeBeforeModelRequest, RuntimeFinalResponseAction, RuntimeFinalResponseContext,
+    RuntimeIterationContext,
+};
 
 mod final_response;
 mod input_items;
@@ -156,20 +160,25 @@ impl AiRuntime {
                 }
             }
 
-            let input_item_count = input_item_count(&request.input);
-            let input_bytes = json_value_size_bytes(&request.input);
-            let tool_count = request.tools.len();
+            let (iteration_request, lifecycle_before) =
+                prepare_iteration_request(&request, &options, iteration, iteration_reason.as_str())
+                    .await?;
+
+            let input_item_count = input_item_count(&iteration_request.input);
+            let input_bytes = json_value_size_bytes(&iteration_request.input);
+            let tool_count = iteration_request.tools.len();
             let mut transient_retry_count = 0usize;
-            let response = loop {
+            let mut response = loop {
                 let response = dispatch_model_request(
                     &self.request_handler,
-                    &request,
+                    &iteration_request,
                     &options,
                     iteration,
                     iteration_reason.as_str(),
                     input_item_count,
                     input_bytes,
                     tool_count,
+                    lifecycle_before.stream_output,
                 )
                 .await;
                 match response {
@@ -177,7 +186,7 @@ impl AiRuntime {
                     Err(err) => {
                         match handle_model_request_error(
                             err,
-                            &request,
+                            &iteration_request,
                             &options,
                             iteration,
                             missing_tool_turn_replay_attempted,
@@ -230,11 +239,61 @@ impl AiRuntime {
                         continue;
                     }
                     FinalResponseAction::Complete => {
+                        if let Some(hook) = &options.lifecycle_hook {
+                            match hook
+                                .after_final_response(RuntimeFinalResponseContext {
+                                    conversation_id: options.conversation_id.clone(),
+                                    conversation_turn_id: options.conversation_turn_id.clone(),
+                                    iteration,
+                                    reason: iteration_reason.clone(),
+                                    response: response.clone(),
+                                })
+                                .await?
+                            {
+                                RuntimeFinalResponseAction::Accept => {}
+                                RuntimeFinalResponseAction::Replace(replacement) => {
+                                    response = replacement;
+                                }
+                                RuntimeFinalResponseAction::Continue {
+                                    input_items,
+                                    reason,
+                                } => {
+                                    runtime_followup_items = input_items;
+                                    runtime_followup_appended_to_request = false;
+                                    iteration_reason = if reason.trim().is_empty() {
+                                        "lifecycle_followup".to_string()
+                                    } else {
+                                        reason
+                                    };
+                                    if let Some(callback) = &options.callbacks.on_turn_phase {
+                                        callback(serde_json::json!({
+                                            "phase": "continue",
+                                            "reason": iteration_reason,
+                                            "iteration": iteration,
+                                        }));
+                                    }
+                                    continue;
+                                }
+                            }
+                        }
+                        let lifecycle_metadata = if let Some(hook) = &options.lifecycle_hook {
+                            hook.final_response_metadata(RuntimeFinalResponseContext {
+                                conversation_id: options.conversation_id.clone(),
+                                conversation_turn_id: options.conversation_turn_id.clone(),
+                                iteration,
+                                reason: iteration_reason.clone(),
+                                response: response.clone(),
+                            })
+                            .await?
+                        } else {
+                            None
+                        };
                         self.save_assistant_record(
                             &options,
                             &response,
                             response.tool_calls.clone(),
                             None,
+                            lifecycle_metadata,
                         )
                         .await?;
                         return Ok(runtime_result_from_response(response));
@@ -257,6 +316,7 @@ impl AiRuntime {
                 &response,
                 Some(tool_calls.clone()),
                 Some("tool_calls".to_string()),
+                None,
             )
             .await?;
 
@@ -290,6 +350,7 @@ impl AiRuntime {
         response: &crate::request::AiResponse,
         tool_calls: Option<Value>,
         response_status: Option<String>,
+        metadata_override: Option<Value>,
     ) -> Result<(), String> {
         if !options.record_options.persist_assistant_records {
             return Ok(());
@@ -310,7 +371,10 @@ impl AiRuntime {
                 structured_payload: tool_calls
                     .clone()
                     .filter(|value| tool_calls_value_has_items(Some(value))),
-                metadata: options.record_options.assistant_metadata.clone(),
+                metadata: merge_record_metadata(
+                    options.record_options.assistant_metadata.clone(),
+                    metadata_override,
+                ),
                 tool_calls,
                 response_id: response.response_id.clone(),
                 response_status: response_status.or_else(|| response.finish_reason.clone()),
@@ -358,6 +422,49 @@ impl AiRuntime {
         }
         writer.save_tool_records(records).await
     }
+}
+
+fn merge_record_metadata(base: Option<Value>, overlay: Option<Value>) -> Option<Value> {
+    match (base, overlay) {
+        (None, None) => None,
+        (Some(value), None) | (None, Some(value)) => Some(value),
+        (Some(Value::Object(mut base)), Some(Value::Object(overlay))) => {
+            base.extend(overlay);
+            Some(Value::Object(base))
+        }
+        (_, Some(overlay)) => Some(overlay),
+    }
+}
+
+async fn prepare_iteration_request(
+    request: &ModelRequest,
+    options: &AiRuntimeOptions,
+    iteration: usize,
+    iteration_reason: &str,
+) -> Result<(ModelRequest, RuntimeBeforeModelRequest), String> {
+    let lifecycle_before = if let Some(hook) = &options.lifecycle_hook {
+        hook.before_model_request(RuntimeIterationContext {
+            conversation_id: options.conversation_id.clone(),
+            conversation_turn_id: options.conversation_turn_id.clone(),
+            iteration,
+            reason: iteration_reason.to_string(),
+            input: request.input.clone(),
+        })
+        .await?
+    } else {
+        RuntimeBeforeModelRequest::unchanged()
+    };
+    let mut iteration_request = request.clone();
+    if !lifecycle_before.input_items.is_empty() {
+        iteration_request.input = append_runtime_input_items(
+            iteration_request.input,
+            lifecycle_before.input_items.as_slice(),
+        );
+    }
+    if !lifecycle_before.tools_enabled {
+        iteration_request.tools.clear();
+    }
+    Ok((iteration_request, lifecycle_before))
 }
 
 #[cfg(test)]

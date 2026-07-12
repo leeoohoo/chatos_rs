@@ -6,12 +6,15 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use serde_json::Value;
+use tracing::warn;
 
 use crate::config::Config;
 use crate::core::ai_model_config::ResolvedChatModelConfig;
+use crate::core::messages::set_task_runner_async_overall_status_for_session;
 use crate::services::access_token_scope;
 use crate::services::agent_runtime::mcp_tool_execute::McpToolExecute;
 use crate::services::agent_runtime::message_manager::MessageManager;
+use crate::services::ai_common::TASK_RUNNER_ASYNC_PLAN_MESSAGE_MODE;
 use crate::services::chatos_memory_engine::CHATOS_COMPAT_SOURCE_ID;
 use crate::services::shared_mcp_runtime::shared_tool_result;
 
@@ -37,8 +40,17 @@ pub fn build_shared_contextual_turn_runner(
     tool_executor: Option<McpToolExecute>,
     message_manager: MessageManager,
 ) -> Result<chatos_ai_runtime::ContextualTurnRunner, String> {
+    build_shared_contextual_turn_runner_with_max_iterations(tool_executor, message_manager, 600)
+}
+
+pub fn build_shared_contextual_turn_runner_with_max_iterations(
+    tool_executor: Option<McpToolExecute>,
+    message_manager: MessageManager,
+    max_iterations: usize,
+) -> Result<chatos_ai_runtime::ContextualTurnRunner, String> {
     let cfg = Config::try_get()?;
-    let runtime = build_shared_ai_runtime_with_chatos_records(tool_executor, message_manager);
+    let runtime = build_shared_ai_runtime_with_chatos_records(tool_executor, message_manager)
+        .with_max_iterations(max_iterations);
     let mut memory_client = memory_engine_sdk::MemoryEngineClient::new_direct(
         cfg.memory_engine_base_url.clone(),
         Duration::from_millis(cfg.memory_engine_request_timeout_ms.max(300) as u64),
@@ -84,6 +96,9 @@ impl chatos_ai_runtime::MemoryRecordWriter for ChatosMemoryRecordWriterAdapter {
         match input.role.as_str() {
             "user" => {
                 let metadata = input.packed_metadata();
+                let task_runner_async_plan = input.message_mode.as_deref().map(str::trim)
+                    == Some(TASK_RUNNER_ASYNC_PLAN_MESSAGE_MODE);
+                let message_id = input.message_id.clone();
                 self.message_manager
                     .save_user_message(
                         input.conversation_id.as_str(),
@@ -93,8 +108,26 @@ impl chatos_ai_runtime::MemoryRecordWriter for ChatosMemoryRecordWriterAdapter {
                         input.message_source,
                         metadata,
                     )
-                    .await
-                    .map(|_| ())
+                    .await?;
+                if task_runner_async_plan {
+                    if let Some(message_id) = message_id.as_deref() {
+                        if let Err(err) = set_task_runner_async_overall_status_for_session(
+                            input.conversation_id.as_str(),
+                            message_id,
+                            "processing",
+                        )
+                        .await
+                        {
+                            warn!(
+                                conversation_id = input.conversation_id.as_str(),
+                                user_message_id = message_id,
+                                error = err.as_str(),
+                                "task runner async processing status persist failed"
+                            );
+                        }
+                    }
+                }
+                Ok(())
             }
             "assistant" => {
                 let metadata = input.packed_metadata();

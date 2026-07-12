@@ -1,29 +1,15 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use std::future::Future;
-
 use serde_json::Value;
-use tracing::{error, info};
 
+#[cfg(test)]
 use crate::core::messages::{optional_text_has_content, select_preferred_text, text_has_content};
+#[cfg(test)]
 use crate::core::tool_call::tool_calls_value_has_items;
 
+#[cfg(test)]
 use super::request_transport::truncate_log;
-
-pub(crate) struct AssistantResponsePersistenceRequest {
-    pub session_id: Option<String>,
-    pub turn_id: Option<String>,
-    pub persist_messages: bool,
-    pub message_mode: Option<String>,
-    pub message_source: Option<String>,
-    pub metadata: Option<Value>,
-    pub content: String,
-    pub reasoning: Option<String>,
-    pub tool_calls: Option<Value>,
-    pub response_id: Option<String>,
-    pub response_status: Option<String>,
-}
 
 pub(crate) const TASK_RUNNER_ASYNC_PLAN_MESSAGE_MODE: &str = "task_runner_async_plan";
 
@@ -60,6 +46,7 @@ pub(crate) fn attach_ai_client_success_extra(payload: Value, extra: Value) -> Va
     Value::Object(base)
 }
 
+#[cfg(test)]
 pub(crate) fn completion_failed_error(
     finish_reason: Option<&str>,
     content: &str,
@@ -101,6 +88,7 @@ pub(crate) fn completion_failed_error(
     Some(format!("ai response failed: {}", segments.join("; ")))
 }
 
+#[cfg(test)]
 pub(crate) fn terminal_empty_response_error(
     finish_reason: Option<&str>,
     content: &str,
@@ -138,6 +126,7 @@ pub(crate) fn terminal_empty_response_error(
     ))
 }
 
+#[cfg(test)]
 pub(crate) fn should_persist_assistant_message(
     content: &str,
     reasoning: Option<&str>,
@@ -153,6 +142,7 @@ pub(crate) fn should_persist_assistant_message(
     false
 }
 
+#[cfg(test)]
 pub(crate) fn is_task_runner_async_plan_message_mode(message_mode: Option<&str>) -> bool {
     matches!(
         message_mode
@@ -249,49 +239,8 @@ pub(crate) fn build_assistant_message_metadata(
     }
 }
 
-pub(crate) async fn persist_assistant_response_with_policy<F, Fut>(
-    request: AssistantResponsePersistenceRequest,
-    should_persist: bool,
-    log_prefix: &str,
-    skip_log_label: Option<&str>,
-    save_assistant_message: F,
-) where
-    F: FnOnce(AssistantResponsePersistenceRequest) -> Fut,
-    Fut: Future<Output = Result<(), String>>,
-{
-    if !request.persist_messages {
-        return;
-    }
-
-    if should_persist {
-        if let Some(session_id) = request.session_id.clone() {
-            if let Err(err) = save_assistant_message(request).await {
-                error!(
-                    "{} save assistant message failed: session_id={}, detail={}",
-                    log_prefix, session_id, err
-                );
-            }
-        }
-        return;
-    }
-
-    if let Some(skip_log_label) = skip_log_label {
-        info!(
-            "{} skip assistant message persistence due to {}: session_id={}, turn_id={}, response_id={}, finish_reason={}",
-            log_prefix,
-            skip_log_label,
-            request
-                .session_id
-                .clone()
-                .unwrap_or_else(|| "n/a".to_string()),
-            request.turn_id.clone().unwrap_or_else(|| "n/a".to_string()),
-            request.response_id.as_deref().unwrap_or("none"),
-            request.response_status.as_deref().unwrap_or("none")
-        );
-    }
-}
-
-pub(crate) fn is_non_terminal_response_status(status: Option<&str>) -> bool {
+#[cfg(test)]
+fn is_non_terminal_response_status(status: Option<&str>) -> bool {
     let normalized = status
         .map(str::trim)
         .filter(|value| !value.is_empty())
@@ -302,6 +251,7 @@ pub(crate) fn is_non_terminal_response_status(status: Option<&str>) -> bool {
     )
 }
 
+#[cfg(test)]
 fn build_provider_error_preview(provider_error: &Value) -> Option<String> {
     if provider_error.is_null() {
         return None;

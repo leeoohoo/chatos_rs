@@ -8,7 +8,7 @@ use serde_json::{json, Value};
 use tracing::{info, warn};
 
 use crate::request::{AiRequestHandler, AiRequestOptions, AiResponse, StreamCallbacks};
-use crate::traits::ModelRequest;
+use crate::traits::{ModelRequest, RuntimeCallbacks};
 
 use super::input_items::attach_runtime_debug;
 use super::options::AiRuntimeOptions;
@@ -22,6 +22,7 @@ pub(super) async fn dispatch_model_request(
     input_item_count: usize,
     input_bytes: usize,
     tool_count: usize,
+    stream_output: bool,
 ) -> Result<AiResponse, String> {
     info!(
         conversation_id = options.conversation_id.as_deref().unwrap_or(""),
@@ -46,17 +47,11 @@ pub(super) async fn dispatch_model_request(
         "tool_count": tool_count,
         "supports_responses": request.supports_responses,
     });
-    let on_before_model_request = options
-        .callbacks
-        .on_before_model_request
-        .as_ref()
-        .map(|cb| {
-            let cb = Arc::clone(cb);
-            let request_debug = request_debug.clone();
-            Arc::new(move |payload: Value| {
-                cb(attach_runtime_debug(payload, &request_debug));
-            }) as Arc<dyn Fn(Value) + Send + Sync>
-        });
+    if let Some(callback) = &options.callbacks.on_before_model_input {
+        callback(request.input.clone());
+    }
+    let on_before_send_model_request =
+        build_before_send_model_request_callback(&options.callbacks, request_debug);
 
     let started_at = Instant::now();
     let result = request_handler
@@ -71,12 +66,16 @@ pub(super) async fn dispatch_model_request(
             request.temperature,
             request.max_output_tokens,
             StreamCallbacks {
-                on_chunk: options.callbacks.on_chunk.clone(),
-                on_thinking: options.callbacks.on_thinking.clone(),
+                on_chunk: stream_output
+                    .then(|| options.callbacks.on_chunk.clone())
+                    .flatten(),
+                on_thinking: stream_output
+                    .then(|| options.callbacks.on_thinking.clone())
+                    .flatten(),
             },
             Some(request.provider.clone()),
             request.thinking_level.clone(),
-            on_before_model_request,
+            on_before_send_model_request,
             AiRequestOptions {
                 prompt_cache_key: request.prompt_cache_key.clone(),
                 request_cwd: request.request_cwd.clone(),
@@ -123,4 +122,74 @@ pub(super) async fn dispatch_model_request(
         }
     }
     result
+}
+
+fn build_before_send_model_request_callback(
+    callbacks: &RuntimeCallbacks,
+    request_debug: Value,
+) -> Option<Arc<dyn Fn(Value) + Send + Sync>> {
+    let legacy_callback = callbacks.on_before_model_request.clone();
+    let payload_callback = callbacks.on_before_send_model_request.clone();
+    if legacy_callback.is_none() && payload_callback.is_none() {
+        return None;
+    }
+
+    Some(Arc::new(move |payload: Value| {
+        if let Some(callback) = &legacy_callback {
+            callback(attach_runtime_debug(payload.clone(), &request_debug));
+        }
+        if let Some(callback) = &payload_callback {
+            callback(payload);
+        }
+    }))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::{Arc, Mutex};
+
+    use serde_json::json;
+
+    use super::*;
+
+    #[test]
+    fn before_send_callback_preserves_exact_payload_and_legacy_debug_payload() {
+        let legacy_payload = Arc::new(Mutex::new(None));
+        let exact_payload = Arc::new(Mutex::new(None));
+        let callbacks = RuntimeCallbacks {
+            on_before_model_request: Some(Arc::new({
+                let legacy_payload = Arc::clone(&legacy_payload);
+                move |payload| {
+                    *legacy_payload.lock().expect("legacy payload") = Some(payload);
+                }
+            })),
+            on_before_send_model_request: Some(Arc::new({
+                let exact_payload = Arc::clone(&exact_payload);
+                move |payload| {
+                    *exact_payload.lock().expect("exact payload") = Some(payload);
+                }
+            })),
+            ..RuntimeCallbacks::default()
+        };
+        let callback = build_before_send_model_request_callback(
+            &callbacks,
+            json!({"iteration": 2, "reason": "tool_results"}),
+        )
+        .expect("callback");
+        let payload = json!({"model": "test", "input": []});
+
+        callback(payload.clone());
+
+        assert_eq!(
+            *exact_payload.lock().expect("exact payload"),
+            Some(payload.clone())
+        );
+        let legacy = legacy_payload
+            .lock()
+            .expect("legacy payload")
+            .clone()
+            .expect("legacy value");
+        assert_eq!(legacy["model"], payload["model"]);
+        assert_eq!(legacy["task_runner_debug"]["iteration"], 2);
+    }
 }

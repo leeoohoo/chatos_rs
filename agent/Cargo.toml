@@ -1,0 +1,26 @@
+# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+# Required Notice: Copyright (c) 2025 AI Chat Team
+
+[package]
+name = "chatos_agent"
+version = "0.1.0"
+edition = "2021"
+
+[features]
+default = ["runtime"]
+runtime = [
+  "dep:async-trait",
+  "dep:chatos_ai_runtime",
+  "dep:chatos_mcp_runtime",
+  "dep:serde_json",
+]
+
+[dependencies]
+async-trait = { version = "0.1", optional = true }
+chatos_ai_runtime = { path = "../crates/chatos_ai_runtime", optional = true }
+chatos_mcp_runtime = { path = "../crates/chatos_mcp_runtime", optional = true }
+chatos_plugin_management_sdk = { path = "../crates/chatos_plugin_management_sdk" }
+serde_json = { version = "1", optional = true }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }

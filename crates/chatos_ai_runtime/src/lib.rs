@@ -5,6 +5,7 @@ pub mod builder;
 pub mod compat;
 pub mod error_policy;
 pub mod input_transform;
+pub mod lifecycle;
 pub mod mcp_executor;
 pub mod memory_context;
 pub mod model_config;
@@ -42,6 +43,10 @@ pub use input_transform::{
     convert_parts_to_response_input, extract_raw_input, normalize_input_for_provider,
     normalize_input_to_text_value, prepend_input_items, response_content_has_image_part,
     to_message_item, to_message_item_with_reasoning,
+};
+pub use lifecycle::{
+    RuntimeBeforeModelRequest, RuntimeFinalResponseAction, RuntimeFinalResponseContext,
+    RuntimeIterationContext, RuntimeLifecycleHook,
 };
 pub use mcp_executor::McpRuntimeToolExecutor;
 pub use memory_context::{

@@ -93,3 +93,8 @@ __pycache__/
 /.chatos
 /.chatos-local-dev
 /docs
+!/docs/
+/docs/*
+!/docs/plan/
+/docs/plan/*
+!/docs/plan/unified-agent-abstraction-implementation-plan.zh-CN.md

@@ -11,7 +11,7 @@ use crate::services::model_runtime_resolver::resolve_model_runtime_for_request;
 use crate::utils::sse::SseSender;
 
 use super::bootstrap::{load_common_chat_bootstrap, CommonChatBootstrapInput};
-use super::chat_execution::init_agent_ai_server;
+use super::chat_execution::init_chatos_stream_agent;
 use super::chat_runner::{build_chat_event_sink, run_bootstrapped_chat, BootstrappedChatInput};
 use super::guidance;
 
@@ -60,7 +60,6 @@ pub async fn run_chat_usecase(input: RunChatUsecaseInput) {
             return;
         }
     };
-    let ai_server = init_agent_ai_server(&model_runtime);
     let bootstrap = load_common_chat_bootstrap(build_common_bootstrap_input(
         &req,
         &session_id,
@@ -68,6 +67,7 @@ pub async fn run_chat_usecase(input: RunChatUsecaseInput) {
         &model_runtime,
     ))
     .await;
+    let agent = init_chatos_stream_agent(&model_runtime, bootstrap.runtime_context.agent_profile);
     run_bootstrapped_chat(BootstrappedChatInput {
         sender: sender.clone(),
         user_id: req.user_id.clone(),
@@ -75,7 +75,7 @@ pub async fn run_chat_usecase(input: RunChatUsecaseInput) {
         session_id: &session_id,
         content: &content,
         model_runtime: &model_runtime,
-        ai_server,
+        agent,
         bootstrap,
     })
     .await;
