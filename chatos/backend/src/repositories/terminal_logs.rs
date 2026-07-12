@@ -62,7 +62,6 @@ pub async fn list_terminal_logs(
     with_db(
         |db| {
             let terminal_id = terminal_id.to_string();
-            let limit = limit.clone();
             Box::pin(async move {
                 let mut options = mongodb::options::FindOptions::builder().sort(doc! { "created_at": 1 }).build();
                 if let Some(l) = limit { options.limit = Some(l); }
@@ -76,7 +75,6 @@ pub async fn list_terminal_logs(
         },
         |pool| {
             let terminal_id = terminal_id.to_string();
-            let limit = limit.clone();
             Box::pin(async move {
                 let mut query = "SELECT id, terminal_id, type as log_type, content, created_at FROM terminal_logs WHERE terminal_id = ? ORDER BY created_at ASC".to_string();
                 append_limit_offset_clause(&mut query, limit, offset);
@@ -88,7 +86,7 @@ pub async fn list_terminal_logs(
                     if offset > 0 { q = q.bind(offset); }
                 }
                 let rows = q.fetch_all(pool).await.map_err(|e| e.to_string())?;
-                Ok(rows.into_iter().map(|r| r.to_log()).collect())
+                Ok(rows.into_iter().map(|r| r.into_log()).collect())
             })
         }
     ).await
@@ -128,7 +126,8 @@ pub async fn list_terminal_logs_recent(
                 .fetch_all(pool)
                 .await
                 .map_err(|e| e.to_string())?;
-                let mut logs: Vec<TerminalLog> = rows.into_iter().map(|r| r.to_log()).collect();
+                let mut logs: Vec<TerminalLog> =
+                    rows.into_iter().map(|r| r.into_log()).collect();
                 logs.reverse();
                 Ok(logs)
             })
@@ -184,7 +183,7 @@ pub async fn list_terminal_logs_before(
                 .fetch_all(pool)
                 .await
                 .map_err(|e| e.to_string())?;
-                let mut logs: Vec<TerminalLog> = rows.into_iter().map(|r| r.to_log()).collect();
+                let mut logs: Vec<TerminalLog> = rows.into_iter().map(|r| r.into_log()).collect();
                 logs.reverse();
                 Ok(logs)
             })

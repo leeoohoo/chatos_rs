@@ -113,28 +113,18 @@ mod tests {
         )
         .expect("issue token");
         let mut headers = HeaderMap::new();
-        headers.insert(
-            "x-memory-caller",
-            HeaderValue::from_static("task-runner"),
-        );
+        headers.insert("x-memory-caller", HeaderValue::from_static("task-runner"));
         headers.insert(
             "x-memory-internal-token",
             HeaderValue::from_str(token.as_str()).expect("token header"),
         );
-        assert!(require_internal_request(
-            &config,
-            &headers,
-            DATA_SCOPE,
-            &["task-runner"]
-        )
-        .expect("valid token"));
-        assert!(require_internal_request(
-            &config,
-            &headers,
-            OPERATOR_SCOPE,
-            &["task-runner"]
-        )
-        .is_err());
+        assert!(
+            require_internal_request(&config, &headers, DATA_SCOPE, &["task-runner"])
+                .expect("valid token")
+        );
+        assert!(
+            require_internal_request(&config, &headers, OPERATOR_SCOPE, &["task-runner"]).is_err()
+        );
     }
 
     fn test_config() -> AppConfig {

@@ -52,7 +52,7 @@ impl SftpTransferManager {
             state: "pending".to_string(),
             total_bytes,
             transferred_bytes: 0,
-            percent: total_bytes.and_then(|total| if total == 0 { Some(100.0) } else { Some(0.0) }),
+            percent: total_bytes.map(|total| if total == 0 { 100.0 } else { 0.0 }),
             current_path,
             message: None,
             error: None,
@@ -113,13 +113,11 @@ impl SftpTransferManager {
                 entry.total_bytes = total_bytes;
             }
             entry.current_path = current_path;
-            entry.percent = entry.total_bytes.and_then(|total| {
+            entry.percent = entry.total_bytes.map(|total| {
                 if total == 0 {
-                    Some(100.0)
+                    100.0
                 } else {
-                    Some(
-                        ((entry.transferred_bytes as f64 * 100.0) / total as f64).clamp(0.0, 100.0),
-                    )
+                    ((entry.transferred_bytes as f64 * 100.0) / total as f64).clamp(0.0, 100.0)
                 }
             });
             entry.updated_at = crate::core::time::now_rfc3339();

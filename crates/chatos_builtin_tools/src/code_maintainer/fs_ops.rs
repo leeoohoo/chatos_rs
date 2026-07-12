@@ -14,6 +14,8 @@ use std::time::{Duration, Instant};
 const SEARCH_DEADLINE: Duration = Duration::from_secs(3);
 const SEARCH_MAX_VISITS: usize = 20_000;
 
+type FileRangeRead = (String, u64, String, usize, usize, usize, String);
+
 #[derive(Clone, Debug)]
 pub struct FsOps {
     root: PathBuf,
@@ -85,7 +87,7 @@ impl FsOps {
         start_line: usize,
         end_line: usize,
         with_numbers: bool,
-    ) -> Result<(String, u64, String, usize, usize, usize, String), String> {
+    ) -> Result<FileRangeRead, String> {
         let target = self.resolve_path(rel_path)?;
         let metadata = fs::metadata(&target).map_err(|err| err.to_string())?;
         if !metadata.is_file() {

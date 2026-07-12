@@ -89,7 +89,7 @@ pub async fn list_threads_with_pending_rollups(
             "min_created_at": {"$min": "$created_at"}
         }},
         doc! {"$sort": {"min_created_at": 1}},
-        doc! {"$limit": limit.max(1).min(500)},
+        doc! {"$limit": limit.clamp(1, 500)},
     ];
 
     let mut rows = db

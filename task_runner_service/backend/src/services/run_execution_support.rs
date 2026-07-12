@@ -18,9 +18,7 @@ impl RunService {
         memory_scope: Option<&MemoryScope>,
     ) -> Option<Value> {
         let scope = memory_scope?;
-        let Some(client) = self.config.memory_client().ok().flatten() else {
-            return None;
-        };
+        let client = self.config.memory_client().ok().flatten()?;
         let composer = MemoryContextComposer::from_client(client);
         match composer.compose(scope).await {
             Ok(response) => serde_json::to_value(response).ok(),

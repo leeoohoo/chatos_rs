@@ -7,15 +7,11 @@ pub const PUBLIC_PROJECT_ID: &str = "-1";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum TaskProjectStatus {
+    #[default]
     Active,
     Archived,
-}
-
-impl Default for TaskProjectStatus {
-    fn default() -> Self {
-        Self::Active
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

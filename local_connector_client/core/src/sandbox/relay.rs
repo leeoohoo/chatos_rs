@@ -52,7 +52,7 @@ pub(crate) async fn handle_sandbox_request(
             headers,
             body,
         }
-        .to_value(),
+        .into_value(),
         Err(err) => RelayResponse {
             message_type: "sandbox_response".to_string(),
             request_id: request.request_id,
@@ -60,7 +60,7 @@ pub(crate) async fn handle_sandbox_request(
             headers: BTreeMap::new(),
             body: json!({ "error": err.to_string() }),
         }
-        .to_value(),
+        .into_value(),
     }
 }
 

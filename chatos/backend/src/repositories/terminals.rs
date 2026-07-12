@@ -69,7 +69,7 @@ pub async fn list_terminals_by_kind(
                     q = q.bind(uid);
                 }
                 let rows = q.fetch_all(pool).await.map_err(|e| e.to_string())?;
-                Ok(rows.into_iter().map(|r| r.to_terminal()).collect())
+                Ok(rows.into_iter().map(|r| r.into_terminal()).collect())
             })
         },
     )
@@ -93,7 +93,7 @@ pub async fn get_terminal_by_id(id: &str) -> Result<Option<Terminal>, String> {
                     .fetch_optional(pool)
                     .await
                     .map_err(|e| e.to_string())?;
-                Ok(row.map(|r| r.to_terminal()))
+                Ok(row.map(|r| r.into_terminal()))
             })
         },
     )
@@ -141,7 +141,7 @@ pub async fn get_project_run_terminal_by_project_id(
                     q = q.bind(uid);
                 }
                 let row = q.fetch_optional(pool).await.map_err(|e| e.to_string())?;
-                Ok(row.map(|r| r.to_terminal()))
+                Ok(row.map(|r| r.into_terminal()))
             })
         },
     )
@@ -197,7 +197,7 @@ pub async fn list_project_run_terminals_by_project_id(
                     q = q.bind(uid);
                 }
                 let rows = q.fetch_all(pool).await.map_err(|e| e.to_string())?;
-                Ok(rows.into_iter().map(|r| r.to_terminal()).collect())
+                Ok(rows.into_iter().map(|r| r.into_terminal()).collect())
             })
         },
     )

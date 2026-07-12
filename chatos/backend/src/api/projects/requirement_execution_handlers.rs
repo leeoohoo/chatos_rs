@@ -137,10 +137,10 @@ async fn execute_requirement_inner(
     let mut dependency_map = work_item_dependency_map(&dependency_graph);
     let mut selected_work_items = all_work_items
         .iter()
-        .cloned()
         .filter(|item| requirement_scope.contains(item.requirement_id.as_str()))
         .filter(|item| item.status != "archived")
         .filter(|item| !is_done_status(item.status.as_str()))
+        .cloned()
         .collect::<Vec<_>>();
     add_requirement_work_item_dependencies(
         &mut dependency_map,

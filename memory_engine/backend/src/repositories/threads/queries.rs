@@ -73,7 +73,7 @@ pub async fn list_threads_with_pending_records_by_token_threshold(
     let cursor = thread_collection(db)
         .find(filter)
         .sort(doc! {"updated_at": 1, "created_at": 1})
-        .limit(limit.max(1).min(500))
+        .limit(limit.clamp(1, 500))
         .await
         .map_err(|err| err.to_string())?;
     collect_threads(cursor).await
@@ -106,7 +106,7 @@ pub async fn list_threads_by_label(
         .find(filter)
         .sort(doc! {"updated_at": -1, "created_at": -1})
         .skip(offset.max(0) as u64)
-        .limit(limit.max(1).min(5_000))
+        .limit(limit.clamp(1, 5_000))
         .await
         .map_err(|err| err.to_string())?;
 
@@ -201,7 +201,7 @@ pub async fn list_threads(
         .find(filter)
         .sort(doc! {"updated_at": -1, "created_at": -1})
         .skip(query.offset.max(0) as u64)
-        .limit(query.limit.max(1).min(10_000))
+        .limit(query.limit.clamp(1, 10_000))
         .await
         .map_err(|err| err.to_string())?;
 

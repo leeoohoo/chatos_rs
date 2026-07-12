@@ -31,6 +31,14 @@ const REMOTE_TERMINAL_STORED_CHUNK_MAX_LINES: usize = 1_024;
 const REMOTE_TERMINAL_IDLE_TIMEOUT: StdDuration = StdDuration::from_secs(20 * 60);
 const REMOTE_TERMINAL_IDLE_SWEEP_INTERVAL: Duration = Duration::from_secs(60);
 
+type RemoteTerminalStartResult = Result<
+    (
+        Arc<RemoteTerminalSession>,
+        Option<Box<dyn portable_pty::Child + Send + Sync>>,
+    ),
+    String,
+>;
+
 #[derive(Clone, Copy)]
 pub(super) enum DisconnectReason {
     Manual,
@@ -155,13 +163,7 @@ impl RemoteTerminalSession {
         verification_code: Option<&str>,
         verification_code_rx: Option<mpsc::Receiver<String>>,
         challenge_tx: Option<mpsc::Sender<String>>,
-    ) -> Result<
-        (
-            Arc<Self>,
-            Option<Box<dyn portable_pty::Child + Send + Sync>>,
-        ),
-        String,
-    > {
+    ) -> RemoteTerminalStartResult {
         if is_password_auth(connection) {
             // Keep password/OTP auth in native ssh2 path so second-factor challenges are
             // surfaced to frontend and can trigger the verification modal.
@@ -184,15 +186,7 @@ impl RemoteTerminalSession {
         }
     }
 
-    fn new_legacy(
-        connection: &RemoteConnection,
-    ) -> Result<
-        (
-            Arc<Self>,
-            Option<Box<dyn portable_pty::Child + Send + Sync>>,
-        ),
-        String,
-    > {
+    fn new_legacy(connection: &RemoteConnection) -> RemoteTerminalStartResult {
         let pty_system = native_pty_system();
         let pair = pty_system
             .openpty(PtySize {
@@ -250,13 +244,7 @@ impl RemoteTerminalSession {
         verification_code: Option<&str>,
         verification_code_rx: Option<mpsc::Receiver<String>>,
         challenge_tx: Option<mpsc::Sender<String>>,
-    ) -> Result<
-        (
-            Arc<Self>,
-            Option<Box<dyn portable_pty::Child + Send + Sync>>,
-        ),
-        String,
-    > {
+    ) -> RemoteTerminalStartResult {
         let connected = if verification_code_rx.is_some() {
             connect_ssh2_session_with_interactive_verification(
                 connection,

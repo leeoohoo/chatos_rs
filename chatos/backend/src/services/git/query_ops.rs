@@ -431,7 +431,7 @@ pub async fn file_diff(query: GitDiffQuery) -> Result<GitFileDiff, String> {
         return local_connector::file_diff(query).await;
     }
     let repo_root = require_repo_root(&query.root).await?;
-    let paths = validate_relative_paths(&[query.path.clone()])?;
+    let paths = validate_relative_paths(std::slice::from_ref(&query.path))?;
     let path = paths
         .first()
         .cloned()

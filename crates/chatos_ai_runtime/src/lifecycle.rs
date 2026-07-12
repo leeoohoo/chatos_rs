@@ -69,7 +69,7 @@ pub enum RuntimeFinalResponseAction {
         input_items: Vec<Value>,
         reason: String,
     },
-    Replace(AiResponse),
+    Replace(Box<AiResponse>),
 }
 
 #[async_trait]

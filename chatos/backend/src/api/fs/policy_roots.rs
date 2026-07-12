@@ -202,42 +202,6 @@ fn safe_path_component(value: &str) -> String {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::{host_fs_roots_enabled_for, user_path_component};
-
-    #[test]
-    fn user_path_component_avoids_sanitization_collisions() {
-        assert_ne!(user_path_component("a/b"), user_path_component("a_b"));
-    }
-
-    #[test]
-    fn user_path_component_keeps_readable_prefix() {
-        let value = user_path_component(" user-1 ");
-        assert!(value.starts_with("user-1-"));
-        assert!(value.len() > "user-1-".len());
-    }
-
-    #[test]
-    fn host_fs_roots_default_to_enabled_outside_production() {
-        assert!(host_fs_roots_enabled_for(None, None));
-        assert!(host_fs_roots_enabled_for(Some("development"), None));
-        assert!(host_fs_roots_enabled_for(Some("test"), None));
-    }
-
-    #[test]
-    fn host_fs_roots_default_to_disabled_in_production() {
-        assert!(!host_fs_roots_enabled_for(Some("production"), None));
-        assert!(!host_fs_roots_enabled_for(Some(" production "), None));
-    }
-
-    #[test]
-    fn host_fs_roots_explicit_env_overrides_default() {
-        assert!(host_fs_roots_enabled_for(Some("production"), Some(true)));
-        assert!(!host_fs_roots_enabled_for(Some("development"), Some(false)));
-    }
-}
-
 fn host_fs_roots_enabled() -> bool {
     if let Some(value) = env_bool_override("CHATOS_ENABLE_HOST_FS_ROOTS")
         .or_else(|| env_bool_override("FS_ENABLE_HOST_ROOTS"))
@@ -299,4 +263,40 @@ fn push_root(roots: &mut Vec<FsAllowedRoot>, candidate: PathBuf, kind: FsAllowed
         path: canonical,
         kind,
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{host_fs_roots_enabled_for, user_path_component};
+
+    #[test]
+    fn user_path_component_avoids_sanitization_collisions() {
+        assert_ne!(user_path_component("a/b"), user_path_component("a_b"));
+    }
+
+    #[test]
+    fn user_path_component_keeps_readable_prefix() {
+        let value = user_path_component(" user-1 ");
+        assert!(value.starts_with("user-1-"));
+        assert!(value.len() > "user-1-".len());
+    }
+
+    #[test]
+    fn host_fs_roots_default_to_enabled_outside_production() {
+        assert!(host_fs_roots_enabled_for(None, None));
+        assert!(host_fs_roots_enabled_for(Some("development"), None));
+        assert!(host_fs_roots_enabled_for(Some("test"), None));
+    }
+
+    #[test]
+    fn host_fs_roots_default_to_disabled_in_production() {
+        assert!(!host_fs_roots_enabled_for(Some("production"), None));
+        assert!(!host_fs_roots_enabled_for(Some(" production "), None));
+    }
+
+    #[test]
+    fn host_fs_roots_explicit_env_overrides_default() {
+        assert!(host_fs_roots_enabled_for(Some("production"), Some(true)));
+        assert!(!host_fs_roots_enabled_for(Some("development"), Some(false)));
+    }
 }

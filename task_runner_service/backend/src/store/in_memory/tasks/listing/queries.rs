@@ -59,7 +59,7 @@ impl InMemoryStore {
                         .as_deref()
                         .map(str::trim)
                         .filter(|item| !item.is_empty())
-                        .or_else(|| task.creator_user_id.as_deref())
+                        .or(task.creator_user_id.as_deref())
                         == Some(value)
                 })
             })

@@ -364,7 +364,7 @@ fn go_package_files(dir: &Path) -> Result<Vec<PathBuf>, String> {
     for entry in WalkDir::new(dir)
         .max_depth(1)
         .into_iter()
-        .filter_entry(|entry| should_visit_go_path(entry))
+        .filter_entry(should_visit_go_path)
     {
         visited_entries = visited_entries.saturating_add(1);
         ensure_code_nav_text_search_budget(started_at, visited_entries)?;

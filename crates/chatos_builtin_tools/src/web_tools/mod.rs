@@ -75,9 +75,9 @@ impl WebToolsService {
             client,
             browser_command_timeout_seconds: timeout,
             default_search_limit: opts.default_search_limit.clamp(1, MAX_SEARCH_LIMIT),
-            max_search_limit: opts.max_search_limit.max(1).min(MAX_SEARCH_LIMIT),
-            max_extract_urls: opts.max_extract_urls.max(1).min(MAX_EXTRACT_URLS),
-            max_extract_chars: opts.max_extract_chars.max(1).min(DEFAULT_MAX_EXTRACT_CHARS),
+            max_search_limit: opts.max_search_limit.clamp(1, MAX_SEARCH_LIMIT),
+            max_extract_urls: opts.max_extract_urls.clamp(1, MAX_EXTRACT_URLS),
+            max_extract_chars: opts.max_extract_chars.clamp(1, DEFAULT_MAX_EXTRACT_CHARS),
         };
 
         service.register_web_search(bound.clone());

@@ -38,9 +38,11 @@ fn policy_error_response(err: FsPolicyError) -> Response {
 
 #[cfg(test)]
 mod tests {
+    use super::download_entry;
     #[cfg(unix)]
     use super::list_entries;
-    use super::{download_entry, read_file};
+    #[cfg(not(windows))]
+    use super::read_file;
     use crate::core::auth::AuthUser;
     use axum::body::to_bytes;
     use axum::extract::Query;
@@ -49,9 +51,11 @@ mod tests {
     use std::fs;
     use std::path::PathBuf;
 
+    use super::super::contracts::FsDownloadQuery;
     #[cfg(unix)]
     use super::super::contracts::FsQuery;
-    use super::super::contracts::{FsDownloadQuery, FsReadQuery};
+    #[cfg(not(windows))]
+    use super::super::contracts::FsReadQuery;
 
     fn make_temp_dir(name: &str) -> PathBuf {
         let root = std::env::current_dir().expect("current dir").join(format!(
@@ -63,6 +67,7 @@ mod tests {
         root
     }
 
+    #[cfg(not(windows))]
     fn make_outside_temp_dir(name: &str) -> PathBuf {
         let root = std::env::temp_dir().join(format!("{}_{}", name, uuid::Uuid::new_v4()));
         fs::create_dir_all(&root).expect("create outside temp dir");
@@ -113,6 +118,7 @@ mod tests {
         fs::remove_dir_all(outside).expect("cleanup outside");
     }
 
+    #[cfg(not(windows))]
     #[tokio::test]
     async fn read_file_rejects_path_outside_allowed_roots() {
         let outside = make_outside_temp_dir("fs_read_outside_root");

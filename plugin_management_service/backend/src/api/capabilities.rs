@@ -103,7 +103,7 @@ async fn resolve_agent_capabilities_for_owner(
                 ) {
                     continue;
                 }
-                let (available, status, reason) = availability_for_mcp(&state, &resource).await?;
+                let (available, status, reason) = availability_for_mcp(state, &resource).await?;
                 collect_local_connector_requirement_for_mcp(
                     &mut local_connector_requirements,
                     &resource,
@@ -138,7 +138,7 @@ async fn resolve_agent_capabilities_for_owner(
                 ) {
                     continue;
                 }
-                let (available, status, reason) = availability_for_skill(&state, &resource).await?;
+                let (available, status, reason) = availability_for_skill(state, &resource).await?;
                 collect_local_connector_requirement_for_skill(
                     &mut local_connector_requirements,
                     &resource,
@@ -193,7 +193,7 @@ async fn resolve_agent_capabilities_for_owner(
                         continue;
                     }
                     let (available, status, reason) =
-                        availability_for_skill(&state, &resource).await?;
+                        availability_for_skill(state, &resource).await?;
                     collect_local_connector_requirement_for_skill(
                         &mut local_connector_requirements,
                         &resource,
@@ -236,7 +236,7 @@ async fn resolve_agent_capabilities_for_owner(
                 RESOURCE_KIND_MCP,
                 resource.id.as_str(),
             );
-            let (available, status, reason) = availability_for_mcp(&state, &resource).await?;
+            let (available, status, reason) = availability_for_mcp(state, &resource).await?;
             collect_local_connector_requirement_for_mcp(
                 &mut local_connector_requirements,
                 &resource,
@@ -274,7 +274,7 @@ async fn resolve_agent_capabilities_for_owner(
                 RESOURCE_KIND_SKILL,
                 resource.id.as_str(),
             );
-            let (available, status, reason) = availability_for_skill(&state, &resource).await?;
+            let (available, status, reason) = availability_for_skill(state, &resource).await?;
             collect_local_connector_requirement_for_skill(
                 &mut local_connector_requirements,
                 &resource,

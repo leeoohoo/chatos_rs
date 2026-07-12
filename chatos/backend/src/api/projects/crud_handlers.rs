@@ -188,7 +188,7 @@ pub(super) async fn create_project(
         .await
         .ok()
         .flatten()
-        .unwrap_or_else(|| Project {
+        .unwrap_or(Project {
             id: saved_id,
             ..project
         });

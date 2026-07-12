@@ -168,7 +168,7 @@ pub(super) async fn read_harness_file(
             file_content.size
         ));
     }
-    if bytes.iter().any(|byte| *byte == 0) {
+    if bytes.contains(&0) {
         return Err("Binary file not supported.".to_string());
     }
     let text = String::from_utf8_lossy(bytes.as_slice()).to_string();

@@ -10,7 +10,9 @@ use super::{default_true, now_rfc3339};
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum TaskRunStatus {
+    #[default]
     Queued,
     Running,
     Succeeded,
@@ -19,26 +21,16 @@ pub enum TaskRunStatus {
     Blocked,
 }
 
-impl Default for TaskRunStatus {
-    fn default() -> Self {
-        Self::Queued
-    }
-}
-
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum AskUserPromptStatus {
+    #[default]
     Pending,
     Submitted,
     Cancelled,
     TimedOut,
     Failed,
-}
-
-impl Default for AskUserPromptStatus {
-    fn default() -> Self {
-        Self::Pending
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -168,7 +168,7 @@ fn exact_allowed_root_detection_uses_normalized_paths() {
     let root = make_temp_dir("fs_policy_root");
     let canonical_root = fs::canonicalize(&root).expect("canonicalize root");
     let policy = configured_policy(root.as_path());
-    assert!(policy.is_exact_allowed_root(root.join(".").as_path()) == false);
+    assert!(!policy.is_exact_allowed_root(root.join(".").as_path()));
     assert!(policy.is_exact_allowed_root(canonical_root.as_path()));
     fs::remove_dir_all(root).expect("cleanup temp dir");
 }

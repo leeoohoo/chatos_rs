@@ -1,0 +1,57 @@
+# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+# Required Notice: Copyright (c) 2025 AI Chat Team
+
+name: Sync GitHub To Harness
+
+on:
+  push:
+    branches:
+      - main
+      - master
+      - "2.*"
+  workflow_dispatch:
+    inputs:
+      harness_branch:
+        description: "Harness branch to update. Defaults to the selected GitHub ref."
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sync-harness-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  sync:
+    name: Push source snapshot to Harness
+    runs-on: ubuntu-latest
+    env:
+      HARNESS_BASE_URL: http://8.155.171.124:3001
+      HARNESS_GIT_BASE_URL: http://8.155.171.124:3001/git
+      HARNESS_ADMIN_LOGIN: admin
+      HARNESS_ADMIN_PASSWORD: ${{ secrets.HARNESS_ADMIN_PASSWORD }}
+      HARNESS_CI_BRANCH: ${{ inputs.harness_branch || github.ref_name }}
+      HARNESS_CI_RUN: "false"
+      HARNESS_CI_SNAPSHOT_SCOPE: all
+      HARNESS_CI_REGISTER_IMAGE_SERVICE_PIPELINES: "true"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Validate Harness credentials
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${HARNESS_ADMIN_PASSWORD:-}" ]]; then
+            echo "::error::Set the HARNESS_ADMIN_PASSWORD repository secret before syncing to Harness."
+            exit 1
+          fi
+
+      - name: Sync to Harness
+        shell: bash
+        run: bash scripts/build-images-on-harness.sh

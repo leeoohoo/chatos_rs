@@ -7,7 +7,9 @@ use super::{normalized_optional, DbStatus};
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum RequirementStatus {
+    #[default]
     Draft,
     Reviewing,
     Approved,
@@ -17,12 +19,6 @@ pub enum RequirementStatus {
     Done,
     Cancelled,
     Archived,
-}
-
-impl Default for RequirementStatus {
-    fn default() -> Self {
-        Self::Draft
-    }
 }
 
 impl DbStatus for RequirementStatus {
@@ -57,16 +53,12 @@ impl DbStatus for RequirementStatus {
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum RequirementType {
+    #[default]
     Requirement,
     Change,
     BugFix,
-}
-
-impl Default for RequirementType {
-    fn default() -> Self {
-        Self::Requirement
-    }
 }
 
 impl DbStatus for RequirementType {

@@ -206,7 +206,7 @@ pub async fn upsert_project_agent_link(
                 .fetch_optional(pool)
                 .await
                 .map_err(|e| e.to_string())?;
-                Ok(row.map(ChatosProjectAgentLinkRow::to_link))
+                Ok(row.map(ChatosProjectAgentLinkRow::into_link))
             })
         },
     )
@@ -294,7 +294,7 @@ pub async fn touch_project_agent_link_session(
                 .fetch_optional(pool)
                 .await
                 .map_err(|e| e.to_string())?;
-                Ok(row.map(ChatosProjectAgentLinkRow::to_link))
+                Ok(row.map(ChatosProjectAgentLinkRow::into_link))
             })
         },
     )
@@ -385,7 +385,7 @@ pub async fn list_project_agent_links_by_contact(
                 }
                 let options = FindOptions::builder()
                     .sort(doc! { "last_bound_at": -1, "updated_at": -1 })
-                    .limit(Some(limit.max(1).min(500)))
+                    .limit(Some(limit.clamp(1, 500)))
                     .skip(Some(offset.max(0) as u64))
                     .build();
                 let cursor = db
@@ -418,11 +418,11 @@ pub async fn list_project_agent_links_by_contact(
                 if let Some(status) = status.as_deref() {
                     query = query.bind(status);
                 }
-                query = query.bind(limit.max(1).min(500)).bind(offset.max(0));
+                query = query.bind(limit.clamp(1, 500)).bind(offset.max(0));
                 let rows = query.fetch_all(pool).await.map_err(|e| e.to_string())?;
                 Ok(rows
                     .into_iter()
-                    .map(ChatosProjectAgentLinkRow::to_link)
+                    .map(ChatosProjectAgentLinkRow::into_link)
                     .collect())
             })
         },
@@ -453,7 +453,7 @@ pub async fn list_project_agent_links_by_project(
                 }
                 let options = FindOptions::builder()
                     .sort(doc! { "last_bound_at": -1, "updated_at": -1 })
-                    .limit(Some(limit.max(1).min(500)))
+                    .limit(Some(limit.clamp(1, 500)))
                     .skip(Some(offset.max(0) as u64))
                     .build();
                 let cursor = db
@@ -486,11 +486,11 @@ pub async fn list_project_agent_links_by_project(
                 if let Some(status) = status.as_deref() {
                     query = query.bind(status);
                 }
-                query = query.bind(limit.max(1).min(500)).bind(offset.max(0));
+                query = query.bind(limit.clamp(1, 500)).bind(offset.max(0));
                 let rows = query.fetch_all(pool).await.map_err(|e| e.to_string())?;
                 Ok(rows
                     .into_iter()
-                    .map(ChatosProjectAgentLinkRow::to_link)
+                    .map(ChatosProjectAgentLinkRow::into_link)
                     .collect())
             })
         },

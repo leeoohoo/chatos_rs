@@ -50,7 +50,7 @@ pub(crate) async fn handle_terminal_exec_request(
                 headers: BTreeMap::new(),
                 body,
             }
-            .to_value()
+            .into_value()
         }
         Err(err) => RelayResponse {
             message_type: "terminal_response".to_string(),
@@ -59,6 +59,6 @@ pub(crate) async fn handle_terminal_exec_request(
             headers: BTreeMap::new(),
             body: json!({ "error": err.to_string() }),
         }
-        .to_value(),
+        .into_value(),
     }
 }

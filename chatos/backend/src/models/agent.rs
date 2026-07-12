@@ -91,7 +91,7 @@ pub struct AgentRow {
 }
 
 impl AgentRow {
-    pub fn to_agent(self) -> Agent {
+    pub fn into_agent(self) -> Agent {
         Agent {
             id: self.id,
             user_id: self.user_id,

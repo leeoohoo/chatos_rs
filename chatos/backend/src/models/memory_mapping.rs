@@ -68,7 +68,7 @@ pub struct ChatosContactRow {
 }
 
 impl ChatosContactRow {
-    pub fn to_contact(self) -> ChatosContact {
+    pub fn into_contact(self) -> ChatosContact {
         ChatosContact {
             id: self.id,
             user_id: self.user_id,
@@ -117,7 +117,7 @@ pub struct ChatosMemoryProjectRow {
 }
 
 impl ChatosMemoryProjectRow {
-    pub fn to_project(self) -> ChatosMemoryProject {
+    pub fn into_project(self) -> ChatosMemoryProject {
         ChatosMemoryProject {
             id: self.id,
             user_id: self.user_id,
@@ -167,7 +167,7 @@ pub struct ChatosProjectAgentLinkRow {
 }
 
 impl ChatosProjectAgentLinkRow {
-    pub fn to_link(self) -> ChatosProjectAgentLink {
+    pub fn into_link(self) -> ChatosProjectAgentLink {
         ChatosProjectAgentLink {
             id: self.id,
             user_id: self.user_id,

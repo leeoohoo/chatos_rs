@@ -7,22 +7,12 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub(crate) struct LocalSandboxState {
     pub(crate) enabled: bool,
     pub(crate) selected_image_ref: Option<String>,
     #[serde(default)]
     pub(crate) images: Vec<LocalSandboxImageRecord>,
-}
-
-impl Default for LocalSandboxState {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            selected_image_ref: None,
-            images: Vec::new(),
-        }
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

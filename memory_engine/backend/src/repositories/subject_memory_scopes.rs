@@ -100,7 +100,7 @@ pub async fn list_active_subject_memory_scopes(
         .collection::<EngineSubjectMemoryScope>("engine_subject_memory_scopes")
         .find(filter)
         .sort(doc! {"updated_at": -1, "created_at": -1})
-        .limit(limit.max(1).min(10_000))
+        .limit(limit.clamp(1, 10_000))
         .await
         .map_err(|err| err.to_string())?;
 
@@ -133,7 +133,7 @@ pub async fn list_runnable_subject_memory_scopes(
         .collection::<EngineSubjectMemoryScope>("engine_subject_memory_scopes")
         .find(filter)
         .sort(doc! {"last_run_at": 1, "updated_at": -1, "created_at": -1})
-        .limit(limit.max(1).min(10_000))
+        .limit(limit.clamp(1, 10_000))
         .await
         .map_err(|err| err.to_string())?;
 

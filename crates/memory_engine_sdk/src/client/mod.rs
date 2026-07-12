@@ -13,6 +13,8 @@ mod summaries;
 mod threads;
 mod transport;
 
+pub use self::jobs::RunPendingRollupsOptions;
+
 use self::transport::normalize_base_url;
 
 #[derive(Debug, Clone)]

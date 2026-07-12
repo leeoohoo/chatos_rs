@@ -61,7 +61,7 @@ pub async fn list_skills(
 
                 let options = FindOptions::builder()
                     .sort(doc! { "updated_at": -1 })
-                    .limit(Some(limit.max(1).min(500)))
+                    .limit(Some(limit.clamp(1, 500)))
                     .skip(Some(offset.max(0) as u64))
                     .build();
 
@@ -122,12 +122,12 @@ pub async fn list_skills(
                     sql_query = sql_query.bind(like.clone()).bind(like.clone()).bind(like);
                 }
                 let rows = sql_query
-                    .bind(limit.max(1).min(500))
+                    .bind(limit.clamp(1, 500))
                     .bind(offset.max(0))
                     .fetch_all(pool)
                     .await
                     .map_err(|e| e.to_string())?;
-                Ok(rows.into_iter().map(MemorySkillRow::to_model).collect())
+                Ok(rows.into_iter().map(MemorySkillRow::into_model).collect())
             })
         },
     )
@@ -176,7 +176,7 @@ pub async fn get_skill_by_id(
                     .fetch_optional(pool)
                     .await
                     .map_err(|e| e.to_string())?;
-                Ok(row.map(MemorySkillRow::to_model))
+                Ok(row.map(MemorySkillRow::into_model))
             })
         },
     )
@@ -203,7 +203,7 @@ pub async fn list_plugins_by_user_ids(
                 };
                 let options = FindOptions::builder()
                     .sort(doc! { "updated_at": -1 })
-                    .limit(Some(limit.max(1).min(1000)))
+                    .limit(Some(limit.clamp(1, 1000)))
                     .skip(Some(offset.max(0) as u64))
                     .build();
                 let cursor = db
@@ -228,14 +228,14 @@ pub async fn list_plugins_by_user_ids(
                     query = query.bind(user_id);
                 }
                 let rows = query
-                    .bind(limit.max(1).min(1000))
+                    .bind(limit.clamp(1, 1000))
                     .bind(offset.max(0))
                     .fetch_all(pool)
                     .await
                     .map_err(|e| e.to_string())?;
                 Ok(rows
                     .into_iter()
-                    .map(MemorySkillPluginRow::to_model)
+                    .map(MemorySkillPluginRow::into_model)
                     .collect())
             })
         },
@@ -291,7 +291,7 @@ pub async fn get_plugins_by_sources_for_user_ids(
                 let rows = query.fetch_all(pool).await.map_err(|e| e.to_string())?;
                 Ok(rows
                     .into_iter()
-                    .map(MemorySkillPluginRow::to_model)
+                    .map(MemorySkillPluginRow::into_model)
                     .collect())
             })
         },

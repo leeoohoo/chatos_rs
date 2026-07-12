@@ -206,13 +206,13 @@ pub fn fallback_document_symbols(
                 "function",
                 name.split('(').next().unwrap_or("").trim().to_string(),
             ))
-        } else if let Some(name) = trimmed.strip_prefix("function ") {
-            Some((
-                "function",
-                name.split('(').next().unwrap_or("").trim().to_string(),
-            ))
         } else {
-            None
+            trimmed.strip_prefix("function ").map(|name| {
+                (
+                    "function",
+                    name.split('(').next().unwrap_or("").trim().to_string(),
+                )
+            })
         };
 
         if let Some((kind, name)) = symbol {

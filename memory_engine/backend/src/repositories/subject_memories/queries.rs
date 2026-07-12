@@ -45,7 +45,7 @@ pub async fn list_subject_memories_by_subject_ids(
         } else {
             doc! {"level": -1, "updated_at": -1}
         })
-        .limit(limit.max(1).min(1000))
+        .limit(limit.clamp(1, 1000))
         .await
         .map_err(|err| err.to_string())?;
 
@@ -72,7 +72,7 @@ pub async fn list_subject_memories(
         ))
         .sort(doc! {"level": -1, "updated_at": -1})
         .skip(offset.max(0) as u64)
-        .limit(limit.max(1).min(1000))
+        .limit(limit.clamp(1, 1000))
         .await
         .map_err(|err| err.to_string())?;
 
@@ -124,7 +124,7 @@ pub async fn query_subject_memories(
         .find(filter)
         .sort(doc! {"level": -1, "updated_at": -1})
         .skip(offset.max(0) as u64)
-        .limit(limit.max(1).min(1000))
+        .limit(limit.clamp(1, 1000))
         .await
         .map_err(|err| err.to_string())?;
 

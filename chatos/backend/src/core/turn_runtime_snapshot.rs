@@ -274,9 +274,7 @@ fn normalize_unavailable_builtin_tools(
 fn normalize_builtin_mcp_prompt(
     prompt: Option<&BuiltinMcpPromptBuildResult>,
 ) -> Option<TurnRuntimeSnapshotBuiltinMcpPromptDto> {
-    let Some(prompt) = prompt else {
-        return None;
-    };
+    let prompt = prompt?;
 
     Some(TurnRuntimeSnapshotBuiltinMcpPromptDto {
         prompt_source_path: normalize_optional_text(Some(

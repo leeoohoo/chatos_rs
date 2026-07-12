@@ -33,7 +33,7 @@ pub(crate) async fn docker_status_struct() -> DockerStatusLocal {
         .or_else(|| first_non_empty_line(version.2.as_str()));
     let info = run_command_capture("docker", &["info"], Duration::from_secs(5)).await;
     match info {
-        Ok((code, _, _)) if code == 0 => DockerStatusLocal {
+        Ok((0, _, _)) => DockerStatusLocal {
             installed: true,
             running: true,
             version: version_text,

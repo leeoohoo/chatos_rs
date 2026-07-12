@@ -1,0 +1,4 @@
+# Service orchestration functions commonly carry several explicit policy and
+# identity inputs. Keep the lint useful for genuinely oversized APIs while
+# avoiding noise for functions with at most twelve parameters.
+too-many-arguments-threshold = 12

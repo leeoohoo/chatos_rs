@@ -54,11 +54,6 @@ impl McpToolExecute {
         self.shared.tool_metadata()
     }
 
-    #[cfg(test)]
-    fn tool_metadata_mut(&mut self) -> &mut std::collections::HashMap<String, ToolInfo> {
-        self.shared.tool_metadata_mut()
-    }
-
     pub fn get_codex_gateway_request_tools(&self) -> Vec<Value> {
         self.shared.codex_gateway_request_tools()
     }
@@ -82,11 +77,6 @@ impl McpToolExecute {
                 on_tool_result,
             )
             .await
-    }
-
-    #[cfg(test)]
-    fn should_parallelize_tool_batch(&self, tool_calls: &[Value]) -> bool {
-        self.shared.should_parallelize_tool_batch(tool_calls)
     }
 }
 

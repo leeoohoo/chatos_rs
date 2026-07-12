@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use std::path::PathBuf;
+use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -31,7 +31,7 @@ pub(in crate::terminal::controller) async fn local_mcp_sessions_for_context(
             Some(project_id) => meta.project_id.as_deref() == Some(project_id),
             None => true,
         };
-        let same_root = PathBuf::from(meta.root.as_str()) == root;
+        let same_root = Path::new(meta.root.as_str()) == root.as_path();
         if same_user && same_project && same_root {
             matched.push(session.clone());
         }

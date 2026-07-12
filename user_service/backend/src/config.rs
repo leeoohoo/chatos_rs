@@ -129,8 +129,8 @@ impl AppConfig {
             user_service_internal_api_secret: read_env(
                 "PROJECT_SERVICE_USER_SERVICE_INTERNAL_API_SECRET",
             )
-                .or_else(|| read_env("USER_SERVICE_INTERNAL_API_SECRET"))
-                .or_else(|| read_env("CHATOS_USER_SERVICE_INTERNAL_SECRET")),
+            .or_else(|| read_env("USER_SERVICE_INTERNAL_API_SECRET"))
+            .or_else(|| read_env("CHATOS_USER_SERVICE_INTERNAL_SECRET")),
             smtp_host: read_env("USER_SERVICE_SMTP_HOST"),
             smtp_port: read_env("USER_SERVICE_SMTP_PORT")
                 .unwrap_or_else(|| "587".to_string())

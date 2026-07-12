@@ -157,10 +157,7 @@ pub async fn list_project_contacts(
         offset,
     )
     .await;
-    let links = match links {
-        Ok(items) => items,
-        Err(_) => Vec::new(),
-    };
+    let links = links.unwrap_or_default();
     if links.is_empty() {
         return Ok(Vec::new());
     }

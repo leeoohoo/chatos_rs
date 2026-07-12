@@ -51,7 +51,7 @@ pub async fn list_applications(user_id: Option<String>) -> Result<Vec<Applicatio
                     q = q.bind(uid);
                 }
                 let rows = q.fetch_all(pool).await.map_err(|e| e.to_string())?;
-                Ok(rows.into_iter().map(|r| r.to_app()).collect())
+                Ok(rows.into_iter().map(|r| r.into_app()).collect())
             })
         },
     )
@@ -76,7 +76,7 @@ pub async fn get_application_by_id(id: &str) -> Result<Option<Application>, Stri
                         .fetch_optional(pool)
                         .await
                         .map_err(|e| e.to_string())?;
-                Ok(row.map(|r| r.to_app()))
+                Ok(row.map(|r| r.into_app()))
             })
         },
     )

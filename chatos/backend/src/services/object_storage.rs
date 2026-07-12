@@ -295,7 +295,7 @@ impl ObjectStorageService {
         let bucket = object_ref
             .bucket
             .as_deref()
-            .unwrap_or_else(|| self.config.bucket.as_str());
+            .unwrap_or(self.config.bucket.as_str());
         let max_bytes = max_bytes.unwrap_or(self.config.max_read_bytes).max(1);
         let url =
             self.presigned_object_url(S3Method::Get, bucket, object_ref.object_key.as_str(), 300)?;
@@ -538,13 +538,7 @@ fn build_object_key(user_id: &str, conversation_id: &str, id: &str, name: &str) 
 fn sanitize_key_segment(value: &str) -> String {
     let sanitized = value
         .chars()
-        .filter_map(|ch| {
-            if ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.') {
-                Some(ch)
-            } else {
-                None
-            }
-        })
+        .filter(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.'))
         .collect::<String>();
     if sanitized.is_empty() {
         URL_SAFE_NO_PAD.encode(value.as_bytes())

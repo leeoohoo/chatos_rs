@@ -40,7 +40,7 @@ pub async fn list_mcp_configs(user_id: Option<String>) -> Result<Vec<McpConfig>,
                     q = q.bind(uid);
                 }
                 let rows = q.fetch_all(pool).await.map_err(|e| e.to_string())?;
-                Ok(rows.into_iter().map(|r| r.to_config()).collect())
+                Ok(rows.into_iter().map(|r| r.into_config()).collect())
             })
         },
     )
@@ -72,7 +72,7 @@ pub async fn list_enabled_mcp_configs(user_id: Option<String>) -> Result<Vec<Mcp
                     q = q.bind(uid);
                 }
                 let rows = q.fetch_all(pool).await.map_err(|e| e.to_string())?;
-                Ok(rows.into_iter().map(|r| r.to_config()).collect())
+                Ok(rows.into_iter().map(|r| r.into_config()).collect())
             })
         },
     )
@@ -117,7 +117,7 @@ pub async fn list_enabled_mcp_configs_by_ids(
                     q = q.bind(uid);
                 }
                 let rows = q.fetch_all(pool).await.map_err(|e| e.to_string())?;
-                Ok(rows.into_iter().map(|r| r.to_config()).collect())
+                Ok(rows.into_iter().map(|r| r.into_config()).collect())
             })
         },
     )
@@ -142,7 +142,7 @@ pub async fn get_mcp_config_by_id(id: &str) -> Result<Option<McpConfig>, String>
                         .fetch_optional(pool)
                         .await
                         .map_err(|e| e.to_string())?;
-                Ok(row.map(|r| r.to_config()))
+                Ok(row.map(|r| r.into_config()))
             })
         },
     )

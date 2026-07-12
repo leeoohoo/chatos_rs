@@ -29,7 +29,7 @@ pub struct ApplicationRow {
 }
 
 impl ApplicationRow {
-    pub fn to_app(self) -> Application {
+    pub fn into_app(self) -> Application {
         Application {
             id: self.id,
             name: self.name,

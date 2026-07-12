@@ -14,19 +14,15 @@ use super::{TaskBuiltinMcpPromptMode, TaskRuntime};
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum TaskMcpInitMode {
+    #[default]
     Full,
     BuiltinOnly,
     Disabled,
 }
 
-impl Default for TaskMcpInitMode {
-    fn default() -> Self {
-        Self::Full
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct TaskRuntimeConfig {
     #[serde(default)]
     pub http_servers: Vec<McpHttpServer>,
@@ -158,20 +154,5 @@ impl TaskRuntimeConfig {
             TaskMcpInitMode::Disabled => builder,
         };
         Ok(builder.build())
-    }
-}
-
-impl Default for TaskRuntimeConfig {
-    fn default() -> Self {
-        Self {
-            http_servers: Vec::new(),
-            stdio_servers: Vec::new(),
-            builtin_servers: Vec::new(),
-            mcp_init_mode: TaskMcpInitMode::default(),
-            builtin_prompt_locale: BuiltinMcpPromptLocale::default(),
-            builtin_prompt_mode: TaskBuiltinMcpPromptMode::default(),
-            max_iterations: None,
-            memory_engine: None,
-        }
     }
 }

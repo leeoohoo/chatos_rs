@@ -66,12 +66,7 @@ pub(crate) fn build_record_filter(
 }
 
 pub(crate) fn summary_status_is_pending(value: Option<&str>) -> bool {
-    match value.map(str::trim) {
-        None => true,
-        Some("") => true,
-        Some("pending") => true,
-        _ => false,
-    }
+    matches!(value.map(str::trim), None | Some("") | Some("pending"))
 }
 
 pub(crate) fn estimate_record_summary_tokens(

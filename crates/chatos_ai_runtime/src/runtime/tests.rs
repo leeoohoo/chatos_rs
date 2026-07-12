@@ -147,7 +147,7 @@ impl RuntimeLifecycleHook for ReviewLifecycleHook {
                 .map_err(|_| "visible response lock poisoned".to_string())?
                 .clone()
                 .unwrap_or(context.response);
-            return Ok(RuntimeFinalResponseAction::Replace(visible));
+            return Ok(RuntimeFinalResponseAction::Replace(Box::new(visible)));
         }
 
         *self

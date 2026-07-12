@@ -32,7 +32,7 @@ pub async fn list_agents_by_user_ids(
                 }
                 let options = FindOptions::builder()
                     .sort(doc! { "updated_at": -1, "created_at": -1 })
-                    .limit(Some(limit.max(1).min(500)))
+                    .limit(Some(limit.clamp(1, 500)))
                     .skip(Some(offset.max(0) as u64))
                     .build();
                 let cursor = db
@@ -64,9 +64,9 @@ pub async fn list_agents_by_user_ids(
                 if let Some(value) = enabled {
                     query = query.bind(crate::core::values::bool_to_sqlite_int(value));
                 }
-                query = query.bind(limit.max(1).min(500)).bind(offset.max(0));
+                query = query.bind(limit.clamp(1, 500)).bind(offset.max(0));
                 let rows = query.fetch_all(pool).await.map_err(|e| e.to_string())?;
-                Ok(rows.into_iter().map(AgentRow::to_agent).collect())
+                Ok(rows.into_iter().map(AgentRow::into_agent).collect())
             })
         },
     )
@@ -92,7 +92,7 @@ pub async fn get_agent_by_id(agent_id: &str) -> Result<Option<Agent>, String> {
                     .fetch_optional(pool)
                     .await
                     .map_err(|e| e.to_string())?;
-                Ok(row.map(AgentRow::to_agent))
+                Ok(row.map(AgentRow::into_agent))
             })
         },
     )

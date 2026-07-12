@@ -144,7 +144,7 @@ pub async fn list_ai_model_configs(user_id: Option<&str>) -> Result<Vec<AiModelC
                 let rows = sql.fetch_all(pool).await.map_err(|e| e.to_string())?;
                 Ok(rows
                     .into_iter()
-                    .map(|row| decrypt_model_for_read(row.to_model()))
+                    .map(|row| decrypt_model_for_read(row.into_model()))
                     .collect())
             })
         },
@@ -173,7 +173,7 @@ pub async fn get_ai_model_config_by_id(id: &str) -> Result<Option<AiModelConfig>
                 .fetch_optional(pool)
                 .await
                 .map_err(|e| e.to_string())?;
-                Ok(row.map(|record| decrypt_model_for_read(record.to_model())))
+                Ok(row.map(|record| decrypt_model_for_read(record.into_model())))
             })
         },
     )

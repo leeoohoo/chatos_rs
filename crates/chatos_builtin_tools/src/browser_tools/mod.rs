@@ -166,10 +166,7 @@ impl BrowserToolsService {
             command_timeout_seconds: opts
                 .command_timeout_seconds
                 .max(DEFAULT_COMMAND_TIMEOUT_SECONDS),
-            max_snapshot_chars: opts
-                .max_snapshot_chars
-                .max(1)
-                .min(DEFAULT_MAX_SNAPSHOT_CHARS),
+            max_snapshot_chars: opts.max_snapshot_chars.clamp(1, DEFAULT_MAX_SNAPSHOT_CHARS),
             sessions: Arc::new(Mutex::new(HashMap::new())),
             vision_adapter: opts.vision_adapter,
         };

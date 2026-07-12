@@ -10,7 +10,9 @@ use super::DbStatus;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum ProjectWorkItemStatus {
+    #[default]
     Todo,
     Ready,
     InProgress,
@@ -32,12 +34,6 @@ impl ProjectWorkItemStatus {
         Self::Cancelled,
         Self::Archived,
     ];
-}
-
-impl Default for ProjectWorkItemStatus {
-    fn default() -> Self {
-        Self::Todo
-    }
 }
 
 impl DbStatus for ProjectWorkItemStatus {

@@ -87,11 +87,10 @@ pub fn parse_implicit_command_selections_from_tools_end(
         {
             continue;
         }
-        if tool_result
+        if !tool_result
             .get("success")
             .and_then(Value::as_bool)
             .unwrap_or(true)
-            == false
         {
             continue;
         }

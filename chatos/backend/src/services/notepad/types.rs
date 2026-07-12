@@ -84,23 +84,12 @@ impl Default for ListNotesParams {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct CreateNoteParams {
     pub folder: String,
     pub title: String,
     pub content: String,
     pub tags: Vec<String>,
-}
-
-impl Default for CreateNoteParams {
-    fn default() -> Self {
-        Self {
-            folder: String::new(),
-            title: String::new(),
-            content: String::new(),
-            tags: Vec::new(),
-        }
-    }
 }
 
 #[derive(Debug, Clone)]

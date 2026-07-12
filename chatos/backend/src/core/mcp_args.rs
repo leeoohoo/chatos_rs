@@ -51,12 +51,10 @@ pub fn parse_env(env: &Option<Value>) -> HashMap<String, String> {
 
     match env {
         Some(Value::String(raw)) => {
-            if let Ok(parsed) = serde_json::from_str::<Value>(raw) {
-                if let Value::Object(obj) = parsed {
-                    for (key, value) in obj {
-                        if let Some(parsed_value) = value_to_env_string(&value) {
-                            map.insert(key, parsed_value);
-                        }
+            if let Ok(Value::Object(obj)) = serde_json::from_str::<Value>(raw) {
+                for (key, value) in obj {
+                    if let Some(parsed_value) = value_to_env_string(&value) {
+                        map.insert(key, parsed_value);
                     }
                 }
             }
@@ -118,6 +116,6 @@ mod tests {
         let parsed_obj = parse_env(&from_obj);
         assert_eq!(parsed_obj.get("A").map(String::as_str), Some("1"));
         assert_eq!(parsed_obj.get("B").map(String::as_str), Some("2"));
-        assert!(parsed_obj.get("C").is_none());
+        assert!(!parsed_obj.contains_key("C"));
     }
 }

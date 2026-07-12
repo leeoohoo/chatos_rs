@@ -166,7 +166,7 @@ impl TaskService {
                         .as_deref()
                         .map(str::trim)
                         .filter(|value| !value.is_empty())
-                        .or_else(|| prerequisite.creator_user_id.as_deref())
+                        .or(prerequisite.creator_user_id.as_deref())
                         != user.effective_owner_user_id()
                 {
                     return Err(format!("无权引用前置任务: {prerequisite_task_id}"));

@@ -60,7 +60,7 @@ impl CreateSandboxLeaseResponse {
                 .agent_endpoint
                 .as_deref()
                 .map(str::trim)
-                .map_or(true, str::is_empty);
+                .is_none_or(str::is_empty);
         }
         matches!(
             self.status.as_deref().unwrap_or("leasing"),

@@ -326,9 +326,7 @@ fn local_connector_runtime_server(
     project_root: &str,
     authoritative: bool,
 ) -> Option<TaskEphemeralHttpMcpServer> {
-    let Some(project) = parse_local_connector_project_root(project_root) else {
-        return None;
-    };
+    let project = parse_local_connector_project_root(project_root)?;
     let local_kinds = selected_local_connector_builtin_kinds_for_task(task, authoritative);
     let local_kinds = normalize_local_connector_builtin_kinds(local_kinds.iter().copied());
     if local_kinds.is_empty() {

@@ -258,6 +258,9 @@ jobs:
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.94.0
+          components: clippy
 
       - name: Cache Rust deps
         uses: Swatinem/rust-cache@v2
@@ -266,6 +269,18 @@ jobs:
 
       - name: cargo check
         run: cargo check
+
+      - name: cargo clippy (root workspace)
+        working-directory: .
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: cargo clippy (Memory Engine)
+        working-directory: memory_engine/backend
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: cargo clippy (User Service)
+        working-directory: user_service/backend
+        run: cargo clippy --all-targets -- -D warnings
 
       - name: request-path panic audit
         run: bash ../../scripts/check-request-path-panics.sh

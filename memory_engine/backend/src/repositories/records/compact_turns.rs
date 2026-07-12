@@ -388,7 +388,7 @@ pub async fn list_compact_turn_slices(
         .filter(|value| !value.is_empty())
         .unwrap_or("message");
 
-    let page_limit = limit.max(1).min(200);
+    let page_limit = limit.clamp(1, 200);
     let mut filter = doc! {
         "tenant_id": tenant_id,
         "source_id": source_id,

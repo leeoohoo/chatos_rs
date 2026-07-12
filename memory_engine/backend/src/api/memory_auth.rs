@@ -276,10 +276,12 @@ pub async fn require_memory_auth(
             Err(err) => {
                 if !state.config.require_signed_internal_requests
                     && state
-                    .config
-                    .operator_token
-                    .as_deref()
-                    .is_some_and(|expected| operator_auth::constant_time_equal(expected, &token))
+                        .config
+                        .operator_token
+                        .as_deref()
+                        .is_some_and(|expected| {
+                            operator_auth::constant_time_equal(expected, &token)
+                        })
                 {
                     request.extensions_mut().insert(MemoryAuthContext::Operator);
                     return Ok(next.run(request).await);

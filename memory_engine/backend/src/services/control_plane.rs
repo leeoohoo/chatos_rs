@@ -55,10 +55,7 @@ pub async fn build_ai_client_for_job(
         }
         None => None,
     };
-    Ok(AiClient::new_with_profile(
-        config,
-        runtime_profile.as_ref(),
-    )?)
+    AiClient::new_with_profile(config, runtime_profile.as_ref())
 }
 
 pub fn build_rollup_settings_from_policy(policy: &EngineJobPolicy) -> RollupSettings {

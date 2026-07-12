@@ -193,16 +193,16 @@ pub(crate) fn pack_message_metadata(message: &Message) -> Option<Value> {
     }
 }
 
-pub(crate) fn unpack_message_metadata(
-    metadata: Option<Value>,
-) -> (
+type MessageMetadataParts = (
     Option<String>,
     Option<String>,
     Option<Value>,
     Option<String>,
     Option<String>,
     Option<Value>,
-) {
+);
+
+pub(crate) fn unpack_message_metadata(metadata: Option<Value>) -> MessageMetadataParts {
     let Some(Value::Object(mut map)) = metadata else {
         return (
             None,

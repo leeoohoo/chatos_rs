@@ -366,11 +366,11 @@ fn project_service_client(config: &AppConfig) -> Result<reqwest::Client, String>
 }
 
 trait TaskProjectStatusExt {
-    fn as_str(self) -> &'static str;
+    fn as_str(&self) -> &'static str;
 }
 
 impl TaskProjectStatusExt for TaskProjectStatus {
-    fn as_str(self) -> &'static str {
+    fn as_str(&self) -> &'static str {
         match self {
             TaskProjectStatus::Active => "active",
             TaskProjectStatus::Archived => "archived",

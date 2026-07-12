@@ -252,7 +252,7 @@ impl AiRuntime {
                             {
                                 RuntimeFinalResponseAction::Accept => {}
                                 RuntimeFinalResponseAction::Replace(replacement) => {
-                                    response = replacement;
+                                    response = *replacement;
                                 }
                                 RuntimeFinalResponseAction::Continue {
                                     input_items,

@@ -44,7 +44,7 @@ fn validate_secret(
             "{name} must contain at least {MIN_PRODUCTION_SECRET_LENGTH} characters in production"
         ));
     }
-    if insecure_values.iter().any(|candidate| value == *candidate) {
+    if insecure_values.contains(&value) {
         return Err(format!(
             "{name} uses a known development default and must be changed in production"
         ));

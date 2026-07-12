@@ -11,16 +11,6 @@ pub async fn get_db() -> Result<Arc<Database>, String> {
     db::get_db().await
 }
 
-#[cfg(test)]
-pub fn get_db_sync() -> Result<Arc<Database>, String> {
-    db::get_db_sync()
-}
-
-#[cfg(test)]
-pub fn is_mongo(db: &Database) -> bool {
-    db.is_mongo()
-}
-
 pub fn to_doc(doc: Document) -> Document {
     doc.into_iter()
         .filter(|(_, v)| !matches!(v, Bson::Null))

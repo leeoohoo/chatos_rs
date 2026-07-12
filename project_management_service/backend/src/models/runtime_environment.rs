@@ -8,20 +8,16 @@ use super::DbStatus;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum ProjectRuntimeEnvironmentStatus {
     Disabled,
     PendingConfiguration,
+    #[default]
     Pending,
     Analyzing,
     Ready,
     NotRunnable,
     Failed,
-}
-
-impl Default for ProjectRuntimeEnvironmentStatus {
-    fn default() -> Self {
-        Self::Pending
-    }
 }
 
 impl DbStatus for ProjectRuntimeEnvironmentStatus {
@@ -52,17 +48,13 @@ impl DbStatus for ProjectRuntimeEnvironmentStatus {
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum RuntimeEnvironmentProvider {
+    #[default]
     None,
     LocalConnector,
     Harness,
     CloudSandboxManager,
-}
-
-impl Default for RuntimeEnvironmentProvider {
-    fn default() -> Self {
-        Self::None
-    }
 }
 
 impl DbStatus for RuntimeEnvironmentProvider {

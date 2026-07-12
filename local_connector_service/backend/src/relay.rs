@@ -129,9 +129,8 @@ impl ConnectorRelay {
                 let request_ids = inner
                     .pending
                     .iter()
-                    .filter_map(|(request_id, pending)| {
-                        (pending.device_id == device_id).then(|| request_id.clone())
-                    })
+                    .filter(|&(_request_id, pending)| pending.device_id == device_id)
+                    .map(|(request_id, _pending)| request_id.clone())
                     .collect::<Vec<_>>();
                 for request_id in request_ids {
                     if let Some(pending) = inner.pending.remove(request_id.as_str()) {

@@ -45,7 +45,7 @@ pub async fn list_remote_connections(
                 let rows = q.fetch_all(pool).await.map_err(|e| e.to_string())?;
                 Ok(rows
                     .into_iter()
-                    .map(RemoteConnectionRow::to_remote_connection)
+                    .map(RemoteConnectionRow::into_remote_connection)
                     .map(decrypt_connection_for_read)
                     .collect())
             })
@@ -74,7 +74,7 @@ pub async fn get_remote_connection_by_id(id: &str) -> Result<Option<RemoteConnec
                 .await
                 .map_err(|e| e.to_string())?;
                 Ok(row
-                    .map(RemoteConnectionRow::to_remote_connection)
+                    .map(RemoteConnectionRow::into_remote_connection)
                     .map(decrypt_connection_for_read))
             })
         },

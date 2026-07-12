@@ -38,7 +38,7 @@ pub(crate) struct RelayResponse {
 }
 
 impl RelayResponse {
-    pub(crate) fn to_value(self) -> Value {
+    pub(crate) fn into_value(self) -> Value {
         serde_json::to_value(self).unwrap_or_else(|err| {
             json!({
                 "type": "relay_response",
@@ -63,7 +63,7 @@ pub(crate) fn relay_error_response(
         headers: BTreeMap::new(),
         body: json!({ "error": message }),
     }
-    .to_value()
+    .into_value()
 }
 
 pub(crate) fn terminal_event(message_type: &str, terminal_session_id: &str, body: Value) -> Value {

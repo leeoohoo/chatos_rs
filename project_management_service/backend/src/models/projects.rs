@@ -7,15 +7,11 @@ use super::DbStatus;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum ProjectStatus {
+    #[default]
     Active,
     Archived,
-}
-
-impl Default for ProjectStatus {
-    fn default() -> Self {
-        Self::Active
-    }
 }
 
 impl DbStatus for ProjectStatus {
@@ -36,16 +32,12 @@ impl DbStatus for ProjectStatus {
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum ProjectSourceType {
+    #[default]
     Local,
     LocalConnector,
     Cloud,
-}
-
-impl Default for ProjectSourceType {
-    fn default() -> Self {
-        Self::Local
-    }
 }
 
 impl DbStatus for ProjectSourceType {
@@ -68,17 +60,13 @@ impl DbStatus for ProjectSourceType {
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum CloudImportSource {
+    #[default]
     None,
     Empty,
     Git,
     Zip,
-}
-
-impl Default for CloudImportSource {
-    fn default() -> Self {
-        Self::None
-    }
 }
 
 impl DbStatus for CloudImportSource {
@@ -103,18 +91,14 @@ impl DbStatus for CloudImportSource {
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum ProjectImportStatus {
+    #[default]
     None,
     Pending,
     Importing,
     Ready,
     Failed,
-}
-
-impl Default for ProjectImportStatus {
-    fn default() -> Self {
-        Self::None
-    }
 }
 
 impl DbStatus for ProjectImportStatus {

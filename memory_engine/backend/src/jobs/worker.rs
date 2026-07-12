@@ -207,8 +207,7 @@ async fn run_pending_queue_reconcile_tick(state: &Arc<AppState>) {
     let limit = summary_policy
         .max_threads_per_tick
         .unwrap_or(state.config.worker_max_threads_per_tick)
-        .max(1)
-        .min(5);
+        .clamp(1, 5);
     let candidates = match threads::list_threads_with_pending_records_by_token_threshold(
         &state.pool,
         None,

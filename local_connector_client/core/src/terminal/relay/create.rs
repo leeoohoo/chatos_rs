@@ -115,5 +115,5 @@ fn terminal_create_response(request_id: String, status: u16, body: Value) -> Val
         headers: BTreeMap::new(),
         body,
     }
-    .to_value()
+    .into_value()
 }

@@ -13,7 +13,7 @@ fn is_default_title(title: &str) -> bool {
 
 fn derive_title_from_content(text: &str, max_len: usize) -> String {
     let raw = text.lines().find(|l| !l.trim().is_empty()).unwrap_or("");
-    let mut first_line = raw.trim().split_whitespace().collect::<Vec<_>>().join(" ");
+    let mut first_line = raw.split_whitespace().collect::<Vec<_>>().join(" ");
     if first_line.starts_with('#') {
         first_line = first_line.trim_start_matches('#').trim_start().to_string();
     }

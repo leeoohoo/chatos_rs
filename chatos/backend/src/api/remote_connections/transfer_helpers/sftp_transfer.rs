@@ -3,7 +3,7 @@
 
 use ssh2::{OpenFlags, OpenType};
 use std::io::{Read, Write};
-use std::path::{Path as FsPath, PathBuf};
+use std::path::Path as FsPath;
 use tokio::time::Duration;
 use walkdir::WalkDir;
 
@@ -51,7 +51,7 @@ pub(crate) fn estimate_local_total_bytes_typed(path: &FsPath) -> Result<u64, Tra
     Err(TransferJobError::message("本地路径必须是文件或目录"))
 }
 
-fn remote_pathbuf_to_string(path: &PathBuf) -> String {
+fn remote_pathbuf_to_string(path: &FsPath) -> String {
     path.to_string_lossy().replace('\\', "/")
 }
 

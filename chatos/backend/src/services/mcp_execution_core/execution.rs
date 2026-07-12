@@ -208,7 +208,7 @@ async fn acquire_heavy_io_tool_permits(
 }
 
 pub(crate) fn is_heavy_io_tool_name(tool_name: &str) -> bool {
-    HEAVY_IO_TOOL_NAMES.iter().any(|name| *name == tool_name)
+    HEAVY_IO_TOOL_NAMES.contains(&tool_name)
 }
 
 fn heavy_io_session_limiter(session_id: Option<&str>) -> Arc<Semaphore> {

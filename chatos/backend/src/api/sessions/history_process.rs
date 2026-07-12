@@ -83,8 +83,12 @@ pub(super) fn build_compact_history_messages(messages: Vec<Message>) -> Vec<Mess
         let mut process_message_count = 0usize;
         let mut callback_updates = Vec::new();
 
-        for index in (user_index + 1)..next_user_index {
-            let message = &messages[index];
+        for (index, message) in messages
+            .iter()
+            .enumerate()
+            .take(next_user_index)
+            .skip(user_index + 1)
+        {
             if is_task_runner_callback_message(message) {
                 callback_updates.push(index);
                 continue;
@@ -122,8 +126,12 @@ pub(super) fn build_compact_history_messages(messages: Vec<Message>) -> Vec<Mess
         );
         compact.push(user_message);
 
-        for index in (user_index + 1)..next_user_index {
-            let source = &messages[index];
+        for (index, source) in messages
+            .iter()
+            .enumerate()
+            .take(next_user_index)
+            .skip(user_index + 1)
+        {
             if Some(index) == final_assistant_index {
                 let mut assistant = source.clone();
                 strip_assistant_for_compact_history(&mut assistant, &user_message_id);

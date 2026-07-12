@@ -275,7 +275,7 @@ impl ChatosRuntimeLifecycleHook {
                     ..context.response.clone()
                 });
             state.mode = None;
-            return Ok(RuntimeFinalResponseAction::Replace(replacement));
+            return Ok(RuntimeFinalResponseAction::Replace(Box::new(replacement)));
         }
 
         if state.follow_up_rounds >= self.max_task_follow_up_rounds {
