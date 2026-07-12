@@ -2,7 +2,7 @@
 
 插件管理服务负责 MCP、skills、skill packages、系统内部 agent 和 agent capability bindings 的统一管理。
 
-当前阶段已经实现服务自身的管理闭环，尚未接入 Chatos、Task Runner、Project Management 和 Local Connector 的业务执行链路。
+当前阶段已经实现服务自身的管理闭环，尚未接入 Chat OS、Task Runner、Project Management 和 Local Connector 的业务执行链路。
 
 ## 目录
 
@@ -74,13 +74,13 @@ Vite 会把 `/api` 代理到 `http://127.0.0.1:39260`。
 
 系统 Agent registry 登记当前代码中真实存在、具有独立 MCP/skills 能力边界的系统级智能体角色或运行模式：
 
-- `chatos_conversation_agent`：Chatos 普通对话智能体。可选使用 `task_runner_service`；用户联系人只提供角色上下文，不逐条登记。
-- `chatos_planning_agent`：Chatos 规划智能体。必需使用 `task_runner_service`，并将 Task Runner 切换到 `chatos_plan` profile。
+- `chatos_conversation_agent`：Chat OS 普通对话智能体。可选使用 `task_runner_service`；用户联系人只提供角色上下文，不逐条登记。
+- `chatos_planning_agent`：Chat OS 规划智能体。必需使用 `task_runner_service`，并将 Task Runner 切换到 `chatos_plan` profile。
 - `task_runner_run_phase`：Task Runner 任务智能体。必需 `TaskManager`、`AskUser`；其余已实现的 Task Runner builtin MCP 为可选。
 - `project_management_agent`：项目运行环境智能体。必需 `CodeMaintainerRead`、`project_environment`、`sandbox_images`。
 - `local_connector_command_approval_agent`：本机命令审批智能体。必需只读 `CodeMaintainerRead` 和 `local_connector_approval`。
 
-Chatos 的两个角色共用会话模型循环，但普通模式与规划模式的 MCP 强制性不同，因此分开管理。`chatos_plan` 本身仍是 Task Runner task profile，不额外登记为 `task_runner_plan_phase`。Chatos 用户联系人、prompt 生成、Agent Builder、浏览器视觉等一次性模型辅助工具不逐条登记。
+Chat OS 的两个角色共用会话模型循环，但普通模式与规划模式的 MCP 强制性不同，因此分开管理。`chatos_plan` 本身仍是 Task Runner task profile，不额外登记为 `task_runner_plan_phase`。Chat OS 用户联系人、prompt 生成、Agent Builder、浏览器视觉等一次性模型辅助工具不逐条登记。
 
 ## 环境变量
 

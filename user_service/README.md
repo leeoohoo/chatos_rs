@@ -4,11 +4,11 @@
 
 It owns:
 
-- ChatOS human users
+- Chat OS human users
 - Task Runner agent accounts
 - The ownership relation from a real user to that user's agent accounts
 - Task Runner delegation token exchange
-- User-owned model configs shared by ChatOS, Task Runner, and memory_engine
+- User-owned model configs shared by Chat OS, Task Runner, and memory_engine
 
 ## Stack
 
@@ -17,7 +17,7 @@ It owns:
 
 ## Ownership Model
 
-- A `human_user` is the real ChatOS user.
+- A `human_user` is the real Chat OS user.
 - An `agent_account` is a Task Runner execution identity.
 - Every `agent_account` belongs to exactly one `human_user`.
 - A real user can create and manage that user's own agent accounts.
@@ -28,11 +28,11 @@ It owns:
 The service is now integrated into the repository flow:
 
 - `chat_app_server_rs` can proxy `register`, `login`, and `me` to `user_service`
-- ChatOS can load the current user's agent accounts from `user_service`
-- ChatOS contact Task Runner config now uses `task_runner_agent_account_id`
-- ChatOS runtime can exchange the current human user's token plus `task_runner_agent_account_id` for a short-lived Task Runner token
+- Chat OS can load the current user's agent accounts from `user_service`
+- Chat OS contact Task Runner config now uses `task_runner_agent_account_id`
+- Chat OS runtime can exchange the current human user's token plus `task_runner_agent_account_id` for a short-lived Task Runner token
 - `task_runner_service/backend` can validate Task Runner audience JWTs issued by `user_service`
-- ChatOS model config CRUD can proxy to `user_service`
+- Chat OS model config CRUD can proxy to `user_service`
 - `user_service` can sync concrete model configs into `task_runner_service` and `memory_engine`
 
 Backward compatibility is still kept for the old contact-level Task Runner username/password flow when `user_service` is not configured.
@@ -42,7 +42,7 @@ Backward compatibility is still kept for the old contact-level Task Runner usern
 - `user_service` is now the source of truth for user-owned model configs.
 - A real user can keep provider credentials here and create that user's own agent accounts here.
 - Creating a model config may omit `model`; `user_service` will call the provider-compatible `/models` endpoint and create one concrete config per returned model id.
-- ChatOS, `task_runner_service`, and `memory_engine` use those concrete model names from the shared configs.
+- Chat OS, `task_runner_service`, and `memory_engine` use those concrete model names from the shared configs.
 - `task_runner_service` and `memory_engine` receive synced runnable configs when downstream sync is configured.
 - `memory_summary_model_config_id` must point to a config with a concrete `model`.
 - Memory summary thinking level is stored in model settings; Task Runner usage and thinking level are stored per model config.
@@ -64,7 +64,7 @@ In the Docker stack, Harness runs as the `harness` service and `user_service` po
 - `HARNESS_PROVISIONING_ENABLED=true`
 - `HARNESS_BASE_URL=http://harness:3000`
 
-Harness source lives in a separate ignored Git checkout at repository root `harness/`; the Chatos parent repository does not track it.
+Harness source lives in a separate ignored Git checkout at repository root `harness/`; the Chat OS parent repository does not track it.
 
 Important behavior:
 
@@ -102,7 +102,7 @@ Required SMTP environment variables:
 - `USER_SERVICE_SMTP_USERNAME=...`
 - `USER_SERVICE_SMTP_PASSWORD=...`
 - `USER_SERVICE_EMAIL_FROM=...`
-- `USER_SERVICE_EMAIL_FROM_NAME=ChatOS`
+- `USER_SERVICE_EMAIL_FROM_NAME=Chat OS`
 
 ## Backend-Only Development
 

@@ -250,7 +250,7 @@ export function ModelsPage() {
           </Typography.Title>
           <Typography.Text type="secondary">
             Save provider credentials here. User service fetches concrete models from the provider
-            catalog for ChatOS, Task Runner, and Memory Engine.
+            catalog for Chat OS, Task Runner, and Memory Engine.
           </Typography.Text>
         </Space>
         <Space wrap>

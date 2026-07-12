@@ -1,15 +1,11 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use std::sync::Arc;
-
 use crate::models::*;
 use crate::state::AppState;
 use crate::user_model_runtime_client::resolve_default_project_agent_model_runtime;
-use chatos_ai_runtime::{
-    AiRuntime, ContextualTurnRunner, MemoryContextOverflowRecovery, ModelRuntimeConfig,
-    RuntimeRecordOptions, RuntimeTurnSpec, SaveRecordInput,
-};
+use chatos_agent::{AgentExecutor, AgentTurnMemory, AgentTurnRequest, PROJECT_ENVIRONMENT_AGENT};
+use chatos_ai_runtime::ModelRuntimeConfig;
 use chatos_mcp_runtime::BuiltinMcpKind;
 use chatos_plugin_management_sdk::{
     ResolveAgentCapabilitiesRequest, ResolvedAgentCapabilities, SystemAgentKey,
@@ -42,8 +38,6 @@ const PROJECT_ENVIRONMENT_MCP_SERVER_NAME: &str = "project_environment";
 const SANDBOX_IMAGE_MCP_SERVER_NAME: &str = "sandbox_images";
 const CLOUD_SANDBOX_IMAGE_MCP_PATH: &str = "/api/sandbox-images/mcp";
 const LOCAL_SANDBOX_IMAGE_MCP_PATH: &str = "/api/local/sandbox/images/mcp";
-const PROJECT_ENVIRONMENT_AGENT_MAX_ITERATIONS: usize = 600;
-
 pub async fn analyze_project_runtime_environment(
     state: &AppState,
     project: &ProjectRecord,
@@ -310,26 +304,6 @@ async fn run_project_environment_agent(
     .await?;
     ensure_agent_required_tools_available(&executor, project, &routing)?;
 
-    let mut agent_model_config = model_config.clone();
-    agent_model_config.instructions = Some(project_environment_agent_system_prompt(
-        model_config.instructions.as_deref(),
-    ));
-    if agent_model_config.temperature.is_none() {
-        agent_model_config.temperature = Some(0.1);
-    }
-    if agent_model_config.max_output_tokens.is_none() {
-        agent_model_config.max_output_tokens = Some(4_000);
-    }
-
-    let runtime = AiRuntime::from_mcp_executor(executor)
-        .with_max_iterations(PROJECT_ENVIRONMENT_AGENT_MAX_ITERATIONS)
-        .with_record_writer(Some(Arc::new(memory.writer.clone())));
-    let runner = ContextualTurnRunner::new(runtime, Some(memory.composer.clone()))
-        .with_context_overflow_recovery(Some(
-            MemoryContextOverflowRecovery::new()
-                .with_trigger_reason("project_environment_agent_context_overflow"),
-        ));
-
     let prompt = build_project_environment_agent_prompt(
         project,
         environment,
@@ -337,7 +311,6 @@ async fn run_project_environment_agent(
         local_inspection,
         run_id,
     )?;
-    let conversation_id = memory.conversation_id.clone();
     let metadata = json!({
         "agent": "project_management_environment_agent",
         "run_id": run_id,
@@ -345,27 +318,25 @@ async fn run_project_environment_agent(
         "file_provider": routing.file_provider.as_str(),
         "sandbox_provider": routing.sandbox_provider.as_str(),
     });
-    let user_record = Some(
-        SaveRecordInput::user_message(memory.conversation_id.clone(), prompt.clone())
-            .with_conversation_turn_id(run_id.to_string())
-            .with_message_mode("project_environment_agent")
-            .with_message_source("project_management_service")
-            .with_metadata(metadata.clone()),
+    let agent_memory = AgentTurnMemory::new(
+        memory.composer.clone(),
+        memory.writer.clone(),
+        memory.scope.clone(),
+        memory.conversation_id.clone(),
     );
-    let record_options = RuntimeRecordOptions::persist_all()
-        .with_assistant_message_mode("project_environment_agent")
-        .with_assistant_message_source("project_management_service")
-        .with_assistant_metadata(metadata.clone())
-        .with_tool_message_mode("project_environment_agent")
-        .with_tool_message_source("project_management_service")
-        .with_tool_metadata(metadata);
-    let spec = RuntimeTurnSpec::for_user_text(agent_model_config, conversation_id, prompt)
-        .with_conversation_turn_id(run_id.to_string())
-        .with_caller_model(model_config.model.clone())
-        .with_record_options(record_options)
-        .with_memory_scope(Some(memory.scope.clone()))
-        .with_user_record(user_record);
-    let result = runner.run_turn(spec.into_contextual_turn_request()).await?;
+    let request = AgentTurnRequest::new(
+        model_config.clone(),
+        memory.conversation_id.clone(),
+        run_id,
+        prompt,
+    )
+    .with_mcp_executor(executor)
+    .with_memory(Some(agent_memory))
+    .with_metadata(metadata);
+    let result = AgentExecutor::new()
+        .run(&PROJECT_ENVIRONMENT_AGENT, request)
+        .await
+        .map_err(|error| error.message().to_string())?;
     tracing::info!(
         project_id = project.id.as_str(),
         run_id,
@@ -418,15 +389,6 @@ async fn resolve_project_agent_capabilities(
             .map_err(|err| err.to_string())?;
     }
     Ok(capabilities)
-}
-
-fn project_environment_agent_system_prompt(existing: Option<&str>) -> String {
-    let fixed = "你是 Project Management Service 内置的运行环境初始化 Agent。你的业务范围固定：读取当前项目文件，判断项目是否可运行，识别运行时和依赖服务，使用沙箱镜像 MCP 搜索或同步创建所需镜像，然后通过项目环境工具写入当前项目的运行环境结果。不要处理需求拆解、任务执行、代码修改或其它项目管理任务。";
-    existing
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(|value| format!("{value}\n\n{fixed}"))
-        .unwrap_or_else(|| fixed.to_string())
 }
 
 fn build_project_environment_agent_prompt(

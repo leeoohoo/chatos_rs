@@ -172,6 +172,12 @@ impl RunService {
                     ));
                 }
             })),
+            on_turn_phase: None,
+            on_runtime_guidance_applied: None,
+            on_context_summarized_start: None,
+            on_context_summarized_stream: None,
+            on_context_summarized_end: None,
+            on_before_model_input: None,
             on_before_model_request: Some(Arc::new({
                 let store = store_for_callbacks;
                 let run_id = run_id.clone();
@@ -194,6 +200,7 @@ impl RunService {
                     ));
                 }
             })),
+            on_before_send_model_request: None,
         }
     }
 

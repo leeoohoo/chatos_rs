@@ -524,7 +524,7 @@ async fn ensure_harness_root_space(
     identity: &HarnessProvisioningIdentity,
     username: &str,
 ) -> Result<(), HarnessRequestError> {
-    let description = format!("Chatos workspace for {username}");
+    let description = format!("Chat OS workspace for {username}");
     let space_body = HarnessCreateSpaceRequest {
         identifier: identity.space_identifier.as_str(),
         parent_ref: "",

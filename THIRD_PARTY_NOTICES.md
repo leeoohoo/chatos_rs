@@ -6,7 +6,7 @@ This repository integrates third-party open-source software that remains governe
 
 - Source: https://github.com/leeoohoo/harness.git
 - Local checkout: `harness/`
-- Docker image used by the Chatos Docker stack: `harness/harness`
+- Docker image used by the Chat OS Docker stack: `harness/harness`
 - License: Apache License 2.0
 - Copyright notice: Copyright 2024 Harness, Inc.
 

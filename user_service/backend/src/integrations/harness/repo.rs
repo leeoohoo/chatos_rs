@@ -97,7 +97,7 @@ pub async fn create_harness_project_repo(
         .as_deref()
         .map(str::trim)
         .filter(|value| !value.is_empty())
-        .unwrap_or("Chatos project");
+        .unwrap_or("Chat OS project");
     let body = HarnessCreateRepoRequest {
         parent_ref: record.space_identifier.as_str(),
         identifier: repo_identifier.as_str(),

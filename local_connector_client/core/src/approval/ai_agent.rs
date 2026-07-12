@@ -10,10 +10,10 @@ use serde::Deserialize;
 use serde_json::json;
 use uuid::Uuid;
 
+use chatos_agent::{AgentExecutor, AgentTurnMemory, AgentTurnRequest, COMMAND_APPROVAL_AGENT};
 use chatos_ai_runtime::{
-    AiRuntime, ContextualTurnRunner, MemoryContextComposer, MemoryContextOverflowRecovery,
-    MemoryEngineRecordWriter, MemoryRecordScope, MemoryScope, ModelRuntimeConfig,
-    RuntimeRecordOptions, RuntimeTurnSpec, SaveRecordInput,
+    MemoryContextComposer, MemoryEngineRecordWriter, MemoryRecordScope, MemoryScope,
+    ModelRuntimeConfig,
 };
 
 use crate::mcp::tools::code_maintainer_service_for_root;
@@ -92,21 +92,6 @@ pub(crate) async fn run_auto_approval_agent(
         .normalized()
         .ai_agent_max_iterations;
 
-    let mut runtime = AiRuntime::builder()
-        .with_tool_executor(executor)
-        .with_max_iterations(max_iterations);
-    if let Some(memory) = memory.as_ref() {
-        runtime = runtime.with_record_writer(memory.writer.clone());
-    }
-    let runner = ContextualTurnRunner::new(
-        runtime.build_runtime(),
-        memory.as_ref().map(|memory| memory.composer.clone()),
-    )
-    .with_context_overflow_recovery(Some(
-        MemoryContextOverflowRecovery::new()
-            .with_trigger_reason("local_connector_command_approval_context_overflow"),
-    ));
-
     let run_id = format!("approval-agent-{}", Uuid::new_v4());
     let conversation_id = memory
         .as_ref()
@@ -122,34 +107,23 @@ pub(crate) async fn run_auto_approval_agent(
         "project_root_relative_path": request.project_key.project_root_relative_path,
         "project_anchor_relative_path": request.project_key.project_anchor_relative_path,
     });
-    let user_record = memory.as_ref().map(|memory| {
-        SaveRecordInput::user_message(memory.conversation_id.clone(), prompt.clone())
-            .with_conversation_turn_id(run_id.clone())
-            .with_message_mode("local_connector_command_approval_agent")
-            .with_message_source("local_connector_client")
-            .with_metadata(metadata.clone())
+    let agent_memory = memory.as_ref().map(|memory| {
+        AgentTurnMemory::new(
+            memory.composer.clone(),
+            memory.writer.clone(),
+            memory.scope.clone(),
+            memory.conversation_id.clone(),
+        )
     });
-    let record_options = RuntimeRecordOptions::persist_all()
-        .with_assistant_message_mode("local_connector_command_approval_agent")
-        .with_assistant_message_source("local_connector_client")
-        .with_assistant_metadata(metadata.clone())
-        .with_tool_message_mode("local_connector_command_approval_agent")
-        .with_tool_message_source("local_connector_client")
-        .with_tool_metadata(metadata);
-    let mut agent_model_config = model_config;
-    agent_model_config.instructions = Some(approval_agent_system_prompt(
-        agent_model_config.instructions.as_deref(),
-    ));
-    let spec = RuntimeTurnSpec::for_user_text(agent_model_config.clone(), conversation_id, prompt)
-        .with_conversation_turn_id(run_id)
-        .with_caller_model(agent_model_config.model.clone())
-        .with_record_options(record_options)
-        .with_memory_scope(memory.as_ref().map(|memory| memory.scope.clone()))
-        .with_user_record(user_record);
-    runner
-        .run_turn(spec.into_contextual_turn_request())
+    let turn_request = AgentTurnRequest::new(model_config, conversation_id, run_id, prompt)
+        .with_tool_executor(executor)
+        .with_memory(agent_memory)
+        .with_max_iterations(max_iterations)
+        .with_metadata(metadata);
+    AgentExecutor::new()
+        .run(&COMMAND_APPROVAL_AGENT, turn_request)
         .await
-        .map_err(anyhow::Error::msg)?;
+        .map_err(|error| anyhow!(error.message().to_string()))?;
 
     let decision = decision
         .lock()
@@ -451,24 +425,6 @@ fn stable_short_hash(value: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(value.as_bytes());
     hex::encode(hasher.finalize()).chars().take(24).collect()
-}
-
-fn approval_agent_system_prompt(existing: Option<&str>) -> String {
-    let fixed = r#"你是 Local Connector Client 内置的命令审批 Agent。你的唯一职责是在本地项目范围内审核即将执行的 shell 命令是否可以放行。
-
-你可以使用文件读取、目录列表和文本搜索工具了解项目上下文。你不能执行命令，不能修改文件，不能联网，不能请求额外工具。
-
-最后必须调用 `approval_decision` 工具返回结论：
-- `approve`：命令与当前项目上下文匹配，风险可接受，且不会读取/泄露敏感信息、破坏数据、越权修改系统或项目外文件。
-- `deny`：命令明显危险，包括破坏性删除/覆盖、权限提升、读取或外传密钥、远程脚本管道执行、修改系统目录、不可逆基础设施操作等。
-- `ask_user`：缺少业务意图、影响范围不清、需要用户确认，或你无法通过本地文件判断。
-
-如果选择 `approve`，只有当命令非常稳定且低风险时才把 `remember_allow` 设为 true。"#;
-    existing
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(|value| format!("{value}\n\n{fixed}"))
-        .unwrap_or_else(|| fixed.to_string())
 }
 
 fn build_approval_prompt(

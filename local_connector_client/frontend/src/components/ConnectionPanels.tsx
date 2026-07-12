@@ -218,7 +218,7 @@ export function WorkspacePanel({
       <div className="panelHeader">
         <div>
           <h2><FolderOpen size={18} />开放目录</h2>
-          <p>默认关闭。只有这里授权过的目录，ChatOS 才能看到并用于创建项目或终端。</p>
+          <p>默认关闭。只有这里授权过的目录，Chat OS 才能看到并用于创建项目或终端。</p>
         </div>
         <button className="primaryButton compact" onClick={() => setPickerOpen(true)}>
           <Plus size={16} />开放目录

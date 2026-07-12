@@ -445,7 +445,7 @@ mod tests {
         fn unavailable_tools(&self) -> Vec<(String, String)> {
             vec![(
                 "write_file".to_string(),
-                "Tool is disabled in Chatos Plan task profile".to_string(),
+                "Tool is disabled in Chat OS Plan task profile".to_string(),
             )]
         }
     }
@@ -489,6 +489,6 @@ mod tests {
         assert!(results[0].is_error);
         assert!(results[0]
             .content
-            .contains("Tool is disabled in Chatos Plan task profile"));
+            .contains("Tool is disabled in Chat OS Plan task profile"));
     }
 }

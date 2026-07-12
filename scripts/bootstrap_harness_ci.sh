@@ -191,7 +191,7 @@ fi
 json_body "$tmp_dir/space-body.json" \
   "identifier=$HARNESS_CI_SPACE" \
   "parent_ref=" \
-  "description=Chatos CI workspace" \
+  "description=Chat OS CI workspace" \
   "is_public=false"
 space_file="$tmp_dir/space.json"
 space_status="$(request_json POST "$HARNESS_BASE_URL/api/v1/spaces" "$admin_token" "$tmp_dir/space-body.json" "$space_file")"
@@ -209,7 +209,7 @@ json_body "$tmp_dir/repo-body.json" \
   "parent_ref=$HARNESS_CI_SPACE" \
   "identifier=$HARNESS_CI_REPO" \
   "default_branch=$HARNESS_CI_BRANCH" \
-  "description=Chatos RS CI mirror" \
+  "description=Chat OS CI mirror" \
   "is_public=false" \
   "readme=false"
 repo_create_file="$tmp_dir/repo-create.json"
@@ -310,9 +310,9 @@ if [[ "$snapshot_needed" == "true" ]]; then
   fi
   snapshot_tree="$(GIT_INDEX_FILE="$snapshot_index" git -C "$ROOT_DIR" write-tree)"
   push_source="$(
-    GIT_AUTHOR_NAME="Chatos Harness CI" \
+    GIT_AUTHOR_NAME="Chat OS Harness CI" \
     GIT_AUTHOR_EMAIL="harness-ci@chatos.local" \
-    GIT_COMMITTER_NAME="Chatos Harness CI" \
+    GIT_COMMITTER_NAME="Chat OS Harness CI" \
     GIT_COMMITTER_EMAIL="harness-ci@chatos.local" \
       git -C "$ROOT_DIR" commit-tree "$snapshot_tree" -p HEAD -m "chore: harness ci trial snapshot"
   )"
@@ -352,7 +352,7 @@ HARNESS_GIT_PASSWORD="$push_token" \
 
 json_body "$tmp_dir/pipeline-body.json" \
   "identifier=$HARNESS_CI_PIPELINE" \
-  "description=Chatos RS CI" \
+  "description=Chat OS CI" \
   "disabled=false" \
   "default_branch=$HARNESS_CI_BRANCH" \
   "config_path=$HARNESS_CI_CONFIG_PATH"

@@ -190,9 +190,9 @@ async fn ready() -> (StatusCode, axum::Json<serde_json::Value>) {
 
 async fn root() -> axum::Json<serde_json::Value> {
     axum::Json(serde_json::json!({
-        "name": "Chatos RS Backend",
+        "name": "Chat OS Backend",
         "version": "1.0.0",
-        "description": "Rust orchestration backend for Chatos RS engineering workflows",
+        "description": "Rust orchestration backend for Chat OS engineering workflows",
         "endpoints": {
             "health": "/health",
             "ready": "/ready",

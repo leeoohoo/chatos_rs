@@ -176,7 +176,7 @@ print_urls() {
   official_website_frontend_port="$(env_value OFFICIAL_WEBSITE_FRONTEND_PORT 39251)"
   cat <<EOF
 
-[OK] Chatos Docker stack is running.
+[OK] Chat OS Docker stack is running.
 
 Main app:                 http://localhost:${frontend_port}
 Main backend:             http://localhost:${main_backend_port}
@@ -203,10 +203,10 @@ build_local_images() {
   if [[ ${#services[@]} -eq 0 ]]; then
     echo "[INFO] building sandbox runtime image"
     compose_build_limited --profile image build sandbox-agent-image
-    echo "[INFO] building Chatos cloud service images"
+    echo "[INFO] building Chat OS cloud service images"
     services=("${LOCAL_BUILD_SERVICES[@]}")
   else
-    echo "[INFO] building selected Chatos service images"
+    echo "[INFO] building selected Chat OS service images"
   fi
 
   local service
@@ -222,10 +222,10 @@ build_local_images() {
 
 pull_prebuilt_images() {
   if [[ $# -gt 0 ]]; then
-    echo "[INFO] pulling selected prebuilt Chatos images"
+    echo "[INFO] pulling selected prebuilt Chat OS images"
     compose --profile image pull "$@"
   else
-    echo "[INFO] pulling prebuilt Chatos cloud images"
+    echo "[INFO] pulling prebuilt Chat OS cloud images"
     compose --profile image pull
   fi
 }
@@ -247,7 +247,7 @@ clean_dangling_images_if_enabled() {
 
 start_from_prebuilt_images() {
   pull_prebuilt_images "$@"
-  echo "[INFO] starting Chatos cloud services from prebuilt images"
+  echo "[INFO] starting Chat OS cloud services from prebuilt images"
   compose up -d --no-build --remove-orphans "$@"
   clean_dangling_images_if_enabled
   print_urls
@@ -255,21 +255,21 @@ start_from_prebuilt_images() {
 
 start_from_local_build() {
   build_local_images "$@"
-  echo "[INFO] starting Chatos cloud services from local build"
+  echo "[INFO] starting Chat OS cloud services from local build"
   compose_build up -d --no-build --remove-orphans "$@"
   clean_dangling_images_if_enabled
   print_urls
 }
 
 start_without_refresh() {
-  echo "[INFO] starting Chatos cloud services without pulling or building images"
+  echo "[INFO] starting Chat OS cloud services without pulling or building images"
   compose up -d --no-build --pull never --remove-orphans "$@"
   print_urls
 }
 
 restart_without_refresh() {
   if [[ $# -gt 0 ]]; then
-    echo "[INFO] recreating selected Chatos services without pulling or building images"
+    echo "[INFO] recreating selected Chat OS services without pulling or building images"
     compose up -d --no-build --pull never --no-deps --force-recreate "$@"
     print_urls
   else
@@ -282,10 +282,10 @@ rebuild_services() {
   local services=("$@")
   build_local_images "${services[@]}"
   if [[ ${#services[@]} -eq 0 ]]; then
-    echo "[INFO] starting Chatos cloud services from rebuilt local images"
+    echo "[INFO] starting Chat OS cloud services from rebuilt local images"
     compose_build up -d --no-build --remove-orphans
   else
-    echo "[INFO] recreating selected Chatos services from rebuilt local images"
+    echo "[INFO] recreating selected Chat OS services from rebuilt local images"
     compose_build up -d --no-build --pull never --no-deps --force-recreate "${services[@]}"
   fi
   clean_dangling_images_if_enabled

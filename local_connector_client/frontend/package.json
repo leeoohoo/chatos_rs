@@ -28,7 +28,7 @@
   },
   "build": {
     "appId": "com.chatos.local-connector",
-    "productName": "ChatOS Local Connector",
+    "productName": "Chat OS Local Connector",
     "directories": {
       "output": "dist-electron"
     },
@@ -57,7 +57,7 @@
           ]
         }
       ],
-      "artifactName": "ChatOS-Local-Connector-${version}-${arch}.${ext}"
+      "artifactName": "Chat-OS-Local-Connector-${version}-${arch}.${ext}"
     }
   }
 }

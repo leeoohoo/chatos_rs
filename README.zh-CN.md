@@ -1,6 +1,6 @@
-# Chatos RS
+# Chat OS
 
-Chatos RS 现在按云端 Docker 部署优先维护。除了 `local_connector_client/` 需要留在用户本机，其它服务都走 Docker Compose。
+Chat OS 现在按云端 Docker 部署优先维护。除了 `local_connector_client/` 需要留在用户本机，其它服务都走 Docker Compose。
 
 安装说明: [INSTALL_GUIDE.zh-CN.md](./INSTALL_GUIDE.zh-CN.md)
 
@@ -97,7 +97,7 @@ Docker 云端配置看 `docker/.env.example`。宿主机 Local Connector Client 
 
 ## Harness
 
-`harness/` 是从 `https://github.com/leeoohoo/harness.git` 拉下来的独立 Git 仓库；父级 Chatos 仓库会忽略这个目录。以后更新 Harness，请进入 `harness/` 目录用它自己的 Git 流程处理。
+`harness/` 是从 `https://github.com/leeoohoo/harness.git` 拉下来的独立 Git 仓库；父级 Chat OS 仓库会忽略这个目录。以后更新 Harness，请进入 `harness/` 目录用它自己的 Git 流程处理。
 
 新工作区如果需要源码副本，可以在根目录执行：
 
@@ -111,7 +111,7 @@ Docker Compose 使用 `harness/harness` 镜像运行 Harness，数据放在 `har
 
 ## CI 镜像
 
-GitHub Actions 会在 `main`、`master` 和版本 tag 上构建并推送所有 Chatos 服务镜像到 GHCR。默认镜像配置在 `docker/.env.example`：
+GitHub Actions 会在 `main`、`master` 和版本 tag 上构建并推送所有 Chat OS 服务镜像到 GHCR。默认镜像配置在 `docker/.env.example`：
 
 ```env
 CHATOS_IMAGE_NAMESPACE=ghcr.io/leeoohoo

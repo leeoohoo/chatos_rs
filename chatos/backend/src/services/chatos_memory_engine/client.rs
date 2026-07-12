@@ -30,8 +30,3 @@ pub(super) fn build_client() -> Result<MemoryEngineClient, String> {
     let cfg = Config::try_get()?;
     build_client_with_timeout_ms(cfg.memory_engine_request_timeout_ms)
 }
-
-pub(super) fn build_active_summary_trigger_client() -> Result<MemoryEngineClient, String> {
-    let cfg = Config::try_get()?;
-    build_client_with_timeout_ms(cfg.memory_engine_active_summary_trigger_timeout_ms)
-}

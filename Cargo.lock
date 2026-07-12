@@ -552,6 +552,7 @@ dependencies = [
  "axum 0.8.9",
  "base64 0.22.1",
  "bytes",
+ "chatos_agent",
  "chatos_ai_runtime",
  "chatos_builtin_tools",
  "chatos_mcp_runtime",
@@ -601,10 +602,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "chatos_agent"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "chatos_ai_runtime",
+ "chatos_mcp_runtime",
+ "chatos_plugin_management_sdk",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "chatos_ai_runtime"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "axum 0.8.9",
  "bytes",
  "chatos_mcp_runtime",
  "chatos_service_runtime",
@@ -2328,6 +2342,7 @@ dependencies = [
  "async-trait",
  "axum 0.8.9",
  "base64 0.22.1",
+ "chatos_agent",
  "chatos_ai_runtime",
  "chatos_builtin_tools",
  "chatos_mcp_runtime",
@@ -2797,13 +2812,18 @@ version = "0.1.0"
 dependencies = [
  "axum 0.7.9",
  "chatos_service_runtime",
+ "chrono",
  "dotenvy",
+ "hex",
  "reqwest",
  "serde",
+ "serde_json",
+ "sha2 0.11.0",
  "tokio",
  "tower-http 0.5.2",
  "tracing",
  "tracing-subscriber",
+ "url",
 ]
 
 [[package]]
@@ -3112,6 +3132,7 @@ name = "plugin_management_service_backend"
 version = "0.1.0"
 dependencies = [
  "axum 0.7.9",
+ "chatos_agent",
  "chatos_mcp_runtime",
  "chatos_service_runtime",
  "chrono",
@@ -3237,6 +3258,7 @@ dependencies = [
  "async-trait",
  "axum 0.7.9",
  "base64 0.22.1",
+ "chatos_agent",
  "chatos_ai_runtime",
  "chatos_builtin_tools",
  "chatos_mcp_runtime",
@@ -4543,6 +4565,7 @@ dependencies = [
  "async-trait",
  "axum 0.7.9",
  "base64 0.22.1",
+ "chatos_agent",
  "chatos_ai_runtime",
  "chatos_builtin_tools",
  "chatos_mcp_runtime",

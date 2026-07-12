@@ -11,7 +11,7 @@ SHELL := /bin/bash
 .PHONY: type-check-user-service-frontend
 
 help:
-	@echo "Chatos RS tasks:"
+	@echo "Chat OS tasks:"
 	@echo "  make dev                    # build/start the Docker stack from local source"
 	@echo "  make local-dev              # start host-side local dev stack for fast testing"
 	@echo "  make local-dev-stop         # stop host-side local dev stack"

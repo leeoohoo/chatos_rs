@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
+#[cfg(test)]
 use serde_json::{json, Value};
 
 use crate::core::internal_context_locale::InternalContextLocale;
 use crate::services::task_manager::TaskRecord;
+#[cfg(test)]
 use crate::services::text_normalization::normalize_optional_text_ref;
 
 const STATUS_TODO: &str = "todo";
@@ -15,6 +17,7 @@ const UNFINISHED_TASK_LIMIT: usize = 5;
 const BLOCKED_TASK_LIMIT: usize = 3;
 const COMPLETED_TASK_LIMIT: usize = 5;
 
+#[cfg(test)]
 pub fn build_runtime_prefixed_input_items(
     task_board_prompt: Option<&str>,
     contact_system_prompt: Option<&str>,
@@ -338,6 +341,7 @@ fn display_blocker_needs(task: &TaskRecord, locale: InternalContextLocale) -> St
     compact_text(task.blocker_needs.join(separator).as_str(), 180)
 }
 
+#[cfg(test)]
 fn build_prefixed_input_items(system_prompts: &[Option<&str>]) -> Option<Vec<Value>> {
     let mut prefixed_input_items = Vec::new();
     for prompt in system_prompts
@@ -357,6 +361,7 @@ fn build_prefixed_input_items(system_prompts: &[Option<&str>]) -> Option<Vec<Val
     }
 }
 
+#[cfg(test)]
 fn normalize_optional_text(value: Option<&str>) -> Option<String> {
     normalize_optional_text_ref(value)
 }

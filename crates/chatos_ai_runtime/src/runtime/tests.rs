@@ -1,18 +1,240 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use std::sync::Arc;
+use std::collections::VecDeque;
+use std::sync::{Arc, Mutex};
 
+use async_trait::async_trait;
+use axum::{extract::State, http::StatusCode, routing::post, Json, Router};
 use serde_json::{json, Value};
+use tokio::sync::Mutex as AsyncMutex;
 
 use chatos_mcp_runtime::{ToolCallerModelRuntime, ToolResult};
 
 use super::{
     append_runtime_input_items, empty_final_response_followup_item,
-    merge_pending_tool_turn_into_input, should_persist_tool_result, IterativeContextRefresh,
-    EMPTY_FINAL_RESPONSE_FOLLOWUP_PROMPT,
+    merge_pending_tool_turn_into_input, merge_record_metadata, prepare_iteration_request,
+    should_persist_tool_result, IterativeContextRefresh, EMPTY_FINAL_RESPONSE_FOLLOWUP_PROMPT,
 };
-use crate::{AiRuntimeOptions, AiRuntimeResult, AiTurnReport, AiTurnStatus};
+use crate::{
+    AiResponse, AiRuntime, AiRuntimeOptions, AiRuntimeResult, AiTurnReport, AiTurnStatus,
+    ModelRequest, RuntimeBeforeModelRequest, RuntimeFinalResponseAction,
+    RuntimeFinalResponseContext, RuntimeIterationContext, RuntimeLifecycleHook,
+};
+
+struct TestLifecycleHook;
+
+#[async_trait]
+impl RuntimeLifecycleHook for TestLifecycleHook {
+    async fn before_model_request(
+        &self,
+        _context: RuntimeIterationContext,
+    ) -> Result<RuntimeBeforeModelRequest, String> {
+        Ok(RuntimeBeforeModelRequest::unchanged()
+            .with_input_items(vec![json!({"role": "system", "content": "dynamic"})])
+            .with_stream_output(false)
+            .with_tools_enabled(false))
+    }
+}
+
+#[tokio::test]
+async fn lifecycle_hook_builds_ephemeral_iteration_request() {
+    let request = ModelRequest::openai_compatible(
+        "http://localhost",
+        "key",
+        "model",
+        "openai_compatible",
+        json!([{"role": "user", "content": "hello"}]),
+    )
+    .with_tools(vec![json!({"name": "tool"})]);
+    let options = AiRuntimeOptions::for_conversation("session-1")
+        .with_lifecycle_hook(Some(Arc::new(TestLifecycleHook)));
+
+    let (iteration_request, directive) =
+        prepare_iteration_request(&request, &options, 1, "initial")
+            .await
+            .expect("iteration request");
+
+    assert_eq!(request.input.as_array().expect("base input").len(), 1);
+    assert_eq!(iteration_request.input.as_array().expect("input").len(), 2);
+    assert!(iteration_request.tools.is_empty());
+    assert!(!directive.stream_output);
+}
+
+#[test]
+fn lifecycle_record_metadata_overlays_static_record_metadata() {
+    let merged = merge_record_metadata(
+        Some(json!({"message_mode": "chat", "shared": "base"})),
+        Some(json!({"task_turn_review": {"outcome": "pass"}, "shared": "hook"})),
+    )
+    .expect("merged metadata");
+
+    assert_eq!(merged["message_mode"], "chat");
+    assert_eq!(merged["shared"], "hook");
+    assert_eq!(merged["task_turn_review"]["outcome"], "pass");
+}
+
+#[derive(Clone)]
+struct MockLifecycleProviderState {
+    responses: Arc<AsyncMutex<VecDeque<Value>>>,
+    requests: Arc<AsyncMutex<Vec<Value>>>,
+}
+
+async fn mock_lifecycle_provider(
+    State(state): State<MockLifecycleProviderState>,
+    Json(payload): Json<Value>,
+) -> (StatusCode, Json<Value>) {
+    state.requests.lock().await.push(payload);
+    let response = state.responses.lock().await.pop_front().unwrap_or_else(|| {
+        json!({
+            "id": "response-default",
+            "status": "completed",
+            "output_text": "ok"
+        })
+    });
+    (StatusCode::OK, Json(response))
+}
+
+async fn start_lifecycle_mock_provider(
+    responses: Vec<Value>,
+) -> (
+    String,
+    Arc<AsyncMutex<Vec<Value>>>,
+    tokio::task::JoinHandle<()>,
+) {
+    let state = MockLifecycleProviderState {
+        responses: Arc::new(AsyncMutex::new(responses.into_iter().collect())),
+        requests: Arc::new(AsyncMutex::new(Vec::new())),
+    };
+    let requests = Arc::clone(&state.requests);
+    let app = Router::new()
+        .route("/responses", post(mock_lifecycle_provider))
+        .with_state(state);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind lifecycle mock provider");
+    let address = listener.local_addr().expect("mock provider address");
+    let server = tokio::spawn(async move {
+        let _ = axum::serve(listener, app).await;
+    });
+    (format!("http://{address}"), requests, server)
+}
+
+#[derive(Default)]
+struct ReviewLifecycleHook {
+    visible_response: Mutex<Option<AiResponse>>,
+}
+
+#[async_trait]
+impl RuntimeLifecycleHook for ReviewLifecycleHook {
+    async fn before_model_request(
+        &self,
+        context: RuntimeIterationContext,
+    ) -> Result<RuntimeBeforeModelRequest, String> {
+        Ok(RuntimeBeforeModelRequest::unchanged()
+            .with_stream_output(context.reason != "task_review")
+            .with_tools_enabled(context.reason != "task_review"))
+    }
+
+    async fn after_final_response(
+        &self,
+        context: RuntimeFinalResponseContext,
+    ) -> Result<RuntimeFinalResponseAction, String> {
+        if context.reason == "task_review" {
+            let visible = self
+                .visible_response
+                .lock()
+                .map_err(|_| "visible response lock poisoned".to_string())?
+                .clone()
+                .unwrap_or(context.response);
+            return Ok(RuntimeFinalResponseAction::Replace(visible));
+        }
+
+        *self
+            .visible_response
+            .lock()
+            .map_err(|_| "visible response lock poisoned".to_string())? =
+            Some(context.response.clone());
+        Ok(RuntimeFinalResponseAction::Continue {
+            input_items: vec![
+                json!({
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [{
+                        "type": "output_text",
+                        "text": context.response.content
+                    }]
+                }),
+                json!({
+                    "type": "message",
+                    "role": "system",
+                    "content": [{
+                        "type": "input_text",
+                        "text": "Review the completed work and return TASK_REVIEW: pass."
+                    }]
+                }),
+            ],
+            reason: "task_review".to_string(),
+        })
+    }
+}
+
+#[tokio::test]
+async fn lifecycle_continuation_runs_hidden_review_and_restores_visible_response() {
+    let (base_url, requests, server) = start_lifecycle_mock_provider(vec![
+        json!({
+            "id": "response-visible",
+            "status": "completed",
+            "output_text": "visible summary"
+        }),
+        json!({
+            "id": "response-review",
+            "status": "completed",
+            "output_text": "TASK_REVIEW: pass\nlooks good"
+        }),
+    ])
+    .await;
+    let request = ModelRequest::openai_compatible(
+        base_url,
+        "test-key",
+        "gpt-test",
+        "openai",
+        json!([{"role": "user", "content": "complete the task"}]),
+    )
+    .with_responses_support(true)
+    .with_tools(vec![json!({
+        "type": "function",
+        "name": "test_tool",
+        "description": "test tool",
+        "parameters": {"type": "object", "properties": {}}
+    })]);
+    let options = AiRuntimeOptions::for_conversation("session-1")
+        .with_lifecycle_hook(Some(Arc::new(ReviewLifecycleHook::default())));
+
+    let result = AiRuntime::new(None)
+        .with_max_iterations(4)
+        .run_turn(request, options)
+        .await
+        .expect("lifecycle review turn");
+    server.abort();
+
+    assert_eq!(result.content, "visible summary");
+    let captured = requests.lock().await.clone();
+    assert_eq!(captured.len(), 2);
+    assert!(captured[0]
+        .get("tools")
+        .and_then(Value::as_array)
+        .is_some_and(|tools| !tools.is_empty()));
+    assert!(captured[1]
+        .get("tools")
+        .and_then(Value::as_array)
+        .is_none_or(Vec::is_empty));
+    assert!(captured[1].to_string().contains("visible summary"));
+    assert!(captured[1].to_string().contains("TASK_REVIEW: pass"));
+    assert!(captured
+        .iter()
+        .all(|payload| payload.get("prev_id").is_none()));
+}
 
 #[test]
 fn runtime_options_pass_abort_checker_to_tool_context() {

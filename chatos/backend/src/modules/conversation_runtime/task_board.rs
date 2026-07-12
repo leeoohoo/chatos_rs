@@ -6,9 +6,9 @@ use std::collections::HashSet;
 use serde_json::Value;
 
 use crate::core::internal_context_locale::InternalContextLocale;
-use crate::services::task_board_prompt::{
-    build_runtime_prefixed_input_items, format_task_board_prompt,
-};
+#[cfg(test)]
+use crate::services::task_board_prompt::build_runtime_prefixed_input_items;
+use crate::services::task_board_prompt::format_task_board_prompt;
 use crate::services::task_manager::{list_tasks_for_context, TaskRecord};
 use crate::utils::events::Events;
 
@@ -40,16 +40,6 @@ pub struct TaskTurnFollowUpDirective {
     pub mode: TaskTurnFollowUpMode,
     pub locale: InternalContextLocale,
     pub guidance: String,
-}
-
-#[derive(Debug, Clone)]
-pub struct TaskBoardRuntimeContext {
-    pub session_id: String,
-    pub turn_id: Option<String>,
-    pub locale: InternalContextLocale,
-    pub contact_system_prompt: Option<String>,
-    pub builtin_mcp_system_prompt: Option<String>,
-    pub command_system_prompt: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -194,6 +184,7 @@ pub fn strip_task_turn_review_marker(content: &str) -> String {
     content.trim().to_string()
 }
 
+#[cfg(test)]
 pub fn build_hidden_task_turn_review_metadata() -> Value {
     serde_json::json!({
         "hidden": true,
@@ -224,43 +215,6 @@ pub fn build_task_turn_review_retry_guidance(locale: InternalContextLocale) -> S
 }
 
 #[cfg(test)]
-pub fn build_runtime_context(
-    session_id: Option<String>,
-    turn_id: Option<String>,
-    locale: InternalContextLocale,
-    contact_system_prompt: Option<String>,
-    builtin_mcp_system_prompt: Option<String>,
-    command_system_prompt: Option<String>,
-) -> Option<TaskBoardRuntimeContext> {
-    let session_id = session_id
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())?;
-    let turn_id = turn_id
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty());
-
-    Some(TaskBoardRuntimeContext {
-        session_id,
-        turn_id,
-        locale,
-        contact_system_prompt,
-        builtin_mcp_system_prompt,
-        command_system_prompt,
-    })
-}
-
-pub async fn load_prefixed_input_items(context: &TaskBoardRuntimeContext) -> Option<Vec<Value>> {
-    build_runtime_prefixed_input_items_for_turn(
-        &context.session_id,
-        context.turn_id.as_deref(),
-        context.locale,
-        context.contact_system_prompt.as_deref(),
-        context.builtin_mcp_system_prompt.as_deref(),
-        context.command_system_prompt.as_deref(),
-    )
-    .await
-}
-
 pub async fn build_runtime_prefixed_input_items_for_turn(
     session_id: &str,
     turn_id: Option<&str>,
@@ -393,9 +347,9 @@ fn is_done_status(status: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        build_hidden_task_turn_review_metadata, build_runtime_context,
-        classify_task_turn_follow_up, parse_task_turn_review_outcome,
-        strip_task_turn_review_marker, TaskTurnFollowUpMode, TaskTurnReviewOutcome,
+        build_hidden_task_turn_review_metadata, classify_task_turn_follow_up,
+        parse_task_turn_review_outcome, strip_task_turn_review_marker, TaskTurnFollowUpMode,
+        TaskTurnReviewOutcome,
     };
     use crate::core::internal_context_locale::InternalContextLocale;
     use crate::services::task_manager::TaskRecord;
@@ -444,22 +398,6 @@ mod tests {
             .map(|task| task.id.as_str())
             .collect::<Vec<_>>();
         assert_eq!(ids, vec!["todo-1", "done-duplicate", "done-2"]);
-    }
-
-    #[test]
-    fn build_runtime_context_trims_session_and_turn() {
-        let context = build_runtime_context(
-            Some("  session-1  ".to_string()),
-            Some("  turn-1  ".to_string()),
-            InternalContextLocale::EnUs,
-            Some("contact".to_string()),
-            Some("builtin".to_string()),
-            Some("command".to_string()),
-        )
-        .expect("context should be present");
-
-        assert_eq!(context.session_id, "session-1");
-        assert_eq!(context.turn_id.as_deref(), Some("turn-1"));
     }
 
     #[test]

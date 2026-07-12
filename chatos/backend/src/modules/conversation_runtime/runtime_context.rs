@@ -6,8 +6,9 @@ use std::sync::{Arc, Mutex};
 
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine as _;
+use chatos_agent::ChatosAgentProfile;
 use chatos_mcp_runtime::{PROJECT_MANAGEMENT_MCP_ID, PROJECT_MANAGEMENT_SERVER_NAME};
-use chatos_plugin_management_sdk::{SystemAgentKey, CHATOS_TASK_RUNNER_MCP_RESOURCE_ID};
+use chatos_plugin_management_sdk::CHATOS_TASK_RUNNER_MCP_RESOURCE_ID;
 use serde::Serialize;
 use tracing::warn;
 
@@ -34,8 +35,6 @@ use crate::services::{
 
 const TASK_RUNNER_CONTACT_MCP_SERVER_NAME: &str = "task_runner_service";
 const PROJECT_MANAGEMENT_MCP_ENDPOINT_PATH: &str = "/mcp";
-const PROJECT_REQUIREMENT_EXECUTION_PLANNER_TOOL_PROFILE: &str =
-    "project_requirement_execution_planner";
 const PROJECT_REQUIREMENT_PLANNER_PROJECT_MCP_READ_TOOLS: &[&str] = &[
     "get_project_overview",
     "list_requirements",
@@ -60,6 +59,7 @@ pub struct ConversationRuntimeRequest {
 
 #[derive(Debug, Clone)]
 pub struct ResolvedConversationRuntimeContext {
+    pub agent_profile: ChatosAgentProfile,
     pub internal_context_locale: InternalContextLocale,
     pub contact_agent_id: Option<String>,
     pub base_system_prompt: Option<String>,
@@ -190,8 +190,10 @@ pub async fn resolve_runtime_context(
 
     let (mut http_servers, stdio_servers, builtin_servers) = empty_mcp_server_bundle();
     let mut runtime_error = None;
+    let agent_profile =
+        ChatosAgentProfile::from_flags(req.plan_mode, req.project_requirement_execution_planner);
 
-    let requires_concrete_project = req.plan_mode || req.project_requirement_execution_planner;
+    let requires_concrete_project = agent_profile.requires_concrete_project();
     let task_runner_project_id = if requires_concrete_project {
         resolved_project_id
             .as_deref()
@@ -204,12 +206,8 @@ pub async fn resolve_runtime_context(
     }
 
     if runtime_error.is_none() {
-        let policy_result = resolve_chatos_task_runner_policy(
-            req.plan_mode,
-            req.project_requirement_execution_planner,
-            effective_user_id.as_deref(),
-        )
-        .await;
+        let policy_result =
+            resolve_chatos_task_runner_policy(agent_profile, effective_user_id.as_deref()).await;
         if let Err(err) = policy_result {
             warn!(
                 session_id,
@@ -235,8 +233,7 @@ pub async fn resolve_runtime_context(
             req.conversation_turn_id.as_deref(),
             req.source_user_message_id.as_deref(),
             internal_context_locale,
-            req.plan_mode,
-            req.project_requirement_execution_planner,
+            agent_profile,
         )
         .await
         {
@@ -250,7 +247,7 @@ pub async fn resolve_runtime_context(
         }
     }
 
-    if runtime_error.is_none() && req.project_requirement_execution_planner {
+    if runtime_error.is_none() && agent_profile.requires_project_management_mcp() {
         match Config::try_get()
             .map_err(|err| err.to_string())
             .and_then(|cfg| {
@@ -287,6 +284,7 @@ pub async fn resolve_runtime_context(
     };
 
     ResolvedConversationRuntimeContext {
+        agent_profile,
         internal_context_locale,
         contact_agent_id,
         base_system_prompt,
@@ -308,8 +306,7 @@ pub async fn resolve_runtime_context(
 }
 
 async fn resolve_chatos_task_runner_policy(
-    plan_mode: bool,
-    project_requirement_execution_planner: bool,
+    agent_profile: ChatosAgentProfile,
     effective_user_id: Option<&str>,
 ) -> Result<(), String> {
     let owner_user_id = effective_user_id
@@ -317,7 +314,7 @@ async fn resolve_chatos_task_runner_policy(
         .filter(|value| !value.is_empty())
         .ok_or_else(|| "当前用户身份缺失".to_string())?;
     let capabilities = plugin_management_capabilities::resolve_for_current_user(
-        chatos_agent_key(plan_mode, project_requirement_execution_planner),
+        agent_profile.key(),
         owner_user_id,
     )
     .await?;
@@ -330,25 +327,12 @@ async fn resolve_chatos_task_runner_policy(
     capabilities
         .require_available_mcp(CHATOS_TASK_RUNNER_MCP_RESOURCE_ID)
         .map_err(|err| err.to_string())?;
-    if project_requirement_execution_planner {
+    if agent_profile.requires_project_management_mcp() {
         capabilities
             .require_available_mcp(PROJECT_MANAGEMENT_MCP_ID)
             .map_err(|err| err.to_string())?;
     }
     Ok(())
-}
-
-fn chatos_agent_key(
-    plan_mode: bool,
-    project_requirement_execution_planner: bool,
-) -> SystemAgentKey {
-    if project_requirement_execution_planner {
-        SystemAgentKey::ProjectRequirementExecutionPlannerAgent
-    } else if plan_mode {
-        SystemAgentKey::ChatosPlanningAgent
-    } else {
-        SystemAgentKey::ChatosConversationAgent
-    }
 }
 
 #[derive(Debug)]
@@ -429,8 +413,7 @@ async fn build_contact_task_runner_runtime(
     conversation_turn_id: Option<&str>,
     source_user_message_id: Option<&str>,
     locale: InternalContextLocale,
-    plan_mode: bool,
-    project_requirement_execution_planner: bool,
+    agent_profile: ChatosAgentProfile,
 ) -> Option<ContactTaskRunnerRuntime> {
     let config = match chatos_memory_mappings::get_contact_task_runner_runtime_config(
         effective_user_id,
@@ -502,22 +485,19 @@ async fn build_contact_task_runner_runtime(
     );
     headers.insert(
         "X-Task-Runner-Tool-Profile".to_string(),
-        if project_requirement_execution_planner {
-            PROJECT_REQUIREMENT_EXECUTION_PLANNER_TOOL_PROFILE
-        } else {
-            "chatos_async_planner"
-        }
-        .to_string(),
+        agent_profile.task_runner_tool_profile().to_string(),
     );
     headers.insert(
         "X-Task-Runner-Builtin-Prompt-Locale".to_string(),
         task_runner_builtin_prompt_lang(locale).to_string(),
     );
-    if plan_mode {
+    if let Some(task_profile) = agent_profile.task_runner_task_profile() {
         headers.insert(
             "X-Task-Runner-Task-Profile".to_string(),
-            "chatos_plan".to_string(),
+            task_profile.to_string(),
         );
+    }
+    if agent_profile.plan_mode_header() {
         headers.insert("X-Chatos-Plan-Mode".to_string(), "true".to_string());
     }
     let project_id =
@@ -612,16 +592,16 @@ mod plugin_policy_tests {
     #[test]
     fn normal_and_plan_modes_use_distinct_system_agent_keys() {
         assert_eq!(
-            chatos_agent_key(false, false),
-            SystemAgentKey::ChatosConversationAgent
+            ChatosAgentProfile::from_flags(false, false).key(),
+            chatos_plugin_management_sdk::SystemAgentKey::ChatosConversationAgent
         );
         assert_eq!(
-            chatos_agent_key(true, false),
-            SystemAgentKey::ChatosPlanningAgent
+            ChatosAgentProfile::from_flags(true, false).key(),
+            chatos_plugin_management_sdk::SystemAgentKey::ChatosPlanningAgent
         );
         assert_eq!(
-            chatos_agent_key(false, true),
-            SystemAgentKey::ProjectRequirementExecutionPlannerAgent
+            ChatosAgentProfile::from_flags(false, true).key(),
+            chatos_plugin_management_sdk::SystemAgentKey::ProjectRequirementExecutionPlannerAgent
         );
     }
 

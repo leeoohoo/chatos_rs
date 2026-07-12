@@ -4,12 +4,18 @@
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::{Path, PathBuf};
 
+use crate::release_storage::ReleaseStorageConfig;
+
 #[derive(Debug, Clone)]
 pub struct AppConfig {
     pub host: IpAddr,
     pub port: u16,
     pub static_dir: PathBuf,
     pub public_base_url: String,
+    pub app_url: String,
+    pub user_service_base_url: String,
+    pub release_storage: Option<ReleaseStorageConfig>,
+    pub release_upload_token: Option<String>,
 }
 
 impl AppConfig {
@@ -22,12 +28,22 @@ impl AppConfig {
             .unwrap_or_else(default_static_dir);
         let public_base_url = normalized_env("OFFICIAL_WEBSITE_PUBLIC_BASE_URL")
             .unwrap_or_else(|| format!("http://localhost:{port}"));
+        let app_url = normalized_env("OFFICIAL_WEBSITE_APP_URL")
+            .unwrap_or_else(|| "http://localhost:8088".to_string());
+        let user_service_base_url = normalized_env("OFFICIAL_WEBSITE_USER_SERVICE_BASE_URL")
+            .unwrap_or_else(|| "http://127.0.0.1:39190".to_string());
+        let release_storage = ReleaseStorageConfig::from_env()?;
+        let release_upload_token = normalized_env("OFFICIAL_WEBSITE_RELEASE_UPLOAD_TOKEN");
 
         Ok(Self {
             host,
             port,
             static_dir,
             public_base_url: public_base_url.trim_end_matches('/').to_string(),
+            app_url: app_url.trim_end_matches('/').to_string(),
+            user_service_base_url: user_service_base_url.trim_end_matches('/').to_string(),
+            release_storage,
+            release_upload_token,
         })
     }
 
@@ -71,7 +87,7 @@ fn default_static_dir() -> PathBuf {
         .join("dist")
 }
 
-fn normalized_env(key: &str) -> Option<String> {
+pub(crate) fn normalized_env(key: &str) -> Option<String> {
     std::env::var(key)
         .ok()
         .map(|value| value.trim().to_string())

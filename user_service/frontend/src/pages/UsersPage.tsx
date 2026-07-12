@@ -560,11 +560,11 @@ export function UsersPage() {
           onFinish={submitHarnessProvision}
         >
           <Typography.Paragraph type="secondary">
-            这个密码会同时写入 Chatos 和 Harness，保持两个账号登录密码一致。
+            这个密码会同时写入 Chat OS 和 Harness，保持两个账号登录密码一致。
           </Typography.Paragraph>
           <Form.Item
             name="password"
-            label="Chatos / Harness 密码"
+            label="Chat OS / Harness 密码"
             rules={[{ required: true, message: '请输入密码' }]}
           >
             <Input.Password autoComplete="new-password" />

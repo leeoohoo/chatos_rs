@@ -44,14 +44,14 @@ pub async fn send_registration_code(
         .parse()
         .map_err(|err| format!("invalid recipient email: {err}"))?;
     let body = format!(
-        "Your ChatOS registration verification code is: {code}\n\n\
+        "Your Chat OS registration verification code is: {code}\n\n\
          This code expires in 10 minutes. Do not share it with anyone.\n\n\
-         ChatOS"
+         Chat OS"
     );
     let message = Message::builder()
         .from(from)
         .to(to)
-        .subject("ChatOS registration verification code")
+        .subject("Chat OS registration verification code")
         .singlepart(SinglePart::plain(body))
         .map_err(|err| format!("build registration email failed: {err}"))?;
     let credentials = Credentials::new(username.to_string(), password.to_string());

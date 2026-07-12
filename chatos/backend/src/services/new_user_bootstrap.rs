@@ -16,7 +16,7 @@ const DEFAULT_AGENT_NAME: &str = "叽咕狸";
 const DEFAULT_AGENT_DESCRIPTION: &str =
     "新用户默认助手，帮助你快速开始对话、整理需求和使用 Task Runner。";
 const DEFAULT_AGENT_CATEGORY: &str = "assistant";
-const DEFAULT_AGENT_ROLE_DEFINITION: &str = "你叫叽咕狸，是用户进入 ChatOS 后默认可用的智能体。优先帮助用户快速开始对话、整理需求、拆解任务，并在需要时引导使用项目、工具和 Task Runner 能力。回答保持直接、清晰、可执行。";
+const DEFAULT_AGENT_ROLE_DEFINITION: &str = "你叫叽咕狸，是用户进入 Chat OS 后默认可用的智能体。优先帮助用户快速开始对话、整理需求、拆解任务，并在需要时引导使用项目、工具和 Task Runner 能力。回答保持直接、清晰、可执行。";
 const DEFAULT_STARTER_SESSION_TITLE: &str = "和叽咕狸开始对话";
 
 #[derive(Debug, Clone)]

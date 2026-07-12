@@ -10,8 +10,8 @@ export function splitArgs(value: string): string[] {
 
 export function sourceLabel(source: string) {
   const labels: Record<string, string> = {
-    chatos_terminal_exec: 'ChatOS 终端',
-    chatos_terminal_session: 'ChatOS 终端',
+    chatos_terminal_exec: 'Chat OS 终端',
+    chatos_terminal_session: 'Chat OS 终端',
     local_mcp: 'Task Runner',
     task_runner_sandbox: 'Task Runner',
     local_connector_ui: 'Local Connector 页面',

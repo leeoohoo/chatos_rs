@@ -84,7 +84,7 @@ function New-ManualElectronPackage {
   }
 
   $outRoot = Join-Path $ClientDir "dist\electron-windows"
-  $appDir = Join-Path $outRoot "ChatOS Local Connector"
+  $appDir = Join-Path $outRoot "Chat OS Local Connector"
   if (Test-Path -LiteralPath $appDir) {
     $resolvedApp = Resolve-Path -LiteralPath $appDir
     $resolvedOut = Resolve-Path -LiteralPath $outRoot
@@ -96,7 +96,7 @@ function New-ManualElectronPackage {
 
   New-Item -ItemType Directory -Force -Path $appDir | Out-Null
   Copy-Item -Path (Join-Path $electronDist "*") -Destination $appDir -Recurse -Force
-  Rename-Item -LiteralPath (Join-Path $appDir "electron.exe") -NewName "ChatOS Local Connector.exe"
+  Rename-Item -LiteralPath (Join-Path $appDir "electron.exe") -NewName "Chat OS Local Connector.exe"
 
   $resourcesDir = Join-Path $appDir "resources"
   $appResourcesDir = Join-Path $resourcesDir "app"
@@ -117,7 +117,7 @@ function New-ManualElectronPackage {
   Copy-Item -LiteralPath (Join-Path $ElectronResourcesDir "local_connector_client_core.exe") -Destination (Join-Path $resourcesDir "local_connector_client_core.exe") -Force
   Copy-Item -LiteralPath (Join-Path $ElectronResourcesDir "bundled-tools") -Destination $resourcesDir -Recurse -Force
 
-  $zipPath = Join-Path $outRoot "ChatOS-Local-Connector-windows-x64.zip"
+  $zipPath = Join-Path $outRoot "Chat-OS-Local-Connector-windows-x64.zip"
   if (Test-Path -LiteralPath $zipPath) {
     Remove-Item -LiteralPath $zipPath -Force
   }

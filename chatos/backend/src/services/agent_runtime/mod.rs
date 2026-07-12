@@ -1,8 +1,6 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-pub mod ai_client;
-pub mod ai_request_handler;
 pub mod ai_server;
 pub mod mcp_tool_execute;
 pub mod message_manager;
