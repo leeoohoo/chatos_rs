@@ -95,6 +95,7 @@ __pycache__/
 /docs
 !/docs/
 /docs/*
+!/docs/HARNESS_CI.md
 !/docs/plan/
 /docs/plan/*
 !/docs/plan/unified-agent-abstraction-implementation-plan.zh-CN.md

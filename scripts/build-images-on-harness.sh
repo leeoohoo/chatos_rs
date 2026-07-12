@@ -14,6 +14,9 @@ export HARNESS_CI_PIPELINE="${HARNESS_CI_PIPELINE:-chatos-rs-images}"
 export HARNESS_CI_CONFIG_PATH="${HARNESS_CI_CONFIG_PATH:-.drone.images.yml}"
 export HARNESS_CI_SNAPSHOT_SCOPE="${HARNESS_CI_SNAPSHOT_SCOPE:-all}"
 export HARNESS_CI_RUN="${HARNESS_CI_RUN:-true}"
+export HARNESS_CI_REGISTER_IMAGE_SERVICE_PIPELINES="${HARNESS_CI_REGISTER_IMAGE_SERVICE_PIPELINES:-true}"
+
+bash "$ROOT_DIR/scripts/generate_harness_image_pipelines.sh"
 
 if [[ -z "${HARNESS_ADMIN_PASSWORD:-}" ]]; then
   printf 'Harness admin password for %s: ' "$HARNESS_BASE_URL" >&2

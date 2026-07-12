@@ -21,6 +21,9 @@ HARNESS_GIT_BASE_URL="${HARNESS_GIT_BASE_URL:-}"
 HARNESS_CI_SNAPSHOT_SCOPE="${HARNESS_CI_SNAPSHOT_SCOPE:-ci-files}"
 HARNESS_CI_IMAGE_SERVICES="${HARNESS_CI_IMAGE_SERVICES:-${CHATOS_CI_IMAGE_SERVICES:-}}"
 HARNESS_CI_IMAGE_SERVICES_FILE="docker/.harness-ci-image-services"
+HARNESS_CI_REGISTER_IMAGE_SERVICE_PIPELINES="${HARNESS_CI_REGISTER_IMAGE_SERVICE_PIPELINES:-false}"
+HARNESS_CI_IMAGE_PIPELINE_DIR="${HARNESS_CI_IMAGE_PIPELINE_DIR:-.harness/pipelines/images}"
+HARNESS_CI_IMAGE_PIPELINE_PREFIX="${HARNESS_CI_IMAGE_PIPELINE_PREFIX:-image-}"
 
 if [[ -z "${HARNESS_CI_BRANCH// }" ]]; then
   HARNESS_CI_BRANCH="main"
@@ -45,11 +48,13 @@ ci_paths=(
   ".gitignore"
   ".drone.yml"
   ".drone.images.yml"
+  ".harness/pipelines"
   "docker/compose.yml"
   "docker/.env.example"
   "docker/deploy-harness-ci.sh"
   "docs/HARNESS_CI.md"
   "scripts/bootstrap_harness_ci.sh"
+  "scripts/generate_harness_image_pipelines.sh"
   "scripts/harness_ci_build_images.sh"
   "scripts/local-dev-stack.sh"
   "scripts/check_openapi_method_contract_gate.sh"
@@ -350,32 +355,69 @@ HARNESS_GIT_USERNAME="$push_username" \
 HARNESS_GIT_PASSWORD="$push_token" \
   git -C "$ROOT_DIR" push "$git_url" "$refspec"
 
-json_body "$tmp_dir/pipeline-body.json" \
-  "identifier=$HARNESS_CI_PIPELINE" \
-  "description=Chat OS CI" \
-  "disabled=false" \
-  "default_branch=$HARNESS_CI_BRANCH" \
-  "config_path=$HARNESS_CI_CONFIG_PATH"
-pipeline_file="$tmp_dir/pipeline.json"
 pipeline_url="$HARNESS_BASE_URL/api/v1/repos/$repo_api_ref/pipelines"
-pipeline_status="$(request_json POST "$pipeline_url" "$admin_token" "$tmp_dir/pipeline-body.json" "$pipeline_file")"
-if request_ok "$pipeline_status"; then
-  echo "[OK] Created Harness pipeline: $HARNESS_CI_PIPELINE"
-elif body_mentions_exists "$pipeline_file"; then
-  pipeline_id_encoded="$(url_encode "$HARNESS_CI_PIPELINE")"
-  patch_status="$(request_json PATCH "$pipeline_url/$pipeline_id_encoded" "$admin_token" "$tmp_dir/pipeline-body.json" "$pipeline_file")"
-  if request_ok "$patch_status"; then
-    echo "[OK] Updated Harness pipeline: $HARNESS_CI_PIPELINE"
-  else
-    echo "[ERROR] Update Harness pipeline failed: HTTP $patch_status" >&2
-    cat "$pipeline_file" >&2 || true
+
+create_or_update_pipeline() {
+  local identifier="$1"
+  local config_path="$2"
+  local description="$3"
+  local body_file="$tmp_dir/pipeline-body-$identifier.json"
+  local out_file="$tmp_dir/pipeline-$identifier.json"
+  local pipeline_status patch_status pipeline_id_encoded
+
+  json_body "$body_file" \
+    "identifier=$identifier" \
+    "description=$description" \
+    "disabled=false" \
+    "default_branch=$HARNESS_CI_BRANCH" \
+    "config_path=$config_path"
+
+  pipeline_status="$(request_json POST "$pipeline_url" "$admin_token" "$body_file" "$out_file")"
+  if request_ok "$pipeline_status"; then
+    echo "[OK] Created Harness pipeline: $identifier"
+    return 0
+  fi
+
+  if ! body_mentions_exists "$out_file"; then
+    echo "[ERROR] Create Harness pipeline failed: HTTP $pipeline_status" >&2
+    cat "$out_file" >&2 || true
     exit 1
   fi
-else
-  echo "[ERROR] Create Harness pipeline failed: HTTP $pipeline_status" >&2
-  cat "$pipeline_file" >&2 || true
-  exit 1
-fi
+
+  pipeline_id_encoded="$(url_encode "$identifier")"
+  patch_status="$(request_json PATCH "$pipeline_url/$pipeline_id_encoded" "$admin_token" "$body_file" "$out_file")"
+  if request_ok "$patch_status"; then
+    echo "[OK] Updated Harness pipeline: $identifier"
+  else
+    echo "[ERROR] Update Harness pipeline failed: HTTP $patch_status" >&2
+    cat "$out_file" >&2 || true
+    exit 1
+  fi
+}
+
+create_or_update_pipeline "$HARNESS_CI_PIPELINE" "$HARNESS_CI_CONFIG_PATH" "Chat OS CI"
+
+case "$HARNESS_CI_REGISTER_IMAGE_SERVICE_PIPELINES" in
+  1|true|TRUE|True|yes|YES|Yes|on|ON|On)
+    while IFS= read -r image_service; do
+      if [[ -z "$image_service" ]]; then
+        continue
+      fi
+      image_pipeline_identifier="$HARNESS_CI_IMAGE_PIPELINE_PREFIX$image_service"
+      image_pipeline_config="$HARNESS_CI_IMAGE_PIPELINE_DIR/$image_pipeline_identifier.yml"
+      if [[ ! -f "$ROOT_DIR/$image_pipeline_config" ]]; then
+        echo "[WARN] Skipping missing image service pipeline config: $image_pipeline_config" >&2
+        continue
+      fi
+      create_or_update_pipeline \
+        "$image_pipeline_identifier" \
+        "$image_pipeline_config" \
+        "Build and deploy Chat OS image: $image_service"
+    done < <(bash "$ROOT_DIR/docker/deploy.sh" build-services)
+    ;;
+  *)
+    ;;
+esac
 
 if [[ "$HARNESS_CI_RUN" == "true" ]]; then
   pipeline_id_encoded="$(url_encode "$HARNESS_CI_PIPELINE")"
