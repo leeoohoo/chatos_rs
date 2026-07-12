@@ -46,6 +46,27 @@ To refresh the pipeline list without running a build:
 HARNESS_CI_RUN=false HARNESS_ADMIN_PASSWORD='<password>' bash scripts/build-images-on-harness.sh
 ```
 
+## GitHub To Harness Sync
+
+GitHub Actions also mirrors source code into Harness automatically through:
+
+```text
+.github/workflows/sync-harness.yml
+```
+
+It runs on pushes to `main`, `master`, and `2.*` branches. The workflow pushes the
+current GitHub ref to the same Harness branch, refreshes Harness pipeline
+metadata, and sets `HARNESS_CI_RUN=false`, so it does not start an image build.
+
+Required GitHub repository secret:
+
+```text
+HARNESS_ADMIN_PASSWORD
+```
+
+For manual sync, run the `Sync GitHub To Harness` workflow from GitHub Actions.
+The optional `harness_branch` input can override the Harness target branch.
+
 ## Partial Build From CLI
 
 To build and deploy one service from CLI:
