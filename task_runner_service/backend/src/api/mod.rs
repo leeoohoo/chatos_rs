@@ -48,6 +48,7 @@ mod chatos_internal;
 mod core;
 mod external_mcp_configs;
 mod internal;
+mod internal_auth;
 mod mcp;
 mod models;
 mod projects;

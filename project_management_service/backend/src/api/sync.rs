@@ -6,6 +6,10 @@ use axum::http::HeaderMap;
 use axum::Json;
 use serde::Deserialize;
 
+use super::internal_auth::{
+    require_project_internal_request, CHATOS_CALLER, PROJECT_READ_SCOPE, PROJECT_SYNC_SCOPE,
+    TASK_RUNNER_CALLER,
+};
 use super::ApiError;
 use crate::models::{
     ImportProjectRequest, ProjectRecord, ProjectRuntimeEnvironmentResponse, ProjectStatus,
@@ -28,7 +32,12 @@ pub(in crate::api) async fn sync_list_projects(
     headers: HeaderMap,
     Query(query): Query<SyncProjectListQuery>,
 ) -> Result<Json<Vec<ProjectRecord>>, ApiError> {
-    require_project_sync_secret(&state, &headers)?;
+    require_project_internal_request(
+        &state.config,
+        &headers,
+        &[CHATOS_CALLER, TASK_RUNNER_CALLER],
+        PROJECT_READ_SCOPE,
+    )?;
     state
         .store
         .list_all_projects(query.status)
@@ -42,7 +51,12 @@ pub(in crate::api) async fn sync_import_project(
     headers: HeaderMap,
     Json(input): Json<ImportProjectRequest>,
 ) -> Result<Json<ProjectRecord>, ApiError> {
-    require_project_sync_secret(&state, &headers)?;
+    require_project_internal_request(
+        &state.config,
+        &headers,
+        &[CHATOS_CALLER, TASK_RUNNER_CALLER],
+        PROJECT_SYNC_SCOPE,
+    )?;
     let sandbox_enabled = input.sandbox_enabled;
     let project = state
         .store
@@ -60,7 +74,12 @@ pub(in crate::api) async fn sync_get_project(
     State(state): State<AppState>,
     headers: HeaderMap,
 ) -> Result<Json<ProjectRecord>, ApiError> {
-    require_project_sync_secret(&state, &headers)?;
+    require_project_internal_request(
+        &state.config,
+        &headers,
+        &[CHATOS_CALLER, TASK_RUNNER_CALLER],
+        PROJECT_READ_SCOPE,
+    )?;
     state
         .store
         .get_project(&project_id)
@@ -75,7 +94,12 @@ pub(in crate::api) async fn sync_get_project_runtime_environment(
     State(state): State<AppState>,
     headers: HeaderMap,
 ) -> Result<Json<ProjectRuntimeEnvironmentResponse>, ApiError> {
-    require_project_sync_secret(&state, &headers)?;
+    require_project_internal_request(
+        &state.config,
+        &headers,
+        &[CHATOS_CALLER, TASK_RUNNER_CALLER],
+        PROJECT_READ_SCOPE,
+    )?;
     let project = state
         .store
         .get_project(&project_id)
@@ -105,7 +129,12 @@ pub(in crate::api) async fn sync_task_runner_work_item_status(
     headers: HeaderMap,
     Json(input): Json<SyncTaskRunnerWorkItemStatusRequest>,
 ) -> Result<Json<SyncTaskRunnerWorkItemStatusResponse>, ApiError> {
-    require_project_sync_secret(&state, &headers)?;
+    require_project_internal_request(
+        &state.config,
+        &headers,
+        &[CHATOS_CALLER, TASK_RUNNER_CALLER],
+        PROJECT_SYNC_SCOPE,
+    )?;
     execution_sync::sync_task_runner_work_item_status(&state.store, &work_item_id, input)
         .await
         .map(Json)
@@ -118,7 +147,12 @@ pub(in crate::api) async fn sync_task_runner_task_status(
     headers: HeaderMap,
     Json(input): Json<SyncTaskRunnerWorkItemStatusRequest>,
 ) -> Result<Json<SyncTaskRunnerWorkItemStatusResponse>, ApiError> {
-    require_project_sync_secret(&state, &headers)?;
+    require_project_internal_request(
+        &state.config,
+        &headers,
+        &[CHATOS_CALLER, TASK_RUNNER_CALLER],
+        PROJECT_SYNC_SCOPE,
+    )?;
     execution_sync::sync_task_runner_task_status(&state.store, &task_runner_task_id, input)
         .await
         .map(Json)
@@ -131,7 +165,12 @@ pub(in crate::api) async fn sync_requirement_execution_state(
     headers: HeaderMap,
     Json(input): Json<SyncRequirementExecutionStateRequest>,
 ) -> Result<Json<SyncRequirementExecutionStateResponse>, ApiError> {
-    require_project_sync_secret(&state, &headers)?;
+    require_project_internal_request(
+        &state.config,
+        &headers,
+        &[CHATOS_CALLER, TASK_RUNNER_CALLER],
+        PROJECT_SYNC_SCOPE,
+    )?;
     execution_sync::sync_requirement_execution_state(&state.store, &requirement_id, input)
         .await
         .map(Json)
@@ -143,30 +182,4 @@ fn sync_error_to_api_error(error: ExecutionSyncError) -> ApiError {
         ExecutionSyncError::BadRequest(message) => ApiError::bad_request(message),
         ExecutionSyncError::NotFound(message) => ApiError::not_found(message),
     }
-}
-
-pub(in crate::api) fn require_project_sync_secret(
-    state: &AppState,
-    headers: &HeaderMap,
-) -> Result<(), ApiError> {
-    let Some(expected) = state
-        .config
-        .sync_secret
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    else {
-        return Err(ApiError::forbidden("project sync secret is not configured"));
-    };
-    let provided = headers
-        .get("x-project-service-sync-secret")
-        .or_else(|| headers.get("x-chatos-callback-secret"))
-        .and_then(|value| value.to_str().ok())
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .ok_or_else(|| ApiError::unauthorized("missing project sync secret"))?;
-    if provided != expected {
-        return Err(ApiError::unauthorized("invalid project sync secret"));
-    }
-    Ok(())
 }

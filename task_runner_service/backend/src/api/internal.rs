@@ -5,6 +5,9 @@ use std::collections::BTreeSet;
 
 use serde::Serialize;
 
+use super::internal_auth::{
+    require_task_runner_internal_request, EXECUTION_OPTIONS_READ_SCOPE, PROJECT_SERVICE_CALLER,
+};
 use super::*;
 
 #[derive(Debug, Serialize)]
@@ -19,7 +22,16 @@ pub(super) async fn get_user_execution_options(
     State(state): State<AppState>,
     headers: HeaderMap,
 ) -> Result<Json<InternalExecutionOptionsResponse>, ApiError> {
-    require_internal_api_secret(&state, &headers)?;
+    require_task_runner_internal_request(
+        &state.config,
+        &headers,
+        &[PROJECT_SERVICE_CALLER],
+        EXECUTION_OPTIONS_READ_SCOPE,
+    )
+    .map_err(|err| ApiError {
+        status: err.status,
+        message: err.message,
+    })?;
     let owner_user_id = owner_user_id.trim();
     if owner_user_id.is_empty() {
         return Err(ApiError::bad_request("owner_user_id is required"));
@@ -68,33 +80,6 @@ pub(super) async fn get_user_execution_options(
         builtin_tool_ids: builtin_tool_ids.into_iter().collect(),
         external_tool_ids: external_tool_ids.into_iter().collect(),
     }))
-}
-
-fn require_internal_api_secret(state: &AppState, headers: &HeaderMap) -> Result<(), ApiError> {
-    let Some(expected) = state
-        .config
-        .internal_api_secret
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    else {
-        return Err(ApiError::forbidden(
-            "task runner internal api secret is not configured",
-        ));
-    };
-    let provided = headers
-        .get("x-task-runner-internal-secret")
-        .or_else(|| headers.get("x-project-service-sync-secret"))
-        .and_then(|value| value.to_str().ok())
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .ok_or_else(|| ApiError::unauthorized("missing task runner internal api secret"))?;
-    if provided != expected {
-        return Err(ApiError::unauthorized(
-            "invalid task runner internal api secret",
-        ));
-    }
-    Ok(())
 }
 
 fn owns_resource(owner_user_id: Option<&str>, expected_owner_user_id: &str) -> bool {
@@ -171,6 +156,70 @@ mod tests {
 
         assert_eq!(err.status, StatusCode::UNAUTHORIZED);
         assert_eq!(err.message, "missing task runner internal api secret");
+    }
+
+    #[tokio::test]
+    async fn user_execution_options_accepts_project_service_scoped_token() {
+        let state = test_state().await;
+        let token = chatos_service_runtime::issue_internal_service_token(
+            "internal-secret",
+            PROJECT_SERVICE_CALLER,
+            super::super::internal_auth::TASK_RUNNER_TOKEN_AUDIENCE,
+            EXECUTION_OPTIONS_READ_SCOPE,
+            60,
+        )
+        .expect("issue token");
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "x-task-runner-caller",
+            HeaderValue::from_static(PROJECT_SERVICE_CALLER),
+        );
+        headers.insert(
+            "x-task-runner-internal-token",
+            HeaderValue::from_str(token.as_str()).expect("token header"),
+        );
+
+        let _ = get_user_execution_options(Path("owner-1".to_string()), State(state), headers)
+            .await
+            .expect("signed execution options request");
+    }
+
+    #[test]
+    fn chatos_internal_auth_uses_dedicated_secret_and_scope() {
+        let config = test_config();
+        let token = chatos_service_runtime::issue_internal_service_token(
+            "chatos-internal-secret",
+            super::super::internal_auth::CHATOS_CALLER,
+            super::super::internal_auth::TASK_RUNNER_TOKEN_AUDIENCE,
+            super::super::internal_auth::CHATOS_MESSAGES_READ_SCOPE,
+            60,
+        )
+        .expect("issue token");
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "x-task-runner-caller",
+            HeaderValue::from_static(super::super::internal_auth::CHATOS_CALLER),
+        );
+        headers.insert(
+            "x-task-runner-internal-token",
+            HeaderValue::from_str(token.as_str()).expect("token header"),
+        );
+
+        super::super::internal_auth::require_task_runner_internal_request(
+            &config,
+            &headers,
+            &[super::super::internal_auth::CHATOS_CALLER],
+            super::super::internal_auth::CHATOS_MESSAGES_READ_SCOPE,
+        )
+        .expect("chatos signed request");
+        let err = super::super::internal_auth::require_task_runner_internal_request(
+            &config,
+            &headers,
+            &[super::super::internal_auth::CHATOS_CALLER],
+            EXECUTION_OPTIONS_READ_SCOPE,
+        )
+        .expect_err("scope mismatch must fail");
+        assert_eq!(err.message, "invalid task runner internal API token");
     }
 
     async fn test_state() -> AppState {
@@ -301,6 +350,7 @@ mod tests {
             chatos_callback_url: None,
             chatos_callback_secret: None,
             internal_api_secret: Some("internal-secret".to_string()),
+            chatos_internal_api_secret: Some("chatos-internal-secret".to_string()),
             local_connector_internal_api_secret: None,
             callback_timeout: Duration::from_millis(1_000),
             admin_username: "admin".to_string(),

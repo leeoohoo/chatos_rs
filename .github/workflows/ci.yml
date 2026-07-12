@@ -4,6 +4,8 @@
 name: CI
 
 on:
+  push:
+  pull_request:
   workflow_dispatch:
 
 permissions:
@@ -14,6 +16,78 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  static-security:
+    name: Secret and Container Config Scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Scan repository secrets
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: secret
+          format: table
+          exit-code: "1"
+          hide-progress: true
+          skip-dirs: node_modules,target,target-shared
+
+      - name: Report container configuration findings
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          scan-type: config
+          scan-ref: .
+          severity: HIGH,CRITICAL
+          format: table
+          exit-code: "0"
+          hide-progress: true
+          skip-dirs: node_modules,target,target-shared
+
+  dependency-security:
+    name: Dependency Security
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@1.94.0
+
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked
+
+      - name: Audit Rust lockfiles
+        run: |
+          cargo audit --file Cargo.lock
+          cargo audit --file memory_engine/backend/Cargo.lock
+          cargo audit --file user_service/backend/Cargo.lock
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Audit production npm dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          for dir in \
+            chatos/frontend \
+            local_connector_client/frontend \
+            memory_engine/frontend \
+            official_website_service/frontend \
+            plugin_management_service/frontend \
+            project_management_service/frontend \
+            sandbox_manager_service/frontend \
+            task_runner_service/frontend \
+            user_service/frontend
+          do
+            echo "Auditing $dir"
+            npm --prefix "$dir" audit --omit=dev --audit-level=high
+          done
+
   api-surface-contract:
     name: API Surface Contract
     runs-on: ubuntu-latest

@@ -63,10 +63,11 @@ impl ProjectManagementBuiltinService {
         }
 
         let mut headers = HashMap::new();
-        headers.insert(
-            "X-Project-Service-Sync-Secret".to_string(),
-            sync_secret.to_string(),
-        );
+        super::super::project_management_api_client::insert_project_service_internal_headers(
+            &mut headers,
+            sync_secret,
+            super::super::project_management_api_client::PROJECT_MCP_SCOPE,
+        )?;
         headers.insert(
             "X-Task-Runner-Owner-User-Id".to_string(),
             owner_user_id.to_string(),

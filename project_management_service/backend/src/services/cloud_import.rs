@@ -63,14 +63,16 @@ pub async fn create_harness_repo_for_project(
         .timeout(config.user_service_request_timeout)
         .build()
         .map_err(|err| format!("build user_service client failed: {err}"))?;
-    let response = client
-        .request(Method::POST, endpoint)
-        .bearer_auth(access_token.trim())
-        .header("x-user-service-internal-secret", secret)
-        .json(&body)
-        .send()
-        .await
-        .map_err(|err| format!("user_service harness repo request failed: {err}"))?;
+    let response = crate::user_model_runtime_client::signed_user_service_request(
+        client.request(Method::POST, endpoint),
+        secret,
+        crate::user_model_runtime_client::HARNESS_REPO_WRITE_SCOPE,
+    )?
+    .bearer_auth(access_token.trim())
+    .json(&body)
+    .send()
+    .await
+    .map_err(|err| format!("user_service harness repo request failed: {err}"))?;
     if !response.status().is_success() {
         let status = response.status();
         let text =

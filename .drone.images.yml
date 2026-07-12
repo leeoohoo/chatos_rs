@@ -28,6 +28,14 @@ steps:
       - name: docker-sock
         path: /var/run/docker.sock
 
+  - name: scan-local-images
+    image: aquasec/trivy:0.58.2
+    commands:
+      - sh scripts/harness_ci_scan_images.sh
+    volumes:
+      - name: docker-sock
+        path: /var/run/docker.sock
+
 volumes:
   - name: docker-sock
     host:

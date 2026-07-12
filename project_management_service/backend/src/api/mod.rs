@@ -6,6 +6,7 @@ mod dependencies;
 mod dependency_graph;
 mod harness_git_access;
 mod harness_mcp;
+mod internal_auth;
 mod plan;
 mod projects;
 mod requirements;

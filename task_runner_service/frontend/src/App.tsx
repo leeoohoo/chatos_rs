@@ -204,7 +204,7 @@ function AuthGate() {
           <Route path="/servers" element={<ServersPage />} />
           <Route path="/runs" element={<RunsPage />} />
           <Route path="/prompts" element={<PromptsPage />} />
-          <Route path="/mcp" element={<McpCatalogPage />} />
+          <Route path="/mcp" element={<McpCatalogPage currentUser={currentUser} />} />
           <Route path="/skills" element={<Navigate to="/tasks" replace />} />
           <Route path="/tooling" element={<ToolingPage />} />
           <Route path="/users" element={requireAdmin(<UsersPage />)} />

@@ -36,6 +36,7 @@ import { RuntimeSettingsPanel } from './components/RuntimeSettingsPanel';
 import { SandboxPanel } from './components/SandboxPanel';
 import { TerminalPanel } from './components/TerminalPanel';
 import './styles.css';
+import './styles-controls.css';
 import './styles-terminal.css';
 import './styles-approval.css';
 import './styles-models.css';

@@ -9,6 +9,12 @@ use serde::Serialize;
 
 use super::{AuthMode, MemoryEngineClient};
 
+const TOKEN_AUDIENCE: &str = "memory-engine";
+const DATA_SCOPE: &str = "memory.data";
+const SOURCE_SCOPE: &str = "memory.source";
+const ADMIN_SCOPE: &str = "memory.admin";
+const MODEL_PROFILE_SYNC_SCOPE: &str = "model-profile.sync";
+
 impl MemoryEngineClient {
     pub(super) async fn send_json<T, B>(
         &self,
@@ -23,7 +29,7 @@ impl MemoryEngineClient {
         let url = format!("{}{}", self.base_url, path);
         let method_label = method.as_str().to_string();
         let req = self.http.request(method, url.clone());
-        let req = self.apply_auth(req);
+        let req = self.apply_auth(req, path)?;
         let req = if let Some(body) = body {
             req.json(body)
         } else {
@@ -80,7 +86,19 @@ impl MemoryEngineClient {
         Ok(resp.deleted)
     }
 
-    fn apply_auth(&self, req: RequestBuilder) -> RequestBuilder {
+    fn apply_auth(&self, req: RequestBuilder, path: &str) -> Result<RequestBuilder, String> {
+        if let Some(auth) = self.internal_service_auth.as_ref() {
+            let token = chatos_service_runtime::issue_internal_service_token(
+                auth.secret.as_str(),
+                auth.caller.as_str(),
+                TOKEN_AUDIENCE,
+                internal_scope_for_path(path),
+                60,
+            )?;
+            return Ok(req
+                .header("x-memory-caller", auth.caller.as_str())
+                .header("x-memory-internal-token", token));
+        }
         let req = if let Some(operator_token) = self.operator_token.as_deref() {
             req.header("x-memory-operator-token", operator_token)
         } else {
@@ -92,7 +110,7 @@ impl MemoryEngineClient {
             req
         };
 
-        match &self.auth {
+        Ok(match &self.auth {
             AuthMode::Direct { .. } => req,
             AuthMode::SystemKey {
                 system_id,
@@ -100,7 +118,20 @@ impl MemoryEngineClient {
             } => req
                 .header("x-memory-system-id", system_id)
                 .header("x-memory-system-key", secret_key),
-        }
+        })
+    }
+}
+
+fn internal_scope_for_path(path: &str) -> &'static str {
+    let path = path.split('?').next().unwrap_or(path);
+    if path.starts_with("/admin/model-profiles") {
+        MODEL_PROFILE_SYNC_SCOPE
+    } else if path.starts_with("/admin/sources") {
+        SOURCE_SCOPE
+    } else if path.starts_with("/admin/") {
+        ADMIN_SCOPE
+    } else {
+        DATA_SCOPE
     }
 }
 
@@ -190,7 +221,7 @@ pub(super) fn append_optional_bool_query(query: &mut String, key: &str, value: O
 mod tests {
     use super::{
         append_optional_bool_query, append_optional_i64_query, append_optional_query,
-        normalize_base_url,
+        normalize_base_url, SOURCE_SCOPE, TOKEN_AUDIENCE,
     };
     use crate::MemoryEngineClient;
     use std::time::Duration;
@@ -247,7 +278,8 @@ mod tests {
                 .with_operator_token(" token-1 ");
 
         let request = client
-            .apply_auth(client.http.get("http://localhost:3000/test"))
+            .apply_auth(client.http.get("http://localhost:3000/test"), "/test")
+            .expect("apply auth")
             .build()
             .expect("request");
 
@@ -268,7 +300,8 @@ mod tests {
                 .with_bearer_token(" user-token-1 ");
 
         let request = client
-            .apply_auth(client.http.get("http://localhost:3000/test"))
+            .apply_auth(client.http.get("http://localhost:3000/test"), "/test")
+            .expect("apply auth")
             .build()
             .expect("request");
 
@@ -279,5 +312,42 @@ mod tests {
                 .and_then(|value| value.to_str().ok()),
             Some("Bearer user-token-1")
         );
+    }
+
+    #[test]
+    fn internal_service_auth_issues_scoped_token_without_static_secret() {
+        let client =
+            MemoryEngineClient::new_platform("http://localhost:3000", Duration::from_secs(5))
+                .expect("client")
+                .with_internal_service_auth("task-runner", "a-long-task-runner-memory-secret");
+        let request = client
+            .apply_auth(
+                client.http.get("http://localhost:3000/admin/sources"),
+                "/admin/sources",
+            )
+            .expect("apply auth")
+            .build()
+            .expect("request");
+        assert!(!request.headers().contains_key("x-memory-operator-token"));
+        assert_eq!(
+            request
+                .headers()
+                .get("x-memory-caller")
+                .and_then(|value| value.to_str().ok()),
+            Some("task-runner")
+        );
+        let token = request
+            .headers()
+            .get("x-memory-internal-token")
+            .and_then(|value| value.to_str().ok())
+            .expect("internal token");
+        chatos_service_runtime::verify_internal_service_token(
+            token,
+            "a-long-task-runner-memory-secret",
+            "task-runner",
+            TOKEN_AUDIENCE,
+            SOURCE_SCOPE,
+        )
+        .expect("valid token");
     }
 }

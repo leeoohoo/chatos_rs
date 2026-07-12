@@ -30,7 +30,7 @@ pub async fn jsonrpc_http_call(
     let client = mcp_http_client();
     let mut request = client.post(url).json(&payload);
     if let Some(headers) = headers {
-        for (key, value) in headers {
+        for (key, value) in chatos_mcp_runtime::rpc::prepare_http_headers(headers)? {
             request = request.header(key.as_str(), value.as_str());
         }
     }

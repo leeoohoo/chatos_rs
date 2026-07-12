@@ -196,17 +196,29 @@ fn harness_file_mcp_server(
     config: &AppConfig,
     project: &ProjectRecord,
 ) -> Result<McpHttpServer, String> {
-    let sync_secret = config
-        .sync_secret
-        .as_deref()
+    let internal_secret = config
+        .internal_api_secrets
+        .get("project-service")
+        .map(String::as_str)
+        .or(config.sync_secret.as_deref())
         .map(str::trim)
         .filter(|value| !value.is_empty())
-        .ok_or_else(|| "PROJECT_SERVICE_SYNC_SECRET is required for Harness MCP".to_string())?;
+        .ok_or_else(|| {
+            "PROJECT_SERVICE_SELF_INTERNAL_API_SECRET is required for Harness MCP".to_string()
+        })?;
     let base = project_service_base_url(config);
     let mut headers = HashMap::new();
     headers.insert(
         "x-project-service-sync-secret".to_string(),
-        sync_secret.to_string(),
+        internal_secret.to_string(),
+    );
+    headers.insert(
+        "x-project-service-caller".to_string(),
+        "project-service".to_string(),
+    );
+    headers.insert(
+        "x-project-service-internal-scope".to_string(),
+        "project.harness".to_string(),
     );
     headers.insert("x-task-runner-project-id".to_string(), project.id.clone());
     headers.insert(
@@ -266,12 +278,7 @@ fn cloud_sandbox_image_mcp_server(
     if provider != RuntimeEnvironmentProvider::CloudSandboxManager {
         return Ok(None);
     }
-    let client_id = config
-        .sandbox_manager_client_id
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .ok_or_else(|| "PROJECT_SERVICE_SANDBOX_MANAGER_CLIENT_ID is required".to_string())?;
+    let client_id = "project-service";
     let client_key = config
         .sandbox_manager_client_key
         .as_deref()
@@ -279,8 +286,12 @@ fn cloud_sandbox_image_mcp_server(
         .filter(|value| !value.is_empty())
         .ok_or_else(|| "PROJECT_SERVICE_SANDBOX_MANAGER_CLIENT_KEY is required".to_string())?;
     let mut headers = HashMap::new();
-    headers.insert("x-sandbox-client-id".to_string(), client_id.to_string());
+    headers.insert("x-sandbox-caller".to_string(), client_id.to_string());
     headers.insert("x-sandbox-client-key".to_string(), client_key.to_string());
+    headers.insert(
+        "x-sandbox-internal-scope".to_string(),
+        "sandbox.service".to_string(),
+    );
     headers.insert(
         SANDBOX_IMAGE_PROJECT_ID_HEADER.to_string(),
         project_id.to_string(),

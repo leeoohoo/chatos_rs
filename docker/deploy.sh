@@ -155,6 +155,62 @@ env_flag_enabled() {
   esac
 }
 
+validate_production_secrets() {
+  local environment
+  environment="$(env_value CHATOS_ENV "$(env_value NODE_ENV local)")"
+  case "${environment,,}" in
+    production|prod)
+      ;;
+    *)
+      return 0
+      ;;
+  esac
+
+  local failures=0
+  local key value default_value
+  while IFS='|' read -r key default_value; do
+    value="$(env_value "$key" "$default_value")"
+    if [[ -z "$value" || "$value" == "$default_value" || ${#value} -lt 16 ]]; then
+      echo "[ERROR] production secret $key is missing, uses the development default, or is shorter than 16 characters" >&2
+      failures=1
+    fi
+  done <<'EOF'
+MONGODB_PASSWORD|admin
+CHATOS_ADMIN_PASSWORD|admin123456
+HARNESS_ADMIN_PASSWORD|admin123456
+AUTH_JWT_SECRET|dev-only-change-me-please
+USER_SERVICE_JWT_SECRET|change_me_user_service_secret
+PROJECT_SERVICE_USER_SERVICE_INTERNAL_API_SECRET|change_me_project_service_user_service_secret
+PROJECT_SERVICE_TASK_RUNNER_INTERNAL_API_SECRET|change_me_project_service_task_runner_secret
+CHATOS_TASK_RUNNER_INTERNAL_API_SECRET|change_me_chatos_task_runner_internal_secret
+PLUGIN_MANAGEMENT_INTERNAL_API_SECRET|change_me_plugin_management_internal_secret
+PLUGIN_MANAGEMENT_TASK_RUNNER_INTERNAL_API_SECRET|change_me_plugin_management_task_runner_secret
+PLUGIN_MANAGEMENT_PROJECT_SERVICE_INTERNAL_API_SECRET|change_me_plugin_management_project_service_secret
+PLUGIN_MANAGEMENT_LOCAL_CONNECTOR_SERVICE_INTERNAL_API_SECRET|change_me_plugin_management_local_connector_secret
+TASK_RUNNER_CHATOS_CALLBACK_SECRET|change_me_chatos_task_runner_secret
+CHATOS_PROJECT_SERVICE_INTERNAL_API_SECRET|change_me_chatos_project_service_secret
+TASK_RUNNER_PROJECT_SERVICE_INTERNAL_API_SECRET|change_me_task_runner_project_service_secret
+PROJECT_SERVICE_SELF_INTERNAL_API_SECRET|change_me_project_service_self_secret
+CHATOS_LOCAL_CONNECTOR_INTERNAL_API_SECRET|change_me_chatos_local_connector_secret
+TASK_RUNNER_LOCAL_CONNECTOR_INTERNAL_API_SECRET|change_me_task_runner_local_connector_secret
+PROJECT_SERVICE_LOCAL_CONNECTOR_INTERNAL_API_SECRET|change_me_project_service_local_connector_secret
+MEMORY_ENGINE_LOCAL_CONNECTOR_INTERNAL_API_SECRET|change_me_memory_engine_local_connector_secret
+CHATOS_MEMORY_ENGINE_INTERNAL_API_SECRET|change_me_chatos_memory_engine_secret
+TASK_RUNNER_MEMORY_ENGINE_INTERNAL_API_SECRET|change_me_task_runner_memory_engine_secret
+PROJECT_SERVICE_MEMORY_ENGINE_INTERNAL_API_SECRET|change_me_project_service_memory_engine_secret
+USER_SERVICE_MEMORY_ENGINE_INTERNAL_API_SECRET|change_me_user_service_memory_engine_secret
+LOCAL_CONNECTOR_MEMORY_ENGINE_INTERNAL_API_SECRET|change_me_local_connector_memory_engine_secret
+SANDBOX_MANAGER_AGENT_TOKEN_SECRET|chatos-sandbox-agent-dev-secret
+TASK_RUNNER_SANDBOX_MANAGER_INTERNAL_API_SECRET|change_me_task_runner_sandbox_manager_secret
+PROJECT_SERVICE_SANDBOX_MANAGER_INTERNAL_API_SECRET|change_me_project_service_sandbox_manager_secret
+EOF
+
+  if (( failures > 0 )); then
+    echo "[ERROR] refusing to start the production stack with insecure credentials" >&2
+    exit 2
+  fi
+}
+
 print_urls() {
   local frontend_port main_backend_port user_service_frontend_port
   local memory_engine_frontend_port task_runner_frontend_port project_service_frontend_port
@@ -315,6 +371,12 @@ fi
 
 ensure_docker_ready
 cd "$ROOT_DIR"
+
+case "$ACTION" in
+  up|start|restart|fast|quick|up-fast|up-quick|restart-fast|restart-quick|dev|local|build-up|restart-dev|restart-local|rebuild)
+    validate_production_secrets
+    ;;
+esac
 
 case "$ACTION" in
   up|start)

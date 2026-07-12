@@ -16,6 +16,8 @@ use crate::models::{CreateSandboxLeaseRequest, ListSandboxQuery, SandboxLeaseRec
 use crate::state::AppState;
 
 const BEARER_PREFIX: &str = "Bearer ";
+const INTERNAL_TOKEN_AUDIENCE: &str = "sandbox-manager";
+const INTERNAL_SERVICE_SCOPE: &str = "sandbox.service";
 pub const SCOPE_ADMIN: &str = "sandbox.admin";
 pub const SCOPE_POOL_READ: &str = "sandbox.pool.read";
 pub const SCOPE_IMAGES_READ: &str = "sandbox.images.read";
@@ -305,6 +307,9 @@ async fn authenticate_request(
         return Ok(SandboxAuthContext::Disabled);
     }
 
+    if let Some(client) = authenticate_internal_service(config, headers)? {
+        return Ok(SandboxAuthContext::System(client));
+    }
     if let Some(client) = authenticate_system_client(state, config, headers).await? {
         return Ok(SandboxAuthContext::System(client));
     }
@@ -316,6 +321,66 @@ async fn authenticate_request(
     }
 
     Err(ApiError::unauthorized("missing sandbox authorization"))
+}
+
+fn authenticate_internal_service(
+    config: &AppConfig,
+    headers: &HeaderMap,
+) -> Result<Option<SandboxSystemClient>, ApiError> {
+    let caller = header_text(headers, "x-sandbox-caller");
+    let token = header_text(headers, "x-sandbox-internal-token");
+    if caller.is_none() && token.is_none() {
+        return Ok(None);
+    }
+    let caller = caller.ok_or_else(|| {
+        ApiError::bad_request("Sandbox Manager caller is required for signed internal requests")
+    })?;
+    let token = token.ok_or_else(|| {
+        ApiError::unauthorized("signed Sandbox Manager internal API token is required")
+    })?;
+    let secret = config
+        .internal_api_secrets
+        .get(caller.as_str())
+        .map(String::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| {
+            ApiError::unauthorized("Sandbox Manager internal API is disabled for caller")
+        })?;
+    chatos_service_runtime::verify_internal_service_token(
+        token.as_str(),
+        secret,
+        caller.as_str(),
+        INTERNAL_TOKEN_AUDIENCE,
+        INTERNAL_SERVICE_SCOPE,
+    )
+    .map_err(|_| ApiError::unauthorized("invalid Sandbox Manager internal API token"))?;
+
+    let scopes = match caller.as_str() {
+        "task-runner" => vec![
+            SCOPE_LEASE_CREATE,
+            SCOPE_LEASE_READ,
+            SCOPE_LEASE_RELEASE,
+            SCOPE_MCP_TOOLS,
+            SCOPE_MCP_CALL,
+            SCOPE_POOL_READ,
+            SCOPE_IMAGES_READ,
+        ],
+        "project-service" => vec![SCOPE_IMAGES_READ, SCOPE_IMAGES_WRITE],
+        _ => {
+            return Err(ApiError::forbidden(
+                "caller service is not allowed for Sandbox Manager",
+            ));
+        }
+    };
+    Ok(Some(SandboxSystemClient {
+        client_id: caller,
+        scopes: scopes.into_iter().map(ToOwned::to_owned).collect(),
+        allowed_tenant_ids: vec!["*".to_string()],
+        allowed_project_ids: vec!["*".to_string()],
+        allowed_tools: vec!["*".to_string()],
+        max_lease_ttl_seconds: config.system_client_max_lease_ttl_seconds,
+    }))
 }
 
 async fn authenticate_system_client(
@@ -335,6 +400,12 @@ async fn authenticate_system_client(
         .await?
     {
         return Ok(Some(client));
+    }
+
+    if config.require_signed_internal_requests {
+        return Err(ApiError::unauthorized(
+            "signed Sandbox Manager internal API token is required",
+        ));
     }
 
     let expected_id = config

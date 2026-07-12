@@ -6,6 +6,9 @@ use axum::http::{HeaderMap, StatusCode};
 use axum::Json;
 use serde_json::Value;
 
+use crate::api::internal_auth::{
+    require_project_internal_request, CHATOS_CALLER, PROJECT_MCP_SCOPE, TASK_RUNNER_CALLER,
+};
 use crate::api::ApiError;
 use crate::auth::{bearer_token_from_headers, verify_token_via_user_service, CurrentUser};
 use crate::mcp_server::{self, JsonRpcRequest, JsonRpcResponse, McpServerInfo};
@@ -162,20 +165,22 @@ fn task_runner_internal_mcp_user(
     config: &crate::config::AppConfig,
     headers: &HeaderMap,
 ) -> Result<Option<CurrentUser>, ApiError> {
-    let Some(provided_secret) =
-        header_text(headers, "x-project-service-sync-secret").map_err(ApiError::bad_request)?
-    else {
+    let has_internal_auth = [
+        "x-project-service-caller",
+        "x-project-service-internal-token",
+        "x-project-service-sync-secret",
+    ]
+    .into_iter()
+    .any(|key| headers.contains_key(key));
+    if !has_internal_auth {
         return Ok(None);
-    };
-    let expected_secret = config
-        .sync_secret
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .ok_or_else(|| ApiError::forbidden("project sync secret is not configured"))?;
-    if provided_secret != expected_secret {
-        return Err(ApiError::unauthorized("invalid project sync secret"));
     }
+    require_project_internal_request(
+        config,
+        headers,
+        &[CHATOS_CALLER, TASK_RUNNER_CALLER],
+        PROJECT_MCP_SCOPE,
+    )?;
     let task_profile = header_text(headers, "x-task-runner-task-profile")
         .map_err(ApiError::bad_request)?
         .ok_or_else(|| ApiError::forbidden("task runner MCP sync branch requires task profile"))?;
@@ -226,6 +231,7 @@ fn header_text(headers: &HeaderMap, key: &'static str) -> Result<Option<String>,
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
     use std::net::{IpAddr, Ipv4Addr};
     use std::time::Duration;
 
@@ -370,6 +376,46 @@ mod tests {
     }
 
     #[test]
+    fn task_runner_internal_mcp_user_accepts_signed_scoped_token() {
+        let mut config = test_config();
+        config.require_signed_internal_requests = true;
+        config.internal_api_secrets.insert(
+            TASK_RUNNER_CALLER.to_string(),
+            "a-long-task-runner-secret".to_string(),
+        );
+        let token = chatos_service_runtime::issue_internal_service_token(
+            "a-long-task-runner-secret",
+            TASK_RUNNER_CALLER,
+            crate::api::internal_auth::PROJECT_SERVICE_TOKEN_AUDIENCE,
+            PROJECT_MCP_SCOPE,
+            60,
+        )
+        .expect("issue token");
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "x-project-service-caller",
+            HeaderValue::from_static(TASK_RUNNER_CALLER),
+        );
+        headers.insert(
+            "x-project-service-internal-token",
+            HeaderValue::from_str(token.as_str()).expect("token header"),
+        );
+        headers.insert(
+            "x-task-runner-task-profile",
+            HeaderValue::from_static("chatos_plan"),
+        );
+        headers.insert(
+            "x-task-runner-owner-user-id",
+            HeaderValue::from_static("user-1"),
+        );
+
+        let user = task_runner_internal_mcp_user(&config, &headers)
+            .expect("signed internal user")
+            .expect("present");
+        assert_eq!(user.id, "user-1");
+    }
+
+    #[test]
     fn task_runner_internal_mcp_user_requires_owner_user_id() {
         let mut headers = HeaderMap::new();
         headers.insert(
@@ -415,6 +461,8 @@ mod tests {
             task_runner_request_timeout: Duration::from_millis(10_000),
             task_runner_internal_secret: Some("sync-secret".to_string()),
             sync_secret: Some("sync-secret".to_string()),
+            internal_api_secrets: HashMap::new(),
+            require_signed_internal_requests: false,
         }
     }
 }

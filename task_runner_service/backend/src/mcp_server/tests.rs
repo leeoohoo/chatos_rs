@@ -93,7 +93,6 @@ async fn test_mcp_service_with_config(
 #[derive(Debug, Clone)]
 struct CapturedProjectSyncCall {
     work_item_id: String,
-    sync_secret: Option<String>,
     payload: serde_json::Value,
 }
 
@@ -129,16 +128,12 @@ async fn capture_project_sync_status(
     headers: HeaderMap,
     Json(payload): Json<serde_json::Value>,
 ) -> Json<serde_json::Value> {
-    let sync_secret = headers
-        .get("X-Project-Service-Sync-Secret")
-        .and_then(|value| value.to_str().ok())
-        .map(ToOwned::to_owned);
+    assert_project_service_internal_headers(&headers, "project.sync");
     calls
         .lock()
         .expect("project sync calls")
         .push(CapturedProjectSyncCall {
             work_item_id,
-            sync_secret,
             payload,
         });
     Json(json!({ "ok": true }))
@@ -148,11 +143,8 @@ async fn get_project_sync_record(
     Path(project_id): Path<String>,
     headers: HeaderMap,
 ) -> Json<serde_json::Value> {
-    let sync_secret = headers
-        .get("X-Project-Service-Sync-Secret")
-        .and_then(|value| value.to_str().ok())
-        .unwrap_or_default();
-    assert_eq!(sync_secret, "project-sync-secret");
+    assert_project_service_internal_headers(&headers, "project.read");
+    assert!(!headers.contains_key("X-Project-Service-Sync-Secret"));
     Json(json!({
         "id": project_id,
         "owner_user_id": "owner-a",
@@ -167,6 +159,26 @@ async fn get_project_sync_record(
         "updated_at": "2026-01-01T00:00:00Z",
         "archived_at": null
     }))
+}
+
+fn assert_project_service_internal_headers(headers: &HeaderMap, scope: &str) {
+    let caller = headers
+        .get("X-Project-Service-Caller")
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or_default();
+    assert_eq!(caller, "task-runner");
+    let token = headers
+        .get("X-Project-Service-Internal-Token")
+        .and_then(|value| value.to_str().ok())
+        .expect("signed project service token");
+    chatos_service_runtime::verify_internal_service_token(
+        token,
+        "project-sync-secret",
+        "task-runner",
+        "project-service",
+        scope,
+    )
+    .expect("valid project service token");
 }
 
 fn test_config() -> AppConfig {
@@ -201,6 +213,7 @@ fn test_config() -> AppConfig {
         chatos_callback_url: None,
         chatos_callback_secret: None,
         internal_api_secret: None,
+        chatos_internal_api_secret: None,
         local_connector_internal_api_secret: None,
         callback_timeout: Duration::from_millis(1000),
         admin_username: "admin".to_string(),

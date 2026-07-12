@@ -2,6 +2,7 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use std::collections::BTreeMap;
+use std::net::IpAddr;
 
 use chatos_mcp_runtime::{list_tools_http, list_tools_stdio, parse_tool_definition};
 use serde_json::Value;
@@ -206,6 +207,7 @@ async fn test_external_mcp_config(record: &ExternalMcpConfigRecord) -> Result<()
             let server = record
                 .to_http_server()
                 .ok_or_else(|| "外部 MCP 配置无效: http 类型需要可用 url".to_string())?;
+            validate_external_mcp_http_target(server.url.as_str()).await?;
             list_tools_http(
                 server.url.as_str(),
                 server.headers.as_ref(),
@@ -253,6 +255,63 @@ async fn test_external_mcp_config(record: &ExternalMcpConfigRecord) -> Result<()
     Ok(())
 }
 
+async fn validate_external_mcp_http_target(url: &str) -> Result<(), String> {
+    let parsed =
+        reqwest::Url::parse(url).map_err(|err| format!("invalid external MCP URL: {err}"))?;
+    if !matches!(parsed.scheme(), "http" | "https") {
+        return Err("external MCP URL must use http or https".to_string());
+    }
+    if !parsed.username().is_empty() || parsed.password().is_some() {
+        return Err("external MCP URL must not contain embedded credentials".to_string());
+    }
+    let host = parsed
+        .host_str()
+        .ok_or_else(|| "external MCP URL is missing host".to_string())?;
+    if host.eq_ignore_ascii_case("localhost") || host.to_ascii_lowercase().ends_with(".localhost") {
+        return Err("external MCP URL cannot target localhost".to_string());
+    }
+    let port = parsed
+        .port_or_known_default()
+        .ok_or_else(|| "external MCP URL is missing port".to_string())?;
+    let addresses = tokio::net::lookup_host((host, port))
+        .await
+        .map_err(|err| format!("resolve external MCP host failed: {err}"))?
+        .collect::<Vec<_>>();
+    if addresses.is_empty() {
+        return Err("external MCP host resolved to no addresses".to_string());
+    }
+    if addresses
+        .iter()
+        .any(|address| external_mcp_ip_is_forbidden(address.ip()))
+    {
+        return Err("external MCP URL cannot target loopback or private networks".to_string());
+    }
+    Ok(())
+}
+
+fn external_mcp_ip_is_forbidden(ip: IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(ip) => {
+            ip.is_loopback()
+                || ip.is_private()
+                || ip.is_link_local()
+                || ip.is_unspecified()
+                || ip.is_multicast()
+                || ip.is_broadcast()
+        }
+        IpAddr::V6(ip) => {
+            if let Some(ipv4) = ip.to_ipv4_mapped() {
+                return external_mcp_ip_is_forbidden(IpAddr::V4(ipv4));
+            }
+            ip.is_loopback()
+                || ip.is_unique_local()
+                || ip.is_unicast_link_local()
+                || ip.is_unspecified()
+                || ip.is_multicast()
+        }
+    }
+}
+
 fn external_mcp_process_user_id(record: &ExternalMcpConfigRecord) -> Option<&str> {
     record
         .owner_user_id
@@ -284,6 +343,26 @@ mod tests {
         let (sender, _) = broadcast::channel(16);
         let store = AppStore::InMemory(InMemoryStore::new(sender));
         ExternalMcpConfigService::new(store)
+    }
+
+    #[test]
+    fn external_mcp_http_target_blocks_private_and_metadata_addresses() {
+        for ip in [
+            "127.0.0.1",
+            "10.0.0.1",
+            "172.16.0.1",
+            "192.168.1.1",
+            "169.254.169.254",
+            "::1",
+            "fd00::1",
+            "fe80::1",
+        ] {
+            let ip = ip.parse::<IpAddr>().expect("valid test IP");
+            assert!(external_mcp_ip_is_forbidden(ip), "{ip} should be blocked");
+        }
+        assert!(!external_mcp_ip_is_forbidden(
+            "8.8.8.8".parse().expect("public test IP")
+        ));
     }
 
     fn external_config(id: &str, enabled: bool) -> ExternalMcpConfigRecord {

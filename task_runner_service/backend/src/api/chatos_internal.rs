@@ -3,7 +3,7 @@
 
 use axum::{
     extract::{Path, Query, State},
-    http::StatusCode,
+    http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
     routing::{get, post},
     Json, Router,
@@ -18,6 +18,10 @@ use crate::{
         ChatosMessageTaskRunEvent, ChatosMessageTaskSummary,
     },
     state::AppState,
+};
+
+use super::internal_auth::{
+    require_task_runner_internal_request, CHATOS_CALLER, CHATOS_MESSAGES_READ_SCOPE,
 };
 
 const DEFAULT_RUN_EVENT_LIMIT: usize = 40;
@@ -298,8 +302,10 @@ fn paginate_run_events(
 
 async fn list_chatos_message_tasks(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Query(query): Query<ChatosMessageTaskQuery>,
 ) -> Result<Json<Value>, InternalApiError> {
+    require_chatos_internal_auth(&state, &headers)?;
     let (source_session_id, source_user_message_id, source_turn_id) =
         validate_chatos_message_query(&query)?;
     let items = state
@@ -319,8 +325,10 @@ async fn list_chatos_message_tasks(
 
 async fn list_chatos_session_active_message_tasks(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Json(request): Json<ChatosSessionActiveMessageTasksRequest>,
 ) -> Result<Json<Value>, InternalApiError> {
+    require_chatos_internal_auth(&state, &headers)?;
     let source_session_id = request.source_session_id.trim();
     if source_session_id.is_empty() {
         return Err(InternalApiError::bad_request(
@@ -367,8 +375,10 @@ async fn list_chatos_session_active_message_tasks(
 async fn get_chatos_message_task(
     Path(task_id): Path<String>,
     State(state): State<AppState>,
+    headers: HeaderMap,
     Query(query): Query<ChatosMessageTaskQuery>,
 ) -> Result<Json<Value>, InternalApiError> {
+    require_chatos_internal_auth(&state, &headers)?;
     let (source_session_id, source_user_message_id, source_turn_id) =
         validate_chatos_message_query(&query)?;
     let detail = state
@@ -387,8 +397,10 @@ async fn get_chatos_message_task(
 
 async fn get_chatos_message_graph(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Query(query): Query<ChatosMessageTaskQuery>,
 ) -> Result<Json<Value>, InternalApiError> {
+    require_chatos_internal_auth(&state, &headers)?;
     let (source_session_id, source_user_message_id, source_turn_id) =
         validate_chatos_message_query(&query)?;
     let graph = state
@@ -406,8 +418,10 @@ async fn get_chatos_message_graph(
 async fn get_chatos_message_run(
     Path(run_id): Path<String>,
     State(state): State<AppState>,
+    headers: HeaderMap,
     Query(query): Query<ChatosMessageRunQuery>,
 ) -> Result<Json<Value>, InternalApiError> {
+    require_chatos_internal_auth(&state, &headers)?;
     let (source_session_id, source_user_message_id, source_turn_id) =
         validate_chatos_message_query(&query.source)?;
     let (event_limit, event_offset) = run_event_page(&query);
@@ -459,8 +473,10 @@ async fn get_chatos_message_run(
 async fn get_chatos_message_run_output_changes(
     Path(run_id): Path<String>,
     State(state): State<AppState>,
+    headers: HeaderMap,
     Query(query): Query<ChatosMessageRunOutputChangesQuery>,
 ) -> Result<Json<Value>, InternalApiError> {
+    require_chatos_internal_auth(&state, &headers)?;
     let (source_session_id, source_user_message_id, source_turn_id) =
         validate_chatos_message_query(&query.source)?;
     let run = require_chatos_message_run(
@@ -483,8 +499,10 @@ async fn get_chatos_message_run_output_changes(
 async fn get_chatos_message_run_output_diff(
     Path(run_id): Path<String>,
     State(state): State<AppState>,
+    headers: HeaderMap,
     Query(query): Query<ChatosMessageRunOutputDiffQuery>,
 ) -> Result<Json<Value>, InternalApiError> {
+    require_chatos_internal_auth(&state, &headers)?;
     let (source_session_id, source_user_message_id, source_turn_id) =
         validate_chatos_message_query(&query.source)?;
     let run = require_chatos_message_run(
@@ -534,8 +552,10 @@ async fn require_chatos_message_run(
 async fn get_chatos_message_graph_run(
     Path(run_id): Path<String>,
     State(state): State<AppState>,
+    headers: HeaderMap,
     Query(query): Query<ChatosMessageRunQuery>,
 ) -> Result<Json<Value>, InternalApiError> {
+    require_chatos_internal_auth(&state, &headers)?;
     let (source_session_id, source_user_message_id, source_turn_id) =
         validate_chatos_message_query(&query.source)?;
     let (event_limit, event_offset) = run_event_page(&query);
@@ -586,4 +606,20 @@ async fn get_chatos_message_graph_run(
             events_has_more,
         },
     )?))
+}
+
+fn require_chatos_internal_auth(
+    state: &AppState,
+    headers: &HeaderMap,
+) -> Result<(), InternalApiError> {
+    require_task_runner_internal_request(
+        &state.config,
+        headers,
+        &[CHATOS_CALLER],
+        CHATOS_MESSAGES_READ_SCOPE,
+    )
+    .map_err(|err| InternalApiError {
+        status: err.status,
+        message: err.message,
+    })
 }

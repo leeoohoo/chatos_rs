@@ -33,7 +33,7 @@ async fn main() -> Result<(), String> {
         .init();
 
     chatos_service_runtime::apply_config_center_env("memory-engine").await;
-    let mut config = AppConfig::from_env();
+    let mut config = AppConfig::from_env()?;
     config.user_service_base_url = chatos_service_runtime::resolve_service_base_url(
         "user-service",
         config.user_service_base_url.as_str(),

@@ -33,6 +33,13 @@ pub struct MemoryEngineClient {
     auth: AuthMode,
     operator_token: Option<String>,
     access_token: Option<String>,
+    internal_service_auth: Option<InternalServiceAuth>,
+}
+
+#[derive(Debug, Clone)]
+struct InternalServiceAuth {
+    caller: String,
+    secret: String,
 }
 
 impl MemoryEngineClient {
@@ -48,6 +55,7 @@ impl MemoryEngineClient {
             },
             operator_token: None,
             access_token: None,
+            internal_service_auth: None,
         })
     }
 
@@ -67,6 +75,7 @@ impl MemoryEngineClient {
             },
             operator_token: None,
             access_token: None,
+            internal_service_auth: None,
         })
     }
 
@@ -88,6 +97,7 @@ impl MemoryEngineClient {
             },
             operator_token: None,
             access_token: None,
+            internal_service_auth: None,
         })
     }
 
@@ -98,6 +108,17 @@ impl MemoryEngineClient {
 
     pub fn with_bearer_token(mut self, access_token: impl Into<String>) -> Self {
         self.access_token = normalize_token(access_token.into());
+        self
+    }
+
+    pub fn with_internal_service_auth(
+        mut self,
+        caller: impl Into<String>,
+        secret: impl Into<String>,
+    ) -> Self {
+        self.internal_service_auth = normalize_token(caller.into())
+            .zip(normalize_token(secret.into()))
+            .map(|(caller, secret)| InternalServiceAuth { caller, secret });
         self
     }
 }

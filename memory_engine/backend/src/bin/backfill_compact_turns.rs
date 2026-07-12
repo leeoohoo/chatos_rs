@@ -55,7 +55,7 @@ fn build_filter(
 #[tokio::main]
 async fn main() -> Result<(), String> {
     dotenvy::dotenv().ok();
-    let config = config::AppConfig::from_env();
+    let config = config::AppConfig::from_env()?;
     let pool = db::init_pool(&config).await?;
     db::init_schema(&pool).await?;
 

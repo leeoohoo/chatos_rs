@@ -72,8 +72,18 @@ pub(crate) fn codex_gateway_request_tools(
             "server_url": server.url.clone(),
         }));
         if let Some(headers) = server.headers.as_ref() {
-            if let Some(item) = out.last_mut() {
-                item["headers"] = json!(headers);
+            match chatos_mcp_runtime::rpc::prepare_http_headers(headers) {
+                Ok(headers) if !headers.is_empty() => {
+                    if let Some(item) = out.last_mut() {
+                        item["headers"] = json!(headers);
+                    }
+                }
+                Ok(_) => {}
+                Err(err) => warn!(
+                    server_name = server.name,
+                    error = err,
+                    "skipping invalid MCP HTTP headers for Codex gateway"
+                ),
             }
         }
     }
