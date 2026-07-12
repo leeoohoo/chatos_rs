@@ -17,11 +17,11 @@ dotenvy = "0.15"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter", "time", "json"] }
 tracing-appender = "0.2"
-tower-http = { version = "0.6", features = ["cors", "trace", "request-id"] }
+tower-http = { version = "0.7", features = ["cors", "trace", "request-id"] }
 reqwest = { version = "0.12", features = ["json", "multipart", "stream", "gzip", "brotli", "deflate", "rustls-tls"] }
 futures = "0.3"
 tokio-stream = "0.1"
-tokio-tungstenite = { version = "0.29", features = ["rustls-tls-webpki-roots"] }
+tokio-tungstenite = { version = "0.30", features = ["rustls-tls-webpki-roots"] }
 bytes = "1"
 once_cell = "1"
 base64 = "0.22"
@@ -35,7 +35,7 @@ url = "2"
 urlencoding = "2"
 zip = "8.6"
 quick-xml = "0.41"
-lopdf = "0.42"
+lopdf = "0.44"
 sha2 = "0.11"
 hex = "0.4"
 walkdir = "2.4"
