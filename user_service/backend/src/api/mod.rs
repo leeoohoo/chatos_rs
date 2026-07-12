@@ -21,6 +21,7 @@ use crate::state::AppState;
 mod agents;
 mod auth;
 mod harness;
+mod internal_auth;
 mod internal_models;
 mod invite_codes;
 mod models;

@@ -4,7 +4,7 @@
 use std::env;
 use std::net::{IpAddr, SocketAddr};
 
-use chatos_service_runtime::DEFAULT_MEMORY_ENGINE_OPERATOR_TOKEN;
+use chatos_service_runtime::{validate_production_secret, DEFAULT_MEMORY_ENGINE_OPERATOR_TOKEN};
 
 #[derive(Debug, Clone)]
 pub struct AppConfig {
@@ -60,7 +60,7 @@ impl AppConfig {
             .or_else(|| mongodb_database_from_url(database_url.as_str()))
             .unwrap_or(default_mongodb_database);
 
-        Ok(Self {
+        let config = Self {
             host: read_env("USER_SERVICE_HOST")
                 .unwrap_or_else(|| "127.0.0.1".to_string())
                 .parse()
@@ -100,7 +100,8 @@ impl AppConfig {
                 .unwrap_or_else(|| "System Admin".to_string()),
             memory_engine_base_url: read_env("MEMORY_ENGINE_BASE_URL"),
             memory_engine_operator_token: Some(
-                read_env("MEMORY_ENGINE_OPERATOR_TOKEN")
+                read_env("USER_SERVICE_MEMORY_ENGINE_INTERNAL_API_SECRET")
+                    .or_else(|| read_env("MEMORY_ENGINE_OPERATOR_TOKEN"))
                     .unwrap_or_else(|| DEFAULT_MEMORY_ENGINE_OPERATOR_TOKEN.to_string()),
             ),
             task_runner_base_url: read_env("TASK_RUNNER_BASE_URL")
@@ -125,7 +126,10 @@ impl AppConfig {
                 .map_err(|err| format!("invalid HARNESS_REQUEST_TIMEOUT_MS: {err}"))?,
             harness_project_pat_prefix: read_env("HARNESS_PROJECT_PAT_PREFIX")
                 .unwrap_or_else(|| "chatos-project-import".to_string()),
-            user_service_internal_api_secret: read_env("USER_SERVICE_INTERNAL_API_SECRET")
+            user_service_internal_api_secret: read_env(
+                "PROJECT_SERVICE_USER_SERVICE_INTERNAL_API_SECRET",
+            )
+                .or_else(|| read_env("USER_SERVICE_INTERNAL_API_SECRET"))
                 .or_else(|| read_env("CHATOS_USER_SERVICE_INTERNAL_SECRET")),
             smtp_host: read_env("USER_SERVICE_SMTP_HOST"),
             smtp_port: read_env("USER_SERVICE_SMTP_PORT")
@@ -155,7 +159,36 @@ impl AppConfig {
                 .unwrap_or_else(|| "5".to_string())
                 .parse()
                 .map_err(|err| format!("invalid USER_SERVICE_REGISTER_CODE_MAX_ATTEMPTS: {err}"))?,
-        })
+        };
+
+        validate_production_secret(
+            "USER_SERVICE_JWT_SECRET",
+            Some(config.jwt_secret.as_str()),
+            &["change_me_user_service_secret"],
+        )?;
+        validate_production_secret(
+            "USER_SERVICE_SUPER_ADMIN_PASSWORD",
+            Some(config.super_admin_password.as_str()),
+            &["admin123456"],
+        )?;
+        validate_production_secret(
+            "USER_SERVICE_MEMORY_ENGINE_INTERNAL_API_SECRET",
+            config.memory_engine_operator_token.as_deref(),
+            &[
+                DEFAULT_MEMORY_ENGINE_OPERATOR_TOKEN,
+                "change_me_user_service_memory_engine_secret",
+            ],
+        )?;
+        validate_production_secret(
+            "PROJECT_SERVICE_USER_SERVICE_INTERNAL_API_SECRET",
+            config.user_service_internal_api_secret.as_deref(),
+            &[
+                "change_me_user_service_internal_secret",
+                "change_me_project_service_user_service_secret",
+            ],
+        )?;
+
+        Ok(config)
     }
 
     pub fn bind_addr(&self) -> SocketAddr {

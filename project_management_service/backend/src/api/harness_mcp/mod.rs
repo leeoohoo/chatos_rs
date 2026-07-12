@@ -8,7 +8,10 @@ use chatos_mcp_service::{HostCapabilityPolicy, HARNESS_CODE_ENABLED_BUILTIN_KIND
 use reqwest::Method;
 use serde_json::{json, Value};
 
-use super::sync::require_project_sync_secret;
+use super::internal_auth::{
+    require_project_internal_request, CHATOS_CALLER, PROJECT_HARNESS_SCOPE, PROJECT_SERVICE_CALLER,
+    TASK_RUNNER_CALLER,
+};
 use crate::http_body::{read_response_text_limited_or_message, ERROR_BODY_PREVIEW_LIMIT_BYTES};
 use crate::mcp_server::{self, JsonRpcRequest, JsonRpcResponse};
 use crate::models::{ProjectImportStatus, ProjectRecord, ProjectStatus};
@@ -31,7 +34,6 @@ use self::tools::{
 const SERVER_NAME: &str = "harness_code";
 const PROTOCOL_VERSION: &str = "2024-11-05";
 const TASK_RUNNER_PROJECT_ID_HEADER: &str = "x-task-runner-project-id";
-const USER_SERVICE_INTERNAL_SECRET_HEADER: &str = "x-user-service-internal-secret";
 const DEFAULT_MAX_WRITE_BYTES: i64 = 5 * 1024 * 1024;
 
 #[derive(Debug)]
@@ -50,7 +52,12 @@ pub(in crate::api) async fn harness_project_mcp_entrypoint(
     Json(request): Json<JsonRpcRequest>,
 ) -> Json<JsonRpcResponse> {
     let id = request.id.clone().unwrap_or(Value::Null);
-    if let Err(err) = require_project_sync_secret(&state, &headers) {
+    if let Err(err) = require_project_internal_request(
+        &state.config,
+        &headers,
+        &[CHATOS_CALLER, TASK_RUNNER_CALLER, PROJECT_SERVICE_CALLER],
+        PROJECT_HARNESS_SCOPE,
+    ) {
         return Json(mcp_server::jsonrpc_error_response(
             err.status,
             id,
@@ -229,12 +236,14 @@ async fn fetch_harness_api_access(
         .timeout(state.config.user_service_request_timeout)
         .build()
         .map_err(|err| format!("build user_service client failed: {err}"))?;
-    let response = client
-        .request(Method::GET, endpoint)
-        .header(USER_SERVICE_INTERNAL_SECRET_HEADER, secret)
-        .send()
-        .await
-        .map_err(|err| format!("user_service Harness access request failed: {err}"))?;
+    let response = crate::user_model_runtime_client::signed_user_service_request(
+        client.request(Method::GET, endpoint),
+        secret,
+        crate::user_model_runtime_client::HARNESS_ACCESS_READ_SCOPE,
+    )?
+    .send()
+    .await
+    .map_err(|err| format!("user_service Harness access request failed: {err}"))?;
     if !response.status().is_success() {
         let status = response.status();
         let text =

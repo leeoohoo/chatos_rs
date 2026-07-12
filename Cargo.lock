@@ -667,6 +667,7 @@ name = "chatos_mcp_runtime"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "chatos_service_runtime",
  "reqwest",
  "serde",
  "serde_json",
@@ -742,6 +743,7 @@ version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
  "futures-util",
+ "jsonwebtoken 9.3.1",
  "reqwest",
  "serde",
  "serde_json",
@@ -2596,6 +2598,7 @@ checksum = "6b947ae49db0d222b1dbc6b113ce7248a3fc3a6ca21b696717bfc000ba4484d8"
 name = "memory_engine_sdk"
 version = "0.1.0"
 dependencies = [
+ "chatos_service_runtime",
  "reqwest",
  "serde",
  "serde_json",

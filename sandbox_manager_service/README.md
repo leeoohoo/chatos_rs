@@ -1,6 +1,6 @@
 # Sandbox Manager Service
 
-Sandbox Manager manages sandbox leases and proxies MCP calls to sandbox agents. In the Docker cloud stack it runs as a container while controlling the host Docker daemon through `/var/run/docker.sock`.
+Sandbox Manager manages sandbox leases and proxies MCP calls to sandbox agents. In the Docker cloud stack it runs as a container and reaches the host Docker daemon through a restricted Docker Socket Proxy.
 
 ## Run
 
@@ -40,15 +40,23 @@ http://chatos-sandbox-<sandbox_id>:49888
 
 This avoids publishing every agent port on the host.
 
-Important: mounting `/var/run/docker.sock` gives the manager high privilege over the host Docker daemon.
+Compose does not mount `/var/run/docker.sock` into Sandbox Manager. Docker CLI requests are sent to
+the private `sandbox-docker-socket-proxy` service, which exposes only the container, image, build,
+network, info, ping and version API groups required by the manager. The proxy still permits
+container and image lifecycle operations, so it must remain private and must never publish port
+`2375` on the host.
 
 ## Auth
 
-`/health` is public. Other API routes can require auth with:
+`/health` is public. All other API routes require auth by default. Authentication can only be
+disabled explicitly for isolated local tests:
 
 ```env
 SANDBOX_MANAGER_REQUIRE_AUTH=true
 ```
+
+The Docker stack binds the backend host port to `127.0.0.1` by default. Set
+`SANDBOX_MANAGER_BIND_HOST` only when an external reverse proxy must reach the host port.
 
 Supported callers:
 

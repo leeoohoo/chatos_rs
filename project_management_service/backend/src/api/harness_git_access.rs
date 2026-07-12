@@ -7,13 +7,13 @@ use axum::Json;
 use reqwest::Method;
 use serde::{Deserialize, Serialize};
 
-use super::sync::require_project_sync_secret;
+use super::internal_auth::{
+    require_project_internal_request, CHATOS_CALLER, PROJECT_HARNESS_SCOPE, TASK_RUNNER_CALLER,
+};
 use super::ApiError;
 use crate::http_body::{read_response_text_limited_or_message, ERROR_BODY_PREVIEW_LIMIT_BYTES};
 use crate::models::ProjectRecord;
 use crate::state::AppState;
-
-const USER_SERVICE_INTERNAL_SECRET_HEADER: &str = "x-user-service-internal-secret";
 
 #[derive(Debug, Deserialize)]
 struct HarnessApiAccessResponse {
@@ -39,7 +39,12 @@ pub(in crate::api) async fn sync_get_project_harness_git_access(
     State(state): State<AppState>,
     headers: HeaderMap,
 ) -> Result<Json<ProjectHarnessGitAccessResponse>, ApiError> {
-    require_project_sync_secret(&state, &headers)?;
+    require_project_internal_request(
+        &state.config,
+        &headers,
+        &[CHATOS_CALLER, TASK_RUNNER_CALLER],
+        PROJECT_HARNESS_SCOPE,
+    )?;
     let project = state
         .store
         .get_project(project_id.as_str())
@@ -124,14 +129,17 @@ async fn fetch_harness_api_access(
         .timeout(state.config.user_service_request_timeout)
         .build()
         .map_err(|err| ApiError::bad_request(format!("build user_service client failed: {err}")))?;
-    let response = client
-        .request(Method::GET, endpoint)
-        .header(USER_SERVICE_INTERNAL_SECRET_HEADER, secret)
-        .send()
-        .await
-        .map_err(|err| {
-            ApiError::bad_request(format!("user_service Harness access request failed: {err}"))
-        })?;
+    let response = crate::user_model_runtime_client::signed_user_service_request(
+        client.request(Method::GET, endpoint),
+        secret,
+        crate::user_model_runtime_client::HARNESS_ACCESS_READ_SCOPE,
+    )
+    .map_err(ApiError::bad_request)?
+    .send()
+    .await
+    .map_err(|err| {
+        ApiError::bad_request(format!("user_service Harness access request failed: {err}"))
+    })?;
     if !response.status().is_success() {
         let status = response.status();
         let text =

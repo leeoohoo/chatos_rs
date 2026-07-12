@@ -50,6 +50,7 @@ pub(super) async fn resolve_model_runtime_for_task(
         base_url: base_url.as_str(),
         request_timeout: local_connector_service_request_timeout(),
         internal_secret: secret,
+        caller: "task-runner",
         owner_user_id,
         model_config_id: model_config.id.as_str(),
     })

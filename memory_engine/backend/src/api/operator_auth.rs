@@ -14,6 +14,8 @@ use subtle::ConstantTimeEq;
 
 use crate::state::AppState;
 
+use super::internal_auth::{require_internal_request, OPERATOR_SCOPE};
+
 const BEARER_PREFIX: &str = "Bearer ";
 const OPERATOR_HEADER: &str = "x-memory-operator-token";
 
@@ -22,8 +24,30 @@ pub async fn require_operator_auth(
     request: Request<Body>,
     next: Next,
 ) -> Result<Response, (StatusCode, String)> {
-    let Some(expected_token) = state.config.operator_token.as_deref() else {
+    if require_internal_request(
+        &state.config,
+        request.headers(),
+        OPERATOR_SCOPE,
+        &[
+            "chatos-backend",
+            "task-runner",
+            "project-service",
+            "local-connector-service",
+        ],
+    )? {
         return Ok(next.run(request).await);
+    }
+    if state.config.require_signed_internal_requests {
+        return Err((
+            StatusCode::UNAUTHORIZED,
+            "signed Memory Engine internal API token is required".to_string(),
+        ));
+    }
+    let Some(expected_token) = state.config.operator_token.as_deref() else {
+        return Err((
+            StatusCode::UNAUTHORIZED,
+            "Memory Engine operator auth is not configured".to_string(),
+        ));
     };
 
     let provided = extract_operator_token(request.headers()).ok_or_else(|| {

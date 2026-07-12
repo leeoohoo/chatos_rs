@@ -183,7 +183,7 @@ impl SandboxManagerClient {
         let url = format!("{}/api/sandboxes/leases", self.base_url);
         for attempt in 0..6 {
             let response = self
-                .apply_auth(self.client.post(url.as_str()))
+                .apply_auth(self.client.post(url.as_str()))?
                 .header("x-idempotency-key", idempotency_key.as_str())
                 .json(&payload)
                 .send()
@@ -252,7 +252,7 @@ impl SandboxManagerClient {
         self.apply_auth(
             self.client
                 .get(format!("{}/api/sandboxes/{}", self.base_url, sandbox_id)),
-        )
+        )?
         .send()
         .await
         .map_err(|err| format!("request sandbox detail failed: {err}"))?
@@ -271,7 +271,7 @@ impl SandboxManagerClient {
             .apply_auth(self.client.get(format!(
                 "{}/api/sandboxes/{}/health",
                 self.base_url, context.sandbox_id
-            )))
+            )))?
             .send()
             .await
             .map_err(|err| format!("request sandbox health failed: {err}"))?
@@ -303,7 +303,7 @@ impl SandboxManagerClient {
         self.apply_auth(self.client.post(format!(
             "{}/api/sandboxes/{}/release",
             self.base_url, context.sandbox_id
-        )))
+        )))?
         .json(&payload)
         .send()
         .await
@@ -315,13 +315,23 @@ impl SandboxManagerClient {
         .map_err(|err| format!("decode sandbox release response failed: {err}"))
     }
 
-    fn apply_auth(&self, request: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+    fn apply_auth(
+        &self,
+        request: reqwest::RequestBuilder,
+    ) -> Result<reqwest::RequestBuilder, String> {
         if let Some(auth) = self.auth.as_ref() {
-            request
-                .header("x-sandbox-client-id", auth.client_id.as_str())
-                .header("x-sandbox-client-key", auth.client_key.as_str())
+            let token = chatos_service_runtime::issue_internal_service_token(
+                auth.client_key.as_str(),
+                "task-runner",
+                "sandbox-manager",
+                "sandbox.service",
+                60,
+            )?;
+            Ok(request
+                .header("x-sandbox-caller", "task-runner")
+                .header("x-sandbox-internal-token", token))
         } else {
-            request
+            Ok(request)
         }
     }
 }
@@ -332,11 +342,54 @@ impl SandboxManagerAuth {
             config.sandbox_manager_client_id.clone(),
             config.sandbox_manager_client_key.clone(),
         ) {
-            (Some(client_id), Some(client_key)) => Some(Self {
-                client_id,
+            (Some(_client_id), Some(client_key)) => Some(Self {
+                client_id: "task-runner".to_string(),
                 client_key,
             }),
             _ => None,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{SandboxManagerAuth, SandboxManagerClient};
+
+    #[test]
+    fn manager_request_uses_short_lived_token_without_client_key() {
+        let client = SandboxManagerClient::new(
+            "http://127.0.0.1:8095".to_string(),
+            Some(SandboxManagerAuth {
+                client_id: "task-runner".to_string(),
+                client_key: "a-long-task-runner-sandbox-secret".to_string(),
+            }),
+        )
+        .expect("client");
+        let request = client
+            .apply_auth(client.client.get("http://127.0.0.1:8095/api/sandboxes"))
+            .expect("apply auth")
+            .build()
+            .expect("request");
+        assert!(!request.headers().contains_key("x-sandbox-client-key"));
+        assert_eq!(
+            request
+                .headers()
+                .get("x-sandbox-caller")
+                .and_then(|value| value.to_str().ok()),
+            Some("task-runner")
+        );
+        let token = request
+            .headers()
+            .get("x-sandbox-internal-token")
+            .and_then(|value| value.to_str().ok())
+            .expect("token");
+        chatos_service_runtime::verify_internal_service_token(
+            token,
+            "a-long-task-runner-sandbox-secret",
+            "task-runner",
+            "sandbox-manager",
+            "sandbox.service",
+        )
+        .expect("valid token");
     }
 }

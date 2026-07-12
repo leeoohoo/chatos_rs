@@ -9,6 +9,8 @@ pub enum PluginManagementClientError {
     InvalidBaseUrl(String),
     #[error("plugin management internal API secret is not configured")]
     MissingInternalSecret,
+    #[error("plugin management internal token failed: {0}")]
+    InternalToken(String),
     #[error("plugin management request failed: {0}")]
     Transport(#[from] reqwest::Error),
     #[error("plugin management request was rejected with status {status}: {message}")]

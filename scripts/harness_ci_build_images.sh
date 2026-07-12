@@ -6,6 +6,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SERVICES_FILE="$ROOT_DIR/docker/.harness-ci-image-services"
+IMAGE_LIST_FILE="${CHATOS_CI_IMAGE_LIST_FILE:-$ROOT_DIR/.chatos-ci-images}"
 AVAILABLE_FILE=""
 
 cleanup() {
@@ -64,9 +65,17 @@ main() {
     bash docker/deploy-harness-ci.sh check-images "${selected_services[@]}"
   fi
 
-  docker images --format '{{.Repository}}:{{.Tag}} {{.Size}}' \
-    | grep 'chatos-rs-.*:harness-ci' \
-    | sort
+  {
+    docker images --format '{{.Repository}}:{{.Tag}}' \
+      | grep 'chatos-rs-.*:harness-ci' || true
+  } | sort -u >"$IMAGE_LIST_FILE"
+  if [[ ! -s "$IMAGE_LIST_FILE" ]]; then
+    echo "[ERROR] no Harness CI images were recorded for security scanning" >&2
+    exit 2
+  fi
+  while IFS= read -r image; do
+    docker image inspect --format '{{.RepoTags}} {{.Size}}' "$image"
+  done <"$IMAGE_LIST_FILE"
 }
 
 main "$@"

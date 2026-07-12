@@ -2,14 +2,16 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use axum::extract::State;
-use axum::http::{HeaderMap, Method, Request, StatusCode};
+use axum::http::{Method, Request, StatusCode};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 use axum::Json;
 
 use crate::auth::{bearer_token_from_headers, verify_token_via_user_service};
-use crate::models::{CurrentUser, ErrorResponse};
+use crate::models::ErrorResponse;
 use crate::state::AppState;
+
+use super::internal_auth::internal_service_user_from_request;
 
 #[derive(Debug)]
 pub struct ApiError {
@@ -102,7 +104,12 @@ pub(super) async fn require_auth(
     if request.method() == Method::OPTIONS {
         return Ok(next.run(request).await);
     }
-    if let Some(user) = internal_service_user_from_headers(&state, request.headers())? {
+    if let Some(user) = internal_service_user_from_request(
+        &state.config,
+        request.headers(),
+        request.method(),
+        request.uri().path(),
+    )? {
         request.extensions_mut().insert(user);
         return Ok(next.run(request).await);
     }
@@ -113,38 +120,6 @@ pub(super) async fn require_auth(
         .map_err(ApiError::unauthorized)?;
     request.extensions_mut().insert(user);
     Ok(next.run(request).await)
-}
-
-fn internal_service_user_from_headers(
-    state: &AppState,
-    headers: &HeaderMap,
-) -> Result<Option<CurrentUser>, ApiError> {
-    let Some(secret) = header_text(headers, "x-local-connector-internal-secret") else {
-        return Ok(None);
-    };
-    let expected = state
-        .config
-        .internal_api_secret
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .ok_or_else(|| ApiError::unauthorized("Local Connector internal auth is not configured"))?;
-    if secret != expected {
-        return Err(ApiError::unauthorized(
-            "Local Connector internal auth secret is invalid",
-        ));
-    }
-    let owner_user_id = header_text(headers, "x-local-connector-owner-user-id")
-        .or_else(|| header_text(headers, "x-chatos-owner-user-id"))
-        .ok_or_else(|| ApiError::unauthorized("Local Connector owner user id is required"))?;
-    Ok(Some(CurrentUser {
-        principal_type: "service".to_string(),
-        user_id: format!("task_runner:{owner_user_id}"),
-        username: Some("task_runner".to_string()),
-        display_name: Some("Task Runner".to_string()),
-        role: "service".to_string(),
-        owner_user_id: Some(owner_user_id),
-    }))
 }
 
 fn bearer_token_from_request(
@@ -181,13 +156,4 @@ fn token_from_query(query: Option<&str>) -> Option<String> {
         let value = parts.next()?.trim();
         ((key == "access_token" || key == "token") && !value.is_empty()).then(|| value.to_string())
     })
-}
-
-fn header_text(headers: &HeaderMap, key: &'static str) -> Option<String> {
-    headers
-        .get(key)
-        .and_then(|value| value.to_str().ok())
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(ToOwned::to_owned)
 }

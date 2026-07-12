@@ -3,7 +3,7 @@
 
 use once_cell::sync::OnceCell;
 
-use chatos_service_runtime::DEFAULT_MEMORY_ENGINE_OPERATOR_TOKEN;
+use chatos_service_runtime::{validate_production_secret, DEFAULT_MEMORY_ENGINE_OPERATOR_TOKEN};
 
 #[derive(Debug, Clone)]
 pub struct Config {
@@ -36,6 +36,7 @@ pub struct Config {
     pub project_service_base_url: String,
     pub project_service_sync_secret: Option<String>,
     pub task_runner_base_url: String,
+    pub task_runner_internal_api_secret: Option<String>,
     pub task_runner_request_timeout_ms: i64,
     pub local_connector_service_base_url: String,
     pub local_connector_service_request_timeout_ms: i64,
@@ -152,11 +153,15 @@ impl Config {
         let project_service_base_url = read_optional_env("CHATOS_PROJECT_SERVICE_BASE_URL")
             .or_else(|| read_optional_env("PROJECT_SERVICE_BASE_URL"))
             .unwrap_or_else(default_project_service_base_url);
-        let project_service_sync_secret = read_optional_env("CHATOS_PROJECT_SERVICE_SYNC_SECRET")
-            .or_else(|| read_optional_env("PROJECT_SERVICE_SYNC_SECRET"));
+        let project_service_sync_secret =
+            read_optional_env("CHATOS_PROJECT_SERVICE_INTERNAL_API_SECRET")
+                .or_else(|| read_optional_env("CHATOS_PROJECT_SERVICE_SYNC_SECRET"))
+                .or_else(|| read_optional_env("PROJECT_SERVICE_SYNC_SECRET"));
         let task_runner_base_url = read_optional_env("CHATOS_TASK_RUNNER_BASE_URL")
             .or_else(|| read_optional_env("TASK_RUNNER_BASE_URL"))
             .unwrap_or_else(default_task_runner_base_url);
+        let task_runner_internal_api_secret =
+            read_optional_env("CHATOS_TASK_RUNNER_INTERNAL_API_SECRET");
         let task_runner_request_timeout_ms =
             read_optional_env("CHATOS_TASK_RUNNER_REQUEST_TIMEOUT_MS")
                 .or_else(|| read_optional_env("TASK_RUNNER_REQUEST_TIMEOUT_MS"))
@@ -176,7 +181,8 @@ impl Config {
         let memory_engine_base_url = std::env::var("MEMORY_ENGINE_BASE_URL")
             .unwrap_or_else(|_| default_memory_engine_base_url());
         let memory_engine_operator_token = Some(
-            read_optional_env("MEMORY_ENGINE_OPERATOR_TOKEN")
+            read_optional_env("CHATOS_MEMORY_ENGINE_INTERNAL_API_SECRET")
+                .or_else(|| read_optional_env("MEMORY_ENGINE_OPERATOR_TOKEN"))
                 .unwrap_or_else(|| DEFAULT_MEMORY_ENGINE_OPERATOR_TOKEN.to_string()),
         );
         let memory_engine_request_timeout_ms =
@@ -189,6 +195,41 @@ impl Config {
             read_int("MEMORY_ENGINE_ACTIVE_SUMMARY_POLL_TIMEOUT_MS", 120_000).max(10_000);
         let task_runner_callback_secret = read_optional_env("TASK_RUNNER_CHATOS_CALLBACK_SECRET")
             .or_else(|| read_optional_env("CHATOS_TASK_RUNNER_CALLBACK_SECRET"));
+        validate_production_secret(
+            "AUTH_JWT_SECRET",
+            Some(auth_jwt_secret.as_str()),
+            &["dev-only-change-me-please"],
+        )?;
+        validate_production_secret(
+            "CHATOS_MEMORY_ENGINE_INTERNAL_API_SECRET",
+            memory_engine_operator_token.as_deref(),
+            &[
+                DEFAULT_MEMORY_ENGINE_OPERATOR_TOKEN,
+                "change_me_chatos_memory_engine_secret",
+            ],
+        )?;
+        if project_service_sync_secret.is_some() {
+            validate_production_secret(
+                "CHATOS_PROJECT_SERVICE_INTERNAL_API_SECRET",
+                project_service_sync_secret.as_deref(),
+                &[
+                    "change_me_project_sync_secret",
+                    "change_me_chatos_project_service_secret",
+                ],
+            )?;
+        }
+        if task_runner_callback_secret.is_some() {
+            validate_production_secret(
+                "TASK_RUNNER_CHATOS_CALLBACK_SECRET",
+                task_runner_callback_secret.as_deref(),
+                &["change_me_chatos_task_runner_secret"],
+            )?;
+        }
+        validate_production_secret(
+            "CHATOS_TASK_RUNNER_INTERNAL_API_SECRET",
+            task_runner_internal_api_secret.as_deref(),
+            &["change_me_chatos_task_runner_internal_secret"],
+        )?;
         validate_config(
             normalized_env,
             port,
@@ -227,6 +268,7 @@ impl Config {
             project_service_base_url,
             project_service_sync_secret,
             task_runner_base_url,
+            task_runner_internal_api_secret,
             task_runner_request_timeout_ms,
             local_connector_service_base_url,
             local_connector_service_request_timeout_ms,

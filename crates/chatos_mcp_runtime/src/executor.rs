@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use std::time::Instant;
 
 use serde_json::{json, Value};
-use tracing::info;
+use tracing::{info, warn};
 
 use crate::builtin_prompt::{BuiltinMcpPromptBuildResult, BuiltinMcpPromptLocale};
 use crate::parallelism::should_parallelize_tool_batch;
@@ -204,12 +204,24 @@ impl McpExecutor {
     pub fn codex_gateway_request_tools(&self) -> Vec<Value> {
         let mut out = Vec::new();
         for server in &self.http_servers {
-            out.push(json!({
+            let mut item = json!({
                 "type": "mcp",
                 "server_label": server.name,
                 "server_url": server.url,
                 "require_approval": "never"
-            }));
+            });
+            if let Some(headers) = server.headers.as_ref() {
+                match crate::rpc::prepare_http_headers(headers) {
+                    Ok(headers) if !headers.is_empty() => item["headers"] = json!(headers),
+                    Ok(_) => {}
+                    Err(err) => warn!(
+                        server_name = server.name,
+                        error = err,
+                        "skipping invalid MCP HTTP headers for Codex gateway"
+                    ),
+                }
+            }
+            out.push(item);
         }
         for server in &self.stdio_servers {
             let mut item = json!({
@@ -266,6 +278,7 @@ fn public_stdio_cwd(server: &McpStdioServer) -> Option<&str> {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
 
@@ -275,8 +288,8 @@ mod tests {
 
     use crate::{
         BuiltinMcpKind, BuiltinMcpPromptLocale, BuiltinMcpServerOptions, BuiltinToolProvider,
-        BuiltinToolRegistry, McpBuiltinServer, McpExecutor, McpStdioServer, ToolCallContext,
-        ToolResult, ToolResultCallback, ToolStreamChunkCallback,
+        BuiltinToolRegistry, McpBuiltinServer, McpExecutor, McpHttpServer, McpStdioServer,
+        ToolCallContext, ToolResult, ToolResultCallback, ToolStreamChunkCallback,
     };
 
     #[tokio::test]
@@ -394,6 +407,52 @@ mod tests {
             Some("/workspace")
         );
         assert!(!tools[0].to_string().contains("/opt/chatos"));
+    }
+
+    #[test]
+    fn codex_gateway_request_tools_signs_internal_http_headers_without_exposing_secret() {
+        let server = McpHttpServer::new("project", "http://127.0.0.1:39210/mcp").with_headers(
+            HashMap::from([
+                (
+                    "X-Project-Service-Sync-Secret".to_string(),
+                    "a-long-project-service-secret".to_string(),
+                ),
+                (
+                    "X-Project-Service-Caller".to_string(),
+                    "chatos-backend".to_string(),
+                ),
+                (
+                    "X-Project-Service-Internal-Scope".to_string(),
+                    "project.mcp".to_string(),
+                ),
+            ]),
+        );
+        let executor = McpExecutor::new(
+            vec![server],
+            Vec::new(),
+            Vec::new(),
+            BuiltinToolRegistry::new(),
+        );
+
+        let tools = executor.codex_gateway_request_tools();
+        let headers = tools[0]
+            .get("headers")
+            .and_then(Value::as_object)
+            .expect("signed gateway headers");
+        assert!(!headers.contains_key("X-Project-Service-Sync-Secret"));
+        assert!(!headers.contains_key("X-Project-Service-Internal-Scope"));
+        let token = headers
+            .get("x-project-service-internal-token")
+            .and_then(Value::as_str)
+            .expect("internal token");
+        chatos_service_runtime::verify_internal_service_token(
+            token,
+            "a-long-project-service-secret",
+            "chatos-backend",
+            "project-service",
+            "project.mcp",
+        )
+        .expect("valid gateway token");
     }
 
     #[test]

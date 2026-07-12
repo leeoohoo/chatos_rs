@@ -14,6 +14,13 @@ use crate::models::{
     UpdateTaskProjectRequest,
 };
 
+const PROJECT_SERVICE_CALLER: &str = "task-runner";
+const PROJECT_SERVICE_TOKEN_AUDIENCE: &str = "project-service";
+pub(in crate::services) const PROJECT_READ_SCOPE: &str = "project.read";
+pub(in crate::services) const PROJECT_SYNC_SCOPE: &str = "project.sync";
+pub(in crate::services) const PROJECT_MCP_SCOPE: &str = "project.mcp";
+pub(in crate::services) const PROJECT_HARNESS_SCOPE: &str = "project.harness";
+
 #[derive(Debug, Clone, Deserialize)]
 struct ProjectServiceProjectRecord {
     id: String,
@@ -238,11 +245,11 @@ pub async fn get_project_harness_git_access(
         base_url.trim().trim_end_matches('/'),
         urlencoding::encode(project_id.trim())
     );
-    send_json(
-        project_service_client(config)?
-            .get(endpoint)
-            .header("X-Project-Service-Sync-Secret", sync_secret.trim()),
-    )
+    send_json(signed_project_service_request(
+        project_service_client(config)?.get(endpoint),
+        sync_secret,
+        PROJECT_HARNESS_SCOPE,
+    )?)
     .await
 }
 
@@ -257,11 +264,11 @@ pub async fn get_project_sandbox_enabled(
         base_url.trim().trim_end_matches('/'),
         urlencoding::encode(project_id.trim())
     );
-    let response = send_json::<ProjectRuntimeEnvironmentResponse>(
-        project_service_client(config)?
-            .get(endpoint)
-            .header("X-Project-Service-Sync-Secret", sync_secret.trim()),
-    )
+    let response = send_json::<ProjectRuntimeEnvironmentResponse>(signed_project_service_request(
+        project_service_client(config)?.get(endpoint),
+        sync_secret,
+        PROJECT_READ_SCOPE,
+    )?)
     .await?;
     Ok(response.environment.sandbox_enabled)
 }
@@ -292,10 +299,12 @@ pub async fn sync_work_item_task_runner_status(
         urlencoding::encode(work_item_id.trim())
     );
     send_json(
-        project_service_client(config)?
-            .post(endpoint)
-            .header("X-Project-Service-Sync-Secret", sync_secret.trim())
-            .json(input),
+        signed_project_service_request(
+            project_service_client(config)?.post(endpoint),
+            sync_secret,
+            PROJECT_SYNC_SCOPE,
+        )?
+        .json(input),
     )
     .await
 }
@@ -311,10 +320,12 @@ pub async fn import_project(
         base_url.trim().trim_end_matches('/')
     );
     send_json::<ProjectServiceProjectRecord>(
-        project_service_client(config)?
-            .post(endpoint)
-            .header("X-Project-Service-Sync-Secret", sync_secret.trim())
-            .json(input),
+        signed_project_service_request(
+            project_service_client(config)?.post(endpoint),
+            sync_secret,
+            PROJECT_SYNC_SCOPE,
+        )?
+        .json(input),
     )
     .await
     .map(Into::into)
@@ -406,11 +417,11 @@ async fn get_project_with_sync_secret(
         base_url.trim().trim_end_matches('/'),
         urlencoding::encode(project_id.trim())
     );
-    send_optional_json(
-        client
-            .get(endpoint)
-            .header("X-Project-Service-Sync-Secret", sync_secret.trim()),
-    )
+    send_optional_json(signed_project_service_request(
+        client.get(endpoint),
+        sync_secret,
+        PROJECT_READ_SCOPE,
+    )?)
     .await
 }
 
@@ -424,13 +435,56 @@ async fn list_projects_with_sync_secret(
         "{}/api/chatos-sync/projects",
         base_url.trim().trim_end_matches('/')
     );
-    let mut request = client
-        .get(endpoint)
-        .header("X-Project-Service-Sync-Secret", sync_secret.trim());
+    let mut request =
+        signed_project_service_request(client.get(endpoint), sync_secret, PROJECT_READ_SCOPE)?;
     if let Some(status) = status.map(str::trim).filter(|value| !value.is_empty()) {
         request = request.query(&[("status", status)]);
     }
     send_json(request).await
+}
+
+fn signed_project_service_request(
+    request: reqwest::RequestBuilder,
+    internal_secret: &str,
+    scope: &str,
+) -> Result<reqwest::RequestBuilder, String> {
+    let internal_secret = internal_secret.trim();
+    let token = chatos_service_runtime::issue_internal_service_token(
+        internal_secret,
+        PROJECT_SERVICE_CALLER,
+        PROJECT_SERVICE_TOKEN_AUDIENCE,
+        scope,
+        60,
+    )?;
+    Ok(request
+        .header("X-Project-Service-Caller", PROJECT_SERVICE_CALLER)
+        .header("X-Project-Service-Internal-Token", token))
+}
+
+pub(in crate::services) fn insert_project_service_internal_headers(
+    headers: &mut impl Extend<(String, String)>,
+    internal_secret: &str,
+    scope: &str,
+) -> Result<(), String> {
+    let internal_secret = internal_secret.trim();
+    if internal_secret.is_empty() || scope.trim().is_empty() {
+        return Err("project service internal secret and scope are required".to_string());
+    }
+    headers.extend([
+        (
+            "x-project-service-sync-secret".to_string(),
+            internal_secret.to_string(),
+        ),
+        (
+            "x-project-service-caller".to_string(),
+            PROJECT_SERVICE_CALLER.to_string(),
+        ),
+        (
+            "x-project-service-internal-scope".to_string(),
+            scope.trim().to_string(),
+        ),
+    ]);
+    Ok(())
 }
 
 async fn send_json<T: for<'de> Deserialize<'de>>(

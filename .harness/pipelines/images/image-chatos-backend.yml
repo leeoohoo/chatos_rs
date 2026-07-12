@@ -1,0 +1,35 @@
+---
+kind: pipeline
+type: docker
+name: image-chatos-backend
+
+clone:
+  git:
+    image: drone/git:local
+    pull: if-not-exists
+
+steps:
+  - name: build-and-deploy
+    image: docker:27-cli
+    environment:
+      CHATOS_CI_IMAGE_SERVICES: "chatos-backend"
+      CHATOS_DOCKER_BUILD_PARALLEL_LIMIT: "1"
+      CHATOS_DOCKER_MODE: build
+      CHATOS_DOCKER_PRUNE_DANGLING_IMAGES: "true"
+      CHATOS_IMAGE_NAMESPACE: ghcr.io/leeoohoo
+      CHATOS_IMAGE_TAG: harness-ci
+    commands:
+      - sed -i 's|https://dl-cdn.alpinelinux.org|https://mirrors.aliyun.com|g; s|http://dl-cdn.alpinelinux.org|http://mirrors.aliyun.com|g' /etc/apk/repositories
+      - apk add --no-cache bash docker-cli-compose
+      - docker info
+      - docker compose version
+      - bash scripts/harness_ci_build_images.sh
+      - bash docker/deploy-harness-ci.sh "$CHATOS_CI_IMAGE_SERVICES"
+    volumes:
+      - name: docker-sock
+        path: /var/run/docker.sock
+
+volumes:
+  - name: docker-sock
+    host:
+      path: /var/run/docker.sock

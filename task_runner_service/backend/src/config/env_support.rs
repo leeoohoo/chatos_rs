@@ -10,7 +10,7 @@ use chatos_ai_runtime::{
     TOOL_RESULTS_MODEL_TOTAL_MAX_CHARS_ENV, TOOL_RESULT_MODEL_MAX_CHARS_ENV,
 };
 use chatos_service_runtime::{
-    DEFAULT_MEMORY_ENGINE_OPERATOR_TOKEN, DEFAULT_SANDBOX_MANAGER_SYSTEM_CLIENT_ID,
+    validate_production_secret, DEFAULT_MEMORY_ENGINE_OPERATOR_TOKEN,
     DEFAULT_SANDBOX_MANAGER_SYSTEM_CLIENT_KEY,
 };
 
@@ -94,12 +94,12 @@ impl AppConfig {
         let default_sandbox_manager_base_url =
             normalized_env("TASK_RUNNER_SANDBOX_MANAGER_BASE_URL")
                 .unwrap_or_else(|| "http://127.0.0.1:8095".to_string());
-        let sandbox_manager_client_id = normalized_env("TASK_RUNNER_SANDBOX_MANAGER_CLIENT_ID")
-            .or_else(|| normalized_env("SANDBOX_MANAGER_SYSTEM_CLIENT_ID"))
-            .unwrap_or_else(|| DEFAULT_SANDBOX_MANAGER_SYSTEM_CLIENT_ID.to_string());
-        let sandbox_manager_client_key = normalized_env("TASK_RUNNER_SANDBOX_MANAGER_CLIENT_KEY")
-            .or_else(|| normalized_env("SANDBOX_MANAGER_SYSTEM_CLIENT_KEY"))
-            .unwrap_or_else(|| DEFAULT_SANDBOX_MANAGER_SYSTEM_CLIENT_KEY.to_string());
+        let sandbox_manager_client_id = "task-runner".to_string();
+        let sandbox_manager_client_key =
+            normalized_env("TASK_RUNNER_SANDBOX_MANAGER_INTERNAL_API_SECRET")
+                .or_else(|| normalized_env("TASK_RUNNER_SANDBOX_MANAGER_CLIENT_KEY"))
+                .or_else(|| normalized_env("SANDBOX_MANAGER_SYSTEM_CLIENT_KEY"))
+                .unwrap_or_else(|| DEFAULT_SANDBOX_MANAGER_SYSTEM_CLIENT_KEY.to_string());
         let default_sandbox_lease_ttl_seconds =
             env_u64("TASK_RUNNER_SANDBOX_LEASE_TTL_SECONDS", 7_200).max(60);
         let callback_timeout_ms = std::env::var("TASK_RUNNER_CALLBACK_TIMEOUT_MS")
@@ -129,9 +129,11 @@ impl AppConfig {
         let project_service_base_url = normalized_env("TASK_RUNNER_PROJECT_SERVICE_BASE_URL")
             .or_else(|| normalized_env("PROJECT_SERVICE_BASE_URL"))
             .or_else(|| normalized_env("CHATOS_PROJECT_SERVICE_BASE_URL"));
-        let project_service_sync_secret = normalized_env("TASK_RUNNER_PROJECT_SERVICE_SYNC_SECRET")
-            .or_else(|| normalized_env("PROJECT_SERVICE_SYNC_SECRET"))
-            .or_else(|| normalized_env("CHATOS_PROJECT_SERVICE_SYNC_SECRET"));
+        let project_service_sync_secret =
+            normalized_env("TASK_RUNNER_PROJECT_SERVICE_INTERNAL_API_SECRET")
+                .or_else(|| normalized_env("TASK_RUNNER_PROJECT_SERVICE_SYNC_SECRET"))
+                .or_else(|| normalized_env("PROJECT_SERVICE_SYNC_SECRET"))
+                .or_else(|| normalized_env("CHATOS_PROJECT_SERVICE_SYNC_SECRET"));
         let project_service_request_timeout_ms =
             std::env::var("TASK_RUNNER_PROJECT_SERVICE_REQUEST_TIMEOUT_MS")
                 .ok()
@@ -144,16 +146,18 @@ impl AppConfig {
             .or_else(|| normalized_env("CHATOS_ADMIN_DISPLAY_NAME"))
             .unwrap_or_else(|| "System Admin".to_string());
 
-        let internal_api_secret = normalized_env("TASK_RUNNER_INTERNAL_API_SECRET")
+        let internal_api_secret = normalized_env("PROJECT_SERVICE_TASK_RUNNER_INTERNAL_API_SECRET")
+            .or_else(|| normalized_env("TASK_RUNNER_INTERNAL_API_SECRET"))
             .or_else(|| normalized_env("PROJECT_SERVICE_SYNC_SECRET"))
             .or_else(|| normalized_env("TASK_RUNNER_PROJECT_SERVICE_SYNC_SECRET"));
+        let chatos_internal_api_secret = normalized_env("CHATOS_TASK_RUNNER_INTERNAL_API_SECRET");
         let local_connector_internal_api_secret =
             normalized_env("TASK_RUNNER_LOCAL_CONNECTOR_INTERNAL_API_SECRET")
                 .or_else(|| normalized_env("LOCAL_CONNECTOR_INTERNAL_API_SECRET"))
                 .or_else(|| normalized_env("CHATOS_LOCAL_CONNECTOR_INTERNAL_API_SECRET"))
                 .or_else(|| internal_api_secret.clone());
 
-        Ok(Self {
+        let config = Self {
             host,
             port,
             role,
@@ -170,9 +174,12 @@ impl AppConfig {
             memory_engine_source_id: normalized_env("MEMORY_ENGINE_SOURCE_ID")
                 .or_else(|| normalized_env("TASK_RUNNER_MEMORY_ENGINE_SOURCE_ID"))
                 .unwrap_or_else(|| "task".to_string()),
-            memory_engine_operator_token: normalized_env("MEMORY_ENGINE_OPERATOR_TOKEN")
-                .or_else(|| normalized_env("TASK_RUNNER_MEMORY_ENGINE_OPERATOR_TOKEN"))
-                .or_else(|| Some(DEFAULT_MEMORY_ENGINE_OPERATOR_TOKEN.to_string())),
+            memory_engine_operator_token: normalized_env(
+                "TASK_RUNNER_MEMORY_ENGINE_INTERNAL_API_SECRET",
+            )
+            .or_else(|| normalized_env("TASK_RUNNER_MEMORY_ENGINE_OPERATOR_TOKEN"))
+            .or_else(|| normalized_env("MEMORY_ENGINE_OPERATOR_TOKEN"))
+            .or_else(|| Some(DEFAULT_MEMORY_ENGINE_OPERATOR_TOKEN.to_string())),
             default_tenant_id: normalized_env("TASK_RUNNER_TENANT_ID")
                 .unwrap_or_else(|| "default_tenant".to_string()),
             default_subject_id: normalized_env("TASK_RUNNER_SUBJECT_ID")
@@ -197,6 +204,7 @@ impl AppConfig {
             chatos_callback_url: normalized_env("TASK_RUNNER_CHATOS_CALLBACK_URL"),
             chatos_callback_secret: normalized_env("TASK_RUNNER_CHATOS_CALLBACK_SECRET"),
             internal_api_secret,
+            chatos_internal_api_secret,
             local_connector_internal_api_secret,
             callback_timeout: Duration::from_millis(callback_timeout_ms.max(1_000)),
             admin_username,
@@ -209,7 +217,54 @@ impl AppConfig {
             project_service_request_timeout: Duration::from_millis(
                 project_service_request_timeout_ms,
             ),
-        })
+        };
+
+        validate_production_secret(
+            "TASK_RUNNER_ADMIN_PASSWORD",
+            Some(config.admin_password.as_str()),
+            &["admin123456"],
+        )?;
+        validate_production_secret(
+            "TASK_RUNNER_SANDBOX_MANAGER_INTERNAL_API_SECRET",
+            config.sandbox_manager_client_key.as_deref(),
+            &[
+                DEFAULT_SANDBOX_MANAGER_SYSTEM_CLIENT_KEY,
+                "change_me_task_runner_sandbox_manager_secret",
+            ],
+        )?;
+        validate_production_secret(
+            "TASK_RUNNER_MEMORY_ENGINE_INTERNAL_API_SECRET",
+            config.memory_engine_operator_token.as_deref(),
+            &[
+                DEFAULT_MEMORY_ENGINE_OPERATOR_TOKEN,
+                "change_me_task_runner_memory_engine_secret",
+            ],
+        )?;
+        validate_production_secret(
+            "PROJECT_SERVICE_TASK_RUNNER_INTERNAL_API_SECRET",
+            config.internal_api_secret.as_deref(),
+            &[
+                "change_me_task_runner_internal_secret",
+                "change_me_project_service_task_runner_secret",
+            ],
+        )?;
+        validate_production_secret(
+            "CHATOS_TASK_RUNNER_INTERNAL_API_SECRET",
+            config.chatos_internal_api_secret.as_deref(),
+            &["change_me_chatos_task_runner_internal_secret"],
+        )?;
+        if config.local_connector_internal_api_secret.is_some() {
+            validate_production_secret(
+                "TASK_RUNNER_LOCAL_CONNECTOR_INTERNAL_API_SECRET",
+                config.local_connector_internal_api_secret.as_deref(),
+                &[
+                    "chatos-local-connector-dev-secret",
+                    "change_me_task_runner_local_connector_secret",
+                ],
+            )?;
+        }
+
+        Ok(config)
     }
 }
 

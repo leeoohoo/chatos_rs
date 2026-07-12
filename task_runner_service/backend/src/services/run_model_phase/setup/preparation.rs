@@ -216,7 +216,10 @@ async fn build_runtime_config(
             )
             .with_timeout_ms(service.config.memory_timeout.as_millis() as u64)
             .with_access_token(crate::auth::get_current_access_token())
-            .with_operator_token(service.config.memory_engine_operator_token.clone())
+            .with_internal_service_auth(
+                "task-runner",
+                service.config.memory_engine_operator_token.clone(),
+            )
             .with_record_scope(Some(MemoryRecordScope::message_thread(
                 task.tenant_id.clone(),
                 task.memory_thread_id.clone(),
@@ -364,6 +367,7 @@ mod tests {
             chatos_callback_url: None,
             chatos_callback_secret: None,
             internal_api_secret: None,
+            chatos_internal_api_secret: None,
             local_connector_internal_api_secret: None,
             callback_timeout: Duration::from_millis(1_000),
             admin_username: "admin".to_string(),

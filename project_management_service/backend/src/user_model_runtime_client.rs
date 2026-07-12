@@ -10,7 +10,9 @@ use serde::Deserialize;
 use crate::config::AppConfig;
 use crate::http_body::{read_response_text_limited_or_message, ERROR_BODY_PREVIEW_LIMIT_BYTES};
 
-const USER_SERVICE_INTERNAL_SECRET_HEADER: &str = "x-user-service-internal-secret";
+pub(crate) const HARNESS_REPO_WRITE_SCOPE: &str = "harness.repo.write";
+pub(crate) const HARNESS_ACCESS_READ_SCOPE: &str = "harness.access.read";
+const MODEL_SETTINGS_READ_SCOPE: &str = "model-settings.read";
 
 #[derive(Debug, Clone, Deserialize)]
 struct UserServiceModelSettingsResponse {
@@ -48,12 +50,11 @@ pub async fn get_project_agent_model_settings(
         .timeout(config.user_service_request_timeout)
         .build()
         .map_err(|err| format!("build user_service client failed: {err}"))?;
-    let response = client
-        .get(endpoint)
-        .header(USER_SERVICE_INTERNAL_SECRET_HEADER, secret)
-        .send()
-        .await
-        .map_err(|err| format!("user_service model settings request failed: {err}"))?;
+    let response =
+        signed_user_service_request(client.get(endpoint), secret, MODEL_SETTINGS_READ_SCOPE)?
+            .send()
+            .await
+            .map_err(|err| format!("user_service model settings request failed: {err}"))?;
     let status = response.status();
     if !status.is_success() {
         let body =
@@ -72,6 +73,24 @@ pub async fn get_project_agent_model_settings(
         model_config_id: normalized_optional(record.project_management_agent_model_config_id),
         thinking_level: normalized_optional(record.project_management_agent_thinking_level),
     })
+}
+
+pub(crate) fn signed_user_service_request(
+    request: reqwest::RequestBuilder,
+    internal_secret: &str,
+    scope: &str,
+) -> Result<reqwest::RequestBuilder, String> {
+    let internal_secret = internal_secret.trim();
+    let token = chatos_service_runtime::issue_internal_service_token(
+        internal_secret,
+        "project-service",
+        "user-service",
+        scope,
+        60,
+    )?;
+    Ok(request
+        .header("X-User-Service-Caller", "project-service")
+        .header("X-User-Service-Internal-Token", token))
 }
 
 pub async fn resolve_default_project_agent_model_runtime(
@@ -111,6 +130,7 @@ pub async fn resolve_project_agent_model_runtime(
         base_url: config.local_connector_service_base_url.as_str(),
         request_timeout: config.local_connector_service_request_timeout,
         internal_secret: secret.as_str(),
+        caller: "project-service",
         owner_user_id,
         model_config_id,
     })
@@ -145,7 +165,7 @@ fn user_service_internal_secret(config: &AppConfig) -> Result<&str, String> {
 }
 
 fn local_connector_internal_secret() -> Result<String, String> {
-    std::env::var("PROJECT_SERVICE_LOCAL_CONNECTOR_INTERNAL_API_SECRET")
+    let secret = std::env::var("PROJECT_SERVICE_LOCAL_CONNECTOR_INTERNAL_API_SECRET")
         .ok()
         .or_else(|| std::env::var("LOCAL_CONNECTOR_INTERNAL_API_SECRET").ok())
         .or_else(|| std::env::var("CHATOS_LOCAL_CONNECTOR_INTERNAL_API_SECRET").ok())
@@ -154,7 +174,16 @@ fn local_connector_internal_secret() -> Result<String, String> {
         .ok_or_else(|| {
             "PROJECT_SERVICE_LOCAL_CONNECTOR_INTERNAL_API_SECRET is required to resolve local model runtime"
                 .to_string()
-        })
+        })?;
+    chatos_service_runtime::validate_production_secret(
+        "PROJECT_SERVICE_LOCAL_CONNECTOR_INTERNAL_API_SECRET",
+        Some(secret.as_str()),
+        &[
+            "chatos-local-connector-dev-secret",
+            "change_me_project_service_local_connector_secret",
+        ],
+    )?;
+    Ok(secret)
 }
 
 fn runtime_provider_for_model(provider: &str, base_url: &str) -> String {
@@ -178,4 +207,44 @@ fn normalized_optional(value: Option<String>) -> Option<String> {
     value
         .map(|item| item.trim().to_string())
         .filter(|item| !item.is_empty())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn signed_user_service_request_uses_scoped_token_without_static_secret() {
+        let request = signed_user_service_request(
+            reqwest::Client::new().get("http://127.0.0.1:39190/api/internal/test"),
+            "a-long-project-user-service-secret",
+            HARNESS_ACCESS_READ_SCOPE,
+        )
+        .expect("signed request")
+        .build()
+        .expect("build request");
+        assert_eq!(
+            request
+                .headers()
+                .get("x-user-service-caller")
+                .and_then(|value| value.to_str().ok()),
+            Some("project-service")
+        );
+        let token = request
+            .headers()
+            .get("x-user-service-internal-token")
+            .and_then(|value| value.to_str().ok())
+            .expect("internal token");
+        chatos_service_runtime::verify_internal_service_token(
+            token,
+            "a-long-project-user-service-secret",
+            "project-service",
+            "user-service",
+            HARNESS_ACCESS_READ_SCOPE,
+        )
+        .expect("valid token");
+        assert!(!request
+            .headers()
+            .contains_key("x-user-service-internal-secret"));
+    }
 }

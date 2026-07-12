@@ -31,13 +31,14 @@ interface McpCatalogPageProps {
   user: CurrentUser;
 }
 
-const runtimeKinds: RuntimeKind[] = [
+const adminRuntimeKinds: RuntimeKind[] = [
   'http',
   'stdio_cloud',
   'local_connector_stdio',
   'local_connector_http',
   'local_connector_builtin_proxy',
 ];
+const userRuntimeKinds: RuntimeKind[] = ['local_connector_stdio', 'local_connector_http'];
 
 export function McpCatalogPage({ user }: McpCatalogPageProps) {
   const { t } = useI18n();
@@ -46,6 +47,7 @@ export function McpCatalogPage({ user }: McpCatalogPageProps) {
   const [editing, setEditing] = useState<McpRecord | null>(null);
   const [modalOpen, setModalOpen] = useState(false);
   const isAdmin = user.role === 'super_admin';
+  const runtimeKinds = isAdmin ? adminRuntimeKinds : userRuntimeKinds;
   const runtimeKind = Form.useWatch('runtime_kind', form) as RuntimeKind | undefined;
   const editingSystemManaged = editing ? isSystemManagedMcp(editing) : false;
 
@@ -175,7 +177,7 @@ export function McpCatalogPage({ user }: McpCatalogPageProps) {
     form.setFieldsValue({
       visibility: 'private',
       enabled: true,
-      runtime_kind: 'http',
+      runtime_kind: isAdmin ? 'http' : 'local_connector_stdio',
       args_json: '[]',
       env_json: '{}',
       headers_json: '{}',

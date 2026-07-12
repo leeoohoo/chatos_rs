@@ -8,7 +8,7 @@ use std::process::Stdio;
 use anyhow::Result;
 use axum::body::Body;
 use axum::extract::State;
-use axum::http::{header, HeaderMap, Method, Request, StatusCode};
+use axum::http::{header, HeaderMap, HeaderValue, Method, Request, StatusCode};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{delete, get, post};
@@ -19,7 +19,7 @@ use hyper_util::service::TowerToHyperService;
 use serde_json::json;
 use sha2::{Digest, Sha256};
 use tokio::io::{AsyncRead, AsyncWrite};
-use tower_http::cors::{Any, CorsLayer};
+use tower_http::cors::CorsLayer;
 use tower_http::services::{ServeDir, ServeFile};
 
 use crate::config::{optional_env, DEFAULT_LOCAL_API_PORT};
@@ -45,11 +45,18 @@ use handlers::{
 };
 
 pub(crate) async fn serve_local_api(runtime: LocalRuntime) -> Result<()> {
-    let app = local_api_app(runtime);
-    if let Some(endpoint) = optional_env("LOCAL_CONNECTOR_IPC_ENDPOINT")
+    let ipc_endpoint = optional_env("LOCAL_CONNECTOR_IPC_ENDPOINT")
         .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
-    {
+        .filter(|value| !value.is_empty());
+    let tcp_enabled = ipc_endpoint.is_none() || env_flag("LOCAL_CONNECTOR_ENABLE_TCP_API");
+    let desktop_auth_token = local_desktop_auth_token();
+    if tcp_enabled && desktop_auth_token.is_none() {
+        return Err(anyhow::anyhow!(
+            "LOCAL_CONNECTOR_DESKTOP_AUTH_TOKEN is required when the Local Connector TCP API is enabled"
+        ));
+    }
+    let app = local_api_app(runtime, desktop_auth_token);
+    if let Some(endpoint) = ipc_endpoint {
         if env_flag("LOCAL_CONNECTOR_ENABLE_TCP_API") {
             let tcp_app = app.clone();
             tokio::spawn(async move {
@@ -64,25 +71,20 @@ pub(crate) async fn serve_local_api(runtime: LocalRuntime) -> Result<()> {
     }
 }
 
-fn local_api_app(runtime: LocalRuntime) -> Router {
+fn local_api_app(runtime: LocalRuntime, desktop_auth_token: Option<String>) -> Router {
     let frontend_dist_dir =
         local_frontend_dist_dir().unwrap_or_else(|| PathBuf::from("frontend/dist"));
     let frontend_service = ServeDir::new(frontend_dist_dir.clone())
         .not_found_service(ServeFile::new(frontend_dist_dir.join("index.html")));
-    let api_routes = local_api_routes();
+    let api_routes = local_api_routes(desktop_auth_token);
     Router::new()
         .merge(api_routes)
         .fallback_service(frontend_service)
         .with_state(runtime)
-        .layer(
-            CorsLayer::new()
-                .allow_origin(Any)
-                .allow_methods(Any)
-                .allow_headers(Any),
-        )
+        .layer(local_api_cors())
 }
 
-fn local_api_routes() -> Router<LocalRuntime> {
+fn local_api_routes(desktop_auth_token: Option<String>) -> Router<LocalRuntime> {
     Router::new()
         .route("/api/local/status", get(local_status))
         .route("/api/local/auth/login", post(local_login))
@@ -192,18 +194,13 @@ fn local_api_routes() -> Router<LocalRuntime> {
             post(local_deny_pending_approval),
         )
         .route_layer(middleware::from_fn_with_state(
-            local_desktop_auth_token(),
+            desktop_auth_token,
             require_local_desktop_auth,
         ))
 }
 
 async fn serve_tcp_local_api(app: Router) -> Result<()> {
-    let bind_addr = SocketAddr::new(
-        IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
-        optional_env("LOCAL_CONNECTOR_CORE_API_PORT")
-            .and_then(|value| value.parse::<u16>().ok())
-            .unwrap_or(DEFAULT_LOCAL_API_PORT),
-    );
+    let bind_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), local_api_port());
     let listener = tokio::net::TcpListener::bind(bind_addr).await?;
     tracing_stdout(format!("local connector core API listening on http://{bind_addr}").as_str());
     if should_open_local_ui() {
@@ -380,6 +377,50 @@ async fn open_local_ui(url: &str) -> Result<()> {
 
 fn local_desktop_auth_token() -> Option<String> {
     optional_env("LOCAL_CONNECTOR_DESKTOP_AUTH_TOKEN")
+}
+
+fn local_api_port() -> u16 {
+    optional_env("LOCAL_CONNECTOR_CORE_API_PORT")
+        .and_then(|value| value.parse::<u16>().ok())
+        .unwrap_or(DEFAULT_LOCAL_API_PORT)
+}
+
+fn local_api_cors() -> CorsLayer {
+    let core_port = local_api_port();
+    let frontend_port = optional_env("LOCAL_CONNECTOR_CLIENT_FRONTEND_PORT")
+        .and_then(|value| value.parse::<u16>().ok())
+        .unwrap_or(39_233);
+    let configured = optional_env("LOCAL_CONNECTOR_DESKTOP_ALLOWED_ORIGINS")
+        .map(|value| {
+            value
+                .split(',')
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(ToOwned::to_owned)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_else(|| {
+            vec![
+                format!("http://127.0.0.1:{core_port}"),
+                format!("http://localhost:{core_port}"),
+                format!("http://127.0.0.1:{frontend_port}"),
+                format!("http://localhost:{frontend_port}"),
+            ]
+        });
+    let origins = configured
+        .into_iter()
+        .filter_map(|value| HeaderValue::from_str(value.as_str()).ok())
+        .collect::<Vec<_>>();
+    CorsLayer::new()
+        .allow_origin(origins)
+        .allow_methods([
+            Method::GET,
+            Method::POST,
+            Method::PUT,
+            Method::PATCH,
+            Method::DELETE,
+        ])
+        .allow_headers([header::AUTHORIZATION, header::CONTENT_TYPE, header::ACCEPT])
 }
 
 async fn require_local_desktop_auth(

@@ -212,7 +212,7 @@ async fn get_internal_json(
     let base_url = resolve_task_runner_base_url(base_url).await;
     let endpoint = format!("{}{}", base_url.trim().trim_end_matches('/'), path);
     send_task_runner_response_with_limit(
-        task_runner_http_client().get(endpoint).query(query),
+        signed_chatos_internal_request(task_runner_http_client().get(endpoint))?.query(query),
         TASK_RUNNER_INTERNAL_RESPONSE_LIMIT_BYTES,
         "Task Runner internal request failed",
     )
@@ -227,11 +227,40 @@ async fn post_internal_json<T: Serialize + ?Sized>(
     let base_url = resolve_task_runner_base_url(base_url).await;
     let endpoint = format!("{}{}", base_url.trim().trim_end_matches('/'), path);
     send_task_runner_response_with_limit(
-        task_runner_http_client().post(endpoint).json(body),
+        signed_chatos_internal_request(task_runner_http_client().post(endpoint))?.json(body),
         TASK_RUNNER_INTERNAL_RESPONSE_LIMIT_BYTES,
         "Task Runner internal request failed",
     )
     .await
+}
+
+fn signed_chatos_internal_request(
+    request: reqwest::RequestBuilder,
+) -> Result<reqwest::RequestBuilder, String> {
+    let config = crate::config::Config::try_get()?;
+    let secret = config
+        .task_runner_internal_api_secret
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| "CHATOS_TASK_RUNNER_INTERNAL_API_SECRET is required".to_string())?;
+    signed_chatos_internal_request_with_secret(request, secret)
+}
+
+fn signed_chatos_internal_request_with_secret(
+    request: reqwest::RequestBuilder,
+    secret: &str,
+) -> Result<reqwest::RequestBuilder, String> {
+    let token = chatos_service_runtime::issue_internal_service_token(
+        secret,
+        "chatos-backend",
+        "task-runner",
+        "chatos.messages.read",
+        60,
+    )?;
+    Ok(request
+        .header("X-Task-Runner-Caller", "chatos-backend")
+        .header("X-Task-Runner-Internal-Token", token))
 }
 
 async fn resolve_task_runner_base_url(base_url: &str) -> String {

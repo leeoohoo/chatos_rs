@@ -31,7 +31,7 @@ services:
     restart: unless-stopped
     command: ["agent", "-dev", "-client=0.0.0.0", "-ui", "-data-dir=/tmp/consul-data"]
     ports:
-      - "${CONSUL_HTTP_PORT:-8500}:8500"
+      - "${CHATOS_INFRA_BIND_HOST:-127.0.0.1}:${CONSUL_HTTP_PORT:-8500}:8500"
     volumes:
       - ./consul/services/harness.json:/consul/config/harness.json:ro
     healthcheck:
@@ -49,7 +49,7 @@ services:
       MONGO_INITDB_ROOT_USERNAME: ${MONGODB_USER:-admin}
       MONGO_INITDB_ROOT_PASSWORD: ${MONGODB_PASSWORD:-admin}
     ports:
-      - "${MONGODB_HOST_PORT:-27018}:27017"
+      - "${CHATOS_INFRA_BIND_HOST:-127.0.0.1}:${MONGODB_HOST_PORT:-27018}:27017"
     volumes:
       - mongodb-data:/data/db
     healthcheck:
@@ -139,7 +139,7 @@ services:
       USER_SERVICE_JWT_ISSUER: ${USER_SERVICE_JWT_ISSUER:-user_service}
       USER_SERVICE_USER_AUDIENCE: ${USER_SERVICE_USER_AUDIENCE:-user_service}
       USER_SERVICE_TASK_RUNNER_AUDIENCE: ${USER_SERVICE_TASK_RUNNER_AUDIENCE:-task_runner}
-      USER_SERVICE_INTERNAL_API_SECRET: ${USER_SERVICE_INTERNAL_API_SECRET:-change_me_user_service_internal_secret}
+      PROJECT_SERVICE_USER_SERVICE_INTERNAL_API_SECRET: ${PROJECT_SERVICE_USER_SERVICE_INTERNAL_API_SECRET:-change_me_project_service_user_service_secret}
       USER_SERVICE_SMTP_HOST: ${USER_SERVICE_SMTP_HOST:-}
       USER_SERVICE_SMTP_PORT: ${USER_SERVICE_SMTP_PORT:-587}
       USER_SERVICE_SMTP_USERNAME: ${USER_SERVICE_SMTP_USERNAME:-}
@@ -154,7 +154,7 @@ services:
       USER_SERVICE_SUPER_ADMIN_PASSWORD: ${CHATOS_ADMIN_PASSWORD:-admin123456}
       USER_SERVICE_SUPER_ADMIN_DISPLAY_NAME: ${CHATOS_ADMIN_DISPLAY_NAME:-System Admin}
       MEMORY_ENGINE_BASE_URL: http://memory-engine-backend:7081/api/memory-engine/v1
-      MEMORY_ENGINE_OPERATOR_TOKEN: ${MEMORY_ENGINE_OPERATOR_TOKEN:-chatos-memory-engine-dev-operator-token}
+      USER_SERVICE_MEMORY_ENGINE_INTERNAL_API_SECRET: ${USER_SERVICE_MEMORY_ENGINE_INTERNAL_API_SECRET:-change_me_user_service_memory_engine_secret}
       TASK_RUNNER_BASE_URL: http://task-runner-backend:39090
       TASK_RUNNER_CHATOS_CALLBACK_SECRET: ${TASK_RUNNER_CHATOS_CALLBACK_SECRET:-change_me_chatos_task_runner_secret}
       HARNESS_PROVISIONING_ENABLED: ${HARNESS_PROVISIONING_ENABLED:-true}
@@ -191,10 +191,15 @@ services:
       MEMORY_ENGINE_PORT: 7081
       MEMORY_ENGINE_MONGODB_URI: mongodb://${MONGODB_USER:-admin}:${MONGODB_PASSWORD:-admin}@mongodb:27017/admin
       MEMORY_ENGINE_MONGODB_DATABASE: memory_engine
-      MEMORY_ENGINE_OPERATOR_TOKEN: ${MEMORY_ENGINE_OPERATOR_TOKEN:-chatos-memory-engine-dev-operator-token}
+      CHATOS_MEMORY_ENGINE_INTERNAL_API_SECRET: ${CHATOS_MEMORY_ENGINE_INTERNAL_API_SECRET:-change_me_chatos_memory_engine_secret}
+      TASK_RUNNER_MEMORY_ENGINE_INTERNAL_API_SECRET: ${TASK_RUNNER_MEMORY_ENGINE_INTERNAL_API_SECRET:-change_me_task_runner_memory_engine_secret}
+      PROJECT_SERVICE_MEMORY_ENGINE_INTERNAL_API_SECRET: ${PROJECT_SERVICE_MEMORY_ENGINE_INTERNAL_API_SECRET:-change_me_project_service_memory_engine_secret}
+      USER_SERVICE_MEMORY_ENGINE_INTERNAL_API_SECRET: ${USER_SERVICE_MEMORY_ENGINE_INTERNAL_API_SECRET:-change_me_user_service_memory_engine_secret}
+      LOCAL_CONNECTOR_MEMORY_ENGINE_INTERNAL_API_SECRET: ${LOCAL_CONNECTOR_MEMORY_ENGINE_INTERNAL_API_SECRET:-change_me_local_connector_memory_engine_secret}
+      MEMORY_ENGINE_OPERATOR_TOKEN: ${MEMORY_ENGINE_OPERATOR_TOKEN:-}
       MEMORY_ENGINE_USER_SERVICE_BASE_URL: http://user-service-backend:39190
       MEMORY_ENGINE_LOCAL_CONNECTOR_SERVICE_BASE_URL: http://local-connector-service-backend:39230
-      MEMORY_ENGINE_LOCAL_CONNECTOR_INTERNAL_API_SECRET: ${CHATOS_LOCAL_CONNECTOR_INTERNAL_API_SECRET:-chatos-local-connector-dev-secret}
+      MEMORY_ENGINE_LOCAL_CONNECTOR_INTERNAL_API_SECRET: ${MEMORY_ENGINE_LOCAL_CONNECTOR_INTERNAL_API_SECRET:-change_me_memory_engine_local_connector_secret}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.openai.com/v1}
     ports:
@@ -222,16 +227,19 @@ services:
       PROJECT_SERVICE_TASK_RUNNER_BASE_URL: http://task-runner-backend:39090
       PROJECT_SERVICE_LOCAL_CONNECTOR_SERVICE_BASE_URL: http://local-connector-service-backend:39230
       PLUGIN_MANAGEMENT_SERVICE_URL: http://plugin-management-backend:39260
-      PLUGIN_MANAGEMENT_INTERNAL_API_SECRET: ${PLUGIN_MANAGEMENT_INTERNAL_API_SECRET:-change_me_plugin_management_internal_secret}
-      PROJECT_SERVICE_LOCAL_CONNECTOR_INTERNAL_API_SECRET: ${CHATOS_LOCAL_CONNECTOR_INTERNAL_API_SECRET:-chatos-local-connector-dev-secret}
+      PLUGIN_MANAGEMENT_PROJECT_SERVICE_INTERNAL_API_SECRET: ${PLUGIN_MANAGEMENT_PROJECT_SERVICE_INTERNAL_API_SECRET:-${PLUGIN_MANAGEMENT_INTERNAL_API_SECRET:-change_me_plugin_management_internal_secret}}
+      PROJECT_SERVICE_LOCAL_CONNECTOR_INTERNAL_API_SECRET: ${PROJECT_SERVICE_LOCAL_CONNECTOR_INTERNAL_API_SECRET:-change_me_project_service_local_connector_secret}
       PROJECT_SERVICE_MEMORY_ENGINE_BASE_URL: http://memory-engine-backend:7081/api/memory-engine/v1
-      PROJECT_SERVICE_MEMORY_ENGINE_OPERATOR_TOKEN: ${MEMORY_ENGINE_OPERATOR_TOKEN:-chatos-memory-engine-dev-operator-token}
+      PROJECT_SERVICE_MEMORY_ENGINE_INTERNAL_API_SECRET: ${PROJECT_SERVICE_MEMORY_ENGINE_INTERNAL_API_SECRET:-change_me_project_service_memory_engine_secret}
       PROJECT_SERVICE_SANDBOX_MANAGER_BASE_URL: http://sandbox-manager-backend:8095
-      PROJECT_SERVICE_SANDBOX_MANAGER_CLIENT_ID: ${TASK_RUNNER_SANDBOX_MANAGER_CLIENT_ID:-task_runner}
-      PROJECT_SERVICE_SANDBOX_MANAGER_CLIENT_KEY: ${TASK_RUNNER_SANDBOX_MANAGER_CLIENT_KEY:-chatos-task-runner-sandbox-dev-key}
-      PROJECT_SERVICE_SYNC_SECRET: ${CHATOS_PROJECT_SERVICE_SYNC_SECRET:-change_me_project_sync_secret}
-      USER_SERVICE_INTERNAL_API_SECRET: ${USER_SERVICE_INTERNAL_API_SECRET:-change_me_user_service_internal_secret}
-      TASK_RUNNER_INTERNAL_API_SECRET: ${TASK_RUNNER_INTERNAL_API_SECRET:-change_me_task_runner_internal_secret}
+      PROJECT_SERVICE_SANDBOX_MANAGER_CLIENT_ID: project-service
+      PROJECT_SERVICE_SANDBOX_MANAGER_INTERNAL_API_SECRET: ${PROJECT_SERVICE_SANDBOX_MANAGER_INTERNAL_API_SECRET:-change_me_project_service_sandbox_manager_secret}
+      PROJECT_SERVICE_SYNC_SECRET: ${CHATOS_PROJECT_SERVICE_SYNC_SECRET:-}
+      CHATOS_PROJECT_SERVICE_INTERNAL_API_SECRET: ${CHATOS_PROJECT_SERVICE_INTERNAL_API_SECRET:-change_me_chatos_project_service_secret}
+      TASK_RUNNER_PROJECT_SERVICE_INTERNAL_API_SECRET: ${TASK_RUNNER_PROJECT_SERVICE_INTERNAL_API_SECRET:-change_me_task_runner_project_service_secret}
+      PROJECT_SERVICE_SELF_INTERNAL_API_SECRET: ${PROJECT_SERVICE_SELF_INTERNAL_API_SECRET:-change_me_project_service_self_secret}
+      PROJECT_SERVICE_USER_SERVICE_INTERNAL_SECRET: ${PROJECT_SERVICE_USER_SERVICE_INTERNAL_API_SECRET:-change_me_project_service_user_service_secret}
+      PROJECT_SERVICE_TASK_RUNNER_INTERNAL_SECRET: ${PROJECT_SERVICE_TASK_RUNNER_INTERNAL_API_SECRET:-change_me_project_service_task_runner_secret}
     depends_on:
       plugin-management-backend:
         condition: service_healthy
@@ -258,7 +266,11 @@ services:
       PLUGIN_MANAGEMENT_SERVICE_DATABASE_URL: mongodb://${MONGODB_USER:-admin}:${MONGODB_PASSWORD:-admin}@mongodb:27017/plugin_management_service?authSource=admin
       PLUGIN_MANAGEMENT_SERVICE_MONGODB_DATABASE: plugin_management_service
       PLUGIN_MANAGEMENT_SERVICE_USER_SERVICE_BASE_URL: http://user-service-backend:39190
+      PLUGIN_MANAGEMENT_CORS_ORIGINS: ${PLUGIN_MANAGEMENT_CORS_ORIGINS:-http://127.0.0.1:39261,http://localhost:39261}
       PLUGIN_MANAGEMENT_INTERNAL_API_SECRET: ${PLUGIN_MANAGEMENT_INTERNAL_API_SECRET:-change_me_plugin_management_internal_secret}
+      PLUGIN_MANAGEMENT_TASK_RUNNER_INTERNAL_API_SECRET: ${PLUGIN_MANAGEMENT_TASK_RUNNER_INTERNAL_API_SECRET:-${PLUGIN_MANAGEMENT_INTERNAL_API_SECRET:-change_me_plugin_management_internal_secret}}
+      PLUGIN_MANAGEMENT_PROJECT_SERVICE_INTERNAL_API_SECRET: ${PLUGIN_MANAGEMENT_PROJECT_SERVICE_INTERNAL_API_SECRET:-${PLUGIN_MANAGEMENT_INTERNAL_API_SECRET:-change_me_plugin_management_internal_secret}}
+      PLUGIN_MANAGEMENT_LOCAL_CONNECTOR_SERVICE_INTERNAL_API_SECRET: ${PLUGIN_MANAGEMENT_LOCAL_CONNECTOR_SERVICE_INTERNAL_API_SECRET:-${PLUGIN_MANAGEMENT_INTERNAL_API_SECRET:-change_me_plugin_management_internal_secret}}
       PLUGIN_MANAGEMENT_SERVICE_SUPER_ADMIN_USERNAME: ${CHATOS_ADMIN_USERNAME:-admin}
       PLUGIN_MANAGEMENT_SERVICE_SUPER_ADMIN_PASSWORD: ${CHATOS_ADMIN_PASSWORD:-admin123456}
       PLUGIN_MANAGEMENT_SERVICE_SEED_SYSTEM_RESOURCES: ${PLUGIN_MANAGEMENT_SERVICE_SEED_SYSTEM_RESOURCES:-true}
@@ -292,11 +304,15 @@ services:
       LOCAL_CONNECTOR_DATABASE_URL: mongodb://${MONGODB_USER:-admin}:${MONGODB_PASSWORD:-admin}@mongodb:27017/local_connector_service?authSource=admin
       LOCAL_CONNECTOR_USER_SERVICE_BASE_URL: http://user-service-backend:39190
       LOCAL_CONNECTOR_PUBLIC_BASE_URL: ${LOCAL_CONNECTOR_PUBLIC_BASE_URL:-http://localhost:39230}
-      LOCAL_CONNECTOR_INTERNAL_API_SECRET: ${CHATOS_LOCAL_CONNECTOR_INTERNAL_API_SECRET:-chatos-local-connector-dev-secret}
+      CHATOS_LOCAL_CONNECTOR_INTERNAL_API_SECRET: ${CHATOS_LOCAL_CONNECTOR_INTERNAL_API_SECRET:-change_me_chatos_local_connector_secret}
+      TASK_RUNNER_LOCAL_CONNECTOR_INTERNAL_API_SECRET: ${TASK_RUNNER_LOCAL_CONNECTOR_INTERNAL_API_SECRET:-change_me_task_runner_local_connector_secret}
+      PROJECT_SERVICE_LOCAL_CONNECTOR_INTERNAL_API_SECRET: ${PROJECT_SERVICE_LOCAL_CONNECTOR_INTERNAL_API_SECRET:-change_me_project_service_local_connector_secret}
+      MEMORY_ENGINE_LOCAL_CONNECTOR_INTERNAL_API_SECRET: ${MEMORY_ENGINE_LOCAL_CONNECTOR_INTERNAL_API_SECRET:-change_me_memory_engine_local_connector_secret}
+      LOCAL_CONNECTOR_INTERNAL_API_SECRET: ${LOCAL_CONNECTOR_INTERNAL_API_SECRET:-}
       PLUGIN_MANAGEMENT_SERVICE_URL: http://plugin-management-backend:39260
-      PLUGIN_MANAGEMENT_INTERNAL_API_SECRET: ${PLUGIN_MANAGEMENT_INTERNAL_API_SECRET:-change_me_plugin_management_internal_secret}
+      PLUGIN_MANAGEMENT_LOCAL_CONNECTOR_SERVICE_INTERNAL_API_SECRET: ${PLUGIN_MANAGEMENT_LOCAL_CONNECTOR_SERVICE_INTERNAL_API_SECRET:-${PLUGIN_MANAGEMENT_INTERNAL_API_SECRET:-change_me_plugin_management_internal_secret}}
       LOCAL_CONNECTOR_MEMORY_ENGINE_BASE_URL: http://memory-engine-backend:7081/api/memory-engine/v1
-      LOCAL_CONNECTOR_MEMORY_ENGINE_OPERATOR_TOKEN: ${MEMORY_ENGINE_OPERATOR_TOKEN:-chatos-memory-engine-dev-operator-token}
+      LOCAL_CONNECTOR_MEMORY_ENGINE_INTERNAL_API_SECRET: ${LOCAL_CONNECTOR_MEMORY_ENGINE_INTERNAL_API_SECRET:-change_me_local_connector_memory_engine_secret}
     ports:
       - "${LOCAL_CONNECTOR_SERVICE_PORT:-39230}:39230"
     volumes:
@@ -309,6 +325,34 @@ services:
       interval: 10s
       timeout: 5s
       retries: 30
+
+  sandbox-docker-socket-proxy:
+    image: ${DOCKER_SOCKET_PROXY_IMAGE:-tecnativa/docker-socket-proxy:latest}
+    restart: unless-stopped
+    networks:
+      - cloud
+    environment:
+      CONTAINERS: "1"
+      IMAGES: "1"
+      BUILD: "1"
+      NETWORKS: "1"
+      INFO: "1"
+      PING: "1"
+      VERSION: "1"
+      POST: "1"
+      DELETE: "1"
+      SERVICES: "0"
+      TASKS: "0"
+      SWARM: "0"
+      SECRETS: "0"
+      CONFIGS: "0"
+      PLUGINS: "0"
+      NODES: "0"
+      VOLUMES: "0"
+      AUTH: "0"
+      DISTRIBUTION: "0"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
 
   sandbox-manager-backend:
     <<: *rust-service
@@ -330,17 +374,22 @@ services:
       SANDBOX_MANAGER_DOCKER_NETWORK: ${CHATOS_DOCKER_NETWORK:-chatos-cloud}
       SANDBOX_MANAGER_DOCKER_AGENT_ENDPOINT_MODE: container
       SANDBOX_MANAGER_DOCKER_PUBLISH_AGENT: "false"
-      SANDBOX_MANAGER_REQUIRE_AUTH: ${SANDBOX_MANAGER_REQUIRE_AUTH:-false}
-      SANDBOX_MANAGER_OPERATOR_TOKEN: ${SANDBOX_MANAGER_OPERATOR_TOKEN:-chatos-sandbox-manager-dev-operator-token}
+      SANDBOX_MANAGER_REQUIRE_AUTH: ${SANDBOX_MANAGER_REQUIRE_AUTH:-true}
+      SANDBOX_MANAGER_OPERATOR_TOKEN: ${SANDBOX_MANAGER_OPERATOR_TOKEN:-}
       SANDBOX_MANAGER_AGENT_TOKEN_SECRET: ${SANDBOX_MANAGER_AGENT_TOKEN_SECRET:-chatos-sandbox-agent-dev-secret}
       SANDBOX_MANAGER_USER_SERVICE_BASE_URL: http://user-service-backend:39190
-      SANDBOX_MANAGER_SYSTEM_CLIENT_ID: ${TASK_RUNNER_SANDBOX_MANAGER_CLIENT_ID:-task_runner}
-      SANDBOX_MANAGER_SYSTEM_CLIENT_KEY: ${TASK_RUNNER_SANDBOX_MANAGER_CLIENT_KEY:-chatos-task-runner-sandbox-dev-key}
+      TASK_RUNNER_SANDBOX_MANAGER_INTERNAL_API_SECRET: ${TASK_RUNNER_SANDBOX_MANAGER_INTERNAL_API_SECRET:-change_me_task_runner_sandbox_manager_secret}
+      PROJECT_SERVICE_SANDBOX_MANAGER_INTERNAL_API_SECRET: ${PROJECT_SERVICE_SANDBOX_MANAGER_INTERNAL_API_SECRET:-change_me_project_service_sandbox_manager_secret}
+      SANDBOX_MANAGER_SYSTEM_CLIENT_ID: ${SANDBOX_MANAGER_SYSTEM_CLIENT_ID:-}
+      SANDBOX_MANAGER_SYSTEM_CLIENT_KEY: ${SANDBOX_MANAGER_SYSTEM_CLIENT_KEY:-}
+      DOCKER_HOST: tcp://sandbox-docker-socket-proxy:2375
     ports:
-      - "${SANDBOX_MANAGER_PORT:-8095}:8095"
+      - "${SANDBOX_MANAGER_BIND_HOST:-127.0.0.1}:${SANDBOX_MANAGER_PORT:-8095}:8095"
     volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
       - sandbox-manager-data:/data/sandboxes
+    depends_on:
+      sandbox-docker-socket-proxy:
+        condition: service_started
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8095/health"]
       interval: 10s
@@ -365,20 +414,21 @@ services:
       TASK_RUNNER_MAX_MODEL_REQUEST_ROUNDS: ${TASK_RUNNER_MAX_MODEL_REQUEST_ROUNDS:-600}
       TASK_RUNNER_USER_SERVICE_BASE_URL: http://user-service-backend:39190
       TASK_RUNNER_PROJECT_SERVICE_BASE_URL: http://project-management-backend:39210
-      TASK_RUNNER_PROJECT_SERVICE_SYNC_SECRET: ${CHATOS_PROJECT_SERVICE_SYNC_SECRET:-change_me_project_sync_secret}
+      TASK_RUNNER_PROJECT_SERVICE_INTERNAL_API_SECRET: ${TASK_RUNNER_PROJECT_SERVICE_INTERNAL_API_SECRET:-change_me_task_runner_project_service_secret}
       TASK_RUNNER_MEMORY_ENGINE_BASE_URL: http://memory-engine-backend:7081/api/memory-engine/v1
-      TASK_RUNNER_MEMORY_ENGINE_OPERATOR_TOKEN: ${MEMORY_ENGINE_OPERATOR_TOKEN:-chatos-memory-engine-dev-operator-token}
+      TASK_RUNNER_MEMORY_ENGINE_INTERNAL_API_SECRET: ${TASK_RUNNER_MEMORY_ENGINE_INTERNAL_API_SECRET:-change_me_task_runner_memory_engine_secret}
       TASK_RUNNER_LOCAL_CONNECTOR_SERVICE_BASE_URL: http://local-connector-service-backend:39230
       PLUGIN_MANAGEMENT_SERVICE_URL: http://plugin-management-backend:39260
-      PLUGIN_MANAGEMENT_INTERNAL_API_SECRET: ${PLUGIN_MANAGEMENT_INTERNAL_API_SECRET:-change_me_plugin_management_internal_secret}
+      PLUGIN_MANAGEMENT_TASK_RUNNER_INTERNAL_API_SECRET: ${PLUGIN_MANAGEMENT_TASK_RUNNER_INTERNAL_API_SECRET:-${PLUGIN_MANAGEMENT_INTERNAL_API_SECRET:-change_me_plugin_management_internal_secret}}
       TASK_RUNNER_EXECUTION_ENVIRONMENT_MODE: cloud
       TASK_RUNNER_SANDBOX_MANAGER_BASE_URL: http://sandbox-manager-backend:8095
-      TASK_RUNNER_SANDBOX_MANAGER_CLIENT_ID: ${TASK_RUNNER_SANDBOX_MANAGER_CLIENT_ID:-task_runner}
-      TASK_RUNNER_SANDBOX_MANAGER_CLIENT_KEY: ${TASK_RUNNER_SANDBOX_MANAGER_CLIENT_KEY:-chatos-task-runner-sandbox-dev-key}
+      TASK_RUNNER_SANDBOX_MANAGER_CLIENT_ID: task-runner
+      TASK_RUNNER_SANDBOX_MANAGER_INTERNAL_API_SECRET: ${TASK_RUNNER_SANDBOX_MANAGER_INTERNAL_API_SECRET:-change_me_task_runner_sandbox_manager_secret}
       TASK_RUNNER_CHATOS_CALLBACK_URL: http://chatos-backend:3997/api/agent/chat/task-runner/callback
       TASK_RUNNER_CHATOS_CALLBACK_SECRET: ${TASK_RUNNER_CHATOS_CALLBACK_SECRET:-change_me_chatos_task_runner_secret}
-      TASK_RUNNER_INTERNAL_API_SECRET: ${TASK_RUNNER_INTERNAL_API_SECRET:-change_me_task_runner_internal_secret}
-      TASK_RUNNER_LOCAL_CONNECTOR_INTERNAL_API_SECRET: ${CHATOS_LOCAL_CONNECTOR_INTERNAL_API_SECRET:-chatos-local-connector-dev-secret}
+      PROJECT_SERVICE_TASK_RUNNER_INTERNAL_API_SECRET: ${PROJECT_SERVICE_TASK_RUNNER_INTERNAL_API_SECRET:-change_me_project_service_task_runner_secret}
+      CHATOS_TASK_RUNNER_INTERNAL_API_SECRET: ${CHATOS_TASK_RUNNER_INTERNAL_API_SECRET:-change_me_chatos_task_runner_internal_secret}
+      TASK_RUNNER_LOCAL_CONNECTOR_INTERNAL_API_SECRET: ${TASK_RUNNER_LOCAL_CONNECTOR_INTERNAL_API_SECRET:-change_me_task_runner_local_connector_secret}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.openai.com/v1}
     ports:
@@ -438,14 +488,15 @@ services:
       CHATOS_WORKSPACE_DIR: /data/chatos/workspace
       CHATOS_USER_SERVICE_BASE_URL: http://user-service-backend:39190
       CHATOS_PROJECT_SERVICE_BASE_URL: http://project-management-backend:39210
-      CHATOS_PROJECT_SERVICE_SYNC_SECRET: ${CHATOS_PROJECT_SERVICE_SYNC_SECRET:-change_me_project_sync_secret}
+      CHATOS_PROJECT_SERVICE_INTERNAL_API_SECRET: ${CHATOS_PROJECT_SERVICE_INTERNAL_API_SECRET:-change_me_chatos_project_service_secret}
       CHATOS_TASK_RUNNER_BASE_URL: http://task-runner-backend:39090
+      CHATOS_TASK_RUNNER_INTERNAL_API_SECRET: ${CHATOS_TASK_RUNNER_INTERNAL_API_SECRET:-change_me_chatos_task_runner_internal_secret}
       TASK_RUNNER_CHATOS_CALLBACK_SECRET: ${TASK_RUNNER_CHATOS_CALLBACK_SECRET:-change_me_chatos_task_runner_secret}
       CHATOS_LOCAL_CONNECTOR_SERVICE_BASE_URL: http://local-connector-service-backend:39230
       PLUGIN_MANAGEMENT_SERVICE_URL: http://plugin-management-backend:39260
-      CHATOS_LOCAL_CONNECTOR_INTERNAL_API_SECRET: ${CHATOS_LOCAL_CONNECTOR_INTERNAL_API_SECRET:-chatos-local-connector-dev-secret}
+      CHATOS_LOCAL_CONNECTOR_INTERNAL_API_SECRET: ${CHATOS_LOCAL_CONNECTOR_INTERNAL_API_SECRET:-change_me_chatos_local_connector_secret}
       MEMORY_ENGINE_BASE_URL: http://memory-engine-backend:7081/api/memory-engine/v1
-      MEMORY_ENGINE_OPERATOR_TOKEN: ${MEMORY_ENGINE_OPERATOR_TOKEN:-chatos-memory-engine-dev-operator-token}
+      CHATOS_MEMORY_ENGINE_INTERNAL_API_SECRET: ${CHATOS_MEMORY_ENGINE_INTERNAL_API_SECRET:-change_me_chatos_memory_engine_secret}
       CHATOS_OBJECT_STORAGE_ENDPOINT: ${CHATOS_OBJECT_STORAGE_ENDPOINT:-}
       CHATOS_OBJECT_STORAGE_REGION: ${CHATOS_OBJECT_STORAGE_REGION:-us-east-1}
       CHATOS_OBJECT_STORAGE_BUCKET: ${CHATOS_OBJECT_STORAGE_BUCKET:-chatos-attachments}
@@ -608,9 +659,6 @@ services:
     image: ${SANDBOX_MANAGER_FRONTEND_IMAGE:-${CHATOS_IMAGE_NAMESPACE:-ghcr.io/leeoohoo}/chatos-rs-sandbox-manager-frontend:${CHATOS_IMAGE_TAG:-latest}}
     environment:
       API_PROXY_PASS: http://sandbox-manager-backend:8095
-      SANDBOX_MANAGER_API_PROXY_CLIENT_ID: ${TASK_RUNNER_SANDBOX_MANAGER_CLIENT_ID:-task_runner}
-      SANDBOX_MANAGER_API_PROXY_CLIENT_KEY: ${TASK_RUNNER_SANDBOX_MANAGER_CLIENT_KEY:-chatos-task-runner-sandbox-dev-key}
-      SANDBOX_MANAGER_API_PROXY_OPERATOR_TOKEN: ${SANDBOX_MANAGER_OPERATOR_TOKEN:-chatos-sandbox-manager-dev-operator-token}
     ports:
       - "${SANDBOX_MANAGER_FRONTEND_PORT:-8096}:80"
     depends_on:

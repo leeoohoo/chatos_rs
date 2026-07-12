@@ -1,9 +1,14 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
+use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
+
+use chatos_service_runtime::{
+    is_production_environment, validate_production_secret, DEFAULT_MEMORY_ENGINE_OPERATOR_TOKEN,
+};
 
 #[derive(Debug, Clone)]
 pub struct AppConfig {
@@ -15,7 +20,9 @@ pub struct AppConfig {
     pub relay_request_timeout: Duration,
     pub sandbox_image_relay_request_timeout: Duration,
     pub public_base_url: Option<String>,
-    pub internal_api_secret: Option<String>,
+    pub legacy_internal_api_secret: Option<String>,
+    pub internal_api_secrets: HashMap<String, String>,
+    pub require_signed_internal_requests: bool,
     pub memory_engine_base_url: String,
     pub memory_engine_operator_token: Option<String>,
     pub memory_engine_request_timeout: Duration,
@@ -65,7 +72,7 @@ impl AppConfig {
                 .unwrap_or(300)
                 .clamp(30, 3600);
 
-        Ok(Self {
+        let config = Self {
             host,
             port,
             database_url: normalized_env("LOCAL_CONNECTOR_DATABASE_URL")
@@ -80,20 +87,21 @@ impl AppConfig {
                 sandbox_image_relay_timeout_ms,
             ),
             public_base_url: normalized_env("LOCAL_CONNECTOR_PUBLIC_BASE_URL"),
-            internal_api_secret: normalized_env("LOCAL_CONNECTOR_INTERNAL_API_SECRET")
-                .or_else(|| normalized_env("CHATOS_LOCAL_CONNECTOR_INTERNAL_API_SECRET"))
-                .or_else(|| normalized_env("MEMORY_ENGINE_LOCAL_CONNECTOR_INTERNAL_API_SECRET"))
-                .or_else(|| normalized_env("PROJECT_SERVICE_LOCAL_CONNECTOR_INTERNAL_API_SECRET"))
-                .or_else(|| normalized_env("TASK_RUNNER_LOCAL_CONNECTOR_INTERNAL_API_SECRET"))
-                .or_else(|| normalized_env("TASK_RUNNER_INTERNAL_API_SECRET")),
+            legacy_internal_api_secret: normalized_env("LOCAL_CONNECTOR_INTERNAL_API_SECRET"),
+            internal_api_secrets: caller_internal_api_secrets(),
+            require_signed_internal_requests: env_flag(
+                "LOCAL_CONNECTOR_REQUIRE_SIGNED_INTERNAL_REQUESTS",
+                is_production_environment(),
+            ),
             memory_engine_base_url: normalize_memory_engine_base_url(
                 normalized_env("LOCAL_CONNECTOR_MEMORY_ENGINE_BASE_URL")
                     .or_else(|| normalized_env("MEMORY_ENGINE_BASE_URL"))
                     .unwrap_or_else(default_memory_engine_base_url),
             ),
             memory_engine_operator_token: normalized_env(
-                "LOCAL_CONNECTOR_MEMORY_ENGINE_OPERATOR_TOKEN",
+                "LOCAL_CONNECTOR_MEMORY_ENGINE_INTERNAL_API_SECRET",
             )
+            .or_else(|| normalized_env("LOCAL_CONNECTOR_MEMORY_ENGINE_OPERATOR_TOKEN"))
             .or_else(|| normalized_env("MEMORY_ENGINE_OPERATOR_TOKEN")),
             memory_engine_request_timeout: Duration::from_millis(memory_timeout_ms),
             require_device_connect_signature: env_flag(
@@ -105,7 +113,62 @@ impl AppConfig {
                 false,
             ),
             device_connect_signature_max_skew: Duration::from_secs(signature_skew_seconds),
-        })
+        };
+
+        if config.require_signed_internal_requests {
+            for caller in [
+                "chatos-backend",
+                "task-runner",
+                "project-service",
+                "memory-engine",
+            ] {
+                if !config.internal_api_secrets.contains_key(caller) {
+                    return Err(format!(
+                        "dedicated Local Connector internal secret is required for {caller}"
+                    ));
+                }
+            }
+        }
+        if config.legacy_internal_api_secret.is_some() {
+            validate_production_secret(
+                "LOCAL_CONNECTOR_INTERNAL_API_SECRET",
+                config.legacy_internal_api_secret.as_deref(),
+                &[
+                    "chatos-local-connector-dev-secret",
+                    "change_me_task_runner_internal_secret",
+                    "change_me_chatos_local_connector_secret",
+                    "change_me_task_runner_local_connector_secret",
+                    "change_me_project_service_local_connector_secret",
+                    "change_me_memory_engine_local_connector_secret",
+                ],
+            )?;
+        }
+        for (caller, secret) in &config.internal_api_secrets {
+            validate_production_secret(
+                format!("Local Connector internal secret for {caller}").as_str(),
+                Some(secret.as_str()),
+                &[
+                    "chatos-local-connector-dev-secret",
+                    "change_me_task_runner_internal_secret",
+                    "change_me_chatos_local_connector_secret",
+                    "change_me_task_runner_local_connector_secret",
+                    "change_me_project_service_local_connector_secret",
+                    "change_me_memory_engine_local_connector_secret",
+                ],
+            )?;
+        }
+        if is_production_environment() || config.memory_engine_operator_token.is_some() {
+            validate_production_secret(
+                "LOCAL_CONNECTOR_MEMORY_ENGINE_INTERNAL_API_SECRET",
+                config.memory_engine_operator_token.as_deref(),
+                &[
+                    DEFAULT_MEMORY_ENGINE_OPERATOR_TOKEN,
+                    "change_me_local_connector_memory_engine_secret",
+                ],
+            )?;
+        }
+
+        Ok(config)
     }
 
     pub fn bind_addr(&self) -> SocketAddr {
@@ -119,6 +182,32 @@ impl AppConfig {
             None => path,
         }
     }
+}
+
+fn caller_internal_api_secrets() -> HashMap<String, String> {
+    [
+        (
+            "chatos-backend",
+            "CHATOS_LOCAL_CONNECTOR_INTERNAL_API_SECRET",
+        ),
+        (
+            "task-runner",
+            "TASK_RUNNER_LOCAL_CONNECTOR_INTERNAL_API_SECRET",
+        ),
+        (
+            "project-service",
+            "PROJECT_SERVICE_LOCAL_CONNECTOR_INTERNAL_API_SECRET",
+        ),
+        (
+            "memory-engine",
+            "MEMORY_ENGINE_LOCAL_CONNECTOR_INTERNAL_API_SECRET",
+        ),
+    ]
+    .into_iter()
+    .filter_map(|(caller, env_name)| {
+        normalized_env(env_name).map(|secret| (caller.to_string(), secret))
+    })
+    .collect()
 }
 
 pub fn load_local_connector_dotenv() {

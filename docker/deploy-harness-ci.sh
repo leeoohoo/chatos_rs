@@ -187,4 +187,7 @@ else
   echo "[INFO] using selected local Harness CI images: $*"
 fi
 echo "[INFO] starting the Chat OS Docker stack, including the business Harness on port 3000"
-exec "$SCRIPT_DIR/deploy.sh" fast "$@"
+if [[ $# -eq 0 ]]; then
+  exec "$SCRIPT_DIR/deploy.sh" fast
+fi
+exec "$SCRIPT_DIR/deploy.sh" restart-fast "$@"

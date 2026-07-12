@@ -7,6 +7,7 @@ pub(super) async fn list_external_mcp_configs(
     State(state): State<AppState>,
     Extension(current_user): Extension<CurrentUser>,
 ) -> Result<Json<Vec<ExternalMcpConfigRecord>>, ApiError> {
+    require_external_mcp_admin(&current_user)?;
     let configs = state
         .external_mcp_config_service
         .list_external_mcp_configs()
@@ -33,6 +34,7 @@ pub(super) async fn create_external_mcp_config(
     Extension(current_user): Extension<CurrentUser>,
     Json(input): Json<CreateExternalMcpConfigRequest>,
 ) -> Result<(StatusCode, Json<ExternalMcpConfigRecord>), ApiError> {
+    require_external_mcp_admin(&current_user)?;
     let config = state
         .external_mcp_config_service
         .create_external_mcp_config(input, Some(&current_user))
@@ -46,6 +48,7 @@ pub(super) async fn get_external_mcp_config(
     State(state): State<AppState>,
     Extension(current_user): Extension<CurrentUser>,
 ) -> Result<Json<ExternalMcpConfigRecord>, ApiError> {
+    require_external_mcp_admin(&current_user)?;
     let config = state
         .external_mcp_config_service
         .get_external_mcp_config(&id)
@@ -68,6 +71,7 @@ pub(super) async fn update_external_mcp_config(
     Extension(current_user): Extension<CurrentUser>,
     Json(input): Json<UpdateExternalMcpConfigRequest>,
 ) -> Result<Json<ExternalMcpConfigRecord>, ApiError> {
+    require_external_mcp_admin(&current_user)?;
     let existing = state
         .external_mcp_config_service
         .get_external_mcp_config(&id)
@@ -95,6 +99,7 @@ pub(super) async fn delete_external_mcp_config(
     State(state): State<AppState>,
     Extension(current_user): Extension<CurrentUser>,
 ) -> Result<StatusCode, ApiError> {
+    require_external_mcp_admin(&current_user)?;
     let existing = state
         .external_mcp_config_service
         .get_external_mcp_config(&id)
@@ -117,5 +122,15 @@ pub(super) async fn delete_external_mcp_config(
         Ok(StatusCode::NO_CONTENT)
     } else {
         Err(ApiError::not_found(format!("外部 MCP 配置不存在: {id}")))
+    }
+}
+
+fn require_external_mcp_admin(current_user: &CurrentUser) -> Result<(), ApiError> {
+    if current_user.is_admin() {
+        Ok(())
+    } else {
+        Err(ApiError::forbidden(
+            "legacy external MCP configs are restricted to administrators",
+        ))
     }
 }

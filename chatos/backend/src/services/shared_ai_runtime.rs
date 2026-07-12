@@ -59,7 +59,7 @@ pub fn build_shared_contextual_turn_runner_with_max_iterations(
     if let Some(access_token) = access_token_scope::get_current_access_token() {
         memory_client = memory_client.with_bearer_token(access_token);
     } else if let Some(operator_token) = cfg.memory_engine_operator_token.as_deref() {
-        memory_client = memory_client.with_operator_token(operator_token);
+        memory_client = memory_client.with_internal_service_auth("chatos-backend", operator_token);
     }
     let composer = chatos_ai_runtime::MemoryContextComposer::from_client(memory_client);
     Ok(chatos_ai_runtime::ContextualTurnRunner::new(

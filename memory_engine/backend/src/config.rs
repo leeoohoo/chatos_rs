@@ -1,9 +1,12 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
+use std::collections::HashMap;
 use std::env;
 
-use chatos_service_runtime::DEFAULT_MEMORY_ENGINE_OPERATOR_TOKEN;
+use chatos_service_runtime::{
+    is_production_environment, validate_production_secret, DEFAULT_MEMORY_ENGINE_OPERATOR_TOKEN,
+};
 
 #[derive(Debug, Clone)]
 pub struct AppConfig {
@@ -24,6 +27,8 @@ pub struct AppConfig {
     pub worker_subject_memory_concurrency: usize,
     pub worker_reconcile_concurrency: usize,
     pub operator_token: Option<String>,
+    pub internal_api_secrets: HashMap<String, String>,
+    pub require_signed_internal_requests: bool,
     pub user_service_base_url: String,
     pub user_service_request_timeout_ms: u64,
     pub local_connector_service_base_url: String,
@@ -32,7 +37,7 @@ pub struct AppConfig {
 }
 
 impl AppConfig {
-    pub fn from_env() -> Self {
+    pub fn from_env() -> Result<Self, String> {
         let host = env_text("MEMORY_ENGINE_HOST").unwrap_or_else(|| "0.0.0.0".to_string());
         let port = parse_u16(env::var("MEMORY_ENGINE_PORT").ok(), 7081);
 
@@ -86,10 +91,9 @@ impl AppConfig {
             2,
             1,
         );
-        let operator_token = Some(
-            env_text("MEMORY_ENGINE_OPERATOR_TOKEN")
-                .unwrap_or_else(|| DEFAULT_MEMORY_ENGINE_OPERATOR_TOKEN.to_string()),
-        );
+        let operator_token = env_text("MEMORY_ENGINE_OPERATOR_TOKEN").or_else(|| {
+            (!is_production_environment()).then(|| DEFAULT_MEMORY_ENGINE_OPERATOR_TOKEN.to_string())
+        });
         let user_service_base_url = env_text("MEMORY_ENGINE_USER_SERVICE_BASE_URL")
             .or_else(|| env_text("MEMORY_ENGINE_USER_SERVICE_API_BASE"))
             .or_else(|| env_text("CHATOS_USER_SERVICE_BASE_URL"))
@@ -121,7 +125,7 @@ impl AppConfig {
                 .or_else(|| env_text("LOCAL_CONNECTOR_INTERNAL_API_SECRET"))
                 .or_else(|| env_text("CHATOS_LOCAL_CONNECTOR_INTERNAL_API_SECRET"));
 
-        Self {
+        let config = Self {
             host,
             port,
             mongodb_uri,
@@ -139,13 +143,93 @@ impl AppConfig {
             worker_subject_memory_concurrency,
             worker_reconcile_concurrency,
             operator_token,
+            internal_api_secrets: caller_internal_api_secrets(),
+            require_signed_internal_requests: env_flag(
+                "MEMORY_ENGINE_REQUIRE_SIGNED_INTERNAL_REQUESTS",
+                is_production_environment(),
+            ),
             user_service_base_url,
             user_service_request_timeout_ms,
             local_connector_service_base_url,
             local_connector_service_request_timeout_ms,
             local_connector_internal_api_secret,
+        };
+
+        if config.require_signed_internal_requests {
+            for caller in [
+                "chatos-backend",
+                "task-runner",
+                "project-service",
+                "user-service",
+                "local-connector-service",
+            ] {
+                if !config.internal_api_secrets.contains_key(caller) {
+                    return Err(format!(
+                        "dedicated Memory Engine internal secret is required for {caller}"
+                    ));
+                }
+            }
         }
+        if config.operator_token.is_some() {
+            validate_production_secret(
+                "MEMORY_ENGINE_OPERATOR_TOKEN",
+                config.operator_token.as_deref(),
+                &[DEFAULT_MEMORY_ENGINE_OPERATOR_TOKEN],
+            )?;
+        }
+        for (caller, secret) in &config.internal_api_secrets {
+            validate_production_secret(
+                format!("Memory Engine internal secret for {caller}").as_str(),
+                Some(secret.as_str()),
+                &[
+                    "change_me_chatos_memory_engine_secret",
+                    "change_me_task_runner_memory_engine_secret",
+                    "change_me_project_service_memory_engine_secret",
+                    "change_me_user_service_memory_engine_secret",
+                    "change_me_local_connector_memory_engine_secret",
+                ],
+            )?;
+        }
+        if config.local_connector_internal_api_secret.is_some() {
+            validate_production_secret(
+                "MEMORY_ENGINE_LOCAL_CONNECTOR_INTERNAL_API_SECRET",
+                config.local_connector_internal_api_secret.as_deref(),
+                &[
+                    "chatos-local-connector-dev-secret",
+                    "change_me_memory_engine_local_connector_secret",
+                ],
+            )?;
+        }
+
+        Ok(config)
     }
+}
+
+fn caller_internal_api_secrets() -> HashMap<String, String> {
+    [
+        ("chatos-backend", "CHATOS_MEMORY_ENGINE_INTERNAL_API_SECRET"),
+        ("task-runner", "TASK_RUNNER_MEMORY_ENGINE_INTERNAL_API_SECRET"),
+        (
+            "project-service",
+            "PROJECT_SERVICE_MEMORY_ENGINE_INTERNAL_API_SECRET",
+        ),
+        ("user-service", "USER_SERVICE_MEMORY_ENGINE_INTERNAL_API_SECRET"),
+        (
+            "local-connector-service",
+            "LOCAL_CONNECTOR_MEMORY_ENGINE_INTERNAL_API_SECRET",
+        ),
+    ]
+    .into_iter()
+    .filter_map(|(caller, env_name)| {
+        env_text(env_name).map(|secret| (caller.to_string(), secret))
+    })
+    .collect()
+}
+
+fn env_flag(key: &str, default: bool) -> bool {
+    env_text(key)
+        .map(|value| matches!(value.to_ascii_lowercase().as_str(), "1" | "true" | "yes" | "on"))
+        .unwrap_or(default)
 }
 
 fn parse_u16(raw: Option<String>, default: u16) -> u16 {

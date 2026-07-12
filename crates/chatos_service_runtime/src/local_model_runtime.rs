@@ -7,13 +7,20 @@ use reqwest::StatusCode;
 use serde::Deserialize;
 
 use crate::http_client::build_http_client;
-use crate::{ServiceRuntimeError, LOCAL_CONNECTOR_MODEL_RUNTIME_OFFLINE_MESSAGE};
+use crate::{
+    issue_internal_service_token, ServiceRuntimeError,
+    LOCAL_CONNECTOR_MODEL_RUNTIME_OFFLINE_MESSAGE,
+};
+
+const LOCAL_CONNECTOR_TOKEN_AUDIENCE: &str = "local-connector-service";
+const MODEL_RUNTIME_READ_SCOPE: &str = "model-runtime.read";
 
 #[derive(Debug, Clone)]
 pub struct LocalConnectorModelRuntimeLookup<'a> {
     pub base_url: &'a str,
     pub request_timeout: Duration,
     pub internal_secret: &'a str,
+    pub caller: &'a str,
     pub owner_user_id: &'a str,
     pub model_config_id: &'a str,
 }
@@ -46,6 +53,7 @@ pub async fn resolve_local_connector_model_runtime(
     let base_url = require_runtime_text(lookup.base_url, "local_connector_service base_url")?;
     let internal_secret =
         require_runtime_text(lookup.internal_secret, "local_connector internal secret")?;
+    let caller = require_runtime_text(lookup.caller, "local_connector caller")?;
     let owner_user_id = require_runtime_text(lookup.owner_user_id, "owner_user_id")?;
     let model_config_id = require_runtime_text(lookup.model_config_id, "model_config_id")?;
     let endpoint = format!(
@@ -54,9 +62,18 @@ pub async fn resolve_local_connector_model_runtime(
         urlencoding::encode(model_config_id)
     );
     let client = build_http_client(lookup.request_timeout.as_millis().max(300) as u64);
+    let token = issue_internal_service_token(
+        internal_secret,
+        caller,
+        LOCAL_CONNECTOR_TOKEN_AUDIENCE,
+        MODEL_RUNTIME_READ_SCOPE,
+        60,
+    )
+    .map_err(ServiceRuntimeError::Message)?;
     let response = client
         .get(endpoint)
-        .header("x-local-connector-internal-secret", internal_secret)
+        .header("x-local-connector-caller", caller)
+        .header("x-local-connector-internal-token", token)
         .header("x-local-connector-owner-user-id", owner_user_id)
         .send()
         .await

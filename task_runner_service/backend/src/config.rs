@@ -62,6 +62,7 @@ pub struct AppConfig {
     pub chatos_callback_url: Option<String>,
     pub chatos_callback_secret: Option<String>,
     pub internal_api_secret: Option<String>,
+    pub chatos_internal_api_secret: Option<String>,
     pub local_connector_internal_api_secret: Option<String>,
     pub callback_timeout: Duration,
     pub admin_username: String,
@@ -111,7 +112,7 @@ impl AppConfig {
         if let Some(access_token) = crate::auth::get_current_access_token() {
             client = client.with_bearer_token(access_token);
         } else if let Some(token) = self.memory_engine_operator_token.clone() {
-            client = client.with_operator_token(token);
+            client = client.with_internal_service_auth("task-runner", token);
         }
         Ok(Some(client))
     }

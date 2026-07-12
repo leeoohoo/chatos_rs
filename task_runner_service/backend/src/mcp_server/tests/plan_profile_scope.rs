@@ -476,7 +476,6 @@ async fn project_execution_planner_creates_multiple_runner_tasks_and_syncs_links
         .iter()
         .map(|call| {
             assert_eq!(call.work_item_id, "project-task-1");
-            assert_eq!(call.sync_secret.as_deref(), Some("project-sync-secret"));
             assert_eq!(
                 call.payload
                     .get("task_runner_status")

@@ -1,12 +1,13 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
+use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use chatos_service_runtime::{
-    DEFAULT_MEMORY_ENGINE_OPERATOR_TOKEN, DEFAULT_SANDBOX_MANAGER_SYSTEM_CLIENT_ID,
+    is_production_environment, validate_production_secret, DEFAULT_MEMORY_ENGINE_OPERATOR_TOKEN,
     DEFAULT_SANDBOX_MANAGER_SYSTEM_CLIENT_KEY,
 };
 
@@ -37,6 +38,8 @@ pub struct AppConfig {
     pub task_runner_request_timeout: Duration,
     pub task_runner_internal_secret: Option<String>,
     pub sync_secret: Option<String>,
+    pub internal_api_secrets: HashMap<String, String>,
+    pub require_signed_internal_requests: bool,
 }
 
 impl AppConfig {
@@ -92,7 +95,7 @@ impl AppConfig {
                 .unwrap_or(120_000)
                 .max(1_000);
 
-        Ok(Self {
+        let config = Self {
             host,
             port,
             database_url: normalized_env("PROJECT_SERVICE_DATABASE_URL")
@@ -123,8 +126,9 @@ impl AppConfig {
                 .or_else(|| normalized_env("MEMORY_ENGINE_SOURCE_ID"))
                 .unwrap_or_else(|| "project_management_agent".to_string()),
             memory_engine_operator_token: normalized_env(
-                "PROJECT_SERVICE_MEMORY_ENGINE_OPERATOR_TOKEN",
+                "PROJECT_SERVICE_MEMORY_ENGINE_INTERNAL_API_SECRET",
             )
+            .or_else(|| normalized_env("PROJECT_SERVICE_MEMORY_ENGINE_OPERATOR_TOKEN"))
             .or_else(|| normalized_env("MEMORY_ENGINE_OPERATOR_TOKEN"))
             .or_else(|| Some(DEFAULT_MEMORY_ENGINE_OPERATOR_TOKEN.to_string())),
             memory_engine_request_timeout: Duration::from_millis(memory_engine_request_timeout_ms),
@@ -132,11 +136,11 @@ impl AppConfig {
                 .or_else(|| normalized_env("SANDBOX_MANAGER_BASE_URL"))
                 .unwrap_or_else(default_sandbox_manager_base_url),
             sandbox_manager_client_id: normalized_env("PROJECT_SERVICE_SANDBOX_MANAGER_CLIENT_ID")
-                .or_else(|| normalized_env("SANDBOX_MANAGER_SYSTEM_CLIENT_ID"))
-                .or_else(|| Some(DEFAULT_SANDBOX_MANAGER_SYSTEM_CLIENT_ID.to_string())),
+                .or_else(|| Some("project-service".to_string())),
             sandbox_manager_client_key: normalized_env(
-                "PROJECT_SERVICE_SANDBOX_MANAGER_CLIENT_KEY",
+                "PROJECT_SERVICE_SANDBOX_MANAGER_INTERNAL_API_SECRET",
             )
+            .or_else(|| normalized_env("PROJECT_SERVICE_SANDBOX_MANAGER_CLIENT_KEY"))
             .or_else(|| normalized_env("SANDBOX_MANAGER_SYSTEM_CLIENT_KEY"))
             .or_else(|| Some(DEFAULT_SANDBOX_MANAGER_SYSTEM_CLIENT_KEY.to_string())),
             sandbox_image_mcp_request_timeout: Duration::from_millis(
@@ -168,12 +172,109 @@ impl AppConfig {
             .or_else(|| normalized_env("TASK_RUNNER_INTERNAL_API_SECRET"))
             .or_else(|| normalized_env("PROJECT_SERVICE_SYNC_SECRET")),
             sync_secret: normalized_env("PROJECT_SERVICE_SYNC_SECRET"),
-        })
+            internal_api_secrets: caller_internal_api_secrets(),
+            require_signed_internal_requests: read_bool_env(
+                "PROJECT_SERVICE_REQUIRE_SIGNED_INTERNAL_REQUESTS",
+                is_production_environment(),
+            )?,
+        };
+
+        if config.require_signed_internal_requests {
+            for caller_service in ["chatos-backend", "task-runner", "project-service"] {
+                if !config.internal_api_secrets.contains_key(caller_service) {
+                    return Err(format!(
+                        "dedicated project service internal secret is required for {caller_service}"
+                    ));
+                }
+            }
+        }
+
+        validate_production_secret(
+            "PROJECT_SERVICE_MEMORY_ENGINE_INTERNAL_API_SECRET",
+            config.memory_engine_operator_token.as_deref(),
+            &[
+                DEFAULT_MEMORY_ENGINE_OPERATOR_TOKEN,
+                "change_me_project_service_memory_engine_secret",
+            ],
+        )?;
+        validate_production_secret(
+            "PROJECT_SERVICE_SANDBOX_MANAGER_INTERNAL_API_SECRET",
+            config.sandbox_manager_client_key.as_deref(),
+            &[
+                DEFAULT_SANDBOX_MANAGER_SYSTEM_CLIENT_KEY,
+                "change_me_project_service_sandbox_manager_secret",
+            ],
+        )?;
+        if config.user_service_internal_secret.is_some() {
+            validate_production_secret(
+                "PROJECT_SERVICE_USER_SERVICE_INTERNAL_SECRET",
+                config.user_service_internal_secret.as_deref(),
+                &[
+                    "change_me_user_service_internal_secret",
+                    "change_me_project_service_user_service_secret",
+                ],
+            )?;
+        }
+        if config.task_runner_internal_secret.is_some() {
+            validate_production_secret(
+                "PROJECT_SERVICE_TASK_RUNNER_INTERNAL_SECRET",
+                config.task_runner_internal_secret.as_deref(),
+                &[
+                    "change_me_task_runner_internal_secret",
+                    "change_me_project_service_task_runner_secret",
+                ],
+            )?;
+        }
+        for (name, value, insecure_default) in [(
+            "PROJECT_SERVICE_SYNC_SECRET",
+            config.sync_secret.as_deref(),
+            "change_me_project_sync_secret",
+        )] {
+            if value.is_some() {
+                validate_production_secret(name, value, &[insecure_default])?;
+            }
+        }
+        for (caller_service, secret) in &config.internal_api_secrets {
+            validate_production_secret(
+                format!("project service secret for {caller_service}").as_str(),
+                Some(secret.as_str()),
+                &[
+                    "change_me_project_sync_secret",
+                    "change_me_chatos_project_service_secret",
+                    "change_me_task_runner_project_service_secret",
+                    "change_me_project_service_self_secret",
+                ],
+            )?;
+        }
+
+        Ok(config)
     }
 
     pub fn bind_addr(&self) -> SocketAddr {
         SocketAddr::new(self.host, self.port)
     }
+}
+
+fn caller_internal_api_secrets() -> HashMap<String, String> {
+    [
+        (
+            "chatos-backend",
+            "CHATOS_PROJECT_SERVICE_INTERNAL_API_SECRET",
+        ),
+        (
+            "task-runner",
+            "TASK_RUNNER_PROJECT_SERVICE_INTERNAL_API_SECRET",
+        ),
+        (
+            "project-service",
+            "PROJECT_SERVICE_SELF_INTERNAL_API_SECRET",
+        ),
+    ]
+    .into_iter()
+    .filter_map(|(caller_service, env_key)| {
+        normalized_env(env_key).map(|secret| (caller_service.to_string(), secret))
+    })
+    .collect()
 }
 
 pub fn load_project_service_dotenv() {

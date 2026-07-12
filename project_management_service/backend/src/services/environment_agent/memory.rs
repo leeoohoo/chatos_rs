@@ -71,7 +71,7 @@ async fn ensure_project_agent_memory_source(config: &AppConfig) -> Result<(), St
         base_url.to_string(),
         config.memory_engine_request_timeout,
     )?
-    .with_operator_token(operator_token.to_string());
+    .with_internal_service_auth("project-service", operator_token.to_string());
     client
         .upsert_source(
             source_id,
@@ -164,7 +164,7 @@ fn build_memory_engine_client(
         .map(str::trim)
         .filter(|value| !value.is_empty())
     {
-        client = client.with_operator_token(operator_token.to_string());
+        client = client.with_internal_service_auth("project-service", operator_token.to_string());
     } else {
         return Err(
             "Memory Engine client requires a user access token or PROJECT_SERVICE_MEMORY_ENGINE_OPERATOR_TOKEN"

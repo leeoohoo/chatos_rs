@@ -16,6 +16,7 @@ use crate::models::{TaskMcpConfig, TaskRecord};
 
 const BUILTIN_RUNTIME_KIND: &str = "builtin";
 const LOCAL_CONNECTOR_DISCOVERED_SOURCE_KIND: &str = "local_connector_discovered";
+const USER_CREATED_SOURCE_KIND: &str = "user_created";
 const LOCAL_CONNECTOR_USER_RUNTIME_KINDS: [&str; 2] =
     ["local_connector_stdio", "local_connector_http"];
 
@@ -287,7 +288,10 @@ fn plugin_builtin_kind(item: &ResolvedMcp) -> Option<BuiltinMcpKind> {
 }
 
 fn validate_local_connector_user_runtime(item: &ResolvedMcp) -> Result<(), String> {
-    if item.resource.source_kind != LOCAL_CONNECTOR_DISCOVERED_SOURCE_KIND {
+    if !matches!(
+        item.resource.source_kind.as_str(),
+        LOCAL_CONNECTOR_DISCOVERED_SOURCE_KIND | USER_CREATED_SOURCE_KIND
+    ) {
         return Ok(());
     }
     if !LOCAL_CONNECTOR_USER_RUNTIME_KINDS.contains(&item.resource.runtime.kind.as_str()) {
@@ -580,5 +584,17 @@ mod tests {
             policy.selectable_external_mcp_ids(),
             vec!["local-user-complete".to_string()]
         );
+    }
+
+    #[test]
+    fn user_created_cloud_mcp_is_rejected_by_runtime_policy() {
+        for runtime_kind in ["http", "stdio_cloud"] {
+            let mut item = resolved_mcp("user-cloud-mcp", runtime_kind, None, false, true);
+            item.resource.source_kind = USER_CREATED_SOURCE_KIND.to_string();
+            item.resource.owner_kind = "user".to_string();
+            let err = validate_local_connector_user_runtime(&item)
+                .expect_err("user-created cloud MCP must be rejected");
+            assert!(err.contains("invalid runtime kind"));
+        }
     }
 }

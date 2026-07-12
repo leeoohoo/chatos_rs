@@ -56,6 +56,7 @@ pub(super) async fn resolve_model_runtime_for_profile(
             config.local_connector_service_request_timeout_ms,
         ),
         internal_secret: secret,
+        caller: "memory-engine",
         owner_user_id,
         model_config_id: profile.id.as_str(),
     })

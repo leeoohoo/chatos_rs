@@ -63,33 +63,11 @@ pub(super) async fn load_external_mcp_servers(
                 transport: loaded.transport,
             });
         }
-    } else {
-        for config_id in &task.mcp_config.external_mcp_config_ids {
-            let config = service
-                .store
-                .get_external_mcp_config(config_id)
-                .await?
-                .ok_or_else(|| format!("external MCP config not found: {config_id}"))?;
-            if !config.enabled {
-                return Err(format!("external MCP config is disabled: {config_id}"));
-            }
-            if let Some(server) = config.to_http_server() {
-                http_servers.push(server);
-            } else if let Some(server) = task_stdio_server_for_config(
-                &config,
-                task.subject_id.as_str(),
-                effective_workspace_dir,
-            )? {
-                stdio_servers.push(server);
-            } else {
-                return Err(format!("external MCP config is invalid: {config_id}"));
-            }
-            summaries.push(ExternalMcpRuntimeSummary {
-                id: config.id,
-                name: config.name,
-                transport: config.transport,
-            });
-        }
+    } else if !task.mcp_config.external_mcp_config_ids.is_empty() {
+        return Err(
+            "legacy external MCP execution is disabled; user MCPs must be resolved through Plugin Management and Local Connector"
+                .to_string(),
+        );
     }
     for server in &task.mcp_config.ephemeral_http_servers {
         let mut headers = server.headers.clone();
@@ -118,6 +96,14 @@ pub(super) async fn load_external_mcp_servers(
                 "x-local-connector-internal-secret".to_string(),
                 secret.to_string(),
             );
+            headers.insert(
+                "x-local-connector-caller".to_string(),
+                "task-runner".to_string(),
+            );
+            headers.insert(
+                "x-local-connector-internal-scope".to_string(),
+                "relay.mcp".to_string(),
+            );
             headers.insert("x-local-connector-owner-user-id".to_string(), owner_user_id);
             headers.insert("x-task-runner-task-id".to_string(), task.id.clone());
         } else if server.auth_mode.as_deref()
@@ -135,10 +121,11 @@ pub(super) async fn load_external_mcp_servers(
                         server.name
                     )
                 })?;
-            headers.insert(
-                "x-project-service-sync-secret".to_string(),
-                secret.to_string(),
-            );
+            crate::services::project_management_api_client::insert_project_service_internal_headers(
+                &mut headers,
+                secret,
+                crate::services::project_management_api_client::PROJECT_HARNESS_SCOPE,
+            )?;
             if let Some(owner_user_id) = normalized_task_owner_user_id(task) {
                 headers.insert("x-task-runner-owner-user-id".to_string(), owner_user_id);
             }
@@ -181,6 +168,7 @@ fn plugin_mcp_server_for_resource(
     resource: &chatos_plugin_management_sdk::McpRecord,
     effective_workspace_dir: &str,
 ) -> Result<LoadedPluginMcpServer, String> {
+    ensure_user_mcp_uses_local_connector(resource)?;
     let server_name = resource
         .runtime
         .server_name
@@ -320,6 +308,14 @@ fn plugin_mcp_server_for_resource(
                 "x-local-connector-internal-secret".to_string(),
                 secret.to_string(),
             );
+            headers.insert(
+                "x-local-connector-caller".to_string(),
+                "task-runner".to_string(),
+            );
+            headers.insert(
+                "x-local-connector-internal-scope".to_string(),
+                "relay.mcp".to_string(),
+            );
             headers.insert("x-local-connector-owner-user-id".to_string(), owner_user_id);
             headers.insert(
                 "x-plugin-management-resource-id".to_string(),
@@ -345,6 +341,35 @@ fn plugin_mcp_server_for_resource(
             resource.id
         )),
     }
+}
+
+fn ensure_user_mcp_uses_local_connector(
+    resource: &chatos_plugin_management_sdk::McpRecord,
+) -> Result<(), String> {
+    ensure_user_mcp_runtime_kind_allowed(
+        resource.id.as_str(),
+        resource.source_kind.as_str(),
+        resource.runtime.kind.as_str(),
+    )
+}
+
+fn ensure_user_mcp_runtime_kind_allowed(
+    resource_id: &str,
+    source_kind: &str,
+    runtime_kind: &str,
+) -> Result<(), String> {
+    if matches!(source_kind, "user_created" | "local_connector_discovered")
+        && !matches!(
+            runtime_kind,
+            "local_connector_stdio" | "local_connector_http"
+        )
+    {
+        return Err(format!(
+            "user MCP {} must run through Local Connector; runtime kind {} is not allowed",
+            resource_id, runtime_kind
+        ));
+    }
+    Ok(())
 }
 
 fn required_plugin_runtime_text<'a>(
@@ -583,215 +608,5 @@ const BROWSER_TOOL_NAMES: &[&str] = &[
 ];
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::models::{TaskMcpConfig, TaskScheduleConfig};
-
-    fn sample_task(enabled_builtin_kinds: Vec<&str>) -> TaskRecord {
-        let now = now_rfc3339();
-        let mut mcp_config = TaskMcpConfig::default();
-        mcp_config.enabled = true;
-        mcp_config.enabled_builtin_kinds = enabled_builtin_kinds
-            .into_iter()
-            .map(ToOwned::to_owned)
-            .collect();
-        TaskRecord {
-            id: "task-1".to_string(),
-            title: "task".to_string(),
-            description: None,
-            objective: "objective".to_string(),
-            input_payload: None,
-            status: TaskStatus::Ready,
-            priority: 0,
-            tags: Vec::new(),
-            default_model_config_id: None,
-            memory_thread_id: "memory-1".to_string(),
-            tenant_id: "tenant".to_string(),
-            subject_id: "subject".to_string(),
-            project_id: "project-1".to_string(),
-            task_profile: "default".to_string(),
-            creator_user_id: None,
-            creator_username: None,
-            creator_display_name: None,
-            owner_user_id: Some("owner-1".to_string()),
-            owner_username: Some("owner".to_string()),
-            owner_display_name: Some("Owner".to_string()),
-            result_summary: None,
-            process_log: None,
-            last_run_id: None,
-            schedule: TaskScheduleConfig::default(),
-            parent_task_id: None,
-            source_run_id: None,
-            source_session_id: None,
-            source_turn_id: None,
-            source_user_message_id: None,
-            prerequisite_task_ids: Vec::new(),
-            task_tool_state: Default::default(),
-            mcp_config,
-            created_at: now.clone(),
-            updated_at: now,
-            deleted_at: None,
-        }
-    }
-
-    fn external_stdio_config(cwd: Option<&str>) -> ExternalMcpConfigRecord {
-        ExternalMcpConfigRecord {
-            id: "external-stdio-1".to_string(),
-            name: "Local Tool".to_string(),
-            transport: "stdio".to_string(),
-            command: Some("node".to_string()),
-            args: vec!["server.js".to_string()],
-            url: None,
-            headers: Default::default(),
-            env: Default::default(),
-            cwd: cwd.map(ToOwned::to_owned),
-            enabled: true,
-            creator_user_id: Some("creator-user".to_string()),
-            creator_username: Some("creator".to_string()),
-            creator_display_name: Some("Creator".to_string()),
-            owner_user_id: Some("owner-user".to_string()),
-            owner_username: Some("owner".to_string()),
-            owner_display_name: Some("Owner".to_string()),
-            created_at: "2026-01-01T00:00:00Z".to_string(),
-            updated_at: "2026-01-01T00:00:00Z".to_string(),
-        }
-    }
-
-    #[test]
-    fn task_stdio_server_binds_task_user_and_effective_workspace() {
-        let config = external_stdio_config(Some("/opt/chatos/internal/workspace"));
-
-        let server =
-            task_stdio_server_for_config(&config, " user-123 ", "/srv/chatos/workspaces/user-123")
-                .expect("stdio server should be valid")
-                .expect("stdio server");
-
-        assert_eq!(server.user_id.as_deref(), Some("user-123"));
-        assert_eq!(
-            server.cwd.as_deref(),
-            Some("/srv/chatos/workspaces/user-123")
-        );
-    }
-
-    #[test]
-    fn task_stdio_server_rejects_missing_task_user() {
-        let config = external_stdio_config(None);
-
-        let err = task_stdio_server_for_config(&config, " ", "/srv/chatos/workspaces/user-123")
-            .expect_err("stdio server should require task user");
-
-        assert!(err.contains("task subject user id"));
-    }
-
-    #[test]
-    fn task_stdio_server_rejects_missing_workspace() {
-        let config = external_stdio_config(None);
-
-        let err = task_stdio_server_for_config(&config, "user-123", " ")
-            .expect_err("stdio server should require workspace");
-
-        assert!(err.contains("effective workspace"));
-    }
-
-    #[test]
-    fn internal_host_mcp_prompt_is_not_exposed_as_external_mcp() {
-        let items = external_mcp_prefixed_input_items(
-            &[ExternalMcpRuntimeSummary {
-                id: "ephemeral:local_connector".to_string(),
-                name: "local_connector".to_string(),
-                transport: "http".to_string(),
-            }],
-            BuiltinMcpPromptLocale::ZhCn,
-        );
-
-        assert!(items.is_empty());
-    }
-
-    #[test]
-    fn external_mcp_prompt_omits_internal_host_tool_names() {
-        let items = external_mcp_prefixed_input_items(
-            &[
-                ExternalMcpRuntimeSummary {
-                    id: "ephemeral:local_connector".to_string(),
-                    name: "local_connector".to_string(),
-                    transport: "http".to_string(),
-                },
-                ExternalMcpRuntimeSummary {
-                    id: "external-1".to_string(),
-                    name: "Issue Tracker".to_string(),
-                    transport: "stdio".to_string(),
-                },
-            ],
-            BuiltinMcpPromptLocale::ZhCn,
-        );
-
-        let text = items[0]
-            .pointer("/content/0/text")
-            .and_then(Value::as_str)
-            .expect("prompt text");
-
-        assert!(text.contains("Issue Tracker"));
-        assert!(!text.contains("local_connector"));
-        assert!(!text.contains("harness_code"));
-        assert!(!text.contains("local_connector_read_file_raw"));
-        assert!(!text.contains("harness_code_read_file_raw"));
-    }
-
-    #[test]
-    fn internal_host_tool_aliases_use_stable_builtin_server_prefixes() {
-        let headers = std::collections::BTreeMap::from([(
-            chatos_mcp_service::LOCAL_CONNECTOR_ENABLED_BUILTIN_KINDS_HEADER.to_string(),
-            "CodeMaintainerRead,TerminalController,BrowserTools".to_string(),
-        )]);
-
-        let aliases = hosted_builtin_tool_name_aliases("local_connector", &headers);
-
-        assert!(aliases.iter().any(|alias| {
-            alias.tool_name == "read_file_raw"
-                && alias.public_server_name == chatos_mcp_runtime::CODE_MAINTAINER_READ_SERVER_NAME
-        }));
-        assert!(aliases.iter().any(|alias| {
-            alias.tool_name == "execute_command"
-                && alias.public_server_name == chatos_mcp_runtime::TERMINAL_CONTROLLER_SERVER_NAME
-        }));
-        assert!(aliases.iter().any(|alias| {
-            alias.tool_name == "browser_navigate"
-                && alias.public_server_name == chatos_mcp_runtime::BROWSER_TOOLS_SERVER_NAME
-        }));
-    }
-
-    #[test]
-    fn sandbox_terminal_aliases_use_stable_builtin_server_prefixes() {
-        let task = sample_task(vec!["TerminalController"]);
-
-        let aliases = sandbox_tool_name_aliases(&task);
-
-        assert!(aliases.iter().any(|alias| {
-            alias.tool_name == "execute_command"
-                && alias.public_server_name == chatos_mcp_runtime::TERMINAL_CONTROLLER_SERVER_NAME
-        }));
-        assert!(!aliases
-            .iter()
-            .any(|alias| alias.tool_name == "read_file_raw"));
-        assert!(!aliases.iter().any(|alias| alias.tool_name == "write_file"));
-    }
-
-    #[test]
-    fn sandbox_write_aliases_include_read_dependency() {
-        let task = sample_task(vec!["CodeMaintainerWrite"]);
-
-        let aliases = sandbox_tool_name_aliases(&task);
-
-        assert!(aliases.iter().any(|alias| {
-            alias.tool_name == "read_file_raw"
-                && alias.public_server_name == chatos_mcp_runtime::CODE_MAINTAINER_READ_SERVER_NAME
-        }));
-        assert!(aliases.iter().any(|alias| {
-            alias.tool_name == "write_file"
-                && alias.public_server_name == chatos_mcp_runtime::CODE_MAINTAINER_WRITE_SERVER_NAME
-        }));
-        assert!(!aliases
-            .iter()
-            .any(|alias| alias.tool_name == "execute_command"));
-    }
-}
+#[path = "mcp_inputs/tests.rs"]
+mod tests;

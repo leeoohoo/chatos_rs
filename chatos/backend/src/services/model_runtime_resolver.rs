@@ -158,7 +158,7 @@ fn ensure_profile_api_key_is_usable(profile: &AiModelConfig) -> Result<(), Strin
 }
 
 fn local_connector_internal_secret() -> Result<String, String> {
-    std::env::var("CHATOS_LOCAL_CONNECTOR_INTERNAL_API_SECRET")
+    let secret = std::env::var("CHATOS_LOCAL_CONNECTOR_INTERNAL_API_SECRET")
         .ok()
         .or_else(|| std::env::var("LOCAL_CONNECTOR_INTERNAL_API_SECRET").ok())
         .map(|value| value.trim().to_string())
@@ -166,7 +166,16 @@ fn local_connector_internal_secret() -> Result<String, String> {
         .ok_or_else(|| {
             "CHATOS_LOCAL_CONNECTOR_INTERNAL_API_SECRET is required to resolve local model runtime"
                 .to_string()
-        })
+        })?;
+    chatos_service_runtime::validate_production_secret(
+        "CHATOS_LOCAL_CONNECTOR_INTERNAL_API_SECRET",
+        Some(secret.as_str()),
+        &[
+            "chatos-local-connector-dev-secret",
+            "change_me_chatos_local_connector_secret",
+        ],
+    )?;
+    Ok(secret)
 }
 
 async fn resolve_runtime_via_local_connector(
@@ -185,6 +194,7 @@ async fn resolve_runtime_via_local_connector(
             cfg.local_connector_service_request_timeout_ms.max(300) as u64,
         ),
         internal_secret: secret.as_str(),
+        caller: "chatos-backend",
         owner_user_id: user_id,
         model_config_id: profile.id.as_str(),
     })

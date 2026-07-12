@@ -278,9 +278,8 @@ async fn delete_memory_engine_model_profile(
         "{memory_engine_base_url}/admin/model-profiles/{}",
         urlencoding::encode(model_config_id)
     );
-    let response = build_client(state)?
-        .request(Method::DELETE, endpoint)
-        .header("x-memory-operator-token", operator_token.trim())
+    let request = build_client(state)?.request(Method::DELETE, endpoint);
+    let response = signed_memory_engine_request(request, operator_token.as_str())?
         .send()
         .await
         .map_err(|err| err.to_string())?;
@@ -395,9 +394,7 @@ where
     TBody: Serialize + ?Sized,
 {
     let client = build_client(state)?;
-    let mut request = client
-        .request(method, endpoint)
-        .header("x-memory-operator-token", operator_token.trim());
+    let mut request = signed_memory_engine_request(client.request(method, endpoint), operator_token)?;
     if let Some(body) = body {
         request = request.json(body);
     }
@@ -415,6 +412,22 @@ where
         .json::<TResp>()
         .await
         .map_err(|err| err.to_string())
+}
+
+fn signed_memory_engine_request(
+    request: reqwest::RequestBuilder,
+    secret: &str,
+) -> Result<reqwest::RequestBuilder, String> {
+    let token = chatos_service_runtime::issue_internal_service_token(
+        secret.trim(),
+        "user-service",
+        "memory-engine",
+        "model-profile.sync",
+        60,
+    )?;
+    Ok(request
+        .header("x-memory-caller", "user-service")
+        .header("x-memory-internal-token", token))
 }
 
 fn task_runner_request(
@@ -483,4 +496,41 @@ fn ensure_concrete_model(config: &UserModelConfigRecord) -> Result<(), String> {
         return Err("model is empty; downstream services require a concrete model".to_string());
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::signed_memory_engine_request;
+
+    #[test]
+    fn memory_engine_request_uses_scoped_token_without_operator_header() {
+        let request = signed_memory_engine_request(
+            reqwest::Client::new().get("http://127.0.0.1:7081/test"),
+            "a-long-user-service-memory-secret",
+        )
+        .expect("signed request")
+        .build()
+        .expect("request");
+        assert!(!request.headers().contains_key("x-memory-operator-token"));
+        assert_eq!(
+            request
+                .headers()
+                .get("x-memory-caller")
+                .and_then(|value| value.to_str().ok()),
+            Some("user-service")
+        );
+        let token = request
+            .headers()
+            .get("x-memory-internal-token")
+            .and_then(|value| value.to_str().ok())
+            .expect("token");
+        chatos_service_runtime::verify_internal_service_token(
+            token,
+            "a-long-user-service-memory-secret",
+            "user-service",
+            "memory-engine",
+            "model-profile.sync",
+        )
+        .expect("valid token");
+    }
 }

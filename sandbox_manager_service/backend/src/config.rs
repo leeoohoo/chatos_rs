@@ -1,11 +1,13 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
+use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use chatos_service_runtime::{
+    is_production_environment, validate_production_secret,
     DEFAULT_SANDBOX_MANAGER_AGENT_TOKEN_SECRET, DEFAULT_SANDBOX_MANAGER_OPERATOR_TOKEN,
     DEFAULT_SANDBOX_MANAGER_SYSTEM_CLIENT_ID, DEFAULT_SANDBOX_MANAGER_SYSTEM_CLIENT_KEY,
 };
@@ -79,6 +81,8 @@ pub struct AppConfig {
     pub system_client_allowed_project_ids: Vec<String>,
     pub system_client_allowed_tools: Vec<String>,
     pub system_client_max_lease_ttl_seconds: u64,
+    pub internal_api_secrets: HashMap<String, String>,
+    pub require_signed_internal_requests: bool,
     pub agent_token_secret: String,
 }
 
@@ -129,7 +133,7 @@ impl AppConfig {
                 .unwrap_or(lease_ttl_seconds)
                 .max(60);
 
-        Ok(Self {
+        let config = Self {
             host,
             port,
             database_url: normalized_env("SANDBOX_MANAGER_DATABASE_URL")
@@ -166,11 +170,11 @@ impl AppConfig {
                 .unwrap_or_else(|| "chatos-sandbox-agent".to_string()),
             image_build_context,
             image_dockerfile,
-            require_auth: env_bool("SANDBOX_MANAGER_REQUIRE_AUTH", false),
-            operator_token: Some(
-                normalized_env("SANDBOX_MANAGER_OPERATOR_TOKEN")
-                    .unwrap_or_else(|| DEFAULT_SANDBOX_MANAGER_OPERATOR_TOKEN.to_string()),
-            ),
+            require_auth: env_bool("SANDBOX_MANAGER_REQUIRE_AUTH", true),
+            operator_token: normalized_env("SANDBOX_MANAGER_OPERATOR_TOKEN").or_else(|| {
+                (!is_production_environment())
+                    .then(|| DEFAULT_SANDBOX_MANAGER_OPERATOR_TOKEN.to_string())
+            }),
             user_service_base_url: normalized_env("SANDBOX_MANAGER_USER_SERVICE_BASE_URL")
                 .or_else(|| normalized_env("CHATOS_USER_SERVICE_BASE_URL"))
                 .or_else(|| normalized_env("USER_SERVICE_BASE_URL"))
@@ -182,14 +186,14 @@ impl AppConfig {
             .or_else(|| env_parse("USER_SERVICE_DOWNSTREAM_REQUEST_TIMEOUT_MS"))
             .unwrap_or(5_000)
             .max(300),
-            system_client_id: Some(
-                normalized_env("SANDBOX_MANAGER_SYSTEM_CLIENT_ID")
-                    .unwrap_or_else(|| DEFAULT_SANDBOX_MANAGER_SYSTEM_CLIENT_ID.to_string()),
-            ),
-            system_client_key: Some(
-                normalized_env("SANDBOX_MANAGER_SYSTEM_CLIENT_KEY")
-                    .unwrap_or_else(|| DEFAULT_SANDBOX_MANAGER_SYSTEM_CLIENT_KEY.to_string()),
-            ),
+            system_client_id: normalized_env("SANDBOX_MANAGER_SYSTEM_CLIENT_ID").or_else(|| {
+                (!is_production_environment())
+                    .then(|| DEFAULT_SANDBOX_MANAGER_SYSTEM_CLIENT_ID.to_string())
+            }),
+            system_client_key: normalized_env("SANDBOX_MANAGER_SYSTEM_CLIENT_KEY").or_else(|| {
+                (!is_production_environment())
+                    .then(|| DEFAULT_SANDBOX_MANAGER_SYSTEM_CLIENT_KEY.to_string())
+            }),
             system_client_scopes: env_csv(
                 "SANDBOX_MANAGER_SYSTEM_CLIENT_SCOPES",
                 &[
@@ -215,16 +219,82 @@ impl AppConfig {
                 &["*"],
             ),
             system_client_max_lease_ttl_seconds,
+            internal_api_secrets: caller_internal_api_secrets(),
+            require_signed_internal_requests: env_bool(
+                "SANDBOX_MANAGER_REQUIRE_SIGNED_INTERNAL_REQUESTS",
+                is_production_environment(),
+            ),
             agent_token_secret: normalized_env("SANDBOX_MANAGER_AGENT_TOKEN_SECRET")
                 .or_else(|| normalized_env("SANDBOX_MANAGER_SYSTEM_CLIENT_KEY"))
                 .or_else(|| normalized_env("SANDBOX_MANAGER_OPERATOR_TOKEN"))
                 .unwrap_or_else(|| DEFAULT_SANDBOX_MANAGER_AGENT_TOKEN_SECRET.to_string()),
-        })
+        };
+
+        if config.require_auth {
+            if config.operator_token.is_some() {
+                validate_production_secret(
+                    "SANDBOX_MANAGER_OPERATOR_TOKEN",
+                    config.operator_token.as_deref(),
+                    &[DEFAULT_SANDBOX_MANAGER_OPERATOR_TOKEN],
+                )?;
+            }
+            if config.system_client_key.is_some() {
+                validate_production_secret(
+                    "SANDBOX_MANAGER_SYSTEM_CLIENT_KEY",
+                    config.system_client_key.as_deref(),
+                    &[DEFAULT_SANDBOX_MANAGER_SYSTEM_CLIENT_KEY],
+                )?;
+            }
+            if config.require_signed_internal_requests {
+                for caller in ["task-runner", "project-service"] {
+                    if !config.internal_api_secrets.contains_key(caller) {
+                        return Err(format!(
+                            "dedicated Sandbox Manager internal secret is required for {caller}"
+                        ));
+                    }
+                }
+            }
+            for (caller, secret) in &config.internal_api_secrets {
+                validate_production_secret(
+                    format!("Sandbox Manager internal secret for {caller}").as_str(),
+                    Some(secret.as_str()),
+                    &[
+                        "change_me_task_runner_sandbox_manager_secret",
+                        "change_me_project_service_sandbox_manager_secret",
+                    ],
+                )?;
+            }
+            validate_production_secret(
+                "SANDBOX_MANAGER_AGENT_TOKEN_SECRET",
+                Some(config.agent_token_secret.as_str()),
+                &[DEFAULT_SANDBOX_MANAGER_AGENT_TOKEN_SECRET],
+            )?;
+        }
+
+        Ok(config)
     }
 
     pub fn bind_addr(&self) -> SocketAddr {
         SocketAddr::new(self.host, self.port)
     }
+}
+
+fn caller_internal_api_secrets() -> HashMap<String, String> {
+    [
+        (
+            "task-runner",
+            "TASK_RUNNER_SANDBOX_MANAGER_INTERNAL_API_SECRET",
+        ),
+        (
+            "project-service",
+            "PROJECT_SERVICE_SANDBOX_MANAGER_INTERNAL_API_SECRET",
+        ),
+    ]
+    .into_iter()
+    .filter_map(|(caller, env_name)| {
+        normalized_env(env_name).map(|secret| (caller.to_string(), secret))
+    })
+    .collect()
 }
 
 pub fn load_sandbox_manager_dotenv() {

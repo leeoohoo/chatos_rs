@@ -239,6 +239,7 @@ fn decode_value<T: for<'de> Deserialize<'de>>(value: Value) -> Result<T, String>
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
     use std::net::{IpAddr, Ipv4Addr};
     use std::time::Duration;
 
@@ -280,6 +281,8 @@ mod tests {
             task_runner_request_timeout: Duration::from_millis(300),
             task_runner_internal_secret: None,
             sync_secret: None,
+            internal_api_secrets: HashMap::new(),
+            require_signed_internal_requests: false,
         })
         .await
         .expect("test state")

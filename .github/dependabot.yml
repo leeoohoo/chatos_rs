@@ -13,12 +13,42 @@ updates:
         patterns:
           - "*"
 
+  - package-ecosystem: "npm"
+    directories:
+      - "/local_connector_client/frontend"
+      - "/memory_engine/frontend"
+      - "/official_website_service/frontend"
+      - "/plugin_management_service/frontend"
+      - "/project_management_service/frontend"
+      - "/sandbox_manager_service/frontend"
+      - "/task_runner_service/frontend"
+      - "/user_service/frontend"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 4
+    groups:
+      service-frontends-npm:
+        patterns:
+          - "*"
+
   - package-ecosystem: "cargo"
-    directory: "/chatos/backend"
+    directory: "/"
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 2
     groups:
       chat-app-server-rs-cargo:
+        patterns:
+          - "*"
+
+  - package-ecosystem: "cargo"
+    directories:
+      - "/memory_engine/backend"
+      - "/user_service/backend"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 4
+    groups:
+      standalone-services-cargo:
         patterns:
           - "*"

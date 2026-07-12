@@ -19,7 +19,10 @@ const MCP_HTTP_ERROR_BODY_PREVIEW_BYTES: usize = 16 * 1024;
 static MCP_HTTP_CLIENT: OnceLock<Result<reqwest::Client, String>> = OnceLock::new();
 static MCP_TOOLS_LIST_CACHE: OnceLock<Mutex<HashMap<String, ToolsListCacheEntry>>> =
     OnceLock::new();
+mod internal_headers;
 mod stdio;
+
+pub use internal_headers::prepare_http_headers;
 
 #[cfg(test)]
 use stdio::{ensure_stdio_response_line_within_limit, stdio_session_cache_key};
@@ -88,7 +91,7 @@ pub async fn jsonrpc_http_call(
     let request_timeout = timeout.unwrap_or(DEFAULT_MCP_RPC_TIMEOUT);
     let mut request = client.post(url).timeout(request_timeout).json(&payload);
     if let Some(headers) = headers {
-        for (key, value) in headers {
+        for (key, value) in prepare_http_headers(headers)? {
             request = request.header(key.as_str(), value.as_str());
         }
     }

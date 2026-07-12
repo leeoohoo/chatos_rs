@@ -23,6 +23,15 @@ steps:
       - docker info
       - docker compose version
       - bash scripts/harness_ci_build_images.sh
+      - bash docker/deploy-harness-ci.sh
+    volumes:
+      - name: docker-sock
+        path: /var/run/docker.sock
+
+  - name: scan-local-images
+    image: aquasec/trivy:0.58.2
+    commands:
+      - sh scripts/harness_ci_scan_images.sh
     volumes:
       - name: docker-sock
         path: /var/run/docker.sock

@@ -3,7 +3,7 @@
 
 use super::{
     ensure_task_runner_body_within_limit, exchange_task_runner_token_via_user_service,
-    UserServiceTaskRunnerExchange,
+    signed_chatos_internal_request_with_secret, UserServiceTaskRunnerExchange,
 };
 use axum::extract::State;
 use axum::http::{header::AUTHORIZATION, HeaderMap, StatusCode};
@@ -11,6 +11,40 @@ use axum::{routing::post, Json, Router};
 use serde_json::{json, Value};
 use std::sync::Arc;
 use tokio::sync::Mutex;
+
+#[test]
+fn chatos_internal_request_uses_scoped_short_lived_token() {
+    let request = signed_chatos_internal_request_with_secret(
+        reqwest::Client::new().get("http://127.0.0.1:39090/internal/chatos/message-tasks"),
+        "a-long-chatos-task-runner-secret",
+    )
+    .expect("signed request")
+    .build()
+    .expect("build request");
+    assert_eq!(
+        request
+            .headers()
+            .get("x-task-runner-caller")
+            .and_then(|value| value.to_str().ok()),
+        Some("chatos-backend")
+    );
+    let token = request
+        .headers()
+        .get("x-task-runner-internal-token")
+        .and_then(|value| value.to_str().ok())
+        .expect("internal token");
+    chatos_service_runtime::verify_internal_service_token(
+        token,
+        "a-long-chatos-task-runner-secret",
+        "chatos-backend",
+        "task-runner",
+        "chatos.messages.read",
+    )
+    .expect("valid internal token");
+    assert!(!request
+        .headers()
+        .contains_key("x-task-runner-internal-secret"));
+}
 
 #[derive(Debug, Default)]
 struct CapturedExchange {

@@ -372,6 +372,17 @@ impl RunService {
     ) -> Result<HeaderMap, String> {
         let mut headers = HeaderMap::new();
         for (key, value) in &server.headers {
+            if [
+                "x-local-connector-internal-secret",
+                "x-local-connector-internal-token",
+                "x-local-connector-internal-scope",
+                "x-local-connector-caller",
+            ]
+            .iter()
+            .any(|internal_key| key.eq_ignore_ascii_case(internal_key))
+            {
+                continue;
+            }
             let name = HeaderName::from_bytes(key.as_bytes())
                 .map_err(|err| format!("invalid Local Connector header name {key}: {err}"))?;
             let value = HeaderValue::from_str(value.as_str())
@@ -389,9 +400,20 @@ impl RunService {
             let owner_user_id = task_owner_user_id(task).ok_or_else(|| {
                 "Local Connector lifecycle requires task owner user id".to_string()
             })?;
+            let token = chatos_service_runtime::issue_internal_service_token(
+                secret,
+                "task-runner",
+                "local-connector-service",
+                "relay.mcp",
+                60,
+            )?;
             headers.insert(
-                HeaderName::from_static("x-local-connector-internal-secret"),
-                HeaderValue::from_str(secret).map_err(|err| err.to_string())?,
+                HeaderName::from_static("x-local-connector-caller"),
+                HeaderValue::from_static("task-runner"),
+            );
+            headers.insert(
+                HeaderName::from_static("x-local-connector-internal-token"),
+                HeaderValue::from_str(token.as_str()).map_err(|err| err.to_string())?,
             );
             headers.insert(
                 HeaderName::from_static("x-local-connector-owner-user-id"),

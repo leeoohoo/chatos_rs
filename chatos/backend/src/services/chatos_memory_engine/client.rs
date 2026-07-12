@@ -21,7 +21,7 @@ fn build_client_with_timeout_ms(timeout_ms: i64) -> Result<MemoryEngineClient, S
     if let Some(access_token) = access_token_scope::get_current_access_token() {
         client = client.with_bearer_token(access_token);
     } else if let Some(operator_token) = cfg.memory_engine_operator_token.as_deref() {
-        client = client.with_operator_token(operator_token);
+        client = client.with_internal_service_auth("chatos-backend", operator_token);
     }
     Ok(client)
 }

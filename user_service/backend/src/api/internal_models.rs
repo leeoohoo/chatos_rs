@@ -2,7 +2,7 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use axum::extract::{Path, State};
-use axum::http::{HeaderMap, StatusCode};
+use axum::http::HeaderMap;
 use axum::Json;
 use serde::Serialize;
 
@@ -10,8 +10,9 @@ use crate::state::AppState;
 use crate::store::now_rfc3339;
 
 use super::{bad_request, forbidden, internal_error, not_found, ApiResult};
-
-const INTERNAL_SECRET_HEADER: &str = "x-user-service-internal-secret";
+use super::internal_auth::{
+    require_project_service_internal_request, MODEL_RUNTIME_READ_SCOPE, MODEL_SETTINGS_READ_SCOPE,
+};
 
 #[derive(Debug, Serialize)]
 pub struct InternalModelRuntimeConfigResponse {
@@ -43,7 +44,11 @@ pub async fn get_user_model_settings(
     headers: HeaderMap,
     Path(user_id): Path<String>,
 ) -> ApiResult<InternalUserModelSettingsResponse> {
-    require_internal_secret(&state, &headers)?;
+    require_project_service_internal_request(
+        &state.config,
+        &headers,
+        MODEL_SETTINGS_READ_SCOPE,
+    )?;
     let user_id = user_id.trim();
     if user_id.is_empty() {
         return Err(bad_request("user_id is required"));
@@ -90,7 +95,11 @@ pub async fn get_user_model_runtime_config(
     headers: HeaderMap,
     Path((user_id, model_config_id)): Path<(String, String)>,
 ) -> ApiResult<InternalModelRuntimeConfigResponse> {
-    require_internal_secret(&state, &headers)?;
+    require_project_service_internal_request(
+        &state.config,
+        &headers,
+        MODEL_RUNTIME_READ_SCOPE,
+    )?;
     let user_id = user_id.trim();
     let model_config_id = model_config_id.trim();
     if user_id.is_empty() {
@@ -130,30 +139,4 @@ pub async fn get_user_model_runtime_config(
         supports_reasoning: model_config.supports_reasoning,
         supports_responses: model_config.supports_responses,
     }))
-}
-
-fn require_internal_secret(
-    state: &AppState,
-    headers: &HeaderMap,
-) -> Result<(), (StatusCode, Json<serde_json::Value>)> {
-    let Some(expected) = state
-        .config
-        .user_service_internal_api_secret
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    else {
-        return Err(forbidden(
-            "USER_SERVICE_INTERNAL_API_SECRET is not configured",
-        ));
-    };
-    let provided = headers
-        .get(INTERNAL_SECRET_HEADER)
-        .and_then(|value| value.to_str().ok())
-        .map(str::trim)
-        .unwrap_or_default();
-    if provided != expected {
-        return Err(forbidden("invalid user service internal secret"));
-    }
-    Ok(())
 }

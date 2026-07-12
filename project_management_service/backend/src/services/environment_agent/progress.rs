@@ -150,10 +150,7 @@ async fn fetch_image_jobs(
 }
 
 async fn fetch_cloud_image_jobs(state: &AppState) -> Result<Vec<SandboxImageJobProgress>, String> {
-    let client_id = required_config_value(
-        state.config.sandbox_manager_client_id.as_deref(),
-        "PROJECT_SERVICE_SANDBOX_MANAGER_CLIENT_ID",
-    )?;
+    let client_id = "project-service";
     let client_key = required_config_value(
         state.config.sandbox_manager_client_key.as_deref(),
         "PROJECT_SERVICE_SANDBOX_MANAGER_CLIENT_KEY",
@@ -170,11 +167,18 @@ async fn fetch_cloud_image_jobs(state: &AppState) -> Result<Vec<SandboxImageJobP
         .timeout(Duration::from_secs(20))
         .build()
         .map_err(|err| format!("build sandbox image progress client failed: {err}"))?;
+    let token = chatos_service_runtime::issue_internal_service_token(
+        client_key,
+        client_id,
+        "sandbox-manager",
+        "sandbox.service",
+        60,
+    )?;
     read_jobs_response(
         client
             .get(url)
-            .header("x-sandbox-client-id", client_id)
-            .header("x-sandbox-client-key", client_key)
+            .header("x-sandbox-caller", client_id)
+            .header("x-sandbox-internal-token", token)
             .send()
             .await
             .map_err(|err| format!("query cloud sandbox image jobs failed: {err}"))?,

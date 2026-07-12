@@ -13,7 +13,7 @@ fn build_client() -> Result<memory_engine_sdk::MemoryEngineClient, String> {
         std::time::Duration::from_millis(cfg.memory_engine_request_timeout_ms.max(300) as u64),
     )?;
     if let Some(operator_token) = cfg.memory_engine_operator_token.as_deref() {
-        client = client.with_operator_token(operator_token);
+        client = client.with_internal_service_auth("chatos-backend", operator_token);
     }
     Ok(client)
 }

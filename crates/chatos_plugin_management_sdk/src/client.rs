@@ -14,7 +14,12 @@ use crate::dto::{
 use crate::error::PluginManagementClientError;
 
 const INTERNAL_SECRET_HEADER: &str = "x-plugin-management-internal-secret";
+const INTERNAL_TOKEN_HEADER: &str = "x-plugin-management-internal-token";
 const CALLER_SERVICE_HEADER: &str = "x-plugin-management-caller-service";
+const INTERNAL_TOKEN_AUDIENCE: &str = "plugin-management-service";
+const CAPABILITIES_RESOLVE_SCOPE: &str = "capabilities.resolve";
+const LOCAL_CONNECTOR_READ_SCOPE: &str = "local-connector.read";
+const LOCAL_CONNECTOR_WRITE_SCOPE: &str = "local-connector.write";
 
 #[derive(Clone)]
 pub struct PluginManagementClient {
@@ -71,20 +76,12 @@ impl PluginManagementClient {
         &self,
         request: &ResolveAgentCapabilitiesRequest,
     ) -> Result<ResolvedAgentCapabilities, PluginManagementClientError> {
-        let secret = self
-            .config
-            .internal_api_secret
-            .as_deref()
-            .ok_or(PluginManagementClientError::MissingInternalSecret)?;
         let url = format!(
             "{}/api/internal/runtime/agent-capabilities/resolve",
             self.config.base_url
         );
         let response = self
-            .http
-            .request(Method::POST, url)
-            .header(INTERNAL_SECRET_HEADER, secret)
-            .header(CALLER_SERVICE_HEADER, self.config.caller_service.as_str())
+            .internal_request(Method::POST, url, CAPABILITIES_RESOLVE_SCOPE)?
             .json(request)
             .send()
             .await?;
@@ -98,7 +95,7 @@ impl PluginManagementClient {
     ) -> Result<LocalConnectorMcpListResponse, PluginManagementClientError> {
         let url = format!("{}/api/internal/local-connector/mcps", self.config.base_url);
         let response = self
-            .internal_request(Method::GET, url)?
+            .internal_request(Method::GET, url, LOCAL_CONNECTOR_READ_SCOPE)?
             .query(&[("owner_user_id", owner_user_id), ("device_id", device_id)])
             .send()
             .await?;
@@ -111,7 +108,7 @@ impl PluginManagementClient {
     ) -> Result<McpRecord, PluginManagementClientError> {
         let url = format!("{}/api/internal/local-connector/mcps", self.config.base_url);
         let response = self
-            .internal_request(Method::POST, url)?
+            .internal_request(Method::POST, url, LOCAL_CONNECTOR_WRITE_SCOPE)?
             .json(request)
             .send()
             .await?;
@@ -129,7 +126,7 @@ impl PluginManagementClient {
             urlencoding::encode(mcp_id)
         );
         let response = self
-            .internal_request(Method::PATCH, url)?
+            .internal_request(Method::PATCH, url, LOCAL_CONNECTOR_WRITE_SCOPE)?
             .json(request)
             .send()
             .await?;
@@ -149,7 +146,7 @@ impl PluginManagementClient {
             urlencoding::encode(mcp_id)
         );
         let response = self
-            .internal_request(Method::DELETE, url)?
+            .internal_request(Method::DELETE, url, LOCAL_CONNECTOR_WRITE_SCOPE)?
             .query(&[
                 ("owner_user_id", owner_user_id),
                 ("device_id", device_id),
@@ -171,7 +168,7 @@ impl PluginManagementClient {
             urlencoding::encode(mcp_id)
         );
         let response = self
-            .internal_request(Method::PUT, url)?
+            .internal_request(Method::PUT, url, LOCAL_CONNECTOR_WRITE_SCOPE)?
             .json(request)
             .send()
             .await?;
@@ -187,7 +184,7 @@ impl PluginManagementClient {
             self.config.base_url
         );
         let response = self
-            .internal_request(Method::PUT, url)?
+            .internal_request(Method::PUT, url, LOCAL_CONNECTOR_WRITE_SCOPE)?
             .json(request)
             .send()
             .await?;
@@ -198,16 +195,26 @@ impl PluginManagementClient {
         &self,
         method: Method,
         url: String,
+        scope: &str,
     ) -> Result<reqwest::RequestBuilder, PluginManagementClientError> {
         let secret = self
             .config
             .internal_api_secret
             .as_deref()
             .ok_or(PluginManagementClientError::MissingInternalSecret)?;
+        let token = chatos_service_runtime::issue_internal_service_token(
+            secret,
+            self.config.caller_service.as_str(),
+            INTERNAL_TOKEN_AUDIENCE,
+            scope,
+            60,
+        )
+        .map_err(PluginManagementClientError::InternalToken)?;
         Ok(self
             .http
             .request(method, url)
             .header(INTERNAL_SECRET_HEADER, secret)
+            .header(INTERNAL_TOKEN_HEADER, token)
             .header(CALLER_SERVICE_HEADER, self.config.caller_service.as_str()))
     }
 }
