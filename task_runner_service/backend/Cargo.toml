@@ -9,7 +9,7 @@ edition = "2021"
 [dependencies]
 async-trait = "0.1"
 argon2 = "0.5"
-axum = { version = "0.7", features = ["json"] }
+axum = { version = "0.8", features = ["json"] }
 base64 = "0.22"
 chatos_agent = { path = "../../agent" }
 chatos_ai_runtime = { path = "../../crates/chatos_ai_runtime" }
@@ -22,11 +22,11 @@ chatos_plugin_management_sdk = { path = "../../crates/chatos_plugin_management_s
 chrono = { version = "0.4", features = ["clock", "serde"] }
 dotenvy = "0.15"
 futures-util = "0.3"
-jsonwebtoken = "9"
+jsonwebtoken = "10"
 memory_engine_sdk = { path = "../../crates/memory_engine_sdk" }
 mongodb = { version = "2.8", features = ["tokio-runtime"] }
 parking_lot = "0.12"
-rand = "0.8"
+rand = "0.10"
 reqwest = { version = "0.12", features = ["json", "stream", "gzip", "brotli", "deflate", "rustls-tls"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -34,7 +34,7 @@ ssh2 = "0.9"
 sqlx = { version = "0.9", features = ["runtime-tokio", "sqlite"] }
 tokio = { version = "1", features = ["full"] }
 tokio-stream = { version = "0.1", features = ["sync"] }
-tower-http = { version = "0.5", features = ["cors", "trace"] }
+tower-http = { version = "0.6", features = ["cors", "trace"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 urlencoding = "2"
