@@ -37,7 +37,7 @@ pub async fn list_job_runs(
 
     let options = FindOptions::builder()
         .sort(doc! {"started_at": -1, "id": 1})
-        .limit(Some(limit.max(1).min(1000)))
+        .limit(Some(limit.clamp(1, 1000)))
         .build();
     let cursor = job_run_collection(db)
         .find(filter)

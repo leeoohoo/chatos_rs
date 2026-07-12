@@ -101,7 +101,7 @@ pub(super) async fn browser_render_extract(
             .and_then(|value| value.as_str())
             .unwrap_or(""),
         "",
-        &[snapshot.clone()],
+        std::slice::from_ref(&snapshot),
     );
 
     if merged_content.trim().is_empty() && snapshot.trim().is_empty() {

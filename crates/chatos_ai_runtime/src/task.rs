@@ -24,15 +24,11 @@ pub use self::spec::TaskRunSpec;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum TaskBuiltinMcpPromptMode {
     Configured,
+    #[default]
     Effective,
-}
-
-impl Default for TaskBuiltinMcpPromptMode {
-    fn default() -> Self {
-        Self::Effective
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -55,11 +55,6 @@ impl McpToolState {
         &mut self.tool_metadata
     }
 
-    #[cfg(test)]
-    pub(crate) fn tool_aliases_mut(&mut self) -> &mut HashMap<String, String> {
-        &mut self.tool_aliases
-    }
-
     pub(crate) fn unavailable_tools(&self) -> Vec<Value> {
         self.unavailable_tools.clone()
     }

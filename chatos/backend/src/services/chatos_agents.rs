@@ -111,19 +111,19 @@ pub async fn update_agent(
         payload
             .plugin_sources
             .as_deref()
-            .or_else(|| Some(existing.plugin_sources.as_slice())),
+            .or(Some(existing.plugin_sources.as_slice())),
         payload
             .skills
             .as_deref()
-            .or_else(|| Some(existing_inline_skills.as_slice())),
+            .or(Some(existing_inline_skills.as_slice())),
         payload
             .skill_ids
             .as_deref()
-            .or_else(|| Some(existing.skill_ids.as_slice())),
+            .or(Some(existing.skill_ids.as_slice())),
         payload
             .default_skill_ids
             .as_deref()
-            .or_else(|| Some(existing.default_skill_ids.as_slice())),
+            .or(Some(existing.default_skill_ids.as_slice())),
     )
     .await?;
 

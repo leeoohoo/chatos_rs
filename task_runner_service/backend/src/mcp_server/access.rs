@@ -153,8 +153,7 @@ impl TaskRunnerMcpService {
             .existing_chatos_async_tasks(current_user, request_context)
             .await?
             .into_iter()
-            .filter(reusable_chatos_async_task)
-            .next())
+            .find(reusable_chatos_async_task))
     }
 
     pub(super) async fn existing_chatos_async_tasks(
@@ -185,7 +184,7 @@ impl TaskRunnerMcpService {
                             .as_deref()
                             .map(str::trim)
                             .filter(|value| !value.is_empty())
-                            .or_else(|| task.creator_user_id.as_deref())
+                            .or(task.creator_user_id.as_deref())
                             == Some(owner_user_id)
                     })
                     .filter(|task| ensure_task_project_scope(task, request_context).is_ok())

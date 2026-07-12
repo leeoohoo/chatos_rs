@@ -53,7 +53,7 @@ pub async fn get_project_by_user_and_project_id(
                 .fetch_optional(pool)
                 .await
                 .map_err(|e| e.to_string())?;
-                Ok(row.map(ChatosMemoryProjectRow::to_project))
+                Ok(row.map(ChatosMemoryProjectRow::into_project))
             })
         },
     )
@@ -189,7 +189,7 @@ pub async fn upsert_memory_project(
                 .fetch_optional(pool)
                 .await
                 .map_err(|e| e.to_string())?;
-                Ok(row.map(ChatosMemoryProjectRow::to_project))
+                Ok(row.map(ChatosMemoryProjectRow::into_project))
             })
         },
     )
@@ -254,7 +254,7 @@ pub async fn list_projects_by_ids(
                     .map_err(|e| e.to_string())?;
                 Ok(rows
                     .into_iter()
-                    .map(ChatosMemoryProjectRow::to_project)
+                    .map(ChatosMemoryProjectRow::into_project)
                     .collect())
             })
         },
@@ -283,7 +283,7 @@ pub async fn list_memory_projects(
                 }
                 let options = FindOptions::builder()
                     .sort(doc! { "updated_at": -1, "created_at": -1 })
-                    .limit(Some(limit.max(1).min(500)))
+                    .limit(Some(limit.clamp(1, 500)))
                     .skip(Some(offset.max(0) as u64))
                     .build();
                 let cursor = db
@@ -315,11 +315,11 @@ pub async fn list_memory_projects(
                 if let Some(status) = status.as_deref() {
                     query = query.bind(status);
                 }
-                query = query.bind(limit.max(1).min(500)).bind(offset.max(0));
+                query = query.bind(limit.clamp(1, 500)).bind(offset.max(0));
                 let rows = query.fetch_all(pool).await.map_err(|e| e.to_string())?;
                 Ok(rows
                     .into_iter()
-                    .map(ChatosMemoryProjectRow::to_project)
+                    .map(ChatosMemoryProjectRow::into_project)
                     .collect())
             })
         },

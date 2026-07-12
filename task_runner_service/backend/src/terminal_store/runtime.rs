@@ -193,7 +193,7 @@ pub(super) async fn wait_for_session(
     session: Arc<TerminalSession>,
     timeout_ms: u64,
 ) -> Result<WaitResult, String> {
-    let timeout = Duration::from_millis(timeout_ms.max(1_000).min(600_000));
+    let timeout = Duration::from_millis(timeout_ms.clamp(1_000, 600_000));
     let started = Instant::now();
     loop {
         refresh_session_status(&session).await?;

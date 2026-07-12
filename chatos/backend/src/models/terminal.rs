@@ -41,7 +41,7 @@ pub struct TerminalRow {
 }
 
 impl TerminalRow {
-    pub fn to_terminal(self) -> Terminal {
+    pub fn into_terminal(self) -> Terminal {
         Terminal {
             id: self.id,
             name: self.name,

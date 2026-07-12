@@ -36,7 +36,7 @@ pub struct McpConfigRow {
 }
 
 impl McpConfigRow {
-    pub fn to_config(self) -> McpConfig {
+    pub fn into_config(self) -> McpConfig {
         McpConfig {
             id: self.id,
             name: self.name,

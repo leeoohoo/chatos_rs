@@ -208,27 +208,36 @@ impl AppConfig {
 fn caller_internal_api_secrets() -> HashMap<String, String> {
     [
         ("chatos-backend", "CHATOS_MEMORY_ENGINE_INTERNAL_API_SECRET"),
-        ("task-runner", "TASK_RUNNER_MEMORY_ENGINE_INTERNAL_API_SECRET"),
+        (
+            "task-runner",
+            "TASK_RUNNER_MEMORY_ENGINE_INTERNAL_API_SECRET",
+        ),
         (
             "project-service",
             "PROJECT_SERVICE_MEMORY_ENGINE_INTERNAL_API_SECRET",
         ),
-        ("user-service", "USER_SERVICE_MEMORY_ENGINE_INTERNAL_API_SECRET"),
+        (
+            "user-service",
+            "USER_SERVICE_MEMORY_ENGINE_INTERNAL_API_SECRET",
+        ),
         (
             "local-connector-service",
             "LOCAL_CONNECTOR_MEMORY_ENGINE_INTERNAL_API_SECRET",
         ),
     ]
     .into_iter()
-    .filter_map(|(caller, env_name)| {
-        env_text(env_name).map(|secret| (caller.to_string(), secret))
-    })
+    .filter_map(|(caller, env_name)| env_text(env_name).map(|secret| (caller.to_string(), secret)))
     .collect()
 }
 
 fn env_flag(key: &str, default: bool) -> bool {
     env_text(key)
-        .map(|value| matches!(value.to_ascii_lowercase().as_str(), "1" | "true" | "yes" | "on"))
+        .map(|value| {
+            matches!(
+                value.to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes" | "on"
+            )
+        })
         .unwrap_or(default)
 }
 

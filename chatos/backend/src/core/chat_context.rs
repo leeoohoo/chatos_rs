@@ -50,9 +50,7 @@ pub async fn resolve_system_prompt(
         return None;
     }
 
-    let Some(uid) = user_id else {
-        return None;
-    };
+    let uid = user_id?;
 
     match system_contexts::get_active_system_context(&uid).await {
         Ok(Some(ctx)) => ctx.content,

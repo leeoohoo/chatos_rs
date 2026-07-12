@@ -323,6 +323,37 @@ pub(in crate::api::projects) fn requirement_dependency_map(
     out
 }
 
+pub(in crate::api::projects) fn work_item_dependency_map(
+    graph: &Value,
+) -> BTreeMap<String, Vec<String>> {
+    let mut out: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    let Some(edges) = graph.get("edges").and_then(Value::as_array) else {
+        return out;
+    };
+    for edge in edges {
+        let Some(from) = value_string(edge, "from") else {
+            continue;
+        };
+        let Some(to) = value_string(edge, "to") else {
+            continue;
+        };
+        let Some(prereq_id) = from.strip_prefix("work_item:") else {
+            continue;
+        };
+        let Some(work_item_id) = to.strip_prefix("work_item:") else {
+            continue;
+        };
+        out.entry(work_item_id.to_string())
+            .or_default()
+            .push(prereq_id.to_string());
+    }
+    for deps in out.values_mut() {
+        deps.sort();
+        deps.dedup();
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -462,35 +493,4 @@ mod tests {
         assert!(items[1].is_planning_task);
         assert!(!items[2].is_planning_task);
     }
-}
-
-pub(in crate::api::projects) fn work_item_dependency_map(
-    graph: &Value,
-) -> BTreeMap<String, Vec<String>> {
-    let mut out: BTreeMap<String, Vec<String>> = BTreeMap::new();
-    let Some(edges) = graph.get("edges").and_then(Value::as_array) else {
-        return out;
-    };
-    for edge in edges {
-        let Some(from) = value_string(edge, "from") else {
-            continue;
-        };
-        let Some(to) = value_string(edge, "to") else {
-            continue;
-        };
-        let Some(prereq_id) = from.strip_prefix("work_item:") else {
-            continue;
-        };
-        let Some(work_item_id) = to.strip_prefix("work_item:") else {
-            continue;
-        };
-        out.entry(work_item_id.to_string())
-            .or_default()
-            .push(prereq_id.to_string());
-    }
-    for deps in out.values_mut() {
-        deps.sort();
-        deps.dedup();
-    }
-    out
 }

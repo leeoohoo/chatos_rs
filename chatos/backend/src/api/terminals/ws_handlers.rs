@@ -262,16 +262,15 @@ async fn handle_terminal_socket(id: String, mut socket: WebSocket) {
     };
 
     let snapshot = session.output_snapshot_tail_lines(WS_DEFAULT_SNAPSHOT_LINES);
-    if !snapshot.is_empty() {
-        if socket
+    if !snapshot.is_empty()
+        && socket
             .send(Message::text(
                 serde_json::to_string(&WsOutput::Snapshot { data: snapshot }).unwrap_or_default(),
             ))
             .await
             .is_err()
-        {
-            return;
-        }
+    {
+        return;
     }
 
     if socket

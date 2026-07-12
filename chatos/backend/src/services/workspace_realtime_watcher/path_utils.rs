@@ -4,27 +4,21 @@
 use std::path::{Component, Path, PathBuf};
 
 pub(super) fn is_path_within_scope(path: &str, scope: &str) -> bool {
+    let path = path.replace('\\', "/");
+    let scope = scope.replace('\\', "/");
     if path == scope {
         return true;
     }
-    let prefix = if scope.ends_with(std::path::MAIN_SEPARATOR) {
-        scope.to_string()
+    let prefix = if scope.ends_with('/') {
+        scope
     } else {
-        format!("{scope}{}", std::path::MAIN_SEPARATOR)
+        format!("{scope}/")
     };
-    path.starts_with(prefix.as_str())
+    path.starts_with(&prefix)
 }
 
 pub(super) fn path_matches_root(path: &str, root: &str) -> bool {
-    if path == root {
-        return true;
-    }
-    let prefix = if root.ends_with(std::path::MAIN_SEPARATOR) {
-        root.to_string()
-    } else {
-        format!("{root}{}", std::path::MAIN_SEPARATOR)
-    };
-    path.starts_with(prefix.as_str())
+    is_path_within_scope(path, root)
 }
 
 pub(super) fn normalize_relative_string(path: &Path) -> String {
@@ -62,5 +56,5 @@ pub(super) fn normalize_path_string(path: &str) -> String {
             Component::Normal(value) => normalized.push(value),
         }
     }
-    normalized.to_string_lossy().to_string()
+    normalized.to_string_lossy().replace('\\', "/")
 }

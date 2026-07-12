@@ -13,6 +13,12 @@ pub struct MessageManager {
     core: MessageManagerCore,
 }
 
+impl Default for MessageManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl MessageManager {
     pub fn new() -> Self {
         Self {

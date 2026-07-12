@@ -6,7 +6,7 @@ use std::path::Path;
 const CONTROL_CHAR_RATIO_THRESHOLD: f64 = 0.02;
 
 fn is_probably_text_payload(bytes: &[u8]) -> bool {
-    if bytes.iter().any(|b| *b == 0) {
+    if bytes.contains(&0) {
         return false;
     }
     if std::str::from_utf8(bytes).is_err() {

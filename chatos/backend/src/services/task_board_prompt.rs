@@ -179,11 +179,7 @@ fn append_task_line(
     if !task.details.trim().is_empty() {
         lines.push(format!(
             "  {}: {}",
-            if locale.is_english() {
-                "details"
-            } else {
-                "details"
-            },
+            "details",
             compact_text(task.details.as_str(), 140)
         ));
     }
@@ -205,29 +201,17 @@ fn append_blocked_task_line(
     append_task_line(lines, task, false, locale);
     lines.push(format!(
         "  {}: {}",
-        if locale.is_english() {
-            "outcome"
-        } else {
-            "outcome"
-        },
+        "outcome",
         display_outcome_summary(task, locale)
     ));
     lines.push(format!(
         "  {}: {}",
-        if locale.is_english() {
-            "blocker"
-        } else {
-            "blocker"
-        },
+        "blocker",
         display_blocker_reason(task, locale)
     ));
     lines.push(format!(
         "  {}: {}",
-        if locale.is_english() {
-            "needs"
-        } else {
-            "needs"
-        },
+        "needs",
         display_blocker_needs(task, locale)
     ));
 }
@@ -240,17 +224,13 @@ fn append_completed_task_line(
     append_task_line(lines, task, false, locale);
     lines.push(format!(
         "  {}: {}",
-        if locale.is_english() {
-            "outcome"
-        } else {
-            "outcome"
-        },
+        "outcome",
         display_outcome_summary(task, locale)
     ));
     if !task.resume_hint.trim().is_empty() {
         lines.push(format!(
             "  {}: {}",
-            if locale.is_english() { "hint" } else { "hint" },
+            "hint",
             compact_text(task.resume_hint.as_str(), 140)
         ));
     }

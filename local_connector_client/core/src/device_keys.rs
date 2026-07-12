@@ -232,7 +232,7 @@ mod secret_store {
             CryptProtectData, CRYPTPROTECT_UI_FORBIDDEN, CRYPT_INTEGER_BLOB,
         };
 
-        let mut input = CRYPT_INTEGER_BLOB {
+        let input = CRYPT_INTEGER_BLOB {
             cbData: value.len() as u32,
             pbData: value.as_ptr() as *mut u8,
         };
@@ -242,7 +242,7 @@ mod secret_store {
         };
         let ok = unsafe {
             CryptProtectData(
-                &mut input,
+                &input,
                 null(),
                 null(),
                 null_mut(),
@@ -270,7 +270,7 @@ mod secret_store {
             CryptUnprotectData, CRYPTPROTECT_UI_FORBIDDEN, CRYPT_INTEGER_BLOB,
         };
 
-        let mut input = CRYPT_INTEGER_BLOB {
+        let input = CRYPT_INTEGER_BLOB {
             cbData: value.len() as u32,
             pbData: value.as_ptr() as *mut u8,
         };
@@ -280,7 +280,7 @@ mod secret_store {
         };
         let ok = unsafe {
             CryptUnprotectData(
-                &mut input,
+                &input,
                 null_mut(),
                 null(),
                 null_mut(),

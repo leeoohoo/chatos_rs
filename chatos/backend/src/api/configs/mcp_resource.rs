@@ -21,7 +21,7 @@ use super::{authorize_mcp_cwd_or_default, ResourceByCommandRequest};
 
 const MCP_RESOURCE_STDIO_TIMEOUT: Duration = Duration::from_secs(15);
 const MCP_RESOURCE_RESPONSE_LINE_LIMIT_BYTES: usize = 2 * 1024 * 1024;
-const MCP_RESOURCE_TEXT_LIMIT_BYTES: usize = 1 * 1024 * 1024;
+const MCP_RESOURCE_TEXT_LIMIT_BYTES: usize = 1024 * 1024;
 
 pub(super) async fn get_mcp_resource_config(
     auth: AuthUser,

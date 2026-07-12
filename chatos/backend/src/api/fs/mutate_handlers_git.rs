@@ -56,7 +56,7 @@ fn gitignore_pattern(
     target_path: &Path,
     mode: &str,
 ) -> Result<String, String> {
-    let file_name = target_path
+    target_path
         .file_name()
         .and_then(|value| value.to_str())
         .filter(|value| !value.is_empty())
@@ -88,8 +88,6 @@ fn gitignore_pattern(
     .and_then(|pattern| {
         if pattern.is_empty() {
             Err("生成的 .gitignore 规则为空".to_string())
-        } else if pattern == file_name && mode == "file" {
-            Ok(pattern)
         } else {
             Ok(pattern)
         }

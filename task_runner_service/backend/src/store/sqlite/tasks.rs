@@ -18,8 +18,7 @@ const TASK_TAG_FILTER_CLAUSE: &str =
 type SqliteQuery<'a> = Query<'a, Sqlite, SqliteArguments>;
 
 fn sqlite_placeholders(count: usize) -> String {
-    std::iter::repeat("?")
-        .take(count)
+    std::iter::repeat_n("?", count)
         .collect::<Vec<_>>()
         .join(", ")
 }

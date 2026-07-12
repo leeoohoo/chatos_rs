@@ -73,7 +73,7 @@ pub async fn list_contact_project_memories_by_contact(
     Ok(items
         .into_iter()
         .skip(skip)
-        .take(limit.unwrap_or(100).max(1).min(1000) as usize)
+        .take(limit.unwrap_or(100).clamp(1, 1000) as usize)
         .collect())
 }
 

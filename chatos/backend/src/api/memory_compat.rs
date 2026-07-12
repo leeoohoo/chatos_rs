@@ -96,7 +96,7 @@ async fn list_sessions(
     match compat_runtime::list_sessions(
         user_id.as_str(),
         query.project_id.as_deref(),
-        Some(query.limit.unwrap_or(50).max(1).min(500)),
+        Some(query.limit.unwrap_or(50).clamp(1, 500)),
         query.offset.unwrap_or(0).max(0),
         query.status.as_deref(),
     )
@@ -231,7 +231,7 @@ async fn list_messages(
         compat_runtime::list_messages_for_auth(
             &auth,
             session_id.as_str(),
-            Some(query.limit.unwrap_or(100).max(1).min(2000)),
+            Some(query.limit.unwrap_or(100).clamp(1, 2000)),
             query.offset.unwrap_or(0).max(0),
             asc,
         )
@@ -357,7 +357,7 @@ async fn list_summaries(
         compat_runtime::list_summaries_for_auth(
             &auth,
             session_id.as_str(),
-            Some(query.limit.unwrap_or(100).max(1).min(1000)),
+            Some(query.limit.unwrap_or(100).clamp(1, 1000)),
             query.offset.unwrap_or(0).max(0),
         )
         .await,

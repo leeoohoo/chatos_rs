@@ -114,7 +114,7 @@ pub(super) async fn bing_html_search(
         return Ok(Vec::new());
     }
 
-    let count = limit.max(10).min(50).to_string();
+    let count = limit.clamp(10, 50).to_string();
     let response = client
         .get(BING_SEARCH_ENDPOINT)
         .header("User-Agent", DEFAULT_USER_AGENT)

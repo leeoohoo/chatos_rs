@@ -81,7 +81,7 @@ pub(super) fn ingest_tool_call_item(
         .map(str::trim)
         .filter(|value| !value.is_empty());
     let index = resolve_tool_call_index(event, Some(item), &state.tool_call_index_map)
-        .unwrap_or_else(|| state.tool_calls_map.len());
+        .unwrap_or(state.tool_calls_map.len());
     remember_tool_call_index(&mut state.tool_call_index_map, index, item_id, call_id);
     let item_arguments_piece = item.get("arguments").map(|value| {
         value
@@ -140,7 +140,7 @@ pub(super) fn merge_function_call_arguments_delta(
         .map(str::trim)
         .filter(|value| !value.is_empty());
     let index = resolve_tool_call_index(event, None, &state.tool_call_index_map)
-        .unwrap_or_else(|| state.tool_calls_map.len());
+        .unwrap_or(state.tool_calls_map.len());
     remember_tool_call_index(&mut state.tool_call_index_map, index, item_id, call_id);
     merge_indexed_tool_call_parts(
         &mut state.tool_calls_map,
@@ -170,7 +170,7 @@ pub(super) fn merge_function_call_done(
         .map(str::trim)
         .filter(|value| !value.is_empty());
     let index = resolve_tool_call_index(event, None, &state.tool_call_index_map)
-        .unwrap_or_else(|| state.tool_calls_map.len());
+        .unwrap_or(state.tool_calls_map.len());
     remember_tool_call_index(&mut state.tool_call_index_map, index, item_id, call_id);
     merge_indexed_tool_call_parts(
         &mut state.tool_calls_map,

@@ -220,9 +220,9 @@ fn normalized_callback_text(value: Option<&str>) -> Option<&str> {
     value.map(str::trim).filter(|value| !value.is_empty())
 }
 
-fn preferred_callback_detail<'a>(
-    payload: &'a TaskRunnerCallbackRequest,
-) -> Option<(&'static str, &'static str, &'a str)> {
+fn preferred_callback_detail(
+    payload: &TaskRunnerCallbackRequest,
+) -> Option<(&'static str, &'static str, &str)> {
     if let Some(value) = normalized_callback_text(payload.result_summary.as_deref()) {
         return Some(("结果摘要", "result_summary", value));
     }

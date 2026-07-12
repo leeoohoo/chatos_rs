@@ -126,7 +126,7 @@ async fn list_job_run_bucket(
             .cmp(&left.started_at)
             .then_with(|| left.id.cmp(&right.id))
     });
-    items.truncate(limit.max(1).min(1000) as usize);
+    items.truncate(limit.clamp(1, 1000) as usize);
     Ok(items)
 }
 

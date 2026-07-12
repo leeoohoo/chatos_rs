@@ -179,7 +179,7 @@ pub(in crate::builtin::terminal_controller) async fn wait_process_with_context(
 
     let session = manager.ensure_running(&terminal).await?;
     let mut receiver = session.subscribe();
-    let effective_timeout_ms = timeout_ms.max(1_000).min(PROCESS_WAIT_MAX_TIMEOUT_MS);
+    let effective_timeout_ms = timeout_ms.clamp(1_000, PROCESS_WAIT_MAX_TIMEOUT_MS);
     let timeout = Duration::from_millis(effective_timeout_ms);
     let started_at = Instant::now();
     let mut output = String::new();

@@ -13,7 +13,7 @@ use tokio::time::{sleep, Duration};
 use uuid::Uuid;
 
 const BROWSER_STDOUT_LIMIT_BYTES: usize = 4 * 1024 * 1024;
-const BROWSER_STDERR_LIMIT_BYTES: usize = 1 * 1024 * 1024;
+const BROWSER_STDERR_LIMIT_BYTES: usize = 1024 * 1024;
 
 #[derive(Debug, Clone)]
 pub(crate) struct BrowserRuntimeSession {

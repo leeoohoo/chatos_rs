@@ -88,18 +88,3 @@ pub enum Database {
     Sqlite(SqlitePool),
     Mongo { _client: Client, db: MongoDatabase },
 }
-
-impl Database {
-    #[cfg(test)]
-    pub fn is_mongo(&self) -> bool {
-        matches!(self, Database::Mongo { .. })
-    }
-
-    #[cfg(test)]
-    pub fn sqlite_pool(&self) -> Option<&SqlitePool> {
-        match self {
-            Database::Sqlite(pool) => Some(pool),
-            _ => None,
-        }
-    }
-}

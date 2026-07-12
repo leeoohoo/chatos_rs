@@ -31,7 +31,7 @@ pub(in crate::services) fn build_task_runner_builtin_provider(
         chatos_mcp_runtime::BuiltinMcpKind::ProjectManagement => {
             build_project_management_provider(server, task_service)?
         }
-        _ => return Ok(build_shared_provider(server)?),
+        _ => return build_shared_provider(server),
     };
     Ok(Some(provider))
 }

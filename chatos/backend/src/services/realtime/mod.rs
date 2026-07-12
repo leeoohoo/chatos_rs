@@ -20,4 +20,4 @@ pub use session_scope::{
     resolve_conversation_scope, RealtimeAckMessage, RealtimeClientControlMessage,
     RealtimeErrorMessage, RealtimeSubscriptionSet,
 };
-pub(crate) use types::RemoteSftpTransferRealtimePayload;
+pub(crate) use types::{AskUserPromptRealtimePayload, RemoteSftpTransferRealtimePayload};

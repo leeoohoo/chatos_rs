@@ -26,7 +26,7 @@ pub struct TerminalLogRow {
 }
 
 impl TerminalLogRow {
-    pub fn to_log(self) -> TerminalLog {
+    pub fn into_log(self) -> TerminalLog {
         TerminalLog {
             id: self.id,
             terminal_id: self.terminal_id,

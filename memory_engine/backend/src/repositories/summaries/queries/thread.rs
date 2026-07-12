@@ -98,7 +98,7 @@ pub async fn list_thread_summaries(
         ))
         .sort(doc! {"level": -1, "created_at": 1})
         .skip(offset.max(0) as u64)
-        .limit(limit.max(1).min(500))
+        .limit(limit.clamp(1, 500))
         .await
         .map_err(|err| err.to_string())?;
 

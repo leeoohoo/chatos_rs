@@ -19,7 +19,9 @@ pub struct TaskEphemeralHttpMcpServer {
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum TaskStatus {
+    #[default]
     Draft,
     Ready,
     Queued,
@@ -31,24 +33,14 @@ pub enum TaskStatus {
     Archived,
 }
 
-impl Default for TaskStatus {
-    fn default() -> Self {
-        Self::Draft
-    }
-}
-
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum TaskProcessLogOperation {
+    #[default]
     Append,
     Replace,
     Clear,
-}
-
-impl Default for TaskProcessLogOperation {
-    fn default() -> Self {
-        Self::Append
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -115,17 +107,13 @@ fn task_mcp_builtin_kinds_default() -> Vec<String> {
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum TaskScheduleMode {
+    #[default]
     Manual,
     Once,
     Interval,
     ContactAsync,
-}
-
-impl Default for TaskScheduleMode {
-    fn default() -> Self {
-        Self::Manual
-    }
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

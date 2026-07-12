@@ -2,6 +2,6 @@
 # Required Notice: Copyright (c) 2025 AI Chat Team
 
 [toolchain]
-channel = "stable"
-components = ["cargo", "rustfmt", "clippy"]
-profile = "default"
+channel = "1.94.0"
+components = ["clippy", "rustfmt"]
+profile = "minimal"

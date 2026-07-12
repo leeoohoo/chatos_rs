@@ -125,7 +125,7 @@ pub fn sort_plugins_desc(items: &mut [MemorySkillPlugin]) {
 
 pub fn paginate_items<T>(items: Vec<T>, limit: i64, offset: i64) -> Vec<T> {
     let offset = offset.max(0) as usize;
-    let limit = limit.max(1).min(5000) as usize;
+    let limit = limit.clamp(1, 5000) as usize;
     items.into_iter().skip(offset).take(limit).collect()
 }
 

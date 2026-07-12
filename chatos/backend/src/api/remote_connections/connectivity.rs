@@ -24,7 +24,7 @@ use super::is_password_auth;
 use super::map_command_spawn_error;
 
 const REMOTE_SSH_STDOUT_LIMIT_BYTES: usize = 4 * 1024 * 1024;
-const REMOTE_SSH_STDERR_LIMIT_BYTES: usize = 1 * 1024 * 1024;
+const REMOTE_SSH_STDERR_LIMIT_BYTES: usize = 1024 * 1024;
 
 pub(super) struct ConnectedSshSession {
     pub(super) session: Session,

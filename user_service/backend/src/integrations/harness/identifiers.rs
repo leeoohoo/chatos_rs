@@ -103,8 +103,6 @@ fn sanitize_harness_identifier_part(value: &str, fallback: &str) -> String {
     for ch in value.trim().to_ascii_lowercase().chars() {
         let next = if ch.is_ascii_alphanumeric() || matches!(ch, '_' | '.') {
             ch
-        } else if ch == '-' || ch.is_whitespace() {
-            '-'
         } else {
             '-'
         };

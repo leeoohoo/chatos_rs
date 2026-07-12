@@ -83,10 +83,7 @@ pub(crate) fn should_parallelize_tool_batch(
         let Some(info) = tool_metadata.get(prefixed_name) else {
             return false;
         };
-        if !PARALLEL_SAFE_TOOLS
-            .iter()
-            .any(|name| *name == info.original_name.as_str())
-        {
+        if !PARALLEL_SAFE_TOOLS.contains(&info.original_name.as_str()) {
             return false;
         }
 
@@ -129,10 +126,7 @@ fn build_tool_access_profile(info: &ToolInfo, args: &Value) -> Option<ToolAccess
 }
 
 fn classify_tool_access_kind(tool_name: &str) -> ToolAccessKind {
-    if PARALLEL_PATH_WRITE_TOOLS
-        .iter()
-        .any(|name| *name == tool_name)
-    {
+    if PARALLEL_PATH_WRITE_TOOLS.contains(&tool_name) {
         ToolAccessKind::Write
     } else {
         ToolAccessKind::Read
@@ -179,10 +173,7 @@ fn resolve_tool_scope(info: &ToolInfo, args: &Value) -> Option<ToolScope> {
             "local",
         ),
         _ => {
-            if PARALLEL_PATH_READ_TOOLS
-                .iter()
-                .any(|name| *name == tool_name)
-            {
+            if PARALLEL_PATH_READ_TOOLS.contains(&tool_name) {
                 extract_scoped_path(
                     args,
                     &["path", "rel_path", "file_path", "target_path", "start_path"],

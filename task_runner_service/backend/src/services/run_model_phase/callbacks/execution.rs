@@ -253,7 +253,8 @@ impl RunService {
         let external_tool_names = executor
             .tool_metadata()
             .iter()
-            .filter_map(|(name, info)| is_user_configured_external_tool(info).then(|| name.clone()))
+            .filter(|&(_name, info)| is_user_configured_external_tool(info))
+            .map(|(name, _info)| name.clone())
             .collect::<Vec<_>>();
         let unavailable_tools = executor.unavailable_tools();
         let payload = json!({
@@ -301,7 +302,8 @@ fn append_external_mcp_runtime_notice(
     let external_tool_names = executor
         .tool_metadata()
         .iter()
-        .filter_map(|(name, info)| is_user_configured_external_tool(info).then(|| name.clone()))
+        .filter(|&(_name, info)| is_user_configured_external_tool(info))
+        .map(|(name, _info)| name.clone())
         .collect::<Vec<_>>();
     if !external_tool_names.is_empty() {
         return;

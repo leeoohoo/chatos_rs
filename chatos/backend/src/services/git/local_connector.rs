@@ -215,7 +215,7 @@ pub async fn compare(query: GitCompareQuery) -> Result<GitCompareResult, String>
 }
 
 pub async fn file_diff(query: GitDiffQuery) -> Result<GitFileDiff, String> {
-    let paths = validate_relative_paths(&[query.path.clone()])?;
+    let paths = validate_relative_paths(std::slice::from_ref(&query.path))?;
     let path = paths
         .first()
         .cloned()

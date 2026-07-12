@@ -229,9 +229,7 @@ async fn scan_project(
     let dirty_scope_kind = classify_dirty_path_scope(&normalized_root, dirty_paths.as_slice());
     let should_run_full_scan = {
         let mut state_guard = WATCHER_STATE.project_states.lock();
-        let state = state_guard
-            .entry(project.id.clone())
-            .or_insert_with(ProjectSnapshotState::default);
+        let state = state_guard.entry(project.id.clone()).or_default();
         if state.root_path != normalized_root {
             *state = ProjectSnapshotState {
                 root_path: normalized_root.clone(),
@@ -257,9 +255,7 @@ async fn scan_project_full(project: &Project, normalized_root: String) -> Result
     let snapshot = collect_workspace_snapshot(normalized_root.clone()).await?;
 
     let mut state_guard = WATCHER_STATE.project_states.lock();
-    let state = state_guard
-        .entry(project.id.clone())
-        .or_insert_with(ProjectSnapshotState::default);
+    let state = state_guard.entry(project.id.clone()).or_default();
     if state.root_path != normalized_root {
         *state = ProjectSnapshotState {
             root_path: normalized_root,
@@ -308,9 +304,7 @@ async fn scan_project_incremental(
     let snapshots = collect_dirty_scope_snapshots(normalized_root.clone(), dirty_paths).await?;
     let outcome = {
         let mut state_guard = WATCHER_STATE.project_states.lock();
-        let state = state_guard
-            .entry(project.id.clone())
-            .or_insert_with(ProjectSnapshotState::default);
+        let state = state_guard.entry(project.id.clone()).or_default();
         if state.root_path != normalized_root {
             *state = ProjectSnapshotState {
                 root_path: normalized_root.clone(),

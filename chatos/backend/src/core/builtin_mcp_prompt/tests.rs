@@ -89,7 +89,7 @@ fn includes_global_and_selected_sections_only() {
     )
     .expect("prompt");
 
-    assert!(prompt.contains("你是 Chatos 中一个“内置 MCP 优先”的助手。"));
+    assert!(prompt.contains("你是 Chat OS 中一个“内置 MCP 优先”的助手。"));
     assert!(prompt.contains("`task_manager_add_task`"));
     assert!(prompt.contains("`ask_user_prompt_choices`"));
     assert!(!prompt.contains("`code_maintainer_read_read_file`"));
@@ -206,7 +206,7 @@ fn english_prompt_uses_english_global_section() {
     .expect("prompt");
 
     assert!(
-        prompt.contains("You are a Chatos assistant that should prefer builtin MCP tools first.")
+        prompt.contains("You are a Chat OS assistant that should prefer builtin MCP tools first.")
     );
     assert!(prompt.contains("`task_manager_add_task`"));
 }

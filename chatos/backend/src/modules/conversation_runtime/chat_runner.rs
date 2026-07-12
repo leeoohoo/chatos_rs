@@ -238,7 +238,7 @@ pub async fn run_bootstrapped_chat(input: BootstrappedChatInput<'_>) {
             Err(runtime_error),
             true,
             || crate::utils::log_helpers::log_chat_cancelled(session_id),
-            |err| crate::utils::log_helpers::log_chat_error(err),
+            crate::utils::log_helpers::log_chat_error,
         )
         .await;
         return;
@@ -260,7 +260,7 @@ pub async fn run_bootstrapped_chat(input: BootstrappedChatInput<'_>) {
             Err(attachment_error),
             true,
             || crate::utils::log_helpers::log_chat_cancelled(session_id),
-            |err| crate::utils::log_helpers::log_chat_error(err),
+            crate::utils::log_helpers::log_chat_error,
         )
         .await;
         return;
@@ -353,7 +353,7 @@ pub async fn run_bootstrapped_chat(input: BootstrappedChatInput<'_>) {
         result,
         false,
         || crate::utils::log_helpers::log_chat_cancelled(session_id),
-        |err| crate::utils::log_helpers::log_chat_error(err),
+        crate::utils::log_helpers::log_chat_error,
     )
     .await;
 }

@@ -565,7 +565,7 @@ fn find_runtime(value: &str) -> Option<RuntimeSpec> {
     let value = value.trim();
     IMAGE_RUNTIMES
         .into_iter()
-        .find(|runtime| runtime.id == value || runtime.aliases.iter().any(|alias| *alias == value))
+        .find(|runtime| runtime.id == value || runtime.aliases.contains(&value))
 }
 
 fn find_runtime_version(runtime: RuntimeSpec, value: &str) -> Option<RuntimeVersionSpec> {

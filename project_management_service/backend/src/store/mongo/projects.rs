@@ -154,7 +154,7 @@ impl MongoStore {
             created_at: normalized_optional(input.created_at).unwrap_or_else(|| now.clone()),
             updated_at: normalized_optional(input.updated_at).unwrap_or_else(|| now.clone()),
             archived_at: if status == ProjectStatus::Archived {
-                normalized_optional(input.archived_at).or_else(|| Some(now))
+                normalized_optional(input.archived_at).or(Some(now))
             } else {
                 None
             },

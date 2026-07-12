@@ -37,7 +37,7 @@ pub async fn list_sources(
         .find(filter)
         .sort(doc! {"updated_at": -1, "created_at": -1})
         .skip(offset.max(0) as u64)
-        .limit(limit.max(1).min(10_000))
+        .limit(limit.clamp(1, 10_000))
         .await
         .map_err(|err| err.to_string())?;
 

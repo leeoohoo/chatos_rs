@@ -27,7 +27,7 @@ pub struct SystemContextRow {
 }
 
 impl SystemContextRow {
-    pub fn to_ctx(self) -> SystemContext {
+    pub fn into_ctx(self) -> SystemContext {
         SystemContext {
             id: self.id,
             name: self.name,

@@ -245,7 +245,7 @@ fn normalize_outcome_items(items: Vec<TaskOutcomeItem>) -> Vec<TaskOutcomeItem> 
             .importance
             .as_deref()
             .and_then(trimmed_non_empty)
-            .map(|value| normalize_importance(value));
+            .map(normalize_importance);
         let refs = normalize_string_list(item.refs);
         out.push(TaskOutcomeItem {
             kind: normalize_outcome_kind(kind.as_str()),

@@ -111,51 +111,6 @@ impl DatabaseFactory {
             }
         }
     }
-
-    #[cfg(test)]
-    pub async fn switch_database(
-        &self,
-        new_config: DatabaseConfig,
-    ) -> Result<Arc<Database>, String> {
-        let adapter = self.create_adapter(&new_config).await?;
-        let mut inner = self.inner.lock().await;
-        inner.adapter = Some(adapter.clone());
-        inner.config = Some(new_config);
-        Ok(adapter)
-    }
-
-    #[cfg(test)]
-    pub async fn switch_to_sqlite(&self, db_path: Option<String>) -> Result<Arc<Database>, String> {
-        let cfg = DatabaseConfig {
-            db_type: Some(DatabaseType::Sqlite),
-            sqlite: Some(super::types::SqliteConfig {
-                db_path,
-                ..super::types::SqliteConfig::default()
-            }),
-            ..DatabaseConfig::default()
-        };
-        self.switch_database(cfg).await
-    }
-
-    #[cfg(test)]
-    pub async fn switch_to_mongodb(
-        &self,
-        host: Option<String>,
-        port: Option<u16>,
-        database: Option<String>,
-    ) -> Result<Arc<Database>, String> {
-        let cfg = DatabaseConfig {
-            db_type: Some(DatabaseType::Mongodb),
-            mongodb: Some(super::types::MongoConfig {
-                host,
-                port,
-                database,
-                ..super::types::MongoConfig::default()
-            }),
-            ..DatabaseConfig::default()
-        };
-        self.switch_database(cfg).await
-    }
 }
 
 pub async fn init_global() -> Result<Arc<Database>, String> {

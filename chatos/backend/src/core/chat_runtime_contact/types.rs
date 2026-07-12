@@ -71,6 +71,10 @@ pub enum ContactSkillPromptMode {
         force_skill_first: bool,
     },
     #[cfg(test)]
+    #[allow(
+        dead_code,
+        reason = "kept for full selected-skill prompt regression fixtures"
+    )]
     SelectedFull {
         skills: Vec<ContactSelectedSkillPrompt>,
         plugins: Vec<ContactSelectedPluginPrompt>,

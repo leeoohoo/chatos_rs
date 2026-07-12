@@ -40,11 +40,14 @@ mod tests {
     use axum::http::StatusCode;
     use axum::Json;
     use serde_json::Value;
+    #[cfg(unix)]
     use std::fs;
+    #[cfg(unix)]
     use std::path::PathBuf;
 
     use super::super::contracts::FsDeleteRequest;
 
+    #[cfg(unix)]
     fn make_temp_dir(name: &str) -> PathBuf {
         let root = std::env::current_dir().expect("current dir").join(format!(
             "{}_{}",

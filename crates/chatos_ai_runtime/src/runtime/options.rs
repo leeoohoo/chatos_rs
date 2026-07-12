@@ -160,6 +160,12 @@ impl IterativeContextRefresh {
     }
 }
 
+impl Default for MemoryContextOverflowRecovery {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl MemoryContextOverflowRecovery {
     pub fn new() -> Self {
         Self {

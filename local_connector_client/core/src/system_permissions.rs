@@ -60,10 +60,10 @@ pub(crate) async fn open_system_permission_settings(permission_id: &str) -> Resu
     let target = settings_target_for_permission(permission_id)
         .ok_or_else(|| anyhow!("system settings are not available for {permission_id}"))?;
     match target.kind {
-        SettingsTargetKind::MacosUri | SettingsTargetKind::LinuxUri => {
+        SettingsTargetKind::Macos | SettingsTargetKind::Linux => {
             open_uri(target.opener, target.value).await?;
         }
-        SettingsTargetKind::WindowsUri => {
+        SettingsTargetKind::Windows => {
             open_windows_uri(target.value).await?;
         }
     }
@@ -228,9 +228,9 @@ struct SettingsTarget {
 
 #[derive(Debug, Clone, Copy)]
 enum SettingsTargetKind {
-    MacosUri,
-    WindowsUri,
-    LinuxUri,
+    Macos,
+    Windows,
+    Linux,
 }
 
 fn settings_target_for_permission(permission_id: &str) -> Option<SettingsTarget> {
@@ -245,19 +245,19 @@ fn settings_target_for_permission(permission_id: &str) -> Option<SettingsTarget>
 fn macos_settings_target(permission_id: &str) -> Option<SettingsTarget> {
     match permission_id {
         PERMISSION_WORKSPACE_FILES => Some(SettingsTarget {
-            kind: SettingsTargetKind::MacosUri,
+            kind: SettingsTargetKind::Macos,
             opener: "open",
             value: "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles",
             label: "macOS 隐私与安全性 · 完全磁盘访问权限",
         }),
         PERMISSION_TERMINAL_EXECUTION => Some(SettingsTarget {
-            kind: SettingsTargetKind::MacosUri,
+            kind: SettingsTargetKind::Macos,
             opener: "open",
             value: "x-apple.systempreferences:com.apple.preference.security?Privacy_DeveloperTools",
             label: "macOS 隐私与安全性 · 开发者工具",
         }),
         PERMISSION_BROWSER_AUTOMATION => Some(SettingsTarget {
-            kind: SettingsTargetKind::MacosUri,
+            kind: SettingsTargetKind::Macos,
             opener: "open",
             value: "x-apple.systempreferences:com.apple.preference.security?Privacy_Automation",
             label: "macOS 隐私与安全性 · 自动化",
@@ -269,13 +269,13 @@ fn macos_settings_target(permission_id: &str) -> Option<SettingsTarget> {
 fn windows_settings_target(permission_id: &str) -> Option<SettingsTarget> {
     match permission_id {
         PERMISSION_WORKSPACE_FILES => Some(SettingsTarget {
-            kind: SettingsTargetKind::WindowsUri,
+            kind: SettingsTargetKind::Windows,
             opener: "cmd",
             value: "windowsdefender:",
             label: "Windows 安全中心",
         }),
         PERMISSION_TERMINAL_EXECUTION => Some(SettingsTarget {
-            kind: SettingsTargetKind::WindowsUri,
+            kind: SettingsTargetKind::Windows,
             opener: "cmd",
             value: "ms-settings:developers",
             label: "Windows 设置 · 开发者选项",
@@ -287,7 +287,7 @@ fn windows_settings_target(permission_id: &str) -> Option<SettingsTarget> {
 fn linux_settings_target(permission_id: &str) -> Option<SettingsTarget> {
     match permission_id {
         PERMISSION_WORKSPACE_FILES => Some(SettingsTarget {
-            kind: SettingsTargetKind::LinuxUri,
+            kind: SettingsTargetKind::Linux,
             opener: "xdg-open",
             value: "file:///",
             label: "系统文件权限",

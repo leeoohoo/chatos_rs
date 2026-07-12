@@ -46,8 +46,9 @@ const SECTION_ORDER: &[&str] = &[
     SECTION_CONDITIONAL_CONTACT_MEMORY_READERS,
 ];
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum BuiltinMcpPromptLocale {
+    #[default]
     ZhCn,
     EnUs,
 }
@@ -69,12 +70,6 @@ impl BuiltinMcpPromptLocale {
 
     pub fn is_english(self) -> bool {
         matches!(self, Self::EnUs)
-    }
-}
-
-impl Default for BuiltinMcpPromptLocale {
-    fn default() -> Self {
-        Self::ZhCn
     }
 }
 

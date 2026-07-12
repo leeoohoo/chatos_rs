@@ -37,7 +37,7 @@ pub(crate) async fn handle_mcp_request(
                 headers: BTreeMap::new(),
                 body: json!({ "error": err.to_string() }),
             }
-            .to_value();
+            .into_value();
         }
     };
     RelayResponse {
@@ -47,7 +47,7 @@ pub(crate) async fn handle_mcp_request(
         headers: BTreeMap::new(),
         body,
     }
-    .to_value()
+    .into_value()
 }
 
 pub(crate) async fn handle_mcp_body(

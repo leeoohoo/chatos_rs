@@ -12,7 +12,9 @@ use crate::services::ask_user_prompt_manager::normalizer::{
 use crate::services::ask_user_prompt_manager::types::{
     AskUserPromptPayload, AskUserPromptRecord, AskUserPromptStatus, ASK_USER_PROMPT_NOT_FOUND_ERR,
 };
-use crate::services::realtime::{publish_ask_user_prompt_updated, resolve_conversation_scope};
+use crate::services::realtime::{
+    publish_ask_user_prompt_updated, resolve_conversation_scope, AskUserPromptRealtimePayload,
+};
 use crate::services::session_mirror::ensure_sqlite_session_present;
 
 use super::codec::{ask_user_prompt_record_from_doc, ask_user_prompt_record_to_doc};
@@ -314,31 +316,35 @@ async fn publish_ask_user_prompt_created(record: &AskUserPromptRecord) {
         });
     publish_ask_user_prompt_updated(
         user_id,
-        record.conversation_id.as_str(),
-        Some(record.conversation_turn_id.as_str()),
-        project_id,
-        record.id.as_str(),
-        "prompt_required",
-        Some(record.status.as_str()),
-        record.tool_call_id.as_deref(),
-        Some(record.kind.as_str()),
-        record
-            .prompt
-            .get("title")
-            .and_then(serde_json::Value::as_str),
-        record
-            .prompt
-            .get("message")
-            .and_then(serde_json::Value::as_str),
-        record
-            .prompt
-            .get("allow_cancel")
-            .and_then(serde_json::Value::as_bool),
-        record
-            .prompt
-            .get("timeout_ms")
-            .and_then(serde_json::Value::as_u64),
-        record.prompt.get("payload").cloned(),
+        AskUserPromptRealtimePayload {
+            conversation_id: record.conversation_id.clone(),
+            conversation_turn_id: Some(record.conversation_turn_id.clone()),
+            project_id: project_id.map(ToOwned::to_owned),
+            prompt_id: record.id.clone(),
+            action: "prompt_required".to_string(),
+            status: Some(record.status.as_str().to_string()),
+            tool_call_id: record.tool_call_id.clone(),
+            prompt_kind: Some(record.kind.clone()),
+            title: record
+                .prompt
+                .get("title")
+                .and_then(serde_json::Value::as_str)
+                .map(ToOwned::to_owned),
+            message: record
+                .prompt
+                .get("message")
+                .and_then(serde_json::Value::as_str)
+                .map(ToOwned::to_owned),
+            allow_cancel: record
+                .prompt
+                .get("allow_cancel")
+                .and_then(serde_json::Value::as_bool),
+            timeout_ms: record
+                .prompt
+                .get("timeout_ms")
+                .and_then(serde_json::Value::as_u64),
+            payload: record.prompt.get("payload").cloned(),
+        },
     );
 }
 
@@ -361,18 +367,20 @@ async fn publish_ask_user_prompt_resolved(record: &AskUserPromptRecord) {
         });
     publish_ask_user_prompt_updated(
         user_id,
-        record.conversation_id.as_str(),
-        Some(record.conversation_turn_id.as_str()),
-        project_id,
-        record.id.as_str(),
-        "prompt_resolved",
-        Some(record.status.as_str()),
-        record.tool_call_id.as_deref(),
-        Some(record.kind.as_str()),
-        None,
-        None,
-        None,
-        None,
-        None,
+        AskUserPromptRealtimePayload {
+            conversation_id: record.conversation_id.clone(),
+            conversation_turn_id: Some(record.conversation_turn_id.clone()),
+            project_id: project_id.map(ToOwned::to_owned),
+            prompt_id: record.id.clone(),
+            action: "prompt_resolved".to_string(),
+            status: Some(record.status.as_str().to_string()),
+            tool_call_id: record.tool_call_id.clone(),
+            prompt_kind: Some(record.kind.clone()),
+            title: None,
+            message: None,
+            allow_cancel: None,
+            timeout_ms: None,
+            payload: None,
+        },
     );
 }

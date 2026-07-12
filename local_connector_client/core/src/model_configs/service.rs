@@ -476,7 +476,7 @@ pub(crate) async fn handle_model_runtime_request(value: Value, state: &LocalStat
             body: serde_json::to_value(runtime)
                 .unwrap_or_else(|err| json!({ "error": err.to_string() })),
         }
-        .to_value(),
+        .into_value(),
         Err(err) => RelayResponse {
             message_type: "model_runtime_response".to_string(),
             request_id: request.request_id,
@@ -484,7 +484,7 @@ pub(crate) async fn handle_model_runtime_request(value: Value, state: &LocalStat
             headers: BTreeMap::new(),
             body: json!({ "error": err.to_string() }),
         }
-        .to_value(),
+        .into_value(),
     }
 }
 

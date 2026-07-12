@@ -62,7 +62,7 @@ pub struct RemoteConnectionRow {
 }
 
 impl RemoteConnectionRow {
-    pub fn to_remote_connection(self) -> RemoteConnection {
+    pub fn into_remote_connection(self) -> RemoteConnection {
         RemoteConnection {
             id: self.id,
             name: self.name,
@@ -91,28 +91,51 @@ impl RemoteConnectionRow {
     }
 }
 
+pub(crate) struct NewRemoteConnection {
+    pub name: String,
+    pub host: String,
+    pub port: i64,
+    pub username: String,
+    pub auth_type: String,
+    pub password: Option<String>,
+    pub private_key_path: Option<String>,
+    pub certificate_path: Option<String>,
+    pub default_remote_path: Option<String>,
+    pub host_key_policy: String,
+    pub jump_enabled: bool,
+    pub jump_connection_id: Option<String>,
+    pub jump_host: Option<String>,
+    pub jump_port: Option<i64>,
+    pub jump_username: Option<String>,
+    pub jump_private_key_path: Option<String>,
+    pub jump_certificate_path: Option<String>,
+    pub jump_password: Option<String>,
+    pub user_id: Option<String>,
+}
+
 impl RemoteConnection {
-    pub fn new(
-        name: String,
-        host: String,
-        port: i64,
-        username: String,
-        auth_type: String,
-        password: Option<String>,
-        private_key_path: Option<String>,
-        certificate_path: Option<String>,
-        default_remote_path: Option<String>,
-        host_key_policy: String,
-        jump_enabled: bool,
-        jump_connection_id: Option<String>,
-        jump_host: Option<String>,
-        jump_port: Option<i64>,
-        jump_username: Option<String>,
-        jump_private_key_path: Option<String>,
-        jump_certificate_path: Option<String>,
-        jump_password: Option<String>,
-        user_id: Option<String>,
-    ) -> Self {
+    pub(crate) fn new(input: NewRemoteConnection) -> Self {
+        let NewRemoteConnection {
+            name,
+            host,
+            port,
+            username,
+            auth_type,
+            password,
+            private_key_path,
+            certificate_path,
+            default_remote_path,
+            host_key_policy,
+            jump_enabled,
+            jump_connection_id,
+            jump_host,
+            jump_port,
+            jump_username,
+            jump_private_key_path,
+            jump_certificate_path,
+            jump_password,
+            user_id,
+        } = input;
         let now = crate::core::time::now_rfc3339();
         Self {
             id: Uuid::new_v4().to_string(),

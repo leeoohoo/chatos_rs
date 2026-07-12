@@ -6,12 +6,14 @@ use crate::models::{TaskMcpConfig, TaskScheduleConfig};
 
 fn sample_task(enabled_builtin_kinds: Vec<&str>) -> TaskRecord {
     let now = now_rfc3339();
-    let mut mcp_config = TaskMcpConfig::default();
-    mcp_config.enabled = true;
-    mcp_config.enabled_builtin_kinds = enabled_builtin_kinds
-        .into_iter()
-        .map(ToOwned::to_owned)
-        .collect();
+    let mcp_config = TaskMcpConfig {
+        enabled: true,
+        enabled_builtin_kinds: enabled_builtin_kinds
+            .into_iter()
+            .map(ToOwned::to_owned)
+            .collect(),
+        ..TaskMcpConfig::default()
+    };
     TaskRecord {
         id: "task-1".to_string(),
         title: "task".to_string(),

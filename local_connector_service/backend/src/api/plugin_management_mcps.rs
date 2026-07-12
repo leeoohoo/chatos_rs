@@ -283,21 +283,18 @@ fn plugin_management_error(
     error: chatos_plugin_management_sdk::PluginManagementClientError,
 ) -> ApiError {
     match error {
-        chatos_plugin_management_sdk::PluginManagementClientError::Rejected { status, message }
-            if status == 400 =>
-        {
-            ApiError::bad_request(message)
-        }
-        chatos_plugin_management_sdk::PluginManagementClientError::Rejected { status, message }
-            if status == 403 =>
-        {
-            ApiError::forbidden(message)
-        }
-        chatos_plugin_management_sdk::PluginManagementClientError::Rejected { status, message }
-            if status == 404 =>
-        {
-            ApiError::not_found(message)
-        }
+        chatos_plugin_management_sdk::PluginManagementClientError::Rejected {
+            status: 400,
+            message,
+        } => ApiError::bad_request(message),
+        chatos_plugin_management_sdk::PluginManagementClientError::Rejected {
+            status: 403,
+            message,
+        } => ApiError::forbidden(message),
+        chatos_plugin_management_sdk::PluginManagementClientError::Rejected {
+            status: 404,
+            message,
+        } => ApiError::not_found(message),
         other => ApiError::service_unavailable(other.to_string()),
     }
 }

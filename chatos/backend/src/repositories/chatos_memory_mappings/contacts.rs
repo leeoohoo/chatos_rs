@@ -39,7 +39,7 @@ pub async fn list_contacts(
                 }
                 let options = FindOptions::builder()
                     .sort(doc! { "updated_at": -1, "created_at": -1 })
-                    .limit(Some(limit.max(1).min(500)))
+                    .limit(Some(limit.clamp(1, 500)))
                     .skip(Some(offset.max(0) as u64))
                     .build();
                 let cursor = db
@@ -67,9 +67,12 @@ pub async fn list_contacts(
                 if let Some(status) = status.as_deref() {
                     query = query.bind(status);
                 }
-                query = query.bind(limit.max(1).min(500)).bind(offset.max(0));
+                query = query.bind(limit.clamp(1, 500)).bind(offset.max(0));
                 let rows = query.fetch_all(pool).await.map_err(|e| e.to_string())?;
-                Ok(rows.into_iter().map(ChatosContactRow::to_contact).collect())
+                Ok(rows
+                    .into_iter()
+                    .map(ChatosContactRow::into_contact)
+                    .collect())
             })
         },
     )
@@ -97,7 +100,7 @@ pub async fn get_contact_by_id(contact_id: &str) -> Result<Option<ChatosContact>
                 .fetch_optional(pool)
                 .await
                 .map_err(|e| e.to_string())?;
-                Ok(row.map(ChatosContactRow::to_contact))
+                Ok(row.map(ChatosContactRow::into_contact))
             })
         },
     )
@@ -131,7 +134,7 @@ pub async fn get_contact_by_user_and_agent(
                 .fetch_optional(pool)
                 .await
                 .map_err(|e| e.to_string())?;
-                Ok(row.map(ChatosContactRow::to_contact))
+                Ok(row.map(ChatosContactRow::into_contact))
             })
         },
     )
@@ -204,7 +207,10 @@ pub async fn list_contacts_by_ids(
                     .fetch_all(pool)
                     .await
                     .map_err(|e| e.to_string())?;
-                Ok(rows.into_iter().map(ChatosContactRow::to_contact).collect())
+                Ok(rows
+                    .into_iter()
+                    .map(ChatosContactRow::into_contact)
+                    .collect())
             })
         },
     )
@@ -287,7 +293,7 @@ pub async fn create_contact_idempotent(
                             .await
                             .map_err(|e| e.to_string())?
                             {
-                                return Ok((existing.to_contact(), false));
+                                return Ok((existing.into_contact(), false));
                             }
                         }
                         Err(err.to_string())
@@ -385,7 +391,7 @@ pub async fn update_contact_task_runner_config(
                         .fetch_optional(pool)
                         .await
                         .map_err(|e| e.to_string())?;
-                Ok(row.map(ChatosContactRow::to_contact))
+                Ok(row.map(ChatosContactRow::into_contact))
             })
         },
     )

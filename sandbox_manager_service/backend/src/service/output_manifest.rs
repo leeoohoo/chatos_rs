@@ -355,7 +355,7 @@ fn read_text_file_for_diff(file: &FileSnapshot) -> Result<Option<String>, ApiErr
     let bytes = std::fs::read(file.absolute_path.as_path()).map_err(|err| {
         ApiError::internal(format!("read output file {} failed: {err}", file.path))
     })?;
-    if bytes.iter().any(|byte| *byte == 0) {
+    if bytes.contains(&0) {
         return Ok(None);
     }
     match String::from_utf8(bytes) {

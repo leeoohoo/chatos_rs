@@ -327,16 +327,14 @@ public class KafkaConfig {
             extract_method_signature(
                 "@Bean(\"kafkaProducerFactory\") public ProducerFactory<Object, Object> kafkaProducerFactory() {",
                 "KafkaConfig"
-            )
-            .map(|(name, kind)| (name, kind)),
+            ),
             Some((String::from("kafkaProducerFactory"), String::from("method")))
         );
         assert_eq!(
             extract_method_signature(
                 "public void configured(@Qualifier(\"main\") String name,",
                 "KafkaConfig"
-            )
-            .map(|(name, kind)| (name, kind)),
+            ),
             Some((String::from("configured"), String::from("method")))
         );
 

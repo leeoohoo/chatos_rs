@@ -47,7 +47,7 @@ pub struct AiModelConfigRow {
 }
 
 impl AiModelConfigRow {
-    pub fn to_model(self) -> AiModelConfig {
+    pub fn into_model(self) -> AiModelConfig {
         let provider = if self.provider.trim().eq_ignore_ascii_case("openai") {
             "gpt".to_string()
         } else {

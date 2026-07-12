@@ -4,7 +4,7 @@
 use std::path::Path as FsPath;
 
 use crate::core::validation::normalize_non_empty;
-use crate::models::remote_connection::RemoteConnection;
+use crate::models::remote_connection::{NewRemoteConnection, RemoteConnection};
 
 use super::{CreateRemoteConnectionRequest, UpdateRemoteConnectionRequest};
 
@@ -61,7 +61,7 @@ pub(super) fn normalize_create_request(
 
     let name = normalize_non_empty(req.name).unwrap_or_else(|| format!("{username}@{host}"));
 
-    Ok(RemoteConnection::new(
+    Ok(RemoteConnection::new(NewRemoteConnection {
         name,
         host,
         port,
@@ -70,30 +70,30 @@ pub(super) fn normalize_create_request(
         password,
         private_key_path,
         certificate_path,
-        normalize_non_empty(req.default_remote_path),
+        default_remote_path: normalize_non_empty(req.default_remote_path),
         host_key_policy,
         jump_enabled,
-        if jump_enabled {
+        jump_connection_id: if jump_enabled {
             jump_connection_id
         } else {
             None
         },
-        if jump_enabled { jump_host } else { None },
-        if jump_enabled { jump_port } else { None },
-        if jump_enabled { jump_username } else { None },
-        if jump_enabled {
+        jump_host: if jump_enabled { jump_host } else { None },
+        jump_port: if jump_enabled { jump_port } else { None },
+        jump_username: if jump_enabled { jump_username } else { None },
+        jump_private_key_path: if jump_enabled {
             jump_private_key_path
         } else {
             None
         },
-        if jump_enabled {
+        jump_certificate_path: if jump_enabled {
             jump_certificate_path
         } else {
             None
         },
-        if jump_enabled { jump_password } else { None },
+        jump_password: if jump_enabled { jump_password } else { None },
         user_id,
-    ))
+    }))
 }
 
 pub(super) fn normalize_update_request(

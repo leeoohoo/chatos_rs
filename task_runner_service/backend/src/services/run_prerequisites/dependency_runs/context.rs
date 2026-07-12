@@ -64,7 +64,7 @@ impl RunService {
             return Err(format!("前置任务已归档，不能执行: {}", task.id));
         }
         if matches!(task.status, TaskStatus::Succeeded) {
-            return Ok(self.latest_successful_run(task.id.as_str()).await?);
+            return self.latest_successful_run(task.id.as_str()).await;
         }
 
         let active_run = self.active_run_for_task(task.id.as_str()).await?;

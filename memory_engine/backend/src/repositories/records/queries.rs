@@ -46,7 +46,7 @@ pub async fn list_records_page(
     asc: bool,
 ) -> Result<ThreadRecordsPageResponse, String> {
     let sort_order = if asc { 1 } else { -1 };
-    let safe_limit = limit.max(1).min(2000);
+    let safe_limit = limit.clamp(1, 2000);
     let safe_offset = offset.max(0);
     let filter = build_record_filter(
         thread_id,
@@ -330,6 +330,60 @@ fn select_turn_process_records(
     items
 }
 
+pub async fn list_compact_turn_slices(
+    db: &Db,
+    thread_id: &str,
+    tenant_id: Option<&str>,
+    source_id: Option<&str>,
+    record_type: Option<&str>,
+    limit: i64,
+    before_turn_id: Option<&str>,
+) -> Result<(Vec<TurnRecordSlice>, bool, Option<String>), String> {
+    compact_turns::list_compact_turn_slices(
+        db,
+        thread_id,
+        tenant_id,
+        source_id,
+        record_type,
+        limit,
+        before_turn_id,
+    )
+    .await
+}
+
+pub async fn list_turn_process_records(
+    db: &Db,
+    thread_id: &str,
+    tenant_id: Option<&str>,
+    source_id: Option<&str>,
+    record_type: Option<&str>,
+    turn_id: &str,
+) -> Result<Vec<EngineRecord>, String> {
+    let normalized_turn_id = turn_id.trim();
+    if normalized_turn_id.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let records = list_records_for_turn(
+        db,
+        thread_id,
+        tenant_id,
+        source_id,
+        record_type,
+        normalized_turn_id,
+    )
+    .await?;
+    let final_assistant_id = select_final_assistant_record(&records)
+        .as_ref()
+        .map(|record| record.id.as_str())
+        .map(ToOwned::to_owned);
+
+    Ok(select_turn_process_records(
+        &records,
+        final_assistant_id.as_deref(),
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use mongodb::bson::{doc, Bson, Document};
@@ -397,58 +451,4 @@ mod tests {
         })
         .unwrap()
     }
-}
-
-pub async fn list_compact_turn_slices(
-    db: &Db,
-    thread_id: &str,
-    tenant_id: Option<&str>,
-    source_id: Option<&str>,
-    record_type: Option<&str>,
-    limit: i64,
-    before_turn_id: Option<&str>,
-) -> Result<(Vec<TurnRecordSlice>, bool, Option<String>), String> {
-    compact_turns::list_compact_turn_slices(
-        db,
-        thread_id,
-        tenant_id,
-        source_id,
-        record_type,
-        limit,
-        before_turn_id,
-    )
-    .await
-}
-
-pub async fn list_turn_process_records(
-    db: &Db,
-    thread_id: &str,
-    tenant_id: Option<&str>,
-    source_id: Option<&str>,
-    record_type: Option<&str>,
-    turn_id: &str,
-) -> Result<Vec<EngineRecord>, String> {
-    let normalized_turn_id = turn_id.trim();
-    if normalized_turn_id.is_empty() {
-        return Ok(Vec::new());
-    }
-
-    let records = list_records_for_turn(
-        db,
-        thread_id,
-        tenant_id,
-        source_id,
-        record_type,
-        normalized_turn_id,
-    )
-    .await?;
-    let final_assistant_id = select_final_assistant_record(&records)
-        .as_ref()
-        .map(|record| record.id.as_str())
-        .map(ToOwned::to_owned);
-
-    Ok(select_turn_process_records(
-        &records,
-        final_assistant_id.as_deref(),
-    ))
 }

@@ -151,7 +151,7 @@ pub(crate) fn guess_title_from_url(url: &str) -> String {
     if let Ok(parsed) = Url::parse(url) {
         if let Some(segment) = parsed
             .path_segments()
-            .and_then(|segments| segments.filter(|item| !item.is_empty()).last())
+            .and_then(|mut segments| segments.rfind(|item| !item.is_empty()))
         {
             let decoded = urlencoding::decode(segment)
                 .map(|value| value.into_owned())
@@ -278,34 +278,6 @@ pub(crate) fn js_string_array(values: &[&str]) -> String {
     out
 }
 
-#[cfg(test)]
-mod tests {
-    use super::{
-        compile_regex, compile_selector, js_string_array, js_string_literal, replace_all_regex,
-    };
-
-    #[test]
-    fn compile_regex_returns_none_for_invalid_pattern() {
-        assert!(compile_regex("(", "broken regex").is_none());
-    }
-
-    #[test]
-    fn compile_selector_returns_none_for_invalid_selector() {
-        assert!(compile_selector("div[", "broken selector").is_none());
-    }
-
-    #[test]
-    fn replace_all_regex_keeps_input_when_pattern_missing() {
-        assert_eq!(replace_all_regex(None, "hello", "x"), "hello");
-    }
-
-    #[test]
-    fn js_string_helpers_emit_json_compatible_literals() {
-        assert_eq!(js_string_literal("a\"b"), "\"a\\\"b\"");
-        assert_eq!(js_string_array(&["a", "b"]), "[\"a\",\"b\"]");
-    }
-}
-
 pub(crate) fn build_extract_summary(
     content: &str,
     max_extract_chars: usize,
@@ -374,4 +346,32 @@ pub(crate) fn truncate_chars(text: &str, max_chars: usize) -> String {
         return text.to_string();
     }
     text.chars().take(max_chars).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        compile_regex, compile_selector, js_string_array, js_string_literal, replace_all_regex,
+    };
+
+    #[test]
+    fn compile_regex_returns_none_for_invalid_pattern() {
+        assert!(compile_regex("(", "broken regex").is_none());
+    }
+
+    #[test]
+    fn compile_selector_returns_none_for_invalid_selector() {
+        assert!(compile_selector("div[", "broken selector").is_none());
+    }
+
+    #[test]
+    fn replace_all_regex_keeps_input_when_pattern_missing() {
+        assert_eq!(replace_all_regex(None, "hello", "x"), "hello");
+    }
+
+    #[test]
+    fn js_string_helpers_emit_json_compatible_literals() {
+        assert_eq!(js_string_literal("a\"b"), "\"a\\\"b\"");
+        assert_eq!(js_string_array(&["a", "b"]), "[\"a\",\"b\"]");
+    }
 }

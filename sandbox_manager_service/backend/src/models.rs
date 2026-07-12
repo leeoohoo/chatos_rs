@@ -78,17 +78,9 @@ impl Default for ResourceLimits {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct NetworkPolicy {
     pub mode: String,
-}
-
-impl Default for NetworkPolicy {
-    fn default() -> Self {
-        Self {
-            mode: String::new(),
-        }
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

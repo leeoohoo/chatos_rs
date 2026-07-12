@@ -4,7 +4,7 @@
 mod client;
 mod models;
 
-pub use self::client::MemoryEngineClient;
+pub use self::client::{MemoryEngineClient, RunPendingRollupsOptions};
 pub use self::models::{
     BatchSyncRecordsResponse, CompactTurnsResponse, ComposeContextBlock, ComposeContextMeta,
     ComposeContextPolicy, ComposeContextRequest, ComposeContextResponse,

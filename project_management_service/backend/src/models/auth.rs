@@ -5,15 +5,11 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum UserRole {
     Admin,
+    #[default]
     Agent,
-}
-
-impl Default for UserRole {
-    fn default() -> Self {
-        Self::Agent
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

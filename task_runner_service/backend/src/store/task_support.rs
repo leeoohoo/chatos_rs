@@ -46,7 +46,7 @@ pub(super) fn task_due_for_scheduler(task: &TaskRecord, now: &DateTime<Utc>) -> 
     if matches!(task.schedule.mode, TaskScheduleMode::Manual) {
         return false;
     }
-    task_due_at(task).is_some_and(|value| value <= now.to_owned())
+    task_due_at(task).is_some_and(|value| value <= *now)
 }
 
 pub(super) fn task_due_at(task: &TaskRecord) -> Option<DateTime<Utc>> {

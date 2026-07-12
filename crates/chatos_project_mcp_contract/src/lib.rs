@@ -177,12 +177,33 @@ mod tests {
     }
 
     fn assert_schema_snapshot_hash(label: &str, definitions: Vec<Value>, expected: u64) {
+        let definitions = definitions
+            .into_iter()
+            .map(canonicalize_json)
+            .collect::<Vec<_>>();
         let snapshot = serde_json::to_string_pretty(&definitions).expect("serialize schema");
         let actual = fnv1a64(snapshot.as_bytes());
         assert_eq!(
             actual, expected,
             "{label} schema snapshot changed; new fnv1a64 hash is {actual:#018x}\n{snapshot}"
         );
+    }
+
+    fn canonicalize_json(value: Value) -> Value {
+        match value {
+            Value::Array(items) => Value::Array(items.into_iter().map(canonicalize_json).collect()),
+            Value::Object(map) => {
+                let mut entries = map.into_iter().collect::<Vec<_>>();
+                entries.sort_by(|left, right| left.0.cmp(&right.0));
+                Value::Object(
+                    entries
+                        .into_iter()
+                        .map(|(key, value)| (key, canonicalize_json(value)))
+                        .collect(),
+                )
+            }
+            scalar => scalar,
+        }
     }
 
     fn fnv1a64(bytes: &[u8]) -> u64 {

@@ -229,7 +229,7 @@ pub fn discover_skill_entries(plugin_root: &Path) -> Vec<String> {
         }
         if file_name.eq_ignore_ascii_case("SKILL.md") || file_name.eq_ignore_ascii_case("index.md")
         {
-            let parent = path.parent().unwrap_or_else(|| root.as_path());
+            let parent = path.parent().unwrap_or(root.as_path());
             if let Some(rel) = path_to_unix_relative(plugin_root, parent) {
                 if !rel.trim().is_empty() {
                     seen.insert(rel);

@@ -63,7 +63,7 @@ fn external_mcp_config_visible_to_user(
         .as_deref()
         .map(str::trim)
         .filter(|value| !value.is_empty())
-        .or_else(|| config.creator_user_id.as_deref());
+        .or(config.creator_user_id.as_deref());
     current_user.can_access_owned_resource(owner)
 }
 
@@ -201,7 +201,7 @@ pub(crate) fn ensure_task_owner(
         .as_deref()
         .map(str::trim)
         .filter(|value| !value.is_empty())
-        .or_else(|| task.creator_user_id.as_deref());
+        .or(task.creator_user_id.as_deref());
     if owner_user_id == Some(effective_owner_user_id(current_user)?) {
         return Ok(());
     }

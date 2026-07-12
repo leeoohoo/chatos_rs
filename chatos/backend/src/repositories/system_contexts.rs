@@ -49,7 +49,7 @@ pub async fn list_system_contexts(user_id: &str) -> Result<Vec<SystemContext>, S
                 .fetch_all(pool)
                 .await
                 .map_err(|e| e.to_string())?;
-                Ok(rows.into_iter().map(|r| r.to_ctx()).collect())
+                Ok(rows.into_iter().map(|r| r.into_ctx()).collect())
             })
         },
     )
@@ -80,7 +80,7 @@ pub async fn get_active_system_context(user_id: &str) -> Result<Option<SystemCon
                 .fetch_optional(pool)
                 .await
                 .map_err(|e| e.to_string())?;
-                Ok(row.map(|r| r.to_ctx()))
+                Ok(row.map(|r| r.into_ctx()))
             })
         },
     )
@@ -106,7 +106,7 @@ pub async fn get_system_context_by_id(id: &str) -> Result<Option<SystemContext>,
                 .fetch_optional(pool)
                 .await
                 .map_err(|e| e.to_string())?;
-                Ok(row.map(|r| r.to_ctx()))
+                Ok(row.map(|r| r.into_ctx()))
             })
         },
     )

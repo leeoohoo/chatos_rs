@@ -67,9 +67,7 @@ async fn agent_chat_send(
     auth: AuthUser,
     Json(mut req): Json<ChatStreamRequest>,
 ) -> Result<(StatusCode, Json<Value>), (StatusCode, Json<Value>)> {
-    if let Err(err) = ensure_and_set_user_id(&mut req.user_id, &auth) {
-        return Err(err);
-    }
+    ensure_and_set_user_id(&mut req.user_id, &auth)?;
     validate_chat_stream_request(&req, false).await?;
     let conversation_id = req.conversation_id.clone().unwrap_or_default();
     let accepted_turn_id = normalize_turn_id(req.turn_id.as_deref());

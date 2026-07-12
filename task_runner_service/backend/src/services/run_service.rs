@@ -4,6 +4,7 @@
 use super::*;
 
 impl RunService {
+    #[cfg(test)]
     pub(crate) fn new(
         config: AppConfig,
         store: AppStore,

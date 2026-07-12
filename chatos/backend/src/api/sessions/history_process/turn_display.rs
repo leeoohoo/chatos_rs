@@ -45,12 +45,16 @@ fn build_turn_process_messages(messages: &[Message], user_index: usize) -> Vec<M
         select_final_assistant_index(messages, user_index + 1, next_user_index);
 
     let mut process_messages: Vec<Message> = Vec::new();
-    for index in (user_index + 1)..next_user_index {
+    for (index, source) in messages
+        .iter()
+        .enumerate()
+        .take(next_user_index)
+        .skip(user_index + 1)
+    {
         if Some(index) == final_assistant_index {
             continue;
         }
 
-        let source = &messages[index];
         if is_task_runner_callback_message(source) {
             continue;
         }
@@ -99,8 +103,12 @@ pub(super) fn build_turn_display_messages(messages: &[Message], user_index: usiz
     let mut process_message_count = 0usize;
     let mut callback_updates = Vec::new();
 
-    for index in (user_index + 1)..next_user_index {
-        let message = &messages[index];
+    for (index, message) in messages
+        .iter()
+        .enumerate()
+        .take(next_user_index)
+        .skip(user_index + 1)
+    {
         if is_task_runner_callback_message(message) {
             callback_updates.push(index);
             continue;

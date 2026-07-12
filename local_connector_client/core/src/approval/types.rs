@@ -32,18 +32,13 @@ impl Default for ApprovalState {
     }
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum ApprovalMode {
     RequestApproval,
     AutoApproval,
+    #[default]
     FullControl,
-}
-
-impl Default for ApprovalMode {
-    fn default() -> Self {
-        Self::FullControl
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -489,55 +489,6 @@ pub(crate) fn generate_invite_code() -> String {
     format!("CHATOS-{}-{}-{}", &raw[0..4], &raw[4..8], &raw[8..12])
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn registration_code_record(
-        window_start_unix: i64,
-        send_count: i64,
-    ) -> RegistrationEmailCodeRecord {
-        RegistrationEmailCodeRecord {
-            email: "user@example.com".to_string(),
-            code_hash: "hash".to_string(),
-            invite_code_hash: "invite".to_string(),
-            expires_at_unix: window_start_unix + 600,
-            resend_after_unix: window_start_unix + 60,
-            attempts: 0,
-            send_count,
-            window_start_unix,
-            consumed_at: None,
-            created_at: now_rfc3339(),
-            updated_at: now_rfc3339(),
-        }
-    }
-
-    #[test]
-    fn invite_code_normalization_trims_and_uppercases() {
-        let normalized = normalize_invite_code("  chatos-abcd-ef12  ").unwrap();
-        assert_eq!(normalized, "CHATOS-ABCD-EF12");
-    }
-
-    #[test]
-    fn invite_code_normalization_rejects_whitespace_inside_code() {
-        assert!(normalize_invite_code("CHATOS ABCD EF12").is_err());
-    }
-
-    #[test]
-    fn next_send_window_enforces_hourly_limit() {
-        let record = registration_code_record(1_000, 5);
-        let err = next_send_window(Some(&record), 1_100, 5).unwrap_err();
-        assert_eq!(err, "too many verification emails; retry later");
-    }
-
-    #[test]
-    fn next_send_window_resets_after_hour_window() {
-        let record = registration_code_record(1_000, 5);
-        let next = next_send_window(Some(&record), 4_700, 5).unwrap();
-        assert_eq!(next, (4_700, 1));
-    }
-}
-
 pub async fn me(
     State(state): State<AppState>,
     Extension(principal): Extension<CurrentPrincipal>,
@@ -634,4 +585,53 @@ fn current_auth_user(
         scopes: vec!["user_service".to_string()],
     }
     .auth_user()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn registration_code_record(
+        window_start_unix: i64,
+        send_count: i64,
+    ) -> RegistrationEmailCodeRecord {
+        RegistrationEmailCodeRecord {
+            email: "user@example.com".to_string(),
+            code_hash: "hash".to_string(),
+            invite_code_hash: "invite".to_string(),
+            expires_at_unix: window_start_unix + 600,
+            resend_after_unix: window_start_unix + 60,
+            attempts: 0,
+            send_count,
+            window_start_unix,
+            consumed_at: None,
+            created_at: now_rfc3339(),
+            updated_at: now_rfc3339(),
+        }
+    }
+
+    #[test]
+    fn invite_code_normalization_trims_and_uppercases() {
+        let normalized = normalize_invite_code("  chatos-abcd-ef12  ").unwrap();
+        assert_eq!(normalized, "CHATOS-ABCD-EF12");
+    }
+
+    #[test]
+    fn invite_code_normalization_rejects_whitespace_inside_code() {
+        assert!(normalize_invite_code("CHATOS ABCD EF12").is_err());
+    }
+
+    #[test]
+    fn next_send_window_enforces_hourly_limit() {
+        let record = registration_code_record(1_000, 5);
+        let err = next_send_window(Some(&record), 1_100, 5).unwrap_err();
+        assert_eq!(err, "too many verification emails; retry later");
+    }
+
+    #[test]
+    fn next_send_window_resets_after_hour_window() {
+        let record = registration_code_record(1_000, 5);
+        let next = next_send_window(Some(&record), 4_700, 5).unwrap();
+        assert_eq!(next, (4_700, 1));
+    }
 }

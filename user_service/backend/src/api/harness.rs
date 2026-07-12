@@ -12,10 +12,10 @@ use crate::integrations::{
 };
 use crate::state::AppState;
 
-use super::{bad_request, forbidden, internal_error, ApiResult};
 use super::internal_auth::{
     require_project_service_internal_request, HARNESS_ACCESS_READ_SCOPE, HARNESS_REPO_WRITE_SCOPE,
 };
+use super::{bad_request, forbidden, internal_error, ApiResult};
 
 pub async fn create_project_repo(
     State(state): State<AppState>,
@@ -23,11 +23,7 @@ pub async fn create_project_repo(
     headers: HeaderMap,
     Json(input): Json<HarnessProjectRepoCreateRequest>,
 ) -> ApiResult<HarnessProjectRepoResponse> {
-    require_project_service_internal_request(
-        &state.config,
-        &headers,
-        HARNESS_REPO_WRITE_SCOPE,
-    )?;
+    require_project_service_internal_request(&state.config, &headers, HARNESS_REPO_WRITE_SCOPE)?;
     let owner_user_id = principal
         .user_id
         .as_deref()
@@ -52,11 +48,7 @@ pub async fn get_user_harness_access(
     headers: HeaderMap,
     Path(user_id): Path<String>,
 ) -> ApiResult<HarnessApiAccessResponse> {
-    require_project_service_internal_request(
-        &state.config,
-        &headers,
-        HARNESS_ACCESS_READ_SCOPE,
-    )?;
+    require_project_service_internal_request(&state.config, &headers, HARNESS_ACCESS_READ_SCOPE)?;
     get_harness_api_access_for_user(&state, user_id.as_str())
         .await
         .map(Json)

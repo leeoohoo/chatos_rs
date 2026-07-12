@@ -532,43 +532,16 @@ pub fn publish_task_board_updated(
     });
 }
 
-pub fn publish_ask_user_prompt_updated(
-    user_id: &str,
-    conversation_id: &str,
-    conversation_turn_id: Option<&str>,
-    project_id: Option<&str>,
-    prompt_id: &str,
-    action: &str,
-    status: Option<&str>,
-    tool_call_id: Option<&str>,
-    prompt_kind: Option<&str>,
-    title: Option<&str>,
-    message: Option<&str>,
-    allow_cancel: Option<bool>,
-    timeout_ms: Option<u64>,
-    payload: Option<serde_json::Value>,
-) {
+pub fn publish_ask_user_prompt_updated(user_id: &str, update: AskUserPromptRealtimePayload) {
+    let conversation_id = update.conversation_id.clone();
+    let project_id = update.project_id.clone();
     REALTIME_HUB.send(RealtimeEventEnvelope {
         message_type: "event",
         event: "conversation.ask_user_prompt.updated",
         user_id: user_id.to_string(),
-        conversation_id: Some(conversation_id.to_string()),
-        project_id: project_id.map(|value| value.to_string()),
-        payload: RealtimeEventPayload::AskUserPrompt(AskUserPromptRealtimePayload {
-            conversation_id: conversation_id.to_string(),
-            conversation_turn_id: conversation_turn_id.map(|value| value.to_string()),
-            project_id: project_id.map(|value| value.to_string()),
-            prompt_id: prompt_id.to_string(),
-            action: action.to_string(),
-            status: status.map(|value| value.to_string()),
-            tool_call_id: tool_call_id.map(|value| value.to_string()),
-            prompt_kind: prompt_kind.map(|value| value.to_string()),
-            title: title.map(|value| value.to_string()),
-            message: message.map(|value| value.to_string()),
-            allow_cancel,
-            timeout_ms,
-            payload,
-        }),
+        conversation_id: Some(conversation_id),
+        project_id,
+        payload: RealtimeEventPayload::AskUserPrompt(update),
         ts: now_rfc3339(),
     });
 }

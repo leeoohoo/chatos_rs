@@ -361,9 +361,10 @@ mod tests {
         let payload =
             build_project_run_input("/tmp/demo", "/tmp/demo", "/usr/local/bin/npm run dev", &env)
                 .expect("payload");
+        let normalized_payload = payload.replace('\\', "/");
 
         assert!(payload.contains("cd '/tmp/demo'"));
-        assert!(payload.contains(".chatos/project-run/run-"));
+        assert!(normalized_payload.contains(".chatos/project-run/run-"));
         assert!(!payload.contains("/usr/local/bin/npm run dev\n"));
     }
 }

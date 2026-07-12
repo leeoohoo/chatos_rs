@@ -68,7 +68,7 @@ pub async fn list_summaries_by_thread_label(
         .find(filter)
         .sort(doc! {"created_at": 1, "level": -1})
         .skip(offset.max(0) as u64)
-        .limit(limit.max(1).min(5_000))
+        .limit(limit.clamp(1, 5_000))
         .await
         .map_err(|err| err.to_string())?;
 

@@ -246,7 +246,13 @@ mod tests {
 
     #[test]
     fn normalize_path_entries_deduplicates_preserving_order() {
-        let entries = normalize_path_entries("/usr/local/bin:/usr/bin:/usr/local/bin:/bin");
+        let raw = join_path_entries(&[
+            "/usr/local/bin".to_string(),
+            "/usr/bin".to_string(),
+            "/usr/local/bin".to_string(),
+            "/bin".to_string(),
+        ]);
+        let entries = normalize_path_entries(raw.as_str());
         assert_eq!(
             entries,
             vec![
@@ -260,7 +266,10 @@ mod tests {
     #[test]
     fn prepend_path_entry_adds_once() {
         let mut env = HashMap::new();
-        env.insert("PATH".to_string(), "/usr/local/bin:/usr/bin".to_string());
+        env.insert(
+            "PATH".to_string(),
+            join_path_entries(&["/usr/local/bin".to_string(), "/usr/bin".to_string()]),
+        );
 
         prepend_path_entry(&mut env, "/opt/homebrew/bin");
         prepend_path_entry(&mut env, "/usr/local/bin");

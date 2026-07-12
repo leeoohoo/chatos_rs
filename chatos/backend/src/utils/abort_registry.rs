@@ -87,11 +87,6 @@ pub fn is_aborted(session_id: &str) -> bool {
     map.get(session_id).map(|e| e.aborted).unwrap_or(false)
 }
 
-#[cfg(test)]
-pub fn reset(session_id: &str) {
-    reset_turn(session_id, None);
-}
-
 pub fn reset_turn(session_id: &str, turn_id: Option<&str>) {
     if session_id.is_empty() {
         return;

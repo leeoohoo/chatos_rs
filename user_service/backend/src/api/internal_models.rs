@@ -9,10 +9,10 @@ use serde::Serialize;
 use crate::state::AppState;
 use crate::store::now_rfc3339;
 
-use super::{bad_request, forbidden, internal_error, not_found, ApiResult};
 use super::internal_auth::{
     require_project_service_internal_request, MODEL_RUNTIME_READ_SCOPE, MODEL_SETTINGS_READ_SCOPE,
 };
+use super::{bad_request, forbidden, internal_error, not_found, ApiResult};
 
 #[derive(Debug, Serialize)]
 pub struct InternalModelRuntimeConfigResponse {
@@ -44,11 +44,7 @@ pub async fn get_user_model_settings(
     headers: HeaderMap,
     Path(user_id): Path<String>,
 ) -> ApiResult<InternalUserModelSettingsResponse> {
-    require_project_service_internal_request(
-        &state.config,
-        &headers,
-        MODEL_SETTINGS_READ_SCOPE,
-    )?;
+    require_project_service_internal_request(&state.config, &headers, MODEL_SETTINGS_READ_SCOPE)?;
     let user_id = user_id.trim();
     if user_id.is_empty() {
         return Err(bad_request("user_id is required"));
@@ -95,11 +91,7 @@ pub async fn get_user_model_runtime_config(
     headers: HeaderMap,
     Path((user_id, model_config_id)): Path<(String, String)>,
 ) -> ApiResult<InternalModelRuntimeConfigResponse> {
-    require_project_service_internal_request(
-        &state.config,
-        &headers,
-        MODEL_RUNTIME_READ_SCOPE,
-    )?;
+    require_project_service_internal_request(&state.config, &headers, MODEL_RUNTIME_READ_SCOPE)?;
     let user_id = user_id.trim();
     let model_config_id = model_config_id.trim();
     if user_id.is_empty() {

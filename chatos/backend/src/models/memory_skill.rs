@@ -61,7 +61,7 @@ pub struct MemorySkillRow {
 }
 
 impl MemorySkillRow {
-    pub fn to_model(self) -> MemorySkill {
+    pub fn into_model(self) -> MemorySkill {
         MemorySkill {
             id: self.id,
             user_id: self.user_id,
@@ -98,7 +98,7 @@ pub struct MemorySkillPluginRow {
 }
 
 impl MemorySkillPluginRow {
-    pub fn to_model(self) -> MemorySkillPlugin {
+    pub fn into_model(self) -> MemorySkillPlugin {
         MemorySkillPlugin {
             id: self.id,
             user_id: self.user_id,

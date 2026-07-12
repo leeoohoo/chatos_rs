@@ -394,7 +394,8 @@ where
     TBody: Serialize + ?Sized,
 {
     let client = build_client(state)?;
-    let mut request = signed_memory_engine_request(client.request(method, endpoint), operator_token)?;
+    let mut request =
+        signed_memory_engine_request(client.request(method, endpoint), operator_token)?;
     if let Some(body) = body {
         request = request.json(body);
     }

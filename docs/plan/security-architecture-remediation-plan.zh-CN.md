@@ -175,6 +175,7 @@
 - 2026-07-12：完成 Sandbox Manager 服务凭据迁移。Task Runner 与 Project Service 使用独立 Secret，每次直接请求签发 audience 为 `sandbox-manager`、scope 为 `sandbox.service` 的 60 秒令牌；MCP 长任务在实际 HTTP/Codex Gateway 请求前动态刷新令牌，长期 client key 不出网。服务端根据真实 caller 构造不同系统客户端权限：Task Runner 仅获得租约、MCP、Pool 读取和镜像读取能力，Project Service 仅获得镜像读取与初始化能力；生产环境拒绝旧静态 bootstrap system key 回退，但数据库中显式创建和轮换的 Access Client 保持可用。Sandbox Manager 前端代理不再自动注入 operator token 或系统 client key，管理操作改为使用真实登录用户 Bearer token；agent token 签名协议保持不变。
 - 2026-07-12：完成新增鉴权代码的热点文件回收。`chatos_mcp_runtime/src/rpc.rs` 中 Project Service、Local Connector、Sandbox Manager 的请求签名与动态刷新逻辑抽到 `rpc/internal_headers.rs`；Chatos Project Management API Client 的内部签名和限流 HTTP transport 拆为独立模块；Local Connector 的 Memory Engine proxy、路径白名单及用户 tenant/source 约束拆到 `api/memory_engine_proxy.rs`。代码体积报告已无超过 700 行或 40 KB 阈值的源文件。
 - 2026-07-12：重新执行九个前端的生产依赖审计，全部报告 0 个漏洞。尝试在本机安装 `cargo-audit` 时 crates.io 索引下载长时间无进展，已终止安装以避免阻塞；RustSec 审计仍由 CI 对根目录、Memory Engine、User Service 三份 lockfile 阻断执行。
+- 2026-07-12：完成 Rust 警告清理。根 workspace 原有 264 条去重 Clippy 警告、Memory Engine 41 条、User Service 2 条均已清零；三个 workspace 现在全部通过 `cargo clippy --all-targets -- -D warnings`。同时将 Memory Engine 工具链统一为 Rust 1.94.0，并在 GitHub Actions 与 Drone 中加入零警告阻断门禁。清理过程中将高参数构造和实时事件接口改为参数对象、统一消费型转换方法命名、移除无调用内部代码，并修复跨平台路径测试及 MCP schema 快照受 `serde_json/preserve_order` 特性合并影响的问题。
 
 ## 6. 后续维护与验证
 

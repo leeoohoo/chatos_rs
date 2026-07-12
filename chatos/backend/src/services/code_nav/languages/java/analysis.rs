@@ -268,7 +268,7 @@ fn resolve_type_file_by_package(
     let mut visited_entries = 0usize;
     for entry in WalkDir::new(root)
         .into_iter()
-        .filter_entry(|entry| should_visit_java_path(entry))
+        .filter_entry(should_visit_java_path)
     {
         visited_entries = visited_entries.saturating_add(1);
         ensure_code_nav_text_search_budget(started_at, visited_entries)?;
