@@ -18,7 +18,6 @@ pub const DEFAULT_TASK_RUN_EXECUTION_TIMEOUT_MS: u64 = 7_200_000;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StoreMode {
     Memory,
-    Sqlite,
     Mongo,
 }
 
@@ -122,7 +121,6 @@ impl StoreMode {
     fn from_env(value: Option<&str>) -> Self {
         match value.unwrap_or("mongo") {
             "memory" => Self::Memory,
-            "sqlite" => Self::Sqlite,
             _ => Self::Mongo,
         }
     }
@@ -130,7 +128,6 @@ impl StoreMode {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Memory => "memory",
-            Self::Sqlite => "sqlite",
             Self::Mongo => "mongo",
         }
     }

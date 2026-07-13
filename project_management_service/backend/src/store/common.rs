@@ -37,10 +37,6 @@ pub(super) fn normalize_id_list(values: Vec<String>) -> Vec<String> {
         .collect()
 }
 
-pub(super) fn normalize_tags(values: Vec<String>) -> Vec<String> {
-    normalize_id_list(values)
-}
-
 pub(super) fn task_runner_status_is_active(status: &str) -> bool {
     matches!(
         status.trim().to_ascii_lowercase().as_str(),

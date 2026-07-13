@@ -2,7 +2,6 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use serde::{Deserialize, Serialize};
-use sqlx::FromRow;
 use uuid::Uuid;
 
 use crate::repositories::terminals as repo;
@@ -23,39 +22,6 @@ pub struct Terminal {
     pub created_at: String,
     pub updated_at: String,
     pub last_active_at: String,
-}
-
-#[derive(Debug, FromRow)]
-pub struct TerminalRow {
-    pub id: String,
-    pub name: String,
-    pub cwd: String,
-    pub kind: String,
-    pub user_id: Option<String>,
-    pub project_id: Option<String>,
-    pub process_id: Option<i64>,
-    pub status: String,
-    pub created_at: String,
-    pub updated_at: String,
-    pub last_active_at: String,
-}
-
-impl TerminalRow {
-    pub fn into_terminal(self) -> Terminal {
-        Terminal {
-            id: self.id,
-            name: self.name,
-            cwd: self.cwd,
-            kind: normalize_terminal_kind(Some(self.kind)),
-            user_id: self.user_id,
-            project_id: self.project_id,
-            process_id: self.process_id,
-            status: self.status,
-            created_at: self.created_at,
-            updated_at: self.updated_at,
-            last_active_at: self.last_active_at,
-        }
-    }
 }
 
 impl Terminal {

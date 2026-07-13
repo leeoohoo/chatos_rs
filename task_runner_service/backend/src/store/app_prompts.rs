@@ -12,7 +12,6 @@ impl AppStore {
     ) -> Result<Vec<AskUserPromptRecord>, String> {
         match self {
             Self::InMemory(store) => Ok(store.list_ask_user_prompts(task_id, run_id, status)),
-            Self::Sqlite(store) => store.list_ask_user_prompts(task_id, run_id, status).await,
             Self::Mongo(store) => store.list_ask_user_prompts(task_id, run_id, status).await,
         }
     }
@@ -23,7 +22,6 @@ impl AppStore {
     ) -> Result<PaginatedResponse<AskUserPromptRecord>, String> {
         match self {
             Self::InMemory(store) => Ok(store.list_ask_user_prompts_page(filters)),
-            Self::Sqlite(store) => store.list_ask_user_prompts_page(filters).await,
             Self::Mongo(store) => store.list_ask_user_prompts_page(filters).await,
         }
     }
@@ -34,7 +32,6 @@ impl AppStore {
     ) -> Result<Option<AskUserPromptRecord>, String> {
         match self {
             Self::InMemory(store) => Ok(store.get_ask_user_prompt(id)),
-            Self::Sqlite(store) => store.get_ask_user_prompt(id).await,
             Self::Mongo(store) => store.get_ask_user_prompt(id).await,
         }
     }
@@ -45,7 +42,6 @@ impl AppStore {
     ) -> Result<AskUserPromptRecord, String> {
         match self {
             Self::InMemory(store) => Ok(store.save_ask_user_prompt(prompt)),
-            Self::Sqlite(store) => store.save_ask_user_prompt(prompt).await,
             Self::Mongo(store) => store.save_ask_user_prompt(prompt).await,
         }
     }
@@ -56,7 +52,6 @@ impl AppStore {
     ) -> Result<Vec<AskUserPromptTaskCountRecord>, String> {
         match self {
             Self::InMemory(store) => Ok(store.list_ask_user_prompt_task_counts(status)),
-            Self::Sqlite(store) => store.list_ask_user_prompt_task_counts(status).await,
             Self::Mongo(store) => store.list_ask_user_prompt_task_counts(status).await,
         }
     }

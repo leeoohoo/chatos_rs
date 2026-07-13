@@ -251,14 +251,16 @@ mod tests {
     use crate::models::UserRole;
 
     async fn test_state() -> AppState {
-        let database_path = std::env::temp_dir().join(format!(
-            "project-management-mcp-tools-{}.db",
-            Uuid::new_v4()
-        ));
+        let base_url = std::env::var("PROJECT_SERVICE_TEST_MONGODB_BASE_URL")
+            .unwrap_or_else(|_| "mongodb://admin:admin@127.0.0.1:27018".to_string());
+        let database = format!("project_management_mcp_tools_{}", Uuid::new_v4().simple());
         AppState::new(AppConfig {
             host: IpAddr::V4(Ipv4Addr::LOCALHOST),
             port: 0,
-            database_url: format!("sqlite://{}", database_path.display()),
+            database_url: format!(
+                "{}/{database}?authSource=admin",
+                base_url.trim_end_matches('/')
+            ),
             user_service_base_url: "http://127.0.0.1:1".to_string(),
             user_service_request_timeout: Duration::from_millis(300),
             user_service_internal_secret: None,
@@ -424,6 +426,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires MongoDB"]
     async fn mcp_rejects_mutating_done_requirement() {
         let state = test_state().await;
         let user = test_user();
@@ -493,6 +496,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires MongoDB"]
     async fn mcp_rejects_attaching_new_records_to_done_requirement() {
         let state = test_state().await;
         let user = test_user();
@@ -540,6 +544,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires MongoDB"]
     async fn mcp_rejects_mutating_done_project_task() {
         let state = test_state().await;
         let user = test_user();

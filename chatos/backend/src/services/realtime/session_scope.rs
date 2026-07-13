@@ -6,7 +6,6 @@ use std::collections::HashSet;
 use serde::{Deserialize, Serialize};
 
 use crate::core::validation::normalize_non_empty_str;
-use crate::repositories::db::with_db;
 use crate::services::chatos_sessions;
 
 use super::types::RealtimeEventEnvelope;
@@ -73,33 +72,6 @@ pub async fn resolve_conversation_scope(
     let conversation_id = normalize_non_empty_str(conversation_id)
         .ok_or_else(|| "conversation_id is required".to_string())?
         .to_string();
-
-    let sqlite_lookup = with_db(
-        |_db| Box::pin(async move { Ok(None::<ConversationRealtimeScope>) }),
-        |pool| {
-            let conversation_id = conversation_id.clone();
-            Box::pin(async move {
-                let row = sqlx::query_as::<_, SessionScopeRow>(
-                    "SELECT id, user_id, project_id FROM sessions WHERE id = ? LIMIT 1",
-                )
-                .bind(&conversation_id)
-                .fetch_optional(pool)
-                .await
-                .map_err(|err| err.to_string())?;
-                Ok(row.map(|value| ConversationRealtimeScope {
-                    user_id: normalize_non_empty_str(&value.user_id.unwrap_or_default())
-                        .map(|value| value.to_string()),
-                    project_id: normalize_non_empty_str(&value.project_id.unwrap_or_default())
-                        .map(|value| value.to_string()),
-                }))
-            })
-        },
-    )
-    .await?;
-
-    if let Some(scope) = sqlite_lookup {
-        return Ok(scope);
-    }
 
     let session = chatos_sessions::get_session_by_id(conversation_id.as_str())
         .await
@@ -274,10 +246,4 @@ fn extract_string_path(envelope: &RealtimeEventEnvelope, path: &[&str]) -> Optio
         .as_str()
         .and_then(normalize_non_empty_str)
         .map(|value| value.to_string())
-}
-
-#[derive(sqlx::FromRow)]
-struct SessionScopeRow {
-    user_id: Option<String>,
-    project_id: Option<String>,
 }

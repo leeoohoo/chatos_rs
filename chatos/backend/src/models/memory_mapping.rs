@@ -2,7 +2,6 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use serde::{Deserialize, Serialize};
-use sqlx::FromRow;
 use uuid::Uuid;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -51,41 +50,6 @@ impl ChatosContact {
     }
 }
 
-#[derive(Debug, FromRow)]
-pub struct ChatosContactRow {
-    pub id: String,
-    pub user_id: String,
-    pub agent_id: String,
-    pub agent_name_snapshot: Option<String>,
-    pub task_runner_enabled: i64,
-    pub task_runner_base_url: Option<String>,
-    pub task_runner_agent_account_id: Option<String>,
-    pub task_runner_username: Option<String>,
-    pub task_runner_password: Option<String>,
-    pub status: String,
-    pub created_at: String,
-    pub updated_at: String,
-}
-
-impl ChatosContactRow {
-    pub fn into_contact(self) -> ChatosContact {
-        ChatosContact {
-            id: self.id,
-            user_id: self.user_id,
-            agent_id: self.agent_id,
-            agent_name_snapshot: self.agent_name_snapshot,
-            task_runner_enabled: self.task_runner_enabled != 0,
-            task_runner_base_url: self.task_runner_base_url,
-            task_runner_agent_account_id: self.task_runner_agent_account_id,
-            task_runner_username: self.task_runner_username,
-            task_runner_password: self.task_runner_password,
-            status: self.status,
-            created_at: self.created_at,
-            updated_at: self.updated_at,
-        }
-    }
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChatosMemoryProject {
     pub id: String,
@@ -99,39 +63,6 @@ pub struct ChatosMemoryProject {
     pub created_at: String,
     pub updated_at: String,
     pub archived_at: Option<String>,
-}
-
-#[derive(Debug, FromRow)]
-pub struct ChatosMemoryProjectRow {
-    pub id: String,
-    pub user_id: String,
-    pub project_id: String,
-    pub name: String,
-    pub root_path: Option<String>,
-    pub description: Option<String>,
-    pub status: String,
-    pub is_virtual: i64,
-    pub created_at: String,
-    pub updated_at: String,
-    pub archived_at: Option<String>,
-}
-
-impl ChatosMemoryProjectRow {
-    pub fn into_project(self) -> ChatosMemoryProject {
-        ChatosMemoryProject {
-            id: self.id,
-            user_id: self.user_id,
-            project_id: self.project_id,
-            name: self.name,
-            root_path: self.root_path,
-            description: self.description,
-            status: self.status,
-            is_virtual: self.is_virtual,
-            created_at: self.created_at,
-            updated_at: self.updated_at,
-            archived_at: self.archived_at,
-        }
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -148,39 +79,4 @@ pub struct ChatosProjectAgentLink {
     pub status: String,
     pub created_at: String,
     pub updated_at: String,
-}
-
-#[derive(Debug, FromRow)]
-pub struct ChatosProjectAgentLinkRow {
-    pub id: String,
-    pub user_id: String,
-    pub project_id: String,
-    pub agent_id: String,
-    pub contact_id: Option<String>,
-    pub latest_session_id: Option<String>,
-    pub first_bound_at: String,
-    pub last_bound_at: String,
-    pub last_message_at: Option<String>,
-    pub status: String,
-    pub created_at: String,
-    pub updated_at: String,
-}
-
-impl ChatosProjectAgentLinkRow {
-    pub fn into_link(self) -> ChatosProjectAgentLink {
-        ChatosProjectAgentLink {
-            id: self.id,
-            user_id: self.user_id,
-            project_id: self.project_id,
-            agent_id: self.agent_id,
-            contact_id: self.contact_id,
-            latest_session_id: self.latest_session_id,
-            first_bound_at: self.first_bound_at,
-            last_bound_at: self.last_bound_at,
-            last_message_at: self.last_message_at,
-            status: self.status,
-            created_at: self.created_at,
-            updated_at: self.updated_at,
-        }
-    }
 }

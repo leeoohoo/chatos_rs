@@ -141,17 +141,20 @@ mod tests {
         CreateProjectRequest, CreateProjectWorkItemRequest, CreateRequirementRequest,
         RequirementStatus, UpsertRequirementDocumentRequest, UserRole,
     };
-    use crate::store::{AppStore, SqliteStore};
+    use crate::store::AppStore;
     use uuid::Uuid;
 
     async fn test_store() -> AppStore {
-        let path =
-            std::env::temp_dir().join(format!("project-plan-snapshot-test-{}.db", Uuid::new_v4()));
-        AppStore::Sqlite(
-            SqliteStore::new(format!("sqlite://{}", path.display()).as_str())
-                .await
-                .expect("sqlite store"),
-        )
+        let base_url = std::env::var("PROJECT_SERVICE_TEST_MONGODB_BASE_URL")
+            .unwrap_or_else(|_| "mongodb://admin:admin@127.0.0.1:27018".to_string());
+        let database = format!("project_plan_snapshot_test_{}", Uuid::new_v4().simple());
+        let database_url = format!(
+            "{}/{database}?authSource=admin",
+            base_url.trim_end_matches('/')
+        );
+        AppStore::new(database_url.as_str())
+            .await
+            .expect("MongoDB test store")
     }
 
     fn test_user() -> CurrentUser {
@@ -168,6 +171,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires MongoDB"]
     async fn project_plan_snapshot_returns_visible_plan_and_graph() {
         let store = test_store().await;
         let user = test_user();

@@ -25,6 +25,11 @@ use crate::services::terminal_manager::get_terminal_manager;
 pub async fn run_server_from_env() -> Result<(), String> {
     dotenvy::dotenv().ok();
 
+    // jsonwebtoken 10 no longer selects a process-wide crypto backend when
+    // dependency feature unification makes the choice ambiguous. Install the
+    // backend explicitly before any request can create or verify a token.
+    let _ = jsonwebtoken::crypto::rust_crypto::DEFAULT_PROVIDER.install_default();
+
     chatos_service_runtime::apply_config_center_env("chatos-backend").await;
     let cfg = config::Config::init_global()?;
     logger::init_logger(cfg).map_err(|err| format!("Failed to init logger: {err}"))?;

@@ -65,7 +65,6 @@ BUDGETS=(
 )
 
 PLANNED_BUDGETS=(
-  "project_management_service/backend/src/store/sqlite.rs:700"
   "project_management_service/backend/src/api/router.rs:700"
   "project_management_service/backend/src/store/mongo.rs:700"
   "project_management_service/backend/src/mcp_server.rs:700"

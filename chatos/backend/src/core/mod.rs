@@ -26,8 +26,6 @@ pub mod remote_connection_error_codes;
 pub mod runtime_health;
 pub mod secrets;
 pub mod session_access;
-pub mod sql_query;
-pub mod sql_rows;
 pub mod system_context_access;
 pub mod terminal_access;
 pub mod time;

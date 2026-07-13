@@ -120,15 +120,10 @@ pub async fn mongo_delete_many_doc(
     Ok(())
 }
 
-pub async fn with_db<T, Fmongo, Fsqlite>(mongo_fn: Fmongo, sqlite_fn: Fsqlite) -> Result<T, String>
+pub async fn with_db<T, Fmongo>(mongo_fn: Fmongo) -> Result<T, String>
 where
     Fmongo: for<'a> FnOnce(
         &'a mongodb::Database,
-    ) -> std::pin::Pin<
-        Box<dyn std::future::Future<Output = Result<T, String>> + Send + 'a>,
-    >,
-    Fsqlite: for<'a> FnOnce(
-        &'a sqlx::SqlitePool,
     ) -> std::pin::Pin<
         Box<dyn std::future::Future<Output = Result<T, String>> + Send + 'a>,
     >,
@@ -136,6 +131,5 @@ where
     let db = get_db().await?;
     match db.as_ref() {
         Database::Mongo { db, .. } => mongo_fn(db).await,
-        Database::Sqlite(pool) => sqlite_fn(pool).await,
     }
 }

@@ -3,20 +3,11 @@
 
 use mongodb::{Client, Database as MongoDatabase};
 use serde::{Deserialize, Serialize};
-use sqlx::SqlitePool;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum DatabaseType {
-    Sqlite,
     Mongodb,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SqliteConfig {
-    pub db_path: Option<String>,
-    pub timeout: Option<u64>,
-    pub busy_timeout: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -38,20 +29,9 @@ pub struct MongoConfig {
 pub struct DatabaseConfig {
     #[serde(rename = "type")]
     pub db_type: Option<DatabaseType>,
-    pub sqlite: Option<SqliteConfig>,
     pub mongodb: Option<MongoConfig>,
     pub auto_migrate: Option<bool>,
     pub debug: Option<bool>,
-}
-
-impl Default for SqliteConfig {
-    fn default() -> Self {
-        Self {
-            db_path: Some(".local/chat_app_server/data/chat_app.db".to_string()),
-            timeout: Some(30000),
-            busy_timeout: Some(30000),
-        }
-    }
 }
 
 impl Default for MongoConfig {
@@ -75,8 +55,7 @@ impl Default for MongoConfig {
 impl Default for DatabaseConfig {
     fn default() -> Self {
         Self {
-            db_type: Some(DatabaseType::Sqlite),
-            sqlite: Some(SqliteConfig::default()),
+            db_type: Some(DatabaseType::Mongodb),
             mongodb: Some(MongoConfig::default()),
             auto_migrate: Some(true),
             debug: Some(false),
@@ -85,6 +64,5 @@ impl Default for DatabaseConfig {
 }
 
 pub enum Database {
-    Sqlite(SqlitePool),
     Mongo { _client: Client, db: MongoDatabase },
 }

@@ -37,7 +37,6 @@ RUN find /etc/apt -type f \( -name '*.list' -o -name '*.sources' \) -print0 \
       clang \
       cmake \
       git \
-      libsqlite3-dev \
       libssl-dev \
       pkg-config \
       protobuf-compiler \
@@ -78,7 +77,6 @@ RUN find /etc/apt -type f \( -name '*.list' -o -name '*.sources' \) -print0 \
         ca-certificates \
         curl \
         git \
-        libsqlite3-0 \
         openssh-client \
         ripgrep \
         tzdata \

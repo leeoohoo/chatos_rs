@@ -155,9 +155,10 @@ fn expand_user_visible_path_maps_existing_virtual_input() {
     let expanded = policy
         .expand_user_visible_path("/demo/.venv/bin/python")
         .expect("expand virtual path");
+    let canonical_python = fs::canonicalize(&python).expect("canonicalize python");
     assert_eq!(
         normalize_path_for_compare(Path::new(expanded.as_str())),
-        normalize_path_for_compare(python.as_path())
+        normalize_path_for_compare(canonical_python.as_path())
     );
 
     fs::remove_dir_all(root).expect("cleanup temp dir");

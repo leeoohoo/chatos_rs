@@ -2,7 +2,6 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use serde::{Deserialize, Serialize};
-use sqlx::FromRow;
 use uuid::Uuid;
 
 use crate::repositories::terminal_logs as repo;
@@ -14,27 +13,6 @@ pub struct TerminalLog {
     pub log_type: String,
     pub content: String,
     pub created_at: String,
-}
-
-#[derive(Debug, FromRow)]
-pub struct TerminalLogRow {
-    pub id: String,
-    pub terminal_id: String,
-    pub log_type: String,
-    pub content: String,
-    pub created_at: String,
-}
-
-impl TerminalLogRow {
-    pub fn into_log(self) -> TerminalLog {
-        TerminalLog {
-            id: self.id,
-            terminal_id: self.terminal_id,
-            log_type: self.log_type,
-            content: self.content,
-            created_at: self.created_at,
-        }
-    }
 }
 
 impl TerminalLog {

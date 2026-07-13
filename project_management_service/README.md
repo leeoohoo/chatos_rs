@@ -14,7 +14,7 @@ PROJECT_SERVICE_DATABASE_URL=mongodb://admin:admin@127.0.0.1:27018/project_manag
 cargo run -p project_management_service_backend
 ```
 
-默认数据库为 MongoDB。显式传入 `sqlite://...` 时仍可使用 SQLite fallback，主要用于本地快速测试。
+项目管理服务仅支持 MongoDB。测试数据库可通过 `PROJECT_SERVICE_TEST_MONGODB_BASE_URL` 指向独立 MongoDB 实例。
 
 前端：
 
