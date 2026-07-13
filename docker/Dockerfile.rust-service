@@ -49,7 +49,7 @@ COPY . .
 ARG MANIFEST_PATH=Cargo.toml
 ARG PACKAGE_NAME=
 ARG BIN_NAME
-ARG CARGO_BUILD_JOBS=2
+ARG CARGO_BUILD_JOBS=4
 
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/usr/local/cargo/git \
