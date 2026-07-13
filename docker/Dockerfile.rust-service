@@ -53,7 +53,7 @@ ARG CARGO_BUILD_JOBS=4
 
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/usr/local/cargo/git \
-    --mount=type=cache,target=/tmp/chatos-target \
+    --mount=type=cache,id=chatos-rust-target-1.94-j4,target=/tmp/chatos-target \
     test -n "$BIN_NAME" \
     && if [ -n "$PACKAGE_NAME" ]; then \
          cargo build --release --ignore-rust-version --jobs "$CARGO_BUILD_JOBS" --manifest-path "$MANIFEST_PATH" -p "$PACKAGE_NAME" --bin "$BIN_NAME"; \
