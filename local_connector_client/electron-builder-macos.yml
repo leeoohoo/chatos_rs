@@ -1,0 +1,21 @@
+appId: com.chatos.local-connector
+productName: Chat OS Local Connector
+directories:
+  output: ../dist/electron-macos
+files:
+  - dist/**/*
+  - electron/main.cjs
+  - electron/preload.cjs
+  - package.json
+extraResources:
+  - from: ../.package/macos/local_connector_client_core
+    to: local_connector_client_core
+  - from: ../.package/macos/bundled-tools
+    to: bundled-tools
+mac:
+  category: public.app-category.developer-tools
+  target:
+    - dmg
+  artifactName: Chat-OS-Local-Connector-${version}-${arch}.${ext}
+dmg:
+  title: Chat OS Local Connector

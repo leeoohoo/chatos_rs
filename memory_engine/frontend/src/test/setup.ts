@@ -20,6 +20,24 @@ if (typeof window !== 'undefined' && !window.matchMedia) {
   });
 }
 
+if (!globalThis.ResizeObserver) {
+  class ResizeObserverMock implements ResizeObserver {
+    constructor(_callback: ResizeObserverCallback) {}
+
+    observe(): void {}
+
+    unobserve(): void {}
+
+    disconnect(): void {}
+  }
+
+  Object.defineProperty(globalThis, 'ResizeObserver', {
+    configurable: true,
+    writable: true,
+    value: ResizeObserverMock,
+  });
+}
+
 afterEach(() => {
   cleanup();
 });

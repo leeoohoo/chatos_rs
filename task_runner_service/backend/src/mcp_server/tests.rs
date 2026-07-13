@@ -102,11 +102,11 @@ async fn test_project_sync_server() -> (String, CapturedProjectSyncCalls) {
     let calls = Arc::new(Mutex::new(Vec::new()));
     let app = Router::new()
         .route(
-            "/api/chatos-sync/work-items/:work_item_id/task-runner-status",
+            "/api/chatos-sync/work-items/{work_item_id}/task-runner-status",
             post(capture_project_sync_status),
         )
         .route(
-            "/api/chatos-sync/projects/:project_id",
+            "/api/chatos-sync/projects/{project_id}",
             get(get_project_sync_record),
         )
         .with_state(calls.clone());

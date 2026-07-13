@@ -4,7 +4,6 @@
 use axum::extract::State;
 use axum::{Extension, Json};
 use chrono::Utc;
-use rand::{Rng, RngCore};
 use serde_json::json;
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
@@ -122,7 +121,7 @@ pub async fn send_register_email_code(
         state.config.registration_code_hourly_limit,
     )
     .map_err(bad_request)?;
-    let code = format!("{:06}", rand::thread_rng().gen_range(0..1_000_000));
+    let code = format!("{:06}", rand::random_range(0..1_000_000));
     let record = RegistrationEmailCodeRecord {
         email: email.clone(),
         code_hash: registration_code_hash(
@@ -480,7 +479,7 @@ fn local_connector_ticket_hash(ticket: &str, secret: &str) -> String {
 
 fn generate_local_connector_ticket() -> String {
     let mut bytes = [0_u8; 32];
-    rand::thread_rng().fill_bytes(&mut bytes);
+    rand::fill(&mut bytes);
     hex::encode(bytes)
 }
 

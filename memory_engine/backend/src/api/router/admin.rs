@@ -18,11 +18,11 @@ pub fn routes() -> Router<Arc<AppState>> {
             get(admin_api::list_job_policies),
         )
         .route(
-            "/api/memory-engine/v1/admin/job-policies/:job_type",
+            "/api/memory-engine/v1/admin/job-policies/{job_type}",
             get(admin_api::get_job_policy).put(admin_api::upsert_job_policy),
         )
         .route(
-            "/api/memory-engine/v1/admin/job-policies/:job_type/generate-prompt",
+            "/api/memory-engine/v1/admin/job-policies/{job_type}/generate-prompt",
             post(admin_api::generate_job_policy_prompt),
         )
         .route(
@@ -46,11 +46,11 @@ pub fn routes() -> Router<Arc<AppState>> {
             get(sources_api::admin_list_sources),
         )
         .route(
-            "/api/memory-engine/v1/admin/sources/:source_id",
+            "/api/memory-engine/v1/admin/sources/{source_id}",
             put(sources_api::admin_upsert_source),
         )
         .route(
-            "/api/memory-engine/v1/admin/sources/:source_id/rotate-key",
+            "/api/memory-engine/v1/admin/sources/{source_id}/rotate-key",
             post(sources_api::admin_rotate_source_secret),
         )
 }
@@ -62,7 +62,7 @@ pub fn model_profile_routes() -> Router<Arc<AppState>> {
             get(admin_api::list_model_profiles).post(admin_api::create_model_profile),
         )
         .route(
-            "/api/memory-engine/v1/admin/model-profiles/:model_id",
+            "/api/memory-engine/v1/admin/model-profiles/{model_id}",
             get(admin_api::get_model_profile)
                 .put(admin_api::update_model_profile)
                 .delete(admin_api::delete_model_profile),

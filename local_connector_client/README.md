@@ -46,6 +46,30 @@ The core listens on `http://127.0.0.1:39232`, serves `frontend/dist`, and opens 
 
 ## Package the Desktop Client
 
+### macOS
+
+Run the reusable packaging script on macOS:
+
+```bash
+./local_connector_client/package-electron-macos-client.sh
+```
+
+The script detects Apple Silicon versus Intel, installs locked frontend dependencies, builds the React UI and Rust Core, bundles the matching tools, and writes a DMG under:
+
+```text
+local_connector_client/dist/electron-macos/
+```
+
+Packaging is unsigned by default so an invalid or revoked local certificate is not selected accidentally. After installing a valid `Developer ID Application` certificate, enable signing explicitly:
+
+```bash
+CHATOS_MAC_SIGN=1 ./local_connector_client/package-electron-macos-client.sh
+```
+
+Set `CSC_NAME` as well if the keychain contains more than one signing identity. Set `CHATOS_SKIP_NPM_CI=1` to reuse an already installed `node_modules` directory.
+
+### Windows
+
 Windows desktop packaging must run in PowerShell on Windows:
 
 ```powershell

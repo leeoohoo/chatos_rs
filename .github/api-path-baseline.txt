@@ -1,7 +1,7 @@
 # API Path Baseline
 
-main_backend_endpoint_count=255
-total_endpoint_count=255
+main_backend_endpoint_count=258
+total_endpoint_count=258
 
 ## chatos/backend endpoints (method + path)
 DELETE /api/agents/{agent_id}
@@ -26,7 +26,6 @@ DELETE /api/projects/{id}/contacts/{contact_id}
 DELETE /api/remote-connections/{id}
 DELETE /api/system-contexts/{context_id}
 DELETE /api/task-manager/tasks/{task_id}
-DELETE /api/task-runner/external-mcp-configs/{id}
 DELETE /api/terminals/{id}
 DELETE /{application_id}
 GET /
@@ -43,6 +42,7 @@ GET /api/ai-model-providers
 GET /api/ai-model-providers/{provider_id}
 GET /api/ai-model-settings
 GET /api/ask-user-prompts
+GET /api/attachments/object
 GET /api/auth/agent-accounts
 GET /api/auth/me
 GET /api/contacts
@@ -119,6 +119,8 @@ GET /api/projects/{id}/requirements/{requirement_id}/work-items
 GET /api/projects/{id}/run/catalog
 GET /api/projects/{id}/run/environment
 GET /api/projects/{id}/run/state
+GET /api/projects/{id}/runtime-environment
+GET /api/projects/{id}/runtime-environment/progress
 GET /api/realtime/ws
 GET /api/remote-connections
 GET /api/remote-connections/{id}
@@ -132,8 +134,6 @@ GET /api/skills/{skill_id}
 GET /api/system-context/active
 GET /api/system-contexts
 GET /api/task-manager/tasks
-GET /api/task-runner/external-mcp-configs
-GET /api/task-runner/external-mcp-configs/{id}
 GET /api/terminals
 GET /api/terminals/{id}
 GET /api/terminals/{id}/history
@@ -149,7 +149,6 @@ PATCH /api/memory/v1/sessions/{session_id}
 PATCH /api/notepad/folders
 PATCH /api/notepad/notes/{note_id}
 PATCH /api/task-manager/tasks/{task_id}
-PATCH /api/task-runner/external-mcp-configs/{id}
 PATCH /api/user-settings
 POST /
 POST /api/agent-builder/ai-create
@@ -166,9 +165,12 @@ POST /api/ai-model-providers
 POST /api/ai-model-providers/{provider_id}/refresh
 POST /api/ask-user-prompts/{prompt_id}/cancel
 POST /api/ask-user-prompts/{prompt_id}/submit
+POST /api/attachments/uploads
 POST /api/auth/bootstrap-defaults
+POST /api/auth/local-connector-ticket
 POST /api/auth/login
 POST /api/auth/register
+POST /api/auth/register/send-code
 POST /api/auth/ws-ticket
 POST /api/code-nav/capabilities
 POST /api/code-nav/definition
@@ -221,6 +223,7 @@ POST /api/projects/{id}/requirements/{requirement_id}/stop
 POST /api/projects/{id}/run/analyze
 POST /api/projects/{id}/run/default
 POST /api/projects/{id}/run/execute
+POST /api/projects/{id}/runtime-environment/analyze
 POST /api/remote-connections
 POST /api/remote-connections/test
 POST /api/remote-connections/{id}/disconnect
@@ -240,7 +243,6 @@ POST /api/system-contexts/ai/generate
 POST /api/system-contexts/ai/optimize
 POST /api/system-contexts/{context_id}/activate
 POST /api/task-manager/tasks/{task_id}/complete
-POST /api/task-runner/external-mcp-configs
 POST /api/terminals
 POST /api/terminals/dispatch-command
 POST /api/terminals/{id}/interrupt
@@ -255,6 +257,7 @@ PUT /api/memory/v1/sessions/{session_id}/sync
 PUT /api/memory/v1/sessions/{session_id}/turn-runtime-snapshots/{turn_id}/sync
 PUT /api/projects/{id}
 PUT /api/projects/{id}/run/environment
+PUT /api/projects/{id}/runtime-environment/settings
 PUT /api/remote-connections/{id}
 PUT /api/system-contexts/{context_id}
 PUT /api/user-settings

@@ -43,20 +43,20 @@ pub fn build_router(state: AppState) -> Router {
             get(invite_codes::list_invite_codes).post(invite_codes::create_invite_code),
         )
         .route(
-            "/api/invite-codes/:id/revoke",
+            "/api/invite-codes/{id}/revoke",
             post(invite_codes::revoke_invite_code),
         )
         .route(
             "/api/users",
             get(users::list_users).post(users::create_user),
         )
-        .route("/api/users/:id", patch(users::update_user))
+        .route("/api/users/{id}", patch(users::update_user))
         .route(
-            "/api/users/:id/harness-provisioning",
+            "/api/users/{id}/harness-provisioning",
             post(users::provision_harness_user),
         )
         .route(
-            "/api/users/:id/harness-provisioning/retry",
+            "/api/users/{id}/harness-provisioning/retry",
             post(users::retry_harness_provisioning),
         )
         .route(
@@ -64,11 +64,11 @@ pub fn build_router(state: AppState) -> Router {
             get(agents::list_agent_accounts).post(agents::create_agent_account),
         )
         .route(
-            "/api/agent-accounts/:id",
+            "/api/agent-accounts/{id}",
             patch(agents::update_agent_account),
         )
         .route(
-            "/api/agent-accounts/:id/reset-password",
+            "/api/agent-accounts/{id}/reset-password",
             post(agents::reset_agent_password),
         )
         .route(
@@ -80,13 +80,13 @@ pub fn build_router(state: AppState) -> Router {
             get(models::list_model_providers).post(models::create_model_provider),
         )
         .route(
-            "/api/model-providers/:id",
+            "/api/model-providers/{id}",
             get(models::get_model_provider)
                 .patch(models::update_model_provider)
                 .delete(models::delete_model_provider),
         )
         .route(
-            "/api/model-providers/:id/refresh",
+            "/api/model-providers/{id}/refresh",
             post(models::refresh_model_provider_models),
         )
         .route(
@@ -94,13 +94,13 @@ pub fn build_router(state: AppState) -> Router {
             get(models::get_model_settings).put(models::put_model_settings),
         )
         .route(
-            "/api/model-configs/:id",
+            "/api/model-configs/{id}",
             get(models::get_model_config)
                 .patch(models::update_model_config)
                 .delete(models::delete_model_config),
         )
         .route(
-            "/api/model-configs/:id/refresh",
+            "/api/model-configs/{id}/refresh",
             post(models::refresh_model_config_provider_models),
         )
         .route(
@@ -131,15 +131,15 @@ pub fn build_router(state: AppState) -> Router {
             post(auth::exchange_local_connector_ticket),
         )
         .route(
-            "/api/internal/harness/users/:user_id/access",
+            "/api/internal/harness/users/{user_id}/access",
             get(harness::get_user_harness_access),
         )
         .route(
-            "/api/internal/users/:user_id/model-configs/:model_config_id/runtime",
+            "/api/internal/users/{user_id}/model-configs/{model_config_id}/runtime",
             get(internal_models::get_user_model_runtime_config),
         )
         .route(
-            "/api/internal/users/:user_id/model-settings",
+            "/api/internal/users/{user_id}/model-settings",
             get(internal_models::get_user_model_settings),
         )
         .merge(protected)

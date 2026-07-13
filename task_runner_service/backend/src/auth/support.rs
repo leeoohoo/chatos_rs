@@ -27,7 +27,9 @@ pub(super) fn hash_password(password: &str) -> Result<String, String> {
     if password.trim().is_empty() {
         return Err("密码不能为空".to_string());
     }
-    let salt = SaltString::generate(&mut OsRng);
+    let mut salt_bytes = [0_u8; 16];
+    rand::fill(&mut salt_bytes);
+    let salt = SaltString::encode_b64(&salt_bytes).map_err(|err| err.to_string())?;
     Argon2::default()
         .hash_password(password.as_bytes(), &salt)
         .map(|hash| hash.to_string())

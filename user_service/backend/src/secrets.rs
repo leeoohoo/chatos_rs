@@ -2,12 +2,10 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use aes_gcm::aead::{Aead, KeyInit};
-use aes_gcm::{Aes256Gcm, Key, Nonce};
+use aes_gcm::{Aes256Gcm, Nonce};
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
 use once_cell::sync::OnceCell;
-use rand::rngs::OsRng;
-use rand::RngCore;
 use sha2::{Digest, Sha256};
 
 const SECRET_PREFIX: &str = "enc:v1:";
@@ -45,10 +43,13 @@ pub fn encrypt_secret(plain_text: &str) -> Result<String, String> {
         );
     }
     let mut nonce = [0u8; NONCE_SIZE];
-    OsRng.fill_bytes(&mut nonce);
-    let cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(secret_key()));
+    rand::fill(&mut nonce);
+    let cipher = Aes256Gcm::new_from_slice(secret_key())
+        .map_err(|err| format!("encrypt secret failed: invalid key: {err}"))?;
+    let nonce_ref = Nonce::try_from(nonce.as_slice())
+        .map_err(|err| format!("encrypt secret failed: invalid nonce: {err}"))?;
     let encrypted = cipher
-        .encrypt(Nonce::from_slice(&nonce), plain_text.as_bytes())
+        .encrypt(&nonce_ref, plain_text.as_bytes())
         .map_err(|err| format!("encrypt secret failed: {err}"))?;
     Ok(format!(
         "{}{}:{}",
@@ -86,9 +87,12 @@ pub fn decrypt_secret(value: &str) -> Result<String, String> {
         .decode(data_b64)
         .map_err(|err| format!("decrypt secret failed: invalid ciphertext: {err}"))?;
 
-    let cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(secret_key()));
+    let cipher = Aes256Gcm::new_from_slice(secret_key())
+        .map_err(|err| format!("decrypt secret failed: invalid key: {err}"))?;
+    let nonce_ref = Nonce::try_from(nonce.as_slice())
+        .map_err(|err| format!("decrypt secret failed: invalid nonce: {err}"))?;
     let plain = cipher
-        .decrypt(Nonce::from_slice(&nonce), encrypted.as_ref())
+        .decrypt(&nonce_ref, encrypted.as_ref())
         .map_err(|_| "decrypt secret failed: key mismatch or corrupted data".to_string())?;
     String::from_utf8(plain).map_err(|err| format!("decrypt secret failed: invalid utf8: {err}"))
 }

@@ -41,23 +41,23 @@ pub fn router() -> Router<AppState> {
             get(get_chatos_message_graph),
         )
         .route(
-            "/internal/chatos/message-tasks/:task_id",
+            "/internal/chatos/message-tasks/{task_id}",
             get(get_chatos_message_task),
         )
         .route(
-            "/internal/chatos/message-runs/:run_id",
+            "/internal/chatos/message-runs/{run_id}",
             get(get_chatos_message_run),
         )
         .route(
-            "/internal/chatos/message-runs/:run_id/output/changes",
+            "/internal/chatos/message-runs/{run_id}/output/changes",
             get(get_chatos_message_run_output_changes),
         )
         .route(
-            "/internal/chatos/message-runs/:run_id/output/diff",
+            "/internal/chatos/message-runs/{run_id}/output/diff",
             get(get_chatos_message_run_output_diff),
         )
         .route(
-            "/internal/chatos/message-graph/runs/:run_id",
+            "/internal/chatos/message-graph/runs/{run_id}",
             get(get_chatos_message_graph_run),
         )
         .route(

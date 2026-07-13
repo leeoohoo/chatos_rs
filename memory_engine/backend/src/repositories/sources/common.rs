@@ -47,7 +47,7 @@ pub(crate) fn generate_secret_key() -> String {
 pub(crate) fn hash_secret(secret_key: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(secret_key.as_bytes());
-    format!("{:x}", hasher.finalize())
+    hex::encode(hasher.finalize())
 }
 
 pub(crate) fn build_secret_key_hint(secret_key: &str) -> String {

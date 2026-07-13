@@ -22,6 +22,8 @@ const MAX_API_RESPONSE_BODY_BYTES = 8 * 1024 * 1024;
 const ALLOWED_API_METHODS = new Set(['GET', 'POST', 'DELETE', 'PUT', 'PATCH']);
 const FORWARDED_RENDERER_HEADERS = new Set(['accept', 'content-type']);
 const SHELL_HEIGHT = 52;
+const MAX_UNIX_SOCKET_PATH_BYTES = 100;
+const CORE_LOG_MAX_BYTES = 5 * 1024 * 1024;
 
 function resourcePath(...segments) {
   const packagedPath = path.join(process.resourcesPath, ...segments);
@@ -49,14 +51,25 @@ function startCore() {
     LOCAL_CONNECTOR_REQUIRE_SECURE_REMOTE: process.env.LOCAL_CONNECTOR_REQUIRE_SECURE_REMOTE || '1',
   };
 
-  coreProcess = spawn(corePath, [], {
-    cwd: path.dirname(corePath),
-    env,
-    stdio: 'ignore',
-    windowsHide: true,
-  });
+  const coreLog = openCoreLog();
+  try {
+    coreProcess = spawn(corePath, [], {
+      cwd: path.dirname(corePath),
+      env,
+      stdio: coreLog.fd === null ? 'ignore' : ['ignore', coreLog.fd, coreLog.fd],
+      windowsHide: true,
+    });
+  } finally {
+    if (coreLog.fd !== null) {
+      fs.closeSync(coreLog.fd);
+    }
+  }
 
-  coreProcess.on('exit', () => {
+  coreProcess.on('error', (error) => {
+    appendCoreLog(coreLog.path, `core process failed to start: ${error.stack || error}`);
+  });
+  coreProcess.on('exit', (code, signal) => {
+    appendCoreLog(coreLog.path, `core process exited: code=${code} signal=${signal}`);
     coreProcess = null;
   });
 }
@@ -66,9 +79,60 @@ function createIpcEndpoint() {
   if (process.platform === 'win32') {
     return `\\\\.\\pipe\\chatos-local-connector-${suffix}`;
   }
-  const socketDir = path.join(app.getPath('temp'), `chatos-local-connector-${suffix}`);
-  fs.mkdirSync(socketDir, { recursive: true, mode: 0o700 });
-  return path.join(socketDir, 'core.sock');
+
+  const candidateRoots = [...new Set([app.getPath('temp'), '/tmp'])];
+  let lastError = null;
+  for (const root of candidateRoots) {
+    let socketDir = null;
+    try {
+      fs.mkdirSync(root, { recursive: true });
+      socketDir = fs.mkdtempSync(path.join(root, 'chatos-'));
+      fs.chmodSync(socketDir, 0o700);
+      const endpoint = path.join(socketDir, 'core.sock');
+      if (Buffer.byteLength(endpoint) <= MAX_UNIX_SOCKET_PATH_BYTES) {
+        return endpoint;
+      }
+      lastError = new Error(`Local connector IPC socket path is too long: ${endpoint}`);
+    } catch (error) {
+      lastError = error;
+    }
+    if (socketDir) {
+      fs.rmSync(socketDir, { recursive: true, force: true });
+    }
+  }
+  throw lastError || new Error('Unable to create a local connector IPC socket path');
+}
+
+function openCoreLog() {
+  try {
+    const logsDir = app.getPath('logs');
+    fs.mkdirSync(logsDir, { recursive: true });
+    const logPath = path.join(logsDir, 'local-connector-core.log');
+    if (fs.existsSync(logPath) && fs.statSync(logPath).size > CORE_LOG_MAX_BYTES) {
+      const previousLogPath = `${logPath}.1`;
+      fs.rmSync(previousLogPath, { force: true });
+      fs.renameSync(logPath, previousLogPath);
+    }
+    const fd = fs.openSync(logPath, 'a', 0o600);
+    fs.chmodSync(logPath, 0o600);
+    fs.writeSync(fd, `\n[${new Date().toISOString()}] starting local connector core\n`);
+    return { fd, path: logPath };
+  } catch (error) {
+    console.error('Unable to open Local Connector Core log', error);
+    return { fd: null, path: null };
+  }
+}
+
+function appendCoreLog(logPath, message) {
+  if (!logPath) {
+    console.error(message);
+    return;
+  }
+  try {
+    fs.appendFileSync(logPath, `[${new Date().toISOString()}] ${message}\n`, { mode: 0o600 });
+  } catch (error) {
+    console.error('Unable to append Local Connector Core log', error);
+  }
 }
 
 function normalizeApiEndpoint(endpoint) {

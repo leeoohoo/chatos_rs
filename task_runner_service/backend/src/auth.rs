@@ -8,7 +8,6 @@ use argon2::password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, Salt
 use argon2::Argon2;
 use chrono::Utc;
 use parking_lot::RwLock;
-use rand::rngs::OsRng;
 use uuid::Uuid;
 
 use crate::config::AppConfig;

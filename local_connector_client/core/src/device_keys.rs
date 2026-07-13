@@ -132,6 +132,9 @@ fn private_key_path(state_path: &Path) -> PathBuf {
 mod secret_store {
     use super::*;
 
+    #[cfg(target_os = "macos")]
+    use sha2::Digest as _;
+
     #[cfg(windows)]
     const DPAPI_MAGIC: &[u8] = b"dpapi-v1\n";
 
