@@ -10,6 +10,7 @@ ENV_EXAMPLE_FILE="$SCRIPT_DIR/.env.example"
 IMAGE_NAMESPACE="${CHATOS_IMAGE_NAMESPACE:-ghcr.io/leeoohoo}"
 IMAGE_TAG="${CHATOS_IMAGE_TAG:-harness-ci}"
 PUBLIC_HOST="${CHATOS_PUBLIC_HOST:-8.155.171.124}"
+DOCKER_SOCKET_PROXY_IMAGE="${DOCKER_SOCKET_PROXY_IMAGE:-tecnativa/docker-socket-proxy:latest}"
 
 ensure_env_file() {
   if [[ -f "$ENV_FILE" ]]; then
@@ -48,6 +49,15 @@ require_local_image() {
   echo "[ERROR] local image not found: $image" >&2
   echo "        Run the Harness CI image pipeline on this server first, or push/pull the image tag." >&2
   exit 1
+}
+
+ensure_runtime_image() {
+  local image="$1"
+  if docker image inspect "$image" >/dev/null 2>&1; then
+    return 0
+  fi
+  echo "[INFO] pulling required runtime image: $image"
+  docker pull "$image"
 }
 
 image_for_service() {
@@ -158,6 +168,7 @@ ensure_env_file
 set_env CHATOS_IMAGE_NAMESPACE "$IMAGE_NAMESPACE"
 set_env CHATOS_IMAGE_TAG "$IMAGE_TAG"
 set_env SANDBOX_MANAGER_DOCKER_IMAGE "$IMAGE_NAMESPACE/chatos-rs-sandbox-agent:$IMAGE_TAG"
+set_env DOCKER_SOCKET_PROXY_IMAGE "$DOCKER_SOCKET_PROXY_IMAGE"
 set_env CHATOS_DOCKER_EXTRA_COMPOSE_FILES ""
 set_env HARNESS_PORT "3000"
 set_env HARNESS_SSH_PORT "3022"
@@ -180,6 +191,7 @@ case "${1:-}" in
 esac
 
 require_harness_ci_images_for_services "$@"
+ensure_runtime_image "$DOCKER_SOCKET_PROXY_IMAGE"
 
 if [[ $# -eq 0 ]]; then
   echo "[INFO] using local Harness CI images: $IMAGE_NAMESPACE/*:$IMAGE_TAG"
