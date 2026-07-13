@@ -14,6 +14,7 @@ services:
       args:
         MANIFEST_PATH: user_service/backend/Cargo.toml
         BIN_NAME: user_service_backend
+        CARGO_TARGET_CACHE_ID: ${CHATOS_CARGO_TARGET_CACHE_ID:-chatos-rust-target-1.94-j4}
 
   memory-engine-backend:
     build:
@@ -22,6 +23,7 @@ services:
       args:
         MANIFEST_PATH: memory_engine/backend/Cargo.toml
         BIN_NAME: memory_engine
+        CARGO_TARGET_CACHE_ID: ${CHATOS_CARGO_TARGET_CACHE_ID:-chatos-rust-target-1.94-j4}
 
   project-management-backend:
     build:
@@ -31,6 +33,7 @@ services:
         MANIFEST_PATH: Cargo.toml
         PACKAGE_NAME: project_management_service_backend
         BIN_NAME: project_management_service_backend
+        CARGO_TARGET_CACHE_ID: ${CHATOS_CARGO_TARGET_CACHE_ID:-chatos-rust-target-1.94-j4}
 
   plugin-management-backend:
     build:
@@ -40,6 +43,7 @@ services:
         MANIFEST_PATH: Cargo.toml
         PACKAGE_NAME: plugin_management_service_backend
         BIN_NAME: plugin_management_service_backend
+        CARGO_TARGET_CACHE_ID: ${CHATOS_CARGO_TARGET_CACHE_ID:-chatos-rust-target-1.94-j4}
 
   local-connector-service-backend:
     build:
@@ -49,6 +53,7 @@ services:
         MANIFEST_PATH: Cargo.toml
         PACKAGE_NAME: local_connector_service_backend
         BIN_NAME: local_connector_service_backend
+        CARGO_TARGET_CACHE_ID: ${CHATOS_CARGO_TARGET_CACHE_ID:-chatos-rust-target-1.94-j4}
 
   sandbox-manager-backend:
     build:
@@ -58,6 +63,7 @@ services:
         MANIFEST_PATH: Cargo.toml
         PACKAGE_NAME: sandbox_manager_service_backend
         BIN_NAME: sandbox_manager_service_backend
+        CARGO_TARGET_CACHE_ID: ${CHATOS_CARGO_TARGET_CACHE_ID:-chatos-rust-target-1.94-j4}
 
   task-runner-backend:
     build:
@@ -67,6 +73,7 @@ services:
         MANIFEST_PATH: Cargo.toml
         PACKAGE_NAME: task_runner_service_backend
         BIN_NAME: task_runner_service_backend
+        CARGO_TARGET_CACHE_ID: ${CHATOS_CARGO_TARGET_CACHE_ID:-chatos-rust-target-1.94-j4}
 
   chatos-backend:
     build:
@@ -76,6 +83,7 @@ services:
         MANIFEST_PATH: Cargo.toml
         PACKAGE_NAME: chat_app_server_rs
         BIN_NAME: chat_app_server_rs
+        CARGO_TARGET_CACHE_ID: ${CHATOS_CARGO_TARGET_CACHE_ID:-chatos-rust-target-1.94-j4}
 
   official-website-backend:
     build:
@@ -85,6 +93,7 @@ services:
         MANIFEST_PATH: Cargo.toml
         PACKAGE_NAME: official_website_service_backend
         BIN_NAME: official_website_service_backend
+        CARGO_TARGET_CACHE_ID: ${CHATOS_CARGO_TARGET_CACHE_ID:-chatos-rust-target-1.94-j4}
 
   chatos-frontend:
     build:
