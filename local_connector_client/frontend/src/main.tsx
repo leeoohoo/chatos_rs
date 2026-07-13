@@ -4,11 +4,13 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import {
+  ArrowLeft,
   Brain,
   Cpu,
   FolderOpen,
   LockKeyhole,
   Moon,
+  PackageCheck,
   Plug,
   RefreshCw,
   Server,
@@ -34,6 +36,7 @@ import { ModelConfigPanel } from './components/ModelConfigPanel';
 import { McpConfigPanel } from './components/McpConfigPanel';
 import { RuntimeSettingsPanel } from './components/RuntimeSettingsPanel';
 import { SandboxPanel } from './components/SandboxPanel';
+import { SkillSettingsPanel } from './components/SkillSettingsPanel';
 import { TerminalPanel } from './components/TerminalPanel';
 import './styles.css';
 import './styles-controls.css';
@@ -43,9 +46,10 @@ import './styles-models.css';
 import './styles-mcp.css';
 import './styles-command-history.css';
 import './styles-sandbox.css';
+import './styles-skills.css';
 import './styles-responsive.css';
 
-type AppTab = 'overview' | 'workspaces' | 'mcps' | 'terminal' | 'models' | 'approval' | 'settings' | 'sandbox';
+type AppTab = 'overview' | 'workspaces' | 'mcps' | 'skills' | 'terminal' | 'models' | 'approval' | 'settings' | 'sandbox';
 type LocalIcon = typeof Server;
 type ThemeMode = 'light' | 'dark';
 
@@ -78,6 +82,13 @@ const TABS: Array<{
     icon: Plug,
   },
   {
+    id: 'skills',
+    label: 'Skills',
+    eyebrow: 'LOCAL SKILLS',
+    description: '启用安装包内置并由本机执行的系统 Skills。',
+    icon: PackageCheck,
+  },
+  {
     id: 'terminal',
     label: '本机终端',
     eyebrow: 'TERMINAL',
@@ -100,9 +111,9 @@ const TABS: Array<{
   },
   {
     id: 'settings',
-    label: '运行配置',
-    eyebrow: 'RUNTIME',
-    description: '调整 Local Connector Core 的本机运行参数。',
+    label: '运行与权限',
+    eyebrow: 'RUNTIME & PERMISSIONS',
+    description: '调整本机运行参数，并检查 Skills 所需的系统权限。',
     icon: Settings2,
   },
   {
@@ -143,7 +154,11 @@ function ShellApp() {
       </div>
       <div className="desktopShellStatus">
         <span className={status?.connector_running ? 'coreStatusDot online' : 'coreStatusDot'} />
-        <strong>{status?.connector_running ? '本机已连接' : status?.configured ? '等待连接' : '未授权本机'}</strong>
+        <strong>
+          {status?.developer_mode
+            ? status?.connector_running ? '开发环境已连接' : '开发者模式'
+            : status?.connector_running ? '本机已连接' : status?.configured ? '等待连接' : '未授权本机'}
+        </strong>
         {status?.user?.username ? <small>{status.user.username}</small> : null}
       </div>
       <div className="desktopShellActions">
@@ -240,6 +255,15 @@ function SettingsApp() {
           </div>
         </div>
         <div className="topbarActions">
+          <button
+            type="button"
+            className="ghostButton compact"
+            onClick={() => void window.chatosLocalConnector?.closeSettings?.()}
+            title="关闭设置并返回 Chat OS"
+          >
+            <ArrowLeft size={16} />
+            <span>返回主页面</span>
+          </button>
           <div className="coreStatus">
             <span className={status?.connector_running ? 'coreStatusDot online' : 'coreStatusDot'} />
             <div>
@@ -299,6 +323,9 @@ function SettingsApp() {
             <button type="button" className="primaryButton" onClick={() => void refresh()}>
               刷新本机状态
             </button>
+            <div className="authDeveloperSettings">
+              <RuntimeSettingsPanel developerOnly />
+            </div>
           </section>
         </main>
       ) : (
@@ -322,6 +349,9 @@ function SettingsApp() {
               ) : null}
               {activeTab === 'workspaces' ? <WorkspacePanel status={status} onStatus={setStatus} /> : null}
               {activeTab === 'mcps' ? <McpConfigPanel /> : null}
+              {activeTab === 'skills' ? (
+                <SkillSettingsPanel onOpenPermissions={() => setActiveTab('settings')} />
+              ) : null}
               {activeTab === 'terminal' ? <TerminalPanel status={status} /> : null}
               {activeTab === 'models' ? <ModelConfigPanel /> : null}
               {activeTab === 'approval' ? <ApprovalPanel /> : null}

@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "bundle_id": "chatos.internal.skill-installer",
+  "skill_id": "internal_skill_skill_installer",
+  "name": "skill-installer",
+  "display_name": "Skill 安装器",
+  "version": "1.0.0",
+  "publisher": "chatos",
+  "source_kind": "admin_created",
+  "entrypoint": { "kind": "prompt_only" },
+  "instructions_path": "instructions.md",
+  "requires_workspace": false,
+  "permissions": [],
+  "platforms": ["macos-arm64", "macos-x64", "windows-x64", "windows-arm64"]
+}

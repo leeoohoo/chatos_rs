@@ -8,8 +8,10 @@ use serde::Deserialize;
 use crate::config::PluginManagementClientConfig;
 use crate::dto::{
     LocalConnectorMcpListResponse, LocalConnectorMcpStatusBatchRequest,
-    LocalConnectorMcpStatusRequest, LocalConnectorMcpSyncRequest, McpRecord,
-    ResolveAgentCapabilitiesRequest, ResolvedAgentCapabilities, ResourceCheckRecord,
+    LocalConnectorMcpStatusRequest, LocalConnectorMcpSyncRequest,
+    LocalConnectorSkillInventoryRequest, McpRecord, ResolveAgentCapabilitiesRequest,
+    ResolvedAgentCapabilities, ResourceCheckRecord, SkillInstallationRecord,
+    UpdateUserSkillPreferenceRequest, UserSkillCatalogItem, UserSkillCatalogResponse,
 };
 use crate::error::PluginManagementClientError;
 
@@ -181,6 +183,61 @@ impl PluginManagementClient {
     ) -> Result<Vec<ResourceCheckRecord>, PluginManagementClientError> {
         let url = format!(
             "{}/api/internal/local-connector/mcps/status/batch",
+            self.config.base_url
+        );
+        let response = self
+            .internal_request(Method::PUT, url, LOCAL_CONNECTOR_WRITE_SCOPE)?
+            .json(request)
+            .send()
+            .await?;
+        parse_response(response).await
+    }
+
+    pub async fn list_user_skill_catalog(
+        &self,
+        owner_user_id: &str,
+        device_id: Option<&str>,
+    ) -> Result<UserSkillCatalogResponse, PluginManagementClientError> {
+        let url = format!(
+            "{}/api/internal/local-connector/skills/catalog",
+            self.config.base_url
+        );
+        let mut query = vec![("owner_user_id", owner_user_id)];
+        if let Some(device_id) = device_id {
+            query.push(("device_id", device_id));
+        }
+        let response = self
+            .internal_request(Method::GET, url, LOCAL_CONNECTOR_READ_SCOPE)?
+            .query(&query)
+            .send()
+            .await?;
+        parse_response(response).await
+    }
+
+    pub async fn update_user_skill_preference(
+        &self,
+        skill_id: &str,
+        request: &UpdateUserSkillPreferenceRequest,
+    ) -> Result<UserSkillCatalogItem, PluginManagementClientError> {
+        let url = format!(
+            "{}/api/internal/local-connector/skills/{}/preference",
+            self.config.base_url,
+            urlencoding::encode(skill_id)
+        );
+        let response = self
+            .internal_request(Method::PUT, url, LOCAL_CONNECTOR_WRITE_SCOPE)?
+            .json(request)
+            .send()
+            .await?;
+        parse_response(response).await
+    }
+
+    pub async fn sync_local_connector_skill_inventory(
+        &self,
+        request: &LocalConnectorSkillInventoryRequest,
+    ) -> Result<Vec<SkillInstallationRecord>, PluginManagementClientError> {
+        let url = format!(
+            "{}/api/internal/local-connector/skills/inventory",
             self.config.base_url
         );
         let response = self

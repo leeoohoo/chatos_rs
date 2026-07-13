@@ -46,6 +46,10 @@
       {
         "from": "electron/resources/bundled-tools",
         "to": "bundled-tools"
+      },
+      {
+        "from": "electron/resources/skill_bundles",
+        "to": "skill-bundles"
       }
     ],
     "win": {

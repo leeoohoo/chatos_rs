@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "bundle_id": "chatos.internal.figma-code-connect",
+  "skill_id": "internal_skill_figma_code_connect",
+  "name": "figma-code-connect",
+  "display_name": "Figma Code Connect",
+  "version": "1.0.0",
+  "publisher": "chatos",
+  "source_kind": "admin_created",
+  "entrypoint": { "kind": "mcp_bridge", "adapter": "figma-code-connect" },
+  "instructions_path": "instructions.md",
+  "requires_workspace": true,
+  "permissions": ["workspace.read", "workspace.write", "figma.oauth"],
+  "platforms": ["macos-arm64", "macos-x64", "windows-x64", "windows-arm64"]
+}

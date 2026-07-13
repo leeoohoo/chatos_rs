@@ -257,6 +257,31 @@ fn local_connector_routing_passes_only_selected_local_capabilities() {
 }
 
 #[test]
+fn selected_skill_keeps_local_workspace_routing_without_builtin_tools() {
+    let mut task = sample_task(TASK_PROFILE_DEFAULT, Vec::new());
+    task.mcp_config.selected_skill_ids = vec!["internal_skill_visualize".to_string()];
+
+    let changed = super::apply_local_connector_runtime_routing_to_task(
+        &mut task,
+        "local://connector/device-1/workspace-1/apps/web",
+        false,
+    );
+
+    assert!(changed);
+    let server = task
+        .mcp_config
+        .ephemeral_http_servers
+        .first()
+        .expect("local connector server");
+    assert_eq!(server.name, "local_connector");
+    assert!(server
+        .headers
+        .get(LOCAL_CONNECTOR_ENABLED_BUILTIN_KINDS_HEADER)
+        .is_none());
+    assert!(server.url.contains("workspace_id=workspace-1"));
+}
+
+#[test]
 fn local_connector_plan_routing_routes_profile_required_capabilities() {
     let mut task = sample_task(TASK_PROFILE_CHATOS_PLAN, Vec::new());
 

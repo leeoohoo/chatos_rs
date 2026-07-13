@@ -10,6 +10,12 @@ mod mongo;
 
 pub use self::mongo::MongoConnectorStore;
 
+#[derive(Debug)]
+pub enum SessionAcquireError {
+    AlreadyActive,
+    Store(String),
+}
+
 #[derive(Clone)]
 pub enum ConnectorStore {
     Mongo(MongoConnectorStore),
@@ -45,7 +51,10 @@ impl ConnectorStore {
         owner_user_id: &str,
     ) -> Result<Vec<LocalConnectorDevice>, String> {
         match self {
-            Self::Mongo(store) => store.list_devices(owner_user_id).await,
+            Self::Mongo(store) => {
+                store.cleanup_expired_owner_session(owner_user_id).await?;
+                store.list_devices(owner_user_id).await
+            }
         }
     }
 
@@ -211,21 +220,76 @@ impl ConnectorStore {
         }
     }
 
-    pub async fn open_session(&self, session: &LocalConnectorSession) -> Result<(), String> {
+    pub async fn open_session(
+        &self,
+        session: &LocalConnectorSession,
+    ) -> Result<(), SessionAcquireError> {
         match self {
             Self::Mongo(store) => store.open_session(session).await,
         }
     }
 
-    pub async fn heartbeat_session(&self, session_id: &str, device_id: &str) -> Result<(), String> {
+    pub async fn heartbeat_session(
+        &self,
+        owner_user_id: &str,
+        session_id: &str,
+        device_id: &str,
+        lease_ttl: std::time::Duration,
+    ) -> Result<bool, String> {
         match self {
-            Self::Mongo(store) => store.heartbeat_session(session_id, device_id).await,
+            Self::Mongo(store) => {
+                store
+                    .heartbeat_session(owner_user_id, session_id, device_id, lease_ttl)
+                    .await
+            }
         }
     }
 
-    pub async fn close_session(&self, session_id: &str, device_id: &str) -> Result<(), String> {
+    pub async fn close_session(
+        &self,
+        owner_user_id: &str,
+        session_id: &str,
+        device_id: &str,
+    ) -> Result<bool, String> {
         match self {
-            Self::Mongo(store) => store.close_session(session_id, device_id).await,
+            Self::Mongo(store) => {
+                store
+                    .close_session(owner_user_id, session_id, device_id)
+                    .await
+            }
+        }
+    }
+
+    pub async fn close_device_session(
+        &self,
+        owner_user_id: &str,
+        device_id: &str,
+    ) -> Result<bool, String> {
+        match self {
+            Self::Mongo(store) => store.close_device_session(owner_user_id, device_id).await,
+        }
+    }
+
+    pub async fn session_holds_active_lease(
+        &self,
+        owner_user_id: &str,
+        device_id: &str,
+    ) -> Result<bool, String> {
+        match self {
+            Self::Mongo(store) => {
+                store
+                    .session_holds_active_lease(owner_user_id, device_id)
+                    .await
+            }
+        }
+    }
+
+    pub async fn active_session(
+        &self,
+        owner_user_id: &str,
+    ) -> Result<Option<LocalConnectorSession>, String> {
+        match self {
+            Self::Mongo(store) => store.active_session(owner_user_id).await,
         }
     }
 }

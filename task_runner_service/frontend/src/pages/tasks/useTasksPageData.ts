@@ -219,6 +219,10 @@ export function useTasksPageData({
     queryKey: ['mcp-catalog'],
     queryFn: api.listMcpCatalog,
   });
+  const taskCapabilityCatalogQuery = useQuery({
+    queryKey: ['task-capability-catalog'],
+    queryFn: api.listTaskCapabilityCatalog,
+  });
   const remoteServersQuery = useQuery({
     queryKey: ['remote-servers'],
     queryFn: api.listRemoteServers,
@@ -477,6 +481,7 @@ export function useTasksPageData({
     modelsQuery,
     projectsQuery,
     mcpCatalogQuery,
+    taskCapabilityCatalogQuery,
     remoteServersQuery,
     externalMcpConfigsQuery,
     taskMemoryContextQuery,

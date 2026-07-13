@@ -14,11 +14,16 @@ use chatos_mcp_service::{
 use serde::Serialize;
 use tokio::process::Command;
 
+use crate::skills::internal_skill_catalog;
 use crate::{select_local_shell, LocalState};
 
 const PERMISSION_WORKSPACE_FILES: &str = "workspace_files";
 const PERMISSION_TERMINAL_EXECUTION: &str = "terminal_execution";
 const PERMISSION_BROWSER_AUTOMATION: &str = "browser_automation";
+const PERMISSION_NETWORK_ACCESS: &str = "network_access";
+const PERMISSION_ACCESSIBILITY_CONTROL: &str = "accessibility_control";
+const PERMISSION_SCREEN_RECORDING: &str = "screen_recording";
+const PERMISSION_OFFICE_AUTOMATION: &str = "office_automation";
 
 #[derive(Debug, Serialize)]
 pub(crate) struct SystemPermissionsResponse {
@@ -39,6 +44,7 @@ pub(crate) struct SystemPermissionItem {
     pub(crate) request_label: String,
     pub(crate) settings_target: Option<String>,
     pub(crate) builtin_kinds: Vec<String>,
+    pub(crate) skill_ids: Vec<String>,
     pub(crate) note: String,
     pub(crate) last_error: Option<String>,
 }
@@ -52,6 +58,10 @@ pub(crate) async fn system_permissions_response(state: &LocalState) -> SystemPer
             workspace_files_permission(state),
             terminal_execution_permission().await,
             browser_automation_permission(),
+            network_access_permission(),
+            accessibility_control_permission(),
+            screen_recording_permission(),
+            office_automation_permission(),
         ],
     }
 }
@@ -107,6 +117,7 @@ fn workspace_files_permission(state: &LocalState) -> SystemPermissionItem {
             BUILTIN_KIND_CODE_MAINTAINER_READ.to_string(),
             BUILTIN_KIND_CODE_MAINTAINER_WRITE.to_string(),
         ],
+        skill_ids: workspace_skill_ids(),
         note: workspace_files_note(),
         last_error,
     }
@@ -129,13 +140,14 @@ async fn terminal_execution_permission() -> SystemPermissionItem {
         request_label: request_label_for_permission(PERMISSION_TERMINAL_EXECUTION).to_string(),
         settings_target: settings_target_label_for_permission(PERMISSION_TERMINAL_EXECUTION),
         builtin_kinds: vec![BUILTIN_KIND_TERMINAL_CONTROLLER.to_string()],
+        skill_ids: skill_ids_requiring(&["process.spawn"]),
         note: terminal_execution_note(),
         last_error,
     }
 }
 
 fn browser_automation_permission() -> SystemPermissionItem {
-    let browser_runtime_available = command_exists("agent-browser") || command_exists("npx");
+    let browser_runtime_available = agent_browser_runtime_available();
     let (status, status_label, last_error) = if browser_runtime_available {
         ("ready", "已就绪", None)
     } else {
@@ -143,7 +155,7 @@ fn browser_automation_permission() -> SystemPermissionItem {
             "missing_dependency",
             "缺少运行时",
             Some(
-                "未找到 agent-browser 或 npx；请安装 agent-browser CLI 并执行 agent-browser install"
+                "未找到真实的 agent-browser 可执行文件；请安装 agent-browser CLI 并执行 agent-browser install"
                     .to_string(),
             ),
         )
@@ -160,9 +172,162 @@ fn browser_automation_permission() -> SystemPermissionItem {
         request_label: request_label_for_permission(PERMISSION_BROWSER_AUTOMATION).to_string(),
         settings_target: settings_target_label_for_permission(PERMISSION_BROWSER_AUTOMATION),
         builtin_kinds: vec![BUILTIN_KIND_BROWSER_TOOLS.to_string()],
+        skill_ids: skill_ids_requiring(&["browser.control"]),
         note: browser_automation_note(browser_runtime_available),
         last_error,
     }
+}
+
+fn network_access_permission() -> SystemPermissionItem {
+    SystemPermissionItem {
+        id: PERMISSION_NETWORK_ACCESS.to_string(),
+        label: "HTTPS 网络访问".to_string(),
+        summary: "用于 OpenAI 官方文档检索、图片模型请求和本机浏览器访问网络。".to_string(),
+        status: "ready".to_string(),
+        status_label: "无需额外授权".to_string(),
+        required: false,
+        can_request: false,
+        request_label: "无需设置".to_string(),
+        settings_target: None,
+        builtin_kinds: Vec::new(),
+        skill_ids: skill_ids_requiring(&["network.https"]),
+        note: "公网 HTTPS 由当前用户网络环境、防火墙和代理策略控制；Local Connector 不绕过系统网络策略。".to_string(),
+        last_error: None,
+    }
+}
+
+fn accessibility_control_permission() -> SystemPermissionItem {
+    let (status, status_label, note) = match std::env::consts::OS {
+        "macos" => (
+            "unknown",
+            "等待系统检测",
+            "macOS 的桌面控件操作需要“辅助功能”权限；桌面版会读取系统实际授权状态。",
+        ),
+        "windows" => (
+            "not_applicable",
+            "无需单独授权",
+            "Windows UI Automation 通常不需要单独的隐私权限，但仍受当前用户权限和应用完整性级别限制。",
+        ),
+        _ => (
+            "not_applicable",
+            "当前平台未启用",
+            "当前版本尚未提供该平台的桌面控制 Adapter。",
+        ),
+    };
+    SystemPermissionItem {
+        id: PERMISSION_ACCESSIBILITY_CONTROL.to_string(),
+        label: "辅助功能控制".to_string(),
+        summary: "用于未来的 Computer Use Skill 读取并操作桌面控件。".to_string(),
+        status: status.to_string(),
+        status_label: status_label.to_string(),
+        required: false,
+        can_request: settings_target_for_permission(PERMISSION_ACCESSIBILITY_CONTROL).is_some(),
+        request_label: request_label_for_permission(PERMISSION_ACCESSIBILITY_CONTROL).to_string(),
+        settings_target: settings_target_label_for_permission(PERMISSION_ACCESSIBILITY_CONTROL),
+        builtin_kinds: Vec::new(),
+        skill_ids: skill_ids_requiring(&["system.accessibility", "desktop.control"]),
+        note: note.to_string(),
+        last_error: None,
+    }
+}
+
+fn screen_recording_permission() -> SystemPermissionItem {
+    let (status, status_label, note) = match std::env::consts::OS {
+        "macos" => (
+            "unknown",
+            "等待系统检测",
+            "macOS 读取其他应用画面需要“屏幕与系统音频录制”权限；桌面版会读取系统实际授权状态。",
+        ),
+        "windows" => (
+            "not_applicable",
+            "无需单独授权",
+            "Windows 桌面捕获通常不需要单独的隐私开关，但受系统策略和受保护内容限制。",
+        ),
+        _ => (
+            "not_applicable",
+            "当前平台未启用",
+            "当前版本尚未提供该平台的桌面观察 Adapter。",
+        ),
+    };
+    SystemPermissionItem {
+        id: PERMISSION_SCREEN_RECORDING.to_string(),
+        label: "屏幕录制".to_string(),
+        summary: "用于未来的 Computer Use Skill 观察其他桌面应用。".to_string(),
+        status: status.to_string(),
+        status_label: status_label.to_string(),
+        required: false,
+        can_request: settings_target_for_permission(PERMISSION_SCREEN_RECORDING).is_some(),
+        request_label: request_label_for_permission(PERMISSION_SCREEN_RECORDING).to_string(),
+        settings_target: settings_target_label_for_permission(PERMISSION_SCREEN_RECORDING),
+        builtin_kinds: Vec::new(),
+        skill_ids: skill_ids_requiring(&["desktop.observe"]),
+        note: note.to_string(),
+        last_error: None,
+    }
+}
+
+fn office_automation_permission() -> SystemPermissionItem {
+    let (status, status_label, note) = match std::env::consts::OS {
+        "macos" => (
+            "on_demand",
+            "按需授权",
+            "控制 Microsoft Excel 时，macOS 会按目标应用单独请求“自动化”权限。",
+        ),
+        "windows" => (
+            "not_applicable",
+            "无需单独授权",
+            "Windows Office Automation 使用当前用户的 Office/COM 权限，不提供统一隐私开关。",
+        ),
+        _ => (
+            "not_applicable",
+            "当前平台未启用",
+            "当前版本尚未提供该平台的 Excel Live Control Adapter。",
+        ),
+    };
+    SystemPermissionItem {
+        id: PERMISSION_OFFICE_AUTOMATION.to_string(),
+        label: "Office 自动化".to_string(),
+        summary: "用于未来的 Excel Live Control Skill 控制已打开的 Microsoft Excel。".to_string(),
+        status: status.to_string(),
+        status_label: status_label.to_string(),
+        required: false,
+        can_request: settings_target_for_permission(PERMISSION_OFFICE_AUTOMATION).is_some(),
+        request_label: request_label_for_permission(PERMISSION_OFFICE_AUTOMATION).to_string(),
+        settings_target: settings_target_label_for_permission(PERMISSION_OFFICE_AUTOMATION),
+        builtin_kinds: Vec::new(),
+        skill_ids: skill_ids_requiring(&["office.excel.control"]),
+        note: note.to_string(),
+        last_error: None,
+    }
+}
+
+fn workspace_skill_ids() -> Vec<String> {
+    skill_ids_requiring(&["workspace.read", "workspace.write"])
+}
+
+fn skill_ids_requiring(permission_names: &[&str]) -> Vec<String> {
+    let Ok(catalog) = internal_skill_catalog() else {
+        return Vec::new();
+    };
+    catalog
+        .skills
+        .into_iter()
+        .filter(|item| {
+            item.permissions.iter().any(|permission| {
+                permission_names
+                    .iter()
+                    .any(|candidate| permission == candidate)
+            })
+        })
+        .map(|item| item.skill_id)
+        .collect()
+}
+
+fn agent_browser_runtime_available() -> bool {
+    std::env::var_os("AGENT_BROWSER_BIN")
+        .map(std::path::PathBuf::from)
+        .is_some_and(|path| path.is_file())
+        || command_exists("agent-browser")
 }
 
 async fn probe_shell_execution() -> std::result::Result<(), String> {
@@ -262,6 +427,24 @@ fn macos_settings_target(permission_id: &str) -> Option<SettingsTarget> {
             value: "x-apple.systempreferences:com.apple.preference.security?Privacy_Automation",
             label: "macOS 隐私与安全性 · 自动化",
         }),
+        PERMISSION_ACCESSIBILITY_CONTROL => Some(SettingsTarget {
+            kind: SettingsTargetKind::Macos,
+            opener: "open",
+            value: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility",
+            label: "macOS 隐私与安全性 · 辅助功能",
+        }),
+        PERMISSION_SCREEN_RECORDING => Some(SettingsTarget {
+            kind: SettingsTargetKind::Macos,
+            opener: "open",
+            value: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture",
+            label: "macOS 隐私与安全性 · 屏幕与系统音频录制",
+        }),
+        PERMISSION_OFFICE_AUTOMATION => Some(SettingsTarget {
+            kind: SettingsTargetKind::Macos,
+            opener: "open",
+            value: "x-apple.systempreferences:com.apple.preference.security?Privacy_Automation",
+            label: "macOS 隐私与安全性 · 自动化",
+        }),
         _ => None,
     }
 }
@@ -316,6 +499,18 @@ fn request_label_for_permission(permission_id: &str) -> &'static str {
             "macos" => "打开自动化权限",
             _ => "打开系统设置",
         },
+        PERMISSION_ACCESSIBILITY_CONTROL => match std::env::consts::OS {
+            "macos" => "打开辅助功能权限",
+            _ => "打开系统设置",
+        },
+        PERMISSION_SCREEN_RECORDING => match std::env::consts::OS {
+            "macos" => "打开屏幕录制权限",
+            _ => "打开系统设置",
+        },
+        PERMISSION_OFFICE_AUTOMATION => match std::env::consts::OS {
+            "macos" => "打开自动化权限",
+            _ => "打开系统设置",
+        },
         _ => "打开系统设置",
     }
 }
@@ -338,7 +533,7 @@ fn terminal_execution_note() -> String {
 
 fn browser_automation_note(runtime_available: bool) -> String {
     let runtime_note = if runtime_available {
-        "已检测到 agent-browser 或 npx。"
+        "已检测到真实的 agent-browser 可执行文件。"
     } else {
         "需要先安装 agent-browser CLI。"
     };
@@ -389,5 +584,56 @@ fn platform_label(platform: &str) -> &str {
         "windows" => "Windows",
         "linux" => "Linux",
         other => other,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn system_permissions_include_skill_capability_mappings() {
+        let response = system_permissions_response(&LocalState::default()).await;
+        assert_eq!(response.items.len(), 7);
+        let workspace = response
+            .items
+            .iter()
+            .find(|item| item.id == PERMISSION_WORKSPACE_FILES)
+            .expect("workspace permission");
+        assert!(workspace
+            .skill_ids
+            .iter()
+            .any(|skill_id| skill_id == "internal_skill_documents"));
+        let browser = response
+            .items
+            .iter()
+            .find(|item| item.id == PERMISSION_BROWSER_AUTOMATION)
+            .expect("browser permission");
+        assert_eq!(browser.skill_ids, vec!["internal_skill_browser"]);
+        let accessibility = response
+            .items
+            .iter()
+            .find(|item| item.id == PERMISSION_ACCESSIBILITY_CONTROL)
+            .expect("accessibility permission");
+        assert_eq!(accessibility.skill_ids, vec!["internal_skill_computer_use"]);
+    }
+
+    #[test]
+    fn permission_mappings_follow_the_embedded_skill_catalog() {
+        assert!(skill_ids_requiring(&["workspace.read"])
+            .iter()
+            .any(|skill_id| skill_id == "internal_skill_openai_docs"));
+        assert_eq!(
+            skill_ids_requiring(&["process.spawn"]),
+            vec!["internal_skill_browser"]
+        );
+        assert_eq!(
+            skill_ids_requiring(&["desktop.observe"]),
+            vec!["internal_skill_computer_use"]
+        );
+        assert_eq!(
+            skill_ids_requiring(&["office.excel.control"]),
+            vec!["internal_skill_excel_live_control"]
+        );
     }
 }

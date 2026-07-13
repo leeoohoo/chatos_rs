@@ -136,6 +136,53 @@ fn responses_payload_supports_prompt_cache_and_cwd() {
 }
 
 #[test]
+fn responses_payload_normalizes_legacy_text_parts_by_message_role() {
+    let payload = build_responses_request_payload(
+        json!([
+            {
+                "type": "message",
+                "role": "system",
+                "content": [{"type": "text", "text": "system context"}]
+            },
+            {
+                "type": "message",
+                "role": "user",
+                "content": [{"type": "text", "text": "hello"}]
+            },
+            {
+                "type": "message",
+                "role": "assistant",
+                "content": [{"type": "text", "text": "previous reply"}]
+            }
+        ]),
+        "gpt-5.4".to_string(),
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        Some("openai".to_string()),
+        None,
+        true,
+        false,
+    );
+
+    assert_eq!(
+        payload.pointer("/input/0/content/0/type"),
+        Some(&Value::String("input_text".to_string()))
+    );
+    assert_eq!(
+        payload.pointer("/input/1/content/0/type"),
+        Some(&Value::String("input_text".to_string()))
+    );
+    assert_eq!(
+        payload.pointer("/input/2/content/0/type"),
+        Some(&Value::String("output_text".to_string()))
+    );
+}
+
+#[test]
 fn responses_payload_requests_summary_for_gpt_model_on_compatible_provider() {
     let payload = build_responses_request_payload(
         json!([]),

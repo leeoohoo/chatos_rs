@@ -10,6 +10,7 @@ use crate::models::CurrentUser;
 pub(super) const TOKEN_AUDIENCE: &str = "local-connector-service";
 pub(super) const MCP_RELAY_SCOPE: &str = "relay.mcp";
 pub(super) const TERMINAL_RELAY_SCOPE: &str = "relay.terminal";
+pub(super) const SKILL_RELAY_SCOPE: &str = "relay.skill";
 pub(super) const MODEL_RUNTIME_READ_SCOPE: &str = "model-runtime.read";
 
 const CHATOS_CALLER: &str = "chatos-backend";
@@ -122,6 +123,13 @@ fn internal_access_for_request(method: &Method, path: &str) -> Option<InternalAc
     match (method, parts.as_slice()) {
         (&Method::POST, ["api", "local-connectors", "relay", _, "mcp"]) => Some(InternalAccess {
             scope: MCP_RELAY_SCOPE,
+            allowed_callers: &[TASK_RUNNER_CALLER],
+        }),
+        (
+            &Method::POST,
+            ["api", "local-connectors", "relay", _, "skills", "prepare" | "execute" | "cancel"],
+        ) => Some(InternalAccess {
+            scope: SKILL_RELAY_SCOPE,
             allowed_callers: &[TASK_RUNNER_CALLER],
         }),
         (&Method::GET, ["api", "local-connectors", "model-runtime", _]) => Some(InternalAccess {
@@ -278,6 +286,7 @@ mod tests {
             require_device_connect_signature: true,
             allow_device_connect_query_token: false,
             device_connect_signature_max_skew: Duration::from_secs(300),
+            active_session_lease_ttl: Duration::from_secs(90),
         }
     }
 }

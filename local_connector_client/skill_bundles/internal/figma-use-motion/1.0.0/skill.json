@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "bundle_id": "chatos.internal.figma-use-motion",
+  "skill_id": "internal_skill_figma_use_motion",
+  "name": "figma-use-motion",
+  "display_name": "Figma 动效编辑",
+  "version": "1.0.0",
+  "publisher": "chatos",
+  "source_kind": "admin_created",
+  "entrypoint": { "kind": "mcp_bridge", "adapter": "figma-use-motion" },
+  "instructions_path": "instructions.md",
+  "requires_workspace": false,
+  "permissions": ["figma.oauth", "figma.files.read", "figma.files.write"],
+  "platforms": ["macos-arm64", "macos-x64", "windows-x64", "windows-arm64"]
+}

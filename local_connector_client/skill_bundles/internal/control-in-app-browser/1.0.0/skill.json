@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "bundle_id": "chatos.internal.browser",
+  "skill_id": "internal_skill_browser",
+  "name": "control-in-app-browser",
+  "display_name": "本机浏览器控制",
+  "version": "1.0.0",
+  "publisher": "chatos",
+  "source_kind": "admin_created",
+  "entrypoint": { "kind": "mcp_bridge", "adapter": "browser" },
+  "instructions_path": "instructions.md",
+  "requires_workspace": true,
+  "permissions": ["workspace.read", "process.spawn", "network.https", "browser.control"],
+  "platforms": ["macos-arm64", "macos-x64", "windows-x64", "windows-arm64"]
+}

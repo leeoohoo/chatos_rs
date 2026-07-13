@@ -17,13 +17,19 @@ use super::internal_auth::internal_service_user_from_request;
 pub struct ApiError {
     status: StatusCode,
     message: String,
+    code: Option<String>,
 }
 
 impl ApiError {
+    pub fn message(&self) -> &str {
+        self.message.as_str()
+    }
+
     pub fn bad_request(message: impl Into<String>) -> Self {
         Self {
             status: StatusCode::BAD_REQUEST,
             message: message.into(),
+            code: None,
         }
     }
 
@@ -31,6 +37,7 @@ impl ApiError {
         Self {
             status: StatusCode::UNAUTHORIZED,
             message: message.into(),
+            code: None,
         }
     }
 
@@ -38,6 +45,7 @@ impl ApiError {
         Self {
             status: StatusCode::FORBIDDEN,
             message: message.into(),
+            code: None,
         }
     }
 
@@ -45,6 +53,7 @@ impl ApiError {
         Self {
             status: StatusCode::NOT_FOUND,
             message: message.into(),
+            code: None,
         }
     }
 
@@ -52,6 +61,7 @@ impl ApiError {
         Self {
             status: StatusCode::INTERNAL_SERVER_ERROR,
             message: message.into(),
+            code: None,
         }
     }
 
@@ -59,6 +69,7 @@ impl ApiError {
         Self {
             status: StatusCode::BAD_GATEWAY,
             message: message.into(),
+            code: None,
         }
     }
 
@@ -66,6 +77,7 @@ impl ApiError {
         Self {
             status: StatusCode::SERVICE_UNAVAILABLE,
             message: message.into(),
+            code: None,
         }
     }
 
@@ -73,6 +85,7 @@ impl ApiError {
         Self {
             status: StatusCode::GATEWAY_TIMEOUT,
             message: message.into(),
+            code: None,
         }
     }
 
@@ -80,6 +93,15 @@ impl ApiError {
         Self {
             status: StatusCode::NOT_IMPLEMENTED,
             message: message.into(),
+            code: None,
+        }
+    }
+
+    pub fn conflict(code: impl Into<String>, message: impl Into<String>) -> Self {
+        Self {
+            status: StatusCode::CONFLICT,
+            message: message.into(),
+            code: Some(code.into()),
         }
     }
 }
@@ -90,6 +112,7 @@ impl IntoResponse for ApiError {
             self.status,
             Json(ErrorResponse {
                 error: self.message,
+                code: self.code,
             }),
         )
             .into_response()

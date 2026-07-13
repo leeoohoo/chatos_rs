@@ -105,6 +105,7 @@ fn public_key_from_pkcs8(pkcs8: &[u8]) -> Result<String> {
 
 fn load_private_key(state_path: &Path) -> Result<Option<Vec<u8>>> {
     let path = private_key_path(state_path);
+    #[cfg(not(target_os = "macos"))]
     if !path.is_file() {
         return Ok(None);
     }

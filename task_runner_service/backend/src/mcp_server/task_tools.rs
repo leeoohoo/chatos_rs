@@ -170,6 +170,18 @@ impl TaskRunnerMcpService {
                     ))))
                 }
             }
+            "list_available_skills" => {
+                let _ = decode_args::<Value>(args).ok();
+                let owner_user_id = current_user
+                    .effective_owner_user_id()
+                    .ok_or_else(|| "current agent token is missing owner scope".to_string())?;
+                let policy = self
+                    .task_service
+                    .resolve_task_runner_policy(Some(current_user), Some(owner_user_id))
+                    .await?
+                    .ok_or_else(|| "Plugin Management policy is unavailable".to_string())?;
+                Ok(text_result(json!(policy.selectable_skill_views())))
+            }
             "create_tasks_with_prerequisites" => {
                 let args: CreateTasksWithPrerequisitesArgs = decode_args(args)?;
                 let result = self

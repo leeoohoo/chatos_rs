@@ -12,8 +12,20 @@ extraResources:
     to: local_connector_client_core
   - from: ../.package/macos/bundled-tools
     to: bundled-tools
+  - from: ../.package/macos/skill-bundles
+    to: skill-bundles
 mac:
   category: public.app-category.developer-tools
+  hardenedRuntime: true
+  entitlements: ../entitlements.mac.plist
+  entitlementsInherit: ../entitlements.mac.plist
+  extendInfo:
+    NSAppleEventsUsageDescription: Chat OS Local Connector 仅在用户启用对应 Skill 后控制 Microsoft Excel 等明确授权的应用。
+    NSDesktopFolderUsageDescription: Chat OS Local Connector 仅访问用户主动开放的桌面目录。
+    NSDocumentsFolderUsageDescription: Chat OS Local Connector 仅访问用户主动开放的文稿目录。
+    NSDownloadsFolderUsageDescription: Chat OS Local Connector 仅访问用户主动开放的下载目录。
+    NSNetworkVolumesUsageDescription: Chat OS Local Connector 仅访问用户主动开放的网络卷目录。
+    NSRemovableVolumesUsageDescription: Chat OS Local Connector 仅访问用户主动开放的可移动卷目录。
   target:
     - dmg
   artifactName: Chat-OS-Local-Connector-${version}-${arch}.${ext}

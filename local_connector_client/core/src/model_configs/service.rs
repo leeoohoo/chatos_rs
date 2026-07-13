@@ -5,7 +5,7 @@ use anyhow::{anyhow, Context, Result};
 use reqwest::Method;
 use serde::de::DeserializeOwned;
 use serde_json::{json, Value};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use uuid::Uuid;
 
 use crate::config::{api_url, normalize_optional};
@@ -279,11 +279,25 @@ pub(crate) async fn sync_local_model_config(
     let saved = request_user_service_json::<Value, Value>(
         http_client,
         &auth,
-        method,
+        method.clone(),
         path.as_str(),
         Some(&payload),
     )
-    .await?;
+    .await;
+    let saved = match saved {
+        Ok(saved) => saved,
+        Err(err) if method == Method::PATCH && is_user_service_not_found(&err) => {
+            request_user_service_json::<Value, Value>(
+                http_client,
+                &auth,
+                Method::POST,
+                "/api/model-configs",
+                Some(&payload),
+            )
+            .await?
+        }
+        Err(err) => return Err(err),
+    };
     let server_model_config_id = saved
         .get("id")
         .and_then(Value::as_str)
@@ -294,6 +308,54 @@ pub(crate) async fn sync_local_model_config(
     state.model_configs.configs[index].server_model_config_id = Some(server_model_config_id);
     state.model_configs.configs[index].updated_at = local_now_rfc3339();
     Ok(state.model_configs.configs[index].clone())
+}
+
+pub(crate) async fn reconcile_local_model_configs(
+    http_client: &reqwest::Client,
+    state: &mut LocalState,
+) -> Result<usize> {
+    if state.model_configs.configs.is_empty() {
+        return Ok(0);
+    }
+    let auth = state.auth.clone().ok_or_else(|| {
+        anyhow!("Local Connector must be logged in before reconciling model configs")
+    })?;
+    let remote = request_user_service_json::<(), Vec<Value>>(
+        http_client,
+        &auth,
+        Method::GET,
+        "/api/model-configs",
+        None,
+    )
+    .await?;
+    let remote_ids = remote
+        .iter()
+        .filter_map(|item| item.get("id").and_then(Value::as_str))
+        .map(str::trim)
+        .filter(|id| !id.is_empty())
+        .map(ToOwned::to_owned)
+        .collect::<HashSet<_>>();
+    let missing_local_ids = state
+        .model_configs
+        .configs
+        .iter()
+        .filter(|item| {
+            let server_id = item
+                .server_model_config_id
+                .as_deref()
+                .map(str::trim)
+                .filter(|id| !id.is_empty())
+                .unwrap_or(item.id.as_str());
+            !remote_ids.contains(server_id)
+        })
+        .map(|item| item.id.clone())
+        .collect::<Vec<_>>();
+
+    for local_id in &missing_local_ids {
+        sync_local_model_config(http_client, state, local_id.as_str()).await?;
+    }
+    sync_local_model_settings(http_client, state).await?;
+    Ok(missing_local_ids.len())
 }
 
 pub(crate) async fn delete_local_model_config(
@@ -562,6 +624,12 @@ fn extract_error_message(body: &str) -> String {
                 .map(ToOwned::to_owned)
         })
         .unwrap_or_else(|| body.trim().to_string())
+}
+
+fn is_user_service_not_found(error: &anyhow::Error) -> bool {
+    error
+        .to_string()
+        .starts_with("user_service request failed: 404 ")
 }
 
 fn required_text(value: Option<String>, field: &str) -> Result<String> {

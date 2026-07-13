@@ -21,7 +21,13 @@ pub(super) async fn create_skill(
     Extension(user): Extension<CurrentUser>,
     Json(payload): Json<SkillPayload>,
 ) -> Result<Json<SkillRecord>, ApiError> {
+    ensure_super_admin(&user)?;
     let visibility = normalize_visibility(payload.visibility.as_deref(), &user)?;
+    if visibility != VISIBILITY_SYSTEM_PRIVATE {
+        return Err(ApiError::bad_request(
+            "admin-created skills must use system_private visibility",
+        ));
+    }
     let owner_user_id = requested_owner_user_id(payload.owner_user_id.as_deref(), &user)?;
     let name = required_text(payload.name.as_deref(), "name")?;
     let display_name = payload
@@ -33,11 +39,16 @@ pub(super) async fn create_skill(
         .content
         .ok_or_else(|| ApiError::bad_request("content is required"))?;
     validate_skill_content(&content)?;
+    if content.kind != SKILL_CONTENT_KIND_LOCAL_CONNECTOR_BUNDLE {
+        return Err(ApiError::bad_request(
+            "new skills must reference an internal Local Connector bundle",
+        ));
+    }
     let now = now_rfc3339();
     let record = SkillRecord {
         id: Uuid::new_v4().to_string(),
         owner_user_id,
-        owner_kind: owner_kind_for(&visibility, &user),
+        owner_kind: OWNER_KIND_ADMIN.to_string(),
         visibility,
         source_kind: default_source_kind(payload.source_kind, &user),
         name,
@@ -66,6 +77,7 @@ pub(super) async fn get_skill(
     Extension(user): Extension<CurrentUser>,
     Path(skill_id): Path<String>,
 ) -> Result<Json<SkillRecord>, ApiError> {
+    ensure_super_admin(&user)?;
     let record = state
         .store
         .get_skill(skill_id.as_str())
@@ -102,7 +114,12 @@ pub(super) async fn update_skill(
     }
     if let Some(visibility) = payload.visibility.as_deref() {
         record.visibility = normalize_visibility(Some(visibility), &user)?;
-        record.owner_kind = owner_kind_for(record.visibility.as_str(), &user);
+        if record.visibility != VISIBILITY_SYSTEM_PRIVATE {
+            return Err(ApiError::bad_request(
+                "admin-created skills must use system_private visibility",
+            ));
+        }
+        record.owner_kind = OWNER_KIND_ADMIN.to_string();
     }
     if let Some(source_kind) = payload.source_kind {
         if user.is_super_admin() {
@@ -124,6 +141,11 @@ pub(super) async fn update_skill(
     }
     if let Some(content) = payload.content {
         validate_skill_content(&content)?;
+        if content.kind != SKILL_CONTENT_KIND_LOCAL_CONNECTOR_BUNDLE {
+            return Err(ApiError::bad_request(
+                "skills must reference an internal Local Connector bundle",
+            ));
+        }
         record.content = content;
     }
     if let Some(metadata) = payload.metadata {
@@ -144,6 +166,7 @@ pub(super) async fn delete_skill(
     Extension(user): Extension<CurrentUser>,
     Path(skill_id): Path<String>,
 ) -> Result<StatusCode, ApiError> {
+    ensure_super_admin(&user)?;
     let record = state
         .store
         .get_skill(skill_id.as_str())

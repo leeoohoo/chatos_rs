@@ -6,7 +6,7 @@ use std::collections::HashSet;
 use chatos_mcp_runtime::{builtin_kind_by_any, BuiltinMcpKind};
 use chatos_plugin_management_sdk::{
     McpRecord as PluginMcpRecord, PluginManagementClient, ResolveAgentCapabilitiesRequest,
-    ResolvedAgentCapabilities, ResolvedMcp, SystemAgentKey,
+    ResolvedAgentCapabilities, ResolvedMcp, ResolvedSkill, SystemAgentKey,
 };
 use serde::Serialize;
 
@@ -35,13 +35,44 @@ pub(crate) struct SelectableExternalMcpView {
     pub visibility: String,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct SelectableSkillView {
+    pub id: String,
+    pub name: String,
+    pub display_name: String,
+    pub description: Option<String>,
+    pub bundle_id: Option<String>,
+    pub version: Option<String>,
+    pub bundle_hash: Option<String>,
+    pub entrypoint_kind: Option<String>,
+    pub device_id: Option<String>,
+    pub platform: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct TaskSkillSnapshotView {
+    pub skill_id: String,
+    pub bundle_id: String,
+    pub version: String,
+    pub bundle_hash: String,
+    pub device_id: String,
+    pub platform: String,
+    pub entrypoint_kind: Option<String>,
+}
+
 impl TaskRunnerCapabilityPolicy {
     fn new(capabilities: ResolvedAgentCapabilities) -> Result<Self, String> {
         capabilities
             .ensure_required_available()
             .map_err(|err| err.to_string())?;
+        let supported_skill_ids = capabilities
+            .skills
+            .iter()
+            .filter(|item| item.resource.content.kind == "local_connector_bundle")
+            .map(|item| item.resource.id.as_str())
+            .collect::<Vec<_>>();
         capabilities
-            .ensure_required_skills_supported(std::iter::empty::<&str>())
+            .ensure_required_skills_supported(supported_skill_ids)
             .map_err(|err| err.to_string())?;
         for item in capabilities.required_mcps() {
             validate_local_connector_user_runtime(item)?;
@@ -99,6 +130,41 @@ impl TaskRunnerCapabilityPolicy {
             .collect()
     }
 
+    pub(crate) fn selectable_skills(&self) -> Vec<&ResolvedSkill> {
+        self.capabilities.selectable_skills().collect()
+    }
+
+    pub(crate) fn selectable_skill_views(&self) -> Vec<SelectableSkillView> {
+        self.selectable_skills()
+            .into_iter()
+            .map(|item| SelectableSkillView {
+                id: item.resource.id.clone(),
+                name: item.resource.name.clone(),
+                display_name: item.resource.display_name.clone(),
+                description: item.resource.description.clone(),
+                bundle_id: item.resource.content.bundle_id.clone(),
+                version: item.resource.content.bundle_version.clone(),
+                bundle_hash: item.resource.content.bundle_hash.clone(),
+                entrypoint_kind: item.resource.content.entrypoint_kind.clone(),
+                device_id: item
+                    .installation
+                    .as_ref()
+                    .map(|value| value.device_id.clone()),
+                platform: item
+                    .installation
+                    .as_ref()
+                    .map(|value| value.platform.clone()),
+            })
+            .collect()
+    }
+
+    pub(crate) fn selectable_skill_ids(&self) -> Vec<String> {
+        self.selectable_skills()
+            .into_iter()
+            .map(|item| item.resource.id.clone())
+            .collect()
+    }
+
     pub(crate) fn validate_optional_config(&self, config: &TaskMcpConfig) -> Result<(), String> {
         let allowed_builtin = self
             .selectable_builtin_kinds()
@@ -123,6 +189,17 @@ impl TaskRunnerCapabilityPolicy {
             if !allowed_external.contains(resource_id) {
                 return Err(format!(
                     "external MCP is not selectable for task_runner_run_phase: {resource_id}"
+                ));
+            }
+        }
+        let allowed_skills = self
+            .selectable_skill_ids()
+            .into_iter()
+            .collect::<HashSet<_>>();
+        for skill_id in &config.selected_skill_ids {
+            if !allowed_skills.contains(skill_id) {
+                return Err(format!(
+                    "Skill is not selectable for task_runner_run_phase: {skill_id}"
                 ));
             }
         }
@@ -178,7 +255,72 @@ impl TaskRunnerCapabilityPolicy {
         effective_external.sort();
         effective_external.dedup();
         task.mcp_config.external_mcp_config_ids = effective_external;
+        let allowed_optional_skills = self
+            .selectable_skill_ids()
+            .into_iter()
+            .collect::<HashSet<_>>();
+        let mut effective_skills = task
+            .mcp_config
+            .selected_skill_ids
+            .iter()
+            .filter(|resource_id| allowed_optional_skills.contains(resource_id.as_str()))
+            .cloned()
+            .collect::<Vec<_>>();
+        effective_skills.extend(
+            self.capabilities
+                .skills
+                .iter()
+                .filter(|item| item.binding.required && item.available)
+                .map(|item| item.resource.id.clone()),
+        );
+        effective_skills.sort();
+        effective_skills.dedup();
+        task.mcp_config.selected_skill_ids = effective_skills;
+        task.mcp_config.skill_policy_revision = Some(self.policy_revision().to_string());
         Ok(())
+    }
+
+    pub(crate) fn effective_skills<'a>(
+        &'a self,
+        task: &TaskRecord,
+    ) -> Result<Vec<&'a ResolvedSkill>, String> {
+        let mut out = Vec::new();
+        for skill_id in &task.mcp_config.selected_skill_ids {
+            let item = self
+                .capabilities
+                .skills
+                .iter()
+                .find(|item| item.resource.id == *skill_id && item.available)
+                .ok_or_else(|| format!("effective Skill is unavailable: {skill_id}"))?;
+            out.push(item);
+        }
+        Ok(out)
+    }
+
+    pub(crate) fn skill_snapshots(
+        &self,
+        task: &TaskRecord,
+    ) -> Result<Vec<TaskSkillSnapshotView>, String> {
+        self.effective_skills(task)?
+            .into_iter()
+            .map(|item| {
+                let installation = item.installation.as_ref().ok_or_else(|| {
+                    format!(
+                        "Skill installation snapshot is missing: {}",
+                        item.resource.id
+                    )
+                })?;
+                Ok(TaskSkillSnapshotView {
+                    skill_id: item.resource.id.clone(),
+                    bundle_id: installation.bundle_id.clone(),
+                    version: installation.version.clone(),
+                    bundle_hash: installation.bundle_hash.clone(),
+                    device_id: installation.device_id.clone(),
+                    platform: installation.platform.clone(),
+                    entrypoint_kind: item.resource.content.entrypoint_kind.clone(),
+                })
+            })
+            .collect()
     }
 
     pub(crate) fn effective_external_mcps<'a>(
@@ -342,7 +484,7 @@ mod tests {
     };
     use chatos_plugin_management_sdk::{
         AgentBindingRecord, BindingConditions, LocalConnectorRef, McpRuntime, ResourceMetadata,
-        ResourceSecurity,
+        ResourceSecurity, SkillContent, SkillInstallationRecord, SkillRecord,
     };
 
     fn resolved_mcp(
@@ -402,6 +544,72 @@ mod tests {
         }
     }
 
+    fn resolved_skill(id: &str, required: bool, available: bool) -> ResolvedSkill {
+        ResolvedSkill {
+            resource: SkillRecord {
+                id: id.to_string(),
+                owner_user_id: "system".to_string(),
+                owner_kind: "admin".to_string(),
+                visibility: "system_private".to_string(),
+                source_kind: "admin_created".to_string(),
+                name: "remotion-best-practices".to_string(),
+                display_name: "Remotion Best Practices".to_string(),
+                description: Some("Local prompt-only Skill".to_string()),
+                enabled: true,
+                content: SkillContent {
+                    kind: "local_connector_bundle".to_string(),
+                    bundle_id: Some("chatos.internal.remotion-best-practices".to_string()),
+                    bundle_version: Some("1.0.0".to_string()),
+                    bundle_hash: Some("bundle-hash-1".to_string()),
+                    entrypoint_kind: Some("prompt_only".to_string()),
+                    ..SkillContent::default()
+                },
+                metadata: ResourceMetadata::default(),
+                created_by: "system".to_string(),
+                updated_by: "system".to_string(),
+                created_at: "now".to_string(),
+                updated_at: "now".to_string(),
+            },
+            binding: AgentBindingRecord {
+                id: format!("binding-{id}"),
+                agent_key: SystemAgentKey::TaskRunnerRunPhase.as_str().to_string(),
+                binding_scope: if required {
+                    "system_required".to_string()
+                } else {
+                    "global_default".to_string()
+                },
+                owner_user_id: None,
+                resource_kind: "skill".to_string(),
+                resource_id: id.to_string(),
+                enabled: true,
+                required,
+                priority: 0,
+                conditions: BindingConditions::default(),
+                created_by: "system".to_string(),
+                updated_by: "system".to_string(),
+                created_at: "now".to_string(),
+                updated_at: "now".to_string(),
+            },
+            available,
+            status: if available { "available" } else { "offline" }.to_string(),
+            reason: (!available).then(|| "offline".to_string()),
+            installation: available.then(|| SkillInstallationRecord {
+                id: format!("owner-1:device-1:{id}"),
+                owner_user_id: "owner-1".to_string(),
+                device_id: "device-1".to_string(),
+                skill_id: id.to_string(),
+                bundle_id: "chatos.internal.remotion-best-practices".to_string(),
+                version: "1.0.0".to_string(),
+                bundle_hash: "bundle-hash-1".to_string(),
+                platform: "macos-arm64".to_string(),
+                status: "available".to_string(),
+                dependency_status: "available".to_string(),
+                last_error: None,
+                last_checked_at: "now".to_string(),
+            }),
+        }
+    }
+
     fn policy() -> TaskRunnerCapabilityPolicy {
         TaskRunnerCapabilityPolicy::new(ResolvedAgentCapabilities {
             agent_key: SystemAgentKey::TaskRunnerRunPhase.as_str().to_string(),
@@ -440,7 +648,7 @@ mod tests {
                 ),
                 resolved_mcp("external-1", "http", None, false, true),
             ],
-            skills: Vec::new(),
+            skills: vec![resolved_skill("internal_skill_remotion", false, true)],
             local_connector_requirements: Vec::new(),
         })
         .expect("policy")
@@ -487,6 +695,10 @@ mod tests {
                     "CodeMaintainerWrite".to_string(),
                 ],
                 external_mcp_config_ids: vec!["external-1".to_string(), "revoked".to_string()],
+                selected_skill_ids: vec![
+                    "internal_skill_remotion".to_string(),
+                    "revoked-skill".to_string(),
+                ],
                 ..TaskMcpConfig::default()
             },
             created_at: now.clone(),
@@ -505,6 +717,10 @@ mod tests {
         assert_eq!(
             policy.selectable_external_mcp_ids(),
             vec!["external-1".to_string()]
+        );
+        assert_eq!(
+            policy.selectable_skill_ids(),
+            vec!["internal_skill_remotion".to_string()]
         );
     }
 
@@ -525,6 +741,13 @@ mod tests {
             task.mcp_config.external_mcp_config_ids,
             vec!["external-1".to_string()]
         );
+        assert_eq!(
+            task.mcp_config.selected_skill_ids,
+            vec!["internal_skill_remotion".to_string()]
+        );
+        let snapshots = policy().skill_snapshots(&task).expect("skill snapshots");
+        assert_eq!(snapshots.len(), 1);
+        assert_eq!(snapshots[0].device_id, "device-1");
     }
 
     #[test]

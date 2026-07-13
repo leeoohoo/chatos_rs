@@ -59,6 +59,7 @@ services:
     build:
       context: ..
       dockerfile: docker/Dockerfile.rust-service
+      target: runtime-docker
       args:
         MANIFEST_PATH: Cargo.toml
         PACKAGE_NAME: sandbox_manager_service_backend

@@ -33,6 +33,7 @@ pub const RUNTIME_KIND_LOCAL_CONNECTOR_BUILTIN_PROXY: &str = "local_connector_bu
 pub const RESOURCE_KIND_MCP: &str = "mcp";
 pub const RESOURCE_KIND_SKILL: &str = "skill";
 pub const RESOURCE_KIND_SKILL_PACKAGE: &str = "skill_package";
+pub const SKILL_CONTENT_KIND_LOCAL_CONNECTOR_BUNDLE: &str = "local_connector_bundle";
 
 pub const BINDING_SCOPE_GLOBAL_DEFAULT: &str = "global_default";
 pub const BINDING_SCOPE_USER_OVERRIDE: &str = "user_override";
@@ -193,6 +194,14 @@ pub struct SkillContent {
     pub repository: Option<String>,
     pub branch: Option<String>,
     pub local_connector: Option<LocalConnectorRef>,
+    #[serde(default)]
+    pub bundle_id: Option<String>,
+    #[serde(default)]
+    pub bundle_version: Option<String>,
+    #[serde(default)]
+    pub bundle_hash: Option<String>,
+    #[serde(default)]
+    pub entrypoint_kind: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -364,6 +373,74 @@ pub struct ResourceCheckRecord {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SkillInstallationRecord {
+    pub id: String,
+    pub owner_user_id: String,
+    pub device_id: String,
+    pub skill_id: String,
+    pub bundle_id: String,
+    pub version: String,
+    pub bundle_hash: String,
+    pub platform: String,
+    pub status: String,
+    pub dependency_status: String,
+    pub last_error: Option<String>,
+    pub last_checked_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UserSkillPreferenceRecord {
+    pub id: String,
+    pub owner_user_id: String,
+    pub skill_id: String,
+    pub enabled: bool,
+    pub enabled_at: Option<String>,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UserSkillCatalogItem {
+    pub skill: SkillRecord,
+    pub user_enabled: bool,
+    pub available: bool,
+    pub status: String,
+    pub reason: Option<String>,
+    pub installation: Option<SkillInstallationRecord>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UserSkillCatalogResponse {
+    pub items: Vec<UserSkillCatalogItem>,
+    pub total: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpdateUserSkillPreferencePayload {
+    pub owner_user_id: String,
+    pub enabled: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LocalConnectorSkillInventoryItem {
+    pub skill_id: String,
+    pub bundle_id: String,
+    pub version: String,
+    pub bundle_hash: String,
+    pub status: String,
+    pub dependency_status: String,
+    pub last_error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LocalConnectorSkillInventoryPayload {
+    pub owner_user_id: String,
+    pub device_id: String,
+    pub platform: String,
+    #[serde(default)]
+    pub items: Vec<LocalConnectorSkillInventoryItem>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LocalConnectorMcpSyncPayload {
     pub owner_user_id: String,
     pub device_id: String,
@@ -419,6 +496,12 @@ pub struct LocalConnectorMcpInternalQuery {
     pub owner_user_id: Option<String>,
     pub device_id: Option<String>,
     pub manifest_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct LocalConnectorSkillInternalQuery {
+    pub owner_user_id: Option<String>,
+    pub device_id: Option<String>,
 }
 
 fn default_true() -> bool {
@@ -484,6 +567,7 @@ pub struct ResolvedSkill {
     pub available: bool,
     pub status: String,
     pub reason: Option<String>,
+    pub installation: Option<SkillInstallationRecord>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

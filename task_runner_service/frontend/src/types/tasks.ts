@@ -28,6 +28,28 @@ export interface TaskMcpConfig {
   workspace_dir?: string | null;
   default_remote_server_id?: string | null;
   external_mcp_config_ids: string[];
+  selected_skill_ids: string[];
+  skill_policy_revision?: string | null;
+}
+
+export interface SelectableTaskSkill {
+  id: string;
+  name: string;
+  display_name: string;
+  description?: string | null;
+  bundle_id?: string | null;
+  version?: string | null;
+  bundle_hash?: string | null;
+  entrypoint_kind?: string | null;
+  device_id?: string | null;
+  platform?: string | null;
+}
+
+export interface TaskCapabilityCatalogResponse {
+  policy_revision: string;
+  selectable_builtin_mcps: unknown[];
+  selectable_external_mcps: unknown[];
+  selectable_skills: SelectableTaskSkill[];
 }
 
 export interface TaskMcpRequiredBuiltinCapability {

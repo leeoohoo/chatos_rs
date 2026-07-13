@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "bundle_id": "chatos.internal.visualize",
+  "skill_id": "internal_skill_visualize",
+  "name": "visualize",
+  "display_name": "可视化",
+  "version": "1.0.0",
+  "publisher": "chatos",
+  "source_kind": "admin_created",
+  "entrypoint": { "kind": "native_adapter", "adapter": "visualize" },
+  "instructions_path": "instructions.md",
+  "requires_workspace": true,
+  "permissions": ["workspace.write"],
+  "platforms": ["macos-arm64", "macos-x64", "windows-x64", "windows-arm64"]
+}

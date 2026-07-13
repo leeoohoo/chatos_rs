@@ -138,13 +138,21 @@ async fn resolve_agent_capabilities_for_owner(
                 ) {
                     continue;
                 }
-                let (available, status, reason) = availability_for_skill(state, &resource).await?;
+                if resource.content.kind == SKILL_CONTENT_KIND_LOCAL_CONNECTOR_BUNDLE
+                    && !user_skill_enabled(state, owner_user_id.as_str(), resource.id.as_str())
+                        .await?
+                {
+                    continue;
+                }
+                let (available, status, reason, installation) =
+                    availability_for_skill(state, &resource, owner_user_id.as_str()).await?;
                 collect_local_connector_requirement_for_skill(
                     &mut local_connector_requirements,
                     &resource,
                     &binding,
                     available,
                     reason.clone(),
+                    installation.as_ref(),
                 );
                 if available || include_unavailable {
                     skills.push(ResolvedSkill {
@@ -153,6 +161,7 @@ async fn resolve_agent_capabilities_for_owner(
                         available,
                         status,
                         reason,
+                        installation,
                     });
                 }
             }
@@ -192,14 +201,21 @@ async fn resolve_agent_capabilities_for_owner(
                     ) {
                         continue;
                     }
-                    let (available, status, reason) =
-                        availability_for_skill(state, &resource).await?;
+                    if resource.content.kind == SKILL_CONTENT_KIND_LOCAL_CONNECTOR_BUNDLE
+                        && !user_skill_enabled(state, owner_user_id.as_str(), resource.id.as_str())
+                            .await?
+                    {
+                        continue;
+                    }
+                    let (available, status, reason, installation) =
+                        availability_for_skill(state, &resource, owner_user_id.as_str()).await?;
                     collect_local_connector_requirement_for_skill(
                         &mut local_connector_requirements,
                         &resource,
                         &binding,
                         available,
                         reason.clone(),
+                        installation.as_ref(),
                     );
                     if available || include_unavailable {
                         skills.push(ResolvedSkill {
@@ -208,6 +224,7 @@ async fn resolve_agent_capabilities_for_owner(
                             available,
                             status,
                             reason,
+                            installation,
                         });
                     }
                 }
@@ -274,13 +291,20 @@ async fn resolve_agent_capabilities_for_owner(
                 RESOURCE_KIND_SKILL,
                 resource.id.as_str(),
             );
-            let (available, status, reason) = availability_for_skill(state, &resource).await?;
+            if resource.content.kind == SKILL_CONTENT_KIND_LOCAL_CONNECTOR_BUNDLE
+                && !user_skill_enabled(state, owner_user_id.as_str(), resource.id.as_str()).await?
+            {
+                continue;
+            }
+            let (available, status, reason, installation) =
+                availability_for_skill(state, &resource, owner_user_id.as_str()).await?;
             collect_local_connector_requirement_for_skill(
                 &mut local_connector_requirements,
                 &resource,
                 &binding,
                 available,
                 reason.clone(),
+                installation.as_ref(),
             );
             if available || include_unavailable {
                 skills.push(ResolvedSkill {
@@ -289,6 +313,7 @@ async fn resolve_agent_capabilities_for_owner(
                     available,
                     status,
                     reason,
+                    installation,
                 });
             }
         }
@@ -306,6 +331,19 @@ async fn resolve_agent_capabilities_for_owner(
         skills,
         local_connector_requirements,
     })
+}
+
+async fn user_skill_enabled(
+    state: &AppState,
+    owner_user_id: &str,
+    skill_id: &str,
+) -> Result<bool, ApiError> {
+    state
+        .store
+        .get_user_skill_preference(owner_user_id, skill_id)
+        .await
+        .map(|record| record.is_some_and(|record| record.enabled))
+        .map_err(ApiError::internal)
 }
 
 fn capability_policy_revision(

@@ -32,6 +32,10 @@ export interface SandboxState {
 export interface ConnectorStatus {
   configured: boolean;
   connector_running: boolean;
+  developer_mode?: boolean;
+  developer_cloud_base_url?: string | null;
+  developer_user_service_base_url?: string | null;
+  developer_chatos_web_url?: string | null;
   cloud_base_url?: string | null;
   user_service_base_url?: string | null;
   device_id?: string | null;
@@ -223,6 +227,10 @@ export interface LocalModelConfigListResponse {
 
 export interface LocalRuntimeSettings {
   ai_agent_max_iterations: number;
+  developer_mode: boolean;
+  developer_cloud_base_url: string;
+  developer_user_service_base_url: string;
+  developer_chatos_web_url: string;
 }
 
 export type SystemPermissionStatus =
@@ -243,6 +251,7 @@ export interface SystemPermissionItem {
   request_label: string;
   settings_target?: string | null;
   builtin_kinds: string[];
+  skill_ids: string[];
   note: string;
   last_error?: string | null;
 }
@@ -331,6 +340,56 @@ export interface LocalMcpConfigDraft {
   url?: string | null;
   headers?: Record<string, string>;
   timeout_ms?: number | null;
+}
+
+export interface LocalSkillInstallation {
+  id: string;
+  owner_user_id: string;
+  device_id: string;
+  skill_id: string;
+  bundle_id: string;
+  version: string;
+  bundle_hash: string;
+  platform: string;
+  status: string;
+  dependency_status: string;
+  last_error?: string | null;
+  last_checked_at: string;
+}
+
+export interface LocalSkillRecord {
+  id: string;
+  name: string;
+  display_name: string;
+  description?: string | null;
+  enabled: boolean;
+  content: {
+    kind: string;
+    bundle_id?: string | null;
+    bundle_version?: string | null;
+    bundle_hash?: string | null;
+    entrypoint_kind?: string | null;
+  };
+  metadata: {
+    version?: string | null;
+    category?: string | null;
+    tags: string[];
+    extra: Record<string, unknown>;
+  };
+}
+
+export interface LocalSkillCatalogItem {
+  skill: LocalSkillRecord;
+  user_enabled: boolean;
+  available: boolean;
+  status: string;
+  reason?: string | null;
+  installation?: LocalSkillInstallation | null;
+}
+
+export interface LocalSkillCatalogResponse {
+  items: LocalSkillCatalogItem[];
+  total: number;
 }
 
 export interface SandboxImageFeature {
@@ -625,6 +684,16 @@ export const api = {
       body: JSON.stringify({ ...payload, sync }),
     }),
   mcpConfigs: () => request<LocalMcpConfig[]>('/api/local/mcp-configs'),
+  skills: () => request<LocalSkillCatalogResponse>('/api/local/skills'),
+  syncSkills: () => request<LocalSkillInstallation[]>('/api/local/skills/sync', { method: 'POST' }),
+  setSkillEnabled: (skillId: string, enabled: boolean) =>
+    request<LocalSkillCatalogItem>(
+      `/api/local/skills/${encodeURIComponent(skillId)}/preference`,
+      {
+        method: 'POST',
+        body: JSON.stringify({ enabled }),
+      },
+    ),
   saveMcpConfig: (draft: LocalMcpConfigDraft) =>
     request<LocalMcpConfig>('/api/local/mcp-configs', {
       method: 'POST',

@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "bundle_id": "chatos.internal.figma-use-figjam",
+  "skill_id": "internal_skill_figma_use_figjam",
+  "name": "figma-use-figjam",
+  "display_name": "FigJam 操作",
+  "version": "1.0.0",
+  "publisher": "chatos",
+  "source_kind": "admin_created",
+  "entrypoint": { "kind": "mcp_bridge", "adapter": "figma-use-figjam" },
+  "instructions_path": "instructions.md",
+  "requires_workspace": false,
+  "permissions": ["figma.oauth", "figjam.files.read", "figjam.files.write"],
+  "platforms": ["macos-arm64", "macos-x64", "windows-x64", "windows-arm64"]
+}

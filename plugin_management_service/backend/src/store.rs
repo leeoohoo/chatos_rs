@@ -4,7 +4,7 @@
 use chrono::Utc;
 use futures_util::TryStreamExt;
 use mongodb::bson::{doc, Regex};
-use mongodb::options::{FindOptions, IndexOptions, ReplaceOptions};
+use mongodb::options::{FindOneOptions, FindOptions, IndexOptions, ReplaceOptions};
 use mongodb::{Collection, Database, IndexModel};
 
 use crate::models::*;
@@ -17,6 +17,8 @@ pub struct AppStore {
     agents: Collection<SystemAgentRecord>,
     bindings: Collection<AgentBindingRecord>,
     checks: Collection<ResourceCheckRecord>,
+    skill_preferences: Collection<UserSkillPreferenceRecord>,
+    skill_installations: Collection<SkillInstallationRecord>,
 }
 
 impl AppStore {
@@ -28,6 +30,8 @@ impl AppStore {
             agents: db.collection("plugin_agents"),
             bindings: db.collection("plugin_agent_bindings"),
             checks: db.collection("plugin_resource_checks"),
+            skill_preferences: db.collection("plugin_user_skill_preferences"),
+            skill_installations: db.collection("plugin_skill_installations"),
         }
     }
 
@@ -88,6 +92,26 @@ impl AppStore {
 
         create_unique_index(&self.checks, doc! { "id": 1 }).await?;
         create_index(&self.checks, doc! { "resource_kind": 1, "resource_id": 1 }).await?;
+        create_unique_index(
+            &self.skill_preferences,
+            doc! { "owner_user_id": 1, "skill_id": 1 },
+        )
+        .await?;
+        create_index(
+            &self.skill_preferences,
+            doc! { "owner_user_id": 1, "enabled": 1 },
+        )
+        .await?;
+        create_unique_index(
+            &self.skill_installations,
+            doc! { "owner_user_id": 1, "device_id": 1, "skill_id": 1 },
+        )
+        .await?;
+        create_index(
+            &self.skill_installations,
+            doc! { "owner_user_id": 1, "skill_id": 1, "status": 1 },
+        )
+        .await?;
         Ok(())
     }
 
@@ -262,6 +286,89 @@ impl AppStore {
             .map_err(|err| err.to_string())
     }
 
+    pub async fn list_internal_bundle_skills(&self) -> Result<Vec<SkillRecord>, String> {
+        let options = FindOptions::builder()
+            .sort(doc! { "metadata.category": 1, "display_name": 1, "name": 1 })
+            .build();
+        self.skills
+            .find(
+                doc! {
+                    "visibility": VISIBILITY_SYSTEM_PRIVATE,
+                    "content.kind": SKILL_CONTENT_KIND_LOCAL_CONNECTOR_BUNDLE,
+                },
+                options,
+            )
+            .await
+            .map_err(|err| err.to_string())?
+            .try_collect()
+            .await
+            .map_err(|err| err.to_string())
+    }
+
+    pub async fn get_user_skill_preference(
+        &self,
+        owner_user_id: &str,
+        skill_id: &str,
+    ) -> Result<Option<UserSkillPreferenceRecord>, String> {
+        self.skill_preferences
+            .find_one(
+                doc! { "owner_user_id": owner_user_id, "skill_id": skill_id },
+                None,
+            )
+            .await
+            .map_err(|err| err.to_string())
+    }
+
+    pub async fn replace_user_skill_preference(
+        &self,
+        record: &UserSkillPreferenceRecord,
+    ) -> Result<(), String> {
+        self.skill_preferences
+            .replace_one(doc! { "id": &record.id }, record, upsert_options())
+            .await
+            .map_err(|err| err.to_string())?;
+        Ok(())
+    }
+
+    pub async fn get_skill_installation(
+        &self,
+        owner_user_id: &str,
+        skill_id: &str,
+    ) -> Result<Option<SkillInstallationRecord>, String> {
+        let options = FindOneOptions::builder()
+            .sort(doc! { "last_checked_at": -1 })
+            .build();
+        self.skill_installations
+            .find_one(
+                doc! { "owner_user_id": owner_user_id, "skill_id": skill_id },
+                options,
+            )
+            .await
+            .map_err(|err| err.to_string())
+    }
+
+    pub async fn replace_device_skill_installations(
+        &self,
+        owner_user_id: &str,
+        device_id: &str,
+        records: &[SkillInstallationRecord],
+    ) -> Result<(), String> {
+        self.skill_installations
+            .delete_many(
+                doc! { "owner_user_id": owner_user_id, "device_id": device_id },
+                None,
+            )
+            .await
+            .map_err(|err| err.to_string())?;
+        for record in records {
+            self.skill_installations
+                .replace_one(doc! { "id": &record.id }, record, upsert_options())
+                .await
+                .map_err(|err| err.to_string())?;
+        }
+        Ok(())
+    }
+
     pub async fn list_enabled_user_skills(
         &self,
         owner_user_id: &str,
@@ -308,6 +415,14 @@ impl AppStore {
     pub async fn delete_skill(&self, id: &str) -> Result<(), String> {
         self.skills
             .delete_one(doc! { "id": id }, None)
+            .await
+            .map_err(|err| err.to_string())?;
+        self.skill_preferences
+            .delete_many(doc! { "skill_id": id }, None)
+            .await
+            .map_err(|err| err.to_string())?;
+        self.skill_installations
+            .delete_many(doc! { "skill_id": id }, None)
             .await
             .map_err(|err| err.to_string())?;
         Ok(())

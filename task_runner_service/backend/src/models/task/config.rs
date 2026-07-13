@@ -66,6 +66,10 @@ pub struct TaskMcpConfig {
     #[serde(default)]
     pub external_mcp_config_ids: Vec<String>,
     #[serde(default)]
+    pub selected_skill_ids: Vec<String>,
+    #[serde(default)]
+    pub skill_policy_revision: Option<String>,
+    #[serde(default)]
     pub ephemeral_http_servers: Vec<TaskEphemeralHttpMcpServer>,
 }
 
@@ -82,6 +86,8 @@ impl Default for TaskMcpConfig {
             sandbox_manager_base_url: None,
             default_remote_server_id: None,
             external_mcp_config_ids: Vec::new(),
+            selected_skill_ids: Vec::new(),
+            skill_policy_revision: None,
             ephemeral_http_servers: Vec::new(),
         }
     }

@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "bundle_id": "chatos.internal.template-creator",
+  "skill_id": "internal_skill_template_creator",
+  "name": "template-creator",
+  "display_name": "模板创建器",
+  "version": "1.0.0",
+  "publisher": "chatos",
+  "source_kind": "admin_created",
+  "entrypoint": { "kind": "composite", "adapter": "template-creator" },
+  "instructions_path": "instructions.md",
+  "requires_workspace": true,
+  "permissions": ["workspace.read", "workspace.write"],
+  "platforms": ["macos-arm64", "macos-x64", "windows-x64", "windows-arm64"]
+}

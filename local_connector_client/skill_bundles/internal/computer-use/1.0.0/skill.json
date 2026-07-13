@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "bundle_id": "chatos.internal.computer-use",
+  "skill_id": "internal_skill_computer_use",
+  "name": "computer-use",
+  "display_name": "本机桌面控制",
+  "version": "1.0.0",
+  "publisher": "chatos",
+  "source_kind": "admin_created",
+  "entrypoint": { "kind": "native_adapter", "adapter": "computer-use" },
+  "instructions_path": "instructions.md",
+  "requires_workspace": false,
+  "permissions": ["desktop.observe", "desktop.control", "system.accessibility"],
+  "platforms": ["macos-arm64", "macos-x64", "windows-x64", "windows-arm64"]
+}

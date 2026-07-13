@@ -22,6 +22,7 @@ import type {
   ExternalMcpConfigRecord,
   McpCatalogEntry,
   RemoteServerRecord,
+  SelectableTaskSkill,
   TaskRecord,
   TaskScheduleMode,
 } from '../../types';
@@ -55,6 +56,7 @@ type TaskEditorDrawerProps = {
   mcpCatalogEntries?: McpCatalogEntry[];
   remoteServers?: RemoteServerRecord[];
   externalMcpConfigs?: ExternalMcpConfigRecord[];
+  selectableSkills?: SelectableTaskSkill[];
   onClose: () => void;
   onSubmit: (values: TaskFormValues) => void;
   onPreviewPrompt: () => void;
@@ -73,6 +75,7 @@ export function TaskEditorDrawer({
   mcpCatalogEntries = [],
   remoteServers = [],
   externalMcpConfigs = [],
+  selectableSkills = [],
   onClose,
   onSubmit,
   onPreviewPrompt,
@@ -199,6 +202,17 @@ export function TaskEditorDrawer({
         })),
     [externalMcpConfigs],
   );
+  const skillOptions = useMemo(
+    () =>
+      selectableSkills.map((skill) => ({
+        label: `${skill.display_name} (${skill.entrypoint_kind || 'local'})`,
+        value: skill.id,
+        description: skill.description,
+        platform: skill.platform,
+        version: skill.version,
+      })),
+    [selectableSkills],
+  );
   return (
     <Drawer
       title={editingTask ? t('tasks.drawer.edit') : t('tasks.drawer.create')}
@@ -274,6 +288,42 @@ export function TaskEditorDrawer({
         <Form.Item name="tagsText" label={t('tasks.form.tags')}>
           <Input placeholder={t('tasks.form.tagsPlaceholder')} />
         </Form.Item>
+
+        <Typography.Title level={5} style={{ marginTop: 8 }}>
+          {t('tasks.form.skills')}
+        </Typography.Title>
+
+        <Form.Item
+          name="selectedSkillIds"
+          label={t('tasks.form.skills')}
+          extra={
+            skillOptions.length
+              ? t('tasks.form.skillsHelp')
+              : t('tasks.form.skillsEmpty')
+          }
+        >
+          <Select
+            mode="multiple"
+            allowClear
+            showSearch
+            optionFilterProp="label"
+            maxTagCount="responsive"
+            options={skillOptions}
+            placeholder={t('tasks.form.skillsPlaceholder')}
+          />
+        </Form.Item>
+
+        {selectableSkills.length ? (
+          <Space direction="vertical" size={4} style={{ width: '100%', marginBottom: 16 }}>
+            {selectableSkills.map((skill) => (
+              <Typography.Text key={skill.id} type="secondary">
+                {skill.display_name}: {skill.description || skill.name}
+                {skill.platform ? ` / ${skill.platform}` : ''}
+                {skill.version ? ` / v${skill.version}` : ''}
+              </Typography.Text>
+            ))}
+          </Space>
+        ) : null}
 
         <Typography.Title level={5} style={{ marginTop: 8 }}>
           {t('tasks.form.schedule')}

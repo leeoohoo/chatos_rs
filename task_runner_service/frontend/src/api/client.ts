@@ -37,6 +37,7 @@ import type {
   RunListFilters,
   TaskStatsResponse,
   TaskIndexResponse,
+  TaskCapabilityCatalogResponse,
   TaskRunnerInternalPromptPreviewResponse,
   TaskMemoryContextPayload,
   TaskMemoryContextResponse,
@@ -159,6 +160,8 @@ export const api = {
     ),
   getTaskStats: () => request<TaskStatsResponse>('/api/tasks/stats'),
   getTaskIndex: () => request<TaskIndexResponse>('/api/tasks/index'),
+  listTaskCapabilityCatalog: () =>
+    request<TaskCapabilityCatalogResponse>('/api/tasks/capabilities/catalog'),
   listTaskSummaries: (filters?: {
     ids?: string[];
     keyword?: string;

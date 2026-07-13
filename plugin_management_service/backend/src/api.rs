@@ -29,6 +29,7 @@ mod availability;
 mod capabilities;
 mod internal_auth;
 mod local_connector;
+mod local_connector_skills;
 mod mcps;
 mod resource_policy;
 mod skill_packages;
@@ -45,12 +46,16 @@ use capabilities::{resolve_agent_capabilities, resolve_agent_capabilities_intern
 use internal_auth::*;
 use local_connector::{
     delete_local_connector_mcp_internal, list_local_connector_mcps_internal,
-    sync_local_connector_mcp_internal, update_local_connector_mcp_internal,
+    sync_local_connector_mcp_internal, truncate_text, update_local_connector_mcp_internal,
     update_local_connector_mcp_status_batch_internal, update_local_connector_mcp_status_internal,
 };
 #[cfg(test)]
 use local_connector::{
     ensure_local_connector_manifest_hash_matches, ensure_local_connector_record_scope,
+};
+use local_connector_skills::{
+    list_user_skill_catalog_internal, sync_skill_inventory_internal,
+    update_user_skill_preference_internal,
 };
 use mcps::{check_mcp, create_mcp, delete_mcp, get_mcp, list_mcps, update_mcp};
 use resource_policy::*;
@@ -181,6 +186,18 @@ pub fn build_router(state: AppState) -> Router {
         .route(
             "/api/internal/local-connector/mcps",
             get(list_local_connector_mcps_internal).post(sync_local_connector_mcp_internal),
+        )
+        .route(
+            "/api/internal/local-connector/skills/catalog",
+            get(list_user_skill_catalog_internal),
+        )
+        .route(
+            "/api/internal/local-connector/skills/inventory",
+            axum::routing::put(sync_skill_inventory_internal),
+        )
+        .route(
+            "/api/internal/local-connector/skills/{skill_id}/preference",
+            axum::routing::put(update_user_skill_preference_internal),
         )
         .route(
             "/api/internal/local-connector/mcps/{mcp_id}",

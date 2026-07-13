@@ -106,3 +106,4 @@ __pycache__/
 /docs/plan/*
 !/docs/plan/unified-agent-abstraction-implementation-plan.zh-CN.md
 !/docs/plan/security-architecture-remediation-plan.zh-CN.md
+!/docs/plan/LOCAL_CONNECTOR_CODEX_SKILLS_PLUGIN_INTEGRATION_PLAN.zh-CN.md

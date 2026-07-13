@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "bundle_id": "chatos.internal.figma-generate-design",
+  "skill_id": "internal_skill_figma_generate_design",
+  "name": "figma-generate-design",
+  "display_name": "生成 Figma 设计",
+  "version": "1.0.0",
+  "publisher": "chatos",
+  "source_kind": "admin_created",
+  "entrypoint": { "kind": "mcp_bridge", "adapter": "figma-generate-design" },
+  "instructions_path": "instructions.md",
+  "requires_workspace": true,
+  "permissions": ["workspace.read", "figma.oauth", "figma.files.write"],
+  "platforms": ["macos-arm64", "macos-x64", "windows-x64", "windows-arm64"]
+}

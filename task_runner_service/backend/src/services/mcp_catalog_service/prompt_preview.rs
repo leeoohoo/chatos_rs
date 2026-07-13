@@ -64,6 +64,8 @@ impl McpCatalogService {
             sandbox_manager_base_url: None,
             default_remote_server_id: normalized_optional(request.default_remote_server_id),
             external_mcp_config_ids: Vec::new(),
+            selected_skill_ids: Vec::new(),
+            skill_policy_revision: None,
             ephemeral_http_servers: Vec::new(),
         };
         let selected_builtin_kinds = if enabled {

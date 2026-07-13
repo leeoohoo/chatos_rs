@@ -63,6 +63,7 @@ mod run_recovery;
 mod run_service;
 mod sandbox_runtime;
 mod schedule_helpers;
+mod skill_runtime;
 mod status_display;
 mod stream_events;
 mod task_dependencies;

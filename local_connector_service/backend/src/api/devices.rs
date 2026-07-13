@@ -20,9 +20,13 @@ use crate::models::{
     DEVICE_STATUS_REVOKED,
 };
 use crate::state::AppState;
+use crate::store::SessionAcquireError;
 
 use super::plugin_management_mcps::{
     is_mcp_manifest_status_message, mark_device_mcps_offline, sync_socket_mcp_statuses,
+};
+use super::plugin_management_skills::{
+    is_skill_inventory_status_message, mark_device_skills_offline, sync_socket_skill_inventory,
 };
 use super::{required_text, ApiError};
 
@@ -98,17 +102,26 @@ pub(super) async fn heartbeat_device(
 ) -> Result<Json<LocalConnectorDevice>, ApiError> {
     let device = load_owned_device(&state, &user, id.as_str(), true).await?;
     if let Some(session_id) = normalize_optional_text(req.session_id) {
-        state
+        let renewed = state
             .store
-            .heartbeat_session(session_id.as_str(), device.id.as_str())
+            .heartbeat_session(
+                user.effective_owner_user_id(),
+                session_id.as_str(),
+                device.id.as_str(),
+                state.config.active_session_lease_ttl,
+            )
             .await
             .map_err(ApiError::internal)?;
+        if !renewed {
+            return Err(ApiError::conflict(
+                "connector_session_lease_lost",
+                "Local Connector active session lease is missing or expired",
+            ));
+        }
     } else {
-        state
-            .store
-            .mark_device_online(device.id.as_str())
-            .await
-            .map_err(ApiError::internal)?;
+        return Err(ApiError::bad_request(
+            "session_id is required to renew the Local Connector active session lease",
+        ));
     }
     load_owned_device(&state, &user, id.as_str(), true)
         .await
@@ -121,6 +134,7 @@ pub(super) async fn revoke_device(
     Path(id): Path<String>,
 ) -> Result<Json<Value>, ApiError> {
     load_owned_device(&state, &user, id.as_str(), false).await?;
+    release_device_session(&state, user.effective_owner_user_id(), id.as_str()).await?;
     state
         .store
         .revoke_device(user.effective_owner_user_id(), id.as_str())
@@ -135,6 +149,15 @@ pub(super) async fn revoke_device(
             "mark revoked device MCPs offline failed"
         );
     }
+    if let Err(err) =
+        mark_device_skills_offline(&state, user.effective_owner_user_id(), id.as_str()).await
+    {
+        tracing::warn!(
+            device_id = id,
+            error = err,
+            "mark revoked device Skills offline failed"
+        );
+    }
     Ok(Json(json!({ "success": true })))
 }
 
@@ -144,6 +167,7 @@ pub(super) async fn disconnect_device(
     Path(id): Path<String>,
 ) -> Result<Json<LocalConnectorDevice>, ApiError> {
     let device = load_owned_device(&state, &user, id.as_str(), true).await?;
+    release_device_session(&state, user.effective_owner_user_id(), device.id.as_str()).await?;
     state
         .store
         .mark_device_offline(device.id.as_str())
@@ -156,6 +180,15 @@ pub(super) async fn disconnect_device(
             device_id = device.id,
             error = err,
             "mark disconnected device MCPs offline failed"
+        );
+    }
+    if let Err(err) =
+        mark_device_skills_offline(&state, user.effective_owner_user_id(), device.id.as_str()).await
+    {
+        tracing::warn!(
+            device_id = device.id,
+            error = err,
+            "mark disconnected device Skills offline failed"
         );
     }
     load_owned_device(&state, &user, id.as_str(), true)
@@ -173,8 +206,59 @@ pub(super) async fn connect_device(
     let device = load_owned_device(&state, &user, id.as_str(), true).await?;
     verify_device_connect_signature(&state, &headers, &device).await?;
     let owner_user_id = user.effective_owner_user_id().to_string();
+    let owner_devices = state
+        .store
+        .list_devices(owner_user_id.as_str())
+        .await
+        .map_err(ApiError::internal)?;
+    let session = LocalConnectorSession::new(
+        owner_user_id.clone(),
+        device.id.clone(),
+        state.config.active_session_lease_ttl,
+    );
+    state
+        .store
+        .open_session(&session)
+        .await
+        .map_err(|err| match err {
+            SessionAcquireError::AlreadyActive => ApiError::conflict(
+                "connector_already_active",
+                "another Local Connector client is already active for this user",
+            ),
+            SessionAcquireError::Store(err) => ApiError::internal(err),
+        })?;
+    state
+        .store
+        .mark_device_online(device.id.as_str())
+        .await
+        .map_err(ApiError::internal)?;
+    for previous_device in owner_devices
+        .into_iter()
+        .filter(|item| item.id != device.id)
+    {
+        if let Err(err) =
+            mark_device_mcps_offline(&state, owner_user_id.as_str(), previous_device.id.as_str())
+                .await
+        {
+            tracing::warn!(
+                device_id = previous_device.id,
+                error = err,
+                "mark previous device MCPs offline after lease acquisition failed"
+            );
+        }
+        if let Err(err) =
+            mark_device_skills_offline(&state, owner_user_id.as_str(), previous_device.id.as_str())
+                .await
+        {
+            tracing::warn!(
+                device_id = previous_device.id,
+                error = err,
+                "mark previous device Skills offline after lease acquisition failed"
+            );
+        }
+    }
     Ok(ws
-        .on_upgrade(move |socket| handle_connector_socket(state, owner_user_id, device.id, socket))
+        .on_upgrade(move |socket| handle_connector_socket(state, session, socket))
         .into_response())
 }
 
@@ -205,16 +289,10 @@ pub(super) async fn load_owned_device(
 
 async fn handle_connector_socket(
     state: AppState,
-    owner_user_id: String,
-    device_id: String,
+    session: LocalConnectorSession,
     socket: WebSocket,
 ) {
-    let session = LocalConnectorSession::new(owner_user_id, device_id.clone());
-    if let Err(err) = state.store.open_session(&session).await {
-        send_startup_error(socket, err).await;
-        return;
-    }
-    let _ = state.store.mark_device_online(device_id.as_str()).await;
+    let device_id = session.device_id.clone();
 
     let (mut sender, mut receiver) = socket.split();
     let (outbound_tx, mut outbound_rx) = mpsc::channel::<String>(256);
@@ -252,10 +330,29 @@ async fn handle_connector_socket(
         match message {
             Ok(Message::Text(text)) => {
                 if is_heartbeat_message(text.as_str()) {
-                    let _ = state
+                    let renewed = state
                         .store
-                        .heartbeat_session(session.id.as_str(), device_id.as_str())
+                        .heartbeat_session(
+                            session.owner_user_id.as_str(),
+                            session.id.as_str(),
+                            device_id.as_str(),
+                            state.config.active_session_lease_ttl,
+                        )
+                        .await
+                        .unwrap_or(false);
+                    if !renewed {
+                        let _ = send_outbound_json(
+                            &outbound_tx,
+                            json!({
+                                "type": "error",
+                                "code": "connector_session_lease_lost",
+                                "message": "Local Connector active session lease is missing or expired",
+                                "timestamp": crate::models::now_rfc3339(),
+                            }),
+                        )
                         .await;
+                        break;
+                    }
                     if !send_outbound_json(
                         &outbound_tx,
                         json!({
@@ -304,6 +401,42 @@ async fn handle_connector_socket(
                             .await;
                         }
                     }
+                } else if is_skill_inventory_status_message(text.as_str()) {
+                    match sync_socket_skill_inventory(
+                        &state,
+                        session.owner_user_id.as_str(),
+                        device_id.as_str(),
+                        text.as_str(),
+                    )
+                    .await
+                    {
+                        Ok(count) => {
+                            if !send_outbound_json(
+                                &outbound_tx,
+                                json!({
+                                    "type": "skill_inventory_status_ack",
+                                    "count": count,
+                                    "timestamp": crate::models::now_rfc3339(),
+                                }),
+                            )
+                            .await
+                            {
+                                break;
+                            }
+                        }
+                        Err(err) => {
+                            let _ = send_outbound_json(
+                                &outbound_tx,
+                                json!({
+                                    "type": "error",
+                                    "code": "skill_inventory_status_rejected",
+                                    "message": err,
+                                    "timestamp": crate::models::now_rfc3339(),
+                                }),
+                            )
+                            .await;
+                        }
+                    }
                 } else if let Ok(consumed) = state.relay.handle_inbound_text(text.as_str()).await {
                     if !consumed {
                         let _ = send_outbound_json(
@@ -331,10 +464,19 @@ async fn handle_connector_socket(
             }
             Ok(Message::Ping(bytes)) => {
                 let payload_len = bytes.len();
-                let _ = state
+                let renewed = state
                     .store
-                    .heartbeat_session(session.id.as_str(), device_id.as_str())
-                    .await;
+                    .heartbeat_session(
+                        session.owner_user_id.as_str(),
+                        session.id.as_str(),
+                        device_id.as_str(),
+                        state.config.active_session_lease_ttl,
+                    )
+                    .await
+                    .unwrap_or(false);
+                if !renewed {
+                    break;
+                }
                 let _ = send_outbound_json(
                     &outbound_tx,
                     json!({
@@ -353,7 +495,11 @@ async fn handle_connector_socket(
 
     let _ = state
         .store
-        .close_session(session.id.as_str(), device_id.as_str())
+        .close_session(
+            session.owner_user_id.as_str(),
+            session.id.as_str(),
+            device_id.as_str(),
+        )
         .await;
     state
         .relay
@@ -368,30 +514,54 @@ async fn handle_connector_socket(
             "mark socket device MCPs offline failed"
         );
     }
+    if let Err(err) =
+        mark_device_skills_offline(&state, session.owner_user_id.as_str(), device_id.as_str()).await
+    {
+        tracing::warn!(
+            device_id,
+            error = err,
+            "mark socket device Skills offline failed"
+        );
+    }
     send_task.abort();
-}
-
-async fn send_socket_json(socket: &mut WebSocket, value: Value) -> bool {
-    socket
-        .send(Message::Text(value.to_string().into()))
-        .await
-        .is_ok()
-}
-
-async fn send_startup_error(mut socket: WebSocket, message: String) {
-    let _ = send_socket_json(
-        &mut socket,
-        json!({
-            "type": "error",
-            "code": "session_open_failed",
-            "message": message,
-        }),
-    )
-    .await;
 }
 
 async fn send_outbound_json(sender: &mpsc::Sender<String>, value: Value) -> bool {
     sender.send(value.to_string()).await.is_ok()
+}
+
+async fn release_device_session(
+    state: &AppState,
+    owner_user_id: &str,
+    device_id: &str,
+) -> Result<(), ApiError> {
+    let active_session = state
+        .store
+        .active_session(owner_user_id)
+        .await
+        .map_err(ApiError::internal)?;
+    if active_session
+        .as_ref()
+        .is_some_and(|item| item.device_id == device_id)
+    {
+        let session = active_session.expect("active session checked above");
+        state
+            .store
+            .close_session(owner_user_id, session.id.as_str(), device_id)
+            .await
+            .map_err(ApiError::internal)?;
+        state
+            .relay
+            .unregister_session(device_id, session.id.as_str())
+            .await;
+    } else {
+        state
+            .store
+            .close_device_session(owner_user_id, device_id)
+            .await
+            .map_err(ApiError::internal)?;
+    }
+    Ok(())
 }
 
 fn resolve_owner_user_id(

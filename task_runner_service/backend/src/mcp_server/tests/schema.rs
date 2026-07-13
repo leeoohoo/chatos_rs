@@ -123,6 +123,10 @@ fn create_task_args_preserve_external_mcp_ids_without_implicit_builtin_selection
             String::new(),
             "external-mcp-1".to_string(),
         ]),
+        selected_skill_ids: Some(vec![
+            " internal_skill_remotion ".to_string(),
+            "internal_skill_remotion".to_string(),
+        ]),
         prerequisite_task_ids: None,
         mcp_config: None,
     }
@@ -135,6 +139,10 @@ fn create_task_args_preserve_external_mcp_ids_without_implicit_builtin_selection
     assert_eq!(
         mcp_config.external_mcp_config_ids,
         vec!["external-mcp-1".to_string()]
+    );
+    assert_eq!(
+        mcp_config.selected_skill_ids,
+        vec!["internal_skill_remotion".to_string()]
     );
 }
 

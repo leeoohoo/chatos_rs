@@ -249,6 +249,19 @@ export function TaskDetailDrawer({
                 t('common.noData')
               )}
             </Descriptions.Item>
+            <Descriptions.Item label={t('tasks.detail.skills')}>
+              {task.mcp_config.selected_skill_ids?.length ? (
+                <Space wrap>
+                  {task.mcp_config.selected_skill_ids.map((skillId) => (
+                    <Tag key={skillId} color="purple">
+                      {skillId}
+                    </Tag>
+                  ))}
+                </Space>
+              ) : (
+                t('common.noData')
+              )}
+            </Descriptions.Item>
             <Descriptions.Item label={t('tasks.detail.mcpRequestedCapabilities')}>
               {renderStringTags(
                 mcpResolution?.requested_builtin_kinds,
