@@ -11,6 +11,11 @@ if [ -n "${TRIVY_DB_REPOSITORY:-}" ]; then
 else
   TRIVY_DB_REPOSITORIES="${TRIVY_DB_REPOSITORIES:-public.ecr.aws/aquasecurity/trivy-db:2 ghcr.io/aquasecurity/trivy-db:2}"
 fi
+if [ -n "${TRIVY_JAVA_DB_REPOSITORY:-}" ]; then
+  TRIVY_JAVA_DB_REPOSITORIES="$TRIVY_JAVA_DB_REPOSITORY"
+else
+  TRIVY_JAVA_DB_REPOSITORIES="${TRIVY_JAVA_DB_REPOSITORIES:-public.ecr.aws/aquasecurity/trivy-java-db:1 ghcr.io/aquasecurity/trivy-java-db:1}"
+fi
 TRIVY_TIMEOUT="${TRIVY_TIMEOUT:-20m}"
 
 if [ ! -s "$IMAGE_LIST_FILE" ]; then
@@ -21,6 +26,9 @@ fi
 set --
 for repository in $TRIVY_DB_REPOSITORIES; do
   set -- "$@" --db-repository "$repository"
+done
+for repository in $TRIVY_JAVA_DB_REPOSITORIES; do
+  set -- "$@" --java-db-repository "$repository"
 done
 
 while IFS= read -r image; do
