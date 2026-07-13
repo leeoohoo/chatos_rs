@@ -3,13 +3,15 @@
 
 FROM docker:27-cli AS docker-cli
 
-FROM rust:bookworm AS builder
+FROM rust:1.94.0-bookworm AS builder
 
 ENV CARGO_REGISTRIES_CRATES_IO_PROTOCOL=sparse
 ENV CARGO_REGISTRIES_CRATES_IO_INDEX=sparse+https://rsproxy.cn/index/
 ENV CARGO_NET_RETRY=10
 ENV CARGO_HTTP_TIMEOUT=600
 ENV CARGO_TARGET_DIR=/tmp/chatos-target
+ENV RUSTUP_DIST_SERVER=https://mirrors.tuna.tsinghua.edu.cn/rustup
+ENV RUSTUP_UPDATE_ROOT=https://mirrors.tuna.tsinghua.edu.cn/rustup/rustup
 
 RUN mkdir -p /root/.cargo \
     && printf '%s\n' \
