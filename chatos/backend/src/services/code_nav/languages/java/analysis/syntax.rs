@@ -163,10 +163,7 @@ fn is_java_method_suffix(value: &str) -> bool {
 
 fn has_java_method_return_type(prefix: &str) -> bool {
     let mut rest = prefix.trim();
-    loop {
-        let Some((word, after_word)) = split_first_java_word(rest) else {
-            break;
-        };
+    while let Some((word, after_word)) = split_first_java_word(rest) {
         if !is_java_modifier(word) {
             break;
         }

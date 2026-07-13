@@ -40,7 +40,7 @@ fn build_local_connector_project_run_input(
     env_overrides: &HashMap<String, String>,
 ) -> String {
     let mut entries = env_overrides.iter().collect::<Vec<_>>();
-    entries.sort_by(|(left, _), (right, _)| left.cmp(right));
+    entries.sort_by_key(|(key, _)| *key);
     let mut input = String::new();
     for (key, value) in entries {
         let key = key.trim();

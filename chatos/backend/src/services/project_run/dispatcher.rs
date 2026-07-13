@@ -239,7 +239,7 @@ fn shell_quote_value(value: &str) -> String {
 
 fn build_env_assignment_lines(env_overrides: &HashMap<String, String>) -> String {
     let mut entries = env_overrides.iter().collect::<Vec<_>>();
-    entries.sort_by(|(left, _), (right, _)| left.cmp(right));
+    entries.sort_by_key(|(key, _)| *key);
 
     let mut payload = String::new();
     for (key, value) in entries {

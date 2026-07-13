@@ -132,18 +132,15 @@ pub(crate) fn validate_project_run_target(
                     );
                 }
             }
-            "gradle_user_home" => {
-                if !path.is_dir() {
-                    push_validation_issue(
-                        &mut issues,
-                        target,
-                        "gradle_user_home",
-                        "已选择的 Gradle User Home 不是目录",
-                        Some(option.path.clone()),
-                        Some("请指向 ~/.gradle 或项目内 .gradle 目录".to_string()),
-                    );
-                }
-            }
+            "gradle_user_home" if !path.is_dir() => push_validation_issue(
+                &mut issues,
+                target,
+                "gradle_user_home",
+                "已选择的 Gradle User Home 不是目录",
+                Some(option.path.clone()),
+                Some("请指向 ~/.gradle 或项目内 .gradle 目录".to_string()),
+            ),
+            "gradle_user_home" => {}
             _ => {}
         }
     }

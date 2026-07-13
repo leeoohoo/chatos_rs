@@ -154,7 +154,7 @@ async fn resolve_persisted_turn_messages(
         }
 
         select_persisted_turn_messages_from_desc_page(
-            batch.into_iter(),
+            batch,
             turn_id,
             normalized_user_message_id,
             &mut user_message,

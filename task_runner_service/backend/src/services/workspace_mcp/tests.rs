@@ -274,10 +274,9 @@ fn selected_skill_keeps_local_workspace_routing_without_builtin_tools() {
         .first()
         .expect("local connector server");
     assert_eq!(server.name, "local_connector");
-    assert!(server
+    assert!(!server
         .headers
-        .get(LOCAL_CONNECTOR_ENABLED_BUILTIN_KINDS_HEADER)
-        .is_none());
+        .contains_key(LOCAL_CONNECTOR_ENABLED_BUILTIN_KINDS_HEADER));
     assert!(server.url.contains("workspace_id=workspace-1"));
 }
 
