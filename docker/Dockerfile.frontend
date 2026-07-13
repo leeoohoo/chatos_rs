@@ -23,9 +23,11 @@ WORKDIR /src/${APP_DIR}
 RUN if [ -f package-lock.json ]; then npm ci --legacy-peer-deps; else npm install --legacy-peer-deps; fi
 RUN npm run build
 
-FROM nginx:1.27-alpine
+FROM nginx:1.30-alpine
 
 ARG APP_DIR
+
+RUN apk upgrade --no-cache
 
 COPY docker/nginx/default.conf.template /etc/nginx/templates/default.conf.template
 COPY --from=builder /src/${APP_DIR}/dist /usr/share/nginx/html
