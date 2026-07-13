@@ -10,7 +10,7 @@ ENV_EXAMPLE_FILE="$SCRIPT_DIR/.env.example"
 IMAGE_NAMESPACE="${CHATOS_IMAGE_NAMESPACE:-ghcr.io/leeoohoo}"
 IMAGE_TAG="${CHATOS_IMAGE_TAG:-harness-ci}"
 PUBLIC_HOST="${CHATOS_PUBLIC_HOST:-8.155.171.124}"
-DOCKER_SOCKET_PROXY_IMAGE="${DOCKER_SOCKET_PROXY_IMAGE:-tecnativa/docker-socket-proxy:latest}"
+DOCKER_SOCKET_PROXY_IMAGE="${DOCKER_SOCKET_PROXY_IMAGE:-ghcr.io/tecnativa/docker-socket-proxy:latest}"
 
 ensure_env_file() {
   if [[ -f "$ENV_FILE" ]]; then
