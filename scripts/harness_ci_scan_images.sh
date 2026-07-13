@@ -6,7 +6,11 @@ set -eu
 
 ROOT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
 IMAGE_LIST_FILE="${CHATOS_CI_IMAGE_LIST_FILE:-$ROOT_DIR/.chatos-ci-images}"
-TRIVY_DB_REPOSITORY="${TRIVY_DB_REPOSITORY:-ghcr.io/aquasecurity/trivy-db:2}"
+if [ -n "${TRIVY_DB_REPOSITORY:-}" ]; then
+  TRIVY_DB_REPOSITORIES="$TRIVY_DB_REPOSITORY"
+else
+  TRIVY_DB_REPOSITORIES="${TRIVY_DB_REPOSITORIES:-public.ecr.aws/aquasecurity/trivy-db:2 ghcr.io/aquasecurity/trivy-db:2}"
+fi
 TRIVY_TIMEOUT="${TRIVY_TIMEOUT:-20m}"
 
 if [ ! -s "$IMAGE_LIST_FILE" ]; then
@@ -14,11 +18,16 @@ if [ ! -s "$IMAGE_LIST_FILE" ]; then
   exit 2
 fi
 
+set --
+for repository in $TRIVY_DB_REPOSITORIES; do
+  set -- "$@" --db-repository "$repository"
+done
+
 while IFS= read -r image; do
   [ -n "$image" ] || continue
   echo "[INFO] scanning image: $image"
   trivy image \
-    --db-repository "$TRIVY_DB_REPOSITORY" \
+    "$@" \
     --timeout "$TRIVY_TIMEOUT" \
     --scanners vuln \
     --severity HIGH,CRITICAL \

@@ -1,0 +1,36 @@
+---
+kind: pipeline
+type: docker
+name: verify-and-scan
+
+clone:
+  git:
+    image: drone/git:local
+    pull: if-not-exists
+
+steps:
+  - name: verify-deployment
+    image: docker:27-cli
+    commands:
+      - docker ps --filter 'name=chatos-rs-' --format 'table {{.Names}}\t{{.Status}}\t{{.Image}}'
+      - test -z "$(docker ps --filter 'name=chatos-rs-' --filter 'health=unhealthy' --format '{{.Names}}')"
+      - test "$(docker inspect chatos-rs-mongodb-1 --format '{{.State.Health.Status}}')" = healthy
+      - test "$(docker inspect chatos-rs-sandbox-manager-backend-1 --format '{{.State.Health.Status}}')" = healthy
+      - docker images --format '{{.Repository}}:{{.Tag}}' | grep 'chatos-rs-.*:harness-ci' | sort -u > .chatos-ci-images
+      - test "$(wc -l < .chatos-ci-images)" -eq 18
+    volumes:
+      - name: docker-sock
+        path: /var/run/docker.sock
+
+  - name: scan-local-images
+    image: aquasec/trivy:0.58.2
+    commands:
+      - sh scripts/harness_ci_scan_images.sh
+    volumes:
+      - name: docker-sock
+        path: /var/run/docker.sock
+
+volumes:
+  - name: docker-sock
+    host:
+      path: /var/run/docker.sock
