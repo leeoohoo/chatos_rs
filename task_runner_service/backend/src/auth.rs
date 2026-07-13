@@ -22,6 +22,7 @@ const AGENT_TOKEN_TTL_SECONDS: i64 = 3600;
 mod access_token_scope;
 mod current_user;
 mod service;
+mod sse_tickets;
 mod support;
 
 pub use access_token_scope::{
@@ -29,3 +30,4 @@ pub use access_token_scope::{
 };
 pub use current_user::CurrentUser;
 pub use service::AuthService;
+pub use sse_tickets::{IssuedSseTicket, SseTicketStore};

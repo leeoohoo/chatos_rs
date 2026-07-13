@@ -9,7 +9,7 @@ mod users;
 
 pub(super) use self::auth::{
     agent_token_handler, bearer_token_from_headers, current_user_from_user_service_token,
-    current_user_handler, login_handler, logout_handler, require_auth,
+    current_user_handler, login_handler, logout_handler, require_auth, sse_ticket_handler,
 };
 pub(super) use self::system::{
     health_handler, system_config_handler, task_runner_internal_prompt_preview_handler,

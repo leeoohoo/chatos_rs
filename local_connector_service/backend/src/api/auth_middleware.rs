@@ -149,19 +149,29 @@ fn bearer_token_from_request(
     request: &Request<axum::body::Body>,
     allow_device_connect_query_token: bool,
 ) -> Result<String, String> {
-    if bearer_token_from_headers(request.headers()).is_err()
-        && is_device_connect_path(request.uri().path())
-        && !allow_device_connect_query_token
-    {
+    if let Ok(token) = bearer_token_from_headers(request.headers()) {
+        return Ok(token.to_string());
+    }
+
+    let path = request.uri().path();
+    let query = request.uri().query();
+    if !has_legacy_query_token(query) {
+        return Err("缺少登录令牌".to_string());
+    }
+
+    if !is_device_connect_path(path) {
+        return Err(
+            "URL query access tokens are not supported; use Authorization header".to_string(),
+        );
+    }
+
+    if !allow_device_connect_query_token {
         return Err(
             "Local Connector device websocket auth must use Authorization header".to_string(),
         );
     }
-    bearer_token_from_headers(request.headers())
-        .map(ToOwned::to_owned)
-        .or_else(|_| {
-            token_from_query(request.uri().query()).ok_or_else(|| "缺少登录令牌".to_string())
-        })
+
+    token_from_query(query).ok_or_else(|| "缺少登录令牌".to_string())
 }
 
 fn is_device_connect_path(path: &str) -> bool {
@@ -179,4 +189,75 @@ fn token_from_query(query: Option<&str>) -> Option<String> {
         let value = parts.next()?.trim();
         ((key == "access_token" || key == "token") && !value.is_empty()).then(|| value.to_string())
     })
+}
+
+fn has_legacy_query_token(query: Option<&str>) -> bool {
+    query
+        .into_iter()
+        .flat_map(|query| query.split('&'))
+        .any(|pair| {
+            let key = pair.split_once('=').map_or(pair, |(key, _)| key);
+            key == "access_token" || key == "token"
+        })
+}
+
+#[cfg(test)]
+mod tests {
+    use axum::http::header::AUTHORIZATION;
+
+    use super::*;
+
+    fn request(uri: &str) -> Request<axum::body::Body> {
+        Request::builder()
+            .uri(uri)
+            .body(axum::body::Body::empty())
+            .expect("test request should be valid")
+    }
+
+    #[test]
+    fn header_token_is_preferred_over_device_query_token() {
+        let mut request =
+            request("/api/local-connectors/devices/device-1/connect?access_token=query-token");
+        request
+            .headers_mut()
+            .insert(AUTHORIZATION, "Bearer header-token".parse().unwrap());
+
+        let token = bearer_token_from_request(&request, false).expect("header token should pass");
+
+        assert_eq!(token, "header-token");
+    }
+
+    #[test]
+    fn non_device_query_token_is_rejected() {
+        let request = request("/api/local-connectors/devices?access_token=query-token");
+
+        let error = bearer_token_from_request(&request, true).expect_err("query token must fail");
+
+        assert_eq!(
+            error,
+            "URL query access tokens are not supported; use Authorization header"
+        );
+    }
+
+    #[test]
+    fn device_query_token_requires_compatibility_flag() {
+        let request =
+            request("/api/local-connectors/devices/device-1/connect?access_token=query-token");
+
+        let error = bearer_token_from_request(&request, false).expect_err("query token must fail");
+
+        assert_eq!(
+            error,
+            "Local Connector device websocket auth must use Authorization header"
+        );
+    }
+
+    #[test]
+    fn device_query_token_is_allowed_when_compatibility_flag_is_enabled() {
+        let request = request("/api/local-connectors/devices/device-1/connect?token=query-token");
+
+        let token = bearer_token_from_request(&request, true).expect("query token should pass");
+
+        assert_eq!(token, "query-token");
+    }
 }

@@ -72,6 +72,32 @@ fn replace_known_host_entry(
     Ok(())
 }
 
+#[cfg_attr(test, derive(Debug, PartialEq, Eq))]
+enum HostKeyPolicyDecision {
+    TrustExisting,
+    TrustAndRecord,
+    Reject(&'static str),
+}
+
+fn evaluate_host_key_policy(
+    check_result: CheckResult,
+    host_key_policy: &str,
+) -> HostKeyPolicyDecision {
+    match check_result {
+        CheckResult::Match => HostKeyPolicyDecision::TrustExisting,
+        CheckResult::Mismatch => {
+            HostKeyPolicyDecision::Reject("主机指纹与 known_hosts 记录不匹配，请核对服务器后重试")
+        }
+        CheckResult::NotFound if host_key_policy == "accept_new" => {
+            HostKeyPolicyDecision::TrustAndRecord
+        }
+        CheckResult::NotFound => HostKeyPolicyDecision::Reject(
+            "主机指纹未受信任，请先加入 known_hosts 或使用 accept_new",
+        ),
+        CheckResult::Failure => HostKeyPolicyDecision::Reject("主机指纹校验失败"),
+    }
+}
+
 pub(super) fn apply_host_key_policy(
     session: &Session,
     host: &str,
@@ -91,9 +117,12 @@ pub(super) fn apply_host_key_policy(
             .map_err(|err| format!("加载 known_hosts 失败: {err}"))?;
     }
 
-    match known_hosts.check_port(host, port as u16, host_key) {
-        CheckResult::Match => Ok(()),
-        CheckResult::Mismatch if host_key_policy == "accept_new" => {
+    match evaluate_host_key_policy(
+        known_hosts.check_port(host, port as u16, host_key),
+        host_key_policy,
+    ) {
+        HostKeyPolicyDecision::TrustExisting => Ok(()),
+        HostKeyPolicyDecision::TrustAndRecord => {
             if let Some(parent) = known_hosts_path.parent() {
                 std::fs::create_dir_all(parent)
                     .map_err(|err| format!("创建 ~/.ssh 目录失败: {err}"))?;
@@ -107,26 +136,46 @@ pub(super) fn apply_host_key_policy(
                 host_key_type,
             )
         }
-        CheckResult::Mismatch => Err(
-            "主机指纹与 known_hosts 记录不匹配，请核对服务器或切换 accept_new 后重试".to_string(),
-        ),
-        CheckResult::NotFound if host_key_policy == "accept_new" => {
-            if let Some(parent) = known_hosts_path.parent() {
-                std::fs::create_dir_all(parent)
-                    .map_err(|err| format!("创建 ~/.ssh 目录失败: {err}"))?;
-            }
-            replace_known_host_entry(
-                &mut known_hosts,
-                &known_hosts_path,
-                host,
-                port,
-                host_key,
-                host_key_type,
+        HostKeyPolicyDecision::Reject(message) => Err(message.to_string()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{evaluate_host_key_policy, HostKeyPolicyDecision};
+    use ssh2::CheckResult;
+
+    #[test]
+    fn accept_new_records_unknown_hosts() {
+        assert_eq!(
+            evaluate_host_key_policy(CheckResult::NotFound, "accept_new"),
+            HostKeyPolicyDecision::TrustAndRecord
+        );
+    }
+
+    #[test]
+    fn accept_new_rejects_mismatched_known_hosts() {
+        assert_eq!(
+            evaluate_host_key_policy(CheckResult::Mismatch, "accept_new"),
+            HostKeyPolicyDecision::Reject("主机指纹与 known_hosts 记录不匹配，请核对服务器后重试")
+        );
+    }
+
+    #[test]
+    fn strict_rejects_unknown_hosts() {
+        assert_eq!(
+            evaluate_host_key_policy(CheckResult::NotFound, "strict"),
+            HostKeyPolicyDecision::Reject(
+                "主机指纹未受信任，请先加入 known_hosts 或使用 accept_new"
             )
-        }
-        CheckResult::NotFound => {
-            Err("主机指纹未受信任，请先加入 known_hosts 或使用 accept_new".to_string())
-        }
-        CheckResult::Failure => Err("主机指纹校验失败".to_string()),
+        );
+    }
+
+    #[test]
+    fn matching_host_keys_are_trusted() {
+        assert_eq!(
+            evaluate_host_key_policy(CheckResult::Match, "strict"),
+            HostKeyPolicyDecision::TrustExisting
+        );
     }
 }

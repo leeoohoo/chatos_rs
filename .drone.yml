@@ -18,6 +18,8 @@ steps:
       - bash scripts/check_api_path_baseline.sh
       - bash scripts/check_openapi_contract_assembly.sh
       - bash scripts/check-large-files.sh --fail
+      - bash scripts/check-bundled-tools-integrity.sh
+      - bash scripts/code-size-report.sh --fail
       - bash scripts/check_openapi_contract_gate.sh
       - bash scripts/check_openapi_method_contract_gate.sh
       - bash scripts/check_openapi_contract_quality_gate.sh

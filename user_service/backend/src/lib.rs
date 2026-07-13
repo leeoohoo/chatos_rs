@@ -7,6 +7,7 @@ mod config;
 mod db;
 mod email;
 mod integrations;
+mod login_throttle;
 mod models;
 mod secrets;
 mod state;

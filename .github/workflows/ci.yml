@@ -137,6 +137,12 @@ jobs:
       - name: Large file policy
         run: bash scripts/check-large-files.sh --fail
 
+      - name: Bundled tools integrity
+        run: bash scripts/check-bundled-tools-integrity.sh
+
+      - name: Source size policy
+        run: bash scripts/code-size-report.sh --fail
+
       - name: Rust dependency drift
         run: python scripts/check-rust-dependency-drift.py
 

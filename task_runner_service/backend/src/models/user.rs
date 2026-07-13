@@ -124,6 +124,13 @@ pub struct CurrentUserResponse {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SseTicketResponse {
+    pub ticket: String,
+    pub expires_in: i64,
+    pub expires_at_unix: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateUserRequest {
     pub username: String,
     pub display_name: Option<String>,

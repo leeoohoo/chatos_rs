@@ -15,6 +15,7 @@ import type {
   HealthResponse,
   LoginPayload,
   LoginResponse,
+  SseTicketResponse,
   ExternalMcpConfigRecord,
   McpCatalogEntry,
   McpPromptPreviewPayload,
@@ -105,6 +106,10 @@ export const api = {
   currentUser: () => request<CurrentUserResponse>('/api/auth/me'),
   logout: () =>
     request<void>('/api/auth/logout', {
+      method: 'POST',
+    }),
+  issueSseTicket: () =>
+    request<SseTicketResponse>('/api/auth/sse-ticket', {
       method: 'POST',
     }),
   listUsers: () => request<UserSummaryRecord[]>('/api/users'),

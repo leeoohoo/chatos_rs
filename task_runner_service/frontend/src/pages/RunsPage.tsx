@@ -86,9 +86,8 @@ export function RunsPage() {
       return undefined;
     }
 
-    const eventSource = new EventSource(
-      buildEventSourceUrl(`/api/runs/${selectedRunId}/stream`),
-    );
+    let closed = false;
+    let eventSource: EventSource | null = null;
     const refresh = () => {
       void Promise.all([
         queryClient.invalidateQueries({ queryKey: ['runs'] }),
@@ -99,14 +98,28 @@ export function RunsPage() {
       ]);
     };
 
-    eventSource.addEventListener('run_event', refresh);
-    eventSource.onerror = () => {
-      eventSource.close();
-    };
+    void api
+      .issueSseTicket()
+      .then(({ ticket }) => {
+        if (closed) {
+          return;
+        }
+        eventSource = new EventSource(
+          buildEventSourceUrl(`/api/runs/${selectedRunId}/stream`, ticket),
+        );
+        eventSource.addEventListener('run_event', refresh);
+        eventSource.onerror = () => {
+          eventSource?.close();
+        };
+      })
+      .catch(() => {
+        // The normal query refresh path will surface auth/network errors.
+      });
 
     return () => {
-      eventSource.removeEventListener('run_event', refresh);
-      eventSource.close();
+      closed = true;
+      eventSource?.removeEventListener('run_event', refresh);
+      eventSource?.close();
     };
   }, [queryClient, selectedRunId]);
 

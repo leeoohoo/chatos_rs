@@ -38,4 +38,11 @@ Download one specific platform:
 scripts/sync-bundled-ripgrep.sh --platform linux-x64
 ```
 
+`scripts/sync-bundled-ripgrep.sh` updates `bundled-tools/SHA256SUMS`.
+CI verifies the manifest with:
+
+```sh
+scripts/check-bundled-tools-integrity.sh
+```
+
 Third-party note: `rg` is ripgrep, licensed upstream under MIT or Unlicense.

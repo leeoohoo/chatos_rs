@@ -43,6 +43,9 @@ pub struct AppConfig {
     pub registration_code_resend_seconds: i64,
     pub registration_code_hourly_limit: i64,
     pub registration_code_max_attempts: i64,
+    pub login_max_failed_attempts: i64,
+    pub login_failure_window_seconds: i64,
+    pub login_lockout_seconds: i64,
 }
 
 impl AppConfig {
@@ -159,7 +162,23 @@ impl AppConfig {
                 .unwrap_or_else(|| "5".to_string())
                 .parse()
                 .map_err(|err| format!("invalid USER_SERVICE_REGISTER_CODE_MAX_ATTEMPTS: {err}"))?,
+            login_max_failed_attempts: read_env("USER_SERVICE_LOGIN_MAX_FAILED_ATTEMPTS")
+                .unwrap_or_else(|| "5".to_string())
+                .parse()
+                .map_err(|err| format!("invalid USER_SERVICE_LOGIN_MAX_FAILED_ATTEMPTS: {err}"))?,
+            login_failure_window_seconds: read_env("USER_SERVICE_LOGIN_FAILURE_WINDOW_SECONDS")
+                .unwrap_or_else(|| "300".to_string())
+                .parse()
+                .map_err(|err| {
+                    format!("invalid USER_SERVICE_LOGIN_FAILURE_WINDOW_SECONDS: {err}")
+                })?,
+            login_lockout_seconds: read_env("USER_SERVICE_LOGIN_LOCKOUT_SECONDS")
+                .unwrap_or_else(|| "300".to_string())
+                .parse()
+                .map_err(|err| format!("invalid USER_SERVICE_LOGIN_LOCKOUT_SECONDS: {err}"))?,
         };
+
+        validate_login_throttle_config(&config)?;
 
         validate_production_secret(
             "USER_SERVICE_JWT_SECRET",
@@ -194,6 +213,19 @@ impl AppConfig {
     pub fn bind_addr(&self) -> SocketAddr {
         SocketAddr::new(self.host, self.port)
     }
+}
+
+fn validate_login_throttle_config(config: &AppConfig) -> Result<(), String> {
+    if config.login_max_failed_attempts < 0 {
+        return Err("USER_SERVICE_LOGIN_MAX_FAILED_ATTEMPTS must be >= 0".to_string());
+    }
+    if config.login_failure_window_seconds < 1 {
+        return Err("USER_SERVICE_LOGIN_FAILURE_WINDOW_SECONDS must be >= 1".to_string());
+    }
+    if config.login_lockout_seconds < 1 {
+        return Err("USER_SERVICE_LOGIN_LOCKOUT_SECONDS must be >= 1".to_string());
+    }
+    Ok(())
 }
 
 pub fn load_user_service_dotenv() {
