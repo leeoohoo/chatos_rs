@@ -2,8 +2,8 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 import { type FormEvent, useEffect, useMemo, useState } from 'react';
-import { sha256 } from '@noble/hashes/sha256';
-import { bytesToHex } from '@noble/hashes/utils';
+import { sha256 } from '@noble/hashes/sha2.js';
+import { bytesToHex } from '@noble/hashes/utils.js';
 import {
   AlertCircle,
   ArrowLeft,
@@ -18,6 +18,7 @@ import {
   Trash2,
   UploadCloud,
 } from 'lucide-react';
+import { BrandMark } from './BrandMark';
 
 type ClientArtifact = {
   platform: string;
@@ -114,7 +115,7 @@ function ReleaseAdminPage() {
       document.head.appendChild(robots);
     }
     robots.content = 'noindex,nofollow';
-    document.title = '安装包发布管理 | Chat OS';
+    document.title = '安装包发布管理 | Okra';
     void refreshCatalog();
     return () => {
       document.title = previousTitle;
@@ -229,7 +230,7 @@ function ReleaseAdminPage() {
 
       setProgress(100);
       setPhase('success');
-      setStatusText(`Chat OS Local Connector ${payload.manifest.version} 已发布`);
+      setStatusText(`Okra Local Connector ${payload.manifest.version} 已发布`);
       await refreshCatalog();
     } catch (error) {
       setPhase('error');
@@ -240,9 +241,9 @@ function ReleaseAdminPage() {
   return (
     <main className="admin-shell">
       <header className="admin-header">
-        <a className="brand" href="/" aria-label="返回 Chat OS 官网">
-          <span className="brand-mark"><ShieldCheck size={19} /></span>
-          <span>Chat OS</span>
+        <a className="brand" href="/" aria-label="返回 Okra 官网">
+          <BrandMark />
+          <span>Okra</span>
         </a>
         <span className="admin-header-title">官方管理后台</span>
         <a className="admin-back-link" href="/"><ArrowLeft size={16} /> 返回官网</a>

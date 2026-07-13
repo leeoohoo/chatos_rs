@@ -6,7 +6,6 @@ use axum::http::{header::AUTHORIZATION, request::Parts, HeaderMap, StatusCode};
 use axum::Json;
 use chrono::Utc;
 use jsonwebtoken::{decode, encode, Algorithm, DecodingKey, EncodingKey, Header, Validation};
-use rand::rngs::OsRng;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use uuid::Uuid;
@@ -102,7 +101,6 @@ impl From<AuthClaims> for CurrentPrincipal {
     }
 }
 
-#[axum::async_trait]
 impl<S> FromRequestParts<S> for CurrentPrincipal
 where
     S: Send + Sync,
@@ -141,7 +139,9 @@ pub fn hash_password(password: &str) -> Result<String, String> {
     if password.trim().is_empty() {
         return Err("password is required".to_string());
     }
-    let salt = SaltString::generate(&mut OsRng);
+    let mut salt_bytes = [0_u8; 16];
+    rand::fill(&mut salt_bytes);
+    let salt = SaltString::encode_b64(&salt_bytes).map_err(|err| err.to_string())?;
     Argon2::default()
         .hash_password(password.as_bytes(), &salt)
         .map(|hash| hash.to_string())

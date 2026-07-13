@@ -8,7 +8,7 @@ edition = "2021"
 
 [dependencies]
 async-trait = "0.1"
-axum = { version = "0.7", features = ["json"] }
+axum = { version = "0.8", features = ["json"] }
 chrono = { version = "0.4", features = ["clock", "serde"] }
 chatos_builtin_tools = { path = "../../crates/chatos_builtin_tools" }
 chatos_mcp_service = { path = "../../crates/chatos_mcp_service" }

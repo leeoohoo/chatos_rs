@@ -16,6 +16,7 @@ SKIP_DIRS = {
     ".local",
     ".cache",
     "node_modules",
+    "docs",
     "target",
     "target-debug",
     "target-release",
@@ -24,48 +25,56 @@ SKIP_DIRS = {
 BASELINE: dict[str, dict[str, str]] = {
     "chatos/backend/Cargo.toml": {
         "axum": "0.8",
-        "tower-http": "0.6",
+        "tower-http": "0.7",
         "mongodb": "2.8",
+    },
+    "crates/chatos_ai_runtime/Cargo.toml": {
+        "axum": "0.8",
     },
     "local_connector_client/core/Cargo.toml": {
         "axum": "0.8",
-        "tower-http": "0.6",
+        "tower-http": "0.7",
     },
     "local_connector_service/backend/Cargo.toml": {
         "axum": "0.8",
-        "tower-http": "0.6",
+        "tower-http": "0.7",
         "mongodb": "2.8",
     },
     "memory_engine/backend/Cargo.toml": {
-        "axum": "0.7",
-        "tower-http": "0.5",
+        "axum": "0.8",
+        "tower-http": "0.7",
         "mongodb": "3",
     },
     "official_website_service/backend/Cargo.toml": {
-        "axum": "0.7",
-        "tower-http": "0.5",
+        "axum": "0.8",
+        "tower-http": "0.7",
+    },
+    "plugin_management_service/backend/Cargo.toml": {
+        "axum": "0.8",
+        "tower-http": "0.7",
+        "mongodb": "2.8",
     },
     "project_management_service/backend/Cargo.toml": {
-        "axum": "0.7",
-        "tower-http": "0.5",
+        "axum": "0.8",
+        "tower-http": "0.7",
         "mongodb": "2.8",
     },
     "sandbox_manager_service/backend/Cargo.toml": {
-        "axum": "0.7",
-        "tower-http": "0.5",
+        "axum": "0.8",
+        "tower-http": "0.7",
         "mongodb": "2.8",
     },
     "sandbox_manager_service/sandbox_mcp_server/Cargo.toml": {
-        "axum": "0.7",
+        "axum": "0.8",
     },
     "task_runner_service/backend/Cargo.toml": {
-        "axum": "0.7",
-        "tower-http": "0.5",
+        "axum": "0.8",
+        "tower-http": "0.7",
         "mongodb": "2.8",
     },
     "user_service/backend/Cargo.toml": {
-        "axum": "0.7",
-        "tower-http": "0.5",
+        "axum": "0.8",
+        "tower-http": "0.7",
         "mongodb": "2.8",
     },
 }

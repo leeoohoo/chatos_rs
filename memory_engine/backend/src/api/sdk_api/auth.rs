@@ -4,7 +4,6 @@
 use std::sync::Arc;
 
 use axum::{
-    async_trait,
     extract::FromRequestParts,
     http::{request::Parts, StatusCode},
     Json,
@@ -71,7 +70,6 @@ impl SdkAuthContext {
     }
 }
 
-#[async_trait]
 impl FromRequestParts<Arc<AppState>> for SdkAuthContext {
     type Rejection = (StatusCode, String);
 

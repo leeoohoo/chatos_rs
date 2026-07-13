@@ -42,7 +42,7 @@ pub struct ShowcaseImage {
 
 pub fn site_manifest(config: &AppConfig) -> SiteManifest {
     SiteManifest {
-        product_name: "Chat OS",
+        product_name: "Okra",
         tagline: "给你的项目一位真正能动手的 AI 搭档。",
         app_url: config.app_url.clone(),
         registration_enabled: !config.user_service_base_url.is_empty(),

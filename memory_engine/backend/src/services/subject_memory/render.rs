@@ -103,7 +103,7 @@ pub(crate) fn digest_from_ids(namespace: &str, ids: &[String]) -> Option<String>
         return None;
     }
 
-    Some(format!("sha256:{:x}", hasher.finalize()))
+    Some(format!("sha256:{}", hex::encode(hasher.finalize())))
 }
 
 fn project_id_from_summary_metadata(metadata: Option<&Value>) -> Option<String> {

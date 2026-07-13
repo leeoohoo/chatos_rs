@@ -5,7 +5,6 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use axum::{
-    async_trait,
     body::Body,
     extract::{FromRequestParts, State},
     http::{header::AUTHORIZATION, request::Parts, Request, StatusCode},
@@ -212,7 +211,6 @@ impl MemoryAuthContext {
     }
 }
 
-#[async_trait]
 impl<S> FromRequestParts<S> for MemoryAuthContext
 where
     S: Send + Sync,

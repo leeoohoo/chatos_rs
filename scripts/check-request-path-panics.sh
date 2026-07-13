@@ -32,7 +32,7 @@ search_unwrap_expect() {
 check_file() {
   local file_path="$1"
   awk '
-    /^\s*#\[cfg\(test\)\]/ { exit }
+    /^[[:space:]]*#\[cfg\(test\)\]/ { exit }
     { print }
   ' "$file_path"
 }
@@ -42,7 +42,7 @@ for target in "${TARGETS[@]}"; do
   if [[ -d "$abs_target" ]]; then
     while IFS= read -r file; do
       check_file "$file" | search_unwrap_expect >>"$tmp_file" || true
-    done < <(find "$abs_target" -type f \( -name '*.rs' \) | sort)
+    done < <(find "$abs_target" -type f -name '*.rs' ! -name 'tests.rs' | sort)
   elif [[ -f "$abs_target" ]]; then
     check_file "$abs_target" | search_unwrap_expect >>"$tmp_file" || true
   fi

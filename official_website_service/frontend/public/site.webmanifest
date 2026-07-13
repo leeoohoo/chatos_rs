@@ -1,16 +1,16 @@
 {
-  "name": "Chat OS",
-  "short_name": "Chat OS",
+  "name": "Okra",
+  "short_name": "Okra",
   "description": "一位能理解项目、使用工具并持续推进任务的 AI 工程搭档。",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#f7f8fc",
-  "theme_color": "#5b5ce2",
+  "theme_color": "#147a51",
   "icons": [
     {
-      "src": "/favicon.svg",
-      "sizes": "any",
-      "type": "image/svg+xml",
+      "src": "/brand/okra-logo-mark.png",
+      "sizes": "512x512",
+      "type": "image/png",
       "purpose": "any"
     }
   ]

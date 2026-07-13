@@ -188,8 +188,7 @@ impl TerminalSession {
         {
             if let Ok(master) = self.master.lock() {
                 if let Some(process_group_leader) = master.process_group_leader() {
-                    let signal_result =
-                        unsafe { libc::kill(-(process_group_leader as i32), _signal) };
+                    let signal_result = unsafe { libc::kill(-process_group_leader, _signal) };
                     if signal_result == 0 {
                         return Ok(());
                     }
@@ -206,7 +205,7 @@ impl TerminalSession {
     pub fn terminate(&self) -> Result<(), String> {
         #[cfg(unix)]
         {
-            return self.terminate_with_signal(libc::SIGTERM);
+            self.terminate_with_signal(libc::SIGTERM)
         }
 
         #[cfg(not(unix))]
@@ -218,7 +217,7 @@ impl TerminalSession {
     pub fn force_terminate(&self) -> Result<(), String> {
         #[cfg(unix)]
         {
-            return self.terminate_with_signal(libc::SIGKILL);
+            self.terminate_with_signal(libc::SIGKILL)
         }
 
         #[cfg(not(unix))]

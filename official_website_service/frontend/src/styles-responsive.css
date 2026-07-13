@@ -34,7 +34,7 @@
 @media (max-width: 620px) {
   .site-header { width: min(100% - 28px, 1180px); padding: 14px 0; }
   .brand { font-size: 16px; }
-  .brand-mark { width: 34px; height: 34px; border-radius: 10px; }
+  .brand-mark { width: 35px; height: 35px; }
   .header-login { padding: 9px 11px; font-size: 12px; }
   .hero-section { width: min(100% - 28px, 1180px); min-height: auto; padding: 55px 0 80px; }
   .hero-copy h1 { font-size: 43px; }

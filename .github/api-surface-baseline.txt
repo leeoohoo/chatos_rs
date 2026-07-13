@@ -1,7 +1,7 @@
 # API Surface Baseline
 
-main_backend_route_count=196
-total_route_count=196
+main_backend_route_count=202
+total_route_count=202
 
 ## chatos/backend/src/api (.route lines)
 chatos/backend/src/api/agent_chat.rs: .route(
@@ -32,11 +32,15 @@ chatos/backend/src/api/applications.rs: .route("/", get(list_apps).post(create_a
 chatos/backend/src/api/ask_user_prompts.rs: .route(
 chatos/backend/src/api/ask_user_prompts.rs: .route(
 chatos/backend/src/api/ask_user_prompts.rs: .route("/api/ask-user-prompts", get(list_ask_user_prompts))
+chatos/backend/src/api/attachments.rs: Router::new().route("/api/attachments/object", get(get_attachment_object))
+chatos/backend/src/api/attachments.rs: Router::new().route("/api/attachments/uploads", post(create_attachment_uploads))
+chatos/backend/src/api/auth.rs: .route(
 chatos/backend/src/api/auth.rs: .route("/api/auth/agent-accounts", get(list_agent_accounts))
 chatos/backend/src/api/auth.rs: .route("/api/auth/bootstrap-defaults", post(bootstrap_defaults))
 chatos/backend/src/api/auth.rs: .route("/api/auth/login", post(login))
 chatos/backend/src/api/auth.rs: .route("/api/auth/me", axum::routing::get(me))
 chatos/backend/src/api/auth.rs: .route("/api/auth/register", post(register))
+chatos/backend/src/api/auth.rs: .route("/api/auth/register/send-code", post(send_register_code))
 chatos/backend/src/api/auth.rs: .route("/api/auth/ws-ticket", post(issue_ws_ticket))
 chatos/backend/src/api/code_nav.rs: .route("/api/code-nav/capabilities", post(capabilities))
 chatos/backend/src/api/code_nav.rs: .route("/api/code-nav/definition", post(definition))
@@ -144,6 +148,10 @@ chatos/backend/src/api/projects.rs: .route(
 chatos/backend/src/api/projects.rs: .route(
 chatos/backend/src/api/projects.rs: .route(
 chatos/backend/src/api/projects.rs: .route(
+chatos/backend/src/api/projects.rs: .route(
+chatos/backend/src/api/projects.rs: .route(
+chatos/backend/src/api/projects.rs: .route(
+chatos/backend/src/api/projects.rs: .route(
 chatos/backend/src/api/projects.rs: .route("/api/projects", get(list_projects).post(create_project))
 chatos/backend/src/api/projects.rs: .route("/api/projects/cloud", post(create_cloud_project))
 chatos/backend/src/api/projects.rs: .route("/api/projects/{id}/plan", get(get_project_plan))
@@ -191,8 +199,6 @@ chatos/backend/src/api/system_contexts/mod.rs: .route("/api/system-context/activ
 chatos/backend/src/api/task_manager.rs: .route(
 chatos/backend/src/api/task_manager.rs: .route(
 chatos/backend/src/api/task_manager.rs: .route("/api/task-manager/tasks", get(list_tasks))
-chatos/backend/src/api/task_runner_external_mcp.rs: .route(
-chatos/backend/src/api/task_runner_external_mcp.rs: .route(
 chatos/backend/src/api/terminals.rs: .route(
 chatos/backend/src/api/terminals.rs: .route(
 chatos/backend/src/api/terminals.rs: .route(

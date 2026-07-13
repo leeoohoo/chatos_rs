@@ -138,22 +138,22 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/auth/me", get(current_user_handler))
         .route("/api/mcps", get(list_mcps).post(create_mcp))
         .route(
-            "/api/mcps/:mcp_id",
+            "/api/mcps/{mcp_id}",
             get(get_mcp).patch(update_mcp).delete(delete_mcp),
         )
-        .route("/api/mcps/:mcp_id/check", post(check_mcp))
+        .route("/api/mcps/{mcp_id}/check", post(check_mcp))
         .route("/api/skills", get(list_skills).post(create_skill))
         .route(
-            "/api/skills/:skill_id",
+            "/api/skills/{skill_id}",
             get(get_skill).patch(update_skill).delete(delete_skill),
         )
-        .route("/api/skills/:skill_id/check", post(check_skill))
+        .route("/api/skills/{skill_id}/check", post(check_skill))
         .route(
             "/api/skill-packages",
             get(list_skill_packages).post(create_skill_package),
         )
         .route(
-            "/api/skill-packages/:package_id",
+            "/api/skill-packages/{package_id}",
             get(get_skill_package)
                 .patch(update_skill_package)
                 .delete(delete_skill_package),
@@ -162,9 +162,9 @@ pub fn build_router(state: AppState) -> Router {
             "/api/system-agents",
             get(list_system_agents).post(create_system_agent),
         )
-        .route("/api/system-agents/:agent_key", patch(update_system_agent))
+        .route("/api/system-agents/{agent_key}", patch(update_system_agent))
         .route(
-            "/api/system-agents/:agent_key/mcp-bindings",
+            "/api/system-agents/{agent_key}/mcp-bindings",
             get(get_agent_mcp_bindings).put(update_agent_mcp_bindings),
         )
         .route(
@@ -183,11 +183,11 @@ pub fn build_router(state: AppState) -> Router {
             get(list_local_connector_mcps_internal).post(sync_local_connector_mcp_internal),
         )
         .route(
-            "/api/internal/local-connector/mcps/:mcp_id",
+            "/api/internal/local-connector/mcps/{mcp_id}",
             patch(update_local_connector_mcp_internal).delete(delete_local_connector_mcp_internal),
         )
         .route(
-            "/api/internal/local-connector/mcps/:mcp_id/status",
+            "/api/internal/local-connector/mcps/{mcp_id}/status",
             axum::routing::put(update_local_connector_mcp_status_internal),
         )
         .route(
