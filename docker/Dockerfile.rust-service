@@ -10,8 +10,7 @@ ENV CARGO_REGISTRIES_CRATES_IO_INDEX=sparse+https://rsproxy.cn/index/
 ENV CARGO_NET_RETRY=10
 ENV CARGO_HTTP_TIMEOUT=600
 ENV CARGO_TARGET_DIR=/tmp/chatos-target
-ENV RUSTUP_DIST_SERVER=https://mirrors.tuna.tsinghua.edu.cn/rustup
-ENV RUSTUP_UPDATE_ROOT=https://mirrors.tuna.tsinghua.edu.cn/rustup/rustup
+ENV RUSTUP_TOOLCHAIN=1.94.0
 
 RUN mkdir -p /root/.cargo \
     && printf '%s\n' \
