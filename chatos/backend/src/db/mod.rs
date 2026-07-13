@@ -3,7 +3,6 @@
 
 mod factory;
 mod mongodb;
-mod sqlite;
 mod types;
 
 pub use factory::{get_db, get_db_sync, init_global};

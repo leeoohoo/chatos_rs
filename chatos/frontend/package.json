@@ -34,7 +34,6 @@
     "class-variance-authority": "^0.7.0",
     "clsx": "^2.0.0",
     "date-fns": "^4.4.0",
-    "drizzle-orm": "^0.45.2",
     "framer-motion": "^12.42.2",
     "highlight.js": "^11.9.0",
     "immer": "^11.1.11",

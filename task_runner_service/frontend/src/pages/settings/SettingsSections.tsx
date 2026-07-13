@@ -55,12 +55,7 @@ export function SettingsOverviewTab({
   onOpenMcpCatalog,
   onSubmit,
 }: SettingsOverviewTabProps) {
-  const storeModeColor =
-    config?.store_mode === 'mongo'
-      ? 'green'
-      : config?.store_mode === 'sqlite'
-        ? 'blue'
-        : 'gold';
+  const storeModeColor = config?.store_mode === 'mongo' ? 'green' : 'gold';
 
   return (
     <Space direction="vertical" size="large" style={{ width: '100%' }}>

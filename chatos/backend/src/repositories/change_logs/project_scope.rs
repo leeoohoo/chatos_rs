@@ -6,7 +6,6 @@ use std::path::Path;
 
 use mongodb::bson::{doc, Document};
 use mongodb::options::FindOptions;
-use sqlx::Row;
 
 use crate::core::mongo_cursor::collect_documents;
 use crate::repositories::db::with_db;
@@ -118,89 +117,7 @@ pub async fn list_unconfirmed_project_changes(
                 }
                 Ok(out)
             })
-        },
-        |pool| {
-            let project_id = project_id.clone();
-            let project_root = project_root.clone();
-            Box::pin(async move {
-                let rows = sqlx::query(
-                    r#"SELECT c.id, c.project_id, c.path, c.action, c.change_kind, c.created_at, c.conversation_id
-                    FROM mcp_change_logs c
-                    WHERE COALESCE(c.confirmed, 0) = 0
-                    ORDER BY c.created_at DESC"#,
-                )
-                .fetch_all(pool)
-                .await
-                .map_err(|e| e.to_string())?;
-
-                let mut conversation_ids: HashSet<String> = HashSet::new();
-                for row in &rows {
-                    let conversation_id = row
-                        .try_get::<Option<String>, _>("conversation_id")
-                        .unwrap_or(None)
-                        .map(|value| value.trim().to_string())
-                        .filter(|value| !value.is_empty());
-                    if let Some(sid) = conversation_id {
-                        conversation_ids.insert(sid);
-                    }
-                }
-                let conversation_meta_map = load_conversation_meta_map(&conversation_ids).await;
-
-                let mut out: Vec<ProjectScopedChangeRecord> = Vec::new();
-                for row in rows {
-                    let id: String = row.try_get("id").unwrap_or_default();
-                    let id = id.trim().to_string();
-                    if id.is_empty() {
-                        continue;
-                    }
-                    let record_project_id: Option<String> =
-                        row.try_get::<Option<String>, _>("project_id").unwrap_or(None);
-                    let raw_path: String = row.try_get("path").unwrap_or_default();
-                    let raw_path = raw_path.trim().to_string();
-                    if raw_path.is_empty() {
-                        continue;
-                    }
-                    let conversation_id: Option<String> = row
-                        .try_get::<Option<String>, _>("conversation_id")
-                        .unwrap_or(None)
-                        .map(|value| value.trim().to_string())
-                        .filter(|value| !value.is_empty());
-                    let conversation_project_id = conversation_id
-                        .as_ref()
-                        .and_then(|sid| conversation_meta_map.get(sid))
-                        .and_then(|meta| meta.project_id.as_deref());
-                    let action: String = row.try_get("action").unwrap_or_default();
-                    let kind_raw: Option<String> = row.try_get("change_kind").ok();
-                    let kind = normalize_change_kind(kind_raw.as_deref(), action.as_str());
-                    let resolved = resolve_project_path_for_project(&project_root, &raw_path);
-                    if !should_include_record(
-                        &project_id,
-                        record_project_id.as_deref(),
-                        conversation_project_id,
-                        conversation_id.as_deref(),
-                        &raw_path,
-                        &kind,
-                        resolved.as_ref(),
-                        &project_root,
-                    ) {
-                        continue;
-                    }
-                    let Some(resolved) = resolved else {
-                        continue;
-                    };
-                    let created_at: String = row.try_get("created_at").unwrap_or_default();
-                    out.push(ProjectScopedChangeRecord {
-                        id,
-                        path: resolved.absolute_path,
-                        relative_path: resolved.relative_path,
-                        kind,
-                        created_at,
-                    });
-                }
-                Ok(out)
-            })
-        },
-    )
+        })
     .await
 }
 

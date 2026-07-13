@@ -9,7 +9,6 @@ use tokio::sync::Mutex;
 use tracing::warn;
 
 use super::mongodb::init_mongodb;
-use super::sqlite::init_sqlite;
 use super::types::{Database, DatabaseConfig, DatabaseType};
 
 static DB_FACTORY: OnceCell<Arc<DatabaseFactory>> = OnceCell::new();
@@ -97,19 +96,9 @@ impl DatabaseFactory {
     }
 
     async fn create_adapter(&self, config: &DatabaseConfig) -> Result<Arc<Database>, String> {
-        let db_type = config.db_type.clone().unwrap_or(DatabaseType::Sqlite);
-        match db_type {
-            DatabaseType::Sqlite => {
-                let sqlite_cfg = config.sqlite.clone().unwrap_or_default();
-                let db = init_sqlite(&sqlite_cfg).await?;
-                Ok(Arc::new(Database::Sqlite(db)))
-            }
-            DatabaseType::Mongodb => {
-                let mongo_cfg = config.mongodb.clone().unwrap_or_default();
-                let db = init_mongodb(&mongo_cfg).await?;
-                Ok(Arc::new(db))
-            }
-        }
+        let mongo_cfg = config.mongodb.clone().unwrap_or_default();
+        let db = init_mongodb(&mongo_cfg).await?;
+        Ok(Arc::new(db))
     }
 }
 
@@ -141,9 +130,7 @@ fn apply_env_overrides(mut cfg: DatabaseConfig) -> DatabaseConfig {
         .ok()
         .map(|s| s.trim().to_lowercase());
     if let Some(t) = db_type_env {
-        if t == "sqlite" {
-            cfg.db_type = Some(DatabaseType::Sqlite);
-        } else if t == "mongodb" {
+        if t == "mongodb" || t == "mongo" {
             cfg.db_type = Some(DatabaseType::Mongodb);
         }
     }
@@ -220,6 +207,8 @@ fn apply_env_overrides(mut cfg: DatabaseConfig) -> DatabaseConfig {
 
         cfg.mongodb = Some(mongo);
     }
+
+    cfg.db_type = Some(DatabaseType::Mongodb);
 
     cfg
 }

@@ -40,8 +40,24 @@ validate_services() {
   done
 }
 
+configure_rust_target_cache() {
+  if [[ -n "${CHATOS_CARGO_TARGET_CACHE_ID:-}" ]]; then
+    echo "[INFO] Rust target cache: $CHATOS_CARGO_TARGET_CACHE_ID"
+    return 0
+  fi
+
+  local pipeline_scope="${DRONE_STAGE_NAME:-docker-images}"
+  local run_scope="${DRONE_BUILD_NUMBER:-${CI_BUILD_NUMBER:-$(date +%s)}}"
+  local cache_scope
+  cache_scope="$(printf '%s-%s' "$pipeline_scope" "$run_scope" | tr -c '[:alnum:]_.-' '-')"
+  export CHATOS_CARGO_TARGET_CACHE_ID="chatos-rust-target-1.94-j4-${cache_scope}"
+  echo "[INFO] Rust target cache: $CHATOS_CARGO_TARGET_CACHE_ID"
+}
+
 main() {
   cd "$ROOT_DIR"
+
+  configure_rust_target_cache
 
   AVAILABLE_FILE="$(mktemp)"
   bash docker/deploy.sh build-services >"$AVAILABLE_FILE"

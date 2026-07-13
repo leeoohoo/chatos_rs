@@ -21,7 +21,7 @@ Cleanup common local development artifacts:
 - chatos/frontend/dist
 - chatos/backend/target
 - target-shared
-- chatos/backend logs and sqlite wal/shm files
+- chatos/backend logs
 - python __pycache__ / .pyc
 - common .DS_Store files
 EOF
@@ -69,8 +69,6 @@ remove_path "$ROOT_DIR/chatos/backend/target"
 remove_path "$ROOT_DIR/target-shared"
 remove_glob "$ROOT_DIR/chatos/backend/logs/server.log*"
 remove_glob "$ROOT_DIR/chatos/backend/logs/error.log*"
-remove_path "$ROOT_DIR/chatos/backend/data/chat_app.db-wal"
-remove_path "$ROOT_DIR/chatos/backend/data/chat_app.db-shm"
 
 while IFS= read -r path; do
   remove_path "$path"

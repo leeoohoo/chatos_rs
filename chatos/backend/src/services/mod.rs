@@ -44,7 +44,6 @@ pub mod project_run;
 pub mod realtime;
 pub(crate) mod runtime_guidance_input;
 pub mod runtime_guidance_manager;
-pub mod session_mirror;
 pub mod session_title;
 pub(crate) mod shared_ai_runtime;
 pub(crate) mod shared_builtin_agent_builder;

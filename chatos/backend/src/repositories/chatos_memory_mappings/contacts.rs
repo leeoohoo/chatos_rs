@@ -4,10 +4,9 @@
 use futures::TryStreamExt;
 use mongodb::bson::{doc, Document};
 use mongodb::options::FindOptions;
-use sqlx::{QueryBuilder, Sqlite};
 
 use crate::core::values::optional_string_bson;
-use crate::models::memory_mapping::{ChatosContact, ChatosContactRow};
+use crate::models::memory_mapping::ChatosContact;
 use crate::repositories::db::with_db;
 
 use super::support::normalize_optional_text;
@@ -28,82 +27,43 @@ pub async fn list_contacts(
     limit: i64,
     offset: i64,
 ) -> Result<Vec<ChatosContact>, String> {
-    with_db(
-        |db| {
-            let user_id = user_id.to_string();
-            let status = normalize_optional_text(status);
-            Box::pin(async move {
-                let mut filter = doc! { "user_id": &user_id };
-                if let Some(status) = status.as_deref() {
-                    filter.insert("status", status);
-                }
-                let options = FindOptions::builder()
-                    .sort(doc! { "updated_at": -1, "created_at": -1 })
-                    .limit(Some(limit.clamp(1, 500)))
-                    .skip(Some(offset.max(0) as u64))
-                    .build();
-                let cursor = db
-                    .collection::<ChatosContact>("chatos_contacts")
-                    .find(filter, options)
-                    .await
-                    .map_err(|e| e.to_string())?;
-                cursor
-                    .try_collect::<Vec<ChatosContact>>()
-                    .await
-                    .map_err(|e| e.to_string())
-            })
-        },
-        |pool| {
-            let user_id = user_id.to_string();
-            let status = normalize_optional_text(status);
-            Box::pin(async move {
-                let mut sql = "SELECT * FROM chatos_contacts WHERE user_id = ?".to_string();
-                if status.is_some() {
-                    sql.push_str(" AND status = ?");
-                }
-                sql.push_str(" ORDER BY updated_at DESC, created_at DESC LIMIT ? OFFSET ?");
-                let mut query =
-                    sqlx::query_as::<_, ChatosContactRow>(sqlx::AssertSqlSafe(sql)).bind(&user_id);
-                if let Some(status) = status.as_deref() {
-                    query = query.bind(status);
-                }
-                query = query.bind(limit.clamp(1, 500)).bind(offset.max(0));
-                let rows = query.fetch_all(pool).await.map_err(|e| e.to_string())?;
-                Ok(rows
-                    .into_iter()
-                    .map(ChatosContactRow::into_contact)
-                    .collect())
-            })
-        },
-    )
+    with_db(|db| {
+        let user_id = user_id.to_string();
+        let status = normalize_optional_text(status);
+        Box::pin(async move {
+            let mut filter = doc! { "user_id": &user_id };
+            if let Some(status) = status.as_deref() {
+                filter.insert("status", status);
+            }
+            let options = FindOptions::builder()
+                .sort(doc! { "updated_at": -1, "created_at": -1 })
+                .limit(Some(limit.clamp(1, 500)))
+                .skip(Some(offset.max(0) as u64))
+                .build();
+            let cursor = db
+                .collection::<ChatosContact>("chatos_contacts")
+                .find(filter, options)
+                .await
+                .map_err(|e| e.to_string())?;
+            cursor
+                .try_collect::<Vec<ChatosContact>>()
+                .await
+                .map_err(|e| e.to_string())
+        })
+    })
     .await
 }
 
 pub async fn get_contact_by_id(contact_id: &str) -> Result<Option<ChatosContact>, String> {
-    with_db(
-        |db| {
-            let contact_id = contact_id.to_string();
-            Box::pin(async move {
-                db.collection::<ChatosContact>("chatos_contacts")
-                    .find_one(doc! { "id": &contact_id }, None)
-                    .await
-                    .map_err(|e| e.to_string())
-            })
-        },
-        |pool| {
-            let contact_id = contact_id.to_string();
-            Box::pin(async move {
-                let row = sqlx::query_as::<_, ChatosContactRow>(
-                    "SELECT * FROM chatos_contacts WHERE id = ?",
-                )
-                .bind(&contact_id)
-                .fetch_optional(pool)
+    with_db(|db| {
+        let contact_id = contact_id.to_string();
+        Box::pin(async move {
+            db.collection::<ChatosContact>("chatos_contacts")
+                .find_one(doc! { "id": &contact_id }, None)
                 .await
-                .map_err(|e| e.to_string())?;
-                Ok(row.map(ChatosContactRow::into_contact))
-            })
-        },
-    )
+                .map_err(|e| e.to_string())
+        })
+    })
     .await
 }
 
@@ -111,33 +71,16 @@ pub async fn get_contact_by_user_and_agent(
     user_id: &str,
     agent_id: &str,
 ) -> Result<Option<ChatosContact>, String> {
-    with_db(
-        |db| {
-            let user_id = user_id.to_string();
-            let agent_id = agent_id.to_string();
-            Box::pin(async move {
-                db.collection::<ChatosContact>("chatos_contacts")
-                    .find_one(doc! { "user_id": &user_id, "agent_id": &agent_id }, None)
-                    .await
-                    .map_err(|e| e.to_string())
-            })
-        },
-        |pool| {
-            let user_id = user_id.to_string();
-            let agent_id = agent_id.to_string();
-            Box::pin(async move {
-                let row = sqlx::query_as::<_, ChatosContactRow>(
-                    "SELECT * FROM chatos_contacts WHERE user_id = ? AND agent_id = ?",
-                )
-                .bind(&user_id)
-                .bind(&agent_id)
-                .fetch_optional(pool)
+    with_db(|db| {
+        let user_id = user_id.to_string();
+        let agent_id = agent_id.to_string();
+        Box::pin(async move {
+            db.collection::<ChatosContact>("chatos_contacts")
+                .find_one(doc! { "user_id": &user_id, "agent_id": &agent_id }, None)
                 .await
-                .map_err(|e| e.to_string())?;
-                Ok(row.map(ChatosContactRow::into_contact))
-            })
-        },
-    )
+                .map_err(|e| e.to_string())
+        })
+    })
     .await
 }
 
@@ -154,66 +97,32 @@ pub async fn list_contacts_by_ids(
         return Ok(Vec::new());
     }
 
-    with_db(
-        |db| {
-            let user_id = user_id.to_string();
-            let status = normalize_optional_text(status);
-            let ids = ids.clone();
-            Box::pin(async move {
-                let mut filter = doc! {
-                    "user_id": &user_id,
-                    "id": { "$in": ids },
-                };
-                if let Some(status) = status.as_deref() {
-                    filter.insert("status", status);
-                }
-                let options = FindOptions::builder()
-                    .sort(doc! { "updated_at": -1, "created_at": -1 })
-                    .build();
-                let cursor = db
-                    .collection::<ChatosContact>("chatos_contacts")
-                    .find(filter, options)
-                    .await
-                    .map_err(|e| e.to_string())?;
-                cursor
-                    .try_collect::<Vec<ChatosContact>>()
-                    .await
-                    .map_err(|e| e.to_string())
-            })
-        },
-        |pool| {
-            let user_id = user_id.to_string();
-            let status = normalize_optional_text(status);
-            let ids = ids.clone();
-            Box::pin(async move {
-                let mut qb =
-                    QueryBuilder::<Sqlite>::new("SELECT * FROM chatos_contacts WHERE user_id = ");
-                qb.push_bind(&user_id);
-                qb.push(" AND id IN (");
-                {
-                    let mut separated = qb.separated(", ");
-                    for id in &ids {
-                        separated.push_bind(id);
-                    }
-                }
-                qb.push(")");
-                if let Some(status) = status.as_deref() {
-                    qb.push(" AND status = ");
-                    qb.push_bind(status);
-                }
-                qb.push(" ORDER BY updated_at DESC, created_at DESC");
-                let rows = qb
-                    .build_query_as::<ChatosContactRow>()
-                    .fetch_all(pool)
-                    .await
-                    .map_err(|e| e.to_string())?;
-                Ok(rows
-                    .into_iter()
-                    .map(ChatosContactRow::into_contact)
-                    .collect())
-            })
-        },
-    )
+    with_db(|db| {
+        let user_id = user_id.to_string();
+        let status = normalize_optional_text(status);
+        let ids = ids.clone();
+        Box::pin(async move {
+            let mut filter = doc! {
+                "user_id": &user_id,
+                "id": { "$in": ids },
+            };
+            if let Some(status) = status.as_deref() {
+                filter.insert("status", status);
+            }
+            let options = FindOptions::builder()
+                .sort(doc! { "updated_at": -1, "created_at": -1 })
+                .build();
+            let cursor = db
+                .collection::<ChatosContact>("chatos_contacts")
+                .find(filter, options)
+                .await
+                .map_err(|e| e.to_string())?;
+            cursor
+                .try_collect::<Vec<ChatosContact>>()
+                .await
+                .map_err(|e| e.to_string())
+        })
+    })
     .await
 }
 
@@ -231,77 +140,37 @@ pub async fn create_contact_idempotent(
         agent_name_snapshot,
         "active".to_string(),
     );
-    with_db(
-        |db| {
-            let contact = contact.clone();
-            Box::pin(async move {
-                match db
-                    .collection::<ChatosContact>("chatos_contacts")
-                    .insert_one(contact.clone(), None)
-                    .await
-                {
-                    Ok(_) => Ok((contact, true)),
-                    Err(err) => {
-                        if err.to_string().contains("E11000") {
-                            let existing = db
-                                .collection::<ChatosContact>("chatos_contacts")
-                                .find_one(
-                                    doc! {
-                                        "user_id": &contact.user_id,
-                                        "agent_id": &contact.agent_id,
-                                    },
-                                    None,
-                                )
-                                .await
-                                .map_err(|e| e.to_string())?;
-                            if let Some(existing) = existing {
-                                return Ok((existing, false));
-                            }
-                        }
-                        Err(err.to_string())
-                    }
-                }
-            })
-        },
-        |pool| {
-            let contact = contact.clone();
-            Box::pin(async move {
-                match sqlx::query(
-                    "INSERT INTO chatos_contacts \
-                    (id, user_id, agent_id, agent_name_snapshot, status, created_at, updated_at) \
-                    VALUES (?, ?, ?, ?, ?, ?, ?)",
-                )
-                .bind(&contact.id)
-                .bind(&contact.user_id)
-                .bind(&contact.agent_id)
-                .bind(&contact.agent_name_snapshot)
-                .bind(&contact.status)
-                .bind(&contact.created_at)
-                .bind(&contact.updated_at)
-                .execute(pool)
+    with_db(|db| {
+        let contact = contact.clone();
+        Box::pin(async move {
+            match db
+                .collection::<ChatosContact>("chatos_contacts")
+                .insert_one(contact.clone(), None)
                 .await
-                {
-                    Ok(_) => Ok((contact, true)),
-                    Err(err) => {
-                        if err.to_string().to_lowercase().contains("unique") {
-                            if let Some(existing) = sqlx::query_as::<_, ChatosContactRow>(
-                                "SELECT * FROM chatos_contacts WHERE user_id = ? AND agent_id = ?",
+            {
+                Ok(_) => Ok((contact, true)),
+                Err(err) => {
+                    if err.to_string().contains("E11000") {
+                        let existing = db
+                            .collection::<ChatosContact>("chatos_contacts")
+                            .find_one(
+                                doc! {
+                                    "user_id": &contact.user_id,
+                                    "agent_id": &contact.agent_id,
+                                },
+                                None,
                             )
-                            .bind(&contact.user_id)
-                            .bind(&contact.agent_id)
-                            .fetch_optional(pool)
                             .await
-                            .map_err(|e| e.to_string())?
-                            {
-                                return Ok((existing.into_contact(), false));
-                            }
+                            .map_err(|e| e.to_string())?;
+                        if let Some(existing) = existing {
+                            return Ok((existing, false));
                         }
-                        Err(err.to_string())
                     }
+                    Err(err.to_string())
                 }
-            })
-        },
-    )
+            }
+        })
+    })
     .await
 }
 
@@ -325,103 +194,62 @@ pub async fn update_contact_task_runner_config(
         && base_url.is_some()
         && (agent_account_id.is_some() || (username.is_some() && password.is_some()));
 
-    with_db(
-        |db| {
-            let contact_id = contact_id.to_string();
-            let base_url = base_url.clone();
-            let agent_account_id = agent_account_id.clone();
-            let username = username.clone();
-            let password = password.clone();
-            let updated_at = updated_at.clone();
-            Box::pin(async move {
-                let mut set_doc = doc! {
-                    "task_runner_enabled": enabled,
-                    "updated_at": &updated_at,
-                };
-                set_doc.insert("task_runner_base_url", optional_string_bson(base_url.clone()));
-                set_doc.insert(
-                    "task_runner_agent_account_id",
-                    optional_string_bson(agent_account_id.clone()),
-                );
-                set_doc.insert("task_runner_username", optional_string_bson(username.clone()));
-                set_doc.insert("task_runner_password", optional_string_bson(password.clone()));
-                let result = db
-                    .collection::<Document>("chatos_contacts")
-                    .update_one(doc! { "id": &contact_id }, doc! { "$set": set_doc }, None)
-                    .await
-                    .map_err(|e| e.to_string())?;
-                if result.matched_count == 0 {
-                    return Ok(None);
-                }
-                db.collection::<ChatosContact>("chatos_contacts")
-                    .find_one(doc! { "id": &contact_id }, None)
-                    .await
-                    .map_err(|e| e.to_string())
-            })
-        },
-        |pool| {
-            let contact_id = contact_id.to_string();
-            let base_url = base_url.clone();
-            let agent_account_id = agent_account_id.clone();
-            let username = username.clone();
-            let password = password.clone();
-            let updated_at = updated_at.clone();
-            Box::pin(async move {
-                let result = sqlx::query(
-                    "UPDATE chatos_contacts SET \
-                    task_runner_enabled = ?, task_runner_base_url = ?, task_runner_agent_account_id = ?, task_runner_username = ?, task_runner_password = ?, updated_at = ? \
-                    WHERE id = ?",
-                )
-                .bind(if enabled { 1_i64 } else { 0_i64 })
-                .bind(&base_url)
-                .bind(&agent_account_id)
-                .bind(&username)
-                .bind(&password)
-                .bind(&updated_at)
-                .bind(&contact_id)
-                .execute(pool)
+    with_db(|db| {
+        let contact_id = contact_id.to_string();
+        let base_url = base_url.clone();
+        let agent_account_id = agent_account_id.clone();
+        let username = username.clone();
+        let password = password.clone();
+        let updated_at = updated_at.clone();
+        Box::pin(async move {
+            let mut set_doc = doc! {
+                "task_runner_enabled": enabled,
+                "updated_at": &updated_at,
+            };
+            set_doc.insert(
+                "task_runner_base_url",
+                optional_string_bson(base_url.clone()),
+            );
+            set_doc.insert(
+                "task_runner_agent_account_id",
+                optional_string_bson(agent_account_id.clone()),
+            );
+            set_doc.insert(
+                "task_runner_username",
+                optional_string_bson(username.clone()),
+            );
+            set_doc.insert(
+                "task_runner_password",
+                optional_string_bson(password.clone()),
+            );
+            let result = db
+                .collection::<Document>("chatos_contacts")
+                .update_one(doc! { "id": &contact_id }, doc! { "$set": set_doc }, None)
                 .await
                 .map_err(|e| e.to_string())?;
-                if result.rows_affected() == 0 {
-                    return Ok(None);
-                }
-                let row =
-                    sqlx::query_as::<_, ChatosContactRow>("SELECT * FROM chatos_contacts WHERE id = ?")
-                        .bind(&contact_id)
-                        .fetch_optional(pool)
-                        .await
-                        .map_err(|e| e.to_string())?;
-                Ok(row.map(ChatosContactRow::into_contact))
-            })
-        },
-    )
+            if result.matched_count == 0 {
+                return Ok(None);
+            }
+            db.collection::<ChatosContact>("chatos_contacts")
+                .find_one(doc! { "id": &contact_id }, None)
+                .await
+                .map_err(|e| e.to_string())
+        })
+    })
     .await
 }
 
 pub async fn delete_contact_by_id(contact_id: &str) -> Result<bool, String> {
-    with_db(
-        |db| {
-            let contact_id = contact_id.to_string();
-            Box::pin(async move {
-                let result = db
-                    .collection::<Document>("chatos_contacts")
-                    .delete_one(doc! { "id": &contact_id }, None)
-                    .await
-                    .map_err(|e| e.to_string())?;
-                Ok(result.deleted_count > 0)
-            })
-        },
-        |pool| {
-            let contact_id = contact_id.to_string();
-            Box::pin(async move {
-                let result = sqlx::query("DELETE FROM chatos_contacts WHERE id = ?")
-                    .bind(&contact_id)
-                    .execute(pool)
-                    .await
-                    .map_err(|e| e.to_string())?;
-                Ok(result.rows_affected() > 0)
-            })
-        },
-    )
+    with_db(|db| {
+        let contact_id = contact_id.to_string();
+        Box::pin(async move {
+            let result = db
+                .collection::<Document>("chatos_contacts")
+                .delete_one(doc! { "id": &contact_id }, None)
+                .await
+                .map_err(|e| e.to_string())?;
+            Ok(result.deleted_count > 0)
+        })
+    })
     .await
 }

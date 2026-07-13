@@ -2,7 +2,6 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use std::collections::{BTreeMap, BTreeSet, HashSet};
-use std::str::FromStr;
 use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
@@ -15,10 +14,6 @@ use mongodb::{
 use parking_lot::RwLock;
 use serde::de::DeserializeOwned;
 use serde::Serialize;
-use sqlx::{
-    sqlite::{SqliteConnectOptions, SqlitePoolOptions},
-    Row, SqlitePool,
-};
 use tokio::sync::broadcast;
 use tracing::warn;
 
@@ -41,27 +36,14 @@ mod codec;
 mod in_memory;
 mod mongo;
 mod mongo_support;
-mod sqlite;
-mod sqlite_rows;
-mod sqlite_support;
 mod task_support;
 
-use self::codec::{
-    ask_user_prompt_status_to_str, bool_to_int, decode_json, encode_json, encode_json_option,
-    encode_json_optional, task_run_status_to_str, task_status_to_str, user_role_to_str,
-};
+use self::codec::ask_user_prompt_status_to_str;
 use self::mongo_support::{
     bson_string_field, bson_usize_field, build_limit_stage, build_mongo_prompt_filter,
     build_mongo_run_filter, build_mongo_task_filter, build_skip_stage,
     is_mongo_active_run_conflict, is_mongo_active_run_index_conflict, mongo_find_options,
 };
-use self::sqlite_rows::{
-    ask_user_prompt_from_row, external_mcp_config_from_row, model_config_from_row,
-    remote_server_from_row, run_summary_from_row, runtime_settings_from_row, task_from_row,
-    task_project_from_row, task_run_event_from_row, task_run_from_row, task_summary_from_row,
-    user_from_row,
-};
-use self::sqlite_support::ensure_sqlite_parent_dir;
 use self::task_support::{
     apply_offset_limit, build_page_response, empty_task_stats, slice_page_items, task_due_at,
     task_due_for_scheduler, task_matches_keyword, DEFAULT_PAGE_LIMIT,
@@ -115,13 +97,6 @@ pub(crate) struct InMemoryStore {
 }
 
 #[derive(Clone)]
-pub(crate) struct SqliteStore {
-    pool: SqlitePool,
-    cancel_requested_runs: Arc<RwLock<HashSet<String>>>,
-    run_event_sender: broadcast::Sender<TaskRunEventRecord>,
-}
-
-#[derive(Clone)]
 pub(crate) struct MongoStore {
     tasks: Collection<TaskRecord>,
     task_projects: Collection<TaskProjectRecord>,
@@ -141,7 +116,6 @@ pub(crate) struct MongoStore {
 #[derive(Clone)]
 pub(crate) enum AppStore {
     InMemory(InMemoryStore),
-    Sqlite(SqliteStore),
     Mongo(MongoStore),
 }
 
@@ -150,9 +124,6 @@ impl AppStore {
         let (run_event_sender, _) = broadcast::channel(512);
         match config.store_mode {
             StoreMode::Memory => Ok(Self::InMemory(InMemoryStore::new(run_event_sender))),
-            StoreMode::Sqlite => Ok(Self::Sqlite(
-                SqliteStore::connect(&config.database_url, run_event_sender).await?,
-            )),
             StoreMode::Mongo => Ok(Self::Mongo(
                 MongoStore::connect(&config.database_url, run_event_sender).await?,
             )),

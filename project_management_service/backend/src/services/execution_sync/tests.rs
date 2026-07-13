@@ -27,14 +27,20 @@ fn test_user() -> CurrentUser {
 }
 
 async fn test_store() -> AppStore {
-    let path = std::env::temp_dir().join(format!(
-        "project-management-execution-sync-test-{}-{}.db",
+    let database = format!(
+        "project_management_execution_sync_test_{}_{}",
         std::process::id(),
         NEXT_TEST_DB.fetch_add(1, Ordering::SeqCst)
-    ));
-    AppStore::new(format!("sqlite://{}", path.display()).as_str())
+    );
+    let base_url = std::env::var("PROJECT_SERVICE_TEST_MONGODB_BASE_URL")
+        .unwrap_or_else(|_| "mongodb://admin:admin@127.0.0.1:27018".to_string());
+    let database_url = format!(
+        "{}/{database}?authSource=admin",
+        base_url.trim_end_matches('/')
+    );
+    AppStore::new(database_url.as_str())
         .await
-        .expect("create sqlite store")
+        .expect("create MongoDB test store")
 }
 
 async fn create_test_project(store: &AppStore) -> crate::models::ProjectRecord {
@@ -125,6 +131,7 @@ async fn create_test_work_item(
 }
 
 #[tokio::test]
+#[ignore = "requires MongoDB"]
 async fn completed_child_requirement_work_items_complete_in_progress_parent_requirement() {
     let store = test_store().await;
     let project = create_test_project(&store).await;
@@ -197,6 +204,7 @@ async fn completed_child_requirement_work_items_complete_in_progress_parent_requ
 }
 
 #[tokio::test]
+#[ignore = "requires MongoDB"]
 async fn completed_downstream_approved_requirement_work_items_complete_requirement() {
     let store = test_store().await;
     let project = create_test_project(&store).await;
@@ -274,6 +282,7 @@ async fn completed_downstream_approved_requirement_work_items_complete_requireme
 }
 
 #[tokio::test]
+#[ignore = "requires MongoDB"]
 async fn failed_work_item_fails_related_in_progress_requirements() {
     let store = test_store().await;
     let project = create_test_project(&store).await;
@@ -323,6 +332,7 @@ async fn failed_work_item_fails_related_in_progress_requirements() {
 }
 
 #[tokio::test]
+#[ignore = "requires MongoDB"]
 async fn blocked_work_item_blocks_related_in_progress_requirements() {
     let store = test_store().await;
     let project = create_test_project(&store).await;
@@ -372,6 +382,7 @@ async fn blocked_work_item_blocks_related_in_progress_requirements() {
 }
 
 #[tokio::test]
+#[ignore = "requires MongoDB"]
 async fn work_item_waits_for_all_current_execution_tasks_before_completion() {
     let store = test_store().await;
     let project = create_test_project(&store).await;

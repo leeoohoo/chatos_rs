@@ -15,10 +15,8 @@ use crate::services::ask_user_prompt_manager::types::{
 use crate::services::realtime::{
     publish_ask_user_prompt_updated, resolve_conversation_scope, AskUserPromptRealtimePayload,
 };
-use crate::services::session_mirror::ensure_sqlite_session_present;
 
 use super::codec::{ask_user_prompt_record_from_doc, ask_user_prompt_record_to_doc};
-use super::row::AskUserPromptRow;
 
 pub async fn create_ask_user_prompt_record(
     payload: &AskUserPromptPayload,
@@ -67,58 +65,22 @@ pub async fn create_ask_user_prompt_record(
     };
 
     let mongo_record = record.clone();
-    let sqlite_record = record.clone();
 
-    let created = with_db(
-        move |db| {
-            let record = mongo_record.clone();
-            Box::pin(async move {
-                let update_options = UpdateOptions::builder().upsert(true).build();
-                db.collection::<Document>("ask_user_prompt_requests")
-                    .update_one(
-                        doc! { "id": record.id.clone() },
-                        doc! { "$set": ask_user_prompt_record_to_doc(&record) },
-                        update_options,
-                    )
-                    .await
-                    .map_err(|err| err.to_string())?;
-                Ok(record)
-            })
-        },
-        move |pool| {
-            let record = sqlite_record.clone();
-            Box::pin(async move {
-                ensure_sqlite_session_present(pool, &record.conversation_id).await?;
-                let prompt_json =
-                    serde_json::to_string(&record.prompt).unwrap_or_else(|_| "{}".to_string());
-
-                sqlx::query(
-                    "INSERT INTO ask_user_prompt_requests (id, conversation_id, conversation_turn_id, tool_call_id, kind, status, prompt_json, response_json, expires_at, source, external_prompt_id, external_task_id, external_run_id, external_project_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET conversation_id = excluded.conversation_id, conversation_turn_id = excluded.conversation_turn_id, tool_call_id = excluded.tool_call_id, kind = excluded.kind, status = excluded.status, prompt_json = excluded.prompt_json, response_json = excluded.response_json, expires_at = excluded.expires_at, source = excluded.source, external_prompt_id = excluded.external_prompt_id, external_task_id = excluded.external_task_id, external_run_id = excluded.external_run_id, external_project_id = excluded.external_project_id, updated_at = excluded.updated_at",
+    let created = with_db(move |db| {
+        let record = mongo_record.clone();
+        Box::pin(async move {
+            let update_options = UpdateOptions::builder().upsert(true).build();
+            db.collection::<Document>("ask_user_prompt_requests")
+                .update_one(
+                    doc! { "id": record.id.clone() },
+                    doc! { "$set": ask_user_prompt_record_to_doc(&record) },
+                    update_options,
                 )
-                .bind(&record.id)
-                .bind(&record.conversation_id)
-                .bind(&record.conversation_turn_id)
-                .bind(&record.tool_call_id)
-                .bind(&record.kind)
-                .bind(record.status.as_str())
-                .bind(prompt_json)
-                .bind(Option::<String>::None)
-                .bind(&record.expires_at)
-                .bind(&record.source)
-                .bind(&record.external_prompt_id)
-                .bind(&record.external_task_id)
-                .bind(&record.external_run_id)
-                .bind(&record.external_project_id)
-                .bind(&record.created_at)
-                .bind(&record.updated_at)
-                .execute(pool)
                 .await
                 .map_err(|err| err.to_string())?;
-
-                Ok(record)
-            })
-        },
-    )
+            Ok(record)
+        })
+    })
     .await?;
 
     publish_ask_user_prompt_created(&created).await;
@@ -129,62 +91,22 @@ pub async fn upsert_external_ask_user_prompt_record(
     record: AskUserPromptRecord,
 ) -> Result<AskUserPromptRecord, String> {
     let mongo_record = record.clone();
-    let sqlite_record = record.clone();
 
-    let saved = with_db(
-        move |db| {
-            let record = mongo_record.clone();
-            Box::pin(async move {
-                let update_options = UpdateOptions::builder().upsert(true).build();
-                db.collection::<Document>("ask_user_prompt_requests")
-                    .update_one(
-                        doc! { "id": record.id.clone() },
-                        doc! { "$set": ask_user_prompt_record_to_doc(&record) },
-                        update_options,
-                    )
-                    .await
-                    .map_err(|err| err.to_string())?;
-                Ok(record)
-            })
-        },
-        move |pool| {
-            let record = sqlite_record.clone();
-            Box::pin(async move {
-                ensure_sqlite_session_present(pool, &record.conversation_id).await?;
-                let prompt_json =
-                    serde_json::to_string(&record.prompt).unwrap_or_else(|_| "{}".to_string());
-                let response_json = record
-                    .response
-                    .as_ref()
-                    .and_then(|value| serde_json::to_string(value).ok());
-
-                sqlx::query(
-                    "INSERT INTO ask_user_prompt_requests (id, conversation_id, conversation_turn_id, tool_call_id, kind, status, prompt_json, response_json, expires_at, source, external_prompt_id, external_task_id, external_run_id, external_project_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET conversation_id = excluded.conversation_id, conversation_turn_id = excluded.conversation_turn_id, tool_call_id = excluded.tool_call_id, kind = excluded.kind, status = excluded.status, prompt_json = excluded.prompt_json, response_json = excluded.response_json, expires_at = excluded.expires_at, source = excluded.source, external_prompt_id = excluded.external_prompt_id, external_task_id = excluded.external_task_id, external_run_id = excluded.external_run_id, external_project_id = excluded.external_project_id, updated_at = excluded.updated_at",
+    let saved = with_db(move |db| {
+        let record = mongo_record.clone();
+        Box::pin(async move {
+            let update_options = UpdateOptions::builder().upsert(true).build();
+            db.collection::<Document>("ask_user_prompt_requests")
+                .update_one(
+                    doc! { "id": record.id.clone() },
+                    doc! { "$set": ask_user_prompt_record_to_doc(&record) },
+                    update_options,
                 )
-                .bind(&record.id)
-                .bind(&record.conversation_id)
-                .bind(&record.conversation_turn_id)
-                .bind(&record.tool_call_id)
-                .bind(&record.kind)
-                .bind(record.status.as_str())
-                .bind(prompt_json)
-                .bind(response_json)
-                .bind(&record.expires_at)
-                .bind(&record.source)
-                .bind(&record.external_prompt_id)
-                .bind(&record.external_task_id)
-                .bind(&record.external_run_id)
-                .bind(&record.external_project_id)
-                .bind(&record.created_at)
-                .bind(&record.updated_at)
-                .execute(pool)
                 .await
                 .map_err(|err| err.to_string())?;
-
-                Ok(record)
-            })
-        },
-    )
+            Ok(record)
+        })
+    })
     .await?;
 
     if saved.status == AskUserPromptStatus::Pending {
@@ -211,86 +133,43 @@ pub async fn update_ask_user_prompt_response(
         .and_then(|value| serde_json::to_string(value).ok());
 
     let prompt_id_for_mongo = prompt_id.clone();
-    let prompt_id_for_sqlite = prompt_id.clone();
     let status_for_mongo = status_raw.clone();
-    let status_for_sqlite = status_raw.clone();
     let response_for_mongo = response_json.clone();
-    let response_for_sqlite = response_json.clone();
     let updated_at_for_mongo = updated_at.clone();
-    let updated_at_for_sqlite = updated_at.clone();
 
-    let updated = with_db(
-        move |db| {
-            let prompt_id = prompt_id_for_mongo.clone();
-            let status = status_for_mongo.clone();
-            let response_json = response_for_mongo.clone();
-            let updated_at = updated_at_for_mongo.clone();
-            Box::pin(async move {
-                let mut set_doc = doc! {
-                    "status": status,
-                    "updated_at": updated_at,
-                };
-                match response_json {
-                    Some(raw) => {
-                        set_doc.insert("response_json", Bson::String(raw));
-                    }
-                    None => {
-                        set_doc.insert("response_json", Bson::Null);
-                    }
+    let updated = with_db(move |db| {
+        let prompt_id = prompt_id_for_mongo.clone();
+        let status = status_for_mongo.clone();
+        let response_json = response_for_mongo.clone();
+        let updated_at = updated_at_for_mongo.clone();
+        Box::pin(async move {
+            let mut set_doc = doc! {
+                "status": status,
+                "updated_at": updated_at,
+            };
+            match response_json {
+                Some(raw) => {
+                    set_doc.insert("response_json", Bson::String(raw));
                 }
-
-                let options = FindOneAndUpdateOptions::builder()
-                    .return_document(ReturnDocument::After)
-                    .build();
-
-                let updated = db
-                    .collection::<Document>("ask_user_prompt_requests")
-                    .find_one_and_update(
-                        doc! { "id": prompt_id },
-                        doc! { "$set": set_doc },
-                        options,
-                    )
-                    .await
-                    .map_err(|err| err.to_string())?
-                    .and_then(|doc| ask_user_prompt_record_from_doc(&doc))
-                    .ok_or_else(|| ASK_USER_PROMPT_NOT_FOUND_ERR.to_string())?;
-                Ok(updated)
-            })
-        },
-        move |pool| {
-            let prompt_id = prompt_id_for_sqlite.clone();
-            let status = status_for_sqlite.clone();
-            let response_json = response_for_sqlite.clone();
-            let updated_at = updated_at_for_sqlite.clone();
-            Box::pin(async move {
-                let result = sqlx::query(
-                    "UPDATE ask_user_prompt_requests SET status = ?, response_json = ?, updated_at = ? WHERE id = ?",
-                )
-                .bind(status)
-                .bind(response_json)
-                .bind(updated_at)
-                .bind(&prompt_id)
-                .execute(pool)
-                .await
-                .map_err(|err| err.to_string())?;
-
-                if result.rows_affected() == 0 {
-                    return Err(ASK_USER_PROMPT_NOT_FOUND_ERR.to_string());
+                None => {
+                    set_doc.insert("response_json", Bson::Null);
                 }
+            }
 
-                let row = sqlx::query_as::<_, AskUserPromptRow>(
-                    "SELECT id, conversation_id, conversation_turn_id, tool_call_id, kind, status, prompt_json, response_json, expires_at, source, external_prompt_id, external_task_id, external_run_id, external_project_id, created_at, updated_at FROM ask_user_prompt_requests WHERE id = ? LIMIT 1",
-                )
-                .bind(&prompt_id)
-                .fetch_optional(pool)
+            let options = FindOneAndUpdateOptions::builder()
+                .return_document(ReturnDocument::After)
+                .build();
+
+            let updated = db
+                .collection::<Document>("ask_user_prompt_requests")
+                .find_one_and_update(doc! { "id": prompt_id }, doc! { "$set": set_doc }, options)
                 .await
                 .map_err(|err| err.to_string())?
+                .and_then(|doc| ask_user_prompt_record_from_doc(&doc))
                 .ok_or_else(|| ASK_USER_PROMPT_NOT_FOUND_ERR.to_string())?;
-
-                Ok(row.into_record())
-            })
-        },
-    )
+            Ok(updated)
+        })
+    })
     .await?;
 
     publish_ask_user_prompt_resolved(&updated).await;

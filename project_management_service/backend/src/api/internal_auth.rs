@@ -221,7 +221,9 @@ mod tests {
         AppConfig {
             host: IpAddr::V4(Ipv4Addr::LOCALHOST),
             port: 0,
-            database_url: "sqlite::memory:".to_string(),
+            database_url:
+                "mongodb://admin:admin@127.0.0.1:27018/project_management_test?authSource=admin"
+                    .to_string(),
             user_service_base_url: "http://127.0.0.1:39190".to_string(),
             user_service_request_timeout: Duration::from_secs(1),
             user_service_internal_secret: None,

@@ -316,8 +316,10 @@ impl FsPathPolicy {
         }
 
         let candidate = PathBuf::from(trimmed);
-        if candidate.is_absolute() && self.raw_path_points_inside_allowed_root(trimmed) {
-            return policy_paths::resolve_input_path(raw);
+        if candidate.is_absolute() {
+            if self.raw_path_points_inside_allowed_root(trimmed) || candidate.exists() {
+                return policy_paths::resolve_input_path(raw);
+            }
         }
 
         if let Some(resolved) = self.resolve_user_visible_path(trimmed) {

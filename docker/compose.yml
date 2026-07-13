@@ -327,7 +327,7 @@ services:
       retries: 30
 
   sandbox-docker-socket-proxy:
-    image: ${DOCKER_SOCKET_PROXY_IMAGE:-tecnativa/docker-socket-proxy:latest}
+    image: ${DOCKER_SOCKET_PROXY_IMAGE:-ghcr.io/tecnativa/docker-socket-proxy:latest}
     restart: unless-stopped
     networks:
       - cloud

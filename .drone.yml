@@ -37,7 +37,7 @@ steps:
   - name: cargo-check
     image: rust:1-bookworm
     commands:
-      - find /etc/apt -type f \( -name '*.list' -o -name '*.sources' \) -exec sed -i -e 's|http://deb.debian.org/debian|http://mirrors.cloud.aliyuncs.com/debian|g' -e 's|http://deb.debian.org/debian-security|http://mirrors.cloud.aliyuncs.com/debian-security|g' {} + && apt-get update && apt-get install -y --no-install-recommends git bash python3 build-essential clang cmake libsqlite3-dev libssl-dev pkg-config protobuf-compiler ca-certificates && rm -rf /var/lib/apt/lists/*
+      - find /etc/apt -type f \( -name '*.list' -o -name '*.sources' \) -exec sed -i -e 's|http://deb.debian.org/debian|http://mirrors.cloud.aliyuncs.com/debian|g' -e 's|http://deb.debian.org/debian-security|http://mirrors.cloud.aliyuncs.com/debian-security|g' {} + && apt-get update && apt-get install -y --no-install-recommends git bash python3 build-essential clang cmake libssl-dev pkg-config protobuf-compiler ca-certificates && rm -rf /var/lib/apt/lists/*
       - cargo check --manifest-path Cargo.toml -p chat_app_server_rs
       - cargo clippy --workspace --all-targets -- -D warnings
       - bash scripts/check-request-path-panics.sh
@@ -58,7 +58,7 @@ steps:
   - name: cargo-check
     image: rust:1-bookworm
     commands:
-      - find /etc/apt -type f \( -name '*.list' -o -name '*.sources' \) -exec sed -i -e 's|http://deb.debian.org/debian|http://mirrors.cloud.aliyuncs.com/debian|g' -e 's|http://deb.debian.org/debian-security|http://mirrors.cloud.aliyuncs.com/debian-security|g' {} + && apt-get update && apt-get install -y --no-install-recommends git bash python3 build-essential clang cmake libsqlite3-dev libssl-dev pkg-config protobuf-compiler ca-certificates && rm -rf /var/lib/apt/lists/*
+      - find /etc/apt -type f \( -name '*.list' -o -name '*.sources' \) -exec sed -i -e 's|http://deb.debian.org/debian|http://mirrors.cloud.aliyuncs.com/debian|g' -e 's|http://deb.debian.org/debian-security|http://mirrors.cloud.aliyuncs.com/debian-security|g' {} + && apt-get update && apt-get install -y --no-install-recommends git bash python3 build-essential clang cmake libssl-dev pkg-config protobuf-compiler ca-certificates && rm -rf /var/lib/apt/lists/*
       - cargo check --manifest-path user_service/backend/Cargo.toml
       - cargo clippy --manifest-path user_service/backend/Cargo.toml --all-targets -- -D warnings
 
@@ -76,7 +76,7 @@ steps:
   - name: cargo-check
     image: rust:1-bookworm
     commands:
-      - find /etc/apt -type f \( -name '*.list' -o -name '*.sources' \) -exec sed -i -e 's|http://deb.debian.org/debian|http://mirrors.cloud.aliyuncs.com/debian|g' -e 's|http://deb.debian.org/debian-security|http://mirrors.cloud.aliyuncs.com/debian-security|g' {} + && apt-get update && apt-get install -y --no-install-recommends git bash python3 build-essential clang cmake libsqlite3-dev libssl-dev pkg-config protobuf-compiler ca-certificates && rm -rf /var/lib/apt/lists/*
+      - find /etc/apt -type f \( -name '*.list' -o -name '*.sources' \) -exec sed -i -e 's|http://deb.debian.org/debian|http://mirrors.cloud.aliyuncs.com/debian|g' -e 's|http://deb.debian.org/debian-security|http://mirrors.cloud.aliyuncs.com/debian-security|g' {} + && apt-get update && apt-get install -y --no-install-recommends git bash python3 build-essential clang cmake libssl-dev pkg-config protobuf-compiler ca-certificates && rm -rf /var/lib/apt/lists/*
       - cargo check --manifest-path memory_engine/backend/Cargo.toml
       - cargo clippy --manifest-path memory_engine/backend/Cargo.toml --all-targets -- -D warnings
 
@@ -94,7 +94,7 @@ steps:
   - name: cargo-check
     image: rust:1-bookworm
     commands:
-      - find /etc/apt -type f \( -name '*.list' -o -name '*.sources' \) -exec sed -i -e 's|http://deb.debian.org/debian|http://mirrors.cloud.aliyuncs.com/debian|g' -e 's|http://deb.debian.org/debian-security|http://mirrors.cloud.aliyuncs.com/debian-security|g' {} + && apt-get update && apt-get install -y --no-install-recommends git bash python3 build-essential clang cmake libsqlite3-dev libssl-dev pkg-config protobuf-compiler ca-certificates && rm -rf /var/lib/apt/lists/*
+      - find /etc/apt -type f \( -name '*.list' -o -name '*.sources' \) -exec sed -i -e 's|http://deb.debian.org/debian|http://mirrors.cloud.aliyuncs.com/debian|g' -e 's|http://deb.debian.org/debian-security|http://mirrors.cloud.aliyuncs.com/debian-security|g' {} + && apt-get update && apt-get install -y --no-install-recommends git bash python3 build-essential clang cmake libssl-dev pkg-config protobuf-compiler ca-certificates && rm -rf /var/lib/apt/lists/*
       - cargo check --manifest-path Cargo.toml -p project_management_service_backend
 
 ---
@@ -111,7 +111,7 @@ steps:
   - name: cargo-check
     image: rust:1-bookworm
     commands:
-      - find /etc/apt -type f \( -name '*.list' -o -name '*.sources' \) -exec sed -i -e 's|http://deb.debian.org/debian|http://mirrors.cloud.aliyuncs.com/debian|g' -e 's|http://deb.debian.org/debian-security|http://mirrors.cloud.aliyuncs.com/debian-security|g' {} + && apt-get update && apt-get install -y --no-install-recommends git bash python3 build-essential clang cmake libsqlite3-dev libssl-dev pkg-config protobuf-compiler ca-certificates && rm -rf /var/lib/apt/lists/*
+      - find /etc/apt -type f \( -name '*.list' -o -name '*.sources' \) -exec sed -i -e 's|http://deb.debian.org/debian|http://mirrors.cloud.aliyuncs.com/debian|g' -e 's|http://deb.debian.org/debian-security|http://mirrors.cloud.aliyuncs.com/debian-security|g' {} + && apt-get update && apt-get install -y --no-install-recommends git bash python3 build-essential clang cmake libssl-dev pkg-config protobuf-compiler ca-certificates && rm -rf /var/lib/apt/lists/*
       - cargo check --manifest-path Cargo.toml -p plugin_management_service_backend
 
 ---
@@ -128,7 +128,7 @@ steps:
   - name: cargo-check
     image: rust:1-bookworm
     commands:
-      - find /etc/apt -type f \( -name '*.list' -o -name '*.sources' \) -exec sed -i -e 's|http://deb.debian.org/debian|http://mirrors.cloud.aliyuncs.com/debian|g' -e 's|http://deb.debian.org/debian-security|http://mirrors.cloud.aliyuncs.com/debian-security|g' {} + && apt-get update && apt-get install -y --no-install-recommends git bash python3 build-essential clang cmake libsqlite3-dev libssl-dev pkg-config protobuf-compiler ca-certificates && rm -rf /var/lib/apt/lists/*
+      - find /etc/apt -type f \( -name '*.list' -o -name '*.sources' \) -exec sed -i -e 's|http://deb.debian.org/debian|http://mirrors.cloud.aliyuncs.com/debian|g' -e 's|http://deb.debian.org/debian-security|http://mirrors.cloud.aliyuncs.com/debian-security|g' {} + && apt-get update && apt-get install -y --no-install-recommends git bash python3 build-essential clang cmake libssl-dev pkg-config protobuf-compiler ca-certificates && rm -rf /var/lib/apt/lists/*
       - cargo check --manifest-path Cargo.toml -p local_connector_service_backend
 
 ---
@@ -145,7 +145,7 @@ steps:
   - name: cargo-check
     image: rust:1-bookworm
     commands:
-      - find /etc/apt -type f \( -name '*.list' -o -name '*.sources' \) -exec sed -i -e 's|http://deb.debian.org/debian|http://mirrors.cloud.aliyuncs.com/debian|g' -e 's|http://deb.debian.org/debian-security|http://mirrors.cloud.aliyuncs.com/debian-security|g' {} + && apt-get update && apt-get install -y --no-install-recommends git bash python3 build-essential clang cmake libsqlite3-dev libssl-dev pkg-config protobuf-compiler ca-certificates && rm -rf /var/lib/apt/lists/*
+      - find /etc/apt -type f \( -name '*.list' -o -name '*.sources' \) -exec sed -i -e 's|http://deb.debian.org/debian|http://mirrors.cloud.aliyuncs.com/debian|g' -e 's|http://deb.debian.org/debian-security|http://mirrors.cloud.aliyuncs.com/debian-security|g' {} + && apt-get update && apt-get install -y --no-install-recommends git bash python3 build-essential clang cmake libssl-dev pkg-config protobuf-compiler ca-certificates && rm -rf /var/lib/apt/lists/*
       - cargo check --manifest-path Cargo.toml -p sandbox_manager_service_backend
 
 ---
@@ -162,7 +162,7 @@ steps:
   - name: cargo-check
     image: rust:1-bookworm
     commands:
-      - find /etc/apt -type f \( -name '*.list' -o -name '*.sources' \) -exec sed -i -e 's|http://deb.debian.org/debian|http://mirrors.cloud.aliyuncs.com/debian|g' -e 's|http://deb.debian.org/debian-security|http://mirrors.cloud.aliyuncs.com/debian-security|g' {} + && apt-get update && apt-get install -y --no-install-recommends git bash python3 build-essential clang cmake libsqlite3-dev libssl-dev pkg-config protobuf-compiler ca-certificates && rm -rf /var/lib/apt/lists/*
+      - find /etc/apt -type f \( -name '*.list' -o -name '*.sources' \) -exec sed -i -e 's|http://deb.debian.org/debian|http://mirrors.cloud.aliyuncs.com/debian|g' -e 's|http://deb.debian.org/debian-security|http://mirrors.cloud.aliyuncs.com/debian-security|g' {} + && apt-get update && apt-get install -y --no-install-recommends git bash python3 build-essential clang cmake libssl-dev pkg-config protobuf-compiler ca-certificates && rm -rf /var/lib/apt/lists/*
       - cargo check --manifest-path Cargo.toml -p task_runner_service_backend
 
 ---
@@ -179,7 +179,7 @@ steps:
   - name: cargo-check
     image: rust:1-bookworm
     commands:
-      - find /etc/apt -type f \( -name '*.list' -o -name '*.sources' \) -exec sed -i -e 's|http://deb.debian.org/debian|http://mirrors.cloud.aliyuncs.com/debian|g' -e 's|http://deb.debian.org/debian-security|http://mirrors.cloud.aliyuncs.com/debian-security|g' {} + && apt-get update && apt-get install -y --no-install-recommends git bash python3 build-essential clang cmake libsqlite3-dev libssl-dev pkg-config protobuf-compiler ca-certificates && rm -rf /var/lib/apt/lists/*
+      - find /etc/apt -type f \( -name '*.list' -o -name '*.sources' \) -exec sed -i -e 's|http://deb.debian.org/debian|http://mirrors.cloud.aliyuncs.com/debian|g' -e 's|http://deb.debian.org/debian-security|http://mirrors.cloud.aliyuncs.com/debian-security|g' {} + && apt-get update && apt-get install -y --no-install-recommends git bash python3 build-essential clang cmake libssl-dev pkg-config protobuf-compiler ca-certificates && rm -rf /var/lib/apt/lists/*
       - cargo check --manifest-path Cargo.toml -p official_website_service_backend
 
 ---

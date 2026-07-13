@@ -217,13 +217,7 @@ export default defineConfig({
       'react-dom',
       'zustand',
     ],
-    exclude: [
-      'better-sqlite3',
-      'drizzle-orm',
-      'fs',
-      'path',
-      'crypto',
-    ],
+    exclude: ['fs', 'path', 'crypto'],
   },
   define: {
     global: 'globalThis',

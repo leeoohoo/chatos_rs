@@ -7,7 +7,6 @@ use crate::repositories::db::{
     doc_from_pairs, mongo_delete_many_doc, mongo_insert_doc, to_doc, with_db,
 };
 use mongodb::bson::{doc, Bson, Document};
-use sqlx::Row;
 
 fn normalize_doc(doc: &Document) -> Option<SessionMcpServer> {
     Some(SessionMcpServer {
@@ -20,45 +19,17 @@ fn normalize_doc(doc: &Document) -> Option<SessionMcpServer> {
 }
 
 pub async fn list_session_mcp_servers(session_id: &str) -> Result<Vec<SessionMcpServer>, String> {
-    with_db(
-        |db| {
-            let session_id = session_id.to_string();
-            Box::pin(async move {
-                let cursor = db
-                    .collection::<Document>("session_mcp_servers")
-                    .find(doc! { "session_id": session_id }, None)
-                    .await
-                    .map_err(|e| e.to_string())?;
-                collect_and_map(cursor, normalize_doc).await
-            })
-        },
-        |pool| {
-            let session_id = session_id.to_string();
-            Box::pin(async move {
-                let rows = sqlx::query("SELECT * FROM session_mcp_servers WHERE session_id = ?")
-                    .bind(&session_id)
-                    .fetch_all(pool)
-                    .await
-                    .map_err(|e| e.to_string())?;
-                let mut out = Vec::new();
-                for row in rows {
-                    let id: String = row.try_get("id").unwrap_or_default();
-                    let session_id: String = row.try_get("session_id").unwrap_or_default();
-                    let mcp_server_name: Option<String> = row.try_get("mcp_server_name").ok();
-                    let mcp_config_id: Option<String> = row.try_get("mcp_config_id").ok();
-                    let created_at: String = row.try_get("created_at").unwrap_or_default();
-                    out.push(SessionMcpServer {
-                        id,
-                        session_id,
-                        mcp_server_name,
-                        mcp_config_id,
-                        created_at,
-                    });
-                }
-                Ok(out)
-            })
-        },
-    )
+    with_db(|db| {
+        let session_id = session_id.to_string();
+        Box::pin(async move {
+            let cursor = db
+                .collection::<Document>("session_mcp_servers")
+                .find(doc! { "session_id": session_id }, None)
+                .await
+                .map_err(|e| e.to_string())?;
+            collect_and_map(cursor, normalize_doc).await
+        })
+    })
     .await
 }
 
@@ -69,38 +40,27 @@ pub async fn add_session_mcp_server(item: &SessionMcpServer) -> Result<(), Strin
         item.created_at.clone()
     };
     let now_mongo = now.clone();
-    let now_sqlite = now.clone();
     let item_mongo = item.clone();
-    let item_sqlite = item.clone();
-    with_db(
-        |db| {
-            let doc = to_doc(doc_from_pairs(vec![
-                ("id", Bson::String(item_mongo.id.clone())),
-                ("session_id", Bson::String(item_mongo.session_id.clone())),
-                ("mcp_server_name", crate::core::values::optional_string_bson(item_mongo.mcp_server_name.clone())),
-                ("mcp_config_id", crate::core::values::optional_string_bson(item_mongo.mcp_config_id.clone())),
-                ("created_at", Bson::String(now_mongo.clone())),
-            ]));
-            Box::pin(async move {
-                mongo_insert_doc(db, "session_mcp_servers", doc).await?;
-                Ok(())
-            })
-        },
-        |pool| {
-            Box::pin(async move {
-                sqlx::query("INSERT INTO session_mcp_servers (id, session_id, mcp_server_name, mcp_config_id, created_at) VALUES (?, ?, ?, ?, ?)")
-                    .bind(&item_sqlite.id)
-                    .bind(&item_sqlite.session_id)
-                    .bind(&item_sqlite.mcp_server_name)
-                    .bind(&item_sqlite.mcp_config_id)
-                    .bind(&now_sqlite)
-                    .execute(pool)
-                    .await
-                    .map_err(|e| e.to_string())?;
-                Ok(())
-            })
-        }
-    ).await
+    with_db(|db| {
+        let doc = to_doc(doc_from_pairs(vec![
+            ("id", Bson::String(item_mongo.id.clone())),
+            ("session_id", Bson::String(item_mongo.session_id.clone())),
+            (
+                "mcp_server_name",
+                crate::core::values::optional_string_bson(item_mongo.mcp_server_name.clone()),
+            ),
+            (
+                "mcp_config_id",
+                crate::core::values::optional_string_bson(item_mongo.mcp_config_id.clone()),
+            ),
+            ("created_at", Bson::String(now_mongo.clone())),
+        ]));
+        Box::pin(async move {
+            mongo_insert_doc(db, "session_mcp_servers", doc).await?;
+            Ok(())
+        })
+    })
+    .await
 }
 
 pub async fn delete_session_mcp_server(
@@ -120,20 +80,5 @@ pub async fn delete_session_mcp_server(
                 .await?;
                 Ok(())
             })
-        },
-        |pool| {
-            let session_id = session_id.to_string();
-            let mcp_id = mcp_config_id_or_id.to_string();
-            Box::pin(async move {
-                sqlx::query("DELETE FROM session_mcp_servers WHERE session_id = ? AND (id = ? OR mcp_config_id = ?)")
-                    .bind(&session_id)
-                    .bind(&mcp_id)
-                    .bind(&mcp_id)
-                    .execute(pool)
-                    .await
-                    .map_err(|e| e.to_string())?;
-                Ok(())
-            })
-        }
-    ).await
+        }).await
 }

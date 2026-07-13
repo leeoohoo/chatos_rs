@@ -561,3 +561,56 @@ fn read_optional_env(key: &str) -> Option<String> {
 fn read_u64_env(key: &str) -> Option<u64> {
     read_optional_env(key).and_then(|value| value.parse::<u64>().ok())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_service() -> ObjectStorageService {
+        ObjectStorageService {
+            http: Client::new(),
+            config: ObjectStorageConfig {
+                endpoint: "http://127.0.0.1:9000".to_string(),
+                region: DEFAULT_REGION.to_string(),
+                bucket: DEFAULT_BUCKET.to_string(),
+                access_key: "test-access-key".to_string(),
+                secret_key: "test-secret-key".to_string(),
+                presign_expires_seconds: DEFAULT_PRESIGN_EXPIRES_SECONDS,
+                public_base_url: None,
+                token_secret: "test-token-secret".to_string(),
+                max_upload_bytes: DEFAULT_MAX_UPLOAD_BYTES,
+                max_read_bytes: DEFAULT_MAX_READ_BYTES,
+            },
+        }
+    }
+
+    #[test]
+    fn signed_object_url_round_trips_without_crypto_provider_panic() {
+        let _ = jsonwebtoken::crypto::rust_crypto::DEFAULT_PROVIDER.install_default();
+        let service = test_service();
+        let url = service
+            .signed_object_url(SignedObject {
+                object_ref: StoredObjectRef {
+                    bucket: None,
+                    object_key: "chatos/users/user/sessions/session/file.txt".to_string(),
+                    name: Some("file.txt".to_string()),
+                    mime_type: Some("text/plain".to_string()),
+                },
+                content_type: "application/octet-stream".to_string(),
+                file_name: "attachment".to_string(),
+            })
+            .expect("attachment URL should be signed");
+        let encoded_token = url
+            .split_once("?token=")
+            .map(|(_, token)| token)
+            .expect("signed URL should contain a token");
+        let token = urlencoding::decode(encoded_token).expect("token should be URL encoded");
+        let decoded = service
+            .decode_signed_object(token.as_ref())
+            .expect("signed object token should decode");
+
+        assert_eq!(decoded.object_ref.bucket.as_deref(), Some(DEFAULT_BUCKET));
+        assert_eq!(decoded.object_ref.name.as_deref(), Some("file.txt"));
+        assert_eq!(decoded.object_ref.mime_type.as_deref(), Some("text/plain"));
+    }
+}

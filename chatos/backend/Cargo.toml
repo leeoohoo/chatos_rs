@@ -55,7 +55,6 @@ aes-gcm = "0.11"
 scraper = "0.27"
 
 # Database
-sqlx = { version = "0.9", features = ["runtime-tokio", "sqlite", "macros", "chrono", "json"] }
 mongodb = { version = "2.8", features = ["tokio-runtime"] }
 memory_engine_sdk = { path = "../../crates/memory_engine_sdk" }
 chatos_agent = { path = "../../agent" }
