@@ -41,8 +41,25 @@ impl CommandApprovalService {
         &self,
         request: CommandApprovalRequest,
     ) -> Result<ApprovalDecision> {
+        self.approve_with_optional_mode(request, None).await
+    }
+
+    pub(crate) async fn approve_with_mode(
+        &self,
+        request: CommandApprovalRequest,
+        mode: ApprovalMode,
+    ) -> Result<ApprovalDecision> {
+        self.approve_with_optional_mode(request, Some(mode)).await
+    }
+
+    async fn approve_with_optional_mode(
+        &self,
+        request: CommandApprovalRequest,
+        forced_mode: Option<ApprovalMode>,
+    ) -> Result<ApprovalDecision> {
         let state_snapshot = self.state.read().await.clone();
-        let mode = approval_mode_for_request(&state_snapshot, &request);
+        let mode =
+            forced_mode.unwrap_or_else(|| approval_mode_for_request(&state_snapshot, &request));
         let risk = classify_command(
             normalized_command(request.command.as_str(), request.args.as_slice()).as_str(),
         );
@@ -120,36 +137,19 @@ impl CommandApprovalService {
         )
         .await
         {
-            Ok(AutoApprovalDecision::Approved {
-                reason,
-                remember_allow,
-            }) => {
-                let whitelist_entry_id = if remember_allow {
-                    Some(
-                        self.add_whitelist_entry(
-                            request,
-                            WhitelistCwdScope::Project,
-                            ApprovalSource::Ai,
-                        )
-                        .await?,
-                    )
-                } else {
-                    None
-                };
-                Ok(ApprovalDecision::Approved {
-                    source: ApprovalSource::Ai,
-                    reason: Some(reason),
-                    whitelist_entry_id,
-                })
-            }
+            Ok(AutoApprovalDecision::Approved { reason }) => Ok(ApprovalDecision::Approved {
+                source: ApprovalSource::Ai,
+                reason: Some(reason),
+                whitelist_entry_id: None,
+            }),
             Ok(AutoApprovalDecision::Denied { reason }) => Ok(ApprovalDecision::Denied {
                 source: ApprovalSource::Ai,
                 reason,
             }),
-            Ok(AutoApprovalDecision::AskUser { reason }) => Ok(ApprovalDecision::Denied {
-                source: ApprovalSource::Ai,
-                reason,
-            }),
+            Ok(AutoApprovalDecision::AskUser { reason }) => {
+                self.request_user_approval_with_reason(request, risk, Some(reason))
+                    .await
+            }
             Err(err) => Ok(ApprovalDecision::Denied {
                 source: ApprovalSource::StaticRule,
                 reason: format!("AI approval unavailable: {err}"),

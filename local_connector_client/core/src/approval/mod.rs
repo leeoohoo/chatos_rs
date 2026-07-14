@@ -15,6 +15,8 @@ pub(crate) use pending::{
     list_in_progress_approvals, list_pending_approvals, start_in_progress_approval,
 };
 pub(crate) use service::{approval_project_key_from_request, CommandApprovalService};
+#[cfg(test)]
+pub(crate) use types::ApprovalProjectKey;
 pub(crate) use types::{
     ApprovalAiSettings, ApprovalDecision, ApprovalMemorySettings, ApprovalMode, ApprovalState,
     CommandApprovalRequest, ProjectApprovalState,

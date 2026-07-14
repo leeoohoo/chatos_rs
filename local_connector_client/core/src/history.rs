@@ -10,5 +10,5 @@ pub(crate) use entries::{
     command_history_entry_for_interactive_submission, command_history_entry_for_sandbox_tool_call,
     command_history_entry_from_exec_result, normalize_history_source, output_text,
 };
-pub(crate) use sandbox::sandbox_tool_call_details;
+pub(crate) use sandbox::{sandbox_tool_call_details, SandboxToolCallDetails};
 pub(crate) use types::{CommandExecutionContext, CommandHistoryEntry, CommandHistoryRecorder};

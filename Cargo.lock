@@ -640,6 +640,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "chatos_sandbox_contract"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "chatos_sandbox_image_mcp"
 version = "0.1.0"
 dependencies = [
@@ -2201,6 +2209,7 @@ dependencies = [
  "chatos_builtin_tools",
  "chatos_mcp_runtime",
  "chatos_mcp_service",
+ "chatos_sandbox_contract",
  "chatos_sandbox_image_mcp",
  "chrono",
  "dotenvy",
@@ -3555,6 +3564,7 @@ dependencies = [
  "async-trait",
  "axum",
  "base64 0.22.1",
+ "chatos_sandbox_contract",
  "chatos_sandbox_image_mcp",
  "chatos_service_runtime",
  "chrono",
@@ -4147,6 +4157,7 @@ dependencies = [
  "chatos_mcp_service",
  "chatos_plugin_management_sdk",
  "chatos_project_mcp_contract",
+ "chatos_sandbox_contract",
  "chatos_service_runtime",
  "chrono",
  "dotenvy",

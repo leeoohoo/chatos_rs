@@ -37,13 +37,14 @@ use handlers::{
     local_logout, local_mcp_configs, local_model_configs, local_model_settings,
     local_pending_approvals, local_preview_model_catalog, local_register,
     local_reinitialize_sandbox_image, local_remove_workspace, local_request_system_permission,
-    local_runtime_settings, local_sandbox_image_jobs, local_sandbox_image_mcp,
-    local_sandbox_images, local_sandbox_leases, local_save_mcp_config, local_save_model_config,
-    local_send_register_email_code, local_skills, local_status, local_sync_mcp_config,
-    local_sync_model_config, local_sync_skill_inventory, local_system_permissions,
-    local_terminal_exec, local_test_mcp_config, local_toggle_sandbox,
+    local_runtime_settings, local_sandbox_capabilities, local_sandbox_image_jobs,
+    local_sandbox_image_mcp, local_sandbox_images, local_sandbox_leases, local_sandbox_settings,
+    local_save_mcp_config, local_save_model_config, local_send_register_email_code, local_skills,
+    local_status, local_sync_mcp_config, local_sync_model_config, local_sync_skill_inventory,
+    local_system_permissions, local_terminal_exec, local_test_mcp_config, local_toggle_sandbox,
     local_update_approval_settings, local_update_mcp_config, local_update_model_config,
-    local_update_model_settings, local_update_runtime_settings, local_update_skill_preference,
+    local_update_model_settings, local_update_runtime_settings, local_update_sandbox_settings,
+    local_update_skill_preference,
 };
 
 pub(crate) async fn serve_local_api(runtime: LocalRuntime) -> Result<()> {
@@ -121,6 +122,14 @@ fn local_api_routes(desktop_auth_token: Option<String>) -> Router<LocalRuntime> 
             post(local_request_system_permission),
         )
         .route("/api/local/sandbox/toggle", post(local_toggle_sandbox))
+        .route(
+            "/api/local/sandbox/capabilities",
+            get(local_sandbox_capabilities),
+        )
+        .route(
+            "/api/local/sandbox/settings",
+            get(local_sandbox_settings).put(local_update_sandbox_settings),
+        )
         .route("/api/local/sandbox/images", get(local_sandbox_images))
         .route(
             "/api/local/sandbox/images/{image_id}",

@@ -22,9 +22,11 @@ import type {
   LocalSkillCatalogResponse,
   LocalSkillInstallation,
   PendingApprovalsResponse,
+  SandboxCapabilities,
   SandboxImageCatalog,
   SandboxImageJob,
   SandboxLease,
+  SandboxSettings,
   SystemPermissionsResponse,
   TerminalExecResponse,
 } from './apiTypes';
@@ -87,6 +89,17 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(payload),
     }),
+  sandboxCapabilities: () => request<SandboxCapabilities>('/api/local/sandbox/capabilities'),
+  sandboxSettings: () => request<SandboxSettings>('/api/local/sandbox/settings'),
+  updateSandboxSettings: (
+    payload: Partial<SandboxSettings> & {
+      risk_acknowledged?: boolean;
+    },
+  ) =>
+    request<SandboxSettings>('/api/local/sandbox/settings', {
+      method: 'PUT',
+      body: JSON.stringify(payload),
+    }),
   sandboxImages: () => request<SandboxImageCatalog>('/api/local/sandbox/images'),
   sandboxImageJobs: () => request<SandboxImageJob[]>('/api/local/sandbox/images/jobs'),
   sandboxLeases: () => request<SandboxLease[]>('/api/local/sandbox/leases'),
@@ -146,13 +159,20 @@ export const api = {
       },
     ),
   approvalSettings: () => request<ApprovalSettings>('/api/local/approval/settings'),
-  updateApprovalSettings: (payload: Partial<Pick<ApprovalSettings, 'default_mode' | 'projects' | 'ai'>>) =>
+  updateApprovalSettings: (
+    payload: Partial<Pick<ApprovalSettings, 'default_mode' | 'projects' | 'ai'>> & {
+      risk_acknowledged?: boolean;
+    },
+  ) =>
     request<ApprovalSettings>('/api/local/approval/settings', {
       method: 'POST',
       body: JSON.stringify(payload),
     }),
   pendingApprovals: () => request<PendingApprovalsResponse>('/api/local/approval/pending'),
-  approvePendingApproval: (id: string, payload: { remember_allow?: boolean } = {}) =>
+  approvePendingApproval: (
+    id: string,
+    payload: { remember_allow?: boolean; risk_acknowledged?: boolean } = {},
+  ) =>
     request<{ ok: boolean }>(`/api/local/approval/pending/${encodeURIComponent(id)}/approve`, {
       method: 'POST',
       body: JSON.stringify(payload),

@@ -9,6 +9,10 @@ use crate::models::{TaskProjectRecord, PUBLIC_PROJECT_ID};
 use crate::services::project_management_api_client::{
     self, ProjectRuntimeEnvironmentImage, ProjectSandboxRuntimeSettings,
 };
+use chatos_sandbox_contract::{
+    ApprovalPolicy, ApprovalReviewer, PermissionProfileId, SandboxBackendKind,
+    SandboxLeasePolicyRequest,
+};
 
 const LOCAL_CONNECTOR_ROOT_PREFIX: &str = "local-connector://";
 
@@ -25,7 +29,25 @@ struct LocalConnectorSandboxPairing {
     workspace_id: String,
     enabled: bool,
     #[serde(default)]
+    sandbox_mode: Option<String>,
+    #[serde(default)]
+    sandbox_readiness: Option<String>,
+    #[serde(default)]
+    permission_profile_id: Option<String>,
+    #[serde(default)]
+    approval_policy: Option<String>,
+    #[serde(default)]
+    approval_reviewer: Option<String>,
+    #[serde(default)]
+    policy_revision: Option<String>,
+    #[serde(default)]
     facade_base_url: Option<String>,
+}
+
+#[derive(Debug)]
+struct LocalConnectorResolvedSandboxRoute {
+    base_url: String,
+    policy: SandboxLeasePolicyRequest,
 }
 
 impl RunService {
@@ -47,6 +69,7 @@ impl RunService {
                 auth,
                 image_id: (!task.mcp_config.requires_execution).then(|| "default".to_string()),
                 provider: "task_override".to_string(),
+                policy: task.mcp_config.sandbox_policy_request(),
             });
         }
 
@@ -60,6 +83,7 @@ impl RunService {
                 base_url,
                 image_id: (!task.mcp_config.requires_execution).then(|| "default".to_string()),
                 provider: "cloud_sandbox_manager".to_string(),
+                policy: task.mcp_config.sandbox_policy_request(),
             });
         }
 
@@ -75,11 +99,15 @@ impl RunService {
         )
         .await?;
         let local_ref = local_connector_project_ref(&project);
-        let (base_url, provider) = if let Some(project_ref) = local_ref.as_ref() {
+        let task_policy = task.mcp_config.sandbox_policy_request();
+        let (base_url, provider, policy) = if let Some(project_ref) = local_ref.as_ref() {
+            let resolved =
+                resolve_local_connector_sandbox_route(&self.config, task, &project, project_ref)
+                    .await?;
             (
-                resolve_local_connector_sandbox_base_url(&self.config, task, &project, project_ref)
-                    .await?,
+                resolved.base_url,
                 "local_connector".to_string(),
+                resolved.policy,
             )
         } else {
             (
@@ -89,6 +117,7 @@ impl RunService {
                 } else {
                     runtime.environment.sandbox_provider.clone()
                 },
+                task_policy,
             )
         };
         let image_id = sandbox_image_id_for_task(task, &runtime, provider.as_str())?;
@@ -98,6 +127,7 @@ impl RunService {
             auth,
             image_id,
             provider,
+            policy,
         })
     }
 }
@@ -179,12 +209,80 @@ fn local_connector_project_ref(project: &TaskProjectRecord) -> Option<LocalConne
     })
 }
 
-async fn resolve_local_connector_sandbox_base_url(
+fn local_connector_policy_for_pairing(
+    task: &TaskRecord,
+    pairing: &LocalConnectorSandboxPairing,
+) -> SandboxLeasePolicyRequest {
+    let mut policy = task.mcp_config.sandbox_policy_request();
+    if policy.sandbox_mode.is_none() {
+        policy.sandbox_mode = pairing
+            .sandbox_mode
+            .as_deref()
+            .and_then(parse_sandbox_backend_kind);
+    }
+    if policy.permission_profile_id.is_none() {
+        policy.permission_profile_id = pairing
+            .permission_profile_id
+            .as_deref()
+            .and_then(parse_permission_profile_id);
+    }
+    if policy.approval_policy.is_none() {
+        policy.approval_policy = pairing
+            .approval_policy
+            .as_deref()
+            .and_then(parse_approval_policy);
+    }
+    if policy.approval_reviewer.is_none() {
+        policy.approval_reviewer = pairing
+            .approval_reviewer
+            .as_deref()
+            .and_then(parse_approval_reviewer);
+    }
+    if policy.policy_revision.is_none() {
+        policy.policy_revision = pairing
+            .policy_revision
+            .as_deref()
+            .and_then(normalized_text)
+            .map(ToOwned::to_owned);
+    }
+    policy
+}
+
+fn parse_sandbox_backend_kind(value: &str) -> Option<SandboxBackendKind> {
+    value.parse::<SandboxBackendKind>().ok()
+}
+
+fn parse_permission_profile_id(value: &str) -> Option<PermissionProfileId> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "read_only" => Some(PermissionProfileId::ReadOnly),
+        "full_access" => Some(PermissionProfileId::FullAccess),
+        "workspace_write" => Some(PermissionProfileId::WorkspaceWrite),
+        _ => None,
+    }
+}
+
+fn parse_approval_policy(value: &str) -> Option<ApprovalPolicy> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "never" => Some(ApprovalPolicy::Never),
+        "on_request" => Some(ApprovalPolicy::OnRequest),
+        _ => None,
+    }
+}
+
+fn parse_approval_reviewer(value: &str) -> Option<ApprovalReviewer> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "auto_review" => Some(ApprovalReviewer::AutoReview),
+        "user" => Some(ApprovalReviewer::User),
+        _ => None,
+    }
+}
+
+async fn resolve_local_connector_sandbox_route(
     config: &crate::config::AppConfig,
     task: &TaskRecord,
     project: &TaskProjectRecord,
     project_ref: &LocalConnectorProjectRef,
-) -> Result<String, String> {
+) -> Result<LocalConnectorResolvedSandboxRoute, String> {
     let owner_user_id = task_owner_user_id(task)
         .or_else(|| project.owner_user_id.as_deref().and_then(normalized_text))
         .ok_or_else(|| "Local Connector sandbox routing requires task owner user id".to_string())?;
@@ -242,19 +340,43 @@ async fn resolve_local_connector_sandbox_base_url(
             "no enabled and online Local Connector sandbox pairing was found for this project"
                 .to_string()
         })?;
+    if pairing
+        .sandbox_readiness
+        .as_deref()
+        .and_then(normalized_text)
+        .is_some_and(|readiness| !readiness.eq_ignore_ascii_case("ready"))
+    {
+        let readiness = pairing
+            .sandbox_readiness
+            .as_deref()
+            .and_then(normalized_text)
+            .unwrap_or("unknown");
+        return Err(format!(
+            "Local Connector sandbox pairing is not ready (readiness={readiness}, mode={})",
+            pairing
+                .sandbox_mode
+                .as_deref()
+                .and_then(normalized_text)
+                .unwrap_or("docker")
+        ));
+    }
     let configured_facade = format!(
         "{}/api/local-connectors/sandbox-facade/{}",
         service_base.trim_end_matches('/'),
         urlencoding::encode(pairing.id.as_str())
     );
-    Ok(pairing
+    let base_url = pairing
         .facade_base_url
         .as_deref()
         .and_then(normalized_text)
         .filter(|url| url.starts_with(service_base.trim_end_matches('/')))
         .unwrap_or(configured_facade.as_str())
         .trim_end_matches('/')
-        .to_string())
+        .to_string();
+    Ok(LocalConnectorResolvedSandboxRoute {
+        base_url,
+        policy: local_connector_policy_for_pairing(task, &pairing),
+    })
 }
 
 fn sandbox_auth_for_task(
@@ -320,4 +442,107 @@ fn local_connector_internal_secret(config: &crate::config::AppConfig) -> Result<
             "TASK_RUNNER_LOCAL_CONNECTOR_INTERNAL_API_SECRET is required for local sandbox routing"
                 .to_string()
         })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::models::{TaskMcpConfig, TaskRecord, TaskScheduleConfig, TaskStatus, TaskToolState};
+
+    fn pairing() -> LocalConnectorSandboxPairing {
+        LocalConnectorSandboxPairing {
+            id: "pairing-1".to_string(),
+            device_id: "device-1".to_string(),
+            workspace_id: "workspace-1".to_string(),
+            enabled: true,
+            sandbox_mode: Some("local_process".to_string()),
+            sandbox_readiness: Some("ready".to_string()),
+            permission_profile_id: Some("full_access".to_string()),
+            approval_policy: Some("never".to_string()),
+            approval_reviewer: Some("auto_review".to_string()),
+            policy_revision: Some("pairing-revision".to_string()),
+            facade_base_url: None,
+        }
+    }
+
+    fn task_with_mcp_config(mcp_config: TaskMcpConfig) -> TaskRecord {
+        TaskRecord {
+            id: "task-1".to_string(),
+            title: "task".to_string(),
+            description: None,
+            objective: "objective".to_string(),
+            input_payload: None,
+            status: TaskStatus::Draft,
+            priority: 0,
+            tags: Vec::new(),
+            default_model_config_id: None,
+            memory_thread_id: "memory-1".to_string(),
+            tenant_id: "tenant-1".to_string(),
+            subject_id: "user-1".to_string(),
+            project_id: "project-1".to_string(),
+            task_profile: "default".to_string(),
+            creator_user_id: None,
+            creator_username: None,
+            creator_display_name: None,
+            owner_user_id: Some("owner-1".to_string()),
+            owner_username: None,
+            owner_display_name: None,
+            result_summary: None,
+            process_log: None,
+            last_run_id: None,
+            schedule: TaskScheduleConfig::default(),
+            parent_task_id: None,
+            source_run_id: None,
+            source_session_id: None,
+            source_turn_id: None,
+            source_user_message_id: None,
+            prerequisite_task_ids: Vec::new(),
+            task_tool_state: TaskToolState::default(),
+            mcp_config,
+            created_at: "2026-07-15T00:00:00Z".to_string(),
+            updated_at: "2026-07-15T00:00:00Z".to_string(),
+            deleted_at: None,
+        }
+    }
+
+    #[test]
+    fn local_connector_policy_uses_pairing_for_missing_task_fields() {
+        let task = task_with_mcp_config(TaskMcpConfig::default());
+        let policy = local_connector_policy_for_pairing(&task, &pairing());
+
+        assert_eq!(policy.sandbox_mode, Some(SandboxBackendKind::LocalProcess));
+        assert_eq!(
+            policy.permission_profile_id,
+            Some(PermissionProfileId::FullAccess)
+        );
+        assert_eq!(policy.approval_policy, Some(ApprovalPolicy::Never));
+        assert_eq!(policy.approval_reviewer, Some(ApprovalReviewer::AutoReview));
+        assert_eq!(policy.policy_revision.as_deref(), Some("pairing-revision"));
+    }
+
+    #[test]
+    fn local_connector_policy_keeps_explicit_task_fields() {
+        let config = TaskMcpConfig {
+            sandbox_mode: Some(SandboxBackendKind::Docker),
+            permission_profile_id: Some(PermissionProfileId::ReadOnly),
+            approval_policy: Some(ApprovalPolicy::OnRequest),
+            approval_reviewer: Some(ApprovalReviewer::User),
+            policy_revision: Some("task-revision".to_string()),
+            additional_writable_roots: vec!["C:/workspace-extra".to_string()],
+            ..TaskMcpConfig::default()
+        };
+        let task = task_with_mcp_config(config);
+
+        let policy = local_connector_policy_for_pairing(&task, &pairing());
+
+        assert_eq!(policy.sandbox_mode, Some(SandboxBackendKind::Docker));
+        assert_eq!(
+            policy.permission_profile_id,
+            Some(PermissionProfileId::ReadOnly)
+        );
+        assert_eq!(policy.approval_policy, Some(ApprovalPolicy::OnRequest));
+        assert_eq!(policy.approval_reviewer, Some(ApprovalReviewer::User));
+        assert_eq!(policy.policy_revision.as_deref(), Some("task-revision"));
+        assert_eq!(policy.additional_writable_roots, vec!["C:/workspace-extra"]);
+    }
 }

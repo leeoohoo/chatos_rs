@@ -160,6 +160,81 @@
   margin-bottom: 13px;
 }
 
+.sandboxSettingsGrid {
+  border-top: 1px solid var(--border-subtle);
+  display: grid;
+  gap: 10px;
+  grid-template-columns: minmax(260px, 1.4fr) minmax(160px, 0.8fr) minmax(160px, 0.8fr) minmax(160px, 0.7fr);
+  margin-bottom: 13px;
+  padding-top: 12px;
+}
+
+.sandboxSettingBlock {
+  background: var(--panel-subtle);
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  min-height: 82px;
+  padding: 10px;
+}
+
+.sandboxSettingBlock select {
+  width: 100%;
+}
+
+.settingLabel {
+  color: var(--text-tertiary);
+  font-size: 9px;
+  font-weight: 650;
+}
+
+.backendChoiceList {
+  display: grid;
+  gap: 7px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.backendChoice {
+  align-items: flex-start;
+  background: var(--panel-bg);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  color: var(--text-secondary);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-height: 44px;
+  padding: 8px;
+  text-align: left;
+}
+
+.backendChoice.active {
+  border-color: var(--accent);
+  color: var(--text);
+}
+
+.backendChoice:disabled {
+  cursor: not-allowed;
+  opacity: 0.58;
+}
+
+.backendChoice strong,
+.policyRevisionBlock strong {
+  font-size: 11px;
+  font-weight: 650;
+  overflow-wrap: anywhere;
+}
+
+.backendChoice small {
+  color: var(--text-tertiary);
+  font-size: 9px;
+}
+
+.policyRevisionBlock {
+  justify-content: center;
+}
+
 .statusTile {
   background: var(--panel-subtle);
   border-radius: 8px;

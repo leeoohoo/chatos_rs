@@ -314,6 +314,9 @@ pub(super) async fn find_enabled_local_sandbox_pairing(
         if !pairing.enabled {
             return false;
         }
+        if !local_sandbox_pairing_is_ready(pairing) {
+            return false;
+        }
         if let Some(project_ref) = project_ref {
             pairing.device_id == project_ref.device_id
                 && pairing.workspace_id == project_ref.workspace_id
@@ -330,8 +333,19 @@ pub(super) struct LocalConnectorSandboxPairing {
     pub(super) device_id: String,
     pub(super) workspace_id: String,
     pub(super) enabled: bool,
+    pub(super) sandbox_readiness: Option<String>,
     #[serde(default)]
     pub(super) facade_base_url: Option<String>,
+}
+
+fn local_sandbox_pairing_is_ready(pairing: &LocalConnectorSandboxPairing) -> bool {
+    pairing
+        .sandbox_readiness
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| value.eq_ignore_ascii_case("ready"))
+        .unwrap_or(true)
 }
 
 fn directory_is_effectively_empty(path: &Path) -> bool {

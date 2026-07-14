@@ -17,6 +17,7 @@ chatos_ai_runtime = { path = "../../crates/chatos_ai_runtime" }
 chatos_builtin_tools = { path = "../../crates/chatos_builtin_tools" }
 chatos_mcp_runtime = { path = "../../crates/chatos_mcp_runtime" }
 chatos_mcp_service = { path = "../../crates/chatos_mcp_service" }
+chatos_sandbox_contract = { path = "../../crates/chatos_sandbox_contract" }
 chatos_sandbox_image_mcp = { path = "../../crates/chatos_sandbox_image_mcp" }
 dotenvy = "0.15"
 futures-util = "0.3"

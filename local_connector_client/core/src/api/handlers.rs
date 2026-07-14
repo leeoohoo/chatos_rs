@@ -36,8 +36,9 @@ pub(super) use model_configs::{
 pub(super) use runtime_settings::{local_runtime_settings, local_update_runtime_settings};
 pub(super) use sandbox::{
     local_delete_sandbox_image, local_docker_status, local_initialize_sandbox_image,
-    local_reinitialize_sandbox_image, local_sandbox_image_jobs, local_sandbox_image_mcp,
-    local_sandbox_images, local_sandbox_leases, local_toggle_sandbox,
+    local_reinitialize_sandbox_image, local_sandbox_capabilities, local_sandbox_image_jobs,
+    local_sandbox_image_mcp, local_sandbox_images, local_sandbox_leases, local_sandbox_settings,
+    local_toggle_sandbox, local_update_sandbox_settings,
 };
 pub(super) use skills::{local_skills, local_sync_skill_inventory, local_update_skill_preference};
 pub(super) use status::local_status;

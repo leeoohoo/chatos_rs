@@ -35,22 +35,8 @@ pub(crate) async fn local_sandbox_image_catalog(runtime: &LocalRuntime) -> Value
         .find(|image| image.image_ref == selected_image_ref);
     let default_features = selected_record
         .map(|image| image.features.clone())
-        .unwrap_or_else(|| {
-            vec![
-                "java@21".to_string(),
-                "node@24".to_string(),
-                "rust@stable".to_string(),
-                "go@1.26".to_string(),
-            ]
-        });
-    let default_rebuildable = selected_record.is_none_or(|image| {
-        !image.features.iter().any(|feature| feature == "imported")
-            && (!image
-                .features
-                .iter()
-                .any(|feature| feature.starts_with("script@"))
-                || image.custom_build_script.is_some())
-    });
+        .unwrap_or_else(default_local_sandbox_features);
+    let default_rebuildable = selected_record.is_none_or(sandbox_image_record_rebuildable);
     let mut seen_refs = std::collections::BTreeSet::new();
     seen_refs.insert(selected_image_ref.clone());
     let mut images = vec![json!({
@@ -66,12 +52,7 @@ pub(crate) async fn local_sandbox_image_catalog(runtime: &LocalRuntime) -> Value
         if !seen_refs.insert(image.image_ref.clone()) {
             continue;
         }
-        let rebuildable = !image.features.iter().any(|feature| feature == "imported")
-            && (!image
-                .features
-                .iter()
-                .any(|feature| feature.starts_with("script@"))
-                || image.custom_build_script.is_some());
+        let rebuildable = sandbox_image_record_rebuildable(&image);
         images.push(json!({
             "id": image.id,
             "name": image.image_name,
@@ -87,13 +68,14 @@ pub(crate) async fn local_sandbox_image_catalog(runtime: &LocalRuntime) -> Value
         if !seen_refs.insert(job.image_ref.clone()) {
             continue;
         }
+        let status = local_docker_image_status(job.image_ref.as_str()).await;
         images.push(json!({
             "id": job.image_id,
             "name": job.image_name,
             "image_ref": job.image_ref,
             "features": job.features,
             "backend": job.backend,
-            "status": "local",
+            "status": status,
             "created_at": job.created_at,
             "rebuildable": true,
         }));
@@ -115,17 +97,14 @@ pub(crate) async fn delete_local_sandbox_image(
     if image_id.is_empty() {
         return Err("sandbox image id is required".to_string());
     }
-    let (record_id, image_ref) = {
+    let image_ref = {
         let state = runtime.state.read().await;
         if image_id == "default" {
-            (
-                None,
-                state
-                    .sandbox
-                    .selected_image_ref
-                    .clone()
-                    .unwrap_or_else(|| DEFAULT_LOCAL_SANDBOX_IMAGE.to_string()),
-            )
+            state
+                .sandbox
+                .selected_image_ref
+                .clone()
+                .unwrap_or_else(|| DEFAULT_LOCAL_SANDBOX_IMAGE.to_string())
         } else {
             let record = state
                 .sandbox
@@ -133,7 +112,7 @@ pub(crate) async fn delete_local_sandbox_image(
                 .iter()
                 .find(|image| image.id == image_id)
                 .ok_or_else(|| format!("sandbox image not found: {image_id}"))?;
-            (Some(record.id.clone()), record.image_ref.clone())
+            record.image_ref.clone()
         }
     };
     let in_use = runtime
@@ -152,6 +131,18 @@ pub(crate) async fn delete_local_sandbox_image(
             "sandbox image is in use by an active lease: {image_ref}"
         ));
     }
+    let build_running = runtime
+        .sandbox_runtime
+        .jobs
+        .read()
+        .await
+        .iter()
+        .any(|job| job.status == "running" && job.image_ref == image_ref);
+    if build_running {
+        return Err(format!(
+            "sandbox image is being initialized by an active build: {image_ref}"
+        ));
+    }
     let output = docker_command()
         .args(["image", "rm", image_ref.as_str()])
         .output()
@@ -161,13 +152,14 @@ pub(crate) async fn delete_local_sandbox_image(
     if !output.status.success() && !stderr.contains("No such image") {
         return Err(format!("docker image rm failed: {}", stderr.trim()));
     }
+    runtime
+        .sandbox_runtime
+        .jobs
+        .write()
+        .await
+        .retain(|job| job.image_ref != image_ref);
     let mut state = runtime.state.write().await;
-    if let Some(record_id) = record_id.as_deref() {
-        state.sandbox.images.retain(|image| image.id != record_id);
-    }
-    if state.sandbox.selected_image_ref.as_deref() == Some(image_ref.as_str()) {
-        state.sandbox.selected_image_ref = None;
-    }
+    remove_local_sandbox_image_state(&mut state, image_id, image_ref.as_str());
     state
         .save(runtime.state_path.as_path())
         .map_err(|err| format!("save local sandbox state failed: {err}"))?;
@@ -191,15 +183,7 @@ pub(crate) async fn reinitialize_local_sandbox_image(
         }) {
             rebuild_spec_from_record(record)?
         } else {
-            (
-                vec![
-                    "java@21".to_string(),
-                    "node@24".to_string(),
-                    "rust@stable".to_string(),
-                    "go@1.26".to_string(),
-                ],
-                None,
-            )
+            (default_local_sandbox_features(), None)
         }
     } else {
         let state = runtime.state.read().await;
@@ -218,7 +202,9 @@ fn rebuild_spec_from_record(
     record: &LocalSandboxImageRecord,
 ) -> Result<(Vec<String>, Option<String>), String> {
     if record.features.iter().any(|feature| feature == "imported") {
-        return Err("imported sandbox image has no rebuild specification".to_string());
+        return recover_imported_sandbox_features(record.image_ref.as_str())
+            .map(|features| (features, None))
+            .ok_or_else(|| "imported sandbox image has no rebuild specification".to_string());
     }
     if record
         .features
@@ -325,13 +311,103 @@ fn normalize_job_context(value: Option<String>) -> Option<String> {
 
 async fn local_sandbox_stored_images(runtime: &LocalRuntime) -> Vec<LocalSandboxImageRecord> {
     let mut state = runtime.state.write().await;
+    let mut changed = false;
     if let Some(record) = imported_selected_sandbox_image(&state) {
         state.sandbox.images.push(record);
+        changed = true;
+    }
+    for image in &mut state.sandbox.images {
+        if image.features.iter().any(|feature| feature == "imported") {
+            if let Some(features) = recover_imported_sandbox_features(image.image_ref.as_str()) {
+                image.features = features;
+                image.updated_at = local_now_rfc3339();
+                changed = true;
+            }
+        }
+    }
+    if changed {
         if let Err(err) = state.save(runtime.state_path.as_path()) {
-            tracing_stdout(format!("save imported local sandbox image failed: {err}").as_str());
+            tracing_stdout(format!("save reconciled local sandbox images failed: {err}").as_str());
         }
     }
     state.sandbox.images.clone()
+}
+
+fn default_local_sandbox_features() -> Vec<String> {
+    vec![
+        "java@21".to_string(),
+        "node@24".to_string(),
+        "rust@stable".to_string(),
+        "go@1.26".to_string(),
+    ]
+}
+
+fn sandbox_image_record_rebuildable(record: &LocalSandboxImageRecord) -> bool {
+    rebuild_spec_from_record(record).is_ok()
+}
+
+fn remove_local_sandbox_image_state(state: &mut LocalState, image_id: &str, image_ref: &str) {
+    state
+        .sandbox
+        .images
+        .retain(|image| image.id != image_id && image.image_ref != image_ref);
+    if state.sandbox.selected_image_ref.as_deref() == Some(image_ref) {
+        state.sandbox.selected_image_ref = None;
+    }
+}
+
+fn recover_imported_sandbox_features(image_ref: &str) -> Option<Vec<String>> {
+    let (_, image_tag) = image_ref.rsplit_once(':')?;
+    let (feature_slug, digest) = image_tag.rsplit_once('-')?;
+    if digest.len() != 12 || !digest.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return None;
+    }
+
+    let mut candidates = Vec::new();
+    for runtime in local_sandbox_runtime_specs() {
+        let runtime_id = runtime.get("id").and_then(Value::as_str)?;
+        for version in runtime.get("versions").and_then(Value::as_array)? {
+            let version_id = version.get("id").and_then(Value::as_str)?;
+            let feature = format!("{runtime_id}@{version_id}");
+            let slug = feature.replace('@', "-").replace('.', "_");
+            candidates.push((slug, feature));
+        }
+    }
+    candidates.sort_by(|left, right| right.0.len().cmp(&left.0.len()));
+
+    let mut features = Vec::new();
+    if !parse_imported_feature_slug(feature_slug, candidates.as_slice(), &mut features) {
+        return None;
+    }
+    features.sort();
+    features.dedup();
+    let recovered_name = local_sandbox_image_id(features.as_slice(), None);
+    (recovered_name.strip_prefix("local-") == Some(image_tag)).then_some(features)
+}
+
+fn parse_imported_feature_slug(
+    remaining: &str,
+    candidates: &[(String, String)],
+    features: &mut Vec<String>,
+) -> bool {
+    for (slug, feature) in candidates {
+        let Some(rest) = remaining.strip_prefix(slug.as_str()) else {
+            continue;
+        };
+        if rest.is_empty() {
+            features.push(feature.clone());
+            return true;
+        }
+        let Some(rest) = rest.strip_prefix('_') else {
+            continue;
+        };
+        features.push(feature.clone());
+        if parse_imported_feature_slug(rest, candidates, features) {
+            return true;
+        }
+        features.pop();
+    }
+    false
 }
 
 fn imported_selected_sandbox_image(state: &LocalState) -> Option<LocalSandboxImageRecord> {
@@ -400,5 +476,37 @@ mod tests {
     fn legacy_script_image_without_persisted_script_is_not_rebuildable() {
         let record = record(vec!["node@24", "script@abcdef"], None);
         assert!(rebuild_spec_from_record(&record).is_err());
+    }
+
+    #[test]
+    fn imported_generated_image_recovers_rebuild_features_from_legacy_tag() {
+        let mut record = record(vec!["imported"], None);
+        record.image_ref = "chatos-sandbox-agent:java-21_node-22-9c4b8e8477ca".to_string();
+
+        let (features, script) = rebuild_spec_from_record(&record).expect("recovered spec");
+
+        assert_eq!(features, vec!["java@21", "node@22"]);
+        assert_eq!(script, None);
+    }
+
+    #[test]
+    fn arbitrary_imported_image_stays_non_rebuildable() {
+        let mut record = record(vec!["imported"], None);
+        record.image_ref = "example.invalid/custom-sandbox:latest".to_string();
+
+        assert!(rebuild_spec_from_record(&record).is_err());
+    }
+
+    #[test]
+    fn deleting_default_image_removes_selected_record_and_selection() {
+        let mut state = LocalState::default();
+        let record = record(vec!["node@24"], None);
+        state.sandbox.selected_image_ref = Some(record.image_ref.clone());
+        state.sandbox.images.push(record.clone());
+
+        remove_local_sandbox_image_state(&mut state, "default", record.image_ref.as_str());
+
+        assert!(state.sandbox.images.is_empty());
+        assert_eq!(state.sandbox.selected_image_ref, None);
     }
 }

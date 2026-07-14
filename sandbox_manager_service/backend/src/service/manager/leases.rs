@@ -5,16 +5,21 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use axum::http::StatusCode;
+use chatos_sandbox_contract::{
+    ApprovalPolicy, ApprovalReviewer, EffectiveSandboxPolicy, PermissionProfileId,
+    SandboxBackendKind, SandboxLeasePolicyRequest,
+};
 use chrono::{Duration as ChronoDuration, Utc};
 use serde_json::json;
 use uuid::Uuid;
 
 use crate::auth::{SandboxAuthContext, SCOPE_LEASE_DESTROY, SCOPE_LEASE_READ, SCOPE_LEASE_RELEASE};
 use crate::backend::SandboxCreateSpec;
+use crate::config::{AppConfig, SandboxBackendKind as ManagerBackendKind};
 use crate::error::ApiError;
 use crate::models::{
     CreateSandboxLeaseRequest, CreateSandboxLeaseResponse, DestroySandboxResponse,
-    HeartbeatRequest, HeartbeatResponse, ListSandboxQuery, ReleaseSandboxRequest,
+    HeartbeatRequest, HeartbeatResponse, ListSandboxQuery, NetworkPolicy, ReleaseSandboxRequest,
     ReleaseSandboxResponse, SandboxEventRecord, SandboxLeaseRecord, SandboxStatus,
 };
 use crate::store::is_duplicate_key_error;
@@ -36,6 +41,16 @@ impl SandboxManager {
         validate_required("run_id", &input.run_id)?;
         validate_required("workspace_root", &input.workspace_root)?;
         auth.ensure_create_lease_allowed(&input)?;
+        let requested_policy =
+            EffectiveSandboxPolicy::resolve(&input.policy, &EffectiveSandboxPolicy::default());
+        if requested_policy.sandbox_mode != SandboxBackendKind::Docker {
+            return Err(ApiError::with_code(
+                StatusCode::CONFLICT,
+                "sandbox_backend_not_ready",
+                "this sandbox manager does not provide a local process backend",
+            ));
+        }
+        let effective_policy = sandbox_manager_effective_policy(&input.policy);
         let idempotency_key = normalize_idempotency_key(idempotency_key)?;
         let tenant_id = input.tenant_id.trim().to_string();
         let project_id = input.project_id.trim().to_string();
@@ -68,6 +83,7 @@ impl SandboxManager {
             self.prepare_run_workspace(input.workspace_root.as_str(), run_id.as_str())?;
         let resource_limits = input.resource_limits.unwrap_or_default();
         let network = input.network.unwrap_or_default();
+        validate_requested_network_policy(&self.config, &network)?;
         let requested_image_id = input.image_id.clone();
         let image = images::resolve_for_create(
             &self.config,
@@ -109,6 +125,7 @@ impl SandboxManager {
             expires_at,
             destroyed_at: None,
             last_error: None,
+            effective_policy: effective_policy.clone(),
         };
 
         let capacity_claim_until = (Utc::now() + ChronoDuration::minutes(5)).to_rfc3339();
@@ -173,6 +190,7 @@ impl SandboxManager {
                     "image_ref": image.image_ref,
                     "max_active": self.pool.max_active(),
                     "max_pending": self.pool.max_pending(),
+                    "effective_policy": effective_policy,
                 })),
             )
             .await;
@@ -187,6 +205,7 @@ impl SandboxManager {
                 "backend": self.backend.kind(),
                 "image_id": image.id,
                 "image_ref": image.image_ref,
+                "effective_policy": effective_policy,
             })),
         )
         .await;
@@ -209,6 +228,7 @@ impl SandboxManager {
             agent_token: self.agent_token_for_record(&record),
             run_workspace: record.run_workspace,
             expires_at: record.expires_at,
+            effective_policy: record.effective_policy,
         })
     }
 
@@ -286,6 +306,7 @@ impl SandboxManager {
                     agent_token,
                     run_workspace: record.run_workspace,
                     expires_at: record.expires_at,
+                    effective_policy: record.effective_policy,
                 })
             }
             Err(err) => {
@@ -657,5 +678,113 @@ impl SandboxManager {
         std::fs::create_dir_all(&run_workspace)
             .map_err(|err| ApiError::internal(format!("create run workspace failed: {err}")))?;
         Ok(run_workspace)
+    }
+}
+
+fn validate_requested_network_policy(
+    config: &AppConfig,
+    network: &NetworkPolicy,
+) -> Result<(), ApiError> {
+    let requested = network.mode.trim();
+    let configured = configured_network_mode(config);
+    if requested_network_mode_is_allowed(requested, configured) {
+        return Ok(());
+    }
+    Err(ApiError::bad_request(format!(
+        "sandbox network mode {requested:?} is not allowed for lease requests; omit network.mode to use the configured default"
+    )))
+}
+
+fn configured_network_mode(config: &AppConfig) -> Option<&str> {
+    match config.backend {
+        ManagerBackendKind::Docker => Some(config.docker_network_mode.trim()),
+        ManagerBackendKind::Kata => Some(config.kata_network_mode.trim()),
+        ManagerBackendKind::Mock => None,
+    }
+    .filter(|value| !value.is_empty())
+}
+
+fn requested_network_mode_is_allowed(requested: &str, configured: Option<&str>) -> bool {
+    let requested = requested.trim();
+    requested.is_empty()
+        || requested.eq_ignore_ascii_case("bridge")
+        || configured
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .is_some_and(|value| value.eq_ignore_ascii_case(requested))
+}
+
+fn sandbox_manager_effective_policy(request: &SandboxLeasePolicyRequest) -> EffectiveSandboxPolicy {
+    EffectiveSandboxPolicy {
+        sandbox_mode: SandboxBackendKind::Docker,
+        // The Docker manager currently exposes a writable run workspace. It does not implement
+        // read-only file policy or host full-access escalation.
+        permission_profile_id: PermissionProfileId::WorkspaceWrite,
+        // The cloud Sandbox Manager has no user/AI approval loop in the MCP proxy. Report the
+        // actual behavior so Task Runner can fail closed when a task explicitly requires approval.
+        approval_policy: ApprovalPolicy::Never,
+        approval_reviewer: ApprovalReviewer::User,
+        policy_revision: request.policy_revision.clone(),
+        additional_writable_roots: Vec::new(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn requested_network_mode_allows_empty_bridge_or_configured_default() {
+        assert!(requested_network_mode_is_allowed("", None));
+        assert!(requested_network_mode_is_allowed(" bridge ", None));
+        assert!(requested_network_mode_is_allowed(
+            "sandbox-internal",
+            Some("sandbox-internal")
+        ));
+        assert!(requested_network_mode_is_allowed(
+            "SANDBOX-INTERNAL",
+            Some("sandbox-internal")
+        ));
+    }
+
+    #[test]
+    fn requested_network_mode_rejects_boundary_expanding_overrides() {
+        assert!(!requested_network_mode_is_allowed("host", Some("bridge")));
+        assert!(!requested_network_mode_is_allowed(
+            "container:other",
+            Some("bridge")
+        ));
+        assert!(!requested_network_mode_is_allowed(
+            "prod-db-network",
+            Some("sandbox-internal")
+        ));
+        assert!(!requested_network_mode_is_allowed("none", Some("bridge")));
+    }
+
+    #[test]
+    fn effective_policy_reports_only_capabilities_enforced_by_manager() {
+        let request = SandboxLeasePolicyRequest {
+            sandbox_mode: Some(SandboxBackendKind::Docker),
+            permission_profile_id: Some(PermissionProfileId::ReadOnly),
+            approval_policy: Some(ApprovalPolicy::OnRequest),
+            approval_reviewer: Some(ApprovalReviewer::AutoReview),
+            policy_revision: Some("request-revision".to_string()),
+            additional_writable_roots: vec!["/outside".to_string()],
+        };
+
+        let effective = sandbox_manager_effective_policy(&request);
+
+        assert_eq!(effective.sandbox_mode, SandboxBackendKind::Docker);
+        assert_eq!(
+            effective.permission_profile_id,
+            PermissionProfileId::WorkspaceWrite
+        );
+        assert_eq!(effective.approval_policy, ApprovalPolicy::Never);
+        assert_eq!(effective.approval_reviewer, ApprovalReviewer::User);
+        assert_eq!(
+            effective.policy_revision.as_deref(),
+            Some("request-revision")
+        );
+        assert!(effective.additional_writable_roots.is_empty());
     }
 }

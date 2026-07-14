@@ -8,6 +8,7 @@ members = [
   "crates/chatos_builtin_tools",
   "crates/chatos_ai_runtime",
   "crates/chatos_project_mcp_contract",
+  "crates/chatos_sandbox_contract",
   "crates/memory_engine_sdk",
   "crates/chatos_mcp_runtime",
   "crates/chatos_mcp_service",

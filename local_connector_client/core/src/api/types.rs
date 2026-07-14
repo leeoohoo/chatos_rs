@@ -3,8 +3,11 @@
 
 use axum::response::{IntoResponse, Response};
 use axum::Json;
+use chatos_sandbox_contract::{
+    ApprovalPolicy, ApprovalReviewer, PermissionProfileId, SandboxBackendKind,
+};
 use serde::{Deserialize, Serialize};
-use serde_json::json;
+use serde_json::{json, Value};
 
 use crate::approval::{
     ApprovalAiSettings, ApprovalMemorySettings, ApprovalMode, ProjectApprovalState,
@@ -87,6 +90,22 @@ pub(super) struct InitializeImageRequest {
 }
 
 #[derive(Debug, Deserialize)]
+pub(super) struct UpdateSandboxSettingsRequest {
+    #[serde(default)]
+    pub(super) enabled: Option<bool>,
+    #[serde(default)]
+    pub(super) default_backend: Option<SandboxBackendKind>,
+    #[serde(default)]
+    pub(super) default_permission_profile_id: Option<PermissionProfileId>,
+    #[serde(default)]
+    pub(super) default_approval_policy: Option<ApprovalPolicy>,
+    #[serde(default)]
+    pub(super) default_approval_reviewer: Option<ApprovalReviewer>,
+    #[serde(default)]
+    pub(super) risk_acknowledged: bool,
+}
+
+#[derive(Debug, Deserialize)]
 pub(super) struct LocalTerminalExecRequest {
     pub(super) workspace_id: String,
     pub(super) command: String,
@@ -101,12 +120,16 @@ pub(super) struct UpdateApprovalSettingsRequest {
     pub(super) projects: Option<Vec<ProjectApprovalState>>,
     pub(super) ai: Option<ApprovalAiSettings>,
     pub(super) memory: Option<ApprovalMemorySettings>,
+    #[serde(default)]
+    pub(super) risk_acknowledged: bool,
 }
 
 #[derive(Debug, Deserialize)]
 pub(super) struct ResolveApprovalRequest {
     pub(super) remember_allow: Option<bool>,
     pub(super) reason: Option<String>,
+    #[serde(default)]
+    pub(super) risk_acknowledged: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -158,6 +181,7 @@ pub(super) struct UpdateLocalRuntimeSettingsRequest {
 #[derive(Debug)]
 pub(super) struct LocalApiError {
     status: axum::http::StatusCode,
+    code: Option<&'static str>,
     message: String,
 }
 
@@ -165,6 +189,7 @@ impl LocalApiError {
     pub(super) fn bad_request(message: impl Into<String>) -> Self {
         Self {
             status: axum::http::StatusCode::BAD_REQUEST,
+            code: None,
             message: message.into(),
         }
     }
@@ -172,6 +197,15 @@ impl LocalApiError {
     pub(super) fn conflict(message: impl Into<String>) -> Self {
         Self {
             status: axum::http::StatusCode::CONFLICT,
+            code: None,
+            message: message.into(),
+        }
+    }
+
+    pub(super) fn conflict_code(code: &'static str, message: impl Into<String>) -> Self {
+        Self {
+            status: axum::http::StatusCode::CONFLICT,
+            code: Some(code),
             message: message.into(),
         }
     }
@@ -179,6 +213,7 @@ impl LocalApiError {
     fn internal(message: impl Into<String>) -> Self {
         Self {
             status: axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            code: None,
             message: message.into(),
         }
     }
@@ -186,6 +221,7 @@ impl LocalApiError {
     pub(super) fn bad_gateway(message: impl Into<String>) -> Self {
         Self {
             status: axum::http::StatusCode::BAD_GATEWAY,
+            code: None,
             message: message.into(),
         }
     }
@@ -193,16 +229,48 @@ impl LocalApiError {
     pub(super) fn message(&self) -> &str {
         self.message.as_str()
     }
+
+    fn body(&self) -> Value {
+        let mut body = json!({ "error": self.message });
+        if let Some(code) = self.code {
+            body["code"] = Value::String(code.to_string());
+        }
+        body
+    }
 }
 
 impl IntoResponse for LocalApiError {
     fn into_response(self) -> Response {
-        (self.status, Json(json!({ "error": self.message }))).into_response()
+        (self.status, Json(self.body())).into_response()
     }
 }
 
 impl From<anyhow::Error> for LocalApiError {
     fn from(value: anyhow::Error) -> Self {
         Self::internal(value.to_string())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn local_api_error_keeps_legacy_error_string_and_optional_code() {
+        let body = LocalApiError::conflict_code("sandbox_backend_not_ready", "not ready").body();
+
+        assert_eq!(body.get("error").and_then(Value::as_str), Some("not ready"));
+        assert_eq!(
+            body.get("code").and_then(Value::as_str),
+            Some("sandbox_backend_not_ready")
+        );
+    }
+
+    #[test]
+    fn local_api_error_omits_code_for_legacy_errors() {
+        let body = LocalApiError::bad_request("bad").body();
+
+        assert_eq!(body.get("error").and_then(Value::as_str), Some("bad"));
+        assert!(body.get("code").is_none());
     }
 }

@@ -12,6 +12,7 @@ axum = { version = "0.8", features = ["json"] }
 base64 = "0.22"
 chrono = { version = "0.4", features = ["clock", "serde"] }
 chatos_sandbox_image_mcp = { path = "../../crates/chatos_sandbox_image_mcp" }
+chatos_sandbox_contract = { path = "../../crates/chatos_sandbox_contract" }
 chatos_service_runtime = { path = "../../crates/chatos_service_runtime" }
 dotenvy = "0.15"
 futures-util = "0.3"

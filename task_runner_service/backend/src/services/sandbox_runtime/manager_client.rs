@@ -4,6 +4,7 @@
 use std::path::Path;
 use std::time::Duration;
 
+use chatos_sandbox_contract::{EffectiveSandboxPolicy, SandboxLeasePolicyRequest};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -22,6 +23,8 @@ struct CreateSandboxLeaseRequest {
     image_id: Option<String>,
     tools: Vec<String>,
     ttl_seconds: u64,
+    #[serde(flatten)]
+    policy: SandboxLeasePolicyRequest,
 }
 
 #[derive(Debug, Deserialize)]
@@ -37,6 +40,8 @@ pub(super) struct CreateSandboxLeaseResponse {
     pub(super) expires_at: String,
     #[serde(default)]
     pub(super) last_error: Option<String>,
+    #[serde(default)]
+    pub(super) effective_policy: EffectiveSandboxPolicy,
 }
 
 impl CreateSandboxLeaseResponse {
@@ -45,14 +50,15 @@ impl CreateSandboxLeaseResponse {
     }
 
     fn is_ready(&self) -> bool {
-        matches!(
-            self.status.as_deref().unwrap_or("ready"),
-            "ready" | "running"
-        ) && self
-            .agent_endpoint
-            .as_deref()
-            .map(str::trim)
-            .is_some_and(|value| !value.is_empty())
+        match self.status.as_deref() {
+            Some("ready" | "running") => true,
+            Some(_) => false,
+            None => self
+                .agent_endpoint
+                .as_deref()
+                .map(str::trim)
+                .is_some_and(|value| !value.is_empty()),
+        }
     }
 
     pub(super) fn is_waiting(&self) -> bool {
@@ -83,6 +89,7 @@ impl CreateSandboxLeaseResponse {
         self.run_workspace = record.run_workspace;
         self.expires_at = record.expires_at;
         self.last_error = record.last_error;
+        self.effective_policy = record.effective_policy;
     }
 }
 
@@ -94,6 +101,8 @@ struct SandboxLeaseRecordResponse {
     pub(super) run_workspace: String,
     pub(super) expires_at: String,
     pub(super) last_error: Option<String>,
+    #[serde(default)]
+    pub(super) effective_policy: EffectiveSandboxPolicy,
 }
 
 fn sandbox_wait_deadline(expires_at: &str) -> tokio::time::Instant {
@@ -179,6 +188,7 @@ impl SandboxManagerClient {
         workspace_root: &Path,
         ttl_seconds: u64,
         image_id: Option<&str>,
+        policy: SandboxLeasePolicyRequest,
     ) -> Result<CreateSandboxLeaseResponse, String> {
         let payload = CreateSandboxLeaseRequest {
             tenant_id: task.tenant_id.clone(),
@@ -189,6 +199,7 @@ impl SandboxManagerClient {
             image_id: image_id.map(ToOwned::to_owned),
             tools: vec!["filesystem".to_string(), "terminal".to_string()],
             ttl_seconds,
+            policy,
         };
         let idempotency_key = format!("sandbox-lease:{}", run.id);
         let url = format!("{}/api/sandboxes/leases", self.base_url);
@@ -201,11 +212,8 @@ impl SandboxManagerClient {
                 .await
                 .map_err(|err| format!("request sandbox lease failed: {err}"))?;
             let status = response.status();
-            if status == reqwest::StatusCode::CONFLICT {
-                let body = response
-                    .text()
-                    .await
-                    .unwrap_or_else(|err| format!("read conflict body failed: {err}"));
+            if !status.is_success() {
+                let body = read_error_body(response).await;
                 if body.contains("sandbox_lease_idempotency_in_progress") && attempt < 5 {
                     tokio::time::sleep(Duration::from_secs(2)).await;
                     continue;
@@ -215,8 +223,6 @@ impl SandboxManagerClient {
                 ));
             }
             return response
-                .error_for_status()
-                .map_err(|err| format!("sandbox lease request returned error: {err}"))?
                 .json::<CreateSandboxLeaseResponse>()
                 .await
                 .map_err(|err| format!("decode sandbox lease response failed: {err}"));
@@ -326,6 +332,32 @@ impl SandboxManagerClient {
         .map_err(|err| format!("decode sandbox release response failed: {err}"))
     }
 
+    pub(super) async fn release_response(
+        &self,
+        response: &CreateSandboxLeaseResponse,
+        export_result: bool,
+        destroy: bool,
+    ) -> Result<ReleaseSandboxResponse, String> {
+        let payload = ReleaseSandboxRequest {
+            lease_id: response.lease_id.clone(),
+            export_result,
+            destroy,
+        };
+        self.apply_auth(self.client.post(format!(
+            "{}/api/sandboxes/{}/release",
+            self.base_url, response.sandbox_id
+        )))?
+        .json(&payload)
+        .send()
+        .await
+        .map_err(|err| format!("request sandbox release failed: {err}"))?
+        .error_for_status()
+        .map_err(|err| format!("sandbox release request returned error: {err}"))?
+        .json::<ReleaseSandboxResponse>()
+        .await
+        .map_err(|err| format!("decode sandbox release response failed: {err}"))
+    }
+
     fn apply_auth(
         &self,
         request: reqwest::RequestBuilder,
@@ -365,6 +397,13 @@ impl SandboxManagerClient {
             Ok(request)
         }
     }
+}
+
+async fn read_error_body(response: reqwest::Response) -> String {
+    response
+        .text()
+        .await
+        .unwrap_or_else(|err| format!("read error body failed: {err}"))
 }
 
 impl SandboxManagerAuth {

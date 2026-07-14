@@ -5,6 +5,7 @@ use std::path::Path;
 use std::time::Duration;
 
 use anyhow::{anyhow, Context, Result};
+use chatos_sandbox_contract::PermissionProfileId;
 
 use crate::sandbox::types::{LocalSandboxNetworkPolicy, LocalSandboxResourceLimits};
 
@@ -17,6 +18,7 @@ pub(crate) async fn start_local_sandbox_container(
     agent_token: &str,
     resource_limits: &LocalSandboxResourceLimits,
     network: &LocalSandboxNetworkPolicy,
+    permission_profile: PermissionProfileId,
 ) -> Result<String> {
     let name = local_sandbox_container_name(sandbox_id);
     let network_mode = if network.mode.trim().is_empty() {
@@ -24,6 +26,7 @@ pub(crate) async fn start_local_sandbox_container(
     } else {
         network.mode.trim()
     };
+    let workspace_mount_mode = workspace_mount_mode(permission_profile);
     let mut command = docker_command();
     command
         .arg("run")
@@ -59,7 +62,10 @@ pub(crate) async fn start_local_sandbox_container(
         .arg("--security-opt")
         .arg("no-new-privileges")
         .arg("-v")
-        .arg(format!("{}:/workspace:rw", run_workspace.display()))
+        .arg(format!(
+            "{}:/workspace:{workspace_mount_mode}",
+            run_workspace.display()
+        ))
         .arg(image_ref);
     let output = command
         .output()
@@ -160,4 +166,26 @@ pub(crate) async fn wait_for_local_sandbox_agent(
 
 fn local_sandbox_container_name(sandbox_id: &str) -> String {
     format!("chatos-local-{sandbox_id}")
+}
+
+fn workspace_mount_mode(permission_profile: PermissionProfileId) -> &'static str {
+    match permission_profile {
+        PermissionProfileId::ReadOnly => "ro",
+        PermissionProfileId::WorkspaceWrite | PermissionProfileId::FullAccess => "rw",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn read_only_permission_mounts_workspace_read_only() {
+        assert_eq!(workspace_mount_mode(PermissionProfileId::ReadOnly), "ro");
+        assert_eq!(
+            workspace_mount_mode(PermissionProfileId::WorkspaceWrite),
+            "rw"
+        );
+        assert_eq!(workspace_mount_mode(PermissionProfileId::FullAccess), "rw");
+    }
 }

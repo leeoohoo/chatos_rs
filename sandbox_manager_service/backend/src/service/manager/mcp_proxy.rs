@@ -260,6 +260,7 @@ mod tests {
             expires_at: "2026-01-01T01:00:00Z".to_string(),
             destroyed_at: None,
             last_error: None,
+            effective_policy: Default::default(),
         }
     }
 

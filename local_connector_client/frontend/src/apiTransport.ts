@@ -29,15 +29,39 @@ export async function request<T>(endpoint: string, options: RequestInit = {}): P
   const text = response.body;
   const body = text ? JSON.parse(text) : null;
   if (!response.ok) {
-    const message =
-      typeof body?.error === 'string'
-        ? body.error
-        : typeof body?.message === 'string'
-          ? body.message
-          : `HTTP ${response.status}`;
-    throw new Error(message);
+    throw apiErrorFromBody(body, response.status);
   }
   return body as T;
+}
+
+function apiErrorFromBody(body: unknown, status: number): Error {
+  const record = isRecord(body) ? body : {};
+  const error = record.error;
+  const errorRecord = isRecord(error) ? error : {};
+  const message =
+    typeof error === 'string'
+      ? error
+      : typeof errorRecord.message === 'string'
+        ? errorRecord.message
+        : typeof record.message === 'string'
+          ? record.message
+          : `HTTP ${status}`;
+  const code =
+    typeof record.code === 'string'
+      ? record.code
+      : typeof errorRecord.code === 'string'
+        ? errorRecord.code
+        : undefined;
+  const err = new Error(message) as Error & { code?: string; status?: number };
+  err.status = status;
+  if (code) {
+    err.code = code;
+  }
+  return err;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
 }
 
 async function sendLocalApiRequest(

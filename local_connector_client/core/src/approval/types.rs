@@ -8,6 +8,8 @@ pub(crate) struct ApprovalState {
     #[serde(default)]
     pub(crate) default_mode: ApprovalMode,
     #[serde(default)]
+    pub(crate) settings_revision: Option<String>,
+    #[serde(default)]
     pub(crate) projects: Vec<ProjectApprovalState>,
     #[serde(default)]
     pub(crate) whitelist: Vec<CommandWhitelistEntry>,
@@ -22,7 +24,8 @@ pub(crate) struct ApprovalState {
 impl Default for ApprovalState {
     fn default() -> Self {
         Self {
-            default_mode: ApprovalMode::FullControl,
+            default_mode: ApprovalMode::RequestApproval,
+            settings_revision: None,
             projects: Vec::new(),
             whitelist: Vec::new(),
             history: Vec::new(),
@@ -35,13 +38,13 @@ impl Default for ApprovalState {
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum ApprovalMode {
+    #[default]
     RequestApproval,
     AutoApproval,
-    #[default]
     FullControl,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub(crate) struct ProjectApprovalState {
     pub(crate) project_key: ApprovalProjectKey,
     pub(crate) mode: Option<ApprovalMode>,
@@ -50,7 +53,7 @@ pub(crate) struct ProjectApprovalState {
     pub(crate) updated_at: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub(crate) struct ApprovalAiSettings {
     #[serde(default)]
     pub(crate) enabled: bool,
@@ -91,7 +94,7 @@ impl Default for ApprovalAiSettings {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub(crate) struct ApprovalMemorySettings {
     #[serde(default = "default_memory_source_id")]
     pub(crate) source_id: String,

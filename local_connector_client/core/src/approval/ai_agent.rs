@@ -31,16 +31,9 @@ use self::tool_executor::ApprovalAgentToolExecutor;
 
 #[derive(Debug, Clone)]
 pub(crate) enum AutoApprovalDecision {
-    Approved {
-        reason: String,
-        remember_allow: bool,
-    },
-    Denied {
-        reason: String,
-    },
-    AskUser {
-        reason: String,
-    },
+    Approved { reason: String },
+    Denied { reason: String },
+    AskUser { reason: String },
 }
 
 #[derive(Clone)]
@@ -142,7 +135,6 @@ pub(crate) async fn run_auto_approval_agent(
     Ok(match decision.decision.as_str() {
         "approve" => AutoApprovalDecision::Approved {
             reason: decision.reason,
-            remember_allow: decision.remember_allow,
         },
         "deny" => AutoApprovalDecision::Denied {
             reason: decision.reason,

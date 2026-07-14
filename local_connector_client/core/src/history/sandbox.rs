@@ -5,13 +5,14 @@ use serde_json::{json, Value};
 
 use super::format::compact_json;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(crate) struct SandboxToolCallDetails {
     pub(crate) tool_name: String,
     pub(crate) command: String,
     pub(crate) args: Vec<String>,
     pub(crate) cwd: Option<String>,
     pub(crate) display: String,
+    pub(crate) requires_approval: bool,
 }
 
 #[derive(Default)]
@@ -53,8 +54,10 @@ pub(crate) fn sandbox_tool_call_details(body: &Value) -> Option<SandboxToolCallD
     if tool_name.is_empty() {
         return None;
     }
-    let command =
-        sandbox_command_from_arguments(&arguments).unwrap_or_else(|| format!("mcp:{tool_name}"));
+    let command_from_arguments = sandbox_command_from_arguments(&arguments);
+    let command = command_from_arguments
+        .clone()
+        .unwrap_or_else(|| format!("mcp:{tool_name}"));
     let cwd = arguments
         .get("cwd")
         .or_else(|| arguments.get("path"))
@@ -74,6 +77,7 @@ pub(crate) fn sandbox_tool_call_details(body: &Value) -> Option<SandboxToolCallD
         args: Vec::new(),
         cwd,
         display,
+        requires_approval: command_from_arguments.is_some(),
     })
 }
 

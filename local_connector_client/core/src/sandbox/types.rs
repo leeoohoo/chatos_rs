@@ -4,15 +4,58 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use chatos_sandbox_contract::{
+    ApprovalPolicy, ApprovalReviewer, EffectiveSandboxPolicy, PermissionProfileId,
+    SandboxBackendKind, SandboxLeasePolicyRequest,
+};
 use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct LocalSandboxState {
     pub(crate) enabled: bool,
+    #[serde(default)]
+    pub(crate) default_backend: SandboxBackendKind,
+    #[serde(default)]
+    pub(crate) default_permission_profile_id: PermissionProfileId,
+    #[serde(default)]
+    pub(crate) default_approval_policy: ApprovalPolicy,
+    #[serde(default)]
+    pub(crate) default_approval_reviewer: ApprovalReviewer,
+    #[serde(default)]
+    pub(crate) policy_revision: Option<String>,
     pub(crate) selected_image_ref: Option<String>,
     #[serde(default)]
     pub(crate) images: Vec<LocalSandboxImageRecord>,
+}
+
+impl Default for LocalSandboxState {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            // Keep existing installations on Docker until a native launcher passes readiness.
+            default_backend: SandboxBackendKind::Docker,
+            default_permission_profile_id: PermissionProfileId::WorkspaceWrite,
+            default_approval_policy: ApprovalPolicy::OnRequest,
+            default_approval_reviewer: ApprovalReviewer::User,
+            policy_revision: None,
+            selected_image_ref: None,
+            images: Vec::new(),
+        }
+    }
+}
+
+impl LocalSandboxState {
+    pub(crate) fn effective_policy_defaults(&self) -> EffectiveSandboxPolicy {
+        EffectiveSandboxPolicy {
+            sandbox_mode: self.default_backend,
+            permission_profile_id: self.default_permission_profile_id,
+            approval_policy: self.default_approval_policy,
+            approval_reviewer: self.default_approval_reviewer,
+            policy_revision: self.policy_revision.clone(),
+            additional_writable_roots: Vec::new(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -82,6 +125,7 @@ pub(crate) struct LocalSandboxLease {
     pub(crate) expires_at: String,
     pub(crate) destroyed_at: Option<String>,
     pub(crate) last_error: Option<String>,
+    pub(crate) effective_policy: EffectiveSandboxPolicy,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -105,15 +149,20 @@ impl Default for LocalSandboxResourceLimits {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct LocalSandboxNetworkPolicy {
+    #[serde(default = "default_local_sandbox_network_mode")]
     pub(crate) mode: String,
 }
 
 impl Default for LocalSandboxNetworkPolicy {
     fn default() -> Self {
         Self {
-            mode: "bridge".to_string(),
+            mode: default_local_sandbox_network_mode(),
         }
     }
+}
+
+fn default_local_sandbox_network_mode() -> String {
+    "bridge".to_string()
 }
 
 #[derive(Debug, Deserialize)]
@@ -129,6 +178,8 @@ pub(crate) struct CreateLocalSandboxLeaseRequest {
     pub(crate) ttl_seconds: Option<u64>,
     pub(crate) resource_limits: Option<LocalSandboxResourceLimits>,
     pub(crate) network: Option<LocalSandboxNetworkPolicy>,
+    #[serde(flatten)]
+    pub(crate) policy: SandboxLeasePolicyRequest,
 }
 
 #[derive(Debug, Deserialize)]

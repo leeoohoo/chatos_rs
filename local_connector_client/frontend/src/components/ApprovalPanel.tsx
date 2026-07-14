@@ -73,11 +73,29 @@ export function ApprovalPanel() {
     if (!settings) {
       return;
     }
+    if (mode === settings.default_mode) {
+      return;
+    }
+    if (
+      mode === 'auto_approval'
+      && !window.confirm('切换到“自动审批”后，命令会由本地 AI 先行判断。确认继续吗？')
+    ) {
+      return;
+    }
+    if (
+      mode === 'full_control'
+      && !window.confirm('切换到“从不询问”后，命令将直接执行，不再弹出审批。确认继续吗？')
+    ) {
+      return;
+    }
     setSaving(true);
     setMessage(null);
     setError(null);
     try {
-      const next = await api.updateApprovalSettings({ default_mode: mode });
+      const next = await api.updateApprovalSettings({
+        default_mode: mode,
+        risk_acknowledged: mode !== 'request_approval',
+      });
       setSettings(next);
       setMessage(`审批级别已切换为 ${approvalModeLabel(mode)}`);
     } catch (err) {
@@ -89,9 +107,17 @@ export function ApprovalPanel() {
 
   const approve = async (item: PendingApprovalItem) => {
     setError(null);
+    const remember = rememberAllow[item.id] || false;
+    if (
+      remember
+      && !window.confirm('选择“始终允许”会把这条命令加入白名单，后续匹配命令将不再询问。确认继续吗？')
+    ) {
+      return;
+    }
     try {
       await api.approvePendingApproval(item.id, {
-        remember_allow: rememberAllow[item.id] || false,
+        remember_allow: remember,
+        risk_acknowledged: remember,
       });
       setMessage(`已通过: ${item.command}`);
       await loadSettings();
@@ -135,6 +161,7 @@ export function ApprovalPanel() {
           <div>
             <h2><ShieldCheck size={18} />命令审批</h2>
             <p>当前级别: {approvalModeLabel(settings.default_mode)}</p>
+            <p>策略版本: {settings.settings_revision || '默认'}</p>
           </div>
           <button className="iconButton" onClick={() => void loadSettings()} title="刷新审批">
             <RefreshCw size={17} />

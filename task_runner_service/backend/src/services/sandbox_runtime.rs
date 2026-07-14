@@ -5,6 +5,7 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use chatos_mcp_runtime::{BuiltinMcpKind, McpHttpServer};
+use chatos_sandbox_contract::EffectiveSandboxPolicy;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tracing::{info, warn};
@@ -41,13 +42,14 @@ struct SandboxTaskRoute {
     auth: Option<SandboxManagerAuth>,
     image_id: Option<String>,
     provider: String,
+    policy: chatos_sandbox_contract::SandboxLeasePolicyRequest,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(super) struct SandboxRuntimeContext {
     pub lease_id: String,
     pub sandbox_id: String,
     pub backend_id: Option<String>,
-    pub agent_endpoint: String,
+    pub agent_endpoint: Option<String>,
     pub agent_token: String,
     pub mcp_url: String,
     #[serde(default, skip_serializing)]
@@ -63,6 +65,7 @@ pub(super) struct SandboxRuntimeContext {
     pub run_workspace: String,
     pub workspace_root: String,
     pub expires_at: String,
+    pub effective_policy: EffectiveSandboxPolicy,
 }
 
 impl SandboxRuntimeContext {
@@ -77,6 +80,7 @@ impl SandboxRuntimeContext {
             "run_workspace": self.run_workspace,
             "workspace_root": self.workspace_root,
             "expires_at": self.expires_at,
+            "effective_policy": self.effective_policy,
         })
     }
 
@@ -145,8 +149,7 @@ impl SandboxRuntimeContext {
         let agent_endpoint = response
             .agent_endpoint
             .map(|value| value.trim().trim_end_matches('/').to_string())
-            .filter(|value| !value.is_empty())
-            .ok_or_else(|| "sandbox agent endpoint is empty".to_string())?;
+            .filter(|value| !value.is_empty());
         let manager_base_url = manager_base_url.trim().trim_end_matches('/').to_string();
         if manager_base_url.is_empty() {
             return Err("sandbox manager base url is empty".to_string());
@@ -186,6 +189,7 @@ impl SandboxRuntimeContext {
             run_workspace: response.run_workspace,
             workspace_root: workspace_root.to_string_lossy().to_string(),
             expires_at: response.expires_at,
+            effective_policy: response.effective_policy,
         })
     }
 }

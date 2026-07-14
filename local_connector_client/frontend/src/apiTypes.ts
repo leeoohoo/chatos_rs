@@ -25,7 +25,17 @@ export interface DockerStatus {
 export interface SandboxState {
   enabled: boolean;
   backend?: string | null;
+  default_backend?: SandboxBackendKind | null;
   isolation?: string | null;
+  filesystem_isolation?: boolean | null;
+  network_isolation?: boolean | null;
+  process_tree_control?: boolean | null;
+  isolation_note?: string | null;
+  default_permission_profile_id?: PermissionProfileId | null;
+  default_approval_policy?: SandboxApprovalPolicy | null;
+  default_approval_reviewer?: SandboxApprovalReviewer | null;
+  policy_revision?: string | null;
+  effective_policy?: SandboxEffectivePolicy | null;
   selected_image_ref?: string | null;
 }
 
@@ -176,6 +186,7 @@ export interface PendingApprovalItem {
 
 export interface ApprovalSettings {
   default_mode: ApprovalMode;
+  settings_revision?: string | null;
   projects: ProjectApprovalState[];
   whitelist: CommandWhitelistEntry[];
   history: ApprovalHistoryEntry[];
@@ -416,6 +427,50 @@ export interface SandboxImageCatalog {
     rebuildable?: boolean;
     created_at?: string;
   }>;
+}
+
+export type SandboxBackendKind = 'docker' | 'local_process';
+export type PermissionProfileId = 'read_only' | 'workspace_write' | 'full_access';
+export type SandboxApprovalPolicy = 'on_request' | 'never';
+export type SandboxApprovalReviewer = 'user' | 'auto_review';
+export type SandboxBackendReadinessStatus =
+  | 'ready'
+  | 'setup_required'
+  | 'unsupported'
+  | 'under_development';
+
+export interface SandboxEffectivePolicy {
+  sandbox_mode: SandboxBackendKind;
+  permission_profile_id: PermissionProfileId;
+  approval_policy: SandboxApprovalPolicy;
+  approval_reviewer: SandboxApprovalReviewer;
+  policy_revision?: string | null;
+  additional_writable_roots?: string[];
+}
+
+export interface SandboxBackendCapability {
+  backend: SandboxBackendKind;
+  status: SandboxBackendReadinessStatus;
+  selectable: boolean;
+  filesystem_isolation: boolean;
+  network_isolation: boolean;
+  process_tree_control: boolean;
+  message: string;
+}
+
+export interface SandboxCapabilities {
+  backends: SandboxBackendCapability[];
+}
+
+export interface SandboxSettings {
+  enabled: boolean;
+  default_backend: SandboxBackendKind;
+  default_permission_profile_id: PermissionProfileId;
+  default_approval_policy: SandboxApprovalPolicy;
+  default_approval_reviewer: SandboxApprovalReviewer;
+  policy_revision?: string | null;
+  selected_image_ref?: string | null;
+  effective_policy: SandboxEffectivePolicy;
 }
 
 export interface SandboxImageJob {

@@ -66,6 +66,7 @@ pub(crate) async fn health_local_sandbox(
             "agent_alive": agent_alive,
             "workspace_alive": workspace_alive,
             "checked_at": local_now_rfc3339(),
+            "effective_policy": lease.effective_policy,
             "message": if ok { "ok" } else { "local sandbox is not healthy" },
             "checks": [
                 { "name": "docker_container", "ok": backend_alive, "message": if backend_alive { "running" } else { "not running" } },

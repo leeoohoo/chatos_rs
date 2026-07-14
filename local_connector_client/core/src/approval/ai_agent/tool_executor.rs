@@ -19,7 +19,6 @@ use super::APPROVAL_DECISION_TOOL;
 pub(super) struct ApprovalToolDecision {
     pub(super) decision: String,
     pub(super) reason: String,
-    pub(super) remember_allow: bool,
 }
 
 #[derive(Clone)]
@@ -198,7 +197,6 @@ impl ApprovalAgentToolExecutor {
             *guard = Some(ApprovalToolDecision {
                 decision: decision.clone(),
                 reason: reason.clone(),
-                remember_allow,
             });
         }
         let structured = json!({
