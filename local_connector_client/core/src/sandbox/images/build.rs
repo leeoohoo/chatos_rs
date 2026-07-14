@@ -8,9 +8,10 @@ use sha2::{Digest, Sha256};
 
 use crate::config::optional_env;
 use crate::sandbox::catalog::local_sandbox_runtime_specs;
+use crate::sandbox::docker::docker_command;
 
 pub(super) async fn local_docker_image_status(image_ref: &str) -> &'static str {
-    match tokio::process::Command::new("docker")
+    match docker_command()
         .args(["image", "inspect", image_ref])
         .output()
         .await

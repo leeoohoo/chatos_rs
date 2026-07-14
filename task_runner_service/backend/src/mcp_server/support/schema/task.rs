@@ -17,6 +17,8 @@ pub(crate) fn create_task_schema() -> Value {
             "input_payload": { "description": "Structured JSON input, references, or material needed for execution." },
             "priority": { "type": "integer", "description": "Higher numbers mean higher priority." },
             "tags": { "type": "array", "items": { "type": "string" }, "description": "Task tags." },
+            "default_model_config_id": default_model_config_id_schema(),
+            "requires_execution": requires_execution_schema(),
             "schedule": { "type": "object", "description": "Optional task schedule configuration." },
             "prerequisite_task_ids": prerequisite_task_ids_schema(),
             "enabled_builtin_kinds": {
@@ -26,6 +28,7 @@ pub(crate) fn create_task_schema() -> Value {
                 "description": enabled_builtin_kinds_description
             },
             "external_mcp_config_ids": external_mcp_config_ids_schema()
+            ,"selected_skill_ids": selected_skill_ids_schema()
         },
         "required": ["title", "objective"],
         "additionalProperties": false
@@ -81,6 +84,8 @@ pub(crate) fn create_tasks_with_prerequisites_schema() -> Value {
                         "input_payload": {},
                         "priority": { "type": "integer" },
                         "tags": { "type": "array", "items": { "type": "string" } },
+                        "default_model_config_id": default_model_config_id_schema(),
+                        "requires_execution": requires_execution_schema(),
                         "schedule": { "type": "object" },
                         "enabled_builtin_kinds": {
                             "type": "array",
@@ -89,6 +94,7 @@ pub(crate) fn create_tasks_with_prerequisites_schema() -> Value {
                             "description": builtin_mcp_kind_schema_description()
                         },
                         "external_mcp_config_ids": external_mcp_config_ids_schema(),
+                        "selected_skill_ids": selected_skill_ids_schema(),
                         "prerequisite_refs": {
                             "type": "array",
                             "items": { "type": "string", "minLength": 1 },
@@ -104,6 +110,22 @@ pub(crate) fn create_tasks_with_prerequisites_schema() -> Value {
         },
         "required": ["tasks"],
         "additionalProperties": false
+    })
+}
+
+fn default_model_config_id_schema() -> Value {
+    json!({
+        "type": "string",
+        "minLength": 1,
+        "description": "Optional single Task Runner execution model config id. The available choices are injected dynamically for the current user. Choose the model whose usage scenario best matches this task; omit the field to let Task Runner select automatically."
+    })
+}
+
+fn requires_execution_schema() -> Value {
+    json!({
+        "type": "boolean",
+        "default": true,
+        "description": "Whether the task must run or validate the project. Set false for file-only inspection or editing: Task Runner uses the default sandbox image and does not require the project's initialized runtime image."
     })
 }
 
@@ -152,6 +174,7 @@ pub(crate) fn create_project_execution_tasks_schema() -> Value {
                             "type": "string",
                             "description": "Optional Task Runner execution model config id. Omit to use the current user's default."
                         },
+                        "requires_execution": requires_execution_schema(),
                         "enabled_builtin_kinds": {
                             "type": "array",
                             "items": builtin_mcp_kind_item_schema(),
@@ -159,6 +182,7 @@ pub(crate) fn create_project_execution_tasks_schema() -> Value {
                             "description": builtin_mcp_kind_schema_description()
                         },
                         "external_mcp_config_ids": external_mcp_config_ids_schema(),
+                        "selected_skill_ids": selected_skill_ids_schema(),
                         "prerequisite_refs": {
                             "type": "array",
                             "items": { "type": "string", "minLength": 1 },
@@ -182,6 +206,7 @@ pub(crate) fn task_mcp_config_schema() -> Value {
         "type": "object",
         "properties": {
             "enabled": { "type": "boolean", "description": "Whether MCP is enabled for this task." },
+            "requires_execution": requires_execution_schema(),
             "builtin_prompt_mode": {
                 "type": "string",
                 "enum": ["effective", "configured"],
@@ -198,7 +223,8 @@ pub(crate) fn task_mcp_config_schema() -> Value {
                 "uniqueItems": true,
                 "description": builtin_mcp_kind_schema_description()
             },
-            "external_mcp_config_ids": external_mcp_config_ids_schema()
+            "external_mcp_config_ids": external_mcp_config_ids_schema(),
+            "selected_skill_ids": selected_skill_ids_schema()
         },
         "additionalProperties": false
     })
@@ -210,6 +236,15 @@ pub(crate) fn external_mcp_config_ids_schema() -> Value {
         "items": { "type": "string", "minLength": 1 },
         "uniqueItems": true,
         "description": "External MCP config ids to load during task execution. Use only ids returned by list_external_mcp_configs."
+    })
+}
+
+pub(crate) fn selected_skill_ids_schema() -> Value {
+    json!({
+        "type": "array",
+        "items": { "type": "string", "minLength": 1 },
+        "uniqueItems": true,
+        "description": "Local Connector Skill ids to prepare for task execution. Use only ids returned by list_available_skills."
     })
 }
 
@@ -288,6 +323,7 @@ pub(crate) fn restrict_task_capability_selection_schemas(
     tools: &mut [Value],
     selectable_builtin_kinds: &[String],
     selectable_external_mcp_ids: &[String],
+    selectable_skill_ids: &[String],
 ) {
     for tool in tools {
         let Some(name) = tool.get("name").and_then(Value::as_str) else {
@@ -310,6 +346,13 @@ pub(crate) fn restrict_task_capability_selection_schemas(
             "enabled_builtin_kinds",
             selectable_builtin_kinds,
             "Optional builtin MCP capabilities available for this task. Required and unavailable capabilities are managed by Task Runner and are not selectable.",
+        );
+        restrict_optional_selection_property(
+            tool,
+            properties_pointer,
+            "selected_skill_ids",
+            selectable_skill_ids,
+            "Optional Local Connector Skill ids enabled by this user and available on the active client. Use only values from this field or list_available_skills.",
         );
         restrict_optional_selection_property(
             tool,
@@ -368,6 +411,7 @@ mod capability_schema_tests {
             &mut tools,
             &["CodeMaintainerRead".to_string()],
             &["user-mcp-1".to_string()],
+            &["skill-1".to_string()],
         );
         assert_eq!(
             tools[0]
@@ -385,6 +429,14 @@ mod capability_schema_tests {
                 .unwrap_or_default(),
             vec![json!("user-mcp-1")]
         );
+        assert_eq!(
+            tools[0]
+                .pointer("/inputSchema/properties/selected_skill_ids/items/enum")
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default(),
+            vec![json!("skill-1")]
+        );
     }
 
     #[test]
@@ -393,12 +445,15 @@ mod capability_schema_tests {
             "name": "create_task",
             "inputSchema": create_task_schema()
         })];
-        restrict_task_capability_selection_schemas(&mut tools, &[], &[]);
+        restrict_task_capability_selection_schemas(&mut tools, &[], &[], &[]);
         assert!(tools[0]
             .pointer("/inputSchema/properties/enabled_builtin_kinds")
             .is_none());
         assert!(tools[0]
             .pointer("/inputSchema/properties/external_mcp_config_ids")
+            .is_none());
+        assert!(tools[0]
+            .pointer("/inputSchema/properties/selected_skill_ids")
             .is_none());
     }
 }

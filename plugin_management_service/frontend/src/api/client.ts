@@ -3,11 +3,16 @@
 
 import type {
   AgentMcpBindingsResponse,
+  AdminAiModelConfig,
   CurrentUser,
   ListResponse,
   LoginPayload,
   LoginResponse,
   McpRecord,
+  McpDescriptorResponse,
+  McpProviderSkill,
+  OptimizeProviderSkillResponse,
+  OptimizeProviderSkillStreamEvent,
   ResourceCheckRecord,
   RuntimeCapabilitiesResponse,
   SkillPackageRecord,
@@ -120,6 +125,37 @@ export const api = {
     request<ResourceCheckRecord>(`/api/mcps/${id}/check`, {
       method: 'POST',
     }),
+  getMcpDescriptor: (id: string) =>
+    request<McpDescriptorResponse>(`/api/mcps/${id}/descriptor`),
+  listAdminAiModels: () => request<AdminAiModelConfig[]>('/api/admin/ai-models'),
+  optimizeMcpProviderSkill: (
+    id: string,
+    payload: { model_config_id: string; skill_id: string; requirement: string },
+  ) =>
+    request<OptimizeProviderSkillResponse>(`/api/mcps/${id}/provider-skills/optimize`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+  optimizeMcpProviderSkillStream: (
+    id: string,
+    payload: { model_config_id: string; skill_id: string; requirement: string },
+    onEvent: (event: OptimizeProviderSkillStreamEvent) => void,
+    signal?: AbortSignal,
+  ) =>
+    requestSse(
+      `/api/mcps/${id}/provider-skills/optimize/stream`,
+      payload,
+      onEvent,
+      signal,
+    ),
+  updateMcpProviderSkill: (id: string, skillId: string, instructions: string) =>
+    request<McpProviderSkill>(
+      `/api/mcps/${id}/provider-skills/${encodeURIComponent(skillId)}`,
+      {
+        method: 'PUT',
+        body: JSON.stringify({ instructions }),
+      },
+    ),
   listSkills: (params?: Record<string, QueryValue>) =>
     request<ListResponse<SkillRecord>>(withQuery('/api/skills', params || {})),
   createSkill: (payload: unknown) =>
@@ -180,3 +216,93 @@ export const api = {
   resolveAgentCapabilities: (params: Record<string, QueryValue>) =>
     request<RuntimeCapabilitiesResponse>(withQuery('/api/runtime/agent-capabilities', params)),
 };
+
+async function requestSse(
+  path: string,
+  payload: unknown,
+  onEvent: (event: OptimizeProviderSkillStreamEvent) => void,
+  signal?: AbortSignal,
+): Promise<void> {
+  const headers = new Headers({
+    Accept: 'text/event-stream',
+    'Cache-Control': 'no-cache',
+    'Content-Type': 'application/json',
+  });
+  const token = getAuthToken();
+  if (token) {
+    headers.set('Authorization', `Bearer ${token}`);
+  }
+  const response = await fetch(buildApiUrl(path), {
+    method: 'POST',
+    headers,
+    body: JSON.stringify(payload),
+    signal,
+  });
+  if (!response.ok) {
+    let detail = response.statusText;
+    try {
+      const body = (await response.json()) as { error?: string };
+      detail = body.error || detail;
+    } catch {
+      // keep status text
+    }
+    throw new Error(detail);
+  }
+  if (!response.body) {
+    throw new Error('Streaming response body is unavailable');
+  }
+  const contentType = response.headers.get('content-type') || '';
+  if (!contentType.toLowerCase().includes('text/event-stream')) {
+    throw new Error(`Expected an SSE response but received ${contentType || 'an unknown content type'}`);
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let streamError: string | null = null;
+  let receivedDone = false;
+
+  const processBlock = (block: string) => {
+    const data = block
+      .split('\n')
+      .filter((line) => line.startsWith('data:'))
+      .map((line) => line.slice(5).trimStart())
+      .join('\n')
+      .trim();
+    if (!data) {
+      return;
+    }
+    const event = JSON.parse(data) as OptimizeProviderSkillStreamEvent;
+    onEvent(event);
+    if (event.type === 'error') {
+      streamError = event.message;
+    } else if (event.type === 'done') {
+      receivedDone = true;
+    }
+  };
+
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) {
+      break;
+    }
+    buffer += decoder.decode(value, { stream: true });
+    buffer = buffer.replace(/\r\n/g, '\n');
+    let boundary = buffer.indexOf('\n\n');
+    while (boundary >= 0) {
+      processBlock(buffer.slice(0, boundary));
+      buffer = buffer.slice(boundary + 2);
+      boundary = buffer.indexOf('\n\n');
+    }
+  }
+  buffer += decoder.decode();
+  if (buffer.trim()) {
+    processBlock(buffer);
+  }
+  if (streamError) {
+    throw new Error(streamError);
+  }
+  if (!receivedDone) {
+    throw new Error('AI stream ended before the final result was received');
+  }
+}

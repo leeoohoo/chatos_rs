@@ -145,7 +145,7 @@ RUN set -eux; \
         1.23) go_version="1.23.12" ;; \
         1.24) go_version="1.24.13" ;; \
         1.25) go_version="1.25.11" ;; \
-        1.26) go_version="1.26.4" ;; \
+        1.26) go_version="1.26.5" ;; \
         *) echo "unsupported Go version: $go_minor" >&2; exit 2 ;; \
       esac; \
       case "$(dpkg --print-architecture)" in \
@@ -234,6 +234,13 @@ RUN set -eux; \
       /bin/bash /tmp/chatos-custom-build.sh; \
       rm -f /tmp/chatos-custom-build.sh; \
     fi
+
+RUN set -eux; \
+    apt-get update; \
+    apt-get dist-upgrade -y; \
+    apt-get autoremove -y; \
+    apt-get clean; \
+    rm -rf /var/lib/apt/lists/*
 
 ENV CARGO_REGISTRIES_CRATES_IO_PROTOCOL=sparse
 ENV CARGO_REGISTRIES_CRATES_IO_INDEX=sparse+https://rsproxy.cn/index/

@@ -29,6 +29,7 @@ mod availability;
 mod capabilities;
 mod internal_auth;
 mod local_connector;
+mod local_connector_skills;
 mod mcps;
 mod resource_policy;
 mod skill_packages;
@@ -45,14 +46,22 @@ use capabilities::{resolve_agent_capabilities, resolve_agent_capabilities_intern
 use internal_auth::*;
 use local_connector::{
     delete_local_connector_mcp_internal, list_local_connector_mcps_internal,
-    sync_local_connector_mcp_internal, update_local_connector_mcp_internal,
+    sync_local_connector_mcp_internal, truncate_text, update_local_connector_mcp_internal,
     update_local_connector_mcp_status_batch_internal, update_local_connector_mcp_status_internal,
 };
 #[cfg(test)]
 use local_connector::{
     ensure_local_connector_manifest_hash_matches, ensure_local_connector_record_scope,
 };
-use mcps::{check_mcp, create_mcp, delete_mcp, get_mcp, list_mcps, update_mcp};
+use local_connector_skills::{
+    list_user_skill_catalog_internal, sync_skill_inventory_internal,
+    update_user_skill_preference_internal,
+};
+use mcps::{
+    check_mcp, create_mcp, delete_mcp, get_mcp, get_mcp_descriptor, list_admin_ai_models,
+    list_mcps, optimize_mcp_provider_skill, optimize_mcp_provider_skill_stream, update_mcp,
+    update_mcp_provider_skill,
+};
 use resource_policy::*;
 use skill_packages::{
     create_skill_package, delete_skill_package, get_skill_package, list_skill_packages,
@@ -142,6 +151,20 @@ pub fn build_router(state: AppState) -> Router {
             get(get_mcp).patch(update_mcp).delete(delete_mcp),
         )
         .route("/api/mcps/{mcp_id}/check", post(check_mcp))
+        .route("/api/mcps/{mcp_id}/descriptor", get(get_mcp_descriptor))
+        .route("/api/admin/ai-models", get(list_admin_ai_models))
+        .route(
+            "/api/mcps/{mcp_id}/provider-skills/optimize",
+            post(optimize_mcp_provider_skill),
+        )
+        .route(
+            "/api/mcps/{mcp_id}/provider-skills/optimize/stream",
+            post(optimize_mcp_provider_skill_stream),
+        )
+        .route(
+            "/api/mcps/{mcp_id}/provider-skills/{skill_id}",
+            axum::routing::put(update_mcp_provider_skill),
+        )
         .route("/api/skills", get(list_skills).post(create_skill))
         .route(
             "/api/skills/{skill_id}",
@@ -181,6 +204,18 @@ pub fn build_router(state: AppState) -> Router {
         .route(
             "/api/internal/local-connector/mcps",
             get(list_local_connector_mcps_internal).post(sync_local_connector_mcp_internal),
+        )
+        .route(
+            "/api/internal/local-connector/skills/catalog",
+            get(list_user_skill_catalog_internal),
+        )
+        .route(
+            "/api/internal/local-connector/skills/inventory",
+            axum::routing::put(sync_skill_inventory_internal),
+        )
+        .route(
+            "/api/internal/local-connector/skills/{skill_id}/preference",
+            axum::routing::put(update_user_skill_preference_internal),
         )
         .route(
             "/api/internal/local-connector/mcps/{mcp_id}",
@@ -245,20 +280,35 @@ async fn require_auth(
 }
 
 fn bearer_token_from_request(request: &Request<axum::body::Body>) -> Result<String, String> {
-    bearer_token_from_headers(request.headers())
-        .map(ToOwned::to_owned)
-        .or_else(|_| {
-            token_from_query(request.uri().query()).ok_or_else(|| "缺少登录令牌".to_string())
+    if has_legacy_query_token(request.uri().query()) {
+        return Err(
+            "URL query access tokens are not supported; use Authorization header".to_string(),
+        );
+    }
+    bearer_token_from_headers(request.headers()).map(ToOwned::to_owned)
+}
+
+fn has_legacy_query_token(query: Option<&str>) -> bool {
+    query
+        .into_iter()
+        .flat_map(|query| query.split('&'))
+        .any(|pair| {
+            let mut parts = pair.splitn(2, '=');
+            matches!(parts.next(), Some("access_token" | "token"))
+                && parts.next().is_some_and(|value| !value.trim().is_empty())
         })
 }
 
-fn token_from_query(query: Option<&str>) -> Option<String> {
-    query?.split('&').find_map(|pair| {
-        let mut parts = pair.splitn(2, '=');
-        let key = parts.next()?;
-        let value = parts.next()?.trim();
-        ((key == "access_token" || key == "token") && !value.is_empty()).then(|| value.to_string())
-    })
+#[cfg(test)]
+mod auth_query_tests {
+    use super::has_legacy_query_token;
+
+    #[test]
+    fn detects_legacy_query_tokens() {
+        assert!(has_legacy_query_token(Some("access_token=token-1")));
+        assert!(has_legacy_query_token(Some("token=token-1")));
+        assert!(!has_legacy_query_token(Some("plain=value")));
+    }
 }
 
 async fn health_handler() -> Json<HealthResponse> {

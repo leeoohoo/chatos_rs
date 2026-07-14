@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "bundle_id": "chatos.internal.figma-use-slides",
+  "skill_id": "internal_skill_figma_use_slides",
+  "name": "figma-use-slides",
+  "display_name": "Figma Slides",
+  "version": "1.0.0",
+  "publisher": "chatos",
+  "source_kind": "admin_created",
+  "entrypoint": { "kind": "mcp_bridge", "adapter": "figma-use-slides" },
+  "instructions_path": "instructions.md",
+  "requires_workspace": false,
+  "permissions": ["figma.oauth", "figma.slides.read", "figma.slides.write"],
+  "platforms": ["macos-arm64", "macos-x64", "windows-x64", "windows-arm64"]
+}

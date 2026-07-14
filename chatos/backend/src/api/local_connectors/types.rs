@@ -105,6 +105,13 @@ pub(super) struct CreateProjectBindingRequest<'a> {
 }
 
 #[derive(Debug, Serialize)]
+pub(super) struct UpdateProjectBindingRequest<'a> {
+    pub(super) device_id: &'a str,
+    pub(super) workspace_id: &'a str,
+    pub(super) enabled: bool,
+}
+
+#[derive(Debug, Serialize)]
 pub(super) struct RelayTerminalExecRequest<'a> {
     pub(super) workspace_id: &'a str,
     pub(super) command: &'a str,

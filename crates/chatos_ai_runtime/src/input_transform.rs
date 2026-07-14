@@ -187,6 +187,32 @@ pub fn normalize_input_for_provider(input: &Value, force_text: bool) -> Value {
     }
 }
 
+pub fn normalize_responses_request_input(input: &Value) -> Value {
+    let Some(items) = input.as_array() else {
+        return input.clone();
+    };
+
+    Value::Array(
+        items
+            .iter()
+            .map(|item| {
+                let Some(content) = item.get("content").filter(|content| content.is_array()) else {
+                    return item.clone();
+                };
+                let role = item.get("role").and_then(Value::as_str).unwrap_or("user");
+                let mut normalized = item.clone();
+                if let Some(map) = normalized.as_object_mut() {
+                    map.insert(
+                        "content".to_string(),
+                        normalize_response_content_parts_for_role(content, role),
+                    );
+                }
+                normalized
+            })
+            .collect(),
+    )
+}
+
 pub fn build_current_input_items(raw_input: &Value, force_text: bool) -> Vec<Value> {
     let normalized = normalize_input_for_provider(raw_input, force_text);
     if let Some(items) = normalized.as_array() {
@@ -255,24 +281,38 @@ fn to_input_text_content(text: String) -> Value {
 }
 
 fn normalize_response_content_parts(content: &Value) -> Value {
+    normalize_response_content_parts_for_role(content, "user")
+}
+
+fn normalize_response_content_parts_for_role(content: &Value, role: &str) -> Value {
     let Some(parts) = content.as_array() else {
         return to_input_text_content(content_parts_to_text(content));
     };
 
-    Value::Array(parts.iter().map(normalize_response_content_part).collect())
+    Value::Array(
+        parts
+            .iter()
+            .map(|part| normalize_response_content_part(part, role))
+            .collect(),
+    )
 }
 
-fn normalize_response_content_part(part: &Value) -> Value {
+fn normalize_response_content_part(part: &Value, role: &str) -> Value {
+    let text_type = if role == "assistant" {
+        "output_text"
+    } else {
+        "input_text"
+    };
     let Some(part_type) = part.get("type").and_then(|value| value.as_str()) else {
         return json!({
-            "type": "input_text",
+            "type": text_type,
             "text": text_or_json_string(part, &["text", "value", "content", "delta"])
         });
     };
 
     match part_type {
         "input_text" | "output_text" | "text" => json!({
-            "type": "input_text",
+            "type": text_type,
             "text": part
                 .get("text")
                 .and_then(|value| value.as_str())
@@ -281,9 +321,11 @@ fn normalize_response_content_part(part: &Value) -> Value {
         }),
         "input_image" => normalize_input_image_part(part),
         "image_url" => normalize_image_url_part(part),
-        "refusal" | "summary_text" | "input_file" | "computer_screenshot" => part.clone(),
+        "refusal" | "summary_text" | "input_file" | "computer_screenshot" | "encrypted_content" => {
+            part.clone()
+        }
         _ => json!({
-            "type": "input_text",
+            "type": text_type,
             "text": text_or_json_string(part, &["text", "value", "content", "delta"])
         }),
     }

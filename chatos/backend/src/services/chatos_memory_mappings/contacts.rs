@@ -64,9 +64,13 @@ pub async fn get_contact_task_runner_runtime_config(
     if contact.user_id != user_id || !contact.task_runner_enabled {
         return Ok(None);
     }
-    let Some(base_url) = normalize_non_empty(contact.task_runner_base_url.as_deref()) else {
+    let Some(stored_base_url) = normalize_non_empty(contact.task_runner_base_url.as_deref()) else {
         return Ok(None);
     };
+    let base_url = resolve_runtime_task_runner_base_url(
+        stored_base_url.as_str(),
+        default_task_runner_base_url().as_deref(),
+    );
     let agent_account_id = normalize_non_empty(contact.task_runner_agent_account_id.as_deref());
     if agent_account_id.is_none() {
         return Ok(None);
@@ -174,6 +178,32 @@ fn default_task_runner_base_url() -> Option<String> {
     normalize_non_empty(Some(Config::get().task_runner_base_url.as_str()))
 }
 
+fn resolve_runtime_task_runner_base_url(stored: &str, configured: Option<&str>) -> String {
+    let stored = stored.trim().trim_end_matches('/');
+    let configured = configured
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| value.trim_end_matches('/'));
+    if is_environment_scoped_task_runner_url(stored) {
+        if let Some(configured) = configured {
+            return configured.to_string();
+        }
+    }
+    stored.to_string()
+}
+
+fn is_environment_scoped_task_runner_url(value: &str) -> bool {
+    let Ok(url) = url::Url::parse(value) else {
+        return false;
+    };
+    url.host_str().is_some_and(|host| {
+        host.eq_ignore_ascii_case("task-runner-backend")
+            || host.eq_ignore_ascii_case("localhost")
+            || host == "127.0.0.1"
+            || host == "::1"
+    })
+}
+
 fn should_auto_bind_contact_task_runner(
     contact: &ChatosContact,
     created: bool,
@@ -196,5 +226,32 @@ fn should_auto_bind_contact_task_runner(
         }
         Some(_) => false,
         None => !has_legacy_credentials,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::resolve_runtime_task_runner_base_url;
+
+    #[test]
+    fn runtime_uses_current_environment_url_for_stale_docker_alias() {
+        assert_eq!(
+            resolve_runtime_task_runner_base_url(
+                "http://task-runner-backend:39090",
+                Some("http://127.0.0.1:39090"),
+            ),
+            "http://127.0.0.1:39090"
+        );
+    }
+
+    #[test]
+    fn runtime_preserves_explicit_external_task_runner_url() {
+        assert_eq!(
+            resolve_runtime_task_runner_base_url(
+                "https://tasks.example.com",
+                Some("http://127.0.0.1:39090"),
+            ),
+            "https://tasks.example.com"
+        );
     }
 }

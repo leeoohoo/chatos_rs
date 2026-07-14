@@ -283,7 +283,8 @@ pub(super) async fn find_enabled_local_sandbox_pairing(
         .map_err(|err| format!("build local connector client failed: {err}"))?;
     let mut request = client
         .get(format!("{base}/api/local-connectors/sandbox-pairings"))
-        .bearer_auth(token);
+        .bearer_auth(token)
+        .query(&[("active_only", "true")]);
     if let Some(project_ref) = project_ref {
         request = request.query(&[
             ("device_id", project_ref.device_id.as_str()),

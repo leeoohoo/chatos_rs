@@ -141,7 +141,7 @@ pub(in crate::api::projects) async fn mark_execution_messages_for_stop(
                 .filter_map(Value::as_str)
                 .map(ToOwned::to_owned)
                 .collect::<BTreeSet<_>>();
-            stopped_task_ids.extend(task_ids.into_iter());
+            stopped_task_ids.extend(task_ids);
             async_meta.insert(
                 "overall_status".to_string(),
                 Value::String(overall_status.to_string()),

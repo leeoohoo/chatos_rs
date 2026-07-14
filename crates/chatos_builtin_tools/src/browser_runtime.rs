@@ -2,7 +2,7 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use std::env;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{ExitStatus, Stdio};
 
 use serde_json::{json, Value};
@@ -11,6 +11,8 @@ use tokio::process::{Child, Command};
 use tokio::task::JoinHandle;
 use tokio::time::{sleep, Duration};
 use uuid::Uuid;
+
+use crate::bundled_tools::agent_browser_binary_path;
 
 const BROWSER_STDOUT_LIMIT_BYTES: usize = 4 * 1024 * 1024;
 const BROWSER_STDERR_LIMIT_BYTES: usize = 1024 * 1024;
@@ -36,8 +38,18 @@ pub(crate) fn new_browser_session() -> BrowserRuntimeSession {
     }
 }
 
-pub(crate) fn browser_backend_available() -> Result<(), String> {
-    resolve_agent_browser_cmd().map(|_| ())
+pub fn browser_backend_available() -> Result<(), String> {
+    resolve_agent_browser_cmd()?;
+    if let Some(path) = env::var_os("AGENT_BROWSER_EXECUTABLE_PATH") {
+        let path = PathBuf::from(path);
+        if !path.is_file() {
+            return Err(format!(
+                "Chrome for Testing is missing from the Local Connector packaged runtime: {}",
+                path.display()
+            ));
+        }
+    }
+    Ok(())
 }
 
 pub(crate) async fn run_browser_command(
@@ -47,16 +59,13 @@ pub(crate) async fn run_browser_command(
     args: Vec<String>,
     timeout_seconds: u64,
 ) -> Result<Value, String> {
-    let (program, prefix) = resolve_agent_browser_cmd()?;
+    browser_backend_available()?;
+    let program = resolve_agent_browser_cmd()?;
     let mut cmd = Command::new(program);
     cmd.current_dir(workspace_dir);
     cmd.stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-
-    for value in prefix {
-        cmd.arg(value);
-    }
 
     if let Some(cdp_url) = session.cdp_url.as_deref() {
         cmd.arg("--cdp").arg(cdp_url);
@@ -277,45 +286,10 @@ fn ensure_browser_stream_within_limit(
     Ok(())
 }
 
-fn resolve_agent_browser_cmd() -> Result<(String, Vec<String>), String> {
-    if let Some(value) = env::var("AGENT_BROWSER_BIN")
-        .ok()
-        .map(|v| v.trim().to_string())
-        .filter(|v| !v.is_empty())
-    {
-        return Ok((value, vec![]));
-    }
-    if command_exists("agent-browser") {
-        return Ok(("agent-browser".to_string(), vec![]));
-    }
-    if command_exists("npx") {
-        return Ok(("npx".to_string(), vec!["agent-browser".to_string()]));
-    }
-    Err(
-        "agent-browser CLI not found. Install with: npm install -g agent-browser && agent-browser install"
-            .to_string(),
-    )
-}
-
-fn command_exists(program: &str) -> bool {
-    let path_value = match env::var_os("PATH") {
-        Some(value) => value,
-        None => return false,
-    };
-    for dir in env::split_paths(&path_value) {
-        let full = dir.join(program);
-        if full.is_file() {
-            return true;
-        }
-        #[cfg(windows)]
-        {
-            let full_exe = dir.join(format!("{}.exe", program));
-            if full_exe.is_file() {
-                return true;
-            }
-        }
-    }
-    false
+fn resolve_agent_browser_cmd() -> Result<PathBuf, String> {
+    agent_browser_binary_path().ok_or_else(|| {
+        "agent-browser CLI is missing from the Local Connector packaged runtime".to_string()
+    })
 }
 
 fn truncate_chars(text: &str, max_chars: usize) -> String {

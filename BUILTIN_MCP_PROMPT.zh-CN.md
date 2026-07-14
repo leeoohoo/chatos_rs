@@ -318,6 +318,22 @@
 3. 写新笔记用 `notepad_create_note`，更新已有笔记用 `notepad_update_note`，检索时优先 `notepad_search_notes` 或 `notepad_list_notes`。
 4. 不是每条普通回答都需要写入笔记，避免无意义沉淀。
 
+## [builtin_agent_builder]
+当存在这些工具时，使用它们创建或维护 Memory Agent：
+`agent_builder_recommend_agent_profile`
+`agent_builder_list_available_skills`
+`agent_builder_create_memory_agent`
+`agent_builder_update_memory_agent`
+`agent_builder_preview_agent_context`
+
+使用规则：
+1. 用户希望创建新 Agent，但角色、能力边界或技能组合还不完整时，先调用 `recommend_agent_profile` 形成候选配置。
+2. 选择技能前先调用 `list_available_skills`，只引用当前用户实际可用的 Skill ID，不要臆造技能。
+3. 创建前用 `preview_agent_context` 检查角色定义与 Skills 合并后的最终上下文，避免重复、冲突或空泛指令。
+4. 只有用户明确要求创建时才调用 `create_memory_agent`；修改已有 Agent 时使用 `update_memory_agent`，并提供准确的 `agent_id`。
+5. `mcp_policy`、`project_policy`、启用状态以及插件来源会改变 Agent 权限和行为，不要在用户未明确授权时擅自扩大范围。
+6. 工具返回创建或更新结果后，以真实返回的 Agent 数据为准，不要宣称未返回的配置已经生效。
+
 ## [conditional_contact_memory_readers]
 这一组 section 只会在联系人 / 记忆代理相关上下文存在时出现。若这些工具存在，说明你可以把联系人摘要里提到的技能、命令、插件引用进一步展开：
 `memory_skill_reader_get_skill_detail`

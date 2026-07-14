@@ -139,6 +139,9 @@ impl TaskService {
         if let Some(kinds) = patch.enabled_builtin_kinds {
             task.mcp_config.enabled_builtin_kinds = normalize_builtin_kind_names(kinds);
         }
+        if let Some(skill_ids) = patch.selected_skill_ids {
+            task.mcp_config.selected_skill_ids = skill_ids;
+        }
         if let Some(workspace_dir) = patch.workspace_dir {
             task.mcp_config.workspace_dir = normalized_optional(Some(workspace_dir));
         }
@@ -153,6 +156,12 @@ impl TaskService {
         let task_owner_user_id = task_owner_or_creator(&task);
         self.validate_task_mcp_config(&task.mcp_config, current_user, task_owner_user_id)
             .await?;
+        if let Some(policy) = self
+            .resolve_task_runner_policy(current_user, task_owner_user_id)
+            .await?
+        {
+            task.mcp_config.skill_policy_revision = Some(policy.policy_revision().to_string());
+        }
         task.updated_at = now_rfc3339();
         Ok(Some(self.store.save_task(task).await?))
     }

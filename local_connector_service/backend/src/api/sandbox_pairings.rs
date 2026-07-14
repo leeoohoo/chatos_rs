@@ -18,6 +18,8 @@ use super::{required_text, validate_device_workspace, ApiError};
 pub(super) struct SandboxPairingQuery {
     device_id: Option<String>,
     workspace_id: Option<String>,
+    #[serde(default)]
+    active_only: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -42,11 +44,32 @@ pub(super) async fn list_sandbox_pairings(
     Extension(user): Extension<CurrentUser>,
     Query(query): Query<SandboxPairingQuery>,
 ) -> Result<Json<Vec<LocalConnectorSandboxPairing>>, ApiError> {
+    let owner_user_id = user.effective_owner_user_id();
+    let requested_device_id = normalize_optional_text(query.device_id);
+    let device_id = if query.active_only {
+        let Some(session) = state
+            .store
+            .active_session(owner_user_id)
+            .await
+            .map_err(ApiError::internal)?
+        else {
+            return Ok(Json(Vec::new()));
+        };
+        if requested_device_id
+            .as_deref()
+            .is_some_and(|device_id| device_id != session.device_id)
+        {
+            return Ok(Json(Vec::new()));
+        }
+        Some(session.device_id)
+    } else {
+        requested_device_id
+    };
     state
         .store
         .list_sandbox_pairings(
-            user.effective_owner_user_id(),
-            normalize_optional_text(query.device_id),
+            owner_user_id,
+            device_id,
             normalize_optional_text(query.workspace_id),
         )
         .await

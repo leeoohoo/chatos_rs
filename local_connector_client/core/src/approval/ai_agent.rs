@@ -97,7 +97,16 @@ pub(crate) async fn run_auto_approval_agent(
         .as_ref()
         .map(|memory| memory.conversation_id.clone())
         .unwrap_or_else(|| format!("local_connector_command_approval:{}", request.request_id));
-    let prompt = build_approval_prompt(request, root.as_path(), risk_level, risk_reason)?;
+    let mut prompt = build_approval_prompt(request, root.as_path(), risk_level, risk_reason)?;
+    if let Some(provider_skills_prompt) = capability_policy
+        .provider_skills_prompt
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        prompt.push_str("\n\n");
+        prompt.push_str(provider_skills_prompt);
+    }
     let metadata = json!({
         "agent": "local_connector_command_approval_agent",
         "run_id": run_id,
@@ -152,6 +161,8 @@ struct ApprovalCapabilityPolicy {
     policy_revision: String,
     code_maintainer_read: bool,
     approval_decision: bool,
+    #[serde(default)]
+    provider_skills_prompt: Option<String>,
 }
 
 async fn resolve_approval_capability_policy(

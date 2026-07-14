@@ -2,7 +2,7 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use crate::ask_user_prompt_service::AskUserPromptService;
-use crate::auth::AuthService;
+use crate::auth::{AuthService, SseTicketStore};
 use crate::config::AppConfig;
 use crate::mcp_server::TaskRunnerMcpService;
 use crate::services::{
@@ -28,6 +28,7 @@ pub struct AppState {
     pub tooling_state_service: ToolingStateService,
     pub task_runner_mcp_service: TaskRunnerMcpService,
     pub auth_service: AuthService,
+    pub sse_tickets: SseTicketStore,
 }
 
 impl AppState {
@@ -83,6 +84,7 @@ impl AppState {
             tooling_state_service,
             task_runner_mcp_service,
             auth_service,
+            sse_tickets: SseTicketStore::default(),
         })
     }
 }

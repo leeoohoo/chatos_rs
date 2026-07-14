@@ -8,6 +8,7 @@ pub mod models;
 pub mod seed;
 pub mod state;
 pub mod store;
+mod tool_catalog;
 
 pub use api::build_router;
 pub use config::{load_plugin_management_dotenv, AppConfig};

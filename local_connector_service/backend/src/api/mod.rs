@@ -20,8 +20,7 @@ use serde_json::{json, Value};
 use uuid::Uuid;
 
 use crate::models::{
-    normalize_optional_text, CurrentUser, HealthResponse, DEVICE_STATUS_ONLINE,
-    WORKSPACE_STATUS_DISABLED,
+    normalize_optional_text, CurrentUser, HealthResponse, WORKSPACE_STATUS_DISABLED,
 };
 use crate::relay::{RelayError, RelayRequest, RelayResponse};
 use crate::state::AppState;
@@ -31,6 +30,7 @@ mod devices;
 mod internal_auth;
 mod memory_engine_proxy;
 mod plugin_management_mcps;
+mod plugin_management_skills;
 mod project_bindings;
 mod router;
 mod sandbox_pairings;
@@ -46,6 +46,9 @@ use self::devices::{
 use self::memory_engine_proxy::memory_engine_proxy;
 use self::plugin_management_mcps::{
     create_local_mcp, delete_local_mcp, list_local_mcps, update_local_mcp, update_local_mcp_status,
+};
+use self::plugin_management_skills::{
+    list_user_skills, sync_user_skill_inventory, update_user_skill_preference,
 };
 use self::project_bindings::{
     create_project_binding, delete_project_binding, list_project_bindings, update_project_binding,
@@ -70,11 +73,17 @@ struct McpRelayQuery {
     cwd: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+struct SkillRelayQuery {
+    workspace_id: Option<String>,
+}
+
 #[derive(Debug, Serialize)]
 struct LocalCommandApprovalCapabilitiesResponse {
     policy_revision: String,
     code_maintainer_read: bool,
     approval_decision: bool,
+    provider_skills_prompt: Option<String>,
 }
 
 async fn health_handler() -> Json<HealthResponse> {
@@ -244,10 +253,18 @@ async fn resolve_local_command_approval_capabilities(
             "local command approval agent required capabilities are unavailable",
         ));
     }
+    let provider_skills_prompt = capabilities.compose_provider_skills_prompt(
+        [
+            "CodeMaintainerRead",
+            LOCAL_CONNECTOR_APPROVAL_MCP_RESOURCE_ID,
+        ],
+        Some("zh-CN"),
+    );
     Ok(Json(LocalCommandApprovalCapabilitiesResponse {
         policy_revision: capabilities.policy_revision,
         code_maintainer_read,
         approval_decision,
+        provider_skills_prompt,
     }))
 }
 
@@ -264,11 +281,8 @@ async fn mcp_relay(
         validate_device_workspace(&state, &user, device_id.as_str(), workspace_id).await?;
     } else if has_nonempty_header(&headers, "x-local-connector-mcp-manifest-id") {
         let device = load_owned_device(&state, &user, device_id.as_str(), true).await?;
-        if device.status != DEVICE_STATUS_ONLINE {
-            return Err(ApiError::service_unavailable(
-                "Local Connector device is offline",
-            ));
-        }
+        ensure_device_active_lease(&state, user.effective_owner_user_id(), device.id.as_str())
+            .await?;
     } else {
         return Err(ApiError::bad_request("workspace_id is required"));
     }
@@ -289,11 +303,74 @@ async fn mcp_relay(
         headers: relay_headers,
         body: relay_body(body.as_ref()),
     };
-    let response = state
-        .relay
-        .dispatch(request, state.config.relay_request_timeout)
-        .await
-        .map_err(relay_error_to_api_error)?;
+    let response = dispatch_relay(&state, request, state.config.relay_request_timeout).await?;
+    Ok(relay_response_to_http(response))
+}
+
+async fn skill_prepare_relay(
+    State(state): State<AppState>,
+    Extension(user): Extension<CurrentUser>,
+    Path(device_id): Path<String>,
+    Query(query): Query<SkillRelayQuery>,
+    Json(body): Json<Value>,
+) -> Result<Response, ApiError> {
+    skill_relay(state, user, device_id, query, "prepare", body).await
+}
+
+async fn skill_execute_relay(
+    State(state): State<AppState>,
+    Extension(user): Extension<CurrentUser>,
+    Path(device_id): Path<String>,
+    Query(query): Query<SkillRelayQuery>,
+    Json(body): Json<Value>,
+) -> Result<Response, ApiError> {
+    skill_relay(state, user, device_id, query, "execute", body).await
+}
+
+async fn skill_cancel_relay(
+    State(state): State<AppState>,
+    Extension(user): Extension<CurrentUser>,
+    Path(device_id): Path<String>,
+    Query(query): Query<SkillRelayQuery>,
+    Json(body): Json<Value>,
+) -> Result<Response, ApiError> {
+    skill_relay(state, user, device_id, query, "cancel", body).await
+}
+
+async fn skill_relay(
+    state: AppState,
+    user: CurrentUser,
+    device_id: String,
+    query: SkillRelayQuery,
+    action: &str,
+    body: Value,
+) -> Result<Response, ApiError> {
+    let workspace_id = normalize_optional_text(query.workspace_id)
+        .or_else(|| {
+            body.get("workspace_id")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+        })
+        .unwrap_or_default();
+    if workspace_id.is_empty() {
+        load_owned_device(&state, &user, device_id.as_str(), true).await?;
+        ensure_device_active_lease(&state, user.effective_owner_user_id(), device_id.as_str())
+            .await?;
+    } else {
+        validate_device_workspace(&state, &user, device_id.as_str(), workspace_id.as_str()).await?;
+    }
+    let request = RelayRequest {
+        message_type: format!("skill_{action}_request"),
+        request_id: Uuid::new_v4().to_string(),
+        owner_user_id: user.effective_owner_user_id().to_string(),
+        device_id,
+        workspace_id,
+        method: "POST".to_string(),
+        path: format!("/skills/{action}"),
+        headers: BTreeMap::new(),
+        body,
+    };
+    let response = dispatch_relay(&state, request, state.config.relay_request_timeout).await?;
     Ok(relay_response_to_http(response))
 }
 
@@ -304,18 +381,17 @@ async fn resolve_model_runtime(
 ) -> Result<Response, ApiError> {
     let model_config_id = required_text(Some(model_config_id), "model_config_id")?;
     let owner_user_id = user.effective_owner_user_id().to_string();
-    let device = state
+    let session = state
         .store
-        .list_devices(owner_user_id.as_str())
+        .active_session(owner_user_id.as_str())
         .await
         .map_err(ApiError::internal)?
-        .into_iter()
-        .find(|device| device.status == DEVICE_STATUS_ONLINE)
         .ok_or_else(|| {
             ApiError::service_unavailable(
                 "Local Connector client is offline; model request was terminated",
             )
         })?;
+    let device = load_owned_device(&state, &user, session.device_id.as_str(), true).await?;
 
     let request = RelayRequest {
         message_type: "model_runtime_request".to_string(),
@@ -328,11 +404,7 @@ async fn resolve_model_runtime(
         headers: BTreeMap::new(),
         body: json!({ "model_config_id": model_config_id }),
     };
-    let response = state
-        .relay
-        .dispatch(request, state.config.relay_request_timeout)
-        .await
-        .map_err(relay_error_to_api_error)?;
+    let response = dispatch_relay(&state, request, state.config.relay_request_timeout).await?;
     Ok(relay_response_to_http(response))
 }
 
@@ -408,11 +480,7 @@ async fn sandbox_facade_impl(
         body: relay_body(body.as_ref()),
     };
 
-    let response = state
-        .relay
-        .dispatch(request, relay_timeout)
-        .await
-        .map_err(relay_error_to_api_error)?;
+    let response = dispatch_relay(&state, request, relay_timeout).await?;
     Ok(relay_response_to_http(response))
 }
 
@@ -423,11 +491,11 @@ async fn validate_device_workspace(
     workspace_id: &str,
 ) -> Result<(), ApiError> {
     let device = load_owned_device(state, user, device_id, true).await?;
-    if device.status != DEVICE_STATUS_ONLINE {
-        return Err(ApiError::service_unavailable(
-            "Local Connector device is offline",
-        ));
-    }
+    // The active lease and relay connection are the authoritative online signal.
+    // The persisted device status is updated by heartbeats and can briefly lag a
+    // successful reconnect, which previously caused valid local project requests
+    // to fail with a stale "device is offline" response.
+    ensure_device_active_lease(state, user.effective_owner_user_id(), device_id).await?;
     let workspace = load_owned_workspace(state, user, workspace_id).await?;
     if workspace.device_id != device.id {
         return Err(ApiError::bad_request(
@@ -440,6 +508,56 @@ async fn validate_device_workspace(
         ));
     }
     Ok(())
+}
+
+async fn ensure_device_active_lease(
+    state: &AppState,
+    owner_user_id: &str,
+    device_id: &str,
+) -> Result<(), ApiError> {
+    let active = state
+        .store
+        .session_holds_active_lease(owner_user_id, device_id)
+        .await
+        .map_err(ApiError::internal)?;
+    if !active {
+        return Err(ApiError::service_unavailable(
+            "Local Connector device does not hold the active session lease",
+        ));
+    }
+    Ok(())
+}
+
+async fn dispatch_relay(
+    state: &AppState,
+    request: RelayRequest,
+    timeout: std::time::Duration,
+) -> Result<RelayResponse, ApiError> {
+    ensure_device_active_lease(
+        state,
+        request.owner_user_id.as_str(),
+        request.device_id.as_str(),
+    )
+    .await?;
+    state
+        .relay
+        .dispatch(request, timeout)
+        .await
+        .map_err(relay_error_to_api_error)
+}
+
+async fn send_relay(state: &AppState, request: RelayRequest) -> Result<(), ApiError> {
+    ensure_device_active_lease(
+        state,
+        request.owner_user_id.as_str(),
+        request.device_id.as_str(),
+    )
+    .await?;
+    state
+        .relay
+        .send(request)
+        .await
+        .map_err(relay_error_to_api_error)
 }
 
 fn normalize_relay_path(path: &str) -> String {

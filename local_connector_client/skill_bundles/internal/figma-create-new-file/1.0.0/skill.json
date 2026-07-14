@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "bundle_id": "chatos.internal.figma-create-new-file",
+  "skill_id": "internal_skill_figma_create_new_file",
+  "name": "figma-create-new-file",
+  "display_name": "Figma 新建文件",
+  "version": "1.0.0",
+  "publisher": "chatos",
+  "source_kind": "admin_created",
+  "entrypoint": { "kind": "mcp_bridge", "adapter": "figma-create-new-file" },
+  "instructions_path": "instructions.md",
+  "requires_workspace": false,
+  "permissions": ["figma.oauth", "figma.files.create"],
+  "platforms": ["macos-arm64", "macos-x64", "windows-x64", "windows-arm64"]
+}

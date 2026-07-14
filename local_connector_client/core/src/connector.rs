@@ -22,8 +22,12 @@ use crate::mcp::manifest::mcp_status_message;
 use crate::mcp::service::handle_mcp_request;
 use crate::model_configs::handle_model_runtime_request;
 use crate::relay::{relay_error_response, RelayRequest, MCP_RELAY_MESSAGE_TYPE};
+use crate::sandbox::pairing::reconcile_sandbox_pairings;
 use crate::sandbox::relay::handle_sandbox_request;
 use crate::sandbox::types::LocalSandboxRuntime;
+use crate::skills::{
+    handle_skill_cancel, handle_skill_execute, handle_skill_prepare, skill_inventory_status_message,
+};
 use crate::terminal::exec::handle_terminal_exec_request;
 use crate::terminal::relay::{
     handle_terminal_close, handle_terminal_command, handle_terminal_input, handle_terminal_resize,
@@ -67,6 +71,13 @@ pub(crate) async fn connect_loop(
     let mut mcp_check = tokio::time::interval(Duration::from_secs(MCP_CHECK_INTERVAL_SECONDS));
     mcp_check.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     tracing_stdout("connected to local_connector_service");
+    match reconcile_sandbox_pairings(&http_client, &config, &state, device_id.as_str()).await {
+        Ok(count) if count > 0 => tracing_stdout(
+            format!("reconciled {count} Local Connector sandbox pairing(s)").as_str(),
+        ),
+        Ok(_) => {}
+        Err(err) => tracing_stdout(format!("reconcile sandbox pairings failed: {err}").as_str()),
+    }
 
     loop {
         tokio::select! {
@@ -93,6 +104,12 @@ pub(crate) async fn connect_loop(
                         .await
                         .context("send MCP manifest status")?;
                 }
+                let skill_inventory = skill_inventory_status_message()
+                    .context("build Skill inventory status")?;
+                write
+                    .send(Message::Text(skill_inventory.to_string().into()))
+                    .await
+                    .context("send Skill inventory status")?;
             }
             outbound = outbound_rx.recv() => {
                 let Some(outbound) = outbound else {
@@ -160,7 +177,7 @@ async fn handle_text_message(
         }
     }
     match message_type {
-        "connected" | "pong" | "ack" | "mcp_manifest_status_ack" => {
+        "connected" | "pong" | "ack" | "mcp_manifest_status_ack" | "skill_inventory_status_ack" => {
             tracing_stdout(format!("service message: {message_type}").as_str());
             None
         }
@@ -173,6 +190,9 @@ async fn handle_text_message(
             Some(handle_terminal_exec_request(value, state, history_recorder).await)
         }
         "model_runtime_request" => Some(handle_model_runtime_request(value, state).await),
+        "skill_prepare_request" => Some(handle_skill_prepare(value, state)),
+        "skill_execute_request" => Some(handle_skill_execute(value, state)),
+        "skill_cancel_request" => Some(handle_skill_cancel(value)),
         "terminal_session_create_request" => Some(
             handle_terminal_session_create_request(value, state, terminal_manager, outbound_tx)
                 .await,
@@ -218,6 +238,9 @@ fn is_remote_control_message(message_type: &str) -> bool {
             | "sandbox_request"
             | "terminal_exec_request"
             | "model_runtime_request"
+            | "skill_prepare_request"
+            | "skill_execute_request"
+            | "skill_cancel_request"
             | "terminal_session_create_request"
             | "terminal_input"
             | "terminal_command"
@@ -267,6 +290,12 @@ fn relay_allows_empty_workspace(message_type: &str, request: &RelayRequest) -> b
     if message_type == "model_runtime_request" {
         return true;
     }
+    if matches!(
+        message_type,
+        "skill_prepare_request" | "skill_execute_request" | "skill_cancel_request"
+    ) {
+        return true;
+    }
     message_type == MCP_RELAY_MESSAGE_TYPE
         && request
             .headers
@@ -312,6 +341,9 @@ fn remote_control_error_response(
         "terminal_exec_request" => "terminal_response",
         "terminal_session_create_request" => "terminal_session_create_response",
         "model_runtime_request" => "model_runtime_response",
+        "skill_prepare_request" => "skill_prepare_response",
+        "skill_execute_request" => "skill_execute_response",
+        "skill_cancel_request" => "skill_cancel_response",
         _ => return None,
     };
     Some(relay_error_response(

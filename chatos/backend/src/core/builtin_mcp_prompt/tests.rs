@@ -50,19 +50,13 @@ fn source_metadata_exposes_prompt_path_and_sections() {
 }
 
 #[test]
-fn returns_none_when_no_supported_builtin_sections_are_selected() {
+fn returns_none_when_no_builtin_sections_are_selected() {
     let prompt = compose_builtin_mcp_system_prompt(&[], InternalContextLocale::ZhCn);
-    assert!(prompt.is_none());
-
-    let prompt = compose_builtin_mcp_system_prompt(
-        &[build_builtin_server(BuiltinMcpKind::AgentBuilder)],
-        InternalContextLocale::ZhCn,
-    );
     assert!(prompt.is_none());
 }
 
 #[test]
-fn inspect_builtin_prompt_marks_unsupported_servers_as_omitted() {
+fn agent_builder_has_runtime_guidance() {
     let info = inspect_builtin_mcp_system_prompt(
         &[McpBuiltinServer {
             name: "agent_builder".to_string(),
@@ -72,10 +66,13 @@ fn inspect_builtin_prompt_marks_unsupported_servers_as_omitted() {
         InternalContextLocale::ZhCn,
     );
 
-    assert!(info.prompt.is_none());
+    assert!(info
+        .prompt
+        .as_deref()
+        .is_some_and(|prompt| prompt.contains("`agent_builder_create_memory_agent`")));
     assert_eq!(info.requested_builtin_server_names, vec!["agent_builder"]);
-    assert!(info.active_builtin_server_names.is_empty());
-    assert_eq!(info.omitted_builtin_server_names, vec!["agent_builder"]);
+    assert_eq!(info.active_builtin_server_names, vec!["agent_builder"]);
+    assert!(info.omitted_builtin_server_names.is_empty());
 }
 
 #[test]

@@ -89,6 +89,7 @@ export function TasksPage() {
     taskRunDerivedQuery,
     taskPromptsQuery,
     mcpCatalogQuery,
+    taskCapabilityCatalogQuery,
     remoteServersQuery,
     externalMcpConfigsQuery,
     taskMemoryContextQuery,
@@ -535,6 +536,7 @@ export function TasksPage() {
         modelOptions={modelOptions}
         prerequisiteTaskOptions={prerequisiteTaskOptions}
         mcpCatalogEntries={mcpCatalogQuery.data}
+        selectableSkills={taskCapabilityCatalogQuery.data?.selectable_skills}
         remoteServers={remoteServersQuery.data}
         externalMcpConfigs={externalMcpConfigsQuery.data}
         onClose={closeTaskDrawer}

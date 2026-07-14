@@ -23,6 +23,7 @@ futures-util = "0.3"
 hex = "0.4"
 hyper-util = { version = "0.1", features = ["http1", "server", "server-auto", "service", "tokio"] }
 memory_engine_sdk = { path = "../../crates/memory_engine_sdk" }
+lopdf = "0.44"
 reqwest = { version = "0.12", features = ["json", "rustls-tls"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -35,6 +36,7 @@ tower-http = { version = "0.7", features = ["cors", "fs"] }
 url = "2"
 urlencoding = "2"
 uuid = { version = "1", features = ["serde", "v4"] }
+zip = { version = "2", default-features = false, features = ["deflate"] }
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security_Cryptography", "Win32_System_Memory"] }

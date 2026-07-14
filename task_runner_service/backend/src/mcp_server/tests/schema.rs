@@ -2,7 +2,9 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use super::*;
-use crate::mcp_server::support::{create_model_config_schema, update_model_config_schema};
+use crate::mcp_server::support::{
+    create_model_config_schema, create_tasks_with_prerequisites_schema, update_model_config_schema,
+};
 
 #[test]
 fn create_task_schema_hides_memory_scope_fields() {
@@ -16,7 +18,7 @@ fn create_task_schema_hides_memory_scope_fields() {
     assert!(!properties.contains_key("subject_id"));
     assert!(!properties.contains_key("status"));
     assert!(!properties.contains_key("mcp_config"));
-    assert!(!properties.contains_key("default_model_config_id"));
+    assert!(properties.contains_key("default_model_config_id"));
     assert!(properties.contains_key("enabled_builtin_kinds"));
     assert!(properties.contains_key("external_mcp_config_ids"));
 
@@ -116,12 +118,17 @@ fn create_task_args_preserve_external_mcp_ids_without_implicit_builtin_selection
         priority: None,
         tags: None,
         default_model_config_id: None,
+        requires_execution: None,
         schedule: None,
         enabled_builtin_kinds: None,
         external_mcp_config_ids: Some(vec![
             " external-mcp-1 ".to_string(),
             String::new(),
             "external-mcp-1".to_string(),
+        ]),
+        selected_skill_ids: Some(vec![
+            " internal_skill_remotion ".to_string(),
+            "internal_skill_remotion".to_string(),
         ]),
         prerequisite_task_ids: None,
         mcp_config: None,
@@ -135,6 +142,10 @@ fn create_task_args_preserve_external_mcp_ids_without_implicit_builtin_selection
     assert_eq!(
         mcp_config.external_mcp_config_ids,
         vec!["external-mcp-1".to_string()]
+    );
+    assert_eq!(
+        mcp_config.selected_skill_ids,
+        vec!["internal_skill_remotion".to_string()]
     );
 }
 
@@ -161,7 +172,7 @@ fn mcp_model_list_is_strictly_scoped_to_current_owner() {
 }
 
 #[test]
-fn mcp_tool_schema_does_not_expose_model_config_ids() {
+fn mcp_tool_schema_exposes_only_current_owner_enabled_model_choices() {
     let current_user = admin_user("user-1");
     let models = vec![
         model_config("own-enabled", "user-1", true),
@@ -175,12 +186,44 @@ fn mcp_tool_schema_does_not_expose_model_config_ids() {
     })];
 
     enrich_tool_schemas_with_model_configs(&mut tools, &visible_models);
-    let properties = tools[0]
-        .pointer("/inputSchema/properties")
-        .and_then(|value| value.as_object())
-        .expect("properties");
+    let model_schema = tools[0]
+        .pointer("/inputSchema/properties/default_model_config_id")
+        .expect("model selection schema");
+    let enum_values = model_schema
+        .get("enum")
+        .and_then(serde_json::Value::as_array)
+        .expect("model enum");
+    assert_eq!(enum_values, &vec![json!("own-enabled")]);
+    let choices = model_schema
+        .get("oneOf")
+        .and_then(serde_json::Value::as_array)
+        .expect("model choices");
+    assert_eq!(choices.len(), 1);
+    assert_eq!(choices[0].get("const"), Some(&json!("own-enabled")));
+    assert!(choices[0]
+        .get("title")
+        .and_then(serde_json::Value::as_str)
+        .is_some_and(|value| value.contains("own-enabled")));
+}
 
-    assert!(!properties.contains_key("default_model_config_id"));
+#[test]
+fn batch_create_schema_exposes_model_selection_for_each_task() {
+    let current_user = admin_user("user-1");
+    let visible_models =
+        filter_model_configs_for_user(vec![model_config("model-a", "user-1", true)], &current_user);
+    let mut tools = vec![json!({
+        "name": "create_tasks_with_prerequisites",
+        "inputSchema": create_tasks_with_prerequisites_schema(),
+    })];
+
+    enrich_tool_schemas_with_model_configs(&mut tools, &visible_models);
+
+    assert_eq!(
+        tools[0].pointer(
+            "/inputSchema/properties/tasks/items/properties/default_model_config_id/enum/0"
+        ),
+        Some(&json!("model-a"))
+    );
 }
 
 #[test]
@@ -189,9 +232,6 @@ fn async_planner_profile_exposes_only_planning_tools() {
         "list_tasks"
     ));
     assert!(chatos_async_planner::planner_agent_tool_allowed("get_task"));
-    assert!(chatos_async_planner::planner_agent_tool_allowed(
-        "get_task_stats"
-    ));
     assert!(chatos_async_planner::planner_agent_tool_allowed(
         "create_task"
     ));
@@ -203,12 +243,6 @@ fn async_planner_profile_exposes_only_planning_tools() {
     ));
     assert!(chatos_async_planner::planner_agent_tool_allowed(
         "list_external_mcp_configs"
-    ));
-    assert!(chatos_async_planner::planner_agent_tool_allowed(
-        "update_task"
-    ));
-    assert!(chatos_async_planner::planner_agent_tool_allowed(
-        "set_task_prerequisites"
     ));
     assert!(chatos_async_planner::planner_agent_tool_allowed(
         "cancel_task"
@@ -235,6 +269,53 @@ fn async_planner_profile_exposes_only_planning_tools() {
     assert!(!chatos_async_planner::planner_agent_tool_allowed(
         "list_run_events"
     ));
+    assert!(!chatos_async_planner::planner_agent_tool_allowed(
+        "get_task_stats"
+    ));
+    assert!(!chatos_async_planner::planner_agent_tool_allowed(
+        "update_task"
+    ));
+    assert!(!chatos_async_planner::planner_agent_tool_allowed(
+        "set_task_prerequisites"
+    ));
+}
+
+#[tokio::test]
+async fn provider_descriptor_exposes_only_chatos_planner_tools() {
+    let (service, _, _) = test_mcp_service().await;
+    let descriptor = service.provider_descriptor();
+    let tool_names = descriptor
+        .tools
+        .iter()
+        .filter_map(|tool| tool.get("name").and_then(serde_json::Value::as_str))
+        .collect::<Vec<_>>();
+
+    assert_eq!(tool_names.len(), 10);
+    for expected in [
+        "list_tasks",
+        "get_task",
+        "create_task",
+        "list_mcp_builtin_catalog",
+        "list_external_mcp_configs",
+        "list_available_skills",
+        "create_tasks_with_prerequisites",
+        "cancel_task",
+        "wait_for_task_completion",
+        "get_task_dependency_graph",
+    ] {
+        assert!(tool_names.contains(&expected), "missing {expected}");
+    }
+    for hidden in [
+        "get_task_stats",
+        "create_project_execution_tasks",
+        "update_task",
+        "set_task_prerequisites",
+        "list_model_configs",
+        "start_task_run",
+        "list_runs",
+    ] {
+        assert!(!tool_names.contains(&hidden), "unexpected {hidden}");
+    }
 }
 
 #[test]

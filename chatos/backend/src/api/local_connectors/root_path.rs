@@ -133,3 +133,29 @@ pub(crate) fn local_connector_root_path(
         None => base,
     }
 }
+
+pub(crate) fn local_connector_display_path(root_path: &str) -> Option<String> {
+    let root_ref = parse_local_connector_root_path(root_path)?;
+    Some(match root_ref.relative_path {
+        Some(relative_path) => format!("/{relative_path}"),
+        None => "/".to_string(),
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{local_connector_display_path, local_connector_root_path};
+
+    #[test]
+    fn display_path_hides_connector_routing_ids() {
+        let root = local_connector_root_path("device-1", "workspace-1", Some("apps/my backend"));
+        assert_eq!(
+            local_connector_display_path(root.as_str()).as_deref(),
+            Some("/apps/my backend")
+        );
+        assert_eq!(
+            local_connector_display_path("local://connector/device-1/workspace-1").as_deref(),
+            Some("/")
+        );
+    }
+}

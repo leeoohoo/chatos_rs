@@ -44,7 +44,7 @@ struct RemoteEntry {
 pub(super) async fn list_connections_with_context(ctx: BoundContext) -> Result<Value, String> {
     let user_id = required_user_id(&ctx)?;
     let mut list = RemoteConnectionService::list(Some(user_id)).await?;
-    list.sort_by(|left, right| left.name.to_lowercase().cmp(&right.name.to_lowercase()));
+    list.sort_by_key(|entry| entry.name.to_lowercase());
 
     let connections: Vec<ConnectionSummary> = list
         .into_iter()

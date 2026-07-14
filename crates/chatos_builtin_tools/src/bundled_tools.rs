@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 
 pub const CHATOS_BUNDLED_TOOLS_DIR_ENV: &str = "CHATOS_BUNDLED_TOOLS_DIR";
 pub const CHATOS_BUNDLED_TOOLS_PATH_ENV: &str = "CHATOS_BUNDLED_TOOLS_PATH";
+pub const AGENT_BROWSER_BIN_ENV: &str = "AGENT_BROWSER_BIN";
 
 const BUNDLED_TOOLS_DIR_NAME: &str = "bundled-tools";
 const RIPGREP_BIN_NAME: &str = "rg";
@@ -18,6 +19,14 @@ pub fn bundled_tool_path(tool_name: &str) -> Option<PathBuf> {
         .into_iter()
         .map(|dir| dir.join(&bin_name))
         .find(|path| path.is_file())
+}
+
+pub fn agent_browser_binary_path() -> Option<PathBuf> {
+    env::var_os(AGENT_BROWSER_BIN_ENV)
+        .map(PathBuf::from)
+        .filter(|path| path.is_file())
+        .or_else(|| bundled_tool_path("agent-browser"))
+        .or_else(|| executable_on_path("agent-browser"))
 }
 
 pub fn path_with_bundled_tools(base_path: Option<OsString>) -> Option<OsString> {
@@ -142,4 +151,11 @@ fn platform_tool_file_name(tool_name: &str) -> String {
     } else {
         tool_name.to_string()
     }
+}
+
+fn executable_on_path(tool_name: &str) -> Option<PathBuf> {
+    let path = env::var_os("PATH")?;
+    env::split_paths(&path)
+        .map(|dir| dir.join(platform_tool_file_name(tool_name)))
+        .find(|candidate| candidate.is_file())
 }

@@ -7,9 +7,11 @@ use crate::services::TaskRunnerCapabilityPolicy;
 mod mcp_builder;
 mod mcp_inputs;
 
+use crate::services::skill_runtime::prepare_local_skills;
 use mcp_builder::build_mcp_builder_parts;
 use mcp_inputs::{
     external_mcp_prefixed_input_items, load_external_mcp_servers, load_system_http_mcp_servers,
+    mcp_provider_skills_prefixed_input_items,
 };
 
 pub(super) async fn prepare_model_execution(
@@ -53,10 +55,6 @@ pub(super) async fn prepare_model_execution(
         prerequisite_context,
         task.mcp_config.locale(),
     );
-    let prefixed_input_items = external_mcp_prefixed_input_items(
-        loaded_external_mcp.summaries.as_slice(),
-        task.mcp_config.locale(),
-    );
     let resolved_model_config =
         crate::services::model_runtime_resolver::resolve_model_runtime_for_task(
             &service.config,
@@ -66,21 +64,6 @@ pub(super) async fn prepare_model_execution(
         .await?;
     let metadata = build_execution_metadata(task, run, model_config, sandbox_context.as_ref());
     let task_process_logging_enabled = task_process_logging_enabled(&task.mcp_config);
-    let mut run_spec = build_run_spec(
-        task,
-        run,
-        &resolved_model_config,
-        model_config,
-        effective_workspace_dir.as_str(),
-        prompt,
-        metadata.clone(),
-        task_process_logging_enabled,
-        prefixed_input_items,
-    );
-
-    let memory_scope = build_memory_scope(service, task);
-    run_spec = run_spec.with_memory_scope(Some(memory_scope));
-
     let tool_result_model_budget_limits = service
         .effective_tool_result_model_budget_limits()
         .await
@@ -88,10 +71,9 @@ pub(super) async fn prepare_model_execution(
     let runtime_config = build_runtime_config(service, task).await?;
 
     let runtime_config = service.apply_task_mcp_config(runtime_config, &task.mcp_config);
-    persist_context_snapshot(service, run, run_spec.memory_scope.as_ref()).await;
 
     let task_service = TaskService::new(service.config.clone(), service.store.clone());
-    let (builtin_servers, builtin_registry) = build_mcp_builder_parts(
+    let (mut builtin_servers, mut builtin_registry) = build_mcp_builder_parts(
         service,
         task,
         run,
@@ -102,6 +84,48 @@ pub(super) async fn prepare_model_execution(
         capability_policy.is_some(),
     )
     .await;
+    let prepared_local_skills = prepare_local_skills(service, task, run, capability_policy).await?;
+    let local_skill_sessions = prepared_local_skills.session_handles.clone();
+    let mut prefixed_input_items = prepared_local_skills.input_items.clone();
+    prefixed_input_items.extend(external_mcp_prefixed_input_items(
+        loaded_external_mcp.summaries.as_slice(),
+        task.mcp_config.locale(),
+    ));
+    let provider_skills_prompt = capability_policy.and_then(|policy| {
+        let locale = if task.mcp_config.locale().is_english() {
+            "en-US"
+        } else {
+            "zh-CN"
+        };
+        policy.compose_provider_skills_prompt(
+            loaded_external_mcp
+                .summaries
+                .iter()
+                .map(|summary| summary.id.as_str()),
+            locale,
+        )
+    });
+    prefixed_input_items.extend(mcp_provider_skills_prefixed_input_items(
+        provider_skills_prompt,
+    ));
+    let mut run_spec = build_run_spec(
+        task,
+        run,
+        &resolved_model_config,
+        model_config,
+        effective_workspace_dir.as_str(),
+        prompt,
+        metadata,
+        task_process_logging_enabled,
+        prefixed_input_items,
+    );
+    let memory_scope = build_memory_scope(service, task);
+    run_spec = run_spec.with_memory_scope(Some(memory_scope));
+    persist_context_snapshot(service, run, run_spec.memory_scope.as_ref()).await;
+    builtin_servers.extend(prepared_local_skills.builtin_servers);
+    for provider in prepared_local_skills.builtin_providers {
+        builtin_registry.register(provider);
+    }
     if !loaded_external_mcp.summaries.is_empty() {
         info!(
             task_id = task.id.as_str(),
@@ -131,6 +155,7 @@ pub(super) async fn prepare_model_execution(
         sandbox_context,
         harness_run_context,
         effective_workspace_dir,
+        local_skill_sessions,
     })
 }
 

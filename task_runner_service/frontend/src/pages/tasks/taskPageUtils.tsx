@@ -36,6 +36,7 @@ export type TaskFormValues = {
   priority?: number;
   status: TaskStatus;
   default_model_config_id?: string;
+  requiresExecution: boolean;
   prerequisite_task_ids?: string[];
   tagsText?: string;
   mcpEnabled: boolean;
@@ -45,6 +46,7 @@ export type TaskFormValues = {
   workspaceDir?: string;
   defaultRemoteServerId?: string;
   externalMcpConfigIds?: string[];
+  selectedSkillIds?: string[];
   scheduleMode: TaskScheduleMode;
   scheduleRunAt?: string;
   scheduleIntervalSeconds?: number;
@@ -65,6 +67,7 @@ export function buildCreateTaskFormValues(locale: string): TaskFormValues {
     status: 'draft',
     taskProfile: 'default',
     default_model_config_id: undefined,
+    requiresExecution: true,
     prerequisite_task_ids: [],
     tagsText: '',
     mcpEnabled: true,
@@ -74,6 +77,7 @@ export function buildCreateTaskFormValues(locale: string): TaskFormValues {
     workspaceDir: '',
     defaultRemoteServerId: undefined,
     externalMcpConfigIds: [],
+    selectedSkillIds: [],
     scheduleMode: 'manual',
     scheduleRunAt: undefined,
     scheduleIntervalSeconds: undefined,
@@ -89,6 +93,7 @@ export function buildEditTaskFormValues(task: TaskRecord): TaskFormValues {
     status: task.status,
     taskProfile: task.task_profile || 'default',
     default_model_config_id: task.default_model_config_id || undefined,
+    requiresExecution: task.mcp_config.requires_execution ?? true,
     prerequisite_task_ids: task.prerequisite_task_ids || [],
     tagsText: task.tags.join(', '),
     mcpEnabled: task.mcp_config.enabled,
@@ -98,6 +103,7 @@ export function buildEditTaskFormValues(task: TaskRecord): TaskFormValues {
     workspaceDir: task.mcp_config.workspace_dir || '',
     defaultRemoteServerId: task.mcp_config.default_remote_server_id || undefined,
     externalMcpConfigIds: task.mcp_config.external_mcp_config_ids || [],
+    selectedSkillIds: task.mcp_config.selected_skill_ids || [],
     scheduleMode: task.schedule.mode,
     scheduleRunAt: formatScheduleInput(task.schedule.run_at ?? task.schedule.next_run_at),
     scheduleIntervalSeconds: task.schedule.interval_seconds || undefined,
@@ -137,6 +143,7 @@ export function buildTaskPayload(
     schedule,
     mcp_config: {
       enabled: values.mcpEnabled,
+      requires_execution: values.requiresExecution,
       init_mode: 'full',
       builtin_prompt_mode: values.builtinPromptMode,
       builtin_prompt_locale: values.builtinPromptLocale,
@@ -144,6 +151,7 @@ export function buildTaskPayload(
       workspace_dir: values.workspaceDir?.trim() || undefined,
       default_remote_server_id: values.defaultRemoteServerId,
       external_mcp_config_ids: values.externalMcpConfigIds || [],
+      selected_skill_ids: values.selectedSkillIds || [],
     },
   };
 }

@@ -8,7 +8,7 @@ use anyhow::{anyhow, Context, Result};
 
 use crate::sandbox::types::{LocalSandboxNetworkPolicy, LocalSandboxResourceLimits};
 
-use super::DEFAULT_LOCAL_SANDBOX_AGENT_PORT;
+use super::{docker_command, DEFAULT_LOCAL_SANDBOX_AGENT_PORT};
 
 pub(crate) async fn start_local_sandbox_container(
     sandbox_id: &str,
@@ -24,7 +24,7 @@ pub(crate) async fn start_local_sandbox_container(
     } else {
         network.mode.trim()
     };
-    let mut command = tokio::process::Command::new("docker");
+    let mut command = docker_command();
     command
         .arg("run")
         .arg("-d")
@@ -77,7 +77,7 @@ pub(crate) async fn start_local_sandbox_container(
 }
 
 pub(crate) async fn inspect_local_sandbox_container(sandbox_id: &str) -> Result<bool> {
-    let output = tokio::process::Command::new("docker")
+    let output = docker_command()
         .arg("inspect")
         .arg("-f")
         .arg("{{.State.Running}}")
@@ -92,7 +92,7 @@ pub(crate) async fn inspect_local_sandbox_container(sandbox_id: &str) -> Result<
 }
 
 pub(crate) async fn destroy_local_sandbox_container(sandbox_id: &str) -> Result<()> {
-    let output = tokio::process::Command::new("docker")
+    let output = docker_command()
         .arg("rm")
         .arg("-f")
         .arg(local_sandbox_container_name(sandbox_id))
@@ -112,7 +112,7 @@ pub(crate) async fn destroy_local_sandbox_container(sandbox_id: &str) -> Result<
 }
 
 pub(crate) async fn published_local_sandbox_agent_endpoint(sandbox_id: &str) -> Option<String> {
-    let output = tokio::process::Command::new("docker")
+    let output = docker_command()
         .arg("port")
         .arg(local_sandbox_container_name(sandbox_id))
         .arg(format!("{DEFAULT_LOCAL_SANDBOX_AGENT_PORT}/tcp"))

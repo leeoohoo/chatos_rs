@@ -5,6 +5,7 @@ use std::collections::HashSet;
 
 use serde_json::{json, Value};
 
+use crate::input_transform::normalize_responses_request_input;
 use crate::model_config::{
     normalize_provider, reasoning_effort_for_provider, thinking_mode_for_provider,
 };
@@ -29,6 +30,7 @@ pub fn build_responses_request_payload(
 ) -> Value {
     let should_request_reasoning_summary =
         should_request_responses_reasoning_summary(provider.as_deref(), model.as_str());
+    let input = normalize_responses_request_input(&input);
     let mut payload = json!({
         "model": model,
         "input": input,

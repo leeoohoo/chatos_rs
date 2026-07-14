@@ -491,6 +491,23 @@ pub(super) fn external_mcp_prefixed_input_items(
     })]
 }
 
+pub(super) fn mcp_provider_skills_prefixed_input_items(prompt: Option<String>) -> Vec<Value> {
+    let Some(prompt) = prompt
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+    else {
+        return Vec::new();
+    };
+    vec![json!({
+        "type": "message",
+        "role": "system",
+        "content": [{
+            "type": "input_text",
+            "text": prompt
+        }]
+    })]
+}
+
 fn is_internal_host_mcp_summary(summary: &ExternalMcpRuntimeSummary) -> bool {
     summary.id.trim().starts_with("ephemeral:")
         && ["local_connector", "harness_code"]

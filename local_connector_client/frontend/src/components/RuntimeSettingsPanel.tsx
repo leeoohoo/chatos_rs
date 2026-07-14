@@ -3,9 +3,13 @@
 
 import React from 'react';
 import {
+  Accessibility,
+  AppWindow,
   ExternalLink,
   FolderOpen,
   Globe2,
+  MonitorUp,
+  Network,
   RefreshCw,
   Settings2,
   ShieldCheck,
@@ -18,13 +22,21 @@ import {
   type SystemPermissionItem,
   type SystemPermissionsResponse,
 } from '../api';
+import { loadSystemPermissions, systemPermissionReady } from '../systemPermissions';
 
 const DEFAULT_AI_AGENT_MAX_ITERATIONS = 600;
+const DEFAULT_DEVELOPER_CLOUD_BASE_URL = 'http://127.0.0.1:39230';
+const DEFAULT_DEVELOPER_USER_SERVICE_BASE_URL = 'http://127.0.0.1:39190';
+const DEFAULT_DEVELOPER_CHATOS_WEB_URL = 'http://127.0.0.1:8088';
 type PermissionIcon = typeof Settings2;
 
-export function RuntimeSettingsPanel() {
+export function RuntimeSettingsPanel({ developerOnly = false }: { developerOnly?: boolean }) {
   const [settings, setSettings] = React.useState<LocalRuntimeSettings>({
     ai_agent_max_iterations: DEFAULT_AI_AGENT_MAX_ITERATIONS,
+    developer_mode: false,
+    developer_cloud_base_url: DEFAULT_DEVELOPER_CLOUD_BASE_URL,
+    developer_user_service_base_url: DEFAULT_DEVELOPER_USER_SERVICE_BASE_URL,
+    developer_chatos_web_url: DEFAULT_DEVELOPER_CHATOS_WEB_URL,
   });
   const [permissions, setPermissions] = React.useState<SystemPermissionsResponse | null>(null);
   const [loading, setLoading] = React.useState(true);
@@ -36,20 +48,24 @@ export function RuntimeSettingsPanel() {
   const load = React.useCallback(async () => {
     setError(null);
     try {
-      const [next, nextPermissions] = await Promise.all([
-        api.runtimeSettings(),
-        api.systemPermissions(),
-      ]);
+      const next = await api.runtimeSettings();
       setSettings({
         ai_agent_max_iterations: next.ai_agent_max_iterations || DEFAULT_AI_AGENT_MAX_ITERATIONS,
+        developer_mode: Boolean(next.developer_mode),
+        developer_cloud_base_url: next.developer_cloud_base_url || DEFAULT_DEVELOPER_CLOUD_BASE_URL,
+        developer_user_service_base_url:
+          next.developer_user_service_base_url || DEFAULT_DEVELOPER_USER_SERVICE_BASE_URL,
+        developer_chatos_web_url: next.developer_chatos_web_url || DEFAULT_DEVELOPER_CHATOS_WEB_URL,
       });
-      setPermissions(nextPermissions);
+      if (!developerOnly) {
+        setPermissions(await loadSystemPermissions());
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : '读取运行配置失败');
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [developerOnly]);
 
   React.useEffect(() => {
     void load();
@@ -65,9 +81,15 @@ export function RuntimeSettingsPanel() {
           1,
           Number(settings.ai_agent_max_iterations) || DEFAULT_AI_AGENT_MAX_ITERATIONS,
         ),
+        developer_mode: settings.developer_mode,
       });
       setSettings(next);
-      setMessage('运行配置已保存');
+      await window.chatosLocalConnector?.setDeveloperMode?.(next.developer_mode);
+      setMessage(
+        next.developer_mode
+          ? '开发者模式已开启，主页面已切换到本地服务；请在本地 Chat OS 登录完成配对。'
+          : '开发者模式已关闭，主页面已切回线上服务；请在线上 Chat OS 登录完成配对。',
+      );
     } catch (err) {
       setError(err instanceof Error ? err.message : '保存运行配置失败');
     } finally {
@@ -83,8 +105,9 @@ export function RuntimeSettingsPanel() {
     setMessage(null);
     setError(null);
     try {
-      const next = await api.requestSystemPermission(permission.id);
-      setPermissions(next);
+      await window.chatosLocalConnector?.requestDesktopSystemPermission?.(permission.id);
+      await api.requestSystemPermission(permission.id);
+      setPermissions(await loadSystemPermissions());
       setMessage('已打开系统设置。完成授权后请刷新状态。');
     } catch (err) {
       setError(err instanceof Error ? err.message : '打开系统权限设置失败');
@@ -111,33 +134,63 @@ export function RuntimeSettingsPanel() {
         </div>
         {message ? <div className="banner">{message}</div> : null}
         {error ? <div className="formError">{error}</div> : null}
-        <div className="settingsFormGrid">
-          <label>
-            Agent 最大迭代次数
-            <input
-              type="number"
-              min="1"
-              step="1"
-              value={settings.ai_agent_max_iterations}
-              onChange={(event) =>
-                setSettings({
-                  ...settings,
-                  ai_agent_max_iterations: Number(event.target.value) || DEFAULT_AI_AGENT_MAX_ITERATIONS,
-                })
-              }
-            />
-          </label>
+        {!developerOnly ? (
+          <div className="settingsFormGrid">
+            <label>
+              Agent 最大迭代次数
+              <input
+                type="number"
+                min="1"
+                step="1"
+                value={settings.ai_agent_max_iterations}
+                onChange={(event) =>
+                  setSettings({
+                    ...settings,
+                    ai_agent_max_iterations: Number(event.target.value) || DEFAULT_AI_AGENT_MAX_ITERATIONS,
+                  })
+                }
+              />
+            </label>
+          </div>
+        ) : null}
+        <div className={`developerModeCard ${settings.developer_mode ? 'active' : ''}`}>
+          <div className="developerModeHeading">
+            <div className="permissionIcon"><Globe2 size={18} /></div>
+            <div>
+              <strong>开发者模式</strong>
+              <span>主页面与 Local Connector Core 切换到本机服务；附件对象存储继续使用后端配置的线上 MinIO。</span>
+            </div>
+            <label className="switch" title="切换开发者模式">
+              <input
+                type="checkbox"
+                checked={settings.developer_mode}
+                onChange={(event) =>
+                  setSettings({ ...settings, developer_mode: event.target.checked })
+                }
+              />
+              <span />
+            </label>
+          </div>
+          <div className="developerEndpointGrid">
+            <div><span>Chat OS</span><code>{settings.developer_chatos_web_url}</code></div>
+            <div><span>Connector Service</span><code>{settings.developer_cloud_base_url}</code></div>
+            <div><span>User Service</span><code>{settings.developer_user_service_base_url}</code></div>
+            <div><span>MinIO S3 API</span><code>https://oss.jgoool.com</code></div>
+          </div>
+          <small>切换时会主动断开当前环境的 Connector 长连接，防止本地页面与线上 Relay 混用；目标页面登录后会自动重新配对。</small>
         </div>
         <button className="primaryButton compact" disabled={saving} onClick={() => void save()}>
           {saving ? '保存中' : '保存配置'}
         </button>
       </section>
-      <SystemPermissionsPanel
-        permissions={permissions}
-        requestingPermissionId={requestingPermissionId}
-        onRefresh={load}
-        onRequest={requestPermission}
-      />
+      {!developerOnly ? (
+        <SystemPermissionsPanel
+          permissions={permissions}
+          requestingPermissionId={requestingPermissionId}
+          onRefresh={load}
+          onRequest={requestPermission}
+        />
+      ) : null}
     </section>
   );
 }
@@ -157,11 +210,11 @@ function SystemPermissionsPanel({
     <section className="panel">
       <div className="panelHeader">
         <div>
-          <h2><ShieldCheck size={18} />MCP 系统权限</h2>
+          <h2><ShieldCheck size={18} />Skills 与 MCP 系统权限</h2>
           <p>
             {permissions
-              ? `${permissions.platform_label} 下本机 MCP 能力的系统访问状态`
-              : '正在读取本机 MCP 权限状态'}
+              ? `${permissions.platform_label} 下本机 Skills 与 MCP 能力的系统访问状态`
+              : '正在读取本机系统权限状态'}
           </p>
         </div>
         <button className="iconButton" onClick={() => void onRefresh()} title="刷新权限状态">
@@ -211,6 +264,7 @@ function PermissionRow({
         {permission.last_error ? <em>{permission.last_error}</em> : null}
         <div className="permissionKinds">
           {permission.builtin_kinds.map((kind) => <code key={kind}>{kind}</code>)}
+          {permission.skill_ids.map((skillId) => <code key={skillId}>{skillId}</code>)}
         </div>
       </div>
       <div className="permissionAction">
@@ -255,17 +309,25 @@ function permissionIcon(permissionId: string): PermissionIcon {
       return Terminal;
     case 'browser_automation':
       return Globe2;
+    case 'network_access':
+      return Network;
+    case 'accessibility_control':
+      return Accessibility;
+    case 'screen_recording':
+      return MonitorUp;
+    case 'office_automation':
+      return AppWindow;
     default:
       return Settings2;
   }
 }
 
 function permissionReady(permission: SystemPermissionItem): boolean {
-  return permission.status === 'ready' || permission.status === 'not_applicable';
+  return systemPermissionReady(permission);
 }
 
 function statusTone(status: string): 'ok' | 'warn' | 'bad' {
-  if (status === 'ready' || status === 'not_applicable') {
+  if (status === 'ready' || status === 'not_applicable' || status === 'on_demand') {
     return 'ok';
   }
   if (status === 'missing_dependency') {

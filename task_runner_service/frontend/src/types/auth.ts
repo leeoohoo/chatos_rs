@@ -24,6 +24,12 @@ export interface CurrentUserResponse {
   user: AuthUser;
 }
 
+export interface SseTicketResponse {
+  ticket: string;
+  expires_in: number;
+  expires_at_unix: number;
+}
+
 export interface UserSummaryRecord {
   id: string;
   username: string;

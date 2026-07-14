@@ -318,6 +318,22 @@ Usage rules:
 3. Use `notepad_create_note` for new notes, `notepad_update_note` for existing notes, and prefer `notepad_search_notes` or `notepad_list_notes` for retrieval.
 4. Not every ordinary answer needs to be written into notes. Avoid meaningless persistence.
 
+## [builtin_agent_builder]
+When these tools are available, use them to create or maintain Memory agents:
+`agent_builder_recommend_agent_profile`
+`agent_builder_list_available_skills`
+`agent_builder_create_memory_agent`
+`agent_builder_update_memory_agent`
+`agent_builder_preview_agent_context`
+
+Usage rules:
+1. If the user wants a new agent but its role, capability boundaries, or skill set are incomplete, call `recommend_agent_profile` first to produce a candidate configuration.
+2. Call `list_available_skills` before selecting skills. Reference only Skill IDs that are actually available to the current user; never invent skills.
+3. Before creation, use `preview_agent_context` to inspect the final merged role and Skills context and remove duplicate, conflicting, or vague instructions.
+4. Call `create_memory_agent` only when the user explicitly asks to create an agent. Use `update_memory_agent` for an existing agent and provide the exact `agent_id`.
+5. `mcp_policy`, `project_policy`, enabled state, and plugin sources change the agent's permissions and behavior. Do not broaden them without explicit user authorization.
+6. After a create or update call, rely on the returned agent data. Do not claim settings took effect when the tool did not return them.
+
 ## [conditional_contact_memory_readers]
 This section only appears when contact or memory-agent related context exists. If these tools are present, you can expand the skill, command, or plugin references mentioned in the contact summary:
 `memory_skill_reader_get_skill_detail`

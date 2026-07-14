@@ -10,6 +10,26 @@ $ClientDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $RootDir = Resolve-Path (Join-Path $ClientDir "..")
 $FrontendDir = Join-Path $ClientDir "frontend"
 $ElectronResourcesDir = Join-Path $FrontendDir "electron\resources"
+$SkillCatalogPath = Join-Path $ClientDir "skill_bundles\catalog\internal-skill-catalog.json"
+
+function Test-SkillBundles {
+  if (!(Test-Path -LiteralPath $SkillCatalogPath)) {
+    throw "Local Connector internal Skill catalog is missing: $SkillCatalogPath"
+  }
+  $catalog = Get-Content -LiteralPath $SkillCatalogPath -Raw | ConvertFrom-Json
+  if ($catalog.schema_version -ne 1 -or $catalog.skills.Count -ne 27) {
+    throw "Local Connector internal Skill catalog must contain exactly 27 schema-v1 entries"
+  }
+  $catalog.skills | ForEach-Object {
+    $bundleDir = Join-Path $ClientDir "skill_bundles\internal\$($_.name)\$($_.version)"
+    @("skill.json", "instructions.md") | ForEach-Object {
+      $resource = Join-Path $bundleDir $_
+      if (!(Test-Path -LiteralPath $resource)) {
+        throw "Missing internal Skill bundle resource: $resource"
+      }
+    }
+  }
+}
 
 function Get-CargoTargetDir {
   Push-Location $RootDir
@@ -72,8 +92,13 @@ function Sync-ElectronResources {
     New-Item -ItemType Directory -Force -Path $destToolsRoot | Out-Null
     Copy-Item -LiteralPath $sourceTools -Destination $destToolsRoot -Recurse -Force
   } else {
-    Write-Warning "Bundled tools not found for $platform`: $sourceTools"
+    throw "Bundled tools not found for $platform`: $sourceTools"
   }
+
+  $prepareBrowserRuntime = Join-Path $ClientDir "prepare-browser-runtime-windows.ps1"
+  & $prepareBrowserRuntime -DestinationDir (Join-Path $destToolsRoot $platform) -Platform $platform
+
+  Copy-Item -LiteralPath (Join-Path $ClientDir "skill_bundles") -Destination $ElectronResourcesDir -Recurse -Force
 }
 
 function New-ManualElectronPackage {
@@ -102,8 +127,7 @@ function New-ManualElectronPackage {
   $appResourcesDir = Join-Path $resourcesDir "app"
   New-Item -ItemType Directory -Force -Path (Join-Path $appResourcesDir "electron") | Out-Null
   Copy-Item -LiteralPath (Join-Path $FrontendDir "dist") -Destination $appResourcesDir -Recurse -Force
-  Copy-Item -LiteralPath (Join-Path $FrontendDir "electron\main.cjs") -Destination (Join-Path $appResourcesDir "electron\main.cjs") -Force
-  Copy-Item -LiteralPath (Join-Path $FrontendDir "electron\preload.cjs") -Destination (Join-Path $appResourcesDir "electron\preload.cjs") -Force
+  Copy-Item -Path (Join-Path $FrontendDir "electron\*.cjs") -Destination (Join-Path $appResourcesDir "electron") -Force
 
   $appPackageJson = @"
 {
@@ -116,6 +140,7 @@ function New-ManualElectronPackage {
 
   Copy-Item -LiteralPath (Join-Path $ElectronResourcesDir "local_connector_client_core.exe") -Destination (Join-Path $resourcesDir "local_connector_client_core.exe") -Force
   Copy-Item -LiteralPath (Join-Path $ElectronResourcesDir "bundled-tools") -Destination $resourcesDir -Recurse -Force
+  Copy-Item -LiteralPath (Join-Path $ElectronResourcesDir "skill_bundles") -Destination (Join-Path $resourcesDir "skill-bundles") -Recurse -Force
 
   $zipPath = Join-Path $outRoot "Chat-OS-Local-Connector-windows-x64.zip"
   if (Test-Path -LiteralPath $zipPath) {
@@ -126,6 +151,7 @@ function New-ManualElectronPackage {
   Write-Host "[OK] Electron desktop zip: $zipPath"
 }
 
+Test-SkillBundles
 Invoke-FrontendBuild
 Invoke-CoreBuild
 Sync-ElectronResources

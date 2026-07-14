@@ -139,13 +139,14 @@ pub(in crate::api) async fn analyze_project_runtime_environment_handler(
     let queued = async {
         let mut environment =
             ensure_runtime_environment_for_project(&state.store, &project, None).await?;
-        environment.status = ProjectRuntimeEnvironmentStatus::Analyzing;
-        environment.last_agent_run_id = Some(run_id.clone());
-        environment.last_error = None;
-        environment.updated_at = now_rfc3339();
+        reset_environment_for_analysis(&mut environment, run_id.as_str());
         let environment = state
             .store
             .upsert_project_runtime_environment(&environment)
+            .await?;
+        state
+            .store
+            .replace_project_runtime_environment_images(&project_id, &[])
             .await?;
         let images = state
             .store
@@ -211,6 +212,20 @@ pub(in crate::api) async fn analyze_project_runtime_environment_handler(
     Ok(Json(response))
 }
 
+fn reset_environment_for_analysis(environment: &mut ProjectRuntimeEnvironmentRecord, run_id: &str) {
+    environment.status = ProjectRuntimeEnvironmentStatus::Analyzing;
+    environment.sandbox_provider = RuntimeEnvironmentProvider::None;
+    environment.file_provider = RuntimeEnvironmentProvider::None;
+    environment.analysis_summary = Some("正在重新分析项目并准备沙箱运行环境。".to_string());
+    environment.not_runnable_reason = None;
+    environment.detected_stack = empty_object();
+    environment.required_services = empty_array();
+    environment.env_vars = empty_object();
+    environment.last_agent_run_id = Some(run_id.to_string());
+    environment.last_error = None;
+    environment.updated_at = now_rfc3339();
+}
+
 async fn persist_background_analysis_failure(
     state: &AppState,
     project_id: &str,
@@ -250,5 +265,53 @@ async fn persist_background_analysis_failure(
             error = persist_error.as_str(),
             "persist failed project environment analysis"
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::reset_environment_for_analysis;
+    use crate::models::{
+        ProjectRuntimeEnvironmentRecord, ProjectRuntimeEnvironmentStatus,
+        RuntimeEnvironmentProvider,
+    };
+    use serde_json::json;
+
+    #[test]
+    fn reanalysis_clears_stale_provisioning_failure_state() {
+        let mut environment = ProjectRuntimeEnvironmentRecord {
+            project_id: "project-1".to_string(),
+            status: ProjectRuntimeEnvironmentStatus::Failed,
+            sandbox_enabled: true,
+            sandbox_provider: RuntimeEnvironmentProvider::LocalConnector,
+            file_provider: RuntimeEnvironmentProvider::Harness,
+            analysis_summary: Some("old summary".to_string()),
+            not_runnable_reason: Some("old reason".to_string()),
+            detected_stack: json!({"stale": true}),
+            required_services: json!([{"stale": true}]),
+            env_vars: json!({"STALE": "1"}),
+            last_agent_run_id: Some("run-old".to_string()),
+            last_error: Some("Docker is not installed".to_string()),
+            created_at: "2026-01-01T00:00:00Z".to_string(),
+            updated_at: "2026-01-01T00:00:00Z".to_string(),
+        };
+
+        reset_environment_for_analysis(&mut environment, "run-new");
+
+        assert_eq!(
+            environment.status,
+            ProjectRuntimeEnvironmentStatus::Analyzing
+        );
+        assert_eq!(
+            environment.sandbox_provider,
+            RuntimeEnvironmentProvider::None
+        );
+        assert_eq!(environment.file_provider, RuntimeEnvironmentProvider::None);
+        assert_eq!(environment.last_agent_run_id.as_deref(), Some("run-new"));
+        assert!(environment.last_error.is_none());
+        assert!(environment.not_runnable_reason.is_none());
+        assert_eq!(environment.detected_stack, json!({}));
+        assert_eq!(environment.required_services, json!([]));
+        assert_eq!(environment.env_vars, json!({}));
     }
 }

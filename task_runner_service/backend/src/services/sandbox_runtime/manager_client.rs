@@ -19,6 +19,7 @@ struct CreateSandboxLeaseRequest {
     project_id: String,
     run_id: String,
     workspace_root: String,
+    image_id: Option<String>,
     tools: Vec<String>,
     ttl_seconds: u64,
 }
@@ -144,6 +145,14 @@ pub(super) struct SandboxManagerClient {
 pub(super) struct SandboxManagerAuth {
     pub(super) client_id: String,
     pub(super) client_key: String,
+    pub(super) mode: SandboxManagerAuthMode,
+    pub(super) owner_user_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum SandboxManagerAuthMode {
+    Cloud,
+    LocalConnector,
 }
 
 impl SandboxManagerClient {
@@ -169,6 +178,7 @@ impl SandboxManagerClient {
         run: &TaskRunRecord,
         workspace_root: &Path,
         ttl_seconds: u64,
+        image_id: Option<&str>,
     ) -> Result<CreateSandboxLeaseResponse, String> {
         let payload = CreateSandboxLeaseRequest {
             tenant_id: task.tenant_id.clone(),
@@ -176,6 +186,7 @@ impl SandboxManagerClient {
             project_id: task.project_id.clone(),
             run_id: run.id.clone(),
             workspace_root: workspace_root.to_string_lossy().to_string(),
+            image_id: image_id.map(ToOwned::to_owned),
             tools: vec!["filesystem".to_string(), "terminal".to_string()],
             ttl_seconds,
         };
@@ -320,16 +331,36 @@ impl SandboxManagerClient {
         request: reqwest::RequestBuilder,
     ) -> Result<reqwest::RequestBuilder, String> {
         if let Some(auth) = self.auth.as_ref() {
-            let token = chatos_service_runtime::issue_internal_service_token(
-                auth.client_key.as_str(),
-                "task-runner",
-                "sandbox-manager",
-                "sandbox.service",
-                60,
-            )?;
-            Ok(request
-                .header("x-sandbox-caller", "task-runner")
-                .header("x-sandbox-internal-token", token))
+            match auth.mode {
+                SandboxManagerAuthMode::Cloud => {
+                    let token = chatos_service_runtime::issue_internal_service_token(
+                        auth.client_key.as_str(),
+                        "task-runner",
+                        "sandbox-manager",
+                        "sandbox.service",
+                        60,
+                    )?;
+                    Ok(request
+                        .header("x-sandbox-caller", "task-runner")
+                        .header("x-sandbox-internal-token", token))
+                }
+                SandboxManagerAuthMode::LocalConnector => {
+                    let owner_user_id = auth.owner_user_id.as_deref().ok_or_else(|| {
+                        "Local Connector sandbox auth requires owner user id".to_string()
+                    })?;
+                    let token = chatos_service_runtime::issue_internal_service_token(
+                        auth.client_key.as_str(),
+                        "task-runner",
+                        "local-connector-service",
+                        "sandbox.service",
+                        60,
+                    )?;
+                    Ok(request
+                        .header("x-local-connector-caller", "task-runner")
+                        .header("x-local-connector-internal-token", token)
+                        .header("x-local-connector-owner-user-id", owner_user_id))
+                }
+            }
         } else {
             Ok(request)
         }
@@ -345,6 +376,8 @@ impl SandboxManagerAuth {
             (Some(_client_id), Some(client_key)) => Some(Self {
                 client_id: "task-runner".to_string(),
                 client_key,
+                mode: SandboxManagerAuthMode::Cloud,
+                owner_user_id: None,
             }),
             _ => None,
         }
@@ -353,7 +386,7 @@ impl SandboxManagerAuth {
 
 #[cfg(test)]
 mod tests {
-    use super::{SandboxManagerAuth, SandboxManagerClient};
+    use super::{SandboxManagerAuth, SandboxManagerAuthMode, SandboxManagerClient};
 
     #[test]
     fn manager_request_uses_short_lived_token_without_client_key() {
@@ -362,6 +395,8 @@ mod tests {
             Some(SandboxManagerAuth {
                 client_id: "task-runner".to_string(),
                 client_key: "a-long-task-runner-sandbox-secret".to_string(),
+                mode: SandboxManagerAuthMode::Cloud,
+                owner_user_id: None,
             }),
         )
         .expect("client");
@@ -388,6 +423,52 @@ mod tests {
             "a-long-task-runner-sandbox-secret",
             "task-runner",
             "sandbox-manager",
+            "sandbox.service",
+        )
+        .expect("valid token");
+    }
+
+    #[test]
+    fn local_connector_manager_request_uses_local_service_auth() {
+        let client = SandboxManagerClient::new(
+            "http://127.0.0.1:39230/api/local-connectors/sandbox-facade/pairing-1".to_string(),
+            Some(SandboxManagerAuth {
+                client_id: "task-runner".to_string(),
+                client_key: "a-long-task-runner-local-connector-secret".to_string(),
+                mode: SandboxManagerAuthMode::LocalConnector,
+                owner_user_id: Some("user-1".to_string()),
+            }),
+        )
+        .expect("client");
+        let request = client
+            .apply_auth(client.client.get("http://127.0.0.1:39230/api/sandboxes"))
+            .expect("apply auth")
+            .build()
+            .expect("request");
+        assert_eq!(
+            request
+                .headers()
+                .get("x-local-connector-caller")
+                .and_then(|value| value.to_str().ok()),
+            Some("task-runner")
+        );
+        assert_eq!(
+            request
+                .headers()
+                .get("x-local-connector-owner-user-id")
+                .and_then(|value| value.to_str().ok()),
+            Some("user-1")
+        );
+        let token = request
+            .headers()
+            .get("x-local-connector-internal-token")
+            .and_then(|value| value.to_str().ok())
+            .expect("token");
+        chatos_service_runtime::verify_internal_service_token(
+            token,
+            "a-long-task-runner-local-connector-secret",
+            "task-runner",
+            "local-connector-service",
             "sandbox.service",
         )
         .expect("valid token");

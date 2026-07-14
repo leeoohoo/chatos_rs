@@ -41,7 +41,7 @@ impl RemoteConnectionControllerStore for TaskRunnerRemoteConnectionStore {
         {
             list.retain(|item| item.id == default_connection_id);
         }
-        list.sort_by(|left, right| left.name.to_lowercase().cmp(&right.name.to_lowercase()));
+        list.sort_by_key(|entry| entry.name.to_lowercase());
         let connections = list
             .into_iter()
             .map(|item| ConnectionSummary {

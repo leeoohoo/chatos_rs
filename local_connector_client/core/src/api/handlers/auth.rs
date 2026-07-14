@@ -213,8 +213,7 @@ pub(crate) async fn local_logout(
 ) -> Result<Json<Value>, LocalApiError> {
     let disconnect = {
         let state = runtime.state.read().await;
-        ClientConfig::from_state(&state, runtime.state_path.clone())
-            .and_then(|config| state.device_id.clone().map(|device_id| (config, device_id)))
+        ClientConfig::from_state(&state, runtime.state_path.clone()).zip(state.device_id.clone())
     };
     {
         let mut task = runtime.connector_task.lock().await;

@@ -82,7 +82,7 @@ pub fn build_turn_runtime_snapshot_payload(
     }
 
     let mut tool_entries: Vec<(&String, &ToolInfo)> = input.tools.iter().collect();
-    tool_entries.sort_by(|(left, _), (right, _)| left.cmp(right));
+    tool_entries.sort_by_key(|(name, _)| *name);
     let tools = tool_entries
         .into_iter()
         .map(|(name, info)| TurnRuntimeSnapshotToolDto {

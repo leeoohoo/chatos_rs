@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use axum::extract::State;
+use std::net::SocketAddr;
+
+use axum::extract::{ConnectInfo, State};
 use axum::{Extension, Json};
 use chrono::Utc;
 use serde_json::json;
@@ -33,11 +35,23 @@ const LOCAL_CONNECTOR_TICKET_TTL_SECONDS: i64 = 60;
 
 pub async fn login(
     State(state): State<AppState>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
     Json(input): Json<LoginRequest>,
 ) -> ApiResult<LoginResponse> {
     let username = normalize_username(input.username.as_str()).map_err(bad_request)?;
     if input.password.trim().is_empty() {
         return Err(bad_request("password is required"));
+    }
+
+    let now_unix = Utc::now().timestamp();
+    let source = addr.ip().to_string();
+    if state.login_throttle.is_locked(
+        username.as_str(),
+        Some(source.as_str()),
+        now_unix,
+        &state.config,
+    ) {
+        return Err(unauthorized("invalid username or password"));
     }
 
     let Some(user) = state
@@ -46,14 +60,35 @@ pub async fn login(
         .await
         .map_err(internal_error)?
     else {
+        state.login_throttle.record_failure(
+            username.as_str(),
+            Some(source.as_str()),
+            now_unix,
+            &state.config,
+        );
         return Err(unauthorized("invalid username or password"));
     };
     if !user.enabled {
-        return Err(unauthorized("account has been disabled"));
-    }
-    if !verify_password(input.password.as_str(), user.password_hash.as_str()) {
+        state.login_throttle.record_failure(
+            username.as_str(),
+            Some(source.as_str()),
+            now_unix,
+            &state.config,
+        );
         return Err(unauthorized("invalid username or password"));
     }
+    if !verify_password(input.password.as_str(), user.password_hash.as_str()) {
+        state.login_throttle.record_failure(
+            username.as_str(),
+            Some(source.as_str()),
+            now_unix,
+            &state.config,
+        );
+        return Err(unauthorized("invalid username or password"));
+    }
+    state
+        .login_throttle
+        .record_success(username.as_str(), Some(source.as_str()));
 
     state
         .store

@@ -40,30 +40,6 @@ start_backend() {
   wait_for_http "$name" "http://127.0.0.1:${port}${health_path}" "${CHATOS_LOCAL_DEV_HEALTH_TIMEOUT_SECONDS:-120}" || true
 }
 
-start_local_connector_core() {
-  local name="local-connector-client-core"
-  local log_file pid_file
-  log_file="$(log_file_for "$name")"
-  pid_file="$(pid_file_for "$name")"
-  stop_service_pid "$name"
-  stop_port_if_needed "$LOCAL_CONNECTOR_CORE_PORT" "$name"
-  echo "[INFO] starting $name on 127.0.0.1:$LOCAL_CONNECTOR_CORE_PORT"
-  : >"$log_file"
-  (
-    cd "$ROOT_DIR"
-    cargo build --manifest-path local_connector_client/core/Cargo.toml --bin local_connector_client_core
-  ) >>"$log_file" 2>&1
-  local spawned_pid
-  spawned_pid="$(
-    export LOCAL_CONNECTOR_CORE_API_PORT="$LOCAL_CONNECTOR_CORE_PORT"
-    export LOCAL_CONNECTOR_CLOUD_BASE_URL="http://127.0.0.1:${LOCAL_CONNECTOR_SERVICE_PORT}"
-    export LOCAL_CONNECTOR_USER_SERVICE_BASE_URL="http://127.0.0.1:${USER_SERVICE_PORT}"
-    spawn_detached "$ROOT_DIR" "$log_file" "$(target_binary_for local_connector_client_core)"
-  )"
-  echo "$spawned_pid" >"$pid_file"
-  wait_for_port "$name" "$LOCAL_CONNECTOR_CORE_PORT" "${CHATOS_LOCAL_DEV_HEALTH_TIMEOUT_SECONDS:-120}" || true
-}
-
 start_frontend() {
   local name="$1"
   local app_dir="$2"
@@ -77,14 +53,17 @@ start_frontend() {
   : >"$log_file"
   local spawned_pid
   spawned_pid="$(
-    if [[ "$name" == "local-connector-client-frontend" ]]; then
-      export LOCAL_CONNECTOR_CORE_API_PROXY_TARGET="http://127.0.0.1:${LOCAL_CONNECTOR_CORE_PORT}"
-      export LOCAL_CONNECTOR_CLIENT_FRONTEND_PORT="$port"
-    fi
     spawn_detached "$ROOT_DIR/$app_dir" "$log_file" npm run dev -- --host 0.0.0.0 --port "$port" --strictPort
   )"
   echo "$spawned_pid" >"$pid_file"
   wait_for_port "$name" "$port" "${CHATOS_LOCAL_DEV_HEALTH_TIMEOUT_SECONDS:-120}" || true
+}
+
+cleanup_legacy_local_connector_client_state() {
+  # Older local-dev versions owned these processes. Stop only PIDs recorded by
+  # that old stack; never kill ports now owned by the standalone client target.
+  stop_service_pid "local-connector-client-frontend"
+  stop_service_pid "local-connector-client-core"
 }
 
 start_all() {
@@ -93,8 +72,10 @@ start_all() {
   need_cmd curl
   need_cmd python3
   load_env_file "$ENV_FILE"
+  load_env_file "${CHATOS_LOCAL_DEV_OBJECT_STORAGE_ENV_FILE:-$STATE_DIR/object-storage.env}"
   export_local_env
   ensure_dirs
+  cleanup_legacy_local_connector_client_state
   start_infra
   wait_for_consul
   deregister_local_dev_services
@@ -108,7 +89,6 @@ start_all() {
     IFS='|' read -r name service_name package health_path port bin <<<"$item"
     start_backend "$name" "$service_name" "$package" "$health_path" "$port" "$bin"
   done
-  start_local_connector_core
   for item in "${FRONTEND_SERVICES[@]}"; do
     IFS='|' read -r name app_dir port <<<"$item"
     start_frontend "$name" "$app_dir" "$port"
@@ -118,6 +98,7 @@ start_all() {
 
 stop_all() {
   ensure_dirs
+  cleanup_legacy_local_connector_client_state
   deregister_local_dev_services
   local item name unused port
   for item in "${FRONTEND_SERVICES[@]}"; do
@@ -125,8 +106,6 @@ stop_all() {
     stop_service_pid "$name"
     stop_port_if_needed "$port" "$name"
   done
-  stop_service_pid "local-connector-client-core"
-  stop_port_if_needed "$LOCAL_CONNECTOR_CORE_PORT" "local-connector-client-core"
   for item in "${BACKEND_SERVICES[@]}"; do
     IFS='|' read -r name unused unused unused port unused <<<"$item"
     stop_service_pid "$name"
@@ -149,12 +128,6 @@ status_all() {
       printf '  %-36s port=%-5s not listening\n' "$name" "$port"
     fi
   done
-  pid="$(pid_for_port "$LOCAL_CONNECTOR_CORE_PORT")"
-  if [[ -n "$pid" ]]; then
-    printf '  %-36s port=%-5s running pid=%s\n' "local-connector-client-core" "$LOCAL_CONNECTOR_CORE_PORT" "$pid"
-  else
-    printf '  %-36s port=%-5s not listening\n' "local-connector-client-core" "$LOCAL_CONNECTOR_CORE_PORT"
-  fi
   for item in "${FRONTEND_SERVICES[@]}"; do
     IFS='|' read -r name _ port <<<"$item"
     pid="$(pid_for_port "$port")"
@@ -194,12 +167,13 @@ Project Management:       http://localhost:39211
 Plugin Management:        http://localhost:39261
 Sandbox Manager:          http://localhost:8096
 Local Connector Service:  http://localhost:39230
-Local Connector Client:   http://localhost:39233
 Official Website:         http://localhost:39251
 
 Status:  $0 status
 Logs:    $0 logs <service-name>
 Stop:    $0 down
+
+The Local Connector client is managed separately:
+  make local-connector-client
 EOF
 }
-

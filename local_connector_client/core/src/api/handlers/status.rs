@@ -28,6 +28,10 @@ pub(crate) async fn status_payload(runtime: &LocalRuntime) -> Value {
     json!({
         "configured": state.auth.is_some(),
         "connector_running": connector_running,
+        "developer_mode": state.runtime_settings.developer_mode,
+        "developer_cloud_base_url": state.runtime_settings.developer_cloud_base_url,
+        "developer_user_service_base_url": state.runtime_settings.developer_user_service_base_url,
+        "developer_chatos_web_url": state.runtime_settings.developer_chatos_web_url,
         "cloud_base_url": state.auth.as_ref().map(|auth| auth.cloud_base_url.as_str()),
         "user_service_base_url": state.auth.as_ref().map(|auth| auth.user_service_base_url.as_str()),
         "device_id": state.device_id,

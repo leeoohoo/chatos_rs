@@ -96,7 +96,7 @@ export const ProjectTreeHeader: React.FC<ProjectTreeHeaderProps> = ({
   onClearDragAutoScroll,
 }) => {
   const { t } = useI18n();
-  const visibleRootPath = getUserVisiblePath(project.rootPath);
+  const visibleRootPath = getUserVisiblePath(project.displayRootPath || project.rootPath);
   const visibleSelectedPath = selectedEntry
     ? getUserVisiblePath(selectedEntry.path, project.rootPath)
     : t('projectExplorer.tree.noSelection');

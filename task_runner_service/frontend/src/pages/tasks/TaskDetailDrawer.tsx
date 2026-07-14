@@ -202,6 +202,9 @@ export function TaskDetailDrawer({
             <Descriptions.Item label={t('tasks.column.priority')}>
               {task.priority}
             </Descriptions.Item>
+            <Descriptions.Item label={t('tasks.form.requiresExecution')}>
+              {task.mcp_config.requires_execution === false ? t('common.no') : t('common.yes')}
+            </Descriptions.Item>
             <Descriptions.Item label={t('tasks.column.schedule')}>
               {describeTaskSchedule(task.schedule, t)}
             </Descriptions.Item>
@@ -244,6 +247,19 @@ export function TaskDetailDrawer({
                       </Tag>
                     );
                   })}
+                </Space>
+              ) : (
+                t('common.noData')
+              )}
+            </Descriptions.Item>
+            <Descriptions.Item label={t('tasks.detail.skills')}>
+              {task.mcp_config.selected_skill_ids?.length ? (
+                <Space wrap>
+                  {task.mcp_config.selected_skill_ids.map((skillId) => (
+                    <Tag key={skillId} color="purple">
+                      {skillId}
+                    </Tag>
+                  ))}
                 </Space>
               ) : (
                 t('common.noData')

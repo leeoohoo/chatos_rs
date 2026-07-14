@@ -6,9 +6,79 @@ use serde_json::{json, Value};
 use crate::models::ModelConfigRecord;
 
 pub(crate) fn enrich_tool_schemas_with_model_configs(
-    _tools: &mut [Value],
-    _model_configs: &[ModelConfigRecord],
+    tools: &mut [Value],
+    model_configs: &[ModelConfigRecord],
 ) {
+    let selectable_models = model_configs
+        .iter()
+        .filter(|model| model.enabled)
+        .collect::<Vec<_>>();
+    let schema = model_config_selection_schema(selectable_models.as_slice());
+    for tool in tools {
+        match tool.get("name").and_then(Value::as_str) {
+            Some("create_task") => {
+                set_model_config_schema(tool, "/inputSchema/properties", schema.clone())
+            }
+            Some("create_tasks_with_prerequisites") | Some("create_project_execution_tasks") => {
+                set_model_config_schema(
+                    tool,
+                    "/inputSchema/properties/tasks/items/properties",
+                    schema.clone(),
+                )
+            }
+            _ => {}
+        }
+    }
+}
+
+fn set_model_config_schema(tool: &mut Value, properties_pointer: &str, schema: Value) {
+    let Some(properties) = tool
+        .pointer_mut(properties_pointer)
+        .and_then(Value::as_object_mut)
+    else {
+        return;
+    };
+    properties.insert("default_model_config_id".to_string(), schema);
+}
+
+fn model_config_selection_schema(model_configs: &[&ModelConfigRecord]) -> Value {
+    let choices = model_configs
+        .iter()
+        .map(|model| {
+            let usage = model
+                .usage_scenario
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty());
+            let title = match usage {
+                Some(usage) => format!("{} / {} — {}", model.name, model.model, usage),
+                None => format!("{} / {}", model.name, model.model),
+            };
+            json!({
+                "const": model.id,
+                "title": title
+            })
+        })
+        .collect::<Vec<_>>();
+    let ids = model_configs
+        .iter()
+        .map(|model| Value::String(model.id.clone()))
+        .collect::<Vec<_>>();
+    let labels = choices
+        .iter()
+        .filter_map(|choice| choice.get("title").cloned())
+        .collect::<Vec<_>>();
+    let mut schema = json!({
+        "type": "string",
+        "minLength": 1,
+        "description": "Select exactly one enabled Task Runner execution model for this task. Match the model usage scenario to the task objective. Omit this field only when Task Runner should choose automatically."
+    });
+    if !ids.is_empty() {
+        schema["enum"] = Value::Array(ids);
+        schema["oneOf"] = Value::Array(choices);
+        schema["x-enum-labels"] = Value::Array(labels);
+    }
+    schema
 }
 
 fn thinking_level_schema() -> Value {

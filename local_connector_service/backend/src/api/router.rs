@@ -15,12 +15,14 @@ use super::{
     create_sandbox_pairing, create_workspace, current_user_handler, delete_local_mcp,
     delete_project_binding, delete_sandbox_pairing, delete_workspace, disconnect_device,
     get_device, health_handler, heartbeat_device, list_devices, list_local_mcps,
-    list_project_bindings, list_sandbox_pairings, list_workspaces, mcp_relay, memory_engine_proxy,
-    require_auth, resolve_local_command_approval_capabilities, resolve_model_runtime,
-    revoke_device, sandbox_facade_path, sandbox_facade_root, terminal_exec_relay,
-    terminal_input_relay, terminal_session_create_relay, terminal_ws_relay, update_local_mcp,
-    update_local_mcp_status, update_project_binding, update_sandbox_pairing, update_workspace,
-    user_service_protected_proxy, user_service_public_proxy,
+    list_project_bindings, list_sandbox_pairings, list_user_skills, list_workspaces, mcp_relay,
+    memory_engine_proxy, require_auth, resolve_local_command_approval_capabilities,
+    resolve_model_runtime, revoke_device, sandbox_facade_path, sandbox_facade_root,
+    skill_cancel_relay, skill_execute_relay, skill_prepare_relay, sync_user_skill_inventory,
+    terminal_exec_relay, terminal_input_relay, terminal_session_create_relay, terminal_ws_relay,
+    update_local_mcp, update_local_mcp_status, update_project_binding, update_sandbox_pairing,
+    update_user_skill_preference, update_workspace, user_service_protected_proxy,
+    user_service_public_proxy,
 };
 
 pub fn build_router(state: AppState) -> Router {
@@ -81,6 +83,18 @@ pub fn build_router(state: AppState) -> Router {
             post(mcp_relay),
         )
         .route(
+            "/api/local-connectors/relay/{device_id}/skills/prepare",
+            post(skill_prepare_relay),
+        )
+        .route(
+            "/api/local-connectors/relay/{device_id}/skills/execute",
+            post(skill_execute_relay),
+        )
+        .route(
+            "/api/local-connectors/relay/{device_id}/skills/cancel",
+            post(skill_cancel_relay),
+        )
+        .route(
             "/api/local-connectors/model-runtime/{model_config_id}",
             get(resolve_model_runtime),
         )
@@ -99,6 +113,15 @@ pub fn build_router(state: AppState) -> Router {
         .route(
             "/api/plugin-management/local-mcps/{mcp_id}/status",
             put(update_local_mcp_status),
+        )
+        .route("/api/plugin-management/skills", get(list_user_skills))
+        .route(
+            "/api/plugin-management/skills/inventory",
+            put(sync_user_skill_inventory),
+        )
+        .route(
+            "/api/plugin-management/skills/{skill_id}/preference",
+            put(update_user_skill_preference),
         )
         .route(
             "/api/local-connectors/memory-engine/{*path}",

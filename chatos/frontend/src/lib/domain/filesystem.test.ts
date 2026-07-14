@@ -33,6 +33,13 @@ describe('domain/filesystem', () => {
     expect(getUserVisiblePath(`${root}/src/main.rs`, root)).toBe('/src/main.rs');
   });
 
+  it('hides Local Connector routing ids', () => {
+    const root = 'local://connector/device-1/workspace-1/apps/my%20backend';
+    expect(getUserVisiblePath(root)).toBe('/apps/my backend');
+    expect(getUserVisiblePath(`${root}/src/main.rs`, root)).toBe('/src/main.rs');
+    expect(getUserVisiblePath('local://connector/device-1/workspace-1')).toBe('/');
+  });
+
   it('converts edited user-visible paths back to the current scoped root', () => {
     const current = '/opt/chatos/backend/data/workspace/users/user-123/workspaces/demo';
     expect(resolveUserVisiblePathInput('/next', current)).toBe(

@@ -1,0 +1,6 @@
+968cabe8efed72fd8fd482cb76b6084fcb695fc5293af7fb62296b02f487fb69  bundled-tools/linux-arm64/rg
+ebeaf56f8a25e102e9419933423738b3a2a613a444fd749d695e15eba53f71f2  bundled-tools/linux-x64/rg
+cb7747387d60207a8b1f1a26c2d89e1ac432bffa5f890d055728a3ce1442a516  bundled-tools/macos-arm64/rg
+3bafa7e6ee51ba3ac4ed065883484a309be09b26ea6dad561ae4049bfe049c50  bundled-tools/macos-x64/rg
+f7799d737b520e00b10dfa72def23904fe66fb03315636a7b78549845ee9609c  bundled-tools/windows-arm64/rg.exe
+decdd4992f3f1b9a5ef9898f1b40ab16886d579d6516b4efd3d5eaa19364e408  bundled-tools/windows-x64/rg.exe

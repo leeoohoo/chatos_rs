@@ -57,10 +57,7 @@ FRONTEND_SERVICES=(
   "task-runner-frontend|task_runner_service/frontend|39091"
   "sandbox-manager-frontend|sandbox_manager_service/frontend|8096"
   "official-website-frontend|official_website_service/frontend|39251"
-  "local-connector-client-frontend|local_connector_client/frontend|39233"
 )
-
-LOCAL_CONNECTOR_CORE_PORT="${LOCAL_CONNECTOR_CORE_API_PORT:-39232}"
 
 # shellcheck source=local-dev-stack/support.sh
 source "$SCRIPT_DIR/local-dev-stack/support.sh"

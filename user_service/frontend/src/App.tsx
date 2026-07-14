@@ -134,6 +134,24 @@ function AuthGate() {
     return <LoginPage loading={loginLoading} onLogin={handleLogin} />;
   }
 
+  if (currentUser.role !== 'super_admin') {
+    return (
+      <Flex align="center" justify="center" style={{ minHeight: '100vh', padding: 24 }}>
+        <Space direction="vertical" size="middle" align="center">
+          <Typography.Title level={3} style={{ margin: 0 }}>
+            Admin only
+          </Typography.Title>
+          <Typography.Text type="secondary">
+            User Service management is only available to the system administrator.
+          </Typography.Text>
+          <Button loading={logoutLoading} onClick={handleLogout}>
+            Logout
+          </Button>
+        </Space>
+      </Flex>
+    );
+  }
+
   return (
     <Routes>
       <Route

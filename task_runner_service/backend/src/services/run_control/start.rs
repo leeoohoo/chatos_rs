@@ -142,6 +142,11 @@ impl RunService {
             .unwrap_or(false);
 
         let run_id = Uuid::new_v4().to_string();
+        let skill_snapshots = capability_policy
+            .as_ref()
+            .map(|policy| policy.skill_snapshots(&runtime_task))
+            .transpose()?
+            .unwrap_or_default();
         let input_snapshot = json!({
             "task_id": task.id,
             "task_title": task.title,
@@ -151,6 +156,7 @@ impl RunService {
             "prompt_override": input.prompt_override,
             "model_config_id": model_config_id,
             "mcp_config": runtime_task.mcp_config,
+            "skill_snapshots": skill_snapshots,
             "effective_workspace_dir": effective_workspace_dir.as_str(),
             "execution_environment_mode": execution_environment_mode,
             "sandbox_enabled": sandbox_enabled,

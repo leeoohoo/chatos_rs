@@ -4,7 +4,9 @@
 use serde_json::{json, Value};
 
 use crate::auth::CurrentUser;
-use crate::models::{McpServerInfo, McpServerToolProfileInfo};
+use crate::models::{
+    McpProviderDescriptor, McpProviderSkill, McpServerInfo, McpServerToolProfileInfo,
+};
 
 use super::chatos_async_planner::enrich_tool_schemas_for_async_planner;
 use super::support::{

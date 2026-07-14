@@ -8,7 +8,7 @@ use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine as _;
 use chatos_agent::ChatosAgentProfile;
 use chatos_mcp_runtime::{PROJECT_MANAGEMENT_MCP_ID, PROJECT_MANAGEMENT_SERVER_NAME};
-use chatos_plugin_management_sdk::CHATOS_TASK_RUNNER_MCP_RESOURCE_ID;
+use chatos_plugin_management_sdk::{ResolvedAgentCapabilities, CHATOS_TASK_RUNNER_MCP_RESOURCE_ID};
 use serde::Serialize;
 use tracing::warn;
 
@@ -18,8 +18,8 @@ use crate::core::auth::AuthUser;
 use crate::core::builtin_mcp_prompt::compose_builtin_mcp_system_prompt;
 use crate::core::chat_context::resolve_system_prompt;
 use crate::core::chat_runtime::{
-    compose_contact_system_prompt, normalize_id, resolve_project_runtime, ChatRuntimeMetadata,
-    ContactSkillPromptMode,
+    compose_contact_system_prompt, normalize_id, resolve_project_runtime_context,
+    ChatRuntimeMetadata, ContactSkillPromptMode,
 };
 use crate::core::internal_context_locale::InternalContextLocale;
 use crate::core::mcp_runtime::{empty_mcp_server_bundle, McpServerBundle};
@@ -68,6 +68,8 @@ pub struct ResolvedConversationRuntimeContext {
     pub builtin_mcp_system_prompt: Option<String>,
     pub selected_commands_for_snapshot: Arc<Mutex<Vec<TurnRuntimeSnapshotSelectedCommandDto>>>,
     pub resolved_project_id: Option<String>,
+    pub resolved_project_name: Option<String>,
+    pub resolved_project_source_type: Option<String>,
     pub resolved_project_root: Option<String>,
     pub default_remote_connection_id: Option<String>,
     pub workspace_root: Option<String>,
@@ -157,7 +159,7 @@ pub async fn resolve_runtime_context(
         effective_user_id.clone(),
     )
     .await;
-    let contact_system_prompt = compose_contact_system_prompt(
+    let mut contact_system_prompt = compose_contact_system_prompt(
         contact_runtime_context.as_ref(),
         &ContactSkillPromptMode::Disabled,
         internal_context_locale,
@@ -173,14 +175,20 @@ pub async fn resolve_runtime_context(
         });
     let requested_project_root =
         normalize_id(req.project_root.clone()).or_else(|| runtime_metadata.project_root.clone());
-    let (resolved_project_id, resolved_project_root) = resolve_project_runtime(
+    let resolved_project_runtime = resolve_project_runtime_context(
         effective_user_id.as_deref(),
         requested_project_id,
         requested_project_root,
     )
     .await;
-    let resolved_project_root =
-        authorize_runtime_workspace_dir(effective_user_id.as_deref(), resolved_project_root).await;
+    let resolved_project_id = resolved_project_runtime.project_id;
+    let resolved_project_name = resolved_project_runtime.project_name;
+    let resolved_project_source_type = resolved_project_runtime.source_type;
+    let resolved_project_root = authorize_runtime_workspace_dir(
+        effective_user_id.as_deref(),
+        resolved_project_runtime.project_root,
+    )
+    .await;
 
     let default_remote_connection_id = normalize_id(req.remote_connection_id.clone())
         .or_else(|| runtime_metadata.remote_connection_id.clone());
@@ -191,6 +199,8 @@ pub async fn resolve_runtime_context(
 
     let (mut http_servers, stdio_servers, builtin_servers) = empty_mcp_server_bundle();
     let mut runtime_error = None;
+    let mut capability_policy = None;
+    let mut effective_mcp_resource_ids = Vec::new();
     let agent_profile =
         ChatosAgentProfile::from_flags(req.plan_mode, req.project_requirement_execution_planner);
 
@@ -208,15 +218,18 @@ pub async fn resolve_runtime_context(
 
     if runtime_error.is_none() {
         let policy_result =
-            resolve_chatos_task_runner_policy(agent_profile, effective_user_id.as_deref()).await;
-        if let Err(err) = policy_result {
-            warn!(
-                session_id,
-                plan_mode = req.plan_mode,
-                detail = err.as_str(),
-                "required task runner capability is unavailable"
-            );
-            runtime_error = Some(format!("Task Runner 能力配置不可用：{err}"));
+            resolve_chatos_mcp_policy(agent_profile, effective_user_id.as_deref()).await;
+        match policy_result {
+            Ok(policy) => capability_policy = Some(policy),
+            Err(err) => {
+                warn!(
+                    session_id,
+                    plan_mode = req.plan_mode,
+                    detail = err.as_str(),
+                    "required task runner capability is unavailable"
+                );
+                runtime_error = Some(format!("Task Runner 能力配置不可用：{err}"));
+            }
         }
     }
 
@@ -240,6 +253,7 @@ pub async fn resolve_runtime_context(
         {
             Some(runtime) => {
                 http_servers.push(runtime.server);
+                effective_mcp_resource_ids.push(CHATOS_TASK_RUNNER_MCP_RESOURCE_ID.to_string());
             }
             None => {
                 runtime_error =
@@ -260,11 +274,28 @@ pub async fn resolve_runtime_context(
             }) {
             Ok(server) => {
                 http_servers.push(server);
+                effective_mcp_resource_ids.push(PROJECT_MANAGEMENT_MCP_ID.to_string());
             }
             Err(err) => {
                 runtime_error = Some(format!("Project Management MCP 配置不可用：{err}"));
             }
         }
+    }
+
+    if runtime_error.is_none() {
+        let locale = if internal_context_locale.is_english() {
+            Some(InternalContextLocale::ENGLISH_KEY)
+        } else {
+            Some(InternalContextLocale::DEFAULT_KEY)
+        };
+        let provider_skills_prompt = capability_policy.as_ref().and_then(|policy| {
+            policy.compose_provider_skills_prompt(
+                effective_mcp_resource_ids.iter().map(String::as_str),
+                locale,
+            )
+        });
+        contact_system_prompt =
+            merge_optional_system_prompts(contact_system_prompt, provider_skills_prompt);
     }
 
     let enabled_mcp_ids_for_snapshot = http_servers
@@ -293,6 +324,8 @@ pub async fn resolve_runtime_context(
         builtin_mcp_system_prompt,
         selected_commands_for_snapshot,
         resolved_project_id,
+        resolved_project_name,
+        resolved_project_source_type,
         resolved_project_root,
         default_remote_connection_id,
         workspace_root,
@@ -306,10 +339,10 @@ pub async fn resolve_runtime_context(
     }
 }
 
-async fn resolve_chatos_task_runner_policy(
+async fn resolve_chatos_mcp_policy(
     agent_profile: ChatosAgentProfile,
     effective_user_id: Option<&str>,
-) -> Result<(), String> {
+) -> Result<ResolvedAgentCapabilities, String> {
     let owner_user_id = effective_user_id
         .map(str::trim)
         .filter(|value| !value.is_empty())
@@ -333,7 +366,16 @@ async fn resolve_chatos_task_runner_policy(
             .require_available_mcp(PROJECT_MANAGEMENT_MCP_ID)
             .map_err(|err| err.to_string())?;
     }
-    Ok(())
+    Ok(capabilities)
+}
+
+fn merge_optional_system_prompts(base: Option<String>, appended: Option<String>) -> Option<String> {
+    match (base, appended) {
+        (Some(base), Some(appended)) => Some(format!("{}\n\n{}", base.trim(), appended.trim())),
+        (Some(base), None) => Some(base),
+        (None, Some(appended)) => Some(appended),
+        (None, None) => None,
+    }
 }
 
 #[derive(Debug)]

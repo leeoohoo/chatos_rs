@@ -11,8 +11,9 @@ use tracing::Level;
 
 use super::core::{
     agent_token_handler, create_user, current_user_handler, delete_user, health_handler,
-    list_users, login_handler, logout_handler, require_auth, system_config_handler,
-    task_runner_internal_prompt_preview_handler, update_system_config_handler, update_user,
+    list_users, login_handler, logout_handler, require_auth, sse_ticket_handler,
+    system_config_handler, task_runner_internal_prompt_preview_handler,
+    update_system_config_handler, update_user,
 };
 use super::external_mcp_configs::{
     create_external_mcp_config, delete_external_mcp_config, get_external_mcp_config,
@@ -20,8 +21,8 @@ use super::external_mcp_configs::{
 };
 use super::internal::get_user_execution_options;
 use super::mcp::{
-    get_mcp_server_info, list_mcp_catalog, list_task_capability_catalog, mcp_entrypoint,
-    preview_mcp_prompt,
+    get_mcp_provider_descriptor, get_mcp_server_info, list_mcp_catalog,
+    list_task_capability_catalog, mcp_entrypoint, preview_mcp_prompt,
 };
 use super::models::{
     create_model_config, delete_model_config, get_model_config, list_model_catalog,
@@ -63,6 +64,7 @@ pub fn build_router(state: AppState) -> Router {
     let protected_api = Router::new()
         .route("/api/auth/me", get(current_user_handler))
         .route("/api/auth/logout", post(logout_handler))
+        .route("/api/auth/sse-ticket", post(sse_ticket_handler))
         .route("/api/system/config", patch(update_system_config_handler))
         .route(
             "/api/system/internal-prompts",
@@ -216,6 +218,10 @@ pub fn build_router(state: AppState) -> Router {
 
     Router::new()
         .route("/api/health", get(health_handler))
+        .route(
+            "/api/mcp/provider-descriptor",
+            get(get_mcp_provider_descriptor),
+        )
         .route("/api/system/config", get(system_config_handler))
         .route("/api/auth/login", post(login_handler))
         .route("/api/auth/agent-token", post(agent_token_handler))

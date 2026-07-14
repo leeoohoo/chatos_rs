@@ -1,29 +1,52 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-const { app, BrowserWindow, Menu, WebContentsView, ipcMain, session, shell } = require('electron');
+const {
+  app,
+  BrowserWindow,
+  Menu,
+  WebContentsView,
+  ipcMain,
+  session,
+  shell,
+  systemPreferences,
+} = require('electron');
 const { spawn } = require('node:child_process');
 const crypto = require('node:crypto');
 const fs = require('node:fs');
-const http = require('node:http');
 const path = require('node:path');
+const { createLocalApiBridge } = require('./local-api-bridge.cjs');
 
 let mainWindow = null;
-let settingsWindow = null;
+let settingsView = null;
+let settingsOpen = false;
 let chatosView = null;
 let coreProcess = null;
 const desktopAuthToken = crypto.randomBytes(32).toString('base64url');
 let ipcEndpoint = null;
 let ipcSocketDir = null;
+let developerMode = process.env.LOCAL_CONNECTOR_DEVELOPER_MODE === '1';
 const trustedLocalWebContents = new Set();
-const MAX_API_ENDPOINT_LENGTH = 4096;
-const MAX_API_REQUEST_BODY_BYTES = 2 * 1024 * 1024;
-const MAX_API_RESPONSE_BODY_BYTES = 8 * 1024 * 1024;
-const ALLOWED_API_METHODS = new Set(['GET', 'POST', 'DELETE', 'PUT', 'PATCH']);
-const FORWARDED_RENDERER_HEADERS = new Set(['accept', 'content-type']);
+const localApiBridge = createLocalApiBridge({
+  getIpcEndpoint: () => ipcEndpoint,
+  getDesktopAuthToken: () => desktopAuthToken,
+  isTrustedSender: (sender) => isTrustedLocalSender(sender),
+});
+const {
+  delay,
+  requestLocalApiOverIpc,
+  sendIpcHttpRequest,
+  localApiHeaders,
+} = localApiBridge;
 const SHELL_HEIGHT = 52;
 const MAX_UNIX_SOCKET_PATH_BYTES = 100;
 const CORE_LOG_MAX_BYTES = 5 * 1024 * 1024;
+const DEVELOPER_CHATOS_WEB_URL = (
+  process.env.LOCAL_CONNECTOR_DEVELOPER_CHATOS_WEB_URL || 'http://127.0.0.1:8088'
+).trim();
+const DEVELOPER_CLOUD_BASE_URL = (
+  process.env.LOCAL_CONNECTOR_DEVELOPER_CLOUD_BASE_URL || 'http://127.0.0.1:39230'
+).trim();
 
 function resourcePath(...segments) {
   const packagedPath = path.join(process.resourcesPath, ...segments);
@@ -31,6 +54,63 @@ function resourcePath(...segments) {
     return packagedPath;
   }
   return path.join(__dirname, 'resources', ...segments);
+}
+
+function bundledToolsPlatformName() {
+  const os = process.platform === 'darwin'
+    ? 'macos'
+    : process.platform === 'win32'
+      ? 'windows'
+      : 'linux';
+  const arch = process.arch === 'arm64' ? 'arm64' : 'x64';
+  return `${os}-${arch}`;
+}
+
+function bundledBrowserRuntime() {
+  const toolsDir = resourcePath('bundled-tools', bundledToolsPlatformName());
+  const agentBrowser = path.join(
+    toolsDir,
+    process.platform === 'win32' ? 'agent-browser.exe' : 'agent-browser',
+  );
+  const browserExecutable = process.platform === 'darwin'
+    ? path.join(
+        toolsDir,
+        'browser',
+        'Google Chrome for Testing.app',
+        'Contents',
+        'MacOS',
+        'Google Chrome for Testing',
+      )
+    : process.platform === 'win32'
+      ? path.join(toolsDir, 'browser', 'chrome-win64', 'chrome.exe')
+      : path.join(toolsDir, 'browser', 'chrome-linux64', 'chrome');
+  return {
+    toolsDir,
+    agentBrowser,
+    browserExecutable,
+  };
+}
+
+function coreExecutablePath() {
+  const existing = String(process.env.PATH || '').split(path.delimiter).filter(Boolean);
+  const candidates = [bundledBrowserRuntime().toolsDir];
+  if (process.platform === 'darwin') {
+    candidates.push(
+      path.join(app.getPath('home'), '.docker', 'bin'),
+      '/Applications/Docker.app/Contents/Resources/bin',
+      '/opt/homebrew/bin',
+      '/usr/local/bin',
+    );
+  } else if (process.platform === 'win32') {
+    for (const root of [process.env.ProgramFiles, process.env['ProgramFiles(x86)']]) {
+      if (root) {
+        candidates.push(path.join(root, 'Docker', 'Docker', 'resources', 'bin'));
+      }
+    }
+  } else {
+    candidates.push('/usr/local/bin', '/usr/bin', '/snap/bin');
+  }
+  return [...new Set([...candidates, ...existing])].join(path.delimiter);
 }
 
 function startCore() {
@@ -42,14 +122,24 @@ function startCore() {
     ? 'local_connector_client_core.exe'
     : 'local_connector_client_core';
   const corePath = resourcePath(coreName);
+  const browserRuntime = bundledBrowserRuntime();
+  const browserStateDir = process.platform === 'win32'
+    ? path.join(app.getPath('userData'), 'browser-runtime')
+    : path.join('/tmp', `chatos-agent-browser-${process.getuid?.() ?? process.pid}`);
+  fs.mkdirSync(browserStateDir, { recursive: true, mode: 0o700 });
   const env = {
     ...process.env,
+    PATH: coreExecutablePath(),
     CHATOS_BUNDLED_TOOLS_DIR: resourcePath('bundled-tools'),
+    CHATOS_BUNDLED_SKILLS_DIR: resourcePath('skill-bundles'),
     LOCAL_CONNECTOR_DESKTOP_AUTH_TOKEN: desktopAuthToken,
     LOCAL_CONNECTOR_IPC_ENDPOINT: ipcEndpoint,
     LOCAL_CONNECTOR_OPEN_UI: '0',
     LOCAL_CONNECTOR_REQUIRE_SECURE_REMOTE: process.env.LOCAL_CONNECTOR_REQUIRE_SECURE_REMOTE || '1',
   };
+  env.AGENT_BROWSER_BIN = browserRuntime.agentBrowser;
+  env.AGENT_BROWSER_EXECUTABLE_PATH = browserRuntime.browserExecutable;
+  env.AGENT_BROWSER_SOCKET_DIR = browserStateDir;
 
   const coreLog = openCoreLog();
   try {
@@ -135,163 +225,8 @@ function appendCoreLog(logPath, message) {
   }
 }
 
-function normalizeApiEndpoint(endpoint) {
-  if (typeof endpoint !== 'string') {
-    throw new Error('Local API endpoint must be a string');
-  }
-  const trimmed = endpoint.trim();
-  if (!trimmed || trimmed.length > MAX_API_ENDPOINT_LENGTH || /^https?:\/\//i.test(trimmed)) {
-    throw new Error('Local API endpoint is not allowed');
-  }
-  const url = new URL(trimmed, 'http://local-connector.internal');
-  if (!url.pathname.startsWith('/api/local/')) {
-    throw new Error('Local API endpoint is outside the local connector API');
-  }
-  return `${url.pathname}${url.search}`;
-}
-
-function normalizeApiMethod(method) {
-  const normalized = typeof method === 'string' && method.trim()
-    ? method.trim().toUpperCase()
-    : 'GET';
-  if (!ALLOWED_API_METHODS.has(normalized)) {
-    throw new Error(`Local API method is not allowed: ${normalized}`);
-  }
-  return normalized;
-}
-
-function normalizeApiRequestBody(body) {
-  if (body === undefined || body === null) {
-    return null;
-  }
-  if (typeof body !== 'string') {
-    throw new Error('Local API request body must be a string');
-  }
-  if (Buffer.byteLength(body, 'utf8') > MAX_API_REQUEST_BODY_BYTES) {
-    throw new Error('Local API request body is too large');
-  }
-  return body;
-}
-
-function sanitizeRendererHeaders(inputHeaders, hasBody) {
-  const headers = {
-    Accept: 'application/json',
-    Host: 'local-connector.ipc',
-    Authorization: `Bearer ${desktopAuthToken}`,
-  };
-
-  if (inputHeaders && typeof inputHeaders === 'object') {
-    for (const [name, value] of Object.entries(inputHeaders)) {
-      const lowerName = name.toLowerCase();
-      if (!FORWARDED_RENDERER_HEADERS.has(lowerName)) {
-        continue;
-      }
-      if (typeof value === 'string' && value.length <= 1024) {
-        headers[name] = value;
-      }
-    }
-  }
-
-  if (hasBody && !Object.keys(headers).some((name) => name.toLowerCase() === 'content-type')) {
-    headers['Content-Type'] = 'application/json';
-  }
-  return headers;
-}
-
-function isTransientIpcError(error) {
-  return ['ENOENT', 'ECONNREFUSED', 'ECONNRESET', 'EPIPE', 'ERROR_PIPE_BUSY'].includes(error?.code);
-}
-
-function delay(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-async function requestLocalApiOverIpc(payload) {
-  if (!isTrustedLocalSender(payload?.sender)) {
-    throw new Error('Local API access is only available to the main connector window');
-  }
-
-  const endpoint = normalizeApiEndpoint(payload.endpoint);
-  const method = normalizeApiMethod(payload.method);
-  const body = normalizeApiRequestBody(payload.body);
-  const headers = sanitizeRendererHeaders(payload.headers, body !== null);
-  let lastError = null;
-
-  for (let attempt = 0; attempt < 30; attempt += 1) {
-    try {
-      return await sendIpcHttpRequest({ endpoint, method, headers, body });
-    } catch (error) {
-      lastError = error;
-      if (!isTransientIpcError(error)) {
-        throw error;
-      }
-      await delay(100);
-    }
-  }
-  throw lastError || new Error('Local connector core is not available');
-}
-
 function isTrustedLocalSender(sender) {
   return Boolean(sender && trustedLocalWebContents.has(sender.id));
-}
-
-function sendIpcHttpRequest({ endpoint, method, headers, body }) {
-  return new Promise((resolve, reject) => {
-    let settled = false;
-    const request = http.request(
-      {
-        socketPath: ipcEndpoint,
-        method,
-        path: endpoint,
-        headers,
-        timeout: 15_000,
-      },
-      (response) => {
-        const chunks = [];
-        let totalBytes = 0;
-
-        response.on('data', (chunk) => {
-          totalBytes += chunk.length;
-          if (totalBytes > MAX_API_RESPONSE_BODY_BYTES) {
-            settled = true;
-            request.destroy(new Error('Local API response body is too large'));
-            reject(new Error('Local API response body is too large'));
-            return;
-          }
-          chunks.push(chunk);
-        });
-
-        response.on('end', () => {
-          if (settled) {
-            return;
-          }
-          settled = true;
-          const responseBody = Buffer.concat(chunks).toString('utf8');
-          resolve({
-            status: response.statusCode || 0,
-            ok: Boolean(response.statusCode && response.statusCode >= 200 && response.statusCode < 300),
-            headers: response.headers,
-            body: responseBody,
-          });
-        });
-      },
-    );
-
-    request.on('timeout', () => {
-      request.destroy(new Error('Local API request timed out'));
-    });
-    request.on('error', (error) => {
-      if (!settled) {
-        settled = true;
-        reject(error);
-      }
-    });
-
-    if (body !== null) {
-      request.write(body);
-    }
-    request.end();
-  });
 }
 
 function createWindow() {
@@ -309,14 +244,23 @@ function createWindow() {
       sandbox: true,
     },
   });
-  trustedLocalWebContents.add(mainWindow.webContents.id);
+  const mainWebContentsId = mainWindow.webContents.id;
+  trustedLocalWebContents.add(mainWebContentsId);
 
   mainWindow.loadFile(path.join(__dirname, '..', 'dist', 'index.html'), {
     query: { view: 'shell' },
   });
-  mainWindow.on('resize', layoutChatosView);
+  mainWindow.on('resize', layoutMainViews);
+  mainWindow.on('focus', restoreMainWindowContent);
+  mainWindow.on('show', restoreMainWindowContent);
   mainWindow.on('closed', () => {
-    trustedLocalWebContents.delete(mainWindow?.webContents?.id);
+    trustedLocalWebContents.delete(mainWebContentsId);
+    if (settingsView && !settingsView.webContents.isDestroyed()) {
+      trustedLocalWebContents.delete(settingsView.webContents.id);
+    }
+    settingsView = null;
+    settingsOpen = false;
+    chatosView = null;
     mainWindow = null;
   });
   createChatosView();
@@ -328,7 +272,7 @@ function createWindow() {
 }
 
 function createChatosView() {
-  const partition = 'persist:chatos-web';
+  const partition = developerMode ? 'persist:chatos-web-development' : 'persist:chatos-web';
   session.fromPartition(partition).setPermissionRequestHandler((_webContents, _permission, callback) => {
     callback(false);
   });
@@ -338,9 +282,12 @@ function createChatosView() {
       nodeIntegration: false,
       sandbox: true,
       partition,
+      backgroundThrottling: false,
     },
   });
+  const createdView = chatosView;
   mainWindow.contentView.addChildView(chatosView);
+  chatosView.setVisible(!settingsOpen);
   layoutChatosView();
 
   chatosView.webContents.on('will-navigate', (event, url) => {
@@ -360,7 +307,45 @@ function createChatosView() {
     openExternalIfSafe(url);
     return { action: 'deny' };
   });
+  chatosView.webContents.on('render-process-gone', () => {
+    if (chatosView !== createdView || !mainWindow || mainWindow.isDestroyed()) {
+      return;
+    }
+    try {
+      mainWindow.contentView.removeChildView(createdView);
+    } catch {
+      // The failed renderer may already have been detached.
+    }
+    chatosView = null;
+    if (!createdView.webContents.isDestroyed()) {
+      createdView.webContents.close();
+    }
+    if (!settingsOpen) {
+      setTimeout(() => {
+        if (mainWindow && !mainWindow.isDestroyed() && !chatosView) {
+          createChatosView();
+          repaintView(chatosView);
+        }
+      }, 100);
+    }
+  });
   chatosView.webContents.loadURL(chatosUrlWithDesktopParam());
+}
+
+function recreateChatosView() {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    return;
+  }
+  if (chatosView && !chatosView.webContents.isDestroyed()) {
+    try {
+      mainWindow.contentView.removeChildView(chatosView);
+    } catch {
+      // The view may already have been detached while the window was closing.
+    }
+    chatosView.webContents.close();
+  }
+  chatosView = null;
+  createChatosView();
 }
 
 function layoutChatosView() {
@@ -376,7 +361,63 @@ function layoutChatosView() {
   });
 }
 
+function layoutSettingsView() {
+  if (!mainWindow || !settingsView) {
+    return;
+  }
+  const bounds = mainWindow.getContentBounds();
+  settingsView.setBounds({
+    x: 0,
+    y: 0,
+    width: bounds.width,
+    height: bounds.height,
+  });
+}
+
+function layoutMainViews() {
+  layoutChatosView();
+  layoutSettingsView();
+}
+
+function repaintView(view) {
+  const webContents = view?.webContents;
+  if (!webContents || webContents.isDestroyed()) {
+    return;
+  }
+  if (typeof webContents.invalidate === 'function') {
+    webContents.invalidate();
+  }
+}
+
+function restoreMainWindowContent() {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    return;
+  }
+  if (mainWindow.isMinimized()) {
+    mainWindow.restore();
+  }
+  if (settingsOpen && settingsView && !settingsView.webContents.isDestroyed()) {
+    if (chatosView && !chatosView.webContents.isDestroyed()) {
+      chatosView.setVisible(false);
+    }
+    settingsView.setVisible(true);
+    layoutSettingsView();
+    repaintView(settingsView);
+    return;
+  }
+  if (!chatosView || chatosView.webContents.isDestroyed()) {
+    createChatosView();
+  } else {
+    chatosView.setVisible(true);
+    layoutChatosView();
+    repaintView(chatosView);
+  }
+}
+
 function chatosWebUrl() {
+  if (developerMode) {
+    return DEVELOPER_CHATOS_WEB_URL;
+  }
   return (
     process.env.LOCAL_CONNECTOR_CHATOS_WEB_URL ||
     process.env.CHATOS_WEB_URL ||
@@ -385,10 +426,38 @@ function chatosWebUrl() {
 }
 
 function localConnectorCloudBaseUrl() {
+  if (developerMode) {
+    return DEVELOPER_CLOUD_BASE_URL;
+  }
   return (
     process.env.LOCAL_CONNECTOR_CLOUD_BASE_URL ||
     'https://local-connector.jgoool.com'
   ).trim();
+}
+
+async function refreshDeveloperModeFromCore() {
+  for (let attempt = 0; attempt < 30; attempt += 1) {
+    try {
+      const response = await sendIpcHttpRequest({
+        endpoint: '/api/local/runtime-settings',
+        method: 'GET',
+        headers: localApiHeaders(false),
+        body: null,
+      });
+      if (response.ok) {
+        const settings = JSON.parse(response.body || '{}');
+        const next = Boolean(settings.developer_mode);
+        if (next !== developerMode) {
+          developerMode = next;
+          recreateChatosView();
+        }
+        return;
+      }
+    } catch {
+      // Core startup is asynchronous; retry briefly before keeping the default mode.
+    }
+    await delay(100);
+  }
 }
 
 function chatosUrlWithDesktopParam() {
@@ -452,18 +521,6 @@ async function authenticateDesktopTicket(ticket) {
   });
 }
 
-function localApiHeaders(hasBody) {
-  const headers = {
-    Accept: 'application/json',
-    Host: 'local-connector.ipc',
-    Authorization: `Bearer ${desktopAuthToken}`,
-  };
-  if (hasBody) {
-    headers['Content-Type'] = 'application/json';
-  }
-  return headers;
-}
-
 function openExternalIfSafe(url) {
   try {
     const parsed = new URL(url);
@@ -475,34 +532,115 @@ function openExternalIfSafe(url) {
   }
 }
 
-function openSettingsWindow() {
-  if (settingsWindow && !settingsWindow.isDestroyed()) {
-    settingsWindow.focus();
+function desktopSystemPermissionStatuses() {
+  if (process.platform !== 'darwin') {
+    return {};
+  }
+  const accessibilityReady = systemPreferences.isTrustedAccessibilityClient(false);
+  const screenStatus = systemPreferences.getMediaAccessStatus('screen');
+  return {
+    accessibility_control: {
+      status: accessibilityReady ? 'ready' : 'needs_attention',
+      status_label: accessibilityReady ? '已授权' : '需要授权',
+      last_error: accessibilityReady ? null : 'Chat OS Local Connector 尚未获得 macOS 辅助功能权限。',
+    },
+    screen_recording: {
+      status: screenStatus === 'granted' ? 'ready' : 'needs_attention',
+      status_label: screenStatus === 'granted' ? '已授权' : '需要授权',
+      last_error: screenStatus === 'granted'
+        ? null
+        : `macOS 屏幕录制权限状态：${screenStatus || 'unknown'}`,
+    },
+  };
+}
+
+function requestDesktopSystemPermission(permissionId) {
+  if (process.platform === 'darwin' && permissionId === 'accessibility_control') {
+    systemPreferences.isTrustedAccessibilityClient(true);
+  }
+  return desktopSystemPermissionStatuses();
+}
+
+function openSettingsView() {
+  if (!mainWindow || mainWindow.isDestroyed()) {
     return;
   }
-  settingsWindow = new BrowserWindow({
-    width: 1180,
-    height: 780,
-    minWidth: 920,
-    minHeight: 620,
-    title: 'Chat OS Local Connector Settings',
-    parent: mainWindow || undefined,
-    backgroundColor: '#121214',
+  settingsOpen = true;
+  if (chatosView && !chatosView.webContents.isDestroyed()) {
+    chatosView.setVisible(false);
+  }
+  if (settingsView && !settingsView.webContents.isDestroyed()) {
+    settingsView.setVisible(true);
+    layoutSettingsView();
+    repaintView(settingsView);
+    settingsView.webContents.focus();
+    mainWindow.show();
+    mainWindow.focus();
+    return;
+  }
+  settingsView = new WebContentsView({
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
       preload: path.join(__dirname, 'preload.cjs'),
       sandbox: true,
+      backgroundThrottling: false,
     },
   });
-  trustedLocalWebContents.add(settingsWindow.webContents.id);
-  settingsWindow.loadFile(path.join(__dirname, '..', 'dist', 'index.html'), {
+  const settingsWebContentsId = settingsView.webContents.id;
+  trustedLocalWebContents.add(settingsWebContentsId);
+  mainWindow.contentView.addChildView(settingsView);
+  layoutSettingsView();
+  settingsView.webContents.loadFile(path.join(__dirname, '..', 'dist', 'index.html'), {
     query: { view: 'settings' },
   });
-  settingsWindow.on('closed', () => {
-    trustedLocalWebContents.delete(settingsWindow?.webContents?.id);
-    settingsWindow = null;
+  settingsView.webContents.setWindowOpenHandler(({ url }) => {
+    openExternalIfSafe(url);
+    return { action: 'deny' };
   });
+  settingsView.webContents.on('before-input-event', (event, input) => {
+    if (input.type === 'keyDown' && input.key === 'Escape') {
+      event.preventDefault();
+      closeSettingsView();
+    }
+  });
+  settingsView.webContents.once('did-finish-load', () => repaintView(settingsView));
+  settingsView.webContents.once('destroyed', () => {
+    if (settingsView?.webContents.id !== settingsWebContentsId) {
+      return;
+    }
+    trustedLocalWebContents.delete(settingsWebContentsId);
+    settingsView = null;
+    settingsOpen = false;
+    setImmediate(restoreMainWindowContent);
+  });
+  mainWindow.show();
+  mainWindow.focus();
+  settingsView.webContents.focus();
+}
+
+function closeSettingsView() {
+  settingsOpen = false;
+  const view = settingsView;
+  settingsView = null;
+  if (view) {
+    trustedLocalWebContents.delete(view.webContents.id);
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      try {
+        mainWindow.contentView.removeChildView(view);
+      } catch {
+        // The view may already have been detached during main-window shutdown.
+      }
+    }
+    if (!view.webContents.isDestroyed()) {
+      view.webContents.close();
+    }
+  }
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.show();
+    mainWindow.focus();
+    setImmediate(restoreMainWindowContent);
+  }
 }
 
 app.whenReady().then(() => {
@@ -511,22 +649,62 @@ app.whenReady().then(() => {
     const rendererRequest = request && typeof request === 'object' ? request : {};
     return requestLocalApiOverIpc({ ...rendererRequest, sender: event.sender });
   });
+  ipcMain.handle('local-connector:desktop-system-permissions', (event) => {
+    if (!isTrustedLocalSender(event.sender)) {
+      return {};
+    }
+    return desktopSystemPermissionStatuses();
+  });
+  ipcMain.handle('local-connector:desktop-system-permission-request', (event, permissionId) => {
+    if (!isTrustedLocalSender(event.sender)) {
+      return {};
+    }
+    return requestDesktopSystemPermission(String(permissionId || ''));
+  });
   ipcMain.handle('local-connector:settings-open', () => {
-    openSettingsWindow();
+    openSettingsView();
+  });
+  ipcMain.handle('local-connector:settings-close', (event) => {
+    if (!settingsView || event.sender.id !== settingsView.webContents.id) {
+      return false;
+    }
+    closeSettingsView();
+    return true;
   });
   ipcMain.handle('local-connector:chatos-reload', () => {
     if (chatosView) {
       chatosView.webContents.reload();
     }
   });
+  ipcMain.handle('local-connector:developer-mode', (event, enabled) => {
+    if (!settingsView || event.sender.id !== settingsView.webContents.id) {
+      return false;
+    }
+    const next = Boolean(enabled);
+    if (next !== developerMode) {
+      developerMode = next;
+      recreateChatosView();
+    }
+    return true;
+  });
   startCore();
   createWindow();
+  void refreshDeveloperModeFromCore();
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
       createWindow();
     }
   });
+  app.on('browser-window-focus', (_event, window) => {
+    if (window === mainWindow) {
+      restoreMainWindowContent();
+    }
+  });
+});
+
+app.on('did-become-active', () => {
+  restoreMainWindowContent();
 });
 
 app.on('before-quit', () => {

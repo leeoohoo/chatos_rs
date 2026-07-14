@@ -21,6 +21,7 @@ mod registration;
 mod relay;
 mod runtime;
 mod sandbox;
+mod skills;
 mod state;
 mod system_permissions;
 mod terminal;

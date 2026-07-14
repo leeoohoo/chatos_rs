@@ -9,10 +9,12 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TOP_N="${TOP_N:-25}"
 WARN_LINES="${WARN_LINES:-700}"
 WARN_BYTES="${WARN_BYTES:-40960}"
+FAIL_ON_HIT=0
+BASELINE_FILE="${BASELINE_FILE:-$ROOT_DIR/scripts/code-size-baseline.tsv}"
 
 usage() {
   cat <<'EOF'
-Usage: scripts/code-size-report.sh [--top <N>] [--warn-lines <N>] [--warn-kb <N>]
+Usage: scripts/code-size-report.sh [--top <N>] [--warn-lines <N>] [--warn-kb <N>] [--fail] [--baseline <path>]
 
 Report source-code file size and line-count hotspots.
 The scan excludes generated/build/runtime artifacts, lockfiles, docs, and binary assets.
@@ -21,6 +23,7 @@ Environment overrides:
   TOP_N       Number of rows per table. Default: 25
   WARN_LINES  Line-count hotspot threshold. Default: 700
   WARN_BYTES  Byte-size hotspot threshold. Default: 40960
+  BASELINE_FILE  TSV file containing allowed hotspot budgets.
 EOF
 }
 
@@ -42,6 +45,13 @@ while [[ "$#" -gt 0 ]]; do
         exit 1
       fi
       WARN_BYTES=$((warn_kb * 1024))
+      ;;
+    --fail)
+      FAIL_ON_HIT=1
+      ;;
+    --baseline)
+      shift
+      BASELINE_FILE="${1:-}"
       ;;
     -h|--help)
       usage
@@ -66,6 +76,10 @@ if ! [[ "$WARN_LINES" =~ ^[0-9]+$ ]]; then
 fi
 if ! [[ "$WARN_BYTES" =~ ^[0-9]+$ ]]; then
   echo "Invalid WARN_BYTES: $WARN_BYTES" >&2
+  exit 1
+fi
+if [[ "$FAIL_ON_HIT" -eq 1 && -n "$BASELINE_FILE" && ! -f "$BASELINE_FILE" ]]; then
+  echo "Baseline file not found: $BASELINE_FILE" >&2
   exit 1
 fi
 
@@ -139,6 +153,27 @@ scan_fallback_scope() {
     -o \( -type f -print0 \)
 }
 
+baseline_allows_hotspot() {
+  local rel="$1"
+  local lines="$2"
+  local bytes="$3"
+
+  [[ -n "$BASELINE_FILE" && -f "$BASELINE_FILE" ]] || return 1
+
+  local baseline_rel baseline_lines baseline_bytes
+  while IFS=$'\t' read -r baseline_rel baseline_lines baseline_bytes; do
+    [[ -n "$baseline_rel" && "${baseline_rel:0:1}" != "#" ]] || continue
+    if [[ "$baseline_rel" == "$rel" ]]; then
+      if (( lines <= baseline_lines && bytes <= baseline_bytes )); then
+        return 0
+      fi
+      return 1
+    fi
+  done < "$BASELINE_FILE"
+
+  return 1
+}
+
 record_file() {
   local rel="$1"
   local file="$ROOT_DIR/$rel"
@@ -170,6 +205,10 @@ echo "Root: $ROOT_DIR"
 echo "Top rows: $TOP_N"
 echo "Line hotspot threshold: $WARN_LINES"
 echo "Size hotspot threshold: $(human_bytes "$WARN_BYTES")"
+if (( FAIL_ON_HIT == 1 )); then
+  echo "Fail on unapproved hotspot: yes"
+  echo "Baseline: ${BASELINE_FILE:-none}"
+fi
 echo
 
 if [[ ! -s "$tmp_file" ]]; then
@@ -202,13 +241,27 @@ done
 echo
 echo "## Hotspots Over Threshold"
 hotspot_count=0
+unapproved_hotspot_count=0
 while IFS=$'\t' read -r bytes lines rel; do
   if (( bytes >= WARN_BYTES || lines >= WARN_LINES )); then
     if (( hotspot_count == 0 )); then
-      printf '%10s  %8s  %s\n' "Size" "Lines" "File"
+      if (( FAIL_ON_HIT == 1 )); then
+        printf '%10s  %8s  %-9s  %s\n' "Size" "Lines" "Status" "File"
+      else
+        printf '%10s  %8s  %s\n' "Size" "Lines" "File"
+      fi
     fi
     hotspot_count=$((hotspot_count + 1))
-    printf '%10s  %8s  %s\n' "$(human_bytes "$bytes")" "$lines" "$rel"
+    if (( FAIL_ON_HIT == 1 )); then
+      if baseline_allows_hotspot "$rel" "$lines" "$bytes"; then
+        printf '%10s  %8s  %-9s  %s\n' "$(human_bytes "$bytes")" "$lines" "baseline" "$rel"
+      else
+        unapproved_hotspot_count=$((unapproved_hotspot_count + 1))
+        printf '%10s  %8s  %-9s  %s\n' "$(human_bytes "$bytes")" "$lines" "violation" "$rel"
+      fi
+    else
+      printf '%10s  %8s  %s\n' "$(human_bytes "$bytes")" "$lines" "$rel"
+    fi
   fi
 done < "$line_sorted_file"
 
@@ -217,4 +270,12 @@ if (( hotspot_count == 0 )); then
 else
   echo
   echo "Hotspot count: $hotspot_count"
+fi
+
+if (( FAIL_ON_HIT == 1 )); then
+  if (( unapproved_hotspot_count > 0 )); then
+    echo "Unapproved hotspot count: $unapproved_hotspot_count"
+    exit 2
+  fi
+  echo "Unapproved hotspot count: 0"
 fi

@@ -71,7 +71,7 @@
 - Dependabot 只覆盖 Chatos 前后端。
 - CI 没有 RustSec、OSV、npm audit、镜像扫描和 Secret 扫描。
 - 当前生产依赖扫描发现 Chatos 前端 2 个高危、1 个中危；Memory Engine 前端 1 个高危。
-- 没有固定 Rust 工具链，当前 rustc 1.93 无法直接构建 SQLx 0.9。
+- Rust 服务镜像现已固定工具链，服务端持久化统一使用 MongoDB。
 - Memory Engine 后端被排除在根 workspace 外，仓库存在多套 Cargo.lock 和依赖版本分叉。
 
 ### P2：大型文件与门禁失效

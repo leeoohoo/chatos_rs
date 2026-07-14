@@ -12,6 +12,7 @@ use tokio::io::{AsyncRead, AsyncReadExt};
 use tokio::sync::RwLock;
 use tokio::task::JoinHandle;
 
+use crate::sandbox::docker::docker_command;
 use crate::sandbox::types::{LocalSandboxImageJob, LocalSandboxImageRecord};
 use crate::{local_now_rfc3339, tracing_stdout, LocalState};
 
@@ -32,7 +33,7 @@ pub(super) async fn run_local_sandbox_image_job(
     };
     let context = local_sandbox_image_build_context();
     let dockerfile = local_sandbox_image_dockerfile(context.as_path());
-    let mut command = tokio::process::Command::new("docker");
+    let mut command = docker_command();
     command
         .arg("build")
         .arg("-t")
@@ -228,6 +229,7 @@ fn upsert_local_sandbox_image_record(state: &mut LocalState, job: &LocalSandboxI
         image_name: job.image_name.clone(),
         image_ref: job.image_ref.clone(),
         features,
+        custom_build_script: job.custom_build_script.clone(),
         backend: job.backend.clone(),
         created_at: job.created_at.clone(),
         updated_at: now,

@@ -94,6 +94,32 @@ platform_bin_name() {
   esac
 }
 
+sha256_file() {
+  local file="$1"
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$file" | awk '{print tolower($1)}'
+  elif command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 "$file" | awk '{print tolower($1)}'
+  else
+    echo "[ERROR] sha256sum or shasum is required" >&2
+    return 1
+  fi
+}
+
+refresh_sha256_manifest() {
+  local manifest="$ROOT_DIR/bundled-tools/SHA256SUMS"
+  local tmp_file
+  tmp_file="$(mktemp)"
+  (
+    cd "$ROOT_DIR"
+    while IFS= read -r tool; do
+      printf '%s  %s\n' "$(sha256_file "$tool")" "$tool" >> "$tmp_file"
+    done < <(find bundled-tools -mindepth 2 -maxdepth 2 -type f \( -name rg -o -name rg.exe \) | sort)
+  )
+  mv "$tmp_file" "$manifest"
+  echo "[INFO] updated $manifest"
+}
+
 install_binary() {
   local platform="$1"
   local src="$2"
@@ -112,6 +138,7 @@ install_binary() {
     printf 'ripgrep %s\n' "$RIPGREP_VERSION" >"$dest_dir/VERSION"
     echo "[INFO] bundled ripgrep $RIPGREP_VERSION for $platform at $dest"
   fi
+  refresh_sha256_manifest
 }
 
 download_platform() {

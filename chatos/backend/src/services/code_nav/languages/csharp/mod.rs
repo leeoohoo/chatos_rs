@@ -304,10 +304,7 @@ fn extract_csharp_field_name(line: &str) -> Option<String> {
 
 fn has_csharp_return_type(prefix: &str) -> bool {
     let mut rest = prefix.trim();
-    loop {
-        let Some((word, after_word)) = split_first_word(rest) else {
-            break;
-        };
+    while let Some((word, after_word)) = split_first_word(rest) {
         if !is_csharp_modifier(word) {
             break;
         }

@@ -7,6 +7,8 @@ use anyhow::{anyhow, Context, Result};
 use serde::Serialize;
 use serde_json::{json, Value};
 
+use super::docker_executable;
+
 #[derive(Debug, Serialize)]
 pub(crate) struct DockerStatusLocal {
     pub(super) installed: bool,
@@ -20,18 +22,23 @@ pub(crate) async fn docker_status() -> Value {
 }
 
 pub(crate) async fn docker_status_struct() -> DockerStatusLocal {
-    let version = run_command_capture("docker", &["--version"], Duration::from_secs(5)).await;
+    let docker = docker_executable();
+    let version =
+        run_command_capture(docker.as_path(), &["--version"], Duration::from_secs(5)).await;
     let Ok(version) = version else {
         return DockerStatusLocal {
             installed: false,
             running: false,
             version: None,
-            error: Some("docker command is not available".to_string()),
+            error: Some(format!(
+                "docker command is not available at {}",
+                docker.display()
+            )),
         };
     };
     let version_text = first_non_empty_line(version.1.as_str())
         .or_else(|| first_non_empty_line(version.2.as_str()));
-    let info = run_command_capture("docker", &["info"], Duration::from_secs(5)).await;
+    let info = run_command_capture(docker.as_path(), &["info"], Duration::from_secs(5)).await;
     match info {
         Ok((0, _, _)) => DockerStatusLocal {
             installed: true,
@@ -102,7 +109,7 @@ async fn start_docker_desktop() -> Result<()> {
 }
 
 async fn run_command_capture(
-    program: &str,
+    program: &std::path::Path,
     args: &[&str],
     timeout_duration: Duration,
 ) -> Result<(i32, String, String)> {
@@ -111,8 +118,8 @@ async fn run_command_capture(
         tokio::process::Command::new(program).args(args).output(),
     )
     .await
-    .with_context(|| format!("{program} timed out"))?
-    .with_context(|| format!("run {program}"))?;
+    .with_context(|| format!("{} timed out", program.display()))?
+    .with_context(|| format!("run {}", program.display()))?;
     Ok((
         output.status.code().unwrap_or(-1),
         String::from_utf8_lossy(output.stdout.as_slice()).into_owned(),

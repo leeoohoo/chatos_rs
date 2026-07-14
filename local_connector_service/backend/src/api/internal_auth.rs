@@ -10,7 +10,10 @@ use crate::models::CurrentUser;
 pub(super) const TOKEN_AUDIENCE: &str = "local-connector-service";
 pub(super) const MCP_RELAY_SCOPE: &str = "relay.mcp";
 pub(super) const TERMINAL_RELAY_SCOPE: &str = "relay.terminal";
+pub(super) const SKILL_RELAY_SCOPE: &str = "relay.skill";
 pub(super) const MODEL_RUNTIME_READ_SCOPE: &str = "model-runtime.read";
+pub(super) const SANDBOX_ROUTING_READ_SCOPE: &str = "sandbox-routing.read";
+pub(super) const SANDBOX_SERVICE_SCOPE: &str = "sandbox.service";
 
 const CHATOS_CALLER: &str = "chatos-backend";
 const TASK_RUNNER_CALLER: &str = "task-runner";
@@ -124,6 +127,13 @@ fn internal_access_for_request(method: &Method, path: &str) -> Option<InternalAc
             scope: MCP_RELAY_SCOPE,
             allowed_callers: &[TASK_RUNNER_CALLER],
         }),
+        (
+            &Method::POST,
+            ["api", "local-connectors", "relay", _, "skills", "prepare" | "execute" | "cancel"],
+        ) => Some(InternalAccess {
+            scope: SKILL_RELAY_SCOPE,
+            allowed_callers: &[TASK_RUNNER_CALLER],
+        }),
         (&Method::GET, ["api", "local-connectors", "model-runtime", _]) => Some(InternalAccess {
             scope: MODEL_RUNTIME_READ_SCOPE,
             allowed_callers: &[
@@ -132,6 +142,14 @@ fn internal_access_for_request(method: &Method, path: &str) -> Option<InternalAc
                 PROJECT_SERVICE_CALLER,
                 MEMORY_ENGINE_CALLER,
             ],
+        }),
+        (&Method::GET, ["api", "local-connectors", "sandbox-pairings"]) => Some(InternalAccess {
+            scope: SANDBOX_ROUTING_READ_SCOPE,
+            allowed_callers: &[TASK_RUNNER_CALLER, PROJECT_SERVICE_CALLER],
+        }),
+        (_, ["api", "local-connectors", "sandbox-facade", _, ..]) => Some(InternalAccess {
+            scope: SANDBOX_SERVICE_SCOPE,
+            allowed_callers: &[TASK_RUNNER_CALLER, PROJECT_SERVICE_CALLER],
         }),
         (
             &Method::POST,
@@ -245,6 +263,42 @@ mod tests {
         .is_err());
     }
 
+    #[test]
+    fn task_runner_can_read_sandbox_routing_and_use_facade_with_scoped_tokens() {
+        let mut config = test_config();
+        config.require_signed_internal_requests = true;
+        config.internal_api_secrets.insert(
+            TASK_RUNNER_CALLER.to_string(),
+            "a-long-task-runner-local-connector-secret".to_string(),
+        );
+        for (scope, method, path) in [
+            (
+                SANDBOX_ROUTING_READ_SCOPE,
+                Method::GET,
+                "/api/local-connectors/sandbox-pairings",
+            ),
+            (
+                SANDBOX_SERVICE_SCOPE,
+                Method::POST,
+                "/api/local-connectors/sandbox-facade/pairing-1/api/sandboxes/leases",
+            ),
+        ] {
+            let token = chatos_service_runtime::issue_internal_service_token(
+                "a-long-task-runner-local-connector-secret",
+                TASK_RUNNER_CALLER,
+                TOKEN_AUDIENCE,
+                scope,
+                60,
+            )
+            .expect("issue token");
+            let headers = signed_headers(TASK_RUNNER_CALLER, token.as_str());
+            let user = internal_service_user_from_request(&config, &headers, &method, path)
+                .expect("authorized request")
+                .expect("service user");
+            assert_eq!(user.owner_user_id.as_deref(), Some("user-1"));
+        }
+    }
+
     fn signed_headers(caller: &'static str, token: &str) -> HeaderMap {
         let mut headers = HeaderMap::new();
         headers.insert("x-local-connector-caller", HeaderValue::from_static(caller));
@@ -278,6 +332,7 @@ mod tests {
             require_device_connect_signature: true,
             allow_device_connect_query_token: false,
             device_connect_signature_max_skew: Duration::from_secs(300),
+            active_session_lease_ttl: Duration::from_secs(90),
         }
     }
 }

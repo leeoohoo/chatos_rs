@@ -36,12 +36,18 @@ pub(super) async fn list_task_capability_catalog(
         "policy_revision": policy.policy_revision(),
         "selectable_builtin_mcps": selectable_builtin_mcps,
         "selectable_external_mcps": policy.selectable_external_mcp_views(),
-        "selectable_skills": [],
+        "selectable_skills": policy.selectable_skill_views(),
     })))
 }
 
 pub(super) async fn get_mcp_server_info(State(state): State<AppState>) -> Json<McpServerInfo> {
     Json(state.task_runner_mcp_service.server_info())
+}
+
+pub(super) async fn get_mcp_provider_descriptor(
+    State(state): State<AppState>,
+) -> Json<crate::models::McpProviderDescriptor> {
+    Json(state.task_runner_mcp_service.provider_descriptor())
 }
 
 pub(super) async fn preview_mcp_prompt(

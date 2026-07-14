@@ -83,11 +83,30 @@ impl RunService {
             return Ok(None);
         }
 
-        let workspace_root = sandbox_workspace_root(effective_workspace_dir)?;
-        let base_url = self.sandbox_manager_base_url_for_task(task).await?;
+        let route = match self.sandbox_route_for_task(task).await {
+            Ok(route) => route,
+            Err(err) => {
+                self.append_sandbox_event(
+                    run,
+                    "sandbox_failed",
+                    format!("解析沙箱路由或镜像失败: {err}"),
+                    Some(json!({
+                        "requires_execution": task.mcp_config.requires_execution,
+                        "project_id": task.project_id.as_str(),
+                    })),
+                )
+                .await;
+                return Err(err);
+            }
+        };
+        let workspace_root = if is_local_connector_sandbox_manager(route.base_url.as_str()) {
+            sandbox_workspace_root(self.config.default_workspace_dir.as_str())?
+        } else {
+            sandbox_workspace_root(effective_workspace_dir)?
+        };
+        let base_url = route.base_url.clone();
         let ttl_seconds = self.effective_sandbox_lease_ttl_seconds().await?;
-        let client =
-            SandboxManagerClient::new(base_url, SandboxManagerAuth::from_config(&self.config))?;
+        let client = SandboxManagerClient::new(base_url, route.auth.clone())?;
 
         self.append_sandbox_event(
             run,
@@ -96,12 +115,21 @@ impl RunService {
             Some(json!({
                 "workspace_root": workspace_root.to_string_lossy(),
                 "ttl_seconds": ttl_seconds,
+                "provider": route.provider.as_str(),
+                "image_id": route.image_id.as_deref(),
+                "requires_execution": task.mcp_config.requires_execution,
             })),
         )
         .await;
 
         let response = match client
-            .create_lease(task, run, workspace_root.as_path(), ttl_seconds)
+            .create_lease(
+                task,
+                run,
+                workspace_root.as_path(),
+                ttl_seconds,
+                route.image_id.as_deref(),
+            )
             .await
         {
             Ok(response) => response,

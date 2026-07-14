@@ -151,6 +151,8 @@ pub(super) struct UpdateLocalModelSettingsRequest {
 pub(super) struct UpdateLocalRuntimeSettingsRequest {
     #[serde(default)]
     pub(super) ai_agent_max_iterations: Option<usize>,
+    #[serde(default)]
+    pub(super) developer_mode: Option<bool>,
 }
 
 #[derive(Debug)]
@@ -163,6 +165,13 @@ impl LocalApiError {
     pub(super) fn bad_request(message: impl Into<String>) -> Self {
         Self {
             status: axum::http::StatusCode::BAD_REQUEST,
+            message: message.into(),
+        }
+    }
+
+    pub(super) fn conflict(message: impl Into<String>) -> Self {
+        Self {
+            status: axum::http::StatusCode::CONFLICT,
             message: message.into(),
         }
     }

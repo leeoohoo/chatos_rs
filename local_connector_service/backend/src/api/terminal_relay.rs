@@ -18,7 +18,7 @@ use crate::relay::RelayRequest;
 use crate::state::AppState;
 
 use super::{
-    relay_error_to_api_error, relay_response_to_http, required_text, validate_device_workspace,
+    dispatch_relay, relay_response_to_http, required_text, send_relay, validate_device_workspace,
     ApiError,
 };
 
@@ -98,11 +98,7 @@ pub(super) async fn terminal_exec_relay(
         }),
     };
 
-    let response = state
-        .relay
-        .dispatch(request, relay_timeout)
-        .await
-        .map_err(relay_error_to_api_error)?;
+    let response = dispatch_relay(&state, request, relay_timeout).await?;
     Ok(relay_response_to_http(response))
 }
 
@@ -133,11 +129,7 @@ pub(super) async fn terminal_session_create_relay(
         }),
     };
 
-    let response = state
-        .relay
-        .dispatch(request, state.config.relay_request_timeout)
-        .await
-        .map_err(relay_error_to_api_error)?;
+    let response = dispatch_relay(&state, request, state.config.relay_request_timeout).await?;
     Ok(relay_response_to_http(response))
 }
 
@@ -168,11 +160,7 @@ pub(super) async fn terminal_input_relay(
         }),
     };
 
-    state
-        .relay
-        .send(request)
-        .await
-        .map_err(relay_error_to_api_error)?;
+    send_relay(&state, request).await?;
     Ok(Json(json!({ "success": true })))
 }
 
@@ -239,10 +227,8 @@ async fn handle_terminal_relay_socket(
             "rows": rows,
         }),
     };
-    let create_response = state
-        .relay
-        .dispatch(create_request, state.config.relay_request_timeout)
-        .await;
+    let create_response =
+        dispatch_relay(&state, create_request, state.config.relay_request_timeout).await;
     match create_response {
         Ok(response) if (200..300).contains(&response.status) => {
             let snapshot = response
@@ -521,7 +507,7 @@ async fn send_terminal_control(
         headers: BTreeMap::new(),
         body,
     };
-    state.relay.send(request).await.is_ok()
+    send_relay(state, request).await.is_ok()
 }
 
 fn terminal_event_to_ws_payload(message_type: &str, body: &Value) -> Option<Value> {

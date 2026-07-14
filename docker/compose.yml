@@ -104,8 +104,8 @@ services:
       GITNESS_REGISTRY_FILESYSTEM_ROOT_DIRECTORY: /data/registry
       XDG_CACHE_HOME: /data
     ports:
-      - "${HARNESS_PORT:-3000}:3000"
-      - "${HARNESS_SSH_PORT:-3022}:3022"
+      - "${CHATOS_PUBLIC_BIND_HOST:-127.0.0.1}:${HARNESS_PORT:-3000}:3000"
+      - "${CHATOS_PUBLIC_BIND_HOST:-127.0.0.1}:${HARNESS_SSH_PORT:-3022}:3022"
     volumes:
       - harness-data:/data
       - /var/run/docker.sock:/var/run/docker.sock
@@ -150,6 +150,9 @@ services:
       USER_SERVICE_REGISTER_CODE_RESEND_SECONDS: ${USER_SERVICE_REGISTER_CODE_RESEND_SECONDS:-60}
       USER_SERVICE_REGISTER_CODE_HOURLY_LIMIT: ${USER_SERVICE_REGISTER_CODE_HOURLY_LIMIT:-5}
       USER_SERVICE_REGISTER_CODE_MAX_ATTEMPTS: ${USER_SERVICE_REGISTER_CODE_MAX_ATTEMPTS:-5}
+      USER_SERVICE_LOGIN_MAX_FAILED_ATTEMPTS: ${USER_SERVICE_LOGIN_MAX_FAILED_ATTEMPTS:-5}
+      USER_SERVICE_LOGIN_FAILURE_WINDOW_SECONDS: ${USER_SERVICE_LOGIN_FAILURE_WINDOW_SECONDS:-300}
+      USER_SERVICE_LOGIN_LOCKOUT_SECONDS: ${USER_SERVICE_LOGIN_LOCKOUT_SECONDS:-300}
       USER_SERVICE_SUPER_ADMIN_USERNAME: ${CHATOS_ADMIN_USERNAME:-admin}
       USER_SERVICE_SUPER_ADMIN_PASSWORD: ${CHATOS_ADMIN_PASSWORD:-admin123456}
       USER_SERVICE_SUPER_ADMIN_DISPLAY_NAME: ${CHATOS_ADMIN_DISPLAY_NAME:-System Admin}
@@ -163,7 +166,7 @@ services:
       HARNESS_SPACE_PREFIX: ${HARNESS_SPACE_PREFIX:-u-}
       HARNESS_PROJECT_PAT_PREFIX: ${HARNESS_PROJECT_PAT_PREFIX:-chatos-project}
     ports:
-      - "${USER_SERVICE_PORT:-39190}:39190"
+      - "${CHATOS_PUBLIC_BIND_HOST:-127.0.0.1}:${USER_SERVICE_PORT:-39190}:39190"
     depends_on:
       consul:
         condition: service_healthy
@@ -203,7 +206,7 @@ services:
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.openai.com/v1}
     ports:
-      - "${MEMORY_ENGINE_PORT:-7081}:7081"
+      - "${CHATOS_PUBLIC_BIND_HOST:-127.0.0.1}:${MEMORY_ENGINE_PORT:-7081}:7081"
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://127.0.0.1:7081/health"]
       interval: 10s
@@ -244,7 +247,7 @@ services:
       plugin-management-backend:
         condition: service_healthy
     ports:
-      - "${PROJECT_SERVICE_PORT:-39210}:39210"
+      - "${CHATOS_PUBLIC_BIND_HOST:-127.0.0.1}:${PROJECT_SERVICE_PORT:-39210}:39210"
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://127.0.0.1:39210/api/health"]
       interval: 10s
@@ -266,6 +269,7 @@ services:
       PLUGIN_MANAGEMENT_SERVICE_DATABASE_URL: mongodb://${MONGODB_USER:-admin}:${MONGODB_PASSWORD:-admin}@mongodb:27017/plugin_management_service?authSource=admin
       PLUGIN_MANAGEMENT_SERVICE_MONGODB_DATABASE: plugin_management_service
       PLUGIN_MANAGEMENT_SERVICE_USER_SERVICE_BASE_URL: http://user-service-backend:39190
+      PLUGIN_MANAGEMENT_TASK_RUNNER_BASE_URL: http://task-runner-backend:39090
       PLUGIN_MANAGEMENT_CORS_ORIGINS: ${PLUGIN_MANAGEMENT_CORS_ORIGINS:-http://127.0.0.1:39261,http://localhost:39261}
       PLUGIN_MANAGEMENT_INTERNAL_API_SECRET: ${PLUGIN_MANAGEMENT_INTERNAL_API_SECRET:-change_me_plugin_management_internal_secret}
       PLUGIN_MANAGEMENT_TASK_RUNNER_INTERNAL_API_SECRET: ${PLUGIN_MANAGEMENT_TASK_RUNNER_INTERNAL_API_SECRET:-${PLUGIN_MANAGEMENT_INTERNAL_API_SECRET:-change_me_plugin_management_internal_secret}}
@@ -275,7 +279,7 @@ services:
       PLUGIN_MANAGEMENT_SERVICE_SUPER_ADMIN_PASSWORD: ${CHATOS_ADMIN_PASSWORD:-admin123456}
       PLUGIN_MANAGEMENT_SERVICE_SEED_SYSTEM_RESOURCES: ${PLUGIN_MANAGEMENT_SERVICE_SEED_SYSTEM_RESOURCES:-true}
     ports:
-      - "${PLUGIN_MANAGEMENT_SERVICE_PORT:-39260}:39260"
+      - "${CHATOS_PUBLIC_BIND_HOST:-127.0.0.1}:${PLUGIN_MANAGEMENT_SERVICE_PORT:-39260}:39260"
     depends_on:
       consul:
         condition: service_healthy
@@ -314,7 +318,7 @@ services:
       LOCAL_CONNECTOR_MEMORY_ENGINE_BASE_URL: http://memory-engine-backend:7081/api/memory-engine/v1
       LOCAL_CONNECTOR_MEMORY_ENGINE_INTERNAL_API_SECRET: ${LOCAL_CONNECTOR_MEMORY_ENGINE_INTERNAL_API_SECRET:-change_me_local_connector_memory_engine_secret}
     ports:
-      - "${LOCAL_CONNECTOR_SERVICE_PORT:-39230}:39230"
+      - "${CHATOS_PUBLIC_BIND_HOST:-127.0.0.1}:${LOCAL_CONNECTOR_SERVICE_PORT:-39230}:39230"
     volumes:
       - local-connector-data:/data/local_connector
     depends_on:
@@ -432,7 +436,7 @@ services:
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.openai.com/v1}
     ports:
-      - "${TASK_RUNNER_BACKEND_PORT:-39090}:39090"
+      - "${CHATOS_PUBLIC_BIND_HOST:-127.0.0.1}:${TASK_RUNNER_BACKEND_PORT:-39090}:39090"
     volumes:
       - task-runner-data:/data/task-runner
     depends_on:
@@ -509,7 +513,7 @@ services:
       CHATOS_ATTACHMENT_UPLOAD_MAX_BYTES: ${CHATOS_ATTACHMENT_UPLOAD_MAX_BYTES:-104857600}
       CHATOS_ATTACHMENT_READ_MAX_BYTES: ${CHATOS_ATTACHMENT_READ_MAX_BYTES:-31457280}
     ports:
-      - "${MAIN_BACKEND_PORT:-3997}:3997"
+      - "${CHATOS_PUBLIC_BIND_HOST:-127.0.0.1}:${MAIN_BACKEND_PORT:-3997}:3997"
     volumes:
       - chatos-data:/data/chatos
     depends_on:
@@ -570,7 +574,7 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     ports:
-      - "${OFFICIAL_WEBSITE_PORT:-39250}:39250"
+      - "${CHATOS_PUBLIC_BIND_HOST:-127.0.0.1}:${OFFICIAL_WEBSITE_PORT:-39250}:39250"
     depends_on:
       consul:
         condition: service_healthy
@@ -590,7 +594,7 @@ services:
     environment:
       API_PROXY_PASS: http://chatos-backend:3997
     ports:
-      - "${FRONTEND_PORT:-8088}:80"
+      - "${CHATOS_PUBLIC_BIND_HOST:-127.0.0.1}:${FRONTEND_PORT:-8088}:80"
     depends_on:
       chatos-backend:
         condition: service_healthy
@@ -601,7 +605,7 @@ services:
     environment:
       API_PROXY_PASS: http://user-service-backend:39190
     ports:
-      - "${USER_SERVICE_FRONTEND_PORT:-39191}:80"
+      - "${CHATOS_PUBLIC_BIND_HOST:-127.0.0.1}:${USER_SERVICE_FRONTEND_PORT:-39191}:80"
     depends_on:
       user-service-backend:
         condition: service_healthy
@@ -614,7 +618,7 @@ services:
       MEMORY_ENGINE_PROXY_PASS: http://memory-engine-backend:7081
       USER_SERVICE_PROXY_PASS: http://user-service-backend:39190
     ports:
-      - "${MEMORY_ENGINE_FRONTEND_PORT:-4178}:80"
+      - "${CHATOS_PUBLIC_BIND_HOST:-127.0.0.1}:${MEMORY_ENGINE_FRONTEND_PORT:-4178}:80"
     depends_on:
       memory-engine-backend:
         condition: service_healthy
@@ -627,7 +631,7 @@ services:
     environment:
       API_PROXY_PASS: http://project-management-backend:39210
     ports:
-      - "${PROJECT_SERVICE_FRONTEND_PORT:-39211}:80"
+      - "${CHATOS_PUBLIC_BIND_HOST:-127.0.0.1}:${PROJECT_SERVICE_FRONTEND_PORT:-39211}:80"
     depends_on:
       project-management-backend:
         condition: service_healthy
@@ -638,7 +642,7 @@ services:
     environment:
       API_PROXY_PASS: http://plugin-management-backend:39260
     ports:
-      - "${PLUGIN_MANAGEMENT_FRONTEND_PORT:-39261}:80"
+      - "${CHATOS_PUBLIC_BIND_HOST:-127.0.0.1}:${PLUGIN_MANAGEMENT_FRONTEND_PORT:-39261}:80"
     depends_on:
       plugin-management-backend:
         condition: service_healthy
@@ -649,7 +653,7 @@ services:
     environment:
       API_PROXY_PASS: http://task-runner-backend:39090
     ports:
-      - "${TASK_RUNNER_FRONTEND_PORT:-39091}:80"
+      - "${CHATOS_PUBLIC_BIND_HOST:-127.0.0.1}:${TASK_RUNNER_FRONTEND_PORT:-39091}:80"
     depends_on:
       task-runner-backend:
         condition: service_healthy
@@ -660,7 +664,7 @@ services:
     environment:
       API_PROXY_PASS: http://sandbox-manager-backend:8095
     ports:
-      - "${SANDBOX_MANAGER_FRONTEND_PORT:-8096}:80"
+      - "${CHATOS_PUBLIC_BIND_HOST:-127.0.0.1}:${SANDBOX_MANAGER_FRONTEND_PORT:-8096}:80"
     depends_on:
       sandbox-manager-backend:
         condition: service_healthy
@@ -671,7 +675,7 @@ services:
     environment:
       API_PROXY_PASS: http://official-website-backend:39250
     ports:
-      - "${OFFICIAL_WEBSITE_FRONTEND_PORT:-39251}:80"
+      - "${CHATOS_PUBLIC_BIND_HOST:-127.0.0.1}:${OFFICIAL_WEBSITE_FRONTEND_PORT:-39251}:80"
     depends_on:
       official-website-backend:
         condition: service_healthy

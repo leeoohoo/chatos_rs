@@ -70,12 +70,24 @@ pub(crate) struct WorkspaceState {
 pub(crate) struct LocalRuntimeSettings {
     #[serde(default = "default_local_ai_agent_max_iterations")]
     pub(crate) ai_agent_max_iterations: usize,
+    #[serde(default)]
+    pub(crate) developer_mode: bool,
+    #[serde(default = "default_developer_cloud_base_url")]
+    pub(crate) developer_cloud_base_url: String,
+    #[serde(default = "default_developer_user_service_base_url")]
+    pub(crate) developer_user_service_base_url: String,
+    #[serde(default = "default_developer_chatos_web_url")]
+    pub(crate) developer_chatos_web_url: String,
 }
 
 impl Default for LocalRuntimeSettings {
     fn default() -> Self {
         Self {
             ai_agent_max_iterations: default_local_ai_agent_max_iterations(),
+            developer_mode: false,
+            developer_cloud_base_url: default_developer_cloud_base_url(),
+            developer_user_service_base_url: default_developer_user_service_base_url(),
+            developer_chatos_web_url: default_developer_chatos_web_url(),
         }
     }
 }
@@ -83,12 +95,45 @@ impl Default for LocalRuntimeSettings {
 impl LocalRuntimeSettings {
     pub(crate) fn normalized(mut self) -> Self {
         self.ai_agent_max_iterations = self.ai_agent_max_iterations.max(1);
+        self.developer_cloud_base_url = normalize_local_developer_url(
+            self.developer_cloud_base_url,
+            default_developer_cloud_base_url(),
+        );
+        self.developer_user_service_base_url = normalize_local_developer_url(
+            self.developer_user_service_base_url,
+            default_developer_user_service_base_url(),
+        );
+        self.developer_chatos_web_url = normalize_local_developer_url(
+            self.developer_chatos_web_url,
+            default_developer_chatos_web_url(),
+        );
         self
     }
 }
 
 fn default_local_ai_agent_max_iterations() -> usize {
     DEFAULT_LOCAL_AI_AGENT_MAX_ITERATIONS
+}
+
+fn default_developer_cloud_base_url() -> String {
+    "http://127.0.0.1:39230".to_string()
+}
+
+fn default_developer_user_service_base_url() -> String {
+    "http://127.0.0.1:39190".to_string()
+}
+
+fn default_developer_chatos_web_url() -> String {
+    "http://127.0.0.1:8088".to_string()
+}
+
+fn normalize_local_developer_url(value: String, fallback: String) -> String {
+    let value = value.trim().trim_end_matches('/');
+    if value.starts_with("http://127.0.0.1:") || value.starts_with("http://localhost:") {
+        value.to_string()
+    } else {
+        fallback
+    }
 }
 
 impl LocalState {
@@ -145,5 +190,36 @@ impl LocalState {
             (Some(stored_cloud_base_url), Some(stored_user_id))
                 if stored_cloud_base_url == cloud_base_url && stored_user_id == user_id
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn developer_mode_defaults_to_local_stack_endpoints() {
+        let settings = LocalRuntimeSettings::default();
+        assert!(!settings.developer_mode);
+        assert_eq!(settings.developer_cloud_base_url, "http://127.0.0.1:39230");
+        assert_eq!(settings.developer_chatos_web_url, "http://127.0.0.1:8088");
+    }
+
+    #[test]
+    fn developer_endpoints_cannot_be_changed_to_remote_hosts() {
+        let settings = LocalRuntimeSettings {
+            developer_mode: true,
+            developer_cloud_base_url: "https://unexpected.example.com".to_string(),
+            developer_user_service_base_url: "http://192.168.1.5:39190".to_string(),
+            developer_chatos_web_url: "javascript:alert(1)".to_string(),
+            ..LocalRuntimeSettings::default()
+        }
+        .normalized();
+        assert_eq!(settings.developer_cloud_base_url, "http://127.0.0.1:39230");
+        assert_eq!(
+            settings.developer_user_service_base_url,
+            "http://127.0.0.1:39190"
+        );
+        assert_eq!(settings.developer_chatos_web_url, "http://127.0.0.1:8088");
     }
 }

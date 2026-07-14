@@ -33,6 +33,7 @@ pub(crate) fn local_browser_tools_service_for_root(
         command_timeout_seconds: 30,
         max_snapshot_chars: 8_000,
         vision_adapter: None,
+        schema_catalog_only: false,
     })
     .map_err(|err| anyhow!(err))?;
     let mut registry = local_browser_tools_registry()

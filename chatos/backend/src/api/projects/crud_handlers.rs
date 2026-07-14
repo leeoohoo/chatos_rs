@@ -9,6 +9,10 @@ use axum::{
 use serde_json::Value;
 use tracing::warn;
 
+use crate::api::local_connectors::{
+    local_connector_display_path, parse_local_connector_root_path,
+    reconcile_local_connector_project,
+};
 use crate::core::auth::AuthUser;
 use crate::core::project_access::{ensure_owned_project, map_project_access_error};
 use crate::core::user_scope::resolve_user_id;
@@ -97,17 +101,22 @@ async fn attach_project_session_ids(projects: Vec<Project>) -> Vec<Project> {
 }
 
 fn project_value(project: Project) -> Value {
-    let display_root_path = display_path(project.root_path.as_str());
+    let is_local_connector = parse_local_connector_root_path(project.root_path.as_str()).is_some();
+    let internal_root_path = project.root_path.clone();
+    let display_root_path = local_connector_display_path(project.root_path.as_str())
+        .unwrap_or_else(|| display_path(project.root_path.as_str()));
     let mut value = serde_json::to_value(project).unwrap_or(Value::Null);
     if let Value::Object(ref mut map) = value {
+        let response_root_path = if is_local_connector {
+            internal_root_path
+        } else {
+            display_root_path.clone()
+        };
         map.insert(
             "root_path".to_string(),
-            Value::String(display_root_path.clone()),
+            Value::String(response_root_path.clone()),
         );
-        map.insert(
-            "rootPath".to_string(),
-            Value::String(display_root_path.clone()),
-        );
+        map.insert("rootPath".to_string(), Value::String(response_root_path));
         map.insert(
             "display_root_path".to_string(),
             Value::String(display_root_path),
@@ -130,7 +139,11 @@ pub(super) async fn list_projects(
     };
     match ProjectService::list(Some(user_id)).await {
         Ok(list) => {
-            let list = attach_project_session_ids(list).await;
+            let mut reconciled = Vec::with_capacity(list.len());
+            for project in list {
+                reconciled.push(reconcile_local_connector_project(project).await);
+            }
+            let list = attach_project_session_ids(reconciled).await;
             (StatusCode::OK, Json(project_list_value(list)))
         }
         Err(err) => (
@@ -277,6 +290,7 @@ pub(super) async fn get_project(
 ) -> (StatusCode, Json<Value>) {
     match ensure_owned_project(&id, &auth).await {
         Ok(project) => {
+            let project = reconcile_local_connector_project(project).await;
             let project = attach_project_session_id(project).await;
             (StatusCode::OK, Json(project_value(project)))
         }

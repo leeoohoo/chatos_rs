@@ -11,6 +11,7 @@ use chatos_mcp_service::{
 };
 use serde_json::{json, Value};
 use std::collections::HashSet;
+use std::time::Duration;
 use tracing::warn;
 
 use crate::api::projects::memory_sync::sync_active_project;
@@ -23,6 +24,7 @@ use crate::services::realtime::publish_projects_updated;
 
 mod connector_client;
 mod directory_payload;
+mod project_reconciliation;
 mod root_path;
 mod terminal_relay;
 mod types;
@@ -32,8 +34,10 @@ use connector_client::{
     connector_post_json_with_headers, local_connector_mcp_relay_path,
 };
 use directory_payload::local_connector_directory_list_payload;
+pub(crate) use project_reconciliation::reconcile_local_connector_project;
 pub(crate) use root_path::{
-    local_connector_root_path, parse_local_connector_root_path, LocalConnectorRootRef,
+    local_connector_display_path, local_connector_root_path, parse_local_connector_root_path,
+    LocalConnectorRootRef,
 };
 use root_path::{
     local_relative_basename, sanitize_optional_local_relative_path,
@@ -148,7 +152,7 @@ async fn list_directory(
         Ok(value) => value,
         Err(err) => return err,
     };
-    if let Err(err) = load_owned_online_workspace(device_id.as_str(), workspace_id.as_str()).await {
+    if let Err(err) = load_owned_workspace(device_id.as_str(), workspace_id.as_str()).await {
         return err;
     }
     let path = match sanitize_optional_local_relative_path(query.path.as_deref()) {
@@ -156,7 +160,7 @@ async fn list_directory(
         Ok(None) => ".".to_string(),
         Err(err) => return err,
     };
-    match call_local_mcp_tool(
+    match call_local_mcp_tool_readonly(
         device_id.as_str(),
         workspace_id.as_str(),
         None,
@@ -358,7 +362,7 @@ async fn validate_local_connector_directory(
     workspace_id: &str,
     path: &str,
 ) -> Result<(), (StatusCode, Json<Value>)> {
-    call_local_mcp_tool(
+    call_local_mcp_tool_readonly(
         device_id,
         workspace_id,
         None,
@@ -401,6 +405,48 @@ pub(crate) async fn call_local_mcp_tool(
     )
     .await?;
     extract_mcp_tool_result(response)
+}
+
+pub(crate) async fn call_local_mcp_tool_readonly(
+    device_id: &str,
+    workspace_id: &str,
+    cwd: Option<&str>,
+    enabled_builtin_kinds: &[&str],
+    name: &str,
+    arguments: Value,
+) -> Result<Value, (StatusCode, Json<Value>)> {
+    const RETRY_DELAYS: [Duration; 3] = [
+        Duration::from_secs(1),
+        Duration::from_secs(2),
+        Duration::from_secs(4),
+    ];
+    for delay in RETRY_DELAYS {
+        match call_local_mcp_tool(
+            device_id,
+            workspace_id,
+            cwd,
+            enabled_builtin_kinds,
+            name,
+            arguments.clone(),
+        )
+        .await
+        {
+            Ok(value) => return Ok(value),
+            Err((status, _)) if status == StatusCode::SERVICE_UNAVAILABLE => {
+                tokio::time::sleep(delay).await;
+            }
+            Err(err) => return Err(err),
+        }
+    }
+    call_local_mcp_tool(
+        device_id,
+        workspace_id,
+        cwd,
+        enabled_builtin_kinds,
+        name,
+        arguments,
+    )
+    .await
 }
 
 fn extract_mcp_tool_result(response: Value) -> Result<Value, (StatusCode, Json<Value>)> {
@@ -562,17 +608,16 @@ pub(crate) async fn validate_local_connector_workspace_ref(
 }
 
 fn project_value(project: Project, local_connector: Option<Value>) -> Value {
-    let display_root_path = display_path(project.root_path.as_str());
+    let internal_root_path = project.root_path.clone();
+    let display_root_path = local_connector_display_path(project.root_path.as_str())
+        .unwrap_or_else(|| display_path(project.root_path.as_str()));
     let mut value = serde_json::to_value(project).unwrap_or(Value::Null);
     if let Value::Object(ref mut map) = value {
         map.insert(
             "root_path".to_string(),
-            Value::String(display_root_path.clone()),
+            Value::String(internal_root_path.clone()),
         );
-        map.insert(
-            "rootPath".to_string(),
-            Value::String(display_root_path.clone()),
-        );
+        map.insert("rootPath".to_string(), Value::String(internal_root_path));
         map.insert(
             "display_root_path".to_string(),
             Value::String(display_root_path),

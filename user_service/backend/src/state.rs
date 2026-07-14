@@ -3,12 +3,14 @@
 
 use crate::config::AppConfig;
 use crate::db::connect_database;
+use crate::login_throttle::LoginThrottle;
 use crate::store::AppStore;
 
 #[derive(Clone)]
 pub struct AppState {
     pub config: AppConfig,
     pub store: AppStore,
+    pub login_throttle: LoginThrottle,
 }
 
 impl AppState {
@@ -17,6 +19,10 @@ impl AppState {
         let store = AppStore::new(db);
         store.initialize().await?;
         store.ensure_default_super_admin(&config).await?;
-        Ok(Self { config, store })
+        Ok(Self {
+            config,
+            store,
+            login_throttle: LoginThrottle::default(),
+        })
     }
 }

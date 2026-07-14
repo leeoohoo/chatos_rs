@@ -80,11 +80,35 @@ pub struct ProjectHarnessGitAccess {
 #[derive(Debug, Deserialize)]
 struct ProjectRuntimeEnvironmentResponse {
     environment: ProjectRuntimeEnvironmentSettings,
+    #[serde(default)]
+    images: Vec<ProjectRuntimeEnvironmentImage>,
 }
 
-#[derive(Debug, Deserialize)]
-struct ProjectRuntimeEnvironmentSettings {
-    sandbox_enabled: bool,
+#[derive(Debug, Clone, Deserialize)]
+pub(in crate::services) struct ProjectRuntimeEnvironmentSettings {
+    pub(in crate::services) sandbox_enabled: bool,
+    #[serde(default)]
+    pub(in crate::services) sandbox_provider: String,
+    #[serde(default)]
+    pub(in crate::services) status: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub(in crate::services) struct ProjectRuntimeEnvironmentImage {
+    #[serde(default)]
+    pub(in crate::services) environment_type: String,
+    #[serde(default)]
+    pub(in crate::services) image_id: Option<String>,
+    #[serde(default)]
+    pub(in crate::services) image_provider: String,
+    #[serde(default)]
+    pub(in crate::services) status: String,
+}
+
+#[derive(Debug, Clone)]
+pub(in crate::services) struct ProjectSandboxRuntimeSettings {
+    pub(in crate::services) environment: ProjectRuntimeEnvironmentSettings,
+    pub(in crate::services) images: Vec<ProjectRuntimeEnvironmentImage>,
 }
 
 pub async fn get_project_from_project_service(
@@ -257,6 +281,16 @@ pub async fn get_project_sandbox_enabled(
     config: &AppConfig,
     project_id: &str,
 ) -> Result<bool, String> {
+    Ok(get_project_sandbox_runtime_settings(config, project_id)
+        .await?
+        .environment
+        .sandbox_enabled)
+}
+
+pub(in crate::services) async fn get_project_sandbox_runtime_settings(
+    config: &AppConfig,
+    project_id: &str,
+) -> Result<ProjectSandboxRuntimeSettings, String> {
     let base_url = required_project_service_base_url(config)?;
     let sync_secret = required_sync_secret(config)?;
     let endpoint = format!(
@@ -270,7 +304,10 @@ pub async fn get_project_sandbox_enabled(
         PROJECT_READ_SCOPE,
     )?)
     .await?;
-    Ok(response.environment.sandbox_enabled)
+    Ok(ProjectSandboxRuntimeSettings {
+        environment: response.environment,
+        images: response.images,
+    })
 }
 
 #[derive(Debug, Serialize)]

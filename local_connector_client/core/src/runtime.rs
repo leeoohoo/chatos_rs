@@ -11,6 +11,7 @@ use tokio::task::JoinHandle;
 
 use crate::config::ClientConfig;
 use crate::connector::connect_loop;
+use crate::model_configs::reconcile_local_model_configs;
 use crate::registration::{ensure_device_registered, ensure_workspace_registered};
 use crate::sandbox::types::LocalSandboxRuntime;
 use crate::{tracing_stdout, LocalState};
@@ -84,6 +85,22 @@ impl LocalRuntime {
 
     pub(crate) async fn start_connector_if_configured(&self) -> Result<()> {
         self.sync_saved_workspaces_if_needed().await?;
+        {
+            let mut state = self.state.write().await;
+            match reconcile_local_model_configs(&self.http_client, &mut state).await {
+                Ok(synced) => {
+                    if synced > 0 {
+                        tracing_stdout(
+                            format!("restored {synced} missing cloud model configs").as_str(),
+                        );
+                    }
+                    state.save(self.state_path.as_path())?;
+                }
+                Err(err) => {
+                    tracing_stdout(format!("reconcile saved model configs failed: {err}").as_str())
+                }
+            }
+        }
         let config = {
             let state = self.state.read().await;
             ClientConfig::from_state(&state, self.state_path.clone())

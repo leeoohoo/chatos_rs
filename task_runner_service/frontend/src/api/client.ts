@@ -15,6 +15,7 @@ import type {
   HealthResponse,
   LoginPayload,
   LoginResponse,
+  SseTicketResponse,
   ExternalMcpConfigRecord,
   McpCatalogEntry,
   McpPromptPreviewPayload,
@@ -37,6 +38,7 @@ import type {
   RunListFilters,
   TaskStatsResponse,
   TaskIndexResponse,
+  TaskCapabilityCatalogResponse,
   TaskRunnerInternalPromptPreviewResponse,
   TaskMemoryContextPayload,
   TaskMemoryContextResponse,
@@ -106,6 +108,10 @@ export const api = {
     request<void>('/api/auth/logout', {
       method: 'POST',
     }),
+  issueSseTicket: () =>
+    request<SseTicketResponse>('/api/auth/sse-ticket', {
+      method: 'POST',
+    }),
   listUsers: () => request<UserSummaryRecord[]>('/api/users'),
   createUser: (payload: CreateUserPayload) =>
     request<UserSummaryRecord>('/api/users', {
@@ -159,6 +165,8 @@ export const api = {
     ),
   getTaskStats: () => request<TaskStatsResponse>('/api/tasks/stats'),
   getTaskIndex: () => request<TaskIndexResponse>('/api/tasks/index'),
+  listTaskCapabilityCatalog: () =>
+    request<TaskCapabilityCatalogResponse>('/api/tasks/capabilities/catalog'),
   listTaskSummaries: (filters?: {
     ids?: string[];
     keyword?: string;

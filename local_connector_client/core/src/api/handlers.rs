@@ -9,6 +9,7 @@ mod mcp_configs;
 mod model_configs;
 mod runtime_settings;
 mod sandbox;
+mod skills;
 mod status;
 mod system_permissions;
 mod terminal;
@@ -34,9 +35,11 @@ pub(super) use model_configs::{
 };
 pub(super) use runtime_settings::{local_runtime_settings, local_update_runtime_settings};
 pub(super) use sandbox::{
-    local_docker_status, local_initialize_sandbox_image, local_sandbox_image_jobs,
-    local_sandbox_image_mcp, local_sandbox_images, local_sandbox_leases, local_toggle_sandbox,
+    local_delete_sandbox_image, local_docker_status, local_initialize_sandbox_image,
+    local_reinitialize_sandbox_image, local_sandbox_image_jobs, local_sandbox_image_mcp,
+    local_sandbox_images, local_sandbox_leases, local_toggle_sandbox,
 };
+pub(super) use skills::{local_skills, local_sync_skill_inventory, local_update_skill_preference};
 pub(super) use status::local_status;
 pub(super) use system_permissions::{local_request_system_permission, local_system_permissions};
 pub(super) use terminal::local_terminal_exec;

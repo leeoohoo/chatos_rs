@@ -311,6 +311,7 @@ mod tests {
             tooling_state_service,
             task_runner_mcp_service,
             auth_service,
+            sse_tickets: crate::auth::SseTicketStore::default(),
         }
     }
 

@@ -4,6 +4,7 @@
 use chatos_ai_runtime::{TaskBuiltinMcpPromptMode, TaskMcpInitMode};
 use chatos_mcp_runtime::{configurable_builtin_kinds, BuiltinMcpKind, BuiltinMcpPromptBuildResult};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct McpUnavailableTool {
@@ -143,6 +144,21 @@ pub struct McpServerToolProfileInfo {
     pub label: String,
     pub description: String,
     pub tool_names: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct McpProviderSkill {
+    pub id: String,
+    pub name: String,
+    pub description: String,
+    pub instructions: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct McpProviderDescriptor {
+    pub server_name: String,
+    pub skills: Vec<McpProviderSkill>,
+    pub tools: Vec<Value>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

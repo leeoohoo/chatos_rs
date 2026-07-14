@@ -18,13 +18,14 @@ pub(in crate::api) async fn require_auth(
         return Ok(next.run(request).await);
     }
 
-    let token = bearer_token_from_request(&request).map_err(ApiError::unauthorized)?;
-    let access_token = token.to_string();
-    let current_user = current_user_from_user_service_token(&state.config, token).await?;
+    let token = bearer_token_from_request(&state, &request).map_err(ApiError::unauthorized)?;
+    let access_token = token;
+    let current_user =
+        current_user_from_user_service_token(&state.config, access_token.as_str()).await?;
     let downstream_access_token = downstream_access_token_from_headers(
         &state.config,
         request.headers(),
-        &access_token,
+        access_token.as_str(),
         &current_user,
     )
     .await?;
@@ -81,10 +82,37 @@ pub(in crate::api) async fn current_user_from_user_service_token(
     current_user_from_verified_principal(payload.principal)
 }
 
-fn bearer_token_from_request(request: &Request) -> Result<&str, String> {
-    bearer_token_from_headers(request.headers()).or_else(|_| {
-        token_from_query(request.uri().query()).ok_or_else(|| "缺少登录令牌".to_string())
-    })
+pub(in crate::api) async fn sse_ticket_handler(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<SseTicketResponse>, ApiError> {
+    let token = bearer_token_from_headers(&headers).map_err(ApiError::unauthorized)?;
+    let issued = state.sse_tickets.issue(token);
+    Ok(Json(SseTicketResponse {
+        ticket: issued.ticket,
+        expires_in: issued.expires_in,
+        expires_at_unix: issued.expires_at_unix,
+    }))
+}
+
+fn bearer_token_from_request(state: &AppState, request: &Request) -> Result<String, String> {
+    if let Ok(token) = bearer_token_from_headers(request.headers()) {
+        return Ok(token.to_string());
+    }
+
+    let Some(ticket) = sse_ticket_from_query(request.uri().query()) else {
+        if has_legacy_query_token(request.uri().query()) {
+            return Err(
+                "URL query access tokens are not supported; use Authorization header".to_string(),
+            );
+        }
+        return Err("缺少登录令牌".to_string());
+    };
+    state
+        .sse_tickets
+        .consume(ticket)
+        .map(|record| record.access_token)
+        .ok_or_else(|| "SSE ticket is invalid or expired".to_string())
 }
 
 pub(in crate::api) fn bearer_token_from_headers(headers: &HeaderMap) -> Result<&str, String> {
@@ -165,13 +193,24 @@ fn header_text(headers: &HeaderMap, key: &'static str) -> Option<String> {
         .map(ToOwned::to_owned)
 }
 
-fn token_from_query(query: Option<&str>) -> Option<&str> {
+fn sse_ticket_from_query(query: Option<&str>) -> Option<&str> {
     query?.split('&').find_map(|pair| {
         let mut parts = pair.splitn(2, '=');
         let key = parts.next()?;
         let value = parts.next()?.trim();
-        ((key == "access_token" || key == "token") && !value.is_empty()).then_some(value)
+        (key == "sse_ticket" && !value.is_empty()).then_some(value)
     })
+}
+
+fn has_legacy_query_token(query: Option<&str>) -> bool {
+    query
+        .into_iter()
+        .flat_map(|query| query.split('&'))
+        .any(|pair| {
+            let mut parts = pair.splitn(2, '=');
+            matches!(parts.next(), Some("access_token" | "token"))
+                && parts.next().is_some_and(|value| !value.trim().is_empty())
+        })
 }
 
 #[derive(Debug, Serialize)]
@@ -425,4 +464,24 @@ fn map_user_service_role(role: Option<&str>) -> UserRole {
 
 fn normalize_identity_text(value: Option<&str>) -> Option<&str> {
     value.map(str::trim).filter(|value| !value.is_empty())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{has_legacy_query_token, sse_ticket_from_query};
+
+    #[test]
+    fn sse_ticket_query_is_supported() {
+        assert_eq!(
+            sse_ticket_from_query(Some("plain=value&sse_ticket=ticket-1")),
+            Some("ticket-1")
+        );
+    }
+
+    #[test]
+    fn legacy_query_access_tokens_are_detected() {
+        assert!(has_legacy_query_token(Some("access_token=long-lived")));
+        assert!(has_legacy_query_token(Some("token=long-lived")));
+        assert!(!has_legacy_query_token(Some("sse_ticket=ticket-1")));
+    }
 }

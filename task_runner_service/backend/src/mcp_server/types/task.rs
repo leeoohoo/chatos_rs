@@ -45,11 +45,15 @@ pub(in crate::mcp_server) struct CreateTaskArgs {
     #[serde(default)]
     pub(in crate::mcp_server) default_model_config_id: Option<String>,
     #[serde(default)]
+    pub(in crate::mcp_server) requires_execution: Option<bool>,
+    #[serde(default)]
     pub(in crate::mcp_server) schedule: Option<TaskScheduleConfig>,
     #[serde(default)]
     pub(in crate::mcp_server) enabled_builtin_kinds: Option<Vec<String>>,
     #[serde(default)]
     pub(in crate::mcp_server) external_mcp_config_ids: Option<Vec<String>>,
+    #[serde(default)]
+    pub(in crate::mcp_server) selected_skill_ids: Option<Vec<String>>,
     #[serde(default)]
     pub(in crate::mcp_server) prerequisite_task_ids: Option<Vec<String>>,
     #[serde(default)]
@@ -70,6 +74,16 @@ impl CreateTaskArgs {
             config.enabled = true;
             config.external_mcp_config_ids =
                 normalize_external_mcp_config_ids(external_mcp_config_ids);
+        }
+        if let Some(selected_skill_ids) = self.selected_skill_ids {
+            let config = mcp_config.get_or_insert_with(task_mcp_config_for_explicit_tool_selection);
+            config.enabled = true;
+            config.selected_skill_ids = normalize_skill_ids(selected_skill_ids);
+        }
+        if let Some(requires_execution) = self.requires_execution {
+            mcp_config
+                .get_or_insert_with(TaskMcpConfig::default)
+                .requires_execution = requires_execution;
         }
         Ok(CreateTaskRequest {
             title: self.title,
@@ -162,9 +176,13 @@ pub(in crate::mcp_server) struct CreateProjectExecutionTaskItem {
     #[serde(default)]
     pub(in crate::mcp_server) default_model_config_id: Option<String>,
     #[serde(default)]
+    pub(in crate::mcp_server) requires_execution: Option<bool>,
+    #[serde(default)]
     pub(in crate::mcp_server) enabled_builtin_kinds: Option<Vec<String>>,
     #[serde(default)]
     pub(in crate::mcp_server) external_mcp_config_ids: Option<Vec<String>>,
+    #[serde(default)]
+    pub(in crate::mcp_server) selected_skill_ids: Option<Vec<String>>,
     #[serde(default)]
     pub(in crate::mcp_server) prerequisite_refs: Vec<String>,
     #[serde(default)]
@@ -187,11 +205,15 @@ pub(in crate::mcp_server) struct CreateTaskWithPrerequisitesItem {
     #[serde(default)]
     pub(in crate::mcp_server) default_model_config_id: Option<String>,
     #[serde(default)]
+    pub(in crate::mcp_server) requires_execution: Option<bool>,
+    #[serde(default)]
     pub(in crate::mcp_server) schedule: Option<TaskScheduleConfig>,
     #[serde(default)]
     pub(in crate::mcp_server) enabled_builtin_kinds: Option<Vec<String>>,
     #[serde(default)]
     pub(in crate::mcp_server) external_mcp_config_ids: Option<Vec<String>>,
+    #[serde(default)]
+    pub(in crate::mcp_server) selected_skill_ids: Option<Vec<String>>,
     #[serde(default)]
     pub(in crate::mcp_server) prerequisite_refs: Vec<String>,
     #[serde(default)]
@@ -199,6 +221,10 @@ pub(in crate::mcp_server) struct CreateTaskWithPrerequisitesItem {
 }
 
 pub(in crate::mcp_server) fn normalize_external_mcp_config_ids(values: Vec<String>) -> Vec<String> {
+    normalize_unique_ids(values)
+}
+
+pub(in crate::mcp_server) fn normalize_skill_ids(values: Vec<String>) -> Vec<String> {
     normalize_unique_ids(values)
 }
 

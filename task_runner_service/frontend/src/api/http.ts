@@ -33,14 +33,10 @@ export function buildApiUrl(path: string): string {
   return API_BASE_URL ? `${API_BASE_URL}${normalizedPath}` : normalizedPath;
 }
 
-export function buildEventSourceUrl(path: string): string {
-  const token = getAuthToken();
-  if (!token) {
-    return buildApiUrl(path);
-  }
+export function buildEventSourceUrl(path: string, sseTicket: string): string {
   const url = buildApiUrl(path);
   const separator = url.includes('?') ? '&' : '?';
-  return `${url}${separator}access_token=${encodeURIComponent(token)}`;
+  return `${url}${separator}sse_ticket=${encodeURIComponent(sseTicket)}`;
 }
 
 function normalizeApiBaseUrl(value: string): string {

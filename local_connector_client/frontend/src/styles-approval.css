@@ -15,6 +15,71 @@
   margin-bottom: 12px;
 }
 
+.developerModeCard {
+  background: var(--panel-subtle);
+  border: 1px solid var(--border-subtle);
+  border-radius: 9px;
+  display: flex;
+  flex-direction: column;
+  gap: 11px;
+  margin-bottom: 12px;
+  padding: 13px;
+}
+
+.developerModeCard.active {
+  background: color-mix(in srgb, var(--accent-soft) 72%, var(--panel-subtle));
+  border-color: color-mix(in srgb, var(--accent) 32%, transparent);
+}
+
+.developerModeHeading {
+  align-items: center;
+  display: grid;
+  gap: 11px;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+}
+
+.developerModeHeading > div:nth-child(2) {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.developerModeHeading strong {
+  color: var(--text);
+  font-size: 12px;
+}
+
+.developerModeHeading span,
+.developerModeCard > small,
+.developerEndpointGrid span {
+  color: var(--text-tertiary);
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+.developerEndpointGrid {
+  display: grid;
+  gap: 7px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.developerEndpointGrid > div {
+  background: var(--panel-bg);
+  border: 1px solid var(--border-subtle);
+  border-radius: 7px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  padding: 8px 9px;
+}
+
+.developerEndpointGrid code {
+  color: var(--text-secondary);
+  font-size: 10px;
+  overflow-wrap: anywhere;
+}
+
 .approvalModeGrid,
 .approvalConfigGrid {
   display: grid;

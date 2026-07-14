@@ -111,6 +111,12 @@ impl TaskService {
             }
             self.validate_task_ephemeral_http_servers(&mcp_config)?;
         }
+        if let Some(policy) = self
+            .resolve_task_runner_policy(creator, task_owner_user_id.as_deref())
+            .await?
+        {
+            mcp_config.skill_policy_revision = Some(policy.policy_revision().to_string());
+        }
         let tenant_id = resolve_task_tenant_id(
             input.tenant_id,
             creator,
@@ -161,7 +167,8 @@ impl TaskService {
             task_title = task.title.as_str(),
             builtin_mcp_kinds = %task.mcp_config.enabled_builtin_kinds.join(","),
             external_mcp_config_ids = %task.mcp_config.external_mcp_config_ids.join(","),
-            "task runner created task with MCP selection"
+            selected_skill_ids = %task.mcp_config.selected_skill_ids.join(","),
+            "task runner created task with MCP and Skill selection"
         );
         self.ensure_task_thread(&task).await?;
         if let Some(remote_server) = passthrough_remote_server_to_save {

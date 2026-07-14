@@ -1,8 +1,6 @@
 # SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 # Required Notice: Copyright (c) 2025 AI Chat Team
 
-FROM docker:27-cli AS docker-cli
-
 FROM rust:1.94.0-bookworm AS builder
 
 ENV CARGO_REGISTRIES_CRATES_IO_PROTOCOL=sparse
@@ -49,8 +47,13 @@ ARG MANIFEST_PATH=Cargo.toml
 ARG PACKAGE_NAME=
 ARG BIN_NAME
 ARG CARGO_BUILD_JOBS=4
-
 ARG CARGO_TARGET_CACHE_ID=chatos-rust-target-1.94-j4
+ARG CARGO_PROFILE_RELEASE_LTO=true
+ARG CARGO_PROFILE_RELEASE_CODEGEN_UNITS=1
+
+ENV CARGO_PROFILE_RELEASE_LTO=${CARGO_PROFILE_RELEASE_LTO}
+ENV CARGO_PROFILE_RELEASE_CODEGEN_UNITS=${CARGO_PROFILE_RELEASE_CODEGEN_UNITS}
+
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/usr/local/cargo/git \
     --mount=type=cache,id=${CARGO_TARGET_CACHE_ID},target=/tmp/chatos-target \
@@ -63,7 +66,7 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
     && mkdir -p /out \
     && cp "$CARGO_TARGET_DIR/release/$BIN_NAME" /out/service
 
-FROM debian:bookworm-slim AS runtime
+FROM debian:bookworm-slim AS runtime-base
 
 RUN find /etc/apt -type f \( -name '*.list' -o -name '*.sources' \) -print0 \
     | xargs -0 -r sed -i \
@@ -82,7 +85,6 @@ RUN find /etc/apt -type f \( -name '*.list' -o -name '*.sources' \) -print0 \
         tzdata \
     && rm -rf /var/lib/apt/lists/*
 
-COPY --from=docker-cli /usr/local/bin/docker /usr/local/bin/docker
 COPY --from=builder /out/service /usr/local/bin/chatos-service
 COPY docker/entrypoint-rust-service.sh /usr/local/bin/chatos-rust-service-entrypoint
 RUN sed -i 's/\r$//' /usr/local/bin/chatos-rust-service-entrypoint \
@@ -92,3 +94,5 @@ WORKDIR /app
 ENV RUST_LOG=info
 
 ENTRYPOINT ["chatos-rust-service-entrypoint"]
+
+FROM runtime-base AS runtime

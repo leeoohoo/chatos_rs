@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use chrono::Utc;
+use chrono::{Duration, SecondsFormat, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -52,6 +52,8 @@ pub struct HealthResponse {
 #[derive(Debug, Serialize)]
 pub struct ErrorResponse {
     pub error: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub code: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -219,27 +221,40 @@ pub struct LocalConnectorSession {
     pub status: String,
     pub connected_at: String,
     pub last_heartbeat_at: String,
+    pub expires_at: String,
     pub disconnected_at: Option<String>,
     pub created_at: String,
     pub updated_at: String,
 }
 
 impl LocalConnectorSession {
-    pub fn new(owner_user_id: String, device_id: String) -> Self {
-        let now = now_rfc3339();
+    pub fn new(owner_user_id: String, device_id: String, lease_ttl: std::time::Duration) -> Self {
+        let now = Utc::now();
+        let now_text = now.to_rfc3339_opts(SecondsFormat::Millis, true);
+        let ttl = Duration::from_std(lease_ttl).unwrap_or_else(|_| Duration::seconds(90));
         Self {
             id: Uuid::new_v4().to_string(),
             owner_user_id,
             device_id,
             connection_id: Uuid::new_v4().to_string(),
             status: SESSION_STATUS_CONNECTED.to_string(),
-            connected_at: now.clone(),
-            last_heartbeat_at: now.clone(),
+            connected_at: now_text.clone(),
+            last_heartbeat_at: now_text.clone(),
+            expires_at: (now + ttl).to_rfc3339_opts(SecondsFormat::Millis, true),
             disconnected_at: None,
-            created_at: now.clone(),
-            updated_at: now,
+            created_at: now_text.clone(),
+            updated_at: now_text,
         }
     }
+}
+
+pub fn lease_deadline_rfc3339(lease_ttl: std::time::Duration) -> String {
+    let ttl = Duration::from_std(lease_ttl).unwrap_or_else(|_| Duration::seconds(90));
+    (Utc::now() + ttl).to_rfc3339_opts(SecondsFormat::Millis, true)
+}
+
+pub fn lease_now_rfc3339() -> String {
+    Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true)
 }
 
 pub fn now_rfc3339() -> String {

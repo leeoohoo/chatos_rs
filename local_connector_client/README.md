@@ -5,11 +5,13 @@ This directory contains the local-side Connector implementation.
 Current status:
 
 1. `core` is a Rust local daemon.
-2. `frontend` is the local React client UI for login, workspace grants, terminal testing, sandbox toggling, and image creation.
+2. `frontend` is the local React client UI for login, workspace grants, Skill enablement, terminal testing, sandbox toggling, and image creation.
 3. The daemon registers a device against `local_connector_service`.
 4. It stores the local-only mapping from cloud `workspace_id` to the real local root.
 5. It opens an outbound WebSocket to the cloud service.
-6. It handles MCP, terminal PTY, terminal exec, and sandbox relay messages from the cloud service.
+6. It handles MCP, Skill prepare/execute/cancel, terminal PTY, terminal exec, and sandbox relay messages from the cloud service.
+7. One owner can hold only one active Local Connector session lease; a second client is rejected with `409 connector_already_active`.
+8. The installer embeds all 27 internal Skill Bundles. Twelve currently have implemented adapters; Browser includes its pinned native `agent-browser` and Chrome for Testing runtime, while the other fifteen fail closed as unsupported.
 
 ## Run the Local Client
 
@@ -54,7 +56,7 @@ Run the reusable packaging script on macOS:
 ./local_connector_client/package-electron-macos-client.sh
 ```
 
-The script detects Apple Silicon versus Intel, installs locked frontend dependencies, builds the React UI and Rust Core, bundles the matching tools, and writes a DMG under:
+The script validates the 27-entry Skill catalog and every Bundle's `skill.json`/`instructions.md`, detects Apple Silicon versus Intel, installs locked frontend dependencies, builds the React UI and Rust Core, downloads/caches the pinned `agent-browser` and Chrome for Testing runtime, bundles the matching tools, and writes a DMG under:
 
 ```text
 local_connector_client/dist/electron-macos/
@@ -104,6 +106,11 @@ The UI supports:
 4. Terminal relay testing through `local_connector_service`.
 5. Local sandbox toggle with Docker availability/running checks.
 6. Sandbox image creation and sandbox lease handling in the Local Connector core through local Docker.
+7. A dedicated Skills page where Admin-provided internal Skills are visible to every user but remain disabled until the user enables them.
+8. A persistent developer-mode switch. It uses local ChatOS (`127.0.0.1:8088`), Local Connector Service (`127.0.0.1:39230`), and User Service (`127.0.0.1:39190`) with a separate Electron cookie partition; the local development stack continues to use the configured online MinIO endpoint by default.
+9. Settings render inside the main Electron window instead of a second macOS Space-aware window. Main/settings views are restored and repainted when the app becomes active, and a failed ChatOS renderer is recreated automatically.
+10. The system-permissions panel derives workspace, process, browser, network, Accessibility, Screen Recording, and Office Automation mappings from the signed Skill catalog. A Skill cannot be enabled while one of its mapped capabilities is not ready; on macOS, Office Automation remains enableable because its consent prompt is issued on first use.
+11. The signed macOS app declares Apple Events automation and user-selected Desktop/Documents/Downloads/network-volume/removable-volume usage descriptions. Accessibility is requested through Electron, while Screen Recording and other privacy categories link to the matching macOS settings pages.
 
 Legacy env-driven mode is still supported:
 

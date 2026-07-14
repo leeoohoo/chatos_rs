@@ -6,6 +6,7 @@ use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 use crate::sandbox::catalog::local_sandbox_runtime_specs;
+use crate::sandbox::docker::docker_command;
 use crate::sandbox::types::{LocalSandboxImageJob, LocalSandboxImageRecord};
 use crate::{
     local_now_rfc3339, tracing_stdout, LocalRuntime, LocalState, DEFAULT_LOCAL_SANDBOX_IMAGE,
@@ -21,20 +22,56 @@ use job::run_local_sandbox_image_job;
 pub(crate) async fn local_sandbox_image_catalog(runtime: &LocalRuntime) -> Value {
     let jobs = runtime.sandbox_runtime.jobs.read().await.clone();
     let stored_images = local_sandbox_stored_images(runtime).await;
+    let selected_image_ref = runtime
+        .state
+        .read()
+        .await
+        .sandbox
+        .selected_image_ref
+        .clone()
+        .unwrap_or_else(|| DEFAULT_LOCAL_SANDBOX_IMAGE.to_string());
+    let selected_record = stored_images
+        .iter()
+        .find(|image| image.image_ref == selected_image_ref);
+    let default_features = selected_record
+        .map(|image| image.features.clone())
+        .unwrap_or_else(|| {
+            vec![
+                "java@21".to_string(),
+                "node@24".to_string(),
+                "rust@stable".to_string(),
+                "go@1.26".to_string(),
+            ]
+        });
+    let default_rebuildable = selected_record.is_none_or(|image| {
+        !image.features.iter().any(|feature| feature == "imported")
+            && (!image
+                .features
+                .iter()
+                .any(|feature| feature.starts_with("script@"))
+                || image.custom_build_script.is_some())
+    });
     let mut seen_refs = std::collections::BTreeSet::new();
-    seen_refs.insert(DEFAULT_LOCAL_SANDBOX_IMAGE.to_string());
+    seen_refs.insert(selected_image_ref.clone());
     let mut images = vec![json!({
         "id": "default",
-        "name": DEFAULT_LOCAL_SANDBOX_IMAGE,
-        "image_ref": DEFAULT_LOCAL_SANDBOX_IMAGE,
-        "features": ["java@21", "node@24", "rust@stable", "go@1.26"],
+        "name": selected_image_ref,
+        "image_ref": selected_image_ref,
+        "features": default_features,
         "backend": LOCAL_SANDBOX_BACKEND,
-        "status": local_docker_image_status(DEFAULT_LOCAL_SANDBOX_IMAGE).await,
+        "status": local_docker_image_status(selected_image_ref.as_str()).await,
+        "rebuildable": default_rebuildable,
     })];
     for image in stored_images {
         if !seen_refs.insert(image.image_ref.clone()) {
             continue;
         }
+        let rebuildable = !image.features.iter().any(|feature| feature == "imported")
+            && (!image
+                .features
+                .iter()
+                .any(|feature| feature.starts_with("script@"))
+                || image.custom_build_script.is_some());
         images.push(json!({
             "id": image.id,
             "name": image.image_name,
@@ -43,6 +80,7 @@ pub(crate) async fn local_sandbox_image_catalog(runtime: &LocalRuntime) -> Value
             "backend": image.backend,
             "status": local_docker_image_status(image.image_ref.as_str()).await,
             "created_at": image.created_at,
+            "rebuildable": rebuildable,
         }));
     }
     for job in jobs.iter().filter(|job| job.status == "succeeded") {
@@ -57,6 +95,7 @@ pub(crate) async fn local_sandbox_image_catalog(runtime: &LocalRuntime) -> Value
             "backend": job.backend,
             "status": "local",
             "created_at": job.created_at,
+            "rebuildable": true,
         }));
     }
     json!({
@@ -66,6 +105,138 @@ pub(crate) async fn local_sandbox_image_catalog(runtime: &LocalRuntime) -> Value
         "features": local_sandbox_runtime_specs(),
         "images": images,
     })
+}
+
+pub(crate) async fn delete_local_sandbox_image(
+    runtime: &LocalRuntime,
+    image_id: &str,
+) -> Result<Value, String> {
+    let image_id = image_id.trim();
+    if image_id.is_empty() {
+        return Err("sandbox image id is required".to_string());
+    }
+    let (record_id, image_ref) = {
+        let state = runtime.state.read().await;
+        if image_id == "default" {
+            (
+                None,
+                state
+                    .sandbox
+                    .selected_image_ref
+                    .clone()
+                    .unwrap_or_else(|| DEFAULT_LOCAL_SANDBOX_IMAGE.to_string()),
+            )
+        } else {
+            let record = state
+                .sandbox
+                .images
+                .iter()
+                .find(|image| image.id == image_id)
+                .ok_or_else(|| format!("sandbox image not found: {image_id}"))?;
+            (Some(record.id.clone()), record.image_ref.clone())
+        }
+    };
+    let in_use = runtime
+        .sandbox_runtime
+        .leases
+        .read()
+        .await
+        .values()
+        .any(|lease| {
+            lease.status != crate::LOCAL_SANDBOX_STATUS_DESTROYED
+                && (lease.image_id.as_deref() == Some(image_id)
+                    || lease.image_ref.as_deref() == Some(image_ref.as_str()))
+        });
+    if in_use {
+        return Err(format!(
+            "sandbox image is in use by an active lease: {image_ref}"
+        ));
+    }
+    let output = docker_command()
+        .args(["image", "rm", image_ref.as_str()])
+        .output()
+        .await
+        .map_err(|err| format!("remove docker image failed: {err}"))?;
+    let stderr = String::from_utf8_lossy(output.stderr.as_slice());
+    if !output.status.success() && !stderr.contains("No such image") {
+        return Err(format!("docker image rm failed: {}", stderr.trim()));
+    }
+    let mut state = runtime.state.write().await;
+    if let Some(record_id) = record_id.as_deref() {
+        state.sandbox.images.retain(|image| image.id != record_id);
+    }
+    if state.sandbox.selected_image_ref.as_deref() == Some(image_ref.as_str()) {
+        state.sandbox.selected_image_ref = None;
+    }
+    state
+        .save(runtime.state_path.as_path())
+        .map_err(|err| format!("save local sandbox state failed: {err}"))?;
+    Ok(json!({ "ok": true, "image_id": image_id, "image_ref": image_ref }))
+}
+
+pub(crate) async fn reinitialize_local_sandbox_image(
+    runtime: &LocalRuntime,
+    image_id: &str,
+) -> Result<LocalSandboxImageJob, String> {
+    let image_id = image_id.trim();
+    let (features, custom_build_script) = if image_id == "default" {
+        let state = runtime.state.read().await;
+        let selected = state.sandbox.selected_image_ref.as_deref();
+        if let Some(record) = selected.and_then(|selected| {
+            state
+                .sandbox
+                .images
+                .iter()
+                .find(|image| image.image_ref == selected)
+        }) {
+            rebuild_spec_from_record(record)?
+        } else {
+            (
+                vec![
+                    "java@21".to_string(),
+                    "node@24".to_string(),
+                    "rust@stable".to_string(),
+                    "go@1.26".to_string(),
+                ],
+                None,
+            )
+        }
+    } else {
+        let state = runtime.state.read().await;
+        let record = state
+            .sandbox
+            .images
+            .iter()
+            .find(|image| image.id == image_id)
+            .ok_or_else(|| format!("sandbox image not found: {image_id}"))?;
+        rebuild_spec_from_record(record)?
+    };
+    start_local_sandbox_image_job(runtime, features, custom_build_script, None, None).await
+}
+
+fn rebuild_spec_from_record(
+    record: &LocalSandboxImageRecord,
+) -> Result<(Vec<String>, Option<String>), String> {
+    if record.features.iter().any(|feature| feature == "imported") {
+        return Err("imported sandbox image has no rebuild specification".to_string());
+    }
+    if record
+        .features
+        .iter()
+        .any(|feature| feature.starts_with("script@"))
+        && record.custom_build_script.is_none()
+    {
+        return Err("sandbox image was created before rebuild scripts were persisted; create a new image with the original script".to_string());
+    }
+    Ok((
+        record
+            .features
+            .iter()
+            .filter(|feature| !feature.starts_with("script@"))
+            .cloned()
+            .collect(),
+        record.custom_build_script.clone(),
+    ))
 }
 
 pub(crate) fn local_sandbox_image_ref_for_id(state: &LocalState, image_id: &str) -> Option<String> {
@@ -186,6 +357,7 @@ fn imported_selected_sandbox_image(state: &LocalState) -> Option<LocalSandboxIma
             .to_string(),
         image_ref: image_ref.to_string(),
         features: vec!["imported".to_string()],
+        custom_build_script: None,
         backend: LOCAL_SANDBOX_BACKEND.to_string(),
         created_at: now.clone(),
         updated_at: now,
@@ -197,4 +369,36 @@ fn imported_local_sandbox_image_id(image_ref: &str) -> String {
     hasher.update(image_ref.as_bytes());
     let digest = hex::encode(hasher.finalize());
     format!("local-imported-{}", &digest[..12])
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn record(features: Vec<&str>, script: Option<&str>) -> LocalSandboxImageRecord {
+        LocalSandboxImageRecord {
+            id: "image-1".to_string(),
+            image_name: "image-1".to_string(),
+            image_ref: "chatos-sandbox-agent:image-1".to_string(),
+            features: features.into_iter().map(ToOwned::to_owned).collect(),
+            custom_build_script: script.map(ToOwned::to_owned),
+            backend: LOCAL_SANDBOX_BACKEND.to_string(),
+            created_at: "now".to_string(),
+            updated_at: "now".to_string(),
+        }
+    }
+
+    #[test]
+    fn rebuild_spec_restores_runtime_features_and_script() {
+        let record = record(vec!["node@24", "script@abcdef"], Some("apt-get update"));
+        let (features, script) = rebuild_spec_from_record(&record).expect("rebuild spec");
+        assert_eq!(features, vec!["node@24"]);
+        assert_eq!(script.as_deref(), Some("apt-get update"));
+    }
+
+    #[test]
+    fn legacy_script_image_without_persisted_script_is_not_rebuildable() {
+        let record = record(vec!["node@24", "script@abcdef"], None);
+        assert!(rebuild_spec_from_record(&record).is_err());
+    }
 }

@@ -62,8 +62,11 @@ impl McpCatalogService {
             workspace_dir: normalized_optional(request.workspace_dir),
             sandbox_enabled: None,
             sandbox_manager_base_url: None,
+            requires_execution: true,
             default_remote_server_id: normalized_optional(request.default_remote_server_id),
             external_mcp_config_ids: Vec::new(),
+            selected_skill_ids: Vec::new(),
+            skill_policy_revision: None,
             ephemeral_http_servers: Vec::new(),
         };
         let selected_builtin_kinds = if enabled {

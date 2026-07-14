@@ -50,7 +50,7 @@ const TerminalHeader: React.FC<TerminalHeaderProps> = ({
       : connectionState === 'error'
         ? t('terminal.connection.error')
         : t('terminal.connection.disconnected');
-  const visibleTerminalCwd = terminalDisplayCwd || getUserVisiblePath(terminalCwd);
+  const visibleTerminalCwd = getUserVisiblePath(terminalDisplayCwd || terminalCwd);
 
   return (
     <div className="flex items-center justify-between border-b border-border px-4 py-2">

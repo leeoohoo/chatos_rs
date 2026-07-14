@@ -329,14 +329,16 @@ fn local_connector_runtime_server(
     let project = parse_local_connector_project_root(project_root)?;
     let local_kinds = selected_local_connector_builtin_kinds_for_task(task, authoritative);
     let local_kinds = normalize_local_connector_builtin_kinds(local_kinds.iter().copied());
-    if local_kinds.is_empty() {
+    if local_kinds.is_empty() && task.mcp_config.selected_skill_ids.is_empty() {
         return None;
     }
     let mut headers = std::collections::BTreeMap::new();
-    headers.insert(
-        LOCAL_CONNECTOR_ENABLED_BUILTIN_KINDS_HEADER.to_string(),
-        local_connector_builtin_kinds_header_value(local_kinds.as_slice()),
-    );
+    if !local_kinds.is_empty() {
+        headers.insert(
+            LOCAL_CONNECTOR_ENABLED_BUILTIN_KINDS_HEADER.to_string(),
+            local_connector_builtin_kinds_header_value(local_kinds.as_slice()),
+        );
+    }
     Some(TaskEphemeralHttpMcpServer {
         name: LOCAL_CONNECTOR_MCP_SERVER_NAME.to_string(),
         url: local_connector_mcp_url(&project),
@@ -526,6 +528,8 @@ pub(super) fn sanitize_task_mcp_config(mut config: TaskMcpConfig) -> TaskMcpConf
         .map(|value| value.trim_end_matches('/').to_string());
     config.default_remote_server_id = normalized_optional(config.default_remote_server_id);
     config.external_mcp_config_ids = normalize_strings(config.external_mcp_config_ids);
+    config.selected_skill_ids = normalize_strings(config.selected_skill_ids);
+    config.skill_policy_revision = normalized_optional(config.skill_policy_revision);
     config.ephemeral_http_servers = normalize_ephemeral_http_servers(config.ephemeral_http_servers);
     config
 }

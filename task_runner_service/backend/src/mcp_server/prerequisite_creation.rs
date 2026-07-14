@@ -20,9 +20,10 @@ use super::support::{
     ensure_client_ref_graph_acyclic, normalize_mcp_builtin_kind_names, reusable_chatos_async_task,
 };
 use super::{
-    normalize_external_mcp_config_ids, task_mcp_config_for_explicit_tool_selection,
-    CreateProjectExecutionTasksArgs, CreateTaskWithPrerequisitesItem,
-    CreateTasksWithPrerequisitesArgs, McpRequestContext, McpToolProfile, TaskRunnerMcpService,
+    normalize_external_mcp_config_ids, normalize_skill_ids,
+    task_mcp_config_for_explicit_tool_selection, CreateProjectExecutionTasksArgs,
+    CreateTaskWithPrerequisitesItem, CreateTasksWithPrerequisitesArgs, McpRequestContext,
+    McpToolProfile, TaskRunnerMcpService,
 };
 
 impl TaskRunnerMcpService {
@@ -95,6 +96,7 @@ impl TaskRunnerMcpService {
                 priority: item.priority,
                 tags: item.tags,
                 default_model_config_id: item.default_model_config_id,
+                requires_execution: item.requires_execution,
                 schedule: Some(TaskScheduleConfig {
                     mode: TaskScheduleMode::ContactAsync,
                     run_at: Some(now_rfc3339()),
@@ -102,6 +104,7 @@ impl TaskRunnerMcpService {
                 }),
                 enabled_builtin_kinds: item.enabled_builtin_kinds,
                 external_mcp_config_ids: item.external_mcp_config_ids,
+                selected_skill_ids: item.selected_skill_ids,
                 prerequisite_refs: item.prerequisite_refs,
                 prerequisite_task_ids: item.prerequisite_task_ids,
             });
@@ -278,6 +281,17 @@ impl TaskRunnerMcpService {
                 config.enabled = true;
                 config.external_mcp_config_ids =
                     normalize_external_mcp_config_ids(external_mcp_config_ids);
+            }
+            if let Some(selected_skill_ids) = item.selected_skill_ids {
+                let config =
+                    mcp_config.get_or_insert_with(task_mcp_config_for_explicit_tool_selection);
+                config.enabled = true;
+                config.selected_skill_ids = normalize_skill_ids(selected_skill_ids);
+            }
+            if let Some(requires_execution) = item.requires_execution {
+                mcp_config
+                    .get_or_insert_with(crate::models::TaskMcpConfig::default)
+                    .requires_execution = requires_execution;
             }
             let is_prerequisite_node = prerequisite_ref_targets.contains(client_ref.as_str());
             let mut request = CreateTaskRequest {

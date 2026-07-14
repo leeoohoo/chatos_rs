@@ -269,28 +269,17 @@ impl ApprovalAgentToolExecutor {
 }
 
 fn approval_decision_tool_schema() -> Value {
+    let definition = chatos_mcp_runtime::local_command_approval_decision_tool_definition();
     build_function_tool_schema(
-        APPROVAL_DECISION_TOOL,
-        "Return the final command approval decision for this request. Must be called exactly once.",
-        &json!({
-            "type": "object",
-            "properties": {
-                "decision": {
-                    "type": "string",
-                    "enum": ["approve", "deny", "ask_user"]
-                },
-                "reason": {
-                    "type": "string",
-                    "description": "Short concrete reason for the decision."
-                },
-                "remember_allow": {
-                    "type": "boolean",
-                    "description": "Set true only for a stable low-risk approve decision that should be whitelisted."
-                }
-            },
-            "required": ["decision", "reason"],
-            "additionalProperties": false
-        }),
+        definition
+            .get("name")
+            .and_then(Value::as_str)
+            .unwrap_or(APPROVAL_DECISION_TOOL),
+        definition
+            .get("description")
+            .and_then(Value::as_str)
+            .unwrap_or_default(),
+        definition.get("inputSchema").unwrap_or(&Value::Null),
     )
 }
 

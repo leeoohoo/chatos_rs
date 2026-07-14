@@ -19,6 +19,7 @@ use crate::core::ai_model_config::ResolvedChatModelConfig;
 use crate::core::ai_settings::request_body_limit_bytes_from_settings;
 use crate::core::builtin_mcp_prompt::compose_effective_builtin_mcp_system_prompt;
 use crate::core::internal_context_locale::InternalContextLocale;
+use crate::models::project::PUBLIC_PROJECT_ID;
 use crate::modules::conversation_runtime::task_board::{
     build_task_turn_follow_up_directive, build_task_turn_follow_up_message,
     build_task_turn_review_retry_guidance, parse_task_turn_review_outcome,
@@ -564,23 +565,76 @@ fn build_workspace_global_prompt(
 ) -> Option<String> {
     let workspace_root = normalize_prompt_text(runtime_context.workspace_root.as_deref());
     let project_root = normalize_prompt_text(runtime_context.resolved_project_root.as_deref());
-    if workspace_root.is_none() && project_root.is_none() {
+    let project_id = normalize_prompt_text(runtime_context.resolved_project_id.as_deref())
+        .filter(|value| *value != PUBLIC_PROJECT_ID);
+    let project_name = normalize_prompt_text(runtime_context.resolved_project_name.as_deref());
+    let project_source =
+        normalize_prompt_text(runtime_context.resolved_project_source_type.as_deref());
+    if workspace_root.is_none()
+        && project_root.is_none()
+        && project_id.is_none()
+        && project_name.is_none()
+    {
         return None;
     }
 
-    let mut lines = vec!["[Runtime Workspace]".to_string()];
+    let mut lines = if runtime_context.internal_context_locale.is_english() {
+        vec!["[Current Project And Runtime Context]".to_string()]
+    } else {
+        vec!["[当前项目与运行上下文]".to_string()]
+    };
+    if let Some(project_name) = project_name {
+        lines.push(if runtime_context.internal_context_locale.is_english() {
+            format!("Current project name: {project_name}")
+        } else {
+            format!("当前项目名称：{project_name}")
+        });
+    }
+    if let Some(project_id) = project_id {
+        lines.push(if runtime_context.internal_context_locale.is_english() {
+            format!("Current project id: {project_id}")
+        } else {
+            format!("当前项目 ID：{project_id}")
+        });
+    }
+    if let Some(project_source) = project_source {
+        lines.push(if runtime_context.internal_context_locale.is_english() {
+            format!("Current project source type: {project_source}")
+        } else {
+            format!("当前项目来源类型：{project_source}")
+        });
+    }
     if let Some(workspace_root) = workspace_root {
-        lines.push(format!("Current workspace root: {workspace_root}"));
+        lines.push(if runtime_context.internal_context_locale.is_english() {
+            format!("Current workspace root: {workspace_root}")
+        } else {
+            format!("当前工作目录：{workspace_root}")
+        });
     }
     if let Some(project_root) = project_root {
         if Some(project_root) != normalize_prompt_text(runtime_context.workspace_root.as_deref()) {
-            lines.push(format!("Current project root: {project_root}"));
+            lines.push(if runtime_context.internal_context_locale.is_english() {
+                format!("Current project root: {project_root}")
+            } else {
+                format!("当前项目目录：{project_root}")
+            });
         }
     }
-    lines.push(
-        "Use the current workspace as the default context for relative project and file references unless the user says otherwise."
-            .to_string(),
-    );
+    if runtime_context.internal_context_locale.is_english() {
+        lines.extend([
+            "This conversation is explicitly bound to the current project. Treat references such as “this project”, “the code”, “look at it”, or “help me change it” as referring to this project unless the user says otherwise.".to_string(),
+            "Task Runner is your internal asynchronous execution path, not a separate product the user must operate. The current user, project id, conversation, and available runtime context are automatically attached to tasks you create.".to_string(),
+            "When a request requires inspecting, searching, modifying, running, testing, building, debugging, or validating the current project—or using real files, logs, terminal, browser, Local Connector, sandbox, MCP, or Skills—use Task Runner to create the necessary task instead of claiming that you cannot access the project or asking the user to paste code or provide the project path.".to_string(),
+            "Use the Task Runner capability catalogs and list_available_skills when specialized tools or Skills may be needed. After arranging the work, briefly tell the user what follow-through you initiated; factual results will return through the normal callback flow.".to_string(),
+        ]);
+    } else {
+        lines.extend([
+            "当前对话已经明确绑定到上述项目。除非用户另有说明，用户提到“这个项目”“代码”“帮我看看”“帮我修改”等内容时，默认就是指当前项目。".to_string(),
+            "Task Runner 是你自己的内部异步执行通道，不是需要用户操作的另一个产品。你创建任务时，当前用户、项目 ID、会话以及可用运行上下文都会由系统自动绑定。".to_string(),
+            "当需求需要查看、搜索、理解、修改、运行、测试、构建、排障或验证当前项目，或者需要真实文件、日志、终端、浏览器、Local Connector、沙箱、MCP 或 Skills 时，必须通过 Task Runner 创建任务继续推进。不得仅因为主对话不能直接读取文件就声称无法查看，也不要要求用户再次粘贴代码或提供项目路径。".to_string(),
+            "需要专门能力时，先使用 Task Runner 的能力目录和 list_available_skills 选择合适工具或 Skills。安排完成后，只需自然地告诉用户你已经开始推进哪些后续步骤；真实结果会通过正常回调链路返回。".to_string(),
+        ]);
+    }
     Some(lines.join("\n"))
 }
 

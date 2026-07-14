@@ -29,6 +29,7 @@ pub struct AppConfig {
     pub require_device_connect_signature: bool,
     pub allow_device_connect_query_token: bool,
     pub device_connect_signature_max_skew: Duration,
+    pub active_session_lease_ttl: Duration,
 }
 
 impl AppConfig {
@@ -71,6 +72,11 @@ impl AppConfig {
                 .and_then(|value| value.parse::<u64>().ok())
                 .unwrap_or(300)
                 .clamp(30, 3600);
+        let active_session_lease_ttl_seconds =
+            normalized_env("LOCAL_CONNECTOR_ACTIVE_SESSION_LEASE_TTL_SECONDS")
+                .and_then(|value| value.parse::<u64>().ok())
+                .unwrap_or(90)
+                .clamp(30, 600);
 
         let config = Self {
             host,
@@ -113,6 +119,7 @@ impl AppConfig {
                 false,
             ),
             device_connect_signature_max_skew: Duration::from_secs(signature_skew_seconds),
+            active_session_lease_ttl: Duration::from_secs(active_session_lease_ttl_seconds),
         };
 
         if config.require_signed_internal_requests {

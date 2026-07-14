@@ -177,6 +177,20 @@ fn external_mcp_prompt_omits_internal_host_tool_names() {
 }
 
 #[test]
+fn provider_skills_prompt_is_added_as_a_system_input_item() {
+    let items = mcp_provider_skills_prefixed_input_items(Some(
+        "# MCP Provider Skills\n\nUse the issue tracker.".to_string(),
+    ));
+
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0]["role"].as_str(), Some("system"));
+    assert_eq!(
+        items[0].pointer("/content/0/text").and_then(Value::as_str),
+        Some("# MCP Provider Skills\n\nUse the issue tracker.")
+    );
+}
+
+#[test]
 fn internal_host_tool_aliases_use_stable_builtin_server_prefixes() {
     let headers = std::collections::BTreeMap::from([(
         chatos_mcp_service::LOCAL_CONNECTOR_ENABLED_BUILTIN_KINDS_HEADER.to_string(),

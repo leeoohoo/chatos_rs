@@ -146,6 +146,14 @@ pub struct SkillContent {
     pub repository: Option<String>,
     pub branch: Option<String>,
     pub local_connector: Option<LocalConnectorRef>,
+    #[serde(default)]
+    pub bundle_id: Option<String>,
+    #[serde(default)]
+    pub bundle_version: Option<String>,
+    #[serde(default)]
+    pub bundle_hash: Option<String>,
+    #[serde(default)]
+    pub entrypoint_kind: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -209,6 +217,67 @@ pub struct ResolvedSkill {
     pub available: bool,
     pub status: String,
     pub reason: Option<String>,
+    #[serde(default)]
+    pub installation: Option<SkillInstallationRecord>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SkillInstallationRecord {
+    pub id: String,
+    pub owner_user_id: String,
+    pub device_id: String,
+    pub skill_id: String,
+    pub bundle_id: String,
+    pub version: String,
+    pub bundle_hash: String,
+    pub platform: String,
+    pub status: String,
+    pub dependency_status: String,
+    pub last_error: Option<String>,
+    pub last_checked_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UserSkillCatalogItem {
+    pub skill: SkillRecord,
+    pub user_enabled: bool,
+    pub available: bool,
+    pub status: String,
+    pub reason: Option<String>,
+    pub installation: Option<SkillInstallationRecord>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UserSkillCatalogResponse {
+    #[serde(default)]
+    pub items: Vec<UserSkillCatalogItem>,
+    pub total: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpdateUserSkillPreferenceRequest {
+    pub owner_user_id: String,
+    pub enabled: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LocalConnectorSkillInventoryItem {
+    pub skill_id: String,
+    pub bundle_id: String,
+    pub version: String,
+    pub bundle_hash: String,
+    pub status: String,
+    pub dependency_status: String,
+    pub last_error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LocalConnectorSkillInventoryRequest {
+    pub owner_user_id: String,
+    pub device_id: String,
+    pub platform: String,
+    #[serde(default)]
+    pub items: Vec<LocalConnectorSkillInventoryItem>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

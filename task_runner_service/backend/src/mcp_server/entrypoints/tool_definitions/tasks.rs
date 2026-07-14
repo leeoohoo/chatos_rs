@@ -57,7 +57,7 @@ pub(super) fn task_tool_definitions() -> Vec<Value> {
         ),
         tool_definition(
             "create_task",
-            "Create a new Task Runner task for the current authenticated agent. Ownership and memory scope are assigned automatically by Task Runner.",
+            "Create a new internal asynchronous task for the current user and current project. User ownership, project id, conversation context, workspace routing and callback context are assigned automatically. Use this instead of claiming the current project cannot be inspected when real files, tools or execution are required.",
             create_task_schema(),
         ),
         tool_definition(
@@ -71,8 +71,13 @@ pub(super) fn task_tool_definitions() -> Vec<Value> {
             empty_object_schema(),
         ),
         tool_definition(
+            "list_available_skills",
+            "List Local Connector Skills currently enabled by the user and available for Task Runner. Use returned id values as selected_skill_ids when creating tasks.",
+            empty_object_schema(),
+        ),
+        tool_definition(
             "create_tasks_with_prerequisites",
-            "Create multiple Task Runner tasks in one call and connect prerequisite edges using temporary client_ref values plus existing prerequisite_task_ids. Use this when new prerequisite tasks do not have real task ids yet.",
+            "Create multiple internal asynchronous tasks for the current user and project, connecting prerequisite edges with temporary client_ref values plus existing prerequisite_task_ids. Project and execution context are attached automatically. Use this for investigation, implementation and review stages instead of asking the user to provide the project again.",
             create_tasks_with_prerequisites_schema(),
         ),
         tool_definition(

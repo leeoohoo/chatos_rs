@@ -279,6 +279,30 @@ pub(super) fn validate_mcp_visibility_for_runtime(
 
 pub(super) fn validate_skill_content(content: &SkillContent) -> Result<(), ApiError> {
     match content.kind.as_str() {
+        SKILL_CONTENT_KIND_LOCAL_CONNECTOR_BUNDLE => {
+            for (value, field) in [
+                (content.bundle_id.as_deref(), "bundle_id"),
+                (content.bundle_version.as_deref(), "bundle_version"),
+                (content.entrypoint_kind.as_deref(), "entrypoint_kind"),
+            ] {
+                if value.and_then(|value| normalized(Some(value))).is_none() {
+                    return Err(ApiError::bad_request(format!(
+                        "local connector bundle skill requires {field}"
+                    )));
+                }
+            }
+            if content.inline.is_some()
+                || content.package_id.is_some()
+                || content.source_path.is_some()
+                || content.repository.is_some()
+                || content.branch.is_some()
+                || content.local_connector.is_some()
+            {
+                return Err(ApiError::bad_request(
+                    "local connector bundle skill cannot contain cloud or device-specific content",
+                ));
+            }
+        }
         "inline_content" => {
             if content
                 .inline
@@ -301,7 +325,7 @@ pub(super) fn validate_skill_content(content: &SkillContent) -> Result<(), ApiEr
         }
         _ => {
             return Err(ApiError::bad_request(
-                "content.kind must be inline_content, cloud_package, git_package, local_connector_file, or local_connector_package",
+                "content.kind must be local_connector_bundle, inline_content, cloud_package, git_package, local_connector_file, or local_connector_package",
             ));
         }
     }
