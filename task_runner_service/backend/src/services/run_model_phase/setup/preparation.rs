@@ -11,6 +11,7 @@ use crate::services::skill_runtime::prepare_local_skills;
 use mcp_builder::build_mcp_builder_parts;
 use mcp_inputs::{
     external_mcp_prefixed_input_items, load_external_mcp_servers, load_system_http_mcp_servers,
+    mcp_provider_skills_prefixed_input_items,
 };
 
 pub(super) async fn prepare_model_execution(
@@ -89,6 +90,23 @@ pub(super) async fn prepare_model_execution(
     prefixed_input_items.extend(external_mcp_prefixed_input_items(
         loaded_external_mcp.summaries.as_slice(),
         task.mcp_config.locale(),
+    ));
+    let provider_skills_prompt = capability_policy.and_then(|policy| {
+        let locale = if task.mcp_config.locale().is_english() {
+            "en-US"
+        } else {
+            "zh-CN"
+        };
+        policy.compose_provider_skills_prompt(
+            loaded_external_mcp
+                .summaries
+                .iter()
+                .map(|summary| summary.id.as_str()),
+            locale,
+        )
+    });
+    prefixed_input_items.extend(mcp_provider_skills_prefixed_input_items(
+        provider_skills_prompt,
     ));
     let mut run_spec = build_run_spec(
         task,

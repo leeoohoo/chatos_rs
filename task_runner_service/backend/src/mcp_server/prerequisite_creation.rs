@@ -96,6 +96,7 @@ impl TaskRunnerMcpService {
                 priority: item.priority,
                 tags: item.tags,
                 default_model_config_id: item.default_model_config_id,
+                requires_execution: item.requires_execution,
                 schedule: Some(TaskScheduleConfig {
                     mode: TaskScheduleMode::ContactAsync,
                     run_at: Some(now_rfc3339()),
@@ -286,6 +287,11 @@ impl TaskRunnerMcpService {
                     mcp_config.get_or_insert_with(task_mcp_config_for_explicit_tool_selection);
                 config.enabled = true;
                 config.selected_skill_ids = normalize_skill_ids(selected_skill_ids);
+            }
+            if let Some(requires_execution) = item.requires_execution {
+                mcp_config
+                    .get_or_insert_with(crate::models::TaskMcpConfig::default)
+                    .requires_execution = requires_execution;
             }
             let is_prerequisite_node = prerequisite_ref_targets.contains(client_ref.as_str());
             let mut request = CreateTaskRequest {

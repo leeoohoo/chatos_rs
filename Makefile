@@ -13,7 +13,7 @@ SHELL := /bin/bash
 help:
 	@echo "Chat OS tasks:"
 	@echo "  make dev                    # build/start the Docker stack from local source"
-	@echo "  make local-dev              # start host-side local dev stack for fast testing"
+	@echo "  make local-dev              # start host-side services/frontends (excludes desktop client)"
 	@echo "  make local-dev-stop         # stop host-side local dev stack"
 	@echo "  make local-dev-status       # show host-side local dev stack status"
 	@echo "  make docker-up              # pull/start the prebuilt Docker stack"
@@ -29,7 +29,7 @@ help:
 	@echo "  make docker-reset           # stop Docker services and remove volumes"
 	@echo "  make docker-logs            # follow Docker service logs"
 	@echo "  make docker-ps              # show Docker service status"
-	@echo "  make local-connector-client # run the host-side Local Connector client"
+	@echo "  make local-connector-client # separately run the host-side Local Connector client"
 	@echo "  make build                  # build Rust services and frontends"
 	@echo "  make test                   # run repo checks and focused tests"
 	@echo "  make smoke                  # run lightweight repo checks"

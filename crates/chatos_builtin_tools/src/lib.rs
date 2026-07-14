@@ -7,6 +7,7 @@ pub mod browser_command_support;
 pub mod browser_runtime;
 pub mod browser_tools;
 pub mod bundled_tools;
+pub mod catalog;
 pub mod code_maintainer;
 pub mod memory_readers;
 pub mod notepad;
@@ -40,9 +41,11 @@ pub use browser_tools::{
     BrowserVisionAdapterRef, BrowserVisionFailure, BrowserVisionRequest, BrowserVisionResponse,
 };
 pub use bundled_tools::{
-    bundled_tool_path, discover_bundled_tool_dirs, path_with_bundled_tools,
-    CHATOS_BUNDLED_TOOLS_DIR_ENV, CHATOS_BUNDLED_TOOLS_PATH_ENV,
+    agent_browser_binary_path, bundled_tool_path, discover_bundled_tool_dirs,
+    path_with_bundled_tools, AGENT_BROWSER_BIN_ENV, CHATOS_BUNDLED_TOOLS_DIR_ENV,
+    CHATOS_BUNDLED_TOOLS_PATH_ENV,
 };
+pub use catalog::builtin_tool_catalog;
 pub use code_maintainer::{
     CodeMaintainerHooks, CodeMaintainerHooksRef, CodeMaintainerOptions, CodeMaintainerService,
 };

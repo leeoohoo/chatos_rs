@@ -28,6 +28,7 @@ const SECTION_REMOTE_CONNECTION_CONTROLLER: &str = "builtin_remote_connection_co
 const SECTION_BROWSER_TOOLS: &str = "builtin_browser_tools";
 const SECTION_WEB_TOOLS: &str = "builtin_web_tools";
 const SECTION_NOTEPAD: &str = "builtin_notepad";
+const SECTION_AGENT_BUILDER: &str = "builtin_agent_builder";
 const SECTION_CONDITIONAL_CONTACT_MEMORY_READERS: &str = "conditional_contact_memory_readers";
 const SECTION_RUNTIME_LIMITATIONS: &str = "runtime_limitations";
 
@@ -43,6 +44,7 @@ const SECTION_ORDER: &[&str] = &[
     SECTION_BROWSER_TOOLS,
     SECTION_WEB_TOOLS,
     SECTION_NOTEPAD,
+    SECTION_AGENT_BUILDER,
     SECTION_CONDITIONAL_CONTACT_MEMORY_READERS,
 ];
 
@@ -162,8 +164,20 @@ fn section_id_for_kind(kind: BuiltinMcpKind) -> Option<&'static str> {
         BuiltinMcpKind::MemorySkillReader
         | BuiltinMcpKind::MemoryCommandReader
         | BuiltinMcpKind::MemoryPluginReader => Some(SECTION_CONDITIONAL_CONTACT_MEMORY_READERS),
-        BuiltinMcpKind::AgentBuilder => None,
+        BuiltinMcpKind::AgentBuilder => Some(SECTION_AGENT_BUILDER),
     }
+}
+
+pub fn builtin_mcp_provider_skill_instructions(
+    kind: BuiltinMcpKind,
+    locale: BuiltinMcpPromptLocale,
+) -> Option<String> {
+    let section_id = section_id_for_kind(kind)?;
+    prompt_section_registry(locale)
+        .sections
+        .get(section_id)
+        .map(|content| content.trim().to_string())
+        .filter(|content| !content.is_empty())
 }
 
 fn section_id_for_server(server: &McpBuiltinServer) -> Option<&'static str> {

@@ -3,6 +3,14 @@
 
 use crate::models::project::{normalize_project_id, ProjectService, PUBLIC_PROJECT_ID};
 
+#[derive(Debug, Clone, Default)]
+pub(crate) struct ResolvedProjectRuntime {
+    pub(crate) project_id: Option<String>,
+    pub(crate) project_name: Option<String>,
+    pub(crate) project_root: Option<String>,
+    pub(crate) source_type: Option<String>,
+}
+
 fn normalize_optional_string(value: Option<String>) -> Option<String> {
     value
         .map(|raw| raw.trim().to_string())
@@ -17,21 +25,29 @@ fn normalize_path_text(raw: &str) -> String {
     out
 }
 
-pub async fn resolve_project_runtime(
+pub(crate) async fn resolve_project_runtime_context(
     user_id: Option<&str>,
     project_id: Option<String>,
     project_root: Option<String>,
-) -> (Option<String>, Option<String>) {
+) -> ResolvedProjectRuntime {
     let mut resolved_project_id = normalize_optional_string(project_id);
     let mut resolved_project_root = normalize_optional_string(project_root);
 
     let Some(project_id) = resolved_project_id.clone() else {
-        return (resolved_project_id, resolved_project_root);
+        return ResolvedProjectRuntime {
+            project_id: resolved_project_id,
+            project_root: resolved_project_root,
+            ..ResolvedProjectRuntime::default()
+        };
     };
     let project_id = normalize_project_id(project_id.as_str());
     if project_id == PUBLIC_PROJECT_ID {
         resolved_project_id = Some(PUBLIC_PROJECT_ID.to_string());
-        return (resolved_project_id, resolved_project_root);
+        return ResolvedProjectRuntime {
+            project_id: resolved_project_id,
+            project_root: resolved_project_root,
+            ..ResolvedProjectRuntime::default()
+        };
     }
     resolved_project_id = Some(project_id.clone());
 
@@ -39,14 +55,22 @@ pub async fn resolve_project_runtime(
         Ok(Some(project)) => project,
         _ => {
             resolved_project_id = None;
-            return (resolved_project_id, resolved_project_root);
+            return ResolvedProjectRuntime {
+                project_id: resolved_project_id,
+                project_root: resolved_project_root,
+                ..ResolvedProjectRuntime::default()
+            };
         }
     };
 
     if let (Some(uid), Some(project_owner)) = (user_id, project.user_id.as_deref()) {
         if project_owner != uid {
             resolved_project_id = None;
-            return (resolved_project_id, resolved_project_root);
+            return ResolvedProjectRuntime {
+                project_id: resolved_project_id,
+                project_root: resolved_project_root,
+                ..ResolvedProjectRuntime::default()
+            };
         }
     }
 
@@ -62,5 +86,10 @@ pub async fn resolve_project_runtime(
         }
     }
 
-    (resolved_project_id, resolved_project_root)
+    ResolvedProjectRuntime {
+        project_id: resolved_project_id,
+        project_name: normalize_optional_string(Some(project.name)),
+        project_root: resolved_project_root,
+        source_type: normalize_optional_string(project.source_type),
+    }
 }

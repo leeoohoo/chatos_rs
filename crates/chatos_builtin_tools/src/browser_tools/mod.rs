@@ -50,6 +50,9 @@ pub struct BrowserToolsOptions {
     pub command_timeout_seconds: u64,
     pub max_snapshot_chars: usize,
     pub vision_adapter: Option<BrowserVisionAdapterRef>,
+    /// Register the authoritative schemas even when the browser executable is
+    /// unavailable. This is intended for descriptor/catalog generation only.
+    pub schema_catalog_only: bool,
 }
 
 #[derive(Clone)]
@@ -171,7 +174,10 @@ impl BrowserToolsService {
             vision_adapter: opts.vision_adapter,
         };
 
-        if let Err(reason) = browser_backend_available() {
+        if opts.schema_catalog_only {
+            service.register_basic_tools(bound.clone());
+            service.register_observe_tools(bound);
+        } else if let Err(reason) = browser_backend_available() {
             service
                 .registry
                 .register_unavailable_tools(BROWSER_TOOL_NAMES, reason.clone());
@@ -273,6 +279,7 @@ impl Default for BrowserToolsOptions {
             command_timeout_seconds: DEFAULT_COMMAND_TIMEOUT_SECONDS,
             max_snapshot_chars: DEFAULT_MAX_SNAPSHOT_CHARS,
             vision_adapter: None,
+            schema_catalog_only: false,
         }
     }
 }

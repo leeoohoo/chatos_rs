@@ -11,7 +11,7 @@ Current status:
 5. It opens an outbound WebSocket to the cloud service.
 6. It handles MCP, Skill prepare/execute/cancel, terminal PTY, terminal exec, and sandbox relay messages from the cloud service.
 7. One owner can hold only one active Local Connector session lease; a second client is rejected with `409 connector_already_active`.
-8. The installer embeds all 27 internal Skill Bundles. Twelve currently have implemented adapters; Browser remains unavailable unless a real `agent-browser` executable is installed, and the other fifteen fail closed as unsupported.
+8. The installer embeds all 27 internal Skill Bundles. Twelve currently have implemented adapters; Browser includes its pinned native `agent-browser` and Chrome for Testing runtime, while the other fifteen fail closed as unsupported.
 
 ## Run the Local Client
 
@@ -56,7 +56,7 @@ Run the reusable packaging script on macOS:
 ./local_connector_client/package-electron-macos-client.sh
 ```
 
-The script validates the 27-entry Skill catalog and every Bundle's `skill.json`/`instructions.md`, detects Apple Silicon versus Intel, installs locked frontend dependencies, builds the React UI and Rust Core, bundles the matching tools, and writes a DMG under:
+The script validates the 27-entry Skill catalog and every Bundle's `skill.json`/`instructions.md`, detects Apple Silicon versus Intel, installs locked frontend dependencies, builds the React UI and Rust Core, downloads/caches the pinned `agent-browser` and Chrome for Testing runtime, bundles the matching tools, and writes a DMG under:
 
 ```text
 local_connector_client/dist/electron-macos/

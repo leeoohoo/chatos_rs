@@ -7,6 +7,7 @@ mod config_refresh;
 mod contracts;
 mod model_values;
 mod normalization;
+mod provider_fetch;
 mod provider_handlers;
 mod provider_sync;
 mod settings_handlers;

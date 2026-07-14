@@ -2,12 +2,14 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use chatos_mcp_runtime::BuiltinMcpKind;
+use serde_json::{json, Value};
 
 use crate::models::*;
 use crate::store::{now_rfc3339, AppStore};
 
 mod internal_skills;
 
+use crate::tool_catalog::system_routed_tool_catalog;
 use internal_skills::{internal_skill_catalog, seed_internal_skills};
 
 pub const SANDBOX_IMAGES_MCP_RESOURCE_ID: &str = "system_mcp_sandbox_images";
@@ -50,7 +52,31 @@ async fn seed_builtin_mcps(store: &AppStore, admin_user_id: &str) -> Result<(), 
     for kind in builtin_kinds() {
         let now = now_rfc3339();
         let id = builtin_resource_id(kind);
-        if store.get_mcp(id.as_str()).await?.is_some() {
+        let provider_skills = provider_skills_for_builtin_mcp(kind);
+        let tool_catalog = Value::Array(chatos_builtin_tools::builtin_tool_catalog(kind)?);
+        if let Some(mut existing) = store.get_mcp(id.as_str()).await? {
+            let mut changed = false;
+            if !provider_skills_are_admin_managed(&existing.metadata)
+                && existing.metadata.extra.get("provider_skills") != Some(&provider_skills)
+            {
+                existing
+                    .metadata
+                    .extra
+                    .insert("provider_skills".to_string(), provider_skills);
+                changed = true;
+            }
+            if existing.metadata.extra.get("tool_catalog") != Some(&tool_catalog) {
+                existing
+                    .metadata
+                    .extra
+                    .insert("tool_catalog".to_string(), tool_catalog);
+                changed = true;
+            }
+            if changed {
+                existing.updated_by = admin_user_id.to_string();
+                existing.updated_at = now;
+                store.replace_mcp(&existing).await?;
+            }
             continue;
         }
         let display_name = builtin_display_name(kind);
@@ -77,6 +103,12 @@ async fn seed_builtin_mcps(store: &AppStore, admin_user_id: &str) -> Result<(), 
             },
             metadata: ResourceMetadata {
                 tags: vec!["system".to_string(), "builtin".to_string()],
+                extra: [
+                    ("provider_skills".to_string(), provider_skills),
+                    ("tool_catalog".to_string(), tool_catalog),
+                ]
+                .into_iter()
+                .collect(),
                 ..ResourceMetadata::default()
             },
             created_by: admin_user_id.to_string(),
@@ -152,7 +184,35 @@ async fn seed_system_routed_mcp(
     tags: &[&str],
     category: &str,
 ) -> Result<(), String> {
-    if store.get_mcp(resource_id).await?.is_some() {
+    let provider_skills = provider_skills_for_system_mcp(resource_id);
+    let tool_catalog = system_routed_tool_catalog(server_name)?.map(Value::Array);
+    if let Some(mut existing) = store.get_mcp(resource_id).await? {
+        let mut changed = false;
+        if let Some(provider_skills) = provider_skills {
+            if !provider_skills_are_admin_managed(&existing.metadata)
+                && existing.metadata.extra.get("provider_skills") != Some(&provider_skills)
+            {
+                existing
+                    .metadata
+                    .extra
+                    .insert("provider_skills".to_string(), provider_skills);
+                changed = true;
+            }
+        }
+        if let Some(tool_catalog) = tool_catalog {
+            if existing.metadata.extra.get("tool_catalog") != Some(&tool_catalog) {
+                existing
+                    .metadata
+                    .extra
+                    .insert("tool_catalog".to_string(), tool_catalog);
+                changed = true;
+            }
+        }
+        if changed {
+            existing.updated_by = admin_user_id.to_string();
+            existing.updated_at = now_rfc3339();
+            store.replace_mcp(&existing).await?;
+        }
         return Ok(());
     }
     let now = now_rfc3339();
@@ -178,6 +238,15 @@ async fn seed_system_routed_mcp(
         metadata: ResourceMetadata {
             tags: tags.iter().map(|value| (*value).to_string()).collect(),
             category: Some(category.to_string()),
+            extra: provider_skills
+                .map(|value| ("provider_skills".to_string(), value))
+                .into_iter()
+                .chain(
+                    tool_catalog
+                        .map(|value| ("tool_catalog".to_string(), value))
+                        .into_iter(),
+                )
+                .collect(),
             ..ResourceMetadata::default()
         },
         created_by: admin_user_id.to_string(),
@@ -186,6 +255,88 @@ async fn seed_system_routed_mcp(
         updated_at: now,
     };
     store.replace_mcp(&record).await
+}
+
+fn provider_skills_are_admin_managed(metadata: &ResourceMetadata) -> bool {
+    metadata
+        .extra
+        .get("provider_skills_managed_by")
+        .and_then(Value::as_str)
+        .is_some_and(|value| value == "admin")
+}
+
+fn provider_skills_for_system_mcp(resource_id: &str) -> Option<Value> {
+    let (id, name, description, instructions) = match resource_id {
+        SANDBOX_IMAGES_MCP_RESOURCE_ID => (
+            "sandbox_images_usage",
+            "Sandbox Images MCP 使用指南",
+            "指导 AI 搜索、复用和创建项目沙箱镜像，并只采用工具真实返回的镜像结果。",
+            include_str!("../provider_skills/sandbox-images.md"),
+        ),
+        PROJECT_ENVIRONMENT_MCP_RESOURCE_ID => (
+            "project_environment_usage",
+            "Project Environment MCP 使用指南",
+            "指导 AI 读取和更新当前项目的运行环境状态。",
+            include_str!("../provider_skills/project-environment.md"),
+        ),
+        LOCAL_CONNECTOR_APPROVAL_MCP_RESOURCE_ID => (
+            "local_command_approval_usage",
+            "Local Command Approval MCP 使用指南",
+            "指导 AI 根据当前项目证据完成本地命令审批，不执行命令或修改文件。",
+            include_str!("../provider_skills/local-command-approval.md"),
+        ),
+        CHATOS_TASK_RUNNER_MCP_RESOURCE_ID => (
+            "task_runner_usage",
+            "Task Runner MCP 使用指南",
+            "指导 AI 把当前用户和项目需求交给内部异步执行链路，并正确选择 MCP 与 Local Connector Skills。",
+            include_str!("../../../task_runner_service/mcp/task-runner-provider-skill.md"),
+        ),
+        _ => return None,
+    };
+    Some(json!([{
+        "id": id,
+        "name": name,
+        "description": description,
+        "instructions": instructions
+    }]))
+}
+
+fn provider_skills_for_builtin_mcp(kind: BuiltinMcpKind) -> Value {
+    let display_name = builtin_display_name(kind);
+    let mut skills = Vec::new();
+    for (locale, locale_key, suffix, name_suffix) in [
+        (
+            chatos_mcp_runtime::BuiltinMcpPromptLocale::ZhCn,
+            "zh-CN",
+            "zh_cn",
+            "使用指南",
+        ),
+        (
+            chatos_mcp_runtime::BuiltinMcpPromptLocale::EnUs,
+            "en-US",
+            "en_us",
+            "Usage Guide",
+        ),
+    ] {
+        let Some(instructions) =
+            chatos_mcp_runtime::builtin_mcp_provider_skill_instructions(kind, locale)
+        else {
+            continue;
+        };
+        let description = if locale.is_english() {
+            format!("Guidance for using the {display_name} tools exposed in the current run.")
+        } else {
+            format!("指导 AI 使用本轮实际暴露的 {display_name} 工具。")
+        };
+        skills.push(json!({
+            "id": format!("{}_usage_{suffix}", kind.server_name()),
+            "name": format!("{display_name} {name_suffix}"),
+            "description": description,
+            "instructions": instructions,
+            "locale": locale_key,
+        }));
+    }
+    Value::Array(skills)
 }
 
 async fn seed_agents(store: &AppStore) -> Result<(), String> {
@@ -575,6 +726,57 @@ mod tests {
         assert!(kinds.contains(&BuiltinMcpKind::BrowserTools));
         assert!(!kinds.contains(&BuiltinMcpKind::AgentBuilder));
         assert!(!kinds.contains(&BuiltinMcpKind::MemorySkillReader));
+    }
+
+    #[test]
+    fn every_seeded_builtin_mcp_has_provider_skills_in_both_locales() {
+        for kind in builtin_kinds() {
+            let skills = provider_skills_for_builtin_mcp(kind);
+            let skills = skills.as_array().expect("provider skills array");
+            assert_eq!(skills.len(), 2, "{}", kind.kind_name());
+            assert!(skills.iter().all(|skill| {
+                skill
+                    .get("instructions")
+                    .and_then(Value::as_str)
+                    .is_some_and(|value| !value.trim().is_empty())
+            }));
+            assert!(skills
+                .iter()
+                .any(|skill| { skill.get("locale").and_then(Value::as_str) == Some("zh-CN") }));
+            assert!(skills
+                .iter()
+                .any(|skill| { skill.get("locale").and_then(Value::as_str) == Some("en-US") }));
+        }
+    }
+
+    #[test]
+    fn every_seeded_builtin_mcp_has_a_real_tool_catalog() {
+        for kind in builtin_kinds() {
+            let tools = chatos_builtin_tools::builtin_tool_catalog(kind)
+                .unwrap_or_else(|err| panic!("{}: {err}", kind.kind_name()));
+            assert!(!tools.is_empty(), "{}", kind.kind_name());
+        }
+    }
+
+    #[test]
+    fn every_system_routed_mcp_has_provider_skills() {
+        for resource_id in [
+            SANDBOX_IMAGES_MCP_RESOURCE_ID,
+            PROJECT_ENVIRONMENT_MCP_RESOURCE_ID,
+            LOCAL_CONNECTOR_APPROVAL_MCP_RESOURCE_ID,
+            CHATOS_TASK_RUNNER_MCP_RESOURCE_ID,
+        ] {
+            let skills = provider_skills_for_system_mcp(resource_id)
+                .and_then(|value| value.as_array().cloned())
+                .expect("system MCP provider skills");
+            assert!(!skills.is_empty(), "{resource_id}");
+            assert!(skills.iter().all(|skill| {
+                skill
+                    .get("instructions")
+                    .and_then(Value::as_str)
+                    .is_some_and(|value| !value.trim().is_empty())
+            }));
+        }
     }
 
     #[test]

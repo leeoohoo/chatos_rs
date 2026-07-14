@@ -221,6 +221,8 @@ export const zhCN: MessageDictionary = {
   'tasks.form.description': '任务说明',
   'tasks.form.taskProfile': '任务类型',
   'tasks.form.defaultModel': '默认模型配置',
+  'tasks.form.requiresExecution': '需要运行项目',
+  'tasks.form.requiresExecutionHelp': '关闭后只使用默认沙箱复制、读取和修改项目文件，不要求先初始化项目专属运行镜像。',
   'tasks.form.modelPlaceholder': '可在运行时覆盖',
   'tasks.form.tags': '标签',
   'tasks.form.tagsPlaceholder': '用逗号分隔',

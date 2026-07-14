@@ -96,6 +96,59 @@ export interface McpRecord {
   updated_at: string;
 }
 
+export interface McpProviderSkill {
+  id: string;
+  name: string;
+  description: string;
+  instructions: string;
+  locale?: string | null;
+}
+
+export interface AdminAiModelConfig {
+  id: string;
+  name: string;
+  provider: string;
+  model: string;
+  model_name?: string;
+  enabled: boolean;
+  has_api_key: boolean;
+  supports_responses: boolean;
+}
+
+export interface OptimizeProviderSkillResponse {
+  mcp_id: string;
+  skill_id: string;
+  model_config_id: string;
+  provider: string;
+  model: string;
+  optimized_instructions: string;
+}
+
+export type OptimizeProviderSkillStreamEvent =
+  | { type: 'started'; provider: string; model: string }
+  | { type: 'thinking'; delta: string }
+  | { type: 'chunk'; delta: string }
+  | { type: 'done'; optimized_instructions: string }
+  | { type: 'error'; message: string };
+
+export interface McpToolDescriptor extends Record<string, unknown> {
+  name?: string;
+  description?: string;
+  inputSchema?: unknown;
+  outputSchema?: unknown;
+  input_schema?: unknown;
+  output_schema?: unknown;
+}
+
+export interface McpDescriptorResponse {
+  mcp_id: string;
+  server_name: string;
+  provider_skills: McpProviderSkill[];
+  tools: McpToolDescriptor[];
+  tools_status: 'ready' | 'degraded' | 'unavailable' | 'not_declared' | string;
+  tools_error?: string | null;
+}
+
 export interface SkillContent {
   kind:
     | 'inline_content'

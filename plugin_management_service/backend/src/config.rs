@@ -16,6 +16,7 @@ pub struct AppConfig {
     pub mongodb_database: String,
     pub user_service_base_url: String,
     pub user_service_request_timeout: Duration,
+    pub task_runner_base_url: String,
     pub cors_origins: Vec<String>,
     pub internal_api_secret: Option<String>,
     pub internal_api_secrets: HashMap<String, String>,
@@ -60,6 +61,9 @@ impl AppConfig {
             .or_else(|| normalized_env("USER_SERVICE_BASE_URL"))
             .unwrap_or_else(default_user_service_base_url),
             user_service_request_timeout: Duration::from_millis(user_service_request_timeout_ms),
+            task_runner_base_url: normalized_env("PLUGIN_MANAGEMENT_TASK_RUNNER_BASE_URL")
+                .or_else(|| normalized_env("TASK_RUNNER_BASE_URL"))
+                .unwrap_or_else(default_task_runner_base_url),
             cors_origins: normalized_env("PLUGIN_MANAGEMENT_CORS_ORIGINS")
                 .map(|value| {
                     value
@@ -210,4 +214,8 @@ fn default_database_url(database: &str) -> String {
 
 fn default_user_service_base_url() -> String {
     "http://127.0.0.1:39190".to_string()
+}
+
+fn default_task_runner_base_url() -> String {
+    "http://127.0.0.1:39090".to_string()
 }

@@ -3,34 +3,21 @@
 
 use super::*;
 
-pub(super) fn check_record_for_mcp(record: &McpRecord) -> ResourceCheckRecord {
-    let (status, error) = if record.enabled {
-        match record.runtime.kind.as_str() {
-            RUNTIME_KIND_LOCAL_CONNECTOR_STDIO
-            | RUNTIME_KIND_LOCAL_CONNECTOR_HTTP
-            | RUNTIME_KIND_LOCAL_CONNECTOR_BUILTIN_PROXY => (
-                "unknown".to_string(),
-                Some(
-                    "Local Connector runtime check is not wired in this service phase".to_string(),
-                ),
-            ),
-            _ => ("available".to_string(), None),
-        }
-    } else {
-        (
-            "unavailable".to_string(),
-            Some("resource is disabled".to_string()),
-        )
-    };
+pub(super) fn check_record_for_mcp(
+    record: &McpRecord,
+    status: impl Into<String>,
+    error: Option<String>,
+    tool_snapshot: Vec<serde_json::Value>,
+) -> ResourceCheckRecord {
     ResourceCheckRecord {
         id: format!("{}:{}", RESOURCE_KIND_MCP, record.id),
         resource_kind: RESOURCE_KIND_MCP.to_string(),
         resource_id: record.id.clone(),
         owner_user_id: record.owner_user_id.clone(),
-        status,
+        status: status.into(),
         last_checked_at: now_rfc3339(),
         last_error: error,
-        tool_snapshot: Vec::new(),
+        tool_snapshot,
         manifest_hash: None,
     }
 }
@@ -65,6 +52,40 @@ pub(super) fn check_record_for_skill(record: &SkillRecord) -> ResourceCheckRecor
         last_error: error,
         tool_snapshot: Vec::new(),
         manifest_hash: None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn mcp_check_record_keeps_the_real_tool_snapshot() {
+        let record = McpRecord {
+            id: "mcp-1".to_string(),
+            owner_user_id: "user-1".to_string(),
+            owner_kind: OWNER_KIND_USER.to_string(),
+            visibility: VISIBILITY_PRIVATE.to_string(),
+            source_kind: SOURCE_KIND_USER_CREATED.to_string(),
+            name: "demo".to_string(),
+            display_name: "Demo".to_string(),
+            description: None,
+            enabled: true,
+            runtime: McpRuntime {
+                kind: RUNTIME_KIND_HTTP.to_string(),
+                ..McpRuntime::default()
+            },
+            security: ResourceSecurity::default(),
+            metadata: ResourceMetadata::default(),
+            created_by: "user-1".to_string(),
+            updated_by: "user-1".to_string(),
+            created_at: "now".to_string(),
+            updated_at: "now".to_string(),
+        };
+        let tools = vec![json!({"name": "demo_tool", "inputSchema": {"type": "object"}})];
+        let check = check_record_for_mcp(&record, "available", None, tools.clone());
+        assert_eq!(check.tool_snapshot, tools);
     }
 }
 

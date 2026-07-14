@@ -24,6 +24,7 @@ struct DeviceResponse {
 #[derive(Debug, Deserialize)]
 struct WorkspaceResponse {
     id: String,
+    device_id: String,
     local_path_alias: String,
     local_path_fingerprint: String,
 }
@@ -83,16 +84,25 @@ pub(crate) async fn ensure_workspace_registered(
     let absolute_root = canonicalize_existing_dir(workspace_path.as_path())?;
     let fingerprint = workspace_fingerprint(absolute_root.as_path());
     let existing_index = state.workspace_index_by_fingerprint(fingerprint.as_str());
-    if let Some(index) = existing_index {
-        if !force_register {
-            if let Some(workspace) =
-                find_registered_workspace(client, config, device_id, fingerprint.as_str()).await?
-            {
-                state.workspaces[index].id = workspace.id.clone();
-                state.workspaces[index].alias = workspace.local_path_alias;
-                return Ok(workspace.id);
-            }
+    if let Some(mut workspace) =
+        find_registered_workspace(client, config, fingerprint.as_str()).await?
+    {
+        if workspace.device_id != device_id || force_register {
+            workspace =
+                move_registered_workspace(client, config, workspace.id.as_str(), device_id).await?;
         }
+        let workspace_state = WorkspaceState {
+            id: workspace.id.clone(),
+            absolute_root,
+            alias: workspace.local_path_alias,
+            fingerprint: workspace.local_path_fingerprint,
+        };
+        if let Some(index) = existing_index {
+            state.workspaces[index] = workspace_state;
+        } else {
+            state.workspaces.push(workspace_state);
+        }
+        return Ok(workspace.id);
     }
     let alias = config
         .workspace_alias
@@ -169,17 +179,12 @@ async fn registered_device(
 async fn find_registered_workspace(
     client: &reqwest::Client,
     config: &ClientConfig,
-    device_id: &str,
     fingerprint: &str,
 ) -> Result<Option<WorkspaceResponse>> {
     let response = client
         .get(api_url(
             &config.cloud_base_url,
-            format!(
-                "/api/local-connectors/workspaces?device_id={}",
-                urlencoding::encode(device_id)
-            )
-            .as_str(),
+            "/api/local-connectors/workspaces",
         ))
         .bearer_auth(config.access_token.as_str())
         .send()
@@ -193,6 +198,39 @@ async fn find_registered_workspace(
     Ok(workspaces
         .into_iter()
         .find(|workspace| workspace.local_path_fingerprint == fingerprint))
+}
+
+async fn move_registered_workspace(
+    client: &reqwest::Client,
+    config: &ClientConfig,
+    workspace_id: &str,
+    device_id: &str,
+) -> Result<WorkspaceResponse> {
+    let response = client
+        .put(api_url(
+            &config.cloud_base_url,
+            format!(
+                "/api/local-connectors/workspaces/{}",
+                urlencoding::encode(workspace_id)
+            )
+            .as_str(),
+        ))
+        .bearer_auth(config.access_token.as_str())
+        .json(&json!({
+            "device_id": device_id,
+            "status": "active",
+        }))
+        .send()
+        .await
+        .context("move local connector workspace to current device")?;
+    ensure_success(
+        response.status(),
+        "move local connector workspace to current device",
+    )?;
+    response
+        .json::<WorkspaceResponse>()
+        .await
+        .context("parse moved local connector workspace response")
 }
 
 pub(crate) async fn disconnect_device(

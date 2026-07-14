@@ -6,6 +6,7 @@ pub(crate) mod docker;
 pub(crate) mod images;
 pub(crate) mod lease;
 pub(crate) mod manifest;
+pub(crate) mod pairing;
 pub(crate) mod proxy;
 pub(crate) mod relay;
 pub(crate) mod types;

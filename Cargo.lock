@@ -571,6 +571,7 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "chatos_mcp_runtime",
+ "chatos_project_mcp_contract",
  "chrono",
  "dirs",
  "futures",
@@ -2906,7 +2907,10 @@ version = "0.1.0"
 dependencies = [
  "axum",
  "chatos_agent",
+ "chatos_ai_runtime",
+ "chatos_builtin_tools",
  "chatos_mcp_runtime",
+ "chatos_sandbox_image_mcp",
  "chatos_service_runtime",
  "chrono",
  "dotenvy",

@@ -88,6 +88,25 @@ const harnessProjectPathMatch = (path: string): { root: string; relative: string
   };
 };
 
+const localConnectorPathMatch = (path: string): { root: string; relative: string } | null => {
+  const match = path.match(/^(local:\/\/connector\/[^/]+\/[^/]+)(?:\/(.*))?$/);
+  if (!match) {
+    return null;
+  }
+  const relative = (match[2] || '')
+    .split('/')
+    .filter(Boolean)
+    .map((part) => {
+      try {
+        return decodeURIComponent(part);
+      } catch {
+        return part;
+      }
+    })
+    .join('/');
+  return { root: match[1], relative };
+};
+
 export const isHarnessProjectPath = (path: string | null | undefined): boolean => (
   harnessProjectPathMatch(normalizePathForCompare(path || '')) !== null
 );
@@ -135,6 +154,11 @@ export const getUserVisiblePath = (
   const harnessPath = harnessProjectPathMatch(normalized);
   if (harnessPath) {
     return joinDisplayPath('/', harnessPath.relative);
+  }
+
+  const localConnectorPath = localConnectorPathMatch(normalized);
+  if (localConnectorPath) {
+    return joinDisplayPath('/', localConnectorPath.relative);
   }
 
   const scoped = userScopedRootMatch(normalized);

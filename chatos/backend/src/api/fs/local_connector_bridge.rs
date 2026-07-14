@@ -6,9 +6,9 @@ use axum::Json;
 use serde_json::{json, Value};
 
 use crate::api::local_connectors::{
-    call_local_mcp_tool, local_connector_root_path, parse_local_connector_root_path,
-    LocalConnectorRootRef, LOCAL_CONNECTOR_BUILTIN_CODE_READ, LOCAL_CONNECTOR_BUILTIN_CODE_WRITE,
-    LOCAL_CONNECTOR_BUILTIN_TERMINAL,
+    call_local_mcp_tool, call_local_mcp_tool_readonly, local_connector_root_path,
+    parse_local_connector_root_path, LocalConnectorRootRef, LOCAL_CONNECTOR_BUILTIN_CODE_READ,
+    LOCAL_CONNECTOR_BUILTIN_CODE_WRITE, LOCAL_CONNECTOR_BUILTIN_TERMINAL,
 };
 
 pub(super) async fn list_entries(
@@ -18,7 +18,7 @@ pub(super) async fn list_entries(
     let root_ref = parse_local_connector_root_path(raw_path)?;
     let relative_path = local_relative_arg(&root_ref);
     Some(
-        match call_local_mcp_tool(
+        match call_local_mcp_tool_readonly(
             root_ref.device_id.as_str(),
             root_ref.workspace_id.as_str(),
             None,
@@ -50,7 +50,7 @@ pub(super) async fn read_file(raw_path: &str) -> Option<(StatusCode, Json<Value>
     let root_ref = parse_local_connector_root_path(raw_path)?;
     let relative_path = local_relative_arg(&root_ref);
     Some(
-        match call_local_mcp_tool(
+        match call_local_mcp_tool_readonly(
             root_ref.device_id.as_str(),
             root_ref.workspace_id.as_str(),
             None,
@@ -74,7 +74,7 @@ pub(super) async fn search_content(
     let root_ref = parse_local_connector_root_path(raw_path)?;
     let relative_path = local_relative_arg(&root_ref);
     Some(
-        match call_local_mcp_tool(
+        match call_local_mcp_tool_readonly(
             root_ref.device_id.as_str(),
             root_ref.workspace_id.as_str(),
             None,
@@ -529,7 +529,7 @@ async fn find_local_entries(
         if matches.len() >= max_results {
             break;
         }
-        let value = call_local_mcp_tool(
+        let value = call_local_mcp_tool_readonly(
             root_ref.device_id.as_str(),
             root_ref.workspace_id.as_str(),
             None,

@@ -56,6 +56,63 @@ function resourcePath(...segments) {
   return path.join(__dirname, 'resources', ...segments);
 }
 
+function bundledToolsPlatformName() {
+  const os = process.platform === 'darwin'
+    ? 'macos'
+    : process.platform === 'win32'
+      ? 'windows'
+      : 'linux';
+  const arch = process.arch === 'arm64' ? 'arm64' : 'x64';
+  return `${os}-${arch}`;
+}
+
+function bundledBrowserRuntime() {
+  const toolsDir = resourcePath('bundled-tools', bundledToolsPlatformName());
+  const agentBrowser = path.join(
+    toolsDir,
+    process.platform === 'win32' ? 'agent-browser.exe' : 'agent-browser',
+  );
+  const browserExecutable = process.platform === 'darwin'
+    ? path.join(
+        toolsDir,
+        'browser',
+        'Google Chrome for Testing.app',
+        'Contents',
+        'MacOS',
+        'Google Chrome for Testing',
+      )
+    : process.platform === 'win32'
+      ? path.join(toolsDir, 'browser', 'chrome-win64', 'chrome.exe')
+      : path.join(toolsDir, 'browser', 'chrome-linux64', 'chrome');
+  return {
+    toolsDir,
+    agentBrowser,
+    browserExecutable,
+  };
+}
+
+function coreExecutablePath() {
+  const existing = String(process.env.PATH || '').split(path.delimiter).filter(Boolean);
+  const candidates = [bundledBrowserRuntime().toolsDir];
+  if (process.platform === 'darwin') {
+    candidates.push(
+      path.join(app.getPath('home'), '.docker', 'bin'),
+      '/Applications/Docker.app/Contents/Resources/bin',
+      '/opt/homebrew/bin',
+      '/usr/local/bin',
+    );
+  } else if (process.platform === 'win32') {
+    for (const root of [process.env.ProgramFiles, process.env['ProgramFiles(x86)']]) {
+      if (root) {
+        candidates.push(path.join(root, 'Docker', 'Docker', 'resources', 'bin'));
+      }
+    }
+  } else {
+    candidates.push('/usr/local/bin', '/usr/bin', '/snap/bin');
+  }
+  return [...new Set([...candidates, ...existing])].join(path.delimiter);
+}
+
 function startCore() {
   if (!ipcEndpoint) {
     ipcEndpoint = createIpcEndpoint();
@@ -65,8 +122,14 @@ function startCore() {
     ? 'local_connector_client_core.exe'
     : 'local_connector_client_core';
   const corePath = resourcePath(coreName);
+  const browserRuntime = bundledBrowserRuntime();
+  const browserStateDir = process.platform === 'win32'
+    ? path.join(app.getPath('userData'), 'browser-runtime')
+    : path.join('/tmp', `chatos-agent-browser-${process.getuid?.() ?? process.pid}`);
+  fs.mkdirSync(browserStateDir, { recursive: true, mode: 0o700 });
   const env = {
     ...process.env,
+    PATH: coreExecutablePath(),
     CHATOS_BUNDLED_TOOLS_DIR: resourcePath('bundled-tools'),
     CHATOS_BUNDLED_SKILLS_DIR: resourcePath('skill-bundles'),
     LOCAL_CONNECTOR_DESKTOP_AUTH_TOKEN: desktopAuthToken,
@@ -74,6 +137,9 @@ function startCore() {
     LOCAL_CONNECTOR_OPEN_UI: '0',
     LOCAL_CONNECTOR_REQUIRE_SECURE_REMOTE: process.env.LOCAL_CONNECTOR_REQUIRE_SECURE_REMOTE || '1',
   };
+  env.AGENT_BROWSER_BIN = browserRuntime.agentBrowser;
+  env.AGENT_BROWSER_EXECUTABLE_PATH = browserRuntime.browserExecutable;
+  env.AGENT_BROWSER_SOCKET_DIR = browserStateDir;
 
   const coreLog = openCoreLog();
   try {

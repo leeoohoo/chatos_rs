@@ -4,22 +4,6 @@
 use super::*;
 
 impl RunService {
-    pub(in crate::services) async fn sandbox_manager_base_url_for_task(
-        &self,
-        task: &TaskRecord,
-    ) -> Result<String, String> {
-        if let Some(base_url) = task
-            .mcp_config
-            .sandbox_manager_base_url
-            .as_deref()
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-        {
-            return Ok(base_url.trim_end_matches('/').to_string());
-        }
-        self.effective_sandbox_manager_base_url().await
-    }
-
     pub(in crate::services) async fn release_sandbox(
         &self,
         run: &TaskRunRecord,
@@ -40,10 +24,26 @@ impl RunService {
         } else {
             context.manager_base_url.clone()
         };
-        let client = match SandboxManagerClient::new(
-            base_url,
-            SandboxManagerAuth::from_config(&self.config),
-        ) {
+        let auth = if context.manager_auth_mode.as_deref() == Some("local_connector") {
+            match (
+                context.manager_client_key.clone(),
+                context.manager_owner_user_id.clone(),
+            ) {
+                (Some(client_key), Some(owner_user_id)) => Some(SandboxManagerAuth {
+                    client_id: context
+                        .manager_client_id
+                        .clone()
+                        .unwrap_or_else(|| "task-runner".to_string()),
+                    client_key,
+                    mode: SandboxManagerAuthMode::LocalConnector,
+                    owner_user_id: Some(owner_user_id),
+                }),
+                _ => None,
+            }
+        } else {
+            SandboxManagerAuth::from_config(&self.config)
+        };
+        let client = match SandboxManagerClient::new(base_url, auth) {
             Ok(client) => client,
             Err(err) => {
                 warn!(

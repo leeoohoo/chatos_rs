@@ -68,7 +68,7 @@ fn ready_bundle_v2_fingerprint_matches_plugin_management_seed() {
         .join("\n");
     assert_eq!(
         hex::encode(Sha256::digest(rows.as_bytes())),
-        "91dcdc4f36bfa4aa3f7e56d9f9d2c62fe299d2f1175c373fbbe2cdc05168ecee"
+        "a35f8389f83ffdfaffdf849e7bd505f6444e9de1147cc7741bd7997f7bd9f68d"
     );
 }
 
@@ -83,7 +83,7 @@ fn all_27_bundled_skill_fingerprints_match_plugin_management_seed() {
         .join("\n");
     assert_eq!(
         hex::encode(Sha256::digest(rows.as_bytes())),
-        "444a397c67701aec2fab0d8ba34bee950f802c84934ce8f2b9718554be7279d2"
+        "223fd6a9576b6c6f90f7c4a7e0f3862d68e8a212c4e308a3701844d0e5398ef9"
     );
 }
 

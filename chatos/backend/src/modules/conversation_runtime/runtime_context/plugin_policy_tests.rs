@@ -118,3 +118,58 @@ fn project_planner_project_mcp_requires_sync_secret() {
 
     assert!(err.contains("PROJECT_SERVICE_SYNC_SECRET"));
 }
+
+#[test]
+fn provider_skills_are_composed_into_the_mcp_system_context() {
+    let mut metadata = chatos_plugin_management_sdk::ResourceMetadata::default();
+    metadata.extra.insert(
+        "provider_skills".to_string(),
+        serde_json::json!([{
+            "id": "task_runner_usage",
+            "name": "Task Runner Usage",
+            "description": "Create durable background tasks.",
+            "instructions": "Call list_available_skills before selecting selected_skill_ids."
+        }]),
+    );
+
+    let mcp = chatos_plugin_management_sdk::McpRecord {
+        id: "task-runner".to_string(),
+        owner_user_id: "owner".to_string(),
+        owner_kind: "system".to_string(),
+        visibility: "system_private".to_string(),
+        source_kind: "system_seed".to_string(),
+        name: "task_runner_service".to_string(),
+        display_name: "Task Runner".to_string(),
+        description: None,
+        enabled: true,
+        runtime: chatos_plugin_management_sdk::McpRuntime {
+            server_name: Some("task_runner_service".to_string()),
+            ..Default::default()
+        },
+        security: Default::default(),
+        metadata,
+        created_by: "system".to_string(),
+        updated_by: "system".to_string(),
+        created_at: "now".to_string(),
+        updated_at: "now".to_string(),
+    };
+    let prompt =
+        chatos_plugin_management_sdk::compose_mcp_provider_skills_prompt([&mcp], Some("zh-CN"))
+            .expect("provider prompt");
+
+    assert!(prompt.contains("MCP Provider Skills"));
+    assert!(prompt.contains("task_runner_service"));
+    assert!(prompt.contains("list_available_skills"));
+    assert!(prompt.contains("selected_skill_ids"));
+}
+
+#[test]
+fn provider_skill_prompt_is_appended_to_existing_contact_prompt() {
+    let merged = merge_optional_system_prompts(
+        Some("contact instructions".to_string()),
+        Some("provider instructions".to_string()),
+    )
+    .expect("merged prompt");
+
+    assert_eq!(merged, "contact instructions\n\nprovider instructions");
+}

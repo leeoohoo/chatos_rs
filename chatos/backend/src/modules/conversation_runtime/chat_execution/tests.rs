@@ -70,6 +70,8 @@ fn runtime_context(
         builtin_mcp_system_prompt: None,
         selected_commands_for_snapshot: Arc::new(Mutex::new(Vec::new())),
         resolved_project_id: Some("project-1".to_string()),
+        resolved_project_name: Some("Demo Project".to_string()),
+        resolved_project_source_type: Some("local".to_string()),
         resolved_project_root: Some("C:/project/demo".to_string()),
         default_remote_connection_id: None,
         workspace_root: Some("C:/project/demo".to_string()),
@@ -103,6 +105,24 @@ fn initializes_stream_agent_with_resolved_profile() {
     let agent = init_chatos_stream_agent(&model_runtime(false), profile);
 
     assert_eq!(agent.profile(), profile);
+}
+
+#[test]
+fn project_context_prompt_names_the_project_and_requires_task_runner_follow_through() {
+    let mut context = runtime_context(false);
+    context.resolved_project_name = Some("CubeSandbox".to_string());
+    context.resolved_project_source_type = Some("cloud".to_string());
+    context.resolved_project_root = None;
+    context.workspace_root = None;
+
+    let prompt = build_workspace_global_prompt(&context).expect("project context prompt");
+
+    assert!(prompt.contains("当前项目名称：CubeSandbox"));
+    assert!(prompt.contains("当前项目 ID：project-1"));
+    assert!(prompt.contains("当前项目来源类型：cloud"));
+    assert!(prompt.contains("Task Runner 是你自己的内部异步执行通道"));
+    assert!(prompt.contains("不得仅因为主对话不能直接读取文件就声称无法查看"));
+    assert!(prompt.contains("不要要求用户再次粘贴代码或提供项目路径"));
 }
 
 #[test]

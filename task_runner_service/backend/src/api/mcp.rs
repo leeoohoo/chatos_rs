@@ -44,6 +44,12 @@ pub(super) async fn get_mcp_server_info(State(state): State<AppState>) -> Json<M
     Json(state.task_runner_mcp_service.server_info())
 }
 
+pub(super) async fn get_mcp_provider_descriptor(
+    State(state): State<AppState>,
+) -> Json<crate::models::McpProviderDescriptor> {
+    Json(state.task_runner_mcp_service.provider_descriptor())
+}
+
 pub(super) async fn preview_mcp_prompt(
     State(state): State<AppState>,
     Json(input): Json<McpPromptPreviewRequest>,

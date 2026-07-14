@@ -21,8 +21,8 @@ use super::external_mcp_configs::{
 };
 use super::internal::get_user_execution_options;
 use super::mcp::{
-    get_mcp_server_info, list_mcp_catalog, list_task_capability_catalog, mcp_entrypoint,
-    preview_mcp_prompt,
+    get_mcp_provider_descriptor, get_mcp_server_info, list_mcp_catalog,
+    list_task_capability_catalog, mcp_entrypoint, preview_mcp_prompt,
 };
 use super::models::{
     create_model_config, delete_model_config, get_model_config, list_model_catalog,
@@ -218,6 +218,10 @@ pub fn build_router(state: AppState) -> Router {
 
     Router::new()
         .route("/api/health", get(health_handler))
+        .route(
+            "/api/mcp/provider-descriptor",
+            get(get_mcp_provider_descriptor),
+        )
         .route("/api/system/config", get(system_config_handler))
         .route("/api/auth/login", post(login_handler))
         .route("/api/auth/agent-token", post(agent_token_handler))

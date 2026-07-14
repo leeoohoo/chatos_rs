@@ -25,6 +25,7 @@ export interface TaskMcpConfig {
   builtin_prompt_mode: TaskBuiltinPromptMode;
   builtin_prompt_locale: string;
   enabled_builtin_kinds: string[];
+  requires_execution: boolean;
   workspace_dir?: string | null;
   default_remote_server_id?: string | null;
   external_mcp_config_ids: string[];

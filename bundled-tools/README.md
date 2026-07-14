@@ -3,6 +3,10 @@
 Runtime shells prepend the current platform directory under this folder to
 `PATH` when a bundled `rg` binary is present.
 
+Desktop packaging also stages a pinned `agent-browser` native executable and
+Chrome for Testing under the selected platform directory. These large runtime
+artifacts are prepared by the platform packaging script and are not checked in.
+
 Directory names:
 
 - `macos-arm64`
@@ -46,3 +50,5 @@ scripts/check-bundled-tools-integrity.sh
 ```
 
 Third-party note: `rg` is ripgrep, licensed upstream under MIT or Unlicense.
+`agent-browser` is licensed under Apache-2.0. Chrome for Testing is distributed
+under Google's Chrome/Chromium terms included with its archive.

@@ -61,6 +61,8 @@ pub struct TaskMcpConfig {
     pub sandbox_enabled: Option<bool>,
     #[serde(default)]
     pub sandbox_manager_base_url: Option<String>,
+    #[serde(default = "task_requires_execution_default")]
+    pub requires_execution: bool,
     #[serde(default)]
     pub default_remote_server_id: Option<String>,
     #[serde(default)]
@@ -84,6 +86,7 @@ impl Default for TaskMcpConfig {
             workspace_dir: None,
             sandbox_enabled: None,
             sandbox_manager_base_url: None,
+            requires_execution: task_requires_execution_default(),
             default_remote_server_id: None,
             external_mcp_config_ids: Vec::new(),
             selected_skill_ids: Vec::new(),
@@ -103,12 +106,28 @@ fn task_mcp_enabled_default() -> bool {
     true
 }
 
+fn task_requires_execution_default() -> bool {
+    true
+}
+
 fn task_mcp_locale_default() -> String {
     BuiltinMcpPromptLocale::DEFAULT_KEY.to_string()
 }
 
 fn task_mcp_builtin_kinds_default() -> Vec<String> {
     Vec::new()
+}
+
+#[cfg(test)]
+mod task_mcp_config_tests {
+    use super::*;
+
+    #[test]
+    fn legacy_task_config_defaults_to_requiring_execution() {
+        let config = serde_json::from_value::<TaskMcpConfig>(serde_json::json!({}))
+            .expect("legacy task config");
+        assert!(config.requires_execution);
+    }
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]

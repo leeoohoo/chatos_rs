@@ -223,6 +223,7 @@ async fn test_state_with_secret(internal_api_secret: Option<&str>) -> AppState {
             mongodb_database: "plugin_management_api_unit_test".to_string(),
             user_service_base_url: "http://127.0.0.1:39190".to_string(),
             user_service_request_timeout: Duration::from_secs(1),
+            task_runner_base_url: "http://127.0.0.1:39090".to_string(),
             cors_origins: vec!["http://127.0.0.1:39261".to_string()],
             internal_api_secret: internal_api_secret.map(ToOwned::to_owned),
             internal_api_secrets: HashMap::new(),

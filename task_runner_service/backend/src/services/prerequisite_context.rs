@@ -28,7 +28,7 @@ pub(super) fn build_task_prompt(
     locale: BuiltinMcpPromptLocale,
 ) -> String {
     let text = task_prompt_text(locale);
-    let current_task_prompt = if let Some(prompt) = prompt_override
+    let mut current_task_prompt = if let Some(prompt) = prompt_override
         .map(str::trim)
         .filter(|value| !value.is_empty())
     {
@@ -54,6 +54,13 @@ pub(super) fn build_task_prompt(
         parts.push(text.completion_instruction.to_string());
         parts.join("\n\n")
     };
+    if !task.mcp_config.requires_execution {
+        current_task_prompt.push_str(if locale.is_english() {
+            "\n\nExecution policy: this is a file-only task. Use the default sandbox to inspect and modify project files. Do not require, initialize, start, build, test, or validate the project's dedicated runtime environment unless the user explicitly changes the task policy."
+        } else {
+            "\n\n执行策略：这是一个仅文件处理任务。使用默认沙箱读取和修改项目文件；除非用户明确修改任务策略，否则不要要求、初始化、启动、构建、测试或验证项目专属运行环境。"
+        });
+    }
 
     if prerequisite_context.is_empty() {
         return current_task_prompt;

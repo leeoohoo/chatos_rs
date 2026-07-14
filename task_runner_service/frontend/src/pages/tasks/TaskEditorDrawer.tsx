@@ -275,6 +275,14 @@ export function TaskEditorDrawer({
             placeholder={t('tasks.form.modelPlaceholder')}
           />
         </Form.Item>
+        <Form.Item
+          name="requiresExecution"
+          label={t('tasks.form.requiresExecution')}
+          valuePropName="checked"
+          extra={t('tasks.form.requiresExecutionHelp')}
+        >
+          <Switch />
+        </Form.Item>
         <Form.Item name="prerequisite_task_ids" label="前置任务">
           <Select
             mode="multiple"

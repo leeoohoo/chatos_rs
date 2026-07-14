@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use serde_json::json;
+use serde_json::{json, Value};
 
 use crate::models::{UserModelConfigRecord, UserModelProviderRecord, UserModelSettingsRecord};
 
@@ -26,7 +26,7 @@ pub(super) fn model_config_public_value(
                 .as_deref()
                 .map(str::trim)
                 .is_some_and(|value| !value.is_empty()),
-        "base_url": serde_json::Value::Null,
+        "base_url": record.base_url,
         "enabled": record.enabled,
         "supports_images": record.supports_images,
         "supports_reasoning": record.supports_reasoning,
@@ -34,7 +34,9 @@ pub(super) fn model_config_public_value(
         "created_at": record.created_at,
         "updated_at": record.updated_at,
     });
-    let _ = include_secret;
+    if include_secret {
+        value["api_key"] = Value::String(record.api_key.unwrap_or_default());
+    }
     if let Some(sync_warnings) = sync_warnings.filter(|items| !items.is_empty()) {
         value["sync_warnings"] = json!(sync_warnings);
     }
@@ -57,7 +59,7 @@ pub(super) fn model_provider_public_value(
                 .as_deref()
                 .map(str::trim)
                 .is_some_and(|value| !value.is_empty()),
-        "base_url": serde_json::Value::Null,
+        "base_url": record.base_url,
         "enabled": record.enabled,
         "supports_images": record.supports_images,
         "supports_reasoning": record.supports_reasoning,
@@ -69,7 +71,9 @@ pub(super) fn model_provider_public_value(
         "created_at": record.created_at,
         "updated_at": record.updated_at,
     });
-    let _ = include_secret;
+    if include_secret {
+        value["api_key"] = Value::String(record.api_key.unwrap_or_default());
+    }
     if let Some(sync_warnings) = sync_warnings.filter(|items| !items.is_empty()) {
         value["sync_warnings"] = json!(sync_warnings);
     }

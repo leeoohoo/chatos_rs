@@ -17,6 +17,8 @@ pub(crate) fn create_task_schema() -> Value {
             "input_payload": { "description": "Structured JSON input, references, or material needed for execution." },
             "priority": { "type": "integer", "description": "Higher numbers mean higher priority." },
             "tags": { "type": "array", "items": { "type": "string" }, "description": "Task tags." },
+            "default_model_config_id": default_model_config_id_schema(),
+            "requires_execution": requires_execution_schema(),
             "schedule": { "type": "object", "description": "Optional task schedule configuration." },
             "prerequisite_task_ids": prerequisite_task_ids_schema(),
             "enabled_builtin_kinds": {
@@ -82,6 +84,8 @@ pub(crate) fn create_tasks_with_prerequisites_schema() -> Value {
                         "input_payload": {},
                         "priority": { "type": "integer" },
                         "tags": { "type": "array", "items": { "type": "string" } },
+                        "default_model_config_id": default_model_config_id_schema(),
+                        "requires_execution": requires_execution_schema(),
                         "schedule": { "type": "object" },
                         "enabled_builtin_kinds": {
                             "type": "array",
@@ -106,6 +110,22 @@ pub(crate) fn create_tasks_with_prerequisites_schema() -> Value {
         },
         "required": ["tasks"],
         "additionalProperties": false
+    })
+}
+
+fn default_model_config_id_schema() -> Value {
+    json!({
+        "type": "string",
+        "minLength": 1,
+        "description": "Optional single Task Runner execution model config id. The available choices are injected dynamically for the current user. Choose the model whose usage scenario best matches this task; omit the field to let Task Runner select automatically."
+    })
+}
+
+fn requires_execution_schema() -> Value {
+    json!({
+        "type": "boolean",
+        "default": true,
+        "description": "Whether the task must run or validate the project. Set false for file-only inspection or editing: Task Runner uses the default sandbox image and does not require the project's initialized runtime image."
     })
 }
 
@@ -154,6 +174,7 @@ pub(crate) fn create_project_execution_tasks_schema() -> Value {
                             "type": "string",
                             "description": "Optional Task Runner execution model config id. Omit to use the current user's default."
                         },
+                        "requires_execution": requires_execution_schema(),
                         "enabled_builtin_kinds": {
                             "type": "array",
                             "items": builtin_mcp_kind_item_schema(),
@@ -185,6 +206,7 @@ pub(crate) fn task_mcp_config_schema() -> Value {
         "type": "object",
         "properties": {
             "enabled": { "type": "boolean", "description": "Whether MCP is enabled for this task." },
+            "requires_execution": requires_execution_schema(),
             "builtin_prompt_mode": {
                 "type": "string",
                 "enum": ["effective", "configured"],

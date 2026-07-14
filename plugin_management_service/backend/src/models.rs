@@ -171,6 +171,28 @@ pub struct McpRecord {
     pub updated_at: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct McpProviderSkill {
+    pub id: String,
+    pub name: String,
+    pub description: String,
+    pub instructions: String,
+    #[serde(default)]
+    pub locale: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct McpDescriptorResponse {
+    pub mcp_id: String,
+    pub server_name: String,
+    #[serde(default)]
+    pub provider_skills: Vec<McpProviderSkill>,
+    #[serde(default)]
+    pub tools: Vec<Value>,
+    pub tools_status: String,
+    pub tools_error: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct McpPayload {
     pub owner_user_id: Option<String>,

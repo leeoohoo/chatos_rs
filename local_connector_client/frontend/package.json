@@ -34,8 +34,7 @@
     },
     "files": [
       "dist/**/*",
-      "electron/main.cjs",
-      "electron/preload.cjs",
+      "electron/*.cjs",
       "package.json"
     ],
     "extraResources": [

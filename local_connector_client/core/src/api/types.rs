@@ -169,6 +169,13 @@ impl LocalApiError {
         }
     }
 
+    pub(super) fn conflict(message: impl Into<String>) -> Self {
+        Self {
+            status: axum::http::StatusCode::CONFLICT,
+            message: message.into(),
+        }
+    }
+
     fn internal(message: impl Into<String>) -> Self {
         Self {
             status: axum::http::StatusCode::INTERNAL_SERVER_ERROR,

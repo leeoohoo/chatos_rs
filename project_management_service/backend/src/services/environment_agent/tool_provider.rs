@@ -77,58 +77,7 @@ impl BuiltinToolProvider for ProjectEnvironmentToolProvider {
     }
 
     fn list_tools(&self) -> Vec<Value> {
-        vec![
-            json!({
-                "name": "get_current_project_runtime_environment",
-                "description": "Get the current project details and persisted runtime environment for this project. The project id is bound by the server.",
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {},
-                    "additionalProperties": false
-                }
-            }),
-            json!({
-                "name": "update_current_project_runtime_environment",
-                "description": "Persist the current project's runtime environment analysis, required service images, generated environment variables, or non-runnable reason. The project id is bound by the server.",
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {
-                        "status": {
-                            "type": "string",
-                            "enum": ["ready", "not_runnable", "failed", "pending_configuration"]
-                        },
-                        "analysis_summary": {"type": "string"},
-                        "not_runnable_reason": {"type": ["string", "null"]},
-                        "detected_stack": {"type": "object"},
-                        "required_services": {"type": "array"},
-                        "env_vars": {"type": "object"},
-                        "last_error": {"type": ["string", "null"]},
-                        "images": {
-                            "type": "array",
-                            "items": {
-                                "type": "object",
-                                "properties": {
-                                    "environment_key": {"type": "string"},
-                                    "environment_type": {"type": "string"},
-                                    "display_name": {"type": "string"},
-                                    "image_id": {"type": ["string", "null"]},
-                                    "image_ref": {"type": ["string", "null"]},
-                                    "image_provider": {"type": "string"},
-                                    "features": {"type": "array"},
-                                    "ports": {"type": "array"},
-                                    "env_vars": {"type": "object"},
-                                    "status": {"type": "string"},
-                                    "error": {"type": ["string", "null"]}
-                                },
-                                "required": ["environment_key", "environment_type", "display_name", "status"],
-                                "additionalProperties": false
-                            }
-                        }
-                    },
-                    "additionalProperties": false
-                }
-            }),
-        ]
+        chatos_mcp_runtime::project_environment_tool_definitions()
     }
 
     async fn call_tool(
@@ -186,6 +135,40 @@ impl ProjectEnvironmentToolProvider {
             .await?
             .unwrap_or_else(|| default_runtime_environment_for_project(&self.project, None));
 
+        let requested_status = args
+            .status
+            .as_deref()
+            .map(parse_runtime_environment_status)
+            .transpose()?;
+        let proposed_not_runnable_reason = args
+            .not_runnable_reason
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty());
+        let proposes_not_runnable = requested_status
+            == Some(ProjectRuntimeEnvironmentStatus::NotRunnable)
+            || (requested_status.is_none() && proposed_not_runnable_reason.is_some());
+        let proposed_stack = args
+            .detected_stack
+            .as_ref()
+            .unwrap_or(&environment.detected_stack);
+        let proposed_services = args
+            .required_services
+            .as_ref()
+            .unwrap_or(&environment.required_services);
+        if proposes_not_runnable
+            && environment_has_provisionable_evidence(
+                proposed_stack,
+                proposed_services,
+                args.images.as_slice(),
+            )
+        {
+            return Err(
+                "not_runnable is rejected because the project contains a provisionable runtime or dependency service. Continue initialization: create/reuse the application runtime image, create local replacements for detected databases/caches/configuration centers, generate connection environment variables, then save ready; use pending_configuration only for irreducible user-supplied business credentials."
+                    .to_string(),
+            );
+        }
+
         if let Some(value) = args.analysis_summary.and_then(normalize_owned) {
             environment.analysis_summary = Some(value);
         }
@@ -208,12 +191,11 @@ impl ProjectEnvironmentToolProvider {
         } else {
             ProjectRuntimeEnvironmentStatus::Ready
         };
-        environment.status = match args.status.as_deref() {
-            Some(status) => parse_runtime_environment_status(status)?,
-            None => inferred_status,
-        };
+        environment.status = requested_status.unwrap_or(inferred_status);
         if environment.status == ProjectRuntimeEnvironmentStatus::NotRunnable {
             environment.required_services = empty_array();
+        } else {
+            environment.not_runnable_reason = None;
         }
         let env_source = args.env_vars.as_ref().or(Some(&environment.env_vars));
         environment.env_vars =
@@ -281,6 +263,13 @@ fn image_input_to_record(
         .status
         .and_then(normalize_owned)
         .unwrap_or_else(|| if error.is_some() { "failed" } else { "ready" }.to_string());
+    let ports = image
+        .ports
+        .map(ensure_array)
+        .filter(|ports| ports.as_array().is_some_and(|ports| !ports.is_empty()))
+        .unwrap_or_else(|| {
+            default_ports_for_environment(environment_key.as_str(), environment_type.as_str())
+        });
     ProjectRuntimeEnvironmentImageRecord {
         id: format!("project_env_image_{}", Uuid::new_v4()),
         project_id: project_id.to_string(),
@@ -295,7 +284,7 @@ fn image_input_to_record(
             .map(parse_runtime_environment_provider)
             .unwrap_or(default_provider),
         features: image.features.map(ensure_array).unwrap_or_else(empty_array),
-        ports: image.ports.map(ensure_array).unwrap_or_else(empty_array),
+        ports,
         env_vars: image
             .env_vars
             .map(ensure_object)
@@ -381,28 +370,98 @@ fn generated_environment_variables(
             .trim()
             .to_ascii_lowercase();
         match service_type.as_str() {
-            "redis" => insert_secret_default(&mut env_vars, "REDIS_PASSWORD"),
+            "redis" => {
+                insert_text_default(&mut env_vars, "REDIS_HOST", "redis");
+                insert_text_default(&mut env_vars, "REDIS_PORT", "6379");
+                insert_secret_default(&mut env_vars, "REDIS_PASSWORD");
+                insert_text_default(&mut env_vars, "SPRING_DATA_REDIS_HOST", "redis");
+                insert_text_default(&mut env_vars, "SPRING_DATA_REDIS_PORT", "6379");
+                copy_text_default(
+                    &mut env_vars,
+                    "REDIS_PASSWORD",
+                    "SPRING_DATA_REDIS_PASSWORD",
+                );
+            }
             "postgres" | "postgresql" => {
+                insert_text_default(&mut env_vars, "POSTGRES_HOST", "postgres");
+                insert_text_default(&mut env_vars, "POSTGRES_PORT", "5432");
                 insert_text_default(&mut env_vars, "POSTGRES_USER", "app");
                 insert_secret_default(&mut env_vars, "POSTGRES_PASSWORD");
                 insert_text_default(&mut env_vars, "POSTGRES_DB", "app");
+                insert_text_default(
+                    &mut env_vars,
+                    "SPRING_DATASOURCE_URL",
+                    "jdbc:postgresql://postgres:5432/app",
+                );
+                copy_text_default(&mut env_vars, "POSTGRES_USER", "SPRING_DATASOURCE_USERNAME");
+                copy_text_default(
+                    &mut env_vars,
+                    "POSTGRES_PASSWORD",
+                    "SPRING_DATASOURCE_PASSWORD",
+                );
             }
             "mysql" | "mariadb" => {
+                insert_text_default(&mut env_vars, "MYSQL_HOST", "mysql");
+                insert_text_default(&mut env_vars, "MYSQL_PORT", "3306");
                 insert_secret_default(&mut env_vars, "MYSQL_ROOT_PASSWORD");
                 insert_text_default(&mut env_vars, "MYSQL_DATABASE", "app");
                 insert_text_default(&mut env_vars, "MYSQL_USER", "app");
                 insert_secret_default(&mut env_vars, "MYSQL_PASSWORD");
+                insert_text_default(
+                    &mut env_vars,
+                    "SPRING_DATASOURCE_URL",
+                    "jdbc:mysql://mysql:3306/app?useSSL=false&allowPublicKeyRetrieval=true",
+                );
+                copy_text_default(&mut env_vars, "MYSQL_USER", "SPRING_DATASOURCE_USERNAME");
+                copy_text_default(
+                    &mut env_vars,
+                    "MYSQL_PASSWORD",
+                    "SPRING_DATASOURCE_PASSWORD",
+                );
             }
             "nacos" => {
+                insert_text_default(&mut env_vars, "NACOS_SERVER_ADDR", "nacos:8848");
+                insert_text_default(&mut env_vars, "NACOS_NAMESPACE", "public");
                 insert_text_default(&mut env_vars, "NACOS_USERNAME", "nacos");
                 insert_secret_default(&mut env_vars, "NACOS_PASSWORD");
                 insert_secret_default(&mut env_vars, "NACOS_AUTH_TOKEN");
+                insert_text_default(
+                    &mut env_vars,
+                    "SPRING_CLOUD_NACOS_SERVER_ADDR",
+                    "nacos:8848",
+                );
+                copy_text_default(
+                    &mut env_vars,
+                    "NACOS_USERNAME",
+                    "SPRING_CLOUD_NACOS_USERNAME",
+                );
+                copy_text_default(
+                    &mut env_vars,
+                    "NACOS_PASSWORD",
+                    "SPRING_CLOUD_NACOS_PASSWORD",
+                );
             }
             "mongodb" | "mongo" => {
+                insert_text_default(&mut env_vars, "MONGODB_HOST", "mongodb");
+                insert_text_default(&mut env_vars, "MONGODB_PORT", "27017");
                 insert_text_default(&mut env_vars, "MONGO_INITDB_ROOT_USERNAME", "app");
                 insert_secret_default(&mut env_vars, "MONGO_INITDB_ROOT_PASSWORD");
+                insert_text_default(&mut env_vars, "SPRING_DATA_MONGODB_HOST", "mongodb");
+                insert_text_default(&mut env_vars, "SPRING_DATA_MONGODB_PORT", "27017");
+                copy_text_default(
+                    &mut env_vars,
+                    "MONGO_INITDB_ROOT_USERNAME",
+                    "SPRING_DATA_MONGODB_USERNAME",
+                );
+                copy_text_default(
+                    &mut env_vars,
+                    "MONGO_INITDB_ROOT_PASSWORD",
+                    "SPRING_DATA_MONGODB_PASSWORD",
+                );
             }
             "rabbitmq" => {
+                insert_text_default(&mut env_vars, "RABBITMQ_HOST", "rabbitmq");
+                insert_text_default(&mut env_vars, "RABBITMQ_PORT", "5672");
                 insert_text_default(&mut env_vars, "RABBITMQ_DEFAULT_USER", "app");
                 insert_secret_default(&mut env_vars, "RABBITMQ_DEFAULT_PASS");
             }
@@ -410,6 +469,92 @@ fn generated_environment_variables(
         }
     }
     Value::Object(env_vars)
+}
+
+fn environment_has_provisionable_evidence(
+    detected_stack: &Value,
+    required_services: &Value,
+    images: &[ProjectRuntimeEnvironmentImageInput],
+) -> bool {
+    !images.is_empty()
+        || required_services
+            .as_array()
+            .is_some_and(|services| !services.is_empty())
+        || [
+            "language",
+            "languages",
+            "runtime",
+            "framework",
+            "frameworks",
+            "build_tool",
+            "package_manager",
+            "project_type",
+            "entrypoint",
+            "startup_command",
+        ]
+        .iter()
+        .any(|key| json_value_has_content(detected_stack.get(*key)))
+        || detected_stack
+            .get("manifests")
+            .and_then(Value::as_array)
+            .is_some_and(|manifests| {
+                manifests.iter().any(|manifest| {
+                    manifest
+                        .as_str()
+                        .is_some_and(is_executable_project_manifest)
+                })
+            })
+}
+
+fn json_value_has_content(value: Option<&Value>) -> bool {
+    match value {
+        Some(Value::String(value)) => !value.trim().is_empty(),
+        Some(Value::Array(value)) => !value.is_empty(),
+        Some(Value::Object(value)) => !value.is_empty(),
+        Some(Value::Bool(value)) => *value,
+        Some(Value::Number(_)) => true,
+        _ => false,
+    }
+}
+
+fn is_executable_project_manifest(value: &str) -> bool {
+    let value = value.trim().to_ascii_lowercase();
+    [
+        "package.json",
+        "cargo.toml",
+        "pyproject.toml",
+        "requirements.txt",
+        "go.mod",
+        "pom.xml",
+        "build.gradle",
+        "build.gradle.kts",
+        "docker-compose.yml",
+        "docker-compose.yaml",
+        "compose.yml",
+        "compose.yaml",
+    ]
+    .iter()
+    .any(|manifest| value.ends_with(manifest))
+}
+
+fn default_ports_for_environment(environment_key: &str, environment_type: &str) -> Value {
+    let identity = format!("{environment_key} {environment_type}").to_ascii_lowercase();
+    let ports: &[u16] = if identity.contains("nacos") {
+        &[8848, 9848, 9849]
+    } else if identity.contains("postgres") {
+        &[5432]
+    } else if identity.contains("mysql") || identity.contains("mariadb") {
+        &[3306]
+    } else if identity.contains("redis") {
+        &[6379]
+    } else if identity.contains("mongo") {
+        &[27017]
+    } else if identity.contains("rabbitmq") {
+        &[5672, 15672]
+    } else {
+        &[]
+    };
+    Value::Array(ports.iter().copied().map(Value::from).collect())
 }
 
 fn insert_text_default(env_vars: &mut serde_json::Map<String, Value>, key: &str, value: &str) {
@@ -421,6 +566,19 @@ fn insert_text_default(env_vars: &mut serde_json::Map<String, Value>, key: &str,
     if should_insert {
         env_vars.insert(key.to_string(), Value::String(value.to_string()));
     }
+}
+
+fn copy_text_default(env_vars: &mut serde_json::Map<String, Value>, source: &str, target: &str) {
+    let Some(value) = env_vars
+        .get(source)
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+    else {
+        return;
+    };
+    insert_text_default(env_vars, target, value.as_str());
 }
 
 fn insert_secret_default(env_vars: &mut serde_json::Map<String, Value>, key: &str) {
@@ -440,4 +598,66 @@ fn insert_secret_default(env_vars: &mut serde_json::Map<String, Value>, key: &st
 fn normalize_owned(value: String) -> Option<String> {
     let value = value.trim().to_string();
     (!value.is_empty()).then_some(value)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn runnable_stack_cannot_be_downgraded_to_not_runnable() {
+        assert!(environment_has_provisionable_evidence(
+            &json!({
+                "language": "Java",
+                "build_tool": "Maven",
+                "project_type": "Spring Boot backend"
+            }),
+            &json!([]),
+            &[],
+        ));
+        assert!(environment_has_provisionable_evidence(
+            &json!({}),
+            &json!([{"type": "redis"}]),
+            &[],
+        ));
+        assert!(!environment_has_provisionable_evidence(
+            &json!({"source": "scan"}),
+            &json!([]),
+            &[],
+        ));
+    }
+
+    #[test]
+    fn detected_services_receive_local_connection_defaults() {
+        let env = generated_environment_variables(
+            &json!([
+                {"type": "nacos"},
+                {"type": "redis"},
+                {"type": "mongodb"},
+                {"type": "mysql"}
+            ]),
+            None,
+        );
+        assert_eq!(env["NACOS_SERVER_ADDR"], "nacos:8848");
+        assert_eq!(env["SPRING_DATA_REDIS_HOST"], "redis");
+        assert_eq!(env["SPRING_DATA_MONGODB_HOST"], "mongodb");
+        assert_eq!(
+            env["SPRING_DATASOURCE_URL"],
+            "jdbc:mysql://mysql:3306/app?useSSL=false&allowPublicKeyRetrieval=true"
+        );
+        assert_eq!(env["MYSQL_PASSWORD"], env["SPRING_DATASOURCE_PASSWORD"]);
+    }
+
+    #[test]
+    fn service_images_receive_default_ports() {
+        assert_eq!(
+            default_ports_for_environment("redis", "service"),
+            json!([6379])
+        );
+        assert_eq!(
+            default_ports_for_environment("nacos", "service"),
+            json!([8848, 9848, 9849])
+        );
+        assert_eq!(default_ports_for_environment("app", "runtime"), json!([]));
+    }
 }

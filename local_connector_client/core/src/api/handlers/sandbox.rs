@@ -1,15 +1,17 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use axum::extract::State;
+use axum::extract::{Path, State};
 use axum::Json;
 use chatos_sandbox_image_mcp::SandboxImageBackend;
 use serde_json::{json, Value};
 
-use crate::config::{api_url, normalize_optional};
-use crate::registration::ensure_success;
+use crate::config::normalize_optional;
 use crate::sandbox::docker::{docker_status, ensure_docker_running};
-use crate::sandbox::images::{local_sandbox_image_catalog, start_local_sandbox_image_job};
+use crate::sandbox::images::{
+    delete_local_sandbox_image, local_sandbox_image_catalog, reinitialize_local_sandbox_image,
+    start_local_sandbox_image_job,
+};
 use crate::LocalRuntime;
 
 use super::super::types::{InitializeImageRequest, LocalApiError, ToggleSandboxRequest};
@@ -33,7 +35,6 @@ pub(crate) async fn local_toggle_sandbox(
         state.sandbox.enabled = req.enabled;
         state.save(runtime.state_path.as_path())?;
     }
-    upsert_sandbox_pairings(&runtime, req.enabled).await?;
     runtime.start_connector_if_configured().await?;
     Ok(Json(status_payload(&runtime).await))
 }
@@ -86,6 +87,40 @@ pub(crate) async fn local_initialize_sandbox_image(
     .await
     .map_err(LocalApiError::bad_request)?;
     Ok(Json(json!(job)))
+}
+
+pub(crate) async fn local_delete_sandbox_image(
+    State(runtime): State<LocalRuntime>,
+    Path(image_id): Path<String>,
+) -> Result<Json<Value>, LocalApiError> {
+    ensure_local_sandbox_enabled(&runtime).await?;
+    ensure_docker_running()
+        .await
+        .map_err(|err| LocalApiError::bad_request(err.to_string()))?;
+    delete_local_sandbox_image(&runtime, image_id.as_str())
+        .await
+        .map(Json)
+        .map_err(|err| {
+            if err.contains("in use by an active lease") {
+                LocalApiError::conflict(err)
+            } else {
+                LocalApiError::bad_request(err)
+            }
+        })
+}
+
+pub(crate) async fn local_reinitialize_sandbox_image(
+    State(runtime): State<LocalRuntime>,
+    Path(image_id): Path<String>,
+) -> Result<Json<Value>, LocalApiError> {
+    ensure_local_sandbox_enabled(&runtime).await?;
+    ensure_docker_running()
+        .await
+        .map_err(|err| LocalApiError::bad_request(err.to_string()))?;
+    reinitialize_local_sandbox_image(&runtime, image_id.as_str())
+        .await
+        .map(|job| Json(json!(job)))
+        .map_err(LocalApiError::bad_request)
 }
 
 pub(crate) async fn local_sandbox_image_mcp(
@@ -143,51 +178,4 @@ async fn ensure_local_sandbox_enabled(runtime: &LocalRuntime) -> Result<(), Loca
     } else {
         Err(LocalApiError::bad_request("local sandbox is disabled"))
     }
-}
-
-async fn upsert_sandbox_pairings(
-    runtime: &LocalRuntime,
-    enabled: bool,
-) -> Result<(), LocalApiError> {
-    let (cloud_base_url, access_token, device_id, workspaces) = {
-        let state = runtime.state.read().await;
-        let auth = state
-            .auth
-            .as_ref()
-            .ok_or_else(|| LocalApiError::bad_request("please login first"))?;
-        let device_id = state
-            .device_id
-            .clone()
-            .ok_or_else(|| LocalApiError::bad_request("device is not registered yet"))?;
-        (
-            auth.cloud_base_url.clone(),
-            auth.access_token.clone(),
-            device_id,
-            state.workspaces.clone(),
-        )
-    };
-    for workspace in workspaces {
-        let response = runtime
-            .http_client
-            .post(
-                api_url(
-                    cloud_base_url.as_str(),
-                    "/api/local-connectors/sandbox-pairings",
-                )
-                .as_str(),
-            )
-            .bearer_auth(access_token.as_str())
-            .json(&json!({
-                "device_id": device_id.as_str(),
-                "workspace_id": workspace.id,
-                "enabled": enabled,
-                "sandbox_mode": "docker",
-            }))
-            .send()
-            .await
-            .map_err(|err| LocalApiError::bad_gateway(err.to_string()))?;
-        ensure_success(response.status(), "upsert sandbox pairing")
-            .map_err(|err| LocalApiError::bad_request(err.to_string()))?;
-    }
-    Ok(())
 }

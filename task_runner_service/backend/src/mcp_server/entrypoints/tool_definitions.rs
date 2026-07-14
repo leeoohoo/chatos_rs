@@ -9,6 +9,42 @@ mod runs;
 mod tasks;
 
 impl TaskRunnerMcpService {
+    pub fn provider_descriptor(&self) -> McpProviderDescriptor {
+        let mut tools = self
+            .list_tools()
+            .into_iter()
+            .filter(|tool| {
+                tool.get("name")
+                    .and_then(Value::as_str)
+                    .is_some_and(|name| {
+                        agent_tool_allowed_for_profile(name, McpToolProfile::ChatosAsyncPlanner)
+                    })
+            })
+            .collect::<Vec<_>>();
+        for tool in &mut tools {
+            if tool.get("outputSchema").is_none() {
+                tool["outputSchema"] = json!({
+                    "type": "object",
+                    "description": "Structured JSON result returned by this Task Runner tool. Exact fields depend on the operation and are also returned through the standard MCP content envelope.",
+                    "additionalProperties": true
+                });
+            }
+        }
+        McpProviderDescriptor {
+            server_name: TASK_RUNNER_MCP_SERVER_NAME.to_string(),
+            skills: vec![McpProviderSkill {
+                id: "task_runner_usage".to_string(),
+                name: "Task Runner MCP 使用指南".to_string(),
+                description: "指导 AI 把当前用户和项目需求交给内部异步执行链路，并正确选择 MCP 与 Local Connector Skills。".to_string(),
+                instructions: include_str!(
+                    "../../../../mcp/task-runner-provider-skill.md"
+                )
+                .to_string(),
+            }],
+            tools,
+        }
+    }
+
     pub fn server_info(&self) -> McpServerInfo {
         let tools = self.list_tools();
         let tool_names = tool_names_from_tools(&tools);

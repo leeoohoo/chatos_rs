@@ -108,6 +108,9 @@ cp "$CORE_BIN" "$STAGING_DIR/local_connector_client_core"
 cp -R "$TOOLS_DIR" "$STAGING_DIR/bundled-tools/$TOOLS_PLATFORM"
 cp -R "$CLIENT_DIR/skill_bundles/." "$STAGING_DIR/skill-bundles/"
 chmod +x "$STAGING_DIR/local_connector_client_core"
+"$CLIENT_DIR/prepare-browser-runtime-macos.sh" \
+  "$STAGING_DIR/bundled-tools/$TOOLS_PLATFORM" \
+  "$TOOLS_PLATFORM"
 
 ELECTRON_VERSION="$(node -p "require('$FRONTEND_DIR/node_modules/electron/package.json').version")"
 ELECTRON_DIST_DIR="$STAGING_DIR/electron-dist"

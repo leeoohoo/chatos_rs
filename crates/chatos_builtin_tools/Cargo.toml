@@ -10,6 +10,7 @@ edition = "2021"
 async-trait = "0.1"
 chrono = { version = "0.4", features = ["serde", "clock"] }
 chatos_mcp_runtime = { path = "../chatos_mcp_runtime" }
+chatos_project_mcp_contract = { path = "../chatos_project_mcp_contract" }
 dirs = "6.0"
 futures = "0.3"
 hex = "0.4"

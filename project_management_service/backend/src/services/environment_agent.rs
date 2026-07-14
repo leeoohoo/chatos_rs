@@ -304,13 +304,21 @@ async fn run_project_environment_agent(
     .await?;
     ensure_agent_required_tools_available(&executor, project, &routing)?;
 
-    let prompt = build_project_environment_agent_prompt(
+    let mut prompt = build_project_environment_agent_prompt(
         project,
         environment,
         &routing,
         local_inspection,
         run_id,
     )?;
+    let effective_mcp_resource_ids = effective_project_environment_mcp_resource_ids(&routing);
+    if let Some(provider_skills_prompt) = capability_policy.compose_provider_skills_prompt(
+        effective_mcp_resource_ids.iter().map(String::as_str),
+        Some("zh-CN"),
+    ) {
+        prompt.push_str("\n\n");
+        prompt.push_str(provider_skills_prompt.trim());
+    }
     let metadata = json!({
         "agent": "project_management_environment_agent",
         "run_id": run_id,
@@ -432,14 +440,22 @@ fn build_project_environment_agent_prompt(
 - 项目详情工具只操作当前项目：先调用 `project_environment_get_current_project_runtime_environment`，最后必须调用 `project_environment_update_current_project_runtime_environment` 写入结果。
 - 文件读取工具：{file_tool_hint}
 - 沙箱镜像工具：使用 `sandbox_images_search_images` 搜索已有镜像；没有可用镜像时调用 `sandbox_images_create_image`。标准 features 无法覆盖项目依赖时，可以在 `custom_build_script` 中提供非交互 Bash 脚本，由镜像构建器在安装标准运行时后以 root 执行。脚本应可重复执行、使用 `set -e`、不得写入密钥，退出非 0 会使镜像创建失败。创建镜像必须同步等待，调用时传 `timeout_ms: 7200000`，不要做异步轮询或反复查进度；成功结果会在顶层返回 `image_id` 和 `image_ref`，必须直接写入镜像记录。
+- 每次初始化都必须在本轮实际调用 `sandbox_images_search_images` 获取当前镜像状态；如果没有满足依赖的可用镜像且项目可运行，必须在本轮调用一次 `sandbox_images_create_image`。不得根据 Memory Engine 中以前的镜像失败、Docker 错误或旧运行环境记录直接判定本轮仍然失败。
 - 不要臆造文件中没有依据的依赖服务。可以先读 package.json、Cargo.toml、go.mod、pyproject.toml、pom.xml、build.gradle、docker-compose、README、.env.example 等关键文件。
 
 判断规则：
-- 如果项目为空、缺少入口、只有文档/配置片段、或明显不具备运行条件，直接调用更新工具写入 `status: "not_runnable"` 和中文 `not_runnable_reason`，不要创建镜像。
+- 平台目标是让导入的项目尽快具备验证和迭代条件，必须采用“优先初始化、最后才判不可运行”的策略。
+- 如果发现 Java、Node.js、Python、Go、Rust、.NET、PHP、Ruby 等应用运行时，必须为应用准备运行时镜像。
+- 如果发现 nacos、postgres、mysql、redis、mongodb、rabbitmq 等外部依赖，必须把它们记录到 `required_services`，并分别搜索或创建对应环境镜像。远程地址、密码、配置中心文件缺失属于需要本地替代和自动配置的 provisioning 输入，不是 `not_runnable` 理由。
+- 对 Nacos 等远程配置中心，优先初始化本地兼容服务，并生成本地服务地址、命名空间、用户名、密码和令牌环境变量。对数据库和缓存同样生成容器内可访问的默认主机名、端口、数据库名与随机凭据。
+- 标准 runtime features 只填写镜像目录真实支持的运行时版本；Redis、MongoDB、MySQL、Nacos 等非标准 feature 应使用基础镜像加 `custom_build_script` 安装，不得把不支持的服务名直接当作 runtime feature。
+- 环境镜像全部准备成功后写入 `status: "ready"`。即使原项目引用的是远程 Nacos、Redis 或 MongoDB，只要已创建本地替代环境并生成连接配置，也应写为 `ready`，并在分析摘要说明替代方案。
+- 只有项目目录确实为空、没有任何可执行入口或构建清单、仅包含说明文档/零散配置且无法识别可启动组件时，才允许写入 `status: "not_runnable"`。不得因为缺少 application.yml、远程 datasource 地址、Nacos 配置、Redis/MongoDB 连接信息而判定不可运行。
+- 如果确实需要无法自动生成的第三方业务凭据，在基础运行时和可自动创建的依赖镜像准备完成后写入 `pending_configuration`，列出需要用户补充的最小变量；不要写 `not_runnable`。
 - 如果项目可运行，识别语言、框架、包管理器、启动方式和依赖服务。依赖服务包括但不限于 nacos、postgres、mysql、redis、mongodb、rabbitmq。
-- 数据库、nacos、redis 等需要启动密码/令牌时，在 `env_vars` 里给出环境变量名；值可以留空或给出非真实占位，服务会补齐随机值。
+- 数据库、nacos、redis 等需要启动密码/令牌时，在 `env_vars` 里给出环境变量名；值可以留空或给出非真实占位，服务会补齐随机值和本地连接默认值。
 - 对每个运行时/依赖服务准备镜像记录。搜索到可用镜像就复用；搜索不到就创建。镜像记录要包含 environment_key、environment_type、display_name、image_id/image_ref、features、ports、env_vars、status。
-- 完成后把 `status` 写成 `ready`；如果镜像创建失败，把 `status` 写成 `failed`，并把失败原因写入 `last_error` 和对应 image.error。
+- 完成后把 `status` 写成 `ready`；如果镜像创建失败，把 `status` 写成 `failed`，并把失败原因写入 `last_error` 和对应 image.error。不要用 `not_runnable` 代替镜像创建或配置生成失败。
 
 预扫描技术栈候选：
 {detected_stack}
@@ -462,6 +478,29 @@ fn build_project_environment_agent_prompt(
         environment_json = serde_json::to_string_pretty(environment)
             .map_err(|err| format!("serialize runtime environment failed: {err}"))?,
     ))
+}
+
+fn effective_project_environment_mcp_resource_ids(routing: &RoutingPlan) -> Vec<String> {
+    let mut resource_ids = vec![PROJECT_ENVIRONMENT_MCP_RESOURCE_ID.to_string()];
+    if matches!(
+        routing.file_provider,
+        RuntimeEnvironmentProvider::Harness | RuntimeEnvironmentProvider::LocalConnector
+    ) {
+        resource_ids.push(
+            BuiltinMcpKind::CodeMaintainerRead
+                .config_id()
+                .map(ToOwned::to_owned)
+                .unwrap_or_else(|| "system_builtin_code_maintainer_read".to_string()),
+        );
+    }
+    if matches!(
+        routing.sandbox_provider,
+        RuntimeEnvironmentProvider::LocalConnector
+            | RuntimeEnvironmentProvider::CloudSandboxManager
+    ) {
+        resource_ids.push(SANDBOX_IMAGES_MCP_RESOURCE_ID.to_string());
+    }
+    resource_ids
 }
 
 fn file_tool_hint(project: &ProjectRecord, provider: RuntimeEnvironmentProvider) -> String {

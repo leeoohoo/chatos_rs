@@ -4,8 +4,7 @@ directories:
   output: ../dist/electron-macos
 files:
   - dist/**/*
-  - electron/main.cjs
-  - electron/preload.cjs
+  - electron/*.cjs
   - package.json
 extraResources:
   - from: ../.package/macos/local_connector_client_core

@@ -31,16 +31,17 @@ mod types;
 use handlers::{
     local_add_workspace, local_approval_settings, local_approve_pending_approval,
     local_clear_command_history, local_command_history, local_delete_mcp_config,
-    local_delete_model_config, local_deny_pending_approval, local_desktop_ticket,
-    local_disable_mcp_config, local_docker_status, local_enable_mcp_config, local_fs_list_handler,
-    local_get_mcp_config, local_initialize_sandbox_image, local_login, local_logout,
-    local_mcp_configs, local_model_configs, local_model_settings, local_pending_approvals,
-    local_preview_model_catalog, local_register, local_remove_workspace,
-    local_request_system_permission, local_runtime_settings, local_sandbox_image_jobs,
-    local_sandbox_image_mcp, local_sandbox_images, local_sandbox_leases, local_save_mcp_config,
-    local_save_model_config, local_send_register_email_code, local_skills, local_status,
-    local_sync_mcp_config, local_sync_model_config, local_sync_skill_inventory,
-    local_system_permissions, local_terminal_exec, local_test_mcp_config, local_toggle_sandbox,
+    local_delete_model_config, local_delete_sandbox_image, local_deny_pending_approval,
+    local_desktop_ticket, local_disable_mcp_config, local_docker_status, local_enable_mcp_config,
+    local_fs_list_handler, local_get_mcp_config, local_initialize_sandbox_image, local_login,
+    local_logout, local_mcp_configs, local_model_configs, local_model_settings,
+    local_pending_approvals, local_preview_model_catalog, local_register,
+    local_reinitialize_sandbox_image, local_remove_workspace, local_request_system_permission,
+    local_runtime_settings, local_sandbox_image_jobs, local_sandbox_image_mcp,
+    local_sandbox_images, local_sandbox_leases, local_save_mcp_config, local_save_model_config,
+    local_send_register_email_code, local_skills, local_status, local_sync_mcp_config,
+    local_sync_model_config, local_sync_skill_inventory, local_system_permissions,
+    local_terminal_exec, local_test_mcp_config, local_toggle_sandbox,
     local_update_approval_settings, local_update_mcp_config, local_update_model_config,
     local_update_model_settings, local_update_runtime_settings, local_update_skill_preference,
 };
@@ -121,6 +122,14 @@ fn local_api_routes(desktop_auth_token: Option<String>) -> Router<LocalRuntime> 
         )
         .route("/api/local/sandbox/toggle", post(local_toggle_sandbox))
         .route("/api/local/sandbox/images", get(local_sandbox_images))
+        .route(
+            "/api/local/sandbox/images/{image_id}",
+            delete(local_delete_sandbox_image),
+        )
+        .route(
+            "/api/local/sandbox/images/{image_id}/reinitialize",
+            post(local_reinitialize_sandbox_image),
+        )
         .route(
             "/api/local/sandbox/images/mcp",
             post(local_sandbox_image_mcp),

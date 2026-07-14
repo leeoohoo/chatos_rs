@@ -78,13 +78,31 @@ pub async fn build_content_parts_async(user_text: &str, attachments: &[Attachmen
             None => format!("Attachment: {} ({}, {} bytes)", name, mime, size),
         };
 
-        if mime.starts_with("image/") && att.data_url.is_some() {
-            parts.push(json!({"type": "image_url", "image_url": {"url": att.data_url.clone().unwrap_or_default()}}));
-            parts.push(json!({"type": "text", "text": meta_line}));
-            continue;
-        }
         if mime.starts_with("image/") {
-            if let Some(url) = public_url {
+            if let Some(data_url) = att
+                .data_url
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| is_supported_image_locator(value))
+            {
+                parts.push(json!({"type": "image_url", "image_url": {"url": data_url}}));
+                parts.push(json!({"type": "text", "text": meta_line}));
+                continue;
+            }
+            if let Some(object_data) = load_object_attachment_bytes(att).await {
+                match object_data {
+                    Ok(bytes) => {
+                        let data_url = image_data_url(mime.as_str(), bytes.as_ref());
+                        parts.push(json!({"type": "image_url", "image_url": {"url": data_url}}));
+                        parts.push(json!({"type": "text", "text": meta_line}));
+                    }
+                    Err(err) => {
+                        parts.push(json!({"type": "text", "text": format!("{} [image content not included: {}]", meta_line, err)}));
+                    }
+                }
+                continue;
+            }
+            if let Some(url) = public_url.filter(|url| is_supported_image_locator(url.as_str())) {
                 parts.push(json!({"type": "image_url", "image_url": {"url": url}}));
                 parts.push(json!({"type": "text", "text": meta_line}));
                 continue;
@@ -304,6 +322,22 @@ fn decode_data_url(data_url: &str) -> Option<Vec<u8>> {
     BASE64_STD.decode(b64.as_bytes()).ok()
 }
 
+fn image_data_url(mime: &str, bytes: &[u8]) -> String {
+    let mime = if mime.trim().starts_with("image/") {
+        mime.trim()
+    } else {
+        "image/png"
+    };
+    format!("data:{mime};base64,{}", BASE64_STD.encode(bytes))
+}
+
+fn is_supported_image_locator(value: &str) -> bool {
+    let value = value.trim().to_ascii_lowercase();
+    value.starts_with("https://")
+        || value.starts_with("http://")
+        || value.starts_with("data:image/")
+}
+
 fn extract_pdf_text(data: &[u8]) -> Option<String> {
     // Best-effort extraction; fallback to None on failure
     #[allow(unused_mut)]
@@ -452,5 +486,59 @@ pub fn adapt_parts_for_model(
         Value::Array(out)
     } else {
         parts.clone()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        build_content_parts_async, decode_data_url, image_data_url, is_supported_image_locator,
+        Attachment,
+    };
+
+    #[test]
+    fn object_image_bytes_become_a_valid_data_url() {
+        let bytes = b"not-a-real-image-but-valid-base64";
+        let data_url = image_data_url("image/jpeg", bytes);
+        assert!(data_url.starts_with("data:image/jpeg;base64,"));
+        assert_eq!(
+            decode_data_url(data_url.as_str()).as_deref(),
+            Some(bytes.as_slice())
+        );
+    }
+
+    #[test]
+    fn relative_attachment_routes_are_not_model_image_locators() {
+        assert!(!is_supported_image_locator(
+            "/api/attachments/object?token=signed-token"
+        ));
+        assert!(is_supported_image_locator(
+            "https://oss.example.com/bucket/image.png?signature=ok"
+        ));
+        assert!(is_supported_image_locator("data:image/png;base64,Zm9v"));
+    }
+
+    #[tokio::test]
+    async fn relative_view_url_is_kept_as_metadata_not_sent_as_an_image() {
+        let parts = build_content_parts_async(
+            "describe this image",
+            &[Attachment {
+                name: Some("photo.jpg".to_string()),
+                mime_type: Some("image/jpeg".to_string()),
+                size: Some(42),
+                view_url: Some("/api/attachments/object?token=signed-token".to_string()),
+                ..Attachment::default()
+            }],
+        )
+        .await;
+        let parts = parts.as_array().expect("content parts");
+        assert!(!parts.iter().any(|part| {
+            part.get("type").and_then(|value| value.as_str()) == Some("image_url")
+        }));
+        assert!(parts.iter().any(|part| {
+            part.get("text")
+                .and_then(|value| value.as_str())
+                .is_some_and(|text| text.contains("/api/attachments/object?token=signed-token"))
+        }));
     }
 }

@@ -341,6 +341,15 @@ impl TaskRunnerCapabilityPolicy {
         }
         Ok(out)
     }
+
+    pub(crate) fn compose_provider_skills_prompt<'a>(
+        &self,
+        effective_mcp_identifiers: impl IntoIterator<Item = &'a str>,
+        locale: &str,
+    ) -> Option<String> {
+        self.capabilities
+            .compose_provider_skills_prompt(effective_mcp_identifiers, Some(locale))
+    }
 }
 
 impl TaskService {

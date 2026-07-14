@@ -265,6 +265,19 @@
   overflow-wrap: anywhere;
 }
 
+.imageActions {
+  align-items: center;
+  display: flex;
+  flex: 0 0 auto;
+  gap: 7px;
+}
+
+.imageActions .ghostButton {
+  align-items: center;
+  display: inline-flex;
+  gap: 5px;
+}
+
 .imageRow strong {
   color: var(--text);
   font-size: 11px;

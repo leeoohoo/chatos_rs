@@ -12,8 +12,10 @@ import {
   Layers,
   ListChecks,
   RefreshCw,
+  RotateCcw,
   Settings2,
   Shield,
+  Trash2,
 } from 'lucide-react';
 
 import {
@@ -43,6 +45,7 @@ export function SandboxPanel({
   const [message, setMessage] = React.useState<string | null>(null);
   const [loadingDetails, setLoadingDetails] = React.useState(false);
   const [building, setBuilding] = React.useState(false);
+  const [imageActionId, setImageActionId] = React.useState<string | null>(null);
 
   const refreshSandboxDetails = React.useCallback(async () => {
     if (!status.sandbox.enabled) {
@@ -121,6 +124,37 @@ export function SandboxPanel({
       setMessage(err instanceof Error ? err.message : '创建镜像失败');
     } finally {
       setBuilding(false);
+    }
+  };
+
+  const deleteImage = async (imageId: string, imageRef: string) => {
+    if (!window.confirm(`确定删除本机 Docker 镜像 ${imageRef} 吗？`)) {
+      return;
+    }
+    setMessage(null);
+    setImageActionId(imageId);
+    try {
+      await api.deleteSandboxImage(imageId);
+      setMessage(`镜像已删除: ${imageRef}`);
+      await Promise.all([refreshSandboxDetails(), onRefresh()]);
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : '删除镜像失败');
+    } finally {
+      setImageActionId(null);
+    }
+  };
+
+  const reinitializeImage = async (imageId: string) => {
+    setMessage(null);
+    setImageActionId(imageId);
+    try {
+      const job = await api.reinitializeSandboxImage(imageId);
+      setMessage(`重新初始化任务已创建: ${job.image_name}`);
+      await refreshSandboxDetails();
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : '重新初始化镜像失败');
+    } finally {
+      setImageActionId(null);
     }
   };
 
@@ -254,7 +288,28 @@ export function SandboxPanel({
                       <strong>{image.image_ref}</strong>
                       <span>{image.features.length ? image.features.join(', ') : 'base'}</span>
                     </div>
-                    <span className="status ok">{image.id === 'default' ? '默认' : '本机'}</span>
+                    <div className="imageActions">
+                      <span className={image.status === 'local' ? 'status ok' : 'status bad'}>
+                        {image.status === 'local' ? (image.id === 'default' ? '默认' : '本机') : '镜像缺失'}
+                      </span>
+                      {image.status !== 'local' && image.rebuildable !== false ? (
+                        <button
+                          className="ghostButton compact"
+                          disabled={imageActionId === image.id}
+                          onClick={() => void reinitializeImage(image.id)}
+                        >
+                          <RotateCcw size={14} />重新初始化
+                        </button>
+                      ) : null}
+                      <button
+                        className="iconButton danger"
+                        title="删除本机镜像"
+                        disabled={imageActionId === image.id || image.status !== 'local'}
+                        onClick={() => void deleteImage(image.id, image.image_ref)}
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    </div>
                   </div>
                 ))}
                 {!catalog?.images.length ? <div className="emptyState">还没有读取到本地沙箱镜像。</div> : null}

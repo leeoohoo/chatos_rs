@@ -13,7 +13,7 @@ pub use self::chat_runtime_metadata::{
     contact_agent_id_from_metadata, contact_id_from_metadata, metadata_string, normalize_id,
     project_id_from_metadata, ChatRuntimeMetadata,
 };
-pub use self::chat_runtime_project::resolve_project_runtime;
+pub(crate) use self::chat_runtime_project::resolve_project_runtime_context;
 
 #[cfg(test)]
 mod tests {

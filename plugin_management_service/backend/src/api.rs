@@ -57,7 +57,11 @@ use local_connector_skills::{
     list_user_skill_catalog_internal, sync_skill_inventory_internal,
     update_user_skill_preference_internal,
 };
-use mcps::{check_mcp, create_mcp, delete_mcp, get_mcp, list_mcps, update_mcp};
+use mcps::{
+    check_mcp, create_mcp, delete_mcp, get_mcp, get_mcp_descriptor, list_admin_ai_models,
+    list_mcps, optimize_mcp_provider_skill, optimize_mcp_provider_skill_stream, update_mcp,
+    update_mcp_provider_skill,
+};
 use resource_policy::*;
 use skill_packages::{
     create_skill_package, delete_skill_package, get_skill_package, list_skill_packages,
@@ -147,6 +151,20 @@ pub fn build_router(state: AppState) -> Router {
             get(get_mcp).patch(update_mcp).delete(delete_mcp),
         )
         .route("/api/mcps/{mcp_id}/check", post(check_mcp))
+        .route("/api/mcps/{mcp_id}/descriptor", get(get_mcp_descriptor))
+        .route("/api/admin/ai-models", get(list_admin_ai_models))
+        .route(
+            "/api/mcps/{mcp_id}/provider-skills/optimize",
+            post(optimize_mcp_provider_skill),
+        )
+        .route(
+            "/api/mcps/{mcp_id}/provider-skills/optimize/stream",
+            post(optimize_mcp_provider_skill_stream),
+        )
+        .route(
+            "/api/mcps/{mcp_id}/provider-skills/{skill_id}",
+            axum::routing::put(update_mcp_provider_skill),
+        )
         .route("/api/skills", get(list_skills).post(create_skill))
         .route(
             "/api/skills/{skill_id}",

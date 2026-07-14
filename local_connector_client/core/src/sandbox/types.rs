@@ -21,6 +21,8 @@ pub(crate) struct LocalSandboxImageRecord {
     pub(crate) image_name: String,
     pub(crate) image_ref: String,
     pub(crate) features: Vec<String>,
+    #[serde(default)]
+    pub(crate) custom_build_script: Option<String>,
     pub(crate) backend: String,
     pub(crate) created_at: String,
     pub(crate) updated_at: String,

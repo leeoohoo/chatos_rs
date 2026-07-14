@@ -412,6 +412,8 @@ export interface SandboxImageCatalog {
     id: string;
     image_ref: string;
     features: string[];
+    status: string;
+    rebuildable?: boolean;
     created_at?: string;
   }>;
 }

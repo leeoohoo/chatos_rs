@@ -22,6 +22,7 @@ use crate::mcp::manifest::mcp_status_message;
 use crate::mcp::service::handle_mcp_request;
 use crate::model_configs::handle_model_runtime_request;
 use crate::relay::{relay_error_response, RelayRequest, MCP_RELAY_MESSAGE_TYPE};
+use crate::sandbox::pairing::reconcile_sandbox_pairings;
 use crate::sandbox::relay::handle_sandbox_request;
 use crate::sandbox::types::LocalSandboxRuntime;
 use crate::skills::{
@@ -70,6 +71,13 @@ pub(crate) async fn connect_loop(
     let mut mcp_check = tokio::time::interval(Duration::from_secs(MCP_CHECK_INTERVAL_SECONDS));
     mcp_check.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     tracing_stdout("connected to local_connector_service");
+    match reconcile_sandbox_pairings(&http_client, &config, &state, device_id.as_str()).await {
+        Ok(count) if count > 0 => tracing_stdout(
+            format!("reconciled {count} Local Connector sandbox pairing(s)").as_str(),
+        ),
+        Ok(_) => {}
+        Err(err) => tracing_stdout(format!("reconcile sandbox pairings failed: {err}").as_str()),
+    }
 
     loop {
         tokio::select! {

@@ -1,10 +1,8 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use std::env;
-use std::path::PathBuf;
-
 use anyhow::{anyhow, Result};
+use chatos_builtin_tools::browser_runtime::browser_backend_available;
 use chatos_builtin_tools::{WebToolsOptions, WebToolsService};
 use serde_json::{json, Value};
 use url::Url;
@@ -99,38 +97,7 @@ fn browser_service(
 }
 
 fn browser_dependency_error() -> Option<String> {
-    if resolve_agent_browser_binary().is_some() {
-        None
-    } else {
-        Some(
-            "agent-browser executable is not installed in the Local Connector runtime; browser Skill remains unavailable"
-                .to_string(),
-        )
-    }
-}
-
-fn resolve_agent_browser_binary() -> Option<PathBuf> {
-    if let Some(path) = env::var_os("AGENT_BROWSER_BIN") {
-        let path = PathBuf::from(path);
-        if path.is_file() {
-            return Some(path);
-        }
-    }
-    let path = env::var_os("PATH")?;
-    for directory in env::split_paths(&path) {
-        let candidate = directory.join("agent-browser");
-        if candidate.is_file() {
-            return Some(candidate);
-        }
-        #[cfg(windows)]
-        {
-            let candidate = directory.join("agent-browser.exe");
-            if candidate.is_file() {
-                return Some(candidate);
-            }
-        }
-    }
-    None
+    browser_backend_available().err()
 }
 
 fn search_openai_docs_tool() -> Value {
@@ -273,12 +240,9 @@ mod tests {
 
     #[test]
     fn browser_dependency_check_never_accepts_npx_as_the_runtime() {
-        let error = dependency_error("internal_skill_browser");
-        if error.is_none() {
-            assert!(
-                std::env::var_os("AGENT_BROWSER_BIN").is_some()
-                    || std::env::var_os("PATH").is_some()
-            );
+        if let Some(error) = dependency_error("internal_skill_browser") {
+            assert!(error.contains("agent-browser"));
+            assert!(!error.contains("npx"));
         }
     }
 }

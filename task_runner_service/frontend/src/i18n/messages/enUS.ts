@@ -221,6 +221,8 @@ export const enUS: MessageDictionary = {
   'tasks.form.description': 'Task description',
   'tasks.form.taskProfile': 'Task type',
   'tasks.form.defaultModel': 'Default model config',
+  'tasks.form.requiresExecution': 'Run the project',
+  'tasks.form.requiresExecutionHelp': 'When disabled, use the default sandbox only to copy, inspect, and edit files without requiring the project runtime image.',
   'tasks.form.modelPlaceholder': 'Can be overridden at run time',
   'tasks.form.tags': 'Tags',
   'tasks.form.tagsPlaceholder': 'Comma separated',

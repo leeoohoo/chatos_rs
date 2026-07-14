@@ -92,8 +92,11 @@ function Sync-ElectronResources {
     New-Item -ItemType Directory -Force -Path $destToolsRoot | Out-Null
     Copy-Item -LiteralPath $sourceTools -Destination $destToolsRoot -Recurse -Force
   } else {
-    Write-Warning "Bundled tools not found for $platform`: $sourceTools"
+    throw "Bundled tools not found for $platform`: $sourceTools"
   }
+
+  $prepareBrowserRuntime = Join-Path $ClientDir "prepare-browser-runtime-windows.ps1"
+  & $prepareBrowserRuntime -DestinationDir (Join-Path $destToolsRoot $platform) -Platform $platform
 
   Copy-Item -LiteralPath (Join-Path $ClientDir "skill_bundles") -Destination $ElectronResourcesDir -Recurse -Force
 }
@@ -124,8 +127,7 @@ function New-ManualElectronPackage {
   $appResourcesDir = Join-Path $resourcesDir "app"
   New-Item -ItemType Directory -Force -Path (Join-Path $appResourcesDir "electron") | Out-Null
   Copy-Item -LiteralPath (Join-Path $FrontendDir "dist") -Destination $appResourcesDir -Recurse -Force
-  Copy-Item -LiteralPath (Join-Path $FrontendDir "electron\main.cjs") -Destination (Join-Path $appResourcesDir "electron\main.cjs") -Force
-  Copy-Item -LiteralPath (Join-Path $FrontendDir "electron\preload.cjs") -Destination (Join-Path $appResourcesDir "electron\preload.cjs") -Force
+  Copy-Item -Path (Join-Path $FrontendDir "electron\*.cjs") -Destination (Join-Path $appResourcesDir "electron") -Force
 
   $appPackageJson = @"
 {

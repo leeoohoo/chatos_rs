@@ -20,8 +20,7 @@ use serde_json::{json, Value};
 use uuid::Uuid;
 
 use crate::models::{
-    normalize_optional_text, CurrentUser, HealthResponse, DEVICE_STATUS_ONLINE,
-    WORKSPACE_STATUS_DISABLED,
+    normalize_optional_text, CurrentUser, HealthResponse, WORKSPACE_STATUS_DISABLED,
 };
 use crate::relay::{RelayError, RelayRequest, RelayResponse};
 use crate::state::AppState;
@@ -84,6 +83,7 @@ struct LocalCommandApprovalCapabilitiesResponse {
     policy_revision: String,
     code_maintainer_read: bool,
     approval_decision: bool,
+    provider_skills_prompt: Option<String>,
 }
 
 async fn health_handler() -> Json<HealthResponse> {
@@ -253,10 +253,18 @@ async fn resolve_local_command_approval_capabilities(
             "local command approval agent required capabilities are unavailable",
         ));
     }
+    let provider_skills_prompt = capabilities.compose_provider_skills_prompt(
+        [
+            "CodeMaintainerRead",
+            LOCAL_CONNECTOR_APPROVAL_MCP_RESOURCE_ID,
+        ],
+        Some("zh-CN"),
+    );
     Ok(Json(LocalCommandApprovalCapabilitiesResponse {
         policy_revision: capabilities.policy_revision,
         code_maintainer_read,
         approval_decision,
+        provider_skills_prompt,
     }))
 }
 
@@ -273,11 +281,6 @@ async fn mcp_relay(
         validate_device_workspace(&state, &user, device_id.as_str(), workspace_id).await?;
     } else if has_nonempty_header(&headers, "x-local-connector-mcp-manifest-id") {
         let device = load_owned_device(&state, &user, device_id.as_str(), true).await?;
-        if device.status != DEVICE_STATUS_ONLINE {
-            return Err(ApiError::service_unavailable(
-                "Local Connector device is offline",
-            ));
-        }
         ensure_device_active_lease(&state, user.effective_owner_user_id(), device.id.as_str())
             .await?;
     } else {
@@ -488,11 +491,10 @@ async fn validate_device_workspace(
     workspace_id: &str,
 ) -> Result<(), ApiError> {
     let device = load_owned_device(state, user, device_id, true).await?;
-    if device.status != DEVICE_STATUS_ONLINE {
-        return Err(ApiError::service_unavailable(
-            "Local Connector device is offline",
-        ));
-    }
+    // The active lease and relay connection are the authoritative online signal.
+    // The persisted device status is updated by heartbeats and can briefly lag a
+    // successful reconnect, which previously caused valid local project requests
+    // to fail with a stale "device is offline" response.
     ensure_device_active_lease(state, user.effective_owner_user_id(), device_id).await?;
     let workspace = load_owned_workspace(state, user, workspace_id).await?;
     if workspace.device_id != device.id {

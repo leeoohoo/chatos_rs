@@ -115,7 +115,6 @@ service_bins = {
     "task_runner_service_backend",
     "chat_app_server_rs",
     "official_website_service_backend",
-    "local_connector_client_core",
 }
 
 current = os.getpid()
@@ -134,6 +133,8 @@ for line in output.splitlines():
 matched = set()
 for pid, _ppid, command in rows:
     if root not in command:
+        continue
+    if "/local_connector_client/" in command:
         continue
     if any(f"/{name}" in command or command.endswith(name) for name in service_bins):
         matched.add(pid)
@@ -203,7 +204,6 @@ stop_managed_ports() {
     IFS='|' read -r name unused port <<<"$item"
     stop_port_if_needed "$port" "$name"
   done
-  stop_port_if_needed "$LOCAL_CONNECTOR_CORE_PORT" "local-connector-client-core"
   for item in "${BACKEND_SERVICES[@]}"; do
     IFS='|' read -r name unused unused unused port unused <<<"$item"
     stop_port_if_needed "$port" "$name"
@@ -218,9 +218,6 @@ managed_ports_busy() {
       return 0
     fi
   done
-  if [[ -n "$(pids_for_port "$LOCAL_CONNECTOR_CORE_PORT")" ]]; then
-    return 0
-  fi
   for item in "${BACKEND_SERVICES[@]}"; do
     IFS='|' read -r _name _unused _unused _unused port _unused <<<"$item"
     if [[ -n "$(pids_for_port "$port")" ]]; then
@@ -286,4 +283,3 @@ wait_for_consul() {
   local consul_addr="${CHATOS_CONSUL_HTTP_ADDR:-http://127.0.0.1:8500}"
   wait_for_http "consul" "${consul_addr%/}/v1/status/leader" "${CHATOS_LOCAL_DEV_INFRA_TIMEOUT_SECONDS:-120}" || true
 }
-

@@ -202,6 +202,9 @@ export function TaskDetailDrawer({
             <Descriptions.Item label={t('tasks.column.priority')}>
               {task.priority}
             </Descriptions.Item>
+            <Descriptions.Item label={t('tasks.form.requiresExecution')}>
+              {task.mcp_config.requires_execution === false ? t('common.no') : t('common.yes')}
+            </Descriptions.Item>
             <Descriptions.Item label={t('tasks.column.schedule')}>
               {describeTaskSchedule(task.schedule, t)}
             </Descriptions.Item>

@@ -95,6 +95,16 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(payload),
     }),
+  deleteSandboxImage: (imageId: string) =>
+    request<{ ok: boolean; image_id: string; image_ref: string }>(
+      `/api/local/sandbox/images/${encodeURIComponent(imageId)}`,
+      { method: 'DELETE' },
+    ),
+  reinitializeSandboxImage: (imageId: string) =>
+    request<SandboxImageJob>(
+      `/api/local/sandbox/images/${encodeURIComponent(imageId)}/reinitialize`,
+      { method: 'POST' },
+    ),
   terminalExec: (payload: {
     workspace_id: string;
     command: string;

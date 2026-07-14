@@ -2,11 +2,11 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use std::fs;
-use std::path::Path;
 use std::process::Stdio;
 use std::time::Duration;
 
 use anyhow::{anyhow, Context, Result};
+use chatos_builtin_tools::browser_runtime::browser_backend_available;
 use chatos_mcp_service::{
     BUILTIN_KIND_BROWSER_TOOLS, BUILTIN_KIND_CODE_MAINTAINER_READ,
     BUILTIN_KIND_CODE_MAINTAINER_WRITE, BUILTIN_KIND_TERMINAL_CONTROLLER,
@@ -147,18 +147,12 @@ async fn terminal_execution_permission() -> SystemPermissionItem {
 }
 
 fn browser_automation_permission() -> SystemPermissionItem {
-    let browser_runtime_available = agent_browser_runtime_available();
+    let browser_runtime_error = browser_backend_available().err();
+    let browser_runtime_available = browser_runtime_error.is_none();
     let (status, status_label, last_error) = if browser_runtime_available {
         ("ready", "已就绪", None)
     } else {
-        (
-            "missing_dependency",
-            "缺少运行时",
-            Some(
-                "未找到真实的 agent-browser 可执行文件；请安装 agent-browser CLI 并执行 agent-browser install"
-                    .to_string(),
-            ),
-        )
+        ("missing_dependency", "缺少运行时", browser_runtime_error)
     };
 
     SystemPermissionItem {
@@ -323,13 +317,6 @@ fn skill_ids_requiring(permission_names: &[&str]) -> Vec<String> {
         .collect()
 }
 
-fn agent_browser_runtime_available() -> bool {
-    std::env::var_os("AGENT_BROWSER_BIN")
-        .map(std::path::PathBuf::from)
-        .is_some_and(|path| path.is_file())
-        || command_exists("agent-browser")
-}
-
 async fn probe_shell_execution() -> std::result::Result<(), String> {
     let mut command = if cfg!(windows) {
         let mut command =
@@ -354,33 +341,6 @@ async fn probe_shell_execution() -> std::result::Result<(), String> {
     } else {
         Err(format!("shell exited with status {status}"))
     }
-}
-
-fn command_exists(program: &str) -> bool {
-    let Some(path_value) = std::env::var_os("PATH") else {
-        return false;
-    };
-    for dir in std::env::split_paths(&path_value) {
-        if executable_candidate_exists(dir.as_path(), program) {
-            return true;
-        }
-    }
-    false
-}
-
-fn executable_candidate_exists(dir: &Path, program: &str) -> bool {
-    if dir.join(program).is_file() {
-        return true;
-    }
-    #[cfg(windows)]
-    {
-        for extension in ["exe", "cmd", "bat"] {
-            if dir.join(format!("{program}.{extension}")).is_file() {
-                return true;
-            }
-        }
-    }
-    false
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -533,9 +493,9 @@ fn terminal_execution_note() -> String {
 
 fn browser_automation_note(runtime_available: bool) -> String {
     let runtime_note = if runtime_available {
-        "已检测到真实的 agent-browser 可执行文件。"
+        "已检测到 Local Connector 内置的 agent-browser 浏览器运行时。"
     } else {
-        "需要先安装 agent-browser CLI。"
+        "当前客户端安装包缺少 agent-browser 浏览器运行时，请重新安装完整客户端。"
     };
     match std::env::consts::OS {
         "macos" => format!("{runtime_note} 当前浏览器 MCP 走 agent-browser/DevTools，不做全屏录制；只有未来改为控制已安装浏览器 App 时，才可能需要 macOS 自动化或辅助功能权限。"),
