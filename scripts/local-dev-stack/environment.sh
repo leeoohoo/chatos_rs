@@ -14,6 +14,13 @@ export_local_env() {
   export CHATOS_CONSUL_HTTP_ADDR="${CHATOS_LOCAL_DEV_CONSUL_HTTP_ADDR:-http://127.0.0.1:8500}"
   export CHATOS_SERVICE_ADDRESS="${CHATOS_LOCAL_DEV_SERVICE_ADDRESS:-127.0.0.1}"
   export CHATOS_SERVICE_CHECK_ADDRESS="${CHATOS_LOCAL_DEV_SERVICE_CHECK_ADDRESS:-host.docker.internal}"
+  export CONFIG_CENTER_HOST="${CONFIG_CENTER_HOST:-0.0.0.0}"
+  export CONFIG_CENTER_PORT="${CONFIG_CENTER_PORT:-39270}"
+  export CONFIG_CENTER_BASE_URL="${CONFIG_CENTER_BASE_URL:-http://127.0.0.1:${CONFIG_CENTER_PORT}}"
+  export CONFIG_CENTER_INTERNAL_API_SECRET="${CONFIG_CENTER_INTERNAL_API_SECRET:-change_me_configuration_center_internal_secret}"
+  export AGENT_MAX_ITERATIONS="${AGENT_MAX_ITERATIONS:-600}"
+  export CONFIG_CENTER_CONSUL_REQUIRED="${CONFIG_CENTER_CONSUL_REQUIRED:-false}"
+  export VITE_CONFIG_CENTER_URL="${VITE_CONFIG_CENTER_URL:-http://localhost:39271}"
 
   export OPENAI_API_KEY="${OPENAI_API_KEY:-}"
   export OPENAI_BASE_URL="${OPENAI_BASE_URL:-https://api.openai.com/v1}"
@@ -88,6 +95,8 @@ export_local_env() {
   export MEMORY_ENGINE_MONGODB_URI="mongodb://${mongo_user}:${mongo_password}@127.0.0.1:${mongo_port}/admin"
   export PROJECT_SERVICE_DATABASE_URL="mongodb://${mongo_user}:${mongo_password}@127.0.0.1:${mongo_port}/project_management_service?authSource=admin"
   export PLUGIN_MANAGEMENT_SERVICE_DATABASE_URL="mongodb://${mongo_user}:${mongo_password}@127.0.0.1:${mongo_port}/plugin_management_service?authSource=admin"
+  export CONFIG_CENTER_DATABASE_URL="mongodb://${mongo_user}:${mongo_password}@127.0.0.1:${mongo_port}/configuration_center?authSource=admin"
+  export CONFIG_CENTER_MONGODB_DATABASE="${CONFIG_CENTER_MONGODB_DATABASE:-configuration_center}"
   export PLUGIN_MANAGEMENT_SERVICE_MONGODB_DATABASE="${PLUGIN_MANAGEMENT_SERVICE_MONGODB_DATABASE:-plugin_management_service}"
   export LOCAL_CONNECTOR_DATABASE_URL="mongodb://${mongo_user}:${mongo_password}@127.0.0.1:${mongo_port}/local_connector_service?authSource=admin"
   export SANDBOX_MANAGER_DATABASE_URL="mongodb://${mongo_user}:${mongo_password}@127.0.0.1:${mongo_port}/sandbox_manager_service?authSource=admin"
@@ -95,6 +104,7 @@ export_local_env() {
   export LEGACY_AUTH_MONGODB_URI="mongodb://${mongo_user}:${mongo_password}@127.0.0.1:${mongo_port}/admin"
 
   export MEMORY_ENGINE_USER_SERVICE_BASE_URL="http://127.0.0.1:${USER_SERVICE_PORT}"
+  export CONFIG_CENTER_USER_SERVICE_BASE_URL="http://127.0.0.1:${USER_SERVICE_PORT}"
   export MEMORY_ENGINE_BASE_URL="http://127.0.0.1:${MEMORY_ENGINE_PORT}/api/memory-engine/v1"
   export TASK_RUNNER_BASE_URL="http://127.0.0.1:${TASK_RUNNER_PORT}"
   export CHATOS_TASK_RUNNER_BASE_URL="http://127.0.0.1:${TASK_RUNNER_PORT}"
@@ -173,6 +183,7 @@ import json
 import sys
 
 managed = {
+    "configuration-center",
     "user-service",
     "memory-engine",
     "project-service",

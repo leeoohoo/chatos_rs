@@ -6,6 +6,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useI18n } from '../../i18n/I18nProvider';
 import { useApiClient } from '../../lib/api/ApiClientContext';
 import type { TaskRunnerAgentAccountResponse } from '../../lib/api/client/types';
+import { localRuntimeBridgeAvailable } from '../../lib/api/localRuntime';
 import {
   useOptionalChatStoreContext,
 } from '../../lib/store/ChatStoreContext';
@@ -33,6 +34,7 @@ import { useSessionsRealtime } from '../../lib/realtime/useSessionsRealtime';
 import { useTerminalUiSetting } from '../../hooks/useTerminalUiSetting';
 import type { ChatStore as SessionListStoreHook } from '../../lib/store/createChatStoreWithBackend';
 import type { ResourceSourceMode } from './CreateResourceModals';
+import { resolveWorkspaceResourceVisibility } from './resourceVisibility';
 import type { ContactItem } from './types';
 
 const CONTACT_CREATE_LIKE_REASONS = new Set(['contact_created', 'contact_upserted']);
@@ -151,6 +153,7 @@ export const useSessionListController = ({
   const [taskRunnerSaving, setTaskRunnerSaving] = useState(false);
 
   const apiClient = useApiClient();
+  const allowProjectCreation = localRuntimeBridgeAvailable();
   const { confirm, alert } = useDialogService();
 
   const {
@@ -332,6 +335,7 @@ export const useSessionListController = ({
     cloudProjectName,
     cloudProjectGitUrl,
     cloudProjectZipFile,
+    allowProjectCreation,
   });
 
   const sectionExpansion = useSectionExpansion({
@@ -343,25 +347,33 @@ export const useSessionListController = ({
     terminalUiEnabled,
     terminalUiResolved,
   } = useTerminalUiSetting();
-  const terminalVisibility = useMemo(() => ({
-    terminalUiEnabled,
-    terminalUiResolved,
-    showTerminalSection: terminalUiResolved && terminalUiEnabled,
-  }), [terminalUiEnabled, terminalUiResolved]);
+  const workspaceResourceVisibility = useMemo(
+    () => resolveWorkspaceResourceVisibility({
+      desktopBridgeAvailable: allowProjectCreation,
+      terminalUiEnabled,
+      terminalUiResolved,
+    }),
+    [allowProjectCreation, terminalUiEnabled, terminalUiResolved],
+  );
 
   useEffect(() => {
-    if (!terminalVisibility.terminalUiResolved || terminalVisibility.terminalUiEnabled) {
+    if (!terminalUiResolved) {
       return;
     }
-    if (activePanel === 'terminal') {
+    const hiddenTerminalPanel = activePanel === 'terminal'
+      && !workspaceResourceVisibility.showTerminalSection;
+    const hiddenRemotePanel = (activePanel === 'remote_terminal' || activePanel === 'remote_sftp')
+      && !workspaceResourceVisibility.showRemoteSection;
+    if (hiddenTerminalPanel || hiddenRemotePanel) {
       setActivePanel(currentProject ? 'project' : 'chat');
     }
   }, [
     activePanel,
     currentProject,
     setActivePanel,
-    terminalVisibility.terminalUiEnabled,
-    terminalVisibility.terminalUiResolved,
+    terminalUiResolved,
+    workspaceResourceVisibility.showRemoteSection,
+    workspaceResourceVisibility.showTerminalSection,
   ]);
 
   const deleteActions = useSessionListDeleteActions({
@@ -391,13 +403,14 @@ export const useSessionListController = ({
     loadTerminals,
     loadRemoteConnections,
     isCollapsed,
-    terminalsEnabled: terminalVisibility.showTerminalSection,
+    terminalsEnabled: workspaceResourceVisibility.showTerminalSection,
+    remoteEnabled: workspaceResourceVisibility.showRemoteSection,
     terminalsExpanded: sectionExpansion.terminalsExpanded,
     remoteExpanded: sectionExpansion.remoteExpanded,
   });
 
   useTerminalListRealtime({
-    enabled: terminalVisibility.showTerminalSection,
+    enabled: workspaceResourceVisibility.showTerminalSection,
     onInvalidate: (payload) => {
       const reason = String(payload.reason || '').trim();
       const terminalId = String(payload.terminal_id || '').trim();
@@ -502,7 +515,7 @@ export const useSessionListController = ({
   });
 
   useRemoteConnectionsRealtime({
-    enabled: true,
+    enabled: workspaceResourceVisibility.showRemoteSection,
     onInvalidate: (payload) => {
       const reason = String(payload.reason || '').trim();
       const connectionId = String(payload.connection_id || '').trim();
@@ -574,6 +587,7 @@ export const useSessionListController = ({
   return {
     agents,
     apiClient,
+    allowProjectCreation,
     contactSessionCreator,
     contactSessionState,
     currentProject,
@@ -630,7 +644,7 @@ export const useSessionListController = ({
     closeTaskRunnerConfig,
     saveTaskRunnerConfig,
     terminals,
-    terminalVisibility,
+    workspaceResourceVisibility,
     terminalError,
     terminalModalOpen,
     terminalExecuting,

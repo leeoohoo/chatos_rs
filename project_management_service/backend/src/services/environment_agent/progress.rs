@@ -311,6 +311,9 @@ fn progress_response(
         ProjectRuntimeEnvironmentStatus::PendingConfiguration => {
             ("pending_configuration", "idle", Some(0))
         }
+        ProjectRuntimeEnvironmentStatus::PendingImageBuild => {
+            ("pending_image_build", "idle", Some(100))
+        }
         ProjectRuntimeEnvironmentStatus::Pending => ("pending", "idle", Some(0)),
         ProjectRuntimeEnvironmentStatus::Ready => ("completed", "succeeded", Some(100)),
         ProjectRuntimeEnvironmentStatus::NotRunnable => ("not_runnable", "succeeded", Some(100)),
@@ -478,6 +481,8 @@ mod tests {
             detected_stack: json!({}),
             required_services: json!([]),
             env_vars: json!({}),
+            environment_variables: Vec::new(),
+            generated_config_files: Vec::new(),
             last_agent_run_id: Some("run-1".to_string()),
             last_error: None,
             created_at: "2026-07-10T10:00:00Z".to_string(),

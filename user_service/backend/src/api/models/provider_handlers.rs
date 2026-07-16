@@ -30,7 +30,6 @@ pub(in crate::api) async fn list_model_providers(
     Extension(principal): Extension<CurrentPrincipal>,
     Query(query): Query<UserScopeQuery>,
 ) -> ApiResult<Vec<serde_json::Value>> {
-    ensure_super_admin(&principal)?;
     let owner_user_id = resolve_target_user_id(&principal, query.user_id.as_deref())?;
     let items = if principal.is_super_admin() && owner_user_id.is_none() {
         state.store.list_user_model_providers(None).await
@@ -55,7 +54,6 @@ pub(in crate::api) async fn create_model_provider(
     Extension(principal): Extension<CurrentPrincipal>,
     Json(input): Json<CreateUserModelProviderRequest>,
 ) -> ApiResult<serde_json::Value> {
-    ensure_super_admin(&principal)?;
     let owner_user_id = resolve_target_user_id(&principal, input.owner_user_id.as_deref())?
         .ok_or_else(|| bad_request("owner_user_id is required"))?;
     ensure_owner_user_exists(&state, owner_user_id.as_str()).await?;
@@ -126,7 +124,6 @@ pub(in crate::api) async fn get_model_provider(
     Extension(principal): Extension<CurrentPrincipal>,
     Query(query): Query<ModelConfigGetQuery>,
 ) -> ApiResult<serde_json::Value> {
-    ensure_super_admin(&principal)?;
     let Some(record) = state
         .store
         .find_user_model_provider_by_id(id.as_str())
@@ -150,7 +147,6 @@ pub(in crate::api) async fn update_model_provider(
     Extension(principal): Extension<CurrentPrincipal>,
     Json(input): Json<UpdateUserModelProviderRequest>,
 ) -> ApiResult<serde_json::Value> {
-    ensure_super_admin(&principal)?;
     let Some(mut record) = state
         .store
         .find_user_model_provider_by_id(id.as_str())
@@ -181,7 +177,6 @@ pub(in crate::api) async fn refresh_model_provider_models(
     Extension(principal): Extension<CurrentPrincipal>,
     Json(input): Json<UpdateUserModelProviderRequest>,
 ) -> ApiResult<serde_json::Value> {
-    ensure_super_admin(&principal)?;
     let Some(mut record) = state
         .store
         .find_user_model_provider_by_id(id.as_str())
@@ -211,7 +206,6 @@ pub(in crate::api) async fn delete_model_provider(
     Path(id): Path<String>,
     Extension(principal): Extension<CurrentPrincipal>,
 ) -> ApiStatusResult {
-    ensure_super_admin(&principal)?;
     let Some(record) = state
         .store
         .find_user_model_provider_by_id(id.as_str())
@@ -251,17 +245,5 @@ pub(in crate::api) async fn delete_model_provider(
         Ok(axum::http::StatusCode::NO_CONTENT)
     } else {
         Err(not_found("model provider not found"))
-    }
-}
-
-fn ensure_super_admin(
-    principal: &CurrentPrincipal,
-) -> Result<(), (axum::http::StatusCode, Json<serde_json::Value>)> {
-    if principal.is_super_admin() {
-        Ok(())
-    } else {
-        Err(super::super::forbidden(
-            "model provider management requires super admin access",
-        ))
     }
 }

@@ -15,11 +15,15 @@ function normalizeBasePath(rawValue: string | undefined): string {
 
 function sandboxApiProxy(
   target: string,
+  operatorToken: string,
   rewrite?: ProxyOptions['rewrite'],
 ): ProxyOptions {
   return {
     target,
     changeOrigin: true,
+    headers: operatorToken
+      ? { 'x-sandbox-operator-token': operatorToken }
+      : undefined,
     ...(rewrite ? { rewrite } : {}),
   };
 }
@@ -28,6 +32,12 @@ export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '');
   const base = normalizeBasePath(env.VITE_BASE_PATH || env.SANDBOX_MANAGER_FRONTEND_BASE_PATH);
   const target = env.SANDBOX_MANAGER_API_PROXY_TARGET || 'http://127.0.0.1:8095';
+  const operatorToken =
+    env.SANDBOX_MANAGER_API_PROXY_OPERATOR_TOKEN ||
+    env.SANDBOX_MANAGER_OPERATOR_TOKEN ||
+    ((env.CHATOS_ENV || 'local').trim().toLowerCase() === 'local'
+      ? 'chatos-sandbox-manager-dev-operator-token'
+      : '');
   const basePrefix = base === '/' ? '' : base.replace(/\/+$/, '');
 
   return {
@@ -37,11 +47,11 @@ export default defineConfig(({ mode }) => {
       host: '0.0.0.0',
       port: Number(env.SANDBOX_MANAGER_FRONTEND_PORT || 8096),
       proxy: {
-        '/api': sandboxApiProxy(target),
+        '/api': sandboxApiProxy(target, operatorToken),
         '/health': target,
         ...(basePrefix
           ? {
-              [`${basePrefix}/api`]: sandboxApiProxy(target, (path) =>
+              [`${basePrefix}/api`]: sandboxApiProxy(target, operatorToken, (path) =>
                 path.slice(basePrefix.length),
               ),
               [`${basePrefix}/health`]: {

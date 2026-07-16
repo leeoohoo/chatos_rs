@@ -150,9 +150,6 @@ mod tests {
             require_signed_internal_requests: false,
             user_service_base_url: "http://127.0.0.1:39190".to_string(),
             user_service_request_timeout_ms: 300,
-            local_connector_service_base_url: "http://127.0.0.1:39230".to_string(),
-            local_connector_service_request_timeout_ms: 300,
-            local_connector_internal_api_secret: None,
         }
     }
 }

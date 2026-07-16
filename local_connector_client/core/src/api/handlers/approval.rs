@@ -3,6 +3,9 @@
 
 use axum::extract::{Path, State};
 use axum::Json;
+use chatos_sandbox_contract::{
+    CommandExecutionApprovalDecision, SimpleCommandExecutionApprovalDecision,
+};
 use serde_json::{json, Value};
 
 use crate::approval::{
@@ -93,17 +96,37 @@ pub(crate) async fn local_approve_pending_approval(
     Json(req): Json<ResolveApprovalRequest>,
 ) -> Result<Json<Value>, LocalApiError> {
     let remember_allow = req.remember_allow.unwrap_or(false);
-    if remember_allow && !req.risk_acknowledged {
+    let decision = req.decision.unwrap_or_else(|| {
+        CommandExecutionApprovalDecision::Simple(if remember_allow {
+            SimpleCommandExecutionApprovalDecision::AcceptForSession
+        } else {
+            SimpleCommandExecutionApprovalDecision::Accept
+        })
+    });
+    if approval_decision_requires_risk_ack(&decision) && !req.risk_acknowledged {
         return Err(LocalApiError::conflict_code(
             "approval_risk_ack_required",
-            "remembering an approval requires explicit risk acknowledgement",
+            "session or persistent approval requires explicit risk acknowledgement",
         ));
     }
-    let ok = approve_pending_approval(id.as_str(), remember_allow).await;
+    let ok = approve_pending_approval(id.as_str(), decision, req.granted_permissions)
+        .await
+        .map_err(LocalApiError::bad_request)?;
     if !ok {
         return Err(LocalApiError::bad_request("pending approval not found"));
     }
     Ok(Json(json!({ "ok": true })))
+}
+
+fn approval_decision_requires_risk_ack(decision: &CommandExecutionApprovalDecision) -> bool {
+    !matches!(
+        decision,
+        CommandExecutionApprovalDecision::Simple(
+            SimpleCommandExecutionApprovalDecision::Accept
+                | SimpleCommandExecutionApprovalDecision::Decline
+                | SimpleCommandExecutionApprovalDecision::Cancel
+        )
+    )
 }
 
 fn approval_settings_payload(state: &crate::approval::ApprovalState) -> Value {
@@ -274,6 +297,8 @@ mod tests {
     fn remember_allow_requires_risk_acknowledgement() {
         let req = ResolveApprovalRequest {
             remember_allow: Some(true),
+            decision: None,
+            granted_permissions: None,
             reason: None,
             risk_acknowledged: false,
         };
@@ -281,6 +306,8 @@ mod tests {
 
         let req = ResolveApprovalRequest {
             remember_allow: Some(true),
+            decision: None,
+            granted_permissions: None,
             reason: None,
             risk_acknowledged: true,
         };

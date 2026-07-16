@@ -269,6 +269,19 @@ fn runtime_options_pass_abort_checker_to_tool_context() {
 }
 
 #[test]
+fn runtime_options_abort_token_cancels_runtime_and_tool_context() {
+    let token = tokio_util::sync::CancellationToken::new();
+    let options =
+        AiRuntimeOptions::for_conversation("session-token").with_abort_token(Some(token.clone()));
+
+    assert!(!options.is_aborted());
+    assert!(!options.tool_call_context().is_aborted());
+    token.cancel();
+    assert!(options.is_aborted());
+    assert!(options.tool_call_context().is_aborted());
+}
+
+#[test]
 fn turn_report_wraps_success_and_failure() {
     let report = AiRuntimeResult {
         content: "done".to_string(),

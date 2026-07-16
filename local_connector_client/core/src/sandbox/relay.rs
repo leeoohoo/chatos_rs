@@ -14,6 +14,7 @@ use tokio::sync::Mutex;
 
 use crate::history::CommandHistoryRecorder;
 use crate::relay::{relay_error_response, RelayRequest, RelayResponse};
+use crate::sandbox::compose::start_project_compose_environment;
 use crate::sandbox::docker::ensure_docker_running;
 use crate::sandbox::images::{local_sandbox_image_catalog, start_local_sandbox_image_job};
 use crate::sandbox::lease::{
@@ -99,6 +100,22 @@ async fn handle_local_sandbox_request(
         let jobs = sandbox_runtime.jobs.read().await.clone();
         return Ok((200, BTreeMap::new(), json!(jobs)));
     }
+    if method == Method::POST && path == "/api/local/sandbox/environments/compose/up" {
+        if !state.sandbox.enabled {
+            return Ok((
+                400,
+                BTreeMap::new(),
+                json!({ "error": "local sandbox is disabled" }),
+            ));
+        }
+        let result = start_project_compose_environment(
+            state,
+            request.workspace_id.as_str(),
+            request.body.clone(),
+        )
+        .await?;
+        return Ok((200, BTreeMap::new(), result));
+    }
     if method == Method::POST && path == "/api/sandboxes/leases" {
         return create_local_sandbox_lease(request, state, http_client, sandbox_runtime).await;
     }
@@ -152,7 +169,13 @@ fn relay_local_runtime(
         state_path: history_recorder.state_path.clone(),
         state: history_recorder.state.clone(),
         http_client: http_client.clone(),
+        database: None,
+        turn_control: Default::default(),
+        memory_jobs: Default::default(),
+        ask_user_prompts: Default::default(),
+        environment_jobs: Default::default(),
         connector_task: Arc::new(Mutex::new(None)),
+        task_worker_task: Arc::new(Mutex::new(None)),
         sandbox_runtime: sandbox_runtime.clone(),
     }
 }

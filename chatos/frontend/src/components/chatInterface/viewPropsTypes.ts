@@ -37,6 +37,11 @@ export interface ChatInterfaceConversationState {
   reviewRepairRunning: boolean;
   reviewRepairPendingCount: number | null;
   reviewRepairDisabled: boolean;
+  isLoading: boolean;
+  isStreaming: boolean;
+  isStopping: boolean;
+  streamingPhase: 'thinking' | 'reviewing' | null;
+  streamingPreviewText: string;
 }
 
 export interface ChatInterfaceConversationActions {
@@ -45,6 +50,7 @@ export interface ChatInterfaceConversationActions {
   handleCloseSummary: () => void;
   toggleSidebar: () => void;
   handleMessageSend: ComponentProps<typeof ChatConversationPane>['onSend'];
+  handleStopMessage: ComponentProps<typeof ChatConversationPane>['onStop'];
   updateReasoningEnabled: (enabled: boolean) => void;
   updatePlanModeEnabled: (enabled: boolean) => void;
   setSelectedModel: (modelId: string | null) => void;

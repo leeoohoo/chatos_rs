@@ -4,6 +4,7 @@
 pub(crate) mod configs;
 pub(crate) mod manifest;
 pub(crate) mod provider;
+pub(crate) mod repository;
 pub(crate) mod selection;
 pub(crate) mod service;
 pub(crate) mod terminal;

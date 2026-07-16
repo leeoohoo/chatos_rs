@@ -1,6 +1,8 @@
 {
   "name": "local-connector-client-frontend",
   "version": "0.1.0",
+  "description": "Chat OS desktop client with local SQLite orchestration and sandbox tooling",
+  "author": "AI Chat Team",
   "private": true,
   "type": "module",
   "main": "electron/main.cjs",
@@ -10,21 +12,20 @@
     "build:electron": "tsc && vite build --mode electron",
     "electron:pack": "electron-builder --win portable",
     "preview": "vite preview",
+    "test:electron": "node --test test/*.test.cjs",
     "type-check": "tsc --noEmit"
   },
-  "dependencies": {
+  "devDependencies": {
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^6.0.3",
+    "electron": "^43.1.0",
+    "electron-builder": "^26.15.3",
     "lucide-react": "^1.24.0",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
     "typescript": "^7.0.2",
     "vite": "^8.1.4"
-  },
-  "devDependencies": {
-    "@types/react": "^19.2.17",
-    "@types/react-dom": "^19.2.3",
-    "electron": "^43.1.0",
-    "electron-builder": "^26.15.3"
   },
   "build": {
     "appId": "com.chatos.local-connector",
@@ -43,12 +44,24 @@
         "to": "local_connector_client_core.exe"
       },
       {
+        "from": "electron/resources/chatos_sandbox_mcp_server.exe",
+        "to": "chatos_sandbox_mcp_server.exe"
+      },
+      {
         "from": "electron/resources/bundled-tools",
         "to": "bundled-tools"
       },
       {
         "from": "electron/resources/skill_bundles",
         "to": "skill-bundles"
+      },
+      {
+        "from": "electron/resources/chatos-frontend",
+        "to": "chatos-frontend"
+      },
+      {
+        "from": "electron/resources/sqlite-migrations",
+        "to": "sqlite-migrations"
       }
     ],
     "win": {

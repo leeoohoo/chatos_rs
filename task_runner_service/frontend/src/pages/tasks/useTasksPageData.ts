@@ -49,6 +49,7 @@ type UseTasksPageDataParams = {
   mcpPreviewTask: TaskRecord | null;
   batchRunTaskIds: string[];
   editingTaskId?: string;
+  editorProjectId?: string;
 };
 
 function normalizeProjectId(value?: string | null) {
@@ -95,6 +96,7 @@ export function useTasksPageData({
   mcpPreviewTask,
   batchRunTaskIds,
   editingTaskId,
+  editorProjectId,
 }: UseTasksPageDataParams) {
   const scheduleModeLabels = useMemo(
     () =>
@@ -366,8 +368,10 @@ export function useTasksPageData({
     const editingTask = (taskIndexQuery.data?.tasks || []).find(
       (task) => task.id === editingTaskId,
     );
-    return normalizeProjectId(editingTask?.project_id || routeProjectId);
-  }, [editingTaskId, routeProjectId, taskIndexQuery.data?.tasks]);
+    return normalizeProjectId(
+      editorProjectId || editingTask?.project_id || routeProjectId,
+    );
+  }, [editingTaskId, editorProjectId, routeProjectId, taskIndexQuery.data?.tasks]);
 
   const prerequisiteTaskOptions = useMemo(
     () =>

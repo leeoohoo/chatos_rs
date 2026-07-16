@@ -5,7 +5,9 @@ use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use async_trait::async_trait;
-use chatos_agent::{ChatosAgentProfile, ChatosStreamAgent, ChatosStreamRuntime};
+use chatos_agent::{
+    ChatosAgentProfile, ChatosStreamAgent, ChatosStreamRuntime, DEFAULT_AGENT_MAX_ITERATIONS,
+};
 use chatos_ai_runtime::{
     AiResponse, AiRuntimeOptions, ContextualTurnRequest, ModelRuntimeConfig,
     RuntimeBeforeModelRequest, RuntimeCallbacks, RuntimeFinalResponseAction,
@@ -735,7 +737,7 @@ fn max_iterations_from_settings(settings: &Value) -> usize {
         .get("MAX_ITERATIONS")
         .and_then(Value::as_i64)
         .map(|value| value.max(1) as usize)
-        .unwrap_or(600)
+        .unwrap_or(DEFAULT_AGENT_MAX_ITERATIONS)
 }
 
 #[cfg(test)]

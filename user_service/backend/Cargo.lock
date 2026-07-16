@@ -317,10 +317,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "chatos_config_sdk"
+version = "0.1.0"
+dependencies = [
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "chatos_service_runtime"
 version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
+ "chatos_config_sdk",
  "futures-util",
  "jsonwebtoken",
  "reqwest",

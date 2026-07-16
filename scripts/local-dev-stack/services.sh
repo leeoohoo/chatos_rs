@@ -159,6 +159,7 @@ print_urls() {
 
 Main app:                 http://localhost:8088
 Main backend:             http://localhost:3997
+Configuration Center:     http://localhost:39271
 Harness:                  http://localhost:3000
 User Service:             http://localhost:39191
 Memory Engine:            http://localhost:4178

@@ -202,6 +202,8 @@ pub struct UserModelConfigRecord {
     pub thinking_level: Option<String>,
     pub task_usage_scenario: Option<String>,
     pub task_thinking_level: Option<String>,
+    pub temperature: Option<f64>,
+    pub max_output_tokens: Option<i64>,
     pub api_key: Option<String>,
     #[serde(default)]
     pub has_api_key: bool,
@@ -248,6 +250,10 @@ pub struct UserModelSettingsRecord {
     pub project_management_agent_model_config_id: Option<String>,
     #[serde(default)]
     pub project_management_agent_thinking_level: Option<String>,
+    #[serde(default)]
+    pub environment_initialization_model_config_id: Option<String>,
+    #[serde(default)]
+    pub environment_initialization_thinking_level: Option<String>,
     pub updated_at: String,
 }
 
@@ -403,6 +409,8 @@ pub struct CreateUserModelConfigRequest {
     pub thinking_level: Option<String>,
     pub task_usage_scenario: Option<String>,
     pub task_thinking_level: Option<String>,
+    pub temperature: Option<f64>,
+    pub max_output_tokens: Option<i64>,
     pub api_key: Option<String>,
     #[serde(default)]
     pub has_api_key: Option<bool>,
@@ -437,6 +445,10 @@ pub struct UpdateUserModelConfigRequest {
     pub thinking_level: Option<String>,
     pub task_usage_scenario: Option<String>,
     pub task_thinking_level: Option<String>,
+    pub temperature: Option<f64>,
+    pub clear_temperature: Option<bool>,
+    pub max_output_tokens: Option<i64>,
+    pub clear_max_output_tokens: Option<bool>,
     pub api_key: Option<String>,
     pub has_api_key: Option<bool>,
     pub clear_api_key: Option<bool>,
@@ -468,6 +480,8 @@ pub struct UpdateUserModelSettingsRequest {
     pub memory_summary_thinking_level: Option<Option<String>>,
     pub project_management_agent_model_config_id: Option<Option<String>>,
     pub project_management_agent_thinking_level: Option<Option<String>>,
+    pub environment_initialization_model_config_id: Option<Option<String>>,
+    pub environment_initialization_thinking_level: Option<Option<String>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

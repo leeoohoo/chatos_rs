@@ -118,9 +118,9 @@ const TABS: Array<{
   },
   {
     id: 'sandbox',
-    label: '本地沙箱',
+    label: '本地保护',
     eyebrow: 'SANDBOX',
-    description: '管理 Docker 隔离环境、镜像与运行实例。',
+    description: '用安全默认值限制本地任务访问文件和网络。',
     icon: Shield,
   },
 ];

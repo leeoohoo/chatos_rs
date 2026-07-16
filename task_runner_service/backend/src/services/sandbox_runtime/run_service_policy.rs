@@ -30,7 +30,7 @@ impl RunService {
                         .source_type
                         .as_deref()
                         .map(str::trim)
-                        .unwrap_or("local");
+                        .unwrap_or("cloud");
                     if source_type.eq_ignore_ascii_case("cloud") {
                         return Ok(true);
                     }
@@ -103,11 +103,7 @@ impl RunService {
                 return Err(err);
             }
         };
-        let workspace_root = if is_local_connector_sandbox_manager(route.base_url.as_str()) {
-            sandbox_workspace_root(self.config.default_workspace_dir.as_str())?
-        } else {
-            sandbox_workspace_root(effective_workspace_dir)?
-        };
+        let workspace_root = sandbox_workspace_root(effective_workspace_dir)?;
         let base_url = route.base_url.clone();
         let ttl_seconds = self.effective_sandbox_lease_ttl_seconds().await?;
         let client = SandboxManagerClient::new(base_url, route.auth.clone())?;
@@ -178,8 +174,23 @@ impl RunService {
             }
         };
 
-        if let Err(err) =
-            validate_effective_policy_is_not_broader(&route.policy, &response.effective_policy)
+        let Some(effective_policy) = response.effective_policy.clone() else {
+            let err = "sandbox response missing required effective_policy".to_string();
+            let _ = client.release_response(&response, false, true).await;
+            self.append_sandbox_event(
+                run,
+                "sandbox_failed",
+                err.clone(),
+                Some(json!({
+                    "requested_policy": route.policy,
+                    "effective_policy": Value::Null,
+                })),
+            )
+            .await;
+            return Err(err);
+        };
+
+        if let Err(err) = validate_effective_policy_is_not_broader(&route.policy, &effective_policy)
         {
             let _ = client.release_response(&response, false, true).await;
             self.append_sandbox_event(
@@ -188,7 +199,7 @@ impl RunService {
                 err.clone(),
                 Some(json!({
                     "requested_policy": route.policy,
-                    "effective_policy": response.effective_policy,
+                    "effective_policy": effective_policy,
                 })),
             )
             .await;
@@ -201,7 +212,7 @@ impl RunService {
             "sandbox policy resolved",
             Some(json!({
                 "requested_policy": route.policy,
-                "effective_policy": response.effective_policy,
+                "effective_policy": effective_policy,
             })),
         )
         .await;
@@ -225,8 +236,6 @@ impl RunService {
             }
         };
 
-        let should_copy_workspace =
-            !is_local_connector_sandbox_manager(context.manager_base_url.as_str());
         let baseline_workspace = match sandbox_baseline_workspace(&context.run_workspace) {
             Ok(path) => path,
             Err(err) => {
@@ -241,33 +250,30 @@ impl RunService {
                 return Err(err);
             }
         };
-        if should_copy_workspace {
-            if let Err(err) =
-                copy_workspace_to_sandbox(effective_workspace_dir, baseline_workspace.as_str())
-            {
-                let _ = client.release(&context, true, true).await;
-                self.append_sandbox_event(
-                    run,
-                    "sandbox_failed",
-                    format!("复制工作区 baseline 失败: {err}"),
-                    Some(context.to_metadata()),
-                )
-                .await;
-                return Err(err);
-            }
-            if let Err(err) =
-                copy_workspace_to_sandbox(effective_workspace_dir, &context.run_workspace)
-            {
-                let _ = client.release(&context, true, true).await;
-                self.append_sandbox_event(
-                    run,
-                    "sandbox_failed",
-                    format!("复制工作区到沙箱失败: {err}"),
-                    Some(context.to_metadata()),
-                )
-                .await;
-                return Err(err);
-            }
+        if let Err(err) =
+            copy_workspace_to_sandbox(effective_workspace_dir, baseline_workspace.as_str())
+        {
+            let _ = client.release(&context, true, true).await;
+            self.append_sandbox_event(
+                run,
+                "sandbox_failed",
+                format!("复制工作区 baseline 失败: {err}"),
+                Some(context.to_metadata()),
+            )
+            .await;
+            return Err(err);
+        }
+        if let Err(err) = copy_workspace_to_sandbox(effective_workspace_dir, &context.run_workspace)
+        {
+            let _ = client.release(&context, true, true).await;
+            self.append_sandbox_event(
+                run,
+                "sandbox_failed",
+                format!("复制工作区到沙箱失败: {err}"),
+                Some(context.to_metadata()),
+            )
+            .await;
+            return Err(err);
         }
 
         match client.health(&context).await {
@@ -466,14 +472,11 @@ mod policy_validation_tests {
     }
 
     #[test]
-    fn effective_policy_rejects_broader_approval_policy_or_reviewer() {
+    fn effective_policy_accepts_fail_closed_never_but_rejects_broader_reviewer() {
         let mut effective_policy = effective();
         effective_policy.approval_policy = ApprovalPolicy::Never;
-        assert!(
-            validate_effective_policy_is_not_broader(&request(), &effective_policy)
-                .expect_err("never is broader")
-                .contains("approval policy")
-        );
+        validate_effective_policy_is_not_broader(&request(), &effective_policy)
+            .expect("never denies escalations and is no broader than on-request");
 
         let mut effective_reviewer = effective();
         effective_reviewer.approval_reviewer = ApprovalReviewer::AutoReview;

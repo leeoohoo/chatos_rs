@@ -9,6 +9,7 @@ $ErrorActionPreference = "Stop"
 $ClientDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $RootDir = Resolve-Path (Join-Path $ClientDir "..")
 $FrontendDir = Join-Path $ClientDir "frontend"
+$ChatosFrontendDir = Join-Path $RootDir "chatos\frontend"
 $ElectronResourcesDir = Join-Path $FrontendDir "electron\resources"
 $SkillCatalogPath = Join-Path $ClientDir "skill_bundles\catalog\internal-skill-catalog.json"
 
@@ -45,6 +46,10 @@ function Get-CoreBin {
   Join-Path (Get-CargoTargetDir) "release\local_connector_client_core.exe"
 }
 
+function Get-SandboxAgentBin {
+  Join-Path (Get-CargoTargetDir) "release\chatos_sandbox_mcp_server.exe"
+}
+
 function Get-PlatformDir {
   $arch = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture
   switch ($arch) {
@@ -63,10 +68,26 @@ function Invoke-FrontendBuild {
   }
 }
 
+function Invoke-ChatosFrontendBuild {
+  Push-Location $ChatosFrontendDir
+  try {
+    $previousApiBase = $env:VITE_API_BASE_URL
+    $env:VITE_API_BASE_URL = if ($env:LOCAL_CONNECTOR_CHATOS_API_BASE_URL) {
+      $env:LOCAL_CONNECTOR_CHATOS_API_BASE_URL
+    } else {
+      "https://app.jgoool.com/api"
+    }
+    npm run build
+  } finally {
+    $env:VITE_API_BASE_URL = $previousApiBase
+    Pop-Location
+  }
+}
+
 function Invoke-CoreBuild {
   Push-Location $RootDir
   try {
-    cargo build --release -p local_connector_client_core
+    cargo build --release -p local_connector_client_core -p chatos_sandbox_mcp_server
   } finally {
     Pop-Location
   }
@@ -84,6 +105,7 @@ function Sync-ElectronResources {
 
   New-Item -ItemType Directory -Force -Path $ElectronResourcesDir | Out-Null
   Copy-Item -LiteralPath (Get-CoreBin) -Destination (Join-Path $ElectronResourcesDir "local_connector_client_core.exe") -Force
+  Copy-Item -LiteralPath (Get-SandboxAgentBin) -Destination (Join-Path $ElectronResourcesDir "chatos_sandbox_mcp_server.exe") -Force
 
   $platform = Get-PlatformDir
   $sourceTools = Join-Path $RootDir "bundled-tools\$platform"
@@ -99,6 +121,8 @@ function Sync-ElectronResources {
   & $prepareBrowserRuntime -DestinationDir (Join-Path $destToolsRoot $platform) -Platform $platform
 
   Copy-Item -LiteralPath (Join-Path $ClientDir "skill_bundles") -Destination $ElectronResourcesDir -Recurse -Force
+  Copy-Item -LiteralPath (Join-Path $ChatosFrontendDir "dist") -Destination (Join-Path $ElectronResourcesDir "chatos-frontend") -Recurse -Force
+  Copy-Item -LiteralPath (Join-Path $ClientDir "core\migrations") -Destination (Join-Path $ElectronResourcesDir "sqlite-migrations") -Recurse -Force
 }
 
 function New-ManualElectronPackage {
@@ -139,8 +163,11 @@ function New-ManualElectronPackage {
   Set-Content -LiteralPath (Join-Path $appResourcesDir "package.json") -Value $appPackageJson -Encoding ASCII
 
   Copy-Item -LiteralPath (Join-Path $ElectronResourcesDir "local_connector_client_core.exe") -Destination (Join-Path $resourcesDir "local_connector_client_core.exe") -Force
+  Copy-Item -LiteralPath (Join-Path $ElectronResourcesDir "chatos_sandbox_mcp_server.exe") -Destination (Join-Path $resourcesDir "chatos_sandbox_mcp_server.exe") -Force
   Copy-Item -LiteralPath (Join-Path $ElectronResourcesDir "bundled-tools") -Destination $resourcesDir -Recurse -Force
   Copy-Item -LiteralPath (Join-Path $ElectronResourcesDir "skill_bundles") -Destination (Join-Path $resourcesDir "skill-bundles") -Recurse -Force
+  Copy-Item -LiteralPath (Join-Path $ElectronResourcesDir "chatos-frontend") -Destination $resourcesDir -Recurse -Force
+  Copy-Item -LiteralPath (Join-Path $ElectronResourcesDir "sqlite-migrations") -Destination $resourcesDir -Recurse -Force
 
   $zipPath = Join-Path $outRoot "Chat-OS-Local-Connector-windows-x64.zip"
   if (Test-Path -LiteralPath $zipPath) {
@@ -153,6 +180,7 @@ function New-ManualElectronPackage {
 
 Test-SkillBundles
 Invoke-FrontendBuild
+Invoke-ChatosFrontendBuild
 Invoke-CoreBuild
 Sync-ElectronResources
 New-ManualElectronPackage

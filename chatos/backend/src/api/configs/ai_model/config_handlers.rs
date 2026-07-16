@@ -266,6 +266,25 @@ pub(in crate::api::configs) async fn update_ai_model_config(
         } else {
             existing.task_thinking_level.clone()
         },
+        temperature: if req.clear_temperature.unwrap_or(false) {
+            None
+        } else {
+            req.temperature.or(existing.temperature)
+        },
+        clear_temperature: None,
+        max_output_tokens: if req.clear_max_output_tokens.unwrap_or(false) {
+            None
+        } else {
+            req.max_output_tokens.or(existing.max_output_tokens)
+        },
+        clear_max_output_tokens: None,
+        api_key: if req.clear_api_key.unwrap_or(false) {
+            None
+        } else {
+            req.api_key.or_else(|| existing.api_key.clone())
+        },
+        clear_api_key: None,
+        base_url: req.base_url.or_else(|| existing.base_url.clone()),
         enabled: req.enabled.or(Some(existing.enabled)),
         supports_images: req.supports_images.or(Some(existing.supports_images)),
         supports_reasoning: req.supports_reasoning.or(Some(existing.supports_reasoning)),

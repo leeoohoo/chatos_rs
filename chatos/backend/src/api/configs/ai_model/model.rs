@@ -58,9 +58,11 @@ pub(super) fn from_user_service_model_config(
         thinking_level: record.thinking_level,
         task_usage_scenario: record.task_usage_scenario,
         task_thinking_level: record.task_thinking_level,
-        api_key: None,
+        temperature: record.temperature,
+        max_output_tokens: record.max_output_tokens,
+        api_key: record.api_key,
         has_api_key: record.has_api_key,
-        base_url: None,
+        base_url: record.base_url,
         enabled: record.enabled,
         supports_images: record.supports_images,
         supports_reasoning: record.supports_reasoning,
@@ -87,8 +89,10 @@ pub(super) fn to_user_service_create_request(
         thinking_level: normalize_optional_input(req.thinking_level),
         task_usage_scenario: normalize_optional_input(req.task_usage_scenario),
         task_thinking_level: normalize_optional_input(req.task_thinking_level),
-        api_key: None,
-        base_url: None,
+        temperature: req.temperature,
+        max_output_tokens: req.max_output_tokens,
+        api_key: normalize_optional_input(req.api_key),
+        base_url: normalize_optional_input(req.base_url),
         enabled: req.enabled,
         supports_images: req.supports_images,
         supports_reasoning: req.supports_reasoning,
@@ -106,9 +110,13 @@ pub(super) fn to_user_service_update_request(
         thinking_level: req.thinking_level,
         task_usage_scenario: req.task_usage_scenario,
         task_thinking_level: req.task_thinking_level,
-        api_key: None,
-        clear_api_key: None,
-        base_url: None,
+        temperature: req.temperature,
+        clear_temperature: req.clear_temperature,
+        max_output_tokens: req.max_output_tokens,
+        clear_max_output_tokens: req.clear_max_output_tokens,
+        api_key: req.api_key,
+        clear_api_key: req.clear_api_key,
+        base_url: req.base_url,
         enabled: req.enabled,
         supports_images: req.supports_images,
         supports_reasoning: req.supports_reasoning,
@@ -126,8 +134,10 @@ pub(super) fn to_response_value(cfg: &AiModelConfig) -> Value {
         "thinking_level": cfg.thinking_level,
         "task_usage_scenario": cfg.task_usage_scenario,
         "task_thinking_level": cfg.task_thinking_level,
+        "temperature": cfg.temperature,
+        "max_output_tokens": cfg.max_output_tokens,
         "has_api_key": cfg.has_api_key,
-        "base_url": Value::Null,
+        "base_url": cfg.base_url,
         "enabled": cfg.enabled,
         "supports_images": cfg.supports_images,
         "supports_reasoning": cfg.supports_reasoning,
@@ -142,8 +152,11 @@ pub(super) fn to_response_value(cfg: &AiModelConfig) -> Value {
 }
 
 pub(super) fn to_response_value_with_secret(cfg: &AiModelConfig, include_secret: bool) -> Value {
-    let _ = include_secret;
-    to_response_value(cfg)
+    let mut value = to_response_value(cfg);
+    if include_secret {
+        value["api_key"] = json!(cfg.api_key);
+    }
+    value
 }
 
 pub(super) fn model_settings_response_value(
@@ -155,6 +168,8 @@ pub(super) fn model_settings_response_value(
         "memory_summary_thinking_level": settings.memory_summary_thinking_level,
         "project_management_agent_model_config_id": settings.project_management_agent_model_config_id,
         "project_management_agent_thinking_level": settings.project_management_agent_thinking_level,
+        "environment_initialization_model_config_id": settings.environment_initialization_model_config_id,
+        "environment_initialization_thinking_level": settings.environment_initialization_thinking_level,
         "updated_at": settings.updated_at,
     });
     if !settings.sync_warnings.is_empty() {
@@ -175,8 +190,8 @@ pub(super) fn to_user_service_create_provider_request(
         owner_user_id: Some(auth.user_id.clone()),
         name: req.name.unwrap_or_default(),
         provider: req.provider,
-        api_key: None,
-        base_url: None,
+        api_key: normalize_optional_input(req.api_key),
+        base_url: normalize_optional_input(req.base_url),
         enabled: req.enabled,
         supports_images: req.supports_images,
         supports_reasoning: req.supports_reasoning,
@@ -190,9 +205,9 @@ pub(super) fn to_user_service_update_provider_request(
     user_service_api_client::UpdateUserServiceModelProviderRequest {
         name: req.name,
         provider: req.provider,
-        api_key: None,
-        clear_api_key: None,
-        base_url: None,
+        api_key: req.api_key,
+        clear_api_key: req.clear_api_key,
+        base_url: req.base_url,
         enabled: req.enabled,
         supports_images: req.supports_images,
         supports_reasoning: req.supports_reasoning,
@@ -204,12 +219,12 @@ pub(super) fn model_provider_response_value(
     provider: user_service_api_client::UserServiceModelProviderRecord,
     include_secret: bool,
 ) -> Value {
-    let value = json!({
+    let mut value = json!({
         "id": provider.id,
         "name": provider.name,
         "provider": normalize_provider(provider.provider.as_str()),
         "has_api_key": provider.has_api_key,
-        "base_url": Value::Null,
+        "base_url": provider.base_url,
         "enabled": provider.enabled,
         "supports_images": provider.supports_images,
         "supports_reasoning": provider.supports_reasoning,
@@ -222,7 +237,9 @@ pub(super) fn model_provider_response_value(
         "created_at": provider.created_at,
         "updated_at": provider.updated_at,
     });
-    let _ = include_secret;
+    if include_secret {
+        value["api_key"] = json!(provider.api_key);
+    }
     value
 }
 
@@ -243,6 +260,8 @@ pub(super) fn build_model_config(
     let provider = normalize_provider_input(req.provider.clone())?;
     let thinking_level =
         normalize_thinking_level_input(provider.as_str(), req.thinking_level.clone())?;
+    let api_key = normalize_optional_input(req.api_key.clone());
+    let has_api_key = api_key.is_some();
     Ok(AiModelConfig {
         id,
         user_id: Some(user_id),
@@ -251,9 +270,11 @@ pub(super) fn build_model_config(
         model,
         task_usage_scenario: None,
         task_thinking_level: None,
-        base_url: None,
-        api_key: None,
-        has_api_key: false,
+        temperature: req.temperature,
+        max_output_tokens: req.max_output_tokens,
+        base_url: normalize_optional_input(req.base_url),
+        api_key,
+        has_api_key,
         enabled: req.enabled.unwrap_or(true),
         thinking_level,
         supports_images: req.supports_images.unwrap_or(false),
@@ -284,6 +305,13 @@ mod tests {
             supports_responses: Some(true),
             task_usage_scenario: None,
             task_thinking_level: None,
+            temperature: Some(0.4),
+            clear_temperature: None,
+            max_output_tokens: Some(4096),
+            clear_max_output_tokens: None,
+            api_key: Some("secret".to_string()),
+            clear_api_key: None,
+            base_url: Some("https://api.openai.com/v1".to_string()),
         }
     }
 
@@ -298,6 +326,8 @@ mod tests {
             thinking_level: Some("medium".to_string()),
             task_usage_scenario: None,
             task_thinking_level: None,
+            temperature: Some(0.4),
+            max_output_tokens: Some(4096),
             api_key: Some("secret".to_string()),
             has_api_key: true,
             base_url: Some("https://api.openai.com/v1".to_string()),
@@ -311,7 +341,10 @@ mod tests {
         });
 
         assert!(value.get("api_key").is_none());
-        assert!(value.get("base_url").is_some_and(|item| item.is_null()));
+        assert_eq!(
+            value.get("base_url").and_then(|item| item.as_str()),
+            Some("https://api.openai.com/v1")
+        );
         assert_eq!(
             value.get("has_api_key").and_then(|item| item.as_bool()),
             Some(true)
@@ -319,7 +352,7 @@ mod tests {
     }
 
     #[test]
-    fn update_does_not_store_existing_api_key() {
+    fn cloud_model_config_keeps_explicit_runtime_credentials() {
         let config = build_model_config(
             "user_1".to_string(),
             "cfg_1".to_string(),
@@ -329,13 +362,16 @@ mod tests {
         )
         .expect("config should build");
 
-        assert_eq!(config.api_key, None);
-        assert_eq!(config.base_url, None);
-        assert!(!config.has_api_key);
+        assert_eq!(config.api_key.as_deref(), Some("secret"));
+        assert_eq!(
+            config.base_url.as_deref(),
+            Some("https://api.openai.com/v1")
+        );
+        assert!(config.has_api_key);
     }
 
     #[test]
-    fn create_does_not_require_or_store_api_key() {
+    fn create_stores_explicit_cloud_api_key() {
         let config = build_model_config(
             "user_1".to_string(),
             "cfg_1".to_string(),
@@ -343,19 +379,21 @@ mod tests {
             None,
             true,
         )
-        .expect("config should build without api key");
+        .expect("config should build");
 
-        assert_eq!(config.api_key, None);
-        assert_eq!(config.base_url, None);
-        assert!(!config.has_api_key);
+        assert_eq!(config.api_key.as_deref(), Some("secret"));
+        assert!(config.has_api_key);
     }
 
     #[test]
-    fn clear_api_key_removes_stored_secret_on_update() {
+    fn build_does_not_restore_an_unsubmitted_existing_secret() {
+        let mut request = sample_request();
+        request.api_key = None;
+        request.base_url = None;
         let config = build_model_config(
             "user_1".to_string(),
             "cfg_1".to_string(),
-            sample_request(),
+            request,
             Some("stored-secret".to_string()),
             false,
         )

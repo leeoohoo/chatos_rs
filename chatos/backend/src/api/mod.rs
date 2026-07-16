@@ -4,7 +4,7 @@
 use axum::body::Body;
 use axum::extract::{DefaultBodyLimit, OriginalUri};
 use axum::http::{
-    header::{HeaderName, ACCEPT, AUTHORIZATION, CONTENT_TYPE, ORIGIN, UPGRADE},
+    header::{HeaderName, UPGRADE},
     Request, StatusCode,
 };
 use axum::middleware;
@@ -14,7 +14,6 @@ use axum::{Json, Router};
 use once_cell::sync::Lazy;
 use serde_json::json;
 use std::time::Instant;
-use tower_http::cors::{Any, CorsLayer};
 use tower_http::request_id::{MakeRequestUuid, PropagateRequestIdLayer, SetRequestIdLayer};
 use tower_http::trace::TraceLayer;
 use tracing::{debug, debug_span};
@@ -41,6 +40,7 @@ pub mod code_nav;
 pub mod configs;
 pub mod contacts;
 mod conversation_semantics;
+mod cors;
 pub mod fs;
 pub mod git;
 pub mod local_connectors;
@@ -62,41 +62,7 @@ pub fn router() -> Result<Router, String> {
     let cfg = Config::try_get()?;
     let request_body_limit = default_request_body_limit_bytes();
 
-    let allowed_headers = [
-        ACCEPT,
-        AUTHORIZATION,
-        CONTENT_TYPE,
-        ORIGIN,
-        HeaderName::from_static("x-requested-with"),
-        HeaderName::from_static("x-api-key"),
-        HeaderName::from_static("x-openai-key"),
-        HeaderName::from_static("x-user-id"),
-        HeaderName::from_static("x-project-id"),
-        HeaderName::from_static("x-conversation-id"),
-        HeaderName::from_static("x-request-id"),
-        HeaderName::from_static("x-remote-verification-code"),
-    ];
-
-    let cors = if cfg.cors_origins.iter().any(|o| o == "*") {
-        CorsLayer::new()
-            .allow_origin(Any)
-            .allow_headers(allowed_headers)
-            .expose_headers([REQUEST_ID_HEADER.clone()])
-            .allow_methods(Any)
-            .allow_credentials(false)
-    } else {
-        let origins = cfg
-            .cors_origins
-            .iter()
-            .filter_map(|o| o.parse().ok())
-            .collect::<Vec<_>>();
-        CorsLayer::new()
-            .allow_origin(origins)
-            .allow_headers(allowed_headers)
-            .expose_headers([REQUEST_ID_HEADER.clone()])
-            .allow_methods(Any)
-            .allow_credentials(true)
-    };
+    let cors = cors::layer(&cfg.cors_origins, REQUEST_ID_HEADER.clone());
 
     let trace = TraceLayer::new_for_http()
         .make_span_with(|req: &Request<Body>| {

@@ -38,10 +38,6 @@ impl SystemAgentDefinition for CommandApprovalAgent {
         "local_connector_client"
     }
 
-    fn max_iterations(&self) -> usize {
-        8
-    }
-
     fn context_overflow_trigger(&self) -> &'static str {
         "local_connector_command_approval_context_overflow"
     }

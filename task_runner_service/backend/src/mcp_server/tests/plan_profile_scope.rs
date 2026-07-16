@@ -294,6 +294,8 @@ async fn project_execution_planner_creates_multiple_runner_tasks_and_syncs_links
             api_key: "test-key".to_string(),
             model: "gpt-test".to_string(),
             usage_scenario: Some("project execution".to_string()),
+            temperature: None,
+            max_output_tokens: None,
             thinking_level: None,
             enabled: Some(true),
             supports_responses: Some(true),

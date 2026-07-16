@@ -8,7 +8,6 @@ mod error;
 pub mod http_body;
 mod http_client;
 mod internal_token;
-mod local_model_runtime;
 mod runtime;
 mod security;
 mod utils;
@@ -19,10 +18,6 @@ pub use env_config::env_text;
 pub use error::ServiceRuntimeError;
 pub use internal_token::{
     issue_internal_service_token, verify_internal_service_token, InternalServiceTokenClaims,
-};
-pub use local_model_runtime::{
-    resolve_local_connector_model_runtime, LocalConnectorModelRuntimeConfig,
-    LocalConnectorModelRuntimeLookup,
 };
 pub use runtime::{
     apply_config_center_env, register_current_service, resolve_service_base_url,
@@ -36,5 +31,3 @@ pub const DEFAULT_SANDBOX_MANAGER_OPERATOR_TOKEN: &str =
 pub const DEFAULT_SANDBOX_MANAGER_AGENT_TOKEN_SECRET: &str = "chatos-sandbox-agent-dev-secret";
 pub const DEFAULT_SANDBOX_MANAGER_SYSTEM_CLIENT_ID: &str = "task_runner";
 pub const DEFAULT_SANDBOX_MANAGER_SYSTEM_CLIENT_KEY: &str = "chatos-task-runner-sandbox-dev-key";
-pub const LOCAL_CONNECTOR_MODEL_RUNTIME_OFFLINE_MESSAGE: &str =
-    "Local Connector client is offline; model request was terminated";

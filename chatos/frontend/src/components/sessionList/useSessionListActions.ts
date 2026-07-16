@@ -82,6 +82,7 @@ interface SessionListActionsParams {
   cloudProjectName: string;
   cloudProjectGitUrl: string;
   cloudProjectZipFile: File | null;
+  allowProjectCreation: boolean;
 }
 
 export const useSessionListActions = ({
@@ -130,6 +131,7 @@ export const useSessionListActions = ({
   cloudProjectName,
   cloudProjectGitUrl,
   cloudProjectZipFile,
+  allowProjectCreation,
 }: SessionListActionsParams) => {
   const localConnectorRelativePath = selectedLocalConnectorDirectoryPath.trim().replace(/\\/g, '/').replace(/^\/+|\/+$/g, '');
 
@@ -201,6 +203,9 @@ export const useSessionListActions = ({
   }, [loadRemoteConnections, setIsRefreshingRemote]);
 
   const openProjectModal = useCallback(() => {
+    if (!allowProjectCreation) {
+      return;
+    }
     setProjectRoot('');
     setCloudProjectName('');
     setCloudProjectGitUrl('');
@@ -209,6 +214,7 @@ export const useSessionListActions = ({
     setProjectSourceMode('server');
     setProjectModalOpen(true);
   }, [
+    allowProjectCreation,
     setCloudProjectGitUrl,
     setCloudProjectName,
     setCloudProjectZipFile,
@@ -232,6 +238,10 @@ export const useSessionListActions = ({
   }, [openRemoteModalBase, setKeyFilePickerOpen]);
 
   const handleCreateProject = useCallback(async () => {
+    if (!allowProjectCreation) {
+      setProjectError('项目只能在 Chat OS 桌面客户端中创建');
+      return;
+    }
     if (projectSourceMode === 'local_connector') {
       const workspace = localConnectorWorkspaces.find((item) => item.id === selectedLocalConnectorWorkspaceId);
       if (!workspace) {
@@ -277,6 +287,7 @@ export const useSessionListActions = ({
       setProjectError(error instanceof Error ? error.message : translateSessionListMessage(t, 'sessionList.resource.error.createProjectFailed'));
     }
   }, [
+    allowProjectCreation,
     apiClient,
     cloudProjectGitUrl,
     cloudProjectName,

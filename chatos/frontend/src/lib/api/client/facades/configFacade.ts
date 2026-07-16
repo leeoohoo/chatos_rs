@@ -51,6 +51,10 @@ import type {
   UpdateAgentPayload,
 } from '../types';
 import type ApiClient from '../../client';
+import {
+  assertCloudSessionOperation,
+  isLocalRuntimeSessionId,
+} from '../../localRuntime';
 
 export interface ConfigFacade {
   getMcpConfigs(userId?: string, options?: { forceRefresh?: boolean }): Promise<McpConfigResponse[]>;
@@ -263,12 +267,39 @@ export const configFacade: ConfigFacade & ThisType<ApiClient> = {
     return this.getAgentRuntimeContext(agentId);
   },
   async getConversationDetails(conversationId) {
+    if (isLocalRuntimeSessionId(conversationId)) {
+      const session = await this.getLocalRuntimeClient().getSession(conversationId);
+      return {
+        data: {
+          conversation: {
+            id: session.id,
+            title: session.title,
+            created_at: session.created_at || session.createdAt || new Date().toISOString(),
+            updated_at: session.updated_at || session.updatedAt || new Date().toISOString(),
+          },
+        },
+      };
+    }
     return conversationApi.getConversationDetails(this.getRequestFn(), conversationId);
   },
   async getAssistant(conversationId) {
+    if (isLocalRuntimeSessionId(conversationId)) {
+      return {
+        data: {
+          assistant: {
+            id: 'local_runtime',
+            name: 'Local Runtime',
+            model_config: {},
+          },
+        },
+      };
+    }
     return conversationApi.getAssistant(this.getRequestFn(), conversationId);
   },
   async getMcpServers(conversationId) {
+    if (isLocalRuntimeSessionId(conversationId)) {
+      return { data: { mcp_servers: [] } };
+    }
     return conversationApi.getMcpServers(this.getRequestFn(), conversationId);
   },
   async getMcpConfigResource(configId) {
@@ -278,12 +309,18 @@ export const configFacade: ConfigFacade & ThisType<ApiClient> = {
     return conversationApi.getMcpConfigResourceByCommand(this.getRequestFn(), data);
   },
   async saveMessage(conversationId, message) {
+    assertCloudSessionOperation(conversationId, '直接保存消息');
     return conversationApi.saveMessage(this.getRequestFn(), conversationId, message);
   },
   async getMessages(conversationId, params = {}) {
+    if (isLocalRuntimeSessionId(conversationId)) {
+      const messages = await this.getLocalRuntimeClient().getMessages(conversationId);
+      return { data: { messages } };
+    }
     return conversationApi.getMessages(this.getRequestFn(), conversationId, params);
   },
   async addMessage(conversationId, message) {
+    assertCloudSessionOperation(conversationId, '追加消息');
     return conversationApi.addMessage(this.getRequestFn(), conversationId, message);
   },
 };

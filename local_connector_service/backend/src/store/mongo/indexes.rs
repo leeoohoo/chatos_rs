@@ -55,6 +55,39 @@ impl MongoConnectorStore {
         ensure_mongo_index(&self.sessions, doc! { "owner_user_id": 1 }, true).await?;
         ensure_mongo_index(&self.sessions, doc! { "device_id": 1, "status": 1 }, false).await?;
         ensure_mongo_index(&self.sessions, doc! { "expires_at": 1 }, false).await?;
+
+        ensure_mongo_index(&self.managed_requirements_policies, doc! { "id": 1 }, true).await?;
+        ensure_mongo_index(
+            &self.managed_requirements_policies,
+            doc! { "name": 1 },
+            true,
+        )
+        .await?;
+        ensure_mongo_index(
+            &self.managed_requirements_policies,
+            doc! { "enabled": 1, "updated_at": -1 },
+            false,
+        )
+        .await?;
+
+        ensure_mongo_index(
+            &self.managed_requirements_assignments,
+            doc! { "id": 1 },
+            true,
+        )
+        .await?;
+        ensure_mongo_index(
+            &self.managed_requirements_assignments,
+            doc! { "policy_id": 1, "scope": 1, "subject": 1 },
+            true,
+        )
+        .await?;
+        ensure_mongo_index(
+            &self.managed_requirements_assignments,
+            doc! { "enabled": 1, "scope": 1, "subject": 1, "priority": 1 },
+            false,
+        )
+        .await?;
         Ok(())
     }
 }

@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use chatos_mcp_runtime::{BuiltinMcpKind, McpHttpServer};
-use chatos_sandbox_contract::EffectiveSandboxPolicy;
+use chatos_sandbox_contract::{EffectivePermissionSnapshot, EffectiveSandboxPolicy};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tracing::{info, warn};
@@ -25,9 +25,7 @@ mod run_service_lifecycle;
 mod run_service_policy;
 mod workspace;
 
-use manager_client::{
-    CreateSandboxLeaseResponse, SandboxManagerAuth, SandboxManagerAuthMode, SandboxManagerClient,
-};
+use manager_client::{CreateSandboxLeaseResponse, SandboxManagerAuth, SandboxManagerClient};
 pub(super) use output::SandboxOutputReport;
 use output::{
     normalize_output_relative_path, read_output_change_manifest_for_run, read_output_diff_file,
@@ -56,16 +54,13 @@ pub(super) struct SandboxRuntimeContext {
     pub manager_client_id: Option<String>,
     #[serde(default, skip_serializing)]
     pub manager_client_key: Option<String>,
-    #[serde(default, skip_serializing)]
-    pub manager_auth_mode: Option<String>,
-    #[serde(default, skip_serializing)]
-    pub manager_owner_user_id: Option<String>,
     #[serde(default)]
     pub manager_base_url: String,
     pub run_workspace: String,
     pub workspace_root: String,
     pub expires_at: String,
     pub effective_policy: EffectiveSandboxPolicy,
+    pub effective_permissions: EffectivePermissionSnapshot,
 }
 
 impl SandboxRuntimeContext {
@@ -81,6 +76,7 @@ impl SandboxRuntimeContext {
             "workspace_root": self.workspace_root,
             "expires_at": self.expires_at,
             "effective_policy": self.effective_policy,
+            "effective_permissions": self.effective_permissions,
         })
     }
 
@@ -95,34 +91,12 @@ impl SandboxRuntimeContext {
             self.manager_client_id.as_deref(),
             self.manager_client_key.as_deref(),
         ) {
-            if self.manager_auth_mode.as_deref() == Some("local_connector") {
-                if let Some(owner_user_id) = self.manager_owner_user_id.as_deref() {
-                    if let Ok(token) = chatos_service_runtime::issue_internal_service_token(
-                        client_key,
-                        "task-runner",
-                        "local-connector-service",
-                        "sandbox.service",
-                        60,
-                    ) {
-                        headers.insert(
-                            "x-local-connector-caller".to_string(),
-                            client_id.to_string(),
-                        );
-                        headers.insert("x-local-connector-internal-token".to_string(), token);
-                        headers.insert(
-                            "x-local-connector-owner-user-id".to_string(),
-                            owner_user_id.to_string(),
-                        );
-                    }
-                }
-            } else {
-                headers.insert("x-sandbox-caller".to_string(), client_id.to_string());
-                headers.insert("x-sandbox-client-key".to_string(), client_key.to_string());
-                headers.insert(
-                    "x-sandbox-internal-scope".to_string(),
-                    "sandbox.service".to_string(),
-                );
-            }
+            headers.insert("x-sandbox-caller".to_string(), client_id.to_string());
+            headers.insert("x-sandbox-client-key".to_string(), client_key.to_string());
+            headers.insert(
+                "x-sandbox-internal-scope".to_string(),
+                "sandbox.service".to_string(),
+            );
         }
         headers.insert("X-Task-Runner-Task-Id".to_string(), task.id.clone());
         headers.insert("X-Task-Runner-Run-Id".to_string(), run.id.clone());
@@ -146,6 +120,12 @@ impl SandboxRuntimeContext {
         manager_base_url: &str,
         manager_auth: Option<SandboxManagerAuth>,
     ) -> Result<Self, String> {
+        let effective_policy = response
+            .effective_policy
+            .ok_or_else(|| "sandbox response missing required effective_policy".to_string())?;
+        let effective_permissions = response
+            .effective_permissions
+            .ok_or_else(|| "sandbox response missing required effective_permissions".to_string())?;
         let agent_endpoint = response
             .agent_endpoint
             .map(|value| value.trim().trim_end_matches('/').to_string())
@@ -160,20 +140,9 @@ impl SandboxRuntimeContext {
             .agent_token
             .filter(|value| !value.trim().is_empty())
             .unwrap_or_else(|| lease_id.clone());
-        let (manager_client_id, manager_client_key, manager_auth_mode, manager_owner_user_id) =
-            manager_auth
-                .map(|auth| {
-                    (
-                        Some(auth.client_id),
-                        Some(auth.client_key),
-                        Some(match auth.mode {
-                            SandboxManagerAuthMode::Cloud => "cloud".to_string(),
-                            SandboxManagerAuthMode::LocalConnector => "local_connector".to_string(),
-                        }),
-                        auth.owner_user_id,
-                    )
-                })
-                .unwrap_or((None, None, None, None));
+        let (manager_client_id, manager_client_key) = manager_auth
+            .map(|auth| (Some(auth.client_id), Some(auth.client_key)))
+            .unwrap_or((None, None));
         Ok(Self {
             lease_id,
             sandbox_id: sandbox_id.clone(),
@@ -182,14 +151,13 @@ impl SandboxRuntimeContext {
             mcp_url: format!("{manager_base_url}/api/sandboxes/{sandbox_id}/mcp"),
             manager_client_id,
             manager_client_key,
-            manager_auth_mode,
-            manager_owner_user_id,
             manager_base_url,
             agent_endpoint,
             run_workspace: response.run_workspace,
             workspace_root: workspace_root.to_string_lossy().to_string(),
             expires_at: response.expires_at,
-            effective_policy: response.effective_policy,
+            effective_policy,
+            effective_permissions,
         })
     }
 }

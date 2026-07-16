@@ -6,6 +6,7 @@ export type * from './apiTypes';
 import { request } from './apiTransport';
 import type {
   ApprovalSettings,
+  CommandExecutionApprovalDecision,
   CommandHistoryResponse,
   ConnectorStatus,
   DockerStatus,
@@ -27,6 +28,7 @@ import type {
   SandboxImageJob,
   SandboxLease,
   SandboxSettings,
+  SandboxSettingsUpdate,
   SystemPermissionsResponse,
   TerminalExecResponse,
 } from './apiTypes';
@@ -83,6 +85,17 @@ export const api = {
     request<ConnectorStatus>(`/api/local/workspaces/${encodeURIComponent(workspaceId)}`, {
       method: 'DELETE',
     }),
+  setWorkspaceProjectConfigTrust: (
+    workspaceId: string,
+    payload: { trusted: boolean; risk_acknowledged?: boolean },
+  ) =>
+    request<ConnectorStatus>(
+      `/api/local/workspaces/${encodeURIComponent(workspaceId)}/project-config-trust`,
+      {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      },
+    ),
   dockerStatus: () => request<DockerStatus>('/api/local/docker/status'),
   setSandboxEnabled: (payload: { enabled: boolean }) =>
     request<ConnectorStatus>('/api/local/sandbox/toggle', {
@@ -91,11 +104,7 @@ export const api = {
     }),
   sandboxCapabilities: () => request<SandboxCapabilities>('/api/local/sandbox/capabilities'),
   sandboxSettings: () => request<SandboxSettings>('/api/local/sandbox/settings'),
-  updateSandboxSettings: (
-    payload: Partial<SandboxSettings> & {
-      risk_acknowledged?: boolean;
-    },
-  ) =>
+  updateSandboxSettings: (payload: SandboxSettingsUpdate) =>
     request<SandboxSettings>('/api/local/sandbox/settings', {
       method: 'PUT',
       body: JSON.stringify(payload),
@@ -171,7 +180,11 @@ export const api = {
   pendingApprovals: () => request<PendingApprovalsResponse>('/api/local/approval/pending'),
   approvePendingApproval: (
     id: string,
-    payload: { remember_allow?: boolean; risk_acknowledged?: boolean } = {},
+    payload: {
+      remember_allow?: boolean;
+      decision?: CommandExecutionApprovalDecision;
+      risk_acknowledged?: boolean;
+    } = {},
   ) =>
     request<{ ok: boolean }>(`/api/local/approval/pending/${encodeURIComponent(id)}/approve`, {
       method: 'POST',
@@ -206,7 +219,7 @@ export const api = {
     request<LocalModelConfig>(`/api/local/model-configs/${encodeURIComponent(id)}/sync`, {
       method: 'POST',
     }),
-  saveModelSettings: (payload: LocalModelSettings, sync = true) =>
+  saveModelSettings: (payload: LocalModelSettings, sync = false) =>
     request<LocalModelSettings>('/api/local/model-settings', {
       method: 'POST',
       body: JSON.stringify({ ...payload, sync }),

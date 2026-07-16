@@ -2,6 +2,16 @@
 # Required Notice: Copyright (c) 2025 AI Chat Team
 
 services:
+  configuration-center-backend:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.rust-service
+      args:
+        MANIFEST_PATH: Cargo.toml
+        PACKAGE_NAME: config_center_service_backend
+        BIN_NAME: config_center_service_backend
+        CARGO_TARGET_CACHE_ID: ${CHATOS_CARGO_TARGET_CACHE_ID:-chatos-rust-target-1.94-j4}
+
   sandbox-agent-image:
     build:
       context: ..
@@ -102,6 +112,13 @@ services:
       args:
         APP_DIR: chatos/frontend
 
+  configuration-center-frontend:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.frontend
+      args:
+        APP_DIR: config_center_service/frontend
+
   user-service-frontend:
     build:
       context: ..
@@ -138,6 +155,7 @@ services:
       dockerfile: docker/Dockerfile.frontend
       args:
         APP_DIR: task_runner_service/frontend
+        VITE_CONFIG_CENTER_URL: ${CONFIG_CENTER_PUBLIC_URL:-http://localhost:39271}
 
   sandbox-manager-frontend:
     build:

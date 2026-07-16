@@ -110,8 +110,12 @@ impl ModelConfigService {
                     .as_ref()
                     .and_then(|item| item.usage_scenario.clone())
             }),
-            temperature: existing.as_ref().and_then(|item| item.temperature),
-            max_output_tokens: existing.as_ref().and_then(|item| item.max_output_tokens),
+            temperature: input
+                .temperature
+                .or_else(|| existing.as_ref().and_then(|item| item.temperature)),
+            max_output_tokens: input
+                .max_output_tokens
+                .or_else(|| existing.as_ref().and_then(|item| item.max_output_tokens)),
             thinking_level,
             supports_responses: input
                 .supports_responses

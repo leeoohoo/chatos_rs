@@ -2,3 +2,4 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 pub(crate) mod paths;
+pub(crate) mod trust;

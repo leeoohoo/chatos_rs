@@ -34,6 +34,8 @@ fn normalize_doc(doc: &Document) -> Option<AiModelConfig> {
         thinking_level: doc.get_str("thinking_level").ok().map(|s| s.to_string()),
         task_usage_scenario: None,
         task_thinking_level: None,
+        temperature: doc.get_f64("temperature").ok(),
+        max_output_tokens: doc.get_i64("max_output_tokens").ok(),
         api_key: doc.get_str("api_key").ok().map(|s| s.to_string()),
         has_api_key: false,
         base_url: doc.get_str("base_url").ok().map(|s| s.to_string()),

@@ -22,13 +22,32 @@ use uuid::Uuid;
 
 mod logs;
 
+use crate::command_sandbox::{
+    CommandSandboxCleanup, CommandSandboxConfig, PreparedSandboxCommand, SpawnedSandboxCommand,
+};
+use crate::quota::WorkspaceQuota;
 use logs::{
     append_log, collect_output, collect_output_from_logs, log_value_content, select_logs,
     take_recent_logs, TerminalLogEntry,
 };
 
-#[derive(Debug, Clone, Default)]
-pub struct SandboxTerminalControllerStore;
+#[derive(Debug, Clone)]
+pub struct SandboxTerminalControllerStore {
+    workspace_quota: WorkspaceQuota,
+    command_sandbox: CommandSandboxConfig,
+}
+
+impl SandboxTerminalControllerStore {
+    pub(crate) fn new(
+        workspace_quota: WorkspaceQuota,
+        command_sandbox: CommandSandboxConfig,
+    ) -> Self {
+        Self {
+            workspace_quota,
+            command_sandbox,
+        }
+    }
+}
 
 #[derive(Debug, Clone)]
 struct TerminalSessionMeta {
@@ -48,6 +67,7 @@ struct TerminalSession {
     meta: Mutex<TerminalSessionMeta>,
     child: Mutex<Child>,
     logs: Mutex<Vec<TerminalLogEntry>>,
+    cleanup: Mutex<Option<CommandSandboxCleanup>>,
 }
 
 #[derive(Default)]
@@ -77,25 +97,39 @@ impl TerminalControllerStore for SandboxTerminalControllerStore {
         path: String,
         command: String,
         background: bool,
+        permissions: chatos_builtin_tools::TerminalCommandPermissions,
     ) -> Result<Value, String> {
+        self.workspace_quota.check().await?;
         let project_root = canonicalize_existing(context.root.as_path())?;
         let target_path = resolve_target_path(project_root.as_path(), path.as_str())?;
         let shell = shell_path();
 
-        let mut process = Command::new(shell.as_str());
-        process
-            .arg("-lc")
-            .arg(command.as_str())
+        let mut prepared = PreparedSandboxCommand::new(
+            &self.command_sandbox,
+            shell.as_str(),
+            command.as_str(),
+            target_path.as_path(),
+            &permissions,
+        )?;
+        prepared
+            .command_mut()
             .current_dir(&target_path)
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped());
-        apply_bundled_tools_path(&mut process);
-        process.env("CHATOS_SANDBOX", "1");
+        apply_bundled_tools_path(prepared.command_mut());
+        prepared.command_mut().env("CHATOS_SANDBOX", "1");
 
-        let child = process.spawn().map_err(|err| err.to_string())?;
-        let session =
-            register_session(context.clone(), target_path.clone(), command.clone(), child).await?;
+        let spawned = prepared.spawn()?;
+        let session = register_session(
+            context.clone(),
+            target_path.clone(),
+            command.clone(),
+            spawned,
+        )
+        .await?;
+        start_status_monitor(session.clone());
+        start_workspace_quota_monitor(session.clone(), self.workspace_quota.clone());
         append_log(session.clone(), "command", format!("{command}\n")).await;
         let session_id = session.meta.lock().await.id.clone();
 
@@ -366,6 +400,36 @@ impl TerminalControllerStore for SandboxTerminalControllerStore {
     }
 }
 
+fn start_workspace_quota_monitor(session: Arc<TerminalSession>, quota: WorkspaceQuota) {
+    if !quota.is_enabled() {
+        return;
+    }
+    tokio::spawn(async move {
+        loop {
+            sleep(Duration::from_millis(250)).await;
+            if session.meta.lock().await.status == "exited" {
+                return;
+            }
+            let Err(err) = quota.check().await else {
+                continue;
+            };
+            {
+                let mut child = session.child.lock().await;
+                let _ = child.kill().await;
+                let _ = child.wait().await;
+            }
+            mark_session_exited(&session, None).await;
+            append_log(
+                session.clone(),
+                "system",
+                format!("[workspace quota terminated process: {err}]\n"),
+            )
+            .await;
+            return;
+        }
+    });
+}
+
 fn shell_path() -> String {
     std::env::var("SHELL")
         .ok()
@@ -389,8 +453,9 @@ async fn register_session(
     context: TerminalControllerContext,
     target_path: PathBuf,
     command: String,
-    mut child: Child,
+    spawned: SpawnedSandboxCommand,
 ) -> Result<Arc<TerminalSession>, String> {
+    let SpawnedSandboxCommand { mut child, cleanup } = spawned;
     let stdout = child.stdout.take();
     let stderr = child.stderr.take();
     let session_id = Uuid::new_v4().to_string();
@@ -410,6 +475,7 @@ async fn register_session(
         }),
         child: Mutex::new(child),
         logs: Mutex::new(Vec::new()),
+        cleanup: Mutex::new(Some(cleanup)),
     });
 
     if let Some(stdout) = stdout {
@@ -424,6 +490,19 @@ async fn register_session(
         .await
         .insert(session_id, session.clone());
     Ok(session)
+}
+
+fn start_status_monitor(session: Arc<TerminalSession>) {
+    tokio::spawn(async move {
+        loop {
+            sleep(Duration::from_millis(100)).await;
+            if refresh_session_status(&session).await.is_err()
+                || session.meta.lock().await.status == "exited"
+            {
+                return;
+            }
+        }
+    });
 }
 
 fn spawn_stream_reader<R>(session: Arc<TerminalSession>, mut reader: R, kind: &'static str)
@@ -465,14 +544,18 @@ async fn refresh_session_status(session: &Arc<TerminalSession>) -> Result<(), St
 }
 
 async fn mark_session_exited(session: &Arc<TerminalSession>, exit_code: Option<i32>) {
-    let mut meta = session.meta.lock().await;
-    if meta.status == "exited" {
-        return;
+    {
+        let mut meta = session.meta.lock().await;
+        if meta.status != "exited" {
+            meta.status = "exited".to_string();
+            meta.exit_code = exit_code;
+            meta.finished_at = Some(now_rfc3339());
+            meta.last_active_at = meta.finished_at.clone().unwrap_or_else(now_rfc3339);
+        }
     }
-    meta.status = "exited".to_string();
-    meta.exit_code = exit_code;
-    meta.finished_at = Some(now_rfc3339());
-    meta.last_active_at = meta.finished_at.clone().unwrap_or_else(now_rfc3339);
+    if let Some(cleanup) = session.cleanup.lock().await.take() {
+        cleanup.run();
+    }
 }
 
 async fn sessions_for_context(

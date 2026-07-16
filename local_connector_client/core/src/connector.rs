@@ -17,8 +17,10 @@ use uuid::Uuid;
 
 use crate::device_keys::sign_device_message;
 use crate::history::CommandHistoryRecorder;
+use crate::local_runtime::LocalDatabase;
 use crate::mcp::configs::refresh_enabled_local_mcp_checks;
 use crate::mcp::manifest::mcp_status_message;
+use crate::mcp::repository::state_identity;
 use crate::mcp::service::handle_mcp_request;
 use crate::model_configs::handle_model_runtime_request;
 use crate::relay::{relay_error_response, RelayRequest, MCP_RELAY_MESSAGE_TYPE};
@@ -42,6 +44,7 @@ const MCP_CHECK_INTERVAL_SECONDS: u64 = 45;
 pub(crate) async fn connect_loop(
     config: ClientConfig,
     state: Arc<RwLock<LocalState>>,
+    database: LocalDatabase,
     sandbox_runtime: LocalSandboxRuntime,
     device_id: String,
 ) -> Result<()> {
@@ -82,10 +85,7 @@ pub(crate) async fn connect_loop(
     loop {
         tokio::select! {
             _ = mcp_check.tick() => {
-                if let Err(err) = refresh_enabled_local_mcp_checks(
-                    state.as_ref(),
-                    config.state_path.as_path(),
-                ).await {
+                if let Err(err) = refresh_enabled_local_mcp_checks(&database, state.as_ref()).await {
                     tracing_stdout(format!("refresh local MCP checks failed: {err}").as_str());
                 }
             }
@@ -94,16 +94,17 @@ pub(crate) async fn connect_loop(
                     .send(Message::Text(json!({"type": "heartbeat"}).to_string().into()))
                     .await
                     .context("send heartbeat")?;
-                let mcp_status = {
-                    let state = state.read().await;
-                    mcp_status_message(&state)
-                };
-                if let Some(mcp_status) = mcp_status {
-                    write
-                        .send(Message::Text(mcp_status.to_string().into()))
-                        .await
-                        .context("send MCP manifest status")?;
-                }
+                let state_guard = state.read().await;
+                let (owner_user_id, current_device_id) = state_identity(&state_guard)?;
+                drop(state_guard);
+                let manifests = database
+                    .list_mcp_manifests(owner_user_id.as_str(), current_device_id.as_str())
+                    .await
+                    .context("load MCP manifest status")?;
+                write
+                    .send(Message::Text(mcp_status_message(&manifests).to_string().into()))
+                    .await
+                    .context("send MCP manifest status")?;
                 let skill_inventory = skill_inventory_status_message()
                     .context("build Skill inventory status")?;
                 write
@@ -132,6 +133,7 @@ pub(crate) async fn connect_loop(
                             handle_text_message(
                                 text.as_str(),
                                 &state_snapshot,
+                                &database,
                                 &http_client,
                                 &sandbox_runtime,
                                 &terminal_manager,
@@ -159,6 +161,7 @@ pub(crate) async fn connect_loop(
 async fn handle_text_message(
     text: &str,
     state: &LocalState,
+    database: &LocalDatabase,
     http_client: &reqwest::Client,
     sandbox_runtime: &LocalSandboxRuntime,
     terminal_manager: &LocalTerminalManager,
@@ -181,7 +184,9 @@ async fn handle_text_message(
             tracing_stdout(format!("service message: {message_type}").as_str());
             None
         }
-        MCP_RELAY_MESSAGE_TYPE => Some(handle_mcp_request(value, state, history_recorder).await),
+        MCP_RELAY_MESSAGE_TYPE => {
+            Some(handle_mcp_request(value, state, database, history_recorder).await)
+        }
         "sandbox_request" => Some(
             handle_sandbox_request(value, state, http_client, sandbox_runtime, history_recorder)
                 .await,

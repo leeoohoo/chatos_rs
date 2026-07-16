@@ -8,11 +8,12 @@ use anyhow::{anyhow, Result};
 use chatos_mcp_runtime::{jsonrpc_http_call, jsonrpc_stdio_call};
 use serde_json::{json, Value};
 
+use crate::local_runtime::LocalDatabase;
 use crate::relay::RelayRequest;
-use crate::LocalState;
 
 use super::configs::{stdio_server_for_manifest, validate_loopback_http_url};
-use super::manifest::{manifest_for_execution, LocalMcpTransport};
+use super::manifest::LocalMcpTransport;
+use super::repository::load_execution_manifest;
 
 const MANIFEST_HEADER: &str = "x-local-connector-mcp-manifest-id";
 const RESOURCE_HEADER: &str = "x-plugin-management-resource-id";
@@ -23,7 +24,7 @@ pub(crate) fn is_user_mcp_request(request: &RelayRequest) -> bool {
 
 pub(crate) async fn handle_user_mcp_body(
     request: &RelayRequest,
-    state: &LocalState,
+    database: &LocalDatabase,
 ) -> Result<Value> {
     let owner_user_id = request
         .owner_user_id
@@ -39,8 +40,14 @@ pub(crate) async fn handle_user_mcp_body(
         .ok_or_else(|| anyhow!("Local Connector MCP device id is required"))?;
     let manifest_id = required_header(request, MANIFEST_HEADER)?;
     let plugin_mcp_id = required_header(request, RESOURCE_HEADER)?;
-    let manifest =
-        manifest_for_execution(state, owner_user_id, device_id, manifest_id, plugin_mcp_id)?;
+    let manifest = load_execution_manifest(
+        database,
+        owner_user_id,
+        device_id,
+        manifest_id,
+        plugin_mcp_id,
+    )
+    .await?;
     let method = request
         .body
         .get("method")
@@ -57,7 +64,7 @@ pub(crate) async fn handle_user_mcp_body(
         .unwrap_or_else(|| json!({}));
     let result = match manifest.transport {
         LocalMcpTransport::Stdio => {
-            let server = stdio_server_for_manifest(manifest)?;
+            let server = stdio_server_for_manifest(&manifest)?;
             jsonrpc_stdio_call(&server, method, params, None)
                 .await
                 .map_err(anyhow::Error::msg)?
@@ -104,3 +111,7 @@ fn header_text<'a>(request: &'a RelayRequest, name: &str) -> Option<&'a str> {
         .map(|(_, value)| value.trim())
         .filter(|value| !value.is_empty())
 }
+
+#[cfg(test)]
+#[path = "user_runtime_tests.rs"]
+mod tests;

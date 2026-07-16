@@ -30,7 +30,6 @@ use super::prerequisite_context::{
     attach_prerequisite_context_to_run, build_task_prompt, PrerequisiteTaskContext,
 };
 use super::sandbox_runtime::SandboxOutputReport;
-use super::skill_runtime::{cleanup_local_skill_sessions, LocalSkillSessionHandle};
 use super::stream_events::{
     append_pending_stream_event, flush_pending_stream_event, PendingRunStreamEvent,
 };
@@ -41,7 +40,7 @@ use super::task_process_log::{
 };
 use super::workspace_mcp::{
     runtime_selected_builtin_kinds, runtime_selected_builtin_kinds_authoritative,
-    task_uses_harness_code, task_uses_local_connector,
+    task_uses_harness_code,
 };
 use super::{
     build_builtin_registry, summarized_report_content, unfinished_subtasks_error,
@@ -62,7 +61,6 @@ pub(in crate::services) struct PreparedModelExecution {
     sandbox_context: Option<crate::services::sandbox_runtime::SandboxRuntimeContext>,
     harness_run_context: Option<HarnessRunContext>,
     effective_workspace_dir: String,
-    local_skill_sessions: Vec<LocalSkillSessionHandle>,
 }
 
 impl RunService {
@@ -123,7 +121,6 @@ impl RunService {
         let sandbox_context = prepared_execution.sandbox_context.clone();
         let harness_run_context = prepared_execution.harness_run_context.clone();
         let finalized_workspace_dir = prepared_execution.effective_workspace_dir.clone();
-        let local_skill_sessions = prepared_execution.local_skill_sessions.clone();
         let report = self
             .execute_prepared_model_run(&task, &run, &model_config, prepared_execution)
             .await;
@@ -158,6 +155,5 @@ impl RunService {
         if let Some(context) = harness_run_context.as_ref() {
             self.cleanup_harness_run_workspace(context);
         }
-        cleanup_local_skill_sessions(local_skill_sessions.as_slice()).await;
     }
 }

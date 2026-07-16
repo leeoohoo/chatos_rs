@@ -126,6 +126,26 @@ describe('SessionList modals', () => {
     expect(onCreate).not.toHaveBeenCalled();
   });
 
+  it('hides local project creation when the desktop surface is unavailable', () => {
+    render(
+      <CreateProjectModal
+        isOpen
+        allowLocalConnector={false}
+        sourceMode="local_connector"
+        projectRoot=""
+        cloudProjectName="Cloud Project"
+        projectError={null}
+        onClose={vi.fn()}
+        onProjectRootChange={vi.fn()}
+        onOpenPicker={vi.fn()}
+        onCreate={vi.fn()}
+      />,
+    );
+
+    expect(screen.queryByRole('button', { name: '本地连接器' })).not.toBeInTheDocument();
+    expect(screen.getByDisplayValue('Cloud Project')).toBeInTheDocument();
+  });
+
   it('renders contact creation dialog with selectable agents', () => {
     const onCreate = vi.fn();
     const onSelectedAgentChange = vi.fn();

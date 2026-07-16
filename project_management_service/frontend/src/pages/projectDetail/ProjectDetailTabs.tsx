@@ -12,6 +12,7 @@ import type {
   DependencyGraphNode,
   ProjectRecord,
   ProjectRuntimeEnvironmentResponse,
+  UpdateProjectRuntimeEnvironmentVariablesPayload,
   ProjectWorkItemRecord,
   RequirementRecord,
   UpsertProjectProfilePayload,
@@ -54,9 +55,15 @@ interface ProjectDetailTabsProps {
   runtimeEnvironmentErrorMessage?: string;
   runtimeEnvironmentAnalyzing: boolean;
   runtimeEnvironmentSettingsSaving: boolean;
+  runtimeEnvironmentVariablesSaving: boolean;
+  runtimeEnvironmentStarting: boolean;
   onRefreshRuntimeEnvironment: () => void;
   onAnalyzeRuntimeEnvironment: () => void;
   onRuntimeSandboxEnabledChange: (value: boolean) => void;
+  onSaveRuntimeEnvironmentVariables: (
+    payload: UpdateProjectRuntimeEnvironmentVariablesPayload,
+  ) => Promise<void>;
+  onStartRuntimeEnvironment: () => void;
 }
 
 const renderRequirementExpandIcon = ({
@@ -119,9 +126,13 @@ export function ProjectDetailTabs({
   runtimeEnvironmentErrorMessage,
   runtimeEnvironmentAnalyzing,
   runtimeEnvironmentSettingsSaving,
+  runtimeEnvironmentVariablesSaving,
+  runtimeEnvironmentStarting,
   onRefreshRuntimeEnvironment,
   onAnalyzeRuntimeEnvironment,
   onRuntimeSandboxEnabledChange,
+  onSaveRuntimeEnvironmentVariables,
+  onStartRuntimeEnvironment,
 }: ProjectDetailTabsProps) {
   return (
     <>
@@ -211,9 +222,13 @@ export function ProjectDetailTabs({
                 errorMessage={runtimeEnvironmentErrorMessage}
                 analyzing={runtimeEnvironmentAnalyzing}
                 settingsSaving={runtimeEnvironmentSettingsSaving}
+                variablesSaving={runtimeEnvironmentVariablesSaving}
+                environmentStarting={runtimeEnvironmentStarting}
                 onRefresh={onRefreshRuntimeEnvironment}
                 onAnalyze={onAnalyzeRuntimeEnvironment}
                 onSandboxEnabledChange={onRuntimeSandboxEnabledChange}
+                onSaveEnvironmentVariables={onSaveRuntimeEnvironmentVariables}
+                onStartEnvironment={onStartRuntimeEnvironment}
               />
             ),
           },

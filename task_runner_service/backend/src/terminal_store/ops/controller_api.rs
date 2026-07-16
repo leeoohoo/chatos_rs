@@ -15,7 +15,13 @@ impl TerminalControllerStore for TaskRunnerTerminalControllerStore {
         path: String,
         command: String,
         background: bool,
+        permissions: chatos_builtin_tools::TerminalCommandPermissions,
     ) -> Result<Value, String> {
+        if !permissions.is_empty() {
+            return Err(
+                "temporary permission overlays are only supported by a sandbox runtime".to_string(),
+            );
+        }
         self.execute_command_value(context, path, command, background)
             .await
     }

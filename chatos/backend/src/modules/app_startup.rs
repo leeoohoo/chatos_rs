@@ -29,6 +29,27 @@ pub async fn initialize_runtime(cfg: &Config) -> Result<(), String> {
         .map_err(|err| format!("Failed to init database: {err}"))?;
     core::runtime_health::mark_runtime_check_ok("database", true, "database initialized");
 
+    match crate::repositories::user_settings::purge_managed_runtime_settings().await {
+        Ok(modified_count) => {
+            info!(
+                "Removed legacy managed runtime fields from user preferences: modified_count={modified_count}"
+            );
+            core::runtime_health::mark_runtime_check_ok(
+                "user_preferences_migration",
+                false,
+                format!("modified_count={modified_count}"),
+            );
+        }
+        Err(err) => {
+            warn!("Failed to clean legacy user runtime settings: {err}");
+            core::runtime_health::mark_runtime_check_warn(
+                "user_preferences_migration",
+                false,
+                format!("cleanup failed: {err}"),
+            );
+        }
+    }
+
     match services::auth_user_backfill::backfill_legacy_auth_users().await {
         Ok(report) => {
             info!(

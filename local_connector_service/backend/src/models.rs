@@ -34,6 +34,11 @@ pub const APPROVAL_REVIEWER_AUTO_REVIEW: &str = "auto_review";
 pub const SESSION_STATUS_CONNECTED: &str = "connected";
 pub const SESSION_STATUS_DISCONNECTED: &str = "disconnected";
 
+pub const USER_ROLE_SUPER_ADMIN: &str = "super_admin";
+pub const MANAGED_REQUIREMENTS_SCOPE_GLOBAL: &str = "global";
+pub const MANAGED_REQUIREMENTS_SCOPE_ROLE: &str = "role";
+pub const MANAGED_REQUIREMENTS_SCOPE_USER: &str = "user";
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CurrentUser {
     pub principal_type: String,
@@ -51,6 +56,10 @@ impl CurrentUser {
             .map(str::trim)
             .filter(|value| !value.is_empty())
             .unwrap_or(self.user_id.as_str())
+    }
+
+    pub fn is_super_admin(&self) -> bool {
+        self.principal_type == "human_user" && self.role == USER_ROLE_SUPER_ADMIN
     }
 }
 
@@ -80,6 +89,41 @@ pub struct LocalConnectorDevice {
     pub revoked_at: Option<String>,
     pub created_at: String,
     pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ManagedRequirementsPolicy {
+    pub id: String,
+    pub name: String,
+    pub description: Option<String>,
+    pub requirements_toml: String,
+    pub content_sha256: String,
+    pub version: i64,
+    pub enabled: bool,
+    pub created_by: String,
+    pub updated_by: String,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ManagedRequirementsAssignment {
+    pub id: String,
+    pub policy_id: String,
+    pub scope: String,
+    pub subject: Option<String>,
+    pub priority: i32,
+    pub enabled: bool,
+    pub created_by: String,
+    pub updated_by: String,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct ApplicableManagedRequirementsLayer {
+    pub policy: ManagedRequirementsPolicy,
+    pub assignment: ManagedRequirementsAssignment,
 }
 
 impl LocalConnectorDevice {

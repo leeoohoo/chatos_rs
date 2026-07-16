@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use axum::http::StatusCode;
 use chatos_sandbox_contract::{
-    ApprovalPolicy, ApprovalReviewer, EffectiveSandboxPolicy, PermissionProfileId,
-    SandboxBackendKind, SandboxLeasePolicyRequest,
+    legacy_policy_permission_snapshot, ApprovalPolicy, ApprovalReviewer, EffectiveSandboxPolicy,
+    PermissionProfileId, SandboxBackendKind, SandboxLeasePolicyRequest,
 };
 use chrono::{Duration as ChronoDuration, Utc};
 use serde_json::json;
@@ -81,7 +81,15 @@ impl SandboxManager {
         .to_rfc3339();
         let run_workspace =
             self.prepare_run_workspace(input.workspace_root.as_str(), run_id.as_str())?;
-        let resource_limits = input.resource_limits.unwrap_or_default();
+        let effective_permissions = legacy_policy_permission_snapshot(
+            &effective_policy,
+            vec![run_workspace.to_string_lossy().to_string()],
+        );
+        let mut resource_limits = input.resource_limits.unwrap_or_default();
+        resource_limits.cpu = resource_limits.cpu.max(0.1);
+        resource_limits.memory_mb = resource_limits.memory_mb.max(128);
+        resource_limits.disk_mb = resource_limits.disk_mb.max(128);
+        resource_limits.max_processes = resource_limits.max_processes.max(16);
         let network = input.network.unwrap_or_default();
         validate_requested_network_policy(&self.config, &network)?;
         let requested_image_id = input.image_id.clone();
@@ -126,6 +134,7 @@ impl SandboxManager {
             destroyed_at: None,
             last_error: None,
             effective_policy: effective_policy.clone(),
+            effective_permissions: Some(effective_permissions),
         };
 
         let capacity_claim_until = (Utc::now() + ChronoDuration::minutes(5)).to_rfc3339();
@@ -217,6 +226,12 @@ impl SandboxManager {
         &self,
         record: SandboxLeaseRecord,
     ) -> Result<CreateSandboxLeaseResponse, ApiError> {
+        let effective_permissions = record.effective_permissions.clone().unwrap_or_else(|| {
+            legacy_policy_permission_snapshot(
+                &record.effective_policy,
+                vec![record.run_workspace.clone()],
+            )
+        });
         Ok(CreateSandboxLeaseResponse {
             lease_id: record.id.clone(),
             sandbox_id: record.sandbox_id.clone(),
@@ -229,6 +244,7 @@ impl SandboxManager {
             run_workspace: record.run_workspace,
             expires_at: record.expires_at,
             effective_policy: record.effective_policy,
+            effective_permissions,
         })
     }
 
@@ -295,6 +311,13 @@ impl SandboxManager {
                     Some(json!({ "backend_id": instance.backend_id })),
                 )
                 .await;
+                let effective_permissions =
+                    record.effective_permissions.clone().unwrap_or_else(|| {
+                        legacy_policy_permission_snapshot(
+                            &record.effective_policy,
+                            vec![record.run_workspace.clone()],
+                        )
+                    });
                 Ok(CreateSandboxLeaseResponse {
                     lease_id: record.id,
                     sandbox_id: record.sandbox_id,
@@ -307,6 +330,7 @@ impl SandboxManager {
                     run_workspace: record.run_workspace,
                     expires_at: record.expires_at,
                     effective_policy: record.effective_policy,
+                    effective_permissions,
                 })
             }
             Err(err) => {
@@ -677,8 +701,43 @@ impl SandboxManager {
             .join("workspace");
         std::fs::create_dir_all(&run_workspace)
             .map_err(|err| ApiError::internal(format!("create run workspace failed: {err}")))?;
+        prepare_sandbox_workspace_owner(run_workspace.as_path()).map_err(ApiError::internal)?;
         Ok(run_workspace)
     }
+}
+
+#[cfg(unix)]
+fn prepare_sandbox_workspace_owner(path: &Path) -> Result<(), String> {
+    use std::os::unix::fs::{chown, PermissionsExt};
+
+    let chown_error = chown(path, Some(1000), Some(1000)).err();
+    if let Some(err) = chown_error.as_ref() {
+        if err.kind() != std::io::ErrorKind::PermissionDenied {
+            return Err(format!(
+                "set sandbox workspace owner for {} failed: {err}",
+                path.display()
+            ));
+        }
+    }
+    let mut permissions = std::fs::metadata(path)
+        .map_err(|metadata_err| metadata_err.to_string())?
+        .permissions();
+    permissions.set_mode(if chown_error.is_some() { 0o777 } else { 0o700 });
+    std::fs::set_permissions(path, permissions).map_err(|permissions_err| {
+        format!(
+            "make sandbox workspace {} accessible{}: {permissions_err}",
+            path.display(),
+            chown_error
+                .map(|err| format!(" after chown failed ({err})"))
+                .unwrap_or_default()
+        )
+    })?;
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn prepare_sandbox_workspace_owner(_path: &Path) -> Result<(), String> {
+    Ok(())
 }
 
 fn validate_requested_network_policy(

@@ -190,6 +190,7 @@ export interface StreamChatOptions {
   projectRoot?: string | null;
   workspaceRoot?: string | null;
   planMode?: boolean;
+  systemPrompt?: string | null;
 }
 
 export interface StreamChatCommandResponse {
@@ -198,6 +199,10 @@ export interface StreamChatCommandResponse {
   turn_id?: string | null;
   user_message_id?: string | null;
   source_user_message_id?: string | null;
+  user_message?: SessionMessageResponse;
+  process_messages?: SessionMessageResponse[];
+  assistant_message?: SessionMessageResponse;
+  reused?: boolean;
 }
 
 export interface RuntimeGuidanceItemPayload {
@@ -219,6 +224,13 @@ export interface RuntimeGuidanceCommandResponse {
   turn_id?: string | null;
   guidance?: RuntimeGuidanceItemPayload;
   message?: SessionMessageResponse;
+}
+
+export interface StopChatResponse {
+  success: boolean;
+  message?: string;
+  conversation_id?: string;
+  turn_id?: string | null;
 }
 
 export interface StreamChatModelConfigPayload {

@@ -2,7 +2,11 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 mod auth;
+mod command_sandbox;
 mod config;
+mod network_proxy;
+mod network_proxy_mitm;
+mod quota;
 mod terminal_store;
 mod tools;
 
@@ -10,7 +14,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use axum::extract::State;
-use axum::http::HeaderMap;
+use axum::http::{HeaderMap, StatusCode};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use chatos_builtin_tools::{
@@ -22,9 +26,12 @@ use chatos_mcp_service::{
     MCP_ERROR_AUTH_REQUIRED,
 };
 use serde_json::{json, Value};
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, BufWriter};
 use tokio::net::TcpListener;
+use tokio::sync::mpsc;
 use tracing::{info, warn};
 
+use crate::quota::WorkspaceQuota;
 use crate::terminal_store::SandboxTerminalControllerStore;
 use crate::tools::SandboxMcpToolProvider;
 use crate::{auth::authorize, config::ServerConfig};
@@ -34,6 +41,7 @@ const VERSION: &str = "0.1.0";
 #[derive(Clone)]
 struct AppState {
     config: ServerConfig,
+    workspace_writes_allowed: bool,
     started_at: String,
     tools: Vec<Value>,
     mcp_service: McpJsonRpcService,
@@ -46,6 +54,21 @@ impl CodeMaintainerHooks for NoopCodeMaintainerHooks {}
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // The dependency graph can enable both rustls crypto backends. Select one deterministically
+    // before any proxy or transitive HTTP client builds a TLS configuration.
+    let _ = rustls::crypto::ring::default_provider().install_default();
+    if network_proxy::is_internal_command_wrapper() {
+        network_proxy::run_internal_command_wrapper()
+            .await
+            .map_err(std::io::Error::other)?;
+        return Ok(());
+    }
+    if network_proxy::is_internal_network_proxy_wrapper() {
+        network_proxy::run_internal_network_proxy_wrapper()
+            .await
+            .map_err(std::io::Error::other)?;
+        return Ok(());
+    }
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
@@ -54,7 +77,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .init();
 
     let config = ServerConfig::from_env()?;
-    let app = build_app(config.clone())?;
+    if std::env::var("CHATOS_SANDBOX_TRANSPORT")
+        .is_ok_and(|value| value.trim().eq_ignore_ascii_case("stdio"))
+    {
+        let state = build_state(config).await.map_err(std::io::Error::other)?;
+        run_stdio(state).await?;
+        return Ok(());
+    }
+    let app = build_app(config.clone()).await?;
     let bind_addr = format!("{}:{}", config.host, config.port);
     let listener = TcpListener::bind(bind_addr.as_str()).await?;
     info!(
@@ -68,43 +98,61 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn build_app(config: ServerConfig) -> Result<Router, String> {
-    std::fs::create_dir_all(&config.workspace).map_err(|err| err.to_string())?;
-    std::fs::create_dir_all(&config.state_dir).map_err(|err| err.to_string())?;
-    let file_service = build_file_service(&config)?;
-    let terminal_service = build_terminal_service(&config)?;
-    let provider = SandboxMcpToolProvider::new(file_service, terminal_service);
-    let tools = provider.tools();
-    let mcp_service = McpJsonRpcService::new(
-        McpServerInfo::new("chatos-sandbox-mcp-server", VERSION),
-        Arc::new(provider),
-    );
-
-    let state = AppState {
-        config: config.clone(),
-        started_at: chrono::Utc::now().to_rfc3339(),
-        tools,
-        mcp_service,
-    };
-
+async fn build_app(config: ServerConfig) -> Result<Router, String> {
+    let state = build_state(config).await?;
     Ok(Router::new()
         .route("/health", get(health))
         .route("/mcp", post(mcp_entrypoint))
         .with_state(state))
 }
 
-fn build_file_service(config: &ServerConfig) -> Result<CodeMaintainerService, String> {
+async fn build_state(config: ServerConfig) -> Result<AppState, String> {
+    std::fs::create_dir_all(&config.workspace).map_err(|err| err.to_string())?;
+    std::fs::create_dir_all(&config.state_dir).map_err(|err| err.to_string())?;
+    let command_sandbox =
+        crate::command_sandbox::CommandSandboxConfig::from_server_config(&config).await?;
+    let file_access_policy = Arc::new(command_sandbox.file_tool_access_policy()?);
+    let workspace_writes_allowed = file_access_policy.workspace_writes_allowed();
+    let file_service = build_file_service(&config, workspace_writes_allowed)?;
+    let terminal_service = build_terminal_service(&config, command_sandbox)?;
+    let workspace_quota = WorkspaceQuota::new(config.workspace.clone(), config.disk_limit_bytes)
+        .with_extra_roots(config.extra_quota_roots.clone());
+    let provider = SandboxMcpToolProvider::new(
+        file_service,
+        terminal_service,
+        workspace_quota,
+        file_access_policy,
+    );
+    let tools = provider.tools();
+    let mcp_service = McpJsonRpcService::new(
+        McpServerInfo::new("chatos-sandbox-mcp-server", VERSION),
+        Arc::new(provider),
+    );
+
+    Ok(AppState {
+        config: config.clone(),
+        workspace_writes_allowed,
+        started_at: chrono::Utc::now().to_rfc3339(),
+        tools,
+        mcp_service,
+    })
+}
+
+fn build_file_service(
+    config: &ServerConfig,
+    allow_writes: bool,
+) -> Result<CodeMaintainerService, String> {
     let change_log_path = config.state_dir.join("code-maintainer.changes.jsonl");
     CodeMaintainerService::new(CodeMaintainerOptions {
         server_name: "sandbox_code_maintainer".to_string(),
         root: config.workspace.clone(),
         project_id: config.project_id.clone(),
-        allow_writes: true,
+        allow_writes,
         max_file_bytes: config.max_file_bytes,
         max_write_bytes: config.max_write_bytes,
         search_limit: config.search_limit,
         enable_read_tools: true,
-        enable_write_tools: true,
+        enable_write_tools: allow_writes,
         conversation_id: None,
         run_id: None,
         db_path: Some(change_log_path.to_string_lossy().to_string()),
@@ -114,7 +162,10 @@ fn build_file_service(config: &ServerConfig) -> Result<CodeMaintainerService, St
     })
 }
 
-fn build_terminal_service(config: &ServerConfig) -> Result<TerminalControllerService, String> {
+fn build_terminal_service(
+    config: &ServerConfig,
+    command_sandbox: crate::command_sandbox::CommandSandboxConfig,
+) -> Result<TerminalControllerService, String> {
     TerminalControllerService::new(TerminalControllerOptions {
         root: config.workspace.clone(),
         user_id: config.user_id.clone(),
@@ -122,22 +173,124 @@ fn build_terminal_service(config: &ServerConfig) -> Result<TerminalControllerSer
         idle_timeout_ms: config.terminal_idle_timeout_ms,
         max_wait_ms: config.terminal_max_wait_ms,
         max_output_chars: config.terminal_max_output_chars,
-        store: TerminalControllerStoreRef::new(Arc::new(SandboxTerminalControllerStore)),
+        store: TerminalControllerStoreRef::new(Arc::new(SandboxTerminalControllerStore::new(
+            WorkspaceQuota::new(config.workspace.clone(), config.disk_limit_bytes)
+                .with_extra_roots(config.extra_quota_roots.clone()),
+            command_sandbox,
+        ))),
     })
 }
 
-async fn health(State(state): State<AppState>) -> Json<Value> {
-    let workspace_writable = probe_workspace_writable(state.config.workspace.as_path());
-    Json(json!({
-        "ok": workspace_writable,
-        "service": "chatos-sandbox-mcp-server",
-        "agent_version": VERSION,
-        "workspace": state.config.workspace,
-        "workspace_writable": workspace_writable,
-        "mcp_endpoint": "/mcp",
-        "tools_count": state.tools.len(),
-        "started_at": state.started_at,
-    }))
+async fn run_stdio(state: AppState) -> Result<(), Box<dyn std::error::Error>> {
+    let writes_required = state.workspace_writes_allowed;
+    if !probe_workspace_access(state.config.workspace.as_path(), writes_required) {
+        return Err(std::io::Error::other("sandbox workspace is not accessible").into());
+    }
+    WorkspaceQuota::new(
+        state.config.workspace.clone(),
+        state.config.disk_limit_bytes,
+    )
+    .with_extra_roots(state.config.extra_quota_roots.clone())
+    .check_sync()
+    .map_err(std::io::Error::other)?;
+
+    info!(
+        service = "chatos-sandbox-mcp-server",
+        version = VERSION,
+        transport = "stdio",
+        workspace = %state.config.workspace.display(),
+        "sandbox MCP server started"
+    );
+    let (input_tx, mut input_rx) = mpsc::channel::<Result<String, std::io::Error>>(16);
+    tokio::spawn(async move {
+        let mut lines = BufReader::new(tokio::io::stdin()).lines();
+        loop {
+            match lines.next_line().await {
+                Ok(Some(line)) => {
+                    if input_tx.send(Ok(line)).await.is_err() {
+                        return;
+                    }
+                }
+                Ok(None) => {
+                    terminate_owned_process_group();
+                    return;
+                }
+                Err(err) => {
+                    let _ = input_tx.send(Err(err)).await;
+                    terminate_owned_process_group();
+                    return;
+                }
+            }
+        }
+    });
+    let mut stdout = BufWriter::new(tokio::io::stdout());
+    while let Some(line) = input_rx.recv().await {
+        let line = line?;
+        if line.trim().is_empty() {
+            continue;
+        }
+        let response = match serde_json::from_str::<JsonRpcRequest>(&line) {
+            Ok(request) => state.mcp_service.handle(request).await,
+            Err(err) => jsonrpc_error(
+                Value::Null,
+                -32700,
+                format!("invalid JSON-RPC request: {err}"),
+            ),
+        };
+        let mut encoded = serde_json::to_vec(&response)?;
+        encoded.push(b'\n');
+        stdout.write_all(&encoded).await?;
+        stdout.flush().await?;
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+fn terminate_owned_process_group() {
+    if std::env::var("CHATOS_SANDBOX_PROCESS_GROUP_OWNED").as_deref() != Ok("1") {
+        return;
+    }
+    unsafe {
+        libc::kill(0, libc::SIGKILL);
+    }
+}
+
+#[cfg(not(unix))]
+fn terminate_owned_process_group() {}
+
+async fn health(State(state): State<AppState>) -> (StatusCode, Json<Value>) {
+    let writes_required = state.workspace_writes_allowed;
+    let workspace_accessible =
+        probe_workspace_access(state.config.workspace.as_path(), writes_required);
+    let quota = WorkspaceQuota::new(
+        state.config.workspace.clone(),
+        state.config.disk_limit_bytes,
+    )
+    .with_extra_roots(state.config.extra_quota_roots.clone());
+    let quota_result = quota.check_sync();
+    let ok = workspace_accessible && quota_result.is_ok();
+    let status = if ok {
+        StatusCode::OK
+    } else {
+        StatusCode::SERVICE_UNAVAILABLE
+    };
+    (
+        status,
+        Json(json!({
+            "ok": ok,
+            "service": "chatos-sandbox-mcp-server",
+            "agent_version": VERSION,
+            "workspace": state.config.workspace,
+            "workspace_writable": writes_required && workspace_accessible,
+            "workspace_writes_allowed": writes_required,
+            "workspace_disk_limit_bytes": state.config.disk_limit_bytes,
+            "workspace_disk_used_bytes": quota_result.as_ref().ok(),
+            "workspace_disk_error": quota_result.err(),
+            "mcp_endpoint": "/mcp",
+            "tools_count": state.tools.len(),
+            "started_at": state.started_at,
+        })),
+    )
 }
 
 async fn mcp_entrypoint(
@@ -152,13 +305,20 @@ async fn mcp_entrypoint(
     Json(state.mcp_service.handle(request).await)
 }
 
-fn probe_workspace_writable(workspace: &Path) -> bool {
+fn probe_workspace_access(workspace: &Path, writes_required: bool) -> bool {
     if let Err(err) = std::fs::create_dir_all(workspace) {
         warn!(
             error = err.to_string(),
             "create workspace for health probe failed"
         );
         return false;
+    }
+    if let Err(err) = std::fs::read_dir(workspace) {
+        warn!(error = err.to_string(), "workspace read probe failed");
+        return false;
+    }
+    if !writes_required {
+        return true;
     }
     let probe = workspace.join(".chatos_sandbox_mcp_health");
     match std::fs::write(&probe, b"ok") {
@@ -179,6 +339,10 @@ mod tests {
     use axum::body::{to_bytes, Body};
     use axum::http::{header, Request, StatusCode};
     use chatos_mcp_service::{MCP_ERROR_AUTH_REQUIRED, METHOD_TOOLS_LIST};
+    use chatos_sandbox_contract::{
+        legacy_policy_permission_snapshot, EffectiveSandboxPolicy, FileSystemAccessMode,
+        FileSystemPath, FileSystemPermissionPolicy, FileSystemSandboxEntry, PermissionProfileId,
+    };
     use serde_json::json;
     use tower::ServiceExt;
 
@@ -201,12 +365,19 @@ mod tests {
             terminal_idle_timeout_ms: 1_000,
             terminal_max_wait_ms: 1_000,
             terminal_max_output_chars: 4_000,
+            disk_limit_bytes: Some(8 * 1024 * 1024),
+            extra_quota_roots: Vec::new(),
+            permission_profile: "workspace_write".to_string(),
+            command_sandbox_backend: "external".to_string(),
+            additional_writable_roots: Vec::new(),
+            host_home: None,
+            effective_permissions: None,
         }
     }
 
-    fn test_app(name: &str, auth_token: Option<&str>) -> (Router, ServerConfig) {
+    async fn test_app(name: &str, auth_token: Option<&str>) -> (Router, ServerConfig) {
         let config = test_config(name, auth_token);
-        let app = build_app(config.clone()).expect("build app");
+        let app = build_app(config.clone()).await.expect("build app");
         (app, config)
     }
 
@@ -249,7 +420,7 @@ mod tests {
 
     #[tokio::test]
     async fn mcp_entrypoint_returns_jsonrpc_auth_error_for_missing_token() {
-        let (app, _config) = test_app("missing-token", Some("secret"));
+        let (app, _config) = test_app("missing-token", Some("secret")).await;
         let (status, rpc) = post_mcp(
             app,
             rpc_request("auth-1", METHOD_TOOLS_LIST, json!({})),
@@ -273,7 +444,7 @@ mod tests {
 
     #[tokio::test]
     async fn mcp_entrypoint_returns_jsonrpc_auth_error_for_wrong_bearer_token() {
-        let (app, _config) = test_app("wrong-token", Some("secret"));
+        let (app, _config) = test_app("wrong-token", Some("secret")).await;
         let (status, rpc) = post_mcp(
             app,
             rpc_request("auth-2", METHOD_TOOLS_LIST, json!({})),
@@ -292,7 +463,7 @@ mod tests {
 
     #[tokio::test]
     async fn mcp_entrypoint_handles_jsonrpc_methods_with_bearer_token() {
-        let (app, config) = test_app("bearer-success", Some("secret"));
+        let (app, config) = test_app("bearer-success", Some("secret")).await;
         std::fs::write(config.workspace.join("hello.txt"), "hello from sandbox")
             .expect("write fixture");
         let auth = [(header::AUTHORIZATION.as_str(), "Bearer secret")];
@@ -357,8 +528,96 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn file_tools_enforce_effective_permission_snapshot() {
+        let mut config = test_config("file-policy", None);
+        std::fs::create_dir_all(config.workspace.join(".git")).expect("git directory");
+        let secret = config.workspace.join("secret.env");
+        std::fs::write(secret.as_path(), "secret").expect("secret fixture");
+        let policy = EffectiveSandboxPolicy {
+            permission_profile_id: PermissionProfileId::WorkspaceWrite,
+            ..EffectiveSandboxPolicy::default()
+        };
+        let mut snapshot = legacy_policy_permission_snapshot(
+            &policy,
+            vec![config.workspace.to_string_lossy().to_string()],
+        );
+        let FileSystemPermissionPolicy::Restricted { entries, .. } = &mut snapshot.file_system
+        else {
+            panic!("workspace profile must be restricted");
+        };
+        entries.push(FileSystemSandboxEntry {
+            access: FileSystemAccessMode::Deny,
+            path: FileSystemPath::Path {
+                path: secret.to_string_lossy().to_string(),
+            },
+        });
+        config.effective_permissions = Some(snapshot);
+        let app = build_app(config.clone()).await.expect("build app");
+
+        let (_status, ordinary) = post_mcp(
+            app.clone(),
+            rpc_request(
+                "write-ordinary",
+                "tools/call",
+                json!({
+                    "name": "write_file",
+                    "arguments": { "path": "ordinary.txt", "content": "ok" },
+                }),
+            ),
+            &[],
+        )
+        .await;
+        assert!(
+            !ordinary.to_string().contains("permission profile denies"),
+            "ordinary workspace write should remain allowed: {ordinary}"
+        );
+        assert!(config.workspace.join("ordinary.txt").exists());
+
+        let (_status, protected_write) = post_mcp(
+            app.clone(),
+            rpc_request(
+                "write-protected",
+                "tools/call",
+                json!({
+                    "name": "write_file",
+                    "arguments": { "path": ".git/config", "content": "blocked" },
+                }),
+            ),
+            &[],
+        )
+        .await;
+        assert!(
+            protected_write
+                .to_string()
+                .contains("permission profile denies writing"),
+            "metadata write must be denied: {protected_write}"
+        );
+
+        let (_status, denied_read) = post_mcp(
+            app,
+            rpc_request(
+                "read-denied",
+                "tools/call",
+                json!({
+                    "name": "read_file",
+                    "arguments": { "path": "secret.env" },
+                }),
+            ),
+            &[],
+        )
+        .await;
+        assert!(
+            denied_read
+                .to_string()
+                .contains("permission profile denies reading"),
+            "denied file contents must not be returned: {denied_read}"
+        );
+        let _ = std::fs::remove_dir_all(config.workspace.parent().expect("test workspace parent"));
+    }
+
+    #[tokio::test]
     async fn mcp_entrypoint_accepts_sandbox_token_header() {
-        let (app, _config) = test_app("sandbox-header", Some("secret"));
+        let (app, _config) = test_app("sandbox-header", Some("secret")).await;
         let (_status, rpc) = post_mcp(
             app,
             rpc_request("tools-2", METHOD_TOOLS_LIST, json!({})),

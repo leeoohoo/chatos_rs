@@ -1,7 +1,21 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use super::*;
+use anyhow::{anyhow, Context, Result};
+use reqwest::Method;
+use serde::de::DeserializeOwned;
+use serde_json::{json, Value};
+
+use crate::config::api_url;
+use crate::mcp::manifest::{LocalMcpManifestPublic, LocalMcpManifestRecord};
+use crate::{AuthState, LocalRuntime};
+
+use super::record::sanitize_manifest_error;
+
+#[derive(Debug, serde::Deserialize)]
+pub(super) struct CloudMcpRecord {
+    pub(super) id: String,
+}
 
 pub(super) async fn sync_manifest_descriptor(
     runtime: &LocalRuntime,
@@ -135,26 +149,16 @@ pub(super) async fn save_manifest(
     runtime: &LocalRuntime,
     record: LocalMcpManifestRecord,
 ) -> Result<()> {
-    let mut state = runtime.state.write().await;
-    if let Some(index) = state
-        .mcp_configs
-        .manifests
-        .iter()
-        .position(|manifest| manifest.manifest_id == record.manifest_id)
-    {
-        state.mcp_configs.manifests[index] = record;
-    } else {
-        state.mcp_configs.manifests.push(record);
-    }
-    state.save(runtime.state_path.as_path())
+    crate::mcp::repository::save_runtime_manifest(runtime, &record).await
 }
 
 pub(super) async fn current_manifest_public(
     runtime: &LocalRuntime,
     manifest_id: &str,
 ) -> Result<LocalMcpManifestPublic> {
-    let state = runtime.state.read().await;
-    current_manifest(&state, manifest_id).map(LocalMcpManifestRecord::public_value)
+    crate::mcp::repository::get_runtime_manifest(runtime, manifest_id)
+        .await
+        .map(|record| record.public_value())
 }
 
 pub(super) async fn mark_sync_error(
@@ -162,11 +166,10 @@ pub(super) async fn mark_sync_error(
     manifest_id: &str,
     error: String,
 ) -> Result<LocalMcpManifestPublic> {
-    let mut state = runtime.state.write().await;
-    let record = current_manifest_mut(&mut state, manifest_id)?;
+    let mut record = crate::mcp::repository::get_runtime_manifest(runtime, manifest_id).await?;
     record.sync_status = "sync_error".to_string();
-    record.last_error = Some(sanitize_manifest_error(record, error.as_str()));
+    record.last_error = Some(sanitize_manifest_error(&record, error.as_str()));
     let public = record.public_value();
-    state.save(runtime.state_path.as_path())?;
+    crate::mcp::repository::save_runtime_manifest(runtime, &record).await?;
     Ok(public)
 }

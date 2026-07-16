@@ -28,15 +28,6 @@ impl InMemoryStore {
         self.inner.read().runtime_settings.clone()
     }
 
-    pub(in crate::store) fn save_runtime_settings(
-        &self,
-        settings: RuntimeSettingsRecord,
-    ) -> RuntimeSettingsRecord {
-        let mut data = self.inner.write();
-        data.runtime_settings = Some(settings.clone());
-        settings
-    }
-
     pub(in crate::store) fn delete_model_config(&self, id: &str) -> bool {
         let mut data = self.inner.write();
         let deleted = data.model_configs.remove(id).is_some();

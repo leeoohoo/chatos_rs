@@ -34,6 +34,7 @@ describe('loadProjects', () => {
       set,
       get,
       client: {
+        registerProjectExecution: vi.fn(),
         listProjects: vi.fn().mockResolvedValue([
           {
             id: 'project_kept',
@@ -55,6 +56,47 @@ describe('loadProjects', () => {
     expect(state.activePanel).toBe('chat');
     expect(state.projects.map((project) => project.id)).toEqual(['project_kept']);
     expect(state.projects[0]?.gitUrl).toBe('git@github.com:org/kept.git');
+  });
+
+  it('filters local projects from the browser project list', async () => {
+    const state = {
+      projects: [],
+      currentProjectId: 'cloud-project',
+      currentProject: null,
+      activePanel: 'chat',
+      error: null,
+    } as unknown as ChatStoreShape;
+    const set = vi.fn((updater: (draftState: ChatStoreDraft) => void) => {
+      updater(state as unknown as ChatStoreDraft);
+    });
+    const actions = createProjectActions({
+      set,
+      get: () => state,
+      client: {
+        registerProjectExecution: vi.fn(),
+        listProjects: vi.fn().mockResolvedValue([
+          {
+            id: 'cloud-project',
+            name: 'Cloud',
+            source_type: 'cloud',
+            execution_plane: 'cloud',
+            root_path: 'harness://project/cloud-project',
+          },
+          {
+            id: 'local-project',
+            name: 'Local',
+            source_type: 'local_connector',
+            execution_plane: 'local_connector',
+            root_path: 'local://connector/device/workspace',
+          },
+        ]),
+      } as never,
+      getUserIdParam: () => 'user_1',
+    });
+
+    await actions.loadProjects({ force: true });
+
+    expect(state.projects.map((project) => project.id)).toEqual(['cloud-project']);
   });
 });
 
@@ -98,6 +140,7 @@ describe('updateProject', () => {
       set,
       get,
       client: {
+        registerProjectExecution: vi.fn(),
         updateProject,
       } as never,
       getUserIdParam: () => 'user_1',

@@ -16,7 +16,13 @@ import { I18nProvider } from '../i18n/I18nProvider';
 import { ApiClientProvider } from '../lib/api/ApiClientContext';
 import type ApiClient from '../lib/api/client';
 import { useChatStoreResolved } from '../lib/store/ChatStoreContext';
-import type { AgentConfig, AiModelConfig, Application, McpConfig } from '../types';
+import type {
+  AgentConfig,
+  AiModelConfig,
+  AiModelProvider,
+  Application,
+  McpConfig,
+} from '../types';
 import { DialogProvider } from './ui/DialogProvider';
 
 vi.mock('../lib/store/ChatStoreContext', async () => {
@@ -29,10 +35,11 @@ vi.mock('../lib/store/ChatStoreContext', async () => {
 
 const mockedUseChatStoreResolved = vi.mocked(useChatStoreResolved);
 
-const createApiClientStub = () => ({
+const createApiClientStub = (modelProviders: AiModelProvider[] = []) => ({
   listSkillPlugins: vi.fn(async () => []),
   listSkills: vi.fn(async () => []),
   getMcpConfigResourceByCommand: vi.fn(async () => ({ success: true, config: null })),
+  getAiModelProviders: vi.fn(async () => modelProviders),
 } as unknown as ApiClient);
 
 const renderWithProviders = (ui: React.ReactElement, client = createApiClientStub()) => render(
@@ -58,6 +65,22 @@ const sampleAiModel: AiModelConfig = {
   supports_images: true,
   supports_reasoning: true,
   supports_responses: true,
+  createdAt: new Date('2026-06-01T00:00:00Z'),
+  updatedAt: new Date('2026-06-01T00:00:00Z'),
+};
+
+const sampleAiProvider: AiModelProvider = {
+  id: 'provider-1',
+  name: 'OpenAI',
+  provider: 'gpt',
+  base_url: 'https://api.example.com/v1',
+  api_key: '',
+  has_api_key: true,
+  enabled: true,
+  supports_images: true,
+  supports_reasoning: true,
+  supports_responses: true,
+  imported_model_count: 1,
   createdAt: new Date('2026-06-01T00:00:00Z'),
   updatedAt: new Date('2026-06-01T00:00:00Z'),
 };
@@ -109,7 +132,7 @@ describe('manager dialogs integration', () => {
     mockedUseChatStoreResolved.mockReset();
   });
 
-  it('opens add and edit dialogs from AiModelManager', () => {
+  it('opens add and edit dialogs from AiModelManager', async () => {
     const store = {
       aiModelConfigs: [sampleAiModel],
       loadAiModelConfigs: vi.fn(async () => undefined),
@@ -117,14 +140,18 @@ describe('manager dialogs integration', () => {
       deleteAiModelConfig: vi.fn(async () => undefined),
     };
 
-    renderWithProviders(<AiModelManager onClose={vi.fn()} store={() => store} />);
+    delete (window as Window & { __aiModelManagerInitAt__?: number }).__aiModelManagerInitAt__;
+    renderWithProviders(
+      <AiModelManager onClose={vi.fn()} store={() => store} />,
+      createApiClientStub([sampleAiProvider]),
+    );
 
-    fireEvent.click(screen.getByRole('button', { name: '添加 AI 模型' }));
-    expect(screen.getByRole('dialog', { name: '添加 AI 模型' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '添加 AI 供应商' }));
+    expect(screen.getByRole('dialog', { name: '添加 AI 供应商' })).toBeInTheDocument();
     fireEvent.keyDown(window, { key: 'Escape' });
 
-    fireEvent.click(screen.getByRole('button', { name: '编辑' }));
-    expect(screen.getByRole('dialog', { name: '编辑 AI 模型' })).toBeInTheDocument();
+    fireEvent.click(await screen.findByRole('button', { name: '编辑' }));
+    expect(screen.getByRole('dialog', { name: '编辑 AI 供应商' })).toBeInTheDocument();
   });
 
   it('opens add and edit dialogs from McpManager', () => {

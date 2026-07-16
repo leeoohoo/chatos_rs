@@ -88,8 +88,6 @@ struct ProjectRuntimeEnvironmentResponse {
 pub(in crate::services) struct ProjectRuntimeEnvironmentSettings {
     pub(in crate::services) sandbox_enabled: bool,
     #[serde(default)]
-    pub(in crate::services) sandbox_provider: String,
-    #[serde(default)]
     pub(in crate::services) status: String,
 }
 
@@ -507,19 +505,19 @@ pub(in crate::services) fn insert_project_service_internal_headers(
     if internal_secret.is_empty() || scope.trim().is_empty() {
         return Err("project service internal secret and scope are required".to_string());
     }
+    let token = chatos_service_runtime::issue_internal_service_token(
+        internal_secret,
+        PROJECT_SERVICE_CALLER,
+        PROJECT_SERVICE_TOKEN_AUDIENCE,
+        scope.trim(),
+        60,
+    )?;
     headers.extend([
-        (
-            "x-project-service-sync-secret".to_string(),
-            internal_secret.to_string(),
-        ),
         (
             "x-project-service-caller".to_string(),
             PROJECT_SERVICE_CALLER.to_string(),
         ),
-        (
-            "x-project-service-internal-scope".to_string(),
-            scope.trim().to_string(),
-        ),
+        ("x-project-service-internal-token".to_string(), token),
     ]);
     Ok(())
 }
@@ -584,5 +582,39 @@ impl From<ProjectServiceProjectRecord> for TaskProjectRecord {
             updated_at: value.updated_at,
             archived_at: value.archived_at,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeMap;
+
+    use super::*;
+
+    #[test]
+    fn project_service_mcp_headers_use_a_scoped_signed_token() {
+        let mut headers = BTreeMap::new();
+        insert_project_service_internal_headers(
+            &mut headers,
+            "task-runner-internal-secret",
+            PROJECT_READ_SCOPE,
+        )
+        .expect("signed project service headers");
+
+        assert_eq!(
+            headers.get("x-project-service-caller").map(String::as_str),
+            Some(PROJECT_SERVICE_CALLER)
+        );
+        assert!(!headers.contains_key("x-project-service-sync-secret"));
+        chatos_service_runtime::verify_internal_service_token(
+            headers
+                .get("x-project-service-internal-token")
+                .expect("internal token"),
+            "task-runner-internal-secret",
+            PROJECT_SERVICE_CALLER,
+            PROJECT_SERVICE_TOKEN_AUDIENCE,
+            PROJECT_READ_SCOPE,
+        )
+        .expect("verify scoped project service token");
     }
 }

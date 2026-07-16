@@ -6,10 +6,13 @@ const http = require('node:http');
 const MAX_API_ENDPOINT_LENGTH = 4096;
 const MAX_API_REQUEST_BODY_BYTES = 2 * 1024 * 1024;
 const MAX_API_RESPONSE_BODY_BYTES = 8 * 1024 * 1024;
+const DEFAULT_API_TIMEOUT_MS = 15_000;
+const LOCAL_CHAT_TIMEOUT_MS = 10 * 60 * 1000;
+const LOCAL_TOOLS_TIMEOUT_MS = 2 * 60 * 1000;
 const ALLOWED_API_METHODS = new Set(['GET', 'POST', 'DELETE', 'PUT', 'PATCH']);
 const FORWARDED_RENDERER_HEADERS = new Set(['accept', 'content-type']);
 
-function normalizeApiEndpoint(endpoint) {
+function normalizeApiEndpoint(endpoint, endpointPrefix) {
   if (typeof endpoint !== 'string') {
     throw new Error('Local API endpoint must be a string');
   }
@@ -18,7 +21,7 @@ function normalizeApiEndpoint(endpoint) {
     throw new Error('Local API endpoint is not allowed');
   }
   const url = new URL(trimmed, 'http://local-connector.internal');
-  if (!url.pathname.startsWith('/api/local/')) {
+  if (!url.pathname.startsWith(endpointPrefix)) {
     throw new Error('Local API endpoint is outside the local connector API');
   }
   return `${url.pathname}${url.search}`;
@@ -45,6 +48,19 @@ function normalizeApiRequestBody(body) {
     throw new Error('Local API request body is too large');
   }
   return body;
+}
+
+function localApiTimeoutMs(endpoint) {
+  if (endpoint === '/api/local/runtime/chat/send') {
+    return LOCAL_CHAT_TIMEOUT_MS;
+  }
+  if (/^\/api\/local\/runtime\/sessions\/[^/]+\/review-repair(?:\?|$)/.test(endpoint)) {
+    return LOCAL_CHAT_TIMEOUT_MS;
+  }
+  if (/^\/api\/local\/runtime\/sessions\/[^/]+\/tools(?:\?|$)/.test(endpoint)) {
+    return LOCAL_TOOLS_TIMEOUT_MS;
+  }
+  return DEFAULT_API_TIMEOUT_MS;
 }
 
 function localApiHeaders(desktopAuthToken, hasBody) {
@@ -88,13 +104,18 @@ function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function createLocalApiBridge({ getIpcEndpoint, getDesktopAuthToken, isTrustedSender }) {
+function createLocalApiBridge({
+  getIpcEndpoint,
+  getDesktopAuthToken,
+  isTrustedSender,
+  endpointPrefix = '/api/local/',
+}) {
   async function requestLocalApiOverIpc(payload) {
     if (!isTrustedSender(payload?.sender)) {
       throw new Error('Local API access is only available to the main connector window');
     }
 
-    const endpoint = normalizeApiEndpoint(payload.endpoint);
+    const endpoint = normalizeApiEndpoint(payload.endpoint, endpointPrefix);
     const method = normalizeApiMethod(payload.method);
     const body = normalizeApiRequestBody(payload.body);
     const headers = sanitizeRendererHeaders(payload.headers, body !== null, getDesktopAuthToken());
@@ -128,7 +149,7 @@ function createLocalApiBridge({ getIpcEndpoint, getDesktopAuthToken, isTrustedSe
           method,
           path: endpoint,
           headers,
-          timeout: 15_000,
+          timeout: localApiTimeoutMs(endpoint),
         },
         (response) => {
           const chunks = [];

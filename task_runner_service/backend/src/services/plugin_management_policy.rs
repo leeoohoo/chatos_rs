@@ -16,9 +16,7 @@ use crate::models::{TaskMcpConfig, TaskRecord};
 
 const BUILTIN_RUNTIME_KIND: &str = "builtin";
 const LOCAL_CONNECTOR_DISCOVERED_SOURCE_KIND: &str = "local_connector_discovered";
-const USER_CREATED_SOURCE_KIND: &str = "user_created";
-const LOCAL_CONNECTOR_USER_RUNTIME_KINDS: [&str; 2] =
-    ["local_connector_stdio", "local_connector_http"];
+const CLOUD_EXTERNAL_RUNTIME_KINDS: [&str; 3] = ["http", "stdio_cloud", "system_routed"];
 
 #[derive(Debug, Clone)]
 pub(crate) struct TaskRunnerCapabilityPolicy {
@@ -65,17 +63,13 @@ impl TaskRunnerCapabilityPolicy {
         capabilities
             .ensure_required_available()
             .map_err(|err| err.to_string())?;
-        let supported_skill_ids = capabilities
-            .skills
-            .iter()
-            .filter(|item| item.resource.content.kind == "local_connector_bundle")
-            .map(|item| item.resource.id.as_str())
-            .collect::<Vec<_>>();
         capabilities
-            .ensure_required_skills_supported(supported_skill_ids)
+            .ensure_required_skills_supported(std::iter::empty::<&str>())
             .map_err(|err| err.to_string())?;
         for item in capabilities.required_mcps() {
-            validate_local_connector_user_runtime(item)?;
+            if plugin_builtin_kind(item).is_none() {
+                validate_cloud_external_mcp_runtime(item)?;
+            }
         }
         Ok(Self { capabilities })
     }
@@ -105,7 +99,7 @@ impl TaskRunnerCapabilityPolicy {
         self.capabilities
             .selectable_mcps()
             .filter(|item| plugin_builtin_kind(item).is_none())
-            .filter(|item| validate_local_connector_user_runtime(item).is_ok())
+            .filter(|item| validate_cloud_external_mcp_runtime(item).is_ok())
             .collect()
     }
 
@@ -131,7 +125,7 @@ impl TaskRunnerCapabilityPolicy {
     }
 
     pub(crate) fn selectable_skills(&self) -> Vec<&ResolvedSkill> {
-        self.capabilities.selectable_skills().collect()
+        Vec::new()
     }
 
     pub(crate) fn selectable_skill_views(&self) -> Vec<SelectableSkillView> {
@@ -284,17 +278,12 @@ impl TaskRunnerCapabilityPolicy {
         &'a self,
         task: &TaskRecord,
     ) -> Result<Vec<&'a ResolvedSkill>, String> {
-        let mut out = Vec::new();
-        for skill_id in &task.mcp_config.selected_skill_ids {
-            let item = self
-                .capabilities
-                .skills
-                .iter()
-                .find(|item| item.resource.id == *skill_id && item.available)
-                .ok_or_else(|| format!("effective Skill is unavailable: {skill_id}"))?;
-            out.push(item);
+        if let Some(skill_id) = task.mcp_config.selected_skill_ids.first() {
+            return Err(format!(
+                "Local Connector Skill is unavailable in cloud Task Runner: {skill_id}"
+            ));
         }
-        Ok(out)
+        Ok(Vec::new())
     }
 
     pub(crate) fn skill_snapshots(
@@ -336,6 +325,7 @@ impl TaskRunnerCapabilityPolicy {
                 .find(|item| item.resource.id == *resource_id && item.available)
                 .ok_or_else(|| format!("effective MCP resource is unavailable: {resource_id}"))?;
             if plugin_builtin_kind(item).is_none() {
+                validate_cloud_external_mcp_runtime(item)?;
                 out.push(&item.resource);
             }
         }
@@ -438,44 +428,22 @@ fn plugin_builtin_kind(item: &ResolvedMcp) -> Option<BuiltinMcpKind> {
         .and_then(builtin_kind_by_any)
 }
 
-fn validate_local_connector_user_runtime(item: &ResolvedMcp) -> Result<(), String> {
-    if !matches!(
-        item.resource.source_kind.as_str(),
-        LOCAL_CONNECTOR_DISCOVERED_SOURCE_KIND | USER_CREATED_SOURCE_KIND
-    ) {
-        return Ok(());
-    }
-    if !LOCAL_CONNECTOR_USER_RUNTIME_KINDS.contains(&item.resource.runtime.kind.as_str()) {
+fn validate_cloud_external_mcp_runtime(item: &ResolvedMcp) -> Result<(), String> {
+    let runtime_kind = item.resource.runtime.kind.as_str();
+    if item.resource.source_kind == LOCAL_CONNECTOR_DISCOVERED_SOURCE_KIND
+        || runtime_kind.starts_with("local_connector_")
+        || item.resource.runtime.local_connector.is_some()
+    {
         return Err(format!(
-            "local connector user MCP {} has invalid runtime kind: {}",
-            item.resource.id, item.resource.runtime.kind
+            "Local Connector MCP is unavailable in cloud Task Runner: {}",
+            item.resource.id
         ));
     }
-    let local = item
-        .resource
-        .runtime
-        .local_connector
-        .as_ref()
-        .ok_or_else(|| {
-            format!(
-                "local connector user MCP {} is missing runtime reference",
-                item.resource.id
-            )
-        })?;
-    for (field, value) in [
-        ("device_id", local.device_id.as_deref()),
-        ("manifest_id", local.manifest_id.as_deref()),
-    ] {
-        if value
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .is_none()
-        {
-            return Err(format!(
-                "local connector user MCP {} is missing {field}",
-                item.resource.id
-            ));
-        }
+    if !CLOUD_EXTERNAL_RUNTIME_KINDS.contains(&runtime_kind) {
+        return Err(format!(
+            "cloud Task Runner does not support MCP runtime kind {} for {}",
+            runtime_kind, item.resource.id
+        ));
     }
     Ok(())
 }

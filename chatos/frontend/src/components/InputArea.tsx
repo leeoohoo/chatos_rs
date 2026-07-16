@@ -19,6 +19,9 @@ import { useInputAreaController } from './inputArea/useInputAreaController';
 
 export const InputArea: React.FC<InputAreaProps> = ({
   onSend,
+  onStop,
+  isRunning = false,
+  isStopping = false,
   disabled = false,
   placeholder = 'Type your message...',
   maxLength = 4000,
@@ -158,6 +161,9 @@ export const InputArea: React.FC<InputAreaProps> = ({
       <div className="relative">
         <InputAreaComposer
           disabled={disabled}
+          onStop={onStop}
+          isRunning={isRunning}
+          isStopping={isStopping}
           effectiveAllowAttachments={effectiveAllowAttachments}
           showModelSelector={showModelSelector}
           selectedModelId={selectedModelId}

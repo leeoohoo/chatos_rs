@@ -5,6 +5,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use serde_json::{json, Value};
+use tokio_util::sync::CancellationToken;
 
 use chatos_mcp_runtime::{ToolAbortCheckCallback, ToolCallContext, ToolCallerModelRuntime};
 
@@ -20,6 +21,7 @@ pub struct AiRuntimeOptions {
     pub caller_model: Option<String>,
     pub caller_model_runtime: Option<ToolCallerModelRuntime>,
     pub abort_checker: Option<ToolAbortCheckCallback>,
+    pub abort_token: Option<CancellationToken>,
     pub tool_result_model_budget_limits: Option<ToolResultModelBudgetLimits>,
     pub callbacks: RuntimeCallbacks,
     pub lifecycle_hook: Option<Arc<dyn RuntimeLifecycleHook>>,
@@ -204,6 +206,7 @@ impl AiRuntimeOptions {
             caller_model: None,
             caller_model_runtime: None,
             abort_checker: None,
+            abort_token: None,
             tool_result_model_budget_limits: None,
             callbacks: RuntimeCallbacks::default(),
             lifecycle_hook: None,
@@ -245,6 +248,11 @@ impl AiRuntimeOptions {
         self
     }
 
+    pub fn with_abort_token(mut self, abort_token: Option<CancellationToken>) -> Self {
+        self.abort_token = abort_token;
+        self
+    }
+
     pub fn with_tool_result_model_budget_limits(
         mut self,
         limits: Option<ToolResultModelBudgetLimits>,
@@ -280,6 +288,13 @@ impl AiRuntimeOptions {
     }
 
     pub fn is_aborted(&self) -> bool {
+        if self
+            .abort_token
+            .as_ref()
+            .is_some_and(CancellationToken::is_cancelled)
+        {
+            return true;
+        }
         let Some(conversation_id) = self.conversation_id.as_deref() else {
             return false;
         };
@@ -295,10 +310,25 @@ impl AiRuntimeOptions {
             self.caller_model.clone(),
         )
         .with_caller_model_runtime(self.caller_model_runtime.clone());
-        if let Some(abort_checker) = &self.abort_checker {
-            context.with_abort_checker(Arc::clone(abort_checker))
-        } else {
-            context
+        let abort_checker = match (&self.abort_checker, &self.abort_token) {
+            (None, None) => None,
+            (Some(checker), None) => Some(Arc::clone(checker)),
+            (None, Some(token)) => {
+                let token = token.clone();
+                Some(Arc::new(move |_conversation_id: &str| token.is_cancelled())
+                    as ToolAbortCheckCallback)
+            }
+            (Some(checker), Some(token)) => {
+                let checker = Arc::clone(checker);
+                let token = token.clone();
+                Some(Arc::new(move |conversation_id: &str| {
+                    token.is_cancelled() || checker(conversation_id)
+                }) as ToolAbortCheckCallback)
+            }
+        };
+        match abort_checker {
+            Some(checker) => context.with_abort_checker(checker),
+            None => context,
         }
     }
 }

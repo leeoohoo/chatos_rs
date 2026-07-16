@@ -25,6 +25,7 @@ import type {
   UpdateRequirementDocumentPayload,
   UpdateProjectPayload,
   UpdateProjectRuntimeEnvironmentSettingsPayload,
+  UpdateProjectRuntimeEnvironmentVariablesPayload,
   UpdateRequirementPayload,
   UpdateWorkItemPayload,
   UpsertRequirementDocumentPayload,
@@ -168,12 +169,35 @@ export const api = {
         body: JSON.stringify(payload),
       },
     ),
+  updateProjectRuntimeEnvironmentVariables: (
+    projectId: string,
+    payload: UpdateProjectRuntimeEnvironmentVariablesPayload,
+  ) =>
+    request<ProjectRuntimeEnvironmentResponse>(
+      `/api/projects/${projectId}/runtime-environment/variables`,
+      {
+        method: 'PUT',
+        body: JSON.stringify(payload),
+      },
+    ),
   analyzeProjectRuntimeEnvironment: (projectId: string) =>
     request<ProjectRuntimeEnvironmentResponse>(
       `/api/projects/${projectId}/runtime-environment/analyze`,
       {
         method: 'POST',
       },
+    ),
+  generateProjectRuntimeEnvironmentImage: (projectId: string, imageRecordId: string) =>
+    request<ProjectRuntimeEnvironmentResponse>(
+      `/api/projects/${projectId}/runtime-environment/images/${imageRecordId}/generate`,
+      {
+        method: 'POST',
+      },
+    ),
+  startProjectRuntimeEnvironment: (projectId: string) =>
+    request<ProjectRuntimeEnvironmentResponse>(
+      `/api/projects/${projectId}/runtime-environment/start`,
+      { method: 'POST' },
     ),
   listRequirements: (
     projectId: string,

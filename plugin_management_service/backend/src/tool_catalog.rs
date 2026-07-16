@@ -5,7 +5,8 @@ use std::collections::HashMap;
 
 use chatos_mcp_runtime::{
     builtin_kind_by_kind_name, list_tools_http, list_tools_stdio,
-    local_command_approval_tool_definitions, project_environment_tool_definitions, McpStdioServer,
+    local_command_approval_tool_definitions, project_environment_tool_definitions,
+    project_runtime_environment_info_tool_definitions, McpStdioServer,
 };
 use serde::Deserialize;
 use serde_json::Value;
@@ -19,6 +20,7 @@ use crate::models::{
 
 const SANDBOX_IMAGES_SERVER_NAME: &str = "sandbox_images";
 const PROJECT_ENVIRONMENT_SERVER_NAME: &str = "project_environment";
+const PROJECT_RUNTIME_ENVIRONMENT_SERVER_NAME: &str = "project_runtime_environment";
 const LOCAL_COMMAND_APPROVAL_SERVER_NAME: &str = "local_connector_approval";
 const TASK_RUNNER_SERVER_NAME: &str = "task_runner_service";
 
@@ -45,6 +47,9 @@ pub(crate) fn system_routed_tool_catalog(server_name: &str) -> Result<Option<Vec
             .map(Some)
             .ok_or_else(|| "Sandbox Images tool registry returned no tools array".to_string()),
         PROJECT_ENVIRONMENT_SERVER_NAME => Ok(Some(project_environment_tool_definitions())),
+        PROJECT_RUNTIME_ENVIRONMENT_SERVER_NAME => {
+            Ok(Some(project_runtime_environment_info_tool_definitions()))
+        }
         LOCAL_COMMAND_APPROVAL_SERVER_NAME => Ok(Some(local_command_approval_tool_definitions())),
         TASK_RUNNER_SERVER_NAME => Ok(None),
         _ => Ok(None),
@@ -196,6 +201,7 @@ mod tests {
         for server_name in [
             SANDBOX_IMAGES_SERVER_NAME,
             PROJECT_ENVIRONMENT_SERVER_NAME,
+            PROJECT_RUNTIME_ENVIRONMENT_SERVER_NAME,
             LOCAL_COMMAND_APPROVAL_SERVER_NAME,
         ] {
             let tools = system_routed_tool_catalog(server_name)

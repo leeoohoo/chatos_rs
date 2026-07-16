@@ -3,6 +3,16 @@
 
 use serde::{Deserialize, Serialize};
 
+mod managed_requirements;
+mod permissions;
+mod profiles;
+mod toml_profiles;
+
+pub use managed_requirements::*;
+pub use permissions::*;
+pub use profiles::*;
+pub use toml_profiles::*;
+
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SandboxBackendKind {
@@ -42,11 +52,21 @@ pub enum PermissionProfileId {
 }
 
 impl PermissionProfileId {
+    pub const ALL: [Self; 3] = [Self::ReadOnly, Self::WorkspaceWrite, Self::FullAccess];
+
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::ReadOnly => "read_only",
             Self::WorkspaceWrite => "workspace_write",
             Self::FullAccess => "full_access",
+        }
+    }
+
+    pub const fn codex_name(self) -> &'static str {
+        match self {
+            Self::ReadOnly => ":read-only",
+            Self::WorkspaceWrite => ":workspace",
+            Self::FullAccess => ":danger-full-access",
         }
     }
 
@@ -60,6 +80,19 @@ impl PermissionProfileId {
 
     pub const fn is_no_broader_than(self, maximum: Self) -> bool {
         self.rank() <= maximum.rank()
+    }
+}
+
+impl std::str::FromStr for PermissionProfileId {
+    type Err = String;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "read_only" | "read-only" | ":read-only" => Ok(Self::ReadOnly),
+            "workspace_write" | "workspace-write" | ":workspace" => Ok(Self::WorkspaceWrite),
+            "full_access" | "danger-full-access" | ":danger-full-access" => Ok(Self::FullAccess),
+            other => Err(format!("unsupported permission profile: {other}")),
+        }
     }
 }
 
@@ -81,8 +114,9 @@ impl ApprovalPolicy {
 
     pub const fn rank(self) -> u8 {
         match self {
-            Self::OnRequest => 0,
-            Self::Never => 1,
+            // `never` cannot grant an escalation: requests outside the sandbox fail closed.
+            Self::Never => 0,
+            Self::OnRequest => 1,
         }
     }
 
@@ -317,12 +351,21 @@ mod tests {
         );
         assert!(!PermissionProfileId::FullAccess
             .is_no_broader_than(PermissionProfileId::WorkspaceWrite));
+        assert_eq!(PermissionProfileId::ReadOnly.codex_name(), ":read-only");
+        assert_eq!(
+            PermissionProfileId::WorkspaceWrite.codex_name(),
+            ":workspace"
+        );
+        assert_eq!(
+            PermissionProfileId::FullAccess.codex_name(),
+            ":danger-full-access"
+        );
     }
 
     #[test]
     fn approval_policy_and_reviewer_have_a_stable_restrictiveness_order() {
-        assert!(ApprovalPolicy::OnRequest.is_no_broader_than(ApprovalPolicy::Never));
-        assert!(!ApprovalPolicy::Never.is_no_broader_than(ApprovalPolicy::OnRequest));
+        assert!(ApprovalPolicy::Never.is_no_broader_than(ApprovalPolicy::OnRequest));
+        assert!(!ApprovalPolicy::OnRequest.is_no_broader_than(ApprovalPolicy::Never));
         assert!(ApprovalReviewer::User.is_no_broader_than(ApprovalReviewer::AutoReview));
         assert!(!ApprovalReviewer::AutoReview.is_no_broader_than(ApprovalReviewer::User));
     }
@@ -356,14 +399,14 @@ mod tests {
             effective.permission_profile_id,
             PermissionProfileId::WorkspaceWrite
         );
-        assert_eq!(effective.approval_policy, ApprovalPolicy::OnRequest);
+        assert_eq!(effective.approval_policy, ApprovalPolicy::Never);
         assert_eq!(effective.approval_reviewer, ApprovalReviewer::User);
         assert_eq!(effective.policy_revision.as_deref(), Some("local-revision"));
         assert_eq!(effective.additional_writable_roots, vec!["C:/allowed"]);
     }
 
     #[test]
-    fn capped_policy_allows_narrower_task_overrides() {
+    fn capped_policy_allows_narrower_fields_without_reenabling_approvals() {
         let request = SandboxLeasePolicyRequest {
             sandbox_mode: None,
             permission_profile_id: Some(PermissionProfileId::ReadOnly),
@@ -388,7 +431,7 @@ mod tests {
             effective.permission_profile_id,
             PermissionProfileId::ReadOnly
         );
-        assert_eq!(effective.approval_policy, ApprovalPolicy::OnRequest);
+        assert_eq!(effective.approval_policy, ApprovalPolicy::Never);
         assert_eq!(effective.approval_reviewer, ApprovalReviewer::User);
     }
 

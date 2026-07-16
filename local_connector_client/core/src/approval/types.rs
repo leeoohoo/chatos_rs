@@ -1,6 +1,10 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
+use chatos_sandbox_contract::{
+    CommandExecutionApprovalDecision, GrantedPermissionProfile, PermissionGrantScope,
+    RequestPermissionProfile,
+};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -183,6 +187,8 @@ pub(crate) struct ApprovalHistoryEntry {
     pub(crate) risk: String,
     pub(crate) reason: Option<String>,
     pub(crate) whitelist_entry_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) permission_scope: Option<PermissionGrantScope>,
     pub(crate) created_at: String,
 }
 
@@ -194,6 +200,8 @@ pub(crate) struct CommandApprovalRequest {
     pub(crate) args: Vec<String>,
     pub(crate) cwd: String,
     pub(crate) source: String,
+    pub(crate) requested_permissions: Option<RequestPermissionProfile>,
+    pub(crate) session_id: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -202,6 +210,8 @@ pub(crate) enum ApprovalDecision {
         source: ApprovalSource,
         reason: Option<String>,
         whitelist_entry_id: Option<String>,
+        granted_permissions: Option<GrantedPermissionProfile>,
+        permission_scope: PermissionGrantScope,
     },
     Denied {
         source: ApprovalSource,
@@ -220,4 +230,7 @@ pub(crate) struct PendingApprovalItem {
     pub(crate) risk: String,
     pub(crate) reason: Option<String>,
     pub(crate) created_at: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) requested_permissions: Option<RequestPermissionProfile>,
+    pub(crate) available_decisions: Vec<CommandExecutionApprovalDecision>,
 }

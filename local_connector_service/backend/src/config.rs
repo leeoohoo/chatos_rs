@@ -30,6 +30,10 @@ pub struct AppConfig {
     pub allow_device_connect_query_token: bool,
     pub device_connect_signature_max_skew: Duration,
     pub active_session_lease_ttl: Duration,
+    pub managed_requirements_toml_path: Option<PathBuf>,
+    pub managed_requirements_signing_key_path: Option<PathBuf>,
+    pub managed_requirements_signing_key_id: Option<String>,
+    pub managed_requirements_bundle_ttl: Duration,
 }
 
 impl AppConfig {
@@ -77,6 +81,11 @@ impl AppConfig {
                 .and_then(|value| value.parse::<u64>().ok())
                 .unwrap_or(90)
                 .clamp(30, 600);
+        let managed_requirements_bundle_ttl_seconds =
+            normalized_env("LOCAL_CONNECTOR_MANAGED_REQUIREMENTS_BUNDLE_TTL_SECONDS")
+                .and_then(|value| value.parse::<u64>().ok())
+                .unwrap_or(24 * 60 * 60)
+                .clamp(300, 7 * 24 * 60 * 60);
 
         let config = Self {
             host,
@@ -120,6 +129,20 @@ impl AppConfig {
             ),
             device_connect_signature_max_skew: Duration::from_secs(signature_skew_seconds),
             active_session_lease_ttl: Duration::from_secs(active_session_lease_ttl_seconds),
+            managed_requirements_toml_path: normalized_env(
+                "LOCAL_CONNECTOR_MANAGED_REQUIREMENTS_TOML_PATH",
+            )
+            .map(PathBuf::from),
+            managed_requirements_signing_key_path: normalized_env(
+                "LOCAL_CONNECTOR_MANAGED_REQUIREMENTS_SIGNING_KEY_PATH",
+            )
+            .map(PathBuf::from),
+            managed_requirements_signing_key_id: normalized_env(
+                "LOCAL_CONNECTOR_MANAGED_REQUIREMENTS_SIGNING_KEY_ID",
+            ),
+            managed_requirements_bundle_ttl: Duration::from_secs(
+                managed_requirements_bundle_ttl_seconds,
+            ),
         };
 
         if config.require_signed_internal_requests {

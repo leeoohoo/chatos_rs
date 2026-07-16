@@ -28,6 +28,7 @@ pub struct ProjectServiceProjectRecord {
     pub root_path: Option<String>,
     pub git_url: Option<String>,
     pub source_type: Option<String>,
+    pub execution_plane: Option<String>,
     pub cloud_import_source: Option<String>,
     pub import_status: Option<String>,
     pub source_git_url: Option<String>,
@@ -258,6 +259,27 @@ pub async fn analyze_project_service_runtime_environment(
         "{}/api/projects/{}/runtime-environment/analyze",
         base_url.trim().trim_end_matches('/'),
         urlencoding::encode(project_id.trim())
+    );
+    send_json(
+        reqwest::Client::new()
+            .post(endpoint)
+            .bearer_auth(access_token.trim()),
+    )
+    .await
+}
+
+pub async fn generate_project_service_runtime_environment_image(
+    base_url: &str,
+    access_token: &str,
+    project_id: &str,
+    image_record_id: &str,
+) -> Result<Value, String> {
+    let base_url = resolve_project_service_base_url(base_url).await;
+    let endpoint = format!(
+        "{}/api/projects/{}/runtime-environment/images/{}/generate",
+        base_url.trim().trim_end_matches('/'),
+        urlencoding::encode(project_id.trim()),
+        urlencoding::encode(image_record_id.trim()),
     );
     send_json(
         reqwest::Client::new()

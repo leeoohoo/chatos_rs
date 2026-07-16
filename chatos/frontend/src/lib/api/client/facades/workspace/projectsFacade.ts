@@ -24,6 +24,23 @@ import type {
   UpdateProjectRuntimeEnvironmentSettingsPayload,
 } from '../../types';
 import type ApiClient from '../../../client';
+import { localRuntimeBridgeAvailable } from '../../../localRuntime';
+
+const requireDesktopProjectCreation = (): void => {
+  if (!localRuntimeBridgeAvailable()) {
+    throw new Error('项目只能在 Chat OS 桌面客户端中创建');
+  }
+};
+
+const projectResponseUsesLocalRuntime = (project: ProjectResponse): boolean => {
+  const executionPlane = String(project.execution_plane || project.executionPlane || '').trim();
+  const sourceType = String(project.source_type || project.sourceType || '').trim();
+  const rootPath = String(project.root_path || project.rootPath || '').trim();
+  return executionPlane === 'local_connector'
+    || sourceType === 'local_connector'
+    || sourceType === 'local'
+    || rootPath.startsWith('local://connector/');
+};
 
 export interface WorkspaceProjectFacade {
   listProjects(userId?: string): Promise<ProjectResponse[]>;
@@ -38,6 +55,10 @@ export interface WorkspaceProjectFacade {
     data: UpdateProjectRuntimeEnvironmentSettingsPayload,
   ): Promise<ProjectRuntimeEnvironmentResponse>;
   analyzeProjectRuntimeEnvironment(projectId: string): Promise<ProjectRuntimeEnvironmentResponse>;
+  generateProjectRuntimeEnvironmentImage(
+    projectId: string,
+    imageRecordId: string,
+  ): Promise<ProjectRuntimeEnvironmentResponse>;
   getProjectRuntimeEnvironmentProgress(
     projectId: string,
   ): Promise<ProjectRuntimeEnvironmentProgressResponse>;
@@ -93,39 +114,88 @@ export interface WorkspaceProjectFacade {
 
 export const workspaceProjectFacade: WorkspaceProjectFacade & ThisType<ApiClient> = {
   async listProjects(userId) {
-    return workspaceApi.listProjects(this.getRequestFn(), userId);
+    const cloudProjects = await workspaceApi.listProjects(this.getRequestFn(), userId);
+    const cloudOnly = cloudProjects.filter((project) => !projectResponseUsesLocalRuntime(project));
+    if (!localRuntimeBridgeAvailable()) {
+      return cloudOnly;
+    }
+    const localProjects = await this.getLocalRuntimeClient().listProjects();
+    return [...localProjects, ...cloudOnly];
   },
   async createProject(data) {
+    requireDesktopProjectCreation();
     return workspaceApi.createProject(this.getRequestFn(), data);
   },
   async createCloudProject(data) {
+    requireDesktopProjectCreation();
     return workspaceApi.createCloudProject(this.getRequestFn(), data);
   },
   async updateProject(id, data) {
+    if (this.projectUsesLocalRuntime(id)) {
+      return this.getLocalRuntimeClient().updateProject(id, data);
+    }
     return workspaceApi.updateProject(this.getRequestFn(), id, data);
   },
   async deleteProject(id) {
+    if (this.projectUsesLocalRuntime(id)) {
+      return this.getLocalRuntimeClient().deleteProject(id);
+    }
     return workspaceApi.deleteProject(this.getRequestFn(), id);
   },
   async getProject(id) {
+    if (this.projectUsesLocalRuntime(id)) {
+      return this.getLocalRuntimeClient().getProject(id);
+    }
     return workspaceApi.getProject(this.getRequestFn(), id);
   },
   async getProjectRuntimeEnvironment(projectId) {
+    if (this.projectUsesLocalRuntime(projectId)) {
+      return this.getLocalRuntimeClient().getProjectRuntimeEnvironment(projectId);
+    }
     return workspaceApi.getProjectRuntimeEnvironment(this.getRequestFn(), projectId);
   },
   async updateProjectRuntimeEnvironmentSettings(projectId, data) {
+    if (this.projectUsesLocalRuntime(projectId)) {
+      return this.getLocalRuntimeClient().updateProjectRuntimeEnvironmentSettings(projectId, data);
+    }
     return workspaceApi.updateProjectRuntimeEnvironmentSettings(this.getRequestFn(), projectId, data);
   },
   async analyzeProjectRuntimeEnvironment(projectId) {
+    if (this.projectUsesLocalRuntime(projectId)) {
+      return this.getLocalRuntimeClient().analyzeProjectRuntimeEnvironment(projectId);
+    }
     return workspaceApi.analyzeProjectRuntimeEnvironment(this.getRequestFn(), projectId);
   },
+  async generateProjectRuntimeEnvironmentImage(projectId, imageRecordId) {
+    if (this.projectUsesLocalRuntime(projectId)) {
+      throw new Error('本地项目镜像必须由本地客户端生成');
+    }
+    return workspaceApi.generateProjectRuntimeEnvironmentImage(
+      this.getRequestFn(),
+      projectId,
+      imageRecordId,
+    );
+  },
   async getProjectRuntimeEnvironmentProgress(projectId) {
+    if (this.projectUsesLocalRuntime(projectId)) {
+      return this.getLocalRuntimeClient().getProjectRuntimeEnvironmentProgress(projectId);
+    }
     return workspaceApi.getProjectRuntimeEnvironmentProgress(this.getRequestFn(), projectId);
   },
   async getProjectPlan(projectId, options) {
+    if (this.projectUsesLocalRuntime(projectId)) {
+      return this.getLocalRuntimeClient().getProjectPlan(projectId, options);
+    }
     return workspaceApi.getProjectPlan(this.getRequestFn(), projectId, options);
   },
   async listProjectRequirementWorkItems(projectId, requirementId, options) {
+    if (this.projectUsesLocalRuntime(projectId)) {
+      return this.getLocalRuntimeClient().listProjectRequirementWorkItems(
+        projectId,
+        requirementId,
+        options,
+      );
+    }
     return workspaceApi.listProjectRequirementWorkItems(
       this.getRequestFn(),
       projectId,
@@ -134,6 +204,12 @@ export const workspaceProjectFacade: WorkspaceProjectFacade & ThisType<ApiClient
     );
   },
   async listProjectRequirementDocuments(projectId, requirementId) {
+    if (this.projectUsesLocalRuntime(projectId)) {
+      return this.getLocalRuntimeClient().listProjectRequirementDocuments(
+        projectId,
+        requirementId,
+      );
+    }
     return workspaceApi.listProjectRequirementDocuments(
       this.getRequestFn(),
       projectId,
@@ -141,9 +217,23 @@ export const workspaceProjectFacade: WorkspaceProjectFacade & ThisType<ApiClient
     );
   },
   async executeProjectRequirement(projectId, requirementId, data) {
+    if (this.projectUsesLocalRuntime(projectId)) {
+      return this.getLocalRuntimeClient().executeProjectRequirement(
+        projectId,
+        requirementId,
+        data,
+      );
+    }
     return workspaceApi.executeProjectRequirement(this.getRequestFn(), projectId, requirementId, data);
   },
   async stopProjectRequirementExecution(projectId, requirementId, data) {
+    if (this.projectUsesLocalRuntime(projectId)) {
+      return this.getLocalRuntimeClient().stopProjectRequirementExecution(
+        projectId,
+        requirementId,
+        data,
+      );
+    }
     return workspaceApi.stopProjectRequirementExecution(this.getRequestFn(), projectId, requirementId, data);
   },
   async analyzeProjectRun(projectId) {

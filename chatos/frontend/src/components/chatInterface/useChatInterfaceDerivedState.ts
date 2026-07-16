@@ -73,5 +73,10 @@ export const useChatInterfaceDerivedState = ({
     currentContactId,
     headerTitle,
     runtimeContextRefreshNonce: currentChatState?.runtimeContextRefreshNonce || 0,
+    isLoading: currentChatState?.isLoading === true,
+    isStreaming: currentChatState?.isStreaming === true,
+    isStopping: currentChatState?.isStopping === true,
+    streamingPhase: currentChatState?.streamingPhase ?? null,
+    streamingPreviewText: currentChatState?.streamingPreviewText || '',
   };
 };

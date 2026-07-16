@@ -110,6 +110,7 @@ export interface StreamChatRuntimeOptions {
   projectRoot: string | null;
   workspaceRoot: string | null;
   planMode: boolean;
+  systemPrompt?: string | null;
 }
 
 export interface StreamEventPayload {

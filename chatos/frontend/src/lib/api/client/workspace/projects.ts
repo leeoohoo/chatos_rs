@@ -98,6 +98,17 @@ export const analyzeProjectRuntimeEnvironment = (
   );
 };
 
+export const generateProjectRuntimeEnvironmentImage = (
+  request: ApiRequestFn,
+  projectId: string,
+  imageRecordId: string,
+): Promise<ProjectRuntimeEnvironmentResponse> => {
+  return request<ProjectRuntimeEnvironmentResponse>(
+    `/projects/${encodeURIComponent(projectId)}/runtime-environment/images/${encodeURIComponent(imageRecordId)}/generate`,
+    { method: 'POST' },
+  );
+};
+
 export const getProjectRuntimeEnvironmentProgress = (
   request: ApiRequestFn,
   projectId: string,

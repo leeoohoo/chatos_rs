@@ -5,6 +5,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
+use chatos_agent::DEFAULT_AGENT_MAX_ITERATIONS;
 use serde_json::Value;
 use tracing::warn;
 
@@ -40,7 +41,11 @@ pub fn build_shared_contextual_turn_runner(
     tool_executor: Option<McpToolExecute>,
     message_manager: MessageManager,
 ) -> Result<chatos_ai_runtime::ContextualTurnRunner, String> {
-    build_shared_contextual_turn_runner_with_max_iterations(tool_executor, message_manager, 600)
+    build_shared_contextual_turn_runner_with_max_iterations(
+        tool_executor,
+        message_manager,
+        DEFAULT_AGENT_MAX_ITERATIONS,
+    )
 }
 
 pub fn build_shared_contextual_turn_runner_with_max_iterations(

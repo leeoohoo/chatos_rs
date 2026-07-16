@@ -33,9 +33,12 @@ use super::requirements::{
     upsert_requirement_technical_overview,
 };
 use super::runtime_environment::{
-    analyze_project_runtime_environment_handler, get_project_runtime_environment,
-    get_project_runtime_environment_progress_handler, update_project_runtime_environment_settings,
+    analyze_project_runtime_environment_handler,
+    generate_project_runtime_environment_image_handler, get_project_runtime_environment,
+    get_project_runtime_environment_progress_handler, start_project_runtime_environment_handler,
+    update_project_runtime_environment_settings, update_project_runtime_environment_variables,
 };
+use super::runtime_environment_mcp::project_runtime_environment_mcp_entrypoint;
 use super::sync::{
     sync_get_project, sync_get_project_runtime_environment, sync_import_project,
     sync_list_projects, sync_requirement_execution_state, sync_task_runner_task_status,
@@ -104,12 +107,24 @@ pub fn build_router(state: AppState) -> Router {
             axum::routing::put(update_project_runtime_environment_settings),
         )
         .route(
+            "/api/projects/{project_id}/runtime-environment/variables",
+            axum::routing::put(update_project_runtime_environment_variables),
+        )
+        .route(
             "/api/projects/{project_id}/runtime-environment/analyze",
             post(analyze_project_runtime_environment_handler),
         )
         .route(
             "/api/projects/{project_id}/runtime-environment/progress",
             get(get_project_runtime_environment_progress_handler),
+        )
+        .route(
+            "/api/projects/{project_id}/runtime-environment/images/{image_record_id}/generate",
+            post(generate_project_runtime_environment_image_handler),
+        )
+        .route(
+            "/api/projects/{project_id}/runtime-environment/start",
+            post(start_project_runtime_environment_handler),
         )
         .route(
             "/api/requirements/{requirement_id}",
@@ -186,6 +201,10 @@ pub fn build_router(state: AppState) -> Router {
         .route(
             "/api/chatos-sync/projects/{project_id}/runtime-environment",
             get(sync_get_project_runtime_environment),
+        )
+        .route(
+            "/api/chatos-sync/projects/{project_id}/runtime-environment/mcp",
+            post(project_runtime_environment_mcp_entrypoint),
         )
         .route(
             "/api/chatos-sync/projects/{project_id}/harness/git-access",

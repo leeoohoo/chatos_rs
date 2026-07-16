@@ -14,6 +14,13 @@ import type {
   LocalConnectorTerminalExecResponse,
   LocalConnectorWorkspaceResponse,
 } from '../../types';
+import { localRuntimeBridgeAvailable } from '../../../localRuntime';
+
+const requireLocalConnectorDesktop = (): void => {
+  if (!localRuntimeBridgeAvailable()) {
+    throw new Error('Local Connector 功能只能在 Chat OS 桌面客户端中使用');
+  }
+};
 
 export interface WorkspaceLocalConnectorFacade {
   listLocalConnectorDevices(userId?: string): Promise<LocalConnectorDeviceResponse[]>;
@@ -31,21 +38,29 @@ export interface WorkspaceLocalConnectorFacade {
 
 export const workspaceLocalConnectorFacade: WorkspaceLocalConnectorFacade & ThisType<ApiClient> = {
   async listLocalConnectorDevices(userId) {
-    return workspaceApi.listLocalConnectorDevices(this.getRequestFn(), userId);
+    requireLocalConnectorDesktop();
+    void userId;
+    return this.getLocalRuntimeClient().listConnectorDevices();
   },
   async listLocalConnectorWorkspaces(deviceId) {
-    return workspaceApi.listLocalConnectorWorkspaces(this.getRequestFn(), deviceId);
+    requireLocalConnectorDesktop();
+    void deviceId;
+    return this.getLocalRuntimeClient().listConnectorWorkspaces();
   },
   async listLocalConnectorDirectory(data) {
-    return workspaceApi.listLocalConnectorDirectory(this.getRequestFn(), data);
+    requireLocalConnectorDesktop();
+    return this.getLocalRuntimeClient().listConnectorDirectory(data.workspace_id, data.path);
   },
   async createLocalConnectorDirectory(data) {
-    return workspaceApi.createLocalConnectorDirectory(this.getRequestFn(), data);
+    requireLocalConnectorDesktop();
+    return this.getLocalRuntimeClient().createConnectorDirectory(data);
   },
   async createLocalConnectorProject(data) {
-    return workspaceApi.createLocalConnectorProject(this.getRequestFn(), data);
+    requireLocalConnectorDesktop();
+    return this.getLocalRuntimeClient().createProject(data);
   },
   async execLocalConnectorTerminalCommand(data) {
+    requireLocalConnectorDesktop();
     return workspaceApi.execLocalConnectorTerminalCommand(this.getRequestFn(), data);
   },
 };

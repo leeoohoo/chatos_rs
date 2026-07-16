@@ -5,6 +5,7 @@ import { useCallback } from 'react';
 
 import { useI18n } from '../../i18n/I18nProvider';
 import type ApiClient from '../../lib/api/client';
+import { isLocalRuntimeSessionId } from '../../lib/api/localRuntime';
 import { countPendingReviewRepairMessages } from '../../lib/domain/reviewRepair';
 import type {
   Message,
@@ -150,9 +151,20 @@ export const useChatInterfaceController = ({
       await flushRuntimeSettings?.();
       await sendMessage(content, attachments, runtimeOptions);
       if (currentSession?.id) {
-        void refreshReviewRepairStatus(currentSession.id).catch((statusError) => {
-          console.error('Failed to refresh review repair status after send:', statusError);
-        });
+        void refreshReviewRepairStatus(currentSession.id)
+          .then(async (status) => {
+            if (!isLocalRuntimeSessionId(currentSession.id) || status.running) {
+              return;
+            }
+            markContactMemoryContextStale(currentSession.id);
+            hydrateContactMemoryContextFromCache(currentSession.id);
+            if (sessionSummaryPaneVisible) {
+              await loadSessionMemorySummaries(currentSession.id, true);
+            }
+          })
+          .catch((statusError) => {
+            console.error('Failed to refresh review repair status after send:', statusError);
+          });
       }
       onMessageSend?.(content, attachments);
     } catch (error) {
@@ -161,9 +173,13 @@ export const useChatInterfaceController = ({
   }, [
     flushRuntimeSettings,
     currentSession?.id,
+    hydrateContactMemoryContextFromCache,
+    loadSessionMemorySummaries,
+    markContactMemoryContextStale,
     onMessageSend,
     refreshReviewRepairStatus,
     sendMessage,
+    sessionSummaryPaneVisible,
   ]);
 
   const handleComposerRemoteConnectionChange = useCallback((connectionId: string | null) => {
@@ -190,6 +206,12 @@ export const useChatInterfaceController = ({
       if (result?.success === false) {
         throw new Error(result.detail || result.error || t('taskWorkbar.reviewRepairFailed'));
       }
+      await refreshReviewRepairStatus(sessionId);
+      if ((result?.result?.generated_summaries || 0) > 0) {
+        markContactMemoryContextStale(sessionId);
+        hydrateContactMemoryContextFromCache(sessionId);
+        await loadSessionMemorySummaries(sessionId, true);
+      }
     } catch (error) {
       await refreshReviewRepairStatus(sessionId).catch((statusError) => {
         console.error('Failed to refresh review repair status after run error:', statusError);
@@ -198,6 +220,9 @@ export const useChatInterfaceController = ({
     }
   }, [
     apiClient,
+    hydrateContactMemoryContextFromCache,
+    loadSessionMemorySummaries,
+    markContactMemoryContextStale,
     markReviewRepairStarting,
     refreshReviewRepairStatus,
     t,

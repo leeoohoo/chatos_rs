@@ -62,6 +62,7 @@ describe('useSessionListActions', () => {
       cloudProjectName: '',
       cloudProjectGitUrl: '',
       cloudProjectZipFile: null,
+      allowProjectCreation: true,
     }));
 
     await result.current.handleSelectSession('contact-placeholder:contact-1');
@@ -127,6 +128,7 @@ describe('useSessionListActions', () => {
       cloudProjectName: '',
       cloudProjectGitUrl: '',
       cloudProjectZipFile: null,
+      allowProjectCreation: true,
     }));
 
     await result.current.handleCreateTerminal();

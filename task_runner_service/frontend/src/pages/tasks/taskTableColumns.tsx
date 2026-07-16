@@ -196,6 +196,19 @@ export function buildTaskTableColumns({
       },
     },
     {
+      title: t('tasks.column.requiresExecution'),
+      dataIndex: 'mcp_config',
+      width: 120,
+      render: (mcpConfig: TaskMcpConfig) => {
+        const requiresExecution = mcpConfig.requires_execution !== false;
+        return (
+          <Tag color={requiresExecution ? 'success' : 'default'}>
+            {requiresExecution ? t('common.yes') : t('common.no')}
+          </Tag>
+        );
+      },
+    },
+    {
       title: t('tasks.column.mcp'),
       dataIndex: 'mcp_config',
       width: 220,

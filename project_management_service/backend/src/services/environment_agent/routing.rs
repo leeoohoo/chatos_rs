@@ -42,18 +42,14 @@ pub(super) async fn resolve_runtime_environment_routing(
     user_access_token: Option<&str>,
 ) -> RoutingDecision {
     match project.source_type {
-        ProjectSourceType::Cloud => resolve_cloud_routing(project, config, user_access_token).await,
+        ProjectSourceType::Cloud => resolve_cloud_routing(project),
         ProjectSourceType::Local | ProjectSourceType::LocalConnector => {
             resolve_local_routing(project, config, user_access_token).await
         }
     }
 }
 
-async fn resolve_cloud_routing(
-    project: &ProjectRecord,
-    config: &AppConfig,
-    user_access_token: Option<&str>,
-) -> RoutingDecision {
+fn resolve_cloud_routing(project: &ProjectRecord) -> RoutingDecision {
     if project.cloud_import_source == CloudImportSource::Empty {
         return RoutingDecision::Stop(not_runnable(
             "云端项目当前为空，暂无可分析的项目文件。请先上传代码或导入仓库后再初始化运行环境。",
@@ -92,20 +88,10 @@ async fn resolve_cloud_routing(
             "云端项目缺少 Harness 仓库信息，无法通过 Harness MCP 读取项目文件。",
         ));
     }
-    let sandbox_provider = match choose_sandbox_provider(config, user_access_token, None).await {
-        Ok(provider) => provider,
-        Err(err) => {
-            return RoutingDecision::Stop(failed_stop(
-                "检查本地沙箱可用性失败，无法确定运行环境镜像 MCP。",
-                err,
-            ));
-        }
-    };
     RoutingDecision::Ready(RoutingPlan {
         file_provider: RuntimeEnvironmentProvider::Harness,
-        sandbox_provider,
-        summary: "云端项目将通过 Harness MCP 读取文件，并按本地沙箱可用性选择沙箱镜像 MCP。"
-            .to_string(),
+        sandbox_provider: RuntimeEnvironmentProvider::CloudSandboxManager,
+        summary: "云端项目只通过 Harness MCP 读取文件，并只使用云端 Sandbox Manager。".to_string(),
     })
 }
 

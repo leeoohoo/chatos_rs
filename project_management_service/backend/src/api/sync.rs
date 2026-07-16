@@ -19,6 +19,7 @@ use crate::models::{
 use crate::services::execution_sync::{self, ExecutionSyncError};
 use crate::services::runtime_environment::{
     default_runtime_environment_for_project, ensure_runtime_environment_for_project,
+    refresh_environment_variable_values,
 };
 use crate::state::AppState;
 
@@ -106,12 +107,13 @@ pub(in crate::api) async fn sync_get_project_runtime_environment(
         .await
         .map_err(ApiError::bad_request)?
         .ok_or_else(|| ApiError::not_found(format!("项目不存在: {project_id}")))?;
-    let environment = state
+    let mut environment = state
         .store
         .get_project_runtime_environment(&project_id)
         .await
         .map_err(ApiError::bad_request)?
         .unwrap_or_else(|| default_runtime_environment_for_project(&project, None));
+    refresh_environment_variable_values(&mut environment);
     let images = state
         .store
         .list_project_runtime_environment_images(&project_id)

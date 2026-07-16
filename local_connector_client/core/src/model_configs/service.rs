@@ -5,11 +5,11 @@ use anyhow::{anyhow, Context, Result};
 use reqwest::Method;
 use serde::de::DeserializeOwned;
 use serde_json::{json, Value};
-use std::collections::{BTreeMap, HashSet};
+use std::collections::HashSet;
 use uuid::Uuid;
 
 use crate::config::{api_url, normalize_optional};
-use crate::relay::{relay_error_response, RelayRequest, RelayResponse};
+use crate::relay::{relay_error_response, RelayRequest};
 use crate::{local_now_rfc3339, AuthState, LocalState};
 
 use super::provider_catalog::{
@@ -354,7 +354,6 @@ pub(crate) async fn reconcile_local_model_configs(
     for local_id in &missing_local_ids {
         sync_local_model_config(http_client, state, local_id.as_str()).await?;
     }
-    sync_local_model_settings(http_client, state).await?;
     Ok(missing_local_ids.len())
 }
 
@@ -404,6 +403,16 @@ pub(crate) fn save_local_model_settings(
         normalize_optional(settings.project_management_agent_model_config_id.as_deref());
     settings.project_management_agent_thinking_level =
         normalize_optional(settings.project_management_agent_thinking_level.as_deref());
+    settings.environment_initialization_model_config_id = normalize_optional(
+        settings
+            .environment_initialization_model_config_id
+            .as_deref(),
+    );
+    settings.environment_initialization_thinking_level = normalize_optional(
+        settings
+            .environment_initialization_thinking_level
+            .as_deref(),
+    );
     settings.command_approval_model_config_id =
         normalize_optional(settings.command_approval_model_config_id.as_deref());
     settings.command_approval_thinking_level =
@@ -512,50 +521,20 @@ pub(crate) fn resolve_local_model_runtime(
     })
 }
 
-pub(crate) async fn handle_model_runtime_request(value: Value, state: &LocalState) -> Value {
+pub(crate) async fn handle_model_runtime_request(value: Value, _state: &LocalState) -> Value {
     let request = match serde_json::from_value::<RelayRequest>(value) {
         Ok(request) => request,
         Err(err) => {
             return relay_error_response("model_runtime_response", "", 400, err.to_string());
         }
     };
-    let model_config_id = request
-        .body
-        .get("model_config_id")
-        .and_then(Value::as_str)
-        .or_else(|| request.path.as_deref().and_then(model_config_id_from_path))
-        .unwrap_or_default();
-    match resolve_local_model_runtime(
-        state,
-        request.owner_user_id.as_deref().unwrap_or_default(),
-        model_config_id,
-    ) {
-        Ok(runtime) => RelayResponse {
-            message_type: "model_runtime_response".to_string(),
-            request_id: request.request_id,
-            status: 200,
-            headers: BTreeMap::new(),
-            body: serde_json::to_value(runtime)
-                .unwrap_or_else(|err| json!({ "error": err.to_string() })),
-        }
-        .into_value(),
-        Err(err) => RelayResponse {
-            message_type: "model_runtime_response".to_string(),
-            request_id: request.request_id,
-            status: 400,
-            headers: BTreeMap::new(),
-            body: json!({ "error": err.to_string() }),
-        }
-        .into_value(),
-    }
-}
-
-fn model_config_id_from_path(path: &str) -> Option<&str> {
-    path.trim_matches('/')
-        .rsplit('/')
-        .next()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
+    relay_error_response(
+        "model_runtime_response",
+        request.request_id.as_str(),
+        403,
+        "Local model credentials are device-only; remote model runtime requests are disabled"
+            .to_string(),
+    )
 }
 
 fn server_model_id_for_local(state: &LocalState, local_model_config_id: &str) -> Option<String> {
@@ -654,6 +633,11 @@ impl LocalModelSettings {
             self.project_management_agent_model_config_id = None;
             self.project_management_agent_thinking_level = None;
         }
+        if self.environment_initialization_model_config_id.as_deref() == Some(local_model_config_id)
+        {
+            self.environment_initialization_model_config_id = None;
+            self.environment_initialization_thinking_level = None;
+        }
         if self.command_approval_model_config_id.as_deref() == Some(local_model_config_id) {
             self.command_approval_model_config_id = None;
             self.command_approval_thinking_level = None;
@@ -667,11 +651,55 @@ mod tests {
     use super::*;
 
     #[test]
+    fn deleting_environment_model_clears_environment_defaults() {
+        let mut settings = LocalModelSettings {
+            environment_initialization_model_config_id: Some("environment-model".to_string()),
+            environment_initialization_thinking_level: Some("high".to_string()),
+            ..Default::default()
+        };
+
+        settings.clear_model_id("environment-model");
+
+        assert!(settings
+            .environment_initialization_model_config_id
+            .is_none());
+        assert!(settings.environment_initialization_thinking_level.is_none());
+    }
+
+    #[test]
     fn optional_text_update_can_clear_existing_value() {
         assert_eq!(optional_text_update(Some(""), Some("task planning")), None);
         assert_eq!(
             optional_text_update(None, Some("task planning")).as_deref(),
             Some("task planning")
+        );
+    }
+
+    #[tokio::test]
+    async fn remote_model_runtime_requests_never_return_device_credentials() {
+        let response = handle_model_runtime_request(
+            json!({
+                "type": "model_runtime_request",
+                "request_id": "request-1",
+                "owner_user_id": "user-1",
+                "device_id": "device-1",
+                "workspace_id": "",
+                "method": "GET",
+                "path": "/model-runtime/model-1",
+                "headers": {},
+                "body": {"model_config_id": "model-1"}
+            }),
+            &LocalState::default(),
+        )
+        .await;
+        assert_eq!(response.get("status").and_then(Value::as_u64), Some(403));
+        assert_eq!(
+            response
+                .pointer("/body/error")
+                .and_then(Value::as_str),
+            Some(
+                "Local model credentials are device-only; remote model runtime requests are disabled"
+            )
         );
     }
 }

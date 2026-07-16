@@ -16,7 +16,7 @@ use chatos_plugin_management_sdk::{
 };
 use serde::Deserialize;
 use serde::Serialize;
-use serde_json::{json, Value};
+use serde_json::Value;
 use uuid::Uuid;
 
 use crate::models::{
@@ -28,7 +28,10 @@ use crate::state::AppState;
 mod auth_middleware;
 mod devices;
 mod internal_auth;
+mod managed_requirements;
+mod managed_requirements_admin;
 mod memory_engine_proxy;
+mod plugin_management_capabilities;
 mod plugin_management_mcps;
 mod plugin_management_skills;
 mod project_bindings;
@@ -43,7 +46,15 @@ use self::devices::{
     connect_device, create_device, disconnect_device, get_device, heartbeat_device, list_devices,
     load_owned_device, revoke_device,
 };
+use self::managed_requirements::get_managed_requirements;
+use self::managed_requirements_admin::{
+    create_managed_requirements_assignment, create_managed_requirements_policy,
+    delete_managed_requirements_assignment, delete_managed_requirements_policy,
+    list_managed_requirements_assignments, list_managed_requirements_policies,
+    update_managed_requirements_assignment, update_managed_requirements_policy,
+};
 use self::memory_engine_proxy::memory_engine_proxy;
+use self::plugin_management_capabilities::resolve_local_runtime_capabilities;
 use self::plugin_management_mcps::{
     create_local_mcp, delete_local_mcp, list_local_mcps, update_local_mcp, update_local_mcp_status,
 };
@@ -81,6 +92,7 @@ struct SkillRelayQuery {
 #[derive(Debug, Serialize)]
 struct LocalCommandApprovalCapabilitiesResponse {
     policy_revision: String,
+    max_iterations: usize,
     code_maintainer_read: bool,
     approval_decision: bool,
     provider_skills_prompt: Option<String>,
@@ -262,6 +274,7 @@ async fn resolve_local_command_approval_capabilities(
     );
     Ok(Json(LocalCommandApprovalCapabilitiesResponse {
         policy_revision: capabilities.policy_revision,
+        max_iterations: chatos_agent::load_agent_max_iterations("local-connector-service").await,
         code_maintainer_read,
         approval_decision,
         provider_skills_prompt,
@@ -375,37 +388,14 @@ async fn skill_relay(
 }
 
 async fn resolve_model_runtime(
-    State(state): State<AppState>,
-    Extension(user): Extension<CurrentUser>,
-    Path(model_config_id): Path<String>,
+    State(_state): State<AppState>,
+    Extension(_user): Extension<CurrentUser>,
+    Path(_model_config_id): Path<String>,
 ) -> Result<Response, ApiError> {
-    let model_config_id = required_text(Some(model_config_id), "model_config_id")?;
-    let owner_user_id = user.effective_owner_user_id().to_string();
-    let session = state
-        .store
-        .active_session(owner_user_id.as_str())
-        .await
-        .map_err(ApiError::internal)?
-        .ok_or_else(|| {
-            ApiError::service_unavailable(
-                "Local Connector client is offline; model request was terminated",
-            )
-        })?;
-    let device = load_owned_device(&state, &user, session.device_id.as_str(), true).await?;
-
-    let request = RelayRequest {
-        message_type: "model_runtime_request".to_string(),
-        request_id: Uuid::new_v4().to_string(),
-        owner_user_id,
-        device_id: device.id,
-        workspace_id: String::new(),
-        method: "GET".to_string(),
-        path: format!("/model-runtime/{model_config_id}"),
-        headers: BTreeMap::new(),
-        body: json!({ "model_config_id": model_config_id }),
-    };
-    let response = dispatch_relay(&state, request, state.config.relay_request_timeout).await?;
-    Ok(relay_response_to_http(response))
+    Err(ApiError::conflict(
+        "local_model_runtime_relay_disabled",
+        "Local model credentials are device-only; cloud services cannot request them from Local Connector",
+    ))
 }
 
 async fn sandbox_facade_root(
@@ -463,7 +453,9 @@ async fn sandbox_facade_impl(
     .await?;
 
     let relay_path = normalize_relay_path(path.as_str());
-    let relay_timeout = if relay_path == "/api/local/sandbox/images/mcp" {
+    let relay_timeout = if relay_path == "/api/local/sandbox/images/mcp"
+        || relay_path.starts_with("/api/local/sandbox/environments/compose/")
+    {
         state.config.sandbox_image_relay_request_timeout
     } else {
         state.config.relay_request_timeout

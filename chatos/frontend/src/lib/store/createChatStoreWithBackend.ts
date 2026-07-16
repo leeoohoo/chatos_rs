@@ -6,6 +6,7 @@ import {immer} from 'zustand/middleware/immer';
 import {persist} from 'zustand/middleware';
 import type ApiClient from '../api/client';
 import {createSendMessageHandler} from './actions/sendMessage';
+import { createStopMessageHandler } from './actions/stopMessage';
 import { createApplicationActions } from './actions/applications';
 import { createAiModelActions } from './actions/aiModels';
 import { createMcpActions } from './actions/mcp';
@@ -81,6 +82,7 @@ export function createChatStoreWithBackend(customApiClient: ApiClient, config?: 
                     ...createRemoteConnectionActions({ set, get, client, getUserIdParam }),
                     ...createMessageActions({ set, get, client }),
                     sendMessage: createSendMessageHandler({ set, get, client, getUserIdParam }),
+                    stopMessage: createStopMessageHandler({ set, get, client }),
                     ...createUiActions({ set }),
 
                     // 配置操作（拆分到独立模块）

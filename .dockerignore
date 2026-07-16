@@ -2,21 +2,23 @@
 # Required Notice: Copyright (c) 2025 AI Chat Team
 
 .git
+**/.git
 .gitignore
 .DS_Store
 
-target
-target-*
-**/target
-harness
-**/node_modules
-**/dist
+target/
+target-*/
+**/target/
+/harness/
+/docs/
+**/node_modules/
+**/dist/
 **/.vite
 **/.turbo
 **/.cache
 
-logs
-**/logs
+/logs/
+**/logs/
 **/*.log
 **/__pycache__
 **/*.pyc
@@ -25,7 +27,15 @@ bundled-tools/windows-*
 
 .env
 **/.env
+/.chatos/
+/.chatos-*/
+/.harness/
+/.local/
+/.task-runner/
+/.task-runner-*/
 *.local
 **/*.local
+
+rustup-init.exe
 
 docker/data

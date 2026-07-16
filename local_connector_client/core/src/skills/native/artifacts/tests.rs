@@ -20,6 +20,7 @@ fn test_context() -> (PathBuf, LocalState, RelayRequest) {
             absolute_root: root.clone(),
             alias: "test".to_string(),
             fingerprint: "fp".to_string(),
+            project_config_trust: None,
         }],
         ..LocalState::default()
     };

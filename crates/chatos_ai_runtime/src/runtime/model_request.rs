@@ -81,7 +81,7 @@ pub(super) async fn dispatch_model_request(
                 request_cwd: request.request_cwd.clone(),
                 include_prompt_cache_retention: request.include_prompt_cache_retention,
                 request_body_limit_bytes: request.request_body_limit_bytes,
-                abort_token: None,
+                abort_token: options.abort_token.clone(),
                 force_identity_encoding: false,
             },
         )

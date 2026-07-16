@@ -124,6 +124,13 @@ impl DockerSandboxBackend {
         let cpu = spec.resource_limits.cpu.max(0.1).to_string();
         let memory = format!("{}m", spec.resource_limits.memory_mb.max(128));
         let pids = spec.resource_limits.max_processes.max(16).to_string();
+        let tmpfs_size_mb = (spec.resource_limits.disk_mb / 16).clamp(16, 512);
+        let workspace_limit_mb = spec
+            .resource_limits
+            .disk_mb
+            .saturating_sub(tmpfs_size_mb.saturating_mul(2))
+            .max(1);
+        let disk_limit_bytes = workspace_limit_mb.saturating_mul(1024 * 1024);
         let requested_network = spec.network.mode.trim();
         let network = if requested_network.is_empty() {
             self.config.docker_network_mode.as_str()
@@ -156,7 +163,17 @@ impl DockerSandboxBackend {
             .arg("/workspace");
         command
             .arg("-e")
-            .arg(format!("CHATOS_SANDBOX_ID={}", spec.sandbox_id));
+            .arg(format!("CHATOS_SANDBOX_ID={}", spec.sandbox_id))
+            .arg("-e")
+            .arg("CHATOS_SANDBOX_PERMISSION_PROFILE=workspace_write")
+            .arg("-e")
+            .arg(format!(
+                "CHATOS_SANDBOX_DISK_LIMIT_BYTES={disk_limit_bytes}"
+            ))
+            .arg("-e")
+            .arg("HOME=/home/sandbox")
+            .arg("-e")
+            .arg("XDG_CACHE_HOME=/home/sandbox/.cache");
         if let Some(agent_token) = spec.agent_token.as_deref() {
             command
                 .arg("-e")
@@ -169,8 +186,19 @@ impl DockerSandboxBackend {
             ));
         }
         command
+            .arg("--read-only")
+            .arg("--cap-drop")
+            .arg("ALL")
+            .arg("--user")
+            .arg("1000:1000")
             .arg("--tmpfs")
-            .arg("/tmp:rw,nosuid,size=512m")
+            .arg(format!(
+                "/tmp:rw,nosuid,nodev,size={tmpfs_size_mb}m,mode=1777"
+            ))
+            .arg("--tmpfs")
+            .arg(format!(
+                "/home/sandbox:rw,nosuid,nodev,size={tmpfs_size_mb}m,uid=1000,gid=1000,mode=0700"
+            ))
             .arg("--security-opt")
             .arg("no-new-privileges")
             .arg("-v")
@@ -207,7 +235,20 @@ impl DockerSandboxBackend {
         };
         let publish_agent =
             self.config.docker_agent_publish && network != "none" && self.config.agent_port > 0;
-        let mut env = vec![format!("CHATOS_SANDBOX_ID={}", spec.sandbox_id)];
+        let tmpfs_size_mb = (spec.resource_limits.disk_mb / 16).clamp(16, 512);
+        let workspace_limit_mb = spec
+            .resource_limits
+            .disk_mb
+            .saturating_sub(tmpfs_size_mb.saturating_mul(2))
+            .max(1);
+        let disk_limit_bytes = workspace_limit_mb.saturating_mul(1024 * 1024);
+        let mut env = vec![
+            format!("CHATOS_SANDBOX_ID={}", spec.sandbox_id),
+            "CHATOS_SANDBOX_PERMISSION_PROFILE=workspace_write".to_string(),
+            format!("CHATOS_SANDBOX_DISK_LIMIT_BYTES={disk_limit_bytes}"),
+            "HOME=/home/sandbox".to_string(),
+            "XDG_CACHE_HOME=/home/sandbox/.cache".to_string(),
+        ];
         if let Some(agent_token) = spec.agent_token.as_deref() {
             env.push(format!("CHATOS_SANDBOX_MCP_TOKEN={agent_token}"));
         }
@@ -220,6 +261,7 @@ impl DockerSandboxBackend {
             "Image": spec.image,
             "Hostname": name,
             "WorkingDir": "/workspace",
+            "User": "1000:1000",
             "Env": env,
             "Labels": labels,
             "HostConfig": {
@@ -227,7 +269,12 @@ impl DockerSandboxBackend {
                 "NanoCpus": (spec.resource_limits.cpu.max(0.1) * 1_000_000_000_f32).round() as i64,
                 "Memory": spec.resource_limits.memory_mb.max(128) as i64 * 1024 * 1024,
                 "PidsLimit": spec.resource_limits.max_processes.max(16),
-                "Tmpfs": {"/tmp": "rw,nosuid,size=512m"},
+                "ReadonlyRootfs": true,
+                "CapDrop": ["ALL"],
+                "Tmpfs": {
+                    "/tmp": format!("rw,nosuid,nodev,size={tmpfs_size_mb}m,mode=1777"),
+                    "/home/sandbox": format!("rw,nosuid,nodev,size={tmpfs_size_mb}m,uid=1000,gid=1000,mode=0700")
+                },
                 "SecurityOpt": ["no-new-privileges"],
                 "Binds": [format!("{}:/workspace:rw", spec.run_workspace)],
             }

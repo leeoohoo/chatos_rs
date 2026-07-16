@@ -198,6 +198,8 @@ pub struct ChatosSyncedModelConfigRequest {
     pub api_key: String,
     pub model: String,
     pub usage_scenario: Option<String>,
+    pub temperature: Option<f64>,
+    pub max_output_tokens: Option<i64>,
     pub thinking_level: Option<String>,
     pub supports_responses: Option<bool>,
     pub enabled: Option<bool>,

@@ -24,7 +24,6 @@ import {
 } from '../api';
 import { loadSystemPermissions, systemPermissionReady } from '../systemPermissions';
 
-const DEFAULT_AI_AGENT_MAX_ITERATIONS = 600;
 const DEFAULT_DEVELOPER_CLOUD_BASE_URL = 'http://127.0.0.1:39230';
 const DEFAULT_DEVELOPER_USER_SERVICE_BASE_URL = 'http://127.0.0.1:39190';
 const DEFAULT_DEVELOPER_CHATOS_WEB_URL = 'http://127.0.0.1:8088';
@@ -32,7 +31,6 @@ type PermissionIcon = typeof Settings2;
 
 export function RuntimeSettingsPanel({ developerOnly = false }: { developerOnly?: boolean }) {
   const [settings, setSettings] = React.useState<LocalRuntimeSettings>({
-    ai_agent_max_iterations: DEFAULT_AI_AGENT_MAX_ITERATIONS,
     developer_mode: false,
     developer_cloud_base_url: DEFAULT_DEVELOPER_CLOUD_BASE_URL,
     developer_user_service_base_url: DEFAULT_DEVELOPER_USER_SERVICE_BASE_URL,
@@ -50,7 +48,6 @@ export function RuntimeSettingsPanel({ developerOnly = false }: { developerOnly?
     try {
       const next = await api.runtimeSettings();
       setSettings({
-        ai_agent_max_iterations: next.ai_agent_max_iterations || DEFAULT_AI_AGENT_MAX_ITERATIONS,
         developer_mode: Boolean(next.developer_mode),
         developer_cloud_base_url: next.developer_cloud_base_url || DEFAULT_DEVELOPER_CLOUD_BASE_URL,
         developer_user_service_base_url:
@@ -77,10 +74,6 @@ export function RuntimeSettingsPanel({ developerOnly = false }: { developerOnly?
     setError(null);
     try {
       const next = await api.updateRuntimeSettings({
-        ai_agent_max_iterations: Math.max(
-          1,
-          Number(settings.ai_agent_max_iterations) || DEFAULT_AI_AGENT_MAX_ITERATIONS,
-        ),
         developer_mode: settings.developer_mode,
       });
       setSettings(next);
@@ -126,7 +119,7 @@ export function RuntimeSettingsPanel({ developerOnly = false }: { developerOnly?
         <div className="panelHeader">
           <div>
             <h2><Settings2 size={18} />运行配置</h2>
-            <p>本机 Agent 运行参数</p>
+            <p>本机开发模式与系统权限设置</p>
           </div>
           <button className="iconButton" onClick={() => void load()} title="刷新配置">
             <RefreshCw size={17} />
@@ -134,25 +127,6 @@ export function RuntimeSettingsPanel({ developerOnly = false }: { developerOnly?
         </div>
         {message ? <div className="banner">{message}</div> : null}
         {error ? <div className="formError">{error}</div> : null}
-        {!developerOnly ? (
-          <div className="settingsFormGrid">
-            <label>
-              Agent 最大迭代次数
-              <input
-                type="number"
-                min="1"
-                step="1"
-                value={settings.ai_agent_max_iterations}
-                onChange={(event) =>
-                  setSettings({
-                    ...settings,
-                    ai_agent_max_iterations: Number(event.target.value) || DEFAULT_AI_AGENT_MAX_ITERATIONS,
-                  })
-                }
-              />
-            </label>
-          </div>
-        ) : null}
         <div className={`developerModeCard ${settings.developer_mode ? 'active' : ''}`}>
           <div className="developerModeHeading">
             <div className="permissionIcon"><Globe2 size={18} /></div>

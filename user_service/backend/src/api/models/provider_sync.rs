@@ -237,6 +237,8 @@ pub(super) async fn refresh_provider_models_from_record(
             task_thinking_level: existing
                 .as_ref()
                 .and_then(|item| item.task_thinking_level.clone()),
+            temperature: existing.as_ref().and_then(|item| item.temperature),
+            max_output_tokens: existing.as_ref().and_then(|item| item.max_output_tokens),
             api_key: provider_record.api_key.clone(),
             has_api_key: true,
             base_url: provider_record.base_url.clone(),

@@ -31,9 +31,6 @@ pub struct AppConfig {
     pub require_signed_internal_requests: bool,
     pub user_service_base_url: String,
     pub user_service_request_timeout_ms: u64,
-    pub local_connector_service_base_url: String,
-    pub local_connector_service_request_timeout_ms: u64,
-    pub local_connector_internal_api_secret: Option<String>,
 }
 
 impl AppConfig {
@@ -107,24 +104,6 @@ impl AppConfig {
             5000,
             300,
         );
-        let local_connector_service_base_url =
-            env_text("MEMORY_ENGINE_LOCAL_CONNECTOR_SERVICE_BASE_URL")
-                .or_else(|| env_text("CHATOS_LOCAL_CONNECTOR_SERVICE_BASE_URL"))
-                .or_else(|| env_text("LOCAL_CONNECTOR_SERVICE_BASE_URL"))
-                .unwrap_or_else(|| "http://127.0.0.1:39230".to_string());
-        let local_connector_service_request_timeout_ms = parse_bounded_u64(
-            env::var("MEMORY_ENGINE_LOCAL_CONNECTOR_SERVICE_REQUEST_TIMEOUT_MS")
-                .ok()
-                .or_else(|| env::var("CHATOS_LOCAL_CONNECTOR_SERVICE_REQUEST_TIMEOUT_MS").ok())
-                .or_else(|| env::var("LOCAL_CONNECTOR_SERVICE_REQUEST_TIMEOUT_MS").ok()),
-            30_000,
-            300,
-        );
-        let local_connector_internal_api_secret =
-            env_text("MEMORY_ENGINE_LOCAL_CONNECTOR_INTERNAL_API_SECRET")
-                .or_else(|| env_text("LOCAL_CONNECTOR_INTERNAL_API_SECRET"))
-                .or_else(|| env_text("CHATOS_LOCAL_CONNECTOR_INTERNAL_API_SECRET"));
-
         let config = Self {
             host,
             port,
@@ -150,9 +129,6 @@ impl AppConfig {
             ),
             user_service_base_url,
             user_service_request_timeout_ms,
-            local_connector_service_base_url,
-            local_connector_service_request_timeout_ms,
-            local_connector_internal_api_secret,
         };
 
         if config.require_signed_internal_requests {
@@ -190,17 +166,6 @@ impl AppConfig {
                 ],
             )?;
         }
-        if config.local_connector_internal_api_secret.is_some() {
-            validate_production_secret(
-                "MEMORY_ENGINE_LOCAL_CONNECTOR_INTERNAL_API_SECRET",
-                config.local_connector_internal_api_secret.as_deref(),
-                &[
-                    "chatos-local-connector-dev-secret",
-                    "change_me_memory_engine_local_connector_secret",
-                ],
-            )?;
-        }
-
         Ok(config)
     }
 }

@@ -15,6 +15,7 @@ import type {
   ProjectWorkItemRecord,
   RequirementRecord,
   UpsertProjectProfilePayload,
+  UpdateProjectRuntimeEnvironmentVariablesPayload,
 } from '../types';
 import { buildProjectDetailColumns } from './projectDetail/columns';
 import { ProjectDetailOverlays } from './projectDetail/ProjectDetailOverlays';
@@ -280,6 +281,28 @@ export function ProjectDetailPage() {
     },
   });
 
+  const updateRuntimeEnvironmentVariablesMutation = useMutation({
+    mutationFn: (payload: UpdateProjectRuntimeEnvironmentVariablesPayload) =>
+      api.updateProjectRuntimeEnvironmentVariables(projectId!, payload),
+    onSuccess: (data) => {
+      messageApi.success('运行环境变量已保存');
+      setRuntimeEnvironmentCache(data);
+    },
+    onError: (error) => messageApi.error((error as Error).message),
+  });
+
+  const startRuntimeEnvironmentMutation = useMutation({
+    mutationFn: () => api.startProjectRuntimeEnvironment(projectId!),
+    onSuccess: (data) => {
+      messageApi.success('项目运行环境已作为一个 Docker Compose 项目启动');
+      setRuntimeEnvironmentCache(data);
+    },
+    onError: (error) => {
+      messageApi.error((error as Error).message);
+      runtimeEnvironmentQuery.refetch();
+    },
+  });
+
   const { requirementColumns, workItemColumns } = buildProjectDetailColumns({
     requirements,
     onShowRequirementDetail: setRequirementDetailTarget,
@@ -342,11 +365,17 @@ export function ProjectDetailPage() {
         }
         runtimeEnvironmentAnalyzing={analyzeRuntimeEnvironmentMutation.isPending}
         runtimeEnvironmentSettingsSaving={updateRuntimeEnvironmentSettingsMutation.isPending}
+        runtimeEnvironmentVariablesSaving={updateRuntimeEnvironmentVariablesMutation.isPending}
+        runtimeEnvironmentStarting={startRuntimeEnvironmentMutation.isPending}
         onRefreshRuntimeEnvironment={() => runtimeEnvironmentQuery.refetch()}
         onAnalyzeRuntimeEnvironment={() => analyzeRuntimeEnvironmentMutation.mutate()}
         onRuntimeSandboxEnabledChange={(value) =>
           updateRuntimeEnvironmentSettingsMutation.mutate(value)
         }
+        onSaveRuntimeEnvironmentVariables={async (payload) => {
+          await updateRuntimeEnvironmentVariablesMutation.mutateAsync(payload);
+        }}
+        onStartRuntimeEnvironment={() => startRuntimeEnvironmentMutation.mutate()}
       />
       <ProjectDetailOverlays
         requirementModalOpen={requirementModalOpen}

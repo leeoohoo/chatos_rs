@@ -29,10 +29,6 @@ impl SystemAgentDefinition for ProjectEnvironmentAgent {
         "project_management_service"
     }
 
-    fn max_iterations(&self) -> usize {
-        600
-    }
-
     fn context_overflow_trigger(&self) -> &'static str {
         "project_environment_agent_context_overflow"
     }

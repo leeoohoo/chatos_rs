@@ -21,6 +21,7 @@ pub mod mongo_query;
 pub mod pagination;
 pub mod path_guard;
 pub mod project_access;
+pub mod project_execution;
 pub mod remote_connection_access;
 pub mod remote_connection_error_codes;
 pub mod runtime_health;

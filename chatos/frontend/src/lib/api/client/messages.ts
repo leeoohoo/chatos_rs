@@ -13,6 +13,12 @@ import type {
 } from './types';
 import { buildQuery } from './shared';
 import type { ApiRequestFn } from './workspace';
+import { isLocalRuntimeSessionId } from '../localRuntime';
+import {
+  getLocalTaskBoardGraph,
+  getLocalTaskBoardTask,
+  getLocalTaskBoardTasks,
+} from '../localRuntime/taskBoard';
 
 export interface MessageTaskRunnerLookupOptions {
   sessionId?: string | null;
@@ -57,6 +63,9 @@ export const getMessageTaskRunnerTasks = (
   messageId: string,
   options?: MessageTaskRunnerLookupOptions,
 ): Promise<MessageTaskRunnerTasksResponse> => {
+  if (options?.sessionId && isLocalRuntimeSessionId(options.sessionId)) {
+    return getLocalTaskBoardTasks(options.sessionId, { ...options, includeDone: true });
+  }
   return request<MessageTaskRunnerTasksResponse>(
     `/messages/${encodeURIComponent(messageId)}/task-runner/tasks${messageTaskRunnerLookupQuery(options)}`,
   );
@@ -67,6 +76,9 @@ export const getMessageTaskRunnerGraph = (
   messageId: string,
   options?: MessageTaskRunnerLookupOptions,
 ): Promise<MessageTaskRunnerGraphResponse> => {
+  if (options?.sessionId && isLocalRuntimeSessionId(options.sessionId)) {
+    return getLocalTaskBoardGraph(options.sessionId, options);
+  }
   return request<MessageTaskRunnerGraphResponse>(
     `/messages/${encodeURIComponent(messageId)}/task-runner/graph${messageTaskRunnerLookupQuery(options)}`,
   );
@@ -78,6 +90,9 @@ export const getMessageTaskRunnerTask = (
   taskId: string,
   options?: MessageTaskRunnerLookupOptions,
 ): Promise<MessageTaskRunnerTask> => {
+  if (options?.sessionId && isLocalRuntimeSessionId(options.sessionId)) {
+    return getLocalTaskBoardTask(options.sessionId, taskId);
+  }
   return request<MessageTaskRunnerTask>(
     `/messages/${encodeURIComponent(messageId)}/task-runner/tasks/${encodeURIComponent(taskId)}${messageTaskRunnerLookupQuery(options)}`,
   );

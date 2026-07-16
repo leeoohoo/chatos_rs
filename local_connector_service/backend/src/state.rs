@@ -7,6 +7,7 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 
 use crate::config::AppConfig;
+use crate::managed_requirements::ManagedRequirementsSigner;
 use crate::relay::ConnectorRelay;
 use crate::store::ConnectorStore;
 use chatos_plugin_management_sdk::{PluginManagementClient, PluginManagementClientConfig};
@@ -17,21 +18,31 @@ pub struct AppState {
     pub relay: ConnectorRelay,
     pub store: ConnectorStore,
     pub plugin_management_client: PluginManagementClient,
+    pub(crate) managed_requirements_signer: Option<Arc<ManagedRequirementsSigner>>,
     device_connect_nonces: Arc<Mutex<HashMap<String, i64>>>,
 }
 
 impl AppState {
     pub async fn new(config: AppConfig) -> Result<Self, String> {
+        let managed_requirements_signer = ManagedRequirementsSigner::load(&config)?;
         let store = ConnectorStore::connect(&config.database_url).await?;
         let plugin_management_client = PluginManagementClient::new(
             PluginManagementClientConfig::from_env("local-connector-service").await,
         )
         .map_err(|err| format!("initialize plugin management client failed: {err}"))?;
+        if let Some(signer) = managed_requirements_signer.as_ref() {
+            tracing::info!(
+                key_id = signer.key_id(),
+                public_key = signer.public_key(),
+                "managed requirements bundle signing is enabled"
+            );
+        }
         Ok(Self {
             config,
             relay: ConnectorRelay::default(),
             store,
             plugin_management_client,
+            managed_requirements_signer,
             device_connect_nonces: Arc::new(Mutex::new(HashMap::new())),
         })
     }

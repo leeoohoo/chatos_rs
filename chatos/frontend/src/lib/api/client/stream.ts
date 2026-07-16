@@ -11,6 +11,7 @@ import {
   ApiRequestError,
   buildParsedJsonErrorPayload,
 } from './shared';
+import { applyClientSurfaceHeader } from './surface';
 
 export interface StreamApiContext {
   baseUrl: string;
@@ -48,14 +49,18 @@ export const sendChatCommand = async (
   const hasRemoteConnectionId = Boolean(
     options && Object.prototype.hasOwnProperty.call(options, 'remoteConnectionId'),
   );
+  const headers = new Headers({
+    Accept: 'application/json',
+    'Content-Type': 'application/json',
+  });
+  if (context.accessToken) {
+    headers.set('Authorization', `Bearer ${context.accessToken}`);
+  }
+  applyClientSurfaceHeader(headers);
 
   const response = await fetch(url, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      ...(context.accessToken ? { Authorization: `Bearer ${context.accessToken}` } : {}),
-      Accept: 'application/json',
-    },
+    headers,
     body: JSON.stringify({
       conversation_id: conversationId,
       content,

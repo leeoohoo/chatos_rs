@@ -3,9 +3,10 @@
 
 import React from 'react';
 import { MessageList } from '../MessageList';
-import { LazyMarkdownRenderer } from '../LazyMarkdownRenderer';
 import type { ChatInterfaceProps, Message } from '../../types';
 import { useI18n } from '../../i18n/I18nProvider';
+import { LocalMemoryPolicyControls } from './LocalMemoryPolicyControls';
+import { MemoryTimelineList, type MemoryTimelineItem } from './MemoryTimelineList';
 
 interface SessionSummaryViewItem {
   id: string;
@@ -24,16 +25,7 @@ interface AgentRecallViewItem {
   confidence?: number | null;
   lastSeenAt?: string | null;
   updatedAt: string;
-}
-
-interface MemoryTimelineItem {
-  id: string;
-  kind: 'session_summary' | 'agent_recall';
-  text: string;
-  level: number;
-  time: string;
-  timeTs: number;
-  sourceLabel: string;
+  subjectType?: string | null;
 }
 
 interface SummaryPaneProps {
@@ -53,17 +45,6 @@ interface SummaryPaneProps {
   onRefresh: () => void;
   onClose: () => void;
 }
-
-const formatTextDate = (value?: string | null): string => {
-  if (!value) {
-    return '-';
-  }
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) {
-    return value;
-  }
-  return parsed.toLocaleString();
-};
 
 const SummaryPane: React.FC<SummaryPaneProps> = ({
   sessionId,
@@ -93,9 +74,9 @@ const SummaryPane: React.FC<SummaryPaneProps> = ({
       const time = summary.updatedAt || summary.createdAt;
       return {
         id: `summary:${summary.id}`,
+        sourceId: summary.id,
         kind: 'session_summary' as const,
         text: summary.summaryText || t('memory.emptySummary'),
-        level: summary.level,
         time,
         timeTs: Math.max(toTimestamp(summary.updatedAt), toTimestamp(summary.createdAt)),
         sourceLabel: t('memory.sessionSummarySource', { level: summary.level }),
@@ -103,12 +84,14 @@ const SummaryPane: React.FC<SummaryPaneProps> = ({
     }),
     ...agentRecalls.map((recall) => ({
       id: `recall:${recall.id}`,
+      sourceId: recall.id,
       kind: 'agent_recall' as const,
       text: recall.recallText || t('memory.emptyRecall'),
-      level: recall.level,
       time: recall.updatedAt || recall.lastSeenAt || '',
       timeTs: Math.max(toTimestamp(recall.updatedAt), toTimestamp(recall.lastSeenAt)),
-      sourceLabel: t('memory.agentRecallSource', { level: recall.level }),
+      sourceLabel: recall.subjectType === 'project'
+        ? t('memory.projectRecallSource', { level: recall.level })
+        : t('memory.agentRecallSource', { level: recall.level }),
     })),
   ].sort((left, right) => right.timeTs - left.timeTs);
 
@@ -151,30 +134,18 @@ const SummaryPane: React.FC<SummaryPaneProps> = ({
           <div className="text-xs text-destructive">{memoryError}</div>
         ) : null}
 
+        <LocalMemoryPolicyControls sessionId={sessionId} />
+
         <div className="rounded-lg border border-border bg-background/80 p-3">
           <div className="text-xs font-semibold text-foreground">{t('memory.entries')}</div>
           <div className="mt-1 text-[11px] text-muted-foreground">
             {projectId ? `project_id: ${projectId}` : t('memory.projectIdNone')}
           </div>
-          {memoryTimeline.length === 0 ? (
-            <div className="mt-2 text-xs text-muted-foreground">
-              {t('memory.empty')}
-            </div>
-          ) : (
-            <div className="mt-2 space-y-2">
-              {memoryTimeline.map((item) => (
-                <div key={item.id} className="rounded border border-border p-2">
-                  <div className="flex items-center justify-between gap-2 text-[11px] text-muted-foreground">
-                    <span>{item.sourceLabel}</span>
-                    <span>{formatTextDate(item.time)}</span>
-                  </div>
-                  <div className="mt-1 text-sm leading-6">
-                    <LazyMarkdownRenderer content={item.text} />
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
+          <MemoryTimelineList
+            sessionId={sessionId}
+            items={memoryTimeline}
+            onRefresh={onRefresh}
+          />
         </div>
       </div>
     </div>

@@ -48,6 +48,7 @@ fn test_workspace(root: &Path) -> WorkspaceState {
         absolute_root: fs::canonicalize(root).expect("canonical root"),
         alias: "workspace".to_string(),
         fingerprint: "fingerprint-test".to_string(),
+        project_config_trust: None,
     }
 }
 
@@ -73,6 +74,12 @@ fn test_state_with_workspace(workspace: WorkspaceState) -> LocalState {
         workspaces: vec![workspace],
         ..LocalState::default()
     }
+}
+
+fn test_state_with_full_control_workspace(workspace: WorkspaceState) -> LocalState {
+    let mut state = test_state_with_workspace(workspace);
+    state.approval.default_mode = crate::approval::ApprovalMode::FullControl;
+    state
 }
 
 #[test]
@@ -247,6 +254,7 @@ fn prepare_local_sandbox_workspace_clears_existing_run_copy() {
         absolute_root: fs::canonicalize(workspace_root.as_path()).expect("canonical root"),
         alias: "project".to_string(),
         fingerprint: "fingerprint-test".to_string(),
+        project_config_trust: None,
     };
     let state = LocalState {
         workspaces: vec![workspace],

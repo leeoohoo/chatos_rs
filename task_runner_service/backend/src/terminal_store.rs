@@ -87,6 +87,7 @@ mod tests {
                 ".".to_string(),
                 "sleep 60".to_string(),
                 true,
+                chatos_builtin_tools::TerminalCommandPermissions::default(),
             )
             .await
             .expect("start background command");

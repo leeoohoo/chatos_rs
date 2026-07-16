@@ -27,6 +27,14 @@ pub(crate) async fn start_local_sandbox_container(
         network.mode.trim()
     };
     let workspace_mount_mode = workspace_mount_mode(permission_profile);
+    let tmpfs_size_mb = (resource_limits.disk_mb / 16).clamp(16, 512);
+    let home_tmpfs_size_mb = tmpfs_size_mb;
+    let workspace_limit_mb = resource_limits
+        .disk_mb
+        .saturating_sub(tmpfs_size_mb.saturating_add(home_tmpfs_size_mb))
+        .max(1);
+    let disk_limit_bytes = workspace_limit_mb.saturating_mul(1024 * 1024);
+    let sandbox_user = sandbox_user_for_workspace(run_workspace);
     let mut command = docker_command();
     command
         .arg("run")
@@ -50,15 +58,40 @@ pub(crate) async fn start_local_sandbox_container(
         .arg("-e")
         .arg(format!("CHATOS_SANDBOX_ID={sandbox_id}"))
         .arg("-e")
-        .arg(format!("CHATOS_SANDBOX_MCP_TOKEN={agent_token}"));
+        .arg(format!("CHATOS_SANDBOX_MCP_TOKEN={agent_token}"))
+        .arg("-e")
+        .arg(format!(
+            "CHATOS_SANDBOX_PERMISSION_PROFILE={}",
+            permission_profile.as_str()
+        ))
+        .arg("-e")
+        .arg(format!(
+            "CHATOS_SANDBOX_DISK_LIMIT_BYTES={disk_limit_bytes}"
+        ))
+        .arg("-e")
+        .arg("HOME=/home/sandbox")
+        .arg("-e")
+        .arg("XDG_CACHE_HOME=/home/sandbox/.cache");
     if network_mode != "none" {
         command
             .arg("-p")
             .arg(format!("127.0.0.1::{DEFAULT_LOCAL_SANDBOX_AGENT_PORT}"));
     }
     command
+        .arg("--read-only")
+        .arg("--cap-drop")
+        .arg("ALL")
+        .arg("--user")
+        .arg(sandbox_user.spec.as_str())
         .arg("--tmpfs")
-        .arg("/tmp:rw,nosuid,size=512m")
+        .arg(format!(
+            "/tmp:rw,nosuid,nodev,size={tmpfs_size_mb}m,mode=1777"
+        ))
+        .arg("--tmpfs")
+        .arg(format!(
+            "/home/sandbox:rw,nosuid,nodev,size={home_tmpfs_size_mb}m,uid={},gid={},mode=0700",
+            sandbox_user.uid, sandbox_user.gid
+        ))
         .arg("--security-opt")
         .arg("no-new-privileges")
         .arg("-v")
@@ -175,6 +208,36 @@ fn workspace_mount_mode(permission_profile: PermissionProfileId) -> &'static str
     }
 }
 
+struct SandboxUser {
+    spec: String,
+    uid: u32,
+    gid: u32,
+}
+
+#[cfg(unix)]
+fn sandbox_user_for_workspace(workspace: &Path) -> SandboxUser {
+    use std::os::unix::fs::MetadataExt;
+
+    let (uid, gid) = workspace
+        .metadata()
+        .map(|metadata| (metadata.uid(), metadata.gid()))
+        .unwrap_or((1000, 1000));
+    SandboxUser {
+        spec: format!("{uid}:{gid}"),
+        uid,
+        gid,
+    }
+}
+
+#[cfg(not(unix))]
+fn sandbox_user_for_workspace(_workspace: &Path) -> SandboxUser {
+    SandboxUser {
+        spec: "1000:1000".to_string(),
+        uid: 1000,
+        gid: 1000,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -187,5 +250,15 @@ mod tests {
             "rw"
         );
         assert_eq!(workspace_mount_mode(PermissionProfileId::FullAccess), "rw");
+    }
+
+    #[test]
+    fn sandbox_user_matches_workspace_owner_on_unix() {
+        let workspace =
+            std::env::temp_dir().join(format!("chatos-sandbox-user-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(workspace.as_path()).expect("workspace");
+        let user = sandbox_user_for_workspace(workspace.as_path());
+        assert_eq!(user.spec, format!("{}:{}", user.uid, user.gid));
+        let _ = std::fs::remove_dir_all(workspace);
     }
 }

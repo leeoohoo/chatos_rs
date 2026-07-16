@@ -542,6 +542,7 @@ mod tests {
             destroyed_at: None,
             last_error: None,
             effective_policy: Default::default(),
+            effective_permissions: None,
         }
     }
 

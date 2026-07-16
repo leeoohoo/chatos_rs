@@ -3,13 +3,8 @@
 
 import React from 'react';
 import {
-  Activity,
-  CloudOff,
   Container,
-  Cpu,
-  HardDrive,
   Image,
-  Layers,
   ListChecks,
   RefreshCw,
   RotateCcw,
@@ -21,20 +16,14 @@ import {
 import {
   api,
   type ConnectorStatus,
-  type PermissionProfileId,
-  type SandboxApprovalPolicy,
-  type SandboxApprovalReviewer,
-  type SandboxBackendCapability,
-  type SandboxBackendKind,
   type SandboxCapabilities,
   type SandboxImageCatalog,
   type SandboxImageJob,
   type SandboxLease,
   type SandboxSettings,
+  type SandboxSettingsUpdate,
 } from '../api';
-
-type SandboxIcon = typeof Shield;
-type SandboxApprovalMode = 'user' | 'auto_review' | 'never';
+import { SandboxPolicySettings } from './SandboxPolicySettings';
 
 export function SandboxPanel({
   status,
@@ -127,7 +116,7 @@ export function SandboxPanel({
     try {
       const next = await api.setSandboxEnabled({ enabled });
       onStatus(next);
-      setMessage(enabled ? '本地沙箱已开启' : '本地沙箱已关闭');
+      setMessage(enabled ? '本地保护已开启' : '本地保护已关闭');
       await Promise.all([refreshSandboxConfig(), onRefresh()]);
     } catch (err) {
       setMessage(err instanceof Error ? err.message : '沙箱设置失败');
@@ -135,7 +124,7 @@ export function SandboxPanel({
   };
 
   const saveSandboxSettings = async (
-    patch: Partial<SandboxSettings> & { risk_acknowledged?: boolean },
+    patch: SandboxSettingsUpdate,
     label: string,
   ) => {
     setMessage(null);
@@ -205,209 +194,51 @@ export function SandboxPanel({
     }
   };
 
-  const currentBackend = normalizeSandboxBackend(
-    settings?.default_backend || status.sandbox.default_backend || status.sandbox.backend,
-  );
-  const currentPermissionProfile = normalizePermissionProfile(
-    settings?.default_permission_profile_id || status.sandbox.default_permission_profile_id,
-  );
-  const currentApprovalPolicy = normalizeApprovalPolicy(
-    settings?.default_approval_policy || status.sandbox.default_approval_policy,
-  );
-  const currentApprovalReviewer = normalizeApprovalReviewer(
-    settings?.default_approval_reviewer || status.sandbox.default_approval_reviewer,
-  );
-  const currentApprovalMode = approvalModeFromPolicy(
-    currentApprovalPolicy,
-    currentApprovalReviewer,
-  );
-  const capabilityByBackend = new Map(
-    (capabilities?.backends || []).map((capability) => [capability.backend, capability]),
-  );
-  const currentCapability = capabilityByBackend.get(currentBackend);
-  const currentIsolationDetail = sandboxBackendIsolationDetail(
-    currentBackend,
-    currentCapability,
-    status.sandbox,
-  );
-  const currentBackendTone = sandboxBackendTone(currentBackend, currentCapability);
-
-  const setDefaultBackend = (backend: SandboxBackendKind) => {
-    const capability = capabilityByBackend.get(backend);
-    if (capability && !capability.selectable) {
-      setMessage(capability.message);
-      return;
-    }
-    if (backend === currentBackend) {
-      return;
-    }
-    void saveSandboxSettings({ default_backend: backend }, '沙箱后端');
-  };
-
-  const setPermissionProfile = (profile: PermissionProfileId) => {
-    if (profile === currentPermissionProfile) {
-      return;
-    }
-    if (
-      profile === 'full_access'
-      && !window.confirm('切换到“完全访问”会允许本地沙箱访问更多本机文件。确认继续吗？')
-    ) {
-      return;
-    }
-    void saveSandboxSettings(
-      { default_permission_profile_id: profile, risk_acknowledged: profile === 'full_access' },
-      '权限档位',
-    );
-  };
-
-  const setApprovalMode = (mode: SandboxApprovalMode) => {
-    if (mode === currentApprovalMode) {
-      return;
-    }
-    if (mode === 'never') {
-      if (!window.confirm('切换到“从不询问”后，命令将不再弹出用户审批。确认继续吗？')) {
-        return;
-      }
-      void saveSandboxSettings(
-        {
-          default_approval_policy: 'never',
-          default_approval_reviewer: currentApprovalReviewer,
-          risk_acknowledged: true,
-        },
-        '审批方式',
-      );
-      return;
-    }
-    if (
-      mode === 'auto_review'
-      && !window.confirm('切换到“自动审批”后，命令会由本地自动审批策略判断。确认继续吗？')
-    ) {
-      return;
-    }
-    void saveSandboxSettings(
-      {
-        default_approval_policy: 'on_request',
-        default_approval_reviewer: mode,
-        risk_acknowledged: mode === 'auto_review',
-      },
-      '审批方式',
-    );
-  };
-
   return (
     <section className="sandboxPage">
       <div className="panel sandboxHero">
         <div className="panelHeader">
           <div>
-            <h2><Shield size={18} />本地沙箱</h2>
-            <p>Local Connector Core 在本机 Docker 内创建、启动和释放沙箱；Local Connector Service 只转发长连接消息。</p>
+            <h2><Shield size={18} />本地保护</h2>
+            <p>限制本地任务能访问的文件和网络；所有执行与数据都留在当前电脑。</p>
           </div>
           <div className="headerActions">
-            <button className="iconButton" onClick={() => void refreshSandboxDetails()} title="刷新沙箱">
+            <button className="iconButton" onClick={() => void refreshSandboxDetails()} title="刷新本地保护状态">
               <RefreshCw size={17} />
             </button>
             <label className="switch">
               <input
                 type="checkbox"
                 checked={status.sandbox.enabled}
+                disabled={Boolean(status.sandbox.permission_configuration_error)}
                 onChange={(event) => void setEnabled(event.target.checked)}
               />
               <span />
             </label>
           </div>
         </div>
-        <div className="sandboxStatusGrid">
-          <StatusTile
-            icon={Container}
-            label="沙箱开关"
-            value={status.sandbox.enabled ? '已开启' : '已关闭'}
-            tone={status.sandbox.enabled ? 'ok' : 'muted'}
-          />
-          <StatusTile
-            icon={HardDrive}
-            label="Docker"
-            value={status.docker.installed ? (status.docker.running ? '运行中' : '未运行') : '未安装'}
-            detail={status.docker.version || status.docker.error || undefined}
-            tone={status.docker.installed && status.docker.running ? 'ok' : 'warn'}
-          />
-          <StatusTile
-            icon={Cpu}
-            label="运行后端"
-            value={sandboxBackendLabel(currentBackend)}
-            detail={currentIsolationDetail}
-            tone={currentBackendTone}
-          />
-          <StatusTile
-            icon={Image}
-            label="默认镜像"
-            value={status.sandbox.selected_image_ref || 'chatos-sandbox-agent:latest'}
-            tone="muted"
-          />
-        </div>
-        <div className="sandboxSettingsGrid">
-          <div className="sandboxSettingBlock backendPickerBlock">
-            <span className="settingLabel">默认后端</span>
-            <div className="backendChoiceList">
-              {(['local_process', 'docker'] as SandboxBackendKind[]).map((backend) => {
-                const capability = capabilityByBackend.get(backend);
-                const selectable = capability?.selectable ?? backend === 'docker';
-                const active = currentBackend === backend;
-                return (
-                  <button
-                    key={backend}
-                    type="button"
-                    className={active ? 'backendChoice active' : 'backendChoice'}
-                    disabled={savingSettings || !selectable}
-                    title={capability?.message}
-                    onClick={() => setDefaultBackend(backend)}
-                  >
-                    <strong>{sandboxBackendLabel(backend)}</strong>
-                    <small>{sandboxBackendDetail(backend, capability)}</small>
-                  </button>
-                );
-              })}
-            </div>
+        {status.sandbox.permission_configuration_error ? (
+          <div className="formError">
+            受管权限策略尚未安全加载，沙箱执行已阻止：{status.sandbox.permission_configuration_error}
           </div>
-          <label className="sandboxSettingBlock">
-            <span className="settingLabel">权限档位</span>
-            <select
-              value={currentPermissionProfile}
-              disabled={savingSettings}
-              onChange={(event) => setPermissionProfile(event.target.value as PermissionProfileId)}
-            >
-              <option value="read_only">只读</option>
-              <option value="workspace_write">工作区可写</option>
-              <option value="full_access">完全访问</option>
-            </select>
-          </label>
-          <label className="sandboxSettingBlock">
-            <span className="settingLabel">审批方式</span>
-            <select
-              value={currentApprovalMode}
-              disabled={savingSettings}
-              onChange={(event) => setApprovalMode(event.target.value as SandboxApprovalMode)}
-            >
-              <option value="user">每次询问</option>
-              <option value="auto_review">自动审批</option>
-              <option value="never">从不询问</option>
-            </select>
-          </label>
-          <div className="sandboxSettingBlock policyRevisionBlock">
-            <span className="settingLabel">策略版本</span>
-            <strong>{settings?.policy_revision || status.sandbox.policy_revision || '默认'}</strong>
-          </div>
-        </div>
-        <div className="boundaryList sandboxBoundary">
-          <div><CloudOff size={16} />不调用云端 Sandbox Manager，不使用云端沙箱实例。</div>
-          <div><Activity size={16} />Task Runner 请求经 Local Connector 长连接转到本机执行。</div>
-          <div><Layers size={16} />可复用 common 里的镜像定义和 Dockerfile 生成逻辑，但运行时状态属于本机。</div>
-          <div><Shield size={16} />Docker bridge 只提供容器文件系统/进程边界，不声明出站网络隔离。</div>
-        </div>
+        ) : null}
+        <SandboxPolicySettings
+          status={status}
+          settings={settings}
+          capabilities={capabilities}
+          saving={savingSettings}
+          onSave={saveSandboxSettings}
+        />
         {message ? <div className="banner">{message}</div> : null}
       </div>
 
       {status.sandbox.enabled ? (
-        <>
+        <details className="panel sandboxAdvancedPanel">
+          <summary>
+            <span><Settings2 size={16} />高级运行信息</span>
+            <small>Docker 镜像、构建任务和当前运行实例</small>
+          </summary>
+          <div className="sandboxAdvancedContent">
           <div className="sandboxContentGrid">
             <section className="panel">
               <div className="panelHeader">
@@ -507,7 +338,7 @@ export function SandboxPanel({
             </section>
           </div>
 
-          <section className="panel">
+          <section className="panel sandboxAdvancedInnerPanel">
             <div className="panelHeader">
               <div>
                 <h2><ListChecks size={18} />镜像任务</h2>
@@ -541,7 +372,7 @@ export function SandboxPanel({
             <div className="panelHeader">
               <div>
                 <h2><Container size={18} />当前沙箱</h2>
-                <p>Task Runner 运行时创建的本机 Docker 沙箱租约。</p>
+                <p>本地任务运行时创建的隔离实例。</p>
               </div>
             </div>
             {leases.length ? (
@@ -565,119 +396,13 @@ export function SandboxPanel({
               <div className="emptyState">当前没有运行中的本地沙箱。</div>
             )}
           </section>
-        </>
+          </div>
+        </details>
       ) : (
         <section className="panel">
-          <div className="emptyState">本地沙箱默认关闭。打开开关后会检查 Docker，并在本机 Docker 内创建沙箱。</div>
+          <div className="emptyState">打开本地保护后，客户端会自动选择当前电脑可用的安全隔离方式。</div>
         </section>
       )}
     </section>
-  );
-}
-
-function normalizeSandboxBackend(value?: string | null): SandboxBackendKind {
-  return value === 'local_process' ? 'local_process' : 'docker';
-}
-
-function normalizePermissionProfile(value?: string | null): PermissionProfileId {
-  if (value === 'read_only' || value === 'full_access') {
-    return value;
-  }
-  return 'workspace_write';
-}
-
-function normalizeApprovalPolicy(value?: string | null): SandboxApprovalPolicy {
-  return value === 'never' ? 'never' : 'on_request';
-}
-
-function normalizeApprovalReviewer(value?: string | null): SandboxApprovalReviewer {
-  return value === 'auto_review' ? 'auto_review' : 'user';
-}
-
-function approvalModeFromPolicy(
-  policy: SandboxApprovalPolicy,
-  reviewer: SandboxApprovalReviewer,
-): SandboxApprovalMode {
-  if (policy === 'never') {
-    return 'never';
-  }
-  return reviewer === 'auto_review' ? 'auto_review' : 'user';
-}
-
-function sandboxBackendLabel(backend: SandboxBackendKind) {
-  return backend === 'local_process' ? '进程隔离' : 'Docker';
-}
-
-function sandboxBackendDetail(
-  backend: SandboxBackendKind,
-  capability?: SandboxBackendCapability,
-) {
-  if (capability) {
-    return readinessLabel(capability.status);
-  }
-  return backend === 'local_process' ? '开发中' : '可用';
-}
-
-function sandboxBackendIsolationDetail(
-  backend: SandboxBackendKind,
-  capability: SandboxBackendCapability | undefined,
-  sandbox: ConnectorStatus['sandbox'],
-) {
-  if (sandbox.isolation_note) {
-    return sandbox.isolation_note;
-  }
-  if (capability) {
-    const fileBoundary = capability.filesystem_isolation ? '文件系统隔离' : '无文件系统隔离';
-    const networkBoundary = capability.network_isolation ? '网络隔离' : '无出站网络隔离';
-    return `${fileBoundary} / ${networkBoundary}`;
-  }
-  return backend === 'local_process'
-    ? '进程隔离开发中，暂不可选择'
-    : 'Docker 文件系统隔离 / 无出站网络隔离';
-}
-
-function sandboxBackendTone(
-  backend: SandboxBackendKind,
-  capability?: SandboxBackendCapability,
-): 'ok' | 'warn' | 'muted' {
-  if (capability?.status === 'ready' && capability.selectable) {
-    return 'ok';
-  }
-  if (backend === 'local_process' || capability?.status === 'under_development') {
-    return 'warn';
-  }
-  return capability ? 'warn' : 'muted';
-}
-
-function readinessLabel(status: string) {
-  const labels: Record<string, string> = {
-    ready: '已就绪',
-    setup_required: '需要设置',
-    unsupported: '不支持',
-    under_development: '开发中',
-  };
-  return labels[status] || status;
-}
-
-function StatusTile({
-  icon: Icon,
-  label,
-  value,
-  detail,
-  tone,
-}: {
-  icon: SandboxIcon;
-  label: string;
-  value: string;
-  detail?: string;
-  tone: 'ok' | 'warn' | 'muted';
-}) {
-  return (
-    <div className={`statusTile ${tone}`}>
-      <Icon size={18} />
-      <span>{label}</span>
-      <strong>{value}</strong>
-      {detail ? <small>{detail}</small> : null}
-    </div>
   );
 }

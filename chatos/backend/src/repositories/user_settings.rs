@@ -17,10 +17,9 @@ pub async fn get_user_settings(user_id: &str) -> Result<Option<UserSettings>, St
                     .get("settings")
                     .cloned()
                     .unwrap_or(Bson::Document(Document::new()));
-                let settings_val = bson_to_json(settings);
                 return Ok(Some(UserSettings {
                     user_id,
-                    settings: settings_val,
+                    settings: bson_to_json(settings),
                 }));
             }
             Ok(None)
@@ -30,40 +29,50 @@ pub async fn get_user_settings(user_id: &str) -> Result<Option<UserSettings>, St
 }
 
 pub async fn set_user_settings(user_id: &str, settings: &Value) -> Result<(), String> {
-    with_db(
-        |db| {
-            let user_id = user_id.to_string();
-            let settings = settings.clone();
-            Box::pin(async move {
-                let now = crate::core::time::now_rfc3339();
-                mongo_update_one_doc(
-                    db,
-                    "user_settings",
-                    doc! { "user_id": &user_id },
-                    doc! { "$set": { "user_id": &user_id, "settings": json_to_bson(settings), "updated_at": &now } },
-                    Some(mongodb::options::UpdateOptions::builder().upsert(true).build()),
-                )
-                .await?;
-                Ok(())
-            })
-        }).await
+    with_db(|db| {
+        let user_id = user_id.to_string();
+        let settings = settings.clone();
+        Box::pin(async move {
+            let now = crate::core::time::now_rfc3339();
+            mongo_update_one_doc(
+                db,
+                "user_settings",
+                doc! { "user_id": &user_id },
+                doc! { "$set": { "user_id": &user_id, "settings": json_to_bson(settings), "updated_at": &now } },
+                Some(mongodb::options::UpdateOptions::builder().upsert(true).build()),
+            )
+            .await?;
+            Ok(())
+        })
+    })
+    .await
 }
 
-pub async fn update_user_settings(user_id: &str, patch: &Value) -> Result<Value, String> {
-    let existing = get_user_settings(user_id).await?;
-    let mut merged = match existing {
-        Some(row) => row.settings,
-        None => Value::Object(serde_json::Map::new()),
-    };
-    if let Value::Object(map) = patch {
-        if let Value::Object(ref mut target) = merged {
-            for (k, v) in map {
-                target.insert(k.clone(), v.clone());
-            }
-        }
-    }
-    set_user_settings(user_id, &merged).await?;
-    Ok(merged)
+pub async fn purge_managed_runtime_settings() -> Result<u64, String> {
+    with_db(|db| {
+        Box::pin(async move {
+            db.collection::<Document>("user_settings")
+                .update_many(
+                    doc! {},
+                    doc! {
+                        "$unset": {
+                            "settings.MAX_ITERATIONS": "",
+                            "settings.TASK_FOLLOW_UP_MAX_ROUNDS": "",
+                            "settings.LOG_LEVEL": "",
+                            "settings.HISTORY_LIMIT": "",
+                            "settings.CHAT_MAX_TOKENS": "",
+                            "settings.ATTACHMENT_TOTAL_MAX_BYTES": "",
+                            "settings.TERMINAL_UI_ENABLED": "",
+                        }
+                    },
+                    None,
+                )
+                .await
+                .map(|result| result.modified_count)
+                .map_err(|err| err.to_string())
+        })
+    })
+    .await
 }
 
 fn bson_to_json(bson: Bson) -> Value {

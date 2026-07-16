@@ -4,6 +4,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import type { SessionSummariesListResponse } from '../../lib/api/client/types';
+import { isLocalRuntimeSessionId } from '../../lib/api/localRuntime';
 import {
   applyConversationSummaryItemsSnapshot,
   loadConversationSummaryItems,
@@ -38,6 +39,7 @@ export interface ContactAgentRecall {
   confidence?: number | null;
   lastSeenAt?: string | null;
   updatedAt: string;
+  subjectType?: string | null;
 }
 
 interface MemoryApiClient {
@@ -48,6 +50,10 @@ interface MemoryApiClient {
   getContactAgentRecalls: (
     contactId: string,
     params?: { limit?: number; offset?: number },
+  ) => Promise<unknown[]>;
+  getConversationMemoryRecalls: (
+    sessionId: string,
+    params?: { limit?: number },
   ) => Promise<unknown[]>;
 }
 
@@ -227,6 +233,7 @@ export const useContactMemoryContext = ({
     }
 
     const normalizedContactId = currentContactId.trim();
+    const usesLocalMemory = isLocalRuntimeSessionId(sessionId);
     const loadKey = buildMemoryLoadKey(sessionId, currentContactId, currentProjectIdForMemory);
     const cached = memoryCacheRef.current.get(sessionId);
     const isStale = staleMemorySessionsRef.current.has(sessionId);
@@ -238,12 +245,8 @@ export const useContactMemoryContext = ({
       return;
     }
 
-    if (!normalizedContactId) {
-      setSessionMemorySummaries([]);
-      setAgentRecalls([]);
-      memoryLoadedKeyRef.current = loadKey;
-      setMemoryError(t('memory.unboundContact'));
-      setMemoryLoading(false);
+    if (!normalizedContactId && !usesLocalMemory) {
+      await loadSessionMemorySummaries(sessionId, force);
       return;
     }
 
@@ -252,6 +255,7 @@ export const useContactMemoryContext = ({
       applyResult: ({ recallRows, selectedSessionSummaries }) => {
         const selectedAgentRecalls = normalizeAgentRecalls(
           Array.isArray(recallRows) ? recallRows : [],
+          usesLocalMemory ? 50 : 1,
         );
         setSessionMemorySummaries(selectedSessionSummaries);
         setAgentRecalls(selectedAgentRecalls);
@@ -266,7 +270,9 @@ export const useContactMemoryContext = ({
       load: async () => {
         const [selectedSessionSummaries, recallRows] = await Promise.all([
           loadConversationSummaryItems(apiClient, sessionId, { force, limit: 100 }),
-          apiClient.getContactAgentRecalls(normalizedContactId, { limit: 50, offset: 0 }),
+          usesLocalMemory
+            ? apiClient.getConversationMemoryRecalls(sessionId)
+            : apiClient.getContactAgentRecalls(normalizedContactId, { limit: 50, offset: 0 }),
         ]);
         return {
           selectedSessionSummaries,
@@ -288,6 +294,7 @@ export const useContactMemoryContext = ({
     currentContactId,
     currentProjectIdForMemory,
     currentSessionId,
+    loadSessionMemorySummaries,
     resetMemoryState,
     t,
   ]);

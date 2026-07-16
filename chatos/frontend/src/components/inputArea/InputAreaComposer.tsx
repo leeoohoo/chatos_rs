@@ -4,13 +4,16 @@
 import type { Ref } from 'react';
 
 import { cn } from '../../lib/utils';
-import { InputAreaSendButton } from './InlineWidgets';
+import { InputAreaSendButton, InputAreaStopButton } from './InlineWidgets';
 import { InputAreaComposerControls } from './InputAreaComposerControls';
 import type { InputAreaComposerProps } from './InputAreaComposerTypes';
 
 export default function InputAreaComposer(props: InputAreaComposerProps) {
   const {
   disabled,
+  onStop,
+  isRunning,
+  isStopping,
   effectiveAllowAttachments,
   showModelSelector,
   selectedModelId,
@@ -67,6 +70,12 @@ export default function InputAreaComposer(props: InputAreaComposerProps) {
         {message.length}/{maxLength}
       </div>
 
+      {isRunning && onStop && (
+        <InputAreaStopButton
+          onStop={onStop}
+          disabled={isStopping}
+        />
+      )}
       <InputAreaSendButton
         onSend={handleSend}
         disabled={disabled}

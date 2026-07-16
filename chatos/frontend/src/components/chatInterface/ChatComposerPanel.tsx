@@ -13,6 +13,9 @@ import { useI18n } from '../../i18n/I18nProvider';
 
 interface ChatComposerPanelProps {
   onSend: SendMessageHandler;
+  onStop?: () => void | Promise<void>;
+  isRunning?: boolean;
+  isStopping?: boolean;
   inputDisabled: boolean;
   supportedFileTypes: string[];
   reasoningSupported: boolean;
@@ -49,6 +52,9 @@ interface ChatComposerPanelProps {
 
 const ChatComposerPanel: React.FC<ChatComposerPanelProps> = ({
   onSend,
+  onStop,
+  isRunning = false,
+  isStopping = false,
   inputDisabled,
   supportedFileTypes,
   reasoningSupported,
@@ -84,8 +90,13 @@ const ChatComposerPanel: React.FC<ChatComposerPanelProps> = ({
   <div className="border-t border-border">
     <InputArea
       onSend={onSend}
+      onStop={onStop}
+      isRunning={isRunning}
+      isStopping={isStopping}
       disabled={inputDisabled}
-      placeholder={t('chat.inputPlaceholder')}
+      placeholder={isRunning
+        ? t('inputArea.composer.guidingPlaceholder')
+        : t('chat.inputPlaceholder')}
       allowAttachments={true}
       supportedFileTypes={supportedFileTypes}
       reasoningSupported={reasoningSupported}

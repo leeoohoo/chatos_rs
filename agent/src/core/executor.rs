@@ -11,6 +11,7 @@ use chatos_ai_runtime::{
 use serde_json::Value;
 
 use super::{AgentError, SystemAgentDefinition};
+use crate::DEFAULT_AGENT_MAX_ITERATIONS;
 
 #[derive(Clone)]
 pub struct AgentTurnMemory {
@@ -138,7 +139,7 @@ impl AgentExecutor {
         let caller_model = model_config.model.clone();
         let max_iterations = request
             .max_iterations
-            .unwrap_or_else(|| agent.max_iterations());
+            .unwrap_or(DEFAULT_AGENT_MAX_ITERATIONS);
         let memory_scope = request.memory.as_ref().map(|memory| memory.scope.clone());
         let user_record = request.memory.as_ref().map(|memory| {
             SaveRecordInput::user_message(memory.conversation_id.clone(), request.prompt.clone())

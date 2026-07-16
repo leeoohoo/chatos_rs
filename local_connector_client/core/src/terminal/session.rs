@@ -53,6 +53,12 @@ pub(crate) struct LocalPtySession {
     exited: AtomicBool,
 }
 
+impl LocalPtySession {
+    pub(crate) fn id(&self) -> &str {
+        self.id.as_str()
+    }
+}
+
 impl LocalTerminalManager {
     pub(crate) async fn ensure_session(
         &self,

@@ -12,6 +12,7 @@ use super::DbStatus;
 pub enum ProjectRuntimeEnvironmentStatus {
     Disabled,
     PendingConfiguration,
+    PendingImageBuild,
     #[default]
     Pending,
     Analyzing,
@@ -25,6 +26,7 @@ impl DbStatus for ProjectRuntimeEnvironmentStatus {
         match self {
             Self::Disabled => "disabled",
             Self::PendingConfiguration => "pending_configuration",
+            Self::PendingImageBuild => "pending_image_build",
             Self::Pending => "pending",
             Self::Analyzing => "analyzing",
             Self::Ready => "ready",
@@ -37,6 +39,7 @@ impl DbStatus for ProjectRuntimeEnvironmentStatus {
         match value.trim() {
             "disabled" => Self::Disabled,
             "pending_configuration" => Self::PendingConfiguration,
+            "pending_image_build" => Self::PendingImageBuild,
             "analyzing" => Self::Analyzing,
             "ready" => Self::Ready,
             "not_runnable" => Self::NotRunnable,
@@ -55,6 +58,53 @@ pub enum RuntimeEnvironmentProvider {
     LocalConnector,
     Harness,
     CloudSandboxManager,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+#[derive(Default)]
+pub enum RuntimeEnvironmentVariableSource {
+    Project,
+    AiRecommended,
+    User,
+    #[default]
+    None,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProjectRuntimeEnvironmentVariableRecord {
+    pub name: String,
+    #[serde(default)]
+    pub project_value: Option<String>,
+    #[serde(default = "default_true")]
+    pub project_value_suitable: bool,
+    #[serde(default)]
+    pub recommended_value: Option<String>,
+    #[serde(default)]
+    pub user_value: Option<String>,
+    #[serde(default)]
+    pub effective_value: Option<String>,
+    #[serde(default)]
+    pub effective_source: RuntimeEnvironmentVariableSource,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub recommendation_reason: Option<String>,
+    #[serde(default)]
+    pub required: bool,
+    #[serde(default)]
+    pub secret: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProjectRuntimeEnvironmentConfigFileRecord {
+    pub path: String,
+    pub format: String,
+    pub content: String,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub source_files: Vec<String>,
 }
 
 impl DbStatus for RuntimeEnvironmentProvider {
@@ -92,6 +142,10 @@ pub struct ProjectRuntimeEnvironmentRecord {
     pub required_services: Value,
     #[serde(default = "empty_object")]
     pub env_vars: Value,
+    #[serde(default)]
+    pub environment_variables: Vec<ProjectRuntimeEnvironmentVariableRecord>,
+    #[serde(default)]
+    pub generated_config_files: Vec<ProjectRuntimeEnvironmentConfigFileRecord>,
     pub last_agent_run_id: Option<String>,
     pub last_error: Option<String>,
     pub created_at: String,
@@ -114,6 +168,10 @@ pub struct ProjectRuntimeEnvironmentImageRecord {
     pub ports: Value,
     #[serde(default = "empty_object")]
     pub env_vars: Value,
+    #[serde(default)]
+    pub dockerfile: Option<String>,
+    #[serde(default)]
+    pub custom_build_script: Option<String>,
     pub status: String,
     pub error: Option<String>,
     pub created_at: String,
@@ -150,10 +208,26 @@ pub struct UpdateProjectRuntimeEnvironmentSettingsRequest {
     pub sandbox_enabled: Option<bool>,
 }
 
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct UpdateProjectRuntimeEnvironmentVariablesRequest {
+    #[serde(default)]
+    pub variables: Vec<ProjectRuntimeEnvironmentVariableOverride>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProjectRuntimeEnvironmentVariableOverride {
+    pub name: String,
+    pub value: String,
+}
+
 pub fn empty_object() -> Value {
     json!({})
 }
 
 pub fn empty_array() -> Value {
     json!([])
+}
+
+fn default_true() -> bool {
+    true
 }

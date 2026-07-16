@@ -16,6 +16,9 @@ pub const SANDBOX_IMAGES_MCP_RESOURCE_ID: &str = "system_mcp_sandbox_images";
 const SANDBOX_IMAGES_MCP_SERVER_NAME: &str = "sandbox_images";
 pub const PROJECT_ENVIRONMENT_MCP_RESOURCE_ID: &str = "system_mcp_project_environment";
 const PROJECT_ENVIRONMENT_MCP_SERVER_NAME: &str = "project_environment";
+pub const PROJECT_RUNTIME_ENVIRONMENT_MCP_RESOURCE_ID: &str =
+    "system_mcp_project_runtime_environment";
+const PROJECT_RUNTIME_ENVIRONMENT_MCP_SERVER_NAME: &str = "project_runtime_environment";
 pub const LOCAL_CONNECTOR_APPROVAL_MCP_RESOURCE_ID: &str = "system_mcp_local_connector_approval";
 const LOCAL_CONNECTOR_APPROVAL_MCP_SERVER_NAME: &str = "local_connector_approval";
 pub const CHATOS_TASK_RUNNER_MCP_RESOURCE_ID: &str = "system_mcp_chatos_task_runner";
@@ -144,6 +147,18 @@ async fn seed_system_routed_mcps(store: &AppStore, admin_user_id: &str) -> Resul
         true,
         &["system", "project", "environment"],
         "project_environment",
+    )
+    .await?;
+    seed_system_routed_mcp(
+        store,
+        admin_user_id,
+        PROJECT_RUNTIME_ENVIRONMENT_MCP_RESOURCE_ID,
+        PROJECT_RUNTIME_ENVIRONMENT_MCP_SERVER_NAME,
+        "Project Runtime Environment",
+        "Read-only initialized runtime environment information for the Task Runner execution agent.",
+        false,
+        &["system", "project", "runtime", "environment", "task_runner"],
+        "task_runner",
     )
     .await?;
     seed_system_routed_mcp(
@@ -278,6 +293,12 @@ fn provider_skills_for_system_mcp(resource_id: &str) -> Option<Value> {
             "Project Environment MCP 使用指南",
             "指导 AI 读取和更新当前项目的运行环境状态。",
             include_str!("../provider_skills/project-environment.md"),
+        ),
+        PROJECT_RUNTIME_ENVIRONMENT_MCP_RESOURCE_ID => (
+            "project_runtime_environment_usage",
+            "项目运行环境信息 MCP 使用指南",
+            "指导 Task Runner 执行 Agent 读取当前项目已经初始化好的环境信息。",
+            include_str!("../provider_skills/project-runtime-environment.md"),
         ),
         LOCAL_CONNECTOR_APPROVAL_MCP_RESOURCE_ID => (
             "local_command_approval_usage",
@@ -478,6 +499,15 @@ async fn seed_agent_bindings(store: &AppStore, admin_user_id: &str) -> Result<()
         )
         .await?;
     }
+    seed_agent_mcp_binding(
+        store,
+        admin_user_id,
+        "task_runner_run_phase",
+        PROJECT_RUNTIME_ENVIRONMENT_MCP_RESOURCE_ID,
+        true,
+        30,
+    )
+    .await?;
     let catalog = internal_skill_catalog()?;
     for (index, item) in catalog.skills.iter().enumerate() {
         seed_agent_resource_binding(
@@ -497,11 +527,16 @@ async fn seed_agent_bindings(store: &AppStore, admin_user_id: &str) -> Result<()
         builtin_resource_id(BuiltinMcpKind::ProjectManagement).as_str(),
     )
     .await?;
+    remove_seed_binding(
+        store,
+        "project_management_agent",
+        SANDBOX_IMAGES_MCP_RESOURCE_ID,
+    )
+    .await?;
     // These bindings mirror fixed tool executors in the current service code.
     for (resource_id, priority) in [
         (builtin_resource_id(BuiltinMcpKind::CodeMaintainerRead), 10),
         (PROJECT_ENVIRONMENT_MCP_RESOURCE_ID.to_string(), 20),
-        (SANDBOX_IMAGES_MCP_RESOURCE_ID.to_string(), 30),
     ] {
         seed_agent_mcp_binding(
             store,
@@ -763,6 +798,7 @@ mod tests {
         for resource_id in [
             SANDBOX_IMAGES_MCP_RESOURCE_ID,
             PROJECT_ENVIRONMENT_MCP_RESOURCE_ID,
+            PROJECT_RUNTIME_ENVIRONMENT_MCP_RESOURCE_ID,
             LOCAL_CONNECTOR_APPROVAL_MCP_RESOURCE_ID,
             CHATOS_TASK_RUNNER_MCP_RESOURCE_ID,
         ] {

@@ -5,6 +5,10 @@ use std::collections::BTreeMap;
 use std::sync::OnceLock;
 use std::time::Duration;
 
+use chatos_sandbox_contract::{
+    CommandExecutionApprovalDecision, GrantedPermissionProfile, PermissionGrantScope,
+    SimpleCommandExecutionApprovalDecision,
+};
 use tokio::sync::{oneshot, Mutex};
 use uuid::Uuid;
 
@@ -13,12 +17,16 @@ use crate::local_now_rfc3339;
 use super::fingerprint::normalized_command;
 use super::types::{CommandApprovalRequest, PendingApprovalItem};
 
+#[cfg(not(test))]
 const APPROVAL_TIMEOUT: Duration = Duration::from_secs(5 * 60);
+#[cfg(test)]
+const APPROVAL_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[derive(Debug)]
 pub(crate) struct PendingApprovalDecision {
-    pub(crate) approved: bool,
-    pub(crate) remember_allow: bool,
+    pub(crate) decision: CommandExecutionApprovalDecision,
+    pub(crate) granted_permissions: Option<GrantedPermissionProfile>,
+    pub(crate) permission_scope: PermissionGrantScope,
     pub(crate) reason: Option<String>,
 }
 
@@ -43,6 +51,21 @@ fn pending_item_for_request(
         risk,
         reason,
         created_at: local_now_rfc3339(),
+        requested_permissions: request.requested_permissions.clone(),
+        available_decisions: vec![
+            CommandExecutionApprovalDecision::Simple(
+                SimpleCommandExecutionApprovalDecision::Accept,
+            ),
+            CommandExecutionApprovalDecision::Simple(
+                SimpleCommandExecutionApprovalDecision::AcceptForSession,
+            ),
+            CommandExecutionApprovalDecision::Simple(
+                SimpleCommandExecutionApprovalDecision::Decline,
+            ),
+            CommandExecutionApprovalDecision::Simple(
+                SimpleCommandExecutionApprovalDecision::Cancel,
+            ),
+        ],
     }
 }
 
@@ -77,13 +100,19 @@ pub(crate) async fn request_pending_approval(
     match result {
         Ok(Ok(decision)) => decision,
         Ok(Err(_)) => PendingApprovalDecision {
-            approved: false,
-            remember_allow: false,
+            decision: CommandExecutionApprovalDecision::Simple(
+                SimpleCommandExecutionApprovalDecision::Cancel,
+            ),
+            granted_permissions: None,
+            permission_scope: PermissionGrantScope::Turn,
             reason: Some("approval request was cancelled".to_string()),
         },
         Err(_) => PendingApprovalDecision {
-            approved: false,
-            remember_allow: false,
+            decision: CommandExecutionApprovalDecision::Simple(
+                SimpleCommandExecutionApprovalDecision::Decline,
+            ),
+            granted_permissions: None,
+            permission_scope: PermissionGrantScope::Turn,
             reason: Some("approval request timed out".to_string()),
         },
     }
@@ -117,24 +146,66 @@ pub(crate) async fn list_pending_approvals() -> Vec<PendingApprovalItem> {
         .collect()
 }
 
-pub(crate) async fn approve_pending_approval(id: &str, remember_allow: bool) -> bool {
-    resolve_pending_approval(
-        id,
-        PendingApprovalDecision {
-            approved: true,
-            remember_allow,
+pub(crate) async fn approve_pending_approval(
+    id: &str,
+    decision: CommandExecutionApprovalDecision,
+    granted_permissions: Option<GrantedPermissionProfile>,
+) -> Result<bool, String> {
+    let mut pending = pending_store().lock().await;
+    let Some(entry) = pending.get_mut(id) else {
+        return Ok(false);
+    };
+    if !entry.item.available_decisions.contains(&decision) {
+        return Err("approval decision is not available for this request".to_string());
+    }
+    let granted_permissions = match (
+        entry.item.requested_permissions.as_ref(),
+        granted_permissions,
+    ) {
+        (Some(requested), Some(granted)) => {
+            if !requested.allows_grant(&granted) {
+                return Err("granted permissions exceed the request".to_string());
+            }
+            Some(granted)
+        }
+        (Some(requested), None) => Some(requested.clone().into()),
+        (None, Some(_)) => {
+            return Err(
+                "approval supplied permissions for a request without an overlay".to_string(),
+            )
+        }
+        (None, None) => None,
+    };
+    let permission_scope = if decision
+        == CommandExecutionApprovalDecision::Simple(
+            SimpleCommandExecutionApprovalDecision::AcceptForSession,
+        ) {
+        PermissionGrantScope::Session
+    } else {
+        PermissionGrantScope::Turn
+    };
+    let Some(tx) = entry.tx.take() else {
+        return Ok(false);
+    };
+    Ok(tx
+        .send(PendingApprovalDecision {
+            decision,
+            granted_permissions,
+            permission_scope,
             reason: None,
-        },
-    )
-    .await
+        })
+        .is_ok())
 }
 
 pub(crate) async fn deny_pending_approval(id: &str, reason: Option<String>) -> bool {
     resolve_pending_approval(
         id,
         PendingApprovalDecision {
-            approved: false,
-            remember_allow: false,
+            decision: CommandExecutionApprovalDecision::Simple(
+                SimpleCommandExecutionApprovalDecision::Decline,
+            ),
+            granted_permissions: None,
+            permission_scope: PermissionGrantScope::Turn,
             reason,
         },
     )
@@ -150,4 +221,69 @@ async fn resolve_pending_approval(id: &str, decision: PendingApprovalDecision) -
         return false;
     };
     tx.send(decision).is_ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::approval::{ApprovalProjectKey, CommandApprovalRequest};
+    use chatos_sandbox_contract::{AdditionalNetworkPermissions, RequestPermissionProfile};
+
+    #[tokio::test]
+    async fn approving_permission_request_defaults_to_the_exact_requested_grant() {
+        let request_id = format!("request-{}", uuid::Uuid::new_v4());
+        let request = CommandApprovalRequest {
+            request_id: request_id.clone(),
+            project_key: ApprovalProjectKey {
+                owner_user_id: "owner".to_string(),
+                device_id: "device".to_string(),
+                workspace_id: "workspace".to_string(),
+                project_id: None,
+                project_root_relative_path: ".".to_string(),
+                project_anchor_relative_path: None,
+            },
+            command: "curl".to_string(),
+            args: Vec::new(),
+            cwd: ".".to_string(),
+            source: "test".to_string(),
+            requested_permissions: Some(RequestPermissionProfile {
+                file_system: None,
+                network: Some(AdditionalNetworkPermissions {
+                    enabled: Some(true),
+                }),
+            }),
+            session_id: Some("session".to_string()),
+        };
+        let waiter = tokio::spawn(async move {
+            request_pending_approval(&request, "high".to_string(), None).await
+        });
+        let id = loop {
+            if let Some(item) = list_pending_approvals()
+                .await
+                .into_iter()
+                .find(|item| item.request_id == request_id)
+            {
+                break item.id;
+            }
+            tokio::task::yield_now().await;
+        };
+        assert!(approve_pending_approval(
+            id.as_str(),
+            CommandExecutionApprovalDecision::Simple(
+                SimpleCommandExecutionApprovalDecision::Accept,
+            ),
+            None,
+        )
+        .await
+        .expect("resolve approval"));
+        let decision = waiter.await.expect("waiter");
+        assert_eq!(decision.permission_scope, PermissionGrantScope::Turn);
+        assert_eq!(
+            decision
+                .granted_permissions
+                .and_then(|grant| grant.network)
+                .and_then(|network| network.enabled),
+            Some(true)
+        );
+    }
 }

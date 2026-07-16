@@ -11,8 +11,15 @@ use tokio::task::JoinHandle;
 
 use crate::config::ClientConfig;
 use crate::connector::connect_loop;
+use crate::local_runtime::{
+    run_local_task_worker_loop, sync_local_plugin_control_plane, LocalAskUserPromptRegistry,
+    LocalDatabase, LocalEnvironmentJobRegistry, LocalMemoryJobRegistry, LocalTurnControlRegistry,
+};
 use crate::model_configs::reconcile_local_model_configs;
 use crate::registration::{ensure_device_registered, ensure_workspace_registered};
+use crate::sandbox::managed_requirements::{
+    load_system_client_config, resolve_startup_managed_requirements,
+};
 use crate::sandbox::types::LocalSandboxRuntime;
 use crate::{tracing_stdout, LocalState};
 
@@ -21,7 +28,13 @@ pub(crate) struct LocalRuntime {
     pub(crate) state_path: PathBuf,
     pub(crate) state: Arc<RwLock<LocalState>>,
     pub(crate) http_client: reqwest::Client,
+    pub(crate) database: Option<LocalDatabase>,
+    pub(crate) turn_control: LocalTurnControlRegistry,
+    pub(crate) memory_jobs: LocalMemoryJobRegistry,
+    pub(crate) ask_user_prompts: LocalAskUserPromptRegistry,
+    pub(crate) environment_jobs: LocalEnvironmentJobRegistry,
     pub(crate) connector_task: Arc<Mutex<Option<JoinHandle<()>>>>,
+    pub(crate) task_worker_task: Arc<Mutex<Option<JoinHandle<()>>>>,
     pub(crate) sandbox_runtime: LocalSandboxRuntime,
 }
 
@@ -30,14 +43,63 @@ impl LocalRuntime {
         state_path: PathBuf,
         state: Arc<RwLock<LocalState>>,
         http_client: reqwest::Client,
+        database: LocalDatabase,
     ) -> Self {
         Self {
             state_path,
             state,
             http_client,
+            database: Some(database),
+            turn_control: LocalTurnControlRegistry::default(),
+            memory_jobs: LocalMemoryJobRegistry::default(),
+            ask_user_prompts: LocalAskUserPromptRegistry::default(),
+            environment_jobs: LocalEnvironmentJobRegistry::default(),
             connector_task: Arc::new(Mutex::new(None)),
+            task_worker_task: Arc::new(Mutex::new(None)),
             sandbox_runtime: LocalSandboxRuntime::default(),
         }
+    }
+
+    pub(crate) fn local_database(&self) -> Result<&LocalDatabase> {
+        self.database
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("local runtime database is unavailable"))
+    }
+
+    pub(crate) async fn reload_managed_requirements_for_current_identity(&self) -> Result<()> {
+        let result = async {
+            let client_config = load_system_client_config()?;
+            let state_snapshot = self.state.read().await.clone();
+            let connector_config =
+                ClientConfig::from_state(&state_snapshot, self.state_path.clone());
+            let resolved = resolve_startup_managed_requirements(
+                &self.http_client,
+                self.state_path.as_path(),
+                &state_snapshot,
+                connector_config.as_ref(),
+                client_config,
+            )
+            .await?;
+            {
+                let mut state = self.state.write().await;
+                state
+                    .sandbox
+                    .load_runtime_permission_profile_layers(resolved.document)?;
+            }
+            if let Some(refresh) = resolved.background_refresh {
+                refresh.spawn(self.http_client.clone());
+            }
+            Ok(())
+        }
+        .await;
+        if let Err(err) = result {
+            let mut state = self.state.write().await;
+            state
+                .sandbox
+                .block_runtime_permission_profile_layers(format!("{err:#}"));
+            return Err(err);
+        }
+        Ok(())
     }
 
     pub(crate) async fn sync_saved_workspaces_if_needed(&self) -> Result<()> {
@@ -101,6 +163,15 @@ impl LocalRuntime {
                 }
             }
         }
+        match sync_local_plugin_control_plane(self).await {
+            Ok(synced) if synced > 0 => tracing_stdout(
+                format!("synced {synced} local Plugin capability snapshots").as_str(),
+            ),
+            Ok(_) => {}
+            Err(err) => {
+                tracing_stdout(format!("keep cached Plugin capability snapshots: {err}").as_str())
+            }
+        }
         let config = {
             let state = self.state.read().await;
             ClientConfig::from_state(&state, self.state_path.clone())
@@ -116,6 +187,7 @@ impl LocalRuntime {
             state.save(self.state_path.as_path())?;
             device_id
         };
+        let database = self.local_database()?.clone();
 
         let mut current = self.connector_task.lock().await;
         if let Some(handle) = current.take() {
@@ -138,6 +210,7 @@ impl LocalRuntime {
                 if let Err(err) = connect_loop(
                     config,
                     runtime.state.clone(),
+                    database.clone(),
                     runtime.sandbox_runtime.clone(),
                     device_id,
                 )
@@ -151,5 +224,19 @@ impl LocalRuntime {
             }
         }));
         Ok(())
+    }
+
+    pub(crate) async fn start_local_task_worker(&self) {
+        let mut current = self.task_worker_task.lock().await;
+        if current.as_ref().is_some_and(|handle| !handle.is_finished()) {
+            return;
+        }
+        if let Some(handle) = current.take() {
+            handle.abort();
+        }
+        let runtime = self.clone();
+        *current = Some(tokio::spawn(async move {
+            run_local_task_worker_loop(runtime).await;
+        }));
     }
 }

@@ -5,7 +5,10 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 use anyhow::{anyhow, Context, Result};
-use chatos_sandbox_contract::{ApprovalPolicy, ApprovalReviewer};
+use chatos_sandbox_contract::{
+    ApprovalPolicy, ApprovalReviewer, GrantedPermissionProfile, PermissionProfileId,
+    SandboxBackendKind,
+};
 use serde_json::json;
 use serde_json::Value;
 
@@ -18,6 +21,7 @@ use crate::history::{
     CommandExecutionContext, CommandHistoryRecorder, SandboxToolCallDetails,
 };
 use crate::relay::RelayRequest;
+use crate::sandbox::process::call_native_sandbox_mcp;
 use crate::sandbox::types::{LocalSandboxLease, LocalSandboxRuntime};
 use crate::workspace::paths::relative_to_workspace;
 use crate::{local_now_rfc3339, LocalState};
@@ -31,8 +35,19 @@ pub(crate) async fn proxy_local_sandbox_mcp(
     history_recorder: &CommandHistoryRecorder,
 ) -> Result<(u16, BTreeMap<String, String>, Value)> {
     let started_at = local_now_rfc3339();
-    let tool_call = sandbox_tool_call_details(&request.body);
+    let tool_call = match sandbox_tool_call_details(&request.body) {
+        Ok(tool_call) => tool_call,
+        Err(reason) => {
+            let denied = approval_denied_sandbox_body("permission_request", ".", reason.as_str());
+            return Ok((
+                200,
+                BTreeMap::new(),
+                sandbox_mcp_text_response(&request.body, denied),
+            ));
+        }
+    };
     let lease = require_local_sandbox_lease(sandbox_runtime, sandbox_id).await?;
+    let mut forwarded_body = request.body.clone();
     if let Some(tool_call) = tool_call.as_ref() {
         if let Some(response) = approve_sandbox_tool_call(
             request,
@@ -42,21 +57,31 @@ pub(crate) async fn proxy_local_sandbox_mcp(
             history_recorder,
             tool_call,
             started_at.as_str(),
+            &mut forwarded_body,
         )
         .await?
         {
             return Ok(response);
         }
     }
-    let endpoint = require_local_sandbox_agent_endpoint(&lease)?;
-    let response = http_client
-        .post(format!("{}/mcp", endpoint.trim_end_matches('/')))
-        .bearer_auth(lease.agent_token.as_str())
-        .json(&request.body)
-        .send()
-        .await
-        .context("proxy local sandbox mcp request")?;
-    let result = local_sandbox_http_response(response).await?;
+    let result = match lease.effective_policy.sandbox_mode {
+        SandboxBackendKind::Docker => {
+            let endpoint = require_local_sandbox_agent_endpoint(&lease)?;
+            let response = http_client
+                .post(format!("{}/mcp", endpoint.trim_end_matches('/')))
+                .bearer_auth(lease.agent_token.as_str())
+                .json(&forwarded_body)
+                .send()
+                .await
+                .context("proxy local Docker sandbox mcp request")?;
+            local_sandbox_http_response(response).await?
+        }
+        SandboxBackendKind::LocalProcess => (
+            200,
+            BTreeMap::new(),
+            call_native_sandbox_mcp(sandbox_runtime, sandbox_id, &forwarded_body).await?,
+        ),
+    };
     if let Some(tool_call) = tool_call {
         history_recorder
             .append(command_history_entry_for_sandbox_tool_call(
@@ -85,12 +110,35 @@ async fn approve_sandbox_tool_call(
     history_recorder: &CommandHistoryRecorder,
     tool_call: &SandboxToolCallDetails,
     started_at: &str,
+    forwarded_body: &mut Value,
 ) -> Result<Option<(u16, BTreeMap<String, String>, Value)>> {
     if !tool_call.requires_approval {
         return Ok(None);
     }
-    let Some(mode) = approval_mode_for_lease(lease) else {
+    let Some(requested_permissions) = tool_call.requested_permissions.clone() else {
+        return Ok(Some(denied_sandbox_tool_response(
+            request,
+            tool_call,
+            "permission elevation request is missing".to_string(),
+        )));
+    };
+    if lease.effective_policy.permission_profile_id == PermissionProfileId::FullAccess {
+        remove_permission_control_fields(forwarded_body);
         return Ok(None);
+    }
+    if lease.effective_policy.sandbox_mode != SandboxBackendKind::LocalProcess {
+        return Ok(Some(denied_sandbox_tool_response(
+            request,
+            tool_call,
+            "temporary permission overlays are not supported by this sandbox backend".to_string(),
+        )));
+    }
+    let Some(mode) = approval_mode_for_lease(lease) else {
+        return Ok(Some(denied_sandbox_tool_response(
+            request,
+            tool_call,
+            "approval policy forbids temporary permission elevation".to_string(),
+        )));
     };
     let workspace = state
         .workspace_by_id(request.workspace_id.as_str())
@@ -112,32 +160,106 @@ async fn approve_sandbox_tool_call(
             args: tool_call.args.clone(),
             cwd: cwd.clone(),
             source: "task_runner_sandbox".to_string(),
+            requested_permissions: Some(requested_permissions.clone()),
+            session_id: Some(sandbox_id.to_string()),
         },
         mode,
     )
     .await?;
-    let ApprovalDecision::Denied { reason, .. } = approval else {
-        return Ok(None);
-    };
-    let denied =
-        approval_denied_sandbox_body(tool_call.command.as_str(), cwd.as_str(), reason.as_str());
-    let response_body = sandbox_mcp_text_response(&request.body, denied);
-    history_recorder
-        .append(command_history_entry_for_sandbox_tool_call(
-            state,
-            request,
-            &CommandExecutionContext::task_runner_sandbox(
+    let granted_permissions = match approval {
+        ApprovalDecision::Approved {
+            granted_permissions: Some(granted_permissions),
+            ..
+        } => granted_permissions,
+        ApprovalDecision::Approved {
+            granted_permissions: None,
+            ..
+        } => {
+            return Ok(Some(denied_sandbox_tool_response(
                 request,
-                sandbox_id,
-                tool_call.tool_name.as_str(),
-            ),
-            tool_call.clone(),
-            200,
-            &response_body,
-            started_at.to_string(),
-        ))
-        .await;
-    Ok(Some((200, BTreeMap::new(), response_body)))
+                tool_call,
+                "approval did not include a permission grant".to_string(),
+            )));
+        }
+        ApprovalDecision::Denied { reason, .. } => {
+            let denied = approval_denied_sandbox_body(
+                tool_call.command.as_str(),
+                cwd.as_str(),
+                reason.as_str(),
+            );
+            let response_body = sandbox_mcp_text_response(&request.body, denied);
+            history_recorder
+                .append(command_history_entry_for_sandbox_tool_call(
+                    state,
+                    request,
+                    &CommandExecutionContext::task_runner_sandbox(
+                        request,
+                        sandbox_id,
+                        tool_call.tool_name.as_str(),
+                    ),
+                    tool_call.clone(),
+                    200,
+                    &response_body,
+                    started_at.to_string(),
+                ))
+                .await;
+            return Ok(Some((200, BTreeMap::new(), response_body)));
+        }
+    };
+    if !requested_permissions.allows_grant(&granted_permissions) {
+        return Ok(Some(denied_sandbox_tool_response(
+            request,
+            tool_call,
+            "approved permission grant exceeded the command request".to_string(),
+        )));
+    }
+    install_granted_permissions(forwarded_body, &granted_permissions)?;
+    Ok(None)
+}
+
+fn denied_sandbox_tool_response(
+    request: &RelayRequest,
+    tool_call: &SandboxToolCallDetails,
+    reason: String,
+) -> (u16, BTreeMap<String, String>, Value) {
+    let cwd = tool_call.cwd.as_deref().unwrap_or(".");
+    let denied = approval_denied_sandbox_body(tool_call.command.as_str(), cwd, reason.as_str());
+    (
+        200,
+        BTreeMap::new(),
+        sandbox_mcp_text_response(&request.body, denied),
+    )
+}
+
+fn command_arguments_mut(body: &mut Value) -> Option<&mut serde_json::Map<String, Value>> {
+    if body.get("method").and_then(Value::as_str) == Some("tools/call") {
+        return body
+            .get_mut("params")?
+            .get_mut("arguments")?
+            .as_object_mut();
+    }
+    body.get_mut("arguments")?.as_object_mut()
+}
+
+fn remove_permission_control_fields(body: &mut Value) {
+    if let Some(arguments) = command_arguments_mut(body) {
+        arguments.remove("additionalPermissions");
+        arguments.remove("_grantedPermissions");
+    }
+}
+
+fn install_granted_permissions(
+    body: &mut Value,
+    granted_permissions: &GrantedPermissionProfile,
+) -> Result<()> {
+    let arguments = command_arguments_mut(body)
+        .ok_or_else(|| anyhow!("sandbox command arguments are unavailable"))?;
+    arguments.remove("_grantedPermissions");
+    arguments.insert(
+        "_grantedPermissions".to_string(),
+        serde_json::to_value(granted_permissions).context("encode granted permission overlay")?,
+    );
+    Ok(())
 }
 
 fn approval_mode_for_lease(lease: &LocalSandboxLease) -> Option<ApprovalMode> {

@@ -55,6 +55,8 @@ export interface AiModelConfigCreatePayload {
   thinking_level?: string;
   task_usage_scenario?: string;
   task_thinking_level?: string;
+  temperature?: number | null;
+  max_output_tokens?: number | null;
   api_key: string;
   base_url: string;
   enabled: boolean;
@@ -72,6 +74,10 @@ export interface AiModelConfigUpdatePayload {
   thinking_level?: string;
   task_usage_scenario?: string;
   task_thinking_level?: string;
+  temperature?: number | null;
+  clear_temperature?: boolean;
+  max_output_tokens?: number | null;
+  clear_max_output_tokens?: boolean;
   api_key?: string;
   clear_api_key?: boolean;
   base_url?: string;
@@ -90,6 +96,8 @@ export interface AiModelConfigResponse {
   thinking_level?: string;
   task_usage_scenario?: string | null;
   task_thinking_level?: string | null;
+  temperature?: number | null;
+  max_output_tokens?: number | null;
   api_key?: string;
   has_api_key?: boolean;
   base_url?: string;
@@ -157,6 +165,8 @@ export interface AiModelSettingsResponse {
   memory_summary_thinking_level?: string | null;
   project_management_agent_model_config_id?: string | null;
   project_management_agent_thinking_level?: string | null;
+  environment_initialization_model_config_id?: string | null;
+  environment_initialization_thinking_level?: string | null;
   updated_at?: string;
   sync_warnings?: string[];
 }
@@ -167,6 +177,8 @@ export interface AiModelSettingsUpdatePayload {
   memory_summary_thinking_level?: string | null;
   project_management_agent_model_config_id?: string | null;
   project_management_agent_thinking_level?: string | null;
+  environment_initialization_model_config_id?: string | null;
+  environment_initialization_thinking_level?: string | null;
 }
 
 export interface AiProviderModelOptionResponse {

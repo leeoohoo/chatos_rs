@@ -96,6 +96,8 @@ pub(crate) async fn ensure_workspace_registered(
             absolute_root,
             alias: workspace.local_path_alias,
             fingerprint: workspace.local_path_fingerprint,
+            project_config_trust: existing_index
+                .and_then(|index| state.workspaces[index].project_config_trust.clone()),
         };
         if let Some(index) = existing_index {
             state.workspaces[index] = workspace_state;
@@ -135,6 +137,8 @@ pub(crate) async fn ensure_workspace_registered(
         absolute_root,
         alias: workspace.local_path_alias,
         fingerprint: workspace.local_path_fingerprint,
+        project_config_trust: existing_index
+            .and_then(|index| state.workspaces[index].project_config_trust.clone()),
     };
     if let Some(index) = existing_index {
         state.workspaces[index] = workspace_state;

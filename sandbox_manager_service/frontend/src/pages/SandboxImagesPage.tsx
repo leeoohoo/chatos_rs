@@ -8,6 +8,7 @@ import dayjs from 'dayjs';
 import { useEffect, useMemo, useState } from 'react';
 
 import { sandboxesApi } from '../api/sandboxes';
+import { QueryErrorAlert } from '../components/QueryErrorAlert';
 import { useI18n } from '../i18n';
 import type {
   SandboxImageFeatureRecord,
@@ -51,6 +52,7 @@ export function SandboxImagesPage() {
   });
   const jobs = jobsQuery.data ?? [];
   const runtimes = imagesQuery.data?.features ?? [];
+  const queryError = imagesQuery.error ?? jobsQuery.error;
 
   useEffect(() => {
     persistSelectedRuntimeVersions(selectedRuntimeVersions);
@@ -123,6 +125,17 @@ export function SandboxImagesPage() {
           {t('common.refresh')}
         </Button>
       </div>
+
+      <QueryErrorAlert
+        error={queryError}
+        loadFailedTitle={t('image.loadFailed')}
+        authorizationDescription={t('image.authorizationFailed')}
+        retryLabel={t('common.retry')}
+        onRetry={() => {
+          void imagesQuery.refetch();
+          void jobsQuery.refetch();
+        }}
+      />
 
       <div className="surface">
         <Space direction="vertical" size={14} style={{ width: '100%' }}>

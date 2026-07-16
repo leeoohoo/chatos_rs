@@ -412,6 +412,7 @@ interface CreateProjectModalProps {
   selectedLocalDirectoryPath?: string;
   selectedLocalWorkspaceId?: string;
   submitting?: boolean;
+  allowLocalConnector?: boolean;
   onClose: () => void;
   onSourceModeChange?: (value: ResourceSourceMode) => void;
   onProjectRootChange: (value: string) => void;
@@ -446,6 +447,7 @@ export const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
   selectedLocalDirectoryPath = '',
   selectedLocalWorkspaceId = '',
   submitting = false,
+  allowLocalConnector = true,
   onClose,
   onSourceModeChange = () => {},
   onProjectRootChange,
@@ -471,7 +473,7 @@ export const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
       pathValue={projectRoot}
       error={projectError}
       fallbackName="Project"
-      sourceMode={sourceMode}
+      sourceMode={allowLocalConnector ? sourceMode : 'server'}
       localConnectorWorkspaces={localConnectorWorkspaces}
       localConnectorLoading={localConnectorLoading}
       localConnectorError={localConnectorError}
@@ -484,6 +486,7 @@ export const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
       selectedLocalWorkspaceId={selectedLocalWorkspaceId}
       submitting={submitting}
       submittingLabel={t('sessionList.resource.creatingProject')}
+      hideSourceModeSwitch={!allowLocalConnector}
       serverContent={(
         <div className="space-y-3">
           <label className="block text-sm text-muted-foreground">

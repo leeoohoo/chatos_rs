@@ -31,6 +31,7 @@ import type {
   ReviewRepairStatusResponse,
   SessionSummariesListResponse,
   RuntimeGuidanceCommandResponse,
+  StopChatResponse,
   StreamChatAttachmentPayload,
   StreamChatCommandResponse,
   StreamChatModelConfigPayload,
@@ -46,6 +47,10 @@ import type {
   UserSettingsResponse,
 } from '../types';
 import type ApiClient from '../../client';
+import {
+  assertCloudSessionOperation,
+  isLocalRuntimeSessionId,
+} from '../../localRuntime';
 
 export interface RuntimeFacade {
   sendChatCommand(
@@ -63,6 +68,7 @@ export interface RuntimeFacade {
     content: string,
     attachments?: StreamChatAttachmentPayload[],
   ): Promise<RuntimeGuidanceCommandResponse>;
+  stopChat(conversationId: string, turnId?: string | null): Promise<StopChatResponse>;
   createAttachmentUploads(
     conversationId: string,
     attachments: AttachmentUploadRequestItem[],
@@ -124,6 +130,14 @@ export interface RuntimeFacade {
   clearConversationSummaries(conversationId: string): Promise<{ success?: boolean }>;
   runConversationReviewRepair(conversationId: string): Promise<ReviewRepairResponse>;
   getConversationReviewRepairStatus(conversationId: string): Promise<ReviewRepairStatusResponse>;
+  getConversationMemoryRecalls(
+    conversationId: string,
+    options?: { limit?: number },
+  ): Promise<unknown[]>;
+  deleteConversationMemoryRecall(
+    conversationId: string,
+    recallId: string,
+  ): Promise<{ success?: boolean; deleted_recalls?: number }>;
   register(data: RegisterPayload): Promise<AuthResponse>;
   sendRegisterEmailCode(data: SendRegisterCodePayload): Promise<SendRegisterCodeResponse>;
   login(data: RegisterPayload): Promise<AuthResponse>;
@@ -136,6 +150,16 @@ export interface RuntimeFacade {
 
 export const runtimeFacade: RuntimeFacade & ThisType<ApiClient> = {
   async sendChatCommand(conversationId, content, modelConfig, userId, attachments, reasoningEnabled, options) {
+    if (isLocalRuntimeSessionId(conversationId)) {
+      return this.getLocalRuntimeClient().sendChatCommand(
+        conversationId,
+        content,
+        modelConfig,
+        attachments,
+        reasoningEnabled,
+        options,
+      );
+    }
     return streamApi.sendChatCommand(
       this.getStreamApiContext(),
       conversationId,
@@ -148,6 +172,14 @@ export const runtimeFacade: RuntimeFacade & ThisType<ApiClient> = {
     );
   },
   async sendRuntimeGuidance(conversationId, turnId, content, attachments) {
+    if (isLocalRuntimeSessionId(conversationId)) {
+      return this.getLocalRuntimeClient().sendRuntimeGuidance(
+        conversationId,
+        turnId,
+        content,
+        attachments,
+      );
+    }
     return this.getRequestFn()<RuntimeGuidanceCommandResponse>('/agent/chat/guidance', {
       method: 'POST',
       body: JSON.stringify({
@@ -158,7 +190,20 @@ export const runtimeFacade: RuntimeFacade & ThisType<ApiClient> = {
       }),
     });
   },
+  async stopChat(conversationId, turnId) {
+    if (isLocalRuntimeSessionId(conversationId)) {
+      return this.getLocalRuntimeClient().stopChat(conversationId, turnId);
+    }
+    return this.getRequestFn()<StopChatResponse>('/agent/chat/stop', {
+      method: 'POST',
+      body: JSON.stringify({
+        conversation_id: conversationId,
+        turn_id: turnId || undefined,
+      }),
+    });
+  },
   async createAttachmentUploads(conversationId, attachments) {
+    assertCloudSessionOperation(conversationId, '附件上传');
     return this.getRequestFn()<AttachmentUploadsResponse>('/attachments/uploads', {
       method: 'POST',
       body: JSON.stringify({
@@ -168,6 +213,10 @@ export const runtimeFacade: RuntimeFacade & ThisType<ApiClient> = {
     });
   },
   async getAgentTools(options) {
+    const conversationId = options?.conversationId;
+    if (typeof conversationId === 'string' && isLocalRuntimeSessionId(conversationId)) {
+      return this.getLocalRuntimeClient().getAgentTools(conversationId);
+    }
     const query = buildQuery({
       conversation_id: options?.conversationId,
       mcp_enabled: typeof options?.mcpEnabled === 'boolean' ? options.mcpEnabled : undefined,
@@ -185,24 +234,45 @@ export const runtimeFacade: RuntimeFacade & ThisType<ApiClient> = {
     return this.getRequestFn()<AgentToolsResponse>(`/agent/tools${query}`);
   },
   async getTaskManagerTasks(conversationId, options) {
+    if (isLocalRuntimeSessionId(conversationId)) {
+      return this.getLocalRuntimeClient().getTaskManagerTasks(conversationId, options);
+    }
     return tasksApi.getTaskManagerTasks(this.getRequestFn(), conversationId, options);
   },
   async updateTaskManagerTask(conversationId, taskId, payload) {
+    if (isLocalRuntimeSessionId(conversationId)) {
+      return this.getLocalRuntimeClient().updateTaskManagerTask(conversationId, taskId, payload);
+    }
     return tasksApi.updateTaskManagerTask(this.getRequestFn(), conversationId, taskId, payload);
   },
   async completeTaskManagerTask(conversationId, taskId, payload) {
+    if (isLocalRuntimeSessionId(conversationId)) {
+      return this.getLocalRuntimeClient().completeTaskManagerTask(conversationId, taskId, payload);
+    }
     return tasksApi.completeTaskManagerTask(this.getRequestFn(), conversationId, taskId, payload);
   },
   async deleteTaskManagerTask(conversationId, taskId) {
+    if (isLocalRuntimeSessionId(conversationId)) {
+      return this.getLocalRuntimeClient().deleteTaskManagerTask(conversationId, taskId);
+    }
     return tasksApi.deleteTaskManagerTask(this.getRequestFn(), conversationId, taskId);
   },
   async listAskUserPrompts(conversationId, options) {
+    if (isLocalRuntimeSessionId(conversationId)) {
+      return this.getLocalRuntimeClient().listAskUserPrompts(conversationId, options);
+    }
     return askUserPromptsApi.listAskUserPrompts(this.getRequestFn(), conversationId, options);
   },
   async submitAskUserPrompt(promptId, payload) {
+    if (isLocalRuntimeSessionId(payload.conversation_id || payload.conversationId)) {
+      return this.getLocalRuntimeClient().submitAskUserPrompt(promptId, payload);
+    }
     return askUserPromptsApi.submitAskUserPrompt(this.getRequestFn(), promptId, payload);
   },
   async cancelAskUserPrompt(promptId, payload) {
+    if (isLocalRuntimeSessionId(payload.conversation_id || payload.conversationId)) {
+      return this.getLocalRuntimeClient().cancelAskUserPrompt(promptId, payload);
+    }
     return askUserPromptsApi.cancelAskUserPrompt(this.getRequestFn(), promptId, payload);
   },
   async notepadInit() {
@@ -242,19 +312,46 @@ export const runtimeFacade: RuntimeFacade & ThisType<ApiClient> = {
     return notepadApi.searchNotepadNotes(this.getRequestFn(), options);
   },
   async getConversationSummaries(conversationId, options) {
+    if (isLocalRuntimeSessionId(conversationId)) {
+      return this.getLocalRuntimeClient().getConversationSummaries(conversationId, options);
+    }
     return summaryApi.getConversationSummaries(this.getRequestFn(), conversationId, options);
   },
   async deleteConversationSummary(conversationId, summaryId) {
+    if (isLocalRuntimeSessionId(conversationId)) {
+      return this.getLocalRuntimeClient().deleteConversationSummary(conversationId, summaryId);
+    }
     return summaryApi.deleteConversationSummary(this.getRequestFn(), conversationId, summaryId);
   },
   async clearConversationSummaries(conversationId) {
+    if (isLocalRuntimeSessionId(conversationId)) {
+      return this.getLocalRuntimeClient().clearConversationSummaries(conversationId);
+    }
     return summaryApi.clearConversationSummaries(this.getRequestFn(), conversationId);
   },
   async runConversationReviewRepair(conversationId) {
+    if (isLocalRuntimeSessionId(conversationId)) {
+      return this.getLocalRuntimeClient().runConversationReviewRepair(conversationId);
+    }
     return summaryApi.runConversationReviewRepair(this.getRequestFn(), conversationId);
   },
   async getConversationReviewRepairStatus(conversationId) {
+    if (isLocalRuntimeSessionId(conversationId)) {
+      return this.getLocalRuntimeClient().getConversationReviewRepairStatus(conversationId);
+    }
     return summaryApi.getConversationReviewRepairStatus(this.getRequestFn(), conversationId);
+  },
+  async getConversationMemoryRecalls(conversationId, options) {
+    if (isLocalRuntimeSessionId(conversationId)) {
+      return this.getLocalRuntimeClient().getConversationMemoryRecalls(conversationId, options);
+    }
+    return [];
+  },
+  async deleteConversationMemoryRecall(conversationId, recallId) {
+    if (isLocalRuntimeSessionId(conversationId)) {
+      return this.getLocalRuntimeClient().deleteConversationMemoryRecall(conversationId, recallId);
+    }
+    return { success: false, deleted_recalls: 0 };
   },
   async register(data) {
     return accountApi.register(this.getRequestFn(), data);

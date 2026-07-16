@@ -5,17 +5,12 @@ import {
   Alert,
   Button,
   Descriptions,
-  Form,
-  Input,
-  InputNumber,
   Segmented,
   Space,
   Statistic,
-  Switch,
   Tag,
   Typography,
 } from 'antd';
-import type { FormInstance } from 'antd';
 
 import { McpPromptPreviewCard } from '../../components/McpPromptPreviewCard';
 import type { TranslateFn } from '../../i18n/I18nProvider';
@@ -28,7 +23,6 @@ import type {
 import {
   errorMessage,
   formatSecondsFromMs,
-  type RuntimeSettingsFormValues,
   type SettingsPromptLocale,
 } from './settingsPageUtils';
 
@@ -38,10 +32,7 @@ type SettingsOverviewTabProps = {
   mcpServer?: McpServerInfo;
   implementedBuiltinCount: number;
   runtimeDefaultCount: number;
-  form: FormInstance<RuntimeSettingsFormValues>;
-  saveLoading: boolean;
   onOpenMcpCatalog: () => void;
-  onSubmit: (values: RuntimeSettingsFormValues) => void;
 };
 
 export function SettingsOverviewTab({
@@ -50,10 +41,7 @@ export function SettingsOverviewTab({
   mcpServer,
   implementedBuiltinCount,
   runtimeDefaultCount,
-  form,
-  saveLoading,
   onOpenMcpCatalog,
-  onSubmit,
 }: SettingsOverviewTabProps) {
   const storeModeColor = config?.store_mode === 'mongo' ? 'green' : 'gold';
 
@@ -158,11 +146,25 @@ export function SettingsOverviewTab({
       ) : null}
 
       {config ? (
-        <RuntimeSettingsForm
-          t={t}
-          form={form}
-          saveLoading={saveLoading}
-          onSubmit={onSubmit}
+        <Alert
+          type="info"
+          showIcon
+          message="运行参数由全局配置中心统一管理"
+          description={
+            <Space direction="vertical" size="small">
+              <Typography.Text>
+                当前页面仅展示实际生效值，不再允许在 Task Runner 内单独修改。
+              </Typography.Text>
+              <Button
+                href={(import.meta.env.VITE_CONFIG_CENTER_URL as string | undefined) || 'http://localhost:39271'}
+                target="_blank"
+                rel="noreferrer"
+                size="small"
+              >
+                打开配置中心
+              </Button>
+            </Space>
+          }
         />
       ) : null}
 
@@ -202,126 +204,6 @@ export function SettingsOverviewTab({
           </Descriptions.Item>
         </Descriptions>
       ) : null}
-    </Space>
-  );
-}
-
-type RuntimeSettingsFormProps = {
-  t: TranslateFn;
-  form: FormInstance<RuntimeSettingsFormValues>;
-  saveLoading: boolean;
-  onSubmit: (values: RuntimeSettingsFormValues) => void;
-};
-
-function RuntimeSettingsForm({ t, form, saveLoading, onSubmit }: RuntimeSettingsFormProps) {
-  return (
-    <Space direction="vertical" size="middle" style={{ width: '100%' }}>
-      <Space direction="vertical" size={0}>
-        <Typography.Title level={5} style={{ margin: 0 }}>
-          {t('settings.runtimeSection')}
-        </Typography.Title>
-        <Typography.Text type="secondary">{t('settings.roundLimitHelp')}</Typography.Text>
-        <Typography.Text type="secondary">{t('settings.executionTimeoutHelp')}</Typography.Text>
-        <Typography.Text type="secondary">{t('settings.toolResultBudgetHelp')}</Typography.Text>
-      </Space>
-      <Form<RuntimeSettingsFormValues> layout="vertical" form={form} onFinish={onSubmit}>
-        <Space align="end" wrap>
-          <Form.Item
-            name="task_execution_max_iterations"
-            label={t('settings.currentRoundLimit')}
-            rules={[
-              {
-                required: true,
-                message: t('settings.roundLimitRequired'),
-              },
-            ]}
-          >
-            <InputNumber min={1} style={{ width: 220 }} />
-          </Form.Item>
-          <Form.Item
-            name="execution_timeout_seconds"
-            label={t('settings.currentExecutionTimeout')}
-            rules={[
-              {
-                required: true,
-                message: t('settings.executionTimeoutRequired'),
-              },
-            ]}
-          >
-            <InputNumber min={1} precision={0} style={{ width: 220 }} />
-          </Form.Item>
-          <Form.Item
-            name="tool_result_model_max_chars"
-            label={t('settings.currentToolResultLimit')}
-            rules={[
-              {
-                required: true,
-                message: t('settings.toolResultLimitRequired'),
-              },
-            ]}
-          >
-            <InputNumber min={1} style={{ width: 220 }} />
-          </Form.Item>
-          <Form.Item
-            name="tool_results_model_total_max_chars"
-            label={t('settings.currentToolResultsBudget')}
-            rules={[
-              {
-                required: true,
-                message: t('settings.toolResultsBudgetRequired'),
-              },
-            ]}
-          >
-            <InputNumber min={1} style={{ width: 220 }} />
-          </Form.Item>
-          <Form.Item
-            name="sandbox_enabled"
-            label={t('settings.sandboxEnabled')}
-            valuePropName="checked"
-            help={t('settings.sandboxEnabledHelp')}
-          >
-            <Switch
-              checkedChildren={t('settings.sandboxSwitchOn')}
-              unCheckedChildren={t('settings.sandboxSwitchOff')}
-            />
-          </Form.Item>
-          <Form.Item shouldUpdate noStyle>
-            {({ getFieldValue }) =>
-              getFieldValue('sandbox_enabled') ? (
-                <>
-                  <Form.Item
-                    name="sandbox_manager_base_url"
-                    label={t('settings.sandboxManagerBaseUrl')}
-                    rules={[
-                      {
-                        required: true,
-                        message: t('settings.sandboxManagerBaseUrlRequired'),
-                      },
-                    ]}
-                  >
-                    <Input style={{ width: 280 }} placeholder="http://127.0.0.1:8095" />
-                  </Form.Item>
-                  <Form.Item
-                    name="sandbox_lease_ttl_seconds"
-                    label={t('settings.sandboxLeaseTtl')}
-                    rules={[
-                      {
-                        required: true,
-                        message: t('settings.sandboxLeaseTtlRequired'),
-                      },
-                    ]}
-                  >
-                    <InputNumber min={60} precision={0} style={{ width: 220 }} />
-                  </Form.Item>
-                </>
-              ) : null
-            }
-          </Form.Item>
-          <Button type="primary" onClick={() => form.submit()} loading={saveLoading}>
-            {t('common.save')}
-          </Button>
-        </Space>
-      </Form>
     </Space>
   );
 }

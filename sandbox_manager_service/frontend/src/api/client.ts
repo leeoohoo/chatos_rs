@@ -8,6 +8,17 @@ const RAW_API_BASE_URL = (
 const API_BASE_URL = RAW_API_BASE_URL.replace(/\/+$/, '').replace(/\/api$/, '');
 const AUTH_TOKEN_STORAGE_KEY = 'user_service_auth_token';
 
+export class ApiRequestError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+    readonly code?: string,
+  ) {
+    super(message);
+    this.name = 'ApiRequestError';
+  }
+}
+
 function getAuthToken(): string | null {
   if (typeof window === 'undefined') {
     return null;
@@ -49,15 +60,17 @@ export async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(buildApiUrl(path), { ...init, headers });
   if (!response.ok) {
     let message = response.statusText;
+    let code: string | undefined;
     try {
-      const data = (await response.json()) as { error?: { message?: string } };
+      const data = (await response.json()) as { error?: { code?: string; message?: string } };
+      code = data.error?.code;
       if (data.error?.message) {
         message = data.error.message;
       }
     } catch {
       // keep status text
     }
-    throw new Error(message);
+    throw new ApiRequestError(message || `HTTP ${response.status}`, response.status, code);
   }
   if (response.status === 204) {
     return undefined as T;

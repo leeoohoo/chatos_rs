@@ -79,12 +79,6 @@ pub(crate) async fn run_auto_approval_agent(
         state.auth.as_ref().map(|auth| auth.access_token.as_str()),
     )
     .await?;
-    let max_iterations = state
-        .runtime_settings
-        .clone()
-        .normalized()
-        .ai_agent_max_iterations;
-
     let run_id = format!("approval-agent-{}", Uuid::new_v4());
     let conversation_id = memory
         .as_ref()
@@ -120,7 +114,7 @@ pub(crate) async fn run_auto_approval_agent(
     let turn_request = AgentTurnRequest::new(model_config, conversation_id, run_id, prompt)
         .with_tool_executor(executor)
         .with_memory(agent_memory)
-        .with_max_iterations(max_iterations)
+        .with_max_iterations(capability_policy.max_iterations)
         .with_metadata(metadata);
     AgentExecutor::new()
         .run(&COMMAND_APPROVAL_AGENT, turn_request)
@@ -151,10 +145,16 @@ pub(crate) async fn run_auto_approval_agent(
 #[derive(Debug, Deserialize)]
 struct ApprovalCapabilityPolicy {
     policy_revision: String,
+    #[serde(default = "default_agent_max_iterations")]
+    max_iterations: usize,
     code_maintainer_read: bool,
     approval_decision: bool,
     #[serde(default)]
     provider_skills_prompt: Option<String>,
+}
+
+fn default_agent_max_iterations() -> usize {
+    chatos_agent::DEFAULT_AGENT_MAX_ITERATIONS
 }
 
 async fn resolve_approval_capability_policy(
@@ -189,6 +189,7 @@ async fn resolve_approval_capability_policy(
         .await
         .context("decode command approval capability policy")?;
     if policy.policy_revision.trim().is_empty()
+        || policy.max_iterations == 0
         || !policy.code_maintainer_read
         || !policy.approval_decision
     {
@@ -436,6 +437,12 @@ fn build_approval_prompt(
     risk_level: &str,
     risk_reason: Option<&str>,
 ) -> Result<String> {
+    let requested_permissions = request
+        .requested_permissions
+        .as_ref()
+        .map(serde_json::to_string_pretty)
+        .transpose()?
+        .unwrap_or_else(|| "null".to_string());
     Ok(format!(
         r#"请审核下面这条本地 shell 命令是否可以执行。必要时先读取或搜索项目文件，再调用 `approval_decision` 给出最终结论。
 
@@ -449,12 +456,14 @@ fn build_approval_prompt(
 - project_root: {project_root}
 - cwd: {cwd}
 - command: {command}
+- requested_permissions: {requested_permissions}
 - static_risk_level: {risk_level}
 - static_risk_reason: {risk_reason}
 
 审核重点：
 - 命令是否符合当前项目的语言、包管理器、脚本和目录结构。
 - 命令是否会访问 `.env`、私钥、token、系统目录或项目外路径。
+- 临时权限是否是完成该命令所必需的最小范围；不要因为命令本身常见就忽略越界文件或网络权限。
 - 命令是否包含破坏性删除、权限提升、远程脚本直接执行、生产基础设施操作等风险。
 - 如果命令只是常见的只读检查、测试、构建、格式化、依赖安装等，也要结合项目文件确认合理性。
 "#,
@@ -471,6 +480,7 @@ fn build_approval_prompt(
         project_root = project_root.display(),
         cwd = request.cwd,
         command = normalized_command(request.command.as_str(), request.args.as_slice()),
+        requested_permissions = requested_permissions,
         risk_level = risk_level,
         risk_reason = risk_reason.unwrap_or(""),
     ))
@@ -496,6 +506,8 @@ mod tests {
             args: vec!["test".to_string()],
             cwd: ".".to_string(),
             source: "test".to_string(),
+            requested_permissions: None,
+            session_id: Some("session-1".to_string()),
         };
 
         assert_eq!(
@@ -512,5 +524,20 @@ mod tests {
         assert!(err
             .to_string()
             .contains("command approval model is not configured"));
+    }
+
+    #[test]
+    fn legacy_capability_response_uses_global_agent_default() {
+        let policy = serde_json::from_value::<ApprovalCapabilityPolicy>(json!({
+            "policy_revision": "revision-1",
+            "code_maintainer_read": true,
+            "approval_decision": true
+        }))
+        .expect("decode legacy policy");
+
+        assert_eq!(
+            policy.max_iterations,
+            chatos_agent::DEFAULT_AGENT_MAX_ITERATIONS
+        );
     }
 }

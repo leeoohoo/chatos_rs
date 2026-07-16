@@ -128,10 +128,25 @@ const UTILITY_PATTERNS = [
   '/lucide-react/',
 ];
 
+const DEFERRED_HTML_PRELOAD_CHUNKS = [
+  'vendor-highlight-',
+  'vendor-katex-',
+  'vendor-mermaid-',
+];
+
 // https://vitejs.dev/config/
 export default defineConfig({
   plugins: [react()],
   build: {
+    modulePreload: {
+      resolveDependencies: (_filename, dependencies, context) => (
+        context.hostType === 'html'
+          ? dependencies.filter((dependency) => (
+              !DEFERRED_HTML_PRELOAD_CHUNKS.some((chunk) => dependency.includes(chunk))
+            ))
+          : dependencies
+      ),
+    },
     sourcemap: false,
     chunkSizeWarningLimit: 600,
     rollupOptions: {

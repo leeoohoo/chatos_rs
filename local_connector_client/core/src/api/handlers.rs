@@ -44,4 +44,7 @@ pub(super) use skills::{local_skills, local_sync_skill_inventory, local_update_s
 pub(super) use status::local_status;
 pub(super) use system_permissions::{local_request_system_permission, local_system_permissions};
 pub(super) use terminal::local_terminal_exec;
-pub(super) use workspace::{local_add_workspace, local_fs_list_handler, local_remove_workspace};
+pub(super) use workspace::{
+    local_add_workspace, local_fs_list_handler, local_remove_workspace,
+    local_update_workspace_project_config_trust,
+};

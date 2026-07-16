@@ -30,6 +30,12 @@ jobs:
             build_args: |
               MANIFEST_PATH=user_service/backend/Cargo.toml
               BIN_NAME=user_service_backend
+          - image: chatos-rs-configuration-center-backend
+            dockerfile: docker/Dockerfile.rust-service
+            build_args: |
+              MANIFEST_PATH=Cargo.toml
+              PACKAGE_NAME=config_center_service_backend
+              BIN_NAME=config_center_service_backend
           - image: chatos-rs-memory-engine-backend
             dockerfile: docker/Dockerfile.rust-service
             build_args: |
@@ -81,6 +87,10 @@ jobs:
             dockerfile: docker/Dockerfile.frontend
             build_args: |
               APP_DIR=chatos/frontend
+          - image: chatos-rs-configuration-center-frontend
+            dockerfile: docker/Dockerfile.frontend
+            build_args: |
+              APP_DIR=config_center_service/frontend
           - image: chatos-rs-user-service-frontend
             dockerfile: docker/Dockerfile.frontend
             build_args: |

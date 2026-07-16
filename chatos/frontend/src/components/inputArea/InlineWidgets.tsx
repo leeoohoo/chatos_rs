@@ -281,3 +281,30 @@ export const InputAreaSendButton: React.FC<InputAreaSendButtonProps> = ({
     </button>
   );
 };
+
+interface InputAreaStopButtonProps {
+  onStop: () => void | Promise<void>;
+  disabled: boolean;
+}
+
+export const InputAreaStopButton: React.FC<InputAreaStopButtonProps> = ({
+  onStop,
+  disabled,
+}) => {
+  const { t } = useI18n();
+
+  return (
+    <button
+      type="button"
+      onClick={() => { void onStop(); }}
+      disabled={disabled}
+      className={cn(
+        'flex-shrink-0 p-2 rounded-md bg-destructive text-destructive-foreground',
+        'hover:bg-destructive/90 disabled:opacity-50 disabled:cursor-not-allowed',
+      )}
+      title={disabled ? t('inputArea.send.stopping') : t('inputArea.send.stop')}
+    >
+      <span className="block h-4 w-4 rounded-[2px] bg-current" />
+    </button>
+  );
+};

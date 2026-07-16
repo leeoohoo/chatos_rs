@@ -2,7 +2,7 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use axum::extract::Query;
-use axum::http::StatusCode;
+use axum::http::{HeaderMap, StatusCode};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use chatos_mcp_service::{
@@ -16,6 +16,7 @@ use tracing::warn;
 
 use crate::api::projects::memory_sync::sync_active_project;
 use crate::core::auth::AuthUser;
+use crate::core::project_execution::require_local_connector_desktop;
 use crate::core::user_scope::resolve_user_id;
 use crate::core::user_visible_path::display_path;
 use crate::core::validation::normalize_non_empty;
@@ -71,8 +72,12 @@ pub fn router() -> Router {
 
 async fn list_devices(
     auth: AuthUser,
+    headers: HeaderMap,
     Query(query): Query<DeviceQuery>,
 ) -> (StatusCode, Json<Value>) {
+    if let Err(err) = require_local_connector_desktop(&headers) {
+        return err;
+    }
     if let Err(err) = resolve_user_id(query.user_id, &auth) {
         return err;
     }
@@ -86,8 +91,12 @@ async fn list_devices(
 
 async fn list_workspaces(
     auth: AuthUser,
+    headers: HeaderMap,
     Query(query): Query<WorkspaceQuery>,
 ) -> (StatusCode, Json<Value>) {
+    if let Err(err) = require_local_connector_desktop(&headers) {
+        return err;
+    }
     let _ = auth;
     let devices =
         match connector_get_json::<Vec<LocalConnectorDevice>>("/api/local-connectors/devices", &[])
@@ -139,8 +148,12 @@ async fn list_workspaces(
 
 async fn list_directory(
     auth: AuthUser,
+    headers: HeaderMap,
     Query(query): Query<LocalFsQuery>,
 ) -> (StatusCode, Json<Value>) {
+    if let Err(err) = require_local_connector_desktop(&headers) {
+        return err;
+    }
     if let Err(err) = resolve_user_id(query.user_id, &auth) {
         return err;
     }
@@ -180,8 +193,12 @@ async fn list_directory(
 
 async fn create_directory(
     auth: AuthUser,
+    headers: HeaderMap,
     Json(req): Json<CreateLocalDirectoryRequest>,
 ) -> (StatusCode, Json<Value>) {
+    if let Err(err) = require_local_connector_desktop(&headers) {
+        return err;
+    }
     if let Err(err) = resolve_user_id(req.user_id, &auth) {
         return err;
     }
@@ -234,8 +251,12 @@ async fn create_directory(
 
 async fn create_project(
     auth: AuthUser,
+    headers: HeaderMap,
     Json(req): Json<CreateLocalConnectorProjectRequest>,
 ) -> (StatusCode, Json<Value>) {
+    if let Err(err) = require_local_connector_desktop(&headers) {
+        return err;
+    }
     let user_id = match resolve_user_id(req.user_id, &auth) {
         Ok(user_id) => user_id,
         Err(err) => return err,

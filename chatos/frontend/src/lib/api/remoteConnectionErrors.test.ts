@@ -43,7 +43,7 @@ describe('remoteConnectionErrors mapping', () => {
     backendErrorCodes = JSON.parse(
       readFileSync(backendCodesDocPath, 'utf8'),
     ) as BackendErrorCodes;
-  });
+  }, 60_000);
 
   it('maps ApiRequestError code to message and action', () => {
     const error = new ApiRequestError('permission denied', {
@@ -53,7 +53,7 @@ describe('remoteConnectionErrors mapping', () => {
     const feedback = resolveRemoteConnectionErrorFeedback(error, '连接失败');
 
     expect(feedback.code).toBe('auth_failed');
-    expect(feedback.message).toBe('SSH 认证失败');
+    expect(feedback.message).toBe('SSH 认证失败: permission denied');
     expect(feedback.action).toContain('用户名');
   });
 

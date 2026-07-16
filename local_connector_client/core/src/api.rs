@@ -44,7 +44,7 @@ use handlers::{
     local_system_permissions, local_terminal_exec, local_test_mcp_config, local_toggle_sandbox,
     local_update_approval_settings, local_update_mcp_config, local_update_model_config,
     local_update_model_settings, local_update_runtime_settings, local_update_sandbox_settings,
-    local_update_skill_preference,
+    local_update_skill_preference, local_update_workspace_project_config_trust,
 };
 
 pub(crate) async fn serve_local_api(runtime: LocalRuntime) -> Result<()> {
@@ -89,6 +89,7 @@ fn local_api_app(runtime: LocalRuntime, desktop_auth_token: Option<String>) -> R
 
 fn local_api_routes(desktop_auth_token: Option<String>) -> Router<LocalRuntime> {
     Router::new()
+        .merge(crate::local_runtime::api::router())
         .route("/api/local/status", get(local_status))
         .route("/api/local/auth/login", post(local_login))
         .route("/api/local/auth/register", post(local_register))
@@ -103,6 +104,10 @@ fn local_api_routes(desktop_auth_token: Option<String>) -> Router<LocalRuntime> 
         .route(
             "/api/local/workspaces/{workspace_id}",
             delete(local_remove_workspace),
+        )
+        .route(
+            "/api/local/workspaces/{workspace_id}/project-config-trust",
+            post(local_update_workspace_project_config_trust),
         )
         .route(
             "/api/local/commands",

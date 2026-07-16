@@ -7,7 +7,6 @@ use crate::services::TaskRunnerCapabilityPolicy;
 mod mcp_builder;
 mod mcp_inputs;
 
-use crate::services::skill_runtime::prepare_local_skills;
 use mcp_builder::build_mcp_builder_parts;
 use mcp_inputs::{
     external_mcp_prefixed_input_items, load_external_mcp_servers, load_system_http_mcp_servers,
@@ -24,6 +23,11 @@ pub(super) async fn prepare_model_execution(
     prerequisite_context: &[PrerequisiteTaskContext],
     capability_policy: Option<&TaskRunnerCapabilityPolicy>,
 ) -> Result<PreparedModelExecution, String> {
+    crate::services::model_runtime_resolver::ensure_cloud_task_project_execution(
+        &service.config,
+        task,
+    )
+    .await?;
     let sandbox_required = service.should_route_task_to_sandbox(task).await?;
     let harness_run_context = if sandbox_required {
         service
@@ -73,24 +77,21 @@ pub(super) async fn prepare_model_execution(
     let runtime_config = service.apply_task_mcp_config(runtime_config, &task.mcp_config);
 
     let task_service = TaskService::new(service.config.clone(), service.store.clone());
-    let (mut builtin_servers, mut builtin_registry) = build_mcp_builder_parts(
+    let (builtin_servers, builtin_registry) = build_mcp_builder_parts(
         service,
         task,
         run,
         effective_workspace_dir.as_str(),
         task_process_logging_enabled,
-        task_service.clone(),
+        task_service,
         sandbox_context.as_ref(),
         capability_policy.is_some(),
     )
     .await;
-    let prepared_local_skills = prepare_local_skills(service, task, run, capability_policy).await?;
-    let local_skill_sessions = prepared_local_skills.session_handles.clone();
-    let mut prefixed_input_items = prepared_local_skills.input_items.clone();
-    prefixed_input_items.extend(external_mcp_prefixed_input_items(
+    let mut prefixed_input_items = external_mcp_prefixed_input_items(
         loaded_external_mcp.summaries.as_slice(),
         task.mcp_config.locale(),
-    ));
+    );
     let provider_skills_prompt = capability_policy.and_then(|policy| {
         let locale = if task.mcp_config.locale().is_english() {
             "en-US"
@@ -122,10 +123,6 @@ pub(super) async fn prepare_model_execution(
     let memory_scope = build_memory_scope(service, task);
     run_spec = run_spec.with_memory_scope(Some(memory_scope));
     persist_context_snapshot(service, run, run_spec.memory_scope.as_ref()).await;
-    builtin_servers.extend(prepared_local_skills.builtin_servers);
-    for provider in prepared_local_skills.builtin_providers {
-        builtin_registry.register(provider);
-    }
     if !loaded_external_mcp.summaries.is_empty() {
         info!(
             task_id = task.id.as_str(),
@@ -155,7 +152,6 @@ pub(super) async fn prepare_model_execution(
         sandbox_context,
         harness_run_context,
         effective_workspace_dir,
-        local_skill_sessions,
     })
 }
 

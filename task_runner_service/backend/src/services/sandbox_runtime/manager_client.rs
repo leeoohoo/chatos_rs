@@ -4,7 +4,9 @@
 use std::path::Path;
 use std::time::Duration;
 
-use chatos_sandbox_contract::{EffectiveSandboxPolicy, SandboxLeasePolicyRequest};
+use chatos_sandbox_contract::{
+    EffectivePermissionSnapshot, EffectiveSandboxPolicy, SandboxLeasePolicyRequest,
+};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -40,8 +42,8 @@ pub(super) struct CreateSandboxLeaseResponse {
     pub(super) expires_at: String,
     #[serde(default)]
     pub(super) last_error: Option<String>,
-    #[serde(default)]
-    pub(super) effective_policy: EffectiveSandboxPolicy,
+    pub(super) effective_policy: Option<EffectiveSandboxPolicy>,
+    pub(super) effective_permissions: Option<EffectivePermissionSnapshot>,
 }
 
 impl CreateSandboxLeaseResponse {
@@ -90,6 +92,7 @@ impl CreateSandboxLeaseResponse {
         self.expires_at = record.expires_at;
         self.last_error = record.last_error;
         self.effective_policy = record.effective_policy;
+        self.effective_permissions = record.effective_permissions;
     }
 }
 
@@ -101,8 +104,8 @@ struct SandboxLeaseRecordResponse {
     pub(super) run_workspace: String,
     pub(super) expires_at: String,
     pub(super) last_error: Option<String>,
-    #[serde(default)]
-    pub(super) effective_policy: EffectiveSandboxPolicy,
+    pub(super) effective_policy: Option<EffectiveSandboxPolicy>,
+    pub(super) effective_permissions: Option<EffectivePermissionSnapshot>,
 }
 
 fn sandbox_wait_deadline(expires_at: &str) -> tokio::time::Instant {
@@ -154,14 +157,6 @@ pub(super) struct SandboxManagerClient {
 pub(super) struct SandboxManagerAuth {
     pub(super) client_id: String,
     pub(super) client_key: String,
-    pub(super) mode: SandboxManagerAuthMode,
-    pub(super) owner_user_id: Option<String>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum SandboxManagerAuthMode {
-    Cloud,
-    LocalConnector,
 }
 
 impl SandboxManagerClient {
@@ -363,36 +358,16 @@ impl SandboxManagerClient {
         request: reqwest::RequestBuilder,
     ) -> Result<reqwest::RequestBuilder, String> {
         if let Some(auth) = self.auth.as_ref() {
-            match auth.mode {
-                SandboxManagerAuthMode::Cloud => {
-                    let token = chatos_service_runtime::issue_internal_service_token(
-                        auth.client_key.as_str(),
-                        "task-runner",
-                        "sandbox-manager",
-                        "sandbox.service",
-                        60,
-                    )?;
-                    Ok(request
-                        .header("x-sandbox-caller", "task-runner")
-                        .header("x-sandbox-internal-token", token))
-                }
-                SandboxManagerAuthMode::LocalConnector => {
-                    let owner_user_id = auth.owner_user_id.as_deref().ok_or_else(|| {
-                        "Local Connector sandbox auth requires owner user id".to_string()
-                    })?;
-                    let token = chatos_service_runtime::issue_internal_service_token(
-                        auth.client_key.as_str(),
-                        "task-runner",
-                        "local-connector-service",
-                        "sandbox.service",
-                        60,
-                    )?;
-                    Ok(request
-                        .header("x-local-connector-caller", "task-runner")
-                        .header("x-local-connector-internal-token", token)
-                        .header("x-local-connector-owner-user-id", owner_user_id))
-                }
-            }
+            let token = chatos_service_runtime::issue_internal_service_token(
+                auth.client_key.as_str(),
+                "task-runner",
+                "sandbox-manager",
+                "sandbox.service",
+                60,
+            )?;
+            Ok(request
+                .header("x-sandbox-caller", "task-runner")
+                .header("x-sandbox-internal-token", token))
         } else {
             Ok(request)
         }
@@ -415,8 +390,6 @@ impl SandboxManagerAuth {
             (Some(_client_id), Some(client_key)) => Some(Self {
                 client_id: "task-runner".to_string(),
                 client_key,
-                mode: SandboxManagerAuthMode::Cloud,
-                owner_user_id: None,
             }),
             _ => None,
         }
@@ -425,7 +398,24 @@ impl SandboxManagerAuth {
 
 #[cfg(test)]
 mod tests {
-    use super::{SandboxManagerAuth, SandboxManagerAuthMode, SandboxManagerClient};
+    use super::{SandboxManagerAuth, SandboxManagerClient};
+
+    #[test]
+    fn lease_response_without_effective_policy_stays_unknown() {
+        let response =
+            serde_json::from_value::<super::CreateSandboxLeaseResponse>(serde_json::json!({
+                "lease_id": "lease-1",
+                "sandbox_id": "sandbox-1",
+                "backend_id": null,
+                "agent_endpoint": "http://127.0.0.1:49888",
+                "agent_token": null,
+                "run_workspace": "/workspace",
+                "expires_at": "2026-07-15T00:00:00Z"
+            }))
+            .expect("legacy response");
+
+        assert!(response.effective_policy.is_none());
+    }
 
     #[test]
     fn manager_request_uses_short_lived_token_without_client_key() {
@@ -434,8 +424,6 @@ mod tests {
             Some(SandboxManagerAuth {
                 client_id: "task-runner".to_string(),
                 client_key: "a-long-task-runner-sandbox-secret".to_string(),
-                mode: SandboxManagerAuthMode::Cloud,
-                owner_user_id: None,
             }),
         )
         .expect("client");
@@ -462,52 +450,6 @@ mod tests {
             "a-long-task-runner-sandbox-secret",
             "task-runner",
             "sandbox-manager",
-            "sandbox.service",
-        )
-        .expect("valid token");
-    }
-
-    #[test]
-    fn local_connector_manager_request_uses_local_service_auth() {
-        let client = SandboxManagerClient::new(
-            "http://127.0.0.1:39230/api/local-connectors/sandbox-facade/pairing-1".to_string(),
-            Some(SandboxManagerAuth {
-                client_id: "task-runner".to_string(),
-                client_key: "a-long-task-runner-local-connector-secret".to_string(),
-                mode: SandboxManagerAuthMode::LocalConnector,
-                owner_user_id: Some("user-1".to_string()),
-            }),
-        )
-        .expect("client");
-        let request = client
-            .apply_auth(client.client.get("http://127.0.0.1:39230/api/sandboxes"))
-            .expect("apply auth")
-            .build()
-            .expect("request");
-        assert_eq!(
-            request
-                .headers()
-                .get("x-local-connector-caller")
-                .and_then(|value| value.to_str().ok()),
-            Some("task-runner")
-        );
-        assert_eq!(
-            request
-                .headers()
-                .get("x-local-connector-owner-user-id")
-                .and_then(|value| value.to_str().ok()),
-            Some("user-1")
-        );
-        let token = request
-            .headers()
-            .get("x-local-connector-internal-token")
-            .and_then(|value| value.to_str().ok())
-            .expect("token");
-        chatos_service_runtime::verify_internal_service_token(
-            token,
-            "a-long-task-runner-local-connector-secret",
-            "task-runner",
-            "local-connector-service",
             "sandbox.service",
         )
         .expect("valid token");

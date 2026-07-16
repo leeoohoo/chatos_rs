@@ -10,10 +10,13 @@ use super::ApiError;
 use crate::auth::{AccessToken, CurrentUser};
 use crate::models::*;
 use crate::services::environment_agent::{
-    analyze_project_runtime_environment, get_project_runtime_environment_progress,
+    analyze_project_runtime_environment, generate_project_runtime_environment_image,
+    get_project_runtime_environment_progress, start_project_runtime_environment,
 };
 use crate::services::runtime_environment::{
-    default_runtime_environment_for_project, ensure_runtime_environment_for_project,
+    apply_environment_variable_overrides, default_runtime_environment_for_project,
+    enforce_project_runtime_boundary, ensure_runtime_environment_for_project,
+    refresh_environment_variable_values,
 };
 use crate::state::AppState;
 
@@ -23,21 +26,96 @@ pub(in crate::api) async fn get_project_runtime_environment(
     Extension(user): Extension<CurrentUser>,
 ) -> Result<Json<ProjectRuntimeEnvironmentResponse>, ApiError> {
     let project = require_project_access(&state, &project_id, &user).await?;
-    let environment = state
+    let mut environment = state
         .store
         .get_project_runtime_environment(&project_id)
         .await
         .map_err(ApiError::bad_request)?
         .unwrap_or_else(|| default_runtime_environment_for_project(&project, None));
+    refresh_environment_variable_values(&mut environment);
+    let mut images = state
+        .store
+        .list_project_runtime_environment_images(&project_id)
+        .await
+        .map_err(ApiError::bad_request)?;
+    if enforce_project_runtime_boundary(
+        project.execution_plane,
+        &mut environment,
+        images.as_mut_slice(),
+    ) {
+        environment = state
+            .store
+            .upsert_project_runtime_environment(&environment)
+            .await
+            .map_err(ApiError::bad_request)?;
+        images = state
+            .store
+            .replace_project_runtime_environment_images(&project_id, images.as_slice())
+            .await
+            .map_err(ApiError::bad_request)?;
+    }
+    Ok(Json(ProjectRuntimeEnvironmentResponse {
+        environment,
+        images,
+    }))
+}
+
+pub(in crate::api) async fn update_project_runtime_environment_variables(
+    Path(project_id): Path<String>,
+    State(state): State<AppState>,
+    Extension(user): Extension<CurrentUser>,
+    Json(input): Json<UpdateProjectRuntimeEnvironmentVariablesRequest>,
+) -> Result<Json<ProjectRuntimeEnvironmentResponse>, ApiError> {
+    let project = require_project_access(&state, &project_id, &user).await?;
+    ensure_project_writable(&project)?;
+    let mut environment = state
+        .store
+        .get_project_runtime_environment(&project_id)
+        .await
+        .map_err(ApiError::bad_request)?
+        .unwrap_or_else(|| default_runtime_environment_for_project(&project, None));
+    apply_environment_variable_overrides(&mut environment, input.variables)
+        .map_err(ApiError::bad_request)?;
     let images = state
         .store
         .list_project_runtime_environment_images(&project_id)
+        .await
+        .map_err(ApiError::bad_request)?;
+    if environment.status == ProjectRuntimeEnvironmentStatus::PendingConfiguration
+        && crate::services::runtime_environment::required_environment_variables_are_complete(
+            &environment.environment_variables,
+        )
+        && !images.is_empty()
+        && images.iter().all(|image| {
+            matches!(
+                image.status.trim().to_ascii_lowercase().as_str(),
+                "ready" | "available" | "local" | "succeeded" | "running"
+            )
+        })
+    {
+        environment.status = ProjectRuntimeEnvironmentStatus::Ready;
+        environment.last_error = None;
+    }
+    environment.updated_at = now_rfc3339();
+    let environment = state
+        .store
+        .upsert_project_runtime_environment(&environment)
         .await
         .map_err(ApiError::bad_request)?;
     Ok(Json(ProjectRuntimeEnvironmentResponse {
         environment,
         images,
     }))
+}
+
+fn ensure_cloud_agent_execution(project: &ProjectRecord) -> Result<(), ApiError> {
+    if project.execution_plane != ProjectExecutionPlane::LocalConnector {
+        return Ok(());
+    }
+    Err(ApiError::conflict(format!(
+        "local_runtime_required: project {} orchestration must run in the Local Connector client; cloud project agent execution is disabled",
+        project.id
+    )))
 }
 
 pub(in crate::api) async fn get_project_runtime_environment_progress_handler(
@@ -48,6 +126,39 @@ pub(in crate::api) async fn get_project_runtime_environment_progress_handler(
 ) -> Result<Json<ProjectRuntimeEnvironmentProgressResponse>, ApiError> {
     let project = require_project_access(&state, &project_id, &user).await?;
     get_project_runtime_environment_progress(&state, &project, Some(access_token.0.as_str()))
+        .await
+        .map(Json)
+        .map_err(ApiError::bad_gateway)
+}
+
+pub(in crate::api) async fn generate_project_runtime_environment_image_handler(
+    Path((project_id, image_record_id)): Path<(String, String)>,
+    State(state): State<AppState>,
+    Extension(user): Extension<CurrentUser>,
+    Extension(access_token): Extension<AccessToken>,
+) -> Result<Json<ProjectRuntimeEnvironmentResponse>, ApiError> {
+    let project = require_project_access(&state, &project_id, &user).await?;
+    ensure_project_writable(&project)?;
+    generate_project_runtime_environment_image(
+        &state,
+        &project,
+        Some(access_token.0.as_str()),
+        image_record_id.as_str(),
+    )
+    .await
+    .map(Json)
+    .map_err(ApiError::bad_gateway)
+}
+
+pub(in crate::api) async fn start_project_runtime_environment_handler(
+    Path(project_id): Path<String>,
+    State(state): State<AppState>,
+    Extension(user): Extension<CurrentUser>,
+    Extension(access_token): Extension<AccessToken>,
+) -> Result<Json<ProjectRuntimeEnvironmentResponse>, ApiError> {
+    let project = require_project_access(&state, &project_id, &user).await?;
+    ensure_project_writable(&project)?;
+    start_project_runtime_environment(&state, &project, Some(access_token.0.as_str()))
         .await
         .map(Json)
         .map_err(ApiError::bad_gateway)
@@ -67,6 +178,7 @@ pub(in crate::api) async fn update_project_runtime_environment_settings(
         .await
         .map_err(ApiError::bad_request)?
         .unwrap_or_else(|| default_runtime_environment_for_project(&project, None));
+    refresh_environment_variable_values(&mut environment);
 
     if let Some(sandbox_enabled) = input.sandbox_enabled {
         environment.sandbox_enabled = sandbox_enabled;
@@ -113,6 +225,7 @@ pub(in crate::api) async fn analyze_project_runtime_environment_handler(
 ) -> Result<Json<ProjectRuntimeEnvironmentResponse>, ApiError> {
     let project = require_project_access(&state, &project_id, &user).await?;
     ensure_project_writable(&project)?;
+    ensure_cloud_agent_execution(&project)?;
 
     {
         let mut active = state.runtime_environment_analysis_jobs.lock().await;
@@ -220,7 +333,8 @@ fn reset_environment_for_analysis(environment: &mut ProjectRuntimeEnvironmentRec
     environment.not_runnable_reason = None;
     environment.detected_stack = empty_object();
     environment.required_services = empty_array();
-    environment.env_vars = empty_object();
+    refresh_environment_variable_values(environment);
+    environment.generated_config_files.clear();
     environment.last_agent_run_id = Some(run_id.to_string());
     environment.last_error = None;
     environment.updated_at = now_rfc3339();
@@ -290,6 +404,16 @@ mod tests {
             detected_stack: json!({"stale": true}),
             required_services: json!([{"stale": true}]),
             env_vars: json!({"STALE": "1"}),
+            environment_variables: Vec::new(),
+            generated_config_files: vec![
+                crate::models::ProjectRuntimeEnvironmentConfigFileRecord {
+                    path: "application-sandbox.yml".to_string(),
+                    format: "yaml".to_string(),
+                    content: "stale: true".to_string(),
+                    description: None,
+                    source_files: Vec::new(),
+                },
+            ],
             last_agent_run_id: Some("run-old".to_string()),
             last_error: Some("Docker is not installed".to_string()),
             created_at: "2026-01-01T00:00:00Z".to_string(),
@@ -312,6 +436,7 @@ mod tests {
         assert!(environment.not_runnable_reason.is_none());
         assert_eq!(environment.detected_stack, json!({}));
         assert_eq!(environment.required_services, json!([]));
-        assert_eq!(environment.env_vars, json!({}));
+        assert_eq!(environment.env_vars, json!({"STALE": "1"}));
+        assert!(environment.generated_config_files.is_empty());
     }
 }

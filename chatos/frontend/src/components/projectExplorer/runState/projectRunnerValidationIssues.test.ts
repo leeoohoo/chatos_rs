@@ -9,6 +9,14 @@ describe('projectRunnerValidationIssues', () => {
   it('formats validation issues into a single actionable message', () => {
     expect(formatProjectRunValidationIssues([
       { kind: 'toolchain', message: '缺少 JDK', targetLabel: 'Java App', hint: '请选择 JDK 21' },
-    ] as never, 'fallback')).toBe('启动前检查未通过：[Java App] 缺少 JDK；建议：请选择 JDK 21');
+    ] as never, 'fallback', (key, params) => {
+      if (key === 'runSettings.validationIssueHint') {
+        return `${params?.base}；建议：${params?.hint}`;
+      }
+      if (key === 'runSettings.validationFailed') {
+        return `启动前检查未通过：${params?.issues}`;
+      }
+      return key;
+    })).toBe('启动前检查未通过：[Java App] 缺少 JDK；建议：请选择 JDK 21');
   });
 });

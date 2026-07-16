@@ -1,11 +1,15 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
+use std::collections::HashMap;
+
 use crate::models::{
-    lease_deadline_rfc3339, lease_now_rfc3339, now_rfc3339, LocalConnectorDevice,
-    LocalConnectorProjectBinding, LocalConnectorSandboxPairing, LocalConnectorSession,
-    LocalConnectorWorkspace, DEVICE_STATUS_OFFLINE, DEVICE_STATUS_ONLINE, DEVICE_STATUS_REVOKED,
-    SESSION_STATUS_CONNECTED,
+    lease_deadline_rfc3339, lease_now_rfc3339, now_rfc3339, ApplicableManagedRequirementsLayer,
+    LocalConnectorDevice, LocalConnectorProjectBinding, LocalConnectorSandboxPairing,
+    LocalConnectorSession, LocalConnectorWorkspace, ManagedRequirementsAssignment,
+    ManagedRequirementsPolicy, DEVICE_STATUS_OFFLINE, DEVICE_STATUS_ONLINE, DEVICE_STATUS_REVOKED,
+    MANAGED_REQUIREMENTS_SCOPE_GLOBAL, MANAGED_REQUIREMENTS_SCOPE_ROLE,
+    MANAGED_REQUIREMENTS_SCOPE_USER, SESSION_STATUS_CONNECTED,
 };
 use crate::store::SessionAcquireError;
 use futures::TryStreamExt;
@@ -22,6 +26,8 @@ pub struct MongoConnectorStore {
     project_bindings: Collection<LocalConnectorProjectBinding>,
     sandbox_pairings: Collection<LocalConnectorSandboxPairing>,
     sessions: Collection<LocalConnectorSession>,
+    managed_requirements_policies: Collection<ManagedRequirementsPolicy>,
+    managed_requirements_assignments: Collection<ManagedRequirementsAssignment>,
 }
 
 impl MongoConnectorStore {
@@ -39,6 +45,10 @@ impl MongoConnectorStore {
             project_bindings: database.collection("local_connector_project_bindings"),
             sandbox_pairings: database.collection("local_connector_sandbox_pairings"),
             sessions: database.collection("local_connector_active_sessions"),
+            managed_requirements_policies: database
+                .collection("local_connector_managed_requirements_policies"),
+            managed_requirements_assignments: database
+                .collection("local_connector_managed_requirements_assignments"),
         };
         store.ensure_indexes().await?;
         Ok(store)
@@ -571,6 +581,202 @@ impl MongoConnectorStore {
         Ok(())
     }
 
+    pub async fn create_managed_requirements_policy(
+        &self,
+        policy: &ManagedRequirementsPolicy,
+    ) -> Result<(), String> {
+        self.managed_requirements_policies
+            .insert_one(policy, None)
+            .await
+            .map_err(|err| err.to_string())?;
+        Ok(())
+    }
+
+    pub async fn get_managed_requirements_policy(
+        &self,
+        id: &str,
+    ) -> Result<Option<ManagedRequirementsPolicy>, String> {
+        self.managed_requirements_policies
+            .find_one(doc! { "id": id }, None)
+            .await
+            .map_err(|err| err.to_string())
+    }
+
+    pub async fn list_managed_requirements_policies(
+        &self,
+    ) -> Result<Vec<ManagedRequirementsPolicy>, String> {
+        let options = FindOptions::builder()
+            .sort(doc! { "name": 1, "updated_at": -1 })
+            .build();
+        let cursor = self
+            .managed_requirements_policies
+            .find(None, options)
+            .await
+            .map_err(|err| err.to_string())?;
+        cursor.try_collect().await.map_err(|err| err.to_string())
+    }
+
+    pub async fn update_managed_requirements_policy(
+        &self,
+        policy: &ManagedRequirementsPolicy,
+    ) -> Result<bool, String> {
+        let result = self
+            .managed_requirements_policies
+            .update_one(
+                doc! { "id": &policy.id },
+                doc! {
+                    "$set": {
+                        "name": &policy.name,
+                        "description": &policy.description,
+                        "requirements_toml": &policy.requirements_toml,
+                        "content_sha256": &policy.content_sha256,
+                        "version": policy.version,
+                        "enabled": policy.enabled,
+                        "updated_by": &policy.updated_by,
+                        "updated_at": &policy.updated_at,
+                    }
+                },
+                None,
+            )
+            .await
+            .map_err(|err| err.to_string())?;
+        Ok(result.matched_count == 1)
+    }
+
+    pub async fn delete_managed_requirements_policy(&self, id: &str) -> Result<bool, String> {
+        self.managed_requirements_policies
+            .delete_one(doc! { "id": id }, None)
+            .await
+            .map(|result| result.deleted_count == 1)
+            .map_err(|err| err.to_string())
+    }
+
+    pub async fn managed_requirements_policy_has_assignments(
+        &self,
+        policy_id: &str,
+    ) -> Result<bool, String> {
+        self.managed_requirements_assignments
+            .find_one(doc! { "policy_id": policy_id }, None)
+            .await
+            .map(|assignment| assignment.is_some())
+            .map_err(|err| err.to_string())
+    }
+
+    pub async fn create_managed_requirements_assignment(
+        &self,
+        assignment: &ManagedRequirementsAssignment,
+    ) -> Result<(), String> {
+        self.managed_requirements_assignments
+            .insert_one(assignment, None)
+            .await
+            .map_err(|err| err.to_string())?;
+        Ok(())
+    }
+
+    pub async fn get_managed_requirements_assignment(
+        &self,
+        id: &str,
+    ) -> Result<Option<ManagedRequirementsAssignment>, String> {
+        self.managed_requirements_assignments
+            .find_one(doc! { "id": id }, None)
+            .await
+            .map_err(|err| err.to_string())
+    }
+
+    pub async fn list_managed_requirements_assignments(
+        &self,
+    ) -> Result<Vec<ManagedRequirementsAssignment>, String> {
+        let options = FindOptions::builder()
+            .sort(doc! { "scope": 1, "subject": 1, "priority": 1, "updated_at": -1 })
+            .build();
+        let cursor = self
+            .managed_requirements_assignments
+            .find(None, options)
+            .await
+            .map_err(|err| err.to_string())?;
+        cursor.try_collect().await.map_err(|err| err.to_string())
+    }
+
+    pub async fn update_managed_requirements_assignment(
+        &self,
+        assignment: &ManagedRequirementsAssignment,
+    ) -> Result<bool, String> {
+        let result = self
+            .managed_requirements_assignments
+            .update_one(
+                doc! { "id": &assignment.id },
+                doc! {
+                    "$set": {
+                        "policy_id": &assignment.policy_id,
+                        "scope": &assignment.scope,
+                        "subject": &assignment.subject,
+                        "priority": assignment.priority,
+                        "enabled": assignment.enabled,
+                        "updated_by": &assignment.updated_by,
+                        "updated_at": &assignment.updated_at,
+                    }
+                },
+                None,
+            )
+            .await
+            .map_err(|err| err.to_string())?;
+        Ok(result.matched_count == 1)
+    }
+
+    pub async fn delete_managed_requirements_assignment(&self, id: &str) -> Result<bool, String> {
+        self.managed_requirements_assignments
+            .delete_one(doc! { "id": id }, None)
+            .await
+            .map(|result| result.deleted_count == 1)
+            .map_err(|err| err.to_string())
+    }
+
+    pub async fn applicable_managed_requirements_layers(
+        &self,
+        owner_user_id: &str,
+        role: &str,
+    ) -> Result<Vec<ApplicableManagedRequirementsLayer>, String> {
+        let mut scopes = vec![
+            doc! { "scope": MANAGED_REQUIREMENTS_SCOPE_GLOBAL },
+            doc! { "scope": MANAGED_REQUIREMENTS_SCOPE_USER, "subject": owner_user_id },
+        ];
+        if !role.trim().is_empty() {
+            scopes.push(doc! { "scope": MANAGED_REQUIREMENTS_SCOPE_ROLE, "subject": role });
+        }
+        let cursor = self
+            .managed_requirements_assignments
+            .find(doc! { "$or": scopes }, None)
+            .await
+            .map_err(|err| err.to_string())?;
+        let assignments = cursor
+            .try_collect::<Vec<ManagedRequirementsAssignment>>()
+            .await
+            .map_err(|err| err.to_string())?;
+        if assignments.is_empty() {
+            return Ok(Vec::new());
+        }
+        let policy_ids = assignments
+            .iter()
+            .map(|assignment| assignment.policy_id.clone())
+            .collect::<Vec<_>>();
+        let cursor = self
+            .managed_requirements_policies
+            .find(doc! { "id": { "$in": policy_ids } }, None)
+            .await
+            .map_err(|err| err.to_string())?;
+        let policies = cursor
+            .try_collect::<Vec<ManagedRequirementsPolicy>>()
+            .await
+            .map_err(|err| err.to_string())?
+            .into_iter()
+            .map(|policy| (policy.id.clone(), policy))
+            .collect::<HashMap<_, _>>();
+        Ok(collect_applicable_managed_requirements_layers(
+            assignments,
+            policies,
+        ))
+    }
+
     async fn mark_owner_devices_offline_except(
         &self,
         owner_user_id: &str,
@@ -653,6 +859,176 @@ impl MongoConnectorStore {
     }
 }
 
+fn collect_applicable_managed_requirements_layers(
+    assignments: Vec<ManagedRequirementsAssignment>,
+    policies: HashMap<String, ManagedRequirementsPolicy>,
+) -> Vec<ApplicableManagedRequirementsLayer> {
+    let mut layers = assignments
+        .into_iter()
+        .filter(|assignment| assignment.enabled)
+        .filter_map(|assignment| {
+            policies
+                .get(assignment.policy_id.as_str())
+                .filter(|policy| policy.enabled)
+                .cloned()
+                .map(|policy| ApplicableManagedRequirementsLayer { policy, assignment })
+        })
+        .collect::<Vec<_>>();
+    layers.sort_by(|left, right| {
+        managed_scope_rank(left.assignment.scope.as_str())
+            .cmp(&managed_scope_rank(right.assignment.scope.as_str()))
+            .then(left.assignment.priority.cmp(&right.assignment.priority))
+            .then(left.assignment.updated_at.cmp(&right.assignment.updated_at))
+            .then(left.assignment.id.cmp(&right.assignment.id))
+    });
+    layers
+}
+
 fn is_duplicate_key_error(error: &mongodb::error::Error) -> bool {
     error.to_string().contains("E11000") || error.to_string().contains("duplicate key")
+}
+
+fn managed_scope_rank(scope: &str) -> u8 {
+    match scope {
+        MANAGED_REQUIREMENTS_SCOPE_GLOBAL => 0,
+        MANAGED_REQUIREMENTS_SCOPE_ROLE => 1,
+        MANAGED_REQUIREMENTS_SCOPE_USER => 2,
+        _ => u8::MAX,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use mongodb::bson::{self, Bson};
+
+    use super::*;
+
+    fn policy(id: &str, enabled: bool) -> ManagedRequirementsPolicy {
+        ManagedRequirementsPolicy {
+            id: id.to_string(),
+            name: id.to_string(),
+            description: None,
+            requirements_toml: String::new(),
+            content_sha256: "sha256:empty".to_string(),
+            version: 1,
+            enabled,
+            created_by: "admin-1".to_string(),
+            updated_by: "admin-1".to_string(),
+            created_at: "2026-07-15T00:00:00Z".to_string(),
+            updated_at: "2026-07-15T00:00:00Z".to_string(),
+        }
+    }
+
+    fn assignment(
+        id: &str,
+        policy_id: &str,
+        scope: &str,
+        subject: Option<&str>,
+        priority: i32,
+        enabled: bool,
+    ) -> ManagedRequirementsAssignment {
+        ManagedRequirementsAssignment {
+            id: id.to_string(),
+            policy_id: policy_id.to_string(),
+            scope: scope.to_string(),
+            subject: subject.map(str::to_string),
+            priority,
+            enabled,
+            created_by: "admin-1".to_string(),
+            updated_by: "admin-1".to_string(),
+            created_at: "2026-07-15T00:00:00Z".to_string(),
+            updated_at: "2026-07-15T00:00:00Z".to_string(),
+        }
+    }
+
+    #[test]
+    fn applicable_layers_are_global_then_role_then_user_and_priority_ascending() {
+        let assignments = vec![
+            assignment("user", "policy-user", "user", Some("user-1"), -100, true),
+            assignment(
+                "role-high",
+                "policy-role-high",
+                "role",
+                Some("admin"),
+                10,
+                true,
+            ),
+            assignment("global", "policy-global", "global", None, 100, true),
+            assignment(
+                "role-low",
+                "policy-role-low",
+                "role",
+                Some("admin"),
+                -10,
+                true,
+            ),
+        ];
+        let policies = [
+            policy("policy-user", true),
+            policy("policy-role-high", true),
+            policy("policy-global", true),
+            policy("policy-role-low", true),
+        ]
+        .into_iter()
+        .map(|policy| (policy.id.clone(), policy))
+        .collect();
+
+        let layers = collect_applicable_managed_requirements_layers(assignments, policies);
+        let ids = layers
+            .iter()
+            .map(|layer| layer.assignment.id.as_str())
+            .collect::<Vec<_>>();
+
+        assert_eq!(ids, vec!["global", "role-low", "role-high", "user"]);
+    }
+
+    #[test]
+    fn disabled_assignments_and_policies_do_not_produce_layers() {
+        let assignments = vec![
+            assignment("enabled", "policy-enabled", "global", None, 0, true),
+            assignment(
+                "disabled-assignment",
+                "policy-enabled",
+                "global",
+                None,
+                1,
+                false,
+            ),
+            assignment(
+                "disabled-policy",
+                "policy-disabled",
+                "user",
+                Some("user-1"),
+                0,
+                true,
+            ),
+        ];
+        let policies = [
+            policy("policy-enabled", true),
+            policy("policy-disabled", false),
+        ]
+        .into_iter()
+        .map(|policy| (policy.id.clone(), policy))
+        .collect();
+
+        let layers = collect_applicable_managed_requirements_layers(assignments, policies);
+
+        assert_eq!(layers.len(), 1);
+        assert_eq!(layers[0].assignment.id, "enabled");
+    }
+
+    #[test]
+    fn global_assignment_subject_is_serialized_as_null_for_the_unique_compound_index() {
+        let document = bson::to_document(&assignment(
+            "global",
+            "policy-global",
+            "global",
+            None,
+            0,
+            true,
+        ))
+        .unwrap();
+
+        assert_eq!(document.get("subject"), Some(&Bson::Null));
+    }
 }

@@ -35,16 +35,6 @@ impl AppStore {
         }
     }
 
-    pub async fn save_runtime_settings(
-        &self,
-        settings: RuntimeSettingsRecord,
-    ) -> Result<RuntimeSettingsRecord, String> {
-        match self {
-            Self::InMemory(store) => Ok(store.save_runtime_settings(settings)),
-            Self::Mongo(store) => store.save_runtime_settings(settings).await,
-        }
-    }
-
     pub async fn delete_model_config(&self, id: &str) -> Result<bool, String> {
         match self {
             Self::InMemory(store) => Ok(store.delete_model_config(id)),

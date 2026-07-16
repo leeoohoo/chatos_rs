@@ -49,6 +49,8 @@ export interface AiModelConfig {
   thinking_level?: string;
   task_usage_scenario?: string | null;
   task_thinking_level?: string | null;
+  temperature?: number | null;
+  max_output_tokens?: number | null;
   enabled: boolean;
   supports_images: boolean;
   supports_reasoning: boolean;
@@ -84,6 +86,8 @@ export interface AiModelSettings {
   memory_summary_thinking_level?: string | null;
   project_management_agent_model_config_id?: string | null;
   project_management_agent_thinking_level?: string | null;
+  environment_initialization_model_config_id?: string | null;
+  environment_initialization_thinking_level?: string | null;
   updated_at?: string;
   sync_warnings?: string[];
 }

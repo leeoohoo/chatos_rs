@@ -19,6 +19,10 @@ import type {
   UserMessageTurnsResponse,
 } from '../../types';
 import type ApiClient from '../../../client';
+import {
+  assertCloudSessionOperation,
+  isLocalRuntimeSessionId,
+} from '../../../localRuntime';
 
 export interface WorkspaceSessionFacade {
   getSessions(
@@ -63,51 +67,110 @@ export interface WorkspaceSessionFacade {
 
 export const workspaceSessionFacade: WorkspaceSessionFacade & ThisType<ApiClient> = {
   async getSessions(userId, projectId, paging) {
+    if (projectId && this.projectUsesLocalRuntime(projectId)) {
+      return this.getLocalRuntimeClient().getSessions(projectId);
+    }
     return workspaceApi.getSessions(this.getRequestFn(), userId, projectId, paging);
   },
   async createSession(data) {
+    if (data.project_id && this.projectUsesLocalRuntime(data.project_id)) {
+      return this.getLocalRuntimeClient().createSession(data);
+    }
     return workspaceApi.createSession(this.getRequestFn(), data);
   },
   async getSession(id) {
+    if (isLocalRuntimeSessionId(id)) {
+      return this.getLocalRuntimeClient().getSession(id);
+    }
     return workspaceApi.getSession(this.getRequestFn(), id);
   },
   async updateSession(id, data) {
+    assertCloudSessionOperation(id, '更新会话');
     return workspaceApi.updateSession(this.getRequestFn(), id, data);
   },
   async getConversationRuntimeSettings(conversationId) {
+    if (isLocalRuntimeSessionId(conversationId)) {
+      return this.getLocalRuntimeClient().getRuntimeSettings(conversationId);
+    }
     return workspaceApi.getConversationRuntimeSettings(this.getRequestFn(), conversationId);
   },
   async updateConversationRuntimeSettings(conversationId, data) {
+    if (isLocalRuntimeSessionId(conversationId)) {
+      return this.getLocalRuntimeClient().updateRuntimeSettings(conversationId, data);
+    }
     return workspaceApi.updateConversationRuntimeSettings(this.getRequestFn(), conversationId, data);
   },
   async deleteSession(id) {
+    assertCloudSessionOperation(id, '删除会话');
     return workspaceApi.deleteSession(this.getRequestFn(), id);
   },
   async getConversationMessages(conversationId, params) {
+    if (isLocalRuntimeSessionId(conversationId)) {
+      return this.getLocalRuntimeClient().getMessages(conversationId);
+    }
     return workspaceApi.getConversationMessages(this.getRequestFn(), conversationId, params);
   },
   async getConversationCompactHistory(conversationId, params) {
+    if (isLocalRuntimeSessionId(conversationId)) {
+      const items = await this.getLocalRuntimeClient().getMessages(conversationId);
+      return { items, has_more: false, next_before: null };
+    }
     return workspaceApi.getConversationCompactHistory(this.getRequestFn(), conversationId, params);
   },
   async getConversationUserMessageTurns(conversationId, params) {
+    if (isLocalRuntimeSessionId(conversationId)) {
+      return this.getLocalRuntimeClient().getUserMessageTurns(conversationId, params);
+    }
     return workspaceApi.getConversationUserMessageTurns(this.getRequestFn(), conversationId, params);
   },
   async getConversationTaskRunnerActiveMessageTasks(conversationId, params) {
+    if (isLocalRuntimeSessionId(conversationId)) {
+      return this.getLocalRuntimeClient().getActiveMessageTasks(conversationId);
+    }
     return workspaceApi.getConversationTaskRunnerActiveMessageTasks(this.getRequestFn(), conversationId, params);
   },
   async getConversationTurnMessages(conversationId, userMessageId) {
+    if (isLocalRuntimeSessionId(conversationId)) {
+      const messages = await this.getLocalRuntimeClient().getMessages(conversationId);
+      const turnId = messages.find((message) => message.id === userMessageId)?.turn_id;
+      return turnId ? messages.filter((message) => message.turn_id === turnId) : [];
+    }
     return workspaceApi.getConversationTurnMessages(this.getRequestFn(), conversationId, userMessageId);
   },
   async getConversationTurnMessagesByTurn(conversationId, turnId) {
+    if (isLocalRuntimeSessionId(conversationId)) {
+      const messages = await this.getLocalRuntimeClient().getMessages(conversationId);
+      return messages.filter((message) => message.turn_id === turnId);
+    }
     return workspaceApi.getConversationTurnMessagesByTurn(this.getRequestFn(), conversationId, turnId);
   },
   async getConversationLatestTurnRuntimeContext(conversationId) {
+    if (isLocalRuntimeSessionId(conversationId)) {
+      return {
+        conversation_id: conversationId,
+        status: 'unavailable',
+        snapshot_source: 'local_runtime',
+        active_in_runtime: false,
+        snapshot: null,
+      };
+    }
     return workspaceApi.getConversationLatestTurnRuntimeContext(this.getRequestFn(), conversationId);
   },
   async getConversationTurnRuntimeContextByTurn(conversationId, turnId) {
+    if (isLocalRuntimeSessionId(conversationId)) {
+      return {
+        conversation_id: conversationId,
+        turn_id: turnId,
+        status: 'unavailable',
+        snapshot_source: 'local_runtime',
+        active_in_runtime: false,
+        snapshot: null,
+      };
+    }
     return workspaceApi.getConversationTurnRuntimeContextByTurn(this.getRequestFn(), conversationId, turnId);
   },
   async createMessage(data) {
+    assertCloudSessionOperation(data.conversationId, '直接创建消息');
     return messagesApi.createMessage(this.getRequestFn(), data);
   },
 };

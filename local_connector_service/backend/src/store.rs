@@ -2,8 +2,9 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use crate::models::{
-    LocalConnectorDevice, LocalConnectorProjectBinding, LocalConnectorSandboxPairing,
-    LocalConnectorSession, LocalConnectorWorkspace,
+    ApplicableManagedRequirementsLayer, LocalConnectorDevice, LocalConnectorProjectBinding,
+    LocalConnectorSandboxPairing, LocalConnectorSession, LocalConnectorWorkspace,
+    ManagedRequirementsAssignment, ManagedRequirementsPolicy,
 };
 
 mod mongo;
@@ -290,6 +291,123 @@ impl ConnectorStore {
     ) -> Result<Option<LocalConnectorSession>, String> {
         match self {
             Self::Mongo(store) => store.active_session(owner_user_id).await,
+        }
+    }
+
+    pub async fn create_managed_requirements_policy(
+        &self,
+        policy: &ManagedRequirementsPolicy,
+    ) -> Result<(), String> {
+        match self {
+            Self::Mongo(store) => store.create_managed_requirements_policy(policy).await,
+        }
+    }
+
+    pub async fn get_managed_requirements_policy(
+        &self,
+        id: &str,
+    ) -> Result<Option<ManagedRequirementsPolicy>, String> {
+        match self {
+            Self::Mongo(store) => store.get_managed_requirements_policy(id).await,
+        }
+    }
+
+    pub async fn list_managed_requirements_policies(
+        &self,
+    ) -> Result<Vec<ManagedRequirementsPolicy>, String> {
+        match self {
+            Self::Mongo(store) => store.list_managed_requirements_policies().await,
+        }
+    }
+
+    pub async fn update_managed_requirements_policy(
+        &self,
+        policy: &ManagedRequirementsPolicy,
+    ) -> Result<bool, String> {
+        match self {
+            Self::Mongo(store) => store.update_managed_requirements_policy(policy).await,
+        }
+    }
+
+    pub async fn delete_managed_requirements_policy(&self, id: &str) -> Result<bool, String> {
+        match self {
+            Self::Mongo(store) => store.delete_managed_requirements_policy(id).await,
+        }
+    }
+
+    pub async fn managed_requirements_policy_has_assignments(
+        &self,
+        policy_id: &str,
+    ) -> Result<bool, String> {
+        match self {
+            Self::Mongo(store) => {
+                store
+                    .managed_requirements_policy_has_assignments(policy_id)
+                    .await
+            }
+        }
+    }
+
+    pub async fn create_managed_requirements_assignment(
+        &self,
+        assignment: &ManagedRequirementsAssignment,
+    ) -> Result<(), String> {
+        match self {
+            Self::Mongo(store) => {
+                store
+                    .create_managed_requirements_assignment(assignment)
+                    .await
+            }
+        }
+    }
+
+    pub async fn get_managed_requirements_assignment(
+        &self,
+        id: &str,
+    ) -> Result<Option<ManagedRequirementsAssignment>, String> {
+        match self {
+            Self::Mongo(store) => store.get_managed_requirements_assignment(id).await,
+        }
+    }
+
+    pub async fn list_managed_requirements_assignments(
+        &self,
+    ) -> Result<Vec<ManagedRequirementsAssignment>, String> {
+        match self {
+            Self::Mongo(store) => store.list_managed_requirements_assignments().await,
+        }
+    }
+
+    pub async fn update_managed_requirements_assignment(
+        &self,
+        assignment: &ManagedRequirementsAssignment,
+    ) -> Result<bool, String> {
+        match self {
+            Self::Mongo(store) => {
+                store
+                    .update_managed_requirements_assignment(assignment)
+                    .await
+            }
+        }
+    }
+
+    pub async fn delete_managed_requirements_assignment(&self, id: &str) -> Result<bool, String> {
+        match self {
+            Self::Mongo(store) => store.delete_managed_requirements_assignment(id).await,
+        }
+    }
+
+    pub async fn applicable_managed_requirements_layers(
+        &self,
+        owner_user_id: &str,
+        role: &str,
+    ) -> Result<Vec<ApplicableManagedRequirementsLayer>, String> {
+        match self {
+            Self::Mongo(store) => {
+                store
+                    .applicable_managed_requirements_layers(owner_user_id, role)
+                    .await
+            }
         }
     }
 }

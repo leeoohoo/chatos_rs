@@ -156,6 +156,10 @@ pub(crate) struct LocalModelSettings {
     #[serde(default)]
     pub(crate) project_management_agent_thinking_level: Option<String>,
     #[serde(default)]
+    pub(crate) environment_initialization_model_config_id: Option<String>,
+    #[serde(default)]
+    pub(crate) environment_initialization_thinking_level: Option<String>,
+    #[serde(default)]
     pub(crate) command_approval_model_config_id: Option<String>,
     #[serde(default)]
     pub(crate) command_approval_thinking_level: Option<String>,

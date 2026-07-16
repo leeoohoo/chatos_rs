@@ -6,26 +6,62 @@
 
 ## 0. 2026-07-15 当前实施状态
 
-本轮已经落地“协议、策略传递、风险确认、UI 入口、Task Runner 路由与 effective policy 校验”的第一阶段，但尚未启用真正的 `local_process` 后端。
+本轮已经落地协议、策略传递、风险确认、Task Runner 路由、effective policy / effective permissions 校验、macOS/Linux 的真实 `local_process` 后端，以及命令级临时权限 overlay。
 
 当前安全边界：
 
-- `local_process` 只作为后端选项展示，readiness 为 `under_development`，`selectable=false`；任何 lease 或设置切换到该后端都会 fail closed，返回 `sandbox_backend_not_ready`。
-- 兼容默认仍保持 `docker + workspace_write + on_request + user`，避免在未完成 OS 级隔离测试前把普通本机进程包装成“进程隔离”。
+- macOS 使用 Seatbelt；Linux 使用 Bubblewrap。Sandbox MCP Agent 是受信任的 stdio broker，每个模型生成的 shell 命令单独创建原生沙箱策略；后台命令在其启动时获得的同一策略内继续运行。
+- Process Agent 使用 stdio JSON-RPC 与 Local Connector Core 通信，不开放 localhost 端口，因此默认网络关闭不会为了控制面通信而放宽 loopback。
+- `execute_command.additionalPermissions` 与当前 Codex app-server 的附加权限形状对齐，支持文件 `read/write/deny`、绝对/相对路径、glob deny、特殊路径和临时网络开关。调用方只能提交 request；`_grantedPermissions` 是 broker 保留字段，外部伪造会 fail closed。
+- 审批通过后，Local Connector Core 只把请求范围内的 grant 注入当前命令。Agent 会再次校验 request/grant 交集；批准一次不会改变 lease 基础档位，也不会泄漏到下一条命令。
+- 用户审批支持仅本次和当前 sandbox session。会话缓存按 session、命令、cwd、权限请求精确匹配；旧的“始终允许”UI 已改为“本会话允许”。
+- `approval_policy=never` 不再代表隐式批准：沙箱内命令继续执行，任何临时越界请求直接拒绝。
+- routine sandbox command 不再每条都弹审批；只有显式 `additionalPermissions` 才进入 permission approval。已有进程的 stdin 交互继续继承该进程原始沙箱边界。
+- Local Connector、Cloud Sandbox Manager 和 Task Runner 现在传递 `effective_permissions` 快照，包括 active profile、provenance、文件/网络边界和 runtime workspace roots；缺失快照时 Task Runner fail closed。
+- `workspace_write` 允许全盘只读、run workspace/独立 HOME/临时目录写入，并保护 `.git`、`.agents`、`.codex`；`read_only` 不允许写 run workspace；`full_access` 明确绕过文件系统/网络沙箱但仍保留进程树回收。
+- 启动时清空父进程环境，只传入白名单环境和运行所需配置，避免将 Local Connector/API 密钥继承给模型生成的命令。
+- readiness 会验证原生隔离器和随包 Agent。任何一项不可用都会 fail closed，返回 `sandbox_backend_not_ready`，不会退化为普通宿主机执行。
+- macOS/Linux 新安装默认使用 `local_process + workspace_write + on_request + user`；已有安装保持其序列化的后端选择，Windows 当前继续使用 Docker。
+- 磁盘配额同时覆盖 run workspace 和 process 专用 state/HOME/tmp；释放 lease 时按独立 process group 杀死完整后台子进程树。
 - Docker 后端只声明容器文件系统/进程边界，不再声明出站网络隔离；UI 和状态接口都明确显示 bridge 网络不提供 outbound network isolation。
-- `full_access`、`approval_policy=never`、`approval_reviewer=auto_review` 都要求显式风险确认；“始终允许/记住允许”也要求显式风险确认。
+- `full_access`、`approval_reviewer=auto_review` 和 session/persistent approval 都要求显式风险确认。`approval_policy=never` 的运行语义已经改为“无审批且越界直接失败”，UI 风险文案仍需继续收敛。
 - Docker sandbox 内的命令型 MCP 调用已接入统一 `CommandApprovalService`；AI 自动审批返回 `AskUser` 时转交用户，不再直接拒绝。
 - Local Connector Core 创建 lease 时以本机 sandbox settings 作为最大权限上限；云端 pairing/task policy 只能收窄，不能把本机默认放宽为 `full_access`、`never` 或 `auto_review`，effective policy 的 revision 以本机为准。
 - Local Connector Docker 后端的实际文件权限最多为 `workspace_write`：即使用户配置 `full_access`，Docker lease 也不会声称已获得主机 full access；请求或配置为 `read_only` 时 `/workspace` 以只读模式挂载。
-- Cloud Sandbox Manager 不再声称支持未实现的审批或只读策略：其 effective policy 反映当前实际行为为 `docker + workspace_write + never + user`；如果任务显式要求 `read_only` 或 `on_request`，Task Runner 会因 effective policy 更宽而 fail closed。
+- Cloud Sandbox Manager 不再声称支持未实现的审批或只读策略：其 effective policy 反映当前实际行为为 `docker + workspace_write + never + user`。`read_only` 请求仍会因文件权限过宽而 fail closed；`never` 表示越界直接失败，因此在安全偏序上不比 `on_request` 更宽。
 - Task Runner 会把 task/pairing policy 传到 lease 请求，并在 lease 返回后校验 effective policy 不能比请求更宽；不满足则释放 lease 并失败。
 - Local Connector Service 的 active sandbox pairing 只返回 online、enabled 且 readiness 为 `ready` 的记录；非 ready 本地 pairing 不参与任务路由。
+- 原生 `local_process` 后端已经接入受限网络代理。命令只获得代理 loopback 端口，HTTP、HTTPS `CONNECT` 和 SOCKS5 TCP 在可信 broker 中执行统一域名策略；精确 host、`*.example.com`、`**.example.com` 和全局 `*` 规则均已实现，`deny` 始终优先。
+- `limited` 模式已经实现 HTTPS MITM：broker 启动时生成独立 CA，私钥只驻留 broker 内存，按 host/IP 动态签发叶证书；CONNECT 和 SOCKS5 `:443` 会终止 TLS、校验内层 Host 与外层目标一致，并且只放行 `GET/HEAD/OPTIONS`。`full` 模式仍保持不检查内容的原始 TCP tunnel。
+- 子命令只获得包含平台根证书、broker 启动时自定义根证书和本次 MITM CA 的公有 trust bundle；`SSL_CERT_FILE`、Requests、curl、Node、Git、pip、Bundler 与 npm 的常见 CA 环境变量统一指向该 bundle。bundle 生命周期随代理释放，文件中不包含 CA 私钥。
+- 代理默认拒绝 loopback、私网、link-local、CGNAT、测试网段、multicast 和保留地址；只有精确 IP/`localhost` allow 或显式 `allow_local_binding` 才能放行。DNS 只解析一次，实际 TCP 连接使用已经检查过的 `SocketAddr`，避免检查后重新解析形成 DNS rebinding 绕过。
+- Unix socket 通过代理的 `x-unix-socket` 控制头和精确 allow/deny 表访问；Linux 子命令额外安装 seccomp，禁止直接创建 `AF_UNIX` socket，因此不能绕过 broker 访问 Docker socket 等本地服务。
+- Linux 受限网络使用独立 network namespace，并通过私有 0700 Unix socket bridge 把命名空间内 loopback 代理路由到可信 broker；宿主代理路径和 MITM CA bundle 均采用短随机目录并显式只读 bind，避免 `sockaddr_un` 路径长度限制及私有 `/tmp` 覆盖导致的证书路径失效。命令结束后临时 mount target、wrapper、bridge 和 CA artifact 会清理。
+- Local Connector 设置页已经提供受限网络开关、limited/full 模式、域名 allow/deny 和本机/私网开关；启用或扩张网络权限需要风险确认。该配置进入 lease 的 effective permission snapshot，Docker backend 因不能证明精确 egress 隔离而 fail closed。
+- Local Connector 已识别 Codex 内建 profile 名称的完整 `allowed_permission_profiles` allowlist。allowlist 存在时，未列出或显式为 `false` 的档位不会出现在可选执行路径中；UI 标记禁用，lease 对被禁用的更宽请求只允许向更窄的本机默认档位回退，任何会把请求反向放宽的回退都会 fail closed。
+- Local Connector 已实现安全子集的自定义 permission profile：`extends` 可选，支持独立 profile、最多 32 层继承、循环检测、workspace roots、精确文件路径覆盖、deny glob、网络要求、完整 allowlist、动态 catalog 和 effective snapshot。独立 profile 从“空 restricted filesystem + 禁网”开始，因此 `:minimal` 可以形成真正窄于 `:root` 的启动基线；仍禁止继承 `:danger-full-access`、禁止写 `:root`，未知 special path 和 read/write glob 会 fail closed。
+- macOS Seatbelt 与 Linux Bubblewrap 都已经直接消费 materialized filesystem snapshot，而不是再按 legacy `workspace_write` 硬编码。父 write 下的更具体 read/deny carve-out、多个 runtime workspace root、命令临时 write overlay 与基础 deny 优先级均已覆盖真实执行测试。
+- Linux Bubblewrap 挂载顺序已对齐当前 Codex split-policy 语义：从只读根开始，按路径深度开放 write root、重新应用只读/deny，再允许更具体的 write 子路径显式重开；缺失只读/deny 文件使用 `--ro-bind-data` 合成 mount target，不在用户目录制造稳定占位。Bubblewrap 内额外 `cap-drop ALL`，因此即使 broker 由 root 启动也不能借 `CAP_DAC_OVERRIDE` 读取 `000` deny mask。
+- restricted-read 已在 macOS/Linux 落地：包含 `:root = read` 的 profile 使用全盘只读基线；独立 `:minimal` profile 在 Linux 从空 `tmpfs /` 开始，仅挂载系统运行路径、显式 readable roots 和 writable roots，macOS 则追加 Codex 对齐的受限启动规则。真实测试确认 shell/动态链接器可运行、workspace write/read carve-out 正常、未授权用户路径不可读、私有临时目录可用。
+- split-policy 现在保留 logical path，并在后端同时跟踪 symlink 的真实 target。Linux 对 symlinked writable root 绑定真实 target 并重映射 carve-out；macOS Seatbelt 使用真实 target 生成访问规则。任何 read-only/deny 路径穿过仍处于 writable root 内的可变 symlink 都会在命令启动前 fail closed，deny glob 同时记录 logical match 与 canonical target。
+- Sandbox MCP 文件工具现在与终端命令使用同一 effective filesystem policy。read/write、递归 search、递归 delete、apply_patch 及兼容 alias 都会在工具执行前校验目标路径；`.git/.agents/.codex`、自定义 read carve-out 和 deny glob 不再能通过内置文件工具绕过。仅在外部目录存在 write 权限时，不会误把主工作区判定为可写。
+- Local Connector 设置/状态接口返回 active profile name、custom profile catalog/config 和 effective permissions；前端权限下拉框可动态选择已配置的 custom profile、展示 description/禁用原因，并在 Docker 后端禁用 custom profile。Docker lease 若遇到 active custom profile 会直接 fail closed，不再按粗粒度 read-only/workspace 分类投影，以免丢失 `:minimal`、deny 或 carve-out 后反向放宽。custom profile 的网络配置按 effective snapshot 只读展示，避免旧的全局网络开关写入无效配置。
+- 已实现 Codex 风格 permission TOML 的严格解析和 API 导入：支持完整 `config.toml` 中的 `default_permissions`、`[permissions.*]`、`extends`、`workspace_roots`、嵌套 `:workspace_roots`/`:project_roots`、`glob_scan_max_depth`、network domains/unix sockets 和 `allowed_permission_profiles`。不支持的 profile/network 字段会 fail closed；导入后仍走现有风险确认、native backend 校验和 JSON 状态持久化。另提供低→高优先级的按键深合并，filesystem 按规范化路径覆盖、allowlist/domain/socket 按 key 覆盖。
+- Local Connector 启动时已自动加载 ChatOS 自己的 system/user/managed 权限层：Unix 使用 `/etc/chatos/config.toml`、`~/.chatos/local_connector/config.toml` 和固定的 `/etc/chatos/requirements.toml`；Windows 使用 `%ProgramData%/ChatOS/LocalConnector` 下的 system/requirements 文件和用户目录下的 config。普通 system/user config 按低→高优先级合成，持久化 UI 设置位于其上；managed requirements 最后作为不可放宽的约束应用，不写回用户 `state.json`。Unix managed 文件必须由 root 持有且不可 group/world write。
+- 云端 managed requirements 的 v2 多层签名 bundle、固定信任根、身份绑定缓存和启动回退已经接通。Local Connector Service 使用独立 Ed25519 私钥签发绑定 `cloud_base_url + owner_user_id + device_id + device_public_key + issued/expires` 以及每层 `policy/assignment/version/scope/TOML digest` 的 bundle；服务端签发前复核最多 64 层、TOML 总计 1 MiB、摘要、元数据和专用严格 TOML 格式，客户端验签后按 global → role → user 的顺序逐层深合并。客户端只信任固定系统文件 `/etc/chatos/managed-requirements-client.json` 中由 root 下发的公钥，不接受响应自带任意公钥。缓存独立于 `state.json`、限制为当前用户 `0600`、同时保留服务签名和设备缓存签名。启动时有效缓存立即生效并只在后台刷新供下次启动使用；缓存缺失/过期/身份不匹配时同步重试拉取，拉取失败且没有有效缓存会 fail closed。运行中登录或切换账号也会重新解析；失败时 runtime permission layers 进入 blocked 状态，不能沿用旧账号策略或退回无 managed policy。
+- Local Connector Service 已提供仅限 human super admin 的 policy/assignment 管理 API，支持 `global`、`role`、`user` 三类分配、启用/禁用、优先级、版本递增、重复映射冲突和被引用 policy 删除保护。没有适用数据库层时可使用静态环境 TOML fallback；未配置 fallback 时可以签发显式空 layers bundle。服务端启用签名只要求同时配置 `LOCAL_CONNECTOR_MANAGED_REQUIREMENTS_SIGNING_KEY_PATH`、`LOCAL_CONNECTOR_MANAGED_REQUIREMENTS_SIGNING_KEY_ID` 和 `LOCAL_CONNECTOR_PUBLIC_BASE_URL`，`LOCAL_CONNECTOR_MANAGED_REQUIREMENTS_TOML_PATH` 仅是可选 fallback。客户端信任文件 schema 为 `{ "schema_version": 1, "trusted_signing_keys": { "<key-id>": "ed25519:<base64url-public-key>" }, "minimum_bundle_issued_at": "<RFC3339>" }`；`trusted_signing_keys` 支持新旧 Ed25519 公钥重叠轮换，删除旧 key 后旧签名立即拒绝，显式最小签发时间和可信缓存 `issued_at` 都用于阻止旧 bundle 回滚。该文件不可由普通用户路径或 API 覆盖。
+- managed `allowed_permission_profiles` 是完整上限；普通用户/API allowlist 只能通过求交进一步收窄。API 直接选择被 managed 禁止的 profile 会拒绝，API 定义与 managed 同名的 custom profile 会按当前 Codex 行为 fail closed，而不是覆盖 managed 定义；managed profile、被 managed allowlist 点名的 custom profile 及其自定义继承链都不能通过 API 改写，避免修改父 profile 间接放宽。managed default 必须搭配 allowlist；不允许的旧本地默认会安全回退到 managed default 或更窄的可解析 profile。运行时配置内容进入 effective policy revision，active managed default 保留来源 provenance。
+- 已实现 ChatOS 自有的可信项目配置模型，不读取或修改 `.codex`：新开放 workspace 默认不信任项目配置，用户必须在本地 UI 显式确认后才加载 `.chatos/config.toml`。信任记录保存在 Connector state 中，仓库文件不能自信任；Unix 绑定 canonical path + device/inode 身份，同一路径被替换后旧信任自动 stale。从 workspace root 到当前任务 cwd 的各级 `.chatos/config.toml` 按由远到近合成，最近层优先；嵌套配置中的普通相对 path/glob/workspace root 会重定位为相对 run workspace 根的同一子目录，不会错误指向原始宿主目录。`.chatos` 目录或 `config.toml` 为 symlink、配置越界/过大/损坏时 lease fail closed。project 层可以覆盖普通默认值，但 project allowlist 只能在用户全局 allowlist 内进一步收窄，不能重新启用用户禁用的 profile；managed 仍是最终不可突破上限。project 选择进入 provenance 和 policy revision。
+- 当前回归结果：sandbox contract 24/24；Sandbox MCP macOS 37/37；特权 Linux + Bubblewrap 38/38；两平台 Clippy `-D warnings` 通过。本轮 Local Connector runtime/project layer 14/14、project config loader 5/5、workspace identity 1/1、trust API 1/1、Sandbox API 15/15、state/effective snapshot 4/4、lease 8/8；当前 managed requirements 客户端定向测试 16/16、Local Connector Service lib 测试 21/21，覆盖本机/云端 managed 专用严格 TOML、多层合并、global/role/user 排序、禁用策略、签发边界、空 layers、静态 fallback、服务/设备签名、密钥重叠与移除、最小签发时间、可信过期缓存阻止旧网络 bundle 回滚、过期、身份/密钥变化、无缓存拉取失败和有效缓存网络回退。前端 TypeScript type-check、目标包 `cargo check` 和目标文件 rustfmt 已通过；contract 与 Service Clippy `-D warnings` 通过，Core Clippy 仅报告同事并行模块中的既有 lint。`cargo check --workspace` 在本轮中途曾通过，但最终复验被并行修改的 `task_runner_service/backend/src/services/workspace_mcp.rs` 缺少 `normalized_optional` 导入所阻塞，与本轮权限代码无关。此前 Core 全量测试为 139 通过、2 忽略，另有 2 个位于非权限 Local MCP terminal reuse 路径的超时失败，因此不能宣称 Core 全量回归全绿。
 
-仍未完成的部分：
+仍未完成或需继续验证的部分：
 
-- Linux/macOS/Windows 的真实 OS 原生进程隔离 launcher、readiness/setup、负向安全测试尚未实现。
+- Windows 独立低权限身份、ACL、Job Object 和防火墙隔离尚未实现，因此 Windows 的 `local_process` 仍不可选择。
+- Linux Bubblewrap 已支持按命令 overlay、缺失 `.git/.agents/.codex` 的临时只读 mount target、deny mask、network namespace proxy bridge 和 AF_UNIX seccomp。macOS Seatbelt 与特权 Linux 容器中的 HTTP/HTTPS、代理绕过和方法限制动态负向测试均通过；仍需把同一矩阵固化到 Ubuntu/WSL2 发布 CI。
 - Project Environment 的 process-aware runtime 初始化、托管 runtime artifact、process app + service containers 混合拓扑尚未实现。
-- 结构化的每条命令临时文件/网络权限提升还只是方案设计，尚未成为统一执行协议。
+- 结构化命令级文件/全网络临时权限、域名/Unix socket 受限代理、DNS/IP 防护和 HTTPS MITM 已经接入执行链；MITM 当前通过 ALPN 限定 HTTP/1.1，尚未原生解析 HTTP/2。SOCKS5 UDP、上游代理链和交互式网络策略 amendment 仍未完成。
+- 自定义 profile 已支持 Codex TOML 语法解析、分层深合并、API 导入、ChatOS 自有 system/user/managed/云端签名 managed 启动加载，以及从 workspace root 到任务 cwd 的多级可信 project `.chatos/config.toml`。ChatOS 不读取或修改 `~/.codex/config.toml` 或项目 `.codex/config.toml`。管理员管理面已经支持 global/role/user 策略分配和签名公钥重叠轮换；尚未完成的是组织/群组分配（当前用户身份系统没有可验证的组织/群组声明，不能伪造匹配）、MDM 原生来源、密钥轮换的运维发布/撤销流程，以及 external/disabled provenance 的完整 UI 呈现。Windows 稳定目录身份/ACL 校验完成前，project config trust 会 fail closed；Windows 云端 managed trust 文件也会因尚无可靠 ACL 校验而 fail closed。
+- native CPU、内存和进程数硬限制仍未按平台完成。磁盘配额和进程树回收已完成，不能把 readiness 中的资源限制声明扩大为 CPU/memory/process-count 已强制执行。
 - Docker 默认出站网络仍受现有 MCP Agent bridge 约束，当前做法是“不声明网络隔离 + 限制危险 network mode”，不是完整 egress sandbox。
 
 ## 1. 目标
@@ -54,7 +90,7 @@
 
 ### 2.1 本次实际核对到的行为
 
-本次使用本机安装的官方 `codex-cli 0.130.0` 核对了以下行为：
+本次使用本机安装的官方 `codex-cli 0.144.2`、2026-07-15 生成的 experimental app-server Schema、官方 Codex manual 和 OpenAI Codex 开源仓库核对了以下行为：
 
 - `codex sandbox macos` 使用 macOS Seatbelt。
 - `codex sandbox linux` 使用 Linux sandbox，当前帮助信息说明默认使用 bubblewrap。
@@ -66,9 +102,9 @@
 
 通过 `codex app-server generate-json-schema --experimental` 生成的官方协议 Schema，还能确认当前 Codex 正在从简单沙箱枚举演进到细粒度权限档案：
 
-- `PermissionProfile.type`：`managed`、`disabled`、`external`。
+- active permission profile 暴露 `id` 和可选 `extends`，客户端应同时保留 built-in/user/project/managed/external/disabled provenance。
 - 文件系统权限：`restricted` 或 `unrestricted`。
-- 文件项权限：`read`、`write`、`none`。
+- 文件项权限：`read`、`write`、`deny`。
 - 路径类型：绝对路径、glob、特殊路径。
 - 网络权限与文件权限分开配置。
 - 命令可以请求临时的附加文件系统或网络权限。
@@ -76,11 +112,9 @@
 - 审批审查者独立于审批策略：`user` 或 `auto_review`。
 - Windows 沙箱存在 readiness 与 setup 流程，并区分 `elevated`、`unelevated` 初始化模式。
 
-### 2.2 官方文档访问说明
+### 2.2 官方资料核对说明
 
-本次按 OpenAI 官方文档流程尝试了 Codex manual、Developer Docs MCP、应用内浏览器和命令行访问。当前网络均被 `developers.openai.com` 返回 HTTP 403。Developer Docs MCP 已安装到本机 Codex 配置，但需要重启任务后才能加载。
-
-因此本方案对 Codex 的具体断言只采用上述官方 CLI、官方生成 Schema 和本机沙箱实测结果，不对未能读取的网页内容作额外推断。
+本次已通过官方 Codex manual 核对 Sandbox、Agent approvals & security、Permissions 和 Managed configuration，并用本机 `codex app-server generate-json-schema --experimental` 生成协议 Schema。实现细节还对照了 OpenAI Codex 开源仓库当前 `codex-rs/sandboxing` 与 `codex-rs/linux-sandbox`，包括 Seatbelt policy、Bubblewrap mount 顺序、deny glob 和缺失受保护路径处理。
 
 后续复核入口：
 
@@ -953,9 +987,9 @@ P2：
 
 P3：
 
-- 域名级网络策略。
-- 用户自定义 permission profiles。
-- 管理员下发受管策略。
+- HTTPS MITM 的 HTTP/2 支持、SOCKS5 UDP、上游代理链和持久 network policy amendment。
+- 自定义 permission profiles 的完整 project profile 编辑 UI 和 external/disabled 多来源 provenance 呈现；嵌套 trusted-project 逐层加载、system/user/本机 managed 加载与求交已经完成。
+- 管理员管理面中的组织/群组策略分配、MDM 原生来源和签名根轮换的运维发布/撤销流程；global/role/user 分配、多层云端签名 bundle/cache、固定客户端多公钥信任根、回滚保护、系统 requirements 与云端层优先级已经完成。
 - 更细粒度的 syscall、设备和 IPC 限制。
 
 ## 20. 最终验收场景

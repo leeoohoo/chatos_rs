@@ -57,6 +57,12 @@ interface ChatConversationPaneProps {
   onOpenSessionRuntimeContext?: (sessionId: string) => void;
   toggleSidebar: () => void;
   onSend: SendMessageHandler;
+  onStop: () => void | Promise<void>;
+  isLoading: boolean;
+  isStreaming: boolean;
+  isStopping: boolean;
+  streamingPhase: 'thinking' | 'reviewing' | null;
+  streamingPreviewText: string;
   inputDisabled: boolean;
   supportedFileTypes: string[];
   supportsReasoning: boolean;
@@ -105,6 +111,11 @@ interface ChatMessagesPaneProps {
   onRefreshMemory: (sessionId: string) => void;
   onCloseSummary: () => void;
   toggleSidebar: () => void;
+  isLoading: boolean;
+  isStreaming: boolean;
+  isStopping: boolean;
+  streamingPhase: 'thinking' | 'reviewing' | null;
+  streamingPreviewText: string;
 }
 
 const ChatMessagesPane: React.FC<ChatMessagesPaneProps> = React.memo(({
@@ -128,6 +139,11 @@ const ChatMessagesPane: React.FC<ChatMessagesPaneProps> = React.memo(({
   onRefreshMemory,
   onCloseSummary,
   toggleSidebar,
+  isLoading,
+  isStreaming,
+  isStopping,
+  streamingPhase,
+  streamingPreviewText,
 }) => {
   const { t } = useI18n();
 
@@ -179,11 +195,11 @@ const ChatMessagesPane: React.FC<ChatMessagesPaneProps> = React.memo(({
       key={`messages-${currentSession?.id || 'none'}-chat`}
       sessionId={currentSession?.id}
       messages={messages}
-      isLoading={false}
-      isStreaming={false}
-      isStopping={false}
-      streamingPhase={null}
-      streamingPreviewText=""
+      isLoading={isLoading}
+      isStreaming={isStreaming}
+      isStopping={isStopping}
+      streamingPhase={streamingPhase}
+      streamingPreviewText={streamingPreviewText}
       assistantContactName={currentContactName}
       anchorMessageId={anchorMessageId}
       anchorRequestKey={anchorRequestKey}
@@ -226,6 +242,12 @@ const ChatConversationPane: React.FC<ChatConversationPaneProps> = ({
   toggleSidebar,
   onSend,
   inputDisabled,
+  onStop,
+  isLoading,
+  isStreaming,
+  isStopping,
+  streamingPhase,
+  streamingPreviewText,
   supportedFileTypes,
   supportsReasoning,
   reasoningEnabled,
@@ -322,6 +344,11 @@ const ChatConversationPane: React.FC<ChatConversationPaneProps> = ({
             onRefreshMemory={onRefreshMemory}
             onCloseSummary={onCloseSummary}
             toggleSidebar={toggleSidebar}
+            isLoading={isLoading}
+            isStreaming={isStreaming}
+            isStopping={isStopping}
+            streamingPhase={streamingPhase}
+            streamingPreviewText={streamingPreviewText}
           />
         </div>
 
@@ -333,6 +360,9 @@ const ChatConversationPane: React.FC<ChatConversationPaneProps> = ({
             />
             <ChatComposerPanel
               onSend={onSend}
+              onStop={onStop}
+              isRunning={isLoading || isStreaming}
+              isStopping={isStopping}
               inputDisabled={inputDisabled}
               supportedFileTypes={supportedFileTypes}
               reasoningSupported={supportsReasoning}

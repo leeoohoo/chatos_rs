@@ -156,6 +156,8 @@ async fn approve_prepared_terminal_input(
             args: Vec::new(),
             cwd: cwd_label,
             source: "chatos_terminal_session".to_string(),
+            requested_permissions: None,
+            session_id: Some(session.id().to_string()),
         })
         .await?;
         if let ApprovalDecision::Denied { reason, .. } = approval {

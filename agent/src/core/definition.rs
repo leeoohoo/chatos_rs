@@ -13,7 +13,6 @@ pub trait SystemAgentDefinition: AgentIdentity {
     fn system_prompt(&self) -> &'static str;
     fn message_mode(&self) -> &'static str;
     fn message_source(&self) -> &'static str;
-    fn max_iterations(&self) -> usize;
     fn context_overflow_trigger(&self) -> &'static str;
 
     fn default_temperature(&self) -> Option<f64> {
@@ -72,10 +71,6 @@ mod tests {
 
         fn message_source(&self) -> &'static str {
             "test"
-        }
-
-        fn max_iterations(&self) -> usize {
-            4
         }
 
         fn context_overflow_trigger(&self) -> &'static str {

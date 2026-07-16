@@ -15,6 +15,7 @@ mod config;
 mod connector;
 mod device_keys;
 mod history;
+mod local_runtime;
 mod mcp;
 mod model_configs;
 mod registration;
@@ -31,10 +32,17 @@ mod workspace;
 
 use crate::api::serve_local_api;
 use crate::config::{default_state_path, load_dotenv, optional_env, ClientConfig};
-use crate::registration::bootstrap_env_config;
+use crate::device_keys::ensure_device_keypair;
+use crate::registration::{bootstrap_env_config, ensure_device_registered};
+use crate::sandbox::managed_requirements::{
+    load_system_client_config, resolve_startup_managed_requirements,
+};
+use crate::sandbox::managed_requirements_cache::ManagedRequirementsIdentity;
 pub(crate) use chatos_mcp_service::LOCAL_CONNECTOR_ENABLED_BUILTIN_KINDS_HEADER;
 pub(crate) use runtime::LocalRuntime;
-pub(crate) use state::{AuthState, AuthUserState, LocalState, WorkspaceState};
+pub(crate) use state::{
+    AuthState, AuthUserState, LocalState, WorkspaceProjectConfigTrust, WorkspaceState,
+};
 
 pub(crate) const DEFAULT_LOCAL_SANDBOX_IMAGE: &str = "chatos-sandbox-agent:latest";
 pub(crate) const DEFAULT_LOCAL_SANDBOX_IMAGE_TAG_PREFIX: &str = "chatos-sandbox-agent";
@@ -60,12 +68,62 @@ pub async fn run_local_connector() -> Result<()> {
         .timeout(Duration::from_secs(30))
         .build()
         .context("build HTTP client")?;
+    let managed_client_config = load_system_client_config()
+        .context("load managed requirements client trust configuration")?;
 
     if let Ok(config) = ClientConfig::from_env() {
         bootstrap_env_config(&http_client, &config, &state).await?;
     }
 
-    let runtime = LocalRuntime::new(state_path, state, http_client);
+    if managed_client_config.is_some() {
+        let connector_config = {
+            let state = state.read().await;
+            ClientConfig::from_state(&state, state_path.clone())
+        };
+        if let Some(connector_config) = connector_config {
+            let mut state = state.write().await;
+            let requested_public_key = state.device_public_key.clone();
+            ensure_device_keypair(
+                state_path.as_path(),
+                &mut state,
+                requested_public_key.as_deref(),
+            )?;
+            if ManagedRequirementsIdentity::from_state(&state)?.is_none() {
+                ensure_device_registered(&http_client, &connector_config, &mut state).await?;
+            }
+            state.save(state_path.as_path())?;
+        }
+    }
+
+    let state_snapshot = state.read().await.clone();
+    let connector_config = ClientConfig::from_state(&state_snapshot, state_path.clone());
+    let managed_requirements = resolve_startup_managed_requirements(
+        &http_client,
+        state_path.as_path(),
+        &state_snapshot,
+        connector_config.as_ref(),
+        managed_client_config,
+    )
+    .await
+    .context("resolve startup managed requirements")?;
+    {
+        let mut state = state.write().await;
+        state
+            .sandbox
+            .load_runtime_permission_profile_layers(managed_requirements.document)
+            .context("load local sandbox permission profile configuration")?;
+    }
+
+    let database = local_runtime::LocalDatabase::open(local_runtime::database_path_for_state(
+        state_path.as_path(),
+    ))
+    .await?;
+
+    let runtime = LocalRuntime::new(state_path, state, http_client, database);
+    if let Some(refresh) = managed_requirements.background_refresh {
+        refresh.spawn(runtime.http_client.clone());
+    }
+    runtime.start_local_task_worker().await;
     if let Err(err) = runtime.start_connector_if_configured().await {
         tracing_stdout(format!("start connector from saved config failed: {err}").as_str());
     }

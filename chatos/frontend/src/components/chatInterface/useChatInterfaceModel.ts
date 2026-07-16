@@ -115,6 +115,11 @@ export const useChatInterfaceModel = ({
     reviewRepairRunning: controller.reviewRepairRunning,
     reviewRepairPendingCount: controller.reviewRepairPendingCount,
     reviewRepairDisabled: controller.reviewRepairDisabled,
+    isLoading: derived.isLoading,
+    isStreaming: derived.isStreaming,
+    isStopping: derived.isStopping,
+    streamingPhase: derived.streamingPhase,
+    streamingPreviewText: derived.streamingPreviewText,
   };
 
   const conversationActions: ChatInterfaceConversationActions = {
@@ -123,6 +128,7 @@ export const useChatInterfaceModel = ({
     handleCloseSummary: controller.handleCloseSummary,
     toggleSidebar: store.toggleSidebar,
     handleMessageSend: controller.handleMessageSend,
+    handleStopMessage: store.stopMessage,
     updateReasoningEnabled: runtimeSettings.setReasoningEnabled,
     updatePlanModeEnabled: runtimeSettings.setPlanModeEnabled,
     setSelectedModel: runtimeSettings.setSelectedModelId,

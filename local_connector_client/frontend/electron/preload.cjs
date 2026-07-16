@@ -5,6 +5,7 @@ const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('chatosLocalConnector', {
   apiRequest: (request) => ipcRenderer.invoke('local-connector:api-request', request),
+  runtimeApiRequest: (request) => ipcRenderer.invoke('local-connector:runtime-api-request', request),
   getDesktopSystemPermissions: () => ipcRenderer.invoke('local-connector:desktop-system-permissions'),
   requestDesktopSystemPermission: (permissionId) => (
     ipcRenderer.invoke('local-connector:desktop-system-permission-request', permissionId)

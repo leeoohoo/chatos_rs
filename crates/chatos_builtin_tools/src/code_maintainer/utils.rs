@@ -67,18 +67,56 @@ pub fn resolve_state_dir(server_name: &str) -> PathBuf {
 }
 
 pub fn ensure_path_inside_root(root: &Path, target: &Path) -> Result<PathBuf, String> {
-    let resolved_root = normalize_path(root);
+    let resolved_root = root
+        .canonicalize()
+        .map_err(|err| format!("Resolve workspace root failed: {err}"))?;
     let candidate = if target.is_absolute() {
         target.to_path_buf()
     } else {
-        resolved_root.join(target)
+        root.join(target)
     };
-    let resolved = normalize_path(&candidate);
+    let lexical_candidate = normalize_path(&candidate);
+    if !lexical_candidate.starts_with(normalize_path(root)) {
+        return Err(format!(
+            "Path is outside workspace root: {}",
+            target.display()
+        ));
+    }
+    let resolved = canonicalize_preserving_missing(lexical_candidate.as_path())?;
     if !resolved.starts_with(&resolved_root) {
         return Err(format!(
             "Path is outside workspace root: {}",
             target.display()
         ));
+    }
+    Ok(resolved)
+}
+
+fn canonicalize_preserving_missing(path: &Path) -> Result<PathBuf, String> {
+    if path.exists() {
+        return path
+            .canonicalize()
+            .map_err(|err| format!("Resolve path failed: {err}"));
+    }
+    let mut missing = Vec::new();
+    let mut ancestor = path;
+    while !ancestor.exists() {
+        let name = ancestor.file_name().ok_or_else(|| {
+            format!(
+                "Resolve path failed: {} has no existing ancestor",
+                path.display()
+            )
+        })?;
+        missing.push(name.to_os_string());
+        ancestor = ancestor
+            .parent()
+            .ok_or_else(|| format!("Resolve path failed: {} has no parent", path.display()))?;
+    }
+    let mut resolved = ancestor
+        .canonicalize()
+        .map_err(|err| format!("Resolve path failed: {err}"))?;
+    for name in missing.into_iter().rev() {
+        resolved.push(name);
     }
     Ok(resolved)
 }
@@ -139,4 +177,39 @@ fn normalize_path(path: &Path) -> PathBuf {
         normalized.push(component.as_os_str());
     }
     normalized
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn missing_child_is_resolved_under_canonical_workspace() {
+        let root =
+            std::env::temp_dir().join(format!("chatos-code-root-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).expect("root");
+        let resolved = ensure_path_inside_root(root.as_path(), Path::new("new/child.txt"))
+            .expect("resolve child");
+        assert!(resolved.starts_with(root.canonicalize().expect("canonical root")));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn symlink_to_outside_workspace_is_rejected() {
+        use std::os::unix::fs::symlink;
+
+        let root =
+            std::env::temp_dir().join(format!("chatos-code-symlink-test-{}", uuid::Uuid::new_v4()));
+        let workspace = root.join("workspace");
+        let outside = root.join("outside");
+        std::fs::create_dir_all(&workspace).expect("workspace");
+        std::fs::create_dir_all(&outside).expect("outside");
+        symlink(&outside, workspace.join("escape")).expect("symlink");
+
+        let err = ensure_path_inside_root(workspace.as_path(), Path::new("escape/secret.txt"))
+            .expect_err("symlink escape must fail");
+        assert!(err.contains("outside workspace"));
+        let _ = std::fs::remove_dir_all(root);
+    }
 }

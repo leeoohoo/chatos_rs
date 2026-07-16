@@ -52,6 +52,7 @@ type TaskEditorDrawerProps = {
   form: FormInstance<TaskFormValues>;
   saving: boolean;
   modelOptions: SelectOption[];
+  projectOptions: SelectOption[];
   prerequisiteTaskOptions: SelectOption[];
   mcpCatalogEntries?: McpCatalogEntry[];
   remoteServers?: RemoteServerRecord[];
@@ -71,6 +72,7 @@ export function TaskEditorDrawer({
   form,
   saving,
   modelOptions,
+  projectOptions,
   prerequisiteTaskOptions,
   mcpCatalogEntries = [],
   remoteServers = [],
@@ -83,6 +85,7 @@ export function TaskEditorDrawer({
   onViewMcpCatalog,
 }: TaskEditorDrawerProps) {
   const mcpEnabled = Form.useWatch('mcpEnabled', form);
+  const selectedProjectId = Form.useWatch('projectId', form);
   const enabledBuiltinKinds = Form.useWatch('enabledBuiltinKinds', form) || [];
   const defaultRemoteServerId = Form.useWatch('defaultRemoteServerId', form);
   const scheduleMode = Form.useWatch('scheduleMode', form);
@@ -275,14 +278,40 @@ export function TaskEditorDrawer({
             placeholder={t('tasks.form.modelPlaceholder')}
           />
         </Form.Item>
-        <Form.Item
-          name="requiresExecution"
-          label={t('tasks.form.requiresExecution')}
-          valuePropName="checked"
-          extra={t('tasks.form.requiresExecutionHelp')}
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: 'minmax(0, 1fr) 220px',
+            columnGap: 16,
+            alignItems: 'start',
+          }}
         >
-          <Switch />
-        </Form.Item>
+          <Form.Item
+            name="projectId"
+            label={t('tasks.form.project')}
+            rules={[{ required: true, message: t('tasks.form.projectRequired') }]}
+          >
+            <Select
+              showSearch
+              optionFilterProp="label"
+              options={projectOptions}
+              placeholder={t('tasks.form.projectPlaceholder')}
+              onChange={(value) => {
+                if (value !== selectedProjectId) {
+                  form.setFieldValue('prerequisite_task_ids', []);
+                }
+              }}
+            />
+          </Form.Item>
+          <Form.Item
+            name="requiresExecution"
+            label={t('tasks.form.requiresExecution')}
+            valuePropName="checked"
+            extra={t('tasks.form.requiresExecutionHelp')}
+          >
+            <Switch />
+          </Form.Item>
+        </div>
         <Form.Item name="prerequisite_task_ids" label="前置任务">
           <Select
             mode="multiple"
@@ -458,13 +487,6 @@ export function TaskEditorDrawer({
               ))}
             </Space>
           </Checkbox.Group>
-        </Form.Item>
-
-        <Form.Item name="workspaceDir" label={t('tasks.form.workspaceDir')}>
-          <Input
-            disabled={!mcpEnabled}
-            placeholder={t('tasks.form.workspacePlaceholder')}
-          />
         </Form.Item>
 
         {remoteControllerEffectiveSelected ? (

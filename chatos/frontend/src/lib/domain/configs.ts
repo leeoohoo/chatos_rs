@@ -55,6 +55,10 @@ export const normalizeAiModelConfig = (config: AiModelConfigResponse): AiModelCo
     thinking_level: config.thinking_level || undefined,
     task_usage_scenario: config.task_usage_scenario || null,
     task_thinking_level: config.task_thinking_level || null,
+    temperature: typeof config.temperature === 'number' ? config.temperature : null,
+    max_output_tokens: typeof config.max_output_tokens === 'number'
+      ? config.max_output_tokens
+      : null,
     enabled: config.enabled === true,
     supports_images: config.supports_images === true,
     supports_reasoning: config.supports_reasoning === true,

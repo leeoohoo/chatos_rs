@@ -4,7 +4,8 @@
 use axum::response::{IntoResponse, Response};
 use axum::Json;
 use chatos_sandbox_contract::{
-    ApprovalPolicy, ApprovalReviewer, PermissionProfileId, SandboxBackendKind,
+    ApprovalPolicy, ApprovalReviewer, CommandExecutionApprovalDecision, GrantedPermissionProfile,
+    PermissionProfileId, SandboxBackendKind,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -54,6 +55,13 @@ pub(super) struct AddWorkspaceRequest {
 }
 
 #[derive(Debug, Deserialize)]
+pub(super) struct UpdateWorkspaceProjectConfigTrustRequest {
+    pub(super) trusted: bool,
+    #[serde(default)]
+    pub(super) risk_acknowledged: bool,
+}
+
+#[derive(Debug, Deserialize)]
 pub(super) struct FsListQuery {
     pub(super) path: Option<String>,
 }
@@ -98,9 +106,21 @@ pub(super) struct UpdateSandboxSettingsRequest {
     #[serde(default)]
     pub(super) default_permission_profile_id: Option<PermissionProfileId>,
     #[serde(default)]
+    pub(super) default_permission_profile_name: Option<String>,
+    #[serde(default)]
+    pub(super) permission_profiles: Option<
+        std::collections::BTreeMap<String, chatos_sandbox_contract::CustomPermissionProfile>,
+    >,
+    #[serde(default)]
+    pub(super) permission_profiles_toml: Option<String>,
+    #[serde(default)]
     pub(super) default_approval_policy: Option<ApprovalPolicy>,
     #[serde(default)]
     pub(super) default_approval_reviewer: Option<ApprovalReviewer>,
+    #[serde(default)]
+    pub(super) default_network_requirements: Option<chatos_sandbox_contract::NetworkRequirements>,
+    #[serde(default)]
+    pub(super) allowed_permission_profiles: Option<std::collections::BTreeMap<String, bool>>,
     #[serde(default)]
     pub(super) risk_acknowledged: bool,
 }
@@ -127,6 +147,10 @@ pub(super) struct UpdateApprovalSettingsRequest {
 #[derive(Debug, Deserialize)]
 pub(super) struct ResolveApprovalRequest {
     pub(super) remember_allow: Option<bool>,
+    #[serde(default)]
+    pub(super) decision: Option<CommandExecutionApprovalDecision>,
+    #[serde(default)]
+    pub(super) granted_permissions: Option<GrantedPermissionProfile>,
     pub(super) reason: Option<String>,
     #[serde(default)]
     pub(super) risk_acknowledged: bool,
@@ -163,6 +187,10 @@ pub(super) struct UpdateLocalModelSettingsRequest {
     #[serde(default)]
     pub(super) project_management_agent_thinking_level: Option<String>,
     #[serde(default)]
+    pub(super) environment_initialization_model_config_id: Option<String>,
+    #[serde(default)]
+    pub(super) environment_initialization_thinking_level: Option<String>,
+    #[serde(default)]
     pub(super) command_approval_model_config_id: Option<String>,
     #[serde(default)]
     pub(super) command_approval_thinking_level: Option<String>,
@@ -172,8 +200,6 @@ pub(super) struct UpdateLocalModelSettingsRequest {
 
 #[derive(Debug, Deserialize)]
 pub(super) struct UpdateLocalRuntimeSettingsRequest {
-    #[serde(default)]
-    pub(super) ai_agent_max_iterations: Option<usize>,
     #[serde(default)]
     pub(super) developer_mode: Option<bool>,
 }

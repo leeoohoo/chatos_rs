@@ -17,13 +17,11 @@ import {
   findExistingImportedModel,
   formatProviderModelOption,
   groupLocalModelProviders,
-  normalizeThinkingLevelForProvider,
   providerLabel,
-  thinkingOptionsForProvider,
-  thinkingValueForProvider,
   type LocalModelProviderGroup,
   type ModelDraftState,
 } from '../utils/modelConfigState';
+import { LocalDefaultModelSettings } from './LocalDefaultModelSettings';
 import { TaskModelSettingsSection } from './TaskModelSettingsSection';
 
 export function ModelConfigPanel() {
@@ -238,7 +236,7 @@ export function ModelConfigPanel() {
     try {
       const next = await api.saveModelSettings(settings);
       setSettings(next);
-      setMessage('默认模型设置已同步');
+      setMessage('默认模型设置已保存到本机');
       await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : '保存默认模型设置失败');
@@ -246,17 +244,6 @@ export function ModelConfigPanel() {
       setSaving(false);
     }
   };
-
-  const enabledModels = items.filter((item) => item.enabled && item.model.trim());
-  const modelById = React.useMemo(
-    () => new Map(enabledModels.map((item) => [item.id, item])),
-    [enabledModels],
-  );
-  const memoryModel = modelById.get(settings.memory_summary_model_config_id || '') || null;
-  const projectAgentModel =
-    modelById.get(settings.project_management_agent_model_config_id || '') || null;
-  const approvalModel =
-    modelById.get(settings.command_approval_model_config_id || '') || enabledModels[0] || null;
 
   return (
     <section className="modelPage">
@@ -474,136 +461,13 @@ export function ModelConfigPanel() {
         </div>
       </section>
 
-      <section className="panel">
-        <div className="panelHeader">
-          <div>
-            <h2><Settings2 size={18} />默认模型</h2>
-            <p>这些设置会同步模型 id 到服务端，服务端需要运行时再向本机换取 key。</p>
-          </div>
-          <button className="primaryButton compact" disabled={saving} onClick={() => void saveSettings()}>
-            保存默认设置
-          </button>
-        </div>
-        <div className="approvalFormGrid">
-          <label>
-            Memory 总结模型
-            <select
-              value={settings.memory_summary_model_config_id || ''}
-              onChange={(event) => {
-                const modelId = event.target.value || null;
-                const nextModel = modelById.get(modelId || '') || null;
-                setSettings({
-                  ...settings,
-                  memory_summary_model_config_id: modelId,
-                  memory_summary_thinking_level: normalizeThinkingLevelForProvider(
-                    nextModel?.provider,
-                    settings.memory_summary_thinking_level,
-                  ),
-                });
-              }}
-            >
-              <option value="">不指定</option>
-              {enabledModels.map((item) => (
-                <option key={item.id} value={item.id}>{item.name} · {item.model}</option>
-              ))}
-            </select>
-          </label>
-          <label>
-            Memory Thinking
-            <select
-              value={thinkingValueForProvider(memoryModel?.provider, settings.memory_summary_thinking_level)}
-              disabled={!memoryModel}
-              onChange={(event) =>
-                setSettings({ ...settings, memory_summary_thinking_level: event.target.value || null })
-              }
-            >
-              {thinkingOptionsForProvider(memoryModel?.provider).map((option) => (
-                <option key={option.value || 'default'} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label>
-            项目管理 Agent 模型
-            <select
-              value={settings.project_management_agent_model_config_id || ''}
-              onChange={(event) => {
-                const modelId = event.target.value || null;
-                const nextModel = modelById.get(modelId || '') || null;
-                setSettings({
-                  ...settings,
-                  project_management_agent_model_config_id: modelId,
-                  project_management_agent_thinking_level: normalizeThinkingLevelForProvider(
-                    nextModel?.provider,
-                    settings.project_management_agent_thinking_level,
-                  ),
-                });
-              }}
-            >
-              <option value="">不指定</option>
-              {enabledModels.map((item) => (
-                <option key={item.id} value={item.id}>{item.name} · {item.model}</option>
-              ))}
-            </select>
-          </label>
-          <label>
-            Agent Thinking
-            <select
-              value={thinkingValueForProvider(projectAgentModel?.provider, settings.project_management_agent_thinking_level)}
-              disabled={!projectAgentModel}
-              onChange={(event) =>
-                setSettings({ ...settings, project_management_agent_thinking_level: event.target.value || null })
-              }
-            >
-              {thinkingOptionsForProvider(projectAgentModel?.provider).map((option) => (
-                <option key={option.value || 'default'} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label>
-            命令审批模型
-            <select
-              value={settings.command_approval_model_config_id || ''}
-              onChange={(event) => {
-                const modelId = event.target.value || null;
-                const nextModel = modelById.get(modelId || '') || enabledModels[0] || null;
-                setSettings({
-                  ...settings,
-                  command_approval_model_config_id: modelId,
-                  command_approval_thinking_level: normalizeThinkingLevelForProvider(
-                    nextModel?.provider,
-                    settings.command_approval_thinking_level,
-                  ),
-                });
-              }}
-            >
-              <option value="">自动选择可用模型</option>
-              {enabledModels.map((item) => (
-                <option key={item.id} value={item.id}>{item.name} · {item.model}</option>
-              ))}
-            </select>
-          </label>
-          <label>
-            审批 Thinking
-            <select
-              value={thinkingValueForProvider(approvalModel?.provider, settings.command_approval_thinking_level)}
-              disabled={!approvalModel}
-              onChange={(event) =>
-                setSettings({ ...settings, command_approval_thinking_level: event.target.value || null })
-              }
-            >
-              {thinkingOptionsForProvider(approvalModel?.provider).map((option) => (
-                <option key={option.value || 'default'} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-          </label>
-        </div>
-      </section>
+      <LocalDefaultModelSettings
+        models={items}
+        settings={settings}
+        disabled={saving}
+        onChange={setSettings}
+        onSave={() => void saveSettings()}
+      />
 
       <TaskModelSettingsSection items={items} loading={loading} onReload={load} />
     </section>

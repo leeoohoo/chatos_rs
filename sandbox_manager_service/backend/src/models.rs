@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use chatos_sandbox_contract::{EffectiveSandboxPolicy, SandboxLeasePolicyRequest};
+use chatos_sandbox_contract::{
+    EffectivePermissionSnapshot, EffectiveSandboxPolicy, SandboxLeasePolicyRequest,
+};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -116,6 +118,8 @@ pub struct SandboxLeaseRecord {
     pub last_error: Option<String>,
     #[serde(default)]
     pub effective_policy: EffectiveSandboxPolicy,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effective_permissions: Option<EffectivePermissionSnapshot>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -159,6 +163,7 @@ pub struct CreateSandboxLeaseResponse {
     pub run_workspace: String,
     pub expires_at: String,
     pub effective_policy: EffectiveSandboxPolicy,
+    pub effective_permissions: EffectivePermissionSnapshot,
 }
 
 #[derive(Debug, Clone, Deserialize)]

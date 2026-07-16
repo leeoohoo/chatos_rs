@@ -17,6 +17,8 @@ chatos_ai_runtime = { path = "../../crates/chatos_ai_runtime" }
 chatos_builtin_tools = { path = "../../crates/chatos_builtin_tools" }
 chatos_mcp_runtime = { path = "../../crates/chatos_mcp_runtime" }
 chatos_mcp_service = { path = "../../crates/chatos_mcp_service" }
+chatos_plugin_management_sdk = { path = "../../crates/chatos_plugin_management_sdk" }
+chatos_project_mcp_contract = { path = "../../crates/chatos_project_mcp_contract" }
 chatos_sandbox_contract = { path = "../../crates/chatos_sandbox_contract" }
 chatos_sandbox_image_mcp = { path = "../../crates/chatos_sandbox_image_mcp" }
 dotenvy = "0.15"
@@ -29,15 +31,20 @@ reqwest = { version = "0.12", features = ["json", "rustls-tls"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.11"
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "sqlite", "migrate", "macros", "chrono", "uuid", "json"] }
 portable-pty = "0.9"
 ring = "0.17"
 tokio = { version = "1", features = ["full"] }
+tokio-util = "0.7"
 tokio-tungstenite = { version = "0.30", features = ["rustls-tls-webpki-roots"] }
 tower-http = { version = "0.7", features = ["cors", "fs"] }
 url = "2"
 urlencoding = "2"
 uuid = { version = "1", features = ["serde", "v4"] }
 zip = { version = "2", default-features = false, features = ["deflate"] }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security_Cryptography", "Win32_System_Memory"] }

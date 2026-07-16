@@ -15,6 +15,10 @@ describe('projectRunnerFailureReason', () => {
   it('falls back to a long-running command exit reason when logs are inconclusive', () => {
     expect(extractFailureReasonFromLogs([
       { content: 'something went wrong' },
-    ] as never, 'npm run dev')).toBe('命令已退出，未检测到持续运行进程');
+    ] as never, 'npm run dev', (key) => (
+      key === 'runSettings.failure.longRunningExited'
+        ? '命令已退出，未检测到持续运行进程'
+        : key
+    ))).toBe('命令已退出，未检测到持续运行进程');
   });
 });

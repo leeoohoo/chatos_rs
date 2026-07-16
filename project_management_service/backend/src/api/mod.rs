@@ -12,6 +12,7 @@ mod projects;
 mod requirements;
 mod router;
 mod runtime_environment;
+mod runtime_environment_mcp;
 mod sync;
 mod task_runner_links;
 mod work_items;
@@ -68,6 +69,13 @@ impl ApiError {
     pub fn not_found(message: impl Into<String>) -> Self {
         Self {
             status: StatusCode::NOT_FOUND,
+            message: message.into(),
+        }
+    }
+
+    pub fn conflict(message: impl Into<String>) -> Self {
+        Self {
+            status: StatusCode::CONFLICT,
             message: message.into(),
         }
     }

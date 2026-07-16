@@ -5,6 +5,7 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::time::Duration;
 
+use serde_json::json;
 use serde_json::Value;
 
 use chatos_mcp_runtime::{
@@ -15,14 +16,12 @@ use chatos_mcp_service::{
     LOCAL_CONNECTOR_ENABLED_BUILTIN_KINDS_HEADER,
 };
 use chatos_plugin_management_sdk::{
-    ResolvedAgentCapabilities, PROJECT_ENVIRONMENT_MCP_RESOURCE_ID, SANDBOX_IMAGES_MCP_RESOURCE_ID,
+    ResolvedAgentCapabilities, PROJECT_ENVIRONMENT_MCP_RESOURCE_ID,
 };
 use chatos_sandbox_image_mcp::{SANDBOX_IMAGE_PROJECT_ID_HEADER, SANDBOX_IMAGE_RUN_ID_HEADER};
 
 use crate::config::AppConfig;
-use crate::models::{
-    ProjectRecord, ProjectRuntimeEnvironmentRecord, ProjectSourceType, RuntimeEnvironmentProvider,
-};
+use crate::models::{ProjectRecord, ProjectSourceType, RuntimeEnvironmentProvider};
 use crate::state::AppState;
 
 use super::routing::{
@@ -38,7 +37,6 @@ use super::{
 pub(super) async fn build_project_environment_mcp_executor(
     state: &AppState,
     project: &ProjectRecord,
-    environment: &ProjectRuntimeEnvironmentRecord,
     routing: &RoutingPlan,
     user_access_token: Option<&str>,
     run_id: &str,
@@ -91,25 +89,6 @@ pub(super) async fn build_project_environment_mcp_executor(
         }
     }
 
-    if capability_allows_mcp(capability_policy, SANDBOX_IMAGES_MCP_RESOURCE_ID) {
-        let sandbox_server = match routing.sandbox_provider {
-            RuntimeEnvironmentProvider::LocalConnector => {
-                local_connector_sandbox_image_mcp_server(state, project, user_access_token, run_id)
-                    .await?
-            }
-            RuntimeEnvironmentProvider::CloudSandboxManager => cloud_sandbox_image_mcp_server(
-                &state.config,
-                environment.sandbox_provider,
-                project.id.as_str(),
-                run_id,
-            )?,
-            RuntimeEnvironmentProvider::None | RuntimeEnvironmentProvider::Harness => None,
-        };
-        if let Some(server) = sandbox_server {
-            builder = builder.with_http_server(server);
-        }
-    }
-
     builder.build_initialized().await
 }
 
@@ -118,6 +97,130 @@ fn capability_allows_mcp(policy: &ResolvedAgentCapabilities, resource_id: &str) 
         .mcps
         .iter()
         .any(|item| item.resource.id == resource_id && item.available)
+}
+
+pub(super) async fn create_sandbox_image_from_plan(
+    state: &AppState,
+    project: &ProjectRecord,
+    provider: RuntimeEnvironmentProvider,
+    user_access_token: Option<&str>,
+    run_id: &str,
+    features: Vec<String>,
+    custom_build_script: Option<String>,
+) -> Result<Value, String> {
+    let server = match provider {
+        RuntimeEnvironmentProvider::LocalConnector => {
+            local_connector_sandbox_image_mcp_server(state, project, user_access_token, run_id)
+                .await?
+        }
+        RuntimeEnvironmentProvider::CloudSandboxManager => {
+            cloud_sandbox_image_mcp_server(&state.config, provider, project.id.as_str(), run_id)?
+        }
+        RuntimeEnvironmentProvider::None | RuntimeEnvironmentProvider::Harness => None,
+    }
+    .ok_or_else(|| "当前项目没有可用的沙箱镜像 Provider".to_string())?;
+    let result = chatos_mcp_runtime::jsonrpc_http_call(
+        server.url.as_str(),
+        server.headers.as_ref(),
+        "tools/call",
+        json!({
+            "name": "create_image",
+            "arguments": {
+                "features": features,
+                "custom_build_script": custom_build_script,
+                "timeout_ms": 7_200_000u64
+            }
+        }),
+        Some(Duration::from_secs(2 * 60 * 60)),
+    )
+    .await?;
+    Ok(result
+        .get("structured_content")
+        .cloned()
+        .or_else(|| result.get("_structured_result").cloned())
+        .unwrap_or(result))
+}
+
+pub(super) async fn start_local_project_compose_environment(
+    state: &AppState,
+    project: &ProjectRecord,
+    user_access_token: Option<&str>,
+    project_name: &str,
+    compose_yaml: &str,
+    application_dockerfile: &str,
+    env_file: &str,
+) -> Result<Value, String> {
+    let access_token =
+        required_user_access_token(user_access_token, "Local Connector Docker Compose")?;
+    let project_ref = project
+        .root_path
+        .as_deref()
+        .and_then(parse_local_connector_project_root)
+        .ok_or_else(|| "当前项目不是有效的 Local Connector 本地项目".to_string())?;
+    let pairing =
+        find_enabled_local_sandbox_pairing(&state.config, Some(access_token), Some(&project_ref))
+            .await?
+            .ok_or_else(|| "没有找到已启用的 Local Connector 沙箱配对".to_string())?;
+    let facade_base = local_connector_facade_base(state, &pairing)?;
+    let response = reqwest::Client::new()
+        .post(format!(
+            "{}/api/local/sandbox/environments/compose/up",
+            facade_base.trim_end_matches('/')
+        ))
+        .bearer_auth(access_token)
+        .json(&json!({
+            "project_name": project_name,
+            "project_relative_path": project_ref.relative_path,
+            "compose_yaml": compose_yaml,
+            "application_dockerfile": application_dockerfile,
+            "env_file": env_file,
+        }))
+        .timeout(Duration::from_secs(2 * 60 * 60))
+        .send()
+        .await
+        .map_err(|err| format!("启动本地 Docker Compose 环境失败: {err}"))?;
+    let status = response.status();
+    let body = response
+        .text()
+        .await
+        .map_err(|err| format!("读取 Local Connector Docker Compose 响应失败: {err}"))?;
+    if !status.is_success() {
+        return Err(format!(
+            "Local Connector Docker Compose 返回 {status}: {}",
+            body.chars().take(4096).collect::<String>()
+        ));
+    }
+    serde_json::from_str(body.as_str())
+        .map_err(|err| format!("解析 Local Connector Docker Compose 响应失败: {err}"))
+}
+
+fn local_connector_facade_base(
+    state: &AppState,
+    pairing: &super::routing::LocalConnectorSandboxPairing,
+) -> Result<String, String> {
+    pairing
+        .id
+        .as_deref()
+        .map(|id| {
+            format!(
+                "{}/api/local-connectors/sandbox-facade/{}",
+                state
+                    .config
+                    .local_connector_service_base_url
+                    .trim()
+                    .trim_end_matches('/'),
+                urlencoding::encode(id)
+            )
+        })
+        .or_else(|| {
+            pairing
+                .facade_base_url
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(ToOwned::to_owned)
+        })
+        .ok_or_else(|| "Local Connector 沙箱配对缺少 facade_base_url".to_string())
 }
 
 fn capability_allows_builtin(policy: &ResolvedAgentCapabilities, kind: BuiltinMcpKind) -> bool {
@@ -147,7 +250,6 @@ fn project_environment_builtin_server() -> McpBuiltinServer {
 
 pub(super) fn ensure_agent_required_tools_available(
     executor: &McpExecutor,
-    project: &ProjectRecord,
     routing: &RoutingPlan,
 ) -> Result<(), String> {
     let tool_names = executor
@@ -175,18 +277,6 @@ pub(super) fn ensure_agent_required_tools_available(
         return Err(format!(
             "项目文件 MCP 不可用，无法分析项目文件：{}",
             provider_label(routing.file_provider)
-        ));
-    }
-    let has_sandbox_images = tool_names
-        .iter()
-        .any(|name| name == "sandbox_images_search_images")
-        && tool_names
-            .iter()
-            .any(|name| name == "sandbox_images_create_image");
-    if !has_sandbox_images {
-        return Err(format!(
-            "沙箱镜像 MCP 不可用，无法为项目 {} 初始化运行环境镜像。",
-            project.id
         ));
     }
     Ok(())
@@ -325,29 +415,7 @@ async fn local_connector_sandbox_image_mcp_server(
         find_enabled_local_sandbox_pairing(&state.config, Some(access_token), project_ref.as_ref())
             .await?
             .ok_or_else(|| "没有找到已启用的 Local Connector 沙箱配对".to_string())?;
-    let facade_base = pairing
-        .id
-        .as_deref()
-        .map(|id| {
-            format!(
-                "{}/api/local-connectors/sandbox-facade/{}",
-                state
-                    .config
-                    .local_connector_service_base_url
-                    .trim()
-                    .trim_end_matches('/'),
-                urlencoding::encode(id)
-            )
-        })
-        .or_else(|| {
-            pairing
-                .facade_base_url
-                .as_deref()
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .map(ToOwned::to_owned)
-        })
-        .ok_or_else(|| "Local Connector 沙箱配对缺少 facade_base_url".to_string())?;
+    let facade_base = local_connector_facade_base(state, &pairing)?;
     let mut headers = HashMap::new();
     headers.insert(
         "authorization".to_string(),

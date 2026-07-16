@@ -17,6 +17,10 @@ use crate::{LocalRuntime, LocalState};
 
 mod bundled;
 mod native;
+mod runtime;
+
+pub(crate) use runtime::prepare_local_skill;
+pub(crate) use runtime::PreparedLocalSkill;
 
 use bundled::{internal_skill_bundle_hash, internal_skill_instructions, internal_skill_manifest};
 

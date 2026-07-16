@@ -90,7 +90,7 @@ describe('MessageItem empty assistant rendering', () => {
     expect(container.firstChild).toBeNull();
   });
 
-  it('keeps non-task-runner assistant messages when collapsed text is visible', () => {
+  it('keeps non-task-runner assistant messages when collapsed text is visible', async () => {
     const message = buildAssistantMessage({
       metadata: {
         historyFinalForUserMessageId: 'user-1',
@@ -108,6 +108,6 @@ describe('MessageItem empty assistant rendering', () => {
       </I18nProvider>,
     );
 
-    expect(screen.getByText('最终回答')).toBeInTheDocument();
+    expect(await screen.findByText('最终回答')).toBeInTheDocument();
   });
 });

@@ -66,6 +66,7 @@ type TaskDetailDrawerProps = {
   runDerivedTasks?: TaskRecord[];
   runDerivedTasksLoading: boolean;
   modelLabelMap: Map<string, string>;
+  projectNameMap: Map<string, string>;
   taskSummaryMap: Map<string, string>;
   remoteServerMap: Map<string, RemoteServerRecord>;
   externalMcpConfigMap: Map<string, ExternalMcpConfigRecord>;
@@ -105,6 +106,7 @@ export function TaskDetailDrawer({
   runDerivedTasks,
   runDerivedTasksLoading,
   modelLabelMap,
+  projectNameMap,
   taskSummaryMap,
   remoteServerMap,
   externalMcpConfigMap,
@@ -184,6 +186,11 @@ export function TaskDetailDrawer({
             <Descriptions.Item label={t('tasks.column.creator')}>
               {taskCreatorLabel(task)}
             </Descriptions.Item>
+            <Descriptions.Item label={t('tasks.column.project')}>
+              {task.project_id === '-1'
+                ? t('projects.public')
+                : projectNameMap.get(task.project_id) || task.project_id}
+            </Descriptions.Item>
             <Descriptions.Item label={t('tasks.detail.defaultModel')}>
               {task.default_model_config_id ? (
                 <Button
@@ -226,9 +233,6 @@ export function TaskDetailDrawer({
             </Descriptions.Item>
             <Descriptions.Item label={t('tasks.detail.recentRun')}>
               {task.last_run_id || '-'}
-            </Descriptions.Item>
-            <Descriptions.Item label={t('tasks.detail.mcpWorkspace')}>
-              {task.mcp_config.workspace_dir || t('tasks.detail.workspaceNotConfigured')}
             </Descriptions.Item>
             <Descriptions.Item label={t('tasks.detail.defaultServer')}>
               {task.mcp_config.default_remote_server_id

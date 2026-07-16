@@ -34,10 +34,44 @@ impl DbStatus for ProjectStatus {
 #[serde(rename_all = "snake_case")]
 #[derive(Default)]
 pub enum ProjectSourceType {
-    #[default]
     Local,
     LocalConnector,
+    #[default]
     Cloud,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+#[derive(Default)]
+pub enum ProjectExecutionPlane {
+    LocalConnector,
+    #[default]
+    Cloud,
+}
+
+impl DbStatus for ProjectExecutionPlane {
+    fn as_str(&self) -> &'static str {
+        match self {
+            Self::LocalConnector => "local_connector",
+            Self::Cloud => "cloud",
+        }
+    }
+
+    fn from_db(value: &str) -> Self {
+        match value.trim() {
+            "local_connector" => Self::LocalConnector,
+            _ => Self::Cloud,
+        }
+    }
+}
+
+impl ProjectSourceType {
+    pub fn execution_plane(self) -> ProjectExecutionPlane {
+        match self {
+            Self::Cloud => ProjectExecutionPlane::Cloud,
+            Self::Local | Self::LocalConnector => ProjectExecutionPlane::LocalConnector,
+        }
+    }
 }
 
 impl DbStatus for ProjectSourceType {
@@ -51,9 +85,9 @@ impl DbStatus for ProjectSourceType {
 
     fn from_db(value: &str) -> Self {
         match value.trim() {
-            "cloud" => Self::Cloud,
+            "local" => Self::Local,
             "local_connector" => Self::LocalConnector,
-            _ => Self::Local,
+            _ => Self::Cloud,
         }
     }
 }
@@ -140,6 +174,8 @@ pub struct ProjectRecord {
     pub git_url: Option<String>,
     #[serde(default)]
     pub source_type: ProjectSourceType,
+    #[serde(default)]
+    pub execution_plane: ProjectExecutionPlane,
     #[serde(default)]
     pub cloud_import_source: CloudImportSource,
     #[serde(default)]

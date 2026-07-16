@@ -204,6 +204,9 @@ async fn apply_login(
         state.save(runtime.state_path.as_path())?;
     }
     runtime.sync_saved_workspaces_if_needed().await?;
+    runtime
+        .reload_managed_requirements_for_current_identity()
+        .await?;
     runtime.start_connector_if_configured().await?;
     Ok(Json(status_payload(&runtime).await))
 }
@@ -233,5 +236,8 @@ pub(crate) async fn local_logout(
         state.sandbox.enabled = false;
         state.save(runtime.state_path.as_path())?;
     }
+    runtime
+        .reload_managed_requirements_for_current_identity()
+        .await?;
     Ok(Json(status_payload(&runtime).await))
 }

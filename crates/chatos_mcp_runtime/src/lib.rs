@@ -52,7 +52,7 @@ pub use rpc::{
 pub use schema::{build_function_tool_schema, parse_tool_definition};
 pub use system_tool_catalog::{
     local_command_approval_decision_tool_definition, local_command_approval_tool_definitions,
-    project_environment_tool_definitions,
+    project_environment_tool_definitions, project_runtime_environment_info_tool_definitions,
 };
 pub use text::{inject_agent_builder_args, to_text_and_structured_result};
 pub use types::{

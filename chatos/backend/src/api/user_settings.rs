@@ -55,7 +55,7 @@ async fn put_settings(
             ),
         ),
         Err(err) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
+            StatusCode::CONFLICT,
             Json(json!({ "error": "保存用户设置失败", "detail": err })),
         ),
     }
@@ -77,7 +77,7 @@ async fn patch_settings(
             ),
         ),
         Err(err) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
+            StatusCode::CONFLICT,
             Json(json!({ "error": "更新用户设置失败", "detail": err })),
         ),
     }

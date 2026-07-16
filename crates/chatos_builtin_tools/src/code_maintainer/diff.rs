@@ -201,18 +201,15 @@ pub fn extract_patch_targets(patch: &str) -> Vec<PatchTarget> {
             let before_path = path.trim().to_string();
             let mut move_to: Option<String> = None;
             i += 1;
-            while i < lines.len() {
-                let current = lines[i];
-                if let Some(dest) = current.strip_prefix("*** Move to: ") {
-                    let dest = dest.trim();
-                    if !dest.is_empty() {
-                        move_to = Some(dest.to_string());
-                    }
+            if let Some(dest) = lines
+                .get(i)
+                .and_then(|current| current.strip_prefix("*** Move to: "))
+            {
+                let dest = dest.trim();
+                if !dest.is_empty() {
+                    move_to = Some(dest.to_string());
                 }
                 i += 1;
-                if current.starts_with("*** End Patch") {
-                    break;
-                }
             }
             let after_path = move_to.unwrap_or_else(|| before_path.clone());
             targets.push(PatchTarget {
@@ -224,13 +221,6 @@ pub fn extract_patch_targets(patch: &str) -> Vec<PatchTarget> {
         if let Some(path) = line.strip_prefix("*** Add File: ") {
             let path = path.trim().to_string();
             i += 1;
-            while i < lines.len() {
-                let current = lines[i];
-                i += 1;
-                if current.starts_with("*** End Patch") {
-                    break;
-                }
-            }
             targets.push(PatchTarget {
                 before_path: path.clone(),
                 after_path: path,
@@ -240,13 +230,6 @@ pub fn extract_patch_targets(patch: &str) -> Vec<PatchTarget> {
         if let Some(path) = line.strip_prefix("*** Delete File: ") {
             let path = path.trim().to_string();
             i += 1;
-            while i < lines.len() {
-                let current = lines[i];
-                i += 1;
-                if current.starts_with("*** End Patch") {
-                    break;
-                }
-            }
             targets.push(PatchTarget {
                 before_path: path.clone(),
                 after_path: path,
@@ -282,6 +265,9 @@ fn collect_patch_section(lines: &[&str], start: usize, path: &str) -> (String, S
     let mut idx = start;
     while idx < lines.len() {
         let line = lines[idx];
+        if is_standard_patch_operation_header(line) {
+            break;
+        }
         section.push(line.to_string());
         if let Some(dest) = line.strip_prefix("*** Move to: ") {
             let dest = dest.trim();
@@ -334,4 +320,28 @@ fn parse_loose_update_header(line: &str) -> Option<String> {
 
 fn is_patch_end_marker(line: &str) -> bool {
     matches!(line.trim(), "*** End Patch" | "End Patch")
+}
+
+fn is_standard_patch_operation_header(line: &str) -> bool {
+    line.starts_with("*** Update File: ")
+        || line.starts_with("*** Add File: ")
+        || line.starts_with("*** Delete File: ")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn patch_target_extraction_covers_every_standard_operation() {
+        let targets = extract_patch_targets(
+            "*** Begin Patch\n*** Update File: src/a.rs\n*** Move to: src/b.rs\n@@\n-old\n+new\n*** Add File: src/c.rs\n+new\n*** Delete File: src/d.rs\n*** End Patch",
+        );
+
+        assert_eq!(targets.len(), 3);
+        assert_eq!(targets[0].before_path, "src/a.rs");
+        assert_eq!(targets[0].after_path, "src/b.rs");
+        assert_eq!(targets[1].after_path, "src/c.rs");
+        assert_eq!(targets[2].after_path, "src/d.rs");
+    }
 }
