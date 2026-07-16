@@ -2,10 +2,14 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use chatos_ai_runtime::ModelRuntimeConfig;
+use chatos_service_runtime::{build_http_client, HttpClientTimeouts};
 use serde::Deserialize;
 
 use crate::config::AppConfig;
-use crate::http_body::{read_response_text_limited_or_message, ERROR_BODY_PREVIEW_LIMIT_BYTES};
+use crate::http_body::{
+    read_response_json_limited, read_response_text_limited_or_message,
+    ERROR_BODY_PREVIEW_LIMIT_BYTES, JSON_BODY_LIMIT_BYTES,
+};
 
 pub(crate) const HARNESS_REPO_WRITE_SCOPE: &str = "harness.repo.write";
 pub(crate) const HARNESS_ACCESS_READ_SCOPE: &str = "harness.access.read";
@@ -61,9 +65,7 @@ pub async fn get_environment_initialization_model_settings(
         config.user_service_base_url.trim().trim_end_matches('/'),
         urlencoding::encode(owner_user_id)
     );
-    let client = reqwest::Client::builder()
-        .timeout(config.user_service_request_timeout)
-        .build()
+    let client = build_http_client(HttpClientTimeouts::new(config.user_service_request_timeout))
         .map_err(|err| format!("build user_service client failed: {err}"))?;
     let response =
         signed_user_service_request(client.get(endpoint), secret, MODEL_SETTINGS_READ_SCOPE)?
@@ -80,10 +82,12 @@ pub async fn get_environment_initialization_model_settings(
             body
         });
     }
-    let record = response
-        .json::<UserServiceModelSettingsResponse>()
-        .await
-        .map_err(|err| format!("parse user_service model settings response failed: {err}"))?;
+    let record = read_response_json_limited::<UserServiceModelSettingsResponse>(
+        response,
+        JSON_BODY_LIMIT_BYTES,
+    )
+    .await
+    .map_err(|err| format!("parse user_service model settings response failed: {err}"))?;
     Ok(environment_initialization_settings_from_response(record))
 }
 
@@ -188,9 +192,7 @@ async fn get_cloud_model_runtime(
         urlencoding::encode(owner_user_id),
         urlencoding::encode(model_config_id),
     );
-    let client = reqwest::Client::builder()
-        .timeout(config.user_service_request_timeout)
-        .build()
+    let client = build_http_client(HttpClientTimeouts::new(config.user_service_request_timeout))
         .map_err(|err| format!("build user_service client failed: {err}"))?;
     let response =
         signed_user_service_request(client.get(endpoint), secret, MODEL_RUNTIME_READ_SCOPE)?
@@ -207,8 +209,7 @@ async fn get_cloud_model_runtime(
             body
         });
     }
-    response
-        .json::<UserServiceModelRuntimeResponse>()
+    read_response_json_limited::<UserServiceModelRuntimeResponse>(response, JSON_BODY_LIMIT_BYTES)
         .await
         .map_err(|err| format!("parse user_service model runtime response failed: {err}"))
 }

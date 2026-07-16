@@ -9,6 +9,9 @@ use axum::http::{
 };
 use axum::response::Response;
 use axum::Extension;
+use chatos_service_runtime::http_body::{
+    read_response_bytes_limited, DEFAULT_RESPONSE_BODY_LIMIT_BYTES,
+};
 use serde_json::Value;
 
 use super::ApiError;
@@ -44,10 +47,6 @@ pub(super) async fn memory_engine_proxy(
         target_url.push('?');
         target_url.push_str(query);
     }
-    let client = reqwest::Client::builder()
-        .timeout(state.config.memory_engine_request_timeout)
-        .build()
-        .map_err(|err| ApiError::internal(format!("build Memory Engine client failed: {err}")))?;
     let scope = if suffix.starts_with("admin/sources") {
         "memory.source"
     } else {
@@ -61,7 +60,8 @@ pub(super) async fn memory_engine_proxy(
         60,
     )
     .map_err(ApiError::internal)?;
-    let mut request = client
+    let mut request = state
+        .memory_engine_http()
         .request(method, target_url)
         .header("x-memory-caller", "local-connector-service")
         .header("x-memory-internal-token", token);
@@ -86,9 +86,11 @@ pub(super) async fn memory_engine_proxy(
         .get(CONTENT_TYPE)
         .and_then(|value| value.to_str().ok())
         .map(ToOwned::to_owned);
-    let bytes = response.bytes().await.map_err(|err| {
-        ApiError::bad_gateway(format!("read Memory Engine response failed: {err}"))
-    })?;
+    let bytes = read_response_bytes_limited(response, DEFAULT_RESPONSE_BODY_LIMIT_BYTES)
+        .await
+        .map_err(|err| {
+            ApiError::bad_gateway(format!("read Memory Engine response failed: {err}"))
+        })?;
     let mut builder = Response::builder().status(status);
     if let Some(content_type) = content_type {
         builder = builder.header(CONTENT_TYPE, content_type);

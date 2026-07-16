@@ -289,6 +289,9 @@ pub fn build_router(state: AppState) -> Router {
                 .on_response(DefaultOnResponse::new().level(Level::DEBUG)),
         )
         .layer(cors)
+        .layer(middleware::from_fn(
+            chatos_service_runtime::request_id_middleware,
+        ))
 }
 
 fn plugin_management_cors(configured_origins: &[String]) -> CorsLayer {
@@ -317,44 +320,25 @@ async fn require_auth(
         return Ok(next.run(request).await);
     }
     let token = bearer_token_from_request(&request).map_err(ApiError::unauthorized)?;
-    let user = verify_token_via_user_service(&state.config, token.as_str())
-        .await
-        .map_err(ApiError::unauthorized)?;
+    let user =
+        verify_token_via_user_service(&state.config, state.user_service_http(), token.as_str())
+            .await
+            .map_err(ApiError::unauthorized)?;
     request.extensions_mut().insert(AccessToken(token));
     request.extensions_mut().insert(user);
     Ok(next.run(request).await)
 }
 
 fn bearer_token_from_request(request: &Request<axum::body::Body>) -> Result<String, String> {
-    if has_legacy_query_token(request.uri().query()) {
+    if chatos_service_runtime::query_has_nonempty_parameter(
+        request.uri().query(),
+        &["access_token", "token"],
+    ) {
         return Err(
             "URL query access tokens are not supported; use Authorization header".to_string(),
         );
     }
     bearer_token_from_headers(request.headers()).map(ToOwned::to_owned)
-}
-
-fn has_legacy_query_token(query: Option<&str>) -> bool {
-    query
-        .into_iter()
-        .flat_map(|query| query.split('&'))
-        .any(|pair| {
-            let mut parts = pair.splitn(2, '=');
-            matches!(parts.next(), Some("access_token" | "token"))
-                && parts.next().is_some_and(|value| !value.trim().is_empty())
-        })
-}
-
-#[cfg(test)]
-mod auth_query_tests {
-    use super::has_legacy_query_token;
-
-    #[test]
-    fn detects_legacy_query_tokens() {
-        assert!(has_legacy_query_token(Some("access_token=token-1")));
-        assert!(has_legacy_query_token(Some("token=token-1")));
-        assert!(!has_legacy_query_token(Some("plain=value")));
-    }
 }
 
 async fn health_handler() -> Json<HealthResponse> {
@@ -368,7 +352,7 @@ async fn login_handler(
     State(state): State<AppState>,
     Json(input): Json<LoginRequest>,
 ) -> Result<Json<LoginResponse>, ApiError> {
-    login_via_user_service(&state.config, &input)
+    login_via_user_service(&state.config, state.user_service_http(), &input)
         .await
         .map(Json)
         .map_err(ApiError::bad_gateway)

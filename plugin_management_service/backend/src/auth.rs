@@ -1,8 +1,15 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use axum::http::header::AUTHORIZATION;
 use axum::http::HeaderMap;
+use chatos_service_runtime::http_body::{
+    read_response_json_limited, read_response_preview_text_limited_or_message,
+    ERROR_BODY_PREVIEW_LIMIT_BYTES, JSON_BODY_LIMIT_BYTES,
+};
+use chatos_service_runtime::{
+    bearer_token_from_headers as parse_bearer_token_from_headers,
+    normalized_identity_text as normalize_identity_text, BearerTokenError,
+};
 use reqwest::Method;
 use serde::{Deserialize, Serialize};
 
@@ -53,10 +60,12 @@ struct UserServiceVerifyResponse {
 
 pub async fn login_via_user_service(
     config: &AppConfig,
+    client: &reqwest::Client,
     input: &LoginRequest,
 ) -> Result<LoginResponse, String> {
     let payload: UserServiceLoginResponse = request_user_service_json(
         config,
+        client,
         Method::POST,
         "/api/auth/login",
         None,
@@ -75,10 +84,12 @@ pub async fn login_via_user_service(
 
 pub async fn verify_token_via_user_service(
     config: &AppConfig,
+    client: &reqwest::Client,
     token: &str,
 ) -> Result<CurrentUser, String> {
     let payload: UserServiceVerifyResponse = request_user_service_json::<(), _>(
         config,
+        client,
         Method::GET,
         "/api/auth/verify",
         Some(token),
@@ -89,22 +100,18 @@ pub async fn verify_token_via_user_service(
 }
 
 pub fn bearer_token_from_headers(headers: &HeaderMap) -> Result<&str, String> {
-    let value = headers
-        .get(AUTHORIZATION)
-        .ok_or_else(|| "缺少登录令牌".to_string())?
-        .to_str()
-        .map_err(|_| "登录令牌格式不正确".to_string())?;
-    let mut parts = value.split_whitespace();
-    let scheme = parts.next().unwrap_or_default();
-    let token = parts.next().unwrap_or_default();
-    if !scheme.eq_ignore_ascii_case("Bearer") || token.is_empty() || parts.next().is_some() {
-        return Err("登录令牌格式不正确".to_string());
+    match parse_bearer_token_from_headers(headers) {
+        Ok(token) => Ok(token),
+        Err(BearerTokenError::MissingAuthorizationHeader) => Err("缺少登录令牌".to_string()),
+        Err(
+            BearerTokenError::InvalidAuthorizationHeader | BearerTokenError::InvalidBearerToken,
+        ) => Err("登录令牌格式不正确".to_string()),
     }
-    Ok(token)
 }
 
 async fn request_user_service_json<TBody, TResp>(
     config: &AppConfig,
+    client: &reqwest::Client,
     method: Method,
     path: &str,
     access_token: Option<&str>,
@@ -119,10 +126,6 @@ where
         config.user_service_base_url.trim().trim_end_matches('/'),
         path
     );
-    let client = reqwest::Client::builder()
-        .timeout(config.user_service_request_timeout)
-        .build()
-        .map_err(|err| format!("build user_service client failed: {err}"))?;
     let mut request = client.request(method, endpoint);
     if let Some(access_token) = access_token {
         request = request.bearer_auth(access_token.trim());
@@ -136,15 +139,16 @@ where
         .map_err(|err| format!("user_service request failed: {err}"))?;
     if !response.status().is_success() {
         let status = response.status();
-        let text = response.text().await.unwrap_or_default();
+        let text =
+            read_response_preview_text_limited_or_message(response, ERROR_BODY_PREVIEW_LIMIT_BYTES)
+                .await;
         return Err(if text.trim().is_empty() {
             format!("user_service request failed with status {status}")
         } else {
             text
         });
     }
-    response
-        .json::<TResp>()
+    read_response_json_limited::<TResp>(response, JSON_BODY_LIMIT_BYTES)
         .await
         .map_err(|err| format!("parse user_service response failed: {err}"))
 }
@@ -234,8 +238,4 @@ fn current_user_from_verified_principal(
         }
         _ => Err(format!("unsupported principal_type: {principal_type}")),
     }
-}
-
-fn normalize_identity_text(value: Option<&str>) -> Option<&str> {
-    value.map(str::trim).filter(|value| !value.is_empty())
 }

@@ -14,6 +14,9 @@ use axum::{Extension, Json};
 use chatos_plugin_management_sdk::{
     ResolveAgentCapabilitiesRequest, SystemAgentKey, LOCAL_CONNECTOR_APPROVAL_MCP_RESOURCE_ID,
 };
+use chatos_service_runtime::http_body::{
+    read_response_bytes_limited, DEFAULT_RESPONSE_BODY_LIMIT_BYTES,
+};
 use serde::Deserialize;
 use serde::Serialize;
 use serde_json::Value;
@@ -170,11 +173,9 @@ async fn proxy_user_service_request(
         target_url.push_str(query);
     }
 
-    let client = reqwest::Client::builder()
-        .timeout(state.config.user_service_request_timeout)
-        .build()
-        .map_err(|err| ApiError::internal(format!("build user_service client failed: {err}")))?;
-    let mut request = client.request(method, target_url.as_str());
+    let mut request = state
+        .user_service_http()
+        .request(method, target_url.as_str());
     if let Some(content_type) = headers.get(CONTENT_TYPE) {
         request = request.header(CONTENT_TYPE.as_str(), content_type);
     }
@@ -202,9 +203,11 @@ async fn proxy_user_service_request(
         .get(CONTENT_TYPE)
         .and_then(|value| value.to_str().ok())
         .map(ToOwned::to_owned);
-    let bytes = response.bytes().await.map_err(|err| {
-        ApiError::bad_gateway(format!("read user_service response failed: {err}"))
-    })?;
+    let bytes = read_response_bytes_limited(response, DEFAULT_RESPONSE_BODY_LIMIT_BYTES)
+        .await
+        .map_err(|err| {
+            ApiError::bad_gateway(format!("read user_service response failed: {err}"))
+        })?;
     let mut builder = Response::builder().status(status);
     if let Some(content_type) = content_type {
         builder = builder.header(CONTENT_TYPE, content_type);

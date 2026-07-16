@@ -5,7 +5,8 @@ use std::collections::HashMap;
 use std::env;
 
 use chatos_service_runtime::{
-    is_production_environment, validate_production_secret, DEFAULT_MEMORY_ENGINE_OPERATOR_TOKEN,
+    env_flag, env_text, is_production_environment, validate_production_secret,
+    DEFAULT_MEMORY_ENGINE_OPERATOR_TOKEN,
 };
 
 #[derive(Debug, Clone)]
@@ -195,17 +196,6 @@ fn caller_internal_api_secrets() -> HashMap<String, String> {
     .collect()
 }
 
-fn env_flag(key: &str, default: bool) -> bool {
-    env_text(key)
-        .map(|value| {
-            matches!(
-                value.to_ascii_lowercase().as_str(),
-                "1" | "true" | "yes" | "on"
-            )
-        })
-        .unwrap_or(default)
-}
-
 fn parse_u16(raw: Option<String>, default: u16) -> u16 {
     raw.and_then(|value| value.trim().parse::<u16>().ok())
         .unwrap_or(default)
@@ -233,13 +223,6 @@ fn parse_bounded_f64(raw: Option<String>, default: f64, min: f64, max: f64) -> f
     raw.and_then(|value| value.trim().parse::<f64>().ok())
         .unwrap_or(default)
         .clamp(min, max)
-}
-
-fn env_text(key: &str) -> Option<String> {
-    env::var(key)
-        .ok()
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
 }
 
 #[cfg(test)]

@@ -2,8 +2,8 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 import { EditOutlined, SaveOutlined } from '@ant-design/icons';
+import { formatDateTime } from '@chatos/frontend-runtime';
 import { Button, Descriptions, Form, Input, Space, Tag, Typography } from 'antd';
-import dayjs from 'dayjs';
 
 import { MarkdownPreview, MarkdownPreviewSection } from '../../components/MarkdownPreview';
 import type { DependencyGraphNode, ProjectWorkItemRecord, RequirementRecord } from '../../types';
@@ -263,8 +263,4 @@ function graphNodeTypeColor(type?: string) {
 function shortGraphId(value: string) {
   const raw = value.split(':').pop()?.trim() || value.trim();
   return raw.length > 8 ? raw.slice(0, 8) : raw;
-}
-
-function formatDateTime(value?: string | null) {
-  return value ? dayjs(value).format('YYYY-MM-DD HH:mm:ss') : '-';
 }

@@ -40,14 +40,15 @@ export function SandboxTechnicalDetails({
               : '未安装'}
             detail={status.docker.version || status.docker.error || 'Docker 模式需要'}
           />
-        ) : (
-          <TechnicalItem
-            icon={Network}
-            label="网络隔离"
-            value={status.sandbox.network_isolation === false ? '不可用' : '受策略限制'}
-            detail="默认断网；需要时进入用户或 AI 审批流程。"
-          />
-        )}
+        ) : null}
+        <TechnicalItem
+          icon={Network}
+          label="网络隔离"
+          value={status.sandbox.network_isolation === false ? '不可用' : '受策略限制'}
+          detail={backend === 'docker'
+            ? '受限权限使用无公网出口的 internal 网络；完整访问模式使用 bridge 网络。'
+            : '默认断网；需要时进入用户或 AI 审批流程。'}
+        />
         <TechnicalItem
           icon={Shield}
           label="策略版本"

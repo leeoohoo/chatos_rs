@@ -17,6 +17,8 @@ fn default_prompt_language() -> String {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EngineModelProfile {
     pub id: String,
+    pub owner_user_id: Option<String>,
+    pub owner_username: Option<String>,
     pub name: String,
     pub provider: String,
     pub model: String,
@@ -43,9 +45,10 @@ pub struct UpsertEngineModelProfileRequest {
     pub id: Option<String>,
     pub name: String,
     pub provider: String,
+    #[serde(alias = "model_name")]
     pub model: String,
-    pub base_url: Option<String>,
-    pub api_key: Option<String>,
+    pub base_url: Option<Option<String>>,
+    pub api_key: Option<Option<String>>,
     pub supports_images: Option<bool>,
     pub supports_reasoning: Option<bool>,
     pub supports_responses: Option<bool>,

@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
+#[cfg(feature = "client")]
 mod client;
 mod models;
 
+#[cfg(feature = "client")]
 pub use self::client::{MemoryEngineClient, RunPendingRollupsOptions};
 pub use self::models::{
     BatchSyncRecordsResponse, CompactTurnsResponse, ComposeContextBlock, ComposeContextMeta,
@@ -29,5 +31,5 @@ pub use self::models::{
     SystemUpsertSubjectMemoryScopeRequest, ThreadRecordsPageResponse, ThreadSnapshotLookupResponse,
     TurnProcessRecordsResponse, TurnRecordSlice, UpsertEngineJobPolicyRequest,
     UpsertEngineModelProfileRequest, UpsertRecordInput, UpsertSourceRequest,
-    UpsertSubjectMemoryScopeRequest,
+    UpsertSubjectMemoryScopeRequest, UpsertThreadSnapshotRequest,
 };

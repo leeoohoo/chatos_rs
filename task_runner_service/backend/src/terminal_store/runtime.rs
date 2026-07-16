@@ -5,13 +5,13 @@ use std::path::PathBuf;
 use std::sync::{Arc, OnceLock};
 
 use chatos_builtin_tools::TerminalControllerContext;
-use tokio::io::{AsyncRead, AsyncReadExt};
+use chatos_terminal_runtime::{read_output_chunks, wait_for_terminal_session, TerminalWaitResult};
+use tokio::io::AsyncRead;
 use tokio::process::Child;
-use tokio::time::{sleep, Duration, Instant};
 use uuid::Uuid;
 
 use super::pathing::{canonicalize_existing, now_rfc3339};
-use super::{TerminalLogEntry, TerminalRuntimeState, TerminalSession, TerminalSessionMeta};
+use super::{TerminalRuntimeState, TerminalSession, TerminalSessionMeta};
 
 static TERMINAL_STATE: OnceLock<Arc<TerminalRuntimeState>> = OnceLock::new();
 
@@ -30,20 +30,16 @@ pub(super) async fn register_session(
     let session_id = Uuid::new_v4().to_string();
     let now = now_rfc3339();
     let session = Arc::new(TerminalSession {
-        meta: tokio::sync::Mutex::new(TerminalSessionMeta {
-            id: session_id.clone(),
-            cwd: target_path.to_string_lossy().to_string(),
-            project_id: context.project_id.clone(),
-            user_id: context.user_id.clone(),
+        meta: tokio::sync::Mutex::new(TerminalSessionMeta::new(
+            session_id.clone(),
+            target_path.to_string_lossy().to_string(),
+            context.project_id.clone(),
+            context.user_id.clone(),
             command,
-            started_at: now.clone(),
-            last_active_at: now.clone(),
-            finished_at: None,
-            status: "running".to_string(),
-            exit_code: None,
-        }),
+            now,
+        )),
         child: tokio::sync::Mutex::new(child),
-        logs: tokio::sync::Mutex::new(Vec::new()),
+        logs: tokio::sync::Mutex::new(chatos_terminal_runtime::TerminalLogBuffer::default()),
     });
 
     if let Some(stdout) = stdout {
@@ -65,19 +61,13 @@ where
     R: AsyncRead + Unpin + Send + 'static,
 {
     tokio::spawn(async move {
-        let mut buf = vec![0_u8; 2048];
-        loop {
-            match reader.read(&mut buf).await {
-                Ok(0) => break,
-                Ok(count) => {
-                    let chunk = String::from_utf8_lossy(&buf[..count]).to_string();
-                    if !chunk.is_empty() {
-                        append_log(session.clone(), kind, chunk).await;
-                    }
-                }
-                Err(_) => break,
+        let _ = read_output_chunks(&mut reader, move |chunk| {
+            let session = session.clone();
+            async move {
+                append_log(session, kind, chunk).await;
             }
-        }
+        })
+        .await;
     });
 }
 
@@ -88,26 +78,16 @@ pub(super) async fn append_log(session: Arc<TerminalSession>, kind: &str, conten
     let now = now_rfc3339();
     {
         let mut logs = session.logs.lock().await;
-        let offset = logs.last().map(|entry| entry.offset + 1).unwrap_or(0);
-        logs.push(TerminalLogEntry {
-            offset,
-            kind: kind.to_string(),
-            content,
-            created_at: now.clone(),
-        });
-        if logs.len() > 4_000 {
-            let drain = logs.len() - 4_000;
-            logs.drain(0..drain);
-        }
+        logs.append(kind, content, now.clone());
     }
     let mut meta = session.meta.lock().await;
-    meta.last_active_at = now;
+    meta.record_activity(now);
 }
 
 pub(super) async fn refresh_session_status(session: &Arc<TerminalSession>) -> Result<(), String> {
     {
         let meta = session.meta.lock().await;
-        if meta.status == "exited" {
+        if meta.is_exited() {
             return Ok(());
         }
     }
@@ -123,13 +103,7 @@ pub(super) async fn refresh_session_status(session: &Arc<TerminalSession>) -> Re
 
 pub(super) async fn mark_session_exited(session: &Arc<TerminalSession>, exit_code: Option<i32>) {
     let mut meta = session.meta.lock().await;
-    if meta.status == "exited" {
-        return;
-    }
-    meta.status = "exited".to_string();
-    meta.exit_code = exit_code;
-    meta.finished_at = Some(now_rfc3339());
-    meta.last_active_at = meta.finished_at.clone().unwrap_or_else(now_rfc3339);
+    meta.mark_exited(exit_code, now_rfc3339());
 }
 
 pub(super) async fn sessions_for_context(
@@ -140,16 +114,11 @@ pub(super) async fn sessions_for_context(
     let mut matched = Vec::new();
     for session in sessions.values() {
         let meta = session.meta.lock().await.clone();
-        let same_user = match context.user_id.as_deref() {
-            Some(user_id) => meta.user_id.as_deref() == Some(user_id),
-            None => true,
-        };
-        let in_scope = if let Some(project_id) = context.project_id.as_deref() {
-            meta.project_id.as_deref() == Some(project_id)
-        } else {
-            PathBuf::from(&meta.cwd).starts_with(&root)
-        };
-        if same_user && in_scope {
+        if meta.matches_scope(
+            root.as_path(),
+            context.project_id.as_deref(),
+            context.user_id.as_deref(),
+        ) {
             matched.push(session.clone());
         }
     }
@@ -181,43 +150,17 @@ pub(super) async fn session_for_context(
         .ok_or_else(|| format!("terminal not found in current project context: {terminal_id}"))
 }
 
-pub(super) struct WaitResult {
-    pub(super) waited_ms: u64,
-    pub(super) busy: bool,
-    pub(super) timed_out: bool,
-    pub(super) finished_by: &'static str,
-    pub(super) exit_code: Option<i32>,
-}
-
 pub(super) async fn wait_for_session(
     session: Arc<TerminalSession>,
     timeout_ms: u64,
-) -> Result<WaitResult, String> {
-    let timeout = Duration::from_millis(timeout_ms.clamp(1_000, 600_000));
-    let started = Instant::now();
-    loop {
-        refresh_session_status(&session).await?;
-        let meta = session.meta.lock().await.clone();
-        if meta.status == "exited" {
-            return Ok(WaitResult {
-                waited_ms: started.elapsed().as_millis() as u64,
-                busy: false,
-                timed_out: false,
-                finished_by: "exit",
-                exit_code: meta.exit_code,
-            });
+) -> Result<TerminalWaitResult, String> {
+    wait_for_terminal_session(timeout_ms, || {
+        let session = session.clone();
+        async move {
+            refresh_session_status(&session).await?;
+            let meta = session.meta.lock().await.clone();
+            Ok(meta)
         }
-        if started.elapsed() >= timeout {
-            break;
-        }
-        sleep(Duration::from_millis(100)).await;
-    }
-    let meta = session.meta.lock().await.clone();
-    Ok(WaitResult {
-        waited_ms: started.elapsed().as_millis() as u64,
-        busy: meta.status != "exited",
-        timed_out: true,
-        finished_by: "timeout",
-        exit_code: meta.exit_code,
     })
+    .await
 }

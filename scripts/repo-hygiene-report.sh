@@ -62,6 +62,8 @@ find "$ROOT_DIR" \
 
 print_header "Suggested Commands"
 echo "bash scripts/check-large-files.sh --threshold 20"
+echo "python scripts/check_source_size_policy.py"
+echo "python scripts/check_new_code_clones.py --min-lines 25"
 echo "python scripts/check-non-test-unwrap-expect.py"
 echo "python scripts/check-rust-dependency-drift.py"
 echo "bash scripts/check-hotspot-line-budgets.sh"

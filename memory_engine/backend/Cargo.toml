@@ -12,12 +12,12 @@ tokio = { version = "1", features = ["full"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 chrono = { version = "0.4", features = ["serde", "clock"] }
-chatos_service_runtime = { path = "../../crates/chatos_service_runtime" }
+chatos_service_runtime = { path = "../../crates/chatos_service_runtime", features = ["axum-support"] }
+memory_engine_sdk = { path = "../../crates/memory_engine_sdk", default-features = false }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
 uuid = { version = "1", features = ["v4", "serde"] }
 mongodb = "3"
-dotenvy = "0.15"
 tower-http = { version = "0.7", features = ["cors", "trace"] }
 reqwest = { version = "0.12", features = ["json", "rustls-tls", "stream"] }
 futures-util = "0.3"

@@ -4,11 +4,12 @@
 use std::collections::{HashSet, VecDeque};
 
 use axum::extract::{Path, Query, Request, State};
-use axum::http::{header, HeaderMap, Method, StatusCode};
+use axum::http::{HeaderMap, Method, StatusCode};
 use axum::middleware::Next;
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
 use axum::{Extension, Json};
+use chatos_service_runtime::{classify_http_request_error, HttpRequestErrorKind};
 use futures_util::stream;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -155,6 +156,14 @@ impl IntoResponse for ApiError {
             error: self.message,
         });
         (self.status, body).into_response()
+    }
+}
+
+fn upstream_gateway_status(error: &reqwest::Error) -> StatusCode {
+    match classify_http_request_error(error) {
+        HttpRequestErrorKind::Timeout => StatusCode::GATEWAY_TIMEOUT,
+        HttpRequestErrorKind::Connect => StatusCode::SERVICE_UNAVAILABLE,
+        _ => StatusCode::BAD_GATEWAY,
     }
 }
 

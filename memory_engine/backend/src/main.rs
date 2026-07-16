@@ -12,7 +12,9 @@ mod services;
 mod state;
 
 use std::sync::Arc;
+use std::time::Duration;
 
+use chatos_service_runtime::{build_http_client, HttpClientTimeouts};
 use tokio::net::TcpListener;
 use tower_http::cors::{Any, CorsLayer};
 use tower_http::trace::{DefaultMakeSpan, DefaultOnRequest, DefaultOnResponse, TraceLayer};
@@ -23,7 +25,7 @@ use crate::state::AppState;
 
 #[tokio::main]
 async fn main() -> Result<(), String> {
-    let _ = dotenvy::dotenv();
+    chatos_service_runtime::load_service_dotenv(std::path::Path::new(env!("CARGO_MANIFEST_DIR")));
 
     tracing_subscriber::fmt()
         .with_env_filter(
@@ -41,10 +43,15 @@ async fn main() -> Result<(), String> {
     .await;
     let pool = db::init_pool(&config).await?;
     db::init_schema(&pool).await?;
+    let user_service_http = build_http_client(HttpClientTimeouts::new(Duration::from_millis(
+        config.user_service_request_timeout_ms.max(300),
+    )))
+    .map_err(|err| format!("build user_service client failed: {err}"))?;
 
     let state = Arc::new(AppState {
         pool,
         config: config.clone(),
+        user_service_http,
     });
 
     if config.worker_enabled {

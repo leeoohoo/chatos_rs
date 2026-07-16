@@ -41,4 +41,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             )),
         )
         .with_state(state)
+        .layer(middleware::from_fn(
+            chatos_service_runtime::request_id_middleware,
+        ))
 }

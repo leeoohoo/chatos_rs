@@ -1,6 +1,10 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
+use chatos_service_runtime::http_body::{
+    read_response_json_limited, read_response_preview_text_limited_or_message,
+    ERROR_BODY_PREVIEW_LIMIT_BYTES, JSON_BODY_LIMIT_BYTES,
+};
 use reqwest::Method;
 use serde::Serialize;
 use serde_json::Value;
@@ -287,7 +291,9 @@ async fn delete_memory_engine_model_profile(
     if status.is_success() || status.as_u16() == 404 {
         return Ok(());
     }
-    let body = response.text().await.unwrap_or_default();
+    let body =
+        read_response_preview_text_limited_or_message(response, ERROR_BODY_PREVIEW_LIMIT_BYTES)
+            .await;
     Err(format!(
         "memory_engine delete request failed: {} {}",
         status.as_u16(),
@@ -377,7 +383,9 @@ async fn delete_task_runner_model_config(
         return Ok(());
     }
     let status = response.status().as_u16();
-    let body = response.text().await.unwrap_or_default();
+    let body =
+        read_response_preview_text_limited_or_message(response, ERROR_BODY_PREVIEW_LIMIT_BYTES)
+            .await;
     Err(format!(
         "task_runner delete request failed: {} {}",
         status,
@@ -405,17 +413,16 @@ where
     let response = request.send().await.map_err(|err| err.to_string())?;
     let status = response.status();
     if !status.is_success() {
-        let body = response.text().await.unwrap_or_default();
+        let body =
+            read_response_preview_text_limited_or_message(response, ERROR_BODY_PREVIEW_LIMIT_BYTES)
+                .await;
         return Err(format!(
             "memory_engine request failed: {} {}",
             status.as_u16(),
             extract_error_message(body.as_str())
         ));
     }
-    response
-        .json::<TResp>()
-        .await
-        .map_err(|err| err.to_string())
+    read_response_json_limited::<TResp>(response, JSON_BODY_LIMIT_BYTES).await
 }
 
 fn signed_memory_engine_request(
@@ -463,17 +470,16 @@ where
     let response = request.send().await.map_err(|err| err.to_string())?;
     let status = response.status();
     if !status.is_success() {
-        let body = response.text().await.unwrap_or_default();
+        let body =
+            read_response_preview_text_limited_or_message(response, ERROR_BODY_PREVIEW_LIMIT_BYTES)
+                .await;
         return Err(format!(
             "task_runner request failed: {} {}",
             status.as_u16(),
             extract_error_message(body.as_str())
         ));
     }
-    response
-        .json::<TResp>()
-        .await
-        .map_err(|err| err.to_string())
+    read_response_json_limited::<TResp>(response, JSON_BODY_LIMIT_BYTES).await
 }
 
 fn task_runner_provider(provider: &str) -> &'static str {

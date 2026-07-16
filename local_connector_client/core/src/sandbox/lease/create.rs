@@ -34,6 +34,10 @@ use crate::{
     local_now_rfc3339, LocalState, DEFAULT_LOCAL_SANDBOX_IMAGE, LOCAL_SANDBOX_STATUS_READY,
 };
 
+const DEFAULT_LOCAL_SANDBOX_LEASE_TTL_SECONDS: u64 = 7_200;
+const MIN_LOCAL_SANDBOX_LEASE_TTL_SECONDS: u64 = 60;
+const MAX_LOCAL_SANDBOX_LEASE_TTL_SECONDS: u64 = 24 * 60 * 60;
+
 pub(crate) async fn create_local_sandbox_lease(
     request: &RelayRequest,
     state: &LocalState,
@@ -79,17 +83,11 @@ pub(crate) async fn create_local_sandbox_lease(
         .sandbox_mode
     {
         SandboxBackendKind::Docker => {
-            if matches!(
-                &effective_permissions.network,
-                NetworkPermissionPolicy::Restricted { requirements }
-                    if requirements.enabled == Some(true)
-            ) {
-                return Err(anyhow!(
-                    "restricted domain network profiles require the native local-process sandbox; Docker bridge networking cannot enforce the configured egress policy"
-                ));
-            }
             ensure_docker_running().await?;
-            validate_local_docker_network_policy(&requested_network)?;
+            let network = normalized_local_docker_network(
+                &requested_network,
+                &effective_permissions.network,
+            )?;
             let image_ref =
                 select_local_sandbox_image_ref(state, sandbox_runtime, input.image_id.as_deref())
                     .await;
@@ -99,7 +97,7 @@ pub(crate) async fn create_local_sandbox_lease(
                 image_ref.as_str(),
                 agent_token.as_str(),
                 &resource_limits,
-                &requested_network,
+                &network,
                 effective_policy.permission_profile_id,
             )
             .await?;
@@ -120,7 +118,7 @@ pub(crate) async fn create_local_sandbox_lease(
                 Some(agent_endpoint),
                 input.image_id.clone(),
                 Some(image_ref),
-                requested_network,
+                network,
             )
         }
         SandboxBackendKind::LocalProcess => {
@@ -155,9 +153,8 @@ pub(crate) async fn create_local_sandbox_lease(
         }
     };
     let now = local_now_rfc3339();
-    let expires_at = (Utc::now()
-        + ChronoDuration::seconds(input.ttl_seconds.unwrap_or(7200) as i64))
-    .to_rfc3339();
+    let ttl_seconds = normalized_local_sandbox_lease_ttl_seconds(input.ttl_seconds);
+    let expires_at = (Utc::now() + ChronoDuration::seconds(ttl_seconds as i64)).to_rfc3339();
     let lease = LocalSandboxLease {
         id: lease_id.clone(),
         sandbox_id: sandbox_id.clone(),
@@ -196,6 +193,15 @@ pub(crate) async fn create_local_sandbox_lease(
         .await
         .insert(sandbox_id, lease);
     Ok((201, BTreeMap::new(), response))
+}
+
+fn normalized_local_sandbox_lease_ttl_seconds(requested: Option<u64>) -> u64 {
+    requested
+        .unwrap_or(DEFAULT_LOCAL_SANDBOX_LEASE_TTL_SECONDS)
+        .clamp(
+            MIN_LOCAL_SANDBOX_LEASE_TTL_SECONDS,
+            MAX_LOCAL_SANDBOX_LEASE_TTL_SECONDS,
+        )
 }
 
 async fn select_local_sandbox_image_ref(
@@ -314,14 +320,38 @@ fn local_effective_policy(
     })
 }
 
-fn validate_local_docker_network_policy(network: &LocalSandboxNetworkPolicy) -> Result<()> {
+fn normalized_local_docker_network(
+    network: &LocalSandboxNetworkPolicy,
+    permissions: &NetworkPermissionPolicy,
+) -> Result<LocalSandboxNetworkPolicy> {
     let mode = network.mode.trim();
-    if mode.is_empty() || mode.eq_ignore_ascii_case("bridge") {
-        return Ok(());
+    if !mode.is_empty()
+        && !mode.eq_ignore_ascii_case("bridge")
+        && !mode.eq_ignore_ascii_case("none")
+    {
+        return Err(anyhow!(
+            "local Docker sandbox only supports bridge or isolated networking; requested network mode {mode:?} is not allowed"
+        ));
     }
-    Err(anyhow!(
-        "local Docker sandbox currently only supports bridge networking for the MCP agent; requested network mode {mode:?} is not allowed"
-    ))
+    match permissions {
+        NetworkPermissionPolicy::Unrestricted => Ok(LocalSandboxNetworkPolicy {
+            mode: if mode.eq_ignore_ascii_case("none") {
+                "none".to_string()
+            } else {
+                "bridge".to_string()
+            },
+        }),
+        NetworkPermissionPolicy::Restricted { requirements }
+            if requirements.enabled == Some(true) =>
+        {
+            Err(anyhow!(
+                "restricted domain network profiles require the native local-process sandbox; Docker cannot enforce a domain allowlist"
+            ))
+        }
+        NetworkPermissionPolicy::Restricted { .. } => Ok(LocalSandboxNetworkPolicy {
+            mode: "none".to_string(),
+        }),
+    }
 }
 
 fn normalized_native_process_network(
@@ -359,6 +389,22 @@ mod tests {
         ApprovalPolicy, ApprovalReviewer, CustomPermissionProfile, PermissionProfileId,
         SandboxBackendKind,
     };
+
+    #[test]
+    fn local_sandbox_lease_ttl_is_bounded() {
+        assert_eq!(
+            normalized_local_sandbox_lease_ttl_seconds(None),
+            DEFAULT_LOCAL_SANDBOX_LEASE_TTL_SECONDS
+        );
+        assert_eq!(
+            normalized_local_sandbox_lease_ttl_seconds(Some(0)),
+            MIN_LOCAL_SANDBOX_LEASE_TTL_SECONDS
+        );
+        assert_eq!(
+            normalized_local_sandbox_lease_ttl_seconds(Some(u64::MAX)),
+            MAX_LOCAL_SANDBOX_LEASE_TTL_SECONDS
+        );
+    }
 
     #[test]
     fn local_effective_policy_caps_cloud_request_to_local_defaults() {
@@ -471,37 +517,43 @@ mod tests {
     }
 
     #[test]
-    fn local_docker_network_policy_rejects_dangerous_or_unsupported_modes() {
-        assert!(
-            validate_local_docker_network_policy(&LocalSandboxNetworkPolicy {
-                mode: String::new(),
-            })
-            .is_ok()
-        );
-        assert!(
-            validate_local_docker_network_policy(&LocalSandboxNetworkPolicy {
+    fn local_docker_network_policy_fails_closed_for_restricted_profiles() {
+        let restricted = NetworkPermissionPolicy::Restricted {
+            requirements: Default::default(),
+        };
+        let network = normalized_local_docker_network(
+            &LocalSandboxNetworkPolicy {
                 mode: "bridge".to_string(),
-            })
-            .is_ok()
-        );
-        assert!(
-            validate_local_docker_network_policy(&LocalSandboxNetworkPolicy {
+            },
+            &restricted,
+        )
+        .expect("restricted Docker network");
+        assert_eq!(network.mode, "none");
+
+        let unrestricted = NetworkPermissionPolicy::Unrestricted;
+        let network = normalized_local_docker_network(
+            &LocalSandboxNetworkPolicy {
+                mode: "bridge".to_string(),
+            },
+            &unrestricted,
+        )
+        .expect("unrestricted Docker network");
+        assert_eq!(network.mode, "bridge");
+
+        assert!(normalized_local_docker_network(
+            &LocalSandboxNetworkPolicy {
                 mode: "host".to_string(),
-            })
-            .is_err()
-        );
-        assert!(
-            validate_local_docker_network_policy(&LocalSandboxNetworkPolicy {
+            },
+            &unrestricted,
+        )
+        .is_err());
+        assert!(normalized_local_docker_network(
+            &LocalSandboxNetworkPolicy {
                 mode: "container:other".to_string(),
-            })
-            .is_err()
-        );
-        assert!(
-            validate_local_docker_network_policy(&LocalSandboxNetworkPolicy {
-                mode: "none".to_string(),
-            })
-            .is_err()
-        );
+            },
+            &unrestricted,
+        )
+        .is_err());
     }
 
     #[test]

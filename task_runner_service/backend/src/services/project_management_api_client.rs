@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
+use chatos_service_runtime::{build_http_client, HttpClientTimeouts};
 use serde::{Deserialize, Serialize};
 
 use crate::auth;
@@ -394,10 +395,10 @@ fn required_sync_secret(config: &AppConfig) -> Result<&str, String> {
 }
 
 fn project_service_client(config: &AppConfig) -> Result<reqwest::Client, String> {
-    reqwest::Client::builder()
-        .timeout(config.project_service_request_timeout)
-        .build()
-        .map_err(|err| err.to_string())
+    build_http_client(HttpClientTimeouts::new(
+        config.project_service_request_timeout,
+    ))
+    .map_err(|err| err.to_string())
 }
 
 trait TaskProjectStatusExt {

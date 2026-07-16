@@ -1,6 +1,10 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
+use chatos_service_runtime::http_body::{
+    read_response_json_limited, read_response_preview_text_limited_or_message,
+    ERROR_BODY_PREVIEW_LIMIT_BYTES, JSON_BODY_LIMIT_BYTES,
+};
 use reqwest::{Method, StatusCode};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -605,14 +609,18 @@ where
         .await
         .map_err(|err| HarnessRequestError::from_error(err.to_string()))?;
     let status = response.status();
-    let body_text = response.text().await.unwrap_or_default();
     if !status.is_success() {
+        let body_text =
+            read_response_preview_text_limited_or_message(response, ERROR_BODY_PREVIEW_LIMIT_BYTES)
+                .await;
         return Err(HarnessRequestError {
             status: Some(status),
             message: extract_error_message(body_text.as_str()),
         });
     }
-    serde_json::from_str::<TResp>(body_text.as_str()).map_err(|err| {
-        HarnessRequestError::from_error(format!("decode harness response failed: {err}"))
-    })
+    read_response_json_limited::<TResp>(response, JSON_BODY_LIMIT_BYTES)
+        .await
+        .map_err(|err| {
+            HarnessRequestError::from_error(format!("decode harness response failed: {err}"))
+        })
 }

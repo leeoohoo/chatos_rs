@@ -17,7 +17,6 @@ use crate::services::agent_runtime::mcp_tool_execute::McpToolExecute;
 use crate::services::agent_runtime::message_manager::MessageManager;
 use crate::services::ai_common::TASK_RUNNER_ASYNC_PLAN_MESSAGE_MODE;
 use crate::services::chatos_memory_engine::CHATOS_COMPAT_SOURCE_ID;
-use crate::services::shared_mcp_runtime::shared_tool_result;
 
 pub fn build_shared_ai_runtime(
     tool_executor: Option<McpToolExecute>,
@@ -229,11 +228,6 @@ impl chatos_ai_runtime::ToolExecutor for ChatosToolExecutorAdapter {
         context: chatos_mcp_runtime::ToolCallContext,
         on_tool_result: Option<chatos_mcp_runtime::ToolResultCallback>,
     ) -> Vec<chatos_mcp_runtime::ToolResult> {
-        let callback = on_tool_result.map(|cb| {
-            Arc::new(move |result: &crate::core::mcp_tools::ToolResult| {
-                cb(&shared_tool_result(result.clone()));
-            }) as crate::core::mcp_tools::ToolResultCallback
-        });
         self.executor
             .execute_tools_stream(
                 tool_calls,
@@ -241,19 +235,10 @@ impl chatos_ai_runtime::ToolExecutor for ChatosToolExecutorAdapter {
                 context.conversation_turn_id.as_deref(),
                 context.caller_model.as_deref(),
                 context.caller_model_runtime.as_ref(),
-                callback,
+                on_tool_result,
             )
             .await
-            .into_iter()
-            .map(chatos_tool_result_inverse)
-            .collect()
     }
-}
-
-fn chatos_tool_result_inverse(
-    result: crate::core::mcp_tools::ToolResult,
-) -> chatos_mcp_runtime::ToolResult {
-    shared_tool_result(result)
 }
 
 pub fn shared_model_request(

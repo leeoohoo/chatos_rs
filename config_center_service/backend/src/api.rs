@@ -103,6 +103,9 @@ pub fn build_router(state: AppState) -> Router {
         .with_state(state)
         .layer(cors)
         .layer(TraceLayer::new_for_http())
+        .layer(middleware::from_fn(
+            chatos_service_runtime::request_id_middleware,
+        ))
 }
 
 async fn health() -> Json<HealthResponse> {
@@ -120,7 +123,7 @@ async fn ready(State(state): State<AppState>) -> Response {
 }
 
 async fn login(State(state): State<AppState>, Json(input): Json<LoginRequest>) -> Response {
-    match auth::login(&state.config, &input).await {
+    match auth::login(&state.config, state.http_client(), &input).await {
         Ok(response) if response.user.is_super_admin() => Json(response).into_response(),
         Ok(_) => error(
             StatusCode::FORBIDDEN,
@@ -327,7 +330,7 @@ async fn require_admin(
         Ok(token) => token,
         Err(err) => return error(StatusCode::UNAUTHORIZED, err),
     };
-    match auth::verify(&state.config, token).await {
+    match auth::verify(&state.config, state.http_client(), token).await {
         Ok(user) if user.is_super_admin() => {
             request.extensions_mut().insert(user);
             next.run(request).await

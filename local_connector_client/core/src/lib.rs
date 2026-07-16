@@ -18,6 +18,7 @@ mod history;
 mod local_runtime;
 mod mcp;
 mod model_configs;
+mod process_lifetime;
 mod registration;
 mod relay;
 mod runtime;
@@ -59,6 +60,8 @@ const MAX_COMMAND_HISTORY_ENTRIES: usize = 1_000;
 const LOCAL_CONNECTOR_ROOT_PREFIX: &str = "local://connector/";
 
 pub async fn run_local_connector() -> Result<()> {
+    let _process_lifetime = process_lifetime::attach_current_process_tree()
+        .context("attach Local Connector Core to its process-tree job")?;
     load_dotenv();
     let state_path = optional_env("LOCAL_CONNECTOR_STATE_PATH")
         .map(PathBuf::from)
@@ -120,6 +123,11 @@ pub async fn run_local_connector() -> Result<()> {
     .await?;
 
     let runtime = LocalRuntime::new(state_path, state, http_client, database);
+    if let Err(err) = sandbox::docker::destroy_all_local_sandbox_containers().await {
+        tracing_stdout(format!("stale local sandbox cleanup skipped: {err}").as_str());
+    }
+    let _sandbox_lease_reaper =
+        sandbox::lease::spawn_local_sandbox_lease_reaper(runtime.sandbox_runtime.clone());
     if let Some(refresh) = managed_requirements.background_refresh {
         refresh.spawn(runtime.http_client.clone());
     }

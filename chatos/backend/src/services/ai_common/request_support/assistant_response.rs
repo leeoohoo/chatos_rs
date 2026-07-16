@@ -3,14 +3,6 @@
 
 use serde_json::Value;
 
-#[cfg(test)]
-use crate::core::messages::{optional_text_has_content, select_preferred_text, text_has_content};
-#[cfg(test)]
-use crate::core::tool_call::tool_calls_value_has_items;
-
-#[cfg(test)]
-use super::request_transport::truncate_log;
-
 pub(crate) const TASK_RUNNER_ASYNC_PLAN_MESSAGE_MODE: &str = "task_runner_async_plan";
 
 pub(crate) fn build_ai_client_success_payload(
@@ -44,112 +36,6 @@ pub(crate) fn attach_ai_client_success_extra(payload: Value, extra: Value) -> Va
         }
     }
     Value::Object(base)
-}
-
-#[cfg(test)]
-pub(crate) fn completion_failed_error(
-    finish_reason: Option<&str>,
-    content: &str,
-    reasoning: Option<&str>,
-    provider_error: Option<&Value>,
-) -> Option<String> {
-    let reason = finish_reason
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .unwrap_or("unknown");
-    let normalized = reason.to_ascii_lowercase();
-    if normalized != "failed" && normalized != "error" {
-        return None;
-    }
-
-    let mut segments = vec![format!("finish_reason={}", reason)];
-
-    if let Some(error_preview) = provider_error
-        .and_then(build_provider_error_preview)
-        .filter(|value| !value.trim().is_empty())
-    {
-        segments.push(format!("provider_error={}", error_preview));
-    }
-
-    if let Some(preferred_text) = select_preferred_text(content, reasoning) {
-        let preview_key = if text_has_content(content) {
-            "content_preview"
-        } else {
-            "reasoning_preview"
-        };
-        segments.push(format!(
-            "{}={}",
-            preview_key,
-            truncate_log(preferred_text, 300)
-        ));
-        return Some(format!("ai response failed: {}", segments.join("; ")));
-    }
-
-    Some(format!("ai response failed: {}", segments.join("; ")))
-}
-
-#[cfg(test)]
-pub(crate) fn terminal_empty_response_error(
-    finish_reason: Option<&str>,
-    content: &str,
-    reasoning: Option<&str>,
-    tool_calls: Option<&Value>,
-    provider_error: Option<&Value>,
-) -> Option<String> {
-    if is_non_terminal_response_status(finish_reason) {
-        return None;
-    }
-
-    if text_has_content(content)
-        || optional_text_has_content(reasoning)
-        || tool_calls_value_has_items(tool_calls)
-    {
-        return None;
-    }
-
-    let reason = finish_reason
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .unwrap_or("unknown");
-    let mut segments = vec![format!("finish_reason={}", reason)];
-
-    if let Some(error_preview) = provider_error
-        .and_then(build_provider_error_preview)
-        .filter(|value| !value.trim().is_empty())
-    {
-        segments.push(format!("provider_error={}", error_preview));
-    }
-
-    Some(format!(
-        "ai response invalid: terminal empty response; {}",
-        segments.join("; ")
-    ))
-}
-
-#[cfg(test)]
-pub(crate) fn should_persist_assistant_message(
-    content: &str,
-    reasoning: Option<&str>,
-    tool_calls: Option<&Value>,
-    _response_status: Option<&str>,
-) -> bool {
-    let has_content = text_has_content(content);
-    let has_reasoning = optional_text_has_content(reasoning);
-    let has_tool_calls = tool_calls_value_has_items(tool_calls);
-    if has_content || has_reasoning || has_tool_calls {
-        return true;
-    }
-    false
-}
-
-#[cfg(test)]
-pub(crate) fn is_task_runner_async_plan_message_mode(message_mode: Option<&str>) -> bool {
-    matches!(
-        message_mode
-            .map(str::trim)
-            .filter(|value| !value.is_empty()),
-        Some(TASK_RUNNER_ASYNC_PLAN_MESSAGE_MODE)
-    )
 }
 
 pub(crate) fn normalize_task_runner_async_plan_metadata(metadata: Option<Value>) -> Option<Value> {
@@ -236,59 +122,5 @@ pub(crate) fn build_assistant_message_metadata(
         None
     } else {
         Some(Value::Object(map))
-    }
-}
-
-#[cfg(test)]
-fn is_non_terminal_response_status(status: Option<&str>) -> bool {
-    let normalized = status
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(|value| value.to_ascii_lowercase());
-    matches!(
-        normalized.as_deref(),
-        Some("in_progress") | Some("queued") | Some("pending") | Some("incomplete")
-    )
-}
-
-#[cfg(test)]
-fn build_provider_error_preview(provider_error: &Value) -> Option<String> {
-    if provider_error.is_null() {
-        return None;
-    }
-
-    if let Some(object) = provider_error.as_object() {
-        let mut parts = Vec::new();
-        if let Some(code) = object.get("code").and_then(|value| value.as_str()) {
-            if text_has_content(code) {
-                parts.push(format!("code={}", code.trim()));
-            }
-        }
-        if let Some(kind) = object.get("type").and_then(|value| value.as_str()) {
-            if text_has_content(kind) {
-                parts.push(format!("type={}", kind.trim()));
-            }
-        }
-        if let Some(message) = object.get("message").and_then(|value| value.as_str()) {
-            if text_has_content(message) {
-                parts.push(format!("message={}", truncate_log(message.trim(), 300)));
-            }
-        }
-        if let Some(param) = object.get("param").and_then(|value| value.as_str()) {
-            if text_has_content(param) {
-                parts.push(format!("param={}", param.trim()));
-            }
-        }
-
-        if !parts.is_empty() {
-            return Some(parts.join(", "));
-        }
-    }
-
-    let raw = provider_error.to_string();
-    if !text_has_content(raw.as_str()) {
-        None
-    } else {
-        Some(truncate_log(raw.trim(), 300))
     }
 }

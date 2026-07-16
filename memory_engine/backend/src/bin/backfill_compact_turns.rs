@@ -54,7 +54,7 @@ fn build_filter(
 
 #[tokio::main]
 async fn main() -> Result<(), String> {
-    dotenvy::dotenv().ok();
+    chatos_service_runtime::load_service_dotenv(std::path::Path::new(env!("CARGO_MANIFEST_DIR")));
     let config = config::AppConfig::from_env()?;
     let pool = db::init_pool(&config).await?;
     db::init_schema(&pool).await?;

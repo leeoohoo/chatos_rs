@@ -60,7 +60,7 @@ export function resolveSandboxPolicyView(
     builtinProfiles,
     customPermissionProfileActive,
     localProcessSelectable,
-    networkPresentation: describeNetworkAccess(network, approvalMode),
+    networkPresentation: describeNetworkAccess(network, approvalMode, backend),
     permissionProfile,
     permissionProfileName,
     recommended:
@@ -150,7 +150,7 @@ function resolveEffectiveNetwork(
 function describeNetworkAccess(network: {
   unrestricted: boolean;
   requirements: SandboxNetworkRequirements;
-}, approvalMode: SandboxApprovalMode) {
+}, approvalMode: SandboxApprovalMode, backend: SandboxBackendKind) {
   if (network.unrestricted) {
     return {
       label: '不受限制',
@@ -161,6 +161,12 @@ function describeNetworkAccess(network: {
     return {
       label: '按本机策略限制',
       detail: '任务只能主动访问客户端策略预设的网站。',
+    };
+  }
+  if (backend === 'docker') {
+    return {
+      label: '无公网出口',
+      detail: '任务使用专用 Docker internal 网络，不能直接访问外部网络；Docker 模式不支持临时联网审批。',
     };
   }
   if (approvalMode === 'auto_review') {

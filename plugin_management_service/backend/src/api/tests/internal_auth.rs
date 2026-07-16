@@ -191,7 +191,7 @@ async fn internal_capability_resolver_rejects_unknown_caller_service() {
 
 fn runtime_request(owner_user_id: &str) -> RuntimeCapabilitiesRequest {
     RuntimeCapabilitiesRequest {
-        agent_key: "task_runner_run_phase".to_string(),
+        agent_key: chatos_plugin_management_sdk::SystemAgentKey::TaskRunnerRunPhase,
         owner_user_id: owner_user_id.to_string(),
         include_unavailable: true,
     }
@@ -235,5 +235,9 @@ async fn test_state_with_secret(internal_api_secret: Option<&str>) -> AppState {
             seed_system_resources: false,
         },
         store,
+        user_service_http: chatos_service_runtime::build_http_client(
+            chatos_service_runtime::HttpClientTimeouts::new(Duration::from_secs(1)),
+        )
+        .expect("build User Service test client"),
     }
 }

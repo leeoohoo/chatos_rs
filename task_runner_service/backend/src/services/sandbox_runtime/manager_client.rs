@@ -1,6 +1,11 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
+use chatos_service_runtime::http_body::{
+    read_response_json_limited, read_response_preview_text_limited_or_message,
+    ERROR_BODY_PREVIEW_LIMIT_BYTES, JSON_BODY_LIMIT_BYTES,
+};
+use chatos_service_runtime::{build_http_client, HttpClientTimeouts};
 use std::path::Path;
 use std::time::Duration;
 
@@ -165,9 +170,7 @@ impl SandboxManagerClient {
         if base_url.is_empty() {
             return Err("sandbox manager base url is empty".to_string());
         }
-        let client = reqwest::Client::builder()
-            .timeout(Duration::from_secs(120))
-            .build()
+        let client = build_http_client(HttpClientTimeouts::new(Duration::from_secs(120)))
             .map_err(|err| format!("build sandbox manager http client failed: {err}"))?;
         Ok(Self {
             base_url,
@@ -217,10 +220,12 @@ impl SandboxManagerClient {
                     "sandbox lease request returned HTTP {status}: {body}"
                 ));
             }
-            return response
-                .json::<CreateSandboxLeaseResponse>()
-                .await
-                .map_err(|err| format!("decode sandbox lease response failed: {err}"));
+            return read_response_json_limited::<CreateSandboxLeaseResponse>(
+                response,
+                JSON_BODY_LIMIT_BYTES,
+            )
+            .await
+            .map_err(|err| format!("decode sandbox lease response failed: {err}"));
         }
         Err("sandbox lease idempotency retry loop exhausted".to_string())
     }
@@ -261,37 +266,30 @@ impl SandboxManagerClient {
     }
 
     async fn get_sandbox(&self, sandbox_id: &str) -> Result<SandboxLeaseRecordResponse, String> {
-        self.apply_auth(
-            self.client
-                .get(format!("{}/api/sandboxes/{}", self.base_url, sandbox_id)),
-        )?
-        .send()
-        .await
-        .map_err(|err| format!("request sandbox detail failed: {err}"))?
-        .error_for_status()
-        .map_err(|err| format!("sandbox detail request returned error: {err}"))?
-        .json::<SandboxLeaseRecordResponse>()
-        .await
-        .map_err(|err| format!("decode sandbox detail response failed: {err}"))
+        let response = self
+            .apply_auth(
+                self.client
+                    .get(format!("{}/api/sandboxes/{}", self.base_url, sandbox_id)),
+            )?
+            .send()
+            .await
+            .map_err(|err| format!("request sandbox detail failed: {err}"))?;
+        decode_success_json(response, "sandbox detail request").await
     }
 
     pub(super) async fn health(
         &self,
         context: &SandboxRuntimeContext,
     ) -> Result<SandboxHealthResult, String> {
-        let raw = self
+        let response = self
             .apply_auth(self.client.get(format!(
                 "{}/api/sandboxes/{}/health",
                 self.base_url, context.sandbox_id
             )))?
             .send()
             .await
-            .map_err(|err| format!("request sandbox health failed: {err}"))?
-            .error_for_status()
-            .map_err(|err| format!("sandbox health request returned error: {err}"))?
-            .json::<Value>()
-            .await
-            .map_err(|err| format!("decode sandbox health response failed: {err}"))?;
+            .map_err(|err| format!("request sandbox health failed: {err}"))?;
+        let raw: Value = decode_success_json(response, "sandbox health request").await?;
         let ok = raw.get("ok").and_then(Value::as_bool).unwrap_or(false);
         let message = raw
             .get("message")
@@ -312,19 +310,16 @@ impl SandboxManagerClient {
             export_result,
             destroy,
         };
-        self.apply_auth(self.client.post(format!(
-            "{}/api/sandboxes/{}/release",
-            self.base_url, context.sandbox_id
-        )))?
-        .json(&payload)
-        .send()
-        .await
-        .map_err(|err| format!("request sandbox release failed: {err}"))?
-        .error_for_status()
-        .map_err(|err| format!("sandbox release request returned error: {err}"))?
-        .json::<ReleaseSandboxResponse>()
-        .await
-        .map_err(|err| format!("decode sandbox release response failed: {err}"))
+        let response = self
+            .apply_auth(self.client.post(format!(
+                "{}/api/sandboxes/{}/release",
+                self.base_url, context.sandbox_id
+            )))?
+            .json(&payload)
+            .send()
+            .await
+            .map_err(|err| format!("request sandbox release failed: {err}"))?;
+        decode_success_json(response, "sandbox release request").await
     }
 
     pub(super) async fn release_response(
@@ -338,19 +333,16 @@ impl SandboxManagerClient {
             export_result,
             destroy,
         };
-        self.apply_auth(self.client.post(format!(
-            "{}/api/sandboxes/{}/release",
-            self.base_url, response.sandbox_id
-        )))?
-        .json(&payload)
-        .send()
-        .await
-        .map_err(|err| format!("request sandbox release failed: {err}"))?
-        .error_for_status()
-        .map_err(|err| format!("sandbox release request returned error: {err}"))?
-        .json::<ReleaseSandboxResponse>()
-        .await
-        .map_err(|err| format!("decode sandbox release response failed: {err}"))
+        let response = self
+            .apply_auth(self.client.post(format!(
+                "{}/api/sandboxes/{}/release",
+                self.base_url, response.sandbox_id
+            )))?
+            .json(&payload)
+            .send()
+            .await
+            .map_err(|err| format!("request sandbox release failed: {err}"))?;
+        decode_success_json(response, "sandbox release request").await
     }
 
     fn apply_auth(
@@ -375,10 +367,21 @@ impl SandboxManagerClient {
 }
 
 async fn read_error_body(response: reqwest::Response) -> String {
-    response
-        .text()
+    read_response_preview_text_limited_or_message(response, ERROR_BODY_PREVIEW_LIMIT_BYTES).await
+}
+
+async fn decode_success_json<T>(response: reqwest::Response, label: &str) -> Result<T, String>
+where
+    T: serde::de::DeserializeOwned,
+{
+    let status = response.status();
+    if !status.is_success() {
+        let body = read_error_body(response).await;
+        return Err(format!("{label} returned HTTP {status}: {body}"));
+    }
+    read_response_json_limited::<T>(response, JSON_BODY_LIMIT_BYTES)
         .await
-        .unwrap_or_else(|err| format!("read error body failed: {err}"))
+        .map_err(|err| format!("decode {label} response failed: {err}"))
 }
 
 impl SandboxManagerAuth {

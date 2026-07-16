@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
+import { createElement } from 'react';
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { Button, Layout, Menu, Segmented, Space, Typography } from 'antd';
 import {
@@ -20,8 +21,21 @@ import {
 
 import { useI18n } from '../i18n/I18nProvider';
 import type { AuthUser } from '../types';
+import { createStandardAdminAppShell } from '@chatos/frontend-runtime/antd';
 
-const { Header, Sider, Content } = Layout;
+const StandardAdminAppShell = createStandardAdminAppShell({
+  createElement,
+  Layout,
+  Menu,
+  Space,
+  Typography,
+  Button,
+  Outlet,
+  useLocation,
+  useNavigate,
+  UserIcon: UserOutlined,
+  LogoutIcon: LogoutOutlined,
+});
 
 type AppShellProps = {
   currentUser: AuthUser;
@@ -31,8 +45,6 @@ type AppShellProps = {
 
 export function AppShell({ currentUser, logoutLoading, onLogout }: AppShellProps) {
   const { locale, setLocale, t } = useI18n();
-  const location = useLocation();
-  const navigate = useNavigate();
   const isAdmin = currentUser.role === 'admin';
   const navItems = [
     {
@@ -93,71 +105,27 @@ export function AppShell({ currentUser, logoutLoading, onLogout }: AppShellProps
     .map(({ adminOnly: _adminOnly, ...item }) => item);
 
   return (
-    <Layout style={{ minHeight: '100vh' }}>
-      <Sider width={220} theme="light" style={{ borderRight: '1px solid #f0f0f0' }}>
-        <div style={{ padding: '20px 20px 8px' }}>
-          <Space direction="vertical" size={0}>
-            <Typography.Title level={4} style={{ margin: 0 }}>
-              {t('app.brand')}
-            </Typography.Title>
-            <Typography.Text type="secondary">
-              {t('app.subtitle')}
-            </Typography.Text>
-          </Space>
-        </div>
-        <Menu
-          mode="inline"
-          selectedKeys={[location.pathname]}
-          items={items}
-          onClick={({ key }) => navigate(key)}
-          style={{ borderInlineEnd: 0 }}
+    <StandardAdminAppShell
+      brandTitle={t('app.brand')}
+      brandSubtitle={t('app.subtitle')}
+      headerSummary={t('app.headerSummary')}
+      navItems={items}
+      currentUser={currentUser}
+      logoutLabel={t('auth.logout')}
+      logoutLoading={logoutLoading}
+      onLogout={onLogout}
+      headerBeforeUser={
+        <Segmented
+          size="small"
+          value={locale}
+          onChange={(value) => setLocale(value === 'en-US' ? 'en-US' : 'zh-CN')}
+          options={[
+            { label: t('language.chinese'), value: 'zh-CN' },
+            { label: t('language.english'), value: 'en-US' },
+          ]}
+          aria-label={t('common.language')}
         />
-      </Sider>
-      <Layout>
-        <Header
-          style={{
-            background: '#fff',
-            borderBottom: '1px solid #f0f0f0',
-            padding: '0 24px',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            gap: 16,
-          }}
-        >
-          <Typography.Text type="secondary">
-            {t('app.headerSummary')}
-          </Typography.Text>
-          <Space size="middle" style={{ flexShrink: 0 }}>
-            <Segmented
-              size="small"
-              value={locale}
-              onChange={(value) => setLocale(value === 'en-US' ? 'en-US' : 'zh-CN')}
-              options={[
-                { label: t('language.chinese'), value: 'zh-CN' },
-                { label: t('language.english'), value: 'en-US' },
-              ]}
-              aria-label={t('common.language')}
-            />
-            <Space size={6}>
-              <UserOutlined />
-              <Typography.Text>{currentUser.display_name || currentUser.username}</Typography.Text>
-              <Typography.Text type="secondary">({currentUser.username})</Typography.Text>
-            </Space>
-            <Button
-              size="small"
-              icon={<LogoutOutlined />}
-              loading={logoutLoading}
-              onClick={onLogout}
-            >
-              {t('auth.logout')}
-            </Button>
-          </Space>
-        </Header>
-        <Content style={{ padding: 24, background: '#f5f7fa' }}>
-          <Outlet />
-        </Content>
-      </Layout>
-    </Layout>
+      }
+    />
   );
 }

@@ -16,4 +16,6 @@ pub(crate) mod project_permissions;
 pub(crate) mod proxy;
 pub(crate) mod relay;
 pub(crate) mod types;
+#[cfg(windows)]
+pub(crate) mod windows_security;
 pub(crate) mod workspace;

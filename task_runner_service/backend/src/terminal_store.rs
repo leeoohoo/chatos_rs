@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
+use chatos_terminal_runtime::{TerminalLogBuffer, TerminalSessionMeta};
 use tokio::process::Child;
 use tokio::sync::{Mutex, RwLock};
 
@@ -9,32 +10,10 @@ mod output;
 mod pathing;
 mod runtime;
 
-#[derive(Debug, Clone)]
-struct TerminalLogEntry {
-    offset: i64,
-    kind: String,
-    content: String,
-    created_at: String,
-}
-
-#[derive(Debug, Clone)]
-struct TerminalSessionMeta {
-    id: String,
-    cwd: String,
-    project_id: Option<String>,
-    user_id: Option<String>,
-    command: String,
-    started_at: String,
-    last_active_at: String,
-    finished_at: Option<String>,
-    status: String,
-    exit_code: Option<i32>,
-}
-
 struct TerminalSession {
     meta: Mutex<TerminalSessionMeta>,
     child: Mutex<Child>,
-    logs: Mutex<Vec<TerminalLogEntry>>,
+    logs: Mutex<TerminalLogBuffer>,
 }
 
 #[derive(Default)]

@@ -6,8 +6,9 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+pub(crate) use chatos_service_runtime::env_text as normalized_env;
 use chatos_service_runtime::{
-    is_production_environment, validate_production_secret,
+    env_flag as env_bool, env_parse, is_production_environment, validate_production_secret,
     DEFAULT_SANDBOX_MANAGER_AGENT_TOKEN_SECRET, DEFAULT_SANDBOX_MANAGER_OPERATOR_TOKEN,
     DEFAULT_SANDBOX_MANAGER_SYSTEM_CLIENT_ID, DEFAULT_SANDBOX_MANAGER_SYSTEM_CLIENT_KEY,
 };
@@ -298,55 +299,7 @@ fn caller_internal_api_secrets() -> HashMap<String, String> {
 }
 
 pub fn load_sandbox_manager_dotenv() {
-    for path in sandbox_manager_dotenv_files() {
-        let _ = dotenvy::from_path(path);
-    }
-}
-
-fn sandbox_manager_dotenv_files() -> Vec<PathBuf> {
-    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let mut files = Vec::new();
-    for path in [
-        Some(manifest_dir.join(".env")),
-        manifest_dir.parent().map(|path| path.join(".env")),
-        manifest_dir
-            .parent()
-            .and_then(|path| path.parent())
-            .map(|path| path.join(".env")),
-    ]
-    .into_iter()
-    .flatten()
-    {
-        if !files.iter().any(|existing| existing == &path) {
-            files.push(path);
-        }
-    }
-    files
-}
-
-pub(crate) fn normalized_env(key: &str) -> Option<String> {
-    std::env::var(key)
-        .ok()
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
-}
-
-fn env_parse<T>(key: &str) -> Option<T>
-where
-    T: std::str::FromStr,
-{
-    normalized_env(key).and_then(|value| value.parse::<T>().ok())
-}
-
-fn env_bool(key: &str, default_value: bool) -> bool {
-    normalized_env(key)
-        .map(|value| {
-            matches!(
-                value.to_ascii_lowercase().as_str(),
-                "1" | "true" | "yes" | "on"
-            )
-        })
-        .unwrap_or(default_value)
+    chatos_service_runtime::load_service_dotenv(Path::new(env!("CARGO_MANIFEST_DIR")));
 }
 
 fn env_csv(key: &str, default_values: &[&str]) -> Vec<String> {

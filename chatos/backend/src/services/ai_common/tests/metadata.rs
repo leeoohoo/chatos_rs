@@ -4,23 +4,6 @@
 use super::*;
 
 #[test]
-fn build_abort_token_only_cancels_matching_turn() {
-    let session_id = "build_abort_token_turn_match";
-    abort_registry::clear(session_id);
-
-    let token = build_abort_token(Some(session_id), Some("turn_new")).expect("token");
-    assert!(!token.is_cancelled());
-
-    assert!(!abort_registry::abort_turn(session_id, Some("turn_old")));
-    assert!(!token.is_cancelled());
-
-    assert!(abort_registry::abort_turn(session_id, Some("turn_new")));
-    assert!(token.is_cancelled());
-
-    abort_registry::clear(session_id);
-}
-
-#[test]
 fn normalize_turn_id_trims_and_filters_empty_values() {
     assert_eq!(
         normalize_turn_id(Some("  turn-1 ")),
@@ -28,62 +11,6 @@ fn normalize_turn_id_trims_and_filters_empty_values() {
     );
     assert_eq!(normalize_turn_id(Some("   ")), None);
     assert_eq!(normalize_turn_id(None), None);
-}
-
-#[test]
-fn truncate_log_adds_suffix_when_exceeding_limit() {
-    let value = truncate_log("abcdefgh", 4);
-    assert_eq!(value, "abcd...[truncated]");
-    assert_eq!(truncate_log("abc", 4), "abc");
-}
-
-#[test]
-fn format_error_response_formats_status_and_body_preview() {
-    let err = format_error_response(
-        reqwest::StatusCode::BAD_GATEWAY,
-        "upstream provider failure",
-    );
-    assert_eq!(err, "status 502 Bad Gateway: upstream provider failure");
-}
-
-#[test]
-fn completion_failed_error_uses_finish_reason_and_preview() {
-    let err = completion_failed_error(Some("failed"), "", Some("detailed reasoning"), None)
-        .expect("should return error");
-    assert!(err.contains("finish_reason=failed"));
-    assert!(err.contains("reasoning_preview=detailed reasoning"));
-
-    let err =
-        completion_failed_error(Some("error"), "body", None, None).expect("should return error");
-    assert!(err.contains("content_preview=body"));
-
-    let provider_error = json!({
-        "code": "context_length_exceeded",
-        "type": "invalid_request_error",
-        "message": "too long",
-        "param": "input"
-    });
-    let err = completion_failed_error(Some("failed"), "", None, Some(&provider_error))
-        .expect("should include provider error");
-    assert!(err.contains("provider_error=code=context_length_exceeded"));
-    assert!(err.contains("type=invalid_request_error"));
-    assert!(err.contains("message=too long"));
-
-    assert!(completion_failed_error(Some("stop"), "", None, None).is_none());
-}
-
-#[test]
-fn terminal_empty_response_error_detects_terminal_empty_payload() {
-    let err = terminal_empty_response_error(Some("completed"), "", None, None, None)
-        .expect("terminal empty response should fail");
-    assert!(err.contains("terminal empty response"));
-    assert!(err.contains("finish_reason=completed"));
-
-    assert!(terminal_empty_response_error(Some("in_progress"), "", None, None, None).is_none());
-    assert!(terminal_empty_response_error(Some("completed"), "hello", None, None, None).is_none());
-    assert!(
-        terminal_empty_response_error(Some("completed"), "", Some("thought"), None, None).is_none()
-    );
 }
 
 #[test]
@@ -131,46 +58,6 @@ fn build_assistant_message_metadata_keeps_response_id_and_tool_calls() {
             .and_then(|value| value.as_str()),
         Some("completed")
     );
-}
-
-#[test]
-fn should_persist_assistant_message_skips_empty_non_terminal_responses() {
-    assert!(!should_persist_assistant_message(
-        "",
-        None,
-        None,
-        Some("in_progress"),
-    ));
-    assert!(!should_persist_assistant_message(
-        "",
-        None,
-        None,
-        Some("completed"),
-    ));
-    assert!(should_persist_assistant_message(
-        "hello",
-        None,
-        None,
-        Some("in_progress"),
-    ));
-    assert!(should_persist_assistant_message(
-        "",
-        Some("thought"),
-        None,
-        Some("queued"),
-    ));
-}
-
-#[test]
-fn task_runner_async_plan_message_mode_matches_expected_value() {
-    assert!(is_task_runner_async_plan_message_mode(Some(
-        TASK_RUNNER_ASYNC_PLAN_MESSAGE_MODE
-    )));
-    assert!(is_task_runner_async_plan_message_mode(Some(
-        " task_runner_async_plan "
-    )));
-    assert!(!is_task_runner_async_plan_message_mode(Some("model")));
-    assert!(!is_task_runner_async_plan_message_mode(None));
 }
 
 #[test]
@@ -287,57 +174,4 @@ fn attach_ai_client_success_extra_merges_fields() {
         Some("pass")
     );
     assert_eq!(merged.get("content").and_then(Value::as_str), Some("hello"));
-}
-
-#[test]
-fn parsed_stream_response_is_empty_only_when_everything_is_blank() {
-    assert!(parsed_stream_response_is_empty(0, " ", "\n", false));
-    assert!(!parsed_stream_response_is_empty(1, "", "", false));
-    assert!(!parsed_stream_response_is_empty(0, "hello", "", false));
-    assert!(!parsed_stream_response_is_empty(0, "", "thinking", false));
-    assert!(!parsed_stream_response_is_empty(0, "", "", true));
-}
-
-#[tokio::test]
-async fn persist_user_message_and_build_content_parts_preserves_turn_metadata() {
-    let captured = Arc::new(std::sync::Mutex::new(None::<Value>));
-    let holder = captured.clone();
-
-    let prepared = persist_user_message_and_build_content_parts(
-        "session_1",
-        "hello world",
-        "gpt-5.3-codex",
-        Vec::new(),
-        Some(true),
-        Some("turn_1".to_string()),
-        move |metadata| {
-            let holder = holder.clone();
-            async move {
-                *holder.lock().expect("lock poisoned") = metadata;
-                Ok::<(), String>(())
-            }
-        },
-    )
-    .await
-    .expect("prepared input");
-
-    assert_eq!(prepared.turn_id.as_deref(), Some("turn_1"));
-    assert_eq!(
-        captured
-            .lock()
-            .expect("lock poisoned")
-            .as_ref()
-            .and_then(|value| value.get("conversation_turn_id"))
-            .and_then(|value| value.as_str()),
-        Some("turn_1")
-    );
-    assert_eq!(
-        prepared
-            .content_parts
-            .as_array()
-            .and_then(|items| items.first())
-            .and_then(|item| item.get("text"))
-            .and_then(|value| value.as_str()),
-        Some("hello world")
-    );
 }

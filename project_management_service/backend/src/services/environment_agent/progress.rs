@@ -4,10 +4,15 @@
 use std::time::Duration;
 use std::{collections::BTreeMap, str::FromStr};
 
+use chatos_service_runtime::{build_http_client, HttpClientTimeouts};
 use chrono::{DateTime, Utc};
 use reqwest::StatusCode;
 use serde::Deserialize;
 
+use crate::http_body::{
+    read_response_json_limited, read_response_text_limited_or_message,
+    ERROR_BODY_PREVIEW_LIMIT_BYTES, JSON_BODY_LIMIT_BYTES,
+};
 use crate::models::{
     now_rfc3339, ProjectRecord, ProjectRuntimeEnvironmentProgressResponse,
     ProjectRuntimeEnvironmentRecord, ProjectRuntimeEnvironmentStatus, RuntimeEnvironmentProvider,
@@ -163,9 +168,7 @@ async fn fetch_cloud_image_jobs(state: &AppState) -> Result<Vec<SandboxImageJobP
             .trim()
             .trim_end_matches('/')
     );
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(20))
-        .build()
+    let client = build_http_client(HttpClientTimeouts::new(Duration::from_secs(20)))
         .map_err(|err| format!("build sandbox image progress client failed: {err}"))?;
     let token = chatos_service_runtime::issue_internal_service_token(
         client_key,
@@ -224,9 +227,7 @@ async fn fetch_local_image_jobs(
                 .map(ToOwned::to_owned)
         })
         .ok_or_else(|| "Local Connector 沙箱配对缺少 facade_base_url".to_string())?;
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(20))
-        .build()
+    let client = build_http_client(HttpClientTimeouts::new(Duration::from_secs(20)))
         .map_err(|err| format!("build local sandbox image progress client failed: {err}"))?;
     read_jobs_response(
         client
@@ -252,14 +253,14 @@ async fn read_jobs_response(
         return Ok(Vec::new());
     }
     if !status.is_success() {
-        let detail = response.text().await.unwrap_or_default();
+        let detail =
+            read_response_text_limited_or_message(response, ERROR_BODY_PREVIEW_LIMIT_BYTES).await;
         return Err(format!(
             "query {label} returned status={status} detail={}",
             truncate_chars(detail.as_str(), 2_000)
         ));
     }
-    response
-        .json::<Vec<SandboxImageJobProgress>>()
+    read_response_json_limited::<Vec<SandboxImageJobProgress>>(response, JSON_BODY_LIMIT_BYTES)
         .await
         .map_err(|err| format!("parse {label} failed: {err}"))
 }

@@ -40,6 +40,7 @@ sha2 = "0.11"
 hex = "0.4"
 walkdir = "2.4"
 dirs = "6.0"
+chatos_remote_runtime = { path = "../../crates/chatos_remote_runtime" }
 pathdiff = "0.2"
 portable-pty = "0.9"
 dashmap = "6.2"

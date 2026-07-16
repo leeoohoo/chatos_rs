@@ -1,12 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-#[cfg(test)]
-use std::future::Future;
-
 use serde_json::Value;
-#[cfg(test)]
-use tracing::error;
 
 use crate::utils::attachments::{self, Attachment};
 
@@ -50,43 +45,4 @@ pub(crate) async fn build_user_content_parts(
     let content_parts =
         attachments::build_content_parts_async(user_message, attachments_list).await;
     attachments::adapt_parts_for_model(model, &content_parts, supports_images)
-}
-
-#[cfg(test)]
-pub(crate) struct PreparedUserMessageInput {
-    pub turn_id: Option<String>,
-    pub content_parts: Value,
-}
-
-#[cfg(test)]
-pub(crate) async fn persist_user_message_and_build_content_parts<F, Fut, T>(
-    session_id: &str,
-    user_message: &str,
-    model: &str,
-    attachments_list: Vec<Attachment>,
-    supports_images: Option<bool>,
-    turn_id: Option<String>,
-    save_user_message: F,
-) -> Result<PreparedUserMessageInput, String>
-where
-    F: FnOnce(Option<Value>) -> Fut,
-    Fut: Future<Output = Result<T, String>>,
-{
-    let metadata = build_user_message_metadata(&attachments_list, turn_id.as_deref());
-    save_user_message(metadata).await.map_err(|err| {
-        let detail = format!(
-            "persist user message failed: session_id={} detail={}",
-            session_id, err
-        );
-        error!("{}", detail);
-        detail
-    })?;
-
-    let content_parts =
-        build_user_content_parts(model, user_message, &attachments_list, supports_images).await;
-
-    Ok(PreparedUserMessageInput {
-        turn_id,
-        content_parts,
-    })
 }

@@ -8,6 +8,8 @@ use chatos_mcp_runtime::{
     local_command_approval_tool_definitions, project_environment_tool_definitions,
     project_runtime_environment_info_tool_definitions, McpStdioServer,
 };
+use chatos_service_runtime::http_body::{read_response_json_limited, JSON_BODY_LIMIT_BYTES};
+use chatos_service_runtime::{build_http_client, HttpClientTimeouts};
 use serde::Deserialize;
 use serde_json::Value;
 
@@ -168,9 +170,7 @@ async fn fetch_task_runner_descriptor(config: &AppConfig) -> Result<LiveMcpDescr
         "{}/api/mcp/provider-descriptor",
         config.task_runner_base_url.trim_end_matches('/')
     );
-    let response = reqwest::Client::builder()
-        .timeout(config.user_service_request_timeout)
-        .build()
+    let response = build_http_client(HttpClientTimeouts::new(config.user_service_request_timeout))
         .map_err(|err| format!("build Task Runner descriptor client failed: {err}"))?
         .get(url)
         .send()
@@ -182,10 +182,10 @@ async fn fetch_task_runner_descriptor(config: &AppConfig) -> Result<LiveMcpDescr
             response.status()
         ));
     }
-    let descriptor = response
-        .json::<TaskRunnerProviderDescriptor>()
-        .await
-        .map_err(|err| format!("decode Task Runner MCP descriptor failed: {err}"))?;
+    let descriptor =
+        read_response_json_limited::<TaskRunnerProviderDescriptor>(response, JSON_BODY_LIMIT_BYTES)
+            .await
+            .map_err(|err| format!("decode Task Runner MCP descriptor failed: {err}"))?;
     Ok(LiveMcpDescriptor {
         skills: descriptor.skills,
         tools: descriptor.tools,

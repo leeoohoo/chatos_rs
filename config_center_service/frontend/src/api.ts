@@ -11,43 +11,32 @@ import type {
   ServiceInstance,
 } from './types';
 
+import {
+  createBrowserAuthTokenStore,
+  createJsonApiClient,
+} from '@chatos/frontend-runtime';
+
 const TOKEN_KEY = 'chatos.configuration-center.token';
+const authTokenStore = createBrowserAuthTokenStore({ storageKey: TOKEN_KEY });
 
 export function getToken(): string | null {
-  return localStorage.getItem(TOKEN_KEY);
+  return authTokenStore.getAuthToken();
 }
 
 export function setToken(token: string): void {
-  localStorage.setItem(TOKEN_KEY, token);
+  authTokenStore.setAuthToken(token);
 }
 
 export function clearToken(): void {
-  localStorage.removeItem(TOKEN_KEY);
+  authTokenStore.clearAuthToken();
 }
 
-async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
-  const headers = new Headers(init.headers);
-  headers.set('Content-Type', 'application/json');
-  const token = getToken();
-  if (token) {
-    headers.set('Authorization', `Bearer ${token}`);
-  }
-  const response = await fetch(path, { ...init, headers });
-  if (!response.ok) {
-    if (response.status === 401) {
-      clearToken();
-    }
-    let message = response.statusText;
-    try {
-      const payload = await response.json() as { error?: string };
-      message = payload.error || message;
-    } catch {
-      // Ignore non-JSON error bodies.
-    }
-    throw new Error(message);
-  }
-  return response.json() as Promise<T>;
-}
+const request = createJsonApiClient({
+  getAuthToken: getToken,
+  onUnauthorized: clearToken,
+  readSuccessResponse: (response) => response.json(),
+  overrideContentType: true,
+});
 
 export const api = {
   login: (username: string, password: string) =>

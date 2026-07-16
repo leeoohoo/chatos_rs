@@ -21,6 +21,7 @@ use crate::history::{
     CommandExecutionContext, CommandHistoryRecorder, SandboxToolCallDetails,
 };
 use crate::relay::RelayRequest;
+use crate::sandbox::lease::local_sandbox_lease_expired;
 use crate::sandbox::process::call_native_sandbox_mcp;
 use crate::sandbox::types::{LocalSandboxLease, LocalSandboxRuntime};
 use crate::workspace::paths::relative_to_workspace;
@@ -329,13 +330,20 @@ async fn require_local_sandbox_lease(
     sandbox_runtime: &LocalSandboxRuntime,
     sandbox_id: &str,
 ) -> Result<LocalSandboxLease> {
-    sandbox_runtime
+    let lease = sandbox_runtime
         .leases
         .read()
         .await
         .get(sandbox_id)
         .cloned()
-        .ok_or_else(|| anyhow!("sandbox not found"))
+        .ok_or_else(|| anyhow!("sandbox not found"))?;
+    if lease.status == crate::LOCAL_SANDBOX_STATUS_DESTROYED {
+        return Err(anyhow!("sandbox lease is destroyed"));
+    }
+    if local_sandbox_lease_expired(&lease) {
+        return Err(anyhow!("sandbox lease has expired"));
+    }
+    Ok(lease)
 }
 
 fn require_local_sandbox_agent_endpoint(lease: &LocalSandboxLease) -> Result<String> {

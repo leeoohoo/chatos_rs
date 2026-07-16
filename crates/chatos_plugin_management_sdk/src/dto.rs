@@ -147,7 +147,7 @@ pub struct McpRuntime {
     pub local_connector: Option<LocalConnectorRef>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ResourceSecurity {
     pub allow_writes: Option<bool>,
     pub max_file_bytes: Option<i64>,
@@ -157,6 +157,19 @@ pub struct ResourceSecurity {
     pub allowed_tool_names: Vec<String>,
     #[serde(default)]
     pub blocked_tool_names: Vec<String>,
+}
+
+impl Default for ResourceSecurity {
+    fn default() -> Self {
+        Self {
+            allow_writes: None,
+            max_file_bytes: Some(256 * 1024),
+            max_write_bytes: Some(5 * 1024 * 1024),
+            search_limit: Some(40),
+            allowed_tool_names: Vec::new(),
+            blocked_tool_names: Vec::new(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -349,6 +362,8 @@ pub struct LocalConnectorRequirement {
 pub struct LocalConnectorMcpSyncRequest {
     pub owner_user_id: String,
     pub device_id: String,
+    #[serde(default)]
+    pub workspace_id: Option<String>,
     pub manifest_id: String,
     pub runtime_kind: String,
     pub internal_name: String,
@@ -363,6 +378,8 @@ pub struct LocalConnectorMcpSyncRequest {
 pub struct LocalConnectorMcpStatusRequest {
     pub owner_user_id: String,
     pub device_id: String,
+    #[serde(default)]
+    pub workspace_id: Option<String>,
     pub manifest_id: String,
     pub status: String,
     pub last_error: Option<String>,
@@ -444,6 +461,50 @@ mod tests {
         assert_eq!(
             SystemAgentKey::LocalConnectorCommandApprovalAgent.as_str(),
             "local_connector_command_approval_agent"
+        );
+    }
+
+    #[test]
+    fn resource_security_default_snapshot_matches_service_policy() {
+        let snapshot = serde_json::to_value(ResourceSecurity::default()).expect("security JSON");
+        assert_eq!(
+            snapshot,
+            serde_json::json!({
+                "allow_writes": null,
+                "max_file_bytes": 262144,
+                "max_write_bytes": 5242880,
+                "search_limit": 40,
+                "allowed_tool_names": [],
+                "blocked_tool_names": []
+            })
+        );
+    }
+
+    #[test]
+    fn local_connector_status_batch_round_trips_flattened_contract() {
+        let snapshot = serde_json::json!({
+            "items": [{
+                "mcp_id": "mcp-1",
+                "owner_user_id": "user-1",
+                "device_id": "device-1",
+                "workspace_id": "workspace-1",
+                "manifest_id": "manifest-1",
+                "status": "available",
+                "last_error": null,
+                "tool_snapshot": [{"name": "read_file"}],
+                "manifest_hash": "sha256:demo"
+            }]
+        });
+
+        let batch: LocalConnectorMcpStatusBatchRequest =
+            serde_json::from_value(snapshot.clone()).expect("decode status batch");
+        assert_eq!(
+            batch.items[0].status.workspace_id.as_deref(),
+            Some("workspace-1")
+        );
+        assert_eq!(
+            serde_json::to_value(batch).expect("encode status batch"),
+            snapshot
         );
     }
 }

@@ -1,0 +1,31 @@
+{
+  "name": "@chatos/frontend-runtime",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./src/index.d.ts",
+      "import": "./src/index.js"
+    },
+    "./react": {
+      "types": "./src/react.d.ts",
+      "import": "./src/react.js"
+    },
+    "./antd": {
+      "types": "./src/antd.d.ts",
+      "import": "./src/antd.js"
+    }
+  },
+  "files": [
+    "src/index.js",
+    "src/index.d.ts",
+    "src/react.js",
+    "src/react.d.ts",
+    "src/antd.js",
+    "src/antd.d.ts"
+  ],
+  "scripts": {
+    "test": "node --test src/index.test.js"
+  }
+}

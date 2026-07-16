@@ -4,6 +4,11 @@
 use std::fs;
 use std::path::Path;
 
+use chatos_service_runtime::http_body::{
+    read_response_json_limited, read_response_preview_text_limited_or_message,
+    ERROR_BODY_PREVIEW_LIMIT_BYTES, JSON_BODY_LIMIT_BYTES,
+};
+use chatos_service_runtime::{build_http_client, HttpClientTimeouts};
 use reqwest::StatusCode;
 use serde::Deserialize;
 
@@ -263,10 +268,10 @@ pub(super) async fn find_enabled_local_sandbox_pairing(
     if base.is_empty() {
         return Ok(None);
     }
-    let client = reqwest::Client::builder()
-        .timeout(config.local_connector_service_request_timeout)
-        .build()
-        .map_err(|err| format!("build local connector client failed: {err}"))?;
+    let client = build_http_client(HttpClientTimeouts::new(
+        config.local_connector_service_request_timeout,
+    ))
+    .map_err(|err| format!("build local connector client failed: {err}"))?;
     let mut request = client
         .get(format!("{base}/api/local-connectors/sandbox-pairings"))
         .bearer_auth(token)
@@ -286,16 +291,20 @@ pub(super) async fn find_enabled_local_sandbox_pairing(
     }
     if !response.status().is_success() {
         let status = response.status();
-        let detail = response.text().await.unwrap_or_default();
+        let detail =
+            read_response_preview_text_limited_or_message(response, ERROR_BODY_PREVIEW_LIMIT_BYTES)
+                .await;
         return Err(format!(
             "query local connector sandbox pairings returned status={status} detail={}",
             truncate_detail(detail.as_str(), 1024)
         ));
     }
-    let pairings = response
-        .json::<Vec<LocalConnectorSandboxPairing>>()
-        .await
-        .map_err(|err| format!("parse local connector sandbox pairings failed: {err}"))?;
+    let pairings = read_response_json_limited::<Vec<LocalConnectorSandboxPairing>>(
+        response,
+        JSON_BODY_LIMIT_BYTES,
+    )
+    .await
+    .map_err(|err| format!("parse local connector sandbox pairings failed: {err}"))?;
     Ok(pairings.into_iter().find(|pairing| {
         if !pairing.enabled {
             return false;

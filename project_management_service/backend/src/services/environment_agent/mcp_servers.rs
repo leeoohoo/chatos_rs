@@ -19,6 +19,11 @@ use chatos_plugin_management_sdk::{
     ResolvedAgentCapabilities, PROJECT_ENVIRONMENT_MCP_RESOURCE_ID,
 };
 use chatos_sandbox_image_mcp::{SANDBOX_IMAGE_PROJECT_ID_HEADER, SANDBOX_IMAGE_RUN_ID_HEADER};
+use chatos_service_runtime::http_body::{
+    read_response_json_limited, read_response_preview_text_limited_or_message,
+    ERROR_BODY_PREVIEW_LIMIT_BYTES, JSON_BODY_LIMIT_BYTES,
+};
+use chatos_service_runtime::{build_http_client, HttpClientTimeouts};
 
 use crate::config::AppConfig;
 use crate::models::{ProjectRecord, ProjectSourceType, RuntimeEnvironmentProvider};
@@ -162,7 +167,9 @@ pub(super) async fn start_local_project_compose_environment(
             .await?
             .ok_or_else(|| "没有找到已启用的 Local Connector 沙箱配对".to_string())?;
     let facade_base = local_connector_facade_base(state, &pairing)?;
-    let response = reqwest::Client::new()
+    let client = build_http_client(HttpClientTimeouts::new(Duration::from_secs(2 * 60 * 60)))
+        .map_err(|err| format!("创建 Local Connector HTTP 客户端失败: {err}"))?;
+    let response = client
         .post(format!(
             "{}/api/local/sandbox/environments/compose/up",
             facade_base.trim_end_matches('/')
@@ -175,22 +182,21 @@ pub(super) async fn start_local_project_compose_environment(
             "application_dockerfile": application_dockerfile,
             "env_file": env_file,
         }))
-        .timeout(Duration::from_secs(2 * 60 * 60))
         .send()
         .await
         .map_err(|err| format!("启动本地 Docker Compose 环境失败: {err}"))?;
     let status = response.status();
-    let body = response
-        .text()
-        .await
-        .map_err(|err| format!("读取 Local Connector Docker Compose 响应失败: {err}"))?;
     if !status.is_success() {
+        let body =
+            read_response_preview_text_limited_or_message(response, ERROR_BODY_PREVIEW_LIMIT_BYTES)
+                .await;
         return Err(format!(
             "Local Connector Docker Compose 返回 {status}: {}",
             body.chars().take(4096).collect::<String>()
         ));
     }
-    serde_json::from_str(body.as_str())
+    read_response_json_limited::<Value>(response, JSON_BODY_LIMIT_BYTES)
+        .await
         .map_err(|err| format!("解析 Local Connector Docker Compose 响应失败: {err}"))
 }
 

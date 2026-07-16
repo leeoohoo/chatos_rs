@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
+mod agent_relay;
 mod auth;
 mod command_sandbox;
 mod config;
@@ -11,6 +12,8 @@ mod terminal_store;
 mod tools;
 
 use std::path::Path;
+#[cfg(unix)]
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use axum::extract::State;
@@ -28,6 +31,8 @@ use chatos_mcp_service::{
 use serde_json::{json, Value};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, BufWriter};
 use tokio::net::TcpListener;
+#[cfg(unix)]
+use tokio::net::UnixListener;
 use tokio::sync::mpsc;
 use tracing::{info, warn};
 
@@ -57,6 +62,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // The dependency graph can enable both rustls crypto backends. Select one deterministically
     // before any proxy or transitive HTTP client builds a TLS configuration.
     let _ = rustls::crypto::ring::default_provider().install_default();
+    if agent_relay::is_internal_agent_relay() {
+        agent_relay::run_internal_agent_relay()
+            .await
+            .map_err(std::io::Error::other)?;
+        return Ok(());
+    }
     if network_proxy::is_internal_command_wrapper() {
         network_proxy::run_internal_command_wrapper()
             .await
@@ -85,6 +96,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Ok(());
     }
     let app = build_app(config.clone()).await?;
+    #[cfg(unix)]
+    if let Some(socket_path) = configured_agent_unix_socket()? {
+        return serve_agent_unix_socket(app, socket_path.as_path()).await;
+    }
     let bind_addr = format!("{}:{}", config.host, config.port);
     let listener = TcpListener::bind(bind_addr.as_str()).await?;
     info!(
@@ -93,6 +108,52 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         bind_addr = bind_addr.as_str(),
         workspace = %config.workspace.display(),
         "sandbox MCP server started"
+    );
+    axum::serve(listener, app).await?;
+    Ok(())
+}
+
+#[cfg(unix)]
+fn configured_agent_unix_socket() -> Result<Option<PathBuf>, Box<dyn std::error::Error>> {
+    let Some(value) = std::env::var_os("CHATOS_AGENT_UNIX_SOCKET") else {
+        return Ok(None);
+    };
+    let path = PathBuf::from(value);
+    if path.as_os_str().is_empty() || !path.is_absolute() {
+        return Err("CHATOS_AGENT_UNIX_SOCKET must be an absolute path".into());
+    }
+    Ok(Some(path))
+}
+
+#[cfg(unix)]
+async fn serve_agent_unix_socket(
+    app: Router,
+    socket_path: &Path,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use std::os::unix::fs::{FileTypeExt, PermissionsExt};
+
+    let parent = socket_path
+        .parent()
+        .ok_or("CHATOS_AGENT_UNIX_SOCKET has no parent directory")?;
+    let parent_metadata = std::fs::symlink_metadata(parent)?;
+    if parent_metadata.file_type().is_symlink() || !parent_metadata.is_dir() {
+        return Err("sandbox agent socket directory must be a non-symlink directory".into());
+    }
+    match std::fs::symlink_metadata(socket_path) {
+        Ok(metadata) if metadata.file_type().is_socket() => {
+            std::fs::remove_file(socket_path)?;
+        }
+        Ok(_) => return Err("sandbox agent socket path is occupied by a non-socket file".into()),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+        Err(err) => return Err(err.into()),
+    }
+    let listener = UnixListener::bind(socket_path)?;
+    std::fs::set_permissions(socket_path, std::fs::Permissions::from_mode(0o600))?;
+    info!(
+        service = "chatos-sandbox-mcp-server",
+        version = VERSION,
+        socket = %socket_path.display(),
+        "sandbox MCP server started on Unix socket"
     );
     axum::serve(listener, app).await?;
     Ok(())

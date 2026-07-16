@@ -5,6 +5,7 @@ use super::*;
 use crate::http_body::{
     read_response_text_limited, ERROR_BODY_PREVIEW_LIMIT_BYTES, MODEL_CATALOG_BODY_LIMIT_BYTES,
 };
+use chatos_service_runtime::{build_http_client, HttpClientTimeouts};
 
 fn model_list_urls(provider: &str, base_url: &str) -> Vec<String> {
     let mut urls = vec![format!("{}/models", base_url.trim_end_matches('/'))];
@@ -81,9 +82,7 @@ async fn fetch_provider_models(
     if api_key.is_empty() {
         return Err("当前供应商配置未提供 API Key".to_string());
     }
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(20))
-        .build()
+    let client = build_http_client(HttpClientTimeouts::new(Duration::from_secs(20)))
         .map_err(|err| err.to_string())?;
     let mut last_error = None;
     for url in model_list_urls(profile.provider.as_str(), profile.base_url.as_str()) {

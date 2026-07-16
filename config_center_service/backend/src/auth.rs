@@ -1,8 +1,14 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use axum::http::header::AUTHORIZATION;
 use axum::http::HeaderMap;
+use chatos_service_runtime::http_body::{
+    read_response_json_limited, read_response_preview_text_limited_or_message,
+    ERROR_BODY_PREVIEW_LIMIT_BYTES, JSON_BODY_LIMIT_BYTES,
+};
+use chatos_service_runtime::{
+    bearer_token_from_headers, normalized_identity_text as normalized, BearerTokenError,
+};
 use reqwest::Method;
 use serde::{Deserialize, Serialize};
 
@@ -44,9 +50,14 @@ struct UserServiceVerifyResponse {
     principal: UserServiceVerifiedPrincipal,
 }
 
-pub async fn login(config: &AppConfig, input: &LoginRequest) -> Result<LoginResponse, String> {
+pub async fn login(
+    config: &AppConfig,
+    client: &reqwest::Client,
+    input: &LoginRequest,
+) -> Result<LoginResponse, String> {
     let response: UserServiceLoginResponse = request_json(
         config,
+        client,
         Method::POST,
         "/api/auth/login",
         None,
@@ -62,9 +73,20 @@ pub async fn login(config: &AppConfig, input: &LoginRequest) -> Result<LoginResp
     })
 }
 
-pub async fn verify(config: &AppConfig, token: &str) -> Result<CurrentUser, String> {
-    let response: UserServiceVerifyResponse =
-        request_json::<(), _>(config, Method::GET, "/api/auth/verify", Some(token), None).await?;
+pub async fn verify(
+    config: &AppConfig,
+    client: &reqwest::Client,
+    token: &str,
+) -> Result<CurrentUser, String> {
+    let response: UserServiceVerifyResponse = request_json::<(), _>(
+        config,
+        client,
+        Method::GET,
+        "/api/auth/verify",
+        Some(token),
+        None,
+    )
+    .await?;
     let principal = response.principal;
     if principal.principal_type.trim() != "human_user" {
         return Err("configuration center only accepts human users".to_string());
@@ -87,22 +109,21 @@ pub async fn verify(config: &AppConfig, token: &str) -> Result<CurrentUser, Stri
 }
 
 pub fn bearer_token(headers: &HeaderMap) -> Result<&str, String> {
-    let value = headers
-        .get(AUTHORIZATION)
-        .ok_or_else(|| "missing authorization header".to_string())?
-        .to_str()
-        .map_err(|_| "invalid authorization header".to_string())?;
-    let mut parts = value.split_whitespace();
-    let scheme = parts.next().unwrap_or_default();
-    let token = parts.next().unwrap_or_default();
-    if !scheme.eq_ignore_ascii_case("Bearer") || token.is_empty() || parts.next().is_some() {
-        return Err("invalid bearer token".to_string());
+    match bearer_token_from_headers(headers) {
+        Ok(token) => Ok(token),
+        Err(BearerTokenError::MissingAuthorizationHeader) => {
+            Err("missing authorization header".to_string())
+        }
+        Err(BearerTokenError::InvalidAuthorizationHeader) => {
+            Err("invalid authorization header".to_string())
+        }
+        Err(BearerTokenError::InvalidBearerToken) => Err("invalid bearer token".to_string()),
     }
-    Ok(token)
 }
 
 async fn request_json<TBody, TResponse>(
     config: &AppConfig,
+    client: &reqwest::Client,
     method: Method,
     path: &str,
     token: Option<&str>,
@@ -117,10 +138,6 @@ where
         config.user_service_base_url.trim_end_matches('/'),
         path
     );
-    let client = reqwest::Client::builder()
-        .timeout(config.user_service_request_timeout)
-        .build()
-        .map_err(|err| err.to_string())?;
     let mut request = client.request(method, endpoint);
     if let Some(token) = token {
         request = request.bearer_auth(token);
@@ -131,14 +148,16 @@ where
     let response = request.send().await.map_err(|err| err.to_string())?;
     if !response.status().is_success() {
         let status = response.status();
-        let body = response.text().await.unwrap_or_default();
+        let body =
+            read_response_preview_text_limited_or_message(response, ERROR_BODY_PREVIEW_LIMIT_BYTES)
+                .await;
         return Err(if body.trim().is_empty() {
             format!("user service returned {status}")
         } else {
             body
         });
     }
-    response.json().await.map_err(|err| err.to_string())
+    read_response_json_limited(response, JSON_BODY_LIMIT_BYTES).await
 }
 
 fn user_from_login(user: UserServiceAuthUser) -> Result<CurrentUser, String> {
@@ -164,8 +183,4 @@ fn user_from_login(user: UserServiceAuthUser) -> Result<CurrentUser, String> {
             .unwrap_or("user")
             .to_string(),
     })
-}
-
-fn normalized(value: Option<&str>) -> Option<&str> {
-    value.map(str::trim).filter(|value| !value.is_empty())
 }

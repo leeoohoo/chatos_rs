@@ -1,11 +1,23 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-import { createContext, ReactNode, useContext, useMemo, useState } from 'react';
+import {
+  createContext,
+  ReactNode,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+} from 'react';
+
+import { createTranslator } from '@chatos/frontend-runtime';
+import { createStoredUiLocaleHook } from '@chatos/frontend-runtime/react';
 
 export type Language = 'zh' | 'en';
 
 const LANGUAGE_STORAGE_KEY = 'sandbox_manager_language';
+const SUPPORTED_LANGUAGES: readonly Language[] = ['zh', 'en'];
 
 const zh = {
   'app.title': '沙箱管理控制台',
@@ -511,27 +523,31 @@ interface I18nContextValue {
 }
 
 const I18nContext = createContext<I18nContextValue | null>(null);
+const useStoredUiLocale = createStoredUiLocaleHook({ useCallback, useEffect, useState });
 
 export function I18nProvider({ children }: { children: ReactNode }) {
-  const [language, setLanguageState] = useState<Language>(() => {
-    const stored = window.localStorage.getItem(LANGUAGE_STORAGE_KEY);
-    return stored === 'en' || stored === 'zh' ? stored : 'zh';
+  const [language, setLanguage] = useStoredUiLocale({
+    storageKey: LANGUAGE_STORAGE_KEY,
+    supportedLocales: SUPPORTED_LANGUAGES,
+    fallbackLocale: 'zh',
+    persist: 'setter',
+    updateDocumentLanguage: false,
   });
 
   const dictionary = dictionaries[language];
 
   const value = useMemo<I18nContextValue>(() => {
-    const setLanguage = (next: Language) => {
-      window.localStorage.setItem(LANGUAGE_STORAGE_KEY, next);
-      setLanguageState(next);
-    };
-    const t = (key: string) => dictionary[key] ?? key;
+    const t = createTranslator({
+      locale: language,
+      messages: dictionaries,
+      fallbackLocale: 'zh',
+    });
     const translateDynamic = (prefix: 'event.type' | 'event.message', raw: string) => {
       const key = `${prefix}.${raw}`;
       return dictionary[key] ?? raw;
     };
     return { language, setLanguage, t, translateDynamic };
-  }, [dictionary, language]);
+  }, [dictionary, language, setLanguage]);
 
   return <I18nContext.Provider value={value}>{children}</I18nContext.Provider>;
 }

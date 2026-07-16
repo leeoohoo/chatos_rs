@@ -3,11 +3,13 @@
 
 use serde::{Deserialize, Serialize};
 
+mod filesystem;
 mod managed_requirements;
 mod permissions;
 mod profiles;
 mod toml_profiles;
 
+pub use filesystem::*;
 pub use managed_requirements::*;
 pub use permissions::*;
 pub use profiles::*;

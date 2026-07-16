@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
+pub mod arguments;
 pub mod builder;
 pub mod builtin_catalog;
 pub mod builtin_prompt;
+pub mod execution;
 pub mod executor;
 pub mod naming;
 pub mod parallelism;
@@ -15,6 +17,7 @@ pub mod text;
 pub mod tool_call;
 pub mod types;
 
+pub use arguments::{parse_json_loose, parse_json_tool_args, parse_tool_args};
 pub use builder::McpExecutorBuilder;
 pub use builtin_catalog::{
     builtin_kind_by_any, builtin_kind_by_command, builtin_kind_by_config_id,
@@ -42,6 +45,7 @@ pub use builtin_prompt::{
     inspect_effective_builtin_mcp_system_prompt, BuiltinMcpPromptBuildResult,
     BuiltinMcpPromptLocale,
 };
+pub use execution::{execute_tool_calls_parallel, execute_tool_calls_stream};
 pub use executor::McpExecutor;
 pub use naming::{canonical_name_segment, canonical_prefixed_tool_name, legacy_prefixed_tool_name};
 pub use registry::{BuiltinToolProvider, BuiltinToolRegistry};
@@ -49,7 +53,7 @@ pub use rpc::{
     extract_tools, invalidate_stdio_session, jsonrpc_http_call, jsonrpc_stdio_call,
     list_tools_http, list_tools_stdio,
 };
-pub use schema::{build_function_tool_schema, parse_tool_definition};
+pub use schema::{build_function_tool_schema, parse_mcp_tool_definition, parse_tool_definition};
 pub use system_tool_catalog::{
     local_command_approval_decision_tool_definition, local_command_approval_tool_definitions,
     project_environment_tool_definitions, project_runtime_environment_info_tool_definitions,

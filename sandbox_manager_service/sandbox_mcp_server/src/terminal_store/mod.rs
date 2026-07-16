@@ -13,11 +13,15 @@ use chatos_builtin_tools::{
     TerminalControllerStore, TerminalProcessPollDetails, TerminalProcessSnapshot,
     TerminalProcessWaitResponse, TerminalRecentLogsEntry,
 };
+use chatos_terminal_runtime::{
+    read_output_chunks, wait_for_terminal_session, TerminalLogBuffer, TerminalSessionMeta,
+    TerminalWaitResult,
+};
 use serde_json::{json, Value};
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
+use tokio::io::{AsyncRead, AsyncWriteExt};
 use tokio::process::{Child, Command};
 use tokio::sync::{Mutex, RwLock};
-use tokio::time::{sleep, Duration, Instant};
+use tokio::time::{sleep, Duration};
 use uuid::Uuid;
 
 mod logs;
@@ -27,8 +31,8 @@ use crate::command_sandbox::{
 };
 use crate::quota::WorkspaceQuota;
 use logs::{
-    append_log, collect_output, collect_output_from_logs, log_value_content, select_logs,
-    take_recent_logs, TerminalLogEntry,
+    append_log, collect_output, collect_output_from_logs, derive_terminal_name, log_value_content,
+    select_logs, take_recent_logs,
 };
 
 #[derive(Debug, Clone)]
@@ -49,38 +53,16 @@ impl SandboxTerminalControllerStore {
     }
 }
 
-#[derive(Debug, Clone)]
-struct TerminalSessionMeta {
-    id: String,
-    cwd: String,
-    project_id: Option<String>,
-    user_id: Option<String>,
-    command: String,
-    started_at: String,
-    last_active_at: String,
-    finished_at: Option<String>,
-    status: String,
-    exit_code: Option<i32>,
-}
-
 struct TerminalSession {
     meta: Mutex<TerminalSessionMeta>,
     child: Mutex<Child>,
-    logs: Mutex<Vec<TerminalLogEntry>>,
+    logs: Mutex<TerminalLogBuffer>,
     cleanup: Mutex<Option<CommandSandboxCleanup>>,
 }
 
 #[derive(Default)]
 struct TerminalRuntimeState {
     sessions: RwLock<HashMap<String, Arc<TerminalSession>>>,
-}
-
-struct WaitResult {
-    waited_ms: u64,
-    busy: bool,
-    timed_out: bool,
-    finished_by: &'static str,
-    exit_code: Option<i32>,
 }
 
 static TERMINAL_STATE: OnceLock<Arc<TerminalRuntimeState>> = OnceLock::new();
@@ -461,20 +443,16 @@ async fn register_session(
     let session_id = Uuid::new_v4().to_string();
     let now = now_rfc3339();
     let session = Arc::new(TerminalSession {
-        meta: Mutex::new(TerminalSessionMeta {
-            id: session_id.clone(),
-            cwd: target_path.to_string_lossy().to_string(),
-            project_id: context.project_id.clone(),
-            user_id: context.user_id.clone(),
+        meta: Mutex::new(TerminalSessionMeta::new(
+            session_id.clone(),
+            target_path.to_string_lossy().to_string(),
+            context.project_id.clone(),
+            context.user_id.clone(),
             command,
-            started_at: now.clone(),
-            last_active_at: now.clone(),
-            finished_at: None,
-            status: "running".to_string(),
-            exit_code: None,
-        }),
+            now,
+        )),
         child: Mutex::new(child),
-        logs: Mutex::new(Vec::new()),
+        logs: Mutex::new(TerminalLogBuffer::default()),
         cleanup: Mutex::new(Some(cleanup)),
     });
 
@@ -510,26 +488,20 @@ where
     R: AsyncRead + Unpin + Send + 'static,
 {
     tokio::spawn(async move {
-        let mut buf = vec![0_u8; 2048];
-        loop {
-            match reader.read(&mut buf).await {
-                Ok(0) => break,
-                Ok(count) => {
-                    let chunk = String::from_utf8_lossy(&buf[..count]).to_string();
-                    if !chunk.is_empty() {
-                        append_log(session.clone(), kind, chunk).await;
-                    }
-                }
-                Err(_) => break,
+        let _ = read_output_chunks(&mut reader, move |chunk| {
+            let session = session.clone();
+            async move {
+                append_log(session, kind, chunk).await;
             }
-        }
+        })
+        .await;
     });
 }
 
 async fn refresh_session_status(session: &Arc<TerminalSession>) -> Result<(), String> {
     {
         let meta = session.meta.lock().await;
-        if meta.status == "exited" {
+        if meta.is_exited() {
             return Ok(());
         }
     }
@@ -546,12 +518,7 @@ async fn refresh_session_status(session: &Arc<TerminalSession>) -> Result<(), St
 async fn mark_session_exited(session: &Arc<TerminalSession>, exit_code: Option<i32>) {
     {
         let mut meta = session.meta.lock().await;
-        if meta.status != "exited" {
-            meta.status = "exited".to_string();
-            meta.exit_code = exit_code;
-            meta.finished_at = Some(now_rfc3339());
-            meta.last_active_at = meta.finished_at.clone().unwrap_or_else(now_rfc3339);
-        }
+        meta.mark_exited(exit_code, now_rfc3339());
     }
     if let Some(cleanup) = session.cleanup.lock().await.take() {
         cleanup.run();
@@ -566,16 +533,11 @@ async fn sessions_for_context(
     let mut matched = Vec::new();
     for session in sessions.values() {
         let meta = session.meta.lock().await.clone();
-        let same_user = match context.user_id.as_deref() {
-            Some(user_id) => meta.user_id.as_deref() == Some(user_id),
-            None => true,
-        };
-        let in_scope = if let Some(project_id) = context.project_id.as_deref() {
-            meta.project_id.as_deref() == Some(project_id)
-        } else {
-            PathBuf::from(&meta.cwd).starts_with(&root)
-        };
-        if same_user && in_scope {
+        if meta.matches_scope(
+            root.as_path(),
+            context.project_id.as_deref(),
+            context.user_id.as_deref(),
+        ) {
             matched.push(session.clone());
         }
     }
@@ -610,65 +572,24 @@ async fn session_for_context(
 async fn wait_for_session(
     session: Arc<TerminalSession>,
     timeout_ms: u64,
-) -> Result<WaitResult, String> {
-    let timeout = Duration::from_millis(timeout_ms.clamp(1_000, 600_000));
-    let started = Instant::now();
-    loop {
-        refresh_session_status(&session).await?;
-        let meta = session.meta.lock().await.clone();
-        if meta.status == "exited" {
-            return Ok(WaitResult {
-                waited_ms: started.elapsed().as_millis() as u64,
-                busy: false,
-                timed_out: false,
-                finished_by: "exit",
-                exit_code: meta.exit_code,
-            });
+) -> Result<TerminalWaitResult, String> {
+    wait_for_terminal_session(timeout_ms, || {
+        let session = session.clone();
+        async move {
+            refresh_session_status(&session).await?;
+            let meta = session.meta.lock().await.clone();
+            Ok(meta)
         }
-        if started.elapsed() >= timeout {
-            break;
-        }
-        sleep(Duration::from_millis(100)).await;
-    }
-    let meta = session.meta.lock().await.clone();
-    Ok(WaitResult {
-        waited_ms: started.elapsed().as_millis() as u64,
-        busy: meta.status != "exited",
-        timed_out: true,
-        finished_by: "timeout",
-        exit_code: meta.exit_code,
     })
-}
-
-fn derive_terminal_name(cwd: &str) -> String {
-    Path::new(cwd)
-        .file_name()
-        .and_then(|value| value.to_str())
-        .unwrap_or("terminal")
-        .to_string()
+    .await
 }
 
 fn canonicalize_existing(path: &Path) -> Result<PathBuf, String> {
-    std::fs::canonicalize(path).map_err(|err| err.to_string())
+    chatos_terminal_runtime::canonicalize_existing(path).map_err(|err| err.to_string())
 }
 
 fn resolve_target_path(root: &Path, path_input: &str) -> Result<PathBuf, String> {
-    let trimmed = path_input.trim();
-    let joined = if trimmed.is_empty() || trimmed == "." {
-        root.to_path_buf()
-    } else {
-        let path = PathBuf::from(trimmed);
-        if path.is_absolute() {
-            path
-        } else {
-            root.join(path)
-        }
-    };
-    let canonical = canonicalize_existing(joined.as_path())?;
-    if !canonical.starts_with(root) {
-        return Err("target path escapes workspace root".to_string());
-    }
-    Ok(canonical)
+    chatos_terminal_runtime::resolve_target_path(root, path_input).map_err(|err| err.to_string())
 }
 
 fn now_rfc3339() -> String {

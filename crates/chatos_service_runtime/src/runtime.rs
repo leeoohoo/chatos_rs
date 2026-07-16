@@ -14,9 +14,8 @@ use crate::consul::{
     ServiceRegistration,
 };
 use crate::env_config::merge_env_config_text;
-use crate::http_client::build_http_client;
 use crate::utils::{non_empty, normalize_path};
-use crate::ServiceRuntimeError;
+use crate::{build_http_client, HttpClientTimeouts, ServiceRuntimeError};
 
 static CLIENT_RUNTIME: OnceLock<ChatosServiceRuntime> = OnceLock::new();
 
@@ -36,7 +35,10 @@ impl ChatosServiceRuntime {
         let config =
             RuntimeConfig::from_env(default_service_name, default_port, default_health_path);
         Self {
-            client: build_http_client(config.request_timeout_ms),
+            client: build_http_client(HttpClientTimeouts::new(std::time::Duration::from_millis(
+                config.request_timeout_ms,
+            )))
+            .expect("build service runtime HTTP client"),
             config,
             round_robin: Arc::new(Mutex::new(HashMap::new())),
         }

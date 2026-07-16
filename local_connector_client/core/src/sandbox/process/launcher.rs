@@ -78,5 +78,7 @@ fn configure_process_group_and_limits(
     _command: &mut tokio::process::Command,
     _limits: &LocalSandboxResourceLimits,
 ) -> Result<()> {
-    Ok(())
+    Err(anyhow::anyhow!(
+        "native process sandbox launcher is unsupported on this operating system"
+    ))
 }

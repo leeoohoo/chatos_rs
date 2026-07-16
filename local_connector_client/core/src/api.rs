@@ -40,13 +40,13 @@ use handlers::{
     local_remove_workspace, local_request_system_permission, local_runtime_settings,
     local_sandbox_capabilities, local_sandbox_image_jobs, local_sandbox_image_mcp,
     local_sandbox_images, local_sandbox_leases, local_sandbox_settings, local_save_mcp_config,
-    local_save_model_config, local_send_register_email_code, local_skills, local_status,
-    local_sync_mcp_config, local_sync_model_config, local_sync_skill_inventory,
-    local_system_permissions, local_terminal_exec, local_test_mcp_config, local_toggle_sandbox,
-    local_update_agent_prompt_bundle, local_update_approval_settings, local_update_mcp_config,
-    local_update_model_config, local_update_model_settings, local_update_runtime_settings,
-    local_update_sandbox_settings, local_update_skill_preference,
-    local_update_workspace_project_config_trust,
+    local_save_model_config, local_send_register_email_code, local_shutdown_sandboxes,
+    local_skills, local_status, local_sync_mcp_config, local_sync_model_config,
+    local_sync_skill_inventory, local_system_permissions, local_terminal_exec,
+    local_test_mcp_config, local_toggle_sandbox, local_update_agent_prompt_bundle,
+    local_update_approval_settings, local_update_mcp_config, local_update_model_config,
+    local_update_model_settings, local_update_runtime_settings, local_update_sandbox_settings,
+    local_update_skill_preference, local_update_workspace_project_config_trust,
 };
 
 pub(crate) async fn serve_local_api(runtime: LocalRuntime) -> Result<()> {
@@ -55,9 +55,10 @@ pub(crate) async fn serve_local_api(runtime: LocalRuntime) -> Result<()> {
         .filter(|value| !value.is_empty());
     let tcp_enabled = ipc_endpoint.is_none() || env_flag("LOCAL_CONNECTOR_ENABLE_TCP_API");
     let desktop_auth_token = local_desktop_auth_token();
-    if tcp_enabled && desktop_auth_token.is_none() {
+    let windows_ipc_enabled = cfg!(windows) && ipc_endpoint.is_some();
+    if (tcp_enabled || windows_ipc_enabled) && desktop_auth_token.is_none() {
         return Err(anyhow::anyhow!(
-            "LOCAL_CONNECTOR_DESKTOP_AUTH_TOKEN is required when the Local Connector TCP API is enabled"
+            "LOCAL_CONNECTOR_DESKTOP_AUTH_TOKEN is required when the Local Connector TCP API or Windows named-pipe API is enabled"
         ));
     }
     let app = local_api_app(runtime, desktop_auth_token);
@@ -168,6 +169,10 @@ fn local_api_routes(desktop_auth_token: Option<String>) -> Router<LocalRuntime> 
         )
         .route("/api/local/sandbox/leases", get(local_sandbox_leases))
         .route(
+            "/api/local/sandbox/shutdown",
+            post(local_shutdown_sandboxes),
+        )
+        .route(
             "/api/local/sandbox/images/initialize",
             post(local_initialize_sandbox_image),
         )
@@ -264,11 +269,18 @@ async fn serve_ipc_local_api(endpoint: String, app: Router) -> Result<()> {
     use anyhow::Context;
     use tokio::net::windows::named_pipe::ServerOptions;
 
+    validate_windows_named_pipe_endpoint(endpoint.as_str())?;
     tracing_stdout(format!("local connector core API listening on named pipe {endpoint}").as_str());
+    let mut first_pipe_instance = true;
     loop {
-        let server = ServerOptions::new()
+        let mut options = ServerOptions::new();
+        options
+            .reject_remote_clients(true)
+            .first_pipe_instance(first_pipe_instance);
+        let server = options
             .create(endpoint.as_str())
             .with_context(|| format!("create local connector API named pipe {endpoint}"))?;
+        first_pipe_instance = false;
         server
             .connect()
             .await
@@ -280,6 +292,20 @@ async fn serve_ipc_local_api(endpoint: String, app: Router) -> Result<()> {
             }
         });
     }
+}
+
+#[cfg(windows)]
+fn validate_windows_named_pipe_endpoint(endpoint: &str) -> Result<()> {
+    const LOCAL_PIPE_PREFIX: &str = r"\\.\pipe\";
+    if !endpoint.starts_with(LOCAL_PIPE_PREFIX)
+        || endpoint.len() <= LOCAL_PIPE_PREFIX.len()
+        || endpoint.contains('\0')
+    {
+        return Err(anyhow::anyhow!(
+            "Local Connector IPC endpoint must be a non-empty local Windows named pipe under {LOCAL_PIPE_PREFIX}"
+        ));
+    }
+    Ok(())
 }
 
 #[cfg(unix)]

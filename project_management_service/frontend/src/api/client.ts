@@ -34,83 +34,39 @@ import type {
   ProjectWorkItemStatus,
 } from '../types';
 
+import {
+  createBrowserAuthTokenStore,
+  createJsonApiClient,
+  normalizeApiBaseUrl,
+  withQuery,
+  type QueryValue,
+} from '@chatos/frontend-runtime';
+
 const RAW_API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || '').trim();
-const API_BASE_URL = RAW_API_BASE_URL.replace(/\/+$/, '').replace(/\/api$/, '');
+const API_BASE_URL = normalizeApiBaseUrl(RAW_API_BASE_URL);
 const AUTH_TOKEN_STORAGE_KEY = 'project_management_service_auth_token';
+const authTokenStore = createBrowserAuthTokenStore({
+  storageKey: AUTH_TOKEN_STORAGE_KEY,
+  changeEvent: 'project-service-auth-changed',
+});
 
 export function getAuthToken(): string | null {
-  return window.localStorage.getItem(AUTH_TOKEN_STORAGE_KEY);
+  return authTokenStore.getAuthToken();
 }
 
 export function setAuthToken(token: string): void {
-  window.localStorage.setItem(AUTH_TOKEN_STORAGE_KEY, token);
-  window.dispatchEvent(new Event('project-service-auth-changed'));
+  authTokenStore.setAuthToken(token);
 }
 
 export function clearAuthToken(): void {
-  window.localStorage.removeItem(AUTH_TOKEN_STORAGE_KEY);
-  window.dispatchEvent(new Event('project-service-auth-changed'));
+  authTokenStore.clearAuthToken();
 }
 
-function buildApiUrl(path: string): string {
-  const normalizedPath = path.startsWith('/') ? path : `/${path}`;
-  return API_BASE_URL ? `${API_BASE_URL}${normalizedPath}` : normalizedPath;
-}
-
-type QueryValue = string | number | boolean | null | undefined;
-
-function withQuery(path: string, params: Record<string, QueryValue>): string {
-  const search = new URLSearchParams();
-  Object.entries(params).forEach(([key, value]) => {
-    if (value === undefined || value === null) {
-      return;
-    }
-    const text = String(value).trim();
-    if (text) {
-      search.set(key, text);
-    }
-  });
-  const query = search.toString();
-  return query ? `${path}?${query}` : path;
-}
-
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const headers = new Headers(init?.headers);
-  if (!headers.has('Content-Type')) {
-    headers.set('Content-Type', 'application/json');
-  }
-  const token = getAuthToken();
-  if (token && !headers.has('Authorization')) {
-    headers.set('Authorization', `Bearer ${token}`);
-  }
-  const response = await fetch(buildApiUrl(path), {
-    ...init,
-    headers,
-  });
-  if (!response.ok) {
-    let message = response.statusText;
-    try {
-      const data = (await response.json()) as { error?: string };
-      if (data.error) {
-        message = data.error;
-      }
-    } catch {
-      // keep status text
-    }
-    if (response.status === 401) {
-      clearAuthToken();
-    }
-    throw new Error(message);
-  }
-  if (response.status === 204) {
-    return undefined as T;
-  }
-  const text = await response.text();
-  if (!text.trim()) {
-    return undefined as T;
-  }
-  return JSON.parse(text) as T;
-}
+const request = createJsonApiClient({
+  baseUrl: API_BASE_URL,
+  getAuthToken,
+  onUnauthorized: clearAuthToken,
+});
 
 export const api = {
   login: (payload: LoginPayload) =>

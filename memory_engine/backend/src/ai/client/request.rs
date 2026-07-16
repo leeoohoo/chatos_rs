@@ -3,6 +3,9 @@
 
 use std::time::Duration;
 
+use chatos_service_runtime::http_body::{
+    read_response_preview_text_limited_or_message, ERROR_BODY_PREVIEW_LIMIT_BYTES,
+};
 use futures_util::StreamExt;
 use reqwest::{header::CONTENT_TYPE, Response};
 use serde_json::{json, Value};
@@ -167,7 +170,9 @@ async fn send_stream_request(
 
     if !response.status().is_success() {
         let status = response.status();
-        let response_body = response.text().await.unwrap_or_default();
+        let response_body =
+            read_response_preview_text_limited_or_message(response, ERROR_BODY_PREVIEW_LIMIT_BYTES)
+                .await;
         return Err(format!(
             "ai request status={} endpoint={} body={}",
             status, endpoint, response_body

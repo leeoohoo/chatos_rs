@@ -1,13 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use async_trait::async_trait;
-use serde_json::Value;
-
-use crate::core::mcp_tools::{
-    build_builtin_tool_service, BuiltinToolService, ToolInfo as ChatosToolInfo,
-    ToolResult as ChatosToolResult,
-};
+use crate::core::mcp_tools::{build_builtin_tool_service, ToolInfo as ChatosToolInfo};
 use crate::services::builtin_mcp::BuiltinMcpKind as ChatosBuiltinMcpKind;
 use crate::services::mcp_loader::{
     McpBuiltinServer as ChatosBuiltinServer, McpHttpServer as ChatosHttpServer,
@@ -36,22 +30,13 @@ pub(crate) fn build_shared_builtin_registry(
 ) -> chatos_mcp_runtime::BuiltinToolRegistry {
     let mut registry = chatos_mcp_runtime::BuiltinToolRegistry::new();
     for server in builtin_servers {
-        let shared_server = shared_builtin_server(server.clone());
-        if matches!(server.kind, ChatosBuiltinMcpKind::WebTools) {
-            if let Ok(Some(provider)) =
-                chatos_builtin_tools::build_shared_builtin_provider(&shared_server)
-            {
-                registry.register(provider);
-                continue;
-            }
-        }
         let Ok(service) = build_builtin_tool_service(server) else {
             continue;
         };
-        registry.register(ChatosBuiltinProvider {
-            server_name: server.name.clone(),
+        registry.register(chatos_builtin_tools::SharedBuiltinProvider::new(
+            server.name.clone(),
             service,
-        });
+        ));
     }
     registry
 }
@@ -193,32 +178,6 @@ pub(crate) fn chatos_builtin_kind(
     }
 }
 
-pub(crate) fn chatos_tool_result(result: chatos_mcp_runtime::ToolResult) -> ChatosToolResult {
-    ChatosToolResult {
-        tool_call_id: result.tool_call_id,
-        name: result.name,
-        success: result.success,
-        is_error: result.is_error,
-        is_stream: result.is_stream,
-        conversation_turn_id: result.conversation_turn_id,
-        content: result.content,
-        result: result.result,
-    }
-}
-
-pub(crate) fn shared_tool_result(result: ChatosToolResult) -> chatos_mcp_runtime::ToolResult {
-    chatos_mcp_runtime::ToolResult {
-        tool_call_id: result.tool_call_id,
-        name: result.name,
-        success: result.success,
-        is_error: result.is_error,
-        is_stream: result.is_stream,
-        conversation_turn_id: result.conversation_turn_id,
-        content: result.content,
-        result: result.result,
-    }
-}
-
 pub(crate) fn chatos_tool_info(info: &chatos_mcp_runtime::ToolInfo) -> ChatosToolInfo {
     ChatosToolInfo {
         original_name: info.original_name.clone(),
@@ -239,43 +198,6 @@ fn chatos_stdio_server(server: chatos_mcp_runtime::McpStdioServer) -> ChatosStdi
         cwd: server.cwd,
         env: server.env,
         user_id: server.user_id,
-    }
-}
-
-struct ChatosBuiltinProvider {
-    server_name: String,
-    service: BuiltinToolService,
-}
-
-#[async_trait]
-impl chatos_mcp_runtime::BuiltinToolProvider for ChatosBuiltinProvider {
-    fn server_name(&self) -> &str {
-        self.server_name.as_str()
-    }
-
-    fn list_tools(&self) -> Vec<Value> {
-        self.service.list_tools()
-    }
-
-    async fn call_tool(
-        &self,
-        name: &str,
-        args: Value,
-        context: chatos_mcp_runtime::ToolCallContext,
-        on_stream_chunk: Option<chatos_mcp_runtime::ToolStreamChunkCallback>,
-    ) -> Result<Value, String> {
-        self.service.call_tool(
-            name,
-            args,
-            context.conversation_id.as_deref(),
-            context.conversation_turn_id.as_deref(),
-            context.caller_model_runtime.as_ref(),
-            on_stream_chunk,
-        )
-    }
-
-    fn unavailable_tools(&self) -> Vec<(String, String)> {
-        self.service.unavailable_tools()
     }
 }
 

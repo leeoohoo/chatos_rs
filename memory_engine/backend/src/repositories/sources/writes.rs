@@ -5,7 +5,7 @@ use mongodb::bson::{doc, Bson};
 use uuid::Uuid;
 
 use crate::db::Db;
-use crate::models::{now_rfc3339, EngineSource, UpsertSourceRequest};
+use crate::models::{now_rfc3339, StoredEngineSource, UpsertSourceRequest};
 
 use super::common::{
     normalize_optional_text, source_collection, source_filter, tenant_bson, RETIRED_SOURCE_IDS,
@@ -28,7 +28,7 @@ pub async fn upsert_source(
     db: &Db,
     source_id: &str,
     req: UpsertSourceRequest,
-) -> Result<EngineSource, String> {
+) -> Result<StoredEngineSource, String> {
     let normalized_source_id = source_id.trim();
     if normalized_source_id.is_empty() {
         return Err("source_id is required".to_string());

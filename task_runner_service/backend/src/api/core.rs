@@ -5,6 +5,7 @@ use super::*;
 
 mod auth;
 mod system;
+mod user_service_client;
 mod users;
 
 pub(super) use self::auth::{

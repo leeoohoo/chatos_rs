@@ -25,6 +25,7 @@ import { EnabledTag, VisibilityTag } from '../components/Tags';
 import { useI18n } from '../i18n/I18nProvider';
 import { contentKindLabel } from '../i18n/labels';
 import type { CurrentUser, SkillRecord } from '../types';
+import { CatalogIdentityFields } from './catalogForm/CatalogIdentityFields';
 import { jsonText, optionalText, parseJsonObject } from './formUtils';
 
 interface SkillCatalogPageProps {
@@ -218,33 +219,7 @@ export function SkillCatalogPage({ user }: SkillCatalogPageProps) {
         destroyOnClose
       >
         <Form form={form} layout="vertical" onFinish={(values) => saveMutation.mutate(values)}>
-          <div className="form-grid">
-            <Form.Item name="name" label={t('field.internalName')} rules={[{ required: true }]}>
-              <Input />
-            </Form.Item>
-            <Form.Item name="display_name" label={t('field.displayName')}>
-              <Input />
-            </Form.Item>
-            <Form.Item name="visibility" label={t('field.visibility')}>
-              <Select
-                options={[
-                  { value: 'private', label: t('visibility.private') },
-                  ...(isAdmin
-                    ? [
-                        { value: 'public', label: t('visibility.public') },
-                        { value: 'system_private', label: t('visibility.system_private') },
-                      ]
-                    : []),
-                ]}
-              />
-            </Form.Item>
-            <Form.Item name="enabled" label={t('field.enabled')} valuePropName="checked">
-              <Switch />
-            </Form.Item>
-          </div>
-          <Form.Item name="description" label={t('field.description')}>
-            <Input.TextArea rows={2} />
-          </Form.Item>
+          <CatalogIdentityFields isAdmin={isAdmin} />
           <div className="form-grid">
             <Form.Item name="content_kind" label={t('field.contentKind')} rules={[{ required: true }]}>
               <Select options={contentKinds.map((value) => ({ value, label: contentKindLabel(value, t) }))} />

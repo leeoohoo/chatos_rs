@@ -17,6 +17,8 @@ use git::{authenticated_git_url, run_git, run_git_output};
 use crate::config::AppConfig;
 use crate::http_body::{read_response_text_limited_or_message, ERROR_BODY_PREVIEW_LIMIT_BYTES};
 use crate::models::ProjectRecord;
+use chatos_service_runtime::http_body::{read_response_json_limited, JSON_BODY_LIMIT_BYTES};
+use chatos_service_runtime::{build_http_client, HttpClientTimeouts};
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct HarnessProjectRepoResponse {
@@ -59,9 +61,7 @@ pub async fn create_harness_repo_for_project(
         project_name: project.name.as_str(),
         description: project.description.as_deref(),
     };
-    let client = reqwest::Client::builder()
-        .timeout(config.user_service_request_timeout)
-        .build()
+    let client = build_http_client(HttpClientTimeouts::new(config.user_service_request_timeout))
         .map_err(|err| format!("build user_service client failed: {err}"))?;
     let response = crate::user_model_runtime_client::signed_user_service_request(
         client.request(Method::POST, endpoint),
@@ -81,8 +81,7 @@ pub async fn create_harness_repo_for_project(
             "user_service harness repo request failed: {status} {text}"
         ));
     }
-    response
-        .json::<HarnessProjectRepoResponse>()
+    read_response_json_limited::<HarnessProjectRepoResponse>(response, JSON_BODY_LIMIT_BYTES)
         .await
         .map_err(|err| format!("parse user_service harness repo response failed: {err}"))
 }

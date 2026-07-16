@@ -6,9 +6,13 @@ name = "memory_engine_sdk"
 version = "0.1.0"
 edition = "2021"
 
+[features]
+default = ["client"]
+client = ["dep:chatos_service_runtime", "dep:reqwest", "dep:urlencoding"]
+
 [dependencies]
-chatos_service_runtime = { path = "../chatos_service_runtime" }
-reqwest = { version = "0.12", features = ["json", "stream", "gzip", "brotli", "deflate", "rustls-tls"] }
+chatos_service_runtime = { path = "../chatos_service_runtime", optional = true }
+reqwest = { version = "0.12", features = ["json", "stream", "gzip", "brotli", "deflate", "rustls-tls"], optional = true }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-urlencoding = "2"
+urlencoding = { version = "2", optional = true }

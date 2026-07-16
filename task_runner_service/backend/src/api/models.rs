@@ -6,6 +6,7 @@ use crate::http_body::{
     read_response_json_limited, read_response_text_limited_or_message,
     ERROR_BODY_PREVIEW_LIMIT_BYTES, JSON_BODY_LIMIT_BYTES,
 };
+use chatos_service_runtime::{build_http_client, HttpClientTimeouts};
 
 #[derive(Debug, Deserialize)]
 struct UserServiceOwnerSummary {
@@ -295,10 +296,10 @@ async fn load_owner_identities_from_user_service(
             .trim()
             .trim_end_matches('/')
     );
-    let client = reqwest::Client::builder()
-        .timeout(state.config.user_service_request_timeout)
-        .build()
-        .map_err(|err| format!("build user_service client failed: {err}"))?;
+    let client = build_http_client(HttpClientTimeouts::new(
+        state.config.user_service_request_timeout,
+    ))
+    .map_err(|err| format!("build user_service client failed: {err}"))?;
     let response = client
         .get(endpoint)
         .bearer_auth(access_token.trim())

@@ -96,8 +96,10 @@ export function SandboxPolicySettings({
       <div className="sandboxSimpleIntro">
         <Shield size={19} />
         <div>
-          <strong>推荐安全策略已启用</strong>
-          <span>默认只读写授权项目；联网或访问项目外文件时，关闭 AI 审批会先询问你。</span>
+          <strong>{view.recommended ? '推荐安全策略已启用' : '当前安全策略'}</strong>
+          <span>{view.backend === 'docker'
+            ? '任务仅挂载授权项目，并使用无公网出口的内部网络。'
+            : '默认只读写授权项目；联网或访问项目外文件时，关闭 AI 审批会先询问你。'}</span>
         </div>
         {!view.recommended && !view.customPermissionProfileActive ? (
           <button

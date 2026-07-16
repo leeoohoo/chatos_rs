@@ -263,7 +263,7 @@ fn merge_optional_text(value: Option<String>, fallback: Option<String>) -> Optio
 }
 
 fn normalize_port(port: i64) -> Result<i64, String> {
-    if !(1..=65535).contains(&port) {
+    if !chatos_remote_runtime::is_valid_ssh_port(port) {
         return Err("端口范围必须在 1-65535".to_string());
     }
     Ok(port)
@@ -271,18 +271,16 @@ fn normalize_port(port: i64) -> Result<i64, String> {
 
 fn normalize_auth_type(value: Option<String>) -> Result<String, String> {
     let raw = normalize_non_empty(value).unwrap_or_else(|| "private_key".to_string());
-    match raw.as_str() {
-        "private_key" | "private_key_cert" | "password" => Ok(raw),
-        _ => Err("auth_type 仅支持 private_key、private_key_cert 或 password".to_string()),
-    }
+    chatos_remote_runtime::SshAuthType::parse(raw.as_str())
+        .map(|value| value.as_str().to_string())
+        .ok_or_else(|| "auth_type 仅支持 private_key、private_key_cert 或 password".to_string())
 }
 
 fn normalize_host_key_policy(value: Option<String>) -> Result<String, String> {
     let raw = normalize_non_empty(value).unwrap_or_else(|| "strict".to_string());
-    match raw.as_str() {
-        "strict" | "accept_new" => Ok(raw),
-        _ => Err("host_key_policy 仅支持 strict 或 accept_new".to_string()),
-    }
+    chatos_remote_runtime::HostKeyPolicy::parse(raw.as_str())
+        .map(|value| value.as_str().to_string())
+        .ok_or_else(|| "host_key_policy 仅支持 strict 或 accept_new".to_string())
 }
 
 fn validate_auth_fields(

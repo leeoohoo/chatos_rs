@@ -5,7 +5,7 @@ use futures_util::TryStreamExt;
 use mongodb::bson::doc;
 
 use crate::db::Db;
-use crate::models::EngineSource;
+use crate::models::StoredEngineSource;
 
 use super::common::{hash_secret, normalize_optional_text_ref, source_collection, tenant_bson};
 use super::writes::is_retired_source_id;
@@ -18,7 +18,7 @@ pub async fn list_sources(
     sdk_enabled: Option<bool>,
     limit: i64,
     offset: i64,
-) -> Result<Vec<EngineSource>, String> {
+) -> Result<Vec<StoredEngineSource>, String> {
     let mut filter = doc! {};
     if tenant_id.is_some() {
         filter.insert("tenant_id", tenant_bson(tenant_id));
@@ -56,7 +56,7 @@ pub async fn verify_source_secret(
     db: &Db,
     source_id: &str,
     secret_key: &str,
-) -> Result<Option<EngineSource>, String> {
+) -> Result<Option<StoredEngineSource>, String> {
     let normalized_source_id = source_id.trim();
     let normalized_secret = secret_key.trim();
     if normalized_source_id.is_empty() || normalized_secret.is_empty() {
@@ -77,7 +77,8 @@ pub async fn verify_source_secret(
         .limit(2)
         .await
         .map_err(|err| err.to_string())?;
-    let matches: Vec<EngineSource> = cursor.try_collect().await.map_err(|err| err.to_string())?;
+    let matches: Vec<StoredEngineSource> =
+        cursor.try_collect().await.map_err(|err| err.to_string())?;
 
     if matches.len() > 1 {
         return Err(format!(

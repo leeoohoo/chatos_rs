@@ -7,7 +7,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TOP_N="${TOP_N:-25}"
-WARN_LINES="${WARN_LINES:-700}"
+WARN_LINES="${WARN_LINES:-500}"
 WARN_BYTES="${WARN_BYTES:-40960}"
 FAIL_ON_HIT=0
 BASELINE_FILE="${BASELINE_FILE:-$ROOT_DIR/scripts/code-size-baseline.tsv}"
@@ -21,7 +21,7 @@ The scan excludes generated/build/runtime artifacts, lockfiles, docs, and binary
 
 Environment overrides:
   TOP_N       Number of rows per table. Default: 25
-  WARN_LINES  Line-count hotspot threshold. Default: 700
+  WARN_LINES  Line-count hotspot threshold. Default: 500
   WARN_BYTES  Byte-size hotspot threshold. Default: 40960
   BASELINE_FILE  TSV file containing allowed hotspot budgets.
 EOF

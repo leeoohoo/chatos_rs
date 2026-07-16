@@ -115,8 +115,8 @@ fn normalized_text(value: Option<&str>) -> Option<&str> {
 }
 
 pub(super) fn normalize_remote_server_port(value: Option<i64>) -> Result<i64, String> {
-    let port = value.unwrap_or(22);
-    if port <= 0 || port > u16::MAX as i64 {
+    let port = value.unwrap_or(chatos_remote_runtime::DEFAULT_SSH_PORT);
+    if !chatos_remote_runtime::is_valid_ssh_port(port) {
         Err("port 必须在 1-65535 之间".to_string())
     } else {
         Ok(port)
@@ -124,11 +124,9 @@ pub(super) fn normalize_remote_server_port(value: Option<i64>) -> Result<i64, St
 }
 
 pub(super) fn normalize_remote_server_auth_type(value: &str) -> Result<String, String> {
-    let normalized = value.trim();
-    match normalized {
-        "password" | "private_key" | "private_key_cert" => Ok(normalized.to_string()),
-        _ => Err("auth_type 仅支持 password / private_key / private_key_cert".to_string()),
-    }
+    chatos_remote_runtime::SshAuthType::parse(value)
+        .map(|value| value.as_str().to_string())
+        .ok_or_else(|| "auth_type 仅支持 password / private_key / private_key_cert".to_string())
 }
 
 pub(super) fn normalize_remote_server_host_key_policy(
@@ -138,10 +136,9 @@ pub(super) fn normalize_remote_server_host_key_policy(
         .map(str::trim)
         .filter(|item| !item.is_empty())
         .unwrap_or("accept_new");
-    match normalized {
-        "accept_new" | "strict" => Ok(normalized.to_string()),
-        _ => Err("host_key_policy 仅支持 accept_new / strict".to_string()),
-    }
+    chatos_remote_runtime::HostKeyPolicy::parse(normalized)
+        .map(|value| value.as_str().to_string())
+        .ok_or_else(|| "host_key_policy 仅支持 accept_new / strict".to_string())
 }
 
 pub(super) fn validate_remote_server_auth_fields(

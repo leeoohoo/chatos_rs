@@ -346,9 +346,12 @@ dependencies = [
 name = "chatos_service_runtime"
 version = "0.1.0"
 dependencies = [
+ "axum",
  "base64 0.22.1",
  "chatos_config_sdk",
+ "dotenvy",
  "futures-util",
+ "http",
  "jsonwebtoken",
  "reqwest",
  "serde",
@@ -357,6 +360,7 @@ dependencies = [
  "tokio",
  "tracing",
  "urlencoding",
+ "uuid",
 ]
 
 [[package]]
@@ -3197,7 +3201,6 @@ dependencies = [
  "chatos_plugin_management_sdk",
  "chatos_service_runtime",
  "chrono",
- "dotenvy",
  "futures-util",
  "hex",
  "jsonwebtoken",

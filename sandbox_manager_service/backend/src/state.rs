@@ -2,16 +2,19 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use crate::backend::{build_backend, SandboxBackendRef};
 use crate::config::AppConfig;
 use crate::pool::SandboxPool;
 use crate::service::SandboxManager;
 use crate::store::SandboxStore;
+use chatos_service_runtime::{build_http_client, HttpClientTimeouts};
 
 #[derive(Clone)]
 pub struct AppState {
     pub manager: SandboxManager,
+    user_service_http: reqwest::Client,
 }
 
 impl AppState {
@@ -31,8 +34,19 @@ impl AppState {
             config.pool_max_active,
             config.pool_max_pending,
         ));
+        let user_service_http = build_http_client(HttpClientTimeouts::new(Duration::from_millis(
+            config.user_service_request_timeout_ms.max(300),
+        )))
+        .map_err(|err| format!("build user_service client failed: {err}"))?;
         let manager = SandboxManager::new(config, store, backend, pool).await?;
-        Ok(Self { manager })
+        Ok(Self {
+            manager,
+            user_service_http,
+        })
+    }
+
+    pub(crate) fn user_service_http(&self) -> &reqwest::Client {
+        &self.user_service_http
     }
 
     pub fn spawn_cleanup_worker(&self) -> tokio::task::JoinHandle<()> {

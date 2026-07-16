@@ -289,7 +289,7 @@ mod tests {
     use crate::{
         BuiltinMcpKind, BuiltinMcpPromptLocale, BuiltinMcpServerOptions, BuiltinToolProvider,
         BuiltinToolRegistry, McpBuiltinServer, McpExecutor, McpHttpServer, McpStdioServer,
-        ToolCallContext, ToolResult, ToolResultCallback, ToolStreamChunkCallback,
+        ToolCallContext, ToolResultCallback, ToolStreamChunkCallback,
     };
 
     #[tokio::test]
@@ -323,42 +323,6 @@ mod tests {
 
         assert!(results.is_empty());
         assert_eq!(callback_count.load(Ordering::SeqCst), 0);
-    }
-
-    #[test]
-    fn parallel_tool_result_collection_fills_missing_items() {
-        let context = ToolCallContext::default();
-        let ok = ToolResult {
-            tool_call_id: "call_ok".to_string(),
-            name: "process_poll".to_string(),
-            success: true,
-            is_error: false,
-            is_stream: false,
-            conversation_turn_id: None,
-            content: "ok".to_string(),
-            result: None,
-        };
-        let fallback = super::execution::parallel_tool_missing_result(
-            "call_missing",
-            "process_poll",
-            &context,
-        );
-        let results = super::execution::collect_parallel_tool_results(
-            vec![Some(ok), None],
-            vec![None, Some(fallback)],
-            &context,
-            None,
-        );
-
-        assert_eq!(results.len(), 2);
-        assert!(results
-            .iter()
-            .any(|result| { result.tool_call_id == "call_ok" && result.content.contains("ok") }));
-        assert!(results.iter().any(|result| {
-            result.tool_call_id == "call_missing"
-                && result.is_error
-                && result.content.contains("没有返回结果")
-        }));
     }
 
     #[test]

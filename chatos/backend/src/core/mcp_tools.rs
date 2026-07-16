@@ -2,30 +2,27 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use std::collections::HashMap;
-use std::sync::Arc;
 
-use serde::Serialize;
 use serde_json::Value;
 
 use crate::services::mcp_loader::McpStdioServer;
 
 mod builtin;
-mod execution;
 mod rpc;
-mod schema;
 #[cfg(test)]
 mod tests;
-mod text;
 
 pub use self::builtin::{build_builtin_tool_service, BuiltinToolService};
-pub use self::execution::execute_tools_stream;
 pub use self::rpc::{jsonrpc_http_call, jsonrpc_stdio_call};
 #[cfg(test)]
-pub(crate) use self::schema::normalize_json_schema;
-pub use self::schema::{build_function_tool_schema, parse_tool_definition};
+pub(crate) use chatos_mcp_runtime::schema::normalize_json_schema;
 #[cfg(test)]
-pub(crate) use self::text::truncate_tool_text;
-pub use self::text::{inject_agent_builder_args, to_text_and_structured_result};
+pub(crate) use chatos_mcp_runtime::text::truncate_tool_text;
+pub use chatos_mcp_runtime::{
+    build_function_tool_schema, execute_tool_calls_stream as execute_tools_stream,
+    inject_agent_builder_args, parse_mcp_tool_definition as parse_tool_definition,
+    to_text_and_structured_result, ToolResult, ToolResultCallback, ToolStreamChunkCallback,
+};
 
 #[derive(Debug, Clone)]
 pub struct ToolInfo {
@@ -38,27 +35,12 @@ pub struct ToolInfo {
     pub tool_info: Value,
 }
 
-#[derive(Debug, Clone, Serialize)]
-pub struct ToolResult {
-    pub tool_call_id: String,
-    pub name: String,
-    pub success: bool,
-    pub is_error: bool,
-    #[serde(default)]
-    pub is_stream: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub conversation_turn_id: Option<String>,
-    pub content: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub result: Option<Value>,
-}
+impl chatos_mcp_runtime::parallelism::ToolParallelismInfo for ToolInfo {
+    fn original_name(&self) -> &str {
+        self.original_name.as_str()
+    }
 
-pub type ToolResultCallback = Arc<dyn Fn(&ToolResult) + Send + Sync>;
-pub type ToolStreamChunkCallback = Arc<dyn Fn(String) + Send + Sync>;
-
-#[derive(Debug, Clone)]
-pub struct ParsedToolDefinition {
-    pub name: String,
-    pub description: String,
-    pub parameters: Value,
+    fn server_name(&self) -> &str {
+        self.server_name.as_str()
+    }
 }

@@ -1,6 +1,11 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
+use chatos_service_runtime::http_body::{
+    read_response_preview_text_limited, read_response_text_limited,
+    DEFAULT_RESPONSE_BODY_LIMIT_BYTES, ERROR_BODY_PREVIEW_LIMIT_BYTES,
+};
+use chatos_service_runtime::{build_http_client, HttpClientTimeouts};
 use reqwest::Method;
 use serde_json::Value;
 use tracing::{error, info, warn};
@@ -26,19 +31,19 @@ pub(super) async fn fetch_provider_model_names(
         timeout_ms = timeout_ms.max(300),
         "provider_models.fetch.start"
     );
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_millis(timeout_ms.max(300) as u64))
-        .build()
-        .map_err(|err| {
-            error!(
-                provider = %provider,
-                base_url = %base_url,
-                endpoint = %endpoint,
-                error = %err,
-                "provider_models.fetch.client_build_failed"
-            );
-            err.to_string()
-        })?;
+    let client = build_http_client(HttpClientTimeouts::new(std::time::Duration::from_millis(
+        timeout_ms.max(300) as u64,
+    )))
+    .map_err(|err| {
+        error!(
+            provider = %provider,
+            base_url = %base_url,
+            endpoint = %endpoint,
+            error = %err,
+            "provider_models.fetch.client_build_failed"
+        );
+        err.to_string()
+    })?;
     let mut request = client.request(Method::GET, endpoint);
     let api_key = api_key.trim();
     if !api_key.is_empty() {
@@ -55,8 +60,10 @@ pub(super) async fn fetch_provider_model_names(
         err.to_string()
     })?;
     let status = response.status();
-    let body = response.text().await.unwrap_or_default();
     if !status.is_success() {
+        let body = read_response_preview_text_limited(response, ERROR_BODY_PREVIEW_LIMIT_BYTES)
+            .await
+            .unwrap_or_else(|err| format!("[response body unavailable: {err}]"));
         warn!(
             provider = %provider,
             base_url = %base_url,
@@ -71,6 +78,7 @@ pub(super) async fn fetch_provider_model_names(
             body.trim()
         ));
     }
+    let body = read_response_text_limited(response, DEFAULT_RESPONSE_BODY_LIMIT_BYTES).await?;
     let payload: Value = serde_json::from_str(body.as_str()).map_err(|err| {
         warn!(
             provider = %provider,

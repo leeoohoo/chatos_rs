@@ -28,43 +28,37 @@ import type {
   InviteCodeRecord,
 } from '../types';
 
+import {
+  buildApiUrl as buildSharedApiUrl,
+  createBrowserAuthTokenStore,
+  createJsonApiClient,
+  normalizeApiBaseUrl,
+} from '@chatos/frontend-runtime';
+
 const RAW_API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || '').trim();
-const API_BASE_URL = normalizeApiBaseUrl(RAW_API_BASE_URL || resolveDefaultApiBaseUrl());
+const API_BASE_URL = normalizeApiBaseUrl(RAW_API_BASE_URL || resolveDefaultApiBaseUrl(), {
+  stripApiSuffix: false,
+});
 const AUTH_TOKEN_STORAGE_KEY = 'user_service_auth_token';
+const authTokenStore = createBrowserAuthTokenStore({
+  storageKey: AUTH_TOKEN_STORAGE_KEY,
+  changeEvent: 'user-service-auth-changed',
+});
 
 export function getAuthToken(): string | null {
-  if (typeof window === 'undefined') {
-    return null;
-  }
-  return window.localStorage.getItem(AUTH_TOKEN_STORAGE_KEY);
+  return authTokenStore.getAuthToken();
 }
 
 export function setAuthToken(token: string): void {
-  if (typeof window === 'undefined') {
-    return;
-  }
-  window.localStorage.setItem(AUTH_TOKEN_STORAGE_KEY, token);
-  window.dispatchEvent(new Event('user-service-auth-changed'));
+  authTokenStore.setAuthToken(token);
 }
 
 export function clearAuthToken(): void {
-  if (typeof window === 'undefined') {
-    return;
-  }
-  window.localStorage.removeItem(AUTH_TOKEN_STORAGE_KEY);
-  window.dispatchEvent(new Event('user-service-auth-changed'));
+  authTokenStore.clearAuthToken();
 }
 
 export function buildApiUrl(path: string): string {
-  const normalizedPath = path.startsWith('/') ? path : `/${path}`;
-  return API_BASE_URL ? `${API_BASE_URL}${normalizedPath}` : normalizedPath;
-}
-
-function normalizeApiBaseUrl(value: string): string {
-  if (!value) {
-    return '';
-  }
-  return value.replace(/\/+$/, '');
+  return buildSharedApiUrl(API_BASE_URL, path);
 }
 
 function resolveDefaultApiBaseUrl(): string {
@@ -75,22 +69,11 @@ function resolveDefaultApiBaseUrl(): string {
   return baseUrl.replace(/\/+$/, '');
 }
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const headers = new Headers(init?.headers);
-  if (!headers.has('Content-Type')) {
-    headers.set('Content-Type', 'application/json');
-  }
-  const token = getAuthToken();
-  if (token && !headers.has('Authorization')) {
-    headers.set('Authorization', `Bearer ${token}`);
-  }
-
-  const response = await fetch(buildApiUrl(path), {
-    ...init,
-    headers,
-  });
-
-  if (!response.ok) {
+const request = createJsonApiClient({
+  baseUrl: API_BASE_URL,
+  getAuthToken,
+  onUnauthorized: clearAuthToken,
+  readErrorMessage: async (response) => {
     let message = response.statusText;
     try {
       const data = (await response.json()) as { error?: string; detail?: string };
@@ -98,20 +81,12 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
         message = [data.error, data.detail].filter(Boolean).join(': ');
       }
     } catch {
-      // noop
+      // Keep the HTTP status text for non-JSON error bodies.
     }
-    if (response.status === 401) {
-      clearAuthToken();
-    }
-    throw new Error(message);
-  }
-
-  if (response.status === 204) {
-    return undefined as T;
-  }
-
-  return (await response.json()) as T;
-}
+    return message;
+  },
+  readSuccessResponse: (response) => response.json(),
+});
 
 export const api = {
   health: () => request<HealthResponse>('/api/health'),

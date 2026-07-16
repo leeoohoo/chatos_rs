@@ -1,13 +1,16 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use std::time::Duration;
-
 use axum::body::Body;
 use axum::extract::State;
-use axum::http::{header::AUTHORIZATION, HeaderMap, Method, Request};
+use axum::http::{HeaderMap, Method, Request};
 use axum::middleware::Next;
 use axum::response::Response;
+use chatos_service_runtime::http_body::{read_response_json_limited, JSON_BODY_LIMIT_BYTES};
+use chatos_service_runtime::{
+    bearer_token_from_headers, classify_http_request_error,
+    normalized_identity_text as normalize_optional, BearerTokenError, HttpRequestErrorKind,
+};
 use serde::Deserialize;
 
 use crate::config::AppConfig;
@@ -15,7 +18,6 @@ use crate::error::ApiError;
 use crate::models::{CreateSandboxLeaseRequest, ListSandboxQuery, SandboxLeaseRecord};
 use crate::state::AppState;
 
-const BEARER_PREFIX: &str = "Bearer ";
 const INTERNAL_TOKEN_AUDIENCE: &str = "sandbox-manager";
 const INTERNAL_SERVICE_SCOPE: &str = "sandbox.service";
 pub const SCOPE_ADMIN: &str = "sandbox.admin";
@@ -317,7 +319,7 @@ async fn authenticate_request(
         return Ok(SandboxAuthContext::Operator);
     }
     if let Some(token) = bearer_token(headers)? {
-        return verify_user_service_principal(config, token).await;
+        return verify_user_service_principal(config, state.user_service_http(), token).await;
     }
 
     Err(ApiError::unauthorized("missing sandbox authorization"))
@@ -447,48 +449,37 @@ fn authenticate_operator(config: &AppConfig, headers: &HeaderMap) -> Result<bool
 }
 
 fn bearer_token(headers: &HeaderMap) -> Result<Option<&str>, ApiError> {
-    let Some(value) = headers.get(AUTHORIZATION) else {
-        return Ok(None);
-    };
-    let value = value
-        .to_str()
-        .map_err(|_| ApiError::unauthorized("invalid authorization header"))?;
-    let token = value
-        .strip_prefix(BEARER_PREFIX)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .ok_or_else(|| ApiError::unauthorized("invalid authorization header"))?;
-    Ok(Some(token))
+    match bearer_token_from_headers(headers) {
+        Ok(token) => Ok(Some(token)),
+        Err(BearerTokenError::MissingAuthorizationHeader) => Ok(None),
+        Err(
+            BearerTokenError::InvalidAuthorizationHeader | BearerTokenError::InvalidBearerToken,
+        ) => Err(ApiError::unauthorized("invalid authorization header")),
+    }
 }
 
 async fn verify_user_service_principal(
     config: &AppConfig,
+    client: &reqwest::Client,
     token: &str,
 ) -> Result<SandboxAuthContext, ApiError> {
     let endpoint = format!(
         "{}/api/auth/verify",
         config.user_service_base_url.trim().trim_end_matches('/')
     );
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_millis(
-            config.user_service_request_timeout_ms.max(300),
-        ))
-        .build()
-        .map_err(|err| {
-            ApiError::with_code(
-                axum::http::StatusCode::BAD_GATEWAY,
-                "user_service_client_error",
-                format!("build user_service client failed: {err}"),
-            )
-        })?;
     let response = client
         .get(endpoint)
         .bearer_auth(token.trim())
         .send()
         .await
         .map_err(|err| {
+            let status = if classify_http_request_error(&err) == HttpRequestErrorKind::Timeout {
+                axum::http::StatusCode::GATEWAY_TIMEOUT
+            } else {
+                axum::http::StatusCode::BAD_GATEWAY
+            };
             ApiError::with_code(
-                axum::http::StatusCode::BAD_GATEWAY,
+                status,
                 "user_service_verify_failed",
                 format!("verify token via user_service failed: {err}"),
             )
@@ -496,16 +487,16 @@ async fn verify_user_service_principal(
     if !response.status().is_success() {
         return Err(ApiError::unauthorized("invalid user token"));
     }
-    let payload = response
-        .json::<UserServiceVerifyResponse>()
-        .await
-        .map_err(|err| {
-            ApiError::with_code(
-                axum::http::StatusCode::BAD_GATEWAY,
-                "user_service_verify_invalid_response",
-                format!("parse user_service verify response failed: {err}"),
-            )
-        })?;
+    let payload =
+        read_response_json_limited::<UserServiceVerifyResponse>(response, JSON_BODY_LIMIT_BYTES)
+            .await
+            .map_err(|err| {
+                ApiError::with_code(
+                    axum::http::StatusCode::BAD_GATEWAY,
+                    "user_service_verify_invalid_response",
+                    format!("parse user_service verify response failed: {err}"),
+                )
+            })?;
     Ok(SandboxAuthContext::User(payload.principal.into()))
 }
 
@@ -554,10 +545,6 @@ fn header_text(headers: &HeaderMap, key: &'static str) -> Option<String> {
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(ToOwned::to_owned)
-}
-
-fn normalize_optional(value: Option<&str>) -> Option<&str> {
-    value.map(str::trim).filter(|value| !value.is_empty())
 }
 
 fn constant_time_equal(expected: &str, provided: &str) -> bool {

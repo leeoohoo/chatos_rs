@@ -3,10 +3,13 @@
 
 use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::time::Duration;
 
-use chatos_service_runtime::{is_production_environment, validate_production_secret};
+pub(crate) use chatos_service_runtime::env_text as normalized_env;
+use chatos_service_runtime::{
+    env_bool_strict as read_bool_env, is_production_environment, validate_production_secret,
+};
 
 #[derive(Debug, Clone)]
 pub struct AppConfig {
@@ -164,48 +167,7 @@ fn caller_internal_api_secrets() -> HashMap<String, String> {
 }
 
 pub fn load_plugin_management_dotenv() {
-    for path in plugin_management_dotenv_files() {
-        let _ = dotenvy::from_path(path);
-    }
-}
-
-fn plugin_management_dotenv_files() -> Vec<PathBuf> {
-    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let mut files = Vec::new();
-    for path in [
-        Some(manifest_dir.join(".env")),
-        manifest_dir.parent().map(|path| path.join(".env")),
-        manifest_dir
-            .parent()
-            .and_then(|path| path.parent())
-            .map(|path| path.join(".env")),
-    ]
-    .into_iter()
-    .flatten()
-    {
-        if !files.iter().any(|existing| existing == &path) {
-            files.push(path);
-        }
-    }
-    files
-}
-
-pub(crate) fn normalized_env(key: &str) -> Option<String> {
-    std::env::var(key)
-        .ok()
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
-}
-
-fn read_bool_env(key: &str, default: bool) -> Result<bool, String> {
-    let Some(value) = normalized_env(key) else {
-        return Ok(default);
-    };
-    match value.to_ascii_lowercase().as_str() {
-        "1" | "true" | "yes" | "on" => Ok(true),
-        "0" | "false" | "no" | "off" => Ok(false),
-        _ => Err(format!("invalid {key}: expected true/false")),
-    }
+    chatos_service_runtime::load_service_dotenv(Path::new(env!("CARGO_MANIFEST_DIR")));
 }
 
 fn default_database_url(database: &str) -> String {

@@ -590,6 +590,7 @@ dependencies = [
  "chatos_mcp_runtime",
  "chatos_mcp_service",
  "chatos_plugin_management_sdk",
+ "chatos_remote_runtime",
  "chatos_service_runtime",
  "chrono",
  "dashmap",
@@ -755,6 +756,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "chatos_remote_runtime"
+version = "0.1.0"
+dependencies = [
+ "dirs",
+ "ssh2",
+]
+
+[[package]]
 name = "chatos_sandbox_contract"
 version = "0.1.0"
 dependencies = [
@@ -785,6 +794,7 @@ dependencies = [
  "chatos_builtin_tools",
  "chatos_mcp_service",
  "chatos_sandbox_contract",
+ "chatos_terminal_runtime",
  "chrono",
  "globset",
  "httparse",
@@ -811,17 +821,31 @@ dependencies = [
 name = "chatos_service_runtime"
 version = "0.1.0"
 dependencies = [
+ "axum",
  "base64 0.22.1",
  "chatos_config_sdk",
+ "dotenvy",
  "futures-util",
+ "http",
  "jsonwebtoken",
  "reqwest",
  "serde",
  "serde_json",
  "thiserror 2.0.18",
  "tokio",
+ "tower",
  "tracing",
  "urlencoding",
+ "uuid",
+]
+
+[[package]]
+name = "chatos_terminal_runtime"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "tempfile",
+ "tokio",
 ]
 
 [[package]]
@@ -910,7 +934,6 @@ dependencies = [
  "chatos_config_sdk",
  "chatos_service_runtime",
  "chrono",
- "dotenvy",
  "futures-util",
  "hex",
  "mongodb",
@@ -2573,7 +2596,6 @@ dependencies = [
  "chatos_sandbox_contract",
  "chatos_service_runtime",
  "chrono",
- "dotenvy",
  "futures",
  "hex",
  "libc",
@@ -3294,7 +3316,6 @@ dependencies = [
  "chatos_sandbox_image_mcp",
  "chatos_service_runtime",
  "chrono",
- "dotenvy",
  "futures-util",
  "hex",
  "mongodb",
@@ -3427,7 +3448,6 @@ dependencies = [
  "chatos_sandbox_image_mcp",
  "chatos_service_runtime",
  "chrono",
- "dotenvy",
  "futures-util",
  "memory_engine_sdk",
  "mongodb",
@@ -3996,7 +4016,6 @@ dependencies = [
  "chatos_sandbox_image_mcp",
  "chatos_service_runtime",
  "chrono",
- "dotenvy",
  "futures-util",
  "mongodb",
  "reqwest",
@@ -4797,10 +4816,11 @@ dependencies = [
  "chatos_mcp_service",
  "chatos_plugin_management_sdk",
  "chatos_project_mcp_contract",
+ "chatos_remote_runtime",
  "chatos_sandbox_contract",
  "chatos_service_runtime",
+ "chatos_terminal_runtime",
  "chrono",
- "dotenvy",
  "futures-util",
  "jsonwebtoken",
  "memory_engine_sdk",

@@ -14,11 +14,3 @@ pub fn now_plus_seconds_rfc3339(seconds: i64) -> String {
 pub fn default_active() -> String {
     "active".to_string()
 }
-
-pub fn default_pending() -> String {
-    "pending".to_string()
-}
-
-pub fn default_idle() -> String {
-    "idle".to_string()
-}

@@ -45,14 +45,15 @@ pub(super) async fn resolve_agent_capabilities_internal(
     require_internal_api_secret(&state, &headers, caller_service, CAPABILITIES_RESOLVE_SCOPE)?;
     let owner_user_id = normalized(Some(input.owner_user_id.as_str()))
         .ok_or_else(|| ApiError::bad_request("owner_user_id is required"))?;
+    let agent_key = input.agent_key.to_string();
     tracing::debug!(
         caller_service,
-        agent_key = input.agent_key,
+        agent_key,
         "resolving agent capabilities through internal API"
     );
     resolve_agent_capabilities_for_owner(
         &state,
-        input.agent_key,
+        agent_key,
         owner_user_id,
         input.include_unavailable,
     )

@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use std::env;
 use std::net::{IpAddr, SocketAddr};
 
-use chatos_service_runtime::{validate_production_secret, DEFAULT_MEMORY_ENGINE_OPERATOR_TOKEN};
+use chatos_service_runtime::{
+    env_bool_strict as read_bool_env, env_text as read_env, validate_production_secret,
+    DEFAULT_MEMORY_ENGINE_OPERATOR_TOKEN,
+};
 
 #[derive(Debug, Clone)]
 pub struct AppConfig {
@@ -229,27 +231,7 @@ fn validate_login_throttle_config(config: &AppConfig) -> Result<(), String> {
 }
 
 pub fn load_user_service_dotenv() {
-    for file in user_service_dotenv_files() {
-        let _ = dotenvy::from_filename(file);
-    }
-}
-
-fn read_env(key: &str) -> Option<String> {
-    env::var(key)
-        .ok()
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
-}
-
-fn read_bool_env(key: &str, default: bool) -> Result<bool, String> {
-    let Some(value) = read_env(key) else {
-        return Ok(default);
-    };
-    match value.to_ascii_lowercase().as_str() {
-        "1" | "true" | "yes" | "on" => Ok(true),
-        "0" | "false" | "no" | "off" => Ok(false),
-        _ => Err(format!("invalid {key}: expected true/false")),
-    }
+    chatos_service_runtime::load_service_dotenv(std::path::Path::new(env!("CARGO_MANIFEST_DIR")));
 }
 
 fn mongodb_database_from_url(url: &str) -> Option<String> {
@@ -270,12 +252,4 @@ fn mongodb_database_from_url(url: &str) -> Option<String> {
     } else {
         Some(database.to_string())
     }
-}
-
-fn user_service_dotenv_files() -> Vec<String> {
-    vec![
-        "user_service/backend/.env".to_string(),
-        "user_service/.env".to_string(),
-        ".env".to_string(),
-    ]
 }

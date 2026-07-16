@@ -145,9 +145,14 @@ fn sandbox_isolation_status(
         SandboxBackendKind::Docker => SandboxIsolationStatus {
             legacy_isolation: "local_docker",
             filesystem_isolation: true,
-            network_isolation: false,
+            network_isolation: permission_profile != PermissionProfileId::FullAccess,
             process_tree_control: true,
-            note: "Docker 容器文件系统/进程边界已启用；bridge 网络不提供出站网络隔离".to_string(),
+            note: if permission_profile == PermissionProfileId::FullAccess {
+                "Docker 容器文件系统/进程边界已启用；完整访问模式使用 bridge 网络，不提供出站网络隔离".to_string()
+            } else {
+                "Docker 容器文件系统/进程边界已启用；受限权限使用专用 internal 网络阻止外部出站访问"
+                    .to_string()
+            },
         },
         SandboxBackendKind::LocalProcess => {
             let capability = process_capability;
@@ -180,7 +185,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn docker_status_does_not_claim_network_isolation() {
+    fn docker_status_reports_restricted_network_isolation() {
         let status = sandbox_isolation_status(
             SandboxBackendKind::Docker,
             PermissionProfileId::WorkspaceWrite,
@@ -189,8 +194,20 @@ mod tests {
 
         assert_eq!(status.legacy_isolation, "local_docker");
         assert!(status.filesystem_isolation);
-        assert!(!status.network_isolation);
+        assert!(status.network_isolation);
         assert!(status.process_tree_control);
+        assert!(status.note.contains("internal"));
+    }
+
+    #[test]
+    fn docker_full_access_reports_bridge_network_without_isolation() {
+        let status = sandbox_isolation_status(
+            SandboxBackendKind::Docker,
+            PermissionProfileId::FullAccess,
+            None,
+        );
+
+        assert!(!status.network_isolation);
         assert!(status.note.contains("bridge"));
     }
 
