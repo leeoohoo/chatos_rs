@@ -13,6 +13,7 @@ export type RuntimeKind =
 export type ResourceKind = 'mcp' | 'skill' | 'skill_package';
 export type BindingScope = 'global_default' | 'user_override' | 'system_required';
 export type McpBindingMode = 'disabled' | 'optional' | 'required';
+export type AgentPromptVendor = 'glm' | 'deepseek' | 'gpt' | 'kimi';
 
 export interface CurrentUser {
   principal_type: string;
@@ -211,6 +212,42 @@ export interface SystemAgentRecord {
   include_user_resources: boolean;
   created_at: string;
   updated_at: string;
+}
+
+export interface AgentProviderPromptRecord {
+  id: string;
+  agent_key: string;
+  vendor: AgentPromptVendor;
+  draft_content?: string | null;
+  published_content?: string | null;
+  published_revision: number;
+  published_checksum?: string | null;
+  enabled: boolean;
+  source_kind: string;
+  generated_by_model_config_id?: string | null;
+  created_by: string;
+  updated_by: string;
+  published_by?: string | null;
+  created_at: string;
+  updated_at: string;
+  published_at?: string | null;
+}
+
+export interface GenerateAgentPromptResponse {
+  agent_key: string;
+  vendor: AgentPromptVendor;
+  model_config_id: string;
+  provider: string;
+  model: string;
+  content: string;
+}
+
+export interface AgentPromptCompleteness {
+  agent_key: string;
+  required_vendors: AgentPromptVendor[];
+  published_vendors: AgentPromptVendor[];
+  missing_vendors: AgentPromptVendor[];
+  ready: boolean;
 }
 
 export interface BindingConditions {

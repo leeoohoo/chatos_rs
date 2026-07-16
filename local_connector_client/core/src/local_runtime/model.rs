@@ -45,6 +45,7 @@ mod tests {
                 id: "model-1".to_string(),
                 local_model_config_id: "local-model-1".to_string(),
                 provider: "openai".to_string(),
+                prompt_vendor: Some("gpt".to_string()),
                 base_url: "https://example.invalid/v1".to_string(),
                 api_key: "secret".to_string(),
                 model: "demo".to_string(),

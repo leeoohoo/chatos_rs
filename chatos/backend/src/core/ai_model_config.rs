@@ -12,6 +12,7 @@ use crate::utils::model_config::{
 pub struct ResolvedChatModelConfig {
     pub model: String,
     pub provider: String,
+    pub prompt_vendor: Option<String>,
     pub thinking_level: Option<String>,
     pub temperature: f64,
     pub supports_images: bool,
@@ -53,6 +54,12 @@ pub fn resolve_chat_model_config(
             .and_then(|value| value.as_str())
             .unwrap_or("gpt"),
     );
+    let prompt_vendor = model_cfg
+        .get("prompt_vendor")
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned);
 
     let thinking_level = normalize_thinking_level(
         &provider,
@@ -131,6 +138,7 @@ pub fn resolve_chat_model_config(
     ResolvedChatModelConfig {
         model,
         provider,
+        prompt_vendor,
         thinking_level,
         temperature,
         supports_images,

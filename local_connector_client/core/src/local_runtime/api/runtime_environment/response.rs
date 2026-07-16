@@ -12,6 +12,9 @@ pub(super) fn environment_response(
     environment: &LocalRuntimeEnvironmentRecord,
     images: &[LocalRuntimeEnvironmentImageRecord],
 ) -> Value {
+    let detected_stack = parse_json(environment.detected_stack_json.as_str());
+    let fallback_dockerfile =
+        crate::local_runtime::environment::prompt::fallback_dockerfile(&detected_stack);
     json!({
         "environment": {
             "project_id": environment.project_id,
@@ -21,7 +24,7 @@ pub(super) fn environment_response(
             "file_provider": environment.file_provider,
             "analysis_summary": environment.analysis_summary,
             "not_runnable_reason": environment.not_runnable_reason,
-            "detected_stack": parse_json(environment.detected_stack_json.as_str()),
+            "detected_stack": detected_stack,
             "required_services": parse_json(environment.required_services_json.as_str()),
             "env_vars": parse_json(environment.env_vars_json.as_str()),
             "generated_config_files": parse_json(environment.generated_config_files_json.as_str()),
@@ -30,7 +33,7 @@ pub(super) fn environment_response(
             "created_at": environment.created_at,
             "updated_at": environment.updated_at,
         },
-        "images": images.iter().map(image_response).collect::<Vec<_>>(),
+        "images": images.iter().map(|image| image_response(image, fallback_dockerfile.as_str())).collect::<Vec<_>>(),
     })
 }
 
@@ -61,7 +64,14 @@ pub(super) fn idle_progress_response(project_id: &str) -> Value {
     })
 }
 
-fn image_response(image: &LocalRuntimeEnvironmentImageRecord) -> Value {
+fn image_response(image: &LocalRuntimeEnvironmentImageRecord, fallback_dockerfile: &str) -> Value {
+    let dockerfile = image.dockerfile.as_deref().or_else(|| {
+        image
+            .environment_type
+            .trim()
+            .eq_ignore_ascii_case("application")
+            .then_some(fallback_dockerfile)
+    });
     json!({
         "id": image.id,
         "project_id": image.project_id,
@@ -71,6 +81,7 @@ fn image_response(image: &LocalRuntimeEnvironmentImageRecord) -> Value {
         "image_id": image.image_id,
         "image_ref": image.image_ref,
         "image_provider": image.image_provider,
+        "dockerfile": dockerfile,
         "features": parse_json(image.features_json.as_str()),
         "ports": parse_json(image.ports_json.as_str()),
         "env_vars": parse_json(image.env_vars_json.as_str()),

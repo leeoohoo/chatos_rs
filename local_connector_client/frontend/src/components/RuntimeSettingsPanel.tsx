@@ -23,6 +23,7 @@ import {
   type SystemPermissionsResponse,
 } from '../api';
 import { loadSystemPermissions, systemPermissionReady } from '../systemPermissions';
+import { AgentPromptUpdateSettings } from './AgentPromptUpdateSettings';
 
 const DEFAULT_DEVELOPER_CLOUD_BASE_URL = 'http://127.0.0.1:39230';
 const DEFAULT_DEVELOPER_USER_SERVICE_BASE_URL = 'http://127.0.0.1:39190';
@@ -158,12 +159,15 @@ export function RuntimeSettingsPanel({ developerOnly = false }: { developerOnly?
         </button>
       </section>
       {!developerOnly ? (
-        <SystemPermissionsPanel
-          permissions={permissions}
-          requestingPermissionId={requestingPermissionId}
-          onRefresh={load}
-          onRequest={requestPermission}
-        />
+        <>
+          <AgentPromptUpdateSettings />
+          <SystemPermissionsPanel
+            permissions={permissions}
+            requestingPermissionId={requestingPermissionId}
+            onRefresh={load}
+            onRequest={requestPermission}
+          />
+        </>
       ) : null}
     </section>
   );

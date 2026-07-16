@@ -7,6 +7,8 @@ use std::fmt;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::agent_prompts::AgentPromptVendor;
+
 pub const CHATOS_TASK_RUNNER_MCP_RESOURCE_ID: &str = "system_mcp_chatos_task_runner";
 pub const SANDBOX_IMAGES_MCP_RESOURCE_ID: &str = "system_mcp_sandbox_images";
 pub const PROJECT_ENVIRONMENT_MCP_RESOURCE_ID: &str = "system_mcp_project_environment";
@@ -26,6 +28,15 @@ pub enum SystemAgentKey {
 }
 
 impl SystemAgentKey {
+    pub const ALL: [Self; 6] = [
+        Self::ChatosConversationAgent,
+        Self::ChatosPlanningAgent,
+        Self::ProjectRequirementExecutionPlannerAgent,
+        Self::TaskRunnerRunPhase,
+        Self::ProjectManagementAgent,
+        Self::LocalConnectorCommandApprovalAgent,
+    ];
+
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::ChatosConversationAgent => "chatos_conversation_agent",
@@ -44,6 +55,47 @@ impl fmt::Display for SystemAgentKey {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(self.as_str())
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResolveAgentPromptRequest {
+    pub agent_key: SystemAgentKey,
+    pub vendor: AgentPromptVendor,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ResolvedAgentPrompt {
+    pub agent_key: String,
+    pub vendor: AgentPromptVendor,
+    pub content: String,
+    pub revision: i64,
+    pub checksum: String,
+    pub published_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AgentPromptBundleManifest {
+    pub bundle_version: i64,
+    pub updated_at: String,
+    #[serde(default)]
+    pub required: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AgentPromptBundle {
+    pub bundle_version: i64,
+    pub updated_at: String,
+    #[serde(default)]
+    pub prompts: Vec<ResolvedAgentPrompt>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AgentPromptCompleteness {
+    pub agent_key: String,
+    pub required_vendors: Vec<AgentPromptVendor>,
+    pub published_vendors: Vec<AgentPromptVendor>,
+    pub missing_vendors: Vec<AgentPromptVendor>,
+    pub ready: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

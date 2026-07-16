@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-import { SettingOutlined } from '@ant-design/icons';
+import { EditOutlined, SettingOutlined } from '@ant-design/icons';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Alert, Button, Input, Modal, Segmented, Space, Table, Typography, message } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
@@ -12,11 +12,13 @@ import { EnabledTag } from '../components/Tags';
 import { useI18n } from '../i18n/I18nProvider';
 import { agentDisplayName, mcpDisplayName } from '../i18n/labels';
 import type {
+  AgentPromptCompleteness,
   AgentMcpBindingView,
   CurrentUser,
   McpBindingMode,
   SystemAgentRecord,
 } from '../types';
+import { AgentPromptModal } from './agentPrompts/AgentPromptModal';
 
 interface SystemAgentsPageProps {
   user: CurrentUser;
@@ -27,6 +29,7 @@ export function SystemAgentsPage({ user }: SystemAgentsPageProps) {
   const queryClient = useQueryClient();
   const [selectedAgentKey, setSelectedAgentKey] = useState<string | null>(null);
   const [modalOpen, setModalOpen] = useState(false);
+  const [promptModalOpen, setPromptModalOpen] = useState(false);
   const [search, setSearch] = useState('');
   const [modes, setModes] = useState<Record<string, McpBindingMode>>({});
   const isAdmin = user.role === 'super_admin';
@@ -36,6 +39,16 @@ export function SystemAgentsPage({ user }: SystemAgentsPageProps) {
     queryFn: api.listSystemAgents,
     enabled: isAdmin,
   });
+
+  const completenessQuery = useQuery({
+    queryKey: ['agent-prompt-completeness'],
+    queryFn: api.agentPromptCompleteness,
+    enabled: isAdmin,
+  });
+  const completeness = useMemo(
+    () => new Map((completenessQuery.data || []).map((item) => [item.agent_key, item])),
+    [completenessQuery.data],
+  );
 
   const bindingsQuery = useQuery({
     queryKey: ['agent-mcp-bindings', selectedAgentKey],
@@ -86,24 +99,48 @@ export function SystemAgentsPage({ user }: SystemAgentsPageProps) {
         render: (enabled) => <EnabledTag enabled={enabled} />,
       },
       {
+        title: t('agent.promptStatus'),
+        key: 'prompt_status',
+        width: 130,
+        render: (_, record) => {
+          const item = completeness.get(record.agent_key) as AgentPromptCompleteness | undefined;
+          return (
+            <Typography.Text type={item?.ready ? 'success' : 'warning'}>
+              {t('agent.promptCount', { count: item?.published_vendors.length || 0 })}
+            </Typography.Text>
+          );
+        },
+      },
+      {
         title: t('table.actions'),
         key: 'actions',
-        width: 150,
+        width: 260,
         render: (_, record) => (
-          <Button
-            icon={<SettingOutlined />}
-            onClick={() => {
-              setSelectedAgentKey(record.agent_key);
-              setSearch('');
-              setModalOpen(true);
-            }}
-          >
-            {t('agent.configureMcp')}
-          </Button>
+          <Space>
+            <Button
+              icon={<SettingOutlined />}
+              onClick={() => {
+                setSelectedAgentKey(record.agent_key);
+                setSearch('');
+                setModalOpen(true);
+              }}
+            >
+              {t('agent.configureMcp')}
+            </Button>
+            <Button
+              icon={<EditOutlined />}
+              onClick={() => {
+                setSelectedAgentKey(record.agent_key);
+                setPromptModalOpen(true);
+              }}
+            >
+              {t('agent.promptSettings')}
+            </Button>
+          </Space>
         ),
       },
     ],
-    [t],
+    [completeness, t],
   );
 
   const mcpItems = useMemo(() => {
@@ -218,6 +255,11 @@ export function SystemAgentsPage({ user }: SystemAgentsPageProps) {
           scroll={{ y: 330 }}
         />
       </Modal>
+      <AgentPromptModal
+        agent={selectedAgent || null}
+        open={promptModalOpen}
+        onClose={() => setPromptModalOpen(false)}
+      />
     </div>
   );
 }

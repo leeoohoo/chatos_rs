@@ -250,6 +250,7 @@ pub(in crate::api::configs) async fn update_ai_model_config(
         id: Some(existing.id.clone()),
         name: req.name.or_else(|| Some(existing.name.clone())),
         provider: req.provider.or_else(|| Some(existing.provider.clone())),
+        prompt_vendor: req.prompt_vendor.or_else(|| existing.prompt_vendor.clone()),
         model: req.model.or_else(|| Some(existing.model.clone())),
         thinking_level: if req.thinking_level.is_some() {
             req.thinking_level

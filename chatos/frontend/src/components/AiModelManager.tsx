@@ -93,6 +93,7 @@ const AiModelManager: React.FC<AiModelManagerProps> = ({ onClose, store: externa
       await apiClient.createAiModelProvider({
         name: formData.name.trim(),
         provider: formData.provider,
+        prompt_vendor: formData.prompt_vendor,
         api_key: formData.api_key.trim(),
         base_url: formData.base_url.trim(),
         enabled: formData.enabled,
@@ -123,6 +124,7 @@ const AiModelManager: React.FC<AiModelManagerProps> = ({ onClose, store: externa
       await apiClient.updateAiModelProvider(editingConfig.id, {
         name: formData.name.trim(),
         provider: formData.provider,
+        prompt_vendor: formData.prompt_vendor,
         base_url: formData.base_url.trim(),
         api_key: apiKey || undefined,
         clear_api_key: formData.clear_api_key,
@@ -185,6 +187,7 @@ const AiModelManager: React.FC<AiModelManagerProps> = ({ onClose, store: externa
         id: editingConfig.id,
         name: formData.name.trim(),
         provider: formData.provider,
+        prompt_vendor: formData.prompt_vendor,
         base_url: formData.base_url.trim(),
         api_key: apiKey || undefined,
         clear_api_key: formData.clear_api_key,

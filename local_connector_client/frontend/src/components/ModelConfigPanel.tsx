@@ -13,6 +13,7 @@ import {
 import {
   buildImportedModelConfigPayload,
   buildProviderPreviewPayload,
+  defaultPromptVendor,
   emptyModelDraft,
   findExistingImportedModel,
   formatProviderModelOption,
@@ -126,6 +127,7 @@ export function ModelConfigPanel() {
     id: group.items[0]?.id,
     name: group.name,
     provider: group.provider,
+    prompt_vendor: group.prompt_vendor as 'glm' | 'deepseek' | 'gpt' | 'kimi',
     base_url: group.base_url,
     api_key_text: '',
     clear_api_key: false,
@@ -186,6 +188,7 @@ export function ModelConfigPanel() {
       server_model_config_id: item.server_model_config_id || undefined,
       name: item.name,
       provider: item.provider,
+      prompt_vendor: item.prompt_vendor || defaultPromptVendor(item.provider),
       model: item.model,
       base_url: item.base_url || '',
       api_key_text: '',
@@ -369,13 +372,30 @@ export function ModelConfigPanel() {
                 Provider
                 <select
                   value={draft.provider || 'gpt'}
-                  onChange={(event) => updateDraft({ provider: event.target.value })}
+                  onChange={(event) => updateDraft({
+                    provider: event.target.value,
+                    prompt_vendor: defaultPromptVendor(event.target.value),
+                  })}
                 >
                   <option value="gpt">OpenAI</option>
                   <option value="openai_compatible">OpenAI Compatible</option>
                   <option value="deepseek">DeepSeek</option>
                   <option value="kimi">Kimi</option>
                   <option value="minimax">MiniMax</option>
+                </select>
+              </label>
+              <label>
+                系统 Agent Prompt
+                <select
+                  value={draft.prompt_vendor || defaultPromptVendor(draft.provider)}
+                  onChange={(event) => updateDraft({
+                    prompt_vendor: event.target.value as 'glm' | 'deepseek' | 'gpt' | 'kimi',
+                  })}
+                >
+                  <option value="glm">GLM</option>
+                  <option value="deepseek">DeepSeek</option>
+                  <option value="gpt">GPT / OpenAI</option>
+                  <option value="kimi">Kimi / Moonshot</option>
                 </select>
               </label>
               <label>

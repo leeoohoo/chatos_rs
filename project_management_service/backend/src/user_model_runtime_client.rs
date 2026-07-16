@@ -22,6 +22,8 @@ struct UserServiceModelSettingsResponse {
 struct UserServiceModelRuntimeResponse {
     id: String,
     provider: String,
+    #[serde(default)]
+    prompt_vendor: Option<String>,
     base_url: String,
     api_key: String,
     model: String,
@@ -41,6 +43,7 @@ pub struct EnvironmentInitializationModelSettings {
 #[derive(Debug, Clone)]
 pub struct ResolvedEnvironmentInitializationModelRuntime {
     pub model_config_id: String,
+    pub prompt_vendor: Option<String>,
     pub model_config: ModelRuntimeConfig,
 }
 
@@ -159,6 +162,7 @@ pub async fn resolve_environment_initialization_model_runtime(
 
     Ok(ResolvedEnvironmentInitializationModelRuntime {
         model_config_id: record.id,
+        prompt_vendor: record.prompt_vendor,
         model_config,
     })
 }

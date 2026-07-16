@@ -19,6 +19,8 @@ pub struct ModelConfigRecord {
     pub owner_display_name: Option<String>,
     pub name: String,
     pub provider: String,
+    #[serde(default)]
+    pub prompt_vendor: Option<String>,
     pub base_url: String,
     pub api_key: String,
     pub model: String,
@@ -150,6 +152,7 @@ mod tests {
             owner_display_name: Some("User".to_string()),
             name: "Model".to_string(),
             provider: provider.to_string(),
+            prompt_vendor: Some("gpt".to_string()),
             base_url: base_url.to_string(),
             api_key: "secret".to_string(),
             model: "model-name".to_string(),
@@ -173,6 +176,7 @@ mod tests {
 pub struct CreateModelConfigRequest {
     pub name: String,
     pub provider: String,
+    pub prompt_vendor: Option<String>,
     pub base_url: String,
     pub api_key: String,
     pub model: String,
@@ -194,6 +198,7 @@ pub struct ChatosSyncedModelConfigRequest {
     pub owner_user_id: Option<String>,
     pub name: String,
     pub provider: String,
+    pub prompt_vendor: Option<String>,
     pub base_url: String,
     pub api_key: String,
     pub model: String,
@@ -209,6 +214,7 @@ pub struct ChatosSyncedModelConfigRequest {
 pub struct UpdateModelConfigRequest {
     pub name: Option<String>,
     pub provider: Option<String>,
+    pub prompt_vendor: Option<String>,
     pub base_url: Option<String>,
     pub api_key: Option<String>,
     pub model: Option<String>,

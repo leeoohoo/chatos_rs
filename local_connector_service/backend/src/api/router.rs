@@ -16,8 +16,9 @@ use super::{
     create_workspace, current_user_handler, delete_local_mcp,
     delete_managed_requirements_assignment, delete_managed_requirements_policy,
     delete_project_binding, delete_sandbox_pairing, delete_workspace, disconnect_device,
-    get_device, get_managed_requirements, health_handler, heartbeat_device, list_devices,
-    list_local_mcps, list_managed_requirements_assignments, list_managed_requirements_policies,
+    get_agent_prompt_bundle, get_agent_prompt_bundle_manifest, get_device,
+    get_managed_requirements, health_handler, heartbeat_device, list_devices, list_local_mcps,
+    list_managed_requirements_assignments, list_managed_requirements_policies,
     list_project_bindings, list_sandbox_pairings, list_user_skills, list_workspaces, mcp_relay,
     memory_engine_proxy, require_auth, resolve_local_command_approval_capabilities,
     resolve_local_runtime_capabilities, resolve_model_runtime, revoke_device, sandbox_facade_path,
@@ -130,6 +131,14 @@ pub fn build_router(state: AppState) -> Router {
         .route(
             "/api/plugin-management/agent-capabilities/{agent_key}",
             get(resolve_local_runtime_capabilities),
+        )
+        .route(
+            "/api/plugin-management/agent-prompts/manifest",
+            get(get_agent_prompt_bundle_manifest),
+        )
+        .route(
+            "/api/plugin-management/agent-prompts/bundle",
+            get(get_agent_prompt_bundle),
         )
         .route(
             "/api/plugin-management/local-mcps",

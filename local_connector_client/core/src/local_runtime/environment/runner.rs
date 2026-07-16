@@ -6,9 +6,10 @@ use std::path::PathBuf;
 use chatos_ai_runtime::{
     build_responses_text_input, run_compatible_prompt_with, AiRequestHandler, SimplePromptOptions,
 };
-use chatos_plugin_management_sdk::SystemAgentKey;
+use chatos_plugin_management_sdk::{required_agent_prompt_vendor, SystemAgentKey};
 
 use crate::local_runtime::capabilities::resolver::LocalCapabilityResolver;
+use crate::local_runtime::load_installed_agent_prompt;
 use crate::local_runtime::model::build_local_model_config;
 use crate::model_configs::resolve_local_model_runtime;
 use crate::LocalRuntime;
@@ -56,6 +57,18 @@ pub(crate) async fn run_local_environment_analysis(
         (root, model, thinking)
     };
     let evidence = scan_local_project(project_root.clone()).await?;
+    let prompt_vendor = required_agent_prompt_vendor(
+        resolved_model.prompt_vendor.as_deref(),
+        resolved_model.provider.as_str(),
+    )
+    .map_err(|error| error.to_string())?;
+    let installed_prompt = load_installed_agent_prompt(
+        &runtime,
+        SystemAgentKey::ProjectManagementAgent,
+        prompt_vendor,
+    )
+    .await
+    .map_err(|error| error.to_string())?;
     database
         .update_local_environment_progress(
             owner_user_id.as_str(),
@@ -80,7 +93,7 @@ pub(crate) async fn run_local_environment_analysis(
     )?;
     let model = build_local_model_config(
         resolved_model,
-        None,
+        Some(installed_prompt.content),
         thinking_level,
         Some(0.1),
         true,

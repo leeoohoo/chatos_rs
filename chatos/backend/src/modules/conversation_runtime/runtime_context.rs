@@ -30,8 +30,8 @@ use crate::models::remote_connection::{RemoteConnection, RemoteConnectionService
 use crate::services::mcp_loader::McpHttpServer;
 use crate::services::{
     access_token_scope, chatos_agents, chatos_memory_engine, chatos_memory_mappings,
-    chatos_sessions, plugin_management_capabilities, project_management_api_client,
-    task_runner_api_client,
+    chatos_sessions, plugin_management_capabilities, plugin_management_prompts,
+    project_management_api_client, task_runner_api_client,
 };
 
 const TASK_RUNNER_CONTACT_MCP_SERVER_NAME: &str = "task_runner_service";
@@ -54,6 +54,8 @@ pub struct ConversationRuntimeRequest {
     pub remote_connection_id: Option<String>,
     pub plan_mode: bool,
     pub project_requirement_execution_planner: bool,
+    pub model_provider: String,
+    pub prompt_vendor: Option<String>,
     pub conversation_turn_id: Option<String>,
     pub source_user_message_id: Option<String>,
 }
@@ -64,6 +66,7 @@ pub struct ResolvedConversationRuntimeContext {
     pub internal_context_locale: InternalContextLocale,
     pub contact_agent_id: Option<String>,
     pub base_system_prompt: Option<String>,
+    pub agent_system_prompt: Option<String>,
     pub contact_system_prompt: Option<String>,
     pub builtin_mcp_system_prompt: Option<String>,
     pub selected_commands_for_snapshot: Arc<Mutex<Vec<TurnRuntimeSnapshotSelectedCommandDto>>>,
@@ -204,6 +207,20 @@ pub async fn resolve_runtime_context(
     let agent_profile =
         ChatosAgentProfile::from_flags(req.plan_mode, req.project_requirement_execution_planner);
 
+    let agent_system_prompt = match plugin_management_prompts::resolve_for_model(
+        agent_profile.key(),
+        req.prompt_vendor.as_deref(),
+        req.model_provider.as_str(),
+    )
+    .await
+    {
+        Ok(prompt) => Some(prompt.content),
+        Err(err) => {
+            runtime_error = Some(format!("系统智能体 Prompt 不可用：{err}"));
+            None
+        }
+    };
+
     let requires_concrete_project = agent_profile.requires_concrete_project();
     let task_runner_project_id = if requires_concrete_project {
         resolved_project_id
@@ -320,6 +337,7 @@ pub async fn resolve_runtime_context(
         internal_context_locale,
         contact_agent_id,
         base_system_prompt,
+        agent_system_prompt,
         contact_system_prompt,
         builtin_mcp_system_prompt,
         selected_commands_for_snapshot,

@@ -59,4 +59,29 @@ describe('workspaceLocalConnectorFacade desktop routing', () => {
       workspaceLocalConnectorFacade.listLocalConnectorWorkspaces.call({} as never),
     ).rejects.toThrow('Local Connector 功能只能在 Chat OS 桌面客户端中使用');
   });
+
+  it('registers a newly created local project before it is selected', async () => {
+    vi.stubGlobal('window', {
+      chatosLocalRuntime: { apiRequest: vi.fn() },
+    });
+    const createProject = vi.fn().mockResolvedValue({
+      id: 'local-project-1',
+      name: 'Local project',
+      root_path: 'local://connector/device/workspace/app',
+    });
+    const registerLocalProjectExecution = vi.fn();
+    const context = {
+      getLocalRuntimeClient: () => ({ createProject }),
+      registerLocalProjectExecution,
+    };
+
+    await workspaceLocalConnectorFacade.createLocalConnectorProject.call(context as never, {
+      name: 'Local project',
+      device_id: 'device',
+      workspace_id: 'workspace',
+      relative_path: 'app',
+    });
+
+    expect(registerLocalProjectExecution).toHaveBeenCalledWith('local-project-1');
+  });
 });

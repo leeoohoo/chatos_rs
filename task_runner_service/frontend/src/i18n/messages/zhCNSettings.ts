@@ -270,6 +270,8 @@ export const zhCNSettings: MessageDictionary = {
   'models.drawer.create': '新建模型配置',
   'models.drawer.edit': '编辑模型配置',
   'models.form.modelRequired': '请选择模型',
+  'models.form.promptVendor': 'Prompt 类型',
+  'models.form.promptVendorHint': '已按供应商自动选择，兼容接口可手动调整。',
   'models.form.modelPlaceholder': '先拉取模型列表',
   'models.form.loadingModels': '正在拉取模型...',
   'models.form.noModels': '暂无模型列表',

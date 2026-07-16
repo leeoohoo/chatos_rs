@@ -335,6 +335,7 @@ async fn sync_task_runner_model_config(
         "owner_user_id": config.owner_user_id,
         "name": config.name,
         "provider": task_runner_provider(config.provider.as_str()),
+        "prompt_vendor": config.prompt_vendor,
         "base_url": config.base_url,
         "api_key": config.api_key,
         "model": config.model,

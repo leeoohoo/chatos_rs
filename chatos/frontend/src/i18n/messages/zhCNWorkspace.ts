@@ -283,6 +283,7 @@ export const zhCNWorkspaceMessages: MessageDictionary = {
   'cloudRuntime.regenerateImage': '重新生成',
   'cloudRuntime.generatingImage': '生成中...',
   'cloudRuntime.platformImage': '平台标准镜像',
+  'cloudRuntime.localDockerfilePlan': '本地沙箱构建计划',
   'cloudRuntime.environment': '环境',
   'cloudRuntime.image': '镜像',
   'cloudRuntime.provider': '提供方',

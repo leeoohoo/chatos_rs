@@ -3,10 +3,12 @@
 
 use std::sync::Arc;
 
+use chatos_plugin_management_sdk::{required_agent_prompt_vendor, SystemAgentKey};
 use serde_json::json;
 use uuid::Uuid;
 
 use crate::local_runtime::capabilities::merge_system_prompts;
+use crate::local_runtime::load_installed_agent_prompt;
 use crate::local_runtime::memory::maybe_spawn_local_memory_review;
 use crate::local_runtime::model::build_local_model_config;
 use crate::local_runtime::storage::{
@@ -149,6 +151,33 @@ pub(crate) async fn execute_chat_turn(
         )?
     };
     let effective_model_name = resolved_model.model.clone();
+    let agent_key = if settings.plan_mode_enabled {
+        SystemAgentKey::ChatosPlanningAgent
+    } else {
+        SystemAgentKey::ChatosConversationAgent
+    };
+    let prompt_vendor = required_agent_prompt_vendor(
+        resolved_model.prompt_vendor.as_deref(),
+        resolved_model.provider.as_str(),
+    )
+    .map_err(|error| {
+        LocalChatExecutionError::new(
+            LocalChatExecutionErrorKind::Conflict,
+            "local_runtime_prompt_vendor_unsupported",
+            error.to_string(),
+        )
+    })?;
+    let installed_prompt = load_installed_agent_prompt(runtime, agent_key, prompt_vendor)
+        .await
+        .map_err(|error| {
+            let message = error.to_string();
+            let code = if message.contains("checksum") {
+                "local_runtime_agent_prompt_invalid"
+            } else {
+                "local_runtime_agent_prompt_not_initialized"
+            };
+            LocalChatExecutionError::new(LocalChatExecutionErrorKind::Conflict, code, message)
+        })?;
     let turn_id = normalize_optional(request.turn_id)
         .unwrap_or_else(|| format!("lc_turn_{}", Uuid::new_v4()));
     let idempotency_key =
@@ -158,6 +187,9 @@ pub(crate) async fn execute_chat_turn(
         "model_config_id": model_config_id,
         "model": effective_model_name,
         "runtime_origin": "local_device",
+        "agent_prompt_bundle_version": installed_prompt.bundle_version,
+        "agent_prompt_revision": installed_prompt.revision,
+        "agent_prompt_checksum": installed_prompt.checksum,
     });
     let begin = database
         .begin_turn(BeginLocalTurnInput {
@@ -259,7 +291,10 @@ pub(crate) async fn execute_chat_turn(
     let model_config = build_local_model_config(
         resolved_model,
         merge_system_prompts(
-            normalize_optional(request.system_prompt),
+            merge_system_prompts(
+                Some(installed_prompt.content),
+                normalize_optional(request.system_prompt),
+            ),
             prepared_tools.capability_prompt,
         ),
         requested_thinking_level,

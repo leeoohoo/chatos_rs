@@ -141,6 +141,7 @@ impl LocalControlHarness {
                     "id": "model-control",
                     "name": "Local control model",
                     "provider": "openai",
+                    "prompt_vendor": "gpt",
                     "model": "gpt-test",
                     "base_url": provider_url,
                     "api_key": "device-secret",

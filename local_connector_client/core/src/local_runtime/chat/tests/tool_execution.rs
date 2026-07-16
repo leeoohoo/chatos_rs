@@ -137,6 +137,7 @@ async fn executes_local_file_tool_and_persists_process_messages() {
                 "id": "model-tools",
                 "name": "Local tool model",
                 "provider": "openai",
+                "prompt_vendor": "gpt",
                 "model": "gpt-test",
                 "base_url": provider_url,
                 "api_key": "device-secret",

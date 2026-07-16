@@ -290,6 +290,7 @@ async fn project_execution_planner_creates_multiple_runner_tasks_and_syncs_links
             owner_user_id: Some("owner-a".to_string()),
             name: "Task Model".to_string(),
             provider: "openai".to_string(),
+            prompt_vendor: Some("gpt".to_string()),
             base_url: "https://api.example.test/v1".to_string(),
             api_key: "test-key".to_string(),
             model: "gpt-test".to_string(),

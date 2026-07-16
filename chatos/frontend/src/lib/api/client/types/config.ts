@@ -51,6 +51,7 @@ export interface AiModelConfigCreatePayload {
   id: string;
   name: string;
   provider: string;
+  prompt_vendor?: 'glm' | 'deepseek' | 'gpt' | 'kimi';
   model?: string;
   thinking_level?: string;
   task_usage_scenario?: string;
@@ -69,6 +70,7 @@ export interface AiModelConfigUpdatePayload {
   id?: string;
   name?: string;
   provider?: string;
+  prompt_vendor?: 'glm' | 'deepseek' | 'gpt' | 'kimi';
   model?: string;
   model_name?: string;
   thinking_level?: string;
@@ -91,6 +93,7 @@ export interface AiModelConfigResponse {
   id: string;
   name: string;
   provider: string;
+  prompt_vendor?: 'glm' | 'deepseek' | 'gpt' | 'kimi';
   model?: string;
   model_name?: string;
   thinking_level?: string;
@@ -116,6 +119,7 @@ export interface AiModelProviderCreatePayload {
   id?: string;
   name: string;
   provider: string;
+  prompt_vendor: 'glm' | 'deepseek' | 'gpt' | 'kimi';
   api_key: string;
   base_url: string;
   enabled: boolean;
@@ -128,6 +132,7 @@ export interface AiModelProviderUpdatePayload {
   id?: string;
   name?: string;
   provider?: string;
+  prompt_vendor?: 'glm' | 'deepseek' | 'gpt' | 'kimi';
   api_key?: string;
   clear_api_key?: boolean;
   base_url?: string;
@@ -141,6 +146,7 @@ export interface AiModelProviderResponse {
   id: string;
   name: string;
   provider: string;
+  prompt_vendor?: 'glm' | 'deepseek' | 'gpt' | 'kimi';
   api_key?: string;
   has_api_key?: boolean;
   base_url?: string;

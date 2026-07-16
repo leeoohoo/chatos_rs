@@ -161,6 +161,7 @@ impl CommandApprovalService {
     ) -> Result<ApprovalDecision> {
         match run_auto_approval_agent(
             state_snapshot,
+            self.state_path.as_path(),
             request,
             risk.level.as_str(),
             risk.reason.as_deref(),

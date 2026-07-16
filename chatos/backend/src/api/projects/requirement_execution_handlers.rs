@@ -328,6 +328,7 @@ fn build_requirement_execution_planner_prompt(
         })
         .collect::<Vec<_>>();
     let payload = json!({
+        "mode": "project_requirement_execution_planning",
         "project_id": project_id,
         "requirement": {
             "id": root_requirement.id.as_str(),
@@ -339,29 +340,7 @@ fn build_requirement_execution_planner_prompt(
         "recommended_project_task_creation_order": creation_order,
         "technical_documents_by_requirement": requirement_documents,
     });
-    let payload = serde_json::to_string_pretty(&payload).unwrap_or_else(|_| "{}".to_string());
-    format!(
-        r#"你是项目需求执行规划 Agent。你的任务是根据下面的需求、技术文档、项目任务和依赖关系，把项目任务拆成具体的 Task Runner 执行任务。
-
-硬性规则：
-1. 只能通过 `create_project_execution_tasks` 创建执行任务。
-2. 每个创建的执行任务都必须填写 `project_task_id`，绑定到对应项目任务。
-3. 一个项目任务可以拆成多个执行任务；不要保持项目任务和执行任务的一对一假设。
-4. 不要调用任何工具把项目任务或需求直接改成 done/failed/blocked；执行完成后的状态传播由程序回调处理。
-5. 创建执行任务时要设置清晰的 title、objective、description，并用 prerequisite_refs 表达执行任务之间的先后关系。
-6. `create_project_execution_tasks.project_id` 必须使用 `{project_id}`，`requirement_id` 必须使用 `{requirement_id}`。
-7. 如果某个项目任务无法拆分或无法创建执行任务，最终总结里说明原因，但不要伪造完成状态。
-
-项目执行上下文 JSON：
-
-```json
-{payload}
-```
-"#,
-        project_id = project_id,
-        requirement_id = root_requirement.id,
-        payload = payload,
-    )
+    serde_json::to_string_pretty(&payload).unwrap_or_else(|_| "{}".to_string())
 }
 
 async fn stop_requirement_execution_inner(

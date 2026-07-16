@@ -40,6 +40,18 @@ pub(in crate::services) fn normalize_model_thinking_level_input(
         .map_err(|_| "思考等级仅支持 none/auto/minimal/low/medium/high/xhigh/max".to_string())
 }
 
+pub(in crate::services) fn normalize_model_prompt_vendor_input(
+    prompt_vendor: Option<String>,
+    provider: &str,
+) -> Result<Option<String>, String> {
+    if let Some(value) = normalized_optional(prompt_vendor) {
+        return AgentPromptVendor::from_str(value.as_str())
+            .map(|vendor| Some(vendor.as_str().to_string()))
+            .map_err(|_| "prompt_vendor 仅支持 glm / deepseek / gpt / kimi".to_string());
+    }
+    Ok(normalize_agent_prompt_vendor(None, provider).map(|vendor| vendor.as_str().to_string()))
+}
+
 pub(in crate::services) fn normalize_model_base_url_input(
     provider: &str,
     base_url: Option<String>,
@@ -58,6 +70,8 @@ pub(in crate::services) fn normalize_model_config_record(
     let provider = normalize_model_provider_input(&record.provider)?;
     record.thinking_level =
         normalize_model_thinking_level_input(provider.as_str(), record.thinking_level.clone())?;
+    record.prompt_vendor =
+        normalize_model_prompt_vendor_input(record.prompt_vendor, provider.as_str())?;
     record.owner_user_id = normalized_optional(record.owner_user_id);
     record.owner_username = normalized_optional(record.owner_username);
     record.owner_display_name = normalized_optional(record.owner_display_name);

@@ -1,23 +1,23 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-import { CloudOff, Shield } from 'lucide-react';
+import { CloudOff, Shield, Sparkles } from 'lucide-react';
 
 import type {
   ConnectorStatus,
   PermissionProfileId,
+  SandboxBackendKind,
   SandboxCapabilities,
   SandboxSettings,
   SandboxSettingsUpdate,
 } from '../api';
 import { SandboxTechnicalDetails } from './SandboxTechnicalDetails';
 import {
-  approvalModeDescription,
   normalizePermissionProfileName,
   permissionProfileDescription,
   recommendedSandboxSettings,
   resolveSandboxPolicyView,
-  type SandboxApprovalMode,
+  sandboxBackendDescription,
 } from './sandboxPolicyModel';
 
 export function SandboxPolicySettings({
@@ -53,28 +53,34 @@ export function SandboxPolicySettings({
     );
   };
 
-  const setApprovalMode = async (mode: SandboxApprovalMode) => {
-    if (mode === view.approvalMode) {
+  const setBackend = async (backend: SandboxBackendKind) => {
+    if (backend === view.backend) {
       return;
     }
-    if (mode === 'auto_review' && !window.confirm(
-      '自动判断会让客户端根据风险规则决定是否执行。确定继续吗？',
+    if (backend === 'docker' && !window.confirm(
+      'Docker 容器当前使用桥接网络，不能提供按域名的出站网络审批。确定切换吗？',
     )) {
       return;
     }
     await onSave(
-      mode === 'never'
-        ? {
-            default_approval_policy: 'never',
-            default_approval_reviewer: view.approvalReviewer,
-            risk_acknowledged: false,
-          }
-        : {
-            default_approval_policy: 'on_request',
-            default_approval_reviewer: mode,
-            risk_acknowledged: mode === 'auto_review',
-          },
-      '额外权限处理方式',
+      { default_backend: backend },
+      '任务运行方式',
+    );
+  };
+
+  const setAiApproval = async (enabled: boolean) => {
+    if (enabled && !window.confirm(
+      '开启后，命令审批模型会审核联网和项目外文件请求。AI 可以批准、拒绝或转交给你；模型不可用时会默认拒绝。确定开启吗？',
+    )) {
+      return;
+    }
+    await onSave(
+      {
+        default_approval_policy: 'on_request',
+        default_approval_reviewer: enabled ? 'auto_review' : 'user',
+        risk_acknowledged: enabled,
+      },
+      'AI 自动审批',
     );
   };
 
@@ -90,8 +96,8 @@ export function SandboxPolicySettings({
       <div className="sandboxSimpleIntro">
         <Shield size={19} />
         <div>
-          <strong>默认保护已经够用</strong>
-          <span>任务只能读写授权项目；访问其他文件或互联网时，客户端会先询问你。</span>
+          <strong>推荐安全策略已启用</strong>
+          <span>默认只读写授权项目；联网或访问项目外文件时，关闭 AI 审批会先询问你。</span>
         </div>
         {!view.recommended && !view.customPermissionProfileActive ? (
           <button
@@ -106,6 +112,27 @@ export function SandboxPolicySettings({
       </div>
 
       <div className="sandboxSimpleSettingsGrid">
+        <label className="sandboxSimpleSetting">
+          <span className="settingLabel">任务运行方式</span>
+          <select
+            value={view.backend}
+            disabled={saving}
+            onChange={(event) => void setBackend(event.target.value as SandboxBackendKind)}
+          >
+            <BackendOption
+              backend="local_process"
+              label="本机进程隔离（推荐）"
+              available={view.backendCapabilities.get('local_process')?.selectable === true}
+            />
+            <BackendOption
+              backend="docker"
+              label="Docker 容器"
+              available={view.backendCapabilities.get('docker')?.status === 'ready'}
+            />
+          </select>
+          <small>{sandboxBackendDescription(view.backend)}</small>
+        </label>
+
         <label className="sandboxSimpleSetting">
           <span className="settingLabel">本地文件访问</span>
           <select
@@ -142,24 +169,29 @@ export function SandboxPolicySettings({
             : permissionProfileDescription(view.permissionProfile)}</small>
         </label>
 
-        <label className="sandboxSimpleSetting">
-          <span className="settingLabel">需要额外权限时</span>
-          <select
-            value={view.approvalMode}
-            disabled={saving}
-            onChange={(event) => void setApprovalMode(event.target.value as SandboxApprovalMode)}
-          >
-            <option value="user">询问我（推荐）</option>
-            <option value="auto_review">由客户端自动判断</option>
-            <option value="never">直接拒绝</option>
-          </select>
-          <small>{approvalModeDescription(view.approvalMode)}</small>
-        </label>
-
         <div className="sandboxSimpleSetting networkSummarySetting">
           <span className="settingLabel">互联网访问</span>
           <strong><CloudOff size={15} />{view.networkPresentation.label}</strong>
           <small>{view.networkPresentation.detail}</small>
+          <div className="sandboxNetworkApprovalRow">
+            <div>
+              <strong><Sparkles size={14} />AI 自动审批</strong>
+              <small>
+                {view.backend === 'local_process'
+                  ? '开启后由命令审批模型审核联网请求；同时适用于项目外文件临时访问。'
+                  : 'Docker 模式暂不支持临时权限覆盖，无法使用 AI 联网审批。'}
+              </small>
+            </div>
+            <label className="switch" title="让 AI 审批联网和项目外文件请求">
+              <input
+                type="checkbox"
+                checked={view.approvalMode === 'auto_review'}
+                disabled={saving || view.backend !== 'local_process'}
+                onChange={(event) => void setAiApproval(event.target.checked)}
+              />
+              <span />
+            </label>
+          </div>
         </div>
       </div>
 
@@ -169,6 +201,22 @@ export function SandboxPolicySettings({
 
       <SandboxTechnicalDetails status={status} settings={settings} backend={view.backend} />
     </>
+  );
+}
+
+function BackendOption({
+  backend,
+  label,
+  available,
+}: {
+  backend: SandboxBackendKind;
+  label: string;
+  available: boolean;
+}) {
+  return (
+    <option value={backend} disabled={!available}>
+      {label}{available ? '' : '（当前不可用）'}
+    </option>
   );
 }
 

@@ -54,6 +54,7 @@ pub(super) fn from_user_service_model_config(
         user_id: Some(record.owner_user_id),
         name: record.name,
         provider: normalize_provider(record.provider.as_str()),
+        prompt_vendor: record.prompt_vendor,
         model,
         thinking_level: record.thinking_level,
         task_usage_scenario: record.task_usage_scenario,
@@ -85,6 +86,7 @@ pub(super) fn to_user_service_create_request(
         owner_user_id: Some(auth.user_id.clone()),
         name: req.name.unwrap_or_default(),
         provider: req.provider,
+        prompt_vendor: req.prompt_vendor,
         model: normalize_optional_input(req.model),
         thinking_level: normalize_optional_input(req.thinking_level),
         task_usage_scenario: normalize_optional_input(req.task_usage_scenario),
@@ -106,6 +108,7 @@ pub(super) fn to_user_service_update_request(
     user_service_api_client::UpdateUserServiceModelConfigRequest {
         name: req.name,
         provider: req.provider,
+        prompt_vendor: req.prompt_vendor,
         model: req.model,
         thinking_level: req.thinking_level,
         task_usage_scenario: req.task_usage_scenario,
@@ -129,6 +132,7 @@ pub(super) fn to_response_value(cfg: &AiModelConfig) -> Value {
         "id": cfg.id,
         "name": cfg.name,
         "provider": cfg.provider,
+        "prompt_vendor": cfg.prompt_vendor,
         "model": cfg.model,
         "model_name": cfg.model,
         "thinking_level": cfg.thinking_level,
@@ -190,6 +194,7 @@ pub(super) fn to_user_service_create_provider_request(
         owner_user_id: Some(auth.user_id.clone()),
         name: req.name.unwrap_or_default(),
         provider: req.provider,
+        prompt_vendor: req.prompt_vendor,
         api_key: normalize_optional_input(req.api_key),
         base_url: normalize_optional_input(req.base_url),
         enabled: req.enabled,
@@ -205,6 +210,7 @@ pub(super) fn to_user_service_update_provider_request(
     user_service_api_client::UpdateUserServiceModelProviderRequest {
         name: req.name,
         provider: req.provider,
+        prompt_vendor: req.prompt_vendor,
         api_key: req.api_key,
         clear_api_key: req.clear_api_key,
         base_url: req.base_url,
@@ -223,6 +229,7 @@ pub(super) fn model_provider_response_value(
         "id": provider.id,
         "name": provider.name,
         "provider": normalize_provider(provider.provider.as_str()),
+        "prompt_vendor": provider.prompt_vendor,
         "has_api_key": provider.has_api_key,
         "base_url": provider.base_url,
         "enabled": provider.enabled,
@@ -258,6 +265,14 @@ pub(super) fn build_model_config(
     };
 
     let provider = normalize_provider_input(req.provider.clone())?;
+    let prompt_vendor = req
+        .prompt_vendor
+        .clone()
+        .and_then(|value| normalize_optional_input(Some(value)))
+        .or_else(|| {
+            chatos_plugin_management_sdk::normalize_agent_prompt_vendor(None, provider.as_str())
+                .map(|vendor| vendor.as_str().to_string())
+        });
     let thinking_level =
         normalize_thinking_level_input(provider.as_str(), req.thinking_level.clone())?;
     let api_key = normalize_optional_input(req.api_key.clone());
@@ -267,6 +282,7 @@ pub(super) fn build_model_config(
         user_id: Some(user_id),
         name,
         provider,
+        prompt_vendor,
         model,
         task_usage_scenario: None,
         task_thinking_level: None,
@@ -297,6 +313,7 @@ mod tests {
             id: None,
             name: Some("Model".to_string()),
             provider: Some("gpt".to_string()),
+            prompt_vendor: Some("gpt".to_string()),
             model: Some("gpt-4o".to_string()),
             thinking_level: Some("medium".to_string()),
             enabled: Some(true),
@@ -322,6 +339,7 @@ mod tests {
             user_id: Some("user_1".to_string()),
             name: "Model".to_string(),
             provider: "gpt".to_string(),
+            prompt_vendor: Some("gpt".to_string()),
             model: "gpt-4o".to_string(),
             thinking_level: Some("medium".to_string()),
             task_usage_scenario: None,

@@ -3,7 +3,7 @@
 
 mod json_output;
 mod models;
-mod prompt;
+pub(crate) mod prompt;
 mod registry;
 mod runner;
 mod scan;

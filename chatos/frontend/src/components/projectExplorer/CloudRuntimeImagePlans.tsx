@@ -97,6 +97,8 @@ export const CloudRuntimeImagePlans: React.FC<CloudRuntimeImagePlansProps> = ({
                               ? t('cloudRuntime.regenerateImage')
                               : t('cloudRuntime.generateImage')}
                         </button>
+                      ) : !isCloudProject && dockerfile ? (
+                        <span className="text-muted-foreground">{t('cloudRuntime.localDockerfilePlan')}</span>
                       ) : (
                         <span className="text-muted-foreground">{t('cloudRuntime.platformImage')}</span>
                       )}

@@ -14,7 +14,7 @@ use crate::store::now_rfc3339;
 use super::super::{bad_request, internal_error};
 use super::normalization::{
     model_config_id_for, normalize_api_key_input, normalize_optional_string,
-    normalize_provider_input, normalized_base_url,
+    normalize_prompt_vendor_input, normalize_provider_input, normalized_base_url,
 };
 use super::provider_fetch::fetch_provider_model_names;
 
@@ -28,8 +28,15 @@ pub(super) fn apply_model_provider_update(
         };
         record.name = name;
     }
+    let provider_changed = input.provider.is_some();
     if let Some(provider) = input.provider {
         record.provider = normalize_provider_input(Some(provider))?;
+    }
+    if input.prompt_vendor.is_some() || provider_changed {
+        let next = normalize_prompt_vendor_input(input.prompt_vendor, record.provider.as_str())?;
+        if next.is_some() || record.prompt_vendor.is_none() {
+            record.prompt_vendor = next;
+        }
     }
     if input.clear_api_key.unwrap_or(false) {
         record.api_key = None;
@@ -80,6 +87,7 @@ pub(super) async fn sync_imported_models_from_provider_state(
         }
 
         let changed = model.api_key != provider_record.api_key
+            || model.prompt_vendor != provider_record.prompt_vendor
             || model.has_api_key != provider_record.has_api_key
             || model.enabled != provider_record.enabled
             || model.supports_images != provider_record.supports_images
@@ -90,6 +98,7 @@ pub(super) async fn sync_imported_models_from_provider_state(
         }
 
         model.api_key = provider_record.api_key.clone();
+        model.prompt_vendor = provider_record.prompt_vendor.clone();
         model.has_api_key = provider_record.has_api_key;
         model.enabled = provider_record.enabled;
         model.supports_images = provider_record.supports_images;
@@ -227,6 +236,7 @@ pub(super) async fn refresh_provider_models_from_record(
                 format!("{} / {}", provider_record.name, model)
             },
             provider: provider_record.provider.clone(),
+            prompt_vendor: provider_record.prompt_vendor.clone(),
             model: model.clone(),
             thinking_level: existing
                 .as_ref()

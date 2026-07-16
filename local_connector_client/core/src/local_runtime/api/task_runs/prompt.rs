@@ -22,13 +22,8 @@ pub(super) fn task_run_prompt(
         .collect::<Vec<_>>()
         .join("\n\n");
     format!(
-        r#"你是本地 Task Runner Worker。请在当前 Local Connector 项目工作区完成下面的项目任务。
-
-必须遵守：
-- 所有模型、工具、Skill、MCP、Ask User 和数据写入都在客户端执行。
-- 禁止调用云端 Task Runner、Project Management 或 Memory 服务。
-- 先检查现有代码和依赖，再实施修改并验证。
-- 使用 Task Manager 更新本轮执行计划；完成后给出结果、验证和剩余风险。
+        r#"execution_location: local_connector_client
+cloud_services_allowed: false
 
 需求：{requirement_title}
 需求摘要：{requirement_summary}

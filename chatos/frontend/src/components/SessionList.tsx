@@ -110,7 +110,7 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
             expanded={controller.sectionExpansion.projectsExpanded}
             projects={controller.projects}
             currentProjectId={controller.currentProject?.id}
-            canCreate={controller.allowProjectCreation}
+            canCreate
             onToggle={controller.sectionExpansion.handleToggleProjectsSection}
             onCreate={controller.sessionListActions.openProjectModal}
             onSelect={(projectId) => {
@@ -202,7 +202,7 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
         cloudProjectZipFile={controller.cloudProjectZipFile}
         projectError={controller.projectError}
         projectSourceMode={controller.projectSourceMode}
-        allowProjectCreation={controller.allowProjectCreation}
+        allowLocalProjectCreation={controller.allowLocalProjectCreation}
         localConnectorWorkspaces={controller.localConnectorWorkspaces}
         localConnectorLoading={controller.localConnectorLoading}
         localConnectorError={controller.localConnectorError}

@@ -66,7 +66,20 @@ pub(super) async fn prepare_model_execution(
             model_config,
         )
         .await?;
-    let metadata = build_execution_metadata(task, run, model_config, sandbox_context.as_ref());
+    let agent_prompt =
+        crate::services::plugin_management_prompts::resolve_task_runner_agent_prompt(
+            service,
+            resolved_model_config.prompt_vendor.as_deref(),
+            resolved_model_config.provider.as_str(),
+        )
+        .await?;
+    let metadata = build_execution_metadata(
+        task,
+        run,
+        model_config,
+        &agent_prompt,
+        sandbox_context.as_ref(),
+    );
     let task_process_logging_enabled = task_process_logging_enabled(&task.mcp_config);
     let tool_result_model_budget_limits = service
         .effective_tool_result_model_budget_limits()
@@ -116,6 +129,7 @@ pub(super) async fn prepare_model_execution(
         model_config,
         effective_workspace_dir.as_str(),
         prompt,
+        agent_prompt.content,
         metadata,
         task_process_logging_enabled,
         prefixed_input_items,
@@ -159,6 +173,7 @@ fn build_execution_metadata(
     task: &TaskRecord,
     run: &TaskRunRecord,
     model_config: &ModelConfigRecord,
+    agent_prompt: &chatos_plugin_management_sdk::ResolvedAgentPrompt,
     sandbox_context: Option<&crate::services::sandbox_runtime::SandboxRuntimeContext>,
 ) -> serde_json::Value {
     let mut metadata = json!({
@@ -166,6 +181,9 @@ fn build_execution_metadata(
         "run_id": run.id,
         "model_config_id": model_config.id,
         "service": "task_runner_service",
+        "agent_prompt_vendor": agent_prompt.vendor.as_str(),
+        "agent_prompt_revision": agent_prompt.revision,
+        "agent_prompt_checksum": agent_prompt.checksum,
     });
     if let Some(context) = sandbox_context {
         if let Some(object) = metadata.as_object_mut() {
@@ -183,13 +201,25 @@ fn build_run_spec(
     metadata_model_config: &ModelConfigRecord,
     _effective_workspace_dir: &str,
     prompt: String,
+    agent_system_prompt: String,
     metadata: serde_json::Value,
     task_process_logging_enabled: bool,
     external_mcp_prefixed_input_items: Vec<Value>,
 ) -> TaskRunSpec {
     let mut effective_model_config = runtime_model_config.clone();
     effective_model_config.request_cwd = None;
-    let model_runtime_config = effective_model_config.to_runtime_config(None);
+    let mut model_runtime_config = effective_model_config.to_runtime_config(None);
+    model_runtime_config.instructions = Some(
+        match model_runtime_config
+            .instructions
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            Some(existing) => format!("{}\n\n{existing}", agent_system_prompt.trim()),
+            None => agent_system_prompt,
+        },
+    );
 
     let mut prefixed_input_items = external_mcp_prefixed_input_items;
     if task_process_logging_enabled {

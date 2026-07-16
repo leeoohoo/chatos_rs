@@ -49,7 +49,7 @@ pub(crate) struct LocalSandboxState {
 impl Default for LocalSandboxState {
     fn default() -> Self {
         Self {
-            enabled: false,
+            enabled: true,
             // Existing installations keep their serialized choice. New macOS/Linux installs use
             // the native OS sandbox and fail closed if readiness is not satisfied.
             default_backend: if cfg!(any(target_os = "macos", target_os = "linux")) {

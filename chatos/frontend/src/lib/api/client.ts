@@ -60,6 +60,13 @@ class ApiClient {
     return plane;
   }
 
+  registerLocalProjectExecution(projectId: string): void {
+    const normalizedProjectId = projectId.trim();
+    if (normalizedProjectId) {
+      this.projectExecutionPlanes.set(normalizedProjectId, 'local_connector');
+    }
+  }
+
   projectUsesLocalRuntime(projectId?: string | null): boolean {
     const projectIdValue = String(projectId || '').trim();
     return projectIdValue.length > 0

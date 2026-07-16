@@ -17,6 +17,7 @@ use super::runtime_environment::{
     enforce_project_runtime_boundary, ensure_runtime_environment_for_project,
 };
 
+mod agent_prompt;
 mod inspection;
 mod mcp_servers;
 mod memory;
@@ -26,6 +27,7 @@ mod tool_provider;
 
 pub use self::progress::get_project_runtime_environment_progress;
 
+use self::agent_prompt::resolve_project_environment_agent_prompt;
 use self::inspection::{inspect_local_project, LocalProjectInspection};
 use self::mcp_servers::{
     build_project_environment_mcp_executor, create_sandbox_image_from_plan,
@@ -587,6 +589,7 @@ pub async fn analyze_project_runtime_environment(
         project,
         &environment,
         routing,
+        model_runtime.prompt_vendor.as_deref(),
         &model_runtime.model_config,
         local_inspection.as_ref(),
         &memory,
@@ -664,6 +667,7 @@ async fn run_project_environment_agent(
     project: &ProjectRecord,
     environment: &ProjectRuntimeEnvironmentRecord,
     routing: RoutingPlan,
+    prompt_vendor: Option<&str>,
     model_config: &ModelRuntimeConfig,
     local_inspection: Option<&LocalProjectInspection>,
     memory: &ProjectAgentMemory,
@@ -671,6 +675,12 @@ async fn run_project_environment_agent(
     run_id: &str,
     capability_policy: &ResolvedAgentCapabilities,
 ) -> Result<(), String> {
+    let agent_prompt = resolve_project_environment_agent_prompt(
+        state,
+        prompt_vendor,
+        model_config.provider.as_str(),
+    )
+    .await?;
     let executor = build_project_environment_mcp_executor(
         state,
         project,
@@ -703,6 +713,9 @@ async fn run_project_environment_agent(
         "project_id": project.id,
         "file_provider": routing.file_provider.as_str(),
         "sandbox_provider": routing.sandbox_provider.as_str(),
+        "agent_prompt_vendor": agent_prompt.vendor.as_str(),
+        "agent_prompt_revision": agent_prompt.revision,
+        "agent_prompt_checksum": agent_prompt.checksum,
     });
     let agent_memory = AgentTurnMemory::new(
         memory.composer.clone(),
@@ -716,6 +729,7 @@ async fn run_project_environment_agent(
         run_id,
         prompt,
     )
+    .with_system_prompt(agent_prompt.content)
     .with_mcp_executor(executor)
     .with_memory(Some(agent_memory))
     .with_max_iterations(chatos_agent::load_agent_max_iterations("project-service").await)
@@ -784,91 +798,34 @@ fn build_project_environment_agent_prompt(
     local_inspection: Option<&LocalProjectInspection>,
     run_id: &str,
 ) -> Result<String, String> {
-    let detected_stack = serde_json::to_string_pretty(
-        &local_inspection
-            .map(|inspection| inspection.detected_stack.clone())
-            .unwrap_or_else(empty_object),
-    )
-    .map_err(|err| format!("serialize detected stack failed: {err}"))?;
-    let required_services = serde_json::to_string_pretty(
-        &local_inspection
-            .map(|inspection| inspection.required_services.clone())
-            .unwrap_or_else(empty_array),
-    )
-    .map_err(|err| format!("serialize required services failed: {err}"))?;
-    let manifest_context = serde_json::to_string_pretty(
-        &local_inspection
-            .map(|inspection| inspection.manifest_context.clone())
-            .unwrap_or_default(),
-    )
-    .map_err(|err| format!("serialize manifest context failed: {err}"))?;
-    let file_tool_hint = file_tool_hint(project, routing.file_provider);
-    Ok(format!(
-        r#"请为当前项目初始化沙箱运行环境。你只做这个固定业务流程，不调用 task runner，不创建任务，不修改项目代码。
-
-当前运行：
-- run_id: {run_id}
-- project_id: {project_id}
-- project_name: {project_name}
-- file_provider: {file_provider}
-- sandbox_provider: {sandbox_provider}
-- sandbox_enabled: {sandbox_enabled}
-
-工具约束：
-- 项目详情工具只操作当前项目：先调用 `project_environment_get_current_project_runtime_environment`，最后必须调用 `project_environment_update_current_project_runtime_environment` 写入结果。
-- 文件读取工具：{file_tool_hint}
-- 本轮只生成项目级容器编排计划，不调用 Sandbox Images 搜索或创建工具。后端会生成一个 `docker-compose.chatos.yml`，用户确认后一次性启动整个环境。
-- 只为应用运行时生成完整 Dockerfile；MySQL、MongoDB、Redis、Nacos 等依赖服务使用平台维护的标准镜像，并作为同一个 Docker Compose 项目下的服务。Dockerfile 不得包含密码、令牌或其他密钥。
-- 不要臆造文件中没有依据的依赖服务。可以先读 package.json、Cargo.toml、go.mod、pyproject.toml、pom.xml、build.gradle、docker-compose、README、.env.example 等关键文件。
-
-强制执行顺序（不得跳步或调换）：
-1. 全项目扫描：先列出项目目录结构，排除 target、node_modules、.git、构建产物和二进制文件；全局搜索所有环境变量引用，再读取命中的配置文件、启动入口、部署文件和说明文档。至少覆盖 `.env*`、`application*.yml/yaml/properties`、`bootstrap*.yml/yaml/properties`、Docker Compose、Dockerfile、Kubernetes/Helm、CI 配置、启动脚本、README，以及 `System.getenv`、`process.env`、`os.getenv`、`std::env`、GitHub Actions 表达式和 `${{VAR}}` 等代码引用。
-2. 变量清单：在生成任何镜像 Dockerfile 计划之前，先形成完整 `environment_variables`。每个变量只有一个最终生效值：项目值适用就使用项目值；缺失或不适配就生成当前沙箱可用值。记录来源判断、是否必填、是否敏感和生成原因。
-3. 依赖与运行计划：根据变量清单、构建清单和启动入口确认语言运行时、依赖服务、端口、启动命令和服务间连接方式。
-4. 环境配置文件：根据前三步生成 `generated_config_files`，例如 `.env.chatos`、`application-chatos.yml`、`application-chatos.properties`、`config.chatos.toml` 或配置中心 YAML。文件路径必须相对项目工作区；敏感值和用户可编辑值使用环境变量占位符，不得写死到文件。项目确实不需要生成配置文件时也必须提交空数组并说明判断依据。
-5. 项目级编排计划：完成前四步后，为应用运行时生成一个 Dockerfile；为每个依赖服务生成独立服务记录。所有记录使用 `status: "planned"`，不要实际申请或启动容器。后端会据此生成一个总的 Docker Compose 文件，把应用和全部依赖包在同一个项目组中。
-6. 最终保存：调用项目环境更新工具，同时提交扫描证据、唯一值变量、配置文件、应用 Dockerfile 和全部依赖服务记录。不得为每个依赖生成散落的独立构建任务。
-
-判断规则：
-- 平台目标是让导入的项目尽快具备验证和迭代条件，必须采用“优先初始化、最后才判不可运行”的策略。
-- 如果发现 Java、Node.js、Python、Go、Rust、.NET、PHP、Ruby 等应用运行时，必须为应用准备运行时镜像。
-- 如果发现 nacos、postgres、mysql、redis、mongodb、rabbitmq 等外部依赖，必须把它们记录到 `required_services`，并分别生成对应环境的 Dockerfile 计划。远程地址、密码、配置中心文件缺失属于需要本地替代和自动配置的 provisioning 输入，不是 `not_runnable` 理由。
-- 环境变量中出现 MYSQL、MONGO、REDIS、NACOS、POSTGRES、RABBITMQ、KAFKA、ELASTICSEARCH 或 MINIO 等引用时，也视为检测到了对应依赖，不得通过把 enabled 设置为 false 或漏写 `required_services` 来跳过环境准备。
-- 对 Nacos 等远程配置中心，优先初始化本地兼容服务，并生成本地服务地址、命名空间、用户名、密码和令牌环境变量。对数据库和缓存同样生成容器内可访问的默认主机名、端口、数据库名与随机凭据。
-- 标准 runtime features 只填写镜像目录真实支持的运行时版本；Redis、MongoDB、MySQL、Nacos 等非标准 feature 应使用基础镜像加 `custom_build_script` 安装，不得把不支持的服务名直接当作 runtime feature。
-- 环境分析和项目级 Compose 计划完成后提交结果，后端会把整体状态置为 `pending_image_build`；用户点击一次“生成并启动整个环境”后才会变为 `ready`。
-- 只有项目目录确实为空、没有任何可执行入口或构建清单、仅包含说明文档/零散配置且无法识别可启动组件时，才允许写入 `status: "not_runnable"`。不得因为缺少 application.yml、远程 datasource 地址、Nacos 配置、Redis/MongoDB 连接信息而判定不可运行。
-- 如果确实需要无法自动生成的第三方业务凭据，在基础运行时和可自动创建的依赖镜像准备完成后写入 `pending_configuration`，列出需要用户补充的最小变量；不要写 `not_runnable`。
-- 如果项目可运行，识别语言、框架、包管理器、启动方式和依赖服务。依赖服务包括但不限于 nacos、postgres、mysql、redis、mongodb、rabbitmq。
-- 所有启动参数和环境变量优先写入 `environment_variables`：从项目配置/代码/.env 中读取到的值放入 `project_value` 并判断 `project_value_suitable`；缺失或不适配时必须生成 `recommended_value` 与 `recommendation_reason`。每个变量最终只有一个生效值，用户可以直接修改该值；Agent 不得写入或覆盖用户已经修改的值，服务会自动保留。
-- 项目中的 localhost、127.0.0.1、宿主机绝对路径、远程生产域名或当前沙箱不可达地址通常不适合直接复用，应保留为 `project_value`、标记 `project_value_suitable: false`，并生成面向当前沙箱服务名和端口的推荐值。
-- 数据库、Nacos、Redis 等需要启动密码/令牌时，为缺失项生成安全的推荐值；变量要标记 `secret: true`。`env_vars` 只作为旧格式兼容，新的分析结果必须优先提供 `environment_variables`。
-- 根据项目实际加载配置的方式生成环境专用配置文件。Spring 项目可以生成独立 profile 配置，Node/Python 等项目可以生成专用 dotenv 或框架配置；使用 Nacos、Consul 等配置中心时生成对应 data-id 的配置内容。配置内容必须来自扫描到的配置键、代码引用和已经确定的变量，不得臆造无依据的业务配置。
-- 生成文件不得覆盖项目已有配置文件，默认使用带 `chatos` 或 `sandbox` 标识的新文件名；在 `source_files` 中记录推断依据。密码、令牌、密钥和用户后续可能修改的值使用 `${{ENV_NAME}}` 等目标格式支持的环境变量引用。
-- 为应用运行时准备一个包含完整 Dockerfile 的记录；每个依赖服务分别准备一个不需要 Dockerfile 的服务记录。每条记录必须包含 environment_key/environment_type/display_name、ports、env_vars 和 `status: "planned"`。
-- 后端会根据环境变量和 `required_services` 复核编排计划；缺少应用 Dockerfile 或遗漏任一 MySQL、MongoDB、Redis、Nacos 等依赖服务记录时会拒绝保存。
-
-预扫描技术栈候选：
-{detected_stack}
-
-预扫描依赖服务候选：
-{required_services}
-
-本地预扫描关键文件预览（可能为空，仍需优先使用 MCP 文件工具确认）：
-{manifest_context}
-
-当前运行环境记录：
-{environment_json}
-"#,
-        run_id = run_id,
-        project_id = project.id,
-        project_name = project.name,
-        file_provider = provider_label(routing.file_provider),
-        sandbox_provider = provider_label(routing.sandbox_provider),
-        sandbox_enabled = environment.sandbox_enabled,
-        environment_json = serde_json::to_string_pretty(environment)
-            .map_err(|err| format!("serialize runtime environment failed: {err}"))?,
-    ))
+    let context = json!({
+        "mode": "cloud_tool_execution",
+        "run_id": run_id,
+        "project": {
+            "id": project.id,
+            "name": project.name,
+        },
+        "routing": {
+            "file_provider": provider_label(routing.file_provider),
+            "sandbox_provider": provider_label(routing.sandbox_provider),
+            "sandbox_enabled": environment.sandbox_enabled,
+            "file_tool_hint": file_tool_hint(project, routing.file_provider),
+        },
+        "pre_scan": {
+            "detected_stack": local_inspection
+                .map(|inspection| inspection.detected_stack.clone())
+                .unwrap_or_else(empty_object),
+            "required_services": local_inspection
+                .map(|inspection| inspection.required_services.clone())
+                .unwrap_or_else(empty_array),
+            "manifest_context": local_inspection
+                .map(|inspection| inspection.manifest_context.clone())
+                .unwrap_or_default(),
+        },
+        "current_environment": environment,
+    });
+    serde_json::to_string_pretty(&context)
+        .map_err(|err| format!("serialize project environment run context failed: {err}"))
 }
 
 fn effective_project_environment_mcp_resource_ids(routing: &RoutingPlan) -> Vec<String> {

@@ -42,6 +42,7 @@ fn from_user_service_model_config(
         user_id: Some(record.owner_user_id),
         name: record.name,
         provider: record.provider,
+        prompt_vendor: record.prompt_vendor,
         model,
         thinking_level: record.thinking_level,
         task_usage_scenario: record.task_usage_scenario,
@@ -123,6 +124,7 @@ fn pick_default_engine_profile(profiles: Vec<AiModelConfig>) -> Result<AiModelCo
 pub fn runtime_value_from_engine_profile(profile: &AiModelConfig) -> Value {
     json!({
         "provider": profile.provider,
+        "prompt_vendor": profile.prompt_vendor,
         "model_name": profile.model,
         "temperature": profile.temperature.unwrap_or(0.7),
         "thinking_level": profile.thinking_level,

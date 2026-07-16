@@ -35,6 +35,7 @@ pub(crate) struct LocalRuntimeEnvironmentImageRecord {
     pub(crate) image_id: Option<String>,
     pub(crate) image_ref: Option<String>,
     pub(crate) image_provider: String,
+    pub(crate) dockerfile: Option<String>,
     pub(crate) features_json: String,
     pub(crate) ports_json: String,
     pub(crate) env_vars_json: String,
@@ -83,6 +84,8 @@ pub(crate) struct LocalEnvironmentImagePlan {
     pub(crate) environment_type: String,
     pub(crate) display_name: String,
     pub(crate) image_ref: Option<String>,
+    #[serde(default)]
+    pub(crate) dockerfile: Option<String>,
     #[serde(default)]
     pub(crate) features: Value,
     #[serde(default)]

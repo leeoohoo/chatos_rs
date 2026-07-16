@@ -11,6 +11,7 @@ use uuid::Uuid;
 use crate::config::{api_url, normalize_optional};
 use crate::relay::{relay_error_response, RelayRequest};
 use crate::{local_now_rfc3339, AuthState, LocalState};
+use chatos_plugin_management_sdk::normalize_agent_prompt_vendor;
 
 use super::provider_catalog::{
     default_base_url_for_provider, fallback_model_list, fetch_provider_models, normalize_provider,
@@ -126,6 +127,16 @@ pub(crate) fn save_local_model_config(
         .iter()
         .position(|item| item.id == id);
     let existing = existing_index.and_then(|idx| state.model_configs.configs.get(idx).cloned());
+    let prompt_vendor = normalize_optional(draft.prompt_vendor.as_deref())
+        .or_else(|| {
+            existing
+                .as_ref()
+                .and_then(|item| normalize_optional(item.prompt_vendor.as_deref()))
+        })
+        .or_else(|| {
+            normalize_agent_prompt_vendor(None, provider.as_str())
+                .map(|vendor| vendor.as_str().to_string())
+        });
     let copied_api_key = draft
         .copy_api_key_from_id
         .as_deref()
@@ -159,6 +170,7 @@ pub(crate) fn save_local_model_config(
             }),
         name,
         provider,
+        prompt_vendor,
         model,
         base_url: normalize_optional(draft.base_url.as_deref()).or_else(|| {
             existing
@@ -255,6 +267,7 @@ pub(crate) async fn sync_local_model_config(
         "owner_user_id": owner_user_id,
         "name": current.name,
         "provider": current.provider,
+        "prompt_vendor": current.prompt_vendor,
         "model": current.model,
         "thinking_level": current.thinking_level,
         "task_usage_scenario": current.task_usage_scenario.clone().unwrap_or_default(),
@@ -509,6 +522,7 @@ pub(crate) fn resolve_local_model_runtime(
             .unwrap_or_else(|| record.id.clone()),
         local_model_config_id: record.id.clone(),
         provider: runtime_provider_for_model(record.provider.as_str(), base_url.as_str()),
+        prompt_vendor: record.prompt_vendor.clone(),
         base_url,
         api_key,
         model: record.model.clone(),

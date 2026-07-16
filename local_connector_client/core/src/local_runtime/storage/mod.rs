@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
+mod agent_prompts;
 mod ask_user;
 mod capabilities;
 mod database;
@@ -21,6 +22,7 @@ mod task_runs;
 mod turn_queries;
 mod turns;
 
+pub(crate) use agent_prompts::LocalAgentPromptRecord;
 pub(crate) use ask_user::LocalAskUserPromptRecord;
 pub(crate) use database::{database_path_for_state, LocalDatabase};
 pub(crate) use models::{

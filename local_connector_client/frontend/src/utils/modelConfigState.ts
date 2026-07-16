@@ -15,6 +15,7 @@ export type LocalModelProviderGroup = {
   key: string;
   name: string;
   provider: string;
+  prompt_vendor: string;
   base_url: string;
   items: LocalModelConfig[];
   enabled_count: number;
@@ -36,6 +37,7 @@ export function emptyModelDraft(): ModelDraftState {
   return {
     name: '',
     provider: 'gpt',
+    prompt_vendor: 'gpt',
     model: '',
     base_url: '',
     api_key_text: '',
@@ -60,6 +62,7 @@ export function buildModelConfigPayload(
     server_model_config_id: normalizeBlank(draft.server_model_config_id || undefined),
     name: draft.name.trim() || fallbackName,
     provider: normalizeBlank(draft.provider || undefined),
+    prompt_vendor: normalizePromptVendor(draft.prompt_vendor),
     model: normalizeBlank(draft.model || undefined),
     base_url: normalizeBlank(draft.base_url || undefined),
     api_key: normalizeBlank(draft.api_key_text),
@@ -82,6 +85,7 @@ export function buildProviderPreviewPayload(draft: ModelDraftState): LocalModelC
     id: draft.id,
     server_model_config_id: normalizeBlank(draft.server_model_config_id || undefined),
     provider: normalizeBlank(draft.provider || undefined),
+    prompt_vendor: normalizePromptVendor(draft.prompt_vendor),
     base_url: normalizeBlank(draft.base_url || undefined),
     api_key: normalizeBlank(draft.api_key_text),
     clear_api_key: draft.clear_api_key || false,
@@ -102,6 +106,8 @@ export function findExistingImportedModel(
   const normalizedBaseUrl = normalizeUrlForCompare(baseUrl || draft.base_url || '');
   return items.find((item) => (
     normalizeModelProvider(item.provider) === provider
+    && (item.prompt_vendor || defaultPromptVendor(item.provider))
+      === (draft.prompt_vendor || defaultPromptVendor(draft.provider))
     && normalizeUrlForCompare(item.base_url || '') === normalizedBaseUrl
     && item.model === modelId
   ));
@@ -119,6 +125,7 @@ export function buildImportedModelConfigPayload(
     server_model_config_id: existing?.server_model_config_id || undefined,
     name: providerName ? `${providerName} / ${model.id}` : model.id,
     provider: normalizeBlank(draft.provider || undefined),
+    prompt_vendor: normalizePromptVendor(draft.prompt_vendor),
     model: model.id,
     base_url: normalizeBlank(baseUrl || draft.base_url || undefined),
     api_key: normalizeBlank(draft.api_key_text),
@@ -135,9 +142,10 @@ export function groupLocalModelProviders(items: LocalModelConfig[]): LocalModelP
   const groups = new Map<string, LocalModelProviderGroup>();
   for (const item of items) {
     const provider = normalizeModelProvider(item.provider || 'gpt');
+    const promptVendor = item.prompt_vendor || defaultPromptVendor(provider);
     const baseUrl = normalizeUrlForCompare(item.base_url || '');
     const name = providerGroupNameFromModel(item);
-    const key = `${provider}\u0000${baseUrl}\u0000${name.toLowerCase()}`;
+    const key = `${provider}\u0000${promptVendor}\u0000${baseUrl}\u0000${name.toLowerCase()}`;
     const existing = groups.get(key);
     if (existing) {
       existing.items.push(item);
@@ -152,6 +160,7 @@ export function groupLocalModelProviders(items: LocalModelConfig[]): LocalModelP
       key,
       name,
       provider,
+      prompt_vendor: promptVendor,
       base_url: baseUrl,
       items: [item],
       enabled_count: item.enabled ? 1 : 0,
@@ -184,6 +193,14 @@ export function providerLabel(provider: string) {
     default:
       return provider || 'Provider';
   }
+}
+
+export function defaultPromptVendor(provider?: string | null): 'glm' | 'deepseek' | 'gpt' | 'kimi' {
+  const normalized = normalizeModelProvider(provider || 'gpt');
+  if (normalized === 'deepseek') return 'deepseek';
+  if (normalized === 'kimi') return 'kimi';
+  if (normalized === 'glm' || normalized === 'zhipu' || normalized === 'zai') return 'glm';
+  return 'gpt';
 }
 
 export function formatProviderModelOption(model: LocalProviderModel) {
@@ -249,6 +266,7 @@ export function buildTaskModelConfigPayload(
     server_model_config_id: model.server_model_config_id || undefined,
     name: model.name,
     provider: model.provider,
+    prompt_vendor: model.prompt_vendor || defaultPromptVendor(model.provider),
     model: model.model,
     clear_api_key: false,
     enabled: draft.enabled,
@@ -335,6 +353,14 @@ function normalizeUrlForCompare(value: string) {
 function normalizeBlank(value?: string | null): string | undefined {
   const normalized = value?.trim();
   return normalized ? normalized : undefined;
+}
+
+function normalizePromptVendor(
+  value?: string | null,
+): 'glm' | 'deepseek' | 'gpt' | 'kimi' | undefined {
+  return ['glm', 'deepseek', 'gpt', 'kimi'].includes(value || '')
+    ? value as 'glm' | 'deepseek' | 'gpt' | 'kimi'
+    : undefined;
 }
 
 function cleanOptionalNumber(value?: number | null): number | undefined {

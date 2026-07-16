@@ -270,6 +270,8 @@ export const enUSSettings: MessageDictionary = {
   'models.drawer.create': 'New model config',
   'models.drawer.edit': 'Edit model config',
   'models.form.modelRequired': 'Please choose a model',
+  'models.form.promptVendor': 'Prompt type',
+  'models.form.promptVendorHint': 'Selected automatically by provider; compatible endpoints can override it.',
   'models.form.modelPlaceholder': 'Fetch the model list first',
   'models.form.loadingModels': 'Fetching models...',
   'models.form.noModels': 'No model list',

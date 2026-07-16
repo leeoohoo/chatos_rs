@@ -2,7 +2,9 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use axum::Json;
+use chatos_plugin_management_sdk::{normalize_agent_prompt_vendor, AgentPromptVendor};
 use sha2::{Digest, Sha256};
+use std::str::FromStr;
 
 use crate::secrets::is_secret_encrypted;
 
@@ -88,6 +90,18 @@ pub(super) fn normalize_provider_input(
             "provider only supports gpt / deepseek / kimi / minimax / openai_compatible",
         )),
     }
+}
+
+pub(super) fn normalize_prompt_vendor_input(
+    prompt_vendor: Option<String>,
+    provider: &str,
+) -> Result<Option<String>, (axum::http::StatusCode, Json<serde_json::Value>)> {
+    if let Some(value) = normalize_optional_string(prompt_vendor) {
+        return AgentPromptVendor::from_str(value.as_str())
+            .map(|vendor| Some(vendor.as_str().to_string()))
+            .map_err(|_| bad_request("prompt_vendor only supports glm/deepseek/gpt/kimi"));
+    }
+    Ok(normalize_agent_prompt_vendor(None, provider).map(|vendor| vendor.as_str().to_string()))
 }
 
 pub(super) fn normalize_thinking_level_input(

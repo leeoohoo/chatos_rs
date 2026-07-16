@@ -105,6 +105,7 @@ mod tests {
             owner_user_id: owner_user_id.to_string(),
             name: "Cloud provider".to_string(),
             provider: "openai".to_string(),
+            prompt_vendor: Some("gpt".to_string()),
             api_key: Some("secret".to_string()),
             has_api_key: true,
             base_url: Some("https://api.openai.com/v1".to_string()),

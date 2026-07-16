@@ -42,6 +42,24 @@ const projectResponseUsesLocalRuntime = (project: ProjectResponse): boolean => {
     || rootPath.startsWith('local://connector/');
 };
 
+const cloudProjectCache = new WeakMap<object, ProjectResponse[]>();
+const DESKTOP_CLOUD_PROJECT_WAIT_MS = 800;
+
+const withinDesktopCloudWaitBudget = async (
+  pending: Promise<ProjectResponse[]>,
+  fallback: ProjectResponse[],
+): Promise<ProjectResponse[]> => new Promise((resolve) => {
+  let settled = false;
+  const finish = (projects: ProjectResponse[]) => {
+    if (settled) return;
+    settled = true;
+    clearTimeout(timer);
+    resolve(projects);
+  };
+  const timer = setTimeout(() => finish(fallback), DESKTOP_CLOUD_PROJECT_WAIT_MS);
+  void pending.then(finish);
+});
+
 export interface WorkspaceProjectFacade {
   listProjects(userId?: string): Promise<ProjectResponse[]>;
   createProject(data: { name: string; root_path: string; git_url?: string; description?: string; user_id?: string }): Promise<ProjectResponse>;
@@ -114,12 +132,25 @@ export interface WorkspaceProjectFacade {
 
 export const workspaceProjectFacade: WorkspaceProjectFacade & ThisType<ApiClient> = {
   async listProjects(userId) {
-    const cloudProjects = await workspaceApi.listProjects(this.getRequestFn(), userId);
-    const cloudOnly = cloudProjects.filter((project) => !projectResponseUsesLocalRuntime(project));
     if (!localRuntimeBridgeAvailable()) {
-      return cloudOnly;
+      const cloudProjects = await workspaceApi.listProjects(this.getRequestFn(), userId);
+      return cloudProjects.filter((project) => !projectResponseUsesLocalRuntime(project));
     }
+
     const localProjects = await this.getLocalRuntimeClient().listProjects();
+    localProjects.forEach((project) => this.registerLocalProjectExecution(project.id));
+    const cachedCloudProjects = cloudProjectCache.get(this) || [];
+    const cloudRequest = workspaceApi.listProjects(this.getRequestFn(), userId)
+      .then((projects) => projects.filter((project) => !projectResponseUsesLocalRuntime(project)))
+      .then((projects) => {
+        cloudProjectCache.set(this, projects);
+        return projects;
+      })
+      .catch((error) => {
+        console.warn('Cloud projects are temporarily unavailable; keeping local projects visible.', error);
+        return cachedCloudProjects;
+      });
+    const cloudOnly = await withinDesktopCloudWaitBudget(cloudRequest, cachedCloudProjects);
     return [...localProjects, ...cloudOnly];
   },
   async createProject(data) {
@@ -127,7 +158,6 @@ export const workspaceProjectFacade: WorkspaceProjectFacade & ThisType<ApiClient
     return workspaceApi.createProject(this.getRequestFn(), data);
   },
   async createCloudProject(data) {
-    requireDesktopProjectCreation();
     return workspaceApi.createCloudProject(this.getRequestFn(), data);
   },
   async updateProject(id, data) {
@@ -237,24 +267,45 @@ export const workspaceProjectFacade: WorkspaceProjectFacade & ThisType<ApiClient
     return workspaceApi.stopProjectRequirementExecution(this.getRequestFn(), projectId, requirementId, data);
   },
   async analyzeProjectRun(projectId) {
+    if (this.projectUsesLocalRuntime(projectId)) {
+      return this.getLocalRuntimeClient().analyzeProjectRun(projectId);
+    }
     return workspaceApi.analyzeProjectRun(this.getRequestFn(), projectId);
   },
   async getProjectRunCatalog(projectId) {
+    if (this.projectUsesLocalRuntime(projectId)) {
+      return this.getLocalRuntimeClient().getProjectRunCatalog(projectId);
+    }
     return workspaceApi.getProjectRunCatalog(this.getRequestFn(), projectId);
   },
   async getProjectRunState(projectId) {
+    if (this.projectUsesLocalRuntime(projectId)) {
+      return this.getLocalRuntimeClient().getProjectRunState(projectId);
+    }
     return workspaceApi.getProjectRunState(this.getRequestFn(), projectId);
   },
   async getProjectRunEnvironment(projectId) {
+    if (this.projectUsesLocalRuntime(projectId)) {
+      return this.getLocalRuntimeClient().getProjectRunEnvironment(projectId);
+    }
     return workspaceApi.getProjectRunEnvironment(this.getRequestFn(), projectId);
   },
   async updateProjectRunEnvironment(projectId, data) {
+    if (this.projectUsesLocalRuntime(projectId)) {
+      return this.getLocalRuntimeClient().updateProjectRunEnvironment(projectId, data);
+    }
     return workspaceApi.updateProjectRunEnvironment(this.getRequestFn(), projectId, data);
   },
   async executeProjectRun(projectId, data) {
+    if (this.projectUsesLocalRuntime(projectId)) {
+      return this.getLocalRuntimeClient().executeProjectRun(projectId, data);
+    }
     return workspaceApi.executeProjectRun(this.getRequestFn(), projectId, data);
   },
   async setProjectRunDefault(projectId, targetId) {
+    if (this.projectUsesLocalRuntime(projectId)) {
+      return this.getLocalRuntimeClient().setProjectRunDefault(projectId, targetId);
+    }
     return workspaceApi.setProjectRunDefault(this.getRequestFn(), projectId, targetId);
   },
   async listProjectContacts(projectId, paging) {

@@ -41,6 +41,7 @@ async fn persists_environment_analysis_and_progress_in_sqlite() {
         images: vec![LocalEnvironmentImagePlan {
             environment_key: "app".to_string(),
             display_name: "Application".to_string(),
+            dockerfile: Some("FROM rust:1".to_string()),
             ..Default::default()
         }],
         ..Default::default()
@@ -50,14 +51,12 @@ async fn persists_environment_analysis_and_progress_in_sqlite() {
         .await
         .expect("finish analysis");
     assert_eq!(environment.status, "ready");
-    assert_eq!(
-        database
-            .list_local_runtime_environment_images("user-env", "project-env")
-            .await
-            .expect("list image plans")
-            .len(),
-        1
-    );
+    let images = database
+        .list_local_runtime_environment_images("user-env", "project-env")
+        .await
+        .expect("list image plans");
+    assert_eq!(images.len(), 1);
+    assert_eq!(images[0].dockerfile.as_deref(), Some("FROM rust:1"));
     assert_eq!(
         database
             .get_local_environment_progress("user-env", "project-env")

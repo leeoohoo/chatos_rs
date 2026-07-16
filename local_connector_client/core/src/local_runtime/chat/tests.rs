@@ -102,6 +102,7 @@ async fn executes_text_chat_with_device_model_and_persists_both_messages() {
                 "id": "model-1",
                 "name": "Local model",
                 "provider": "openai",
+                "prompt_vendor": "gpt",
                 "model": "gpt-test",
                 "base_url": provider_url,
                 "api_key": "device-secret",

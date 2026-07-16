@@ -15,6 +15,7 @@ pub(super) fn model_config_public_value(
         "owner_user_id": record.owner_user_id,
         "name": record.name,
         "provider": record.provider,
+        "prompt_vendor": record.prompt_vendor,
         "model": record.model,
         "model_name": record.model,
         "thinking_level": record.thinking_level,
@@ -55,6 +56,7 @@ pub(super) fn model_provider_public_value(
         "owner_user_id": record.owner_user_id,
         "name": record.name,
         "provider": record.provider,
+        "prompt_vendor": record.prompt_vendor,
         "has_api_key": record.has_api_key
             || record
                 .api_key

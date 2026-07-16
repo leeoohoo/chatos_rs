@@ -3,7 +3,8 @@
 
 use chatos_mcp_runtime::BuiltinMcpKind;
 use chatos_plugin_management_sdk::{
-    AgentBindingRecord, BindingConditions, McpRecord, McpRuntime, ResolvedAgentCapabilities,
+    agent_prompt_checksum, AgentBindingRecord, AgentPromptBundle, AgentPromptVendor,
+    BindingConditions, McpRecord, McpRuntime, ResolvedAgentCapabilities, ResolvedAgentPrompt,
     ResolvedMcp, ResourceMetadata, ResourceSecurity, SystemAgentKey,
 };
 
@@ -13,6 +14,9 @@ pub(in crate::local_runtime) async fn seed_chat_capabilities(
     database: &LocalDatabase,
     owner_user_id: &str,
 ) -> anyhow::Result<()> {
+    database
+        .install_agent_prompt_bundle("https://cloud.example.invalid", &test_agent_prompt_bundle())
+        .await?;
     for agent_key in [
         SystemAgentKey::ChatosConversationAgent,
         SystemAgentKey::ChatosPlanningAgent,
@@ -45,6 +49,30 @@ pub(in crate::local_runtime) async fn seed_chat_capabilities(
             mcps,
         ))
         .await
+}
+
+fn test_agent_prompt_bundle() -> AgentPromptBundle {
+    let prompts = SystemAgentKey::ALL
+        .into_iter()
+        .flat_map(|agent_key| {
+            AgentPromptVendor::ALL.into_iter().map(move |vendor| {
+                let content = format!("{} {vendor} test prompt", agent_key.as_str());
+                ResolvedAgentPrompt {
+                    agent_key: agent_key.as_str().to_string(),
+                    vendor,
+                    checksum: agent_prompt_checksum(content.as_str()),
+                    content,
+                    revision: 1,
+                    published_at: "2026-07-16T00:00:00Z".to_string(),
+                }
+            })
+        })
+        .collect();
+    AgentPromptBundle {
+        bundle_version: 1,
+        updated_at: "2026-07-16T00:00:00Z".to_string(),
+        prompts,
+    }
 }
 
 fn capabilities(

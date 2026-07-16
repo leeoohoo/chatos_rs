@@ -18,7 +18,7 @@ use super::contracts::{ModelConfigGetQuery, UserScopeQuery};
 use super::model_values::model_config_public_value;
 use super::normalization::{
     model_config_id_for, normalize_api_key_input, normalize_optional_string,
-    normalize_provider_input, normalize_thinking_level_input,
+    normalize_prompt_vendor_input, normalize_provider_input, normalize_thinking_level_input,
 };
 
 pub(in crate::api) async fn list_model_configs(
@@ -59,6 +59,7 @@ pub(in crate::api) async fn create_model_config(
         return Err(bad_request("name is required"));
     };
     let provider = normalize_provider_input(input.provider)?;
+    let prompt_vendor = normalize_prompt_vendor_input(input.prompt_vendor, provider.as_str())?;
     let api_key = normalize_api_key_input(input.api_key)?;
     let api_key_present = api_key.is_some();
     let base_url = normalize_optional_string(input.base_url);
@@ -93,6 +94,7 @@ pub(in crate::api) async fn create_model_config(
         owner_user_id: owner_user_id.clone(),
         name,
         provider: provider.clone(),
+        prompt_vendor,
         model,
         thinking_level: normalize_thinking_level_input(
             provider.as_str(),
@@ -182,8 +184,15 @@ pub(in crate::api) async fn update_model_config(
         };
         record.name = name;
     }
+    let provider_changed = input.provider.is_some();
     if let Some(provider) = input.provider {
         record.provider = normalize_provider_input(Some(provider))?;
+    }
+    if input.prompt_vendor.is_some() || provider_changed {
+        let next = normalize_prompt_vendor_input(input.prompt_vendor, record.provider.as_str())?;
+        if next.is_some() || record.prompt_vendor.is_none() {
+            record.prompt_vendor = next;
+        }
     }
     if let Some(model) = input.model {
         let Some(model) = normalize_optional_string(Some(model)) else {

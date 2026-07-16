@@ -82,6 +82,48 @@ import {
   updateLocalProjectRuntimeEnvironmentSettings,
 } from './runtimeEnvironment';
 import {
+  appendLocalFsGitignore,
+  createLocalFsDirectory,
+  createLocalFsFile,
+  deleteLocalFsEntry,
+  discardLocalFsGitChanges,
+  downloadLocalFsEntry,
+  listLocalFsEntries,
+  moveLocalFsEntry,
+  openLocalFsPath,
+  readLocalFsFile,
+  searchLocalFsContent,
+  searchLocalFsEntries,
+  writeLocalFsFile,
+} from './filesystem';
+import {
+  analyzeLocalProjectRun,
+  executeLocalProjectRun,
+  getLocalProjectRunCatalog,
+  getLocalProjectRunEnvironment,
+  getLocalProjectRunState,
+  setLocalProjectRunDefault,
+  updateLocalProjectRunEnvironment,
+} from './projectRuns';
+import {
+  checkoutLocalGit,
+  commitLocalGit,
+  compareLocalGitBranch,
+  createLocalGitBranch,
+  discardLocalGitPaths,
+  fetchLocalGit,
+  getLocalGitDiff,
+  getLocalGitBranches,
+  getLocalGitClientInfo,
+  getLocalGitStatus,
+  getLocalGitSummary,
+  mergeLocalGit,
+  pullLocalGit,
+  pushLocalGit,
+  stageLocalGitPaths,
+  unstageLocalGitPaths,
+} from './git';
+import {
   completeLocalTaskManagerTask,
   deleteLocalTaskManagerTask,
   getLocalActiveMessageTasks,
@@ -117,6 +159,131 @@ const toSessionResponse = (
 });
 
 export class LocalRuntimeClient {
+  getGitClientInfo() {
+    return getLocalGitClientInfo();
+  }
+
+  getGitSummary(root: string) {
+    return getLocalGitSummary(root);
+  }
+
+  getGitBranches(root: string) {
+    return getLocalGitBranches(root);
+  }
+
+  getGitStatus(root: string) {
+    return getLocalGitStatus(root);
+  }
+
+  compareGitBranch(root: string, target: string) {
+    return compareLocalGitBranch(root, target);
+  }
+
+  getGitDiff(data: { root: string; path: string; target?: string; staged?: boolean }) {
+    return getLocalGitDiff(data);
+  }
+
+  fetchGit(data: { root: string; remote?: string }) {
+    return fetchLocalGit(data);
+  }
+
+  pullGit(data: { root: string; mode?: string }) {
+    return pullLocalGit(data);
+  }
+
+  pushGit(data: { root: string; remote?: string; branch?: string; setUpstream?: boolean }) {
+    return pushLocalGit(data);
+  }
+
+  checkoutGit(data: {
+    root: string;
+    branch?: string;
+    remoteBranch?: string;
+    createTracking?: boolean;
+  }) {
+    return checkoutLocalGit(data);
+  }
+
+  createGitBranch(data: { root: string; name: string; startPoint?: string; checkout?: boolean }) {
+    return createLocalGitBranch(data);
+  }
+
+  mergeGit(data: { root: string; branch: string; mode?: string }) {
+    return mergeLocalGit(data);
+  }
+
+  stageGitPaths(data: { root: string; paths: string[] }) {
+    return stageLocalGitPaths(data);
+  }
+
+  unstageGitPaths(data: { root: string; paths: string[] }) {
+    return unstageLocalGitPaths(data);
+  }
+
+  discardGitPaths(data: { root: string; paths: string[] }) {
+    return discardLocalGitPaths(data);
+  }
+
+  commitGit(data: { root: string; message: string; paths?: string[] }) {
+    return commitLocalGit(data);
+  }
+
+  listFsEntries(path: string) {
+    return listLocalFsEntries(path);
+  }
+
+  searchFsEntries(path: string, query: string, limit?: number) {
+    return searchLocalFsEntries(path, query, limit);
+  }
+
+  searchFsContent(
+    path: string,
+    query: string,
+    options?: { limit?: number; caseSensitive?: boolean; wholeWord?: boolean },
+  ) {
+    return searchLocalFsContent(path, query, options);
+  }
+
+  readFsFile(path: string) {
+    return readLocalFsFile(path);
+  }
+
+  createFsDirectory(parentPath: string, name: string) {
+    return createLocalFsDirectory(parentPath, name);
+  }
+
+  createFsFile(parentPath: string, name: string, content: string) {
+    return createLocalFsFile(parentPath, name, content);
+  }
+
+  writeFsFile(path: string, content: string) {
+    return writeLocalFsFile(path, content);
+  }
+
+  deleteFsEntry(path: string, recursive: boolean) {
+    return deleteLocalFsEntry(path, recursive);
+  }
+
+  moveFsEntry(sourcePath: string, targetParentPath: string, options?: import('../client/types').FsMoveOptions) {
+    return moveLocalFsEntry(sourcePath, targetParentPath, options);
+  }
+
+  appendFsGitignore(path: string, mode: 'file' | 'folder' | 'extension') {
+    return appendLocalFsGitignore(path, mode);
+  }
+
+  openFsPath(path: string, mode: 'default' | 'reveal' | 'code') {
+    return openLocalFsPath(path, mode);
+  }
+
+  discardFsGitChanges(path: string) {
+    return discardLocalFsGitChanges(path);
+  }
+
+  downloadFsEntry(path: string) {
+    return downloadLocalFsEntry(path);
+  }
+
   async listConnectorDevices(): Promise<LocalConnectorDeviceResponse[]> {
     return listLocalRuntimeDevices();
   }
@@ -244,6 +411,51 @@ export class LocalRuntimeClient {
     projectId: string,
   ): Promise<ProjectRuntimeEnvironmentProgressResponse> {
     return getLocalProjectRuntimeEnvironmentProgress(projectId);
+  }
+
+  analyzeProjectRun(projectId: string) {
+    return analyzeLocalProjectRun(projectId);
+  }
+
+  getProjectRunCatalog(projectId: string) {
+    return getLocalProjectRunCatalog(projectId);
+  }
+
+  getProjectRunState(projectId: string) {
+    return getLocalProjectRunState(projectId);
+  }
+
+  getProjectRunEnvironment(projectId: string) {
+    return getLocalProjectRunEnvironment(projectId);
+  }
+
+  updateProjectRunEnvironment(
+    projectId: string,
+    data: {
+      selected_toolchains?: Record<string, string>;
+      custom_toolchains?: Record<string, { kind?: string; label?: string; path?: string }>;
+      env_vars?: Record<string, string>;
+      terminal_ui_enabled?: boolean;
+    },
+  ) {
+    return updateLocalProjectRunEnvironment(projectId, data);
+  }
+
+  executeProjectRun(
+    projectId: string,
+    data: {
+      target_id?: string;
+      cwd?: string;
+      command?: string;
+      create_if_missing?: boolean;
+      terminal_id?: string;
+    },
+  ) {
+    return executeLocalProjectRun(projectId, data);
+  }
+
+  setProjectRunDefault(projectId: string, targetId: string) {
+    return setLocalProjectRunDefault(projectId, targetId);
   }
 
   async getSessions(projectId: string): Promise<SessionResponse[]> {

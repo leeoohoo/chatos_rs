@@ -241,12 +241,8 @@ pub(super) async fn create_project(
 
 pub(super) async fn create_cloud_project(
     auth: AuthUser,
-    headers: HeaderMap,
     multipart: Multipart,
 ) -> (StatusCode, Json<Value>) {
-    if let Err(err) = require_local_connector_desktop(&headers) {
-        return err;
-    }
     let input = match parse_cloud_project_multipart(multipart).await {
         Ok(input) => input,
         Err(err) => return err,

@@ -227,6 +227,27 @@
   color: var(--success);
 }
 
+.sandboxNetworkApprovalRow {
+  align-items: center;
+  border-top: 1px solid var(--border-subtle);
+  display: flex;
+  gap: 10px;
+  justify-content: space-between;
+  margin-top: auto;
+  padding-top: 8px;
+}
+
+.sandboxNetworkApprovalRow > div {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.sandboxNetworkApprovalRow .switch {
+  flex: 0 0 auto;
+}
+
 .sandboxInboundNotice {
   background: var(--panel-subtle);
   border-left: 3px solid var(--accent);

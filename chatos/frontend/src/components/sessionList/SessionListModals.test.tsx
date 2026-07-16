@@ -35,6 +35,9 @@ describe('SessionList modals', () => {
     );
 
     expect(screen.getByRole('dialog', { name: '新增项目' })).toBeInTheDocument();
+    fireEvent.change(screen.getByRole('combobox', { name: '项目来源' }), {
+      target: { value: 'empty' },
+    });
     fireEvent.click(screen.getByRole('button', { name: '创建' }));
     expect(onCreate).toHaveBeenCalledTimes(1);
 
@@ -144,6 +147,49 @@ describe('SessionList modals', () => {
 
     expect(screen.queryByRole('button', { name: '本地连接器' })).not.toBeInTheDocument();
     expect(screen.getByDisplayValue('Cloud Project')).toBeInTheDocument();
+  });
+
+  it('lets cloud projects choose one source without mixing Git and ZIP inputs', () => {
+    const onCreate = vi.fn();
+    const onGitUrlChange = vi.fn();
+    const onZipFileChange = vi.fn();
+    const props = {
+      isOpen: true,
+      allowLocalConnector: false,
+      projectRoot: '',
+      cloudProjectName: 'Cloud Project',
+      cloudProjectGitUrl: '',
+      projectError: null,
+      onClose: vi.fn(),
+      onProjectRootChange: vi.fn(),
+      onCloudProjectGitUrlChange: onGitUrlChange,
+      onCloudProjectZipFileChange: onZipFileChange,
+      onOpenPicker: vi.fn(),
+      onCreate,
+    };
+    const { rerender } = render(<CreateProjectModal {...props} cloudProjectZipFile={null} />);
+    const sourceSelect = screen.getByRole('combobox', { name: '项目来源' });
+
+    expect(screen.getByLabelText('Git 地址')).toBeInTheDocument();
+    expect(screen.queryByLabelText('ZIP 压缩包')).not.toBeInTheDocument();
+
+    fireEvent.change(sourceSelect, { target: { value: 'zip' } });
+
+    expect(onGitUrlChange).toHaveBeenCalledWith('');
+    expect(screen.queryByLabelText('Git 地址')).not.toBeInTheDocument();
+    expect(screen.getByLabelText('ZIP 压缩包')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: '创建' }));
+    expect(screen.getByText('请选择 ZIP 压缩包')).toBeInTheDocument();
+    expect(onCreate).not.toHaveBeenCalled();
+
+    const zipFile = new File(['zip'], 'project.zip', { type: 'application/zip' });
+    fireEvent.change(screen.getByLabelText('ZIP 压缩包'), { target: { files: [zipFile] } });
+    expect(onZipFileChange).toHaveBeenCalledWith(zipFile);
+    rerender(<CreateProjectModal {...props} cloudProjectZipFile={zipFile} />);
+    fireEvent.click(screen.getByRole('button', { name: '创建' }));
+
+    expect(onCreate).toHaveBeenCalledTimes(1);
   });
 
   it('renders contact creation dialog with selectable agents', () => {

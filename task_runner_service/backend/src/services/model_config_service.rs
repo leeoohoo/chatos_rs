@@ -17,7 +17,8 @@ use crate::store::AppStore;
 
 use super::model_catalog::{
     fetch_model_catalog_for_record, normalize_model_base_url_input, normalize_model_config_record,
-    normalize_model_provider_input, normalize_model_thinking_level_input,
+    normalize_model_prompt_vendor_input, normalize_model_provider_input,
+    normalize_model_thinking_level_input,
 };
 use super::{normalized_optional, validate_required, ModelConfigService};
 
@@ -76,6 +77,8 @@ impl ModelConfigService {
         let provider = normalize_model_provider_input(&input.provider)?;
         let thinking_level =
             normalize_model_thinking_level_input(provider.as_str(), input.thinking_level)?;
+        let prompt_vendor =
+            normalize_model_prompt_vendor_input(input.prompt_vendor, provider.as_str())?;
         let existing = self
             .store
             .get_model_config(input.id.trim())
@@ -102,6 +105,7 @@ impl ModelConfigService {
             }),
             name: input.name.trim().to_string(),
             provider: provider.clone(),
+            prompt_vendor,
             base_url: input.base_url.trim().trim_end_matches('/').to_string(),
             api_key: input.api_key.trim().to_string(),
             model: input.model.trim().to_string(),

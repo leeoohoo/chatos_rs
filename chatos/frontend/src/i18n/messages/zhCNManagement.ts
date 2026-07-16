@@ -388,6 +388,8 @@ export const zhCNManagementMessages: MessageDictionary = {
   'aiModelManager.form.name': '配置名称',
   'aiModelManager.form.namePlaceholder': '例如: OpenAI GPT-4',
   'aiModelManager.form.provider': '供应商',
+  'aiModelManager.form.promptVendor': 'Prompt 类型',
+  'aiModelManager.form.promptVendorHint': '系统已按供应商自动选择。只有兼容接口需要时才调整。',
   'aiModelManager.form.baseUrl': 'Base URL',
   'aiModelManager.form.baseUrlPlaceholder': '例如: https://api.openai.com/v1',
   'aiModelManager.form.apiKey': 'API Key',

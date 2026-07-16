@@ -58,7 +58,7 @@ pub(super) fn local_state(root: &std::path::Path, provider_url: String) -> Local
         }],
         "model_configs": {
             "configs": [{
-                "id": "model-task", "name": "Task model", "provider": "openai",
+                "id": "model-task", "name": "Task model", "provider": "openai", "prompt_vendor": "gpt",
                 "model": "gpt-test", "base_url": provider_url, "api_key": "secret",
                 "enabled": true, "supports_images": false, "supports_reasoning": false,
                 "supports_responses": true, "created_at": "2026-01-01T00:00:00Z",

@@ -19,6 +19,7 @@ import {
   buildModelColumns,
   buildProviderColumns,
   buildUpdateProviderPayload,
+  defaultPromptVendor,
   type ProviderFormValues,
 } from './models/modelPageUtils';
 
@@ -178,6 +179,7 @@ export function ModelsPage() {
     form.setFieldsValue({
       owner_user_id: selectedUserId,
       provider: 'gpt',
+      prompt_vendor: 'gpt',
       enabled: true,
       supports_images: false,
       supports_reasoning: false,
@@ -193,6 +195,7 @@ export function ModelsPage() {
       owner_user_id: record.owner_user_id,
       name: record.name,
       provider: record.provider,
+      prompt_vendor: record.prompt_vendor || defaultPromptVendor(record.provider),
       api_key: '',
       clear_api_key: false,
       base_url: record.base_url || '',

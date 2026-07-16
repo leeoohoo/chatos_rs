@@ -49,6 +49,7 @@ struct AiModelConfigRequest {
     id: Option<String>,
     name: Option<String>,
     provider: Option<String>,
+    prompt_vendor: Option<String>,
     model: Option<String>,
     thinking_level: Option<String>,
     task_usage_scenario: Option<String>,

@@ -118,9 +118,9 @@ const TABS: Array<{
   },
   {
     id: 'sandbox',
-    label: '本地保护',
+    label: '安全沙箱',
     eyebrow: 'SANDBOX',
-    description: '用安全默认值限制本地任务访问文件和网络。',
+    description: '选择任务隔离方式，并管理文件、网络与 AI 审批策略。',
     icon: Shield,
   },
 ];
@@ -356,9 +356,7 @@ function SettingsApp() {
               {activeTab === 'models' ? <ModelConfigPanel /> : null}
               {activeTab === 'approval' ? <ApprovalPanel /> : null}
               {activeTab === 'settings' ? <RuntimeSettingsPanel /> : null}
-              {activeTab === 'sandbox' ? (
-                <SandboxPanel status={status} onStatus={setStatus} onRefresh={refresh} />
-              ) : null}
+              {activeTab === 'sandbox' ? <SandboxPanel status={status} onRefresh={refresh} /> : null}
             </div>
           </section>
         </main>

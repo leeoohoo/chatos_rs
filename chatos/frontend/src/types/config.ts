@@ -3,6 +3,8 @@
 
 import type { UnknownRecord } from './common';
 
+export type AgentPromptVendor = 'glm' | 'deepseek' | 'gpt' | 'kimi';
+
 export interface SystemContext {
   id: string;
   name: string;
@@ -42,6 +44,7 @@ export interface AiModelConfig {
   id: string;
   name: string;
   provider: string;
+  prompt_vendor?: AgentPromptVendor;
   base_url: string;
   api_key: string;
   has_api_key: boolean;
@@ -64,6 +67,7 @@ export interface AiModelProvider {
   id: string;
   name: string;
   provider: string;
+  prompt_vendor?: AgentPromptVendor;
   base_url: string;
   api_key: string;
   has_api_key: boolean;

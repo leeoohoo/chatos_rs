@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
+mod agent_prompts;
 mod approval;
 mod auth;
 mod helpers;
@@ -15,6 +16,9 @@ mod system_permissions;
 mod terminal;
 mod workspace;
 
+pub(super) use agent_prompts::{
+    local_agent_prompt_status, local_check_agent_prompt_updates, local_update_agent_prompt_bundle,
+};
 pub(super) use approval::{
     local_approval_settings, local_approve_pending_approval, local_deny_pending_approval,
     local_pending_approvals, local_update_approval_settings,

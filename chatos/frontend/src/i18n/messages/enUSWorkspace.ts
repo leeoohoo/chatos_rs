@@ -283,6 +283,7 @@ export const enUSWorkspaceMessages: MessageDictionary = {
   'cloudRuntime.regenerateImage': 'Regenerate',
   'cloudRuntime.generatingImage': 'Generating...',
   'cloudRuntime.platformImage': 'Platform image',
+  'cloudRuntime.localDockerfilePlan': 'Local sandbox build plan',
   'cloudRuntime.environment': 'Environment',
   'cloudRuntime.image': 'Image',
   'cloudRuntime.provider': 'Provider',

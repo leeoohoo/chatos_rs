@@ -128,8 +128,8 @@ async fn replace_image_plans(
             INSERT INTO project_runtime_environment_images (
                 id, project_id, owner_user_id, environment_key, environment_type,
                 display_name, image_ref, image_provider, features_json, ports_json,
-                env_vars_json, status, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, 'local_connector', ?, ?, ?, 'planned', ?, ?)
+                env_vars_json, dockerfile, status, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, 'local_connector', ?, ?, ?, ?, 'planned', ?, ?)
             "#,
         )
         .bind(format!("lc_env_image_{}", Uuid::new_v4()))
@@ -142,6 +142,7 @@ async fn replace_image_plans(
         .bind(serde_json::to_string(&plan.features)?)
         .bind(serde_json::to_string(&plan.ports)?)
         .bind(serde_json::to_string(&plan.env_vars)?)
+        .bind(plan.dockerfile.as_deref())
         .bind(now)
         .bind(now)
         .execute(&mut **transaction)

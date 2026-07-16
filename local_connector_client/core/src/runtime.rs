@@ -12,8 +12,9 @@ use tokio::task::JoinHandle;
 use crate::config::ClientConfig;
 use crate::connector::connect_loop;
 use crate::local_runtime::{
-    run_local_task_worker_loop, sync_local_plugin_control_plane, LocalAskUserPromptRegistry,
-    LocalDatabase, LocalEnvironmentJobRegistry, LocalMemoryJobRegistry, LocalTurnControlRegistry,
+    check_agent_prompt_updates, run_local_task_worker_loop, spawn_agent_prompt_update_checker,
+    sync_local_plugin_control_plane, LocalAskUserPromptRegistry, LocalDatabase,
+    LocalEnvironmentJobRegistry, LocalMemoryJobRegistry, LocalTurnControlRegistry,
 };
 use crate::model_configs::reconcile_local_model_configs;
 use crate::registration::{ensure_device_registered, ensure_workspace_registered};
@@ -35,6 +36,7 @@ pub(crate) struct LocalRuntime {
     pub(crate) environment_jobs: LocalEnvironmentJobRegistry,
     pub(crate) connector_task: Arc<Mutex<Option<JoinHandle<()>>>>,
     pub(crate) task_worker_task: Arc<Mutex<Option<JoinHandle<()>>>>,
+    pub(crate) agent_prompt_check_task: Arc<Mutex<Option<JoinHandle<()>>>>,
     pub(crate) sandbox_runtime: LocalSandboxRuntime,
 }
 
@@ -56,6 +58,7 @@ impl LocalRuntime {
             environment_jobs: LocalEnvironmentJobRegistry::default(),
             connector_task: Arc::new(Mutex::new(None)),
             task_worker_task: Arc::new(Mutex::new(None)),
+            agent_prompt_check_task: Arc::new(Mutex::new(None)),
             sandbox_runtime: LocalSandboxRuntime::default(),
         }
     }
@@ -111,6 +114,13 @@ impl LocalRuntime {
             return Ok(());
         };
         config.ensure_remote_urls_allowed()?;
+        {
+            let mut current = self.agent_prompt_check_task.lock().await;
+            if let Some(handle) = current.take() {
+                handle.abort();
+            }
+            *current = Some(spawn_agent_prompt_update_checker(self.clone()));
+        }
 
         let mut state = self.state.write().await;
         let previous_device_id = state.device_id.clone();
@@ -171,6 +181,9 @@ impl LocalRuntime {
             Err(err) => {
                 tracing_stdout(format!("keep cached Plugin capability snapshots: {err}").as_str())
             }
+        }
+        if let Err(err) = check_agent_prompt_updates(self).await {
+            tracing_stdout(format!("check Agent Prompt updates failed: {err}").as_str());
         }
         let config = {
             let state = self.state.read().await;

@@ -24,6 +24,7 @@ use crate::models::*;
 use crate::state::AppState;
 use crate::store::{normalized, now_rfc3339};
 
+mod agent_provider_prompts;
 mod agents;
 mod availability;
 mod capabilities;
@@ -32,9 +33,14 @@ mod local_connector;
 mod local_connector_skills;
 mod mcps;
 mod resource_policy;
+mod runtime_agent_prompts;
 mod skill_packages;
 mod skills;
 
+use agent_provider_prompts::{
+    agent_prompt_completeness, generate_agent_provider_prompt, list_agent_provider_prompts,
+    publish_agent_provider_prompt, update_agent_provider_prompt_draft,
+};
 use agents::{
     create_system_agent, get_agent_mcp_bindings, list_system_agents, update_agent_mcp_bindings,
     update_system_agent,
@@ -63,14 +69,22 @@ use mcps::{
     update_mcp_provider_skill,
 };
 use resource_policy::*;
+use runtime_agent_prompts::{
+    agent_prompt_bundle_internal, agent_prompt_bundle_manifest_internal,
+    resolve_agent_prompt_internal,
+};
 use skill_packages::{
     create_skill_package, delete_skill_package, get_skill_package, list_skill_packages,
     update_skill_package,
 };
 use skills::{check_skill, create_skill, delete_skill, get_skill, list_skills, update_skill};
 
-const ALLOWED_INTERNAL_CALLER_SERVICES: &[&str] =
-    &["task-runner", "project-service", "local-connector-service"];
+const ALLOWED_INTERNAL_CALLER_SERVICES: &[&str] = &[
+    "chatos-backend",
+    "task-runner",
+    "project-service",
+    "local-connector-service",
+];
 
 #[derive(Debug)]
 pub struct ApiError {
@@ -187,6 +201,26 @@ pub fn build_router(state: AppState) -> Router {
         )
         .route("/api/system-agents/{agent_key}", patch(update_system_agent))
         .route(
+            "/api/system-agents/{agent_key}/provider-prompts",
+            get(list_agent_provider_prompts),
+        )
+        .route(
+            "/api/system-agents/{agent_key}/provider-prompts/{vendor}/draft",
+            axum::routing::put(update_agent_provider_prompt_draft),
+        )
+        .route(
+            "/api/system-agents/{agent_key}/provider-prompts/{vendor}/publish",
+            post(publish_agent_provider_prompt),
+        )
+        .route(
+            "/api/system-agents/{agent_key}/provider-prompts/{vendor}/generate",
+            post(generate_agent_provider_prompt),
+        )
+        .route(
+            "/api/system-agents/prompt-completeness",
+            get(agent_prompt_completeness),
+        )
+        .route(
             "/api/system-agents/{agent_key}/mcp-bindings",
             get(get_agent_mcp_bindings).put(update_agent_mcp_bindings),
         )
@@ -197,6 +231,18 @@ pub fn build_router(state: AppState) -> Router {
         .route_layer(middleware::from_fn_with_state(state.clone(), require_auth));
 
     let internal_api = Router::new()
+        .route(
+            "/api/internal/runtime/agent-prompts/resolve",
+            post(resolve_agent_prompt_internal),
+        )
+        .route(
+            "/api/internal/runtime/agent-prompts/manifest",
+            get(agent_prompt_bundle_manifest_internal),
+        )
+        .route(
+            "/api/internal/runtime/agent-prompts/bundle",
+            get(agent_prompt_bundle_internal),
+        )
         .route(
             "/api/internal/runtime/agent-capabilities/resolve",
             post(resolve_agent_capabilities_internal),

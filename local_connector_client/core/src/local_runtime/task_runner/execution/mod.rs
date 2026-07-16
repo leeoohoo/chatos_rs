@@ -9,12 +9,15 @@ use chatos_ai_runtime::{
     AiRuntimeOptions, RuntimeRecordOptions, TaskMcpInitMode, TaskRunExecution, TaskRunSpec,
     TaskRuntime, TaskRuntimeConfig,
 };
+use chatos_plugin_management_sdk::{required_agent_prompt_vendor, SystemAgentKey};
 use serde_json::json;
 use tokio_util::sync::CancellationToken;
 
+use crate::local_runtime::capabilities::merge_system_prompts;
 use crate::local_runtime::chat::{
     prepare_local_chat_tools, LocalChatEventStream, LocalChatRecordWriter,
 };
+use crate::local_runtime::load_installed_agent_prompt;
 use crate::local_runtime::model::build_local_model_config;
 use crate::local_runtime::storage::{BeginLocalTurnInput, BeginLocalTurnResult};
 use crate::local_runtime::task_runner::LocalTaskRunRecord;
@@ -66,9 +69,21 @@ pub(super) async fn execute_local_task_run(
         .map_err(|error| error.to_string())?
     };
     let model_name = resolved_model.model.clone();
+    let prompt_vendor = required_agent_prompt_vendor(
+        resolved_model.prompt_vendor.as_deref(),
+        resolved_model.provider.as_str(),
+    )
+    .map_err(|error| error.to_string())?;
+    let installed_prompt =
+        load_installed_agent_prompt(runtime, SystemAgentKey::TaskRunnerRunPhase, prompt_vendor)
+            .await
+            .map_err(|error| error.to_string())?;
     let model = build_local_model_config(
         resolved_model,
-        prepared.capability_prompt.clone(),
+        merge_system_prompts(
+            Some(installed_prompt.content),
+            prepared.capability_prompt.clone(),
+        ),
         settings.selected_thinking_level.clone(),
         None,
         true,

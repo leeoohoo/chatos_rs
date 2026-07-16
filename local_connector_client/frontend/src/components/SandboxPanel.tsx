@@ -27,11 +27,9 @@ import { SandboxPolicySettings } from './SandboxPolicySettings';
 
 export function SandboxPanel({
   status,
-  onStatus,
   onRefresh,
 }: {
   status: ConnectorStatus;
-  onStatus: (status: ConnectorStatus) => void;
   onRefresh: () => Promise<void>;
 }) {
   const [catalog, setCatalog] = React.useState<SandboxImageCatalog | null>(null);
@@ -46,6 +44,7 @@ export function SandboxPanel({
   const [building, setBuilding] = React.useState(false);
   const [imageActionId, setImageActionId] = React.useState<string | null>(null);
   const [savingSettings, setSavingSettings] = React.useState(false);
+  const enablingSandbox = React.useRef(false);
 
   const refreshSandboxConfig = React.useCallback(async () => {
     try {
@@ -102,6 +101,43 @@ export function SandboxPanel({
   }, [refreshSandboxDetails]);
 
   React.useEffect(() => {
+    if (
+      status.sandbox.enabled
+      || !capabilities
+      || status.sandbox.permission_configuration_error
+      || enablingSandbox.current
+    ) {
+      return;
+    }
+    const configuredBackend = settings?.default_backend || status.sandbox.default_backend;
+    const configuredReady = capabilities.backends.find(
+      (capability) => capability.backend === configuredBackend && capability.status === 'ready',
+    );
+    const preferred = configuredReady
+      || capabilities.backends.find(
+        (capability) => capability.backend === 'local_process' && capability.status === 'ready',
+      )
+      || capabilities.backends.find((capability) => capability.status === 'ready');
+    if (!preferred) {
+      setMessage('当前没有可用的沙箱运行方式，请先启动 Docker 或修复本机进程沙箱。');
+      return;
+    }
+    enablingSandbox.current = true;
+    void api.updateSandboxSettings({
+      enabled: true,
+      default_backend: preferred.backend,
+    }).then(async (nextSettings) => {
+      setSettings(nextSettings);
+      setMessage('安全沙箱已自动启用');
+      await onRefresh();
+    }).catch((err) => {
+      setMessage(err instanceof Error ? err.message : '启用安全沙箱失败');
+    }).finally(() => {
+      enablingSandbox.current = false;
+    });
+  }, [capabilities, onRefresh, settings?.default_backend, status.sandbox]);
+
+  React.useEffect(() => {
     if (!status.sandbox.enabled) {
       return;
     }
@@ -110,18 +146,6 @@ export function SandboxPanel({
     }, jobs.some((job) => job.status === 'running') ? 2500 : 6000);
     return () => window.clearInterval(interval);
   }, [jobs, refreshSandboxDetails, status.sandbox.enabled]);
-
-  const setEnabled = async (enabled: boolean) => {
-    setMessage(null);
-    try {
-      const next = await api.setSandboxEnabled({ enabled });
-      onStatus(next);
-      setMessage(enabled ? '本地保护已开启' : '本地保护已关闭');
-      await Promise.all([refreshSandboxConfig(), onRefresh()]);
-    } catch (err) {
-      setMessage(err instanceof Error ? err.message : '沙箱设置失败');
-    }
-  };
 
   const saveSandboxSettings = async (
     patch: SandboxSettingsUpdate,
@@ -199,22 +223,21 @@ export function SandboxPanel({
       <div className="panel sandboxHero">
         <div className="panelHeader">
           <div>
-            <h2><Shield size={18} />本地保护</h2>
-            <p>限制本地任务能访问的文件和网络；所有执行与数据都留在当前电脑。</p>
+            <h2><Shield size={18} />安全沙箱</h2>
+            <p>选择任务使用本机进程隔离还是 Docker，并管理文件、网络与 AI 审批。</p>
           </div>
           <div className="headerActions">
-            <button className="iconButton" onClick={() => void refreshSandboxDetails()} title="刷新本地保护状态">
+            <button
+              className="iconButton"
+              onClick={() => void Promise.all([
+                refreshSandboxConfig(),
+                refreshSandboxDetails(),
+                onRefresh(),
+              ])}
+              title="刷新安全沙箱状态"
+            >
               <RefreshCw size={17} />
             </button>
-            <label className="switch">
-              <input
-                type="checkbox"
-                checked={status.sandbox.enabled}
-                disabled={Boolean(status.sandbox.permission_configuration_error)}
-                onChange={(event) => void setEnabled(event.target.checked)}
-              />
-              <span />
-            </label>
           </div>
         </div>
         {status.sandbox.permission_configuration_error ? (
@@ -236,7 +259,7 @@ export function SandboxPanel({
         <details className="panel sandboxAdvancedPanel">
           <summary>
             <span><Settings2 size={16} />高级运行信息</span>
-            <small>Docker 镜像、构建任务和当前运行实例</small>
+            <small>可选 Docker 镜像、构建任务和当前运行实例</small>
           </summary>
           <div className="sandboxAdvancedContent">
           <div className="sandboxContentGrid">
@@ -400,7 +423,7 @@ export function SandboxPanel({
         </details>
       ) : (
         <section className="panel">
-          <div className="emptyState">打开本地保护后，客户端会自动选择当前电脑可用的安全隔离方式。</div>
+          <div className="emptyState">正在启用安全沙箱；如果持续不可用，请启动 Docker 或检查本机沙箱组件。</div>
         </section>
       )}
     </section>

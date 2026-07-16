@@ -198,6 +198,8 @@ pub struct UserModelConfigRecord {
     pub owner_user_id: String,
     pub name: String,
     pub provider: String,
+    #[serde(default)]
+    pub prompt_vendor: Option<String>,
     pub model: String,
     pub thinking_level: Option<String>,
     pub task_usage_scenario: Option<String>,
@@ -222,6 +224,8 @@ pub struct UserModelProviderRecord {
     pub owner_user_id: String,
     pub name: String,
     pub provider: String,
+    #[serde(default)]
+    pub prompt_vendor: Option<String>,
     pub api_key: Option<String>,
     #[serde(default)]
     pub has_api_key: bool,
@@ -405,6 +409,7 @@ pub struct CreateUserModelConfigRequest {
     pub owner_user_id: Option<String>,
     pub name: String,
     pub provider: Option<String>,
+    pub prompt_vendor: Option<String>,
     pub model: Option<String>,
     pub thinking_level: Option<String>,
     pub task_usage_scenario: Option<String>,
@@ -427,6 +432,7 @@ pub struct CreateUserModelProviderRequest {
     pub owner_user_id: Option<String>,
     pub name: String,
     pub provider: Option<String>,
+    pub prompt_vendor: Option<String>,
     pub api_key: Option<String>,
     #[serde(default)]
     pub has_api_key: Option<bool>,
@@ -441,6 +447,7 @@ pub struct CreateUserModelProviderRequest {
 pub struct UpdateUserModelConfigRequest {
     pub name: Option<String>,
     pub provider: Option<String>,
+    pub prompt_vendor: Option<String>,
     pub model: Option<String>,
     pub thinking_level: Option<String>,
     pub task_usage_scenario: Option<String>,
@@ -463,6 +470,7 @@ pub struct UpdateUserModelConfigRequest {
 pub struct UpdateUserModelProviderRequest {
     pub name: Option<String>,
     pub provider: Option<String>,
+    pub prompt_vendor: Option<String>,
     pub api_key: Option<String>,
     pub has_api_key: Option<bool>,
     pub clear_api_key: Option<bool>,

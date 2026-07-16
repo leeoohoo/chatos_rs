@@ -3,7 +3,7 @@
 
 import type { FormEvent } from 'react';
 
-import type { AiModelConfig, AiModelProvider } from '../../types';
+import type { AgentPromptVendor, AiModelConfig, AiModelProvider } from '../../types';
 
 export interface AiModelManagerProps {
   onClose: () => void;
@@ -21,6 +21,7 @@ export interface AiModelManagerProps {
 export interface AiModelFormData {
   name: string;
   provider: string;
+  prompt_vendor: AgentPromptVendor;
   base_url: string;
   api_key: string;
   has_stored_api_key: boolean;

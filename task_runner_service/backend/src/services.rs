@@ -70,6 +70,7 @@ mod model_config_service;
 mod model_runtime_resolver;
 pub(crate) mod path_redaction;
 mod plugin_management_policy;
+mod plugin_management_prompts;
 mod prerequisite_context;
 mod process_log_text;
 pub(crate) mod project_management_api_client;

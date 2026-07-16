@@ -17,8 +17,8 @@ use super::access::{ensure_owner_user_exists, ensure_provider_access, resolve_ta
 use super::contracts::{ModelConfigGetQuery, UserScopeQuery};
 use super::model_values::model_provider_public_value;
 use super::normalization::{
-    normalize_api_key_input, normalize_optional_string, normalize_provider_input,
-    normalized_base_url,
+    normalize_api_key_input, normalize_optional_string, normalize_prompt_vendor_input,
+    normalize_provider_input, normalized_base_url,
 };
 use super::provider_sync::{
     apply_model_provider_update, refresh_provider_models_from_record,
@@ -62,6 +62,7 @@ pub(in crate::api) async fn create_model_provider(
         return Err(bad_request("name is required"));
     };
     let provider = normalize_provider_input(input.provider)?;
+    let prompt_vendor = normalize_prompt_vendor_input(input.prompt_vendor, provider.as_str())?;
     let api_key = normalize_api_key_input(input.api_key)?;
     if api_key.is_none() {
         return Err(bad_request("api_key is required"));
@@ -79,6 +80,7 @@ pub(in crate::api) async fn create_model_provider(
         owner_user_id,
         name,
         provider,
+        prompt_vendor,
         api_key,
         has_api_key: true,
         base_url,

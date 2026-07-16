@@ -251,6 +251,7 @@ export interface LocalModelConfig {
   server_model_config_id?: string | null;
   name: string;
   provider: string;
+  prompt_vendor?: 'glm' | 'deepseek' | 'gpt' | 'kimi' | null;
   model: string;
   model_name: string;
   base_url?: string | null;
@@ -290,6 +291,21 @@ export interface LocalRuntimeSettings {
   developer_cloud_base_url: string;
   developer_user_service_base_url: string;
   developer_chatos_web_url: string;
+}
+
+export interface AgentPromptUpdateStatus {
+  configured: boolean;
+  initialized: boolean;
+  source_instance_id?: string | null;
+  installed_bundle_version: number;
+  remote_bundle_version: number;
+  update_available: boolean;
+  required: boolean;
+  prompt_count: number;
+  expected_prompt_count: number;
+  last_checked_at?: string | null;
+  last_synced_at?: string | null;
+  last_error?: string | null;
 }
 
 export type SystemPermissionStatus =
@@ -344,6 +360,7 @@ export interface LocalModelConfigDraft {
   server_model_config_id?: string | null;
   name: string;
   provider?: string | null;
+  prompt_vendor?: 'glm' | 'deepseek' | 'gpt' | 'kimi' | null;
   model?: string | null;
   base_url?: string | null;
   api_key?: string | null;

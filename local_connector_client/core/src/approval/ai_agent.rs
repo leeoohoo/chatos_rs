@@ -15,7 +15,13 @@ use chatos_ai_runtime::{
     MemoryContextComposer, MemoryEngineRecordWriter, MemoryRecordScope, MemoryScope,
     ModelRuntimeConfig,
 };
+use chatos_plugin_management_sdk::{
+    required_agent_prompt_vendor, AgentPromptVendor, SystemAgentKey,
+};
 
+use crate::local_runtime::{
+    database_path_for_state, load_installed_agent_prompt_from_database, LocalDatabase,
+};
 use crate::mcp::tools::code_maintainer_service_for_root;
 use crate::workspace::paths::resolve_workspace_dir;
 use crate::{local_now_rfc3339, LocalState};
@@ -46,16 +52,30 @@ struct ApprovalAgentMemory {
 
 pub(crate) async fn run_auto_approval_agent(
     state: &LocalState,
+    state_path: &Path,
     request: &CommandApprovalRequest,
     risk_level: &str,
     risk_reason: Option<&str>,
 ) -> Result<AutoApprovalDecision> {
     let root = approval_project_root(state, request)?;
-    let model_config = approval_model_config(
+    let (model_config, prompt_vendor) = approval_model_config(
         state,
         request.project_key.owner_user_id.as_str(),
         root.as_path(),
     )?;
+    let source_instance_id = state
+        .auth
+        .as_ref()
+        .map(|auth| auth.cloud_base_url.trim_end_matches('/'))
+        .ok_or_else(|| anyhow!("Local Connector login is required for Agent Prompt"))?;
+    let database = LocalDatabase::open(database_path_for_state(state_path)).await?;
+    let installed_prompt = load_installed_agent_prompt_from_database(
+        &database,
+        source_instance_id,
+        SystemAgentKey::LocalConnectorCommandApprovalAgent,
+        prompt_vendor,
+    )
+    .await?;
     let capability_policy = resolve_approval_capability_policy(state).await?;
     let code_service = code_maintainer_service_for_root(
         root.as_path(),
@@ -102,6 +122,9 @@ pub(crate) async fn run_auto_approval_agent(
         "project_id": request.project_key.project_id,
         "project_root_relative_path": request.project_key.project_root_relative_path,
         "project_anchor_relative_path": request.project_key.project_anchor_relative_path,
+        "agent_prompt_bundle_version": installed_prompt.bundle_version,
+        "agent_prompt_revision": installed_prompt.revision,
+        "agent_prompt_checksum": installed_prompt.checksum,
     });
     let agent_memory = memory.as_ref().map(|memory| {
         AgentTurnMemory::new(
@@ -115,6 +138,7 @@ pub(crate) async fn run_auto_approval_agent(
         .with_tool_executor(executor)
         .with_memory(agent_memory)
         .with_max_iterations(capability_policy.max_iterations)
+        .with_system_prompt(installed_prompt.content)
         .with_metadata(metadata);
     AgentExecutor::new()
         .run(&COMMAND_APPROVAL_AGENT, turn_request)
@@ -219,7 +243,7 @@ fn approval_model_config(
     state: &LocalState,
     owner_user_id: &str,
     root: &Path,
-) -> Result<ModelRuntimeConfig> {
+) -> Result<(ModelRuntimeConfig, AgentPromptVendor)> {
     let model_config_id = state
         .model_configs
         .settings
@@ -261,18 +285,23 @@ fn approval_model_config(
     } else {
         runtime.provider.trim().to_string()
     };
-    Ok(ModelRuntimeConfig::openai_compatible(
-        runtime.base_url,
-        runtime.api_key,
-        runtime.model,
-        provider,
-    )
-    .with_responses_support(runtime.supports_responses)
-    .with_images_support(Some(runtime.supports_images))
-    .with_temperature(runtime.temperature.or(Some(0.0)))
-    .with_max_output_tokens(runtime.max_output_tokens.or(Some(1_200)))
-    .with_thinking_level(thinking_level)
-    .with_request_cwd(Some(root.display().to_string())))
+    let prompt_vendor =
+        required_agent_prompt_vendor(runtime.prompt_vendor.as_deref(), provider.as_str())?;
+    Ok((
+        ModelRuntimeConfig::openai_compatible(
+            runtime.base_url,
+            runtime.api_key,
+            runtime.model,
+            provider,
+        )
+        .with_responses_support(runtime.supports_responses)
+        .with_images_support(Some(runtime.supports_images))
+        .with_temperature(runtime.temperature.or(Some(0.0)))
+        .with_max_output_tokens(runtime.max_output_tokens.or(Some(1_200)))
+        .with_thinking_level(thinking_level)
+        .with_request_cwd(Some(root.display().to_string())),
+        prompt_vendor,
+    ))
 }
 
 async fn build_approval_agent_memory(

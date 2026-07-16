@@ -3,6 +3,7 @@
 
 use std::collections::BTreeMap;
 
+use chatos_plugin_management_sdk::AgentPromptVendor;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -316,6 +317,46 @@ pub struct SystemAgentPayload {
     pub description: Option<String>,
     pub enabled: Option<bool>,
     pub managed_by: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentProviderPromptRecord {
+    pub id: String,
+    pub agent_key: String,
+    pub vendor: AgentPromptVendor,
+    pub draft_content: Option<String>,
+    pub published_content: Option<String>,
+    pub published_revision: i64,
+    pub published_checksum: Option<String>,
+    pub enabled: bool,
+    pub source_kind: String,
+    pub generated_by_model_config_id: Option<String>,
+    pub created_by: String,
+    pub updated_by: String,
+    pub published_by: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+    pub published_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentPromptBundleVersionRecord {
+    pub id: String,
+    pub version: i64,
+    pub updated_at: String,
+    #[serde(default)]
+    pub required: bool,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct UpdateAgentPromptDraftRequest {
+    pub content: String,
+    pub expected_updated_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct PublishAgentPromptRequest {
+    pub expected_draft_checksum: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

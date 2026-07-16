@@ -373,6 +373,7 @@ mod tests {
             owner_display_name: None,
             name: id.to_string(),
             provider: "openai".to_string(),
+            prompt_vendor: Some("gpt".to_string()),
             base_url: "https://api.openai.com/v1".to_string(),
             api_key: "secret".to_string(),
             model: "gpt-test".to_string(),

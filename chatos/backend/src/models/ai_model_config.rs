@@ -9,6 +9,8 @@ pub struct AiModelConfig {
     pub user_id: Option<String>,
     pub name: String,
     pub provider: String,
+    #[serde(default)]
+    pub prompt_vendor: Option<String>,
     pub model: String,
     pub thinking_level: Option<String>,
     pub task_usage_scenario: Option<String>,

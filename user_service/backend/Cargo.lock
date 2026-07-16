@@ -328,6 +328,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "chatos_plugin_management_sdk"
+version = "0.1.0"
+dependencies = [
+ "chatos_service_runtime",
+ "hex",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sha2 0.11.0",
+ "thiserror 2.0.18",
+ "tokio",
+ "urlencoding",
+]
+
+[[package]]
 name = "chatos_service_runtime"
 version = "0.1.0"
 dependencies = [
@@ -3179,6 +3194,7 @@ dependencies = [
  "argon2",
  "axum",
  "base64 0.22.1",
+ "chatos_plugin_management_sdk",
  "chatos_service_runtime",
  "chrono",
  "dotenvy",

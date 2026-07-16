@@ -87,7 +87,17 @@ describe('CloudProjectRuntimeEnvironmentPanel', () => {
         sandbox_provider: 'local_connector',
         file_provider: 'local_connector',
       },
-      images: [],
+      images: [{
+        id: 'local-image-1',
+        environment_key: 'app',
+        environment_type: 'application',
+        display_name: 'Local application',
+        image_provider: 'local_connector',
+        dockerfile: 'FROM node:22\nCMD ["npm", "start"]',
+        status: 'planned',
+        ports: [3000],
+        env_vars: {},
+      }],
     };
     const client = {
       getProjectRuntimeEnvironment: vi.fn(async () => response),
@@ -109,6 +119,9 @@ describe('CloudProjectRuntimeEnvironmentPanel', () => {
     expect((await screen.findAllByText('local_connector')).length).toBeGreaterThanOrEqual(2);
     expect(screen.getByRole('checkbox', { name: '已启用沙箱' })).toBeChecked();
     expect(screen.getByText('沙箱运行环境')).toBeInTheDocument();
+    expect(screen.getByText('本地沙箱构建计划')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '查看 Dockerfile' }));
+    expect(screen.getByText('FROM node:22', { exact: false })).toBeInTheDocument();
   });
 
   it('shows actionable feedback when the environment initialization model is missing', async () => {

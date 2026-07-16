@@ -6,10 +6,13 @@ mod chat;
 mod context;
 mod error;
 mod events;
+mod filesystem;
+mod git;
 mod guidance;
 mod health;
 mod messages;
 mod project_management;
+mod project_runs;
 mod projects;
 mod recalls;
 mod review_repair;
@@ -21,6 +24,7 @@ mod task_board;
 mod task_runs;
 mod tools;
 mod turn_control;
+mod workspace_path;
 mod workspaces;
 
 use axum::routing::{get, post};
@@ -61,7 +65,10 @@ pub(crate) fn router() -> Router<LocalRuntime> {
                 .delete(projects::delete_project),
         )
         .merge(project_management::router())
+        .merge(project_runs::router())
         .merge(runtime_environment::router())
+        .merge(filesystem::router())
+        .merge(git::router())
         .route(
             "/api/local/runtime/sessions",
             get(sessions::list_sessions).post(sessions::create_session),

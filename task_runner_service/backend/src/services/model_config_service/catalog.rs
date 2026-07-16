@@ -37,6 +37,7 @@ impl ModelConfigService {
             owner_display_name: None,
             name: "preview".to_string(),
             provider: provider.clone(),
+            prompt_vendor: None,
             base_url: normalize_model_base_url_input(provider.as_str(), input.base_url),
             api_key: input
                 .api_key

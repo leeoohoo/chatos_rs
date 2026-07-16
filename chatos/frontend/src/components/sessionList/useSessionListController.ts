@@ -153,7 +153,7 @@ export const useSessionListController = ({
   const [taskRunnerSaving, setTaskRunnerSaving] = useState(false);
 
   const apiClient = useApiClient();
-  const allowProjectCreation = localRuntimeBridgeAvailable();
+  const allowLocalProjectCreation = localRuntimeBridgeAvailable();
   const { confirm, alert } = useDialogService();
 
   const {
@@ -335,7 +335,7 @@ export const useSessionListController = ({
     cloudProjectName,
     cloudProjectGitUrl,
     cloudProjectZipFile,
-    allowProjectCreation,
+    allowLocalProjectCreation,
   });
 
   const sectionExpansion = useSectionExpansion({
@@ -349,11 +349,11 @@ export const useSessionListController = ({
   } = useTerminalUiSetting();
   const workspaceResourceVisibility = useMemo(
     () => resolveWorkspaceResourceVisibility({
-      desktopBridgeAvailable: allowProjectCreation,
+      desktopBridgeAvailable: allowLocalProjectCreation,
       terminalUiEnabled,
       terminalUiResolved,
     }),
-    [allowProjectCreation, terminalUiEnabled, terminalUiResolved],
+    [allowLocalProjectCreation, terminalUiEnabled, terminalUiResolved],
   );
 
   useEffect(() => {
@@ -587,7 +587,7 @@ export const useSessionListController = ({
   return {
     agents,
     apiClient,
-    allowProjectCreation,
+    allowLocalProjectCreation,
     contactSessionCreator,
     contactSessionState,
     currentProject,

@@ -176,6 +176,7 @@ fn relay_local_runtime(
         environment_jobs: Default::default(),
         connector_task: Arc::new(Mutex::new(None)),
         task_worker_task: Arc::new(Mutex::new(None)),
+        agent_prompt_check_task: Arc::new(Mutex::new(None)),
         sandbox_runtime: sandbox_runtime.clone(),
     }
 }

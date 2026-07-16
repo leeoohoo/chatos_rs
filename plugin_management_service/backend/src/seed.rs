@@ -7,9 +7,11 @@ use serde_json::{json, Value};
 use crate::models::*;
 use crate::store::{now_rfc3339, AppStore};
 
+mod agent_prompts;
 mod internal_skills;
 
 use crate::tool_catalog::system_routed_tool_catalog;
+use agent_prompts::seed_agent_prompts;
 use internal_skills::{internal_skill_catalog, seed_internal_skills};
 
 pub const SANDBOX_IMAGES_MCP_RESOURCE_ID: &str = "system_mcp_sandbox_images";
@@ -39,6 +41,7 @@ pub async fn seed_system_resources(store: &AppStore, admin_user_id: &str) -> Res
     seed_system_routed_mcps(store, admin_user_id).await?;
     seed_internal_skills(store, admin_user_id).await?;
     seed_agents(store).await?;
+    seed_agent_prompts(store, admin_user_id).await?;
     seed_agent_bindings(store, admin_user_id).await?;
     Ok(())
 }

@@ -33,6 +33,7 @@ mod managed_requirements_admin;
 mod memory_engine_proxy;
 mod plugin_management_capabilities;
 mod plugin_management_mcps;
+mod plugin_management_prompts;
 mod plugin_management_skills;
 mod project_bindings;
 mod router;
@@ -58,6 +59,7 @@ use self::plugin_management_capabilities::resolve_local_runtime_capabilities;
 use self::plugin_management_mcps::{
     create_local_mcp, delete_local_mcp, list_local_mcps, update_local_mcp, update_local_mcp_status,
 };
+use self::plugin_management_prompts::{get_agent_prompt_bundle, get_agent_prompt_bundle_manifest};
 use self::plugin_management_skills::{
     list_user_skills, sync_user_skill_inventory, update_user_skill_preference,
 };

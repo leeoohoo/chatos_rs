@@ -17,6 +17,8 @@ pub struct AppStore {
     skills: Collection<SkillRecord>,
     skill_packages: Collection<SkillPackageRecord>,
     agents: Collection<SystemAgentRecord>,
+    agent_prompts: Collection<AgentProviderPromptRecord>,
+    agent_prompt_versions: Collection<AgentPromptBundleVersionRecord>,
     bindings: Collection<AgentBindingRecord>,
     checks: Collection<ResourceCheckRecord>,
     skill_preferences: Collection<UserSkillPreferenceRecord>,
@@ -30,6 +32,8 @@ impl AppStore {
             skills: db.collection("plugin_skills"),
             skill_packages: db.collection("plugin_skill_packages"),
             agents: db.collection("plugin_agents"),
+            agent_prompts: db.collection("plugin_agent_provider_prompts"),
+            agent_prompt_versions: db.collection("plugin_agent_prompt_versions"),
             bindings: db.collection("plugin_agent_bindings"),
             checks: db.collection("plugin_resource_checks"),
             skill_preferences: db.collection("plugin_user_skill_preferences"),
@@ -434,6 +438,110 @@ impl AppStore {
             .await
             .map_err(|err| err.to_string())?;
         Ok(())
+    }
+
+    pub async fn list_agent_prompts(
+        &self,
+        agent_key: &str,
+    ) -> Result<Vec<AgentProviderPromptRecord>, String> {
+        let options = FindOptions::builder().sort(doc! { "vendor": 1 }).build();
+        self.agent_prompts
+            .find(doc! { "agent_key": agent_key }, options)
+            .await
+            .map_err(|err| err.to_string())?
+            .try_collect()
+            .await
+            .map_err(|err| err.to_string())
+    }
+
+    pub async fn get_agent_prompt(
+        &self,
+        agent_key: &str,
+        vendor: chatos_plugin_management_sdk::AgentPromptVendor,
+    ) -> Result<Option<AgentProviderPromptRecord>, String> {
+        let vendor = mongodb::bson::to_bson(&vendor).map_err(|err| err.to_string())?;
+        self.agent_prompts
+            .find_one(doc! { "agent_key": agent_key, "vendor": vendor }, None)
+            .await
+            .map_err(|err| err.to_string())
+    }
+
+    pub async fn list_published_agent_prompts(
+        &self,
+    ) -> Result<Vec<AgentProviderPromptRecord>, String> {
+        let options = FindOptions::builder()
+            .sort(doc! { "agent_key": 1, "vendor": 1 })
+            .build();
+        self.agent_prompts
+            .find(
+                doc! {
+                    "enabled": true,
+                    "published_revision": { "$gt": 0 },
+                    "published_content": { "$type": "string", "$ne": "" },
+                },
+                options,
+            )
+            .await
+            .map_err(|err| err.to_string())?
+            .try_collect()
+            .await
+            .map_err(|err| err.to_string())
+    }
+
+    pub async fn replace_agent_prompt(
+        &self,
+        record: &AgentProviderPromptRecord,
+    ) -> Result<(), String> {
+        self.agent_prompts
+            .replace_one(doc! { "id": &record.id }, record, upsert_options())
+            .await
+            .map_err(|err| err.to_string())?;
+        Ok(())
+    }
+
+    pub async fn get_agent_prompt_bundle_version(
+        &self,
+    ) -> Result<Option<AgentPromptBundleVersionRecord>, String> {
+        self.agent_prompt_versions
+            .find_one(doc! { "id": "system_agent_prompts" }, None)
+            .await
+            .map_err(|err| err.to_string())
+    }
+
+    pub async fn replace_agent_prompt_bundle_version(
+        &self,
+        record: &AgentPromptBundleVersionRecord,
+    ) -> Result<(), String> {
+        self.agent_prompt_versions
+            .replace_one(doc! { "id": &record.id }, record, upsert_options())
+            .await
+            .map_err(|err| err.to_string())?;
+        Ok(())
+    }
+
+    pub async fn increment_agent_prompt_bundle_version(
+        &self,
+    ) -> Result<AgentPromptBundleVersionRecord, String> {
+        use mongodb::options::{FindOneAndUpdateOptions, ReturnDocument};
+
+        let now = now_rfc3339();
+        let options = FindOneAndUpdateOptions::builder()
+            .upsert(true)
+            .return_document(ReturnDocument::After)
+            .build();
+        self.agent_prompt_versions
+            .find_one_and_update(
+                doc! { "id": "system_agent_prompts" },
+                doc! {
+                    "$inc": { "version": 1_i64 },
+                    "$set": { "updated_at": &now },
+                    "$setOnInsert": { "id": "system_agent_prompts", "required": false },
+                },
+                options,
+            )
+            .await
+            .map_err(|err| err.to_string())?
+            .ok_or_else(|| "agent prompt bundle version was not persisted".to_string())
     }
 
     pub async fn list_bindings(

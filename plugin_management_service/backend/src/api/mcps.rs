@@ -87,6 +87,13 @@ struct PreparedProviderSkillOptimization {
     user_prompt: String,
 }
 
+pub(super) struct AdminModelRuntime {
+    pub(super) model_config_id: String,
+    pub(super) provider: String,
+    pub(super) model: String,
+    pub(super) runtime: ModelRuntimeConfig,
+}
+
 #[derive(Debug, Deserialize)]
 pub(super) struct UpdateProviderSkillRequest {
     instructions: String,
@@ -358,6 +365,38 @@ async fn prepare_provider_skill_optimization(
         .find(|skill| skill.id == skill_id)
         .cloned()
         .ok_or_else(|| ApiError::not_found("MCP Provider Skill not found"))?;
+    let admin_model =
+        load_admin_model_runtime(state, access_token, model_config_id.as_str()).await?;
+    let tools_json = serde_json::to_string_pretty(&descriptor.tools)
+        .map_err(|err| ApiError::internal(format!("serialize MCP tools failed: {err}")))?;
+    let skill_json = serde_json::to_string_pretty(&skill)
+        .map_err(|err| ApiError::internal(format!("serialize Provider Skill failed: {err}")))?;
+    let system_prompt = build_provider_skill_optimizer_system_prompt(
+        &record,
+        skill_json.as_str(),
+        tools_json.as_str(),
+    );
+    Ok(PreparedProviderSkillOptimization {
+        mcp_id: record.id,
+        skill_id,
+        model_config_id,
+        provider: admin_model.provider,
+        model: admin_model.model,
+        runtime: admin_model.runtime,
+        system_prompt,
+        user_prompt: format!(
+            "请按照下面的管理员要求优化 Provider Skill，并返回优化后的完整 instructions 文本：\n\n{}",
+            requirement.trim()
+        ),
+    })
+}
+
+pub(super) async fn load_admin_model_runtime(
+    state: &AppState,
+    access_token: &str,
+    model_config_id: &str,
+) -> Result<AdminModelRuntime, ApiError> {
+    let model_config_id = required_text(Some(model_config_id), "model_config_id")?;
     let model_path = format!(
         "/api/model-configs/{}?include_secret=true",
         model_config_id.trim()
@@ -383,15 +422,6 @@ async fn prepare_provider_skill_optimization(
     if model.is_empty() {
         return Err(ApiError::bad_request("selected AI model name is empty"));
     }
-    let tools_json = serde_json::to_string_pretty(&descriptor.tools)
-        .map_err(|err| ApiError::internal(format!("serialize MCP tools failed: {err}")))?;
-    let skill_json = serde_json::to_string_pretty(&skill)
-        .map_err(|err| ApiError::internal(format!("serialize Provider Skill failed: {err}")))?;
-    let system_prompt = build_provider_skill_optimizer_system_prompt(
-        &record,
-        skill_json.as_str(),
-        tools_json.as_str(),
-    );
     let provider = model_config.provider.clone();
     let runtime = ModelRuntimeConfig::openai_compatible(
         default_ai_base_url(provider.as_str(), model_config.base_url.as_deref()),
@@ -401,18 +431,11 @@ async fn prepare_provider_skill_optimization(
     )
     .with_responses_support(model_config.supports_responses)
     .with_thinking_level(model_config.thinking_level.clone());
-    Ok(PreparedProviderSkillOptimization {
-        mcp_id: record.id,
-        skill_id,
+    Ok(AdminModelRuntime {
         model_config_id,
         provider,
         model,
         runtime,
-        system_prompt,
-        user_prompt: format!(
-            "请按照下面的管理员要求优化 Provider Skill，并返回优化后的完整 instructions 文本：\n\n{}",
-            requirement.trim()
-        ),
     })
 }
 

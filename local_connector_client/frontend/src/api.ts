@@ -5,6 +5,7 @@ export type * from './apiTypes';
 
 import { request } from './apiTransport';
 import type {
+  AgentPromptUpdateStatus,
   ApprovalSettings,
   CommandExecutionApprovalDecision,
   CommandHistoryResponse,
@@ -159,6 +160,12 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(payload),
     }),
+  agentPromptStatus: () =>
+    request<AgentPromptUpdateStatus>('/api/local/agent-prompts/status'),
+  checkAgentPromptUpdates: () =>
+    request<AgentPromptUpdateStatus>('/api/local/agent-prompts/check', { method: 'POST' }),
+  updateAgentPrompts: () =>
+    request<AgentPromptUpdateStatus>('/api/local/agent-prompts/update', { method: 'POST' }),
   systemPermissions: () => request<SystemPermissionsResponse>('/api/local/system-permissions'),
   requestSystemPermission: (permissionId: string) =>
     request<SystemPermissionsResponse>(

@@ -736,9 +736,11 @@ name = "chatos_plugin_management_sdk"
 version = "0.1.0"
 dependencies = [
  "chatos_service_runtime",
+ "hex",
  "reqwest",
  "serde",
  "serde_json",
+ "sha2 0.11.0",
  "thiserror 2.0.18",
  "tokio",
  "urlencoding",
@@ -3288,6 +3290,7 @@ dependencies = [
  "chatos_ai_runtime",
  "chatos_builtin_tools",
  "chatos_mcp_runtime",
+ "chatos_plugin_management_sdk",
  "chatos_sandbox_image_mcp",
  "chatos_service_runtime",
  "chrono",

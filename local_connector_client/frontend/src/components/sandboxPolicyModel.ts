@@ -48,19 +48,24 @@ export function resolveSandboxPolicyView(
   const localProcessSelectable = capabilities?.backends.some(
     (capability) => capability.backend === 'local_process' && capability.selectable,
   ) === true;
+  const backendCapabilities = new Map(
+    (capabilities?.backends || []).map((capability) => [capability.backend, capability]),
+  );
 
   return {
     approvalMode,
     approvalReviewer,
     backend,
+    backendCapabilities,
     builtinProfiles,
     customPermissionProfileActive,
     localProcessSelectable,
-    networkPresentation: describeNetworkAccess(network),
+    networkPresentation: describeNetworkAccess(network, approvalMode),
     permissionProfile,
     permissionProfileName,
     recommended:
       !customPermissionProfileActive
+      && backend === 'local_process'
       && permissionProfile === 'workspace_write'
       && approvalMode === 'user'
       && network.unrestricted !== true
@@ -103,7 +108,7 @@ export function permissionProfileDescription(profile: PermissionProfileId) {
 
 export function approvalModeDescription(mode: SandboxApprovalMode) {
   if (mode === 'auto_review') {
-    return '客户端根据命令风险自动决定，必要时仍会拒绝。';
+    return '由命令审批模型审核；AI 可以批准、拒绝或转交给你。';
   }
   if (mode === 'never') {
     return '超出当前范围的文件或网络访问会直接失败。';
@@ -113,6 +118,13 @@ export function approvalModeDescription(mode: SandboxApprovalMode) {
 
 export function sandboxBackendLabel(backend: SandboxBackendKind) {
   return backend === 'local_process' ? '本机进程隔离' : 'Docker 容器';
+}
+
+export function sandboxBackendDescription(backend: SandboxBackendKind) {
+  if (backend === 'local_process') {
+    return '任务仍在本机进程中运行，由操作系统沙箱限制文件和网络；不是线程隔离。';
+  }
+  return '任务在独立 Docker 容器中运行；兼容性更统一，但当前桥接网络不支持按域名审批。';
 }
 
 function resolveEffectiveNetwork(
@@ -138,7 +150,7 @@ function resolveEffectiveNetwork(
 function describeNetworkAccess(network: {
   unrestricted: boolean;
   requirements: SandboxNetworkRequirements;
-}) {
+}, approvalMode: SandboxApprovalMode) {
   if (network.unrestricted) {
     return {
       label: '不受限制',
@@ -149,6 +161,18 @@ function describeNetworkAccess(network: {
     return {
       label: '按本机策略限制',
       detail: '任务只能主动访问客户端策略预设的网站。',
+    };
+  }
+  if (approvalMode === 'auto_review') {
+    return {
+      label: '默认关闭，由 AI 审批',
+      detail: '任务确需联网时，由命令审批模型决定批准、拒绝或转交给你。',
+    };
+  }
+  if (approvalMode === 'never') {
+    return {
+      label: '默认关闭，直接拒绝',
+      detail: '任务发起的临时联网请求会直接失败。',
     };
   }
   return {

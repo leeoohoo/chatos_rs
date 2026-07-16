@@ -388,6 +388,8 @@ export const enUSManagementMessages: MessageDictionary = {
   'aiModelManager.form.name': 'Config name',
   'aiModelManager.form.namePlaceholder': 'e.g. OpenAI GPT-4',
   'aiModelManager.form.provider': 'Provider',
+  'aiModelManager.form.promptVendor': 'Prompt type',
+  'aiModelManager.form.promptVendorHint': 'Selected automatically for known providers. Change it only for compatible endpoints.',
   'aiModelManager.form.baseUrl': 'Base URL',
   'aiModelManager.form.baseUrlPlaceholder': 'e.g. https://api.openai.com/v1',
   'aiModelManager.form.apiKey': 'API Key',

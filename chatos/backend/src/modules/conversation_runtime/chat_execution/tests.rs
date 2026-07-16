@@ -45,6 +45,7 @@ fn model_runtime(use_codex_gateway_mcp_passthrough: bool) -> ResolvedChatModelCo
     ResolvedChatModelConfig {
         model: "codex-test".to_string(),
         provider: "openai".to_string(),
+        prompt_vendor: Some("gpt".to_string()),
         thinking_level: None,
         temperature: 0.2,
         supports_images: false,
@@ -66,6 +67,7 @@ fn runtime_context(
         internal_context_locale: InternalContextLocale::ZhCn,
         contact_agent_id: None,
         base_system_prompt: None,
+        agent_system_prompt: Some("agent prompt".to_string()),
         contact_system_prompt: None,
         builtin_mcp_system_prompt: None,
         selected_commands_for_snapshot: Arc::new(Mutex::new(Vec::new())),
@@ -108,7 +110,7 @@ fn initializes_stream_agent_with_resolved_profile() {
 }
 
 #[test]
-fn project_context_prompt_names_the_project_and_requires_task_runner_follow_through() {
+fn project_context_prompt_contains_only_dynamic_project_facts() {
     let mut context = runtime_context(false);
     context.resolved_project_name = Some("CubeSandbox".to_string());
     context.resolved_project_source_type = Some("cloud".to_string());
@@ -120,9 +122,7 @@ fn project_context_prompt_names_the_project_and_requires_task_runner_follow_thro
     assert!(prompt.contains("当前项目名称：CubeSandbox"));
     assert!(prompt.contains("当前项目 ID：project-1"));
     assert!(prompt.contains("当前项目来源类型：cloud"));
-    assert!(prompt.contains("Task Runner 是你自己的内部异步执行通道"));
-    assert!(prompt.contains("不得仅因为主对话不能直接读取文件就声称无法查看"));
-    assert!(prompt.contains("不要要求用户再次粘贴代码或提供项目路径"));
+    assert!(!prompt.contains("Task Runner 是你自己的内部异步执行通道"));
 }
 
 #[test]

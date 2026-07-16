@@ -2,6 +2,9 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 import type {
+  AgentPromptCompleteness,
+  GenerateAgentPromptResponse,
+  AgentProviderPromptRecord,
   AgentMcpBindingsResponse,
   AdminAiModelConfig,
   CurrentUser,
@@ -213,6 +216,38 @@ export const api = {
       method: 'PUT',
       body: JSON.stringify({ bindings }),
     }),
+  listAgentProviderPrompts: (agentKey: string) =>
+    request<AgentProviderPromptRecord[]>(
+      `/api/system-agents/${encodeURIComponent(agentKey)}/provider-prompts`,
+    ),
+  updateAgentProviderPromptDraft: (
+    agentKey: string,
+    vendor: string,
+    content: string,
+    expectedUpdatedAt?: string,
+  ) =>
+    request<AgentProviderPromptRecord>(
+      `/api/system-agents/${encodeURIComponent(agentKey)}/provider-prompts/${encodeURIComponent(vendor)}/draft`,
+      {
+        method: 'PUT',
+        body: JSON.stringify({ content, expected_updated_at: expectedUpdatedAt }),
+      },
+    ),
+  publishAgentProviderPrompt: (agentKey: string, vendor: string) =>
+    request<AgentProviderPromptRecord>(
+      `/api/system-agents/${encodeURIComponent(agentKey)}/provider-prompts/${encodeURIComponent(vendor)}/publish`,
+      { method: 'POST', body: JSON.stringify({}) },
+    ),
+  generateAgentProviderPrompt: (
+    agentKey: string,
+    vendor: string,
+    payload: { model_config_id: string; requirement: string; current_content: string },
+  ) => request<GenerateAgentPromptResponse>(
+    `/api/system-agents/${encodeURIComponent(agentKey)}/provider-prompts/${encodeURIComponent(vendor)}/generate`,
+    { method: 'POST', body: JSON.stringify(payload) },
+  ),
+  agentPromptCompleteness: () =>
+    request<AgentPromptCompleteness[]>('/api/system-agents/prompt-completeness'),
   resolveAgentCapabilities: (params: Record<string, QueryValue>) =>
     request<RuntimeCapabilitiesResponse>(withQuery('/api/runtime/agent-capabilities', params)),
 };

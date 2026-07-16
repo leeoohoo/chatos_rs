@@ -51,7 +51,6 @@ pub(super) fn build_task_prompt(
                 .unwrap_or_else(|_| input_payload.to_string());
             parts.push(format!("{}:\n{payload_text}", text.input_data_label));
         }
-        parts.push(text.completion_instruction.to_string());
         parts.join("\n\n")
     };
     if !task.mcp_config.requires_execution {
@@ -88,7 +87,11 @@ pub(super) fn build_task_prompt_template(locale: BuiltinMcpPromptLocale) -> Stri
 }
 
 pub(super) fn build_global_execution_prompt(locale: BuiltinMcpPromptLocale) -> String {
-    task_prompt_text(locale).completion_instruction.to_string()
+    if locale.is_english() {
+        "Managed by the published task_runner_run_phase Prompt in Plugin Management.".to_string()
+    } else {
+        "由 Plugin Management 中已发布的 task_runner_run_phase Prompt 统一管理。".to_string()
+    }
 }
 
 fn format_prerequisite_context_for_prompt(
@@ -167,7 +170,6 @@ struct TaskPromptText {
     task_objective_label: &'static str,
     task_description_label: &'static str,
     input_data_label: &'static str,
-    completion_instruction: &'static str,
     prerequisite_heading: &'static str,
     current_task_heading: &'static str,
     prerequisite_objective_label: &'static str,
@@ -184,7 +186,6 @@ fn task_prompt_text(locale: BuiltinMcpPromptLocale) -> TaskPromptText {
             task_objective_label: "Task Objective",
             task_description_label: "Task Description",
             input_data_label: "Input Data",
-            completion_instruction: "Engineering rules for concrete work:\n- Understand the real flow before changing anything: read the relevant task context, prerequisite results, files, logs, callers, or tool state before choosing the fix.\n- Before adding code, config, scripts, prompts, pages, or docs, ask whether anything needs to be built at all; then reuse existing project helpers and patterns; then use the standard library or native platform; then use already-installed dependencies; only then write the minimum new code that works.\n- Prefer deletion, reuse, and the shortest correct diff over new abstractions, new dependencies, boilerplate, speculative configuration, or \"maybe later\" extensibility.\n- For bugs, fix the shared root cause, not only the reported symptom; check sibling callers or adjacent paths when the touched code is reused.\n- Do not remove trust-boundary validation, error handling that prevents data loss, security checks, accessibility basics, or explicitly requested behavior in the name of simplicity.\n- For non-trivial changes, leave the smallest useful verification evidence, such as a focused command, test, log check, or clear reason why verification could not be run.\n\nExecute the task directly. Use tools only when they provide needed facts, changes, or verification. Finish with the result, key evidence, verification performed or skipped, and any necessary next step.",
             prerequisite_heading: "Prerequisite Task Results",
             current_task_heading: "Current Task",
             prerequisite_objective_label: "Objective",
@@ -199,7 +200,6 @@ fn task_prompt_text(locale: BuiltinMcpPromptLocale) -> TaskPromptText {
             task_objective_label: "任务目标",
             task_description_label: "任务说明",
             input_data_label: "输入数据",
-            completion_instruction: "具体工程工作规则：\n- 改任何东西前先理解真实链路：读取相关任务上下文、前置结果、文件、日志、调用方或工具状态后，再决定怎么做。\n- 新增代码、配置、脚本、prompt、页面或文档前，先判断是否真的需要新增；再优先复用项目已有 helper、模式和约定；再用标准库或平台原生能力；再用已安装依赖；最后才写最小可工作的新增实现。\n- 优先删除、复用和最短正确 diff，不要新增未请求的抽象、依赖、样板、投机配置或“以后可能用”的扩展层。\n- 修 bug 要修共享根因，不只补当前症状；如果触碰的是复用代码，要检查相邻调用方或同类路径。\n- 不要为了“简单”删掉信任边界校验、防止数据丢失的错误处理、安全检查、可访问性基础或用户明确要求的行为。\n- 非平凡改动要留下最小但有用的验证证据，例如聚焦的命令、测试、日志检查，或说明为什么无法验证。\n\n请直接执行当前任务。只有当工具能提供事实、修改或验证时才调用工具。最终输出结果、关键证据、已执行或跳过的验证，以及必要的下一步。",
             prerequisite_heading: "前置任务执行结果",
             current_task_heading: "当前任务",
             prerequisite_objective_label: "目标",

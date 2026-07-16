@@ -10,7 +10,6 @@ pub trait AgentIdentity: Send + Sync {
 }
 
 pub trait SystemAgentDefinition: AgentIdentity {
-    fn system_prompt(&self) -> &'static str;
     fn message_mode(&self) -> &'static str;
     fn message_source(&self) -> &'static str;
     fn context_overflow_trigger(&self) -> &'static str;
@@ -23,10 +22,14 @@ pub trait SystemAgentDefinition: AgentIdentity {
         None
     }
 
-    fn configure_model(&self, mut model_config: ModelRuntimeConfig) -> ModelRuntimeConfig {
+    fn configure_model_with_prompt(
+        &self,
+        mut model_config: ModelRuntimeConfig,
+        system_prompt: &str,
+    ) -> ModelRuntimeConfig {
         model_config.instructions = Some(merge_system_instructions(
             model_config.instructions.as_deref(),
-            self.system_prompt(),
+            system_prompt,
         ));
         if model_config.temperature.is_none() {
             model_config.temperature = self.default_temperature();
@@ -42,7 +45,7 @@ pub fn merge_system_instructions(existing: Option<&str>, required: &str) -> Stri
     existing
         .map(str::trim)
         .filter(|value| !value.is_empty())
-        .map(|value| format!("{value}\n\n{required}"))
+        .map(|value| format!("{required}\n\n{value}"))
         .unwrap_or_else(|| required.to_string())
 }
 
@@ -61,10 +64,6 @@ mod tests {
     }
 
     impl SystemAgentDefinition for TestAgent {
-        fn system_prompt(&self) -> &'static str {
-            "required prompt"
-        }
-
         fn message_mode(&self) -> &'static str {
             "test"
         }
@@ -97,11 +96,11 @@ mod tests {
         .with_instructions(Some("existing".to_string()))
         .with_temperature(Some(0.7));
 
-        let configured = TestAgent.configure_model(base);
+        let configured = TestAgent.configure_model_with_prompt(base, "required prompt");
 
         assert_eq!(
             configured.instructions.as_deref(),
-            Some("existing\n\nrequired prompt")
+            Some("required prompt\n\nexisting")
         );
         assert_eq!(configured.temperature, Some(0.7));
         assert_eq!(configured.max_output_tokens, Some(800));

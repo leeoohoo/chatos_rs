@@ -8,6 +8,7 @@ export type ModelEnabledFilter = 'all' | 'enabled' | 'disabled';
 export type ModelFormValues = {
   name: string;
   provider: string;
+  prompt_vendor: 'glm' | 'deepseek' | 'gpt' | 'kimi';
   base_url: string;
   api_key: string;
   model: string;
@@ -34,6 +35,19 @@ export const SUPPORTED_PROVIDER_OPTIONS: Array<{
   { label: 'deepseek', value: 'deepseek' },
   { label: 'kimik2', value: 'kimik2' },
 ];
+
+export const PROMPT_VENDOR_OPTIONS = ['glm', 'deepseek', 'gpt', 'kimi'].map((value) => ({
+  label: value,
+  value,
+}));
+
+export function defaultPromptVendor(provider?: string): ModelFormValues['prompt_vendor'] {
+  const value = (provider || '').trim().toLowerCase();
+  if (value === 'deepseek') return 'deepseek';
+  if (value === 'kimi' || value === 'kimik2' || value === 'moonshot') return 'kimi';
+  if (value === 'glm' || value === 'zhipu') return 'glm';
+  return 'gpt';
+}
 
 export const THINKING_LEVEL_OPTIONS: Record<
   SupportedProvider,

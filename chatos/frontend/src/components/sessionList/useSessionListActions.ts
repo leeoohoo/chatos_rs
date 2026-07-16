@@ -82,7 +82,7 @@ interface SessionListActionsParams {
   cloudProjectName: string;
   cloudProjectGitUrl: string;
   cloudProjectZipFile: File | null;
-  allowProjectCreation: boolean;
+  allowLocalProjectCreation: boolean;
 }
 
 export const useSessionListActions = ({
@@ -131,7 +131,7 @@ export const useSessionListActions = ({
   cloudProjectName,
   cloudProjectGitUrl,
   cloudProjectZipFile,
-  allowProjectCreation,
+  allowLocalProjectCreation,
 }: SessionListActionsParams) => {
   const localConnectorRelativePath = selectedLocalConnectorDirectoryPath.trim().replace(/\\/g, '/').replace(/^\/+|\/+$/g, '');
 
@@ -203,9 +203,6 @@ export const useSessionListActions = ({
   }, [loadRemoteConnections, setIsRefreshingRemote]);
 
   const openProjectModal = useCallback(() => {
-    if (!allowProjectCreation) {
-      return;
-    }
     setProjectRoot('');
     setCloudProjectName('');
     setCloudProjectGitUrl('');
@@ -214,7 +211,6 @@ export const useSessionListActions = ({
     setProjectSourceMode('server');
     setProjectModalOpen(true);
   }, [
-    allowProjectCreation,
     setCloudProjectGitUrl,
     setCloudProjectName,
     setCloudProjectZipFile,
@@ -238,11 +234,11 @@ export const useSessionListActions = ({
   }, [openRemoteModalBase, setKeyFilePickerOpen]);
 
   const handleCreateProject = useCallback(async () => {
-    if (!allowProjectCreation) {
-      setProjectError('项目只能在 Chat OS 桌面客户端中创建');
-      return;
-    }
     if (projectSourceMode === 'local_connector') {
+      if (!allowLocalProjectCreation) {
+        setProjectError('本地项目只能在 Chat OS 桌面客户端中创建');
+        return;
+      }
       const workspace = localConnectorWorkspaces.find((item) => item.id === selectedLocalConnectorWorkspaceId);
       if (!workspace) {
         setProjectError(translateSessionListMessage(t, 'sessionList.resource.error.selectLocalConnectorWorkspace'));
@@ -256,10 +252,12 @@ export const useSessionListActions = ({
           workspace_id: workspace.id,
           relative_path: localConnectorRelativePath || undefined,
         });
-        await loadProjects({ force: true });
         if (created.id) {
           await selectProject(created.id);
         }
+        void loadProjects({ force: true }).catch((error) => {
+          console.warn('Background cloud project refresh failed after local project creation.', error);
+        });
         setProjectModalOpen(false);
       } catch (error) {
         setProjectError(error instanceof Error ? error.message : translateSessionListMessage(t, 'sessionList.resource.error.createProjectFailed'));
@@ -287,7 +285,7 @@ export const useSessionListActions = ({
       setProjectError(error instanceof Error ? error.message : translateSessionListMessage(t, 'sessionList.resource.error.createProjectFailed'));
     }
   }, [
-    allowProjectCreation,
+    allowLocalProjectCreation,
     apiClient,
     cloudProjectGitUrl,
     cloudProjectName,

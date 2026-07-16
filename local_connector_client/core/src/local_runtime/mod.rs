@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
+mod agent_prompts;
 pub(crate) mod api;
 mod ask_user;
 mod capabilities;
@@ -13,6 +14,11 @@ mod storage;
 mod task_board;
 mod task_runner;
 
+pub(crate) use agent_prompts::{
+    agent_prompt_status, check_agent_prompt_updates, load_installed_agent_prompt,
+    load_installed_agent_prompt_from_database, spawn_agent_prompt_update_checker,
+    update_agent_prompt_bundle, LocalAgentPromptStatus,
+};
 pub(crate) use ask_user::LocalAskUserPromptRegistry;
 pub(crate) use capabilities::{sync_local_capability_snapshots, sync_local_plugin_control_plane};
 pub(crate) use chat::LocalTurnControlRegistry;

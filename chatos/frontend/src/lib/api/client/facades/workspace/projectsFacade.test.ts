@@ -7,6 +7,7 @@ import { workspaceProjectFacade } from './projectsFacade';
 
 describe('workspaceProjectFacade local project management routing', () => {
   afterEach(() => {
+    vi.useRealTimers();
     vi.unstubAllGlobals();
   });
 
@@ -39,12 +40,96 @@ describe('workspaceProjectFacade local project management routing', () => {
     const context = {
       getRequestFn: () => cloudRequest,
       getLocalRuntimeClient: () => ({ listProjects }),
+      registerLocalProjectExecution: vi.fn(),
     };
 
     const projects = await workspaceProjectFacade.listProjects.call(context as never, 'user-1');
 
     expect(projects.map((project) => project.id)).toEqual(['local-1', 'cloud-1']);
     expect(listProjects).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps SQLite projects available when the cloud list is offline', async () => {
+    vi.stubGlobal('window', {
+      chatosLocalRuntime: { apiRequest: vi.fn() },
+    });
+    const localProject = {
+      id: 'local-1',
+      name: 'Local',
+      execution_plane: 'local_connector',
+      root_path: 'local://connector/device/workspace/app',
+    };
+    const registerLocalProjectExecution = vi.fn();
+    const context = {
+      getRequestFn: () => vi.fn().mockRejectedValue(new Error('cloud offline')),
+      getLocalRuntimeClient: () => ({
+        listProjects: vi.fn().mockResolvedValue([localProject]),
+      }),
+      registerLocalProjectExecution,
+    };
+
+    const projects = await workspaceProjectFacade.listProjects.call(context as never, 'user-1');
+
+    expect(projects).toEqual([localProject]);
+    expect(registerLocalProjectExecution).toHaveBeenCalledWith('local-1');
+  });
+
+  it('does not let a slow cloud list indefinitely block desktop local projects', async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal('window', {
+      chatosLocalRuntime: { apiRequest: vi.fn() },
+    });
+    const localProject = {
+      id: 'local-fast',
+      name: 'Local Fast',
+      execution_plane: 'local_connector',
+      root_path: 'local://connector/device/workspace/app',
+    };
+    const context = {
+      getRequestFn: () => vi.fn().mockReturnValue(new Promise(() => {})),
+      getLocalRuntimeClient: () => ({
+        listProjects: vi.fn().mockResolvedValue([localProject]),
+      }),
+      registerLocalProjectExecution: vi.fn(),
+    };
+
+    const pending = workspaceProjectFacade.listProjects.call(context as never, 'user-1');
+    await vi.advanceTimersByTimeAsync(800);
+
+    await expect(pending).resolves.toEqual([localProject]);
+  });
+
+  it('allows browser clients to create cloud projects', async () => {
+    vi.stubGlobal('window', {});
+    const cloudRequest = vi.fn().mockResolvedValue({
+      id: 'cloud-1',
+      name: 'Cloud',
+      execution_plane: 'cloud',
+    });
+    const context = {
+      getRequestFn: () => cloudRequest,
+    };
+    const form = new FormData();
+    form.set('name', 'Cloud');
+
+    await workspaceProjectFacade.createCloudProject.call(context as never, form);
+
+    expect(cloudRequest).toHaveBeenCalledWith('/projects/cloud', {
+      method: 'POST',
+      body: form,
+    });
+  });
+
+  it('keeps local project creation desktop-only', async () => {
+    vi.stubGlobal('window', {});
+    const context = {
+      getRequestFn: () => vi.fn(),
+    };
+
+    await expect(workspaceProjectFacade.createProject.call(context as never, {
+      name: 'Local',
+      root_path: '/tmp/local',
+    })).rejects.toThrow('项目只能在 Chat OS 桌面客户端中创建');
   });
 
   it('routes local plan data to the desktop runtime', async () => {
@@ -146,6 +231,41 @@ describe('workspaceProjectFacade local project management routing', () => {
     );
     expect(analyzeProjectRuntimeEnvironment).toHaveBeenCalledWith('project-local');
     expect(getProjectRuntimeEnvironmentProgress).toHaveBeenCalledWith('project-local');
+    expect(cloudRequest).not.toHaveBeenCalled();
+  });
+
+  it('routes local project run settings to SQLite runtime APIs', async () => {
+    const localRuntime = {
+      analyzeProjectRun: vi.fn().mockResolvedValue({ targets: [] }),
+      getProjectRunCatalog: vi.fn().mockResolvedValue({ targets: [] }),
+      getProjectRunState: vi.fn().mockResolvedValue({ status: 'idle' }),
+      getProjectRunEnvironment: vi.fn().mockResolvedValue({ env_vars: {} }),
+      updateProjectRunEnvironment: vi.fn().mockResolvedValue({ env_vars: { PORT: '3000' } }),
+      executeProjectRun: vi.fn().mockResolvedValue({ status: 'running' }),
+      setProjectRunDefault: vi.fn().mockResolvedValue({ default_target_id: 'target-1' }),
+    };
+    const cloudRequest = vi.fn(() => {
+      throw new Error('cloud project run request must not run');
+    });
+    const context = {
+      projectUsesLocalRuntime: () => true,
+      getLocalRuntimeClient: () => localRuntime,
+      getRequestFn: () => cloudRequest,
+    };
+
+    await workspaceProjectFacade.analyzeProjectRun.call(context as never, 'local-1');
+    await workspaceProjectFacade.getProjectRunCatalog.call(context as never, 'local-1');
+    await workspaceProjectFacade.getProjectRunState.call(context as never, 'local-1');
+    await workspaceProjectFacade.getProjectRunEnvironment.call(context as never, 'local-1');
+    await workspaceProjectFacade.updateProjectRunEnvironment.call(context as never, 'local-1', {
+      env_vars: { PORT: '3000' },
+    });
+    await workspaceProjectFacade.executeProjectRun.call(context as never, 'local-1', {
+      target_id: 'target-1',
+    });
+    await workspaceProjectFacade.setProjectRunDefault.call(context as never, 'local-1', 'target-1');
+
+    Object.values(localRuntime).forEach((method) => expect(method).toHaveBeenCalled());
     expect(cloudRequest).not.toHaveBeenCalled();
   });
 

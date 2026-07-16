@@ -57,7 +57,9 @@ export const workspaceLocalConnectorFacade: WorkspaceLocalConnectorFacade & This
   },
   async createLocalConnectorProject(data) {
     requireLocalConnectorDesktop();
-    return this.getLocalRuntimeClient().createProject(data);
+    const project = await this.getLocalRuntimeClient().createProject(data);
+    this.registerLocalProjectExecution(project.id);
+    return project;
   },
   async execLocalConnectorTerminalCommand(data) {
     requireLocalConnectorDesktop();
