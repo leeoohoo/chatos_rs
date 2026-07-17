@@ -31,7 +31,7 @@ reqwest = { version = "0.12", features = ["json", "rustls-tls"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.11"
-sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "sqlite", "migrate", "macros", "chrono", "uuid", "json"] }
+sqlx = { version = "0.9", default-features = false, features = ["runtime-tokio", "sqlite", "migrate", "macros", "chrono", "uuid", "json"] }
 portable-pty = "0.9"
 ring = "0.17"
 tokio = { version = "1", features = ["full"] }
@@ -41,7 +41,7 @@ tower-http = { version = "0.7", features = ["cors", "fs"] }
 url = "2"
 urlencoding = "2"
 uuid = { version = "1", features = ["serde", "v4"] }
-zip = { version = "2", default-features = false, features = ["deflate"] }
+zip = { version = "8", default-features = false, features = ["deflate"] }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
