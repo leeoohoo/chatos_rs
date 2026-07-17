@@ -30,6 +30,13 @@ impl SandboxBackend for KataSandboxBackend {
         let cpu = spec.resource_limits.cpu.max(0.1).to_string();
         let memory = format!("{}m", spec.resource_limits.memory_mb.max(128));
         let pids = spec.resource_limits.max_processes.max(16).to_string();
+        let tmpfs_size_mb = (spec.resource_limits.disk_mb / 16).clamp(16, 512);
+        let workspace_limit_mb = spec
+            .resource_limits
+            .disk_mb
+            .saturating_sub(tmpfs_size_mb.saturating_mul(2))
+            .max(1);
+        let disk_limit_bytes = workspace_limit_mb.saturating_mul(1024 * 1024);
         let requested_network = spec.network.mode.trim();
         let network = if requested_network.is_empty() {
             self.config.kata_network_mode.as_str()
@@ -64,7 +71,17 @@ impl SandboxBackend for KataSandboxBackend {
             .arg("/workspace");
         command
             .arg("-e")
-            .arg(format!("CHATOS_SANDBOX_ID={}", spec.sandbox_id));
+            .arg(format!("CHATOS_SANDBOX_ID={}", spec.sandbox_id))
+            .arg("-e")
+            .arg("CHATOS_SANDBOX_PERMISSION_PROFILE=workspace_write")
+            .arg("-e")
+            .arg(format!(
+                "CHATOS_SANDBOX_DISK_LIMIT_BYTES={disk_limit_bytes}"
+            ))
+            .arg("-e")
+            .arg("HOME=/home/sandbox")
+            .arg("-e")
+            .arg("XDG_CACHE_HOME=/home/sandbox/.cache");
         if let Some(agent_token) = spec.agent_token.as_deref() {
             command
                 .arg("-e")
@@ -76,8 +93,19 @@ impl SandboxBackend for KataSandboxBackend {
                 .arg(format!("127.0.0.1::{}", self.config.agent_port));
         }
         command
+            .arg("--read-only")
+            .arg("--cap-drop")
+            .arg("ALL")
+            .arg("--user")
+            .arg("1000:1000")
             .arg("--tmpfs")
-            .arg("/tmp:rw,nosuid,size=512m")
+            .arg(format!(
+                "/tmp:rw,nosuid,nodev,size={tmpfs_size_mb}m,mode=1777"
+            ))
+            .arg("--tmpfs")
+            .arg(format!(
+                "/home/sandbox:rw,nosuid,nodev,size={tmpfs_size_mb}m,uid=1000,gid=1000,mode=0700"
+            ))
             .arg("--security-opt")
             .arg("no-new-privileges")
             .arg("-v")

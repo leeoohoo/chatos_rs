@@ -17,8 +17,8 @@ use super::access::{ensure_model_access, ensure_owner_user_exists, resolve_targe
 use super::contracts::{ModelConfigGetQuery, UserScopeQuery};
 use super::model_values::model_config_public_value;
 use super::normalization::{
-    model_config_id_for, normalize_api_key_input, normalize_optional_string,
-    normalize_provider_input, normalize_thinking_level_input,
+    is_supported_provider, model_config_id_for, normalize_api_key_input, normalize_optional_string,
+    normalize_prompt_vendor_input, normalize_provider_input, normalize_thinking_level_input,
 };
 
 pub(in crate::api) async fn list_model_configs(
@@ -40,7 +40,9 @@ pub(in crate::api) async fn list_model_configs(
     Ok(Json(
         items
             .into_iter()
-            .filter(|item| !item.model.trim().is_empty())
+            .filter(|item| {
+                !item.model.trim().is_empty() && is_supported_provider(item.provider.as_str())
+            })
             .map(|item| model_config_public_value(item, false, None))
             .collect::<Vec<_>>(),
     ))
@@ -59,14 +61,15 @@ pub(in crate::api) async fn create_model_config(
         return Err(bad_request("name is required"));
     };
     let provider = normalize_provider_input(input.provider)?;
-    let api_key_present = normalize_api_key_input(input.api_key)?
-        .as_deref()
-        .map(str::trim)
-        .is_some_and(|value| !value.is_empty());
-    let base_url: Option<String> = None;
+    let prompt_vendor = normalize_prompt_vendor_input(input.prompt_vendor, provider.as_str())?;
+    let api_key = normalize_api_key_input(input.api_key)?;
+    let api_key_present = api_key.is_some();
+    let base_url = normalize_optional_string(input.base_url);
     let task_thinking_level =
         normalize_thinking_level_input(provider.as_str(), input.task_thinking_level.as_deref())?;
     let task_usage_scenario = normalize_optional_string(input.task_usage_scenario);
+    let temperature = validate_temperature(input.temperature)?;
+    let max_output_tokens = validate_max_output_tokens(input.max_output_tokens)?;
     let now = now_rfc3339();
     let Some(model) = normalize_optional_string(input.model) else {
         return Err(bad_request(
@@ -93,6 +96,7 @@ pub(in crate::api) async fn create_model_config(
         owner_user_id: owner_user_id.clone(),
         name,
         provider: provider.clone(),
+        prompt_vendor,
         model,
         thinking_level: normalize_thinking_level_input(
             provider.as_str(),
@@ -108,9 +112,14 @@ pub(in crate::api) async fn create_model_config(
                 .as_ref()
                 .and_then(|item| item.task_thinking_level.clone())
         }),
-        api_key: None,
-        has_api_key: input.has_api_key.unwrap_or(api_key_present),
-        base_url: base_url.clone(),
+        temperature: temperature.or_else(|| existing.as_ref().and_then(|item| item.temperature)),
+        max_output_tokens: max_output_tokens
+            .or_else(|| existing.as_ref().and_then(|item| item.max_output_tokens)),
+        api_key: api_key.or_else(|| existing.as_ref().and_then(|item| item.api_key.clone())),
+        has_api_key: input.has_api_key.unwrap_or_else(|| {
+            api_key_present || existing.as_ref().is_some_and(|item| item.has_api_key)
+        }),
+        base_url: base_url.or_else(|| existing.as_ref().and_then(|item| item.base_url.clone())),
         enabled: input.enabled.unwrap_or(true),
         supports_images: input.supports_images.unwrap_or(false),
         supports_reasoning: input.supports_reasoning.unwrap_or(false),
@@ -146,6 +155,9 @@ pub(in crate::api) async fn get_model_config(
     else {
         return Err(not_found("model config not found"));
     };
+    if !is_supported_provider(record.provider.as_str()) {
+        return Err(not_found("model config not found"));
+    }
     ensure_model_access(&principal, &record)?;
     let include_secret = query.include_secret.unwrap_or(false);
     Ok(Json(model_config_public_value(
@@ -169,6 +181,9 @@ pub(in crate::api) async fn update_model_config(
     else {
         return Err(not_found("model config not found"));
     };
+    if !is_supported_provider(record.provider.as_str()) {
+        return Err(not_found("model config not found"));
+    }
     ensure_model_access(&principal, &record)?;
 
     if let Some(name) = input.name {
@@ -177,8 +192,15 @@ pub(in crate::api) async fn update_model_config(
         };
         record.name = name;
     }
+    let provider_changed = input.provider.is_some();
     if let Some(provider) = input.provider {
         record.provider = normalize_provider_input(Some(provider))?;
+    }
+    if input.prompt_vendor.is_some() || provider_changed {
+        let next = normalize_prompt_vendor_input(input.prompt_vendor, record.provider.as_str())?;
+        if next.is_some() || record.prompt_vendor.is_none() {
+            record.prompt_vendor = next;
+        }
     }
     if let Some(model) = input.model {
         let Some(model) = normalize_optional_string(Some(model)) else {
@@ -187,17 +209,17 @@ pub(in crate::api) async fn update_model_config(
         record.model = model;
     }
     if input.clear_api_key.unwrap_or(false) {
+        record.api_key = None;
         record.has_api_key = false;
-    } else if input.has_api_key.is_some() || input.api_key.is_some() {
-        let api_key_present = normalize_api_key_input(input.api_key)?
-            .as_deref()
-            .map(str::trim)
-            .is_some_and(|value| !value.is_empty());
-        record.has_api_key = input.has_api_key.unwrap_or(api_key_present);
+    } else if let Some(api_key) = input.api_key {
+        record.api_key = normalize_api_key_input(Some(api_key))?;
+        record.has_api_key = record.api_key.is_some();
+    } else if let Some(has_api_key) = input.has_api_key {
+        record.has_api_key = has_api_key && record.api_key.is_some();
     }
-    record.api_key = None;
-    record.base_url = None;
-    let _ = input.base_url;
+    if let Some(base_url) = input.base_url {
+        record.base_url = normalize_optional_string(Some(base_url));
+    }
     if let Some(enabled) = input.enabled {
         record.enabled = enabled;
     }
@@ -225,6 +247,16 @@ pub(in crate::api) async fn update_model_config(
             input.task_thinking_level.as_deref(),
         )?;
     }
+    if input.clear_temperature.unwrap_or(false) {
+        record.temperature = None;
+    } else if input.temperature.is_some() {
+        record.temperature = validate_temperature(input.temperature)?;
+    }
+    if input.clear_max_output_tokens.unwrap_or(false) {
+        record.max_output_tokens = None;
+    } else if input.max_output_tokens.is_some() {
+        record.max_output_tokens = validate_max_output_tokens(input.max_output_tokens)?;
+    }
     record.updated_at = now_rfc3339();
 
     let saved = state
@@ -242,6 +274,26 @@ pub(in crate::api) async fn update_model_config(
         false,
         Some(sync_warnings),
     )))
+}
+
+fn validate_temperature(
+    value: Option<f64>,
+) -> Result<Option<f64>, (axum::http::StatusCode, Json<serde_json::Value>)> {
+    match value {
+        Some(value) if !value.is_finite() || !(0.0..=2.0).contains(&value) => {
+            Err(bad_request("temperature must be between 0 and 2"))
+        }
+        value => Ok(value),
+    }
+}
+
+fn validate_max_output_tokens(
+    value: Option<i64>,
+) -> Result<Option<i64>, (axum::http::StatusCode, Json<serde_json::Value>)> {
+    match value {
+        Some(value) if value <= 0 => Err(bad_request("max_output_tokens must be positive")),
+        value => Ok(value),
+    }
 }
 
 pub(in crate::api) async fn delete_model_config(

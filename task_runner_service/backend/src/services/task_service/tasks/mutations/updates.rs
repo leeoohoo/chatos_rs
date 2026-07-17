@@ -15,6 +15,26 @@ impl TaskService {
             return Ok(None);
         };
 
+        let mut project_changed = false;
+        if let Some(project_id) = patch.project_id {
+            let project_id = normalize_project_id(Some(project_id));
+            let current_project_id = normalize_project_id(Some(task.project_id.clone()));
+            if project_id != current_project_id {
+                if self.store.has_active_run_for_task(id).await? {
+                    return Err(
+                        "任务仍有运行中的执行记录，不能切换所属项目，请先取消或等待完成"
+                            .to_string(),
+                    );
+                }
+                if project_id != PUBLIC_PROJECT_ID {
+                    self.ensure_project_available_for_task(&project_id, current_user)
+                        .await?;
+                }
+                task.project_id = project_id;
+                project_changed = true;
+            }
+        }
+
         if let Some(title) = patch.title {
             validate_required("title", &title)?;
             task.title = title.trim().to_string();
@@ -81,9 +101,22 @@ impl TaskService {
             .prerequisite_task_ids
             .map(normalize_prerequisite_task_ids);
         if let Some(prerequisite_task_ids) = prerequisite_task_ids.as_ref() {
-            self.validate_task_prerequisites(id, prerequisite_task_ids, current_user)
-                .await?;
+            self.validate_task_prerequisites_for_project(
+                id,
+                prerequisite_task_ids,
+                current_user,
+                Some(task.project_id.as_str()),
+            )
+            .await?;
             task.prerequisite_task_ids = prerequisite_task_ids.clone();
+        } else if project_changed && !task.prerequisite_task_ids.is_empty() {
+            self.validate_task_prerequisites_for_project(
+                id,
+                &task.prerequisite_task_ids,
+                current_user,
+                Some(task.project_id.as_str()),
+            )
+            .await?;
         }
         align_task_tenant_to_owner(&mut task);
         task.updated_at = now_rfc3339();
@@ -275,6 +308,135 @@ mod tests {
         let mut child = create_task(service, title, status).await;
         child.parent_task_id = Some(parent.id.clone());
         service.store.save_task(child).await.expect("save child")
+    }
+
+    async fn save_project(
+        service: &TaskService,
+        id: &str,
+        status: TaskProjectStatus,
+    ) -> TaskProjectRecord {
+        let now = now_rfc3339();
+        service
+            .store
+            .save_task_project(TaskProjectRecord {
+                id: id.to_string(),
+                owner_user_id: None,
+                owner_username: None,
+                owner_display_name: None,
+                name: format!("Project {id}"),
+                root_path: Some(format!("/workspace/{id}")),
+                git_url: None,
+                source_type: None,
+                cloud_import_source: None,
+                import_status: None,
+                source_git_url: None,
+                harness_space_identifier: None,
+                harness_repo_identifier: None,
+                harness_repo_path: None,
+                harness_git_url: None,
+                harness_git_ssh_url: None,
+                harness_default_branch: None,
+                harness_provision_status: None,
+                harness_provision_error: None,
+                harness_provisioned_at: None,
+                description: None,
+                status,
+                created_at: now.clone(),
+                updated_at: now.clone(),
+                archived_at: (status == TaskProjectStatus::Archived).then_some(now),
+            })
+            .await
+            .expect("save project")
+    }
+
+    #[tokio::test]
+    async fn update_task_can_switch_to_active_project() {
+        let service = test_service().await;
+        let task = create_task(&service, "task", TaskStatus::Ready).await;
+        let project = save_project(&service, "project-active", TaskProjectStatus::Active).await;
+
+        let updated = service
+            .update_task(
+                task.id.as_str(),
+                UpdateTaskRequest {
+                    project_id: Some(project.id.clone()),
+                    ..UpdateTaskRequest::default()
+                },
+                None,
+            )
+            .await
+            .expect("update task")
+            .expect("task");
+
+        assert_eq!(updated.project_id, project.id);
+    }
+
+    #[tokio::test]
+    async fn update_task_rejects_missing_or_archived_project() {
+        let service = test_service().await;
+        let task = create_task(&service, "task", TaskStatus::Ready).await;
+        save_project(&service, "project-archived", TaskProjectStatus::Archived).await;
+
+        for project_id in ["project-missing", "project-archived"] {
+            let err = service
+                .update_task(
+                    task.id.as_str(),
+                    UpdateTaskRequest {
+                        project_id: Some(project_id.to_string()),
+                        ..UpdateTaskRequest::default()
+                    },
+                    None,
+                )
+                .await
+                .expect_err("unavailable project should be rejected");
+            assert!(err.contains("项目"));
+        }
+
+        let unchanged = service
+            .get_task(task.id.as_str())
+            .await
+            .expect("get task")
+            .expect("task");
+        assert_eq!(unchanged.project_id, PUBLIC_PROJECT_ID);
+    }
+
+    #[tokio::test]
+    async fn update_task_rejects_cross_project_prerequisites() {
+        let service = test_service().await;
+        let prerequisite = create_task(&service, "prerequisite", TaskStatus::Ready).await;
+        let task = create_task(&service, "task", TaskStatus::Ready).await;
+        service
+            .update_task(
+                task.id.as_str(),
+                UpdateTaskRequest {
+                    prerequisite_task_ids: Some(vec![prerequisite.id.clone()]),
+                    ..UpdateTaskRequest::default()
+                },
+                None,
+            )
+            .await
+            .expect("set prerequisite");
+        let project = save_project(&service, "project-active", TaskProjectStatus::Active).await;
+
+        let err = service
+            .update_task(
+                task.id.as_str(),
+                UpdateTaskRequest {
+                    project_id: Some(project.id),
+                    ..UpdateTaskRequest::default()
+                },
+                None,
+            )
+            .await
+            .expect_err("cross-project prerequisite should be rejected");
+
+        assert!(err.contains("前置任务必须属于同一项目"));
+        let unchanged = service
+            .get_task(task.id.as_str())
+            .await
+            .expect("get task")
+            .expect("task");
+        assert_eq!(unchanged.project_id, PUBLIC_PROJECT_ID);
     }
 
     #[tokio::test]

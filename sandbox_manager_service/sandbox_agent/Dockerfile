@@ -50,8 +50,10 @@ COPY BUILTIN_MCP_PROMPT.en-US.md ./BUILTIN_MCP_PROMPT.en-US.md
 COPY BUILTIN_MCP_PROMPT.zh-CN.md ./BUILTIN_MCP_PROMPT.zh-CN.md
 COPY crates ./crates
 COPY sandbox_manager_service/sandbox_mcp_server ./sandbox_manager_service/sandbox_mcp_server
-RUN cargo build --release -p chatos_sandbox_mcp_server \
-    && cp target/release/chatos_sandbox_mcp_server /usr/local/bin/chatos-sandbox-mcp-server
+RUN target="$(rustc -vV | sed -n 's/^host: //p')" \
+    && RUSTFLAGS="-C target-feature=+crt-static" cargo build --release --target "$target" -p chatos_sandbox_mcp_server \
+    && ldd "target/$target/release/chatos_sandbox_mcp_server" 2>&1 | grep -Eq 'not a dynamic executable|statically linked' \
+    && cp "target/$target/release/chatos_sandbox_mcp_server" /usr/local/bin/chatos-sandbox-mcp-server
 
 FROM mcr.microsoft.com/devcontainers/base:dev-ubuntu-24.04
 
@@ -66,7 +68,10 @@ ENV DOTNET_ROOT=/usr/local/dotnet
 ENV JAVA_HOME=/usr/lib/jvm/default-jvm
 ENV PIP_BREAK_SYSTEM_PACKAGES=1
 ENV UV_BREAK_SYSTEM_PACKAGES=1
-ENV PATH=/usr/local/go/bin:/usr/local/dotnet:/root/.cargo/bin:/root/.local/bin:$PATH
+ENV RUSTUP_HOME=/opt/chatos/rustup
+ENV UV_INSTALL_DIR=/usr/local/bin
+ENV UV_PYTHON_INSTALL_DIR=/opt/chatos/python
+ENV PATH=/usr/local/go/bin:/usr/local/dotnet:/opt/chatos/cargo/bin:/usr/local/bin:$PATH
 ENV RUSTUP_DIST_SERVER=https://mirrors.tuna.tsinghua.edu.cn/rustup
 ENV RUSTUP_UPDATE_ROOT=https://mirrors.tuna.tsinghua.edu.cn/rustup/rustup
 
@@ -161,7 +166,7 @@ RUN set -eux; \
     if [ -n "$rust_channel" ]; then \
       case "$rust_channel" in stable|beta|nightly|1.85.1|1.88.0|1.92.0|1.96.1) true ;; *) echo "unsupported Rust channel: $rust_channel" >&2; exit 2 ;; esac; \
       curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
-        | sh -s -- -y --profile minimal --default-toolchain "$rust_channel"; \
+        | CARGO_HOME=/opt/chatos/cargo RUSTUP_HOME="$RUSTUP_HOME" sh -s -- -y --profile minimal --default-toolchain "$rust_channel"; \
     fi; \
     if [ -n "$dotnet_channel" ]; then \
       case "$dotnet_channel" in 8.0|9.0|10.0) true ;; *) echo "unsupported .NET version: $dotnet_channel" >&2; exit 2 ;; esac; \
@@ -250,9 +255,16 @@ ENV CARGO_HTTP_TIMEOUT=600
 COPY --from=agent-builder /usr/local/bin/chatos-sandbox-mcp-server /usr/local/bin/chatos-sandbox-mcp-server
 
 WORKDIR /
-RUN mkdir -p /workspace /opt/chatos-sandbox-agent
+RUN mkdir -p /workspace /opt/chatos-sandbox-agent /home/sandbox \
+    && chown 1000:1000 /home/sandbox
+
+ENV HOME=/home/sandbox
+ENV CARGO_HOME=/home/sandbox/.cargo
+ENV UV_CACHE_DIR=/home/sandbox/.cache/uv
+ENV XDG_CACHE_HOME=/home/sandbox/.cache
 
 WORKDIR /workspace
 EXPOSE 49888
 
+USER 1000:1000
 ENTRYPOINT ["chatos-sandbox-mcp-server"]

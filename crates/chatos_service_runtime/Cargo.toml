@@ -6,9 +6,17 @@ name = "chatos_service_runtime"
 version = "0.1.0"
 edition = "2021"
 
+[features]
+default = []
+axum-support = ["dep:axum", "dep:uuid"]
+
 [dependencies]
+axum = { version = "0.8", optional = true }
 base64 = "0.22"
+chatos_config_sdk = { path = "../chatos_config_sdk" }
+dotenvy = "0.15"
 futures-util = "0.3"
+http = "1"
 jsonwebtoken = { version = "10", features = ["rust_crypto"] }
 reqwest = { version = "0.12", features = ["json", "rustls-tls", "stream"] }
 serde = { version = "1", features = ["derive"] }
@@ -17,3 +25,8 @@ thiserror = "2"
 tokio = { version = "1", features = ["sync"] }
 tracing = "0.1"
 urlencoding = "2"
+uuid = { version = "1", features = ["v4"], optional = true }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt"] }
+tower = { version = "0.5", features = ["util"] }

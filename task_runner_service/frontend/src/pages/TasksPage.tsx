@@ -71,6 +71,7 @@ export function TasksPage() {
     useState<TaskMemorySummaryFilter>('all');
   const [memoryLimit, setMemoryLimit] = useState<number>(50);
   const [form] = Form.useForm<TaskFormValues>();
+  const editorProjectId = Form.useWatch('projectId', form);
   const [runForm] = Form.useForm<RunTaskFormValues>();
   const [batchRunForm] = Form.useForm<RunTaskFormValues>();
   const routeTaskId = searchParams.get('task_id');
@@ -90,6 +91,7 @@ export function TasksPage() {
     taskPromptsQuery,
     mcpCatalogQuery,
     taskCapabilityCatalogQuery,
+    projectRuntimeEnvironmentQuery,
     remoteServersQuery,
     externalMcpConfigsQuery,
     taskMemoryContextQuery,
@@ -138,6 +140,7 @@ export function TasksPage() {
     mcpPreviewTask,
     batchRunTaskIds,
     editingTaskId: editingTask?.id,
+    editorProjectId,
   });
 
   const { taskSubtasksQuery } = useTasksPageEffects({
@@ -243,7 +246,7 @@ export function TasksPage() {
 
   function openCreateDrawer() {
     setEditingTask(null);
-    form.setFieldsValue(buildCreateTaskFormValues(locale));
+    form.setFieldsValue(buildCreateTaskFormValues(locale, routeProjectId));
     setDrawerOpen(true);
   }
 
@@ -301,7 +304,6 @@ export function TasksPage() {
       'builtinPromptMode',
       'builtinPromptLocale',
       'enabledBuiltinKinds',
-      'workspaceDir',
       'defaultRemoteServerId',
     ]) as Partial<TaskFormValues>;
     setDraftMcpPreviewOpen(true);
@@ -311,7 +313,6 @@ export function TasksPage() {
       builtin_prompt_mode: values.builtinPromptMode ?? 'effective',
       builtin_prompt_locale: values.builtinPromptLocale || locale,
       enabled_builtin_kinds: completeEnabledBuiltinKindDependencies(values.enabledBuiltinKinds),
-      workspace_dir: values.workspaceDir?.trim() || undefined,
       default_remote_server_id: values.defaultRemoteServerId,
     });
   }
@@ -347,7 +348,7 @@ export function TasksPage() {
   }
 
   function handleSubmit(values: TaskFormValues) {
-    const payload = buildTaskPayload(values, { editingTask, routeProjectId });
+    const payload = buildTaskPayload(values, { routeProjectId });
     if (!payload) {
       messageApi.error(t('tasks.scheduleInvalid'));
       return;
@@ -496,6 +497,7 @@ export function TasksPage() {
         runDerivedTasks={taskRunDerivedQuery.data}
         runDerivedTasksLoading={taskRunDerivedQuery.isLoading}
         modelLabelMap={modelLabelMap}
+        projectNameMap={projectNameMap}
         taskSummaryMap={taskSummaryMap}
         remoteServerMap={remoteServerMap}
         externalMcpConfigMap={externalMcpConfigMap}
@@ -534,11 +536,15 @@ export function TasksPage() {
         form={form}
         saving={createTaskMutation.isPending || updateTaskMutation.isPending}
         modelOptions={modelOptions}
+        projectOptions={projectOptions}
         prerequisiteTaskOptions={prerequisiteTaskOptions}
         mcpCatalogEntries={mcpCatalogQuery.data}
         selectableSkills={taskCapabilityCatalogQuery.data?.selectable_skills}
         remoteServers={remoteServersQuery.data}
         externalMcpConfigs={externalMcpConfigsQuery.data}
+        runtimeEnvironment={projectRuntimeEnvironmentQuery.data}
+        runtimeEnvironmentLoading={projectRuntimeEnvironmentQuery.isLoading}
+        runtimeEnvironmentUnavailable={projectRuntimeEnvironmentQuery.isError}
         onClose={closeTaskDrawer}
         onSubmit={handleSubmit}
         onPreviewPrompt={openDraftMcpPreviewModal}

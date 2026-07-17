@@ -1,16 +1,34 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-import type { AiModelConfig, AiModelProvider } from '../../types';
+import type { AgentPromptVendor, AiModelConfig, AiModelProvider } from '../../types';
 import { generateId } from '../../lib/utils';
 
 import type { AiModelFormData } from './types';
 
-export const AI_MODEL_PROVIDERS = ['gpt', 'deepseek', 'kimi', 'minimax', 'openai_compatible'] as const;
+export const AI_MODEL_PROVIDERS = ['gpt', 'deepseek', 'kimi', 'glm'] as const;
+export const AGENT_PROMPT_VENDORS: AgentPromptVendor[] = ['glm', 'deepseek', 'gpt', 'kimi'];
+
+export const defaultAgentPromptVendor = (provider: string): AgentPromptVendor => {
+  switch (provider.trim().toLowerCase()) {
+    case 'deepseek':
+      return 'deepseek';
+    case 'kimi':
+    case 'kimik2':
+    case 'moonshot':
+      return 'kimi';
+    case 'glm':
+    case 'zhipu':
+      return 'glm';
+    default:
+      return 'gpt';
+  }
+};
 
 const DEFAULT_FORM_DATA: AiModelFormData = {
   name: '',
   provider: 'gpt',
+  prompt_vendor: 'gpt',
   base_url: '',
   api_key: '',
   has_stored_api_key: false,
@@ -33,12 +51,14 @@ export const applyProviderChange = (
 ): AiModelFormData => ({
   ...current,
   provider,
+  prompt_vendor: defaultAgentPromptVendor(provider),
   thinking_level: provider === 'gpt' ? current.thinking_level : '',
 });
 
 export const toAiModelFormData = (config: AiModelConfig | AiModelProvider): AiModelFormData => ({
   name: config.name,
   provider: config.provider || 'gpt',
+  prompt_vendor: config.prompt_vendor || defaultAgentPromptVendor(config.provider),
   base_url: config.base_url,
   api_key: '',
   has_stored_api_key: config.has_api_key || Boolean(config.api_key.trim()),
@@ -64,6 +84,7 @@ export const buildAiModelConfig = (
     id: current?.id || generateId(),
     name: formData.name.trim(),
     provider: formData.provider,
+    prompt_vendor: formData.prompt_vendor,
     base_url: formData.base_url.trim(),
     api_key: apiKey,
     has_api_key: hasApiKey,

@@ -7,6 +7,7 @@ import { DeleteOutlined, EditOutlined, ReloadOutlined } from '@ant-design/icons'
 import dayjs from 'dayjs';
 
 import type {
+  AgentPromptVendor,
   CreateUserModelProviderPayload,
   UpdateUserModelProviderPayload,
   UserModelConfigRecord,
@@ -18,6 +19,7 @@ export type ProviderFormValues = {
   owner_user_id?: string;
   name: string;
   provider: string;
+  prompt_vendor: AgentPromptVendor;
   api_key?: string;
   clear_api_key?: boolean;
   base_url?: string;
@@ -31,9 +33,31 @@ export const PROVIDER_OPTIONS = [
   { label: 'GPT / OpenAI', value: 'gpt' },
   { label: 'DeepSeek', value: 'deepseek' },
   { label: 'Kimi', value: 'kimi' },
-  { label: 'MiniMax', value: 'minimax' },
-  { label: 'OpenAI Compatible', value: 'openai_compatible' },
+  { label: 'GLM', value: 'glm' },
 ];
+
+export const PROMPT_VENDOR_OPTIONS = [
+  { label: 'GLM', value: 'glm' },
+  { label: 'DeepSeek', value: 'deepseek' },
+  { label: 'GPT / OpenAI', value: 'gpt' },
+  { label: 'Kimi / Moonshot', value: 'kimi' },
+];
+
+export function defaultPromptVendor(provider: string): AgentPromptVendor {
+  switch (provider.trim().toLowerCase()) {
+    case 'glm':
+    case 'zhipu':
+    case 'zhipuai':
+      return 'glm';
+    case 'deepseek':
+      return 'deepseek';
+    case 'kimi':
+    case 'moonshot':
+      return 'kimi';
+    default:
+      return 'gpt';
+  }
+}
 
 export const ALL_USERS_SCOPE = '__all_users__';
 
@@ -87,6 +111,7 @@ function normalizeProviderValues(values: ProviderFormValues) {
   return {
     name: values.name.trim(),
     provider: values.provider,
+    prompt_vendor: values.prompt_vendor,
     api_key: values.api_key?.trim() || undefined,
     base_url: values.base_url?.trim() || undefined,
     enabled: values.enabled,

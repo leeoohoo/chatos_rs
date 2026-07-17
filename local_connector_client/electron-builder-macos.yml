@@ -9,12 +9,19 @@ files:
 extraResources:
   - from: ../.package/macos/local_connector_client_core
     to: local_connector_client_core
+  - from: ../.package/macos/chatos_sandbox_mcp_server
+    to: chatos_sandbox_mcp_server
   - from: ../.package/macos/bundled-tools
     to: bundled-tools
   - from: ../.package/macos/skill-bundles
     to: skill-bundles
+  - from: ../.package/macos/chatos-frontend
+    to: chatos-frontend
+  - from: ../.package/macos/sqlite-migrations
+    to: sqlite-migrations
 mac:
   category: public.app-category.developer-tools
+  icon: ../.package/macos/ChatOS.icns
   hardenedRuntime: true
   entitlements: ../entitlements.mac.plist
   entitlementsInherit: ../entitlements.mac.plist

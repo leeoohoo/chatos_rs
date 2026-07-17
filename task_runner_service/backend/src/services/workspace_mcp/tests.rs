@@ -3,13 +3,12 @@
 
 use crate::models::{
     now_rfc3339, TaskEphemeralHttpMcpServer, TaskMcpConfig, TaskRecord, TaskScheduleConfig,
-    TaskStatus, TASK_MCP_HTTP_AUTH_LOCAL_CONNECTOR_INTERNAL,
-    TASK_MCP_HTTP_AUTH_PROJECT_SERVICE_SYNC, TASK_PROFILE_CHATOS_PLAN, TASK_PROFILE_DEFAULT,
+    TaskStatus, TASK_MCP_HTTP_AUTH_PROJECT_SERVICE_SYNC, TASK_PROFILE_CHATOS_PLAN,
+    TASK_PROFILE_DEFAULT,
 };
 
 use super::{
     ensure_workspace_is_inside_base, runtime_selected_builtin_kinds, selected_builtin_kinds,
-    LOCAL_CONNECTOR_ENABLED_BUILTIN_KINDS_HEADER,
 };
 use chatos_mcp_runtime::BuiltinMcpKind;
 
@@ -76,44 +75,13 @@ fn contact_async_task_adds_required_task_manager_and_ask_user_at_runtime() {
 }
 
 #[test]
-fn local_connector_task_removes_server_local_builtin_kinds() {
-    let mut task = sample_task(
-        TASK_PROFILE_DEFAULT,
-        vec![
-            "CodeMaintainerWrite".to_string(),
-            "TerminalController".to_string(),
-            "BrowserTools".to_string(),
-            "WebTools".to_string(),
-        ],
-    );
-    task.mcp_config
-        .ephemeral_http_servers
-        .push(local_connector_server());
-
-    let selected = runtime_selected_builtin_kinds(&task);
-
-    assert!(!selected.contains(&BuiltinMcpKind::CodeMaintainerRead));
-    assert!(!selected.contains(&BuiltinMcpKind::CodeMaintainerWrite));
-    assert!(!selected.contains(&BuiltinMcpKind::TerminalController));
-    assert!(!selected.contains(&BuiltinMcpKind::BrowserTools));
-    assert!(selected.contains(&BuiltinMcpKind::WebTools));
-}
-
-#[test]
-fn local_connector_plan_task_removes_fixed_server_local_builtin_kinds() {
-    let mut task = sample_task(TASK_PROFILE_CHATOS_PLAN, Vec::new());
-    task.mcp_config
-        .ephemeral_http_servers
-        .push(local_connector_server());
-
-    let selected = runtime_selected_builtin_kinds(&task);
-
-    assert!(!selected.contains(&BuiltinMcpKind::CodeMaintainerRead));
-    assert!(!selected.contains(&BuiltinMcpKind::CodeMaintainerWrite));
-    assert!(!selected.contains(&BuiltinMcpKind::TerminalController));
-    assert!(!selected.contains(&BuiltinMcpKind::BrowserTools));
-    assert!(selected.contains(&BuiltinMcpKind::TaskManager));
-    assert!(selected.contains(&BuiltinMcpKind::ProjectManagement));
+fn local_connector_roots_are_rejected_by_cloud_routing() {
+    assert!(super::is_local_connector_project_root(
+        "local://connector/device-1/workspace-1/apps/web"
+    ));
+    assert!(!super::is_local_connector_project_root(
+        "harness://project/project-1"
+    ));
 }
 
 #[test]
@@ -153,194 +121,6 @@ fn harness_code_plan_task_removes_fixed_server_local_code_builtin_kinds() {
     assert!(selected.contains(&BuiltinMcpKind::BrowserTools));
     assert!(selected.contains(&BuiltinMcpKind::TaskManager));
     assert!(selected.contains(&BuiltinMcpKind::ProjectManagement));
-}
-
-#[test]
-fn local_connector_runtime_routing_keeps_requested_config_and_payload() {
-    let mut task = sample_task(
-        TASK_PROFILE_DEFAULT,
-        vec![
-            "CodeMaintainerRead".to_string(),
-            "TerminalController".to_string(),
-            "BrowserTools".to_string(),
-            "TaskManager".to_string(),
-        ],
-    );
-    task.input_payload = Some(serde_json::json!({ "source": "test" }));
-
-    let changed = super::apply_local_connector_runtime_routing_to_task(
-        &mut task,
-        "local://connector/device-1/workspace-1/apps/web",
-        false,
-    );
-
-    assert!(changed);
-    assert_eq!(
-        task.input_payload,
-        Some(serde_json::json!({ "source": "test" }))
-    );
-    assert_eq!(
-        task.mcp_config.enabled_builtin_kinds,
-        vec![
-            "CodeMaintainerRead".to_string(),
-            "TerminalController".to_string(),
-            "BrowserTools".to_string(),
-            "TaskManager".to_string(),
-        ]
-    );
-    let server = task
-        .mcp_config
-        .ephemeral_http_servers
-        .first()
-        .expect("local connector server");
-    assert_eq!(server.name, "local_connector");
-    assert_eq!(
-        server.auth_mode.as_deref(),
-        Some(TASK_MCP_HTTP_AUTH_LOCAL_CONNECTOR_INTERNAL)
-    );
-    assert_eq!(
-        server
-            .headers
-            .get(LOCAL_CONNECTOR_ENABLED_BUILTIN_KINDS_HEADER)
-            .map(String::as_str),
-        Some("CodeMaintainerRead,TerminalController,BrowserTools")
-    );
-    assert!(server
-        .url
-        .contains("/api/local-connectors/relay/device-1/mcp"));
-    assert!(server.url.contains("workspace_id=workspace-1"));
-    assert!(server.url.contains("cwd=apps%2Fweb"));
-}
-
-#[test]
-fn local_connector_routing_passes_only_selected_local_capabilities() {
-    let mut task = sample_task(
-        TASK_PROFILE_DEFAULT,
-        vec!["BrowserTools".to_string(), "TaskManager".to_string()],
-    );
-
-    let changed = super::apply_local_connector_runtime_routing_to_task(
-        &mut task,
-        "local://connector/device-1/workspace-1/apps/web",
-        false,
-    );
-
-    assert!(changed);
-    assert_eq!(
-        task.mcp_config.enabled_builtin_kinds,
-        vec!["BrowserTools".to_string(), "TaskManager".to_string()]
-    );
-    let server = task
-        .mcp_config
-        .ephemeral_http_servers
-        .first()
-        .expect("local connector server");
-    assert_eq!(
-        server
-            .headers
-            .get(LOCAL_CONNECTOR_ENABLED_BUILTIN_KINDS_HEADER)
-            .map(String::as_str),
-        Some("BrowserTools")
-    );
-    assert!(super::local_connector_server_enables_builtin_kind(
-        server,
-        BuiltinMcpKind::BrowserTools
-    ));
-    assert!(!super::local_connector_server_enables_builtin_kind(
-        server,
-        BuiltinMcpKind::TerminalController
-    ));
-    assert!(!super::local_connector_server_enables_builtin_kind(
-        &local_connector_server(),
-        BuiltinMcpKind::BrowserTools
-    ));
-}
-
-#[test]
-fn selected_skill_keeps_local_workspace_routing_without_builtin_tools() {
-    let mut task = sample_task(TASK_PROFILE_DEFAULT, Vec::new());
-    task.mcp_config.selected_skill_ids = vec!["internal_skill_visualize".to_string()];
-
-    let changed = super::apply_local_connector_runtime_routing_to_task(
-        &mut task,
-        "local://connector/device-1/workspace-1/apps/web",
-        false,
-    );
-
-    assert!(changed);
-    let server = task
-        .mcp_config
-        .ephemeral_http_servers
-        .first()
-        .expect("local connector server");
-    assert_eq!(server.name, "local_connector");
-    assert!(!server
-        .headers
-        .contains_key(LOCAL_CONNECTOR_ENABLED_BUILTIN_KINDS_HEADER));
-    assert!(server.url.contains("workspace_id=workspace-1"));
-}
-
-#[test]
-fn local_connector_plan_routing_routes_profile_required_capabilities() {
-    let mut task = sample_task(TASK_PROFILE_CHATOS_PLAN, Vec::new());
-
-    let changed = super::apply_local_connector_runtime_routing_to_task(
-        &mut task,
-        "local://connector/device-1/workspace-1/apps/web",
-        false,
-    );
-
-    assert!(changed);
-    assert!(task.input_payload.is_none());
-    let server = task
-        .mcp_config
-        .ephemeral_http_servers
-        .first()
-        .expect("local connector server");
-    assert_eq!(
-        server
-            .headers
-            .get(LOCAL_CONNECTOR_ENABLED_BUILTIN_KINDS_HEADER)
-            .map(String::as_str),
-        Some("CodeMaintainerRead,TerminalController,BrowserTools")
-    );
-}
-
-#[test]
-fn local_connector_plan_routing_merges_profile_and_selected_capabilities() {
-    let mut task = sample_task(TASK_PROFILE_CHATOS_PLAN, vec!["BrowserTools".to_string()]);
-
-    let changed = super::apply_local_connector_runtime_routing_to_task(
-        &mut task,
-        "local://connector/device-1/workspace-1/apps/web",
-        false,
-    );
-
-    assert!(changed);
-    let server = task
-        .mcp_config
-        .ephemeral_http_servers
-        .first()
-        .expect("local connector server");
-    assert_eq!(
-        server
-            .headers
-            .get(LOCAL_CONNECTOR_ENABLED_BUILTIN_KINDS_HEADER)
-            .map(String::as_str),
-        Some("CodeMaintainerRead,TerminalController,BrowserTools")
-    );
-    assert!(super::local_connector_server_enables_builtin_kind(
-        server,
-        BuiltinMcpKind::BrowserTools
-    ));
-    assert!(super::local_connector_server_enables_builtin_kind(
-        server,
-        BuiltinMcpKind::TerminalController
-    ));
-    assert!(super::local_connector_server_enables_builtin_kind(
-        server,
-        BuiltinMcpKind::CodeMaintainerRead
-    ));
 }
 
 #[test]
@@ -422,15 +202,6 @@ fn sample_task(task_profile: &str, enabled_builtin_kinds: Vec<String>) -> TaskRe
         created_at: now.clone(),
         updated_at: now,
         deleted_at: None,
-    }
-}
-
-fn local_connector_server() -> TaskEphemeralHttpMcpServer {
-    TaskEphemeralHttpMcpServer {
-        name: "local_connector".to_string(),
-        url: "http://127.0.0.1:39230/internal/mcp".to_string(),
-        headers: Default::default(),
-        auth_mode: Some(TASK_MCP_HTTP_AUTH_LOCAL_CONNECTOR_INTERNAL.to_string()),
     }
 }
 

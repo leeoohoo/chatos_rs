@@ -114,8 +114,8 @@
   }
 
   .layout,
-  .sandboxBoundary,
-  .sandboxStatusGrid,
+  .sandboxSimpleSettingsGrid,
+  .sandboxTechnicalGrid,
   .runtimeGrid,
   .approvalModeGrid,
   .approvalConfigGrid,
@@ -125,6 +125,16 @@
   .metaGrid,
   .terminalForm {
     grid-template-columns: 1fr;
+  }
+
+  .sandboxSimpleIntro {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .sandboxAdvancedPanel > summary {
+    align-items: flex-start;
+    flex-direction: column;
   }
 
   .approvalActions {

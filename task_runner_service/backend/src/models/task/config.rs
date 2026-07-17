@@ -2,6 +2,10 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use super::*;
+use chatos_sandbox_contract::{
+    ApprovalPolicy, ApprovalReviewer, PermissionProfileId, SandboxBackendKind,
+    SandboxLeasePolicyRequest,
+};
 use std::collections::BTreeMap;
 
 pub const TASK_MCP_HTTP_AUTH_LOCAL_CONNECTOR_INTERNAL: &str = "local_connector_internal";
@@ -61,8 +65,22 @@ pub struct TaskMcpConfig {
     pub sandbox_enabled: Option<bool>,
     #[serde(default)]
     pub sandbox_manager_base_url: Option<String>,
+    #[serde(default)]
+    pub sandbox_mode: Option<SandboxBackendKind>,
+    #[serde(default)]
+    pub permission_profile_id: Option<PermissionProfileId>,
+    #[serde(default)]
+    pub approval_policy: Option<ApprovalPolicy>,
+    #[serde(default)]
+    pub approval_reviewer: Option<ApprovalReviewer>,
+    #[serde(default)]
+    pub policy_revision: Option<String>,
+    #[serde(default)]
+    pub additional_writable_roots: Vec<String>,
     #[serde(default = "task_requires_execution_default")]
     pub requires_execution: bool,
+    #[serde(default)]
+    pub execution_service_id: Option<String>,
     #[serde(default)]
     pub default_remote_server_id: Option<String>,
     #[serde(default)]
@@ -86,7 +104,14 @@ impl Default for TaskMcpConfig {
             workspace_dir: None,
             sandbox_enabled: None,
             sandbox_manager_base_url: None,
+            sandbox_mode: None,
+            permission_profile_id: None,
+            approval_policy: None,
+            approval_reviewer: None,
+            policy_revision: None,
+            additional_writable_roots: Vec::new(),
             requires_execution: task_requires_execution_default(),
+            execution_service_id: None,
             default_remote_server_id: None,
             external_mcp_config_ids: Vec::new(),
             selected_skill_ids: Vec::new(),
@@ -99,6 +124,17 @@ impl Default for TaskMcpConfig {
 impl TaskMcpConfig {
     pub fn locale(&self) -> BuiltinMcpPromptLocale {
         BuiltinMcpPromptLocale::from_key(Some(&self.builtin_prompt_locale))
+    }
+
+    pub fn sandbox_policy_request(&self) -> SandboxLeasePolicyRequest {
+        SandboxLeasePolicyRequest {
+            sandbox_mode: self.sandbox_mode,
+            permission_profile_id: self.permission_profile_id,
+            approval_policy: self.approval_policy,
+            approval_reviewer: self.approval_reviewer,
+            policy_revision: self.policy_revision.clone(),
+            additional_writable_roots: self.additional_writable_roots.clone(),
+        }
     }
 }
 
@@ -127,6 +163,10 @@ mod task_mcp_config_tests {
         let config = serde_json::from_value::<TaskMcpConfig>(serde_json::json!({}))
             .expect("legacy task config");
         assert!(config.requires_execution);
+        assert_eq!(
+            config.sandbox_policy_request(),
+            SandboxLeasePolicyRequest::default()
+        );
     }
 }
 

@@ -13,17 +13,16 @@ import {
 import {
   buildImportedModelConfigPayload,
   buildProviderPreviewPayload,
+  defaultPromptVendor,
   emptyModelDraft,
   findExistingImportedModel,
   formatProviderModelOption,
   groupLocalModelProviders,
-  normalizeThinkingLevelForProvider,
   providerLabel,
-  thinkingOptionsForProvider,
-  thinkingValueForProvider,
   type LocalModelProviderGroup,
   type ModelDraftState,
 } from '../utils/modelConfigState';
+import { LocalDefaultModelSettings } from './LocalDefaultModelSettings';
 import { TaskModelSettingsSection } from './TaskModelSettingsSection';
 
 export function ModelConfigPanel() {
@@ -108,7 +107,7 @@ export function ModelConfigPanel() {
         }
         savedCount += 1;
       }
-      setMessage(`已保存供应商配置并导入 ${savedCount} 个模型`);
+      setMessage(`已保存到服务端并同步 ${savedCount} 个模型到本机`);
       resetDraft();
       await load();
     } catch (err) {
@@ -128,6 +127,7 @@ export function ModelConfigPanel() {
     id: group.items[0]?.id,
     name: group.name,
     provider: group.provider,
+    prompt_vendor: group.prompt_vendor as 'glm' | 'deepseek' | 'gpt' | 'kimi',
     base_url: group.base_url,
     api_key_text: '',
     clear_api_key: false,
@@ -172,10 +172,10 @@ export function ModelConfigPanel() {
       for (const item of group.items) {
         await api.syncModelConfig(item.id);
       }
-      setMessage(`已同步供应商 ${group.name} 的 ${group.items.length} 个模型`);
+      setMessage(`已同步供应商 ${group.name} 的 ${group.items.length} 个完整模型配置`);
       await load();
     } catch (err) {
-      setError(err instanceof Error ? err.message : '同步供应商元信息失败');
+      setError(err instanceof Error ? err.message : '同步供应商模型配置失败');
     } finally {
       setSaving(false);
     }
@@ -188,6 +188,7 @@ export function ModelConfigPanel() {
       server_model_config_id: item.server_model_config_id || undefined,
       name: item.name,
       provider: item.provider,
+      prompt_vendor: item.prompt_vendor || defaultPromptVendor(item.provider),
       model: item.model,
       base_url: item.base_url || '',
       api_key_text: '',
@@ -224,10 +225,10 @@ export function ModelConfigPanel() {
     setError(null);
     try {
       const synced = await api.syncModelConfig(item.id);
-      setMessage(`元信息已同步: ${synced.name}`);
+      setMessage(`服务端模型配置已同步到本机: ${synced.name}`);
       await load();
     } catch (err) {
-      setError(err instanceof Error ? err.message : '同步模型元信息失败');
+      setError(err instanceof Error ? err.message : '同步模型配置失败');
     }
   };
 
@@ -238,7 +239,7 @@ export function ModelConfigPanel() {
     try {
       const next = await api.saveModelSettings(settings);
       setSettings(next);
-      setMessage('默认模型设置已同步');
+      setMessage('默认模型设置已保存到本机');
       await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : '保存默认模型设置失败');
@@ -247,24 +248,13 @@ export function ModelConfigPanel() {
     }
   };
 
-  const enabledModels = items.filter((item) => item.enabled && item.model.trim());
-  const modelById = React.useMemo(
-    () => new Map(enabledModels.map((item) => [item.id, item])),
-    [enabledModels],
-  );
-  const memoryModel = modelById.get(settings.memory_summary_model_config_id || '') || null;
-  const projectAgentModel =
-    modelById.get(settings.project_management_agent_model_config_id || '') || null;
-  const approvalModel =
-    modelById.get(settings.command_approval_model_config_id || '') || enabledModels[0] || null;
-
   return (
     <section className="modelPage">
       <section className="panel">
         <div className="panelHeader">
           <div>
-            <h2><Brain size={18} />本地模型配置</h2>
-            <p>API Key 和 Base URL 只保存在这台电脑；服务端只保存模型元信息和本地映射 id。</p>
+            <h2><Brain size={18} />模型配置</h2>
+            <p>服务端加密保存完整模型配置；当前客户端同步一份受保护的本地副本，离线时继续使用。</p>
           </div>
           <button className="iconButton" onClick={() => void load()} title="刷新模型">
             <RefreshCw size={17} />
@@ -312,7 +302,7 @@ export function ModelConfigPanel() {
                   </button>
                   <button
                     className="iconButton"
-                    title="同步供应商下的模型元信息"
+                    title="同步供应商下的完整模型配置"
                     onClick={() => void syncProviderGroup(group)}
                   >
                     <CheckCircle2 size={16} />
@@ -341,13 +331,13 @@ export function ModelConfigPanel() {
                     </span>
                   </div>
                   <span>{item.provider} · {item.model}</span>
-                  <span className="mono">{item.server_model_config_id || '未同步到服务端'}</span>
+                  <span className="mono">{item.server_model_config_id || '尚未同步到服务端'}</span>
                 </div>
                 <div className="modelActions">
                   <button className="iconButton" title="编辑" onClick={() => editModel(item)}>
                     <Settings2 size={16} />
                   </button>
-                  <button className="iconButton" title="同步元信息" onClick={() => void syncModel(item)}>
+                  <button className="iconButton" title="同步完整模型配置" onClick={() => void syncModel(item)}>
                     <RefreshCw size={16} />
                   </button>
                   <button className="iconButton danger" title="删除" onClick={() => void deleteModel(item)}>
@@ -382,13 +372,29 @@ export function ModelConfigPanel() {
                 Provider
                 <select
                   value={draft.provider || 'gpt'}
-                  onChange={(event) => updateDraft({ provider: event.target.value })}
+                  onChange={(event) => updateDraft({
+                    provider: event.target.value,
+                    prompt_vendor: defaultPromptVendor(event.target.value),
+                  })}
                 >
                   <option value="gpt">OpenAI</option>
-                  <option value="openai_compatible">OpenAI Compatible</option>
                   <option value="deepseek">DeepSeek</option>
                   <option value="kimi">Kimi</option>
-                  <option value="minimax">MiniMax</option>
+                  <option value="glm">GLM</option>
+                </select>
+              </label>
+              <label>
+                系统 Agent Prompt
+                <select
+                  value={draft.prompt_vendor || defaultPromptVendor(draft.provider)}
+                  onChange={(event) => updateDraft({
+                    prompt_vendor: event.target.value as 'glm' | 'deepseek' | 'gpt' | 'kimi',
+                  })}
+                >
+                  <option value="glm">GLM</option>
+                  <option value="deepseek">DeepSeek</option>
+                  <option value="gpt">GPT / OpenAI</option>
+                  <option value="kimi">Kimi / Moonshot</option>
                 </select>
               </label>
               <label>
@@ -474,136 +480,13 @@ export function ModelConfigPanel() {
         </div>
       </section>
 
-      <section className="panel">
-        <div className="panelHeader">
-          <div>
-            <h2><Settings2 size={18} />默认模型</h2>
-            <p>这些设置会同步模型 id 到服务端，服务端需要运行时再向本机换取 key。</p>
-          </div>
-          <button className="primaryButton compact" disabled={saving} onClick={() => void saveSettings()}>
-            保存默认设置
-          </button>
-        </div>
-        <div className="approvalFormGrid">
-          <label>
-            Memory 总结模型
-            <select
-              value={settings.memory_summary_model_config_id || ''}
-              onChange={(event) => {
-                const modelId = event.target.value || null;
-                const nextModel = modelById.get(modelId || '') || null;
-                setSettings({
-                  ...settings,
-                  memory_summary_model_config_id: modelId,
-                  memory_summary_thinking_level: normalizeThinkingLevelForProvider(
-                    nextModel?.provider,
-                    settings.memory_summary_thinking_level,
-                  ),
-                });
-              }}
-            >
-              <option value="">不指定</option>
-              {enabledModels.map((item) => (
-                <option key={item.id} value={item.id}>{item.name} · {item.model}</option>
-              ))}
-            </select>
-          </label>
-          <label>
-            Memory Thinking
-            <select
-              value={thinkingValueForProvider(memoryModel?.provider, settings.memory_summary_thinking_level)}
-              disabled={!memoryModel}
-              onChange={(event) =>
-                setSettings({ ...settings, memory_summary_thinking_level: event.target.value || null })
-              }
-            >
-              {thinkingOptionsForProvider(memoryModel?.provider).map((option) => (
-                <option key={option.value || 'default'} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label>
-            项目管理 Agent 模型
-            <select
-              value={settings.project_management_agent_model_config_id || ''}
-              onChange={(event) => {
-                const modelId = event.target.value || null;
-                const nextModel = modelById.get(modelId || '') || null;
-                setSettings({
-                  ...settings,
-                  project_management_agent_model_config_id: modelId,
-                  project_management_agent_thinking_level: normalizeThinkingLevelForProvider(
-                    nextModel?.provider,
-                    settings.project_management_agent_thinking_level,
-                  ),
-                });
-              }}
-            >
-              <option value="">不指定</option>
-              {enabledModels.map((item) => (
-                <option key={item.id} value={item.id}>{item.name} · {item.model}</option>
-              ))}
-            </select>
-          </label>
-          <label>
-            Agent Thinking
-            <select
-              value={thinkingValueForProvider(projectAgentModel?.provider, settings.project_management_agent_thinking_level)}
-              disabled={!projectAgentModel}
-              onChange={(event) =>
-                setSettings({ ...settings, project_management_agent_thinking_level: event.target.value || null })
-              }
-            >
-              {thinkingOptionsForProvider(projectAgentModel?.provider).map((option) => (
-                <option key={option.value || 'default'} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label>
-            命令审批模型
-            <select
-              value={settings.command_approval_model_config_id || ''}
-              onChange={(event) => {
-                const modelId = event.target.value || null;
-                const nextModel = modelById.get(modelId || '') || enabledModels[0] || null;
-                setSettings({
-                  ...settings,
-                  command_approval_model_config_id: modelId,
-                  command_approval_thinking_level: normalizeThinkingLevelForProvider(
-                    nextModel?.provider,
-                    settings.command_approval_thinking_level,
-                  ),
-                });
-              }}
-            >
-              <option value="">自动选择可用模型</option>
-              {enabledModels.map((item) => (
-                <option key={item.id} value={item.id}>{item.name} · {item.model}</option>
-              ))}
-            </select>
-          </label>
-          <label>
-            审批 Thinking
-            <select
-              value={thinkingValueForProvider(approvalModel?.provider, settings.command_approval_thinking_level)}
-              disabled={!approvalModel}
-              onChange={(event) =>
-                setSettings({ ...settings, command_approval_thinking_level: event.target.value || null })
-              }
-            >
-              {thinkingOptionsForProvider(approvalModel?.provider).map((option) => (
-                <option key={option.value || 'default'} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-          </label>
-        </div>
-      </section>
+      <LocalDefaultModelSettings
+        models={items}
+        settings={settings}
+        disabled={saving}
+        onChange={setSettings}
+        onSave={() => void saveSettings()}
+      />
 
       <TaskModelSettingsSection items={items} loading={loading} onReload={load} />
     </section>

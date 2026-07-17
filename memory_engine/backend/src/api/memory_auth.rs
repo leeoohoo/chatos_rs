@@ -2,14 +2,21 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use std::sync::Arc;
-use std::time::Duration;
 
 use axum::{
     body::Body,
     extract::{FromRequestParts, State},
-    http::{header::AUTHORIZATION, request::Parts, Request, StatusCode},
+    http::{request::Parts, Request, StatusCode},
     middleware::Next,
     response::Response,
+};
+use chatos_service_runtime::http_body::{
+    read_response_json_limited, read_response_preview_text_limited_or_message,
+    ERROR_BODY_PREVIEW_LIMIT_BYTES, JSON_BODY_LIMIT_BYTES,
+};
+use chatos_service_runtime::{
+    bearer_token_from_headers, classify_http_request_error,
+    normalized_identity_text as normalize_optional, BearerTokenError, HttpRequestErrorKind,
 };
 use serde::{Deserialize, Serialize};
 
@@ -23,7 +30,6 @@ use super::{
     operator_auth,
 };
 
-const BEARER_PREFIX: &str = "Bearer ";
 const PRINCIPAL_TYPE_AGENT_ACCOUNT: &str = "agent_account";
 const PRINCIPAL_TYPE_HUMAN_USER: &str = "human_user";
 const USER_ROLE_SUPER_ADMIN: &str = "super_admin";
@@ -264,7 +270,9 @@ pub async fn require_memory_auth(
         return Ok(next.run(request).await);
     }
     if let Some(token) = bearer_token_from_request(&request)? {
-        match verify_user_service_principal(token.as_str(), &state.config).await {
+        match verify_user_service_principal(token.as_str(), &state.config, &state.user_service_http)
+            .await
+        {
             Ok(principal) => {
                 request
                     .extensions_mut()
@@ -323,75 +331,62 @@ pub async fn require_memory_auth(
 fn bearer_token_from_request(
     request: &Request<Body>,
 ) -> Result<Option<String>, (StatusCode, String)> {
-    let Some(raw_value) = request.headers().get(AUTHORIZATION) else {
-        return Ok(None);
-    };
-    let value = raw_value.to_str().map_err(|_| {
-        (
+    match bearer_token_from_headers(request.headers()) {
+        Ok(token) => Ok(Some(token.to_string())),
+        Err(BearerTokenError::MissingAuthorizationHeader) => Ok(None),
+        Err(
+            BearerTokenError::InvalidAuthorizationHeader | BearerTokenError::InvalidBearerToken,
+        ) => Err((
             StatusCode::UNAUTHORIZED,
             "invalid authorization header".to_string(),
-        )
-    })?;
-    let token = value
-        .strip_prefix(BEARER_PREFIX)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .ok_or_else(|| {
-            (
-                StatusCode::UNAUTHORIZED,
-                "invalid authorization header".to_string(),
-            )
-        })?;
-    Ok(Some(token.to_string()))
+        )),
+    }
 }
 
 async fn verify_user_service_principal(
     token: &str,
     config: &AppConfig,
+    client: &reqwest::Client,
 ) -> Result<MemoryPrincipal, (StatusCode, String)> {
     let endpoint = format!(
         "{}/api/auth/verify",
         config.user_service_base_url.trim().trim_end_matches('/')
     );
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_millis(
-            config.user_service_request_timeout_ms.max(300),
-        ))
-        .build()
-        .map_err(|err| {
-            (
-                StatusCode::BAD_GATEWAY,
-                format!("build user_service client failed: {err}"),
-            )
-        })?;
     let response = client
         .get(endpoint)
         .bearer_auth(token.trim())
         .send()
         .await
         .map_err(|err| {
+            let status = if classify_http_request_error(&err) == HttpRequestErrorKind::Timeout {
+                StatusCode::GATEWAY_TIMEOUT
+            } else {
+                StatusCode::BAD_GATEWAY
+            };
             (
-                StatusCode::BAD_GATEWAY,
+                status,
                 format!("verify token via user_service failed: {err}"),
             )
         })?;
     let status = response.status();
     if !status.is_success() {
-        let body = response.text().await.unwrap_or_default();
+        let body =
+            read_response_preview_text_limited_or_message(response, ERROR_BODY_PREVIEW_LIMIT_BYTES)
+                .await;
         return Err((
             StatusCode::UNAUTHORIZED,
             format!("invalid user token: {} {}", status.as_u16(), body),
         ));
     }
-    let payload = response
-        .json::<UserServiceVerifyResponse>()
-        .await
-        .map_err(|err| {
-            (
-                StatusCode::BAD_GATEWAY,
-                format!("parse user_service verify response failed: {err}"),
-            )
-        })?;
+    let payload =
+        read_response_json_limited::<UserServiceVerifyResponse>(response, JSON_BODY_LIMIT_BYTES)
+            .await
+            .map_err(|err| {
+                (
+                    StatusCode::BAD_GATEWAY,
+                    format!("parse user_service verify response failed: {err}"),
+                )
+            })?;
     match payload.principal.principal_type.as_str() {
         PRINCIPAL_TYPE_HUMAN_USER | PRINCIPAL_TYPE_AGENT_ACCOUNT => {}
         _ => {
@@ -402,10 +397,6 @@ async fn verify_user_service_principal(
         }
     }
     Ok(MemoryPrincipal::from(payload.principal))
-}
-
-fn normalize_optional(value: Option<&str>) -> Option<&str> {
-    value.map(str::trim).filter(|value| !value.is_empty())
 }
 
 #[cfg(test)]

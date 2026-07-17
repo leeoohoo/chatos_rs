@@ -21,6 +21,7 @@ import type {
 } from '../types';
 import {
   defaultBaseUrlForProvider,
+  defaultPromptVendor,
   type ModelEnabledFilter,
   type ModelFormValues,
   normalizeSupportedProvider,
@@ -170,6 +171,7 @@ export function ModelsPage() {
     form.setFieldsValue({
       name: '',
       provider,
+      prompt_vendor: defaultPromptVendor(provider),
       base_url: defaultBaseUrlForProvider(provider),
       api_key: '',
       model: '',
@@ -202,6 +204,7 @@ export function ModelsPage() {
     form.setFieldsValue({
       name: model.name,
       provider,
+      prompt_vendor: model.prompt_vendor || defaultPromptVendor(provider),
       base_url: model.base_url,
       api_key: model.api_key,
       model: model.model,
@@ -246,6 +249,7 @@ export function ModelsPage() {
         applyAutoBaseUrl(defaultBaseUrlForProvider(nextProvider));
       }
       providerRef.current = nextProvider;
+      form.setFieldValue('prompt_vendor', defaultPromptVendor(nextProvider));
       setModelCatalog(null);
       if (form.getFieldValue('model')) {
         form.setFieldValue('model', '');

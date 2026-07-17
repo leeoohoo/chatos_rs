@@ -29,7 +29,7 @@ const getSandboxEnabled = (response: ProjectRuntimeEnvironmentResponse | null | 
 };
 
 const sourceTypeForBoundary = (project: Project | null): string => (
-  (project?.sourceType || 'local').trim().toLowerCase()
+  (project?.sourceType || 'cloud').trim().toLowerCase()
 );
 
 export const isProjectRuntimeSandboxConfigurable = (project: Project | null): boolean => {

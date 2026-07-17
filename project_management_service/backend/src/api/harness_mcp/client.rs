@@ -8,7 +8,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
-use crate::http_body::{read_response_text_limited_or_message, ERROR_BODY_PREVIEW_LIMIT_BYTES};
+use crate::http_body::{
+    read_response_json_limited, read_response_text_limited_or_message,
+    ERROR_BODY_PREVIEW_LIMIT_BYTES, JSON_BODY_LIMIT_BYTES,
+};
 
 use super::HarnessMcpContext;
 
@@ -328,8 +331,7 @@ where
             message: text,
         });
     }
-    response
-        .json::<TResp>()
+    read_response_json_limited::<TResp>(response, JSON_BODY_LIMIT_BYTES)
         .await
         .map_err(|err| HarnessRequestError::from_message(err.to_string()))
 }

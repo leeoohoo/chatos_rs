@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use chatos_sandbox_contract::{GrantedPermissionProfile, RequestPermissionProfile};
 use serde_json::Value;
 
 use crate::tool_registry::{async_text_tool_handler, block_on_result, text_result, ToolRegistry};
@@ -47,6 +48,21 @@ pub struct TerminalControllerContext {
     pub max_output_chars: usize,
 }
 
+#[derive(Debug, Clone, Default)]
+pub struct TerminalCommandPermissions {
+    /// Untrusted permission overlay requested by the caller. A store must never treat this as a
+    /// grant on its own.
+    pub requested: Option<RequestPermissionProfile>,
+    /// Trusted overlay inserted by the local approval broker after it validates the decision.
+    pub granted: Option<GrantedPermissionProfile>,
+}
+
+impl TerminalCommandPermissions {
+    pub fn is_empty(&self) -> bool {
+        self.requested.is_none() && self.granted.is_none()
+    }
+}
+
 #[async_trait]
 pub trait TerminalControllerStore: Send + Sync {
     async fn execute_command(
@@ -55,6 +71,7 @@ pub trait TerminalControllerStore: Send + Sync {
         path: String,
         command: String,
         background: bool,
+        permissions: TerminalCommandPermissions,
     ) -> Result<Value, String>;
 
     async fn get_recent_logs(
@@ -234,9 +251,29 @@ impl TerminalControllerService {
                     .get("background")
                     .and_then(Value::as_bool)
                     .unwrap_or(false);
+                let requested = args
+                    .get("additionalPermissions")
+                    .cloned()
+                    .map(serde_json::from_value::<RequestPermissionProfile>)
+                    .transpose()
+                    .map_err(|err| format!("invalid additionalPermissions: {err}"))?;
+                if let Some(requested) = &requested {
+                    requested.validate()?;
+                }
+                let granted = args
+                    .get("_grantedPermissions")
+                    .cloned()
+                    .map(serde_json::from_value::<GrantedPermissionProfile>)
+                    .transpose()
+                    .map_err(|err| format!("invalid granted permission overlay: {err}"))?;
+                let permissions = TerminalCommandPermissions { requested, granted };
                 let ctx = bound.clone();
                 let store = store.inner();
-                Ok(async move { store.execute_command(ctx, path, command, background).await })
+                Ok(async move {
+                    store
+                        .execute_command(ctx, path, command, background, permissions)
+                        .await
+                })
             }),
         );
     }

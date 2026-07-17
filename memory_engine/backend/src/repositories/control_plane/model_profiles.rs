@@ -67,20 +67,6 @@ pub async fn get_model_profile_by_id_for_owner(
         .map_err(|err| err.to_string())
 }
 
-pub async fn get_runtime_model_profile_by_id(
-    db: &Db,
-    id: &str,
-    owner_user_id: Option<&str>,
-) -> Result<Option<EngineModelProfile>, String> {
-    let Some(profile) = get_model_profile_by_id(db, id).await? else {
-        return Ok(None);
-    };
-    if profile_visible_to_owner(&profile, owner_user_id) {
-        return Ok(Some(profile));
-    }
-    Ok(None)
-}
-
 pub async fn get_active_model_profile(
     db: &Db,
     owner_user_id: Option<&str>,
@@ -290,14 +276,4 @@ fn global_enabled_filter(enabled: Option<bool>, is_default: Option<bool>) -> Doc
         filter.insert("is_default", is_default);
     }
     filter
-}
-
-fn profile_visible_to_owner(profile: &EngineModelProfile, owner_user_id: Option<&str>) -> bool {
-    match normalize_owner(owner_user_id) {
-        Some(owner_user_id) => {
-            profile.owner_user_id.as_deref() == Some(owner_user_id)
-                || normalize_owner(profile.owner_user_id.as_deref()).is_none()
-        }
-        None => normalize_owner(profile.owner_user_id.as_deref()).is_none(),
-    }
 }

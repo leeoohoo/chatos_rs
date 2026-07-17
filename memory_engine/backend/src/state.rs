@@ -8,4 +8,5 @@ use crate::db::Db;
 pub struct AppState {
     pub pool: Db,
     pub config: AppConfig,
+    pub user_service_http: reqwest::Client,
 }

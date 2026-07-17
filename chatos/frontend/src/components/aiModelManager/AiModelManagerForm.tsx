@@ -6,6 +6,7 @@ import { Eye, EyeOff, Loader2, RefreshCw } from 'lucide-react';
 import { useI18n } from '../../i18n/I18nProvider';
 import {
   AI_MODEL_PROVIDERS,
+  AGENT_PROMPT_VENDORS,
   applyProviderChange,
 } from './helpers';
 import type { AiModelManagerFormProps } from './types';
@@ -69,6 +70,26 @@ const AiModelManagerForm = ({
               </option>
             ))}
           </select>
+        </div>
+
+        <div>
+          <label className="block text-sm font-medium text-foreground mb-2">
+            {t('aiModelManager.form.promptVendor')}
+          </label>
+          <select
+            value={formData.prompt_vendor}
+            onChange={(event) => onFormDataChange({
+              prompt_vendor: event.target.value as typeof formData.prompt_vendor,
+            })}
+            className="w-full px-3 py-2 border border-input bg-background text-foreground rounded-md focus:outline-none focus:ring-2 focus:ring-ring"
+          >
+            {AGENT_PROMPT_VENDORS.map((vendor) => (
+              <option key={vendor} value={vendor}>{vendor}</option>
+            ))}
+          </select>
+          <p className="mt-1 text-xs text-muted-foreground">
+            {t('aiModelManager.form.promptVendorHint')}
+          </p>
         </div>
 
         <div>

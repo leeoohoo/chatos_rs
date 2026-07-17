@@ -69,7 +69,6 @@ pub(crate) async fn process_level0_selection(
         db,
         Some(req.tenant_id.as_str()),
         settings.prompt_title.as_str(),
-        settings.summary_prompt.as_deref(),
         selected_texts.as_slice(),
         settings.token_limit,
         settings.target_summary_tokens,

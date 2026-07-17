@@ -43,7 +43,14 @@ impl TerminalControllerStore for ChatosTerminalControllerStore {
         path: String,
         command: String,
         background: bool,
+        permissions: chatos_builtin_tools::TerminalCommandPermissions,
     ) -> Result<Value, String> {
+        if !permissions.is_empty() {
+            return Err(
+                "temporary permission overlays are unavailable in this terminal runtime"
+                    .to_string(),
+            );
+        }
         execute_command_with_context(
             bound_context(context),
             path.as_str(),

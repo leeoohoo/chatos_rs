@@ -1,6 +1,10 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
+use std::collections::BTreeSet;
+
+use chatos_sandbox_contract::{EffectiveSandboxPolicy, SandboxLeasePolicyRequest};
+
 use super::*;
 
 impl RunService {
@@ -26,7 +30,7 @@ impl RunService {
                         .source_type
                         .as_deref()
                         .map(str::trim)
-                        .unwrap_or("local");
+                        .unwrap_or("cloud");
                     if source_type.eq_ignore_ascii_case("cloud") {
                         return Ok(true);
                     }
@@ -99,11 +103,7 @@ impl RunService {
                 return Err(err);
             }
         };
-        let workspace_root = if is_local_connector_sandbox_manager(route.base_url.as_str()) {
-            sandbox_workspace_root(self.config.default_workspace_dir.as_str())?
-        } else {
-            sandbox_workspace_root(effective_workspace_dir)?
-        };
+        let workspace_root = sandbox_workspace_root(effective_workspace_dir)?;
         let base_url = route.base_url.clone();
         let ttl_seconds = self.effective_sandbox_lease_ttl_seconds().await?;
         let client = SandboxManagerClient::new(base_url, route.auth.clone())?;
@@ -117,7 +117,11 @@ impl RunService {
                 "ttl_seconds": ttl_seconds,
                 "provider": route.provider.as_str(),
                 "image_id": route.image_id.as_deref(),
+                "environment_group": route.environment_plan.is_some(),
+                "primary_service_id": route.environment_plan.as_ref().map(|plan| plan.primary_service_id.as_str()),
+                "service_ids": route.environment_plan.as_ref().map(|plan| plan.services.iter().map(|service| service.service_id.as_str()).collect::<Vec<_>>()),
                 "requires_execution": task.mcp_config.requires_execution,
+                "requested_policy": route.policy,
             })),
         )
         .await;
@@ -129,6 +133,9 @@ impl RunService {
                 workspace_root.as_path(),
                 ttl_seconds,
                 route.image_id.as_deref(),
+                route.environment_plan.as_ref(),
+                effective_workspace_dir,
+                route.policy.clone(),
             )
             .await
         {
@@ -172,6 +179,49 @@ impl RunService {
             }
         };
 
+        let Some(effective_policy) = response.effective_policy.clone() else {
+            let err = "sandbox response missing required effective_policy".to_string();
+            let _ = client.release_response(&response, false, true).await;
+            self.append_sandbox_event(
+                run,
+                "sandbox_failed",
+                err.clone(),
+                Some(json!({
+                    "requested_policy": route.policy,
+                    "effective_policy": Value::Null,
+                })),
+            )
+            .await;
+            return Err(err);
+        };
+
+        if let Err(err) = validate_effective_policy_is_not_broader(&route.policy, &effective_policy)
+        {
+            let _ = client.release_response(&response, false, true).await;
+            self.append_sandbox_event(
+                run,
+                "sandbox_failed",
+                err.clone(),
+                Some(json!({
+                    "requested_policy": route.policy,
+                    "effective_policy": effective_policy,
+                })),
+            )
+            .await;
+            return Err(err);
+        }
+
+        self.append_sandbox_event(
+            run,
+            "sandbox_policy_resolved",
+            "sandbox policy resolved",
+            Some(json!({
+                "requested_policy": route.policy,
+                "effective_policy": effective_policy,
+            })),
+        )
+        .await;
+
         let context = match SandboxRuntimeContext::from_response(
             response,
             workspace_root.as_path(),
@@ -191,8 +241,6 @@ impl RunService {
             }
         };
 
-        let should_copy_workspace =
-            !is_local_connector_sandbox_manager(context.manager_base_url.as_str());
         let baseline_workspace = match sandbox_baseline_workspace(&context.run_workspace) {
             Ok(path) => path,
             Err(err) => {
@@ -207,7 +255,7 @@ impl RunService {
                 return Err(err);
             }
         };
-        if should_copy_workspace {
+        if !context.is_environment {
             if let Err(err) =
                 copy_workspace_to_sandbox(effective_workspace_dir, baseline_workspace.as_str())
             {
@@ -289,5 +337,175 @@ impl RunService {
         );
 
         Ok(Some(context))
+    }
+}
+
+fn validate_effective_policy_is_not_broader(
+    requested: &SandboxLeasePolicyRequest,
+    effective: &EffectiveSandboxPolicy,
+) -> Result<(), String> {
+    if let Some(requested_backend) = requested.sandbox_mode {
+        if effective.sandbox_mode != requested_backend {
+            return Err(format!(
+                "sandbox effective backend {} does not match requested {}",
+                effective.sandbox_mode.as_str(),
+                requested_backend.as_str()
+            ));
+        }
+    }
+
+    if let Some(requested_profile) = requested.permission_profile_id {
+        if !effective
+            .permission_profile_id
+            .is_no_broader_than(requested_profile)
+        {
+            return Err(format!(
+                "sandbox effective permission profile {} is broader than requested {}",
+                effective.permission_profile_id.as_str(),
+                requested_profile.as_str()
+            ));
+        }
+    }
+
+    if let Some(requested_policy) = requested.approval_policy {
+        if !effective
+            .approval_policy
+            .is_no_broader_than(requested_policy)
+        {
+            return Err(format!(
+                "sandbox effective approval policy {} is broader than requested {}",
+                effective.approval_policy.as_str(),
+                requested_policy.as_str()
+            ));
+        }
+    }
+
+    if let Some(requested_reviewer) = requested.approval_reviewer {
+        if !effective
+            .approval_reviewer
+            .is_no_broader_than(requested_reviewer)
+        {
+            return Err(format!(
+                "sandbox effective approval reviewer {} is broader than requested {}",
+                effective.approval_reviewer.as_str(),
+                requested_reviewer.as_str()
+            ));
+        }
+    }
+
+    let requested_roots = normalized_root_set(&requested.additional_writable_roots);
+    let effective_roots = normalized_root_set(&effective.additional_writable_roots);
+    if !effective_roots.is_subset(&requested_roots) {
+        let extra = effective_roots
+            .difference(&requested_roots)
+            .cloned()
+            .collect::<Vec<_>>()
+            .join(", ");
+        return Err(format!(
+            "sandbox effective additional writable roots exceed requested roots: {extra}"
+        ));
+    }
+
+    Ok(())
+}
+
+fn normalized_root_set(values: &[String]) -> BTreeSet<String> {
+    values
+        .iter()
+        .map(|value| value.trim())
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+        .collect()
+}
+
+#[cfg(test)]
+mod policy_validation_tests {
+    use super::*;
+    use chatos_sandbox_contract::{
+        ApprovalPolicy, ApprovalReviewer, PermissionProfileId, SandboxBackendKind,
+    };
+
+    fn request() -> SandboxLeasePolicyRequest {
+        SandboxLeasePolicyRequest {
+            sandbox_mode: Some(SandboxBackendKind::Docker),
+            permission_profile_id: Some(PermissionProfileId::WorkspaceWrite),
+            approval_policy: Some(ApprovalPolicy::OnRequest),
+            approval_reviewer: Some(ApprovalReviewer::User),
+            policy_revision: None,
+            additional_writable_roots: vec!["C:/project/cache".to_string()],
+        }
+    }
+
+    fn effective() -> EffectiveSandboxPolicy {
+        EffectiveSandboxPolicy {
+            sandbox_mode: SandboxBackendKind::Docker,
+            permission_profile_id: PermissionProfileId::WorkspaceWrite,
+            approval_policy: ApprovalPolicy::OnRequest,
+            approval_reviewer: ApprovalReviewer::User,
+            policy_revision: None,
+            additional_writable_roots: vec!["C:/project/cache".to_string()],
+        }
+    }
+
+    #[test]
+    fn effective_policy_matching_or_stricter_than_request_is_allowed() {
+        let mut effective = effective();
+        effective.permission_profile_id = PermissionProfileId::ReadOnly;
+
+        validate_effective_policy_is_not_broader(&request(), &effective).expect("valid policy");
+    }
+
+    #[test]
+    fn effective_policy_rejects_broader_permission_profile() {
+        let mut requested = request();
+        requested.permission_profile_id = Some(PermissionProfileId::ReadOnly);
+        let mut effective = effective();
+        effective.permission_profile_id = PermissionProfileId::WorkspaceWrite;
+
+        let err = validate_effective_policy_is_not_broader(&requested, &effective)
+            .expect_err("workspace write is broader than read only");
+
+        assert!(err.contains("permission profile"));
+    }
+
+    #[test]
+    fn effective_policy_rejects_backend_mismatch() {
+        let mut effective = effective();
+        effective.sandbox_mode = SandboxBackendKind::LocalProcess;
+
+        let err = validate_effective_policy_is_not_broader(&request(), &effective)
+            .expect_err("backend mismatch should fail");
+
+        assert!(err.contains("backend"));
+    }
+
+    #[test]
+    fn effective_policy_accepts_fail_closed_never_but_rejects_broader_reviewer() {
+        let mut effective_policy = effective();
+        effective_policy.approval_policy = ApprovalPolicy::Never;
+        validate_effective_policy_is_not_broader(&request(), &effective_policy)
+            .expect("never denies escalations and is no broader than on-request");
+
+        let mut effective_reviewer = effective();
+        effective_reviewer.approval_reviewer = ApprovalReviewer::AutoReview;
+        assert!(
+            validate_effective_policy_is_not_broader(&request(), &effective_reviewer)
+                .expect_err("auto review is broader")
+                .contains("approval reviewer")
+        );
+    }
+
+    #[test]
+    fn effective_policy_rejects_unrequested_extra_writable_roots() {
+        let mut effective = effective();
+        effective
+            .additional_writable_roots
+            .push("C:/outside".to_string());
+
+        let err = validate_effective_policy_is_not_broader(&request(), &effective)
+            .expect_err("extra roots should fail");
+
+        assert!(err.contains("additional writable roots"));
+        assert!(err.contains("C:/outside"));
     }
 }

@@ -9,6 +9,7 @@ use chatos_ai_runtime::{
     DEFAULT_TOOL_RESULTS_MODEL_TOTAL_MAX_CHARS, DEFAULT_TOOL_RESULT_MODEL_MAX_CHARS,
     TOOL_RESULTS_MODEL_TOTAL_MAX_CHARS_ENV, TOOL_RESULT_MODEL_MAX_CHARS_ENV,
 };
+pub(super) use chatos_service_runtime::env_text as normalized_env;
 use chatos_service_runtime::{
     validate_production_secret, DEFAULT_MEMORY_ENGINE_OPERATOR_TOKEN,
     DEFAULT_SANDBOX_MANAGER_SYSTEM_CLIENT_KEY,
@@ -71,12 +72,7 @@ impl AppConfig {
                 )
             })
             .unwrap_or(false);
-        let default_task_execution_max_iterations =
-            std::env::var("TASK_RUNNER_MAX_MODEL_REQUEST_ROUNDS")
-                .ok()
-                .and_then(|value| value.parse::<usize>().ok())
-                .unwrap_or(600)
-                .max(1);
+        let default_task_execution_max_iterations = chatos_agent::agent_max_iterations_from_env();
         let default_tool_result_model_max_chars = env_usize(
             TOOL_RESULT_MODEL_MAX_CHARS_ENV,
             DEFAULT_TOOL_RESULT_MODEL_MAX_CHARS,
@@ -278,13 +274,6 @@ fn default_worker_id() -> String {
         std::process::id(),
         uuid::Uuid::new_v4()
     )
-}
-
-pub(super) fn normalized_env(key: &str) -> Option<String> {
-    std::env::var(key)
-        .ok()
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
 }
 
 pub(super) fn env_usize(key: &str, default_value: usize) -> usize {

@@ -17,10 +17,13 @@ chatos_builtin_tools = { path = "../../crates/chatos_builtin_tools" }
 chatos_mcp_service = { path = "../../crates/chatos_mcp_service" }
 chatos_mcp_runtime = { path = "../../crates/chatos_mcp_runtime" }
 chatos_project_mcp_contract = { path = "../../crates/chatos_project_mcp_contract" }
-chatos_service_runtime = { path = "../../crates/chatos_service_runtime" }
+chatos_remote_runtime = { path = "../../crates/chatos_remote_runtime" }
+chatos_sandbox_contract = { path = "../../crates/chatos_sandbox_contract" }
+chatos_service_runtime = { path = "../../crates/chatos_service_runtime", features = ["axum-support"] }
+chatos_terminal_runtime = { path = "../../crates/chatos_terminal_runtime" }
+chatos_config_sdk = { path = "../../crates/chatos_config_sdk" }
 chatos_plugin_management_sdk = { path = "../../crates/chatos_plugin_management_sdk" }
 chrono = { version = "0.4", features = ["clock", "serde"] }
-dotenvy = "0.15"
 futures-util = "0.3"
 jsonwebtoken = { version = "10", features = ["rust_crypto"] }
 memory_engine_sdk = { path = "../../crates/memory_engine_sdk" }

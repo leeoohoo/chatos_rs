@@ -1,6 +1,8 @@
 # SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 # Required Notice: Copyright (c) 2025 AI Chat Team
 
+ARG DOCKER_CLI_VERSION=27.5.1
+
 FROM rust:1.94.0-bookworm AS builder
 
 ENV CARGO_REGISTRIES_CRATES_IO_PROTOCOL=sparse
@@ -68,6 +70,9 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
 
 FROM debian:bookworm-slim AS runtime-base
 
+ARG BIN_NAME
+ARG DOCKER_CLI_VERSION
+
 RUN find /etc/apt -type f \( -name '*.list' -o -name '*.sources' \) -print0 \
     | xargs -0 -r sed -i \
       -e 's|http://deb.debian.org/debian|http://mirrors.aliyun.com/debian|g' \
@@ -83,6 +88,14 @@ RUN find /etc/apt -type f \( -name '*.list' -o -name '*.sources' \) -print0 \
         openssh-client \
         ripgrep \
         tzdata \
+    && if [ "$BIN_NAME" = "sandbox_manager_service_backend" ]; then \
+         docker_arch="$(dpkg --print-architecture)" \
+         && curl -fsSL \
+           "https://download.docker.com/linux/debian/dists/bookworm/pool/stable/${docker_arch}/docker-ce-cli_${DOCKER_CLI_VERSION}-1~debian.12~bookworm_${docker_arch}.deb" \
+           -o /tmp/docker-ce-cli.deb \
+         && apt-get install -y --no-install-recommends /tmp/docker-ce-cli.deb \
+         && rm -f /tmp/docker-ce-cli.deb; \
+       fi \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /out/service /usr/local/bin/chatos-service

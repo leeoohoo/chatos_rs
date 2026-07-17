@@ -22,6 +22,9 @@ export type InputAreaRefObject<T> = RefObject<T> | RefObject<T | null>;
 
 export interface InputAreaComposerProps {
   disabled: boolean;
+  onStop?: () => void | Promise<void>;
+  isRunning: boolean;
+  isStopping: boolean;
   effectiveAllowAttachments: boolean;
   showModelSelector: boolean;
   selectedModelId: string | null;

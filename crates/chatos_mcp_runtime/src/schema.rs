@@ -6,6 +6,17 @@ use serde_json::{json, Value};
 use crate::types::ParsedToolDefinition;
 
 pub fn parse_tool_definition(tool: &Value) -> Option<ParsedToolDefinition> {
+    parse_tool_definition_with_parameters_alias(tool, true)
+}
+
+pub fn parse_mcp_tool_definition(tool: &Value) -> Option<ParsedToolDefinition> {
+    parse_tool_definition_with_parameters_alias(tool, false)
+}
+
+fn parse_tool_definition_with_parameters_alias(
+    tool: &Value,
+    allow_parameters_alias: bool,
+) -> Option<ParsedToolDefinition> {
     let name = tool
         .get("name")
         .and_then(Value::as_str)
@@ -20,7 +31,11 @@ pub fn parse_tool_definition(tool: &Value) -> Option<ParsedToolDefinition> {
     let parameters = tool
         .get("inputSchema")
         .cloned()
-        .or_else(|| tool.get("parameters").cloned())
+        .or_else(|| {
+            allow_parameters_alias
+                .then(|| tool.get("parameters").cloned())
+                .flatten()
+        })
         .unwrap_or_else(default_tool_parameters);
 
     Some(ParsedToolDefinition {
@@ -133,4 +148,36 @@ pub fn normalize_json_schema(schema: &Value) -> Value {
 
     visit(&mut root);
     root
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::{parse_mcp_tool_definition, parse_tool_definition};
+
+    #[test]
+    fn generic_tool_definition_accepts_parameters_alias() {
+        let parsed = parse_tool_definition(&json!({
+            "name": "search",
+            "parameters": {"type": "object", "properties": {"q": {"type": "string"}}}
+        }))
+        .expect("tool definition");
+
+        assert!(parsed.parameters.get("properties").is_some());
+    }
+
+    #[test]
+    fn mcp_tool_definition_uses_only_input_schema() {
+        let parsed = parse_mcp_tool_definition(&json!({
+            "name": "search",
+            "parameters": {"type": "object", "properties": {"q": {"type": "string"}}}
+        }))
+        .expect("tool definition");
+
+        assert_eq!(
+            parsed.parameters,
+            json!({"type": "object", "properties": {}, "required": []})
+        );
+    }
 }

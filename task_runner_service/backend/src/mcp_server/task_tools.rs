@@ -19,10 +19,10 @@ use super::support::{
     tasks_for_external_mcp,
 };
 use super::{
-    decode_args, text_result, BatchTaskDeleteArgs, BatchTaskStatusUpdateArgs, CancelTaskArgs,
-    CreateProjectExecutionTasksArgs, CreateTaskArgs, CreateTasksWithPrerequisitesArgs,
-    McpRequestContext, McpToolProfile, SetTaskPrerequisitesArgs, TaskIdArgs, TaskRunnerMcpService,
-    UpdateTaskArgs,
+    decode_args, reject_ai_execution_service_selection, text_result, BatchTaskDeleteArgs,
+    BatchTaskStatusUpdateArgs, CancelTaskArgs, CreateProjectExecutionTasksArgs, CreateTaskArgs,
+    CreateTasksWithPrerequisitesArgs, McpRequestContext, McpToolProfile, SetTaskPrerequisitesArgs,
+    TaskIdArgs, TaskRunnerMcpService, UpdateTaskArgs,
 };
 
 impl TaskRunnerMcpService {
@@ -198,6 +198,7 @@ impl TaskRunnerMcpService {
             }
             "update_task" => {
                 let mut args: UpdateTaskArgs = decode_args(args)?;
+                reject_ai_execution_service_selection(args.patch.mcp_config.as_ref())?;
                 if args.patch.status.is_some() {
                     ensure_task_status_update_allowed_from_mcp(current_user)?;
                 }

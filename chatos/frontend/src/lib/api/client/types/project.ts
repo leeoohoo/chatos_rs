@@ -14,6 +14,8 @@ export interface ProjectResponse {
   gitUrl?: string | null;
   source_type?: string | null;
   sourceType?: string | null;
+  execution_plane?: string | null;
+  executionPlane?: string | null;
   cloud_import_source?: string | null;
   cloudImportSource?: string | null;
   import_status?: string | null;
@@ -225,6 +227,7 @@ export interface ProjectRunEnvironmentResponse {
 export type ProjectRuntimeEnvironmentStatus =
   | 'disabled'
   | 'pending_configuration'
+  | 'pending_image_build'
   | 'pending'
   | 'analyzing'
   | 'ready'
@@ -259,6 +262,8 @@ export interface ProjectRuntimeEnvironmentRecordResponse {
   requiredServices?: unknown;
   env_vars?: unknown;
   envVars?: unknown;
+  generated_config_files?: ProjectRuntimeEnvironmentConfigFileResponse[];
+  generatedConfigFiles?: ProjectRuntimeEnvironmentConfigFileResponse[];
   last_agent_run_id?: string | null;
   lastAgentRunId?: string | null;
   last_error?: string | null;
@@ -267,6 +272,15 @@ export interface ProjectRuntimeEnvironmentRecordResponse {
   createdAt?: string;
   updated_at?: string;
   updatedAt?: string;
+}
+
+export interface ProjectRuntimeEnvironmentConfigFileResponse {
+  path?: string;
+  format?: string;
+  content?: string;
+  description?: string | null;
+  source_files?: string[];
+  sourceFiles?: string[];
 }
 
 export interface ProjectRuntimeEnvironmentImageResponse {
@@ -279,6 +293,12 @@ export interface ProjectRuntimeEnvironmentImageResponse {
   environmentType?: string;
   display_name?: string;
   displayName?: string;
+  service_id?: string;
+  serviceId?: string;
+  service_role?: 'application' | 'dependency' | 'unknown' | string;
+  serviceRole?: 'application' | 'dependency' | 'unknown' | string;
+  mcp_policy?: ProjectRuntimeEnvironmentMcpPolicyResponse;
+  mcpPolicy?: ProjectRuntimeEnvironmentMcpPolicyResponse;
   image_id?: string | null;
   imageId?: string | null;
   image_ref?: string | null;
@@ -289,12 +309,23 @@ export interface ProjectRuntimeEnvironmentImageResponse {
   ports?: unknown;
   env_vars?: unknown;
   envVars?: unknown;
+  dockerfile?: string | null;
+  custom_build_script?: string | null;
+  customBuildScript?: string | null;
   status?: string;
   error?: string | null;
   created_at?: string;
   createdAt?: string;
   updated_at?: string;
   updatedAt?: string;
+}
+
+export interface ProjectRuntimeEnvironmentMcpPolicyResponse {
+  managed_by?: 'system' | string;
+  managedBy?: 'system' | string;
+  attachment?: 'project_gateway_target' | 'none' | string;
+  filesystem?: boolean;
+  terminal?: boolean;
 }
 
 export interface ProjectRuntimeEnvironmentResponse {

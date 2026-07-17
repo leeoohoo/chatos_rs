@@ -333,6 +333,10 @@ mod tests {
             allow_device_connect_query_token: false,
             device_connect_signature_max_skew: Duration::from_secs(300),
             active_session_lease_ttl: Duration::from_secs(90),
+            managed_requirements_toml_path: None,
+            managed_requirements_signing_key_path: None,
+            managed_requirements_signing_key_id: None,
+            managed_requirements_bundle_ttl: Duration::from_secs(3600),
         }
     }
 }

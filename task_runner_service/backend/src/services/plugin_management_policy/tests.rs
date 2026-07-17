@@ -6,8 +6,8 @@ use crate::models::{
     now_rfc3339, TaskMcpConfig, TaskRecord, TaskScheduleConfig, TaskStatus, TaskToolState,
 };
 use chatos_plugin_management_sdk::{
-    AgentBindingRecord, BindingConditions, LocalConnectorRef, McpRuntime, ResourceMetadata,
-    ResourceSecurity, SkillContent, SkillInstallationRecord, SkillRecord,
+    AgentBindingRecord, BindingConditions, McpRuntime, ResourceMetadata, ResourceSecurity,
+    SkillContent, SkillInstallationRecord, SkillRecord,
 };
 
 fn resolved_mcp(
@@ -241,10 +241,7 @@ fn ai_selectable_sets_exclude_required_and_unavailable_capabilities() {
         policy.selectable_external_mcp_ids(),
         vec!["external-1".to_string()]
     );
-    assert_eq!(
-        policy.selectable_skill_ids(),
-        vec!["internal_skill_remotion".to_string()]
-    );
+    assert!(policy.selectable_skill_ids().is_empty());
 }
 
 #[test]
@@ -264,13 +261,9 @@ fn runtime_injects_required_and_intersects_saved_optional_selection() {
         task.mcp_config.external_mcp_config_ids,
         vec!["external-1".to_string()]
     );
-    assert_eq!(
-        task.mcp_config.selected_skill_ids,
-        vec!["internal_skill_remotion".to_string()]
-    );
+    assert!(task.mcp_config.selected_skill_ids.is_empty());
     let snapshots = policy().skill_snapshots(&task).expect("skill snapshots");
-    assert_eq!(snapshots.len(), 1);
-    assert_eq!(snapshots[0].device_id, "device-1");
+    assert!(snapshots.is_empty());
 }
 
 #[test]
@@ -285,42 +278,17 @@ fn write_validation_rejects_required_and_unavailable_selection() {
 }
 
 #[test]
-fn local_connector_user_mcp_requires_complete_execution_reference() {
-    let mut incomplete = resolved_mcp(
-        "local-user-incomplete",
-        "local_connector_stdio",
-        None,
-        false,
-        true,
-    );
-    incomplete.resource.source_kind = LOCAL_CONNECTOR_DISCOVERED_SOURCE_KIND.to_string();
-    incomplete.resource.owner_kind = "user".to_string();
-    incomplete.resource.runtime.local_connector = Some(LocalConnectorRef {
-        device_id: Some("device-1".to_string()),
-        workspace_id: None,
-        manifest_id: None,
-        requires_online: true,
-        ..LocalConnectorRef::default()
-    });
-    let mut complete = incomplete.clone();
-    complete.resource.id = "local-user-complete".to_string();
-    complete.binding.resource_id = complete.resource.id.clone();
-    complete.resource.runtime.local_connector = Some(LocalConnectorRef {
-        manifest_id: Some("manifest-1".to_string()),
-        ..incomplete
-            .resource
-            .runtime
-            .local_connector
-            .clone()
-            .expect("local connector reference")
-    });
+fn cloud_policy_excludes_local_connector_mcps() {
+    let mut local = resolved_mcp("local-user", "local_connector_http", None, false, true);
+    local.resource.source_kind = LOCAL_CONNECTOR_DISCOVERED_SOURCE_KIND.to_string();
+    let cloud = resolved_mcp("cloud-http", "http", None, false, true);
     let policy = TaskRunnerCapabilityPolicy::new(ResolvedAgentCapabilities {
         agent_key: SystemAgentKey::TaskRunnerRunPhase.as_str().to_string(),
         owner_user_id: "owner-1".to_string(),
         policy_revision: "revision-local".to_string(),
         generated_at: "now".to_string(),
         agent_enabled: true,
-        mcps: vec![incomplete, complete],
+        mcps: vec![local, cloud],
         skills: Vec::new(),
         local_connector_requirements: Vec::new(),
     })
@@ -328,18 +296,22 @@ fn local_connector_user_mcp_requires_complete_execution_reference() {
 
     assert_eq!(
         policy.selectable_external_mcp_ids(),
-        vec!["local-user-complete".to_string()]
+        vec!["cloud-http".to_string()]
     );
 }
 
 #[test]
-fn user_created_cloud_mcp_is_rejected_by_runtime_policy() {
+fn user_created_cloud_mcp_is_allowed_and_local_connector_mcp_is_rejected() {
     for runtime_kind in ["http", "stdio_cloud"] {
         let mut item = resolved_mcp("user-cloud-mcp", runtime_kind, None, false, true);
-        item.resource.source_kind = USER_CREATED_SOURCE_KIND.to_string();
+        item.resource.source_kind = "user_created".to_string();
         item.resource.owner_kind = "user".to_string();
-        let err = validate_local_connector_user_runtime(&item)
-            .expect_err("user-created cloud MCP must be rejected");
-        assert!(err.contains("invalid runtime kind"));
+        validate_cloud_external_mcp_runtime(&item)
+            .expect("user-created cloud MCP should remain cloud-runnable");
     }
+
+    let local = resolved_mcp("local-mcp", "local_connector_stdio", None, false, true);
+    let err = validate_cloud_external_mcp_runtime(&local)
+        .expect_err("Local Connector MCP must be rejected by cloud policy");
+    assert!(err.contains("unavailable in cloud Task Runner"));
 }

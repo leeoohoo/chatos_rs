@@ -62,9 +62,6 @@ pub async fn run_pending_rollups_once(
         )
         .max(1);
     let mut settings = cp_service::build_rollup_settings_from_policy(&policy);
-    if let Some(value) = req.summary_prompt {
-        settings.summary_prompt = Some(value);
-    }
     if let Some(value) = req.token_limit {
         settings.token_limit = value.max(500);
     }

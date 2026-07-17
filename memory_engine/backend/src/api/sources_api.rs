@@ -37,10 +37,10 @@ pub async fn upsert_source(
     Json(req): Json<UpsertSourceRequest>,
 ) -> Result<Json<EngineSource>, (axum::http::StatusCode, String)> {
     source_guard::ensure_source_registration_allowed(source_id.as_str())?;
-    sources::upsert_source(&state.pool, source_id.as_str(), req)
+    let source = sources::upsert_source(&state.pool, source_id.as_str(), req)
         .await
-        .map(Json)
-        .map_err(internal_error)
+        .map_err(internal_error)?;
+    Ok(Json(source.into()))
 }
 
 pub async fn admin_list_sources(
@@ -60,6 +60,10 @@ pub async fn admin_list_sources(
     )
     .await
     .map_err(internal_error)?;
+    let items = items
+        .into_iter()
+        .map(EngineSource::from)
+        .collect::<Vec<_>>();
     Ok(Json(json!({ "items": items })))
 }
 
@@ -82,7 +86,7 @@ pub async fn rotate_source_secret(
         .await
         .map_err(internal_error)?
     {
-        Some(resp) => Ok(Json(resp)),
+        Some(resp) => Ok(Json(resp.into())),
         None => Err((
             axum::http::StatusCode::NOT_FOUND,
             "source not found".to_string(),

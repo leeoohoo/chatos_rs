@@ -1,11 +1,23 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-import { createContext, ReactNode, useContext, useMemo, useState } from 'react';
+import {
+  createContext,
+  ReactNode,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+} from 'react';
+
+import { createTranslator } from '@chatos/frontend-runtime';
+import { createStoredUiLocaleHook } from '@chatos/frontend-runtime/react';
 
 export type Language = 'zh' | 'en';
 
 const LANGUAGE_STORAGE_KEY = 'sandbox_manager_language';
+const SUPPORTED_LANGUAGES: readonly Language[] = ['zh', 'en'];
 
 const zh = {
   'app.title': '沙箱管理控制台',
@@ -22,6 +34,7 @@ const zh = {
   'nav.create': '创建',
   'nav.settings': '配置',
   'common.refresh': '刷新',
+  'common.retry': '重试',
   'common.save': '保存',
   'common.release': '释放',
   'common.destroy': '销毁',
@@ -127,6 +140,8 @@ const zh = {
   'image.initializeStarted': '镜像初始化已开始',
   'image.initializeSuccess': '镜像已初始化',
   'image.initializeFailure': '镜像初始化失败',
+  'image.loadFailed': '沙箱镜像数据加载失败',
+  'image.authorizationFailed': '沙箱控制台未取得管理权限，请检查沙箱前端代理凭据配置后重试。',
   'image.features': '开发环境',
   'image.reference': '镜像引用',
   'image.configured': '配置默认',
@@ -266,6 +281,7 @@ const en = {
   'nav.create': 'Create',
   'nav.settings': 'Settings',
   'common.refresh': 'Refresh',
+  'common.retry': 'Retry',
   'common.save': 'Save',
   'common.release': 'Release',
   'common.destroy': 'Destroy',
@@ -371,6 +387,8 @@ const en = {
   'image.initializeStarted': 'Image initialization started',
   'image.initializeSuccess': 'Image initialized',
   'image.initializeFailure': 'Image initialization failed',
+  'image.loadFailed': 'Failed to load sandbox image data',
+  'image.authorizationFailed': 'The console did not receive sandbox management credentials. Check the frontend proxy credential configuration and retry.',
   'image.features': 'Development Environments',
   'image.reference': 'Image Reference',
   'image.configured': 'Configured Default',
@@ -505,27 +523,31 @@ interface I18nContextValue {
 }
 
 const I18nContext = createContext<I18nContextValue | null>(null);
+const useStoredUiLocale = createStoredUiLocaleHook({ useCallback, useEffect, useState });
 
 export function I18nProvider({ children }: { children: ReactNode }) {
-  const [language, setLanguageState] = useState<Language>(() => {
-    const stored = window.localStorage.getItem(LANGUAGE_STORAGE_KEY);
-    return stored === 'en' || stored === 'zh' ? stored : 'zh';
+  const [language, setLanguage] = useStoredUiLocale({
+    storageKey: LANGUAGE_STORAGE_KEY,
+    supportedLocales: SUPPORTED_LANGUAGES,
+    fallbackLocale: 'zh',
+    persist: 'setter',
+    updateDocumentLanguage: false,
   });
 
   const dictionary = dictionaries[language];
 
   const value = useMemo<I18nContextValue>(() => {
-    const setLanguage = (next: Language) => {
-      window.localStorage.setItem(LANGUAGE_STORAGE_KEY, next);
-      setLanguageState(next);
-    };
-    const t = (key: string) => dictionary[key] ?? key;
+    const t = createTranslator({
+      locale: language,
+      messages: dictionaries,
+      fallbackLocale: 'zh',
+    });
     const translateDynamic = (prefix: 'event.type' | 'event.message', raw: string) => {
       const key = `${prefix}.${raw}`;
       return dictionary[key] ?? raw;
     };
     return { language, setLanguage, t, translateDynamic };
-  }, [dictionary, language]);
+  }, [dictionary, language, setLanguage]);
 
   return <I18nContext.Provider value={value}>{children}</I18nContext.Provider>;
 }

@@ -23,7 +23,13 @@ impl TerminalControllerStore for LocalConnectorTerminalControllerStore {
         path: String,
         command: String,
         background: bool,
+        permissions: chatos_builtin_tools::TerminalCommandPermissions,
     ) -> std::result::Result<Value, String> {
+        if !permissions.is_empty() {
+            return Err(
+                "temporary permission overlays require an active sandbox lease".to_string(),
+            );
+        }
         let project_root = canonicalize_terminal_root(context.root.as_path())?;
         let cwd = resolve_terminal_controller_cwd(project_root.as_path(), path.as_str())?;
         let display_project_root =

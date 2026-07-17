@@ -77,6 +77,8 @@ pub(super) async fn run_terminal_exec(
                     args: args.clone(),
                     cwd: cwd_label.clone(),
                     source: context.source.clone(),
+                    requested_permissions: None,
+                    session_id: None,
                 })
                 .await?;
         if let ApprovalDecision::Denied { reason, .. } = approval {

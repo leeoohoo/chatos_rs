@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
+mod agent_prompts;
 mod approval;
 mod auth;
 mod helpers;
@@ -15,6 +16,9 @@ mod system_permissions;
 mod terminal;
 mod workspace;
 
+pub(super) use agent_prompts::{
+    local_agent_prompt_status, local_check_agent_prompt_updates, local_update_agent_prompt_bundle,
+};
 pub(super) use approval::{
     local_approval_settings, local_approve_pending_approval, local_deny_pending_approval,
     local_pending_approvals, local_update_approval_settings,
@@ -36,11 +40,15 @@ pub(super) use model_configs::{
 pub(super) use runtime_settings::{local_runtime_settings, local_update_runtime_settings};
 pub(super) use sandbox::{
     local_delete_sandbox_image, local_docker_status, local_initialize_sandbox_image,
-    local_reinitialize_sandbox_image, local_sandbox_image_jobs, local_sandbox_image_mcp,
-    local_sandbox_images, local_sandbox_leases, local_toggle_sandbox,
+    local_reinitialize_sandbox_image, local_sandbox_capabilities, local_sandbox_image_jobs,
+    local_sandbox_image_mcp, local_sandbox_images, local_sandbox_leases, local_sandbox_settings,
+    local_shutdown_sandboxes, local_toggle_sandbox, local_update_sandbox_settings,
 };
 pub(super) use skills::{local_skills, local_sync_skill_inventory, local_update_skill_preference};
 pub(super) use status::local_status;
 pub(super) use system_permissions::{local_request_system_permission, local_system_permissions};
 pub(super) use terminal::local_terminal_exec;
-pub(super) use workspace::{local_add_workspace, local_fs_list_handler, local_remove_workspace};
+pub(super) use workspace::{
+    local_add_workspace, local_fs_list_handler, local_remove_workspace,
+    local_update_workspace_project_config_trust,
+};

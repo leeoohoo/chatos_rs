@@ -13,9 +13,7 @@ mod summaries;
 mod thread_snapshots;
 mod threads;
 
-pub use self::common::{
-    default_active, default_idle, default_pending, now_plus_seconds_rfc3339, now_rfc3339,
-};
+pub use self::common::{default_active, now_plus_seconds_rfc3339, now_rfc3339};
 pub use self::compose::{
     ComposeContextBlock, ComposeContextMeta, ComposeContextPolicy, ComposeContextRequest,
     ComposeContextResponse,
@@ -36,7 +34,10 @@ pub use self::records::{
     EngineRecord, ThreadRecordsPageResponse, TurnProcessRecordsResponse, TurnRecordSlice,
     UpsertRecordInput,
 };
-pub use self::sources::{EngineSource, RotateSourceSecretResponse, UpsertSourceRequest};
+pub use self::sources::{
+    EngineSource, RotateSourceSecretResponse, StoredEngineSource, StoredRotateSourceSecretResponse,
+    UpsertSourceRequest,
+};
 pub use self::subject_memories::{
     EngineSubjectMemory, MarkSubjectMemoriesRolledUpRequest, MarkSubjectMemoriesRolledUpResponse,
     QuerySubjectMemoriesRequest, RunSubjectMemoryJobRequest, RunSubjectMemoryJobResponse,

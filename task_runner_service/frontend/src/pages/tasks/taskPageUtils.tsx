@@ -35,15 +35,16 @@ export type TaskFormValues = {
   description?: string;
   priority?: number;
   status: TaskStatus;
+  projectId: string;
   default_model_config_id?: string;
   requiresExecution: boolean;
+  executionServiceId?: string;
   prerequisite_task_ids?: string[];
   tagsText?: string;
   mcpEnabled: boolean;
   builtinPromptMode: TaskBuiltinPromptMode;
   builtinPromptLocale: string;
   enabledBuiltinKinds: string[];
-  workspaceDir?: string;
   defaultRemoteServerId?: string;
   externalMcpConfigIds?: string[];
   selectedSkillIds?: string[];
@@ -58,7 +59,10 @@ export type RunTaskFormValues = {
   prompt_override?: string;
 };
 
-export function buildCreateTaskFormValues(locale: string): TaskFormValues {
+export function buildCreateTaskFormValues(
+  locale: string,
+  routeProjectId?: string,
+): TaskFormValues {
   return {
     title: '',
     objective: '',
@@ -66,15 +70,16 @@ export function buildCreateTaskFormValues(locale: string): TaskFormValues {
     priority: 0,
     status: 'draft',
     taskProfile: 'default',
+    projectId: normalizeTaskProjectId(routeProjectId),
     default_model_config_id: undefined,
     requiresExecution: true,
+    executionServiceId: undefined,
     prerequisite_task_ids: [],
     tagsText: '',
     mcpEnabled: true,
     builtinPromptMode: 'effective',
     builtinPromptLocale: locale,
     enabledBuiltinKinds: [],
-    workspaceDir: '',
     defaultRemoteServerId: undefined,
     externalMcpConfigIds: [],
     selectedSkillIds: [],
@@ -92,15 +97,16 @@ export function buildEditTaskFormValues(task: TaskRecord): TaskFormValues {
     priority: task.priority,
     status: task.status,
     taskProfile: task.task_profile || 'default',
+    projectId: normalizeTaskProjectId(task.project_id),
     default_model_config_id: task.default_model_config_id || undefined,
     requiresExecution: task.mcp_config.requires_execution ?? true,
+    executionServiceId: task.mcp_config.execution_service_id || undefined,
     prerequisite_task_ids: task.prerequisite_task_ids || [],
     tagsText: task.tags.join(', '),
     mcpEnabled: task.mcp_config.enabled,
     builtinPromptMode: task.mcp_config.builtin_prompt_mode,
     builtinPromptLocale: task.mcp_config.builtin_prompt_locale,
     enabledBuiltinKinds: task.mcp_config.enabled_builtin_kinds,
-    workspaceDir: task.mcp_config.workspace_dir || '',
     defaultRemoteServerId: task.mcp_config.default_remote_server_id || undefined,
     externalMcpConfigIds: task.mcp_config.external_mcp_config_ids || [],
     selectedSkillIds: task.mcp_config.selected_skill_ids || [],
@@ -113,7 +119,6 @@ export function buildEditTaskFormValues(task: TaskRecord): TaskFormValues {
 export function buildTaskPayload(
   values: TaskFormValues,
   options: {
-    editingTask?: TaskRecord | null;
     routeProjectId?: string;
   },
 ): CreateTaskPayload | null {
@@ -134,7 +139,7 @@ export function buildTaskPayload(
     status: values.status,
     task_profile: values.taskProfile,
     default_model_config_id: values.default_model_config_id,
-    project_id: options.editingTask ? undefined : options.routeProjectId,
+    project_id: normalizeTaskProjectId(values.projectId || options.routeProjectId),
     prerequisite_task_ids: values.prerequisite_task_ids || [],
     tags: values.tagsText
       ?.split(',')
@@ -144,16 +149,21 @@ export function buildTaskPayload(
     mcp_config: {
       enabled: values.mcpEnabled,
       requires_execution: values.requiresExecution,
+      execution_service_id: values.executionServiceId?.trim() || undefined,
       init_mode: 'full',
       builtin_prompt_mode: values.builtinPromptMode,
       builtin_prompt_locale: values.builtinPromptLocale,
       enabled_builtin_kinds: enabledBuiltinKinds,
-      workspace_dir: values.workspaceDir?.trim() || undefined,
       default_remote_server_id: values.defaultRemoteServerId,
       external_mcp_config_ids: values.externalMcpConfigIds || [],
       selected_skill_ids: values.selectedSkillIds || [],
     },
   };
+}
+
+function normalizeTaskProjectId(value?: string | null): string {
+  const trimmed = value?.trim();
+  return trimmed && trimmed !== '0' ? trimmed : '-1';
 }
 
 export const CODE_MAINTAINER_READ_KIND = 'CodeMaintainerRead';

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use std::net::{TcpStream, ToSocketAddrs};
+use std::net::TcpStream;
 use std::time::Duration as StdDuration;
 
 pub(super) fn connect_tcp_stream(
@@ -10,29 +10,8 @@ pub(super) fn connect_tcp_stream(
     timeout: StdDuration,
     label: &str,
 ) -> Result<TcpStream, String> {
-    let addr = format!("{host}:{port}");
-    let mut last_error = None;
-    let mut stream_opt = None;
-    let addrs = addr
-        .to_socket_addrs()
-        .map_err(|e| format!("解析{label}地址失败: {e}"))?;
-    for socket in addrs {
-        match TcpStream::connect_timeout(&socket, timeout) {
-            Ok(stream) => {
-                stream_opt = Some(stream);
-                break;
-            }
-            Err(err) => {
-                last_error = Some(err.to_string());
-            }
-        }
-    }
-    stream_opt.ok_or_else(|| {
-        format!(
-            "连接{label}失败: {}",
-            last_error.unwrap_or_else(|| "无可用地址".to_string())
-        )
-    })
+    chatos_remote_runtime::connect_tcp_stream(host, port, timeout)
+        .map_err(|error| error.format_tcp_context(label, label))
 }
 
 pub(super) fn configure_stream_timeout(
@@ -40,11 +19,6 @@ pub(super) fn configure_stream_timeout(
     timeout: StdDuration,
     label: &str,
 ) -> Result<(), String> {
-    stream
-        .set_read_timeout(Some(timeout))
-        .map_err(|e| format!("设置{label}读超时失败: {e}"))?;
-    stream
-        .set_write_timeout(Some(timeout))
-        .map_err(|e| format!("设置{label}写超时失败: {e}"))?;
-    Ok(())
+    chatos_remote_runtime::configure_stream_timeout(stream, timeout)
+        .map_err(|error| error.format_tcp_context(label, label))
 }

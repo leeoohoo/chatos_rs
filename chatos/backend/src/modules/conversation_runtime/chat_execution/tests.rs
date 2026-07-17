@@ -1,11 +1,13 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use super::*;
 use crate::core::internal_context_locale::InternalContextLocale;
 use crate::core::mcp_runtime::empty_mcp_server_bundle;
+use crate::services::mcp_loader::McpHttpServer;
 
 fn lifecycle_hook_with_state(state: TaskTurnLifecycleState) -> ChatosRuntimeLifecycleHook {
     ChatosRuntimeLifecycleHook {
@@ -45,6 +47,7 @@ fn model_runtime(use_codex_gateway_mcp_passthrough: bool) -> ResolvedChatModelCo
     ResolvedChatModelConfig {
         model: "codex-test".to_string(),
         provider: "openai".to_string(),
+        prompt_vendor: Some("gpt".to_string()),
         thinking_level: None,
         temperature: 0.2,
         supports_images: false,
@@ -66,6 +69,7 @@ fn runtime_context(
         internal_context_locale: InternalContextLocale::ZhCn,
         contact_agent_id: None,
         base_system_prompt: None,
+        agent_system_prompt: Some("agent prompt".to_string()),
         contact_system_prompt: None,
         builtin_mcp_system_prompt: None,
         selected_commands_for_snapshot: Arc::new(Mutex::new(Vec::new())),
@@ -100,6 +104,24 @@ fn requirement_execution_planner_disables_codex_gateway_mcp_passthrough() {
 }
 
 #[test]
+fn per_request_mcp_auth_disables_codex_gateway_passthrough() {
+    let model = model_runtime(true);
+    let mut context = runtime_context(false);
+    context.mcp_server_bundle.0.push(McpHttpServer {
+        name: "project".to_string(),
+        url: "http://127.0.0.1:39210/mcp".to_string(),
+        headers: Some(HashMap::from([(
+            "x-project-service-internal-scope".to_string(),
+            "project.mcp".to_string(),
+        )])),
+        allowed_tool_names: None,
+        header_provider: None,
+    });
+
+    assert!(!effective_codex_gateway_mcp_passthrough(&model, &context));
+}
+
+#[test]
 fn initializes_stream_agent_with_resolved_profile() {
     let profile = ChatosAgentProfile::from_flags(true, false);
     let agent = init_chatos_stream_agent(&model_runtime(false), profile);
@@ -108,7 +130,7 @@ fn initializes_stream_agent_with_resolved_profile() {
 }
 
 #[test]
-fn project_context_prompt_names_the_project_and_requires_task_runner_follow_through() {
+fn project_context_prompt_contains_only_dynamic_project_facts() {
     let mut context = runtime_context(false);
     context.resolved_project_name = Some("CubeSandbox".to_string());
     context.resolved_project_source_type = Some("cloud".to_string());
@@ -120,9 +142,7 @@ fn project_context_prompt_names_the_project_and_requires_task_runner_follow_thro
     assert!(prompt.contains("当前项目名称：CubeSandbox"));
     assert!(prompt.contains("当前项目 ID：project-1"));
     assert!(prompt.contains("当前项目来源类型：cloud"));
-    assert!(prompt.contains("Task Runner 是你自己的内部异步执行通道"));
-    assert!(prompt.contains("不得仅因为主对话不能直接读取文件就声称无法查看"));
-    assert!(prompt.contains("不要要求用户再次粘贴代码或提供项目路径"));
+    assert!(!prompt.contains("Task Runner 是你自己的内部异步执行通道"));
 }
 
 #[test]

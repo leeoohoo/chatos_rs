@@ -52,7 +52,7 @@ export function TaskListTable({
         showSizeChanger: true,
         onChange: onPageChange,
       }}
-      scroll={{ x: 1530 }}
+      scroll={{ x: 1650 }}
       locale={{
         emptyText: (
           <Empty

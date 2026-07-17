@@ -30,6 +30,10 @@ pub fn build_router(state: AppState) -> Router {
             post(handlers::initialize_sandbox_image),
         )
         .route(
+            "/api/sandbox-images/prepare-dependencies",
+            post(handlers::prepare_sandbox_dependency_images),
+        )
+        .route(
             "/api/sandbox-images/mcp",
             post(handlers::sandbox_image_mcp_entrypoint),
         )
@@ -48,6 +52,30 @@ pub fn build_router(state: AppState) -> Router {
         .route(
             "/api/sandboxes/leases",
             post(handlers::create_sandbox_lease),
+        )
+        .route(
+            "/api/sandbox-environments/leases",
+            post(handlers::create_sandbox_environment_lease),
+        )
+        .route(
+            "/api/sandbox-environments/{environment_id}",
+            get(handlers::get_sandbox_environment),
+        )
+        .route(
+            "/api/sandbox-environments/{environment_id}/start",
+            post(handlers::start_sandbox_environment),
+        )
+        .route(
+            "/api/sandbox-environments/{environment_id}/stop",
+            post(handlers::stop_sandbox_environment),
+        )
+        .route(
+            "/api/sandbox-environments/{environment_id}/services/{service_id}/exec",
+            post(handlers::exec_sandbox_environment_service),
+        )
+        .route(
+            "/api/sandbox-environments/{environment_id}/mcp",
+            post(handlers::sandbox_environment_mcp_proxy),
         )
         .route("/api/sandboxes", get(handlers::list_sandboxes))
         .route(
@@ -90,4 +118,7 @@ pub fn build_router(state: AppState) -> Router {
                 .allow_methods(Any)
                 .allow_headers(Any),
         )
+        .layer(middleware::from_fn(
+            chatos_service_runtime::request_id_middleware,
+        ))
 }

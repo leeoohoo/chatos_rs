@@ -141,6 +141,7 @@ impl TerminalControllerStore for SchemaOnlyStore {
         _path: String,
         _command: String,
         _background: bool,
+        _permissions: crate::TerminalCommandPermissions,
     ) -> Result<Value, String> {
         Err(schema_only_error())
     }

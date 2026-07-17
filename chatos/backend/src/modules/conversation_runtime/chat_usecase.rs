@@ -104,6 +104,8 @@ fn build_common_bootstrap_input(
         remote_connection_id: req.remote_connection_id.clone(),
         plan_mode: req.plan_mode,
         project_requirement_execution_planner: req.project_requirement_execution_planner,
+        model_provider: model_runtime.provider.clone(),
+        prompt_vendor: model_runtime.prompt_vendor.clone(),
         turn_id: req.turn_id.clone(),
         user_message_id: req.user_message_id.clone(),
         attachments: req.attachments.clone(),

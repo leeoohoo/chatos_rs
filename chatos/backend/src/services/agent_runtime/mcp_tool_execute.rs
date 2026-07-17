@@ -107,6 +107,7 @@ mod tests {
                 url: "http://127.0.0.1:9000/mcp".to_string(),
                 headers: None,
                 allowed_tool_names: None,
+                header_provider: None,
             }],
             vec![McpStdioServer {
                 name: "beta_stdio".to_string(),

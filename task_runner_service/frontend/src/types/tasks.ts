@@ -26,6 +26,7 @@ export interface TaskMcpConfig {
   builtin_prompt_locale: string;
   enabled_builtin_kinds: string[];
   requires_execution: boolean;
+  execution_service_id?: string | null;
   workspace_dir?: string | null;
   default_remote_server_id?: string | null;
   external_mcp_config_ids: string[];
@@ -210,6 +211,36 @@ export interface TaskProjectRecord {
   created_at: string;
   updated_at: string;
   archived_at?: string | null;
+}
+
+export interface TaskProjectRuntimeEnvironmentMcpPolicy {
+  managed_by: string;
+  attachment: string;
+  filesystem: boolean;
+  terminal: boolean;
+}
+
+export interface TaskProjectRuntimeEnvironmentImage {
+  environment_key: string;
+  service_id: string;
+  display_name: string;
+  service_role: string;
+  mcp_policy: TaskProjectRuntimeEnvironmentMcpPolicy;
+  image_id?: string | null;
+  image_ref?: string | null;
+  image_provider: string;
+  status: string;
+  dockerfile?: string | null;
+  env_vars?: unknown;
+}
+
+export interface TaskProjectRuntimeEnvironmentResponse {
+  environment: {
+    sandbox_enabled: boolean;
+    status: string;
+    env_vars?: unknown;
+  };
+  images: TaskProjectRuntimeEnvironmentImage[];
 }
 
 export interface TaskStatsResponse {

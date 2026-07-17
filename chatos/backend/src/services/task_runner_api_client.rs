@@ -19,8 +19,8 @@ mod types;
 mod tests;
 
 pub use types::{
-    CancelTaskRunnerPromptRequest, CancelTaskRunnerTaskRequest, SubmitTaskRunnerPromptRequest,
-    TaskRunnerTaskRecord, UserServiceTaskRunnerExchange,
+    CancelTaskRunnerPromptRequest, CancelTaskRunnerTaskRequest, ExchangedTaskRunnerToken,
+    SubmitTaskRunnerPromptRequest, TaskRunnerTaskRecord, UserServiceTaskRunnerExchange,
 };
 
 use types::UserServiceTaskRunnerTokenResponse;
@@ -28,6 +28,14 @@ use types::UserServiceTaskRunnerTokenResponse;
 pub async fn exchange_task_runner_token_via_user_service(
     request: &UserServiceTaskRunnerExchange,
 ) -> Result<String, String> {
+    Ok(exchange_task_runner_access_via_user_service(request)
+        .await?
+        .access_token)
+}
+
+pub async fn exchange_task_runner_access_via_user_service(
+    request: &UserServiceTaskRunnerExchange,
+) -> Result<ExchangedTaskRunnerToken, String> {
     let base_url = resolve_user_service_base_url(request.base_url.as_str()).await;
     let endpoint = format!(
         "{}/api/token/exchange/task-runner",
@@ -49,7 +57,10 @@ pub async fn exchange_task_runner_token_via_user_service(
     if token.is_empty() {
         return Err("User service task runner token exchange returned empty token".to_string());
     }
-    Ok(token.to_string())
+    Ok(ExchangedTaskRunnerToken {
+        access_token: token.to_string(),
+        expires_in: payload.expires_in.max(1),
+    })
 }
 
 pub async fn get_task_runner_task(

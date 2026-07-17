@@ -1,12 +1,18 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
+use chatos_sandbox_contract::{
+    CommandExecutionApprovalDecision, GrantedPermissionProfile, PermissionGrantScope,
+    RequestPermissionProfile,
+};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct ApprovalState {
     #[serde(default)]
     pub(crate) default_mode: ApprovalMode,
+    #[serde(default)]
+    pub(crate) settings_revision: Option<String>,
     #[serde(default)]
     pub(crate) projects: Vec<ProjectApprovalState>,
     #[serde(default)]
@@ -22,7 +28,8 @@ pub(crate) struct ApprovalState {
 impl Default for ApprovalState {
     fn default() -> Self {
         Self {
-            default_mode: ApprovalMode::FullControl,
+            default_mode: ApprovalMode::RequestApproval,
+            settings_revision: None,
             projects: Vec::new(),
             whitelist: Vec::new(),
             history: Vec::new(),
@@ -35,13 +42,13 @@ impl Default for ApprovalState {
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum ApprovalMode {
+    #[default]
     RequestApproval,
     AutoApproval,
-    #[default]
     FullControl,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub(crate) struct ProjectApprovalState {
     pub(crate) project_key: ApprovalProjectKey,
     pub(crate) mode: Option<ApprovalMode>,
@@ -50,7 +57,7 @@ pub(crate) struct ProjectApprovalState {
     pub(crate) updated_at: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub(crate) struct ApprovalAiSettings {
     #[serde(default)]
     pub(crate) enabled: bool,
@@ -91,7 +98,7 @@ impl Default for ApprovalAiSettings {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub(crate) struct ApprovalMemorySettings {
     #[serde(default = "default_memory_source_id")]
     pub(crate) source_id: String,
@@ -180,6 +187,8 @@ pub(crate) struct ApprovalHistoryEntry {
     pub(crate) risk: String,
     pub(crate) reason: Option<String>,
     pub(crate) whitelist_entry_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) permission_scope: Option<PermissionGrantScope>,
     pub(crate) created_at: String,
 }
 
@@ -191,6 +200,8 @@ pub(crate) struct CommandApprovalRequest {
     pub(crate) args: Vec<String>,
     pub(crate) cwd: String,
     pub(crate) source: String,
+    pub(crate) requested_permissions: Option<RequestPermissionProfile>,
+    pub(crate) session_id: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -199,6 +210,8 @@ pub(crate) enum ApprovalDecision {
         source: ApprovalSource,
         reason: Option<String>,
         whitelist_entry_id: Option<String>,
+        granted_permissions: Option<GrantedPermissionProfile>,
+        permission_scope: PermissionGrantScope,
     },
     Denied {
         source: ApprovalSource,
@@ -217,4 +230,7 @@ pub(crate) struct PendingApprovalItem {
     pub(crate) risk: String,
     pub(crate) reason: Option<String>,
     pub(crate) created_at: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) requested_permissions: Option<RequestPermissionProfile>,
+    pub(crate) available_decisions: Vec<CommandExecutionApprovalDecision>,
 }

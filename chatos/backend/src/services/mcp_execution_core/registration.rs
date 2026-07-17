@@ -66,6 +66,18 @@ pub(crate) fn codex_gateway_request_tools(
     let mut out = Vec::new();
 
     for server in mcp_servers {
+        if server.header_provider.is_some()
+            || server
+                .headers
+                .as_ref()
+                .is_some_and(chatos_mcp_runtime::rpc::headers_require_per_request_signing)
+        {
+            warn!(
+                server_name = server.name,
+                "skipping MCP server that requires per-request authentication in Codex gateway passthrough"
+            );
+            continue;
+        }
         out.push(json!({
             "type": "mcp",
             "server_label": server.name.clone(),

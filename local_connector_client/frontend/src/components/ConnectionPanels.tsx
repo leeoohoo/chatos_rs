@@ -10,6 +10,7 @@ import {
   LogOut,
   Plus,
   Server,
+  ShieldCheck,
   Trash2,
 } from 'lucide-react';
 
@@ -233,7 +234,35 @@ export function WorkspacePanel({
               <div>
                 <strong>{workspace.alias}</strong>
                 <span>{workspace.absolute_root}</span>
+                <span>
+                  项目配置：{workspace.project_config_trusted
+                    ? '已信任'
+                    : workspace.project_config_trust_stale
+                      ? '目录身份已变化，信任失效'
+                      : '未信任'}
+                </span>
               </div>
+              <button
+                className={`iconButton ${workspace.project_config_trusted ? 'active' : ''}`}
+                title={workspace.project_config_trusted ? '停止信任项目配置' : '信任项目配置'}
+                onClick={async () => {
+                  const trusted = !workspace.project_config_trusted;
+                  if (
+                    trusted
+                    && !window.confirm(
+                      '信任后，ChatOS 会读取该目录中的 .chatos/config.toml。仓库内容可能改变本地沙箱权限，但仍不能突破管理员 managed requirements。确认信任？',
+                    )
+                  ) {
+                    return;
+                  }
+                  onStatus(await api.setWorkspaceProjectConfigTrust(workspace.id, {
+                    trusted,
+                    risk_acknowledged: trusted,
+                  }));
+                }}
+              >
+                <ShieldCheck size={16} />
+              </button>
               <button
                 className="iconButton danger"
                 title="移除"

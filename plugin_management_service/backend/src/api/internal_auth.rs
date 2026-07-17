@@ -5,6 +5,8 @@ use super::*;
 
 pub(super) const INTERNAL_TOKEN_AUDIENCE: &str = "plugin-management-service";
 pub(super) const CAPABILITIES_RESOLVE_SCOPE: &str = "capabilities.resolve";
+pub(super) const AGENT_PROMPTS_RESOLVE_SCOPE: &str = "agent-prompts.resolve";
+pub(super) const AGENT_PROMPTS_SYNC_SCOPE: &str = "agent-prompts.sync";
 pub(super) const LOCAL_CONNECTOR_READ_SCOPE: &str = "local-connector.read";
 pub(super) const LOCAL_CONNECTOR_WRITE_SCOPE: &str = "local-connector.write";
 

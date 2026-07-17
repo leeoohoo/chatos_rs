@@ -37,6 +37,7 @@ pub mod new_user_bootstrap;
 pub mod notepad;
 pub mod object_storage;
 pub(crate) mod plugin_management_capabilities;
+pub(crate) mod plugin_management_prompts;
 pub mod project_fs_cache;
 pub mod project_local_cache;
 pub(crate) mod project_management_api_client;

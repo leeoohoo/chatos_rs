@@ -49,10 +49,18 @@ struct AiModelConfigRequest {
     id: Option<String>,
     name: Option<String>,
     provider: Option<String>,
+    prompt_vendor: Option<String>,
     model: Option<String>,
     thinking_level: Option<String>,
     task_usage_scenario: Option<String>,
     task_thinking_level: Option<String>,
+    temperature: Option<f64>,
+    clear_temperature: Option<bool>,
+    max_output_tokens: Option<i64>,
+    clear_max_output_tokens: Option<bool>,
+    api_key: Option<String>,
+    clear_api_key: Option<bool>,
+    base_url: Option<String>,
     enabled: Option<bool>,
     supports_images: Option<bool>,
     supports_reasoning: Option<bool>,
@@ -66,6 +74,8 @@ struct AiModelSettingsRequest {
     memory_summary_thinking_level: Option<Option<String>>,
     project_management_agent_model_config_id: Option<Option<String>>,
     project_management_agent_thinking_level: Option<Option<String>>,
+    environment_initialization_model_config_id: Option<Option<String>>,
+    environment_initialization_thinking_level: Option<Option<String>>,
 }
 
 #[derive(Debug, Deserialize)]

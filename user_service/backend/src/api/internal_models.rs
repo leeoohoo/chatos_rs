@@ -8,10 +8,12 @@ use serde::Serialize;
 
 use crate::state::AppState;
 use crate::store::now_rfc3339;
+use chatos_plugin_management_sdk::normalize_agent_prompt_vendor;
 
 use super::internal_auth::{
     require_project_service_internal_request, MODEL_RUNTIME_READ_SCOPE, MODEL_SETTINGS_READ_SCOPE,
 };
+use super::models::is_supported_provider;
 use super::{bad_request, forbidden, internal_error, not_found, ApiResult};
 
 #[derive(Debug, Serialize)]
@@ -20,10 +22,13 @@ pub struct InternalModelRuntimeConfigResponse {
     pub owner_user_id: String,
     pub name: String,
     pub provider: String,
+    pub prompt_vendor: Option<String>,
     pub base_url: String,
     pub api_key: String,
     pub model: String,
     pub thinking_level: Option<String>,
+    pub temperature: Option<f64>,
+    pub max_output_tokens: Option<i64>,
     pub supports_images: bool,
     pub supports_reasoning: bool,
     pub supports_responses: bool,
@@ -36,6 +41,8 @@ pub struct InternalUserModelSettingsResponse {
     pub memory_summary_thinking_level: Option<String>,
     pub project_management_agent_model_config_id: Option<String>,
     pub project_management_agent_thinking_level: Option<String>,
+    pub environment_initialization_model_config_id: Option<String>,
+    pub environment_initialization_thinking_level: Option<String>,
     pub updated_at: String,
 }
 
@@ -73,6 +80,10 @@ pub async fn get_user_model_settings(
                 .project_management_agent_model_config_id,
             project_management_agent_thinking_level: settings
                 .project_management_agent_thinking_level,
+            environment_initialization_model_config_id: settings
+                .environment_initialization_model_config_id,
+            environment_initialization_thinking_level: settings
+                .environment_initialization_thinking_level,
             updated_at: settings.updated_at,
         },
         None => InternalUserModelSettingsResponse {
@@ -81,6 +92,8 @@ pub async fn get_user_model_settings(
             memory_summary_thinking_level: None,
             project_management_agent_model_config_id: None,
             project_management_agent_thinking_level: None,
+            environment_initialization_model_config_id: None,
+            environment_initialization_thinking_level: None,
             updated_at: now_rfc3339(),
         },
     }))
@@ -111,22 +124,46 @@ pub async fn get_user_model_runtime_config(
     if model_config.owner_user_id != user_id {
         return Err(forbidden("model config does not belong to the target user"));
     }
+    if !is_supported_provider(model_config.provider.as_str()) {
+        return Err(not_found("model config not found"));
+    }
     if !model_config.enabled {
         return Err(bad_request("model config is disabled"));
     }
     if model_config.model.trim().is_empty() {
         return Err(bad_request("model config requires a concrete model name"));
     }
+    let api_key = model_config
+        .api_key
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| bad_request("cloud model config requires a stored API key"))?
+        .to_string();
+    let base_url = model_config
+        .base_url
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| bad_request("cloud model config requires a stored base_url"))?
+        .to_string();
+    let prompt_vendor = model_config.prompt_vendor.clone().or_else(|| {
+        normalize_agent_prompt_vendor(None, model_config.provider.as_str())
+            .map(|vendor| vendor.as_str().to_string())
+    });
 
     Ok(Json(InternalModelRuntimeConfigResponse {
         id: model_config.id,
         owner_user_id: model_config.owner_user_id,
         name: model_config.name,
         provider: model_config.provider,
-        base_url: String::new(),
-        api_key: String::new(),
+        prompt_vendor,
+        base_url,
+        api_key,
         model: model_config.model,
         thinking_level: model_config.thinking_level,
+        temperature: model_config.temperature,
+        max_output_tokens: model_config.max_output_tokens,
         supports_images: model_config.supports_images,
         supports_reasoning: model_config.supports_reasoning,
         supports_responses: model_config.supports_responses,

@@ -69,6 +69,9 @@ impl CodeMaintainerService {
         let root = opts.root;
         ensure_dir(&root)
             .map_err(|err| format!("create workspace dir {} failed: {}", root.display(), err))?;
+        let root = root
+            .canonicalize()
+            .map_err(|err| format!("canonicalize workspace dir failed: {err}"))?;
 
         let change_log =
             ChangeLogStore::new(&server_name, opts.project_id.clone(), opts.db_path.clone())?;

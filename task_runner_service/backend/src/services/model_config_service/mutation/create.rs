@@ -13,6 +13,8 @@ impl ModelConfigService {
         let provider = normalize_model_provider_input(&input.provider)?;
         let thinking_level =
             normalize_model_thinking_level_input(provider.as_str(), input.thinking_level.clone())?;
+        let prompt_vendor =
+            normalize_model_prompt_vendor_input(input.prompt_vendor, provider.as_str())?;
         let now = now_rfc3339();
         let record = ModelConfigRecord {
             id: Uuid::new_v4().to_string(),
@@ -21,6 +23,7 @@ impl ModelConfigService {
             owner_display_name: None,
             name: input.name.trim().to_string(),
             provider: provider.clone(),
+            prompt_vendor,
             base_url: normalize_model_base_url_input(provider.as_str(), Some(input.base_url)),
             api_key: input.api_key.trim().to_string(),
             model: input.model.trim().to_string(),

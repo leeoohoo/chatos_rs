@@ -1,0 +1,14 @@
+# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+# Required Notice: Copyright (c) 2025 AI Chat Team
+
+[package]
+name = "chatos_terminal_runtime"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+serde_json = "1"
+tokio = { version = "1", features = ["io-util", "macros", "rt", "time"] }
+
+[dev-dependencies]
+tempfile = "3"

@@ -168,6 +168,17 @@ impl AppStore {
             )
             .await
             .map_err(|err| err.to_string())?;
+        self.user_model_settings
+            .update_many(
+                doc! { "environment_initialization_model_config_id": id },
+                doc! { "$set": {
+                    "environment_initialization_model_config_id": Bson::Null,
+                    "environment_initialization_thinking_level": Bson::Null,
+                } },
+                None,
+            )
+            .await
+            .map_err(|err| err.to_string())?;
         Ok(result.deleted_count > 0)
     }
 

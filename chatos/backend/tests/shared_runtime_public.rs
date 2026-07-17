@@ -220,6 +220,7 @@ fn shared_runtime_public_facade_converts_resolved_model_config() {
     let resolved = ResolvedChatModelConfig {
         model: "gpt-test".to_string(),
         provider: "gpt".to_string(),
+        prompt_vendor: Some("gpt".to_string()),
         thinking_level: Some("medium".to_string()),
         temperature: 0.3,
         supports_images: true,

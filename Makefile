@@ -109,6 +109,7 @@ build-rust:
 
 build-frontends:
 	@cd chatos/frontend && npm run build
+	@cd config_center_service/frontend && npm run build
 	@cd user_service/frontend && npm run build
 	@cd task_runner_service/frontend && npm run build
 	@cd memory_engine/frontend && npm run build
@@ -126,7 +127,8 @@ smoke-repo:
 	@bash scripts/check_api_path_baseline.sh
 	@bash scripts/check-hotspot-line-budgets.sh
 	@bash -n docker/deploy.sh
-	@bash -n scripts/local-dev-stack.sh
+	@bash -n docker/deploy-harness-ci.sh
+	@bash -n scripts/local-dev-stack.sh scripts/local-dev-stack/environment.sh scripts/local-dev-stack/services.sh
 	@docker compose -f docker/compose.yml config >/dev/null
 	@docker compose -f docker/compose.yml -f docker/compose.build.yml config >/dev/null
 	@bash scripts/check-large-files.sh --fail

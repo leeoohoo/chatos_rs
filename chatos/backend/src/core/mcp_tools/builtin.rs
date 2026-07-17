@@ -14,8 +14,8 @@ use crate::services::shared_builtin_notepad::ChatosNotepadStore;
 use crate::services::shared_builtin_task_manager::ChatosTaskManagerStore;
 use chatos_builtin_tools::{
     AgentBuilderOptions, AgentBuilderService, AgentBuilderStoreRef, AskUserOptions, AskUserService,
-    AskUserStoreRef, BrowserToolCallContext, BrowserToolsOptions, BrowserToolsService,
-    BrowserVisionAdapterRef, CodeMaintainerHooksRef, CodeMaintainerOptions, CodeMaintainerService,
+    AskUserStoreRef, BrowserToolsOptions, BrowserToolsService, BrowserVisionAdapterRef,
+    CodeMaintainerHooksRef, CodeMaintainerOptions, CodeMaintainerService,
     MemoryCommandReaderOptions, MemoryCommandReaderService, MemoryPluginReaderOptions,
     MemoryPluginReaderService, MemoryReaderStoreRef, MemorySkillReaderOptions,
     MemorySkillReaderService, NotepadBuiltinService, NotepadOptions, NotepadStoreRef,
@@ -26,104 +26,7 @@ use chatos_builtin_tools::{
 };
 use std::sync::Arc;
 
-use super::ToolStreamChunkCallback;
-
-#[derive(Clone)]
-pub enum BuiltinToolService {
-    CodeMaintainer(CodeMaintainerService),
-    TerminalController(TerminalControllerService),
-    TaskManager(TaskManagerService),
-    Notepad(NotepadBuiltinService),
-    AgentBuilder(AgentBuilderService),
-    AskUser(AskUserService),
-    RemoteConnectionController(RemoteConnectionControllerService),
-    WebTools(WebToolsService),
-    BrowserTools(BrowserToolsService),
-    MemorySkillReader(MemorySkillReaderService),
-    MemoryCommandReader(MemoryCommandReaderService),
-    MemoryPluginReader(MemoryPluginReaderService),
-}
-
-impl BuiltinToolService {
-    pub fn list_tools(&self) -> Vec<serde_json::Value> {
-        match self {
-            Self::CodeMaintainer(service) => service.list_tools(),
-            Self::TerminalController(service) => service.list_tools(),
-            Self::TaskManager(service) => service.list_tools(),
-            Self::Notepad(service) => service.list_tools(),
-            Self::AgentBuilder(service) => service.list_tools(),
-            Self::AskUser(service) => service.list_tools(),
-            Self::RemoteConnectionController(service) => service.list_tools(),
-            Self::WebTools(service) => service.list_tools(),
-            Self::BrowserTools(service) => service.list_tools(),
-            Self::MemorySkillReader(service) => service.list_tools(),
-            Self::MemoryCommandReader(service) => service.list_tools(),
-            Self::MemoryPluginReader(service) => service.list_tools(),
-        }
-    }
-
-    pub fn call_tool(
-        &self,
-        name: &str,
-        args: serde_json::Value,
-        conversation_id: Option<&str>,
-        conversation_turn_id: Option<&str>,
-        caller_model_runtime: Option<&chatos_mcp_runtime::ToolCallerModelRuntime>,
-        on_stream_chunk: Option<ToolStreamChunkCallback>,
-    ) -> Result<serde_json::Value, String> {
-        match self {
-            Self::CodeMaintainer(service) => service.call_tool(name, args, conversation_id),
-            Self::TerminalController(service) => service.call_tool(name, args, conversation_id),
-            Self::TaskManager(service) => service.call_tool(
-                name,
-                args,
-                conversation_id,
-                conversation_turn_id,
-                on_stream_chunk,
-            ),
-            Self::Notepad(service) => service.call_tool(name, args),
-            Self::AgentBuilder(service) => service.call_tool(
-                name,
-                args,
-                conversation_id,
-                conversation_turn_id,
-                on_stream_chunk,
-            ),
-            Self::AskUser(service) => service.call_tool(
-                name,
-                args,
-                conversation_id,
-                conversation_turn_id,
-                on_stream_chunk,
-            ),
-            Self::RemoteConnectionController(service) => service.call_tool(name, args),
-            Self::WebTools(service) => service.call_tool(name, args),
-            Self::BrowserTools(service) => service.call_tool_with_context(
-                name,
-                args,
-                BrowserToolCallContext {
-                    conversation_id: conversation_id
-                        .map(str::trim)
-                        .filter(|value| !value.is_empty())
-                        .map(ToOwned::to_owned),
-                    caller_model_runtime: caller_model_runtime.cloned(),
-                },
-            ),
-            Self::MemorySkillReader(service) => service.call_tool(name, args),
-            Self::MemoryCommandReader(service) => service.call_tool(name, args),
-            Self::MemoryPluginReader(service) => service.call_tool(name, args),
-        }
-    }
-
-    pub fn unavailable_tools(&self) -> Vec<(String, String)> {
-        match self {
-            Self::RemoteConnectionController(service) => service.unavailable_tools(),
-            Self::WebTools(service) => service.unavailable_tools(),
-            Self::BrowserTools(service) => service.unavailable_tools(),
-            _ => Vec::new(),
-        }
-    }
-}
+pub use chatos_builtin_tools::SharedBuiltinToolService as BuiltinToolService;
 
 pub fn build_builtin_tool_service(server: &McpBuiltinServer) -> Result<BuiltinToolService, String> {
     match server.kind {

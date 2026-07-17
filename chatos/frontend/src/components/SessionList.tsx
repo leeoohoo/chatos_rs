@@ -110,6 +110,7 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
             expanded={controller.sectionExpansion.projectsExpanded}
             projects={controller.projects}
             currentProjectId={controller.currentProject?.id}
+            canCreate
             onToggle={controller.sectionExpansion.handleToggleProjectsSection}
             onCreate={controller.sessionListActions.openProjectModal}
             onSelect={(projectId) => {
@@ -122,7 +123,7 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
             closeActionMenus={() => controller.inlineActionMenus.closeActionMenus()}
           />
 
-          {controller.terminalVisibility.showTerminalSection && (
+          {controller.workspaceResourceVisibility.showTerminalSection && (
             <>
               <div className="my-2 border-t border-border" />
 
@@ -145,32 +146,36 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
             </>
           )}
 
-          <div className="my-2 border-t border-border" />
+          {controller.workspaceResourceVisibility.showRemoteSection && (
+            <>
+              <div className="my-2 border-t border-border" />
 
-          <RemoteSection
-            expanded={controller.sectionExpansion.remoteExpanded}
-            remoteConnections={controller.remoteConnections}
-            currentRemoteConnectionId={controller.currentRemoteConnection?.id}
-            isRefreshing={controller.isRefreshingRemote}
-            onToggle={controller.sectionExpansion.handleToggleRemoteSection}
-            onRefresh={controller.sessionListActions.handleRefreshRemote}
-            onCreate={controller.sessionListActions.openRemoteModal}
-            onSelect={(connectionId) => {
-              void controller.sessionListActions.handleSelectRemoteConnection(connectionId);
-            }}
-            onOpenSftp={(connectionId) => {
-              void controller.sessionListActions.handleOpenRemoteSftp(connectionId);
-            }}
-            onEdit={(connection) => {
-              controller.localFsPickers.setKeyFilePickerOpen(false);
-              controller.remoteForm.openEditRemoteModal(connection);
-            }}
-            onTest={controller.remoteForm.handleQuickTestRemoteConnection}
-            onDelete={controller.deleteActions.handleDeleteRemoteConnection}
-            onToggleActionMenu={controller.inlineActionMenus.toggleActionMenu}
-            closeActionMenus={() => controller.inlineActionMenus.closeActionMenus()}
-            formatTimeAgo={formatTimeAgoForLocale}
-          />
+              <RemoteSection
+                expanded={controller.sectionExpansion.remoteExpanded}
+                remoteConnections={controller.remoteConnections}
+                currentRemoteConnectionId={controller.currentRemoteConnection?.id}
+                isRefreshing={controller.isRefreshingRemote}
+                onToggle={controller.sectionExpansion.handleToggleRemoteSection}
+                onRefresh={controller.sessionListActions.handleRefreshRemote}
+                onCreate={controller.sessionListActions.openRemoteModal}
+                onSelect={(connectionId) => {
+                  void controller.sessionListActions.handleSelectRemoteConnection(connectionId);
+                }}
+                onOpenSftp={(connectionId) => {
+                  void controller.sessionListActions.handleOpenRemoteSftp(connectionId);
+                }}
+                onEdit={(connection) => {
+                  controller.localFsPickers.setKeyFilePickerOpen(false);
+                  controller.remoteForm.openEditRemoteModal(connection);
+                }}
+                onTest={controller.remoteForm.handleQuickTestRemoteConnection}
+                onDelete={controller.deleteActions.handleDeleteRemoteConnection}
+                onToggleActionMenu={controller.inlineActionMenus.toggleActionMenu}
+                closeActionMenus={() => controller.inlineActionMenus.closeActionMenus()}
+                formatTimeAgo={formatTimeAgoForLocale}
+              />
+            </>
+          )}
         </div>
       )}
       <SessionListDialogs
@@ -197,6 +202,7 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
         cloudProjectZipFile={controller.cloudProjectZipFile}
         projectError={controller.projectError}
         projectSourceMode={controller.projectSourceMode}
+        allowLocalProjectCreation={controller.allowLocalProjectCreation}
         localConnectorWorkspaces={controller.localConnectorWorkspaces}
         localConnectorLoading={controller.localConnectorLoading}
         localConnectorError={controller.localConnectorError}

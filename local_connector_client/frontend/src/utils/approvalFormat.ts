@@ -7,7 +7,7 @@ export function approvalModeLabel(mode: ApprovalMode) {
   const labels: Record<ApprovalMode, string> = {
     request_approval: '请求审批',
     auto_approval: '自动审批',
-    full_control: '完全控制',
+    full_control: '从不询问',
   };
   return labels[mode] || mode;
 }
@@ -16,7 +16,7 @@ export function approvalModeDescription(mode: ApprovalMode) {
   const labels: Record<ApprovalMode, string> = {
     request_approval: '每条命令等待用户通过',
     auto_approval: '由本机 AI 审批命令',
-    full_control: '命令直接执行',
+    full_control: '命令直接执行，不再弹出审批',
   };
   return labels[mode] || mode;
 }
@@ -57,7 +57,7 @@ export function decisionSourceLabel(source: string) {
     whitelist: '白名单',
     user: '用户',
     ai: 'AI',
-    full_control: '完全控制',
+    full_control: '从不询问',
     static_rule: '静态规则',
   };
   return labels[source] || source;

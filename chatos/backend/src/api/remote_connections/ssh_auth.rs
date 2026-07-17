@@ -7,6 +7,8 @@ use std::sync::mpsc;
 use std::time::Duration as StdDuration;
 use tracing::warn;
 
+use chatos_remote_runtime::authenticate_private_key_file;
+
 use crate::models::remote_connection::RemoteConnection;
 
 const DEFAULT_SECOND_FACTOR_PROMPT: &str = "请输入验证码 / OTP";
@@ -326,14 +328,14 @@ pub(super) fn authenticate_target_session(
                 .as_ref()
                 .ok_or_else(|| "私钥路径不能为空".to_string())?;
             let cert_path = connection.certificate_path.as_ref().map(FsPath::new);
-            session
-                .userauth_pubkey_file(
-                    connection.username.as_str(),
-                    cert_path,
-                    FsPath::new(private_key),
-                    None,
-                )
-                .map_err(|e| format!("密钥认证失败: {e}"))?;
+            authenticate_private_key_file(
+                session,
+                connection.username.as_str(),
+                FsPath::new(private_key),
+                cert_path,
+                None,
+            )
+            .map_err(|e| format!("密钥认证失败: {e}"))?;
         }
         _ => return Err("不支持的认证方式".to_string()),
     }
@@ -354,10 +356,11 @@ pub(super) fn authenticate_jump_session(
 
     if let Some(jump_key_path) = connection.jump_private_key_path.as_ref() {
         let jump_cert_path = connection.jump_certificate_path.as_ref().map(FsPath::new);
-        match session.userauth_pubkey_file(
+        match authenticate_private_key_file(
+            session,
             jump_username,
-            jump_cert_path,
             FsPath::new(jump_key_path),
+            jump_cert_path,
             None,
         ) {
             Ok(_) => return Ok(()),
@@ -388,10 +391,11 @@ pub(super) fn authenticate_jump_session(
     if connection.auth_type != "password" {
         if let Some(private_key_path) = connection.private_key_path.as_ref() {
             let cert_path = connection.certificate_path.as_ref().map(FsPath::new);
-            match session.userauth_pubkey_file(
+            match authenticate_private_key_file(
+                session,
                 jump_username,
-                cert_path,
                 FsPath::new(private_key_path),
+                cert_path,
                 None,
             ) {
                 Ok(_) => return Ok(()),

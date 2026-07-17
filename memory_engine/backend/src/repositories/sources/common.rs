@@ -6,12 +6,12 @@ use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 use crate::db::Db;
-use crate::models::EngineSource;
+use crate::models::StoredEngineSource;
 
 pub(crate) const RETIRED_SOURCE_IDS: &[&str] = &["memory_server"];
 
-pub(crate) fn source_collection(db: &Db) -> mongodb::Collection<EngineSource> {
-    db.collection::<EngineSource>("engine_sources")
+pub(crate) fn source_collection(db: &Db) -> mongodb::Collection<StoredEngineSource> {
+    db.collection::<StoredEngineSource>("engine_sources")
 }
 
 pub(crate) fn normalize_optional_text(value: Option<String>) -> Option<String> {

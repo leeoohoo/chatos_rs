@@ -53,6 +53,7 @@ interface SessionListDialogsProps {
   cloudProjectZipFile: File | null;
   projectError: string | null;
   projectSourceMode: ResourceSourceMode;
+  allowLocalProjectCreation: boolean;
   localConnectorWorkspaces: LocalConnectorWorkspaceOption[];
   localConnectorLoading: boolean;
   localConnectorError: string | null;
@@ -196,6 +197,7 @@ export const SessionListDialogs: React.FC<SessionListDialogsProps> = ({
   cloudProjectZipFile,
   projectError,
   projectSourceMode,
+  allowLocalProjectCreation,
   localConnectorWorkspaces,
   localConnectorLoading,
   localConnectorError,
@@ -373,6 +375,7 @@ export const SessionListDialogs: React.FC<SessionListDialogsProps> = ({
       cloudProjectZipFile={cloudProjectZipFile}
       projectError={projectError}
       sourceMode={projectSourceMode}
+      allowLocalConnector={allowLocalProjectCreation}
       localConnectorWorkspaces={localConnectorWorkspaces}
       localConnectorLoading={localConnectorLoading}
       localConnectorError={localConnectorError}

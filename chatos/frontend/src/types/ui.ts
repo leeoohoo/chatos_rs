@@ -64,6 +64,9 @@ export interface MessageListProps {
 export interface InputAreaProps {
   conversationId?: string | null;
   onSend: SendMessageHandler;
+  onStop?: () => void | Promise<void>;
+  isRunning?: boolean;
+  isStopping?: boolean;
   disabled?: boolean;
   placeholder?: string;
   maxLength?: number;

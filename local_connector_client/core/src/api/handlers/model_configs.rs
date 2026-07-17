@@ -103,12 +103,14 @@ pub(crate) async fn local_update_model_settings(
         memory_summary_thinking_level: req.memory_summary_thinking_level,
         project_management_agent_model_config_id: req.project_management_agent_model_config_id,
         project_management_agent_thinking_level: req.project_management_agent_thinking_level,
+        environment_initialization_model_config_id: req.environment_initialization_model_config_id,
+        environment_initialization_thinking_level: req.environment_initialization_thinking_level,
         command_approval_model_config_id: req.command_approval_model_config_id,
         command_approval_thinking_level: req.command_approval_thinking_level,
         updated_at: None,
     };
     let settings = save_local_model_settings(&mut state, settings)?;
-    if req.sync.unwrap_or(true) {
+    if req.sync.unwrap_or(false) {
         sync_local_model_settings(&runtime.http_client, &state)
             .await
             .map_err(|err| LocalApiError::bad_gateway(err.to_string()))?;

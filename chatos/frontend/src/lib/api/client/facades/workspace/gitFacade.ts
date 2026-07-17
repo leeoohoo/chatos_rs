@@ -12,6 +12,9 @@ import type {
   GitSummaryResponse,
 } from '../../types';
 import type ApiClient from '../../../client';
+import { parseLocalConnectorProjectRoot } from '../../../localRuntime';
+
+const isLocalRoot = (root?: string | null): boolean => Boolean(parseLocalConnectorProjectRoot(root));
 
 export interface WorkspaceGitFacade {
   getGitClientInfo(): Promise<GitClientInfoResponse>;
@@ -34,51 +37,99 @@ export interface WorkspaceGitFacade {
 
 export const workspaceGitFacade: WorkspaceGitFacade & ThisType<ApiClient> = {
   async getGitClientInfo() {
+    if (typeof window !== 'undefined' && window.chatosLocalRuntime?.apiRequest) {
+      return this.getLocalRuntimeClient().getGitClientInfo();
+    }
     return workspaceApi.getGitClientInfo(this.getRequestFn());
   },
   async getGitSummary(root, preferredRepoRoot, forceRefresh) {
+    if (isLocalRoot(root)) {
+      return this.getLocalRuntimeClient().getGitSummary(preferredRepoRoot && isLocalRoot(preferredRepoRoot) ? preferredRepoRoot : root);
+    }
     return workspaceApi.getGitSummary(this.getRequestFn(), root, preferredRepoRoot, forceRefresh);
   },
   async getGitBranches(root, forceRefresh) {
+    if (isLocalRoot(root)) {
+      return this.getLocalRuntimeClient().getGitBranches(root);
+    }
     return workspaceApi.getGitBranches(this.getRequestFn(), root, forceRefresh);
   },
   async getGitStatus(root, forceRefresh) {
+    if (isLocalRoot(root)) {
+      return this.getLocalRuntimeClient().getGitStatus(root);
+    }
     return workspaceApi.getGitStatus(this.getRequestFn(), root, forceRefresh);
   },
   async compareGitBranch(root, target) {
+    if (isLocalRoot(root)) {
+      return this.getLocalRuntimeClient().compareGitBranch(root, target);
+    }
     return workspaceApi.compareGitBranch(this.getRequestFn(), root, target);
   },
   async getGitDiff(data) {
+    if (isLocalRoot(data.root)) {
+      return this.getLocalRuntimeClient().getGitDiff(data);
+    }
     return workspaceApi.getGitDiff(this.getRequestFn(), data);
   },
   async fetchGit(data) {
+    if (isLocalRoot(data.root)) {
+      return this.getLocalRuntimeClient().fetchGit(data);
+    }
     return workspaceApi.fetchGit(this.getRequestFn(), data);
   },
   async pullGit(data) {
+    if (isLocalRoot(data.root)) {
+      return this.getLocalRuntimeClient().pullGit(data);
+    }
     return workspaceApi.pullGit(this.getRequestFn(), data);
   },
   async pushGit(data) {
+    if (isLocalRoot(data.root)) {
+      return this.getLocalRuntimeClient().pushGit(data);
+    }
     return workspaceApi.pushGit(this.getRequestFn(), data);
   },
   async checkoutGit(data) {
+    if (isLocalRoot(data.root)) {
+      return this.getLocalRuntimeClient().checkoutGit(data);
+    }
     return workspaceApi.checkoutGit(this.getRequestFn(), data);
   },
   async createGitBranch(data) {
+    if (isLocalRoot(data.root)) {
+      return this.getLocalRuntimeClient().createGitBranch(data);
+    }
     return workspaceApi.createGitBranch(this.getRequestFn(), data);
   },
   async mergeGit(data) {
+    if (isLocalRoot(data.root)) {
+      return this.getLocalRuntimeClient().mergeGit(data);
+    }
     return workspaceApi.mergeGit(this.getRequestFn(), data);
   },
   async stageGitPaths(data) {
+    if (isLocalRoot(data.root)) {
+      return this.getLocalRuntimeClient().stageGitPaths(data);
+    }
     return workspaceApi.stageGitPaths(this.getRequestFn(), data);
   },
   async unstageGitPaths(data) {
+    if (isLocalRoot(data.root)) {
+      return this.getLocalRuntimeClient().unstageGitPaths(data);
+    }
     return workspaceApi.unstageGitPaths(this.getRequestFn(), data);
   },
   async discardGitPaths(data) {
+    if (isLocalRoot(data.root)) {
+      return this.getLocalRuntimeClient().discardGitPaths(data);
+    }
     return workspaceApi.discardGitPaths(this.getRequestFn(), data);
   },
   async commitGit(data) {
+    if (isLocalRoot(data.root)) {
+      return this.getLocalRuntimeClient().commitGit(data);
+    }
     return workspaceApi.commitGit(this.getRequestFn(), data);
   },
 };

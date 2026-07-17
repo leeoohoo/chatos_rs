@@ -4,6 +4,11 @@
 use std::fs;
 use std::path::Path;
 
+use chatos_service_runtime::http_body::{
+    read_response_json_limited, read_response_preview_text_limited_or_message,
+    ERROR_BODY_PREVIEW_LIMIT_BYTES, JSON_BODY_LIMIT_BYTES,
+};
+use chatos_service_runtime::{build_http_client, HttpClientTimeouts};
 use reqwest::StatusCode;
 use serde::Deserialize;
 
@@ -25,7 +30,6 @@ pub(super) enum RoutingDecision {
 pub(super) struct RoutingPlan {
     pub(super) file_provider: RuntimeEnvironmentProvider,
     pub(super) sandbox_provider: RuntimeEnvironmentProvider,
-    pub(super) summary: String,
 }
 
 #[derive(Debug)]
@@ -42,18 +46,14 @@ pub(super) async fn resolve_runtime_environment_routing(
     user_access_token: Option<&str>,
 ) -> RoutingDecision {
     match project.source_type {
-        ProjectSourceType::Cloud => resolve_cloud_routing(project, config, user_access_token).await,
+        ProjectSourceType::Cloud => resolve_cloud_routing(project),
         ProjectSourceType::Local | ProjectSourceType::LocalConnector => {
             resolve_local_routing(project, config, user_access_token).await
         }
     }
 }
 
-async fn resolve_cloud_routing(
-    project: &ProjectRecord,
-    config: &AppConfig,
-    user_access_token: Option<&str>,
-) -> RoutingDecision {
+fn resolve_cloud_routing(project: &ProjectRecord) -> RoutingDecision {
     if project.cloud_import_source == CloudImportSource::Empty {
         return RoutingDecision::Stop(not_runnable(
             "云端项目当前为空，暂无可分析的项目文件。请先上传代码或导入仓库后再初始化运行环境。",
@@ -92,20 +92,9 @@ async fn resolve_cloud_routing(
             "云端项目缺少 Harness 仓库信息，无法通过 Harness MCP 读取项目文件。",
         ));
     }
-    let sandbox_provider = match choose_sandbox_provider(config, user_access_token, None).await {
-        Ok(provider) => provider,
-        Err(err) => {
-            return RoutingDecision::Stop(failed_stop(
-                "检查本地沙箱可用性失败，无法确定运行环境镜像 MCP。",
-                err,
-            ));
-        }
-    };
     RoutingDecision::Ready(RoutingPlan {
         file_provider: RuntimeEnvironmentProvider::Harness,
-        sandbox_provider,
-        summary: "云端项目将通过 Harness MCP 读取文件，并按本地沙箱可用性选择沙箱镜像 MCP。"
-            .to_string(),
+        sandbox_provider: RuntimeEnvironmentProvider::CloudSandboxManager,
     })
 }
 
@@ -163,9 +152,6 @@ async fn resolve_local_routing(
     RoutingDecision::Ready(RoutingPlan {
         file_provider: RuntimeEnvironmentProvider::LocalConnector,
         sandbox_provider,
-        summary:
-            "本地项目将通过 Local Connector 文件 MCP 读取文件，并按本地沙箱可用性选择沙箱镜像 MCP。"
-                .to_string(),
     })
 }
 
@@ -277,10 +263,10 @@ pub(super) async fn find_enabled_local_sandbox_pairing(
     if base.is_empty() {
         return Ok(None);
     }
-    let client = reqwest::Client::builder()
-        .timeout(config.local_connector_service_request_timeout)
-        .build()
-        .map_err(|err| format!("build local connector client failed: {err}"))?;
+    let client = build_http_client(HttpClientTimeouts::new(
+        config.local_connector_service_request_timeout,
+    ))
+    .map_err(|err| format!("build local connector client failed: {err}"))?;
     let mut request = client
         .get(format!("{base}/api/local-connectors/sandbox-pairings"))
         .bearer_auth(token)
@@ -300,18 +286,25 @@ pub(super) async fn find_enabled_local_sandbox_pairing(
     }
     if !response.status().is_success() {
         let status = response.status();
-        let detail = response.text().await.unwrap_or_default();
+        let detail =
+            read_response_preview_text_limited_or_message(response, ERROR_BODY_PREVIEW_LIMIT_BYTES)
+                .await;
         return Err(format!(
             "query local connector sandbox pairings returned status={status} detail={}",
             truncate_detail(detail.as_str(), 1024)
         ));
     }
-    let pairings = response
-        .json::<Vec<LocalConnectorSandboxPairing>>()
-        .await
-        .map_err(|err| format!("parse local connector sandbox pairings failed: {err}"))?;
+    let pairings = read_response_json_limited::<Vec<LocalConnectorSandboxPairing>>(
+        response,
+        JSON_BODY_LIMIT_BYTES,
+    )
+    .await
+    .map_err(|err| format!("parse local connector sandbox pairings failed: {err}"))?;
     Ok(pairings.into_iter().find(|pairing| {
         if !pairing.enabled {
+            return false;
+        }
+        if !local_sandbox_pairing_is_ready(pairing) {
             return false;
         }
         if let Some(project_ref) = project_ref {
@@ -330,8 +323,19 @@ pub(super) struct LocalConnectorSandboxPairing {
     pub(super) device_id: String,
     pub(super) workspace_id: String,
     pub(super) enabled: bool,
+    pub(super) sandbox_readiness: Option<String>,
     #[serde(default)]
     pub(super) facade_base_url: Option<String>,
+}
+
+fn local_sandbox_pairing_is_ready(pairing: &LocalConnectorSandboxPairing) -> bool {
+    pairing
+        .sandbox_readiness
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| value.eq_ignore_ascii_case("ready"))
+        .unwrap_or(true)
 }
 
 fn directory_is_effectively_empty(path: &Path) -> bool {

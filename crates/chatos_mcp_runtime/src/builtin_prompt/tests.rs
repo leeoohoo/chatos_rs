@@ -136,6 +136,7 @@ fn effective_prompt_keeps_available_sections_and_appends_runtime_limitations() {
             server_type: "builtin".to_string(),
             server_url: None,
             server_headers: None,
+            server_header_provider: None,
             server_timeout: None,
             server_config: None,
             tool_info: json!({}),

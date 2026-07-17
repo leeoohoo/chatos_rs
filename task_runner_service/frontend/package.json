@@ -10,6 +10,7 @@
     "type-check": "tsc --noEmit"
   },
   "dependencies": {
+    "@chatos/frontend-runtime": "file:../../frontend_runtime",
     "@ant-design/icons": "^6.3.2",
     "@tanstack/react-query": "^5.101.2",
     "antd": "^6.5.0",

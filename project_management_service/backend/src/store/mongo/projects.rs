@@ -25,12 +25,16 @@ impl MongoStore {
         if let Some(status) = status {
             filter.insert("status", status.as_str());
         }
-        find_many(
+        let projects = find_many(
             &self.projects,
             filter,
             Some(doc! { "updated_at": -1, "id": 1 }),
         )
-        .await
+        .await?;
+        Ok(projects
+            .into_iter()
+            .map(normalize_project_execution_plane)
+            .collect())
     }
 
     pub async fn list_all_projects(
@@ -41,12 +45,16 @@ impl MongoStore {
         if let Some(status) = status {
             filter.insert("status", status.as_str());
         }
-        find_many(
+        let projects = find_many(
             &self.projects,
             filter,
             Some(doc! { "updated_at": -1, "id": 1 }),
         )
-        .await
+        .await?;
+        Ok(projects
+            .into_iter()
+            .map(normalize_project_execution_plane)
+            .collect())
     }
 
     pub async fn create_project(
@@ -81,6 +89,7 @@ impl MongoStore {
             root_path,
             git_url,
             source_type,
+            execution_plane: source_type.execution_plane(),
             cloud_import_source: input.cloud_import_source.unwrap_or_default(),
             import_status: input.import_status.unwrap_or_default(),
             source_git_url,
@@ -134,6 +143,7 @@ impl MongoStore {
             root_path,
             git_url,
             source_type,
+            execution_plane: source_type.execution_plane(),
             cloud_import_source: input.cloud_import_source.unwrap_or_default(),
             import_status: input.import_status.unwrap_or_default(),
             source_git_url,
@@ -164,14 +174,17 @@ impl MongoStore {
     }
 
     pub async fn save_project_record(&self, project: &ProjectRecord) -> Result<(), String> {
-        upsert_by_id(&self.projects, &project.id, project).await
+        let project = normalize_project_execution_plane(project.clone());
+        upsert_by_id(&self.projects, &project.id, &project).await
     }
 
     pub async fn get_project(&self, id: &str) -> Result<Option<ProjectRecord>, String> {
-        self.projects
+        let project = self
+            .projects
             .find_one(doc! { "id": id.trim() }, None)
             .await
-            .map_err(|err| err.to_string())
+            .map_err(|err| err.to_string())?;
+        Ok(project.map(normalize_project_execution_plane))
     }
 
     pub async fn update_project(
@@ -286,5 +299,36 @@ fn project_source_type_from_root(root_path: Option<&str>) -> ProjectSourceType {
         ProjectSourceType::LocalConnector
     } else {
         ProjectSourceType::Local
+    }
+}
+
+fn normalize_project_execution_plane(mut project: ProjectRecord) -> ProjectRecord {
+    project.execution_plane = project.source_type.execution_plane();
+    project
+}
+
+#[cfg(test)]
+mod execution_plane_tests {
+    use super::*;
+
+    #[test]
+    fn project_source_type_selects_execution_plane() {
+        assert_eq!(ProjectSourceType::default(), ProjectSourceType::Cloud);
+        assert_eq!(
+            ProjectExecutionPlane::default(),
+            ProjectExecutionPlane::Cloud
+        );
+        assert_eq!(
+            ProjectSourceType::Cloud.execution_plane(),
+            ProjectExecutionPlane::Cloud
+        );
+        assert_eq!(
+            ProjectSourceType::Local.execution_plane(),
+            ProjectExecutionPlane::LocalConnector
+        );
+        assert_eq!(
+            ProjectSourceType::LocalConnector.execution_plane(),
+            ProjectExecutionPlane::LocalConnector
+        );
     }
 }

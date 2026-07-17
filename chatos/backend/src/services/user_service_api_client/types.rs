@@ -66,12 +66,16 @@ pub struct UserServiceModelConfigRecord {
     pub name: String,
     pub provider: String,
     #[serde(default)]
+    pub prompt_vendor: Option<String>,
+    #[serde(default)]
     pub model: String,
     #[serde(default)]
     pub model_name: String,
     pub thinking_level: Option<String>,
     pub task_usage_scenario: Option<String>,
     pub task_thinking_level: Option<String>,
+    pub temperature: Option<f64>,
+    pub max_output_tokens: Option<i64>,
     pub api_key: Option<String>,
     #[serde(default)]
     pub has_api_key: bool,
@@ -95,6 +99,8 @@ pub struct UserServiceModelProviderRecord {
     pub owner_user_id: String,
     pub name: String,
     pub provider: String,
+    #[serde(default)]
+    pub prompt_vendor: Option<String>,
     pub api_key: Option<String>,
     #[serde(default)]
     pub has_api_key: bool,
@@ -123,10 +129,13 @@ pub struct CreateUserServiceModelConfigRequest {
     pub owner_user_id: Option<String>,
     pub name: String,
     pub provider: Option<String>,
+    pub prompt_vendor: Option<String>,
     pub model: Option<String>,
     pub thinking_level: Option<String>,
     pub task_usage_scenario: Option<String>,
     pub task_thinking_level: Option<String>,
+    pub temperature: Option<f64>,
+    pub max_output_tokens: Option<i64>,
     pub api_key: Option<String>,
     pub base_url: Option<String>,
     pub enabled: Option<bool>,
@@ -141,6 +150,7 @@ pub struct CreateUserServiceModelProviderRequest {
     pub owner_user_id: Option<String>,
     pub name: String,
     pub provider: Option<String>,
+    pub prompt_vendor: Option<String>,
     pub api_key: Option<String>,
     pub base_url: Option<String>,
     pub enabled: Option<bool>,
@@ -153,10 +163,15 @@ pub struct CreateUserServiceModelProviderRequest {
 pub struct UpdateUserServiceModelConfigRequest {
     pub name: Option<String>,
     pub provider: Option<String>,
+    pub prompt_vendor: Option<String>,
     pub model: Option<String>,
     pub thinking_level: Option<String>,
     pub task_usage_scenario: Option<String>,
     pub task_thinking_level: Option<String>,
+    pub temperature: Option<f64>,
+    pub clear_temperature: Option<bool>,
+    pub max_output_tokens: Option<i64>,
+    pub clear_max_output_tokens: Option<bool>,
     pub api_key: Option<String>,
     pub clear_api_key: Option<bool>,
     pub base_url: Option<String>,
@@ -170,6 +185,7 @@ pub struct UpdateUserServiceModelConfigRequest {
 pub struct UpdateUserServiceModelProviderRequest {
     pub name: Option<String>,
     pub provider: Option<String>,
+    pub prompt_vendor: Option<String>,
     pub api_key: Option<String>,
     pub clear_api_key: Option<bool>,
     pub base_url: Option<String>,
@@ -186,6 +202,8 @@ pub struct UserServiceModelSettingsRecord {
     pub memory_summary_thinking_level: Option<String>,
     pub project_management_agent_model_config_id: Option<String>,
     pub project_management_agent_thinking_level: Option<String>,
+    pub environment_initialization_model_config_id: Option<String>,
+    pub environment_initialization_thinking_level: Option<String>,
     pub updated_at: String,
     #[serde(default)]
     pub sync_warnings: Vec<String>,
@@ -203,4 +221,8 @@ pub struct UpdateUserServiceModelSettingsRequest {
     pub project_management_agent_model_config_id: Option<Option<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub project_management_agent_thinking_level: Option<Option<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub environment_initialization_model_config_id: Option<Option<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub environment_initialization_thinking_level: Option<Option<String>>,
 }

@@ -22,6 +22,10 @@ impl ModelConfigService {
         if let Some(provider) = patch.provider {
             model.provider = normalize_model_provider_input(&provider)?;
         }
+        if patch.prompt_vendor.is_some() || model.provider != original_provider {
+            model.prompt_vendor =
+                normalize_model_prompt_vendor_input(patch.prompt_vendor, model.provider.as_str())?;
+        }
         if let Some(base_url) = patch.base_url {
             model.base_url =
                 normalize_model_base_url_input(model.provider.as_str(), Some(base_url));

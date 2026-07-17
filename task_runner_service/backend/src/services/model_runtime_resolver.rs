@@ -1,95 +1,61 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use chatos_service_runtime::{
-    resolve_local_connector_model_runtime, LocalConnectorModelRuntimeLookup,
-};
-
 use crate::config::AppConfig;
-use crate::models::{ModelConfigRecord, TaskRecord};
+use crate::models::{ModelConfigRecord, TaskRecord, PUBLIC_PROJECT_ID};
+use crate::services::project_management_api_client::get_project_from_project_service;
 
 pub(super) async fn resolve_model_runtime_for_task(
     config: &AppConfig,
     task: &TaskRecord,
     model_config: &ModelConfigRecord,
 ) -> Result<ModelConfigRecord, String> {
+    ensure_cloud_task_project_execution(config, task).await?;
     let has_embedded_runtime =
         !model_config.api_key.trim().is_empty() && !model_config.base_url.trim().is_empty();
-    let owner_user_id = match task
-        .owner_user_id
-        .as_deref()
-        .or(model_config.owner_user_id.as_deref())
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    {
-        Some(owner_user_id) => owner_user_id,
-        None if has_embedded_runtime => return Ok(model_config.clone()),
-        None => {
-            return Err(format!(
-                "owner_user_id is required to resolve model runtime for {}",
-                model_config.id
-            ));
-        }
-    };
-    let Some(secret) = config
-        .local_connector_internal_api_secret
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    else {
-        if has_embedded_runtime {
-            return Ok(model_config.clone());
-        }
-        return Err(
-            "TASK_RUNNER_LOCAL_CONNECTOR_INTERNAL_API_SECRET is required to resolve local model runtime"
-                .to_string(),
-        );
-    };
-    let base_url = local_connector_service_base_url();
-    let runtime = resolve_local_connector_model_runtime(LocalConnectorModelRuntimeLookup {
-        base_url: base_url.as_str(),
-        request_timeout: local_connector_service_request_timeout(),
-        internal_secret: secret,
-        caller: "task-runner",
-        owner_user_id,
-        model_config_id: model_config.id.as_str(),
+    if has_embedded_runtime {
+        return Ok(model_config.clone());
+    }
+    Err(format!(
+        "cloud_model_credentials_required: task runner model config {} must contain cloud-resident api_key and base_url; Local Connector credential lookup is disabled",
+        model_config.id
+    ))
+}
+
+pub(super) async fn ensure_cloud_task_project_execution(
+    config: &AppConfig,
+    task: &TaskRecord,
+) -> Result<(), String> {
+    let project_id = task.project_id.trim();
+    if project_id.is_empty() || project_id == "0" || project_id == PUBLIC_PROJECT_ID {
+        return Ok(());
+    }
+    let project = get_project_from_project_service(config, project_id)
+        .await?
+        .ok_or_else(|| format!("task project not found: {project_id}"))?;
+    if source_type_uses_local_runtime(project.source_type.as_deref()) {
+        return Err(format!(
+            "local_runtime_required: project {project_id} must run in the Local Connector client; cloud task model execution and local credential lookup are disabled"
+        ));
+    }
+    Ok(())
+}
+
+fn source_type_uses_local_runtime(source_type: Option<&str>) -> bool {
+    source_type.map(str::trim).is_some_and(|value| {
+        value.eq_ignore_ascii_case("local") || value.eq_ignore_ascii_case("local_connector")
     })
-    .await
-    .map_err(|err| err.to_string())?;
-
-    let mut resolved = model_config.clone();
-    resolved.provider = runtime.provider;
-    resolved.base_url = runtime.base_url;
-    resolved.api_key = runtime.api_key;
-    resolved.model = runtime.model;
-    resolved.thinking_level = runtime.thinking_level.or(resolved.thinking_level);
-    resolved.supports_responses = runtime.supports_responses;
-    if runtime.temperature.is_some() {
-        resolved.temperature = runtime.temperature;
-    }
-    if runtime.max_output_tokens.is_some() {
-        resolved.max_output_tokens = runtime.max_output_tokens;
-    }
-    Ok(resolved)
 }
 
-fn local_connector_service_base_url() -> String {
-    std::env::var("TASK_RUNNER_LOCAL_CONNECTOR_SERVICE_BASE_URL")
-        .ok()
-        .or_else(|| std::env::var("LOCAL_CONNECTOR_SERVICE_BASE_URL").ok())
-        .or_else(|| std::env::var("CHATOS_LOCAL_CONNECTOR_SERVICE_BASE_URL").ok())
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
-        .unwrap_or_else(|| "http://127.0.0.1:39230".to_string())
-}
+#[cfg(test)]
+mod tests {
+    use super::source_type_uses_local_runtime;
 
-fn local_connector_service_request_timeout() -> std::time::Duration {
-    let timeout_ms = std::env::var("TASK_RUNNER_LOCAL_CONNECTOR_SERVICE_REQUEST_TIMEOUT_MS")
-        .ok()
-        .or_else(|| std::env::var("LOCAL_CONNECTOR_SERVICE_REQUEST_TIMEOUT_MS").ok())
-        .or_else(|| std::env::var("CHATOS_LOCAL_CONNECTOR_SERVICE_REQUEST_TIMEOUT_MS").ok())
-        .and_then(|value| value.parse::<u64>().ok())
-        .unwrap_or(30_000)
-        .max(300);
-    std::time::Duration::from_millis(timeout_ms)
+    #[test]
+    fn local_project_sources_disable_cloud_model_resolution() {
+        assert!(source_type_uses_local_runtime(Some("local")));
+        assert!(source_type_uses_local_runtime(Some("LOCAL_CONNECTOR")));
+        assert!(!source_type_uses_local_runtime(Some("cloud")));
+        assert!(!source_type_uses_local_runtime(None));
+    }
 }

@@ -8,7 +8,9 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 
 use crate::models::{
-    normalize_optional_text, normalize_sandbox_mode, CurrentUser, LocalConnectorSandboxPairing,
+    normalize_approval_policy, normalize_approval_reviewer, normalize_optional_text,
+    normalize_permission_profile_id, normalize_sandbox_mode, normalize_sandbox_readiness,
+    CurrentUser, LocalConnectorSandboxPairing, SANDBOX_READINESS_READY,
 };
 use crate::state::AppState;
 
@@ -27,6 +29,11 @@ pub(super) struct CreateSandboxPairingRequest {
     device_id: Option<String>,
     workspace_id: Option<String>,
     sandbox_mode: Option<String>,
+    sandbox_readiness: Option<String>,
+    permission_profile_id: Option<String>,
+    approval_policy: Option<String>,
+    approval_reviewer: Option<String>,
+    policy_revision: Option<String>,
     enabled: Option<bool>,
     access_client_id: Option<String>,
 }
@@ -35,6 +42,11 @@ pub(super) struct CreateSandboxPairingRequest {
 pub(super) struct UpdateSandboxPairingRequest {
     workspace_id: Option<String>,
     sandbox_mode: Option<String>,
+    sandbox_readiness: Option<String>,
+    permission_profile_id: Option<String>,
+    approval_policy: Option<String>,
+    approval_reviewer: Option<String>,
+    policy_revision: Option<String>,
     enabled: Option<bool>,
     access_client_id: Option<String>,
 }
@@ -65,7 +77,7 @@ pub(super) async fn list_sandbox_pairings(
     } else {
         requested_device_id
     };
-    state
+    let mut pairings = state
         .store
         .list_sandbox_pairings(
             owner_user_id,
@@ -73,8 +85,11 @@ pub(super) async fn list_sandbox_pairings(
             normalize_optional_text(query.workspace_id),
         )
         .await
-        .map(Json)
-        .map_err(ApiError::internal)
+        .map_err(ApiError::internal)?;
+    if query.active_only {
+        pairings.retain(active_sandbox_pairing);
+    }
+    Ok(Json(pairings))
 }
 
 pub(super) async fn create_sandbox_pairing(
@@ -91,6 +106,11 @@ pub(super) async fn create_sandbox_pairing(
         workspace_id,
         req.enabled.unwrap_or(false),
         normalize_sandbox_mode(req.sandbox_mode),
+        Some(normalize_sandbox_readiness(req.sandbox_readiness)),
+        Some(normalize_permission_profile_id(req.permission_profile_id)),
+        Some(normalize_approval_policy(req.approval_policy)),
+        Some(normalize_approval_reviewer(req.approval_reviewer)),
+        normalize_optional_text(req.policy_revision),
         None,
         normalize_optional_text(req.access_client_id),
     );
@@ -122,6 +142,21 @@ pub(super) async fn update_sandbox_pairing(
     .await?;
     if let Some(mode) = normalize_optional_text(req.sandbox_mode) {
         pairing.sandbox_mode = normalize_sandbox_mode(Some(mode));
+    }
+    if let Some(readiness) = normalize_optional_text(req.sandbox_readiness) {
+        pairing.sandbox_readiness = normalize_sandbox_readiness(Some(readiness));
+    }
+    if let Some(profile) = normalize_optional_text(req.permission_profile_id) {
+        pairing.permission_profile_id = normalize_permission_profile_id(Some(profile));
+    }
+    if let Some(policy) = normalize_optional_text(req.approval_policy) {
+        pairing.approval_policy = normalize_approval_policy(Some(policy));
+    }
+    if let Some(reviewer) = normalize_optional_text(req.approval_reviewer) {
+        pairing.approval_reviewer = normalize_approval_reviewer(Some(reviewer));
+    }
+    if let Some(policy_revision) = normalize_optional_text(req.policy_revision) {
+        pairing.policy_revision = Some(policy_revision);
     }
     if let Some(enabled) = req.enabled {
         pairing.enabled = enabled;
@@ -173,4 +208,50 @@ pub(super) async fn load_owned_sandbox_pairing(
         ));
     }
     Ok(pairing)
+}
+
+fn active_sandbox_pairing(pairing: &LocalConnectorSandboxPairing) -> bool {
+    pairing.enabled
+        && pairing
+            .sandbox_readiness
+            .trim()
+            .eq_ignore_ascii_case(SANDBOX_READINESS_READY)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn pairing(enabled: bool, readiness: Option<&str>) -> LocalConnectorSandboxPairing {
+        LocalConnectorSandboxPairing::new(
+            "owner-1".to_string(),
+            "device-1".to_string(),
+            "workspace-1".to_string(),
+            enabled,
+            "docker".to_string(),
+            readiness.map(ToOwned::to_owned),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+    }
+
+    #[test]
+    fn active_sandbox_pairing_requires_enabled_and_ready() {
+        assert!(active_sandbox_pairing(&pairing(true, Some("ready"))));
+        assert!(active_sandbox_pairing(&pairing(true, Some(" READY "))));
+        assert!(!active_sandbox_pairing(&pairing(false, Some("ready"))));
+        assert!(!active_sandbox_pairing(&pairing(
+            true,
+            Some("setup_required")
+        )));
+        assert!(!active_sandbox_pairing(&pairing(
+            true,
+            Some("under_development")
+        )));
+        assert!(!active_sandbox_pairing(&pairing(true, Some("unsupported"))));
+    }
 }

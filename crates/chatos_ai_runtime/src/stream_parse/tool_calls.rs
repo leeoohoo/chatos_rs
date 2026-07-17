@@ -6,8 +6,9 @@ use std::collections::BTreeMap;
 use serde_json::{json, Value};
 
 use crate::tool_call::{
-    build_function_tool_call, collect_ordered_tool_calls, merge_indexed_tool_call_parts,
-    remember_tool_call_index, resolve_tool_call_index,
+    append_tool_call_arguments_delta, append_tool_call_name_delta, build_function_tool_call,
+    collect_ordered_tool_calls, merge_indexed_tool_call_parts, remember_tool_call_index,
+    resolve_tool_call_index,
 };
 
 use super::StreamState;
@@ -148,8 +149,11 @@ pub(super) fn merge_function_call_arguments_delta(
         item_id,
         call_id,
         None,
-        Some(arguments_piece),
+        None,
     );
+    if let Some(entry) = state.tool_calls_map.get_mut(&index) {
+        append_tool_call_arguments_delta(entry, arguments_piece);
+    }
 }
 
 pub(super) fn merge_function_call_done(
@@ -204,12 +208,83 @@ pub(super) fn merge_chat_tool_call_delta(
         .and_then(Value::as_str)
         .or_else(|| tool_call.get("arguments").and_then(Value::as_str));
 
-    merge_indexed_tool_call_parts(
-        &mut state.tool_calls_map,
-        index,
-        id,
-        call_id,
-        name,
-        arguments,
-    );
+    merge_indexed_tool_call_parts(&mut state.tool_calls_map, index, id, call_id, None, None);
+    if let Some(entry) = state.tool_calls_map.get_mut(&index) {
+        if let Some(name) = name {
+            append_tool_call_name_delta(entry, name);
+        }
+        if let Some(arguments) = arguments {
+            append_tool_call_arguments_delta(entry, arguments);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::{collect_stream_tool_calls, merge_chat_tool_call_delta};
+    use crate::stream_parse::StreamState;
+
+    #[test]
+    fn chat_tool_call_deltas_preserve_repeated_boundary_quotes() {
+        let mut state = StreamState::default();
+        merge_chat_tool_call_delta(
+            &mut state,
+            0,
+            &json!({
+                "index": 0,
+                "id": "call_1",
+                "function": {
+                    "name": "create_task",
+                    "arguments": "{\"default_model_config_id\": \""
+                }
+            }),
+        );
+        merge_chat_tool_call_delta(
+            &mut state,
+            0,
+            &json!({
+                "index": 0,
+                "function": {
+                    "arguments": "\", \"requires_execution\": false}"
+                }
+            }),
+        );
+
+        let tool_calls = collect_stream_tool_calls(&state.tool_calls_map).expect("tool calls");
+        let arguments = tool_calls[0]["function"]["arguments"]
+            .as_str()
+            .expect("arguments");
+        assert_eq!(
+            arguments,
+            "{\"default_model_config_id\": \"\", \"requires_execution\": false}"
+        );
+        assert!(serde_json::from_str::<serde_json::Value>(arguments).is_ok());
+    }
+
+    #[test]
+    fn chat_tool_call_name_deltas_preserve_repeated_boundary_characters() {
+        let mut state = StreamState::default();
+        merge_chat_tool_call_delta(
+            &mut state,
+            0,
+            &json!({
+                "index": 0,
+                "id": "call_1",
+                "function": { "name": "demo_", "arguments": "{}" }
+            }),
+        );
+        merge_chat_tool_call_delta(
+            &mut state,
+            0,
+            &json!({
+                "index": 0,
+                "function": { "name": "_tool" }
+            }),
+        );
+
+        let tool_calls = collect_stream_tool_calls(&state.tool_calls_map).expect("tool calls");
+        assert_eq!(tool_calls[0]["function"]["name"], "demo__tool");
+    }
 }

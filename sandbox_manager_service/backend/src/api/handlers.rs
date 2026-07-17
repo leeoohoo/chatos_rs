@@ -12,13 +12,17 @@ use serde_json::{json, Value};
 use crate::auth::SandboxAuthContext;
 use crate::error::ApiError;
 use crate::models::{
-    CreateSandboxAccessClientRequest, CreateSandboxAccessClientResponse, CreateSandboxLeaseRequest,
-    CreateSandboxLeaseResponse, DeleteSandboxAccessClientResponse, DestroySandboxResponse,
-    HeartbeatRequest, HeartbeatResponse, InitializeSandboxImageRequest, ListSandboxQuery,
-    PoolStatusResponse, ReleaseSandboxRequest, ReleaseSandboxResponse,
-    RotateSandboxAccessClientKeyResponse, SandboxAccessClientResponse, SandboxEventRecord,
+    CreateSandboxAccessClientRequest, CreateSandboxAccessClientResponse,
+    CreateSandboxEnvironmentLeaseRequest, CreateSandboxLeaseRequest, CreateSandboxLeaseResponse,
+    DeleteSandboxAccessClientResponse, DestroySandboxResponse, HeartbeatRequest, HeartbeatResponse,
+    InitializeSandboxImageRequest, ListSandboxQuery, PoolStatusResponse,
+    PrepareSandboxDependencyImagesRequest, PrepareSandboxDependencyImagesResponse,
+    ReleaseSandboxRequest, ReleaseSandboxResponse, RotateSandboxAccessClientKeyResponse,
+    SandboxAccessClientResponse, SandboxEnvironmentExecRequest, SandboxEnvironmentExecResponse,
+    SandboxEnvironmentLeaseResponse, SandboxEnvironmentStopRequest, SandboxEventRecord,
     SandboxHealthResponse, SandboxImageCatalogResponse, SandboxImageJobRecord, SandboxLeaseRecord,
-    SystemConfigResponse, UpdatePoolConfigRequest, UpdateSandboxAccessClientRequest,
+    StartSandboxEnvironmentRequest, SystemConfigResponse, UpdatePoolConfigRequest,
+    UpdateSandboxAccessClientRequest,
 };
 use crate::state::AppState;
 
@@ -72,6 +76,19 @@ pub async fn initialize_sandbox_image(
 ) -> Result<Json<SandboxImageJobRecord>, ApiError> {
     Ok(Json(
         state.manager.initialize_sandbox_image(&auth, input).await?,
+    ))
+}
+
+pub async fn prepare_sandbox_dependency_images(
+    State(state): State<AppState>,
+    Extension(auth): Extension<SandboxAuthContext>,
+    Json(input): Json<PrepareSandboxDependencyImagesRequest>,
+) -> Result<Json<PrepareSandboxDependencyImagesResponse>, ApiError> {
+    Ok(Json(
+        state
+            .manager
+            .prepare_sandbox_dependency_images(&auth, input)
+            .await?,
     ))
 }
 
@@ -215,6 +232,95 @@ pub async fn create_sandbox_lease(
         state
             .manager
             .create_lease(&auth, input, header_text(&headers, "x-idempotency-key"))
+            .await?,
+    ))
+}
+
+pub async fn create_sandbox_environment_lease(
+    State(state): State<AppState>,
+    Extension(auth): Extension<SandboxAuthContext>,
+    headers: HeaderMap,
+    Json(input): Json<CreateSandboxEnvironmentLeaseRequest>,
+) -> Result<Json<SandboxEnvironmentLeaseResponse>, ApiError> {
+    Ok(Json(
+        state
+            .manager
+            .create_environment_lease(&auth, input, header_text(&headers, "x-idempotency-key"))
+            .await?,
+    ))
+}
+
+pub async fn start_sandbox_environment(
+    Path(environment_id): Path<String>,
+    State(state): State<AppState>,
+    Extension(auth): Extension<SandboxAuthContext>,
+    Json(input): Json<StartSandboxEnvironmentRequest>,
+) -> Result<Json<SandboxEnvironmentLeaseResponse>, ApiError> {
+    Ok(Json(
+        state
+            .manager
+            .start_environment(&auth, environment_id.as_str(), input)
+            .await?,
+    ))
+}
+
+pub async fn get_sandbox_environment(
+    Path(environment_id): Path<String>,
+    State(state): State<AppState>,
+    Extension(auth): Extension<SandboxAuthContext>,
+) -> Result<Json<SandboxEnvironmentLeaseResponse>, ApiError> {
+    Ok(Json(
+        state
+            .manager
+            .get_environment(&auth, environment_id.as_str())
+            .await?,
+    ))
+}
+
+pub async fn stop_sandbox_environment(
+    Path(environment_id): Path<String>,
+    State(state): State<AppState>,
+    Extension(auth): Extension<SandboxAuthContext>,
+    Json(input): Json<SandboxEnvironmentStopRequest>,
+) -> Result<Json<SandboxEnvironmentLeaseResponse>, ApiError> {
+    Ok(Json(
+        state
+            .manager
+            .stop_environment(&auth, environment_id.as_str(), input)
+            .await?,
+    ))
+}
+
+pub async fn exec_sandbox_environment_service(
+    Path((environment_id, service_id)): Path<(String, String)>,
+    State(state): State<AppState>,
+    Extension(auth): Extension<SandboxAuthContext>,
+    Json(input): Json<SandboxEnvironmentExecRequest>,
+) -> Result<Json<SandboxEnvironmentExecResponse>, ApiError> {
+    Ok(Json(
+        state
+            .manager
+            .exec_environment_service(&auth, environment_id.as_str(), service_id.as_str(), input)
+            .await?,
+    ))
+}
+
+pub async fn sandbox_environment_mcp_proxy(
+    Path(environment_id): Path<String>,
+    State(state): State<AppState>,
+    Extension(auth): Extension<SandboxAuthContext>,
+    headers: HeaderMap,
+    Json(payload): Json<Value>,
+) -> Result<Json<Value>, ApiError> {
+    Ok(Json(
+        state
+            .manager
+            .environment_mcp_proxy(
+                &auth,
+                environment_id.as_str(),
+                header_text(&headers, "x-chatos-service-id").as_deref(),
+                payload,
+            )
             .await?,
     ))
 }

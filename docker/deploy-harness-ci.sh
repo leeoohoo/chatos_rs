@@ -68,6 +68,9 @@ image_for_service() {
     user-service-backend)
       printf '%s/chatos-rs-user-service-backend:%s\n' "$IMAGE_NAMESPACE" "$IMAGE_TAG"
       ;;
+    configuration-center-backend)
+      printf '%s/chatos-rs-configuration-center-backend:%s\n' "$IMAGE_NAMESPACE" "$IMAGE_TAG"
+      ;;
     memory-engine-backend)
       printf '%s/chatos-rs-memory-engine-backend:%s\n' "$IMAGE_NAMESPACE" "$IMAGE_TAG"
       ;;
@@ -94,6 +97,9 @@ image_for_service() {
       ;;
     chatos-frontend)
       printf '%s/chatos-rs-chatos-frontend:%s\n' "$IMAGE_NAMESPACE" "$IMAGE_TAG"
+      ;;
+    configuration-center-frontend)
+      printf '%s/chatos-rs-configuration-center-frontend:%s\n' "$IMAGE_NAMESPACE" "$IMAGE_TAG"
       ;;
     user-service-frontend)
       printf '%s/chatos-rs-user-service-frontend:%s\n' "$IMAGE_NAMESPACE" "$IMAGE_TAG"
@@ -139,6 +145,7 @@ require_harness_ci_images_for_services() {
 require_harness_ci_images() {
   local required_images=(
     "$IMAGE_NAMESPACE/chatos-rs-sandbox-agent:$IMAGE_TAG"
+    "$IMAGE_NAMESPACE/chatos-rs-configuration-center-backend:$IMAGE_TAG"
     "$IMAGE_NAMESPACE/chatos-rs-user-service-backend:$IMAGE_TAG"
     "$IMAGE_NAMESPACE/chatos-rs-memory-engine-backend:$IMAGE_TAG"
     "$IMAGE_NAMESPACE/chatos-rs-project-management-backend:$IMAGE_TAG"
@@ -149,6 +156,7 @@ require_harness_ci_images() {
     "$IMAGE_NAMESPACE/chatos-rs-chatos-backend:$IMAGE_TAG"
     "$IMAGE_NAMESPACE/chatos-rs-official-website-backend:$IMAGE_TAG"
     "$IMAGE_NAMESPACE/chatos-rs-chatos-frontend:$IMAGE_TAG"
+    "$IMAGE_NAMESPACE/chatos-rs-configuration-center-frontend:$IMAGE_TAG"
     "$IMAGE_NAMESPACE/chatos-rs-user-service-frontend:$IMAGE_TAG"
     "$IMAGE_NAMESPACE/chatos-rs-memory-engine-frontend:$IMAGE_TAG"
     "$IMAGE_NAMESPACE/chatos-rs-project-management-frontend:$IMAGE_TAG"

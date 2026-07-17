@@ -113,12 +113,17 @@ pub(super) async fn update_agent_mcp_bindings(
     Json(payload): Json<UpdateAgentMcpBindingsRequest>,
 ) -> Result<Json<AgentMcpBindingsResponse>, ApiError> {
     ensure_super_admin(&user)?;
-    state
+    let agent = state
         .store
         .get_agent(agent_key.as_str())
         .await
         .map_err(ApiError::internal)?
         .ok_or_else(|| ApiError::not_found("System agent not found"))?;
+    if !agent_supports_mcp(&agent) && !payload.bindings.is_empty() {
+        return Err(ApiError::bad_request(
+            "This system agent does not support MCP bindings",
+        ));
+    }
 
     let mut seen = HashSet::new();
     let mut selected = Vec::new();
@@ -189,6 +194,12 @@ pub(super) async fn build_agent_mcp_bindings_response(
         .await
         .map_err(ApiError::internal)?
         .ok_or_else(|| ApiError::not_found("System agent not found"))?;
+    if !agent_supports_mcp(&agent) {
+        return Ok(AgentMcpBindingsResponse {
+            agent,
+            items: Vec::new(),
+        });
+    }
     let mcps = state
         .store
         .list_system_mcps()
@@ -230,4 +241,8 @@ pub(super) async fn build_agent_mcp_bindings_response(
         })
         .collect();
     Ok(AgentMcpBindingsResponse { agent, items })
+}
+
+fn agent_supports_mcp(agent: &SystemAgentRecord) -> bool {
+    agent.service_name != "memory-engine"
 }

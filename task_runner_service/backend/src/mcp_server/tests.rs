@@ -294,6 +294,7 @@ fn model_config(id: &str, owner_user_id: &str, enabled: bool) -> ModelConfigReco
         owner_display_name: Some(format!("{owner_user_id} name")),
         name: id.to_string(),
         provider: "openai".to_string(),
+        prompt_vendor: Some("gpt".to_string()),
         base_url: "https://api.example.test/v1".to_string(),
         api_key: format!("{id}-key"),
         model: format!("{id}-model"),

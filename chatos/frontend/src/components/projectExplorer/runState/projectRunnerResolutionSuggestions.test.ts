@@ -38,6 +38,9 @@ describe('projectRunnerResolutionSuggestions', () => {
           buildOption('java_home', '/usr/lib/jvm/java-21'),
         ],
       },
+      t: (key) => key === 'runSettings.failure.jdkMismatch'
+        ? 'JDK 版本与项目编译目标不匹配'
+        : key,
     }).map((item) => item.id)).toContain('switch-java-home');
   });
 });

@@ -9,6 +9,7 @@ export type ProjectImportStatus = 'none' | 'pending' | 'importing' | 'ready' | '
 export type ProjectRuntimeEnvironmentStatus =
   | 'disabled'
   | 'pending_configuration'
+  | 'pending_image_build'
   | 'pending'
   | 'analyzing'
   | 'ready'
@@ -139,10 +140,44 @@ export interface ProjectRuntimeEnvironmentRecord {
   detected_stack: unknown;
   required_services: unknown;
   env_vars: unknown;
+  environment_variables: ProjectRuntimeEnvironmentVariableRecord[];
+  generated_config_files?: ProjectRuntimeEnvironmentConfigFileRecord[];
   last_agent_run_id?: string | null;
   last_error?: string | null;
   created_at: string;
   updated_at: string;
+}
+
+export type RuntimeEnvironmentVariableSource =
+  | 'project'
+  | 'ai_recommended'
+  | 'user'
+  | 'none';
+
+export interface ProjectRuntimeEnvironmentVariableRecord {
+  name: string;
+  project_value?: string | null;
+  project_value_suitable: boolean;
+  recommended_value?: string | null;
+  user_value?: string | null;
+  effective_value?: string | null;
+  effective_source: RuntimeEnvironmentVariableSource;
+  description?: string | null;
+  recommendation_reason?: string | null;
+  required: boolean;
+  secret: boolean;
+}
+
+export interface UpdateProjectRuntimeEnvironmentVariablesPayload {
+  variables: Array<{ name: string; value: string }>;
+}
+
+export interface ProjectRuntimeEnvironmentConfigFileRecord {
+  path: string;
+  format: string;
+  content: string;
+  description?: string | null;
+  source_files: string[];
 }
 
 export interface ProjectRuntimeEnvironmentImageRecord {
@@ -151,12 +186,22 @@ export interface ProjectRuntimeEnvironmentImageRecord {
   environment_key: string;
   environment_type: string;
   display_name: string;
+  service_id: string;
+  service_role: 'application' | 'dependency' | 'unknown';
+  mcp_policy: {
+    managed_by: 'system';
+    attachment: 'project_gateway_target' | 'none';
+    filesystem: boolean;
+    terminal: boolean;
+  };
   image_id?: string | null;
   image_ref?: string | null;
   image_provider: RuntimeEnvironmentProvider;
   features: unknown;
   ports: unknown;
   env_vars: unknown;
+  dockerfile?: string | null;
+  custom_build_script?: string | null;
   status: string;
   error?: string | null;
   created_at: string;
@@ -166,6 +211,28 @@ export interface ProjectRuntimeEnvironmentImageRecord {
 export interface ProjectRuntimeEnvironmentResponse {
   environment: ProjectRuntimeEnvironmentRecord;
   images: ProjectRuntimeEnvironmentImageRecord[];
+}
+
+export interface ProjectRuntimeEnvironmentDeploymentResponse {
+  project_id: string;
+  project_name: string;
+  status: 'running' | 'stopped' | 'degraded' | string;
+  runtime_directory?: string | null;
+  compose_file?: string | null;
+  output?: string | null;
+  services: ProjectRuntimeEnvironmentDeploymentService[];
+}
+
+export interface ProjectRuntimeEnvironmentDeploymentService {
+  service_id: string;
+  environment_key: string;
+  display_name: string;
+  service_role: 'application' | 'dependency' | 'unknown';
+  mcp_policy: ProjectRuntimeEnvironmentImageRecord['mcp_policy'];
+  status: string;
+  image_ref?: string | null;
+  ports: unknown;
+  runtime?: Record<string, unknown> | null;
 }
 
 export interface UpdateProjectRuntimeEnvironmentSettingsPayload {

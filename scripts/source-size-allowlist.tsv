@@ -1,0 +1,3 @@
+# path	max_lines	expires_on	reason
+# Only production source files above 800 lines belong here.
+# expires_on is inclusive; expired, stale, missing, and over-budget entries fail CI.

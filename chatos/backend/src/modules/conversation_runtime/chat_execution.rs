@@ -5,7 +5,9 @@ use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use async_trait::async_trait;
-use chatos_agent::{ChatosAgentProfile, ChatosStreamAgent, ChatosStreamRuntime};
+use chatos_agent::{
+    ChatosAgentProfile, ChatosStreamAgent, ChatosStreamRuntime, DEFAULT_AGENT_MAX_ITERATIONS,
+};
 use chatos_ai_runtime::{
     AiResponse, AiRuntimeOptions, ContextualTurnRequest, ModelRuntimeConfig,
     RuntimeBeforeModelRequest, RuntimeCallbacks, RuntimeFinalResponseAction,
@@ -551,6 +553,13 @@ pub fn effective_codex_gateway_mcp_passthrough(
 ) -> bool {
     model_runtime.use_codex_gateway_mcp_passthrough
         && !runtime_context.project_requirement_execution_planner
+        && runtime_context.mcp_server_bundle.0.iter().all(|server| {
+            server.header_provider.is_none()
+                && !server
+                    .headers
+                    .as_ref()
+                    .is_some_and(chatos_mcp_runtime::rpc::headers_require_per_request_signing)
+        })
 }
 
 fn push_optional_system_prompt(items: &mut Vec<Value>, content: Option<&str>) {
@@ -620,21 +629,6 @@ fn build_workspace_global_prompt(
             });
         }
     }
-    if runtime_context.internal_context_locale.is_english() {
-        lines.extend([
-            "This conversation is explicitly bound to the current project. Treat references such as “this project”, “the code”, “look at it”, or “help me change it” as referring to this project unless the user says otherwise.".to_string(),
-            "Task Runner is your internal asynchronous execution path, not a separate product the user must operate. The current user, project id, conversation, and available runtime context are automatically attached to tasks you create.".to_string(),
-            "When a request requires inspecting, searching, modifying, running, testing, building, debugging, or validating the current project—or using real files, logs, terminal, browser, Local Connector, sandbox, MCP, or Skills—use Task Runner to create the necessary task instead of claiming that you cannot access the project or asking the user to paste code or provide the project path.".to_string(),
-            "Use the Task Runner capability catalogs and list_available_skills when specialized tools or Skills may be needed. After arranging the work, briefly tell the user what follow-through you initiated; factual results will return through the normal callback flow.".to_string(),
-        ]);
-    } else {
-        lines.extend([
-            "当前对话已经明确绑定到上述项目。除非用户另有说明，用户提到“这个项目”“代码”“帮我看看”“帮我修改”等内容时，默认就是指当前项目。".to_string(),
-            "Task Runner 是你自己的内部异步执行通道，不是需要用户操作的另一个产品。你创建任务时，当前用户、项目 ID、会话以及可用运行上下文都会由系统自动绑定。".to_string(),
-            "当需求需要查看、搜索、理解、修改、运行、测试、构建、排障或验证当前项目，或者需要真实文件、日志、终端、浏览器、Local Connector、沙箱、MCP 或 Skills 时，必须通过 Task Runner 创建任务继续推进。不得仅因为主对话不能直接读取文件就声称无法查看，也不要要求用户再次粘贴代码或提供项目路径。".to_string(),
-            "需要专门能力时，先使用 Task Runner 的能力目录和 list_available_skills 选择合适工具或 Skills。安排完成后，只需自然地告诉用户你已经开始推进哪些后续步骤；真实结果会通过正常回调链路返回。".to_string(),
-        ]);
-    }
     Some(lines.join("\n"))
 }
 
@@ -693,12 +687,7 @@ pub fn build_agent_chat_options(
         None
     };
     let shared_model_config = shared_model_runtime_config_from_resolved(model_runtime)
-        .with_instructions(
-            runtime_context
-                .base_system_prompt
-                .clone()
-                .or_else(|| model_runtime.system_prompt.clone()),
-        )
+        .with_instructions(compose_agent_instructions(runtime_context, model_runtime))
         .with_max_output_tokens(input.max_tokens)
         .with_prompt_cache_key(Some(session_id.to_string()))
         .with_request_cwd(request_cwd.clone())
@@ -722,6 +711,27 @@ pub fn build_agent_chat_options(
     }
 }
 
+fn compose_agent_instructions(
+    runtime_context: &ResolvedConversationRuntimeContext,
+    model_runtime: &ResolvedChatModelConfig,
+) -> Option<String> {
+    let dynamic_prompt = runtime_context
+        .base_system_prompt
+        .as_deref()
+        .or(model_runtime.system_prompt.as_deref());
+    match (
+        normalize_prompt_text(runtime_context.agent_system_prompt.as_deref()),
+        normalize_prompt_text(dynamic_prompt),
+    ) {
+        (Some(agent_prompt), Some(dynamic_prompt)) => {
+            Some(format!("{agent_prompt}\n\n{dynamic_prompt}"))
+        }
+        (Some(agent_prompt), None) => Some(agent_prompt.to_string()),
+        (None, Some(dynamic_prompt)) => Some(dynamic_prompt.to_string()),
+        (None, None) => None,
+    }
+}
+
 fn task_follow_up_max_rounds_from_settings(settings: &Value) -> usize {
     settings
         .get("TASK_FOLLOW_UP_MAX_ROUNDS")
@@ -735,7 +745,7 @@ fn max_iterations_from_settings(settings: &Value) -> usize {
         .get("MAX_ITERATIONS")
         .and_then(Value::as_i64)
         .map(|value| value.max(1) as usize)
-        .unwrap_or(600)
+        .unwrap_or(DEFAULT_AGENT_MAX_ITERATIONS)
 }
 
 #[cfg(test)]

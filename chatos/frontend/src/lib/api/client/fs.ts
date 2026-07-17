@@ -7,6 +7,7 @@ import {
   guessFilenameFromPath,
   parseFilenameFromContentDisposition,
 } from './shared';
+import { applyClientSurfaceHeader } from './surface';
 
 export interface BinaryApiContext {
   baseUrl: string;
@@ -29,6 +30,7 @@ export const downloadFsEntry = async (
   if (context.accessToken) {
     headers.set('Authorization', `Bearer ${context.accessToken}`);
   }
+  applyClientSurfaceHeader(headers);
   const response = await fetch(`${context.baseUrl}/fs/download${qs}`, {
     method: 'GET',
     headers,

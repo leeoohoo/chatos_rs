@@ -48,6 +48,8 @@ pub struct UpdateTaskRequest {
     pub tags: Option<Vec<String>>,
     pub default_model_config_id: Option<String>,
     #[serde(default)]
+    pub project_id: Option<String>,
+    #[serde(default)]
     pub task_profile: Option<String>,
     pub schedule: Option<TaskScheduleConfig>,
     pub mcp_config: Option<TaskMcpConfig>,

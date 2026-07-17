@@ -35,21 +35,18 @@ impl RunService {
     }
 
     pub(super) async fn effective_task_execution_max_iterations(&self) -> Result<usize, String> {
-        Ok(self
-            .store
-            .get_runtime_settings()
-            .await?
-            .map(|settings| settings.task_execution_max_iterations.max(1))
-            .unwrap_or(self.config.default_task_execution_max_iterations.max(1)))
+        let snapshot = load_managed_config_snapshot().await;
+        Ok(chatos_agent::resolve_agent_max_iterations(
+            snapshot.as_ref(),
+            self.config.default_task_execution_max_iterations,
+        ))
     }
 
     pub(super) async fn effective_execution_timeout(&self) -> Result<Duration, String> {
         Ok(Duration::from_millis(
-            self.store
-                .get_runtime_settings()
-                .await?
-                .and_then(|settings| settings.execution_timeout_ms)
-                .filter(|value| *value > 0)
+            load_managed_config_snapshot()
+                .await
+                .and_then(|snapshot| snapshot.u64("task_runner.execution.timeout_ms"))
                 .unwrap_or(self.config.execution_timeout.as_millis() as u64)
                 .max(1),
         ))
@@ -58,22 +55,17 @@ impl RunService {
     pub(super) async fn effective_tool_result_model_budget_limits(
         &self,
     ) -> Result<ToolResultModelBudgetLimits, String> {
-        Ok(self
-            .store
-            .get_runtime_settings()
-            .await?
-            .map(|settings| {
-                ToolResultModelBudgetLimits::new(
-                    settings.tool_result_model_max_chars,
-                    settings.tool_results_model_total_max_chars,
-                )
-            })
-            .unwrap_or_else(|| {
-                ToolResultModelBudgetLimits::new(
-                    self.config.default_tool_result_model_max_chars,
-                    self.config.default_tool_results_model_total_max_chars,
-                )
-            }))
+        let snapshot = load_managed_config_snapshot().await;
+        Ok(ToolResultModelBudgetLimits::new(
+            snapshot
+                .as_ref()
+                .and_then(|snapshot| snapshot.usize("task_runner.ai.tool_result_max_chars"))
+                .unwrap_or(self.config.default_tool_result_model_max_chars),
+            snapshot
+                .as_ref()
+                .and_then(|snapshot| snapshot.usize("task_runner.ai.tool_results_total_max_chars"))
+                .unwrap_or(self.config.default_tool_results_model_total_max_chars),
+        ))
     }
 
     pub(super) async fn effective_execution_environment_mode(&self) -> Result<String, String> {
@@ -83,20 +75,16 @@ impl RunService {
     }
 
     pub(super) async fn effective_sandbox_enabled(&self) -> Result<bool, String> {
-        Ok(self
-            .store
-            .get_runtime_settings()
-            .await?
-            .map(|settings| settings.sandbox_enabled)
+        Ok(load_managed_config_snapshot()
+            .await
+            .and_then(|snapshot| snapshot.bool("task_runner.sandbox.enabled"))
             .unwrap_or(false))
     }
 
     pub(super) async fn effective_sandbox_manager_base_url(&self) -> Result<String, String> {
-        Ok(self
-            .store
-            .get_runtime_settings()
-            .await?
-            .map(|settings| settings.sandbox_manager_base_url)
+        Ok(load_managed_config_snapshot()
+            .await
+            .and_then(|snapshot| snapshot.string("task_runner.sandbox.manager_base_url"))
             .filter(|value| !value.trim().is_empty())
             .unwrap_or_else(|| self.config.default_sandbox_manager_base_url.clone())
             .trim_end_matches('/')
@@ -104,12 +92,11 @@ impl RunService {
     }
 
     pub(super) async fn effective_sandbox_lease_ttl_seconds(&self) -> Result<u64, String> {
-        Ok(self
-            .store
-            .get_runtime_settings()
-            .await?
-            .map(|settings| settings.sandbox_lease_ttl_seconds.max(1))
-            .unwrap_or(self.config.default_sandbox_lease_ttl_seconds.max(1)))
+        Ok(load_managed_config_snapshot()
+            .await
+            .and_then(|snapshot| snapshot.u64("task_runner.sandbox.lease_ttl_seconds"))
+            .unwrap_or(self.config.default_sandbox_lease_ttl_seconds)
+            .max(1))
     }
 
     pub async fn list_runs(&self, task_id: Option<&str>) -> Result<Vec<TaskRunRecord>, String> {

@@ -38,8 +38,6 @@ fn build_settings(req: &RunSubjectMemoryJobRequest) -> Result<SubjectMemoryJobSe
             .filter(|value| !value.is_empty())
             .map(ToOwned::to_owned)
             .unwrap_or_else(|| "thread_incremental".to_string()),
-        summary_prompt: req.summary_prompt.clone(),
-        rollup_summary_prompt: req.rollup_summary_prompt.clone(),
         prompt_title: req
             .prompt_title
             .as_deref()
@@ -66,12 +64,6 @@ pub(crate) async fn build_settings_with_policy(
     let mut settings = build_settings(req)?;
     let policy = cp_repo::get_effective_job_policy(db, "subject_memory").await?;
 
-    if settings.summary_prompt.is_none() {
-        settings.summary_prompt = policy.summary_prompt.clone();
-    }
-    if settings.rollup_summary_prompt.is_none() {
-        settings.rollup_summary_prompt = policy.rollup_summary_prompt.clone();
-    }
     if req.token_limit.is_none() {
         settings.token_limit = policy.token_limit.unwrap_or(settings.token_limit).max(500);
     }

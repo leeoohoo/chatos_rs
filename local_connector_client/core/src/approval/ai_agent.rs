@@ -15,7 +15,13 @@ use chatos_ai_runtime::{
     MemoryContextComposer, MemoryEngineRecordWriter, MemoryRecordScope, MemoryScope,
     ModelRuntimeConfig,
 };
+use chatos_plugin_management_sdk::{
+    required_agent_prompt_vendor, AgentPromptVendor, SystemAgentKey,
+};
 
+use crate::local_runtime::{
+    database_path_for_state, load_installed_agent_prompt_from_database, LocalDatabase,
+};
 use crate::mcp::tools::code_maintainer_service_for_root;
 use crate::workspace::paths::resolve_workspace_dir;
 use crate::{local_now_rfc3339, LocalState};
@@ -31,16 +37,9 @@ use self::tool_executor::ApprovalAgentToolExecutor;
 
 #[derive(Debug, Clone)]
 pub(crate) enum AutoApprovalDecision {
-    Approved {
-        reason: String,
-        remember_allow: bool,
-    },
-    Denied {
-        reason: String,
-    },
-    AskUser {
-        reason: String,
-    },
+    Approved { reason: String },
+    Denied { reason: String },
+    AskUser { reason: String },
 }
 
 #[derive(Clone)]
@@ -53,16 +52,30 @@ struct ApprovalAgentMemory {
 
 pub(crate) async fn run_auto_approval_agent(
     state: &LocalState,
+    state_path: &Path,
     request: &CommandApprovalRequest,
     risk_level: &str,
     risk_reason: Option<&str>,
 ) -> Result<AutoApprovalDecision> {
     let root = approval_project_root(state, request)?;
-    let model_config = approval_model_config(
+    let (model_config, prompt_vendor) = approval_model_config(
         state,
         request.project_key.owner_user_id.as_str(),
         root.as_path(),
     )?;
+    let source_instance_id = state
+        .auth
+        .as_ref()
+        .map(|auth| auth.cloud_base_url.trim_end_matches('/'))
+        .ok_or_else(|| anyhow!("Local Connector login is required for Agent Prompt"))?;
+    let database = LocalDatabase::open(database_path_for_state(state_path)).await?;
+    let installed_prompt = load_installed_agent_prompt_from_database(
+        &database,
+        source_instance_id,
+        SystemAgentKey::LocalConnectorCommandApprovalAgent,
+        prompt_vendor,
+    )
+    .await?;
     let capability_policy = resolve_approval_capability_policy(state).await?;
     let code_service = code_maintainer_service_for_root(
         root.as_path(),
@@ -86,12 +99,6 @@ pub(crate) async fn run_auto_approval_agent(
         state.auth.as_ref().map(|auth| auth.access_token.as_str()),
     )
     .await?;
-    let max_iterations = state
-        .runtime_settings
-        .clone()
-        .normalized()
-        .ai_agent_max_iterations;
-
     let run_id = format!("approval-agent-{}", Uuid::new_v4());
     let conversation_id = memory
         .as_ref()
@@ -115,6 +122,9 @@ pub(crate) async fn run_auto_approval_agent(
         "project_id": request.project_key.project_id,
         "project_root_relative_path": request.project_key.project_root_relative_path,
         "project_anchor_relative_path": request.project_key.project_anchor_relative_path,
+        "agent_prompt_bundle_version": installed_prompt.bundle_version,
+        "agent_prompt_revision": installed_prompt.revision,
+        "agent_prompt_checksum": installed_prompt.checksum,
     });
     let agent_memory = memory.as_ref().map(|memory| {
         AgentTurnMemory::new(
@@ -127,7 +137,8 @@ pub(crate) async fn run_auto_approval_agent(
     let turn_request = AgentTurnRequest::new(model_config, conversation_id, run_id, prompt)
         .with_tool_executor(executor)
         .with_memory(agent_memory)
-        .with_max_iterations(max_iterations)
+        .with_max_iterations(capability_policy.max_iterations)
+        .with_system_prompt(installed_prompt.content)
         .with_metadata(metadata);
     AgentExecutor::new()
         .run(&COMMAND_APPROVAL_AGENT, turn_request)
@@ -142,7 +153,6 @@ pub(crate) async fn run_auto_approval_agent(
     Ok(match decision.decision.as_str() {
         "approve" => AutoApprovalDecision::Approved {
             reason: decision.reason,
-            remember_allow: decision.remember_allow,
         },
         "deny" => AutoApprovalDecision::Denied {
             reason: decision.reason,
@@ -159,10 +169,16 @@ pub(crate) async fn run_auto_approval_agent(
 #[derive(Debug, Deserialize)]
 struct ApprovalCapabilityPolicy {
     policy_revision: String,
+    #[serde(default = "default_agent_max_iterations")]
+    max_iterations: usize,
     code_maintainer_read: bool,
     approval_decision: bool,
     #[serde(default)]
     provider_skills_prompt: Option<String>,
+}
+
+fn default_agent_max_iterations() -> usize {
+    chatos_agent::DEFAULT_AGENT_MAX_ITERATIONS
 }
 
 async fn resolve_approval_capability_policy(
@@ -197,6 +213,7 @@ async fn resolve_approval_capability_policy(
         .await
         .context("decode command approval capability policy")?;
     if policy.policy_revision.trim().is_empty()
+        || policy.max_iterations == 0
         || !policy.code_maintainer_read
         || !policy.approval_decision
     {
@@ -226,7 +243,7 @@ fn approval_model_config(
     state: &LocalState,
     owner_user_id: &str,
     root: &Path,
-) -> Result<ModelRuntimeConfig> {
+) -> Result<(ModelRuntimeConfig, AgentPromptVendor)> {
     let model_config_id = state
         .model_configs
         .settings
@@ -268,18 +285,23 @@ fn approval_model_config(
     } else {
         runtime.provider.trim().to_string()
     };
-    Ok(ModelRuntimeConfig::openai_compatible(
-        runtime.base_url,
-        runtime.api_key,
-        runtime.model,
-        provider,
-    )
-    .with_responses_support(runtime.supports_responses)
-    .with_images_support(Some(runtime.supports_images))
-    .with_temperature(runtime.temperature.or(Some(0.0)))
-    .with_max_output_tokens(runtime.max_output_tokens.or(Some(1_200)))
-    .with_thinking_level(thinking_level)
-    .with_request_cwd(Some(root.display().to_string())))
+    let prompt_vendor =
+        required_agent_prompt_vendor(runtime.prompt_vendor.as_deref(), provider.as_str())?;
+    Ok((
+        ModelRuntimeConfig::openai_compatible(
+            runtime.base_url,
+            runtime.api_key,
+            runtime.model,
+            provider,
+        )
+        .with_responses_support(runtime.supports_responses)
+        .with_images_support(Some(runtime.supports_images))
+        .with_temperature(runtime.temperature.or(Some(0.0)))
+        .with_max_output_tokens(runtime.max_output_tokens.or(Some(1_200)))
+        .with_thinking_level(thinking_level)
+        .with_request_cwd(Some(root.display().to_string())),
+        prompt_vendor,
+    ))
 }
 
 async fn build_approval_agent_memory(
@@ -444,6 +466,12 @@ fn build_approval_prompt(
     risk_level: &str,
     risk_reason: Option<&str>,
 ) -> Result<String> {
+    let requested_permissions = request
+        .requested_permissions
+        .as_ref()
+        .map(serde_json::to_string_pretty)
+        .transpose()?
+        .unwrap_or_else(|| "null".to_string());
     Ok(format!(
         r#"请审核下面这条本地 shell 命令是否可以执行。必要时先读取或搜索项目文件，再调用 `approval_decision` 给出最终结论。
 
@@ -457,12 +485,14 @@ fn build_approval_prompt(
 - project_root: {project_root}
 - cwd: {cwd}
 - command: {command}
+- requested_permissions: {requested_permissions}
 - static_risk_level: {risk_level}
 - static_risk_reason: {risk_reason}
 
 审核重点：
 - 命令是否符合当前项目的语言、包管理器、脚本和目录结构。
 - 命令是否会访问 `.env`、私钥、token、系统目录或项目外路径。
+- 临时权限是否是完成该命令所必需的最小范围；不要因为命令本身常见就忽略越界文件或网络权限。
 - 命令是否包含破坏性删除、权限提升、远程脚本直接执行、生产基础设施操作等风险。
 - 如果命令只是常见的只读检查、测试、构建、格式化、依赖安装等，也要结合项目文件确认合理性。
 "#,
@@ -479,6 +509,7 @@ fn build_approval_prompt(
         project_root = project_root.display(),
         cwd = request.cwd,
         command = normalized_command(request.command.as_str(), request.args.as_slice()),
+        requested_permissions = requested_permissions,
         risk_level = risk_level,
         risk_reason = risk_reason.unwrap_or(""),
     ))
@@ -504,6 +535,8 @@ mod tests {
             args: vec!["test".to_string()],
             cwd: ".".to_string(),
             source: "test".to_string(),
+            requested_permissions: None,
+            session_id: Some("session-1".to_string()),
         };
 
         assert_eq!(
@@ -520,5 +553,20 @@ mod tests {
         assert!(err
             .to_string()
             .contains("command approval model is not configured"));
+    }
+
+    #[test]
+    fn legacy_capability_response_uses_global_agent_default() {
+        let policy = serde_json::from_value::<ApprovalCapabilityPolicy>(json!({
+            "policy_revision": "revision-1",
+            "code_maintainer_read": true,
+            "approval_decision": true
+        }))
+        .expect("decode legacy policy");
+
+        assert_eq!(
+            policy.max_iterations,
+            chatos_agent::DEFAULT_AGENT_MAX_ITERATIONS
+        );
     }
 }

@@ -189,9 +189,23 @@ async fn internal_capability_resolver_rejects_unknown_caller_service() {
     assert_eq!(err.message, "caller service is not allowed");
 }
 
+#[test]
+fn memory_engine_is_an_allowed_internal_prompt_caller() {
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        "x-plugin-management-caller-service",
+        HeaderValue::from_static("memory-engine"),
+    );
+
+    assert_eq!(
+        require_internal_caller_service(&headers).expect("memory engine caller"),
+        "memory-engine"
+    );
+}
+
 fn runtime_request(owner_user_id: &str) -> RuntimeCapabilitiesRequest {
     RuntimeCapabilitiesRequest {
-        agent_key: "task_runner_run_phase".to_string(),
+        agent_key: chatos_plugin_management_sdk::SystemAgentKey::TaskRunnerRunPhase,
         owner_user_id: owner_user_id.to_string(),
         include_unavailable: true,
     }
@@ -235,5 +249,9 @@ async fn test_state_with_secret(internal_api_secret: Option<&str>) -> AppState {
             seed_system_resources: false,
         },
         store,
+        user_service_http: chatos_service_runtime::build_http_client(
+            chatos_service_runtime::HttpClientTimeouts::new(Duration::from_secs(1)),
+        )
+        .expect("build User Service test client"),
     }
 }

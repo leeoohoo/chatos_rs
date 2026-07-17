@@ -28,7 +28,7 @@ describe('SessionBusyBadge', () => {
 
   it('renders idle by default', () => {
     renderBadge({ phase: null });
-    expect(screen.getByText('空闲')).toBeInTheDocument();
+    expect(screen.getByText('Idle')).toBeInTheDocument();
   });
 
   it('renders reviewing label when phase is reviewing', () => {

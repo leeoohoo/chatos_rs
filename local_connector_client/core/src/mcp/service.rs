@@ -9,6 +9,7 @@ use chatos_mcp_service::{JsonRpcRequest, McpJsonRpcService, McpServerInfo};
 use serde_json::{json, Value};
 
 use crate::history::CommandHistoryRecorder;
+use crate::local_runtime::LocalDatabase;
 use crate::mcp::terminal::{handle_local_mcp_terminal_cleanup, handle_local_mcp_terminal_start};
 use crate::relay::{relay_error_response, RelayRequest, RelayResponse, MCP_RELAY_MESSAGE_TYPE};
 use crate::LocalState;
@@ -19,6 +20,7 @@ use super::user_runtime::{handle_user_mcp_body, is_user_mcp_request};
 pub(crate) async fn handle_mcp_request(
     value: Value,
     state: &LocalState,
+    database: &LocalDatabase,
     history_recorder: &CommandHistoryRecorder,
 ) -> Value {
     let request = match serde_json::from_value::<RelayRequest>(value) {
@@ -27,19 +29,20 @@ pub(crate) async fn handle_mcp_request(
             return relay_error_response(MCP_RELAY_MESSAGE_TYPE, "", 400, err.to_string());
         }
     };
-    let body = match handle_mcp_body(&request, state, history_recorder).await {
-        Ok(body) => body,
-        Err(err) => {
-            return RelayResponse {
-                message_type: MCP_RELAY_MESSAGE_TYPE.to_string(),
-                request_id: request.request_id,
-                status: 400,
-                headers: BTreeMap::new(),
-                body: json!({ "error": err.to_string() }),
+    let body =
+        match handle_mcp_body_with_database(&request, state, database, history_recorder).await {
+            Ok(body) => body,
+            Err(err) => {
+                return RelayResponse {
+                    message_type: MCP_RELAY_MESSAGE_TYPE.to_string(),
+                    request_id: request.request_id,
+                    status: 400,
+                    headers: BTreeMap::new(),
+                    body: json!({ "error": err.to_string() }),
+                }
+                .into_value();
             }
-            .into_value();
-        }
-    };
+        };
     RelayResponse {
         message_type: MCP_RELAY_MESSAGE_TYPE.to_string(),
         request_id: request.request_id,
@@ -50,7 +53,28 @@ pub(crate) async fn handle_mcp_request(
     .into_value()
 }
 
+#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) async fn handle_mcp_body(
+    request: &RelayRequest,
+    state: &LocalState,
+    history_recorder: &CommandHistoryRecorder,
+) -> Result<Value> {
+    handle_mcp_body_without_user_runtime(request, state, history_recorder).await
+}
+
+async fn handle_mcp_body_with_database(
+    request: &RelayRequest,
+    state: &LocalState,
+    database: &LocalDatabase,
+    history_recorder: &CommandHistoryRecorder,
+) -> Result<Value> {
+    if is_user_mcp_request(request) {
+        return handle_user_mcp_body(request, database).await;
+    }
+    handle_mcp_body_without_user_runtime(request, state, history_recorder).await
+}
+
+async fn handle_mcp_body_without_user_runtime(
     request: &RelayRequest,
     state: &LocalState,
     history_recorder: &CommandHistoryRecorder,
@@ -77,7 +101,9 @@ async fn handle_standard_local_mcp_body(
     history_recorder: &CommandHistoryRecorder,
 ) -> Result<Value> {
     if is_user_mcp_request(request) {
-        return handle_user_mcp_body(request, state).await;
+        return Err(anyhow::anyhow!(
+            "user MCP execution requires the local SQLite runtime"
+        ));
     }
     let rpc_request = serde_json::from_value::<JsonRpcRequest>(request.body.clone())
         .context("parse local connector MCP JSON-RPC request")?;

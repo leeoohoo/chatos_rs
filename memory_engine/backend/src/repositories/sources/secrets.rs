@@ -4,7 +4,7 @@
 use mongodb::bson::doc;
 
 use crate::db::Db;
-use crate::models::{now_rfc3339, RotateSourceSecretResponse};
+use crate::models::{now_rfc3339, StoredRotateSourceSecretResponse};
 
 use super::common::{
     build_secret_key_hint, generate_secret_key, hash_secret, source_collection, source_filter,
@@ -14,7 +14,7 @@ pub async fn rotate_source_secret(
     db: &Db,
     source_id: &str,
     tenant_id: Option<&str>,
-) -> Result<Option<RotateSourceSecretResponse>, String> {
+) -> Result<Option<StoredRotateSourceSecretResponse>, String> {
     let normalized_source_id = source_id.trim();
     if normalized_source_id.is_empty() {
         return Err("source_id is required".to_string());
@@ -56,5 +56,8 @@ pub async fn rotate_source_secret(
         .map_err(|err| err.to_string())?
         .ok_or_else(|| "rotated source not found".to_string())?;
 
-    Ok(Some(RotateSourceSecretResponse { source, secret_key }))
+    Ok(Some(StoredRotateSourceSecretResponse {
+        source,
+        secret_key,
+    }))
 }

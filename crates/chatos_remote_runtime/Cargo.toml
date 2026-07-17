@@ -1,0 +1,11 @@
+# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+# Required Notice: Copyright (c) 2025 AI Chat Team
+
+[package]
+name = "chatos_remote_runtime"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+dirs = "6"
+ssh2 = "0.9"

@@ -13,6 +13,7 @@ EXTRA_COMPOSE_FILES="${CHATOS_DOCKER_EXTRA_COMPOSE_FILES:-${CHATOS_DOCKER_EXTRA_
 ACTION="${1:-up}"
 
 LOCAL_BUILD_SERVICES=(
+  configuration-center-backend
   user-service-backend
   memory-engine-backend
   project-management-backend
@@ -22,6 +23,7 @@ LOCAL_BUILD_SERVICES=(
   task-runner-backend
   chatos-backend
   official-website-backend
+  configuration-center-frontend
   chatos-frontend
   user-service-frontend
   memory-engine-frontend
@@ -184,9 +186,11 @@ PROJECT_SERVICE_USER_SERVICE_INTERNAL_API_SECRET|change_me_project_service_user_
 PROJECT_SERVICE_TASK_RUNNER_INTERNAL_API_SECRET|change_me_project_service_task_runner_secret
 CHATOS_TASK_RUNNER_INTERNAL_API_SECRET|change_me_chatos_task_runner_internal_secret
 PLUGIN_MANAGEMENT_INTERNAL_API_SECRET|change_me_plugin_management_internal_secret
+CONFIG_CENTER_INTERNAL_API_SECRET|change_me_configuration_center_internal_secret
 PLUGIN_MANAGEMENT_TASK_RUNNER_INTERNAL_API_SECRET|change_me_plugin_management_task_runner_secret
 PLUGIN_MANAGEMENT_PROJECT_SERVICE_INTERNAL_API_SECRET|change_me_plugin_management_project_service_secret
 PLUGIN_MANAGEMENT_LOCAL_CONNECTOR_SERVICE_INTERNAL_API_SECRET|change_me_plugin_management_local_connector_secret
+PLUGIN_MANAGEMENT_MEMORY_ENGINE_INTERNAL_API_SECRET|change_me_plugin_management_memory_engine_secret
 TASK_RUNNER_CHATOS_CALLBACK_SECRET|change_me_chatos_task_runner_secret
 CHATOS_PROJECT_SERVICE_INTERNAL_API_SECRET|change_me_chatos_project_service_secret
 TASK_RUNNER_PROJECT_SERVICE_INTERNAL_API_SECRET|change_me_task_runner_project_service_secret
@@ -200,6 +204,7 @@ TASK_RUNNER_MEMORY_ENGINE_INTERNAL_API_SECRET|change_me_task_runner_memory_engin
 PROJECT_SERVICE_MEMORY_ENGINE_INTERNAL_API_SECRET|change_me_project_service_memory_engine_secret
 USER_SERVICE_MEMORY_ENGINE_INTERNAL_API_SECRET|change_me_user_service_memory_engine_secret
 LOCAL_CONNECTOR_MEMORY_ENGINE_INTERNAL_API_SECRET|change_me_local_connector_memory_engine_secret
+SANDBOX_MANAGER_OPERATOR_TOKEN|chatos-sandbox-manager-dev-operator-token
 SANDBOX_MANAGER_AGENT_TOKEN_SECRET|chatos-sandbox-agent-dev-secret
 TASK_RUNNER_SANDBOX_MANAGER_INTERNAL_API_SECRET|change_me_task_runner_sandbox_manager_secret
 PROJECT_SERVICE_SANDBOX_MANAGER_INTERNAL_API_SECRET|change_me_project_service_sandbox_manager_secret
@@ -215,7 +220,8 @@ print_urls() {
   local frontend_port main_backend_port user_service_frontend_port
   local memory_engine_frontend_port task_runner_frontend_port project_service_frontend_port
   local plugin_management_frontend_port sandbox_manager_frontend_port local_connector_service_port
-  local official_website_frontend_port harness_port harness_ssh_host harness_ssh_port consul_port
+  local official_website_frontend_port config_center_frontend_port
+  local harness_port harness_ssh_host harness_ssh_port consul_port
   frontend_port="$(env_value FRONTEND_PORT 8088)"
   main_backend_port="$(env_value MAIN_BACKEND_PORT 3997)"
   consul_port="$(env_value CONSUL_HTTP_PORT 8500)"
@@ -230,6 +236,7 @@ print_urls() {
   sandbox_manager_frontend_port="$(env_value SANDBOX_MANAGER_FRONTEND_PORT 8096)"
   local_connector_service_port="$(env_value LOCAL_CONNECTOR_SERVICE_PORT 39230)"
   official_website_frontend_port="$(env_value OFFICIAL_WEBSITE_FRONTEND_PORT 39251)"
+  config_center_frontend_port="$(env_value CONFIG_CENTER_FRONTEND_PORT 39271)"
   cat <<EOF
 
 [OK] Chat OS Docker stack is running.
@@ -244,6 +251,7 @@ Memory Engine:            http://localhost:${memory_engine_frontend_port}
 Task Runner:              http://localhost:${task_runner_frontend_port}
 Project Management:       http://localhost:${project_service_frontend_port}
 Plugin Management:        http://localhost:${plugin_management_frontend_port}
+Configuration Center:     http://localhost:${config_center_frontend_port}
 Sandbox Manager:          http://localhost:${sandbox_manager_frontend_port}
 Local Connector Service:  http://localhost:${local_connector_service_port}
 Official Website:         http://localhost:${official_website_frontend_port}

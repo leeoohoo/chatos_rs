@@ -7,10 +7,11 @@ use serde::Deserialize;
 
 use crate::config::PluginManagementClientConfig;
 use crate::dto::{
-    LocalConnectorMcpListResponse, LocalConnectorMcpStatusBatchRequest,
-    LocalConnectorMcpStatusRequest, LocalConnectorMcpSyncRequest,
-    LocalConnectorSkillInventoryRequest, McpRecord, ResolveAgentCapabilitiesRequest,
-    ResolvedAgentCapabilities, ResourceCheckRecord, SkillInstallationRecord,
+    AgentPromptBundle, AgentPromptBundleManifest, LocalConnectorMcpListResponse,
+    LocalConnectorMcpStatusBatchRequest, LocalConnectorMcpStatusRequest,
+    LocalConnectorMcpSyncRequest, LocalConnectorSkillInventoryRequest, McpRecord,
+    ResolveAgentCapabilitiesRequest, ResolveAgentPromptRequest, ResolvedAgentCapabilities,
+    ResolvedAgentPrompt, ResourceCheckRecord, SkillInstallationRecord,
     UpdateUserSkillPreferenceRequest, UserSkillCatalogItem, UserSkillCatalogResponse,
 };
 use crate::error::PluginManagementClientError;
@@ -20,6 +21,8 @@ const INTERNAL_TOKEN_HEADER: &str = "x-plugin-management-internal-token";
 const CALLER_SERVICE_HEADER: &str = "x-plugin-management-caller-service";
 const INTERNAL_TOKEN_AUDIENCE: &str = "plugin-management-service";
 const CAPABILITIES_RESOLVE_SCOPE: &str = "capabilities.resolve";
+const AGENT_PROMPTS_RESOLVE_SCOPE: &str = "agent-prompts.resolve";
+const AGENT_PROMPTS_SYNC_SCOPE: &str = "agent-prompts.sync";
 const LOCAL_CONNECTOR_READ_SCOPE: &str = "local-connector.read";
 const LOCAL_CONNECTOR_WRITE_SCOPE: &str = "local-connector.write";
 
@@ -85,6 +88,50 @@ impl PluginManagementClient {
         let response = self
             .internal_request(Method::POST, url, CAPABILITIES_RESOLVE_SCOPE)?
             .json(request)
+            .send()
+            .await?;
+        parse_response(response).await
+    }
+
+    pub async fn resolve_agent_prompt_for_service(
+        &self,
+        request: &ResolveAgentPromptRequest,
+    ) -> Result<ResolvedAgentPrompt, PluginManagementClientError> {
+        let url = format!(
+            "{}/api/internal/runtime/agent-prompts/resolve",
+            self.config.base_url
+        );
+        let response = self
+            .internal_request(Method::POST, url, AGENT_PROMPTS_RESOLVE_SCOPE)?
+            .json(request)
+            .send()
+            .await?;
+        parse_response(response).await
+    }
+
+    pub async fn get_agent_prompt_bundle_manifest_for_service(
+        &self,
+    ) -> Result<AgentPromptBundleManifest, PluginManagementClientError> {
+        let url = format!(
+            "{}/api/internal/runtime/agent-prompts/manifest",
+            self.config.base_url
+        );
+        let response = self
+            .internal_request(Method::GET, url, AGENT_PROMPTS_SYNC_SCOPE)?
+            .send()
+            .await?;
+        parse_response(response).await
+    }
+
+    pub async fn get_agent_prompt_bundle_for_service(
+        &self,
+    ) -> Result<AgentPromptBundle, PluginManagementClientError> {
+        let url = format!(
+            "{}/api/internal/runtime/agent-prompts/bundle",
+            self.config.base_url
+        );
+        let response = self
+            .internal_request(Method::GET, url, AGENT_PROMPTS_SYNC_SCOPE)?
             .send()
             .await?;
         parse_response(response).await

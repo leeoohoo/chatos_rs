@@ -12,10 +12,12 @@ use serde_json::Value;
 use crate::config::{api_url, home_dir, normalize_optional, ClientConfig};
 use crate::registration::{ensure_device_registered, ensure_success, ensure_workspace_registered};
 use crate::workspace::paths::canonicalize_existing_dir;
-use crate::LocalRuntime;
+use crate::workspace::trust::workspace_project_config_trust_fingerprint;
+use crate::{local_now_rfc3339, LocalRuntime, WorkspaceProjectConfigTrust};
 
 use super::super::types::{
     AddWorkspaceRequest, FsEntry, FsListQuery, FsListResponse, LocalApiError,
+    UpdateWorkspaceProjectConfigTrustRequest,
 };
 use super::helpers::normalize_required;
 use super::status::status_payload;
@@ -129,4 +131,100 @@ pub(crate) async fn local_remove_workspace(
         state.save(runtime.state_path.as_path())?;
     }
     Ok(Json(status_payload(&runtime).await))
+}
+
+pub(crate) async fn local_update_workspace_project_config_trust(
+    State(runtime): State<LocalRuntime>,
+    AxumPath(workspace_id): AxumPath<String>,
+    Json(req): Json<UpdateWorkspaceProjectConfigTrustRequest>,
+) -> Result<Json<Value>, LocalApiError> {
+    {
+        let mut state = runtime.state.write().await;
+        let workspace = state
+            .workspaces
+            .iter_mut()
+            .find(|workspace| workspace.id == workspace_id)
+            .ok_or_else(|| LocalApiError::bad_request("workspace not found"))?;
+        update_workspace_project_config_trust(workspace, &req)?;
+        state.save(runtime.state_path.as_path())?;
+    }
+    Ok(Json(status_payload(&runtime).await))
+}
+
+fn update_workspace_project_config_trust(
+    workspace: &mut crate::WorkspaceState,
+    req: &UpdateWorkspaceProjectConfigTrustRequest,
+) -> Result<(), LocalApiError> {
+    if req.trusted && !req.risk_acknowledged {
+        return Err(LocalApiError::conflict_code(
+            "workspace_project_config_trust_ack_required",
+            "trusting workspace project configuration requires explicit risk acknowledgement",
+        ));
+    }
+    workspace.project_config_trust = if req.trusted {
+        Some(WorkspaceProjectConfigTrust {
+            identity_fingerprint: workspace_project_config_trust_fingerprint(
+                workspace.absolute_root.as_path(),
+            )
+            .map_err(|err| LocalApiError::bad_request(err.to_string()))?,
+            trusted_at: local_now_rfc3339(),
+        })
+    } else {
+        None
+    };
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::workspace::trust::workspace_project_config_trust_is_current;
+
+    #[cfg(unix)]
+    #[test]
+    fn project_config_trust_requires_ack_and_can_be_revoked() {
+        let root = std::env::temp_dir().join(format!(
+            "chatos-workspace-trust-api-test-{}",
+            uuid::Uuid::new_v4()
+        ));
+        fs::create_dir_all(&root).expect("create workspace");
+        let mut workspace = crate::WorkspaceState {
+            id: "workspace-test".to_string(),
+            absolute_root: root.canonicalize().expect("canonical workspace"),
+            alias: "test".to_string(),
+            fingerprint: "path-fingerprint".to_string(),
+            project_config_trust: None,
+        };
+
+        let error = update_workspace_project_config_trust(
+            &mut workspace,
+            &UpdateWorkspaceProjectConfigTrustRequest {
+                trusted: true,
+                risk_acknowledged: false,
+            },
+        )
+        .expect_err("trust requires acknowledgement");
+        assert!(error.message().contains("risk acknowledgement"));
+
+        update_workspace_project_config_trust(
+            &mut workspace,
+            &UpdateWorkspaceProjectConfigTrustRequest {
+                trusted: true,
+                risk_acknowledged: true,
+            },
+        )
+        .expect("trust workspace");
+        assert!(workspace_project_config_trust_is_current(&workspace));
+
+        update_workspace_project_config_trust(
+            &mut workspace,
+            &UpdateWorkspaceProjectConfigTrustRequest {
+                trusted: false,
+                risk_acknowledged: false,
+            },
+        )
+        .expect("revoke trust");
+        assert!(workspace.project_config_trust.is_none());
+        let _ = fs::remove_dir_all(root);
+    }
 }

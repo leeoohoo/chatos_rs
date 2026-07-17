@@ -106,6 +106,7 @@ import sys
 
 root = os.path.realpath(sys.argv[1])
 service_bins = {
+    "config_center_service_backend",
     "user_service_backend",
     "memory_engine",
     "project_management_service_backend",

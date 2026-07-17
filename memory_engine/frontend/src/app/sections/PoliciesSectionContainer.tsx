@@ -17,17 +17,10 @@ export function PoliciesSectionContainer(props: PoliciesSectionContainerProps) {
   const catalog = useCatalogResources(message);
 
   const loadPoliciesPage = async () => {
-    const [models, policies] = await Promise.allSettled([
-      catalog.loadModels(),
-      catalog.loadPolicies(),
-    ]);
-
-    if (models.status === 'rejected') {
-      message.error(`加载模型配置失败：${String(models.reason)}`);
-    }
-
-    if (policies.status === 'rejected') {
-      message.error(`加载任务策略失败：${String(policies.reason)}`);
+    try {
+      await catalog.loadPolicies();
+    } catch (error) {
+      message.error(`加载任务策略失败：${String(error)}`);
     }
   };
 
@@ -51,11 +44,6 @@ export function PoliciesSectionContainer(props: PoliciesSectionContainerProps) {
       onSelect={catalog.setSelectedPolicyViewKey}
       onReload={() => void loadPoliciesPage()}
       policyMap={catalog.policyMap}
-      modelOptions={catalog.modelOptions}
-      savingPolicyJobType={catalog.savingPolicyJobType}
-      generatingPolicyJobType={catalog.generatingPolicyJobType}
-      onSave={catalog.handleSavePolicy}
-      onGeneratePrompt={catalog.handleGeneratePolicyPrompt}
     />
   );
 }

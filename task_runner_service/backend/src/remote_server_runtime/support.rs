@@ -4,6 +4,9 @@
 use serde::Serialize;
 
 use chatos_builtin_tools::RemoteConnectionControllerContext;
+use chatos_remote_runtime::join_remote_path;
+
+pub(super) use chatos_remote_runtime::normalize_remote_path;
 
 #[derive(Debug, Serialize)]
 pub(super) struct ConnectionSummary {
@@ -48,38 +51,6 @@ fn normalize_optional_string(value: Option<String>) -> Option<String> {
 
 pub(super) fn shell_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\"'\"'"))
-}
-
-pub(super) fn normalize_remote_path(path: &str) -> String {
-    let trimmed = path.trim();
-    if trimmed.is_empty() {
-        return ".".to_string();
-    }
-
-    let mut normalized = trimmed.replace('\\', "/");
-    while normalized.contains("//") {
-        normalized = normalized.replace("//", "/");
-    }
-
-    if normalized.len() > 1 {
-        normalized = normalized.trim_end_matches('/').to_string();
-    }
-    if normalized.is_empty() {
-        ".".to_string()
-    } else {
-        normalized
-    }
-}
-
-fn join_remote_path(base: &str, name: &str) -> String {
-    let base = normalize_remote_path(base);
-    if base == "." {
-        name.to_string()
-    } else if base.ends_with('/') {
-        format!("{base}{name}")
-    } else {
-        format!("{base}/{name}")
-    }
 }
 
 pub(super) fn command_danger_reason(command: &str) -> Option<&'static str> {

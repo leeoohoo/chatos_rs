@@ -20,11 +20,6 @@ pub(crate) async fn local_update_runtime_settings(
     State(runtime): State<LocalRuntime>,
     Json(req): Json<UpdateLocalRuntimeSettingsRequest>,
 ) -> Result<Json<crate::state::LocalRuntimeSettings>, LocalApiError> {
-    if req.ai_agent_max_iterations == Some(0) {
-        return Err(LocalApiError::bad_request(
-            "ai_agent_max_iterations must be greater than 0",
-        ));
-    }
     let mode_changed = {
         let state = runtime.state.read().await;
         req.developer_mode
@@ -53,9 +48,6 @@ pub(crate) async fn local_update_runtime_settings(
         }
     }
     let mut state = runtime.state.write().await;
-    if let Some(max_iterations) = req.ai_agent_max_iterations {
-        state.runtime_settings.ai_agent_max_iterations = max_iterations;
-    }
     if let Some(developer_mode) = req.developer_mode {
         state.runtime_settings.developer_mode = developer_mode;
     }

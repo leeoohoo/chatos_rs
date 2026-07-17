@@ -14,7 +14,7 @@ export interface SessionChatState {
   streamingMessageId: string | null;
   activeTurnId: string | null;
   streamingPreviewText: string;
-  streamingTransport?: 'realtime' | 'sse' | null;
+  streamingTransport?: 'realtime' | 'sse' | 'local' | null;
   runtimeContextRefreshNonce?: number;
 }
 
@@ -67,6 +67,7 @@ export interface ConversationRuntimeSliceActions {
     attachments?: File[],
     runtimeOptions?: SendMessageRuntimeOptions,
   ) => Promise<void>;
+  stopMessage: () => Promise<void>;
   updateMessage: (messageId: string, updates: Partial<Message>) => Promise<void>;
   deleteMessage: (messageId: string) => Promise<void>;
 }

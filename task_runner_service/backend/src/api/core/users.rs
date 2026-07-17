@@ -1,11 +1,8 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
+use super::user_service_client::request_user_service_json;
 use super::*;
-use crate::http_body::{
-    read_response_json_limited, read_response_text_limited_or_message,
-    ERROR_BODY_PREVIEW_LIMIT_BYTES, JSON_BODY_LIMIT_BYTES,
-};
 
 #[derive(Debug, Deserialize)]
 struct UserServiceUserSummary {
@@ -56,7 +53,7 @@ pub(in crate::api) async fn list_users(
 ) -> Result<Json<Vec<UserSummaryRecord>>, ApiError> {
     let token = current_access_token()?;
     let agents = request_user_service_json::<(), Vec<UserServiceAgentAccount>>(
-        &state,
+        &state.config,
         reqwest::Method::GET,
         "/api/agent-accounts",
         Some(token.as_str()),
@@ -90,7 +87,7 @@ pub(in crate::api) async fn create_user(
         enabled: input.enabled,
     };
     let created = request_user_service_json(
-        &state,
+        &state.config,
         reqwest::Method::POST,
         "/api/users",
         Some(token.as_str()),
@@ -117,7 +114,7 @@ pub(in crate::api) async fn update_user(
     };
     let path = format!("/api/users/{id}");
     let updated = request_user_service_json(
-        &state,
+        &state.config,
         reqwest::Method::PATCH,
         path.as_str(),
         Some(token.as_str()),
@@ -141,74 +138,6 @@ pub(in crate::api) async fn delete_user(
 fn current_access_token() -> Result<String, ApiError> {
     crate::auth::get_current_access_token()
         .ok_or_else(|| ApiError::unauthorized("缺少 user_service 访问令牌"))
-}
-
-async fn request_user_service_json<TBody, TResp>(
-    state: &AppState,
-    method: reqwest::Method,
-    path: &str,
-    access_token: Option<&str>,
-    body: Option<&TBody>,
-) -> Result<TResp, ApiError>
-where
-    TBody: Serialize + ?Sized,
-    TResp: serde::de::DeserializeOwned,
-{
-    let response = request_user_service(state, method, path, access_token, body).await?;
-    read_response_json_limited::<TResp>(response, JSON_BODY_LIMIT_BYTES)
-        .await
-        .map_err(|err| ApiError::bad_gateway(format!("parse user_service response failed: {err}")))
-}
-
-async fn request_user_service<TBody>(
-    state: &AppState,
-    method: reqwest::Method,
-    path: &str,
-    access_token: Option<&str>,
-    body: Option<&TBody>,
-) -> Result<reqwest::Response, ApiError>
-where
-    TBody: Serialize + ?Sized,
-{
-    let endpoint = format!(
-        "{}{}",
-        state
-            .config
-            .user_service_base_url
-            .trim()
-            .trim_end_matches('/'),
-        path
-    );
-    let client = reqwest::Client::builder()
-        .timeout(state.config.user_service_request_timeout)
-        .build()
-        .map_err(|err| ApiError::bad_gateway(format!("build user_service client failed: {err}")))?;
-    let mut request = client.request(method, endpoint);
-    if let Some(access_token) = access_token {
-        request = request.bearer_auth(access_token.trim());
-    }
-    if let Some(body) = body {
-        request = request.json(body);
-    }
-    let response = request
-        .send()
-        .await
-        .map_err(|err| ApiError::bad_gateway(format!("user_service request failed: {err}")))?;
-    if response.status().is_success() {
-        return Ok(response);
-    }
-    let status =
-        StatusCode::from_u16(response.status().as_u16()).unwrap_or(StatusCode::BAD_GATEWAY);
-    let message =
-        read_response_text_limited_or_message(response, ERROR_BODY_PREVIEW_LIMIT_BYTES).await;
-    Err(ApiError {
-        status,
-        message: if message.trim().is_empty() {
-            "user_service request failed".to_string()
-        } else {
-            message
-        },
-    })
 }
 
 fn user_service_user_to_task_runner_row(user: UserServiceUserSummary) -> UserSummaryRecord {

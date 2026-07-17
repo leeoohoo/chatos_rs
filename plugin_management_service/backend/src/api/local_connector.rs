@@ -113,23 +113,9 @@ pub(super) async fn update_local_connector_mcp_status_batch_internal(
     }
     let mut checks = Vec::with_capacity(payload.items.len());
     for item in payload.items {
-        checks.push(
-            update_local_connector_mcp_status_record(
-                &state,
-                item.mcp_id.as_str(),
-                LocalConnectorMcpStatusPayload {
-                    owner_user_id: item.owner_user_id,
-                    device_id: item.device_id,
-                    workspace_id: item.workspace_id,
-                    manifest_id: item.manifest_id,
-                    status: item.status,
-                    last_error: item.last_error,
-                    tool_snapshot: item.tool_snapshot,
-                    manifest_hash: item.manifest_hash,
-                },
-            )
-            .await?,
-        );
+        let LocalConnectorMcpStatusItem { mcp_id, status } = item;
+        checks
+            .push(update_local_connector_mcp_status_record(&state, mcp_id.as_str(), status).await?);
     }
     Ok(Json(checks))
 }
@@ -160,7 +146,7 @@ pub(super) async fn sync_local_connector_mcp_record(
         server_name: Some(internal_name.clone()),
         local_connector: Some(LocalConnectorRef {
             device_id: Some(device_id.clone()),
-            workspace_id: None,
+            workspace_id: payload.workspace_id.clone(),
             manifest_id: Some(manifest_id.clone()),
             relative_path: None,
             requires_online: true,

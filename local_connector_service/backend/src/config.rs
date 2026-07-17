@@ -6,8 +6,10 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+pub(crate) use chatos_service_runtime::env_text as normalized_env;
 use chatos_service_runtime::{
-    is_production_environment, validate_production_secret, DEFAULT_MEMORY_ENGINE_OPERATOR_TOKEN,
+    env_flag, is_production_environment, validate_production_secret,
+    DEFAULT_MEMORY_ENGINE_OPERATOR_TOKEN,
 };
 
 #[derive(Debug, Clone)]
@@ -30,6 +32,10 @@ pub struct AppConfig {
     pub allow_device_connect_query_token: bool,
     pub device_connect_signature_max_skew: Duration,
     pub active_session_lease_ttl: Duration,
+    pub managed_requirements_toml_path: Option<PathBuf>,
+    pub managed_requirements_signing_key_path: Option<PathBuf>,
+    pub managed_requirements_signing_key_id: Option<String>,
+    pub managed_requirements_bundle_ttl: Duration,
 }
 
 impl AppConfig {
@@ -77,6 +83,11 @@ impl AppConfig {
                 .and_then(|value| value.parse::<u64>().ok())
                 .unwrap_or(90)
                 .clamp(30, 600);
+        let managed_requirements_bundle_ttl_seconds =
+            normalized_env("LOCAL_CONNECTOR_MANAGED_REQUIREMENTS_BUNDLE_TTL_SECONDS")
+                .and_then(|value| value.parse::<u64>().ok())
+                .unwrap_or(24 * 60 * 60)
+                .clamp(300, 7 * 24 * 60 * 60);
 
         let config = Self {
             host,
@@ -120,6 +131,20 @@ impl AppConfig {
             ),
             device_connect_signature_max_skew: Duration::from_secs(signature_skew_seconds),
             active_session_lease_ttl: Duration::from_secs(active_session_lease_ttl_seconds),
+            managed_requirements_toml_path: normalized_env(
+                "LOCAL_CONNECTOR_MANAGED_REQUIREMENTS_TOML_PATH",
+            )
+            .map(PathBuf::from),
+            managed_requirements_signing_key_path: normalized_env(
+                "LOCAL_CONNECTOR_MANAGED_REQUIREMENTS_SIGNING_KEY_PATH",
+            )
+            .map(PathBuf::from),
+            managed_requirements_signing_key_id: normalized_env(
+                "LOCAL_CONNECTOR_MANAGED_REQUIREMENTS_SIGNING_KEY_ID",
+            ),
+            managed_requirements_bundle_ttl: Duration::from_secs(
+                managed_requirements_bundle_ttl_seconds,
+            ),
         };
 
         if config.require_signed_internal_requests {
@@ -218,48 +243,7 @@ fn caller_internal_api_secrets() -> HashMap<String, String> {
 }
 
 pub fn load_local_connector_dotenv() {
-    for path in local_connector_dotenv_files() {
-        let _ = dotenvy::from_path(path);
-    }
-}
-
-fn local_connector_dotenv_files() -> Vec<PathBuf> {
-    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let mut files = Vec::new();
-    for path in [
-        Some(manifest_dir.join(".env")),
-        manifest_dir.parent().map(|path| path.join(".env")),
-        manifest_dir
-            .parent()
-            .and_then(|path| path.parent())
-            .map(|path| path.join(".env")),
-    ]
-    .into_iter()
-    .flatten()
-    {
-        if !files.iter().any(|existing| existing == &path) {
-            files.push(path);
-        }
-    }
-    files
-}
-
-pub(crate) fn normalized_env(key: &str) -> Option<String> {
-    std::env::var(key)
-        .ok()
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
-}
-
-fn env_flag(key: &str, default: bool) -> bool {
-    normalized_env(key)
-        .map(|value| {
-            matches!(
-                value.to_ascii_lowercase().as_str(),
-                "1" | "true" | "yes" | "on"
-            )
-        })
-        .unwrap_or(default)
+    chatos_service_runtime::load_service_dotenv(Path::new(env!("CARGO_MANIFEST_DIR")));
 }
 
 fn default_database_url() -> String {

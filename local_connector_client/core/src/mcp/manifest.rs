@@ -12,12 +12,6 @@ use crate::LocalState;
 
 pub(crate) const MASKED_SECRET_VALUE: &str = "********";
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub(crate) struct LocalMcpState {
-    #[serde(default)]
-    pub(crate) manifests: Vec<LocalMcpManifestRecord>,
-}
-
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum LocalMcpTransport {
@@ -188,6 +182,10 @@ impl LocalMcpManifestRecord {
             && self.last_check_status == "available"
             && self.plugin_mcp_id.is_some()
     }
+
+    pub(crate) fn is_locally_executable(&self) -> bool {
+        self.enabled && self.last_check_status == "available"
+    }
 }
 
 pub(crate) fn current_owner_user_id(state: &LocalState) -> Option<&str> {
@@ -209,56 +207,28 @@ pub(crate) fn current_device_id(state: &LocalState) -> Option<&str> {
         .filter(|value| !value.is_empty())
 }
 
-pub(crate) fn current_user_manifests(state: &LocalState) -> Vec<&LocalMcpManifestRecord> {
-    let Some(owner_user_id) = current_owner_user_id(state) else {
-        return Vec::new();
-    };
-    let Some(device_id) = current_device_id(state) else {
-        return Vec::new();
-    };
-    state
-        .mcp_configs
-        .manifests
-        .iter()
-        .filter(|manifest| {
-            manifest.owner_user_id == owner_user_id && manifest.device_id == device_id
-        })
-        .collect()
-}
-
-pub(crate) fn manifest_for_execution<'a>(
-    state: &'a LocalState,
+pub(crate) fn validate_manifest_for_execution(
+    manifest: &LocalMcpManifestRecord,
     owner_user_id: &str,
     device_id: &str,
     manifest_id: &str,
     plugin_mcp_id: &str,
-) -> Result<&'a LocalMcpManifestRecord> {
-    let current_owner =
-        current_owner_user_id(state).ok_or_else(|| anyhow!("Local Connector login is required"))?;
-    let current_device =
-        current_device_id(state).ok_or_else(|| anyhow!("Local Connector device is missing"))?;
-    if current_owner != owner_user_id || current_device != device_id {
+) -> Result<()> {
+    if manifest.owner_user_id != owner_user_id
+        || manifest.device_id != device_id
+        || manifest.manifest_id != manifest_id
+        || manifest.plugin_mcp_id.as_deref() != Some(plugin_mcp_id)
+    {
         return Err(anyhow!(
-            "Local Connector MCP owner or device does not match"
+            "Local Connector MCP manifest identity does not match"
         ));
     }
-    let manifest = state
-        .mcp_configs
-        .manifests
-        .iter()
-        .find(|manifest| {
-            manifest.owner_user_id == owner_user_id
-                && manifest.device_id == device_id
-                && manifest.manifest_id == manifest_id
-                && manifest.plugin_mcp_id.as_deref() == Some(plugin_mcp_id)
-        })
-        .ok_or_else(|| anyhow!("Local Connector MCP manifest not found"))?;
     if !manifest.is_executable() {
         return Err(anyhow!(
             "Local Connector MCP manifest is disabled or unavailable"
         ));
     }
-    Ok(manifest)
+    Ok(())
 }
 
 pub(crate) fn merge_masked_map(
@@ -283,19 +253,10 @@ pub(crate) fn merge_masked_map(
         .collect()
 }
 
-pub(crate) fn mcp_status_message(state: &LocalState) -> Option<Value> {
-    let owner_user_id = current_owner_user_id(state)?;
-    let device_id = current_device_id(state)?;
-    let items = state
-        .mcp_configs
-        .manifests
+pub(crate) fn mcp_status_message(manifests: &[LocalMcpManifestRecord]) -> Value {
+    let items = manifests
         .iter()
-        .filter(|manifest| {
-            manifest.owner_user_id == owner_user_id
-                && manifest.device_id == device_id
-                && manifest.enabled
-                && manifest.plugin_mcp_id.is_some()
-        })
+        .filter(|manifest| manifest.enabled && manifest.plugin_mcp_id.is_some())
         .map(|manifest| {
             json!({
                 "plugin_mcp_id": manifest.plugin_mcp_id,
@@ -307,10 +268,10 @@ pub(crate) fn mcp_status_message(state: &LocalState) -> Option<Value> {
             })
         })
         .collect::<Vec<_>>();
-    Some(json!({
+    json!({
         "type": "mcp_manifest_status",
         "items": items,
-    }))
+    })
 }
 
 fn masked_map(values: &BTreeMap<String, String>) -> BTreeMap<String, String> {
@@ -353,17 +314,6 @@ mod tests {
             manifest_hash: "hash-1".to_string(),
             created_at: "now".to_string(),
             updated_at: "now".to_string(),
-        }
-    }
-
-    fn state_with_manifest(manifest: LocalMcpManifestRecord) -> LocalState {
-        LocalState {
-            paired_user_id: Some("owner-1".to_string()),
-            device_id: Some("device-1".to_string()),
-            mcp_configs: LocalMcpState {
-                manifests: vec![manifest],
-            },
-            ..LocalState::default()
         }
     }
 
@@ -413,31 +363,46 @@ mod tests {
 
     #[test]
     fn execution_requires_exact_owner_device_manifest_and_resource() {
-        let state = state_with_manifest(executable_manifest());
+        let manifest = executable_manifest();
 
-        assert!(
-            manifest_for_execution(&state, "owner-1", "device-1", "manifest-1", "plugin-1",)
-                .is_ok()
-        );
-        assert!(
-            manifest_for_execution(&state, "owner-2", "device-1", "manifest-1", "plugin-1",)
-                .is_err()
-        );
-        assert!(
-            manifest_for_execution(&state, "owner-1", "device-1", "manifest-1", "plugin-2",)
-                .is_err()
-        );
+        assert!(validate_manifest_for_execution(
+            &manifest,
+            "owner-1",
+            "device-1",
+            "manifest-1",
+            "plugin-1",
+        )
+        .is_ok());
+        assert!(validate_manifest_for_execution(
+            &manifest,
+            "owner-2",
+            "device-1",
+            "manifest-1",
+            "plugin-1",
+        )
+        .is_err());
+        assert!(validate_manifest_for_execution(
+            &manifest,
+            "owner-1",
+            "device-1",
+            "manifest-1",
+            "plugin-2",
+        )
+        .is_err());
     }
 
     #[test]
     fn disabled_manifest_cannot_execute() {
         let mut manifest = executable_manifest();
         manifest.enabled = false;
-        let state = state_with_manifest(manifest);
 
-        assert!(
-            manifest_for_execution(&state, "owner-1", "device-1", "manifest-1", "plugin-1",)
-                .is_err()
-        );
+        assert!(validate_manifest_for_execution(
+            &manifest,
+            "owner-1",
+            "device-1",
+            "manifest-1",
+            "plugin-1",
+        )
+        .is_err());
     }
 }

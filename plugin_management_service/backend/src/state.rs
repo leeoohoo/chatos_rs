@@ -4,16 +4,19 @@
 use mongodb::Client;
 use tracing::warn;
 
+use chatos_service_runtime::{build_http_client, HttpClientTimeouts};
+
 use crate::auth::login_via_user_service;
 use crate::config::AppConfig;
 use crate::models::LoginRequest;
-use crate::seed::seed_system_resources;
+use crate::seed::{ensure_agent_prompt_version_history, seed_system_resources};
 use crate::store::AppStore;
 
 #[derive(Clone)]
 pub struct AppState {
     pub config: AppConfig,
     pub store: AppStore,
+    pub(crate) user_service_http: reqwest::Client,
 }
 
 impl AppState {
@@ -24,17 +27,30 @@ impl AppState {
         let db = client.database(config.mongodb_database.as_str());
         let store = AppStore::new(db);
         store.initialize().await?;
+        let user_service_http =
+            build_http_client(HttpClientTimeouts::new(config.user_service_request_timeout))
+                .map_err(|err| format!("build user_service client failed: {err}"))?;
         if config.seed_system_resources {
-            let admin_user_id = resolve_seed_admin_user_id(&config).await;
+            let admin_user_id = resolve_seed_admin_user_id(&config, &user_service_http).await;
             seed_system_resources(&store, admin_user_id.as_str()).await?;
         }
-        Ok(Self { config, store })
+        ensure_agent_prompt_version_history(&store).await?;
+        Ok(Self {
+            config,
+            store,
+            user_service_http,
+        })
+    }
+
+    pub(crate) fn user_service_http(&self) -> &reqwest::Client {
+        &self.user_service_http
     }
 }
 
-async fn resolve_seed_admin_user_id(config: &AppConfig) -> String {
+async fn resolve_seed_admin_user_id(config: &AppConfig, client: &reqwest::Client) -> String {
     match login_via_user_service(
         config,
+        client,
         &LoginRequest {
             username: config.super_admin_username.clone(),
             password: config.super_admin_password.clone(),

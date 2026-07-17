@@ -13,6 +13,7 @@ import type {
   AskUserPromptStoredPrompt,
 } from '../../lib/api/client/types';
 import { useConversationAskUserPromptRealtime } from '../../lib/realtime/useConversationAskUserPromptRealtime';
+import { isLocalRuntimeSessionId } from '../../lib/api/localRuntime';
 
 interface ConversationAskUserPromptPanelProps {
   sessionId: string | null;
@@ -103,13 +104,17 @@ const ConversationAskUserPromptPanel: React.FC<ConversationAskUserPromptPanelPro
   const [selection, setSelection] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
 
-  const loadPrompts = useCallback(async () => {
+  const localSession = isLocalRuntimeSessionId(sessionId);
+
+  const loadPrompts = useCallback(async (silent = false) => {
     const normalizedSessionId = String(sessionId || '').trim();
     if (!normalizedSessionId) {
       setPrompts([]);
       return;
     }
-    setLoading(true);
+    if (!silent) {
+      setLoading(true);
+    }
     try {
       const result = await apiClient.listAskUserPrompts(normalizedSessionId, {
         includePending: true,
@@ -120,7 +125,9 @@ const ConversationAskUserPromptPanel: React.FC<ConversationAskUserPromptPanelPro
       console.error('Failed to load ask user prompts:', loadError);
       setError(t('askUserPrompt.loadFailed'));
     } finally {
-      setLoading(false);
+      if (!silent) {
+        setLoading(false);
+      }
     }
   }, [apiClient, sessionId, t]);
 
@@ -128,10 +135,20 @@ const ConversationAskUserPromptPanel: React.FC<ConversationAskUserPromptPanelPro
     void loadPrompts();
   }, [loadPrompts]);
 
+  useEffect(() => {
+    if (!localSession || !sessionId) {
+      return undefined;
+    }
+    const timer = window.setInterval(() => {
+      void loadPrompts(true);
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [loadPrompts, localSession, sessionId]);
+
   useConversationAskUserPromptRealtime({
     sessionId,
     projectId,
-    enabled: Boolean(sessionId),
+    enabled: Boolean(sessionId) && !localSession,
     onEvent: async () => {
       await loadPrompts();
     },

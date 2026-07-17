@@ -2,312 +2,191 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 import React from 'react';
-import {
-  useChatRuntimeEnv,
-} from '../lib/store/ChatStoreContext';
-import { useApiClient } from '../lib/api/ApiClientContext';
+
 import { useI18n } from '../i18n/I18nProvider';
+import { useApiClient } from '../lib/api/ApiClientContext';
+import { useChatRuntimeEnv } from '../lib/store/ChatStoreContext';
+import AiModelManager from './AiModelManager';
+import { CloudAiSettingsSection } from './settings/CloudAiSettingsSection';
 import {
-  emitTerminalUiSettingChanged,
-  resolveTerminalUiEnabledFromResponse,
-  writeStoredTerminalUiEnabled,
-} from '../hooks/useTerminalUiSetting';
-import {
-  DEFAULT_ATTACHMENT_TOTAL_MAX_BYTES,
-  resolveAttachmentTotalMaxBytes,
-} from '../lib/store/actions/sendMessage/attachments';
+  GeneralSettingsSection,
+  normalizeLocale,
+  type UserPreferences,
+} from './settings/GeneralSettingsSection';
 
-interface Props { onClose: () => void }
-
-const BYTES_PER_MB = 1024 * 1024;
-
-interface UserSettingsForm {
-  MAX_ITERATIONS?: number | string;
-  TASK_FOLLOW_UP_MAX_ROUNDS?: number | string;
-  LOG_LEVEL?: string;
-  CHAT_MAX_TOKENS?: number | string | null;
-  ATTACHMENT_TOTAL_MAX_BYTES?: number | string | null;
-  INTERNAL_CONTEXT_LOCALE?: string;
-  UI_LOCALE?: string;
-  TERMINAL_UI_ENABLED?: boolean;
-  [key: string]: string | number | boolean | null | undefined;
+interface Props {
+  onClose: () => void;
 }
-
-interface UserSettingsPayload {
-  MAX_ITERATIONS: number;
-  TASK_FOLLOW_UP_MAX_ROUNDS: number;
-  LOG_LEVEL: string;
-  CHAT_MAX_TOKENS: number | null;
-  ATTACHMENT_TOTAL_MAX_BYTES: number;
-  INTERNAL_CONTEXT_LOCALE: string;
-  UI_LOCALE: string;
-  TERMINAL_UI_ENABLED: boolean;
-  [key: string]: string | number | boolean | null;
-}
-
-const normalizeUserSettingsForm = (value: unknown): UserSettingsForm => {
-  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
-    return {};
-  }
-
-  const result: UserSettingsForm = {};
-  Object.entries(value as Record<string, unknown>).forEach(([key, entry]) => {
-    if (
-      typeof entry === 'string'
-      || typeof entry === 'number'
-      || typeof entry === 'boolean'
-      || entry === null
-      || entry === undefined
-    ) {
-      result[key] = entry;
-    }
-  });
-  return result;
-};
-
-const bytesToMegabytesInputValue = (value: unknown): string => {
-  if (value === '' || value === null || value === undefined) {
-    return '';
-  }
-  const bytes = resolveAttachmentTotalMaxBytes(value);
-  return String(Number((bytes / BYTES_PER_MB).toFixed(2)));
-};
-
-const megabytesToBytesSetting = (value: string): number | '' => {
-  const trimmed = value.trim();
-  if (!trimmed) {
-    return '';
-  }
-  const megabytes = Number(trimmed);
-  if (!Number.isFinite(megabytes) || megabytes <= 0) {
-    return DEFAULT_ATTACHMENT_TOTAL_MAX_BYTES;
-  }
-  return Math.max(1, Math.round(megabytes * BYTES_PER_MB));
-};
 
 const UserSettingsPanel: React.FC<Props> = ({ onClose }) => {
   const client = useApiClient();
   const { userId } = useChatRuntimeEnv();
   const { locale, setLocale, t } = useI18n();
-
   const [loading, setLoading] = React.useState(true);
   const [saving, setSaving] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const [notice, setNotice] = React.useState<string | null>(null);
-  const [settings, setSettings] = React.useState<UserSettingsForm>({});
+  const [activeSection, setActiveSection] = React.useState<'general' | 'cloud_ai'>('general');
+  const [showAiModelManager, setShowAiModelManager] = React.useState(false);
+  const [cloudAiRefreshKey, setCloudAiRefreshKey] = React.useState(0);
+  const [preferences, setPreferences] = React.useState<UserPreferences>({
+    INTERNAL_CONTEXT_LOCALE: 'zh-CN',
+    UI_LOCALE: normalizeLocale(locale),
+  });
 
-  const getErrorMessage = React.useCallback((err: unknown): string => {
-    if (err instanceof Error) {
-      return err.message;
-    }
-    if (typeof err === 'string') {
-      return err;
-    }
+  const getErrorMessage = React.useCallback((value: unknown): string => {
+    if (value instanceof Error) return value.message;
+    if (typeof value === 'string') return value;
     return t('common.unknown');
   }, [t]);
 
   React.useEffect(() => {
     let mounted = true;
-    (async () => {
-      setLoading(true);
-      setError(null);
-      try {
-        const settingsResp = await client.getUserSettings(userId);
+    setLoading(true);
+    setError(null);
+    void client.getUserSettings(userId)
+      .then((response) => {
         if (!mounted) return;
-        const normalized = normalizeUserSettingsForm(settingsResp?.effective);
-        setSettings(normalized);
-        writeStoredTerminalUiEnabled(resolveTerminalUiEnabledFromResponse(settingsResp));
-      } catch (e: unknown) {
-        if (mounted) {
-          setError(getErrorMessage(e));
-        }
-      } finally {
+        const effective = response?.effective || {};
+        setPreferences({
+          INTERNAL_CONTEXT_LOCALE: normalizeLocale(effective.INTERNAL_CONTEXT_LOCALE),
+          UI_LOCALE: normalizeLocale(effective.UI_LOCALE),
+        });
+      })
+      .catch((value: unknown) => {
+        if (mounted) setError(getErrorMessage(value));
+      })
+      .finally(() => {
         if (mounted) setLoading(false);
-      }
-    })();
-    return () => { mounted = false; };
-  }, [client, userId]);
-
-  const bind = (key: string) => ({
-    value: typeof settings[key] === 'string' || typeof settings[key] === 'number'
-      ? settings[key]
-      : '',
-    onChange: (e: React.ChangeEvent<HTMLInputElement>) => {
-      const val = e.target.type === 'checkbox' ? e.target.checked : e.target.value;
-      setSettings((s) => ({ ...s, [key]: e.target.type === 'number' ? Number(val) : val }));
-    }
-  });
+      });
+    return () => {
+      mounted = false;
+    };
+  }, [client, getErrorMessage, userId]);
 
   const save = async () => {
-    if (!userId) { setError(t('settings.missingUserId')); return; }
+    if (!userId) {
+      setError(t('settings.missingUserId'));
+      return;
+    }
     setSaving(true);
     setError(null);
     setNotice(null);
     try {
-      const nextUiLocale = String(settings.UI_LOCALE || locale || 'zh-CN') === 'en-US' ? 'en-US' : 'zh-CN';
-      const userSettingsPayload: UserSettingsPayload = {
-        MAX_ITERATIONS: Number(settings.MAX_ITERATIONS || 0),
-        TASK_FOLLOW_UP_MAX_ROUNDS: Number(settings.TASK_FOLLOW_UP_MAX_ROUNDS || 0),
-        LOG_LEVEL: String(settings.LOG_LEVEL || 'info'),
-        CHAT_MAX_TOKENS: settings.CHAT_MAX_TOKENS === '' || settings.CHAT_MAX_TOKENS === null || settings.CHAT_MAX_TOKENS === undefined
-          ? null
-          : Number(settings.CHAT_MAX_TOKENS),
-        ATTACHMENT_TOTAL_MAX_BYTES: resolveAttachmentTotalMaxBytes(
-          settings.ATTACHMENT_TOTAL_MAX_BYTES,
-        ),
-        INTERNAL_CONTEXT_LOCALE: String(settings.INTERNAL_CONTEXT_LOCALE || 'zh-CN'),
-        UI_LOCALE: nextUiLocale,
-        TERMINAL_UI_ENABLED: settings.TERMINAL_UI_ENABLED !== false,
+      const response = await client.updateUserSettings(userId, { ...preferences });
+      const effective = response?.effective || preferences;
+      const nextPreferences = {
+        INTERNAL_CONTEXT_LOCALE: normalizeLocale(effective.INTERNAL_CONTEXT_LOCALE),
+        UI_LOCALE: normalizeLocale(effective.UI_LOCALE),
       };
-
-      const savedSettings = await client.updateUserSettings(userId, userSettingsPayload);
-      const nextSettings = normalizeUserSettingsForm(savedSettings?.effective || userSettingsPayload);
-      const nextTerminalUiEnabled = resolveTerminalUiEnabledFromResponse(savedSettings || {
-        effective: nextSettings,
-      });
-
-      setSettings(nextSettings);
-      writeStoredTerminalUiEnabled(nextTerminalUiEnabled);
-      emitTerminalUiSettingChanged(nextTerminalUiEnabled);
-      setLocale(nextUiLocale);
+      setPreferences(nextPreferences);
+      setLocale(nextPreferences.UI_LOCALE);
       setNotice(t('settings.saved'));
-    } catch (e: unknown) {
-      setError(getErrorMessage(e));
+    } catch (value: unknown) {
+      setError(getErrorMessage(value));
     } finally {
       setSaving(false);
     }
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center">
-      <div className="absolute inset-0 bg-gradient-to-b from-background/60 to-background/80 backdrop-blur-sm" />
-      <div className="relative bg-card text-card-foreground w-full max-w-3xl rounded-xl shadow-2xl border border-border/60">
-        <div className="flex items-center justify-between p-4 sm:p-5 border-b border-border/60">
+    <>
+      <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6">
+        <div className="absolute inset-0 bg-gradient-to-b from-background/60 to-background/80 backdrop-blur-sm" />
+        <div className="relative flex max-h-[88vh] w-full max-w-6xl flex-col rounded-xl border border-border/60 bg-card text-card-foreground shadow-2xl">
+          <div className="flex items-center justify-between border-b border-border/60 p-4 sm:p-5">
             <div className="flex items-center gap-3">
-              <div className="p-2 rounded-lg bg-accent/60 text-accent-foreground">
-                <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6V4m0 16v-2m8-6h2M4 12H2m15.364 5.364l1.414 1.414M5.636 6.636L4.222 5.222m12.728 0l1.414 1.414M5.636 17.364l-1.414 1.414" /></svg>
+              <div className="rounded-lg bg-accent/60 p-2 text-accent-foreground">
+                <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6V4m0 16v-2m8-6h2M4 12H2m15.364 5.364l1.414 1.414M5.636 6.636L4.222 5.222m12.728 0l1.414 1.414M5.636 17.364l-1.414 1.414" />
+                </svg>
               </div>
               <div>
-              <h3 className="font-semibold leading-tight">{t('settings.title')}</h3>
-              <p className="text-xs text-muted-foreground mt-0.5">{t('settings.subtitle')}</p>
+                <h3 className="font-semibold leading-tight">{t('settings.title')}</h3>
+                <p className="mt-0.5 text-xs text-muted-foreground">{t('settings.subtitle')}</p>
               </div>
             </div>
-          <button onClick={onClose} className="p-2 hover:bg-accent rounded-lg transition-colors" aria-label={t('common.close')}>
-            <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
-          </button>
-        </div>
-        <div className="p-4 sm:p-6 space-y-4 max-h-[75vh] overflow-auto">
-          {loading ? (
-            <div className="text-sm text-muted-foreground">{t('common.loading')}</div>
-          ) : (
-            <>
-              {error && (
-                <div className="p-2 text-sm rounded-lg bg-destructive/10 text-destructive border border-destructive/20">{error}</div>
-              )}
-              {notice && (
-                <div className="p-2 text-sm rounded-lg bg-primary/10 text-primary border border-primary/20">{notice}</div>
-              )}
+            <button onClick={onClose} className="rounded-lg p-2 transition-colors hover:bg-accent" aria-label={t('common.close')}>
+              <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
 
-              <div className="rounded-xl border border-border/60 overflow-hidden">
-                <div className="px-4 py-2.5 border-b border-border/60 bg-accent/10 text-sm font-medium">{t('settings.section.runtime')}</div>
-                <div className="p-4 grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <div>
-                    <label className="text-xs text-muted-foreground">{t('settings.chatMaxTokens')}</label>
-                    <input type="number" className="w-full mt-1 p-2 border rounded-lg bg-background focus:outline-none focus:ring-2 focus:ring-primary/40" {...bind('CHAT_MAX_TOKENS')} />
-                    <p className="text-[11px] text-muted-foreground mt-1">{t('settings.chatMaxTokensHelp')}</p>
-                  </div>
-                  <div>
-                    <label className="text-xs text-muted-foreground">{t('settings.attachmentTotalMaxMb')}</label>
-                    <input
-                      type="number"
-                      min="1"
-                      step="1"
-                      className="w-full mt-1 p-2 border rounded-lg bg-background focus:outline-none focus:ring-2 focus:ring-primary/40"
-                      value={bytesToMegabytesInputValue(settings.ATTACHMENT_TOTAL_MAX_BYTES)}
-                      onChange={(event) => {
-                        const next = megabytesToBytesSetting(event.target.value);
-                        setSettings((s) => ({ ...s, ATTACHMENT_TOTAL_MAX_BYTES: next }));
-                      }}
-                    />
-                    <p className="text-[11px] text-muted-foreground mt-1">{t('settings.attachmentTotalMaxMbHelp')}</p>
-                  </div>
-                  <div>
-                    <label className="text-xs text-muted-foreground">{t('settings.maxIterations')}</label>
-                    <input type="number" className="w-full mt-1 p-2 border rounded-lg bg-background focus:outline-none focus:ring-2 focus:ring-primary/40" {...bind('MAX_ITERATIONS')} />
-                    <p className="text-[11px] text-muted-foreground mt-1">{t('settings.maxIterationsHelp')}</p>
-                  </div>
-                  <div>
-                    <label className="text-xs text-muted-foreground">{t('settings.taskFollowUpMaxRounds')}</label>
-                    <input type="number" className="w-full mt-1 p-2 border rounded-lg bg-background focus:outline-none focus:ring-2 focus:ring-primary/40" {...bind('TASK_FOLLOW_UP_MAX_ROUNDS')} />
-                    <p className="text-[11px] text-muted-foreground mt-1">{t('settings.taskFollowUpMaxRoundsHelp')}</p>
-                  </div>
-                  <div>
-                    <label className="text-xs text-muted-foreground">{t('settings.logLevel')}</label>
-                    <input type="text" className="w-full mt-1 p-2 border rounded-lg bg-background focus:outline-none focus:ring-2 focus:ring-primary/40" {...bind('LOG_LEVEL')} placeholder={t('settings.logLevelPlaceholder')} />
-                    <p className="text-[11px] text-muted-foreground mt-1">{t('settings.logLevelHelp')}</p>
-                  </div>
-                  <div>
-                    <label className="text-xs text-muted-foreground">{t('settings.uiLocale')}</label>
-                    <select
-                      className="w-full mt-1 p-2 border rounded-lg bg-background focus:outline-none focus:ring-2 focus:ring-primary/40"
-                      value={typeof settings.UI_LOCALE === 'string' ? settings.UI_LOCALE : locale}
-                      onChange={(e) => {
-                        const next = e.target.value === 'en-US' ? 'en-US' : 'zh-CN';
-                        setSettings((s) => ({ ...s, UI_LOCALE: next }));
-                        setLocale(next);
-                      }}
-                    >
-                      <option value="zh-CN">{t('language.chinese')}</option>
-                      <option value="en-US">{t('language.english')}</option>
-                    </select>
-                    <p className="text-[11px] text-muted-foreground mt-1">{t('settings.uiLocaleHelp')}</p>
-                  </div>
-                  <div>
-                    <label className="text-xs text-muted-foreground">{t('settings.internalContextLocale')}</label>
-                    <select
-                      className="w-full mt-1 p-2 border rounded-lg bg-background focus:outline-none focus:ring-2 focus:ring-primary/40"
-                      value={typeof settings.INTERNAL_CONTEXT_LOCALE === 'string' ? settings.INTERNAL_CONTEXT_LOCALE : 'zh-CN'}
-                      onChange={(e) => {
-                        const next = e.target.value === 'en-US' ? 'en-US' : 'zh-CN';
-                        setSettings((s) => ({ ...s, INTERNAL_CONTEXT_LOCALE: next }));
-                      }}
-                    >
-                      <option value="zh-CN">{t('language.chinese')}</option>
-                      <option value="en-US">{t('language.english')}</option>
-                    </select>
-                    <p className="text-[11px] text-muted-foreground mt-1">{t('settings.internalContextLocaleHelp')}</p>
-                  </div>
-                  <div className="sm:col-span-2 rounded-lg border border-border/60 bg-background px-3 py-3">
-                    <label className="flex items-start justify-between gap-4">
-                      <div>
-                        <div className="text-sm font-medium text-foreground">{t('settings.terminalUiEnabled')}</div>
-                        <p className="mt-1 text-[11px] text-muted-foreground">{t('settings.terminalUiEnabledHelp')}</p>
-                      </div>
-                      <input
-                        type="checkbox"
-                        checked={settings.TERMINAL_UI_ENABLED !== false}
-                        onChange={(event) => {
-                          setSettings((current) => ({
-                            ...current,
-                            TERMINAL_UI_ENABLED: event.target.checked,
-                          }));
-                        }}
-                        className="mt-0.5 h-4 w-4 rounded border border-border text-primary focus:ring-2 focus:ring-primary/30"
-                      />
-                    </label>
-                  </div>
-                </div>
-              </div>
-            </>
-          )}
-        </div>
-        <div className="p-4 sm:p-5 border-t border-border/60 flex items-center justify-end gap-2">
-          <button onClick={onClose} className="px-3 py-2 rounded-lg bg-muted text-foreground hover:bg-muted/80">{t('common.cancel')}</button>
-          <button onClick={save} disabled={saving} className="px-3 py-2 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50">{saving ? t('common.saving') : t('common.save')}</button>
+          <div className="flex gap-2 border-b border-border/60 px-4 py-2 sm:px-5">
+            <SettingsTab
+              active={activeSection === 'general'}
+              label={t('settings.section.general')}
+              onClick={() => setActiveSection('general')}
+            />
+            <SettingsTab
+              active={activeSection === 'cloud_ai'}
+              label={t('settings.section.cloudAi')}
+              onClick={() => setActiveSection('cloud_ai')}
+            />
+          </div>
+
+          <div className="flex-1 overflow-y-auto p-4 sm:p-6">
+            {activeSection === 'general' ? (
+              <GeneralSettingsSection
+                loading={loading}
+                error={error}
+                notice={notice}
+                preferences={preferences}
+                setPreferences={setPreferences}
+              />
+            ) : (
+              <CloudAiSettingsSection
+                refreshKey={cloudAiRefreshKey}
+                onManageModels={() => setShowAiModelManager(true)}
+              />
+            )}
+          </div>
+
+          <div className="flex items-center justify-end gap-2 border-t border-border/60 p-4 sm:p-5">
+            <button onClick={onClose} className="rounded-lg bg-muted px-3 py-2 text-foreground hover:bg-muted/80">
+              {activeSection === 'general' ? t('common.cancel') : t('common.close')}
+            </button>
+            {activeSection === 'general' ? (
+              <button onClick={save} disabled={loading || saving} className="rounded-lg bg-primary px-3 py-2 text-primary-foreground hover:bg-primary/90 disabled:opacity-50">
+                {saving ? t('common.saving') : t('common.save')}
+              </button>
+            ) : null}
+          </div>
         </div>
       </div>
-    </div>
+      {showAiModelManager ? (
+        <AiModelManager
+          onClose={() => {
+            setShowAiModelManager(false);
+            setCloudAiRefreshKey((value) => value + 1);
+          }}
+        />
+      ) : null}
+    </>
   );
 };
+
+function SettingsTab({
+  active,
+  label,
+  onClick,
+}: {
+  active: boolean;
+  label: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`rounded-lg px-3 py-2 text-sm transition-colors ${
+        active ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:bg-accent'
+      }`}
+    >
+      {label}
+    </button>
+  );
+}
 
 export default UserSettingsPanel;

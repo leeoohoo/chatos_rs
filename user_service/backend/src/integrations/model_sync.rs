@@ -1,6 +1,10 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
+use chatos_service_runtime::http_body::{
+    read_response_json_limited, read_response_preview_text_limited_or_message,
+    ERROR_BODY_PREVIEW_LIMIT_BYTES, JSON_BODY_LIMIT_BYTES,
+};
 use reqwest::Method;
 use serde::Serialize;
 use serde_json::Value;
@@ -181,6 +185,7 @@ async fn sync_memory_engine_model_profile(
     config: &UserModelConfigRecord,
 ) -> Result<(), String> {
     ensure_concrete_model(config)?;
+    ensure_supported_provider(config)?;
     let Some(memory_engine_base_url) =
         normalized_url(state.config.memory_engine_base_url.as_deref())
     else {
@@ -213,12 +218,12 @@ async fn sync_memory_engine_model_profile(
         "name": config.name,
         "provider": memory_engine_provider(config.provider.as_str()),
         "model": config.model,
-        "base_url": Value::Null,
-        "api_key": Value::Null,
+        "base_url": config.base_url,
+        "api_key": config.api_key,
         "supports_images": config.supports_images,
         "supports_reasoning": config.supports_reasoning,
         "supports_responses": config.supports_responses,
-        "temperature": Value::Null,
+        "temperature": config.temperature,
         "thinking_level": thinking_level,
         "is_default": is_default,
         "enabled": config.enabled,
@@ -287,7 +292,9 @@ async fn delete_memory_engine_model_profile(
     if status.is_success() || status.as_u16() == 404 {
         return Ok(());
     }
-    let body = response.text().await.unwrap_or_default();
+    let body =
+        read_response_preview_text_limited_or_message(response, ERROR_BODY_PREVIEW_LIMIT_BYTES)
+            .await;
     Err(format!(
         "memory_engine delete request failed: {} {}",
         status.as_u16(),
@@ -325,6 +332,7 @@ async fn sync_task_runner_model_config(
     config: &UserModelConfigRecord,
 ) -> Result<(), String> {
     ensure_concrete_model(config)?;
+    ensure_supported_provider(config)?;
     let Some(task_runner_base_url) = normalized_url(state.config.task_runner_base_url.as_deref())
     else {
         return Ok(());
@@ -335,11 +343,14 @@ async fn sync_task_runner_model_config(
         "owner_user_id": config.owner_user_id,
         "name": config.name,
         "provider": task_runner_provider(config.provider.as_str()),
-        "base_url": "",
-        "api_key": "",
+        "prompt_vendor": config.prompt_vendor,
+        "base_url": config.base_url,
+        "api_key": config.api_key,
         "model": config.model,
         "usage_scenario": config.task_usage_scenario,
         "thinking_level": config.task_thinking_level,
+        "temperature": config.temperature,
+        "max_output_tokens": config.max_output_tokens,
         "supports_responses": config.supports_responses,
         "enabled": config.enabled,
     });
@@ -374,7 +385,9 @@ async fn delete_task_runner_model_config(
         return Ok(());
     }
     let status = response.status().as_u16();
-    let body = response.text().await.unwrap_or_default();
+    let body =
+        read_response_preview_text_limited_or_message(response, ERROR_BODY_PREVIEW_LIMIT_BYTES)
+            .await;
     Err(format!(
         "task_runner delete request failed: {} {}",
         status,
@@ -402,17 +415,16 @@ where
     let response = request.send().await.map_err(|err| err.to_string())?;
     let status = response.status();
     if !status.is_success() {
-        let body = response.text().await.unwrap_or_default();
+        let body =
+            read_response_preview_text_limited_or_message(response, ERROR_BODY_PREVIEW_LIMIT_BYTES)
+                .await;
         return Err(format!(
             "memory_engine request failed: {} {}",
             status.as_u16(),
             extract_error_message(body.as_str())
         ));
     }
-    response
-        .json::<TResp>()
-        .await
-        .map_err(|err| err.to_string())
+    read_response_json_limited::<TResp>(response, JSON_BODY_LIMIT_BYTES).await
 }
 
 fn signed_memory_engine_request(
@@ -460,24 +472,23 @@ where
     let response = request.send().await.map_err(|err| err.to_string())?;
     let status = response.status();
     if !status.is_success() {
-        let body = response.text().await.unwrap_or_default();
+        let body =
+            read_response_preview_text_limited_or_message(response, ERROR_BODY_PREVIEW_LIMIT_BYTES)
+                .await;
         return Err(format!(
             "task_runner request failed: {} {}",
             status.as_u16(),
             extract_error_message(body.as_str())
         ));
     }
-    response
-        .json::<TResp>()
-        .await
-        .map_err(|err| err.to_string())
+    read_response_json_limited::<TResp>(response, JSON_BODY_LIMIT_BYTES).await
 }
 
 fn task_runner_provider(provider: &str) -> &'static str {
     match provider.trim() {
         "deepseek" => "deepseek",
         "kimi" => "kimik2",
-        "openai_compatible" | "minimax" => "openai_compatible",
+        "glm" => "glm",
         _ => "openai",
     }
 }
@@ -486,8 +497,7 @@ fn memory_engine_provider(provider: &str) -> &'static str {
     match provider.trim() {
         "deepseek" => "deepseek",
         "kimi" => "openai",
-        "minimax" => "openai",
-        "openai_compatible" => "openai",
+        "glm" => "openai",
         _ => "openai",
     }
 }
@@ -497,6 +507,13 @@ fn ensure_concrete_model(config: &UserModelConfigRecord) -> Result<(), String> {
         return Err("model is empty; downstream services require a concrete model".to_string());
     }
     Ok(())
+}
+
+fn ensure_supported_provider(config: &UserModelConfigRecord) -> Result<(), String> {
+    match config.provider.trim() {
+        "gpt" | "deepseek" | "kimi" | "glm" => Ok(()),
+        provider => Err(format!("unsupported configured model provider: {provider}")),
+    }
 }
 
 #[cfg(test)]

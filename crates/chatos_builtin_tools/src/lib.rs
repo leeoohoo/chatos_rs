@@ -47,7 +47,8 @@ pub use bundled_tools::{
 };
 pub use catalog::builtin_tool_catalog;
 pub use code_maintainer::{
-    CodeMaintainerHooks, CodeMaintainerHooksRef, CodeMaintainerOptions, CodeMaintainerService,
+    extract_patch_targets, CodeMaintainerHooks, CodeMaintainerHooksRef, CodeMaintainerOptions,
+    CodeMaintainerService, PatchTarget,
 };
 pub use memory_readers::{
     MemoryCommandReaderOptions, MemoryCommandReaderService, MemoryFullPlugin, MemoryFullSkill,
@@ -72,10 +73,10 @@ pub use task_manager::{
     TASK_NOT_FOUND_ERR,
 };
 pub use terminal_controller::{
-    coerce_process_identifier, resolve_wait_timeout_ms, TerminalControllerContext,
-    TerminalControllerOptions, TerminalControllerService, TerminalControllerStore,
-    TerminalControllerStoreRef, PROCESS_LIST_MAX_LIMIT, PROCESS_POLL_MAX_LIMIT,
-    PROCESS_WAIT_MAX_TIMEOUT_MS, RECENT_LOGS_MAX_PER_TERMINAL_LIMIT,
+    coerce_process_identifier, resolve_wait_timeout_ms, TerminalCommandPermissions,
+    TerminalControllerContext, TerminalControllerOptions, TerminalControllerService,
+    TerminalControllerStore, TerminalControllerStoreRef, PROCESS_LIST_MAX_LIMIT,
+    PROCESS_POLL_MAX_LIMIT, PROCESS_WAIT_MAX_TIMEOUT_MS, RECENT_LOGS_MAX_PER_TERMINAL_LIMIT,
     RECENT_LOGS_MAX_TERMINAL_LIMIT,
 };
 pub use terminal_controller_response::{

@@ -9,9 +9,7 @@ use serde_json::Value;
 use crate::core::mcp_tools::{ToolInfo, ToolResult, ToolResultCallback};
 use crate::services::mcp_execution_core::McpExecutorCore;
 use crate::services::mcp_loader::{McpBuiltinServer, McpHttpServer, McpStdioServer};
-use crate::services::shared_mcp_runtime::{
-    build_shared_mcp_executor, chatos_tool_info, chatos_tool_result,
-};
+use crate::services::shared_mcp_runtime::{build_shared_mcp_executor, chatos_tool_info};
 
 #[derive(Clone)]
 pub(crate) struct SharedMcpToolExecute {
@@ -117,12 +115,6 @@ impl SharedMcpToolExecute {
         on_tool_result: Option<ToolResultCallback>,
     ) -> Vec<ToolResult> {
         if let Some(shared) = &self.shared_core {
-            let shared_callback = on_tool_result.as_ref().map(|callback| {
-                let callback = std::sync::Arc::clone(callback);
-                std::sync::Arc::new(move |result: &chatos_mcp_runtime::ToolResult| {
-                    callback(&chatos_tool_result(result.clone()));
-                }) as chatos_mcp_runtime::ToolResultCallback
-            });
             return shared
                 .execute_tools_stream(
                     tool_calls,
@@ -135,12 +127,9 @@ impl SharedMcpToolExecute {
                     .with_abort_checker(std::sync::Arc::new(|session_id| {
                         crate::utils::abort_registry::is_aborted(session_id)
                     })),
-                    shared_callback,
+                    on_tool_result,
                 )
-                .await
-                .into_iter()
-                .map(chatos_tool_result)
-                .collect();
+                .await;
         }
 
         self.core

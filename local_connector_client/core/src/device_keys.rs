@@ -8,9 +8,12 @@ use anyhow::{anyhow, Context, Result};
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine as _;
 use ring::rand::SystemRandom;
-use ring::signature::{Ed25519KeyPair, KeyPair};
+use ring::signature::{Ed25519KeyPair, KeyPair, UnparsedPublicKey, ED25519};
 
 use crate::LocalState;
+
+#[cfg(target_os = "macos")]
+mod macos_keychain;
 
 const PUBLIC_KEY_PREFIX: &str = "ed25519:";
 const KEY_FILE_NAME: &str = "device-signing-key.bin";
@@ -65,6 +68,21 @@ pub(crate) fn sign_device_message(
     let keypair = Ed25519KeyPair::from_pkcs8(pkcs8.as_slice())
         .map_err(|_| anyhow!("load local connector device private key failed"))?;
     Ok(URL_SAFE_NO_PAD.encode(keypair.sign(payload).as_ref()))
+}
+
+pub(crate) fn verify_device_message_signature(
+    public_key: &str,
+    payload: &[u8],
+    signature: &str,
+) -> Result<()> {
+    let public_key = public_key_bytes(public_key)
+        .ok_or_else(|| anyhow!("local connector device public key must be an ed25519 key"))?;
+    let signature = URL_SAFE_NO_PAD
+        .decode(signature.trim().as_bytes())
+        .map_err(|err| anyhow!("decode local connector device signature failed: {err}"))?;
+    UnparsedPublicKey::new(&ED25519, public_key)
+        .verify(payload, signature.as_slice())
+        .map_err(|_| anyhow!("local connector device signature verification failed"))
 }
 
 fn ensure_supported_public_key(value: &str) -> Result<()> {
@@ -133,9 +151,6 @@ fn private_key_path(state_path: &Path) -> PathBuf {
 mod secret_store {
     use super::*;
 
-    #[cfg(target_os = "macos")]
-    use sha2::Digest as _;
-
     #[cfg(windows)]
     const DPAPI_MAGIC: &[u8] = b"dpapi-v1\n";
 
@@ -159,51 +174,12 @@ mod secret_store {
 
     #[cfg(target_os = "macos")]
     pub(super) fn load(path: &Path) -> Result<Option<Vec<u8>>> {
-        let account = keychain_account(path);
-        let output = std::process::Command::new("security")
-            .args([
-                "find-generic-password",
-                "-a",
-                account.as_str(),
-                "-s",
-                "Chat OS Local Connector Device Key",
-                "-w",
-            ])
-            .output()?;
-        if !output.status.success() {
-            return Ok(None);
-        }
-        let value = String::from_utf8(output.stdout)?;
-        URL_SAFE_NO_PAD
-            .decode(value.trim().as_bytes())
-            .map(Some)
-            .map_err(|err| {
-                anyhow!("decode macOS Keychain local connector device key failed: {err}")
-            })
+        macos_keychain::load(path)
     }
 
     #[cfg(target_os = "macos")]
     pub(super) fn save(path: &Path, value: &[u8]) -> Result<()> {
-        let account = keychain_account(path);
-        let encoded = URL_SAFE_NO_PAD.encode(value);
-        let status = std::process::Command::new("security")
-            .args([
-                "add-generic-password",
-                "-a",
-                account.as_str(),
-                "-s",
-                "Chat OS Local Connector Device Key",
-                "-w",
-                encoded.as_str(),
-                "-U",
-            ])
-            .status()?;
-        if !status.success() {
-            return Err(anyhow!(
-                "store local connector device key in macOS Keychain failed"
-            ));
-        }
-        Ok(())
+        macos_keychain::save(path, value)
     }
 
     #[cfg(all(not(windows), not(target_os = "macos")))]
@@ -220,12 +196,6 @@ mod secret_store {
             fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
         }
         Ok(())
-    }
-
-    #[cfg(target_os = "macos")]
-    fn keychain_account(path: &Path) -> String {
-        let digest = sha2::Sha256::digest(path.to_string_lossy().as_bytes());
-        format!("chatos-local-connector-{}", hex::encode(digest))
     }
 
     #[cfg(windows)]

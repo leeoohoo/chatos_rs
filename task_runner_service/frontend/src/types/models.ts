@@ -8,6 +8,7 @@ export interface ModelConfigRecord {
   owner_display_name?: string | null;
   name: string;
   provider: string;
+  prompt_vendor?: 'glm' | 'deepseek' | 'gpt' | 'kimi' | null;
   base_url: string;
   api_key: string;
   model: string;
@@ -34,6 +35,7 @@ export interface ModelConfigUsageRecord {
 export interface CreateModelConfigPayload {
   name: string;
   provider: string;
+  prompt_vendor: 'glm' | 'deepseek' | 'gpt' | 'kimi';
   base_url: string;
   api_key: string;
   model: string;

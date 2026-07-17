@@ -5,6 +5,7 @@ use std::collections::HashMap;
 
 use serde_json::Value;
 
+use crate::arguments::parse_json_tool_args;
 use crate::tool_call::{clone_tool_call_arguments, extract_tool_call_name};
 use crate::types::ToolInfo;
 
@@ -49,6 +50,21 @@ const PARALLEL_PATH_READ_TOOLS: &[&str] = &[
 
 const PARALLEL_PATH_WRITE_TOOLS: &[&str] = &["edit_file", "write_file"];
 
+pub trait ToolParallelismInfo {
+    fn original_name(&self) -> &str;
+    fn server_name(&self) -> &str;
+}
+
+impl ToolParallelismInfo for ToolInfo {
+    fn original_name(&self) -> &str {
+        self.original_name.as_str()
+    }
+
+    fn server_name(&self) -> &str {
+        self.server_name.as_str()
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum ToolAccessKind {
     Read,
@@ -67,15 +83,18 @@ struct ToolAccessProfile {
     scope: ToolScope,
 }
 
-pub fn should_parallelize_tool_batch(
+pub fn should_parallelize_tool_batch<T>(
     tool_calls: &[Value],
-    tool_metadata: &HashMap<String, ToolInfo>,
-) -> bool {
+    tool_metadata: &HashMap<String, T>,
+) -> bool
+where
+    T: ToolParallelismInfo,
+{
     if tool_calls.len() <= 1 {
         return false;
     }
 
-    let mut profiles = Vec::with_capacity(tool_calls.len());
+    let mut access_profiles = Vec::with_capacity(tool_calls.len());
     for tool_call in tool_calls {
         let Some(prefixed_name) = extract_tool_call_name(tool_call) else {
             return false;
@@ -83,19 +102,21 @@ pub fn should_parallelize_tool_batch(
         let Some(info) = tool_metadata.get(prefixed_name) else {
             return false;
         };
-        if !PARALLEL_SAFE_TOOLS.contains(&info.original_name.as_str()) {
+        if !PARALLEL_SAFE_TOOLS.contains(&info.original_name()) {
             return false;
         }
-        let Ok(args) = parse_tool_args(clone_tool_call_arguments(tool_call)) else {
+
+        let args = clone_tool_call_arguments(tool_call);
+        let Ok(args) = parse_json_tool_args(args) else {
             return false;
         };
         let Some(profile) = build_tool_access_profile(info, &args) else {
             return false;
         };
-        profiles.push(profile);
+        access_profiles.push(profile);
     }
 
-    !has_conflicting_tool_profiles(profiles.as_slice())
+    !has_conflicting_tool_profiles(access_profiles.as_slice())
 }
 
 fn has_conflicting_tool_profiles(profiles: &[ToolAccessProfile]) -> bool {
@@ -109,60 +130,29 @@ fn has_conflicting_tool_profiles(profiles: &[ToolAccessProfile]) -> bool {
     false
 }
 
-fn tool_profiles_conflict(left: &ToolAccessProfile, right: &ToolAccessProfile) -> bool {
-    match (&left.scope, &right.scope) {
-        (ToolScope::Global, ToolScope::Global) => false,
-        (ToolScope::Global, ToolScope::Path { .. }) => false,
-        (ToolScope::Path { .. }, ToolScope::Global) => false,
-        (
-            ToolScope::Path {
-                locator: left_locator,
-                path: left_path,
-            },
-            ToolScope::Path {
-                locator: right_locator,
-                path: right_path,
-            },
-        ) => {
-            if left_locator != right_locator {
-                return false;
-            }
-            if !paths_overlap(left_path, right_path) {
-                return false;
-            }
-            left.kind == ToolAccessKind::Write || right.kind == ToolAccessKind::Write
-        }
-    }
-}
-
-fn paths_overlap(left: &str, right: &str) -> bool {
-    if left == "." || right == "." {
-        return true;
-    }
-    left == right || is_path_prefix(left, right) || is_path_prefix(right, left)
-}
-
-fn is_path_prefix(parent: &str, child: &str) -> bool {
-    let parent = parent.trim_end_matches('/');
-    let child = child.trim_end_matches('/');
-    child
-        .strip_prefix(parent)
-        .is_some_and(|rest| rest.starts_with('/'))
-}
-
-fn build_tool_access_profile(info: &ToolInfo, args: &Value) -> Option<ToolAccessProfile> {
-    let kind = if PARALLEL_PATH_WRITE_TOOLS.contains(&info.original_name.as_str()) {
-        ToolAccessKind::Write
-    } else {
-        ToolAccessKind::Read
-    };
+fn build_tool_access_profile<T>(info: &T, args: &Value) -> Option<ToolAccessProfile>
+where
+    T: ToolParallelismInfo,
+{
+    let kind = classify_tool_access_kind(info.original_name());
     let scope = resolve_tool_scope(info, args)?;
     Some(ToolAccessProfile { kind, scope })
 }
 
-fn resolve_tool_scope(info: &ToolInfo, args: &Value) -> Option<ToolScope> {
-    let tool_name = info.original_name.as_str();
-    let remote_default_locator = format!("remote:{}", info.server_name);
+fn classify_tool_access_kind(tool_name: &str) -> ToolAccessKind {
+    if PARALLEL_PATH_WRITE_TOOLS.contains(&tool_name) {
+        ToolAccessKind::Write
+    } else {
+        ToolAccessKind::Read
+    }
+}
+
+fn resolve_tool_scope<T>(info: &T, args: &Value) -> Option<ToolScope>
+where
+    T: ToolParallelismInfo,
+{
+    let tool_name = info.original_name();
+    let remote_default_locator = format!("remote:{}", info.server_name());
     match tool_name {
         "read_file" => extract_scoped_path(
             args,
@@ -241,24 +231,75 @@ fn first_non_empty_string(args: &Value, keys: &[&str]) -> Option<String> {
     None
 }
 
-fn normalize_scope_path(path: &str) -> String {
-    let normalized = path.trim().replace('\\', "/");
-    let trimmed = normalized.trim_matches('/');
+fn normalize_scope_locator(raw: &str) -> String {
+    let trimmed = raw.trim();
     if trimmed.is_empty() {
+        "default".to_string()
+    } else {
+        trimmed.to_ascii_lowercase()
+    }
+}
+
+fn normalize_scope_path(raw: &str) -> String {
+    let mut segments = Vec::new();
+    let normalized = raw.trim().replace('\\', "/");
+    for part in normalized.split('/') {
+        let segment = part.trim();
+        if segment.is_empty() || segment == "." {
+            continue;
+        }
+        if segment == ".." {
+            if !segments.is_empty() {
+                segments.pop();
+            }
+            continue;
+        }
+        segments.push(segment);
+    }
+    if segments.is_empty() {
         ".".to_string()
     } else {
-        trimmed.to_string()
+        segments.join("/")
     }
 }
 
-fn normalize_scope_locator(locator: &str) -> String {
-    locator.trim().to_ascii_lowercase()
+fn tool_profiles_conflict(left: &ToolAccessProfile, right: &ToolAccessProfile) -> bool {
+    if left.kind == ToolAccessKind::Read && right.kind == ToolAccessKind::Read {
+        return false;
+    }
+    tool_scopes_overlap(&left.scope, &right.scope)
 }
 
-fn parse_tool_args(args: Value) -> Result<Value, serde_json::Error> {
-    if let Some(raw) = args.as_str() {
-        serde_json::from_str::<Value>(raw)
-    } else {
-        Ok(args)
+fn tool_scopes_overlap(left: &ToolScope, right: &ToolScope) -> bool {
+    match (left, right) {
+        (ToolScope::Global, _) | (_, ToolScope::Global) => true,
+        (
+            ToolScope::Path {
+                locator: left_locator,
+                path: left_path,
+            },
+            ToolScope::Path {
+                locator: right_locator,
+                path: right_path,
+            },
+        ) => {
+            left_locator == right_locator && paths_overlap(left_path.as_str(), right_path.as_str())
+        }
     }
 }
+
+fn paths_overlap(left: &str, right: &str) -> bool {
+    if left == "." || right == "." {
+        return true;
+    }
+    left == right || is_path_prefix(left, right) || is_path_prefix(right, left)
+}
+
+fn is_path_prefix(path: &str, prefix: &str) -> bool {
+    path.len() > prefix.len()
+        && path.starts_with(prefix)
+        && path.as_bytes().get(prefix.len()) == Some(&b'/')
+}
+
+#[cfg(test)]
+mod tests;

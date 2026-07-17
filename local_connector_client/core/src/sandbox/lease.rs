@@ -2,9 +2,11 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 mod create;
+mod reaper;
 mod release;
 mod status;
 
 pub(crate) use create::create_local_sandbox_lease;
-pub(crate) use release::release_local_sandbox;
+pub(crate) use reaper::{local_sandbox_lease_expired, spawn_local_sandbox_lease_reaper};
+pub(crate) use release::{release_local_sandbox, shutdown_local_sandboxes};
 pub(crate) use status::{get_local_sandbox, health_local_sandbox};

@@ -11,26 +11,45 @@ const {
   shell,
   systemPreferences,
 } = require('electron');
-const { spawn } = require('node:child_process');
 const crypto = require('node:crypto');
-const fs = require('node:fs');
 const path = require('node:path');
+const { startBundledChatosServer } = require('./bundled-chatos-server.cjs');
+const { isTrustedMainFrameEvent } = require('./ipc-trust.cjs');
 const { createLocalApiBridge } = require('./local-api-bridge.cjs');
+const { attachRetryingViewLoader } = require('./retrying-view-loader.cjs');
+const { createCoreRuntime } = require('./core-runtime.cjs');
+const {
+  isAllowedLocalFrontendUrl,
+  isAllowedOriginUrl,
+  isSafeExternalUrl,
+} = require('./navigation-policy.cjs');
+
+if (!app.requestSingleInstanceLock()) {
+  app.exit(0);
+}
 
 let mainWindow = null;
 let settingsView = null;
 let settingsOpen = false;
 let chatosView = null;
-let coreProcess = null;
+let chatosViewLoader = null;
+let bundledChatosServer = null;
+let shutdownStarted = false;
 const desktopAuthToken = crypto.randomBytes(32).toString('base64url');
-let ipcEndpoint = null;
-let ipcSocketDir = null;
+const coreRuntime = createCoreRuntime({ app, desktopAuthToken });
 let developerMode = process.env.LOCAL_CONNECTOR_DEVELOPER_MODE === '1';
 const trustedLocalWebContents = new Set();
+const trustedRuntimeWebContents = new Set();
 const localApiBridge = createLocalApiBridge({
-  getIpcEndpoint: () => ipcEndpoint,
+  getIpcEndpoint: () => coreRuntime.getIpcEndpoint(),
   getDesktopAuthToken: () => desktopAuthToken,
   isTrustedSender: (sender) => isTrustedLocalSender(sender),
+});
+const runtimeApiBridge = createLocalApiBridge({
+  getIpcEndpoint: () => coreRuntime.getIpcEndpoint(),
+  getDesktopAuthToken: () => desktopAuthToken,
+  isTrustedSender: (sender) => Boolean(sender && trustedRuntimeWebContents.has(sender.id)),
+  endpointPrefix: '/api/local/runtime/',
 });
 const {
   delay,
@@ -39,8 +58,7 @@ const {
   localApiHeaders,
 } = localApiBridge;
 const SHELL_HEIGHT = 52;
-const MAX_UNIX_SOCKET_PATH_BYTES = 100;
-const CORE_LOG_MAX_BYTES = 5 * 1024 * 1024;
+const RUNTIME_SETTINGS_STARTUP_ATTEMPTS = 300;
 const DEVELOPER_CHATOS_WEB_URL = (
   process.env.LOCAL_CONNECTOR_DEVELOPER_CHATOS_WEB_URL || 'http://127.0.0.1:8088'
 ).trim();
@@ -48,185 +66,45 @@ const DEVELOPER_CLOUD_BASE_URL = (
   process.env.LOCAL_CONNECTOR_DEVELOPER_CLOUD_BASE_URL || 'http://127.0.0.1:39230'
 ).trim();
 
-function resourcePath(...segments) {
-  const packagedPath = path.join(process.resourcesPath, ...segments);
-  if (fs.existsSync(packagedPath)) {
-    return packagedPath;
-  }
-  return path.join(__dirname, 'resources', ...segments);
-}
-
-function bundledToolsPlatformName() {
-  const os = process.platform === 'darwin'
-    ? 'macos'
-    : process.platform === 'win32'
-      ? 'windows'
-      : 'linux';
-  const arch = process.arch === 'arm64' ? 'arm64' : 'x64';
-  return `${os}-${arch}`;
-}
-
-function bundledBrowserRuntime() {
-  const toolsDir = resourcePath('bundled-tools', bundledToolsPlatformName());
-  const agentBrowser = path.join(
-    toolsDir,
-    process.platform === 'win32' ? 'agent-browser.exe' : 'agent-browser',
-  );
-  const browserExecutable = process.platform === 'darwin'
-    ? path.join(
-        toolsDir,
-        'browser',
-        'Google Chrome for Testing.app',
-        'Contents',
-        'MacOS',
-        'Google Chrome for Testing',
-      )
-    : process.platform === 'win32'
-      ? path.join(toolsDir, 'browser', 'chrome-win64', 'chrome.exe')
-      : path.join(toolsDir, 'browser', 'chrome-linux64', 'chrome');
-  return {
-    toolsDir,
-    agentBrowser,
-    browserExecutable,
-  };
-}
-
-function coreExecutablePath() {
-  const existing = String(process.env.PATH || '').split(path.delimiter).filter(Boolean);
-  const candidates = [bundledBrowserRuntime().toolsDir];
-  if (process.platform === 'darwin') {
-    candidates.push(
-      path.join(app.getPath('home'), '.docker', 'bin'),
-      '/Applications/Docker.app/Contents/Resources/bin',
-      '/opt/homebrew/bin',
-      '/usr/local/bin',
-    );
-  } else if (process.platform === 'win32') {
-    for (const root of [process.env.ProgramFiles, process.env['ProgramFiles(x86)']]) {
-      if (root) {
-        candidates.push(path.join(root, 'Docker', 'Docker', 'resources', 'bin'));
+async function shutdownApplication() {
+  try {
+    if (coreRuntime.isRunning()) {
+      const response = await sendIpcHttpRequest({
+        endpoint: '/api/local/sandbox/shutdown',
+        method: 'POST',
+        headers: localApiHeaders(true),
+        body: '{}',
+      });
+      if (!response.ok) {
+        console.warn('Local sandbox shutdown returned an error', response.status, response.body);
       }
     }
-  } else {
-    candidates.push('/usr/local/bin', '/usr/bin', '/snap/bin');
-  }
-  return [...new Set([...candidates, ...existing])].join(path.delimiter);
-}
-
-function startCore() {
-  if (!ipcEndpoint) {
-    ipcEndpoint = createIpcEndpoint();
-    ipcSocketDir = process.platform === 'win32' ? null : path.dirname(ipcEndpoint);
-  }
-  const coreName = process.platform === 'win32'
-    ? 'local_connector_client_core.exe'
-    : 'local_connector_client_core';
-  const corePath = resourcePath(coreName);
-  const browserRuntime = bundledBrowserRuntime();
-  const browserStateDir = process.platform === 'win32'
-    ? path.join(app.getPath('userData'), 'browser-runtime')
-    : path.join('/tmp', `chatos-agent-browser-${process.getuid?.() ?? process.pid}`);
-  fs.mkdirSync(browserStateDir, { recursive: true, mode: 0o700 });
-  const env = {
-    ...process.env,
-    PATH: coreExecutablePath(),
-    CHATOS_BUNDLED_TOOLS_DIR: resourcePath('bundled-tools'),
-    CHATOS_BUNDLED_SKILLS_DIR: resourcePath('skill-bundles'),
-    LOCAL_CONNECTOR_DESKTOP_AUTH_TOKEN: desktopAuthToken,
-    LOCAL_CONNECTOR_IPC_ENDPOINT: ipcEndpoint,
-    LOCAL_CONNECTOR_OPEN_UI: '0',
-    LOCAL_CONNECTOR_REQUIRE_SECURE_REMOTE: process.env.LOCAL_CONNECTOR_REQUIRE_SECURE_REMOTE || '1',
-  };
-  env.AGENT_BROWSER_BIN = browserRuntime.agentBrowser;
-  env.AGENT_BROWSER_EXECUTABLE_PATH = browserRuntime.browserExecutable;
-  env.AGENT_BROWSER_SOCKET_DIR = browserStateDir;
-
-  const coreLog = openCoreLog();
-  try {
-    coreProcess = spawn(corePath, [], {
-      cwd: path.dirname(corePath),
-      env,
-      stdio: coreLog.fd === null ? 'ignore' : ['ignore', coreLog.fd, coreLog.fd],
-      windowsHide: true,
-    });
-  } finally {
-    if (coreLog.fd !== null) {
-      fs.closeSync(coreLog.fd);
-    }
-  }
-
-  coreProcess.on('error', (error) => {
-    appendCoreLog(coreLog.path, `core process failed to start: ${error.stack || error}`);
-  });
-  coreProcess.on('exit', (code, signal) => {
-    appendCoreLog(coreLog.path, `core process exited: code=${code} signal=${signal}`);
-    coreProcess = null;
-  });
-}
-
-function createIpcEndpoint() {
-  const suffix = `${process.pid}-${crypto.randomBytes(24).toString('hex')}`;
-  if (process.platform === 'win32') {
-    return `\\\\.\\pipe\\chatos-local-connector-${suffix}`;
-  }
-
-  const candidateRoots = [...new Set([app.getPath('temp'), '/tmp'])];
-  let lastError = null;
-  for (const root of candidateRoots) {
-    let socketDir = null;
-    try {
-      fs.mkdirSync(root, { recursive: true });
-      socketDir = fs.mkdtempSync(path.join(root, 'chatos-'));
-      fs.chmodSync(socketDir, 0o700);
-      const endpoint = path.join(socketDir, 'core.sock');
-      if (Buffer.byteLength(endpoint) <= MAX_UNIX_SOCKET_PATH_BYTES) {
-        return endpoint;
-      }
-      lastError = new Error(`Local connector IPC socket path is too long: ${endpoint}`);
-    } catch (error) {
-      lastError = error;
-    }
-    if (socketDir) {
-      fs.rmSync(socketDir, { recursive: true, force: true });
-    }
-  }
-  throw lastError || new Error('Unable to create a local connector IPC socket path');
-}
-
-function openCoreLog() {
-  try {
-    const logsDir = app.getPath('logs');
-    fs.mkdirSync(logsDir, { recursive: true });
-    const logPath = path.join(logsDir, 'local-connector-core.log');
-    if (fs.existsSync(logPath) && fs.statSync(logPath).size > CORE_LOG_MAX_BYTES) {
-      const previousLogPath = `${logPath}.1`;
-      fs.rmSync(previousLogPath, { force: true });
-      fs.renameSync(logPath, previousLogPath);
-    }
-    const fd = fs.openSync(logPath, 'a', 0o600);
-    fs.chmodSync(logPath, 0o600);
-    fs.writeSync(fd, `\n[${new Date().toISOString()}] starting local connector core\n`);
-    return { fd, path: logPath };
   } catch (error) {
-    console.error('Unable to open Local Connector Core log', error);
-    return { fd: null, path: null };
+    console.warn('Unable to request graceful Local Connector shutdown', error);
   }
-}
-
-function appendCoreLog(logPath, message) {
-  if (!logPath) {
-    console.error(message);
-    return;
+  await coreRuntime.stopCoreProcessTree();
+  coreRuntime.cleanupIpcEndpoint();
+  if (bundledChatosServer) {
+    await bundledChatosServer.close().catch(() => undefined);
+    bundledChatosServer = null;
   }
-  try {
-    fs.appendFileSync(logPath, `[${new Date().toISOString()}] ${message}\n`, { mode: 0o600 });
-  } catch (error) {
-    console.error('Unable to append Local Connector Core log', error);
-  }
+  app.exit(0);
 }
 
 function isTrustedLocalSender(sender) {
   return Boolean(sender && trustedLocalWebContents.has(sender.id));
+}
+
+function isTrustedLocalEvent(event) {
+  return isTrustedMainFrameEvent(
+    event,
+    trustedLocalWebContents,
+    (url) => isAllowedLocalFrontendUrl(url, localFrontendIndexPath()),
+  );
+}
+
+function isTrustedRuntimeEvent(event) {
+  return isTrustedMainFrameEvent(event, trustedRuntimeWebContents, chatosOrigin());
 }
 
 function createWindow() {
@@ -247,7 +125,8 @@ function createWindow() {
   const mainWebContentsId = mainWindow.webContents.id;
   trustedLocalWebContents.add(mainWebContentsId);
 
-  mainWindow.loadFile(path.join(__dirname, '..', 'dist', 'index.html'), {
+  attachLocalFrontendNavigationGuard(mainWindow.webContents);
+  mainWindow.loadFile(localFrontendIndexPath(), {
     query: { view: 'shell' },
   });
   mainWindow.on('resize', layoutMainViews);
@@ -260,46 +139,40 @@ function createWindow() {
     }
     settingsView = null;
     settingsOpen = false;
+    chatosViewLoader?.dispose();
+    chatosViewLoader = null;
     chatosView = null;
+    trustedRuntimeWebContents.clear();
     mainWindow = null;
   });
   createChatosView();
 
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    shell.openExternal(url);
+    openExternalIfSafe(url);
     return { action: 'deny' };
   });
 }
 
 function createChatosView() {
   const partition = developerMode ? 'persist:chatos-web-development' : 'persist:chatos-web';
-  session.fromPartition(partition).setPermissionRequestHandler((_webContents, _permission, callback) => {
-    callback(false);
-  });
+  denyWebPermissions(session.fromPartition(partition));
   chatosView = new WebContentsView({
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
+      preload: path.join(__dirname, 'runtime-preload.cjs'),
       sandbox: true,
       partition,
       backgroundThrottling: false,
     },
   });
   const createdView = chatosView;
+  trustedRuntimeWebContents.add(chatosView.webContents.id);
   mainWindow.contentView.addChildView(chatosView);
   chatosView.setVisible(!settingsOpen);
   layoutChatosView();
 
-  chatosView.webContents.on('will-navigate', (event, url) => {
-    if (handleChatosProtocolNavigation(url)) {
-      event.preventDefault();
-      return;
-    }
-    if (!isAllowedChatosUrl(url)) {
-      event.preventDefault();
-      openExternalIfSafe(url);
-    }
-  });
+  attachChatosNavigationGuard(chatosView.webContents);
   chatosView.webContents.setWindowOpenHandler(({ url }) => {
     if (handleChatosProtocolNavigation(url)) {
       return { action: 'deny' };
@@ -316,7 +189,10 @@ function createChatosView() {
     } catch {
       // The failed renderer may already have been detached.
     }
+    chatosViewLoader?.dispose();
+    chatosViewLoader = null;
     chatosView = null;
+    trustedRuntimeWebContents.delete(createdView.webContents.id);
     if (!createdView.webContents.isDestroyed()) {
       createdView.webContents.close();
     }
@@ -329,7 +205,20 @@ function createChatosView() {
       }, 100);
     }
   });
-  chatosView.webContents.loadURL(chatosUrlWithDesktopParam());
+  chatosViewLoader = attachRetryingViewLoader({
+    webContents: createdView.webContents,
+    load: () => createdView.webContents.loadURL(chatosUrlWithDesktopParam()),
+    shouldRetry: () => (
+      developerMode
+      && chatosView === createdView
+      && !createdView.webContents.isDestroyed()
+    ),
+    onLoadError: (error) => {
+      if (developerMode && chatosView === createdView) {
+        console.warn('Developer Chat OS page is unavailable; retrying', error);
+      }
+    },
+  });
 }
 
 function recreateChatosView() {
@@ -337,6 +226,9 @@ function recreateChatosView() {
     return;
   }
   if (chatosView && !chatosView.webContents.isDestroyed()) {
+    chatosViewLoader?.dispose();
+    chatosViewLoader = null;
+    trustedRuntimeWebContents.delete(chatosView.webContents.id);
     try {
       mainWindow.contentView.removeChildView(chatosView);
     } catch {
@@ -418,11 +310,10 @@ function chatosWebUrl() {
   if (developerMode) {
     return DEVELOPER_CHATOS_WEB_URL;
   }
-  return (
-    process.env.LOCAL_CONNECTOR_CHATOS_WEB_URL ||
-    process.env.CHATOS_WEB_URL ||
-    'https://app.jgoool.com'
-  ).trim();
+  if (!bundledChatosServer) {
+    throw new Error('Bundled Chat OS frontend server is not ready');
+  }
+  return bundledChatosServer.origin;
 }
 
 function localConnectorCloudBaseUrl() {
@@ -436,7 +327,7 @@ function localConnectorCloudBaseUrl() {
 }
 
 async function refreshDeveloperModeFromCore() {
-  for (let attempt = 0; attempt < 30; attempt += 1) {
+  for (let attempt = 0; attempt < RUNTIME_SETTINGS_STARTUP_ATTEMPTS; attempt += 1) {
     try {
       const response = await sendIpcHttpRequest({
         endpoint: '/api/local/runtime-settings',
@@ -471,12 +362,45 @@ function chatosOrigin() {
 }
 
 function isAllowedChatosUrl(url) {
-  try {
-    const parsed = new URL(url);
-    return parsed.origin === chatosOrigin();
-  } catch {
-    return false;
-  }
+  return isAllowedOriginUrl(url, chatosOrigin());
+}
+
+function localFrontendIndexPath() {
+  return path.join(__dirname, '..', 'dist', 'index.html');
+}
+
+function attachLocalFrontendNavigationGuard(webContents) {
+  const guard = (event, url) => {
+    if (isAllowedLocalFrontendUrl(url, localFrontendIndexPath())) {
+      return;
+    }
+    event.preventDefault();
+    openExternalIfSafe(url);
+  };
+  webContents.on('will-navigate', guard);
+  webContents.on('will-redirect', guard);
+}
+
+function attachChatosNavigationGuard(webContents) {
+  const guard = (event, url) => {
+    if (handleChatosProtocolNavigation(url)) {
+      event.preventDefault();
+      return;
+    }
+    if (!isAllowedChatosUrl(url)) {
+      event.preventDefault();
+      openExternalIfSafe(url);
+    }
+  };
+  webContents.on('will-navigate', guard);
+  webContents.on('will-redirect', guard);
+}
+
+function denyWebPermissions(targetSession) {
+  targetSession.setPermissionCheckHandler(() => false);
+  targetSession.setPermissionRequestHandler((_webContents, _permission, callback) => {
+    callback(false);
+  });
 }
 
 function handleChatosProtocolNavigation(url) {
@@ -522,13 +446,8 @@ async function authenticateDesktopTicket(ticket) {
 }
 
 function openExternalIfSafe(url) {
-  try {
-    const parsed = new URL(url);
-    if (parsed.protocol === 'https:' || parsed.protocol === 'http:') {
-      shell.openExternal(url);
-    }
-  } catch {
-    // Ignore invalid URLs from remote content.
+  if (isSafeExternalUrl(url)) {
+    shell.openExternal(url);
   }
 }
 
@@ -591,7 +510,8 @@ function openSettingsView() {
   trustedLocalWebContents.add(settingsWebContentsId);
   mainWindow.contentView.addChildView(settingsView);
   layoutSettingsView();
-  settingsView.webContents.loadFile(path.join(__dirname, '..', 'dist', 'index.html'), {
+  attachLocalFrontendNavigationGuard(settingsView.webContents);
+  settingsView.webContents.loadFile(localFrontendIndexPath(), {
     query: { view: 'settings' },
   });
   settingsView.webContents.setWindowOpenHandler(({ url }) => {
@@ -643,41 +563,71 @@ function closeSettingsView() {
   }
 }
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   Menu.setApplicationMenu(null);
+  denyWebPermissions(session.defaultSession);
+  bundledChatosServer = await startBundledChatosServer(
+    coreRuntime.resourcePath('chatos-frontend'),
+  );
   ipcMain.handle('local-connector:api-request', (event, request) => {
+    if (!isTrustedLocalEvent(event)) {
+      throw new Error('Local Connector API access requires a trusted main frame');
+    }
     const rendererRequest = request && typeof request === 'object' ? request : {};
     return requestLocalApiOverIpc({ ...rendererRequest, sender: event.sender });
   });
+  ipcMain.handle('local-connector:runtime-api-request', (event, request) => {
+    if (!isTrustedRuntimeEvent(event)) {
+      throw new Error('Local Runtime API access requires the bundled Chat OS main frame');
+    }
+    const rendererRequest = request && typeof request === 'object' ? request : {};
+    return runtimeApiBridge.requestLocalApiOverIpc({ ...rendererRequest, sender: event.sender });
+  });
   ipcMain.handle('local-connector:desktop-system-permissions', (event) => {
-    if (!isTrustedLocalSender(event.sender)) {
+    if (!isTrustedLocalEvent(event)) {
       return {};
     }
     return desktopSystemPermissionStatuses();
   });
   ipcMain.handle('local-connector:desktop-system-permission-request', (event, permissionId) => {
-    if (!isTrustedLocalSender(event.sender)) {
+    if (!isTrustedLocalEvent(event)) {
       return {};
     }
     return requestDesktopSystemPermission(String(permissionId || ''));
   });
-  ipcMain.handle('local-connector:settings-open', () => {
+  ipcMain.handle('local-connector:settings-open', (event) => {
+    if (!isTrustedLocalEvent(event)) {
+      return false;
+    }
     openSettingsView();
+    return true;
   });
   ipcMain.handle('local-connector:settings-close', (event) => {
-    if (!settingsView || event.sender.id !== settingsView.webContents.id) {
+    if (
+      !isTrustedLocalEvent(event)
+      || !settingsView
+      || event.sender.id !== settingsView.webContents.id
+    ) {
       return false;
     }
     closeSettingsView();
     return true;
   });
-  ipcMain.handle('local-connector:chatos-reload', () => {
+  ipcMain.handle('local-connector:chatos-reload', (event) => {
+    if (!isTrustedLocalEvent(event)) {
+      return false;
+    }
     if (chatosView) {
       chatosView.webContents.reload();
     }
+    return true;
   });
   ipcMain.handle('local-connector:developer-mode', (event, enabled) => {
-    if (!settingsView || event.sender.id !== settingsView.webContents.id) {
+    if (
+      !isTrustedLocalEvent(event)
+      || !settingsView
+      || event.sender.id !== settingsView.webContents.id
+    ) {
       return false;
     }
     const next = Boolean(enabled);
@@ -687,9 +637,17 @@ app.whenReady().then(() => {
     }
     return true;
   });
-  startCore();
+  coreRuntime.startCore();
   createWindow();
   void refreshDeveloperModeFromCore();
+
+  app.on('second-instance', () => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.show();
+      mainWindow.focus();
+      restoreMainWindowContent();
+    }
+  });
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
@@ -701,20 +659,22 @@ app.whenReady().then(() => {
       restoreMainWindowContent();
     }
   });
+}).catch((error) => {
+  console.error('Unable to start Chat OS Local Connector', error);
+  app.quit();
 });
 
 app.on('did-become-active', () => {
   restoreMainWindowContent();
 });
 
-app.on('before-quit', () => {
-  if (coreProcess) {
-    coreProcess.kill();
-    coreProcess = null;
+app.on('before-quit', (event) => {
+  event.preventDefault();
+  if (shutdownStarted) {
+    return;
   }
-  if (ipcSocketDir) {
-    fs.rmSync(ipcSocketDir, { recursive: true, force: true });
-  }
+  shutdownStarted = true;
+  void shutdownApplication();
 });
 
 app.on('window-all-closed', () => {

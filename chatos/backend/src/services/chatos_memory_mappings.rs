@@ -16,7 +16,7 @@ pub use memories::{
     list_contact_project_memories_by_contact, list_contact_projects,
 };
 pub use project_links::{
-    delete_project_contact_link, list_project_contacts, sync_project_agent_link,
-    touch_current_project_contact_session,
+    delete_project_contact_link, list_project_contacts, list_project_contacts_for_owner,
+    sync_project_agent_link, touch_current_project_contact_session,
 };
 pub use projects::{list_memory_projects, sync_memory_project};

@@ -2,12 +2,15 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use super::*;
-use crate::http_body::{
-    read_response_json_limited, read_response_text_limited_or_message,
-    ERROR_BODY_PREVIEW_LIMIT_BYTES, JSON_BODY_LIMIT_BYTES,
-};
 use crate::models::UserRole;
+use chatos_service_runtime::{
+    bearer_token_from_headers as parse_bearer_token_from_headers,
+    normalized_identity_text as normalize_identity_text, query_has_nonempty_parameter,
+    BearerTokenError,
+};
 use serde::{Deserialize, Serialize};
+
+use super::user_service_client::{request_user_service_empty, request_user_service_json};
 
 pub(in crate::api) async fn require_auth(
     State(state): State<AppState>,
@@ -101,7 +104,7 @@ fn bearer_token_from_request(state: &AppState, request: &Request) -> Result<Stri
     }
 
     let Some(ticket) = sse_ticket_from_query(request.uri().query()) else {
-        if has_legacy_query_token(request.uri().query()) {
+        if query_has_nonempty_parameter(request.uri().query(), &["access_token", "token"]) {
             return Err(
                 "URL query access tokens are not supported; use Authorization header".to_string(),
             );
@@ -116,18 +119,13 @@ fn bearer_token_from_request(state: &AppState, request: &Request) -> Result<Stri
 }
 
 pub(in crate::api) fn bearer_token_from_headers(headers: &HeaderMap) -> Result<&str, String> {
-    let value = headers
-        .get(header::AUTHORIZATION)
-        .ok_or_else(|| "缺少登录令牌".to_string())?
-        .to_str()
-        .map_err(|_| "登录令牌格式不正确".to_string())?;
-    let mut parts = value.split_whitespace();
-    let scheme = parts.next().unwrap_or_default();
-    let token = parts.next().unwrap_or_default();
-    if !scheme.eq_ignore_ascii_case("Bearer") || token.is_empty() || parts.next().is_some() {
-        return Err("登录令牌格式不正确".to_string());
+    match parse_bearer_token_from_headers(headers) {
+        Ok(token) => Ok(token),
+        Err(BearerTokenError::MissingAuthorizationHeader) => Err("缺少登录令牌".to_string()),
+        Err(
+            BearerTokenError::InvalidAuthorizationHeader | BearerTokenError::InvalidBearerToken,
+        ) => Err("登录令牌格式不正确".to_string()),
     }
-    Ok(token)
 }
 
 async fn downstream_access_token_from_headers(
@@ -200,17 +198,6 @@ fn sse_ticket_from_query(query: Option<&str>) -> Option<&str> {
         let value = parts.next()?.trim();
         (key == "sse_ticket" && !value.is_empty()).then_some(value)
     })
-}
-
-fn has_legacy_query_token(query: Option<&str>) -> bool {
-    query
-        .into_iter()
-        .flat_map(|query| query.split('&'))
-        .any(|pair| {
-            let mut parts = pair.splitn(2, '=');
-            matches!(parts.next(), Some("access_token" | "token"))
-                && parts.next().is_some_and(|value| !value.trim().is_empty())
-        })
 }
 
 #[derive(Debug, Serialize)]
@@ -295,84 +282,6 @@ async fn logout_via_user_service(
         None,
     )
     .await
-}
-
-async fn request_user_service_json<TBody, TResp>(
-    config: &crate::config::AppConfig,
-    method: reqwest::Method,
-    path: &str,
-    access_token: Option<&str>,
-    body: Option<&TBody>,
-) -> Result<TResp, ApiError>
-where
-    TBody: Serialize + ?Sized,
-    TResp: serde::de::DeserializeOwned,
-{
-    let response = request_user_service(config, method, path, access_token, body).await?;
-    read_response_json_limited::<TResp>(response, JSON_BODY_LIMIT_BYTES)
-        .await
-        .map_err(|err| ApiError::bad_gateway(format!("parse user_service response failed: {err}")))
-}
-
-async fn request_user_service_empty<TBody>(
-    config: &crate::config::AppConfig,
-    method: reqwest::Method,
-    path: &str,
-    access_token: Option<&str>,
-    body: Option<&TBody>,
-) -> Result<(), ApiError>
-where
-    TBody: Serialize + ?Sized,
-{
-    let _response = request_user_service(config, method, path, access_token, body).await?;
-    Ok(())
-}
-
-async fn request_user_service<TBody>(
-    config: &crate::config::AppConfig,
-    method: reqwest::Method,
-    path: &str,
-    access_token: Option<&str>,
-    body: Option<&TBody>,
-) -> Result<reqwest::Response, ApiError>
-where
-    TBody: Serialize + ?Sized,
-{
-    let endpoint = format!(
-        "{}{}",
-        config.user_service_base_url.trim().trim_end_matches('/'),
-        path
-    );
-    let client = reqwest::Client::builder()
-        .timeout(config.user_service_request_timeout)
-        .build()
-        .map_err(|err| ApiError::bad_gateway(format!("build user_service client failed: {err}")))?;
-    let mut request = client.request(method, endpoint);
-    if let Some(access_token) = access_token {
-        request = request.bearer_auth(access_token.trim());
-    }
-    if let Some(body) = body {
-        request = request.json(body);
-    }
-    let response = request
-        .send()
-        .await
-        .map_err(|err| ApiError::bad_gateway(format!("user_service request failed: {err}")))?;
-    if response.status().is_success() {
-        return Ok(response);
-    }
-    let status =
-        StatusCode::from_u16(response.status().as_u16()).unwrap_or(StatusCode::BAD_GATEWAY);
-    let message =
-        read_response_text_limited_or_message(response, ERROR_BODY_PREVIEW_LIMIT_BYTES).await;
-    Err(ApiError {
-        status,
-        message: if message.trim().is_empty() {
-            "user_service request failed".to_string()
-        } else {
-            message
-        },
-    })
 }
 
 fn current_user_from_user_service_auth_user(
@@ -462,13 +371,10 @@ fn map_user_service_role(role: Option<&str>) -> UserRole {
     }
 }
 
-fn normalize_identity_text(value: Option<&str>) -> Option<&str> {
-    value.map(str::trim).filter(|value| !value.is_empty())
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{has_legacy_query_token, sse_ticket_from_query};
+    use super::sse_ticket_from_query;
+    use chatos_service_runtime::query_has_nonempty_parameter;
 
     #[test]
     fn sse_ticket_query_is_supported() {
@@ -480,8 +386,18 @@ mod tests {
 
     #[test]
     fn legacy_query_access_tokens_are_detected() {
-        assert!(has_legacy_query_token(Some("access_token=long-lived")));
-        assert!(has_legacy_query_token(Some("token=long-lived")));
-        assert!(!has_legacy_query_token(Some("sse_ticket=ticket-1")));
+        let names = ["access_token", "token"];
+        assert!(query_has_nonempty_parameter(
+            Some("access_token=long-lived"),
+            &names
+        ));
+        assert!(query_has_nonempty_parameter(
+            Some("token=long-lived"),
+            &names
+        ));
+        assert!(!query_has_nonempty_parameter(
+            Some("sse_ticket=ticket-1"),
+            &names
+        ));
     }
 }

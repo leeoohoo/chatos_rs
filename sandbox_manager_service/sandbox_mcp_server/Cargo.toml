@@ -9,15 +9,34 @@ edition = "2021"
 [dependencies]
 async-trait = "0.1"
 axum = { version = "0.8", features = ["json"] }
+base64 = "0.22"
 chrono = { version = "0.4", features = ["clock", "serde"] }
 chatos_builtin_tools = { path = "../../crates/chatos_builtin_tools" }
 chatos_mcp_service = { path = "../../crates/chatos_mcp_service" }
+chatos_sandbox_contract = { path = "../../crates/chatos_sandbox_contract" }
+chatos_terminal_runtime = { path = "../../crates/chatos_terminal_runtime" }
+globset = "0.4"
+httparse = "1"
+rcgen = "0.14.7"
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+rustls-native-certs = "0.8"
+rustls-pemfile = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["full"] }
+tokio-rustls = "0.26"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+url = "2"
 uuid = { version = "1", features = ["v4", "serde"] }
+walkdir = "2.4"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+security-framework = "3"
 
 [dev-dependencies]
+tempfile = "3"
 tower = { version = "0.5", features = ["util"] }

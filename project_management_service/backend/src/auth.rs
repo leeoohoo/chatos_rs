@@ -1,13 +1,19 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use axum::http::header::AUTHORIZATION;
 use axum::http::HeaderMap;
+use chatos_service_runtime::{
+    bearer_token_from_headers as parse_bearer_token_from_headers, build_http_client,
+    normalized_identity_text as normalize_identity_text, BearerTokenError, HttpClientTimeouts,
+};
 use reqwest::Method;
 use serde::{Deserialize, Serialize};
 
 use crate::config::AppConfig;
-use crate::http_body::{read_response_text_limited_or_message, ERROR_BODY_PREVIEW_LIMIT_BYTES};
+use crate::http_body::{
+    read_response_json_limited, read_response_text_limited_or_message,
+    ERROR_BODY_PREVIEW_LIMIT_BYTES, JSON_BODY_LIMIT_BYTES,
+};
 use crate::models::{AgentAccountListItem, AuthUser, LoginRequest, LoginResponse, UserRole};
 
 #[derive(Debug, Clone)]
@@ -180,18 +186,13 @@ pub async fn list_agent_accounts_via_user_service(
 }
 
 pub fn bearer_token_from_headers(headers: &HeaderMap) -> Result<&str, String> {
-    let value = headers
-        .get(AUTHORIZATION)
-        .ok_or_else(|| "缺少登录令牌".to_string())?
-        .to_str()
-        .map_err(|_| "登录令牌格式不正确".to_string())?;
-    let mut parts = value.split_whitespace();
-    let scheme = parts.next().unwrap_or_default();
-    let token = parts.next().unwrap_or_default();
-    if !scheme.eq_ignore_ascii_case("Bearer") || token.is_empty() || parts.next().is_some() {
-        return Err("登录令牌格式不正确".to_string());
+    match parse_bearer_token_from_headers(headers) {
+        Ok(token) => Ok(token),
+        Err(BearerTokenError::MissingAuthorizationHeader) => Err("缺少登录令牌".to_string()),
+        Err(
+            BearerTokenError::InvalidAuthorizationHeader | BearerTokenError::InvalidBearerToken,
+        ) => Err("登录令牌格式不正确".to_string()),
     }
-    Ok(token)
 }
 
 async fn request_user_service_json<TBody, TResp>(
@@ -210,9 +211,7 @@ where
         config.user_service_base_url.trim().trim_end_matches('/'),
         path
     );
-    let client = reqwest::Client::builder()
-        .timeout(config.user_service_request_timeout)
-        .build()
+    let client = build_http_client(HttpClientTimeouts::new(config.user_service_request_timeout))
         .map_err(|err| format!("build user_service client failed: {err}"))?;
     let mut request = client.request(method, endpoint);
     if let Some(access_token) = access_token {
@@ -235,8 +234,7 @@ where
             text
         });
     }
-    response
-        .json::<TResp>()
+    read_response_json_limited::<TResp>(response, JSON_BODY_LIMIT_BYTES)
         .await
         .map_err(|err| format!("parse user_service response failed: {err}"))
 }
@@ -325,8 +323,4 @@ fn map_user_service_role(role: Option<&str>) -> UserRole {
     } else {
         UserRole::Agent
     }
-}
-
-fn normalize_identity_text(value: Option<&str>) -> Option<&str> {
-    value.map(str::trim).filter(|value| !value.is_empty())
 }

@@ -12,6 +12,6 @@ pub(crate) use service::{
     sync_local_model_settings,
 };
 pub(crate) use types::{
-    LocalModelCatalogResponse, LocalModelConfigDraft, LocalModelConfigPublic, LocalModelSettings,
-    ModelConfigState,
+    LocalModelCatalogResponse, LocalModelConfigDraft, LocalModelConfigPublic,
+    LocalModelRuntimeResponse, LocalModelSettings, ModelConfigState,
 };

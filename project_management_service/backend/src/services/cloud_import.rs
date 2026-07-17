@@ -1,22 +1,24 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use std::ffi::OsStr;
-use std::fs::{self, File};
-use std::io::{self, Cursor};
-use std::path::{Component, Path, PathBuf};
-use std::process::Stdio;
+use std::fs;
+use std::path::PathBuf;
 
 use reqwest::Method;
 use serde::{Deserialize, Serialize};
-use tokio::process::Command;
-use tokio::time::timeout;
-use walkdir::WalkDir;
-use zip::ZipArchive;
+
+mod archive;
+mod archive_policy;
+mod git;
+
+use archive::{flatten_single_project_directory, has_importable_files, unpack_zip_safely};
+use git::{authenticated_git_url, run_git, run_git_output};
 
 use crate::config::AppConfig;
 use crate::http_body::{read_response_text_limited_or_message, ERROR_BODY_PREVIEW_LIMIT_BYTES};
 use crate::models::ProjectRecord;
+use chatos_service_runtime::http_body::{read_response_json_limited, JSON_BODY_LIMIT_BYTES};
+use chatos_service_runtime::{build_http_client, HttpClientTimeouts};
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct HarnessProjectRepoResponse {
@@ -59,9 +61,7 @@ pub async fn create_harness_repo_for_project(
         project_name: project.name.as_str(),
         description: project.description.as_deref(),
     };
-    let client = reqwest::Client::builder()
-        .timeout(config.user_service_request_timeout)
-        .build()
+    let client = build_http_client(HttpClientTimeouts::new(config.user_service_request_timeout))
         .map_err(|err| format!("build user_service client failed: {err}"))?;
     let response = crate::user_model_runtime_client::signed_user_service_request(
         client.request(Method::POST, endpoint),
@@ -81,8 +81,7 @@ pub async fn create_harness_repo_for_project(
             "user_service harness repo request failed: {status} {text}"
         ));
     }
-    response
-        .json::<HarnessProjectRepoResponse>()
+    read_response_json_limited::<HarnessProjectRepoResponse>(response, JSON_BODY_LIMIT_BYTES)
         .await
         .map_err(|err| format!("parse user_service harness repo response failed: {err}"))
 }
@@ -149,8 +148,11 @@ pub async fn import_zip_to_harness(
             config.cloud_project_max_files,
             config.cloud_project_max_unpacked_bytes,
         )?;
+        flatten_single_project_directory(work_dir.as_path())?;
         if !has_importable_files(work_dir.as_path()) {
-            return Ok(());
+            return Err(
+                "ZIP 中没有可导入的源文件；.git、依赖目录、编译产物和缓存会被自动忽略".to_string(),
+            );
         }
         let push_url = authenticated_git_url(
             repo.git_url.as_str(),
@@ -246,173 +248,4 @@ fn create_temp_import_dir(project_id: &str, kind: &str) -> Result<PathBuf, Strin
     ));
     fs::create_dir_all(&dir).map_err(|err| err.to_string())?;
     Ok(dir)
-}
-
-fn unpack_zip_safely(
-    zip_bytes: Vec<u8>,
-    target_dir: &Path,
-    max_files: usize,
-    max_unpacked_bytes: u64,
-) -> Result<(), String> {
-    let cursor = Cursor::new(zip_bytes);
-    let mut archive = ZipArchive::new(cursor).map_err(|err| format!("open zip failed: {err}"))?;
-    let mut file_count = 0usize;
-    let mut unpacked_bytes = 0u64;
-    for index in 0..archive.len() {
-        let mut entry = archive
-            .by_index(index)
-            .map_err(|err| format!("read zip entry failed: {err}"))?;
-        let enclosed = entry
-            .enclosed_name()
-            .ok_or_else(|| format!("zip entry has unsafe path: {}", entry.name()))?
-            .to_path_buf();
-        reject_git_metadata_path(enclosed.as_path())?;
-        if entry.is_dir() {
-            fs::create_dir_all(target_dir.join(enclosed)).map_err(|err| err.to_string())?;
-            continue;
-        }
-        file_count += 1;
-        if file_count > max_files {
-            return Err(format!(
-                "zip contains too many files: {file_count} > {max_files}"
-            ));
-        }
-        unpacked_bytes = unpacked_bytes.saturating_add(entry.size());
-        if unpacked_bytes > max_unpacked_bytes {
-            return Err(format!(
-                "zip unpacked content is too large: {unpacked_bytes} bytes > {max_unpacked_bytes} bytes"
-            ));
-        }
-        let out_path = target_dir.join(enclosed);
-        if let Some(parent) = out_path.parent() {
-            fs::create_dir_all(parent).map_err(|err| err.to_string())?;
-        }
-        let mut out_file = File::create(out_path).map_err(|err| err.to_string())?;
-        io::copy(&mut entry, &mut out_file).map_err(|err| err.to_string())?;
-    }
-    Ok(())
-}
-
-fn reject_git_metadata_path(path: &Path) -> Result<(), String> {
-    if path.components().any(|component| match component {
-        Component::Normal(value) => value == OsStr::new(".git"),
-        _ => false,
-    }) {
-        Err("zip archives containing .git directories are not accepted".to_string())
-    } else {
-        Ok(())
-    }
-}
-
-fn has_importable_files(path: &Path) -> bool {
-    WalkDir::new(path)
-        .into_iter()
-        .filter_map(Result::ok)
-        .any(|entry| entry.file_type().is_file())
-}
-
-fn authenticated_git_url(raw_url: &str, username: &str, token: &str) -> Result<String, String> {
-    let mut url =
-        reqwest::Url::parse(raw_url).map_err(|err| format!("invalid harness git url: {err}"))?;
-    url.set_username(username.trim())
-        .map_err(|_| "failed to set harness git username".to_string())?;
-    url.set_password(Some(token.trim()))
-        .map_err(|_| "failed to set harness git token".to_string())?;
-    Ok(url.to_string())
-}
-
-async fn run_git(
-    args: Vec<String>,
-    cwd: Option<&Path>,
-    config: &AppConfig,
-    scrub_values: &[&str],
-) -> Result<(), String> {
-    let output = run_git_raw(args, cwd, config, scrub_values).await?;
-    if output.status.success() {
-        return Ok(());
-    }
-    Err(git_output_error(
-        "git command failed",
-        &output,
-        scrub_values,
-    ))
-}
-
-async fn run_git_output(
-    args: Vec<String>,
-    cwd: Option<&Path>,
-    config: &AppConfig,
-    scrub_values: &[&str],
-) -> Result<String, String> {
-    let output = run_git_raw(args, cwd, config, scrub_values).await?;
-    if !output.status.success() {
-        return Err(git_output_error(
-            "git command failed",
-            &output,
-            scrub_values,
-        ));
-    }
-    Ok(scrub_sensitive(
-        String::from_utf8_lossy(output.stdout.as_slice()).as_ref(),
-        scrub_values,
-    ))
-}
-
-async fn run_git_raw(
-    args: Vec<String>,
-    cwd: Option<&Path>,
-    config: &AppConfig,
-    scrub_values: &[&str],
-) -> Result<std::process::Output, String> {
-    let mut command = Command::new("git");
-    command.args(args.iter().map(String::as_str));
-    if let Some(cwd) = cwd {
-        command.current_dir(cwd);
-    }
-    command.stdout(Stdio::piped()).stderr(Stdio::piped());
-    command.kill_on_drop(true);
-    let child = command.spawn().map_err(|err| {
-        scrub_sensitive(
-            format!("failed to start git command: {err}").as_str(),
-            scrub_values,
-        )
-    })?;
-    timeout(config.cloud_project_git_timeout, child.wait_with_output())
-        .await
-        .map_err(|_| "git command timed out".to_string())?
-        .map_err(|err| {
-            scrub_sensitive(
-                format!("failed to wait for git command: {err}").as_str(),
-                scrub_values,
-            )
-        })
-}
-
-fn git_output_error(prefix: &str, output: &std::process::Output, scrub_values: &[&str]) -> String {
-    let stderr = scrub_sensitive(
-        String::from_utf8_lossy(output.stderr.as_slice()).as_ref(),
-        scrub_values,
-    );
-    let stdout = scrub_sensitive(
-        String::from_utf8_lossy(output.stdout.as_slice()).as_ref(),
-        scrub_values,
-    );
-    format!(
-        "{}: status={} stderr={} stdout={}",
-        prefix,
-        output.status,
-        stderr.trim(),
-        stdout.trim()
-    )
-}
-
-fn scrub_sensitive(value: &str, scrub_values: &[&str]) -> String {
-    let mut out = value.to_string();
-    for secret in scrub_values {
-        let secret = secret.trim();
-        if !secret.is_empty() {
-            out = out.replace(secret, "***");
-        }
-    }
-    out
 }

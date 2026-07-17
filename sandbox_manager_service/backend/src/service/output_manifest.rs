@@ -534,6 +534,9 @@ mod tests {
             resource_limits: ResourceLimits::default(),
             network: NetworkPolicy::default(),
             tools: vec!["filesystem".to_string(), "terminal".to_string()],
+            lease_kind: "sandbox".to_string(),
+            primary_service_id: None,
+            environment_services: Vec::new(),
             agent_token_nonce: Some("nonce-1".to_string()),
             idempotency_key: None,
             created_at: "2026-01-01T00:00:00Z".to_string(),
@@ -541,6 +544,8 @@ mod tests {
             expires_at: "2026-01-01T01:00:00Z".to_string(),
             destroyed_at: None,
             last_error: None,
+            effective_policy: Default::default(),
+            effective_permissions: None,
         }
     }
 

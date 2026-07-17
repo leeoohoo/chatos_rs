@@ -1,7 +1,12 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use super::*;
+use chatos_agent::ChatosAgentProfile;
+use chatos_mcp_runtime::PROJECT_MANAGEMENT_SERVER_NAME;
+
+use super::policy::merge_optional_system_prompts;
+use super::project_mcp::build_project_management_mcp_runtime;
+use crate::config::Config;
 
 fn test_config() -> Config {
     Config {

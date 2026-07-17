@@ -30,10 +30,13 @@ fn normalize_doc(doc: &Document) -> Option<AiModelConfig> {
         user_id: doc.get_str("user_id").ok().map(|s| s.to_string()),
         name: doc.get_str("name").ok()?.to_string(),
         provider,
+        prompt_vendor: doc.get_str("prompt_vendor").ok().map(ToOwned::to_owned),
         model: doc.get_str("model").ok()?.to_string(),
         thinking_level: doc.get_str("thinking_level").ok().map(|s| s.to_string()),
         task_usage_scenario: None,
         task_thinking_level: None,
+        temperature: doc.get_f64("temperature").ok(),
+        max_output_tokens: doc.get_i64("max_output_tokens").ok(),
         api_key: doc.get_str("api_key").ok().map(|s| s.to_string()),
         has_api_key: false,
         base_url: doc.get_str("base_url").ok().map(|s| s.to_string()),
@@ -147,6 +150,10 @@ pub async fn create_ai_model_config(config: &AiModelConfig) -> Result<AiModelCon
             ),
             ("name", Bson::String(config_mongo.name.clone())),
             ("provider", Bson::String(config_mongo.provider.clone())),
+            (
+                "prompt_vendor",
+                crate::core::values::optional_string_bson(config_mongo.prompt_vendor.clone()),
+            ),
             ("model", Bson::String(config_mongo.model.clone())),
             (
                 "thinking_level",
@@ -209,6 +216,10 @@ pub async fn update_ai_model_config(id: &str, config: &AiModelConfig) -> Result<
             );
             set_doc.insert("name", config_mongo.name.clone());
             set_doc.insert("provider", config_mongo.provider.clone());
+            set_doc.insert(
+                "prompt_vendor",
+                crate::core::values::optional_string_bson(config_mongo.prompt_vendor.clone()),
+            );
             set_doc.insert("model", config_mongo.model.clone());
             set_doc.insert(
                 "thinking_level",

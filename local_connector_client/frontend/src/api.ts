@@ -5,7 +5,9 @@ export type * from './apiTypes';
 
 import { request } from './apiTransport';
 import type {
+  AgentPromptUpdateStatus,
   ApprovalSettings,
+  CommandExecutionApprovalDecision,
   CommandHistoryResponse,
   ConnectorStatus,
   DockerStatus,
@@ -22,9 +24,12 @@ import type {
   LocalSkillCatalogResponse,
   LocalSkillInstallation,
   PendingApprovalsResponse,
+  SandboxCapabilities,
   SandboxImageCatalog,
   SandboxImageJob,
   SandboxLease,
+  SandboxSettings,
+  SandboxSettingsUpdate,
   SystemPermissionsResponse,
   TerminalExecResponse,
 } from './apiTypes';
@@ -81,10 +86,28 @@ export const api = {
     request<ConnectorStatus>(`/api/local/workspaces/${encodeURIComponent(workspaceId)}`, {
       method: 'DELETE',
     }),
+  setWorkspaceProjectConfigTrust: (
+    workspaceId: string,
+    payload: { trusted: boolean; risk_acknowledged?: boolean },
+  ) =>
+    request<ConnectorStatus>(
+      `/api/local/workspaces/${encodeURIComponent(workspaceId)}/project-config-trust`,
+      {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      },
+    ),
   dockerStatus: () => request<DockerStatus>('/api/local/docker/status'),
   setSandboxEnabled: (payload: { enabled: boolean }) =>
     request<ConnectorStatus>('/api/local/sandbox/toggle', {
       method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+  sandboxCapabilities: () => request<SandboxCapabilities>('/api/local/sandbox/capabilities'),
+  sandboxSettings: () => request<SandboxSettings>('/api/local/sandbox/settings'),
+  updateSandboxSettings: (payload: SandboxSettingsUpdate) =>
+    request<SandboxSettings>('/api/local/sandbox/settings', {
+      method: 'PUT',
       body: JSON.stringify(payload),
     }),
   sandboxImages: () => request<SandboxImageCatalog>('/api/local/sandbox/images'),
@@ -137,6 +160,12 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(payload),
     }),
+  agentPromptStatus: () =>
+    request<AgentPromptUpdateStatus>('/api/local/agent-prompts/status'),
+  checkAgentPromptUpdates: () =>
+    request<AgentPromptUpdateStatus>('/api/local/agent-prompts/check', { method: 'POST' }),
+  updateAgentPrompts: () =>
+    request<AgentPromptUpdateStatus>('/api/local/agent-prompts/update', { method: 'POST' }),
   systemPermissions: () => request<SystemPermissionsResponse>('/api/local/system-permissions'),
   requestSystemPermission: (permissionId: string) =>
     request<SystemPermissionsResponse>(
@@ -146,13 +175,24 @@ export const api = {
       },
     ),
   approvalSettings: () => request<ApprovalSettings>('/api/local/approval/settings'),
-  updateApprovalSettings: (payload: Partial<Pick<ApprovalSettings, 'default_mode' | 'projects' | 'ai'>>) =>
+  updateApprovalSettings: (
+    payload: Partial<Pick<ApprovalSettings, 'default_mode' | 'projects' | 'ai'>> & {
+      risk_acknowledged?: boolean;
+    },
+  ) =>
     request<ApprovalSettings>('/api/local/approval/settings', {
       method: 'POST',
       body: JSON.stringify(payload),
     }),
   pendingApprovals: () => request<PendingApprovalsResponse>('/api/local/approval/pending'),
-  approvePendingApproval: (id: string, payload: { remember_allow?: boolean } = {}) =>
+  approvePendingApproval: (
+    id: string,
+    payload: {
+      remember_allow?: boolean;
+      decision?: CommandExecutionApprovalDecision;
+      risk_acknowledged?: boolean;
+    } = {},
+  ) =>
     request<{ ok: boolean }>(`/api/local/approval/pending/${encodeURIComponent(id)}/approve`, {
       method: 'POST',
       body: JSON.stringify(payload),
@@ -186,7 +226,7 @@ export const api = {
     request<LocalModelConfig>(`/api/local/model-configs/${encodeURIComponent(id)}/sync`, {
       method: 'POST',
     }),
-  saveModelSettings: (payload: LocalModelSettings, sync = true) =>
+  saveModelSettings: (payload: LocalModelSettings, sync = false) =>
     request<LocalModelSettings>('/api/local/model-settings', {
       method: 'POST',
       body: JSON.stringify({ ...payload, sync }),

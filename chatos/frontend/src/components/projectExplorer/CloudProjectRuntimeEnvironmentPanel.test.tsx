@@ -87,7 +87,17 @@ describe('CloudProjectRuntimeEnvironmentPanel', () => {
         sandbox_provider: 'local_connector',
         file_provider: 'local_connector',
       },
-      images: [],
+      images: [{
+        id: 'local-image-1',
+        environment_key: 'app',
+        environment_type: 'application',
+        display_name: 'Local application',
+        image_provider: 'local_connector',
+        dockerfile: 'FROM node:22\nCMD ["npm", "start"]',
+        status: 'planned',
+        ports: [3000],
+        env_vars: {},
+      }],
     };
     const client = {
       getProjectRuntimeEnvironment: vi.fn(async () => response),
@@ -109,6 +119,112 @@ describe('CloudProjectRuntimeEnvironmentPanel', () => {
     expect((await screen.findAllByText('local_connector')).length).toBeGreaterThanOrEqual(2);
     expect(screen.getByRole('checkbox', { name: '已启用沙箱' })).toBeChecked();
     expect(screen.getByText('沙箱运行环境')).toBeInTheDocument();
+    expect(screen.getByText('本地沙箱构建计划')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '查看 Dockerfile' }));
+    expect(screen.getByText('FROM node:22', { exact: false })).toBeInTheDocument();
+  });
+
+  it('shows actionable feedback when the environment initialization model is missing', async () => {
+    const pendingConfigurationResponse = {
+      environment: {
+        project_id: 'project-config',
+        status: 'pending_configuration',
+        sandbox_enabled: true,
+        sandbox_provider: 'cloud_sandbox_manager',
+        file_provider: 'harness',
+        analysis_summary: '缺少环境初始化模型。',
+      },
+      images: [],
+    };
+    const analyzeProjectRuntimeEnvironment = vi.fn(async () => pendingConfigurationResponse);
+    const client = {
+      getProjectRuntimeEnvironment: vi.fn(async () => pendingConfigurationResponse),
+      analyzeProjectRuntimeEnvironment,
+    } as unknown as ApiClient;
+
+    render(
+      <ApiClientProvider client={client}>
+        <I18nProvider>
+          <CloudProjectRuntimeEnvironmentPanel
+            projectId="project-config"
+            projectName="Missing model project"
+            projectSourceType="cloud"
+          />
+        </I18nProvider>
+      </ApiClientProvider>,
+    );
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('缺少环境初始化模型。');
+    fireEvent.click(screen.getByRole('button', { name: '检查配置并初始化' }));
+
+    await waitFor(() => {
+      expect(analyzeProjectRuntimeEnvironment).toHaveBeenCalledWith('project-config');
+    });
+    expect(await screen.findByRole('alert')).toHaveTextContent('已完成检查：缺少环境初始化模型。');
+  });
+
+  it('shows the Dockerfile and generates a cloud sandbox image on demand', async () => {
+    const plannedResponse = {
+      environment: {
+        project_id: 'project-image',
+        status: 'pending_image_build',
+        sandbox_enabled: true,
+        sandbox_provider: 'cloud_sandbox_manager',
+        file_provider: 'harness',
+        analysis_summary: '运行环境分析和 Dockerfile 生成完成。',
+      },
+      images: [{
+        id: 'image-plan-1',
+        environment_key: 'application_runtime',
+        environment_type: 'runtime',
+        display_name: 'Application runtime',
+        image_provider: 'cloud_sandbox_manager',
+        status: 'planned',
+        dockerfile: 'FROM node:24\nRUN corepack enable',
+        ports: [],
+        env_vars: {},
+      }],
+    };
+    const readyResponse = {
+      ...plannedResponse,
+      environment: { ...plannedResponse.environment, status: 'ready' },
+      images: [{
+        ...plannedResponse.images[0],
+        image_ref: 'chatos-sandbox-agent:node-24-project-image',
+        status: 'ready',
+      }],
+    };
+    const generateProjectRuntimeEnvironmentImage = vi.fn(async () => readyResponse);
+    const client = {
+      getProjectRuntimeEnvironment: vi.fn(async () => plannedResponse),
+      analyzeProjectRuntimeEnvironment: vi.fn(async () => plannedResponse),
+      generateProjectRuntimeEnvironmentImage,
+    } as unknown as ApiClient;
+
+    render(
+      <ApiClientProvider client={client}>
+        <I18nProvider>
+          <CloudProjectRuntimeEnvironmentPanel
+            projectId="project-image"
+            projectName="Cloud image project"
+            projectSourceType="cloud"
+          />
+        </I18nProvider>
+      </ApiClientProvider>,
+    );
+
+    expect(await screen.findByText('cloud_sandbox_manager')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '查看 Dockerfile' }));
+    expect(screen.getByText('FROM node:24', { exact: false })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '准备全部镜像' }));
+
+    await waitFor(() => {
+      expect(generateProjectRuntimeEnvironmentImage).toHaveBeenCalledWith(
+        'project-image',
+        'image-plan-1',
+      );
+    });
+    expect(await screen.findByRole('button', { name: '准备全部镜像' })).toBeInTheDocument();
   });
 
   it('disables initialization while the backend is analyzing and surfaces failed build logs', async () => {

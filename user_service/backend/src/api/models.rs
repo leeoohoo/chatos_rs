@@ -17,6 +17,7 @@ pub(super) use config_handlers::{
     update_model_config,
 };
 pub(super) use config_refresh::refresh_model_config_provider_models;
+pub(super) use normalization::is_supported_provider;
 pub(super) use provider_handlers::{
     create_model_provider, delete_model_provider, get_model_provider, list_model_providers,
     refresh_model_provider_models, update_model_provider,

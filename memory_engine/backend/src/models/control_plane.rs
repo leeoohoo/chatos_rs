@@ -1,8 +1,13 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use serde::{Deserialize, Serialize};
 use serde_json::Value;
+
+pub use memory_engine_sdk::{
+    DashboardOverviewResponse, EngineJobPolicy, EngineJobRun, EngineModelProfile,
+    GenerateJobPolicyPromptRequest, GenerateJobPolicyPromptResponse, JobRunsBundleResponse,
+    UpsertEngineJobPolicyRequest, UpsertEngineModelProfileRequest,
+};
 
 pub const DEFAULT_ENGINE_SUMMARY_PROMPT_TEMPLATE: &str = "你是 memory engine 的消息总结引擎。你的任务不是泛泛概括聊天内容，而是为后续对话提供承上启下的会话摘要。\n请优先保留以下信息：\n1. 当前会话已经完成了什么，哪些动作、结论、修改或验证已经发生；\n2. 当前正在进行什么，眼下卡在哪一步，哪些问题还没有解决；\n3. 接下来最可能继续做什么，明确下一步待办、待确认项和推进顺序；\n4. 对后续续聊有决定作用的重要事实、约束、风险、假设、路径、文件、命令、环境信息和用户要求；\n5. 如果用户临时改变目标，也要保留目标切换前后的上下文关系。\n请避免空泛复述，避免写成长篇会议纪要；输出应简洁、连续、可直接帮助下一轮对话衔接。";
 
@@ -26,158 +31,6 @@ pub const DEFAULT_ENGINE_MEMORY_ROLLUP_PROMPT_TEMPLATE_EN: &str = "You are the p
 
 pub const PROMPT_LANGUAGE_ZH: &str = "zh";
 pub const PROMPT_LANGUAGE_EN: &str = "en";
-
-fn default_enabled() -> bool {
-    true
-}
-
-fn default_prompt_language() -> String {
-    PROMPT_LANGUAGE_ZH.to_string()
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct EngineModelProfile {
-    pub id: String,
-    pub owner_user_id: Option<String>,
-    pub owner_username: Option<String>,
-    pub name: String,
-    pub provider: String,
-    pub model: String,
-    pub base_url: Option<String>,
-    pub api_key: Option<String>,
-    #[serde(default)]
-    pub supports_images: bool,
-    #[serde(default)]
-    pub supports_reasoning: bool,
-    #[serde(default)]
-    pub supports_responses: bool,
-    pub temperature: Option<f64>,
-    pub thinking_level: Option<String>,
-    #[serde(default)]
-    pub is_default: bool,
-    #[serde(default = "default_enabled")]
-    pub enabled: bool,
-    pub created_at: String,
-    pub updated_at: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct UpsertEngineModelProfileRequest {
-    pub id: Option<String>,
-    pub name: String,
-    pub provider: String,
-    #[serde(alias = "model_name")]
-    pub model: String,
-    pub base_url: Option<Option<String>>,
-    pub api_key: Option<Option<String>>,
-    pub supports_images: Option<bool>,
-    pub supports_reasoning: Option<bool>,
-    pub supports_responses: Option<bool>,
-    pub temperature: Option<f64>,
-    pub thinking_level: Option<String>,
-    pub is_default: Option<bool>,
-    pub enabled: Option<bool>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct EngineJobPolicy {
-    pub job_type: String,
-    #[serde(default = "default_enabled")]
-    pub enabled: bool,
-    pub model_profile_id: Option<String>,
-    pub summary_prompt: Option<String>,
-    #[serde(default)]
-    pub summary_prompt_zh: Option<String>,
-    #[serde(default)]
-    pub summary_prompt_en: Option<String>,
-    #[serde(default = "default_prompt_language")]
-    pub summary_prompt_language: String,
-    pub rollup_summary_prompt: Option<String>,
-    #[serde(default)]
-    pub rollup_summary_prompt_zh: Option<String>,
-    #[serde(default)]
-    pub rollup_summary_prompt_en: Option<String>,
-    #[serde(default = "default_prompt_language")]
-    pub rollup_summary_prompt_language: String,
-    pub token_limit: Option<i64>,
-    pub target_summary_tokens: Option<i64>,
-    pub interval_seconds: Option<i64>,
-    pub max_threads_per_tick: Option<i64>,
-    pub count_limit: Option<i64>,
-    pub keep_level0_count: Option<i64>,
-    pub max_level: Option<i64>,
-    pub updated_at: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct UpsertEngineJobPolicyRequest {
-    pub enabled: Option<bool>,
-    pub model_profile_id: Option<Option<String>>,
-    pub summary_prompt: Option<Option<String>>,
-    pub summary_prompt_zh: Option<Option<String>>,
-    pub summary_prompt_en: Option<Option<String>>,
-    pub summary_prompt_language: Option<String>,
-    pub rollup_summary_prompt: Option<Option<String>>,
-    pub rollup_summary_prompt_zh: Option<Option<String>>,
-    pub rollup_summary_prompt_en: Option<Option<String>>,
-    pub rollup_summary_prompt_language: Option<String>,
-    pub token_limit: Option<Option<i64>>,
-    pub target_summary_tokens: Option<Option<i64>>,
-    pub interval_seconds: Option<Option<i64>>,
-    pub max_threads_per_tick: Option<Option<i64>>,
-    pub count_limit: Option<Option<i64>>,
-    pub keep_level0_count: Option<Option<i64>>,
-    pub max_level: Option<Option<i64>>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct GenerateJobPolicyPromptRequest {
-    pub prompt_field: String,
-    pub user_input: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct GenerateJobPolicyPromptResponse {
-    pub prompt_zh: String,
-    pub prompt_en: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct EngineJobRun {
-    pub id: String,
-    pub job_type: String,
-    pub trigger_type: String,
-    pub tenant_id: Option<String>,
-    pub source_id: Option<String>,
-    pub thread_id: Option<String>,
-    pub subject_id: Option<String>,
-    pub thread_label: Option<String>,
-    pub thread_display_name: Option<String>,
-    pub status: String,
-    pub input_count: i64,
-    pub output_count: i64,
-    pub processed_count: i64,
-    pub success_count: i64,
-    pub error_count: i64,
-    pub metadata: Option<Value>,
-    pub error_message: Option<String>,
-    pub started_at: String,
-    pub finished_at: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct JobRunsBundleResponse {
-    pub thread_runs: Vec<EngineJobRun>,
-    pub scheduler_runs: Vec<EngineJobRun>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DashboardOverviewResponse {
-    pub source_count: i64,
-    pub model_count: i64,
-    pub policy_count: i64,
-    pub job_stats: serde_json::Value,
-}
 
 #[derive(Debug, Clone)]
 pub struct CreateEngineJobRunRequest {

@@ -33,8 +33,9 @@ use self::run_handlers::{
     get_project_run_state, set_project_run_default, update_project_run_environment,
 };
 use self::runtime_environment_handlers::{
-    analyze_project_runtime_environment, get_project_runtime_environment,
-    get_project_runtime_environment_progress, update_project_runtime_environment_settings,
+    analyze_project_runtime_environment, generate_project_runtime_environment_image,
+    get_project_runtime_environment, get_project_runtime_environment_progress,
+    update_project_runtime_environment_settings,
 };
 
 pub fn router() -> Router {
@@ -100,6 +101,10 @@ pub fn router() -> Router {
         .route(
             "/api/projects/{id}/runtime-environment/analyze",
             post(analyze_project_runtime_environment),
+        )
+        .route(
+            "/api/projects/{id}/runtime-environment/images/{image_record_id}/generate",
+            post(generate_project_runtime_environment_image),
         )
         .route(
             "/api/projects/{id}/runtime-environment/progress",

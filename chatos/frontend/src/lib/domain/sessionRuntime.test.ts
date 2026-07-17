@@ -46,6 +46,8 @@ describe('sessionRuntime metadata helpers', () => {
       projectId: null,
       projectRoot: null,
       workspaceRoot: '/tmp/workspace',
+      reasoningEnabled: false,
+      planModeEnabled: false,
     });
   });
 

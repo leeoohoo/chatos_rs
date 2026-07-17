@@ -39,6 +39,7 @@ export const PIPELINE_POLICY_META: Record<PolicyViewKey, PolicyMeta> = {
     outputText: '线程一级总结（L0 summary）',
     purposeText: '先把长对话压缩成稳定摘要，减少直接读取原始消息的成本。',
     promptLabel: '消息总结 Prompt',
+    managedAgentKey: 'memory_engine_summary_agent',
     promptPlaceholder:
       '为空时使用默认“消息总结”模板，重点保留已完成事项、当前进展、下一步计划，以及关键约束、风险、路径和用户要求。',
     tokenLimitLabel: '触发 Token 阈值',
@@ -58,6 +59,7 @@ export const PIPELINE_POLICY_META: Record<PolicyViewKey, PolicyMeta> = {
     outputText: '更高层级的聚合总结（rollup summary）',
     purposeText: '当总结本身也变多时，再做一轮压缩，进一步降低上下文体积。',
     promptLabel: '聚合总结 Prompt',
+    managedAgentKey: 'memory_engine_rollup_agent',
     promptPlaceholder:
       '为空时使用默认“总结再总结”模板，重点沉淀项目整体全貌、常用技能、环境信息、目录结构、接口边界和长期有效经验。',
     tokenLimitLabel: '聚合 Token 阈值',
@@ -80,6 +82,7 @@ export const PIPELINE_POLICY_META: Record<PolicyViewKey, PolicyMeta> = {
     outputText: '一级主题记忆（L0 subject memory）',
     purposeText: '把阶段性总结沉淀成长期记忆，减少每次都从历史总结里重新翻找。',
     promptLabel: '记忆提炼 Prompt',
+    managedAgentKey: 'memory_engine_subject_memory_agent',
     promptPlaceholder:
       '为空时使用默认“总结生成记忆”模板，重点沉淀用户画像、协作习惯、长期偏好，以及智能体可复用的常识积累。',
     tokenLimitLabel: '记忆提炼 Token 阈值',
@@ -104,6 +107,7 @@ export const PIPELINE_POLICY_META: Record<PolicyViewKey, PolicyMeta> = {
     outputText: '更高层主题记忆（rolled-up memory）',
     purposeText: '持续压缩长期记忆体积，避免记忆层本身再次膨胀。',
     promptLabel: '记忆归并 Prompt',
+    managedAgentKey: 'memory_engine_memory_rollup_agent',
     promptPlaceholder:
       '为空时使用默认“记忆再总结”模板，重点归纳智能体在长期协作中逐渐形成的人格、性格、表达风格和判断方式。',
     tokenLimitLabel: '记忆归并 Token 阈值',
@@ -129,6 +133,7 @@ export const PIPELINE_POLICY_META: Record<PolicyViewKey, PolicyMeta> = {
     purposeText:
       '只在接口主动触发时执行，用于修复上下文漂移；Token 配置控制单次 AI 分块上限，默认 200000。',
     promptLabel: '修复总结 Prompt',
+    managedAgentKey: 'memory_engine_thread_repair_agent',
     promptPlaceholder:
       '为空时使用默认“修复总结”模板，重点以用户消息为准，指出错误或未验证内容，并保留下轮必须遵守的约束。',
     tokenLimitLabel: '单次分块 Token 上限',

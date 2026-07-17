@@ -11,10 +11,12 @@ import type {
   CreateRequirementPayload,
   DependencyGraphNode,
   ProjectProfileRecord,
+  ProjectRuntimeEnvironmentDeploymentResponse,
   ProjectRuntimeEnvironmentResponse,
   ProjectWorkItemRecord,
   RequirementRecord,
   UpsertProjectProfilePayload,
+  UpdateProjectRuntimeEnvironmentVariablesPayload,
 } from '../types';
 import { buildProjectDetailColumns } from './projectDetail/columns';
 import { ProjectDetailOverlays } from './projectDetail/ProjectDetailOverlays';
@@ -85,6 +87,18 @@ export function ProjectDetailPage() {
     queryKey: ['project-runtime-environment', projectId],
     queryFn: () => api.getProjectRuntimeEnvironment(projectId!),
     enabled: Boolean(projectId),
+  });
+  const runtimeEnvironmentDeploymentQuery = useQuery<ProjectRuntimeEnvironmentDeploymentResponse>({
+    queryKey: ['project-runtime-environment-deployment', projectId],
+    queryFn: () => api.getProjectRuntimeEnvironmentDeployment(projectId!),
+    enabled: Boolean(
+      projectId &&
+        runtimeEnvironmentQuery.data?.environment.sandbox_provider === 'local_connector' &&
+        runtimeEnvironmentQuery.data.images.some((image) =>
+          ['running', 'starting', 'stopped'].includes(image.status),
+        ),
+    ),
+    retry: false,
   });
   const requirementDepsQuery = useQuery({
     queryKey: ['requirement-deps', requirementDepTarget?.id],
@@ -280,6 +294,58 @@ export function ProjectDetailPage() {
     },
   });
 
+  const updateRuntimeEnvironmentVariablesMutation = useMutation({
+    mutationFn: (payload: UpdateProjectRuntimeEnvironmentVariablesPayload) =>
+      api.updateProjectRuntimeEnvironmentVariables(projectId!, payload),
+    onSuccess: (data) => {
+      messageApi.success('运行环境变量已保存');
+      setRuntimeEnvironmentCache(data);
+    },
+    onError: (error) => messageApi.error((error as Error).message),
+  });
+
+  const startRuntimeEnvironmentMutation = useMutation({
+    mutationFn: () => api.startProjectRuntimeEnvironment(projectId!),
+    onSuccess: (data) => {
+      messageApi.success('项目运行环境已作为一个 Docker Compose 项目启动');
+      setRuntimeEnvironmentCache(data);
+      queryClient.invalidateQueries({
+        queryKey: ['project-runtime-environment-deployment', projectId],
+      });
+    },
+    onError: (error) => {
+      messageApi.error((error as Error).message);
+      runtimeEnvironmentQuery.refetch();
+    },
+  });
+
+  const stopRuntimeEnvironmentMutation = useMutation({
+    mutationFn: () => api.stopProjectRuntimeEnvironment(projectId!),
+    onSuccess: (data) => {
+      messageApi.success('项目级 Docker Compose 环境已整体停止，数据卷已保留');
+      setRuntimeEnvironmentCache(data);
+      queryClient.invalidateQueries({
+        queryKey: ['project-runtime-environment-deployment', projectId],
+      });
+    },
+    onError: (error) => messageApi.error((error as Error).message),
+  });
+
+  const restartRuntimeEnvironmentMutation = useMutation({
+    mutationFn: () => api.restartProjectRuntimeEnvironment(projectId!),
+    onSuccess: (data) => {
+      messageApi.success('项目级 Docker Compose 环境已整体重启');
+      setRuntimeEnvironmentCache(data);
+      queryClient.invalidateQueries({
+        queryKey: ['project-runtime-environment-deployment', projectId],
+      });
+    },
+    onError: (error) => {
+      messageApi.error((error as Error).message);
+      runtimeEnvironmentQuery.refetch();
+    },
+  });
+
   const { requirementColumns, workItemColumns } = buildProjectDetailColumns({
     requirements,
     onShowRequirementDetail: setRequirementDetailTarget,
@@ -334,7 +400,9 @@ export function ProjectDetailPage() {
         blockingRelations={blockingRelations}
         containsRelations={containsRelations}
         runtimeEnvironment={runtimeEnvironmentQuery.data}
+        runtimeEnvironmentDeployment={runtimeEnvironmentDeploymentQuery.data}
         runtimeEnvironmentLoading={runtimeEnvironmentQuery.isLoading}
+        runtimeEnvironmentDeploymentLoading={runtimeEnvironmentDeploymentQuery.isFetching}
         runtimeEnvironmentErrorMessage={
           runtimeEnvironmentQuery.isError
             ? (runtimeEnvironmentQuery.error as Error).message
@@ -342,11 +410,22 @@ export function ProjectDetailPage() {
         }
         runtimeEnvironmentAnalyzing={analyzeRuntimeEnvironmentMutation.isPending}
         runtimeEnvironmentSettingsSaving={updateRuntimeEnvironmentSettingsMutation.isPending}
+        runtimeEnvironmentVariablesSaving={updateRuntimeEnvironmentVariablesMutation.isPending}
+        runtimeEnvironmentStarting={startRuntimeEnvironmentMutation.isPending}
+        runtimeEnvironmentStopping={stopRuntimeEnvironmentMutation.isPending}
+        runtimeEnvironmentRestarting={restartRuntimeEnvironmentMutation.isPending}
         onRefreshRuntimeEnvironment={() => runtimeEnvironmentQuery.refetch()}
         onAnalyzeRuntimeEnvironment={() => analyzeRuntimeEnvironmentMutation.mutate()}
         onRuntimeSandboxEnabledChange={(value) =>
           updateRuntimeEnvironmentSettingsMutation.mutate(value)
         }
+        onSaveRuntimeEnvironmentVariables={async (payload) => {
+          await updateRuntimeEnvironmentVariablesMutation.mutateAsync(payload);
+        }}
+        onStartRuntimeEnvironment={() => startRuntimeEnvironmentMutation.mutate()}
+        onRefreshRuntimeEnvironmentDeployment={() => runtimeEnvironmentDeploymentQuery.refetch()}
+        onStopRuntimeEnvironment={() => stopRuntimeEnvironmentMutation.mutate()}
+        onRestartRuntimeEnvironment={() => restartRuntimeEnvironmentMutation.mutate()}
       />
       <ProjectDetailOverlays
         requirementModalOpen={requirementModalOpen}

@@ -9,10 +9,14 @@ pub struct AiModelConfig {
     pub user_id: Option<String>,
     pub name: String,
     pub provider: String,
+    #[serde(default)]
+    pub prompt_vendor: Option<String>,
     pub model: String,
     pub thinking_level: Option<String>,
     pub task_usage_scenario: Option<String>,
     pub task_thinking_level: Option<String>,
+    pub temperature: Option<f64>,
+    pub max_output_tokens: Option<i64>,
     pub api_key: Option<String>,
     #[serde(default)]
     pub has_api_key: bool,

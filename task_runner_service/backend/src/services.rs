@@ -2,7 +2,7 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use chatos_ai_runtime::ToolResultModelBudgetLimits;
@@ -32,6 +32,27 @@ use crate::models::{
 };
 use crate::store::AppStore;
 
+fn managed_config_client() -> Option<&'static chatos_config_sdk::ConfigClient> {
+    static CLIENT: OnceLock<Option<chatos_config_sdk::ConfigClient>> = OnceLock::new();
+    CLIENT
+        .get_or_init(|| chatos_config_sdk::ConfigClient::from_env("task-runner").ok())
+        .as_ref()
+}
+
+async fn load_managed_config_snapshot() -> Option<chatos_config_sdk::ConfigSnapshot> {
+    let client = managed_config_client()?;
+    match client.load().await {
+        Ok(snapshot) => Some(snapshot),
+        Err(err) => {
+            tracing::warn!(
+                error = err.as_str(),
+                "failed to load task runner managed configuration; using startup defaults"
+            );
+            None
+        }
+    }
+}
+
 mod batch_ops;
 mod builtin_providers;
 mod chatos_async_dispatch;
@@ -49,6 +70,7 @@ mod model_config_service;
 mod model_runtime_resolver;
 pub(crate) mod path_redaction;
 mod plugin_management_policy;
+mod plugin_management_prompts;
 mod prerequisite_context;
 mod process_log_text;
 pub(crate) mod project_management_api_client;
@@ -63,7 +85,6 @@ mod run_recovery;
 mod run_service;
 mod sandbox_runtime;
 mod schedule_helpers;
-mod skill_runtime;
 mod status_display;
 mod stream_events;
 mod task_dependencies;
@@ -106,7 +127,6 @@ use self::workspace_mcp::{
 
 const RUN_CANCEL_POLL_INTERVAL: Duration = Duration::from_millis(300);
 const TASK_PROCESS_LOG_MAX_CHARS: usize = 200_000;
-const SYSTEM_RUNTIME_SETTINGS_ID: &str = "system";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum RunTriggerSource {

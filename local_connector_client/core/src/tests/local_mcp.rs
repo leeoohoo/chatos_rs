@@ -26,7 +26,7 @@ async fn exposes_builtin_compatible_tools_and_project_relative_args() {
     fs::create_dir_all(project.as_path()).expect("create project");
     fs::write(project.join("package.json"), "{\"name\":\"web\"}\n").expect("write package");
     let workspace = test_workspace(root.as_path());
-    let state = test_state_with_workspace(workspace);
+    let state = test_state_with_full_control_workspace(workspace);
     let request = request_with_cwd_and_builtin_kinds(
         "apps/web",
         "CodeMaintainerRead,CodeMaintainerWrite,TerminalController,BrowserTools",
@@ -318,7 +318,7 @@ async fn lifecycle_starts_and_cleans_task_terminal() {
     let project = root.join("apps").join("web");
     fs::create_dir_all(project.as_path()).expect("create project");
     let workspace = test_workspace(root.as_path());
-    let state = test_state_with_workspace(workspace);
+    let state = test_state_with_full_control_workspace(workspace);
     let recorder = CommandHistoryRecorder {
         state_path: root.join("state.json"),
         state: Arc::new(RwLock::new(state.clone())),

@@ -18,8 +18,7 @@ pub(super) fn normalize_provider(value: Option<String>) -> String {
         "openai" | "gpt" => "gpt".to_string(),
         "deepseek" => "deepseek".to_string(),
         "kimi" | "kimik2" | "moonshot" => "kimi".to_string(),
-        "minimax" => "minimax".to_string(),
-        "openai_compatible" | "compatible" => "openai_compatible".to_string(),
+        "glm" | "zhipu" | "zhipuai" | "zai" | "chatglm" => "glm".to_string(),
         other => other.to_string(),
     }
 }
@@ -28,18 +27,19 @@ pub(super) fn default_base_url_for_provider(provider: &str) -> String {
     match normalize_provider(Some(provider.to_string())).as_str() {
         "deepseek" => "https://api.deepseek.com/v1".to_string(),
         "kimi" => "https://api.moonshot.cn/v1".to_string(),
-        "minimax" => "https://api.minimax.chat/v1".to_string(),
+        "glm" => "https://open.bigmodel.cn/api/paas/v4".to_string(),
         _ => "https://api.openai.com/v1".to_string(),
     }
 }
 
 pub(super) fn runtime_provider_for_model(provider: &str, base_url: &str) -> String {
     let provider = normalize_provider(Some(provider.to_string()));
-    if provider == "gpt"
-        && !base_url
-            .trim()
-            .to_ascii_lowercase()
-            .contains("api.openai.com")
+    if provider == "glm"
+        || (provider == "gpt"
+            && !base_url
+                .trim()
+                .to_ascii_lowercase()
+                .contains("api.openai.com"))
     {
         "openai_compatible".to_string()
     } else {
@@ -233,6 +233,19 @@ mod tests {
         assert_eq!(models[0].id, "deepseek-chat");
         assert!(!models[0].supports_images);
         assert!(!models[0].supports_reasoning);
+    }
+
+    #[test]
+    fn glm_aliases_use_the_glm_catalog_and_compatible_runtime() {
+        assert_eq!(normalize_provider(Some("zhipu".to_string())), "glm");
+        assert_eq!(
+            default_base_url_for_provider("glm"),
+            "https://open.bigmodel.cn/api/paas/v4"
+        );
+        assert_eq!(
+            runtime_provider_for_model("glm", "https://open.bigmodel.cn/api/paas/v4"),
+            "openai_compatible"
+        );
     }
 
     #[test]

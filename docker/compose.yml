@@ -10,6 +10,8 @@ x-rust-service: &rust-service
       condition: service_healthy
     mongodb:
       condition: service_healthy
+    configuration-center-backend:
+      condition: service_healthy
   networks:
     - cloud
 
@@ -19,6 +21,10 @@ x-service-runtime-env: &service-runtime-env
   CHATOS_ENV: ${CHATOS_ENV:-local}
   CHATOS_CONSUL_HTTP_ADDR: ${CHATOS_CONSUL_HTTP_ADDR:-http://consul:8500}
   CHATOS_SERVICE_RUNTIME_REQUEST_TIMEOUT_MS: ${CHATOS_SERVICE_RUNTIME_REQUEST_TIMEOUT_MS:-3000}
+  CONFIG_CENTER_BASE_URL: http://configuration-center-backend:39270
+  CONFIG_CENTER_INTERNAL_API_SECRET: ${CONFIG_CENTER_INTERNAL_API_SECRET:-change_me_configuration_center_internal_secret}
+  CONFIG_CENTER_REQUEST_TIMEOUT_MS: ${CONFIG_CENTER_REQUEST_TIMEOUT_MS:-3000}
+  AGENT_MAX_ITERATIONS: ${AGENT_MAX_ITERATIONS:-600}
 
 x-frontend-service: &frontend-service
   restart: unless-stopped
@@ -58,6 +64,39 @@ services:
           "CMD-SHELL",
           "mongosh --quiet --username \"$${MONGO_INITDB_ROOT_USERNAME}\" --password \"$${MONGO_INITDB_ROOT_PASSWORD}\" --authenticationDatabase admin --eval 'db.adminCommand({ ping: 1 }).ok' | grep 1"
         ]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+    networks:
+      - cloud
+
+  configuration-center-backend:
+    restart: unless-stopped
+    image: ${CONFIG_CENTER_BACKEND_IMAGE:-${CHATOS_IMAGE_NAMESPACE:-ghcr.io/leeoohoo}/chatos-rs-configuration-center-backend:${CHATOS_IMAGE_TAG:-latest}}
+    environment:
+      <<: *service-runtime-env
+      CHATOS_SERVICE_NAME: configuration-center
+      CHATOS_SERVICE_ID: configuration-center-docker
+      CHATOS_SERVICE_ADDRESS: configuration-center-backend
+      CHATOS_SERVICE_PORT: 39270
+      CHATOS_SERVICE_HEALTH_PATH: /health
+      CONFIG_CENTER_HOST: 0.0.0.0
+      CONFIG_CENTER_PORT: 39270
+      CONFIG_CENTER_DATABASE_URL: mongodb://${MONGODB_USER:-admin}:${MONGODB_PASSWORD:-admin}@mongodb:27017/configuration_center?authSource=admin
+      CONFIG_CENTER_MONGODB_DATABASE: configuration_center
+      CONFIG_CENTER_USER_SERVICE_BASE_URL: http://user-service-backend:39190
+      CONFIG_CENTER_INTERNAL_API_SECRET: ${CONFIG_CENTER_INTERNAL_API_SECRET:-change_me_configuration_center_internal_secret}
+      CONFIG_CENTER_CONSUL_REQUIRED: ${CONFIG_CENTER_CONSUL_REQUIRED:-false}
+      CONFIG_CENTER_CORS_ORIGINS: ${CONFIG_CENTER_CORS_ORIGINS:-http://127.0.0.1:39271,http://localhost:39271}
+    ports:
+      - "${CHATOS_PUBLIC_BIND_HOST:-127.0.0.1}:${CONFIG_CENTER_BACKEND_PORT:-39270}:39270"
+    depends_on:
+      consul:
+        condition: service_healthy
+      mongodb:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:39270/health"]
       interval: 10s
       timeout: 5s
       retries: 30
@@ -199,6 +238,8 @@ services:
       PROJECT_SERVICE_MEMORY_ENGINE_INTERNAL_API_SECRET: ${PROJECT_SERVICE_MEMORY_ENGINE_INTERNAL_API_SECRET:-change_me_project_service_memory_engine_secret}
       USER_SERVICE_MEMORY_ENGINE_INTERNAL_API_SECRET: ${USER_SERVICE_MEMORY_ENGINE_INTERNAL_API_SECRET:-change_me_user_service_memory_engine_secret}
       LOCAL_CONNECTOR_MEMORY_ENGINE_INTERNAL_API_SECRET: ${LOCAL_CONNECTOR_MEMORY_ENGINE_INTERNAL_API_SECRET:-change_me_local_connector_memory_engine_secret}
+      PLUGIN_MANAGEMENT_SERVICE_URL: http://plugin-management-backend:39260
+      PLUGIN_MANAGEMENT_MEMORY_ENGINE_INTERNAL_API_SECRET: ${PLUGIN_MANAGEMENT_MEMORY_ENGINE_INTERNAL_API_SECRET:-${PLUGIN_MANAGEMENT_INTERNAL_API_SECRET:-change_me_plugin_management_internal_secret}}
       MEMORY_ENGINE_OPERATOR_TOKEN: ${MEMORY_ENGINE_OPERATOR_TOKEN:-}
       MEMORY_ENGINE_USER_SERVICE_BASE_URL: http://user-service-backend:39190
       MEMORY_ENGINE_LOCAL_CONNECTOR_SERVICE_BASE_URL: http://local-connector-service-backend:39230
@@ -275,6 +316,7 @@ services:
       PLUGIN_MANAGEMENT_TASK_RUNNER_INTERNAL_API_SECRET: ${PLUGIN_MANAGEMENT_TASK_RUNNER_INTERNAL_API_SECRET:-${PLUGIN_MANAGEMENT_INTERNAL_API_SECRET:-change_me_plugin_management_internal_secret}}
       PLUGIN_MANAGEMENT_PROJECT_SERVICE_INTERNAL_API_SECRET: ${PLUGIN_MANAGEMENT_PROJECT_SERVICE_INTERNAL_API_SECRET:-${PLUGIN_MANAGEMENT_INTERNAL_API_SECRET:-change_me_plugin_management_internal_secret}}
       PLUGIN_MANAGEMENT_LOCAL_CONNECTOR_SERVICE_INTERNAL_API_SECRET: ${PLUGIN_MANAGEMENT_LOCAL_CONNECTOR_SERVICE_INTERNAL_API_SECRET:-${PLUGIN_MANAGEMENT_INTERNAL_API_SECRET:-change_me_plugin_management_internal_secret}}
+      PLUGIN_MANAGEMENT_MEMORY_ENGINE_INTERNAL_API_SECRET: ${PLUGIN_MANAGEMENT_MEMORY_ENGINE_INTERNAL_API_SECRET:-${PLUGIN_MANAGEMENT_INTERNAL_API_SECRET:-change_me_plugin_management_internal_secret}}
       PLUGIN_MANAGEMENT_SERVICE_SUPER_ADMIN_USERNAME: ${CHATOS_ADMIN_USERNAME:-admin}
       PLUGIN_MANAGEMENT_SERVICE_SUPER_ADMIN_PASSWORD: ${CHATOS_ADMIN_PASSWORD:-admin123456}
       PLUGIN_MANAGEMENT_SERVICE_SEED_SYSTEM_RESOURCES: ${PLUGIN_MANAGEMENT_SERVICE_SEED_SYSTEM_RESOURCES:-true}
@@ -308,6 +350,10 @@ services:
       LOCAL_CONNECTOR_DATABASE_URL: mongodb://${MONGODB_USER:-admin}:${MONGODB_PASSWORD:-admin}@mongodb:27017/local_connector_service?authSource=admin
       LOCAL_CONNECTOR_USER_SERVICE_BASE_URL: http://user-service-backend:39190
       LOCAL_CONNECTOR_PUBLIC_BASE_URL: ${LOCAL_CONNECTOR_PUBLIC_BASE_URL:-http://localhost:39230}
+      LOCAL_CONNECTOR_MANAGED_REQUIREMENTS_TOML_PATH: ${LOCAL_CONNECTOR_MANAGED_REQUIREMENTS_TOML_PATH:-}
+      LOCAL_CONNECTOR_MANAGED_REQUIREMENTS_SIGNING_KEY_PATH: ${LOCAL_CONNECTOR_MANAGED_REQUIREMENTS_SIGNING_KEY_PATH:-}
+      LOCAL_CONNECTOR_MANAGED_REQUIREMENTS_SIGNING_KEY_ID: ${LOCAL_CONNECTOR_MANAGED_REQUIREMENTS_SIGNING_KEY_ID:-}
+      LOCAL_CONNECTOR_MANAGED_REQUIREMENTS_BUNDLE_TTL_SECONDS: ${LOCAL_CONNECTOR_MANAGED_REQUIREMENTS_BUNDLE_TTL_SECONDS:-86400}
       CHATOS_LOCAL_CONNECTOR_INTERNAL_API_SECRET: ${CHATOS_LOCAL_CONNECTOR_INTERNAL_API_SECRET:-change_me_chatos_local_connector_secret}
       TASK_RUNNER_LOCAL_CONNECTOR_INTERNAL_API_SECRET: ${TASK_RUNNER_LOCAL_CONNECTOR_INTERNAL_API_SECRET:-change_me_task_runner_local_connector_secret}
       PROJECT_SERVICE_LOCAL_CONNECTOR_INTERNAL_API_SECRET: ${PROJECT_SERVICE_LOCAL_CONNECTOR_INTERNAL_API_SECRET:-change_me_project_service_local_connector_secret}
@@ -386,11 +432,20 @@ services:
       PROJECT_SERVICE_SANDBOX_MANAGER_INTERNAL_API_SECRET: ${PROJECT_SERVICE_SANDBOX_MANAGER_INTERNAL_API_SECRET:-change_me_project_service_sandbox_manager_secret}
       SANDBOX_MANAGER_SYSTEM_CLIENT_ID: ${SANDBOX_MANAGER_SYSTEM_CLIENT_ID:-}
       SANDBOX_MANAGER_SYSTEM_CLIENT_KEY: ${SANDBOX_MANAGER_SYSTEM_CLIENT_KEY:-}
+      SANDBOX_MANAGER_IMAGE_BUILD_CONTEXT: /opt/chatos-sandbox-build-context
+      SANDBOX_MANAGER_IMAGE_DOCKERFILE: /opt/chatos-sandbox-build-context/sandbox_manager_service/sandbox_agent/Dockerfile
       DOCKER_HOST: tcp://sandbox-docker-socket-proxy:2375
+      DOCKER_BUILDKIT: "0"
     ports:
       - "${SANDBOX_MANAGER_BIND_HOST:-127.0.0.1}:${SANDBOX_MANAGER_PORT:-8095}:8095"
     volumes:
       - sandbox-manager-data:/data/sandboxes
+      - ../Cargo.lock:/opt/chatos-sandbox-build-context/Cargo.lock:ro
+      - ../BUILTIN_MCP_PROMPT.en-US.md:/opt/chatos-sandbox-build-context/BUILTIN_MCP_PROMPT.en-US.md:ro
+      - ../BUILTIN_MCP_PROMPT.zh-CN.md:/opt/chatos-sandbox-build-context/BUILTIN_MCP_PROMPT.zh-CN.md:ro
+      - ../crates:/opt/chatos-sandbox-build-context/crates:ro
+      - ../sandbox_manager_service/sandbox_agent:/opt/chatos-sandbox-build-context/sandbox_manager_service/sandbox_agent:ro
+      - ../sandbox_manager_service/sandbox_mcp_server:/opt/chatos-sandbox-build-context/sandbox_manager_service/sandbox_mcp_server:ro
     depends_on:
       sandbox-docker-socket-proxy:
         condition: service_started
@@ -415,7 +470,7 @@ services:
       TASK_RUNNER_STORE_MODE: mongo
       TASK_RUNNER_DATABASE_URL: mongodb://${MONGODB_USER:-admin}:${MONGODB_PASSWORD:-admin}@mongodb:27017/task_runner_service?authSource=admin
       TASK_RUNNER_WORKSPACE_DIR: /data/task-runner/workspace
-      TASK_RUNNER_MAX_MODEL_REQUEST_ROUNDS: ${TASK_RUNNER_MAX_MODEL_REQUEST_ROUNDS:-600}
+      TASK_RUNNER_MAX_MODEL_REQUEST_ROUNDS: ${AGENT_MAX_ITERATIONS:-600}
       TASK_RUNNER_USER_SERVICE_BASE_URL: http://user-service-backend:39190
       TASK_RUNNER_PROJECT_SERVICE_BASE_URL: http://project-management-backend:39210
       TASK_RUNNER_PROJECT_SERVICE_INTERNAL_API_SECRET: ${TASK_RUNNER_PROJECT_SERVICE_INTERNAL_API_SECRET:-change_me_task_runner_project_service_secret}
@@ -474,7 +529,7 @@ services:
       HOST: 0.0.0.0
       BACKEND_PORT: 3997
       LOG_LEVEL: ${LOG_LEVEL:-info}
-      MAX_ITERATIONS: ${MAX_ITERATIONS:-600}
+      MAX_ITERATIONS: ${AGENT_MAX_ITERATIONS:-600}
       CORS_ORIGINS: ${CORS_ORIGINS:-*}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.openai.com/v1}
@@ -599,6 +654,17 @@ services:
       chatos-backend:
         condition: service_healthy
 
+  configuration-center-frontend:
+    <<: *frontend-service
+    image: ${CONFIG_CENTER_FRONTEND_IMAGE:-${CHATOS_IMAGE_NAMESPACE:-ghcr.io/leeoohoo}/chatos-rs-configuration-center-frontend:${CHATOS_IMAGE_TAG:-latest}}
+    environment:
+      API_PROXY_PASS: http://configuration-center-backend:39270
+    ports:
+      - "${CHATOS_PUBLIC_BIND_HOST:-127.0.0.1}:${CONFIG_CENTER_FRONTEND_PORT:-39271}:80"
+    depends_on:
+      configuration-center-backend:
+        condition: service_healthy
+
   user-service-frontend:
     <<: *frontend-service
     image: ${USER_SERVICE_FRONTEND_IMAGE:-${CHATOS_IMAGE_NAMESPACE:-ghcr.io/leeoohoo}/chatos-rs-user-service-frontend:${CHATOS_IMAGE_TAG:-latest}}
@@ -663,6 +729,7 @@ services:
     image: ${SANDBOX_MANAGER_FRONTEND_IMAGE:-${CHATOS_IMAGE_NAMESPACE:-ghcr.io/leeoohoo}/chatos-rs-sandbox-manager-frontend:${CHATOS_IMAGE_TAG:-latest}}
     environment:
       API_PROXY_PASS: http://sandbox-manager-backend:8095
+      SANDBOX_MANAGER_API_PROXY_OPERATOR_TOKEN: ${SANDBOX_MANAGER_OPERATOR_TOKEN:-chatos-sandbox-manager-dev-operator-token}
     ports:
       - "${CHATOS_PUBLIC_BIND_HOST:-127.0.0.1}:${SANDBOX_MANAGER_FRONTEND_PORT:-8096}:80"
     depends_on:

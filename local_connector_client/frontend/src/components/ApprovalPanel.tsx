@@ -4,7 +4,13 @@
 import React from 'react';
 import { BellRing, CheckCircle2, ListChecks, RefreshCw, ShieldCheck, XCircle } from 'lucide-react';
 
-import { api, type ApprovalMode, type ApprovalSettings, type PendingApprovalItem } from '../api';
+import {
+  api,
+  type ApprovalMode,
+  type ApprovalSettings,
+  type PendingApprovalItem,
+  type RequestPermissionProfile,
+} from '../api';
 import {
   approvalDecisionClass,
   approvalDecisionLabel,
@@ -19,6 +25,23 @@ import {
   formatHistoryTime,
   sourceLabel,
 } from '../utils/terminalFormat';
+
+function formatRequestedPermissions(permissions: RequestPermissionProfile): string {
+  const labels: string[] = [];
+  const fileSystem = permissions.fileSystem;
+  for (const entry of fileSystem?.entries || []) {
+    const path = entry.path.type === 'path'
+      ? entry.path.path
+      : entry.path.type === 'glob_pattern'
+        ? entry.path.pattern
+        : `${entry.path.value.kind}${entry.path.value.subpath ? `/${entry.path.value.subpath}` : ''}`;
+    labels.push(`文件 ${entry.access}: ${path}`);
+  }
+  for (const path of fileSystem?.read || []) labels.push(`文件 read: ${path}`);
+  for (const path of fileSystem?.write || []) labels.push(`文件 write: ${path}`);
+  if (permissions.network?.enabled) labels.push('网络访问');
+  return labels.join('；') || '无有效增量权限';
+}
 
 export function ApprovalPanel() {
   const [settings, setSettings] = React.useState<ApprovalSettings | null>(null);
@@ -73,11 +96,29 @@ export function ApprovalPanel() {
     if (!settings) {
       return;
     }
+    if (mode === settings.default_mode) {
+      return;
+    }
+    if (
+      mode === 'auto_approval'
+      && !window.confirm('切换到“自动审批”后，命令会由本地 AI 先行判断。确认继续吗？')
+    ) {
+      return;
+    }
+    if (
+      mode === 'full_control'
+      && !window.confirm('切换到“从不询问”后，命令将直接执行，不再弹出审批。确认继续吗？')
+    ) {
+      return;
+    }
     setSaving(true);
     setMessage(null);
     setError(null);
     try {
-      const next = await api.updateApprovalSettings({ default_mode: mode });
+      const next = await api.updateApprovalSettings({
+        default_mode: mode,
+        risk_acknowledged: mode !== 'request_approval',
+      });
       setSettings(next);
       setMessage(`审批级别已切换为 ${approvalModeLabel(mode)}`);
     } catch (err) {
@@ -89,9 +130,17 @@ export function ApprovalPanel() {
 
   const approve = async (item: PendingApprovalItem) => {
     setError(null);
+    const remember = rememberAllow[item.id] || false;
+    if (
+      remember
+      && !window.confirm('选择“本会话允许”后，仅本次沙箱会话内相同命令和相同权限请求不再询问。确认继续吗？')
+    ) {
+      return;
+    }
     try {
       await api.approvePendingApproval(item.id, {
-        remember_allow: rememberAllow[item.id] || false,
+        decision: remember ? 'acceptForSession' : 'accept',
+        risk_acknowledged: remember,
       });
       setMessage(`已通过: ${item.command}`);
       await loadSettings();
@@ -135,6 +184,7 @@ export function ApprovalPanel() {
           <div>
             <h2><ShieldCheck size={18} />命令审批</h2>
             <p>当前级别: {approvalModeLabel(settings.default_mode)}</p>
+            <p>策略版本: {settings.settings_revision || '默认'}</p>
           </div>
           <button className="iconButton" onClick={() => void loadSettings()} title="刷新审批">
             <RefreshCw size={17} />
@@ -183,6 +233,11 @@ export function ApprovalPanel() {
                 {sourceLabel(item.source)} · {projectLabel(item.project_key)} · {item.cwd} · {formatHistoryTime(item.created_at)}
               </div>
               {item.reason ? <div className="approvalReason">{item.reason}</div> : null}
+              {item.requested_permissions ? (
+                <div className="approvalReason">
+                  请求的临时权限：{formatRequestedPermissions(item.requested_permissions)}
+                </div>
+              ) : null}
             </div>
           ))}
           {pending.map((item) => (
@@ -195,6 +250,11 @@ export function ApprovalPanel() {
                 {sourceLabel(item.source)} · {projectLabel(item.project_key)} · {item.cwd} · {formatHistoryTime(item.created_at)}
               </div>
               {item.reason ? <div className="approvalReason">{item.reason}</div> : null}
+              {item.requested_permissions ? (
+                <div className="approvalReason">
+                  请求的临时权限：{formatRequestedPermissions(item.requested_permissions)}
+                </div>
+              ) : null}
               <div className="approvalActions">
                 <label className="inlineCheck">
                   <input
@@ -205,7 +265,7 @@ export function ApprovalPanel() {
                       [item.id]: event.target.checked,
                     }))}
                   />
-                  始终允许
+                  本会话允许
                 </label>
                 <input
                   value={denyReasons[item.id] || ''}

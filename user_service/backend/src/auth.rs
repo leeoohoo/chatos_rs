@@ -2,8 +2,11 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use axum::extract::FromRequestParts;
-use axum::http::{header::AUTHORIZATION, request::Parts, HeaderMap, StatusCode};
+use axum::http::{request::Parts, HeaderMap, StatusCode};
 use axum::Json;
+use chatos_service_runtime::{
+    bearer_token_from_headers as parse_bearer_token_from_headers, BearerTokenError,
+};
 use chrono::Utc;
 use jsonwebtoken::{decode, encode, Algorithm, DecodingKey, EncodingKey, Header, Validation};
 use serde::{Deserialize, Serialize};
@@ -221,17 +224,15 @@ pub fn decode_any_user_service_token(
 }
 
 pub fn bearer_token_from_headers(headers: &HeaderMap) -> Result<String, String> {
-    let value = headers
-        .get(AUTHORIZATION)
-        .ok_or_else(|| "missing authorization header".to_string())?
-        .to_str()
-        .map_err(|_| "invalid authorization header".to_string())?;
-    let token = value
-        .strip_prefix("Bearer ")
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .ok_or_else(|| "invalid authorization header".to_string())?;
-    Ok(token.to_string())
+    match parse_bearer_token_from_headers(headers) {
+        Ok(token) => Ok(token.to_string()),
+        Err(BearerTokenError::MissingAuthorizationHeader) => {
+            Err("missing authorization header".to_string())
+        }
+        Err(
+            BearerTokenError::InvalidAuthorizationHeader | BearerTokenError::InvalidBearerToken,
+        ) => Err("invalid authorization header".to_string()),
+    }
 }
 
 fn encode_token(config: &AppConfig, claims: AuthClaims) -> Result<String, String> {

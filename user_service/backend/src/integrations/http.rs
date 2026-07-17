@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
+use chatos_service_runtime::{build_http_client, HttpClientTimeouts};
 use serde_json::Value;
 
 use crate::state::AppState;
@@ -10,10 +11,10 @@ pub(super) fn build_client(state: &AppState) -> Result<reqwest::Client, String> 
 }
 
 pub(super) fn build_client_with_timeout(timeout_ms: i64) -> Result<reqwest::Client, String> {
-    reqwest::Client::builder()
-        .timeout(std::time::Duration::from_millis(timeout_ms.max(300) as u64))
-        .build()
-        .map_err(|err| err.to_string())
+    build_http_client(HttpClientTimeouts::new(std::time::Duration::from_millis(
+        timeout_ms.max(300) as u64,
+    )))
+    .map_err(|err| err.to_string())
 }
 
 pub(super) fn normalized_text(value: Option<&str>) -> Option<String> {

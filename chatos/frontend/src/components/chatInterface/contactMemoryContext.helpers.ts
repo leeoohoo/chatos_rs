@@ -28,7 +28,10 @@ const readString = (record: Record<string, unknown> | null, key: string): string
   return typeof value === 'string' ? value : '';
 };
 
-export const normalizeAgentRecalls = (rows: unknown[]): ContactAgentRecall[] => {
+export const normalizeAgentRecalls = (
+  rows: unknown[],
+  limit = 1,
+): ContactAgentRecall[] => {
   const normalized = rows
     .map((item) => {
       const record = asRecord(item);
@@ -40,6 +43,7 @@ export const normalizeAgentRecalls = (rows: unknown[]): ContactAgentRecall[] => 
         confidence: typeof record?.confidence === 'number' ? record.confidence : null,
         lastSeenAt: readString(record, 'last_seen_at') || null,
         updatedAt: String(record?.updated_at || ''),
+        subjectType: readString(record, 'subject_type') || null,
       };
     })
     .filter((item) => item.id && item.recallKey);
@@ -51,7 +55,7 @@ export const normalizeAgentRecalls = (rows: unknown[]): ContactAgentRecall[] => 
       }
       return toTimestamp(right.updatedAt) - toTimestamp(left.updatedAt);
     })
-    .slice(0, 1);
+    .slice(0, Math.max(1, limit));
 };
 
 export const buildMemoryLoadKey = (

@@ -126,6 +126,7 @@ fn native_skill_execute_requires_prepared_snapshot_and_writes_locally() {
             absolute_root: root.clone(),
             alias: "test".to_string(),
             fingerprint: "fp".to_string(),
+            project_config_trust: None,
         }],
         ..LocalState::default()
     };
@@ -214,6 +215,7 @@ fn document_skill_prepare_publishes_and_executes_native_tools() {
             absolute_root: root.clone(),
             alias: "test".to_string(),
             fingerprint: "fp".to_string(),
+            project_config_trust: None,
         }],
         ..LocalState::default()
     };

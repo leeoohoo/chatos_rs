@@ -3,13 +3,8 @@
 
 import React from 'react';
 import {
-  Activity,
-  CloudOff,
   Container,
-  Cpu,
-  HardDrive,
   Image,
-  Layers,
   ListChecks,
   RefreshCw,
   RotateCcw,
@@ -21,23 +16,25 @@ import {
 import {
   api,
   type ConnectorStatus,
+  type SandboxCapabilities,
   type SandboxImageCatalog,
   type SandboxImageJob,
   type SandboxLease,
+  type SandboxSettings,
+  type SandboxSettingsUpdate,
 } from '../api';
-
-type SandboxIcon = typeof Shield;
+import { SandboxPolicySettings } from './SandboxPolicySettings';
 
 export function SandboxPanel({
   status,
-  onStatus,
   onRefresh,
 }: {
   status: ConnectorStatus;
-  onStatus: (status: ConnectorStatus) => void;
   onRefresh: () => Promise<void>;
 }) {
   const [catalog, setCatalog] = React.useState<SandboxImageCatalog | null>(null);
+  const [capabilities, setCapabilities] = React.useState<SandboxCapabilities | null>(null);
+  const [settings, setSettings] = React.useState<SandboxSettings | null>(null);
   const [jobs, setJobs] = React.useState<SandboxImageJob[]>([]);
   const [leases, setLeases] = React.useState<SandboxLease[]>([]);
   const [features, setFeatures] = React.useState<Record<string, string>>({});
@@ -46,6 +43,21 @@ export function SandboxPanel({
   const [loadingDetails, setLoadingDetails] = React.useState(false);
   const [building, setBuilding] = React.useState(false);
   const [imageActionId, setImageActionId] = React.useState<string | null>(null);
+  const [savingSettings, setSavingSettings] = React.useState(false);
+  const enablingSandbox = React.useRef(false);
+
+  const refreshSandboxConfig = React.useCallback(async () => {
+    try {
+      const [nextCapabilities, nextSettings] = await Promise.all([
+        api.sandboxCapabilities(),
+        api.sandboxSettings(),
+      ]);
+      setCapabilities(nextCapabilities);
+      setSettings(nextSettings);
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : '读取沙箱设置失败');
+    }
+  }, []);
 
   const refreshSandboxDetails = React.useCallback(async () => {
     if (!status.sandbox.enabled) {
@@ -81,8 +93,49 @@ export function SandboxPanel({
   }, [status.sandbox.enabled]);
 
   React.useEffect(() => {
+    void refreshSandboxConfig();
+  }, [refreshSandboxConfig]);
+
+  React.useEffect(() => {
     void refreshSandboxDetails();
   }, [refreshSandboxDetails]);
+
+  React.useEffect(() => {
+    if (
+      status.sandbox.enabled
+      || !capabilities
+      || status.sandbox.permission_configuration_error
+      || enablingSandbox.current
+    ) {
+      return;
+    }
+    const configuredBackend = settings?.default_backend || status.sandbox.default_backend;
+    const configuredReady = capabilities.backends.find(
+      (capability) => capability.backend === configuredBackend && capability.status === 'ready',
+    );
+    const preferred = configuredReady
+      || capabilities.backends.find(
+        (capability) => capability.backend === 'local_process' && capability.status === 'ready',
+      )
+      || capabilities.backends.find((capability) => capability.status === 'ready');
+    if (!preferred) {
+      setMessage('当前没有可用的沙箱运行方式，请先启动 Docker 或修复本机进程沙箱。');
+      return;
+    }
+    enablingSandbox.current = true;
+    void api.updateSandboxSettings({
+      enabled: true,
+      default_backend: preferred.backend,
+    }).then(async (nextSettings) => {
+      setSettings(nextSettings);
+      setMessage('安全沙箱已自动启用');
+      await onRefresh();
+    }).catch((err) => {
+      setMessage(err instanceof Error ? err.message : '启用安全沙箱失败');
+    }).finally(() => {
+      enablingSandbox.current = false;
+    });
+  }, [capabilities, onRefresh, settings?.default_backend, status.sandbox]);
 
   React.useEffect(() => {
     if (!status.sandbox.enabled) {
@@ -94,15 +147,21 @@ export function SandboxPanel({
     return () => window.clearInterval(interval);
   }, [jobs, refreshSandboxDetails, status.sandbox.enabled]);
 
-  const setEnabled = async (enabled: boolean) => {
+  const saveSandboxSettings = async (
+    patch: SandboxSettingsUpdate,
+    label: string,
+  ) => {
     setMessage(null);
+    setSavingSettings(true);
     try {
-      const next = await api.setSandboxEnabled({ enabled });
-      onStatus(next);
-      setMessage(enabled ? '本地沙箱已开启' : '本地沙箱已关闭');
-      await onRefresh();
+      const next = await api.updateSandboxSettings(patch);
+      setSettings(next);
+      setMessage(`${label}已更新`);
+      await Promise.all([refreshSandboxConfig(), onRefresh()]);
     } catch (err) {
-      setMessage(err instanceof Error ? err.message : '沙箱设置失败');
+      setMessage(err instanceof Error ? err.message : `${label}更新失败`);
+    } finally {
+      setSavingSettings(false);
     }
   };
 
@@ -127,15 +186,16 @@ export function SandboxPanel({
     }
   };
 
-  const deleteImage = async (imageId: string, imageRef: string) => {
-    if (!window.confirm(`确定删除本机 Docker 镜像 ${imageRef} 吗？`)) {
+  const deleteImage = async (imageId: string, imageRef: string, imageExists: boolean) => {
+    const actionLabel = imageExists ? '删除本机 Docker 镜像' : '清理已缺失的镜像记录';
+    if (!window.confirm(`确定${actionLabel} ${imageRef} 吗？`)) {
       return;
     }
     setMessage(null);
     setImageActionId(imageId);
     try {
       await api.deleteSandboxImage(imageId);
-      setMessage(`镜像已删除: ${imageRef}`);
+      setMessage(`${imageExists ? '镜像已删除' : '镜像记录已清理'}: ${imageRef}`);
       await Promise.all([refreshSandboxDetails(), onRefresh()]);
     } catch (err) {
       setMessage(err instanceof Error ? err.message : '删除镜像失败');
@@ -163,61 +223,45 @@ export function SandboxPanel({
       <div className="panel sandboxHero">
         <div className="panelHeader">
           <div>
-            <h2><Shield size={18} />本地沙箱</h2>
-            <p>Local Connector Core 在本机 Docker 内创建、启动和释放沙箱；Local Connector Service 只转发长连接消息。</p>
+            <h2><Shield size={18} />安全沙箱</h2>
+            <p>选择任务使用本机进程隔离还是 Docker，并管理文件、网络与 AI 审批。</p>
           </div>
           <div className="headerActions">
-            <button className="iconButton" onClick={() => void refreshSandboxDetails()} title="刷新沙箱">
+            <button
+              className="iconButton"
+              onClick={() => void Promise.all([
+                refreshSandboxConfig(),
+                refreshSandboxDetails(),
+                onRefresh(),
+              ])}
+              title="刷新安全沙箱状态"
+            >
               <RefreshCw size={17} />
             </button>
-            <label className="switch">
-              <input
-                type="checkbox"
-                checked={status.sandbox.enabled}
-                onChange={(event) => void setEnabled(event.target.checked)}
-              />
-              <span />
-            </label>
           </div>
         </div>
-        <div className="sandboxStatusGrid">
-          <StatusTile
-            icon={Container}
-            label="沙箱开关"
-            value={status.sandbox.enabled ? '已开启' : '已关闭'}
-            tone={status.sandbox.enabled ? 'ok' : 'muted'}
-          />
-          <StatusTile
-            icon={HardDrive}
-            label="Docker"
-            value={status.docker.installed ? (status.docker.running ? '运行中' : '未运行') : '未安装'}
-            detail={status.docker.version || status.docker.error || undefined}
-            tone={status.docker.installed && status.docker.running ? 'ok' : 'warn'}
-          />
-          <StatusTile
-            icon={Cpu}
-            label="运行后端"
-            value={status.sandbox.backend || 'docker'}
-            detail={status.sandbox.isolation || 'local_docker'}
-            tone="ok"
-          />
-          <StatusTile
-            icon={Image}
-            label="默认镜像"
-            value={status.sandbox.selected_image_ref || 'chatos-sandbox-agent:latest'}
-            tone="muted"
-          />
-        </div>
-        <div className="boundaryList sandboxBoundary">
-          <div><CloudOff size={16} />不调用云端 Sandbox Manager，不使用云端沙箱实例。</div>
-          <div><Activity size={16} />Task Runner 请求经 Local Connector 长连接转到本机执行。</div>
-          <div><Layers size={16} />可复用 common 里的镜像定义和 Dockerfile 生成逻辑，但运行时状态属于本机。</div>
-        </div>
+        {status.sandbox.permission_configuration_error ? (
+          <div className="formError">
+            受管权限策略尚未安全加载，沙箱执行已阻止：{status.sandbox.permission_configuration_error}
+          </div>
+        ) : null}
+        <SandboxPolicySettings
+          status={status}
+          settings={settings}
+          capabilities={capabilities}
+          saving={savingSettings}
+          onSave={saveSandboxSettings}
+        />
         {message ? <div className="banner">{message}</div> : null}
       </div>
 
       {status.sandbox.enabled ? (
-        <>
+        <details className="panel sandboxAdvancedPanel">
+          <summary>
+            <span><Settings2 size={16} />高级运行信息</span>
+            <small>可选 Docker 镜像、构建任务和当前运行实例</small>
+          </summary>
+          <div className="sandboxAdvancedContent">
           <div className="sandboxContentGrid">
             <section className="panel">
               <div className="panelHeader">
@@ -292,7 +336,7 @@ export function SandboxPanel({
                       <span className={image.status === 'local' ? 'status ok' : 'status bad'}>
                         {image.status === 'local' ? (image.id === 'default' ? '默认' : '本机') : '镜像缺失'}
                       </span>
-                      {image.status !== 'local' && image.rebuildable !== false ? (
+                      {image.rebuildable !== false ? (
                         <button
                           className="ghostButton compact"
                           disabled={imageActionId === image.id}
@@ -303,9 +347,9 @@ export function SandboxPanel({
                       ) : null}
                       <button
                         className="iconButton danger"
-                        title="删除本机镜像"
-                        disabled={imageActionId === image.id || image.status !== 'local'}
-                        onClick={() => void deleteImage(image.id, image.image_ref)}
+                        title={image.status === 'local' ? '删除本机镜像' : '清理缺失镜像记录'}
+                        disabled={imageActionId === image.id}
+                        onClick={() => void deleteImage(image.id, image.image_ref, image.status === 'local')}
                       >
                         <Trash2 size={14} />
                       </button>
@@ -317,7 +361,7 @@ export function SandboxPanel({
             </section>
           </div>
 
-          <section className="panel">
+          <section className="panel sandboxAdvancedInnerPanel">
             <div className="panelHeader">
               <div>
                 <h2><ListChecks size={18} />镜像任务</h2>
@@ -351,7 +395,7 @@ export function SandboxPanel({
             <div className="panelHeader">
               <div>
                 <h2><Container size={18} />当前沙箱</h2>
-                <p>Task Runner 运行时创建的本机 Docker 沙箱租约。</p>
+                <p>本地任务运行时创建的隔离实例。</p>
               </div>
             </div>
             {leases.length ? (
@@ -375,35 +419,13 @@ export function SandboxPanel({
               <div className="emptyState">当前没有运行中的本地沙箱。</div>
             )}
           </section>
-        </>
+          </div>
+        </details>
       ) : (
         <section className="panel">
-          <div className="emptyState">本地沙箱默认关闭。打开开关后会检查 Docker，并在本机 Docker 内创建沙箱。</div>
+          <div className="emptyState">正在启用安全沙箱；如果持续不可用，请启动 Docker 或检查本机沙箱组件。</div>
         </section>
       )}
     </section>
-  );
-}
-
-function StatusTile({
-  icon: Icon,
-  label,
-  value,
-  detail,
-  tone,
-}: {
-  icon: SandboxIcon;
-  label: string;
-  value: string;
-  detail?: string;
-  tone: 'ok' | 'warn' | 'muted';
-}) {
-  return (
-    <div className={`statusTile ${tone}`}>
-      <Icon size={18} />
-      <span>{label}</span>
-      <strong>{value}</strong>
-      {detail ? <small>{detail}</small> : null}
-    </div>
   );
 }

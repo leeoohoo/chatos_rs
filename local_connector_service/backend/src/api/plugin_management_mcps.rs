@@ -150,6 +150,7 @@ pub(super) async fn update_local_mcp_status(
     let request = LocalConnectorMcpStatusRequest {
         owner_user_id: user.effective_owner_user_id().to_string(),
         device_id: request.device_id,
+        workspace_id: None,
         manifest_id: request.manifest_id,
         status: request.status,
         last_error: request.last_error,
@@ -194,6 +195,7 @@ pub(super) async fn sync_socket_mcp_statuses(
             status: LocalConnectorMcpStatusRequest {
                 owner_user_id: owner_user_id.to_string(),
                 device_id: device_id.to_string(),
+                workspace_id: None,
                 manifest_id: item.manifest_id,
                 status: item.status,
                 last_error: item.last_error,
@@ -231,6 +233,7 @@ pub(super) async fn mark_device_mcps_offline(
                 status: LocalConnectorMcpStatusRequest {
                     owner_user_id: owner_user_id.to_string(),
                     device_id: device_id.to_string(),
+                    workspace_id: local.workspace_id,
                     manifest_id: local.manifest_id?,
                     status: "offline".to_string(),
                     last_error: Some("Local Connector device is offline".to_string()),
@@ -259,6 +262,7 @@ fn plugin_sync_request(
     LocalConnectorMcpSyncRequest {
         owner_user_id: user.effective_owner_user_id().to_string(),
         device_id: request.device_id,
+        workspace_id: None,
         manifest_id: request.manifest_id,
         runtime_kind: request.runtime_kind,
         internal_name: request.internal_name,

@@ -115,6 +115,8 @@ export function createAiModelActions({ set, get, client }: Deps) {
           supports_responses: config.supports_responses === true,
           task_usage_scenario: config.task_usage_scenario?.trim() || undefined,
           task_thinking_level: config.task_thinking_level?.trim() || undefined,
+          temperature: config.temperature ?? undefined,
+          max_output_tokens: config.max_output_tokens ?? undefined,
         };
         if (method === 'update') {
           const updateData: AiModelConfigUpdatePayload = {
@@ -129,6 +131,10 @@ export function createAiModelActions({ set, get, client }: Deps) {
             supports_responses: apiData.supports_responses,
             task_usage_scenario: apiData.task_usage_scenario,
             task_thinking_level: apiData.task_thinking_level,
+            temperature: apiData.temperature,
+            clear_temperature: config.temperature == null,
+            max_output_tokens: apiData.max_output_tokens,
+            clear_max_output_tokens: config.max_output_tokens == null,
           };
           if (trimmedApiKey) {
             updateData.api_key = trimmedApiKey;

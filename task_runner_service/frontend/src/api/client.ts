@@ -49,6 +49,7 @@ import type {
   TaskSummaryRecord,
   TaskListFilters,
   TaskProjectRecord,
+  TaskProjectRuntimeEnvironmentResponse,
   TaskRecord,
   TaskRunEventRecord,
   TaskRunRecord,
@@ -190,6 +191,10 @@ export const api = {
       }),
     ),
   getProject: (id: string) => request<TaskProjectRecord>(`/api/projects/${id}`),
+  getProjectRuntimeEnvironment: (id: string) =>
+    request<TaskProjectRuntimeEnvironmentResponse>(
+      `/api/projects/${encodeURIComponent(id)}/runtime-environment`,
+    ),
   listProjectTasks: (id: string) =>
     request<TaskRecord[]>(`/api/projects/${encodeURIComponent(id)}/tasks`),
   getTask: (id: string) => request<TaskRecord>(`/api/tasks/${id}`),

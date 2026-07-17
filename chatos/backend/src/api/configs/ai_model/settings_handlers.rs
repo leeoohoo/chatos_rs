@@ -110,6 +110,12 @@ pub(in crate::api::configs) async fn put_ai_model_settings(
         project_management_agent_thinking_level: normalize_settings_update_value(
             req.project_management_agent_thinking_level,
         ),
+        environment_initialization_model_config_id: normalize_settings_update_value(
+            req.environment_initialization_model_config_id,
+        ),
+        environment_initialization_thinking_level: normalize_settings_update_value(
+            req.environment_initialization_thinking_level,
+        ),
     };
     match user_service_api_client::update_model_settings(
         base_url.as_str(),

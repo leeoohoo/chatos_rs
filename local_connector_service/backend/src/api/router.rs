@@ -11,16 +11,22 @@ use tracing::Level;
 use crate::state::AppState;
 
 use super::{
-    connect_device, create_device, create_local_mcp, create_project_binding,
-    create_sandbox_pairing, create_workspace, current_user_handler, delete_local_mcp,
+    connect_device, create_device, create_local_mcp, create_managed_requirements_assignment,
+    create_managed_requirements_policy, create_project_binding, create_sandbox_pairing,
+    create_workspace, current_user_handler, delete_local_mcp,
+    delete_managed_requirements_assignment, delete_managed_requirements_policy,
     delete_project_binding, delete_sandbox_pairing, delete_workspace, disconnect_device,
-    get_device, health_handler, heartbeat_device, list_devices, list_local_mcps,
-    list_project_bindings, list_sandbox_pairings, list_user_skills, list_workspaces, mcp_relay,
-    memory_engine_proxy, require_auth, resolve_local_command_approval_capabilities,
+    get_agent_prompt_bundle, get_agent_prompt_bundle_manifest, get_device,
+    get_managed_memory_policy, get_managed_requirements, health_handler, heartbeat_device,
+    list_devices, list_local_mcps, list_managed_requirements_assignments,
+    list_managed_requirements_policies, list_project_bindings, list_sandbox_pairings,
+    list_user_skills, list_workspaces, mcp_relay, memory_engine_proxy, require_auth,
+    resolve_local_command_approval_capabilities, resolve_local_runtime_capabilities,
     resolve_model_runtime, revoke_device, sandbox_facade_path, sandbox_facade_root,
     skill_cancel_relay, skill_execute_relay, skill_prepare_relay, sync_user_skill_inventory,
     terminal_exec_relay, terminal_input_relay, terminal_session_create_relay, terminal_ws_relay,
-    update_local_mcp, update_local_mcp_status, update_project_binding, update_sandbox_pairing,
+    update_local_mcp, update_local_mcp_status, update_managed_requirements_assignment,
+    update_managed_requirements_policy, update_project_binding, update_sandbox_pairing,
     update_user_skill_preference, update_workspace, user_service_protected_proxy,
     user_service_public_proxy,
 };
@@ -38,6 +44,27 @@ pub fn build_router(state: AppState) -> Router {
             get(list_devices).post(create_device),
         )
         .route("/api/local-connectors/devices/{id}", get(get_device))
+        .route(
+            "/api/local-connectors/devices/{id}/managed-requirements",
+            get(get_managed_requirements),
+        )
+        .route(
+            "/api/local-connectors/managed-requirements/policies",
+            get(list_managed_requirements_policies).post(create_managed_requirements_policy),
+        )
+        .route(
+            "/api/local-connectors/managed-requirements/policies/{id}",
+            put(update_managed_requirements_policy).delete(delete_managed_requirements_policy),
+        )
+        .route(
+            "/api/local-connectors/managed-requirements/assignments",
+            get(list_managed_requirements_assignments).post(create_managed_requirements_assignment),
+        )
+        .route(
+            "/api/local-connectors/managed-requirements/assignments/{id}",
+            put(update_managed_requirements_assignment)
+                .delete(delete_managed_requirements_assignment),
+        )
         .route(
             "/api/local-connectors/devices/{id}/heartbeat",
             post(heartbeat_device),
@@ -101,6 +128,22 @@ pub fn build_router(state: AppState) -> Router {
         .route(
             "/api/plugin-management/agent-capabilities/local-command-approval",
             get(resolve_local_command_approval_capabilities),
+        )
+        .route(
+            "/api/plugin-management/agent-capabilities/{agent_key}",
+            get(resolve_local_runtime_capabilities),
+        )
+        .route(
+            "/api/plugin-management/agent-prompts/manifest",
+            get(get_agent_prompt_bundle_manifest),
+        )
+        .route(
+            "/api/plugin-management/agent-prompts/bundle",
+            get(get_agent_prompt_bundle),
+        )
+        .route(
+            "/api/local-connectors/config/memory-policy",
+            get(get_managed_memory_policy),
         )
         .route(
             "/api/plugin-management/local-mcps",
@@ -179,4 +222,7 @@ pub fn build_router(state: AppState) -> Router {
                 .allow_methods(Any)
                 .allow_headers(Any),
         )
+        .layer(middleware::from_fn(
+            chatos_service_runtime::request_id_middleware,
+        ))
 }

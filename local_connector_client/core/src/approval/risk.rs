@@ -43,3 +43,75 @@ pub(crate) fn classify_command(command: &str) -> RiskSummary {
         reason: None,
     }
 }
+
+pub(crate) fn classify_command_request(
+    command: &str,
+    permissions: Option<&RequestPermissionProfile>,
+) -> RiskSummary {
+    let command_risk = classify_command(command);
+    if command_risk.level == "high" {
+        return command_risk;
+    }
+    let Some(permissions) = permissions else {
+        return command_risk;
+    };
+    if permissions
+        .network
+        .as_ref()
+        .and_then(|network| network.enabled)
+        == Some(true)
+    {
+        return RiskSummary {
+            level: "high".to_string(),
+            reason: Some("command requests temporary network access".to_string()),
+        };
+    }
+    let entries = permissions
+        .file_system
+        .as_ref()
+        .map(|file_system| file_system.normalized_entries())
+        .unwrap_or_default();
+    if entries
+        .iter()
+        .any(|entry| entry.access == FileSystemAccessMode::Write)
+    {
+        return RiskSummary {
+            level: "high".to_string(),
+            reason: Some("command requests temporary filesystem write access".to_string()),
+        };
+    }
+    if entries
+        .iter()
+        .any(|entry| entry.access == FileSystemAccessMode::Read)
+    {
+        return RiskSummary {
+            level: "medium".to_string(),
+            reason: Some("command requests temporary filesystem read access".to_string()),
+        };
+    }
+    command_risk
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chatos_sandbox_contract::{AdditionalNetworkPermissions, RequestPermissionProfile};
+
+    #[test]
+    fn network_permission_request_is_high_risk_even_for_benign_command() {
+        let request = RequestPermissionProfile {
+            file_system: None,
+            network: Some(AdditionalNetworkPermissions {
+                enabled: Some(true),
+            }),
+        };
+        let risk = classify_command_request("true", Some(&request));
+        assert_eq!(risk.level, "high");
+        assert!(risk
+            .reason
+            .as_deref()
+            .unwrap_or_default()
+            .contains("network"));
+    }
+}
+use chatos_sandbox_contract::{FileSystemAccessMode, RequestPermissionProfile};

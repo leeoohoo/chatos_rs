@@ -11,7 +11,7 @@ use axum::{
 use serde::Deserialize;
 use serde_json::json;
 
-use crate::models::EngineSource;
+use crate::models::StoredEngineSource;
 use crate::repositories::sources;
 use crate::state::AppState;
 
@@ -19,7 +19,7 @@ use super::internal_error;
 
 #[derive(Debug, Clone)]
 pub struct SdkAuthContext {
-    pub source: EngineSource,
+    pub source: StoredEngineSource,
 }
 
 impl SdkAuthContext {
@@ -144,11 +144,11 @@ pub async fn auth_status(
 #[cfg(test)]
 mod tests {
     use super::SdkAuthContext;
-    use crate::models::EngineSource;
+    use crate::models::StoredEngineSource;
 
     fn auth_context(tenant_id: Option<&str>) -> SdkAuthContext {
         SdkAuthContext {
-            source: EngineSource {
+            source: StoredEngineSource {
                 id: "src_1".to_string(),
                 tenant_id: tenant_id.map(ToOwned::to_owned),
                 source_id: "source_1".to_string(),

@@ -48,6 +48,7 @@ export const normalizeAiModelConfig = (config: AiModelConfigResponse): AiModelCo
     id: config.id,
     name: config.name,
     provider: config.provider || 'gpt',
+    prompt_vendor: config.prompt_vendor,
     base_url: config.base_url || '',
     api_key: '',
     has_api_key: config.has_api_key === true || Boolean(config.api_key?.trim()),
@@ -55,6 +56,10 @@ export const normalizeAiModelConfig = (config: AiModelConfigResponse): AiModelCo
     thinking_level: config.thinking_level || undefined,
     task_usage_scenario: config.task_usage_scenario || null,
     task_thinking_level: config.task_thinking_level || null,
+    temperature: typeof config.temperature === 'number' ? config.temperature : null,
+    max_output_tokens: typeof config.max_output_tokens === 'number'
+      ? config.max_output_tokens
+      : null,
     enabled: config.enabled === true,
     supports_images: config.supports_images === true,
     supports_reasoning: config.supports_reasoning === true,
@@ -73,6 +78,7 @@ export const normalizeAiModelProvider = (provider: AiModelProviderResponse): AiM
     id: provider.id,
     name: provider.name,
     provider: provider.provider || 'gpt',
+    prompt_vendor: provider.prompt_vendor || 'gpt',
     base_url: provider.base_url || '',
     api_key: '',
     has_api_key: provider.has_api_key === true || Boolean(provider.api_key?.trim()),

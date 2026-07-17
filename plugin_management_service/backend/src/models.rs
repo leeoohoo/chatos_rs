@@ -1,10 +1,23 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use std::collections::BTreeMap;
-
+use chatos_plugin_management_sdk::AgentPromptVendor;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+
+pub use chatos_plugin_management_sdk::{
+    AgentBindingRecord, BindingConditions,
+    LocalConnectorMcpStatusBatchRequest as LocalConnectorMcpStatusBatchPayload,
+    LocalConnectorMcpStatusItem, LocalConnectorMcpStatusRequest as LocalConnectorMcpStatusPayload,
+    LocalConnectorMcpSyncRequest as LocalConnectorMcpSyncPayload, LocalConnectorRef,
+    LocalConnectorRequirement, LocalConnectorSkillInventoryItem,
+    LocalConnectorSkillInventoryRequest as LocalConnectorSkillInventoryPayload, McpProviderSkill,
+    McpRecord, McpRuntime, ResolveAgentCapabilitiesRequest as RuntimeCapabilitiesRequest,
+    ResolvedAgentCapabilities as RuntimeCapabilitiesResponse, ResolvedMcp, ResolvedSkill,
+    ResourceCheckRecord, ResourceMetadata, ResourceSecurity, SkillContent, SkillInstallationRecord,
+    SkillRecord, UpdateUserSkillPreferenceRequest as UpdateUserSkillPreferencePayload,
+    UserSkillCatalogItem, UserSkillCatalogResponse,
+};
 
 pub const USER_ROLE_SUPER_ADMIN: &str = "super_admin";
 pub const USER_ROLE_USER: &str = "user";
@@ -87,100 +100,6 @@ pub struct LoginResponse {
     pub user: CurrentUser,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct LocalConnectorRef {
-    pub device_id: Option<String>,
-    pub workspace_id: Option<String>,
-    pub manifest_id: Option<String>,
-    pub relative_path: Option<String>,
-    #[serde(default)]
-    pub requires_online: bool,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct McpRuntime {
-    pub kind: String,
-    pub builtin_kind: Option<String>,
-    pub server_name: Option<String>,
-    pub command: Option<String>,
-    #[serde(default)]
-    pub args: Vec<String>,
-    #[serde(default)]
-    pub env: BTreeMap<String, String>,
-    pub cwd: Option<String>,
-    pub url: Option<String>,
-    #[serde(default)]
-    pub headers: BTreeMap<String, String>,
-    pub local_connector: Option<LocalConnectorRef>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ResourceSecurity {
-    pub allow_writes: Option<bool>,
-    pub max_file_bytes: Option<i64>,
-    pub max_write_bytes: Option<i64>,
-    pub search_limit: Option<i64>,
-    #[serde(default)]
-    pub allowed_tool_names: Vec<String>,
-    #[serde(default)]
-    pub blocked_tool_names: Vec<String>,
-}
-
-impl Default for ResourceSecurity {
-    fn default() -> Self {
-        Self {
-            allow_writes: None,
-            max_file_bytes: Some(256 * 1024),
-            max_write_bytes: Some(5 * 1024 * 1024),
-            search_limit: Some(40),
-            allowed_tool_names: Vec::new(),
-            blocked_tool_names: Vec::new(),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct ResourceMetadata {
-    #[serde(default)]
-    pub tags: Vec<String>,
-    pub version: Option<String>,
-    pub homepage: Option<String>,
-    pub category: Option<String>,
-    pub argument_hint: Option<String>,
-    #[serde(default)]
-    pub extra: BTreeMap<String, Value>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct McpRecord {
-    pub id: String,
-    pub owner_user_id: String,
-    pub owner_kind: String,
-    pub visibility: String,
-    pub source_kind: String,
-    pub name: String,
-    pub display_name: String,
-    pub description: Option<String>,
-    pub enabled: bool,
-    pub runtime: McpRuntime,
-    pub security: ResourceSecurity,
-    pub metadata: ResourceMetadata,
-    pub created_by: String,
-    pub updated_by: String,
-    pub created_at: String,
-    pub updated_at: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct McpProviderSkill {
-    pub id: String,
-    pub name: String,
-    pub description: String,
-    pub instructions: String,
-    #[serde(default)]
-    pub locale: Option<String>,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct McpDescriptorResponse {
     pub mcp_id: String,
@@ -205,44 +124,6 @@ pub struct McpPayload {
     pub runtime: Option<McpRuntime>,
     pub security: Option<ResourceSecurity>,
     pub metadata: Option<ResourceMetadata>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct SkillContent {
-    pub kind: String,
-    pub inline: Option<String>,
-    pub package_id: Option<String>,
-    pub source_path: Option<String>,
-    pub repository: Option<String>,
-    pub branch: Option<String>,
-    pub local_connector: Option<LocalConnectorRef>,
-    #[serde(default)]
-    pub bundle_id: Option<String>,
-    #[serde(default)]
-    pub bundle_version: Option<String>,
-    #[serde(default)]
-    pub bundle_hash: Option<String>,
-    #[serde(default)]
-    pub entrypoint_kind: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SkillRecord {
-    pub id: String,
-    pub owner_user_id: String,
-    pub owner_kind: String,
-    pub visibility: String,
-    pub source_kind: String,
-    pub name: String,
-    pub display_name: String,
-    pub description: Option<String>,
-    pub enabled: bool,
-    pub content: SkillContent,
-    pub metadata: ResourceMetadata,
-    pub created_by: String,
-    pub updated_by: String,
-    pub created_at: String,
-    pub updated_at: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -319,6 +200,85 @@ pub struct SystemAgentPayload {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentProviderPromptRecord {
+    pub id: String,
+    pub agent_key: String,
+    pub vendor: AgentPromptVendor,
+    pub draft_content: Option<String>,
+    pub published_content: Option<String>,
+    pub published_revision: i64,
+    pub published_checksum: Option<String>,
+    pub enabled: bool,
+    pub source_kind: String,
+    pub generated_by_model_config_id: Option<String>,
+    pub created_by: String,
+    pub updated_by: String,
+    pub published_by: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+    pub published_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentPromptBundleVersionRecord {
+    pub id: String,
+    pub version: i64,
+    pub updated_at: String,
+    #[serde(default)]
+    pub required: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentPromptVersionPrompt {
+    pub vendor: AgentPromptVendor,
+    #[serde(default)]
+    pub content: String,
+    pub revision: i64,
+    pub checksum: String,
+    pub published_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentPromptVersionRecord {
+    pub id: String,
+    pub agent_key: String,
+    pub bundle_version: i64,
+    pub changed_vendor: Option<AgentPromptVendor>,
+    pub prompts: Vec<AgentPromptVersionPrompt>,
+    pub published_by: String,
+    pub published_at: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct AgentPromptVersionVendorSummary {
+    pub vendor: AgentPromptVendor,
+    pub revision: i64,
+    pub checksum: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct AgentPromptVersionSummary {
+    pub id: String,
+    pub agent_key: String,
+    pub bundle_version: i64,
+    pub changed_vendor: Option<AgentPromptVendor>,
+    pub vendor_revisions: Vec<AgentPromptVersionVendorSummary>,
+    pub published_by: String,
+    pub published_at: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct UpdateAgentPromptDraftRequest {
+    pub content: String,
+    pub expected_updated_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct PublishAgentPromptRequest {
+    pub expected_draft_checksum: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentMcpBindingView {
     pub mcp: McpRecord,
     pub mode: String,
@@ -343,32 +303,6 @@ pub struct UpdateAgentMcpBindingsRequest {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct BindingConditions {
-    pub task_profile: Option<String>,
-    pub project_source_type: Option<String>,
-    pub runtime_provider: Option<String>,
-    pub schedule_mode: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AgentBindingRecord {
-    pub id: String,
-    pub agent_key: String,
-    pub binding_scope: String,
-    pub owner_user_id: Option<String>,
-    pub resource_kind: String,
-    pub resource_id: String,
-    pub enabled: bool,
-    pub required: bool,
-    pub priority: i64,
-    pub conditions: BindingConditions,
-    pub created_by: String,
-    pub updated_by: String,
-    pub created_at: String,
-    pub updated_at: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct AgentBindingPayload {
     pub binding_scope: Option<String>,
     pub owner_user_id: Option<String>,
@@ -381,36 +315,6 @@ pub struct AgentBindingPayload {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ResourceCheckRecord {
-    pub id: String,
-    pub resource_kind: String,
-    pub resource_id: String,
-    pub owner_user_id: String,
-    pub status: String,
-    pub last_checked_at: String,
-    pub last_error: Option<String>,
-    #[serde(default)]
-    pub tool_snapshot: Vec<Value>,
-    pub manifest_hash: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SkillInstallationRecord {
-    pub id: String,
-    pub owner_user_id: String,
-    pub device_id: String,
-    pub skill_id: String,
-    pub bundle_id: String,
-    pub version: String,
-    pub bundle_hash: String,
-    pub platform: String,
-    pub status: String,
-    pub dependency_status: String,
-    pub last_error: Option<String>,
-    pub last_checked_at: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UserSkillPreferenceRecord {
     pub id: String,
     pub owner_user_id: String,
@@ -418,99 +322,6 @@ pub struct UserSkillPreferenceRecord {
     pub enabled: bool,
     pub enabled_at: Option<String>,
     pub updated_at: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct UserSkillCatalogItem {
-    pub skill: SkillRecord,
-    pub user_enabled: bool,
-    pub available: bool,
-    pub status: String,
-    pub reason: Option<String>,
-    pub installation: Option<SkillInstallationRecord>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct UserSkillCatalogResponse {
-    pub items: Vec<UserSkillCatalogItem>,
-    pub total: u64,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct UpdateUserSkillPreferencePayload {
-    pub owner_user_id: String,
-    pub enabled: bool,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct LocalConnectorSkillInventoryItem {
-    pub skill_id: String,
-    pub bundle_id: String,
-    pub version: String,
-    pub bundle_hash: String,
-    pub status: String,
-    pub dependency_status: String,
-    pub last_error: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct LocalConnectorSkillInventoryPayload {
-    pub owner_user_id: String,
-    pub device_id: String,
-    pub platform: String,
-    #[serde(default)]
-    pub items: Vec<LocalConnectorSkillInventoryItem>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct LocalConnectorMcpSyncPayload {
-    pub owner_user_id: String,
-    pub device_id: String,
-    #[serde(default)]
-    pub workspace_id: Option<String>,
-    pub manifest_id: String,
-    pub runtime_kind: String,
-    pub internal_name: String,
-    pub display_name: String,
-    pub description: Option<String>,
-    #[serde(default = "default_true")]
-    pub enabled: bool,
-    pub manifest_hash: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct LocalConnectorMcpStatusPayload {
-    pub owner_user_id: String,
-    pub device_id: String,
-    #[serde(default)]
-    pub workspace_id: Option<String>,
-    pub manifest_id: String,
-    pub status: String,
-    pub last_error: Option<String>,
-    #[serde(default)]
-    pub tool_snapshot: Vec<Value>,
-    pub manifest_hash: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct LocalConnectorMcpStatusBatchPayload {
-    #[serde(default)]
-    pub items: Vec<LocalConnectorMcpStatusItem>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct LocalConnectorMcpStatusItem {
-    pub mcp_id: String,
-    pub owner_user_id: String,
-    pub device_id: String,
-    #[serde(default)]
-    pub workspace_id: Option<String>,
-    pub manifest_id: String,
-    pub status: String,
-    pub last_error: Option<String>,
-    #[serde(default)]
-    pub tool_snapshot: Vec<Value>,
-    pub manifest_hash: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -524,10 +335,6 @@ pub struct LocalConnectorMcpInternalQuery {
 pub struct LocalConnectorSkillInternalQuery {
     pub owner_user_id: Option<String>,
     pub device_id: Option<String>,
-}
-
-fn default_true() -> bool {
-    true
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -559,58 +366,4 @@ pub struct RuntimeCapabilitiesQuery {
     pub agent_key: String,
     pub owner_user_id: Option<String>,
     pub include_unavailable: Option<bool>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RuntimeCapabilitiesRequest {
-    pub agent_key: String,
-    pub owner_user_id: String,
-    #[serde(default = "default_include_unavailable")]
-    pub include_unavailable: bool,
-}
-
-fn default_include_unavailable() -> bool {
-    true
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ResolvedMcp {
-    pub resource: McpRecord,
-    pub binding: AgentBindingRecord,
-    pub available: bool,
-    pub status: String,
-    pub reason: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ResolvedSkill {
-    pub resource: SkillRecord,
-    pub binding: AgentBindingRecord,
-    pub available: bool,
-    pub status: String,
-    pub reason: Option<String>,
-    pub installation: Option<SkillInstallationRecord>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct LocalConnectorRequirement {
-    pub resource_kind: String,
-    pub resource_id: String,
-    pub device_id: Option<String>,
-    pub workspace_id: Option<String>,
-    pub required: bool,
-    pub available: bool,
-    pub reason: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RuntimeCapabilitiesResponse {
-    pub agent_key: String,
-    pub owner_user_id: String,
-    pub policy_revision: String,
-    pub generated_at: String,
-    pub agent_enabled: bool,
-    pub mcps: Vec<ResolvedMcp>,
-    pub skills: Vec<ResolvedSkill>,
-    pub local_connector_requirements: Vec<LocalConnectorRequirement>,
 }

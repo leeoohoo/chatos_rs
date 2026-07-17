@@ -90,7 +90,21 @@ pub fn is_transient_network_error(err: &str) -> bool {
         || message.contains("status 522")
         || message.contains("status 523")
         || message.contains("status 524")
+        || is_retryable_failed_provider_response(err)
         || is_retryable_provider_backpressure_error(err)
+}
+
+pub fn is_retryable_failed_provider_response(err: &str) -> bool {
+    let message = err.to_lowercase();
+    if !message.contains("ai response failed: finish_reason=failed") {
+        return false;
+    }
+    if is_provider_authentication_error(err) || is_non_retryable_quota_error(message.as_str()) {
+        return false;
+    }
+    !message.contains("invalid_request_error")
+        && !message.contains("invalid request")
+        && !message.contains("bad_request")
 }
 
 pub fn is_retryable_provider_overload_error(err: &str) -> bool {
@@ -258,10 +272,11 @@ mod tests {
         classify_transient_retry, classify_user_facing_ai_error, exhausted_transient_retry_message,
         handle_transient_retry, is_context_length_exceeded_error, is_provider_authentication_error,
         is_rate_limited_provider_error, is_request_body_too_large_error, is_response_parse_error,
-        is_retryable_provider_backpressure_error, is_retryable_provider_overload_error,
-        is_transient_network_error, is_transient_transport_or_parse_error,
-        replay_request_error_policy, transient_retry_backoff_ms, transient_retry_kind_label,
-        RequestErrorReplay, TransientRetryAction,
+        is_retryable_failed_provider_response, is_retryable_provider_backpressure_error,
+        is_retryable_provider_overload_error, is_transient_network_error,
+        is_transient_transport_or_parse_error, replay_request_error_policy,
+        transient_retry_backoff_ms, transient_retry_kind_label, RequestErrorReplay,
+        TransientRetryAction,
     };
 
     #[test]
@@ -340,9 +355,31 @@ mod tests {
             "ai response failed: finish_reason=failed; provider_error=message=Selected model is at capacity. Please try a different model."
         ));
         assert!(is_transient_network_error(
+            "ai response failed: finish_reason=failed; provider_error=unavailable"
+        ));
+        assert!(is_transient_network_error(
             "status 429 Too Many Requests: {\"error\":{\"message\":\"Rate limit exceeded\"}}"
         ));
         assert!(!is_transient_network_error("status 401: invalid api key"));
+    }
+
+    #[test]
+    fn retries_failed_provider_responses_unless_the_error_is_actionable() {
+        assert!(is_retryable_failed_provider_response(
+            "ai response failed: finish_reason=failed; provider_error=unavailable"
+        ));
+        assert!(is_retryable_failed_provider_response(
+            "ai response failed: finish_reason=failed; provider_error=type=server_error; message=temporary failure"
+        ));
+        assert!(!is_retryable_failed_provider_response(
+            "ai response failed: finish_reason=failed; provider_error=type=invalid_request_error; message=invalid request"
+        ));
+        assert!(!is_retryable_failed_provider_response(
+            "ai response failed: finish_reason=failed; provider_error=code=insufficient_quota; message=credit balance exhausted"
+        ));
+        assert!(!is_retryable_failed_provider_response(
+            "ai response failed: finish_reason=failed; provider_error=message=invalid api key"
+        ));
     }
 
     #[test]

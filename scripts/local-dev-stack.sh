@@ -17,6 +17,7 @@ COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-chatos-rs}"
 
 INFRA_SERVICES=(consul mongodb harness)
 DOCKER_APP_SERVICES=(
+  configuration-center-backend
   user-service-backend
   memory-engine-backend
   project-management-backend
@@ -26,6 +27,7 @@ DOCKER_APP_SERVICES=(
   task-runner-backend
   chatos-backend
   official-website-backend
+  configuration-center-frontend
   chatos-frontend
   user-service-frontend
   memory-engine-frontend
@@ -37,6 +39,7 @@ DOCKER_APP_SERVICES=(
 )
 
 BACKEND_SERVICES=(
+  "configuration-center-backend|configuration-center|config_center_service/backend/Cargo.toml|/health|39270|config_center_service_backend"
   "user-service-backend|user-service|user_service/backend/Cargo.toml|/api/health|39190|user_service_backend"
   "memory-engine-backend|memory-engine|memory_engine/backend/Cargo.toml|/health|7081|memory_engine"
   "project-management-backend|project-service|project_management_service/backend/Cargo.toml|/api/health|39210|project_management_service_backend"
@@ -49,6 +52,7 @@ BACKEND_SERVICES=(
 )
 
 FRONTEND_SERVICES=(
+  "configuration-center-frontend|config_center_service/frontend|39271"
   "chatos-frontend|chatos/frontend|8088"
   "user-service-frontend|user_service/frontend|39191"
   "memory-engine-frontend|memory_engine/frontend|4178"

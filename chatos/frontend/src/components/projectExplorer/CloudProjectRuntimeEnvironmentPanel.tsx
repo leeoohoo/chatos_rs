@@ -7,12 +7,16 @@ import { Cloud, Clock3, HardDrive, Loader2, PlayCircle, RefreshCw, ScrollText } 
 import { useI18n } from '../../i18n/I18nProvider';
 import { useApiClient } from '../../lib/api/ApiClientContext';
 import type {
-  ProjectRuntimeEnvironmentImageResponse,
   ProjectRuntimeEnvironmentProgressResponse,
   ProjectRuntimeEnvironmentRecordResponse,
   ProjectRuntimeEnvironmentResponse,
 } from '../../lib/api/client/types';
 import { cn } from '../../lib/utils';
+import {
+  actionNoticeForRuntimeStatus,
+  type RuntimeActionNotice,
+} from './cloudRuntimeActionNotice';
+import CloudRuntimeImagePlans from './CloudRuntimeImagePlans';
 
 interface CloudProjectRuntimeEnvironmentPanelProps {
   projectId: string;
@@ -107,7 +111,7 @@ const statusTone = (status: string): string => {
   if (status === 'failed' || status === 'not_runnable') {
     return 'border-destructive/30 bg-destructive/10 text-destructive';
   }
-  if (status === 'analyzing' || status === 'pending') {
+  if (status === 'analyzing' || status === 'pending' || status === 'pending_image_build') {
     return 'border-amber-500/30 bg-amber-500/10 text-amber-700';
   }
   return 'border-border bg-background text-muted-foreground';
@@ -136,11 +140,14 @@ export const CloudProjectRuntimeEnvironmentPanel: React.FC<CloudProjectRuntimeEn
   const [progress, setProgress] = useState<ProjectRuntimeEnvironmentProgressResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [analyzing, setAnalyzing] = useState(false);
+  const [buildingImageId, setBuildingImageId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [actionNotice, setActionNotice] = useState<RuntimeActionNotice | null>(null);
 
   const loadEnvironment = useCallback(async () => {
     setLoading(true);
     setError(null);
+    setActionNotice(null);
     try {
       setResponse(await client.getProjectRuntimeEnvironment(projectId));
     } catch (loadError) {
@@ -157,13 +164,54 @@ export const CloudProjectRuntimeEnvironmentPanel: React.FC<CloudProjectRuntimeEn
   const analyzeEnvironment = useCallback(async () => {
     setAnalyzing(true);
     setError(null);
+    setActionNotice(null);
     setProgress(null);
     try {
-      setResponse(await client.analyzeProjectRuntimeEnvironment(projectId));
+      const nextResponse = await client.analyzeProjectRuntimeEnvironment(projectId);
+      const nextEnvironment = asRecord(environmentRecord(nextResponse));
+      const nextStatus = readString(nextEnvironment, ['status'], 'pending');
+      const nextSummary = readString(nextEnvironment, ['analysis_summary', 'analysisSummary']);
+      setResponse(nextResponse);
+      setActionNotice(actionNoticeForRuntimeStatus(nextStatus, t, nextSummary));
     } catch (analyzeError) {
       setError(analyzeError instanceof Error ? analyzeError.message : t('cloudRuntime.analyzeFailed'));
     } finally {
       setAnalyzing(false);
+    }
+  }, [client, projectId, t]);
+
+  const generateRuntimeImage = useCallback(async (imageId: string) => {
+    setBuildingImageId(imageId);
+    setError(null);
+    setActionNotice({ tone: 'info', message: t('cloudRuntime.imageBuildSubmitted') });
+    setResponse((current) => current ? {
+      ...current,
+      environment: {
+        ...current.environment,
+        status: 'pending_image_build',
+      },
+      images: (current.images || []).map((image) => (
+        image.dockerfile
+          ? { ...image, status: 'building', error: null }
+          : { ...image, status: 'preparing', error: null }
+      )),
+    } : current);
+    try {
+      const nextResponse = await client.generateProjectRuntimeEnvironmentImage(projectId, imageId);
+      const nextEnvironment = asRecord(environmentRecord(nextResponse));
+      const nextStatus = readString(nextEnvironment, ['status'], 'pending');
+      const nextSummary = readString(nextEnvironment, ['analysis_summary', 'analysisSummary']);
+      setResponse(nextResponse);
+      setActionNotice(actionNoticeForRuntimeStatus(nextStatus, t, nextSummary));
+    } catch (buildError) {
+      setError(buildError instanceof Error ? buildError.message : t('cloudRuntime.imageBuildFailed'));
+      try {
+        setResponse(await client.getProjectRuntimeEnvironment(projectId));
+      } catch {
+        // Keep the build error visible; manual refresh can retry the status request.
+      }
+    } finally {
+      setBuildingImageId(null);
     }
   }, [client, projectId, t]);
 
@@ -201,6 +249,12 @@ export const CloudProjectRuntimeEnvironmentPanel: React.FC<CloudProjectRuntimeEn
   const progressLogs = readString(progressData, ['logs']);
   const progressError = readString(progressData, ['error']);
   const showProgress = backendAnalyzing || Boolean(progressJobId || progressLogs || progressError);
+  const visibleNotice = status === 'pending_configuration'
+    ? actionNotice || {
+      tone: 'warning' as const,
+      message: analysisSummary || t('cloudRuntime.configurationRequired'),
+    }
+    : actionNotice;
 
   useEffect(() => {
     if (!backendAnalyzing) {
@@ -219,13 +273,38 @@ export const CloudProjectRuntimeEnvironmentPanel: React.FC<CloudProjectRuntimeEn
       }
       if (environmentResult.status === 'fulfilled') {
         setResponse(environmentResult.value);
+        const nextEnvironment = asRecord(environmentRecord(environmentResult.value));
+        const nextStatus = readString(
+          nextEnvironment,
+          ['status'],
+          'pending',
+        );
+        if (nextStatus !== 'analyzing') {
+          setActionNotice(actionNoticeForRuntimeStatus(
+            nextStatus,
+            t,
+            readString(nextEnvironment, ['analysis_summary', 'analysisSummary']),
+          ));
+        }
       }
       if (progressResult.status === 'fulfilled') {
         setProgress(progressResult.value);
         const nextStatus = readString(asRecord(progressResult.value), ['status']);
         if (nextStatus === 'failed' || nextStatus === 'succeeded') {
           try {
-            setResponse(await client.getProjectRuntimeEnvironment(projectId));
+            const finalResponse = await client.getProjectRuntimeEnvironment(projectId);
+            const finalEnvironment = asRecord(environmentRecord(finalResponse));
+            const finalStatus = readString(
+              finalEnvironment,
+              ['status'],
+              'pending',
+            );
+            setResponse(finalResponse);
+            setActionNotice(actionNoticeForRuntimeStatus(
+              finalStatus,
+              t,
+              readString(finalEnvironment, ['analysis_summary', 'analysisSummary']),
+            ));
           } catch {
             // The next scheduled poll will retry the project status refresh.
           }
@@ -306,10 +385,30 @@ export const CloudProjectRuntimeEnvironmentPanel: React.FC<CloudProjectRuntimeEn
             ) : (
               <PlayCircle className="h-3.5 w-3.5" aria-hidden="true" />
             )}
-            {analyzing || backendAnalyzing ? t('cloudRuntime.analyzing') : t('cloudRuntime.analyze')}
+            {analyzing || backendAnalyzing
+              ? t('cloudRuntime.analyzing')
+              : status === 'pending_configuration'
+                ? t('cloudRuntime.checkConfiguration')
+                : t('cloudRuntime.analyze')}
           </button>
         </div>
       </div>
+
+      {visibleNotice && !(error || lastError || notRunnableReason) && (
+        <div
+          role={visibleNotice.tone === 'warning' ? 'alert' : 'status'}
+          className={cn(
+            'border-t px-4 py-3 text-xs',
+            visibleNotice.tone === 'warning'
+              ? 'border-amber-500/30 bg-amber-500/10 text-amber-800'
+              : visibleNotice.tone === 'success'
+                ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-800'
+                : 'border-sky-500/30 bg-sky-500/10 text-sky-800',
+          )}
+        >
+          {visibleNotice.message}
+        </div>
+      )}
 
       {(error || lastError || notRunnableReason) && (
         <div className="border-t border-border bg-destructive/5 px-4 py-3 text-xs text-destructive">
@@ -473,47 +572,13 @@ export const CloudProjectRuntimeEnvironmentPanel: React.FC<CloudProjectRuntimeEn
         </div>
       </section>
 
-      <section className="border-t border-border px-4 py-4">
-        <h3 className="text-sm font-semibold text-foreground">{t('cloudRuntime.images')}</h3>
-        <div className="mt-3 overflow-x-auto border border-border">
-          <table className="w-full min-w-[900px] text-left text-xs">
-            <thead className="bg-muted/40 text-muted-foreground">
-              <tr>
-                <th className="px-3 py-2 font-medium">{t('cloudRuntime.environment')}</th>
-                <th className="px-3 py-2 font-medium">{t('cloudRuntime.image')}</th>
-                <th className="px-3 py-2 font-medium">{t('cloudRuntime.provider')}</th>
-                <th className="px-3 py-2 font-medium">{t('cloudRuntime.status')}</th>
-                <th className="px-3 py-2 font-medium">{t('cloudRuntime.ports')}</th>
-                <th className="px-3 py-2 font-medium">{t('cloudRuntime.envVars')}</th>
-                <th className="px-3 py-2 font-medium">{t('cloudRuntime.error')}</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-border">
-              {images.length === 0 ? (
-                <tr><td className="px-3 py-6 text-center text-muted-foreground" colSpan={7}>{t('cloudRuntime.noImages')}</td></tr>
-              ) : images.map((image, index) => (
-                <RuntimeImageRow key={image.id || `${image.environment_key || image.environmentKey}-${index}`} image={image} />
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </section>
+      <CloudRuntimeImagePlans
+        images={images}
+        isCloudProject={isCloudProject}
+        buildingImageId={buildingImageId}
+        onGenerateImage={(imageId) => void generateRuntimeImage(imageId)}
+      />
     </div>
-  );
-};
-
-const RuntimeImageRow: React.FC<{ image: ProjectRuntimeEnvironmentImageResponse }> = ({ image }) => {
-  const record = asRecord(image);
-  return (
-    <tr>
-      <td className="px-3 py-2">{readString(record, ['display_name', 'displayName', 'environment_key', 'environmentKey'], '-')}</td>
-      <td className="px-3 py-2 font-mono">{readString(record, ['image_ref', 'imageRef', 'image_id', 'imageId'], '-')}</td>
-      <td className="px-3 py-2 font-mono">{readString(record, ['image_provider', 'imageProvider'], '-')}</td>
-      <td className="px-3 py-2">{readString(record, ['status'], '-')}</td>
-      <td className="whitespace-pre-wrap px-3 py-2 font-mono">{displayValue(record.ports)}</td>
-      <td className="whitespace-pre-wrap px-3 py-2 font-mono">{displayValue(record.env_vars ?? record.envVars)}</td>
-      <td className="px-3 py-2 text-destructive">{readString(record, ['error'], '-')}</td>
-    </tr>
   );
 };
 

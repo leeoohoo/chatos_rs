@@ -4,15 +4,15 @@
 use portable_pty::CommandBuilder;
 use serde_json::Value;
 use ssh2::Session;
-use std::io::Read;
 use std::sync::mpsc;
 use std::time::Duration as StdDuration;
 use tokio::time::Duration;
 
+use chatos_remote_runtime::{establish_ssh_session, read_stream_limited};
+
 use crate::models::remote_connection::RemoteConnection;
 use crate::utils::process_output::{run_command_limited, BoundedCommandError};
 
-use super::apply_host_key_policy;
 use super::authenticate_target_session;
 use super::build_ssh_args;
 use super::build_ssh_process_command;
@@ -76,34 +76,28 @@ pub(super) fn connect_ssh2_session_with_interactive_verification(
         stream
     };
 
-    let mut session = Session::new().map_err(|e| format!("创建 SSH 会话失败: {e}"))?;
-    session.set_tcp_stream(stream);
-    session.set_timeout(timeout_ms);
-    session
-        .handshake()
-        .map_err(|e| format!("SSH 握手失败: {e}"))?;
-    apply_host_key_policy(
-        &session,
+    let session = establish_ssh_session(
+        stream,
+        timeout,
         connection.host.as_str(),
         connection.port,
         connection.host_key_policy.as_str(),
-    )?;
-    let (target_verification_code_rx, target_challenge_tx) = if jump_enabled {
-        (None, None)
-    } else {
-        (verification_code_rx, challenge_tx)
-    };
-    authenticate_target_session(
-        &session,
-        connection,
-        verification_code,
-        target_verification_code_rx,
-        target_challenge_tx,
-    )?;
-
-    if !session.authenticated() {
-        return Err("SSH 认证失败".to_string());
-    }
+        |session| {
+            let (target_verification_code_rx, target_challenge_tx) = if jump_enabled {
+                (None, None)
+            } else {
+                (verification_code_rx, challenge_tx)
+            };
+            authenticate_target_session(
+                session,
+                connection,
+                verification_code,
+                target_verification_code_rx,
+                target_challenge_tx,
+            )
+        },
+    )
+    .map_err(|error| error.to_string())?;
 
     Ok(ConnectedSshSession { session })
 }
@@ -161,16 +155,12 @@ pub(crate) async fn run_ssh_command_with_verification(
                 .exec(command.as_str())
                 .map_err(|e| format!("执行远端命令失败: {e}"))?;
 
-            let stdout =
-                read_ssh_stream_limited(&mut channel, REMOTE_SSH_STDOUT_LIMIT_BYTES, "stdout")
-                    .map_err(|e| format!("读取标准输出失败: {e}"))?;
+            let stdout = read_stream_limited(&mut channel, "stdout", REMOTE_SSH_STDOUT_LIMIT_BYTES)
+                .map_err(|e| format!("读取标准输出失败: {e}"))?;
             let mut stderr_stream = channel.stderr();
-            let stderr = read_ssh_stream_limited(
-                &mut stderr_stream,
-                REMOTE_SSH_STDERR_LIMIT_BYTES,
-                "stderr",
-            )
-            .map_err(|e| format!("读取标准错误失败: {e}"))?;
+            let stderr =
+                read_stream_limited(&mut stderr_stream, "stderr", REMOTE_SSH_STDERR_LIMIT_BYTES)
+                    .map_err(|e| format!("读取标准错误失败: {e}"))?;
             let _ = channel.wait_close();
             let code = channel.exit_status().unwrap_or(0);
 
@@ -244,40 +234,6 @@ fn map_ssh_process_error(prefix: &str, err: BoundedCommandError, password_auth: 
     }
 }
 
-fn read_ssh_stream_limited<R>(
-    reader: &mut R,
-    limit_bytes: usize,
-    stream_label: &str,
-) -> Result<Vec<u8>, String>
-where
-    R: Read,
-{
-    let mut output = Vec::new();
-    let mut buffer = [0_u8; 8192];
-    loop {
-        let read = reader.read(&mut buffer).map_err(|err| err.to_string())?;
-        if read == 0 {
-            return Ok(output);
-        }
-        let next_len = output.len().saturating_add(read);
-        ensure_ssh_stream_within_limit(stream_label, next_len, limit_bytes)?;
-        output.extend_from_slice(&buffer[..read]);
-    }
-}
-
-fn ensure_ssh_stream_within_limit(
-    stream_label: &str,
-    actual_bytes: usize,
-    limit_bytes: usize,
-) -> Result<(), String> {
-    if actual_bytes > limit_bytes {
-        return Err(format!(
-            "SSH {stream_label} exceeded output limit: {actual_bytes} bytes > {limit_bytes} bytes"
-        ));
-    }
-    Ok(())
-}
-
 pub(crate) async fn run_remote_connectivity_test(
     connection: &RemoteConnection,
     verification_code: Option<&str>,
@@ -306,23 +262,4 @@ pub(crate) async fn run_remote_connectivity_test(
         "remote_host": host_line,
         "connected_at": crate::core::time::now_rfc3339(),
     }))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::ensure_ssh_stream_within_limit;
-
-    #[test]
-    fn ssh_stream_limit_accepts_boundary_size() {
-        assert!(ensure_ssh_stream_within_limit("stdout", 1024, 1024).is_ok());
-    }
-
-    #[test]
-    fn ssh_stream_limit_rejects_oversized_output() {
-        let err = ensure_ssh_stream_within_limit("stderr", 1025, 1024)
-            .expect_err("oversized output should fail");
-
-        assert!(err.contains("exceeded output limit"));
-        assert!(err.contains("1025 bytes > 1024 bytes"));
-    }
 }

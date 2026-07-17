@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
+// @vitest-environment jsdom
+
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createChatStoreWithBackend } from './createChatStoreWithBackend';

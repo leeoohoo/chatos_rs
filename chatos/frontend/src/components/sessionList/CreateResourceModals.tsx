@@ -6,6 +6,7 @@ import React from 'react';
 import { useI18n } from '../../i18n/I18nProvider';
 import { getUserVisiblePath, resolveUserVisiblePathInput } from '../../lib/domain/filesystem';
 import ManagerFormDialog from '../ui/ManagerFormDialog';
+import { CloudProjectSourceFields, type CloudProjectSourceMethod } from './CloudProjectSourceFields';
 import { deriveNameFromPath } from './helpers';
 
 export type ResourceSourceMode = 'server' | 'local_connector';
@@ -412,6 +413,7 @@ interface CreateProjectModalProps {
   selectedLocalDirectoryPath?: string;
   selectedLocalWorkspaceId?: string;
   submitting?: boolean;
+  allowLocalConnector?: boolean;
   onClose: () => void;
   onSourceModeChange?: (value: ResourceSourceMode) => void;
   onProjectRootChange: (value: string) => void;
@@ -446,6 +448,7 @@ export const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
   selectedLocalDirectoryPath = '',
   selectedLocalWorkspaceId = '',
   submitting = false,
+  allowLocalConnector = true,
   onClose,
   onSourceModeChange = () => {},
   onProjectRootChange,
@@ -461,6 +464,41 @@ export const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
   onCreate,
 }) => {
   const { t } = useI18n();
+  const [cloudSourceMethod, setCloudSourceMethod] = React.useState<CloudProjectSourceMethod>('git');
+  const [cloudSourceError, setCloudSourceError] = React.useState<string | null>(null);
+  const wasOpenRef = React.useRef(false);
+
+  React.useEffect(() => {
+    if (isOpen && !wasOpenRef.current) {
+      setCloudSourceMethod(cloudProjectZipFile ? 'zip' : 'git');
+      setCloudSourceError(null);
+    } else if (!isOpen) {
+      setCloudSourceError(null);
+    }
+    wasOpenRef.current = isOpen;
+  }, [cloudProjectGitUrl, cloudProjectZipFile, isOpen]);
+
+  const changeCloudSourceMethod = (method: CloudProjectSourceMethod) => {
+    setCloudSourceMethod(method);
+    setCloudSourceError(null);
+    if (method !== 'git') onCloudProjectGitUrlChange('');
+    if (method !== 'zip') onCloudProjectZipFileChange(null);
+  };
+
+  const submitProject = () => {
+    if (sourceMode === 'server') {
+      if (cloudSourceMethod === 'git' && !cloudProjectGitUrl.trim()) {
+        setCloudSourceError(t('sessionList.resource.error.enterGitUrl'));
+        return;
+      }
+      if (cloudSourceMethod === 'zip' && !cloudProjectZipFile) {
+        setCloudSourceError(t('sessionList.resource.error.selectZipFile'));
+        return;
+      }
+    }
+    setCloudSourceError(null);
+    onCreate();
+  };
 
   return (
     <CreateResourceModal
@@ -469,9 +507,9 @@ export const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
       pathLabel={t('sessionList.resource.projectDirectory')}
       previewLabel={t('sessionList.resource.projectDefaultName')}
       pathValue={projectRoot}
-      error={projectError}
+      error={cloudSourceError || projectError}
       fallbackName="Project"
-      sourceMode={sourceMode}
+      sourceMode={allowLocalConnector ? sourceMode : 'server'}
       localConnectorWorkspaces={localConnectorWorkspaces}
       localConnectorLoading={localConnectorLoading}
       localConnectorError={localConnectorError}
@@ -484,48 +522,18 @@ export const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
       selectedLocalWorkspaceId={selectedLocalWorkspaceId}
       submitting={submitting}
       submittingLabel={t('sessionList.resource.creatingProject')}
+      hideSourceModeSwitch={!allowLocalConnector}
       serverContent={(
-        <div className="space-y-3">
-          <label className="block text-sm text-muted-foreground">
-            {t('sessionList.resource.cloudProjectName')}
-            <input
-              value={cloudProjectName}
-              onChange={(event) => onCloudProjectNameChange(event.target.value)}
-              className="mt-1 w-full rounded border border-border bg-background px-3 py-2 text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-              placeholder={t('sessionList.resource.cloudProjectNamePlaceholder')}
-              autoFocus
-            />
-          </label>
-          <label className="block text-sm text-muted-foreground">
-            {t('sessionList.resource.cloudProjectGitUrl')}
-            <input
-              value={cloudProjectGitUrl}
-              onChange={(event) => onCloudProjectGitUrlChange(event.target.value)}
-              className="mt-1 w-full rounded border border-border bg-background px-3 py-2 text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-              placeholder="https://github.com/org/repo.git"
-            />
-          </label>
-          <div className="space-y-1">
-            <label className="block text-sm text-muted-foreground" htmlFor="cloud-project-zip">
-              {t('sessionList.resource.cloudProjectZip')}
-            </label>
-            <input
-              id="cloud-project-zip"
-              type="file"
-              accept=".zip,application/zip,application/x-zip-compressed"
-              onChange={(event) => onCloudProjectZipFileChange(event.target.files?.[0] || null)}
-              className="w-full rounded border border-border bg-background px-3 py-2 text-sm text-foreground file:mr-3 file:rounded file:border-0 file:bg-muted file:px-3 file:py-1.5 file:text-sm file:text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-            />
-            {cloudProjectZipFile ? (
-              <div className="text-xs text-muted-foreground">
-                {t('sessionList.resource.cloudProjectZipSelected', { name: cloudProjectZipFile.name })}
-              </div>
-            ) : null}
-          </div>
-          <div className="rounded border border-border bg-background px-3 py-2 text-xs text-muted-foreground">
-            {t('sessionList.resource.cloudProjectSourceHint')}
-          </div>
-        </div>
+        <CloudProjectSourceFields
+          projectName={cloudProjectName}
+          gitUrl={cloudProjectGitUrl}
+          zipFile={cloudProjectZipFile}
+          sourceMethod={cloudSourceMethod}
+          onProjectNameChange={onCloudProjectNameChange}
+          onGitUrlChange={onCloudProjectGitUrlChange}
+          onZipFileChange={onCloudProjectZipFileChange}
+          onSourceMethodChange={changeCloudSourceMethod}
+        />
       )}
       hideServerPreview
       onClose={onClose}
@@ -537,7 +545,7 @@ export const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
       onBrowseLocalConnectorDirectory={onBrowseLocalConnectorDirectory}
       onSelectLocalConnectorDirectory={onSelectLocalConnectorDirectory}
       onCreateLocalConnectorDirectory={onCreateLocalConnectorDirectory}
-      onSubmit={onCreate}
+      onSubmit={submitProject}
     />
   );
 };

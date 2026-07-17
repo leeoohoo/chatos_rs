@@ -44,6 +44,12 @@ pub async fn upsert_job_policy(
     Json(req): Json<UpsertEngineJobPolicyRequest>,
 ) -> Result<Json<serde_json::Value>, (axum::http::StatusCode, String)> {
     auth.require_super_admin_or_operator()?;
+    if control_plane::managed_memory_policy_active(job_type.as_str()).await {
+        return Err((
+            axum::http::StatusCode::CONFLICT,
+            "Memory Engine 运行策略已由配置中心统一管理，请在配置中心修改并发布".to_string(),
+        ));
+    }
     control_plane::upsert_job_policy(&state.pool, job_type.as_str(), req)
         .await
         .map(|item| Json(json!(item)))

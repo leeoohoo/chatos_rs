@@ -29,7 +29,7 @@ pub(super) async fn send_json_with_limit<T: for<'de> Deserialize<'de>>(
             .await
             .map(|bytes| String::from_utf8_lossy(bytes.as_ref()).into_owned())
             .unwrap_or_default();
-        return Err(format!("Project service request failed: {status} {body}"));
+        return Err(project_service_error(status, body.as_str()));
     }
     let body = read_body_limited(response, response_limit_bytes).await?;
     serde_json::from_slice::<T>(body.as_ref()).map_err(|err| err.to_string())
@@ -48,7 +48,7 @@ pub(super) async fn send_optional_json<T: for<'de> Deserialize<'de>>(
             .await
             .map(|bytes| String::from_utf8_lossy(bytes.as_ref()).into_owned())
             .unwrap_or_default();
-        return Err(format!("Project service request failed: {status} {body}"));
+        return Err(project_service_error(status, body.as_str()));
     }
     let body = read_body_limited(response, DEFAULT_RESPONSE_LIMIT_BYTES).await?;
     serde_json::from_slice::<T>(body.as_ref())
@@ -83,9 +83,38 @@ fn ensure_body_within_limit(actual_bytes: usize, limit_bytes: usize) -> Result<(
     Ok(())
 }
 
+fn project_service_error(status: reqwest::StatusCode, body: &str) -> String {
+    let trimmed = body.trim();
+    if let Ok(payload) = serde_json::from_str::<serde_json::Value>(trimmed) {
+        if let Some(message) = payload
+            .get("import_error")
+            .and_then(serde_json::Value::as_str)
+            .map(str::trim)
+            .filter(|message| !message.is_empty())
+        {
+            return format!("云项目导入失败：{message}");
+        }
+        for key in ["error", "detail"] {
+            if let Some(message) = payload
+                .get(key)
+                .and_then(serde_json::Value::as_str)
+                .map(str::trim)
+                .filter(|message| !message.is_empty())
+            {
+                return format!("Project service request failed: {status} {message}");
+            }
+        }
+    }
+    if trimmed.is_empty() {
+        format!("Project service request failed: {status}")
+    } else {
+        format!("Project service request failed: {status} {trimmed}")
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::ensure_body_within_limit;
+    use super::{ensure_body_within_limit, project_service_error};
 
     #[test]
     fn body_limit_accepts_boundary_size() {
@@ -97,5 +126,20 @@ mod tests {
         let err = ensure_body_within_limit(1025, 1024).expect_err("oversized body should fail");
         assert!(err.contains("exceeded limit"));
         assert!(err.contains("1025 bytes > 1024 bytes"));
+    }
+
+    #[test]
+    fn project_import_error_hides_the_created_project_payload() {
+        let body = r#"{
+            "id":"project-secret-id",
+            "name":"demo",
+            "import_error":"ZIP 中没有可导入的源文件"
+        }"#;
+
+        let err = project_service_error(reqwest::StatusCode::BAD_GATEWAY, body);
+
+        assert_eq!(err, "云项目导入失败：ZIP 中没有可导入的源文件");
+        assert!(!err.contains("project-secret-id"));
+        assert!(!err.contains("\"name\""));
     }
 }

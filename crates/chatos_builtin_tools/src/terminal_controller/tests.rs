@@ -19,7 +19,9 @@ impl TerminalControllerStore for NoopTerminalStore {
         _path: String,
         command: String,
         _background: bool,
+        permissions: TerminalCommandPermissions,
     ) -> Result<Value, String> {
+        assert!(permissions.is_empty());
         Ok(json!({ "common": command, "output": "" }))
     }
 

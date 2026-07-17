@@ -4,31 +4,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use super::{default_active, default_pending};
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct EngineSubjectMemory {
-    pub id: String,
-    pub tenant_id: String,
-    pub source_id: String,
-    pub subject_id: String,
-    pub memory_key: String,
-    pub memory_type: String,
-    pub text: String,
-    pub level: i64,
-    pub source_digest: Option<String>,
-    pub confidence: Option<f64>,
-    pub last_seen_at: Option<String>,
-    pub metadata: Option<Value>,
-    #[serde(default = "default_active")]
-    pub status: String,
-    #[serde(default = "default_pending")]
-    pub rollup_status: String,
-    pub rollup_memory_key: Option<String>,
-    pub rolled_up_at: Option<String>,
-    pub created_at: String,
-    pub updated_at: String,
-}
+pub use memory_engine_sdk::{EngineSubjectMemory, QuerySubjectMemoriesRequest};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UpsertSubjectMemoryRequest {
@@ -61,21 +37,6 @@ pub struct MarkSubjectMemoriesRolledUpRequest {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MarkSubjectMemoriesRolledUpResponse {
     pub marked: usize,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct QuerySubjectMemoriesRequest {
-    pub tenant_id: String,
-    pub source_id: String,
-    pub subject_id: String,
-    pub memory_type: Option<String>,
-    pub level: Option<i64>,
-    pub max_level_exclusive: Option<i64>,
-    pub rollup_status: Option<String>,
-    pub relation_subject_id: Option<String>,
-    pub source_digest: Option<String>,
-    pub limit: Option<i64>,
-    pub offset: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

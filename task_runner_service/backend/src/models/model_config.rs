@@ -19,6 +19,8 @@ pub struct ModelConfigRecord {
     pub owner_display_name: Option<String>,
     pub name: String,
     pub provider: String,
+    #[serde(default)]
+    pub prompt_vendor: Option<String>,
     pub base_url: String,
     pub api_key: String,
     pub model: String,
@@ -63,6 +65,9 @@ impl ModelConfigRecord {
 
 fn runtime_provider_for_model(provider: &str, base_url: &str) -> String {
     let normalized = normalize_provider(provider);
+    if normalized == "glm" {
+        return "openai_compatible".to_string();
+    }
     if normalized == "gpt" && !is_openai_api_base_url(base_url) {
         return "openai_compatible".to_string();
     }
@@ -138,6 +143,17 @@ mod tests {
         assert_eq!(runtime.thinking_level.as_deref(), Some("minimal"));
     }
 
+    #[test]
+    fn runtime_config_uses_compatible_transport_for_glm() {
+        let mut record = model_config_record("glm", "https://open.bigmodel.cn/api/paas/v4", "high");
+        record.prompt_vendor = Some("glm".to_string());
+
+        let runtime = record.to_runtime_config(None);
+
+        assert_eq!(runtime.provider, "openai_compatible");
+        assert_eq!(runtime.thinking_level.as_deref(), Some("high"));
+    }
+
     fn model_config_record(
         provider: &str,
         base_url: &str,
@@ -150,6 +166,7 @@ mod tests {
             owner_display_name: Some("User".to_string()),
             name: "Model".to_string(),
             provider: provider.to_string(),
+            prompt_vendor: Some("gpt".to_string()),
             base_url: base_url.to_string(),
             api_key: "secret".to_string(),
             model: "model-name".to_string(),
@@ -173,6 +190,7 @@ mod tests {
 pub struct CreateModelConfigRequest {
     pub name: String,
     pub provider: String,
+    pub prompt_vendor: Option<String>,
     pub base_url: String,
     pub api_key: String,
     pub model: String,
@@ -194,10 +212,13 @@ pub struct ChatosSyncedModelConfigRequest {
     pub owner_user_id: Option<String>,
     pub name: String,
     pub provider: String,
+    pub prompt_vendor: Option<String>,
     pub base_url: String,
     pub api_key: String,
     pub model: String,
     pub usage_scenario: Option<String>,
+    pub temperature: Option<f64>,
+    pub max_output_tokens: Option<i64>,
     pub thinking_level: Option<String>,
     pub supports_responses: Option<bool>,
     pub enabled: Option<bool>,
@@ -207,6 +228,7 @@ pub struct ChatosSyncedModelConfigRequest {
 pub struct UpdateModelConfigRequest {
     pub name: Option<String>,
     pub provider: Option<String>,
+    pub prompt_vendor: Option<String>,
     pub base_url: Option<String>,
     pub api_key: Option<String>,
     pub model: Option<String>,

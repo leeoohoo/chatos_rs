@@ -7,9 +7,11 @@ set -euo pipefail
 CLIENT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "$CLIENT_DIR/.." && pwd)"
 FRONTEND_DIR="$CLIENT_DIR/frontend"
+CHATOS_FRONTEND_DIR="$ROOT_DIR/chatos/frontend"
 STAGING_DIR="$CLIENT_DIR/.package/macos"
 BUILDER_CONFIG="$CLIENT_DIR/electron-builder-macos.yml"
 SKILL_CATALOG="$CLIENT_DIR/skill_bundles/catalog/internal-skill-catalog.json"
+APP_ICON_SOURCE="${CHATOS_APP_ICON_SOURCE:-$ROOT_DIR/official_website_service/frontend/public/brand/okra-logo-mark.png}"
 
 case "$(uname -m)" in
   arm64|aarch64)
@@ -63,6 +65,10 @@ if [[ "${CHATOS_SKIP_NPM_CI:-0}" != "1" ]]; then
     cd "$FRONTEND_DIR"
     ELECTRON_SKIP_BINARY_DOWNLOAD=1 npm ci
   )
+  (
+    cd "$CHATOS_FRONTEND_DIR"
+    npm ci
+  )
 fi
 
 if [[ ! -x "$FRONTEND_DIR/node_modules/.bin/electron-builder" ]]; then
@@ -76,8 +82,14 @@ fi
 )
 
 (
+  cd "$CHATOS_FRONTEND_DIR"
+  VITE_API_BASE_URL="${LOCAL_CONNECTOR_CHATOS_API_BASE_URL:-https://app.jgoool.com/api}" \
+    npm run build
+)
+
+(
   cd "$ROOT_DIR"
-  cargo build --release -p local_connector_client_core
+  cargo build --release -p local_connector_client_core -p chatos_sandbox_mcp_server
 )
 
 TARGET_DIR="$({
@@ -90,10 +102,16 @@ process.stdin.on("data", (chunk) => input += chunk);
 process.stdin.on("end", () => process.stdout.write(JSON.parse(input).target_directory));
 ')"
 CORE_BIN="$TARGET_DIR/release/local_connector_client_core"
+SANDBOX_AGENT_BIN="$TARGET_DIR/release/chatos_sandbox_mcp_server"
 TOOLS_DIR="$ROOT_DIR/bundled-tools/$TOOLS_PLATFORM"
 
 if [[ ! -x "$CORE_BIN" ]]; then
   echo "Local Connector Core was not built: $CORE_BIN" >&2
+  exit 1
+fi
+
+if [[ ! -x "$SANDBOX_AGENT_BIN" ]]; then
+  echo "Native sandbox MCP agent was not built: $SANDBOX_AGENT_BIN" >&2
   exit 1
 fi
 
@@ -103,11 +121,21 @@ if [[ ! -d "$TOOLS_DIR" ]]; then
 fi
 
 rm -rf "$STAGING_DIR"
-mkdir -p "$STAGING_DIR/bundled-tools" "$STAGING_DIR/skill-bundles"
+mkdir -p \
+  "$STAGING_DIR/bundled-tools" \
+  "$STAGING_DIR/skill-bundles" \
+  "$STAGING_DIR/chatos-frontend" \
+  "$STAGING_DIR/sqlite-migrations"
 cp "$CORE_BIN" "$STAGING_DIR/local_connector_client_core"
+cp "$SANDBOX_AGENT_BIN" "$STAGING_DIR/chatos_sandbox_mcp_server"
 cp -R "$TOOLS_DIR" "$STAGING_DIR/bundled-tools/$TOOLS_PLATFORM"
 cp -R "$CLIENT_DIR/skill_bundles/." "$STAGING_DIR/skill-bundles/"
-chmod +x "$STAGING_DIR/local_connector_client_core"
+cp -R "$CHATOS_FRONTEND_DIR/dist/." "$STAGING_DIR/chatos-frontend/"
+cp -R "$CLIENT_DIR/core/migrations/." "$STAGING_DIR/sqlite-migrations/"
+chmod +x "$STAGING_DIR/local_connector_client_core" "$STAGING_DIR/chatos_sandbox_mcp_server"
+bash "$CLIENT_DIR/prepare-app-icon-macos.sh" \
+  "$APP_ICON_SOURCE" \
+  "$STAGING_DIR/ChatOS.icns"
 "$CLIENT_DIR/prepare-browser-runtime-macos.sh" \
   "$STAGING_DIR/bundled-tools/$TOOLS_PLATFORM" \
   "$TOOLS_PLATFORM"

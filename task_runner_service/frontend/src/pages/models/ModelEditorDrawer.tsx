@@ -17,6 +17,7 @@ import {
 import type { TranslateFn } from '../../i18n/I18nProvider';
 import type { ModelCatalogResponse, ModelConfigRecord } from '../../types';
 import {
+  PROMPT_VENDOR_OPTIONS,
   type ModelFormValues,
   SUPPORTED_PROVIDER_OPTIONS,
 } from './modelPageUtils';
@@ -97,6 +98,15 @@ export function ModelEditorDrawer({
             rules={[{ required: true }]}
           >
             <Select options={SUPPORTED_PROVIDER_OPTIONS} />
+          </Form.Item>
+          <Form.Item
+            name="prompt_vendor"
+            label={t('models.form.promptVendor')}
+            style={{ flex: 1 }}
+            rules={[{ required: true }]}
+            extra={t('models.form.promptVendorHint')}
+          >
+            <Select options={PROMPT_VENDOR_OPTIONS} />
           </Form.Item>
         </Space>
         <Form.Item name="base_url" label="Base URL" rules={[{ required: true }]}>

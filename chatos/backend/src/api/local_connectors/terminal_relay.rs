@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use axum::http::StatusCode;
+use axum::http::{HeaderMap, StatusCode};
 use axum::Json;
 use serde_json::Value;
 
 use crate::core::auth::AuthUser;
+use crate::core::project_execution::require_local_connector_desktop;
 use crate::core::user_scope::resolve_user_id;
 use crate::core::validation::normalize_non_empty;
 
@@ -18,8 +19,12 @@ use super::{load_owned_online_workspace, required_text};
 
 pub(super) async fn exec_terminal_command(
     auth: AuthUser,
+    headers: HeaderMap,
     Json(req): Json<LocalTerminalExecRequest>,
 ) -> (StatusCode, Json<Value>) {
+    if let Err(err) = require_local_connector_desktop(&headers) {
+        return err;
+    }
     if let Err(err) = resolve_user_id(req.user_id, &auth) {
         return err;
     }

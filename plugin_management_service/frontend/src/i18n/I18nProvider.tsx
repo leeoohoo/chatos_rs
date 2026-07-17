@@ -1,10 +1,21 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+  type ReactNode,
+} from 'react';
 import { ConfigProvider } from 'antd';
 import enUS from 'antd/locale/en_US';
 import zhCN from 'antd/locale/zh_CN';
+
+import { createTranslator } from '@chatos/frontend-runtime';
+import { createStoredUiLocaleHook } from '@chatos/frontend-runtime/react';
 
 import { enUSMessages, zhCNMessages } from './messages';
 
@@ -17,29 +28,32 @@ interface I18nContextValue {
 }
 
 const STORAGE_KEY = 'plugin_management_service_locale';
+const SUPPORTED_LOCALES: readonly AppLocale[] = ['zh-CN', 'en-US'];
+const MESSAGE_CATALOG = {
+  'zh-CN': zhCNMessages,
+  'en-US': enUSMessages,
+};
 
 const I18nContext = createContext<I18nContextValue | null>(null);
+const useStoredUiLocale = createStoredUiLocaleHook({ useCallback, useEffect, useState });
 
 export function I18nProvider({ children }: { children: ReactNode }) {
-  const [locale, setLocale] = useState<AppLocale>(() => {
-    const saved = window.localStorage.getItem(STORAGE_KEY);
-    if (saved === 'zh-CN' || saved === 'en-US') {
-      return saved;
-    }
-    return 'zh-CN';
+  const [locale, setLocale] = useStoredUiLocale({
+    storageKey: STORAGE_KEY,
+    supportedLocales: SUPPORTED_LOCALES,
+    fallbackLocale: 'zh-CN',
+    persist: 'effect',
   });
 
-  useEffect(() => {
-    window.localStorage.setItem(STORAGE_KEY, locale);
-    document.documentElement.lang = locale;
-  }, [locale]);
-
   const value = useMemo<I18nContextValue>(() => {
-    const messages = locale === 'zh-CN' ? zhCNMessages : enUSMessages;
     return {
       locale,
       setLocale,
-      t: (key, values) => interpolate(messages[key] || enUSMessages[key] || key, values),
+      t: createTranslator({
+        locale,
+        messages: MESSAGE_CATALOG,
+        fallbackLocale: 'en-US',
+      }),
     };
   }, [locale]);
 
@@ -56,14 +70,4 @@ export function useI18n(): I18nContextValue {
     throw new Error('useI18n must be used inside I18nProvider');
   }
   return value;
-}
-
-function interpolate(template: string, values?: Record<string, string | number>): string {
-  if (!values) {
-    return template;
-  }
-  return Object.entries(values).reduce(
-    (result, [key, value]) => result.split(`{${key}}`).join(String(value)),
-    template,
-  );
 }

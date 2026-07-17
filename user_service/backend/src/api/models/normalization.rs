@@ -2,7 +2,9 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use axum::Json;
+use chatos_plugin_management_sdk::{normalize_agent_prompt_vendor, AgentPromptVendor};
 use sha2::{Digest, Sha256};
+use std::str::FromStr;
 
 use crate::secrets::is_secret_encrypted;
 
@@ -82,12 +84,44 @@ pub(super) fn normalize_provider_input(
         "openai" | "gpt" => Ok("gpt".to_string()),
         "deepseek" => Ok("deepseek".to_string()),
         "kimi" | "kimik2" | "moonshot" => Ok("kimi".to_string()),
-        "minimax" => Ok("minimax".to_string()),
-        "openai_compatible" => Ok("openai_compatible".to_string()),
+        "glm" | "zhipu" | "zhipuai" | "zai" | "chatglm" => Ok("glm".to_string()),
         _ => Err(bad_request(
-            "provider only supports gpt / deepseek / kimi / minimax / openai_compatible",
+            "provider only supports gpt / deepseek / kimi / glm",
         )),
     }
+}
+
+pub(in crate::api) fn is_supported_provider(provider: &str) -> bool {
+    matches!(
+        provider
+            .trim()
+            .to_ascii_lowercase()
+            .replace('-', "_")
+            .as_str(),
+        "openai"
+            | "gpt"
+            | "deepseek"
+            | "kimi"
+            | "kimik2"
+            | "moonshot"
+            | "glm"
+            | "zhipu"
+            | "zhipuai"
+            | "zai"
+            | "chatglm"
+    )
+}
+
+pub(super) fn normalize_prompt_vendor_input(
+    prompt_vendor: Option<String>,
+    provider: &str,
+) -> Result<Option<String>, (axum::http::StatusCode, Json<serde_json::Value>)> {
+    if let Some(value) = normalize_optional_string(prompt_vendor) {
+        return AgentPromptVendor::from_str(value.as_str())
+            .map(|vendor| Some(vendor.as_str().to_string()))
+            .map_err(|_| bad_request("prompt_vendor only supports glm/deepseek/gpt/kimi"));
+    }
+    Ok(normalize_agent_prompt_vendor(None, provider).map(|vendor| vendor.as_str().to_string()))
 }
 
 pub(super) fn normalize_thinking_level_input(
@@ -102,7 +136,6 @@ pub(super) fn normalize_thinking_level_input(
     {
         "openai" | "gpt" => "gpt".to_string(),
         "kimik2" | "kimi" | "moonshot" => "kimi".to_string(),
-        "openai_compatible" | "compatible" => "openai_compatible".to_string(),
         other => other.to_string(),
     };
     let Some(level) = value
@@ -138,13 +171,31 @@ pub(super) fn normalize_thinking_level_input(
         "kimi" => ["none", "auto", "low", "medium", "high", "xhigh"].as_slice(),
         _ => ["none", "low", "medium", "high", "xhigh"].as_slice(),
     };
-    if provider == "openai_compatible" && normalized == "minimal" {
-        return Ok(Some("low".to_string()));
-    }
     if !allowed.contains(&normalized) {
         return Err(bad_request(
             "thinking_level is not supported by the selected provider",
         ));
     }
     Ok(Some(normalized.to_string()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn normalizes_glm_provider_aliases_and_prompt_vendor() {
+        let provider = normalize_provider_input(Some("zhipu".to_string())).expect("provider");
+        let prompt_vendor =
+            normalize_prompt_vendor_input(None, provider.as_str()).expect("prompt vendor");
+
+        assert_eq!(provider, "glm");
+        assert_eq!(prompt_vendor.as_deref(), Some("glm"));
+    }
+
+    #[test]
+    fn rejects_removed_provider_values() {
+        assert!(normalize_provider_input(Some("openai_compatible".to_string())).is_err());
+        assert!(normalize_provider_input(Some("minimax".to_string())).is_err());
+    }
 }

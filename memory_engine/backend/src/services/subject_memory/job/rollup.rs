@@ -98,7 +98,6 @@ pub(crate) async fn process_rollup_selection(
             db,
             Some(req.tenant_id.as_str()),
             settings.prompt_title.as_str(),
-            settings.rollup_summary_prompt.as_deref(),
             summarizable.as_slice(),
             settings.token_limit,
             settings.target_summary_tokens,

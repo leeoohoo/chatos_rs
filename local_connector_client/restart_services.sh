@@ -103,6 +103,12 @@ start_core() {
     return 1
   fi
 
+  echo "[INFO] building native sandbox MCP agent"
+  (
+    cd "$ROOT_DIR"
+    CARGO_TARGET_DIR="$CARGO_TARGET_DIR_EFFECTIVE" cargo build -p chatos_sandbox_mcp_server
+  )
+
   echo "[INFO] starting local connector client core on 127.0.0.1:$CORE_PORT"
   if command -v tmux >/dev/null 2>&1; then
     tmux new-session -d -s "$CORE_SESSION" \

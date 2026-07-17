@@ -17,7 +17,8 @@ use crate::store::AppStore;
 
 use super::model_catalog::{
     fetch_model_catalog_for_record, normalize_model_base_url_input, normalize_model_config_record,
-    normalize_model_provider_input, normalize_model_thinking_level_input,
+    normalize_model_prompt_vendor_input, normalize_model_provider_input,
+    normalize_model_thinking_level_input,
 };
 use super::{normalized_optional, validate_required, ModelConfigService};
 
@@ -56,10 +57,23 @@ impl ModelConfigService {
 
     pub async fn list_model_configs(&self) -> Result<Vec<ModelConfigRecord>, String> {
         let records = self.store.list_model_configs().await?;
-        records
+        Ok(records
             .into_iter()
-            .map(normalize_model_config_record)
-            .collect::<Result<Vec<_>, _>>()
+            .filter_map(|record| {
+                let record_id = record.id.clone();
+                match normalize_model_config_record(record) {
+                    Ok(record) => Some(record),
+                    Err(err) => {
+                        warn!(
+                            model_config_id = record_id.as_str(),
+                            error = err.as_str(),
+                            "skipping invalid model config while listing model configs"
+                        );
+                        None
+                    }
+                }
+            })
+            .collect())
     }
 
     pub async fn get_model_config(&self, id: &str) -> Result<Option<ModelConfigRecord>, String> {
@@ -76,6 +90,8 @@ impl ModelConfigService {
         let provider = normalize_model_provider_input(&input.provider)?;
         let thinking_level =
             normalize_model_thinking_level_input(provider.as_str(), input.thinking_level)?;
+        let prompt_vendor =
+            normalize_model_prompt_vendor_input(input.prompt_vendor, provider.as_str())?;
         let existing = self
             .store
             .get_model_config(input.id.trim())
@@ -102,6 +118,7 @@ impl ModelConfigService {
             }),
             name: input.name.trim().to_string(),
             provider: provider.clone(),
+            prompt_vendor,
             base_url: input.base_url.trim().trim_end_matches('/').to_string(),
             api_key: input.api_key.trim().to_string(),
             model: input.model.trim().to_string(),
@@ -110,8 +127,12 @@ impl ModelConfigService {
                     .as_ref()
                     .and_then(|item| item.usage_scenario.clone())
             }),
-            temperature: existing.as_ref().and_then(|item| item.temperature),
-            max_output_tokens: existing.as_ref().and_then(|item| item.max_output_tokens),
+            temperature: input
+                .temperature
+                .or_else(|| existing.as_ref().and_then(|item| item.temperature)),
+            max_output_tokens: input
+                .max_output_tokens
+                .or_else(|| existing.as_ref().and_then(|item| item.max_output_tokens)),
             thinking_level,
             supports_responses: input
                 .supports_responses

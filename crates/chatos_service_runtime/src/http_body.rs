@@ -3,6 +3,10 @@
 
 use futures_util::StreamExt;
 
+pub const ERROR_BODY_PREVIEW_LIMIT_BYTES: usize = 16 * 1024;
+pub const DEFAULT_RESPONSE_BODY_LIMIT_BYTES: usize = 8 * 1024 * 1024;
+pub const JSON_BODY_LIMIT_BYTES: usize = DEFAULT_RESPONSE_BODY_LIMIT_BYTES;
+
 pub async fn read_response_bytes_limited(
     response: reqwest::Response,
     limit_bytes: usize,

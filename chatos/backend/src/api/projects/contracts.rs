@@ -37,6 +37,14 @@ pub(super) struct UpdateProjectRequest {
 pub(super) struct ProjectContactsQuery {
     pub(super) limit: Option<i64>,
     pub(super) offset: Option<i64>,
+    #[serde(default)]
+    pub(super) local_runtime: bool,
+}
+
+#[derive(Debug, Default, Deserialize)]
+pub(super) struct LocalProjectRequestQuery {
+    #[serde(default)]
+    pub(super) local_runtime: bool,
 }
 
 #[derive(Debug, Deserialize)]

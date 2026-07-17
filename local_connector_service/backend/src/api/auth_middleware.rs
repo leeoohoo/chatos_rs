@@ -138,9 +138,10 @@ pub(super) async fn require_auth(
     }
     let token = bearer_token_from_request(&request, state.config.allow_device_connect_query_token)
         .map_err(ApiError::unauthorized)?;
-    let user = verify_token_via_user_service(&state.config, token.as_str())
-        .await
-        .map_err(ApiError::unauthorized)?;
+    let user =
+        verify_token_via_user_service(&state.config, state.user_service_http(), token.as_str())
+            .await
+            .map_err(ApiError::unauthorized)?;
     request.extensions_mut().insert(user);
     Ok(next.run(request).await)
 }

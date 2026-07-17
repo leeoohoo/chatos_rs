@@ -14,8 +14,6 @@ pub(crate) const DEFAULT_MAX_SOURCE_SUMMARIES: i64 = 1000;
 pub(crate) struct SubjectMemoryJobSettings {
     pub(crate) relation_subject_id: String,
     pub(crate) source_summary_type: String,
-    pub(crate) summary_prompt: Option<String>,
-    pub(crate) rollup_summary_prompt: Option<String>,
     pub(crate) prompt_title: String,
     pub(crate) token_limit: i64,
     pub(crate) target_summary_tokens: i64,

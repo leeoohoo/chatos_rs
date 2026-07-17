@@ -2,6 +2,11 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 import type {
+  AgentPromptCompleteness,
+  AgentPromptVersionRecord,
+  AgentPromptVersionSummary,
+  GenerateAgentPromptResponse,
+  AgentProviderPromptRecord,
   AgentMcpBindingsResponse,
   AdminAiModelConfig,
   CurrentUser,
@@ -20,83 +25,44 @@ import type {
   SystemAgentRecord,
 } from '../types';
 
+import {
+  buildApiUrl as buildSharedApiUrl,
+  createBrowserAuthTokenStore,
+  createJsonApiClient,
+  normalizeApiBaseUrl,
+  withQuery,
+  type QueryValue,
+} from '@chatos/frontend-runtime';
+
 const RAW_API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || '').trim();
-const API_BASE_URL = RAW_API_BASE_URL.replace(/\/+$/, '').replace(/\/api$/, '');
+const API_BASE_URL = normalizeApiBaseUrl(RAW_API_BASE_URL);
 const AUTH_TOKEN_STORAGE_KEY = 'plugin_management_service_auth_token';
+const authTokenStore = createBrowserAuthTokenStore({
+  storageKey: AUTH_TOKEN_STORAGE_KEY,
+  changeEvent: 'plugin-management-auth-changed',
+});
 
 export function getAuthToken(): string | null {
-  return window.localStorage.getItem(AUTH_TOKEN_STORAGE_KEY);
+  return authTokenStore.getAuthToken();
 }
 
 export function setAuthToken(token: string): void {
-  window.localStorage.setItem(AUTH_TOKEN_STORAGE_KEY, token);
-  window.dispatchEvent(new Event('plugin-management-auth-changed'));
+  authTokenStore.setAuthToken(token);
 }
 
 export function clearAuthToken(): void {
-  window.localStorage.removeItem(AUTH_TOKEN_STORAGE_KEY);
-  window.dispatchEvent(new Event('plugin-management-auth-changed'));
+  authTokenStore.clearAuthToken();
 }
 
 function buildApiUrl(path: string): string {
-  const normalizedPath = path.startsWith('/') ? path : `/${path}`;
-  return API_BASE_URL ? `${API_BASE_URL}${normalizedPath}` : normalizedPath;
+  return buildSharedApiUrl(API_BASE_URL, path);
 }
 
-type QueryValue = string | number | boolean | null | undefined;
-
-function withQuery(path: string, params: Record<string, QueryValue>): string {
-  const search = new URLSearchParams();
-  Object.entries(params).forEach(([key, value]) => {
-    if (value === undefined || value === null) {
-      return;
-    }
-    const text = String(value).trim();
-    if (text) {
-      search.set(key, text);
-    }
-  });
-  const query = search.toString();
-  return query ? `${path}?${query}` : path;
-}
-
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const headers = new Headers(init?.headers);
-  if (!headers.has('Content-Type')) {
-    headers.set('Content-Type', 'application/json');
-  }
-  const token = getAuthToken();
-  if (token && !headers.has('Authorization')) {
-    headers.set('Authorization', `Bearer ${token}`);
-  }
-  const response = await fetch(buildApiUrl(path), {
-    ...init,
-    headers,
-  });
-  if (!response.ok) {
-    let message = response.statusText;
-    try {
-      const data = (await response.json()) as { error?: string };
-      if (data.error) {
-        message = data.error;
-      }
-    } catch {
-      // keep status text
-    }
-    if (response.status === 401) {
-      clearAuthToken();
-    }
-    throw new Error(message);
-  }
-  if (response.status === 204) {
-    return undefined as T;
-  }
-  const text = await response.text();
-  if (!text.trim()) {
-    return undefined as T;
-  }
-  return JSON.parse(text) as T;
-}
+const request = createJsonApiClient({
+  baseUrl: API_BASE_URL,
+  getAuthToken,
+  onUnauthorized: clearAuthToken,
+});
 
 export const api = {
   login: (payload: LoginPayload) =>
@@ -213,6 +179,46 @@ export const api = {
       method: 'PUT',
       body: JSON.stringify({ bindings }),
     }),
+  listAgentProviderPrompts: (agentKey: string) =>
+    request<AgentProviderPromptRecord[]>(
+      `/api/system-agents/${encodeURIComponent(agentKey)}/provider-prompts`,
+    ),
+  listAgentPromptVersions: (agentKey: string) =>
+    request<AgentPromptVersionSummary[]>(
+      `/api/system-agents/${encodeURIComponent(agentKey)}/prompt-versions`,
+    ),
+  getAgentPromptVersion: (agentKey: string, bundleVersion: number) =>
+    request<AgentPromptVersionRecord>(
+      `/api/system-agents/${encodeURIComponent(agentKey)}/prompt-versions/${bundleVersion}`,
+    ),
+  updateAgentProviderPromptDraft: (
+    agentKey: string,
+    vendor: string,
+    content: string,
+    expectedUpdatedAt?: string,
+  ) =>
+    request<AgentProviderPromptRecord>(
+      `/api/system-agents/${encodeURIComponent(agentKey)}/provider-prompts/${encodeURIComponent(vendor)}/draft`,
+      {
+        method: 'PUT',
+        body: JSON.stringify({ content, expected_updated_at: expectedUpdatedAt }),
+      },
+    ),
+  publishAgentProviderPrompt: (agentKey: string, vendor: string) =>
+    request<AgentProviderPromptRecord>(
+      `/api/system-agents/${encodeURIComponent(agentKey)}/provider-prompts/${encodeURIComponent(vendor)}/publish`,
+      { method: 'POST', body: JSON.stringify({}) },
+    ),
+  generateAgentProviderPrompt: (
+    agentKey: string,
+    vendor: string,
+    payload: { model_config_id: string; requirement: string; current_content: string },
+  ) => request<GenerateAgentPromptResponse>(
+    `/api/system-agents/${encodeURIComponent(agentKey)}/provider-prompts/${encodeURIComponent(vendor)}/generate`,
+    { method: 'POST', body: JSON.stringify(payload) },
+  ),
+  agentPromptCompleteness: () =>
+    request<AgentPromptCompleteness[]>('/api/system-agents/prompt-completeness'),
   resolveAgentCapabilities: (params: Record<string, QueryValue>) =>
     request<RuntimeCapabilitiesResponse>(withQuery('/api/runtime/agent-capabilities', params)),
 };

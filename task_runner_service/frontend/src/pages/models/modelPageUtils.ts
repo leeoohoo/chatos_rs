@@ -8,6 +8,7 @@ export type ModelEnabledFilter = 'all' | 'enabled' | 'disabled';
 export type ModelFormValues = {
   name: string;
   provider: string;
+  prompt_vendor: 'glm' | 'deepseek' | 'gpt' | 'kimi';
   base_url: string;
   api_key: string;
   model: string;
@@ -23,17 +24,30 @@ export type ModelFormValues = {
   enabled: boolean;
 };
 
-export type SupportedProvider = 'openai' | 'openai_compatible' | 'deepseek' | 'kimik2';
+export type SupportedProvider = 'openai' | 'deepseek' | 'kimik2' | 'glm';
 
 export const SUPPORTED_PROVIDER_OPTIONS: Array<{
   label: SupportedProvider;
   value: SupportedProvider;
 }> = [
   { label: 'openai', value: 'openai' },
-  { label: 'openai_compatible', value: 'openai_compatible' },
   { label: 'deepseek', value: 'deepseek' },
   { label: 'kimik2', value: 'kimik2' },
+  { label: 'glm', value: 'glm' },
 ];
+
+export const PROMPT_VENDOR_OPTIONS = ['glm', 'deepseek', 'gpt', 'kimi'].map((value) => ({
+  label: value,
+  value,
+}));
+
+export function defaultPromptVendor(provider?: string): ModelFormValues['prompt_vendor'] {
+  const value = (provider || '').trim().toLowerCase();
+  if (value === 'deepseek') return 'deepseek';
+  if (value === 'kimi' || value === 'kimik2' || value === 'moonshot') return 'kimi';
+  if (value === 'glm' || value === 'zhipu') return 'glm';
+  return 'gpt';
+}
 
 export const THINKING_LEVEL_OPTIONS: Record<
   SupportedProvider,
@@ -47,7 +61,7 @@ export const THINKING_LEVEL_OPTIONS: Record<
     { label: 'high', value: 'high' },
     { label: 'xhigh', value: 'xhigh' },
   ],
-  openai_compatible: [
+  glm: [
     { label: 'none', value: 'none' },
     { label: 'low', value: 'low' },
     { label: 'medium', value: 'medium' },
@@ -77,8 +91,8 @@ export function defaultBaseUrlForProvider(provider?: string): string {
       return 'https://api.deepseek.com';
     case 'kimik2':
       return 'https://api.moonshot.ai/v1';
-    case 'openai_compatible':
-      return 'https://api.openai.com/v1';
+    case 'glm':
+      return 'https://open.bigmodel.cn/api/paas/v4';
     case 'openai':
     default:
       return 'https://api.openai.com/v1';
@@ -90,8 +104,8 @@ export function normalizeSupportedProvider(provider?: string): SupportedProvider
   if (value === 'deepseek') {
     return 'deepseek';
   }
-  if (value === 'openai_compatible' || value === 'openai-compatible' || value === 'compatible') {
-    return 'openai_compatible';
+  if (value === 'glm' || value === 'zhipu' || value === 'zhipuai' || value === 'zai' || value === 'chatglm') {
+    return 'glm';
   }
   if (value === 'kimi' || value === 'kimik2' || value === 'kiminik2' || value === 'moonshot') {
     return 'kimik2';

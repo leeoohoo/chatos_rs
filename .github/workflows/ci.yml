@@ -140,8 +140,20 @@ jobs:
       - name: Bundled tools integrity
         run: bash scripts/check-bundled-tools-integrity.sh
 
+      - name: Code quality gate tests
+        run: python -m unittest discover -s scripts/tests -p "test_code_quality_*.py"
+
       - name: Source size policy
-        run: bash scripts/code-size-report.sh --fail
+        env:
+          CODE_QUALITY_DIFF_BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before || 'HEAD^' }}
+          CODE_QUALITY_DIFF_HEAD: ${{ github.sha }}
+        run: python scripts/check_source_size_policy.py
+
+      - name: New production code clone policy
+        env:
+          CODE_QUALITY_DIFF_BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before || 'HEAD^' }}
+          CODE_QUALITY_DIFF_HEAD: ${{ github.sha }}
+        run: python scripts/check_new_code_clones.py --min-lines 25
 
       - name: Rust dependency drift
         run: python scripts/check-rust-dependency-drift.py

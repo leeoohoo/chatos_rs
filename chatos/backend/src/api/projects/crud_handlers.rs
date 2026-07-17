@@ -3,7 +3,7 @@
 
 use axum::{
     extract::{Multipart, Path, Query},
-    http::StatusCode,
+    http::{HeaderMap, StatusCode},
     Json,
 };
 use serde_json::Value;
@@ -15,6 +15,10 @@ use crate::api::local_connectors::{
 };
 use crate::core::auth::AuthUser;
 use crate::core::project_access::{ensure_owned_project, map_project_access_error};
+use crate::core::project_execution::{
+    ensure_project_visible_on_request, project_is_visible_on_request,
+    require_local_connector_desktop,
+};
 use crate::core::user_scope::resolve_user_id;
 use crate::core::user_visible_path::display_path;
 use crate::core::validation::normalize_non_empty;
@@ -131,6 +135,7 @@ fn project_list_value(projects: Vec<Project>) -> Value {
 
 pub(super) async fn list_projects(
     auth: AuthUser,
+    headers: HeaderMap,
     Query(query): Query<ProjectQuery>,
 ) -> (StatusCode, Json<Value>) {
     let user_id = match resolve_user_id(query.user_id, &auth) {
@@ -140,7 +145,10 @@ pub(super) async fn list_projects(
     match ProjectService::list(Some(user_id)).await {
         Ok(list) => {
             let mut reconciled = Vec::with_capacity(list.len());
-            for project in list {
+            for project in list
+                .into_iter()
+                .filter(|project| project_is_visible_on_request(project, &headers))
+            {
                 reconciled.push(reconcile_local_connector_project(project).await);
             }
             let list = attach_project_session_ids(reconciled).await;
@@ -155,8 +163,12 @@ pub(super) async fn list_projects(
 
 pub(super) async fn create_project(
     auth: AuthUser,
+    headers: HeaderMap,
     Json(req): Json<CreateProjectRequest>,
 ) -> (StatusCode, Json<Value>) {
+    if let Err(err) = require_local_connector_desktop(&headers) {
+        return err;
+    }
     let CreateProjectRequest {
         name,
         root_path,
@@ -286,10 +298,14 @@ pub(super) async fn create_cloud_project(
 
 pub(super) async fn get_project(
     auth: AuthUser,
+    headers: HeaderMap,
     Path(id): Path<String>,
 ) -> (StatusCode, Json<Value>) {
     match ensure_owned_project(&id, &auth).await {
         Ok(project) => {
+            if let Err(err) = ensure_project_visible_on_request(&project, &headers) {
+                return err;
+            }
             let project = reconcile_local_connector_project(project).await;
             let project = attach_project_session_id(project).await;
             (StatusCode::OK, Json(project_value(project)))
@@ -375,11 +391,16 @@ async fn read_multipart_text(
 
 pub(super) async fn update_project(
     auth: AuthUser,
+    headers: HeaderMap,
     Path(id): Path<String>,
     Json(req): Json<UpdateProjectRequest>,
 ) -> (StatusCode, Json<Value>) {
-    if let Err(err) = ensure_owned_project(&id, &auth).await {
-        return map_project_access_error(err);
+    let existing = match ensure_owned_project(&id, &auth).await {
+        Ok(project) => project,
+        Err(err) => return map_project_access_error(err),
+    };
+    if let Err(err) = ensure_project_visible_on_request(&existing, &headers) {
+        return err;
     }
 
     let UpdateProjectRequest {
@@ -429,12 +450,16 @@ pub(super) async fn update_project(
 
 pub(super) async fn delete_project(
     auth: AuthUser,
+    headers: HeaderMap,
     Path(id): Path<String>,
 ) -> (StatusCode, Json<Value>) {
     let project = match ensure_owned_project(&id, &auth).await {
         Ok(project) => project,
         Err(err) => return map_project_access_error(err),
     };
+    if let Err(err) = ensure_project_visible_on_request(&project, &headers) {
+        return err;
+    }
     let manager = get_terminal_manager();
     let _ = manager
         .close_project_run_terminals(

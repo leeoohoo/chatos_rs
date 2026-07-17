@@ -5,7 +5,12 @@ import { Button, Drawer, Form, Input, Select, Space, Switch } from 'antd';
 import type { FormInstance } from 'antd';
 
 import type { UserModelProviderRecord } from '../../types';
-import { PROVIDER_OPTIONS, type ProviderFormValues } from './modelPageUtils';
+import {
+  defaultPromptVendor,
+  PROMPT_VENDOR_OPTIONS,
+  PROVIDER_OPTIONS,
+  type ProviderFormValues,
+} from './modelPageUtils';
 
 type UserOption = {
   label: string;
@@ -55,6 +60,7 @@ export function ModelProviderDrawer({
         requiredMark={false}
         initialValues={{
           provider: 'gpt',
+          prompt_vendor: 'gpt',
           enabled: true,
           supports_images: false,
           supports_reasoning: false,
@@ -80,7 +86,18 @@ export function ModelProviderDrawer({
           <Input />
         </Form.Item>
         <Form.Item name="provider" label="Provider" rules={[{ required: true }]}>
-          <Select options={PROVIDER_OPTIONS} />
+          <Select
+            options={PROVIDER_OPTIONS}
+            onChange={(provider) => form.setFieldValue('prompt_vendor', defaultPromptVendor(provider))}
+          />
+        </Form.Item>
+        <Form.Item
+          name="prompt_vendor"
+          label="Prompt Type"
+          tooltip="Selects the optimized system prompt used by cloud agents. Known providers are filled automatically."
+          rules={[{ required: true, message: 'Please choose a prompt type' }]}
+        >
+          <Select options={PROMPT_VENDOR_OPTIONS} />
         </Form.Item>
         <Form.Item name="base_url" label="Base URL">
           <Input placeholder="https://api.openai.com/v1" />

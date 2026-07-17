@@ -197,6 +197,7 @@ async fn apply_login(
         });
         state.paired_cloud_base_url = Some(cloud_base_url);
         state.paired_user_id = Some(login.user.id);
+        state.sandbox.enabled = true;
         if pairing_changed {
             state.device_id = None;
             state.device_public_key = None;
@@ -204,6 +205,9 @@ async fn apply_login(
         state.save(runtime.state_path.as_path())?;
     }
     runtime.sync_saved_workspaces_if_needed().await?;
+    runtime
+        .reload_managed_requirements_for_current_identity()
+        .await?;
     runtime.start_connector_if_configured().await?;
     Ok(Json(status_payload(&runtime).await))
 }
@@ -230,8 +234,10 @@ pub(crate) async fn local_logout(
     {
         let mut state = runtime.state.write().await;
         state.auth = None;
-        state.sandbox.enabled = false;
         state.save(runtime.state_path.as_path())?;
     }
+    runtime
+        .reload_managed_requirements_for_current_identity()
+        .await?;
     Ok(Json(status_payload(&runtime).await))
 }

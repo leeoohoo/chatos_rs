@@ -17,6 +17,7 @@ Chat OS 不只是聊天界面，而是一套围绕“理解需求、形成计划
 - 用 Memory Engine 统一保存线程记录、摘要、上下文和长期记忆。
 - 用 Plugin Management Service 统一管理 MCP、Skill、Skill Package 和系统 Agent 能力。
 - 用 User Service 统一处理用户、Agent 账号、模型配置、令牌交换与 Harness 账号资源。
+- 用 Configuration Center 统一管理各环境和服务的运行参数、发布版本、回滚与审计，业务端不再让普通用户覆盖系统参数。
 
 ## 总体架构
 
@@ -33,6 +34,7 @@ flowchart LR
         web["Chat OS Web 与领域管理台"]
         api["Chat OS 与领域 API<br/>User / Project / Plugin / Memory"]
         runner["Task Runner<br/>Queue、Worker、AI/MCP Runtime"]
+        config["Configuration Center<br/>全局配置、发布、回滚与审计"]
         relay["Local Connector Service<br/>设备、工作区与 WebSocket 中继"]
         sandbox["Sandbox Manager"]
         cloudAgent["按需启动的 Sandbox Agent"]
@@ -56,7 +58,11 @@ flowchart LR
     web --> api
     api --> mongo
     runner --> mongo
+    config --> mongo
     relay --> mongo
+    api -. "读取配置快照" .-> config
+    runner -. "读取配置快照" .-> config
+    config -. "发布兼容配置" .-> consul
     api -. "注册 / 发现" .-> consul
     runner -. "注册 / 发现" .-> consul
     relay -. "注册 / 发现" .-> consul
@@ -76,7 +82,7 @@ flowchart LR
 | 层次 | 核心组件 | 主要职责 |
 | --- | --- | --- |
 | 产品接入 | Official Website、Chat OS Web、领域管理台、Connector Desktop UI | 产品介绍、注册下载、会话交互、管理配置、本机授权 |
-| 业务控制 | Chat OS、User、Project、Plugin、Memory | 身份与模型元数据、会话编排、项目领域数据、能力策略、上下文治理 |
+| 业务控制 | Chat OS、User、Project、Plugin、Memory、Configuration Center | 身份与模型元数据、会话编排、项目领域数据、能力策略、上下文治理、全局运行参数治理 |
 | 任务执行 | Task Runner、Sandbox Manager、Local Connector、Sandbox Agent | 队列与 Worker、模型工具循环、工作区访问、沙箱生命周期、结果回传 |
 | 数据与基础设施 | MongoDB、Consul、Harness、MinIO/S3、Docker | 业务持久化、服务发现、代码托管、客户端分发、隔离运行环境 |
 
@@ -91,6 +97,7 @@ flowchart LR
     U["User Service"]
     P["Project Management"]
     T["Task Runner"]
+    CC["Configuration Center"]
     G["Plugin Management"]
     M["Memory Engine"]
     L["Local Connector Service"]
@@ -104,12 +111,14 @@ flowchart LR
     W -->|"注册"| U
     W -->|"发布目录 / 签名下载"| O
     C --> U
+    C --> CC
     C --> P
     C --> G
     C --> M
     C --> L
     C -. "创建异步任务" .-> T
     T --> U
+    T --> CC
     T --> P
     T --> G
     T --> M
@@ -134,6 +143,7 @@ flowchart LR
     L <-->|"出站 WebSocket"| LC
     S --> U
     S --> D
+    CC --> U
     C --> AI
     T --> AI
     M --> AI
@@ -289,6 +299,7 @@ MongoDB 是主要业务存储，但各服务保持独立数据库边界，不共
 | User Service | Web `39191` / API `39190` | `user_service/` | 用户与 Agent 账号、认证、模型配置、令牌交换、Harness 资源 |
 | Memory Engine | Web `4178` / API `7081` | `memory_engine/` | 线程记录、摘要、上下文组装、长期记忆、后台记忆任务 |
 | Task Runner | Web `39091` / API `39090` | `task_runner_service/` | 任务、调度、Worker、AI/MCP 执行循环、运行事件 |
+| Configuration Center | Web `39271` / API `39270` | `config_center_service/` | 全局配置目录、环境草稿、校验发布、版本回滚、实例与审计管理 |
 | Project Management | Web `39211` / API `39210` | `project_management_service/` | 项目、需求、项目任务、依赖关系、运行环境与执行映射 |
 | Plugin Management | Web `39261` / API `39260` | `plugin_management_service/` | MCP、Skill、Skill Package、系统 Agent 与能力绑定 |
 | Sandbox Manager | Web `8096` / API `8095` | `sandbox_manager_service/` | 云端沙箱、租约、池、镜像与 Sandbox Agent 代理 |
@@ -335,6 +346,7 @@ chatos_rs/
 ├── user_service/                   # 身份、模型配置与令牌
 ├── memory_engine/                  # 长期记忆与上下文引擎
 ├── task_runner_service/            # 异步任务与执行 Worker
+├── config_center_service/          # 全局配置中心管理台与 API
 ├── project_management_service/     # 项目领域服务
 ├── plugin_management_service/      # MCP、Skill 与 Agent 能力管理
 ├── sandbox_manager_service/        # 云端沙箱管理与 Sandbox Agent
@@ -369,6 +381,7 @@ make docker-up
 启动后访问：
 
 - 主应用：<http://localhost:8088>
+- 配置中心：<http://localhost:39271>
 - 最终用户官网：<http://localhost:39251>
 - Consul：<http://localhost:8500>
 - Harness：<http://localhost:3000>
@@ -396,6 +409,7 @@ docker/deploy.sh build-services
 ```bash
 make local-dev
 make local-dev-status
+make local-dev-logs SERVICE=configuration-center-backend
 make local-dev-logs SERVICE=chatos-backend
 make local-dev-stop
 ```
@@ -433,6 +447,9 @@ docker/deploy.sh reset
 ## 配置与安全边界
 
 - Docker 云端配置：`docker/.env.example` → `docker/.env`。
+- 业务运行参数由 Configuration Center 按环境统一发布；Chat OS 与 Task Runner 通过带 ETag 和本地 last-known-good 缓存的快照接口读取。
+- `UI_LOCALE` 和 `INTERNAL_CONTEXT_LOCALE` 属于按用户保存的 Chat OS 偏好，不进入 Configuration Center，也不会通过 Consul 全局下发。
+- 配置中心管理台只允许 User Service 的 `super_admin` 登录；服务读取快照使用 `CONFIG_CENTER_INTERNAL_API_SECRET`，生产环境必须替换默认值。
 - Local Connector 宿主机配置：根目录 `.env.example`。
 - 内部服务 token 带有开发默认值，仅用于本地环境；生产部署必须替换。
 - Sandbox Manager 挂载 `/var/run/docker.sock`，等价于拥有较高的宿主机 Docker 管理权限，应部署在受控节点。

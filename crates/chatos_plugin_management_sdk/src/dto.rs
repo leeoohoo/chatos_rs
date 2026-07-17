@@ -7,9 +7,13 @@ use std::fmt;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::agent_prompts::AgentPromptVendor;
+
 pub const CHATOS_TASK_RUNNER_MCP_RESOURCE_ID: &str = "system_mcp_chatos_task_runner";
 pub const SANDBOX_IMAGES_MCP_RESOURCE_ID: &str = "system_mcp_sandbox_images";
 pub const PROJECT_ENVIRONMENT_MCP_RESOURCE_ID: &str = "system_mcp_project_environment";
+pub const PROJECT_RUNTIME_ENVIRONMENT_MCP_RESOURCE_ID: &str =
+    "system_mcp_project_runtime_environment";
 pub const LOCAL_CONNECTOR_APPROVAL_MCP_RESOURCE_ID: &str = "system_mcp_local_connector_approval";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -21,9 +25,28 @@ pub enum SystemAgentKey {
     TaskRunnerRunPhase,
     ProjectManagementAgent,
     LocalConnectorCommandApprovalAgent,
+    MemoryEngineSummaryAgent,
+    MemoryEngineRollupAgent,
+    MemoryEngineSubjectMemoryAgent,
+    MemoryEngineMemoryRollupAgent,
+    MemoryEngineThreadRepairAgent,
 }
 
 impl SystemAgentKey {
+    pub const ALL: [Self; 11] = [
+        Self::ChatosConversationAgent,
+        Self::ChatosPlanningAgent,
+        Self::ProjectRequirementExecutionPlannerAgent,
+        Self::TaskRunnerRunPhase,
+        Self::ProjectManagementAgent,
+        Self::LocalConnectorCommandApprovalAgent,
+        Self::MemoryEngineSummaryAgent,
+        Self::MemoryEngineRollupAgent,
+        Self::MemoryEngineSubjectMemoryAgent,
+        Self::MemoryEngineMemoryRollupAgent,
+        Self::MemoryEngineThreadRepairAgent,
+    ];
+
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::ChatosConversationAgent => "chatos_conversation_agent",
@@ -34,6 +57,11 @@ impl SystemAgentKey {
             Self::TaskRunnerRunPhase => "task_runner_run_phase",
             Self::ProjectManagementAgent => "project_management_agent",
             Self::LocalConnectorCommandApprovalAgent => "local_connector_command_approval_agent",
+            Self::MemoryEngineSummaryAgent => "memory_engine_summary_agent",
+            Self::MemoryEngineRollupAgent => "memory_engine_rollup_agent",
+            Self::MemoryEngineSubjectMemoryAgent => "memory_engine_subject_memory_agent",
+            Self::MemoryEngineMemoryRollupAgent => "memory_engine_memory_rollup_agent",
+            Self::MemoryEngineThreadRepairAgent => "memory_engine_thread_repair_agent",
         }
     }
 }
@@ -42,6 +70,47 @@ impl fmt::Display for SystemAgentKey {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(self.as_str())
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResolveAgentPromptRequest {
+    pub agent_key: SystemAgentKey,
+    pub vendor: AgentPromptVendor,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ResolvedAgentPrompt {
+    pub agent_key: String,
+    pub vendor: AgentPromptVendor,
+    pub content: String,
+    pub revision: i64,
+    pub checksum: String,
+    pub published_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AgentPromptBundleManifest {
+    pub bundle_version: i64,
+    pub updated_at: String,
+    #[serde(default)]
+    pub required: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AgentPromptBundle {
+    pub bundle_version: i64,
+    pub updated_at: String,
+    #[serde(default)]
+    pub prompts: Vec<ResolvedAgentPrompt>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AgentPromptCompleteness {
+    pub agent_key: String,
+    pub required_vendors: Vec<AgentPromptVendor>,
+    pub published_vendors: Vec<AgentPromptVendor>,
+    pub missing_vendors: Vec<AgentPromptVendor>,
+    pub ready: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -93,7 +162,7 @@ pub struct McpRuntime {
     pub local_connector: Option<LocalConnectorRef>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ResourceSecurity {
     pub allow_writes: Option<bool>,
     pub max_file_bytes: Option<i64>,
@@ -103,6 +172,19 @@ pub struct ResourceSecurity {
     pub allowed_tool_names: Vec<String>,
     #[serde(default)]
     pub blocked_tool_names: Vec<String>,
+}
+
+impl Default for ResourceSecurity {
+    fn default() -> Self {
+        Self {
+            allow_writes: None,
+            max_file_bytes: Some(256 * 1024),
+            max_write_bytes: Some(5 * 1024 * 1024),
+            search_limit: Some(40),
+            allowed_tool_names: Vec::new(),
+            blocked_tool_names: Vec::new(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -295,6 +377,8 @@ pub struct LocalConnectorRequirement {
 pub struct LocalConnectorMcpSyncRequest {
     pub owner_user_id: String,
     pub device_id: String,
+    #[serde(default)]
+    pub workspace_id: Option<String>,
     pub manifest_id: String,
     pub runtime_kind: String,
     pub internal_name: String,
@@ -309,6 +393,8 @@ pub struct LocalConnectorMcpSyncRequest {
 pub struct LocalConnectorMcpStatusRequest {
     pub owner_user_id: String,
     pub device_id: String,
+    #[serde(default)]
+    pub workspace_id: Option<String>,
     pub manifest_id: String,
     pub status: String,
     pub last_error: Option<String>,
@@ -383,6 +469,8 @@ mod tests {
 
     #[test]
     fn system_agent_keys_match_registry_keys() {
+        assert_eq!(SystemAgentKey::ALL.len(), 11);
+        assert_eq!(SystemAgentKey::ALL.len() * AgentPromptVendor::ALL.len(), 44);
         assert_eq!(
             SystemAgentKey::ChatosConversationAgent.as_str(),
             "chatos_conversation_agent"
@@ -390,6 +478,54 @@ mod tests {
         assert_eq!(
             SystemAgentKey::LocalConnectorCommandApprovalAgent.as_str(),
             "local_connector_command_approval_agent"
+        );
+        assert_eq!(
+            SystemAgentKey::MemoryEngineThreadRepairAgent.as_str(),
+            "memory_engine_thread_repair_agent"
+        );
+    }
+
+    #[test]
+    fn resource_security_default_snapshot_matches_service_policy() {
+        let snapshot = serde_json::to_value(ResourceSecurity::default()).expect("security JSON");
+        assert_eq!(
+            snapshot,
+            serde_json::json!({
+                "allow_writes": null,
+                "max_file_bytes": 262144,
+                "max_write_bytes": 5242880,
+                "search_limit": 40,
+                "allowed_tool_names": [],
+                "blocked_tool_names": []
+            })
+        );
+    }
+
+    #[test]
+    fn local_connector_status_batch_round_trips_flattened_contract() {
+        let snapshot = serde_json::json!({
+            "items": [{
+                "mcp_id": "mcp-1",
+                "owner_user_id": "user-1",
+                "device_id": "device-1",
+                "workspace_id": "workspace-1",
+                "manifest_id": "manifest-1",
+                "status": "available",
+                "last_error": null,
+                "tool_snapshot": [{"name": "read_file"}],
+                "manifest_hash": "sha256:demo"
+            }]
+        });
+
+        let batch: LocalConnectorMcpStatusBatchRequest =
+            serde_json::from_value(snapshot.clone()).expect("decode status batch");
+        assert_eq!(
+            batch.items[0].status.workspace_id.as_deref(),
+            Some("workspace-1")
+        );
+        assert_eq!(
+            serde_json::to_value(batch).expect("encode status batch"),
+            snapshot
         );
     }
 }

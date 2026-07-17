@@ -41,15 +41,6 @@ impl MongoStore {
         self.find_by_id(&self.runtime_settings, "system").await
     }
 
-    pub(in crate::store) async fn save_runtime_settings(
-        &self,
-        settings: RuntimeSettingsRecord,
-    ) -> Result<RuntimeSettingsRecord, String> {
-        self.upsert_by_id(&self.runtime_settings, &settings.id, &settings)
-            .await?;
-        Ok(settings)
-    }
-
     pub(in crate::store) async fn delete_model_config(&self, id: &str) -> Result<bool, String> {
         let deleted = self.delete_by_id(&self.model_configs, id).await?;
         if !deleted {

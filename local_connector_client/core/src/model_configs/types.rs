@@ -18,6 +18,8 @@ pub(crate) struct LocalModelConfigRecord {
     pub(crate) server_model_config_id: Option<String>,
     pub(crate) name: String,
     pub(crate) provider: String,
+    #[serde(default)]
+    pub(crate) prompt_vendor: Option<String>,
     pub(crate) model: String,
     #[serde(default)]
     pub(crate) base_url: Option<String>,
@@ -51,6 +53,7 @@ pub(crate) struct LocalModelConfigDraft {
     pub(crate) server_model_config_id: Option<String>,
     pub(crate) name: String,
     pub(crate) provider: Option<String>,
+    pub(crate) prompt_vendor: Option<String>,
     pub(crate) model: Option<String>,
     pub(crate) base_url: Option<String>,
     pub(crate) api_key: Option<String>,
@@ -78,6 +81,7 @@ pub(crate) struct LocalModelConfigPublic {
     pub(crate) server_model_config_id: Option<String>,
     pub(crate) name: String,
     pub(crate) provider: String,
+    pub(crate) prompt_vendor: Option<String>,
     pub(crate) model: String,
     pub(crate) model_name: String,
     pub(crate) base_url: Option<String>,
@@ -122,6 +126,7 @@ impl LocalModelConfigRecord {
             server_model_config_id: self.server_model_config_id.clone(),
             name: self.name.clone(),
             provider: self.provider.clone(),
+            prompt_vendor: self.prompt_vendor.clone(),
             model: self.model.clone(),
             model_name: self.model.clone(),
             base_url: self.base_url.clone(),
@@ -156,6 +161,10 @@ pub(crate) struct LocalModelSettings {
     #[serde(default)]
     pub(crate) project_management_agent_thinking_level: Option<String>,
     #[serde(default)]
+    pub(crate) environment_initialization_model_config_id: Option<String>,
+    #[serde(default)]
+    pub(crate) environment_initialization_thinking_level: Option<String>,
+    #[serde(default)]
     pub(crate) command_approval_model_config_id: Option<String>,
     #[serde(default)]
     pub(crate) command_approval_thinking_level: Option<String>,
@@ -168,6 +177,7 @@ pub(crate) struct LocalModelRuntimeResponse {
     pub(crate) id: String,
     pub(crate) local_model_config_id: String,
     pub(crate) provider: String,
+    pub(crate) prompt_vendor: Option<String>,
     pub(crate) base_url: String,
     pub(crate) api_key: String,
     pub(crate) model: String,

@@ -130,6 +130,7 @@ export interface UserModelConfigRecord {
   owner_user_id: string;
   name: string;
   provider: string;
+  prompt_vendor?: AgentPromptVendor | null;
   model: string;
   model_name: string;
   thinking_level?: string | null;
@@ -150,6 +151,7 @@ export interface UserModelProviderRecord {
   owner_user_id: string;
   name: string;
   provider: string;
+  prompt_vendor?: AgentPromptVendor | null;
   api_key?: string;
   has_api_key: boolean;
   base_url?: string | null;
@@ -171,6 +173,7 @@ export interface CreateUserModelConfigPayload {
   owner_user_id?: string;
   name: string;
   provider?: string;
+  prompt_vendor?: AgentPromptVendor;
   model?: string;
   thinking_level?: string;
   api_key?: string;
@@ -186,6 +189,7 @@ export interface CreateUserModelProviderPayload {
   owner_user_id?: string;
   name: string;
   provider?: string;
+  prompt_vendor?: AgentPromptVendor;
   api_key?: string;
   base_url?: string;
   enabled?: boolean;
@@ -197,6 +201,7 @@ export interface CreateUserModelProviderPayload {
 export interface UpdateUserModelConfigPayload {
   name?: string;
   provider?: string;
+  prompt_vendor?: AgentPromptVendor;
   model?: string;
   thinking_level?: string;
   api_key?: string;
@@ -211,6 +216,7 @@ export interface UpdateUserModelConfigPayload {
 export interface UpdateUserModelProviderPayload {
   name?: string;
   provider?: string;
+  prompt_vendor?: AgentPromptVendor;
   api_key?: string;
   clear_api_key?: boolean;
   base_url?: string;
@@ -219,6 +225,8 @@ export interface UpdateUserModelProviderPayload {
   supports_reasoning?: boolean;
   supports_responses?: boolean;
 }
+
+export type AgentPromptVendor = 'glm' | 'deepseek' | 'gpt' | 'kimi';
 
 export interface UserModelSettingsRecord {
   user_id: string;

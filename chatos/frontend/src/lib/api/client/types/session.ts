@@ -28,6 +28,10 @@ export interface SessionRuntimeSettingsResponse {
   mcp_enabled: boolean;
   enabled_mcp_ids: string[];
   auto_create_task: boolean;
+  memory_auto_summary_enabled?: boolean;
+  memory_summary_message_threshold?: number;
+  memory_summary_character_threshold?: number;
+  memory_recall_limit?: number;
   created_at?: string;
   updated_at?: string;
 }
@@ -43,6 +47,10 @@ export interface SessionRuntimeSettingsPayload {
   mcp_enabled?: boolean;
   enabled_mcp_ids?: string[];
   auto_create_task?: boolean;
+  memory_auto_summary_enabled?: boolean;
+  memory_summary_message_threshold?: number;
+  memory_summary_character_threshold?: number;
+  memory_recall_limit?: number;
 }
 
 export interface SessionResponse {
@@ -137,6 +145,8 @@ export interface SessionMessageResponse {
   id: string;
   conversationId?: string;
   conversation_id?: string;
+  turn_id?: string | null;
+  sequence_no?: number;
   role: string;
   content: string;
   message_mode?: string | null;

@@ -15,11 +15,14 @@ pub(super) fn model_config_public_value(
         "owner_user_id": record.owner_user_id,
         "name": record.name,
         "provider": record.provider,
+        "prompt_vendor": record.prompt_vendor,
         "model": record.model,
         "model_name": record.model,
         "thinking_level": record.thinking_level,
         "task_usage_scenario": record.task_usage_scenario,
         "task_thinking_level": record.task_thinking_level,
+        "temperature": record.temperature,
+        "max_output_tokens": record.max_output_tokens,
         "has_api_key": record.has_api_key
             || record
                 .api_key
@@ -53,6 +56,7 @@ pub(super) fn model_provider_public_value(
         "owner_user_id": record.owner_user_id,
         "name": record.name,
         "provider": record.provider,
+        "prompt_vendor": record.prompt_vendor,
         "has_api_key": record.has_api_key
             || record
                 .api_key
@@ -90,6 +94,8 @@ pub(super) fn model_settings_public_value(
         "memory_summary_thinking_level": record.memory_summary_thinking_level,
         "project_management_agent_model_config_id": record.project_management_agent_model_config_id,
         "project_management_agent_thinking_level": record.project_management_agent_thinking_level,
+        "environment_initialization_model_config_id": record.environment_initialization_model_config_id,
+        "environment_initialization_thinking_level": record.environment_initialization_thinking_level,
         "updated_at": record.updated_at,
     });
     if let Some(sync_warnings) = sync_warnings.filter(|items| !items.is_empty()) {

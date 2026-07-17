@@ -9,7 +9,7 @@ use tokio::task::JoinSet;
 use tracing::warn;
 
 use crate::naming::{canonical_prefixed_tool_name, legacy_prefixed_tool_name};
-use crate::rpc::{list_tools_http, list_tools_stdio};
+use crate::rpc::{extract_tools, jsonrpc_http_call, list_tools_http, list_tools_stdio};
 use crate::schema::{build_function_tool_schema, parse_tool_definition};
 use crate::types::{McpStdioServer, ParsedToolDefinition, ToolInfo};
 
@@ -23,6 +23,7 @@ impl McpExecutor {
         server_type: &str,
         server_url: Option<String>,
         server_headers: Option<HashMap<String, String>>,
+        server_header_provider: Option<std::sync::Arc<dyn crate::McpHttpHeaderProvider>>,
         server_timeout: Option<Duration>,
         server_config: Option<McpStdioServer>,
         def: ParsedToolDefinition,
@@ -46,6 +47,7 @@ impl McpExecutor {
                 server_type: server_type.to_string(),
                 server_url,
                 server_headers,
+                server_header_provider,
                 server_timeout,
                 server_config,
                 tool_info: tool,
@@ -90,12 +92,26 @@ impl McpExecutor {
         let mut joins = JoinSet::new();
         for (index, server) in self.http_servers.clone().into_iter().enumerate() {
             joins.spawn(async move {
-                let tools = list_tools_http(
-                    server.url.as_str(),
-                    server.headers.as_ref(),
-                    server.timeout_duration(),
-                )
-                .await;
+                let tools = match server.resolved_headers().await {
+                    Ok(headers) if server.header_provider.is_some() => jsonrpc_http_call(
+                        server.url.as_str(),
+                        headers.as_ref(),
+                        "tools/list",
+                        json!({}),
+                        server.timeout_duration(),
+                    )
+                    .await
+                    .and_then(|response| extract_tools(&response)),
+                    Ok(headers) => {
+                        list_tools_http(
+                            server.url.as_str(),
+                            headers.as_ref(),
+                            server.timeout_duration(),
+                        )
+                        .await
+                    }
+                    Err(err) => Err(err),
+                };
                 (index, server, tools)
             });
         }
@@ -123,6 +139,7 @@ impl McpExecutor {
                                 "http",
                                 Some(server.url.clone()),
                                 server.headers.clone(),
+                                server.header_provider.clone(),
                                 server.timeout_duration(),
                                 None,
                                 def,
@@ -179,6 +196,7 @@ impl McpExecutor {
                                 None,
                                 None,
                                 None,
+                                None,
                                 Some(server.clone()),
                                 def,
                                 tool,
@@ -226,6 +244,7 @@ impl McpExecutor {
                         server.name.as_str(),
                         server.name.as_str(),
                         "builtin",
+                        None,
                         None,
                         None,
                         None,
@@ -284,6 +303,7 @@ mod tests {
             "code_maintainer_read",
             "http",
             Some("http://127.0.0.1:9000/mcp".to_string()),
+            None,
             None,
             None,
             None,

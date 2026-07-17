@@ -51,6 +51,17 @@ impl AppStore {
         create_unique_index(&self.agents, doc! { "agent_key": 1 }).await?;
         create_index(&self.agents, doc! { "service_name": 1, "enabled": 1 }).await?;
 
+        create_unique_index(&self.agent_prompts, doc! { "id": 1 }).await?;
+        create_unique_index(&self.agent_prompts, doc! { "agent_key": 1, "vendor": 1 }).await?;
+        create_index(&self.agent_prompts, doc! { "agent_key": 1, "enabled": 1 }).await?;
+        create_unique_index(&self.agent_prompt_versions, doc! { "id": 1 }).await?;
+        create_unique_index(&self.agent_prompt_releases, doc! { "id": 1 }).await?;
+        create_unique_index(
+            &self.agent_prompt_releases,
+            doc! { "agent_key": 1, "bundle_version": 1 },
+        )
+        .await?;
+
         create_unique_index(&self.bindings, doc! { "id": 1 }).await?;
         create_index(
             &self.bindings,

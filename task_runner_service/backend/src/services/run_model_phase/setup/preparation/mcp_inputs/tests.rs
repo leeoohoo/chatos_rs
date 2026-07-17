@@ -113,23 +113,21 @@ fn task_stdio_server_rejects_missing_workspace() {
 }
 
 #[test]
-fn final_execution_guard_rejects_user_cloud_mcps() {
-    for source_kind in ["user_created", "local_connector_discovered"] {
-        for runtime_kind in ["http", "stdio_cloud"] {
-            let err = ensure_user_mcp_runtime_kind_allowed("user-mcp", source_kind, runtime_kind)
-                .expect_err("user cloud MCP must be rejected");
-            assert!(err.contains("must run through Local Connector"));
-        }
+fn final_execution_guard_allows_cloud_mcps_and_rejects_local_connector_mcps() {
+    for runtime_kind in ["http", "stdio_cloud"] {
+        ensure_cloud_mcp_runtime_allowed("user-cloud-mcp", "user_created", runtime_kind, false)
+            .expect("cloud MCP should be allowed");
     }
-    assert!(ensure_user_mcp_runtime_kind_allowed(
-        "user-mcp",
-        "user_created",
-        "local_connector_stdio",
-    )
-    .is_ok());
-    assert!(
-        ensure_user_mcp_runtime_kind_allowed("admin-mcp", "admin_created", "stdio_cloud",).is_ok()
-    );
+    for (source_kind, runtime_kind, has_local_ref) in [
+        ("local_connector_discovered", "http", false),
+        ("user_created", "local_connector_stdio", false),
+        ("user_created", "http", true),
+    ] {
+        let err =
+            ensure_cloud_mcp_runtime_allowed("local-mcp", source_kind, runtime_kind, has_local_ref)
+                .expect_err("Local Connector MCP must be rejected");
+        assert!(err.contains("unavailable in cloud Task Runner"));
+    }
 }
 
 #[test]

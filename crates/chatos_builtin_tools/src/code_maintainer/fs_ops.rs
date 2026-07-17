@@ -48,6 +48,7 @@ impl FsOps {
         max_write_bytes: i64,
         search_limit: usize,
     ) -> Self {
+        let root = root.canonicalize().unwrap_or(root);
         Self {
             root,
             allow_writes,

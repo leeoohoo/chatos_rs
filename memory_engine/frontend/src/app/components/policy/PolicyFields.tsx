@@ -1,195 +1,89 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-import { useState } from 'react';
-
-import { BulbOutlined, TranslationOutlined } from '@ant-design/icons';
-import {
-  Alert,
-  Button,
-  Card,
-  Col,
-  Form,
-  Input,
-  InputNumber,
-  Radio,
-  Row,
-  Select,
-  Space,
-  Switch,
-  Typography,
-} from 'antd';
+import { Alert, Button, Descriptions, Space, Tag, Typography } from 'antd';
 
 import type { PolicyFieldsProps } from './types';
 
-const { TextArea } = Input;
 const { Text } = Typography;
 
-export function PolicyFields(props: PolicyFieldsProps) {
-  const {
-    form,
-    initialValues,
-    meta,
-    modelOptions,
-    promptFieldName,
-    promptLanguageFieldName,
-    promptZhFieldName,
-    promptEnFieldName,
-    generatingPrompt,
-    onGeneratePrompt,
-  } = props;
-  const [promptRequest, setPromptRequest] = useState('');
+const configCenterUrl =
+  (import.meta.env.VITE_CONFIG_CENTER_URL as string | undefined) ||
+  'http://localhost:39271';
 
-  const handleGeneratePrompt = async () => {
-    await onGeneratePrompt(promptRequest);
-  };
+export function PolicyFields({ policy, meta }: PolicyFieldsProps) {
+  const value = (input: string | number | null | undefined, suffix = '') =>
+    input === null || input === undefined || input === '' ? '-' : `${input}${suffix}`;
 
   return (
-    <Form form={form} layout="vertical" initialValues={initialValues}>
-      <Row gutter={[12, 0]}>
-        <Col xs={24} md={8}>
-          <Form.Item label="启用" name="enabled" valuePropName="checked">
-            <Switch />
-          </Form.Item>
-        </Col>
-        <Col xs={24} md={16}>
-          <Form.Item label="模型配置" name="model_profile_id">
-            <Select
-              allowClear
-              showSearch
-              optionFilterProp="label"
-              placeholder="留空表示使用全局默认模型"
-              options={modelOptions}
-            />
-          </Form.Item>
-        </Col>
+    <Space direction="vertical" size={16} style={{ width: '100%' }}>
+      <Alert
+        type="info"
+        showIcon
+        message="运行参数已由全局配置中心统一管理"
+        description={
+          <Space direction="vertical" size="small">
+            <Text>
+              云端 Memory Engine 和 Local Connector 客户端读取同一份已发布策略；客户端会缓存
+              last-known-good，离线时继续使用最近一次有效配置。
+            </Text>
+            <Text>
+              模型供应商、模型名、Base URL 和 API Key 仍在“模型配置”中维护，本页和配置中心都不重复保存模型信息。
+            </Text>
+            <Button href={configCenterUrl} target="_blank" rel="noreferrer" size="small">
+              打开配置中心
+            </Button>
+          </Space>
+        }
+      />
 
-        <Col span={24}>
-          <Card
-            size="small"
-            title={
-              <Space size={8}>
-                <TranslationOutlined />
-                <span>{meta.promptLabel}</span>
-              </Space>
-            }
-          >
-            <Space direction="vertical" size={16} style={{ width: '100%' }}>
-              <Alert
-                type="info"
-                showIcon
-                message="可以先描述你想要的总结风格、保留重点和输出倾向，AI 会一次生成中文和英文两版 prompt。"
-              />
+      {meta.managedAgentKey ? (
+        <Alert
+          type="success"
+          showIcon
+          message={`${meta.promptLabel} 已由系统 Agent 统一管理`}
+          description={`请在 Plugin Management 的系统智能体页面编辑并发布 ${meta.managedAgentKey}；运行时会按当前模型厂商读取对应 Published Prompt。`}
+        />
+      ) : null}
 
-              <Form.Item label="Prompt 生成需求">
-                <TextArea
-                  rows={4}
-                  value={promptRequest}
-                  onChange={(event) => setPromptRequest(event.target.value)}
-                  placeholder="例如：基于用户输入内容自动生成高密度总结，重点保留任务进展、阻塞点、下一步计划、关键文件路径，并分别提供中文和英文版本。"
-                />
-              </Form.Item>
-
-              <Space wrap>
-                <Button
-                  type="default"
-                  icon={<BulbOutlined />}
-                  loading={generatingPrompt}
-                  disabled={!promptRequest.trim()}
-                  onClick={() => void handleGeneratePrompt()}
-                >
-                  AI 生成中英 Prompt
-                </Button>
-                <Text type="secondary">
-                  生成后仍可手动调整，保存时会保留中英双版本。
-                </Text>
-              </Space>
-
-              <Form.Item label="总结时使用哪种提示词" name={promptLanguageFieldName}>
-                <Radio.Group
-                  optionType="button"
-                  buttonStyle="solid"
-                  options={[
-                    { label: '中文 Prompt', value: 'zh' },
-                    { label: 'English Prompt', value: 'en' },
-                  ]}
-                />
-              </Form.Item>
-
-              <Row gutter={[12, 0]}>
-                <Col xs={24} lg={12}>
-                  <Form.Item
-                    label="中文 Prompt"
-                    name={promptZhFieldName}
-                    extra={meta.promptPlaceholder ?? '为空时使用默认总结模板'}
-                  >
-                    <TextArea rows={10} placeholder="输入或生成中文总结提示词" />
-                  </Form.Item>
-                </Col>
-                <Col xs={24} lg={12}>
-                  <Form.Item
-                    label="English Prompt"
-                    name={promptEnFieldName}
-                    extra="可填写与中文等价的英文提示词，便于切换使用。"
-                  >
-                    <TextArea rows={10} placeholder="Write or generate the English prompt" />
-                  </Form.Item>
-                </Col>
-              </Row>
-
-              <Form.Item name={promptFieldName} hidden>
-                <Input />
-              </Form.Item>
-            </Space>
-          </Card>
-        </Col>
-
-        <Col xs={24} md={8}>
-          <Form.Item label={meta.tokenLimitLabel} name="token_limit">
-            <InputNumber min={128} style={{ width: '100%' }} />
-          </Form.Item>
-        </Col>
+      <Descriptions bordered size="small" column={{ xs: 1, sm: 2, lg: 3 }}>
+        <Descriptions.Item label="启用">
+          <Tag color={policy.enabled ? 'green' : 'default'}>
+            {policy.enabled ? '已启用' : '已停用'}
+          </Tag>
+        </Descriptions.Item>
+        <Descriptions.Item label={meta.tokenLimitLabel}>
+          {value(policy.token_limit)}
+        </Descriptions.Item>
         {meta.showTargetSummaryTokens === false ? null : (
-          <Col xs={24} md={8}>
-            <Form.Item label={meta.targetSummaryTokensLabel} name="target_summary_tokens">
-              <InputNumber min={128} style={{ width: '100%' }} />
-            </Form.Item>
-          </Col>
+          <Descriptions.Item label={meta.targetSummaryTokensLabel}>
+            {value(policy.target_summary_tokens)}
+          </Descriptions.Item>
         )}
-        <Col xs={24} md={8}>
-          <Form.Item label={meta.intervalSecondsLabel} name="interval_seconds">
-            <InputNumber min={3} style={{ width: '100%' }} />
-          </Form.Item>
-        </Col>
+        <Descriptions.Item label={meta.intervalSecondsLabel}>
+          {value(policy.interval_seconds, ' 秒')}
+        </Descriptions.Item>
         {meta.showMaxThreadsPerTick === false || !meta.maxThreadsPerTickLabel ? null : (
-          <Col xs={24} md={8}>
-            <Form.Item label={meta.maxThreadsPerTickLabel} name="max_threads_per_tick">
-              <InputNumber min={1} style={{ width: '100%' }} />
-            </Form.Item>
-          </Col>
+          <Descriptions.Item label={meta.maxThreadsPerTickLabel}>
+            {value(policy.max_threads_per_tick)}
+          </Descriptions.Item>
         )}
         {meta.countLimitLabel ? (
-          <Col xs={24} md={8}>
-            <Form.Item label={meta.countLimitLabel} name="count_limit">
-              <InputNumber min={1} style={{ width: '100%' }} />
-            </Form.Item>
-          </Col>
+          <Descriptions.Item label={meta.countLimitLabel}>
+            {value(policy.count_limit)}
+          </Descriptions.Item>
         ) : null}
         {meta.showKeepLevel0 ? (
-          <Col xs={24} md={8}>
-            <Form.Item label={meta.keepLevel0Label} name="keep_level0_count">
-              <InputNumber min={0} style={{ width: '100%' }} />
-            </Form.Item>
-          </Col>
+          <Descriptions.Item label={meta.keepLevel0Label}>
+            {value(policy.keep_level0_count)}
+          </Descriptions.Item>
         ) : null}
         {meta.showMaxLevel ? (
-          <Col xs={24} md={8}>
-            <Form.Item label={meta.maxLevelLabel} name="max_level">
-              <InputNumber min={1} style={{ width: '100%' }} />
-            </Form.Item>
-          </Col>
+          <Descriptions.Item label={meta.maxLevelLabel}>
+            {value(policy.max_level)}
+          </Descriptions.Item>
         ) : null}
-      </Row>
-    </Form>
+      </Descriptions>
+    </Space>
   );
 }

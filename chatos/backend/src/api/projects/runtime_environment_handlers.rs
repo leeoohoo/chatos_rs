@@ -129,6 +129,39 @@ pub(super) async fn analyze_project_runtime_environment(
     (StatusCode::OK, Json(response))
 }
 
+pub(super) async fn generate_project_runtime_environment_image(
+    auth: AuthUser,
+    Path((id, image_record_id)): Path<(String, String)>,
+) -> (StatusCode, Json<Value>) {
+    let project = match ensure_owned_project(&id, &auth).await {
+        Ok(project) => project,
+        Err(err) => return map_project_access_error(err),
+    };
+    if !is_cloud_project(&project) {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "本地项目镜像必须由本地客户端生成" })),
+        );
+    }
+    let (cfg, access_token) = match project_service_context() {
+        Ok(context) => context,
+        Err(err) => return err,
+    };
+    let response =
+        match project_management_api_client::generate_project_service_runtime_environment_image(
+            cfg.project_service_base_url.as_str(),
+            access_token.as_str(),
+            project.id.as_str(),
+            image_record_id.as_str(),
+        )
+        .await
+        {
+            Ok(response) => response,
+            Err(err) => return (StatusCode::BAD_GATEWAY, Json(json!({ "error": err }))),
+        };
+    (StatusCode::OK, Json(response))
+}
+
 pub(super) async fn get_project_runtime_environment_progress(
     auth: AuthUser,
     Path(id): Path<String>,

@@ -7,15 +7,20 @@ use serde_json::{json, Value};
 use crate::models::*;
 use crate::store::{now_rfc3339, AppStore};
 
+mod agent_prompts;
 mod internal_skills;
 
 use crate::tool_catalog::system_routed_tool_catalog;
+use agent_prompts::{backfill_agent_prompt_versions, seed_agent_prompts};
 use internal_skills::{internal_skill_catalog, seed_internal_skills};
 
 pub const SANDBOX_IMAGES_MCP_RESOURCE_ID: &str = "system_mcp_sandbox_images";
 const SANDBOX_IMAGES_MCP_SERVER_NAME: &str = "sandbox_images";
 pub const PROJECT_ENVIRONMENT_MCP_RESOURCE_ID: &str = "system_mcp_project_environment";
 const PROJECT_ENVIRONMENT_MCP_SERVER_NAME: &str = "project_environment";
+pub const PROJECT_RUNTIME_ENVIRONMENT_MCP_RESOURCE_ID: &str =
+    "system_mcp_project_runtime_environment";
+const PROJECT_RUNTIME_ENVIRONMENT_MCP_SERVER_NAME: &str = "project_runtime_environment";
 pub const LOCAL_CONNECTOR_APPROVAL_MCP_RESOURCE_ID: &str = "system_mcp_local_connector_approval";
 const LOCAL_CONNECTOR_APPROVAL_MCP_SERVER_NAME: &str = "local_connector_approval";
 pub const CHATOS_TASK_RUNNER_MCP_RESOURCE_ID: &str = "system_mcp_chatos_task_runner";
@@ -36,8 +41,13 @@ pub async fn seed_system_resources(store: &AppStore, admin_user_id: &str) -> Res
     seed_system_routed_mcps(store, admin_user_id).await?;
     seed_internal_skills(store, admin_user_id).await?;
     seed_agents(store).await?;
+    seed_agent_prompts(store, admin_user_id).await?;
     seed_agent_bindings(store, admin_user_id).await?;
     Ok(())
+}
+
+pub async fn ensure_agent_prompt_version_history(store: &AppStore) -> Result<(), String> {
+    backfill_agent_prompt_versions(store).await
 }
 
 async fn remove_retired_system_agents(store: &AppStore) -> Result<(), String> {
@@ -144,6 +154,18 @@ async fn seed_system_routed_mcps(store: &AppStore, admin_user_id: &str) -> Resul
         true,
         &["system", "project", "environment"],
         "project_environment",
+    )
+    .await?;
+    seed_system_routed_mcp(
+        store,
+        admin_user_id,
+        PROJECT_RUNTIME_ENVIRONMENT_MCP_RESOURCE_ID,
+        PROJECT_RUNTIME_ENVIRONMENT_MCP_SERVER_NAME,
+        "Project Runtime Environment",
+        "Read-only initialized runtime environment information for the Task Runner execution agent.",
+        false,
+        &["system", "project", "runtime", "environment", "task_runner"],
+        "task_runner",
     )
     .await?;
     seed_system_routed_mcp(
@@ -278,6 +300,12 @@ fn provider_skills_for_system_mcp(resource_id: &str) -> Option<Value> {
             "Project Environment MCP 使用指南",
             "指导 AI 读取和更新当前项目的运行环境状态。",
             include_str!("../provider_skills/project-environment.md"),
+        ),
+        PROJECT_RUNTIME_ENVIRONMENT_MCP_RESOURCE_ID => (
+            "project_runtime_environment_usage",
+            "项目运行环境信息 MCP 使用指南",
+            "指导 Task Runner 执行 Agent 读取当前项目已经初始化好的环境信息。",
+            include_str!("../provider_skills/project-runtime-environment.md"),
         ),
         LOCAL_CONNECTOR_APPROVAL_MCP_RESOURCE_ID => (
             "local_command_approval_usage",
@@ -478,6 +506,15 @@ async fn seed_agent_bindings(store: &AppStore, admin_user_id: &str) -> Result<()
         )
         .await?;
     }
+    seed_agent_mcp_binding(
+        store,
+        admin_user_id,
+        "task_runner_run_phase",
+        PROJECT_RUNTIME_ENVIRONMENT_MCP_RESOURCE_ID,
+        true,
+        30,
+    )
+    .await?;
     let catalog = internal_skill_catalog()?;
     for (index, item) in catalog.skills.iter().enumerate() {
         seed_agent_resource_binding(
@@ -706,121 +743,4 @@ fn snake_case(value: &str) -> String {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn task_runner_run_phase_defaults_match_callable_task_runner_providers() {
-        let kinds = task_runner_run_phase_optional_builtin_kinds()
-            .into_iter()
-            .map(|(kind, _)| kind)
-            .collect::<Vec<_>>();
-
-        assert!(kinds.contains(&BuiltinMcpKind::CodeMaintainerRead));
-        assert!(kinds.contains(&BuiltinMcpKind::CodeMaintainerWrite));
-        assert!(kinds.contains(&BuiltinMcpKind::TerminalController));
-        assert!(kinds.contains(&BuiltinMcpKind::ProjectManagement));
-        assert!(kinds.contains(&BuiltinMcpKind::Notepad));
-        assert!(kinds.contains(&BuiltinMcpKind::RemoteConnectionController));
-        assert!(kinds.contains(&BuiltinMcpKind::WebTools));
-        assert!(kinds.contains(&BuiltinMcpKind::BrowserTools));
-        assert!(!kinds.contains(&BuiltinMcpKind::AgentBuilder));
-        assert!(!kinds.contains(&BuiltinMcpKind::MemorySkillReader));
-    }
-
-    #[test]
-    fn every_seeded_builtin_mcp_has_provider_skills_in_both_locales() {
-        for kind in builtin_kinds() {
-            let skills = provider_skills_for_builtin_mcp(kind);
-            let skills = skills.as_array().expect("provider skills array");
-            assert_eq!(skills.len(), 2, "{}", kind.kind_name());
-            assert!(skills.iter().all(|skill| {
-                skill
-                    .get("instructions")
-                    .and_then(Value::as_str)
-                    .is_some_and(|value| !value.trim().is_empty())
-            }));
-            assert!(skills
-                .iter()
-                .any(|skill| { skill.get("locale").and_then(Value::as_str) == Some("zh-CN") }));
-            assert!(skills
-                .iter()
-                .any(|skill| { skill.get("locale").and_then(Value::as_str) == Some("en-US") }));
-        }
-    }
-
-    #[test]
-    fn every_seeded_builtin_mcp_has_a_real_tool_catalog() {
-        for kind in builtin_kinds() {
-            let tools = chatos_builtin_tools::builtin_tool_catalog(kind)
-                .unwrap_or_else(|err| panic!("{}: {err}", kind.kind_name()));
-            assert!(!tools.is_empty(), "{}", kind.kind_name());
-        }
-    }
-
-    #[test]
-    fn every_system_routed_mcp_has_provider_skills() {
-        for resource_id in [
-            SANDBOX_IMAGES_MCP_RESOURCE_ID,
-            PROJECT_ENVIRONMENT_MCP_RESOURCE_ID,
-            LOCAL_CONNECTOR_APPROVAL_MCP_RESOURCE_ID,
-            CHATOS_TASK_RUNNER_MCP_RESOURCE_ID,
-        ] {
-            let skills = provider_skills_for_system_mcp(resource_id)
-                .and_then(|value| value.as_array().cloned())
-                .expect("system MCP provider skills");
-            assert!(!skills.is_empty(), "{resource_id}");
-            assert!(skills.iter().all(|skill| {
-                skill
-                    .get("instructions")
-                    .and_then(Value::as_str)
-                    .is_some_and(|value| !value.trim().is_empty())
-            }));
-        }
-    }
-
-    #[test]
-    fn legacy_chatos_plan_key_is_replaced_by_the_explicit_planning_role() {
-        assert!(RETIRED_SYSTEM_AGENT_KEYS.contains(&"chatos_plan_agent"));
-        assert!(system_agent_specs()
-            .iter()
-            .any(|(agent_key, _, _, _, _)| *agent_key == "chatos_planning_agent"));
-    }
-
-    #[test]
-    fn system_agent_registry_contains_all_six_capability_roles() {
-        let keys = system_agent_specs()
-            .into_iter()
-            .map(|(agent_key, _, _, _, _)| agent_key)
-            .collect::<Vec<_>>();
-
-        assert_eq!(
-            keys,
-            vec![
-                "chatos_conversation_agent",
-                "chatos_planning_agent",
-                "project_requirement_execution_planner_agent",
-                "task_runner_run_phase",
-                "project_management_agent",
-                "local_connector_command_approval_agent",
-            ]
-        );
-    }
-
-    #[test]
-    fn chatos_uses_the_task_runner_service_mcp_entry() {
-        assert_eq!(CHATOS_TASK_RUNNER_MCP_SERVER_NAME, "task_runner_service");
-    }
-
-    #[test]
-    fn chatos_conversation_requires_task_runner_service() {
-        let spec = (
-            "chatos_conversation_agent",
-            CHATOS_TASK_RUNNER_MCP_RESOURCE_ID,
-            true,
-        );
-        assert_eq!(spec.0, "chatos_conversation_agent");
-        assert_eq!(spec.1, "system_mcp_chatos_task_runner");
-        assert!(spec.2);
-    }
-}
+mod tests;

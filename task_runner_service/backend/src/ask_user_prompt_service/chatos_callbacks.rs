@@ -7,6 +7,7 @@ use tracing::{info, warn};
 
 use crate::http_body::{read_response_text_limited_or_message, ERROR_BODY_PREVIEW_LIMIT_BYTES};
 use crate::models::{now_rfc3339, AskUserPromptRecord, TaskRecord, TaskRunRecord, TaskStatus};
+use chatos_service_runtime::{build_http_client, HttpClientTimeouts};
 
 use super::support::{
     redacted_prompt_payload, redacted_prompt_response, secret_field_keys, status_label,
@@ -183,9 +184,7 @@ async fn send_chatos_ask_user_prompt_callback(
     let Some(url) = config.chatos_callback_url.clone() else {
         return Err("TASK_RUNNER_CHATOS_CALLBACK_URL not configured".to_string());
     };
-    let client = reqwest::Client::builder()
-        .timeout(config.callback_timeout)
-        .build()
+    let client = build_http_client(HttpClientTimeouts::new(config.callback_timeout))
         .map_err(|err| err.to_string())?;
     let mut request = client.post(url).json(&payload);
     if let Some(secret) = config.chatos_callback_secret.clone() {
