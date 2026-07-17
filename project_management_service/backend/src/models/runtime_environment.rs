@@ -71,6 +71,64 @@ pub enum RuntimeEnvironmentVariableSource {
     None,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum RuntimeServiceRole {
+    Application,
+    Dependency,
+    #[default]
+    Unknown,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum RuntimeMcpPolicyManager {
+    #[default]
+    System,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum RuntimeMcpAttachment {
+    ProjectGatewayTarget,
+    #[default]
+    None,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ProgramManagedMcpPolicy {
+    #[serde(default)]
+    pub managed_by: RuntimeMcpPolicyManager,
+    #[serde(default)]
+    pub attachment: RuntimeMcpAttachment,
+    #[serde(default)]
+    pub filesystem: bool,
+    #[serde(default)]
+    pub terminal: bool,
+}
+
+impl Default for ProgramManagedMcpPolicy {
+    fn default() -> Self {
+        Self {
+            managed_by: RuntimeMcpPolicyManager::System,
+            attachment: RuntimeMcpAttachment::None,
+            filesystem: false,
+            terminal: false,
+        }
+    }
+}
+
+impl ProgramManagedMcpPolicy {
+    pub fn application_target() -> Self {
+        Self {
+            managed_by: RuntimeMcpPolicyManager::System,
+            attachment: RuntimeMcpAttachment::ProjectGatewayTarget,
+            filesystem: true,
+            terminal: true,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProjectRuntimeEnvironmentVariableRecord {
     pub name: String,
@@ -159,6 +217,12 @@ pub struct ProjectRuntimeEnvironmentImageRecord {
     pub environment_key: String,
     pub environment_type: String,
     pub display_name: String,
+    #[serde(default)]
+    pub service_id: String,
+    #[serde(default)]
+    pub service_role: RuntimeServiceRole,
+    #[serde(default)]
+    pub mcp_policy: ProgramManagedMcpPolicy,
     pub image_id: Option<String>,
     pub image_ref: Option<String>,
     pub image_provider: RuntimeEnvironmentProvider,

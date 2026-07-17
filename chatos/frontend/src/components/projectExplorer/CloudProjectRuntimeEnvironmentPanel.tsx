@@ -191,7 +191,9 @@ export const CloudProjectRuntimeEnvironmentPanel: React.FC<CloudProjectRuntimeEn
         status: 'pending_image_build',
       },
       images: (current.images || []).map((image) => (
-        image.id === imageId ? { ...image, status: 'building', error: null } : image
+        image.dockerfile
+          ? { ...image, status: 'building', error: null }
+          : { ...image, status: 'preparing', error: null }
       )),
     } : current);
     try {

@@ -38,8 +38,9 @@ mod skill_packages;
 mod skills;
 
 use agent_provider_prompts::{
-    agent_prompt_completeness, generate_agent_provider_prompt, list_agent_provider_prompts,
-    publish_agent_provider_prompt, update_agent_provider_prompt_draft,
+    agent_prompt_completeness, generate_agent_provider_prompt, get_agent_prompt_version,
+    list_agent_prompt_versions, list_agent_provider_prompts, publish_agent_provider_prompt,
+    update_agent_provider_prompt_draft,
 };
 use agents::{
     create_system_agent, get_agent_mcp_bindings, list_system_agents, update_agent_mcp_bindings,
@@ -84,6 +85,7 @@ const ALLOWED_INTERNAL_CALLER_SERVICES: &[&str] = &[
     "task-runner",
     "project-service",
     "local-connector-service",
+    "memory-engine",
 ];
 
 #[derive(Debug)]
@@ -203,6 +205,14 @@ pub fn build_router(state: AppState) -> Router {
         .route(
             "/api/system-agents/{agent_key}/provider-prompts",
             get(list_agent_provider_prompts),
+        )
+        .route(
+            "/api/system-agents/{agent_key}/prompt-versions",
+            get(list_agent_prompt_versions),
+        )
+        .route(
+            "/api/system-agents/{agent_key}/prompt-versions/{bundle_version}",
+            get(get_agent_prompt_version),
         )
         .route(
             "/api/system-agents/{agent_key}/provider-prompts/{vendor}/draft",

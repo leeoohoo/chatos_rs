@@ -236,6 +236,46 @@ async fn lifecycle_continuation_runs_hidden_review_and_restores_visible_response
         .all(|payload| payload.get("prev_id").is_none()));
 }
 
+#[tokio::test]
+async fn failed_provider_response_retries_five_times_before_succeeding() {
+    let failed_response = json!({
+        "id": "response-failed",
+        "status": "failed",
+        "error": null
+    });
+    let (base_url, requests, server) = start_lifecycle_mock_provider(vec![
+        failed_response.clone(),
+        failed_response.clone(),
+        failed_response.clone(),
+        failed_response.clone(),
+        failed_response,
+        json!({
+            "id": "response-success",
+            "status": "completed",
+            "output_text": "completed after retries"
+        }),
+    ])
+    .await;
+    let request = ModelRequest::openai_compatible(
+        base_url,
+        "test-key",
+        "gpt-test",
+        "openai",
+        json!([{"role": "user", "content": "complete the task"}]),
+    )
+    .with_responses_support(true);
+
+    let result = AiRuntime::new(None)
+        .with_max_iterations(2)
+        .run_turn(request, AiRuntimeOptions::for_conversation("session-retry"))
+        .await
+        .expect("fifth retry should succeed");
+    server.abort();
+
+    assert_eq!(result.content, "completed after retries");
+    assert_eq!(requests.lock().await.len(), 6);
+}
+
 #[test]
 fn runtime_options_pass_abort_checker_to_tool_context() {
     let options = AiRuntimeOptions::new(Some("session_1".to_string()), Some("turn_1".to_string()))

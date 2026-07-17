@@ -18,12 +18,15 @@ pub use config::{
 pub use config::{load_agent_max_iterations, resolve_agent_max_iterations};
 #[cfg(feature = "runtime")]
 pub use core::{
-    merge_system_instructions, AgentError, AgentExecutor, AgentIdentity, AgentTurnMemory,
-    AgentTurnRequest, SystemAgentDefinition,
+    merge_system_instructions, resolve_managed_prompt_by_key_for_model,
+    resolve_managed_prompt_for_model, resolve_managed_prompt_for_model_with_client, AgentError,
+    AgentExecutor, AgentIdentity, AgentTurnMemory, AgentTurnRequest, SystemAgentDefinition,
 };
 #[cfg(feature = "runtime")]
 pub use implementations::{
     ChatosAgentProfile, ChatosStreamAgent, ChatosStreamRuntime, CommandApprovalAgent,
-    ProjectEnvironmentAgent, TaskRunnerAgent, TaskRunnerRunSpecInput, COMMAND_APPROVAL_AGENT,
-    PROJECT_ENVIRONMENT_AGENT, TASK_RUNNER_AGENT,
+    MemoryEngineAgent, MemoryEngineAgentKind, ProjectEnvironmentAgent, TaskRunnerAgent,
+    TaskRunnerRunSpecInput, COMMAND_APPROVAL_AGENT, MEMORY_ENGINE_MEMORY_ROLLUP_AGENT,
+    MEMORY_ENGINE_ROLLUP_AGENT, MEMORY_ENGINE_SUBJECT_MEMORY_AGENT, MEMORY_ENGINE_SUMMARY_AGENT,
+    MEMORY_ENGINE_THREAD_REPAIR_AGENT, PROJECT_ENVIRONMENT_AGENT, TASK_RUNNER_AGENT,
 };

@@ -2,11 +2,18 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use std::collections::HashMap;
+use std::fmt::Debug;
 use std::sync::Arc;
 use std::time::Duration;
 
+use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+
+#[async_trait]
+pub trait McpHttpHeaderProvider: Debug + Send + Sync {
+    async fn headers(&self) -> Result<HashMap<String, String>, String>;
+}
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct McpToolNameAlias {
@@ -26,6 +33,8 @@ pub struct McpHttpServer {
     pub tool_name_aliases: Vec<McpToolNameAlias>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub allowed_tool_names: Option<Vec<String>>,
+    #[serde(skip)]
+    pub header_provider: Option<Arc<dyn McpHttpHeaderProvider>>,
 }
 
 impl McpHttpServer {
@@ -37,6 +46,7 @@ impl McpHttpServer {
             timeout_ms: None,
             tool_name_aliases: Vec::new(),
             allowed_tool_names: None,
+            header_provider: None,
         }
     }
 
@@ -48,6 +58,22 @@ impl McpHttpServer {
     pub fn with_timeout(mut self, timeout: Duration) -> Self {
         self.timeout_ms = Some(timeout.as_millis().min(u128::from(u64::MAX)) as u64);
         self
+    }
+
+    pub fn with_header_provider<P>(mut self, provider: P) -> Self
+    where
+        P: McpHttpHeaderProvider + 'static,
+    {
+        self.header_provider = Some(Arc::new(provider));
+        self
+    }
+
+    pub async fn resolved_headers(&self) -> Result<Option<HashMap<String, String>>, String> {
+        let mut headers = self.headers.clone().unwrap_or_default();
+        if let Some(provider) = self.header_provider.as_ref() {
+            extend_headers_case_insensitive(&mut headers, provider.headers().await?);
+        }
+        Ok((!headers.is_empty()).then_some(headers))
     }
 
     pub fn with_tool_name_aliases<I>(mut self, aliases: I) -> Self
@@ -97,6 +123,22 @@ impl McpHttpServer {
                     .iter()
                     .any(|allowed| allowed.trim() == tool_name.trim())
             })
+    }
+}
+
+pub(crate) fn extend_headers_case_insensitive(
+    headers: &mut HashMap<String, String>,
+    additional: HashMap<String, String>,
+) {
+    for (key, value) in additional {
+        if let Some(existing_key) = headers
+            .keys()
+            .find(|existing| existing.eq_ignore_ascii_case(key.as_str()))
+            .cloned()
+        {
+            headers.remove(existing_key.as_str());
+        }
+        headers.insert(key, value);
     }
 }
 
@@ -171,6 +213,7 @@ pub struct ToolInfo {
     pub server_type: String,
     pub server_url: Option<String>,
     pub server_headers: Option<HashMap<String, String>>,
+    pub server_header_provider: Option<Arc<dyn McpHttpHeaderProvider>>,
     pub server_timeout: Option<Duration>,
     pub server_config: Option<McpStdioServer>,
     pub tool_info: Value,
@@ -369,9 +412,25 @@ pub type ToolAbortCheckCallback = Arc<dyn Fn(&str) -> bool + Send + Sync>;
 mod tests {
     use std::collections::HashMap;
 
+    use async_trait::async_trait;
+
     use super::{
-        McpHttpServer, McpStdioServer, McpToolNameAlias, ToolCallContext, ToolCallerModelRuntime,
+        McpHttpHeaderProvider, McpHttpServer, McpStdioServer, McpToolNameAlias, ToolCallContext,
+        ToolCallerModelRuntime,
     };
+
+    #[derive(Debug)]
+    struct TestHeaderProvider;
+
+    #[async_trait]
+    impl McpHttpHeaderProvider for TestHeaderProvider {
+        async fn headers(&self) -> Result<HashMap<String, String>, String> {
+            Ok(HashMap::from([(
+                "authorization".to_string(),
+                "Bearer refreshed".to_string(),
+            )]))
+        }
+    }
 
     #[test]
     fn server_config_builders_fill_common_fields() {
@@ -394,6 +453,28 @@ mod tests {
             stdio.env.as_ref().and_then(|env| env.get("TOKEN")),
             Some(&"secret".to_string())
         );
+    }
+
+    #[tokio::test]
+    async fn http_server_resolves_dynamic_headers_over_static_values() {
+        let server = McpHttpServer::new("remote", "http://127.0.0.1:9000/mcp")
+            .with_headers(HashMap::from([
+                ("Authorization".to_string(), "Bearer stale".to_string()),
+                ("x-context".to_string(), "kept".to_string()),
+            ]))
+            .with_header_provider(TestHeaderProvider);
+
+        let headers = server
+            .resolved_headers()
+            .await
+            .expect("resolve headers")
+            .expect("headers");
+        assert_eq!(
+            headers.get("authorization").map(String::as_str),
+            Some("Bearer refreshed")
+        );
+        assert!(!headers.contains_key("Authorization"));
+        assert_eq!(headers.get("x-context").map(String::as_str), Some("kept"));
     }
 
     #[test]

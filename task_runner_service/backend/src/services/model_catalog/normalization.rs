@@ -13,16 +13,17 @@ pub(in crate::services) fn normalize_model_provider_input(
     let normalized = normalize_provider(raw);
     let provider = match normalized.as_str() {
         "gpt" => "openai",
-        "openai_compatible" => "openai_compatible",
+        "openai_compatible" => "openai",
         "deepseek" => "deepseek",
         "kimi" => "kimik2",
+        "glm" => "glm",
         "custom_gateway" => "openai",
         "kiminik2" => "kimik2",
         other => other,
     };
     match provider {
-        "openai" | "openai_compatible" | "deepseek" | "kimik2" => Ok(provider.to_string()),
-        _ => Err("provider 仅支持 openai / openai_compatible / deepseek / kimik2".to_string()),
+        "openai" | "deepseek" | "kimik2" | "glm" => Ok(provider.to_string()),
+        _ => Err("provider 仅支持 openai / deepseek / kimik2 / glm".to_string()),
     }
 }
 
@@ -81,4 +82,19 @@ pub(in crate::services) fn normalize_model_config_record(
     record.instructions = normalized_optional(record.instructions);
     record.request_cwd = normalized_optional(record.request_cwd);
     Ok(record)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn accepts_glm_and_migrates_legacy_compatible_provider() {
+        assert_eq!(normalize_model_provider_input("zhipu").unwrap(), "glm");
+        assert_eq!(
+            normalize_model_provider_input("openai_compatible").unwrap(),
+            "openai"
+        );
+        assert!(normalize_model_provider_input("minimax").is_err());
+    }
 }

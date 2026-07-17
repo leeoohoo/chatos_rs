@@ -6,6 +6,9 @@ use chatos_agent::{
     LEGACY_CHATOS_MAX_ITERATIONS_ENV, LEGACY_TASK_RUNNER_MAX_ITERATIONS_ENV,
 };
 use chrono::Utc;
+use memory_engine_sdk::{
+    memory_policy_config_key, memory_policy_env_key, ManagedMemoryPolicy, MemoryPolicyKind,
+};
 use serde_json::{json, Value};
 
 use crate::models::ConfigDefinitionRecord;
@@ -19,7 +22,7 @@ pub const LEGACY_AGENT_MAX_ITERATIONS_CONFIG_KEYS: &[&str] = &[
 
 pub fn builtin_definitions() -> Vec<ConfigDefinitionRecord> {
     let now = Utc::now().to_rfc3339();
-    vec![
+    let mut definitions = vec![
         definition(
             "shared.logging.level",
             "日志级别",
@@ -296,7 +299,209 @@ pub fn builtin_definitions() -> Vec<ConfigDefinitionRecord> {
             280,
             &now,
         ),
-    ]
+    ];
+    definitions.extend(memory_policy_definitions(&now));
+    definitions
+}
+
+fn memory_policy_definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
+    let mut definitions = Vec::new();
+    for (kind, title, order) in [
+        (MemoryPolicyKind::Summary, "消息总结", 400),
+        (MemoryPolicyKind::Rollup, "总结聚合", 500),
+        (MemoryPolicyKind::SubjectMemory, "主题记忆与记忆归并", 600),
+        (MemoryPolicyKind::ThreadRepair, "修复总结", 700),
+    ] {
+        let defaults = kind.defaults();
+        let category = format!("Memory Engine / {title}");
+        definitions.push(memory_policy_definition(
+            kind,
+            "enabled",
+            "启用",
+            format!("是否启用{title}任务").as_str(),
+            category.as_str(),
+            "boolean",
+            json!(defaults.enabled),
+            None,
+            None,
+            false,
+            order,
+            now,
+        ));
+        push_optional_integer_definition(
+            &mut definitions,
+            kind,
+            &defaults,
+            "token_limit",
+            "输入 Token 阈值",
+            "单次处理或分块使用的输入 Token 上限",
+            category.as_str(),
+            128,
+            2_000_000,
+            order + 1,
+            now,
+        );
+        push_optional_integer_definition(
+            &mut definitions,
+            kind,
+            &defaults,
+            "target_summary_tokens",
+            "目标输出 Tokens",
+            "模型生成总结或记忆时的目标输出 Token 数",
+            category.as_str(),
+            128,
+            1_000_000,
+            order + 2,
+            now,
+        );
+        push_optional_integer_definition(
+            &mut definitions,
+            kind,
+            &defaults,
+            "interval_seconds",
+            "调度间隔（秒）",
+            "后台任务检查或刷新间隔",
+            category.as_str(),
+            3,
+            86_400,
+            order + 3,
+            now,
+        );
+        push_optional_integer_definition(
+            &mut definitions,
+            kind,
+            &defaults,
+            "max_threads_per_tick",
+            "每轮最大处理数",
+            "单轮调度最多处理的线程或主题数量",
+            category.as_str(),
+            1,
+            10_000,
+            order + 4,
+            now,
+        );
+        push_optional_integer_definition(
+            &mut definitions,
+            kind,
+            &defaults,
+            "count_limit",
+            "聚合条数阈值",
+            "达到该数量后允许执行聚合；0 表示仅按 Token 阈值判断",
+            category.as_str(),
+            0,
+            1_000_000,
+            order + 5,
+            now,
+        );
+        push_optional_integer_definition(
+            &mut definitions,
+            kind,
+            &defaults,
+            "keep_level0_count",
+            "保留 L0 数量",
+            "执行聚合后保留的底层总结或记忆数量",
+            category.as_str(),
+            0,
+            1_000_000,
+            order + 6,
+            now,
+        );
+        push_optional_integer_definition(
+            &mut definitions,
+            kind,
+            &defaults,
+            "max_level",
+            "最大聚合层级",
+            "总结或记忆允许向上聚合的最大层级",
+            category.as_str(),
+            1,
+            128,
+            order + 7,
+            now,
+        );
+    }
+    definitions
+}
+
+#[allow(clippy::too_many_arguments)]
+fn push_optional_integer_definition(
+    definitions: &mut Vec<ConfigDefinitionRecord>,
+    kind: MemoryPolicyKind,
+    defaults: &ManagedMemoryPolicy,
+    field: &str,
+    display_name: &str,
+    description: &str,
+    category: &str,
+    min: i64,
+    max: i64,
+    ui_order: i32,
+    now: &str,
+) {
+    let default_value = match field {
+        "token_limit" => defaults.token_limit,
+        "target_summary_tokens" => defaults.target_summary_tokens,
+        "interval_seconds" => defaults.interval_seconds,
+        "max_threads_per_tick" => defaults.max_threads_per_tick,
+        "count_limit" => defaults.count_limit,
+        "keep_level0_count" => defaults.keep_level0_count,
+        "max_level" => defaults.max_level,
+        _ => None,
+    };
+    let Some(default_value) = default_value else {
+        return;
+    };
+    definitions.push(memory_policy_definition(
+        kind,
+        field,
+        display_name,
+        description,
+        category,
+        "integer",
+        json!(default_value),
+        Some(min),
+        Some(max),
+        false,
+        ui_order,
+        now,
+    ));
+}
+
+#[allow(clippy::too_many_arguments)]
+fn memory_policy_definition(
+    kind: MemoryPolicyKind,
+    field: &str,
+    display_name: &str,
+    description: &str,
+    category: &str,
+    value_type: &str,
+    default_value: Value,
+    min: Option<i64>,
+    max: Option<i64>,
+    nullable: bool,
+    ui_order: i32,
+    now: &str,
+) -> ConfigDefinitionRecord {
+    let key = memory_policy_config_key(kind, field);
+    let env_alias = memory_policy_env_key(kind, field);
+    let mut record = definition(
+        key.as_str(),
+        display_name,
+        description,
+        category,
+        "shared",
+        None,
+        value_type,
+        default_value,
+        min,
+        max,
+        &[],
+        "next_run",
+        &[env_alias.as_str()],
+        ui_order,
+        now,
+    );
+    record.nullable = nullable;
+    record
 }
 
 #[cfg(test)]
@@ -320,6 +525,31 @@ mod tests {
             definition.default_value,
             json!(DEFAULT_AGENT_MAX_ITERATIONS)
         );
+    }
+
+    #[test]
+    fn catalog_exposes_shared_memory_policies_for_server_and_client() {
+        let definitions = builtin_definitions();
+        let memory_definitions = definitions
+            .iter()
+            .filter(|definition| definition.key.starts_with("memory_engine.policy."))
+            .collect::<Vec<_>>();
+
+        assert!(!memory_definitions.is_empty());
+        assert!(memory_definitions
+            .iter()
+            .all(|definition| definition.scope == "shared"));
+        assert!(memory_definitions
+            .iter()
+            .all(|definition| !definition.key.ends_with("model_profile_id")));
+        assert!(memory_definitions.iter().any(|definition| {
+            definition.key == "memory_engine.policy.rollup.keep_level0_count"
+                && definition.default_value == json!(5)
+        }));
+        assert!(memory_definitions.iter().any(|definition| {
+            definition.key == "memory_engine.policy.thread_repair.token_limit"
+                && definition.default_value == json!(200000)
+        }));
     }
 }
 

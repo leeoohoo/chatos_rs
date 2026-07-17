@@ -103,7 +103,7 @@ impl McpExecutor {
         match info.server_type.as_str() {
             "http" => {
                 let url = info.server_url.clone().ok_or("missing server url")?;
-                let headers = http_tool_call_headers(info, &context);
+                let headers = http_tool_call_headers(info, &context).await?;
                 let result = jsonrpc_http_call(
                     url.as_str(),
                     headers.as_ref(),
@@ -169,11 +169,14 @@ fn unavailable_tool_reason(unavailable_tools: &[Value], full_tool_name: &str) ->
         })
     })
 }
-fn http_tool_call_headers(
+async fn http_tool_call_headers(
     info: &ToolInfo,
     context: &ToolCallContext,
-) -> Option<HashMap<String, String>> {
+) -> Result<Option<HashMap<String, String>>, String> {
     let mut headers = info.server_headers.clone().unwrap_or_default();
+    if let Some(provider) = info.server_header_provider.as_ref() {
+        crate::types::extend_headers_case_insensitive(&mut headers, provider.headers().await?);
+    }
     if info.server_name == TASK_RUNNER_MCP_SERVER_NAME {
         if let Some(session_id) = normalized_context_value(context.conversation_id.as_deref()) {
             headers.insert("X-Chatos-Session-Id".to_string(), session_id.clone());
@@ -183,7 +186,7 @@ fn http_tool_call_headers(
             headers.insert("X-Chatos-Turn-Id".to_string(), turn_id);
         }
     }
-    (!headers.is_empty()).then_some(headers)
+    Ok((!headers.is_empty()).then_some(headers))
 }
 fn normalized_context_value(value: Option<&str>) -> Option<String> {
     value

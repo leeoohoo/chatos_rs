@@ -13,6 +13,8 @@ use crate::traits::{ModelRequest, RuntimeCallbacks};
 use super::input_items::attach_runtime_debug;
 use super::options::AiRuntimeOptions;
 
+const PROVIDER_ERROR_DETAIL_MAX_CHARS: usize = 2_000;
+
 pub(super) async fn dispatch_model_request(
     request_handler: &AiRequestHandler,
     request: &ModelRequest,
@@ -86,6 +88,13 @@ pub(super) async fn dispatch_model_request(
             },
         )
         .await;
+    let result = result.and_then(|response| {
+        if let Some(error) = failed_ai_response_error(&response) {
+            Err(error)
+        } else {
+            Ok(response)
+        }
+    });
     let model_request_ms = started_at.elapsed().as_millis();
     match &result {
         Ok(response) => {
@@ -124,6 +133,72 @@ pub(super) async fn dispatch_model_request(
     result
 }
 
+fn failed_ai_response_error(response: &AiResponse) -> Option<String> {
+    let finish_reason = response
+        .finish_reason
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    let response_failed = finish_reason.is_some_and(|value| value.eq_ignore_ascii_case("failed"));
+    if !response_failed && response.provider_error.is_none() {
+        return None;
+    }
+
+    let mut parts = vec![format!(
+        "finish_reason={}",
+        finish_reason.unwrap_or("unknown")
+    )];
+    if let Some(response_id) = response
+        .response_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        parts.push(format!("response_id={response_id}"));
+    }
+    parts.push(format!(
+        "provider_error={}",
+        response
+            .provider_error
+            .as_ref()
+            .map(provider_error_detail)
+            .unwrap_or_else(|| "unavailable".to_string())
+    ));
+    Some(format!("ai response failed: {}", parts.join("; ")))
+}
+
+fn provider_error_detail(value: &Value) -> String {
+    let detail = value
+        .as_object()
+        .map(|object| {
+            ["code", "type", "message"]
+                .into_iter()
+                .filter_map(|key| {
+                    object
+                        .get(key)
+                        .and_then(Value::as_str)
+                        .map(str::trim)
+                        .filter(|value| !value.is_empty())
+                        .map(|value| format!("{key}={value}"))
+                })
+                .collect::<Vec<_>>()
+                .join("; ")
+        })
+        .filter(|detail| !detail.is_empty())
+        .or_else(|| value.as_str().map(str::trim).map(ToOwned::to_owned))
+        .filter(|detail| !detail.is_empty())
+        .unwrap_or_else(|| value.to_string());
+    truncate_chars(detail.as_str(), PROVIDER_ERROR_DETAIL_MAX_CHARS)
+}
+
+fn truncate_chars(value: &str, max_chars: usize) -> String {
+    let mut output = value.chars().take(max_chars).collect::<String>();
+    if value.chars().count() > max_chars {
+        output.push_str("...<truncated>");
+    }
+    output
+}
+
 fn build_before_send_model_request_callback(
     callbacks: &RuntimeCallbacks,
     request_debug: Value,
@@ -151,6 +226,48 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+
+    #[test]
+    fn failed_response_preserves_provider_error_details() {
+        let response = AiResponse {
+            content: String::new(),
+            reasoning: None,
+            tool_calls: None,
+            finish_reason: Some("failed".to_string()),
+            provider_error: Some(json!({
+                "code": "server_is_overloaded",
+                "type": "server_error",
+                "message": "Our servers are currently overloaded."
+            })),
+            usage: None,
+            response_id: Some("resp_1".to_string()),
+        };
+
+        let error = failed_ai_response_error(&response).expect("failed response error");
+
+        assert!(error.contains("finish_reason=failed"));
+        assert!(error.contains("response_id=resp_1"));
+        assert!(error.contains("code=server_is_overloaded"));
+        assert!(error.contains("message=Our servers are currently overloaded."));
+    }
+
+    #[test]
+    fn failed_response_without_provider_error_remains_actionable() {
+        let response = AiResponse {
+            content: String::new(),
+            reasoning: None,
+            tool_calls: None,
+            finish_reason: Some("failed".to_string()),
+            provider_error: None,
+            usage: None,
+            response_id: None,
+        };
+
+        assert_eq!(
+            failed_ai_response_error(&response).as_deref(),
+            Some("ai response failed: finish_reason=failed; provider_error=unavailable")
+        );
+    }
 
     #[test]
     fn before_send_callback_preserves_exact_payload_and_legacy_debug_payload() {

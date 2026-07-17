@@ -4,6 +4,7 @@
 mod admin;
 mod common;
 mod context;
+mod memory_policy;
 mod records;
 mod snapshots;
 mod subject_memories;
@@ -20,6 +21,10 @@ pub use self::common::{default_active, default_idle, default_pending, ListRespon
 pub use self::context::{
     ComposeContextBlock, ComposeContextMeta, ComposeContextPolicy, ComposeContextRequest,
     ComposeContextResponse, SdkComposeContextRequest,
+};
+pub use self::memory_policy::{
+    managed_memory_policy_env_available, memory_policy_config_key, memory_policy_env_key,
+    ManagedMemoryPolicy, ManagedMemoryPolicyBundle, MemoryPolicyKind, MEMORY_POLICY_CONFIG_PREFIX,
 };
 pub use self::records::{
     BatchSyncRecordsResponse, CompactTurnsResponse, CountThreadRecordsResponse, EngineRecord,

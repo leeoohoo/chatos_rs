@@ -15,7 +15,10 @@ use serde::Deserialize;
 
 use crate::config::AppConfig;
 use crate::error::ApiError;
-use crate::models::{CreateSandboxLeaseRequest, ListSandboxQuery, SandboxLeaseRecord};
+use crate::models::{
+    CreateSandboxEnvironmentLeaseRequest, CreateSandboxLeaseRequest, ListSandboxQuery,
+    SandboxLeaseRecord,
+};
 use crate::state::AppState;
 
 const INTERNAL_TOKEN_AUDIENCE: &str = "sandbox-manager";
@@ -151,6 +154,32 @@ impl SandboxAuthContext {
         }
     }
 
+    pub fn ensure_create_environment_lease_allowed(
+        &self,
+        input: &CreateSandboxEnvironmentLeaseRequest,
+    ) -> Result<(), ApiError> {
+        self.require_scope(SCOPE_LEASE_CREATE)?;
+        match self {
+            Self::Disabled | Self::Operator => Ok(()),
+            Self::System(client) => client.ensure_create_environment_lease_allowed(input),
+            Self::User(principal) => {
+                ensure_user_owns_tenant(principal, input.tenant_id.as_str())?;
+                let requested_user = input.user_id.trim();
+                if !requested_user.is_empty()
+                    && principal
+                        .effective_owner_user_id()
+                        .is_some_and(|owner| owner != requested_user)
+                    && !principal.is_super_admin()
+                {
+                    return Err(ApiError::forbidden(
+                        "user_id does not match authenticated user",
+                    ));
+                }
+                Ok(())
+            }
+        }
+    }
+
     pub fn scoped_list_query(
         &self,
         mut query: ListSandboxQuery,
@@ -249,6 +278,31 @@ impl SandboxSystemClient {
         }
         for tool in &input.tools {
             self.ensure_tool_allowed(tool)?;
+        }
+        Ok(())
+    }
+
+    fn ensure_create_environment_lease_allowed(
+        &self,
+        input: &CreateSandboxEnvironmentLeaseRequest,
+    ) -> Result<(), ApiError> {
+        ensure_value_allowed(
+            "tenant_id",
+            input.tenant_id.as_str(),
+            &self.allowed_tenant_ids,
+        )?;
+        ensure_value_allowed(
+            "project_id",
+            input.project_id.as_str(),
+            &self.allowed_project_ids,
+        )?;
+        if let Some(ttl_seconds) = input.ttl_seconds {
+            if ttl_seconds > self.max_lease_ttl_seconds {
+                return Err(ApiError::forbidden(format!(
+                    "ttl_seconds exceeds client policy: requested={ttl_seconds}, max={}",
+                    self.max_lease_ttl_seconds
+                )));
+            }
         }
         Ok(())
     }

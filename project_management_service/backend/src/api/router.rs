@@ -35,7 +35,9 @@ use super::requirements::{
 use super::runtime_environment::{
     analyze_project_runtime_environment_handler,
     generate_project_runtime_environment_image_handler, get_project_runtime_environment,
-    get_project_runtime_environment_progress_handler, start_project_runtime_environment_handler,
+    get_project_runtime_environment_deployment_handler,
+    get_project_runtime_environment_progress_handler, restart_project_runtime_environment_handler,
+    start_project_runtime_environment_handler, stop_project_runtime_environment_handler,
     update_project_runtime_environment_settings, update_project_runtime_environment_variables,
 };
 use super::runtime_environment_mcp::project_runtime_environment_mcp_entrypoint;
@@ -125,6 +127,18 @@ pub fn build_router(state: AppState) -> Router {
         .route(
             "/api/projects/{project_id}/runtime-environment/start",
             post(start_project_runtime_environment_handler),
+        )
+        .route(
+            "/api/projects/{project_id}/runtime-environment/deployment",
+            get(get_project_runtime_environment_deployment_handler),
+        )
+        .route(
+            "/api/projects/{project_id}/runtime-environment/stop",
+            post(stop_project_runtime_environment_handler),
+        )
+        .route(
+            "/api/projects/{project_id}/runtime-environment/restart",
+            post(restart_project_runtime_environment_handler),
         )
         .route(
             "/api/requirements/{requirement_id}",

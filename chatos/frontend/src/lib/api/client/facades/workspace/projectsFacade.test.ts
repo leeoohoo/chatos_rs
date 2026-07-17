@@ -309,4 +309,48 @@ describe('workspaceProjectFacade local project management routing', () => {
     );
     expect(cloudRequest).not.toHaveBeenCalled();
   });
+
+  it('marks project contact requests as local without requiring a cloud project record', async () => {
+    const request = vi.fn()
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce({ locked: false })
+      .mockResolvedValueOnce({ contact_id: 'contact-1' })
+      .mockResolvedValueOnce({ success: true });
+    const context = {
+      projectUsesLocalRuntime: () => true,
+      getRequestFn: () => request,
+    };
+
+    await workspaceProjectFacade.listProjectContacts.call(context as never, 'project-local');
+    await workspaceProjectFacade.getProjectContactLock.call(context as never, 'project-local');
+    await workspaceProjectFacade.addProjectContact.call(
+      context as never,
+      'project-local',
+      { contact_id: 'contact-1' },
+    );
+    await workspaceProjectFacade.removeProjectContact.call(
+      context as never,
+      'project-local',
+      'contact-1',
+    );
+
+    expect(request).toHaveBeenNthCalledWith(
+      1,
+      '/projects/project-local/contacts?local_runtime=true',
+    );
+    expect(request).toHaveBeenNthCalledWith(
+      2,
+      '/projects/project-local/contacts/lock?local_runtime=true',
+    );
+    expect(request).toHaveBeenNthCalledWith(
+      3,
+      '/projects/project-local/contacts?local_runtime=true',
+      { method: 'POST', body: JSON.stringify({ contact_id: 'contact-1' }) },
+    );
+    expect(request).toHaveBeenNthCalledWith(
+      4,
+      '/projects/project-local/contacts/contact-1?local_runtime=true',
+      { method: 'DELETE' },
+    );
+  });
 });

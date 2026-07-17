@@ -76,6 +76,7 @@ export type PolicyMeta = {
   purposeText: string;
   promptLabel: string;
   promptPlaceholder?: string;
+  managedAgentKey?: string;
   tokenLimitLabel: string;
   targetSummaryTokensLabel: string;
   showTargetSummaryTokens?: boolean;

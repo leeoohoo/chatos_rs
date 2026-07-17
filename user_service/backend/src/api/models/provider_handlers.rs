@@ -17,8 +17,8 @@ use super::access::{ensure_owner_user_exists, ensure_provider_access, resolve_ta
 use super::contracts::{ModelConfigGetQuery, UserScopeQuery};
 use super::model_values::model_provider_public_value;
 use super::normalization::{
-    normalize_api_key_input, normalize_optional_string, normalize_prompt_vendor_input,
-    normalize_provider_input, normalized_base_url,
+    is_supported_provider, normalize_api_key_input, normalize_optional_string,
+    normalize_prompt_vendor_input, normalize_provider_input, normalized_base_url,
 };
 use super::provider_sync::{
     apply_model_provider_update, refresh_provider_models_from_record,
@@ -44,6 +44,7 @@ pub(in crate::api) async fn list_model_providers(
     Ok(Json(
         items
             .into_iter()
+            .filter(|item| is_supported_provider(item.provider.as_str()))
             .map(|item| model_provider_public_value(item, false, None))
             .collect::<Vec<_>>(),
     ))
@@ -134,6 +135,9 @@ pub(in crate::api) async fn get_model_provider(
     else {
         return Err(not_found("model provider not found"));
     };
+    if !is_supported_provider(record.provider.as_str()) {
+        return Err(not_found("model provider not found"));
+    }
     ensure_provider_access(&principal, &record)?;
     let include_secret = query.include_secret.unwrap_or(false);
     Ok(Json(model_provider_public_value(
@@ -157,6 +161,9 @@ pub(in crate::api) async fn update_model_provider(
     else {
         return Err(not_found("model provider not found"));
     };
+    if !is_supported_provider(record.provider.as_str()) {
+        return Err(not_found("model provider not found"));
+    }
     ensure_provider_access(&principal, &record)?;
     apply_model_provider_update(&mut record, input)?;
     record.updated_at = now_rfc3339();
@@ -187,6 +194,9 @@ pub(in crate::api) async fn refresh_model_provider_models(
     else {
         return Err(not_found("model provider not found"));
     };
+    if !is_supported_provider(record.provider.as_str()) {
+        return Err(not_found("model provider not found"));
+    }
     ensure_provider_access(&principal, &record)?;
     apply_model_provider_update(&mut record, input)?;
     record.updated_at = now_rfc3339();

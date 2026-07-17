@@ -12,6 +12,7 @@ chrono = { version = "0.4", features = ["clock", "serde"] }
 chatos_agent = { path = "../../agent", default-features = false }
 chatos_config_sdk = { path = "../../crates/chatos_config_sdk" }
 chatos_service_runtime = { path = "../../crates/chatos_service_runtime", features = ["axum-support"] }
+memory_engine_sdk = { path = "../../crates/memory_engine_sdk", default-features = false }
 futures-util = "0.3"
 hex = "0.4"
 mongodb = { version = "2.8", features = ["tokio-runtime"] }

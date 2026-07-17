@@ -44,7 +44,9 @@ use self::model_request::dispatch_model_request;
 use self::persistence::{normalized_option, should_persist_tool_result};
 use self::request_error::{handle_model_request_error, ModelRequestErrorAction};
 use self::summaries::summarize_tool_call_names;
-use self::tool_execution::execute_runtime_tools;
+use self::tool_execution::{
+    execute_runtime_tools, next_consecutive_failed_tool_batch_count, repeated_tool_failure_error,
+};
 
 pub struct AiRuntime {
     request_handler: AiRequestHandler,
@@ -55,7 +57,8 @@ pub struct AiRuntime {
 
 const EMPTY_FINAL_RESPONSE_FOLLOWUP_PROMPT: &str = "上一轮响应没有返回任何可展示的最终结果。请先检查当前任务是否已经真实完成：如果已经满足目标且不需要更多验证，直接输出最终结果；如果仍有未完成工作、未处理的任务状态/门禁反馈、缺少关键事实或缺少验证，请继续使用必要工具完成工作或记录明确阻塞。不要把未完成工作包装成最终结果。";
 const EMPTY_FINAL_RESPONSE_ERROR: &str = "模型未返回可展示的最终结果";
-const MAX_TRANSIENT_MODEL_REQUEST_RETRIES: usize = 3;
+const MAX_TRANSIENT_MODEL_REQUEST_RETRIES: usize = 5;
+const MAX_CONSECUTIVE_FAILED_TOOL_BATCHES: usize = 8;
 
 impl AiRuntime {
     pub fn builder() -> crate::builder::AiRuntimeBuilder {
@@ -115,6 +118,7 @@ impl AiRuntime {
         let mut empty_final_response_followup_attempted = false;
         let mut runtime_followup_items: Vec<Value> = Vec::new();
         let mut runtime_followup_appended_to_request = false;
+        let mut consecutive_failed_tool_batches = 0usize;
         'runtime_loop: loop {
             if options.is_aborted() {
                 return Err("aborted".to_string());
@@ -328,6 +332,24 @@ impl AiRuntime {
                 execute_runtime_tools(executor.as_ref(), &tool_calls, &options, iteration).await?;
             self.save_tool_records(&options, tool_execution.tool_results.as_slice())
                 .await?;
+            consecutive_failed_tool_batches = next_consecutive_failed_tool_batch_count(
+                consecutive_failed_tool_batches,
+                tool_execution.tool_results.as_slice(),
+            );
+            if consecutive_failed_tool_batches >= MAX_CONSECUTIVE_FAILED_TOOL_BATCHES {
+                let error = repeated_tool_failure_error(
+                    tool_execution.tool_results.as_slice(),
+                    consecutive_failed_tool_batches,
+                );
+                warn!(
+                    conversation_id = options.conversation_id.as_deref().unwrap_or(""),
+                    conversation_turn_id = options.conversation_turn_id.as_deref().unwrap_or(""),
+                    iteration,
+                    consecutive_failed_tool_batches,
+                    "ai runtime stopped after repeated failed tool batches"
+                );
+                return Err(error);
+            }
             pending_tool_calls = Some(tool_execution.tool_call_items);
             pending_tool_outputs = Some(tool_execution.tool_output_items);
             if options.iterative_context_refresh.is_none() {

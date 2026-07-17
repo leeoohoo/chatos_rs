@@ -186,6 +186,14 @@ export interface ProjectRuntimeEnvironmentImageRecord {
   environment_key: string;
   environment_type: string;
   display_name: string;
+  service_id: string;
+  service_role: 'application' | 'dependency' | 'unknown';
+  mcp_policy: {
+    managed_by: 'system';
+    attachment: 'project_gateway_target' | 'none';
+    filesystem: boolean;
+    terminal: boolean;
+  };
   image_id?: string | null;
   image_ref?: string | null;
   image_provider: RuntimeEnvironmentProvider;
@@ -203,6 +211,28 @@ export interface ProjectRuntimeEnvironmentImageRecord {
 export interface ProjectRuntimeEnvironmentResponse {
   environment: ProjectRuntimeEnvironmentRecord;
   images: ProjectRuntimeEnvironmentImageRecord[];
+}
+
+export interface ProjectRuntimeEnvironmentDeploymentResponse {
+  project_id: string;
+  project_name: string;
+  status: 'running' | 'stopped' | 'degraded' | string;
+  runtime_directory?: string | null;
+  compose_file?: string | null;
+  output?: string | null;
+  services: ProjectRuntimeEnvironmentDeploymentService[];
+}
+
+export interface ProjectRuntimeEnvironmentDeploymentService {
+  service_id: string;
+  environment_key: string;
+  display_name: string;
+  service_role: 'application' | 'dependency' | 'unknown';
+  mcp_policy: ProjectRuntimeEnvironmentImageRecord['mcp_policy'];
+  status: string;
+  image_ref?: string | null;
+  ports: unknown;
+  runtime?: Record<string, unknown> | null;
 }
 
 export interface UpdateProjectRuntimeEnvironmentSettingsPayload {

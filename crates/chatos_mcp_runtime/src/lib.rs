@@ -60,7 +60,7 @@ pub use system_tool_catalog::{
 };
 pub use text::{inject_agent_builder_args, to_text_and_structured_result};
 pub use types::{
-    McpBuiltinServer, McpHttpServer, McpStdioServer, McpToolNameAlias, ParsedToolDefinition,
-    ToolAbortCheckCallback, ToolCallContext, ToolCallerModelRuntime, ToolInfo, ToolResult,
-    ToolResultCallback, ToolStreamChunkCallback,
+    McpBuiltinServer, McpHttpHeaderProvider, McpHttpServer, McpStdioServer, McpToolNameAlias,
+    ParsedToolDefinition, ToolAbortCheckCallback, ToolCallContext, ToolCallerModelRuntime,
+    ToolInfo, ToolResult, ToolResultCallback, ToolStreamChunkCallback,
 };

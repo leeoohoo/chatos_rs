@@ -216,7 +216,7 @@ describe('CloudProjectRuntimeEnvironmentPanel', () => {
     expect(await screen.findByText('cloud_sandbox_manager')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: '查看 Dockerfile' }));
     expect(screen.getByText('FROM node:24', { exact: false })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: '执行生成镜像' }));
+    fireEvent.click(screen.getByRole('button', { name: '准备全部镜像' }));
 
     await waitFor(() => {
       expect(generateProjectRuntimeEnvironmentImage).toHaveBeenCalledWith(
@@ -224,7 +224,7 @@ describe('CloudProjectRuntimeEnvironmentPanel', () => {
         'image-plan-1',
       );
     });
-    expect(await screen.findByRole('button', { name: '重新生成' })).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: '准备全部镜像' })).toBeInTheDocument();
   });
 
   it('disables initialization while the backend is analyzing and surfaces failed build logs', async () => {

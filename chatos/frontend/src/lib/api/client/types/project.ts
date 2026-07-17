@@ -293,6 +293,12 @@ export interface ProjectRuntimeEnvironmentImageResponse {
   environmentType?: string;
   display_name?: string;
   displayName?: string;
+  service_id?: string;
+  serviceId?: string;
+  service_role?: 'application' | 'dependency' | 'unknown' | string;
+  serviceRole?: 'application' | 'dependency' | 'unknown' | string;
+  mcp_policy?: ProjectRuntimeEnvironmentMcpPolicyResponse;
+  mcpPolicy?: ProjectRuntimeEnvironmentMcpPolicyResponse;
   image_id?: string | null;
   imageId?: string | null;
   image_ref?: string | null;
@@ -312,6 +318,14 @@ export interface ProjectRuntimeEnvironmentImageResponse {
   createdAt?: string;
   updated_at?: string;
   updatedAt?: string;
+}
+
+export interface ProjectRuntimeEnvironmentMcpPolicyResponse {
+  managed_by?: 'system' | string;
+  managedBy?: 'system' | string;
+  attachment?: 'project_gateway_target' | 'none' | string;
+  filesystem?: boolean;
+  terminal?: boolean;
 }
 
 export interface ProjectRuntimeEnvironmentResponse {

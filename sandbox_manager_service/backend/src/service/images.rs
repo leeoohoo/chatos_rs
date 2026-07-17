@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::process::Stdio;
 use std::sync::Arc;
 
@@ -15,7 +15,10 @@ use tokio::sync::RwLock;
 use uuid::Uuid;
 
 use crate::config::{AppConfig, SandboxBackendKind};
-use crate::models::{SandboxImageCatalogResponse, SandboxImageJobRecord, SandboxImageRecord};
+use crate::models::{
+    PrepareSandboxDependencyImagesResponse, PreparedSandboxDependencyImageRecord,
+    SandboxImageCatalogResponse, SandboxImageJobRecord, SandboxImageRecord,
+};
 
 use super::image_specs::{self, RuntimeSelectionSpec};
 
@@ -105,6 +108,89 @@ pub(crate) async fn catalog(
         features: image_specs::catalog_features(),
         images,
     }
+}
+
+pub(crate) async fn prepare_dependency_images(
+    config: &AppConfig,
+    backend: SandboxBackendKind,
+    image_refs: &[String],
+) -> Result<PrepareSandboxDependencyImagesResponse, String> {
+    if image_refs.len() > 64 {
+        return Err("too many dependency images; maximum is 64".to_string());
+    }
+    let refs = image_refs
+        .iter()
+        .map(|value| value.trim())
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+        .collect::<BTreeSet<_>>();
+    for image_ref in &refs {
+        if !known_dependency_image_ref(image_ref) {
+            return Err(format!(
+                "dependency image_ref is not platform-managed: {image_ref}"
+            ));
+        }
+    }
+
+    let mut tasks = tokio::task::JoinSet::new();
+    for image_ref in refs {
+        let config = config.clone();
+        tasks.spawn(async move {
+            if matches!(backend, SandboxBackendKind::Mock) {
+                return Ok(PreparedSandboxDependencyImageRecord {
+                    image_ref,
+                    reused: true,
+                    status: "mock".to_string(),
+                });
+            }
+            if image_exists(&config, backend, image_ref.as_str()).await? {
+                return Ok(PreparedSandboxDependencyImageRecord {
+                    image_ref,
+                    reused: true,
+                    status: "ready".to_string(),
+                });
+            }
+            let cli = container_cli(&config, backend);
+            let output = Command::new(cli)
+                .arg("pull")
+                .arg(image_ref.as_str())
+                .output()
+                .await
+                .map_err(|err| format!("{cli} pull {image_ref} failed: {err}"))?;
+            if !output.status.success() {
+                return Err(format!(
+                    "{cli} pull {image_ref} failed: {}",
+                    String::from_utf8_lossy(&output.stderr)
+                ));
+            }
+            Ok(PreparedSandboxDependencyImageRecord {
+                image_ref,
+                reused: false,
+                status: "ready".to_string(),
+            })
+        });
+    }
+    let mut images = Vec::new();
+    while let Some(result) = tasks.join_next().await {
+        images.push(result.map_err(|err| format!("dependency image task failed: {err}"))??);
+    }
+    images.sort_by(|left, right| left.image_ref.cmp(&right.image_ref));
+    Ok(PrepareSandboxDependencyImagesResponse { images })
+}
+
+pub(crate) fn known_dependency_image_ref(value: &str) -> bool {
+    matches!(
+        value.trim(),
+        "mysql:8.4"
+            | "mongo:7.0"
+            | "postgres:16-alpine"
+            | "redis:7-alpine"
+            | "nacos/nacos-server:v2.4.3"
+            | "rabbitmq:3.13-management-alpine"
+            | "bitnami/kafka:3.7"
+            | "docker.elastic.co/elasticsearch/elasticsearch:8.14.3"
+            | "minio/minio:latest"
+    )
 }
 
 pub(crate) async fn start_initialize_job(
@@ -615,6 +701,43 @@ fn container_cli(config: &AppConfig, backend: SandboxBackendKind) -> &str {
     match backend {
         SandboxBackendKind::Kata => config.kata_container_cli.as_str(),
         SandboxBackendKind::Docker | SandboxBackendKind::Mock => "docker",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn mock_dependency_preparation_reuses_all_platform_images() {
+        let config = AppConfig::from_env().expect("sandbox config");
+        let result = prepare_dependency_images(
+            &config,
+            SandboxBackendKind::Mock,
+            &[
+                "redis:7-alpine".to_string(),
+                "mysql:8.4".to_string(),
+                "redis:7-alpine".to_string(),
+            ],
+        )
+        .await
+        .expect("prepare mock dependency images");
+        assert_eq!(result.images.len(), 2);
+        assert!(result.images.iter().all(|image| image.reused));
+        assert!(result.images.iter().all(|image| image.status == "mock"));
+    }
+
+    #[tokio::test]
+    async fn dependency_preparation_rejects_unmanaged_image_refs() {
+        let config = AppConfig::from_env().expect("sandbox config");
+        let error = prepare_dependency_images(
+            &config,
+            SandboxBackendKind::Mock,
+            &["untrusted.example/database:latest".to_string()],
+        )
+        .await
+        .expect_err("unmanaged dependency image must be rejected");
+        assert!(error.contains("not platform-managed"));
     }
 }
 

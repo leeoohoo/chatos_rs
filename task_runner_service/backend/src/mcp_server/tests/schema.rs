@@ -71,8 +71,36 @@ fn task_mcp_config_schema_hides_host_passthrough_fields() {
 
     assert!(!properties.contains_key("workspace_dir"));
     assert!(!properties.contains_key("default_remote_server_id"));
+    assert!(!properties.contains_key("execution_service_id"));
     assert!(properties.contains_key("enabled_builtin_kinds"));
     assert!(properties.contains_key("external_mcp_config_ids"));
+}
+
+#[test]
+fn ai_task_input_cannot_select_execution_service() {
+    let error = CreateTaskArgs {
+        title: "task".to_string(),
+        description: None,
+        objective: "run selected service".to_string(),
+        input_payload: None,
+        priority: None,
+        tags: None,
+        default_model_config_id: None,
+        requires_execution: Some(true),
+        schedule: None,
+        enabled_builtin_kinds: None,
+        external_mcp_config_ids: None,
+        selected_skill_ids: None,
+        prerequisite_task_ids: None,
+        mcp_config: Some(TaskMcpConfig {
+            execution_service_id: Some("services-api".to_string()),
+            ..TaskMcpConfig::default()
+        }),
+    }
+    .into_request()
+    .expect_err("AI execution service selection must be rejected");
+
+    assert!(error.contains("cannot be selected by AI"));
 }
 
 #[test]

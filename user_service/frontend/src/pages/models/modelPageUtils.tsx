@@ -33,8 +33,7 @@ export const PROVIDER_OPTIONS = [
   { label: 'GPT / OpenAI', value: 'gpt' },
   { label: 'DeepSeek', value: 'deepseek' },
   { label: 'Kimi', value: 'kimi' },
-  { label: 'MiniMax', value: 'minimax' },
-  { label: 'OpenAI Compatible', value: 'openai_compatible' },
+  { label: 'GLM', value: 'glm' },
 ];
 
 export const PROMPT_VENDOR_OPTIONS = [

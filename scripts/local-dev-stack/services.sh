@@ -40,11 +40,33 @@ start_backend() {
   wait_for_http "$name" "http://127.0.0.1:${port}${health_path}" "${CHATOS_LOCAL_DEV_HEALTH_TIMEOUT_SECONDS:-120}" || true
 }
 
+ensure_frontend_dependencies() {
+  local app_dir="$1"
+  local app_path="$ROOT_DIR/$app_dir"
+  local installed_lock="$app_path/node_modules/.package-lock.json"
+
+  if [[ ! -d "$app_path/node_modules" ]] \
+    || [[ ! -f "$installed_lock" ]] \
+    || [[ "$app_path/package.json" -nt "$installed_lock" ]] \
+    || [[ -f "$app_path/package-lock.json" && "$app_path/package-lock.json" -nt "$installed_lock" ]]; then
+    echo "[INFO] refreshing frontend dependencies: $app_dir"
+    (
+      cd "$app_path"
+      if [[ -f package-lock.json ]]; then
+        npm ci --legacy-peer-deps
+      else
+        npm install --legacy-peer-deps
+      fi
+    )
+  fi
+}
+
 start_frontend() {
   local name="$1"
   local app_dir="$2"
   local port="$3"
   local log_file pid_file
+  ensure_frontend_dependencies "$app_dir"
   log_file="$(log_file_for "$name")"
   pid_file="$(pid_file_for "$name")"
   stop_service_pid "$name"

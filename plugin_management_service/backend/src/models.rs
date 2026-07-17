@@ -228,6 +228,45 @@ pub struct AgentPromptBundleVersionRecord {
     pub required: bool,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentPromptVersionPrompt {
+    pub vendor: AgentPromptVendor,
+    #[serde(default)]
+    pub content: String,
+    pub revision: i64,
+    pub checksum: String,
+    pub published_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentPromptVersionRecord {
+    pub id: String,
+    pub agent_key: String,
+    pub bundle_version: i64,
+    pub changed_vendor: Option<AgentPromptVendor>,
+    pub prompts: Vec<AgentPromptVersionPrompt>,
+    pub published_by: String,
+    pub published_at: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct AgentPromptVersionVendorSummary {
+    pub vendor: AgentPromptVendor,
+    pub revision: i64,
+    pub checksum: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct AgentPromptVersionSummary {
+    pub id: String,
+    pub agent_key: String,
+    pub bundle_version: i64,
+    pub changed_vendor: Option<AgentPromptVendor>,
+    pub vendor_revisions: Vec<AgentPromptVersionVendorSummary>,
+    pub published_by: String,
+    pub published_at: String,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct UpdateAgentPromptDraftRequest {
     pub content: String,

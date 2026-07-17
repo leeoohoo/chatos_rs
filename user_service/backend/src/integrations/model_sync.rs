@@ -185,6 +185,7 @@ async fn sync_memory_engine_model_profile(
     config: &UserModelConfigRecord,
 ) -> Result<(), String> {
     ensure_concrete_model(config)?;
+    ensure_supported_provider(config)?;
     let Some(memory_engine_base_url) =
         normalized_url(state.config.memory_engine_base_url.as_deref())
     else {
@@ -331,6 +332,7 @@ async fn sync_task_runner_model_config(
     config: &UserModelConfigRecord,
 ) -> Result<(), String> {
     ensure_concrete_model(config)?;
+    ensure_supported_provider(config)?;
     let Some(task_runner_base_url) = normalized_url(state.config.task_runner_base_url.as_deref())
     else {
         return Ok(());
@@ -486,7 +488,7 @@ fn task_runner_provider(provider: &str) -> &'static str {
     match provider.trim() {
         "deepseek" => "deepseek",
         "kimi" => "kimik2",
-        "openai_compatible" | "minimax" => "openai_compatible",
+        "glm" => "glm",
         _ => "openai",
     }
 }
@@ -495,8 +497,7 @@ fn memory_engine_provider(provider: &str) -> &'static str {
     match provider.trim() {
         "deepseek" => "deepseek",
         "kimi" => "openai",
-        "minimax" => "openai",
-        "openai_compatible" => "openai",
+        "glm" => "openai",
         _ => "openai",
     }
 }
@@ -506,6 +507,13 @@ fn ensure_concrete_model(config: &UserModelConfigRecord) -> Result<(), String> {
         return Err("model is empty; downstream services require a concrete model".to_string());
     }
     Ok(())
+}
+
+fn ensure_supported_provider(config: &UserModelConfigRecord) -> Result<(), String> {
+    match config.provider.trim() {
+        "gpt" | "deepseek" | "kimi" | "glm" => Ok(()),
+        provider => Err(format!("unsupported configured model provider: {provider}")),
+    }
 }
 
 #[cfg(test)]

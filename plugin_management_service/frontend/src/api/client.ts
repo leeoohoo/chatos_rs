@@ -3,6 +3,8 @@
 
 import type {
   AgentPromptCompleteness,
+  AgentPromptVersionRecord,
+  AgentPromptVersionSummary,
   GenerateAgentPromptResponse,
   AgentProviderPromptRecord,
   AgentMcpBindingsResponse,
@@ -180,6 +182,14 @@ export const api = {
   listAgentProviderPrompts: (agentKey: string) =>
     request<AgentProviderPromptRecord[]>(
       `/api/system-agents/${encodeURIComponent(agentKey)}/provider-prompts`,
+    ),
+  listAgentPromptVersions: (agentKey: string) =>
+    request<AgentPromptVersionSummary[]>(
+      `/api/system-agents/${encodeURIComponent(agentKey)}/prompt-versions`,
+    ),
+  getAgentPromptVersion: (agentKey: string, bundleVersion: number) =>
+    request<AgentPromptVersionRecord>(
+      `/api/system-agents/${encodeURIComponent(agentKey)}/prompt-versions/${bundleVersion}`,
     ),
   updateAgentProviderPromptDraft: (
     agentKey: string,

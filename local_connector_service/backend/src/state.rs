@@ -4,7 +4,9 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use chatos_config_sdk::ConfigClient;
 use chatos_service_runtime::{build_http_client, HttpClientTimeouts};
+use memory_engine_sdk::ManagedMemoryPolicyBundle;
 use tokio::sync::Mutex;
 
 use crate::config::AppConfig;
@@ -19,6 +21,7 @@ pub struct AppState {
     pub relay: ConnectorRelay,
     pub store: ConnectorStore,
     pub plugin_management_client: PluginManagementClient,
+    config_center_client: Option<ConfigClient>,
     user_service_http: reqwest::Client,
     memory_engine_http: reqwest::Client,
     pub(crate) managed_requirements_signer: Option<Arc<ManagedRequirementsSigner>>,
@@ -33,6 +36,24 @@ impl AppState {
             PluginManagementClientConfig::from_env("local-connector-service").await,
         )
         .map_err(|err| format!("initialize plugin management client failed: {err}"))?;
+        let config_center_client = match ConfigClient::from_env("local-connector-service") {
+            Ok(client) => {
+                if let Err(error) = client.load().await {
+                    tracing::warn!(
+                        error = error.as_str(),
+                        "load Local Connector managed Memory Policy snapshot failed; keeping environment fallback"
+                    );
+                }
+                Some(client)
+            }
+            Err(error) => {
+                tracing::warn!(
+                    error = error.as_str(),
+                    "initialize Local Connector configuration client failed"
+                );
+                None
+            }
+        };
         let user_service_http =
             build_http_client(HttpClientTimeouts::new(config.user_service_request_timeout))
                 .map_err(|err| format!("build user_service client failed: {err}"))?;
@@ -52,6 +73,7 @@ impl AppState {
             relay: ConnectorRelay::default(),
             store,
             plugin_management_client,
+            config_center_client,
             user_service_http,
             memory_engine_http,
             managed_requirements_signer,
@@ -65,6 +87,34 @@ impl AppState {
 
     pub(crate) fn memory_engine_http(&self) -> &reqwest::Client {
         &self.memory_engine_http
+    }
+
+    pub(crate) async fn managed_memory_policy_bundle(&self) -> ManagedMemoryPolicyBundle {
+        if let Some(client) = self.config_center_client.as_ref() {
+            let snapshot = match client.refresh().await {
+                Ok(Some(snapshot)) => Some(snapshot),
+                Ok(None) => client.current().await,
+                Err(error) => {
+                    tracing::warn!(
+                        error = error.as_str(),
+                        "refresh Local Connector managed Memory Policy failed; using last-known-good"
+                    );
+                    client.current().await
+                }
+            };
+            if let Some(snapshot) = snapshot {
+                return ManagedMemoryPolicyBundle::from_config_values(
+                    snapshot.environment,
+                    snapshot.revision,
+                    snapshot.checksum,
+                    snapshot.generated_at,
+                    snapshot.stale,
+                    snapshot.source,
+                    &snapshot.values,
+                );
+            }
+        }
+        ManagedMemoryPolicyBundle::from_env()
     }
 
     pub async fn consume_device_connect_nonce(

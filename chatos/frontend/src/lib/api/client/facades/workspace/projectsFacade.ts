@@ -309,15 +309,34 @@ export const workspaceProjectFacade: WorkspaceProjectFacade & ThisType<ApiClient
     return workspaceApi.setProjectRunDefault(this.getRequestFn(), projectId, targetId);
   },
   async listProjectContacts(projectId, paging) {
-    return workspaceApi.listProjectContacts(this.getRequestFn(), projectId, paging);
+    return workspaceApi.listProjectContacts(
+      this.getRequestFn(),
+      projectId,
+      paging,
+      this.projectUsesLocalRuntime(projectId),
+    );
   },
   async getProjectContactLock(projectId) {
-    return workspaceApi.getProjectContactLock(this.getRequestFn(), projectId);
+    return workspaceApi.getProjectContactLock(
+      this.getRequestFn(),
+      projectId,
+      this.projectUsesLocalRuntime(projectId),
+    );
   },
   async addProjectContact(projectId, data) {
-    return workspaceApi.addProjectContact(this.getRequestFn(), projectId, data);
+    return workspaceApi.addProjectContact(
+      this.getRequestFn(),
+      projectId,
+      data,
+      this.projectUsesLocalRuntime(projectId),
+    );
   },
   async removeProjectContact(projectId, contactId) {
-    return workspaceApi.removeProjectContact(this.getRequestFn(), projectId, contactId);
+    return workspaceApi.removeProjectContact(
+      this.getRequestFn(),
+      projectId,
+      contactId,
+      this.projectUsesLocalRuntime(projectId),
+    );
   },
 };

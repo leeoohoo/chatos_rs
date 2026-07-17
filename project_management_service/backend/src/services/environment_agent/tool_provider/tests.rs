@@ -2,17 +2,21 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use super::*;
+use crate::models::ProgramManagedMcpPolicy;
 
 fn planned_image(
     environment_key: &str,
     environment_type: &str,
 ) -> ProjectRuntimeEnvironmentImageRecord {
-    ProjectRuntimeEnvironmentImageRecord {
+    let mut image = ProjectRuntimeEnvironmentImageRecord {
         id: format!("record-{environment_key}"),
         project_id: "project-1".to_string(),
         environment_key: environment_key.to_string(),
         environment_type: environment_type.to_string(),
         display_name: environment_key.to_string(),
+        service_id: String::new(),
+        service_role: RuntimeServiceRole::Unknown,
+        mcp_policy: ProgramManagedMcpPolicy::default(),
         image_id: None,
         image_ref: None,
         image_provider: RuntimeEnvironmentProvider::LocalConnector,
@@ -25,7 +29,9 @@ fn planned_image(
         error: None,
         created_at: "now".to_string(),
         updated_at: "now".to_string(),
-    }
+    };
+    crate::services::runtime_environment::apply_program_managed_image_policy(&mut image);
+    image
 }
 
 #[test]
@@ -127,22 +133,20 @@ fn environment_variables_restore_omitted_dependency_plans() {
 }
 
 #[test]
-fn application_image_plan_ignores_agent_ready_state_and_provider_override() {
+fn application_image_plan_without_catalog_match_is_program_managed_and_planned() {
     let record = image_input_to_record(
         "project-1",
         ProjectRuntimeEnvironmentImageInput {
             environment_key: Some("application_runtime".to_string()),
             environment_type: Some("runtime".to_string()),
-            image_id: Some("agent-image".to_string()),
-            image_ref: Some("agent/runtime:latest".to_string()),
-            _image_provider: Some("local_connector".to_string()),
             dockerfile: Some("FROM node:24".to_string()),
-            status: Some("ready".to_string()),
             ..ProjectRuntimeEnvironmentImageInput::default()
         },
         0,
         RuntimeEnvironmentProvider::CloudSandboxManager,
-    );
+        None,
+    )
+    .expect("planned application image");
 
     assert_eq!(
         record.image_provider,
@@ -151,6 +155,11 @@ fn application_image_plan_ignores_agent_ready_state_and_provider_override() {
     assert_eq!(record.status, "planned");
     assert!(record.image_id.is_none());
     assert!(record.image_ref.is_none());
+    assert_eq!(record.service_role, RuntimeServiceRole::Application);
+    assert_eq!(
+        record.mcp_policy.attachment,
+        crate::models::RuntimeMcpAttachment::ProjectGatewayTarget
+    );
 }
 
 #[test]
@@ -160,13 +169,13 @@ fn dependency_image_plan_uses_platform_image_without_manual_build() {
         ProjectRuntimeEnvironmentImageInput {
             environment_key: Some("redis".to_string()),
             environment_type: Some("service".to_string()),
-            _image_provider: Some("local_connector".to_string()),
-            status: Some("planned".to_string()),
             ..ProjectRuntimeEnvironmentImageInput::default()
         },
         1,
         RuntimeEnvironmentProvider::CloudSandboxManager,
-    );
+        None,
+    )
+    .expect("platform dependency image");
 
     assert_eq!(
         record.image_provider,
@@ -174,6 +183,222 @@ fn dependency_image_plan_uses_platform_image_without_manual_build() {
     );
     assert_eq!(record.image_ref.as_deref(), Some("redis:7-alpine"));
     assert_eq!(record.status, "ready");
+    assert_eq!(record.service_role, RuntimeServiceRole::Dependency);
+    assert_eq!(record.mcp_policy, ProgramManagedMcpPolicy::default());
+}
+
+#[test]
+fn application_image_can_reuse_an_initialized_catalog_image_id() {
+    let catalog = json!({
+        "images": [{
+            "id": "dev-java8",
+            "image_ref": "chatos-sandbox-agent:dev-java8",
+            "features": ["java@8"],
+            "initialized": true,
+            "status": "ready"
+        }]
+    });
+    let record = image_input_to_record(
+        "project-1",
+        ProjectRuntimeEnvironmentImageInput {
+            environment_key: Some("app".to_string()),
+            environment_type: Some("application".to_string()),
+            image_id: Some("dev-java8".to_string()),
+            features: Some(json!(["java@8"])),
+            dockerfile: Some("FROM maven:3-eclipse-temurin-8".to_string()),
+            ..ProjectRuntimeEnvironmentImageInput::default()
+        },
+        0,
+        RuntimeEnvironmentProvider::CloudSandboxManager,
+        Some(&catalog),
+    )
+    .expect("reuse catalog image");
+
+    assert_eq!(record.image_id.as_deref(), Some("dev-java8"));
+    assert_eq!(
+        record.image_ref.as_deref(),
+        Some("chatos-sandbox-agent:dev-java8")
+    );
+    assert_eq!(record.features, json!(["java@8"]));
+    assert_eq!(record.status, "ready");
+}
+
+#[test]
+fn agent_cannot_submit_program_managed_mcp_or_image_control_fields() {
+    let image = json!({
+        "environment_key": "api",
+        "environment_type": "application",
+        "display_name": "API",
+        "dockerfile": "FROM node:24",
+        "mcp_policy": { "attachment": "project_gateway_target" }
+    });
+    assert!(serde_json::from_value::<ProjectRuntimeEnvironmentImageInput>(image).is_err());
+
+    let top_level = json!({
+        "environment_variable_scan": {
+            "completed": true,
+            "files_scanned": [],
+            "reference_count": 0,
+            "summary": "scan complete"
+        },
+        "environment_variables": [],
+        "generated_config_files": [],
+        "mcp_enabled": true
+    });
+    assert!(serde_json::from_value::<UpdateProjectEnvironmentToolArgs>(top_level).is_err());
+
+    for forbidden in [
+        json!({"analysis_summary": "AI summary"}),
+        json!({"status": "ready"}),
+        json!({"last_error": "AI error"}),
+        json!({"sandbox_provider": "cloud_sandbox_manager"}),
+    ] {
+        assert!(serde_json::from_value::<UpdateProjectEnvironmentToolArgs>(forbidden).is_err());
+    }
+}
+
+#[test]
+fn agent_visible_state_hides_routing_and_program_managed_fields() {
+    let project = ProjectRecord {
+        id: "project-1".to_string(),
+        creator_user_id: None,
+        creator_username: None,
+        creator_display_name: None,
+        owner_user_id: Some("user-1".to_string()),
+        owner_username: None,
+        owner_display_name: None,
+        name: "Example".to_string(),
+        root_path: Some("/private/workspace".to_string()),
+        git_url: None,
+        source_type: crate::models::ProjectSourceType::Cloud,
+        execution_plane: crate::models::ProjectExecutionPlane::Cloud,
+        cloud_import_source: crate::models::CloudImportSource::Zip,
+        import_status: crate::models::ProjectImportStatus::Ready,
+        source_git_url: None,
+        harness_space_identifier: Some("space".to_string()),
+        harness_repo_identifier: Some("repo".to_string()),
+        harness_repo_path: Some("secret-path".to_string()),
+        harness_git_url: None,
+        harness_git_ssh_url: None,
+        harness_default_branch: None,
+        harness_provision_status: None,
+        harness_provision_error: None,
+        harness_provisioned_at: None,
+        import_error: None,
+        import_started_at: None,
+        import_finished_at: None,
+        description: None,
+        status: crate::models::ProjectStatus::Active,
+        created_at: "now".to_string(),
+        updated_at: "now".to_string(),
+        archived_at: None,
+    };
+    let mut environment =
+        crate::services::runtime_environment::default_runtime_environment_for_project(
+            &project,
+            Some(true),
+        );
+    environment.file_provider = RuntimeEnvironmentProvider::Harness;
+    environment.sandbox_provider = RuntimeEnvironmentProvider::CloudSandboxManager;
+    environment.analysis_summary =
+        Some("云端项目只通过 Harness MCP 读取文件，并只使用云端 Sandbox Manager。".to_string());
+    let image = planned_image("services/api", "application");
+
+    let visible = agent_visible_runtime_state(&project, &environment, &[image]);
+    assert!(visible.pointer("/analysis/status").is_none());
+    assert!(visible.pointer("/images/0/status").is_none());
+    assert!(visible.pointer("/images/0/error").is_none());
+    let serialized = serde_json::to_string(&visible).expect("serialize agent-visible state");
+    for forbidden in [
+        "file_provider",
+        "sandbox_provider",
+        "analysis_summary",
+        "mcp_policy",
+        "image_provider",
+        "harness_repo_identifier",
+        "secret-path",
+        "/private/workspace",
+    ] {
+        assert!(!serialized.contains(forbidden));
+    }
+}
+
+#[test]
+fn technical_summary_is_generated_from_program_results() {
+    let project = ProjectRecord {
+        id: "project-1".to_string(),
+        creator_user_id: None,
+        creator_username: None,
+        creator_display_name: None,
+        owner_user_id: Some("user-1".to_string()),
+        owner_username: None,
+        owner_display_name: None,
+        name: "Example".to_string(),
+        root_path: None,
+        git_url: None,
+        source_type: crate::models::ProjectSourceType::Cloud,
+        execution_plane: crate::models::ProjectExecutionPlane::Cloud,
+        cloud_import_source: crate::models::CloudImportSource::Zip,
+        import_status: crate::models::ProjectImportStatus::Ready,
+        source_git_url: None,
+        harness_space_identifier: None,
+        harness_repo_identifier: None,
+        harness_repo_path: None,
+        harness_git_url: None,
+        harness_git_ssh_url: None,
+        harness_default_branch: None,
+        harness_provision_status: None,
+        harness_provision_error: None,
+        harness_provisioned_at: None,
+        import_error: None,
+        import_started_at: None,
+        import_finished_at: None,
+        description: None,
+        status: crate::models::ProjectStatus::Active,
+        created_at: "now".to_string(),
+        updated_at: "now".to_string(),
+        archived_at: None,
+    };
+    let mut environment =
+        crate::services::runtime_environment::default_runtime_environment_for_project(
+            &project,
+            Some(true),
+        );
+    environment.status = ProjectRuntimeEnvironmentStatus::PendingImageBuild;
+    environment.generated_config_files = vec![ProjectRuntimeEnvironmentConfigFileRecord {
+        path: ".env.chatos".to_string(),
+        format: "dotenv".to_string(),
+        content: "PORT=3000".to_string(),
+        description: None,
+        source_files: vec![".env.example".to_string()],
+    }];
+    let images = vec![
+        planned_image("services/api", "application"),
+        planned_image("redis", "service"),
+    ];
+
+    let summary = program_generated_runtime_analysis_summary(&environment, images.as_slice());
+    assert!(summary.contains("1 个应用组件"));
+    assert!(summary.contains("1 个依赖服务"));
+    assert!(summary.contains("等待生成应用镜像"));
+    assert!(!summary.contains("Harness"));
+    assert!(!summary.contains("Sandbox Manager"));
+}
+
+#[test]
+fn application_dockerfile_cannot_install_program_managed_mcp_agent() {
+    let mut controlled = planned_image("services/api", "application");
+    controlled.dockerfile = Some(
+        "FROM node:24\nCOPY chatos-sandbox-mcp-server /opt/chatos/bin/\nENV MCP_TOKEN=ai\n"
+            .to_string(),
+    );
+    let error = validate_environment_image_plans(
+        &json!({"language": "Node.js"}),
+        &json!([]),
+        &[controlled],
+    )
+    .expect_err("AI-authored MCP installation must be rejected");
+    assert!(error.contains("program-managed Chat OS MCP Agent"));
 }
 
 #[test]
@@ -215,7 +440,8 @@ fn compose_planning_requires_application_dockerfile_and_each_dependency_record()
 #[test]
 fn project_compose_groups_application_and_dependencies() {
     let images = vec![
-        planned_image("application_runtime", "runtime"),
+        planned_image("services/api", "application"),
+        planned_image("services/worker", "application"),
         planned_image("mysql", "service"),
         planned_image("redis", "service"),
     ];
@@ -227,12 +453,32 @@ fn project_compose_groups_application_and_dependencies() {
     )
     .expect("compose plan");
     assert!(compose.contains("name: \"chatos-project123\""));
-    assert!(compose.contains("  application:"));
+    assert!(compose.contains("  services-api:"));
+    assert!(compose.contains("  services-worker:"));
+    assert!(compose
+        .contains("dockerfile: .chatos/runtime-environment/services/services-api/Dockerfile"));
+    assert!(compose
+        .contains("dockerfile: .chatos/runtime-environment/services/services-worker/Dockerfile"));
     assert!(compose.contains("  mysql:"));
     assert!(compose.contains("  redis:"));
     assert!(compose.contains("depends_on:"));
     assert!(compose.contains("127.0.0.1:3306:3306"));
     assert!(compose.contains("127.0.0.1:6379:6379"));
+}
+
+#[test]
+fn application_service_ids_are_program_normalized_and_bounded() {
+    let image = planned_image(
+        "123/services/API Worker with a deliberately very long component name that exceeds compose limits",
+        "application",
+    );
+    let service_id = super::super::runtime_application_service_id(&image, 0);
+    assert!(service_id.starts_with("app-123-services-api-worker"));
+    assert!(service_id.len() <= 63);
+    assert!(service_id.chars().all(|character| {
+        character.is_ascii_lowercase() || character.is_ascii_digit() || character == '-'
+    }));
+    assert!(!service_id.ends_with('-'));
 }
 
 #[test]

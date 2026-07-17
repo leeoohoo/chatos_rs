@@ -2,6 +2,7 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use chatos_ai_runtime::ModelRuntimeConfig;
+use chatos_plugin_management_sdk::normalize_agent_prompt_vendor;
 use chatos_service_runtime::{build_http_client, HttpClientTimeouts};
 use serde::Deserialize;
 
@@ -151,9 +152,22 @@ pub async fn resolve_environment_initialization_model_runtime(
         return Err("environment initialization model_config_id is required".to_string());
     }
     let record = get_cloud_model_runtime(config, owner_user_id, model_config_id).await?;
+    resolve_environment_initialization_model_runtime_from_response(record, thinking_level_override)
+}
+
+fn resolve_environment_initialization_model_runtime_from_response(
+    record: UserServiceModelRuntimeResponse,
+    thinking_level_override: Option<&str>,
+) -> Result<ResolvedEnvironmentInitializationModelRuntime, String> {
     let thinking_level = normalized_optional(thinking_level_override.map(ToOwned::to_owned))
         .or_else(|| normalized_optional(record.thinking_level));
-    let provider = runtime_provider_for_model(record.provider.as_str(), record.base_url.as_str());
+    let configured_provider = normalize_configured_provider(record.provider.as_str())?;
+    let prompt_vendor = normalized_optional(record.prompt_vendor).or_else(|| {
+        normalize_agent_prompt_vendor(None, configured_provider.as_str())
+            .map(|vendor| vendor.as_str().to_string())
+    });
+    let provider =
+        runtime_provider_for_model(configured_provider.as_str(), record.base_url.as_str());
     let model_config = ModelRuntimeConfig::openai_compatible(
         record.base_url,
         record.api_key,
@@ -166,9 +180,21 @@ pub async fn resolve_environment_initialization_model_runtime(
 
     Ok(ResolvedEnvironmentInitializationModelRuntime {
         model_config_id: record.id,
-        prompt_vendor: record.prompt_vendor,
+        prompt_vendor,
         model_config,
     })
+}
+
+fn normalize_configured_provider(provider: &str) -> Result<String, String> {
+    let normalized = provider.trim().to_ascii_lowercase().replace('-', "_");
+    let provider = match normalized.as_str() {
+        "openai" | "gpt" => "gpt",
+        "deepseek" => "deepseek",
+        "kimi" | "kimik2" | "moonshot" => "kimi",
+        "glm" | "zhipu" | "zhipuai" | "zai" | "chatglm" => "glm",
+        _ => return Err("provider only supports gpt / deepseek / kimi / glm".to_string()),
+    };
+    Ok(provider.to_string())
 }
 
 fn user_service_internal_secret(config: &AppConfig) -> Result<&str, String> {
@@ -259,6 +285,72 @@ mod tests {
             Some("environment-model")
         );
         assert_eq!(settings.thinking_level.as_deref(), Some("high"));
+    }
+
+    #[test]
+    fn custom_openai_gateway_keeps_gpt_prompt_vendor() {
+        let runtime = resolve_environment_initialization_model_runtime_from_response(
+            UserServiceModelRuntimeResponse {
+                id: "model-1".to_string(),
+                provider: "gpt".to_string(),
+                prompt_vendor: None,
+                base_url: "https://gateway.example.invalid/v1".to_string(),
+                api_key: "secret".to_string(),
+                model: "gpt-compatible".to_string(),
+                thinking_level: Some("high".to_string()),
+                supports_images: false,
+                supports_responses: true,
+            },
+            None,
+        )
+        .expect("runtime");
+
+        assert_eq!(runtime.prompt_vendor.as_deref(), Some("gpt"));
+        assert_eq!(runtime.model_config.provider, "openai_compatible");
+    }
+
+    #[test]
+    fn glm_runtime_keeps_glm_prompt_vendor() {
+        let runtime = resolve_environment_initialization_model_runtime_from_response(
+            UserServiceModelRuntimeResponse {
+                id: "model-1".to_string(),
+                provider: "glm".to_string(),
+                prompt_vendor: None,
+                base_url: "https://open.bigmodel.cn/api/paas/v4".to_string(),
+                api_key: "secret".to_string(),
+                model: "glm-4-plus".to_string(),
+                thinking_level: Some("high".to_string()),
+                supports_images: false,
+                supports_responses: false,
+            },
+            None,
+        )
+        .expect("runtime");
+
+        assert_eq!(runtime.prompt_vendor.as_deref(), Some("glm"));
+        assert_eq!(runtime.model_config.provider, "glm");
+    }
+
+    #[test]
+    fn removed_provider_values_are_rejected() {
+        for provider in ["openai_compatible", "minimax"] {
+            let result = resolve_environment_initialization_model_runtime_from_response(
+                UserServiceModelRuntimeResponse {
+                    id: "model-1".to_string(),
+                    provider: provider.to_string(),
+                    prompt_vendor: None,
+                    base_url: "https://removed.example.invalid/v1".to_string(),
+                    api_key: "secret".to_string(),
+                    model: "removed-model".to_string(),
+                    thinking_level: None,
+                    supports_images: false,
+                    supports_responses: false,
+                },
+                None,
+            );
+
+            assert!(result.is_err());
+        }
     }
 
     #[test]

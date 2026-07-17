@@ -70,9 +70,9 @@ export function AgentPromptGenerateModal({
       confirmLoading={generateMutation.isPending}
       onCancel={onClose}
       onOk={() => form.submit()}
-      destroyOnClose
+      destroyOnHidden
     >
-      <Alert type="info" showIcon message={t('agent.promptGenerateNotice')} />
+      <Alert type="info" showIcon title={t('agent.promptGenerateNotice')} />
       <Form form={form} layout="vertical" onFinish={(values) => generateMutation.mutate(values)}>
         <Form.Item
           name="model_config_id"

@@ -76,7 +76,8 @@ pub(super) async fn agent_prompt_bundle_internal(
         .map_err(ApiError::internal)?
         .into_iter()
         .filter(|agent| agent.enabled)
-        .collect::<Vec<_>>();
+        .map(|agent| agent.agent_key)
+        .collect::<std::collections::HashSet<_>>();
     let records = state
         .store
         .list_published_agent_prompts()
@@ -87,15 +88,18 @@ pub(super) async fn agent_prompt_bundle_internal(
         .map(|record| ((record.agent_key.clone(), record.vendor), record))
         .collect::<HashMap<_, _>>();
     let mut prompts = Vec::new();
-    for agent in enabled_agents {
+    for agent_key in chatos_plugin_management_sdk::SystemAgentKey::ALL {
+        if !enabled_agents.contains(agent_key.as_str()) {
+            continue;
+        }
         for vendor in AgentPromptVendor::ALL {
             let record = by_key
-                .get(&(agent.agent_key.clone(), vendor))
+                .get(&(agent_key.as_str().to_string(), vendor))
                 .cloned()
                 .ok_or_else(|| {
                     ApiError::conflict(format!(
                         "agent_prompt_not_configured: {} {vendor}",
-                        agent.agent_key
+                        agent_key.as_str()
                     ))
                 })?;
             prompts.push(resolved_prompt(record)?);

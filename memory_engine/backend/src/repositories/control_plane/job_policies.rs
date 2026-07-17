@@ -27,11 +27,14 @@ pub async fn list_job_policies(db: &Db) -> Result<Vec<EngineJobPolicy>, String> 
 
     for item in &mut items {
         normalize_job_policy(item);
+        super::managed_memory_policy::apply_to_engine_job_policy(item).await;
     }
 
     for job_type in default_job_types() {
         if !items.iter().any(|item| item.job_type == *job_type) {
-            items.push(default_job_policy(job_type));
+            let mut policy = default_job_policy(job_type);
+            super::managed_memory_policy::apply_to_engine_job_policy(&mut policy).await;
+            items.push(policy);
         }
     }
     items.sort_by(|a, b| a.job_type.cmp(&b.job_type));
@@ -57,9 +60,12 @@ pub async fn get_job_policy(db: &Db, job_type: &str) -> Result<Option<EngineJobP
 pub async fn get_effective_job_policy(db: &Db, job_type: &str) -> Result<EngineJobPolicy, String> {
     if let Some(mut policy) = get_job_policy(db, job_type).await? {
         normalize_job_policy(&mut policy);
+        super::managed_memory_policy::apply_to_engine_job_policy(&mut policy).await;
         return Ok(policy);
     }
-    Ok(default_job_policy(job_type))
+    let mut policy = default_job_policy(job_type);
+    super::managed_memory_policy::apply_to_engine_job_policy(&mut policy).await;
+    Ok(policy)
 }
 
 pub async fn upsert_job_policy(

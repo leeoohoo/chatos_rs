@@ -30,7 +30,7 @@ use super::{now_rfc3339, prefixed_id, SandboxManager};
 
 mod create;
 mod lifecycle;
-mod policy;
+pub(in crate::service::manager) mod policy;
 mod queries;
 
 use policy::*;

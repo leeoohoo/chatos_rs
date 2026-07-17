@@ -10,11 +10,8 @@ import { PIPELINE_POLICY_META, PIPELINE_POLICY_VIEWS } from '../constants';
 import type { EngineJobPolicy } from '../../types';
 import type {
   JobTypeKey,
-  ModelOptions,
   PolicyMap,
-  PolicyPromptGenerator,
   PolicyViewKey,
-  PolicySaveHandler,
 } from '../types';
 
 const { Text } = Typography;
@@ -26,11 +23,6 @@ type PoliciesSectionProps = {
   onSelect: (value: PolicyViewKey) => void;
   onReload: () => void;
   policyMap: PolicyMap;
-  modelOptions: ModelOptions;
-  savingPolicyJobType: string | null;
-  generatingPolicyJobType: string | null;
-  onSave: PolicySaveHandler;
-  onGeneratePrompt: PolicyPromptGenerator;
 };
 
 export function PoliciesSection(props: PoliciesSectionProps) {
@@ -41,11 +33,6 @@ export function PoliciesSection(props: PoliciesSectionProps) {
     onSelect,
     onReload,
     policyMap,
-    modelOptions,
-    savingPolicyJobType,
-    generatingPolicyJobType,
-    onSave,
-    onGeneratePrompt,
   } = props;
 
   const items: TabsProps['items'] = PIPELINE_POLICY_VIEWS.map((view) => {
@@ -66,12 +53,6 @@ export function PoliciesSection(props: PoliciesSectionProps) {
         <PolicyEditorCard
           policy={policy}
           meta={meta}
-          viewKey={view.key}
-          modelOptions={modelOptions}
-          saving={savingPolicyJobType === policy.job_type}
-          generatingPrompt={generatingPolicyJobType === policy.job_type}
-          onSave={onSave}
-          onGeneratePrompt={onGeneratePrompt}
         />
       ),
     };
@@ -89,7 +70,7 @@ export function PoliciesSection(props: PoliciesSectionProps) {
       >
         <Space direction="vertical" size={6}>
           <Text type="secondary">
-            这里统一配置平台的后台处理策略，所有接入系统共用这一套规则。
+            当前页面展示配置中心已经发布并实际生效的 Memory Policy，不再在 Memory Engine 内单独保存。
           </Text>
           <Text type="secondary">
             主链路按四个阶段推进：消息总结 {'->'} 总结再总结 {'->'} 总结生成记忆 {'->'} 记忆再总结。

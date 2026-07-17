@@ -15,8 +15,9 @@ use chatos_plugin_management_sdk::{
 };
 
 use crate::models::{
-    AgentProviderPromptRecord, CurrentUser, PublishAgentPromptRequest,
-    UpdateAgentPromptDraftRequest, SOURCE_KIND_ADMIN_CREATED,
+    AgentPromptVersionPrompt, AgentPromptVersionRecord, AgentPromptVersionSummary,
+    AgentPromptVersionVendorSummary, AgentProviderPromptRecord, CurrentUser,
+    PublishAgentPromptRequest, UpdateAgentPromptDraftRequest, SOURCE_KIND_ADMIN_CREATED,
 };
 use crate::state::AppState;
 use crate::store::now_rfc3339;
@@ -55,6 +56,37 @@ pub(super) async fn list_agent_provider_prompts(
         .await
         .map(Json)
         .map_err(ApiError::internal)
+}
+
+pub(super) async fn list_agent_prompt_versions(
+    State(state): State<AppState>,
+    Extension(user): Extension<CurrentUser>,
+    Path(agent_key): Path<String>,
+) -> Result<Json<Vec<AgentPromptVersionSummary>>, ApiError> {
+    ensure_super_admin(&user)?;
+    ensure_agent_exists(&state, agent_key.as_str()).await?;
+    let versions = state
+        .store
+        .list_agent_prompt_versions(agent_key.as_str())
+        .await
+        .map_err(ApiError::internal)?;
+    Ok(Json(versions.iter().map(version_summary).collect()))
+}
+
+pub(super) async fn get_agent_prompt_version(
+    State(state): State<AppState>,
+    Extension(user): Extension<CurrentUser>,
+    Path((agent_key, bundle_version)): Path<(String, i64)>,
+) -> Result<Json<AgentPromptVersionRecord>, ApiError> {
+    ensure_super_admin(&user)?;
+    ensure_agent_exists(&state, agent_key.as_str()).await?;
+    state
+        .store
+        .get_agent_prompt_version(agent_key.as_str(), bundle_version)
+        .await
+        .map_err(ApiError::internal)?
+        .map(Json)
+        .ok_or_else(|| ApiError::not_found("Agent Prompt version was not found"))
 }
 
 pub(super) async fn update_agent_provider_prompt_draft(
@@ -153,11 +185,20 @@ pub(super) async fn publish_agent_provider_prompt(
         .replace_agent_prompt(&record)
         .await
         .map_err(ApiError::internal)?;
-    state
+    let bundle = state
         .store
         .increment_agent_prompt_bundle_version()
         .await
         .map_err(ApiError::internal)?;
+    persist_agent_prompt_version(
+        &state,
+        agent_key.as_str(),
+        bundle.version,
+        Some(vendor),
+        user.user_id.as_str(),
+        bundle.updated_at.as_str(),
+    )
+    .await?;
     Ok(Json(record))
 }
 
@@ -311,6 +352,83 @@ fn reject_obvious_secrets(content: &str) -> Result<(), ApiError> {
     Ok(())
 }
 
+async fn persist_agent_prompt_version(
+    state: &AppState,
+    agent_key: &str,
+    bundle_version: i64,
+    changed_vendor: Option<AgentPromptVendor>,
+    published_by: &str,
+    published_at: &str,
+) -> Result<(), ApiError> {
+    let prompts = state
+        .store
+        .list_agent_prompts(agent_key)
+        .await
+        .map_err(ApiError::internal)?
+        .into_iter()
+        .filter_map(prompt_version_snapshot)
+        .collect::<Vec<_>>();
+    if prompts.is_empty() {
+        return Err(ApiError::conflict(
+            "Agent Prompt version has no published vendor content",
+        ));
+    }
+    state
+        .store
+        .replace_agent_prompt_version(&AgentPromptVersionRecord {
+            id: format!("{agent_key}__bundle__{bundle_version}"),
+            agent_key: agent_key.to_string(),
+            bundle_version,
+            changed_vendor,
+            prompts,
+            published_by: published_by.to_string(),
+            published_at: published_at.to_string(),
+        })
+        .await
+        .map_err(ApiError::internal)
+}
+
+fn prompt_version_snapshot(record: AgentProviderPromptRecord) -> Option<AgentPromptVersionPrompt> {
+    let content = record
+        .published_content
+        .filter(|content| !content.trim().is_empty())?;
+    let checksum = record
+        .published_checksum
+        .filter(|checksum| !checksum.trim().is_empty())?;
+    if !record.enabled || record.published_revision <= 0 {
+        return None;
+    }
+    Some(AgentPromptVersionPrompt {
+        vendor: record.vendor,
+        content,
+        revision: record.published_revision,
+        checksum,
+        published_at: record
+            .published_at
+            .unwrap_or_else(|| record.updated_at.clone()),
+    })
+}
+
+fn version_summary(record: &AgentPromptVersionRecord) -> AgentPromptVersionSummary {
+    AgentPromptVersionSummary {
+        id: record.id.clone(),
+        agent_key: record.agent_key.clone(),
+        bundle_version: record.bundle_version,
+        changed_vendor: record.changed_vendor,
+        vendor_revisions: record
+            .prompts
+            .iter()
+            .map(|prompt| AgentPromptVersionVendorSummary {
+                vendor: prompt.vendor,
+                revision: prompt.revision,
+                checksum: prompt.checksum.clone(),
+            })
+            .collect(),
+        published_by: record.published_by.clone(),
+        published_at: record.published_at.clone(),
+    }
+}
+
 async fn ensure_agent_exists(state: &AppState, agent_key: &str) -> Result<(), ApiError> {
     state
         .store
@@ -336,5 +454,26 @@ mod tests {
     fn rejects_private_keys_before_publish() {
         assert!(reject_obvious_secrets("-----BEGIN PRIVATE KEY-----").is_err());
         assert!(reject_obvious_secrets("normal system prompt").is_ok());
+    }
+
+    #[test]
+    fn prompt_version_summary_omits_prompt_content() {
+        let summary = version_summary(&AgentPromptVersionRecord {
+            id: "agent__bundle__3".to_string(),
+            agent_key: "agent".to_string(),
+            bundle_version: 3,
+            changed_vendor: Some(AgentPromptVendor::Gpt),
+            prompts: vec![AgentPromptVersionPrompt {
+                vendor: AgentPromptVendor::Gpt,
+                content: "secretly large prompt".to_string(),
+                revision: 2,
+                checksum: "sha256:test".to_string(),
+                published_at: "2026-07-17T00:00:00Z".to_string(),
+            }],
+            published_by: "admin".to_string(),
+            published_at: "2026-07-17T00:00:00Z".to_string(),
+        });
+        assert_eq!(summary.bundle_version, 3);
+        assert_eq!(summary.vendor_revisions[0].revision, 2);
     }
 }

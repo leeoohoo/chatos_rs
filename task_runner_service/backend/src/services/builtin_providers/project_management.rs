@@ -63,7 +63,7 @@ impl ProjectManagementBuiltinService {
         }
 
         let mut headers = HashMap::new();
-        super::super::project_management_api_client::insert_project_service_internal_headers(
+        super::super::project_management_api_client::insert_project_service_mcp_signing_headers(
             &mut headers,
             sync_secret,
             super::super::project_management_api_client::PROJECT_MCP_SCOPE,
@@ -77,13 +77,6 @@ impl ProjectManagementBuiltinService {
             "X-Task-Runner-Task-Profile".to_string(),
             crate::models::TASK_PROFILE_CHATOS_PLAN.to_string(),
         );
-        if let Some(access_token) = crate::auth::get_current_access_token() {
-            headers.insert(
-                "X-Chatos-User-Authorization".to_string(),
-                format!("Bearer {access_token}"),
-            );
-        }
-
         let result = chatos_mcp_runtime::jsonrpc_http_call(
             format!("{}{}", base_url.trim_end_matches('/'), mcp::ENDPOINT_PATH).as_str(),
             Some(&headers),

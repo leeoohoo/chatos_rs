@@ -15,6 +15,18 @@ pub struct UserServiceTaskRunnerExchange {
 #[derive(Debug, Deserialize)]
 pub(super) struct UserServiceTaskRunnerTokenResponse {
     pub(super) access_token: String,
+    #[serde(default = "default_task_runner_token_expires_in")]
+    pub(super) expires_in: i64,
+}
+
+fn default_task_runner_token_expires_in() -> i64 {
+    3600
+}
+
+#[derive(Debug, Clone)]
+pub struct ExchangedTaskRunnerToken {
+    pub access_token: String,
+    pub expires_in: i64,
 }
 
 #[derive(Debug, Clone, Deserialize)]

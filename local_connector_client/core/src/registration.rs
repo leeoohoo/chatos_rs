@@ -3,6 +3,7 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::{error::Error as StdError, fmt};
 
 use anyhow::{anyhow, Context, Result};
 use reqwest::StatusCode;
@@ -296,9 +297,43 @@ pub(crate) async fn bootstrap_env_config(
 pub(crate) fn ensure_success(status: StatusCode, context: &str) -> Result<()> {
     if status.is_success() {
         Ok(())
+    } else if status == StatusCode::UNAUTHORIZED {
+        Err(cloud_authentication_expired(context))
     } else {
         Err(anyhow!("{context} failed with status {status}"))
     }
+}
+
+#[derive(Debug)]
+struct CloudAuthenticationExpired {
+    context: String,
+}
+
+impl fmt::Display for CloudAuthenticationExpired {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            formatter,
+            "{} failed because the saved login expired; sign in again",
+            self.context
+        )
+    }
+}
+
+impl StdError for CloudAuthenticationExpired {}
+
+pub(crate) fn cloud_authentication_expired(context: &str) -> anyhow::Error {
+    CloudAuthenticationExpired {
+        context: context.to_string(),
+    }
+    .into()
+}
+
+pub(crate) fn is_cloud_authentication_expired(error: &anyhow::Error) -> bool {
+    error.chain().any(|source| {
+        source
+            .downcast_ref::<CloudAuthenticationExpired>()
+            .is_some()
+    })
 }
 
 fn display_alias(path: &Path) -> String {
@@ -323,4 +358,24 @@ fn apply_device_pairing_context(
     };
     state.paired_cloud_base_url = Some(config.cloud_base_url.clone());
     state.paired_user_id = Some(owner_user_id.to_string());
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn unauthorized_response_is_classified_as_expired_cloud_authentication() {
+        let error = ensure_success(StatusCode::UNAUTHORIZED, "verify device")
+            .expect_err("401 must require a new login");
+        assert!(is_cloud_authentication_expired(&error));
+        assert!(error.to_string().contains("sign in again"));
+    }
+
+    #[test]
+    fn non_authentication_error_is_not_classified_as_expired_login() {
+        let error = ensure_success(StatusCode::BAD_GATEWAY, "verify device")
+            .expect_err("bad gateway must fail");
+        assert!(!is_cloud_authentication_expired(&error));
+    }
 }

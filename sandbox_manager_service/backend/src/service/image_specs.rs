@@ -321,21 +321,39 @@ const IMAGE_RUNTIMES: [RuntimeSpec; 10] = [
         id: "java",
         label: "JDK",
         description: "OpenJDK development tools",
-        aliases: &["jdk", "openjdk"],
+        aliases: &[
+            "jdk",
+            "openjdk",
+            "maven",
+            "mvn",
+            "gradle",
+            "spring",
+            "springboot",
+            "spring-boot",
+        ],
         versions: &JAVA_VERSIONS,
     },
     RuntimeSpec {
         id: "node",
         label: "Node.js",
         description: "Node.js, npm, pnpm and yarn",
-        aliases: &["js", "nodejs", "javascript", "typescript"],
+        aliases: &[
+            "js",
+            "nodejs",
+            "javascript",
+            "typescript",
+            "npm",
+            "pnpm",
+            "yarn",
+            "bun",
+        ],
         versions: &NODE_VERSIONS,
     },
     RuntimeSpec {
         id: "python",
         label: "Python",
         description: "Python interpreter, pip and venv tooling",
-        aliases: &["py", "python3"],
+        aliases: &["py", "python3", "pip", "pip3", "poetry", "uv"],
         versions: &PYTHON_VERSIONS,
     },
     RuntimeSpec {
@@ -349,28 +367,28 @@ const IMAGE_RUNTIMES: [RuntimeSpec; 10] = [
         id: "go",
         label: "Go",
         description: "Go toolchain",
-        aliases: &["golang"],
+        aliases: &["golang", "gomod"],
         versions: &GO_VERSIONS,
     },
     RuntimeSpec {
         id: "dotnet",
         label: ".NET",
         description: ".NET SDK for C# and F# projects",
-        aliases: &["csharp", "cs", "fsharp"],
+        aliases: &["csharp", "cs", "fsharp", "msbuild"],
         versions: &DOTNET_VERSIONS,
     },
     RuntimeSpec {
         id: "php",
         label: "PHP",
         description: "PHP CLI runtime and Composer",
-        aliases: &[],
+        aliases: &["composer"],
         versions: &PHP_VERSIONS,
     },
     RuntimeSpec {
         id: "ruby",
         label: "Ruby",
         description: "Ruby runtime, RubyGems and Bundler",
-        aliases: &["rails"],
+        aliases: &["rails", "gem", "bundler"],
         versions: &RUBY_VERSIONS,
     },
     RuntimeSpec {
@@ -595,4 +613,26 @@ fn runtime_index(runtime_id: &str) -> usize {
         .iter()
         .position(|runtime| runtime.id == runtime_id)
         .unwrap_or(usize::MAX)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{canonical_features, selection_feature_token};
+
+    #[test]
+    fn build_tool_aliases_resolve_to_supported_language_runtimes() {
+        let selections = canonical_features(&[
+            "maven".to_string(),
+            "pnpm".to_string(),
+            "poetry".to_string(),
+        ])
+        .expect("canonical build tool aliases");
+        assert_eq!(
+            selections
+                .iter()
+                .map(selection_feature_token)
+                .collect::<Vec<_>>(),
+            vec!["java@21", "node@24", "python@3.14"]
+        );
+    }
 }

@@ -49,6 +49,7 @@ pub(crate) fn shared_http_server(server: ChatosHttpServer) -> chatos_mcp_runtime
         timeout_ms: None,
         tool_name_aliases: Vec::new(),
         allowed_tool_names: server.allowed_tool_names,
+        header_provider: server.header_provider,
     }
 }
 
@@ -220,6 +221,7 @@ mod tests {
                 "list_project_tasks".to_string(),
                 "get_project_dependency_graph".to_string(),
             ]),
+            header_provider: None,
         };
 
         let shared = shared_http_server(server);

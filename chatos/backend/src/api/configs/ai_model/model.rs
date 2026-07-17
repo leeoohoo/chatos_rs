@@ -15,8 +15,8 @@ fn normalize_provider_input(provider: Option<String>) -> Result<String, String> 
     let provider = normalize_provider(&raw);
 
     match provider.as_str() {
-        "gpt" | "deepseek" | "kimi" | "minimax" | "openai_compatible" => Ok(provider),
-        _ => Err("provider 仅支持 gpt / deepseek / kimi / minimax / openai_compatible".to_string()),
+        "gpt" | "deepseek" | "kimi" | "glm" => Ok(provider),
+        _ => Err("provider 仅支持 gpt / deepseek / kimi / glm".to_string()),
     }
 }
 
@@ -443,11 +443,30 @@ mod tests {
     }
 
     #[test]
-    fn accepts_openai_compatible_provider() {
+    fn rejects_removed_provider_values() {
+        for provider in ["openai-compatible", "minimax"] {
+            let mut request = sample_request();
+            request.provider = Some(provider.to_string());
+            request.model = Some("custom-model".to_string());
+
+            assert!(build_model_config(
+                "user_1".to_string(),
+                "cfg_1".to_string(),
+                request,
+                None,
+                true,
+            )
+            .is_err());
+        }
+    }
+
+    #[test]
+    fn accepts_glm_provider() {
         let mut request = sample_request();
-        request.provider = Some("openai-compatible".to_string());
-        request.model = Some("custom-model".to_string());
-        request.thinking_level = Some("max".to_string());
+        request.provider = Some("zhipu".to_string());
+        request.prompt_vendor = Some("glm".to_string());
+        request.model = Some("glm-4-plus".to_string());
+        request.thinking_level = Some("high".to_string());
 
         let config = build_model_config(
             "user_1".to_string(),
@@ -458,7 +477,8 @@ mod tests {
         )
         .expect("config should build");
 
-        assert_eq!(config.provider, "openai_compatible");
-        assert_eq!(config.thinking_level.as_deref(), Some("xhigh"));
+        assert_eq!(config.provider, "glm");
+        assert_eq!(config.prompt_vendor.as_deref(), Some("glm"));
+        assert_eq!(config.thinking_level.as_deref(), Some("high"));
     }
 }

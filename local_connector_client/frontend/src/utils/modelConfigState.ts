@@ -182,14 +182,12 @@ export function providerLabel(provider: string) {
   switch (normalizeModelProvider(provider || 'gpt')) {
     case 'gpt':
       return 'OpenAI';
-    case 'openai_compatible':
-      return 'OpenAI Compatible';
     case 'deepseek':
       return 'DeepSeek';
     case 'kimi':
       return 'Kimi';
-    case 'minimax':
-      return 'MiniMax';
+    case 'glm':
+      return 'GLM';
     default:
       return provider || 'Provider';
   }
@@ -300,7 +298,11 @@ export function thinkingOptionsForProvider(provider?: string | null) {
       { value: 'none', label: '关闭' },
     ];
   }
-  if (normalized === 'openai_compatible' || normalized === 'minimax') {
+  if (
+    normalized === 'glm'
+    || normalized === 'zhipu'
+    || normalized === 'zai'
+  ) {
     return [
       { value: '', label: '默认' },
       { value: 'none', label: 'none' },
@@ -343,7 +345,9 @@ function providerGroupNameFromModel(item: LocalModelConfig) {
 
 function normalizeModelProvider(value: string) {
   const normalized = value.trim().toLowerCase().replace('-', '_');
-  return normalized === 'openai' ? 'gpt' : normalized;
+  if (normalized === 'openai') return 'gpt';
+  if (['zhipu', 'zhipuai', 'zai', 'chatglm'].includes(normalized)) return 'glm';
+  return normalized;
 }
 
 function normalizeUrlForCompare(value: string) {

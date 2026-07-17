@@ -8,10 +8,12 @@ use serde::Serialize;
 
 use crate::state::AppState;
 use crate::store::now_rfc3339;
+use chatos_plugin_management_sdk::normalize_agent_prompt_vendor;
 
 use super::internal_auth::{
     require_project_service_internal_request, MODEL_RUNTIME_READ_SCOPE, MODEL_SETTINGS_READ_SCOPE,
 };
+use super::models::is_supported_provider;
 use super::{bad_request, forbidden, internal_error, not_found, ApiResult};
 
 #[derive(Debug, Serialize)]
@@ -122,6 +124,9 @@ pub async fn get_user_model_runtime_config(
     if model_config.owner_user_id != user_id {
         return Err(forbidden("model config does not belong to the target user"));
     }
+    if !is_supported_provider(model_config.provider.as_str()) {
+        return Err(not_found("model config not found"));
+    }
     if !model_config.enabled {
         return Err(bad_request("model config is disabled"));
     }
@@ -142,13 +147,17 @@ pub async fn get_user_model_runtime_config(
         .filter(|value| !value.is_empty())
         .ok_or_else(|| bad_request("cloud model config requires a stored base_url"))?
         .to_string();
+    let prompt_vendor = model_config.prompt_vendor.clone().or_else(|| {
+        normalize_agent_prompt_vendor(None, model_config.provider.as_str())
+            .map(|vendor| vendor.as_str().to_string())
+    });
 
     Ok(Json(InternalModelRuntimeConfigResponse {
         id: model_config.id,
         owner_user_id: model_config.owner_user_id,
         name: model_config.name,
         provider: model_config.provider,
-        prompt_vendor: model_config.prompt_vendor,
+        prompt_vendor,
         base_url,
         api_key,
         model: model_config.model,

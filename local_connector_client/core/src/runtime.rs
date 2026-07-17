@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use tokio::sync::{Mutex, RwLock};
 use tokio::task::JoinHandle;
 
@@ -13,11 +13,13 @@ use crate::config::ClientConfig;
 use crate::connector::connect_loop;
 use crate::local_runtime::{
     check_agent_prompt_updates, run_local_task_worker_loop, spawn_agent_prompt_update_checker,
-    sync_local_plugin_control_plane, LocalAskUserPromptRegistry, LocalDatabase,
-    LocalEnvironmentJobRegistry, LocalMemoryJobRegistry, LocalTurnControlRegistry,
+    sync_local_plugin_control_plane, sync_managed_memory_policy, LocalAskUserPromptRegistry,
+    LocalDatabase, LocalEnvironmentJobRegistry, LocalMemoryJobRegistry, LocalTurnControlRegistry,
 };
 use crate::model_configs::reconcile_local_model_configs;
-use crate::registration::{ensure_device_registered, ensure_workspace_registered};
+use crate::registration::{
+    ensure_device_registered, ensure_workspace_registered, is_cloud_authentication_expired,
+};
 use crate::sandbox::managed_requirements::{
     load_system_client_config, resolve_startup_managed_requirements,
 };
@@ -156,6 +158,27 @@ impl LocalRuntime {
     }
 
     pub(crate) async fn start_connector_if_configured(&self) -> Result<()> {
+        let result = self.start_connector_if_configured_inner().await;
+        if let Err(error) = result {
+            if is_cloud_authentication_expired(&error) {
+                self.clear_expired_cloud_auth().await?;
+                return Err(anyhow!(
+                    "Local Connector saved login expired; sign in again to reconnect"
+                ));
+            }
+            return Err(error);
+        }
+        Ok(())
+    }
+
+    async fn clear_expired_cloud_auth(&self) -> Result<()> {
+        let mut state = self.state.write().await;
+        state.auth = None;
+        state.save(self.state_path.as_path())?;
+        Ok(())
+    }
+
+    async fn start_connector_if_configured_inner(&self) -> Result<()> {
         self.sync_saved_workspaces_if_needed().await?;
         {
             let mut state = self.state.write().await;
@@ -163,7 +186,10 @@ impl LocalRuntime {
                 Ok(synced) => {
                     if synced > 0 {
                         tracing_stdout(
-                            format!("restored {synced} missing cloud model configs").as_str(),
+                            format!(
+                                "synchronized {synced} server-authoritative model config change(s)"
+                            )
+                            .as_str(),
                         );
                     }
                     state.save(self.state_path.as_path())?;
@@ -180,6 +206,18 @@ impl LocalRuntime {
             Ok(_) => {}
             Err(err) => {
                 tracing_stdout(format!("keep cached Plugin capability snapshots: {err}").as_str())
+            }
+        }
+        match sync_managed_memory_policy(self).await {
+            Ok(bundle) => tracing_stdout(
+                format!(
+                    "synced managed Memory Policy revision {} ({})",
+                    bundle.revision, bundle.checksum
+                )
+                .as_str(),
+            ),
+            Err(err) => {
+                tracing_stdout(format!("keep cached managed Memory Policy: {err}").as_str())
             }
         }
         if let Err(err) = check_agent_prompt_updates(self).await {
@@ -229,6 +267,21 @@ impl LocalRuntime {
                 )
                 .await
                 {
+                    if is_cloud_authentication_expired(&err) {
+                        if let Err(clear_error) = runtime.clear_expired_cloud_auth().await {
+                            tracing_stdout(
+                                format!(
+                                    "clear expired Local Connector login failed: {clear_error}"
+                                )
+                                .as_str(),
+                            );
+                        } else {
+                            tracing_stdout(
+                                "Local Connector saved login expired; sign in again to reconnect",
+                            );
+                        }
+                        break;
+                    }
                     tracing_stdout(format!("connector loop stopped: {err}").as_str());
                     tokio::time::sleep(Duration::from_secs(3)).await;
                     continue;

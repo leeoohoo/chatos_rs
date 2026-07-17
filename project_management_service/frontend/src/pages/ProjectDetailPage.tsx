@@ -11,6 +11,7 @@ import type {
   CreateRequirementPayload,
   DependencyGraphNode,
   ProjectProfileRecord,
+  ProjectRuntimeEnvironmentDeploymentResponse,
   ProjectRuntimeEnvironmentResponse,
   ProjectWorkItemRecord,
   RequirementRecord,
@@ -86,6 +87,18 @@ export function ProjectDetailPage() {
     queryKey: ['project-runtime-environment', projectId],
     queryFn: () => api.getProjectRuntimeEnvironment(projectId!),
     enabled: Boolean(projectId),
+  });
+  const runtimeEnvironmentDeploymentQuery = useQuery<ProjectRuntimeEnvironmentDeploymentResponse>({
+    queryKey: ['project-runtime-environment-deployment', projectId],
+    queryFn: () => api.getProjectRuntimeEnvironmentDeployment(projectId!),
+    enabled: Boolean(
+      projectId &&
+        runtimeEnvironmentQuery.data?.environment.sandbox_provider === 'local_connector' &&
+        runtimeEnvironmentQuery.data.images.some((image) =>
+          ['running', 'starting', 'stopped'].includes(image.status),
+        ),
+    ),
+    retry: false,
   });
   const requirementDepsQuery = useQuery({
     queryKey: ['requirement-deps', requirementDepTarget?.id],
@@ -296,6 +309,36 @@ export function ProjectDetailPage() {
     onSuccess: (data) => {
       messageApi.success('项目运行环境已作为一个 Docker Compose 项目启动');
       setRuntimeEnvironmentCache(data);
+      queryClient.invalidateQueries({
+        queryKey: ['project-runtime-environment-deployment', projectId],
+      });
+    },
+    onError: (error) => {
+      messageApi.error((error as Error).message);
+      runtimeEnvironmentQuery.refetch();
+    },
+  });
+
+  const stopRuntimeEnvironmentMutation = useMutation({
+    mutationFn: () => api.stopProjectRuntimeEnvironment(projectId!),
+    onSuccess: (data) => {
+      messageApi.success('项目级 Docker Compose 环境已整体停止，数据卷已保留');
+      setRuntimeEnvironmentCache(data);
+      queryClient.invalidateQueries({
+        queryKey: ['project-runtime-environment-deployment', projectId],
+      });
+    },
+    onError: (error) => messageApi.error((error as Error).message),
+  });
+
+  const restartRuntimeEnvironmentMutation = useMutation({
+    mutationFn: () => api.restartProjectRuntimeEnvironment(projectId!),
+    onSuccess: (data) => {
+      messageApi.success('项目级 Docker Compose 环境已整体重启');
+      setRuntimeEnvironmentCache(data);
+      queryClient.invalidateQueries({
+        queryKey: ['project-runtime-environment-deployment', projectId],
+      });
     },
     onError: (error) => {
       messageApi.error((error as Error).message);
@@ -357,7 +400,9 @@ export function ProjectDetailPage() {
         blockingRelations={blockingRelations}
         containsRelations={containsRelations}
         runtimeEnvironment={runtimeEnvironmentQuery.data}
+        runtimeEnvironmentDeployment={runtimeEnvironmentDeploymentQuery.data}
         runtimeEnvironmentLoading={runtimeEnvironmentQuery.isLoading}
+        runtimeEnvironmentDeploymentLoading={runtimeEnvironmentDeploymentQuery.isFetching}
         runtimeEnvironmentErrorMessage={
           runtimeEnvironmentQuery.isError
             ? (runtimeEnvironmentQuery.error as Error).message
@@ -367,6 +412,8 @@ export function ProjectDetailPage() {
         runtimeEnvironmentSettingsSaving={updateRuntimeEnvironmentSettingsMutation.isPending}
         runtimeEnvironmentVariablesSaving={updateRuntimeEnvironmentVariablesMutation.isPending}
         runtimeEnvironmentStarting={startRuntimeEnvironmentMutation.isPending}
+        runtimeEnvironmentStopping={stopRuntimeEnvironmentMutation.isPending}
+        runtimeEnvironmentRestarting={restartRuntimeEnvironmentMutation.isPending}
         onRefreshRuntimeEnvironment={() => runtimeEnvironmentQuery.refetch()}
         onAnalyzeRuntimeEnvironment={() => analyzeRuntimeEnvironmentMutation.mutate()}
         onRuntimeSandboxEnabledChange={(value) =>
@@ -376,6 +423,9 @@ export function ProjectDetailPage() {
           await updateRuntimeEnvironmentVariablesMutation.mutateAsync(payload);
         }}
         onStartRuntimeEnvironment={() => startRuntimeEnvironmentMutation.mutate()}
+        onRefreshRuntimeEnvironmentDeployment={() => runtimeEnvironmentDeploymentQuery.refetch()}
+        onStopRuntimeEnvironment={() => stopRuntimeEnvironmentMutation.mutate()}
+        onRestartRuntimeEnvironment={() => restartRuntimeEnvironmentMutation.mutate()}
       />
       <ProjectDetailOverlays
         requirementModalOpen={requirementModalOpen}

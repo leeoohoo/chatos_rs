@@ -12,7 +12,7 @@ use tokio::sync::{mpsc, RwLock};
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tokio_tungstenite::tungstenite::http::header::AUTHORIZATION;
 use tokio_tungstenite::tungstenite::http::HeaderValue;
-use tokio_tungstenite::tungstenite::Message;
+use tokio_tungstenite::tungstenite::{Error as WebSocketError, Message};
 use uuid::Uuid;
 
 use crate::device_keys::sign_device_message;
@@ -23,6 +23,7 @@ use crate::mcp::manifest::mcp_status_message;
 use crate::mcp::repository::state_identity;
 use crate::mcp::service::handle_mcp_request;
 use crate::model_configs::handle_model_runtime_request;
+use crate::registration::cloud_authentication_expired;
 use crate::relay::{relay_error_response, RelayRequest, MCP_RELAY_MESSAGE_TYPE};
 use crate::sandbox::pairing::reconcile_sandbox_pairings;
 use crate::sandbox::relay::handle_sandbox_request;
@@ -60,9 +61,18 @@ pub(crate) async fn connect_loop(
         &config,
         device_id.as_str(),
     )?;
-    let (ws_stream, _) = tokio_tungstenite::connect_async(connect_request)
-        .await
-        .with_context(|| format!("connect local connector websocket {ws_url}"))?;
+    let (ws_stream, _) = match tokio_tungstenite::connect_async(connect_request).await {
+        Ok(connected) => connected,
+        Err(WebSocketError::Http(response)) if response.status().as_u16() == 401 => {
+            return Err(cloud_authentication_expired(
+                "connect local connector websocket",
+            ));
+        }
+        Err(error) => {
+            return Err(error)
+                .with_context(|| format!("connect local connector websocket {ws_url}"));
+        }
+    };
     let (mut write, mut read) = ws_stream.split();
     let terminal_manager = LocalTerminalManager::default();
     let history_recorder = CommandHistoryRecorder {

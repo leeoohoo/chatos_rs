@@ -57,6 +57,31 @@ pub(super) async fn get_project(
     Ok(Json(redact_workspace_paths(&state, project)?))
 }
 
+pub(super) async fn get_project_runtime_environment(
+    Path(id): Path<String>,
+    State(state): State<AppState>,
+    Extension(current_user): Extension<CurrentUser>,
+) -> Result<
+    Json<crate::services::project_management_api_client::ProjectSandboxRuntimeSettings>,
+    ApiError,
+> {
+    let project = state
+        .task_project_service
+        .get_project_for_user(&id, &current_user)
+        .await
+        .map_err(ApiError::bad_request)?
+        .ok_or_else(|| ApiError::not_found(format!("项目不存在: {id}")))?;
+    ensure_project_access(&project, &current_user)?;
+    let runtime =
+        crate::services::project_management_api_client::get_project_sandbox_runtime_settings(
+            &state.config,
+            project.id.as_str(),
+        )
+        .await
+        .map_err(ApiError::bad_request)?;
+    Ok(Json(runtime))
+}
+
 pub(super) async fn update_project(
     Path(id): Path<String>,
     State(state): State<AppState>,

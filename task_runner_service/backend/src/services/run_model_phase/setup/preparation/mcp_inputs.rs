@@ -94,7 +94,7 @@ pub(super) async fn load_external_mcp_servers(
                         server.name
                     )
                 })?;
-            crate::services::project_management_api_client::insert_project_service_internal_headers(
+            crate::services::project_management_api_client::insert_project_service_mcp_signing_headers(
                 &mut headers,
                 secret,
                 crate::services::project_management_api_client::PROJECT_HARNESS_SCOPE,
@@ -192,7 +192,7 @@ fn plugin_mcp_server_for_resource(
                 urlencoding::encode(project_id.as_str())
             );
             let mut headers = resource.runtime.headers.clone();
-            crate::services::project_management_api_client::insert_project_service_internal_headers(
+            crate::services::project_management_api_client::insert_project_service_mcp_signing_headers(
                 &mut headers,
                 secret,
                 crate::services::project_management_api_client::PROJECT_READ_SCOPE,

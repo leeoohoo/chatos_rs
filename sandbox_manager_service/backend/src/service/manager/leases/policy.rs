@@ -37,7 +37,7 @@ pub(super) fn prepare_sandbox_workspace_owner(_path: &Path) -> Result<(), String
     Ok(())
 }
 
-pub(super) fn validate_requested_network_policy(
+pub(in crate::service::manager) fn validate_requested_network_policy(
     config: &AppConfig,
     network: &NetworkPolicy,
 ) -> Result<(), ApiError> {
@@ -70,7 +70,7 @@ pub(super) fn requested_network_mode_is_allowed(requested: &str, configured: Opt
             .is_some_and(|value| value.eq_ignore_ascii_case(requested))
 }
 
-pub(super) fn sandbox_manager_effective_policy(
+pub(in crate::service::manager) fn sandbox_manager_effective_policy(
     request: &SandboxLeasePolicyRequest,
 ) -> EffectiveSandboxPolicy {
     EffectiveSandboxPolicy {

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
+use std::collections::BTreeMap;
 use std::path::{Component, Path, PathBuf};
 use std::process::Stdio;
 
@@ -19,6 +20,7 @@ const ENV_FILE_NAME: &str = ".env.chatos";
 const MAX_COMPOSE_BYTES: usize = 1024 * 1024;
 const MAX_DOCKERFILE_BYTES: usize = 512 * 1024;
 const MAX_ENV_BYTES: usize = 1024 * 1024;
+const MAX_APPLICATION_SERVICES: usize = 64;
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct ComposeUpRequest {
@@ -26,8 +28,18 @@ pub(crate) struct ComposeUpRequest {
     #[serde(default)]
     pub(crate) project_relative_path: Option<String>,
     pub(crate) compose_yaml: String,
-    pub(crate) application_dockerfile: String,
+    #[serde(default)]
+    pub(crate) application_dockerfile: Option<String>,
+    #[serde(default)]
+    pub(crate) application_dockerfiles: BTreeMap<String, String>,
     pub(crate) env_file: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct ComposeProjectRequest {
+    pub(crate) project_name: String,
+    #[serde(default)]
+    pub(crate) project_relative_path: Option<String>,
 }
 
 pub(crate) async fn start_project_compose_environment(
@@ -38,7 +50,8 @@ pub(crate) async fn start_project_compose_environment(
     let input: ComposeUpRequest =
         serde_json::from_value(body).context("parse Docker Compose request")?;
     let project_name = validate_project_name(input.project_name.as_str())?;
-    validate_generated_content(&input)?;
+    let application_dockerfiles = normalized_application_dockerfiles(&input)?;
+    validate_generated_content(&input, &application_dockerfiles)?;
     ensure_docker_running().await?;
 
     let project_root =
@@ -48,24 +61,14 @@ pub(crate) async fn start_project_compose_environment(
         .await
         .with_context(|| format!("create runtime directory {}", runtime_directory.display()))?;
     let compose_path = runtime_directory.join(COMPOSE_FILE_NAME);
-    let dockerfile_path = runtime_directory.join(APPLICATION_DOCKERFILE_NAME);
-    let dockerignore_path = runtime_directory.join(APPLICATION_DOCKERIGNORE_NAME);
     let env_path = runtime_directory.join(ENV_FILE_NAME);
     tokio::fs::write(compose_path.as_path(), input.compose_yaml.as_bytes())
         .await
         .with_context(|| format!("write {}", compose_path.display()))?;
-    tokio::fs::write(
-        dockerfile_path.as_path(),
-        input.application_dockerfile.as_bytes(),
-    )
-    .await
-    .with_context(|| format!("write {}", dockerfile_path.display()))?;
-    tokio::fs::write(
-        dockerignore_path.as_path(),
-        b".chatos/runtime-environment/.env.chatos\n",
-    )
-    .await
-    .with_context(|| format!("write {}", dockerignore_path.display()))?;
+    write_application_dockerfiles(runtime_directory.as_path(), &application_dockerfiles).await?;
+    if let Some(legacy_dockerfile) = input.application_dockerfile.as_deref() {
+        write_legacy_application_dockerfile(runtime_directory.as_path(), legacy_dockerfile).await?;
+    }
     tokio::fs::write(env_path.as_path(), input.env_file.as_bytes())
         .await
         .with_context(|| format!("write {}", env_path.display()))?;
@@ -106,6 +109,127 @@ pub(crate) async fn start_project_compose_environment(
         "output": up_output,
         "services": parse_compose_ps(ps_output.as_str()),
     }))
+}
+
+pub(crate) async fn get_project_compose_environment_status(
+    state: &LocalState,
+    workspace_id: &str,
+    body: Value,
+) -> Result<Value> {
+    let input: ComposeProjectRequest =
+        serde_json::from_value(body).context("parse Docker Compose status request")?;
+    let (project_name, project_root, compose_path) =
+        prepare_existing_project_compose(state, workspace_id, &input).await?;
+    let ps_output = run_compose_command(
+        project_root.as_path(),
+        compose_path.as_path(),
+        project_name.as_str(),
+        &["ps", "--format", "json"],
+    )
+    .await
+    .unwrap_or_default();
+    let services = parse_compose_ps(ps_output.as_str());
+    Ok(json!({
+        "project_name": project_name,
+        "status": compose_environment_status(services.as_slice()),
+        "runtime_directory": compose_path.parent().map(|path| path.to_string_lossy().to_string()),
+        "compose_file": compose_path.to_string_lossy(),
+        "services": services,
+    }))
+}
+
+pub(crate) async fn stop_project_compose_environment(
+    state: &LocalState,
+    workspace_id: &str,
+    body: Value,
+) -> Result<Value> {
+    let input: ComposeProjectRequest =
+        serde_json::from_value(body).context("parse Docker Compose stop request")?;
+    let (project_name, project_root, compose_path) =
+        prepare_existing_project_compose(state, workspace_id, &input).await?;
+    let output = run_compose_command(
+        project_root.as_path(),
+        compose_path.as_path(),
+        project_name.as_str(),
+        &["down", "--remove-orphans"],
+    )
+    .await
+    .context("stop project Docker Compose environment")?;
+    Ok(json!({
+        "project_name": project_name,
+        "status": "stopped",
+        "runtime_directory": compose_path.parent().map(|path| path.to_string_lossy().to_string()),
+        "compose_file": compose_path.to_string_lossy(),
+        "output": output,
+        "services": [],
+    }))
+}
+
+pub(crate) async fn restart_project_compose_environment(
+    state: &LocalState,
+    workspace_id: &str,
+    body: Value,
+) -> Result<Value> {
+    let input: ComposeProjectRequest =
+        serde_json::from_value(body).context("parse Docker Compose restart request")?;
+    let (project_name, project_root, compose_path) =
+        prepare_existing_project_compose(state, workspace_id, &input).await?;
+    let output = run_compose_command(
+        project_root.as_path(),
+        compose_path.as_path(),
+        project_name.as_str(),
+        &["up", "-d", "--build", "--remove-orphans"],
+    )
+    .await
+    .context("restart project Docker Compose environment")?;
+    let ps_output = run_compose_command(
+        project_root.as_path(),
+        compose_path.as_path(),
+        project_name.as_str(),
+        &["ps", "--format", "json"],
+    )
+    .await
+    .unwrap_or_default();
+    let services = parse_compose_ps(ps_output.as_str());
+    Ok(json!({
+        "project_name": project_name,
+        "status": compose_environment_status(services.as_slice()),
+        "runtime_directory": compose_path.parent().map(|path| path.to_string_lossy().to_string()),
+        "compose_file": compose_path.to_string_lossy(),
+        "output": output,
+        "services": services,
+    }))
+}
+
+async fn prepare_existing_project_compose(
+    state: &LocalState,
+    workspace_id: &str,
+    input: &ComposeProjectRequest,
+) -> Result<(String, PathBuf, PathBuf)> {
+    let project_name = validate_project_name(input.project_name.as_str())?.to_string();
+    ensure_docker_running().await?;
+    let project_root =
+        resolve_project_root(state, workspace_id, input.project_relative_path.as_deref()).await?;
+    let compose_path = project_root.join(RUNTIME_DIRECTORY).join(COMPOSE_FILE_NAME);
+    let compose_source = tokio::fs::read_to_string(compose_path.as_path())
+        .await
+        .with_context(|| format!("read managed Compose file {}", compose_path.display()))?;
+    if compose_source.is_empty() || compose_source.len() > MAX_COMPOSE_BYTES {
+        return Err(anyhow!("managed Docker Compose file is empty or too large"));
+    }
+    validate_compose_source_before_resolution(compose_source.as_str())?;
+    let normalized = run_compose_command(
+        project_root.as_path(),
+        compose_path.as_path(),
+        project_name.as_str(),
+        &["config", "--format", "json"],
+    )
+    .await
+    .context("validate managed Docker Compose file")?;
+    let normalized = serde_json::from_str::<Value>(normalized.as_str())
+        .context("parse managed Docker Compose configuration")?;
+    validate_normalized_compose(project_root.as_path(), &normalized)?;
+    Ok((project_name, project_root, compose_path))
 }
 
 async fn resolve_project_root(
@@ -168,17 +292,133 @@ fn validate_project_name(value: &str) -> Result<&str> {
     Ok(value)
 }
 
-fn validate_generated_content(input: &ComposeUpRequest) -> Result<()> {
+fn normalized_application_dockerfiles(
+    input: &ComposeUpRequest,
+) -> Result<BTreeMap<String, String>> {
+    let mut dockerfiles = input.application_dockerfiles.clone();
+    if dockerfiles.is_empty() {
+        if let Some(dockerfile) = input.application_dockerfile.as_deref() {
+            dockerfiles.insert("application".to_string(), dockerfile.to_string());
+        }
+    }
+    if dockerfiles.is_empty() || dockerfiles.len() > MAX_APPLICATION_SERVICES {
+        return Err(anyhow!(
+            "generated environment must contain between 1 and {MAX_APPLICATION_SERVICES} application Dockerfiles"
+        ));
+    }
+    for (service_id, dockerfile) in &dockerfiles {
+        validate_application_service_id(service_id)?;
+        if dockerfile.is_empty() || dockerfile.len() > MAX_DOCKERFILE_BYTES {
+            return Err(anyhow!(
+                "generated application Dockerfile is empty or too large: {service_id}"
+            ));
+        }
+        if dockerfile_contains_program_managed_mcp_control(dockerfile) {
+            return Err(anyhow!(
+                "application Dockerfile cannot install or configure the program-managed Chat OS MCP Agent: {service_id}"
+            ));
+        }
+    }
+    Ok(dockerfiles)
+}
+
+fn validate_application_service_id(value: &str) -> Result<()> {
+    if value.is_empty()
+        || value.len() > 63
+        || !value.chars().all(|character| {
+            character.is_ascii_lowercase() || character.is_ascii_digit() || character == '-'
+        })
+        || !value
+            .chars()
+            .next()
+            .is_some_and(|character| character.is_ascii_lowercase() || character.is_ascii_digit())
+        || !value
+            .chars()
+            .last()
+            .is_some_and(|character| character.is_ascii_lowercase() || character.is_ascii_digit())
+    {
+        return Err(anyhow!("invalid application service id: {value}"));
+    }
+    Ok(())
+}
+
+fn dockerfile_contains_program_managed_mcp_control(dockerfile: &str) -> bool {
+    let dockerfile = dockerfile.to_ascii_lowercase();
+    [
+        "chatos-sandbox-mcp",
+        "chatos_sandbox_mcp",
+        "chat os mcp agent",
+        "chatos mcp agent",
+        "mcp_token",
+        "mcp_port",
+        "mcp_image",
+        "mcp_command",
+        "agent_install_script",
+        "agent_injection_mode",
+        "/opt/chatos/",
+    ]
+    .iter()
+    .any(|marker| dockerfile.contains(marker))
+}
+
+async fn write_application_dockerfiles(
+    runtime_directory: &Path,
+    dockerfiles: &BTreeMap<String, String>,
+) -> Result<()> {
+    let services_directory = runtime_directory.join("services");
+    if tokio::fs::try_exists(services_directory.as_path())
+        .await
+        .unwrap_or(false)
+    {
+        tokio::fs::remove_dir_all(services_directory.as_path())
+            .await
+            .with_context(|| format!("clean {}", services_directory.display()))?;
+    }
+    for (service_id, content) in dockerfiles {
+        let service_directory = services_directory.join(service_id);
+        tokio::fs::create_dir_all(service_directory.as_path())
+            .await
+            .with_context(|| format!("create {}", service_directory.display()))?;
+        let dockerfile_path = service_directory.join("Dockerfile");
+        let dockerignore_path = service_directory.join("Dockerfile.dockerignore");
+        tokio::fs::write(dockerfile_path.as_path(), content.as_bytes())
+            .await
+            .with_context(|| format!("write {}", dockerfile_path.display()))?;
+        tokio::fs::write(
+            dockerignore_path.as_path(),
+            b".chatos/runtime-environment/.env.chatos\n",
+        )
+        .await
+        .with_context(|| format!("write {}", dockerignore_path.display()))?;
+    }
+    Ok(())
+}
+
+async fn write_legacy_application_dockerfile(
+    runtime_directory: &Path,
+    content: &str,
+) -> Result<()> {
+    let dockerfile_path = runtime_directory.join(APPLICATION_DOCKERFILE_NAME);
+    let dockerignore_path = runtime_directory.join(APPLICATION_DOCKERIGNORE_NAME);
+    tokio::fs::write(dockerfile_path.as_path(), content.as_bytes())
+        .await
+        .with_context(|| format!("write {}", dockerfile_path.display()))?;
+    tokio::fs::write(
+        dockerignore_path.as_path(),
+        b".chatos/runtime-environment/.env.chatos\n",
+    )
+    .await
+    .with_context(|| format!("write {}", dockerignore_path.display()))?;
+    Ok(())
+}
+
+fn validate_generated_content(
+    input: &ComposeUpRequest,
+    application_dockerfiles: &BTreeMap<String, String>,
+) -> Result<()> {
     if input.compose_yaml.is_empty() || input.compose_yaml.len() > MAX_COMPOSE_BYTES {
         return Err(anyhow!(
             "generated Docker Compose file is empty or too large"
-        ));
-    }
-    if input.application_dockerfile.is_empty()
-        || input.application_dockerfile.len() > MAX_DOCKERFILE_BYTES
-    {
-        return Err(anyhow!(
-            "generated application Dockerfile is empty or too large"
         ));
     }
     if input.env_file.len() > MAX_ENV_BYTES {
@@ -201,10 +441,40 @@ fn validate_generated_content(input: &ComposeUpRequest) -> Result<()> {
             ));
         }
     }
-    if !compose_lower.contains("services:") || !compose_lower.contains("application:") {
+    for marker in [
+        "chatos-sandbox-mcp",
+        "chatos_sandbox_mcp",
+        "mcp_token",
+        "mcp_port",
+        "agent_install_script",
+        "agent_injection_mode",
+    ] {
+        if compose_lower.contains(marker) {
+            return Err(anyhow!(
+                "generated Docker Compose file cannot install or configure the program-managed Chat OS MCP Agent: {marker}"
+            ));
+        }
+    }
+    if !compose_lower.contains("services:") {
         return Err(anyhow!(
-            "generated Docker Compose file must contain the application service"
+            "generated Docker Compose file must contain services"
         ));
+    }
+    if input.application_dockerfiles.is_empty() {
+        if !compose_lower.contains("dockerfile.application") {
+            return Err(anyhow!(
+                "legacy generated Docker Compose file must reference Dockerfile.application"
+            ));
+        }
+    } else {
+        for service_id in application_dockerfiles.keys() {
+            let expected = format!(".chatos/runtime-environment/services/{service_id}/dockerfile");
+            if !compose_lower.contains(expected.as_str()) {
+                return Err(anyhow!(
+                    "generated Docker Compose file does not reference the managed Dockerfile for application service {service_id}"
+                ));
+            }
+        }
     }
     Ok(())
 }
@@ -349,6 +619,7 @@ fn validate_normalized_compose(project_root: &Path, compose: &Value) -> Result<(
         .get("services")
         .and_then(Value::as_object)
         .ok_or_else(|| anyhow!("normalized Docker Compose configuration has no services"))?;
+    let mut application_build_count = 0usize;
     for (service_name, service) in services {
         let service = service
             .as_object()
@@ -382,6 +653,7 @@ fn validate_normalized_compose(project_root: &Path, compose: &Value) -> Result<(
         }
         if let Some(build) = service.get("build") {
             validate_compose_build(project_root, service_name, build)?;
+            application_build_count += 1;
         }
         if let Some(volumes) = service.get("volumes") {
             validate_compose_volumes(service_name, volumes)?;
@@ -389,6 +661,11 @@ fn validate_normalized_compose(project_root: &Path, compose: &Value) -> Result<(
         if let Some(ports) = service.get("ports") {
             validate_compose_ports(service_name, ports)?;
         }
+    }
+    if application_build_count == 0 {
+        return Err(anyhow!(
+            "normalized Docker Compose configuration has no managed application build service"
+        ));
     }
     for section in ["networks", "volumes"] {
         for (name, resource) in root
@@ -458,9 +735,26 @@ fn validate_compose_build(project_root: &Path, service_name: &str, build: &Value
         let dockerfile = std::fs::canonicalize(dockerfile.as_path()).with_context(|| {
             format!("resolve Docker Compose Dockerfile {}", dockerfile.display())
         })?;
-        if !dockerfile.starts_with(project_root) || !dockerfile.is_file() {
+        let managed_service_dockerfile = std::fs::canonicalize(
+            project_root
+                .join(RUNTIME_DIRECTORY)
+                .join("services")
+                .join(service_name)
+                .join("Dockerfile"),
+        )
+        .ok();
+        let legacy_dockerfile = std::fs::canonicalize(
+            project_root
+                .join(RUNTIME_DIRECTORY)
+                .join(APPLICATION_DOCKERFILE_NAME),
+        )
+        .ok();
+        let managed = managed_service_dockerfile.as_deref() == Some(dockerfile.as_path())
+            || (service_name == "application"
+                && legacy_dockerfile.as_deref() == Some(dockerfile.as_path()));
+        if !dockerfile.starts_with(project_root) || !dockerfile.is_file() || !managed {
             return Err(anyhow!(
-                "Docker Compose service {service_name} Dockerfile escapes the authorized project"
+                "Docker Compose service {service_name} Dockerfile is not a program-managed runtime artifact"
             ));
         }
     }
@@ -556,10 +850,36 @@ async fn run_compose_command(
 }
 
 fn parse_compose_ps(output: &str) -> Vec<Value> {
+    if let Ok(Value::Array(services)) = serde_json::from_str::<Value>(output.trim()) {
+        return services;
+    }
     output
         .lines()
         .filter_map(|line| serde_json::from_str::<Value>(line).ok())
         .collect()
+}
+
+fn compose_environment_status(services: &[Value]) -> &'static str {
+    if services.is_empty() {
+        return "stopped";
+    }
+    let running = services
+        .iter()
+        .filter(|service| {
+            service
+                .get("State")
+                .or_else(|| service.get("state"))
+                .and_then(Value::as_str)
+                .is_some_and(|state| state.eq_ignore_ascii_case("running"))
+        })
+        .count();
+    if running == services.len() {
+        "running"
+    } else if running == 0 {
+        "stopped"
+    } else {
+        "degraded"
+    }
 }
 
 async fn restrict_generated_file(path: &Path) -> Result<()> {
@@ -590,10 +910,101 @@ mod tests {
             project_name: "chatos-project".to_string(),
             project_relative_path: None,
             compose_yaml: "services:\n  application:\n    privileged: true\n".to_string(),
-            application_dockerfile: "FROM alpine\n".to_string(),
+            application_dockerfile: Some("FROM alpine\n".to_string()),
+            application_dockerfiles: BTreeMap::new(),
             env_file: String::new(),
         };
-        assert!(validate_generated_content(&request).is_err());
+        let dockerfiles = normalized_application_dockerfiles(&request).expect("dockerfiles");
+        assert!(validate_generated_content(&request, &dockerfiles).is_err());
+    }
+
+    #[test]
+    fn compose_accepts_multiple_program_managed_application_dockerfiles() {
+        let application_dockerfiles = BTreeMap::from([
+            ("api".to_string(), "FROM node:24\n".to_string()),
+            ("worker".to_string(), "FROM python:3.12\n".to_string()),
+        ]);
+        let request = ComposeUpRequest {
+            project_name: "chatos-project".to_string(),
+            project_relative_path: None,
+            compose_yaml: concat!(
+                "services:\n",
+                "  api:\n",
+                "    build:\n",
+                "      context: ../..\n",
+                "      dockerfile: .chatos/runtime-environment/services/api/Dockerfile\n",
+                "  worker:\n",
+                "    build:\n",
+                "      context: ../..\n",
+                "      dockerfile: .chatos/runtime-environment/services/worker/Dockerfile\n",
+            )
+            .to_string(),
+            application_dockerfile: None,
+            application_dockerfiles,
+            env_file: String::new(),
+        };
+        let dockerfiles = normalized_application_dockerfiles(&request).expect("dockerfiles");
+        validate_generated_content(&request, &dockerfiles).expect("multi-app compose source");
+        assert_eq!(dockerfiles.len(), 2);
+    }
+
+    #[test]
+    fn compose_rejects_ai_authored_mcp_installation_in_dockerfile() {
+        let request = ComposeUpRequest {
+            project_name: "chatos-project".to_string(),
+            project_relative_path: None,
+            compose_yaml: concat!(
+                "services:\n",
+                "  api:\n",
+                "    build:\n",
+                "      context: ../..\n",
+                "      dockerfile: .chatos/runtime-environment/services/api/Dockerfile\n",
+            )
+            .to_string(),
+            application_dockerfile: None,
+            application_dockerfiles: BTreeMap::from([(
+                "api".to_string(),
+                "FROM node:24\nCOPY chatos-sandbox-mcp-server /opt/chatos/bin/\n".to_string(),
+            )]),
+            env_file: String::new(),
+        };
+        assert!(normalized_application_dockerfiles(&request).is_err());
+    }
+
+    #[tokio::test]
+    async fn writes_each_application_dockerfile_to_managed_service_directory() {
+        let runtime_directory = std::env::temp_dir().join(format!(
+            "chatos-compose-artifacts-{}",
+            uuid::Uuid::new_v4().simple()
+        ));
+        let dockerfiles = BTreeMap::from([
+            ("api".to_string(), "FROM node:24\n".to_string()),
+            ("worker".to_string(), "FROM python:3.12\n".to_string()),
+        ]);
+        write_application_dockerfiles(runtime_directory.as_path(), &dockerfiles)
+            .await
+            .expect("write application Dockerfiles");
+        assert_eq!(
+            std::fs::read_to_string(
+                runtime_directory
+                    .join("services")
+                    .join("api")
+                    .join("Dockerfile")
+            )
+            .expect("read api Dockerfile"),
+            "FROM node:24\n"
+        );
+        assert_eq!(
+            std::fs::read_to_string(
+                runtime_directory
+                    .join("services")
+                    .join("worker")
+                    .join("Dockerfile")
+            )
+            .expect("read worker Dockerfile"),
+            "FROM python:3.12\n"
+        );
+        let _ = tokio::fs::remove_dir_all(runtime_directory).await;
     }
 
     #[test]
@@ -647,10 +1058,27 @@ mod tests {
 
     #[test]
     fn normalized_compose_accepts_named_volumes_and_loopback_ports() {
-        let project_root = std::env::temp_dir();
+        let project_root = std::env::temp_dir().join(format!(
+            "chatos-compose-test-{}",
+            uuid::Uuid::new_v4().simple()
+        ));
+        let dockerfile = project_root
+            .join(RUNTIME_DIRECTORY)
+            .join("services")
+            .join("application")
+            .join("Dockerfile");
+        std::fs::create_dir_all(dockerfile.parent().expect("dockerfile parent"))
+            .expect("create test runtime directory");
+        std::fs::write(dockerfile.as_path(), "FROM alpine\n").expect("write test Dockerfile");
+        let project_root = std::fs::canonicalize(project_root).expect("canonical project root");
+        let build_context = project_root.to_string_lossy().to_string();
         let compose = json!({
             "services": {
                 "application": {
+                    "build": {
+                        "context": build_context,
+                        "dockerfile": ".chatos/runtime-environment/services/application/Dockerfile"
+                    },
                     "ports": [{
                         "host_ip": "127.0.0.1",
                         "target": 8080,
@@ -669,5 +1097,57 @@ mod tests {
         });
         validate_normalized_compose(project_root.as_path(), &compose)
             .expect("safe normalized compose");
+        let _ = std::fs::remove_dir_all(project_root);
+    }
+
+    #[test]
+    fn normalized_compose_service_cannot_reuse_another_services_dockerfile() {
+        let project_root = std::env::temp_dir().join(format!(
+            "chatos-compose-service-binding-test-{}",
+            uuid::Uuid::new_v4().simple()
+        ));
+        let api_dockerfile = project_root
+            .join(RUNTIME_DIRECTORY)
+            .join("services")
+            .join("api")
+            .join("Dockerfile");
+        std::fs::create_dir_all(api_dockerfile.parent().expect("api Dockerfile parent"))
+            .expect("create managed API directory");
+        std::fs::write(api_dockerfile.as_path(), "FROM alpine\n")
+            .expect("write managed API Dockerfile");
+        let project_root = std::fs::canonicalize(project_root).expect("canonical project root");
+        let compose = json!({
+            "services": {
+                "worker": {
+                    "build": {
+                        "context": project_root.to_string_lossy(),
+                        "dockerfile": ".chatos/runtime-environment/services/api/Dockerfile"
+                    }
+                }
+            }
+        });
+        assert!(validate_normalized_compose(project_root.as_path(), &compose).is_err());
+        let _ = std::fs::remove_dir_all(project_root);
+    }
+
+    #[test]
+    fn compose_parent_status_is_derived_from_all_child_services() {
+        assert_eq!(compose_environment_status(&[]), "stopped");
+        assert_eq!(
+            compose_environment_status(&[json!({"State": "running"}), json!({"State": "running"})]),
+            "running"
+        );
+        assert_eq!(
+            compose_environment_status(&[json!({"State": "running"}), json!({"State": "exited"})]),
+            "degraded"
+        );
+        assert_eq!(
+            compose_environment_status(&[json!({"State": "exited"})]),
+            "stopped"
+        );
+        assert_eq!(
+            parse_compose_ps(r#"[{"State":"running"},{"State":"exited"}]"#).len(),
+            2
+        );
     }
 }

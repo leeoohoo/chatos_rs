@@ -1,11 +1,13 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use super::*;
 use crate::core::internal_context_locale::InternalContextLocale;
 use crate::core::mcp_runtime::empty_mcp_server_bundle;
+use crate::services::mcp_loader::McpHttpServer;
 
 fn lifecycle_hook_with_state(state: TaskTurnLifecycleState) -> ChatosRuntimeLifecycleHook {
     ChatosRuntimeLifecycleHook {
@@ -99,6 +101,24 @@ fn requirement_execution_planner_disables_codex_gateway_mcp_passthrough() {
         &model,
         &runtime_context(true)
     ));
+}
+
+#[test]
+fn per_request_mcp_auth_disables_codex_gateway_passthrough() {
+    let model = model_runtime(true);
+    let mut context = runtime_context(false);
+    context.mcp_server_bundle.0.push(McpHttpServer {
+        name: "project".to_string(),
+        url: "http://127.0.0.1:39210/mcp".to_string(),
+        headers: Some(HashMap::from([(
+            "x-project-service-internal-scope".to_string(),
+            "project.mcp".to_string(),
+        )])),
+        allowed_tool_names: None,
+        header_provider: None,
+    });
+
+    assert!(!effective_codex_gateway_mcp_passthrough(&model, &context));
 }
 
 #[test]

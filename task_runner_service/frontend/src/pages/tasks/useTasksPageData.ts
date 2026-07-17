@@ -217,6 +217,12 @@ export function useTasksPageData({
     queryKey: ['task-projects', 'active'],
     queryFn: () => api.listProjects('active'),
   });
+  const projectRuntimeEnvironmentQuery = useQuery({
+    queryKey: ['task-project-runtime-environment', editorProjectId],
+    queryFn: () => api.getProjectRuntimeEnvironment(normalizeProjectId(editorProjectId)),
+    enabled: Boolean(editorProjectId && normalizeProjectId(editorProjectId) !== '-1'),
+    retry: false,
+  });
   const mcpCatalogQuery = useQuery({
     queryKey: ['mcp-catalog'],
     queryFn: api.listMcpCatalog,
@@ -484,6 +490,7 @@ export function useTasksPageData({
     taskPromptsQuery,
     modelsQuery,
     projectsQuery,
+    projectRuntimeEnvironmentQuery,
     mcpCatalogQuery,
     taskCapabilityCatalogQuery,
     remoteServersQuery,

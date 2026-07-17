@@ -18,18 +18,17 @@ import type {
   McpBindingMode,
   SystemAgentRecord,
 } from '../types';
-import { AgentPromptModal } from './agentPrompts/AgentPromptModal';
 
 interface SystemAgentsPageProps {
   user: CurrentUser;
+  onOpenPromptSettings: (agentKey: string) => void;
 }
 
-export function SystemAgentsPage({ user }: SystemAgentsPageProps) {
+export function SystemAgentsPage({ user, onOpenPromptSettings }: SystemAgentsPageProps) {
   const { t } = useI18n();
   const queryClient = useQueryClient();
   const [selectedAgentKey, setSelectedAgentKey] = useState<string | null>(null);
   const [modalOpen, setModalOpen] = useState(false);
-  const [promptModalOpen, setPromptModalOpen] = useState(false);
   const [search, setSearch] = useState('');
   const [modes, setModes] = useState<Record<string, McpBindingMode>>({});
   const isAdmin = user.role === 'super_admin';
@@ -115,32 +114,34 @@ export function SystemAgentsPage({ user }: SystemAgentsPageProps) {
         title: t('table.actions'),
         key: 'actions',
         width: 260,
-        render: (_, record) => (
-          <Space>
-            <Button
-              icon={<SettingOutlined />}
-              onClick={() => {
-                setSelectedAgentKey(record.agent_key);
-                setSearch('');
-                setModalOpen(true);
-              }}
-            >
-              {t('agent.configureMcp')}
-            </Button>
-            <Button
-              icon={<EditOutlined />}
-              onClick={() => {
-                setSelectedAgentKey(record.agent_key);
-                setPromptModalOpen(true);
-              }}
-            >
-              {t('agent.promptSettings')}
-            </Button>
-          </Space>
-        ),
+        render: (_, record) => {
+          const supportsMcp = record.service_name !== 'memory-engine';
+          return (
+            <Space>
+              {supportsMcp ? (
+                <Button
+                  icon={<SettingOutlined />}
+                  onClick={() => {
+                    setSelectedAgentKey(record.agent_key);
+                    setSearch('');
+                    setModalOpen(true);
+                  }}
+                >
+                  {t('agent.configureMcp')}
+                </Button>
+              ) : null}
+              <Button
+                icon={<EditOutlined />}
+                onClick={() => onOpenPromptSettings(record.agent_key)}
+              >
+                {t('agent.promptSettings')}
+              </Button>
+            </Space>
+          );
+        },
       },
     ],
-    [completeness, t],
+    [completeness, onOpenPromptSettings, t],
   );
 
   const mcpItems = useMemo(() => {
@@ -255,11 +256,6 @@ export function SystemAgentsPage({ user }: SystemAgentsPageProps) {
           scroll={{ y: 330 }}
         />
       </Modal>
-      <AgentPromptModal
-        agent={selectedAgent || null}
-        open={promptModalOpen}
-        onClose={() => setPromptModalOpen(false)}
-      />
     </div>
   );
 }

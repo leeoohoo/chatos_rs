@@ -31,6 +31,7 @@ use crate::state::AppState;
 mod auth_middleware;
 mod devices;
 mod internal_auth;
+mod managed_memory_policy;
 mod managed_requirements;
 mod managed_requirements_admin;
 mod memory_engine_proxy;
@@ -50,6 +51,7 @@ use self::devices::{
     connect_device, create_device, disconnect_device, get_device, heartbeat_device, list_devices,
     load_owned_device, revoke_device,
 };
+use self::managed_memory_policy::get_managed_memory_policy;
 use self::managed_requirements::get_managed_requirements;
 use self::managed_requirements_admin::{
     create_managed_requirements_assignment, create_managed_requirements_policy,

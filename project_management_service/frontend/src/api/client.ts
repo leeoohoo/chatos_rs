@@ -14,6 +14,7 @@ import type {
   ProjectManagementSkillLocale,
   ProjectManagementSkillResponse,
   ProjectRecord,
+  ProjectRuntimeEnvironmentDeploymentResponse,
   ProjectRuntimeEnvironmentResponse,
   ProjectStatus,
   ProjectWorkItemRecord,
@@ -153,6 +154,20 @@ export const api = {
   startProjectRuntimeEnvironment: (projectId: string) =>
     request<ProjectRuntimeEnvironmentResponse>(
       `/api/projects/${projectId}/runtime-environment/start`,
+      { method: 'POST' },
+    ),
+  getProjectRuntimeEnvironmentDeployment: (projectId: string) =>
+    request<ProjectRuntimeEnvironmentDeploymentResponse>(
+      `/api/projects/${projectId}/runtime-environment/deployment`,
+    ),
+  stopProjectRuntimeEnvironment: (projectId: string) =>
+    request<ProjectRuntimeEnvironmentResponse>(
+      `/api/projects/${projectId}/runtime-environment/stop`,
+      { method: 'POST' },
+    ),
+  restartProjectRuntimeEnvironment: (projectId: string) =>
+    request<ProjectRuntimeEnvironmentResponse>(
+      `/api/projects/${projectId}/runtime-environment/restart`,
       { method: 'POST' },
     ),
   listRequirements: (

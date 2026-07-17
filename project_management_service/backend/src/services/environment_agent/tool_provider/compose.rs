@@ -35,48 +35,47 @@ pub(super) fn build_project_compose_yaml(
     required_services: &Value,
     images: &[ProjectRuntimeEnvironmentImageRecord],
 ) -> Result<String, String> {
-    let application = images
+    let applications = images
         .iter()
-        .find(|image| image_is_application_runtime(image))
-        .ok_or_else(|| "application runtime plan is required for Docker Compose".to_string())?;
-    if application
-        .dockerfile
-        .as_deref()
-        .is_none_or(|value| value.trim().is_empty())
-    {
-        return Err("application Dockerfile is required for Docker Compose".to_string());
+        .filter(|image| image_is_application_runtime(image))
+        .collect::<Vec<_>>();
+    if applications.is_empty() {
+        return Err("application runtime plan is required for Docker Compose".to_string());
+    }
+    let mut application_services = Vec::with_capacity(applications.len());
+    let mut service_ids = std::collections::BTreeSet::new();
+    for (index, application) in applications.into_iter().enumerate() {
+        if application
+            .dockerfile
+            .as_deref()
+            .is_none_or(|value| value.trim().is_empty())
+        {
+            return Err(format!(
+                "application Dockerfile is required for Docker Compose: {}",
+                application.environment_key
+            ));
+        }
+        let service_id = super::super::runtime_application_service_id(application, index);
+        if !service_ids.insert(service_id.clone()) {
+            return Err(format!(
+                "duplicate application service id in Docker Compose: {service_id}"
+            ));
+        }
+        application_services.push((service_id, application));
     }
     let service_kinds = provisionable_service_kinds(required_services);
     let mut output = String::new();
     output.push_str("name: ");
     output.push_str(yaml_string(compose_project_name(project_id).as_str()).as_str());
-    output.push_str("\nservices:\n  application:\n    build:\n      context: ../..\n      dockerfile: .chatos/runtime-environment/Dockerfile.application\n    env_file:\n      - .env.chatos\n");
-    if let Some(ports) = application.ports.as_array() {
-        let ports = ports
-            .iter()
-            .filter_map(Value::as_u64)
-            .filter(|port| *port > 0 && *port <= u16::MAX as u64)
-            .collect::<Vec<_>>();
-        if !ports.is_empty() {
-            output.push_str("    ports:\n");
-            for port in ports {
-                output.push_str(format!("      - \"127.0.0.1:{port}:{port}\"\n").as_str());
-            }
-        }
+    output.push_str("\nservices:\n");
+    for (service_id, application) in &application_services {
+        append_compose_application_service(
+            &mut output,
+            service_id.as_str(),
+            application,
+            &service_kinds,
+        );
     }
-    if !service_kinds.is_empty() {
-        output.push_str("    depends_on:\n");
-        for service in &service_kinds {
-            output.push_str(
-                format!(
-                    "      {}:\n        condition: service_healthy\n",
-                    compose_service_name(service)
-                )
-                .as_str(),
-            );
-        }
-    }
-    output.push_str("    networks:\n      - chatos-runtime\n    restart: unless-stopped\n");
     for service in &service_kinds {
         append_compose_dependency_service(&mut output, service.as_str());
     }
@@ -93,6 +92,47 @@ pub(super) fn build_project_compose_yaml(
     }
     let _ = variables;
     Ok(output)
+}
+
+fn append_compose_application_service(
+    output: &mut String,
+    service_id: &str,
+    application: &ProjectRuntimeEnvironmentImageRecord,
+    service_kinds: &std::collections::BTreeSet<String>,
+) {
+    output.push_str(format!("  {service_id}:\n").as_str());
+    output.push_str("    build:\n      context: ../..\n");
+    output.push_str(
+        format!("      dockerfile: .chatos/runtime-environment/services/{service_id}/Dockerfile\n")
+            .as_str(),
+    );
+    output.push_str("    env_file:\n      - .env.chatos\n");
+    if let Some(ports) = application.ports.as_array() {
+        let ports = ports
+            .iter()
+            .filter_map(Value::as_u64)
+            .filter(|port| *port > 0 && *port <= u16::MAX as u64)
+            .collect::<Vec<_>>();
+        if !ports.is_empty() {
+            output.push_str("    ports:\n");
+            for port in ports {
+                output.push_str(format!("      - \"127.0.0.1:{port}:{port}\"\n").as_str());
+            }
+        }
+    }
+    if !service_kinds.is_empty() {
+        output.push_str("    depends_on:\n");
+        for service in service_kinds {
+            output.push_str(
+                format!(
+                    "      {}:\n        condition: service_healthy\n",
+                    compose_service_name(service)
+                )
+                .as_str(),
+            );
+        }
+    }
+    output.push_str("    networks:\n      - chatos-runtime\n    restart: unless-stopped\n");
 }
 
 pub(super) fn compose_project_name(project_id: &str) -> String {
@@ -233,15 +273,7 @@ pub(super) fn image_is_real_and_ready(image: &ProjectRuntimeEnvironmentImageReco
 }
 
 pub(super) fn image_is_application_runtime(image: &ProjectRuntimeEnvironmentImageRecord) -> bool {
-    let environment_type = image.environment_type.trim().to_ascii_lowercase();
-    let environment_key = image.environment_key.trim().to_ascii_lowercase();
-    environment_type.contains("runtime")
-        || environment_type.contains("application")
-        || matches!(
-            environment_key.as_str(),
-            "app" | "application" | "runtime" | "application_runtime"
-        )
-        || environment_key.ends_with("_runtime")
+    image.service_role == RuntimeServiceRole::Application
 }
 
 pub(super) fn image_matches_service(

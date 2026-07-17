@@ -80,6 +80,8 @@ pub struct TaskMcpConfig {
     #[serde(default = "task_requires_execution_default")]
     pub requires_execution: bool,
     #[serde(default)]
+    pub execution_service_id: Option<String>,
+    #[serde(default)]
     pub default_remote_server_id: Option<String>,
     #[serde(default)]
     pub external_mcp_config_ids: Vec<String>,
@@ -109,6 +111,7 @@ impl Default for TaskMcpConfig {
             policy_revision: None,
             additional_writable_roots: Vec::new(),
             requires_execution: task_requires_execution_default(),
+            execution_service_id: None,
             default_remote_server_id: None,
             external_mcp_config_ids: Vec::new(),
             selected_skill_ids: Vec::new(),

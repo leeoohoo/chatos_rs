@@ -63,6 +63,7 @@ pub(in crate::mcp_server) struct CreateTaskArgs {
 impl CreateTaskArgs {
     pub(in crate::mcp_server) fn into_request(self) -> Result<CreateTaskRequest, String> {
         let mut mcp_config = self.mcp_config;
+        reject_ai_execution_service_selection(mcp_config.as_ref())?;
         if let Some(enabled_builtin_kinds) = self.enabled_builtin_kinds {
             let normalized = normalize_mcp_builtin_kind_names(enabled_builtin_kinds)?;
             let config = mcp_config.get_or_insert_with(task_mcp_config_for_explicit_tool_selection);
@@ -103,6 +104,22 @@ impl CreateTaskArgs {
             prerequisite_task_ids: self.prerequisite_task_ids,
         })
     }
+}
+
+pub(in crate::mcp_server) fn reject_ai_execution_service_selection(
+    config: Option<&TaskMcpConfig>,
+) -> Result<(), String> {
+    if config
+        .and_then(|config| config.execution_service_id.as_deref())
+        .map(str::trim)
+        .is_some_and(|value| !value.is_empty())
+    {
+        return Err(
+            "execution_service_id is controlled by the user or program and cannot be selected by AI"
+                .to_string(),
+        );
+    }
+    Ok(())
 }
 
 pub(in crate::mcp_server) fn task_mcp_config_for_explicit_tool_selection() -> TaskMcpConfig {

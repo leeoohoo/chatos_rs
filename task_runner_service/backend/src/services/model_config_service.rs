@@ -57,10 +57,23 @@ impl ModelConfigService {
 
     pub async fn list_model_configs(&self) -> Result<Vec<ModelConfigRecord>, String> {
         let records = self.store.list_model_configs().await?;
-        records
+        Ok(records
             .into_iter()
-            .map(normalize_model_config_record)
-            .collect::<Result<Vec<_>, _>>()
+            .filter_map(|record| {
+                let record_id = record.id.clone();
+                match normalize_model_config_record(record) {
+                    Ok(record) => Some(record),
+                    Err(err) => {
+                        warn!(
+                            model_config_id = record_id.as_str(),
+                            error = err.as_str(),
+                            "skipping invalid model config while listing model configs"
+                        );
+                        None
+                    }
+                }
+            })
+            .collect())
     }
 
     pub async fn get_model_config(&self, id: &str) -> Result<Option<ModelConfigRecord>, String> {

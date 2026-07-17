@@ -5,6 +5,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
+use memory_engine_sdk::ManagedMemoryPolicyBundle;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -35,6 +36,15 @@ pub(crate) struct LocalState {
     pub(crate) model_configs: ModelConfigState,
     #[serde(default)]
     pub(crate) runtime_settings: LocalRuntimeSettings,
+    #[serde(default)]
+    pub(crate) managed_memory_policy: Option<ManagedMemoryPolicyCache>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct ManagedMemoryPolicyCache {
+    pub(crate) source_instance_id: String,
+    pub(crate) bundle: ManagedMemoryPolicyBundle,
+    pub(crate) last_synced_at: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

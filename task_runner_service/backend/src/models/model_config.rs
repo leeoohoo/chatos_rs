@@ -65,6 +65,9 @@ impl ModelConfigRecord {
 
 fn runtime_provider_for_model(provider: &str, base_url: &str) -> String {
     let normalized = normalize_provider(provider);
+    if normalized == "glm" {
+        return "openai_compatible".to_string();
+    }
     if normalized == "gpt" && !is_openai_api_base_url(base_url) {
         return "openai_compatible".to_string();
     }
@@ -138,6 +141,17 @@ mod tests {
 
         assert_eq!(runtime.provider, "openai");
         assert_eq!(runtime.thinking_level.as_deref(), Some("minimal"));
+    }
+
+    #[test]
+    fn runtime_config_uses_compatible_transport_for_glm() {
+        let mut record = model_config_record("glm", "https://open.bigmodel.cn/api/paas/v4", "high");
+        record.prompt_vendor = Some("glm".to_string());
+
+        let runtime = record.to_runtime_config(None);
+
+        assert_eq!(runtime.provider, "openai_compatible");
+        assert_eq!(runtime.thinking_level.as_deref(), Some("high"));
     }
 
     fn model_config_record(

@@ -14,7 +14,10 @@ use tokio::sync::Mutex;
 
 use crate::history::CommandHistoryRecorder;
 use crate::relay::{relay_error_response, RelayRequest, RelayResponse};
-use crate::sandbox::compose::start_project_compose_environment;
+use crate::sandbox::compose::{
+    get_project_compose_environment_status, restart_project_compose_environment,
+    start_project_compose_environment, stop_project_compose_environment,
+};
 use crate::sandbox::docker::ensure_docker_running;
 use crate::sandbox::images::{local_sandbox_image_catalog, start_local_sandbox_image_job};
 use crate::sandbox::lease::{
@@ -109,6 +112,33 @@ async fn handle_local_sandbox_request(
             ));
         }
         let result = start_project_compose_environment(
+            state,
+            request.workspace_id.as_str(),
+            request.body.clone(),
+        )
+        .await?;
+        return Ok((200, BTreeMap::new(), result));
+    }
+    if method == Method::POST && path == "/api/local/sandbox/environments/compose/status" {
+        let result = get_project_compose_environment_status(
+            state,
+            request.workspace_id.as_str(),
+            request.body.clone(),
+        )
+        .await?;
+        return Ok((200, BTreeMap::new(), result));
+    }
+    if method == Method::POST && path == "/api/local/sandbox/environments/compose/stop" {
+        let result = stop_project_compose_environment(
+            state,
+            request.workspace_id.as_str(),
+            request.body.clone(),
+        )
+        .await?;
+        return Ok((200, BTreeMap::new(), result));
+    }
+    if method == Method::POST && path == "/api/local/sandbox/environments/compose/restart" {
+        let result = restart_project_compose_environment(
             state,
             request.workspace_id.as_str(),
             request.body.clone(),

@@ -35,9 +35,6 @@ pub(super) fn normalize_analysis(
     ) {
         return Err(format!("unsupported environment status: {}", value.status));
     }
-    if value.analysis_summary.trim().is_empty() {
-        return Err("environment analysis_summary is required".to_string());
-    }
     value.detected_stack = object_or_default(value.detected_stack);
     value.required_services = array_or_default(value.required_services);
     value.env_vars = object_or_default(value.env_vars);
@@ -46,7 +43,37 @@ pub(super) fn normalize_analysis(
         .images
         .retain(|image| !image.environment_key.trim().is_empty());
     ensure_application_dockerfile(&mut value);
+    if let Some(image) = value.images.iter().find(|image| {
+        image
+            .dockerfile
+            .as_deref()
+            .is_some_and(dockerfile_contains_program_managed_mcp_control)
+    }) {
+        return Err(format!(
+            "application Dockerfile attempts to install or configure the program-managed Chat OS MCP Agent: {}",
+            image.environment_key
+        ));
+    }
     Ok(value)
+}
+
+fn dockerfile_contains_program_managed_mcp_control(dockerfile: &str) -> bool {
+    let dockerfile = dockerfile.to_ascii_lowercase();
+    [
+        "chatos-sandbox-mcp",
+        "chatos_sandbox_mcp",
+        "chat os mcp agent",
+        "chatos mcp agent",
+        "mcp_token",
+        "mcp_port",
+        "mcp_image",
+        "mcp_command",
+        "agent_install_script",
+        "agent_injection_mode",
+        "/opt/chatos/",
+    ]
+    .iter()
+    .any(|marker| dockerfile.contains(marker))
 }
 
 fn ensure_application_dockerfile(value: &mut super::LocalEnvironmentAnalysisResult) {
@@ -129,7 +156,6 @@ mod tests {
         let analysis =
             super::normalize_analysis(super::super::models::LocalEnvironmentAnalysisResult {
                 status: "ready".to_string(),
-                analysis_summary: "Node service".to_string(),
                 detected_stack: serde_json::json!({ "nodejs": true }),
                 images: vec![super::super::models::LocalEnvironmentImagePlan {
                     environment_key: "app".to_string(),
@@ -145,5 +171,27 @@ mod tests {
             .dockerfile
             .as_deref()
             .is_some_and(|dockerfile| dockerfile.contains("FROM node:22")));
+    }
+
+    #[test]
+    fn rejects_ai_authored_mcp_installation_in_local_dockerfile() {
+        let error =
+            super::normalize_analysis(super::super::models::LocalEnvironmentAnalysisResult {
+                status: "ready".to_string(),
+                detected_stack: serde_json::json!({ "nodejs": true }),
+                images: vec![super::super::models::LocalEnvironmentImagePlan {
+                    environment_key: "services/api".to_string(),
+                    environment_type: "application".to_string(),
+                    display_name: "API".to_string(),
+                    dockerfile: Some(
+                        "FROM node:24\nCOPY chatos-sandbox-mcp-server /opt/chatos/bin/\n"
+                            .to_string(),
+                    ),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            })
+            .expect_err("AI-authored MCP installation must be rejected");
+        assert!(error.contains("program-managed Chat OS MCP Agent"));
     }
 }

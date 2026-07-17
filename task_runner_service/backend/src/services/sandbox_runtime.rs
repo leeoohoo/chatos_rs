@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
+use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::path::Path;
 
@@ -39,13 +40,45 @@ struct SandboxTaskRoute {
     base_url: String,
     auth: Option<SandboxManagerAuth>,
     image_id: Option<String>,
+    environment_plan: Option<SandboxEnvironmentPlan>,
     provider: String,
     policy: chatos_sandbox_contract::SandboxLeasePolicyRequest,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct SandboxEnvironmentPlan {
+    primary_service_id: String,
+    services: Vec<SandboxEnvironmentServicePlan>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct SandboxEnvironmentServicePlan {
+    service_id: String,
+    environment_key: String,
+    display_name: String,
+    service_role: String,
+    image_id: Option<String>,
+    image_ref: Option<String>,
+    dockerfile: Option<String>,
+    environment: BTreeMap<String, String>,
+    mcp_policy: SandboxEnvironmentMcpPolicyPlan,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct SandboxEnvironmentMcpPolicyPlan {
+    managed_by: String,
+    attachment: String,
+    filesystem: bool,
+    terminal: bool,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(super) struct SandboxRuntimeContext {
     pub lease_id: String,
     pub sandbox_id: String,
+    #[serde(default)]
+    pub is_environment: bool,
+    #[serde(default)]
+    pub service_id: Option<String>,
     pub backend_id: Option<String>,
     pub agent_endpoint: Option<String>,
     pub agent_token: String,
@@ -68,6 +101,8 @@ impl SandboxRuntimeContext {
         json!({
             "lease_id": self.lease_id,
             "sandbox_id": self.sandbox_id,
+            "is_environment": self.is_environment,
+            "service_id": self.service_id,
             "backend_id": self.backend_id,
             "agent_endpoint": self.agent_endpoint,
             "mcp_url": self.mcp_url,
@@ -87,6 +122,9 @@ impl SandboxRuntimeContext {
             "X-Chatos-Sandbox-Lease-Id".to_string(),
             self.lease_id.clone(),
         );
+        if let Some(service_id) = self.service_id.as_deref() {
+            headers.insert("X-Chatos-Service-Id".to_string(), service_id.to_string());
+        }
         if let (Some(client_id), Some(client_key)) = (
             self.manager_client_id.as_deref(),
             self.manager_client_key.as_deref(),
@@ -146,9 +184,15 @@ impl SandboxRuntimeContext {
         Ok(Self {
             lease_id,
             sandbox_id: sandbox_id.clone(),
+            is_environment: response.is_environment,
+            service_id: response.primary_service_id,
             backend_id: response.backend_id,
             agent_token,
-            mcp_url: format!("{manager_base_url}/api/sandboxes/{sandbox_id}/mcp"),
+            mcp_url: if response.is_environment {
+                format!("{manager_base_url}/api/sandbox-environments/{sandbox_id}/mcp")
+            } else {
+                format!("{manager_base_url}/api/sandboxes/{sandbox_id}/mcp")
+            },
             manager_client_id,
             manager_client_key,
             manager_base_url,

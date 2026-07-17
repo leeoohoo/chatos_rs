@@ -149,6 +149,20 @@ pub async fn list_project_contacts(
         .filter(|value| !value.is_empty())
         .ok_or_else(|| "project owner is missing".to_string())?;
 
+    list_project_contacts_for_owner(owner_user_id, project_id, limit, offset).await
+}
+
+pub async fn list_project_contacts_for_owner(
+    owner_user_id: &str,
+    project_id: &str,
+    limit: Option<i64>,
+    offset: i64,
+) -> Result<Vec<MemoryProjectContactDto>, String> {
+    let owner_user_id = owner_user_id.trim();
+    if owner_user_id.is_empty() {
+        return Err("project owner is missing".to_string());
+    }
+
     let links = mappings_repo::list_project_agent_links_by_project(
         owner_user_id,
         project_id,

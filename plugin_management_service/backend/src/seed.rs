@@ -11,7 +11,7 @@ mod agent_prompts;
 mod internal_skills;
 
 use crate::tool_catalog::system_routed_tool_catalog;
-use agent_prompts::seed_agent_prompts;
+use agent_prompts::{backfill_agent_prompt_versions, seed_agent_prompts};
 use internal_skills::{internal_skill_catalog, seed_internal_skills};
 
 pub const SANDBOX_IMAGES_MCP_RESOURCE_ID: &str = "system_mcp_sandbox_images";
@@ -44,6 +44,10 @@ pub async fn seed_system_resources(store: &AppStore, admin_user_id: &str) -> Res
     seed_agent_prompts(store, admin_user_id).await?;
     seed_agent_bindings(store, admin_user_id).await?;
     Ok(())
+}
+
+pub async fn ensure_agent_prompt_version_history(store: &AppStore) -> Result<(), String> {
+    backfill_agent_prompt_versions(store).await
 }
 
 async fn remove_retired_system_agents(store: &AppStore) -> Result<(), String> {
@@ -530,16 +534,11 @@ async fn seed_agent_bindings(store: &AppStore, admin_user_id: &str) -> Result<()
         builtin_resource_id(BuiltinMcpKind::ProjectManagement).as_str(),
     )
     .await?;
-    remove_seed_binding(
-        store,
-        "project_management_agent",
-        SANDBOX_IMAGES_MCP_RESOURCE_ID,
-    )
-    .await?;
     // These bindings mirror fixed tool executors in the current service code.
     for (resource_id, priority) in [
         (builtin_resource_id(BuiltinMcpKind::CodeMaintainerRead), 10),
         (PROJECT_ENVIRONMENT_MCP_RESOURCE_ID.to_string(), 20),
+        (SANDBOX_IMAGES_MCP_RESOURCE_ID.to_string(), 30),
     ] {
         seed_agent_mcp_binding(
             store,

@@ -6,7 +6,7 @@ import { generateId } from '../../lib/utils';
 
 import type { AiModelFormData } from './types';
 
-export const AI_MODEL_PROVIDERS = ['gpt', 'deepseek', 'kimi', 'minimax', 'openai_compatible'] as const;
+export const AI_MODEL_PROVIDERS = ['gpt', 'deepseek', 'kimi', 'glm'] as const;
 export const AGENT_PROMPT_VENDORS: AgentPromptVendor[] = ['glm', 'deepseek', 'gpt', 'kimi'];
 
 export const defaultAgentPromptVendor = (provider: string): AgentPromptVendor => {

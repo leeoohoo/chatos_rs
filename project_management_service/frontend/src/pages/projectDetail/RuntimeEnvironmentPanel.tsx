@@ -8,6 +8,8 @@ import {
   PlayCircleOutlined,
   PlusOutlined,
   ReloadOutlined,
+  StopOutlined,
+  SyncOutlined,
 } from '@ant-design/icons';
 import {
   Alert,
@@ -25,6 +27,8 @@ import { useEffect, useMemo, useState } from 'react';
 
 import type {
   ProjectRuntimeEnvironmentConfigFileRecord,
+  ProjectRuntimeEnvironmentDeploymentResponse,
+  ProjectRuntimeEnvironmentDeploymentService,
   ProjectRuntimeEnvironmentImageRecord,
   ProjectRuntimeEnvironmentResponse,
   ProjectRuntimeEnvironmentVariableRecord,
@@ -54,12 +58,16 @@ import {
 
 interface RuntimeEnvironmentPanelProps {
   response?: ProjectRuntimeEnvironmentResponse;
+  deployment?: ProjectRuntimeEnvironmentDeploymentResponse;
   loading: boolean;
+  deploymentLoading: boolean;
   errorMessage?: string;
   analyzing: boolean;
   settingsSaving: boolean;
   variablesSaving: boolean;
   environmentStarting: boolean;
+  environmentStopping: boolean;
+  environmentRestarting: boolean;
   onAnalyze: () => void;
   onRefresh: () => void;
   onSandboxEnabledChange: (value: boolean) => void;
@@ -67,21 +75,31 @@ interface RuntimeEnvironmentPanelProps {
     payload: UpdateProjectRuntimeEnvironmentVariablesPayload,
   ) => Promise<void>;
   onStartEnvironment: () => void;
+  onRefreshDeployment: () => void;
+  onStopEnvironment: () => void;
+  onRestartEnvironment: () => void;
 }
 
 export function RuntimeEnvironmentPanel({
   response,
+  deployment,
   loading,
+  deploymentLoading,
   errorMessage,
   analyzing,
   settingsSaving,
   variablesSaving,
   environmentStarting,
+  environmentStopping,
+  environmentRestarting,
   onAnalyze,
   onRefresh,
   onSandboxEnabledChange,
   onSaveEnvironmentVariables,
   onStartEnvironment,
+  onRefreshDeployment,
+  onStopEnvironment,
+  onRestartEnvironment,
 }: RuntimeEnvironmentPanelProps) {
   const environment = response?.environment;
   const images = response?.images ?? [];
@@ -97,6 +115,9 @@ export function RuntimeEnvironmentPanel({
     [environment?.environment_variables, environment?.env_vars],
   );
   const canAnalyze = Boolean(environment?.sandbox_enabled) && !analyzing;
+  const deploymentStatus = deployment?.status;
+  const deploymentExists = Boolean(deployment && deploymentStatus !== 'stopped');
+  const lifecycleBusy = environmentStarting || environmentStopping || environmentRestarting;
   const [variableEditorOpen, setVariableEditorOpen] = useState(false);
   const [variableDrafts, setVariableDrafts] = useState<EnvVarDraft[]>([]);
   const [previewConfigFile, setPreviewConfigFile] =
@@ -211,6 +232,14 @@ export function RuntimeEnvironmentPanel({
       {environment?.last_error ? (
         <Alert type="error" showIcon message="最近一次初始化失败" description={environment.last_error} />
       ) : null}
+      {deploymentStatus === 'degraded' ? (
+        <Alert
+          type="warning"
+          showIcon
+          message="Compose 父环境处于降级状态"
+          description="部分子服务未运行，请查看服务状态后执行整体重启。"
+        />
+      ) : null}
 
       <RuntimeSection title="初始化状态">
         <Descriptions bordered size="small" column={{ xs: 1, md: 2 }}>
@@ -234,7 +263,7 @@ export function RuntimeEnvironmentPanel({
               '-'
             )}
           </Descriptions.Item>
-          <Descriptions.Item label="分析摘要" span={2}>
+          <Descriptions.Item label="技术分析摘要" span={2}>
             {environment?.analysis_summary || '-'}
           </Descriptions.Item>
         </Descriptions>
@@ -266,6 +295,14 @@ export function RuntimeEnvironmentPanel({
         extra={
           <Space>
             <Button
+              icon={<ReloadOutlined />}
+              loading={deploymentLoading}
+              disabled={!deployment && !images.some((image) => image.status === 'running')}
+              onClick={onRefreshDeployment}
+            >
+              刷新状态
+            </Button>
+            <Button
               icon={<EyeOutlined />}
               disabled={!composeFile}
               onClick={() => composeFile && setPreviewConfigFile(composeFile)}
@@ -276,10 +313,27 @@ export function RuntimeEnvironmentPanel({
               type="primary"
               icon={<PlayCircleOutlined />}
               loading={environmentStarting}
-              disabled={!composeFile || !environment?.sandbox_enabled || analyzing}
+              disabled={!composeFile || !environment?.sandbox_enabled || analyzing || lifecycleBusy}
               onClick={onStartEnvironment}
             >
-              {environment?.status === 'ready' ? '重新生成并启动' : '生成并启动整个环境'}
+              {deploymentExists ? '重新生成并启动' : '生成并启动整个环境'}
+            </Button>
+            <Button
+              icon={<SyncOutlined />}
+              loading={environmentRestarting}
+              disabled={!deployment || deploymentStatus === 'stopped' || lifecycleBusy}
+              onClick={onRestartEnvironment}
+            >
+              整体重启
+            </Button>
+            <Button
+              danger
+              icon={<StopOutlined />}
+              loading={environmentStopping}
+              disabled={!deployment || deploymentStatus === 'stopped' || lifecycleBusy}
+              onClick={onStopEnvironment}
+            >
+              整体停止
             </Button>
           </Space>
         }
@@ -294,9 +348,77 @@ export function RuntimeEnvironmentPanel({
             {composeFile ? <Typography.Text code>{composeFile.path}</Typography.Text> : '-'}
           </Descriptions.Item>
           <Descriptions.Item label="包含服务">
-            {images.length > 0 ? `${images.length} 个（应用 + 依赖）` : '-'}
+            {deployment?.services?.length
+              ? `${deployment.services.length} 个正在记录的子服务`
+              : images.length > 0
+                ? `${images.length} 个（应用 + 依赖）`
+                : '-'}
+          </Descriptions.Item>
+          <Descriptions.Item label="部署状态">
+            {deploymentStatus || '尚未启动'}
+          </Descriptions.Item>
+          <Descriptions.Item label="Compose 项目名">
+            {deployment?.project_name ? (
+              <Typography.Text code>{deployment.project_name}</Typography.Text>
+            ) : (
+              '-'
+            )}
           </Descriptions.Item>
         </Descriptions>
+        {deployment?.services?.length ? (
+          <div style={{ marginTop: 16 }}>
+            <Typography.Text strong>子服务拓扑</Typography.Text>
+            <Table<ProjectRuntimeEnvironmentDeploymentService>
+              rowKey="service_id"
+              size="small"
+              pagination={false}
+              style={{ marginTop: 8 }}
+              dataSource={deployment.services}
+              columns={[
+                {
+                  title: '子服务',
+                  dataIndex: 'display_name',
+                  render: (value: string, row) => (
+                    <Space direction="vertical" size={1}>
+                      <Typography.Text>{value || row.service_id}</Typography.Text>
+                      <Typography.Text code type="secondary">
+                        {row.service_id}
+                      </Typography.Text>
+                    </Space>
+                  ),
+                },
+                {
+                  title: '角色',
+                  dataIndex: 'service_role',
+                  width: 130,
+                  render: (value: ProjectRuntimeEnvironmentDeploymentService['service_role']) => (
+                    <Tag color={value === 'application' ? 'blue' : undefined}>{value}</Tag>
+                  ),
+                },
+                {
+                  title: 'MCP',
+                  width: 150,
+                  render: (_, row) =>
+                    row.mcp_policy.attachment === 'project_gateway_target' ? (
+                      <Tag color="green">系统管理目标</Tag>
+                    ) : (
+                      <Tag>无 MCP</Tag>
+                    ),
+                },
+                {
+                  title: '运行状态',
+                  dataIndex: 'status',
+                  width: 150,
+                },
+                {
+                  title: '镜像',
+                  dataIndex: 'image_ref',
+                  render: (value?: string | null) => value || '-',
+                },
+              ]}
+            />
+          </div>
+        ) : null}
       </RuntimeSection>
 
       <RuntimeSection

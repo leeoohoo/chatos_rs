@@ -4,6 +4,7 @@
 import { useEffect, useMemo } from 'react';
 import type { FormInstance } from 'antd';
 import {
+  Alert,
   Button,
   Checkbox,
   Drawer,
@@ -23,6 +24,7 @@ import type {
   McpCatalogEntry,
   RemoteServerRecord,
   SelectableTaskSkill,
+  TaskProjectRuntimeEnvironmentResponse,
   TaskRecord,
   TaskScheduleMode,
 } from '../../types';
@@ -58,6 +60,9 @@ type TaskEditorDrawerProps = {
   remoteServers?: RemoteServerRecord[];
   externalMcpConfigs?: ExternalMcpConfigRecord[];
   selectableSkills?: SelectableTaskSkill[];
+  runtimeEnvironment?: TaskProjectRuntimeEnvironmentResponse;
+  runtimeEnvironmentLoading?: boolean;
+  runtimeEnvironmentUnavailable?: boolean;
   onClose: () => void;
   onSubmit: (values: TaskFormValues) => void;
   onPreviewPrompt: () => void;
@@ -78,6 +83,9 @@ export function TaskEditorDrawer({
   remoteServers = [],
   externalMcpConfigs = [],
   selectableSkills = [],
+  runtimeEnvironment,
+  runtimeEnvironmentLoading = false,
+  runtimeEnvironmentUnavailable = false,
   onClose,
   onSubmit,
   onPreviewPrompt,
@@ -86,6 +94,8 @@ export function TaskEditorDrawer({
 }: TaskEditorDrawerProps) {
   const mcpEnabled = Form.useWatch('mcpEnabled', form);
   const selectedProjectId = Form.useWatch('projectId', form);
+  const requiresExecution = Form.useWatch('requiresExecution', form);
+  const executionServiceId = Form.useWatch('executionServiceId', form);
   const enabledBuiltinKinds = Form.useWatch('enabledBuiltinKinds', form) || [];
   const defaultRemoteServerId = Form.useWatch('defaultRemoteServerId', form);
   const scheduleMode = Form.useWatch('scheduleMode', form);
@@ -216,6 +226,32 @@ export function TaskEditorDrawer({
       })),
     [selectableSkills],
   );
+  const runtimeApplicationOptions = useMemo(
+    () =>
+      (runtimeEnvironment?.images || [])
+        .filter((image) => image.service_role === 'application')
+        .filter((image) =>
+          ['ready', 'local', 'available', 'succeeded'].includes(image.status),
+        )
+        .filter(
+          (image) =>
+            image.mcp_policy?.managed_by === 'system' &&
+            image.mcp_policy?.attachment === 'project_gateway_target' &&
+            image.mcp_policy?.filesystem &&
+            image.mcp_policy?.terminal,
+        )
+        .map((image) => ({
+          label: `${image.display_name || image.service_id} (${image.service_id})`,
+          value: image.service_id,
+        })),
+    [runtimeEnvironment?.images],
+  );
+  useEffect(() => {
+    if (!requiresExecution || runtimeApplicationOptions.length !== 1 || executionServiceId) {
+      return;
+    }
+    form.setFieldValue('executionServiceId', runtimeApplicationOptions[0].value);
+  }, [executionServiceId, form, requiresExecution, runtimeApplicationOptions]);
   return (
     <Drawer
       title={editingTask ? t('tasks.drawer.edit') : t('tasks.drawer.create')}
@@ -299,6 +335,7 @@ export function TaskEditorDrawer({
               onChange={(value) => {
                 if (value !== selectedProjectId) {
                   form.setFieldValue('prerequisite_task_ids', []);
+                  form.setFieldValue('executionServiceId', undefined);
                 }
               }}
             />
@@ -312,6 +349,82 @@ export function TaskEditorDrawer({
             <Switch />
           </Form.Item>
         </div>
+        {selectedProjectId && selectedProjectId !== '-1' ? (
+          <Space direction="vertical" size={8} style={{ width: '100%', marginBottom: 16 }}>
+            <Typography.Text strong>{t('tasks.form.runtimeTopology')}</Typography.Text>
+            {runtimeEnvironmentLoading ? (
+              <Typography.Text type="secondary">
+                {t('tasks.form.runtimeTopologyLoading')}
+              </Typography.Text>
+            ) : runtimeEnvironmentUnavailable ? (
+              <Alert
+                type="warning"
+                showIcon
+                message={t('tasks.form.runtimeTopologyUnavailable')}
+              />
+            ) : runtimeEnvironment ? (
+              <div
+                style={{
+                  border: '1px solid #e5e7eb',
+                  borderRadius: 8,
+                  padding: 12,
+                  background: '#fafafa',
+                }}
+              >
+                <Space direction="vertical" size={8} style={{ width: '100%' }}>
+                  <Space wrap>
+                    <Tag color="blue">
+                      Compose / {runtimeEnvironment.environment.status || 'unknown'}
+                    </Tag>
+                    <Typography.Text type="secondary">
+                      {t('tasks.form.runtimeTopologyParent')}
+                    </Typography.Text>
+                  </Space>
+                  <Space wrap>
+                    {runtimeEnvironment.images.map((image) => {
+                      const isApplication = image.service_role === 'application';
+                      return (
+                        <Tag
+                          key={image.service_id || image.environment_key}
+                          color={isApplication ? 'green' : 'default'}
+                        >
+                          {image.display_name || image.service_id} / {image.service_id} /{' '}
+                          {isApplication
+                            ? t('tasks.form.runtimeApplicationTarget')
+                            : t('tasks.form.runtimeDependencyNoMcp')}
+                        </Tag>
+                      );
+                    })}
+                  </Space>
+                </Space>
+              </div>
+            ) : null}
+            {requiresExecution && runtimeApplicationOptions.length ? (
+              <Form.Item
+                name="executionServiceId"
+                label={t('tasks.form.executionService')}
+                extra={t('tasks.form.executionServiceHelp')}
+                rules={[
+                  {
+                    validator: async (_, value) => {
+                      if (!requiresExecution || runtimeApplicationOptions.length <= 1 || value) {
+                        return;
+                      }
+                      throw new Error(t('tasks.form.executionServiceRequired'));
+                    },
+                  },
+                ]}
+                style={{ marginBottom: 0 }}
+              >
+                <Select
+                  allowClear={runtimeApplicationOptions.length <= 1}
+                  options={runtimeApplicationOptions}
+                  placeholder={t('tasks.form.executionServicePlaceholder')}
+                />
+              </Form.Item>
+            ) : null}
+          </Space>
+        ) : null}
         <Form.Item name="prerequisite_task_ids" label="前置任务">
           <Select
             mode="multiple"

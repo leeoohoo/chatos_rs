@@ -192,6 +192,78 @@ body {
   width: 100%;
 }
 
+.prompt-page-heading {
+  align-items: flex-start;
+}
+
+.prompt-page-heading h3 {
+  margin: 0;
+}
+
+.page-back-button {
+  height: auto;
+  padding: 0;
+}
+
+.prompt-page-icon {
+  color: #1677ff;
+  font-size: 22px;
+}
+
+.prompt-page-notice {
+  margin-bottom: 16px;
+}
+
+.prompt-version-table,
+.prompt-editor-panel {
+  overflow: hidden;
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+}
+
+.prompt-version-id {
+  display: block;
+  max-width: 170px;
+  overflow: hidden;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.prompt-version-change {
+  font-size: 12px;
+}
+
+.prompt-editor-panel {
+  padding: 0 20px 20px;
+}
+
+.prompt-editor-content {
+  width: 100%;
+}
+
+.prompt-editor-loading {
+  min-height: 420px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+}
+
+.prompt-content-editor {
+  height: clamp(360px, calc(100vh - 410px), 620px) !important;
+  min-height: 360px !important;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  line-height: 1.65;
+}
+
+.prompt-content-editor[readonly] {
+  color: #374151;
+  background: #f8fafc;
+}
+
 .ant-table-wrapper .ant-table-cell {
   vertical-align: middle;
 }

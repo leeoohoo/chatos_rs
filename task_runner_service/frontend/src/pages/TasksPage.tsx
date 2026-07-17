@@ -91,6 +91,7 @@ export function TasksPage() {
     taskPromptsQuery,
     mcpCatalogQuery,
     taskCapabilityCatalogQuery,
+    projectRuntimeEnvironmentQuery,
     remoteServersQuery,
     externalMcpConfigsQuery,
     taskMemoryContextQuery,
@@ -541,6 +542,9 @@ export function TasksPage() {
         selectableSkills={taskCapabilityCatalogQuery.data?.selectable_skills}
         remoteServers={remoteServersQuery.data}
         externalMcpConfigs={externalMcpConfigsQuery.data}
+        runtimeEnvironment={projectRuntimeEnvironmentQuery.data}
+        runtimeEnvironmentLoading={projectRuntimeEnvironmentQuery.isLoading}
+        runtimeEnvironmentUnavailable={projectRuntimeEnvironmentQuery.isError}
         onClose={closeTaskDrawer}
         onSubmit={handleSubmit}
         onPreviewPrompt={openDraftMcpPreviewModal}

@@ -117,6 +117,9 @@ impl RunService {
                 "ttl_seconds": ttl_seconds,
                 "provider": route.provider.as_str(),
                 "image_id": route.image_id.as_deref(),
+                "environment_group": route.environment_plan.is_some(),
+                "primary_service_id": route.environment_plan.as_ref().map(|plan| plan.primary_service_id.as_str()),
+                "service_ids": route.environment_plan.as_ref().map(|plan| plan.services.iter().map(|service| service.service_id.as_str()).collect::<Vec<_>>()),
                 "requires_execution": task.mcp_config.requires_execution,
                 "requested_policy": route.policy,
             })),
@@ -130,6 +133,8 @@ impl RunService {
                 workspace_root.as_path(),
                 ttl_seconds,
                 route.image_id.as_deref(),
+                route.environment_plan.as_ref(),
+                effective_workspace_dir,
                 route.policy.clone(),
             )
             .await
@@ -250,30 +255,33 @@ impl RunService {
                 return Err(err);
             }
         };
-        if let Err(err) =
-            copy_workspace_to_sandbox(effective_workspace_dir, baseline_workspace.as_str())
-        {
-            let _ = client.release(&context, true, true).await;
-            self.append_sandbox_event(
-                run,
-                "sandbox_failed",
-                format!("复制工作区 baseline 失败: {err}"),
-                Some(context.to_metadata()),
-            )
-            .await;
-            return Err(err);
-        }
-        if let Err(err) = copy_workspace_to_sandbox(effective_workspace_dir, &context.run_workspace)
-        {
-            let _ = client.release(&context, true, true).await;
-            self.append_sandbox_event(
-                run,
-                "sandbox_failed",
-                format!("复制工作区到沙箱失败: {err}"),
-                Some(context.to_metadata()),
-            )
-            .await;
-            return Err(err);
+        if !context.is_environment {
+            if let Err(err) =
+                copy_workspace_to_sandbox(effective_workspace_dir, baseline_workspace.as_str())
+            {
+                let _ = client.release(&context, true, true).await;
+                self.append_sandbox_event(
+                    run,
+                    "sandbox_failed",
+                    format!("复制工作区 baseline 失败: {err}"),
+                    Some(context.to_metadata()),
+                )
+                .await;
+                return Err(err);
+            }
+            if let Err(err) =
+                copy_workspace_to_sandbox(effective_workspace_dir, &context.run_workspace)
+            {
+                let _ = client.release(&context, true, true).await;
+                self.append_sandbox_event(
+                    run,
+                    "sandbox_failed",
+                    format!("复制工作区到沙箱失败: {err}"),
+                    Some(context.to_metadata()),
+                )
+                .await;
+                return Err(err);
+            }
         }
 
         match client.health(&context).await {

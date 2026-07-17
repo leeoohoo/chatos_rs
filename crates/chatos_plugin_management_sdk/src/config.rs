@@ -64,6 +64,7 @@ fn caller_secret_env_key(caller_service: &str) -> Option<&'static str> {
         "local-connector-service" => {
             Some("PLUGIN_MANAGEMENT_LOCAL_CONNECTOR_SERVICE_INTERNAL_API_SECRET")
         }
+        "memory-engine" => Some("PLUGIN_MANAGEMENT_MEMORY_ENGINE_INTERNAL_API_SECRET"),
         _ => None,
     }
 }
@@ -85,6 +86,10 @@ mod tests {
         assert_eq!(
             caller_secret_env_key("local-connector-service"),
             Some("PLUGIN_MANAGEMENT_LOCAL_CONNECTOR_SERVICE_INTERNAL_API_SECRET")
+        );
+        assert_eq!(
+            caller_secret_env_key("memory-engine"),
+            Some("PLUGIN_MANAGEMENT_MEMORY_ENGINE_INTERNAL_API_SECRET")
         );
         assert_eq!(caller_secret_env_key("unknown"), None);
     }

@@ -22,6 +22,35 @@ const SANDBOX_MANAGER_TOKEN_AUDIENCE: &str = "sandbox-manager";
 pub fn prepare_http_headers(
     headers: &HashMap<String, String>,
 ) -> Result<HashMap<String, String>, String> {
+    reject_static_token_without_scope(
+        headers,
+        PROJECT_SERVICE_TOKEN_HEADER,
+        PROJECT_SERVICE_SCOPE_HEADER,
+        "project service",
+    )?;
+    reject_static_token_without_scope(
+        headers,
+        LOCAL_CONNECTOR_TOKEN_HEADER,
+        LOCAL_CONNECTOR_SCOPE_HEADER,
+        "Local Connector",
+    )?;
+    reject_static_token_without_scope(
+        headers,
+        SANDBOX_MANAGER_TOKEN_HEADER,
+        SANDBOX_MANAGER_SCOPE_HEADER,
+        "Sandbox Manager",
+    )?;
+    let signing_profile_count = [
+        SANDBOX_MANAGER_SCOPE_HEADER,
+        LOCAL_CONNECTOR_SCOPE_HEADER,
+        PROJECT_SERVICE_SCOPE_HEADER,
+    ]
+    .into_iter()
+    .filter(|scope_header| header_value(headers, scope_header).is_some())
+    .count();
+    if signing_profile_count > 1 {
+        return Err("MCP headers contain multiple internal request signing profiles".to_string());
+    }
     if let Some(scope) = header_value(headers, SANDBOX_MANAGER_SCOPE_HEADER) {
         return sign_headers(
             headers,
@@ -68,6 +97,32 @@ pub fn prepare_http_headers(
         },
         scope,
     )
+}
+
+pub fn headers_require_per_request_signing(headers: &HashMap<String, String>) -> bool {
+    [
+        SANDBOX_MANAGER_SCOPE_HEADER,
+        LOCAL_CONNECTOR_SCOPE_HEADER,
+        PROJECT_SERVICE_SCOPE_HEADER,
+    ]
+    .into_iter()
+    .any(|scope_header| header_value(headers, scope_header).is_some())
+}
+
+fn reject_static_token_without_scope(
+    headers: &HashMap<String, String>,
+    token_header: &str,
+    scope_header: &str,
+    service_label: &str,
+) -> Result<(), String> {
+    if header_value(headers, token_header).is_some()
+        && header_value(headers, scope_header).is_none()
+    {
+        return Err(format!(
+            "static {service_label} internal tokens are not allowed in reusable MCP headers; configure caller, secret, and scope for per-request signing"
+        ));
+    }
+    Ok(())
 }
 
 struct HeaderSigningProfile<'a> {
@@ -217,6 +272,25 @@ mod tests {
             SANDBOX_MANAGER_TOKEN_AUDIENCE,
             "sandbox.service",
         );
+    }
+
+    #[test]
+    fn reusable_headers_reject_static_internal_token() {
+        let err = prepare_http_headers(&HashMap::from([(
+            PROJECT_SERVICE_TOKEN_HEADER.to_string(),
+            "stale-token".to_string(),
+        )]))
+        .expect_err("static token must be rejected");
+        assert!(err.contains("static project service internal tokens are not allowed"));
+    }
+
+    #[test]
+    fn signing_requirement_detects_private_scope_headers() {
+        assert!(headers_require_per_request_signing(&HashMap::from([(
+            PROJECT_SERVICE_SCOPE_HEADER.to_string(),
+            "project.read".to_string(),
+        )])));
+        assert!(!headers_require_per_request_signing(&HashMap::new()));
     }
 
     fn assert_signed_headers(

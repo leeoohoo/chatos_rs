@@ -233,6 +233,40 @@ export interface AgentProviderPromptRecord {
   published_at?: string | null;
 }
 
+export interface AgentPromptVersionPrompt {
+  vendor: AgentPromptVendor;
+  content: string;
+  revision: number;
+  checksum: string;
+  published_at: string;
+}
+
+export interface AgentPromptVersionRecord {
+  id: string;
+  agent_key: string;
+  bundle_version: number;
+  changed_vendor?: AgentPromptVendor | null;
+  prompts: AgentPromptVersionPrompt[];
+  published_by: string;
+  published_at: string;
+}
+
+export interface AgentPromptVersionVendorSummary {
+  vendor: AgentPromptVendor;
+  revision: number;
+  checksum: string;
+}
+
+export interface AgentPromptVersionSummary {
+  id: string;
+  agent_key: string;
+  bundle_version: number;
+  changed_vendor?: AgentPromptVendor | null;
+  vendor_revisions: AgentPromptVersionVendorSummary[];
+  published_by: string;
+  published_at: string;
+}
+
 export interface GenerateAgentPromptResponse {
   agent_key: string;
   vendor: AgentPromptVendor;

@@ -248,8 +248,11 @@ export function imageColumns({
         <Typography.Text strong>{row.display_name || row.environment_key}</Typography.Text>
         <Space size={4} wrap>
           <Tag>{row.environment_type || 'service'}</Tag>
+          <Tag color={row.service_role === 'application' ? 'blue' : undefined}>
+            {row.service_role || 'unknown'}
+          </Tag>
           <Typography.Text type="secondary" code style={codeTextStyle}>
-            {row.environment_key}
+            {row.service_id || row.environment_key}
           </Typography.Text>
         </Space>
       </Space>
@@ -284,6 +287,23 @@ export function imageColumns({
     title: '状态',
     width: 110,
     render: (_, row) => imageStatusTag(row.status),
+    },
+    {
+    title: 'MCP 策略',
+    width: 150,
+    render: (_, row) =>
+      row.mcp_policy?.attachment === 'project_gateway_target' ? (
+        <Space direction="vertical" size={2}>
+          <Tag color="green">系统管理目标</Tag>
+          <Typography.Text type="secondary">
+            {row.mcp_policy.filesystem ? '文件' : ''}
+            {row.mcp_policy.filesystem && row.mcp_policy.terminal ? ' / ' : ''}
+            {row.mcp_policy.terminal ? '终端' : ''}
+          </Typography.Text>
+        </Space>
+      ) : (
+        <Tag>无 MCP</Tag>
+      ),
     },
     {
     title: '端口',

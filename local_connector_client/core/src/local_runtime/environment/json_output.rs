@@ -38,6 +38,7 @@ mod tests {
     use serde::Deserialize;
 
     use super::parse_model_json;
+    use crate::local_runtime::environment::LocalEnvironmentAnalysisResult;
 
     #[derive(Deserialize)]
     struct Output {
@@ -49,5 +50,34 @@ mod tests {
         let output: Output =
             parse_model_json("```json\n{\"status\":\"ready\"}\n```").expect("parse output");
         assert_eq!(output.status, "ready");
+    }
+
+    #[test]
+    fn local_environment_output_rejects_ai_managed_mcp_fields() {
+        let raw = r#"{
+            "status":"ready",
+            "images":[{
+                "environment_key":"api",
+                "environment_type":"application",
+                "display_name":"API",
+                "dockerfile":"FROM node:24",
+                "mcp_policy":{"attachment":"project_gateway_target"}
+            }]
+        }"#;
+        assert!(parse_model_json::<LocalEnvironmentAnalysisResult>(raw).is_err());
+    }
+
+    #[test]
+    fn local_environment_output_rejects_ai_authored_summary() {
+        let raw = r#"{
+            "status":"ready",
+            "analysis_summary":"AI-authored summary",
+            "detected_stack":{},
+            "required_services":[],
+            "environment_variables":{},
+            "generated_config_files":[],
+            "images":[]
+        }"#;
+        assert!(parse_model_json::<LocalEnvironmentAnalysisResult>(raw).is_err());
     }
 }

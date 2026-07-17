@@ -107,7 +107,7 @@ export function ModelConfigPanel() {
         }
         savedCount += 1;
       }
-      setMessage(`已保存供应商配置并导入 ${savedCount} 个模型`);
+      setMessage(`已保存到服务端并同步 ${savedCount} 个模型到本机`);
       resetDraft();
       await load();
     } catch (err) {
@@ -172,10 +172,10 @@ export function ModelConfigPanel() {
       for (const item of group.items) {
         await api.syncModelConfig(item.id);
       }
-      setMessage(`已同步供应商 ${group.name} 的 ${group.items.length} 个模型`);
+      setMessage(`已同步供应商 ${group.name} 的 ${group.items.length} 个完整模型配置`);
       await load();
     } catch (err) {
-      setError(err instanceof Error ? err.message : '同步供应商元信息失败');
+      setError(err instanceof Error ? err.message : '同步供应商模型配置失败');
     } finally {
       setSaving(false);
     }
@@ -225,10 +225,10 @@ export function ModelConfigPanel() {
     setError(null);
     try {
       const synced = await api.syncModelConfig(item.id);
-      setMessage(`元信息已同步: ${synced.name}`);
+      setMessage(`服务端模型配置已同步到本机: ${synced.name}`);
       await load();
     } catch (err) {
-      setError(err instanceof Error ? err.message : '同步模型元信息失败');
+      setError(err instanceof Error ? err.message : '同步模型配置失败');
     }
   };
 
@@ -253,8 +253,8 @@ export function ModelConfigPanel() {
       <section className="panel">
         <div className="panelHeader">
           <div>
-            <h2><Brain size={18} />本地模型配置</h2>
-            <p>API Key 和 Base URL 只保存在这台电脑；服务端只保存模型元信息和本地映射 id。</p>
+            <h2><Brain size={18} />模型配置</h2>
+            <p>服务端加密保存完整模型配置；当前客户端同步一份受保护的本地副本，离线时继续使用。</p>
           </div>
           <button className="iconButton" onClick={() => void load()} title="刷新模型">
             <RefreshCw size={17} />
@@ -302,7 +302,7 @@ export function ModelConfigPanel() {
                   </button>
                   <button
                     className="iconButton"
-                    title="同步供应商下的模型元信息"
+                    title="同步供应商下的完整模型配置"
                     onClick={() => void syncProviderGroup(group)}
                   >
                     <CheckCircle2 size={16} />
@@ -331,13 +331,13 @@ export function ModelConfigPanel() {
                     </span>
                   </div>
                   <span>{item.provider} · {item.model}</span>
-                  <span className="mono">{item.server_model_config_id || '未同步到服务端'}</span>
+                  <span className="mono">{item.server_model_config_id || '尚未同步到服务端'}</span>
                 </div>
                 <div className="modelActions">
                   <button className="iconButton" title="编辑" onClick={() => editModel(item)}>
                     <Settings2 size={16} />
                   </button>
-                  <button className="iconButton" title="同步元信息" onClick={() => void syncModel(item)}>
+                  <button className="iconButton" title="同步完整模型配置" onClick={() => void syncModel(item)}>
                     <RefreshCw size={16} />
                   </button>
                   <button className="iconButton danger" title="删除" onClick={() => void deleteModel(item)}>
@@ -378,10 +378,9 @@ export function ModelConfigPanel() {
                   })}
                 >
                   <option value="gpt">OpenAI</option>
-                  <option value="openai_compatible">OpenAI Compatible</option>
                   <option value="deepseek">DeepSeek</option>
                   <option value="kimi">Kimi</option>
-                  <option value="minimax">MiniMax</option>
+                  <option value="glm">GLM</option>
                 </select>
               </label>
               <label>

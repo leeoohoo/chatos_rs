@@ -64,7 +64,7 @@ impl SandboxManager {
     }
 }
 
-fn authorize_mcp_proxy_payload(
+pub(in crate::service::manager) fn authorize_mcp_proxy_payload(
     auth: &SandboxAuthContext,
     record: &SandboxLeaseRecord,
     payload: &Value,
@@ -164,7 +164,7 @@ pub(super) async fn check_agent_health(agent_endpoint: Option<&str>) -> (Option<
     }
 }
 
-async fn jsonrpc_agent_proxy(
+pub(in crate::service::manager) async fn jsonrpc_agent_proxy(
     agent_endpoint: &str,
     agent_token: Option<&str>,
     payload: Value,
@@ -267,6 +267,9 @@ mod tests {
             resource_limits: ResourceLimits::default(),
             network: NetworkPolicy::default(),
             tools: vec!["filesystem".to_string(), "terminal".to_string()],
+            lease_kind: "sandbox".to_string(),
+            primary_service_id: None,
+            environment_services: Vec::new(),
             agent_token_nonce: Some("nonce-1".to_string()),
             idempotency_key: None,
             created_at: "2026-01-01T00:00:00Z".to_string(),

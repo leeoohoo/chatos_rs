@@ -14,7 +14,8 @@ use crate::backend::SandboxBackendRef;
 use crate::config::AppConfig;
 use crate::error::ApiError;
 use crate::models::{
-    InitializeSandboxImageRequest, PoolStatusResponse, SandboxEventRecord, SandboxHealthCheck,
+    InitializeSandboxImageRequest, PoolStatusResponse, PrepareSandboxDependencyImagesRequest,
+    PrepareSandboxDependencyImagesResponse, SandboxEventRecord, SandboxHealthCheck,
     SandboxHealthResponse, SandboxImageCatalogResponse, SandboxImageJobRecord, SandboxLeaseRecord,
     SandboxStatus, SystemConfigResponse, UpdatePoolConfigRequest,
 };
@@ -24,6 +25,7 @@ use crate::store::SandboxStore;
 use super::images;
 
 mod access_clients;
+mod environments;
 mod lease_inputs;
 mod leases;
 mod mcp_proxy;
@@ -66,6 +68,9 @@ impl SandboxManager {
     ) -> Result<SandboxHealthResponse, ApiError> {
         let record = self.require_sandbox(sandbox_id).await?;
         auth.ensure_lease_access(&record, SCOPE_LEASE_READ)?;
+        if record.lease_kind == "environment" {
+            return self.environment_health(&record).await;
+        }
         let checked_at = now_rfc3339();
 
         let (backend_instance, backend_error) = match self
@@ -176,6 +181,161 @@ impl SandboxManager {
         Ok(response)
     }
 
+    async fn environment_health(
+        &self,
+        record: &SandboxLeaseRecord,
+    ) -> Result<SandboxHealthResponse, ApiError> {
+        let checked_at = now_rfc3339();
+        let (environment, backend_error) = match self
+            .backend
+            .inspect_environment(record.sandbox_id.as_str())
+            .await
+        {
+            Ok(environment) => (environment, None),
+            Err(error) => (None, Some(error)),
+        };
+        let backend_id = environment
+            .as_ref()
+            .and_then(|environment| environment.backend_id.clone())
+            .or_else(|| record.backend_id.clone());
+        let backend_alive = environment.is_some();
+        let lifecycle_ok = matches!(record.status, SandboxStatus::Ready | SandboxStatus::Running);
+        let workspace_alive = std::fs::metadata(record.run_workspace.as_str())
+            .map(|metadata| metadata.is_dir())
+            .unwrap_or(false);
+        let primary_service_id = record.primary_service_id.as_deref();
+        let primary_runtime = primary_service_id.and_then(|service_id| {
+            environment.as_ref().and_then(|environment| {
+                environment
+                    .services
+                    .iter()
+                    .find(|service| service.service_id == service_id)
+            })
+        });
+        let primary_record = primary_service_id.and_then(|service_id| {
+            record
+                .environment_services
+                .iter()
+                .find(|service| service.service_id == service_id)
+        });
+        let agent_endpoint = primary_runtime
+            .and_then(|service| service.agent_endpoint.clone())
+            .or_else(|| primary_record.and_then(|service| service.agent_endpoint.clone()))
+            .or_else(|| record.agent_endpoint.clone());
+        let (agent_alive, agent_message) =
+            mcp_proxy::check_agent_health(agent_endpoint.as_deref()).await;
+
+        let mut checks = vec![
+            SandboxHealthCheck {
+                name: "lifecycle_status".to_string(),
+                ok: lifecycle_ok,
+                message: if lifecycle_ok {
+                    format!("sandbox environment status is {}", record.status.as_str())
+                } else {
+                    format!(
+                        "sandbox environment status is not ready: {}",
+                        record.status.as_str()
+                    )
+                },
+            },
+            SandboxHealthCheck {
+                name: "environment_backend".to_string(),
+                ok: backend_alive,
+                message: match (&backend_id, &backend_error) {
+                    (_, Some(error)) => format!("environment inspect failed: {error}"),
+                    (Some(backend_id), None) => {
+                        format!("environment backend found: {backend_id}")
+                    }
+                    (None, None) => "environment backend was not found".to_string(),
+                },
+            },
+        ];
+        for service in &record.environment_services {
+            let runtime = environment.as_ref().and_then(|environment| {
+                environment
+                    .services
+                    .iter()
+                    .find(|runtime| runtime.service_id == service.service_id)
+            });
+            let status = runtime
+                .map(|runtime| runtime.status.as_str())
+                .unwrap_or(service.status.as_str());
+            let running = matches!(status, "running" | "ready" | "healthy");
+            checks.push(SandboxHealthCheck {
+                name: format!("service:{}", service.service_id),
+                ok: running,
+                message: format!(
+                    "{} service {} status is {}",
+                    service.service_role, service.service_id, status
+                ),
+            });
+        }
+        checks.push(SandboxHealthCheck {
+            name: "primary_application_agent".to_string(),
+            ok: primary_service_id.is_some() && agent_alive.unwrap_or(false),
+            message: match primary_service_id {
+                Some(service_id) => format!("primary application {service_id}: {agent_message}"),
+                None => "primary application service is not selected".to_string(),
+            },
+        });
+        checks.push(SandboxHealthCheck {
+            name: "workspace_path".to_string(),
+            ok: workspace_alive,
+            message: if workspace_alive {
+                "run workspace exists".to_string()
+            } else {
+                "run workspace does not exist".to_string()
+            },
+        });
+
+        let ok = checks.iter().all(|check| check.ok);
+        let message = if ok {
+            "sandbox environment is healthy; all services are running and the primary application MCP Agent is ready".to_string()
+        } else {
+            let failed_checks = checks
+                .iter()
+                .filter(|check| !check.ok)
+                .map(|check| check.name.as_str())
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("sandbox environment health check failed: {failed_checks}")
+        };
+        let response = SandboxHealthResponse {
+            ok,
+            sandbox_id: record.sandbox_id.clone(),
+            lease_id: record.id.clone(),
+            status: record.status,
+            backend: record.backend.clone(),
+            backend_id,
+            backend_alive,
+            agent_endpoint,
+            agent_alive,
+            workspace_alive,
+            checked_at,
+            message,
+            checks,
+        };
+        self.event(
+            record,
+            "sandbox_environment_health_checked",
+            Some(response.message.as_str()),
+            Some(json!({
+                "ok": response.ok,
+                "backend_alive": response.backend_alive,
+                "agent_alive": response.agent_alive,
+                "workspace_alive": response.workspace_alive,
+                "primary_service_id": record.primary_service_id,
+                "services": record.environment_services.iter().map(|service| json!({
+                    "service_id": service.service_id,
+                    "service_role": service.service_role,
+                    "status": service.status,
+                })).collect::<Vec<_>>(),
+            })),
+        )
+        .await;
+        Ok(response)
+    }
+
     pub async fn sandbox_images(
         &self,
         auth: &SandboxAuthContext,
@@ -209,6 +369,17 @@ impl SandboxManager {
         )
         .await
         .map_err(ApiError::bad_request)
+    }
+
+    pub async fn prepare_sandbox_dependency_images(
+        &self,
+        auth: &SandboxAuthContext,
+        input: PrepareSandboxDependencyImagesRequest,
+    ) -> Result<PrepareSandboxDependencyImagesResponse, ApiError> {
+        auth.require_scope(SCOPE_IMAGES_WRITE)?;
+        images::prepare_dependency_images(&self.config, self.config.backend, &input.image_refs)
+            .await
+            .map_err(ApiError::bad_request)
     }
 
     pub async fn pool_status(

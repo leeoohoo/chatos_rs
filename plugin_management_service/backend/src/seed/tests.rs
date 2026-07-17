@@ -83,7 +83,7 @@ fn legacy_chatos_plan_key_is_replaced_by_the_explicit_planning_role() {
 }
 
 #[test]
-fn system_agent_registry_contains_all_six_capability_roles() {
+fn system_agent_registry_contains_all_runtime_roles() {
     let keys = system_agent_specs()
         .into_iter()
         .map(|(agent_key, _, _, _, _)| agent_key)
@@ -98,6 +98,11 @@ fn system_agent_registry_contains_all_six_capability_roles() {
             "task_runner_run_phase",
             "project_management_agent",
             "local_connector_command_approval_agent",
+            "memory_engine_summary_agent",
+            "memory_engine_rollup_agent",
+            "memory_engine_subject_memory_agent",
+            "memory_engine_memory_rollup_agent",
+            "memory_engine_thread_repair_agent",
         ]
     );
 }

@@ -7,7 +7,7 @@ pub fn project_environment_tool_definitions() -> Vec<Value> {
     vec![
         json!({
             "name": "get_current_project_runtime_environment",
-            "description": "Get the current project details and persisted runtime environment for this project. The project id is bound by the server.",
+            "description": "Get the current project's persisted technical analysis, variables, generated configuration files, and service plans. User-secret values and non-analysis implementation details are omitted. The project id is bound by the server.",
             "inputSchema": {
                 "type": "object",
                 "properties": {},
@@ -16,16 +16,10 @@ pub fn project_environment_tool_definitions() -> Vec<Value> {
         }),
         json!({
             "name": "update_current_project_runtime_environment",
-            "description": "Persist the current project's provisioned runtime environment, generated environment configuration files, required service images, and connection variables. Prefer provisioning detected runtimes and dependencies; non-runnable is reserved for projects with no executable application or infrastructure entry point. The project id is bound by the server.",
+            "description": "Persist the current project's technical analysis, generated environment configuration files, application build plans, dependency service plans, and connection variables. Fields outside this technical-analysis schema are calculated by the server. Non-runnable is represented only by a concrete not_runnable_reason and is reserved for projects with no executable application or infrastructure entry point. The project id is bound by the server.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "status": {
-                        "type": "string",
-                        "enum": ["ready", "not_runnable", "failed", "pending_configuration", "pending_image_build"],
-                        "description": "Use ready after provisioning detected runtimes and dependency services. Use pending_configuration only for irreducible user-supplied business credentials. Use not_runnable only when the project has no executable entry point or build manifest; missing databases, caches, configuration centers, connection strings, or application configuration must be provisioned or generated instead."
-                    },
-                    "analysis_summary": {"type": "string"},
                     "not_runnable_reason": {
                         "type": ["string", "null"],
                         "description": "Allowed only when no executable application or infrastructure component can be identified. External service/configuration gaps are not valid reasons."
@@ -114,19 +108,19 @@ pub fn project_environment_tool_definitions() -> Vec<Value> {
                             "additionalProperties": false
                         }
                     },
-                    "last_error": {"type": ["string", "null"]},
                     "images": {
                         "type": "array",
-                        "description": "Service plans for one project-level Docker Compose environment. Generate a Dockerfile only for the application runtime; detected databases, caches, and configuration centers are dependency service records that the platform maps to maintained images under the same Compose project.",
+                        "description": "Service plans for one project-level Docker Compose environment. Before saving an application plan, search the current sandbox image catalog. If an initialized matching image exists, return its exact image_id; otherwise omit image_id so the program can initialize it when the user executes image preparation. Generate a Dockerfile only for the application runtime; detected databases, caches, and configuration centers are dependency service records that the platform maps to maintained images under the same Compose project.",
                         "items": {
                             "type": "object",
                             "properties": {
                                 "environment_key": {"type": "string"},
                                 "environment_type": {"type": "string"},
                                 "display_name": {"type": "string"},
-                                "image_id": {"type": ["string", "null"]},
-                                "image_ref": {"type": ["string", "null"]},
-                                "image_provider": {"type": "string"},
+                                "image_id": {
+                                    "type": ["string", "null"],
+                                    "description": "Exact initialized image id returned by sandbox image search. Omit when no matching initialized image exists. Never invent an id."
+                                },
                                 "features": {"type": "array"},
                                 "ports": {"type": "array"},
                                 "env_vars": {"type": "object"},
@@ -135,16 +129,9 @@ pub fn project_environment_tool_definitions() -> Vec<Value> {
                                     "minLength": 1,
                                     "maxLength": 131072,
                                     "description": "Complete generated Dockerfile for the application runtime. Dependency service records may use null because the platform supplies their maintained images in the project-level Compose file. Do not embed secrets."
-                                },
-                                "custom_build_script": {
-                                    "type": ["string", "null"],
-                                    "maxLength": 131072,
-                                    "description": "Optional idempotent root Bash installation script equivalent to the generated Dockerfile RUN steps. The current image builder uses this script when the user clicks Generate Image."
-                                },
-                                "status": {"type": "string"},
-                                "error": {"type": ["string", "null"]}
+                                }
                             },
-                            "required": ["environment_key", "environment_type", "display_name", "status"],
+                            "required": ["environment_key", "environment_type", "display_name"],
                             "additionalProperties": false
                         }
                     }
@@ -226,6 +213,37 @@ mod tests {
         assert!(project_tools[1]
             .pointer("/inputSchema/properties/generated_config_files/items/properties/content")
             .is_some());
+        let top_level_properties = project_tools[1]
+            .pointer("/inputSchema/properties")
+            .and_then(Value::as_object)
+            .expect("top-level properties");
+        for forbidden in [
+            "status",
+            "analysis_summary",
+            "last_error",
+            "file_provider",
+            "sandbox_provider",
+            "mcp_policy",
+        ] {
+            assert!(!top_level_properties.contains_key(forbidden));
+        }
+        let image_properties = project_tools[1]
+            .pointer("/inputSchema/properties/images/items/properties")
+            .and_then(Value::as_object)
+            .expect("image properties");
+        for forbidden in [
+            "image_ref",
+            "image_provider",
+            "custom_build_script",
+            "mcp_policy",
+            "mcp_enabled",
+            "agent_install_script",
+            "status",
+            "error",
+        ] {
+            assert!(!image_properties.contains_key(forbidden));
+        }
+        assert!(image_properties.contains_key("image_id"));
         let runtime_info_tools = project_runtime_environment_info_tool_definitions();
         assert_eq!(runtime_info_tools.len(), 1);
         assert_eq!(

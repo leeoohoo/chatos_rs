@@ -35,7 +35,7 @@ async fn compacts_old_recalls_into_a_cumulative_rollup() {
     }
 
     let first_plan = database
-        .prepare_subject_memory_rollup(OWNER, "project", PROJECT, PROJECT, 2)
+        .prepare_subject_memory_rollup(OWNER, "project", PROJECT, PROJECT, 2, 1)
         .await
         .expect("prepare first rollup")
         .expect("first rollup plan");
@@ -46,7 +46,7 @@ async fn compacts_old_recalls_into_a_cumulative_rollup() {
 
     create_project_recall(&database, 4).await;
     let second_plan = database
-        .prepare_subject_memory_rollup(OWNER, "project", PROJECT, PROJECT, 2)
+        .prepare_subject_memory_rollup(OWNER, "project", PROJECT, PROJECT, 2, 1)
         .await
         .expect("prepare second rollup")
         .expect("second rollup plan");

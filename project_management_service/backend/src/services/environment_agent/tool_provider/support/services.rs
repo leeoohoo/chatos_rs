@@ -150,7 +150,18 @@ pub(in crate::services::environment_agent::tool_provider) fn validate_environmen
         .filter(|image| image_is_application_runtime(image) && !image_plan_is_complete(image))
         .map(|image| image.environment_key.clone())
         .collect::<Vec<_>>();
-    if missing.is_empty() && invalid_plans.is_empty() {
+    let agent_controlled_dockerfiles = images
+        .iter()
+        .filter(|image| image_is_application_runtime(image))
+        .filter(|image| {
+            image
+                .dockerfile
+                .as_deref()
+                .is_some_and(dockerfile_contains_program_managed_mcp_control)
+        })
+        .map(|image| image.environment_key.clone())
+        .collect::<Vec<_>>();
+    if missing.is_empty() && invalid_plans.is_empty() && agent_controlled_dockerfiles.is_empty() {
         return Ok(());
     }
     let mut reasons = Vec::new();
@@ -166,8 +177,33 @@ pub(in crate::services::environment_agent::tool_provider) fn validate_environmen
             invalid_plans.join(", ")
         ));
     }
+    if !agent_controlled_dockerfiles.is_empty() {
+        reasons.push(format!(
+            "application Dockerfiles attempt to install or configure the program-managed Chat OS MCP Agent: {}",
+            agent_controlled_dockerfiles.join(", ")
+        ));
+    }
     Err(format!(
-        "runtime environment composition planning is incomplete: {}. Generate one application Dockerfile and include one service record for every detected dependency; dependency services are grouped under the generated project-level Docker Compose file.",
+        "runtime environment composition planning is incomplete: {}. Generate one application record and Dockerfile for every independently deployable code component, and include one service record for every detected dependency; all application and dependency services are grouped under the generated project-level Docker Compose file.",
         reasons.join("; ")
     ))
+}
+
+fn dockerfile_contains_program_managed_mcp_control(dockerfile: &str) -> bool {
+    let dockerfile = dockerfile.to_ascii_lowercase();
+    [
+        "chatos-sandbox-mcp",
+        "chatos_sandbox_mcp",
+        "chat os mcp agent",
+        "chatos mcp agent",
+        "mcp_token",
+        "mcp_port",
+        "mcp_image",
+        "mcp_command",
+        "agent_install_script",
+        "agent_injection_mode",
+        "/opt/chatos/",
+    ]
+    .iter()
+    .any(|marker| dockerfile.contains(marker))
 }

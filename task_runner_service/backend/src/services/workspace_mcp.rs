@@ -333,6 +333,7 @@ pub(super) fn sanitize_task_mcp_config(mut config: TaskMcpConfig) -> TaskMcpConf
     config.sandbox_manager_base_url = normalized_optional(config.sandbox_manager_base_url)
         .map(|value| value.trim_end_matches('/').to_string());
     config.default_remote_server_id = normalized_optional(config.default_remote_server_id);
+    config.execution_service_id = normalized_optional(config.execution_service_id);
     config.external_mcp_config_ids = normalize_strings(config.external_mcp_config_ids);
     config.selected_skill_ids = normalize_strings(config.selected_skill_ids);
     config.skill_policy_revision = normalized_optional(config.skill_policy_revision);

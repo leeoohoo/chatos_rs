@@ -47,6 +47,7 @@ export_local_env() {
   export PROJECT_SERVICE_TASK_RUNNER_INTERNAL_API_SECRET="${PROJECT_SERVICE_TASK_RUNNER_INTERNAL_API_SECRET:-change_me_project_service_task_runner_secret}"
   export CHATOS_TASK_RUNNER_INTERNAL_API_SECRET="${CHATOS_TASK_RUNNER_INTERNAL_API_SECRET:-change_me_chatos_task_runner_internal_secret}"
   export PLUGIN_MANAGEMENT_INTERNAL_API_SECRET="${PLUGIN_MANAGEMENT_INTERNAL_API_SECRET:-change_me_plugin_management_internal_secret}"
+  export PLUGIN_MANAGEMENT_MEMORY_ENGINE_INTERNAL_API_SECRET="${PLUGIN_MANAGEMENT_MEMORY_ENGINE_INTERNAL_API_SECRET:-change_me_plugin_management_memory_engine_secret}"
   export TASK_RUNNER_CHATOS_CALLBACK_SECRET="${TASK_RUNNER_CHATOS_CALLBACK_SECRET:-change_me_chatos_task_runner_secret}"
   export CHATOS_PROJECT_SERVICE_SYNC_SECRET="${CHATOS_PROJECT_SERVICE_SYNC_SECRET:-change_me_project_sync_secret}"
   export CHATOS_PROJECT_SERVICE_INTERNAL_API_SECRET="${CHATOS_PROJECT_SERVICE_INTERNAL_API_SECRET:-change_me_chatos_project_service_secret}"

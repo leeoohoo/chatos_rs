@@ -72,12 +72,32 @@ fn image_response(image: &LocalRuntimeEnvironmentImageRecord, fallback_dockerfil
             .eq_ignore_ascii_case("application")
             .then_some(fallback_dockerfile)
     });
+    let service_role = program_managed_service_role(image, dockerfile);
+    let service_id = program_managed_service_id(image.environment_key.as_str(), service_role);
+    let mcp_policy = if service_role == "application" {
+        json!({
+            "managed_by": "system",
+            "attachment": "project_gateway_target",
+            "filesystem": true,
+            "terminal": true,
+        })
+    } else {
+        json!({
+            "managed_by": "system",
+            "attachment": "none",
+            "filesystem": false,
+            "terminal": false,
+        })
+    };
     json!({
         "id": image.id,
         "project_id": image.project_id,
         "environment_key": image.environment_key,
         "environment_type": image.environment_type,
         "display_name": image.display_name,
+        "service_id": service_id,
+        "service_role": service_role,
+        "mcp_policy": mcp_policy,
         "image_id": image.image_id,
         "image_ref": image.image_ref,
         "image_provider": image.image_provider,
@@ -92,6 +112,119 @@ fn image_response(image: &LocalRuntimeEnvironmentImageRecord, fallback_dockerfil
     })
 }
 
+fn program_managed_service_id(environment_key: &str, service_role: &str) -> String {
+    const MAX_SERVICE_ID_LENGTH: usize = 63;
+
+    let mut normalized = String::new();
+    let mut previous_separator = false;
+    for character in environment_key.trim().chars() {
+        if character.is_ascii_alphanumeric() {
+            normalized.push(character.to_ascii_lowercase());
+            previous_separator = false;
+        } else if !previous_separator && !normalized.is_empty() {
+            normalized.push('-');
+            previous_separator = true;
+        }
+    }
+    while normalized.ends_with('-') {
+        normalized.pop();
+    }
+    if normalized.is_empty() {
+        normalized = match service_role {
+            "application" => "application",
+            "dependency" => "dependency",
+            _ => "service",
+        }
+        .to_string();
+    } else if normalized
+        .chars()
+        .next()
+        .is_some_and(|character| character.is_ascii_digit())
+    {
+        let prefix = match service_role {
+            "application" => "app",
+            "dependency" => "dependency",
+            _ => "service",
+        };
+        normalized = format!("{prefix}-{normalized}");
+    }
+    normalized.truncate(MAX_SERVICE_ID_LENGTH);
+    while normalized.ends_with('-') {
+        normalized.pop();
+    }
+    normalized
+}
+
+fn program_managed_service_role(
+    image: &LocalRuntimeEnvironmentImageRecord,
+    dockerfile: Option<&str>,
+) -> &'static str {
+    let identity = format!(
+        "{} {} {} {}",
+        image.environment_key,
+        image.environment_type,
+        image.display_name,
+        image.image_ref.as_deref().unwrap_or_default(),
+    )
+    .to_ascii_lowercase();
+    if [
+        "mysql",
+        "mariadb",
+        "mongodb",
+        "mongo:",
+        "postgres",
+        "redis",
+        "nacos",
+        "rabbitmq",
+        "kafka",
+        "elasticsearch",
+        "opensearch",
+        "minio",
+    ]
+    .iter()
+    .any(|marker| identity.contains(marker))
+    {
+        return "dependency";
+    }
+    let declared_application = image
+        .environment_type
+        .trim()
+        .eq_ignore_ascii_case("application")
+        || image
+            .environment_type
+            .trim()
+            .eq_ignore_ascii_case("runtime")
+        || matches!(
+            image.environment_key.trim().to_ascii_lowercase().as_str(),
+            "app" | "application" | "application_runtime"
+        );
+    if declared_application && dockerfile.is_some_and(|value| !value.trim().is_empty()) {
+        "application"
+    } else {
+        "unknown"
+    }
+}
+
 fn parse_json(raw: &str) -> Value {
     serde_json::from_str(raw).unwrap_or(Value::Null)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::program_managed_service_id;
+
+    #[test]
+    fn local_service_ids_match_program_managed_compose_constraints() {
+        assert_eq!(
+            program_managed_service_id("services/API Worker", "application"),
+            "services-api-worker"
+        );
+        let service_id = program_managed_service_id(
+            "123/a deliberately very long application component name that exceeds compose limits",
+            "application",
+        );
+        assert!(service_id.starts_with("app-123-a-deliberately"));
+        assert!(service_id.len() <= 63);
+        assert!(!service_id.ends_with('-'));
+    }
 }

@@ -12,7 +12,8 @@ use super::internal_auth::{
 };
 use crate::mcp_server::{self, JsonRpcRequest, JsonRpcResponse};
 use crate::services::runtime_environment::{
-    default_runtime_environment_for_project, refresh_environment_variable_values,
+    apply_program_managed_image_policy, default_runtime_environment_for_project,
+    refresh_environment_variable_values,
 };
 use crate::state::AppState;
 
@@ -117,10 +118,13 @@ async fn call_tool(
         .await?
         .unwrap_or_else(|| default_runtime_environment_for_project(&project, None));
     refresh_environment_variable_values(&mut environment);
-    let images = state
+    let mut images = state
         .store
         .list_project_runtime_environment_images(project_id)
         .await?;
+    for image in &mut images {
+        apply_program_managed_image_policy(image);
+    }
     Ok(tool_result(json!({
         "project_id": project_id,
         "environment": environment,

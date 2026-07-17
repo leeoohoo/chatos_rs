@@ -9,7 +9,7 @@ use chatos_ai_runtime::ModelRuntimeConfig;
 use chatos_mcp_runtime::BuiltinMcpKind;
 use chatos_plugin_management_sdk::{
     ResolveAgentCapabilitiesRequest, ResolvedAgentCapabilities, SystemAgentKey,
-    PROJECT_ENVIRONMENT_MCP_RESOURCE_ID,
+    PROJECT_ENVIRONMENT_MCP_RESOURCE_ID, SANDBOX_IMAGES_MCP_RESOURCE_ID,
 };
 use serde_json::{json, Value};
 
@@ -31,11 +31,14 @@ use self::agent_prompt::resolve_project_environment_agent_prompt;
 use self::inspection::{inspect_local_project, LocalProjectInspection};
 use self::mcp_servers::{
     build_project_environment_mcp_executor, create_sandbox_image_from_plan,
-    ensure_agent_required_tools_available, start_local_project_compose_environment,
+    ensure_agent_required_tools_available, get_local_project_compose_environment_status,
+    get_sandbox_image_catalog, prepare_sandbox_dependency_images,
+    restart_local_project_compose_environment, start_local_project_compose_environment,
+    stop_local_project_compose_environment,
 };
 use self::memory::{build_project_agent_memory, ProjectAgentMemory};
 use self::routing::{
-    provider_label, resolve_runtime_environment_routing, RoutingDecision, RoutingPlan, StopDecision,
+    resolve_runtime_environment_routing, RoutingDecision, RoutingPlan, StopDecision,
 };
 
 const LOCAL_CONNECTOR_ROOT_PREFIX: &str = "local://connector/";
@@ -53,6 +56,37 @@ pub async fn start_project_runtime_environment(
     user_access_token: Option<&str>,
 ) -> Result<ProjectRuntimeEnvironmentResponse, String> {
     runtime::lifecycle::start_project_runtime_environment_impl(state, project, user_access_token)
+        .await
+}
+
+pub async fn get_project_runtime_environment_deployment(
+    state: &AppState,
+    project: &ProjectRecord,
+    user_access_token: Option<&str>,
+) -> Result<Value, String> {
+    runtime::lifecycle::get_project_runtime_environment_deployment_impl(
+        state,
+        project,
+        user_access_token,
+    )
+    .await
+}
+
+pub async fn stop_project_runtime_environment(
+    state: &AppState,
+    project: &ProjectRecord,
+    user_access_token: Option<&str>,
+) -> Result<ProjectRuntimeEnvironmentResponse, String> {
+    runtime::lifecycle::stop_project_runtime_environment_impl(state, project, user_access_token)
+        .await
+}
+
+pub async fn restart_project_runtime_environment(
+    state: &AppState,
+    project: &ProjectRecord,
+    user_access_token: Option<&str>,
+) -> Result<ProjectRuntimeEnvironmentResponse, String> {
+    runtime::lifecycle::restart_project_runtime_environment_impl(state, project, user_access_token)
         .await
 }
 
@@ -90,4 +124,11 @@ pub(super) fn compose_dependency_image_ref(
     image: &ProjectRuntimeEnvironmentImageRecord,
 ) -> Option<String> {
     runtime::lifecycle::compose_dependency_image_ref_impl(image)
+}
+
+pub(super) fn runtime_application_service_id(
+    image: &ProjectRuntimeEnvironmentImageRecord,
+    _index: usize,
+) -> String {
+    crate::services::runtime_environment::program_managed_service_id(image)
 }

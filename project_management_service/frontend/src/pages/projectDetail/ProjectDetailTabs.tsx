@@ -11,6 +11,7 @@ import { Link } from 'react-router-dom';
 import type {
   DependencyGraphNode,
   ProjectRecord,
+  ProjectRuntimeEnvironmentDeploymentResponse,
   ProjectRuntimeEnvironmentResponse,
   UpdateProjectRuntimeEnvironmentVariablesPayload,
   ProjectWorkItemRecord,
@@ -51,12 +52,16 @@ interface ProjectDetailTabsProps {
   blockingRelations: GraphRelationRow[];
   containsRelations: GraphRelationRow[];
   runtimeEnvironment?: ProjectRuntimeEnvironmentResponse;
+  runtimeEnvironmentDeployment?: ProjectRuntimeEnvironmentDeploymentResponse;
   runtimeEnvironmentLoading: boolean;
+  runtimeEnvironmentDeploymentLoading: boolean;
   runtimeEnvironmentErrorMessage?: string;
   runtimeEnvironmentAnalyzing: boolean;
   runtimeEnvironmentSettingsSaving: boolean;
   runtimeEnvironmentVariablesSaving: boolean;
   runtimeEnvironmentStarting: boolean;
+  runtimeEnvironmentStopping: boolean;
+  runtimeEnvironmentRestarting: boolean;
   onRefreshRuntimeEnvironment: () => void;
   onAnalyzeRuntimeEnvironment: () => void;
   onRuntimeSandboxEnabledChange: (value: boolean) => void;
@@ -64,6 +69,9 @@ interface ProjectDetailTabsProps {
     payload: UpdateProjectRuntimeEnvironmentVariablesPayload,
   ) => Promise<void>;
   onStartRuntimeEnvironment: () => void;
+  onRefreshRuntimeEnvironmentDeployment: () => void;
+  onStopRuntimeEnvironment: () => void;
+  onRestartRuntimeEnvironment: () => void;
 }
 
 const renderRequirementExpandIcon = ({
@@ -122,17 +130,24 @@ export function ProjectDetailTabs({
   blockingRelations,
   containsRelations,
   runtimeEnvironment,
+  runtimeEnvironmentDeployment,
   runtimeEnvironmentLoading,
+  runtimeEnvironmentDeploymentLoading,
   runtimeEnvironmentErrorMessage,
   runtimeEnvironmentAnalyzing,
   runtimeEnvironmentSettingsSaving,
   runtimeEnvironmentVariablesSaving,
   runtimeEnvironmentStarting,
+  runtimeEnvironmentStopping,
+  runtimeEnvironmentRestarting,
   onRefreshRuntimeEnvironment,
   onAnalyzeRuntimeEnvironment,
   onRuntimeSandboxEnabledChange,
   onSaveRuntimeEnvironmentVariables,
   onStartRuntimeEnvironment,
+  onRefreshRuntimeEnvironmentDeployment,
+  onStopRuntimeEnvironment,
+  onRestartRuntimeEnvironment,
 }: ProjectDetailTabsProps) {
   return (
     <>
@@ -218,17 +233,24 @@ export function ProjectDetailTabs({
             children: (
               <RuntimeEnvironmentPanel
                 response={runtimeEnvironment}
+                deployment={runtimeEnvironmentDeployment}
                 loading={runtimeEnvironmentLoading}
+                deploymentLoading={runtimeEnvironmentDeploymentLoading}
                 errorMessage={runtimeEnvironmentErrorMessage}
                 analyzing={runtimeEnvironmentAnalyzing}
                 settingsSaving={runtimeEnvironmentSettingsSaving}
                 variablesSaving={runtimeEnvironmentVariablesSaving}
                 environmentStarting={runtimeEnvironmentStarting}
+                environmentStopping={runtimeEnvironmentStopping}
+                environmentRestarting={runtimeEnvironmentRestarting}
                 onRefresh={onRefreshRuntimeEnvironment}
                 onAnalyze={onAnalyzeRuntimeEnvironment}
                 onSandboxEnabledChange={onRuntimeSandboxEnabledChange}
                 onSaveEnvironmentVariables={onSaveRuntimeEnvironmentVariables}
                 onStartEnvironment={onStartRuntimeEnvironment}
+                onRefreshDeployment={onRefreshRuntimeEnvironmentDeployment}
+                onStopEnvironment={onStopRuntimeEnvironment}
+                onRestartEnvironment={onRestartRuntimeEnvironment}
               />
             ),
           },

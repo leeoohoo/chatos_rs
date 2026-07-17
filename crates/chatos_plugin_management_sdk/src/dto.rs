@@ -25,16 +25,26 @@ pub enum SystemAgentKey {
     TaskRunnerRunPhase,
     ProjectManagementAgent,
     LocalConnectorCommandApprovalAgent,
+    MemoryEngineSummaryAgent,
+    MemoryEngineRollupAgent,
+    MemoryEngineSubjectMemoryAgent,
+    MemoryEngineMemoryRollupAgent,
+    MemoryEngineThreadRepairAgent,
 }
 
 impl SystemAgentKey {
-    pub const ALL: [Self; 6] = [
+    pub const ALL: [Self; 11] = [
         Self::ChatosConversationAgent,
         Self::ChatosPlanningAgent,
         Self::ProjectRequirementExecutionPlannerAgent,
         Self::TaskRunnerRunPhase,
         Self::ProjectManagementAgent,
         Self::LocalConnectorCommandApprovalAgent,
+        Self::MemoryEngineSummaryAgent,
+        Self::MemoryEngineRollupAgent,
+        Self::MemoryEngineSubjectMemoryAgent,
+        Self::MemoryEngineMemoryRollupAgent,
+        Self::MemoryEngineThreadRepairAgent,
     ];
 
     pub const fn as_str(self) -> &'static str {
@@ -47,6 +57,11 @@ impl SystemAgentKey {
             Self::TaskRunnerRunPhase => "task_runner_run_phase",
             Self::ProjectManagementAgent => "project_management_agent",
             Self::LocalConnectorCommandApprovalAgent => "local_connector_command_approval_agent",
+            Self::MemoryEngineSummaryAgent => "memory_engine_summary_agent",
+            Self::MemoryEngineRollupAgent => "memory_engine_rollup_agent",
+            Self::MemoryEngineSubjectMemoryAgent => "memory_engine_subject_memory_agent",
+            Self::MemoryEngineMemoryRollupAgent => "memory_engine_memory_rollup_agent",
+            Self::MemoryEngineThreadRepairAgent => "memory_engine_thread_repair_agent",
         }
     }
 }
@@ -454,6 +469,8 @@ mod tests {
 
     #[test]
     fn system_agent_keys_match_registry_keys() {
+        assert_eq!(SystemAgentKey::ALL.len(), 11);
+        assert_eq!(SystemAgentKey::ALL.len() * AgentPromptVendor::ALL.len(), 44);
         assert_eq!(
             SystemAgentKey::ChatosConversationAgent.as_str(),
             "chatos_conversation_agent"
@@ -461,6 +478,10 @@ mod tests {
         assert_eq!(
             SystemAgentKey::LocalConnectorCommandApprovalAgent.as_str(),
             "local_connector_command_approval_agent"
+        );
+        assert_eq!(
+            SystemAgentKey::MemoryEngineThreadRepairAgent.as_str(),
+            "memory_engine_thread_repair_agent"
         );
     }
 

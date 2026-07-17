@@ -11,12 +11,14 @@ use crate::auth::{AccessToken, CurrentUser};
 use crate::models::*;
 use crate::services::environment_agent::{
     analyze_project_runtime_environment, generate_project_runtime_environment_image,
-    get_project_runtime_environment_progress, start_project_runtime_environment,
+    get_project_runtime_environment_deployment, get_project_runtime_environment_progress,
+    restart_project_runtime_environment, start_project_runtime_environment,
+    stop_project_runtime_environment,
 };
 use crate::services::runtime_environment::{
     apply_environment_variable_overrides, default_runtime_environment_for_project,
     enforce_project_runtime_boundary, ensure_runtime_environment_for_project,
-    refresh_environment_variable_values,
+    refresh_environment_variable_values, replace_legacy_internal_routing_summary,
 };
 use crate::state::AppState;
 
@@ -38,11 +40,16 @@ pub(in crate::api) async fn get_project_runtime_environment(
         .list_project_runtime_environment_images(&project_id)
         .await
         .map_err(ApiError::bad_request)?;
+    let mut environment_changed =
+        replace_legacy_internal_routing_summary(&mut environment, images.as_slice());
     if enforce_project_runtime_boundary(
         project.execution_plane,
         &mut environment,
         images.as_mut_slice(),
     ) {
+        environment_changed = true;
+    }
+    if environment_changed {
         environment = state
             .store
             .upsert_project_runtime_environment(&environment)
@@ -159,6 +166,47 @@ pub(in crate::api) async fn start_project_runtime_environment_handler(
     let project = require_project_access(&state, &project_id, &user).await?;
     ensure_project_writable(&project)?;
     start_project_runtime_environment(&state, &project, Some(access_token.0.as_str()))
+        .await
+        .map(Json)
+        .map_err(ApiError::bad_gateway)
+}
+
+pub(in crate::api) async fn get_project_runtime_environment_deployment_handler(
+    Path(project_id): Path<String>,
+    State(state): State<AppState>,
+    Extension(user): Extension<CurrentUser>,
+    Extension(access_token): Extension<AccessToken>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let project = require_project_access(&state, &project_id, &user).await?;
+    get_project_runtime_environment_deployment(&state, &project, Some(access_token.0.as_str()))
+        .await
+        .map(Json)
+        .map_err(ApiError::bad_gateway)
+}
+
+pub(in crate::api) async fn stop_project_runtime_environment_handler(
+    Path(project_id): Path<String>,
+    State(state): State<AppState>,
+    Extension(user): Extension<CurrentUser>,
+    Extension(access_token): Extension<AccessToken>,
+) -> Result<Json<ProjectRuntimeEnvironmentResponse>, ApiError> {
+    let project = require_project_access(&state, &project_id, &user).await?;
+    ensure_project_writable(&project)?;
+    stop_project_runtime_environment(&state, &project, Some(access_token.0.as_str()))
+        .await
+        .map(Json)
+        .map_err(ApiError::bad_gateway)
+}
+
+pub(in crate::api) async fn restart_project_runtime_environment_handler(
+    Path(project_id): Path<String>,
+    State(state): State<AppState>,
+    Extension(user): Extension<CurrentUser>,
+    Extension(access_token): Extension<AccessToken>,
+) -> Result<Json<ProjectRuntimeEnvironmentResponse>, ApiError> {
+    let project = require_project_access(&state, &project_id, &user).await?;
+    ensure_project_writable(&project)?;
+    restart_project_runtime_environment(&state, &project, Some(access_token.0.as_str()))
         .await
         .map(Json)
         .map_err(ApiError::bad_gateway)

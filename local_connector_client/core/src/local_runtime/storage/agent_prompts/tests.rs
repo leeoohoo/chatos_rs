@@ -77,7 +77,10 @@ async fn installs_bundle_atomically_and_tracks_remote_updates() {
     assert_eq!(sync.installed_bundle_version, 3);
     assert_eq!(sync.remote_bundle_version, 4);
     assert!(sync.update_available);
-    assert_eq!(sync.prompt_count, 24);
+    assert_eq!(
+        sync.prompt_count,
+        (SystemAgentKey::ALL.len() * AgentPromptVendor::ALL.len()) as i64
+    );
 
     database.close().await;
     fs::remove_dir_all(root).expect("cleanup database");

@@ -12,7 +12,7 @@
 - [x] 本地模型供应商支持 `prompt_vendor`；
 - [x] User Service 完成供应商级 `prompt_vendor` 配置并向 ChatOS、Project Management、Task Runner 传播；
 - [x] ChatOS、Project Management、Task Runner 云端运行时在每个 Run 前解析当前 Published Prompt；
-- [x] 删除目标六类 Agent 的迁移期硬编码 Prompt 正文和 fallback；
+- [x] 删除原目标六类 Agent 的迁移期硬编码 Prompt 正文和 fallback；
 - [x] Plugin Management 支持使用用户云端模型生成 Prompt 草稿，生成结果不会自动保存或发布；
 - [x] 客户端启动、手动检查及每 15 分钟后台检查 Manifest，只提示可更新，不自动覆盖；
 - [x] 完成后端测试、主要 Rust 工程编译检查及相关前端生产构建；
@@ -20,7 +20,7 @@
 
 客户端更新流程固定为：自动检查版本、用户手动确认、下载完整 Bundle、checksum/完整性校验、单事务替换 SQLite 当前版本。任何下载或安装失败都保留原安装版本。客户端运行 Agent 时不请求云端 Prompt。
 
-当前实现边界：每个 `agent_key + vendor` 只保存当前 Published 版本；客户端不保存 Draft 和历史版本；本期不迁移历史数据。服务端 seed 不会覆盖已经存在的 Prompt 记录，已有开发数据库如需采用新的基线内容，应由管理员编辑并重新发布。
+当前实现边界：每个 `agent_key + vendor` 继续保存当前 Draft/Published 内容；Plugin Management 额外保存每次发布后的 Agent 级完整 Bundle 快照，供管理页查看版本列表和历史详情。客户端仍只保存用户当前安装的 Bundle，不保存 Draft 和历史版本。服务端 seed 不会覆盖已经存在的 Prompt 记录，已有数据首次升级时会把当前 Published 内容登记为版本历史基线。
 
 ## 1. 最终需求定义
 
@@ -163,7 +163,7 @@ Local Connector Client
 flowchart LR
     Admin["超级管理员"] --> UI["System Agents<br/>Prompt 设置"]
     UI --> PM["Plugin Management Service"]
-    PM --> Mongo["MongoDB<br/>24 个 Agent Vendor Prompts"]
+    PM --> Mongo["MongoDB<br/>44 个 Agent Vendor Prompts"]
 
     Cloud["Chat OS / Task Runner / Project Service"] --> ResolveAPI["Prompt Resolve API"]
     ResolveAPI --> PM
@@ -409,12 +409,16 @@ agent_prompt_bundle_version
 
 Bundle Version 用于客户端低成本检测更新；单条 Prompt 仍使用 `published_revision + checksum` 做精确校验。客户端只保存当前安装 Bundle，不保存历史 Bundle 和 Draft。
 
+Plugin Management 同时按 Agent 保存发布快照。每次某个 vendor 发布后，使用新的全局 `bundle_version` 固化该 Agent 当时四个 vendor 的 Published 内容、revision 和 checksum。该快照只用于管理员查看历史版本，不改变运行时与客户端只读取当前 Published Bundle 的规则。
+
 ## 8. Plugin Management 管理 API
 
 全部要求 `super_admin`。
 
 ```text
 GET  /api/system-agents/{agent_key}/provider-prompts
+GET  /api/system-agents/{agent_key}/prompt-versions
+GET  /api/system-agents/{agent_key}/prompt-versions/{bundle_version}
 PUT  /api/system-agents/{agent_key}/provider-prompts/{vendor}/draft
 POST /api/system-agents/{agent_key}/provider-prompts/{vendor}/publish
 POST /api/system-agents/{agent_key}/provider-prompts/{vendor}/generate/stream
@@ -510,9 +514,11 @@ Prompt 4/4
 Prompt 3/4
 ```
 
-### 10.2 Prompt 设置页面
+### 10.2 Prompt 版本列表与设置页面
 
-使用宽 Drawer 或大 Modal，固定四个 Tab：
+点击 `Prompt 设置` 后进入完整版本列表页，不使用 Drawer 或 Modal 承载主编辑器。列表按 Bundle Version 倒序展示每次发布的 Agent 完整快照、四厂商 revision、变更厂商、发布时间和发布人。
+
+点击当前版本进入可编辑的完整详情页；点击历史版本进入只读详情页。详情页固定四个 Tab：
 
 ```text
 [GLM] [DeepSeek] [GPT] [Kimi]
@@ -1046,8 +1052,8 @@ glm/zhipu/zai -> glm
 按以下顺序实施：
 
 1. 先完成 Plugin Management 数据面和管理页面；
-2. 从当前代码行为整理 6 份 Agent 基线 Prompt；
-3. Plugin Management Seeder 把每份基线复制为四个厂商的 Published revision 1，共 24 条；
+2. 从当前代码行为整理 11 份 Agent 基线 Prompt；
+3. Plugin Management Seeder 把每份基线复制为四个厂商的 Published revision 1，共 44 条；
 4. 管理员在页面检查默认内容，需要时先分别调整；
 5. 完整性接口确认所有启用 Agent 都是 `4/4 ready`；
 6. 云端消费者增加运行前 Resolve 能力，客户端增加 Bundle 同步、SQLite 存储和设置页更新能力；
@@ -1269,4 +1275,4 @@ Plugin Management 中的 Agent × Vendor 完整 Prompt
 
 Plugin Management 是唯一发布权威；云端通过 Internal Prompt Resolve API 主动读取当前 Published Prompt，客户端通过 Local Connector Service 检查版本并由用户手动同步 Published Bundle 到 SQLite，Agent Run 只读取本地安装版本。
 
-推荐先从当前代码行为整理 6 份基线 Prompt，并在 Plugin Management 中复制初始化为 24 份厂商默认 Prompt；确认全部发布完整后再切换运行时，最后删除 Agent Runtime 代码中的 Prompt 正文和所有 legacy fallback。后续管理员可以在页面里分别优化四个厂商版本。
+推荐先从当前代码行为整理 11 份基线 Prompt，并在 Plugin Management 中复制初始化为 44 份厂商默认 Prompt；确认全部发布完整后再切换运行时，最后删除 Agent Runtime 代码中的 Prompt 正文和所有 legacy fallback。后续管理员可以在页面里分别优化四个厂商版本。

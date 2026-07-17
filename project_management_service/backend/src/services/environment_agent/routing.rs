@@ -30,7 +30,6 @@ pub(super) enum RoutingDecision {
 pub(super) struct RoutingPlan {
     pub(super) file_provider: RuntimeEnvironmentProvider,
     pub(super) sandbox_provider: RuntimeEnvironmentProvider,
-    pub(super) summary: String,
 }
 
 #[derive(Debug)]
@@ -96,7 +95,6 @@ fn resolve_cloud_routing(project: &ProjectRecord) -> RoutingDecision {
     RoutingDecision::Ready(RoutingPlan {
         file_provider: RuntimeEnvironmentProvider::Harness,
         sandbox_provider: RuntimeEnvironmentProvider::CloudSandboxManager,
-        summary: "云端项目只通过 Harness MCP 读取文件，并只使用云端 Sandbox Manager。".to_string(),
     })
 }
 
@@ -154,9 +152,6 @@ async fn resolve_local_routing(
     RoutingDecision::Ready(RoutingPlan {
         file_provider: RuntimeEnvironmentProvider::LocalConnector,
         sandbox_provider,
-        summary:
-            "本地项目将通过 Local Connector 文件 MCP 读取文件，并按本地沙箱可用性选择沙箱镜像 MCP。"
-                .to_string(),
     })
 }
 

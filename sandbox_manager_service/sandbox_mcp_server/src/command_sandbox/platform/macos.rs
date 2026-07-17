@@ -15,7 +15,7 @@ pub(in crate::command_sandbox) fn prepare_macos_command(
 ) -> Result<PreparedSandboxCommand, String> {
     let materialized = materialize_permissions(config, cwd, granted)?;
     let mut profile = String::from(include_str!(
-        "../../../local_connector_client/core/src/sandbox/process/seatbelt_base_policy.sbpl"
+        "../../../../../local_connector_client/core/src/sandbox/process/seatbelt_base_policy.sbpl"
     ));
     profile.push_str("\n; ChatOS command-scoped permission profile\n");
     let mut params = Vec::new();
@@ -37,7 +37,9 @@ pub(in crate::command_sandbox) fn prepare_macos_command(
     );
     if materialized.include_platform_defaults && !materialized.full_disk_read {
         profile.push_str("\n; restricted-read platform defaults\n");
-        profile.push_str(include_str!("restricted_read_only_platform_defaults.sbpl"));
+        profile.push_str(include_str!(
+            "../../restricted_read_only_platform_defaults.sbpl"
+        ));
         profile.push('\n');
     }
     if materialized.unrestricted {
@@ -116,7 +118,7 @@ pub(in crate::command_sandbox) fn prepare_macos_command(
                     format!("(allow network-outbound (remote ip \"localhost:{port}\"))\n").as_str(),
                 );
             }
-            profile.push_str(include_str!("seatbelt_network_policy.sbpl"));
+            profile.push_str(include_str!("../../seatbelt_network_policy.sbpl"));
         }
     }
 

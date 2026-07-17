@@ -100,8 +100,10 @@ pub(in crate::services::environment_agent::tool_provider) fn image_input_to_reco
     image: ProjectRuntimeEnvironmentImageInput,
     index: usize,
     default_provider: RuntimeEnvironmentProvider,
-) -> ProjectRuntimeEnvironmentImageRecord {
+    image_catalog: Option<&Value>,
+) -> Result<ProjectRuntimeEnvironmentImageRecord, String> {
     let now = now_rfc3339();
+    let requested_image_id = image.image_id.and_then(normalize_owned);
     let environment_type = image
         .environment_type
         .and_then(normalize_owned)
@@ -114,21 +116,11 @@ pub(in crate::services::environment_agent::tool_provider) fn image_input_to_reco
         .display_name
         .and_then(normalize_owned)
         .unwrap_or_else(|| environment_key.clone());
-    let error = image.error.and_then(normalize_owned);
-    let image_id = image.image_id.and_then(normalize_owned);
-    let image_ref = image.image_ref.and_then(normalize_owned);
+    let image_id = None;
+    let image_ref = None;
     let dockerfile = image.dockerfile.and_then(normalize_multiline_owned);
-    let custom_build_script = image
-        .custom_build_script
-        .and_then(normalize_multiline_owned);
-    let requested_status = image.status.and_then(normalize_owned);
-    let status = if error.is_some() {
-        "failed".to_string()
-    } else if image_id.is_none() && image_ref.is_none() {
-        "planned".to_string()
-    } else {
-        requested_status.unwrap_or_else(|| "ready".to_string())
-    };
+    let custom_build_script = None;
+    let status = "planned".to_string();
     let ports = image
         .ports
         .map(ensure_array)
@@ -142,6 +134,9 @@ pub(in crate::services::environment_agent::tool_provider) fn image_input_to_reco
         environment_key,
         environment_type,
         display_name,
+        service_id: String::new(),
+        service_role: RuntimeServiceRole::Unknown,
+        mcp_policy: ProgramManagedMcpPolicy::default(),
         image_id,
         image_ref,
         image_provider: default_provider,
@@ -154,44 +149,82 @@ pub(in crate::services::environment_agent::tool_provider) fn image_input_to_reco
         dockerfile,
         custom_build_script,
         status,
-        error,
+        error: None,
         created_at: now.clone(),
         updated_at: now,
     };
-    if image_is_application_runtime(&record) {
-        record.image_id = None;
-        record.image_ref = None;
-        record.status = "planned".to_string();
-        record.error = None;
-    } else if let Some(image_ref) = super::super::super::compose_dependency_image_ref(&record) {
+    if let Some(image_ref) = super::super::super::compose_dependency_image_ref(&record) {
         record.image_id = None;
         record.image_ref = Some(image_ref);
         record.status = "ready".to_string();
         record.error = None;
+    } else if image_is_application_runtime(&record) {
+        record.image_id = None;
+        record.image_ref = None;
+        record.status = "planned".to_string();
+        record.error = None;
     }
-    record
+    crate::services::runtime_environment::apply_program_managed_image_policy(&mut record);
+    if let Some(image_id) = requested_image_id {
+        apply_catalog_image_selection(&mut record, image_catalog, image_id.as_str())?;
+    }
+    Ok(record)
 }
 
-pub(in crate::services::environment_agent::tool_provider) fn parse_runtime_environment_status(
-    value: &str,
-) -> Result<ProjectRuntimeEnvironmentStatus, String> {
-    match value.trim().to_ascii_lowercase().as_str() {
-        "disabled" => Ok(ProjectRuntimeEnvironmentStatus::Disabled),
-        "pending_configuration" | "pending-configuration" => {
-            Ok(ProjectRuntimeEnvironmentStatus::PendingConfiguration)
-        }
-        "pending_image_build" | "pending-image-build" => {
-            Ok(ProjectRuntimeEnvironmentStatus::PendingImageBuild)
-        }
-        "pending" => Ok(ProjectRuntimeEnvironmentStatus::Pending),
-        "analyzing" => Ok(ProjectRuntimeEnvironmentStatus::Analyzing),
-        "ready" => Ok(ProjectRuntimeEnvironmentStatus::Ready),
-        "not_runnable" | "not-runnable" => Ok(ProjectRuntimeEnvironmentStatus::NotRunnable),
-        "failed" => Ok(ProjectRuntimeEnvironmentStatus::Failed),
-        other => Err(format!(
-            "unsupported project runtime environment status: {other}"
-        )),
+fn apply_catalog_image_selection(
+    record: &mut ProjectRuntimeEnvironmentImageRecord,
+    image_catalog: Option<&Value>,
+    image_id: &str,
+) -> Result<(), String> {
+    if record.service_role != RuntimeServiceRole::Application {
+        return Err(format!(
+            "dependency service {} cannot select a sandbox application image_id",
+            record.environment_key
+        ));
     }
+    let image = image_catalog
+        .and_then(|catalog| catalog.get("images"))
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .find(|image| image.get("id").and_then(Value::as_str) == Some(image_id))
+        .ok_or_else(|| {
+            format!("sandbox image_id is not present in the current catalog: {image_id}")
+        })?;
+    let initialized = image
+        .get("initialized")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let status = image
+        .get("status")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .trim()
+        .to_ascii_lowercase();
+    if !initialized
+        && !matches!(
+            status.as_str(),
+            "ready" | "available" | "local" | "succeeded" | "initialized"
+        )
+    {
+        return Err(format!(
+            "sandbox image_id is not initialized and cannot be reused: {image_id}"
+        ));
+    }
+    let image_ref = image
+        .get("image_ref")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| format!("sandbox image_id has no image_ref: {image_id}"))?;
+    record.image_id = Some(image_id.to_string());
+    record.image_ref = Some(image_ref.to_string());
+    if let Some(features) = image.get("features").and_then(Value::as_array) {
+        record.features = Value::Array(features.clone());
+    }
+    record.status = "ready".to_string();
+    record.error = None;
+    Ok(())
 }
 
 pub(in crate::services::environment_agent::tool_provider) fn ensure_array(value: Value) -> Value {

@@ -76,7 +76,7 @@ impl LocalDatabase {
             "#,
         )
         .bind(analysis.status.as_str())
-        .bind(analysis.analysis_summary.as_str())
+        .bind(analysis.program_generated_summary())
         .bind(analysis.not_runnable_reason.as_deref())
         .bind(serde_json::to_string(&analysis.detected_stack)?)
         .bind(serde_json::to_string(&analysis.required_services)?)
@@ -138,7 +138,7 @@ async fn replace_image_plans(
         .bind(plan.environment_key.trim())
         .bind(plan.environment_type.trim())
         .bind(plan.display_name.trim())
-        .bind(plan.image_ref.as_deref())
+        .bind(Option::<String>::None)
         .bind(serde_json::to_string(&plan.features)?)
         .bind(serde_json::to_string(&plan.ports)?)
         .bind(serde_json::to_string(&plan.env_vars)?)

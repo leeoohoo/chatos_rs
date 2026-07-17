@@ -4,6 +4,7 @@
 mod common;
 mod job_policies;
 mod job_runs;
+mod managed_memory_policy;
 mod model_profiles;
 
 pub use job_policies::{
@@ -13,8 +14,12 @@ pub use job_runs::{
     create_job_run, fail_stale_running_job_runs, finish_job_run, get_job_run_by_id,
     has_recent_job_run, job_run_stats, list_job_runs,
 };
+pub use managed_memory_policy::{
+    active_for_job_type as managed_memory_policy_active,
+    initialize as initialize_managed_memory_policy,
+};
 pub use model_profiles::{
     count_model_profiles, create_model_profile, delete_model_profile, get_active_model_profile,
-    get_model_profile_by_id, get_model_profile_by_id_for_owner, get_runtime_model_profile_by_id,
-    list_model_profiles, list_model_profiles_by_owner, update_model_profile,
+    get_model_profile_by_id, get_model_profile_by_id_for_owner, list_model_profiles,
+    list_model_profiles_by_owner, update_model_profile,
 };

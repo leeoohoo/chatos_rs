@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -35,6 +36,49 @@ pub struct SandboxInstance {
     pub agent_endpoint: Option<String>,
 }
 
+#[derive(Debug, Clone)]
+pub struct SandboxEnvironmentCreateSpec {
+    pub environment_id: String,
+    pub run_workspace: String,
+    pub services: Vec<SandboxEnvironmentServiceSpec>,
+    pub agent_token: String,
+    pub resource_limits: ResourceLimits,
+    pub network: NetworkPolicy,
+}
+
+#[derive(Debug, Clone)]
+pub struct SandboxEnvironmentServiceSpec {
+    pub service_id: String,
+    pub service_role: String,
+    pub image: String,
+    pub dockerfile: Option<String>,
+    pub environment: BTreeMap<String, String>,
+    pub mcp_enabled: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct SandboxEnvironmentServiceInstance {
+    pub service_id: String,
+    pub backend_id: Option<String>,
+    pub status: String,
+    pub agent_endpoint: Option<String>,
+    pub image_ref: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct SandboxEnvironmentInstance {
+    pub environment_id: String,
+    pub backend_id: Option<String>,
+    pub services: Vec<SandboxEnvironmentServiceInstance>,
+}
+
+#[derive(Debug, Clone)]
+pub struct SandboxExecResult {
+    pub exit_code: i32,
+    pub stdout: String,
+    pub stderr: String,
+}
+
 #[async_trait]
 pub trait SandboxBackend: Send + Sync {
     fn kind(&self) -> &'static str;
@@ -47,6 +91,35 @@ pub trait SandboxBackend: Send + Sync {
         sandbox_id: &str,
         backend_id: Option<&str>,
     ) -> Result<Option<SandboxInstance>, String>;
+    async fn create_environment(
+        &self,
+        _spec: SandboxEnvironmentCreateSpec,
+    ) -> Result<SandboxEnvironmentInstance, String> {
+        Err("sandbox environment groups are unsupported by this backend".to_string())
+    }
+    async fn start_environment(&self, _environment_id: &str) -> Result<(), String> {
+        Err("sandbox environment groups are unsupported by this backend".to_string())
+    }
+    async fn stop_environment(&self, _environment_id: &str) -> Result<(), String> {
+        Err("sandbox environment groups are unsupported by this backend".to_string())
+    }
+    async fn destroy_environment(&self, _environment_id: &str) -> Result<(), String> {
+        Err("sandbox environment groups are unsupported by this backend".to_string())
+    }
+    async fn inspect_environment(
+        &self,
+        _environment_id: &str,
+    ) -> Result<Option<SandboxEnvironmentInstance>, String> {
+        Err("sandbox environment groups are unsupported by this backend".to_string())
+    }
+    async fn exec_environment_service(
+        &self,
+        _environment_id: &str,
+        _service_id: &str,
+        _command: &[String],
+    ) -> Result<SandboxExecResult, String> {
+        Err("sandbox environment groups are unsupported by this backend".to_string())
+    }
 }
 
 pub fn build_backend(config: &AppConfig) -> SandboxBackendRef {

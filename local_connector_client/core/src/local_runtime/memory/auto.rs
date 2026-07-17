@@ -2,7 +2,9 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use anyhow::Result;
+use memory_engine_sdk::MemoryPolicyKind;
 
+use crate::local_runtime::managed_memory_policy;
 use crate::{tracing_stdout, LocalRuntime};
 
 use super::service::run_review_inner;
@@ -23,8 +25,9 @@ pub(crate) async fn maybe_spawn_local_memory_review(
         .local_database()?
         .pending_memory_stats(owner_user_id, session_id)
         .await?;
+    let policy = managed_memory_policy(runtime, MemoryPolicyKind::Summary).await;
     if !should_start_automatic_summary(
-        settings.memory_auto_summary_enabled,
+        settings.memory_auto_summary_enabled && policy.enabled,
         pending_messages,
         pending_characters,
         settings.memory_summary_message_threshold,

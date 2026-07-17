@@ -211,11 +211,16 @@ impl SandboxManager {
         )
         .await;
 
-        if let Err(err) = self
-            .backend
-            .destroy(record.sandbox_id.as_str(), record.backend_id.as_deref())
-            .await
-        {
+        let destroy_result = if record.lease_kind == "environment" {
+            self.backend
+                .destroy_environment(record.sandbox_id.as_str())
+                .await
+        } else {
+            self.backend
+                .destroy(record.sandbox_id.as_str(), record.backend_id.as_deref())
+                .await
+        };
+        if let Err(err) = destroy_result {
             record.status = SandboxStatus::Failed;
             record.last_error = Some(err.clone());
             record.updated_at = now_rfc3339();
@@ -245,7 +250,7 @@ impl SandboxManager {
         Ok(())
     }
 
-    pub(super) fn prepare_run_workspace(
+    pub(in crate::service::manager) fn prepare_run_workspace(
         &self,
         workspace_root: &str,
         run_id: &str,

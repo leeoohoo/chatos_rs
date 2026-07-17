@@ -107,7 +107,7 @@ pub(in crate::services::environment_agent) async fn analyze_project_runtime_envi
     environment.status = ProjectRuntimeEnvironmentStatus::Analyzing;
     environment.file_provider = routing.file_provider;
     environment.sandbox_provider = routing.sandbox_provider;
-    environment.analysis_summary = Some(routing.summary.clone());
+    environment.analysis_summary = Some("正在分析项目技术栈和运行环境需求。".to_string());
     environment.not_runnable_reason = None;
     environment.last_agent_run_id = Some(run_id.clone());
     environment.last_error = None;
@@ -177,7 +177,6 @@ pub(in crate::services::environment_agent) async fn analyze_project_runtime_envi
     let agent_result = run_project_environment_agent(
         state,
         project,
-        &environment,
         routing,
         model_runtime.prompt_vendor.as_deref(),
         &model_runtime.model_config,
@@ -255,7 +254,6 @@ async fn response_for_project(
 async fn run_project_environment_agent(
     state: &AppState,
     project: &ProjectRecord,
-    environment: &ProjectRuntimeEnvironmentRecord,
     routing: RoutingPlan,
     prompt_vendor: Option<&str>,
     model_config: &ModelRuntimeConfig,
@@ -282,13 +280,7 @@ async fn run_project_environment_agent(
     .await?;
     ensure_agent_required_tools_available(&executor, &routing)?;
 
-    let mut prompt = build_project_environment_agent_prompt(
-        project,
-        environment,
-        &routing,
-        local_inspection,
-        run_id,
-    )?;
+    let mut prompt = build_project_environment_agent_prompt(project, local_inspection, run_id)?;
     let effective_mcp_resource_ids = effective_project_environment_mcp_resource_ids(&routing);
     if let Some(provider_skills_prompt) = capability_policy.compose_provider_skills_prompt(
         effective_mcp_resource_ids.iter().map(String::as_str),
@@ -301,8 +293,6 @@ async fn run_project_environment_agent(
         "agent": "project_management_environment_agent",
         "run_id": run_id,
         "project_id": project.id,
-        "file_provider": routing.file_provider.as_str(),
-        "sandbox_provider": routing.sandbox_provider.as_str(),
         "agent_prompt_vendor": agent_prompt.vendor.as_str(),
         "agent_prompt_revision": agent_prompt.revision,
         "agent_prompt_checksum": agent_prompt.checksum,
@@ -373,6 +363,7 @@ async fn resolve_project_agent_capabilities(
     for resource_id in [
         code_read_resource_id.as_str(),
         PROJECT_ENVIRONMENT_MCP_RESOURCE_ID,
+        SANDBOX_IMAGES_MCP_RESOURCE_ID,
     ] {
         capabilities
             .require_available_mcp(resource_id)
@@ -383,23 +374,31 @@ async fn resolve_project_agent_capabilities(
 
 fn build_project_environment_agent_prompt(
     project: &ProjectRecord,
-    environment: &ProjectRuntimeEnvironmentRecord,
-    routing: &RoutingPlan,
     local_inspection: Option<&LocalProjectInspection>,
     run_id: &str,
 ) -> Result<String, String> {
-    let context = json!({
+    let context = project_environment_agent_context(
+        project.id.as_str(),
+        project.name.as_str(),
+        local_inspection,
+        run_id,
+    );
+    serde_json::to_string_pretty(&context)
+        .map_err(|err| format!("serialize project environment run context failed: {err}"))
+}
+
+fn project_environment_agent_context(
+    project_id: &str,
+    project_name: &str,
+    local_inspection: Option<&LocalProjectInspection>,
+    run_id: &str,
+) -> Value {
+    json!({
         "mode": "cloud_tool_execution",
         "run_id": run_id,
         "project": {
-            "id": project.id,
-            "name": project.name,
-        },
-        "routing": {
-            "file_provider": provider_label(routing.file_provider),
-            "sandbox_provider": provider_label(routing.sandbox_provider),
-            "sandbox_enabled": environment.sandbox_enabled,
-            "file_tool_hint": file_tool_hint(project, routing.file_provider),
+            "id": project_id,
+            "name": project_name,
         },
         "pre_scan": {
             "detected_stack": local_inspection
@@ -412,14 +411,14 @@ fn build_project_environment_agent_prompt(
                 .map(|inspection| inspection.manifest_context.clone())
                 .unwrap_or_default(),
         },
-        "current_environment": environment,
-    });
-    serde_json::to_string_pretty(&context)
-        .map_err(|err| format!("serialize project environment run context failed: {err}"))
+    })
 }
 
 fn effective_project_environment_mcp_resource_ids(routing: &RoutingPlan) -> Vec<String> {
-    let mut resource_ids = vec![PROJECT_ENVIRONMENT_MCP_RESOURCE_ID.to_string()];
+    let mut resource_ids = vec![
+        PROJECT_ENVIRONMENT_MCP_RESOURCE_ID.to_string(),
+        SANDBOX_IMAGES_MCP_RESOURCE_ID.to_string(),
+    ];
     if matches!(
         routing.file_provider,
         RuntimeEnvironmentProvider::Harness | RuntimeEnvironmentProvider::LocalConnector
@@ -432,29 +431,6 @@ fn effective_project_environment_mcp_resource_ids(routing: &RoutingPlan) -> Vec<
         );
     }
     resource_ids
-}
-
-fn file_tool_hint(project: &ProjectRecord, provider: RuntimeEnvironmentProvider) -> String {
-    match provider {
-        RuntimeEnvironmentProvider::Harness => {
-            "`harness_code_list_dir`、`harness_code_read_file_raw`、`harness_code_search_text`。"
-                .to_string()
-        }
-        RuntimeEnvironmentProvider::LocalConnector => {
-            if project
-                .root_path
-                .as_deref()
-                .is_some_and(|root| root.trim().starts_with(LOCAL_CONNECTOR_ROOT_PREFIX))
-            {
-                "`local_connector_list_dir`、`local_connector_read_file_raw`、`local_connector_search_text`。".to_string()
-            } else {
-                "`code_maintainer_read_list_dir`、`code_maintainer_read_read_file_raw`、`code_maintainer_read_search_text`。".to_string()
-            }
-        }
-        RuntimeEnvironmentProvider::CloudSandboxManager | RuntimeEnvironmentProvider::None => {
-            "没有可用文件 MCP。".to_string()
-        }
-    }
 }
 
 fn apply_stop_decision(
@@ -470,4 +446,26 @@ fn apply_stop_decision(
     environment.last_agent_run_id = Some(run_id);
     environment.last_error = stop.last_error;
     environment.updated_at = now_rfc3339();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::project_environment_agent_context;
+
+    #[test]
+    fn agent_context_does_not_expose_program_routing_or_environment_state() {
+        let context = project_environment_agent_context("project-1", "Example", None, "run-1");
+        assert!(context.get("routing").is_none());
+        assert!(context.get("current_environment").is_none());
+        let serialized = serde_json::to_string(&context).expect("serialize context");
+        for forbidden in [
+            "file_provider",
+            "sandbox_provider",
+            "Harness",
+            "Sandbox Manager",
+            "analysis_summary",
+        ] {
+            assert!(!serialized.contains(forbidden));
+        }
+    }
 }

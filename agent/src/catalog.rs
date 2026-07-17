@@ -80,13 +80,58 @@ pub static LOCAL_CONNECTOR_COMMAND_APPROVAL_AGENT_DESCRIPTOR: AgentDescriptor =
         false,
     );
 
-static SYSTEM_AGENT_CATALOG: [&AgentDescriptor; 6] = [
+pub static MEMORY_ENGINE_SUMMARY_AGENT_DESCRIPTOR: AgentDescriptor = AgentDescriptor::new(
+    SystemAgentKey::MemoryEngineSummaryAgent,
+    "Memory Engine Message Summary Agent",
+    "memory-engine",
+    "Compresses raw conversation records into a high-signal level-zero thread summary.",
+    false,
+);
+
+pub static MEMORY_ENGINE_ROLLUP_AGENT_DESCRIPTOR: AgentDescriptor = AgentDescriptor::new(
+    SystemAgentKey::MemoryEngineRollupAgent,
+    "Memory Engine Summary Rollup Agent",
+    "memory-engine",
+    "Consolidates lower-level thread summaries into durable higher-level project knowledge.",
+    false,
+);
+
+pub static MEMORY_ENGINE_SUBJECT_MEMORY_AGENT_DESCRIPTOR: AgentDescriptor = AgentDescriptor::new(
+    SystemAgentKey::MemoryEngineSubjectMemoryAgent,
+    "Memory Engine Subject Memory Agent",
+    "memory-engine",
+    "Distills thread summaries into durable subject memories for long-term recall.",
+    false,
+);
+
+pub static MEMORY_ENGINE_MEMORY_ROLLUP_AGENT_DESCRIPTOR: AgentDescriptor = AgentDescriptor::new(
+    SystemAgentKey::MemoryEngineMemoryRollupAgent,
+    "Memory Engine Memory Rollup Agent",
+    "memory-engine",
+    "Consolidates lower-level subject memories into stable higher-level long-term memory.",
+    false,
+);
+
+pub static MEMORY_ENGINE_THREAD_REPAIR_AGENT_DESCRIPTOR: AgentDescriptor = AgentDescriptor::new(
+    SystemAgentKey::MemoryEngineThreadRepairAgent,
+    "Memory Engine Thread Repair Agent",
+    "memory-engine",
+    "Builds a user-grounded repair summary when conversation context has drifted.",
+    false,
+);
+
+static SYSTEM_AGENT_CATALOG: [&AgentDescriptor; 11] = [
     &CHATOS_CONVERSATION_AGENT_DESCRIPTOR,
     &CHATOS_PLANNING_AGENT_DESCRIPTOR,
     &PROJECT_REQUIREMENT_EXECUTION_PLANNER_AGENT_DESCRIPTOR,
     &TASK_RUNNER_AGENT_DESCRIPTOR,
     &PROJECT_MANAGEMENT_AGENT_DESCRIPTOR,
     &LOCAL_CONNECTOR_COMMAND_APPROVAL_AGENT_DESCRIPTOR,
+    &MEMORY_ENGINE_SUMMARY_AGENT_DESCRIPTOR,
+    &MEMORY_ENGINE_ROLLUP_AGENT_DESCRIPTOR,
+    &MEMORY_ENGINE_SUBJECT_MEMORY_AGENT_DESCRIPTOR,
+    &MEMORY_ENGINE_MEMORY_ROLLUP_AGENT_DESCRIPTOR,
+    &MEMORY_ENGINE_THREAD_REPAIR_AGENT_DESCRIPTOR,
 ];
 
 pub fn system_agent_catalog() -> &'static [&'static AgentDescriptor] {
@@ -105,6 +150,17 @@ pub fn agent_descriptor(key: SystemAgentKey) -> &'static AgentDescriptor {
         SystemAgentKey::LocalConnectorCommandApprovalAgent => {
             &LOCAL_CONNECTOR_COMMAND_APPROVAL_AGENT_DESCRIPTOR
         }
+        SystemAgentKey::MemoryEngineSummaryAgent => &MEMORY_ENGINE_SUMMARY_AGENT_DESCRIPTOR,
+        SystemAgentKey::MemoryEngineRollupAgent => &MEMORY_ENGINE_ROLLUP_AGENT_DESCRIPTOR,
+        SystemAgentKey::MemoryEngineSubjectMemoryAgent => {
+            &MEMORY_ENGINE_SUBJECT_MEMORY_AGENT_DESCRIPTOR
+        }
+        SystemAgentKey::MemoryEngineMemoryRollupAgent => {
+            &MEMORY_ENGINE_MEMORY_ROLLUP_AGENT_DESCRIPTOR
+        }
+        SystemAgentKey::MemoryEngineThreadRepairAgent => {
+            &MEMORY_ENGINE_THREAD_REPAIR_AGENT_DESCRIPTOR
+        }
     }
 }
 
@@ -122,7 +178,7 @@ mod tests {
             .collect::<Vec<_>>();
         let unique = keys.iter().copied().collect::<HashSet<_>>();
 
-        assert_eq!(keys.len(), 6);
+        assert_eq!(keys.len(), 11);
         assert_eq!(unique.len(), keys.len());
         assert_eq!(
             keys,
@@ -133,6 +189,11 @@ mod tests {
                 "task_runner_run_phase",
                 "project_management_agent",
                 "local_connector_command_approval_agent",
+                "memory_engine_summary_agent",
+                "memory_engine_rollup_agent",
+                "memory_engine_subject_memory_agent",
+                "memory_engine_memory_rollup_agent",
+                "memory_engine_thread_repair_agent",
             ]
         );
     }

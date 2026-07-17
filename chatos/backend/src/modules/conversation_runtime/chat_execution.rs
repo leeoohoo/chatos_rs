@@ -553,6 +553,13 @@ pub fn effective_codex_gateway_mcp_passthrough(
 ) -> bool {
     model_runtime.use_codex_gateway_mcp_passthrough
         && !runtime_context.project_requirement_execution_planner
+        && runtime_context.mcp_server_bundle.0.iter().all(|server| {
+            server.header_provider.is_none()
+                && !server
+                    .headers
+                    .as_ref()
+                    .is_some_and(chatos_mcp_runtime::rpc::headers_require_per_request_signing)
+        })
 }
 
 fn push_optional_system_prompt(items: &mut Vec<Value>, content: Option<&str>) {

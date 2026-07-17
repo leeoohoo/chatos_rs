@@ -204,6 +204,18 @@ impl McpExecutor {
     pub fn codex_gateway_request_tools(&self) -> Vec<Value> {
         let mut out = Vec::new();
         for server in &self.http_servers {
+            if server.header_provider.is_some()
+                || server
+                    .headers
+                    .as_ref()
+                    .is_some_and(crate::rpc::headers_require_per_request_signing)
+            {
+                warn!(
+                    server_name = server.name,
+                    "skipping MCP server that requires per-request authentication in Codex gateway passthrough"
+                );
+                continue;
+            }
             let mut item = json!({
                 "type": "mcp",
                 "server_label": server.name,
@@ -374,7 +386,7 @@ mod tests {
     }
 
     #[test]
-    fn codex_gateway_request_tools_signs_internal_http_headers_without_exposing_secret() {
+    fn codex_gateway_request_tools_skips_internal_per_request_signing() {
         let server = McpHttpServer::new("project", "http://127.0.0.1:39210/mcp").with_headers(
             HashMap::from([
                 (
@@ -398,25 +410,33 @@ mod tests {
             BuiltinToolRegistry::new(),
         );
 
-        let tools = executor.codex_gateway_request_tools();
-        let headers = tools[0]
-            .get("headers")
-            .and_then(Value::as_object)
-            .expect("signed gateway headers");
-        assert!(!headers.contains_key("X-Project-Service-Sync-Secret"));
-        assert!(!headers.contains_key("X-Project-Service-Internal-Scope"));
-        let token = headers
-            .get("x-project-service-internal-token")
-            .and_then(Value::as_str)
-            .expect("internal token");
-        chatos_service_runtime::verify_internal_service_token(
-            token,
-            "a-long-project-service-secret",
-            "chatos-backend",
-            "project-service",
-            "project.mcp",
-        )
-        .expect("valid gateway token");
+        assert!(executor.codex_gateway_request_tools().is_empty());
+    }
+
+    #[derive(Debug)]
+    struct DynamicHeaderProvider;
+
+    #[async_trait]
+    impl crate::McpHttpHeaderProvider for DynamicHeaderProvider {
+        async fn headers(&self) -> Result<HashMap<String, String>, String> {
+            Ok(HashMap::from([(
+                "authorization".to_string(),
+                "Bearer refreshed".to_string(),
+            )]))
+        }
+    }
+
+    #[test]
+    fn codex_gateway_request_tools_skips_per_request_auth_servers() {
+        let executor = McpExecutor::new(
+            vec![McpHttpServer::new("dynamic", "http://127.0.0.1:39090/mcp")
+                .with_header_provider(DynamicHeaderProvider)],
+            Vec::new(),
+            Vec::new(),
+            BuiltinToolRegistry::new(),
+        );
+
+        assert!(executor.codex_gateway_request_tools().is_empty());
     }
 
     #[test]

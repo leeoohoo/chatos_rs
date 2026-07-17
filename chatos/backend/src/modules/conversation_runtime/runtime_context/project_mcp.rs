@@ -8,7 +8,7 @@ use chatos_mcp_runtime::PROJECT_MANAGEMENT_SERVER_NAME;
 use super::support::is_concrete_project_id;
 use crate::config::Config;
 use crate::services::mcp_loader::McpHttpServer;
-use crate::services::{access_token_scope, project_management_api_client};
+use crate::services::project_management_api_client;
 
 const PROJECT_MANAGEMENT_MCP_ENDPOINT_PATH: &str = "/mcp";
 const PROJECT_REQUIREMENT_PLANNER_PROJECT_MCP_READ_TOOLS: &[&str] = &[
@@ -59,13 +59,6 @@ pub(super) fn build_project_management_mcp_runtime(
         owner_user_id.to_string(),
     );
     headers.insert("X-Chatos-Project-Id".to_string(), project_id.to_string());
-    if let Some(access_token) = access_token_scope::get_current_access_token() {
-        headers.insert(
-            "X-Chatos-User-Authorization".to_string(),
-            format!("Bearer {access_token}"),
-        );
-    }
-
     Ok(McpHttpServer {
         name: PROJECT_MANAGEMENT_SERVER_NAME.to_string(),
         url: format!(
@@ -80,5 +73,6 @@ pub(super) fn build_project_management_mcp_runtime(
                 .map(|name| (*name).to_string())
                 .collect(),
         ),
+        header_provider: None,
     })
 }

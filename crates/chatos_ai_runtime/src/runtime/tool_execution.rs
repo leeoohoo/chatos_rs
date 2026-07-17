@@ -21,6 +21,44 @@ pub(super) struct RuntimeToolExecution {
     pub(super) tool_output_items: Vec<Value>,
 }
 
+pub(super) fn next_consecutive_failed_tool_batch_count(
+    current: usize,
+    tool_results: &[ToolResult],
+) -> usize {
+    if !tool_results.is_empty()
+        && tool_results
+            .iter()
+            .all(|result| result.is_error || !result.success)
+    {
+        current.saturating_add(1)
+    } else {
+        0
+    }
+}
+
+pub(super) fn repeated_tool_failure_error(
+    tool_results: &[ToolResult],
+    failed_batch_count: usize,
+) -> String {
+    let last_error = tool_results
+        .iter()
+        .rev()
+        .find(|result| result.is_error || !result.success)
+        .map(|result| truncate_chars(result.content.trim(), 1_000))
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "未知工具错误".to_string());
+    format!("连续 {failed_batch_count} 轮工具调用全部失败，已停止自动重试。最后错误：{last_error}")
+}
+
+fn truncate_chars(value: &str, max_chars: usize) -> String {
+    let mut chars = value.chars();
+    let mut output = chars.by_ref().take(max_chars).collect::<String>();
+    if chars.next().is_some() {
+        output.push_str("...<truncated>");
+    }
+    output
+}
+
 pub(super) async fn execute_runtime_tools(
     executor: &dyn ToolExecutor,
     tool_calls: &Value,
@@ -75,4 +113,54 @@ pub(super) async fn execute_runtime_tools(
         tool_call_items,
         tool_output_items,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use chatos_mcp_runtime::ToolResult;
+
+    use super::{next_consecutive_failed_tool_batch_count, repeated_tool_failure_error};
+
+    fn tool_result(success: bool, content: &str) -> ToolResult {
+        ToolResult {
+            tool_call_id: "call_1".to_string(),
+            name: "demo".to_string(),
+            success,
+            is_error: !success,
+            is_stream: false,
+            conversation_turn_id: None,
+            content: content.to_string(),
+            result: None,
+        }
+    }
+
+    #[test]
+    fn consecutive_failure_counter_resets_after_any_success() {
+        assert_eq!(
+            next_consecutive_failed_tool_batch_count(2, &[tool_result(false, "failed")]),
+            3
+        );
+        assert_eq!(
+            next_consecutive_failed_tool_batch_count(
+                2,
+                &[tool_result(false, "failed"), tool_result(true, "ok")],
+            ),
+            0
+        );
+        assert_eq!(next_consecutive_failed_tool_batch_count(2, &[]), 0);
+    }
+
+    #[test]
+    fn repeated_failure_error_keeps_the_last_actionable_error() {
+        let message = repeated_tool_failure_error(
+            &[
+                tool_result(false, "first error"),
+                tool_result(false, "参数解析失败: expected comma"),
+            ],
+            8,
+        );
+
+        assert!(message.contains("连续 8 轮"));
+        assert!(message.contains("参数解析失败: expected comma"));
+    }
 }

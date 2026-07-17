@@ -69,6 +69,7 @@ impl McpCatalogService {
             policy_revision: None,
             additional_writable_roots: Vec::new(),
             requires_execution: true,
+            execution_service_id: None,
             default_remote_server_id: normalized_optional(request.default_remote_server_id),
             external_mcp_config_ids: Vec::new(),
             selected_skill_ids: Vec::new(),

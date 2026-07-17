@@ -19,6 +19,7 @@ pub struct AppStore {
     agents: Collection<SystemAgentRecord>,
     agent_prompts: Collection<AgentProviderPromptRecord>,
     agent_prompt_versions: Collection<AgentPromptBundleVersionRecord>,
+    agent_prompt_releases: Collection<AgentPromptVersionRecord>,
     bindings: Collection<AgentBindingRecord>,
     checks: Collection<ResourceCheckRecord>,
     skill_preferences: Collection<UserSkillPreferenceRecord>,
@@ -34,6 +35,7 @@ impl AppStore {
             agents: db.collection("plugin_agents"),
             agent_prompts: db.collection("plugin_agent_provider_prompts"),
             agent_prompt_versions: db.collection("plugin_agent_prompt_versions"),
+            agent_prompt_releases: db.collection("plugin_agent_prompt_releases"),
             bindings: db.collection("plugin_agent_bindings"),
             checks: db.collection("plugin_resource_checks"),
             skill_preferences: db.collection("plugin_user_skill_preferences"),
@@ -542,6 +544,48 @@ impl AppStore {
             .await
             .map_err(|err| err.to_string())?
             .ok_or_else(|| "agent prompt bundle version was not persisted".to_string())
+    }
+
+    pub async fn list_agent_prompt_versions(
+        &self,
+        agent_key: &str,
+    ) -> Result<Vec<AgentPromptVersionRecord>, String> {
+        let options = FindOptions::builder()
+            .sort(doc! { "bundle_version": -1 })
+            .projection(doc! { "prompts.content": 0 })
+            .build();
+        self.agent_prompt_releases
+            .find(doc! { "agent_key": agent_key }, options)
+            .await
+            .map_err(|err| err.to_string())?
+            .try_collect()
+            .await
+            .map_err(|err| err.to_string())
+    }
+
+    pub async fn get_agent_prompt_version(
+        &self,
+        agent_key: &str,
+        bundle_version: i64,
+    ) -> Result<Option<AgentPromptVersionRecord>, String> {
+        self.agent_prompt_releases
+            .find_one(
+                doc! { "agent_key": agent_key, "bundle_version": bundle_version },
+                None,
+            )
+            .await
+            .map_err(|err| err.to_string())
+    }
+
+    pub async fn replace_agent_prompt_version(
+        &self,
+        record: &AgentPromptVersionRecord,
+    ) -> Result<(), String> {
+        self.agent_prompt_releases
+            .replace_one(doc! { "id": &record.id }, record, upsert_options())
+            .await
+            .map_err(|err| err.to_string())?;
+        Ok(())
     }
 
     pub async fn list_bindings(

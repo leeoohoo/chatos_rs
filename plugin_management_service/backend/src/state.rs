@@ -9,7 +9,7 @@ use chatos_service_runtime::{build_http_client, HttpClientTimeouts};
 use crate::auth::login_via_user_service;
 use crate::config::AppConfig;
 use crate::models::LoginRequest;
-use crate::seed::seed_system_resources;
+use crate::seed::{ensure_agent_prompt_version_history, seed_system_resources};
 use crate::store::AppStore;
 
 #[derive(Clone)]
@@ -34,6 +34,7 @@ impl AppState {
             let admin_user_id = resolve_seed_admin_user_id(&config, &user_service_http).await;
             seed_system_resources(&store, admin_user_id.as_str()).await?;
         }
+        ensure_agent_prompt_version_history(&store).await?;
         Ok(Self {
             config,
             store,

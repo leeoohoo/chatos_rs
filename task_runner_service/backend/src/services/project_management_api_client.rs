@@ -3,6 +3,7 @@
 
 use chatos_service_runtime::{build_http_client, HttpClientTimeouts};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 use crate::auth;
 use crate::config::AppConfig;
@@ -85,29 +86,57 @@ struct ProjectRuntimeEnvironmentResponse {
     images: Vec<ProjectRuntimeEnvironmentImage>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
-pub(in crate::services) struct ProjectRuntimeEnvironmentSettings {
-    pub(in crate::services) sandbox_enabled: bool,
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct ProjectRuntimeEnvironmentSettings {
+    pub(crate) sandbox_enabled: bool,
     #[serde(default)]
-    pub(in crate::services) status: String,
+    pub(crate) status: String,
+    #[serde(default)]
+    pub(crate) env_vars: Value,
 }
 
-#[derive(Debug, Clone, Deserialize)]
-pub(in crate::services) struct ProjectRuntimeEnvironmentImage {
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct ProjectRuntimeEnvironmentImage {
     #[serde(default)]
-    pub(in crate::services) environment_type: String,
+    pub(crate) environment_key: String,
     #[serde(default)]
-    pub(in crate::services) image_id: Option<String>,
+    pub(crate) service_id: String,
     #[serde(default)]
-    pub(in crate::services) image_provider: String,
+    pub(crate) display_name: String,
     #[serde(default)]
-    pub(in crate::services) status: String,
+    pub(crate) service_role: String,
+    #[serde(default)]
+    pub(crate) mcp_policy: ProjectRuntimeEnvironmentMcpPolicy,
+    #[serde(default)]
+    pub(crate) image_id: Option<String>,
+    #[serde(default)]
+    pub(crate) image_ref: Option<String>,
+    #[serde(default)]
+    pub(crate) image_provider: String,
+    #[serde(default)]
+    pub(crate) status: String,
+    #[serde(default)]
+    pub(crate) dockerfile: Option<String>,
+    #[serde(default)]
+    pub(crate) env_vars: Value,
 }
 
-#[derive(Debug, Clone)]
-pub(in crate::services) struct ProjectSandboxRuntimeSettings {
-    pub(in crate::services) environment: ProjectRuntimeEnvironmentSettings,
-    pub(in crate::services) images: Vec<ProjectRuntimeEnvironmentImage>,
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub(crate) struct ProjectRuntimeEnvironmentMcpPolicy {
+    #[serde(default)]
+    pub(crate) managed_by: String,
+    #[serde(default)]
+    pub(crate) attachment: String,
+    #[serde(default)]
+    pub(crate) filesystem: bool,
+    #[serde(default)]
+    pub(crate) terminal: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct ProjectSandboxRuntimeSettings {
+    pub(crate) environment: ProjectRuntimeEnvironmentSettings,
+    pub(crate) images: Vec<ProjectRuntimeEnvironmentImage>,
 }
 
 pub async fn get_project_from_project_service(
@@ -286,7 +315,7 @@ pub async fn get_project_sandbox_enabled(
         .sandbox_enabled)
 }
 
-pub(in crate::services) async fn get_project_sandbox_runtime_settings(
+pub(crate) async fn get_project_sandbox_runtime_settings(
     config: &AppConfig,
     project_id: &str,
 ) -> Result<ProjectSandboxRuntimeSettings, String> {
@@ -497,28 +526,29 @@ fn signed_project_service_request(
         .header("X-Project-Service-Internal-Token", token))
 }
 
-pub(in crate::services) fn insert_project_service_internal_headers(
+pub(in crate::services) fn insert_project_service_mcp_signing_headers(
     headers: &mut impl Extend<(String, String)>,
     internal_secret: &str,
     scope: &str,
 ) -> Result<(), String> {
     let internal_secret = internal_secret.trim();
-    if internal_secret.is_empty() || scope.trim().is_empty() {
+    let scope = scope.trim();
+    if internal_secret.is_empty() || scope.is_empty() {
         return Err("project service internal secret and scope are required".to_string());
     }
-    let token = chatos_service_runtime::issue_internal_service_token(
-        internal_secret,
-        PROJECT_SERVICE_CALLER,
-        PROJECT_SERVICE_TOKEN_AUDIENCE,
-        scope.trim(),
-        60,
-    )?;
     headers.extend([
+        (
+            "x-project-service-sync-secret".to_string(),
+            internal_secret.to_string(),
+        ),
         (
             "x-project-service-caller".to_string(),
             PROJECT_SERVICE_CALLER.to_string(),
         ),
-        ("x-project-service-internal-token".to_string(), token),
+        (
+            "x-project-service-internal-scope".to_string(),
+            scope.to_string(),
+        ),
     ]);
     Ok(())
 }
@@ -593,29 +623,32 @@ mod tests {
     use super::*;
 
     #[test]
-    fn project_service_mcp_headers_use_a_scoped_signed_token() {
+    fn project_service_mcp_signing_headers_refresh_token_per_request() {
         let mut headers = BTreeMap::new();
-        insert_project_service_internal_headers(
+        insert_project_service_mcp_signing_headers(
             &mut headers,
             "task-runner-internal-secret",
-            PROJECT_READ_SCOPE,
+            PROJECT_HARNESS_SCOPE,
         )
-        .expect("signed project service headers");
+        .expect("deferred project service signing headers");
 
+        assert!(!headers.contains_key("x-project-service-internal-token"));
+        assert_eq!(
+            headers
+                .get("x-project-service-internal-scope")
+                .map(String::as_str),
+            Some(PROJECT_HARNESS_SCOPE)
+        );
+
+        assert_eq!(
+            headers
+                .get("x-project-service-sync-secret")
+                .map(String::as_str),
+            Some("task-runner-internal-secret")
+        );
         assert_eq!(
             headers.get("x-project-service-caller").map(String::as_str),
             Some(PROJECT_SERVICE_CALLER)
         );
-        assert!(!headers.contains_key("x-project-service-sync-secret"));
-        chatos_service_runtime::verify_internal_service_token(
-            headers
-                .get("x-project-service-internal-token")
-                .expect("internal token"),
-            "task-runner-internal-secret",
-            PROJECT_SERVICE_CALLER,
-            PROJECT_SERVICE_TOKEN_AUDIENCE,
-            PROJECT_READ_SCOPE,
-        )
-        .expect("verify scoped project service token");
     }
 }

@@ -30,8 +30,9 @@ use super::models::{
     update_model_config,
 };
 use super::projects::{
-    create_project, delete_project, get_project, import_chatos_project, list_project_tasks,
-    list_projects, sync_get_project, sync_list_projects, update_project,
+    create_project, delete_project, get_project, get_project_runtime_environment,
+    import_chatos_project, list_project_tasks, list_projects, sync_get_project, sync_list_projects,
+    update_project,
 };
 use super::prompts::{
     cancel_prompt, get_prompt, list_prompt_task_counts, list_prompts, list_prompts_page,
@@ -80,6 +81,10 @@ pub fn build_router(state: AppState) -> Router {
                 .delete(delete_project),
         )
         .route("/api/projects/{id}/tasks", get(list_project_tasks))
+        .route(
+            "/api/projects/{id}/runtime-environment",
+            get(get_project_runtime_environment),
+        )
         .route("/api/tasks", get(list_tasks).post(create_task))
         .route("/api/tasks/summaries", get(list_task_summaries))
         .route("/api/tasks/page", get(list_tasks_page))

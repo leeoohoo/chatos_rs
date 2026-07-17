@@ -2,19 +2,21 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use anyhow::{Context, Result};
+use chatos_plugin_management_sdk::{required_agent_prompt_vendor, SystemAgentKey};
+use memory_engine_sdk::MemoryPolicyKind;
 use serde::Serialize;
 
 use crate::local_runtime::model::build_local_model_config;
 use crate::local_runtime::storage::CreateLocalMemorySummaryInput;
-use crate::model_configs::resolve_local_model_runtime;
+use crate::local_runtime::{load_installed_agent_prompt, managed_memory_policy};
+use crate::model_configs::{resolve_local_model_runtime, LocalModelRuntimeResponse};
 use crate::LocalRuntime;
 
 use super::generator::generate_summary;
 use super::rollup::rollup_subject_memories;
 
 const LOCAL_MEMORY_BATCH_LIMIT: i64 = 200;
-const LOCAL_MEMORY_SYSTEM_PROMPT: &str = "Create a concise, durable conversation memory. Preserve user goals, decisions, constraints, important facts, unresolved work, tool outcomes, and exact identifiers when relevant. Remove repetition and transient chatter. Never invent facts.";
-
+const LOCAL_MEMORY_PROMPT_FALLBACK: &str = "Create a concise, durable conversation memory. Preserve user goals, decisions, constraints, important facts, unresolved work, tool outcomes, and exact identifiers when relevant. Remove repetition and transient chatter. Never invent facts.";
 #[derive(Debug, Clone, Serialize)]
 pub(crate) struct LocalMemoryReviewResult {
     pub(crate) processed_sessions: i64,
@@ -75,35 +77,57 @@ pub(super) async fn run_review_inner(
         .get_runtime_settings(owner_user_id, session_id)
         .await?
         .context("local memory runtime settings were not found")?;
-    let model_config_id = settings
-        .selected_model_id
-        .clone()
-        .or(session.selected_model_id.clone())
-        .filter(|value| !value.trim().is_empty())
-        .context("select a local model before generating memory")?;
-    let resolved_model = {
-        let state = runtime.state.read().await;
-        resolve_local_model_runtime(&state, owner_user_id, model_config_id.as_str())
-            .map_err(anyhow::Error::msg)?
+    let policy_kind = if trigger_type.contains("repair") {
+        MemoryPolicyKind::ThreadRepair
+    } else {
+        MemoryPolicyKind::Summary
     };
+    let policy = managed_memory_policy(runtime, policy_kind).await;
+    let resolved_model = resolve_memory_model(
+        runtime,
+        owner_user_id,
+        settings.selected_model_id.as_deref(),
+        session.selected_model_id.as_deref(),
+    )
+    .await?;
     let model_name = resolved_model.model.clone();
     let rollup_model = resolved_model.clone();
+    let max_output_tokens = policy
+        .target_summary_tokens
+        .or(resolved_model.max_output_tokens);
+    let prompt_vendor = required_agent_prompt_vendor(
+        resolved_model.prompt_vendor.as_deref(),
+        resolved_model.provider.as_str(),
+    )
+    .map_err(anyhow::Error::msg)?;
+    let agent_key = if policy_kind == MemoryPolicyKind::ThreadRepair {
+        SystemAgentKey::MemoryEngineThreadRepairAgent
+    } else {
+        SystemAgentKey::MemoryEngineSummaryAgent
+    };
+    let installed_prompt = load_installed_agent_prompt(runtime, agent_key, prompt_vendor)
+        .await
+        .ok()
+        .map(|prompt| prompt.content)
+        .unwrap_or_else(|| LOCAL_MEMORY_PROMPT_FALLBACK.to_string());
     let previous = database
         .latest_memory_summary(owner_user_id, session_id)
         .await?;
     let model_config = build_local_model_config(
         resolved_model,
-        Some(LOCAL_MEMORY_SYSTEM_PROMPT.to_string()),
+        Some(installed_prompt),
         settings.selected_thinking_level.clone(),
         Some(0.2),
         settings.reasoning_enabled,
         settings.workspace_root.clone(),
-    );
+    )
+    .with_max_output_tokens(max_output_tokens);
     let draft = generate_summary(
         model_config,
         session_id,
         previous.as_ref(),
         pending.as_slice(),
+        policy.token_limit.unwrap_or(6_000),
     )
     .await
     .map_err(anyhow::Error::msg)?;
@@ -134,6 +158,7 @@ pub(super) async fn run_review_inner(
         .upsert_subject_memories_for_summary(owner_user_id, &session, &summary)
         .await?;
     rollup_subject_memories(
+        runtime,
         database,
         owner_user_id,
         session_id,
@@ -151,6 +176,34 @@ pub(super) async fn run_review_inner(
         pending.len() as i64,
         remaining,
     ))
+}
+
+async fn resolve_memory_model(
+    runtime: &LocalRuntime,
+    owner_user_id: &str,
+    session_model_id: Option<&str>,
+    fallback_model_id: Option<&str>,
+) -> Result<LocalModelRuntimeResponse> {
+    let state = runtime.state.read().await;
+    let shared_memory_model_id = state
+        .model_configs
+        .settings
+        .memory_summary_model_config_id
+        .as_deref();
+    let mut last_error = None;
+    for model_config_id in [shared_memory_model_id, session_model_id, fallback_model_id]
+        .into_iter()
+        .flatten()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        match resolve_local_model_runtime(&state, owner_user_id, model_config_id) {
+            Ok(runtime) => return Ok(runtime),
+            Err(error) => last_error = Some(error),
+        }
+    }
+    Err(last_error
+        .unwrap_or_else(|| anyhow::anyhow!("select a local model before generating memory")))
 }
 
 pub(crate) async fn local_memory_review_status(

@@ -17,7 +17,7 @@ use super::access::{ensure_model_access, ensure_owner_user_exists, resolve_targe
 use super::contracts::{ModelConfigGetQuery, UserScopeQuery};
 use super::model_values::model_config_public_value;
 use super::normalization::{
-    model_config_id_for, normalize_api_key_input, normalize_optional_string,
+    is_supported_provider, model_config_id_for, normalize_api_key_input, normalize_optional_string,
     normalize_prompt_vendor_input, normalize_provider_input, normalize_thinking_level_input,
 };
 
@@ -40,7 +40,9 @@ pub(in crate::api) async fn list_model_configs(
     Ok(Json(
         items
             .into_iter()
-            .filter(|item| !item.model.trim().is_empty())
+            .filter(|item| {
+                !item.model.trim().is_empty() && is_supported_provider(item.provider.as_str())
+            })
             .map(|item| model_config_public_value(item, false, None))
             .collect::<Vec<_>>(),
     ))
@@ -153,6 +155,9 @@ pub(in crate::api) async fn get_model_config(
     else {
         return Err(not_found("model config not found"));
     };
+    if !is_supported_provider(record.provider.as_str()) {
+        return Err(not_found("model config not found"));
+    }
     ensure_model_access(&principal, &record)?;
     let include_secret = query.include_secret.unwrap_or(false);
     Ok(Json(model_config_public_value(
@@ -176,6 +181,9 @@ pub(in crate::api) async fn update_model_config(
     else {
         return Err(not_found("model config not found"));
     };
+    if !is_supported_provider(record.provider.as_str()) {
+        return Err(not_found("model config not found"));
+    }
     ensure_model_access(&principal, &record)?;
 
     if let Some(name) = input.name {

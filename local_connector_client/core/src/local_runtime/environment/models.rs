@@ -61,9 +61,9 @@ pub(crate) struct LocalEnvironmentProgressRecord {
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct LocalEnvironmentAnalysisResult {
     pub(crate) status: String,
-    pub(crate) analysis_summary: String,
     pub(crate) not_runnable_reason: Option<String>,
     #[serde(default)]
     pub(crate) detected_stack: Value,
@@ -78,12 +78,12 @@ pub(crate) struct LocalEnvironmentAnalysisResult {
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct LocalEnvironmentImagePlan {
     pub(crate) environment_key: String,
     #[serde(default = "default_environment_type")]
     pub(crate) environment_type: String,
     pub(crate) display_name: String,
-    pub(crate) image_ref: Option<String>,
     #[serde(default)]
     pub(crate) dockerfile: Option<String>,
     #[serde(default)]
@@ -96,4 +96,46 @@ pub(crate) struct LocalEnvironmentImagePlan {
 
 fn default_environment_type() -> String {
     "application".to_string()
+}
+
+impl LocalEnvironmentAnalysisResult {
+    pub(crate) fn program_generated_summary(&self) -> String {
+        if self.status == "not_runnable" {
+            return "未识别到可自动初始化的应用或基础设施入口。".to_string();
+        }
+
+        let application_count = self
+            .images
+            .iter()
+            .filter(|image| {
+                image
+                    .environment_type
+                    .trim()
+                    .eq_ignore_ascii_case("application")
+            })
+            .count();
+        let dependency_count = self
+            .images
+            .iter()
+            .filter(|image| {
+                image
+                    .environment_type
+                    .trim()
+                    .eq_ignore_ascii_case("service")
+            })
+            .count();
+        let config_file_count = self
+            .generated_config_files
+            .as_array()
+            .map(Vec::len)
+            .unwrap_or_default();
+        let base = format!(
+            "已识别 {application_count} 个应用组件和 {dependency_count} 个依赖服务，生成 {config_file_count} 个环境配置文件及项目级 Compose 计划"
+        );
+        if self.status == "pending_configuration" {
+            format!("{base}，仍需补充必填运行参数。")
+        } else {
+            format!("{base}，等待生成应用镜像。")
+        }
+    }
 }

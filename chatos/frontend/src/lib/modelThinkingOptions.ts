@@ -32,7 +32,11 @@ export const thinkingOptionsForProvider = (
       { value: 'none', label: t('inputArea.model.thinking.off') },
     ];
   }
-  if (normalized === 'openai_compatible' || normalized === 'openai-compatible' || normalized === 'minimax') {
+  if (
+    normalized === 'glm'
+    || normalized === 'zhipu'
+    || normalized === 'zai'
+  ) {
     return [
       { value: '', label: t('inputArea.model.thinking.default') },
       { value: 'none', label: t('inputArea.model.thinking.value', { value: 'none' }) },

@@ -9,19 +9,20 @@ use uuid::Uuid;
 use chatos_mcp_runtime::{BuiltinToolProvider, ToolCallContext, ToolStreamChunkCallback};
 
 use crate::models::{
-    empty_array, empty_object, now_rfc3339, ProjectRecord,
+    empty_array, empty_object, now_rfc3339, ProgramManagedMcpPolicy, ProjectRecord,
     ProjectRuntimeEnvironmentConfigFileRecord, ProjectRuntimeEnvironmentImageRecord,
     ProjectRuntimeEnvironmentStatus, ProjectRuntimeEnvironmentVariableRecord,
-    RuntimeEnvironmentProvider, RuntimeEnvironmentVariableSource,
+    RuntimeEnvironmentProvider, RuntimeEnvironmentVariableSource, RuntimeServiceRole,
 };
 use crate::services::runtime_environment::{
     environment_variable_name_is_secret, normalize_environment_variable_name,
-    normalize_environment_variable_records, refresh_environment_variable_record,
-    required_environment_variables_are_complete,
+    normalize_environment_variable_records, program_generated_runtime_analysis_summary,
+    refresh_environment_variable_record, required_environment_variables_are_complete,
 };
 use crate::state::AppState;
 
 use super::super::runtime_environment::default_runtime_environment_for_project;
+use super::mcp_servers::get_sandbox_image_catalog;
 use super::PROJECT_ENVIRONMENT_MCP_SERVER_NAME;
 
 #[derive(Clone)]
@@ -29,14 +30,12 @@ pub(super) struct ProjectEnvironmentToolProvider {
     pub(super) state: AppState,
     pub(super) project: ProjectRecord,
     pub(super) run_id: String,
+    pub(super) user_access_token: Option<String>,
 }
 
 #[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct UpdateProjectEnvironmentToolArgs {
-    #[serde(default)]
-    status: Option<String>,
-    #[serde(default)]
-    analysis_summary: Option<String>,
     #[serde(default)]
     not_runnable_reason: Option<String>,
     #[serde(default)]
@@ -53,8 +52,6 @@ struct UpdateProjectEnvironmentToolArgs {
     generated_config_files: Option<Vec<ProjectRuntimeEnvironmentConfigFileInput>>,
     #[serde(default)]
     images: Vec<ProjectRuntimeEnvironmentImageInput>,
-    #[serde(default)]
-    last_error: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -101,6 +98,7 @@ struct ProjectRuntimeEnvironmentConfigFileInput {
 }
 
 #[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct ProjectRuntimeEnvironmentImageInput {
     #[serde(default)]
     environment_key: Option<String>,
@@ -111,10 +109,6 @@ struct ProjectRuntimeEnvironmentImageInput {
     #[serde(default)]
     image_id: Option<String>,
     #[serde(default)]
-    image_ref: Option<String>,
-    #[serde(default, rename = "image_provider")]
-    _image_provider: Option<String>,
-    #[serde(default)]
     features: Option<Value>,
     #[serde(default)]
     ports: Option<Value>,
@@ -122,12 +116,6 @@ struct ProjectRuntimeEnvironmentImageInput {
     env_vars: Option<Value>,
     #[serde(default)]
     dockerfile: Option<String>,
-    #[serde(default)]
-    custom_build_script: Option<String>,
-    #[serde(default)]
-    status: Option<String>,
-    #[serde(default)]
-    error: Option<String>,
 }
 
 #[async_trait]
@@ -175,11 +163,7 @@ impl ProjectEnvironmentToolProvider {
             .await?;
         Ok(mcp_tool_result(
             "当前项目运行环境详情已读取。",
-            json!({
-                "project": self.project,
-                "environment": environment,
-                "images": images,
-            }),
+            agent_visible_runtime_state(&self.project, &environment, images.as_slice()),
         ))
     }
 
@@ -196,11 +180,6 @@ impl ProjectEnvironmentToolProvider {
             .await?
             .unwrap_or_else(|| default_runtime_environment_for_project(&self.project, None));
 
-        let requested_status = args
-            .status
-            .as_deref()
-            .map(parse_runtime_environment_status)
-            .transpose()?;
         let environment_variable_scan =
             require_completed_environment_variable_scan(args.environment_variable_scan.clone())?;
         let generated_config_files =
@@ -213,9 +192,7 @@ impl ProjectEnvironmentToolProvider {
             .as_deref()
             .map(str::trim)
             .filter(|value| !value.is_empty());
-        let proposes_not_runnable = requested_status
-            == Some(ProjectRuntimeEnvironmentStatus::NotRunnable)
-            || (requested_status.is_none() && proposed_not_runnable_reason.is_some());
+        let proposes_not_runnable = proposed_not_runnable_reason.is_some();
         let proposed_stack = args
             .detected_stack
             .as_ref()
@@ -237,9 +214,6 @@ impl ProjectEnvironmentToolProvider {
             );
         }
 
-        if let Some(value) = args.analysis_summary.and_then(normalize_owned) {
-            environment.analysis_summary = Some(value);
-        }
         environment.not_runnable_reason = args.not_runnable_reason.and_then(normalize_owned);
         if let Some(value) = args.detected_stack {
             environment.detected_stack = ensure_object(value);
@@ -266,19 +240,11 @@ impl ProjectEnvironmentToolProvider {
             args.env_vars.as_ref(),
         );
         ensure_required_service_records(&mut environment.required_services, inferred_service_kinds);
-        let inferred_status = if environment.not_runnable_reason.is_some() {
+        environment.status = if environment.not_runnable_reason.is_some() {
             ProjectRuntimeEnvironmentStatus::NotRunnable
-        } else if args
-            .last_error
-            .as_deref()
-            .map(str::trim)
-            .is_some_and(|value| !value.is_empty())
-        {
-            ProjectRuntimeEnvironmentStatus::Failed
         } else {
             ProjectRuntimeEnvironmentStatus::Ready
         };
-        environment.status = requested_status.unwrap_or(inferred_status);
         if environment.status == ProjectRuntimeEnvironmentStatus::NotRunnable {
             environment.required_services = empty_array();
         } else {
@@ -294,9 +260,28 @@ impl ProjectEnvironmentToolProvider {
                 &environment.environment_variables,
             );
         environment.last_agent_run_id = Some(self.run_id.clone());
-        environment.last_error = args.last_error.and_then(normalize_owned);
+        environment.last_error = None;
         environment.updated_at = now_rfc3339();
 
+        let image_catalog = if args.images.iter().any(|image| {
+            image
+                .image_id
+                .as_deref()
+                .is_some_and(|value| !value.trim().is_empty())
+        }) {
+            Some(
+                get_sandbox_image_catalog(
+                    &self.state,
+                    &self.project,
+                    environment.sandbox_provider,
+                    self.user_access_token.as_deref(),
+                    self.run_id.as_str(),
+                )
+                .await?,
+            )
+        } else {
+            None
+        };
         let mut image_records = Vec::new();
         if environment.status != ProjectRuntimeEnvironmentStatus::NotRunnable {
             for (index, image) in args.images.into_iter().enumerate() {
@@ -305,7 +290,8 @@ impl ProjectEnvironmentToolProvider {
                     image,
                     index,
                     environment.sandbox_provider,
-                ));
+                    image_catalog.as_ref(),
+                )?);
             }
         }
         environment.generated_config_files = generated_config_files;
@@ -338,29 +324,10 @@ impl ProjectEnvironmentToolProvider {
                 environment.status = ProjectRuntimeEnvironmentStatus::Ready;
             }
         }
-        if !required_environment_variables_are_complete(&environment.environment_variables) {
-            let missing = environment
-                .environment_variables
-                .iter()
-                .filter(|record| {
-                    record.required
-                        && record
-                            .effective_value
-                            .as_deref()
-                            .is_none_or(|value| value.trim().is_empty())
-                })
-                .map(|record| record.name.as_str())
-                .collect::<Vec<_>>()
-                .join(", ");
-            environment.analysis_summary = Some(format!(
-                "{} 仍需补充必填运行参数：{}。",
-                environment
-                    .analysis_summary
-                    .as_deref()
-                    .unwrap_or("运行环境分析和镜像计划已完成。"),
-                missing
-            ));
-        }
+        environment.analysis_summary = Some(program_generated_runtime_analysis_summary(
+            &environment,
+            image_records.as_slice(),
+        ));
 
         let environment = self
             .state
@@ -377,12 +344,49 @@ impl ProjectEnvironmentToolProvider {
             .await?;
         Ok(mcp_tool_result(
             "当前项目运行环境初始化结果已保存。",
-            json!({
-                "environment": environment,
-                "images": images,
-            }),
+            agent_visible_runtime_state(&self.project, &environment, images.as_slice()),
         ))
     }
+}
+
+fn agent_visible_runtime_state(
+    project: &ProjectRecord,
+    environment: &crate::models::ProjectRuntimeEnvironmentRecord,
+    images: &[ProjectRuntimeEnvironmentImageRecord],
+) -> Value {
+    json!({
+        "project": {
+            "id": project.id,
+            "name": project.name,
+        },
+        "analysis": {
+            "not_runnable_reason": environment.not_runnable_reason,
+            "detected_stack": environment.detected_stack,
+            "required_services": environment.required_services,
+            "environment_variables": environment.environment_variables.iter().map(|record| json!({
+                "name": record.name,
+                "project_value": (!record.secret).then_some(record.project_value.as_deref()).flatten(),
+                "project_value_present": record.project_value.is_some(),
+                "project_value_suitable": record.project_value_suitable,
+                "recommended_value": (!record.secret).then_some(record.recommended_value.as_deref()).flatten(),
+                "recommended_value_present": record.recommended_value.is_some(),
+                "description": record.description,
+                "recommendation_reason": record.recommendation_reason,
+                "required": record.required,
+                "secret": record.secret,
+            })).collect::<Vec<_>>(),
+            "generated_config_files": environment.generated_config_files,
+        },
+        "images": images.iter().map(|image| json!({
+            "environment_key": image.environment_key,
+            "environment_type": image.environment_type,
+            "display_name": image.display_name,
+            "features": image.features,
+            "ports": image.ports,
+            "env_vars": image.env_vars,
+            "dockerfile": image.dockerfile,
+        })).collect::<Vec<_>>(),
+    })
 }
 
 mod compose;

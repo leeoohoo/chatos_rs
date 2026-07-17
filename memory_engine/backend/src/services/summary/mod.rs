@@ -9,7 +9,6 @@ pub(crate) const DEFAULT_ROLLUP_TARGET_TOKENS: i64 = 700;
 
 #[derive(Debug, Clone)]
 pub struct RollupSettings {
-    pub summary_prompt: Option<String>,
     pub token_limit: i64,
     pub target_summary_tokens: i64,
     pub count_limit: i64,
@@ -42,7 +41,6 @@ pub(crate) struct PreparedThreadRollup {
 
 #[derive(Debug, Clone)]
 pub(crate) struct SummaryJobSettings {
-    pub(crate) summary_prompt: Option<String>,
     pub(crate) token_limit: i64,
     pub(crate) target_summary_tokens: Option<i64>,
 }

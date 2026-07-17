@@ -5,6 +5,7 @@ pub fn normalize_provider(provider: &str) -> String {
     match provider.trim().to_ascii_lowercase().as_str() {
         "openai" | "gpt" => "gpt".to_string(),
         "kimik2" | "kimi" | "moonshot" => "kimi".to_string(),
+        "glm" | "zhipu" | "zhipuai" | "zai" | "chatglm" => "glm".to_string(),
         "openai-compatible" | "openai_compatible" | "compatible" => "openai_compatible".to_string(),
         other => other.to_string(),
     }
@@ -18,6 +19,7 @@ pub fn default_base_url_for_provider(provider: &str, fallback_base_url: &str) ->
     match normalize_provider(provider).as_str() {
         "deepseek" => "https://api.deepseek.com".to_string(),
         "kimi" => "https://api.moonshot.ai/v1".to_string(),
+        "glm" => "https://open.bigmodel.cn/api/paas/v4".to_string(),
         _ => {
             let fallback = fallback_base_url.trim();
             if fallback.is_empty() {
@@ -129,6 +131,7 @@ mod tests {
         assert_eq!(normalize_provider("openai"), "gpt");
         assert_eq!(normalize_provider("kimik2"), "kimi");
         assert_eq!(normalize_provider("moonshot"), "kimi");
+        assert_eq!(normalize_provider("zhipu"), "glm");
         assert_eq!(normalize_provider("openai-compatible"), "openai_compatible");
     }
 
@@ -141,6 +144,10 @@ mod tests {
         assert_eq!(
             default_base_url_for_provider("kimi", "https://api.openai.com/v1"),
             "https://api.moonshot.ai/v1"
+        );
+        assert_eq!(
+            default_base_url_for_provider("glm", "https://api.openai.com/v1"),
+            "https://open.bigmodel.cn/api/paas/v4"
         );
         assert_eq!(
             default_base_url_for_provider("gpt", "https://gateway.local/v1"),

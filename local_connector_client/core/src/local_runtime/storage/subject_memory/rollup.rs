@@ -18,7 +18,8 @@ impl LocalDatabase {
         subject_type: &str,
         subject_id: &str,
         project_id: &str,
-        recall_limit: i64,
+        count_limit: i64,
+        keep_level0_count: i64,
     ) -> Result<Option<LocalSubjectMemoryRollupPlan>> {
         let existing_rollup = self
             .get_subject_memory(
@@ -48,16 +49,13 @@ impl LocalDatabase {
         .fetch_all(self.pool())
         .await
         .context("load local subject memory rollup candidates")?;
-        let recall_limit = recall_limit.clamp(2, 50) as usize;
+        let count_limit = count_limit.clamp(2, 50) as usize;
+        let keep_level0_count = keep_level0_count.clamp(0, 50) as usize;
         let total = raw.len() + usize::from(existing_rollup.is_some());
-        if total <= recall_limit {
+        if total <= count_limit {
             return Ok(None);
         }
-        let candidate_count = if existing_rollup.is_some() {
-            total - recall_limit
-        } else {
-            total - recall_limit + 1
-        };
+        let candidate_count = raw.len().saturating_sub(keep_level0_count).max(1);
         Ok(Some(LocalSubjectMemoryRollupPlan {
             existing_rollup,
             candidates: raw.into_iter().take(candidate_count.max(1)).collect(),

@@ -145,7 +145,7 @@ fn default_base_url_for_provider(provider: &str) -> &'static str {
     match provider {
         "deepseek" => "https://api.deepseek.com",
         "kimi" => "https://api.moonshot.ai/v1",
-        "minimax" => "https://api.minimax.chat/v1",
+        "glm" => "https://open.bigmodel.cn/api/paas/v4",
         _ => "https://api.openai.com/v1",
     }
 }

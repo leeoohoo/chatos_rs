@@ -11,7 +11,7 @@ use crate::local_runtime::storage::{
 };
 
 const MAX_MESSAGE_CHARS: usize = 8_000;
-const MAX_TRANSCRIPT_CHARS: usize = 120_000;
+const DEFAULT_MAX_TRANSCRIPT_CHARS: usize = 120_000;
 
 pub(super) struct LocalSummaryDraft {
     pub(super) text: String,
@@ -23,14 +23,15 @@ pub(super) async fn generate_summary(
     session_id: &str,
     previous_summary: Option<&LocalMemorySummaryRecord>,
     messages: &[LocalMessageRecord],
+    token_limit: i64,
 ) -> Result<LocalSummaryDraft, String> {
-    let transcript = build_transcript(messages);
+    let transcript = build_transcript(messages, token_limit);
     let previous = previous_summary
         .map(|summary| summary.summary_text.trim())
         .filter(|summary| !summary.is_empty())
         .unwrap_or("(none)");
     let prompt = format!(
-        "Previous cumulative summary:\n{previous}\n\nNew conversation records:\n{transcript}\n\nRewrite these into one cumulative summary. Do not mention that you are summarizing."
+        "Previous cumulative summary:\n{previous}\n\nNew conversation records:\n{transcript}\n\nProduce the requested memory output using the system instructions. Do not invent missing facts."
     );
     let text = run_memory_prompt(model_config, session_id, "review", prompt).await?;
     Ok(LocalSummaryDraft {
@@ -101,12 +102,16 @@ async fn run_memory_prompt(
     Ok(text)
 }
 
-fn build_transcript(messages: &[LocalMessageRecord]) -> String {
+fn build_transcript(messages: &[LocalMessageRecord], token_limit: i64) -> String {
+    let max_transcript_chars = usize::try_from(token_limit.max(128))
+        .unwrap_or(30_000)
+        .saturating_mul(4)
+        .clamp(512, DEFAULT_MAX_TRANSCRIPT_CHARS);
     let mut output = String::new();
     for message in messages {
         let content = truncate_chars(message.content.as_str(), MAX_MESSAGE_CHARS);
         let row = format!("[{}] {}\n", message.role, content);
-        if output.chars().count() + row.chars().count() > MAX_TRANSCRIPT_CHARS {
+        if output.chars().count() + row.chars().count() > max_transcript_chars {
             break;
         }
         output.push_str(row.as_str());

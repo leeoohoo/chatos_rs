@@ -13,6 +13,8 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 chrono = { version = "0.4", features = ["serde", "clock"] }
 chatos_service_runtime = { path = "../../crates/chatos_service_runtime", features = ["axum-support"] }
+chatos_config_sdk = { path = "../../crates/chatos_config_sdk" }
+chatos_agent = { path = "../../agent", default-features = false, features = ["runtime"] }
 memory_engine_sdk = { path = "../../crates/memory_engine_sdk", default-features = false }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }

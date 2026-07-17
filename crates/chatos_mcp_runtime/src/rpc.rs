@@ -22,7 +22,7 @@ static MCP_TOOLS_LIST_CACHE: OnceLock<Mutex<HashMap<String, ToolsListCacheEntry>
 mod internal_headers;
 mod stdio;
 
-pub use internal_headers::prepare_http_headers;
+pub use internal_headers::{headers_require_per_request_signing, prepare_http_headers};
 
 #[cfg(test)]
 use stdio::{ensure_stdio_response_line_within_limit, stdio_session_cache_key};

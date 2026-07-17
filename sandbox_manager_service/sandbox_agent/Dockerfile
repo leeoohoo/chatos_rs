@@ -50,8 +50,10 @@ COPY BUILTIN_MCP_PROMPT.en-US.md ./BUILTIN_MCP_PROMPT.en-US.md
 COPY BUILTIN_MCP_PROMPT.zh-CN.md ./BUILTIN_MCP_PROMPT.zh-CN.md
 COPY crates ./crates
 COPY sandbox_manager_service/sandbox_mcp_server ./sandbox_manager_service/sandbox_mcp_server
-RUN cargo build --release -p chatos_sandbox_mcp_server \
-    && cp target/release/chatos_sandbox_mcp_server /usr/local/bin/chatos-sandbox-mcp-server
+RUN target="$(rustc -vV | sed -n 's/^host: //p')" \
+    && RUSTFLAGS="-C target-feature=+crt-static" cargo build --release --target "$target" -p chatos_sandbox_mcp_server \
+    && ldd "target/$target/release/chatos_sandbox_mcp_server" 2>&1 | grep -Eq 'not a dynamic executable|statically linked' \
+    && cp "target/$target/release/chatos_sandbox_mcp_server" /usr/local/bin/chatos-sandbox-mcp-server
 
 FROM mcr.microsoft.com/devcontainers/base:dev-ubuntu-24.04
 

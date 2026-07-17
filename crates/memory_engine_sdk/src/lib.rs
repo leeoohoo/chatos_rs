@@ -8,6 +8,7 @@ mod models;
 #[cfg(feature = "client")]
 pub use self::client::{MemoryEngineClient, RunPendingRollupsOptions};
 pub use self::models::{
+    managed_memory_policy_env_available, memory_policy_config_key, memory_policy_env_key,
     BatchSyncRecordsResponse, CompactTurnsResponse, ComposeContextBlock, ComposeContextMeta,
     ComposeContextPolicy, ComposeContextRequest, ComposeContextResponse,
     CountThreadRecordsResponse, DashboardOverviewResponse, DeleteThreadResponse, EngineJobPolicy,
@@ -15,7 +16,8 @@ pub use self::models::{
     EngineSubjectMemoryScope, EngineSummary, EngineThread, EngineThreadSnapshot,
     GenerateJobPolicyPromptRequest, GenerateJobPolicyPromptResponse, GetThreadResponse,
     JobRunsBundleResponse, ListJobRunsRequest, ListResponse, ListSourcesRequest,
-    ListSummariesByThreadLabelRequest, QuerySubjectMemoriesRequest, RotateSourceSecretResponse,
+    ListSummariesByThreadLabelRequest, ManagedMemoryPolicy, ManagedMemoryPolicyBundle,
+    MemoryPolicyKind, QuerySubjectMemoriesRequest, RotateSourceSecretResponse,
     RunPendingRollupsResponse, RunPendingSummariesResponse, RunSubjectMemoryScopesResponse,
     RunThreadActiveSummaryResponse, RunThreadRepairSummaryResponse, RunThreadSummaryResponse,
     SdkAuthStatusResponse, SdkBatchSyncRecordsRequest, SdkComposeContextRequest,
@@ -31,5 +33,5 @@ pub use self::models::{
     SystemUpsertSubjectMemoryScopeRequest, ThreadRecordsPageResponse, ThreadSnapshotLookupResponse,
     TurnProcessRecordsResponse, TurnRecordSlice, UpsertEngineJobPolicyRequest,
     UpsertEngineModelProfileRequest, UpsertRecordInput, UpsertSourceRequest,
-    UpsertSubjectMemoryScopeRequest, UpsertThreadSnapshotRequest,
+    UpsertSubjectMemoryScopeRequest, UpsertThreadSnapshotRequest, MEMORY_POLICY_CONFIG_PREFIX,
 };

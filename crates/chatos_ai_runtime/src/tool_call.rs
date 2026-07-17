@@ -90,6 +90,27 @@ pub fn merge_tool_call_arguments_piece(entry: &mut Value, arguments_piece: &str)
         Value::String(join_stream_text(current.as_str(), arguments_piece));
 }
 
+pub fn append_tool_call_name_delta(entry: &mut Value, name_delta: &str) {
+    if name_delta.is_empty() {
+        return;
+    }
+    let mut current = entry["function"]["name"].as_str().unwrap_or("").to_string();
+    current.push_str(name_delta);
+    entry["function"]["name"] = Value::String(current);
+}
+
+pub fn append_tool_call_arguments_delta(entry: &mut Value, arguments_delta: &str) {
+    if arguments_delta.is_empty() {
+        return;
+    }
+    let mut current = entry["function"]["arguments"]
+        .as_str()
+        .unwrap_or("")
+        .to_string();
+    current.push_str(arguments_delta);
+    entry["function"]["arguments"] = Value::String(current);
+}
+
 pub fn merge_indexed_tool_call_parts(
     tool_calls_map: &mut BTreeMap<usize, Value>,
     index: usize,

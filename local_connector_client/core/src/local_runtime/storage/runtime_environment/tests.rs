@@ -34,12 +34,12 @@ async fn persists_environment_analysis_and_progress_in_sqlite() {
         .expect("start analysis");
     let analysis = LocalEnvironmentAnalysisResult {
         status: "ready".to_string(),
-        analysis_summary: "Rust service".to_string(),
         detected_stack: json!({ "rust": true }),
         required_services: json!(["postgres"]),
         env_vars: json!({ "DATABASE_URL": { "required": true } }),
         images: vec![LocalEnvironmentImagePlan {
             environment_key: "app".to_string(),
+            environment_type: "application".to_string(),
             display_name: "Application".to_string(),
             dockerfile: Some("FROM rust:1".to_string()),
             ..Default::default()
@@ -51,6 +51,10 @@ async fn persists_environment_analysis_and_progress_in_sqlite() {
         .await
         .expect("finish analysis");
     assert_eq!(environment.status, "ready");
+    assert!(environment
+        .analysis_summary
+        .as_deref()
+        .is_some_and(|summary| summary.contains("1 个应用组件")));
     let images = database
         .list_local_runtime_environment_images("user-env", "project-env")
         .await
