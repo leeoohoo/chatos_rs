@@ -34,15 +34,6 @@ type ParsedMessageForList = {
   isTaskRunnerCallbackAssistant: boolean;
 };
 
-export type ParsedMessageCacheEntry = {
-  ref: Message;
-  metadataRef: unknown;
-  content: string;
-  status: unknown;
-  updatedAt: unknown;
-  parsed: ParsedMessageForList;
-};
-
 const getTimeValue = (value: unknown): number => {
   if (!value) return 0;
   if (value instanceof Date) return value.getTime();

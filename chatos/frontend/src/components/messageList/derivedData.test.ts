@@ -4,6 +4,7 @@
 import { describe, expect, it } from 'vitest';
 
 import type { Message } from '../../types';
+import { normalizeRawMessages } from '../../lib/domain/messages';
 import { buildVisibleMessageState, parseMessageForList } from './derivedData';
 
 const buildAssistant = (overrides: Partial<Message> = {}): Message => ({
@@ -268,6 +269,62 @@ describe('buildVisibleMessageState', () => {
       'assistant-final-tool-carrier-1',
     ]);
     expect(state.assistantToolCallById.has('tool-call-carrier-1')).toBe(true);
+  });
+
+  it('filters the live task-runner async plan payload while tools are still running', () => {
+    const messages = normalizeRawMessages([
+      {
+        id: 'user-live-plan-1',
+        conversation_id: 'session-1',
+        role: 'user',
+        content: '刚才好像失败了，你重新试一下吧',
+        status: 'completed',
+        created_at: '2026-07-22T07:15:05.943434Z',
+        message_mode: 'task_runner_async_plan',
+        metadata: {
+          conversation_turn_id: 'turn-live-plan-1',
+          task_runner_async: {
+            mode: 'contact_async',
+            overall_status: 'processing',
+          },
+        },
+      },
+      {
+        id: 'assistant-live-plan-tools-1',
+        conversation_id: 'session-1',
+        role: 'assistant',
+        content: '',
+        status: 'completed',
+        created_at: '2026-07-22T07:15:19.309907Z',
+        message_mode: 'task_runner_async_plan',
+        metadata: {
+          conversation_turn_id: 'turn-live-plan-1',
+          response_status: 'tool_calls',
+          task_runner_async: {
+            mode: 'contact_async',
+            message_kind: 'plan_summary',
+          },
+          reasoning: 'Planning parallel task status listing',
+          toolCalls: [
+            {
+              id: 'call-live-plan-1',
+              type: 'function',
+              function: {
+                name: 'task_runner_service_list_tasks',
+                arguments: '{}',
+              },
+            },
+          ],
+        },
+      },
+    ] as never, 'session-1');
+
+    const state = buildVisibleMessageState(messages.map(parseMessageForList));
+
+    expect(state.visibleMessages.map((message) => message.id)).toEqual([
+      'user-live-plan-1',
+    ]);
+    expect(state.assistantToolCallById.has('call-live-plan-1')).toBe(true);
   });
 
   it('filters intermediate assistant text when the same response also carries tool calls', () => {
