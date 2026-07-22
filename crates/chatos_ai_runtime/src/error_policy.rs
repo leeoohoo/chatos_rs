@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
+use std::time::{SystemTime, UNIX_EPOCH};
+
 use tokio::time::{sleep, Duration};
+use tokio_util::sync::CancellationToken;
 use tracing::warn;
 
 const RATE_LIMITED_ERROR_CODE: &str = "RATE_LIMITED";
@@ -100,8 +103,20 @@ pub fn is_transient_network_error(err: &str) -> bool {
         || message.contains("error code: 522")
         || message.contains("error code: 523")
         || message.contains("error code: 524")
+        || is_upstream_auth_unavailable_error(err)
         || is_retryable_failed_provider_response(err)
         || is_retryable_provider_backpressure_error(err)
+}
+
+/// Detects a gateway's temporary lack of provider-side credentials/accounts.
+/// This is distinct from a user's invalid API key, which is normally a 401 and
+/// must not be retried.
+pub fn is_upstream_auth_unavailable_error(err: &str) -> bool {
+    let message = err.to_lowercase();
+    message.contains("auth_unavailable")
+        || message.contains("no auth available")
+        || message.contains("no available auth")
+        || message.contains("no available account")
 }
 
 pub fn is_retryable_failed_provider_response(err: &str) -> bool {
@@ -181,23 +196,77 @@ pub fn is_transient_transport_or_parse_error(err: &str) -> bool {
 }
 
 pub fn transient_retry_kind_label(err: &str) -> &'static str {
-    if is_response_parse_error(err) {
+    if is_upstream_auth_unavailable_error(err) {
+        "上游认证资源暂不可用"
+    } else if is_response_parse_error(err) {
         "响应解析异常"
     } else if is_rate_limited_provider_error(err) {
         "上游限流"
     } else if is_retryable_provider_overload_error(err) {
         "上游暂时过载"
+    } else if is_retryable_gateway_error(err) {
+        "上游服务暂不可用"
     } else {
         "网络波动"
     }
 }
 
 pub fn transient_retry_backoff_ms(err: &str, retry_count: usize) -> u64 {
-    if is_rate_limited_provider_error(err) {
-        1000_u64 * retry_count as u64
+    let retry_count = retry_count.max(1);
+    let (base_ms, cap_ms) = if is_upstream_auth_unavailable_error(err)
+        || is_rate_limited_provider_error(err)
+        || is_retryable_provider_overload_error(err)
+    {
+        (2_000_u64, 30_000_u64)
+    } else if is_retryable_gateway_error(err) {
+        (1_000_u64, 16_000_u64)
+    } else if is_response_parse_error(err) || is_retryable_failed_provider_response(err) {
+        (250_u64, 4_000_u64)
     } else {
-        150_u64 * retry_count as u64
-    }
+        (750_u64, 12_000_u64)
+    };
+    let exponent = u32::try_from(retry_count.saturating_sub(1))
+        .unwrap_or(u32::MAX)
+        .min(16);
+    let exponential_ms = base_ms.saturating_mul(1_u64 << exponent).min(cap_ms);
+    retry_after_hint_ms(err)
+        .map(|hint_ms| exponential_ms.max(hint_ms.min(120_000)))
+        .unwrap_or(exponential_ms)
+}
+
+fn retry_after_hint_ms(err: &str) -> Option<u64> {
+    const MARKER: &str = "retry_after_ms=";
+    let start = err.find(MARKER)? + MARKER.len();
+    let digits = err[start..]
+        .chars()
+        .take_while(char::is_ascii_digit)
+        .collect::<String>();
+    (!digits.is_empty())
+        .then(|| digits.parse::<u64>().ok())
+        .flatten()
+}
+
+fn is_retryable_gateway_error(err: &str) -> bool {
+    let message = err.to_lowercase();
+    [502, 503, 504, 522, 523, 524].into_iter().any(|status| {
+        message.contains(format!("status {status}").as_str())
+            || message.contains(format!("status={status}").as_str())
+    }) || message.contains("upstream connect error")
+        || message.contains("disconnect/reset before headers")
+}
+
+fn jittered_transient_retry_backoff_ms(err: &str, retry_count: usize) -> u64 {
+    let backoff_ms = transient_retry_backoff_ms(err, retry_count);
+    let jitter_window_ms = (backoff_ms / 5).max(1);
+    let time_entropy = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.subsec_nanos() as u64)
+        .unwrap_or_default();
+    let error_entropy = err.bytes().fold(retry_count as u64, |hash, byte| {
+        hash.wrapping_mul(1_099_511_628_211)
+            .wrapping_add(byte as u64)
+    });
+    backoff_ms.saturating_add((time_entropy ^ error_entropy) % (jitter_window_ms + 1))
 }
 
 pub fn exhausted_transient_retry_message(
@@ -226,7 +295,7 @@ pub fn classify_transient_retry(
         return Some(TransientRetryAction::Retry {
             retry_kind,
             next_retry_count,
-            backoff_ms: transient_retry_backoff_ms(err, next_retry_count),
+            backoff_ms: jittered_transient_retry_backoff_ms(err, next_retry_count),
         });
     }
 
@@ -240,6 +309,23 @@ pub async fn handle_transient_retry(
     err: &str,
     transient_retry_count: &mut usize,
     max_transient_retries: usize,
+) -> Result<bool, String> {
+    handle_transient_retry_with_abort(
+        log_prefix,
+        err,
+        transient_retry_count,
+        max_transient_retries,
+        None,
+    )
+    .await
+}
+
+pub async fn handle_transient_retry_with_abort(
+    log_prefix: &str,
+    err: &str,
+    transient_retry_count: &mut usize,
+    max_transient_retries: usize,
+    abort_token: Option<&CancellationToken>,
 ) -> Result<bool, String> {
     let Some(action) = classify_transient_retry(err, *transient_retry_count, max_transient_retries)
     else {
@@ -262,7 +348,16 @@ pub async fn handle_transient_retry(
                 backoff_ms,
                 err
             );
-            sleep(Duration::from_millis(backoff_ms)).await;
+            let backoff = sleep(Duration::from_millis(backoff_ms));
+            tokio::pin!(backoff);
+            if let Some(token) = abort_token {
+                tokio::select! {
+                    _ = token.cancelled() => return Err("aborted".to_string()),
+                    _ = &mut backoff => {}
+                }
+            } else {
+                backoff.await;
+            }
             Ok(true)
         }
         TransientRetryAction::Exhausted { error_message } => Err(error_message),
@@ -280,13 +375,14 @@ fn is_non_retryable_quota_error(message: &str) -> bool {
 mod tests {
     use super::{
         classify_transient_retry, classify_user_facing_ai_error, exhausted_transient_retry_message,
-        handle_transient_retry, is_context_length_exceeded_error, is_provider_authentication_error,
+        handle_transient_retry, handle_transient_retry_with_abort,
+        is_context_length_exceeded_error, is_provider_authentication_error,
         is_rate_limited_provider_error, is_request_body_too_large_error, is_response_parse_error,
         is_retryable_failed_provider_response, is_retryable_provider_backpressure_error,
         is_retryable_provider_overload_error, is_transient_network_error,
-        is_transient_transport_or_parse_error, replay_request_error_policy,
-        transient_retry_backoff_ms, transient_retry_kind_label, RequestErrorReplay,
-        TransientRetryAction,
+        is_transient_transport_or_parse_error, is_upstream_auth_unavailable_error,
+        replay_request_error_policy, transient_retry_backoff_ms, transient_retry_kind_label,
+        RequestErrorReplay, TransientRetryAction,
     };
 
     #[test]
@@ -422,6 +518,14 @@ mod tests {
     }
 
     #[test]
+    fn distinguishes_upstream_auth_pool_outage_from_invalid_user_credentials() {
+        let error = "status 503 Service Unavailable: auth_unavailable: no auth available (providers=codex, model=gpt-5.4)";
+        assert!(is_upstream_auth_unavailable_error(error));
+        assert!(is_transient_network_error(error));
+        assert!(!is_provider_authentication_error(error));
+    }
+
+    #[test]
     fn detects_retryable_backpressure_union() {
         assert!(is_retryable_provider_backpressure_error(
             "status 429 Too Many Requests: try again later"
@@ -466,7 +570,13 @@ mod tests {
         );
         assert_eq!(
             transient_retry_kind_label("status 503: service unavailable"),
-            "网络波动"
+            "上游服务暂不可用"
+        );
+        assert_eq!(
+            transient_retry_kind_label(
+                "status 503: auth_unavailable: no auth available (providers=codex)"
+            ),
+            "上游认证资源暂不可用"
         );
         assert_eq!(
             transient_retry_kind_label(
@@ -482,14 +592,25 @@ mod tests {
         );
         assert_eq!(
             transient_retry_backoff_ms("status 503: service unavailable", 2),
-            300
+            2000
         );
         assert_eq!(
             transient_retry_backoff_ms(
                 "status 429 Too Many Requests: {\"error\":{\"message\":\"Rate limit exceeded\"}}",
                 3,
             ),
-            3000
+            8000
+        );
+        assert_eq!(
+            transient_retry_backoff_ms(
+                "status 503: auth_unavailable: no auth available (providers=codex)",
+                5,
+            ),
+            30000
+        );
+        assert_eq!(
+            transient_retry_backoff_ms("status 503 [retry_after_ms=45000]: service unavailable", 2,),
+            45000
         );
     }
 
@@ -502,9 +623,9 @@ mod tests {
                 next_retry_count,
                 backoff_ms,
             }) => {
-                assert_eq!(retry_kind, "网络波动");
+                assert_eq!(retry_kind, "上游服务暂不可用");
                 assert_eq!(next_retry_count, 1);
-                assert_eq!(backoff_ms, 150);
+                assert!((1000..=1200).contains(&backoff_ms));
             }
             _ => panic!("expected retry action"),
         }
@@ -515,7 +636,7 @@ mod tests {
                 assert_eq!(
                     error_message,
                     exhausted_transient_retry_message(
-                        "网络波动",
+                        "上游服务暂不可用",
                         5,
                         "status 503: service unavailable"
                     ),
@@ -557,6 +678,25 @@ mod tests {
 
         assert!(err.contains("AI 请求失败"));
         assert!(err.contains("status 503: service unavailable"));
+    }
+
+    #[tokio::test]
+    async fn retry_backoff_can_be_cancelled_immediately() {
+        let token = tokio_util::sync::CancellationToken::new();
+        token.cancel();
+        let mut retry_count = 0usize;
+        let err = handle_transient_retry_with_abort(
+            "[test]",
+            "status 503: auth_unavailable: no auth available",
+            &mut retry_count,
+            5,
+            Some(&token),
+        )
+        .await
+        .expect_err("cancelled backoff should abort");
+
+        assert_eq!(err, "aborted");
+        assert_eq!(retry_count, 1);
     }
 
     #[test]

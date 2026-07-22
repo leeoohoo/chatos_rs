@@ -25,6 +25,7 @@ pub(super) async fn dispatch_model_request(
     input_bytes: usize,
     tool_count: usize,
     stream_output: bool,
+    force_identity_encoding: bool,
 ) -> Result<AiResponse, String> {
     info!(
         conversation_id = options.conversation_id.as_deref().unwrap_or(""),
@@ -37,6 +38,11 @@ pub(super) async fn dispatch_model_request(
         input_item_count,
         input_bytes,
         tool_count,
+        connection_mode = if force_identity_encoding {
+            "isolated_retry"
+        } else {
+            "pooled"
+        },
         "ai runtime dispatching model request"
     );
     let request_debug = json!({
@@ -84,7 +90,7 @@ pub(super) async fn dispatch_model_request(
                 include_prompt_cache_retention: request.include_prompt_cache_retention,
                 request_body_limit_bytes: request.request_body_limit_bytes,
                 abort_token: options.abort_token.clone(),
-                force_identity_encoding: false,
+                force_identity_encoding,
             },
         )
         .await;

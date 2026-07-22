@@ -8,8 +8,8 @@ use serde_json::{json, Value};
 use super::{
     build_chat_completions_request_payload, build_responses_request_payload,
     effective_provider_for_request, emit_finalized_stream_callbacks,
-    response_items_to_chat_messages, validate_request_payload_size, AiRequestOptions,
-    StreamCallbacks,
+    response_items_to_chat_messages, validate_request_payload_size, AiRequestHandler,
+    AiRequestOptions, StreamCallbacks,
 };
 use crate::stream_parse::FinalizedStreamState;
 
@@ -263,6 +263,35 @@ fn request_payload_size_limit_rejects_oversized_body() {
 fn request_payload_size_limit_allows_unset_or_zero_limit() {
     assert!(validate_request_payload_size(usize::MAX, None).is_ok());
     assert!(validate_request_payload_size(usize::MAX, Some(0)).is_ok());
+}
+
+#[tokio::test]
+async fn transport_errors_preserve_error_kind_and_source_chain() {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind unused port");
+    let address = listener.local_addr().expect("unused port address");
+    drop(listener);
+
+    let error = AiRequestHandler::new()
+        .handle_request(
+            format!("http://{address}").as_str(),
+            "test-key",
+            json!({"messages": []}),
+            false,
+            "test-model".to_string(),
+            None,
+            None,
+            None,
+            None,
+            StreamCallbacks::default(),
+            Some("openai_compatible".to_string()),
+            None,
+            None,
+        )
+        .await
+        .expect_err("closed port should fail");
+
+    assert!(error.contains("AI transport error (kind=connect)"));
+    assert!(error.contains("caused by:"));
 }
 
 #[test]

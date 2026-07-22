@@ -16,8 +16,8 @@ use crate::request_payload::{
 };
 use crate::request_retry::should_retry_without_prompt_cache_retention;
 use http::{
-    log_preview, read_error_response_text_limited, send_json_request, serialize_request_payload,
-    validate_request_payload_size,
+    log_preview, read_error_response_text_limited, retry_after_delay_ms, send_json_request,
+    serialize_request_payload, validate_request_payload_size,
 };
 use streaming::parse_stream_response;
 
@@ -263,16 +263,21 @@ impl AiRequestHandler {
         );
         if !response.status().is_success() {
             let status = response.status();
+            let retry_after_ms = retry_after_delay_ms(response.headers());
             let body = read_error_response_text_limited(response).await;
             let body_preview = log_preview(body.as_str());
             warn!(
                 transport = transport_label(transport),
                 url = url.as_str(),
                 status = status.as_u16(),
+                retry_after_ms,
                 response_body = body_preview.as_str(),
                 "ai provider request failed"
             );
-            return Err(format!("status {status}: {body}"));
+            let retry_hint = retry_after_ms
+                .map(|value| format!(" [retry_after_ms={value}]"))
+                .unwrap_or_default();
+            return Err(format!("status {status}{retry_hint}: {body}"));
         }
 
         let parsed = parse_stream_response(

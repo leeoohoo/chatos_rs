@@ -5,7 +5,12 @@ use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
-use axum::{extract::State, http::StatusCode, routing::post, Json, Router};
+use axum::{
+    extract::State,
+    http::{HeaderMap, StatusCode},
+    routing::post,
+    Json, Router,
+};
 use serde_json::{json, Value};
 use tokio::sync::Mutex as AsyncMutex;
 
@@ -78,13 +83,21 @@ fn lifecycle_record_metadata_overlays_static_record_metadata() {
 struct MockLifecycleProviderState {
     responses: Arc<AsyncMutex<VecDeque<Value>>>,
     requests: Arc<AsyncMutex<Vec<Value>>>,
+    connection_headers: Arc<AsyncMutex<Vec<Option<String>>>>,
 }
 
 async fn mock_lifecycle_provider(
     State(state): State<MockLifecycleProviderState>,
+    headers: HeaderMap,
     Json(payload): Json<Value>,
 ) -> (StatusCode, Json<Value>) {
     state.requests.lock().await.push(payload);
+    state.connection_headers.lock().await.push(
+        headers
+            .get(reqwest::header::CONNECTION)
+            .and_then(|value| value.to_str().ok())
+            .map(ToOwned::to_owned),
+    );
     let response = state.responses.lock().await.pop_front().unwrap_or_else(|| {
         json!({
             "id": "response-default",
@@ -100,11 +113,14 @@ async fn start_lifecycle_mock_provider(
 ) -> (
     String,
     Arc<AsyncMutex<Vec<Value>>>,
+    Arc<AsyncMutex<Vec<Option<String>>>>,
     tokio::task::JoinHandle<()>,
 ) {
+    let connection_headers = Arc::new(AsyncMutex::new(Vec::new()));
     let state = MockLifecycleProviderState {
         responses: Arc::new(AsyncMutex::new(responses.into_iter().collect())),
         requests: Arc::new(AsyncMutex::new(Vec::new())),
+        connection_headers: Arc::clone(&connection_headers),
     };
     let requests = Arc::clone(&state.requests);
     let app = Router::new()
@@ -117,7 +133,12 @@ async fn start_lifecycle_mock_provider(
     let server = tokio::spawn(async move {
         let _ = axum::serve(listener, app).await;
     });
-    (format!("http://{address}"), requests, server)
+    (
+        format!("http://{address}"),
+        requests,
+        connection_headers,
+        server,
+    )
 }
 
 #[derive(Default)]
@@ -181,7 +202,7 @@ impl RuntimeLifecycleHook for ReviewLifecycleHook {
 
 #[tokio::test]
 async fn lifecycle_continuation_runs_hidden_review_and_restores_visible_response() {
-    let (base_url, requests, server) = start_lifecycle_mock_provider(vec![
+    let (base_url, requests, _connection_headers, server) = start_lifecycle_mock_provider(vec![
         json!({
             "id": "response-visible",
             "status": "completed",
@@ -243,7 +264,7 @@ async fn failed_provider_response_retries_five_times_before_succeeding() {
         "status": "failed",
         "error": null
     });
-    let (base_url, requests, server) = start_lifecycle_mock_provider(vec![
+    let (base_url, requests, connection_headers, server) = start_lifecycle_mock_provider(vec![
         failed_response.clone(),
         failed_response.clone(),
         failed_response.clone(),
@@ -274,6 +295,12 @@ async fn failed_provider_response_retries_five_times_before_succeeding() {
 
     assert_eq!(result.content, "completed after retries");
     assert_eq!(requests.lock().await.len(), 6);
+    let connection_headers = connection_headers.lock().await;
+    assert_eq!(connection_headers.first(), Some(&None));
+    assert!(connection_headers
+        .iter()
+        .skip(1)
+        .all(|header| header.as_deref() == Some("close")));
 }
 
 #[tokio::test]
@@ -283,7 +310,7 @@ async fn model_request_uses_configured_transient_retry_limit() {
         "status": "failed",
         "error": null
     });
-    let (base_url, requests, server) = start_lifecycle_mock_provider(vec![
+    let (base_url, requests, _connection_headers, server) = start_lifecycle_mock_provider(vec![
         failed_response.clone(),
         failed_response.clone(),
         failed_response,
