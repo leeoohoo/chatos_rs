@@ -9,6 +9,9 @@ use serde::Deserialize;
 use super::access::{ensure_project_writable, require_project_access, require_requirement_access};
 use super::ApiError;
 use crate::auth::CurrentUser;
+use crate::domain::status_policy::{
+    ensure_requirement_create_status, ensure_requirement_user_update_status,
+};
 use crate::domain::visibility::{non_archived_requirements, should_include_archived};
 use crate::models::{
     now_rfc3339, CreateRequirementRequest, RequirementDocumentRecord, RequirementRecord,
@@ -59,6 +62,7 @@ pub(in crate::api) async fn create_requirement(
 ) -> Result<(StatusCode, Json<RequirementRecord>), ApiError> {
     let project = require_project_access(&state, &project_id, &user).await?;
     ensure_project_writable(&project)?;
+    ensure_requirement_create_status(input.status).map_err(ApiError::bad_request)?;
     let requirement = state
         .store
         .create_requirement(&project_id, input, &user)
@@ -85,6 +89,7 @@ pub(in crate::api) async fn update_requirement(
     let requirement = require_requirement_access(&state, &requirement_id, &user).await?;
     let project = require_project_access(&state, &requirement.project_id, &user).await?;
     ensure_project_writable(&project)?;
+    ensure_requirement_user_update_status(input.status).map_err(ApiError::bad_request)?;
     state
         .store
         .update_requirement(&requirement_id, input)

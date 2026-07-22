@@ -71,6 +71,11 @@ impl LocalDatabase {
             ON CONFLICT(project_id) DO UPDATE SET
                 run_id = excluded.run_id, phase = excluded.phase, status = excluded.status,
                 progress_percent = excluded.progress_percent, updated_at = excluded.updated_at,
+                started_at = CASE
+                    WHEN project_runtime_environment_progress.run_id IS NOT excluded.run_id
+                        THEN excluded.started_at
+                    ELSE project_runtime_environment_progress.started_at
+                END,
                 finished_at = excluded.finished_at, logs = excluded.logs, error = excluded.error
             "#,
         )

@@ -4,7 +4,7 @@
 use std::path::Path;
 
 use anyhow::{anyhow, Result};
-use chatos_builtin_tools::{CodeMaintainerOptions, CodeMaintainerService};
+use chatos_mcp::{CodeMaintainerOptions, CodeMaintainerService};
 use serde_json::{json, Value};
 
 use crate::relay::RelayRequest;

@@ -45,12 +45,13 @@ pub struct MessageOut {
 
 impl From<Message> for MessageOut {
     fn from(msg: Message) -> Self {
+        let content = message_content_for_display(&msg);
         MessageOut {
             id: msg.id,
             conversation_id: msg.session_id.clone(),
             conversation_id_camel: msg.session_id,
             role: msg.role,
-            content: msg.content,
+            content,
             message_mode: msg.message_mode,
             message_source: msg.message_source,
             summary: msg.summary,
@@ -64,6 +65,84 @@ impl From<Message> for MessageOut {
             created_at: msg.created_at,
         }
     }
+}
+
+fn message_content_for_display(message: &Message) -> String {
+    if message.role.trim() != "user" {
+        return message.content.clone();
+    }
+
+    let execution_metadata = message
+        .metadata
+        .as_ref()
+        .and_then(|metadata| metadata.get("project_requirement_execution"));
+    if let Some(content) = execution_metadata
+        .and_then(|metadata| metadata.get("user_visible_content"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|content| !content.is_empty())
+    {
+        return content.to_string();
+    }
+
+    let leaked_internal_prompt =
+        looks_like_requirement_execution_internal_prompt(message.content.as_str());
+    let task_runner_source = message
+        .metadata
+        .as_ref()
+        .and_then(|metadata| metadata.get("task_runner_async"))
+        .and_then(|metadata| metadata.get("source"))
+        .and_then(Value::as_str);
+    let is_requirement_execution = execution_metadata.is_some()
+        || message.message_mode.as_deref() == Some("project_requirement_execution")
+        || task_runner_source == Some("project_requirement_execute_button")
+        || leaked_internal_prompt;
+    if !is_requirement_execution {
+        return message.content.clone();
+    }
+
+    let prompt_payload = leaked_internal_prompt
+        .then(|| parse_requirement_execution_prompt_payload(message.content.as_str()))
+        .flatten();
+    let requirement_title = execution_metadata
+        .and_then(|metadata| metadata.get("requirement_title"))
+        .and_then(Value::as_str)
+        .or_else(|| {
+            prompt_payload
+                .as_ref()
+                .and_then(|payload| payload.get("requirement"))
+                .and_then(|requirement| requirement.get("title"))
+                .and_then(Value::as_str)
+        })
+        .map(str::trim)
+        .filter(|title| !title.is_empty());
+    let task_count = execution_metadata
+        .and_then(|metadata| metadata.get("project_task_ids"))
+        .and_then(Value::as_array)
+        .map(Vec::len)
+        .or_else(|| {
+            prompt_payload
+                .as_ref()
+                .and_then(|payload| payload.get("selected_project_tasks"))
+                .and_then(Value::as_array)
+                .map(Vec::len)
+        });
+
+    match (requirement_title, task_count) {
+        (Some(title), Some(count)) => format!("执行需求「{title}」的 {count} 个关联任务。"),
+        (Some(title), None) => format!("执行需求「{title}」的关联任务。"),
+        (None, Some(count)) => format!("执行 {count} 个关联任务。"),
+        (None, None) => "执行所选关联任务。".to_string(),
+    }
+}
+
+fn looks_like_requirement_execution_internal_prompt(content: &str) -> bool {
+    content.contains("project_requirement_execution_planning")
+}
+
+fn parse_requirement_execution_prompt_payload(content: &str) -> Option<Value> {
+    let json_start = content.find('{')?;
+    serde_json::from_str(&content[json_start..]).ok()
 }
 
 pub fn build_message(session_id: String, fields: NewMessageFields, default_role: &str) -> Message {
@@ -313,9 +392,60 @@ mod tests {
         extract_non_empty_text_value, flatten_text_value, is_session_summary_message,
         join_text_lines_or_json, message_metadata_string_alias, message_turn_id,
         object_string_alias, optional_text_has_content, owned_non_empty_text,
-        select_preferred_text, text_has_content, text_value_or_json,
+        select_preferred_text, text_has_content, text_value_or_json, MessageOut,
     };
     use crate::models::message::Message;
+
+    #[test]
+    fn requirement_execution_message_uses_persisted_user_visible_content() {
+        let mut message = Message::new(
+            "session_1".to_string(),
+            "user".to_string(),
+            "internal execution_contract payload".to_string(),
+        );
+        message.metadata = Some(json!({
+            "project_requirement_execution": {
+                "requirement_title": "JDK 21 upgrade",
+                "project_task_ids": ["task-1", "task-2"],
+                "user_visible_content": "执行需求「JDK 21 upgrade」的 2 个关联任务。"
+            }
+        }));
+
+        let output = MessageOut::from(message);
+
+        assert_eq!(
+            output.content,
+            "执行需求「JDK 21 upgrade」的 2 个关联任务。"
+        );
+        assert!(!output.content.contains("execution_contract"));
+    }
+
+    #[test]
+    fn legacy_requirement_execution_prompt_is_summarized_without_metadata() {
+        let message = Message::new(
+            "session_1".to_string(),
+            "user".to_string(),
+            concat!(
+                "这是用户点击‘执行关联任务’产生的强制执行请求。\n\n",
+                "{\n",
+                "  \"mode\": \"project_requirement_execution_planning\",\n",
+                "  \"requirement\": {\"title\": \"JDK 21 upgrade\"},\n",
+                "  \"selected_project_tasks\": [{\"id\": \"task-1\"}, {\"id\": \"task-2\"}]\n",
+                "}"
+            )
+            .to_string(),
+        );
+
+        let output = MessageOut::from(message);
+
+        assert_eq!(
+            output.content,
+            "执行需求「JDK 21 upgrade」的 2 个关联任务。"
+        );
+        assert!(!output
+            .content
+            .contains("project_requirement_execution_planning"));
+    }
 
     #[test]
     fn flattens_text_values_using_configured_keys() {

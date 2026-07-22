@@ -18,7 +18,7 @@ export function RuntimeKindTag({ value }: { value: RuntimeKind | string }) {
   const { t } = useI18n();
   const local = value.startsWith('local_connector');
   return (
-    <Tag color={local ? 'orange' : value === 'builtin' ? 'blue' : 'cyan'}>
+    <Tag color={local ? 'orange' : value === 'system' || value === 'builtin' ? 'blue' : 'cyan'}>
       {runtimeKindLabel(value, t)}
     </Tag>
   );

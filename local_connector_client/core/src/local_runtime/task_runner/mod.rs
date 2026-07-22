@@ -3,9 +3,14 @@
 
 mod execution;
 mod models;
+mod service_provider;
 mod worker;
 
-pub(crate) use models::{EnqueueLocalTaskRunInput, LocalTaskRunRecord};
+pub(crate) use execution::user_visible_task_run_failure_receipt;
+pub(crate) use models::{
+    CreateLocalConversationTaskInput, EnqueueLocalTaskRunInput, LocalTaskRunRecord,
+};
+pub(crate) use service_provider::LocalTaskRunnerServiceProvider;
 pub(crate) use worker::run_local_task_worker_loop;
 
 #[cfg(test)]

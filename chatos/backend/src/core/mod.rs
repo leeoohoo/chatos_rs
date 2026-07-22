@@ -28,6 +28,7 @@ pub mod runtime_health;
 pub mod secrets;
 pub mod session_access;
 pub mod system_context_access;
+pub mod task_runner_callback_display;
 pub mod terminal_access;
 pub mod time;
 pub mod tool_call;

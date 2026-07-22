@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use serde_json::json;
@@ -81,4 +81,72 @@ async fn parallel_execution_maps_panics_to_the_originating_call() {
     assert_eq!(results[1].tool_call_id, "call-panic");
     assert!(results[1].is_error);
     assert!(results[1].content.contains("internal panic"));
+}
+
+#[tokio::test]
+async fn sequential_execution_stops_while_a_tool_is_still_waiting() {
+    let aborted = Arc::new(AtomicBool::new(false));
+    let context = ToolCallContext::new(Some("session-1".to_string()), None, None)
+        .with_abort_checker(Arc::new({
+            let aborted = Arc::clone(&aborted);
+            move |_| aborted.load(Ordering::SeqCst)
+        }));
+    let abort_handle = tokio::spawn({
+        let aborted = Arc::clone(&aborted);
+        async move {
+            tokio::time::sleep(std::time::Duration::from_millis(80)).await;
+            aborted.store(true, Ordering::SeqCst);
+        }
+    });
+
+    let results = tokio::time::timeout(
+        std::time::Duration::from_secs(1),
+        execute_tool_calls_stream(
+            &[json!({"id": "call-1", "function": {"name": "wait", "arguments": "{}"}})],
+            context,
+            None,
+            |_name, _args, _stream| async move {
+                std::future::pending::<Result<(String, Option<serde_json::Value>), String>>().await
+            },
+        ),
+    )
+    .await
+    .expect("abort must interrupt a waiting sequential tool");
+    abort_handle.await.expect("abort task");
+
+    assert!(results.is_empty());
+}
+
+#[tokio::test]
+async fn parallel_execution_stops_while_tools_are_still_waiting() {
+    let aborted = Arc::new(AtomicBool::new(false));
+    let context = ToolCallContext::new(Some("session-1".to_string()), None, None)
+        .with_abort_checker(Arc::new({
+            let aborted = Arc::clone(&aborted);
+            move |_| aborted.load(Ordering::SeqCst)
+        }));
+    let abort_handle = tokio::spawn({
+        let aborted = Arc::clone(&aborted);
+        async move {
+            tokio::time::sleep(std::time::Duration::from_millis(80)).await;
+            aborted.store(true, Ordering::SeqCst);
+        }
+    });
+
+    let results = tokio::time::timeout(
+        std::time::Duration::from_secs(1),
+        execute_tool_calls_parallel(
+            &[json!({"id": "call-1", "function": {"name": "wait", "arguments": "{}"}})],
+            context,
+            None,
+            |_name, _args, _context, _stream| async move {
+                std::future::pending::<Result<(String, Option<serde_json::Value>), String>>().await
+            },
+        ),
+    )
+    .await
+    .expect("abort must interrupt waiting parallel tools");
+    abort_handle.await.expect("abort task");
+
+    assert!(results.is_empty());
 }

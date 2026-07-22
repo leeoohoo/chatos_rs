@@ -29,6 +29,7 @@ pub(super) async fn initialize_model_phase(
     run: &mut TaskRunRecord,
     effective_workspace_dir: &str,
     prerequisite_context: &[PrerequisiteTaskContext],
+    authoritative_policy: bool,
 ) -> bool {
     if service.store.is_cancel_requested(&run.id)
         || service
@@ -58,7 +59,7 @@ pub(super) async fn initialize_model_phase(
     mark_task_running(service, task, &run.id).await;
     persist_prerequisite_context(service, run, prerequisite_context).await;
     service
-        .ensure_task_terminal_started(task, run, effective_workspace_dir)
+        .ensure_task_terminal_started(task, run, effective_workspace_dir, authoritative_policy)
         .await;
     true
 }

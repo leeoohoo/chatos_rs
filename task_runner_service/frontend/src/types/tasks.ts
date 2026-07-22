@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
+import type { McpCatalogEntry } from './mcp';
+
 export type TaskStatus =
   | 'draft'
   | 'ready'
@@ -47,10 +49,20 @@ export interface SelectableTaskSkill {
   platform?: string | null;
 }
 
+export interface SelectableTaskExternalMcp {
+  id: string;
+  name: string;
+  display_name: string;
+  description?: string | null;
+  runtime_kind: string;
+  visibility: string;
+}
+
 export interface TaskCapabilityCatalogResponse {
+  agent_key: 'task_runner_plan_phase' | 'task_runner_run_phase';
   policy_revision: string;
-  selectable_builtin_mcps: unknown[];
-  selectable_external_mcps: unknown[];
+  selectable_builtin_mcps: McpCatalogEntry[];
+  selectable_external_mcps: SelectableTaskExternalMcp[];
   selectable_skills: SelectableTaskSkill[];
 }
 

@@ -3,7 +3,7 @@
 
 use std::path::Path;
 
-use chatos_builtin_tools::{
+use chatos_mcp::{
     terminal_process_wait_response, TerminalControllerContext, TerminalProcessWaitResponse,
 };
 use serde_json::{json, Value};
@@ -16,6 +16,7 @@ use super::super::super::registry::{
 };
 use super::super::super::shell::{
     canonicalize_terminal_root, derive_local_mcp_terminal_name, display_local_mcp_workspace_path,
+    terminate_terminal_process_tree,
 };
 
 pub(in crate::terminal::controller::store) async fn process_wait(
@@ -104,8 +105,7 @@ pub(in crate::terminal::controller::store) async fn process_kill(
     let session = local_mcp_session_for_context(&context, terminal_id.as_str()).await?;
     {
         let mut child = session.child.lock().await;
-        child.kill().await.map_err(|err| err.to_string())?;
-        let _ = child.wait().await;
+        terminate_terminal_process_tree(&mut child).await?;
     }
     mark_local_mcp_terminal_exited(&session, None).await;
     append_local_mcp_terminal_log(session, "system", "[terminal killed]\n".to_string()).await;

@@ -102,30 +102,6 @@ pub(super) fn effective_skills<'a>(
     Ok(effective)
 }
 
-pub(super) fn validate_selected_mcp_ids(
-    selected_ids: &[String],
-    builtin_kinds: &[BuiltinMcpKind],
-    manifests: &[LocalMcpManifestRecord],
-) -> Result<(), String> {
-    for selected_id in selected_ids {
-        let builtin_match = builtin_kinds.iter().any(|kind| {
-            kind.config_id() == Some(selected_id.as_str())
-                || kind.kind_name() == selected_id
-                || kind.server_name() == selected_id
-        });
-        let manifest_match = manifests.iter().any(|manifest| {
-            manifest.manifest_id == *selected_id
-                || manifest.plugin_mcp_id.as_deref() == Some(selected_id.as_str())
-        });
-        if !builtin_match && !manifest_match {
-            return Err(format!(
-                "Selected MCP is not available in the local capability snapshot: {selected_id}"
-            ));
-        }
-    }
-    Ok(())
-}
-
 pub(super) fn parse_ids(raw: &str) -> Vec<String> {
     serde_json::from_str::<Vec<String>>(raw)
         .unwrap_or_default()
@@ -145,10 +121,8 @@ fn resolved_builtin(
     kind: BuiltinMcpKind,
 ) -> Option<&ResolvedMcp> {
     capabilities.mcps.iter().find(|item| {
-        item.resource.runtime.kind == "builtin"
-            && (item.resource.runtime.builtin_kind.as_deref() == Some(kind.kind_name())
-                || item.resource.runtime.server_name.as_deref() == Some(kind.server_name())
-                || kind.config_id() == Some(item.resource.id.as_str()))
+        chatos_mcp::system_mcp_descriptor_for_record(&item.resource)
+            .is_some_and(|descriptor| descriptor.embedded_kind == Some(kind))
     })
 }
 

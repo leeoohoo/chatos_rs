@@ -16,6 +16,15 @@ interface CloudRuntimeImagePlansProps {
 
 type ImageRecord = Record<string, unknown>;
 
+const READY_IMAGE_STATUSES = new Set([
+  'ready',
+  'available',
+  'local',
+  'succeeded',
+  'completed',
+  'running',
+]);
+
 export const CloudRuntimeImagePlans: React.FC<CloudRuntimeImagePlansProps> = ({
   images,
   isCloudProject,
@@ -33,28 +42,43 @@ export const CloudRuntimeImagePlans: React.FC<CloudRuntimeImagePlansProps> = ({
     })
     .find(Boolean);
   const isPreparingAll = buildingImageId !== null;
+  const allImagesReady = images.length > 0 && images.every((image) => (
+    READY_IMAGE_STATUSES.has(readString(asRecord(image), ['status']).toLowerCase())
+  ));
+  const prepareDisabled = !applicationImageId || isPreparingAll || allImagesReady;
 
   return (
     <section className="border-t border-border px-4 py-4">
       <div className="flex items-center justify-between gap-3">
         <h3 className="text-sm font-semibold text-foreground">{t('cloudRuntime.images')}</h3>
-        {isCloudProject && applicationImageId ? (
-          <button
-            type="button"
-            disabled={isPreparingAll}
-            onClick={() => onGenerateImage(applicationImageId)}
-            className="inline-flex h-8 items-center gap-1.5 bg-primary px-3 text-xs text-primary-foreground hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            {isPreparingAll ? (
-              <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
-            ) : (
-              <PlayCircle className="h-3.5 w-3.5" aria-hidden="true" />
-            )}
-            {isPreparingAll
+        <button
+          type="button"
+          disabled={prepareDisabled}
+          onClick={() => {
+            if (applicationImageId) onGenerateImage(applicationImageId);
+          }}
+          title={!applicationImageId ? t('cloudRuntime.noPreparatableImages') : undefined}
+          className="inline-flex h-8 items-center gap-1.5 bg-primary px-3 text-xs text-primary-foreground hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          {isPreparingAll ? (
+            <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+          ) : (
+            <PlayCircle className="h-3.5 w-3.5" aria-hidden="true" />
+          )}
+          {isPreparingAll
+            ? isCloudProject
               ? t('cloudRuntime.preparingAllImages')
-              : t('cloudRuntime.prepareAllImages')}
-          </button>
-        ) : null}
+              : t('cloudRuntime.localBuilding')
+            : allImagesReady
+              ? isCloudProject
+                ? t('cloudRuntime.allImagesReady')
+                : t('cloudRuntime.localRunning')
+              : applicationImageId
+                ? isCloudProject
+                  ? t('cloudRuntime.prepareAllImages')
+                  : t('cloudRuntime.localBuild')
+                : t('cloudRuntime.noPreparatableImages')}
+        </button>
       </div>
       <div className="mt-3 overflow-x-auto border border-border">
         <table className="w-full min-w-[1120px] text-left text-xs">

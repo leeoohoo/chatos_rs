@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use chatos_builtin_tools::{TerminalControllerContext, TerminalControllerStore};
+use chatos_mcp::{TerminalControllerContext, TerminalControllerStore};
 use serde_json::Value;
 
 use super::shell::{
@@ -23,7 +23,7 @@ impl TerminalControllerStore for LocalConnectorTerminalControllerStore {
         path: String,
         command: String,
         background: bool,
-        permissions: chatos_builtin_tools::TerminalCommandPermissions,
+        permissions: chatos_mcp::TerminalCommandPermissions,
     ) -> std::result::Result<Value, String> {
         if !permissions.is_empty() {
             return Err(

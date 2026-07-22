@@ -395,6 +395,9 @@ export type ProjectRequirementStatus =
   | 'blocked'
   | 'failed'
   | 'done'
+  | 'completed'
+  | 'succeeded'
+  | 'success'
   | 'cancelled'
   | 'archived';
 
@@ -407,6 +410,9 @@ export type ProjectWorkItemStatus =
   | 'blocked'
   | 'failed'
   | 'done'
+  | 'completed'
+  | 'succeeded'
+  | 'success'
   | 'cancelled'
   | 'archived';
 

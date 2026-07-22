@@ -3,7 +3,7 @@
 
 use axum::extract::{Path, State};
 use axum::Json;
-use chatos_builtin_tools::TaskUpdatePatch;
+use chatos_mcp::TaskUpdatePatch;
 use serde_json::{json, Value};
 
 use crate::LocalRuntime;

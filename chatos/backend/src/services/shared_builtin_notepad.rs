@@ -4,7 +4,7 @@
 use async_trait::async_trait;
 use serde_json::Value;
 
-use chatos_builtin_tools::NotepadStore;
+use chatos_mcp::NotepadStore;
 
 use crate::services::notepad::{
     CreateNoteParams, ListNotesParams, NotepadService, SearchNotesParams, UpdateNoteParams,

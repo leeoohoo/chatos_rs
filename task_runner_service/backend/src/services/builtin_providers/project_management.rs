@@ -3,7 +3,9 @@
 
 use std::collections::{HashMap, HashSet};
 
-use chatos_project_mcp_contract::{mcp, schemas, tools};
+#[cfg(test)]
+use chatos_mcp::project_management_contract::schemas;
+use chatos_mcp::project_management_contract::{mcp, tools};
 use serde_json::{json, Value};
 
 use crate::models::{normalize_project_id, PUBLIC_PROJECT_ID};
@@ -134,7 +136,10 @@ fn normalize_optional(value: Option<String>) -> Option<String> {
 }
 
 fn tool_definitions() -> Vec<Value> {
-    schemas::task_runner_builtin_tool_definitions()
+    chatos_mcp::system_mcp_static_tools(
+        chatos_plugin_management_sdk::SystemMcpKey::ProjectManagement,
+    )
+    .expect("Project Management must have a static system MCP catalog")
 }
 
 fn archived_status_short_circuit(name: &str, args: &Value) -> Result<Option<Value>, String> {

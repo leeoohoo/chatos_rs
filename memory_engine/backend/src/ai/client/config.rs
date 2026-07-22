@@ -44,5 +44,8 @@ pub(super) fn build_client_config(
         timeout_secs: config.ai_request_timeout_secs,
         supports_responses: profile.map(|item| item.supports_responses).unwrap_or(false),
         disable_thinking,
+        max_transient_retries: profile
+            .map(|item| item.model_request_max_retries)
+            .unwrap_or(5),
     })
 }

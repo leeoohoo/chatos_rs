@@ -93,7 +93,13 @@ export interface WorkspaceProjectFacade {
   executeProjectRequirement(
     projectId: string,
     requirementId: string,
-    data?: { contact_id?: string; include_prerequisite_dependents?: boolean; includePrerequisiteDependents?: boolean },
+    data?: {
+      contact_id?: string;
+      model_config_id?: string;
+      modelConfigId?: string;
+      include_prerequisite_dependents?: boolean;
+      includePrerequisiteDependents?: boolean;
+    },
   ): Promise<ProjectRequirementExecuteResponse>;
   stopProjectRequirementExecution(
     projectId: string,
@@ -198,7 +204,7 @@ export const workspaceProjectFacade: WorkspaceProjectFacade & ThisType<ApiClient
   },
   async generateProjectRuntimeEnvironmentImage(projectId, imageRecordId) {
     if (this.projectUsesLocalRuntime(projectId)) {
-      throw new Error('本地项目镜像必须由本地客户端生成');
+      return this.getLocalRuntimeClient().startProjectRuntimeEnvironment(projectId);
     }
     return workspaceApi.generateProjectRuntimeEnvironmentImage(
       this.getRequestFn(),

@@ -10,6 +10,55 @@ import type {
 import { createProjectActions } from './projects';
 
 describe('loadProjects', () => {
+  it('lets a forced refresh supersede an older in-flight project request', async () => {
+    const state = {
+      projects: [],
+      currentProjectId: null,
+      currentProject: null,
+      activePanel: 'chat',
+      error: null,
+    } as unknown as ChatStoreShape;
+    const set = vi.fn((updater: (draftState: ChatStoreDraft) => void) => {
+      updater(state as unknown as ChatStoreDraft);
+    });
+    let resolveInitial: ((value: unknown[]) => void) | undefined;
+    const listProjects = vi.fn()
+      .mockImplementationOnce(() => new Promise<unknown[]>((resolve) => {
+        resolveInitial = resolve;
+      }))
+      .mockResolvedValueOnce([{
+        id: 'project_fresh',
+        name: 'Fresh Project',
+        source_type: 'cloud',
+        execution_plane: 'cloud',
+        root_path: 'harness://project/project_fresh',
+      }]);
+    const actions = createProjectActions({
+      set,
+      get: () => state,
+      client: {
+        registerProjectExecution: vi.fn(),
+        listProjects,
+      } as never,
+      getUserIdParam: () => 'user_force_projects',
+    });
+
+    const initial = actions.loadProjects();
+    await Promise.resolve();
+    await actions.loadProjects({ force: true });
+    resolveInitial?.([{
+      id: 'project_stale',
+      name: 'Stale Project',
+      source_type: 'cloud',
+      execution_plane: 'cloud',
+      root_path: 'harness://project/project_stale',
+    }]);
+    await initial;
+
+    expect(listProjects).toHaveBeenCalledTimes(2);
+    expect(state.projects.map((project) => project.id)).toEqual(['project_fresh']);
+  });
+
   it('clears stale current project state when the selected project no longer exists', async () => {
     const state = {
       projects: [],

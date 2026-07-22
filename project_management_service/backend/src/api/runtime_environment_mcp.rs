@@ -1,9 +1,13 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
+use std::sync::Arc;
+
+use async_trait::async_trait;
 use axum::extract::{Path, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::Json;
+use chatos_mcp_service::{McpRequestContext, McpToolProvider};
 use serde_json::{json, Value};
 
 use super::internal_auth::{
@@ -17,8 +21,6 @@ use crate::services::runtime_environment::{
 };
 use crate::state::AppState;
 
-const SERVER_NAME: &str = "project_runtime_environment";
-const PROTOCOL_VERSION: &str = "2024-11-05";
 const TOOL_NAME: &str = "get_project_runtime_environment_info";
 const TASK_RUNNER_PROJECT_ID_HEADER: &str = "x-task-runner-project-id";
 
@@ -56,39 +58,54 @@ async fn handle_jsonrpc(
     project_id: String,
     request: JsonRpcRequest,
 ) -> JsonRpcResponse {
-    let id = request.id.clone().unwrap_or(Value::Null);
-    let result = match request.method.as_str() {
-        "initialize" => Ok(json!({
-            "protocolVersion": PROTOCOL_VERSION,
-            "serverInfo": {
-                "name": SERVER_NAME,
-                "version": env!("CARGO_PKG_VERSION")
-            },
-            "capabilities": { "tools": {} }
-        })),
-        "ping" => Ok(json!({})),
-        "tools/list" => Ok(json!({
-            "tools": chatos_mcp_runtime::project_runtime_environment_info_tool_definitions()
-        })),
-        "tools/call" => call_tool(&state, project_id.as_str(), request.params).await,
-        method => Err(format!("unsupported MCP method: {method}")),
-    };
-    match result {
-        Ok(result) => JsonRpcResponse {
-            jsonrpc: "2.0",
-            id,
-            result: Some(result),
-            error: None,
-        },
-        Err(message) => JsonRpcResponse {
-            jsonrpc: "2.0",
-            id,
-            result: None,
-            error: Some(crate::mcp_server::JsonRpcError {
-                code: -32000,
-                message,
-            }),
-        },
+    let descriptor = chatos_mcp::system_mcp_descriptor(
+        chatos_plugin_management_sdk::SystemMcpKey::ProjectRuntimeEnvironment,
+    );
+    mcp_server::handle_provider_jsonrpc(
+        descriptor.server_name,
+        request,
+        Arc::new(ProjectRuntimeEnvironmentMcpProvider { state, project_id }),
+    )
+    .await
+}
+
+#[derive(Clone)]
+struct ProjectRuntimeEnvironmentMcpProvider {
+    state: AppState,
+    project_id: String,
+}
+
+#[async_trait]
+impl McpToolProvider for ProjectRuntimeEnvironmentMcpProvider {
+    fn server_name(&self) -> &str {
+        chatos_mcp::system_mcp_descriptor(
+            chatos_plugin_management_sdk::SystemMcpKey::ProjectRuntimeEnvironment,
+        )
+        .server_name
+    }
+
+    fn list_tools(&self, _context: &McpRequestContext) -> Vec<Value> {
+        chatos_mcp::system_mcp_static_tools(
+            chatos_plugin_management_sdk::SystemMcpKey::ProjectRuntimeEnvironment,
+        )
+        .expect("Project Runtime Environment must have a static system MCP catalog")
+    }
+
+    async fn call_tool(
+        &self,
+        name: &str,
+        args: Value,
+        _context: McpRequestContext,
+    ) -> Result<Value, String> {
+        call_tool(
+            &self.state,
+            self.project_id.as_str(),
+            Some(json!({
+                "name": name,
+                "arguments": args,
+            })),
+        )
+        .await
     }
 }
 

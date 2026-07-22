@@ -246,6 +246,45 @@ fn merge_pending_tool_turn_items_skips_outputs_without_calls() {
 }
 
 #[test]
+fn merge_pending_tool_turn_items_replaces_budget_omission_with_latest_output() {
+    let mut items = vec![
+        json!({"type":"function_call","call_id":"call_1","name":"task_manager_list_tasks","arguments":"{}"}),
+        json!({
+            "type":"function_call_output",
+            "call_id":"call_1",
+            "output":"[Tool result omitted before sending to the model]"
+        }),
+    ];
+    let pending_calls = vec![
+        json!({"type":"function_call","call_id":"call_1","name":"task_manager_list_tasks","arguments":"{}"}),
+    ];
+    let pending_outputs = vec![json!({
+        "type":"function_call_output",
+        "call_id":"call_1",
+        "output":"{\"count\":0,\"tasks\":[]}"
+    })];
+
+    merge_pending_tool_turn_items(
+        &mut items,
+        Some(pending_calls.as_slice()),
+        Some(pending_outputs.as_slice()),
+    );
+
+    let outputs = items
+        .iter()
+        .filter(|item| {
+            item.get("type").and_then(Value::as_str) == Some("function_call_output")
+                && item.get("call_id").and_then(Value::as_str) == Some("call_1")
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(outputs.len(), 1);
+    assert_eq!(
+        outputs[0].get("output").and_then(Value::as_str),
+        Some("{\"count\":0,\"tasks\":[]}")
+    );
+}
+
+#[test]
 fn merge_pending_tool_turn_items_fills_missing_outputs() {
     let mut items = Vec::new();
     let pending_calls =

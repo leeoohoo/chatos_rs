@@ -5,7 +5,7 @@ use std::path::PathBuf;
 
 use serde_json::{json, Value};
 
-use chatos_builtin_tools::{NotepadStore, TerminalControllerContext, TerminalControllerStore};
+use chatos_mcp::{NotepadStore, TerminalControllerContext, TerminalControllerStore};
 
 use crate::config::AppConfig;
 use crate::notepad_store::TaskRunnerNotepadStore;

@@ -15,7 +15,7 @@ import type {
   TaskStatus,
 } from '../../types';
 import {
-  isSchedulerOnlyTask,
+  isTaskRunActionDisabled,
   statusColorMap,
   taskCreatorLabel,
   taskOwnerLabel,
@@ -79,7 +79,11 @@ export function buildTaskTableColumns({
             </Space>
             <Space size={[4, 4]} wrap>
               <Tag color={taskProfileColorMap[record.task_profile] || 'default'}>
-                {taskProfileLabel(record.task_profile, t)}
+                {taskProfileLabel(
+                  record.task_profile,
+                  t,
+                  record.mcp_config.requires_execution,
+                )}
               </Tag>
               {record.parent_task_id ? (
                 <Tag color="purple">{t('tasks.followUp')}</Tag>
@@ -326,10 +330,7 @@ export function buildTaskTableColumns({
           <Button
             size="small"
             type="primary"
-            disabled={
-              (record.status === 'queued' || record.status === 'running')
-              || isSchedulerOnlyTask(record)
-            }
+            disabled={isTaskRunActionDisabled(record)}
             onClick={() => onOpenRun(record)}
           >
             {t('tasks.action.run')}

@@ -68,7 +68,7 @@ Vite 会把 `/api` 代理到 `http://127.0.0.1:39260`。
 
 项目来源和运行提供方不属于绑定配置。具体 MCP 在运行时根据项目上下文自行选择云端、本机或其他子实现。
 
-`task_runner_run_phase` 是 Task Runner 当前唯一独立的模型/工具执行循环，同时承载普通任务和 `chatos_plan` 任务 profile。它会自动包含当前用户通过 Local Connector 添加的 MCP 和 skills，不需要管理员逐项绑定。
+Task Runner 的规划任务与执行任务复用底层模型运行时和 Worker，但使用独立的 Agent 身份、Prompt 与 MCP/skills 能力边界。纯规划任务进入 `task_runner_plan_phase`，工程执行任务进入 `task_runner_run_phase`。
 
 ## 当前系统 Agent
 
@@ -76,11 +76,12 @@ Vite 会把 `/api` 代理到 `http://127.0.0.1:39260`。
 
 - `chatos_conversation_agent`：Chat OS 普通对话智能体。可选使用 `task_runner_service`；用户联系人只提供角色上下文，不逐条登记。
 - `chatos_planning_agent`：Chat OS 规划智能体。必需使用 `task_runner_service`，并将 Task Runner 切换到 `chatos_plan` profile。
-- `task_runner_run_phase`：Task Runner 任务智能体。必需 `TaskManager`、`AskUser`；其余已实现的 Task Runner builtin MCP 为可选。
+- `task_runner_plan_phase`：Task Runner 规划任务智能体。使用只读代码、任务/项目管理、资料读取和询问用户能力，不开放代码写入与终端执行。
+- `task_runner_run_phase`：Task Runner 执行任务智能体。负责代码修改、终端执行、测试、部署及工程验收。
 - `project_management_agent`：项目运行环境智能体。必需 `CodeMaintainerRead`、`project_environment`、`sandbox_images`。
 - `local_connector_command_approval_agent`：本机命令审批智能体。必需只读 `CodeMaintainerRead` 和 `local_connector_approval`。
 
-Chat OS 的两个角色共用会话模型循环，但普通模式与规划模式的 MCP 强制性不同，因此分开管理。`chatos_plan` 本身仍是 Task Runner task profile，不额外登记为 `task_runner_plan_phase`。Chat OS 用户联系人、prompt 生成、Agent Builder、浏览器视觉等一次性模型辅助工具不逐条登记。
+Chat OS 的两个角色共用会话模型循环，但普通模式与规划模式的 MCP 强制性不同，因此分开管理。Task Runner 根据 `task_profile=chatos_plan && requires_execution=false` 路由到 `task_runner_plan_phase`；其他任务进入 `task_runner_run_phase`。Chat OS 用户联系人、prompt 生成、Agent Builder、浏览器视觉等一次性模型辅助工具不逐条登记。
 
 ## 环境变量
 

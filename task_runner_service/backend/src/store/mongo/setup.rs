@@ -163,6 +163,12 @@ impl MongoStore {
             .await?;
         self.ensure_index(&self.runs, doc! { "worker_id": 1, "claim_token": 1 }, false)
             .await?;
+        self.ensure_index(
+            &self.runs,
+            doc! { "chatos_callback_delivery.status": 1, "chatos_callback_delivery.next_attempt_at": 1 },
+            false,
+        )
+        .await?;
         self.ensure_task_run_indexes().await?;
 
         self.ensure_index(&self.run_events, doc! { "id": 1 }, true)

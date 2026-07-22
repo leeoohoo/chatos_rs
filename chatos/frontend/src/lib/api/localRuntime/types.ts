@@ -33,6 +33,7 @@ export interface LocalRuntimeSessionRecord {
   project_id: string;
   owner_user_id: string;
   title: string;
+  contact_id?: string | null;
   selected_model_id?: string | null;
   selected_agent_id?: string | null;
   status: string;

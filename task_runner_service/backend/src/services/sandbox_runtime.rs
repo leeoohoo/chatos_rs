@@ -4,6 +4,7 @@
 use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::path::Path;
+use std::time::Duration;
 
 use chatos_mcp_runtime::{BuiltinMcpKind, McpHttpServer};
 use chatos_sandbox_contract::{EffectivePermissionSnapshot, EffectiveSandboxPolicy};
@@ -13,10 +14,13 @@ use tracing::{info, warn};
 
 use crate::models::{RunOutputChangesResponse, RunOutputDiffResponse, RunOutputFileChangeCounts};
 
-use super::workspace_mcp::runtime_selected_builtin_kinds;
+use super::workspace_mcp::{
+    runtime_selected_builtin_kinds, runtime_selected_builtin_kinds_authoritative,
+};
 use super::*;
 
 pub(super) const SANDBOX_MCP_SERVER_NAME: &str = "sandbox";
+const SANDBOX_MCP_REQUEST_TIMEOUT: Duration = Duration::from_secs(135);
 mod manager_client;
 mod output;
 mod routing;
@@ -26,7 +30,9 @@ mod run_service_lifecycle;
 mod run_service_policy;
 mod workspace;
 
-use manager_client::{CreateSandboxLeaseResponse, SandboxManagerAuth, SandboxManagerClient};
+use manager_client::{
+    CreateSandboxLeaseResponse, SandboxLeaseListItem, SandboxManagerAuth, SandboxManagerClient,
+};
 pub(super) use output::SandboxOutputReport;
 use output::{
     normalize_output_relative_path, read_output_change_manifest_for_run, read_output_diff_file,
@@ -49,6 +55,13 @@ struct SandboxTaskRoute {
 struct SandboxEnvironmentPlan {
     primary_service_id: String,
     services: Vec<SandboxEnvironmentServicePlan>,
+    generated_config_files: Vec<SandboxGeneratedConfigFile>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct SandboxGeneratedConfigFile {
+    path: String,
+    content: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -147,7 +160,9 @@ impl SandboxRuntimeContext {
             "X-Task-Runner-Project-Id".to_string(),
             task.project_id.clone(),
         );
-        McpHttpServer::new(SANDBOX_MCP_SERVER_NAME, self.mcp_url.clone()).with_headers(headers)
+        McpHttpServer::new(SANDBOX_MCP_SERVER_NAME, self.mcp_url.clone())
+            .with_headers(headers)
+            .with_timeout(SANDBOX_MCP_REQUEST_TIMEOUT)
     }
 }
 
@@ -206,18 +221,21 @@ impl SandboxRuntimeContext {
     }
 }
 
-pub(super) fn task_requires_sandbox(task: &TaskRecord) -> bool {
+pub(super) fn task_requires_sandbox(task: &TaskRecord, authoritative_policy: bool) -> bool {
     if !task.mcp_config.enabled {
         return false;
     }
-    runtime_selected_builtin_kinds(task)
-        .into_iter()
-        .any(|kind| {
-            matches!(
-                kind,
-                BuiltinMcpKind::CodeMaintainerWrite | BuiltinMcpKind::TerminalController
-            ) || (!task.mcp_config.requires_execution && kind == BuiltinMcpKind::CodeMaintainerRead)
-        })
+    let selected_builtin_kinds = if authoritative_policy {
+        runtime_selected_builtin_kinds_authoritative(task)
+    } else {
+        runtime_selected_builtin_kinds(task)
+    };
+    selected_builtin_kinds.into_iter().any(|kind| {
+        matches!(
+            kind,
+            BuiltinMcpKind::CodeMaintainerWrite | BuiltinMcpKind::TerminalController
+        ) || (!task.mcp_config.requires_execution && kind == BuiltinMcpKind::CodeMaintainerRead)
+    })
 }
 
 pub(super) fn sandbox_replaces_builtin_kind(kind: BuiltinMcpKind) -> bool {

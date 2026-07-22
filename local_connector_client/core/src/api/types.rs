@@ -179,6 +179,8 @@ pub(super) struct PreviewLocalModelCatalogRequest {
 #[derive(Debug, Deserialize)]
 pub(super) struct UpdateLocalModelSettingsRequest {
     #[serde(default)]
+    pub(super) model_request_max_retries: Option<usize>,
+    #[serde(default)]
     pub(super) memory_summary_model_config_id: Option<String>,
     #[serde(default)]
     pub(super) memory_summary_thinking_level: Option<String>,

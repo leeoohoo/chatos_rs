@@ -67,13 +67,13 @@ export interface WorkspaceSessionFacade {
 
 export const workspaceSessionFacade: WorkspaceSessionFacade & ThisType<ApiClient> = {
   async getSessions(userId, projectId, paging) {
-    if (projectId && this.projectUsesLocalRuntime(projectId)) {
-      return this.getLocalRuntimeClient().getSessions(projectId);
+    if (this.sessionScopeUsesLocalRuntime(projectId)) {
+      return this.getLocalRuntimeClient().getSessions(projectId || '-1');
     }
     return workspaceApi.getSessions(this.getRequestFn(), userId, projectId, paging);
   },
   async createSession(data) {
-    if (data.project_id && this.projectUsesLocalRuntime(data.project_id)) {
+    if (this.sessionScopeUsesLocalRuntime(data.project_id)) {
       return this.getLocalRuntimeClient().createSession(data);
     }
     return workspaceApi.createSession(this.getRequestFn(), data);

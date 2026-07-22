@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use chatos_builtin_tools::{TaskDraft, TaskOutcomeItem, TaskUpdatePatch};
+use chatos_mcp::{TaskDraft, TaskOutcomeItem, TaskUpdatePatch};
 
 pub(crate) fn normalize_task_draft(mut draft: TaskDraft) -> Result<TaskDraft, String> {
     draft.title = required_title(draft.title)?;

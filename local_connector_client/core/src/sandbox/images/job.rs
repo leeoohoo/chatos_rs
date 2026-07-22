@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use base64::engine::general_purpose;
 use base64::Engine as _;
-use chatos_sandbox_image_mcp::custom_build_script_feature;
+use chatos_mcp::sandbox_images::custom_build_script_feature;
 use tokio::io::{AsyncRead, AsyncReadExt};
 use tokio::sync::RwLock;
 use tokio::task::JoinHandle;

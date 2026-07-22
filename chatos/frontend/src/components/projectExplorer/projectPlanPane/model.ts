@@ -38,6 +38,10 @@ export const readText = (value: unknown): string => (
   typeof value === 'string' ? value.trim() : ''
 );
 
+export const isCompletedStatus = (status: unknown): boolean => (
+  ['done', 'completed', 'succeeded', 'success'].includes(readText(status).toLowerCase())
+);
+
 export const requirementParentId = (requirement: ProjectRequirementResponse): string => (
   readText(requirement.parent_requirement_id) || readText(requirement.parentRequirementId)
 );
@@ -78,6 +82,9 @@ export const statusLabel = (status?: string): string => {
     case 'error':
       return '失败';
     case 'done':
+    case 'completed':
+    case 'succeeded':
+    case 'success':
       return '完成';
     case 'cancelled':
       return '取消';
@@ -133,13 +140,17 @@ export const requirementDocumentTypeLabel = (type?: string): string => {
 };
 
 export const canShowRequirementExecutionAction = (status?: string): boolean => {
-  const normalizedStatus = readText(status);
-  return !['done', 'cancelled', 'archived'].includes(normalizedStatus);
+  const normalizedStatus = readText(status).toLowerCase();
+  return !isCompletedStatus(normalizedStatus)
+    && !['cancelled', 'archived'].includes(normalizedStatus);
 };
 
 export const statusClassName = (status?: string): string => {
   switch (readText(status).toLowerCase()) {
     case 'done':
+    case 'completed':
+    case 'succeeded':
+    case 'success':
       return 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-300';
     case 'in_progress':
     case 'reviewing':
@@ -266,9 +277,7 @@ export const buildRequirementChildrenMap = (
   return byParent;
 };
 
-const requirementStatusIsDone = (status: unknown): boolean => (
-  ['done', 'succeeded', 'success', 'completed'].includes(readText(status).toLowerCase())
-);
+const requirementStatusIsDone = isCompletedStatus;
 
 const expandRequirementDescendants = (
   requirements: ProjectRequirementResponse[],
@@ -474,8 +483,25 @@ export const groupWorkItemsByRequirement = (
 };
 
 export const countOpenItems = (items: ProjectWorkItemResponse[]): number => (
-  items.filter((item) => item.status !== 'done').length
+  items.filter((item) => !isCompletedStatus(item.status)).length
 );
+
+export const buildRequirementExecutionPayload = ({
+  includePrerequisiteDependents,
+  selectedModelId,
+}: {
+  includePrerequisiteDependents?: boolean;
+  selectedModelId?: string | null;
+}): {
+  include_prerequisite_dependents: boolean;
+  model_config_id?: string;
+} => {
+  const normalizedModelId = readText(selectedModelId);
+  return {
+    include_prerequisite_dependents: Boolean(includePrerequisiteDependents),
+    ...(normalizedModelId ? { model_config_id: normalizedModelId } : {}),
+  };
+};
 
 export const buildVisiblePlanItems = <T>(
   items: T[],

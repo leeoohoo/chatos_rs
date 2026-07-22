@@ -112,7 +112,7 @@ fn image_response(image: &LocalRuntimeEnvironmentImageRecord, fallback_dockerfil
     })
 }
 
-fn program_managed_service_id(environment_key: &str, service_role: &str) -> String {
+pub(super) fn program_managed_service_id(environment_key: &str, service_role: &str) -> String {
     const MAX_SERVICE_ID_LENGTH: usize = 63;
 
     let mut normalized = String::new();

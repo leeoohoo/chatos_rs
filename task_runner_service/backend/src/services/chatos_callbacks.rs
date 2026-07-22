@@ -14,6 +14,9 @@ use super::{RunService, TaskScheduleModeExt, TaskService, TaskStatusExt};
 mod delivery;
 mod dispatch;
 mod payload;
+mod reconciliation;
+
+pub use reconciliation::spawn_chatos_callback_reconciler;
 
 #[derive(Debug, Clone, Serialize)]
 struct ChatosTaskCallbackPayload {
@@ -22,6 +25,8 @@ struct ChatosTaskCallbackPayload {
     run_id: Option<String>,
     status: String,
     task_title: String,
+    task_objective: String,
+    fallback_locale: String,
     result_summary: Option<String>,
     error_message: Option<String>,
     report_content: Option<String>,

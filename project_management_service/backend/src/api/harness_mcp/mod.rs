@@ -374,6 +374,17 @@ fn tool_text_result(payload: Value) -> Value {
     })
 }
 
+fn tool_structured_result(payload: Value, message: &str) -> Value {
+    json!({
+        "content": [{
+            "type": "text",
+            "text": message
+        }],
+        "_structured_result": payload,
+        "isError": false
+    })
+}
+
 fn header_text(headers: &HeaderMap, key: &'static str) -> Option<String> {
     headers
         .get(key)

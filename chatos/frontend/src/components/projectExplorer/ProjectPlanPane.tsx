@@ -10,9 +10,7 @@ import type {
   ProjectDependencyGraphResponse,
   ProjectPlanResponse,
   ProjectRequirementDocumentResponse,
-  ProjectRequirementWorkItemsResponse,
   ProjectRequirementResponse,
-  ProjectWorkItemCountsResponse,
   ProjectWorkItemResponse,
 } from '../../lib/api/client/types';
 import { cn } from '../../lib/utils';
@@ -27,12 +25,17 @@ import {
 import { PlanRequirementColumns } from './projectPlanPane/PlanRequirementColumns';
 import { PlanRequirementDetail, type DetailTabId } from './projectPlanPane/PlanRequirementDetail';
 import {
+  normalizeRequirementWorkItemsResponse,
+  planWorkItemCounts,
+} from './projectPlanPane/planResponse';
+import {
   MAX_REQUIREMENT_PANE_WIDTH,
   REQUIREMENT_COLUMN_WIDTH,
   SELECTED_WORK_ITEM_INITIAL_RENDER_LIMIT,
   SELECTED_WORK_ITEM_RENDER_INCREMENT,
   buildDependencyMaps,
   buildDependencyMapsFromGraph,
+  buildRequirementExecutionPayload,
   buildRequirementExecutionScope,
   buildRequirementChildrenMap,
   buildRequirementColumns,
@@ -40,6 +43,7 @@ import {
   buildVisiblePlanItems,
   canShowRequirementExecutionAction,
   countOpenItems,
+  isCompletedStatus,
   mergeDependencyMaps,
   readText,
   sortWorkItemsByDependencies,
@@ -49,25 +53,6 @@ interface ProjectPlanPaneProps {
   project: Project;
   className?: string;
 }
-
-const normalizeRequirementWorkItemsResponse = (
-  response: ProjectRequirementWorkItemsResponse | ProjectWorkItemResponse[],
-): {
-  dependencyGraph: ProjectDependencyGraphResponse | null;
-  workItems: ProjectWorkItemResponse[];
-} => {
-  if (Array.isArray(response)) {
-    return { dependencyGraph: null, workItems: response };
-  }
-  return {
-    dependencyGraph: response.dependencyGraph || response.dependency_graph || null,
-    workItems: Array.isArray(response.workItems) ? response.workItems : (response.work_items || []),
-  };
-};
-
-const planWorkItemCounts = (plan: ProjectPlanResponse | null): ProjectWorkItemCountsResponse | null => (
-  plan?.workItemCounts || plan?.work_item_counts || null
-);
 
 export const ProjectPlanPane: React.FC<ProjectPlanPaneProps> = ({ project, className }) => {
   const apiClient = useApiClient();
@@ -88,6 +73,7 @@ export const ProjectPlanPane: React.FC<ProjectPlanPaneProps> = ({ project, class
   const [visibleWorkItemLimit, setVisibleWorkItemLimit] = useState(SELECTED_WORK_ITEM_INITIAL_RENDER_LIMIT);
   const refreshSessionById = useChatStore((state) => state.refreshSessionById);
   const selectSession = useChatStore((state) => state.selectSession);
+  const selectedModelId = useChatStore((state) => state.selectedModelId);
   const upsertSessionMessage = useChatStore((state) => state.upsertSessionMessage);
 
   const loadPlan = useCallback(async () => {
@@ -182,9 +168,14 @@ export const ProjectPlanPane: React.FC<ProjectPlanPaneProps> = ({ project, class
     setExecutionMessage(null);
     setError(null);
     try {
-      const result = await apiClient.executeProjectRequirement(project.id, requirement.id, {
-        include_prerequisite_dependents: Boolean(options?.includePrerequisiteDependents),
-      });
+      const result = await apiClient.executeProjectRequirement(
+        project.id,
+        requirement.id,
+        buildRequirementExecutionPayload({
+          includePrerequisiteDependents: options?.includePrerequisiteDependents,
+          selectedModelId,
+        }),
+      );
       await loadPlan();
       const conversationId = readText(result.conversation_id) || readText(result.conversationId);
       if (!conversationId) {
@@ -217,7 +208,7 @@ export const ProjectPlanPane: React.FC<ProjectPlanPaneProps> = ({ project, class
     } finally {
       setExecutingRequirementId(null);
     }
-  }, [apiClient, executingRequirementId, loadPlan, project.id, refreshSessionById, selectSession, upsertSessionMessage]);
+  }, [apiClient, executingRequirementId, loadPlan, project.id, refreshSessionById, selectSession, selectedModelId, upsertSessionMessage]);
 
   const stopRequirementExecution = useCallback(async (requirement: ProjectRequirementResponse) => {
     if (executingRequirementId) {
@@ -394,7 +385,7 @@ export const ProjectPlanPane: React.FC<ProjectPlanPaneProps> = ({ project, class
     : countOpenItems(workItems);
   const doneWorkItemCount = typeof workItemCounts?.done === 'number'
     ? workItemCounts.done
-    : workItems.filter((item) => item.status === 'done').length;
+    : workItems.filter((item) => isCompletedStatus(item.status)).length;
   const blockedWorkItemCount = typeof workItemCounts?.blocked === 'number'
     ? workItemCounts.blocked
     : workItems.filter((item) => item.status === 'blocked').length;

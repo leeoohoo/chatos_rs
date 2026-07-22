@@ -93,6 +93,7 @@ export function TaskEditorDrawer({
   onViewMcpCatalog,
 }: TaskEditorDrawerProps) {
   const mcpEnabled = Form.useWatch('mcpEnabled', form);
+  const taskProfile = Form.useWatch('taskProfile', form);
   const selectedProjectId = Form.useWatch('projectId', form);
   const requiresExecution = Form.useWatch('requiresExecution', form);
   const executionServiceId = Form.useWatch('executionServiceId', form);
@@ -160,6 +161,16 @@ export function TaskEditorDrawer({
         })),
     [mcpCatalogEntries],
   );
+  useEffect(() => {
+    if (!mcpCatalogEntries.length || !enabledBuiltinKinds.length) {
+      return;
+    }
+    const selectable = new Set(mcpOptions.map((option) => option.value));
+    const filtered = enabledBuiltinKinds.filter((kind) => selectable.has(kind));
+    if (filtered.length !== enabledBuiltinKinds.length) {
+      form.setFieldsValue({ enabledBuiltinKinds: filtered });
+    }
+  }, [enabledBuiltinKinds, form, mcpCatalogEntries.length, mcpOptions]);
   const remoteControllerEntry = useMemo(
     () =>
       mcpCatalogEntries.find((entry) => entry.kind === 'RemoteConnectionController') ||
@@ -306,6 +317,21 @@ export function TaskEditorDrawer({
             <InputNumber style={{ width: '100%' }} />
           </Form.Item>
         </Space>
+        <Alert
+          type="info"
+          showIcon
+          style={{ marginBottom: 16 }}
+          message={
+            taskProfile === 'chatos_plan' && !requiresExecution
+              ? t('tasks.form.agentPlanning')
+              : t('tasks.form.agentExecution')
+          }
+          description={
+            taskProfile === 'chatos_plan' && !requiresExecution
+              ? t('tasks.form.agentPlanningHelp')
+              : t('tasks.form.agentExecutionHelp')
+          }
+        />
 
         <Form.Item name="default_model_config_id" label={t('tasks.form.defaultModel')}>
           <Select

@@ -3,10 +3,13 @@
 
 import type { FC } from 'react';
 import type { MessageTaskRunnerRunDetailResponse } from '../../lib/api/client/types';
+import { sanitizeUserVisibleAppError } from '../../lib/domain/userVisibleError';
 import { CollapsibleSection, CollapsibleText } from './CollapsibleSection';
 import { FieldGrid, MarkdownCard, ModalShell } from './parts';
 import { RunEventTimeline } from './RunEventTimeline';
+import { RunProcessTimeline } from './RunProcessTimeline';
 import { buildRunEventTimelineEntries } from './runEventTimelineUtils';
+import { buildRunProcessTimelineItems } from './runProcessTimelineModel';
 import { extractReportContent, formatDateTime, isRecord, readString } from './utils';
 
 interface MessageTaskRunDetailModalProps {
@@ -63,7 +66,8 @@ export const MessageTaskRunDetailModal: FC<MessageTaskRunDetailModalProps> = ({
   const reportContent = extractReportContent(run.report);
   const modelRequestCount = events.filter((event) => event.event_type === 'model_request').length;
   const toolEventCount = events.filter((event) => event.event_type.includes('tool')).length;
-  const timelineEntries = buildRunEventTimelineEntries(events);
+  const processTimelineItems = buildRunProcessTimelineItems(events);
+  const rawTimelineEntries = buildRunEventTimelineEntries(events);
   const eventsTotal = typeof detail.events_total === 'number'
     ? detail.events_total
     : events.length;
@@ -71,6 +75,9 @@ export const MessageTaskRunDetailModal: FC<MessageTaskRunDetailModalProps> = ({
   const resultSummary = readString(run.result_summary);
   const normalizedReportContent = readString(reportContent);
   const sandboxOutputCounts = extractSandboxOutputCounts(run.report);
+  const userVisibleError = run.error_message
+    ? sanitizeUserVisibleAppError(run.error_message)
+    : null;
   const hasDistinctReport = Boolean(
     normalizedReportContent
       && normalizedReportContent !== resultSummary,
@@ -92,8 +99,8 @@ export const MessageTaskRunDetailModal: FC<MessageTaskRunDetailModalProps> = ({
           ['开始时间', formatDateTime(run.started_at)],
           ['结束时间', formatDateTime(run.finished_at)],
           ['已加载事件', `${events.length}/${eventsTotal}`],
-          ['当前页模型请求', modelRequestCount],
-          ['当前页工具事件', toolEventCount],
+          ['已加载模型请求', modelRequestCount],
+          ['已加载工具事件', toolEventCount],
         ]}
       />
 
@@ -103,9 +110,9 @@ export const MessageTaskRunDetailModal: FC<MessageTaskRunDetailModalProps> = ({
         </CollapsibleSection>
       ) : null}
 
-      {run.error_message ? (
+      {userVisibleError ? (
         <CollapsibleSection title="错误信息" defaultOpen>
-          <CollapsibleText value={run.error_message} />
+          <CollapsibleText value={userVisibleError} />
         </CollapsibleSection>
       ) : null}
 
@@ -129,11 +136,11 @@ export const MessageTaskRunDetailModal: FC<MessageTaskRunDetailModalProps> = ({
       ) : null}
 
       <CollapsibleSection
-        title="运行事件"
-        summary={events.length ? `已加载 ${events.length}/${eventsTotal} 条事件 · 聚合为 ${timelineEntries.length} 个节点` : '暂无事件'}
+        title="执行过程"
+        summary={events.length ? `已加载 ${events.length}/${eventsTotal} 条运行记录 · 展示为 ${processTimelineItems.length} 个过程步骤` : '暂无过程'}
         defaultOpen={events.length > 0}
       >
-        <RunEventTimeline entries={timelineEntries} />
+        <RunProcessTimeline items={processTimelineItems} />
         {eventsHasMore ? (
           <button
             type="button"
@@ -141,9 +148,16 @@ export const MessageTaskRunDetailModal: FC<MessageTaskRunDetailModalProps> = ({
             disabled={loadingMoreEvents}
             onClick={onLoadMoreEvents}
           >
-            {loadingMoreEvents ? '加载中' : `加载更多事件（剩余 ${Math.max(eventsTotal - events.length, 0)}）`}
+            {loadingMoreEvents ? '加载中' : `加载更多过程（剩余 ${Math.max(eventsTotal - events.length, 0)}）`}
           </button>
         ) : null}
+      </CollapsibleSection>
+
+      <CollapsibleSection
+        title="原始运行事件（诊断）"
+        summary={events.length ? `${events.length} 条事件 · 聚合为 ${rawTimelineEntries.length} 个节点` : '暂无事件'}
+      >
+        <RunEventTimeline entries={rawTimelineEntries} />
       </CollapsibleSection>
 
       <CollapsibleSection title="运行快照">

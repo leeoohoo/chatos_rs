@@ -14,8 +14,8 @@ use serde::Deserialize;
 
 use crate::config::AppConfig;
 use crate::models::{
-    CloudImportSource, ProjectImportStatus, ProjectRecord, ProjectRuntimeEnvironmentStatus,
-    ProjectSourceType, RuntimeEnvironmentProvider,
+    ProjectImportStatus, ProjectRecord, ProjectRuntimeEnvironmentStatus, ProjectSourceType,
+    RuntimeEnvironmentProvider,
 };
 
 use super::LOCAL_CONNECTOR_ROOT_PREFIX;
@@ -54,11 +54,6 @@ pub(super) async fn resolve_runtime_environment_routing(
 }
 
 fn resolve_cloud_routing(project: &ProjectRecord) -> RoutingDecision {
-    if project.cloud_import_source == CloudImportSource::Empty {
-        return RoutingDecision::Stop(not_runnable(
-            "云端项目当前为空，暂无可分析的项目文件。请先上传代码或导入仓库后再初始化运行环境。",
-        ));
-    }
     match project.import_status {
         ProjectImportStatus::Pending | ProjectImportStatus::Importing => {
             return RoutingDecision::Stop(StopDecision {
@@ -92,6 +87,10 @@ fn resolve_cloud_routing(project: &ProjectRecord) -> RoutingDecision {
             "云端项目缺少 Harness 仓库信息，无法通过 Harness MCP 读取项目文件。",
         ));
     }
+    // `cloud_import_source=empty` describes how the project was created, not
+    // whether its Harness repository is still empty. Task Runner runs may add
+    // code later, so the environment agent must inspect the current repository
+    // instead of permanently short-circuiting on creation-time metadata.
     RoutingDecision::Ready(RoutingPlan {
         file_provider: RuntimeEnvironmentProvider::Harness,
         sandbox_provider: RuntimeEnvironmentProvider::CloudSandboxManager,
@@ -394,5 +393,71 @@ pub(super) fn provider_label(provider: RuntimeEnvironmentProvider) -> &'static s
         RuntimeEnvironmentProvider::LocalConnector => "Local Connector",
         RuntimeEnvironmentProvider::Harness => "Harness",
         RuntimeEnvironmentProvider::CloudSandboxManager => "Cloud Sandbox Manager",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cloud_project_created_empty_still_inspects_current_harness_repository() {
+        let project = cloud_project(Some("repo"));
+        assert!(matches!(
+            resolve_cloud_routing(&project),
+            RoutingDecision::Ready(RoutingPlan {
+                file_provider: RuntimeEnvironmentProvider::Harness,
+                sandbox_provider: RuntimeEnvironmentProvider::CloudSandboxManager,
+            })
+        ));
+    }
+
+    #[test]
+    fn cloud_project_without_harness_repository_remains_not_runnable() {
+        let project = cloud_project(None);
+        assert!(matches!(
+            resolve_cloud_routing(&project),
+            RoutingDecision::Stop(StopDecision {
+                status: ProjectRuntimeEnvironmentStatus::NotRunnable,
+                ..
+            })
+        ));
+    }
+
+    fn cloud_project(harness_repo_identifier: Option<&str>) -> ProjectRecord {
+        ProjectRecord {
+            id: "project-1".to_string(),
+            creator_user_id: None,
+            creator_username: None,
+            creator_display_name: None,
+            owner_user_id: Some("user-1".to_string()),
+            owner_username: None,
+            owner_display_name: None,
+            name: "Example".to_string(),
+            root_path: None,
+            git_url: None,
+            source_type: ProjectSourceType::Cloud,
+            execution_plane: crate::models::ProjectExecutionPlane::Cloud,
+            cloud_import_source: crate::models::CloudImportSource::Empty,
+            import_status: ProjectImportStatus::Ready,
+            source_git_url: None,
+            harness_space_identifier: Some("space".to_string()),
+            harness_repo_identifier: harness_repo_identifier.map(ToOwned::to_owned),
+            harness_repo_path: Some("repo-path".to_string()),
+            harness_git_url: None,
+            harness_git_ssh_url: None,
+            harness_default_branch: Some("main".to_string()),
+            harness_provision_status: None,
+            harness_provision_error: None,
+            harness_provisioned_at: None,
+            import_error: None,
+            import_started_at: None,
+            import_finished_at: None,
+            description: None,
+            status: crate::models::ProjectStatus::Active,
+            created_at: "now".to_string(),
+            updated_at: "now".to_string(),
+            archived_at: None,
+        }
     }
 }

@@ -20,7 +20,7 @@ use axum::extract::State;
 use axum::http::{HeaderMap, StatusCode};
 use axum::routing::{get, post};
 use axum::{Json, Router};
-use chatos_builtin_tools::{
+use chatos_mcp::{
     CodeMaintainerHooks, CodeMaintainerHooksRef, CodeMaintainerOptions, CodeMaintainerService,
     TerminalControllerOptions, TerminalControllerService, TerminalControllerStoreRef,
 };

@@ -93,6 +93,14 @@ pub(crate) struct ProjectRuntimeEnvironmentSettings {
     pub(crate) status: String,
     #[serde(default)]
     pub(crate) env_vars: Value,
+    #[serde(default)]
+    pub(crate) generated_config_files: Vec<ProjectRuntimeEnvironmentConfigFile>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct ProjectRuntimeEnvironmentConfigFile {
+    pub(crate) path: String,
+    pub(crate) content: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

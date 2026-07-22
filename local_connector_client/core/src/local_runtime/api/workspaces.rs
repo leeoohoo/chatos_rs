@@ -171,7 +171,7 @@ fn list_workspace_directory(
             is_dir: true,
         });
     }
-    entries.sort_by(|left, right| left.name.to_lowercase().cmp(&right.name.to_lowercase()));
+    entries.sort_by_key(|entry| entry.name.to_lowercase());
     Ok(LocalDirectoryListResponse {
         path,
         parent,

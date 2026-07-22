@@ -83,7 +83,7 @@ pub async fn resolve_runtime_guidance_locale(
 ) -> InternalContextLocale {
     load_runtime_user_context(None, guidance_item.session_id.as_str())
         .await
-        .locale
+        .internal_context_locale
 }
 
 pub fn format_runtime_guidance_instruction(

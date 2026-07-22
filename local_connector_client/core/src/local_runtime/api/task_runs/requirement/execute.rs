@@ -58,7 +58,11 @@ pub(in crate::local_runtime::api::task_runs) async fn execute_requirement(
         )
         .await?
         .into_iter()
-        .filter(|item| !matches!(item.status.as_str(), "done" | "completed" | "archived"))
+        .filter(|item| {
+            !crate::local_runtime::project_management::is_completed_project_status(
+                item.status.as_str(),
+            ) && item.status != "archived"
+        })
         .collect::<Vec<_>>();
     if work_items.is_empty() {
         return Err(LocalRuntimeApiError::bad_request(
@@ -92,6 +96,7 @@ pub(in crate::local_runtime::api::task_runs) async fn execute_requirement(
                     owner_user_id: owner.owner_user_id.clone(),
                     project_id: project_id.clone(),
                     requirement_id: Some(requirement_id.clone()),
+                    task_kind: "project_work_item".to_string(),
                     task_id: item.id.clone(),
                     session_id: session.id.clone(),
                     execution_group_id: execution_group_id.clone(),

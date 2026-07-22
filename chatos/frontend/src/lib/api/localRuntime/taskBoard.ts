@@ -5,6 +5,9 @@ import type { MessageTaskRunnerLookupOptions } from '../client/messages';
 import type {
   ConversationTaskRunnerActiveMessageTasksResponse,
   MessageTaskRunnerGraphResponse,
+  MessageTaskRunnerRunDetailResponse,
+  MessageTaskRunnerRunOutputChangesResponse,
+  MessageTaskRunnerRunOutputDiffResponse,
   MessageTaskRunnerTask,
   MessageTaskRunnerTasksResponse,
   TaskManagerTaskResponse,
@@ -46,6 +49,41 @@ export const getLocalTaskBoardTask = (
   taskId: string,
 ): Promise<MessageTaskRunnerTask> => requestLocalRuntime<MessageTaskRunnerTask>(
   `/api/local/runtime/sessions/${encodeURIComponent(sessionId)}/task-board/tasks/${encodeURIComponent(taskId)}`,
+);
+
+export const getLocalTaskRunnerRunDetail = (
+  runId: string,
+  options: { eventLimit?: number | null; eventOffset?: number | null } = {},
+): Promise<MessageTaskRunnerRunDetailResponse> => {
+  const query = new URLSearchParams();
+  if (typeof options.eventLimit === 'number') query.set('event_limit', String(options.eventLimit));
+  if (typeof options.eventOffset === 'number') query.set('event_offset', String(options.eventOffset));
+  const suffix = query.size > 0 ? `?${query.toString()}` : '';
+  return requestLocalRuntime<MessageTaskRunnerRunDetailResponse>(
+    `/api/local/runtime/task-runs/${encodeURIComponent(runId)}/detail${suffix}`,
+  );
+};
+
+export const getLocalTaskRunnerRunOutputChanges = (
+  runId: string,
+  options: { limit?: number | null; offset?: number | null } = {},
+): Promise<MessageTaskRunnerRunOutputChangesResponse> => {
+  const query = new URLSearchParams();
+  if (typeof options.limit === 'number') query.set('limit', String(options.limit));
+  if (typeof options.offset === 'number') query.set('offset', String(options.offset));
+  const suffix = query.size > 0 ? `?${query.toString()}` : '';
+  return requestLocalRuntime<MessageTaskRunnerRunOutputChangesResponse>(
+    `/api/local/runtime/task-runs/${encodeURIComponent(runId)}/output/changes${suffix}`,
+  );
+};
+
+export const getLocalTaskRunnerRunOutputDiff = (
+  runId: string,
+  path: string,
+): Promise<MessageTaskRunnerRunOutputDiffResponse> => requestLocalRuntime<
+  MessageTaskRunnerRunOutputDiffResponse
+>(
+  `/api/local/runtime/task-runs/${encodeURIComponent(runId)}/output/diff?path=${encodeURIComponent(path)}`,
 );
 
 export const getLocalActiveMessageTasks = (

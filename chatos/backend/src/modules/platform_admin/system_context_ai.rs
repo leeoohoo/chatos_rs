@@ -92,5 +92,7 @@ pub async fn evaluate_system_context_draft_usecase(
 }
 
 async fn resolve_user_locale(user_id: Option<String>) -> InternalContextLocale {
-    load_runtime_user_context(user_id, "").await.locale
+    load_runtime_user_context(user_id, "")
+        .await
+        .internal_context_locale
 }

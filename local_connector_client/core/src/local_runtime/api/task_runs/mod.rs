@@ -22,6 +22,18 @@ pub(super) fn router() -> Router<LocalRuntime> {
         )
         .route("/api/local/runtime/task-runs/{run_id}", get(runs::get_run))
         .route(
+            "/api/local/runtime/task-runs/{run_id}/detail",
+            get(runs::get_run_detail),
+        )
+        .route(
+            "/api/local/runtime/task-runs/{run_id}/output/changes",
+            get(runs::get_run_output_changes),
+        )
+        .route(
+            "/api/local/runtime/task-runs/{run_id}/output/diff",
+            get(runs::get_run_output_diff),
+        )
+        .route(
             "/api/local/runtime/task-runs/{run_id}/cancel",
             post(runs::cancel_run),
         )

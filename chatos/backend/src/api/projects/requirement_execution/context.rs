@@ -13,6 +13,8 @@ use crate::core::validation::normalize_non_empty;
 use crate::models::memory_mapping_types::MemoryProjectContactDto;
 use crate::models::message::Message;
 use crate::models::session::Session;
+use crate::models::session_runtime_settings::SessionRuntimeSettings;
+use crate::repositories::session_runtime_settings;
 use crate::services::{chatos_memory_mappings, chatos_sessions, task_runner_api_client};
 
 use super::super::session_resolver::resolve_project_contact_session_id;
@@ -100,10 +102,12 @@ pub(in crate::api::projects) async fn resolve_or_create_execution_session(
     project: &crate::models::project::Project,
     contact: &MemoryProjectContactDto,
     requirement_title: &str,
+    selected_model_id: Option<String>,
 ) -> Result<Session, HandlerError> {
+    let selected_model_id = normalize_non_empty(selected_model_id);
     if let Some(session_id) = contact.latest_session_id.as_deref() {
         if let Ok(Some(session)) = chatos_sessions::get_session_by_id(session_id).await {
-            return Ok(session);
+            return bind_execution_session_model(auth, session, selected_model_id).await;
         }
     }
     if let Some((session_id, _)) = resolve_project_contact_session_id(
@@ -114,7 +118,7 @@ pub(in crate::api::projects) async fn resolve_or_create_execution_session(
     .await
     {
         if let Ok(Some(session)) = chatos_sessions::get_session_by_id(session_id.as_str()).await {
-            return Ok(session);
+            return bind_execution_session_model(auth, session, selected_model_id).await;
         }
     }
 
@@ -125,6 +129,7 @@ pub(in crate::api::projects) async fn resolve_or_create_execution_session(
             "project_root": project.root_path,
             "contact_id": contact.contact_id,
             "contact_agent_id": contact.agent_id,
+            "selected_model_id": selected_model_id,
             "mcp_enabled": true
         },
         "contact": {
@@ -137,17 +142,95 @@ pub(in crate::api::projects) async fn resolve_or_create_execution_session(
             "agent_id": contact.agent_id
         },
         "ui_chat_selection": {
+            "selected_model_id": selected_model_id,
             "selected_agent_id": contact.agent_id
         }
     });
-    chatos_sessions::create_session(
+    let session = chatos_sessions::create_session(
         auth.user_id.clone(),
         title,
         Some(project.id.clone()),
         Some(metadata),
     )
     .await
-    .map_err(|err| HandlerError::internal("创建联系人会话失败", err))
+    .map_err(|err| HandlerError::internal("创建联系人会话失败", err))?;
+    bind_execution_session_model(auth, session, selected_model_id).await
+}
+
+async fn bind_execution_session_model(
+    auth: &AuthUser,
+    session: Session,
+    selected_model_id: Option<String>,
+) -> Result<Session, HandlerError> {
+    let Some(selected_model_id) = selected_model_id else {
+        return Ok(session);
+    };
+
+    let mut runtime_settings = session_runtime_settings::get_session_runtime_settings(
+        session.id.as_str(),
+        auth.user_id.as_str(),
+    )
+    .await
+    .map_err(|err| HandlerError::internal("读取执行会话模型配置失败", err))?
+    .unwrap_or_else(|| SessionRuntimeSettings::new(session.id.clone(), auth.user_id.clone()));
+    if runtime_settings.selected_model_id.as_deref() != Some(selected_model_id.as_str()) {
+        runtime_settings.selected_model_id = Some(selected_model_id.clone());
+        session_runtime_settings::upsert_session_runtime_settings(&runtime_settings)
+            .await
+            .map_err(|err| HandlerError::internal("保存执行会话模型配置失败", err))?;
+    }
+
+    if session.selected_model_id.as_deref() == Some(selected_model_id.as_str()) {
+        return Ok(session);
+    }
+
+    let mut metadata = session.metadata.clone().unwrap_or_else(|| json!({}));
+    if !metadata.is_object() {
+        metadata = json!({});
+    }
+    let metadata_map = metadata.as_object_mut().ok_or_else(|| {
+        HandlerError::internal(
+            "绑定执行会话模型失败",
+            "normalized session metadata is not an object",
+        )
+    })?;
+    let chat_runtime = metadata_map
+        .entry("chat_runtime".to_string())
+        .or_insert_with(|| json!({}));
+    if !chat_runtime.is_object() {
+        *chat_runtime = json!({});
+    }
+    let chat_runtime_map = chat_runtime.as_object_mut().ok_or_else(|| {
+        HandlerError::internal(
+            "绑定执行会话模型失败",
+            "normalized chat runtime metadata is not an object",
+        )
+    })?;
+    chat_runtime_map.insert(
+        "selected_model_id".to_string(),
+        Value::String(selected_model_id.clone()),
+    );
+    let ui_selection = metadata_map
+        .entry("ui_chat_selection".to_string())
+        .or_insert_with(|| json!({}));
+    if !ui_selection.is_object() {
+        *ui_selection = json!({});
+    }
+    let ui_selection_map = ui_selection.as_object_mut().ok_or_else(|| {
+        HandlerError::internal(
+            "绑定执行会话模型失败",
+            "normalized UI chat selection metadata is not an object",
+        )
+    })?;
+    ui_selection_map.insert(
+        "selected_model_id".to_string(),
+        Value::String(selected_model_id),
+    );
+
+    chatos_sessions::update_session(session.id.as_str(), None, None, Some(metadata))
+        .await
+        .map_err(|err| HandlerError::internal("绑定执行会话模型失败", err))?
+        .ok_or_else(|| HandlerError::not_found("执行会话不存在"))
 }
 
 pub(in crate::api::projects) async fn create_execution_message(
@@ -162,7 +245,7 @@ pub(in crate::api::projects) async fn create_execution_message(
         session.id.clone(),
         NewMessageFields {
             role: Some("user".to_string()),
-            content: Some(content),
+            content: Some(content.clone()),
             message_mode: Some("project_requirement_execution".to_string()),
             message_source: Some("project_management".to_string()),
             metadata: Some(json!({
@@ -173,6 +256,7 @@ pub(in crate::api::projects) async fn create_execution_message(
                     "contact_id": contact.contact_id,
                     "contact_agent_id": contact.agent_id,
                     "project_task_ids": work_items.iter().map(|item| item.id.clone()).collect::<Vec<_>>(),
+                    "user_visible_content": content,
                     "task_links": [],
                 },
                 "task_runner_async": {
@@ -202,4 +286,33 @@ pub(in crate::api::projects) async fn create_execution_message(
     create_message_and_maybe_rename(message)
         .await
         .map_err(|err| HandlerError::internal("创建执行消息失败", err))
+}
+
+pub(in crate::api::projects) async fn create_execution_planner_failure_message(
+    session_id: &str,
+    execution_group_id: &str,
+    content: String,
+) -> Result<Message, HandlerError> {
+    let message = build_message(
+        session_id.to_string(),
+        NewMessageFields {
+            role: Some("assistant".to_string()),
+            content: Some(content),
+            message_mode: Some("project_requirement_execution_error".to_string()),
+            message_source: Some("project_management".to_string()),
+            metadata: Some(json!({
+                "conversation_turn_id": execution_group_id,
+                "project_requirement_execution": {
+                    "execution_group_id": execution_group_id,
+                    "status": "failed",
+                    "failure_kind": "planner_created_no_tasks"
+                }
+            })),
+            ..NewMessageFields::default()
+        },
+        "assistant",
+    );
+    create_message_and_maybe_rename(message)
+        .await
+        .map_err(|err| HandlerError::internal("创建执行规划失败回执失败", err))
 }

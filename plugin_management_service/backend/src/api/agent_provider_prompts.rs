@@ -115,6 +115,7 @@ pub(super) async fn update_agent_provider_prompt_draft(
             published_content: None,
             published_revision: 0,
             published_checksum: None,
+            seed_checksum: None,
             enabled: true,
             source_kind: SOURCE_KIND_ADMIN_CREATED.to_string(),
             generated_by_model_config_id: None,
@@ -126,6 +127,9 @@ pub(super) async fn update_agent_provider_prompt_draft(
             published_at: None,
         },
     };
+    if record.source_kind == crate::models::SOURCE_KIND_SYSTEM_SEED {
+        record.source_kind = SOURCE_KIND_ADMIN_CREATED.to_string();
+    }
     if request
         .expected_updated_at
         .as_deref()
@@ -242,7 +246,6 @@ pub(super) async fn generate_agent_provider_prompt(
         &runtime,
         format!("Administrator requirement:\n{requirement}").as_str(),
         SimplePromptOptions {
-            max_attempts: Some(2),
             max_output_tokens: Some(12_000),
             ..Default::default()
         },

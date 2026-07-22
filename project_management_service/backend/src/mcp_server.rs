@@ -1,8 +1,17 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
+use std::sync::Arc;
+
+use async_trait::async_trait;
 use axum::http::StatusCode;
-use chatos_project_mcp_contract::{mcp, schemas};
+use chatos_mcp_service::{
+    McpJsonRpcService, McpRequestContext, McpServerInfo as SharedMcpServerInfo, McpToolProvider,
+};
+use chatos_plugin_management_sdk::SystemMcpKey;
+use chatos_mcp::project_management_contract::mcp;
+#[cfg(test)]
+use chatos_mcp::project_management_contract::schemas;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
@@ -44,6 +53,7 @@ pub struct McpServerInfo {
 }
 
 pub fn server_info() -> McpServerInfo {
+    let descriptor = chatos_mcp::system_mcp_descriptor(SystemMcpKey::ProjectManagement);
     let tools = tool_definitions();
     let tool_names = tools
         .iter()
@@ -54,7 +64,7 @@ pub fn server_info() -> McpServerInfo {
         })
         .collect();
     McpServerInfo {
-        server_name: mcp::SERVER_NAME.to_string(),
+        server_name: descriptor.server_name.to_string(),
         transports: vec![mcp::TRANSPORT_HTTP_JSONRPC.to_string()],
         http_endpoint_path: mcp::ENDPOINT_PATH.to_string(),
         tool_names,
@@ -62,7 +72,8 @@ pub fn server_info() -> McpServerInfo {
 }
 
 pub fn tool_definitions() -> Vec<Value> {
-    schemas::project_management_server_tool_definitions()
+    chatos_mcp::system_mcp_static_tools(SystemMcpKey::ProjectManagement)
+        .expect("Project Management must have a static system MCP catalog")
 }
 
 pub async fn handle_jsonrpc(
@@ -71,83 +82,86 @@ pub async fn handle_jsonrpc(
     project_id: Option<String>,
     request: JsonRpcRequest,
 ) -> JsonRpcResponse {
-    let id = request.id.clone().unwrap_or(Value::Null);
-    let result = match request.method.as_str() {
-        mcp::METHOD_INITIALIZE => Ok(json!({
-            "protocolVersion": "2024-11-05",
-            "serverInfo": {
-                "name": mcp::SERVER_NAME,
-                "version": env!("CARGO_PKG_VERSION")
-            },
-            "capabilities": {
-                "tools": {}
-            }
-        })),
-        mcp::METHOD_PING => Ok(json!({})),
-        mcp::METHOD_TOOLS_LIST => {
-            let tools = tool_definitions();
-            Ok(json!({ "tools": tools }))
-        }
-        mcp::METHOD_TOOLS_CALL => {
-            let project_id = match project_id
-                .as_deref()
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-            {
-                Some(value) => value,
-                None => {
-                    return JsonRpcResponse {
-                        jsonrpc: "2.0",
-                        id,
-                        result: None,
-                        error: Some(JsonRpcError {
-                            code: -32000,
-                            message: "project management MCP requires current project context"
-                                .to_string(),
-                        }),
-                    };
-                }
-            };
-            mcp_tools::call_tool_from_value(
-                &state,
-                &current_user,
-                project_id,
-                request.params.unwrap_or_else(|| json!({})),
-            )
-            .await
-        }
-        method => Err(format!("unsupported MCP method: {method}")),
+    let descriptor = chatos_mcp::system_mcp_descriptor(SystemMcpKey::ProjectManagement);
+    handle_provider_jsonrpc(
+        descriptor.server_name,
+        request,
+        Arc::new(ProjectManagementMcpProvider {
+            state,
+            current_user,
+            project_id,
+        }),
+    )
+    .await
+}
+
+pub async fn handle_provider_jsonrpc(
+    server_name: &str,
+    request: JsonRpcRequest,
+    provider: Arc<dyn McpToolProvider>,
+) -> JsonRpcResponse {
+    let shared_request = chatos_mcp_service::JsonRpcRequest {
+        jsonrpc: Some(request.jsonrpc),
+        id: request.id,
+        method: request.method,
+        params: request.params.unwrap_or_else(|| json!({})),
     };
-    match result {
-        Ok(result) => JsonRpcResponse {
-            jsonrpc: "2.0",
-            id,
-            result: Some(result),
-            error: None,
-        },
-        Err(message) => JsonRpcResponse {
-            jsonrpc: "2.0",
-            id,
-            result: None,
-            error: Some(JsonRpcError {
-                code: -32000,
-                message,
-            }),
-        },
+    let response = McpJsonRpcService::new(
+        SharedMcpServerInfo::new(server_name, env!("CARGO_PKG_VERSION")),
+        provider,
+    )
+    .handle(shared_request)
+    .await;
+    JsonRpcResponse {
+        jsonrpc: response.jsonrpc,
+        id: response.id,
+        result: response.result,
+        error: response.error.map(|error| JsonRpcError {
+            code: i64::from(error.code),
+            message: error.message,
+        }),
     }
 }
 
-impl From<String> for JsonRpcResponse {
-    fn from(message: String) -> Self {
-        Self {
-            jsonrpc: "2.0",
-            id: Value::Null,
-            result: None,
-            error: Some(JsonRpcError {
-                code: -32000,
-                message,
+#[derive(Clone)]
+struct ProjectManagementMcpProvider {
+    state: AppState,
+    current_user: CurrentUser,
+    project_id: Option<String>,
+}
+
+#[async_trait]
+impl McpToolProvider for ProjectManagementMcpProvider {
+    fn server_name(&self) -> &str {
+        chatos_mcp::system_mcp_descriptor(SystemMcpKey::ProjectManagement).server_name
+    }
+
+    fn list_tools(&self, _context: &McpRequestContext) -> Vec<Value> {
+        tool_definitions()
+    }
+
+    async fn call_tool(
+        &self,
+        name: &str,
+        args: Value,
+        _context: McpRequestContext,
+    ) -> Result<Value, String> {
+        let project_id = self
+            .project_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| "project management MCP requires current project context".to_string())?;
+        mcp_tools::call_tool_from_value(
+            &self.state,
+            &self.current_user,
+            project_id,
+            json!({
+                "name": name,
+                "arguments": args,
             }),
-        }
+        )
+        .await
     }
 }
 
@@ -173,7 +187,7 @@ pub fn jsonrpc_error_response(status: StatusCode, id: Value, message: String) ->
 mod tests {
     use std::collections::BTreeSet;
 
-    use chatos_project_mcp_contract::tools;
+    use chatos_mcp::project_management_contract::tools;
 
     use super::*;
     use crate::domain::visibility::{

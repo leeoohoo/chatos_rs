@@ -64,6 +64,8 @@ pub struct AppConfig {
     pub docker_agent_publish: bool,
     pub docker_agent_bind_host: String,
     pub docker_agent_connect_host: String,
+    pub docker_config: Option<PathBuf>,
+    pub docker_host: Option<String>,
     pub kata_container_cli: String,
     pub kata_runtime: String,
     pub kata_image: String,
@@ -160,6 +162,8 @@ impl AppConfig {
             docker_agent_connect_host: normalized_env("SANDBOX_MANAGER_DOCKER_AGENT_CONNECT_HOST")
                 .or_else(|| normalized_env("SANDBOX_MANAGER_DOCKER_AGENT_HOST"))
                 .unwrap_or_else(|| "127.0.0.1".to_string()),
+            docker_config: normalized_env("SANDBOX_MANAGER_DOCKER_CONFIG").map(PathBuf::from),
+            docker_host: normalized_env("SANDBOX_MANAGER_DOCKER_HOST"),
             kata_container_cli: normalized_env("SANDBOX_MANAGER_KATA_CONTAINER_CLI")
                 .unwrap_or_else(|| "nerdctl".to_string()),
             kata_runtime: normalized_env("SANDBOX_MANAGER_KATA_RUNTIME")

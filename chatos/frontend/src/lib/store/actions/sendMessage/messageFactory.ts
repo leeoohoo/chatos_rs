@@ -29,6 +29,7 @@ export const createDraftUserMessage = ({
   status: 'completed',
   createdAt,
   metadata: {
+    clientOptimistic: true,
     conversation_turn_id: conversationTurnId,
     ...(previewAttachments.length > 0 ? { attachments: previewAttachments } : {}),
     model: selectedModel.model_name,

@@ -52,6 +52,7 @@ pub(crate) struct LocalSessionRecord {
     pub(crate) project_id: String,
     pub(crate) owner_user_id: String,
     pub(crate) title: String,
+    pub(crate) contact_id: Option<String>,
     pub(crate) selected_model_id: Option<String>,
     pub(crate) selected_agent_id: Option<String>,
     pub(crate) status: String,
@@ -114,6 +115,15 @@ pub(crate) struct BeginLocalTurnInput {
     pub(crate) idempotency_key: String,
     pub(crate) content: String,
     pub(crate) metadata_json: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct BeginLocalBackgroundTurnInput {
+    pub(crate) session_id: String,
+    pub(crate) owner_user_id: String,
+    pub(crate) source_turn_id: String,
+    pub(crate) turn_id: String,
+    pub(crate) idempotency_key: String,
 }
 
 #[derive(Debug, Clone)]

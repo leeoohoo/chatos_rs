@@ -4,16 +4,14 @@
 [workspace]
 members = [
   "agent",
+  "mcp",
   "chatos/backend",
-  "crates/chatos_builtin_tools",
   "crates/chatos_ai_runtime",
-  "crates/chatos_project_mcp_contract",
   "crates/chatos_remote_runtime",
   "crates/chatos_sandbox_contract",
   "crates/memory_engine_sdk",
   "crates/chatos_mcp_runtime",
   "crates/chatos_mcp_service",
-  "crates/chatos_sandbox_image_mcp",
   "crates/chatos_service_runtime",
   "crates/chatos_terminal_runtime",
   "crates/chatos_config_sdk",

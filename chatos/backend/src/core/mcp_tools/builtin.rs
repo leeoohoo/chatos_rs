@@ -12,7 +12,7 @@ use crate::services::shared_builtin_code_maintainer::ChatosCodeMaintainerHooks;
 use crate::services::shared_builtin_memory_readers::ChatosMemoryReaderStore;
 use crate::services::shared_builtin_notepad::ChatosNotepadStore;
 use crate::services::shared_builtin_task_manager::ChatosTaskManagerStore;
-use chatos_builtin_tools::{
+use chatos_mcp::{
     AgentBuilderOptions, AgentBuilderService, AgentBuilderStoreRef, AskUserOptions, AskUserService,
     AskUserStoreRef, BrowserToolsOptions, BrowserToolsService, BrowserVisionAdapterRef,
     CodeMaintainerHooksRef, CodeMaintainerOptions, CodeMaintainerService,
@@ -26,9 +26,22 @@ use chatos_builtin_tools::{
 };
 use std::sync::Arc;
 
-pub use chatos_builtin_tools::SharedBuiltinToolService as BuiltinToolService;
+pub use chatos_mcp::SharedBuiltinToolService as BuiltinToolService;
 
 pub fn build_builtin_tool_service(server: &McpBuiltinServer) -> Result<BuiltinToolService, String> {
+    let descriptor =
+        chatos_mcp::system_mcp_descriptor_by_embedded_kind(server.kind).ok_or_else(|| {
+            format!(
+                "missing system MCP descriptor for {}",
+                server.kind.kind_name()
+            )
+        })?;
+    if !descriptor.supports_host(chatos_mcp::SystemMcpHost::Chatos) {
+        return Err(format!(
+            "system MCP {} is not supported by ChatOS",
+            descriptor.server_name
+        ));
+    }
     match server.kind {
         BuiltinMcpKind::CodeMaintainerRead => {
             let service = CodeMaintainerService::new(CodeMaintainerOptions {

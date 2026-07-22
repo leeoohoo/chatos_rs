@@ -6,7 +6,7 @@ use std::process::Stdio;
 use std::time::Duration;
 
 use anyhow::{anyhow, Context, Result};
-use chatos_builtin_tools::browser_runtime::browser_backend_available;
+use chatos_mcp::browser_runtime::browser_backend_available;
 use chatos_mcp_service::{
     BUILTIN_KIND_BROWSER_TOOLS, BUILTIN_KIND_CODE_MAINTAINER_READ,
     BUILTIN_KIND_CODE_MAINTAINER_WRITE, BUILTIN_KIND_TERMINAL_CONTROLLER,

@@ -24,6 +24,7 @@ pub(crate) fn build_local_model_config(
     .with_instructions(system_prompt)
     .with_temperature(temperature.or(runtime.temperature))
     .with_max_output_tokens(runtime.max_output_tokens)
+    .with_max_transient_retries(Some(runtime.model_request_max_retries))
     .with_thinking_level(if reasoning_enabled && runtime.supports_reasoning {
         thinking_level.or(runtime.thinking_level)
     } else {
@@ -55,6 +56,7 @@ mod tests {
                 supports_responses: true,
                 temperature: Some(0.5),
                 max_output_tokens: Some(512),
+                model_request_max_retries: 5,
             },
             None,
             Some("medium".to_string()),
@@ -64,5 +66,6 @@ mod tests {
         );
         assert_eq!(config.thinking_level, None);
         assert_eq!(config.temperature, Some(0.5));
+        assert_eq!(config.max_transient_retries, Some(5));
     }
 }

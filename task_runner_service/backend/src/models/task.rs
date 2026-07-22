@@ -35,3 +35,43 @@ pub fn normalize_task_profile(value: Option<&str>) -> Result<String, String> {
     }
     Err(format!("unknown task_profile: {value}"))
 }
+
+pub fn uses_task_runner_planning_agent(task_profile: &str, requires_execution: bool) -> bool {
+    task_profile
+        .trim()
+        .eq_ignore_ascii_case(TASK_PROFILE_CHATOS_PLAN)
+        && !requires_execution
+}
+
+pub fn task_runner_agent_key_for(
+    task_profile: &str,
+    requires_execution: bool,
+) -> chatos_plugin_management_sdk::SystemAgentKey {
+    if uses_task_runner_planning_agent(task_profile, requires_execution) {
+        chatos_plugin_management_sdk::SystemAgentKey::TaskRunnerPlanPhase
+    } else {
+        chatos_plugin_management_sdk::SystemAgentKey::TaskRunnerRunPhase
+    }
+}
+
+#[cfg(test)]
+mod task_runner_agent_routing_tests {
+    use super::*;
+    use chatos_plugin_management_sdk::SystemAgentKey;
+
+    #[test]
+    fn only_non_executing_plan_tasks_use_the_planning_agent() {
+        assert_eq!(
+            task_runner_agent_key_for(TASK_PROFILE_CHATOS_PLAN, false),
+            SystemAgentKey::TaskRunnerPlanPhase
+        );
+        assert_eq!(
+            task_runner_agent_key_for(TASK_PROFILE_CHATOS_PLAN, true),
+            SystemAgentKey::TaskRunnerRunPhase
+        );
+        assert_eq!(
+            task_runner_agent_key_for(TASK_PROFILE_DEFAULT, false),
+            SystemAgentKey::TaskRunnerRunPhase
+        );
+    }
+}

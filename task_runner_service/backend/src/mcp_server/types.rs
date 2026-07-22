@@ -30,8 +30,7 @@ pub(super) use self::run::{
     GetTaskMemoryContextArgs, ListRunsArgs, ListTaskMemoryRecordsArgs, RunIdArgs, StartTaskRunArgs,
 };
 pub(super) use self::task::{
-    normalize_external_mcp_config_ids, normalize_skill_ids, reject_ai_execution_service_selection,
-    task_mcp_config_for_explicit_tool_selection, BatchTaskDeleteArgs, BatchTaskRunArgs,
+    reject_ai_execution_service_selection, BatchTaskDeleteArgs, BatchTaskRunArgs,
     BatchTaskStatusUpdateArgs, CancelTaskArgs, CreateProjectExecutionTasksArgs, CreateTaskArgs,
     CreateTaskWithPrerequisitesItem, CreateTasksWithPrerequisitesArgs, ListTasksArgs,
     SetTaskPrerequisitesArgs, TaskIdArgs, UpdateTaskArgs,

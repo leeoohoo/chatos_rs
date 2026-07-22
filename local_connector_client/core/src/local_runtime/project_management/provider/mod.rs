@@ -12,10 +12,10 @@ mod tasks;
 mod tests;
 
 use async_trait::async_trait;
+use chatos_mcp::project_management_contract::tools;
 use chatos_mcp_runtime::{
     BuiltinToolProvider, ToolCallContext, ToolStreamChunkCallback, PROJECT_MANAGEMENT_SERVER_NAME,
 };
-use chatos_project_mcp_contract::tools;
 use serde::de::DeserializeOwned;
 use serde_json::{json, Value};
 
@@ -49,7 +49,10 @@ impl BuiltinToolProvider for LocalProjectManagementProvider {
     }
 
     fn list_tools(&self) -> Vec<Value> {
-        chatos_project_mcp_contract::schemas::task_runner_builtin_tool_definitions()
+        chatos_mcp::system_mcp_static_tools(
+            chatos_plugin_management_sdk::SystemMcpKey::ProjectManagement,
+        )
+        .expect("Project Management must have a static system MCP catalog")
     }
 
     async fn call_tool(

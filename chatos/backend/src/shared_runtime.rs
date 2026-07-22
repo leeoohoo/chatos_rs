@@ -12,7 +12,7 @@ pub use chatos_ai_runtime::{
     TaskMemoryRuntimeConfig, TaskRunExecution, TaskRunReport, TaskRunSpec, TaskRuntime,
     TaskRuntimeBuilder, TaskRuntimeConfig,
 };
-pub use chatos_builtin_tools::{
+pub use chatos_mcp::{
     build_shared_builtin_provider, build_shared_builtin_registry,
     build_shared_builtin_tool_service, AgentBuilderAgentSnapshot, AgentBuilderOptions,
     AgentBuilderService, AgentBuilderSkill, AgentBuilderStore, AgentBuilderStoreRef,

@@ -12,13 +12,20 @@ pub(super) async fn list_mcp_catalog(State(state): State<AppState>) -> Json<Vec<
 pub(super) async fn list_task_capability_catalog(
     State(state): State<AppState>,
     Extension(user): Extension<CurrentUser>,
+    Query(query): Query<TaskCapabilityCatalogQuery>,
 ) -> Result<Json<Value>, ApiError> {
     let owner_user_id = user
         .effective_owner_user_id()
         .ok_or_else(|| ApiError::unauthorized("current user is missing owner scope"))?;
+    let task_profile = crate::models::normalize_task_profile(query.task_profile.as_deref())
+        .map_err(ApiError::bad_request)?;
+    let agent_key = crate::models::task_runner_agent_key_for(
+        task_profile.as_str(),
+        query.requires_execution.unwrap_or(true),
+    );
     let policy = state
         .task_service
-        .resolve_task_runner_policy(Some(&user), Some(owner_user_id))
+        .resolve_task_runner_policy_for_agent(Some(&user), Some(owner_user_id), agent_key)
         .await
         .map_err(ApiError::bad_gateway)?
         .ok_or_else(|| ApiError::internal("plugin management policy resolver is unavailable"))?;
@@ -33,11 +40,18 @@ pub(super) async fn list_task_capability_catalog(
         .filter(|item| selectable_builtin_kinds.contains(item.kind.as_str()))
         .collect::<Vec<_>>();
     Ok(Json(json!({
+        "agent_key": agent_key.as_str(),
         "policy_revision": policy.policy_revision(),
         "selectable_builtin_mcps": selectable_builtin_mcps,
         "selectable_external_mcps": policy.selectable_external_mcp_views(),
         "selectable_skills": policy.selectable_skill_views(),
     })))
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct TaskCapabilityCatalogQuery {
+    task_profile: Option<String>,
+    requires_execution: Option<bool>,
 }
 
 pub(super) async fn get_mcp_server_info(State(state): State<AppState>) -> Json<McpServerInfo> {
@@ -226,6 +240,7 @@ fn mcp_request_context_from_headers(headers: &HeaderMap) -> McpRequestContext {
             .or_else(|| header_text(headers, "x-chatos-conversation-id")),
         source_turn_id: header_text(headers, "x-chatos-turn-id"),
         source_user_message_id: header_text(headers, "x-chatos-user-message-id"),
+        default_model_config_id: header_text(headers, "x-task-runner-default-model-config-id"),
         workspace_dir: header_text(headers, "x-task-runner-workspace-dir")
             .or_else(|| header_text(headers, "x-chatos-workspace-dir"))
             .or_else(|| header_text(headers, "x-chatos-workspace-root")),
@@ -254,4 +269,25 @@ fn header_bool(headers: &HeaderMap, key: &'static str) -> bool {
         .and_then(|value| value.to_str().ok())
         .map(str::trim)
         .is_some_and(|value| matches!(value.to_ascii_lowercase().as_str(), "1" | "true" | "yes"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn request_context_reads_inherited_model_header() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "x-task-runner-default-model-config-id",
+            " model-selected ".parse().expect("valid header"),
+        );
+
+        let context = mcp_request_context_from_headers(&headers);
+
+        assert_eq!(
+            context.default_model_config_id.as_deref(),
+            Some("model-selected")
+        );
+    }
 }

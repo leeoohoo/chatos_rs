@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use chatos_project_mcp_contract::args::ProjectTaskStatus;
+use chatos_mcp::project_management_contract::args::ProjectTaskStatus;
 
-use crate::local_runtime::project_management::LocalWorkItemRecord;
+use crate::local_runtime::project_management::{is_completed_project_status, LocalWorkItemRecord};
 
 use super::requirement_support::require_mutable as require_requirement_mutable;
 use super::LocalProjectManagementProvider;
@@ -21,7 +21,7 @@ pub(super) async fn require_mutable(
     if record.project_id != provider.project_id || record.archived_at.is_some() {
         return Err("local project task was not found".to_string());
     }
-    if record.status == "done" {
+    if is_completed_project_status(record.status.as_str()) {
         return Err("completed local project task is immutable".to_string());
     }
     require_requirement_mutable(provider, record.requirement_id.as_str()).await?;

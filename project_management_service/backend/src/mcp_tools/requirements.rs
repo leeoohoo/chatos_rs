@@ -1,13 +1,16 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use chatos_project_mcp_contract::args::{
+use chatos_mcp::project_management_contract::args::{
     CreateRequirementArgs, ListRequirementsArgs, RequirementIdArgs, SetRequirementDependenciesArgs,
     UpdateRequirementArgs,
 };
 use serde_json::{json, Value};
 
 use crate::auth::CurrentUser;
+use crate::domain::status_policy::{
+    ensure_requirement_create_status, ensure_requirement_user_update_status,
+};
 use crate::domain::visibility::ensure_requirement_status_queryable_for_mcp;
 use crate::models::{
     CreateRequirementRequest, RequirementStatus, RequirementType, UpdateRequirementRequest,
@@ -28,6 +31,7 @@ pub(super) async fn list_requirements(
 ) -> Result<Value, String> {
     let args: ListRequirementsArgs = decode_value(arguments)?;
     let status = args.status.map(RequirementStatus::from);
+    ensure_requirement_status_queryable_for_mcp(status)?;
     let page = mcp_list_page(args.limit, args.offset);
     require_project_access(state, project_id, current_user).await?;
     let mut requirements = state
@@ -60,7 +64,7 @@ pub(super) async fn create_requirement(
 ) -> Result<Value, String> {
     let args: CreateRequirementArgs = decode_value(arguments)?;
     let status = args.status.map(RequirementStatus::from);
-    ensure_requirement_status_queryable_for_mcp(status)?;
+    ensure_requirement_create_status(status)?;
     let project = require_project_access(state, project_id, current_user).await?;
     ensure_project_writable(&project)?;
     if let Some(parent_requirement_id) = normalized_optional(args.parent_requirement_id.clone()) {
@@ -100,7 +104,7 @@ pub(super) async fn update_requirement(
 ) -> Result<Value, String> {
     let args: UpdateRequirementArgs = decode_value(arguments)?;
     let patch = UpdateRequirementRequest::from(args.patch);
-    ensure_requirement_status_queryable_for_mcp(patch.status)?;
+    ensure_requirement_user_update_status(patch.status)?;
     let requirement =
         require_requirement_in_project(state, &args.requirement_id, project_id, current_user)
             .await?;

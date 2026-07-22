@@ -162,6 +162,32 @@ describe('ProjectPreviewPane', () => {
     expect(screen.queryByTestId('markdown-preview')).not.toBeInTheDocument();
   });
 
+  it.each([
+    ['diagram.svg', 'image/svg+xml', 'PHN2Zz48L3N2Zz4='],
+    ['diagram.png', 'image/png', 'iVBORw0KGgo='],
+  ])('renders %s binary content as an image preview', (name, contentType, content) => {
+    renderPane({
+      selectedFile: {
+        ...baseFile,
+        path: `/workspace/docs/${name}`,
+        name,
+        contentType,
+        isBinary: true,
+        content,
+      },
+      selectedPath: `/workspace/docs/${name}`,
+      selectedEntry: {
+        ...baseEntry,
+        path: `/workspace/docs/${name}`,
+        name,
+      },
+    });
+
+    const image = screen.getByRole('img', { name });
+    expect(image).toHaveAttribute('src', `data:${contentType};base64,${content}`);
+    expect(screen.queryByText('Binary file. Preview is unavailable.')).not.toBeInTheDocument();
+  });
+
   it('copies preview content and current draft content from the header action', async () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
     Object.defineProperty(navigator, 'clipboard', {

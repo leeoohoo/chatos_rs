@@ -16,6 +16,7 @@ const path = require('node:path');
 const { startBundledChatosServer } = require('./bundled-chatos-server.cjs');
 const { isTrustedMainFrameEvent } = require('./ipc-trust.cjs');
 const { createLocalApiBridge } = require('./local-api-bridge.cjs');
+const { createDesktopTicketAuthenticator } = require('./desktop-auth.cjs');
 const { attachRetryingViewLoader } = require('./retrying-view-loader.cjs');
 const { createCoreRuntime } = require('./core-runtime.cjs');
 const {
@@ -57,6 +58,11 @@ const {
   sendIpcHttpRequest,
   localApiHeaders,
 } = localApiBridge;
+const authenticateDesktopTicket = createDesktopTicketAuthenticator({
+  sendIpcHttpRequest,
+  localApiHeaders,
+  getCloudBaseUrl: localConnectorCloudBaseUrl,
+});
 const SHELL_HEIGHT = 52;
 const RUNTIME_SETTINGS_STARTUP_ATTEMPTS = 300;
 const DEVELOPER_CHATOS_WEB_URL = (
@@ -411,7 +417,9 @@ function handleChatosProtocolNavigation(url) {
     const parsed = new URL(url);
     if (parsed.hostname === 'auth') {
       const ticket = parsed.searchParams.get('ticket') || '';
-      void authenticateDesktopTicket(ticket);
+      void authenticateDesktopTicket(ticket).catch((error) => {
+        console.warn('Local Connector desktop ticket authentication failed', error);
+      });
       return true;
     }
     if (parsed.hostname === 'logout') {
@@ -427,22 +435,6 @@ function handleChatosProtocolNavigation(url) {
     return true;
   }
   return true;
-}
-
-async function authenticateDesktopTicket(ticket) {
-  const trimmed = String(ticket || '').trim();
-  if (!trimmed) {
-    return;
-  }
-  await sendIpcHttpRequest({
-    endpoint: '/api/local/auth/desktop-ticket',
-    method: 'POST',
-    headers: localApiHeaders(true),
-    body: JSON.stringify({
-      cloud_base_url: localConnectorCloudBaseUrl(),
-      ticket: trimmed,
-    }),
-  });
 }
 
 function openExternalIfSafe(url) {
@@ -582,6 +574,12 @@ app.whenReady().then(async () => {
     }
     const rendererRequest = request && typeof request === 'object' ? request : {};
     return runtimeApiBridge.requestLocalApiOverIpc({ ...rendererRequest, sender: event.sender });
+  });
+  ipcMain.handle('local-connector:desktop-ticket-authenticate', (event, ticket) => {
+    if (!isTrustedRuntimeEvent(event)) {
+      throw new Error('Local Connector authentication requires the bundled Chat OS main frame');
+    }
+    return authenticateDesktopTicket(ticket);
   });
   ipcMain.handle('local-connector:desktop-system-permissions', (event) => {
     if (!isTrustedLocalEvent(event)) {

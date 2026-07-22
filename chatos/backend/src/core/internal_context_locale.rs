@@ -37,12 +37,17 @@ pub fn internal_context_locale_from_settings(settings: &Value) -> InternalContex
     )
 }
 
+pub fn ui_locale_from_settings(settings: &Value) -> InternalContextLocale {
+    parse_internal_context_locale(settings.get("UI_LOCALE").and_then(Value::as_str))
+}
+
 #[cfg(test)]
 mod tests {
     use serde_json::json;
 
     use super::{
-        internal_context_locale_from_settings, parse_internal_context_locale, InternalContextLocale,
+        internal_context_locale_from_settings, parse_internal_context_locale,
+        ui_locale_from_settings, InternalContextLocale,
     };
 
     #[test]
@@ -74,6 +79,27 @@ mod tests {
         assert_eq!(
             internal_context_locale_from_settings(&json!({"INTERNAL_CONTEXT_LOCALE": "en-US"})),
             InternalContextLocale::EnUs
+        );
+        assert_eq!(
+            ui_locale_from_settings(&json!({"UI_LOCALE": "en-US"})),
+            InternalContextLocale::EnUs
+        );
+    }
+
+    #[test]
+    fn keeps_ui_and_internal_context_locales_independent() {
+        let settings = json!({
+            "INTERNAL_CONTEXT_LOCALE": "en-US",
+            "UI_LOCALE": "zh-CN"
+        });
+
+        assert_eq!(
+            internal_context_locale_from_settings(&settings),
+            InternalContextLocale::EnUs
+        );
+        assert_eq!(
+            ui_locale_from_settings(&settings),
+            InternalContextLocale::ZhCn
         );
     }
 }

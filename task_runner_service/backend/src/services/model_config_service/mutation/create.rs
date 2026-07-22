@@ -30,6 +30,7 @@ impl ModelConfigService {
             usage_scenario: normalized_optional(input.usage_scenario),
             temperature: input.temperature,
             max_output_tokens: input.max_output_tokens,
+            model_request_max_retries: chatos_ai_runtime::DEFAULT_MODEL_REQUEST_MAX_RETRIES,
             thinking_level,
             supports_responses: input
                 .supports_responses

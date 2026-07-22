@@ -10,6 +10,7 @@ use crate::utils::model_config::{
 
 #[derive(Debug, Clone)]
 pub struct ResolvedChatModelConfig {
+    pub model_config_id: Option<String>,
     pub model: String,
     pub provider: String,
     pub prompt_vendor: Option<String>,
@@ -23,6 +24,7 @@ pub struct ResolvedChatModelConfig {
     pub system_prompt: Option<String>,
     pub use_active_system_context: bool,
     pub use_codex_gateway_mcp_passthrough: bool,
+    pub model_request_max_retries: usize,
 }
 
 fn default_codex_gateway_mcp_passthrough(base_url: &str, model: &str) -> bool {
@@ -134,8 +136,14 @@ pub fn resolve_chat_model_config(
         .get("use_codex_gateway_mcp_passthrough")
         .and_then(|value| value.as_bool())
         .unwrap_or_else(|| default_codex_gateway_mcp_passthrough(&base_url, &model));
+    let model_request_max_retries = model_cfg
+        .get("model_request_max_retries")
+        .and_then(Value::as_u64)
+        .and_then(|value| usize::try_from(value).ok())
+        .unwrap_or(chatos_ai_runtime::DEFAULT_MODEL_REQUEST_MAX_RETRIES);
 
     ResolvedChatModelConfig {
+        model_config_id: None,
         model,
         provider,
         prompt_vendor,
@@ -149,6 +157,7 @@ pub fn resolve_chat_model_config(
         system_prompt,
         use_active_system_context,
         use_codex_gateway_mcp_passthrough,
+        model_request_max_retries,
     }
 }
 

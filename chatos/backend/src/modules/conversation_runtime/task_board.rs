@@ -72,7 +72,9 @@ pub async fn build_task_turn_follow_up_directive(
         return None;
     }
 
-    let locale = load_runtime_user_context(None, session_id).await.locale;
+    let locale = load_runtime_user_context(None, session_id)
+        .await
+        .internal_context_locale;
     let tasks = load_task_board_context_tasks(session_id, Some(turn_id)).await;
     classify_task_turn_follow_up(tasks.as_slice(), locale)
 }
@@ -242,7 +244,9 @@ pub async fn refresh_task_board_runtime_outcome(
         return None;
     }
 
-    let locale = load_runtime_user_context(None, session_id).await.locale;
+    let locale = load_runtime_user_context(None, session_id)
+        .await
+        .internal_context_locale;
 
     let prompt = build_task_board_prompt(session_id, Some(turn_id), locale).await?;
     if let Some(guidance) = build_task_board_runtime_guidance(prompt.as_str(), locale) {

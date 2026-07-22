@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use chatos_builtin_tools::TerminalControllerContext;
+use chatos_mcp::TerminalControllerContext;
 use chatos_mcp_runtime::BuiltinMcpKind;
 use tracing::{info, warn};
 
@@ -17,11 +17,15 @@ impl RunService {
         task: &TaskRecord,
         run: &TaskRunRecord,
         workspace_dir: &str,
+        authoritative_policy: bool,
     ) {
         if !task_terminal_enabled(task) {
             return;
         }
-        match self.should_route_task_to_sandbox(task).await {
+        match self
+            .should_route_task_to_sandbox(task, authoritative_policy)
+            .await
+        {
             Ok(true) => {
                 info!(
                     task_id = task.id.as_str(),

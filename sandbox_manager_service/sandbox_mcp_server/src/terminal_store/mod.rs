@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
 
 use async_trait::async_trait;
-use chatos_builtin_tools::{
+use chatos_mcp::{
     path_with_bundled_tools, terminal_process_list_entry, terminal_process_list_response,
     terminal_process_log_response, terminal_process_poll_response, terminal_process_wait_response,
     terminal_recent_logs_entry, terminal_recent_logs_response, TerminalControllerContext,
@@ -79,7 +79,7 @@ impl TerminalControllerStore for SandboxTerminalControllerStore {
         path: String,
         command: String,
         background: bool,
-        permissions: chatos_builtin_tools::TerminalCommandPermissions,
+        permissions: chatos_mcp::TerminalCommandPermissions,
     ) -> Result<Value, String> {
         self.workspace_quota.check().await?;
         let project_root = canonicalize_existing(context.root.as_path())?;

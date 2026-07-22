@@ -8,6 +8,10 @@ use serde_json::Value;
 
 use super::{default_tool_result_model_max_chars, default_tool_results_model_total_max_chars};
 
+fn default_model_request_max_retries() -> usize {
+    chatos_ai_runtime::DEFAULT_MODEL_REQUEST_MAX_RETRIES
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelConfigRecord {
     pub id: String,
@@ -28,6 +32,8 @@ pub struct ModelConfigRecord {
     pub usage_scenario: Option<String>,
     pub temperature: Option<f64>,
     pub max_output_tokens: Option<i64>,
+    #[serde(default = "default_model_request_max_retries")]
+    pub model_request_max_retries: usize,
     pub thinking_level: Option<String>,
     pub supports_responses: bool,
     pub instructions: Option<String>,
@@ -60,6 +66,7 @@ impl ModelConfigRecord {
         .with_request_cwd(self.request_cwd.clone().or(default_request_cwd))
         .with_prompt_cache_retention(self.include_prompt_cache_retention)
         .with_request_body_limit_bytes(self.request_body_limit_bytes)
+        .with_max_transient_retries(Some(self.model_request_max_retries))
     }
 }
 
@@ -131,6 +138,7 @@ mod tests {
 
         assert_eq!(runtime.provider, "openai_compatible");
         assert_eq!(runtime.thinking_level.as_deref(), Some("low"));
+        assert_eq!(runtime.max_transient_retries, Some(5));
     }
 
     #[test]
@@ -173,6 +181,7 @@ mod tests {
             usage_scenario: None,
             temperature: None,
             max_output_tokens: None,
+            model_request_max_retries: 5,
             thinking_level: Some(thinking_level.to_string()),
             supports_responses: true,
             instructions: None,
@@ -219,6 +228,8 @@ pub struct ChatosSyncedModelConfigRequest {
     pub usage_scenario: Option<String>,
     pub temperature: Option<f64>,
     pub max_output_tokens: Option<i64>,
+    #[serde(default = "default_model_request_max_retries")]
+    pub model_request_max_retries: usize,
     pub thinking_level: Option<String>,
     pub supports_responses: Option<bool>,
     pub enabled: Option<bool>,

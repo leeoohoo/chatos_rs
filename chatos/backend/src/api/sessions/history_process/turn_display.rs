@@ -6,6 +6,8 @@ use crate::core::messages::{
     message_turn_id,
 };
 use crate::models::message::Message;
+use serde_json::Value;
+use std::collections::HashSet;
 
 use super::super::history_process_support::{
     attach_user_history_process_metadata, build_embedded_process_message,
@@ -160,4 +162,117 @@ pub(super) fn build_turn_display_messages(messages: &[Message], user_index: usiz
     }
 
     display_messages
+}
+
+fn is_loaded_process_message(message: &Message) -> bool {
+    message
+        .metadata
+        .as_ref()
+        .and_then(Value::as_object)
+        .is_some_and(|metadata| {
+            metadata
+                .get("historyProcessLoaded")
+                .and_then(Value::as_bool)
+                == Some(true)
+                || metadata
+                    .get("historyProcessUserMessageId")
+                    .and_then(Value::as_str)
+                    .is_some_and(|value| !value.trim().is_empty())
+        })
+}
+
+fn prepare_recovered_process_messages(
+    process_records: &[Message],
+    user_message_id: &str,
+    final_assistant_message_id: Option<&str>,
+) -> Vec<Message> {
+    let mut seen = HashSet::new();
+    let mut recovered = Vec::new();
+
+    for source in process_records {
+        if !seen.insert(source.id.clone())
+            || is_task_runner_callback_message(source)
+            || (source.role == "assistant" && is_session_summary(source))
+        {
+            continue;
+        }
+
+        if final_assistant_message_id == Some(source.id.as_str()) {
+            if let Some(synthetic) = build_embedded_process_message(source, user_message_id) {
+                recovered.push(synthetic);
+            }
+            continue;
+        }
+
+        if source.role == "assistant" {
+            let mut assistant = source.clone();
+            enrich_assistant_message_for_display(&mut assistant);
+            mark_process_message_loaded(&mut assistant, user_message_id);
+            recovered.push(assistant);
+        } else if source.role == "tool" {
+            let mut tool_message = source.clone();
+            mark_process_message_loaded(&mut tool_message, user_message_id);
+            recovered.push(tool_message);
+        }
+    }
+
+    recovered
+}
+
+pub(super) fn build_turn_display_messages_with_process_records(
+    messages: &[Message],
+    user_index: usize,
+    process_records: &[Message],
+) -> Vec<Message> {
+    let mut display_messages = build_turn_display_messages(messages, user_index);
+    let Some(user_message) = display_messages.first() else {
+        return display_messages;
+    };
+    let user_message_id = user_message.id.clone();
+    let final_assistant_message_id = user_message
+        .metadata
+        .as_ref()
+        .and_then(|metadata| metadata.get("historyProcess"))
+        .and_then(|history| history.get("finalAssistantMessageId"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned);
+    let recovered = prepare_recovered_process_messages(
+        process_records,
+        user_message_id.as_str(),
+        final_assistant_message_id.as_deref(),
+    );
+    if recovered.is_empty() {
+        return display_messages;
+    }
+
+    let mut user_message = display_messages.remove(0);
+    let tool_call_count = recovered
+        .iter()
+        .filter(|message| message.role == "assistant")
+        .map(|message| extract_tool_calls_from_message(message).len())
+        .sum();
+    let thinking_count = recovered
+        .iter()
+        .filter(|message| message.role == "assistant")
+        .map(count_assistant_thinking_steps)
+        .sum();
+    attach_user_history_process_metadata(
+        &mut user_message,
+        true,
+        tool_call_count,
+        thinking_count,
+        recovered.len(),
+        final_assistant_message_id,
+    );
+    let mut merged = Vec::with_capacity(display_messages.len() + recovered.len() + 1);
+    merged.push(user_message);
+    merged.extend(recovered);
+    merged.extend(
+        display_messages
+            .into_iter()
+            .filter(|message| !is_loaded_process_message(message)),
+    );
+    merged
 }

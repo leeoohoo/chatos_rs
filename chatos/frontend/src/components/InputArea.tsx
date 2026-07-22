@@ -91,6 +91,7 @@ export const InputArea: React.FC<InputAreaProps> = ({
     handleToggleWorkspacePicker,
     handleSelectWorkspaceRoot,
     enabledModels,
+    effectiveSelectedModelId,
     selectedModelName: resolvedSelectedModelName,
     selectedThinkingLevel: resolvedSelectedThinkingLevel,
     handleModelChange,
@@ -166,7 +167,7 @@ export const InputArea: React.FC<InputAreaProps> = ({
           isStopping={isStopping}
           effectiveAllowAttachments={effectiveAllowAttachments}
           showModelSelector={showModelSelector}
-          selectedModelId={selectedModelId}
+          selectedModelId={effectiveSelectedModelId}
           selectedModelName={resolvedSelectedModelName}
           selectedThinkingLevel={resolvedSelectedThinkingLevel}
           onModelChange={handleModelChange}

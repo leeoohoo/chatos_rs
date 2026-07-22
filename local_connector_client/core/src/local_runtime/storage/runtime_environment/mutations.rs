@@ -2,5 +2,6 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 mod analysis;
+mod build;
 mod progress;
 mod settings;

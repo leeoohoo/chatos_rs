@@ -333,7 +333,8 @@ async fn resolve_project_agent_capabilities(
     user_access_token: Option<&str>,
 ) -> Result<ResolvedAgentCapabilities, String> {
     let request =
-        ResolveAgentCapabilitiesRequest::new(SystemAgentKey::ProjectManagementAgent, owner_user_id);
+        ResolveAgentCapabilitiesRequest::new(SystemAgentKey::ProjectManagementAgent, owner_user_id)
+            .with_runtime_context(None, None, Some("cloud".to_string()), None);
     let capabilities = if let Some(access_token) = user_access_token
         .map(str::trim)
         .filter(|value| !value.is_empty())

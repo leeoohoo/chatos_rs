@@ -103,7 +103,7 @@ async fn run_with_responses(
     system_prompt: &str,
     user_prompt: &str,
     max_tokens: Option<i64>,
-    purpose: &str,
+    _purpose: &str,
 ) -> Result<String, String> {
     let handler = shared_ai_runtime::AiRequestHandler::new();
     let response = shared_ai_runtime::run_compatible_prompt_with(
@@ -114,12 +114,8 @@ async fn run_with_responses(
             system_prompt: Some(system_prompt.to_string()),
             temperature: Some(runtime.temperature()),
             max_output_tokens: max_tokens,
-            max_attempts: Some(if purpose == "session_summary_job" {
-                5
-            } else {
-                4
-            }),
             callbacks: shared_ai_runtime::StreamCallbacks::default(),
+            ..Default::default()
         },
         shared_ai_runtime::build_responses_text_input,
     )

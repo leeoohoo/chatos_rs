@@ -25,8 +25,34 @@ impl LocalDatabase {
                 SELECT 1 FROM work_item_dependencies AS dependencies
                 INNER JOIN project_work_items AS prerequisite
                     ON prerequisite.id = dependencies.prerequisite_work_item_id
-                WHERE dependencies.work_item_id = runs.task_id
-                  AND prerequisite.status NOT IN ('done', 'completed')
+                WHERE runs.task_kind = 'project_work_item'
+                  AND dependencies.work_item_id = runs.task_id
+                  AND LOWER(TRIM(prerequisite.status)) NOT IN
+                      ('done', 'completed', 'succeeded', 'success')
+              )
+              AND NOT EXISTS (
+                SELECT 1
+                FROM task_board_tasks AS task
+                JOIN json_each(task.prerequisite_task_ids_json) AS dependency
+                LEFT JOIN task_board_tasks AS prerequisite
+                  ON prerequisite.id = dependency.value
+                 AND prerequisite.owner_user_id = task.owner_user_id
+                 AND prerequisite.session_id = task.session_id
+                WHERE runs.task_kind = 'conversation_task'
+                  AND task.id = runs.task_id
+                  AND (prerequisite.id IS NULL OR prerequisite.status != 'done')
+              )
+              AND (
+                runs.task_kind != 'conversation_task'
+                OR EXISTS (
+                  SELECT 1
+                  FROM task_board_tasks AS task
+                  INNER JOIN turns AS source_turn ON source_turn.id = task.turn_id
+                  WHERE task.id = runs.task_id
+                    AND task.owner_user_id = runs.owner_user_id
+                    AND task.session_id = runs.session_id
+                    AND source_turn.status = 'completed'
+                )
               )
             ORDER BY runs.priority DESC, runs.created_at ASC, runs.id ASC
             LIMIT 1

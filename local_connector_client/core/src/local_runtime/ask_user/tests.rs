@@ -4,7 +4,7 @@
 use std::fs;
 use std::time::Duration;
 
-use chatos_builtin_tools::{AskUserPromptPayload, AskUserResponseSubmission, AskUserStore};
+use chatos_mcp::{AskUserPromptPayload, AskUserResponseSubmission, AskUserStore};
 use serde_json::json;
 use uuid::Uuid;
 

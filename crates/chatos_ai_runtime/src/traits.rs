@@ -9,7 +9,10 @@ mod records;
 mod tests;
 
 pub use executor::ToolExecutor;
-pub use model::{ModelRequest, ModelRuntimeConfig, RuntimeCallbacks, RuntimeMessage};
+pub use model::{
+    ModelRequest, ModelRuntimeConfig, RuntimeCallbacks, RuntimeMessage,
+    DEFAULT_MODEL_REQUEST_MAX_RETRIES,
+};
 pub use records::{
     MemoryRecordWriter, RuntimeRecordOptions, SaveAssistantRecordInput, SaveRecordInput,
     SaveToolRecordInput,

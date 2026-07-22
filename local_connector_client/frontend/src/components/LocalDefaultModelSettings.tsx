@@ -38,6 +38,24 @@ export function LocalDefaultModelSettings({
         </button>
       </div>
       <div className="approvalFormGrid">
+        <label>
+          模型请求最大重试次数
+          <input
+            type="number"
+            min={0}
+            max={10}
+            step={1}
+            value={settings.model_request_max_retries ?? 5}
+            disabled={disabled}
+            onChange={(event) => onChange({
+              ...settings,
+              model_request_max_retries: Math.min(10, Math.max(0, Number(event.target.value) || 0)),
+            })}
+          />
+          <small>网络波动、限流或上游暂时不可用时重试；默认 5 次。</small>
+        </label>
+      </div>
+      <div className="approvalFormGrid">
         <DefaultModelPair
           modelLabel="Memory 总结模型"
           thinkingLabel="Memory Thinking"

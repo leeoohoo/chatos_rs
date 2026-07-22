@@ -23,6 +23,19 @@ fn task_runner_run_phase_defaults_match_callable_task_runner_providers() {
 }
 
 #[test]
+fn task_runner_plan_phase_excludes_mutating_engineering_tools() {
+    let kinds = task_runner_plan_phase_builtin_kinds();
+
+    assert!(kinds.contains(&BuiltinMcpKind::CodeMaintainerRead));
+    assert!(kinds.contains(&BuiltinMcpKind::TaskManager));
+    assert!(kinds.contains(&BuiltinMcpKind::ProjectManagement));
+    assert!(kinds.contains(&BuiltinMcpKind::AskUser));
+    assert!(!kinds.contains(&BuiltinMcpKind::CodeMaintainerWrite));
+    assert!(!kinds.contains(&BuiltinMcpKind::TerminalController));
+    assert!(!kinds.contains(&BuiltinMcpKind::RemoteConnectionController));
+}
+
+#[test]
 fn every_seeded_builtin_mcp_has_provider_skills_in_both_locales() {
     for kind in builtin_kinds() {
         let skills = provider_skills_for_builtin_mcp(kind);
@@ -46,25 +59,23 @@ fn every_seeded_builtin_mcp_has_provider_skills_in_both_locales() {
 #[test]
 fn every_seeded_builtin_mcp_has_a_real_tool_catalog() {
     for kind in builtin_kinds() {
-        let tools = chatos_builtin_tools::builtin_tool_catalog(kind)
+        let descriptor = chatos_mcp::system_mcp_catalog()
+            .iter()
+            .find(|descriptor| descriptor.embedded_kind == Some(kind))
+            .expect("embedded descriptor");
+        let tools = chatos_mcp::system_mcp_static_tools(descriptor.key)
             .unwrap_or_else(|err| panic!("{}: {err}", kind.kind_name()));
         assert!(!tools.is_empty(), "{}", kind.kind_name());
     }
 }
 
 #[test]
-fn every_system_routed_mcp_has_provider_skills() {
-    for resource_id in [
-        SANDBOX_IMAGES_MCP_RESOURCE_ID,
-        PROJECT_ENVIRONMENT_MCP_RESOURCE_ID,
-        PROJECT_RUNTIME_ENVIRONMENT_MCP_RESOURCE_ID,
-        LOCAL_CONNECTOR_APPROVAL_MCP_RESOURCE_ID,
-        CHATOS_TASK_RUNNER_MCP_RESOURCE_ID,
-    ] {
-        let skills = provider_skills_for_system_mcp(resource_id)
+fn every_system_mcp_has_provider_skills() {
+    for descriptor in chatos_mcp::system_mcp_catalog() {
+        let skills = provider_skills_for_system_mcp(descriptor.resource_id)
             .and_then(|value| value.as_array().cloned())
             .expect("system MCP provider skills");
-        assert!(!skills.is_empty(), "{resource_id}");
+        assert!(!skills.is_empty(), "{}", descriptor.resource_id);
         assert!(skills.iter().all(|skill| {
             skill
                 .get("instructions")
@@ -72,6 +83,21 @@ fn every_system_routed_mcp_has_provider_skills() {
                 .is_some_and(|value| !value.trim().is_empty())
         }));
     }
+}
+
+#[test]
+fn project_runtime_environment_skill_distinguishes_application_topology_from_base_sandbox() {
+    let skills = provider_skills_for_system_mcp(PROJECT_RUNTIME_ENVIRONMENT_MCP_RESOURCE_ID)
+        .and_then(|value| value.as_array().cloned())
+        .expect("project runtime provider skill");
+    let instructions = skills[0]
+        .get("instructions")
+        .and_then(Value::as_str)
+        .expect("instructions");
+
+    assert!(instructions.contains("项目运行环境状态不等于当前 Task Runner 基础执行沙箱状态"));
+    assert!(instructions.contains("不能仅因项目环境为 `pending` 而阻塞"));
+    assert!(instructions.contains("Project Gateway application target"));
 }
 
 #[test]
@@ -95,6 +121,7 @@ fn system_agent_registry_contains_all_runtime_roles() {
             "chatos_conversation_agent",
             "chatos_planning_agent",
             "project_requirement_execution_planner_agent",
+            "task_runner_plan_phase",
             "task_runner_run_phase",
             "project_management_agent",
             "local_connector_command_approval_agent",
@@ -109,11 +136,27 @@ fn system_agent_registry_contains_all_runtime_roles() {
 
 #[test]
 fn chatos_uses_the_task_runner_service_mcp_entry() {
-    assert_eq!(CHATOS_TASK_RUNNER_MCP_SERVER_NAME, "task_runner_service");
+    let descriptor = chatos_mcp::system_mcp_descriptor(
+        chatos_plugin_management_sdk::SystemMcpKey::TaskRunnerService,
+    );
+    assert_eq!(descriptor.server_name, "task_runner_service");
 }
 
 #[test]
-fn chatos_conversation_requires_task_runner_service() {
+fn seeded_system_mcp_records_use_the_unified_runtime_kind() {
+    for descriptor in chatos_mcp::system_mcp_catalog() {
+        let record = system_mcp_record(descriptor, "admin", "now").expect("system MCP record");
+        assert_eq!(record.runtime.kind, RUNTIME_KIND_SYSTEM);
+        assert_eq!(
+            record.runtime.system_key.as_deref(),
+            Some(descriptor.key.as_str())
+        );
+        assert!(record.runtime.builtin_kind.is_none());
+    }
+}
+
+#[test]
+fn chatos_conversation_requires_task_runner_service_on_both_execution_planes() {
     let spec = (
         "chatos_conversation_agent",
         CHATOS_TASK_RUNNER_MCP_RESOURCE_ID,
@@ -122,4 +165,8 @@ fn chatos_conversation_requires_task_runner_service() {
     assert_eq!(spec.0, "chatos_conversation_agent");
     assert_eq!(spec.1, "system_mcp_chatos_task_runner");
     assert!(spec.2);
+    assert!(chatos_mcp::system_mcp_descriptor(
+        chatos_plugin_management_sdk::SystemMcpKey::TaskRunnerService,
+    )
+    .supports_host(chatos_mcp::SystemMcpHost::LocalConnector));
 }

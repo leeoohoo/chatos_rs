@@ -20,7 +20,8 @@ pub(super) async fn resolve_local_runtime_capabilities(
     let agent_key = local_runtime_agent_key(agent_key.as_str())
         .ok_or_else(|| ApiError::not_found("Local runtime agent capability was not found"))?;
     let owner_user_id = user.effective_owner_user_id();
-    let request = ResolveAgentCapabilitiesRequest::new(agent_key, owner_user_id);
+    let request = ResolveAgentCapabilitiesRequest::new(agent_key, owner_user_id)
+        .with_runtime_context(None, None, Some("local_connector".to_string()), None);
     let capabilities = state
         .plugin_management_client
         .resolve_for_service(&request)
@@ -35,16 +36,10 @@ pub(super) async fn resolve_local_runtime_capabilities(
 }
 
 fn local_runtime_agent_key(value: &str) -> Option<SystemAgentKey> {
-    match value.trim() {
-        "chatos_conversation_agent" => Some(SystemAgentKey::ChatosConversationAgent),
-        "chatos_planning_agent" => Some(SystemAgentKey::ChatosPlanningAgent),
-        "project_requirement_execution_planner_agent" => {
-            Some(SystemAgentKey::ProjectRequirementExecutionPlannerAgent)
-        }
-        "task_runner_run_phase" => Some(SystemAgentKey::TaskRunnerRunPhase),
-        "project_management_agent" => Some(SystemAgentKey::ProjectManagementAgent),
-        _ => None,
-    }
+    let value = value.trim();
+    SystemAgentKey::ALL
+        .into_iter()
+        .find(|agent_key| agent_key.as_str() == value)
 }
 
 #[cfg(test)]
@@ -52,15 +47,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn exposes_only_local_project_runtime_agents() {
-        assert_eq!(
-            local_runtime_agent_key("task_runner_run_phase"),
-            Some(SystemAgentKey::TaskRunnerRunPhase)
-        );
-        assert_eq!(
-            local_runtime_agent_key("local_connector_command_approval_agent"),
-            None
-        );
+    fn exposes_every_system_agent_configuration_resource() {
+        for agent_key in SystemAgentKey::ALL {
+            assert_eq!(local_runtime_agent_key(agent_key.as_str()), Some(agent_key));
+        }
         assert_eq!(local_runtime_agent_key("unknown"), None);
     }
 }

@@ -29,7 +29,12 @@ pub async fn resolve_for_current_user(
         .await?;
     client
         .resolve_for_user(
-            &ResolveAgentCapabilitiesRequest::new(agent_key, owner_user_id),
+            &ResolveAgentCapabilitiesRequest::new(agent_key, owner_user_id).with_runtime_context(
+                None,
+                None,
+                Some("cloud".to_string()),
+                None,
+            ),
             access_token.as_str(),
         )
         .await

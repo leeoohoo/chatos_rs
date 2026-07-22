@@ -35,8 +35,9 @@ pub const SOURCE_KIND_ADMIN_CREATED: &str = "admin_created";
 pub const SOURCE_KIND_USER_CREATED: &str = "user_created";
 pub const SOURCE_KIND_LOCAL_CONNECTOR_DISCOVERED: &str = "local_connector_discovered";
 
-pub const RUNTIME_KIND_BUILTIN: &str = "builtin";
-pub const RUNTIME_KIND_SYSTEM_ROUTED: &str = "system_routed";
+pub const RUNTIME_KIND_SYSTEM: &str = chatos_plugin_management_sdk::SYSTEM_MCP_RUNTIME_KIND;
+pub const RUNTIME_KIND_BUILTIN: &str =
+    chatos_plugin_management_sdk::LEGACY_BUILTIN_MCP_RUNTIME_KIND;
 pub const RUNTIME_KIND_HTTP: &str = "http";
 pub const RUNTIME_KIND_STDIO_CLOUD: &str = "stdio_cloud";
 pub const RUNTIME_KIND_LOCAL_CONNECTOR_STDIO: &str = "local_connector_stdio";
@@ -208,6 +209,8 @@ pub struct AgentProviderPromptRecord {
     pub published_content: Option<String>,
     pub published_revision: i64,
     pub published_checksum: Option<String>,
+    #[serde(default)]
+    pub seed_checksum: Option<String>,
     pub enabled: bool,
     pub source_kind: String,
     pub generated_by_model_config_id: Option<String>,
@@ -366,4 +369,8 @@ pub struct RuntimeCapabilitiesQuery {
     pub agent_key: String,
     pub owner_user_id: Option<String>,
     pub include_unavailable: Option<bool>,
+    pub task_profile: Option<String>,
+    pub project_source_type: Option<String>,
+    pub runtime_provider: Option<String>,
+    pub schedule_mode: Option<String>,
 }

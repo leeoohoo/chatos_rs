@@ -51,8 +51,7 @@ impl TaskRunnerTerminalControllerStore {
         let session = session_for_context(&context, terminal_id.as_str()).await?;
         {
             let mut child = session.child.lock().await;
-            child.kill().await.map_err(|err| err.to_string())?;
-            let _ = child.wait().await;
+            terminate_task_terminal_process_tree(&mut child).await?;
         }
         mark_session_exited(&session, None).await;
         append_log(session.clone(), "system", "[terminal killed]\n".to_string()).await;

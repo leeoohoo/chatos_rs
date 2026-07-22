@@ -7,6 +7,11 @@ use crate::core::messages::{
     ensure_message_metadata_object, extract_message_tool_calls_for_display,
     is_session_summary_message as is_session_summary, message_has_text_content, message_turn_id,
 };
+use crate::core::task_runner_callback_display::{
+    detect_task_runner_callback_language, sanitize_user_visible_callback_detail,
+    summarize_task_runner_callback_detail, task_runner_callback_completion_detail,
+    task_runner_callback_detail_footer,
+};
 use crate::core::tool_call::extract_tool_call_id;
 use crate::models::message::Message;
 use crate::services::ai_common::TASK_RUNNER_ASYNC_PLAN_MESSAGE_MODE;
@@ -105,20 +110,7 @@ pub(super) fn normalize_task_runner_async_user_status_for_display(
     if current_status == "completed" {
         return;
     }
-    let has_terminal_tracking = [
-        "terminal_task_ids",
-        "succeeded_task_ids",
-        "failed_task_ids",
-        "blocked_task_ids",
-        "cancelled_task_ids",
-    ]
-    .iter()
-    .any(|key| {
-        task_runner_async
-            .get(*key)
-            .and_then(Value::as_array)
-            .is_some_and(|items| !items.is_empty())
-    });
+    let has_terminal_tracking = task_runner_async_has_terminal_tracking(task_runner_async);
     let last_event_is_terminal = task_runner_async
         .get("last_event")
         .and_then(Value::as_str)
@@ -136,6 +128,119 @@ pub(super) fn normalize_task_runner_async_user_status_for_display(
             Value::String("completed".to_string()),
         );
     }
+}
+
+pub(crate) fn contact_async_user_status_needs_runtime_reconciliation(message: &Message) -> bool {
+    if message.role != "user" {
+        return false;
+    }
+    let Some(Value::Object(task_runner_async)) = message
+        .metadata
+        .as_ref()
+        .and_then(|value| value.get("task_runner_async"))
+    else {
+        return false;
+    };
+    if task_runner_async.get("mode").and_then(Value::as_str) != Some("contact_async") {
+        return false;
+    }
+    let current_status = task_runner_async
+        .get("overall_status")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .unwrap_or_default();
+    if !matches!(
+        current_status,
+        "pending" | "processing" | "running" | "in_progress"
+    ) {
+        return false;
+    }
+
+    ![
+        "created_task_ids",
+        "running_task_ids",
+        "queued_task_ids",
+        "pending_task_ids",
+    ]
+    .iter()
+    .any(|key| {
+        task_runner_async
+            .get(*key)
+            .and_then(Value::as_array)
+            .is_some_and(|items| !items.is_empty())
+    })
+}
+
+pub(crate) fn reconcile_contact_async_user_status_for_display(
+    message: &mut Message,
+    snapshot_status: Option<&str>,
+    active_in_runtime: bool,
+) {
+    if !contact_async_user_status_needs_runtime_reconciliation(message) {
+        return;
+    }
+    let next_status = if active_in_runtime {
+        Some("processing")
+    } else {
+        match snapshot_status
+            .map(str::trim)
+            .map(|value| value.to_ascii_lowercase())
+            .as_deref()
+        {
+            Some("completed" | "succeeded") => Some("completed"),
+            Some("failed" | "blocked") => Some("failed"),
+            Some("cancelled" | "canceled" | "running") => Some("cancelled"),
+            _ => None,
+        }
+    };
+    let Some(next_status) = next_status else {
+        return;
+    };
+    let Some(Value::Object(task_runner_async)) = message
+        .metadata
+        .as_mut()
+        .and_then(|value| value.get_mut("task_runner_async"))
+    else {
+        return;
+    };
+    task_runner_async.insert(
+        "overall_status".to_string(),
+        Value::String(next_status.to_string()),
+    );
+}
+
+pub(super) fn task_runner_async_user_has_terminal_tracking(message: &Message) -> bool {
+    if message.role != "user" {
+        return false;
+    }
+    let Some(Value::Object(task_runner_async)) = message
+        .metadata
+        .as_ref()
+        .and_then(|value| value.get("task_runner_async"))
+    else {
+        return false;
+    };
+
+    task_runner_async_has_terminal_tracking(task_runner_async)
+}
+
+fn task_runner_async_has_terminal_tracking(
+    task_runner_async: &serde_json::Map<String, Value>,
+) -> bool {
+    [
+        "terminal_task_ids",
+        "succeeded_task_ids",
+        "failed_task_ids",
+        "blocked_task_ids",
+        "cancelled_task_ids",
+    ]
+    .iter()
+    .any(|key| {
+        task_runner_async
+            .get(*key)
+            .and_then(Value::as_array)
+            .is_some_and(|items| !items.is_empty())
+    })
 }
 
 fn extract_content_segments_from_message(message: &Message) -> Vec<Value> {
@@ -298,6 +403,90 @@ pub(super) fn normalize_task_runner_callback_for_display(message: &mut Message) 
         return;
     }
 
+    let task_title = message
+        .metadata
+        .as_ref()
+        .and_then(|value| value.get("task_runner_async"))
+        .and_then(|value| value.get("task_title"))
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let language_text = format!("{task_title}\n{}", message.content);
+    let language = detect_task_runner_callback_language(language_text.as_str(), None);
+    let event = message
+        .metadata
+        .as_ref()
+        .and_then(|value| value.get("task_runner_async"))
+        .and_then(|value| value.get("event"))
+        .and_then(Value::as_str)
+        .or_else(|| {
+            message
+                .id
+                .split("::")
+                .find(|part| part.starts_with("task."))
+        })
+        .unwrap_or_default()
+        .to_string();
+    let stored_detail_source = message
+        .metadata
+        .as_ref()
+        .and_then(|value| value.get("task_runner_async"))
+        .and_then(|value| value.get("detail_source"))
+        .and_then(Value::as_str)
+        .map(ToOwned::to_owned);
+    let stored_detail = message
+        .metadata
+        .as_ref()
+        .and_then(|value| value.get("task_runner_async"))
+        .and_then(|value| {
+            value
+                .get("result_summary")
+                .or_else(|| value.get("detail_preview"))
+                .or_else(|| value.get("report_excerpt"))
+        })
+        .and_then(Value::as_str)
+        .map(ToOwned::to_owned);
+    let sanitized_content =
+        sanitize_user_visible_callback_detail(message.content.as_str(), language);
+    let completed_detail = if event == "task.completed" {
+        let headline = sanitized_content
+            .lines()
+            .find(|line| !line.trim().is_empty())
+            .unwrap_or_default()
+            .trim();
+        let content_detail = sanitized_content
+            .lines()
+            .skip_while(|line| line.trim() != headline)
+            .skip(1)
+            .filter(|line| {
+                !matches!(
+                    line.trim(),
+                    "Result summary:" | "Result summary：" | "结果摘要:" | "结果摘要："
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        let summary = stored_detail
+            .as_deref()
+            .and_then(|detail| summarize_task_runner_callback_detail(detail, language))
+            .or_else(|| summarize_task_runner_callback_detail(content_detail.as_str(), language))
+            .unwrap_or_else(|| task_runner_callback_completion_detail(language).to_string());
+        let detail = format!(
+            "{}\n{}",
+            summary.trim(),
+            task_runner_callback_detail_footer(language)
+        );
+        let label = if language.is_english() {
+            "Result summary:"
+        } else {
+            "结果摘要："
+        };
+        message.content = format!("{headline}\n\n{label}\n{detail}");
+        Some(detail)
+    } else {
+        message.content = sanitized_content;
+        None
+    };
+
     let source_turn_id = message_turn_id(message).map(|value| value.to_string());
     let metadata = ensure_message_metadata_object(message);
     metadata.remove("conversation_turn_id");
@@ -315,6 +504,28 @@ pub(super) fn normalize_task_runner_callback_for_display(message: &mut Message) 
             task_runner_async_map
                 .entry("source_turn_id".to_string())
                 .or_insert_with(|| Value::String(source_turn_id));
+        }
+    }
+    if let Some(Value::Object(task_runner_async)) = metadata.get_mut("task_runner_async") {
+        if let Some(detail) = completed_detail {
+            task_runner_async.insert("result_summary".to_string(), Value::String(detail.clone()));
+            task_runner_async.insert(
+                "detail_source".to_string(),
+                Value::String(stored_detail_source.unwrap_or_else(|| "result_summary".to_string())),
+            );
+            task_runner_async.insert("detail_preview".to_string(), Value::String(detail));
+            task_runner_async.remove("report_excerpt");
+        }
+        for key in [
+            "result_summary",
+            "error_message",
+            "report_excerpt",
+            "detail_preview",
+        ] {
+            let Some(Value::String(value)) = task_runner_async.get_mut(key) else {
+                continue;
+            };
+            *value = sanitize_user_visible_callback_detail(value.as_str(), language);
         }
     }
 }
@@ -372,20 +583,6 @@ pub(super) fn attach_user_history_process_metadata(
 
     let metadata = ensure_message_metadata_object(user_message);
     metadata.insert("historyProcess".to_string(), history_process);
-}
-
-#[cfg(test)]
-pub(super) fn ensure_message_turn_id(message: &mut Message, turn_id: &str) {
-    let normalized_turn_id = turn_id.trim();
-    if normalized_turn_id.is_empty() {
-        return;
-    }
-
-    let metadata = ensure_message_metadata_object(message);
-    metadata.insert(
-        "conversation_turn_id".to_string(),
-        Value::String(normalized_turn_id.to_string()),
-    );
 }
 
 pub(super) fn strip_assistant_for_compact_history(message: &mut Message, user_message_id: &str) {
@@ -468,150 +665,4 @@ pub(super) fn build_embedded_process_message(
 }
 
 #[cfg(test)]
-mod tests {
-    use serde_json::json;
-
-    use super::{
-        attach_user_history_process_metadata, ensure_message_turn_id,
-        strip_assistant_for_compact_history,
-    };
-    use crate::models::message::Message;
-
-    fn build_message(role: &str, content: &str) -> Message {
-        Message::new(
-            "session-1".to_string(),
-            role.to_string(),
-            content.to_string(),
-        )
-    }
-
-    #[test]
-    fn ensure_message_turn_id_overwrites_missing_or_stale_turn_id() {
-        let mut message = build_message("assistant", "done");
-        message.metadata = Some(json!({
-            "conversation_turn_id": "stale-turn"
-        }));
-
-        ensure_message_turn_id(&mut message, "turn-42");
-
-        assert_eq!(
-            message
-                .metadata
-                .as_ref()
-                .and_then(|value| value.get("conversation_turn_id"))
-                .and_then(|value| value.as_str()),
-            Some("turn-42")
-        );
-    }
-
-    #[test]
-    fn compact_history_metadata_preserves_turn_stats_and_final_assistant_links() {
-        let mut user = build_message("user", "please help");
-        user.id = "user-1".to_string();
-
-        let mut assistant = build_message("assistant", "finished");
-        assistant.id = "assistant-1".to_string();
-        assistant.reasoning = Some("inspect first".to_string());
-        assistant.tool_calls = Some(json!([
-            {
-                "id": "call-1",
-                "type": "function",
-                "function": {
-                    "name": "workspace_search",
-                    "arguments": "{\"query\":\"todo\"}"
-                }
-            }
-        ]));
-
-        ensure_message_turn_id(&mut user, "turn-9");
-        ensure_message_turn_id(&mut assistant, "turn-9");
-        attach_user_history_process_metadata(&mut user, true, 3, 2, 4, Some(assistant.id.clone()));
-        strip_assistant_for_compact_history(&mut assistant, &user.id);
-
-        let history_process = user
-            .metadata
-            .as_ref()
-            .and_then(|value| value.get("historyProcess"))
-            .expect("historyProcess");
-        assert_eq!(
-            history_process
-                .get("hasProcess")
-                .and_then(|value| value.as_bool()),
-            Some(true)
-        );
-        assert_eq!(
-            history_process
-                .get("toolCallCount")
-                .and_then(|value| value.as_u64()),
-            Some(3)
-        );
-        assert_eq!(
-            history_process
-                .get("thinkingCount")
-                .and_then(|value| value.as_u64()),
-            Some(2)
-        );
-        assert_eq!(
-            history_process
-                .get("processMessageCount")
-                .and_then(|value| value.as_u64()),
-            Some(4)
-        );
-        assert_eq!(
-            history_process
-                .get("finalAssistantMessageId")
-                .and_then(|value| value.as_str()),
-            Some("assistant-1")
-        );
-        assert_eq!(
-            history_process
-                .get("turnId")
-                .and_then(|value| value.as_str()),
-            Some("turn-9")
-        );
-
-        assert!(assistant.tool_calls.is_none());
-        assert!(assistant.reasoning.is_none());
-        assert_eq!(
-            assistant
-                .metadata
-                .as_ref()
-                .and_then(|value| value.get("historyFinalForUserMessageId"))
-                .and_then(|value| value.as_str()),
-            Some("user-1")
-        );
-        assert_eq!(
-            assistant
-                .metadata
-                .as_ref()
-                .and_then(|value| value.get("historyFinalForTurnId"))
-                .and_then(|value| value.as_str()),
-            Some("turn-9")
-        );
-        assert_eq!(
-            assistant
-                .metadata
-                .as_ref()
-                .and_then(|value| value.get("conversation_turn_id"))
-                .and_then(|value| value.as_str()),
-            Some("turn-9")
-        );
-        assert_eq!(
-            assistant
-                .metadata
-                .as_ref()
-                .and_then(|value| value.get("historyProcessExpanded"))
-                .and_then(|value| value.as_bool()),
-            Some(false)
-        );
-        assert_eq!(
-            assistant
-                .metadata
-                .as_ref()
-                .and_then(|value| value.get("toolCalls"))
-                .and_then(|value| value.as_array())
-                .map(|items| items.len()),
-            Some(1)
-        );
-    }
-}
+include!("history_process_support.test.rs");

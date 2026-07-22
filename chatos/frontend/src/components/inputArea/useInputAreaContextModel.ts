@@ -19,6 +19,89 @@ interface UseInputAreaContextModelOptions {
   showProjectFileButton: boolean;
 }
 
+const normalizedModelIdentityPart = (value: string | null | undefined): string => (
+  typeof value === 'string' ? value.trim().toLocaleLowerCase() : ''
+);
+
+const chatModelIdentity = (model: AiModelConfig): string => (
+  [model.provider, model.model_name, model.name]
+    .map(normalizedModelIdentityPart)
+    .join('\u0000')
+);
+
+const modelTimestamp = (value: Date): number => {
+  const timestamp = value.getTime();
+  return Number.isFinite(timestamp) ? timestamp : 0;
+};
+
+const shouldPreferChatModel = (
+  candidate: AiModelConfig,
+  current: AiModelConfig,
+): boolean => {
+  if (candidate.has_api_key !== current.has_api_key) {
+    return candidate.has_api_key;
+  }
+  if (candidate.enabled !== current.enabled) {
+    return candidate.enabled;
+  }
+  const candidateHasBaseUrl = Boolean(candidate.base_url.trim());
+  const currentHasBaseUrl = Boolean(current.base_url.trim());
+  if (candidateHasBaseUrl !== currentHasBaseUrl) {
+    return candidateHasBaseUrl;
+  }
+  const candidateUpdatedAt = modelTimestamp(candidate.updatedAt);
+  const currentUpdatedAt = modelTimestamp(current.updatedAt);
+  if (candidateUpdatedAt !== currentUpdatedAt) {
+    return candidateUpdatedAt > currentUpdatedAt;
+  }
+  const candidateCreatedAt = modelTimestamp(candidate.createdAt);
+  const currentCreatedAt = modelTimestamp(current.createdAt);
+  if (candidateCreatedAt !== currentCreatedAt) {
+    return candidateCreatedAt > currentCreatedAt;
+  }
+  return candidate.id.localeCompare(current.id) > 0;
+};
+
+export const selectChatModelOptions = (models: AiModelConfig[]): AiModelConfig[] => {
+  const preferredByIdentity = new Map<string, { index: number; model: AiModelConfig }>();
+  (models || []).forEach((model, index) => {
+    const identity = chatModelIdentity(model);
+    const current = preferredByIdentity.get(identity);
+    if (!current) {
+      preferredByIdentity.set(identity, { index, model });
+      return;
+    }
+    if (shouldPreferChatModel(model, current.model)) {
+      preferredByIdentity.set(identity, { index: current.index, model });
+    }
+  });
+
+  return Array.from(preferredByIdentity.values())
+    .sort((left, right) => left.index - right.index)
+    .map((item) => item.model)
+    .filter((model) => model.enabled && model.has_api_key && model.model_name.trim());
+};
+
+export const resolveChatModelSelection = (
+  models: AiModelConfig[],
+  options: AiModelConfig[],
+  selectedModelId: string | null,
+): AiModelConfig | null => {
+  if (!selectedModelId) {
+    return null;
+  }
+  const direct = options.find((model) => model.id === selectedModelId);
+  if (direct) {
+    return direct;
+  }
+  const selected = (models || []).find((model) => model.id === selectedModelId);
+  if (!selected) {
+    return null;
+  }
+  const identity = chatModelIdentity(selected);
+  return options.find((model) => chatModelIdentity(model) === identity) || null;
+};
+
 export const useInputAreaContextModel = ({
   availableModels,
   availableProjects,
@@ -51,15 +134,15 @@ export const useInputAreaContextModel = ({
     return raw ? normalizePath(raw) : null;
   }, [normalizePath, workspaceRoot]);
 
-  const selectedModel = useMemo<AiModelConfig | null>(
-    () => (selectedModelId ? (availableModels || []).find((model) => model.id === selectedModelId) || null : null),
-    [availableModels, selectedModelId],
-  );
-
   const enabledModels = useMemo(
-    () => (availableModels || []).filter((model) => model.enabled),
+    () => selectChatModelOptions(availableModels || []),
     [availableModels],
   );
+  const selectedModel = useMemo<AiModelConfig | null>(
+    () => resolveChatModelSelection(availableModels || [], enabledModels, selectedModelId),
+    [availableModels, enabledModels, selectedModelId],
+  );
+  const effectiveSelectedModelId = selectedModel?.id || null;
   const effectiveModelName = useMemo(() => {
     const explicit = typeof selectedModelName === 'string' ? selectedModelName.trim() : '';
     return explicit || selectedModel?.model_name || null;
@@ -69,7 +152,7 @@ export const useInputAreaContextModel = ({
     return explicit || selectedModel?.thinking_level || null;
   }, [selectedModel?.thinking_level, selectedThinkingLevel]);
 
-  const hasAiOptions = Boolean(availableModels && availableModels.length > 0);
+  const hasAiOptions = enabledModels.length > 0;
   const projectForFilePicker = useMemo(
     () => selectedRuntimeProject || null,
     [selectedRuntimeProject],
@@ -121,6 +204,7 @@ export const useInputAreaContextModel = ({
     selectedRuntimeProject,
     normalizedWorkspaceRoot,
     selectedModel,
+    effectiveSelectedModelId,
     enabledModels,
     effectiveModelName,
     effectiveThinkingLevel,

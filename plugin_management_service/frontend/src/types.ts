@@ -3,8 +3,8 @@
 
 export type Visibility = 'private' | 'public' | 'system_private';
 export type RuntimeKind =
+  | 'system'
   | 'builtin'
-  | 'system_routed'
   | 'http'
   | 'stdio_cloud'
   | 'local_connector_stdio'
@@ -49,6 +49,7 @@ export interface LocalConnectorRef {
 
 export interface McpRuntime {
   kind: RuntimeKind;
+  system_key?: string | null;
   builtin_kind?: string | null;
   server_name?: string | null;
   command?: string | null;

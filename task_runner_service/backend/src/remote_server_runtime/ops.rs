@@ -6,7 +6,7 @@ use std::cmp::Ordering;
 use async_trait::async_trait;
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use base64::Engine as _;
-use chatos_builtin_tools::{RemoteConnectionControllerContext, RemoteConnectionControllerStore};
+use chatos_mcp::{RemoteConnectionControllerContext, RemoteConnectionControllerStore};
 use serde_json::{json, Value};
 use tokio::time::Duration;
 

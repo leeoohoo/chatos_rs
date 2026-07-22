@@ -5,13 +5,15 @@ use serde_json::{json, Value};
 
 use crate::models::ModelConfigRecord;
 
+use super::super::access::model_has_cloud_runtime_credentials;
+
 pub(crate) fn enrich_tool_schemas_with_model_configs(
     tools: &mut [Value],
     model_configs: &[ModelConfigRecord],
 ) {
     let selectable_models = model_configs
         .iter()
-        .filter(|model| model.enabled)
+        .filter(|model| model.enabled && model_has_cloud_runtime_credentials(model))
         .collect::<Vec<_>>();
     let schema = model_config_selection_schema(selectable_models.as_slice());
     for tool in tools {

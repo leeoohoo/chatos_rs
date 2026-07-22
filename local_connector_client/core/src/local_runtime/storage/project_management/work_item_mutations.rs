@@ -4,7 +4,9 @@
 use anyhow::{Context, Result};
 
 use crate::local_now_rfc3339;
-use crate::local_runtime::project_management::{LocalWorkItemRecord, UpdateLocalWorkItemInput};
+use crate::local_runtime::project_management::{
+    canonical_project_status, LocalWorkItemRecord, UpdateLocalWorkItemInput,
+};
 
 use super::super::LocalDatabase;
 
@@ -34,6 +36,7 @@ impl LocalDatabase {
         }
         let now = local_now_rfc3339();
         let tags_json = input.tags.as_ref().map(serde_json::to_string).transpose()?;
+        let status = input.status.as_deref().map(canonical_project_status);
         sqlx::query(
             r#"
             UPDATE project_work_items SET
@@ -54,7 +57,7 @@ impl LocalDatabase {
         .bind(input.requirement_id.as_deref())
         .bind(input.title.as_deref())
         .bind(input.description.as_deref())
-        .bind(input.status.as_deref())
+        .bind(status.as_deref())
         .bind(input.priority)
         .bind(input.assignee_user_id.as_deref())
         .bind(input.estimate_points)
@@ -62,9 +65,9 @@ impl LocalDatabase {
         .bind(input.sort_order)
         .bind(tags_json.as_deref())
         .bind(input.is_planning_task)
-        .bind(input.status.as_deref())
+        .bind(status.as_deref())
         .bind(now.as_str())
-        .bind(input.status.as_deref())
+        .bind(status.as_deref())
         .bind(now.as_str())
         .bind(work_item_id)
         .bind(owner_user_id)

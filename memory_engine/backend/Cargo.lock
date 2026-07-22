@@ -1746,6 +1746,7 @@ version = "0.1.0"
 dependencies = [
  "axum",
  "chatos_agent",
+ "chatos_ai_runtime",
  "chatos_config_sdk",
  "chatos_service_runtime",
  "chrono",

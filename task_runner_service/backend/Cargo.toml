@@ -13,10 +13,9 @@ axum = { version = "0.8", features = ["json"] }
 base64 = "0.22"
 chatos_agent = { path = "../../agent" }
 chatos_ai_runtime = { path = "../../crates/chatos_ai_runtime" }
-chatos_builtin_tools = { path = "../../crates/chatos_builtin_tools" }
+chatos_mcp = { path = "../../mcp" }
 chatos_mcp_service = { path = "../../crates/chatos_mcp_service" }
 chatos_mcp_runtime = { path = "../../crates/chatos_mcp_runtime" }
-chatos_project_mcp_contract = { path = "../../crates/chatos_project_mcp_contract" }
 chatos_remote_runtime = { path = "../../crates/chatos_remote_runtime" }
 chatos_sandbox_contract = { path = "../../crates/chatos_sandbox_contract" }
 chatos_service_runtime = { path = "../../crates/chatos_service_runtime", features = ["axum-support"] }
@@ -26,6 +25,7 @@ chatos_plugin_management_sdk = { path = "../../crates/chatos_plugin_management_s
 chrono = { version = "0.4", features = ["clock", "serde"] }
 futures-util = "0.3"
 jsonwebtoken = { version = "10", features = ["rust_crypto"] }
+libc = "0.2"
 memory_engine_sdk = { path = "../../crates/memory_engine_sdk" }
 mongodb = { version = "2.8", features = ["tokio-runtime"] }
 parking_lot = "0.12"
@@ -36,6 +36,7 @@ serde_json = "1"
 ssh2 = "0.9"
 tokio = { version = "1", features = ["full"] }
 tokio-stream = { version = "0.1", features = ["sync"] }
+tokio-util = "0.7"
 tower-http = { version = "0.7", features = ["cors", "trace"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }

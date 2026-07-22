@@ -85,7 +85,7 @@ pub use tool_runtime::{
 pub use traits::{
     MemoryRecordWriter, ModelRequest, ModelRuntimeConfig, RuntimeCallbacks, RuntimeMessage,
     RuntimeRecordOptions, SaveAssistantRecordInput, SaveRecordInput, SaveToolRecordInput,
-    ToolExecutor,
+    ToolExecutor, DEFAULT_MODEL_REQUEST_MAX_RETRIES,
 };
 pub use turn::{
     build_contextual_input, input_value_to_items, message_item, user_text_item,

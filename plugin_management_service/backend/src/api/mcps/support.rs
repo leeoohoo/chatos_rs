@@ -3,9 +3,11 @@
 
 use super::super::*;
 use super::{
-    live_mcp_descriptor, select_preferred_response_text, AdminAiModelConfig, AdminModelRuntime,
+    build_responses_text_input, live_mcp_descriptor, run_compatible_prompt_with,
+    select_preferred_response_text, AdminAiModelConfig, AdminAiModelSettings, AdminModelRuntime,
     AiRequestHandler, ModelRuntimeConfig, OptimizeProviderSkillRequest,
-    PreparedProviderSkillOptimization, StreamCallbacks, UpdateProviderSkillRequest,
+    PreparedProviderSkillOptimization, SimplePromptOptions, StreamCallbacks,
+    UpdateProviderSkillRequest,
 };
 use chatos_service_runtime::http_body::{
     read_response_json_limited, read_response_preview_text_limited_or_message,
@@ -100,6 +102,15 @@ pub(in crate::api) async fn load_admin_model_runtime(
         return Err(ApiError::bad_request("selected AI model name is empty"));
     }
     let provider = model_config.provider.clone();
+    let model_settings = request_user_service::<serde_json::Value, AdminAiModelSettings>(
+        state,
+        reqwest::Method::GET,
+        "/api/model-configs/settings",
+        access_token,
+        None,
+    )
+    .await
+    .unwrap_or_default();
     let runtime = ModelRuntimeConfig::openai_compatible(
         default_ai_base_url(provider.as_str(), model_config.base_url.as_deref()),
         api_key.to_string(),
@@ -107,7 +118,12 @@ pub(in crate::api) async fn load_admin_model_runtime(
         provider.clone(),
     )
     .with_responses_support(model_config.supports_responses)
-    .with_thinking_level(model_config.thinking_level.clone());
+    .with_thinking_level(model_config.thinking_level.clone())
+    .with_max_transient_retries(Some(
+        model_settings
+            .model_request_max_retries
+            .unwrap_or(chatos_ai_runtime::DEFAULT_MODEL_REQUEST_MAX_RETRIES),
+    ));
     Ok(AdminModelRuntime {
         model_config_id,
         provider,
@@ -127,24 +143,22 @@ pub(super) async fn execute_provider_skill_optimization(
     )
     .build()
     .map_err(|err| ApiError::internal(format!("build streaming AI client failed: {err}")))?;
-    let response = AiRequestHandler::from_client(client)
-        .handle_request(
-            prepared.runtime.base_url.as_str(),
-            prepared.runtime.api_key.as_str(),
-            serde_json::Value::String(prepared.user_prompt.clone()),
-            prepared.runtime.supports_responses,
-            prepared.runtime.model.clone(),
-            Some(prepared.system_prompt.clone()),
-            None,
-            Some(0.2),
-            Some(6000),
+    let handler = AiRequestHandler::from_client(client);
+    let response = run_compatible_prompt_with(
+        &handler,
+        &prepared.runtime,
+        prepared.user_prompt.as_str(),
+        SimplePromptOptions {
+            system_prompt: Some(prepared.system_prompt.clone()),
+            temperature: Some(0.2),
+            max_output_tokens: Some(6000),
             callbacks,
-            Some(prepared.runtime.provider.clone()),
-            prepared.runtime.thinking_level.clone(),
-            None,
-        )
-        .await
-        .map_err(ApiError::bad_gateway)?;
+            ..Default::default()
+        },
+        build_responses_text_input,
+    )
+    .await
+    .map_err(ApiError::bad_gateway)?;
     if response
         .finish_reason
         .as_deref()

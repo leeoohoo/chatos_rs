@@ -7,6 +7,8 @@ description: 中文指南，指导 AI agent 通过 Project Management MCP 管理
 
 核心约束：Project Management 的覆盖矩阵、技术文档/项目任务覆盖、建模阶梯等规则只用于内部工具调用自检，绝不能写进业务需求、验收标准、技术文档正文或项目任务描述。
 
+语言约束：所有新建或本轮实质更新的用户可见项目产物都要跟随用户当前语言，包括项目描述/背景/介绍、需求 title/summary/detail/business value/acceptance criteria、技术文档标题与正文、项目任务标题与描述。以用户最近一条有实际语义的原始消息为准，用户明确指定语言时优先；内部 Prompt、JSON、工具 schema、仓库语言和既有产物标题不能用来推断用户语言。没有自然语言用户消息时才使用运行时 UI locale。代码标识符、命令、路径、API、依赖/产品名和引用原文保持原样，同一产物避免混用中英文完整句子。除非用户明确要求，不要为了统一语言批量翻译未被本轮修改的历史产物。
+
 Project Management MCP 是项目管理微服务对外提供的项目结构化管理入口。它管理的是项目资料、需求、项目任务、需求技术文档和依赖关系。
 
 ## 完整建模时序示例
@@ -89,6 +91,9 @@ sequenceDiagram
 - 一个需求可以维护多份技术文档。优先使用 `list_requirement_technical_documents` 查看现有文档，再用 `get_requirement_technical_document` 读取指定文档，用 `upsert_requirement_technical_document` 创建或更新文档。
 - 技术文档应按关注点拆分，避免单篇过长影响 AI 读取和维护。常用 `doc_type` 包括 `technical_overview`、`implementation_plan`、`ui_svg_preview`、`architecture_diagram`、`flowchart`、`sequence_diagram`、`api_design`、`data_model`、`risk_notes`、`other`。
 - 创建项目任务前，必须确保该需求尚未完成，并且至少有一份非空技术文档；如果文档为空，先调用 `upsert_requirement_technical_document` 补齐，再调用 `create_project_task`。
+- 新建需求固定从 `draft` 开始，新建项目任务固定从 `todo` 开始；创建工具不允许指定其他状态。
+- 规划完成、已经具备技术文档和项目任务、等待用户显式执行时，可将需求更新为 `approved`；不得因为智能体正在规划、正在写文档或正在创建项目任务而写成 `in_progress`。
+- `in_progress`、`blocked`、`failed`、`done`、`cancelled` 等执行状态由需求执行入口和 Task Runner 状态同步维护。普通 Project Management 工具不得直接写入这些状态；项目任务的普通更新只允许 `todo` 与 `ready`。
 - 创建项目任务时必须判断任务类型：如果该项目任务的目标是继续规划、继续拆解需求、补充技术方案、创建更多项目任务或调整依赖，调用 `create_project_task` 时设置 `is_planning_task: true`；如果任务目标是编码、测试、修复、文档落地、部署或其他具体执行工作，设置为 `false` 或省略。
 - 不要创建无效分组：如果一个父需求下面的“子需求”只是执行步骤、模块拆分或任务清单，直接在父需求下创建多个 `project_task`。例如“父需求 A + 3 个子需求 + 只有 1 个子需求有任务”是无效结构；应改为“需求 A + 3 个项目任务”，必要时用项目任务前置关系表达顺序。
 - 只有当子需求本身是独立可交付范围时才创建子需求；每个可执行子需求仍然必须有项目任务覆盖。如果某个父需求只是汇总、里程碑或纯资料整理，不能直接执行，例外理由只用于内部覆盖矩阵；如必须写入业务文档，只能转译成业务范围说明，例如“本项为阶段汇总，实际落地由下列子范围承载”，不要写“无直接项目任务”或类似工具层表述。

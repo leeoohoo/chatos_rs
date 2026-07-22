@@ -40,6 +40,7 @@ export function CloudAiSettingsSection({
     emptyDefaultModelDrafts,
   );
   const [taskDrafts, setTaskDrafts] = React.useState<TaskModelDrafts>({});
+  const [modelRequestMaxRetries, setModelRequestMaxRetries] = React.useState('5');
   const [loading, setLoading] = React.useState(true);
   const [saving, setSaving] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
@@ -59,6 +60,7 @@ export function CloudAiSettingsSection({
       setModels(cloudModels);
       setDefaultDrafts(defaultModelDraftsFromSettings(settings));
       setTaskDrafts(taskModelDraftsFromModels(cloudModels));
+      setModelRequestMaxRetries(String(settings.model_request_max_retries ?? 5));
       await loadAiModelConfigs({ force: true });
     } catch (value) {
       setError(errorMessage(value, t('modelSettings.error.load'), t));
@@ -93,6 +95,10 @@ export function CloudAiSettingsSection({
     setError(null);
     setNotice(null);
     try {
+      const maxRetries = Number(modelRequestMaxRetries);
+      if (!Number.isInteger(maxRetries) || maxRetries < 0 || maxRetries > 10) {
+        throw new Error('invalid_model_request_max_retries');
+      }
       const updates = models.flatMap((model) => {
         const draft = taskDrafts[model.id];
         if (!draft) return [];
@@ -101,6 +107,7 @@ export function CloudAiSettingsSection({
       });
       await Promise.all([
         client.updateAiModelSettings({
+          model_request_max_retries: maxRetries,
           memory_summary_model_config_id: defaultDrafts.memory.modelId || null,
           memory_summary_thinking_level: defaultDrafts.memory.thinking || null,
           project_management_agent_model_config_id: defaultDrafts.project.modelId || null,
@@ -169,6 +176,27 @@ export function CloudAiSettingsSection({
         disabled={loading || saving}
         onChange={updateDefaultDraft}
       />
+      <section className="rounded-xl border border-border bg-card p-4">
+        <h4 className="text-sm font-semibold text-foreground">
+          {t('cloudAi.retrySettings')}
+        </h4>
+        <p className="mt-1 text-xs text-muted-foreground">
+          {t('cloudAi.retrySettingsDescription')}
+        </p>
+        <label className="mt-3 block max-w-xs text-sm text-foreground">
+          {t('cloudAi.maxRetries')}
+          <input
+            type="number"
+            min={0}
+            max={10}
+            step={1}
+            value={modelRequestMaxRetries}
+            disabled={loading || saving}
+            onChange={(event) => setModelRequestMaxRetries(event.target.value)}
+            className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2"
+          />
+        </label>
+      </section>
       <CloudTaskModelSettings
         models={models}
         drafts={taskDrafts}
@@ -201,6 +229,9 @@ function errorMessage(
   }
   if (value instanceof Error && value.message === 'invalid_max_output_tokens') {
     return t('cloudAi.error.invalidMaxTokens');
+  }
+  if (value instanceof Error && value.message === 'invalid_model_request_max_retries') {
+    return t('cloudAi.error.invalidMaxRetries');
   }
   return value instanceof Error ? value.message : fallback;
 }

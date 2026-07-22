@@ -7,6 +7,7 @@ use serde::Serialize;
 use serde_json::Value;
 
 use crate::local_runtime::storage::LocalMessageRecord;
+use crate::local_runtime::task_runner::user_visible_task_run_failure_receipt;
 use crate::LocalRuntime;
 
 use super::context::owner_context;
@@ -52,13 +53,20 @@ pub(super) fn message_response(record: LocalMessageRecord) -> LocalMessageRespon
     let metadata = message_metadata(record.metadata_json, record.sequence_no);
     let message_mode = metadata_text(&metadata, "message_mode");
     let message_source = metadata_text(&metadata, "message_source");
+    let content = if message_mode.as_deref() == Some("task_run_receipt")
+        && metadata_text(&metadata, "response_status").as_deref() == Some("failed")
+    {
+        user_visible_task_run_failure_receipt(record.content.as_str())
+    } else {
+        record.content
+    };
     LocalMessageResponse {
         id: record.id,
         conversation_id: record.session_id,
         turn_id: record.turn_id,
         sequence_no: record.sequence_no,
         role: record.role,
-        content: record.content,
+        content,
         message_mode,
         message_source,
         reasoning: record.reasoning,

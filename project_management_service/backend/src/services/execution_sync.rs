@@ -17,6 +17,7 @@ use self::status_transition::{
     block_related_requirements_if_work_item_blocked,
     complete_related_requirements_if_work_items_done,
     fail_related_requirements_if_work_item_failed,
+    recover_related_requirements_if_work_item_recovered,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -112,6 +113,7 @@ pub async fn sync_task_runner_work_item_status(
 
     match work_item.status {
         ProjectWorkItemStatus::Done => {
+            recover_related_requirements_if_work_item_recovered(store, &work_item).await?;
             complete_related_requirements_if_work_items_done(store, &work_item).await?;
         }
         ProjectWorkItemStatus::Failed => {
@@ -120,7 +122,12 @@ pub async fn sync_task_runner_work_item_status(
         ProjectWorkItemStatus::Blocked => {
             block_related_requirements_if_work_item_blocked(store, &work_item).await?;
         }
-        _ => {}
+        ProjectWorkItemStatus::Todo
+        | ProjectWorkItemStatus::Ready
+        | ProjectWorkItemStatus::InProgress => {
+            recover_related_requirements_if_work_item_recovered(store, &work_item).await?;
+        }
+        ProjectWorkItemStatus::Cancelled | ProjectWorkItemStatus::Archived => {}
     }
 
     Ok(SyncTaskRunnerWorkItemStatusResponse { work_item, link })

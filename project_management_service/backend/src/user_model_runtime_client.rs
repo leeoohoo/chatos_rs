@@ -19,6 +19,8 @@ const MODEL_RUNTIME_READ_SCOPE: &str = "model-runtime.read";
 
 #[derive(Debug, Clone, Deserialize)]
 struct UserServiceModelSettingsResponse {
+    #[serde(default = "default_model_request_max_retries")]
+    model_request_max_retries: usize,
     environment_initialization_model_config_id: Option<String>,
     environment_initialization_thinking_level: Option<String>,
 }
@@ -43,6 +45,11 @@ struct UserServiceModelRuntimeResponse {
 pub struct EnvironmentInitializationModelSettings {
     pub model_config_id: Option<String>,
     pub thinking_level: Option<String>,
+    pub model_request_max_retries: usize,
+}
+
+fn default_model_request_max_retries() -> usize {
+    chatos_ai_runtime::DEFAULT_MODEL_REQUEST_MAX_RETRIES
 }
 
 #[derive(Debug, Clone)]
@@ -98,6 +105,7 @@ fn environment_initialization_settings_from_response(
     EnvironmentInitializationModelSettings {
         model_config_id: normalized_optional(record.environment_initialization_model_config_id),
         thinking_level: normalized_optional(record.environment_initialization_thinking_level),
+        model_request_max_retries: record.model_request_max_retries,
     }
 }
 
@@ -132,6 +140,7 @@ pub async fn resolve_default_environment_initialization_model_runtime(
         owner_user_id,
         model_config_id,
         settings.thinking_level.as_deref(),
+        settings.model_request_max_retries,
     )
     .await
     .map(Some)
@@ -142,6 +151,7 @@ pub async fn resolve_environment_initialization_model_runtime(
     owner_user_id: &str,
     model_config_id: &str,
     thinking_level_override: Option<&str>,
+    model_request_max_retries: usize,
 ) -> Result<ResolvedEnvironmentInitializationModelRuntime, String> {
     let owner_user_id = owner_user_id.trim();
     let model_config_id = model_config_id.trim();
@@ -152,12 +162,17 @@ pub async fn resolve_environment_initialization_model_runtime(
         return Err("environment initialization model_config_id is required".to_string());
     }
     let record = get_cloud_model_runtime(config, owner_user_id, model_config_id).await?;
-    resolve_environment_initialization_model_runtime_from_response(record, thinking_level_override)
+    resolve_environment_initialization_model_runtime_from_response(
+        record,
+        thinking_level_override,
+        model_request_max_retries,
+    )
 }
 
 fn resolve_environment_initialization_model_runtime_from_response(
     record: UserServiceModelRuntimeResponse,
     thinking_level_override: Option<&str>,
+    model_request_max_retries: usize,
 ) -> Result<ResolvedEnvironmentInitializationModelRuntime, String> {
     let thinking_level = normalized_optional(thinking_level_override.map(ToOwned::to_owned))
         .or_else(|| normalized_optional(record.thinking_level));
@@ -176,7 +191,8 @@ fn resolve_environment_initialization_model_runtime_from_response(
     )
     .with_responses_support(record.supports_responses)
     .with_images_support(Some(record.supports_images))
-    .with_thinking_level(thinking_level);
+    .with_thinking_level(thinking_level)
+    .with_max_transient_retries(Some(model_request_max_retries));
 
     Ok(ResolvedEnvironmentInitializationModelRuntime {
         model_config_id: record.id,
@@ -285,6 +301,7 @@ mod tests {
             Some("environment-model")
         );
         assert_eq!(settings.thinking_level.as_deref(), Some("high"));
+        assert_eq!(settings.model_request_max_retries, 5);
     }
 
     #[test]
@@ -302,11 +319,13 @@ mod tests {
                 supports_responses: true,
             },
             None,
+            5,
         )
         .expect("runtime");
 
         assert_eq!(runtime.prompt_vendor.as_deref(), Some("gpt"));
         assert_eq!(runtime.model_config.provider, "openai_compatible");
+        assert_eq!(runtime.model_config.max_transient_retries, Some(5));
     }
 
     #[test]
@@ -324,6 +343,7 @@ mod tests {
                 supports_responses: false,
             },
             None,
+            5,
         )
         .expect("runtime");
 
@@ -347,6 +367,7 @@ mod tests {
                     supports_responses: false,
                 },
                 None,
+                5,
             );
 
             assert!(result.is_err());

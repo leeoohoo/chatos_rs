@@ -153,10 +153,8 @@ fn walk_files(
                 continue;
             }
             let path = entry.path();
-            if metadata.is_dir() {
-                if !ignored_directory(path.as_path()) {
-                    queue.push_back(path.clone());
-                }
+            if metadata.is_dir() && !ignored_directory(path.as_path()) {
+                queue.push_back(path.clone());
             }
             if !visit(path.as_path(), &metadata) {
                 return Ok(());

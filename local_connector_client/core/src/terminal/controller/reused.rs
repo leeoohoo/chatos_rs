@@ -4,7 +4,7 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use chatos_builtin_tools::TerminalControllerContext;
+use chatos_mcp::TerminalControllerContext;
 use serde_json::{json, Value};
 use tokio::io::AsyncWriteExt;
 use uuid::Uuid;

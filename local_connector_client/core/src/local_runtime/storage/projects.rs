@@ -4,6 +4,7 @@
 use anyhow::{Context, Result};
 
 use crate::local_now_rfc3339;
+use crate::local_runtime::LOCAL_UNSCOPED_PROJECT_ID;
 
 use super::{LocalDatabase, LocalProjectRecord, UpsertLocalProjectInput};
 
@@ -79,11 +80,12 @@ impl LocalDatabase {
                    root_relative_path, execution_plane, runtime_schema_version,
                    created_at, updated_at
             FROM local_projects
-            WHERE owner_user_id = ?
+            WHERE owner_user_id = ? AND project_id <> ?
             ORDER BY updated_at DESC, project_id ASC
             "#,
         )
         .bind(owner_user_id)
+        .bind(LOCAL_UNSCOPED_PROJECT_ID)
         .fetch_all(self.pool())
         .await
         .context("list local runtime projects")

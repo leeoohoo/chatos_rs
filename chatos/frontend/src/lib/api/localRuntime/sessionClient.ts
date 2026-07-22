@@ -27,6 +27,7 @@ import {
 } from './askUserPrompts';
 import { requestLocalRuntime } from './bridge';
 import { LocalRuntimeProjectClient } from './projectClient';
+import { mergeSessionRuntimeIntoMetadata } from '../../domain/sessionRuntime';
 import { readLocalSessionSelection } from './sessionMetadata';
 import {
   completeLocalTaskManagerTask,
@@ -54,7 +55,12 @@ const toSessionResponse = (
   created_at: record.created_at,
   updated_at: record.updated_at,
   metadata: {
-    ...metadata,
+    ...mergeSessionRuntimeIntoMetadata(metadata, {
+      contactAgentId: record.selected_agent_id ?? null,
+      contactId: record.contact_id ?? null,
+      selectedModelId: record.selected_model_id ?? null,
+      projectId: record.project_id,
+    }),
     runtime_origin: 'local_device',
   },
 });
@@ -76,6 +82,7 @@ export class LocalRuntimeSessionClient extends LocalRuntimeProjectClient {
         body: JSON.stringify({
           project_id: data.project_id,
           title: data.title,
+          contact_id: selection.contactId,
           selected_model_id: selection.selectedModelId,
           selected_agent_id: selection.selectedAgentId,
         }),

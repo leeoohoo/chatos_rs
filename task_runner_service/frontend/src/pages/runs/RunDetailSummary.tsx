@@ -11,7 +11,7 @@ import dayjs from 'dayjs';
 
 import type { TranslateFn } from '../../i18n/I18nProvider';
 import type { TaskRunRecord, TaskRunStatus } from '../../types';
-import { runColorMap } from './runPageUtils';
+import { formatUserVisibleRunText, runColorMap } from './runPageUtils';
 
 type RunStreamStats = {
   chunkCount: number;
@@ -54,6 +54,17 @@ export function RunDetailSummary({
   onRetry,
 }: RunDetailSummaryProps) {
   const runStatusLabel = (status: TaskRunStatus) => t(`runs.status.${status}`);
+  const inputSnapshot =
+    run.input_snapshot && typeof run.input_snapshot === 'object'
+      ? (run.input_snapshot as Record<string, unknown>)
+      : null;
+  const agentKey = typeof inputSnapshot?.agent_key === 'string' ? inputSnapshot.agent_key : null;
+  const agentLabel =
+    agentKey === 'task_runner_plan_phase'
+      ? t('runs.detail.planningAgent')
+      : agentKey === 'task_runner_run_phase'
+        ? t('runs.detail.executionAgent')
+        : '-';
 
   return (
     <>
@@ -85,6 +96,7 @@ export function RunDetailSummary({
         <Descriptions.Item label={t('common.status')}>
           <Tag color={runColorMap[run.status]}>{runStatusLabel(run.status)}</Tag>
         </Descriptions.Item>
+        <Descriptions.Item label={t('runs.detail.agent')}>{agentLabel}</Descriptions.Item>
         <Descriptions.Item label={t('runs.column.modelConfig')}>
           <Button
             type="link"
@@ -102,10 +114,10 @@ export function RunDetailSummary({
           {run.finished_at ? dayjs(run.finished_at).format('YYYY-MM-DD HH:mm:ss') : '-'}
         </Descriptions.Item>
         <Descriptions.Item label={t('runs.detail.resultSummary')}>
-          {run.result_summary || '-'}
+          {formatUserVisibleRunText(run.result_summary, t)}
         </Descriptions.Item>
         <Descriptions.Item label={t('runs.detail.errorMessage')}>
-          {run.error_message || '-'}
+          {formatUserVisibleRunText(run.error_message, t)}
         </Descriptions.Item>
         <Descriptions.Item label={t('runs.detail.toolCallCount')}>
           {toolCallCount}

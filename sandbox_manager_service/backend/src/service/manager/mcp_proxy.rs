@@ -20,18 +20,25 @@ use crate::models::SandboxLeaseRecord;
 
 use super::SandboxManager;
 
+const SANDBOX_AGENT_MCP_TIMEOUT: Duration = Duration::from_secs(135);
+
 impl SandboxManager {
     pub async fn mcp_proxy(
         &self,
         auth: &SandboxAuthContext,
         sandbox_id: &str,
-        payload: Value,
+        mut payload: Value,
     ) -> Result<Value, ApiError> {
         let record = self.require_sandbox(sandbox_id).await?;
+        strip_ungrantable_command_permission_requests(&mut payload);
         authorize_mcp_proxy_payload(auth, &record, &payload)?;
         let agent_endpoint = self.agent_endpoint_for(&record).await?;
         let agent_token = self.agent_token_for_record(&record);
-        jsonrpc_agent_proxy(agent_endpoint.as_str(), Some(agent_token.as_str()), payload).await
+        let mut response =
+            jsonrpc_agent_proxy(agent_endpoint.as_str(), Some(agent_token.as_str()), payload)
+                .await?;
+        strip_ungrantable_command_permission_schemas(&mut response);
+        Ok(response)
     }
 
     async fn agent_endpoint_for(&self, record: &SandboxLeaseRecord) -> Result<String, ApiError> {
@@ -61,6 +68,70 @@ impl SandboxManager {
             .filter(|value| !value.is_empty())
             .ok_or_else(|| ApiError::bad_request("sandbox agent endpoint is not available"))?;
         validate_http_agent_endpoint(endpoint)
+    }
+}
+
+fn strip_ungrantable_command_permission_requests(payload: &mut Value) {
+    match payload {
+        Value::Array(items) => {
+            for item in items {
+                strip_ungrantable_command_permission_requests(item);
+            }
+        }
+        Value::Object(object) => {
+            let is_execute_command = object.get("method").and_then(Value::as_str)
+                == Some("tools/call")
+                && object
+                    .get("params")
+                    .and_then(|params| params.get("name"))
+                    .and_then(Value::as_str)
+                    == Some("execute_command");
+            if !is_execute_command {
+                return;
+            }
+            if let Some(arguments) = object
+                .get_mut("params")
+                .and_then(|params| params.get_mut("arguments"))
+                .and_then(Value::as_object_mut)
+            {
+                arguments.remove("additionalPermissions");
+                arguments.remove("_grantedPermissions");
+            }
+        }
+        _ => {}
+    }
+}
+
+fn strip_ungrantable_command_permission_schemas(response: &mut Value) {
+    match response {
+        Value::Array(items) => {
+            for item in items {
+                strip_ungrantable_command_permission_schemas(item);
+            }
+        }
+        Value::Object(object) => {
+            let Some(tools) = object
+                .get_mut("result")
+                .and_then(|result| result.get_mut("tools"))
+                .and_then(Value::as_array_mut)
+            else {
+                return;
+            };
+            for tool in tools {
+                if tool.get("name").and_then(Value::as_str) != Some("execute_command") {
+                    continue;
+                }
+                if let Some(properties) = tool
+                    .get_mut("inputSchema")
+                    .and_then(|schema| schema.get_mut("properties"))
+                    .and_then(Value::as_object_mut)
+                {
+                    properties.remove("additionalPermissions");
+                    properties.remove("_grantedPermissions");
+                }
+            }
+        }
+        _ => {}
     }
 }
 
@@ -170,7 +241,7 @@ pub(in crate::service::manager) async fn jsonrpc_agent_proxy(
     payload: Value,
 ) -> Result<Value, ApiError> {
     let url = format!("{}/mcp", agent_endpoint.trim_end_matches('/'));
-    let client = http_client_builder(HttpClientTimeouts::new(Duration::from_secs(15)))
+    let client = http_client_builder(HttpClientTimeouts::new(SANDBOX_AGENT_MCP_TIMEOUT))
         .redirect(reqwest::redirect::Policy::none())
         .build()
         .map_err(|err| ApiError::internal(format!("build MCP proxy client failed: {err}")))?;
@@ -336,5 +407,62 @@ mod tests {
         let err = authorize_mcp_proxy_payload(&auth, &lease_record(), &payload)
             .expect_err("unexpected accepted invalid payload");
         assert_eq!(err.status, StatusCode::BAD_REQUEST);
+    }
+
+    #[test]
+    fn mcp_proxy_strips_ungrantable_command_permission_overlays() {
+        let mut payload = json!({
+            "jsonrpc": "2.0",
+            "id": "request-1",
+            "method": "tools/call",
+            "params": {
+                "name": "execute_command",
+                "arguments": {
+                    "command": "pwd",
+                    "additionalPermissions": null,
+                    "_grantedPermissions": { "network": { "enabled": true } }
+                }
+            }
+        });
+
+        strip_ungrantable_command_permission_requests(&mut payload);
+
+        let arguments = payload["params"]["arguments"]
+            .as_object()
+            .expect("arguments");
+        assert_eq!(
+            arguments.get("command").and_then(Value::as_str),
+            Some("pwd")
+        );
+        assert!(!arguments.contains_key("additionalPermissions"));
+        assert!(!arguments.contains_key("_grantedPermissions"));
+    }
+
+    #[test]
+    fn mcp_proxy_hides_ungrantable_command_permission_schema() {
+        let mut response = json!({
+            "jsonrpc": "2.0",
+            "id": "request-1",
+            "result": {
+                "tools": [{
+                    "name": "execute_command",
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": {
+                            "command": { "type": "string" },
+                            "additionalPermissions": { "type": "object" }
+                        }
+                    }
+                }]
+            }
+        });
+
+        strip_ungrantable_command_permission_schemas(&mut response);
+
+        let properties = response["result"]["tools"][0]["inputSchema"]["properties"]
+            .as_object()
+            .expect("properties");
+        assert!(properties.contains_key("command"));
+        assert!(!properties.contains_key("additionalPermissions"));
     }
 }

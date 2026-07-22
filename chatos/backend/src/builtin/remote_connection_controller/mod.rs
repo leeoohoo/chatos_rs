@@ -7,7 +7,7 @@ mod context;
 use async_trait::async_trait;
 use serde_json::Value;
 
-use chatos_builtin_tools::{RemoteConnectionControllerContext, RemoteConnectionControllerStore};
+use chatos_mcp::{RemoteConnectionControllerContext, RemoteConnectionControllerStore};
 
 use self::actions::{
     download_file_with_context, list_connections_with_context, list_directory_with_context,

@@ -9,14 +9,6 @@ use crate::config::{api_url, ClientConfig};
 use crate::skills::sync_skill_inventory;
 use crate::{tracing_stdout, LocalRuntime};
 
-const SNAPSHOT_AGENT_KEYS: [SystemAgentKey; 5] = [
-    SystemAgentKey::ChatosConversationAgent,
-    SystemAgentKey::ChatosPlanningAgent,
-    SystemAgentKey::ProjectRequirementExecutionPlannerAgent,
-    SystemAgentKey::TaskRunnerRunPhase,
-    SystemAgentKey::ProjectManagementAgent,
-];
-
 pub(crate) async fn sync_local_plugin_control_plane(runtime: &LocalRuntime) -> Result<usize> {
     if let Err(error) = sync_skill_inventory(runtime).await {
         tracing_stdout(format!("sync local Skill inventory failed: {error}").as_str());
@@ -25,29 +17,23 @@ pub(crate) async fn sync_local_plugin_control_plane(runtime: &LocalRuntime) -> R
 }
 
 pub(crate) async fn sync_local_capability_snapshots(runtime: &LocalRuntime) -> Result<usize> {
-    let (config, owner_user_id) = configured_client(runtime).await?;
+    let snapshots = fetch_all_capability_snapshots(runtime).await?;
     let database = runtime.local_database()?;
-    let mut synced = 0usize;
-    let mut errors = Vec::new();
-    for agent_key in SNAPSHOT_AGENT_KEYS {
-        match fetch_snapshot(runtime, &config, owner_user_id.as_str(), agent_key).await {
-            Ok(snapshot) => {
-                database.save_capability_snapshot(&snapshot).await?;
-                synced += 1;
-            }
-            Err(error) => errors.push(format!("{}: {error}", agent_key.as_str())),
-        }
+    database
+        .replace_capability_snapshots(snapshots.as_slice())
+        .await?;
+    Ok(snapshots.len())
+}
+
+pub(crate) async fn fetch_all_capability_snapshots(
+    runtime: &LocalRuntime,
+) -> Result<Vec<ResolvedAgentCapabilities>> {
+    let (config, owner_user_id) = configured_client(runtime).await?;
+    let mut snapshots = Vec::with_capacity(SystemAgentKey::ALL.len());
+    for agent_key in SystemAgentKey::ALL {
+        snapshots.push(fetch_snapshot(runtime, &config, owner_user_id.as_str(), agent_key).await?);
     }
-    if synced == 0 && !errors.is_empty() {
-        return Err(anyhow!(
-            "capability snapshot sync failed: {}",
-            errors.join("; ")
-        ));
-    }
-    for error in errors {
-        tracing_stdout(format!("capability snapshot sync skipped: {error}").as_str());
-    }
-    Ok(synced)
+    Ok(snapshots)
 }
 
 async fn fetch_snapshot(

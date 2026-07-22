@@ -29,6 +29,7 @@ impl MongoStore {
             return Ok(persisted);
         }
 
+        let run = prepare_run_for_claim_guarded_persist(run);
         self.runs
             .replace_one(
                 doc! { "id": &run.id },
@@ -118,32 +119,72 @@ impl MongoStore {
     pub(in crate::store) async fn fail_expired_run_claims(
         &self,
         now: &str,
-    ) -> Result<usize, String> {
-        let result = self
+    ) -> Result<Vec<TaskRunRecord>, String> {
+        let candidates = self
             .runs
-            .update_many(
+            .find(
                 doc! {
                     "status": "running",
                     "claim_until": { "$lte": now },
                 },
-                doc! {
-                    "$set": {
-                        "status": "failed",
-                        "finished_at": now,
-                        "updated_at": now,
-                        "result_summary": "任务运行节点心跳过期，已标记为失败",
-                        "error_message": "worker claim expired",
-                        "cancel_requested": false,
-                    },
-                    "$unset": {
-                        "claim_token": "",
-                        "claim_until": "",
-                    }
-                },
                 None,
             )
             .await
+            .map_err(|err| err.to_string())?
+            .try_collect::<Vec<TaskRunRecord>>()
+            .await
             .map_err(|err| err.to_string())?;
-        Ok(result.modified_count as usize)
+        let mut failed_runs = Vec::new();
+        for mut run in candidates {
+            let result = self
+                .runs
+                .update_one(
+                    doc! {
+                        "id": run.id.as_str(),
+                        "status": "running",
+                        "claim_until": { "$lte": now },
+                    },
+                    doc! {
+                        "$set": {
+                            "status": "failed",
+                            "finished_at": now,
+                            "updated_at": now,
+                            "result_summary": "任务运行节点心跳过期，已标记为失败",
+                            "error_message": "worker claim expired",
+                            "cancel_requested": false,
+                            "chatos_callback_delivery": bson::to_bson(&ChatosCallbackDeliveryState {
+                                event: "task.failed".to_string(),
+                                status: ChatosCallbackDeliveryStatus::Pending,
+                                attempt_count: 0,
+                                next_attempt_at: Some(now.to_string()),
+                                last_error: None,
+                                updated_at: now.to_string(),
+                            }).map_err(|err| err.to_string())?,
+                        },
+                        "$unset": {
+                            "claim_token": "",
+                            "claim_until": "",
+                        }
+                    },
+                    None,
+                )
+                .await
+                .map_err(|err| err.to_string())?;
+            if result.modified_count == 0 {
+                continue;
+            }
+            run.status = TaskRunStatus::Failed;
+            run.finished_at = Some(now.to_string());
+            run.updated_at = now.to_string();
+            run.result_summary = Some("任务运行节点心跳过期，已标记为失败".to_string());
+            run.error_message = Some("worker claim expired".to_string());
+            run.cancel_requested = false;
+            run.claim_token = None;
+            run.claim_until = None;
+            ensure_terminal_callback_pending(&mut run);
+            self.sync_cancel_requested_cache(&run);
+            failed_runs.push(run);
+        }
+        Ok(failed_runs)
     }
 }

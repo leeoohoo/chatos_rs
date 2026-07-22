@@ -476,12 +476,28 @@ fn should_skip_workspace_path(root: &Path, path: &Path) -> bool {
     let Ok(relative) = path.strip_prefix(root) else {
         return true;
     };
-    relative.components().any(|component| {
-        matches!(
-            component,
-            std::path::Component::Normal(name)
-                if name == ".git" || name == ".chatos" || name == ".task-runner"
-        )
+    relative.components().any(|component| match component {
+        std::path::Component::Normal(name) => name.to_str().is_some_and(|name| {
+            name == ".chatos"
+                || name.starts_with(".chatos-")
+                || matches!(
+                    name,
+                    ".git"
+                        | ".task-runner"
+                        | "node_modules"
+                        | ".pnpm-store"
+                        | ".yarn"
+                        | ".vite"
+                        | "__pycache__"
+                        | ".pytest_cache"
+                        | ".mypy_cache"
+                        | ".ruff_cache"
+                        | ".venv"
+                        | "venv"
+                        | "target"
+                )
+        }),
+        _ => false,
     })
 }
 
@@ -599,6 +615,42 @@ mod tests {
         assert!(diff.contains("diff --git a/src/modified.rs b/src/modified.rs"));
         assert!(diff.contains("-fn old() {}"));
         assert!(diff.contains("+fn new() {}"));
+
+        std::fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn output_manifest_skips_dependency_and_build_cache_directories() {
+        let root = temp_test_dir("generated-directories");
+        let baseline = root.join("baseline").join("workspace");
+        let output = root.join("output").join("workspace");
+        std::fs::create_dir_all(&baseline).expect("baseline");
+        std::fs::create_dir_all(output.join("src")).expect("output src");
+        std::fs::write(output.join("src/app.js"), "export const app = true;\n")
+            .expect("write source");
+
+        for generated_dir in [
+            "node_modules/pkg",
+            "client/node_modules/pkg",
+            "client/.vite/cache",
+            "target/debug",
+            ".venv/lib",
+            "__pycache__",
+            ".chatos-apt/cache",
+            ".chatos-playwright-browsers/chromium",
+        ] {
+            let generated_dir = output.join(generated_dir);
+            std::fs::create_dir_all(&generated_dir).expect("generated directory");
+            std::fs::write(generated_dir.join("generated.bin"), "generated")
+                .expect("write generated file");
+        }
+
+        let manifest =
+            build_output_change_manifest(&lease_record(), baseline.as_path(), output.as_path())
+                .expect("manifest");
+
+        assert_eq!(manifest.counts.total, 1);
+        assert_eq!(manifest.files[0].path, "src/app.js");
 
         std::fs::remove_dir_all(root).expect("cleanup");
     }

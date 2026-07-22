@@ -70,6 +70,8 @@ pub struct BootstrappedChatInput<'a> {
     pub project_id: Option<String>,
     pub session_id: &'a str,
     pub content: &'a str,
+    pub persisted_user_message_content: Option<String>,
+    pub persisted_user_message_metadata: Option<Value>,
     pub model_runtime: &'a ResolvedChatModelConfig,
     pub agent: ChatosAgentAiServer,
     pub bootstrap: CommonChatBootstrap,
@@ -201,6 +203,8 @@ pub async fn run_bootstrapped_chat(input: BootstrappedChatInput<'_>) {
         project_id,
         session_id,
         content,
+        persisted_user_message_content,
+        persisted_user_message_metadata,
         model_runtime,
         agent,
         bootstrap,
@@ -325,6 +329,8 @@ pub async fn run_bootstrapped_chat(input: BootstrappedChatInput<'_>) {
             turn_id: resolved_turn_id.clone(),
             user_message_id: user_message_id.clone(),
             message_source: model_runtime.model.clone(),
+            persisted_user_message_content,
+            persisted_user_message_metadata,
         },
     );
     let result = run_chat_lifecycle(

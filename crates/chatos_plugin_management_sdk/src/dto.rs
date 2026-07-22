@@ -16,12 +16,106 @@ pub const PROJECT_RUNTIME_ENVIRONMENT_MCP_RESOURCE_ID: &str =
     "system_mcp_project_runtime_environment";
 pub const LOCAL_CONNECTOR_APPROVAL_MCP_RESOURCE_ID: &str = "system_mcp_local_connector_approval";
 
+pub const SYSTEM_MCP_RUNTIME_KIND: &str = "system";
+pub const LEGACY_BUILTIN_MCP_RUNTIME_KIND: &str = "builtin";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SystemMcpKey {
+    CodeMaintainerRead,
+    CodeMaintainerWrite,
+    TerminalController,
+    TaskManager,
+    ProjectManagement,
+    Notepad,
+    AgentBuilder,
+    AskUser,
+    RemoteConnectionController,
+    WebTools,
+    BrowserTools,
+    MemorySkillReader,
+    MemoryCommandReader,
+    MemoryPluginReader,
+    SandboxImages,
+    ProjectEnvironment,
+    ProjectRuntimeEnvironment,
+    LocalCommandApproval,
+    TaskRunnerService,
+}
+
+impl SystemMcpKey {
+    pub const ALL: [Self; 19] = [
+        Self::CodeMaintainerRead,
+        Self::CodeMaintainerWrite,
+        Self::TerminalController,
+        Self::TaskManager,
+        Self::ProjectManagement,
+        Self::Notepad,
+        Self::AgentBuilder,
+        Self::AskUser,
+        Self::RemoteConnectionController,
+        Self::WebTools,
+        Self::BrowserTools,
+        Self::MemorySkillReader,
+        Self::MemoryCommandReader,
+        Self::MemoryPluginReader,
+        Self::SandboxImages,
+        Self::ProjectEnvironment,
+        Self::ProjectRuntimeEnvironment,
+        Self::LocalCommandApproval,
+        Self::TaskRunnerService,
+    ];
+
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::CodeMaintainerRead => "code_maintainer_read",
+            Self::CodeMaintainerWrite => "code_maintainer_write",
+            Self::TerminalController => "terminal_controller",
+            Self::TaskManager => "task_manager",
+            Self::ProjectManagement => "project_management",
+            Self::Notepad => "notepad",
+            Self::AgentBuilder => "agent_builder",
+            Self::AskUser => "ask_user",
+            Self::RemoteConnectionController => "remote_connection_controller",
+            Self::WebTools => "web_tools",
+            Self::BrowserTools => "browser_tools",
+            Self::MemorySkillReader => "memory_skill_reader",
+            Self::MemoryCommandReader => "memory_command_reader",
+            Self::MemoryPluginReader => "memory_plugin_reader",
+            Self::SandboxImages => "sandbox_images",
+            Self::ProjectEnvironment => "project_environment",
+            Self::ProjectRuntimeEnvironment => "project_runtime_environment",
+            Self::LocalCommandApproval => "local_command_approval",
+            Self::TaskRunnerService => "task_runner_service",
+        }
+    }
+}
+
+impl fmt::Display for SystemMcpKey {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(self.as_str())
+    }
+}
+
+impl std::str::FromStr for SystemMcpKey {
+    type Err = String;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        let normalized = value.trim().to_ascii_lowercase().replace(['-', ' '], "_");
+        Self::ALL
+            .into_iter()
+            .find(|key| key.as_str() == normalized)
+            .ok_or_else(|| format!("unknown system MCP key: {value}"))
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SystemAgentKey {
     ChatosConversationAgent,
     ChatosPlanningAgent,
     ProjectRequirementExecutionPlannerAgent,
+    TaskRunnerPlanPhase,
     TaskRunnerRunPhase,
     ProjectManagementAgent,
     LocalConnectorCommandApprovalAgent,
@@ -33,10 +127,11 @@ pub enum SystemAgentKey {
 }
 
 impl SystemAgentKey {
-    pub const ALL: [Self; 11] = [
+    pub const ALL: [Self; 12] = [
         Self::ChatosConversationAgent,
         Self::ChatosPlanningAgent,
         Self::ProjectRequirementExecutionPlannerAgent,
+        Self::TaskRunnerPlanPhase,
         Self::TaskRunnerRunPhase,
         Self::ProjectManagementAgent,
         Self::LocalConnectorCommandApprovalAgent,
@@ -54,6 +149,7 @@ impl SystemAgentKey {
             Self::ProjectRequirementExecutionPlannerAgent => {
                 "project_requirement_execution_planner_agent"
             }
+            Self::TaskRunnerPlanPhase => "task_runner_plan_phase",
             Self::TaskRunnerRunPhase => "task_runner_run_phase",
             Self::ProjectManagementAgent => "project_management_agent",
             Self::LocalConnectorCommandApprovalAgent => "local_connector_command_approval_agent",
@@ -119,6 +215,14 @@ pub struct ResolveAgentCapabilitiesRequest {
     pub owner_user_id: String,
     #[serde(default = "default_include_unavailable")]
     pub include_unavailable: bool,
+    #[serde(default)]
+    pub task_profile: Option<String>,
+    #[serde(default)]
+    pub project_source_type: Option<String>,
+    #[serde(default)]
+    pub runtime_provider: Option<String>,
+    #[serde(default)]
+    pub schedule_mode: Option<String>,
 }
 
 impl ResolveAgentCapabilitiesRequest {
@@ -127,7 +231,25 @@ impl ResolveAgentCapabilitiesRequest {
             agent_key,
             owner_user_id: owner_user_id.into(),
             include_unavailable: true,
+            task_profile: None,
+            project_source_type: None,
+            runtime_provider: None,
+            schedule_mode: None,
         }
+    }
+
+    pub fn with_runtime_context(
+        mut self,
+        task_profile: Option<String>,
+        project_source_type: Option<String>,
+        runtime_provider: Option<String>,
+        schedule_mode: Option<String>,
+    ) -> Self {
+        self.task_profile = task_profile;
+        self.project_source_type = project_source_type;
+        self.runtime_provider = runtime_provider;
+        self.schedule_mode = schedule_mode;
+        self
     }
 }
 
@@ -148,6 +270,8 @@ pub struct LocalConnectorRef {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct McpRuntime {
     pub kind: String,
+    #[serde(default)]
+    pub system_key: Option<String>,
     pub builtin_kind: Option<String>,
     pub server_name: Option<String>,
     pub command: Option<String>,
@@ -257,7 +381,7 @@ pub struct SkillRecord {
     pub updated_at: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
 pub struct BindingConditions {
     pub task_profile: Option<String>,
     pub project_source_type: Option<String>,
@@ -469,8 +593,8 @@ mod tests {
 
     #[test]
     fn system_agent_keys_match_registry_keys() {
-        assert_eq!(SystemAgentKey::ALL.len(), 11);
-        assert_eq!(SystemAgentKey::ALL.len() * AgentPromptVendor::ALL.len(), 44);
+        assert_eq!(SystemAgentKey::ALL.len(), 12);
+        assert_eq!(SystemAgentKey::ALL.len() * AgentPromptVendor::ALL.len(), 48);
         assert_eq!(
             SystemAgentKey::ChatosConversationAgent.as_str(),
             "chatos_conversation_agent"
@@ -482,6 +606,19 @@ mod tests {
         assert_eq!(
             SystemAgentKey::MemoryEngineThreadRepairAgent.as_str(),
             "memory_engine_thread_repair_agent"
+        );
+    }
+
+    #[test]
+    fn system_mcp_keys_are_stable_and_complete() {
+        assert_eq!(SystemMcpKey::ALL.len(), 19);
+        assert_eq!(
+            SystemMcpKey::ProjectRuntimeEnvironment.as_str(),
+            "project_runtime_environment"
+        );
+        assert_eq!(
+            "task_runner_service".parse::<SystemMcpKey>(),
+            Ok(SystemMcpKey::TaskRunnerService)
         );
     }
 

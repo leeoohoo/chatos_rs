@@ -5,7 +5,7 @@ use serde_json::{json, Value};
 
 use crate::core::chat_context::resolve_effective_user_id;
 use crate::core::internal_context_locale::{
-    internal_context_locale_from_settings, InternalContextLocale,
+    internal_context_locale_from_settings, ui_locale_from_settings, InternalContextLocale,
 };
 use crate::services::user_settings::get_effective_user_settings;
 
@@ -13,7 +13,8 @@ use crate::services::user_settings::get_effective_user_settings;
 pub struct ConversationRuntimeUserContext {
     pub effective_user_id: Option<String>,
     pub effective_settings: Value,
-    pub locale: InternalContextLocale,
+    pub internal_context_locale: InternalContextLocale,
+    pub ui_locale: InternalContextLocale,
 }
 
 pub async fn load_runtime_user_context(
@@ -24,11 +25,13 @@ pub async fn load_runtime_user_context(
     let effective_settings = get_effective_user_settings(effective_user_id.clone())
         .await
         .unwrap_or_else(|_| json!({}));
-    let locale = internal_context_locale_from_settings(&effective_settings);
+    let internal_context_locale = internal_context_locale_from_settings(&effective_settings);
+    let ui_locale = ui_locale_from_settings(&effective_settings);
 
     ConversationRuntimeUserContext {
         effective_user_id,
         effective_settings,
-        locale,
+        internal_context_locale,
+        ui_locale,
     }
 }

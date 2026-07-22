@@ -24,7 +24,8 @@ impl AskUserStore for AskUserPromptService {
         };
         let prompt =
             AskUserPromptRecord::from_payload(payload, task_id, run_id, created_at, expires_at);
-        let notify = self.waiters.register(&prompt.id);
+        let waiter = self.waiters.register(&prompt.id);
+        let notify = waiter.notify();
         let timeout_ms = prompt.timeout_ms;
         let prompt_id = prompt.id.clone();
         self.store.save_ask_user_prompt(prompt.clone()).await?;
@@ -49,11 +50,9 @@ impl AskUserStore for AskUserPromptService {
         let deadline = tokio::time::Instant::now() + Duration::from_millis(timeout_ms);
         loop {
             let Some(current) = self.store.get_ask_user_prompt(&prompt_id).await? else {
-                self.waiters.remove(&prompt_id);
                 return Err(format!("提示不存在: {prompt_id}"));
             };
             if current.status != AskUserPromptStatus::Pending {
-                self.waiters.remove(&prompt_id);
                 return Ok(prompt_to_decision(current));
             }
 
@@ -62,7 +61,6 @@ impl AskUserStore for AskUserPromptService {
                 _ = tokio::time::sleep(PROMPT_STATUS_POLL_INTERVAL) => {}
                 _ = tokio::time::sleep_until(deadline) => {
                     let timed_out = self.timeout_prompt(&prompt_id).await?;
-                    self.waiters.remove(&prompt_id);
                     return Ok(prompt_to_decision(timed_out));
                 }
             }

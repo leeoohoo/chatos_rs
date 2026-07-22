@@ -333,6 +333,117 @@ async fn failed_work_item_fails_related_in_progress_requirements() {
 
 #[tokio::test]
 #[ignore = "requires MongoDB"]
+async fn retried_work_item_restores_failed_related_requirements_to_in_progress() {
+    let store = test_store().await;
+    let project = create_test_project(&store).await;
+    let parent = create_test_requirement(&store, &project.id, None, "Parent").await;
+    let child =
+        create_test_requirement(&store, &project.id, Some(parent.id.clone()), "Child").await;
+    let item = create_test_work_item(&store, &child, "Retrying task").await;
+    let _remaining = create_test_work_item(&store, &child, "Remaining task").await;
+
+    for requirement in [&parent, &child] {
+        store
+            .update_requirement(
+                &requirement.id,
+                UpdateRequirementRequest {
+                    status: Some(RequirementStatus::InProgress),
+                    ..UpdateRequirementRequest::default()
+                },
+            )
+            .await
+            .expect("mark requirement in progress");
+    }
+
+    sync_task_runner_work_item_status(
+        &store,
+        &item.id,
+        SyncTaskRunnerWorkItemStatusRequest {
+            task_runner_task_id: "task-runner-retry".to_string(),
+            task_runner_status: Some("failed".to_string()),
+            ..SyncTaskRunnerWorkItemStatusRequest::default()
+        },
+    )
+    .await
+    .expect("sync failed task status");
+
+    let response = sync_task_runner_work_item_status(
+        &store,
+        &item.id,
+        SyncTaskRunnerWorkItemStatusRequest {
+            task_runner_task_id: "task-runner-retry".to_string(),
+            task_runner_status: Some("running".to_string()),
+            ..SyncTaskRunnerWorkItemStatusRequest::default()
+        },
+    )
+    .await
+    .expect("sync retried task status");
+
+    assert_eq!(response.work_item.status, ProjectWorkItemStatus::InProgress);
+    for requirement_id in [&child.id, &parent.id] {
+        let requirement = store
+            .get_requirement(requirement_id)
+            .await
+            .expect("get requirement")
+            .expect("requirement");
+        assert_eq!(requirement.status, RequirementStatus::InProgress);
+    }
+}
+
+#[tokio::test]
+#[ignore = "requires MongoDB"]
+async fn successful_retry_completes_previously_failed_requirement() {
+    let store = test_store().await;
+    let project = create_test_project(&store).await;
+    let requirement = create_test_requirement(&store, &project.id, None, "Requirement").await;
+    let item = create_test_work_item(&store, &requirement, "Retrying task").await;
+
+    store
+        .update_requirement(
+            &requirement.id,
+            UpdateRequirementRequest {
+                status: Some(RequirementStatus::InProgress),
+                ..UpdateRequirementRequest::default()
+            },
+        )
+        .await
+        .expect("mark requirement in progress");
+
+    sync_task_runner_work_item_status(
+        &store,
+        &item.id,
+        SyncTaskRunnerWorkItemStatusRequest {
+            task_runner_task_id: "task-runner-successful-retry".to_string(),
+            task_runner_status: Some("failed".to_string()),
+            ..SyncTaskRunnerWorkItemStatusRequest::default()
+        },
+    )
+    .await
+    .expect("sync failed task status");
+
+    let response = sync_task_runner_work_item_status(
+        &store,
+        &item.id,
+        SyncTaskRunnerWorkItemStatusRequest {
+            task_runner_task_id: "task-runner-successful-retry".to_string(),
+            task_runner_status: Some("succeeded".to_string()),
+            ..SyncTaskRunnerWorkItemStatusRequest::default()
+        },
+    )
+    .await
+    .expect("sync successful retry status");
+
+    assert_eq!(response.work_item.status, ProjectWorkItemStatus::Done);
+    let requirement_after = store
+        .get_requirement(&requirement.id)
+        .await
+        .expect("get requirement")
+        .expect("requirement");
+    assert_eq!(requirement_after.status, RequirementStatus::Done);
+}
+
+#[tokio::test]
+#[ignore = "requires MongoDB"]
 async fn blocked_work_item_blocks_related_in_progress_requirements() {
     let store = test_store().await;
     let project = create_test_project(&store).await;

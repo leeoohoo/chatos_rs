@@ -379,31 +379,55 @@ const matchesSnapshotCursor = (message: Message, cursor: string): boolean => {
   return message.id === normalizedCursor || readMessageTurnCursor(message) === normalizedCursor;
 };
 
-const preserveMissingTaskRunnerCallbacks = (
+export const isClientOptimisticMessage = (message: Message): boolean => (
+  message.metadata?.clientOptimistic === true
+  || message.metadata?.clientPendingSync === true
+  || String(message.id || '').startsWith('temp_user_')
+);
+
+const isClientOptimisticUserDraft = (message: Message): boolean => (
+  message.role === 'user'
+  && (
+    message.metadata?.clientOptimistic === true
+    || String(message.id || '').startsWith('temp_user_')
+  )
+);
+
+const transientSnapshotMessage = (message: Message): boolean => (
+  isTaskRunnerCallbackSnapshotMessage(message) || isClientOptimisticMessage(message)
+);
+
+const messageTurnIdentity = (message: Message): string => {
+  const turnId = readMessageTurnCursor(message);
+  return turnId ? `${message.role}:${turnId}` : '';
+};
+
+const preserveMissingTransientMessages = (
   baseMessages: Message[],
   preservedMessages: Message[],
 ): Message[] => {
-  const baseMessageIds = new Set(baseMessages.map((message) => message.id));
-  const missingCallbacks = preservedMessages.filter((message) => (
-    isTaskRunnerCallbackSnapshotMessage(message)
-    && !baseMessageIds.has(message.id)
-  ));
-  if (missingCallbacks.length === 0) {
-    return baseMessages;
-  }
-
   const baseMessageById = new Map(baseMessages.map((message) => [message.id, message]));
+  const baseMessageByTurn = new Map(
+    baseMessages
+      .map((message) => [messageTurnIdentity(message), message] as const)
+      .filter(([identity]) => Boolean(identity)),
+  );
   const mergedMessages: Message[] = [];
   const consumedBaseIds = new Set<string>();
 
   for (const preservedMessage of preservedMessages) {
-    const baseMessage = baseMessageById.get(preservedMessage.id);
+    const baseMessage = baseMessageById.get(preservedMessage.id)
+      || (isClientOptimisticUserDraft(preservedMessage)
+        ? baseMessageByTurn.get(messageTurnIdentity(preservedMessage))
+        : undefined);
     if (baseMessage) {
-      mergedMessages.push(baseMessage);
+      if (!consumedBaseIds.has(baseMessage.id)) {
+        mergedMessages.push(baseMessage);
+      }
       consumedBaseIds.add(baseMessage.id);
       continue;
     }
-    if (isTaskRunnerCallbackSnapshotMessage(preservedMessage)) {
+    if (transientSnapshotMessage(preservedMessage)) {
       mergedMessages.push(preservedMessage);
     }
   }
@@ -468,7 +492,9 @@ export const mergeLatestCompactHistorySnapshot = (
 
   if (!preservedSnapshot?.loaded) {
     return {
-      messages: compactLatestMessages,
+      messages: preservedSnapshot
+        ? preserveMissingTransientMessages(compactLatestMessages, preservedSnapshot.messages)
+        : compactLatestMessages,
       nextBefore: latestNextBefore,
       loaded: true,
     };
@@ -480,7 +506,7 @@ export const mergeLatestCompactHistorySnapshot = (
   if (splitIndex > 0) {
     const olderMessages = preservedSnapshot.messages.slice(0, splitIndex);
     return {
-      messages: preserveMissingTaskRunnerCallbacks(
+      messages: preserveMissingTransientMessages(
         [...olderMessages, ...compactLatestMessages],
         preservedSnapshot.messages,
       ),
@@ -493,7 +519,10 @@ export const mergeLatestCompactHistorySnapshot = (
   const overlapIndex = preservedSnapshot.messages.findIndex((message) => latestIds.has(message.id));
   if (overlapIndex < 0) {
     return {
-      messages: compactLatestMessages,
+      messages: preserveMissingTransientMessages(
+        compactLatestMessages,
+        preservedSnapshot.messages,
+      ),
       nextBefore: latestNextBefore,
       loaded: true,
     };
@@ -501,7 +530,7 @@ export const mergeLatestCompactHistorySnapshot = (
 
   if (overlapIndex === 0) {
     return {
-      messages: preserveMissingTaskRunnerCallbacks(
+      messages: preserveMissingTransientMessages(
         compactLatestMessages,
         preservedSnapshot.messages,
       ),
@@ -512,7 +541,7 @@ export const mergeLatestCompactHistorySnapshot = (
 
   const olderMessages = preservedSnapshot.messages.slice(0, overlapIndex);
   return {
-    messages: preserveMissingTaskRunnerCallbacks(
+    messages: preserveMissingTransientMessages(
       [...olderMessages, ...compactLatestMessages],
       preservedSnapshot.messages,
     ),

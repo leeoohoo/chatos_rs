@@ -96,7 +96,7 @@ pub(crate) async fn local_approve_pending_approval(
     Json(req): Json<ResolveApprovalRequest>,
 ) -> Result<Json<Value>, LocalApiError> {
     let remember_allow = req.remember_allow.unwrap_or(false);
-    let decision = req.decision.unwrap_or_else(|| {
+    let decision = req.decision.unwrap_or({
         CommandExecutionApprovalDecision::Simple(if remember_allow {
             SimpleCommandExecutionApprovalDecision::AcceptForSession
         } else {

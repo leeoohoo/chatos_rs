@@ -305,11 +305,11 @@ fn builtin_mcps_cannot_be_created_through_the_api() {
 }
 
 #[test]
-fn system_routed_mcps_cannot_be_created_through_the_api() {
+fn system_mcps_cannot_be_created_through_the_api() {
     let payload = McpPayload {
         runtime: Some(McpRuntime {
-            kind: RUNTIME_KIND_SYSTEM_ROUTED.to_string(),
-            server_name: Some("sandbox_images".to_string()),
+            kind: RUNTIME_KIND_SYSTEM.to_string(),
+            system_key: Some("sandbox_images".to_string()),
             ..McpRuntime::default()
         }),
         ..McpPayload::default()

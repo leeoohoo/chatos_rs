@@ -299,6 +299,7 @@ const ChatConversationPane: React.FC<ChatConversationPaneProps> = ({
         <ConversationUserMessagesSidebar
           sessionId={currentSession?.id || null}
           refreshKey={userMessagesRefreshKey}
+          liveMessages={messages}
           className="w-[360px]"
           summaryActive={sessionSummaryPaneVisible}
           runtimeContextActive={Boolean(

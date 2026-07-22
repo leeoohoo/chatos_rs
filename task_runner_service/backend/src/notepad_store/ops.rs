@@ -4,7 +4,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use async_trait::async_trait;
-use chatos_builtin_tools::NotepadStore;
+use chatos_mcp::NotepadStore;
 use serde_json::{json, Value};
 use tokio::fs;
 use uuid::Uuid;

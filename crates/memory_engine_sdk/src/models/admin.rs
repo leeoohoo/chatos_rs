@@ -14,6 +14,10 @@ fn default_prompt_language() -> String {
     "zh".to_string()
 }
 
+fn default_model_request_max_retries() -> usize {
+    5
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EngineModelProfile {
     pub id: String,
@@ -32,6 +36,8 @@ pub struct EngineModelProfile {
     pub supports_responses: bool,
     pub temperature: Option<f64>,
     pub thinking_level: Option<String>,
+    #[serde(default = "default_model_request_max_retries")]
+    pub model_request_max_retries: usize,
     #[serde(default)]
     pub is_default: bool,
     #[serde(default = "default_enabled")]
@@ -54,6 +60,7 @@ pub struct UpsertEngineModelProfileRequest {
     pub supports_responses: Option<bool>,
     pub temperature: Option<f64>,
     pub thinking_level: Option<String>,
+    pub model_request_max_retries: Option<usize>,
     pub is_default: Option<bool>,
     pub enabled: Option<bool>,
 }

@@ -23,7 +23,7 @@ pub(super) struct ApprovalToolDecision {
 
 #[derive(Clone)]
 pub(super) struct ApprovalAgentToolExecutor {
-    pub(super) code_service: chatos_builtin_tools::CodeMaintainerService,
+    pub(super) code_service: chatos_mcp::CodeMaintainerService,
     pub(super) decision: Arc<Mutex<Option<ApprovalToolDecision>>>,
     pub(super) allow_code_tools: bool,
     pub(super) allow_approval_decision: bool,
@@ -267,7 +267,7 @@ impl ApprovalAgentToolExecutor {
 }
 
 fn approval_decision_tool_schema() -> Value {
-    let definition = chatos_mcp_runtime::local_command_approval_decision_tool_definition();
+    let definition = chatos_mcp::local_command_approval_decision_tool_definition();
     build_function_tool_schema(
         definition
             .get("name")

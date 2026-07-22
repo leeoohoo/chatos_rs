@@ -26,7 +26,7 @@ import type {
 } from '../../types';
 import {
   describeTaskSchedule,
-  isSchedulerOnlyTask,
+  isTaskRunActionDisabled,
   JsonBlock,
   statusColorMap,
   taskCreatorLabel,
@@ -142,11 +142,7 @@ export function TaskDetailDrawer({
             </Button>
             <Button
               type="primary"
-              disabled={
-                task.status === 'queued' ||
-                task.status === 'running' ||
-                isSchedulerOnlyTask(task)
-              }
+              disabled={isTaskRunActionDisabled(task)}
               onClick={() => {
                 onClose();
                 onRunTask(task);
@@ -180,7 +176,7 @@ export function TaskDetailDrawer({
             </Descriptions.Item>
             <Descriptions.Item label={t('tasks.detail.taskProfile')}>
               <Tag color={taskProfileColorMap[task.task_profile] || 'default'}>
-                {taskProfileLabel(task.task_profile, t)}
+                {taskProfileLabel(task.task_profile, t, task.mcp_config.requires_execution)}
               </Tag>
             </Descriptions.Item>
             <Descriptions.Item label={t('tasks.column.creator')}>

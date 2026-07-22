@@ -6,7 +6,6 @@ use serde_json::{json, Value};
 use crate::auth::CurrentUser;
 use crate::models::{
     BatchTaskDeleteRequest, BatchTaskStatusUpdateRequest, CreateTaskRequest, TaskListFilters,
-    TASK_PROFILE_CHATOS_PLAN,
 };
 
 use super::chatos_async_planner::{
@@ -75,8 +74,10 @@ impl TaskRunnerMcpService {
                 Ok(text_result(json!(stats)))
             }
             "create_task" => {
-                let mut input: CreateTaskRequest =
-                    decode_args::<CreateTaskArgs>(args)?.into_request()?;
+                let decoded = decode_args::<CreateTaskArgs>(args)?;
+                let child_task_profile = request_context
+                    .child_task_profile(decoded.is_planning_task, decoded.requires_execution);
+                let mut input: CreateTaskRequest = decoded.into_request()?;
                 let source_context = request_context.task_source_context()?;
                 if let Some(prerequisite_task_ids) = input.prerequisite_task_ids.as_ref() {
                     self.require_tasks_for_user_in_context(
@@ -101,6 +102,14 @@ impl TaskRunnerMcpService {
                             .unwrap_or(existing);
                         return Ok(text_result(task_for_external_mcp(task)));
                     }
+                    if let Some(default_model_config_id) = request_context
+                        .default_model_config_id
+                        .as_deref()
+                        .map(str::trim)
+                        .filter(|value| !value.is_empty())
+                    {
+                        input.default_model_config_id = Some(default_model_config_id.to_string());
+                    }
                     self.ensure_mcp_default_model_config(&mut input, current_user)
                         .await?;
                     input = planner_root_create_request(input, request_context)?;
@@ -108,8 +117,8 @@ impl TaskRunnerMcpService {
                     self.ensure_mcp_default_model_config(&mut input, current_user)
                         .await?;
                 }
-                if request_context.is_chatos_plan_task_profile() {
-                    input.task_profile = Some(TASK_PROFILE_CHATOS_PLAN.to_string());
+                if let Some(task_profile) = child_task_profile {
+                    input.task_profile = Some(task_profile);
                 }
                 let task = self
                     .task_service

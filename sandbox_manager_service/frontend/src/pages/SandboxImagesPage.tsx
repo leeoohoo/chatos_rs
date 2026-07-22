@@ -222,7 +222,7 @@ export function SandboxImagesPage() {
                 type="primary"
                 icon={<CloudDownloadOutlined />}
                 loading={initializeMutation.isPending || selectedImageRunning}
-                disabled={!canInitialize}
+                disabled={!canInitialize || selectedImageInitialized}
                 onClick={() =>
                   initializeMutation.mutate({
                     features: selectedFeatures,

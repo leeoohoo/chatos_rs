@@ -19,7 +19,9 @@ use serde_json::Value;
 use crate::config::AppConfig;
 use crate::models::{RunOutputChangeManifest, TaskRecord, TaskRunRecord};
 
-use super::workspace::{copy_workspace_to_sandbox, sandbox_baseline_workspace};
+use super::workspace::{
+    copy_workspace_to_sandbox, sandbox_baseline_workspace, write_generated_config_files,
+};
 use super::{SandboxEnvironmentPlan, SandboxRuntimeContext};
 #[derive(Debug, Serialize)]
 struct CreateSandboxLeaseRequest {
@@ -206,6 +208,19 @@ struct SandboxLeaseRecordResponse {
     pub(super) last_error: Option<String>,
     pub(super) effective_policy: Option<EffectiveSandboxPolicy>,
     pub(super) effective_permissions: Option<EffectivePermissionSnapshot>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct SandboxLeaseListItem {
+    pub(super) id: String,
+    pub(super) sandbox_id: String,
+    pub(super) status: String,
+}
+
+impl SandboxLeaseListItem {
+    pub(super) fn requires_cleanup(&self) -> bool {
+        !matches!(self.status.as_str(), "destroyed" | "expired" | "failed")
+    }
 }
 
 fn sandbox_wait_deadline(expires_at: &str) -> tokio::time::Instant {
@@ -413,6 +428,23 @@ impl SandboxManagerClient {
                     "synchronize source into prepared sandbox environment failed: {error}"
                 ));
             }
+            if let Err(error) = write_generated_config_files(
+                baseline_workspace.as_str(),
+                environment_plan.generated_config_files.as_slice(),
+            )
+            .and_then(|_| {
+                write_generated_config_files(
+                    prepared.run_workspace.as_str(),
+                    environment_plan.generated_config_files.as_slice(),
+                )
+            }) {
+                let _ = self
+                    .release_environment_response(&prepared, false, true)
+                    .await;
+                return Err(format!(
+                    "materialize generated sandbox environment files failed: {error}"
+                ));
+            }
         }
 
         let restart_services = Vec::new();
@@ -524,6 +556,42 @@ impl SandboxManagerClient {
             .await
             .map_err(|err| format!("request sandbox environment detail failed: {err}"))?;
         decode_success_json(response, "sandbox environment detail request").await
+    }
+
+    pub(super) async fn list_run_leases(
+        &self,
+        run_id: &str,
+    ) -> Result<Vec<SandboxLeaseListItem>, String> {
+        let response = self
+            .apply_auth(self.client.get(format!("{}/api/sandboxes", self.base_url)))?
+            .query(&[("run_id", run_id), ("limit", "100")])
+            .send()
+            .await
+            .map_err(|err| format!("request sandbox leases for run failed: {err}"))?;
+        decode_success_json(response, "sandbox leases for run request").await
+    }
+
+    pub(super) async fn release_list_item(
+        &self,
+        record: &SandboxLeaseListItem,
+        export_result: bool,
+        destroy: bool,
+    ) -> Result<ReleaseSandboxResponse, String> {
+        let payload = ReleaseSandboxRequest {
+            lease_id: record.id.clone(),
+            export_result,
+            destroy,
+        };
+        let response = self
+            .apply_auth(self.client.post(format!(
+                "{}/api/sandboxes/{}/release",
+                self.base_url, record.sandbox_id
+            )))?
+            .json(&payload)
+            .send()
+            .await
+            .map_err(|err| format!("request sandbox release for terminal run failed: {err}"))?;
+        decode_success_json(response, "sandbox release for terminal run request").await
     }
 
     pub(super) async fn health(
@@ -672,61 +740,4 @@ impl SandboxManagerAuth {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::{SandboxManagerAuth, SandboxManagerClient};
-
-    #[test]
-    fn lease_response_without_effective_policy_stays_unknown() {
-        let response =
-            serde_json::from_value::<super::CreateSandboxLeaseResponse>(serde_json::json!({
-                "lease_id": "lease-1",
-                "sandbox_id": "sandbox-1",
-                "backend_id": null,
-                "agent_endpoint": "http://127.0.0.1:49888",
-                "agent_token": null,
-                "run_workspace": "/workspace",
-                "expires_at": "2026-07-15T00:00:00Z"
-            }))
-            .expect("legacy response");
-
-        assert!(response.effective_policy.is_none());
-    }
-
-    #[test]
-    fn manager_request_uses_short_lived_token_without_client_key() {
-        let client = SandboxManagerClient::new(
-            "http://127.0.0.1:8095".to_string(),
-            Some(SandboxManagerAuth {
-                client_id: "task-runner".to_string(),
-                client_key: "a-long-task-runner-sandbox-secret".to_string(),
-            }),
-        )
-        .expect("client");
-        let request = client
-            .apply_auth(client.client.get("http://127.0.0.1:8095/api/sandboxes"))
-            .expect("apply auth")
-            .build()
-            .expect("request");
-        assert!(!request.headers().contains_key("x-sandbox-client-key"));
-        assert_eq!(
-            request
-                .headers()
-                .get("x-sandbox-caller")
-                .and_then(|value| value.to_str().ok()),
-            Some("task-runner")
-        );
-        let token = request
-            .headers()
-            .get("x-sandbox-internal-token")
-            .and_then(|value| value.to_str().ok())
-            .expect("token");
-        chatos_service_runtime::verify_internal_service_token(
-            token,
-            "a-long-task-runner-sandbox-secret",
-            "task-runner",
-            "sandbox-manager",
-            "sandbox.service",
-        )
-        .expect("valid token");
-    }
-}
+include!("manager_client.test.rs");

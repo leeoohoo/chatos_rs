@@ -49,7 +49,7 @@ export function AgentPromptUpdateSettings() {
     try {
       const next = await api.updateAgentPrompts();
       setStatus(next);
-      setMessage(`系统 Agent 配置已更新到版本 ${next.installed_bundle_version}。`);
+      setMessage(`系统 Agent Prompt 与插件配置已更新到版本 ${next.installed_bundle_version}。`);
     } catch (err) {
       setError(err instanceof Error ? err.message : '更新系统 Agent 配置失败');
       await loadStatus();
@@ -63,7 +63,7 @@ export function AgentPromptUpdateSettings() {
       <div className="panelHeader">
         <div>
           <h2><Sparkles size={18} />系统 Agent 配置</h2>
-          <p>检测云端已发布版本，由你确认后更新到本机 SQLite。</p>
+          <p>检测云端已发布版本，由你确认后原子同步 Prompt 与插件管理中的 MCP、Skill、Agent 状态和权限策略。</p>
         </div>
         <button className="iconButton" onClick={() => void loadStatus()} title="刷新本机版本">
           <RefreshCw size={17} />
@@ -78,6 +78,10 @@ export function AgentPromptUpdateSettings() {
           <div>
             <span>Prompt</span>
             <code>{status ? `${status.prompt_count}/${status.expected_prompt_count}` : '--'}</code>
+          </div>
+          <div>
+            <span>插件配置</span>
+            <code>{status ? `${status.capability_count}/${status.expected_capability_count}` : '--'}</code>
           </div>
           <div>
             <span>状态</span>

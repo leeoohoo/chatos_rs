@@ -6,6 +6,7 @@ use std::path::PathBuf;
 use chatos_ai_runtime::{
     build_responses_text_input, run_compatible_prompt_with, AiRequestHandler, SimplePromptOptions,
 };
+use chatos_mcp_runtime::BuiltinMcpKind;
 use chatos_plugin_management_sdk::{required_agent_prompt_vendor, SystemAgentKey};
 
 use crate::local_runtime::capabilities::resolver::LocalCapabilityResolver;
@@ -43,6 +44,16 @@ pub(crate) async fn run_local_environment_analysis(
     capability
         .ensure_required_available()
         .map_err(|error| error.to_string())?;
+    let code_read_resource_id = BuiltinMcpKind::CodeMaintainerRead
+        .config_id()
+        .ok_or_else(|| "CodeMaintainerRead Plugin resource identity is missing".to_string())?;
+    capability
+        .require_available_mcp(code_read_resource_id)
+        .map_err(|error| {
+            format!(
+                "Project Environment Agent cannot scan files without an explicitly required CodeMaintainerRead Plugin configuration: {error}"
+            )
+        })?;
 
     let (project_root, resolved_model, thinking_level) = {
         let state = runtime.state.read().await;
@@ -104,7 +115,6 @@ pub(crate) async fn run_local_environment_analysis(
         &model,
         prompt.as_str(),
         SimplePromptOptions {
-            max_attempts: Some(2),
             max_output_tokens: Some(8_000),
             ..Default::default()
         },

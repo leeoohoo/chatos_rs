@@ -28,7 +28,15 @@ BASELINE: dict[str, dict[str, str]] = {
         "tower-http": "0.7",
         "mongodb": "2.8",
     },
+    "config_center_service/backend/Cargo.toml": {
+        "axum": "0.8",
+        "tower-http": "0.7",
+        "mongodb": "2.8",
+    },
     "crates/chatos_ai_runtime/Cargo.toml": {
+        "axum": "0.8",
+    },
+    "crates/chatos_service_runtime/Cargo.toml": {
         "axum": "0.8",
     },
     "local_connector_client/core/Cargo.toml": {

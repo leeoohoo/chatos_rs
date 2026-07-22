@@ -3,8 +3,8 @@
 
 use std::fs;
 
+use chatos_mcp::project_management_contract::tools;
 use chatos_mcp_runtime::{BuiltinToolProvider, ToolCallContext};
-use chatos_project_mcp_contract::tools;
 use serde_json::{json, Value};
 use uuid::Uuid;
 

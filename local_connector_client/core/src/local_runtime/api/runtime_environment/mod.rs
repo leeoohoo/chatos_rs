@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
+mod compose_plan;
+mod lifecycle;
 mod response;
 
 use axum::extract::{Path, State};
@@ -37,6 +39,10 @@ pub(super) fn router() -> Router<LocalRuntime> {
         .route(
             "/api/local/runtime/projects/{project_id}/runtime-environment/analyze",
             post(analyze_environment),
+        )
+        .route(
+            "/api/local/runtime/projects/{project_id}/runtime-environment/start",
+            post(lifecycle::start_environment),
         )
         .route(
             "/api/local/runtime/projects/{project_id}/runtime-environment/progress",
@@ -160,7 +166,7 @@ async fn get_progress(
     )))
 }
 
-async fn response_for(
+pub(super) async fn response_for(
     runtime: &LocalRuntime,
     owner_user_id: &str,
     environment: &crate::local_runtime::LocalRuntimeEnvironmentRecord,

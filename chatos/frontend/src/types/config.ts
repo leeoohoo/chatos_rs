@@ -86,6 +86,7 @@ export interface AiModelProvider {
 
 export interface AiModelSettings {
   user_id: string;
+  model_request_max_retries?: number;
   memory_summary_model_config_id?: string | null;
   memory_summary_thinking_level?: string | null;
   project_management_agent_model_config_id?: string | null;

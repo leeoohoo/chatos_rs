@@ -12,10 +12,9 @@ use super::{
 };
 use crate::core::internal_context_locale::InternalContextLocale;
 use crate::core::mcp_tools::ToolInfo;
-use crate::services::builtin_mcp::{
-    BuiltinMcpKind, BROWSER_TOOLS_SERVER_NAME, WEB_TOOLS_SERVER_NAME,
-};
+use crate::services::builtin_mcp::BuiltinMcpKind;
 use crate::services::mcp_loader::McpBuiltinServer;
+use chatos_mcp_runtime::{BROWSER_TOOLS_SERVER_NAME, WEB_TOOLS_SERVER_NAME};
 
 fn build_builtin_server(kind: BuiltinMcpKind) -> McpBuiltinServer {
     McpBuiltinServer {

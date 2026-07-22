@@ -24,7 +24,8 @@ fn model_runtime_config_builds_model_request() {
     .with_prompt_cache_key(Some("task-1".to_string()))
     .with_request_cwd(Some("/tmp/work".to_string()))
     .with_prompt_cache_retention(true)
-    .with_request_body_limit_bytes(Some(2048));
+    .with_request_body_limit_bytes(Some(2048))
+    .with_max_transient_retries(Some(7));
 
     let request =
         ModelRequest::from_runtime_config(&config, json!("hello"), vec![json!({"name":"t"})]);
@@ -42,7 +43,11 @@ fn model_runtime_config_builds_model_request() {
     assert_eq!(request.request_cwd.as_deref(), Some("/tmp/work"));
     assert!(request.include_prompt_cache_retention);
     assert_eq!(request.request_body_limit_bytes, Some(2048));
+    assert_eq!(request.max_transient_retries, Some(7));
     assert_eq!(request.tools.len(), 1);
+
+    let tool_runtime = config.to_tool_caller_model_runtime();
+    assert_eq!(tool_runtime.max_transient_retries, Some(7));
 }
 
 #[test]

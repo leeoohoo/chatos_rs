@@ -5,6 +5,42 @@ use super::support::{normalized_optional, prompt_event_payload, status_label};
 use super::*;
 
 impl AskUserPromptService {
+    pub(crate) async fn cancel_pending_prompts_for_run(
+        &self,
+        run_id: &str,
+        reason: &str,
+    ) -> Result<usize, String> {
+        let prompts = self
+            .store
+            .list_ask_user_prompts(None, Some(run_id), Some(AskUserPromptStatus::Pending))
+            .await?;
+        let reason = normalized_optional(Some(reason.to_string()))
+            .unwrap_or_else(|| "run cancellation requested".to_string());
+        let mut cancelled = 0;
+        for mut prompt in prompts {
+            prompt.status = AskUserPromptStatus::Cancelled;
+            prompt.response = Some(AskUserResponseSubmission {
+                status: "cancelled".to_string(),
+                values: None,
+                selection: None,
+                reason: Some(reason.clone()),
+            });
+            prompt.updated_at = now_rfc3339();
+            let saved = self.store.save_ask_user_prompt(prompt).await?;
+            self.append_prompt_event(
+                &saved,
+                "ask_user_prompt_cancelled",
+                Some("运行已取消，人工提示同步取消".to_string()),
+                Some(prompt_event_payload(&saved)),
+            )
+            .await;
+            self.try_send_chatos_ask_user_prompt_resolved(&saved).await;
+            self.waiters.wake(saved.id.as_str());
+            cancelled += 1;
+        }
+        Ok(cancelled)
+    }
+
     pub async fn list_prompts(
         &self,
         task_id: Option<&str>,

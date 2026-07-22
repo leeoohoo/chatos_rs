@@ -31,6 +31,12 @@ pub(super) async fn resolve_agent_capabilities(
         query.agent_key,
         owner_user_id,
         query.include_unavailable.unwrap_or(true),
+        BindingConditions {
+            task_profile: normalized(query.task_profile.as_deref()),
+            project_source_type: normalized(query.project_source_type.as_deref()),
+            runtime_provider: normalized(query.runtime_provider.as_deref()),
+            schedule_mode: normalized(query.schedule_mode.as_deref()),
+        },
     )
     .await
     .map(Json)
@@ -56,6 +62,12 @@ pub(super) async fn resolve_agent_capabilities_internal(
         agent_key,
         owner_user_id,
         input.include_unavailable,
+        BindingConditions {
+            task_profile: normalized(input.task_profile.as_deref()),
+            project_source_type: normalized(input.project_source_type.as_deref()),
+            runtime_provider: normalized(input.runtime_provider.as_deref()),
+            schedule_mode: normalized(input.schedule_mode.as_deref()),
+        },
     )
     .await
     .map(Json)
@@ -66,6 +78,7 @@ async fn resolve_agent_capabilities_for_owner(
     agent_key: String,
     owner_user_id: String,
     include_unavailable: bool,
+    runtime_context: BindingConditions,
 ) -> Result<RuntimeCapabilitiesResponse, ApiError> {
     let agent = state
         .store
@@ -86,6 +99,9 @@ async fn resolve_agent_capabilities_for_owner(
     let mut local_connector_requirements = Vec::new();
 
     for binding in bindings {
+        if !binding_matches_runtime_context(&binding.conditions, &runtime_context) {
+            continue;
+        }
         match binding.resource_kind.as_str() {
             RESOURCE_KIND_MCP => {
                 let Some(resource) = state
@@ -334,6 +350,32 @@ async fn resolve_agent_capabilities_for_owner(
     })
 }
 
+fn binding_matches_runtime_context(
+    conditions: &BindingConditions,
+    runtime_context: &BindingConditions,
+) -> bool {
+    condition_matches(
+        conditions.task_profile.as_deref(),
+        runtime_context.task_profile.as_deref(),
+    ) && condition_matches(
+        conditions.project_source_type.as_deref(),
+        runtime_context.project_source_type.as_deref(),
+    ) && condition_matches(
+        conditions.runtime_provider.as_deref(),
+        runtime_context.runtime_provider.as_deref(),
+    ) && condition_matches(
+        conditions.schedule_mode.as_deref(),
+        runtime_context.schedule_mode.as_deref(),
+    )
+}
+
+fn condition_matches(expected: Option<&str>, actual: Option<&str>) -> bool {
+    let Some(expected) = normalized(expected) else {
+        return true;
+    };
+    normalized(actual).is_some_and(|actual| actual.eq_ignore_ascii_case(expected.as_str()))
+}
+
 async fn user_skill_enabled(
     state: &AppState,
     owner_user_id: &str,
@@ -406,5 +448,49 @@ pub(super) fn automatic_user_binding(
         updated_by: "system".to_string(),
         created_at: now.clone(),
         updated_at: now,
+    }
+}
+
+#[cfg(test)]
+mod condition_tests {
+    use super::*;
+
+    #[test]
+    fn project_scoped_binding_only_matches_cloud_project_context() {
+        let conditions = BindingConditions {
+            project_source_type: Some("cloud".to_string()),
+            ..BindingConditions::default()
+        };
+        assert!(binding_matches_runtime_context(
+            &conditions,
+            &BindingConditions {
+                project_source_type: Some("CLOUD".to_string()),
+                ..BindingConditions::default()
+            }
+        ));
+        assert!(!binding_matches_runtime_context(
+            &conditions,
+            &BindingConditions {
+                project_source_type: Some("public".to_string()),
+                ..BindingConditions::default()
+            }
+        ));
+        assert!(!binding_matches_runtime_context(
+            &conditions,
+            &BindingConditions::default()
+        ));
+    }
+
+    #[test]
+    fn unconditional_binding_matches_every_runtime_context() {
+        assert!(binding_matches_runtime_context(
+            &BindingConditions::default(),
+            &BindingConditions {
+                task_profile: Some("default".to_string()),
+                project_source_type: Some("public".to_string()),
+                schedule_mode: Some("contact_async".to_string()),
+                ..BindingConditions::default()
+            }
+        ));
     }
 }

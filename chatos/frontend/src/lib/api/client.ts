@@ -20,6 +20,7 @@ import type {
 import {
   assertCloudSessionOperation,
   isLocalRuntimeSessionId,
+  localRuntimeBridgeAvailable,
   LocalRuntimeClient,
 } from './localRuntime';
 import * as workspaceApi from './client/workspace';
@@ -71,6 +72,17 @@ class ApiClient {
     const projectIdValue = String(projectId || '').trim();
     return projectIdValue.length > 0
       && this.projectExecutionPlanes.get(projectIdValue) === 'local_connector';
+  }
+
+  sessionScopeUsesLocalRuntime(projectId?: string | null): boolean {
+    if (!localRuntimeBridgeAvailable()) {
+      return false;
+    }
+    const projectIdValue = String(projectId || '').trim();
+    if (!projectIdValue || projectIdValue === '-1' || projectIdValue === '0') {
+      return true;
+    }
+    return this.projectExecutionPlanes.get(projectIdValue) !== 'cloud';
   }
 
   sessionUsesLocalRuntime(sessionId?: string | null): boolean {

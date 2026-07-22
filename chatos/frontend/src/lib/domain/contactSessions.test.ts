@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest';
 
 import type { Session } from '../../types';
 import {
+  findBestLegacyMatchedSession,
   findLatestMatchedSession,
   matchSessionContactProjectScope,
   normalizeContactSessions,
@@ -107,6 +108,45 @@ describe('domain/contactSessions', () => {
       id: 'contact_2',
       agentId: 'agent_shared',
     }, 'project_1')).toBeNull();
+  });
+
+  it('recovers the best legacy session when contact id was not persisted', () => {
+    const legacyWithoutMessages = buildSession({
+      id: 'legacy-new-empty',
+      updatedAt: new Date('2026-04-03T00:00:00.000Z'),
+      metadata: {
+        chat_runtime: { project_id: 'project_1', contact_agent_id: 'agent_1' },
+      },
+    });
+    const legacyWithMessages = buildSession({
+      id: 'legacy-with-messages',
+      messageCount: 2,
+      updatedAt: new Date('2026-04-02T00:00:00.000Z'),
+      metadata: {
+        chat_runtime: { project_id: 'project_1', contact_agent_id: 'agent_1' },
+      },
+    });
+
+    expect(findBestLegacyMatchedSession(
+      [legacyWithoutMessages, legacyWithMessages],
+      { id: 'contact_1', agentId: 'agent_1' },
+      'project_1',
+    )?.id).toBe('legacy-with-messages');
+  });
+
+  it('never treats an explicitly bound session as a legacy fallback', () => {
+    const session = buildSession({
+      metadata: {
+        chat_runtime: { project_id: 'project_1', contact_agent_id: 'agent_shared' },
+        contact: { contact_id: 'contact_other' },
+      },
+    });
+
+    expect(findBestLegacyMatchedSession(
+      [session],
+      { id: 'contact_1', agentId: 'agent_shared' },
+      'project_1',
+    )).toBeNull();
   });
 
   it('keeps same-agent contacts missing until each has its own contact session', () => {

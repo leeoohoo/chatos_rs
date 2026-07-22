@@ -15,14 +15,29 @@ impl LocalDatabase {
         &self,
         input: EnqueueLocalTaskRunInput,
     ) -> Result<LocalTaskRunRecord> {
-        let work_item = self
-            .get_local_work_item(input.owner_user_id.as_str(), input.task_id.as_str())
-            .await?
-            .context("local task run work item was not found")?;
-        if work_item.project_id != input.project_id {
-            return Err(anyhow::anyhow!(
-                "local task run work item belongs to another project"
-            ));
+        match input.task_kind.as_str() {
+            "project_work_item" => {
+                let work_item = self
+                    .get_local_work_item(input.owner_user_id.as_str(), input.task_id.as_str())
+                    .await?
+                    .context("local task run work item was not found")?;
+                if work_item.project_id != input.project_id {
+                    return Err(anyhow::anyhow!(
+                        "local task run work item belongs to another project"
+                    ));
+                }
+            }
+            "conversation_task" => {
+                self.get_local_task_board_task(
+                    input.owner_user_id.as_str(),
+                    input.session_id.as_str(),
+                    input.task_id.as_str(),
+                )
+                .await?
+                .filter(|task| task.task_kind == "task_runner")
+                .context("local conversation task was not found")?;
+            }
+            other => return Err(anyhow::anyhow!("unsupported local task kind: {other}")),
         }
         let id = format!("lc_task_run_{}", Uuid::new_v4());
         let turn_id = format!("lc_turn_task_{}", Uuid::new_v4());
@@ -30,16 +45,17 @@ impl LocalDatabase {
         sqlx::query(
             r#"
             INSERT INTO local_task_runs (
-                id, owner_user_id, project_id, requirement_id, task_id,
+                id, owner_user_id, project_id, requirement_id, task_kind, task_id,
                 session_id, turn_id, execution_group_id, status, priority,
                 prompt, model_config_id, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?)
             "#,
         )
         .bind(id.as_str())
         .bind(input.owner_user_id.as_str())
         .bind(input.project_id.as_str())
         .bind(input.requirement_id.as_deref())
+        .bind(input.task_kind.as_str())
         .bind(input.task_id.as_str())
         .bind(input.session_id.as_str())
         .bind(turn_id)
@@ -52,6 +68,18 @@ impl LocalDatabase {
         .execute(self.pool())
         .await
         .context("enqueue local task run")?;
+        if input.task_kind == "conversation_task" {
+            sqlx::query(
+                "UPDATE task_board_tasks SET last_run_id = ?, updated_at = ? WHERE id = ? AND owner_user_id = ?",
+            )
+            .bind(id.as_str())
+            .bind(now.as_str())
+            .bind(input.task_id.as_str())
+            .bind(input.owner_user_id.as_str())
+            .execute(self.pool())
+            .await
+            .context("link local conversation task run")?;
+        }
         self.append_local_task_run_event(
             input.owner_user_id.as_str(),
             id.as_str(),
@@ -92,13 +120,7 @@ impl LocalDatabase {
         }
         let run = self.get_local_task_run(owner_user_id, run_id).await?;
         if let Some(run) = run.as_ref().filter(|run| run.status == "canceled") {
-            sqlx::query("UPDATE project_work_items SET status = 'todo', updated_at = ? WHERE id = ? AND owner_user_id = ?")
-                .bind(now.as_str())
-                .bind(run.task_id.as_str())
-                .bind(owner_user_id)
-                .execute(self.pool())
-                .await
-                .context("reset canceled local work item")?;
+            reset_local_task_subject(self, run, owner_user_id, now.as_str()).await?;
         }
         Ok(run)
     }
@@ -107,12 +129,13 @@ impl LocalDatabase {
         &self,
         owner_user_id: &str,
         run_id: &str,
+        model_config_id: &str,
     ) -> Result<Option<LocalTaskRunRecord>> {
         let now = local_now_rfc3339();
         let turn_id = format!("lc_turn_task_{}", Uuid::new_v4());
         let result = sqlx::query(
             r#"
-            UPDATE local_task_runs SET status = 'queued', turn_id = ?, cancel_requested = 0,
+            UPDATE local_task_runs SET status = 'queued', turn_id = ?, model_config_id = ?, cancel_requested = 0,
                 worker_id = NULL, lease_expires_at = NULL, heartbeat_at = NULL,
                 result_content = NULL, result_reasoning = NULL, tool_calls_json = NULL,
                 finish_reason = NULL, usage_json = NULL, error = NULL,
@@ -122,6 +145,7 @@ impl LocalDatabase {
             "#,
         )
         .bind(turn_id)
+        .bind(model_config_id)
         .bind(now.as_str())
         .bind(run_id)
         .bind(owner_user_id)
@@ -131,16 +155,11 @@ impl LocalDatabase {
         if result.rows_affected() == 0 {
             return Ok(None);
         }
-        sqlx::query(
-            "UPDATE project_work_items SET status = 'todo', updated_at = ? WHERE id = (SELECT task_id FROM local_task_runs WHERE id = ?) AND owner_user_id = ?",
-        )
-        .bind(now.as_str())
-        .bind(run_id)
-        .bind(owner_user_id)
-        .execute(self.pool())
-        .await
-        .context("reset retried local work item")?;
-        self.get_local_task_run(owner_user_id, run_id).await
+        let run = self.get_local_task_run(owner_user_id, run_id).await?;
+        if let Some(run) = run.as_ref() {
+            reset_local_task_subject(self, run, owner_user_id, now.as_str()).await?;
+        }
+        Ok(run)
     }
 
     pub(crate) async fn append_local_task_run_event(
@@ -163,4 +182,28 @@ impl LocalDatabase {
         .context("append local task run event")?;
         Ok(())
     }
+}
+
+async fn reset_local_task_subject(
+    database: &LocalDatabase,
+    run: &LocalTaskRunRecord,
+    owner_user_id: &str,
+    now: &str,
+) -> Result<()> {
+    let (table, status) = if run.task_kind == "conversation_task" {
+        ("task_board_tasks", "todo")
+    } else {
+        ("project_work_items", "todo")
+    };
+    let sql =
+        format!("UPDATE {table} SET status = ?, updated_at = ? WHERE id = ? AND owner_user_id = ?");
+    sqlx::query(sql.as_str())
+        .bind(status)
+        .bind(now)
+        .bind(run.task_id.as_str())
+        .bind(owner_user_id)
+        .execute(database.pool())
+        .await
+        .context("reset local task subject")?;
+    Ok(())
 }

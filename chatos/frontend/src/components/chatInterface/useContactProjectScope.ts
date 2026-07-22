@@ -4,6 +4,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   normalizeProjectScopeId,
+  PUBLIC_PROJECT_ID,
   resolveSessionProjectScopeId,
 } from '../../features/contactSession/sessionResolver';
 import type { Project, Session } from '../../types';
@@ -58,6 +59,7 @@ export const useContactProjectScope = <TProject extends ContactProjectScopeProje
 }: UseContactProjectScopeOptions<TProject>): UseContactProjectScopeResult<TProject> => {
   const [composerProjectId, setComposerProjectId] = useState<string | null>(null);
   const [contactScopedProjectIds, setContactScopedProjectIds] = useState<string[]>([]);
+  const [loadedContactProjectsFor, setLoadedContactProjectsFor] = useState('');
   const contactProjectsLoadSeqRef = useRef(0);
 
   const currentProjectIdForMemory = useMemo(() => {
@@ -65,21 +67,21 @@ export const useContactProjectScope = <TProject extends ContactProjectScopeProje
       return '';
     }
     const fromComposer = normalizeProjectScopeId(composerProjectId);
-    if (fromComposer !== '0') {
+    if (fromComposer !== PUBLIC_PROJECT_ID) {
       return fromComposer;
     }
     const fromSession = resolveSessionProjectScopeId(currentSession);
-    if (fromSession !== '0') {
+    if (fromSession !== PUBLIC_PROJECT_ID) {
       return fromSession;
     }
-    return '0';
+    return PUBLIC_PROJECT_ID;
   }, [composerProjectId, currentSession]);
 
   const currentProjectNameForMemory = useMemo(() => {
     if (!currentProjectIdForMemory) {
       return '';
     }
-    if (currentProjectIdForMemory === '0') {
+    if (currentProjectIdForMemory === PUBLIC_PROJECT_ID) {
       return '';
     }
     const matched = (projects || []).find((item) => item.id === currentProjectIdForMemory);
@@ -96,22 +98,30 @@ export const useContactProjectScope = <TProject extends ContactProjectScopeProje
 
   useEffect(() => {
     const sessionProjectId = resolveSessionProjectScopeId(currentSession);
-    setComposerProjectId(sessionProjectId !== '0' ? sessionProjectId : null);
-  }, [currentSession?.id, currentSession?.metadata]);
+    setComposerProjectId(sessionProjectId !== PUBLIC_PROJECT_ID ? sessionProjectId : null);
+  }, [
+    currentSession?.id,
+    currentSession?.metadata,
+    currentSession?.projectId,
+    currentSession?.project_id,
+  ]);
 
   useEffect(() => {
     const contactId = currentContactId.trim();
     if (!contactId) {
       setContactScopedProjectIds([]);
+      setLoadedContactProjectsFor('');
       return;
     }
 
     const cached = contactProjectScopeCache.get(contactId);
     if (cached) {
       setContactScopedProjectIds(cached.projectIds);
+      setLoadedContactProjectsFor(contactId);
       return;
     }
 
+    setLoadedContactProjectsFor('');
     const loadSeq = beginSessionLoadRequest(contactProjectsLoadSeqRef);
     const existingInflight = contactProjectScopeInflight.get(contactId);
     const request = existingInflight || apiClient.getContactProjects(contactId, { limit: 1000, offset: 0 })
@@ -122,7 +132,10 @@ export const useContactProjectScope = <TProject extends ContactProjectScopeProje
               const row = (item && typeof item === 'object' ? item : {}) as ContactProjectLinkRow;
               return typeof row.project_id === 'string' ? row.project_id.trim() : '';
             })
-            .filter((projectId: string) => projectId.length > 0 && projectId !== '0'),
+            .filter((projectId: string) => (
+              projectId.length > 0
+              && normalizeProjectScopeId(projectId) !== PUBLIC_PROJECT_ID
+            )),
         ))
       ))
       .finally(() => {
@@ -142,6 +155,7 @@ export const useContactProjectScope = <TProject extends ContactProjectScopeProje
         }
         contactProjectScopeCache.set(contactId, { projectIds: ids });
         setContactScopedProjectIds(ids);
+        setLoadedContactProjectsFor(contactId);
       })
       .catch((error) => {
         if (!isLoadRequestCurrent(contactProjectsLoadSeqRef, loadSeq)) {
@@ -149,6 +163,7 @@ export const useContactProjectScope = <TProject extends ContactProjectScopeProje
         }
         console.error('Failed to load contact projects:', error);
         setContactScopedProjectIds([]);
+        setLoadedContactProjectsFor(contactId);
       });
   }, [apiClient, currentContactId]);
 
@@ -156,11 +171,19 @@ export const useContactProjectScope = <TProject extends ContactProjectScopeProje
     if (!composerProjectId) {
       return;
     }
-    const exists = composerAvailableProjects.some((item) => item.id === composerProjectId);
-    if (!exists) {
+    const contactId = currentContactId.trim();
+    if (!contactId || loadedContactProjectsFor !== contactId) {
+      return;
+    }
+    if (!contactScopedProjectIds.includes(composerProjectId)) {
       setComposerProjectId(null);
     }
-  }, [composerAvailableProjects, composerProjectId]);
+  }, [
+    composerProjectId,
+    contactScopedProjectIds,
+    currentContactId,
+    loadedContactProjectsFor,
+  ]);
 
   const handleComposerProjectChange = useCallback((projectId: string | null) => {
     const normalizedProjectId = typeof projectId === 'string' ? projectId.trim() : '';

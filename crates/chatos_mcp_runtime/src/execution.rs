@@ -4,6 +4,7 @@
 use std::collections::HashMap;
 use std::future::Future;
 use std::sync::Arc;
+use std::time::Duration;
 
 use serde_json::Value;
 use tokio::task::{Id, JoinSet};
@@ -12,6 +13,8 @@ use tracing::{error, warn};
 use crate::arguments::{parse_json_tool_args, parse_tool_args};
 use crate::tool_call::{clone_tool_call_arguments, extract_tool_call_id, extract_tool_call_name};
 use crate::types::{ToolCallContext, ToolResult, ToolResultCallback, ToolStreamChunkCallback};
+
+const TOOL_ABORT_POLL_INTERVAL: Duration = Duration::from_millis(50);
 
 pub async fn execute_tool_calls_stream<F, Fut>(
     tool_calls: &[Value],
@@ -76,7 +79,21 @@ where
             tool_name.as_str(),
             &context,
         );
-        let outcome = call_tool_once(tool_name.clone(), args, stream_callback).await;
+        let outcome = call_tool_once(tool_name.clone(), args, stream_callback);
+        tokio::pin!(outcome);
+        let outcome = loop {
+            tokio::select! {
+                outcome = &mut outcome => break Some(outcome),
+                _ = tokio::time::sleep(TOOL_ABORT_POLL_INTERVAL) => {
+                    if context.is_aborted() {
+                        break None;
+                    }
+                }
+            }
+        };
+        let Some(outcome) = outcome else {
+            break;
+        };
         if context.is_aborted() {
             break;
         }
@@ -224,7 +241,20 @@ where
         );
     }
 
-    while let Some(joined) = join_set.join_next_with_id().await {
+    while !join_set.is_empty() {
+        let joined = tokio::select! {
+            joined = join_set.join_next_with_id() => joined,
+            _ = tokio::time::sleep(TOOL_ABORT_POLL_INTERVAL) => {
+                if context.is_aborted() {
+                    join_set.abort_all();
+                    break;
+                }
+                continue;
+            }
+        };
+        let Some(joined) = joined else {
+            break;
+        };
         match joined {
             Ok((task_id, (index, result))) => {
                 pending_contexts.remove(&task_id);

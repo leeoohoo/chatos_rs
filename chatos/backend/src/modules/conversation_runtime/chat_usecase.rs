@@ -9,6 +9,7 @@ use crate::core::chat_stream::{send_error_event, send_start_event};
 use crate::services::ai_common::normalize_turn_id;
 use crate::services::model_runtime_resolver::resolve_model_runtime_for_request;
 use crate::utils::sse::SseSender;
+use serde_json::Value;
 
 use super::bootstrap::{load_common_chat_bootstrap, CommonChatBootstrapInput};
 use super::chat_execution::init_chatos_stream_agent;
@@ -18,10 +19,17 @@ use super::guidance;
 pub struct RunChatUsecaseInput {
     pub sender: Option<SseSender>,
     pub req: ChatStreamRequest,
+    pub persisted_user_message_content: Option<String>,
+    pub persisted_user_message_metadata: Option<Value>,
 }
 
 pub async fn run_chat_usecase(input: RunChatUsecaseInput) {
-    let RunChatUsecaseInput { sender, req } = input;
+    let RunChatUsecaseInput {
+        sender,
+        req,
+        persisted_user_message_content,
+        persisted_user_message_metadata,
+    } = input;
     let session_id = req.conversation_id.clone().unwrap_or_default();
     let content = req.content.clone().unwrap_or_default();
     let initial_turn_id = normalize_turn_id(req.turn_id.as_deref());
@@ -45,7 +53,14 @@ pub async fn run_chat_usecase(input: RunChatUsecaseInput) {
     }
 
     send_start_event(&initial_sink, &session_id);
-    maybe_spawn_session_title_rename(true, &session_id, &content, 30);
+    maybe_spawn_session_title_rename(
+        true,
+        &session_id,
+        persisted_user_message_content
+            .as_deref()
+            .unwrap_or(content.as_str()),
+        30,
+    );
 
     let model_runtime = match resolve_chat_model_runtime(&req, "gpt-4o", true).await {
         Ok(runtime) => runtime,
@@ -74,6 +89,8 @@ pub async fn run_chat_usecase(input: RunChatUsecaseInput) {
         project_id: req.project_id.clone(),
         session_id: &session_id,
         content: &content,
+        persisted_user_message_content,
+        persisted_user_message_metadata,
         model_runtime: &model_runtime,
         agent,
         bootstrap,
@@ -104,6 +121,7 @@ fn build_common_bootstrap_input(
         remote_connection_id: req.remote_connection_id.clone(),
         plan_mode: req.plan_mode,
         project_requirement_execution_planner: req.project_requirement_execution_planner,
+        model_config_id: model_runtime.model_config_id.clone(),
         model_provider: model_runtime.provider.clone(),
         prompt_vendor: model_runtime.prompt_vendor.clone(),
         turn_id: req.turn_id.clone(),

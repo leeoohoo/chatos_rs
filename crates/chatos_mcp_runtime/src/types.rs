@@ -247,6 +247,7 @@ pub struct ToolCallerModelRuntime {
     pub instructions: Option<String>,
     pub max_output_tokens: Option<i64>,
     pub request_body_limit_bytes: Option<usize>,
+    pub max_transient_retries: Option<usize>,
 }
 
 impl ToolCallerModelRuntime {
@@ -303,6 +304,11 @@ impl ToolCallerModelRuntime {
         self
     }
 
+    pub fn with_max_transient_retries(mut self, max_transient_retries: Option<usize>) -> Self {
+        self.max_transient_retries = max_transient_retries;
+        self
+    }
+
     pub fn is_configured(&self) -> bool {
         !self.model.trim().is_empty()
             && !self.base_url.trim().is_empty()
@@ -324,6 +330,7 @@ impl std::fmt::Debug for ToolCallerModelRuntime {
             .field("has_instructions", &self.instructions.is_some())
             .field("max_output_tokens", &self.max_output_tokens)
             .field("request_body_limit_bytes", &self.request_body_limit_bytes)
+            .field("max_transient_retries", &self.max_transient_retries)
             .finish()
     }
 }

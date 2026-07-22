@@ -4,6 +4,84 @@
 use super::*;
 
 impl RunService {
+    pub(in crate::services) async fn release_sandboxes_for_terminal_run(
+        &self,
+        run: &TaskRunRecord,
+    ) -> Result<usize, String> {
+        let base_url = self.effective_sandbox_manager_base_url().await?;
+        let client =
+            SandboxManagerClient::new(base_url, SandboxManagerAuth::from_config(&self.config))?;
+        let leases = client.list_run_leases(run.id.as_str()).await?;
+        let mut released = 0usize;
+        let mut failures = Vec::new();
+
+        for lease in leases
+            .into_iter()
+            .filter(SandboxLeaseListItem::requires_cleanup)
+        {
+            match client.release_list_item(&lease, false, true).await {
+                Ok(response) => {
+                    released += 1;
+                    if let Err(error) = self
+                        .store
+                        .append_run_event(TaskRunEventRecord::new(
+                            run.id.clone(),
+                            "sandbox_released_after_terminal_run",
+                            Some("任务运行节点中断后，遗留沙箱已自动释放".to_string()),
+                            Some(json!({
+                                "sandbox_id": lease.sandbox_id,
+                                "lease_id": lease.id,
+                                "previous_status": lease.status,
+                                "release_status": response.status,
+                            })),
+                        ))
+                        .await
+                    {
+                        warn!(
+                            run_id = run.id.as_str(),
+                            error = error.as_str(),
+                            "failed to append terminal run sandbox release event"
+                        );
+                    }
+                }
+                Err(error) => {
+                    failures.push(format!("{}: {error}", lease.sandbox_id));
+                    if let Err(event_error) = self
+                        .store
+                        .append_run_event(TaskRunEventRecord::new(
+                            run.id.clone(),
+                            "sandbox_release_failed_after_terminal_run",
+                            Some("任务运行节点中断后，遗留沙箱自动释放失败".to_string()),
+                            Some(json!({
+                                "sandbox_id": lease.sandbox_id,
+                                "lease_id": lease.id,
+                                "previous_status": lease.status,
+                                "error": error,
+                            })),
+                        ))
+                        .await
+                    {
+                        warn!(
+                            run_id = run.id.as_str(),
+                            error = event_error.as_str(),
+                            "failed to append terminal run sandbox release failure event"
+                        );
+                    }
+                }
+            }
+        }
+
+        if failures.is_empty() {
+            Ok(released)
+        } else {
+            Err(format!(
+                "failed to release {} sandbox lease(s) for terminal run: {}",
+                failures.len(),
+                failures.join("; ")
+            ))
+        }
+    }
+
     pub(in crate::services) async fn release_sandbox(
         &self,
         run: &TaskRunRecord,

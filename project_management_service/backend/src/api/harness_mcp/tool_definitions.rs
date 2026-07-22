@@ -19,12 +19,13 @@ fn read_tool_definitions() -> Vec<Value> {
     vec![
         json!({
             "name": "read_file_raw",
-            "description": "Return UTF-8 file content from the Harness repo for this cloud project. with_line_numbers defaults to true; set false to skip structured numbered lines.",
+            "description": "Return file content from the Harness repo for this cloud project. encoding defaults to utf8; base64 is intended for binary preview consumers. with_line_numbers defaults to true for UTF-8 reads.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "path": { "type": "string" },
-                    "with_line_numbers": { "type": "boolean", "default": true }
+                    "with_line_numbers": { "type": "boolean", "default": true },
+                    "encoding": { "type": "string", "enum": ["utf8", "base64"], "default": "utf8" }
                 },
                 "additionalProperties": false,
                 "required": ["path"]

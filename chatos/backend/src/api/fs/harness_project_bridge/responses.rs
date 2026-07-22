@@ -79,6 +79,7 @@ pub(super) fn read_response(path: &HarnessProjectPath, value: Value) -> (StatusC
         .first_or_text_plain()
         .essence_str()
         .to_string();
+    let is_binary = value.get("content_encoding").and_then(Value::as_str) == Some("base64");
     (
         StatusCode::OK,
         Json(json!({
@@ -90,7 +91,7 @@ pub(super) fn read_response(path: &HarnessProjectPath, value: Value) -> (StatusC
                 .and_then(Value::as_u64)
                 .unwrap_or(content.len() as u64),
             "content_type": content_type,
-            "is_binary": false,
+            "is_binary": is_binary,
             "writable": true,
             "modified_at": Value::Null,
             "content": content,
@@ -225,6 +226,47 @@ pub(super) fn created_response(
             "harness_project": true,
         })),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn preserves_harness_file_sizes_in_directory_entries() {
+        let entry = json!({
+            "name": "diagram.png",
+            "path": "docs/diagram.png",
+            "type": "file",
+            "size": 128
+        });
+
+        let normalized = normalize_entry("project-1", &entry, true).expect("entry");
+
+        assert_eq!(normalized["size"], 128);
+    }
+
+    #[test]
+    fn maps_base64_image_content_to_a_binary_frontend_preview() {
+        let path = HarnessProjectPath {
+            project_id: "project-1".to_string(),
+            relative_path: "docs/diagram.svg".to_string(),
+        };
+
+        let (_, Json(response)) = read_response(
+            &path,
+            json!({
+                "path": "docs/diagram.svg",
+                "size_bytes": 42,
+                "content_encoding": "base64",
+                "content": "PHN2Zz48L3N2Zz4="
+            }),
+        );
+
+        assert_eq!(response["content_type"], "image/svg+xml");
+        assert_eq!(response["is_binary"], true);
+        assert_eq!(response["content"], "PHN2Zz48L3N2Zz4=");
+    }
 }
 
 pub(super) fn parse_harness_project_path(raw_path: &str) -> Option<HarnessProjectPath> {

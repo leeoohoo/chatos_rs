@@ -218,6 +218,7 @@ fn shared_runtime_public_facade_exports_runtime_builder() {
 #[test]
 fn shared_runtime_public_facade_converts_resolved_model_config() {
     let resolved = ResolvedChatModelConfig {
+        model_config_id: Some("model-config-1".to_string()),
         model: "gpt-test".to_string(),
         provider: "gpt".to_string(),
         prompt_vendor: Some("gpt".to_string()),
@@ -231,6 +232,7 @@ fn shared_runtime_public_facade_converts_resolved_model_config() {
         system_prompt: Some("system".to_string()),
         use_active_system_context: true,
         use_codex_gateway_mcp_passthrough: false,
+        model_request_max_retries: 7,
     };
 
     let config = build_model_runtime_config_from_resolved(&resolved);
@@ -242,6 +244,7 @@ fn shared_runtime_public_facade_converts_resolved_model_config() {
     assert_eq!(config.temperature, Some(0.3));
     assert_eq!(config.instructions.as_deref(), Some("system"));
     assert!(config.supports_responses);
+    assert_eq!(config.max_transient_retries, Some(7));
 
     let report = AiTurnReport::aborted();
     assert_eq!(report.status, AiTurnStatus::Aborted);

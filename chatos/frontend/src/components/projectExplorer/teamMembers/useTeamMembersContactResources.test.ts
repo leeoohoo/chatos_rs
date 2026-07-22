@@ -5,7 +5,10 @@ import { describe, expect, it } from 'vitest';
 
 import type { Session } from '../../../types';
 import type { ContactItem } from './types';
-import { resolveProjectContactSession } from './useTeamMembersContactResources';
+import {
+  findProjectContactSessionInStore,
+  resolveProjectContactSession,
+} from './useTeamMembersContactResources';
 
 const buildContact = (): ContactItem => ({
   id: 'contact-1',
@@ -136,5 +139,73 @@ describe('resolveProjectContactSession', () => {
     });
 
     expect(resolved?.id).toBe('contact-2-session');
+  });
+});
+
+describe('findProjectContactSessionInStore', () => {
+  it('recovers an old local session when the project agent maps to one contact', () => {
+    const legacySession = buildSession({
+      id: 'legacy-session',
+      metadata: {
+        chat_runtime: {
+          project_id: 'project-1',
+          contact_agent_id: 'agent-1',
+        },
+      },
+    });
+
+    const resolved = findProjectContactSessionInStore({
+      sessions: [legacySession],
+      contact: buildContact(),
+      normalizedProjectId: 'project-1',
+      projectMembers: [{
+        contactId: 'contact-1',
+        agentId: 'agent-1',
+        name: 'Alice',
+        latestSessionId: null,
+        lastMessageAt: null,
+        updatedAt: 0,
+      }],
+    });
+
+    expect(resolved?.id).toBe('legacy-session');
+  });
+
+  it('does not recover an agent-only legacy session when project contacts are ambiguous', () => {
+    const legacySession = buildSession({
+      id: 'legacy-session',
+      metadata: {
+        chat_runtime: {
+          project_id: 'project-1',
+          contact_agent_id: 'agent-1',
+        },
+      },
+    });
+
+    const resolved = findProjectContactSessionInStore({
+      sessions: [legacySession],
+      contact: buildContact(),
+      normalizedProjectId: 'project-1',
+      projectMembers: [
+        {
+          contactId: 'contact-1',
+          agentId: 'agent-1',
+          name: 'Alice',
+          latestSessionId: null,
+          lastMessageAt: null,
+          updatedAt: 0,
+        },
+        {
+          contactId: 'contact-2',
+          agentId: 'agent-1',
+          name: 'Bob',
+          latestSessionId: null,
+          lastMessageAt: null,
+          updatedAt: 0,
+        },
+      ],
+    });
+
+    expect(resolved).toBeNull();
   });
 });

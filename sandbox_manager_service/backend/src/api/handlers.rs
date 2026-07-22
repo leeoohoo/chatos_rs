@@ -4,7 +4,7 @@
 use axum::extract::{Extension, Path, Query, State};
 use axum::http::HeaderMap;
 use axum::Json;
-use chatos_sandbox_image_mcp::{
+use chatos_mcp::sandbox_images::{
     SandboxImageBackend, SANDBOX_IMAGE_PROJECT_ID_HEADER, SANDBOX_IMAGE_RUN_ID_HEADER,
 };
 use serde_json::{json, Value};
@@ -104,7 +104,7 @@ pub async fn sandbox_image_mcp_entrypoint(
         project_id: header_value(&headers, SANDBOX_IMAGE_PROJECT_ID_HEADER),
         run_id: header_value(&headers, SANDBOX_IMAGE_RUN_ID_HEADER),
     };
-    Json(chatos_sandbox_image_mcp::handle_jsonrpc(&backend, payload).await)
+    Json(chatos_mcp::sandbox_images::handle_jsonrpc(&backend, payload).await)
 }
 
 struct CloudSandboxImageMcpBackend {

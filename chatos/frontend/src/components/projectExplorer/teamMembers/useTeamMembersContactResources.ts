@@ -6,6 +6,7 @@ import { useCallback, useMemo } from 'react';
 import { useI18n } from '../../../i18n/I18nProvider';
 import { useContactSessionResolver } from '../../../features/contactSession/useContactSessionResolver';
 import {
+  findBestLegacyMatchedSession,
   findBestMatchedSession,
   hasSessionMessages,
   isSessionMatchedContactAndProject,
@@ -19,6 +20,7 @@ import type {
   ContactItem,
   EnsureProjectContactSessionOptions,
   ProjectContactRow,
+  ProjectContactLink,
 } from './types';
 import { useProjectMembersManager } from './useProjectMembersManager';
 import { useTeamMemberConversation } from './useTeamMemberConversation';
@@ -28,6 +30,37 @@ interface UseTeamMembersContactResourcesOptions {
   project: Project;
   store: ReturnType<typeof useTeamMembersPaneStoreBridge>;
 }
+
+export const findProjectContactSessionInStore = ({
+  sessions,
+  contact,
+  normalizedProjectId,
+  preferredSessionId,
+  projectMembers,
+}: {
+  sessions: Session[];
+  contact: ContactItem;
+  normalizedProjectId: string;
+  preferredSessionId?: string | null;
+  projectMembers: ProjectContactLink[];
+}): Session | null => {
+  const matched = findBestMatchedSession(
+    sessions,
+    contact,
+    normalizedProjectId,
+    preferredSessionId,
+  );
+  if (matched) {
+    return matched;
+  }
+  const sameAgentMemberCount = projectMembers.filter(
+    (member) => member.agentId === contact.agentId,
+  ).length;
+  if (sameAgentMemberCount !== 1) {
+    return null;
+  }
+  return findBestLegacyMatchedSession(sessions, contact, normalizedProjectId);
+};
 
 export const resolveProjectContactSession = ({
   currentSession,
@@ -119,8 +152,14 @@ export const useTeamMembersContactResources = ({
     contact: ContactItem,
     preferredSessionId?: string | null,
   ): Session | null => {
-    return findBestMatchedSession(sessions || [], contact, normalizedProjectId, preferredSessionId);
-  }, [normalizedProjectId, sessions]);
+    return findProjectContactSessionInStore({
+      sessions: sessions || [],
+      contact,
+      normalizedProjectId,
+      preferredSessionId,
+      projectMembers,
+    });
+  }, [normalizedProjectId, projectMembers, sessions]);
 
   const { ensureContactSession: ensureContactSessionFromResolver } = useContactSessionResolver({
     sessions: sessions || [],

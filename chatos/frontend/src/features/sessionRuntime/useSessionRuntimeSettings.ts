@@ -39,7 +39,7 @@ interface UseSessionRuntimeSettingsResult {
   setWorkspaceRoot: (path: string | null) => void;
   setReasoningEnabled: (enabled: boolean) => void;
   setPlanModeEnabled: (enabled: boolean) => void;
-  flushRuntimeSettings: () => Promise<void>;
+  flushRuntimeSettings: (targetSessionId?: string | null) => Promise<void>;
 }
 
 interface RuntimeSettingsState {
@@ -114,6 +114,13 @@ export const useSessionRuntimeSettings = ({
   const client = useApiClient();
   const initialRuntime = emptyRuntimeState();
   const runtimeRef = useRef<RuntimeSettingsState>(initialRuntime);
+  const activeSessionIdRef = useRef('');
+  const preparedSessionRuntimeRef = useRef<{
+    sessionId: string;
+    state: RuntimeSettingsState;
+  } | null>(null);
+  const unboundRuntimeDirtyRef = useRef(false);
+  const runtimeMutationSeqRef = useRef(0);
   const persistChainRef = useRef<Promise<unknown>>(Promise.resolve());
   const persistErrorRef = useRef<unknown>(null);
   const [runtimeState, setRuntimeState] = useState<RuntimeSettingsState>(initialRuntime);
@@ -125,15 +132,34 @@ export const useSessionRuntimeSettings = ({
 
   useEffect(() => {
     const sessionId = typeof session?.id === 'string' ? session.id.trim() : '';
+    const previousSessionId = activeSessionIdRef.current;
+    activeSessionIdRef.current = sessionId;
+    const preparedRuntime = preparedSessionRuntimeRef.current;
+    if (sessionId && preparedRuntime?.sessionId === sessionId) {
+      preparedSessionRuntimeRef.current = null;
+      unboundRuntimeDirtyRef.current = false;
+      applyRuntimeState(preparedRuntime.state);
+      return;
+    }
+    preparedSessionRuntimeRef.current = null;
+    if (sessionId && !previousSessionId && unboundRuntimeDirtyRef.current) {
+      return;
+    }
+    unboundRuntimeDirtyRef.current = false;
     applyRuntimeState(emptyRuntimeState());
     if (!sessionId) {
       return;
     }
 
     let cancelled = false;
+    const loadMutationSeq = runtimeMutationSeqRef.current;
     void client.getConversationRuntimeSettings(sessionId)
       .then((response) => {
-        if (cancelled) {
+        if (
+          cancelled
+          || activeSessionIdRef.current !== sessionId
+          || runtimeMutationSeqRef.current !== loadMutationSeq
+        ) {
           return;
         }
         applyRuntimeState(runtimeFromResponse(response));
@@ -186,10 +212,13 @@ export const useSessionRuntimeSettings = ({
 
     applyRuntimeState(next);
     if (!sessionId) {
+      unboundRuntimeDirtyRef.current = true;
       return;
     }
 
     const payload = toRuntimePayload(next);
+    unboundRuntimeDirtyRef.current = false;
+    runtimeMutationSeqRef.current += 1;
     persistErrorRef.current = null;
     persistChainRef.current = persistChainRef.current
       .catch(() => undefined)
@@ -246,14 +275,51 @@ export const useSessionRuntimeSettings = ({
     persistRuntimePatch({ planModeEnabled: enabled });
   }, [persistRuntimePatch]);
 
-  const flushRuntimeSettings = useCallback(async () => {
+  const flushRuntimeSettings = useCallback(async (targetSessionId?: string | null) => {
+    const normalizedTargetSessionId = typeof targetSessionId === 'string'
+      ? targetSessionId.trim()
+      : '';
+    const activeSessionId = activeSessionIdRef.current;
+    if (
+      normalizedTargetSessionId
+      && (
+        normalizedTargetSessionId !== activeSessionId
+        || unboundRuntimeDirtyRef.current
+      )
+    ) {
+      const payload = toRuntimePayload(runtimeRef.current);
+      runtimeMutationSeqRef.current += 1;
+      persistErrorRef.current = null;
+      persistChainRef.current = persistChainRef.current
+        .catch(() => undefined)
+        .then(() => client.updateConversationRuntimeSettings(normalizedTargetSessionId, payload))
+        .then((response) => {
+          persistErrorRef.current = null;
+          unboundRuntimeDirtyRef.current = false;
+          const preparedState = runtimeFromResponse(response);
+          preparedSessionRuntimeRef.current = {
+            sessionId: normalizedTargetSessionId,
+            state: preparedState,
+          };
+          if (
+            !activeSessionIdRef.current
+            || activeSessionIdRef.current === normalizedTargetSessionId
+          ) {
+            applyRuntimeState(preparedState);
+          }
+        })
+        .catch((error) => {
+          persistErrorRef.current = error;
+          console.error('Failed to persist session runtime settings:', error);
+        });
+    }
     await persistChainRef.current.catch(() => undefined);
     if (persistErrorRef.current) {
       throw persistErrorRef.current instanceof Error
         ? persistErrorRef.current
         : new Error('Failed to persist session runtime settings');
     }
-  }, []);
+  }, [applyRuntimeState, client]);
 
   return {
     selectedModelId: runtimeState.selectedModelId,

@@ -3,7 +3,7 @@
 
 use std::path::Path;
 
-use chatos_builtin_tools::CodeMaintainerHooks;
+use chatos_mcp::CodeMaintainerHooks;
 
 pub(crate) struct ChatosCodeMaintainerHooks;
 

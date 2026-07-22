@@ -16,6 +16,7 @@ impl RunService {
             plugin_management_client: None,
             ask_user_prompt_service,
             start_locks: Arc::new(parking_lot::Mutex::new(HashMap::new())),
+            callback_delivery_locks: Arc::new(parking_lot::Mutex::new(HashMap::new())),
         }
     }
 
@@ -31,6 +32,7 @@ impl RunService {
             plugin_management_client: Some(plugin_management_client),
             ask_user_prompt_service,
             start_locks: Arc::new(parking_lot::Mutex::new(HashMap::new())),
+            callback_delivery_locks: Arc::new(parking_lot::Mutex::new(HashMap::new())),
         }
     }
 
@@ -178,7 +180,39 @@ impl RunService {
 
     pub async fn fail_expired_run_claims(&self) -> Result<usize, String> {
         let now = now_rfc3339();
-        self.store.fail_expired_run_claims(now.as_str()).await
+        let failed_runs = self.store.fail_expired_run_claims(now.as_str()).await?;
+        for run in &failed_runs {
+            if let Some(mut task) = self.store.get_task(run.task_id.as_str()).await? {
+                if task.last_run_id.as_deref() == Some(run.id.as_str()) {
+                    task.status = TaskStatus::Failed;
+                    task.result_summary = run.result_summary.clone();
+                    task.updated_at = now.clone();
+                    self.store.save_task(task).await?;
+                }
+            }
+            self.store
+                .append_run_event(TaskRunEventRecord::new(
+                    run.id.clone(),
+                    "run.claim.expired".to_string(),
+                    run.result_summary.clone(),
+                    Some(serde_json::json!({
+                        "reason": "worker_claim_expired",
+                        "previous_worker_id": run.worker_id,
+                    })),
+                ))
+                .await?;
+            if let Err(err) = self.release_sandboxes_for_terminal_run(run).await {
+                tracing::warn!(
+                    run_id = run.id.as_str(),
+                    error = err.as_str(),
+                    "failed to release sandboxes after worker claim expired"
+                );
+            }
+            self.try_send_terminal_callback(run.task_id.as_str(), run)
+                .await;
+        }
+        self.store.refresh_runtime_guards().await?;
+        Ok(failed_runs.len())
     }
 
     pub async fn batch_start_runs(

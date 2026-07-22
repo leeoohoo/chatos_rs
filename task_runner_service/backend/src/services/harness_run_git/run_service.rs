@@ -262,6 +262,15 @@ impl RunService {
                 &secrets,
             )
             .await?;
+            if status == "committed" {
+                promote_run_branch_to_base(
+                    worktree.as_path(),
+                    context.base_branch.as_str(),
+                    context.base_commit.as_str(),
+                    &secrets,
+                )
+                .await?;
+            }
             Ok(context.output_report(status.as_str(), Some(result_commit), None))
         }
         .await;
@@ -284,6 +293,19 @@ pub(in crate::services) async fn create_snapshot_commit_and_push(
     commit_message: &str,
     secrets: &[&str],
 ) -> Result<String, String> {
+    let expected_base_commit = run_git_output(
+        vec![
+            "rev-parse".to_string(),
+            "--verify".to_string(),
+            format!("refs/remotes/origin/{base_branch}"),
+        ],
+        Some(worktree),
+        secrets,
+    )
+    .await
+    .ok()
+    .map(|value| value.trim().to_string())
+    .filter(|value| !value.is_empty());
     replace_git_worktree_with_workspace(workspace_dir, worktree)?;
     let snapshot_branch = format!("chatos-snapshot-{}", Uuid::new_v4().simple());
     run_git(
@@ -337,12 +359,15 @@ pub(in crate::services) async fn create_snapshot_commit_and_push(
     .await?
     .trim()
     .to_string();
+    let base_lease = expected_base_commit
+        .map(|commit| format!("--force-with-lease=refs/heads/{base_branch}:{commit}"))
+        .unwrap_or_else(|| format!("--force-with-lease=refs/heads/{base_branch}:"));
     run_git(
         vec![
             "push".to_string(),
             "origin".to_string(),
+            base_lease,
             format!("HEAD:refs/heads/{base_branch}"),
-            "--force".to_string(),
         ],
         Some(worktree),
         secrets,
@@ -440,4 +465,23 @@ pub(in crate::services) async fn commit_workspace_to_run_branch(
     )
     .await?;
     Ok(("committed".to_string(), result_commit))
+}
+
+pub(in crate::services) async fn promote_run_branch_to_base(
+    worktree: &Path,
+    base_branch: &str,
+    expected_base_commit: &str,
+    secrets: &[&str],
+) -> Result<(), String> {
+    run_git(
+        vec![
+            "push".to_string(),
+            "origin".to_string(),
+            format!("--force-with-lease=refs/heads/{base_branch}:{expected_base_commit}"),
+            format!("HEAD:refs/heads/{base_branch}"),
+        ],
+        Some(worktree),
+        secrets,
+    )
+    .await
 }

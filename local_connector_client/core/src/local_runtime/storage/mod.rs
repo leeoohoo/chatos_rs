@@ -26,12 +26,12 @@ pub(crate) use agent_prompts::LocalAgentPromptRecord;
 pub(crate) use ask_user::LocalAskUserPromptRecord;
 pub(crate) use database::{database_path_for_state, LocalDatabase};
 pub(crate) use models::{
-    AppendLocalMessageInput, AppendLocalRuntimeEventInput, BeginLocalTurnInput,
-    BeginLocalTurnResult, CompleteLocalTurnInput, CreateLocalMemorySummaryInput,
-    CreateLocalSessionInput, LocalMemoryContext, LocalMemorySummaryRecord, LocalMessageRecord,
-    LocalProjectRecord, LocalRuntimeDatabaseHealth, LocalRuntimeEventRecord,
-    LocalRuntimeSettingsRecord, LocalSessionRecord, LocalSubjectMemoryRecord,
-    LocalSubjectMemoryRollupPlan, LocalTurnRecord, LocalTurnSnapshot,
+    AppendLocalMessageInput, AppendLocalRuntimeEventInput, BeginLocalBackgroundTurnInput,
+    BeginLocalTurnInput, BeginLocalTurnResult, CompleteLocalTurnInput,
+    CreateLocalMemorySummaryInput, CreateLocalSessionInput, LocalMemoryContext,
+    LocalMemorySummaryRecord, LocalMessageRecord, LocalProjectRecord, LocalRuntimeDatabaseHealth,
+    LocalRuntimeEventRecord, LocalRuntimeSettingsRecord, LocalSessionRecord,
+    LocalSubjectMemoryRecord, LocalSubjectMemoryRollupPlan, LocalTurnRecord, LocalTurnSnapshot,
     SaveLocalRuntimeSettingsInput, SaveLocalSubjectMemoryRollupInput, UpsertLocalProjectInput,
 };
 

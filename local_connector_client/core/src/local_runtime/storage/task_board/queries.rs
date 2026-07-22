@@ -37,7 +37,11 @@ impl LocalDatabase {
                    tasks.tags_json, tasks.prerequisite_task_ids_json, tasks.due_at,
                    tasks.outcome_summary, tasks.outcome_items_json, tasks.resume_hint,
                    tasks.blocker_reason, tasks.blocker_needs_json, tasks.blocker_kind,
-                   tasks.completed_at, tasks.last_outcome_at, tasks.created_at, tasks.updated_at
+                   tasks.completed_at, tasks.last_outcome_at, tasks.created_at, tasks.updated_at,
+                   tasks.task_kind, tasks.objective, tasks.model_config_id,
+                   tasks.is_planning_task, tasks.enabled_builtin_kinds_json,
+                   tasks.external_mcp_config_ids_json, tasks.selected_skill_ids_json,
+                   tasks.last_run_id
             FROM task_board_tasks AS tasks
             INNER JOIN turns ON turns.id = tasks.turn_id
             WHERE tasks.owner_user_id = ? AND tasks.session_id = ?
@@ -84,7 +88,11 @@ pub(super) async fn select_task(
                tasks.tags_json, tasks.prerequisite_task_ids_json, tasks.due_at,
                tasks.outcome_summary, tasks.outcome_items_json, tasks.resume_hint,
                tasks.blocker_reason, tasks.blocker_needs_json, tasks.blocker_kind,
-               tasks.completed_at, tasks.last_outcome_at, tasks.created_at, tasks.updated_at
+               tasks.completed_at, tasks.last_outcome_at, tasks.created_at, tasks.updated_at,
+               tasks.task_kind, tasks.objective, tasks.model_config_id,
+               tasks.is_planning_task, tasks.enabled_builtin_kinds_json,
+               tasks.external_mcp_config_ids_json, tasks.selected_skill_ids_json,
+               tasks.last_run_id
         FROM task_board_tasks AS tasks
         INNER JOIN turns ON turns.id = tasks.turn_id
         WHERE tasks.id = ? AND tasks.session_id = ? AND tasks.owner_user_id = ?

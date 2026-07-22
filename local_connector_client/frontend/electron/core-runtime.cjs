@@ -8,11 +8,26 @@ const path = require('node:path');
 
 const MAX_UNIX_SOCKET_PATH_BYTES = 100;
 const CORE_LOG_MAX_BYTES = 5 * 1024 * 1024;
+const CORE_RESTART_BASE_DELAY_MS = 250;
+const CORE_RESTART_MAX_DELAY_MS = 5_000;
+const CORE_RESTART_STABLE_WINDOW_MS = 10_000;
+
+function coreRestartDelayMs(attempt) {
+  const normalizedAttempt = Number.isInteger(attempt) && attempt > 0 ? attempt : 0;
+  return Math.min(
+    CORE_RESTART_BASE_DELAY_MS * (2 ** Math.min(normalizedAttempt, 5)),
+    CORE_RESTART_MAX_DELAY_MS,
+  );
+}
 
 function createCoreRuntime({ app, desktopAuthToken }) {
   let coreProcess = null;
   let ipcEndpoint = null;
   let ipcSocketDir = null;
+  let restartAttempt = 0;
+  let restartTimer = null;
+  let stableTimer = null;
+  let stopRequested = false;
 
   function resourcePath(...segments) {
     const packagedPath = path.join(process.resourcesPath, ...segments);
@@ -80,6 +95,10 @@ function createCoreRuntime({ app, desktopAuthToken }) {
   }
 
   function startCore() {
+    if (coreProcess) {
+      return;
+    }
+    stopRequested = false;
     if (!ipcEndpoint) {
       ipcEndpoint = createIpcEndpoint();
       ipcSocketDir = process.platform === 'win32' ? null : path.dirname(ipcEndpoint);
@@ -121,13 +140,59 @@ function createCoreRuntime({ app, desktopAuthToken }) {
       }
     }
 
-    coreProcess.on('error', (error) => {
+    const startedProcess = coreProcess;
+    clearStableTimer();
+    stableTimer = setTimeout(() => {
+      if (coreProcess === startedProcess) {
+        restartAttempt = 0;
+      }
+      stableTimer = null;
+    }, CORE_RESTART_STABLE_WINDOW_MS);
+    stableTimer.unref?.();
+
+    startedProcess.on('error', (error) => {
       appendCoreLog(coreLog.path, `core process failed to start: ${error.stack || error}`);
     });
-    coreProcess.on('exit', (code, signal) => {
+    startedProcess.on('exit', (code, signal) => {
       appendCoreLog(coreLog.path, `core process exited: code=${code} signal=${signal}`);
-      coreProcess = null;
+      if (coreProcess === startedProcess) {
+        coreProcess = null;
+      }
+      clearStableTimer();
+      if (!stopRequested) {
+        scheduleCoreRestart(coreLog.path);
+      }
     });
+  }
+
+  function clearRestartTimer() {
+    if (restartTimer) {
+      clearTimeout(restartTimer);
+      restartTimer = null;
+    }
+  }
+
+  function clearStableTimer() {
+    if (stableTimer) {
+      clearTimeout(stableTimer);
+      stableTimer = null;
+    }
+  }
+
+  function scheduleCoreRestart(logPath) {
+    if (stopRequested || restartTimer || coreProcess) {
+      return;
+    }
+    const delayMs = coreRestartDelayMs(restartAttempt);
+    restartAttempt += 1;
+    appendCoreLog(logPath, `core process will restart in ${delayMs}ms`);
+    restartTimer = setTimeout(() => {
+      restartTimer = null;
+      if (!stopRequested && !coreProcess) {
+        startCore();
+      }
+    }, delayMs);
+    restartTimer.unref?.();
   }
 
   function createIpcEndpoint() {
@@ -220,6 +285,9 @@ function createCoreRuntime({ app, desktopAuthToken }) {
   }
 
   async function stopCoreProcessTree() {
+    stopRequested = true;
+    clearRestartTimer();
+    clearStableTimer();
     const child = coreProcess;
     if (!child || !child.pid) {
       coreProcess = null;
@@ -243,6 +311,9 @@ function createCoreRuntime({ app, desktopAuthToken }) {
   }
 
   function cleanupIpcEndpoint() {
+    stopRequested = true;
+    clearRestartTimer();
+    clearStableTimer();
     if (ipcSocketDir) {
       fs.rmSync(ipcSocketDir, { recursive: true, force: true });
       ipcSocketDir = null;
@@ -260,4 +331,4 @@ function createCoreRuntime({ app, desktopAuthToken }) {
   };
 }
 
-module.exports = { createCoreRuntime };
+module.exports = { coreRestartDelayMs, createCoreRuntime };

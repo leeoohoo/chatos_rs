@@ -46,7 +46,11 @@ export function buildMcpPayload(values: Record<string, unknown>, isAdmin: boolea
 }
 
 export function isSystemManagedMcp(record: McpRecord): boolean {
-  return record.source_kind === 'system_seed' || record.runtime.kind === 'builtin';
+  return (
+    record.source_kind === 'system_seed' ||
+    record.runtime.kind === 'system' ||
+    record.runtime.kind === 'builtin'
+  );
 }
 
 export function runtimeUsesCommand(kind: RuntimeKind | undefined): boolean {

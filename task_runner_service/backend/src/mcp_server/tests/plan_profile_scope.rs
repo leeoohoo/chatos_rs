@@ -297,6 +297,7 @@ async fn project_execution_planner_creates_multiple_runner_tasks_and_syncs_links
             usage_scenario: Some("project execution".to_string()),
             temperature: None,
             max_output_tokens: None,
+            model_request_max_retries: 5,
             thinking_level: None,
             enabled: Some(true),
             supports_responses: Some(true),
@@ -329,15 +330,18 @@ async fn project_execution_planner_creates_multiple_runner_tasks_and_syncs_links
                         "project_task_id": "project-task-1",
                         "title": "Prepare implementation",
                         "objective": "Inspect the current implementation and prepare the change.",
-                        "default_model_config_id": "model-1",
-                        "input_payload": { "slice": "analysis" }
+                        "default_model_config_id": "model-that-must-be-overridden",
+                        "input_payload": {
+                            "requirement_id": "child-requirement-1",
+                            "slice": "analysis"
+                        }
                     },
                     {
                         "client_ref": "implement",
                         "project_task_id": "project-task-1",
                         "title": "Implement change",
                         "objective": "Apply the code changes and verify the behavior.",
-                        "default_model_config_id": "model-1",
+                        "default_model_config_id": "another-model-that-must-be-overridden",
                         "prerequisite_refs": ["prepare"],
                         "input_payload": { "slice": "code" }
                     }
@@ -348,6 +352,7 @@ async fn project_execution_planner_creates_multiple_runner_tasks_and_syncs_links
                 project_id: Some(project.id.clone()),
                 source_session_id: Some("session-1".to_string()),
                 source_user_message_id: Some("execution-group-1".to_string()),
+                default_model_config_id: Some("model-1".to_string()),
                 tool_profile: Some("project_requirement_execution_planner".to_string()),
                 ..McpRequestContext::default()
             },
@@ -435,6 +440,14 @@ async fn project_execution_planner_creates_multiple_runner_tasks_and_syncs_links
         .expect("implement task");
     assert_eq!(prepare_task.status, TaskStatus::Queued);
     assert_eq!(implement_task.status, TaskStatus::Ready);
+    assert_eq!(
+        prepare_task.default_model_config_id.as_deref(),
+        Some("model-1")
+    );
+    assert_eq!(
+        implement_task.default_model_config_id.as_deref(),
+        Some("model-1")
+    );
     assert_eq!(prepare_task.project_id, project.id);
     assert_eq!(implement_task.project_id, project.id);
     assert_eq!(prepare_task.source_session_id.as_deref(), Some("session-1"));
@@ -462,6 +475,18 @@ async fn project_execution_planner_creates_multiple_runner_tasks_and_syncs_links
     );
     assert_eq!(
         prepare_payload
+            .get("requirement_id")
+            .and_then(|value| value.as_str()),
+        Some("child-requirement-1")
+    );
+    assert_eq!(
+        prepare_payload
+            .get("root_requirement_id")
+            .and_then(|value| value.as_str()),
+        Some("requirement-1")
+    );
+    assert_eq!(
+        prepare_payload
             .get("execution_group_id")
             .and_then(|value| value.as_str()),
         Some("execution-group-1")
@@ -471,6 +496,19 @@ async fn project_execution_planner_creates_multiple_runner_tasks_and_syncs_links
             .get("slice")
             .and_then(|value| value.as_str()),
         Some("analysis")
+    );
+    let implement_payload = implement_task.input_payload.expect("implement payload");
+    assert_eq!(
+        implement_payload
+            .get("requirement_id")
+            .and_then(|value| value.as_str()),
+        Some("requirement-1")
+    );
+    assert_eq!(
+        implement_payload
+            .get("root_requirement_id")
+            .and_then(|value| value.as_str()),
+        Some("requirement-1")
     );
 
     let calls = sync_calls.lock().expect("project sync calls").clone();

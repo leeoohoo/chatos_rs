@@ -6,6 +6,7 @@ import type ApiClient from '../../api/client';
 import { ApiRequestError } from '../../api/client/shared';
 import { localRuntimeBridgeAvailable } from '../../api/localRuntime';
 import { resolveProjectExecutionPlane } from '../../domain/projectExecution';
+import { isTransientServiceAppError } from '../../domain/userVisibleError';
 import { normalizeProject } from '../helpers/projects';
 import type { ChatStoreDraft, ChatStoreGet, ChatStoreSet } from '../types';
 
@@ -18,6 +19,7 @@ interface Deps {
 
 interface LoadProjectsOptions {
   force?: boolean;
+  throwOnError?: boolean;
 }
 
 interface ProjectsListCacheEntry {
@@ -264,31 +266,48 @@ export function createProjectActions({ set, get, client, getUserIdParam }: Deps)
           return formatted;
         }
 
-        let inflight = cacheState.listInflight.get(cacheKey);
+        let inflight = options?.force ? undefined : cacheState.listInflight.get(cacheKey);
         if (!inflight) {
-          inflight = client.listProjects(uid)
+          const request = client.listProjects(uid)
             .then((list) => {
               const formatted = visibleProjectsOnCurrentSurface(
                 Array.isArray(list) ? list.map(normalizeProject) : [],
               );
-              syncLoadedProjects(uid, formatted);
               return formatted;
-            })
-            .finally(() => {
-              cacheState.listInflight.delete(cacheKey);
             });
+          const trackedRequest: Promise<Project[]> = request.then((formatted) => {
+            if (cacheState.listInflight.get(cacheKey) === trackedRequest) {
+              syncLoadedProjects(uid, formatted);
+              syncProjectsIntoState(formatted, uid);
+              set((state: ChatStoreDraft) => {
+                if (isTransientServiceAppError(state.error)) {
+                  state.error = null;
+                }
+              });
+              cacheState.listInflight.delete(cacheKey);
+            }
+            return formatted;
+          }, (error) => {
+            if (cacheState.listInflight.get(cacheKey) === trackedRequest) {
+              cacheState.listInflight.delete(cacheKey);
+            }
+            throw error;
+          });
+          inflight = trackedRequest;
           cacheState.listInflight.set(cacheKey, inflight);
         }
 
         const formatted = await inflight;
-        syncProjectsIntoState(formatted, uid);
         return formatted;
       } catch (error) {
         console.error('Failed to load projects:', error);
+        if (options?.throwOnError) {
+          throw error;
+        }
         set((state: ChatStoreDraft) => {
           state.error = error instanceof Error ? error.message : 'Failed to load projects';
         });
-        return [];
+        return get().projects || [];
       }
     },
 

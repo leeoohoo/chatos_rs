@@ -6,7 +6,9 @@ use tokio::process::Command;
 
 use crate::config::AppConfig;
 
-use super::{SandboxBackend, SandboxCreateSpec, SandboxInstance};
+use super::{
+    append_sandbox_create_runtime_args, SandboxBackend, SandboxCreateSpec, SandboxInstance,
+};
 
 #[derive(Debug, Clone)]
 pub struct KataSandboxBackend {
@@ -58,35 +60,16 @@ impl SandboxBackend for KataSandboxBackend {
             .arg("--label")
             .arg(format!("chatos.sandbox_id={}", spec.sandbox_id))
             .arg("--label")
-            .arg("chatos.backend=kata")
-            .arg("--network")
-            .arg(network)
-            .arg("--cpus")
-            .arg(cpu)
-            .arg("--memory")
-            .arg(memory)
-            .arg("--pids-limit")
-            .arg(pids)
-            .arg("--workdir")
-            .arg("/workspace");
-        command
-            .arg("-e")
-            .arg(format!("CHATOS_SANDBOX_ID={}", spec.sandbox_id))
-            .arg("-e")
-            .arg("CHATOS_SANDBOX_PERMISSION_PROFILE=workspace_write")
-            .arg("-e")
-            .arg(format!(
-                "CHATOS_SANDBOX_DISK_LIMIT_BYTES={disk_limit_bytes}"
-            ))
-            .arg("-e")
-            .arg("HOME=/home/sandbox")
-            .arg("-e")
-            .arg("XDG_CACHE_HOME=/home/sandbox/.cache");
-        if let Some(agent_token) = spec.agent_token.as_deref() {
-            command
-                .arg("-e")
-                .arg(format!("CHATOS_SANDBOX_MCP_TOKEN={agent_token}"));
-        }
+            .arg("chatos.backend=kata");
+        append_sandbox_create_runtime_args(
+            &mut command,
+            &spec,
+            network,
+            cpu.as_str(),
+            memory.as_str(),
+            pids.as_str(),
+            disk_limit_bytes,
+        );
         if publish_agent {
             command
                 .arg("-p")

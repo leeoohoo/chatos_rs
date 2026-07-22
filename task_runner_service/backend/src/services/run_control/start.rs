@@ -42,6 +42,16 @@ impl RunService {
             .await
     }
 
+    pub(super) async fn start_retry_run_with_user(
+        &self,
+        task_id: &str,
+        input: StartTaskRunRequest,
+        current_user: Option<&CurrentUser>,
+    ) -> Result<TaskRunRecord, String> {
+        self.start_run_with_trigger(task_id, input, RunTriggerSource::Retry, current_user)
+            .await
+    }
+
     pub(super) fn start_lock_for_task(&self, task_id: &str) -> Arc<AsyncMutex<()>> {
         let mut locks = self.start_locks.lock();
         locks
@@ -80,11 +90,11 @@ impl RunService {
             "task runner received start_run request"
         );
         if matches!(task.schedule.mode, TaskScheduleMode::ContactAsync)
-            && !matches!(trigger, RunTriggerSource::Scheduler)
+            && !contact_async_trigger_is_allowed(trigger)
         {
             return Err("contact_async tasks can only be started by the scheduler".to_string());
         }
-        if task.status == TaskStatus::Cancelled {
+        if task.status == TaskStatus::Cancelled && !cancelled_task_trigger_is_allowed(trigger) {
             return Err(format!("task has been cancelled: {task_id}"));
         }
         if self.store.has_active_run_for_task(task_id).await? {
@@ -117,6 +127,10 @@ impl RunService {
             }
         }
         let capability_policy = self.resolve_task_runner_policy_for_task(&task).await?;
+        let agent_key = crate::models::task_runner_agent_key_for(
+            task.task_profile.as_str(),
+            task.mcp_config.requires_execution,
+        );
         let mut runtime_task = task.clone();
         if let Some(policy) = capability_policy.as_ref() {
             policy.apply_to_task(&mut runtime_task)?;
@@ -137,7 +151,7 @@ impl RunService {
             .await
             .unwrap_or_else(|_| self.config.default_execution_environment_mode.clone());
         let sandbox_enabled = self
-            .should_route_task_to_sandbox(&runtime_task)
+            .should_route_task_to_sandbox(&runtime_task, capability_policy.is_some())
             .await
             .unwrap_or(false);
 
@@ -148,6 +162,7 @@ impl RunService {
             .transpose()?
             .unwrap_or_default();
         let input_snapshot = json!({
+            "agent_key": agent_key.as_str(),
             "task_id": task.id,
             "task_title": task.title,
             "objective": task.objective,
@@ -162,29 +177,14 @@ impl RunService {
             "sandbox_enabled": sandbox_enabled,
         });
         let now = now_rfc3339();
-        let run = TaskRunRecord {
-            id: run_id.clone(),
-            task_id: task.id.clone(),
-            model_config_id: model_config_id.clone(),
-            memory_thread_id: task.memory_thread_id.clone(),
-            status: TaskRunStatus::Queued,
-            started_at: None,
-            finished_at: None,
+        let run = TaskRunRecord::queued(
+            run_id.clone(),
+            task.id.clone(),
+            model_config_id.clone(),
+            task.memory_thread_id.clone(),
             input_snapshot,
-            context_snapshot: None,
-            result_summary: None,
-            error_message: None,
-            usage: None,
-            report: None,
-            cancel_requested: false,
-            summary_job_run_id: None,
-            worker_id: None,
-            claim_token: None,
-            claim_until: None,
-            attempt: 0,
-            created_at: now.clone(),
-            updated_at: now,
-        };
+            now,
+        );
         self.store.save_run(run.clone()).await?;
         info!(
             run_id = run.id.as_str(),
@@ -198,7 +198,9 @@ impl RunService {
             "task runner queued run"
         );
         if let Ok(Some(mut task_record)) = self.store.get_task(task_id).await {
-            if task_record.status != TaskStatus::Cancelled {
+            if task_record.status != TaskStatus::Cancelled
+                || cancelled_task_trigger_is_allowed(trigger)
+            {
                 task_record.status = TaskStatus::Queued;
                 task_record.last_run_id = Some(run.id.clone());
                 task_record.updated_at = now_rfc3339();
@@ -220,5 +222,41 @@ impl RunService {
             .await?;
 
         Ok(run)
+    }
+}
+
+fn contact_async_trigger_is_allowed(trigger: RunTriggerSource) -> bool {
+    matches!(
+        trigger,
+        RunTriggerSource::Scheduler | RunTriggerSource::Retry
+    )
+}
+
+fn cancelled_task_trigger_is_allowed(trigger: RunTriggerSource) -> bool {
+    matches!(trigger, RunTriggerSource::Retry)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        cancelled_task_trigger_is_allowed, contact_async_trigger_is_allowed, RunTriggerSource,
+    };
+
+    #[test]
+    fn contact_async_allows_scheduler_and_explicit_retry_only() {
+        assert!(contact_async_trigger_is_allowed(
+            RunTriggerSource::Scheduler
+        ));
+        assert!(contact_async_trigger_is_allowed(RunTriggerSource::Retry));
+        assert!(!contact_async_trigger_is_allowed(RunTriggerSource::Manual));
+    }
+
+    #[test]
+    fn cancelled_task_can_only_be_reopened_by_explicit_retry() {
+        assert!(cancelled_task_trigger_is_allowed(RunTriggerSource::Retry));
+        assert!(!cancelled_task_trigger_is_allowed(RunTriggerSource::Manual));
+        assert!(!cancelled_task_trigger_is_allowed(
+            RunTriggerSource::Scheduler
+        ));
     }
 }

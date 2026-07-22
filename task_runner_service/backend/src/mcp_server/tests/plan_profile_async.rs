@@ -21,6 +21,7 @@ async fn chatos_async_reuse_is_scoped_by_task_profile() {
             usage_scenario: Some("task planning".to_string()),
             temperature: None,
             max_output_tokens: None,
+            model_request_max_retries: 5,
             thinking_level: None,
             enabled: Some(true),
             supports_responses: Some(true),
@@ -115,6 +116,87 @@ async fn chatos_async_reuse_is_scoped_by_task_profile() {
         .expect("reused plan task id");
 
     assert_eq!(reused_plan_task_id, created_plan_task_id);
+}
+
+#[tokio::test]
+async fn chatos_async_create_task_inherits_selected_conversation_model() {
+    let (mcp_service, task_service, project_service) = test_mcp_service().await;
+    let current_user = agent_user("owner-a");
+    for (id, name) in [
+        ("model-selected", "Selected Model"),
+        ("model-other", "Other Model"),
+    ] {
+        mcp_service
+            .model_config_service
+            .upsert_chatos_model_config(ChatosSyncedModelConfigRequest {
+                id: id.to_string(),
+                owner_user_id: Some("owner-a".to_string()),
+                name: name.to_string(),
+                provider: "openai".to_string(),
+                prompt_vendor: Some("gpt".to_string()),
+                base_url: "https://api.example.test/v1".to_string(),
+                api_key: "test-key".to_string(),
+                model: "gpt-test".to_string(),
+                usage_scenario: Some("task planning".to_string()),
+                temperature: None,
+                max_output_tokens: None,
+                model_request_max_retries: 5,
+                thinking_level: None,
+                enabled: Some(true),
+                supports_responses: Some(true),
+            })
+            .await
+            .expect("create model config");
+    }
+    let project = project_service
+        .create_project(
+            CreateTaskProjectRequest {
+                name: "Project A".to_string(),
+                root_path: None,
+                git_url: None,
+                description: None,
+            },
+            &current_user,
+        )
+        .await
+        .expect("create project");
+
+    let result = mcp_service
+        .call_tool(
+            "create_task",
+            json!({
+                "title": "plan task",
+                "objective": "define implementation plan",
+                "default_model_config_id": "model-other",
+            }),
+            &current_user,
+            &McpRequestContext {
+                project_id: Some(project.id.clone()),
+                source_session_id: Some("session-1".to_string()),
+                source_user_message_id: Some("message-1".to_string()),
+                default_model_config_id: Some("model-selected".to_string()),
+                tool_profile: Some("chatos_async_planner".to_string()),
+                task_profile: Some(TASK_PROFILE_CHATOS_PLAN.to_string()),
+                ..McpRequestContext::default()
+            },
+        )
+        .await
+        .expect("create plan task");
+
+    let task_id = result
+        .get("_structured_result")
+        .and_then(|value| value.get("id"))
+        .and_then(|value| value.as_str())
+        .expect("plan task id");
+    let task = task_service
+        .get_task(task_id)
+        .await
+        .expect("get plan task")
+        .expect("plan task");
+    assert_eq!(
+        task.default_model_config_id.as_deref(),
+        Some("model-selected")
+    );
 }
 
 #[tokio::test]
@@ -240,6 +322,7 @@ async fn chatos_async_create_task_does_not_reuse_succeeded_task() {
             usage_scenario: Some("task planning".to_string()),
             temperature: None,
             max_output_tokens: None,
+            model_request_max_retries: 5,
             thinking_level: None,
             enabled: Some(true),
             supports_responses: Some(true),
@@ -332,6 +415,7 @@ async fn chatos_async_batch_create_does_not_reuse_succeeded_task() {
             usage_scenario: Some("task planning".to_string()),
             temperature: None,
             max_output_tokens: None,
+            model_request_max_retries: 5,
             thinking_level: None,
             enabled: Some(true),
             supports_responses: Some(true),

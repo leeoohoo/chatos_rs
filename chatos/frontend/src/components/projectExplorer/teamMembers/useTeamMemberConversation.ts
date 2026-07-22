@@ -383,6 +383,7 @@ export const useTeamMemberConversation = ({
     content: string,
     attachments?: File[],
     _runtimeOptions?: SendMessageRuntimeOptions,
+    prepareSessionRuntime?: (sessionId: string) => Promise<void>,
   ) => {
     if (!selectedContact) {
       return;
@@ -392,6 +393,7 @@ export const useTeamMemberConversation = ({
       if (!sessionId) {
         return;
       }
+      await prepareSessionRuntime?.(sessionId);
       setSelectedSessionId(sessionId);
       if (currentSession?.id !== sessionId) {
         await selectSession(sessionId, {

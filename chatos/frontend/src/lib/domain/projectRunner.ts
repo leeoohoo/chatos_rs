@@ -48,6 +48,10 @@ interface ProjectRunnerContactRowsCacheEntry {
 
 const projectRunnerContactRowsInflight = new WeakMap<object, Map<string, Promise<ProjectContactLinkResponse[]>>>();
 const projectRunnerContactRowsCache = new WeakMap<object, Map<string, ProjectRunnerContactRowsCacheEntry>>();
+const projectRunnerContactRowsListeners = new WeakMap<
+  object,
+  Map<string, Set<(rows: ProjectContactLinkResponse[]) => void>>
+>();
 
 const readTrimmedString = (value: unknown): string => (
   typeof value === 'string' ? value.trim() : ''
@@ -83,7 +87,45 @@ const setProjectRunnerContactRowsCacheEntry = (
 ): ProjectContactLinkResponse[] => {
   const scopedCache = ensureProjectRunnerContactRowsScopedCache(client);
   scopedCache.set(projectId, entry);
+  projectRunnerContactRowsListeners
+    .get(client)
+    ?.get(projectId)
+    ?.forEach((listener) => listener(entry.rows));
   return entry.rows;
+};
+
+export const subscribeProjectRunnerContactRows = (
+  client: RunnerProjectContactsClient,
+  projectId: string,
+  listener: (rows: ProjectContactLinkResponse[]) => void,
+): (() => void) => {
+  const normalizedProjectId = readTrimmedString(projectId);
+  if (!normalizedProjectId) {
+    return () => undefined;
+  }
+  let scopedListeners = projectRunnerContactRowsListeners.get(client);
+  if (!scopedListeners) {
+    scopedListeners = new Map();
+    projectRunnerContactRowsListeners.set(client, scopedListeners);
+  }
+  let listeners = scopedListeners.get(normalizedProjectId);
+  if (!listeners) {
+    listeners = new Set();
+    scopedListeners.set(normalizedProjectId, listeners);
+  }
+  listeners.add(listener);
+
+  return () => {
+    const currentScopedListeners = projectRunnerContactRowsListeners.get(client);
+    const currentListeners = currentScopedListeners?.get(normalizedProjectId);
+    currentListeners?.delete(listener);
+    if (currentListeners?.size === 0) {
+      currentScopedListeners?.delete(normalizedProjectId);
+    }
+    if (currentScopedListeners?.size === 0) {
+      projectRunnerContactRowsListeners.delete(client);
+    }
+  };
 };
 
 const withClientInflight = <Result,>(

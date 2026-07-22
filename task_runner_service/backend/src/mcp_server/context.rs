@@ -25,6 +25,7 @@ pub struct McpRequestContext {
     pub source_session_id: Option<String>,
     pub source_turn_id: Option<String>,
     pub source_user_message_id: Option<String>,
+    pub default_model_config_id: Option<String>,
     pub workspace_dir: Option<String>,
     pub remote_server_config: Option<String>,
     pub tool_profile: Option<String>,
@@ -112,6 +113,27 @@ impl McpRequestContext {
         } else {
             TASK_PROFILE_DEFAULT
         }
+    }
+
+    pub(super) fn child_task_profile(
+        &self,
+        is_planning_task: Option<bool>,
+        _requires_execution: Option<bool>,
+    ) -> Option<String> {
+        if !self.is_chatos_plan_task_profile() {
+            return None;
+        }
+        // Preserve the historical planning profile when an older caller omits
+        // the field. Planner-facing schemas now require an explicit value.
+        let is_planning_task = is_planning_task.unwrap_or(true);
+        Some(
+            if is_planning_task {
+                TASK_PROFILE_CHATOS_PLAN
+            } else {
+                crate::models::TASK_PROFILE_DEFAULT
+            }
+            .to_string(),
+        )
     }
 
     pub(super) fn requested_builtin_prompt_locale(&self) -> String {

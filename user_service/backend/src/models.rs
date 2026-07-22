@@ -3,6 +3,13 @@
 
 use serde::{Deserialize, Serialize};
 
+pub const DEFAULT_MODEL_REQUEST_MAX_RETRIES: i64 = 5;
+pub const MAX_MODEL_REQUEST_MAX_RETRIES: i64 = 10;
+
+fn default_model_request_max_retries() -> i64 {
+    DEFAULT_MODEL_REQUEST_MAX_RETRIES
+}
+
 pub const USER_ROLE_SUPER_ADMIN: &str = "super_admin";
 pub const USER_ROLE_USER: &str = "user";
 pub const PRINCIPAL_TYPE_HUMAN_USER: &str = "human_user";
@@ -246,6 +253,8 @@ pub struct UserModelProviderRecord {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UserModelSettingsRecord {
     pub user_id: String,
+    #[serde(default = "default_model_request_max_retries")]
+    pub model_request_max_retries: i64,
     #[serde(default)]
     pub memory_summary_model_config_id: Option<String>,
     #[serde(default)]
@@ -484,6 +493,7 @@ pub struct UpdateUserModelProviderRequest {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UpdateUserModelSettingsRequest {
     pub user_id: Option<String>,
+    pub model_request_max_retries: Option<i64>,
     pub memory_summary_model_config_id: Option<Option<String>>,
     pub memory_summary_thinking_level: Option<Option<String>>,
     pub project_management_agent_model_config_id: Option<Option<String>>,

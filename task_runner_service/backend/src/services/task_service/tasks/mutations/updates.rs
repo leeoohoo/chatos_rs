@@ -16,6 +16,7 @@ impl TaskService {
         };
 
         let mut project_changed = false;
+        let mut capability_boundary_changed = false;
         if let Some(project_id) = patch.project_id {
             let project_id = normalize_project_id(Some(project_id));
             let current_project_id = normalize_project_id(Some(task.project_id.clone()));
@@ -87,15 +88,34 @@ impl TaskService {
         }
         if let Some(task_profile) = patch.task_profile {
             task.task_profile = normalize_task_profile(Some(task_profile.as_str()))?;
+            capability_boundary_changed = true;
         }
         if let Some(schedule) = patch.schedule {
             task.schedule = sanitize_task_schedule_config(schedule, Some(&task.schedule))?;
         }
         if let Some(mcp_config) = patch.mcp_config {
             task.mcp_config = sanitize_task_mcp_config(mcp_config);
+            capability_boundary_changed = true;
+        }
+        if capability_boundary_changed {
             let task_owner_user_id = task_owner_or_creator(&task);
-            self.validate_task_mcp_config(&task.mcp_config, current_user, task_owner_user_id)
-                .await?;
+            let agent_key = crate::models::task_runner_agent_key_for(
+                task.task_profile.as_str(),
+                task.mcp_config.requires_execution,
+            );
+            self.validate_task_mcp_config_for_agent(
+                &task.mcp_config,
+                current_user,
+                task_owner_user_id,
+                agent_key,
+            )
+            .await?;
+            if let Some(policy) = self
+                .resolve_task_runner_policy_for_agent(current_user, task_owner_user_id, agent_key)
+                .await?
+            {
+                task.mcp_config.skill_policy_revision = Some(policy.policy_revision().to_string());
+            }
         }
         let prerequisite_task_ids = patch
             .prerequisite_task_ids
@@ -187,10 +207,19 @@ impl TaskService {
         }
         task.mcp_config = sanitize_task_mcp_config(task.mcp_config);
         let task_owner_user_id = task_owner_or_creator(&task);
-        self.validate_task_mcp_config(&task.mcp_config, current_user, task_owner_user_id)
-            .await?;
+        let agent_key = crate::models::task_runner_agent_key_for(
+            task.task_profile.as_str(),
+            task.mcp_config.requires_execution,
+        );
+        self.validate_task_mcp_config_for_agent(
+            &task.mcp_config,
+            current_user,
+            task_owner_user_id,
+            agent_key,
+        )
+        .await?;
         if let Some(policy) = self
-            .resolve_task_runner_policy(current_user, task_owner_user_id)
+            .resolve_task_runner_policy_for_agent(current_user, task_owner_user_id, agent_key)
             .await?
         {
             task.mcp_config.skill_policy_revision = Some(policy.policy_revision().to_string());

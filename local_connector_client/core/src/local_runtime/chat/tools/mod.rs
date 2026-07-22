@@ -3,9 +3,9 @@
 
 mod builtins;
 mod context;
-mod context_selection;
 mod executor;
 mod persistence;
+mod system_mcp_adapter;
 
 pub(crate) use executor::prepare_local_chat_tools;
 pub(crate) use persistence::LocalChatRecordWriter;

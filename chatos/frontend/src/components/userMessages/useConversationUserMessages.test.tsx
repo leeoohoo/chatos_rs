@@ -9,7 +9,12 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { I18nProvider } from '../../i18n/I18nProvider';
 import { ApiClientProvider } from '../../lib/api/ApiClientContext';
-import { useConversationUserMessages } from './useConversationUserMessages';
+import type { Message } from '../../types';
+import {
+  buildLiveUserMessageTurns,
+  mergeLiveUserMessageTurns,
+  useConversationUserMessages,
+} from './useConversationUserMessages';
 
 const wrapperForClient = (client: unknown) => {
   const Wrapper: React.FC<{ children: React.ReactNode }> = ({ children }) => (
@@ -32,6 +37,61 @@ describe('useConversationUserMessages', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.useRealTimers();
+  });
+
+  it('shows a just-sent optimistic user message before the server turn endpoint catches up', () => {
+    const liveMessage: Message = {
+      id: 'temp_user_1',
+      sessionId: 'session-1',
+      role: 'user',
+      content: 'new message',
+      status: 'completed',
+      createdAt: new Date('2026-07-21T08:48:00.000Z'),
+      metadata: {
+        clientOptimistic: true,
+        conversation_turn_id: 'turn-new',
+        task_runner_async: {
+          mode: 'contact_async',
+          overall_status: 'pending',
+        },
+      },
+    };
+    const liveTurns = buildLiveUserMessageTurns('session-1', [liveMessage]);
+    const visible = mergeLiveUserMessageTurns([], liveTurns);
+
+    expect(visible).toHaveLength(1);
+    expect(visible[0]?.userMessage.id).toBe('temp_user_1');
+    expect(visible[0]?.taskState.running).toBe(true);
+  });
+
+  it('deduplicates the optimistic turn after the server returns its persisted message id', () => {
+    const liveMessage: Message = {
+      id: 'temp_user_1',
+      sessionId: 'session-1',
+      role: 'user',
+      content: 'new message',
+      status: 'completed',
+      createdAt: new Date('2026-07-21T08:48:00.000Z'),
+      metadata: { clientOptimistic: true, conversation_turn_id: 'turn-new' },
+    };
+    const persisted = {
+      turnId: 'turn-new',
+      userMessage: { ...liveMessage, id: 'user-1', metadata: { conversation_turn_id: 'turn-new' } },
+      finalAssistantMessage: null,
+      hasProcess: false,
+      toolCallCount: 0,
+      thinkingCount: 0,
+      processMessageCount: 0,
+      taskState: { hasTask: false, running: false, label: null, runningCount: 0 },
+    };
+
+    const visible = mergeLiveUserMessageTurns(
+      [persisted],
+      buildLiveUserMessageTurns('session-1', [liveMessage]),
+    );
+
+    expect(visible).toHaveLength(1);
+    expect(visible[0]?.userMessage.id).toBe('user-1');
   });
 
   it('hydrates active task state from the session task runner status endpoint', async () => {

@@ -13,6 +13,9 @@ use uuid::Uuid;
 use crate::local_runtime::storage::{
     CreateLocalSessionInput, LocalDatabase, UpsertLocalProjectInput,
 };
+use crate::local_runtime::{
+    LOCAL_UNSCOPED_PROJECT_ID, LOCAL_UNSCOPED_PROJECT_NAME, LOCAL_UNSCOPED_WORKSPACE_ID,
+};
 use crate::{LocalRuntime, LocalState};
 
 use super::{execute_chat_turn, LocalChatSendRequest};
@@ -20,6 +23,88 @@ use super::{execute_chat_turn, LocalChatSendRequest};
 pub(in crate::local_runtime) mod capability_support;
 mod tool_execution;
 mod turn_control;
+
+#[tokio::test]
+async fn prepares_non_project_contact_tools_in_a_private_local_workspace() {
+    let root = std::env::temp_dir().join(format!("chatos-local-contact-{}", Uuid::new_v4()));
+    let database = LocalDatabase::open(root.join("runtime.sqlite3"))
+        .await
+        .expect("open local database");
+    capability_support::seed_chat_capabilities(&database, "user-1")
+        .await
+        .expect("seed chat capabilities");
+    let project = database
+        .upsert_project(UpsertLocalProjectInput {
+            project_id: LOCAL_UNSCOPED_PROJECT_ID.to_string(),
+            owner_user_id: "user-1".to_string(),
+            device_id: "device-1".to_string(),
+            workspace_id: LOCAL_UNSCOPED_WORKSPACE_ID.to_string(),
+            project_name: LOCAL_UNSCOPED_PROJECT_NAME.to_string(),
+            root_relative_path: None,
+        })
+        .await
+        .expect("upsert local unscoped project");
+    let session = database
+        .create_session_with_contact(
+            CreateLocalSessionInput {
+                project_id: project.project_id.clone(),
+                owner_user_id: "user-1".to_string(),
+                title: "Local contact".to_string(),
+                selected_model_id: None,
+                selected_agent_id: Some("agent-1".to_string()),
+            },
+            Some("contact-1".to_string()),
+        )
+        .await
+        .expect("create local contact session");
+    let settings = database
+        .get_runtime_settings("user-1", session.id.as_str())
+        .await
+        .expect("load runtime settings")
+        .expect("runtime settings");
+    let state = serde_json::from_value::<LocalState>(json!({
+        "device_id": "device-1",
+        "workspaces": []
+    }))
+    .expect("build local state");
+    let runtime = LocalRuntime::new(
+        root.join("state.json"),
+        Arc::new(RwLock::new(state)),
+        reqwest::Client::new(),
+        database.clone(),
+    );
+
+    let prepared = super::tools::prepare_local_chat_tools(
+        &runtime,
+        "user-1",
+        "request-contact-1",
+        &project,
+        &settings,
+        chatos_plugin_management_sdk::SystemAgentKey::ChatosConversationAgent,
+        false,
+    )
+    .await
+    .expect("prepare local contact tools");
+
+    assert_eq!(
+        prepared
+            .project_root
+            .canonicalize()
+            .expect("canonical prepared root"),
+        root.join("unscoped-workspace")
+            .canonicalize()
+            .expect("canonical expected root")
+    );
+    assert!(prepared.project_root.is_dir());
+    assert!(session.id.starts_with("lc_session_"));
+    assert!(prepared.available_tools.iter().any(|tool| {
+        tool.get("name").and_then(serde_json::Value::as_str)
+            == Some("task_runner_service_create_task")
+    }));
+
+    database.close().await;
+    fs::remove_dir_all(root).expect("cleanup local contact database");
+}
 
 #[tokio::test]
 async fn executes_text_chat_with_device_model_and_persists_both_messages() {

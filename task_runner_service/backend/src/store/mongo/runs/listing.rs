@@ -4,6 +4,30 @@
 use super::*;
 
 impl MongoStore {
+    pub(in crate::store) async fn list_pending_chatos_callback_runs(
+        &self,
+        now: &str,
+        limit: usize,
+    ) -> Result<Vec<TaskRunRecord>, String> {
+        self.load_collection_items_with_query(
+            &self.runs,
+            doc! {
+                "chatos_callback_delivery.status": "pending",
+                "$or": [
+                    { "chatos_callback_delivery.next_attempt_at": Bson::Null },
+                    { "chatos_callback_delivery.next_attempt_at": { "$exists": false } },
+                    { "chatos_callback_delivery.next_attempt_at": { "$lte": now } },
+                ],
+            },
+            Some(mongo_find_options(
+                doc! { "chatos_callback_delivery.next_attempt_at": 1, "updated_at": 1 },
+                None,
+                Some(limit),
+            )),
+        )
+        .await
+    }
+
     pub(in crate::store) async fn list_runs(
         &self,
         task_id: Option<&str>,

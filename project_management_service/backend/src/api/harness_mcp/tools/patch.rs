@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use chatos_builtin_tools::code_maintainer::{apply_patch_limited, ApplyPatchResult};
+use chatos_mcp::code_maintainer::{apply_patch_limited, ApplyPatchResult};
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path as FsPath, PathBuf};

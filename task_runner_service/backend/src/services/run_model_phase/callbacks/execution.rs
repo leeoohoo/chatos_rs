@@ -38,6 +38,7 @@ impl RunService {
             }
         };
         let mut run_spec = prepared_execution.run_spec;
+        let agent = prepared_execution.agent;
         let runtime_config = prepared_execution.runtime_config;
         let mcp_builder = prepared_execution.mcp_builder;
         let runtime_options = runtime_execution.runtime_options;
@@ -80,7 +81,7 @@ impl RunService {
             append_external_mcp_runtime_notice(&mut run_spec, task, &runtime);
             let mut completion_gate_attempts = 0usize;
             loop {
-                let report = TASK_RUNNER_AGENT
+                let report = agent
                     .run_report_with_runtime_options(
                         runtime_config.clone(),
                         run_spec.clone(),
@@ -351,7 +352,11 @@ fn append_external_mcp_runtime_notice(
 
 fn is_user_configured_external_tool(info: &chatos_mcp_runtime::ToolInfo) -> bool {
     matches!(info.server_type.as_str(), "http" | "stdio")
-        && info.server_name != PROJECT_MANAGEMENT_MCP_SERVER_NAME
+        && info.server_name
+            != chatos_mcp::system_mcp_descriptor(
+                chatos_plugin_management_sdk::SystemMcpKey::ProjectManagement,
+            )
+            .server_name
         && info.server_name != crate::services::sandbox_runtime::SANDBOX_MCP_SERVER_NAME
 }
 

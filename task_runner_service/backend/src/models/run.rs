@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use chatos_builtin_tools::{AskUserPromptPayload, AskUserResponseSubmission};
+use chatos_mcp::{AskUserPromptPayload, AskUserResponseSubmission};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use uuid::Uuid;
@@ -19,6 +19,27 @@ pub enum TaskRunStatus {
     Failed,
     Cancelled,
     Blocked,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ChatosCallbackDeliveryStatus {
+    Pending,
+    Delivered,
+    Skipped,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ChatosCallbackDeliveryState {
+    pub event: String,
+    pub status: ChatosCallbackDeliveryStatus,
+    #[serde(default)]
+    pub attempt_count: u32,
+    #[serde(default)]
+    pub next_attempt_at: Option<String>,
+    #[serde(default)]
+    pub last_error: Option<String>,
+    pub updated_at: String,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -58,8 +79,46 @@ pub struct TaskRunRecord {
     pub claim_until: Option<String>,
     #[serde(default)]
     pub attempt: i64,
+    #[serde(default)]
+    pub chatos_callback_delivery: Option<ChatosCallbackDeliveryState>,
     pub created_at: String,
     pub updated_at: String,
+}
+
+impl TaskRunRecord {
+    pub fn queued(
+        id: String,
+        task_id: String,
+        model_config_id: String,
+        memory_thread_id: String,
+        input_snapshot: Value,
+        now: String,
+    ) -> Self {
+        Self {
+            id,
+            task_id,
+            model_config_id,
+            memory_thread_id,
+            status: TaskRunStatus::Queued,
+            started_at: None,
+            finished_at: None,
+            input_snapshot,
+            context_snapshot: None,
+            result_summary: None,
+            error_message: None,
+            usage: None,
+            report: None,
+            cancel_requested: false,
+            summary_job_run_id: None,
+            worker_id: None,
+            claim_token: None,
+            claim_until: None,
+            attempt: 0,
+            chatos_callback_delivery: None,
+            created_at: now.clone(),
+            updated_at: now,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

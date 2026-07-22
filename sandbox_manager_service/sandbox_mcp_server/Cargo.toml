@@ -11,7 +11,7 @@ async-trait = "0.1"
 axum = { version = "0.8", features = ["json"] }
 base64 = "0.22"
 chrono = { version = "0.4", features = ["clock", "serde"] }
-chatos_builtin_tools = { path = "../../crates/chatos_builtin_tools" }
+chatos_mcp = { path = "../../mcp" }
 chatos_mcp_service = { path = "../../crates/chatos_mcp_service" }
 chatos_sandbox_contract = { path = "../../crates/chatos_sandbox_contract" }
 chatos_terminal_runtime = { path = "../../crates/chatos_terminal_runtime" }

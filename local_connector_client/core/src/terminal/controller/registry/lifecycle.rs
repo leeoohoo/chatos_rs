@@ -4,7 +4,7 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use chatos_builtin_tools::TerminalControllerContext;
+use chatos_mcp::TerminalControllerContext;
 use tokio::io::{AsyncRead, AsyncReadExt};
 use tokio::sync::Mutex;
 use uuid::Uuid;

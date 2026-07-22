@@ -2,8 +2,8 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use anyhow::{anyhow, Result};
-use chatos_builtin_tools::browser_runtime::browser_backend_available;
-use chatos_builtin_tools::{WebToolsOptions, WebToolsService};
+use chatos_mcp::browser_runtime::browser_backend_available;
+use chatos_mcp::{WebToolsOptions, WebToolsService};
 use serde_json::{json, Value};
 use url::Url;
 
@@ -86,7 +86,7 @@ fn execute_browser_tool(
 fn browser_service(
     state: &LocalState,
     request: &RelayRequest,
-) -> Result<chatos_builtin_tools::BrowserToolsService> {
+) -> Result<chatos_mcp::BrowserToolsService> {
     if request.workspace_id.trim().is_empty() {
         return Err(anyhow!(
             "workspace_id is required for local browser control"

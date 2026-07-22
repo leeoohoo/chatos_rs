@@ -28,7 +28,10 @@ pub(super) async fn prepare_model_execution(
         task,
     )
     .await?;
-    let sandbox_required = service.should_route_task_to_sandbox(task).await?;
+    let authoritative_policy = capability_policy.is_some();
+    let sandbox_required = service
+        .should_route_task_to_sandbox(task, authoritative_policy)
+        .await?;
     let harness_run_context = if sandbox_required {
         service
             .prepare_harness_run_for_sandbox(task, run, effective_workspace_dir)
@@ -49,7 +52,12 @@ pub(super) async fn prepare_model_execution(
     )
     .await?;
     let sandbox_context = service
-        .prepare_sandbox_if_needed(task, run, effective_workspace_dir.as_str())
+        .prepare_sandbox_if_needed(
+            task,
+            run,
+            effective_workspace_dir.as_str(),
+            authoritative_policy,
+        )
         .await?;
     let system_http_servers =
         load_system_http_mcp_servers(service, task, run, sandbox_context.as_ref())?;
@@ -66,9 +74,11 @@ pub(super) async fn prepare_model_execution(
             model_config,
         )
         .await?;
+    let agent = task_runner_agent_for_task(task);
     let agent_prompt =
         crate::services::plugin_management_prompts::resolve_task_runner_agent_prompt(
             service,
+            &agent,
             resolved_model_config.prompt_vendor.as_deref(),
             resolved_model_config.provider.as_str(),
         )
@@ -98,7 +108,7 @@ pub(super) async fn prepare_model_execution(
         task_process_logging_enabled,
         task_service,
         sandbox_context.as_ref(),
-        capability_policy.is_some(),
+        authoritative_policy,
     )
     .await;
     let mut prefixed_input_items = external_mcp_prefixed_input_items(
@@ -123,6 +133,7 @@ pub(super) async fn prepare_model_execution(
         provider_skills_prompt,
     ));
     let mut run_spec = build_run_spec(
+        &agent,
         task,
         run,
         &resolved_model_config,
@@ -134,6 +145,12 @@ pub(super) async fn prepare_model_execution(
         task_process_logging_enabled,
         prefixed_input_items,
     );
+    if let Some(context) = sandbox_context.as_ref() {
+        run_spec.current_input_items.insert(
+            0,
+            sandbox_run_fact_input_item(task.mcp_config.locale(), context.run_workspace.as_str()),
+        );
+    }
     let memory_scope = build_memory_scope(service, task);
     run_spec = run_spec.with_memory_scope(Some(memory_scope));
     persist_context_snapshot(service, run, run_spec.memory_scope.as_ref()).await;
@@ -159,6 +176,7 @@ pub(super) async fn prepare_model_execution(
         .with_builtin_registry(builtin_registry);
 
     Ok(PreparedModelExecution {
+        agent,
         run_spec,
         runtime_config,
         mcp_builder,
@@ -166,6 +184,23 @@ pub(super) async fn prepare_model_execution(
         sandbox_context,
         harness_run_context,
         effective_workspace_dir,
+    })
+}
+
+fn sandbox_run_fact_input_item(locale: BuiltinMcpPromptLocale, run_workspace: &str) -> Value {
+    let workspace = run_workspace.trim();
+    let content = if locale.is_english() {
+        format!(
+            "[Authoritative current-run sandbox state]\nTask Runner has already acquired and health-checked the sandbox lease for this run. TerminalController and CodeMaintainer exposed in this turn are the real execution surface of that sandbox. The current sandbox workspace is `{workspace}`.\n\nA project runtime environment status of `pending` only limits application-service topology and Project Gateway targets; it does not disable this run-scoped base sandbox or its terminal/file tools. Any historical memory claiming that `pending` forbids all terminal use is obsolete for this run. Reopen and continue child tasks that were blocked only because of that obsolete conclusion. Do not ask the user to initialize the project application environment merely to use the sandbox tools already prepared for this run."
+        )
+    } else {
+        format!(
+            "[当前运行的权威沙箱状态]\nTask Runner 已为本次运行申请并完成沙箱租约健康检查。本轮暴露的 TerminalController 与 CodeMaintainer 是该沙箱的真实执行面。当前沙箱工作区为 `{workspace}`。\n\n项目运行环境的 `pending` 仅限制应用服务拓扑与 Project Gateway 目标，不会禁用本次运行专属的基础沙箱及其终端/文件工具。历史记忆中“`pending` 禁止使用所有终端”的结论对本次运行已经过期。仅因为该旧结论而阻塞的子任务应重新打开并继续执行。不得仅为使用本轮已经准备好的沙箱工具，再次要求用户初始化项目应用环境。"
+        )
+    };
+    json!({
+        "role": "system",
+        "content": content,
     })
 }
 
@@ -181,6 +216,7 @@ fn build_execution_metadata(
         "run_id": run.id,
         "model_config_id": model_config.id,
         "service": "task_runner_service",
+        "agent_key": agent_prompt.agent_key,
         "agent_prompt_vendor": agent_prompt.vendor.as_str(),
         "agent_prompt_revision": agent_prompt.revision,
         "agent_prompt_checksum": agent_prompt.checksum,
@@ -195,6 +231,7 @@ fn build_execution_metadata(
 }
 
 fn build_run_spec(
+    agent: &TaskRunnerAgent,
     task: &TaskRecord,
     run: &TaskRunRecord,
     runtime_model_config: &ModelConfigRecord,
@@ -227,7 +264,7 @@ fn build_run_spec(
             task.mcp_config.locale(),
         ));
     }
-    TASK_RUNNER_AGENT.build_run_spec(
+    agent.build_run_spec(
         TaskRunnerRunSpecInput::new(
             task.id.clone(),
             run.id.clone(),
@@ -238,6 +275,17 @@ fn build_run_spec(
         )
         .with_prefixed_input_items(prefixed_input_items),
     )
+}
+
+fn task_runner_agent_for_task(task: &TaskRecord) -> TaskRunnerAgent {
+    if crate::models::uses_task_runner_planning_agent(
+        task.task_profile.as_str(),
+        task.mcp_config.requires_execution,
+    ) {
+        TASK_RUNNER_PLAN_AGENT
+    } else {
+        TASK_RUNNER_AGENT
+    }
 }
 
 fn build_memory_scope(service: &RunService, task: &TaskRecord) -> MemoryScope {
@@ -299,9 +347,10 @@ async fn persist_context_snapshot(
 }
 
 fn is_chatos_plan_task(task: &TaskRecord) -> bool {
-    task.task_profile
-        .trim()
-        .eq_ignore_ascii_case(crate::models::TASK_PROFILE_CHATOS_PLAN)
+    crate::models::uses_task_runner_planning_agent(
+        task.task_profile.as_str(),
+        task.mcp_config.requires_execution,
+    )
 }
 
 #[cfg(test)]
@@ -309,17 +358,43 @@ mod tests {
     use std::net::{IpAddr, Ipv4Addr};
     use std::time::Duration;
 
+    use chatos_agent::{AgentIdentity, TASK_RUNNER_AGENT, TASK_RUNNER_PLAN_AGENT};
+    use chatos_plugin_management_sdk::SystemAgentKey;
+
     use crate::config::{AppConfig, StoreMode};
     use crate::models::{now_rfc3339, TaskMcpConfig, TaskRecord, TaskScheduleConfig, TaskStatus};
     use serde_json::json;
     use tokio::sync::broadcast;
 
     use super::*;
+
+    #[test]
+    fn task_nature_selects_distinct_task_runner_agents() {
+        let mut planning = sample_task(crate::models::TASK_PROFILE_CHATOS_PLAN, "project-1");
+        planning.mcp_config.requires_execution = false;
+        let mut executing = planning.clone();
+        executing.mcp_config.requires_execution = true;
+
+        assert_eq!(
+            task_runner_agent_for_task(&planning).descriptor().key,
+            TASK_RUNNER_PLAN_AGENT.descriptor().key
+        );
+        assert_eq!(
+            task_runner_agent_for_task(&planning).descriptor().key,
+            SystemAgentKey::TaskRunnerPlanPhase
+        );
+        assert_eq!(
+            task_runner_agent_for_task(&executing).descriptor().key,
+            TASK_RUNNER_AGENT.descriptor().key
+        );
+    }
+
     #[tokio::test]
     async fn chatos_plan_builtin_servers_include_project_management_provider() {
         let config = test_config();
         let service = test_run_service(config);
-        let task = sample_task(crate::models::TASK_PROFILE_CHATOS_PLAN, "project-1");
+        let mut task = sample_task(crate::models::TASK_PROFILE_CHATOS_PLAN, "project-1");
+        task.mcp_config.requires_execution = false;
         let run = sample_run(&task);
         let task_service = TaskService::new(service.config.clone(), service.store.clone());
 
@@ -384,6 +459,19 @@ mod tests {
             .get("name")
             .and_then(|name| name.as_str())
             .is_none_or(|name| !name.starts_with("project_management_service_"))));
+    }
+
+    #[test]
+    fn sandbox_run_fact_overrides_stale_project_environment_memory() {
+        let item = sandbox_run_fact_input_item(BuiltinMcpPromptLocale::ZhCn, "/workspace");
+        let content = item["content"].as_str().expect("system content");
+
+        assert_eq!(item["role"].as_str(), Some("system"));
+        assert!(content.contains("已为本次运行申请并完成沙箱租约健康检查"));
+        assert!(content.contains("`pending` 仅限制应用服务拓扑"));
+        assert!(content.contains("历史记忆"));
+        assert!(content.contains("重新打开并继续执行"));
+        assert!(content.contains("`/workspace`"));
     }
 
     fn test_config() -> AppConfig {
@@ -506,6 +594,7 @@ mod tests {
             claim_token: None,
             claim_until: None,
             attempt: 0,
+            chatos_callback_delivery: None,
             created_at: now.clone(),
             updated_at: now,
         }

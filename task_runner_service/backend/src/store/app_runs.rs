@@ -102,10 +102,21 @@ impl AppStore {
         }
     }
 
-    pub async fn fail_expired_run_claims(&self, now: &str) -> Result<usize, String> {
+    pub async fn fail_expired_run_claims(&self, now: &str) -> Result<Vec<TaskRunRecord>, String> {
         match self {
             Self::InMemory(store) => Ok(store.fail_expired_run_claims(now)),
             Self::Mongo(store) => store.fail_expired_run_claims(now).await,
+        }
+    }
+
+    pub async fn list_pending_chatos_callback_runs(
+        &self,
+        now: &str,
+        limit: usize,
+    ) -> Result<Vec<TaskRunRecord>, String> {
+        match self {
+            Self::InMemory(store) => Ok(store.list_pending_chatos_callback_runs(now, limit)),
+            Self::Mongo(store) => store.list_pending_chatos_callback_runs(now, limit).await,
         }
     }
 

@@ -3,6 +3,10 @@
 
 import { useCallback } from 'react';
 import type { TranslateFn } from '../../i18n/I18nProvider';
+import {
+  resolveContactAgentIdFromSession,
+  resolveContactIdFromSession,
+} from '../../features/contactSession/sessionResolver';
 import type ApiClient from '../../lib/api/client';
 import { deriveNameFromPath, translateSessionListMessage } from './helpers';
 import type { ChatState, SessionSelectOptions } from '../../lib/store/types';
@@ -142,6 +146,20 @@ export const useSessionListActions = ({
         const contact = contacts.find((item) => item.id === contactId);
         if (!contact) {
           return null;
+        }
+        const currentContactId = resolveContactIdFromSession(currentSession);
+        const currentContactAgentId = resolveContactAgentIdFromSession(currentSession);
+        const currentSessionMatchesContact = Boolean(
+          currentSession?.id
+          && (
+            currentContactId
+              ? currentContactId === contact.id
+              : currentContactAgentId === contact.agentId
+          ),
+        );
+        if (currentSessionMatchesContact) {
+          setActivePanel('chat');
+          return currentSession?.id || null;
         }
         const ensuredSessionId = await ensureSessionForContact(contact);
         if (!ensuredSessionId) {

@@ -42,8 +42,6 @@ use self::routing::{
 };
 
 const LOCAL_CONNECTOR_ROOT_PREFIX: &str = "local://connector/";
-const PROJECT_ENVIRONMENT_MCP_SERVER_NAME: &str = "project_environment";
-const SANDBOX_IMAGE_MCP_SERVER_NAME: &str = "sandbox_images";
 const CLOUD_SANDBOX_IMAGE_MCP_PATH: &str = "/api/sandbox-images/mcp";
 const LOCAL_SANDBOX_IMAGE_MCP_PATH: &str = "/api/local/sandbox/images/mcp";
 const PROJECT_COMPOSE_FILE_PATH: &str = ".chatos/runtime-environment/docker-compose.chatos.yml";

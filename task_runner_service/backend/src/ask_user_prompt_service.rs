@@ -6,7 +6,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
-use chatos_builtin_tools::{
+use chatos_mcp::{
     AskUserDecision, AskUserPromptPayload, AskUserResponseSubmission, AskUserStore,
     AskUserStreamChunkCallback,
 };
@@ -70,7 +70,7 @@ mod tests {
     use super::*;
     use crate::models::SubmitAskUserPromptRequest;
     use crate::store::InMemoryStore;
-    use chatos_builtin_tools::AskUserStore;
+    use chatos_mcp::AskUserStore;
 
     #[tokio::test]
     async fn execute_prompt_detects_submission_from_another_service_instance() {
@@ -127,5 +127,53 @@ mod tests {
 
         assert_eq!(decision.status, "submitted");
         assert_eq!(decision.response.values, Some(json!({ "answer": "yes" })));
+    }
+
+    #[tokio::test]
+    async fn run_cancellation_forces_pending_prompt_to_cancel_and_wakes_waiter() {
+        let (run_event_sender, _) = broadcast::channel(8);
+        let store = AppStore::InMemory(InMemoryStore::new(run_event_sender));
+        let service = AskUserPromptService::new(store.clone());
+        let payload = AskUserPromptPayload {
+            prompt_id: "prompt_run_cancel".to_string(),
+            conversation_id: "task_1".to_string(),
+            conversation_turn_id: "run_1".to_string(),
+            tool_call_id: None,
+            kind: "prompt_key_values".to_string(),
+            title: "Need approval".to_string(),
+            message: "continue?".to_string(),
+            allow_cancel: false,
+            timeout_ms: 10_000,
+            payload: json!({}),
+        };
+        let prompt = AskUserPromptRecord::from_payload(
+            payload,
+            Some("task_1".to_string()),
+            Some("run_1".to_string()),
+            now_rfc3339(),
+            None,
+        );
+        store
+            .save_ask_user_prompt(prompt)
+            .await
+            .expect("save pending prompt");
+
+        assert_eq!(
+            service
+                .cancel_pending_prompts_for_run("run_1", "user stopped the run")
+                .await
+                .expect("cancel pending prompts"),
+            1
+        );
+        let saved = store
+            .get_ask_user_prompt("prompt_run_cancel")
+            .await
+            .expect("load prompt")
+            .expect("prompt");
+        assert_eq!(saved.status, AskUserPromptStatus::Cancelled);
+        assert_eq!(
+            saved.response.and_then(|response| response.reason),
+            Some("user stopped the run".to_string())
+        );
     }
 }

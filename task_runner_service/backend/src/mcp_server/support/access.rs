@@ -285,7 +285,12 @@ pub(crate) fn enabled_model_configs_for_user(
         .into_iter()
         .filter(|model| model_visible_to_user(model, current_user))
         .filter(|model| model.enabled)
+        .filter(model_has_cloud_runtime_credentials)
         .collect()
+}
+
+pub(crate) fn model_has_cloud_runtime_credentials(model: &ModelConfigRecord) -> bool {
+    !model.api_key.trim().is_empty() && !model.base_url.trim().is_empty()
 }
 
 pub(crate) fn model_visible_to_user(model: &ModelConfigRecord, current_user: &CurrentUser) -> bool {
@@ -308,10 +313,65 @@ pub(crate) fn select_model_config_id_for_task(
     tags: &[String],
 ) -> Option<String> {
     let haystack = task_model_selection_text(title, objective, description, tags);
+    let image_task = task_requests_image_generation(haystack.as_str());
     models
         .iter()
-        .max_by_key(|model| model_task_match_score(model, haystack.as_str()))
+        .enumerate()
+        .max_by_key(|(index, model)| {
+            let image_model = model_is_image_specialized(model);
+            (
+                model_task_compatibility_score(image_task, image_model),
+                model_task_match_score(model, haystack.as_str()),
+                model_default_usage_score(model),
+                (!model_looks_like_test_config(model)) as usize,
+                std::cmp::Reverse(*index),
+            )
+        })
+        .map(|(_, model)| model)
         .map(|model| model.id.clone())
+}
+
+fn model_task_compatibility_score(image_task: bool, image_model: bool) -> usize {
+    match (image_task, image_model) {
+        (true, true) => 2,
+        (true, false) | (false, false) => 1,
+        (false, true) => 0,
+    }
+}
+
+fn task_requests_image_generation(haystack: &str) -> bool {
+    [
+        "image", "images", "dall-e", "图片", "图像", "生图", "绘图", "插画", "海报", "照片",
+    ]
+    .iter()
+    .any(|keyword| haystack.contains(keyword))
+}
+
+fn model_is_image_specialized(model: &ModelConfigRecord) -> bool {
+    let identity = format!("{} {}", model.name, model.model).to_ascii_lowercase();
+    ["image", "dall-e", "imagen"]
+        .iter()
+        .any(|keyword| identity.contains(keyword))
+}
+
+fn model_default_usage_score(model: &ModelConfigRecord) -> usize {
+    let usage = model
+        .usage_scenario
+        .as_deref()
+        .unwrap_or_default()
+        .trim()
+        .to_ascii_lowercase();
+    ["常规", "通用", "general", "default"]
+        .iter()
+        .any(|keyword| usage.contains(keyword)) as usize
+}
+
+fn model_looks_like_test_config(model: &ModelConfigRecord) -> bool {
+    let name = model.name.trim().to_ascii_lowercase();
+    name == "test"
+        || name.starts_with("test /")
+        || name.starts_with("test-")
+        || name.starts_with("test_")
 }
 
 fn task_model_selection_text(
@@ -352,7 +412,183 @@ fn text_match_score(value: Option<&str>, haystack: &str, weight: usize) -> usize
         .split(|ch: char| !ch.is_alphanumeric())
         .map(str::trim)
         .filter(|token| token.chars().count() >= 2)
+        .filter(|token| !model_selection_stop_word(token))
         .filter(|token| haystack.contains(token.to_ascii_lowercase().as_str()))
         .count()
         * weight
+}
+
+fn model_selection_stop_word(token: &str) -> bool {
+    matches!(
+        token.to_ascii_lowercase().as_str(),
+        "api" | "auto" | "e2e" | "model" | "my" | "preview" | "test"
+    )
+}
+
+#[cfg(test)]
+mod model_selection_tests {
+    use super::*;
+
+    fn model(id: &str, name: &str, model: &str, usage_scenario: Option<&str>) -> ModelConfigRecord {
+        ModelConfigRecord {
+            id: id.to_string(),
+            owner_user_id: Some("owner-1".to_string()),
+            owner_username: None,
+            owner_display_name: None,
+            name: name.to_string(),
+            provider: "openai".to_string(),
+            prompt_vendor: Some("gpt".to_string()),
+            base_url: "https://example.test/v1".to_string(),
+            api_key: "secret".to_string(),
+            model: model.to_string(),
+            usage_scenario: usage_scenario.map(ToOwned::to_owned),
+            temperature: None,
+            max_output_tokens: None,
+            model_request_max_retries: 5,
+            thinking_level: None,
+            supports_responses: true,
+            instructions: None,
+            request_cwd: None,
+            include_prompt_cache_retention: false,
+            request_body_limit_bytes: None,
+            enabled: true,
+            created_at: "2026-01-01T00:00:00Z".to_string(),
+            updated_at: "2026-01-01T00:00:00Z".to_string(),
+        }
+    }
+
+    #[test]
+    fn generic_text_task_prefers_regular_text_model_over_image_test_model() {
+        let models = vec![
+            model(
+                "image-test",
+                "test / gemini image preview",
+                "gemini-image-preview",
+                None,
+            ),
+            model("regular", "my_api / gpt", "gpt", Some("常规任务")),
+            model("complex", "my_api / pro", "pro", Some("复杂任务")),
+        ];
+
+        assert_eq!(
+            select_model_config_id_for_task(
+                models.as_slice(),
+                "JDK 21 检查清单",
+                "输出三项规划建议",
+                None,
+                &["planning".to_string()],
+            )
+            .as_deref(),
+            Some("regular"),
+        );
+    }
+
+    #[test]
+    fn automatic_selection_ignores_models_without_cloud_credentials() {
+        let mut credentialless = model("local-only", "my_api / gpt", "gpt", Some("常规任务"));
+        credentialless.api_key.clear();
+        credentialless.base_url.clear();
+        let cloud = model("cloud-ready", "my_api / gpt", "gpt", Some("常规任务"));
+
+        let eligible = enabled_model_configs_for_user(
+            vec![credentialless, cloud],
+            &crate::auth::CurrentUser {
+                id: "agent-1".to_string(),
+                username: "agent".to_string(),
+                display_name: "Agent".to_string(),
+                role: crate::models::UserRole::Agent,
+                owner_user_id: Some("owner-1".to_string()),
+                owner_username: Some("owner".to_string()),
+                owner_display_name: Some("Owner".to_string()),
+            },
+        );
+
+        assert_eq!(eligible.len(), 1);
+        assert_eq!(eligible[0].id, "cloud-ready");
+    }
+
+    #[test]
+    fn image_generation_task_prefers_image_model() {
+        let models = vec![
+            model("regular", "my_api / gpt", "gpt", Some("常规任务")),
+            model("image", "my_api / image", "gpt-image", Some("图片生成")),
+        ];
+
+        assert_eq!(
+            select_model_config_id_for_task(
+                models.as_slice(),
+                "生成产品海报",
+                "创建一张图片",
+                None,
+                &[],
+            )
+            .as_deref(),
+            Some("image"),
+        );
+    }
+
+    #[test]
+    fn explicit_complex_usage_match_overrides_regular_default() {
+        let models = vec![
+            model("regular", "my_api / gpt", "gpt", Some("常规任务")),
+            model("complex", "my_api / pro", "pro", Some("复杂任务")),
+        ];
+
+        assert_eq!(
+            select_model_config_id_for_task(
+                models.as_slice(),
+                "复杂任务：架构改造",
+                "输出详细方案",
+                None,
+                &[],
+            )
+            .as_deref(),
+            Some("complex"),
+        );
+    }
+
+    #[test]
+    fn auto_model_tag_does_not_accidentally_select_auto_review_model() {
+        let models = vec![
+            model(
+                "review",
+                "my_api / codex-auto-review",
+                "codex-auto-review",
+                Some("审批任务"),
+            ),
+            model("regular", "my_api / gpt", "gpt", Some("常规任务")),
+        ];
+
+        assert_eq!(
+            select_model_config_id_for_task(
+                models.as_slice(),
+                "会议准备事项",
+                "由 Task Runner 自动选择模型并输出两条建议",
+                None,
+                &["e2e".to_string(), "auto-model".to_string()],
+            )
+            .as_deref(),
+            Some("regular"),
+        );
+    }
+
+    #[test]
+    fn test_tag_does_not_accidentally_select_test_config() {
+        let models = vec![
+            model("test", "test / gpt", "gpt", None),
+            model("regular", "my_api / gpt", "gpt", Some("常规任务")),
+        ];
+
+        assert_eq!(
+            select_model_config_id_for_task(
+                models.as_slice(),
+                "JDK 21 检查清单",
+                "输出只读规划建议",
+                None,
+                &["e2e-receipt-test".to_string()],
+            )
+            .as_deref(),
+            Some("regular"),
+        );
+    }
 }

@@ -115,6 +115,7 @@ fn failed_run_for_task(task: &TaskRecord, run_id: &str) -> TaskRunRecord {
         claim_token: None,
         claim_until: None,
         attempt: 0,
+        chatos_callback_delivery: None,
         created_at: now.clone(),
         updated_at: now,
     }

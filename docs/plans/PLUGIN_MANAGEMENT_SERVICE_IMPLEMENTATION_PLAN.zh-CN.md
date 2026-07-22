@@ -193,11 +193,13 @@ Skill content 类型：
 
 本服务中的 agent 指系统内部具有独立 MCP/skills 能力边界的智能体角色或运行模式，不要求每一项都对应独立进程，也不包含 Chatos 用户创建的联系人 agent。
 
-按当前代码执行链审计，registry 登记五个 agent 能力角色：
+按当前代码执行链审计，registry 的核心执行角色包括：
 
 - `chatos_conversation_agent`：Chatos 普通对话模式；联系人提供动态角色上下文，但系统能力矩阵统一管理。
 - `chatos_planning_agent`：Chatos `plan_mode` 规划模式；强制接入 Task Runner 并使用 `chatos_plan` task profile。
-- `task_runner_run_phase`：Task Runner 唯一的任务模型执行循环，同时执行普通任务和 `chatos_plan` profile。
+- `project_requirement_execution_planner_agent`：把项目工作项拆成具体 Task Runner 任务。
+- `task_runner_plan_phase`：Task Runner 纯规划任务 Agent；使用独立规划 Prompt 和非变更型工具边界。
+- `task_runner_run_phase`：Task Runner 工程执行 Agent；负责实现、测试、修复和部署等变更型工作。
 - `project_management_agent`：Project Management Service 的项目运行环境初始化智能体。
 - `local_connector_command_approval_agent`：Local Connector Client 的本机命令审批智能体。
 
@@ -206,7 +208,6 @@ Skill content 类型：
 - `chatos_plan_agent`：旧的模糊 key；由明确的 `chatos_planning_agent` 代替，避免和 Task Runner task profile 混淆。
 - `chatos_async_planner`：Task Runner 暴露给 Chatos 的 MCP 工具入口。
 - `chatos_chat_runtime`：运行模块名称；由系统级能力角色 `chatos_conversation_agent` 代替。
-- `task_runner_plan_phase`：当前没有独立模型执行入口。
 - `project_environment_agent`：与 `project_management_agent` 指向同一实现的重复别名。
 - `local_connector_client_agent`：客户端/服务名称，不是模型智能体。
 - `memory_engine_context_agent`：没有独立模型执行链。

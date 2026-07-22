@@ -4,7 +4,7 @@
 use std::path::PathBuf;
 use std::sync::{Arc, OnceLock};
 
-use chatos_builtin_tools::TerminalControllerContext;
+use chatos_mcp::TerminalControllerContext;
 use chatos_terminal_runtime::{read_output_chunks, wait_for_terminal_session, TerminalWaitResult};
 use tokio::io::AsyncRead;
 use tokio::process::Child;

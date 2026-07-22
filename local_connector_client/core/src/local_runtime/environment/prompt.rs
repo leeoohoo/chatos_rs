@@ -136,17 +136,19 @@ pub(crate) fn fallback_dockerfile(stack: &Value) -> String {
 }
 
 fn object_or_default(value: Value) -> Value {
-    value
-        .is_object()
-        .then_some(value)
-        .unwrap_or_else(|| serde_json::json!({}))
+    if value.is_object() {
+        value
+    } else {
+        serde_json::json!({})
+    }
 }
 
 fn array_or_default(value: Value) -> Value {
-    value
-        .is_array()
-        .then_some(value)
-        .unwrap_or_else(|| serde_json::json!([]))
+    if value.is_array() {
+        value
+    } else {
+        serde_json::json!([])
+    }
 }
 
 #[cfg(test)]

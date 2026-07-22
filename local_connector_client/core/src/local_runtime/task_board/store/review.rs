@@ -1,9 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use chatos_builtin_tools::{
-    AskUserPromptPayload, AskUserStore, TaskDraft, TaskStreamChunkCallback,
-};
+use chatos_mcp::{AskUserPromptPayload, AskUserStore, TaskDraft, TaskStreamChunkCallback};
 use serde_json::{json, Value};
 
 use crate::local_runtime::ask_user::LocalAskUserStore;
@@ -53,7 +51,7 @@ pub(super) async fn review_and_create_tasks(
             },
             on_stream_chunk
                 .clone()
-                .map(|callback| callback as chatos_builtin_tools::AskUserStreamChunkCallback),
+                .map(|callback| callback as chatos_mcp::AskUserStreamChunkCallback),
         )
         .await?;
     if decision.status != "ok"
@@ -66,7 +64,7 @@ pub(super) async fn review_and_create_tasks(
         return Ok(json!({
             "confirmed": false,
             "cancelled": true,
-            "reason": decision.response.reason.unwrap_or_else(|| decision.status),
+            "reason": decision.response.reason.unwrap_or(decision.status),
         }));
     }
     let tasks = store

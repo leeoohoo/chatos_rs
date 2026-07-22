@@ -5,7 +5,7 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::PathBuf;
 use std::process::Stdio;
 
-use anyhow::Result;
+use anyhow::{Context as _, Result};
 use axum::body::Body;
 use axum::extract::State;
 use axum::http::{header, HeaderMap, HeaderValue, Method, Request, StatusCode};
@@ -288,7 +288,7 @@ async fn serve_ipc_local_api(endpoint: String, app: Router) -> Result<()> {
         let app = app.clone();
         tokio::spawn(async move {
             if let Err(err) = serve_ipc_connection(server, app).await {
-                tracing_stdout(format!("local connector IPC connection failed: {err}").as_str());
+                report_ipc_connection_error(&err);
             }
         });
     }
@@ -344,10 +344,26 @@ async fn serve_ipc_local_api(endpoint: String, app: Router) -> Result<()> {
         let app = app.clone();
         tokio::spawn(async move {
             if let Err(err) = serve_ipc_connection(stream, app).await {
-                tracing_stdout(format!("local connector IPC connection failed: {err}").as_str());
+                report_ipc_connection_error(&err);
             }
         });
     }
+}
+
+fn report_ipc_connection_error(error: &anyhow::Error) {
+    if is_benign_ipc_connection_shutdown(error) {
+        return;
+    }
+    tracing_stdout(format!("local connector IPC connection failed: {error}").as_str());
+}
+
+fn is_benign_ipc_connection_shutdown(error: &anyhow::Error) -> bool {
+    error.chain().any(|cause| {
+        cause
+            .to_string()
+            .trim()
+            .eq_ignore_ascii_case("error shutting down connection")
+    })
 }
 
 async fn serve_ipc_connection<I>(stream: I, app: Router) -> Result<()>
@@ -358,7 +374,8 @@ where
     builder
         .serve_connection(TokioIo::new(stream), TowerToHyperService::new(app))
         .await
-        .map_err(|err| anyhow::anyhow!("serve local connector IPC API connection: {err}"))?;
+        .map_err(anyhow::Error::from_boxed)
+        .context("serve local connector IPC API connection")?;
     Ok(())
 }
 
@@ -402,6 +419,27 @@ fn local_frontend_dist_dir() -> Option<PathBuf> {
     candidates
         .into_iter()
         .find(|candidate| candidate.join("index.html").is_file())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_benign_ipc_connection_shutdown;
+
+    #[test]
+    fn normal_peer_shutdown_is_not_reported_as_an_ipc_failure() {
+        let error = anyhow::anyhow!("error shutting down connection")
+            .context("serve local connector IPC API connection");
+
+        assert!(is_benign_ipc_connection_shutdown(&error));
+    }
+
+    #[test]
+    fn actionable_ipc_errors_are_still_reported() {
+        let error = anyhow::anyhow!("invalid HTTP request")
+            .context("serve local connector IPC API connection");
+
+        assert!(!is_benign_ipc_connection_shutdown(&error));
+    }
 }
 
 fn should_open_local_ui() -> bool {

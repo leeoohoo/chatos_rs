@@ -8,6 +8,7 @@ import type { SessionRuntimeSettingsResponse } from '../../api/client/types';
 import {
   getRealtimeConnectionStateSnapshot,
   waitForRealtimeConnectedSnapshot,
+  waitForRealtimeTopicAckSnapshot,
 } from '../../realtime/state';
 import { debugLog, debugLogLazy } from '@/lib/utils';
 import {
@@ -57,6 +58,7 @@ import {
 import { rollbackFailedSendMessage } from './sendMessage/streamExecution';
 
 const REALTIME_STREAM_CONNECT_GRACE_MS = 2200;
+const REALTIME_TOPIC_SUBSCRIBE_GRACE_MS = 5000;
 
 const mergeMessageByIdAndTime = (messages: Message[] = [], nextMessage: Message): Message[] => {
   const next = [...messages.filter((message) => message.id !== nextMessage.id), nextMessage];
@@ -557,6 +559,13 @@ export function createSendMessageHandler({
       if (!preferRealtimeStream) {
         throw new Error('Realtime connection unavailable');
       }
+      const conversationTopicReady = await waitForRealtimeTopicAckSnapshot({
+        scope: 'conversation',
+        id: currentSessionId,
+      }, REALTIME_TOPIC_SUBSCRIBE_GRACE_MS);
+      if (!conversationTopicReady) {
+        throw new Error('Realtime conversation subscription unavailable');
+      }
 
       set((state) => {
         const prev = state.sessionChatState[currentSessionId] || createDefaultSessionChatState();
@@ -588,13 +597,19 @@ export function createSendMessageHandler({
         set((state) => {
           activeUserMessageId = replaceOptimisticUserMessageId(
             state,
+            currentSessionId,
             userMessage.id,
             persistedUserMessageId,
           );
         });
       }
       set((state) => {
-        setTaskRunnerAsyncUserMessageStatus(state, activeUserMessageId, 'processing');
+        setTaskRunnerAsyncUserMessageStatus(
+          state,
+          currentSessionId,
+          activeUserMessageId,
+          'processing',
+        );
       });
 
       debugLog('✅ 消息发送完成');

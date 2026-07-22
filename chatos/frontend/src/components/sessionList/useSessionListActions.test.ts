@@ -5,6 +5,8 @@
 import { renderHook } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 
+import type ApiClient from '../../lib/api/client';
+import type { Session } from '../../types';
 import { useSessionListActions } from './useSessionListActions';
 
 describe('useSessionListActions', () => {
@@ -12,7 +14,7 @@ describe('useSessionListActions', () => {
     const setProjectModalOpen = vi.fn();
     const setProjectSourceMode = vi.fn();
     const { result } = renderHook(() => useSessionListActions({
-      apiClient: { createLocalConnectorProject: vi.fn() } as any,
+      apiClient: { createLocalConnectorProject: vi.fn() } as unknown as ApiClient,
       contacts: [],
       currentSession: null,
       terminals: [],
@@ -68,7 +70,7 @@ describe('useSessionListActions', () => {
       apiClient: {
         createLocalConnectorProject: vi.fn(),
         execLocalConnectorTerminalCommand: vi.fn(),
-      } as any,
+      } as unknown as ApiClient,
       contacts: [{
         id: 'contact-1',
         agentId: 'agent-1',
@@ -126,6 +128,83 @@ describe('useSessionListActions', () => {
     });
   });
 
+  it('keeps the current project-scoped session when opening the same contact', async () => {
+    const ensureSessionForContact = vi.fn().mockResolvedValue('public-session');
+    const selectSession = vi.fn().mockResolvedValue(undefined);
+    const setActivePanel = vi.fn();
+    const { result } = renderHook(() => useSessionListActions({
+      apiClient: {
+        createLocalConnectorProject: vi.fn(),
+        execLocalConnectorTerminalCommand: vi.fn(),
+      } as unknown as ApiClient,
+      contacts: [{
+        id: 'contact-1',
+        agentId: 'agent-1',
+        name: 'Alice',
+        status: 'active',
+        createdAt: new Date('2026-05-28T00:00:00.000Z'),
+        updatedAt: new Date('2026-05-28T00:00:00.000Z'),
+      }],
+      currentSession: {
+        id: 'project-session',
+        projectId: 'project-1',
+        metadata: {
+          source_metadata: {
+            contact: {
+              contact_id: 'contact-1',
+              agent_id: 'agent-1',
+            },
+          },
+        },
+      } as unknown as Session,
+      terminals: [],
+      currentTerminal: null,
+      remoteConnections: [],
+      currentRemoteConnection: null,
+      ensureSessionForContact,
+      selectSession,
+      setActivePanel,
+      loadContactsAction: vi.fn(),
+      loadTerminals: vi.fn(),
+      loadRemoteConnections: vi.fn(),
+      setIsRefreshing: vi.fn(),
+      setIsRefreshingTerminals: vi.fn(),
+      setIsRefreshingRemote: vi.fn(),
+      setProjectRoot: vi.fn(),
+      setCloudProjectName: vi.fn(),
+      setCloudProjectGitUrl: vi.fn(),
+      setCloudProjectZipFile: vi.fn(),
+      setProjectError: vi.fn(),
+      setProjectModalOpen: vi.fn(),
+      setProjectSourceMode: vi.fn(),
+      setTerminalError: vi.fn(),
+      setTerminalModalOpen: vi.fn(),
+      setTerminalExecuting: vi.fn(),
+      setKeyFilePickerOpen: vi.fn(),
+      openRemoteModalBase: vi.fn(),
+      createCloudProject: vi.fn(),
+      createTerminal: vi.fn(),
+      selectProject: vi.fn(),
+      selectTerminal: vi.fn(),
+      loadProjects: vi.fn(),
+      projectSourceMode: 'server',
+      localConnectorWorkspaces: [],
+      selectedLocalConnectorWorkspaceId: '',
+      selectRemoteConnection: vi.fn(),
+      openRemoteSftp: vi.fn(),
+      cloudProjectName: '',
+      cloudProjectGitUrl: '',
+      cloudProjectZipFile: null,
+      allowLocalProjectCreation: true,
+    }));
+
+    await result.current.handleSelectSession('contact-placeholder:contact-1');
+
+    expect(ensureSessionForContact).not.toHaveBeenCalled();
+    expect(selectSession).not.toHaveBeenCalled();
+    expect(setActivePanel).toHaveBeenCalledWith('chat');
+  });
+
   it('creates terminals from the selected local connector workspace', async () => {
     const createTerminal = vi.fn().mockResolvedValue({ id: 'terminal-1' });
     const setTerminalModalOpen = vi.fn();
@@ -135,7 +214,7 @@ describe('useSessionListActions', () => {
       apiClient: {
         createLocalConnectorProject: vi.fn(),
         execLocalConnectorTerminalCommand: vi.fn(),
-      } as any,
+      } as unknown as ApiClient,
       contacts: [],
       currentSession: null,
       terminals: [],
@@ -204,7 +283,7 @@ describe('useSessionListActions', () => {
       apiClient: {
         createLocalConnectorProject: vi.fn().mockResolvedValue({ id: 'local-project-1' }),
         execLocalConnectorTerminalCommand: vi.fn(),
-      } as any,
+      } as unknown as ApiClient,
       contacts: [],
       currentSession: null,
       terminals: [],

@@ -5,7 +5,7 @@ use tracing_subscriber::EnvFilter;
 
 use task_runner_service_backend::{
     build_router, load_task_runner_dotenv, scheduler::spawn_task_scheduler,
-    worker::spawn_task_worker, AppConfig, AppState,
+    services::spawn_chatos_callback_reconciler, worker::spawn_task_worker, AppConfig, AppState,
 };
 
 const TASK_RUNNER_TOKIO_THREAD_STACK_SIZE: usize = 8 * 1024 * 1024;
@@ -39,6 +39,12 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     if config.worker_enabled() {
         background_handles.push(spawn_task_worker(
             config.clone(),
+            app_state.run_service.clone(),
+        ));
+    }
+
+    if config.chatos_callback_url.is_some() {
+        background_handles.push(spawn_chatos_callback_reconciler(
             app_state.run_service.clone(),
         ));
     }

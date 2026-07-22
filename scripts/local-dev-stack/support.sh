@@ -163,8 +163,10 @@ stop_pid() {
   kill "-$pid" 2>/dev/null || true
   kill "$pid" 2>/dev/null || true
   sleep 1
-  if kill -0 "$pid" 2>/dev/null; then
+  if kill -0 "-$pid" 2>/dev/null; then
     kill -9 "-$pid" 2>/dev/null || true
+  fi
+  if kill -0 "$pid" 2>/dev/null; then
     kill -9 "$pid" 2>/dev/null || true
   fi
 }

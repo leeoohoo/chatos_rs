@@ -31,6 +31,7 @@ impl RunService {
         run: &mut TaskRunRecord,
         effective_workspace_dir: &str,
         prerequisite_context: &[PrerequisiteTaskContext],
+        authoritative_policy: bool,
     ) -> bool {
         initialization::initialize_model_phase(
             self,
@@ -38,6 +39,7 @@ impl RunService {
             run,
             effective_workspace_dir,
             prerequisite_context,
+            authoritative_policy,
         )
         .await
     }

@@ -337,9 +337,9 @@ export const RequirementExecutionPreviewModal: React.FC<{
                   )}
                 />
               </span>
-              <span>include_prerequisite_dependents</span>
+              <span>包含前置需求关联的额外后续需求</span>
               <span className="text-muted-foreground">
-                {includePrerequisiteDependents ? '开' : '关'}
+                {includePrerequisiteDependents ? '已开启' : '已关闭'}
               </span>
             </button>
           </div>

@@ -264,6 +264,18 @@ impl AppConfig {
     }
 }
 
+pub(crate) fn configured_sandbox_base_image_id() -> String {
+    sandbox_base_image_id_from_value(normalized_env("TASK_RUNNER_SANDBOX_BASE_IMAGE_ID").as_deref())
+}
+
+fn sandbox_base_image_id_from_value(value: Option<&str>) -> String {
+    value
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("default")
+        .to_string()
+}
+
 fn default_worker_id() -> String {
     let hostname = normalized_env("HOSTNAME")
         .or_else(|| normalized_env("COMPUTERNAME"))

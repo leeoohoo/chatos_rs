@@ -9,6 +9,8 @@ import { requestLocalRuntime } from './bridge';
 
 type RequirementExecutionPayload = {
   contact_id?: string;
+  model_config_id?: string;
+  modelConfigId?: string;
   include_prerequisite_dependents?: boolean;
   includePrerequisiteDependents?: boolean;
 };

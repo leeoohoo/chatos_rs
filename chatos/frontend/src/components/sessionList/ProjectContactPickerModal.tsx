@@ -8,7 +8,6 @@ import { useI18n } from '../../i18n/I18nProvider';
 interface ContactOption {
   id: string;
   name: string;
-  agentId: string;
 }
 
 interface ProjectContactPickerModalProps {
@@ -94,7 +93,6 @@ export const ProjectContactPickerModal: React.FC<ProjectContactPickerModalProps>
                       </span>
                     ) : null}
                   </div>
-                  <div className="text-xs text-muted-foreground mt-1 truncate">{contact.agentId}</div>
                 </button>
               );
             })}

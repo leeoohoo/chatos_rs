@@ -7,6 +7,7 @@ use std::time::SystemTime;
 
 use axum::extract::{Query, State};
 use axum::Json;
+use base64::Engine;
 use chrono::{DateTime, Utc};
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -126,14 +127,21 @@ pub(super) async fn read_file(
     .map_err(|error| {
         LocalRuntimeApiError::bad_request("local_runtime_fs_read_failed", error.to_string())
     })?;
-    let is_binary = metadata.len() > MAX_PREVIEW_BYTES || looks_binary(bytes.as_slice());
-    let content = (!is_binary).then(|| String::from_utf8_lossy(bytes.as_slice()).to_string());
+    let content_type = content_type(resolved.path.as_path(), false);
+    let is_binary = metadata.len() > MAX_PREVIEW_BYTES
+        || content_type.starts_with("image/")
+        || looks_binary(bytes.as_slice());
+    let content = if is_binary {
+        base64::engine::general_purpose::STANDARD.encode(bytes.as_slice())
+    } else {
+        String::from_utf8_lossy(bytes.as_slice()).to_string()
+    };
     Ok(Json(json!({
         "path": resolved.logical_path(),
         "display_path": resolved.logical_path(),
         "name": resolved.path.file_name().and_then(|value| value.to_str()).unwrap_or(""),
         "size": metadata.len(),
-        "content_type": content_type(resolved.path.as_path(), is_binary),
+        "content_type": content_type,
         "is_binary": is_binary,
         "writable": !metadata.permissions().readonly(),
         "modified_at": modified_at(&metadata),
@@ -194,6 +202,12 @@ mod tests {
             std::env::temp_dir().join(format!("chatos-local-fs-api-{}", uuid::Uuid::new_v4()));
         fs::create_dir_all(root.join("project/src")).expect("create project");
         fs::write(root.join("project/src/main.rs"), "fn main() {}").expect("write source");
+        fs::write(
+            root.join("project/src/diagram.svg"),
+            r#"<svg xmlns="http://www.w3.org/2000/svg"></svg>"#,
+        )
+        .expect("write svg");
+        fs::write(root.join("project/src/pixel.png"), b"\x89PNG\r\n\x1a\n").expect("write png");
         let state_path = root.join("state.json");
         let database = LocalDatabase::open(database_path_for_state(state_path.as_path()))
             .await
@@ -236,6 +250,37 @@ mod tests {
         .await
         .expect("read file");
         assert_eq!(file["content"], "fn main() {}");
+
+        let Json(svg) = read_file(
+            State(runtime.clone()),
+            Query(PathQuery {
+                path: format!("{project_root}/src/diagram.svg"),
+            }),
+        )
+        .await
+        .expect("read svg");
+        assert_eq!(svg["content_type"], "image/svg+xml");
+        assert_eq!(svg["is_binary"], true);
+        assert_eq!(
+            svg["content"],
+            base64::engine::general_purpose::STANDARD
+                .encode(br#"<svg xmlns="http://www.w3.org/2000/svg"></svg>"#)
+        );
+
+        let Json(png) = read_file(
+            State(runtime.clone()),
+            Query(PathQuery {
+                path: format!("{project_root}/src/pixel.png"),
+            }),
+        )
+        .await
+        .expect("read png");
+        assert_eq!(png["content_type"], "image/png");
+        assert_eq!(png["is_binary"], true);
+        assert_eq!(
+            png["content"],
+            base64::engine::general_purpose::STANDARD.encode(b"\x89PNG\r\n\x1a\n")
+        );
 
         runtime.local_database().expect("database").close().await;
         fs::remove_dir_all(root).expect("cleanup project");

@@ -3,13 +3,20 @@
 
 use serde_json::{json, Value};
 
-use crate::{AiRequestHandler, AiResponse, ModelRuntimeConfig, StreamCallbacks};
+use crate::error_policy::{handle_transient_retry, is_transient_transport_or_parse_error};
+use crate::{
+    AiRequestHandler, AiResponse, ModelRuntimeConfig, StreamCallbacks,
+    DEFAULT_MODEL_REQUEST_MAX_RETRIES,
+};
 
 #[derive(Clone, Default)]
 pub struct SimplePromptOptions {
     pub system_prompt: Option<String>,
     pub temperature: Option<f64>,
     pub max_output_tokens: Option<i64>,
+    pub max_transient_retries: Option<usize>,
+    /// Deprecated compatibility field. Prefer `max_transient_retries`, whose
+    /// value is the number of retries after the initial request.
     pub max_attempts: Option<usize>,
     pub callbacks: StreamCallbacks,
 }
@@ -32,13 +39,14 @@ where
     );
     let mut no_system_messages = base_url_disallows_system_messages(config.base_url.as_str());
     let mut input_as_list = base_url_requires_responses_input_list(config.base_url.as_str());
-    let max_attempts = options
-        .max_attempts
-        .unwrap_or(if config.supports_responses { 4 } else { 3 })
-        .max(1);
-    let mut last_transport_error: Option<String> = None;
+    let max_transient_retries = options
+        .max_transient_retries
+        .or(config.max_transient_retries)
+        .or_else(|| options.max_attempts.map(|attempts| attempts.max(1) - 1))
+        .unwrap_or(DEFAULT_MODEL_REQUEST_MAX_RETRIES);
+    let mut transient_retry_count = 0usize;
 
-    for attempt in 0..max_attempts {
+    loop {
         let wrapped_user_prompt = if no_system_messages {
             wrap_prompt_with_system_context(user_prompt, normalized_system_prompt.as_deref(), true)
         } else {
@@ -79,16 +87,20 @@ where
                     no_system_messages = true;
                     continue;
                 }
-                if attempt + 1 < max_attempts && should_retry_transport_error(err.as_str()) {
-                    last_transport_error = Some(err);
+                if handle_transient_retry(
+                    "simple prompt request",
+                    err.as_str(),
+                    &mut transient_retry_count,
+                    max_transient_retries,
+                )
+                .await?
+                {
                     continue;
                 }
                 return Err(err);
             }
         }
     }
-
-    Err(last_transport_error.unwrap_or_else(|| "AI 请求失败：兼容重试后仍失败".to_string()))
 }
 
 pub fn wrap_prompt_with_system_context(
@@ -154,18 +166,7 @@ pub fn is_input_must_be_list_error(err: &str) -> bool {
 }
 
 pub fn should_retry_transport_error(err: &str) -> bool {
-    let normalized = err.to_lowercase();
-    normalized.contains("error sending request for url")
-        || normalized.contains("error decoding response body")
-        || normalized.contains("connection closed before message completed")
-        || normalized.contains("unexpected eof")
-        || normalized.contains("timed out")
-        || normalized.contains("status 522")
-        || normalized.contains("status 523")
-        || normalized.contains("status 524")
-        || normalized.contains("error code: 522")
-        || normalized.contains("error code: 523")
-        || normalized.contains("error code: 524")
+    is_transient_transport_or_parse_error(err)
 }
 
 pub fn select_preferred_response_text<'a>(
@@ -204,14 +205,78 @@ fn env_flag_enabled(key: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    };
+
+    use axum::{extract::State, http::StatusCode, routing::post, Json, Router};
     use serde_json::{json, Value};
 
     use super::{
         base_url_disallows_system_messages, build_responses_text_input,
         is_input_must_be_list_error, is_system_messages_not_allowed_error,
-        select_preferred_response_text, should_retry_transport_error,
-        wrap_prompt_with_system_context,
+        run_compatible_prompt_with, select_preferred_response_text, should_retry_transport_error,
+        wrap_prompt_with_system_context, SimplePromptOptions,
     };
+    use crate::{AiRequestHandler, ModelRuntimeConfig};
+
+    #[derive(Clone)]
+    struct RetryProviderState {
+        attempts: Arc<AtomicUsize>,
+        failures_before_success: usize,
+        failure_status: StatusCode,
+    }
+
+    async fn retry_provider(
+        State(state): State<RetryProviderState>,
+        Json(_payload): Json<Value>,
+    ) -> (StatusCode, Json<Value>) {
+        let attempt = state.attempts.fetch_add(1, Ordering::SeqCst) + 1;
+        if attempt <= state.failures_before_success {
+            return (
+                state.failure_status,
+                Json(json!({"error": {"message": "temporarily unavailable"}})),
+            );
+        }
+
+        (
+            StatusCode::OK,
+            Json(json!({
+                "id": "response-test",
+                "status": "completed",
+                "output_text": "ok"
+            })),
+        )
+    }
+
+    async fn start_retry_provider(
+        failures_before_success: usize,
+        failure_status: StatusCode,
+    ) -> (String, Arc<AtomicUsize>, tokio::task::JoinHandle<()>) {
+        let attempts = Arc::new(AtomicUsize::new(0));
+        let state = RetryProviderState {
+            attempts: Arc::clone(&attempts),
+            failures_before_success,
+            failure_status,
+        };
+        let app = Router::new()
+            .route("/responses", post(retry_provider))
+            .with_state(state);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind retry provider");
+        let address = listener.local_addr().expect("retry provider address");
+        let server = tokio::spawn(async move {
+            let _ = axum::serve(listener, app).await;
+        });
+        (format!("http://{address}"), attempts, server)
+    }
+
+    fn retry_test_config(base_url: String) -> ModelRuntimeConfig {
+        ModelRuntimeConfig::openai_compatible(base_url, "test-key", "test-model", "openai")
+            .with_responses_support(true)
+    }
 
     #[test]
     fn detects_relay_domain_prompt_compat_rules() {
@@ -267,7 +332,82 @@ mod tests {
             "{\"detail\":\"System messages are not allowed\"}"
         ));
         assert!(should_retry_transport_error("request timed out"));
+        assert!(should_retry_transport_error(
+            "error sending request for url (https://newapi.example/v1/responses)"
+        ));
+        assert!(should_retry_transport_error(
+            "status 503: service unavailable"
+        ));
         assert!(!should_retry_transport_error("status 401: invalid api key"));
+        assert!(!should_retry_transport_error(
+            "status 400: invalid_request_error"
+        ));
+        assert!(!should_retry_transport_error(
+            "insufficient_quota: credit balance exhausted"
+        ));
+    }
+
+    #[tokio::test]
+    async fn retries_transient_failures_until_request_succeeds() {
+        let (base_url, attempts, server) =
+            start_retry_provider(2, StatusCode::SERVICE_UNAVAILABLE).await;
+        let response = run_compatible_prompt_with(
+            &AiRequestHandler::new(),
+            &retry_test_config(base_url),
+            "hello",
+            SimplePromptOptions {
+                max_transient_retries: Some(3),
+                ..Default::default()
+            },
+            build_responses_text_input,
+        )
+        .await
+        .expect("transient request should recover");
+        server.abort();
+
+        assert_eq!(response.content, "ok");
+        assert_eq!(attempts.load(Ordering::SeqCst), 3);
+    }
+
+    #[tokio::test]
+    async fn reports_retry_exhaustion_after_configured_attempts() {
+        let (base_url, attempts, server) =
+            start_retry_provider(10, StatusCode::SERVICE_UNAVAILABLE).await;
+        let error = run_compatible_prompt_with(
+            &AiRequestHandler::new(),
+            &retry_test_config(base_url).with_max_transient_retries(Some(2)),
+            "hello",
+            SimplePromptOptions::default(),
+            build_responses_text_input,
+        )
+        .await
+        .expect_err("transient request should exhaust retries");
+        server.abort();
+
+        assert_eq!(attempts.load(Ordering::SeqCst), 3);
+        assert!(error.contains("已重试 2 次"));
+        assert!(error.contains("status 503"));
+    }
+
+    #[tokio::test]
+    async fn does_not_retry_authentication_failures() {
+        let (base_url, attempts, server) = start_retry_provider(10, StatusCode::UNAUTHORIZED).await;
+        let error = run_compatible_prompt_with(
+            &AiRequestHandler::new(),
+            &retry_test_config(base_url),
+            "hello",
+            SimplePromptOptions {
+                max_transient_retries: Some(5),
+                ..Default::default()
+            },
+            build_responses_text_input,
+        )
+        .await
+        .expect_err("authentication failure should not retry");
+        server.abort();
+
+        assert_eq!(attempts.load(Ordering::SeqCst), 1);
+        assert!(error.contains("status 401"));
     }
 
     #[test]

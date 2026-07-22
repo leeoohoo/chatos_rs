@@ -6,7 +6,7 @@ mod response;
 use axum::extract::{Path, Query, State};
 use axum::routing::{get, post};
 use axum::{Json, Router};
-use chatos_builtin_tools::{AskUserPromptPayload, AskUserResponseSubmission};
+use chatos_mcp::{AskUserPromptPayload, AskUserResponseSubmission};
 use serde::Deserialize;
 use serde_json::{json, Value};
 

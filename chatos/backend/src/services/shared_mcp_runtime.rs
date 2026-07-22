@@ -33,7 +33,7 @@ pub(crate) fn build_shared_builtin_registry(
         let Ok(service) = build_builtin_tool_service(server) else {
             continue;
         };
-        registry.register(chatos_builtin_tools::SharedBuiltinProvider::new(
+        registry.register(chatos_mcp::SharedBuiltinProvider::new(
             server.name.clone(),
             service,
         ));

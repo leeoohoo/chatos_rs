@@ -2,7 +2,7 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use async_trait::async_trait;
-use chatos_builtin_tools::{TaskDraft, TaskManagerStore, TaskStreamChunkCallback, TaskUpdatePatch};
+use chatos_mcp::{TaskDraft, TaskManagerStore, TaskStreamChunkCallback, TaskUpdatePatch};
 use serde_json::{json, Value};
 
 use crate::local_runtime::storage::LocalDatabase;

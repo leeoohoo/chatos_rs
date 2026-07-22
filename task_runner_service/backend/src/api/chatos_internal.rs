@@ -260,6 +260,7 @@ where
 fn trim_run_for_chatos_detail(
     mut run: crate::models::TaskRunRecord,
 ) -> crate::models::TaskRunRecord {
+    run.chatos_callback_delivery = None;
     run.input_snapshot = truncate_json_value(run.input_snapshot, RUN_SNAPSHOT_PREVIEW_LIMIT_BYTES);
     run.context_snapshot = run
         .context_snapshot

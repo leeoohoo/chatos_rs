@@ -98,6 +98,7 @@ pub(in crate::api::configs) async fn put_ai_model_settings(
     };
     let payload = user_service_api_client::UpdateUserServiceModelSettingsRequest {
         user_id: Some(auth.user_id.clone()),
+        model_request_max_retries: req.model_request_max_retries,
         memory_summary_model_config_id: normalize_settings_update_value(
             req.memory_summary_model_config_id,
         ),

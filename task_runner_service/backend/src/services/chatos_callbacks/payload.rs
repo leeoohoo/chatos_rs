@@ -38,6 +38,8 @@ pub(super) fn build_chatos_task_callback_payload(
         run_id: run.map(|item| item.id.clone()),
         status: task.status.status_string().to_string(),
         task_title: task.title.clone(),
+        task_objective: task.objective.clone(),
+        fallback_locale: task.mcp_config.builtin_prompt_locale.clone(),
         result_summary: normalize_optional_callback_text(
             run.and_then(|item| item.result_summary.clone())
                 .or_else(|| task.result_summary.clone()),

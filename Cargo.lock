@@ -585,8 +585,8 @@ dependencies = [
  "bytes",
  "chatos_agent",
  "chatos_ai_runtime",
- "chatos_builtin_tools",
  "chatos_config_sdk",
+ "chatos_mcp",
  "chatos_mcp_runtime",
  "chatos_mcp_service",
  "chatos_plugin_management_sdk",
@@ -668,17 +668,29 @@ dependencies = [
 ]
 
 [[package]]
-name = "chatos_builtin_tools"
+name = "chatos_config_sdk"
+version = "0.1.0"
+dependencies = [
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "chatos_mcp"
 version = "0.1.0"
 dependencies = [
  "async-trait",
  "chatos_mcp_runtime",
- "chatos_project_mcp_contract",
+ "chatos_plugin_management_sdk",
  "chatos_sandbox_contract",
  "chrono",
  "dirs",
  "futures",
  "hex",
+ "libc",
  "lopdf",
  "once_cell",
  "parking_lot",
@@ -695,17 +707,6 @@ dependencies = [
  "urlencoding",
  "uuid",
  "walkdir",
-]
-
-[[package]]
-name = "chatos_config_sdk"
-version = "0.1.0"
-dependencies = [
- "reqwest",
- "serde",
- "serde_json",
- "tokio",
- "tracing",
 ]
 
 [[package]]
@@ -748,14 +749,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "chatos_project_mcp_contract"
-version = "0.1.0"
-dependencies = [
- "serde",
- "serde_json",
-]
-
-[[package]]
 name = "chatos_remote_runtime"
 version = "0.1.0"
 dependencies = [
@@ -773,25 +766,13 @@ dependencies = [
 ]
 
 [[package]]
-name = "chatos_sandbox_image_mcp"
-version = "0.1.0"
-dependencies = [
- "async-trait",
- "serde",
- "serde_json",
- "sha2 0.11.0",
- "tokio",
- "uuid",
-]
-
-[[package]]
 name = "chatos_sandbox_mcp_server"
 version = "0.1.0"
 dependencies = [
  "async-trait",
  "axum",
  "base64 0.22.1",
- "chatos_builtin_tools",
+ "chatos_mcp",
  "chatos_mcp_service",
  "chatos_sandbox_contract",
  "chatos_terminal_runtime",
@@ -2553,13 +2534,11 @@ dependencies = [
  "base64 0.22.1",
  "chatos_agent",
  "chatos_ai_runtime",
- "chatos_builtin_tools",
+ "chatos_mcp",
  "chatos_mcp_runtime",
  "chatos_mcp_service",
  "chatos_plugin_management_sdk",
- "chatos_project_mcp_contract",
  "chatos_sandbox_contract",
- "chatos_sandbox_image_mcp",
  "chrono",
  "dotenvy",
  "futures-util",
@@ -3313,10 +3292,9 @@ dependencies = [
  "axum",
  "chatos_agent",
  "chatos_ai_runtime",
- "chatos_builtin_tools",
+ "chatos_mcp",
  "chatos_mcp_runtime",
  "chatos_plugin_management_sdk",
- "chatos_sandbox_image_mcp",
  "chatos_service_runtime",
  "chrono",
  "futures-util",
@@ -3443,12 +3421,10 @@ dependencies = [
  "base64 0.22.1",
  "chatos_agent",
  "chatos_ai_runtime",
- "chatos_builtin_tools",
+ "chatos_mcp",
  "chatos_mcp_runtime",
  "chatos_mcp_service",
  "chatos_plugin_management_sdk",
- "chatos_project_mcp_contract",
- "chatos_sandbox_image_mcp",
  "chatos_service_runtime",
  "chrono",
  "futures-util",
@@ -4015,8 +3991,8 @@ dependencies = [
  "async-trait",
  "axum",
  "base64 0.22.1",
+ "chatos_mcp",
  "chatos_sandbox_contract",
- "chatos_sandbox_image_mcp",
  "chatos_service_runtime",
  "chrono",
  "futures-util",
@@ -4813,12 +4789,11 @@ dependencies = [
  "base64 0.22.1",
  "chatos_agent",
  "chatos_ai_runtime",
- "chatos_builtin_tools",
  "chatos_config_sdk",
+ "chatos_mcp",
  "chatos_mcp_runtime",
  "chatos_mcp_service",
  "chatos_plugin_management_sdk",
- "chatos_project_mcp_contract",
  "chatos_remote_runtime",
  "chatos_sandbox_contract",
  "chatos_service_runtime",
@@ -4826,6 +4801,7 @@ dependencies = [
  "chrono",
  "futures-util",
  "jsonwebtoken",
+ "libc",
  "memory_engine_sdk",
  "mongodb",
  "parking_lot",
@@ -4836,6 +4812,7 @@ dependencies = [
  "ssh2",
  "tokio",
  "tokio-stream",
+ "tokio-util",
  "tower-http 0.7.0",
  "tracing",
  "tracing-subscriber",

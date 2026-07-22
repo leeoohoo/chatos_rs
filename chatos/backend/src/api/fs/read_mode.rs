@@ -28,6 +28,9 @@ fn is_probably_text_payload(bytes: &[u8]) -> bool {
 }
 
 pub fn should_render_text(path: &Path, bytes: &[u8], content_type: &str) -> bool {
+    if content_type.starts_with("image/") {
+        return false;
+    }
     let ext = path
         .extension()
         .and_then(|e| e.to_str())
@@ -135,4 +138,18 @@ pub fn should_render_text(path: &Path, bytes: &[u8], content_type: &str) -> bool
     }
 
     text_like_payload
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn image_mime_types_use_binary_preview_even_when_payload_is_text() {
+        assert!(!should_render_text(
+            Path::new("diagram.svg"),
+            br#"<svg xmlns="http://www.w3.org/2000/svg"></svg>"#,
+            "image/svg+xml",
+        ));
+    }
 }

@@ -24,9 +24,8 @@ pub fn compose_response_to_input_items_with_budget(
     let mut items = Vec::new();
     let mut seen_tool_call_ids = HashSet::new();
     let mut remaining_tool_output_ids = collect_tool_output_id_counts(&response.recent_records);
-    let mut tool_result_budget = limits
-        .map(ToolResultModelBudget::from_limits)
-        .unwrap_or_else(ToolResultModelBudget::from_env);
+    let sanitized_tool_outputs =
+        sanitize_recent_tool_outputs(response.recent_records.as_slice(), limits);
 
     if !response.blocks.is_empty() {
         let text = response
@@ -40,12 +39,13 @@ pub fn compose_response_to_input_items_with_budget(
         }
     }
 
-    for record in &response.recent_records {
+    for (record_index, record) in response.recent_records.iter().enumerate() {
         items.extend(engine_record_to_input_items(
             record,
+            record_index,
             &mut seen_tool_call_ids,
             &mut remaining_tool_output_ids,
-            &mut tool_result_budget,
+            &sanitized_tool_outputs,
         ));
     }
 
@@ -64,9 +64,10 @@ pub(super) fn default_compose_policy() -> Option<ComposeContextPolicy> {
 
 fn engine_record_to_input_items(
     record: &EngineRecord,
+    record_index: usize,
     seen_tool_call_ids: &mut HashSet<String>,
     remaining_tool_output_ids: &mut HashMap<String, usize>,
-    tool_result_budget: &mut ToolResultModelBudget,
+    sanitized_tool_outputs: &HashMap<usize, String>,
 ) -> Vec<Value> {
     let role = record.role.trim();
     if role.is_empty() {
@@ -77,19 +78,10 @@ fn engine_record_to_input_items(
     if role == "tool" {
         if let Some(tool_call_id) = engine_record_tool_call_id(record) {
             if seen_tool_call_ids.contains(tool_call_id.as_str()) {
-                let tool_name = record
-                    .metadata
-                    .as_ref()
-                    .and_then(|value| {
-                        value
-                            .get("name")
-                            .or_else(|| value.get("tool_name"))
-                            .or_else(|| value.get("toolName"))
-                    })
-                    .and_then(Value::as_str)
-                    .unwrap_or("");
-                let output =
-                    tool_result_budget.sanitize_content(tool_name, record.content.as_str());
+                let output = sanitized_tool_outputs
+                    .get(&record_index)
+                    .cloned()
+                    .unwrap_or_else(|| record.content.clone());
                 items.push(build_function_call_output_item(
                     tool_call_id.as_str(),
                     output.as_str(),
@@ -141,6 +133,72 @@ fn engine_record_to_input_items(
         ));
     }
     items
+}
+
+fn sanitize_recent_tool_outputs(
+    records: &[EngineRecord],
+    limits: Option<ToolResultModelBudgetLimits>,
+) -> HashMap<usize, String> {
+    let tool_call_names = collect_tool_call_names(records);
+    let mut budget = limits
+        .map(ToolResultModelBudget::from_limits)
+        .unwrap_or_else(ToolResultModelBudget::from_env);
+    let mut outputs = HashMap::new();
+
+    // Prefer the newest evidence when the cumulative history budget is full.
+    // The model needs the latest state-changing result (for example an empty
+    // TaskManager board) more than an older, already-consumed file dump.
+    for (record_index, record) in records.iter().enumerate().rev() {
+        if record.role.trim() != "tool" {
+            continue;
+        }
+        let Some(tool_call_id) = engine_record_tool_call_id(record) else {
+            continue;
+        };
+        let Some(call_name) = tool_call_names.get(tool_call_id.as_str()) else {
+            continue;
+        };
+        let tool_name = record
+            .metadata
+            .as_ref()
+            .and_then(|value| {
+                value
+                    .get("name")
+                    .or_else(|| value.get("tool_name"))
+                    .or_else(|| value.get("toolName"))
+            })
+            .and_then(Value::as_str)
+            .unwrap_or(call_name.as_str());
+        outputs.insert(
+            record_index,
+            budget.sanitize_content(tool_name, record.content.as_str()),
+        );
+    }
+
+    outputs
+}
+
+fn collect_tool_call_names(records: &[EngineRecord]) -> HashMap<String, String> {
+    let mut names = HashMap::new();
+    for record in records {
+        if record.role.trim() != "assistant" {
+            continue;
+        }
+        for tool_call in
+            extract_message_tool_calls(record.structured_payload.as_ref(), record.metadata.as_ref())
+        {
+            let Some(call_id) = extract_tool_call_id(&tool_call).map(str::trim) else {
+                continue;
+            };
+            let Some(name) = extract_tool_call_name(&tool_call).map(str::trim) else {
+                continue;
+            };
+            if !call_id.is_empty() && !name.is_empty() {
+                names.insert(call_id.to_string(), name.to_string());
+            }
+        }
+    }
+    names
 }
 
 fn collect_tool_output_id_counts(records: &[EngineRecord]) -> HashMap<String, usize> {

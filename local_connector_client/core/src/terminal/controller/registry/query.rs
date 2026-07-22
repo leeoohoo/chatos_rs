@@ -5,7 +5,7 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
-use chatos_builtin_tools::TerminalControllerContext;
+use chatos_mcp::TerminalControllerContext;
 
 use super::lifecycle::refresh_local_mcp_terminal_session_status;
 use super::local_mcp_terminal_registry;

@@ -137,6 +137,7 @@ export function createChatStoreWithBackend(customApiClient: ApiClient, config?: 
                         selectedModelId: state.selectedModelId,
                         selectedAgentId: state.selectedAgentId,
                         sessionAiSelectionBySession: state.sessionAiSelectionBySession,
+                        activePanel: state.activePanel === 'project' ? 'project' : 'chat',
                     }),
                 }
             )

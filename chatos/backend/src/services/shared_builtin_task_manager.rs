@@ -5,7 +5,7 @@ use async_trait::async_trait;
 use serde::Serialize;
 use serde_json::{json, Value};
 
-use chatos_builtin_tools::{
+use chatos_mcp::{
     TaskDraft as SharedTaskDraft, TaskManagerStore, TaskOutcomeItem as SharedTaskOutcomeItem,
     TaskStreamChunkCallback, TaskUpdatePatch as SharedTaskUpdatePatch,
 };

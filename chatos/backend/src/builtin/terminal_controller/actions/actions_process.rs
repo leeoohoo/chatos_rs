@@ -4,7 +4,7 @@
 use serde_json::{json, Value};
 use tokio::time::{Duration, Instant};
 
-use chatos_builtin_tools::PROCESS_WAIT_MAX_TIMEOUT_MS;
+use chatos_mcp::PROCESS_WAIT_MAX_TIMEOUT_MS;
 
 use crate::models::terminal::TerminalService;
 use crate::models::terminal_log::{TerminalLog, TerminalLogService};

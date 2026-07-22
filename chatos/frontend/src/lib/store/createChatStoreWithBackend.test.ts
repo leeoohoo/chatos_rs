@@ -54,6 +54,7 @@ describe('createChatStoreWithBackend persistence', () => {
     store.setState({
       theme: 'dark',
       sidebarOpen: false,
+      activePanel: 'project',
       sessionAiSelectionBySession: {
         session_1: {
           selectedModelId: 'model_1',
@@ -85,6 +86,7 @@ describe('createChatStoreWithBackend persistence', () => {
     expect(persisted.state).toMatchObject({
       theme: 'dark',
       sidebarOpen: false,
+      activePanel: 'project',
       sessionAiSelectionBySession: {
         session_1: {
           selectedModelId: 'model_1',

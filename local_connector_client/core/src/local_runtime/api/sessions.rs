@@ -5,7 +5,12 @@ use axum::extract::{Path, Query, State};
 use axum::Json;
 use serde::Deserialize;
 
-use crate::local_runtime::storage::{CreateLocalSessionInput, LocalSessionRecord};
+use crate::local_runtime::storage::{
+    CreateLocalSessionInput, LocalSessionRecord, UpsertLocalProjectInput,
+};
+use crate::local_runtime::{
+    LOCAL_UNSCOPED_PROJECT_ID, LOCAL_UNSCOPED_PROJECT_NAME, LOCAL_UNSCOPED_WORKSPACE_ID,
+};
 use crate::LocalRuntime;
 
 use super::context::owner_context;
@@ -20,6 +25,7 @@ pub(super) struct LocalSessionListQuery {
 pub(super) struct CreateLocalSessionRequest {
     project_id: String,
     title: Option<String>,
+    contact_id: Option<String>,
     selected_model_id: Option<String>,
     selected_agent_id: Option<String>,
 }
@@ -50,15 +56,33 @@ pub(super) async fn create_session(
         .filter(|value| !value.is_empty())
         .unwrap_or_else(|| "Untitled".to_string());
 
+    let contact_id = normalize_optional(request.contact_id);
+    if project_id == LOCAL_UNSCOPED_PROJECT_ID {
+        runtime
+            .local_database()?
+            .upsert_project(UpsertLocalProjectInput {
+                project_id: LOCAL_UNSCOPED_PROJECT_ID.to_string(),
+                owner_user_id: owner.owner_user_id.clone(),
+                device_id: owner.device_id.clone(),
+                workspace_id: LOCAL_UNSCOPED_WORKSPACE_ID.to_string(),
+                project_name: LOCAL_UNSCOPED_PROJECT_NAME.to_string(),
+                root_relative_path: None,
+            })
+            .await
+            .map_err(LocalRuntimeApiError::from)?;
+    }
     runtime
         .local_database()?
-        .create_session(CreateLocalSessionInput {
-            project_id,
-            owner_user_id: owner.owner_user_id,
-            title,
-            selected_model_id: normalize_optional(request.selected_model_id),
-            selected_agent_id: normalize_optional(request.selected_agent_id),
-        })
+        .create_session_with_contact(
+            CreateLocalSessionInput {
+                project_id,
+                owner_user_id: owner.owner_user_id,
+                title,
+                selected_model_id: normalize_optional(request.selected_model_id),
+                selected_agent_id: normalize_optional(request.selected_agent_id),
+            },
+            contact_id,
+        )
         .await
         .map(Json)
         .map_err(LocalRuntimeApiError::from)

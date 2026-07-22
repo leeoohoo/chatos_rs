@@ -91,6 +91,14 @@ async fn executes_local_file_tool_and_persists_process_messages() {
     super::capability_support::seed_chat_capabilities(&database, "user-1")
         .await
         .expect("seed tool capabilities");
+    super::capability_support::grant_required_builtin(
+        &database,
+        "user-1",
+        chatos_plugin_management_sdk::SystemAgentKey::ChatosConversationAgent,
+        chatos_mcp_runtime::BuiltinMcpKind::CodeMaintainerRead,
+    )
+    .await
+    .expect("grant conversation file-read capability");
     database
         .upsert_project(UpsertLocalProjectInput {
             project_id: "project-tools".to_string(),

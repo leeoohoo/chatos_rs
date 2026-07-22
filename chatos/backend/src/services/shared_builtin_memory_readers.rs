@@ -3,7 +3,7 @@
 
 use async_trait::async_trait;
 
-use chatos_builtin_tools::{
+use chatos_mcp::{
     MemoryFullPlugin, MemoryFullSkill, MemoryInlineSkill, MemoryReaderStore, MemoryRuntimeCommand,
     MemoryRuntimeContext, MemoryRuntimePlugin, MemoryRuntimeSkill,
 };

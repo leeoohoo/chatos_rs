@@ -48,6 +48,7 @@ COPY sandbox_manager_service/sandbox_agent/Cargo.workspace.toml ./Cargo.toml
 COPY Cargo.lock ./Cargo.lock
 COPY BUILTIN_MCP_PROMPT.en-US.md ./BUILTIN_MCP_PROMPT.en-US.md
 COPY BUILTIN_MCP_PROMPT.zh-CN.md ./BUILTIN_MCP_PROMPT.zh-CN.md
+COPY mcp ./mcp
 COPY crates ./crates
 COPY sandbox_manager_service/sandbox_mcp_server ./sandbox_manager_service/sandbox_mcp_server
 RUN target="$(rustc -vV | sed -n 's/^host: //p')" \

@@ -380,6 +380,7 @@ mod tests {
             usage_scenario: None,
             temperature: None,
             max_output_tokens: None,
+            model_request_max_retries: 5,
             thinking_level: None,
             supports_responses: true,
             instructions: None,

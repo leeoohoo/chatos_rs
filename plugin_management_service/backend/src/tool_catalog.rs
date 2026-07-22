@@ -3,11 +3,11 @@
 
 use std::collections::HashMap;
 
-use chatos_mcp_runtime::{
-    builtin_kind_by_kind_name, list_tools_http, list_tools_stdio,
-    local_command_approval_tool_definitions, project_environment_tool_definitions,
-    project_runtime_environment_info_tool_definitions, McpStdioServer,
+use chatos_mcp::{
+    system_mcp_descriptor_for_record, system_mcp_provider_skills, system_mcp_tool_catalog,
+    SystemMcpToolCatalog,
 };
+use chatos_mcp_runtime::{list_tools_http, list_tools_stdio, McpStdioServer};
 use chatos_service_runtime::http_body::{read_response_json_limited, JSON_BODY_LIMIT_BYTES};
 use chatos_service_runtime::{build_http_client, HttpClientTimeouts};
 use serde::Deserialize;
@@ -15,16 +15,10 @@ use serde_json::Value;
 
 use crate::config::AppConfig;
 use crate::models::{
-    McpProviderSkill, McpRecord, RUNTIME_KIND_BUILTIN, RUNTIME_KIND_HTTP,
-    RUNTIME_KIND_LOCAL_CONNECTOR_BUILTIN_PROXY, RUNTIME_KIND_LOCAL_CONNECTOR_HTTP,
-    RUNTIME_KIND_LOCAL_CONNECTOR_STDIO, RUNTIME_KIND_STDIO_CLOUD, RUNTIME_KIND_SYSTEM_ROUTED,
+    McpProviderSkill, McpRecord, RUNTIME_KIND_HTTP, RUNTIME_KIND_LOCAL_CONNECTOR_BUILTIN_PROXY,
+    RUNTIME_KIND_LOCAL_CONNECTOR_HTTP, RUNTIME_KIND_LOCAL_CONNECTOR_STDIO,
+    RUNTIME_KIND_STDIO_CLOUD,
 };
-
-const SANDBOX_IMAGES_SERVER_NAME: &str = "sandbox_images";
-const PROJECT_ENVIRONMENT_SERVER_NAME: &str = "project_environment";
-const PROJECT_RUNTIME_ENVIRONMENT_SERVER_NAME: &str = "project_runtime_environment";
-const LOCAL_COMMAND_APPROVAL_SERVER_NAME: &str = "local_connector_approval";
-const TASK_RUNNER_SERVER_NAME: &str = "task_runner_service";
 
 #[derive(Debug, Default)]
 pub(crate) struct LiveMcpDescriptor {
@@ -40,58 +34,14 @@ struct TaskRunnerProviderDescriptor {
     tools: Vec<Value>,
 }
 
-pub(crate) fn system_routed_tool_catalog(server_name: &str) -> Result<Option<Vec<Value>>, String> {
-    match server_name.trim() {
-        SANDBOX_IMAGES_SERVER_NAME => chatos_sandbox_image_mcp::list_tools()
-            .get("tools")
-            .and_then(Value::as_array)
-            .cloned()
-            .map(Some)
-            .ok_or_else(|| "Sandbox Images tool registry returned no tools array".to_string()),
-        PROJECT_ENVIRONMENT_SERVER_NAME => Ok(Some(project_environment_tool_definitions())),
-        PROJECT_RUNTIME_ENVIRONMENT_SERVER_NAME => {
-            Ok(Some(project_runtime_environment_info_tool_definitions()))
-        }
-        LOCAL_COMMAND_APPROVAL_SERVER_NAME => Ok(Some(local_command_approval_tool_definitions())),
-        TASK_RUNNER_SERVER_NAME => Ok(None),
-        _ => Ok(None),
-    }
-}
-
 pub(crate) async fn live_mcp_descriptor(
     config: &AppConfig,
     record: &McpRecord,
 ) -> Result<Option<LiveMcpDescriptor>, String> {
+    if system_mcp_descriptor_for_record(record).is_some() {
+        return live_system_mcp_descriptor(config, record).await.map(Some);
+    }
     match record.runtime.kind.as_str() {
-        RUNTIME_KIND_BUILTIN => {
-            let kind_name = record
-                .runtime
-                .builtin_kind
-                .as_deref()
-                .ok_or_else(|| "builtin MCP is missing runtime.builtin_kind".to_string())?;
-            let kind = builtin_kind_by_kind_name(kind_name)
-                .ok_or_else(|| format!("unknown builtin MCP kind: {kind_name}"))?;
-            Ok(Some(LiveMcpDescriptor {
-                tools: chatos_builtin_tools::builtin_tool_catalog(kind)?,
-                ..LiveMcpDescriptor::default()
-            }))
-        }
-        RUNTIME_KIND_SYSTEM_ROUTED => {
-            let server_name = record
-                .runtime
-                .server_name
-                .as_deref()
-                .unwrap_or(record.name.as_str());
-            if server_name == TASK_RUNNER_SERVER_NAME {
-                return fetch_task_runner_descriptor(config).await.map(Some);
-            }
-            Ok(
-                system_routed_tool_catalog(server_name)?.map(|tools| LiveMcpDescriptor {
-                    tools,
-                    ..LiveMcpDescriptor::default()
-                }),
-            )
-        }
         RUNTIME_KIND_HTTP => {
             let url = record
                 .runtime
@@ -165,6 +115,27 @@ pub(crate) async fn live_mcp_descriptor(
     }
 }
 
+async fn live_system_mcp_descriptor(
+    config: &AppConfig,
+    record: &McpRecord,
+) -> Result<LiveMcpDescriptor, String> {
+    let descriptor = system_mcp_descriptor_for_record(record)
+        .ok_or_else(|| format!("unknown system MCP: {}", record.id))?;
+    if descriptor.key == chatos_plugin_management_sdk::SystemMcpKey::TaskRunnerService {
+        return fetch_task_runner_descriptor(config).await;
+    }
+    let tools = match system_mcp_tool_catalog(descriptor.key)? {
+        SystemMcpToolCatalog::Static(tools) => tools,
+        SystemMcpToolCatalog::Dynamic => Vec::new(),
+    };
+    let skills = system_mcp_provider_skills(descriptor.key)
+        .into_iter()
+        .map(|skill| serde_json::from_value(serde_json::to_value(skill).unwrap_or(Value::Null)))
+        .collect::<Result<Vec<McpProviderSkill>, _>>()
+        .map_err(|error| format!("decode system MCP provider skills failed: {error}"))?;
+    Ok(LiveMcpDescriptor { skills, tools })
+}
+
 async fn fetch_task_runner_descriptor(config: &AppConfig) -> Result<LiveMcpDescriptor, String> {
     let url = format!(
         "{}/api/mcp/provider-descriptor",
@@ -197,18 +168,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn every_static_system_route_has_real_tools() {
-        for server_name in [
-            SANDBOX_IMAGES_SERVER_NAME,
-            PROJECT_ENVIRONMENT_SERVER_NAME,
-            PROJECT_RUNTIME_ENVIRONMENT_SERVER_NAME,
-            LOCAL_COMMAND_APPROVAL_SERVER_NAME,
-        ] {
-            let tools = system_routed_tool_catalog(server_name)
-                .expect("catalog")
-                .expect("static system route");
-            assert!(!tools.is_empty(), "{server_name}");
-            assert!(tools.iter().all(|tool| tool.get("name").is_some()));
+    fn every_static_system_mcp_has_real_tools() {
+        for descriptor in chatos_mcp::system_mcp_catalog() {
+            let catalog = system_mcp_tool_catalog(descriptor.key).expect("catalog");
+            if let SystemMcpToolCatalog::Static(tools) = catalog {
+                assert!(!tools.is_empty(), "{}", descriptor.server_name);
+                assert!(tools.iter().all(|tool| tool.get("name").is_some()));
+            }
         }
     }
 }

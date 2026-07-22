@@ -9,6 +9,7 @@ import {
   clearLegacyChatStoreState,
 } from '@/lib/store/persistence';
 import ApiClient, { apiClient as globalApiClient } from '@/lib/api/client';
+import { ApiRequestError } from '@/lib/api/client/shared';
 import { useApiClientContext } from '@/lib/api/ApiClientContext';
 
 export interface AuthUser {
@@ -43,6 +44,10 @@ function extractErrorMessage(error: unknown): string {
   }
   return '请求失败，请稍后重试';
 }
+
+const authFailureInvalidatesSession = (error: unknown): boolean => (
+  error instanceof ApiRequestError && (error.status === 401 || error.status === 403)
+);
 
 const readStringField = (record: Record<string, unknown>, key: string): string => {
   const value = record[key];
@@ -80,11 +85,22 @@ function normalizeAuthUser(input: unknown): AuthUser | null {
   };
 }
 
-function applyAuthSuccess(
+interface ParsedAuthSuccess {
+  token: string;
+  user: AuthUser;
+}
+
+class LocalConnectorDesktopSyncError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'LocalConnectorDesktopSyncError';
+  }
+}
+
+function parseAuthSuccess(
   response: unknown,
   client: ApiClient,
-  set: (partial: Partial<AuthState>) => void,
-) {
+): ParsedAuthSuccess {
   const record = (response && typeof response === 'object') ? response as Record<string, unknown> : null;
   const token = record?.access_token;
   const user = normalizeAuthUser(record?.user);
@@ -92,9 +108,16 @@ function applyAuthSuccess(
     throw new Error('认证失败：返回数据不完整');
   }
   client.setAccessToken(token);
+  return { token, user };
+}
+
+function commitAuthSuccess(
+  auth: ParsedAuthSuccess,
+  set: (partial: Partial<AuthState>) => void,
+) {
   set({
-    accessToken: token,
-    user,
+    accessToken: auth.token,
+    user: auth.user,
     initialized: true,
     loading: false,
     error: null,
@@ -121,12 +144,23 @@ async function syncLocalConnectorDesktop(client: ApiClient): Promise<void> {
   if (!isLocalConnectorDesktopHost()) {
     return;
   }
-  const response = await client.issueLocalConnectorTicket();
-  const ticket = String(response?.ticket || '').trim();
-  if (!ticket) {
-    throw new Error('Local Connector 授权票据为空');
+  try {
+    const response = await client.issueLocalConnectorTicket();
+    const ticket = String(response?.ticket || '').trim();
+    if (!ticket) {
+      throw new Error('授权票据为空');
+    }
+    const authenticate = window.chatosLocalRuntime?.authenticateDesktopTicket;
+    if (typeof authenticate === 'function') {
+      await authenticate(ticket);
+      return;
+    }
+    window.location.href = `chatos-local-connector://auth?ticket=${encodeURIComponent(ticket)}`;
+  } catch (error) {
+    throw new LocalConnectorDesktopSyncError(
+      `Local Connector 登录同步失败：${extractErrorMessage(error)}`,
+    );
   }
-  window.location.href = `chatos-local-connector://auth?ticket=${encodeURIComponent(ticket)}`;
 }
 
 const AUTH_STORE_KEY = 'chat-auth-store';
@@ -176,6 +210,67 @@ export const createAuthStore = (
         return client;
       };
 
+      let bootstrapInFlight: Promise<void> | null = null;
+
+      const runBootstrap = async (): Promise<void> => {
+        const runtimeClient = getClient();
+        const token = get().accessToken;
+        if (!token) {
+          runtimeClient.setAccessToken(null);
+          set({ initialized: true, user: null, loading: false, error: null });
+          return;
+        }
+
+        runtimeClient.setAccessToken(token);
+        set({ loading: true, error: null });
+        try {
+          const resp = await runtimeClient.getMe();
+          const user = normalizeAuthUser(resp?.user);
+          if (!user?.id) {
+            runtimeClient.setAccessToken(null);
+            set({
+              accessToken: null,
+              user: null,
+              initialized: true,
+              loading: false,
+              error: null,
+            });
+            return;
+          }
+          await syncLocalConnectorDesktop(runtimeClient);
+          set({ user, initialized: true, loading: false, error: null });
+        } catch (error) {
+          if (authFailureInvalidatesSession(error)) {
+            runtimeClient.setAccessToken(null);
+            set({
+              accessToken: null,
+              user: null,
+              initialized: true,
+              loading: false,
+              error: null,
+            });
+            return;
+          }
+          if (error instanceof LocalConnectorDesktopSyncError) {
+            runtimeClient.setAccessToken(null);
+            set({
+              accessToken: null,
+              user: null,
+              initialized: true,
+              loading: false,
+              error: error.message,
+            });
+            return;
+          }
+          console.warn('Unable to validate the persisted login during startup; keeping the local session.', error);
+          set({
+            initialized: true,
+            loading: false,
+            error: null,
+          });
+        }
+      };
+
       const storeState: AuthState = {
         accessToken: null,
         user: null,
@@ -187,36 +282,12 @@ export const createAuthStore = (
           if (get().initialized) {
             return;
           }
-          const runtimeClient = getClient();
-          const token = get().accessToken;
-          if (!token) {
-            runtimeClient.setAccessToken(null);
-            set({ initialized: true, user: null, loading: false, error: null });
-            return;
-          }
-
-          runtimeClient.setAccessToken(token);
-          set({ loading: true, error: null });
-          try {
-            const resp = await runtimeClient.getMe();
-            const user = normalizeAuthUser(resp?.user);
-            if (!user?.id) {
-              throw new Error('登录状态已失效');
-            }
-            void syncLocalConnectorDesktop(runtimeClient).catch((error) => {
-              console.warn('Local Connector desktop sync failed:', error);
-            });
-            set({ user, initialized: true, loading: false, error: null });
-          } catch (error) {
-            runtimeClient.setAccessToken(null);
-            set({
-              accessToken: null,
-              user: null,
-              initialized: true,
-              loading: false,
-              error: null,
+          if (!bootstrapInFlight) {
+            bootstrapInFlight = runBootstrap().finally(() => {
+              bootstrapInFlight = null;
             });
           }
+          await bootstrapInFlight;
         },
 
         login: async (username: string, password: string) => {
@@ -224,12 +295,18 @@ export const createAuthStore = (
           set({ loading: true, error: null });
           try {
             const resp = await runtimeClient.login({ username, password });
-            applyAuthSuccess(resp, runtimeClient, set);
-            void syncLocalConnectorDesktop(runtimeClient).catch((error) => {
-              console.warn('Local Connector desktop sync failed:', error);
-            });
+            const auth = parseAuthSuccess(resp, runtimeClient);
+            await syncLocalConnectorDesktop(runtimeClient);
+            commitAuthSuccess(auth, set);
           } catch (error) {
-            set({ loading: false, error: extractErrorMessage(error) });
+            runtimeClient.setAccessToken(null);
+            set({
+              accessToken: null,
+              user: null,
+              initialized: true,
+              loading: false,
+              error: extractErrorMessage(error),
+            });
             throw error;
           }
         },
@@ -257,12 +334,18 @@ export const createAuthStore = (
               invite_code: inviteCode,
               verification_code: verificationCode,
             });
-            applyAuthSuccess(resp, runtimeClient, set);
-            void syncLocalConnectorDesktop(runtimeClient).catch((error) => {
-              console.warn('Local Connector desktop sync failed:', error);
-            });
+            const auth = parseAuthSuccess(resp, runtimeClient);
+            await syncLocalConnectorDesktop(runtimeClient);
+            commitAuthSuccess(auth, set);
           } catch (error) {
-            set({ loading: false, error: extractErrorMessage(error) });
+            runtimeClient.setAccessToken(null);
+            set({
+              accessToken: null,
+              user: null,
+              initialized: true,
+              loading: false,
+              error: extractErrorMessage(error),
+            });
             throw error;
           }
         },

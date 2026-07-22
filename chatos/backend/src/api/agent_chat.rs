@@ -5,7 +5,7 @@ mod task_runner_callback;
 #[path = "agent_chat/tools_panel.rs"]
 mod tools_panel;
 
-use axum::http::StatusCode;
+use axum::http::{HeaderMap, StatusCode};
 use axum::{
     extract::Path,
     routing::{get, post},
@@ -66,6 +66,7 @@ pub fn public_router() -> Router {
 
 async fn agent_chat_send(
     auth: AuthUser,
+    headers: HeaderMap,
     Json(mut req): Json<ChatStreamRequest>,
 ) -> Result<(StatusCode, Json<Value>), (StatusCode, Json<Value>)> {
     ensure_and_set_user_id(&mut req.user_id, &auth)?;
@@ -74,7 +75,7 @@ async fn agent_chat_send(
     let session = ensure_owned_session(conversation_id.as_str(), &auth)
         .await
         .map_err(map_session_access_error)?;
-    ensure_cloud_session_execution(&session, req.project_id.as_deref(), &auth).await?;
+    ensure_cloud_session_execution(&session, req.project_id.as_deref(), &auth, &headers).await?;
     let accepted_turn_id = normalize_turn_id(req.turn_id.as_deref());
     let user_message_id = Uuid::new_v4().to_string();
     req.user_message_id = Some(user_message_id.clone());
@@ -99,6 +100,7 @@ async fn agent_chat_send(
 
 async fn agent_chat_guidance(
     auth: AuthUser,
+    headers: HeaderMap,
     Json(req): Json<RuntimeGuidanceRequest>,
 ) -> (StatusCode, Json<Value>) {
     let conversation_id = req.conversation_id.unwrap_or_default().trim().to_string();
@@ -145,7 +147,7 @@ async fn agent_chat_guidance(
         Ok(session) => session,
         Err(err) => return map_session_access_error(err),
     };
-    if let Err(error) = ensure_cloud_session_execution(&session, None, &auth).await {
+    if let Err(error) = ensure_cloud_session_execution(&session, None, &auth, &headers).await {
         return error;
     }
 
@@ -296,5 +298,11 @@ async fn stop_chat(Json(req): Json<Value>) -> (StatusCode, Json<Value>) {
 }
 
 async fn stream_chat(sender: Option<SseSender>, req: ChatStreamRequest) {
-    run_chat_usecase(RunChatUsecaseInput { sender, req }).await;
+    run_chat_usecase(RunChatUsecaseInput {
+        sender,
+        req,
+        persisted_user_message_content: None,
+        persisted_user_message_metadata: None,
+    })
+    .await;
 }

@@ -18,6 +18,9 @@ import {
   getLocalTaskBoardGraph,
   getLocalTaskBoardTask,
   getLocalTaskBoardTasks,
+  getLocalTaskRunnerRunDetail,
+  getLocalTaskRunnerRunOutputChanges,
+  getLocalTaskRunnerRunOutputDiff,
 } from '../localRuntime/taskBoard';
 
 export interface MessageTaskRunnerLookupOptions {
@@ -104,6 +107,9 @@ export const getMessageTaskRunnerRun = (
   runId: string,
   options?: MessageTaskRunnerLookupOptions,
 ): Promise<MessageTaskRunnerRunDetailResponse> => {
+  if (options?.sessionId && isLocalRuntimeSessionId(options.sessionId)) {
+    return getLocalTaskRunnerRunDetail(runId, options);
+  }
   return request<MessageTaskRunnerRunDetailResponse>(
     `/messages/${encodeURIComponent(messageId)}/task-runner/runs/${encodeURIComponent(runId)}${messageTaskRunnerLookupQuery(options)}`,
   );
@@ -115,6 +121,9 @@ export const getMessageTaskRunnerGraphRun = (
   runId: string,
   options?: MessageTaskRunnerLookupOptions,
 ): Promise<MessageTaskRunnerRunDetailResponse> => {
+  if (options?.sessionId && isLocalRuntimeSessionId(options.sessionId)) {
+    return getLocalTaskRunnerRunDetail(runId, options);
+  }
   return request<MessageTaskRunnerRunDetailResponse>(
     `/messages/${encodeURIComponent(messageId)}/task-runner/graph/runs/${encodeURIComponent(runId)}${messageTaskRunnerLookupQuery(options)}`,
   );
@@ -126,6 +135,9 @@ export const getMessageTaskRunnerRunOutputChanges = (
   runId: string,
   options?: MessageTaskRunnerLookupOptions,
 ): Promise<MessageTaskRunnerRunOutputChangesResponse> => {
+  if (options?.sessionId && isLocalRuntimeSessionId(options.sessionId)) {
+    return getLocalTaskRunnerRunOutputChanges(runId, options);
+  }
   return request<MessageTaskRunnerRunOutputChangesResponse>(
     `/messages/${encodeURIComponent(messageId)}/task-runner/runs/${encodeURIComponent(runId)}/output/changes${messageTaskRunnerLookupQuery(options)}`,
   );
@@ -138,6 +150,9 @@ export const getMessageTaskRunnerRunOutputDiff = (
   path: string,
   options?: MessageTaskRunnerLookupOptions,
 ): Promise<MessageTaskRunnerRunOutputDiffResponse> => {
+  if (options?.sessionId && isLocalRuntimeSessionId(options.sessionId)) {
+    return getLocalTaskRunnerRunOutputDiff(runId, path);
+  }
   return request<MessageTaskRunnerRunOutputDiffResponse>(
     `/messages/${encodeURIComponent(messageId)}/task-runner/runs/${encodeURIComponent(runId)}/output/diff${messageTaskRunnerLookupQuery({ ...options, path })}`,
   );

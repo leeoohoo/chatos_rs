@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use chatos_project_mcp_contract::args::InitProjectArgs;
+use chatos_mcp::project_management_contract::args::InitProjectArgs;
 use serde_json::{json, Value};
 
 use crate::auth::CurrentUser;

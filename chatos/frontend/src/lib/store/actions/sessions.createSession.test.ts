@@ -115,6 +115,8 @@ describe('createSession', () => {
       set,
       get: (() => state) as never,
       client: {
+        sessionScopeUsesLocalRuntime: vi.fn().mockReturnValue(false),
+        sessionUsesLocalRuntime: vi.fn().mockReturnValue(false),
         createSession: vi.fn().mockResolvedValue(createdRemote),
         getSessions: vi.fn().mockResolvedValue([]),
       } as never,
@@ -144,5 +146,69 @@ describe('createSession', () => {
       selectedAgentId: 'agent_1',
     });
     expect(localStorageMock.setItem).not.toHaveBeenCalled();
+  });
+
+  it('does not reuse a cloud contact session when the desktop scope is local', async () => {
+    const staleCloudSession = createSession('cloud_session_1', {
+      projectId: '-1',
+      project_id: '-1',
+      metadata: {
+        chat_runtime: {
+          contact_id: 'contact_1',
+          contact_agent_id: 'agent_1',
+          project_id: '-1',
+        },
+      },
+    });
+    const state = {
+      contacts: [],
+      sessions: [staleCloudSession],
+      currentSessionId: null,
+      currentSession: null,
+      currentProjectId: null,
+      currentProject: null,
+      activePanel: 'chat',
+      messages: [],
+      error: null,
+      selectedModelId: 'model_local',
+      selectedAgentId: null,
+      sessionAiSelectionBySession: {},
+      sessionMessagesCache: {},
+      sessionMessagesCacheOrder: [],
+    } as unknown as ChatStoreShape;
+    const set = (updater: (draftState: ChatStoreDraft) => void) => {
+      updater(state as unknown as ChatStoreDraft);
+    };
+    const createLocalSession = vi.fn().mockResolvedValue({
+      id: 'lc_session_new',
+      title: 'Local contact',
+      user_id: 'user_1',
+      project_id: '-1',
+      created_at: '2026-01-01T00:00:00.000Z',
+      updated_at: '2026-01-01T00:00:00.000Z',
+    });
+    const actions = createSessionCreateActions({
+      set,
+      get: (() => state) as never,
+      client: {
+        sessionScopeUsesLocalRuntime: vi.fn().mockReturnValue(true),
+        sessionUsesLocalRuntime: (sessionId: string) => sessionId.startsWith('lc_session_'),
+        createSession: createLocalSession,
+        getSessions: vi.fn().mockResolvedValue([]),
+      } as never,
+      getSessionParams: () => ({ userId: 'user_1', projectId: '-1' }),
+    });
+
+    const createdId = await actions.createSession({
+      title: 'Local contact',
+      contactId: 'contact_1',
+      contactAgentId: 'agent_1',
+      projectId: '-1',
+      selectedModelId: 'model_local',
+    });
+
+    expect(createdId).toBe('lc_session_new');
+    expect(createLocalSession).toHaveBeenCalledTimes(1);
+    expect(state.currentSessionId).toBe('lc_session_new');
   });
 });

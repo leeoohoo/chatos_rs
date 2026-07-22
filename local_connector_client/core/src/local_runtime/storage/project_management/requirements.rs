@@ -6,7 +6,7 @@ use uuid::Uuid;
 
 use crate::local_now_rfc3339;
 use crate::local_runtime::project_management::{
-    CreateLocalRequirementInput, LocalRequirementRecord,
+    canonical_project_status, CreateLocalRequirementInput, LocalRequirementRecord,
 };
 
 use super::super::LocalDatabase;
@@ -34,6 +34,7 @@ impl LocalDatabase {
         }
         let id = format!("lc_requirement_{}", Uuid::new_v4());
         let now = local_now_rfc3339();
+        let status = canonical_project_status(input.status.as_str());
         sqlx::query(
             r#"
             INSERT INTO project_requirements (
@@ -56,7 +57,7 @@ impl LocalDatabase {
         .bind(input.acceptance_criteria.as_deref())
         .bind(input.source.as_deref())
         .bind(input.priority)
-        .bind(input.status.as_str())
+        .bind(status.as_str())
         .bind(input.owner_user_id.as_str())
         .bind(input.assignee_user_id.as_deref())
         .bind(now.as_str())

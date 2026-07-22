@@ -2,7 +2,9 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
+
+use super::SandboxGeneratedConfigFile;
 pub(super) fn sandbox_workspace_root(workspace_dir: &str) -> Result<PathBuf, String> {
     let root = Path::new(workspace_dir).join(".chatos").join("task-runner");
     fs::create_dir_all(&root).map_err(|err| {
@@ -34,6 +36,131 @@ pub(super) fn sandbox_baseline_workspace(run_workspace: &str) -> Result<String, 
 pub(super) fn copy_workspace_to_sandbox(source: &str, destination: &str) -> Result<(), String> {
     super::super::workspace_snapshot::copy_workspace_snapshot(source, destination)?;
     prepare_sandbox_workspace_owner(Path::new(destination))
+}
+
+pub(super) fn write_generated_config_files(
+    workspace: &str,
+    files: &[SandboxGeneratedConfigFile],
+) -> Result<(), String> {
+    const MAX_FILES: usize = 100;
+    const MAX_FILE_BYTES: usize = 1024 * 1024;
+    const MAX_TOTAL_BYTES: usize = 5 * 1024 * 1024;
+
+    if files.len() > MAX_FILES {
+        return Err(format!(
+            "generated config file count exceeds limit: {} > {MAX_FILES}",
+            files.len()
+        ));
+    }
+    let total_bytes = files
+        .iter()
+        .try_fold(0usize, |total, file| total.checked_add(file.content.len()))
+        .ok_or_else(|| "generated config total size overflow".to_string())?;
+    if total_bytes > MAX_TOTAL_BYTES {
+        return Err(format!(
+            "generated config total size exceeds limit: {total_bytes} > {MAX_TOTAL_BYTES}"
+        ));
+    }
+
+    let root = Path::new(workspace);
+    fs::create_dir_all(root)
+        .map_err(|err| format!("create generated config workspace failed: {err}"))?;
+    for file in files {
+        if file.content.len() > MAX_FILE_BYTES {
+            return Err(format!(
+                "generated config file exceeds size limit: {}",
+                file.path
+            ));
+        }
+        let relative = normalize_generated_config_path(file.path.as_str())?;
+        let target = root.join(relative.as_path());
+        reject_symlink_path(root, relative.parent())?;
+        if let Ok(metadata) = fs::symlink_metadata(target.as_path()) {
+            if metadata.file_type().is_symlink() {
+                return Err(format!(
+                    "generated config target cannot be a symlink: {}",
+                    file.path
+                ));
+            }
+        }
+        if let Some(parent) = target.parent() {
+            fs::create_dir_all(parent)
+                .map_err(|err| format!("create generated config directory failed: {err}"))?;
+        }
+        fs::write(target.as_path(), file.content.as_bytes())
+            .map_err(|err| format!("write generated config {} failed: {err}", file.path))?;
+    }
+    prepare_sandbox_workspace_owner(root)
+}
+
+fn normalize_generated_config_path(value: &str) -> Result<PathBuf, String> {
+    let value = value.trim();
+    if value.is_empty() {
+        return Err("generated config path is empty".to_string());
+    }
+    let mut normalized = PathBuf::new();
+    for component in Path::new(value).components() {
+        match component {
+            Component::Normal(segment) => normalized.push(segment),
+            Component::CurDir => {}
+            Component::ParentDir => {
+                return Err("generated config path cannot contain ..".to_string())
+            }
+            Component::RootDir | Component::Prefix(_) => {
+                return Err("generated config path must be relative".to_string())
+            }
+        }
+    }
+    if normalized.as_os_str().is_empty() {
+        return Err("generated config path is empty".to_string());
+    }
+    Ok(normalized)
+}
+
+fn reject_symlink_path(root: &Path, parent: Option<&Path>) -> Result<(), String> {
+    let Some(parent) = parent else {
+        return Ok(());
+    };
+    let mut current = root.to_path_buf();
+    for component in parent.components() {
+        let Component::Normal(segment) = component else {
+            continue;
+        };
+        current.push(segment);
+        match fs::symlink_metadata(current.as_path()) {
+            Ok(metadata) if metadata.file_type().is_symlink() => {
+                return Err(format!(
+                    "generated config path crosses symlink: {}",
+                    current.display()
+                ));
+            }
+            Ok(_) => {}
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => break,
+            Err(err) => {
+                return Err(format!(
+                    "inspect generated config path {} failed: {err}",
+                    current.display()
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn generated_config_paths_reject_escape_and_absolute_paths() {
+        assert_eq!(
+            normalize_generated_config_path(".chatos/runtime.env").expect("relative path"),
+            PathBuf::from(".chatos/runtime.env")
+        );
+        assert!(normalize_generated_config_path("../runtime.env").is_err());
+        assert!(normalize_generated_config_path("config/../runtime.env").is_err());
+        assert!(normalize_generated_config_path("/tmp/runtime.env").is_err());
+    }
 }
 
 #[cfg(unix)]

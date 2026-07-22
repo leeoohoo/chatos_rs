@@ -176,8 +176,12 @@ export const taskProfileColorMap: Record<TaskProfile, string> = {
   chatos_plan: 'geekblue',
 };
 
-export function taskProfileLabel(profile: string | undefined, t: TranslateFn): string {
-  if (profile === 'chatos_plan') {
+export function taskProfileLabel(
+  profile: string | undefined,
+  t: TranslateFn,
+  requiresExecution?: boolean,
+): string {
+  if (profile === 'chatos_plan' && requiresExecution !== true) {
     return t('tasks.profile.chatosPlan');
   }
   return t('tasks.profile.default');
@@ -300,6 +304,15 @@ export function taskRunReportContent(run?: TaskRunRecord | null): string | null 
 
 export function isSchedulerOnlyTask(task: Pick<TaskRecord, 'schedule'>): boolean {
   return task.schedule.mode === 'contact_async';
+}
+
+export function isTaskRunActionDisabled(
+  task: Pick<TaskRecord, 'status' | 'schedule'>,
+): boolean {
+  return task.status === 'queued'
+    || task.status === 'running'
+    || task.status === 'cancelled'
+    || isSchedulerOnlyTask(task);
 }
 
 export function taskModelOptionLabel(

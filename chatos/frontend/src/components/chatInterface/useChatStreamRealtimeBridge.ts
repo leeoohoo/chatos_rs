@@ -9,79 +9,29 @@ import {
   useRealtimeTopics,
 } from '../../lib/realtime/RealtimeProvider';
 import { useConversationChatStreamRealtime } from '../../lib/realtime/useConversationChatStreamRealtime';
-import { formatAssistantFailureContent } from '../../lib/store/actions/sendMessage/errorParsing';
+import {
+  formatAssistantFailureContent,
+  sanitizeUserVisibleAiError,
+} from '../../lib/store/actions/sendMessage/errorParsing';
 import { normalizePersistedMessage } from '../../lib/store/actions/sendMessage/persistedTurnMessages';
 import { createDefaultSessionChatState } from '../../lib/store/actions/sendMessage/sessionState';
-import {
-  useChatStoreContext,
-  useChatStoreSelector,
-} from '../../lib/store/ChatStoreContext';
+import { useChatStoreContext, useChatStoreSelector } from '../../lib/store/ChatStoreContext';
 import type { Message } from '../../types';
 import type {
   ChatStoreDraft,
   ChatStoreSet,
 } from '../../lib/store/types';
+import { useCurrentTaskRunnerCallbackReconciliation } from './useCurrentTaskRunnerCallbackReconciliation';
 
-const readTurnId = (message: Message | null | undefined): string => {
-  const metadata = message?.metadata || {};
-  const taskRunnerAsync = metadata.task_runner_async;
-  const taskRunnerRecord = taskRunnerAsync && typeof taskRunnerAsync === 'object'
-    ? taskRunnerAsync as Record<string, unknown>
-    : {};
-  const value = (
-    metadata.conversation_turn_id
-    || metadata.conversationTurnId
-    || taskRunnerRecord.source_turn_id
-    || taskRunnerRecord.sourceTurnId
-  );
-  return typeof value === 'string' ? value.trim() : '';
-};
-
-const readString = (value: unknown): string => (
-  typeof value === 'string' ? value.trim() : ''
-);
-
-const normalizeEventType = (
-  payload: Parameters<Parameters<typeof useConversationChatStreamRealtime>[0]['onEvent']>[0],
-  eventName?: string,
-): string => String(payload.raw?.type || payload.stream_type || eventName || '').trim().toLowerCase();
-
-const isCancelledEventType = (eventType: string): boolean => (
-  eventType === 'cancelled'
-  || eventType === 'canceled'
-  || eventType.endsWith('.cancelled')
-  || eventType.endsWith('.canceled')
-);
-
-const isFailedEventType = (eventType: string): boolean => (
-  eventType === 'error'
-  || eventType === 'failed'
-  || eventType.endsWith('.failed')
-  || eventType.endsWith('.error')
-);
-
-const isTerminalErrorEventType = (eventType: string): boolean => (
-  isFailedEventType(eventType) || isCancelledEventType(eventType)
-);
-
-const readRealtimeErrorMessage = (
-  payload: Parameters<Parameters<typeof useConversationChatStreamRealtime>[0]['onEvent']>[0],
-): string | null => {
-  const direct = readString(payload.raw?.message);
-  if (direct) {
-    return direct;
-  }
-  const data = payload.raw?.data;
-  if (data && typeof data === 'object' && !Array.isArray(data)) {
-    const record = data as Record<string, unknown>;
-    return readString(record.message) || readString(record.error) || null;
-  }
-  return null;
-};
-
-const sanitizeMessageIdPart = (value: string): string => (
-  value.replace(/[^A-Za-z0-9_-]/g, '_')
-);
+import {
+  isCancelledEventType,
+  isTerminalErrorEventType,
+  normalizeEventType,
+  readRealtimeErrorMessage,
+  readString,
+  readTurnId,
+  sanitizeMessageIdPart,
+} from './chatStreamRealtimeEvent';
 
 const markUserMessageTurnFailed = (
   messages: Message[],
@@ -119,7 +69,7 @@ const buildRealtimeFailureMessage = (
   message: string,
 ): Message => {
   const normalizedTurnId = turnId || `unknown_${Date.now()}`;
-  const readableError = message || 'Chat turn failed';
+  const readableError = sanitizeUserVisibleAiError(message || 'Chat turn failed');
   const content = formatAssistantFailureContent(readableError, '');
   return {
     id: `realtime_error_${sanitizeMessageIdPart(sessionId)}_${sanitizeMessageIdPart(normalizedTurnId)}`,
@@ -149,6 +99,8 @@ const mergeRealtimeMessage = (
     metadata: {
       ...existingMetadata,
       ...incomingMetadata,
+      clientOptimistic: false,
+      clientPendingSync: true,
       historyProcess: existingMetadata.historyProcess || incomingMetadata.historyProcess,
     },
   };
@@ -186,7 +138,7 @@ const upsertRealtimeMessage = (
   return nextMessages;
 };
 
-const applyTaskRunnerCallbackRealtimeUpdate = (
+export const applyTaskRunnerCallbackRealtimeUpdate = (
   state: ChatStoreDraft,
   sessionId: string,
   persistedUserMessage: Message | null,
@@ -209,8 +161,10 @@ const applyTaskRunnerCallbackRealtimeUpdate = (
   }
 
   const prev = state.sessionChatState?.[sessionId] || createDefaultSessionChatState();
-  const isTerminalPlannerMessage = Boolean(persistedUserMessage || persistedAssistantMessage);
-  if (isTerminalPlannerMessage) {
+  const activeTurnId = readString(prev.activeTurnId);
+  const terminalTurnMatchesActive = !activeTurnId || (Boolean(turnId) && turnId === activeTurnId);
+  const hasTerminalAssistantMessage = Boolean(persistedAssistantMessage);
+  if (hasTerminalAssistantMessage && terminalTurnMatchesActive) {
     state.sessionChatState[sessionId] = {
       ...prev,
       isLoading: false,
@@ -227,18 +181,10 @@ const applyTaskRunnerCallbackRealtimeUpdate = (
       state.isStreaming = false;
       state.streamingMessageId = null;
     }
-  } else if (turnId && prev.activeTurnId === turnId) {
-    state.sessionChatState[sessionId] = {
-      ...prev,
-      activeTurnId: null,
-      isLoading: false,
-      isStreaming: false,
-      streamingTransport: null,
-    };
   }
 };
 
-const applyTaskRunnerRealtimeError = (
+export const applyTaskRunnerRealtimeError = (
   state: ChatStoreDraft,
   sessionId: string,
   message: string | null,
@@ -247,8 +193,12 @@ const applyTaskRunnerRealtimeError = (
 ) => {
   const isCancelled = isCancelledEventType(eventType);
   const terminalStatus = isCancelled ? 'cancelled' : 'failed';
-  const readableMessage = message || (isCancelled ? 'Chat turn cancelled' : 'Chat turn failed');
-  const failureMessage = buildRealtimeFailureMessage(sessionId, turnId, readableMessage);
+  const readableMessage = sanitizeUserVisibleAiError(
+    message || (isCancelled ? 'Chat turn cancelled' : 'Chat turn failed'),
+  );
+  const failureMessage = isCancelled
+    ? null
+    : buildRealtimeFailureMessage(sessionId, turnId, readableMessage);
   if (state.currentSessionId === sessionId) {
     state.messages = markUserMessageTurnFailed(state.messages || [], turnId, terminalStatus);
     state.messages = upsertRealtimeMessage(state.messages || [], failureMessage);
@@ -261,22 +211,26 @@ const applyTaskRunnerRealtimeError = (
   }
 
   const prev = state.sessionChatState?.[sessionId] || createDefaultSessionChatState();
-  state.sessionChatState[sessionId] = {
-    ...prev,
-    isLoading: false,
-    isStreaming: false,
-    isStopping: false,
-    streamingPhase: null,
-    streamingMessageId: null,
-    activeTurnId: null,
-    streamingPreviewText: '',
-    streamingTransport: null,
-  };
-  if (state.currentSessionId === sessionId) {
-    state.isLoading = false;
-    state.isStreaming = false;
-    state.streamingMessageId = null;
-    state.error = readableMessage;
+  const activeTurnId = readString(prev.activeTurnId);
+  const terminalTurnMatchesActive = !activeTurnId || (Boolean(turnId) && turnId === activeTurnId);
+  if (terminalTurnMatchesActive) {
+    state.sessionChatState[sessionId] = {
+      ...prev,
+      isLoading: false,
+      isStreaming: false,
+      isStopping: false,
+      streamingPhase: null,
+      streamingMessageId: null,
+      activeTurnId: null,
+      streamingPreviewText: '',
+      streamingTransport: null,
+    };
+    if (state.currentSessionId === sessionId) {
+      state.isLoading = false;
+      state.isStreaming = false;
+      state.streamingMessageId = null;
+      state.error = isCancelled ? null : readableMessage;
+    }
   }
 };
 
@@ -349,6 +303,7 @@ export const useChatStreamRealtimeBridge = () => {
     () => realtimeConnectionState === 'connected',
     [realtimeConnectionState],
   );
+  useCurrentTaskRunnerCallbackReconciliation();
 
   useRealtimeTopics(
     subscribedConversationIds.map((sessionId) => ({ scope: 'conversation' as const, id: sessionId })),

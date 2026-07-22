@@ -1,8 +1,16 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
+use std::collections::BTreeMap;
+
+#[cfg(test)]
+use chatos_mcp::system_mcp_descriptor_by_resource_id;
+use chatos_mcp::{
+    system_mcp_catalog, system_mcp_provider_skills, system_mcp_tool_catalog, SystemMcpDescriptor,
+    SystemMcpToolCatalog,
+};
 use chatos_mcp_runtime::BuiltinMcpKind;
-use serde_json::{json, Value};
+use serde_json::Value;
 
 use crate::models::*;
 use crate::store::{now_rfc3339, AppStore};
@@ -10,26 +18,18 @@ use crate::store::{now_rfc3339, AppStore};
 mod agent_prompts;
 mod internal_skills;
 
-use crate::tool_catalog::system_routed_tool_catalog;
 use agent_prompts::{backfill_agent_prompt_versions, seed_agent_prompts};
 use internal_skills::{internal_skill_catalog, seed_internal_skills};
 
-pub const SANDBOX_IMAGES_MCP_RESOURCE_ID: &str = "system_mcp_sandbox_images";
-const SANDBOX_IMAGES_MCP_SERVER_NAME: &str = "sandbox_images";
-pub const PROJECT_ENVIRONMENT_MCP_RESOURCE_ID: &str = "system_mcp_project_environment";
-const PROJECT_ENVIRONMENT_MCP_SERVER_NAME: &str = "project_environment";
-pub const PROJECT_RUNTIME_ENVIRONMENT_MCP_RESOURCE_ID: &str =
-    "system_mcp_project_runtime_environment";
-const PROJECT_RUNTIME_ENVIRONMENT_MCP_SERVER_NAME: &str = "project_runtime_environment";
-pub const LOCAL_CONNECTOR_APPROVAL_MCP_RESOURCE_ID: &str = "system_mcp_local_connector_approval";
-const LOCAL_CONNECTOR_APPROVAL_MCP_SERVER_NAME: &str = "local_connector_approval";
-pub const CHATOS_TASK_RUNNER_MCP_RESOURCE_ID: &str = "system_mcp_chatos_task_runner";
-const CHATOS_TASK_RUNNER_MCP_SERVER_NAME: &str = "task_runner_service";
+pub use chatos_plugin_management_sdk::{
+    CHATOS_TASK_RUNNER_MCP_RESOURCE_ID, LOCAL_CONNECTOR_APPROVAL_MCP_RESOURCE_ID,
+    PROJECT_ENVIRONMENT_MCP_RESOURCE_ID, PROJECT_RUNTIME_ENVIRONMENT_MCP_RESOURCE_ID,
+    SANDBOX_IMAGES_MCP_RESOURCE_ID,
+};
 const RETIRED_SYSTEM_AGENT_KEYS: &[&str] = &[
     "chatos_plan_agent",
     "chatos_async_planner",
     "chatos_chat_runtime",
-    "task_runner_plan_phase",
     "project_environment_agent",
     "local_connector_client_agent",
     "memory_engine_context_agent",
@@ -37,8 +37,7 @@ const RETIRED_SYSTEM_AGENT_KEYS: &[&str] = &[
 
 pub async fn seed_system_resources(store: &AppStore, admin_user_id: &str) -> Result<(), String> {
     remove_retired_system_agents(store).await?;
-    seed_builtin_mcps(store, admin_user_id).await?;
-    seed_system_routed_mcps(store, admin_user_id).await?;
+    seed_system_mcps(store, admin_user_id).await?;
     seed_internal_skills(store, admin_user_id).await?;
     seed_agents(store).await?;
     seed_agent_prompts(store, admin_user_id).await?;
@@ -58,225 +57,108 @@ async fn remove_retired_system_agents(store: &AppStore) -> Result<(), String> {
     Ok(())
 }
 
-async fn seed_builtin_mcps(store: &AppStore, admin_user_id: &str) -> Result<(), String> {
-    for kind in builtin_kinds() {
-        let now = now_rfc3339();
-        let id = builtin_resource_id(kind);
-        let provider_skills = provider_skills_for_builtin_mcp(kind);
-        let tool_catalog = Value::Array(chatos_builtin_tools::builtin_tool_catalog(kind)?);
-        if let Some(mut existing) = store.get_mcp(id.as_str()).await? {
-            let mut changed = false;
-            if !provider_skills_are_admin_managed(&existing.metadata)
-                && existing.metadata.extra.get("provider_skills") != Some(&provider_skills)
-            {
-                existing
-                    .metadata
-                    .extra
-                    .insert("provider_skills".to_string(), provider_skills);
-                changed = true;
-            }
-            if existing.metadata.extra.get("tool_catalog") != Some(&tool_catalog) {
-                existing
-                    .metadata
-                    .extra
-                    .insert("tool_catalog".to_string(), tool_catalog);
-                changed = true;
-            }
-            if changed {
-                existing.updated_by = admin_user_id.to_string();
-                existing.updated_at = now;
-                store.replace_mcp(&existing).await?;
-            }
-            continue;
-        }
-        let display_name = builtin_display_name(kind);
-        let record = McpRecord {
-            id,
-            owner_user_id: admin_user_id.to_string(),
-            owner_kind: OWNER_KIND_SYSTEM.to_string(),
-            visibility: VISIBILITY_SYSTEM_PRIVATE.to_string(),
-            source_kind: SOURCE_KIND_SYSTEM_SEED.to_string(),
-            name: kind.server_name().to_string(),
-            display_name,
-            description: Some(format!("System builtin MCP: {}", kind.kind_name())),
-            enabled: true,
-            runtime: McpRuntime {
-                kind: RUNTIME_KIND_BUILTIN.to_string(),
-                builtin_kind: Some(kind.kind_name().to_string()),
-                server_name: Some(kind.server_name().to_string()),
-                command: kind.command().map(ToOwned::to_owned),
-                ..McpRuntime::default()
-            },
-            security: ResourceSecurity {
-                allow_writes: Some(kind.default_allow_writes()),
-                ..ResourceSecurity::default()
-            },
-            metadata: ResourceMetadata {
-                tags: vec!["system".to_string(), "builtin".to_string()],
-                extra: [
-                    ("provider_skills".to_string(), provider_skills),
-                    ("tool_catalog".to_string(), tool_catalog),
-                ]
-                .into_iter()
-                .collect(),
-                ..ResourceMetadata::default()
-            },
-            created_by: admin_user_id.to_string(),
-            updated_by: admin_user_id.to_string(),
-            created_at: now.clone(),
-            updated_at: now,
-        };
-        store.replace_mcp(&record).await?;
+async fn seed_system_mcps(store: &AppStore, admin_user_id: &str) -> Result<(), String> {
+    for descriptor in system_mcp_catalog() {
+        seed_system_mcp(store, admin_user_id, descriptor).await?;
     }
     Ok(())
 }
 
-async fn seed_system_routed_mcps(store: &AppStore, admin_user_id: &str) -> Result<(), String> {
-    seed_system_routed_mcp(
-        store,
-        admin_user_id,
-        SANDBOX_IMAGES_MCP_RESOURCE_ID,
-        SANDBOX_IMAGES_MCP_SERVER_NAME,
-        "Sandbox Images",
-        "System-routed sandbox image MCP for project environment initialization.",
-        true,
-        &["system", "sandbox", "images"],
-        "project_environment",
-    )
-    .await?;
-    seed_system_routed_mcp(
-        store,
-        admin_user_id,
-        PROJECT_ENVIRONMENT_MCP_RESOURCE_ID,
-        PROJECT_ENVIRONMENT_MCP_SERVER_NAME,
-        "Project Environment",
-        "Project environment state tools used by the Project Management Agent.",
-        true,
-        &["system", "project", "environment"],
-        "project_environment",
-    )
-    .await?;
-    seed_system_routed_mcp(
-        store,
-        admin_user_id,
-        PROJECT_RUNTIME_ENVIRONMENT_MCP_RESOURCE_ID,
-        PROJECT_RUNTIME_ENVIRONMENT_MCP_SERVER_NAME,
-        "Project Runtime Environment",
-        "Read-only initialized runtime environment information for the Task Runner execution agent.",
-        false,
-        &["system", "project", "runtime", "environment", "task_runner"],
-        "task_runner",
-    )
-    .await?;
-    seed_system_routed_mcp(
-        store,
-        admin_user_id,
-        LOCAL_CONNECTOR_APPROVAL_MCP_RESOURCE_ID,
-        LOCAL_CONNECTOR_APPROVAL_MCP_SERVER_NAME,
-        "Local Command Approval",
-        "Final decision tools used by the Local Connector command approval agent.",
-        true,
-        &["system", "local_connector", "approval"],
-        "local_connector",
-    )
-    .await?;
-    seed_system_routed_mcp(
-        store,
-        admin_user_id,
-        CHATOS_TASK_RUNNER_MCP_RESOURCE_ID,
-        CHATOS_TASK_RUNNER_MCP_SERVER_NAME,
-        "Task Runner Service",
-        "Task Runner MCP entry used by Chat OS to create and manage asynchronous tasks.",
-        true,
-        &["system", "chatos", "task_runner"],
-        "chatos",
-    )
-    .await
-}
-
-#[allow(clippy::too_many_arguments)]
-async fn seed_system_routed_mcp(
+async fn seed_system_mcp(
     store: &AppStore,
     admin_user_id: &str,
-    resource_id: &str,
-    server_name: &str,
-    display_name: &str,
-    description: &str,
-    allow_writes: bool,
-    tags: &[&str],
-    category: &str,
+    descriptor: &SystemMcpDescriptor,
 ) -> Result<(), String> {
-    let provider_skills = provider_skills_for_system_mcp(resource_id);
-    let tool_catalog = system_routed_tool_catalog(server_name)?.map(Value::Array);
-    if let Some(mut existing) = store.get_mcp(resource_id).await? {
-        let mut changed = false;
-        if let Some(provider_skills) = provider_skills {
-            if !provider_skills_are_admin_managed(&existing.metadata)
-                && existing.metadata.extra.get("provider_skills") != Some(&provider_skills)
-            {
-                existing
-                    .metadata
-                    .extra
-                    .insert("provider_skills".to_string(), provider_skills);
-                changed = true;
-            }
+    let now = now_rfc3339();
+    let mut desired = system_mcp_record(descriptor, admin_user_id, now.as_str())?;
+    let Some(existing) = store.get_mcp(descriptor.resource_id).await? else {
+        return store.replace_mcp(&desired).await;
+    };
+
+    desired.enabled = existing.enabled;
+    desired.created_by = existing.created_by.clone();
+    desired.created_at = existing.created_at.clone();
+    desired.updated_by = existing.updated_by.clone();
+    desired.updated_at = existing.updated_at.clone();
+    if provider_skills_are_admin_managed(&existing.metadata) {
+        if let Some(provider_skills) = existing.metadata.extra.get("provider_skills") {
+            desired
+                .metadata
+                .extra
+                .insert("provider_skills".to_string(), provider_skills.clone());
         }
-        if let Some(tool_catalog) = tool_catalog {
-            if existing.metadata.extra.get("tool_catalog") != Some(&tool_catalog) {
-                existing
-                    .metadata
-                    .extra
-                    .insert("tool_catalog".to_string(), tool_catalog);
-                changed = true;
-            }
+        if let Some(managed_by) = existing.metadata.extra.get("provider_skills_managed_by") {
+            desired
+                .metadata
+                .extra
+                .insert("provider_skills_managed_by".to_string(), managed_by.clone());
         }
-        if changed {
-            existing.updated_by = admin_user_id.to_string();
-            existing.updated_at = now_rfc3339();
-            store.replace_mcp(&existing).await?;
-        }
+    }
+    if serde_json::to_value(&desired).map_err(|error| error.to_string())?
+        == serde_json::to_value(&existing).map_err(|error| error.to_string())?
+    {
         return Ok(());
     }
-    let now = now_rfc3339();
-    let record = McpRecord {
-        id: resource_id.to_string(),
+    desired.updated_by = admin_user_id.to_string();
+    desired.updated_at = now;
+    store.replace_mcp(&desired).await
+}
+
+fn system_mcp_record(
+    descriptor: &SystemMcpDescriptor,
+    admin_user_id: &str,
+    now: &str,
+) -> Result<McpRecord, String> {
+    let provider_skills = Value::Array(
+        system_mcp_provider_skills(descriptor.key)
+            .into_iter()
+            .map(|skill| serde_json::to_value(skill).map_err(|error| error.to_string()))
+            .collect::<Result<Vec<_>, _>>()?,
+    );
+    let mut extra: BTreeMap<String, Value> = [("provider_skills".to_string(), provider_skills)]
+        .into_iter()
+        .collect();
+    if let SystemMcpToolCatalog::Static(tools) = system_mcp_tool_catalog(descriptor.key)? {
+        extra.insert("tool_catalog".to_string(), Value::Array(tools));
+    }
+    Ok(McpRecord {
+        id: descriptor.resource_id.to_string(),
         owner_user_id: admin_user_id.to_string(),
         owner_kind: OWNER_KIND_SYSTEM.to_string(),
         visibility: VISIBILITY_SYSTEM_PRIVATE.to_string(),
         source_kind: SOURCE_KIND_SYSTEM_SEED.to_string(),
-        name: server_name.to_string(),
-        display_name: display_name.to_string(),
-        description: Some(description.to_string()),
+        name: descriptor.server_name.to_string(),
+        display_name: descriptor.display_name.to_string(),
+        description: Some(descriptor.description.to_string()),
         enabled: true,
         runtime: McpRuntime {
-            kind: RUNTIME_KIND_SYSTEM_ROUTED.to_string(),
-            server_name: Some(server_name.to_string()),
+            kind: RUNTIME_KIND_SYSTEM.to_string(),
+            system_key: Some(descriptor.key.as_str().to_string()),
+            server_name: Some(descriptor.server_name.to_string()),
+            command: descriptor
+                .embedded_kind
+                .and_then(|kind| kind.command().map(ToOwned::to_owned)),
             ..McpRuntime::default()
         },
         security: ResourceSecurity {
-            allow_writes: Some(allow_writes),
+            allow_writes: Some(descriptor.allow_writes),
             ..ResourceSecurity::default()
         },
         metadata: ResourceMetadata {
-            tags: tags.iter().map(|value| (*value).to_string()).collect(),
-            category: Some(category.to_string()),
-            extra: provider_skills
-                .map(|value| ("provider_skills".to_string(), value))
-                .into_iter()
-                .chain(
-                    tool_catalog
-                        .map(|value| ("tool_catalog".to_string(), value))
-                        .into_iter(),
-                )
+            tags: descriptor
+                .tags
+                .iter()
+                .map(|value| (*value).to_string())
                 .collect(),
+            category: descriptor.category.map(ToOwned::to_owned),
+            extra,
             ..ResourceMetadata::default()
         },
         created_by: admin_user_id.to_string(),
         updated_by: admin_user_id.to_string(),
-        created_at: now.clone(),
-        updated_at: now,
-    };
-    store.replace_mcp(&record).await
+        created_at: now.to_string(),
+        updated_at: now.to_string(),
+    })
 }
 
 fn provider_skills_are_admin_managed(metadata: &ResourceMetadata) -> bool {
@@ -287,84 +169,20 @@ fn provider_skills_are_admin_managed(metadata: &ResourceMetadata) -> bool {
         .is_some_and(|value| value == "admin")
 }
 
+#[cfg(test)]
 fn provider_skills_for_system_mcp(resource_id: &str) -> Option<Value> {
-    let (id, name, description, instructions) = match resource_id {
-        SANDBOX_IMAGES_MCP_RESOURCE_ID => (
-            "sandbox_images_usage",
-            "Sandbox Images MCP 使用指南",
-            "指导 AI 搜索、复用和创建项目沙箱镜像，并只采用工具真实返回的镜像结果。",
-            include_str!("../provider_skills/sandbox-images.md"),
-        ),
-        PROJECT_ENVIRONMENT_MCP_RESOURCE_ID => (
-            "project_environment_usage",
-            "Project Environment MCP 使用指南",
-            "指导 AI 读取和更新当前项目的运行环境状态。",
-            include_str!("../provider_skills/project-environment.md"),
-        ),
-        PROJECT_RUNTIME_ENVIRONMENT_MCP_RESOURCE_ID => (
-            "project_runtime_environment_usage",
-            "项目运行环境信息 MCP 使用指南",
-            "指导 Task Runner 执行 Agent 读取当前项目已经初始化好的环境信息。",
-            include_str!("../provider_skills/project-runtime-environment.md"),
-        ),
-        LOCAL_CONNECTOR_APPROVAL_MCP_RESOURCE_ID => (
-            "local_command_approval_usage",
-            "Local Command Approval MCP 使用指南",
-            "指导 AI 根据当前项目证据完成本地命令审批，不执行命令或修改文件。",
-            include_str!("../provider_skills/local-command-approval.md"),
-        ),
-        CHATOS_TASK_RUNNER_MCP_RESOURCE_ID => (
-            "task_runner_usage",
-            "Task Runner MCP 使用指南",
-            "指导 AI 把当前用户和项目需求交给内部异步执行链路，并正确选择 MCP 与 Local Connector Skills。",
-            include_str!("../../../task_runner_service/mcp/task-runner-provider-skill.md"),
-        ),
-        _ => return None,
-    };
-    Some(json!([{
-        "id": id,
-        "name": name,
-        "description": description,
-        "instructions": instructions
-    }]))
+    let descriptor = system_mcp_descriptor_by_resource_id(resource_id)?;
+    serde_json::to_value(system_mcp_provider_skills(descriptor.key)).ok()
 }
 
+#[cfg(test)]
 fn provider_skills_for_builtin_mcp(kind: BuiltinMcpKind) -> Value {
-    let display_name = builtin_display_name(kind);
-    let mut skills = Vec::new();
-    for (locale, locale_key, suffix, name_suffix) in [
-        (
-            chatos_mcp_runtime::BuiltinMcpPromptLocale::ZhCn,
-            "zh-CN",
-            "zh_cn",
-            "使用指南",
-        ),
-        (
-            chatos_mcp_runtime::BuiltinMcpPromptLocale::EnUs,
-            "en-US",
-            "en_us",
-            "Usage Guide",
-        ),
-    ] {
-        let Some(instructions) =
-            chatos_mcp_runtime::builtin_mcp_provider_skill_instructions(kind, locale)
-        else {
-            continue;
-        };
-        let description = if locale.is_english() {
-            format!("Guidance for using the {display_name} tools exposed in the current run.")
-        } else {
-            format!("指导 AI 使用本轮实际暴露的 {display_name} 工具。")
-        };
-        skills.push(json!({
-            "id": format!("{}_usage_{suffix}", kind.server_name()),
-            "name": format!("{display_name} {name_suffix}"),
-            "description": description,
-            "instructions": instructions,
-            "locale": locale_key,
-        }));
-    }
-    Value::Array(skills)
+    let descriptor = chatos_mcp::system_mcp_catalog()
+        .iter()
+        .find(|descriptor| descriptor.embedded_kind == Some(kind))
+        .expect("embedded MCP descriptor");
+    serde_json::to_value(system_mcp_provider_skills(descriptor.key))
+        .unwrap_or_else(|_| Value::Array(Vec::new()))
 }
 
 async fn seed_agents(store: &AppStore) -> Result<(), String> {
@@ -438,31 +256,25 @@ fn system_agent_specs() -> Vec<(&'static str, &'static str, &'static str, &'stat
 }
 
 async fn seed_agent_bindings(store: &AppStore, admin_user_id: &str) -> Result<(), String> {
-    seed_agent_mcp_binding(
-        store,
-        admin_user_id,
-        "chatos_conversation_agent",
-        CHATOS_TASK_RUNNER_MCP_RESOURCE_ID,
-        true,
-        10,
-    )
-    .await?;
-    seed_agent_mcp_binding(
-        store,
-        admin_user_id,
-        "chatos_planning_agent",
-        CHATOS_TASK_RUNNER_MCP_RESOURCE_ID,
-        true,
-        10,
-    )
-    .await?;
-    seed_agent_mcp_binding(
+    for agent_key in ["chatos_conversation_agent", "chatos_planning_agent"] {
+        seed_agent_mcp_binding(
+            store,
+            admin_user_id,
+            agent_key,
+            CHATOS_TASK_RUNNER_MCP_RESOURCE_ID,
+            true,
+            10,
+        )
+        .await?;
+    }
+    seed_agent_mcp_binding_with_conditions(
         store,
         admin_user_id,
         "project_requirement_execution_planner_agent",
         CHATOS_TASK_RUNNER_MCP_RESOURCE_ID,
         true,
         10,
+        cloud_runtime_binding_conditions(),
     )
     .await?;
     seed_agent_mcp_binding(
@@ -474,6 +286,22 @@ async fn seed_agent_bindings(store: &AppStore, admin_user_id: &str) -> Result<()
         20,
     )
     .await?;
+    for (index, kind) in task_runner_plan_phase_builtin_kinds()
+        .into_iter()
+        .enumerate()
+    {
+        let required = matches!(kind, BuiltinMcpKind::TaskManager | BuiltinMcpKind::AskUser);
+        let resource_id = builtin_resource_id(kind);
+        seed_agent_mcp_binding(
+            store,
+            admin_user_id,
+            "task_runner_plan_phase",
+            resource_id.as_str(),
+            required,
+            10 + index as i64 * 10,
+        )
+        .await?;
+    }
     for (agent_key, kind, required, priority) in [
         (
             "task_runner_run_phase",
@@ -506,27 +334,36 @@ async fn seed_agent_bindings(store: &AppStore, admin_user_id: &str) -> Result<()
         )
         .await?;
     }
-    seed_agent_mcp_binding(
-        store,
-        admin_user_id,
-        "task_runner_run_phase",
-        PROJECT_RUNTIME_ENVIRONMENT_MCP_RESOURCE_ID,
-        true,
-        30,
-    )
-    .await?;
-    let catalog = internal_skill_catalog()?;
-    for (index, item) in catalog.skills.iter().enumerate() {
-        seed_agent_resource_binding(
+    for agent_key in ["task_runner_plan_phase", "task_runner_run_phase"] {
+        seed_agent_mcp_binding_with_conditions(
             store,
             admin_user_id,
-            "task_runner_run_phase",
-            RESOURCE_KIND_SKILL,
-            item.skill_id.as_str(),
-            false,
-            300 + index as i64,
+            agent_key,
+            PROJECT_RUNTIME_ENVIRONMENT_MCP_RESOURCE_ID,
+            true,
+            30,
+            BindingConditions {
+                project_source_type: Some("cloud".to_string()),
+                runtime_provider: Some("cloud".to_string()),
+                ..BindingConditions::default()
+            },
         )
         .await?;
+    }
+    let catalog = internal_skill_catalog()?;
+    for agent_key in ["task_runner_plan_phase", "task_runner_run_phase"] {
+        for (index, item) in catalog.skills.iter().enumerate() {
+            seed_agent_resource_binding(
+                store,
+                admin_user_id,
+                agent_key,
+                RESOURCE_KIND_SKILL,
+                item.skill_id.as_str(),
+                false,
+                300 + index as i64,
+            )
+            .await?;
+        }
     }
     remove_seed_binding(
         store,
@@ -535,18 +372,27 @@ async fn seed_agent_bindings(store: &AppStore, admin_user_id: &str) -> Result<()
     )
     .await?;
     // These bindings mirror fixed tool executors in the current service code.
+    seed_agent_mcp_binding(
+        store,
+        admin_user_id,
+        "project_management_agent",
+        builtin_resource_id(BuiltinMcpKind::CodeMaintainerRead).as_str(),
+        true,
+        10,
+    )
+    .await?;
     for (resource_id, priority) in [
-        (builtin_resource_id(BuiltinMcpKind::CodeMaintainerRead), 10),
-        (PROJECT_ENVIRONMENT_MCP_RESOURCE_ID.to_string(), 20),
-        (SANDBOX_IMAGES_MCP_RESOURCE_ID.to_string(), 30),
+        (PROJECT_ENVIRONMENT_MCP_RESOURCE_ID, 20),
+        (SANDBOX_IMAGES_MCP_RESOURCE_ID, 30),
     ] {
-        seed_agent_mcp_binding(
+        seed_agent_mcp_binding_with_conditions(
             store,
             admin_user_id,
             "project_management_agent",
-            resource_id.as_str(),
+            resource_id,
             true,
             priority,
+            cloud_runtime_binding_conditions(),
         )
         .await?;
     }
@@ -565,6 +411,13 @@ async fn seed_agent_bindings(store: &AppStore, admin_user_id: &str) -> Result<()
         .await?;
     }
     Ok(())
+}
+
+fn cloud_runtime_binding_conditions() -> BindingConditions {
+    BindingConditions {
+        runtime_provider: Some("cloud".to_string()),
+        ..BindingConditions::default()
+    }
 }
 
 async fn remove_seed_binding(
@@ -587,7 +440,7 @@ async fn seed_agent_mcp_binding(
     required: bool,
     priority: i64,
 ) -> Result<(), String> {
-    seed_agent_resource_binding(
+    seed_agent_resource_binding_with_conditions(
         store,
         admin_user_id,
         agent_key,
@@ -595,6 +448,29 @@ async fn seed_agent_mcp_binding(
         resource_id,
         required,
         priority,
+        BindingConditions::default(),
+    )
+    .await
+}
+
+async fn seed_agent_mcp_binding_with_conditions(
+    store: &AppStore,
+    admin_user_id: &str,
+    agent_key: &str,
+    resource_id: &str,
+    required: bool,
+    priority: i64,
+    conditions: BindingConditions,
+) -> Result<(), String> {
+    seed_agent_resource_binding_with_conditions(
+        store,
+        admin_user_id,
+        agent_key,
+        RESOURCE_KIND_MCP,
+        resource_id,
+        required,
+        priority,
+        conditions,
     )
     .await
 }
@@ -607,6 +483,29 @@ async fn seed_agent_resource_binding(
     resource_id: &str,
     required: bool,
     priority: i64,
+) -> Result<(), String> {
+    seed_agent_resource_binding_with_conditions(
+        store,
+        admin_user_id,
+        agent_key,
+        resource_kind,
+        resource_id,
+        required,
+        priority,
+        BindingConditions::default(),
+    )
+    .await
+}
+
+async fn seed_agent_resource_binding_with_conditions(
+    store: &AppStore,
+    admin_user_id: &str,
+    agent_key: &str,
+    resource_kind: &str,
+    resource_id: &str,
+    required: bool,
+    priority: i64,
+    conditions: BindingConditions,
 ) -> Result<(), String> {
     let existing = store
         .list_bindings(agent_key, &ListBindingsQuery::default())
@@ -649,7 +548,7 @@ async fn seed_agent_resource_binding(
         enabled: true,
         required,
         priority,
-        conditions: BindingConditions::default(),
+        conditions,
         created_by: admin_user_id.to_string(),
         updated_by: admin_user_id.to_string(),
         created_at,
@@ -664,10 +563,7 @@ async fn seed_agent_resource_binding(
             && binding.enabled == desired.enabled
             && binding.required == desired.required
             && binding.priority == desired.priority
-            && binding.conditions.task_profile.is_none()
-            && binding.conditions.project_source_type.is_none()
-            && binding.conditions.runtime_provider.is_none()
-            && binding.conditions.schedule_mode.is_none()
+            && binding.conditions == desired.conditions
     });
     for binding in matching {
         if binding.id != desired_id {
@@ -694,18 +590,14 @@ fn task_runner_run_phase_optional_builtin_kinds() -> Vec<(BuiltinMcpKind, i64)> 
     ]
 }
 
-fn builtin_kinds() -> Vec<BuiltinMcpKind> {
+fn task_runner_plan_phase_builtin_kinds() -> Vec<BuiltinMcpKind> {
     use BuiltinMcpKind::*;
     vec![
         CodeMaintainerRead,
-        CodeMaintainerWrite,
-        TerminalController,
         TaskManager,
         ProjectManagement,
         Notepad,
-        AgentBuilder,
         AskUser,
-        RemoteConnectionController,
         WebTools,
         BrowserTools,
         MemorySkillReader,
@@ -714,32 +606,20 @@ fn builtin_kinds() -> Vec<BuiltinMcpKind> {
     ]
 }
 
+#[cfg(test)]
+fn builtin_kinds() -> Vec<BuiltinMcpKind> {
+    system_mcp_catalog()
+        .iter()
+        .filter_map(|descriptor| descriptor.embedded_kind)
+        .collect()
+}
+
 pub fn builtin_resource_id(kind: BuiltinMcpKind) -> String {
-    kind.config_id()
-        .map(ToOwned::to_owned)
-        .unwrap_or_else(|| format!("system_builtin_{}", snake_case(kind.kind_name())))
-}
-
-fn builtin_display_name(kind: BuiltinMcpKind) -> String {
-    let mut out = String::new();
-    for (idx, ch) in kind.kind_name().chars().enumerate() {
-        if idx > 0 && ch.is_ascii_uppercase() {
-            out.push(' ');
-        }
-        out.push(ch);
-    }
-    format!("{out} (Builtin)")
-}
-
-fn snake_case(value: &str) -> String {
-    let mut out = String::new();
-    for (idx, ch) in value.chars().enumerate() {
-        if idx > 0 && ch.is_ascii_uppercase() {
-            out.push('_');
-        }
-        out.push(ch.to_ascii_lowercase());
-    }
-    out
+    system_mcp_catalog()
+        .iter()
+        .find(|descriptor| descriptor.embedded_kind == Some(kind))
+        .map(|descriptor| descriptor.resource_id.to_string())
+        .expect("embedded MCP resource id")
 }
 
 #[cfg(test)]

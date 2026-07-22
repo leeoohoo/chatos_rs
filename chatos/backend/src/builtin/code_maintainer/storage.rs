@@ -19,7 +19,7 @@ use std::io::Write;
 use std::path::PathBuf;
 use tracing::warn;
 
-use chatos_builtin_tools::code_maintainer::{generate_id, now_iso, resolve_state_dir};
+use chatos_mcp::code_maintainer::{generate_id, now_iso, resolve_state_dir};
 
 const PROJECT_CHANGE_SUMMARY_CACHE_PATH: &str = "project_changes/summary.json";
 

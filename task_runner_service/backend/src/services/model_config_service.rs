@@ -87,6 +87,9 @@ impl ModelConfigService {
         validate_required("id", &input.id)?;
         validate_required("name", &input.name)?;
         validate_required("model", &input.model)?;
+        if input.model_request_max_retries > 10 {
+            return Err("model_request_max_retries must be between 0 and 10".to_string());
+        }
         let provider = normalize_model_provider_input(&input.provider)?;
         let thinking_level =
             normalize_model_thinking_level_input(provider.as_str(), input.thinking_level)?;
@@ -133,6 +136,7 @@ impl ModelConfigService {
             max_output_tokens: input
                 .max_output_tokens
                 .or_else(|| existing.as_ref().and_then(|item| item.max_output_tokens)),
+            model_request_max_retries: input.model_request_max_retries,
             thinking_level,
             supports_responses: input
                 .supports_responses

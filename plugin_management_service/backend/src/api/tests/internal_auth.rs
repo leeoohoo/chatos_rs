@@ -208,6 +208,10 @@ fn runtime_request(owner_user_id: &str) -> RuntimeCapabilitiesRequest {
         agent_key: chatos_plugin_management_sdk::SystemAgentKey::TaskRunnerRunPhase,
         owner_user_id: owner_user_id.to_string(),
         include_unavailable: true,
+        task_profile: None,
+        project_source_type: None,
+        runtime_provider: None,
+        schedule_mode: None,
     }
 }
 

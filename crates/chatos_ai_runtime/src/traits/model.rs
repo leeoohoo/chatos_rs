@@ -6,6 +6,8 @@ use serde_json::Value;
 
 use chatos_mcp_runtime::ToolCallerModelRuntime;
 
+pub const DEFAULT_MODEL_REQUEST_MAX_RETRIES: usize = 5;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RuntimeMessage {
     pub role: String,
@@ -28,6 +30,7 @@ pub struct ModelRuntimeConfig {
     pub request_cwd: Option<String>,
     pub include_prompt_cache_retention: bool,
     pub request_body_limit_bytes: Option<usize>,
+    pub max_transient_retries: Option<usize>,
 }
 
 impl ModelRuntimeConfig {
@@ -99,6 +102,11 @@ impl ModelRuntimeConfig {
         self
     }
 
+    pub fn with_max_transient_retries(mut self, max_transient_retries: Option<usize>) -> Self {
+        self.max_transient_retries = max_transient_retries;
+        self
+    }
+
     pub fn to_model_request(&self, input: Value, tools: Vec<Value>) -> ModelRequest {
         ModelRequest {
             input,
@@ -116,6 +124,7 @@ impl ModelRuntimeConfig {
             request_cwd: self.request_cwd.clone(),
             include_prompt_cache_retention: self.include_prompt_cache_retention,
             request_body_limit_bytes: self.request_body_limit_bytes,
+            max_transient_retries: self.max_transient_retries,
         }
     }
 
@@ -133,6 +142,7 @@ impl ModelRuntimeConfig {
         .with_instructions(self.instructions.clone())
         .with_max_output_tokens(self.max_output_tokens)
         .with_request_body_limit_bytes(self.request_body_limit_bytes)
+        .with_max_transient_retries(self.max_transient_retries)
     }
 }
 
@@ -153,6 +163,7 @@ pub struct ModelRequest {
     pub request_cwd: Option<String>,
     pub include_prompt_cache_retention: bool,
     pub request_body_limit_bytes: Option<usize>,
+    pub max_transient_retries: Option<usize>,
 }
 
 impl ModelRequest {
@@ -187,6 +198,7 @@ impl ModelRequest {
             request_cwd: None,
             include_prompt_cache_retention: false,
             request_body_limit_bytes: None,
+            max_transient_retries: None,
         }
     }
 
@@ -240,6 +252,11 @@ impl ModelRequest {
         request_body_limit_bytes: Option<usize>,
     ) -> Self {
         self.request_body_limit_bytes = request_body_limit_bytes;
+        self
+    }
+
+    pub fn with_max_transient_retries(mut self, max_transient_retries: Option<usize>) -> Self {
+        self.max_transient_retries = max_transient_retries;
         self
     }
 }

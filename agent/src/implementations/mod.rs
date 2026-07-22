@@ -15,4 +15,6 @@ pub use memory_engine::{
     MEMORY_ENGINE_THREAD_REPAIR_AGENT,
 };
 pub use project_environment::{ProjectEnvironmentAgent, PROJECT_ENVIRONMENT_AGENT};
-pub use task_runner::{TaskRunnerAgent, TaskRunnerRunSpecInput, TASK_RUNNER_AGENT};
+pub use task_runner::{
+    TaskRunnerAgent, TaskRunnerRunSpecInput, TASK_RUNNER_AGENT, TASK_RUNNER_PLAN_AGENT,
+};

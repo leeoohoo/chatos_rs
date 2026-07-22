@@ -4,7 +4,7 @@
 use async_trait::async_trait;
 use serde_json::Value;
 
-use chatos_builtin_tools::{AgentBuilderAgentSnapshot, AgentBuilderSkill, AgentBuilderStore};
+use chatos_mcp::{AgentBuilderAgentSnapshot, AgentBuilderSkill, AgentBuilderStore};
 
 use crate::models::chatos_agent_types::{CreateChatosAgentRequest, UpdateChatosAgentRequest};
 use crate::services::chatos_agents;

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use serde_json::json;
+use serde_json::{json, Value};
 
 use super::events::{build_error_event_payload, select_persisted_turn_messages_from_desc_page};
 use super::text::join_stream_text;
@@ -36,15 +36,30 @@ fn build_error_event_payload_marks_rate_limited_errors() {
         .and_then(|value| value.as_str())
         .map(|value| value.contains("上游模型接口限流"))
         .unwrap_or(false));
-    assert_eq!(
-        payload
-            .get("data")
-            .and_then(|value| value.get("detail"))
-            .and_then(|value| value.as_str()),
-        Some(
-            "status 429 Too Many Requests: {\"error\":{\"message\":\"Rate limit exceeded\",\"type\":\"bad_response_status_code\",\"code\":\"bad_response_status_code\"}}"
-        )
+    assert!(payload
+        .get("data")
+        .and_then(|value| value.get("detail"))
+        .is_some_and(Value::is_null));
+}
+
+#[test]
+fn build_error_event_payload_redacts_provider_secrets() {
+    let payload = build_error_event_payload(
+        "status 500 Internal Server Error: {\"error\":{\"message\":\"provider failed; api_key=test-secret; internal_trace=trace-1\"}}",
+        None,
     );
+    let serialized = payload.to_string();
+
+    assert_eq!(
+        payload.get("code").and_then(Value::as_str),
+        Some("MODEL_UPSTREAM_UNAVAILABLE")
+    );
+    assert_eq!(
+        payload.get("message").and_then(Value::as_str),
+        Some("模型服务暂时不可用，请稍后重试或切换模型。")
+    );
+    assert!(!serialized.contains("test-secret"));
+    assert!(!serialized.contains("internal_trace"));
 }
 
 fn message(id: &str, role: &str, turn_id: &str, content: &str) -> Message {

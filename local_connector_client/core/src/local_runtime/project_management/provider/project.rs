@@ -3,7 +3,7 @@
 
 use std::path::Path;
 
-use chatos_project_mcp_contract::args::InitProjectArgs;
+use chatos_mcp::project_management_contract::args::InitProjectArgs;
 use serde_json::{json, Value};
 
 use crate::local_runtime::project_management::UpsertLocalProjectProfileInput;

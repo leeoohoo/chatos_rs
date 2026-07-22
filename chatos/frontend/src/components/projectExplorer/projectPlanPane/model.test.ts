@@ -5,15 +5,33 @@ import { describe, expect, it } from 'vitest';
 
 import {
   buildDependencyMaps,
+  buildRequirementExecutionPayload,
   buildRequirementExecutionScope,
   buildVisiblePlanItems,
   canShowRequirementExecutionAction,
+  countOpenItems,
   mergeDependencyMaps,
   statusClassName,
   statusLabel,
 } from './model';
 
 describe('projectPlanPane model', () => {
+  it('propagates the selected model when executing a requirement', () => {
+    expect(buildRequirementExecutionPayload({
+      includePrerequisiteDependents: true,
+      selectedModelId: '  model-selected  ',
+    })).toEqual({
+      include_prerequisite_dependents: true,
+      model_config_id: 'model-selected',
+    });
+  });
+
+  it('omits an empty model selection from requirement execution', () => {
+    expect(buildRequirementExecutionPayload({ selectedModelId: '  ' })).toEqual({
+      include_prerequisite_dependents: false,
+    });
+  });
+
   it('limits visible plan items and reports hidden count', () => {
     const result = buildVisiblePlanItems([1, 2, 3, 4], 2);
 
@@ -144,10 +162,25 @@ describe('projectPlanPane model', () => {
 
   it('hides requirement execution action for terminal statuses', () => {
     expect(canShowRequirementExecutionAction('done')).toBe(false);
+    expect(canShowRequirementExecutionAction('completed')).toBe(false);
+    expect(canShowRequirementExecutionAction('succeeded')).toBe(false);
+    expect(canShowRequirementExecutionAction('success')).toBe(false);
     expect(canShowRequirementExecutionAction('cancelled')).toBe(false);
     expect(canShowRequirementExecutionAction('archived')).toBe(false);
     expect(canShowRequirementExecutionAction('in_progress')).toBe(true);
     expect(canShowRequirementExecutionAction('approved')).toBe(true);
+  });
+
+  it('renders all completion aliases consistently and excludes them from open counts', () => {
+    for (const status of ['done', 'completed', 'succeeded', 'success']) {
+      expect(statusLabel(status)).toBe('完成');
+      expect(statusClassName(status)).toContain('text-emerald');
+    }
+    expect(countOpenItems([
+      { id: 'done', title: 'Done', status: 'done' },
+      { id: 'completed', title: 'Completed', status: 'completed' },
+      { id: 'open', title: 'Open', status: 'in_progress' },
+    ])).toBe(1);
   });
 
   it('renders failed statuses without falling back to draft', () => {

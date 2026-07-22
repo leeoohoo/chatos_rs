@@ -26,6 +26,7 @@ import {
   writeSessionMessagesCache,
 } from '../sessionsUtils';
 import { applySelectSessionState } from '../sessionsSelectHelpers';
+import { restoreSessionRuntimeState } from './runtimeRecovery';
 import type { SessionActionDeps } from './types';
 
 let latestSelectRequestSeq = 0;
@@ -188,6 +189,7 @@ export function createSelectSessionActions({
           if (shouldBackgroundSync) {
             void get().syncSessionMessagesInBackground(sessionId);
           }
+          void restoreSessionRuntimeState({ client, set, get, sessionId });
           debugLog('[Store] selectSession served from cache', {
             sessionId,
             previousSessionId,
@@ -262,6 +264,7 @@ export function createSelectSessionActions({
           };
           state.hasMoreMessages = Boolean(effectiveNextBefore);
         });
+        void restoreSessionRuntimeState({ client, set, get, sessionId });
 
         if (session) {
           const { userId, projectId } = getSessionParams();

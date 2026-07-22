@@ -20,11 +20,13 @@ impl RunService {
         let task_completed_abort = Arc::new(AtomicBool::new(false));
         let pending_stream_event =
             Arc::new(parking_lot::Mutex::new(PendingRunStreamEvent::default()));
+        let abort_token = tokio_util::sync::CancellationToken::new();
         let callbacks = self.build_runtime_callbacks(
             task_id.to_string(),
             run.id.clone(),
             Arc::clone(&pending_stream_event),
             Arc::clone(&task_completed_abort),
+            abort_token.clone(),
             path_redactor.clone(),
         );
         let cancel_requested = Arc::new(AtomicBool::new(self.store.is_cancel_requested(&run.id)));
@@ -33,12 +35,14 @@ impl RunService {
             run.id.as_str(),
             Arc::clone(&cancel_requested),
             Arc::clone(&task_completed_abort),
+            abort_token.clone(),
         );
         let runtime_options = AiRuntimeOptions::new(Some(run.id.clone()), Some(run.id.clone()))
             .with_caller_model(Some(model_config.model.clone()))
             .with_record_options(run_spec.record_options.clone())
             .with_tool_result_model_budget_limits(Some(tool_result_model_budget_limits))
             .with_callbacks(callbacks)
+            .with_abort_token(Some(abort_token))
             .with_abort_checker(Some(Arc::new({
                 let cancel_requested = Arc::clone(&cancel_requested);
                 let task_completed_abort = Arc::clone(&task_completed_abort);
@@ -63,6 +67,7 @@ impl RunService {
         run_id: String,
         pending_stream_event: PendingRunStreamState,
         task_completed_abort: Arc<AtomicBool>,
+        abort_token: tokio_util::sync::CancellationToken,
         path_redactor: crate::services::path_redaction::WorkspacePathRedactor,
     ) -> RuntimeCallbacks {
         let store_for_callbacks = self.store.clone();
@@ -142,10 +147,12 @@ impl RunService {
                 let run_id = run_id.clone();
                 let task_id = task_id.clone();
                 let task_completed_abort = Arc::clone(&task_completed_abort);
+                let abort_token = abort_token.clone();
                 let path_redactor = path_redactor.clone();
                 move |payload| {
                     if tool_result_marks_root_task_done(&payload, task_id.as_str()) {
                         task_completed_abort.store(true, Ordering::Relaxed);
+                        abort_token.cancel();
                     }
                     let mut payload = sanitize_runtime_event_payload(payload);
                     path_redactor.redact_value(&mut payload);
@@ -210,6 +217,7 @@ impl RunService {
         run_id: &str,
         cancel_requested: Arc<AtomicBool>,
         task_completed_abort: Arc<AtomicBool>,
+        abort_token: tokio_util::sync::CancellationToken,
     ) -> (Arc<AtomicBool>, tokio::task::JoinHandle<()>) {
         let stop_cancel_poll = Arc::new(AtomicBool::new(false));
         let cancel_poll_handle = tokio::spawn({
@@ -224,6 +232,7 @@ impl RunService {
                     match store.get_task(&task_id).await {
                         Ok(Some(task)) if task.status == TaskStatus::Succeeded => {
                             task_completed_abort.store(true, Ordering::Relaxed);
+                            abort_token.cancel();
                             break;
                         }
                         Ok(_) => {}
@@ -238,6 +247,7 @@ impl RunService {
                         Ok(is_requested) => {
                             cancel_requested.store(is_requested, Ordering::Relaxed);
                             if is_requested {
+                                abort_token.cancel();
                                 break;
                             }
                         }

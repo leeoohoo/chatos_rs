@@ -12,6 +12,7 @@ mod dotenv;
 mod env_support;
 
 pub use self::dotenv::load_task_runner_dotenv;
+pub(crate) use self::env_support::configured_sandbox_base_image_id;
 
 pub const DEFAULT_TASK_RUN_EXECUTION_TIMEOUT_MS: u64 = 7_200_000;
 

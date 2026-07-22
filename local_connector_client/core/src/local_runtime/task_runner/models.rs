@@ -9,6 +9,7 @@ pub(crate) struct EnqueueLocalTaskRunInput {
     pub(crate) owner_user_id: String,
     pub(crate) project_id: String,
     pub(crate) requirement_id: Option<String>,
+    pub(crate) task_kind: String,
     pub(crate) task_id: String,
     pub(crate) session_id: String,
     pub(crate) execution_group_id: String,
@@ -17,12 +18,32 @@ pub(crate) struct EnqueueLocalTaskRunInput {
     pub(crate) model_config_id: String,
 }
 
+#[derive(Debug, Clone)]
+pub(crate) struct CreateLocalConversationTaskInput {
+    pub(crate) owner_user_id: String,
+    pub(crate) project_id: String,
+    pub(crate) session_id: String,
+    pub(crate) source_turn_id: String,
+    pub(crate) title: String,
+    pub(crate) description: String,
+    pub(crate) objective: String,
+    pub(crate) priority: i64,
+    pub(crate) tags: Vec<String>,
+    pub(crate) model_config_id: String,
+    pub(crate) is_planning_task: bool,
+    pub(crate) enabled_builtin_kinds: Vec<String>,
+    pub(crate) external_mcp_config_ids: Vec<String>,
+    pub(crate) selected_skill_ids: Vec<String>,
+    pub(crate) prerequisite_task_ids: Vec<String>,
+}
+
 #[derive(Debug, Clone, Serialize, FromRow)]
 pub(crate) struct LocalTaskRunRecord {
     pub(crate) id: String,
     pub(crate) owner_user_id: String,
     pub(crate) project_id: String,
     pub(crate) requirement_id: Option<String>,
+    pub(crate) task_kind: String,
     pub(crate) task_id: String,
     pub(crate) session_id: String,
     pub(crate) turn_id: String,

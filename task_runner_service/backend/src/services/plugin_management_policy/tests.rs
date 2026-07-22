@@ -30,7 +30,12 @@ fn resolved_mcp(
             enabled: true,
             runtime: McpRuntime {
                 kind: runtime_kind.to_string(),
-                builtin_kind: builtin_kind.map(ToOwned::to_owned),
+                system_key: (runtime_kind == chatos_plugin_management_sdk::SYSTEM_MCP_RUNTIME_KIND)
+                    .then(|| builtin_kind.map(ToOwned::to_owned))
+                    .flatten(),
+                builtin_kind: (runtime_kind == BUILTIN_RUNTIME_KIND)
+                    .then(|| builtin_kind.map(ToOwned::to_owned))
+                    .flatten(),
                 url: (runtime_kind == "http").then(|| "http://127.0.0.1/mcp".to_string()),
                 ..McpRuntime::default()
             },
@@ -267,6 +272,100 @@ fn runtime_injects_required_and_intersects_saved_optional_selection() {
 }
 
 #[test]
+fn planning_policy_injects_its_non_mutating_builtin_allowlist() {
+    let mut policy = policy();
+    policy.capabilities.agent_key = SystemAgentKey::TaskRunnerPlanPhase.as_str().to_string();
+    for item in &mut policy.capabilities.mcps {
+        item.binding.agent_key = SystemAgentKey::TaskRunnerPlanPhase.as_str().to_string();
+        if item.resource.id == "external-1" {
+            item.resource.security.allow_writes = Some(true);
+        }
+        if item.resource.id == "write" {
+            item.available = true;
+            item.status = "available".to_string();
+            item.reason = None;
+        }
+    }
+    let mut task = task();
+    task.task_profile = crate::models::TASK_PROFILE_CHATOS_PLAN.to_string();
+    task.mcp_config.requires_execution = false;
+    task.mcp_config.enabled_builtin_kinds.clear();
+
+    policy.apply_to_task(&mut task).expect("apply plan policy");
+
+    assert!(task
+        .mcp_config
+        .enabled_builtin_kinds
+        .contains(&"CodeMaintainerRead".to_string()));
+    assert!(task
+        .mcp_config
+        .enabled_builtin_kinds
+        .contains(&"TaskManager".to_string()));
+    assert!(task
+        .mcp_config
+        .enabled_builtin_kinds
+        .contains(&"AskUser".to_string()));
+    assert!(!task
+        .mcp_config
+        .enabled_builtin_kinds
+        .contains(&"CodeMaintainerWrite".to_string()));
+    assert!(!task
+        .mcp_config
+        .enabled_builtin_kinds
+        .contains(&"TerminalController".to_string()));
+    assert!(policy.selectable_external_mcp_ids().is_empty());
+}
+
+#[test]
+fn planning_policy_rejects_required_mutating_tools() {
+    let mut capabilities = policy().capabilities;
+    capabilities.agent_key = SystemAgentKey::TaskRunnerPlanPhase.as_str().to_string();
+    let write = capabilities
+        .mcps
+        .iter_mut()
+        .find(|item| item.resource.id == "write")
+        .expect("write capability");
+    write.binding.agent_key = SystemAgentKey::TaskRunnerPlanPhase.as_str().to_string();
+    write.binding.required = true;
+    write.available = true;
+    write.status = "available".to_string();
+    write.reason = None;
+
+    let error = TaskRunnerCapabilityPolicy::new(capabilities)
+        .expect_err("planning policy must reject mutating required tools");
+    assert!(error.contains("cannot be required for task_runner_plan_phase"));
+}
+
+#[test]
+fn policy_rejects_write_when_read_is_not_configured_for_the_same_agent() {
+    let mut capabilities = policy().capabilities;
+    capabilities
+        .mcps
+        .retain(|item| plugin_builtin_kind(item) != Some(BuiltinMcpKind::CodeMaintainerRead));
+    let write = capabilities
+        .mcps
+        .iter_mut()
+        .find(|item| plugin_builtin_kind(item) == Some(BuiltinMcpKind::CodeMaintainerWrite))
+        .expect("write capability");
+    write.available = true;
+    write.status = "available".to_string();
+    write.reason = None;
+
+    let error = TaskRunnerCapabilityPolicy::new(capabilities)
+        .expect_err("write-only Plugin configuration must fail closed");
+    assert!(error.contains("enables CodeMaintainerWrite without CodeMaintainerRead"));
+}
+
+#[test]
+fn disabled_task_runner_agent_fails_closed() {
+    let mut capabilities = policy().capabilities;
+    capabilities.agent_enabled = false;
+    let error =
+        TaskRunnerCapabilityPolicy::new(capabilities).expect_err("disabled Agent must not execute");
+    assert!(error.contains("disabled by Plugin Management"));
+}
+
+#[test]
 fn write_validation_rejects_required_and_unavailable_selection() {
     let mut config = TaskMcpConfig {
         enabled_builtin_kinds: vec!["TaskManager".to_string()],
@@ -297,6 +396,33 @@ fn cloud_policy_excludes_local_connector_mcps() {
     assert_eq!(
         policy.selectable_external_mcp_ids(),
         vec!["cloud-http".to_string()]
+    );
+}
+
+#[test]
+fn unified_service_system_mcp_is_selected_as_a_task_runner_backend() {
+    let system = resolved_mcp(
+        chatos_plugin_management_sdk::PROJECT_RUNTIME_ENVIRONMENT_MCP_RESOURCE_ID,
+        chatos_plugin_management_sdk::SYSTEM_MCP_RUNTIME_KIND,
+        Some("project_runtime_environment"),
+        false,
+        true,
+    );
+    let policy = TaskRunnerCapabilityPolicy::new(ResolvedAgentCapabilities {
+        agent_key: SystemAgentKey::TaskRunnerRunPhase.as_str().to_string(),
+        owner_user_id: "owner-1".to_string(),
+        policy_revision: "revision-system".to_string(),
+        generated_at: "now".to_string(),
+        agent_enabled: true,
+        mcps: vec![system],
+        skills: Vec::new(),
+        local_connector_requirements: Vec::new(),
+    })
+    .expect("policy");
+
+    assert_eq!(
+        policy.selectable_external_mcp_ids(),
+        vec![chatos_plugin_management_sdk::PROJECT_RUNTIME_ENVIRONMENT_MCP_RESOURCE_ID.to_string()]
     );
 }
 

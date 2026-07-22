@@ -150,8 +150,10 @@ impl LocalModelConfigRecord {
     }
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct LocalModelSettings {
+    #[serde(default = "default_model_request_max_retries")]
+    pub(crate) model_request_max_retries: usize,
     #[serde(default)]
     pub(crate) memory_summary_model_config_id: Option<String>,
     #[serde(default)]
@@ -172,6 +174,27 @@ pub(crate) struct LocalModelSettings {
     pub(crate) updated_at: Option<String>,
 }
 
+fn default_model_request_max_retries() -> usize {
+    chatos_ai_runtime::DEFAULT_MODEL_REQUEST_MAX_RETRIES
+}
+
+impl Default for LocalModelSettings {
+    fn default() -> Self {
+        Self {
+            model_request_max_retries: default_model_request_max_retries(),
+            memory_summary_model_config_id: None,
+            memory_summary_thinking_level: None,
+            project_management_agent_model_config_id: None,
+            project_management_agent_thinking_level: None,
+            environment_initialization_model_config_id: None,
+            environment_initialization_thinking_level: None,
+            command_approval_model_config_id: None,
+            command_approval_thinking_level: None,
+            updated_at: None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub(crate) struct LocalModelRuntimeResponse {
     pub(crate) id: String,
@@ -187,4 +210,5 @@ pub(crate) struct LocalModelRuntimeResponse {
     pub(crate) supports_responses: bool,
     pub(crate) temperature: Option<f64>,
     pub(crate) max_output_tokens: Option<i64>,
+    pub(crate) model_request_max_retries: usize,
 }

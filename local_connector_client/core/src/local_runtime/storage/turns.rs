@@ -11,11 +11,111 @@ use super::turn_queries::{
     refresh_session_message_count,
 };
 use super::{
-    BeginLocalTurnInput, BeginLocalTurnResult, CompleteLocalTurnInput, LocalDatabase,
-    LocalTurnSnapshot,
+    BeginLocalBackgroundTurnInput, BeginLocalTurnInput, BeginLocalTurnResult,
+    CompleteLocalTurnInput, LocalDatabase, LocalTurnSnapshot,
 };
 
 impl LocalDatabase {
+    pub(crate) async fn begin_background_turn(
+        &self,
+        input: BeginLocalBackgroundTurnInput,
+    ) -> Result<BeginLocalTurnResult> {
+        let mut transaction = self
+            .begin_write()
+            .await
+            .context("begin local background turn")?;
+        if let Some(turn) = find_turn_by_idempotency(
+            &mut transaction,
+            input.owner_user_id.as_str(),
+            input.session_id.as_str(),
+            input.idempotency_key.as_str(),
+        )
+        .await?
+        {
+            let snapshot = load_turn_snapshot(&mut transaction, turn).await?;
+            transaction
+                .commit()
+                .await
+                .context("commit existing local background turn lookup")?;
+            return Ok(BeginLocalTurnResult::Existing(snapshot));
+        }
+        let source_user_message_id = sqlx::query_scalar::<_, String>(
+            r#"
+            SELECT turns.user_message_id
+            FROM turns
+            INNER JOIN sessions ON sessions.id = turns.session_id
+            WHERE turns.id = ? AND turns.session_id = ? AND sessions.owner_user_id = ?
+              AND turns.user_message_id IS NOT NULL
+            "#,
+        )
+        .bind(input.source_turn_id.as_str())
+        .bind(input.session_id.as_str())
+        .bind(input.owner_user_id.as_str())
+        .fetch_optional(&mut *transaction)
+        .await
+        .context("resolve local background turn source message")?
+        .ok_or_else(|| anyhow::anyhow!("local background turn source was not found"))?;
+        let now = local_now_rfc3339();
+        sqlx::query(
+            r#"
+            INSERT INTO turns (
+                id, session_id, user_message_id, idempotency_key, status,
+                cancel_requested, started_at, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, 'running', 0, ?, ?, ?)
+            "#,
+        )
+        .bind(input.turn_id.as_str())
+        .bind(input.session_id.as_str())
+        .bind(source_user_message_id)
+        .bind(input.idempotency_key.as_str())
+        .bind(now.as_str())
+        .bind(now.as_str())
+        .bind(now.as_str())
+        .execute(&mut *transaction)
+        .await
+        .context("insert local background turn")?;
+        let turn = find_turn_by_id(
+            &mut transaction,
+            input.owner_user_id.as_str(),
+            input.turn_id.as_str(),
+        )
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("local background turn was not persisted"))?;
+        let snapshot = load_turn_snapshot(&mut transaction, turn).await?;
+        transaction
+            .commit()
+            .await
+            .context("commit local background turn")?;
+        Ok(BeginLocalTurnResult::Started(snapshot))
+    }
+
+    pub(crate) async fn complete_background_turn(
+        &self,
+        owner_user_id: &str,
+        turn_id: &str,
+    ) -> Result<()> {
+        let now = local_now_rfc3339();
+        sqlx::query(
+            r#"
+            UPDATE turns SET status = 'completed', error_code = NULL, error_message = NULL,
+                finished_at = ?, updated_at = ?
+            WHERE id = ? AND status = 'running'
+              AND EXISTS (
+                SELECT 1 FROM sessions
+                WHERE sessions.id = turns.session_id AND sessions.owner_user_id = ?
+              )
+            "#,
+        )
+        .bind(now.as_str())
+        .bind(now.as_str())
+        .bind(turn_id)
+        .bind(owner_user_id)
+        .execute(self.pool())
+        .await
+        .context("complete local background turn")?;
+        Ok(())
+    }
+
     pub(crate) async fn begin_turn(
         &self,
         input: BeginLocalTurnInput,

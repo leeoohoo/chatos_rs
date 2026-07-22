@@ -20,8 +20,6 @@ use crate::models::project::PUBLIC_PROJECT_ID;
 use crate::services::mcp_loader::McpHttpServer;
 use crate::services::{access_token_scope, chatos_memory_mappings, task_runner_api_client};
 
-const TASK_RUNNER_CONTACT_MCP_SERVER_NAME: &str = "task_runner_service";
-
 #[derive(Debug)]
 struct TaskRunnerAgentHeaderProvider {
     exchange: task_runner_api_client::UserServiceTaskRunnerExchange,
@@ -86,6 +84,7 @@ pub(super) async fn build_contact_task_runner_runtime(
     remote_connection_id: Option<&str>,
     conversation_turn_id: Option<&str>,
     source_user_message_id: Option<&str>,
+    model_config_id: Option<&str>,
     locale: InternalContextLocale,
     agent_profile: ChatosAgentProfile,
 ) -> Option<ContactTaskRunnerRuntime> {
@@ -166,6 +165,7 @@ pub(super) async fn build_contact_task_runner_runtime(
     if let Some(user_message_id) = normalize_optional_text(source_user_message_id) {
         headers.insert("X-Chatos-User-Message-Id".to_string(), user_message_id);
     }
+    insert_planner_default_model_header(&mut headers, agent_profile, model_config_id);
     if let Some(workspace_dir) = normalize_optional_text(workspace_dir) {
         headers.insert("X-Task-Runner-Workspace-Dir".to_string(), workspace_dir);
     }
@@ -179,13 +179,33 @@ pub(super) async fn build_contact_task_runner_runtime(
     }
     Some(ContactTaskRunnerRuntime {
         server: McpHttpServer {
-            name: TASK_RUNNER_CONTACT_MCP_SERVER_NAME.to_string(),
+            name: chatos_mcp::system_mcp_descriptor(
+                chatos_plugin_management_sdk::SystemMcpKey::TaskRunnerService,
+            )
+            .server_name
+            .to_string(),
             url: format!("{}/mcp", config.base_url.trim().trim_end_matches('/')),
             headers: Some(headers),
             allowed_tool_names: None,
             header_provider: Some(header_provider),
         },
     })
+}
+
+fn insert_planner_default_model_header(
+    headers: &mut HashMap<String, String>,
+    agent_profile: ChatosAgentProfile,
+    model_config_id: Option<&str>,
+) {
+    if !agent_profile.plan_mode_header() && !agent_profile.requires_project_management_mcp() {
+        return;
+    }
+    if let Some(model_config_id) = normalize_optional_text(model_config_id) {
+        headers.insert(
+            "X-Task-Runner-Default-Model-Config-Id".to_string(),
+            model_config_id,
+        );
+    }
 }
 
 fn task_runner_builtin_prompt_lang(locale: InternalContextLocale) -> &'static str {
@@ -205,6 +225,52 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+
+    #[test]
+    fn requirement_planner_forwards_selected_model_to_task_runner() {
+        let mut headers = HashMap::new();
+        insert_planner_default_model_header(
+            &mut headers,
+            ChatosAgentProfile::from_flags(false, true),
+            Some(" model-selected "),
+        );
+
+        assert_eq!(
+            headers
+                .get("X-Task-Runner-Default-Model-Config-Id")
+                .map(String::as_str),
+            Some("model-selected")
+        );
+    }
+
+    #[test]
+    fn planning_conversation_forwards_selected_model_to_task_runner() {
+        let mut headers = HashMap::new();
+        insert_planner_default_model_header(
+            &mut headers,
+            ChatosAgentProfile::from_flags(true, false),
+            Some(" model-selected "),
+        );
+
+        assert_eq!(
+            headers
+                .get("X-Task-Runner-Default-Model-Config-Id")
+                .map(String::as_str),
+            Some("model-selected")
+        );
+    }
+
+    #[test]
+    fn normal_conversation_does_not_force_task_runner_model() {
+        let mut headers = HashMap::new();
+        insert_planner_default_model_header(
+            &mut headers,
+            ChatosAgentProfile::from_flags(false, false),
+            Some("model-selected"),
+        );
+
+        assert!(!headers.contains_key("X-Task-Runner-Default-Model-Config-Id"));
+    }
 
     #[tokio::test]
     async fn task_runner_header_provider_reuses_token_until_refresh_window() {

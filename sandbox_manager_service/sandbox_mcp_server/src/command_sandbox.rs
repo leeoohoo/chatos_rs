@@ -6,7 +6,7 @@ use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use std::path::{Component, Path, PathBuf};
 
-use chatos_builtin_tools::TerminalCommandPermissions;
+use chatos_mcp::TerminalCommandPermissions;
 use chatos_sandbox_contract::{
     FileSystemAccessMode, FileSystemPath, FileSystemPermissionPolicy, FileSystemSandboxEntry,
     FileSystemSpecialPath, GrantedPermissionProfile, NetworkPermissionPolicy, NetworkRequirements,

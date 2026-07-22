@@ -7,8 +7,10 @@ import type {
   SessionChatState,
 } from '../../types';
 import {
+  extractCompactHistoryMessages,
   resolveSessionProjectScopeId,
   syncCurrentProjectFromSession,
+  writeSessionMessagesCache,
 } from '../sessionsUtils';
 
 export const createDefaultSessionChatState = (): SessionChatState => ({
@@ -27,6 +29,60 @@ const resolveSessionChatState = (
   state: ChatStoreDraft,
   sessionId: string,
 ): SessionChatState => state.sessionChatState[sessionId] || createDefaultSessionChatState();
+
+const updateSessionMessageList = (
+  messages: Message[],
+  messageId: string,
+  update: (message: Message) => Message,
+): { messages: Message[]; updated: boolean } => {
+  let updated = false;
+  const nextMessages = messages.map((message) => {
+    if (message.id !== messageId || message.role !== 'user') {
+      return message;
+    }
+    updated = true;
+    return update(message);
+  });
+  return { messages: nextMessages, updated };
+};
+
+const writeUpdatedSessionCache = (
+  state: ChatStoreDraft,
+  sessionId: string,
+  messages: Message[],
+) => {
+  const cached = state.sessionMessagesCache?.[sessionId];
+  const pagination = state.sessionMessagePaginationState?.[sessionId];
+  writeSessionMessagesCache(state, sessionId, {
+    messages: extractCompactHistoryMessages(messages),
+    nextBefore: pagination?.nextBefore ?? cached?.nextBefore ?? null,
+    loaded: pagination?.loaded ?? cached?.loaded ?? false,
+  });
+};
+
+const markSessionMessageCreated = (
+  state: ChatStoreDraft,
+  sessionId: string,
+  createdAt: Date,
+) => {
+  const sessionIndex = state.sessions.findIndex((session) => session.id === sessionId);
+  const listMessageCount = sessionIndex >= 0
+    ? Number(state.sessions[sessionIndex].messageCount || 0)
+    : 0;
+  const currentMessageCount = state.currentSession?.id === sessionId
+    ? Number(state.currentSession.messageCount || 0)
+    : 0;
+  const nextMessageCount = Math.max(listMessageCount, currentMessageCount, 0) + 1;
+  if (sessionIndex >= 0) {
+    const session = state.sessions[sessionIndex];
+    session.messageCount = nextMessageCount;
+    session.updatedAt = createdAt;
+  }
+  if (state.currentSession?.id === sessionId) {
+    state.currentSession.messageCount = nextMessageCount;
+    state.currentSession.updatedAt = createdAt;
+  }
+};
 
 export const applySessionRuntimeMetadata = (
   state: ChatStoreDraft,
@@ -61,6 +117,7 @@ export const applySessionRuntimeMetadata = (
 
 export const setTaskRunnerAsyncUserMessageStatus = (
   state: ChatStoreDraft,
+  sessionId: string,
   userMessageId: string | null | undefined,
   overallStatus: 'pending' | 'processing' | 'completed' | 'failed' | 'cancelled',
 ) => {
@@ -71,35 +128,38 @@ export const setTaskRunnerAsyncUserMessageStatus = (
     return;
   }
 
-  const userIndex = state.messages.findIndex((message) => (
-    message.id === normalizedUserMessageId && message.role === 'user'
-  ));
-  if (userIndex < 0) {
-    return;
-  }
-
-  const existingUser = state.messages[userIndex];
-  const existingMetadata = existingUser.metadata || {};
-  const existingTaskRunnerAsync = (
-    existingMetadata.task_runner_async
-    && typeof existingMetadata.task_runner_async === 'object'
-  ) ? existingMetadata.task_runner_async : {};
-
-  state.messages[userIndex] = {
-    ...existingUser,
-    metadata: {
-      ...existingMetadata,
-      task_runner_async: {
-        ...existingTaskRunnerAsync,
-        mode: 'contact_async',
-        overall_status: overallStatus,
+  const update = (existingUser: Message): Message => {
+    const existingMetadata = existingUser.metadata || {};
+    const existingTaskRunnerAsync = (
+      existingMetadata.task_runner_async
+      && typeof existingMetadata.task_runner_async === 'object'
+    ) ? existingMetadata.task_runner_async : {};
+    return {
+      ...existingUser,
+      metadata: {
+        ...existingMetadata,
+        task_runner_async: {
+          ...existingTaskRunnerAsync,
+          mode: 'contact_async',
+          overall_status: overallStatus,
+        },
       },
-    },
+    };
   };
+
+  if (state.currentSessionId === sessionId) {
+    state.messages = updateSessionMessageList(state.messages, normalizedUserMessageId, update).messages;
+  }
+  const cachedMessages = state.sessionMessagesCache?.[sessionId]?.messages || [];
+  const cachedUpdate = updateSessionMessageList(cachedMessages, normalizedUserMessageId, update);
+  if (cachedUpdate.updated) {
+    writeUpdatedSessionCache(state, sessionId, cachedUpdate.messages);
+  }
 };
 
 export const replaceOptimisticUserMessageId = (
   state: ChatStoreDraft,
+  sessionId: string,
   tempUserMessageId: string,
   persistedUserMessageId: string | null | undefined,
 ) => {
@@ -110,31 +170,33 @@ export const replaceOptimisticUserMessageId = (
     return tempUserMessageId;
   }
 
-  const userIndex = state.messages.findIndex((message) => (
-    message.id === tempUserMessageId && message.role === 'user'
-  ));
-  if (userIndex < 0) {
-    return normalizedPersistedId;
-  }
-
-  const existingUser = state.messages[userIndex];
-  const existingMetadata = existingUser.metadata || {};
-  const existingTaskRunnerAsync = (
-    existingMetadata.task_runner_async
-    && typeof existingMetadata.task_runner_async === 'object'
-  ) ? existingMetadata.task_runner_async : {};
-
-  state.messages[userIndex] = {
-    ...existingUser,
-    id: normalizedPersistedId,
-    metadata: {
-      ...existingMetadata,
-      task_runner_async: {
-        ...existingTaskRunnerAsync,
-        source_user_message_id: normalizedPersistedId,
+  const update = (existingUser: Message): Message => {
+    const existingMetadata = existingUser.metadata || {};
+    const existingTaskRunnerAsync = (
+      existingMetadata.task_runner_async
+      && typeof existingMetadata.task_runner_async === 'object'
+    ) ? existingMetadata.task_runner_async : {};
+    return {
+      ...existingUser,
+      id: normalizedPersistedId,
+      metadata: {
+        ...existingMetadata,
+        task_runner_async: {
+          ...existingTaskRunnerAsync,
+          source_user_message_id: normalizedPersistedId,
+        },
       },
-    },
+    };
   };
+
+  if (state.currentSessionId === sessionId) {
+    state.messages = updateSessionMessageList(state.messages, tempUserMessageId, update).messages;
+  }
+  const cachedMessages = state.sessionMessagesCache?.[sessionId]?.messages || [];
+  const cachedUpdate = updateSessionMessageList(cachedMessages, tempUserMessageId, update);
+  if (cachedUpdate.updated) {
+    writeUpdatedSessionCache(state, sessionId, cachedUpdate.messages);
+  }
 
   return normalizedPersistedId;
 };
@@ -151,7 +213,20 @@ export const beginUserTurnInState = (
     conversationTurnId: string;
   },
 ) => {
-  state.messages.push(userMessage);
+  const appendUserMessage = (messages: Message[]): Message[] => [
+    ...messages.filter((message) => message.id !== userMessage.id),
+    userMessage,
+  ];
+  if (state.currentSessionId === sessionId) {
+    state.messages = appendUserMessage(state.messages || []);
+  }
+
+  const cachedMessages = state.sessionMessagesCache?.[sessionId]?.messages || [];
+  const nextCachedMessages = state.currentSessionId === sessionId
+    ? state.messages
+    : appendUserMessage(cachedMessages);
+  writeUpdatedSessionCache(state, sessionId, nextCachedMessages);
+  markSessionMessageCreated(state, sessionId, userMessage.createdAt);
 
   const prev = resolveSessionChatState(state, sessionId);
   state.sessionChatState[sessionId] = {
@@ -189,6 +264,31 @@ export const failSendMessageState = (
     readableError: string;
   },
 ) => {
+  const previousChatState = resolveSessionChatState(state, sessionId);
+  const failedTurnId = String(previousChatState.activeTurnId || '').trim();
+  const markFailedUserTurn = (messages: Message[]): Message[] => messages.map((message) => {
+    const taskRunnerAsync = message.metadata?.task_runner_async;
+    const messageTurnId = String(
+      message.metadata?.conversation_turn_id
+      || taskRunnerAsync?.source_turn_id
+      || '',
+    ).trim();
+    if (message.role !== 'user' || !failedTurnId || messageTurnId !== failedTurnId) {
+      return message;
+    }
+    return {
+      ...message,
+      metadata: {
+        ...(message.metadata || {}),
+        clientOptimistic: false,
+        task_runner_async: {
+          ...(taskRunnerAsync || {}),
+          mode: 'contact_async',
+          overall_status: 'failed',
+        },
+      },
+    };
+  });
   const existingAssistantIndex = tempAssistantId
     ? state.messages.findIndex((message) => message.id === tempAssistantId)
     : -1;
@@ -222,9 +322,19 @@ export const failSendMessageState = (
     state.messages.push(failureAssistantMessage);
   }
 
-  const prev = resolveSessionChatState(state, sessionId);
+  if (state.currentSessionId === sessionId) {
+    state.messages = markFailedUserTurn(state.messages);
+    writeUpdatedSessionCache(state, sessionId, state.messages);
+  } else {
+    const cachedMessages = state.sessionMessagesCache?.[sessionId]?.messages || [];
+    const nextCachedMessages = markFailedUserTurn(cachedMessages);
+    if (nextCachedMessages.some((message, index) => message !== cachedMessages[index])) {
+      writeUpdatedSessionCache(state, sessionId, nextCachedMessages);
+    }
+  }
+
   state.sessionChatState[sessionId] = {
-    ...prev,
+    ...previousChatState,
     isLoading: false,
     isStreaming: false,
     isStopping: false,

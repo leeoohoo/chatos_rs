@@ -6,7 +6,7 @@ use uuid::Uuid;
 
 use crate::local_now_rfc3339;
 use crate::local_runtime::project_management::{
-    CreateLocalWorkItemInput, LocalWorkItemRecord, LocalWorkItemRow,
+    canonical_project_status, CreateLocalWorkItemInput, LocalWorkItemRecord, LocalWorkItemRow,
 };
 
 use super::super::LocalDatabase;
@@ -22,6 +22,7 @@ impl LocalDatabase {
             .context("local work item requirement was not found")?;
         let id = format!("lc_work_item_{}", Uuid::new_v4());
         let now = local_now_rfc3339();
+        let status = canonical_project_status(input.status.as_str());
         sqlx::query(
             r#"
             INSERT INTO project_work_items (
@@ -38,7 +39,7 @@ impl LocalDatabase {
         .bind(input.owner_user_id.as_str())
         .bind(input.title.as_str())
         .bind(input.description.as_deref())
-        .bind(input.status.as_str())
+        .bind(status.as_str())
         .bind(input.priority)
         .bind(input.assignee_user_id.as_deref())
         .bind(input.estimate_points)

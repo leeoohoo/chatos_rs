@@ -31,7 +31,7 @@ impl RunService {
             return Ok(SandboxTaskRoute {
                 base_url,
                 auth,
-                image_id: (!task.mcp_config.requires_execution).then(|| "default".to_string()),
+                image_id: Some(base_sandbox_image_id_for_task(task)?),
                 environment_plan: None,
                 provider: "task_override".to_string(),
                 policy: task.mcp_config.sandbox_policy_request(),
@@ -46,7 +46,7 @@ impl RunService {
             return Ok(SandboxTaskRoute {
                 auth: sandbox_auth_for_task(&self.config, task, base_url.as_str())?,
                 base_url,
-                image_id: (!task.mcp_config.requires_execution).then(|| "default".to_string()),
+                image_id: Some(base_sandbox_image_id_for_task(task)?),
                 environment_plan: None,
                 provider: "cloud_sandbox_manager".to_string(),
                 policy: task.mcp_config.sandbox_policy_request(),
@@ -82,11 +82,18 @@ impl RunService {
         } else {
             None
         };
-        let image_id = if environment_plan.is_some() {
-            None
-        } else {
-            sandbox_image_id_for_task(task, &runtime, provider.as_str())?
-        };
+        // Keep the resolved application/base image even when topology v2 is selected.
+        // The environment plan may be stale or temporarily unbuildable after a previous
+        // task changes the repository. Generic implementation tasks must still be able to
+        // enter a plain execution sandbox and repair the project instead of failing before
+        // the model gets any tools. `create_lease` ignores this value while the environment
+        // plan succeeds and uses it only for the guarded fallback path.
+        let image_id = sandbox_image_id_for_task(
+            task,
+            &runtime,
+            provider.as_str(),
+            crate::config::configured_sandbox_base_image_id().as_str(),
+        )?;
         let auth = sandbox_auth_for_task(&self.config, task, base_url.as_str())?;
         Ok(SandboxTaskRoute {
             base_url,
@@ -112,6 +119,15 @@ fn runtime_topology_v2_enabled_from_value(value: Option<&str>) -> bool {
         value.map(str::trim).map(str::to_ascii_lowercase).as_deref(),
         Some("0" | "false" | "off" | "no")
     )
+}
+
+pub(super) fn sandbox_environment_fallback_allowed(
+    task: &TaskRecord,
+    route: &SandboxTaskRoute,
+) -> bool {
+    route.environment_plan.is_some()
+        && route.image_id.is_some()
+        && normalized_execution_service_id(task).is_none()
 }
 
 fn sandbox_environment_plan_for_task(
@@ -203,6 +219,11 @@ fn sandbox_environment_plan_for_task(
         }
     }
     if application_service_ids.is_empty() {
+        if let Some(requested) = normalized_execution_service_id(task) {
+            return Err(format!(
+                "execution_service_id is not a ready application service: {requested}"
+            ));
+        }
         return Ok(None);
     }
     let primary_service_id = resolve_execution_service_id(
@@ -212,6 +233,15 @@ fn sandbox_environment_plan_for_task(
     Ok(Some(SandboxEnvironmentPlan {
         primary_service_id,
         services,
+        generated_config_files: runtime
+            .environment
+            .generated_config_files
+            .iter()
+            .map(|file| SandboxGeneratedConfigFile {
+                path: file.path.clone(),
+                content: file.content.clone(),
+            })
+            .collect(),
     }))
 }
 
@@ -274,17 +304,22 @@ fn sandbox_image_id_for_task(
     task: &TaskRecord,
     runtime: &ProjectSandboxRuntimeSettings,
     provider: &str,
+    base_image_id: &str,
 ) -> Result<Option<String>, String> {
     if !task.mcp_config.requires_execution {
-        return Ok(Some("default".to_string()));
+        return Ok(Some(normalize_base_image_id(base_image_id)));
     }
-    sandbox_image_id_for_runtime(runtime, provider).map(Some)
+    match sandbox_image_id_for_runtime(runtime, provider, normalized_execution_service_id(task))? {
+        Some(image_id) => Ok(Some(image_id)),
+        None => Ok(Some(normalize_base_image_id(base_image_id))),
+    }
 }
 
 fn sandbox_image_id_for_runtime(
     runtime: &ProjectSandboxRuntimeSettings,
     provider: &str,
-) -> Result<String, String> {
+    requested_service_id: Option<&str>,
+) -> Result<Option<String>, String> {
     let images = runtime
         .images
         .iter()
@@ -302,6 +337,18 @@ fn sandbox_image_id_for_runtime(
                 .is_some_and(|value| !value.is_empty())
         })
         .collect::<Vec<_>>();
+    if let Some(requested) = requested_service_id {
+        return images
+            .into_iter()
+            .find(|image| image.service_id.trim() == requested)
+            .and_then(|image| image.image_id.as_deref())
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(|value| Some(value.to_string()))
+            .ok_or_else(|| {
+                format!("execution_service_id is not a ready application service: {requested}")
+            });
+    }
     if images.len() > 1 {
         let service_ids = images
             .iter()
@@ -319,18 +366,38 @@ fn sandbox_image_id_for_runtime(
             "project runtime has multiple ready system-managed application targets ({service_ids}); program-controlled service selection is required before cloud execution"
         ));
     }
-    images
+    Ok(images
         .first()
         .and_then(|image| image.image_id.as_deref())
         .map(str::trim)
         .filter(|value| !value.is_empty())
-        .map(ToOwned::to_owned)
-        .ok_or_else(|| {
-            format!(
-                "project runtime has no ready system-managed application MCP target (environment_status={}); reinitialize the project environment image or create the task with requires_execution=false for file-only work",
-                runtime.environment.status.trim()
-            )
-        })
+        .map(ToOwned::to_owned))
+}
+
+fn normalized_execution_service_id(task: &TaskRecord) -> Option<&str> {
+    task.mcp_config
+        .execution_service_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+}
+
+fn base_sandbox_image_id_for_task(task: &TaskRecord) -> Result<String, String> {
+    if let Some(requested) = normalized_execution_service_id(task) {
+        return Err(format!(
+            "execution_service_id requires a ready project runtime application service: {requested}"
+        ));
+    }
+    Ok(crate::config::configured_sandbox_base_image_id())
+}
+
+fn normalize_base_image_id(value: &str) -> String {
+    let value = value.trim();
+    if value.is_empty() {
+        "default".to_string()
+    } else {
+        value.to_string()
+    }
 }
 
 fn image_status_is_available(status: &str) -> bool {
@@ -445,11 +512,12 @@ mod tests {
                 sandbox_enabled: true,
                 status: "ready".to_string(),
                 env_vars: serde_json::json!({}),
+                generated_config_files: Vec::new(),
             },
             images: vec![api, worker],
         };
 
-        let error = sandbox_image_id_for_runtime(&runtime, "cloud_sandbox_manager")
+        let error = sandbox_image_id_for_runtime(&runtime, "cloud_sandbox_manager", None)
             .expect_err("ambiguous application targets must be rejected");
         assert!(error.contains("services-api, services-worker"));
         assert!(error.contains("program-controlled service selection"));
@@ -480,5 +548,115 @@ mod tests {
         assert!(runtime_topology_v2_enabled_from_value(Some("true")));
         assert!(!runtime_topology_v2_enabled_from_value(Some("false")));
         assert!(!runtime_topology_v2_enabled_from_value(Some("0")));
+    }
+
+    #[test]
+    fn implicit_environment_route_can_fall_back_but_explicit_service_cannot() {
+        let mut task = task();
+        task.mcp_config.requires_execution = true;
+        let route = SandboxTaskRoute {
+            base_url: "http://sandbox.example".to_string(),
+            auth: None,
+            image_id: Some("dev-node24".to_string()),
+            environment_plan: Some(SandboxEnvironmentPlan {
+                primary_service_id: "api".to_string(),
+                services: Vec::new(),
+                generated_config_files: Vec::new(),
+            }),
+            provider: "cloud_sandbox_manager".to_string(),
+            policy: task.mcp_config.sandbox_policy_request(),
+        };
+
+        assert!(sandbox_environment_fallback_allowed(&task, &route));
+
+        task.mcp_config.execution_service_id = Some("api".to_string());
+        assert!(!sandbox_environment_fallback_allowed(&task, &route));
+    }
+
+    #[test]
+    fn code_or_terminal_execution_without_application_target_uses_configured_base_image() {
+        let runtime = ProjectSandboxRuntimeSettings {
+            environment: ProjectRuntimeEnvironmentSettings {
+                sandbox_enabled: true,
+                status: "pending".to_string(),
+                env_vars: serde_json::json!({}),
+                generated_config_files: Vec::new(),
+            },
+            images: Vec::new(),
+        };
+        let mut task = task();
+        task.mcp_config.requires_execution = true;
+
+        assert!(
+            sandbox_environment_plan_for_task(&task, &runtime, "cloud_sandbox_manager")
+                .expect("empty project runtime must fall back")
+                .is_none()
+        );
+        assert_eq!(
+            sandbox_image_id_for_task(&task, &runtime, "cloud_sandbox_manager", "dev-java21",)
+                .expect("configured base image"),
+            Some("dev-java21".to_string())
+        );
+    }
+
+    #[test]
+    fn explicit_application_execution_still_requires_a_ready_target() {
+        let runtime = ProjectSandboxRuntimeSettings {
+            environment: ProjectRuntimeEnvironmentSettings {
+                sandbox_enabled: true,
+                status: "pending".to_string(),
+                env_vars: serde_json::json!({}),
+                generated_config_files: Vec::new(),
+            },
+            images: Vec::new(),
+        };
+        let mut task = task();
+        task.mcp_config.requires_execution = true;
+        task.mcp_config.execution_service_id = Some("services-api".to_string());
+
+        let error = sandbox_environment_plan_for_task(&task, &runtime, "cloud_sandbox_manager")
+            .expect_err("explicit project Gateway target must not fall back");
+        assert!(error.contains("services-api"));
+        assert!(error.contains("not a ready application service"));
+    }
+
+    fn task() -> TaskRecord {
+        TaskRecord {
+            id: "task-1".to_string(),
+            title: "Task".to_string(),
+            description: None,
+            objective: "Test sandbox routing".to_string(),
+            input_payload: None,
+            status: crate::models::TaskStatus::Ready,
+            priority: 0,
+            tags: Vec::new(),
+            default_model_config_id: None,
+            memory_thread_id: "task-task-1".to_string(),
+            tenant_id: "tenant-1".to_string(),
+            subject_id: "user-1".to_string(),
+            project_id: "project-1".to_string(),
+            task_profile: crate::models::default_task_profile(),
+            creator_user_id: None,
+            creator_username: None,
+            creator_display_name: None,
+            owner_user_id: None,
+            owner_username: None,
+            owner_display_name: None,
+            result_summary: None,
+            process_log: None,
+            last_run_id: None,
+            schedule: crate::models::TaskScheduleConfig::default(),
+            parent_task_id: None,
+            source_run_id: None,
+            source_session_id: None,
+            source_turn_id: None,
+            source_user_message_id: None,
+            prerequisite_task_ids: Vec::new(),
+            task_tool_state: crate::models::TaskToolState::default(),
+            mcp_config: crate::models::TaskMcpConfig::default(),
+            created_at: "2026-07-19T00:00:00Z".to_string(),
+            updated_at: "2026-07-19T00:00:00Z".to_string(),
+            deleted_at: None,
+        }
     }
 }

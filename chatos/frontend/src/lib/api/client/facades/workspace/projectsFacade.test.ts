@@ -186,6 +186,7 @@ describe('workspaceProjectFacade local project management routing', () => {
     const getProjectRuntimeEnvironment = vi.fn().mockResolvedValue({ environment: {} });
     const updateProjectRuntimeEnvironmentSettings = vi.fn().mockResolvedValue({ environment: {} });
     const analyzeProjectRuntimeEnvironment = vi.fn().mockResolvedValue({ environment: {} });
+    const startProjectRuntimeEnvironment = vi.fn().mockResolvedValue({ environment: {} });
     const getProjectRuntimeEnvironmentProgress = vi.fn().mockResolvedValue({ status: 'running' });
     const cloudRequest = vi.fn(() => {
       throw new Error('cloud environment request must not run');
@@ -196,6 +197,7 @@ describe('workspaceProjectFacade local project management routing', () => {
         getProjectRuntimeEnvironment,
         updateProjectRuntimeEnvironmentSettings,
         analyzeProjectRuntimeEnvironment,
+        startProjectRuntimeEnvironment,
         getProjectRuntimeEnvironmentProgress,
       }),
       getRequestFn: () => cloudRequest,
@@ -218,11 +220,11 @@ describe('workspaceProjectFacade local project management routing', () => {
       context as never,
       'project-local',
     );
-    await expect(workspaceProjectFacade.generateProjectRuntimeEnvironmentImage.call(
+    await workspaceProjectFacade.generateProjectRuntimeEnvironmentImage.call(
       context as never,
       'project-local',
       'image-1',
-    )).rejects.toThrow('本地项目镜像必须由本地客户端生成');
+    );
 
     expect(getProjectRuntimeEnvironment).toHaveBeenCalledWith('project-local');
     expect(updateProjectRuntimeEnvironmentSettings).toHaveBeenCalledWith(
@@ -230,6 +232,7 @@ describe('workspaceProjectFacade local project management routing', () => {
       { sandbox_enabled: true },
     );
     expect(analyzeProjectRuntimeEnvironment).toHaveBeenCalledWith('project-local');
+    expect(startProjectRuntimeEnvironment).toHaveBeenCalledWith('project-local');
     expect(getProjectRuntimeEnvironmentProgress).toHaveBeenCalledWith('project-local');
     expect(cloudRequest).not.toHaveBeenCalled();
   });

@@ -90,6 +90,7 @@ pub(super) fn model_settings_public_value(
 ) -> serde_json::Value {
     let mut value = json!({
         "user_id": record.user_id,
+        "model_request_max_retries": record.model_request_max_retries,
         "memory_summary_model_config_id": record.memory_summary_model_config_id,
         "memory_summary_thinking_level": record.memory_summary_thinking_level,
         "project_management_agent_model_config_id": record.project_management_agent_model_config_id,
