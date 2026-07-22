@@ -55,14 +55,6 @@ const readMessageContentLength = (message: Message): number => (
   normalizeMessageContent(message?.content).trim().length
 );
 
-const readMetadataString = (
-  metadata: Record<string, unknown> | null,
-  key: string,
-): string => {
-  const value = metadata?.[key];
-  return typeof value === 'string' ? value.trim().toLowerCase() : '';
-};
-
 const readNonProcessAssistantDedupKey = (parsed: ParsedMessageForList): string => {
   if (parsed.role !== 'assistant') {
     return '';
@@ -109,20 +101,12 @@ export const parseMessageForList = (message: Message): ParsedMessageForList => {
   const isTaskRunnerCallbackAssistant = Boolean(
     message.role === 'assistant' && isTaskRunnerCallbackMessage(message),
   );
-  const responseStatus = readMetadataString(metadataRecord, 'response_status')
-    || readMetadataString(metadataRecord, 'responseStatus');
   const isAssistantToolCallCarrier = Boolean(
     message.role === 'assistant'
     && assistantToolCalls.length > 0
     && !historyFinalForUserMessageId
     && !historyFinalForTurnId
     && !isTaskRunnerCallbackAssistant
-    && (
-      responseStatus === 'tool_calls'
-      || responseStatus === 'tool_call'
-      || responseStatus === 'requires_action'
-      || readMessageContentLength(message) === 0
-    )
   );
 
   return {

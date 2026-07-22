@@ -225,7 +225,7 @@ const normalizeTurn = (
     return null;
   }
   const [userMessage] = normalizeRawMessages([item.user_message], sessionId);
-  if (!userMessage) {
+  if (!userMessage || isRuntimeGuidanceMessage(userMessage)) {
     return null;
   }
   const [finalAssistantMessage] = item.final_assistant_message
@@ -260,6 +260,44 @@ const messageTime = (message: Message): number => (
     : 0
 );
 
+const isRuntimeGuidanceMessage = (message: Message | null | undefined): boolean => (
+  readString(message?.messageMode) === 'runtime_guidance'
+  || readString(message?.messageSource) === 'runtime_guidance'
+  || Boolean(message?.metadata?.runtime_guidance)
+);
+
+const turnIdentity = (item: UserMessageTurn): string => {
+  const turnId = readString(item.turnId);
+  return turnId ? `turn:${turnId}` : `message:${item.userMessage.id}`;
+};
+
+const sortTurnsChronologically = (items: UserMessageTurn[]): UserMessageTurn[] => (
+  [...items].sort((left, right) => (
+    messageTime(left.userMessage) - messageTime(right.userMessage)
+    || left.userMessage.id.localeCompare(right.userMessage.id)
+  ))
+);
+
+const dedupeUserMessageTurns = (items: UserMessageTurn[]): UserMessageTurn[] => {
+  const byIdentity = new Map<string, UserMessageTurn>();
+  items.forEach((item) => {
+    const identity = turnIdentity(item);
+    if (!byIdentity.has(identity)) {
+      byIdentity.set(identity, item);
+    }
+  });
+  return Array.from(byIdentity.values());
+};
+
+const preferCanonicalUserMessage = (current: Message, candidate: Message): Message => {
+  const currentOptimistic = current.metadata?.clientOptimistic === true;
+  const candidateOptimistic = candidate.metadata?.clientOptimistic === true;
+  if (currentOptimistic !== candidateOptimistic) {
+    return currentOptimistic ? candidate : current;
+  }
+  return messageTime(candidate) < messageTime(current) ? candidate : current;
+};
+
 export const buildLiveUserMessageTurns = (
   sessionId: string | null | undefined,
   messages: Message[],
@@ -268,40 +306,60 @@ export const buildLiveUserMessageTurns = (
   if (!normalizedSessionId) {
     return [];
   }
-  const sessionMessages = messages.filter((message) => (
-    message?.sessionId === normalizedSessionId
-    && message.metadata?.historyProcessPlaceholder !== true
-  ));
-  const assistantByTurnId = new Map<string, Message>();
-  sessionMessages.forEach((message) => {
-    if (message.role !== 'assistant') {
+
+  const messagesById = new Map<string, Message>();
+  messages.forEach((message) => {
+    if (
+      message?.sessionId !== normalizedSessionId
+      || message.metadata?.historyProcessPlaceholder === true
+      || !readString(message.id)
+    ) {
       return;
     }
-    const turnId = messageTurnId(message);
-    if (turnId) {
-      assistantByTurnId.set(turnId, message);
-    }
+    messagesById.set(message.id, message);
   });
-  return sessionMessages
-    .filter((message) => message.role === 'user')
-    .map((userMessage) => {
-      const turnId = messageTurnId(userMessage);
-      const finalAssistantMessage = assistantByTurnId.get(turnId) || null;
-      return {
-        turnId,
-        userMessage,
-        finalAssistantMessage,
-        hasProcess: false,
-        toolCallCount: 0,
-        thinkingCount: 0,
-        processMessageCount: 0,
-        taskState: mergeTaskState(
-          taskStateFromMessage(userMessage),
-          taskStateFromMessage(finalAssistantMessage),
-        ),
-      };
-    })
-    .sort((left, right) => messageTime(right.userMessage) - messageTime(left.userMessage));
+  const sessionMessages = Array.from(messagesById.values());
+
+  const assistantByTurnId = new Map<string, Message>();
+  const userByTurnId = new Map<string, Message>();
+  sessionMessages.forEach((message) => {
+    const turnId = messageTurnId(message);
+    if (!turnId) {
+      return;
+    }
+    if (message.role === 'assistant') {
+      const existing = assistantByTurnId.get(turnId);
+      if (!existing || messageTime(message) >= messageTime(existing)) {
+        assistantByTurnId.set(turnId, message);
+      }
+      return;
+    }
+    if (message.role !== 'user' || isRuntimeGuidanceMessage(message)) {
+      return;
+    }
+    const existing = userByTurnId.get(turnId);
+    userByTurnId.set(
+      turnId,
+      existing ? preferCanonicalUserMessage(existing, message) : message,
+    );
+  });
+
+  return sortTurnsChronologically(Array.from(userByTurnId.entries()).map(([turnId, userMessage]) => {
+    const finalAssistantMessage = assistantByTurnId.get(turnId) || null;
+    return {
+      turnId,
+      userMessage,
+      finalAssistantMessage,
+      hasProcess: false,
+      toolCallCount: 0,
+      thinkingCount: 0,
+      processMessageCount: 0,
+      taskState: mergeTaskState(
+        taskStateFromMessage(userMessage),
+        taskStateFromMessage(finalAssistantMessage),
+      ),
+    };
+  }));
 };
 
 const mergeTurnTaskState = (
@@ -318,25 +376,28 @@ export const mergeLiveUserMessageTurns = (
   persistedItems: UserMessageTurn[],
   liveItems: UserMessageTurn[],
 ): UserMessageTurn[] => {
-  if (liveItems.length === 0) {
-    return persistedItems;
+  const uniquePersistedItems = dedupeUserMessageTurns(persistedItems);
+  const uniqueLiveItems = dedupeUserMessageTurns(liveItems);
+  if (uniqueLiveItems.length === 0) {
+    return uniquePersistedItems;
   }
+
   const liveByMessageId = new Map(
-    liveItems.map((item) => [item.userMessage.id, item]),
+    uniqueLiveItems.map((item) => [item.userMessage.id, item]),
   );
   const liveByTurnId = new Map(
-    liveItems
-      .filter((item) => Boolean(readString(item.turnId)))
-      .map((item) => [readString(item.turnId), item]),
+    uniqueLiveItems
+      .map((item) => [readString(item.turnId), item] as const)
+      .filter(([turnId]) => Boolean(turnId)),
   );
-  const consumedLiveIds = new Set<string>();
-  const mergedPersisted = persistedItems.map((persistedItem) => {
+  const consumedLiveIdentities = new Set<string>();
+  const mergedPersisted = uniquePersistedItems.map((persistedItem) => {
     const liveItem = liveByMessageId.get(persistedItem.userMessage.id)
       || liveByTurnId.get(readString(persistedItem.turnId));
     if (!liveItem) {
       return persistedItem;
     }
-    consumedLiveIds.add(liveItem.userMessage.id);
+    consumedLiveIdentities.add(turnIdentity(liveItem));
     return {
       ...persistedItem,
       finalAssistantMessage: persistedItem.finalAssistantMessage || liveItem.finalAssistantMessage,
@@ -350,10 +411,21 @@ export const mergeLiveUserMessageTurns = (
       taskState: mergeTurnTaskState(persistedItem.taskState, liveItem.taskState),
     };
   });
-  const missingLiveItems = liveItems.filter(
-    (item) => !consumedLiveIds.has(item.userMessage.id),
+  const missingLiveItems = uniqueLiveItems.filter(
+    (item) => !consumedLiveIdentities.has(turnIdentity(item)),
   );
-  return [...missingLiveItems, ...mergedPersisted];
+  const mergedItems = dedupeUserMessageTurns([...mergedPersisted, ...missingLiveItems]);
+  const persistedFirstTime = uniquePersistedItems[0]
+    ? messageTime(uniquePersistedItems[0].userMessage)
+    : 0;
+  const persistedLastTime = uniquePersistedItems[uniquePersistedItems.length - 1]
+    ? messageTime(uniquePersistedItems[uniquePersistedItems.length - 1].userMessage)
+    : 0;
+  const descending = uniquePersistedItems.length > 1 && persistedFirstTime > persistedLastTime;
+  return [...mergedItems].sort((left, right) => {
+    const delta = messageTime(left.userMessage) - messageTime(right.userMessage);
+    return descending ? -delta : delta;
+  });
 };
 
 export const useConversationUserMessages = (
@@ -468,11 +540,16 @@ export const useConversationUserMessages = (
       const nextItems = (Array.isArray(response.items) ? response.items : [])
         .map((item) => normalizeTurn(sessionId, item))
         .filter((item): item is UserMessageTurn => Boolean(item));
-      setItems((current) => (mode === 'append' ? [...nextItems, ...current] : nextItems));
-      void hydrateInitialLiveTaskStates(nextItems);
+      const uniqueNextItems = dedupeUserMessageTurns(nextItems);
+      setItems((current) => (
+        mode === 'append'
+          ? dedupeUserMessageTurns([...uniqueNextItems, ...current])
+          : uniqueNextItems
+      ));
+      void hydrateInitialLiveTaskStates(uniqueNextItems);
       setNextBefore(response.next_before || null);
       setHasMore(response.has_more === true);
-      return nextItems;
+      return uniqueNextItems;
     } catch (err) {
       if (requestSeqRef.current !== requestSeq) {
         return [];

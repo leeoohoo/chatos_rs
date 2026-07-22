@@ -270,6 +270,54 @@ describe('buildVisibleMessageState', () => {
     expect(state.assistantToolCallById.has('tool-call-carrier-1')).toBe(true);
   });
 
+  it('filters intermediate assistant text when the same response also carries tool calls', () => {
+    const messages: Message[] = [
+      buildUser({
+        id: 'user-tool-text-1',
+        metadata: {
+          conversation_turn_id: 'turn-tool-text-1',
+        },
+      }),
+      buildAssistant({
+        id: 'assistant-tool-text-1',
+        content: '我先检查仍在排队的任务，然后继续处理。',
+        metadata: {
+          conversation_turn_id: 'turn-tool-text-1',
+          response_status: 'completed',
+          toolCalls: [{
+            id: 'tool-call-text-1',
+            messageId: 'assistant-tool-text-1',
+            name: 'task_runner_service_list_tasks',
+            arguments: {},
+            createdAt: new Date('2026-05-07T10:00:01.000Z'),
+          }],
+          contentSegments: [
+            { type: 'thinking', content: '先检查任务状态' },
+            { type: 'tool_call', toolCallId: 'tool-call-text-1', content: '' as never },
+            { type: 'text', content: '我先检查仍在排队的任务，然后继续处理。' },
+          ],
+        },
+      }),
+      buildAssistant({
+        id: 'assistant-final-tool-text-1',
+        content: '已生成完整开发计划。',
+        metadata: {
+          conversation_turn_id: 'turn-tool-text-1',
+          historyFinalForUserMessageId: 'user-tool-text-1',
+          historyFinalForTurnId: 'turn-tool-text-1',
+        },
+      }),
+    ];
+
+    const state = buildVisibleMessageState(messages.map(parseMessageForList));
+
+    expect(state.visibleMessages.map((message) => message.id)).toEqual([
+      'user-tool-text-1',
+      'assistant-final-tool-text-1',
+    ]);
+    expect(state.assistantToolCallById.has('tool-call-text-1')).toBe(true);
+  });
+
   it('filters hidden tool messages from the main visible message list', () => {
     const messages: Message[] = [
       buildUser({
