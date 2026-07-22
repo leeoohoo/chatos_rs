@@ -94,6 +94,89 @@ describe('useConversationUserMessages', () => {
     expect(visible[0]?.userMessage.id).toBe('user-1');
   });
 
+  it('keeps one live item per user turn and excludes runtime guidance messages', () => {
+    const initialUserMessage: Message = {
+      id: 'user-1',
+      sessionId: 'session-1',
+      role: 'user',
+      content: '原始需求',
+      status: 'completed',
+      createdAt: new Date('2026-07-22T02:08:38.000Z'),
+      metadata: { conversation_turn_id: 'turn-1' },
+    };
+    const guidanceMessage: Message = {
+      id: 'guidance-1',
+      sessionId: 'session-1',
+      role: 'user',
+      content: '品控失败后重新排产',
+      messageMode: 'runtime_guidance',
+      messageSource: 'runtime_guidance',
+      status: 'completed',
+      createdAt: new Date('2026-07-22T02:09:38.000Z'),
+      metadata: {
+        conversation_turn_id: 'turn-1',
+        runtime_guidance: { guidance_id: 'guidance-1' },
+      },
+    };
+
+    const liveTurns = buildLiveUserMessageTurns('session-1', [
+      initialUserMessage,
+      guidanceMessage,
+      guidanceMessage,
+      initialUserMessage,
+    ]);
+
+    expect(liveTurns.map((item) => item.userMessage.id)).toEqual(['user-1']);
+  });
+
+  it('deduplicates repeated API turns and ignores promoted runtime guidance', async () => {
+    const normalTurn = {
+      turn_id: 'turn-1',
+      user_message: {
+        id: 'user-1',
+        conversation_id: 'session-1',
+        role: 'user',
+        content: '原始需求',
+        status: 'completed',
+        created_at: '2026-07-22T02:08:38.000Z',
+        metadata: { conversation_turn_id: 'turn-1' },
+      },
+      final_assistant_message: null,
+      has_process: false,
+      process_message_count: 0,
+    };
+    const client = {
+      getConversationUserMessageTurns: vi.fn().mockResolvedValue({
+        items: [normalTurn, normalTurn, {
+          ...normalTurn,
+          user_message: {
+            ...normalTurn.user_message,
+            id: 'guidance-1',
+            content: '追加指令',
+            message_mode: 'runtime_guidance',
+            message_source: 'runtime_guidance',
+          },
+        }],
+        has_more: false,
+        next_before: null,
+      }),
+      getConversationTaskRunnerActiveMessageTasks: vi.fn().mockResolvedValue({
+        active_source_user_message_ids: [],
+        running_source_user_message_ids: [],
+        items: [],
+      }),
+    };
+
+    const { result } = renderHook(
+      () => useConversationUserMessages('session-1'),
+      { wrapper: wrapperForClient(client) },
+    );
+
+    await waitFor(() => {
+      expect(result.current.items.map((item) => item.userMessage.id)).toEqual(['user-1']);
+    });
+  });
+
   it('hydrates active task state from the session task runner status endpoint', async () => {
     const client = {
       getConversationUserMessageTurns: vi.fn().mockResolvedValue({
