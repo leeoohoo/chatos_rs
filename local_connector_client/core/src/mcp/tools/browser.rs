@@ -6,7 +6,7 @@ use std::path::Path;
 use std::sync::{Mutex as StdMutex, OnceLock};
 
 use anyhow::{anyhow, Result};
-use chatos_builtin_tools::{BrowserToolsOptions, BrowserToolsService};
+use chatos_mcp::{BrowserToolsOptions, BrowserToolsService};
 
 use crate::relay::RelayRequest;
 use crate::terminal::controller::local_mcp_terminal_project_id;

@@ -6,7 +6,7 @@ use std::process::Stdio;
 use std::sync::Arc;
 
 use anyhow::{anyhow, Result};
-use chatos_builtin_tools::{
+use chatos_mcp::{
     TerminalControllerContext, TerminalControllerOptions, TerminalControllerService,
     TerminalControllerStoreRef,
 };
@@ -33,7 +33,7 @@ use reused::{
 };
 use shell::{
     canonicalize_terminal_root, display_local_mcp_workspace_path, resolve_terminal_controller_cwd,
-    shell_session_for_terminal_controller,
+    shell_session_for_terminal_controller, terminate_terminal_process_tree,
 };
 use standalone::execute_local_mcp_standalone_command;
 
@@ -136,11 +136,10 @@ impl LocalConnectorTerminalControllerStore {
             }
             {
                 let mut child = session.child.lock().await;
-                if let Err(err) = child.kill().await {
+                if let Err(err) = terminate_terminal_process_tree(&mut child).await {
                     errors.push(format!("kill {} failed: {}", meta.id, err));
                     continue;
                 }
-                let _ = child.wait().await;
             }
             mark_local_mcp_terminal_exited(&session, None).await;
             append_local_mcp_terminal_log(
@@ -188,13 +187,61 @@ pub(crate) fn local_terminal_controller_context_for_root(
 pub(crate) fn local_mcp_terminal_project_id(request: &RelayRequest) -> Option<String> {
     request
         .headers
-        .get("x-task-runner-task-id")
-        .or_else(|| request.headers.get("x-task-runner-run-id"))
+        .get("x-task-runner-run-id")
+        .or_else(|| request.headers.get("x-task-runner-task-id"))
         .map(String::as_str)
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(ToOwned::to_owned)
         .or_else(|| Some(request.workspace_id.clone()))
+}
+
+pub(crate) fn local_terminal_controller_context_for_task_run(
+    root: &Path,
+    owner_user_id: &str,
+    run_id: &str,
+    timeout_ms: u64,
+) -> TerminalControllerContext {
+    TerminalControllerContext {
+        root: root.to_path_buf(),
+        user_id: Some(owner_user_id.to_string()),
+        project_id: Some(run_id.to_string()),
+        idle_timeout_ms: 1_000,
+        max_wait_ms: timeout_ms,
+        max_output_chars: MAX_TERMINAL_OUTPUT_BYTES,
+    }
+}
+
+pub(crate) async fn kill_local_terminal_sessions_for_task_run(
+    run_id: &str,
+) -> std::result::Result<Value, String> {
+    let sessions = {
+        let registry = local_mcp_terminal_registry().sessions.read().await;
+        registry.values().cloned().collect::<Vec<_>>()
+    };
+    for session in sessions {
+        let meta = session.meta.lock().await.clone();
+        if meta.project_id.as_deref() != Some(run_id) {
+            continue;
+        }
+        let context = local_terminal_controller_context_for_task_run(
+            Path::new(meta.root.as_str()),
+            meta.user_id.as_deref().unwrap_or_default(),
+            run_id,
+            30_000,
+        );
+        return LocalConnectorTerminalControllerStore
+            .kill_sessions_for_context(context)
+            .await;
+    }
+    Ok(json!({
+        "ok": true,
+        "total": 0,
+        "killed": 0,
+        "already_exited": 0,
+        "terminal_ids": [],
+        "errors": [],
+    }))
 }
 
 pub(crate) fn local_terminal_controller_service_for_root(
@@ -212,4 +259,36 @@ pub(crate) fn local_terminal_controller_service_for_root(
         store: TerminalControllerStoreRef::new(Arc::new(LocalConnectorTerminalControllerStore)),
     })
     .map_err(|err| anyhow!(err))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeMap;
+
+    use serde_json::json;
+
+    use super::local_mcp_terminal_project_id;
+    use crate::relay::RelayRequest;
+
+    #[test]
+    fn task_run_id_isolated_terminal_context_takes_priority() {
+        let request = RelayRequest {
+            _message_type: "local_runtime_chat".to_string(),
+            request_id: "request-1".to_string(),
+            owner_user_id: Some("user-1".to_string()),
+            device_id: Some("device-1".to_string()),
+            workspace_id: "workspace-1".to_string(),
+            method: None,
+            path: None,
+            headers: BTreeMap::from([
+                ("x-task-runner-task-id".to_string(), "project-1".to_string()),
+                ("x-task-runner-run-id".to_string(), "run-1".to_string()),
+            ]),
+            body: json!({}),
+        };
+        assert_eq!(
+            local_mcp_terminal_project_id(&request).as_deref(),
+            Some("run-1")
+        );
+    }
 }

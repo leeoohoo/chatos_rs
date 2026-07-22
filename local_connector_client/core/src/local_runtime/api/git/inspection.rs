@@ -26,9 +26,11 @@ pub(super) async fn compare(
         .unwrap_or_else(|_| "HEAD".to_string())
         .trim()
         .to_string();
-    let current = (!current.is_empty())
-        .then_some(current)
-        .unwrap_or_else(|| "HEAD".to_string());
+    let current = if current.is_empty() {
+        "HEAD".to_string()
+    } else {
+        current
+    };
     let range = format!("{current}...{target}");
     let files = git_text(repo.as_path(), &["diff", "--name-status", range.as_str()])
         .await

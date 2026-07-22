@@ -23,7 +23,6 @@ use crate::state::AppState;
 
 use super::super::runtime_environment::default_runtime_environment_for_project;
 use super::mcp_servers::get_sandbox_image_catalog;
-use super::PROJECT_ENVIRONMENT_MCP_SERVER_NAME;
 
 #[derive(Clone)]
 pub(super) struct ProjectEnvironmentToolProvider {
@@ -121,11 +120,17 @@ struct ProjectRuntimeEnvironmentImageInput {
 #[async_trait]
 impl BuiltinToolProvider for ProjectEnvironmentToolProvider {
     fn server_name(&self) -> &str {
-        PROJECT_ENVIRONMENT_MCP_SERVER_NAME
+        chatos_mcp::system_mcp_descriptor(
+            chatos_plugin_management_sdk::SystemMcpKey::ProjectEnvironment,
+        )
+        .server_name
     }
 
     fn list_tools(&self) -> Vec<Value> {
-        chatos_mcp_runtime::project_environment_tool_definitions()
+        chatos_mcp::system_mcp_static_tools(
+            chatos_plugin_management_sdk::SystemMcpKey::ProjectEnvironment,
+        )
+        .expect("Project Environment must have a static system MCP catalog")
     }
 
     async fn call_tool(

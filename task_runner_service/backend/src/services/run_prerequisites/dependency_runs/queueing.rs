@@ -49,29 +49,14 @@ impl RunService {
             "started_as_prerequisite": true,
         });
         let now = now_rfc3339();
-        let run = TaskRunRecord {
-            id: run_id.clone(),
-            task_id: task.id.clone(),
-            model_config_id: model_config_id.clone(),
-            memory_thread_id: task.memory_thread_id.clone(),
-            status: TaskRunStatus::Queued,
-            started_at: None,
-            finished_at: None,
+        let run = TaskRunRecord::queued(
+            run_id.clone(),
+            task.id.clone(),
+            model_config_id.clone(),
+            task.memory_thread_id.clone(),
             input_snapshot,
-            context_snapshot: None,
-            result_summary: None,
-            error_message: None,
-            usage: None,
-            report: None,
-            cancel_requested: false,
-            summary_job_run_id: None,
-            worker_id: None,
-            claim_token: None,
-            claim_until: None,
-            attempt: 0,
-            created_at: now.clone(),
-            updated_at: now,
-        };
+            now,
+        );
         self.store.save_run(run.clone()).await?;
         if let Ok(Some(mut task_record)) = self.store.get_task(&task.id).await {
             if task_record.status != TaskStatus::Cancelled {

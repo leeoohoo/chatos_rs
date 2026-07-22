@@ -4,7 +4,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use chatos_builtin_tools::path_with_bundled_tools;
+use chatos_mcp::path_with_bundled_tools;
 use portable_pty::{CommandBuilder, SlavePty};
 
 use crate::models::terminal_log::TerminalLog;

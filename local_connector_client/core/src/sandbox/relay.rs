@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
-use chatos_sandbox_image_mcp::{
+use chatos_mcp::sandbox_images::{
     SandboxImageBackend, SANDBOX_IMAGE_PROJECT_ID_HEADER, SANDBOX_IMAGE_RUN_ID_HEADER,
 };
 use reqwest::Method;
@@ -89,7 +89,7 @@ async fn handle_local_sandbox_request(
             project_id: relay_header(request, SANDBOX_IMAGE_PROJECT_ID_HEADER),
             run_id: relay_header(request, SANDBOX_IMAGE_RUN_ID_HEADER),
         };
-        let body = chatos_sandbox_image_mcp::handle_jsonrpc(&backend, request.body.clone()).await;
+        let body = chatos_mcp::sandbox_images::handle_jsonrpc(&backend, request.body.clone()).await;
         return Ok((200, BTreeMap::new(), body));
     }
     if method == Method::GET && path == "/api/local/sandbox/images/jobs" {

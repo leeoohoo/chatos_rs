@@ -3,6 +3,10 @@
 
 use serde::{Deserialize, Serialize};
 
+fn default_model_request_max_retries() -> i64 {
+    5
+}
+
 #[derive(Debug, Deserialize)]
 pub struct UserServiceAuthUser {
     pub id: String,
@@ -198,6 +202,8 @@ pub struct UpdateUserServiceModelProviderRequest {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct UserServiceModelSettingsRecord {
     pub user_id: String,
+    #[serde(default = "default_model_request_max_retries")]
+    pub model_request_max_retries: i64,
     pub memory_summary_model_config_id: Option<String>,
     pub memory_summary_thinking_level: Option<String>,
     pub project_management_agent_model_config_id: Option<String>,
@@ -213,6 +219,8 @@ pub struct UserServiceModelSettingsRecord {
 pub struct UpdateUserServiceModelSettingsRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub user_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model_request_max_retries: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub memory_summary_model_config_id: Option<Option<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]

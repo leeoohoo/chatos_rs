@@ -183,7 +183,12 @@ export const CloudProjectRuntimeEnvironmentPanel: React.FC<CloudProjectRuntimeEn
   const generateRuntimeImage = useCallback(async (imageId: string) => {
     setBuildingImageId(imageId);
     setError(null);
-    setActionNotice({ tone: 'info', message: t('cloudRuntime.imageBuildSubmitted') });
+    setActionNotice({
+      tone: 'info',
+      message: isCloudProject
+        ? t('cloudRuntime.imageBuildSubmitted')
+        : t('cloudRuntime.localBuildSubmitted'),
+    });
     setResponse((current) => current ? {
       ...current,
       environment: {
@@ -213,7 +218,7 @@ export const CloudProjectRuntimeEnvironmentPanel: React.FC<CloudProjectRuntimeEn
     } finally {
       setBuildingImageId(null);
     }
-  }, [client, projectId, t]);
+  }, [client, isCloudProject, projectId, t]);
 
   const environment = environmentRecord(response);
   const environmentData = asRecord(environment);
@@ -237,18 +242,24 @@ export const CloudProjectRuntimeEnvironmentPanel: React.FC<CloudProjectRuntimeEn
   const envEntries = useMemo(() => Object.entries(envVars), [envVars]);
   const detectedStackText = formatJson(detectedStack);
   const backendAnalyzing = status === 'analyzing';
+  const backendBuilding = !isCloudProject && status === 'pending_image_build';
+  const backendBusy = backendAnalyzing || backendBuilding;
   const progressData = asRecord(progress);
   const progressStatus = readString(progressData, ['status']);
-  const progressPhase = readString(progressData, ['phase'], backendAnalyzing ? 'analyzing_project' : '');
+  const progressPhase = readString(
+    progressData,
+    ['phase'],
+    backendAnalyzing ? 'analyzing_project' : backendBuilding ? 'building_image' : '',
+  );
   const progressPercent = readNumber(progressData, ['progress_percent', 'progressPercent']);
-  const progressJobId = readString(progressData, ['job_id', 'jobId']);
+  const progressJobId = readString(progressData, ['job_id', 'jobId', 'run_id', 'runId']);
   const progressImageId = readString(progressData, ['image_id', 'imageId']);
   const progressImageRef = readString(progressData, ['image_ref', 'imageRef']);
   const progressStartedAt = readString(progressData, ['started_at', 'startedAt']);
   const progressUpdatedAt = readString(progressData, ['updated_at', 'updatedAt']);
   const progressLogs = readString(progressData, ['logs']);
   const progressError = readString(progressData, ['error']);
-  const showProgress = backendAnalyzing || Boolean(progressJobId || progressLogs || progressError);
+  const showProgress = backendBusy || Boolean(progressJobId || progressLogs || progressError);
   const visibleNotice = status === 'pending_configuration'
     ? actionNotice || {
       tone: 'warning' as const,
@@ -257,7 +268,7 @@ export const CloudProjectRuntimeEnvironmentPanel: React.FC<CloudProjectRuntimeEn
     : actionNotice;
 
   useEffect(() => {
-    if (!backendAnalyzing) {
+    if (!backendBusy) {
       return undefined;
     }
     let disposed = false;
@@ -326,7 +337,7 @@ export const CloudProjectRuntimeEnvironmentPanel: React.FC<CloudProjectRuntimeEn
         clearTimeout(timer);
       }
     };
-  }, [backendAnalyzing, client, projectId, t]);
+  }, [backendBusy, client, projectId, t]);
 
   return (
     <div className="overflow-hidden border border-border bg-card">
@@ -377,16 +388,18 @@ export const CloudProjectRuntimeEnvironmentPanel: React.FC<CloudProjectRuntimeEn
           <button
             type="button"
             onClick={() => void analyzeEnvironment()}
-            disabled={loading || analyzing || backendAnalyzing}
+            disabled={loading || analyzing || backendBusy}
             className="inline-flex h-8 items-center gap-1.5 bg-primary px-3 text-xs text-primary-foreground hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
           >
-            {analyzing || backendAnalyzing ? (
+            {analyzing || backendBusy ? (
               <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
             ) : (
               <PlayCircle className="h-3.5 w-3.5" aria-hidden="true" />
             )}
-            {analyzing || backendAnalyzing
-              ? t('cloudRuntime.analyzing')
+            {analyzing || backendBusy
+              ? backendBuilding
+                ? t('cloudRuntime.localBuilding')
+                : t('cloudRuntime.analyzing')
               : status === 'pending_configuration'
                 ? t('cloudRuntime.checkConfiguration')
                 : t('cloudRuntime.analyze')}
@@ -421,7 +434,7 @@ export const CloudProjectRuntimeEnvironmentPanel: React.FC<CloudProjectRuntimeEn
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="flex items-center gap-2">
               <Loader2
-                className={cn('h-4 w-4 text-primary', (backendAnalyzing || progressStatus === 'running') && 'animate-spin')}
+                className={cn('h-4 w-4 text-primary', (backendBusy || progressStatus === 'running') && 'animate-spin')}
                 aria-hidden="true"
               />
               <h3 className="text-sm font-semibold text-foreground">{t('cloudRuntime.buildProgress')}</h3>
@@ -575,7 +588,7 @@ export const CloudProjectRuntimeEnvironmentPanel: React.FC<CloudProjectRuntimeEn
       <CloudRuntimeImagePlans
         images={images}
         isCloudProject={isCloudProject}
-        buildingImageId={buildingImageId}
+        buildingImageId={buildingImageId || (backendBuilding ? '__local_environment__' : null)}
         onGenerateImage={(imageId) => void generateRuntimeImage(imageId)}
       />
     </div>

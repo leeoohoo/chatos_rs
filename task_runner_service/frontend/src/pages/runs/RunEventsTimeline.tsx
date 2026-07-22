@@ -15,6 +15,7 @@ import {
   RunEventPayload,
   describeRunEventType,
 } from './runEventUtils';
+import { formatUserVisibleRunText } from './runPageUtils';
 
 export function RunEventsTimeline({
   t,
@@ -45,7 +46,15 @@ export function RunEventsTimeline({
                 <Typography.Text type="secondary">
                   {dayjs(event.created_at).format('YYYY-MM-DD HH:mm:ss')}
                 </Typography.Text>
-                {event.message ? <Typography.Text>{event.message}</Typography.Text> : null}
+                {event.message ? (
+                  <Typography.Text>
+                    {event.event_type.includes('failed')
+                      || event.event_type.includes('error')
+                      || event.event_type.includes('expired')
+                      ? formatUserVisibleRunText(event.message, t)
+                      : event.message}
+                  </Typography.Text>
+                ) : null}
                 <RunEventPayload event={event} t={t} />
               </Space>
             ),

@@ -36,6 +36,15 @@ pub(in crate::api::fs) async fn read_file(
     raw_path: &str,
 ) -> Option<(StatusCode, Json<Value>)> {
     let path = parse_harness_project_path(raw_path)?;
+    let content_type = mime_guess::from_path(path.relative_path.as_str())
+        .first_or_text_plain()
+        .essence_str()
+        .to_string();
+    let encoding = if content_type.starts_with("image/") {
+        "base64"
+    } else {
+        "utf8"
+    };
     Some(
         match call_harness_tool(
             auth,
@@ -44,6 +53,7 @@ pub(in crate::api::fs) async fn read_file(
             json!({
                 "path": harness_relative_arg(&path),
                 "with_line_numbers": false,
+                "encoding": encoding,
             }),
         )
         .await

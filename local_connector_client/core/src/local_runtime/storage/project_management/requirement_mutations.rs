@@ -5,7 +5,7 @@ use anyhow::{Context, Result};
 
 use crate::local_now_rfc3339;
 use crate::local_runtime::project_management::{
-    LocalRequirementRecord, UpdateLocalRequirementInput,
+    canonical_project_status, LocalRequirementRecord, UpdateLocalRequirementInput,
 };
 
 use super::super::LocalDatabase;
@@ -38,6 +38,7 @@ impl LocalDatabase {
             }
         }
         let now = local_now_rfc3339();
+        let status = input.status.as_deref().map(canonical_project_status);
         sqlx::query(
             r#"
             UPDATE project_requirements SET
@@ -64,11 +65,11 @@ impl LocalDatabase {
         .bind(input.acceptance_criteria.as_deref())
         .bind(input.source.as_deref())
         .bind(input.priority)
-        .bind(input.status.as_deref())
+        .bind(status.as_deref())
         .bind(input.assignee_user_id.as_deref())
-        .bind(input.status.as_deref())
+        .bind(status.as_deref())
         .bind(now.as_str())
-        .bind(input.status.as_deref())
+        .bind(status.as_deref())
         .bind(now.as_str())
         .bind(requirement_id)
         .bind(owner_user_id)

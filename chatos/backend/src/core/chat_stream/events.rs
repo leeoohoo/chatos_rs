@@ -311,9 +311,9 @@ pub fn send_cancelled_event(sink: &ChatEventSink, result: Option<&Value>) {
 }
 
 pub(super) fn build_error_event_payload(error: &str, result: Option<&Value>) -> Value {
-    let (message, code, detail) = match classify_user_facing_ai_error(error) {
-        Some((code, message)) => (message, Some(code.to_string()), Some(error.to_string())),
-        None => (error.to_string(), None, None),
+    let (message, code) = match classify_user_facing_ai_error(error) {
+        Some((code, message)) => (message, Some(code.to_string())),
+        None => sanitize_unclassified_user_facing_error(error),
     };
     let mut payload = serde_json::Map::new();
     payload.insert("type".to_string(), Value::String(Events::ERROR.to_string()));
@@ -331,13 +331,79 @@ pub(super) fn build_error_event_payload(error: &str, result: Option<&Value>) -> 
             "error": message,
             "message": message,
             "code": code,
-            "detail": detail
+            "detail": null
         }),
     );
     if let Some(result) = result {
         payload.insert("result".to_string(), result.clone());
     }
     Value::Object(payload)
+}
+
+fn sanitize_unclassified_user_facing_error(error: &str) -> (String, Option<String>) {
+    let normalized = error.trim();
+    let lower = normalized.to_ascii_lowercase();
+    let response_parse_error = lower.contains("stream response parse failed")
+        || lower.contains("invalid json response")
+        || lower.contains("error decoding response body")
+        || lower.contains("no valid sse events");
+    if response_parse_error {
+        return (
+            "模型服务响应异常，请稍后重试或切换模型。".to_string(),
+            Some("MODEL_RESPONSE_INVALID".to_string()),
+        );
+    }
+
+    let contains_sensitive_detail = [
+        "api_key",
+        "api key",
+        "authorization",
+        "bearer ",
+        "access_token",
+        "internal_trace",
+        "provider_error",
+    ]
+    .iter()
+    .any(|needle| lower.contains(needle));
+    let provider_transport_error = lower.contains("internal server error")
+        || lower.contains("bad gateway")
+        || lower.contains("service unavailable")
+        || lower.contains("gateway timeout")
+        || lower.contains("error sending request for url")
+        || lower.contains("connection reset")
+        || lower.contains("connection refused")
+        || lower.contains("network is unreachable")
+        || lower.contains("timed out")
+        || lower.contains("timeout")
+        || contains_http_5xx_status(&lower);
+    if provider_transport_error {
+        return (
+            "模型服务暂时不可用，请稍后重试或切换模型。".to_string(),
+            Some("MODEL_UPSTREAM_UNAVAILABLE".to_string()),
+        );
+    }
+    if contains_sensitive_detail
+        || (normalized.contains('{') && normalized.contains('}'))
+        || lower.contains("trace=")
+    {
+        return (
+            "模型服务调用失败，请稍后重试或检查模型配置。".to_string(),
+            Some("MODEL_PROVIDER_ERROR".to_string()),
+        );
+    }
+
+    (normalized.to_string(), None)
+}
+
+fn contains_http_5xx_status(value: &str) -> bool {
+    value
+        .split(|character: char| !character.is_ascii_alphanumeric())
+        .any(|part| {
+            part.len() == 3
+                && part.starts_with('5')
+                && part.chars().all(|character| character.is_ascii_digit())
+        })
+        && value.contains("status")
 }
 
 pub fn send_error_event(sink: &ChatEventSink, error: &str, result: Option<&Value>) {

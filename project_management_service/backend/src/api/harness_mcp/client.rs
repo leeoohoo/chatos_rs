@@ -16,6 +16,7 @@ use crate::http_body::{
 use super::HarnessMcpContext;
 
 const DEFAULT_MAX_FILE_BYTES: i64 = 256 * 1024;
+const MAX_PREVIEW_FILE_BYTES: i64 = 2 * 1024 * 1024;
 const MAX_COMMIT_ACTIONS: usize = 500;
 
 #[derive(Debug, Clone, Deserialize)]
@@ -64,6 +65,8 @@ pub(super) struct HarnessContentInfo {
     pub(super) name: String,
     #[serde(default)]
     pub(super) path: String,
+    #[serde(default)]
+    pub(super) size: i64,
 }
 
 #[derive(Debug, Deserialize)]
@@ -111,6 +114,15 @@ pub(super) struct HarnessFile {
     pub(super) content: String,
 }
 
+#[derive(Debug, Clone)]
+pub(super) struct HarnessFileBytes {
+    pub(super) path: String,
+    pub(super) size: i64,
+    pub(super) sha256: String,
+    pub(super) harness_blob_sha: String,
+    pub(super) bytes: Vec<u8>,
+}
+
 #[derive(Debug)]
 pub(super) struct HarnessRequestError {
     status: Option<StatusCode>,
@@ -129,6 +141,10 @@ impl HarnessRequestError {
         self.status == Some(StatusCode::NOT_FOUND)
             || self.message.to_ascii_lowercase().contains("not found")
     }
+
+    pub(super) fn is_empty_repository_root_listing(&self, requested_path: &str) -> bool {
+        requested_path.is_empty() && self.is_not_found()
+    }
 }
 
 impl std::fmt::Display for HarnessRequestError {
@@ -145,6 +161,32 @@ pub(super) async fn read_harness_file(
     ctx: &HarnessMcpContext,
     path: &str,
 ) -> Result<HarnessFile, String> {
+    let file = read_harness_file_bytes(ctx, path, DEFAULT_MAX_FILE_BYTES).await?;
+    if file.bytes.contains(&0) {
+        return Err("Binary file not supported.".to_string());
+    }
+    let text = String::from_utf8_lossy(file.bytes.as_slice()).to_string();
+    Ok(HarnessFile {
+        path: file.path,
+        size: file.size,
+        sha256: file.sha256,
+        harness_blob_sha: file.harness_blob_sha,
+        content: text,
+    })
+}
+
+pub(super) async fn read_harness_file_for_preview(
+    ctx: &HarnessMcpContext,
+    path: &str,
+) -> Result<HarnessFileBytes, String> {
+    read_harness_file_bytes(ctx, path, MAX_PREVIEW_FILE_BYTES).await
+}
+
+async fn read_harness_file_bytes(
+    ctx: &HarnessMcpContext,
+    path: &str,
+    max_file_bytes: i64,
+) -> Result<HarnessFileBytes, String> {
     let content = fetch_harness_content(ctx, path)
         .await
         .map_err(|err| err.to_string())?;
@@ -159,10 +201,10 @@ pub(super) async fn read_harness_file(
     let file_content: HarnessFileContent = serde_json::from_value(content.content)
         .map_err(|err| format!("parse Harness file content failed: {err}"))?;
     let bytes = decode_harness_file_content(&file_content)?;
-    if file_content.size > DEFAULT_MAX_FILE_BYTES {
+    if file_content.size > max_file_bytes {
         return Err(format!("File too large ({} bytes).", file_content.size));
     }
-    if bytes.len() as i64 > DEFAULT_MAX_FILE_BYTES {
+    if bytes.len() as i64 > max_file_bytes {
         return Err(format!("File too large ({} bytes).", bytes.len()));
     }
     if file_content.data_size > 0 && file_content.size > file_content.data_size {
@@ -171,16 +213,12 @@ pub(super) async fn read_harness_file(
             file_content.size
         ));
     }
-    if bytes.contains(&0) {
-        return Err("Binary file not supported.".to_string());
-    }
-    let text = String::from_utf8_lossy(bytes.as_slice()).to_string();
-    Ok(HarnessFile {
+    Ok(HarnessFileBytes {
         path,
         size: file_content.size.max(bytes.len() as i64),
         sha256: sha256_hex(bytes.as_slice()),
         harness_blob_sha: content.sha,
-        content: text,
+        bytes,
     })
 }
 
@@ -407,5 +445,36 @@ mod tests {
         let value = serde_json::to_value(body).expect("serialize body");
 
         assert!(value.get("branch").is_none());
+    }
+
+    #[test]
+    fn identifies_an_empty_repository_missing_its_initial_revision() {
+        let error = HarnessRequestError {
+            status: Some(StatusCode::NOT_FOUND),
+            message: r#"{"message":"revision \"main\" not found"}"#.to_string(),
+        };
+
+        assert!(error.is_empty_repository_root_listing(""));
+    }
+
+    #[test]
+    fn does_not_treat_an_ordinary_missing_path_as_an_empty_repository() {
+        let error = HarnessRequestError {
+            status: Some(StatusCode::NOT_FOUND),
+            message: r#"{"message":"path src/main.rs not found"}"#.to_string(),
+        };
+
+        assert!(!error.is_empty_repository_root_listing("src"));
+    }
+
+    #[test]
+    fn treats_a_missing_root_path_as_an_empty_repository_listing() {
+        let error = HarnessRequestError {
+            status: Some(StatusCode::NOT_FOUND),
+            message: r#"{"message":"path './' wasn't found in the repo"}"#.to_string(),
+        };
+
+        assert!(error.is_empty_repository_root_listing(""));
+        assert!(!error.is_empty_repository_root_listing("src"));
     }
 }

@@ -52,6 +52,7 @@ pub struct ConversationRuntimeRequest {
     pub remote_connection_id: Option<String>,
     pub plan_mode: bool,
     pub project_requirement_execution_planner: bool,
+    pub model_config_id: Option<String>,
     pub model_provider: String,
     pub prompt_vendor: Option<String>,
     pub conversation_turn_id: Option<String>,
@@ -62,6 +63,7 @@ pub struct ConversationRuntimeRequest {
 pub struct ResolvedConversationRuntimeContext {
     pub agent_profile: ChatosAgentProfile,
     pub internal_context_locale: InternalContextLocale,
+    pub user_output_locale: InternalContextLocale,
     pub contact_agent_id: Option<String>,
     pub base_system_prompt: Option<String>,
     pub agent_system_prompt: Option<String>,
@@ -92,6 +94,7 @@ pub async fn resolve_runtime_context(
     default_system_prompt: Option<String>,
     use_active_system_context: bool,
     internal_context_locale: InternalContextLocale,
+    user_output_locale: InternalContextLocale,
 ) -> ResolvedConversationRuntimeContext {
     let memory_session = chatos_sessions::get_session_by_id(session_id)
         .await
@@ -261,7 +264,8 @@ pub async fn resolve_runtime_context(
             default_remote_connection_id.as_deref(),
             req.conversation_turn_id.as_deref(),
             req.source_user_message_id.as_deref(),
-            internal_context_locale,
+            req.model_config_id.as_deref(),
+            user_output_locale,
             agent_profile,
         )
         .await
@@ -298,7 +302,7 @@ pub async fn resolve_runtime_context(
     }
 
     if runtime_error.is_none() {
-        let locale = if internal_context_locale.is_english() {
+        let locale = if user_output_locale.is_english() {
             Some(InternalContextLocale::ENGLISH_KEY)
         } else {
             Some(InternalContextLocale::DEFAULT_KEY)
@@ -333,6 +337,7 @@ pub async fn resolve_runtime_context(
     ResolvedConversationRuntimeContext {
         agent_profile,
         internal_context_locale,
+        user_output_locale,
         contact_agent_id,
         base_system_prompt,
         agent_system_prompt,

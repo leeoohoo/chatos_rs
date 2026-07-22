@@ -11,9 +11,17 @@ declare global {
   interface Window {
     chatosLocalRuntime?: {
       apiRequest: (request: LocalRuntimeBridgeRequest) => Promise<LocalRuntimeBridgeResponse>;
+      authenticateDesktopTicket?: (ticket: string) => Promise<unknown>;
     };
   }
 }
+
+const LOCAL_RUNTIME_AUTH_READY_ATTEMPTS = 50;
+const LOCAL_RUNTIME_AUTH_READY_DELAY_MS = 100;
+
+const delay = (milliseconds: number): Promise<void> => (
+  new Promise((resolve) => window.setTimeout(resolve, milliseconds))
+);
 
 export const localRuntimeBridgeAvailable = (): boolean =>
   typeof window !== 'undefined'
@@ -35,23 +43,36 @@ export const requestLocalRuntime = async <T>(
   if (options.body != null && !headers.has('Content-Type')) {
     headers.set('Content-Type', 'application/json');
   }
-  const response = await bridge.apiRequest({
-    endpoint,
-    method: options.method || 'GET',
-    headers: Object.fromEntries(headers.entries()),
-    body: typeof options.body === 'string' ? options.body : null,
-  });
-  const raw = response.body || '';
-  if (!response.ok) {
-    const parsed = buildParsedJsonErrorPayload(raw, '本地运行时请求失败');
-    throw new ApiRequestError(parsed.message, {
-      status: response.status,
-      code: parsed.code,
-      payload: parsed.payload,
+  for (let attempt = 0; attempt < LOCAL_RUNTIME_AUTH_READY_ATTEMPTS; attempt += 1) {
+    const response = await bridge.apiRequest({
+      endpoint,
+      method: options.method || 'GET',
+      headers: Object.fromEntries(headers.entries()),
+      body: typeof options.body === 'string' ? options.body : null,
     });
+    const raw = response.body || '';
+    if (!response.ok) {
+      const parsed = buildParsedJsonErrorPayload(raw, '本地运行时请求失败');
+      const waitingForAuthentication = response.status === 409
+        && parsed.code === 'local_runtime_not_authenticated'
+        && attempt + 1 < LOCAL_RUNTIME_AUTH_READY_ATTEMPTS;
+      if (waitingForAuthentication) {
+        await delay(LOCAL_RUNTIME_AUTH_READY_DELAY_MS);
+        continue;
+      }
+      throw new ApiRequestError(parsed.message, {
+        status: response.status,
+        code: parsed.code,
+        payload: parsed.payload,
+      });
+    }
+    if (!raw) {
+      return {} as T;
+    }
+    return JSON.parse(raw) as T;
   }
-  if (!raw) {
-    return {} as T;
-  }
-  return JSON.parse(raw) as T;
+  throw new ApiRequestError('Local Connector 登录尚未完成', {
+    status: 409,
+    code: 'local_runtime_not_authenticated',
+  });
 };

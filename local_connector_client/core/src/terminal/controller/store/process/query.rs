@@ -3,7 +3,7 @@
 
 use std::path::Path;
 
-use chatos_builtin_tools::{
+use chatos_mcp::{
     terminal_process_list_entry, terminal_process_list_response, terminal_process_log_response,
     terminal_process_poll_response, TerminalControllerContext, TerminalProcessPollDetails,
     TerminalProcessSnapshot,

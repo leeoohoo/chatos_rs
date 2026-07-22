@@ -8,39 +8,20 @@ import {
   ChevronDown,
   CheckCircle2,
   Clock,
-  Hammer,
 } from 'lucide-react';
 
 import { LazyMarkdownRenderer } from '../LazyMarkdownRenderer';
-import { getToolDisplayName } from '../../lib/tools/displayName';
 import { cn } from '../../lib/utils';
 import {
   buildDisplayValue,
-  buildValueSummary,
   formatTime,
   type TimelineItem,
   type TimelineStatus,
 } from './ConversationProcessTimelineModel';
-
-const statusLabel = (status: TimelineStatus): string => {
-  if (status === 'error') {
-    return '错误';
-  }
-  if (status === 'completed') {
-    return '已返回';
-  }
-  return '等待返回';
-};
-
-const statusClassName = (status: TimelineStatus): string => {
-  if (status === 'error') {
-    return 'border-destructive/30 bg-destructive/10 text-destructive';
-  }
-  if (status === 'completed') {
-    return 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-300';
-  }
-  return 'border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-300';
-};
+import {
+  buildToolActionSummary,
+  toolActionText,
+} from './ConversationProcessToolSummary';
 
 export const SummaryPill: React.FC<{ label: string; value: number }> = ({ label, value }) => (
   <div className="rounded-md border border-border bg-background px-3 py-2">
@@ -120,89 +101,43 @@ export const TimelineDot: React.FC<{
 };
 
 const ToolCallCard: React.FC<{
-  index: number;
   item: Extract<TimelineItem, { type: 'tool_call' }>;
-}> = ({ index, item }) => {
+}> = ({ item }) => {
   const [expanded, setExpanded] = useState(false);
-  const rawToolName = item.toolCall.name || 'unknown_tool';
-  const displayToolName = getToolDisplayName(rawToolName);
-  const showRawName = rawToolName !== displayToolName;
-  const parameterSummary = buildValueSummary(item.toolCall.arguments, {
-    emptyArrayText: '无参数',
-    emptyObjectText: '无参数',
-    emptyText: '无参数',
-  });
-  const resultValue = item.error || (item.hasResult ? item.result : undefined);
-  const resultSummary = buildValueSummary(resultValue, {
-    emptyArrayText: item.error ? '工具返回错误' : '返回为空数组',
-    emptyObjectText: item.error ? '工具返回错误' : '返回为空对象',
-    emptyText: item.error ? '工具返回错误' : (item.hasResult ? '返回为空内容' : '暂无返回'),
-  });
+  const actionSummary = buildToolActionSummary(
+    item.toolCall.name || '',
+    item.toolCall.arguments,
+  );
+  const actionText = toolActionText(actionSummary, item.status);
 
   return (
-    <article className="rounded-lg border border-border bg-background px-3.5 py-3 shadow-sm">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div className="min-w-0">
-          <div className="flex flex-wrap items-center gap-2 text-xs">
-            <span className="inline-flex items-center gap-1 rounded border border-border bg-muted/40 px-2 py-0.5 font-medium text-foreground">
-              <Hammer className="h-3 w-3" />
-              {index}. 工具调用
-            </span>
-            <span className="rounded-md border border-primary/25 bg-primary/10 px-2 py-0.5 font-mono text-[11px] font-semibold text-primary">
-              {displayToolName}
-            </span>
-            <span className="text-muted-foreground">{formatTime(item.createdAt)}</span>
-          </div>
-          <div className="mt-1.5 flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-muted-foreground">
-            <span>
-              调用 ID <code className="rounded bg-muted px-1 py-0.5 font-mono">{item.toolCall.id || '-'}</code>
-            </span>
-            {showRawName ? (
-              <span>
-                原始名称 <code className="rounded bg-muted px-1 py-0.5 font-mono">{rawToolName}</code>
-              </span>
-            ) : null}
-          </div>
-        </div>
-        <div className="flex shrink-0 items-center gap-2">
-          <span className={cn(
-            'inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-medium',
-            statusClassName(item.status),
-          )}
-          >
-            {statusLabel(item.status)}
-          </span>
-          <button
-            type="button"
-            className="inline-flex items-center gap-1 rounded-md border border-border bg-background px-2 py-1 text-[11px] font-medium text-muted-foreground hover:bg-accent hover:text-foreground"
-            aria-expanded={expanded}
-            onClick={() => setExpanded((prev) => !prev)}
-          >
-            {expanded ? '收起' : '展开'}
-            <ChevronDown className={cn('h-3.5 w-3.5 transition-transform', expanded && 'rotate-180')} />
-          </button>
-        </div>
-      </div>
-
-      <div className="mt-3 flex flex-wrap gap-2 text-xs text-muted-foreground">
-        <span className="rounded-md border border-border/70 bg-muted/20 px-2 py-1">
-          参数：{parameterSummary}
-        </span>
+    <article className="overflow-hidden rounded-md border border-border/80 bg-background">
+      <button
+        type="button"
+        className="flex w-full items-center gap-3 px-3 py-2.5 text-left hover:bg-accent/40"
+        aria-expanded={expanded}
+        onClick={() => setExpanded((prev) => !prev)}
+      >
         <span className={cn(
-          'rounded-md border px-2 py-1',
-          item.error
-            ? 'border-destructive/25 bg-destructive/10 text-destructive'
-            : 'border-border/70 bg-muted/20',
+          'min-w-0 flex-1 text-sm',
+          item.status === 'error' ? 'text-destructive' : 'text-foreground',
         )}
         >
-          {item.error ? '错误' : '返回'}：{resultSummary}
+          {actionText}
         </span>
-      </div>
+        <span className="hidden shrink-0 text-[11px] text-muted-foreground sm:inline">
+          {formatTime(item.createdAt)}
+        </span>
+        <span className="inline-flex shrink-0 items-center gap-1 text-[11px] text-muted-foreground">
+          {expanded ? '收起' : '展开'}
+          <ChevronDown className={cn('h-3.5 w-3.5 transition-transform', expanded && 'rotate-180')} />
+        </span>
+      </button>
 
       {expanded ? (
-        <div className="mt-3 grid gap-3 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
+        <div className="grid gap-3 border-t border-border/70 bg-muted/10 p-3 lg:grid-cols-[minmax(0,0.85fr)_minmax(0,1.15fr)]">
           <ValueSection
-            title="参数"
+            title="主要参数"
             value={item.toolCall.arguments}
             emptyText="无参数"
             emptyArrayText="无参数"
@@ -232,60 +167,36 @@ const ToolCallCard: React.FC<{
 };
 
 const ToolResultCard: React.FC<{
-  index: number;
   item: Extract<TimelineItem, { type: 'tool_result' }>;
-}> = ({ index, item }) => {
+}> = ({ item }) => {
   const [expanded, setExpanded] = useState(false);
   const resultValue = item.error || item.result;
-  const resultSummary = buildValueSummary(resultValue, {
-    emptyArrayText: item.error ? '工具返回错误' : '返回为空数组',
-    emptyObjectText: item.error ? '工具返回错误' : '返回为空对象',
-    emptyText: item.error ? '工具返回错误' : (item.hasResult ? '返回为空内容' : '暂无返回'),
-  });
 
   return (
-    <article className="rounded-lg border border-border bg-background px-3.5 py-3 shadow-sm">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="flex flex-wrap items-center gap-2 text-xs">
-          <span className="inline-flex items-center gap-1 rounded border border-border bg-muted/40 px-2 py-0.5 font-medium text-foreground">
-            <Hammer className="h-3 w-3" />
-            {index}. 未匹配工具返回
-          </span>
-          <span className="text-muted-foreground">{formatTime(item.createdAt)}</span>
-        </div>
+    <article className="overflow-hidden rounded-md border border-border/80 bg-background">
+      <button
+        type="button"
+        className="flex w-full items-center gap-3 px-3 py-2.5 text-left hover:bg-accent/40"
+        aria-expanded={expanded}
+        onClick={() => setExpanded((prev) => !prev)}
+      >
         <span className={cn(
-          'inline-flex shrink-0 items-center rounded-full border px-2 py-0.5 text-[11px] font-medium',
-          statusClassName(item.status),
+          'min-w-0 flex-1 text-sm',
+          item.error ? 'text-destructive' : 'text-foreground',
         )}
         >
-          {statusLabel(item.status)}
+          {item.error ? '执行结果返回失败' : '已收到执行结果'}
         </span>
-        <button
-          type="button"
-          className="inline-flex items-center gap-1 rounded-md border border-border bg-background px-2 py-1 text-[11px] font-medium text-muted-foreground hover:bg-accent hover:text-foreground"
-          aria-expanded={expanded}
-          onClick={() => setExpanded((prev) => !prev)}
-        >
+        <span className="hidden shrink-0 text-[11px] text-muted-foreground sm:inline">
+          {formatTime(item.createdAt)}
+        </span>
+        <span className="inline-flex shrink-0 items-center gap-1 text-[11px] text-muted-foreground">
           {expanded ? '收起' : '展开'}
           <ChevronDown className={cn('h-3.5 w-3.5 transition-transform', expanded && 'rotate-180')} />
-        </button>
-      </div>
-      {item.callId ? (
-        <div className="mt-1.5 text-[11px] text-muted-foreground">
-          调用 ID <code className="rounded bg-muted px-1 py-0.5 font-mono">{item.callId}</code>
-        </div>
-      ) : null}
-      <div className={cn(
-        'mt-3 inline-flex rounded-md border px-2 py-1 text-xs',
-        item.error
-          ? 'border-destructive/25 bg-destructive/10 text-destructive'
-          : 'border-border/70 bg-muted/20 text-muted-foreground',
-      )}
-      >
-        {item.error ? '错误' : '返回'}：{resultSummary}
-      </div>
+        </span>
+      </button>
       {expanded ? (
-        <div className="mt-3">
+        <div className="border-t border-border/70 bg-muted/10 p-3">
           <ValueSection
             title={item.error ? '错误' : '返回结果'}
             value={resultValue}
@@ -300,14 +211,13 @@ const ToolResultCard: React.FC<{
 };
 
 const ModelCard: React.FC<{
-  index: number;
   item: Extract<TimelineItem, { type: 'model' }>;
-}> = ({ index, item }) => (
-  <article className="rounded-lg border border-border bg-background px-3.5 py-3 shadow-sm">
+}> = ({ item }) => (
+  <article className="rounded-md border border-border/80 bg-background px-3.5 py-3">
     <div className="mb-2 flex flex-wrap items-center gap-2 text-xs">
       <span className="inline-flex items-center gap-1 rounded border border-border bg-muted/40 px-2 py-0.5 font-medium text-foreground">
         <Bot className="h-3 w-3" />
-        {index}. {item.label}
+        {item.label}
       </span>
       <span className="text-muted-foreground">{formatTime(item.createdAt)}</span>
     </div>
@@ -317,12 +227,12 @@ const ModelCard: React.FC<{
   </article>
 );
 
-export const renderTimelineCard = (item: TimelineItem, index: number) => {
+export const renderTimelineCard = (item: TimelineItem) => {
   if (item.type === 'model') {
-    return <ModelCard item={item} index={index + 1} />;
+    return <ModelCard item={item} />;
   }
   if (item.type === 'tool_result') {
-    return <ToolResultCard item={item} index={index + 1} />;
+    return <ToolResultCard item={item} />;
   }
-  return <ToolCallCard item={item} index={index + 1} />;
+  return <ToolCallCard item={item} />;
 };

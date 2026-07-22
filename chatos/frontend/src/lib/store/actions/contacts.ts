@@ -4,6 +4,7 @@
 import type ApiClient from '../../api/client';
 import { ApiRequestError } from '../../api/client/shared';
 import type { ContactRecord } from '../types';
+import { isTransientServiceAppError } from '../../domain/userVisibleError';
 import { normalizeContact } from '../helpers/contacts';
 import type { ChatStoreDraft, ChatStoreGet, ChatStoreSet } from '../types';
 
@@ -16,6 +17,7 @@ interface Deps {
 
 interface LoadContactsOptions {
   force?: boolean;
+  throwOnError?: boolean;
 }
 
 interface ContactsCacheEntry {
@@ -152,35 +154,47 @@ export function createContactActions({ set, get, client, getUserIdParam }: Deps)
           return normalized;
         }
 
-        let inflight = cacheState.inflight.get(cacheKey);
+        let inflight = options?.force ? undefined : cacheState.inflight.get(cacheKey);
         if (!inflight) {
-          inflight = client.getContacts(uid, { limit: 2000, offset: 0 })
+          const request = client.getContacts(uid, { limit: 2000, offset: 0 })
             .then((list) => (Array.isArray(list) ? list : [])
               .map(normalizeContact)
               .filter((item): item is ContactRecord => !!item)
               .filter((item) => item.status === '' || item.status === 'active')
-              .sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime()))
-            .then((normalized) => {
+              .sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime()));
+          const trackedRequest: Promise<ContactRecord[]> = request.then((normalized) => {
+            if (cacheState.inflight.get(cacheKey) === trackedRequest) {
               syncLoadedContacts(uid, normalized);
-              return normalized;
-            })
-            .finally(() => {
+              set((state: ChatStoreDraft) => {
+                state.contacts = normalized;
+                if (isTransientServiceAppError(state.error)) {
+                  state.error = null;
+                }
+              });
               cacheState.inflight.delete(cacheKey);
-            });
+            }
+            return normalized;
+          }, (error) => {
+            if (cacheState.inflight.get(cacheKey) === trackedRequest) {
+              cacheState.inflight.delete(cacheKey);
+            }
+            throw error;
+          });
+          inflight = trackedRequest;
           cacheState.inflight.set(cacheKey, inflight);
         }
 
         const normalized = await inflight;
-        set((state: ChatStoreDraft) => {
-          state.contacts = normalized;
-        });
         return normalized;
       } catch (error) {
         console.error('Failed to load contacts:', error);
+        if (options?.throwOnError) {
+          throw error;
+        }
         set((state: ChatStoreDraft) => {
           state.error = error instanceof Error ? error.message : 'Failed to load contacts';
         });
-        return [];
+        return get().contacts || [];
       }
     },
 

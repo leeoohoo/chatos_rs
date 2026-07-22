@@ -64,6 +64,7 @@ const TeamMembersPane: React.FC<TeamMembersPaneProps> = ({ project, className })
           sessionId={activeSessionId}
           hasProjectContact={Boolean(workspaceProps.selectedContact)}
           refreshKey={userMessagesRefreshKey}
+          liveMessages={workspaceProps.messages}
           className="w-[400px]"
           summaryActive={userMessageSidebarActions.summaryActive}
           runtimeContextActive={userMessageSidebarActions.runtimeContextActive}

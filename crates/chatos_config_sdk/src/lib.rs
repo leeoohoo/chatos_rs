@@ -205,12 +205,15 @@ impl ConfigClient {
             }
             Err(fetch_error) => {
                 if let Some(snapshot) = current {
-                    return Ok(snapshot.with_source("memory", true));
+                    let snapshot = snapshot.with_source("memory", true);
+                    self.install(snapshot.clone()).await;
+                    return Ok(snapshot);
                 }
                 match self.load_cache().await {
                     Ok(snapshot) => {
+                        let snapshot = snapshot.with_source("local_cache", true);
                         self.install(snapshot.clone()).await;
-                        Ok(snapshot.with_source("local_cache", true))
+                        Ok(snapshot)
                     }
                     Err(cache_error) => Err(format!(
                         "config center fetch failed: {fetch_error}; cache fallback failed: {cache_error}"
@@ -404,6 +407,31 @@ fn url_component(value: &str) -> String {
 mod tests {
     use super::*;
 
+    fn test_snapshot() -> ConfigSnapshot {
+        ConfigSnapshot {
+            environment: "test".to_string(),
+            service_name: "task-runner".to_string(),
+            revision: 7,
+            checksum: "checksum-7".to_string(),
+            values: BTreeMap::from([("agent.max_iterations".to_string(), Value::from(600))]),
+            env: BTreeMap::new(),
+            generated_at: "2026-07-19T00:00:00Z".to_string(),
+            stale: false,
+            source: Some("configuration_center".to_string()),
+        }
+    }
+
+    fn unique_cache_dir(label: &str) -> PathBuf {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock must be after epoch")
+            .as_nanos();
+        std::env::temp_dir().join(format!(
+            "chatos-config-sdk-{label}-{}-{nonce}",
+            std::process::id()
+        ))
+    }
+
     #[test]
     fn typed_snapshot_values_are_coerced() {
         let snapshot = ConfigSnapshot {
@@ -423,5 +451,57 @@ mod tests {
         assert_eq!(snapshot.etag(), "\"1-x\"");
         assert_eq!(snapshot.usize("integer"), Some(600));
         assert_eq!(snapshot.bool("flag"), Some(true));
+    }
+
+    #[tokio::test]
+    async fn unavailable_center_uses_and_installs_stale_disk_cache() {
+        let cache_dir = unique_cache_dir("disk-fallback");
+        let client = ConfigClient::new(
+            "task-runner",
+            "test",
+            "http://127.0.0.1:9",
+            None,
+            Duration::from_millis(300),
+            &cache_dir,
+        )
+        .expect("client should build");
+        tokio::fs::create_dir_all(&cache_dir)
+            .await
+            .expect("cache directory should be created");
+        tokio::fs::write(
+            &client.cache_path,
+            serde_json::to_vec(&test_snapshot()).expect("snapshot should serialize"),
+        )
+        .await
+        .expect("cache snapshot should be written");
+
+        let loaded = client.load().await.expect("disk fallback should load");
+        assert!(loaded.stale);
+        assert_eq!(loaded.source.as_deref(), Some("local_cache"));
+        assert_eq!(client.current().await, Some(loaded));
+
+        let _ = tokio::fs::remove_dir_all(cache_dir).await;
+    }
+
+    #[tokio::test]
+    async fn unavailable_center_marks_current_snapshot_as_stale_memory_fallback() {
+        let cache_dir = unique_cache_dir("memory-fallback");
+        let client = ConfigClient::new(
+            "task-runner",
+            "test",
+            "http://127.0.0.1:9",
+            None,
+            Duration::from_millis(300),
+            &cache_dir,
+        )
+        .expect("client should build");
+        client.install(test_snapshot()).await;
+
+        let loaded = client.load().await.expect("memory fallback should load");
+        assert!(loaded.stale);
+        assert_eq!(loaded.source.as_deref(), Some("memory"));
+        assert_eq!(client.current().await, Some(loaded));
+
+        let _ = tokio::fs::remove_dir_all(cache_dir).await;
     }
 }

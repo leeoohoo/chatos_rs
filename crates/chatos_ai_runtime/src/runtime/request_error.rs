@@ -9,10 +9,10 @@ use crate::error_policy::{
     is_request_body_too_large_error,
 };
 use crate::traits::ModelRequest;
+use crate::DEFAULT_MODEL_REQUEST_MAX_RETRIES;
 
 use super::input_items::merge_pending_tool_turn_into_input;
 use super::options::AiRuntimeOptions;
-use super::MAX_TRANSIENT_MODEL_REQUEST_RETRIES;
 
 pub(super) enum ModelRequestErrorAction {
     ReplayMissingToolTurn(Value),
@@ -87,7 +87,9 @@ pub(super) async fn handle_model_request_error(
         "ai runtime model request",
         err.as_str(),
         transient_retry_count,
-        MAX_TRANSIENT_MODEL_REQUEST_RETRIES,
+        request
+            .max_transient_retries
+            .unwrap_or(DEFAULT_MODEL_REQUEST_MAX_RETRIES),
     )
     .await?
     {

@@ -38,16 +38,20 @@ async fn initializes_database_and_persists_local_project_sessions() {
     assert_eq!(project.execution_plane, "local_connector");
 
     let session = database
-        .create_session(CreateLocalSessionInput {
-            project_id: project.project_id.clone(),
-            owner_user_id: project.owner_user_id.clone(),
-            title: "Local session".to_string(),
-            selected_model_id: Some("model-1".to_string()),
-            selected_agent_id: None,
-        })
+        .create_session_with_contact(
+            CreateLocalSessionInput {
+                project_id: project.project_id.clone(),
+                owner_user_id: project.owner_user_id.clone(),
+                title: "Local session".to_string(),
+                selected_model_id: Some("model-1".to_string()),
+                selected_agent_id: Some("agent-1".to_string()),
+            },
+            Some("contact-1".to_string()),
+        )
         .await
         .expect("create session");
     assert!(session.id.starts_with("lc_session_"));
+    assert_eq!(session.contact_id.as_deref(), Some("contact-1"));
 
     let sessions = database
         .list_sessions("user-1", "project-1")
@@ -55,9 +59,41 @@ async fn initializes_database_and_persists_local_project_sessions() {
         .expect("list sessions");
     assert_eq!(sessions.len(), 1);
     assert_eq!(sessions[0].id, session.id);
+    assert_eq!(sessions[0].contact_id.as_deref(), Some("contact-1"));
 
     database.close().await;
     fs::remove_dir_all(root).expect("cleanup local database");
+}
+
+#[tokio::test]
+async fn hides_the_internal_non_project_scope_from_the_project_list() {
+    let root = std::env::temp_dir().join(format!("chatos-local-public-{}", Uuid::new_v4()));
+    let database = LocalDatabase::open(root.join("runtime.sqlite3"))
+        .await
+        .expect("open local database");
+    for (project_id, project_name) in [("-1", "Local Contacts"), ("project-1", "Project 1")] {
+        database
+            .upsert_project(UpsertLocalProjectInput {
+                project_id: project_id.to_string(),
+                owner_user_id: "user-1".to_string(),
+                device_id: "device-1".to_string(),
+                workspace_id: format!("workspace-{project_id}"),
+                project_name: project_name.to_string(),
+                root_relative_path: None,
+            })
+            .await
+            .expect("upsert project");
+    }
+
+    let projects = database
+        .list_projects("user-1")
+        .await
+        .expect("list visible projects");
+    assert_eq!(projects.len(), 1);
+    assert_eq!(projects[0].project_id, "project-1");
+
+    database.close().await;
+    fs::remove_dir_all(root).expect("cleanup local public database");
 }
 
 #[tokio::test]

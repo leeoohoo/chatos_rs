@@ -102,7 +102,7 @@ async fn load_runtime_mcp_debug_context(user_id: Option<String>) -> RuntimeMcpDe
     .await;
 
     RuntimeMcpDebugContext {
-        locale: user_context.locale,
+        locale: user_context.internal_context_locale,
         mcp_server_bundle,
     }
 }

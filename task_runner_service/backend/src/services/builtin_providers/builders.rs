@@ -12,6 +12,11 @@ pub(in crate::services) fn build_task_runner_builtin_provider(
     let Some(kind) = builtin_kind_by_any(server.kind.as_str()) else {
         return Ok(None);
     };
+    let descriptor = chatos_mcp::system_mcp_descriptor_by_embedded_kind(kind)
+        .ok_or_else(|| format!("missing system MCP descriptor for {}", kind.kind_name()))?;
+    if !descriptor.supports_host(chatos_mcp::SystemMcpHost::TaskRunner) {
+        return Ok(None);
+    }
     let provider = match kind {
         chatos_mcp_runtime::BuiltinMcpKind::TaskManager => {
             build_task_manager_provider(server, task_service)?

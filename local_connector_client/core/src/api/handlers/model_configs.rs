@@ -98,7 +98,16 @@ pub(crate) async fn local_update_model_settings(
     Json(req): Json<UpdateLocalModelSettingsRequest>,
 ) -> Result<Json<LocalModelSettings>, LocalApiError> {
     let mut state = runtime.state.write().await;
+    let model_request_max_retries = req
+        .model_request_max_retries
+        .unwrap_or(state.model_configs.settings.model_request_max_retries);
+    if model_request_max_retries > 10 {
+        return Err(LocalApiError::bad_request(
+            "model_request_max_retries must be between 0 and 10",
+        ));
+    }
     let settings = LocalModelSettings {
+        model_request_max_retries,
         memory_summary_model_config_id: req.memory_summary_model_config_id,
         memory_summary_thinking_level: req.memory_summary_thinking_level,
         project_management_agent_model_config_id: req.project_management_agent_model_config_id,

@@ -56,7 +56,7 @@ export interface StreamingMessageMetadata extends Record<string, unknown> {
 
 export type StreamingMessage = Message;
 
-export interface PreviewAttachment extends Attachment {}
+export type PreviewAttachment = Attachment;
 
 export interface ApiAttachmentPayload {
   id?: string;

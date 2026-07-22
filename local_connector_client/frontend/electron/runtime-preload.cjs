@@ -5,4 +5,7 @@ const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('chatosLocalRuntime', {
   apiRequest: (request) => ipcRenderer.invoke('local-connector:runtime-api-request', request),
+  authenticateDesktopTicket: (ticket) => (
+    ipcRenderer.invoke('local-connector:desktop-ticket-authenticate', ticket)
+  ),
 });

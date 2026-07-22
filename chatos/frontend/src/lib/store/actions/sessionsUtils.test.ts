@@ -9,6 +9,7 @@ import {
   SESSION_MESSAGES_CACHE_MAX_ENTRIES,
   SESSION_MESSAGES_INITIAL_PAGE_SIZE,
   deleteSessionMessagesCacheEntry,
+  mergeLatestCompactHistorySnapshot,
   readSessionMessagesCache,
   touchSessionMessagesCacheEntry,
   trimCompactHistorySnapshotToRecent,
@@ -218,6 +219,82 @@ describe('sessionMessagesCache', () => {
       'task_runner_callback::user_22::task_1::task.completed::run_1',
     ]);
     expect(trimmed?.nextBefore).toBe('offset:44');
+  });
+
+  it('preserves an optimistic user turn when a background snapshot arrives before persistence', () => {
+    const sessionId = 'session_1';
+    const persisted = {
+      ...createMessage(sessionId, 'assistant_old'),
+      role: 'assistant' as const,
+    };
+    const optimistic: Message = {
+      id: 'persisted_user_id_reserved_by_command',
+      sessionId,
+      role: 'user',
+      content: 'new message',
+      status: 'completed',
+      createdAt: new Date('2026-01-01T00:01:00.000Z'),
+      metadata: {
+        clientOptimistic: true,
+        conversation_turn_id: 'turn_new',
+        task_runner_async: {
+          mode: 'contact_async',
+          overall_status: 'processing',
+        },
+      },
+    };
+
+    const merged = mergeLatestCompactHistorySnapshot(
+      [persisted],
+      null,
+      {
+        messages: [persisted, optimistic],
+        nextBefore: null,
+        loaded: true,
+      },
+    );
+
+    expect(merged.messages.map((message) => message.id)).toEqual([
+      'assistant_old',
+      'persisted_user_id_reserved_by_command',
+    ]);
+  });
+
+  it('replaces a temporary optimistic message when the persisted turn reaches the snapshot', () => {
+    const sessionId = 'session_1';
+    const optimistic: Message = {
+      id: 'temp_user_1',
+      sessionId,
+      role: 'user',
+      content: 'new message',
+      status: 'completed',
+      createdAt: new Date('2026-01-01T00:01:00.000Z'),
+      metadata: {
+        clientOptimistic: true,
+        conversation_turn_id: 'turn_new',
+      },
+    };
+    const persisted: Message = {
+      ...optimistic,
+      id: 'user_1',
+      metadata: {
+        conversation_turn_id: 'turn_new',
+      },
+    };
+
+    const merged = mergeLatestCompactHistorySnapshot(
+      [persisted],
+      null,
+      {
+        messages: [optimistic],
+        nextBefore: null,
+        loaded: true,
+      },
+    );
+
+    expect(merged.messages).toHaveLength(1);
+    expect(merged.messages[0]?.id).toBe('user_1');
+    expect(merged.messages[0]?.metadata?.clientOptimistic).not.toBe(true);
   });
 
 });

@@ -21,9 +21,10 @@ import type {
   TaskRunRecord,
   TaskStatus,
 } from '../../types';
+import { formatUserVisibleRunText } from '../runs/runPageUtils';
 import {
   formatTaskRemoteEndpoint,
-  isSchedulerOnlyTask,
+  isTaskRunActionDisabled,
   promptStatusColorMap,
   runStatusColorMap,
   statusColorMap,
@@ -243,10 +244,12 @@ export function RecentRunsSection({
                     ellipsis={{ rows: 2 }}
                     style={{ marginBottom: 0 }}
                   >
-                    {run.result_summary}
+                    {formatUserVisibleRunText(run.result_summary, t)}
                   </Typography.Paragraph>
                 ) : run.error_message ? (
-                  <Typography.Text type="danger">{run.error_message}</Typography.Text>
+                  <Typography.Text type="danger">
+                    {formatUserVisibleRunText(run.error_message, t)}
+                  </Typography.Text>
                 ) : (
                   <Typography.Text type="secondary">
                     {t('tasks.detail.noSummary')}
@@ -391,11 +394,7 @@ export function RelatedTasksSection({
                     key="run"
                     size="small"
                     type="primary"
-                    disabled={
-                      relatedTask.status === 'queued' ||
-                      relatedTask.status === 'running' ||
-                      isSchedulerOnlyTask(relatedTask)
-                    }
+                    disabled={isTaskRunActionDisabled(relatedTask)}
                     onClick={() => onRunTask(relatedTask)}
                   >
                     {t('tasks.action.run')}

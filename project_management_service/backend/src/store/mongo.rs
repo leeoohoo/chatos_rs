@@ -212,7 +212,88 @@ impl MongoStore {
         .await?;
         self.repair_failed_work_item_statuses().await?;
         self.repair_blocked_requirement_statuses().await?;
+        self.repair_orphaned_execution_statuses().await?;
 
+        Ok(())
+    }
+
+    async fn repair_orphaned_execution_statuses(&self) -> Result<(), String> {
+        let mut cursor = self
+            .task_runner_links
+            .find(
+                doc! {
+                    "is_current": { "$ne": false },
+                    "task_runner_status": {
+                        "$regex": "^(ready|queued|running|processing|in_progress)$",
+                        "$options": "i",
+                    },
+                },
+                None,
+            )
+            .await
+            .map_err(|err| err.to_string())?;
+        let mut active_work_item_ids = BTreeSet::new();
+        while let Some(link) = cursor.try_next().await.map_err(|err| err.to_string())? {
+            let work_item_id = link.work_item_id.trim();
+            if !work_item_id.is_empty() {
+                active_work_item_ids.insert(work_item_id.to_string());
+            }
+        }
+
+        let active_work_item_ids = active_work_item_ids.into_iter().collect::<Vec<_>>();
+        let now = now_rfc3339();
+        self.work_items
+            .update_many(
+                doc! {
+                    "status": ProjectWorkItemStatus::InProgress.as_str(),
+                    "id": { "$nin": active_work_item_ids.clone() },
+                },
+                doc! {
+                    "$set": {
+                        "status": ProjectWorkItemStatus::Ready.as_str(),
+                        "updated_at": now.as_str(),
+                    },
+                },
+                None,
+            )
+            .await
+            .map_err(|err| err.to_string())?;
+
+        let mut active_requirement_ids = BTreeSet::new();
+        for work_item_id in active_work_item_ids {
+            let Some(item) = self.get_work_item(work_item_id.as_str()).await? else {
+                continue;
+            };
+            let mut requirement_id = Some(item.requirement_id);
+            while let Some(current_id) = requirement_id {
+                if !active_requirement_ids.insert(current_id.clone()) {
+                    break;
+                }
+                requirement_id = self
+                    .get_requirement(current_id.as_str())
+                    .await?
+                    .and_then(|requirement| requirement.parent_requirement_id);
+            }
+        }
+
+        self.requirements
+            .update_many(
+                doc! {
+                    "status": RequirementStatus::InProgress.as_str(),
+                    "id": {
+                        "$nin": active_requirement_ids.into_iter().collect::<Vec<_>>()
+                    },
+                },
+                doc! {
+                    "$set": {
+                        "status": RequirementStatus::Approved.as_str(),
+                        "updated_at": now,
+                    },
+                },
+                None,
+            )
+            .await
+            .map_err(|err| err.to_string())?;
         Ok(())
     }
 
@@ -400,6 +481,218 @@ where
                 Err(format!("drop mongodb index failed: {message}"))
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use super::*;
+    use crate::auth::CurrentUser;
+
+    static NEXT_TEST_DB: AtomicUsize = AtomicUsize::new(1);
+
+    async fn test_store() -> MongoStore {
+        let database = format!(
+            "project_management_status_repair_test_{}_{}",
+            std::process::id(),
+            NEXT_TEST_DB.fetch_add(1, Ordering::SeqCst)
+        );
+        let base_url = std::env::var("PROJECT_SERVICE_TEST_MONGODB_BASE_URL")
+            .unwrap_or_else(|_| "mongodb://admin:admin@127.0.0.1:27018".to_string());
+        MongoStore::new(
+            format!(
+                "{}/{database}?authSource=admin",
+                base_url.trim_end_matches('/')
+            )
+            .as_str(),
+        )
+        .await
+        .expect("create test store")
+    }
+
+    fn test_user() -> CurrentUser {
+        CurrentUser {
+            principal_type: "human_user".to_string(),
+            id: "user-1".to_string(),
+            username: "owner".to_string(),
+            display_name: "Owner".to_string(),
+            role: UserRole::Agent,
+            owner_user_id: Some("user-1".to_string()),
+            owner_username: Some("owner".to_string()),
+            owner_display_name: Some("Owner".to_string()),
+        }
+    }
+
+    async fn create_test_project(store: &MongoStore) -> ProjectRecord {
+        store
+            .create_project(
+                CreateProjectRequest {
+                    name: "Project".to_string(),
+                    root_path: None,
+                    git_url: None,
+                    description: None,
+                    sandbox_enabled: None,
+                    source_type: None,
+                    cloud_import_source: None,
+                    import_status: None,
+                    source_git_url: None,
+                },
+                &test_user(),
+            )
+            .await
+            .expect("create project")
+    }
+
+    async fn create_test_requirement(store: &MongoStore, project_id: &str) -> RequirementRecord {
+        store
+            .create_requirement(
+                project_id,
+                CreateRequirementRequest {
+                    parent_requirement_id: None,
+                    requirement_type: None,
+                    title: "Requirement".to_string(),
+                    summary: None,
+                    detail: None,
+                    business_value: None,
+                    acceptance_criteria: None,
+                    source: None,
+                    priority: None,
+                    status: Some(RequirementStatus::InProgress),
+                    assignee_user_id: None,
+                },
+                &test_user(),
+            )
+            .await
+            .expect("create requirement")
+    }
+
+    async fn create_test_work_item(
+        store: &MongoStore,
+        requirement: &RequirementRecord,
+        status: ProjectWorkItemStatus,
+    ) -> ProjectWorkItemRecord {
+        store
+            .upsert_requirement_document(
+                &requirement.id,
+                UpsertRequirementDocumentRequest {
+                    doc_type: None,
+                    title: None,
+                    format: None,
+                    content: "Technical overview".to_string(),
+                },
+                &test_user(),
+            )
+            .await
+            .expect("upsert document");
+        store
+            .create_work_item(
+                requirement,
+                CreateProjectWorkItemRequest {
+                    title: "Task".to_string(),
+                    description: None,
+                    status: Some(status),
+                    priority: None,
+                    assignee_user_id: None,
+                    estimate_points: None,
+                    due_at: None,
+                    sort_order: None,
+                    tags: None,
+                    is_planning_task: false,
+                },
+                &test_user(),
+            )
+            .await
+            .expect("create work item")
+    }
+
+    #[tokio::test]
+    #[ignore = "requires MongoDB"]
+    async fn orphaned_execution_statuses_return_to_pre_execution_states() {
+        let store = test_store().await;
+        let project = create_test_project(&store).await;
+        let requirement = create_test_requirement(&store, &project.id).await;
+        let item =
+            create_test_work_item(&store, &requirement, ProjectWorkItemStatus::InProgress).await;
+
+        store
+            .repair_orphaned_execution_statuses()
+            .await
+            .expect("repair statuses");
+
+        assert_eq!(
+            store
+                .get_requirement(&requirement.id)
+                .await
+                .expect("read requirement")
+                .expect("requirement")
+                .status,
+            RequirementStatus::Approved
+        );
+        assert_eq!(
+            store
+                .get_work_item(&item.id)
+                .await
+                .expect("read work item")
+                .expect("work item")
+                .status,
+            ProjectWorkItemStatus::Ready
+        );
+    }
+
+    #[tokio::test]
+    #[ignore = "requires MongoDB"]
+    async fn active_task_runner_links_preserve_execution_statuses() {
+        let store = test_store().await;
+        let project = create_test_project(&store).await;
+        let requirement = create_test_requirement(&store, &project.id).await;
+        let item =
+            create_test_work_item(&store, &requirement, ProjectWorkItemStatus::InProgress).await;
+        store
+            .upsert_task_runner_link(
+                &item.id,
+                LinkTaskRunnerTaskRequest {
+                    task_runner_task_id: "runner-1".to_string(),
+                    task_runner_run_id: None,
+                    link_type: None,
+                    execution_group_id: None,
+                    is_current: Some(true),
+                    superseded_at: None,
+                    source_session_id: None,
+                    source_user_message_id: None,
+                    task_runner_status: Some("running".to_string()),
+                    last_callback_event: None,
+                    last_callback_at: None,
+                    last_error_message: None,
+                },
+            )
+            .await
+            .expect("link task runner task");
+
+        store
+            .repair_orphaned_execution_statuses()
+            .await
+            .expect("repair statuses");
+
+        assert_eq!(
+            store
+                .get_requirement(&requirement.id)
+                .await
+                .expect("read requirement")
+                .expect("requirement")
+                .status,
+            RequirementStatus::InProgress
+        );
+        assert_eq!(
+            store
+                .get_work_item(&item.id)
+                .await
+                .expect("read work item")
+                .expect("work item")
+                .status,
+            ProjectWorkItemStatus::InProgress
+        );
     }
 }
 

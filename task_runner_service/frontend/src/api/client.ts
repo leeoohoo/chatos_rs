@@ -166,8 +166,19 @@ export const api = {
     ),
   getTaskStats: () => request<TaskStatsResponse>('/api/tasks/stats'),
   getTaskIndex: () => request<TaskIndexResponse>('/api/tasks/index'),
-  listTaskCapabilityCatalog: () =>
-    request<TaskCapabilityCatalogResponse>('/api/tasks/capabilities/catalog'),
+  listTaskCapabilityCatalog: (options?: {
+    task_profile?: 'default' | 'chatos_plan';
+    requires_execution?: boolean;
+  }) =>
+    request<TaskCapabilityCatalogResponse>(
+      withQuery('/api/tasks/capabilities/catalog', {
+        task_profile: options?.task_profile,
+        requires_execution:
+          options?.requires_execution === undefined
+            ? undefined
+            : String(options.requires_execution),
+      }),
+    ),
   listTaskSummaries: (filters?: {
     ids?: string[];
     keyword?: string;

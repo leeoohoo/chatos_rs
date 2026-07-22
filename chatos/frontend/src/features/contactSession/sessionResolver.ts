@@ -3,10 +3,12 @@
 
 export type { ContactSessionRef } from '../../lib/domain/contactSessions';
 export {
+  findBestLegacyMatchedSession,
   findBestMatchedSession,
   findLatestMatchedSession,
   hasSessionMessages,
   isSessionActive,
+  isLegacySessionMatchedContactAndProject,
   isSessionMatchedContactAndProject,
   normalizeProjectScopeId,
   PUBLIC_PROJECT_ID,

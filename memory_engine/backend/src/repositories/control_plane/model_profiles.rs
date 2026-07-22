@@ -144,11 +144,16 @@ pub async fn create_model_profile(
         supports_responses,
         temperature,
         thinking_level,
+        model_request_max_retries,
         is_default,
         enabled,
     } = req;
     let now = now_rfc3339();
     let id = id.unwrap_or_else(|| Uuid::new_v4().to_string());
+    let model_request_max_retries = model_request_max_retries.unwrap_or(5);
+    if model_request_max_retries > 10 {
+        return Err("model_request_max_retries must be between 0 and 10".to_string());
+    }
     let enabled = enabled.unwrap_or(true);
     let is_default = is_default.unwrap_or(false);
     let profile = EngineModelProfile {
@@ -165,6 +170,7 @@ pub async fn create_model_profile(
         supports_responses: supports_responses.unwrap_or(false),
         temperature,
         thinking_level,
+        model_request_max_retries,
         is_default,
         enabled,
         created_at: now.clone(),
@@ -193,6 +199,12 @@ pub async fn update_model_profile(
     };
     let is_default = req.is_default.unwrap_or(existing.is_default);
     let enabled = req.enabled.unwrap_or(existing.enabled);
+    let model_request_max_retries = req
+        .model_request_max_retries
+        .unwrap_or(existing.model_request_max_retries);
+    if model_request_max_retries > 10 {
+        return Err("model_request_max_retries must be between 0 and 10".to_string());
+    }
 
     let updated = EngineModelProfile {
         id: existing.id,
@@ -212,6 +224,7 @@ pub async fn update_model_profile(
             .unwrap_or(existing.supports_responses),
         temperature: req.temperature.or(existing.temperature),
         thinking_level: req.thinking_level.or(existing.thinking_level),
+        model_request_max_retries,
         is_default,
         enabled,
         created_at: existing.created_at,

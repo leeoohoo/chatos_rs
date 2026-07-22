@@ -3,7 +3,7 @@
 
 mod graph;
 mod mutations;
-mod response;
+pub(in crate::local_runtime::api) mod response;
 
 use std::collections::BTreeMap;
 

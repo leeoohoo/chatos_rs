@@ -30,7 +30,7 @@
 
 ### 2.2 重点重复代码簇
 
-- `chatos/backend` 与 `chatos_mcp_runtime`、`chatos_ai_runtime`、`chatos_builtin_tools` 之间存在过渡期影子实现。
+- `chatos/backend` 与 `chatos_mcp_runtime`、`chatos_ai_runtime`、根目录 `mcp/` 之间曾存在过渡期影子实现。
 - 多个微服务重复实现鉴权、环境配置、内部 HTTP 请求和错误映射。
 - `memory_engine_sdk`、`chatos_plugin_management_sdk` 与对应服务端模型存在重复定义。
 - Sandbox MCP 与 Task Runner 重复实现终端存储、日志分页和终端运行时。
@@ -59,7 +59,7 @@
 
 - 将 `chatos/backend/core/mcp_tools` 中可复用的 execution、schema、text、parallelism 迁移到 `chatos_mcp_runtime`。
 - 将 AI 流解析和模型配置统一到 `chatos_ai_runtime`。
-- 将 Ask User、Code Maintainer 等通用实现统一到 `chatos_builtin_tools`。
+- 将 Ask User、Code Maintainer 等通用实现统一到根目录 `mcp/`。
 - 业务侧仅保留类型转换、回调适配和领域特有行为。
 
 ### 阶段 2：拆分超大安全与环境模块
@@ -150,7 +150,7 @@
 - [x] 删除 Chatos 后端独立的 `mcp_execution_core/parallelism.rs`，通过元数据适配接口统一使用公共并行访问策略。
 - [x] Chatos 与公共 runtime 共用 `ToolResult` 和回调类型，删除结果及回调的逐字段双向转换。
 - [x] 顺序及并行 MCP execution 调度统一到公共内核；流式回调、终止检查、Task ID 异常映射和有序结果收集不再保留双实现。
-- [x] Chatos builtin tool 服务枚举、调用分派和 provider 包装统一到 `chatos_builtin_tools`；业务侧仅保留 Store、Hook 与 Vision Adapter 构造。
+- [x] Chatos builtin tool 服务枚举、调用分派和 provider 包装统一到根目录 `mcp/`；业务侧仅保留 Store、Hook 与 Vision Adapter 构造。
 - [x] 删除 Chatos `ai_common` 中仅在测试编译存在的 SSE、终止处理、工具生命周期与请求处理影子实现；保留领域元数据、记录写入和模型配置适配层。
 - [x] 共享 `chatos_ai_runtime` 全量 137 个测试通过。
 

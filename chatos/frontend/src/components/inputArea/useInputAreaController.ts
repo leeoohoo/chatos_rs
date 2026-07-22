@@ -201,6 +201,7 @@ export function useInputAreaController({
     selectedRuntimeProject,
     normalizedWorkspaceRoot,
     selectedModel,
+    effectiveSelectedModelId,
     enabledModels,
     hasAiOptions,
     projectForFilePicker,
@@ -221,6 +222,27 @@ export function useInputAreaController({
     isGuidingMode: false,
     showProjectFileButton,
   });
+
+  useEffect(() => {
+    if (
+      !selectedModelId
+      || !selectedModel
+      || !effectiveSelectedModelId
+      || effectiveSelectedModelId === selectedModelId
+    ) {
+      return;
+    }
+    handleModelRuntimeChange({
+      selectedModelId: effectiveSelectedModelId,
+      selectedModelName: selectedModel.model_name || null,
+      selectedThinkingLevel: selectedModel.thinking_level || null,
+    });
+  }, [
+    effectiveSelectedModelId,
+    handleModelRuntimeChange,
+    selectedModel,
+    selectedModelId,
+  ]);
 
   const {
     workspacePickerOpen,
@@ -281,7 +303,7 @@ export function useInputAreaController({
   );
 
   const requireModelSelection = useCallback(() => {
-    if (showModelSelector && !selectedModelId) {
+    if (showModelSelector && !effectiveSelectedModelId) {
       void alert({
         title: t('inputArea.send.selectModelTitle'),
         message: t('inputArea.send.selectModelMessage'),
@@ -290,7 +312,7 @@ export function useInputAreaController({
       return true;
     }
     return false;
-  }, [alert, selectedModelId, showModelSelector, t]);
+  }, [alert, effectiveSelectedModelId, showModelSelector, t]);
 
   const {
     message,
@@ -343,6 +365,7 @@ export function useInputAreaController({
     handleToggleWorkspacePicker,
     handleSelectWorkspaceRoot,
     selectedModel,
+    effectiveSelectedModelId,
     enabledModels,
     selectedModelName: localSelectedModelName,
     selectedThinkingLevel: localSelectedThinkingLevel,

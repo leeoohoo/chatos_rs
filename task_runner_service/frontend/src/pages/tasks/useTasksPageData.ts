@@ -11,6 +11,7 @@ import type {
   RemoteServerRecord,
   TaskProjectRecord,
   TaskRecord,
+  TaskProfile,
   TaskRunEventRecord,
   TaskRunStatus,
   TaskScheduleMode,
@@ -50,6 +51,8 @@ type UseTasksPageDataParams = {
   batchRunTaskIds: string[];
   editingTaskId?: string;
   editorProjectId?: string;
+  editorTaskProfile?: TaskProfile;
+  editorRequiresExecution?: boolean;
 };
 
 function normalizeProjectId(value?: string | null) {
@@ -97,6 +100,8 @@ export function useTasksPageData({
   batchRunTaskIds,
   editingTaskId,
   editorProjectId,
+  editorTaskProfile,
+  editorRequiresExecution,
 }: UseTasksPageDataParams) {
   const scheduleModeLabels = useMemo(
     () =>
@@ -223,13 +228,17 @@ export function useTasksPageData({
     enabled: Boolean(editorProjectId && normalizeProjectId(editorProjectId) !== '-1'),
     retry: false,
   });
-  const mcpCatalogQuery = useQuery({
-    queryKey: ['mcp-catalog'],
-    queryFn: api.listMcpCatalog,
-  });
   const taskCapabilityCatalogQuery = useQuery({
-    queryKey: ['task-capability-catalog'],
-    queryFn: api.listTaskCapabilityCatalog,
+    queryKey: [
+      'task-capability-catalog',
+      editorTaskProfile || 'default',
+      editorRequiresExecution ?? true,
+    ],
+    queryFn: () =>
+      api.listTaskCapabilityCatalog({
+        task_profile: editorTaskProfile || 'default',
+        requires_execution: editorRequiresExecution ?? true,
+      }),
   });
   const remoteServersQuery = useQuery({
     queryKey: ['remote-servers'],
@@ -491,7 +500,6 @@ export function useTasksPageData({
     modelsQuery,
     projectsQuery,
     projectRuntimeEnvironmentQuery,
-    mcpCatalogQuery,
     taskCapabilityCatalogQuery,
     remoteServersQuery,
     externalMcpConfigsQuery,

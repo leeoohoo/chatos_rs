@@ -168,6 +168,7 @@ pub(super) fn model_settings_response_value(
 ) -> Value {
     let mut value = json!({
         "user_id": settings.user_id,
+        "model_request_max_retries": settings.model_request_max_retries,
         "memory_summary_model_config_id": settings.memory_summary_model_config_id,
         "memory_summary_thinking_level": settings.memory_summary_thinking_level,
         "project_management_agent_model_config_id": settings.project_management_agent_model_config_id,

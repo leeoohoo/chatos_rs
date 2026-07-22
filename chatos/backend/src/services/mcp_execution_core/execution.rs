@@ -18,7 +18,6 @@ use crate::core::mcp_tools::{
 use crate::core::tool_call::extract_tool_call_name;
 use crate::utils::abort_registry;
 
-const TASK_RUNNER_MCP_SERVER_NAME: &str = "task_runner_service";
 const HEAVY_IO_TOOL_SESSION_LIMIT: usize = 2;
 const HEAVY_IO_TOOL_GLOBAL_LIMIT: usize = 8;
 const HEAVY_IO_TOOL_NAMES: &[&str] = &[
@@ -223,7 +222,12 @@ fn http_tool_call_headers(
     conversation_turn_id: Option<&str>,
 ) -> Option<HashMap<String, String>> {
     let mut headers = info.server_headers.clone().unwrap_or_default();
-    if info.server_name == TASK_RUNNER_MCP_SERVER_NAME {
+    if info.server_name
+        == chatos_mcp::system_mcp_descriptor(
+            chatos_plugin_management_sdk::SystemMcpKey::TaskRunnerService,
+        )
+        .server_name
+    {
         if let Some(session_id) = normalized_context_value(session_id) {
             headers.insert("X-Chatos-Session-Id".to_string(), session_id.clone());
             headers.insert("X-Chatos-Conversation-Id".to_string(), session_id);

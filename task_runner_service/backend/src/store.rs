@@ -20,11 +20,12 @@ use tracing::warn;
 use crate::config::{AppConfig, StoreMode};
 use crate::models::{
     now_rfc3339, AskUserPromptRecord, AskUserPromptStatus, AskUserPromptTaskCountRecord,
-    ExternalMcpConfigRecord, ModelConfigRecord, ModelConfigUsageRecord, PaginatedResponse,
-    PromptListFilters, RemoteServerRecord, RunListFilters, RunSummaryRecord, RuntimeSettingsRecord,
-    TaskListFilters, TaskPrerequisiteRecord, TaskProjectRecord, TaskRecord, TaskRunEventRecord,
-    TaskRunRecord, TaskRunStatus, TaskScheduleConfig, TaskScheduleMode, TaskStatsResponse,
-    TaskStatus, TaskSummaryRecord, UserRecord,
+    ChatosCallbackDeliveryState, ChatosCallbackDeliveryStatus, ExternalMcpConfigRecord,
+    ModelConfigRecord, ModelConfigUsageRecord, PaginatedResponse, PromptListFilters,
+    RemoteServerRecord, RunListFilters, RunSummaryRecord, RuntimeSettingsRecord, TaskListFilters,
+    TaskPrerequisiteRecord, TaskProjectRecord, TaskRecord, TaskRunEventRecord, TaskRunRecord,
+    TaskRunStatus, TaskScheduleConfig, TaskScheduleMode, TaskStatsResponse, TaskStatus,
+    TaskSummaryRecord, UserRecord,
 };
 
 mod app_models;
@@ -66,8 +67,41 @@ fn prepare_run_for_claim_guarded_persist(mut run: TaskRunRecord) -> TaskRunRecor
     if task_run_status_is_terminal(run.status) {
         run.claim_token = None;
         run.claim_until = None;
+        ensure_terminal_callback_pending(&mut run);
     }
     run
+}
+
+fn terminal_callback_event_for_status(status: TaskRunStatus) -> Option<&'static str> {
+    match status {
+        TaskRunStatus::Succeeded => Some("task.completed"),
+        TaskRunStatus::Failed => Some("task.failed"),
+        TaskRunStatus::Cancelled => Some("task.cancelled"),
+        TaskRunStatus::Blocked => Some("task.blocked"),
+        TaskRunStatus::Queued | TaskRunStatus::Running => None,
+    }
+}
+
+fn ensure_terminal_callback_pending(run: &mut TaskRunRecord) {
+    let Some(event) = terminal_callback_event_for_status(run.status) else {
+        return;
+    };
+    if run
+        .chatos_callback_delivery
+        .as_ref()
+        .is_some_and(|delivery| delivery.event == event)
+    {
+        return;
+    }
+    let updated_at = run.updated_at.clone();
+    run.chatos_callback_delivery = Some(ChatosCallbackDeliveryState {
+        event: event.to_string(),
+        status: ChatosCallbackDeliveryStatus::Pending,
+        attempt_count: 0,
+        next_attempt_at: Some(updated_at.clone()),
+        last_error: None,
+        updated_at,
+    });
 }
 
 fn lost_run_claim_error(run_id: &str) -> String {

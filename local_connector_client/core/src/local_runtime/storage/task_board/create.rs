@@ -2,7 +2,7 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use anyhow::{Context, Result};
-use chatos_builtin_tools::TaskDraft;
+use chatos_mcp::TaskDraft;
 use uuid::Uuid;
 
 use crate::local_now_rfc3339;

@@ -1,11 +1,14 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
+use std::path::Path as FsPath;
+
 use axum::extract::{Path, State};
 use axum::Json;
 use serde::Deserialize;
 
 use crate::local_runtime::storage::{LocalProjectRecord, UpsertLocalProjectInput};
+use crate::workspace::paths::normalize_relative_workspace_path;
 use crate::workspace::paths::resolve_workspace_dir;
 use crate::LocalRuntime;
 
@@ -120,7 +123,7 @@ async fn upsert(
     let project_id = required(project_id, "project_id")?;
     let project_name = required(project_name, "project_name")?;
     let workspace_id = required(workspace_id, "workspace_id")?;
-    let root_relative_path = normalize_optional(root_relative_path);
+    let root_relative_path = normalize_project_root(root_relative_path)?;
     {
         let state = runtime.state.read().await;
         let workspace = state
@@ -166,8 +169,41 @@ fn required(value: String, field: &'static str) -> Result<String, LocalRuntimeAp
     Ok(value)
 }
 
-fn normalize_optional(value: Option<String>) -> Option<String> {
-    value
-        .map(|value| value.trim().trim_matches('/').to_string())
-        .filter(|value| !value.is_empty())
+fn normalize_project_root(value: Option<String>) -> Result<Option<String>, LocalRuntimeApiError> {
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    let value = value.trim();
+    if value.is_empty() || value == "." {
+        return Ok(None);
+    }
+    if FsPath::new(value).is_absolute() {
+        return Err(LocalRuntimeApiError::bad_request(
+            "local_runtime_project_root_invalid",
+            "Project root must be relative to the authorized workspace",
+        ));
+    }
+    normalize_relative_workspace_path(value)
+        .map(Some)
+        .map_err(|error| {
+            LocalRuntimeApiError::bad_request(
+                "local_runtime_project_root_invalid",
+                error.to_string(),
+            )
+        })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::normalize_project_root;
+
+    #[test]
+    fn rejects_absolute_and_parent_project_roots() {
+        assert!(normalize_project_root(Some("/tmp/outside".to_string())).is_err());
+        assert!(normalize_project_root(Some("../outside".to_string())).is_err());
+        assert_eq!(
+            normalize_project_root(Some("FocusFlow/app".to_string())).unwrap(),
+            Some("FocusFlow/app".to_string())
+        );
+    }
 }

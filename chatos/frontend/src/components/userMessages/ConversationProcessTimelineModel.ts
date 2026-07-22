@@ -2,11 +2,12 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 import {
-  getMessageMetadataToolCalls,
+  getMessagePrimaryToolCalls,
   getMessageToolResultCallId,
   type MessageToolCallLike,
 } from '../messageItem/messageReaders';
 import type { Message } from '../../types';
+import type { UserMessageTurn } from './types';
 
 export const readRecord = (value: unknown): Record<string, unknown> | null => (
   value && typeof value === 'object' && !Array.isArray(value)
@@ -40,6 +41,33 @@ export const isProcessMessage = (message: Message): boolean => {
     return true;
   }
   return false;
+};
+
+export const selectTurnProcessMessages = (
+  messages: Message[],
+  item: UserMessageTurn | null,
+): Message[] => {
+  if (!item) {
+    return [];
+  }
+  const userMessageId = item.userMessage.id;
+  const finalAssistantMessageId = item.finalAssistantMessage?.id || '';
+  const selected = new Map<string, Message>();
+
+  messages.forEach((message) => {
+    const withinTurnBoundary = (
+      message.id !== userMessageId
+      && message.id !== finalAssistantMessageId
+      && (message.role === 'assistant' || message.role === 'tool')
+    );
+    if (isProcessMessage(message) || withinTurnBoundary) {
+      selected.set(message.id, message);
+    }
+  });
+
+  return Array.from(selected.values()).sort(
+    (left, right) => left.createdAt.getTime() - right.createdAt.getTime(),
+  );
 };
 
 const readTaskRunnerMessageKind = (message: Message): string => {
@@ -85,16 +113,18 @@ const readContentSegments = (message: Message): TextSegment[] => {
     .filter((segment): segment is TextSegment => segment !== null);
 };
 
-const processContent = (message: Message): string => {
-  const segmentText = readContentSegments(message)
+const processContentItems = (message: Message): Array<{ content: string; label: string }> => {
+  const segmentItems = readContentSegments(message)
     .filter((segment) => segment.type === 'text' || segment.type === 'thinking')
-    .map((segment) => segment.content)
-    .filter(Boolean)
-    .join('\n\n');
-  if (segmentText) {
-    return segmentText;
+    .map((segment) => ({
+      content: segment.content,
+      label: segment.type === 'thinking' ? '模型思考' : processLabel(message),
+    }));
+  if (segmentItems.length > 0) {
+    return segmentItems;
   }
-  return readString(message.content);
+  const content = readString(message.content);
+  return content ? [{ content, label: processLabel(message) }] : [];
 };
 
 const readToolMessageResult = (message: Message): unknown => {
@@ -178,7 +208,7 @@ export const buildTimelineItems = (processMessages: Message[]): TimelineItem[] =
       return;
     }
 
-    getMessageMetadataToolCalls(message).forEach((toolCall) => {
+    getMessagePrimaryToolCalls(message).forEach((toolCall) => {
       if (toolCall.id) {
         knownToolCallIds.add(toolCall.id);
       }
@@ -205,18 +235,17 @@ export const buildTimelineItems = (processMessages: Message[]): TimelineItem[] =
     }
 
     const items: TimelineItem[] = [];
-    const content = processContent(message);
-    if (content) {
+    processContentItems(message).forEach((contentItem, index) => {
       items.push({
-        content,
+        content: contentItem.content,
         createdAt: message.createdAt,
-        id: `model-${message.id}`,
-        label: processLabel(message),
+        id: `model-${message.id}-${index}`,
+        label: contentItem.label,
         type: 'model',
       });
-    }
+    });
 
-    getMessageMetadataToolCalls(message)
+    getMessagePrimaryToolCalls(message)
       .filter((toolCall) => toolCall.id || toolCall.name)
       .forEach((toolCall, index) => {
         const resultMessage = toolCall.id ? toolResultByCallId.get(toolCall.id) : undefined;

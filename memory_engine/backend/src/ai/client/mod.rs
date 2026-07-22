@@ -20,7 +20,6 @@ use self::responses::{build_user_prompt, request_kind, validate_summary_text};
 use super::protocol::effective_request_temperature;
 
 pub(crate) const SUMMARY_SYSTEM_PROMPT: &str = "You summarize conversation increments for a memory engine. Produce a concise, high-signal summary with concrete user intent, assistant response, and notable constraints. Do not use markdown bullets unless useful.";
-const MAX_TRANSIENT_RETRIES: usize = 5;
 
 #[derive(Clone)]
 pub struct AiClient {
@@ -32,6 +31,7 @@ pub struct AiClient {
     timeout_secs: u64,
     supports_responses: bool,
     disable_thinking: bool,
+    max_transient_retries: usize,
 }
 
 impl AiClient {
@@ -124,7 +124,9 @@ impl AiClient {
             {
                 Ok(text) => break text,
                 Err(err) => {
-                    if let Some(backoff_ms) = transient_retry_backoff_ms(&err, retry_count) {
+                    if let Some(backoff_ms) =
+                        transient_retry_backoff_ms(&err, retry_count, self.max_transient_retries)
+                    {
                         retry_count += 1;
                         warn!(
                             "[MEMORY-ENGINE-AI] transient-retry model={} base_url={} request_kind={} retry={}/{} backoff_ms={} error={}",
@@ -132,7 +134,7 @@ impl AiClient {
                             self.base_url,
                             request_kind,
                             retry_count,
-                            MAX_TRANSIENT_RETRIES,
+                            self.max_transient_retries,
                             backoff_ms,
                             err
                         );
@@ -164,8 +166,12 @@ impl AiClient {
     }
 }
 
-fn transient_retry_backoff_ms(err: &str, retry_count: usize) -> Option<u64> {
-    if retry_count >= MAX_TRANSIENT_RETRIES || !is_transient_summary_error(err) {
+fn transient_retry_backoff_ms(
+    err: &str,
+    retry_count: usize,
+    max_transient_retries: usize,
+) -> Option<u64> {
+    if retry_count >= max_transient_retries || !is_transient_summary_error(err) {
         return None;
     }
     let next_retry = retry_count + 1;
@@ -173,21 +179,5 @@ fn transient_retry_backoff_ms(err: &str, retry_count: usize) -> Option<u64> {
 }
 
 fn is_transient_summary_error(err: &str) -> bool {
-    let message = err.to_lowercase();
-    message.contains("error sending request for url")
-        || message.contains("connection closed before message completed")
-        || message.contains("connection reset")
-        || message.contains("broken pipe")
-        || message.contains("unexpected eof")
-        || message.contains("timed out")
-        || message.contains("timeout")
-        || message.contains("status=502")
-        || message.contains("status=503")
-        || message.contains("status=504")
-        || message.contains("status 502")
-        || message.contains("status 503")
-        || message.contains("status 504")
-        || message.contains("engine_overloaded_error")
-        || message.contains("currently overloaded")
-        || message.contains("server is currently overloaded")
+    chatos_ai_runtime::is_transient_transport_or_parse_error(err)
 }

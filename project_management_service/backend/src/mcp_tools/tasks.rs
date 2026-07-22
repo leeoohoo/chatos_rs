@@ -1,13 +1,16 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use chatos_project_mcp_contract::args::{
+use chatos_mcp::project_management_contract::args::{
     CreateProjectTaskArgs, ListProjectTasksArgs, ProjectTaskIdArgs, SetProjectTaskDependenciesArgs,
     UpdateProjectTaskArgs,
 };
 use serde_json::{json, Value};
 
 use crate::auth::CurrentUser;
+use crate::domain::status_policy::{
+    ensure_project_task_create_status, ensure_project_task_user_update_status,
+};
 use crate::domain::visibility::ensure_project_task_status_queryable_for_mcp;
 use crate::models::{
     CreateProjectWorkItemRequest, ProjectWorkItemStatus, UpdateProjectWorkItemRequest,
@@ -30,6 +33,7 @@ pub(super) async fn list_project_tasks(
 ) -> Result<Value, String> {
     let args: ListProjectTasksArgs = decode_value(arguments)?;
     let status = args.status.map(ProjectWorkItemStatus::from);
+    ensure_project_task_status_queryable_for_mcp(status)?;
     let page = mcp_list_page(args.limit, args.offset);
     require_project_access(state, project_id, current_user).await?;
     let requirement_id = normalized_optional(args.requirement_id);
@@ -72,7 +76,7 @@ pub(super) async fn create_project_task(
 ) -> Result<Value, String> {
     let args: CreateProjectTaskArgs = decode_value(arguments)?;
     let status = args.status.map(ProjectWorkItemStatus::from);
-    ensure_project_task_status_queryable_for_mcp(status)?;
+    ensure_project_task_create_status(status)?;
     let requirement =
         require_requirement_in_project(state, &args.requirement_id, project_id, current_user)
             .await?;
@@ -121,7 +125,7 @@ pub(super) async fn update_project_task(
 ) -> Result<Value, String> {
     let args: UpdateProjectTaskArgs = decode_value(arguments)?;
     let patch = UpdateProjectWorkItemRequest::from(args.patch);
-    ensure_project_task_status_queryable_for_mcp(patch.status)?;
+    ensure_project_task_user_update_status(patch.status)?;
     if let Some(requirement_id) = normalized_optional(patch.requirement_id.clone()) {
         let target_requirement =
             require_requirement_in_project(state, &requirement_id, project_id, current_user)

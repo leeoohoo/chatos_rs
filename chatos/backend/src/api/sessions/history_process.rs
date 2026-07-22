@@ -33,10 +33,10 @@ pub(super) fn build_compact_history_messages_from_turn_slices_with_process(
     )
 }
 
-pub(super) fn turn_slice_final_assistant_is_task_runner_callback(
+pub(super) fn turn_slice_needs_task_runner_callback_process_messages(
     slice: &memory_engine_sdk::TurnRecordSlice,
 ) -> bool {
-    turn_slices::turn_slice_final_assistant_is_task_runner_callback(slice)
+    turn_slices::turn_slice_needs_task_runner_callback_process_messages(slice)
 }
 
 pub(super) fn find_user_index_by_turn_id(messages: &[Message], turn_id: &str) -> Option<usize> {
@@ -45,6 +45,18 @@ pub(super) fn find_user_index_by_turn_id(messages: &[Message], turn_id: &str) ->
 
 pub(super) fn build_turn_display_messages(messages: &[Message], user_index: usize) -> Vec<Message> {
     turn_display::build_turn_display_messages(messages, user_index)
+}
+
+pub(super) fn build_turn_display_messages_with_process_records(
+    messages: &[Message],
+    user_index: usize,
+    process_records: &[Message],
+) -> Vec<Message> {
+    turn_display::build_turn_display_messages_with_process_records(
+        messages,
+        user_index,
+        process_records,
+    )
 }
 
 pub(super) fn build_compact_history_messages(messages: Vec<Message>) -> Vec<Message> {
@@ -153,11 +165,13 @@ pub(super) fn build_compact_history_messages(messages: Vec<Message>) -> Vec<Mess
 mod tests {
     use std::collections::HashMap;
 
-    use serde_json::json;
+    use serde_json::{json, Value};
 
     use super::{
         build_compact_history_messages, build_compact_history_messages_from_turn_slices,
         build_compact_history_messages_from_turn_slices_with_process, build_turn_display_messages,
+        build_turn_display_messages_with_process_records,
+        turn_slice_needs_task_runner_callback_process_messages,
     };
     use crate::models::message::Message;
 
@@ -230,6 +244,64 @@ mod tests {
                 .as_ref()
                 .and_then(|value| value.get("conversation_turn_id")),
             None
+        );
+    }
+
+    #[test]
+    fn turn_display_recovers_process_records_missing_from_visible_history() {
+        let mut user = build_message("user", "help");
+        user.id = "user-1".to_string();
+        user.metadata = Some(json!({ "conversation_turn_id": "turn-1" }));
+
+        let mut final_assistant = build_message("assistant", "done");
+        final_assistant.id = "assistant-final".to_string();
+        final_assistant.metadata = Some(json!({ "conversation_turn_id": "turn-1" }));
+
+        let mut process_assistant = build_message("assistant", "");
+        process_assistant.id = "assistant-process".to_string();
+        process_assistant.reasoning = Some("inspect repository".to_string());
+        process_assistant.metadata = Some(json!({ "conversation_turn_id": "turn-1" }));
+
+        let mut process_tool = build_message("tool", "tool result");
+        process_tool.id = "tool-process".to_string();
+        process_tool.tool_call_id = Some("call-1".to_string());
+        process_tool.metadata = Some(json!({ "conversation_turn_id": "turn-1" }));
+
+        let display = build_turn_display_messages_with_process_records(
+            &[user, final_assistant],
+            0,
+            &[process_assistant, process_tool],
+        );
+
+        assert_eq!(display.len(), 4);
+        assert_eq!(display[0].id, "user-1");
+        assert_eq!(display[1].id, "assistant-process");
+        assert_eq!(display[2].id, "tool-process");
+        assert_eq!(display[3].id, "assistant-final");
+        for message in &display[1..3] {
+            assert_eq!(
+                message
+                    .metadata
+                    .as_ref()
+                    .and_then(|metadata| metadata.get("historyProcessLoaded"))
+                    .and_then(Value::as_bool),
+                Some(true)
+            );
+        }
+        let history_process = display[0]
+            .metadata
+            .as_ref()
+            .and_then(|metadata| metadata.get("historyProcess"))
+            .expect("history process metadata");
+        assert_eq!(
+            history_process
+                .get("processMessageCount")
+                .and_then(Value::as_u64),
+            Some(2)
+        );
+        assert_eq!(
+            history_process.get("thinkingCount").and_then(Value::as_u64),
+            Some(1)
         );
     }
 
@@ -368,6 +440,140 @@ mod tests {
     }
 
     #[test]
+    fn compact_history_sanitizes_legacy_task_runner_callback_content() {
+        let user = build_engine_record("user-1", "user", "help", "turn-1");
+        let mut callback = build_engine_record(
+            "task_runner_callback::user-1::task-1::task.completed::run-1",
+            "assistant",
+            "任务「创建需求」已完成\n\n结果摘要：\n- requirement_id: `6f7854a9-7a6e-4aef-887b-9de81198f349`\n- 状态：`draft`\n- 文档类型：`implementation_plan`",
+            "turn-1",
+        );
+        callback.metadata = Some(json!({
+            "conversation_turn_id": "turn-1",
+            "task_runner_async": {
+                "message_kind": "task_terminal_update",
+                "source_turn_id": "turn-1",
+                "task_title": "创建需求",
+                "result_summary": "requirement_id: 6f7854a9-7a6e-4aef-887b-9de81198f349\n状态：draft\n文档类型：implementation_plan"
+            }
+        }));
+
+        let compact = build_compact_history_messages_from_turn_slices(vec![
+            memory_engine_sdk::TurnRecordSlice {
+                turn_id: "turn-1".to_string(),
+                user_record: user,
+                final_assistant_record: Some(callback),
+                has_process: true,
+                tool_call_count: 0,
+                thinking_count: 0,
+                process_message_count: 1,
+            },
+        ]);
+
+        assert!(compact[1].content.contains("任务「创建需求」已完成"));
+        assert!(compact[1].content.contains("草稿"));
+        assert!(compact[1].content.contains("实施计划"));
+        assert!(!compact[1].content.contains("requirement_id"));
+        assert!(!compact[1].content.contains("6f7854a9"));
+        assert!(!compact[1].content.contains("implementation_plan"));
+        let result_summary = compact[1]
+            .metadata
+            .as_ref()
+            .and_then(|value| value.get("task_runner_async"))
+            .and_then(|value| value.get("result_summary"))
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        assert!(!result_summary.contains("requirement_id"));
+        assert!(!result_summary.contains("6f7854a9"));
+    }
+
+    #[test]
+    fn compact_history_preserves_completed_callback_user_summary() {
+        let user = build_engine_record("user-1", "user", "help", "turn-1");
+        let mut callback = build_engine_record(
+            "task_runner_callback::user-1::task-1::task.completed::run-1",
+            "assistant",
+            "任务「梳理项目用途」已完成\n\n结果摘要：\n已梳理项目用途、核心流程和主要模块。\n更多实施细节可在任务详情中查看。",
+            "turn-1",
+        );
+        callback.metadata = Some(json!({
+            "conversation_turn_id": "turn-1",
+            "task_runner_async": {
+                "event": "task.completed",
+                "message_kind": "task_terminal_update",
+                "source_turn_id": "turn-1",
+                "task_title": "梳理项目用途",
+                "detail_source": "result_summary",
+                "result_summary": "已梳理项目用途、核心流程和主要模块。\n更多实施细节可在任务详情中查看。"
+            }
+        }));
+
+        let compact = build_compact_history_messages_from_turn_slices(vec![
+            memory_engine_sdk::TurnRecordSlice {
+                turn_id: "turn-1".to_string(),
+                user_record: user,
+                final_assistant_record: Some(callback),
+                has_process: true,
+                tool_call_count: 0,
+                thinking_count: 0,
+                process_message_count: 1,
+            },
+        ]);
+
+        assert!(compact[1]
+            .content
+            .contains("已梳理项目用途、核心流程和主要模块。"));
+        assert!(compact[1]
+            .content
+            .contains("更多实施细节可在任务详情中查看。"));
+        assert!(!compact[1]
+            .content
+            .contains("已完成当前任务并通过任务内验证"));
+    }
+
+    #[test]
+    fn compact_history_sanitizes_legacy_internal_prompt_failure() {
+        let user = build_engine_record("user-1", "user", "help", "turn-1");
+        let mut callback = build_engine_record(
+            "task_runner_callback::user-1::task-1::task.failed::run-1",
+            "assistant",
+            "任务「实现复杂领域契约」执行失败\n\n结果摘要：\ntask_runner_run_phase failed: resolve published prompt for vendor gpt failed: plugin management request was rejected with status 409: agent_prompt_checksum_invalid",
+            "turn-1",
+        );
+        callback.metadata = Some(json!({
+            "conversation_turn_id": "turn-1",
+            "task_runner_async": {
+                "message_kind": "task_terminal_update",
+                "source_turn_id": "turn-1",
+                "task_title": "实现复杂领域契约",
+                "result_summary": "agent_prompt_checksum_invalid"
+            }
+        }));
+
+        let compact = build_compact_history_messages_from_turn_slices(vec![
+            memory_engine_sdk::TurnRecordSlice {
+                turn_id: "turn-1".to_string(),
+                user_record: user,
+                final_assistant_record: Some(callback),
+                has_process: true,
+                tool_call_count: 0,
+                thinking_count: 0,
+                process_message_count: 1,
+            },
+        ]);
+
+        assert_eq!(compact[1].content, "任务暂时无法启动，请稍后重试。");
+        assert!(!compact[1].content.contains("checksum"));
+        let result_summary = compact[1]
+            .metadata
+            .as_ref()
+            .and_then(|value| value.get("task_runner_async"))
+            .and_then(|value| value.get("result_summary"))
+            .and_then(Value::as_str);
+        assert_eq!(result_summary, Some("任务暂时无法启动，请稍后重试。"));
+    }
+
+    #[test]
     fn compact_history_from_turn_slices_keeps_plan_summary_before_callback() {
         let user = build_engine_record("user-1", "user", "help", "turn-1");
         let mut plan = build_message("assistant", "I created the async task.");
@@ -441,6 +647,74 @@ mod tests {
         assert_eq!(
             compact[2].id,
             "task_runner_callback::user-1::task-1::task.completed::run-1"
+        );
+    }
+
+    #[test]
+    fn compact_history_from_turn_slices_keeps_callback_that_arrived_before_plan_summary() {
+        let mut user = build_engine_record("user-1", "user", "help", "turn-1");
+        user.metadata = Some(json!({
+            "conversation_turn_id": "turn-1",
+            "task_runner_async": {
+                "mode": "contact_async",
+                "created_task_ids": ["task-1"],
+                "terminal_task_ids": ["task-1"],
+                "failed_task_ids": ["task-1"]
+            }
+        }));
+        let mut plan = build_engine_record(
+            "assistant-plan",
+            "assistant",
+            "I created the async task.",
+            "turn-1",
+        );
+        plan.metadata = Some(json!({
+            "conversation_turn_id": "turn-1",
+            "task_runner_async": {
+                "mode": "contact_async",
+                "message_kind": "plan_summary"
+            }
+        }));
+        let mut callback = build_message("assistant", "Task failed.");
+        callback.id = "task_runner_callback::user-1::task-1::task.failed::run-1".to_string();
+        callback.message_mode = Some("task_runner_callback".to_string());
+        callback.metadata = Some(json!({
+            "conversation_turn_id": "turn-1",
+            "task_runner_async": {
+                "message_kind": "task_terminal_update",
+                "source_turn_id": "turn-1"
+            }
+        }));
+        let slice = memory_engine_sdk::TurnRecordSlice {
+            turn_id: "turn-1".to_string(),
+            user_record: user,
+            final_assistant_record: Some(plan),
+            has_process: true,
+            tool_call_count: 0,
+            thinking_count: 0,
+            process_message_count: 1,
+        };
+        assert!(turn_slice_needs_task_runner_callback_process_messages(
+            &slice
+        ));
+
+        let mut process_messages_by_turn = HashMap::new();
+        process_messages_by_turn.insert("turn-1".to_string(), vec![callback]);
+        let compact = build_compact_history_messages_from_turn_slices_with_process(
+            vec![slice],
+            &process_messages_by_turn,
+        );
+
+        assert_eq!(
+            compact
+                .iter()
+                .map(|message| message.id.as_str())
+                .collect::<Vec<_>>(),
+            vec![
+                "user-1",
+                "assistant-plan",
+                "task_runner_callback::user-1::task-1::task.failed::run-1",
+            ]
         );
     }
 

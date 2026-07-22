@@ -270,6 +270,7 @@ export interface LocalModelConfig {
 }
 
 export interface LocalModelSettings {
+  model_request_max_retries?: number;
   memory_summary_model_config_id?: string | null;
   memory_summary_thinking_level?: string | null;
   project_management_agent_model_config_id?: string | null;
@@ -303,6 +304,8 @@ export interface AgentPromptUpdateStatus {
   required: boolean;
   prompt_count: number;
   expected_prompt_count: number;
+  capability_count: number;
+  expected_capability_count: number;
   last_checked_at?: string | null;
   last_synced_at?: string | null;
   last_error?: string | null;

@@ -12,7 +12,6 @@ pub mod parallelism;
 pub mod registry;
 pub mod rpc;
 pub mod schema;
-pub mod system_tool_catalog;
 pub mod text;
 pub mod tool_call;
 pub mod types;
@@ -54,10 +53,6 @@ pub use rpc::{
     list_tools_http, list_tools_stdio,
 };
 pub use schema::{build_function_tool_schema, parse_mcp_tool_definition, parse_tool_definition};
-pub use system_tool_catalog::{
-    local_command_approval_decision_tool_definition, local_command_approval_tool_definitions,
-    project_environment_tool_definitions, project_runtime_environment_info_tool_definitions,
-};
 pub use text::{inject_agent_builder_args, to_text_and_structured_result};
 pub use types::{
     McpBuiltinServer, McpHttpHeaderProvider, McpHttpServer, McpStdioServer, McpToolNameAlias,

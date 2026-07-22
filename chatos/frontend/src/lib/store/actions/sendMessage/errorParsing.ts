@@ -129,23 +129,93 @@ export const resolveStreamErrorPayload = (
 export const resolveReadableErrorMessage = (inputError: unknown): string => {
   const nested = resolveNestedErrorDetails(inputError);
   if (typeof nested.message === 'string' && nested.message.trim().length > 0) {
-    return nested.message.trim();
+    return sanitizeUserVisibleAiError(nested.message);
   }
   if (inputError instanceof Error && inputError.message.trim().length > 0) {
-    return inputError.message.trim();
+    return sanitizeUserVisibleAiError(inputError.message);
   }
   if (typeof inputError === 'string' && inputError.trim().length > 0) {
-    return inputError.trim();
+    return sanitizeUserVisibleAiError(inputError);
   }
   const raw = asErrorRecord(inputError);
   if (raw && typeof raw.message === 'string' && raw.message.trim().length > 0) {
-    return raw.message.trim();
+    return sanitizeUserVisibleAiError(raw.message);
   }
   return '请求失败，请稍后重试';
 };
 
+const includesAny = (value: string, needles: string[]): boolean => (
+  needles.some((needle) => value.includes(needle))
+);
+
+export const sanitizeUserVisibleAiError = (reason: string): string => {
+  const normalized = String(reason || '').trim();
+  if (!normalized) {
+    return '请求失败，请稍后重试';
+  }
+
+  const lower = normalized.toLowerCase();
+  if (
+    lower === 'chat turn cancelled'
+    || lower === 'chat turn canceled'
+    || lower === 'cancelled'
+    || lower === 'canceled'
+    || lower === 'aborted'
+  ) {
+    return '已停止生成';
+  }
+
+  if (includesAny(lower, [
+    'stream response parse failed',
+    'invalid json response',
+    'error decoding response body',
+    'no valid sse events',
+  ])) {
+    const retries = normalized.match(/已重试\s*(\d+)\s*次/);
+    return retries
+      ? `模型服务响应异常，已自动重试 ${retries[1]} 次，请稍后重试或切换模型。`
+      : '模型服务响应异常，请稍后重试或切换模型。';
+  }
+
+  if (includesAny(lower, [
+    'api_key',
+    'api key',
+    'authorization',
+    'bearer ',
+    'access_token',
+    'internal_trace',
+    'provider_error',
+  ])) {
+    return '模型服务调用失败，请稍后重试或检查模型配置。';
+  }
+
+  if (
+    /status\s+5\d\d\b/i.test(normalized)
+    || includesAny(lower, [
+      'internal server error',
+      'bad gateway',
+      'service unavailable',
+      'gateway timeout',
+      'error sending request for url',
+      'connection reset',
+      'connection refused',
+      'network is unreachable',
+      'timed out',
+      'timeout',
+    ])
+  ) {
+    return '模型服务暂时不可用，请稍后重试或切换模型。';
+  }
+
+  if ((normalized.includes('{') && normalized.includes('}')) || normalized.includes('trace=')) {
+    return '模型服务调用失败，请稍后重试或检查模型配置。';
+  }
+
+  return normalized;
+};
+
 export const formatAssistantFailureContent = (reason: string, existingContent: string): string => {
-  const normalizedReason = reason.trim().length > 0 ? reason.trim() : '请求失败，请稍后重试';
+  const normalizedReason = sanitizeUserVisibleAiError(reason);
   if (existingContent.trim().length > 0) {
     return `${existingContent.trim()}\n\n[请求失败] ${normalizedReason}`;
   }

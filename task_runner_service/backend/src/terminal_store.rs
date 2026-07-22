@@ -29,7 +29,7 @@ mod tests {
     use std::path::PathBuf;
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    use chatos_builtin_tools::{TerminalControllerContext, TerminalControllerStore};
+    use chatos_mcp::{TerminalControllerContext, TerminalControllerStore};
     use serde_json::Value;
 
     use super::*;
@@ -66,7 +66,7 @@ mod tests {
                 ".".to_string(),
                 "sleep 60".to_string(),
                 true,
-                chatos_builtin_tools::TerminalCommandPermissions::default(),
+                chatos_mcp::TerminalCommandPermissions::default(),
             )
             .await
             .expect("start background command");

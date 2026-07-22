@@ -122,7 +122,7 @@ impl InMemoryStore {
             }
             prepare_run_for_claim_guarded_persist(run)
         } else {
-            run
+            prepare_run_for_claim_guarded_persist(run)
         };
         data.runs.insert(persisted.id.clone(), persisted.clone());
         Ok(persisted)
@@ -180,9 +180,9 @@ impl InMemoryStore {
         true
     }
 
-    pub(in crate::store) fn fail_expired_run_claims(&self, now: &str) -> usize {
+    pub(in crate::store) fn fail_expired_run_claims(&self, now: &str) -> Vec<TaskRunRecord> {
         let mut data = self.inner.write();
-        let mut count = 0usize;
+        let mut failed_runs = Vec::new();
         for run in data.runs.values_mut() {
             if run.status != TaskRunStatus::Running {
                 continue;
@@ -202,9 +202,37 @@ impl InMemoryStore {
             run.cancel_requested = false;
             run.claim_token = None;
             run.claim_until = None;
-            count += 1;
+            ensure_terminal_callback_pending(run);
+            failed_runs.push(run.clone());
         }
-        count
+        failed_runs
+    }
+
+    pub(in crate::store) fn list_pending_chatos_callback_runs(
+        &self,
+        now: &str,
+        limit: usize,
+    ) -> Vec<TaskRunRecord> {
+        let data = self.inner.read();
+        let mut runs = data
+            .runs
+            .values()
+            .filter(|run| {
+                run.chatos_callback_delivery
+                    .as_ref()
+                    .is_some_and(|delivery| {
+                        delivery.status == ChatosCallbackDeliveryStatus::Pending
+                            && delivery
+                                .next_attempt_at
+                                .as_deref()
+                                .is_none_or(|next_attempt_at| next_attempt_at <= now)
+                    })
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        runs.sort_by(|left, right| left.updated_at.cmp(&right.updated_at));
+        runs.truncate(limit);
+        runs
     }
 
     pub(in crate::store) fn list_run_events(&self, run_id: &str) -> Vec<TaskRunEventRecord> {
@@ -284,6 +312,7 @@ mod tests {
             claim_token: None,
             claim_until: None,
             attempt: 0,
+            chatos_callback_delivery: None,
             created_at: now.clone(),
             updated_at: now,
         }
@@ -306,6 +335,13 @@ mod tests {
         assert_eq!(saved.worker_id.as_deref(), Some("worker-1"));
         assert!(saved.claim_token.is_none());
         assert!(saved.claim_until.is_none());
+        assert_eq!(
+            saved
+                .chatos_callback_delivery
+                .as_ref()
+                .map(|state| state.status),
+            Some(ChatosCallbackDeliveryStatus::Pending)
+        );
         let persisted = store.get_run("run-1").expect("persisted run");
         assert!(persisted.claim_token.is_none());
         assert!(persisted.claim_until.is_none());
@@ -319,7 +355,9 @@ mod tests {
             .claim_next_queued_run("worker-1", "claim-1", "2000-01-01T00:00:00Z")
             .expect("claim run");
 
-        assert_eq!(store.fail_expired_run_claims("2001-01-01T00:00:00Z"), 1);
+        let failed_runs = store.fail_expired_run_claims("2001-01-01T00:00:00Z");
+        assert_eq!(failed_runs.len(), 1);
+        assert_eq!(failed_runs[0].id, "run-1");
         stale.status = TaskRunStatus::Succeeded;
         stale.finished_at = Some(now_rfc3339());
         stale.updated_at = now_rfc3339();

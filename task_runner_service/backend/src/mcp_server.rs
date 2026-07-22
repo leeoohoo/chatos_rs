@@ -26,7 +26,6 @@ use self::context::McpToolProfile;
 use self::types::*;
 pub use self::types::{JsonRpcError, JsonRpcRequest, JsonRpcResponse};
 
-const TASK_RUNNER_MCP_SERVER_NAME: &str = "task_runner_service";
 const TASK_RUNNER_MCP_ENDPOINT_PATH: &str = "/mcp";
 const TASK_RUNNER_MCP_STDIO_COMMAND: &str = "cargo";
 const TASK_RUNNER_MCP_STDIO_ARGS: &[&str] = &[

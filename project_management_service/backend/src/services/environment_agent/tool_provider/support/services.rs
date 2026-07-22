@@ -129,13 +129,12 @@ pub(in crate::services::environment_agent::tool_provider) fn validate_environmen
     images: &[ProjectRuntimeEnvironmentImageRecord],
 ) -> Result<(), String> {
     let mut missing = Vec::new();
-    if stack_requires_application_runtime(detected_stack) {
-        if !images
+    if stack_requires_application_runtime(detected_stack)
+        && !images
             .iter()
             .any(|image| image_plan_is_complete(image) && image_is_application_runtime(image))
-        {
-            missing.push("application runtime".to_string());
-        }
+    {
+        missing.push("application runtime".to_string());
     }
     for service in provisionable_service_kinds(required_services) {
         if !images

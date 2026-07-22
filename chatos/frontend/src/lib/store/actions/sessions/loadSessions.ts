@@ -81,7 +81,11 @@ export function createLoadSessionActions({
     });
 
     const currentState = get();
-    if (deduped.length > 0 && !currentState.currentSessionId) {
+    if (
+      deduped.length > 0
+      && !currentState.currentSessionId
+      && currentState.activePanel !== 'project'
+    ) {
       const activeSessions = deduped.filter((session: Session) => isSessionActive(session));
       if (activeSessions.length > 0) {
         const lastSessionId = localStorage.getItem(`lastSessionId_${userId}_${projectId}`);
@@ -120,7 +124,7 @@ export function createLoadSessionActions({
         }
 
         const { userId, projectId } = getSessionParams();
-        const cacheKey = buildSessionsListCacheKey(userId);
+        const cacheKey = buildSessionsListCacheKey(userId, projectId);
         const cacheState = getOrCreateSessionsClientCacheState(client);
         const allowPrimaryListCache = !options.force && !options.append && !options.limit && !options.offset;
         const cached = allowPrimaryListCache ? cacheState.listCache.get(cacheKey) : null;
@@ -135,7 +139,7 @@ export function createLoadSessionActions({
         const executeLoad = async (): Promise<{ contacts: ContactRecord[]; sessions: Session[] }> => {
           const contacts = await get().loadContacts();
           const memoryContacts = toMemoryContacts(contacts, userId);
-          const requestProjectId = client.projectUsesLocalRuntime(projectId)
+          const requestProjectId = client.sessionScopeUsesLocalRuntime(projectId)
             ? projectId
             : undefined;
           const rawSessions = await client.getSessions(
@@ -177,7 +181,7 @@ export function createLoadSessionActions({
           if (!inflight) {
             inflight = executeLoad()
               .then(({ contacts, sessions }) => {
-                syncLoadedSessions(client, userId, sessions, contacts);
+                syncLoadedSessions(client, userId, projectId, sessions, contacts);
                 return sessions;
               })
               .finally(() => {

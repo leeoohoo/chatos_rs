@@ -3,6 +3,9 @@
 
 use std::path::{Path, PathBuf};
 
+use chatos_mcp::configure_child_process_group as configure_terminal_process_group;
+pub(super) use chatos_mcp::terminate_child_process_tree as terminate_terminal_process_tree;
+
 use crate::select_local_shell;
 
 pub(super) fn build_local_mcp_shell_command_script(
@@ -95,6 +98,7 @@ pub(super) fn shell_command_for_terminal_controller(command: &str) -> tokio::pro
     }
     let mut cmd = tokio::process::Command::new(select_local_shell());
     cmd.arg("-lc").arg(command);
+    configure_terminal_process_group(&mut cmd);
     cmd
 }
 
@@ -108,9 +112,35 @@ pub(super) fn shell_session_for_terminal_controller(shell: &str) -> tokio::proce
     }
     let mut cmd = tokio::process::Command::new(shell);
     cmd.arg("-l");
+    configure_terminal_process_group(&mut cmd);
     cmd
 }
 
 fn shell_single_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\\''"))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+
+    use super::resolve_terminal_controller_cwd;
+
+    #[test]
+    fn rejects_parent_path_escape_from_terminal_workspace() {
+        let base = std::env::temp_dir().join(format!(
+            "chatos-terminal-path-test-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let root = base.join("workspace");
+        let outside = base.join("outside");
+        fs::create_dir_all(root.as_path()).expect("create workspace");
+        fs::create_dir_all(outside.as_path()).expect("create outside directory");
+
+        let error = resolve_terminal_controller_cwd(root.as_path(), "../outside")
+            .expect_err("parent path escape must be rejected");
+        assert!(error.contains("outside workspace root"));
+
+        fs::remove_dir_all(base.as_path()).expect("cleanup path test");
+    }
 }

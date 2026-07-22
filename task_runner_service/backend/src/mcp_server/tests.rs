@@ -301,6 +301,7 @@ fn model_config(id: &str, owner_user_id: &str, enabled: bool) -> ModelConfigReco
         usage_scenario: Some(format!("{id} usage")),
         temperature: None,
         max_output_tokens: None,
+        model_request_max_retries: 5,
         thinking_level: None,
         supports_responses: true,
         instructions: None,

@@ -6,24 +6,17 @@ use std::collections::{HashMap, HashSet};
 use serde_json::{json, Value};
 
 use crate::auth::CurrentUser;
-use crate::models::{
-    now_rfc3339, CreateTaskRequest, TaskRunRecord, TaskScheduleConfig, TaskScheduleMode,
-    TaskStatus, TASK_PROFILE_CHATOS_PLAN,
-};
+use crate::models::{now_rfc3339, TaskRunRecord, TaskScheduleConfig, TaskScheduleMode, TaskStatus};
 use crate::services::project_management_api_client;
 
 use super::chatos_async_planner::{
     planner_prerequisite_create_request, planner_root_create_request,
     require_chatos_async_source_context,
 };
-use super::support::{
-    ensure_client_ref_graph_acyclic, normalize_mcp_builtin_kind_names, reusable_chatos_async_task,
-};
+use super::support::{ensure_client_ref_graph_acyclic, reusable_chatos_async_task};
 use super::{
-    normalize_external_mcp_config_ids, normalize_skill_ids,
-    task_mcp_config_for_explicit_tool_selection, CreateProjectExecutionTasksArgs,
-    CreateTaskWithPrerequisitesItem, CreateTasksWithPrerequisitesArgs, McpRequestContext,
-    McpToolProfile, TaskRunnerMcpService,
+    CreateProjectExecutionTasksArgs, CreateTaskArgs, CreateTaskWithPrerequisitesItem,
+    CreateTasksWithPrerequisitesArgs, McpRequestContext, McpToolProfile, TaskRunnerMcpService,
 };
 
 impl TaskRunnerMcpService {
@@ -89,24 +82,28 @@ impl TaskRunnerMcpService {
             );
             converted.push(CreateTaskWithPrerequisitesItem {
                 client_ref,
-                title: item.title,
-                description: item.description,
-                objective: item.objective,
-                input_payload: Some(input_payload),
-                priority: item.priority,
-                tags: item.tags,
-                default_model_config_id: item.default_model_config_id,
-                requires_execution: item.requires_execution,
-                schedule: Some(TaskScheduleConfig {
-                    mode: TaskScheduleMode::ContactAsync,
-                    run_at: Some(now_rfc3339()),
-                    ..TaskScheduleConfig::default()
-                }),
-                enabled_builtin_kinds: item.enabled_builtin_kinds,
-                external_mcp_config_ids: item.external_mcp_config_ids,
-                selected_skill_ids: item.selected_skill_ids,
+                task: CreateTaskArgs {
+                    title: item.title,
+                    description: item.description,
+                    objective: item.objective,
+                    input_payload: Some(input_payload),
+                    priority: item.priority,
+                    tags: item.tags,
+                    default_model_config_id: item.default_model_config_id,
+                    requires_execution: item.requires_execution,
+                    is_planning_task: item.is_planning_task,
+                    schedule: Some(TaskScheduleConfig {
+                        mode: TaskScheduleMode::ContactAsync,
+                        run_at: Some(now_rfc3339()),
+                        ..TaskScheduleConfig::default()
+                    }),
+                    enabled_builtin_kinds: item.enabled_builtin_kinds,
+                    external_mcp_config_ids: item.external_mcp_config_ids,
+                    selected_skill_ids: item.selected_skill_ids,
+                    prerequisite_task_ids: Some(item.prerequisite_task_ids),
+                    mcp_config: None,
+                },
                 prerequisite_refs: item.prerequisite_refs,
-                prerequisite_task_ids: item.prerequisite_task_ids,
             });
         }
 
@@ -239,7 +236,12 @@ impl TaskRunnerMcpService {
                     return Err(format!("任务不能依赖自身: {prerequisite_ref}"));
                 }
             }
-            for prerequisite_task_id in &task.prerequisite_task_ids {
+            for prerequisite_task_id in task
+                .task
+                .prerequisite_task_ids
+                .as_deref()
+                .unwrap_or_default()
+            {
                 self.require_task_for_user_in_context(
                     prerequisite_task_id,
                     current_user,
@@ -266,55 +268,37 @@ impl TaskRunnerMcpService {
             .collect::<HashSet<_>>();
 
         for item in args.tasks {
-            let client_ref = item.client_ref.trim().to_string();
-            let mut mcp_config = None;
-            if let Some(enabled_builtin_kinds) = item.enabled_builtin_kinds {
-                let normalized = normalize_mcp_builtin_kind_names(enabled_builtin_kinds)?;
-                let config =
-                    mcp_config.get_or_insert_with(task_mcp_config_for_explicit_tool_selection);
-                config.enabled = true;
-                config.enabled_builtin_kinds = normalized;
-            }
-            if let Some(external_mcp_config_ids) = item.external_mcp_config_ids {
-                let config =
-                    mcp_config.get_or_insert_with(task_mcp_config_for_explicit_tool_selection);
-                config.enabled = true;
-                config.external_mcp_config_ids =
-                    normalize_external_mcp_config_ids(external_mcp_config_ids);
-            }
-            if let Some(selected_skill_ids) = item.selected_skill_ids {
-                let config =
-                    mcp_config.get_or_insert_with(task_mcp_config_for_explicit_tool_selection);
-                config.enabled = true;
-                config.selected_skill_ids = normalize_skill_ids(selected_skill_ids);
-            }
-            if let Some(requires_execution) = item.requires_execution {
-                mcp_config
-                    .get_or_insert_with(crate::models::TaskMcpConfig::default)
-                    .requires_execution = requires_execution;
-            }
+            let CreateTaskWithPrerequisitesItem {
+                client_ref,
+                task,
+                prerequisite_refs,
+            } = item;
+            let client_ref = client_ref.trim().to_string();
+            let child_task_profile =
+                request_context.child_task_profile(task.is_planning_task, task.requires_execution);
             let is_prerequisite_node = prerequisite_ref_targets.contains(client_ref.as_str());
-            let mut request = CreateTaskRequest {
-                title: item.title,
-                description: item.description,
-                objective: item.objective,
-                input_payload: item.input_payload,
-                status: if tool_profile == McpToolProfile::ProjectRequirementExecutionPlanner {
-                    Some(TaskStatus::Ready)
-                } else {
-                    None
-                },
-                priority: item.priority,
-                tags: item.tags,
-                default_model_config_id: item.default_model_config_id,
-                project_id: request_context.project_scope_id(),
-                task_profile: None,
-                tenant_id: None,
-                subject_id: None,
-                schedule: item.schedule,
-                mcp_config,
-                prerequisite_task_ids: Some(item.prerequisite_task_ids.clone()),
+            let mut request = task.into_request()?;
+            request.status = if tool_profile == McpToolProfile::ProjectRequirementExecutionPlanner {
+                Some(TaskStatus::Ready)
+            } else {
+                None
             };
+            request.project_id = request_context.project_scope_id();
+            let prerequisite_task_ids = request.prerequisite_task_ids.clone().unwrap_or_default();
+            if matches!(
+                tool_profile,
+                McpToolProfile::ChatosAsyncPlanner
+                    | McpToolProfile::ProjectRequirementExecutionPlanner
+            ) {
+                if let Some(default_model_config_id) = request_context
+                    .default_model_config_id
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                {
+                    request.default_model_config_id = Some(default_model_config_id.to_string());
+                }
+            }
             self.ensure_mcp_default_model_config(&mut request, current_user)
                 .await?;
             if tool_profile == McpToolProfile::ChatosAsyncPlanner {
@@ -324,8 +308,8 @@ impl TaskRunnerMcpService {
                     planner_root_create_request(request, request_context)?
                 };
             }
-            if request_context.is_chatos_plan_task_profile() {
-                request.task_profile = Some(TASK_PROFILE_CHATOS_PLAN.to_string());
+            if let Some(task_profile) = child_task_profile {
+                request.task_profile = Some(task_profile);
             }
             let task = self
                 .task_service
@@ -336,11 +320,7 @@ impl TaskRunnerMcpService {
                 )
                 .await?;
             ref_to_task_id.insert(client_ref.clone(), task.id.clone());
-            pending_edges.push((
-                task.id.clone(),
-                item.prerequisite_refs,
-                item.prerequisite_task_ids,
-            ));
+            pending_edges.push((task.id.clone(), prerequisite_refs, prerequisite_task_ids));
             created_tasks.push(json!({
                 "client_ref": client_ref,
                 "task_id": task.id,
@@ -423,8 +403,19 @@ fn enrich_project_execution_payload(
         "project_id".to_string(),
         Value::String(project_id.to_string()),
     );
+    let item_requirement_id = payload
+        .get("requirement_id")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+        .unwrap_or_else(|| requirement_id.to_string());
     payload.insert(
         "requirement_id".to_string(),
+        Value::String(item_requirement_id),
+    );
+    payload.insert(
+        "root_requirement_id".to_string(),
         Value::String(requirement_id.to_string()),
     );
     payload.insert(
@@ -436,4 +427,63 @@ fn enrich_project_execution_payload(
         Value::String(execution_group_id.to_string()),
     );
     Value::Object(payload)
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::enrich_project_execution_payload;
+
+    #[test]
+    fn project_execution_payload_preserves_child_requirement_id() {
+        let payload = enrich_project_execution_payload(
+            Some(json!({ "requirement_id": " child-requirement ", "slice": "analysis" })),
+            "project-1",
+            "root-requirement",
+            "work-item-1",
+            "execution-group-1",
+        );
+
+        assert_eq!(
+            payload
+                .get("requirement_id")
+                .and_then(|value| value.as_str()),
+            Some("child-requirement")
+        );
+        assert_eq!(
+            payload
+                .get("root_requirement_id")
+                .and_then(|value| value.as_str()),
+            Some("root-requirement")
+        );
+        assert_eq!(
+            payload.get("slice").and_then(|value| value.as_str()),
+            Some("analysis")
+        );
+    }
+
+    #[test]
+    fn project_execution_payload_falls_back_to_root_requirement_id() {
+        let payload = enrich_project_execution_payload(
+            Some(json!({ "requirement_id": "   " })),
+            "project-1",
+            "root-requirement",
+            "work-item-1",
+            "execution-group-1",
+        );
+
+        assert_eq!(
+            payload
+                .get("requirement_id")
+                .and_then(|value| value.as_str()),
+            Some("root-requirement")
+        );
+        assert_eq!(
+            payload
+                .get("root_requirement_id")
+                .and_then(|value| value.as_str()),
+            Some("root-requirement")
+        );
+    }
 }

@@ -3,7 +3,8 @@
 
 use super::*;
 use crate::mcp_server::support::{
-    create_model_config_schema, create_tasks_with_prerequisites_schema, update_model_config_schema,
+    create_model_config_schema, create_project_execution_tasks_schema,
+    create_tasks_with_prerequisites_schema, update_model_config_schema,
 };
 
 #[test]
@@ -77,6 +78,29 @@ fn task_mcp_config_schema_hides_host_passthrough_fields() {
 }
 
 #[test]
+fn planner_task_creation_schemas_require_explicit_task_nature() {
+    let create = create_task_schema();
+    assert!(create.pointer("/properties/is_planning_task").is_some());
+
+    let batch = create_tasks_with_prerequisites_schema();
+    assert!(batch
+        .pointer("/properties/tasks/items/properties/is_planning_task")
+        .is_some());
+
+    let project = create_project_execution_tasks_schema();
+    assert!(project
+        .pointer("/properties/tasks/items/properties/is_planning_task")
+        .is_some());
+    let required = project
+        .pointer("/properties/tasks/items/required")
+        .and_then(|value| value.as_array())
+        .expect("project execution task required fields");
+    assert!(required
+        .iter()
+        .any(|value| value.as_str() == Some("is_planning_task")));
+}
+
+#[test]
 fn ai_task_input_cannot_select_execution_service() {
     let error = CreateTaskArgs {
         title: "task".to_string(),
@@ -87,6 +111,7 @@ fn ai_task_input_cannot_select_execution_service() {
         tags: None,
         default_model_config_id: None,
         requires_execution: Some(true),
+        is_planning_task: Some(false),
         schedule: None,
         enabled_builtin_kinds: None,
         external_mcp_config_ids: None,
@@ -147,6 +172,7 @@ fn create_task_args_preserve_external_mcp_ids_without_implicit_builtin_selection
         tags: None,
         default_model_config_id: None,
         requires_execution: None,
+        is_planning_task: None,
         schedule: None,
         enabled_builtin_kinds: None,
         external_mcp_config_ids: Some(vec![
@@ -651,4 +677,33 @@ fn mcp_request_context_detects_chatos_plan_task_profile() {
     };
     assert!(context.is_chatos_plan_task_profile());
     assert_eq!(context.requested_task_profile(), TASK_PROFILE_CHATOS_PLAN);
+}
+
+#[test]
+fn chatos_plan_context_assigns_child_profile_from_task_nature() {
+    let context = McpRequestContext {
+        task_profile: Some(TASK_PROFILE_CHATOS_PLAN.to_string()),
+        ..McpRequestContext::default()
+    };
+
+    assert_eq!(
+        context
+            .child_task_profile(Some(true), Some(false))
+            .as_deref(),
+        Some(TASK_PROFILE_CHATOS_PLAN)
+    );
+    assert_eq!(
+        context
+            .child_task_profile(Some(false), Some(true))
+            .as_deref(),
+        Some(TASK_PROFILE_DEFAULT)
+    );
+    assert_eq!(
+        context.child_task_profile(None, Some(false)).as_deref(),
+        Some(TASK_PROFILE_CHATOS_PLAN)
+    );
+    assert_eq!(
+        context.child_task_profile(None, Some(true)).as_deref(),
+        Some(TASK_PROFILE_CHATOS_PLAN)
+    );
 }

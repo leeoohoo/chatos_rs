@@ -2,8 +2,9 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 import { PlusOutlined } from '@ant-design/icons';
-import { App, Button, Form, Input, InputNumber, Select, Space, Typography } from 'antd';
+import { Alert, App, Button, Form, Input, InputNumber, Select, Space, Typography } from 'antd';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 
 import { sandboxesApi } from '../api/sandboxes';
@@ -20,6 +21,22 @@ export function CreateSandboxPage() {
     queryKey: ['sandbox-images'],
     queryFn: sandboxesApi.images,
   });
+  const images = imagesQuery.data?.images ?? [];
+  const readyImages = useMemo(() => images.filter((image) => image.initialized), [images]);
+
+  useEffect(() => {
+    if (!imagesQuery.data) {
+      return;
+    }
+    const currentImageId = form.getFieldValue('image_id');
+    if (readyImages.some((image) => image.id === currentImageId)) {
+      return;
+    }
+    const configuredDefault = readyImages.find(
+      (image) => image.id === imagesQuery.data.default_image_id,
+    );
+    form.setFieldValue('image_id', configuredDefault?.id ?? readyImages[0]?.id);
+  }, [form, imagesQuery.data, readyImages]);
 
   const mutation = useMutation({
     mutationFn: (values: CreateSandboxLeasePayload) => sandboxesApi.create(values),
@@ -108,13 +125,16 @@ export function CreateSandboxPage() {
                 },
               ]).map((image) => ({
                 label: `${image.name}${image.image_ref ? ` · ${image.image_ref}` : ''}${
-                  image.buildable && !image.initialized ? ` · ${t('image.missing')}` : ''
+                  !image.initialized ? ` · ${t('image.missing')}` : ''
                 }`,
                 value: image.id,
-                disabled: image.buildable && !image.initialized,
+                disabled: !image.initialized,
               }))}
             />
           </Form.Item>
+          {!imagesQuery.isLoading && readyImages.length === 0 ? (
+            <Alert type="warning" showIcon message={t('create.noReadyImage')} />
+          ) : null}
           <Form.Item label={t('create.tools')} name="tools">
             <Select
               mode="multiple"
@@ -147,7 +167,13 @@ export function CreateSandboxPage() {
               ]}
             />
           </Form.Item>
-          <Button type="primary" htmlType="submit" icon={<PlusOutlined />} loading={mutation.isPending}>
+          <Button
+            type="primary"
+            htmlType="submit"
+            icon={<PlusOutlined />}
+            loading={mutation.isPending}
+            disabled={imagesQuery.isLoading || readyImages.length === 0}
+          >
             {t('create.submit')}
           </Button>
         </Form>

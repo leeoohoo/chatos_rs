@@ -18,6 +18,7 @@ pub(super) enum AgentMcpCaller {
     ChatosAsyncPlanner,
     ProjectManagementAgent,
     LocalConnectorClientAgent,
+    TaskRunnerPlanPhase,
     TaskRunnerRunPhase,
 }
 
@@ -127,8 +128,15 @@ pub(super) fn resolve_task_mcp(
     task: &TaskRecord,
     active_host_backends: &[BuiltinHostBackend],
 ) -> TaskMcpResolution {
-    let caller_requirements =
-        caller_builtin_capability_requirements(AgentMcpCaller::TaskRunnerRunPhase);
+    let caller = if crate::models::uses_task_runner_planning_agent(
+        task.task_profile.as_str(),
+        task.mcp_config.requires_execution,
+    ) {
+        AgentMcpCaller::TaskRunnerPlanPhase
+    } else {
+        AgentMcpCaller::TaskRunnerRunPhase
+    };
+    let caller_requirements = caller_builtin_capability_requirements(caller);
     resolve_task_mcp_with_requirements(task, active_host_backends, caller_requirements.as_slice())
 }
 
@@ -180,7 +188,7 @@ pub(super) fn resolve_mcp_config(input: TaskMcpResolutionInput<'_>) -> TaskMcpRe
         .map(|requirement| requirement.kind)
         .collect::<Vec<_>>();
 
-    let mut effective_kinds = if is_chatos_plan_profile(input.task_profile) {
+    let mut effective_kinds = if is_chatos_plan_profile(input) {
         required_kinds
     } else {
         requested_builtin_kinds
@@ -266,6 +274,9 @@ fn requirement_source_key(source: McpCapabilityRequirementSource) -> &'static st
         McpCapabilityRequirementSource::CallerContract(AgentMcpCaller::TaskRunnerRunPhase) => {
             "task_runner_run_phase"
         }
+        McpCapabilityRequirementSource::CallerContract(AgentMcpCaller::TaskRunnerPlanPhase) => {
+            "task_runner_plan_phase"
+        }
         McpCapabilityRequirementSource::TaskProfileChatosPlan => "task_profile_chatos_plan",
         McpCapabilityRequirementSource::RuntimeInternal => "runtime_internal",
     }
@@ -297,7 +308,7 @@ fn required_builtin_capabilities(
     input: TaskMcpResolutionInput<'_>,
 ) -> Vec<RequiredBuiltinCapability> {
     let mut requirements = Vec::new();
-    if is_chatos_plan_profile(input.task_profile) {
+    if is_chatos_plan_profile(input) {
         requirements.extend(chatos_plan_profile_requirements());
     }
     if is_chatos_async_context(input) {
@@ -314,7 +325,7 @@ pub(super) fn caller_builtin_capability_requirements(
     use BuiltinMcpKind::*;
 
     let kinds: &[BuiltinMcpKind] = match caller {
-        ChatosAsyncPlanner | TaskRunnerRunPhase => &[TaskManager, AskUser],
+        ChatosAsyncPlanner | TaskRunnerPlanPhase | TaskRunnerRunPhase => &[TaskManager, AskUser],
         ProjectManagementAgent => &[ProjectManagement],
         LocalConnectorClientAgent => &[],
     };
@@ -334,12 +345,10 @@ fn chatos_plan_profile_requirements() -> Vec<McpCapabilityRequirement> {
     use BuiltinMcpKind::*;
     [
         CodeMaintainerRead,
-        TerminalController,
         TaskManager,
         ProjectManagement,
         Notepad,
         AskUser,
-        RemoteConnectionController,
         WebTools,
         BrowserTools,
         MemorySkillReader,
@@ -431,10 +440,12 @@ fn remove_hosted_builtin_kinds(
     });
 }
 
-fn is_chatos_plan_profile(task_profile: &str) -> bool {
-    task_profile
+fn is_chatos_plan_profile(input: TaskMcpResolutionInput<'_>) -> bool {
+    input
+        .task_profile
         .trim()
         .eq_ignore_ascii_case(TASK_PROFILE_CHATOS_PLAN)
+        && !input.mcp_config.requires_execution
 }
 
 fn is_chatos_async_context(input: TaskMcpResolutionInput<'_>) -> bool {

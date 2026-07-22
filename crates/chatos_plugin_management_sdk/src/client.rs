@@ -56,22 +56,35 @@ impl PluginManagementClient {
             .trim()
             .strip_prefix("Bearer ")
             .unwrap_or(bearer_token.trim());
+        let mut query = vec![
+            ("agent_key", request.agent_key.as_str()),
+            ("owner_user_id", request.owner_user_id.as_str()),
+            (
+                "include_unavailable",
+                if request.include_unavailable {
+                    "true"
+                } else {
+                    "false"
+                },
+            ),
+        ];
+        if let Some(value) = request.task_profile.as_deref() {
+            query.push(("task_profile", value));
+        }
+        if let Some(value) = request.project_source_type.as_deref() {
+            query.push(("project_source_type", value));
+        }
+        if let Some(value) = request.runtime_provider.as_deref() {
+            query.push(("runtime_provider", value));
+        }
+        if let Some(value) = request.schedule_mode.as_deref() {
+            query.push(("schedule_mode", value));
+        }
         let response = self
             .http
             .request(Method::GET, url)
             .bearer_auth(token)
-            .query(&[
-                ("agent_key", request.agent_key.as_str()),
-                ("owner_user_id", request.owner_user_id.as_str()),
-                (
-                    "include_unavailable",
-                    if request.include_unavailable {
-                        "true"
-                    } else {
-                        "false"
-                    },
-                ),
-            ])
+            .query(&query)
             .send()
             .await?;
         parse_response(response).await

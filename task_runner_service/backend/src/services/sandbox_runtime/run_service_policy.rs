@@ -69,12 +69,13 @@ impl RunService {
     pub(in crate::services) async fn should_route_task_to_sandbox(
         &self,
         task: &TaskRecord,
+        authoritative_policy: bool,
     ) -> Result<bool, String> {
         if !task.mcp_config.enabled {
             return Ok(false);
         }
         let sandbox_enabled = self.effective_sandbox_policy_for_task(task).await?;
-        Ok(sandbox_enabled && task_requires_sandbox(task))
+        Ok(sandbox_enabled && task_requires_sandbox(task, authoritative_policy))
     }
 
     pub(in crate::services) async fn prepare_sandbox_if_needed(
@@ -82,8 +83,12 @@ impl RunService {
         task: &TaskRecord,
         run: &mut TaskRunRecord,
         effective_workspace_dir: &str,
+        authoritative_policy: bool,
     ) -> Result<Option<SandboxRuntimeContext>, String> {
-        if !self.should_route_task_to_sandbox(task).await? {
+        if !self
+            .should_route_task_to_sandbox(task, authoritative_policy)
+            .await?
+        {
             return Ok(None);
         }
 
@@ -140,6 +145,52 @@ impl RunService {
             .await
         {
             Ok(response) => response,
+            Err(environment_error)
+                if routing::sandbox_environment_fallback_allowed(task, &route) =>
+            {
+                self.append_sandbox_event(
+                    run,
+                    "sandbox_environment_fallback",
+                    "项目运行环境暂时无法启动，已切换到基础执行沙箱继续修复",
+                    Some(json!({
+                        "provider": route.provider.as_str(),
+                        "fallback_image_id": route.image_id.as_deref(),
+                        "environment_error": environment_error,
+                    })),
+                )
+                .await;
+                match client
+                    .create_lease(
+                        task,
+                        run,
+                        workspace_root.as_path(),
+                        ttl_seconds,
+                        route.image_id.as_deref(),
+                        None,
+                        effective_workspace_dir,
+                        route.policy.clone(),
+                    )
+                    .await
+                {
+                    Ok(response) => response,
+                    Err(fallback_error) => {
+                        let err = format!(
+                            "project environment start failed and base sandbox fallback failed: {fallback_error}"
+                        );
+                        self.append_sandbox_event(
+                            run,
+                            "sandbox_failed",
+                            format!("申请基础执行沙箱失败: {fallback_error}"),
+                            Some(json!({
+                                "environment_error": environment_error,
+                                "fallback_image_id": route.image_id.as_deref(),
+                            })),
+                        )
+                        .await;
+                        return Err(err);
+                    }
+                }
+            }
             Err(err) => {
                 self.append_sandbox_event(
                     run,

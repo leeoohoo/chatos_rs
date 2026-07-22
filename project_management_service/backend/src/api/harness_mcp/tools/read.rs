@@ -1,16 +1,17 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
+use base64::Engine as _;
 use serde_json::{json, Value};
 
 use super::super::client::{
     fetch_harness_content, list_harness_branches, list_harness_paths, read_harness_file,
-    HarnessDirContent, HarnessFile,
+    read_harness_file_for_preview, HarnessDirContent, HarnessFile,
 };
 use super::super::path_policy::{
     optional_repo_path, path_matches_scope, path_name, required_file_path,
 };
-use super::super::{tool_text_result, HarnessMcpContext};
+use super::super::{tool_structured_result, tool_text_result, HarnessMcpContext};
 
 const DEFAULT_SEARCH_LIMIT: usize = 40;
 const MAX_SEARCH_FILES: usize = 2_000;
@@ -25,6 +26,32 @@ pub(in super::super) async fn tool_read_file_raw(
         .get("with_line_numbers")
         .and_then(Value::as_bool)
         .unwrap_or(true);
+    let encoding = args
+        .get("encoding")
+        .and_then(Value::as_str)
+        .unwrap_or("utf8");
+    if encoding == "base64" {
+        let file = read_harness_file_for_preview(ctx, path.as_str()).await?;
+        return Ok(tool_structured_result(
+            json!({
+                "path": file.path,
+                "size_bytes": file.size,
+                "sha256": file.sha256,
+                "harness_blob_sha": file.harness_blob_sha,
+                "content_encoding": "base64",
+                "content": base64::engine::general_purpose::STANDARD.encode(file.bytes),
+                "harness": {
+                    "project_id": ctx.project_id,
+                    "repo_path": ctx.repo_path,
+                    "blob_sha": file.harness_blob_sha
+                }
+            }),
+            "Binary file content returned as base64 in _structured_result.",
+        ));
+    }
+    if encoding != "utf8" {
+        return Err("encoding must be utf8 or base64".to_string());
+    }
     let file = read_harness_file(ctx, path.as_str()).await?;
     let mut payload = file_payload(&file, with_line_numbers);
     payload["harness"] = json!({
@@ -97,9 +124,13 @@ pub(in super::super) async fn tool_list_dir(
         .and_then(Value::as_u64)
         .map(|value| value.clamp(1, 1000) as usize)
         .unwrap_or(200);
-    let content = fetch_harness_content(ctx, path.as_str())
-        .await
-        .map_err(|err| err.to_string())?;
+    let content = match fetch_harness_content(ctx, path.as_str()).await {
+        Ok(content) => content,
+        Err(err) if err.is_empty_repository_root_listing(path.as_str()) => {
+            return Ok(tool_text_result(json!({ "entries": Vec::<Value>::new() })));
+        }
+        Err(err) => return Err(err.to_string()),
+    };
     if content.kind != "dir" {
         return Err("Target is not a directory.".to_string());
     }
@@ -114,7 +145,7 @@ pub(in super::super) async fn tool_list_dir(
                 "name": if entry.name.is_empty() { path_name(entry.path.as_str()) } else { entry.name },
                 "path": entry.path,
                 "type": entry.kind,
-                "size": 0,
+                "size": entry.size,
                 "mtime_ms": 0
             })
         })

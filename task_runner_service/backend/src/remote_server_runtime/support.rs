@@ -3,7 +3,7 @@
 
 use serde::Serialize;
 
-use chatos_builtin_tools::RemoteConnectionControllerContext;
+use chatos_mcp::RemoteConnectionControllerContext;
 use chatos_remote_runtime::join_remote_path;
 
 pub(super) use chatos_remote_runtime::normalize_remote_path;

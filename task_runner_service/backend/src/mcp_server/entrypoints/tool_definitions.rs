@@ -10,6 +10,18 @@ mod tasks;
 
 impl TaskRunnerMcpService {
     pub fn provider_descriptor(&self) -> McpProviderDescriptor {
+        let system_descriptor = chatos_mcp::system_mcp_descriptor(
+            chatos_plugin_management_sdk::SystemMcpKey::TaskRunnerService,
+        );
+        let skills = chatos_mcp::system_mcp_provider_skills(system_descriptor.key)
+            .into_iter()
+            .map(|skill| McpProviderSkill {
+                id: skill.id,
+                name: skill.name,
+                description: skill.description,
+                instructions: skill.instructions,
+            })
+            .collect();
         let mut tools = self
             .list_tools()
             .into_iter()
@@ -31,25 +43,20 @@ impl TaskRunnerMcpService {
             }
         }
         McpProviderDescriptor {
-            server_name: TASK_RUNNER_MCP_SERVER_NAME.to_string(),
-            skills: vec![McpProviderSkill {
-                id: "task_runner_usage".to_string(),
-                name: "Task Runner MCP 使用指南".to_string(),
-                description: "指导 AI 把当前用户和项目需求交给内部异步执行链路，并正确选择 MCP 与 Local Connector Skills。".to_string(),
-                instructions: include_str!(
-                    "../../../../mcp/task-runner-provider-skill.md"
-                )
-                .to_string(),
-            }],
+            server_name: system_descriptor.server_name.to_string(),
+            skills,
             tools,
         }
     }
 
     pub fn server_info(&self) -> McpServerInfo {
+        let system_descriptor = chatos_mcp::system_mcp_descriptor(
+            chatos_plugin_management_sdk::SystemMcpKey::TaskRunnerService,
+        );
         let tools = self.list_tools();
         let tool_names = tool_names_from_tools(&tools);
         McpServerInfo {
-            server_name: TASK_RUNNER_MCP_SERVER_NAME.to_string(),
+            server_name: system_descriptor.server_name.to_string(),
             transports: vec!["http-jsonrpc".to_string(), "stdio-jsonrpc".to_string()],
             http_endpoint_path: Some(TASK_RUNNER_MCP_ENDPOINT_PATH.to_string()),
             stdio_command: Some(TASK_RUNNER_MCP_STDIO_COMMAND.to_string()),

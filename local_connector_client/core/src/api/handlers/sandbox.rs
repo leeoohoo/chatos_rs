@@ -8,7 +8,7 @@ use chatos_sandbox_contract::{
     NetworkPermissionPolicy, NetworkRequirements, PermissionProfileId, SandboxBackendCapability,
     SandboxBackendKind, SandboxBackendReadinessStatus,
 };
-use chatos_sandbox_image_mcp::SandboxImageBackend;
+use chatos_mcp::sandbox_images::SandboxImageBackend;
 use serde_json::{json, Value};
 
 use crate::config::normalize_optional;
@@ -549,7 +549,7 @@ pub(crate) async fn local_sandbox_image_mcp(
     Json(payload): Json<Value>,
 ) -> Json<Value> {
     let backend = LocalSandboxImageMcpBackend { runtime };
-    Json(chatos_sandbox_image_mcp::handle_jsonrpc(&backend, payload).await)
+    Json(chatos_mcp::sandbox_images::handle_jsonrpc(&backend, payload).await)
 }
 
 struct LocalSandboxImageMcpBackend {

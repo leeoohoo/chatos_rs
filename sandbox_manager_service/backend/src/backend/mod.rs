@@ -5,6 +5,7 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use tokio::process::Command;
 
 use crate::config::{AppConfig, SandboxBackendKind};
 use crate::models::{NetworkPolicy, ResourceLimits};
@@ -34,6 +35,45 @@ pub struct SandboxInstance {
     pub sandbox_id: String,
     pub backend_id: Option<String>,
     pub agent_endpoint: Option<String>,
+}
+
+fn append_sandbox_create_runtime_args(
+    command: &mut Command,
+    spec: &SandboxCreateSpec,
+    network: &str,
+    cpu: &str,
+    memory: &str,
+    pids: &str,
+    disk_limit_bytes: u64,
+) {
+    command
+        .arg("--network")
+        .arg(network)
+        .arg("--cpus")
+        .arg(cpu)
+        .arg("--memory")
+        .arg(memory)
+        .arg("--pids-limit")
+        .arg(pids)
+        .arg("--workdir")
+        .arg("/workspace")
+        .arg("-e")
+        .arg(format!("CHATOS_SANDBOX_ID={}", spec.sandbox_id))
+        .arg("-e")
+        .arg("CHATOS_SANDBOX_PERMISSION_PROFILE=workspace_write")
+        .arg("-e")
+        .arg(format!(
+            "CHATOS_SANDBOX_DISK_LIMIT_BYTES={disk_limit_bytes}"
+        ))
+        .arg("-e")
+        .arg("HOME=/home/sandbox")
+        .arg("-e")
+        .arg("XDG_CACHE_HOME=/home/sandbox/.cache");
+    if let Some(agent_token) = spec.agent_token.as_deref() {
+        command
+            .arg("-e")
+            .arg(format!("CHATOS_SANDBOX_MCP_TOKEN={agent_token}"));
+    }
 }
 
 #[derive(Debug, Clone)]

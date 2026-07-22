@@ -174,6 +174,69 @@ describe('syncSessionMessagesInBackground', () => {
     expect(readCache(state, 'session_2')?.messages.map((message) => message.id)).toEqual(['older', 'newest']);
   });
 
+  it('does not erase a just-sent optimistic turn when reconciliation beats cloud persistence', async () => {
+    const oldUser = createUserMessage('user_old', 'old message', {
+      conversation_turn_id: 'turn_old',
+    });
+    const optimisticUser = createUserMessage('user_reserved', 'new message', {
+      clientOptimistic: true,
+      conversation_turn_id: 'turn_new',
+      task_runner_async: {
+        mode: 'contact_async',
+        overall_status: 'processing',
+        source_user_message_id: 'user_reserved',
+        source_turn_id: 'turn_new',
+      },
+    });
+    const state = {
+      currentSessionId: 'session_2',
+      messages: [oldUser, optimisticUser],
+      hasMoreMessages: false,
+      isLoading: true,
+      isStreaming: false,
+      streamingMessageId: null,
+      error: null,
+      sessionChatState: {
+        session_2: {
+          isLoading: true,
+          isStreaming: false,
+          isStopping: false,
+          streamingMessageId: null,
+          activeTurnId: 'turn_new',
+          streamingPreviewText: '',
+        },
+      },
+      sessionMessagePaginationState: {
+        session_2: { nextBefore: null, loaded: true },
+      },
+      sessionMessagesCache: {},
+      sessionMessagesCacheOrder: [],
+    } as unknown as ChatStoreShape;
+    writeCache(state, 'session_2', {
+      messages: [oldUser, optimisticUser],
+      nextBefore: null,
+      loaded: true,
+    });
+    const set = vi.fn((updater: (draftState: ChatStoreDraft) => void) => {
+      updater(state as unknown as ChatStoreDraft);
+    });
+    const get = () => state;
+    vi.mocked(fetchSessionMessages).mockResolvedValue({
+      messages: [oldUser],
+      hasMore: false,
+      nextBefore: null,
+    });
+
+    const actions = createMessageLoadingActions({ set, get, client: {} as never });
+    await actions.syncSessionMessagesInBackground('session_2');
+
+    expect(state.messages.map((message) => message.id)).toEqual(['user_old', 'user_reserved']);
+    expect(readCache(state, 'session_2')?.messages.map((message) => message.id)).toEqual([
+      'user_old',
+      'user_reserved',
+    ]);
+  });
+
   it('derives hasMore from nextBefore when loading older compact history', async () => {
     const existing = createMessage('existing', 'already loaded', 'completed', {
       conversation_turn_id: 'turn_existing',

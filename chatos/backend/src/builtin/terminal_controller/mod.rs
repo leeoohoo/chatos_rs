@@ -10,7 +10,7 @@ use std::path::PathBuf;
 use async_trait::async_trait;
 use serde_json::Value;
 
-use chatos_builtin_tools::{TerminalControllerContext, TerminalControllerStore};
+use chatos_mcp::{TerminalControllerContext, TerminalControllerStore};
 
 use self::actions::actions_execute::execute_command_with_context;
 use self::actions::actions_process::{
@@ -43,7 +43,7 @@ impl TerminalControllerStore for ChatosTerminalControllerStore {
         path: String,
         command: String,
         background: bool,
-        permissions: chatos_builtin_tools::TerminalCommandPermissions,
+        permissions: chatos_mcp::TerminalCommandPermissions,
     ) -> Result<Value, String> {
         if !permissions.is_empty() {
             return Err(

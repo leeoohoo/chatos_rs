@@ -68,9 +68,11 @@ pub(super) async fn append_gitignore(
     let existing = fs::read_to_string(gitignore.as_path()).unwrap_or_default();
     let appended = !existing.lines().any(|line| line.trim() == pattern);
     if appended {
-        let separator = (!existing.is_empty() && !existing.ends_with('\n'))
-            .then_some("\n")
-            .unwrap_or("");
+        let separator = if !existing.is_empty() && !existing.ends_with('\n') {
+            "\n"
+        } else {
+            ""
+        };
         fs::write(
             gitignore.as_path(),
             format!("{existing}{separator}{pattern}\n"),

@@ -152,7 +152,7 @@ export function McpCatalogPage({ user }: McpCatalogPageProps) {
           <Space direction="vertical" size={0}>
             <RuntimeKindTag value={value} />
             <Typography.Text type="secondary" className="table-secondary-nowrap" ellipsis>
-              {record.runtime.builtin_kind || record.runtime.server_name || record.runtime.url || record.runtime.command}
+              {record.runtime.system_key || record.runtime.builtin_kind || record.runtime.server_name || record.runtime.url || record.runtime.command}
             </Typography.Text>
           </Space>
         ),

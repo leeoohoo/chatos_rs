@@ -52,6 +52,8 @@ pub struct ChatosAgentExecutionOptions {
     attachments: Vec<Attachment>,
     turn_id: String,
     user_message_id: String,
+    persisted_user_message_content: Option<String>,
+    persisted_user_message_metadata: Option<Value>,
     message_mode: String,
     message_source: String,
     prefixed_input_items: Vec<Value>,
@@ -78,6 +80,8 @@ impl ChatosStreamRuntime for AgentAiServer {
             attachments,
             turn_id,
             user_message_id,
+            persisted_user_message_content,
+            persisted_user_message_metadata,
             message_mode,
             message_source,
             prefixed_input_items,
@@ -88,7 +92,10 @@ impl ChatosStreamRuntime for AgentAiServer {
             task_turn,
         } = options;
         let turn_id = normalize_turn_id(Some(turn_id.as_str()));
-        let user_metadata = build_user_message_metadata(&attachments, turn_id.as_deref());
+        let user_metadata = merge_user_record_metadata(
+            persisted_user_message_metadata,
+            build_user_message_metadata(&attachments, turn_id.as_deref()),
+        );
         let current_input_items = vec![json!({
             "type": "message",
             "role": "user",
@@ -103,7 +110,9 @@ impl ChatosStreamRuntime for AgentAiServer {
             conversation_id,
             turn_id.clone(),
             user_message_id,
-            user_message,
+            persisted_user_message_content
+                .as_deref()
+                .unwrap_or(user_message),
             user_metadata,
             message_mode.as_str(),
             message_source.as_str(),
@@ -111,9 +120,11 @@ impl ChatosStreamRuntime for AgentAiServer {
         let record_options =
             build_chatos_record_options(message_mode.as_str(), message_source.as_str());
         let abort_checker = Arc::new(|session_id: &str| abort_registry::is_aborted(session_id));
+        let abort_token = abort_registry::abort_token_for_turn(conversation_id, turn_id.as_deref());
         let runtime_options = AiRuntimeOptions::new(Some(conversation_id.to_string()), turn_id)
             .with_caller_model_runtime(Some(shared_model_config.to_tool_caller_model_runtime()))
             .with_abort_checker(Some(abort_checker))
+            .with_abort_token(abort_token)
             .with_callbacks(shared_runtime_callbacks)
             .with_lifecycle_hook(Some(shared_runtime_lifecycle))
             .with_record_options(record_options);
@@ -143,6 +154,18 @@ impl ChatosStreamRuntime for AgentAiServer {
             .map_err(|_| "task turn lifecycle state lock poisoned".to_string())?;
         let review_metadata = task_turn_review_metadata(&task_turn);
         Ok(attach_ai_client_success_extra(payload, review_metadata))
+    }
+}
+
+fn merge_user_record_metadata(persisted: Option<Value>, generated: Option<Value>) -> Option<Value> {
+    match (persisted, generated) {
+        (Some(Value::Object(mut persisted)), Some(Value::Object(generated))) => {
+            persisted.extend(generated);
+            Some(Value::Object(persisted))
+        }
+        (Some(persisted), None) => Some(persisted),
+        (None, generated) => generated,
+        (Some(_), Some(generated)) => Some(generated),
     }
 }
 
@@ -473,6 +496,8 @@ pub struct ChatExecutionInput {
     pub turn_id: String,
     pub user_message_id: String,
     pub message_source: String,
+    pub persisted_user_message_content: Option<String>,
+    pub persisted_user_message_metadata: Option<Value>,
 }
 
 pub fn init_chatos_stream_agent(
@@ -700,6 +725,8 @@ pub fn build_agent_chat_options(
         attachments: input.attachments,
         turn_id: input.turn_id,
         user_message_id: input.user_message_id,
+        persisted_user_message_content: input.persisted_user_message_content,
+        persisted_user_message_metadata: input.persisted_user_message_metadata,
         message_mode: TASK_RUNNER_ASYNC_PLAN_MESSAGE_MODE.to_string(),
         message_source: input.message_source,
         prefixed_input_items,
@@ -719,17 +746,32 @@ fn compose_agent_instructions(
         .base_system_prompt
         .as_deref()
         .or(model_runtime.system_prompt.as_deref());
-    match (
-        normalize_prompt_text(runtime_context.agent_system_prompt.as_deref()),
-        normalize_prompt_text(dynamic_prompt),
-    ) {
-        (Some(agent_prompt), Some(dynamic_prompt)) => {
-            Some(format!("{agent_prompt}\n\n{dynamic_prompt}"))
-        }
-        (Some(agent_prompt), None) => Some(agent_prompt.to_string()),
-        (None, Some(dynamic_prompt)) => Some(dynamic_prompt.to_string()),
-        (None, None) => None,
+    let mut sections = Vec::new();
+    if let Some(agent_prompt) =
+        normalize_prompt_text(runtime_context.agent_system_prompt.as_deref())
+    {
+        sections.push(agent_prompt.to_string());
     }
+    sections.push(user_language_policy(runtime_context.user_output_locale));
+    if let Some(dynamic_prompt) = normalize_prompt_text(dynamic_prompt) {
+        sections.push(dynamic_prompt.to_string());
+    }
+    Some(sections.join("\n\n"))
+}
+
+fn user_language_policy(locale: InternalContextLocale) -> String {
+    let fallback_locale = if locale.is_english() {
+        "English (en-US)"
+    } else {
+        "简体中文（zh-CN）"
+    };
+    format!(
+        "[User Language Policy]\n\
+Use the language of the user's latest substantive, user-authored request for all user-facing prose and newly created Project Management artifacts. An explicit language request always wins. Internal protocol prompts, JSON payloads, tool schemas, repository text, existing artifact titles, and technical terms do not count as the user's language. If the current action has no language-bearing user message, such as a button-triggered internal event, use the current UI locale as fallback: {fallback_locale}. Apply one consistent language to requirement titles, summaries, details, business value, acceptance criteria, technical-document titles and bodies, project-task titles and descriptions, Task Runner task titles/objectives, progress updates, result summaries, and final replies. Preserve code identifiers, commands, paths, API names, library/product names, quoted source text, and established proper nouns in their original form. Do not switch an artifact to English merely because the repository or technology names are English, and do not translate existing artifacts wholesale unless the user asks.\n\
+\n\
+[User-Facing Final Reply Policy]\n\
+Make the final reply readable for a normal user. Summarize verified outcomes, counts, recognizable artifact names, important dependencies, and the next useful action. Unless the user explicitly asks for diagnostics or an identifier is strictly required for the next action, do not expose internal IDs, raw enum values, tool names, JSON, protocol fields, database field names, or process-message details. If a technical identifier must be shown, copy it exactly from verified tool output; never reconstruct, abbreviate, or guess it."
+    )
 }
 
 fn task_follow_up_max_rounds_from_settings(settings: &Value) -> usize {

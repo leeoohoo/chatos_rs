@@ -5,6 +5,7 @@ type MetadataRecord = Record<string, unknown>;
 
 export interface LocalSessionSelection {
   metadata: MetadataRecord;
+  contactId: string | null;
   selectedModelId: string | null;
   selectedAgentId: string | null;
 }
@@ -15,8 +16,12 @@ export const readLocalSessionSelection = (
   const record = parseMetadata(metadata);
   const uiSelection = asRecord(record.ui_chat_selection);
   const chatRuntime = asRecord(record.chat_runtime);
+  const contact = asRecord(record.contact);
+  const uiContact = asRecord(record.ui_contact);
   return {
     metadata: record,
+    contactId: readString(contact, 'contact_id', 'contactId')
+      || readString(uiContact, 'contact_id', 'contactId'),
     selectedModelId: readString(uiSelection, 'selected_model_id', 'selectedModelId')
       || readString(chatRuntime, 'selected_model_id', 'selectedModelId'),
     selectedAgentId: readString(uiSelection, 'selected_agent_id', 'selectedAgentId')

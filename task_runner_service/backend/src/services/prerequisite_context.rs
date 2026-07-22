@@ -53,7 +53,18 @@ pub(super) fn build_task_prompt(
         }
         parts.join("\n\n")
     };
-    if !task.mcp_config.requires_execution {
+    current_task_prompt.push_str("\n\n");
+    current_task_prompt.push_str(task_output_language_policy(locale));
+    if crate::models::uses_task_runner_planning_agent(
+        task.task_profile.as_str(),
+        task.mcp_config.requires_execution,
+    ) {
+        current_task_prompt.push_str(if locale.is_english() {
+            "\n\nExecution policy: this is a pure planning task. Produce analysis, plans, task decomposition, or Project Management updates only. Do not run commands and do not create, modify, move, or delete project files."
+        } else {
+            "\n\n执行策略：这是纯规划任务。只产出分析、方案、任务拆分或 Project Management 更新；不得运行命令，不得创建、修改、移动或删除项目文件。"
+        });
+    } else if !task.mcp_config.requires_execution {
         current_task_prompt.push_str(if locale.is_english() {
             "\n\nExecution policy: this is a file-only task. Use the default sandbox to inspect and modify project files. Do not require, initialize, start, build, test, or validate the project's dedicated runtime environment unless the user explicitly changes the task policy."
         } else {
@@ -76,7 +87,8 @@ pub(super) fn build_task_prompt(
 pub(super) fn build_task_prompt_template(locale: BuiltinMcpPromptLocale) -> String {
     let text = task_prompt_text(locale);
     format!(
-        "{}\n\n{}:\n\n{}:\n{{{{task.title}}}}\n\n{}:\n{{{{task.objective}}}}\n\n{}:\n{{{{task.description}}}}\n\n{}:\n{{{{task.input_payload_json}}}}",
+        "{}\n\n{}\n\n{}:\n\n{}:\n{{{{task.title}}}}\n\n{}:\n{{{{task.objective}}}}\n\n{}:\n{{{{task.description}}}}\n\n{}:\n{{{{task.input_payload_json}}}}",
+        task_output_language_policy(locale),
         format_prerequisite_context_template(locale),
         text.current_task_heading,
         text.task_title_label,
@@ -84,6 +96,14 @@ pub(super) fn build_task_prompt_template(locale: BuiltinMcpPromptLocale) -> Stri
         text.task_description_label,
         text.input_data_label
     )
+}
+
+fn task_output_language_policy(locale: BuiltinMcpPromptLocale) -> &'static str {
+    if locale.is_english() {
+        "[Output Language Policy]\nUse the language explicitly requested by the user or used in the current task title/objective for progress notes, Project Management artifacts, result summaries, reports, and other user-visible prose. If the task text is mixed or contains no clear natural language, use English (en-US). Preserve code identifiers, commands, paths, API/library/product names, and quoted source text in their original form. Keep each newly written artifact internally consistent instead of mixing English and Chinese sentences."
+    } else {
+        "[输出语言规则]\n进度说明、Project Management 产物、结果摘要、报告及其他用户可见文本，应优先使用用户明确指定的语言，或当前任务标题/目标所使用的自然语言。任务文本语言混合或无法判断时，使用简体中文（zh-CN）。代码标识符、命令、路径、API、库/产品名和引用原文保持不变。每个新写入的产物应保持语言一致，不要混用中英文完整句子。"
+    }
 }
 
 pub(super) fn build_global_execution_prompt(locale: BuiltinMcpPromptLocale) -> String {
@@ -264,5 +284,23 @@ pub(super) fn attach_prerequisite_context_to_run(
     let context_json = prerequisite_context_json(contexts);
     if let Some(object) = run.input_snapshot.as_object_mut() {
         object.insert("resolved_prerequisites".to_string(), context_json);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn task_prompt_template_keeps_user_language_policy_in_both_locales() {
+        let chinese = build_task_prompt_template(BuiltinMcpPromptLocale::ZhCn);
+        assert!(chinese.contains("输出语言规则"));
+        assert!(chinese.contains("当前任务标题/目标所使用的自然语言"));
+        assert!(chinese.contains("Project Management 产物"));
+
+        let english = build_task_prompt_template(BuiltinMcpPromptLocale::EnUs);
+        assert!(english.contains("Output Language Policy"));
+        assert!(english.contains("current task title/objective"));
+        assert!(english.contains("Project Management artifacts"));
     }
 }

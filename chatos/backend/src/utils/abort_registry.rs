@@ -87,6 +87,21 @@ pub fn is_aborted(session_id: &str) -> bool {
     map.get(session_id).map(|e| e.aborted).unwrap_or(false)
 }
 
+pub fn abort_token_for_turn(session_id: &str, turn_id: Option<&str>) -> Option<CancellationToken> {
+    if session_id.is_empty() {
+        return None;
+    }
+    let normalized_turn_id = turn_id.map(str::trim).filter(|value| !value.is_empty());
+    let map = ABORT_REGISTRY.lock();
+    let entry = map.get(session_id)?;
+    if let Some(target_turn_id) = normalized_turn_id {
+        if entry.turn_id.as_deref() != Some(target_turn_id) {
+            return None;
+        }
+    }
+    Some(entry.token.clone())
+}
+
 pub fn reset_turn(session_id: &str, turn_id: Option<&str>) {
     if session_id.is_empty() {
         return;
@@ -95,14 +110,16 @@ pub fn reset_turn(session_id: &str, turn_id: Option<&str>) {
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(str::to_string);
+    let token = CancellationToken::new();
     let mut map = ABORT_REGISTRY.lock();
-    let entry = map.entry(session_id.to_string()).or_insert(AbortEntry {
-        token: CancellationToken::new(),
-        aborted: false,
-        turn_id: normalized_turn_id.clone(),
-    });
-    entry.aborted = false;
-    entry.turn_id = normalized_turn_id;
+    map.insert(
+        session_id.to_string(),
+        AbortEntry {
+            token,
+            aborted: false,
+            turn_id: normalized_turn_id,
+        },
+    );
 }
 
 #[cfg(test)]
@@ -181,6 +198,24 @@ mod tests {
 
         assert!(!new_token.is_cancelled());
         assert!(!is_aborted(session_id));
+
+        clear(session_id);
+    }
+
+    #[test]
+    fn reset_turn_replaces_cancelled_token_and_exposes_it_to_runtime() {
+        let session_id = "abort_registry_reset_turn_replaces_token";
+        clear(session_id);
+
+        reset_turn(session_id, Some("turn_old"));
+        let old_token = abort_token_for_turn(session_id, Some("turn_old")).expect("old turn token");
+        assert!(abort_turn(session_id, Some("turn_old")));
+        assert!(old_token.is_cancelled());
+
+        reset_turn(session_id, Some("turn_new"));
+        let new_token = abort_token_for_turn(session_id, Some("turn_new")).expect("new turn token");
+        assert!(!new_token.is_cancelled());
+        assert!(abort_token_for_turn(session_id, Some("turn_old")).is_none());
 
         clear(session_id);
     }

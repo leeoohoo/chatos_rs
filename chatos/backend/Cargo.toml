@@ -60,7 +60,7 @@ mongodb = { version = "2.8", features = ["tokio-runtime"] }
 memory_engine_sdk = { path = "../../crates/memory_engine_sdk" }
 chatos_agent = { path = "../../agent" }
 chatos_ai_runtime = { path = "../../crates/chatos_ai_runtime" }
-chatos_builtin_tools = { path = "../../crates/chatos_builtin_tools" }
+chatos_mcp = { path = "../../mcp" }
 chatos_mcp_service = { path = "../../crates/chatos_mcp_service" }
 chatos_mcp_runtime = { path = "../../crates/chatos_mcp_runtime" }
 chatos_service_runtime = { path = "../../crates/chatos_service_runtime" }

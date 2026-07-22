@@ -1,7 +1,7 @@
 # API Path Baseline
 
-main_backend_endpoint_count=258
-total_endpoint_count=258
+main_backend_endpoint_count=259
+total_endpoint_count=259
 
 ## chatos/backend endpoints (method + path)
 DELETE /api/agents/{agent_id}
@@ -224,6 +224,7 @@ POST /api/projects/{id}/run/analyze
 POST /api/projects/{id}/run/default
 POST /api/projects/{id}/run/execute
 POST /api/projects/{id}/runtime-environment/analyze
+POST /api/projects/{id}/runtime-environment/images/{image_record_id}/generate
 POST /api/remote-connections
 POST /api/remote-connections/test
 POST /api/remote-connections/{id}/disconnect

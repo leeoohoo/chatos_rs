@@ -60,7 +60,7 @@ pub(in crate::services::environment_agent::tool_provider) fn normalize_generated
         .split('/')
         .filter(|segment| !segment.is_empty() && *segment != ".")
         .collect::<Vec<_>>();
-    if segments.is_empty() || segments.iter().any(|segment| *segment == "..") {
+    if segments.is_empty() || segments.contains(&"..") {
         return Err(format!("invalid generated config file path: {value}"));
     }
     Ok(segments.join("/"))

@@ -3,11 +3,11 @@
 
 [workspace]
 members = [
-  "crates/chatos_builtin_tools",
+  "mcp",
   "crates/chatos_config_sdk",
   "crates/chatos_mcp_runtime",
   "crates/chatos_mcp_service",
-  "crates/chatos_project_mcp_contract",
+  "crates/chatos_plugin_management_sdk",
   "crates/chatos_sandbox_contract",
   "crates/chatos_service_runtime",
   "sandbox_manager_service/sandbox_mcp_server",

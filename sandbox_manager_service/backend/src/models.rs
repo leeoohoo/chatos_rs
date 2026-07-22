@@ -80,7 +80,7 @@ impl Default for ResourceLimits {
             cpu: 2.0,
             memory_mb: 4096,
             disk_mb: 10240,
-            max_processes: 128,
+            max_processes: 512,
         }
     }
 }
@@ -625,4 +625,17 @@ pub struct SandboxImageJobRecord {
 
 fn default_true() -> bool {
     true
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ResourceLimits;
+
+    #[test]
+    fn default_resource_limits_support_browser_e2e_processes() {
+        let limits = ResourceLimits::default();
+
+        assert_eq!(limits.max_processes, 512);
+        assert!(limits.memory_mb >= 4096);
+    }
 }

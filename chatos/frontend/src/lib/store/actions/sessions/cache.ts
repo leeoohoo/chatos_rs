@@ -98,7 +98,10 @@ export const normalizeTrackedSessions = (
   return normalizeSessionsForScope(sessions, buildContactScope(contacts));
 };
 
-export const buildSessionsListCacheKey = (userId: string): string => normalizeUserId(userId);
+export const buildSessionsListCacheKey = (
+  userId: string,
+  projectId?: string | null,
+): string => `${normalizeUserId(userId)}::${String(projectId || '*').trim() || '*'}`;
 
 export const getOrCreateSessionsClientCacheState = (
   apiClient: ApiClient,
@@ -146,12 +149,13 @@ const syncSessionListCaches = (
 export const syncLoadedSessions = (
   apiClient: ApiClient,
   userId: string,
+  projectId: string,
   sessions: Session[],
   contacts: ContactRecord[],
 ) => {
   const cacheState = getOrCreateSessionsClientCacheState(apiClient);
   const scope = buildContactScope(contacts);
-  cacheState.listCache.set(buildSessionsListCacheKey(userId), {
+  cacheState.listCache.set(buildSessionsListCacheKey(userId, projectId), {
     sessions,
     stale: false,
     scope,
@@ -170,13 +174,16 @@ export const markSessionCachesStale = (
   const normalizedSessionId = normalizeSessionId(String(options?.sessionId || ''));
 
   if (normalizedUserId) {
-    const cached = cacheState.listCache.get(buildSessionsListCacheKey(normalizedUserId));
-    if (cached) {
-      cacheState.listCache.set(buildSessionsListCacheKey(normalizedUserId), {
+    const prefix = `${normalizedUserId}::`;
+    cacheState.listCache.forEach((cached, key) => {
+      if (!key.startsWith(prefix)) {
+        return;
+      }
+      cacheState.listCache.set(key, {
         ...cached,
         stale: true,
       });
-    }
+    });
   } else {
     cacheState.listCache.forEach((entry, key) => {
       cacheState.listCache.set(key, {

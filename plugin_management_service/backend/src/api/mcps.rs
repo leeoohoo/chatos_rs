@@ -6,7 +6,8 @@ use super::*;
 use axum::http::HeaderName;
 use axum::response::sse::{Event, KeepAlive, Sse};
 use chatos_ai_runtime::{
-    select_preferred_response_text, AiRequestHandler, ModelRuntimeConfig, StreamCallbacks,
+    build_responses_text_input, run_compatible_prompt_with, select_preferred_response_text,
+    AiRequestHandler, ModelRuntimeConfig, SimplePromptOptions, StreamCallbacks,
 };
 use futures_util::stream;
 use serde::{Deserialize, Serialize};
@@ -35,6 +36,12 @@ pub(super) struct AdminAiModelConfig {
     supports_responses: bool,
     #[serde(default)]
     thinking_level: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+pub(super) struct AdminAiModelSettings {
+    #[serde(default)]
+    model_request_max_retries: Option<usize>,
 }
 
 #[derive(Debug, Deserialize)]

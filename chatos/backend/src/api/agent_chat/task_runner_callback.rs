@@ -33,6 +33,10 @@ pub(super) struct TaskRunnerCallbackRequest {
     run_id: Option<String>,
     status: String,
     task_title: String,
+    #[serde(default)]
+    task_objective: String,
+    #[serde(default)]
+    fallback_locale: String,
     project_id: Option<String>,
     task_status: Option<String>,
     result_summary: Option<String>,
@@ -432,6 +436,11 @@ async fn sync_project_requirement_execution_status(
     message: &Message,
     payload: &TaskRunnerCallbackRequest,
 ) -> Result<(), String> {
+    if !is_project_requirement_execution_message(message)
+        || normalize_callback_value(payload.parent_task_id.as_deref()).is_some()
+    {
+        return Ok(());
+    }
     if should_ignore_stopped_task_cancel_callback(message.metadata.as_ref(), payload) {
         return Ok(());
     }
@@ -466,6 +475,14 @@ async fn sync_project_requirement_execution_status(
     )
     .await
     .map(|_| ())
+}
+
+fn is_project_requirement_execution_message(message: &Message) -> bool {
+    message
+        .metadata
+        .as_ref()
+        .and_then(|metadata| metadata.get("project_requirement_execution"))
+        .is_some_and(Value::is_object)
 }
 
 fn should_ignore_stopped_task_cancel_callback(
@@ -521,4 +538,32 @@ fn ask_user_prompt_status_from_task_runner_event(
 
 fn default_true() -> bool {
     true
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn project_requirement_execution_sync_only_applies_to_execution_messages() {
+        let mut execution_message = Message::new(
+            "session-1".to_string(),
+            "user".to_string(),
+            "execute".to_string(),
+        );
+        execution_message.metadata = Some(json!({
+            "project_requirement_execution": {
+                "project_id": "project-1",
+                "requirement_id": "requirement-1"
+            }
+        }));
+        let ordinary_message = Message::new(
+            "session-1".to_string(),
+            "user".to_string(),
+            "ordinary task".to_string(),
+        );
+
+        assert!(is_project_requirement_execution_message(&execution_message));
+        assert!(!is_project_requirement_execution_message(&ordinary_message));
+    }
 }

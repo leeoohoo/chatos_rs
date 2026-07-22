@@ -46,7 +46,7 @@ export const sessionInitialState: SessionSliceState = {
 };
 
 export interface SessionSliceActions {
-  loadContacts: (options?: { force?: boolean }) => Promise<ContactRecord[]>;
+  loadContacts: (options?: { force?: boolean; throwOnError?: boolean }) => Promise<ContactRecord[]>;
   createContact: (agentId: string, agentNameSnapshot?: string) => Promise<ContactRecord>;
   updateContactTaskRunnerConfig: (
     contactId: string,

@@ -11,6 +11,7 @@ use super::super::history_process_support::{
     attach_user_history_process_metadata, is_task_runner_async_plan_summary_message,
     is_task_runner_callback_message, normalize_task_runner_async_user_status_for_display,
     normalize_task_runner_callback_for_display, strip_assistant_for_compact_history,
+    task_runner_async_user_has_terminal_tracking,
 };
 
 pub(super) fn build_compact_history_messages_from_turn_slices(
@@ -36,6 +37,9 @@ pub(super) fn build_compact_history_messages_from_turn_slices_with_process(
             .final_assistant_record
             .map(engine_record_to_message)
             .filter(|message| !message_is_hidden(message));
+        let final_assistant_is_callback = final_assistant
+            .as_ref()
+            .is_some_and(is_task_runner_callback_message);
         let turn_process_messages = process_messages_by_turn.get(slice.turn_id.as_str());
         let recovered_plan_summary =
             recover_task_runner_plan_summary(final_assistant.as_ref(), turn_process_messages);
@@ -68,17 +72,21 @@ pub(super) fn build_compact_history_messages_from_turn_slices_with_process(
             compact.push(assistant);
         }
 
+        let mut final_assistant = final_assistant;
+        if !final_assistant_is_callback {
+            if let Some(mut assistant) = final_assistant.take() {
+                strip_assistant_for_compact_history(&mut assistant, &user_message_id);
+                compact.push(assistant);
+            }
+        }
+
         for mut assistant in recovered_callback_updates {
             normalize_task_runner_callback_for_display(&mut assistant);
             compact.push(assistant);
         }
 
         if let Some(mut assistant) = final_assistant {
-            if is_task_runner_callback_message(&assistant) {
-                normalize_task_runner_callback_for_display(&mut assistant);
-            } else {
-                strip_assistant_for_compact_history(&mut assistant, &user_message_id);
-            }
+            normalize_task_runner_callback_for_display(&mut assistant);
             compact.push(assistant);
         }
     }
@@ -86,14 +94,21 @@ pub(super) fn build_compact_history_messages_from_turn_slices_with_process(
     compact
 }
 
-pub(super) fn turn_slice_final_assistant_is_task_runner_callback(
+pub(super) fn turn_slice_needs_task_runner_callback_process_messages(
     slice: &memory_engine_sdk::TurnRecordSlice,
 ) -> bool {
-    slice
+    if slice
         .final_assistant_record
         .as_ref()
         .map(|record| is_task_runner_callback_message(&engine_record_to_message(record.clone())))
         .unwrap_or(false)
+    {
+        return true;
+    }
+
+    task_runner_async_user_has_terminal_tracking(&engine_record_to_message(
+        slice.user_record.clone(),
+    ))
 }
 
 fn recover_task_runner_plan_summary(
@@ -119,18 +134,12 @@ fn recover_task_runner_callback_updates(
     final_assistant: Option<&Message>,
     turn_process_messages: Option<&Vec<Message>>,
 ) -> Vec<Message> {
-    let Some(final_assistant) =
-        final_assistant.filter(|message| is_task_runner_callback_message(message))
-    else {
-        return Vec::new();
-    };
-
     turn_process_messages
         .map(|messages| {
             messages
                 .iter()
                 .filter(|message| {
-                    message.id != final_assistant.id
+                    final_assistant.is_none_or(|assistant| message.id != assistant.id)
                         && !message_is_hidden(message)
                         && is_task_runner_callback_message(message)
                 })

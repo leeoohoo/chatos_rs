@@ -110,10 +110,10 @@ pub(super) fn validate_client_managed_mcp_payload(
             .runtime
             .as_ref()
             .map(|runtime| runtime.kind.as_str()),
-        Some(RUNTIME_KIND_BUILTIN | RUNTIME_KIND_SYSTEM_ROUTED)
+        Some(RUNTIME_KIND_SYSTEM | RUNTIME_KIND_BUILTIN)
     ) {
         return Err(ApiError::bad_request(
-            "builtin and system-routed MCPs are managed by the service",
+            "system MCPs are managed by the service",
         ));
     }
     if let Some(runtime) = payload.runtime.as_ref() {
@@ -160,27 +160,22 @@ pub(super) fn validate_system_seed_mcp_update(payload: &McpPayload) -> Result<()
 
 pub(super) fn validate_mcp_runtime(runtime: &McpRuntime) -> Result<(), ApiError> {
     match runtime.kind.as_str() {
-        RUNTIME_KIND_BUILTIN => {
-            if runtime
-                .builtin_kind
+        RUNTIME_KIND_SYSTEM => {
+            let system_key = runtime
+                .system_key
                 .as_deref()
                 .and_then(|value| normalized(Some(value)))
-                .is_none()
-            {
-                return Err(ApiError::bad_request("builtin MCP requires builtin_kind"));
+                .ok_or_else(|| ApiError::bad_request("system MCP requires system_key"))?;
+            if chatos_mcp::system_mcp_descriptor_by_any(system_key.as_str()).is_none() {
+                return Err(ApiError::bad_request(format!(
+                    "unknown system MCP key: {system_key}"
+                )));
             }
         }
-        RUNTIME_KIND_SYSTEM_ROUTED => {
-            if runtime
-                .server_name
-                .as_deref()
-                .and_then(|value| normalized(Some(value)))
-                .is_none()
-            {
-                return Err(ApiError::bad_request(
-                    "system-routed MCP requires server_name",
-                ));
-            }
+        RUNTIME_KIND_BUILTIN => {
+            return Err(ApiError::bad_request(
+                "legacy system MCP runtime kinds are read-only; use system",
+            ));
         }
         RUNTIME_KIND_HTTP => {
             if runtime
@@ -207,7 +202,7 @@ pub(super) fn validate_mcp_runtime(runtime: &McpRuntime) -> Result<(), ApiError>
         | RUNTIME_KIND_LOCAL_CONNECTOR_BUILTIN_PROXY => validate_local_connector_ref(runtime)?,
         _ => {
             return Err(ApiError::bad_request(
-                "runtime.kind must be builtin, system_routed, http, stdio_cloud, local_connector_stdio, local_connector_http, or local_connector_builtin_proxy",
+                "runtime.kind must be system, http, stdio_cloud, local_connector_stdio, local_connector_http, or local_connector_builtin_proxy",
             ));
         }
     }

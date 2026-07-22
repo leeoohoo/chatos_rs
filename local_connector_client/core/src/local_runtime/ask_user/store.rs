@@ -4,7 +4,7 @@
 use std::time::Duration;
 
 use async_trait::async_trait;
-use chatos_builtin_tools::{
+use chatos_mcp::{
     AskUserDecision, AskUserPromptPayload, AskUserResponseSubmission, AskUserStore,
     AskUserStreamChunkCallback,
 };

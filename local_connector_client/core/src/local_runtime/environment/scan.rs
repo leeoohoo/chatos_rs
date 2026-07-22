@@ -30,7 +30,7 @@ pub(super) async fn scan_local_project(root: PathBuf) -> Result<LocalProjectScan
 
 fn scan(root: &Path) -> Result<LocalProjectScanEvidence, String> {
     let mut candidates = Vec::new();
-    collect_files(root, root, 0, &mut candidates)?;
+    collect_files(root, 0, &mut candidates)?;
     let mut stack = serde_json::Map::new();
     let mut services = BTreeSet::new();
     let mut env_keys = BTreeSet::new();
@@ -56,12 +56,7 @@ fn scan(root: &Path) -> Result<LocalProjectScanEvidence, String> {
     })
 }
 
-fn collect_files(
-    root: &Path,
-    dir: &Path,
-    depth: usize,
-    output: &mut Vec<PathBuf>,
-) -> Result<(), String> {
+fn collect_files(dir: &Path, depth: usize, output: &mut Vec<PathBuf>) -> Result<(), String> {
     if depth > 5 || output.len() >= 400 {
         return Ok(());
     }
@@ -71,7 +66,7 @@ fn collect_files(
         let name = entry.file_name().to_string_lossy().to_string();
         if path.is_dir() {
             if !ignored_dir(name.as_str()) {
-                collect_files(root, path.as_path(), depth + 1, output)?;
+                collect_files(path.as_path(), depth + 1, output)?;
             }
         } else if relevant_file(name.as_str()) {
             output.push(path);

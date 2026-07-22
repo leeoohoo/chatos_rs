@@ -1,9 +1,6 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-#[cfg(test)]
-#[path = "normalizer/fields.rs"]
-mod fields;
 #[path = "normalizer/redaction.rs"]
 mod redaction;
 #[path = "normalizer/support.rs"]
@@ -36,7 +33,7 @@ mod tests {
         ]);
 
         let fields =
-            super::fields::normalize_kv_fields(Some(&input), 50).expect("normalize fields");
+            chatos_mcp::normalize_kv_fields(Some(&input), 50).expect("normalize fields");
         assert_eq!(fields.len(), 3);
         assert_eq!(fields[0].key, "repo");
         assert_eq!(fields[1].key, "api_token");

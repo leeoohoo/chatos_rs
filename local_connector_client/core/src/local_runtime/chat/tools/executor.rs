@@ -7,19 +7,21 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use chatos_ai_runtime::{McpRuntimeToolExecutor, ToolExecutor};
-use chatos_mcp_runtime::{BuiltinMcpServerOptions, McpExecutor, McpHttpServer, McpStdioServer};
+use chatos_mcp::{
+    system_mcp_descriptor_by_embedded_kind, ResolvedSystemMcpBackend, SystemMcpHostAdapter,
+    SystemMcpResolveContext,
+};
+use chatos_mcp_runtime::{McpExecutor, McpHttpServer, McpStdioServer};
+use chatos_plugin_management_sdk::SystemAgentKey;
 use serde_json::Value;
 
-use crate::local_runtime::ask_user::LocalAskUserProvider;
-use crate::local_runtime::project_management::LocalProjectManagementProvider;
 use crate::local_runtime::storage::{LocalProjectRecord, LocalRuntimeSettingsRecord};
-use crate::local_runtime::task_board::LocalTaskManagerProvider;
 use crate::mcp::configs::{stdio_server_for_manifest, validate_loopback_http_url};
 use crate::mcp::manifest::{LocalMcpManifestRecord, LocalMcpTransport};
 use crate::LocalRuntime;
 
-use super::builtins::LocalChatBuiltinProvider;
 use super::context::{resolve_local_chat_tool_context, LocalChatToolContext};
+use super::system_mcp_adapter::LocalConnectorSystemMcpAdapter;
 
 pub(crate) struct PreparedLocalChatTools {
     pub(crate) executor: Option<Arc<dyn ToolExecutor>>,
@@ -35,10 +37,19 @@ pub(crate) async fn prepare_local_chat_tools(
     request_id: &str,
     project: &LocalProjectRecord,
     settings: &LocalRuntimeSettingsRecord,
+    agent_key: SystemAgentKey,
+    include_all_configured: bool,
 ) -> Result<PreparedLocalChatTools, String> {
-    let context =
-        resolve_local_chat_tool_context(runtime, owner_user_id, request_id, project, settings)
-            .await?;
+    let context = resolve_local_chat_tool_context(
+        runtime,
+        owner_user_id,
+        request_id,
+        project,
+        settings,
+        agent_key,
+        include_all_configured,
+    )
+    .await?;
     if !context.enabled {
         return Ok(PreparedLocalChatTools {
             executor: None,
@@ -66,56 +77,50 @@ pub(crate) async fn prepare_local_chat_tools(
 }
 
 async fn build_mcp_executor(context: LocalChatToolContext) -> Result<McpExecutor, String> {
-    let options = BuiltinMcpServerOptions::new(context.project_root.display().to_string())
-        .with_user_id(
-            context
-                .request
-                .owner_user_id
-                .clone()
-                .unwrap_or_else(|| "local_runtime".to_string()),
-        )
-        .with_project_id(
-            context
-                .request
-                .headers
-                .get("x-task-runner-task-id")
-                .cloned()
-                .unwrap_or_else(|| context.request.workspace_id.clone()),
-        )
-        .with_auto_create_task(context.auto_create_task);
+    let system_adapter = LocalConnectorSystemMcpAdapter::new(context.clone());
     let mut builder = McpExecutor::builder();
     for kind in context.builtin_kinds.iter().copied() {
-        builder = builder.with_builtin_server(kind.server_with_options(&options));
-        builder = match kind {
-            chatos_mcp_runtime::BuiltinMcpKind::ProjectManagement => {
-                builder.with_builtin_provider(LocalProjectManagementProvider::new(
-                    context.database.clone(),
-                    owner_user_id(&context),
-                    project_id(&context),
-                ))
+        let descriptor = system_mcp_descriptor_by_embedded_kind(kind)
+            .ok_or_else(|| format!("missing system MCP descriptor for {}", kind.kind_name()))?;
+        match system_adapter
+            .resolve(descriptor.key, &SystemMcpResolveContext::default())
+            .await?
+        {
+            ResolvedSystemMcpBackend::Embedded { server, provider } => {
+                builder = builder.with_builtin_server(server);
+                if let Some(provider) = provider {
+                    builder = builder.with_builtin_provider_arc(provider);
+                }
             }
-            chatos_mcp_runtime::BuiltinMcpKind::TaskManager => {
-                builder.with_builtin_provider(LocalTaskManagerProvider::new(
-                    context.database.clone(),
-                    owner_user_id(&context),
-                    context.auto_create_task,
-                    context.ask_user_prompts.clone(),
-                ))
+            ResolvedSystemMcpBackend::Unavailable(reason) => return Err(reason),
+            ResolvedSystemMcpBackend::Http(_) => {
+                return Err(format!(
+                    "Local Connector expected an embedded system MCP: {}",
+                    descriptor.server_name
+                ));
             }
-            chatos_mcp_runtime::BuiltinMcpKind::AskUser => {
-                builder.with_builtin_provider(LocalAskUserProvider::new(
-                    context.database.clone(),
-                    owner_user_id(&context),
-                    context.ask_user_prompts.clone(),
-                ))
+        }
+    }
+    for key in context.host_system_mcps.iter().copied() {
+        let descriptor = chatos_mcp::system_mcp_descriptor(key);
+        match system_adapter
+            .resolve(key, &SystemMcpResolveContext::default())
+            .await?
+        {
+            ResolvedSystemMcpBackend::Embedded { server, provider } => {
+                builder = builder.with_builtin_server(server);
+                if let Some(provider) = provider {
+                    builder = builder.with_builtin_provider_arc(provider);
+                }
             }
-            _ => builder.with_builtin_provider(LocalChatBuiltinProvider::new(
-                kind,
-                context.request.clone(),
-                context.state.clone(),
-                context.history_recorder.clone(),
-            )),
-        };
+            ResolvedSystemMcpBackend::Unavailable(reason) => return Err(reason),
+            ResolvedSystemMcpBackend::Http(_) => {
+                return Err(format!(
+                    "Local Connector expected a local system MCP provider: {}",
+                    descriptor.server_name
+                ));
+            }
+        }
     }
     for skill in &context.skills {
         if let (Some(server), Some(provider)) = (&skill.server, &skill.provider) {
@@ -134,23 +139,6 @@ async fn build_mcp_executor(context: LocalChatToolContext) -> Result<McpExecutor
         }
     }
     builder.build_initialized().await
-}
-
-fn owner_user_id(context: &LocalChatToolContext) -> String {
-    context
-        .request
-        .owner_user_id
-        .clone()
-        .unwrap_or_else(|| "local_runtime".to_string())
-}
-
-fn project_id(context: &LocalChatToolContext) -> String {
-    context
-        .request
-        .headers
-        .get("x-task-runner-task-id")
-        .cloned()
-        .unwrap_or_else(|| context.request.workspace_id.clone())
 }
 
 fn local_stdio_server(manifest: &LocalMcpManifestRecord) -> Result<McpStdioServer, String> {

@@ -77,7 +77,7 @@
 
 ### 2.3 用户 MCP 的边界
 
-- 普通用户不能在 Plugin Management 云端直接创建 `http`、`stdio_cloud`、`builtin` 或 `system_routed` MCP。
+- 普通用户不能在 Plugin Management 云端直接创建 `http`、`stdio_cloud` 或统一的 `system` MCP。
 - 用户 MCP 的 command、args、env、headers、token、cwd 只保存在 Local Connector 本地状态中。
 - 云端只保存 `owner_user_id + device_id + manifest_id + runtime_kind + manifest_hash + tool snapshot`。
 
@@ -103,7 +103,7 @@
 | 领域 | 当前事实 | 与目标的差距 |
 | --- | --- | --- |
 | Plugin Management README | 明确写着服务自身管理闭环已完成，但尚未接入 ChatOS、Task Runner、Local Connector 执行链路 | 文档与部分新代码已不完全一致，需要以真实调用链更新 README |
-| MCP 模型 | `models.rs` 仍允许 `builtin`、`system_routed`、`http`、`stdio_cloud`、Local Connector 三类 runtime | 用户 MCP 已有局部约束，但 Admin 任意 HTTP/stdio 仍缺少“系统内部组件证明” |
+| MCP 模型 | 系统 MCP 已统一为 `system + system_key`，历史 `builtin`/路由记录由统一 Catalog 兼容解析并在种子阶段迁移；用户 MCP 保留 HTTP/stdio 与 Local Connector runtime | Admin 任意 HTTP/stdio 仍需继续加强“系统内部组件证明” |
 | Skill 模型 | `SkillContent` 允许 `inline_content`、`cloud_package`、`git_package`、`local_connector_file/package` | 与“所有 Skill 都在 Local Connector 执行”冲突；云端内容类型必须退役 |
 | Skill availability | 已按 owner/device 保存 bundle id、version、hash、platform、status 和 dependency status，并与 Admin seed snapshot 比对 | 完整的逐依赖探测、签名链和升级回滚策略仍需继续实现 |
 | Local Connector Client | 已有 27 项实体 Bundle、12 个 adapter-ready bundle、真实依赖门禁、inventory、用户启用页面和 prepare/execute/cancel runtime | 用户安装入口、Ed25519 release 签名和剩余 15 个 adapter 尚未完成 |

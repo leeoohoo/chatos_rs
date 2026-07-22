@@ -7,6 +7,9 @@ use axum::extract::{Path, Query, State};
 use axum::Json;
 use serde::Deserialize;
 
+use crate::local_runtime::project_management::{
+    canonical_project_status, is_completed_project_status,
+};
 use crate::LocalRuntime;
 
 use super::super::context::owner_context;
@@ -63,9 +66,13 @@ fn work_item_counts(
 ) -> serde_json::Value {
     let mut by_status = BTreeMap::<String, i64>::new();
     for record in records {
-        *by_status.entry(record.status.clone()).or_default() += 1;
+        let status = canonical_project_status(record.status.as_str());
+        *by_status.entry(status).or_default() += 1;
     }
-    let done = *by_status.get("done").unwrap_or(&0);
+    let done = records
+        .iter()
+        .filter(|record| is_completed_project_status(record.status.as_str()))
+        .count() as i64;
     let blocked = *by_status.get("blocked").unwrap_or(&0);
     let failed = *by_status.get("failed").unwrap_or(&0);
     serde_json::json!({

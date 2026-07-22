@@ -25,6 +25,7 @@ async fn claims_each_queued_local_task_run_once() {
             owner_user_id: "user-run".to_string(),
             project_id: "project-run".to_string(),
             requirement_id: None,
+            task_kind: "project_work_item".to_string(),
             task_id,
             session_id,
             execution_group_id: "group-run".to_string(),

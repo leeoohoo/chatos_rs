@@ -102,6 +102,7 @@ pub async fn ensure_cloud_session_execution(
     session: &Session,
     requested_project_id: Option<&str>,
     auth: &AuthUser,
+    headers: &HeaderMap,
 ) -> Result<(), (StatusCode, Json<Value>)> {
     let mut project_ids = BTreeSet::new();
     let session_project_id =
@@ -114,6 +115,19 @@ pub async fn ensure_cloud_session_execution(
         .filter(|value| !value.is_empty() && *value != "0" && *value != PUBLIC_PROJECT_ID)
     {
         project_ids.insert(project_id.to_string());
+    }
+
+    if desktop_non_project_scope_requires_local(headers, project_ids.is_empty()) {
+        return Err((
+            StatusCode::CONFLICT,
+            Json(json!({
+                "accepted": false,
+                "code": "local_runtime_required",
+                "error": "桌面客户端中的非项目会话必须在本地运行，云端运行已禁用",
+                "project_id": PUBLIC_PROJECT_ID,
+                "execution_plane": "local_connector",
+            })),
+        ));
     }
 
     for project_id in project_ids {
@@ -136,14 +150,19 @@ pub async fn ensure_cloud_session_execution(
     Ok(())
 }
 
+fn desktop_non_project_scope_requires_local(headers: &HeaderMap, no_project_scope: bool) -> bool {
+    no_project_scope && request_is_local_connector_desktop(headers)
+}
+
 #[cfg(test)]
 mod tests {
     use axum::http::{HeaderMap, HeaderValue};
 
     use super::{
-        project_is_visible_on_request, project_uses_local_runtime,
-        request_is_local_connector_desktop, CHATOS_CLIENT_SURFACE_COMPAT_HEADER,
-        CHATOS_CLIENT_SURFACE_HEADER, LOCAL_CONNECTOR_DESKTOP_SURFACE,
+        desktop_non_project_scope_requires_local, project_is_visible_on_request,
+        project_uses_local_runtime, request_is_local_connector_desktop,
+        CHATOS_CLIENT_SURFACE_COMPAT_HEADER, CHATOS_CLIENT_SURFACE_HEADER,
+        LOCAL_CONNECTOR_DESKTOP_SURFACE,
     };
     use crate::models::project::Project;
 
@@ -220,5 +239,26 @@ mod tests {
             headers.insert(header, HeaderValue::from_static("XMLHttpRequest"));
             assert!(!request_is_local_connector_desktop(&headers));
         }
+    }
+
+    #[test]
+    fn desktop_non_project_chat_is_never_allowed_to_fall_through_to_cloud() {
+        let mut desktop_headers = HeaderMap::new();
+        desktop_headers.insert(
+            CHATOS_CLIENT_SURFACE_HEADER,
+            HeaderValue::from_static(LOCAL_CONNECTOR_DESKTOP_SURFACE),
+        );
+        assert!(desktop_non_project_scope_requires_local(
+            &desktop_headers,
+            true
+        ));
+        assert!(!desktop_non_project_scope_requires_local(
+            &desktop_headers,
+            false
+        ));
+        assert!(!desktop_non_project_scope_requires_local(
+            &HeaderMap::new(),
+            true
+        ));
     }
 }

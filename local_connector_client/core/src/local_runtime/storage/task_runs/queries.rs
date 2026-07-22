@@ -8,7 +8,7 @@ use crate::local_runtime::task_runner::LocalTaskRunRecord;
 use super::super::LocalDatabase;
 
 pub(super) const TASK_RUN_COLUMNS: &str = r#"
-    id, owner_user_id, project_id, requirement_id, task_id, session_id,
+    id, owner_user_id, project_id, requirement_id, task_kind, task_id, session_id,
     turn_id, execution_group_id, status, priority, prompt, model_config_id,
     attempt, max_attempts, worker_id, lease_expires_at, heartbeat_at,
     cancel_requested, result_content, result_reasoning, tool_calls_json,

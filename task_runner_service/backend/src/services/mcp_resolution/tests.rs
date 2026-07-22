@@ -178,6 +178,7 @@ fn chatos_async_source_wins_over_run_phase_for_fixed_task_tools() {
 fn plan_profile_requirements_are_fixed_and_host_routable() {
     let config = TaskMcpConfig {
         enabled_builtin_kinds: Vec::new(),
+        requires_execution: false,
         ..TaskMcpConfig::default()
     };
     let resolution = resolve_mcp_config(TaskMcpResolutionInput {
@@ -204,6 +205,35 @@ fn plan_profile_requirements_are_fixed_and_host_routable() {
     assert!(!resolution
         .server_local_builtin_kinds
         .contains(&BuiltinMcpKind::CodeMaintainerRead));
+}
+
+#[test]
+fn legacy_plan_profile_with_execution_uses_implementation_capabilities() {
+    let config = TaskMcpConfig {
+        enabled_builtin_kinds: vec!["CodeMaintainerWrite".to_string()],
+        requires_execution: true,
+        ..TaskMcpConfig::default()
+    };
+    let resolution = resolve_mcp_config(TaskMcpResolutionInput {
+        mcp_config: &config,
+        task_profile: TASK_PROFILE_CHATOS_PLAN,
+        schedule_mode: TaskScheduleMode::Manual,
+        source_session_id: None,
+        source_user_message_id: None,
+        active_host_backends: &[BuiltinHostBackend::HarnessCode],
+        caller_requirements: &[],
+    });
+
+    assert!(!resolution.required_builtin_kinds.iter().any(|required| {
+        required.source == McpCapabilityRequirementSource::TaskProfileChatosPlan
+    }));
+    assert_eq!(
+        hosted_builtin_kinds_for(&resolution, BuiltinHostBackend::HarnessCode),
+        vec![
+            BuiltinMcpKind::CodeMaintainerRead,
+            BuiltinMcpKind::CodeMaintainerWrite,
+        ]
+    );
 }
 
 #[test]

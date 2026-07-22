@@ -24,6 +24,7 @@ pub struct CommonChatBootstrapInput {
     pub remote_connection_id: Option<String>,
     pub plan_mode: bool,
     pub project_requirement_execution_planner: bool,
+    pub model_config_id: Option<String>,
     pub model_provider: String,
     pub prompt_vendor: Option<String>,
     pub turn_id: Option<String>,
@@ -70,6 +71,7 @@ pub async fn load_common_chat_bootstrap(input: CommonChatBootstrapInput) -> Comm
             remote_connection_id: input.remote_connection_id,
             plan_mode: input.plan_mode,
             project_requirement_execution_planner: input.project_requirement_execution_planner,
+            model_config_id: input.model_config_id,
             model_provider: input.model_provider,
             prompt_vendor: input.prompt_vendor,
             conversation_turn_id: Some(resolved_turn_id.clone()),
@@ -77,7 +79,8 @@ pub async fn load_common_chat_bootstrap(input: CommonChatBootstrapInput) -> Comm
         },
         input.default_system_prompt,
         input.use_active_system_context,
-        user_context.locale,
+        user_context.internal_context_locale,
+        user_context.ui_locale,
     )
     .await;
     let attachments = attachments::parse_attachments(&input.attachments.unwrap_or_default());

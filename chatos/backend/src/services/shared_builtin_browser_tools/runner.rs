@@ -2,7 +2,7 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use chatos_ai_runtime as shared_ai_runtime;
-use chatos_builtin_tools::BrowserVisionFailure;
+use chatos_mcp::BrowserVisionFailure;
 use chatos_mcp_runtime::ToolCallerModelRuntime;
 use serde_json::{json, Value};
 
@@ -151,7 +151,8 @@ async fn run_browser_vision_with_responses(
     .with_temperature(Some(candidate.temperature))
     .with_max_output_tokens(Some(DEFAULT_CONTACT_VISION_MAX_OUTPUT_TOKENS))
     .with_thinking_level(candidate.thinking_level.clone())
-    .with_request_body_limit_bytes(candidate.request_body_limit_bytes);
+    .with_request_body_limit_bytes(candidate.request_body_limit_bytes)
+    .with_max_transient_retries(candidate.max_transient_retries);
     let response = shared_ai_runtime::run_compatible_prompt_with(
         &handler,
         &runtime,
@@ -160,8 +161,8 @@ async fn run_browser_vision_with_responses(
             system_prompt: candidate.instructions.clone(),
             temperature: Some(candidate.temperature),
             max_output_tokens: Some(DEFAULT_CONTACT_VISION_MAX_OUTPUT_TOKENS),
-            max_attempts: Some(4),
             callbacks: shared_ai_runtime::StreamCallbacks::default(),
+            ..Default::default()
         },
         |wrapped_prompt, _input_as_list| {
             build_browser_vision_responses_input(wrapped_prompt, image_data_url)

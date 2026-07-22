@@ -3,7 +3,7 @@
 
 use std::path::Path;
 
-use chatos_builtin_tools::{
+use chatos_mcp::{
     terminal_recent_logs_entry, terminal_recent_logs_response, TerminalControllerContext,
     TerminalRecentLogsEntry,
 };

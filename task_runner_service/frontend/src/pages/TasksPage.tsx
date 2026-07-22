@@ -72,6 +72,8 @@ export function TasksPage() {
   const [memoryLimit, setMemoryLimit] = useState<number>(50);
   const [form] = Form.useForm<TaskFormValues>();
   const editorProjectId = Form.useWatch('projectId', form);
+  const editorTaskProfile = Form.useWatch('taskProfile', form);
+  const editorRequiresExecution = Form.useWatch('requiresExecution', form);
   const [runForm] = Form.useForm<RunTaskFormValues>();
   const [batchRunForm] = Form.useForm<RunTaskFormValues>();
   const routeTaskId = searchParams.get('task_id');
@@ -89,7 +91,6 @@ export function TasksPage() {
     taskFollowUpQuery,
     taskRunDerivedQuery,
     taskPromptsQuery,
-    mcpCatalogQuery,
     taskCapabilityCatalogQuery,
     projectRuntimeEnvironmentQuery,
     remoteServersQuery,
@@ -141,6 +142,8 @@ export function TasksPage() {
     batchRunTaskIds,
     editingTaskId: editingTask?.id,
     editorProjectId,
+    editorTaskProfile,
+    editorRequiresExecution,
   });
 
   const { taskSubtasksQuery } = useTasksPageEffects({
@@ -538,10 +541,14 @@ export function TasksPage() {
         modelOptions={modelOptions}
         projectOptions={projectOptions}
         prerequisiteTaskOptions={prerequisiteTaskOptions}
-        mcpCatalogEntries={mcpCatalogQuery.data}
+        mcpCatalogEntries={taskCapabilityCatalogQuery.data?.selectable_builtin_mcps}
         selectableSkills={taskCapabilityCatalogQuery.data?.selectable_skills}
         remoteServers={remoteServersQuery.data}
-        externalMcpConfigs={externalMcpConfigsQuery.data}
+        externalMcpConfigs={(externalMcpConfigsQuery.data || []).filter((config) =>
+          (taskCapabilityCatalogQuery.data?.selectable_external_mcps || []).some(
+            (item) => item.id === config.id,
+          ),
+        )}
         runtimeEnvironment={projectRuntimeEnvironmentQuery.data}
         runtimeEnvironmentLoading={projectRuntimeEnvironmentQuery.isLoading}
         runtimeEnvironmentUnavailable={projectRuntimeEnvironmentQuery.isError}

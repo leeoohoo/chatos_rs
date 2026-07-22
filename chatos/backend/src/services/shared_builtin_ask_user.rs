@@ -4,7 +4,7 @@
 use async_trait::async_trait;
 use serde_json::json;
 
-use chatos_builtin_tools::{
+use chatos_mcp::{
     AskUserDecision as SharedAskUserDecision, AskUserPromptPayload as SharedAskUserPromptPayload,
     AskUserResponseSubmission as SharedAskUserResponseSubmission, AskUserStore,
     AskUserStreamChunkCallback,

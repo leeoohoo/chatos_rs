@@ -64,6 +64,18 @@ pub(super) async fn build_browser_vision_candidates(
         );
     }
 
+    if let Ok(config) = Config::try_get() {
+        let max_retries =
+            crate::services::model_runtime_resolver::resolve_model_request_max_retries(
+                config,
+                prepared.user_id.as_deref(),
+            )
+            .await;
+        for candidate in &mut out {
+            candidate.max_transient_retries.get_or_insert(max_retries);
+        }
+    }
+
     out
 }
 
@@ -105,6 +117,7 @@ fn browser_vision_candidate_from_model_cfg(
         api_key: runtime.api_key,
         base_url: runtime.base_url,
         request_body_limit_bytes: None,
+        max_transient_retries: None,
     })
 }
 
@@ -141,6 +154,7 @@ pub(super) fn browser_vision_candidate_from_caller_runtime(
         api_key,
         base_url,
         request_body_limit_bytes: runtime.request_body_limit_bytes,
+        max_transient_retries: runtime.max_transient_retries,
     })
 }
 
@@ -166,6 +180,7 @@ fn default_browser_vision_candidate(
         api_key: cfg.openai_api_key.clone(),
         base_url: cfg.openai_base_url.clone(),
         request_body_limit_bytes: None,
+        max_transient_retries: None,
     })
 }
 

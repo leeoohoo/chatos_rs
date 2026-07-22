@@ -55,11 +55,19 @@ pub static PROJECT_REQUIREMENT_EXECUTION_PLANNER_AGENT_DESCRIPTOR: AgentDescript
         true,
     );
 
+pub static TASK_RUNNER_PLAN_AGENT_DESCRIPTOR: AgentDescriptor = AgentDescriptor::new(
+    SystemAgentKey::TaskRunnerPlanPhase,
+    "Task Runner Planning Agent",
+    "task-runner",
+    "Runs non-mutating Task Runner planning tasks with a planning-specific Prompt and capability boundary.",
+    true,
+);
+
 pub static TASK_RUNNER_AGENT_DESCRIPTOR: AgentDescriptor = AgentDescriptor::new(
     SystemAgentKey::TaskRunnerRunPhase,
-    "Task Runner Agent",
+    "Task Runner Execution Agent",
     "task-runner",
-    "Runs both default and chatos_plan task profiles through the same model and tool loop.",
+    "Executes implementation, testing, repair, deployment, and other mutating Task Runner work.",
     true,
 );
 
@@ -120,10 +128,11 @@ pub static MEMORY_ENGINE_THREAD_REPAIR_AGENT_DESCRIPTOR: AgentDescriptor = Agent
     false,
 );
 
-static SYSTEM_AGENT_CATALOG: [&AgentDescriptor; 11] = [
+static SYSTEM_AGENT_CATALOG: [&AgentDescriptor; 12] = [
     &CHATOS_CONVERSATION_AGENT_DESCRIPTOR,
     &CHATOS_PLANNING_AGENT_DESCRIPTOR,
     &PROJECT_REQUIREMENT_EXECUTION_PLANNER_AGENT_DESCRIPTOR,
+    &TASK_RUNNER_PLAN_AGENT_DESCRIPTOR,
     &TASK_RUNNER_AGENT_DESCRIPTOR,
     &PROJECT_MANAGEMENT_AGENT_DESCRIPTOR,
     &LOCAL_CONNECTOR_COMMAND_APPROVAL_AGENT_DESCRIPTOR,
@@ -145,6 +154,7 @@ pub fn agent_descriptor(key: SystemAgentKey) -> &'static AgentDescriptor {
         SystemAgentKey::ProjectRequirementExecutionPlannerAgent => {
             &PROJECT_REQUIREMENT_EXECUTION_PLANNER_AGENT_DESCRIPTOR
         }
+        SystemAgentKey::TaskRunnerPlanPhase => &TASK_RUNNER_PLAN_AGENT_DESCRIPTOR,
         SystemAgentKey::TaskRunnerRunPhase => &TASK_RUNNER_AGENT_DESCRIPTOR,
         SystemAgentKey::ProjectManagementAgent => &PROJECT_MANAGEMENT_AGENT_DESCRIPTOR,
         SystemAgentKey::LocalConnectorCommandApprovalAgent => {
@@ -178,7 +188,7 @@ mod tests {
             .collect::<Vec<_>>();
         let unique = keys.iter().copied().collect::<HashSet<_>>();
 
-        assert_eq!(keys.len(), 11);
+        assert_eq!(keys.len(), 12);
         assert_eq!(unique.len(), keys.len());
         assert_eq!(
             keys,
@@ -186,6 +196,7 @@ mod tests {
                 "chatos_conversation_agent",
                 "chatos_planning_agent",
                 "project_requirement_execution_planner_agent",
+                "task_runner_plan_phase",
                 "task_runner_run_phase",
                 "project_management_agent",
                 "local_connector_command_approval_agent",

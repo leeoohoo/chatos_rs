@@ -3,6 +3,7 @@
 
 use axum::extract::{Path, State};
 use axum::Json;
+use chatos_plugin_management_sdk::SystemAgentKey;
 use serde::Serialize;
 use serde_json::Value;
 
@@ -55,12 +56,19 @@ pub(super) async fn get_agent_tools(
             )
         })?;
     let request_id = format!("local_tool_catalog_{session_id}");
+    let agent_key = if settings.plan_mode_enabled {
+        SystemAgentKey::ChatosPlanningAgent
+    } else {
+        SystemAgentKey::ChatosConversationAgent
+    };
     let prepared = prepare_local_chat_tools(
         &runtime,
         owner.owner_user_id.as_str(),
         request_id.as_str(),
         &project,
         &settings,
+        agent_key,
+        false,
     )
     .await
     .map_err(|error| LocalRuntimeApiError::conflict("local_runtime_tools_unavailable", error))?;

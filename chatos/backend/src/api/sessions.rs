@@ -11,7 +11,7 @@ mod history;
 mod history_compact;
 mod history_display;
 mod history_process;
-mod history_process_support;
+pub(crate) mod history_process_support;
 mod mcp_server_handlers;
 mod message_handlers;
 mod review_handlers;

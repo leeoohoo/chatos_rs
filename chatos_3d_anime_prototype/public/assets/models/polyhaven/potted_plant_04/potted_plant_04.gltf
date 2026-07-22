@@ -1,0 +1,391 @@
+{
+  "asset": {
+    "generator": "Khronos glTF Blender I/O v4.1.63",
+    "version": "2.0"
+  },
+  "scene": 0,
+  "scenes": [
+    {
+      "name": "Scene",
+      "nodes": [
+        0,
+        1,
+        2,
+        3
+      ]
+    }
+  ],
+  "nodes": [
+    {
+      "mesh": 0,
+      "name": "potted_plant_04_ground"
+    },
+    {
+      "mesh": 1,
+      "name": "potted_plant_04_dirt"
+    },
+    {
+      "mesh": 2,
+      "name": "potted_plant_04_plant"
+    },
+    {
+      "mesh": 3,
+      "name": "potted_plant_04_pot"
+    }
+  ],
+  "materials": [
+    {
+      "doubleSided": true,
+      "name": "potted_plant_04",
+      "normalTexture": {
+        "index": 0
+      },
+      "pbrMetallicRoughness": {
+        "baseColorTexture": {
+          "index": 1
+        },
+        "metallicFactor": 0,
+        "metallicRoughnessTexture": {
+          "index": 2
+        }
+      }
+    }
+  ],
+  "meshes": [
+    {
+      "name": "HaworthiaScan_Model_2.001",
+      "primitives": [
+        {
+          "attributes": {
+            "POSITION": 0,
+            "NORMAL": 1,
+            "TEXCOORD_0": 2
+          },
+          "indices": 3,
+          "material": 0
+        }
+      ]
+    },
+    {
+      "name": "Plane.118",
+      "primitives": [
+        {
+          "attributes": {
+            "POSITION": 4,
+            "NORMAL": 5,
+            "TEXCOORD_0": 6
+          },
+          "indices": 7,
+          "material": 0
+        }
+      ]
+    },
+    {
+      "name": "Plane.116",
+      "primitives": [
+        {
+          "attributes": {
+            "POSITION": 8,
+            "NORMAL": 9,
+            "TEXCOORD_0": 10
+          },
+          "indices": 11,
+          "material": 0
+        }
+      ]
+    },
+    {
+      "name": "Mesh",
+      "primitives": [
+        {
+          "attributes": {
+            "POSITION": 12,
+            "NORMAL": 13,
+            "TEXCOORD_0": 14
+          },
+          "indices": 15,
+          "material": 0
+        }
+      ]
+    }
+  ],
+  "textures": [
+    {
+      "sampler": 0,
+      "source": 0
+    },
+    {
+      "sampler": 0,
+      "source": 1
+    },
+    {
+      "sampler": 0,
+      "source": 2
+    }
+  ],
+  "images": [
+    {
+      "mimeType": "image/jpeg",
+      "name": "potted_plant_04_nor_gl",
+      "uri": "textures/potted_plant_04_nor_gl_1k.jpg"
+    },
+    {
+      "mimeType": "image/jpeg",
+      "name": "potted_plant_04_diff",
+      "uri": "textures/potted_plant_04_diff_1k.jpg"
+    },
+    {
+      "mimeType": "image/jpeg",
+      "name": "potted_plant_04_rough",
+      "uri": "textures/potted_plant_04_arm_1k.jpg"
+    }
+  ],
+  "accessors": [
+    {
+      "bufferView": 0,
+      "componentType": 5126,
+      "count": 846,
+      "max": [
+        0.0730348601937294,
+        0.15447069704532623,
+        0.0733804777264595
+      ],
+      "min": [
+        -0.07429894804954529,
+        0.13273943960666656,
+        -0.07550132274627686
+      ],
+      "type": "VEC3"
+    },
+    {
+      "bufferView": 1,
+      "componentType": 5126,
+      "count": 846,
+      "type": "VEC3"
+    },
+    {
+      "bufferView": 2,
+      "componentType": 5126,
+      "count": 846,
+      "type": "VEC2"
+    },
+    {
+      "bufferView": 3,
+      "componentType": 5123,
+      "count": 4140,
+      "type": "SCALAR"
+    },
+    {
+      "bufferView": 4,
+      "componentType": 5126,
+      "count": 320,
+      "max": [
+        0.07750431448221207,
+        0.15339542925357819,
+        0.07759721577167511
+      ],
+      "min": [
+        -0.07887636125087738,
+        0.13423533737659454,
+        -0.07863402366638184
+      ],
+      "type": "VEC3"
+    },
+    {
+      "bufferView": 5,
+      "componentType": 5126,
+      "count": 320,
+      "type": "VEC3"
+    },
+    {
+      "bufferView": 6,
+      "componentType": 5126,
+      "count": 320,
+      "type": "VEC2"
+    },
+    {
+      "bufferView": 7,
+      "componentType": 5123,
+      "count": 1233,
+      "type": "SCALAR"
+    },
+    {
+      "bufferView": 8,
+      "componentType": 5126,
+      "count": 2241,
+      "max": [
+        0.08372806012630463,
+        0.26783305406570435,
+        0.1008082702755928
+      ],
+      "min": [
+        -0.06238364055752754,
+        0.13549184799194336,
+        -0.07231908291578293
+      ],
+      "type": "VEC3"
+    },
+    {
+      "bufferView": 9,
+      "componentType": 5126,
+      "count": 2241,
+      "type": "VEC3"
+    },
+    {
+      "bufferView": 10,
+      "componentType": 5126,
+      "count": 2241,
+      "type": "VEC2"
+    },
+    {
+      "bufferView": 11,
+      "componentType": 5123,
+      "count": 10182,
+      "type": "SCALAR"
+    },
+    {
+      "bufferView": 12,
+      "componentType": 5126,
+      "count": 2475,
+      "max": [
+        0.08394316583871841,
+        0.15544982254505157,
+        0.08394315838813782
+      ],
+      "min": [
+        -0.08394315838813782,
+        0.0003753884811885655,
+        -0.08394315838813782
+      ],
+      "type": "VEC3"
+    },
+    {
+      "bufferView": 13,
+      "componentType": 5126,
+      "count": 2475,
+      "type": "VEC3"
+    },
+    {
+      "bufferView": 14,
+      "componentType": 5126,
+      "count": 2475,
+      "type": "VEC2"
+    },
+    {
+      "bufferView": 15,
+      "componentType": 5123,
+      "count": 11232,
+      "type": "SCALAR"
+    }
+  ],
+  "bufferViews": [
+    {
+      "buffer": 0,
+      "byteLength": 10152,
+      "byteOffset": 0,
+      "target": 34962
+    },
+    {
+      "buffer": 0,
+      "byteLength": 10152,
+      "byteOffset": 10152,
+      "target": 34962
+    },
+    {
+      "buffer": 0,
+      "byteLength": 6768,
+      "byteOffset": 20304,
+      "target": 34962
+    },
+    {
+      "buffer": 0,
+      "byteLength": 8280,
+      "byteOffset": 27072,
+      "target": 34963
+    },
+    {
+      "buffer": 0,
+      "byteLength": 3840,
+      "byteOffset": 35352,
+      "target": 34962
+    },
+    {
+      "buffer": 0,
+      "byteLength": 3840,
+      "byteOffset": 39192,
+      "target": 34962
+    },
+    {
+      "buffer": 0,
+      "byteLength": 2560,
+      "byteOffset": 43032,
+      "target": 34962
+    },
+    {
+      "buffer": 0,
+      "byteLength": 2466,
+      "byteOffset": 45592,
+      "target": 34963
+    },
+    {
+      "buffer": 0,
+      "byteLength": 26892,
+      "byteOffset": 48060,
+      "target": 34962
+    },
+    {
+      "buffer": 0,
+      "byteLength": 26892,
+      "byteOffset": 74952,
+      "target": 34962
+    },
+    {
+      "buffer": 0,
+      "byteLength": 17928,
+      "byteOffset": 101844,
+      "target": 34962
+    },
+    {
+      "buffer": 0,
+      "byteLength": 20364,
+      "byteOffset": 119772,
+      "target": 34963
+    },
+    {
+      "buffer": 0,
+      "byteLength": 29700,
+      "byteOffset": 140136,
+      "target": 34962
+    },
+    {
+      "buffer": 0,
+      "byteLength": 29700,
+      "byteOffset": 169836,
+      "target": 34962
+    },
+    {
+      "buffer": 0,
+      "byteLength": 19800,
+      "byteOffset": 199536,
+      "target": 34962
+    },
+    {
+      "buffer": 0,
+      "byteLength": 22464,
+      "byteOffset": 219336,
+      "target": 34963
+    }
+  ],
+  "samplers": [
+    {
+      "magFilter": 9729,
+      "minFilter": 9987
+    }
+  ],
+  "buffers": [
+    {
+      "byteLength": 241800,
+      "uri": "potted_plant_04.bin"
+    }
+  ]
+}

@@ -20,7 +20,8 @@ use crate::services::runtime_guidance_manager::runtime_guidance_manager;
 
 use super::contracts::{CreateMessageRequest, PageQuery};
 use super::history::{
-    build_turn_display_messages, compact_messages_for_display, parse_bool_query_flag,
+    build_turn_display_messages_with_process_records, compact_messages_for_display,
+    parse_bool_query_flag,
 };
 use super::history_process::find_user_index_by_turn_id;
 use super::support::list_all_session_messages;
@@ -137,7 +138,22 @@ pub(super) async fn get_session_turn_display_messages(
                 return (StatusCode::OK, Json(Value::Array(Vec::new())));
             };
 
-            let turn_messages = build_turn_display_messages(&messages, user_index);
+            let turn_id = crate::core::messages::message_turn_id(&messages[user_index])
+                .map(ToOwned::to_owned);
+            let process_records = match turn_id.as_deref() {
+                Some(turn_id) => conversation_messages::list_turn_process_messages(
+                    conversation_id.as_str(),
+                    turn_id,
+                )
+                .await
+                .unwrap_or_default(),
+                None => Vec::new(),
+            };
+            let turn_messages = build_turn_display_messages_with_process_records(
+                &messages,
+                user_index,
+                process_records.as_slice(),
+            );
             let out: Vec<Value> = turn_messages
                 .into_iter()
                 .map(|message| {
@@ -170,7 +186,17 @@ pub(super) async fn get_session_turn_display_messages_by_turn(
                 return (StatusCode::OK, Json(Value::Array(Vec::new())));
             };
 
-            let turn_messages = build_turn_display_messages(&messages, user_index);
+            let process_records = conversation_messages::list_turn_process_messages(
+                conversation_id.as_str(),
+                turn_id.as_str(),
+            )
+            .await
+            .unwrap_or_default();
+            let turn_messages = build_turn_display_messages_with_process_records(
+                &messages,
+                user_index,
+                process_records.as_slice(),
+            );
             let out: Vec<Value> = turn_messages
                 .into_iter()
                 .map(|message| {

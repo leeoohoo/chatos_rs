@@ -8,6 +8,11 @@ mod tests;
 
 use crate::core::chat_runtime::{metadata_string, ChatRuntimeMetadata};
 use crate::core::messages::ensure_message_metadata_object;
+use crate::core::task_runner_callback_display::{
+    detect_task_runner_callback_language, sanitize_user_visible_callback_detail,
+    summarize_task_runner_callback_detail, task_runner_callback_completion_detail,
+    task_runner_callback_detail_footer, TaskRunnerCallbackLanguage,
+};
 use crate::models::message::Message;
 use crate::models::session::Session;
 use crate::services::realtime::publish_chat_stream_event;
@@ -91,7 +96,6 @@ pub(super) fn apply_task_runner_callback_to_user_message(
             );
             terminal_task_ids.insert(payload.task_id.clone());
             succeeded_task_ids.insert(payload.task_id.clone());
-            upsert_string(task_runner_meta, "overall_status", "completed");
         }
         "task.failed" => {
             created_task_ids.insert(payload.task_id.clone());
@@ -106,7 +110,6 @@ pub(super) fn apply_task_runner_callback_to_user_message(
             );
             terminal_task_ids.insert(payload.task_id.clone());
             failed_task_ids.insert(payload.task_id.clone());
-            upsert_string(task_runner_meta, "overall_status", "completed");
         }
         "task.blocked" => {
             created_task_ids.insert(payload.task_id.clone());
@@ -121,7 +124,6 @@ pub(super) fn apply_task_runner_callback_to_user_message(
             );
             terminal_task_ids.insert(payload.task_id.clone());
             blocked_task_ids.insert(payload.task_id.clone());
-            upsert_string(task_runner_meta, "overall_status", "completed");
         }
         "task.cancelled" => {
             created_task_ids.insert(payload.task_id.clone());
@@ -136,10 +138,23 @@ pub(super) fn apply_task_runner_callback_to_user_message(
             );
             terminal_task_ids.insert(payload.task_id.clone());
             cancelled_task_ids.insert(payload.task_id.clone());
-            upsert_string(task_runner_meta, "overall_status", "completed");
         }
         _ => {}
     }
+
+    let all_created_tasks_terminal = !created_task_ids.is_empty()
+        && created_task_ids
+            .iter()
+            .all(|task_id| terminal_task_ids.contains(task_id));
+    upsert_string(
+        task_runner_meta,
+        "overall_status",
+        if all_created_tasks_terminal {
+            "completed"
+        } else {
+            "processing"
+        },
+    );
 
     write_string_set(task_runner_meta, "created_task_ids", &created_task_ids);
     write_string_set(task_runner_meta, "running_task_ids", &running_task_ids);
@@ -220,19 +235,107 @@ fn normalized_callback_text(value: Option<&str>) -> Option<&str> {
     value.map(str::trim).filter(|value| !value.is_empty())
 }
 
+fn task_runner_callback_language(
+    payload: &TaskRunnerCallbackRequest,
+) -> TaskRunnerCallbackLanguage {
+    let task_language_text = format!("{}\n{}", payload.task_title, payload.task_objective);
+    detect_task_runner_callback_language(
+        task_language_text.as_str(),
+        Some(payload.fallback_locale.as_str()),
+    )
+}
+
 fn preferred_callback_detail(
     payload: &TaskRunnerCallbackRequest,
+    language: TaskRunnerCallbackLanguage,
 ) -> Option<(&'static str, &'static str, &str)> {
     if let Some(value) = normalized_callback_text(payload.result_summary.as_deref()) {
-        return Some(("结果摘要", "result_summary", value));
+        return Some((
+            if language.is_english() {
+                "Result summary"
+            } else {
+                "结果摘要"
+            },
+            "result_summary",
+            value,
+        ));
     }
     if let Some(value) = normalized_callback_text(payload.report_content.as_deref()) {
-        return Some(("关键输出", "report_content", value));
+        return Some((
+            if language.is_english() {
+                "Key output"
+            } else {
+                "关键输出"
+            },
+            "report_content",
+            value,
+        ));
     }
     if let Some(value) = normalized_callback_text(payload.error_message.as_deref()) {
-        return Some(("错误信息", "error_message", value));
+        return Some((
+            if language.is_english() {
+                "Error"
+            } else {
+                "错误信息"
+            },
+            "error_message",
+            value,
+        ));
     }
     None
+}
+
+fn user_visible_callback_detail(
+    payload: &TaskRunnerCallbackRequest,
+    language: TaskRunnerCallbackLanguage,
+) -> Option<(&'static str, &'static str, String)> {
+    if payload.event == "task.completed" {
+        let candidate = normalized_callback_text(payload.result_summary.as_deref())
+            .map(|value| ("result_summary", value))
+            .or_else(|| {
+                normalized_callback_text(payload.report_content.as_deref())
+                    .map(|value| ("report_content", value))
+            });
+        let (detail_source, summary) = candidate
+            .and_then(|(source, value)| {
+                summarize_task_runner_callback_detail(value, language)
+                    .map(|summary| (source, summary))
+            })
+            .or_else(|| {
+                summarize_task_runner_callback_detail(payload.task_objective.as_str(), language)
+                    .map(|summary| ("task_objective", summary))
+            })
+            .unwrap_or_else(|| {
+                (
+                    "completion_receipt",
+                    task_runner_callback_completion_detail(language).to_string(),
+                )
+            });
+        let detail = format!(
+            "{}\n{}",
+            summary.trim(),
+            task_runner_callback_detail_footer(language)
+        );
+        return Some((
+            if language.is_english() {
+                "Result summary"
+            } else {
+                "结果摘要"
+            },
+            detail_source,
+            detail,
+        ));
+    }
+    if payload.event == "task.cancelled" {
+        return None;
+    }
+    preferred_callback_detail(payload, language).map(|(label, source, detail)| {
+        (
+            label,
+            source,
+            sanitize_user_visible_callback_detail(detail, language),
+        )
+    })
 }
 
 pub(super) fn is_task_runner_terminal_event(event: &str) -> bool {
@@ -342,18 +445,17 @@ pub(super) fn build_task_runner_callback_assistant_message_with_contact(
     if let Some(callback_at) = normalize_callback_value(payload.callback_at.as_deref()) {
         upsert_string(task_runner_meta, "callback_at", callback_at.as_str());
     }
-    if let Some(result_summary) = normalized_callback_text(payload.result_summary.as_deref()) {
-        upsert_string(task_runner_meta, "result_summary", result_summary);
-    }
-    if let Some(error_message) = normalized_callback_text(payload.error_message.as_deref()) {
-        upsert_string(task_runner_meta, "error_message", error_message);
-    }
-    if let Some(report_content) = normalized_callback_text(payload.report_content.as_deref()) {
-        upsert_string(task_runner_meta, "report_excerpt", report_content);
-    }
-    if let Some((_, detail_source, detail)) = preferred_callback_detail(payload) {
+    let callback_language = task_runner_callback_language(payload);
+    if let Some((_, detail_source, detail)) =
+        user_visible_callback_detail(payload, callback_language)
+    {
+        match detail_source {
+            "error_message" => upsert_string(task_runner_meta, "error_message", detail.as_str()),
+            "report_content" => upsert_string(task_runner_meta, "report_excerpt", detail.as_str()),
+            _ => upsert_string(task_runner_meta, "result_summary", detail.as_str()),
+        }
         upsert_string(task_runner_meta, "detail_source", detail_source);
-        upsert_string(task_runner_meta, "detail_preview", detail);
+        upsert_string(task_runner_meta, "detail_preview", detail.as_str());
     }
     message
 }
@@ -372,15 +474,46 @@ fn build_task_runner_callback_message_id(payload: &TaskRunnerCallbackRequest) ->
 
 fn build_task_runner_callback_message_content(payload: &TaskRunnerCallbackRequest) -> String {
     let title = payload.task_title.trim();
-    let headline = match payload.event.as_str() {
-        "task.completed" => format!("任务「{}」已完成", title),
-        "task.failed" => format!("任务「{}」执行失败", title),
-        "task.blocked" => format!("任务「{}」当前被阻塞", title),
-        "task.cancelled" => format!("任务「{}」已取消", title),
-        _ => format!("任务「{}」状态更新", title),
+    let language = task_runner_callback_language(payload);
+    let headline = match (language, payload.event.as_str()) {
+        (TaskRunnerCallbackLanguage::EnUs, "task.completed") => {
+            format!("Task “{title}” completed")
+        }
+        (TaskRunnerCallbackLanguage::EnUs, "task.failed") => {
+            format!("Task “{title}” failed")
+        }
+        (TaskRunnerCallbackLanguage::EnUs, "task.blocked") => {
+            format!("Task “{title}” is blocked")
+        }
+        (TaskRunnerCallbackLanguage::EnUs, "task.cancelled") => {
+            format!("Task “{title}” was cancelled")
+        }
+        (TaskRunnerCallbackLanguage::EnUs, _) => {
+            format!("Task “{title}” status updated")
+        }
+        (TaskRunnerCallbackLanguage::ZhCn, "task.completed") => {
+            format!("任务「{title}」已完成")
+        }
+        (TaskRunnerCallbackLanguage::ZhCn, "task.failed") => {
+            format!("任务「{title}」执行失败")
+        }
+        (TaskRunnerCallbackLanguage::ZhCn, "task.blocked") => {
+            format!("任务「{title}」当前被阻塞")
+        }
+        (TaskRunnerCallbackLanguage::ZhCn, "task.cancelled") => {
+            format!("任务「{title}」已取消")
+        }
+        (TaskRunnerCallbackLanguage::ZhCn, _) => format!("任务「{title}」状态更新"),
     };
-    match preferred_callback_detail(payload) {
-        Some((label, _, detail)) => format!("{headline}\n\n{label}：\n{detail}"),
+    match user_visible_callback_detail(payload, language) {
+        Some((label, _, detail)) => {
+            let separator = if language.is_english() { ":" } else { "：" };
+            if detail.is_empty() {
+                headline
+            } else {
+                format!("{headline}\n\n{label}{separator}\n{detail}")
+            }
+        }
         None => headline,
     }
 }

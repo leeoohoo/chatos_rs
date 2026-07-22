@@ -6,6 +6,7 @@ use axum::http::HeaderMap;
 use axum::Json;
 use serde::Serialize;
 
+use crate::models::DEFAULT_MODEL_REQUEST_MAX_RETRIES;
 use crate::state::AppState;
 use crate::store::now_rfc3339;
 use chatos_plugin_management_sdk::normalize_agent_prompt_vendor;
@@ -37,6 +38,7 @@ pub struct InternalModelRuntimeConfigResponse {
 #[derive(Debug, Serialize)]
 pub struct InternalUserModelSettingsResponse {
     pub user_id: String,
+    pub model_request_max_retries: i64,
     pub memory_summary_model_config_id: Option<String>,
     pub memory_summary_thinking_level: Option<String>,
     pub project_management_agent_model_config_id: Option<String>,
@@ -74,6 +76,7 @@ pub async fn get_user_model_settings(
     Ok(Json(match settings {
         Some(settings) => InternalUserModelSettingsResponse {
             user_id: settings.user_id,
+            model_request_max_retries: settings.model_request_max_retries,
             memory_summary_model_config_id: settings.memory_summary_model_config_id,
             memory_summary_thinking_level: settings.memory_summary_thinking_level,
             project_management_agent_model_config_id: settings
@@ -88,6 +91,7 @@ pub async fn get_user_model_settings(
         },
         None => InternalUserModelSettingsResponse {
             user_id: user_id.to_string(),
+            model_request_max_retries: DEFAULT_MODEL_REQUEST_MAX_RETRIES,
             memory_summary_model_config_id: None,
             memory_summary_thinking_level: None,
             project_management_agent_model_config_id: None,

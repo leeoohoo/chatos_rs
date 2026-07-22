@@ -54,6 +54,13 @@ impl RunService {
                 }
             }
         }
+        if let Err(err) = self.release_sandboxes_for_terminal_run(run).await {
+            warn!(
+                run_id = run.id.as_str(),
+                error = err.as_str(),
+                "failed to release sandboxes after task failed before execution"
+            );
+        }
         if !task_already_cancelled {
             self.try_send_terminal_callback(task.id.as_str(), run).await;
         }

@@ -99,9 +99,27 @@ describe('CloudProjectRuntimeEnvironmentPanel', () => {
         env_vars: {},
       }],
     };
+    const pendingResponse = {
+      ...response,
+      environment: { ...response.environment, status: 'pending_image_build' },
+      images: response.images.map((image) => ({ ...image, status: 'building' })),
+    };
+    const readyResponse = {
+      ...response,
+      images: response.images.map((image) => ({
+        ...image,
+        image_ref: 'chatos-local-project-app',
+        status: 'running',
+      })),
+    };
+    const generateProjectRuntimeEnvironmentImage = vi.fn(async () => pendingResponse);
     const client = {
-      getProjectRuntimeEnvironment: vi.fn(async () => response),
+      getProjectRuntimeEnvironment: vi.fn()
+        .mockResolvedValueOnce(response)
+        .mockResolvedValue(readyResponse),
+      getProjectRuntimeEnvironmentProgress: vi.fn(async () => ({ status: 'succeeded' })),
       analyzeProjectRuntimeEnvironment: vi.fn(async () => response),
+      generateProjectRuntimeEnvironmentImage,
     } as unknown as ApiClient;
 
     render(
@@ -120,6 +138,14 @@ describe('CloudProjectRuntimeEnvironmentPanel', () => {
     expect(screen.getByRole('checkbox', { name: '已启用沙箱' })).toBeChecked();
     expect(screen.getByText('沙箱运行环境')).toBeInTheDocument();
     expect(screen.getByText('本地沙箱构建计划')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '构建并启动本地环境' }));
+    await waitFor(() => {
+      expect(generateProjectRuntimeEnvironmentImage).toHaveBeenCalledWith(
+        'local-project-1',
+        'local-image-1',
+      );
+    });
+    expect(await screen.findByRole('button', { name: '本地环境已启动' })).toBeDisabled();
     fireEvent.click(screen.getByRole('button', { name: '查看 Dockerfile' }));
     expect(screen.getByText('FROM node:22', { exact: false })).toBeInTheDocument();
   });
@@ -155,6 +181,7 @@ describe('CloudProjectRuntimeEnvironmentPanel', () => {
     );
 
     expect(await screen.findByRole('alert')).toHaveTextContent('缺少环境初始化模型。');
+    expect(screen.getByRole('button', { name: '暂无可准备镜像' })).toBeDisabled();
     fireEvent.click(screen.getByRole('button', { name: '检查配置并初始化' }));
 
     await waitFor(() => {
@@ -224,7 +251,8 @@ describe('CloudProjectRuntimeEnvironmentPanel', () => {
         'image-plan-1',
       );
     });
-    expect(await screen.findByRole('button', { name: '准备全部镜像' })).toBeInTheDocument();
+    const preparedButton = await screen.findByRole('button', { name: '全部镜像已准备' });
+    expect(preparedButton).toBeDisabled();
   });
 
   it('disables initialization while the backend is analyzing and surfaces failed build logs', async () => {

@@ -430,3 +430,100 @@ async fn lifecycle_starts_and_cleans_task_terminal() {
 
     fs::remove_dir_all(root.as_path()).expect("cleanup");
 }
+
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread")]
+async fn process_kill_terminates_nested_background_processes() {
+    let root = temp_test_dir("terminal-process-tree");
+    let project = root.join("apps").join("web");
+    fs::create_dir_all(project.as_path()).expect("create project");
+    let workspace = test_workspace(root.as_path());
+    let state = test_state_with_full_control_workspace(workspace);
+    let recorder = CommandHistoryRecorder {
+        state_path: root.join("state.json"),
+        state: Arc::new(RwLock::new(state.clone())),
+    };
+    let mut request = request_with_cwd_and_builtin_kinds("apps/web", "TerminalController");
+    request.headers.insert(
+        "x-task-runner-task-id".to_string(),
+        "task-process-tree".to_string(),
+    );
+
+    let started = call_builtin_compatible_local_tool(
+        &request,
+        &state,
+        "execute_command",
+        json!({
+            "path": ".",
+            "common": r#"sh -c 'sleep 30 & child=$!; printf "%s" "$child" > child.pid; wait'"#,
+            "background": true,
+        }),
+        &recorder,
+    )
+    .await
+    .expect("start background process tree")
+    .expect("background process result");
+    let structured = code_maintainer_structured_result(started);
+    let terminal_id = structured
+        .get("terminal_id")
+        .and_then(Value::as_str)
+        .expect("background terminal id")
+        .to_string();
+
+    let child_pid_path = project.join("child.pid");
+    for _ in 0..100 {
+        if child_pid_path.exists() {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    let child_pid = fs::read_to_string(child_pid_path.as_path())
+        .expect("nested child pid file")
+        .trim()
+        .parse::<i32>()
+        .expect("nested child pid");
+    assert!(unix_process_exists(child_pid));
+
+    let killed = call_builtin_compatible_local_tool(
+        &request,
+        &state,
+        "process_kill",
+        json!({ "terminal_id": terminal_id }),
+        &recorder,
+    )
+    .await
+    .expect("kill background process tree")
+    .expect("process kill result");
+    let structured = code_maintainer_structured_result(killed);
+    assert_eq!(
+        structured.get("killed").and_then(Value::as_bool),
+        Some(true)
+    );
+
+    for _ in 0..100 {
+        if !unix_process_exists(child_pid) {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    assert!(!unix_process_exists(child_pid));
+
+    let context = local_terminal_controller_context_for_root(
+        project.as_path(),
+        &request,
+        DEFAULT_TERMINAL_EXEC_TIMEOUT_MS,
+    );
+    LocalConnectorTerminalControllerStore
+        .kill_sessions_for_context(context)
+        .await
+        .expect("cleanup local terminal sessions");
+    fs::remove_dir_all(root.as_path()).expect("cleanup");
+}
+
+#[cfg(unix)]
+fn unix_process_exists(pid: i32) -> bool {
+    if unsafe { libc::kill(pid, 0) } == 0 {
+        return true;
+    }
+    std::io::Error::last_os_error().raw_os_error() != Some(libc::ESRCH)
+}

@@ -1,0 +1,8 @@
+@import './styles/00-foundation.css';
+@import './styles/10-chat-shell.css';
+@import './styles/20-workspaces.css';
+@import './styles/30-immersive.css';
+@import './styles/40-chat-screen.css';
+@import './styles/50-task-center.css';
+@import './styles/60-project-dossier.css';
+@import './styles/70-responsive.css';

@@ -6,7 +6,7 @@ use serde_json::{json, Value};
 use tracing::{info, warn};
 use uuid::Uuid;
 
-use chatos_builtin_tools::{
+use chatos_mcp::{
     TaskDraft as SharedTaskDraft, TaskManagerStore, TaskOutcomeItem as SharedTaskOutcomeItem,
     TaskStreamChunkCallback, TaskUpdatePatch as SharedTaskUpdatePatch, TASK_NOT_FOUND_ERR,
 };

@@ -71,18 +71,18 @@ pub async fn sync_model_settings(
     state: &AppState,
     settings: &UserModelSettingsRecord,
 ) -> Vec<String> {
+    let mut warnings = sync_task_runner_model_settings(state, settings).await;
     let Some(memory_engine_base_url) =
         normalized_url(state.config.memory_engine_base_url.as_deref())
     else {
-        return Vec::new();
+        return warnings;
     };
     let Some(operator_token) =
         normalized_text(state.config.memory_engine_operator_token.as_deref())
     else {
-        return vec!["memory_engine operator token is not configured".to_string()];
+        warnings.push("memory_engine operator token is not configured".to_string());
+        return warnings;
     };
-
-    let mut warnings = Vec::new();
     let owner_user_id = settings.user_id.as_str();
     let profiles = match list_memory_engine_model_profiles(
         state,
@@ -99,7 +99,8 @@ pub async fn sync_model_settings(
                 error = err.as_str(),
                 "load memory_engine model profiles for settings update failed"
             );
-            return vec![format!("memory_engine settings update failed: {err}")];
+            warnings.push(format!("memory_engine settings update failed: {err}"));
+            return warnings;
         }
     };
 
@@ -148,6 +149,7 @@ pub async fn sync_model_settings(
             "supports_responses": profile.get("supports_responses"),
             "temperature": profile.get("temperature"),
             "thinking_level": desired_thinking_level,
+            "model_request_max_retries": settings.model_request_max_retries,
             "is_default": desired_default,
             "enabled": profile.get("enabled"),
         });
@@ -177,6 +179,30 @@ pub async fn sync_model_settings(
         }
     }
 
+    warnings
+}
+
+async fn sync_task_runner_model_settings(
+    state: &AppState,
+    settings: &UserModelSettingsRecord,
+) -> Vec<String> {
+    let configs = match state
+        .store
+        .list_user_model_configs(Some(settings.user_id.as_str()))
+        .await
+    {
+        Ok(configs) => configs,
+        Err(err) => return vec![format!("task_runner settings update failed: {err}")],
+    };
+    let mut warnings = Vec::new();
+    for config in configs {
+        if let Err(err) = sync_task_runner_model_config(state, &config).await {
+            warnings.push(format!(
+                "task_runner retry setting update failed for {}: {err}",
+                config.id
+            ));
+        }
+    }
     warnings
 }
 
@@ -212,6 +238,10 @@ async fn sync_memory_engine_model_profile(
     } else {
         config.thinking_level.clone()
     };
+    let model_request_max_retries = settings
+        .as_ref()
+        .map(|settings| settings.model_request_max_retries)
+        .unwrap_or(crate::models::DEFAULT_MODEL_REQUEST_MAX_RETRIES);
 
     let payload = serde_json::json!({
         "id": config.id,
@@ -225,6 +255,7 @@ async fn sync_memory_engine_model_profile(
         "supports_responses": config.supports_responses,
         "temperature": config.temperature,
         "thinking_level": thinking_level,
+        "model_request_max_retries": model_request_max_retries,
         "is_default": is_default,
         "enabled": config.enabled,
     });
@@ -338,6 +369,12 @@ async fn sync_task_runner_model_config(
         return Ok(());
     };
 
+    let model_request_max_retries = state
+        .store
+        .get_user_model_settings(config.owner_user_id.as_str())
+        .await?
+        .map(|settings| settings.model_request_max_retries)
+        .unwrap_or(crate::models::DEFAULT_MODEL_REQUEST_MAX_RETRIES);
     let payload = serde_json::json!({
         "id": config.id,
         "owner_user_id": config.owner_user_id,
@@ -351,6 +388,7 @@ async fn sync_task_runner_model_config(
         "thinking_level": config.task_thinking_level,
         "temperature": config.temperature,
         "max_output_tokens": config.max_output_tokens,
+        "model_request_max_retries": model_request_max_retries,
         "supports_responses": config.supports_responses,
         "enabled": config.enabled,
     });

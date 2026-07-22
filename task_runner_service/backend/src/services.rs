@@ -87,6 +87,7 @@ mod sandbox_runtime;
 mod schedule_helpers;
 mod status_display;
 mod stream_events;
+mod system_mcp_adapter;
 mod task_dependencies;
 mod task_manager_bridge;
 mod task_memory;
@@ -104,6 +105,7 @@ use self::batch_ops::{
     summarize_batch_results,
 };
 use self::builtin_providers::{build_builtin_registry, DisabledBuiltinProvider};
+pub use self::chatos_callbacks::spawn_chatos_callback_reconciler;
 pub use self::chatos_message_tasks::{
     ChatosActiveMessageTaskSource, ChatosMessageModelConfigSummary, ChatosMessageRunDetail,
     ChatosMessageTaskDetail, ChatosMessageTaskGraph, ChatosMessageTaskGraphEdge,
@@ -132,6 +134,7 @@ const TASK_PROCESS_LOG_MAX_CHARS: usize = 200_000;
 enum RunTriggerSource {
     Manual,
     Scheduler,
+    Retry,
 }
 
 #[derive(Clone)]
@@ -169,6 +172,7 @@ pub struct RunService {
     plugin_management_client: Option<PluginManagementClient>,
     ask_user_prompt_service: AskUserPromptService,
     start_locks: Arc<parking_lot::Mutex<HashMap<String, Arc<AsyncMutex<()>>>>>,
+    callback_delivery_locks: Arc<parking_lot::Mutex<HashMap<String, Arc<AsyncMutex<()>>>>>,
 }
 
 #[derive(Clone)]

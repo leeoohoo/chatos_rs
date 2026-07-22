@@ -77,6 +77,20 @@ async fn updates_documents_and_rejects_dependency_cycles() {
     assert_eq!(updated.title, "Second updated");
     assert_eq!(updated.status, "in_progress");
 
+    let completed_requirement = database
+        .update_local_requirement(
+            "user-write",
+            first.id.as_str(),
+            UpdateLocalRequirementInput {
+                status: Some("completed".to_string()),
+                ..Default::default()
+            },
+        )
+        .await
+        .expect("normalize completed requirement")
+        .expect("completed requirement");
+    assert_eq!(completed_requirement.status, "done");
+
     let first_item = create_work_item(&database, second.id.as_str(), "First item").await;
     let second_item = create_work_item(&database, second.id.as_str(), "Second item").await;
     database
@@ -112,6 +126,20 @@ async fn updates_documents_and_rejects_dependency_cycles() {
         .expect("updated work item");
     assert_eq!(updated_item.status, "ready");
     assert_eq!(updated_item.tags, vec!["backend", "local"]);
+
+    let completed_item = database
+        .update_local_work_item(
+            "user-write",
+            first_item.id.as_str(),
+            UpdateLocalWorkItemInput {
+                status: Some("succeeded".to_string()),
+                ..Default::default()
+            },
+        )
+        .await
+        .expect("normalize completed work item")
+        .expect("completed work item");
+    assert_eq!(completed_item.status, "done");
 
     let document = database
         .upsert_local_requirement_document(document_input(second.id.as_str(), None, "v1"))

@@ -12,6 +12,7 @@ import {
   readProjectRunnerBoundTerminal,
   readProjectRunnerDispatchTarget,
   removeProjectRunnerContactRow,
+  subscribeProjectRunnerContactRows,
   syncProjectRunnerContactRows,
   upsertProjectRunnerContactRow,
 } from './projectRunner';
@@ -188,6 +189,33 @@ describe('domain/projectRunner', () => {
       },
     ]);
     expect(listProjectContacts).toHaveBeenCalledTimes(1);
+  });
+
+  it('notifies mounted consumers when another project contact surface updates the cache', async () => {
+    const listProjectContacts = vi.fn(async () => []);
+    const client = { listProjectContacts };
+    const listener = vi.fn();
+    const unsubscribe = subscribeProjectRunnerContactRows(client, 'project_1', listener);
+
+    syncProjectRunnerContactRows(client, 'project_1', [
+      {
+        contact_id: 'contact_1',
+        agent_id: 'agent_1',
+        agent_name_snapshot: 'Agent One',
+      },
+    ]);
+
+    expect(listener).toHaveBeenCalledWith([
+      {
+        contact_id: 'contact_1',
+        agent_id: 'agent_1',
+        agent_name_snapshot: 'Agent One',
+      },
+    ]);
+
+    unsubscribe();
+    syncProjectRunnerContactRows(client, 'project_1', []);
+    expect(listener).toHaveBeenCalledTimes(1);
   });
 
   it('normalizes runtime root paths, bound terminal state and dispatch terminal metadata', () => {

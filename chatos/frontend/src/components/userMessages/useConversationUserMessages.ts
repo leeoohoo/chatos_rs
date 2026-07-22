@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { useI18n } from '../../i18n/I18nProvider';
 import { useApiClient } from '../../lib/api/ApiClientContext';
@@ -21,7 +21,10 @@ const EXTERNAL_REFRESH_RETRY_DELAYS_MS = [600, 1400, 3000, 5000];
 interface UseConversationUserMessagesOptions {
   refreshKey?: string | number | null;
   refreshDelayMs?: number;
+  liveMessages?: Message[];
 }
+
+const EMPTY_LIVE_MESSAGES: Message[] = [];
 
 const readRecord = (value: unknown): Record<string, unknown> | null => (
   value && typeof value === 'object' && !Array.isArray(value)
@@ -244,6 +247,115 @@ const normalizeTurn = (
   };
 };
 
+const messageTurnId = (message: Message | null | undefined): string => {
+  const taskRunnerAsync = readRecord(message?.metadata?.task_runner_async);
+  return readString(message?.metadata?.conversation_turn_id)
+    || readString(taskRunnerAsync?.['source_turn_id'])
+    || readString(message?.id);
+};
+
+const messageTime = (message: Message): number => (
+  message.createdAt instanceof Date && Number.isFinite(message.createdAt.getTime())
+    ? message.createdAt.getTime()
+    : 0
+);
+
+export const buildLiveUserMessageTurns = (
+  sessionId: string | null | undefined,
+  messages: Message[],
+): UserMessageTurn[] => {
+  const normalizedSessionId = readString(sessionId);
+  if (!normalizedSessionId) {
+    return [];
+  }
+  const sessionMessages = messages.filter((message) => (
+    message?.sessionId === normalizedSessionId
+    && message.metadata?.historyProcessPlaceholder !== true
+  ));
+  const assistantByTurnId = new Map<string, Message>();
+  sessionMessages.forEach((message) => {
+    if (message.role !== 'assistant') {
+      return;
+    }
+    const turnId = messageTurnId(message);
+    if (turnId) {
+      assistantByTurnId.set(turnId, message);
+    }
+  });
+  return sessionMessages
+    .filter((message) => message.role === 'user')
+    .map((userMessage) => {
+      const turnId = messageTurnId(userMessage);
+      const finalAssistantMessage = assistantByTurnId.get(turnId) || null;
+      return {
+        turnId,
+        userMessage,
+        finalAssistantMessage,
+        hasProcess: false,
+        toolCallCount: 0,
+        thinkingCount: 0,
+        processMessageCount: 0,
+        taskState: mergeTaskState(
+          taskStateFromMessage(userMessage),
+          taskStateFromMessage(finalAssistantMessage),
+        ),
+      };
+    })
+    .sort((left, right) => messageTime(right.userMessage) - messageTime(left.userMessage));
+};
+
+const mergeTurnTaskState = (
+  persisted: UserMessageTaskState,
+  live: UserMessageTaskState,
+): UserMessageTaskState => ({
+  hasTask: persisted.hasTask || live.hasTask,
+  running: persisted.running || live.running,
+  label: live.running ? live.label : persisted.label || live.label,
+  runningCount: Math.max(persisted.runningCount, live.runningCount),
+});
+
+export const mergeLiveUserMessageTurns = (
+  persistedItems: UserMessageTurn[],
+  liveItems: UserMessageTurn[],
+): UserMessageTurn[] => {
+  if (liveItems.length === 0) {
+    return persistedItems;
+  }
+  const liveByMessageId = new Map(
+    liveItems.map((item) => [item.userMessage.id, item]),
+  );
+  const liveByTurnId = new Map(
+    liveItems
+      .filter((item) => Boolean(readString(item.turnId)))
+      .map((item) => [readString(item.turnId), item]),
+  );
+  const consumedLiveIds = new Set<string>();
+  const mergedPersisted = persistedItems.map((persistedItem) => {
+    const liveItem = liveByMessageId.get(persistedItem.userMessage.id)
+      || liveByTurnId.get(readString(persistedItem.turnId));
+    if (!liveItem) {
+      return persistedItem;
+    }
+    consumedLiveIds.add(liveItem.userMessage.id);
+    return {
+      ...persistedItem,
+      finalAssistantMessage: persistedItem.finalAssistantMessage || liveItem.finalAssistantMessage,
+      hasProcess: persistedItem.hasProcess || liveItem.hasProcess,
+      toolCallCount: Math.max(persistedItem.toolCallCount, liveItem.toolCallCount),
+      thinkingCount: Math.max(persistedItem.thinkingCount, liveItem.thinkingCount),
+      processMessageCount: Math.max(
+        persistedItem.processMessageCount,
+        liveItem.processMessageCount,
+      ),
+      taskState: mergeTurnTaskState(persistedItem.taskState, liveItem.taskState),
+    };
+  });
+  const missingLiveItems = liveItems.filter(
+    (item) => !consumedLiveIds.has(item.userMessage.id),
+  );
+  return [...missingLiveItems, ...mergedPersisted];
+};
+
 export const useConversationUserMessages = (
   sessionId: string | null | undefined,
   options: UseConversationUserMessagesOptions = {},
@@ -252,6 +364,7 @@ export const useConversationUserMessages = (
   const apiClient = useApiClient();
   const externalRefreshKey = readRefreshKey(options.refreshKey);
   const externalRefreshDelayMs = resolveRefreshDelay(options.refreshDelayMs);
+  const liveMessages = options.liveMessages || EMPTY_LIVE_MESSAGES;
   const [items, setItems] = useState<UserMessageTurn[]>([]);
   const [nextBefore, setNextBefore] = useState<string | null>(null);
   const [hasMore, setHasMore] = useState(false);
@@ -462,8 +575,13 @@ export const useConversationUserMessages = (
     return loadPage(nextBefore, 'append');
   }, [loadPage, loadingMore, nextBefore]);
 
-  return {
+  const visibleItems = useMemo(() => mergeLiveUserMessageTurns(
     items,
+    buildLiveUserMessageTurns(sessionId, liveMessages),
+  ), [items, liveMessages, sessionId]);
+
+  return {
+    items: visibleItems,
     loading,
     loadingMore,
     error,

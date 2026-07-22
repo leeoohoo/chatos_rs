@@ -6,7 +6,9 @@ use std::sync::{
     Arc,
 };
 
-use chatos_agent::{TaskRunnerRunSpecInput, TASK_RUNNER_AGENT};
+use chatos_agent::{
+    TaskRunnerAgent, TaskRunnerRunSpecInput, TASK_RUNNER_AGENT, TASK_RUNNER_PLAN_AGENT,
+};
 use chatos_ai_runtime::{
     AiRuntimeOptions, AiTurnReport, MemoryRecordScope, MemoryScope, RuntimeCallbacks,
     TaskMemoryRuntimeConfig, TaskRunReport, TaskRunSpec, TaskRuntime, TaskRuntimeConfig,
@@ -51,9 +53,8 @@ mod callbacks;
 mod completion;
 mod setup;
 
-const PROJECT_MANAGEMENT_MCP_SERVER_NAME: &str = "project_management_service";
-
 pub(in crate::services) struct PreparedModelExecution {
+    agent: TaskRunnerAgent,
     run_spec: TaskRunSpec,
     runtime_config: TaskRuntimeConfig,
     mcp_builder: McpExecutorBuilder,
@@ -74,6 +75,7 @@ impl RunService {
         prerequisite_context: Vec<PrerequisiteTaskContext>,
         capability_policy: Option<TaskRunnerCapabilityPolicy>,
     ) {
+        let authoritative_policy = capability_policy.is_some();
         self.log_run_model_phase_start(
             &task,
             &model_config,
@@ -87,6 +89,7 @@ impl RunService {
                 &mut run,
                 effective_workspace_dir.as_str(),
                 &prerequisite_context,
+                authoritative_policy,
             )
             .await
         {

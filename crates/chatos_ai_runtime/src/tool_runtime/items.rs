@@ -242,15 +242,16 @@ pub fn merge_missing_tool_turn_items(
         }
     }
 
-    let mut existing_output_ids: HashSet<String> = items
+    let mut existing_output_indexes: HashMap<String, usize> = items
         .iter()
+        .enumerate()
         .filter(|item| {
-            item.get("type").and_then(|value| value.as_str()) == Some("function_call_output")
+            item.1.get("type").and_then(|value| value.as_str()) == Some("function_call_output")
         })
-        .filter_map(|item| {
+        .filter_map(|(index, item)| {
             item.get("call_id")
                 .and_then(|value| value.as_str())
-                .map(|value| value.to_string())
+                .map(|value| (value.to_string(), index))
         })
         .collect();
 
@@ -262,7 +263,14 @@ pub fn merge_missing_tool_turn_items(
         if call_id.is_empty() || !pending_call_ids.contains(call_id) {
             continue;
         }
-        if existing_output_ids.insert(call_id.to_string()) {
+        if let Some(index) = existing_output_indexes.get(call_id).copied() {
+            // Iterative context refresh may have rebuilt this output from memory after
+            // the cumulative history budget was already exhausted. The pending output
+            // is the authoritative result from the immediately preceding tool batch,
+            // so it must replace an older/sanitized copy instead of being discarded.
+            items[index] = item.clone();
+        } else {
+            existing_output_indexes.insert(call_id.to_string(), items.len());
             items.push(item.clone());
         }
     }

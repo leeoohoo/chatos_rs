@@ -56,6 +56,10 @@ impl TaskService {
         .await?;
         let schedule = sanitize_task_schedule_config(input.schedule.unwrap_or_default(), None)?;
         let mut mcp_config = sanitize_task_mcp_config(input.mcp_config.unwrap_or_default());
+        let agent_key = crate::models::task_runner_agent_key_for(
+            task_profile.as_str(),
+            mcp_config.requires_execution,
+        );
         let input_payload = input.input_payload;
         if let Some(workspace_dir) = normalized_optional(source_context.workspace_dir.clone()) {
             mcp_config.workspace_dir = Some(workspace_dir);
@@ -91,14 +95,20 @@ impl TaskService {
             mcp_config.default_remote_server_id = Some(remote_server_id.clone());
         }
         if passthrough_remote_server_id.is_none() {
-            self.validate_task_mcp_config(&mcp_config, creator, task_owner_user_id.as_deref())
-                .await?;
+            self.validate_task_mcp_config_for_agent(
+                &mcp_config,
+                creator,
+                task_owner_user_id.as_deref(),
+                agent_key,
+            )
+            .await?;
         } else {
             let centralized_policy = self
-                .validate_task_capability_selection(
+                .validate_task_capability_selection_for_agent(
                     &mcp_config,
                     creator,
                     task_owner_user_id.as_deref(),
+                    agent_key,
                 )
                 .await?;
             if !centralized_policy {
@@ -112,7 +122,7 @@ impl TaskService {
             self.validate_task_ephemeral_http_servers(&mcp_config)?;
         }
         if let Some(policy) = self
-            .resolve_task_runner_policy(creator, task_owner_user_id.as_deref())
+            .resolve_task_runner_policy_for_agent(creator, task_owner_user_id.as_deref(), agent_key)
             .await?
         {
             mcp_config.skill_policy_revision = Some(policy.policy_revision().to_string());

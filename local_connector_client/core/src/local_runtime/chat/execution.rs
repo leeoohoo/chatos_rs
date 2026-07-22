@@ -24,6 +24,8 @@ use super::model::run_text_turn;
 use super::request::{normalize_optional, LocalChatSendRequest};
 use super::tools::{prepare_local_chat_tools, LocalChatRecordWriter};
 
+const USER_FACING_FINAL_REPLY_POLICY: &str = "[User-Facing Final Reply Policy]\nMake the final reply readable for a normal user and use the language of the user's latest substantive request. Summarize verified outcomes, counts, recognizable artifact names, important dependencies, and the next useful action. Unless the user explicitly asks for diagnostics or an identifier is strictly required for the next action, do not expose internal IDs, raw enum values, tool names, JSON, protocol fields, database field names, or process-message details. If a technical identifier must be shown, copy it exactly from verified tool output; never reconstruct, abbreviate, or guess it.";
+
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum LocalChatExecutionErrorKind {
     BadRequest,
@@ -260,12 +262,16 @@ pub(crate) async fn execute_chat_turn(
             ));
         }
     };
+    let mut tool_settings = settings.clone();
+    tool_settings.selected_model_id = Some(model_config_id.clone());
     let prepared_tools = match prepare_local_chat_tools(
         runtime,
         owner_user_id,
         turn_id.as_str(),
         &project,
-        &settings,
+        &tool_settings,
+        agent_key,
+        false,
     )
     .await
     {
@@ -292,7 +298,10 @@ pub(crate) async fn execute_chat_turn(
         resolved_model,
         merge_system_prompts(
             merge_system_prompts(
-                Some(installed_prompt.content),
+                merge_system_prompts(
+                    Some(installed_prompt.content),
+                    Some(USER_FACING_FINAL_REPLY_POLICY.to_string()),
+                ),
                 normalize_optional(request.system_prompt),
             ),
             prepared_tools.capability_prompt,
@@ -532,4 +541,16 @@ fn required(value: String, field: &'static str) -> Result<String, LocalChatExecu
         ));
     }
     Ok(value)
+}
+
+#[cfg(test)]
+mod prompt_policy_tests {
+    use super::USER_FACING_FINAL_REPLY_POLICY;
+
+    #[test]
+    fn final_reply_policy_hides_internal_protocol_details() {
+        assert!(USER_FACING_FINAL_REPLY_POLICY.contains("internal IDs"));
+        assert!(USER_FACING_FINAL_REPLY_POLICY.contains("raw enum values"));
+        assert!(USER_FACING_FINAL_REPLY_POLICY.contains("never reconstruct"));
+    }
 }

@@ -16,6 +16,7 @@ import {
   loadProjectRunnerContactRows,
   markProjectRunnerContactRowsStale,
   removeProjectRunnerContactRow,
+  subscribeProjectRunnerContactRows,
   upsertProjectRunnerContactRow,
 } from '../../../lib/domain/projectRunner';
 import { useProjectRunRealtime } from '../../../lib/realtime/useProjectRunRealtime';
@@ -179,6 +180,15 @@ export const useProjectMembersManager = ({
       active = false;
     };
   }, [loadProjectMembers]);
+
+  useEffect(() => {
+    if (!projectId) {
+      return undefined;
+    }
+    return subscribeProjectRunnerContactRows(apiClient, projectId, (rows) => {
+      syncProjectMembersFromRows(rows);
+    });
+  }, [apiClient, projectId, syncProjectMembersFromRows]);
 
   const openAddMember = useCallback(async () => {
     setMemberPickerError(null);

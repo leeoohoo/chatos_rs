@@ -116,14 +116,20 @@ impl TaskService {
         Ok(())
     }
 
-    pub(super) async fn validate_task_mcp_config(
+    pub(super) async fn validate_task_mcp_config_for_agent(
         &self,
         config: &TaskMcpConfig,
         current_user: Option<&CurrentUser>,
         task_owner_user_id: Option<&str>,
+        agent_key: chatos_plugin_management_sdk::SystemAgentKey,
     ) -> Result<(), String> {
         let centralized_policy = self
-            .validate_task_capability_selection(config, current_user, task_owner_user_id)
+            .validate_task_capability_selection_for_agent(
+                config,
+                current_user,
+                task_owner_user_id,
+                agent_key,
+            )
             .await?;
         if let Some(remote_server_id) = config.default_remote_server_id.as_deref() {
             self.ensure_remote_server_exists(remote_server_id, current_user)
@@ -143,14 +149,15 @@ impl TaskService {
         Ok(())
     }
 
-    pub(super) async fn validate_task_capability_selection(
+    pub(super) async fn validate_task_capability_selection_for_agent(
         &self,
         config: &TaskMcpConfig,
         current_user: Option<&CurrentUser>,
         task_owner_user_id: Option<&str>,
+        agent_key: chatos_plugin_management_sdk::SystemAgentKey,
     ) -> Result<bool, String> {
         let Some(policy) = self
-            .resolve_task_runner_policy(current_user, task_owner_user_id)
+            .resolve_task_runner_policy_for_agent(current_user, task_owner_user_id, agent_key)
             .await?
         else {
             return Ok(false);

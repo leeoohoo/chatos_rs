@@ -10,14 +10,25 @@ use serde_json::Value;
 
 use crate::{agent_descriptor, AgentDescriptor, AgentIdentity};
 
-pub const TASK_RUNNER_AGENT: TaskRunnerAgent = TaskRunnerAgent;
+pub const TASK_RUNNER_PLAN_AGENT: TaskRunnerAgent =
+    TaskRunnerAgent::new(SystemAgentKey::TaskRunnerPlanPhase);
+pub const TASK_RUNNER_AGENT: TaskRunnerAgent =
+    TaskRunnerAgent::new(SystemAgentKey::TaskRunnerRunPhase);
 
-#[derive(Debug, Default, Clone, Copy)]
-pub struct TaskRunnerAgent;
+#[derive(Debug, Clone, Copy)]
+pub struct TaskRunnerAgent {
+    key: SystemAgentKey,
+}
+
+impl TaskRunnerAgent {
+    pub const fn new(key: SystemAgentKey) -> Self {
+        Self { key }
+    }
+}
 
 impl AgentIdentity for TaskRunnerAgent {
     fn descriptor(&self) -> &'static AgentDescriptor {
-        agent_descriptor(SystemAgentKey::TaskRunnerRunPhase)
+        agent_descriptor(self.key)
     }
 }
 
@@ -175,5 +186,17 @@ mod tests {
         assert_eq!(user_record.message_mode.as_deref(), Some("task_run"));
         assert_eq!(user_record.message_source.as_deref(), Some("task_runner"));
         assert_eq!(user_record.metadata, Some(metadata));
+    }
+
+    #[test]
+    fn planning_and_execution_agents_have_distinct_identities() {
+        assert_eq!(
+            TASK_RUNNER_PLAN_AGENT.descriptor().key,
+            SystemAgentKey::TaskRunnerPlanPhase
+        );
+        assert_eq!(
+            TASK_RUNNER_AGENT.descriptor().key,
+            SystemAgentKey::TaskRunnerRunPhase
+        );
     }
 }

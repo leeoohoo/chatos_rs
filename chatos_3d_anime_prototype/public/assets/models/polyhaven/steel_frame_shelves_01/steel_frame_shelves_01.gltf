@@ -1,0 +1,155 @@
+{
+  "asset": {
+    "generator": "Khronos glTF Blender I/O v1.7.33",
+    "version": "2.0"
+  },
+  "scene": 0,
+  "scenes": [
+    {
+      "name": "Scene",
+      "nodes": [
+        0
+      ]
+    }
+  ],
+  "nodes": [
+    {
+      "mesh": 0,
+      "name": "steel_frame_shelves_01"
+    }
+  ],
+  "materials": [
+    {
+      "doubleSided": true,
+      "name": "steel_frame_shelves_01",
+      "normalTexture": {
+        "index": 0
+      },
+      "pbrMetallicRoughness": {
+        "baseColorTexture": {
+          "index": 1
+        },
+        "metallicRoughnessTexture": {
+          "index": 2
+        }
+      }
+    }
+  ],
+  "meshes": [
+    {
+      "name": "Cylinder.008",
+      "primitives": [
+        {
+          "attributes": {
+            "POSITION": 0,
+            "NORMAL": 1,
+            "TEXCOORD_0": 2
+          },
+          "indices": 3,
+          "material": 0
+        }
+      ]
+    }
+  ],
+  "textures": [
+    {
+      "sampler": 0,
+      "source": 0
+    },
+    {
+      "sampler": 0,
+      "source": 1
+    },
+    {
+      "sampler": 0,
+      "source": 2
+    }
+  ],
+  "images": [
+    {
+      "mimeType": "image/jpeg",
+      "name": "steel_frame_shelves_01_nor_gl",
+      "uri": "textures/steel_frame_shelves_01_nor_gl_1k.jpg"
+    },
+    {
+      "mimeType": "image/jpeg",
+      "name": "steel_frame_shelves_01_diff",
+      "uri": "textures/steel_frame_shelves_01_diff_1k.jpg"
+    },
+    {
+      "mimeType": "image/jpeg",
+      "name": "steel_frame_shelves_01_metal-steel_frame_shelves_01_rough",
+      "uri": "textures/steel_frame_shelves_01_arm_1k.jpg"
+    }
+  ],
+  "accessors": [
+    {
+      "bufferView": 0,
+      "componentType": 5126,
+      "count": 3632,
+      "max": [
+        5.487281322479248,
+        21.39432716369629,
+        2.510587692260742
+      ],
+      "min": [
+        -5.48686408996582,
+        -0.010678904131054878,
+        -2.510587692260742
+      ],
+      "type": "VEC3"
+    },
+    {
+      "bufferView": 1,
+      "componentType": 5126,
+      "count": 3632,
+      "type": "VEC3"
+    },
+    {
+      "bufferView": 2,
+      "componentType": 5126,
+      "count": 3632,
+      "type": "VEC2"
+    },
+    {
+      "bufferView": 3,
+      "componentType": 5123,
+      "count": 13044,
+      "type": "SCALAR"
+    }
+  ],
+  "bufferViews": [
+    {
+      "buffer": 0,
+      "byteLength": 43584,
+      "byteOffset": 0
+    },
+    {
+      "buffer": 0,
+      "byteLength": 43584,
+      "byteOffset": 43584
+    },
+    {
+      "buffer": 0,
+      "byteLength": 29056,
+      "byteOffset": 87168
+    },
+    {
+      "buffer": 0,
+      "byteLength": 26088,
+      "byteOffset": 116224
+    }
+  ],
+  "samplers": [
+    {
+      "magFilter": 9729,
+      "minFilter": 9987
+    }
+  ],
+  "buffers": [
+    {
+      "byteLength": 142312,
+      "uri": "steel_frame_shelves_01.bin"
+    }
+  ]
+}

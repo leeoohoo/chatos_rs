@@ -6,9 +6,13 @@ use std::time::Duration;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
+use crate::terminal::controller::kill_local_terminal_sessions_for_task_run;
 use crate::{tracing_stdout, LocalRuntime};
 
-use super::execution::execute_local_task_run;
+use super::execution::{
+    execute_local_task_run, persist_task_run_receipt, set_requirement_status, set_work_item_status,
+    user_visible_task_run_failure_receipt,
+};
 
 pub(crate) async fn run_local_task_worker_loop(runtime: LocalRuntime) {
     let worker_id = format!("local-worker-{}", Uuid::new_v4());
@@ -41,6 +45,13 @@ pub(crate) async fn run_local_task_worker_loop(runtime: LocalRuntime) {
                 ));
                 if let Err(error) = execute_local_task_run(&runtime, &run, abort).await {
                     if let Ok(database) = runtime.local_database() {
+                        let _ = persist_task_run_receipt(
+                            database,
+                            &run,
+                            "failed",
+                            user_visible_task_run_failure_receipt(error.as_str()),
+                        )
+                        .await;
                         let _ = database
                             .fail_turn(
                                 run.owner_user_id.as_str(),
@@ -52,6 +63,8 @@ pub(crate) async fn run_local_task_worker_loop(runtime: LocalRuntime) {
                         let _ = database
                             .fail_local_task_run(&run, "failed", error.as_str())
                             .await;
+                        let _ = set_work_item_status(&runtime, &run, "blocked").await;
+                        let _ = set_requirement_status(&runtime, &run, "failed").await;
                     }
                     tracing_stdout(format!("local task run {} failed: {error}", run.id).as_str());
                 }
@@ -74,12 +87,15 @@ async fn monitor_run(
     abort: CancellationToken,
     stop: CancellationToken,
 ) {
+    let mut ticks = 0u64;
     loop {
         tokio::select! {
             _ = stop.cancelled() => return,
-            _ = tokio::time::sleep(Duration::from_secs(5)) => {}
+            _ = tokio::time::sleep(Duration::from_secs(1)) => {}
         }
+        ticks = ticks.saturating_add(1);
         let Ok(database) = runtime.local_database() else {
+            let _ = kill_local_terminal_sessions_for_task_run(run_id.as_str()).await;
             abort.cancel();
             return;
         };
@@ -88,13 +104,17 @@ async fn monitor_run(
             .await
             .unwrap_or(true)
         {
+            let _ = kill_local_terminal_sessions_for_task_run(run_id.as_str()).await;
             abort.cancel();
+            return;
         }
-        if !database
-            .heartbeat_local_task_run(run_id.as_str(), worker_id.as_str())
-            .await
-            .unwrap_or(false)
+        if ticks.is_multiple_of(5)
+            && !database
+                .heartbeat_local_task_run(run_id.as_str(), worker_id.as_str())
+                .await
+                .unwrap_or(false)
         {
+            let _ = kill_local_terminal_sessions_for_task_run(run_id.as_str()).await;
             abort.cancel();
             return;
         }

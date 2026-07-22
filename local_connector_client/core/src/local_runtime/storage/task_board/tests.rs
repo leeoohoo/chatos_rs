@@ -3,7 +3,7 @@
 
 use std::fs;
 
-use chatos_builtin_tools::{TaskDraft, TaskOutcomeItem, TaskUpdatePatch};
+use chatos_mcp::{TaskDraft, TaskOutcomeItem, TaskUpdatePatch};
 use uuid::Uuid;
 
 use super::super::{

@@ -23,7 +23,9 @@ use super::RunService;
 #[path = "harness_run_git/run_service.rs"]
 mod run_service;
 #[cfg(test)]
-pub(super) use run_service::{commit_workspace_to_run_branch, create_snapshot_commit_and_push};
+pub(super) use run_service::{
+    commit_workspace_to_run_branch, create_snapshot_commit_and_push, promote_run_branch_to_base,
+};
 
 const GIT_COMMAND_TIMEOUT: Duration = Duration::from_secs(180);
 

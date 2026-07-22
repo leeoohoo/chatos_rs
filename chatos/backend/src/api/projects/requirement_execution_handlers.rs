@@ -5,20 +5,23 @@ use axum::{extract::Path, http::StatusCode, Json};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet};
+use tracing::warn;
 
 use crate::api::chat_stream_common::ChatStreamRequest;
-use crate::config::Config;
 use crate::core::auth::AuthUser;
-use crate::core::project_access::ensure_owned_project;
+use crate::core::messages::set_task_runner_async_overall_status_for_session;
+use crate::core::validation::normalize_non_empty;
 use crate::modules::conversation_runtime::chat_usecase::{run_chat_usecase, RunChatUsecaseInput};
 use crate::services::{access_token_scope, project_management_api_client, task_runner_api_client};
 
 use super::requirement_execution::{
     add_requirement_work_item_dependencies, collect_requirement_execution_scope,
-    create_execution_message, ensure_requirement_execution_not_active, is_done_status,
-    load_execution_links_for_work_items, mark_execution_messages_for_stop, parse_requirements,
-    parse_work_items, project_plan_array, project_plan_value, requirement_dependency_map,
-    resolve_or_create_execution_session, select_contact_runtime, sync_execution_link_status,
+    create_execution_message, create_execution_planner_failure_message,
+    ensure_requirement_execution_not_active, is_done_status, load_execution_links_for_work_items,
+    load_requirement_execution_request_context, mark_execution_messages_for_stop,
+    parse_requirements, parse_work_items, project_plan_array, project_plan_value,
+    requirement_dependency_map, resolve_or_create_execution_session, select_contact_runtime,
+    sync_execution_link_status, sync_execution_message_task_tracking,
     sync_requirement_execution_state, task_runner_callback_event_for_status,
     task_runner_status_is_active, task_runner_status_is_success, topological_work_item_order,
     validate_requirement_prerequisites, value_string, work_item_dependency_map, HandlerError,
@@ -28,6 +31,8 @@ use super::requirement_execution::{
 #[derive(Debug, Default, Deserialize)]
 pub(super) struct ExecuteRequirementRequest {
     contact_id: Option<String>,
+    #[serde(alias = "modelConfigId")]
+    model_config_id: Option<String>,
     #[serde(default, alias = "includePrerequisiteDependents")]
     include_prerequisite_dependents: bool,
 }
@@ -72,44 +77,13 @@ async fn execute_requirement_inner(
     requirement_id: String,
     req: ExecuteRequirementRequest,
 ) -> Result<Value, HandlerError> {
-    let project = ensure_owned_project(&project_id, &auth)
-        .await
-        .map_err(|err| match err {
-            crate::core::project_access::ProjectAccessError::NotFound => {
-                HandlerError::not_found("项目不存在")
-            }
-            crate::core::project_access::ProjectAccessError::Forbidden => {
-                HandlerError::forbidden("无权访问该项目")
-            }
-            crate::core::project_access::ProjectAccessError::Internal(err) => {
-                HandlerError::internal("读取项目失败", err)
-            }
-        })?;
-    let cfg = Config::try_get().map_err(|err| HandlerError::internal("配置未初始化", err))?;
-    let access_token = access_token_scope::get_current_access_token()
-        .ok_or_else(|| HandlerError::unauthorized("current user access token is required"))?;
-    let project_sync_secret = cfg
-        .project_service_sync_secret
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .ok_or_else(|| {
-            HandlerError::internal(
-                "项目执行需要配置项目管理同步密钥",
-                "CHATOS_PROJECT_SERVICE_SYNC_SECRET / PROJECT_SERVICE_SYNC_SECRET is required"
-                    .to_string(),
-            )
-        })?
-        .to_string();
-
-    let plan = project_management_api_client::get_project_service_plan(
-        cfg.project_service_base_url.as_str(),
-        access_token.as_str(),
-        project.id.as_str(),
-        false,
-    )
-    .await
-    .map_err(|err| HandlerError::bad_gateway("read project plan snapshot failed", err))?;
+    let requested_model_config_id = normalize_non_empty(req.model_config_id.clone());
+    let context = load_requirement_execution_request_context(&auth, project_id.as_str()).await?;
+    let cfg = context.cfg;
+    let project = context.project;
+    let access_token = context.access_token;
+    let project_sync_secret = context.project_sync_secret;
+    let plan = context.plan;
 
     let requirement_items =
         parse_requirements(project_plan_array(&plan, "requirements", "requirements"));
@@ -193,12 +167,16 @@ async fn execute_requirement_inner(
         &creation_order,
         &dependency_map,
         &requirement_documents,
+        requested_model_config_id.as_deref(),
     );
+    let user_visible_content =
+        build_requirement_execution_user_message(&root_requirement, &selected_work_items);
     let session = resolve_or_create_execution_session(
         &auth,
         &project,
         &contact_runtime.contact,
         root_requirement.title.as_str(),
+        requested_model_config_id.clone(),
     )
     .await?;
     let message = create_execution_message(
@@ -207,7 +185,7 @@ async fn execute_requirement_inner(
         &root_requirement,
         &contact_runtime.contact,
         &selected_work_items,
-        planner_prompt.clone(),
+        user_visible_content.clone(),
     )
     .await?;
 
@@ -232,7 +210,9 @@ async fn execute_requirement_inner(
     let chat_req = ChatStreamRequest {
         conversation_id: Some(session.id.clone()),
         content: Some(planner_prompt),
-        model_config_id: None,
+        model_config_id: requested_model_config_id
+            .clone()
+            .or_else(|| session.selected_model_id.clone()),
         ai_model_config: None,
         user_id: Some(auth.user_id.clone()),
         attachments: None,
@@ -247,10 +227,32 @@ async fn execute_requirement_inner(
         user_message_id: Some(execution_group_id.clone()),
         project_requirement_execution_planner: true,
     };
-    access_token_scope::spawn_with_current_access_token(run_chat_usecase(RunChatUsecaseInput {
-        sender: None,
-        req: chat_req,
-    }));
+    let persisted_user_message_metadata = message.metadata.clone();
+    let recovery = RequirementPlannerRecovery {
+        access_token: access_token.clone(),
+        execution_group_id: execution_group_id.clone(),
+        executing_requirement_ids,
+        project_service_base_url: cfg.project_service_base_url.clone(),
+        project_sync_secret,
+        selected_work_items: selected_work_items.clone(),
+        session_id: session.id.clone(),
+    };
+    access_token_scope::spawn_with_current_access_token(async move {
+        run_chat_usecase(RunChatUsecaseInput {
+            sender: None,
+            req: chat_req,
+            persisted_user_message_content: Some(user_visible_content),
+            persisted_user_message_metadata,
+        })
+        .await;
+        if let Err(err) = reconcile_requirement_planner_outcome(recovery).await {
+            warn!(
+                error = err.error.as_str(),
+                detail = err.detail.as_deref().unwrap_or_default(),
+                "failed to reconcile requirement execution planner outcome"
+            );
+        }
+    });
 
     Ok(json!({
         "success": true,
@@ -258,6 +260,8 @@ async fn execute_requirement_inner(
         "project_id": project.id,
         "requirement_id": requirement_id,
         "contact_id": contact_runtime.contact.contact_id,
+        "model_config_id": requested_model_config_id
+            .or_else(|| session.selected_model_id.clone()),
         "conversation_id": session.id,
         "message_id": execution_group_id.clone(),
         "message": message,
@@ -265,6 +269,39 @@ async fn execute_requirement_inner(
         "planner_agent_key": "project_requirement_execution_planner_agent",
         "plan_mode_enabled": false,
     }))
+}
+
+fn build_requirement_execution_user_message(
+    requirement: &RequirementPlanItem,
+    work_items: &[WorkItemPlanItem],
+) -> String {
+    const MAX_VISIBLE_TASK_TITLES: usize = 3;
+
+    let mut content = format!(
+        "执行需求「{}」的 {} 个关联任务。",
+        requirement.title,
+        work_items.len()
+    );
+    let visible_titles = work_items
+        .iter()
+        .map(|item| item.title.trim())
+        .filter(|title| !title.is_empty())
+        .take(MAX_VISIBLE_TASK_TITLES)
+        .collect::<Vec<_>>();
+    if !visible_titles.is_empty() {
+        content.push_str("\n\n执行范围：");
+        for title in visible_titles {
+            content.push_str("\n- ");
+            content.push_str(title);
+        }
+        if work_items.len() > MAX_VISIBLE_TASK_TITLES {
+            content.push_str(&format!(
+                "\n- 另有 {} 个关联任务",
+                work_items.len() - MAX_VISIBLE_TASK_TITLES
+            ));
+        }
+    }
+    content
 }
 
 async fn load_requirement_documents_for_scope(
@@ -295,6 +332,7 @@ fn build_requirement_execution_planner_prompt(
     creation_order: &[String],
     dependency_map: &BTreeMap<String, Vec<String>>,
     requirement_documents: &BTreeMap<String, Value>,
+    default_model_config_id: Option<&str>,
 ) -> String {
     let scoped_requirements = requirement_items
         .iter()
@@ -327,8 +365,23 @@ fn build_requirement_execution_planner_prompt(
             })
         })
         .collect::<Vec<_>>();
+    let selected_project_task_ids = selected_work_items
+        .iter()
+        .map(|item| item.id.clone())
+        .collect::<Vec<_>>();
     let payload = json!({
         "mode": "project_requirement_execution_planning",
+        "execution_contract": {
+            "user_action": "execute_selected_project_tasks",
+            "must_call_tool": "create_project_execution_tasks",
+            "must_create_at_least_one_task_per_selected_project_task": true,
+            "selected_project_task_ids": selected_project_task_ids,
+            "default_model_config_id": default_model_config_id,
+            "model_binding_policy": "Set this default_model_config_id on every created Task Runner task when it is present; do not omit it and do not substitute another model.",
+            "description_completeness_does_not_mean_execution_is_complete": true,
+            "planning_task_policy": "is_planning_task=true still requires a bound Task Runner task; set requires_execution=false unless that concrete task truly needs a sandbox or project runtime",
+            "forbidden_terminal_response": "Do not return a completion summary without a successful create_project_execution_tasks tool result."
+        },
         "project_id": project_id,
         "requirement": {
             "id": root_requirement.id.as_str(),
@@ -340,7 +393,83 @@ fn build_requirement_execution_planner_prompt(
         "recommended_project_task_creation_order": creation_order,
         "technical_documents_by_requirement": requirement_documents,
     });
-    serde_json::to_string_pretty(&payload).unwrap_or_else(|_| "{}".to_string())
+    let payload = serde_json::to_string_pretty(&payload).unwrap_or_else(|_| "{}".to_string());
+    format!(
+        "这是用户点击‘执行关联任务’产生的强制执行请求，不是规划完整性复核。已有 description、技术文档或验收标准即使完整，也绝不表示项目任务已经执行完成。你必须先成功调用 create_project_execution_tasks，并确保每个 selected_project_task 至少创建一个绑定任务，之后才能总结。对于 is_planning_task=true 的工作项，仍需创建 Task Runner 任务；如果只需规划、读取资料或维护 Project Management，设置 requires_execution=false，不得因为没有沙箱需求而跳过任务创建。如果 execution_contract.default_model_config_id 非空，每个创建任务都必须原样填写该 default_model_config_id，不得省略或替换。\n\n{payload}"
+    )
+}
+
+#[derive(Debug)]
+struct RequirementPlannerRecovery {
+    access_token: String,
+    execution_group_id: String,
+    executing_requirement_ids: BTreeSet<String>,
+    project_service_base_url: String,
+    project_sync_secret: String,
+    selected_work_items: Vec<WorkItemPlanItem>,
+    session_id: String,
+}
+
+async fn reconcile_requirement_planner_outcome(
+    recovery: RequirementPlannerRecovery,
+) -> Result<(), HandlerError> {
+    let links = load_execution_links_for_work_items(
+        recovery.project_service_base_url.as_str(),
+        recovery.access_token.as_str(),
+        recovery.selected_work_items.as_slice(),
+    )
+    .await?;
+    let current_execution_links = links
+        .iter()
+        .filter(|link| {
+            link.source_user_message_id.as_deref() == Some(recovery.execution_group_id.as_str())
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    if !current_execution_links.is_empty() {
+        sync_execution_message_task_tracking(
+            recovery.session_id.as_str(),
+            recovery.execution_group_id.as_str(),
+            current_execution_links.as_slice(),
+        )
+        .await?;
+        return Ok(());
+    }
+
+    let mut work_item_ids_by_requirement = BTreeMap::<String, Vec<String>>::new();
+    for item in &recovery.selected_work_items {
+        work_item_ids_by_requirement
+            .entry(item.requirement_id.clone())
+            .or_default()
+            .push(item.id.clone());
+    }
+    for requirement_id in &recovery.executing_requirement_ids {
+        sync_requirement_execution_state(
+            recovery.project_service_base_url.as_str(),
+            recovery.project_sync_secret.as_str(),
+            requirement_id.as_str(),
+            Some("approved"),
+            work_item_ids_by_requirement
+                .remove(requirement_id.as_str())
+                .unwrap_or_default(),
+            Some("ready"),
+            true,
+        )
+        .await?;
+    }
+    let _ = set_task_runner_async_overall_status_for_session(
+        recovery.session_id.as_str(),
+        recovery.execution_group_id.as_str(),
+        "failed",
+    )
+    .await;
+    create_execution_planner_failure_message(
+        recovery.session_id.as_str(),
+        recovery.execution_group_id.as_str(),
+        "需求执行规划没有创建任何 Task Runner 执行任务，系统已自动将本次需求和项目任务恢复为可执行状态。请重新点击执行；如果仍然发生，需检查需求执行规划 Agent 的工具调用。".to_string(),
+    )
+    .await?;
+    Ok(())
 }
 
 async fn stop_requirement_execution_inner(
@@ -349,44 +478,12 @@ async fn stop_requirement_execution_inner(
     requirement_id: String,
     req: ExecuteRequirementRequest,
 ) -> Result<Value, HandlerError> {
-    let project = ensure_owned_project(&project_id, &auth)
-        .await
-        .map_err(|err| match err {
-            crate::core::project_access::ProjectAccessError::NotFound => {
-                HandlerError::not_found("项目不存在")
-            }
-            crate::core::project_access::ProjectAccessError::Forbidden => {
-                HandlerError::forbidden("无权访问该项目")
-            }
-            crate::core::project_access::ProjectAccessError::Internal(err) => {
-                HandlerError::internal("读取项目失败", err)
-            }
-        })?;
-    let cfg = Config::try_get().map_err(|err| HandlerError::internal("配置未初始化", err))?;
-    let access_token = access_token_scope::get_current_access_token()
-        .ok_or_else(|| HandlerError::unauthorized("current user access token is required"))?;
-    let project_sync_secret = cfg
-        .project_service_sync_secret
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .ok_or_else(|| {
-            HandlerError::internal(
-                "项目执行需要配置项目管理同步密钥",
-                "CHATOS_PROJECT_SERVICE_SYNC_SECRET / PROJECT_SERVICE_SYNC_SECRET is required"
-                    .to_string(),
-            )
-        })?
-        .to_string();
-
-    let plan = project_management_api_client::get_project_service_plan(
-        cfg.project_service_base_url.as_str(),
-        access_token.as_str(),
-        project.id.as_str(),
-        false,
-    )
-    .await
-    .map_err(|err| HandlerError::bad_gateway("read project plan snapshot failed", err))?;
+    let context = load_requirement_execution_request_context(&auth, project_id.as_str()).await?;
+    let cfg = context.cfg;
+    let project = context.project;
+    let access_token = context.access_token;
+    let project_sync_secret = context.project_sync_secret;
+    let plan = context.plan;
     let requirement_items =
         parse_requirements(project_plan_array(&plan, "requirements", "requirements"));
     let Some(root_requirement) = requirement_items
@@ -582,3 +679,6 @@ async fn stop_requirement_execution_inner(
         "reset_work_item_ids": work_item_ids,
     }))
 }
+
+#[cfg(test)]
+include!("requirement_execution_handlers.test.rs");

@@ -24,6 +24,11 @@ impl LocalDatabase {
             FROM messages
             INNER JOIN sessions ON sessions.id = messages.session_id
             WHERE messages.session_id = ? AND sessions.owner_user_id = ?
+              AND NOT EXISTS (
+                SELECT 1 FROM local_task_runs
+                WHERE local_task_runs.turn_id = messages.turn_id
+                  AND local_task_runs.task_kind = 'conversation_task'
+              )
             ORDER BY messages.sequence_no ASC
             "#,
         )
@@ -32,6 +37,87 @@ impl LocalDatabase {
         .fetch_all(self.pool())
         .await
         .context("list local runtime messages")
+    }
+
+    pub(crate) async fn append_turn_result_message(
+        &self,
+        input: AppendLocalMessageInput,
+    ) -> Result<LocalMessageRecord> {
+        let mut transaction = self
+            .begin_write()
+            .await
+            .context("append local turn result message")?;
+        let turn_exists = sqlx::query_scalar::<_, i64>(
+            r#"
+            SELECT COUNT(*)
+            FROM turns
+            INNER JOIN sessions ON sessions.id = turns.session_id
+            WHERE turns.id = ? AND turns.session_id = ?
+              AND turns.status = 'completed' AND sessions.owner_user_id = ?
+            "#,
+        )
+        .bind(input.turn_id.as_str())
+        .bind(input.session_id.as_str())
+        .bind(input.owner_user_id.as_str())
+        .fetch_one(&mut *transaction)
+        .await
+        .context("validate local task result source turn")?;
+        if turn_exists == 0 {
+            return Err(anyhow::anyhow!(
+                "local task result source turn is not completed"
+            ));
+        }
+        let message_id = input
+            .message_id
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or_else(|| format!("lc_message_{}", Uuid::new_v4()));
+        let created_at = input.created_at.unwrap_or_else(local_now_rfc3339);
+        let sequence_no =
+            next_message_sequence(&mut transaction, input.session_id.as_str()).await?;
+        sqlx::query(
+            r#"
+            INSERT INTO messages (
+                id, session_id, turn_id, sequence_no, role, content, reasoning,
+                tool_calls_json, tool_call_id, metadata_json, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            "#,
+        )
+        .bind(message_id.as_str())
+        .bind(input.session_id.as_str())
+        .bind(input.turn_id.as_str())
+        .bind(sequence_no)
+        .bind(input.role.as_str())
+        .bind(input.content.as_str())
+        .bind(input.reasoning.as_deref())
+        .bind(input.tool_calls_json.as_deref())
+        .bind(input.tool_call_id.as_deref())
+        .bind(input.metadata_json.as_deref())
+        .bind(created_at.as_str())
+        .execute(&mut *transaction)
+        .await
+        .context("insert local task result message")?;
+        refresh_session_message_count(
+            &mut transaction,
+            input.session_id.as_str(),
+            created_at.as_str(),
+        )
+        .await?;
+        let message = sqlx::query_as::<_, LocalMessageRecord>(
+            r#"
+            SELECT id, session_id, turn_id, sequence_no, role, content, reasoning,
+                   tool_calls_json, tool_call_id, metadata_json, created_at
+            FROM messages WHERE id = ?
+            "#,
+        )
+        .bind(message_id)
+        .fetch_one(&mut *transaction)
+        .await
+        .context("load local task result message")?;
+        transaction
+            .commit()
+            .await
+            .context("commit local task result message")?;
+        Ok(message)
     }
 
     pub(crate) async fn list_turn_messages(

@@ -13,11 +13,9 @@ base64 = "0.22"
 chrono = { version = "0.4", features = ["clock", "serde"] }
 chatos_agent = { path = "../../agent" }
 chatos_ai_runtime = { path = "../../crates/chatos_ai_runtime" }
-chatos_builtin_tools = { path = "../../crates/chatos_builtin_tools" }
+chatos_mcp = { path = "../../mcp" }
 chatos_mcp_service = { path = "../../crates/chatos_mcp_service" }
 chatos_mcp_runtime = { path = "../../crates/chatos_mcp_runtime" }
-chatos_project_mcp_contract = { path = "../../crates/chatos_project_mcp_contract" }
-chatos_sandbox_image_mcp = { path = "../../crates/chatos_sandbox_image_mcp" }
 chatos_service_runtime = { path = "../../crates/chatos_service_runtime", features = ["axum-support"] }
 chatos_plugin_management_sdk = { path = "../../crates/chatos_plugin_management_sdk" }
 futures-util = "0.3"

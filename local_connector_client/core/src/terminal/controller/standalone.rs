@@ -4,7 +4,7 @@
 use std::path::PathBuf;
 use std::process::Stdio;
 
-use chatos_builtin_tools::TerminalControllerContext;
+use chatos_mcp::TerminalControllerContext;
 use serde_json::{json, Value};
 
 use super::registry::{

@@ -406,7 +406,8 @@ mod tests {
     use super::{clone_run_branch, count_file_changes, parse_name_status, parse_numstat};
     use crate::models::RunOutputFileChange;
     use crate::services::harness_run_git::{
-        commit_workspace_to_run_branch, create_snapshot_commit_and_push, run_git_output,
+        commit_workspace_to_run_branch, create_snapshot_commit_and_push,
+        promote_run_branch_to_base, run_git_output,
     };
     use crate::services::workspace_snapshot::copy_workspace_snapshot;
 
@@ -572,6 +573,14 @@ mod tests {
         .expect("commit sandbox output");
         assert_eq!(status, "committed");
         assert_ne!(result_commit, base_commit);
+        promote_run_branch_to_base(
+            commit_worktree.as_path(),
+            "feature/local-work",
+            base_commit.as_str(),
+            &[],
+        )
+        .await
+        .expect("promote sandbox output to base branch");
 
         let (no_change_status, no_change_commit) = commit_workspace_to_run_branch(
             bare_repo.to_string_lossy().to_string(),
@@ -640,7 +649,7 @@ mod tests {
         )
         .await
         .expect("read base branch commit");
-        assert_eq!(base_branch_commit.trim(), base_commit);
+        assert_eq!(base_branch_commit.trim(), result_commit);
         assert_eq!(
             fs::read_to_string(source.join(".git/config")).expect("read local git config"),
             original_git_config

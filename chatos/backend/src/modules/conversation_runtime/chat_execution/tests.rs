@@ -45,6 +45,7 @@ fn final_response_context(response: AiResponse) -> RuntimeFinalResponseContext {
 
 fn model_runtime(use_codex_gateway_mcp_passthrough: bool) -> ResolvedChatModelConfig {
     ResolvedChatModelConfig {
+        model_config_id: Some("model-config-1".to_string()),
         model: "codex-test".to_string(),
         provider: "openai".to_string(),
         prompt_vendor: Some("gpt".to_string()),
@@ -58,6 +59,7 @@ fn model_runtime(use_codex_gateway_mcp_passthrough: bool) -> ResolvedChatModelCo
         system_prompt: None,
         use_active_system_context: true,
         use_codex_gateway_mcp_passthrough,
+        model_request_max_retries: 5,
     }
 }
 
@@ -67,6 +69,7 @@ fn runtime_context(
     ResolvedConversationRuntimeContext {
         agent_profile: ChatosAgentProfile::from_flags(false, project_requirement_execution_planner),
         internal_context_locale: InternalContextLocale::ZhCn,
+        user_output_locale: InternalContextLocale::ZhCn,
         contact_agent_id: None,
         base_system_prompt: None,
         agent_system_prompt: Some("agent prompt".to_string()),
@@ -146,6 +149,34 @@ fn project_context_prompt_contains_only_dynamic_project_facts() {
 }
 
 #[test]
+fn agent_instructions_apply_user_language_to_project_artifacts() {
+    let mut chinese_context = runtime_context(false);
+    chinese_context.internal_context_locale = InternalContextLocale::EnUs;
+    chinese_context.user_output_locale = InternalContextLocale::ZhCn;
+    let chinese = compose_agent_instructions(&chinese_context, &model_runtime(false))
+        .expect("Chinese instructions");
+
+    assert!(chinese.contains("User Language Policy"));
+    assert!(chinese.contains("latest substantive, user-authored request"));
+    assert!(chinese.contains("简体中文（zh-CN）"));
+    assert!(chinese.contains("requirement titles"));
+    assert!(chinese.contains("project-task titles and descriptions"));
+    assert!(chinese.contains("Task Runner task titles/objectives"));
+    assert!(chinese.contains("User-Facing Final Reply Policy"));
+    assert!(chinese.contains("do not expose internal IDs"));
+    assert!(chinese.contains("never reconstruct, abbreviate, or guess"));
+
+    let mut english_context = runtime_context(false);
+    english_context.internal_context_locale = InternalContextLocale::ZhCn;
+    english_context.user_output_locale = InternalContextLocale::EnUs;
+    let english = compose_agent_instructions(&english_context, &model_runtime(false))
+        .expect("English instructions");
+
+    assert!(english.contains("English (en-US)"));
+    assert!(!english.contains("简体中文（zh-CN）"));
+}
+
+#[test]
 fn builds_shared_runtime_execution_contract_from_chat_context() {
     let options = build_agent_chat_options(
         "session-1",
@@ -165,6 +196,12 @@ fn builds_shared_runtime_execution_contract_from_chat_context() {
             turn_id: "turn-1".to_string(),
             user_message_id: "user-1".to_string(),
             message_source: "model-source".to_string(),
+            persisted_user_message_content: Some("执行需求的 2 个关联任务。".to_string()),
+            persisted_user_message_metadata: Some(json!({
+                "project_requirement_execution": {
+                    "requirement_title": "JDK 21 upgrade"
+                }
+            })),
         },
     );
 
@@ -178,6 +215,17 @@ fn builds_shared_runtime_execution_contract_from_chat_context() {
         Some("C:/project/demo")
     );
     assert!(options.shared_model_config.include_prompt_cache_retention);
+    assert_eq!(
+        options.persisted_user_message_content.as_deref(),
+        Some("执行需求的 2 个关联任务。")
+    );
+    assert_eq!(
+        options
+            .persisted_user_message_metadata
+            .as_ref()
+            .and_then(|value| value["project_requirement_execution"]["requirement_title"].as_str()),
+        Some("JDK 21 upgrade")
+    );
 }
 
 #[test]
@@ -218,6 +266,26 @@ fn shared_runtime_record_contract_preserves_chatos_message_metadata() {
         Some(TASK_RUNNER_ASYNC_PLAN_MESSAGE_MODE)
     );
     assert_eq!(user_record.message_source.as_deref(), Some("model-source"));
+    assert_eq!(user_record.content, "hello");
+}
+
+#[test]
+fn merges_persisted_execution_metadata_with_generated_turn_metadata() {
+    let metadata = merge_user_record_metadata(
+        Some(json!({
+            "project_requirement_execution": {
+                "requirement_title": "JDK 21 upgrade"
+            }
+        })),
+        Some(json!({"conversation_turn_id": "turn-1"})),
+    )
+    .expect("merged metadata");
+
+    assert_eq!(
+        metadata["project_requirement_execution"]["requirement_title"].as_str(),
+        Some("JDK 21 upgrade")
+    );
+    assert_eq!(metadata["conversation_turn_id"].as_str(), Some("turn-1"));
 }
 
 #[test]

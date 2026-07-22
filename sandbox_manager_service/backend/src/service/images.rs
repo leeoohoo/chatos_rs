@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use base64::engine::general_purpose;
 use base64::Engine as _;
-use chatos_sandbox_image_mcp::custom_build_script_hash;
+use chatos_mcp::sandbox_images::custom_build_script_hash;
 use chrono::Utc;
 use tokio::io::{AsyncBufReadExt, AsyncRead, BufReader};
 use tokio::process::Command;
@@ -417,23 +417,24 @@ pub(crate) async fn resolve_for_create(
     image_id: Option<&str>,
 ) -> Result<SandboxImageRecord, String> {
     let image_id = image_id.map(str::trim).filter(|value| !value.is_empty());
-    let Some(image_id) = image_id else {
-        return Ok(default_image_record(config, backend));
+    let mut record = match image_id {
+        None | Some(DEFAULT_IMAGE_ID) => default_image_record(config, backend),
+        Some(image_id) => generated_image_record_for_id(config, backend, image_id)
+            .ok_or_else(|| format!("unknown sandbox image id: {image_id}"))?,
     };
-    if image_id == DEFAULT_IMAGE_ID {
-        return Ok(default_image_record(config, backend));
-    }
-
-    let mut record = generated_image_record_for_id(config, backend, image_id)
-        .ok_or_else(|| format!("unknown sandbox image id: {image_id}"))?;
     apply_status(config, backend, &mut record).await;
-    if !record.initialized {
-        return Err(format!(
-            "sandbox image {} is not initialized; initialize it before creating a sandbox",
-            record.name
-        ));
-    }
+    ensure_image_ready_for_create(&record)?;
     Ok(record)
+}
+
+fn ensure_image_ready_for_create(record: &SandboxImageRecord) -> Result<(), String> {
+    if record.initialized {
+        return Ok(());
+    }
+    Err(format!(
+        "sandbox image {} is not initialized; initialize it before creating a sandbox",
+        record.name
+    ))
 }
 
 async fn apply_status(
@@ -707,6 +708,16 @@ fn container_cli(config: &AppConfig, backend: SandboxBackendKind) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn create_rejects_an_uninitialized_default_image() {
+        let config = AppConfig::from_env().expect("sandbox config");
+        let record = default_image_record(&config, SandboxBackendKind::Docker);
+        let error = ensure_image_ready_for_create(&record)
+            .expect_err("missing default image must not be used for a lease");
+        assert!(error.contains("Default"));
+        assert!(error.contains("not initialized"));
+    }
 
     #[tokio::test]
     async fn mock_dependency_preparation_reuses_all_platform_images() {

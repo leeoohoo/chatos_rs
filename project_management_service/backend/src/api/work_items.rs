@@ -13,6 +13,9 @@ use super::access::{
 };
 use super::ApiError;
 use crate::auth::CurrentUser;
+use crate::domain::status_policy::{
+    ensure_project_task_create_status, ensure_project_task_user_update_status,
+};
 use crate::domain::visibility::{non_archived_project_tasks, should_include_archived};
 use crate::models::{
     CreateProjectWorkItemRequest, ProjectWorkItemRecord, ProjectWorkItemStatus, RequirementRecord,
@@ -132,6 +135,7 @@ pub(in crate::api) async fn create_work_item(
     let requirement = require_requirement_access(&state, &requirement_id, &user).await?;
     let project = require_project_access(&state, &requirement.project_id, &user).await?;
     ensure_project_writable(&project)?;
+    ensure_project_task_create_status(input.status).map_err(ApiError::bad_request)?;
     let item = state
         .store
         .create_work_item(&requirement, input, &user)
@@ -158,6 +162,7 @@ pub(in crate::api) async fn update_work_item(
     let item = require_work_item_access(&state, &work_item_id, &user).await?;
     let project = require_project_access(&state, &item.project_id, &user).await?;
     ensure_project_writable(&project)?;
+    ensure_project_task_user_update_status(input.status).map_err(ApiError::bad_request)?;
     state
         .store
         .update_work_item(&work_item_id, input)

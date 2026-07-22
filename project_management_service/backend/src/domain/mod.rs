@@ -2,4 +2,5 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 pub mod dependency_graph;
+pub mod status_policy;
 pub mod visibility;

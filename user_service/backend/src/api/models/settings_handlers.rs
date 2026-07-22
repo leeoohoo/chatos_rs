@@ -8,6 +8,7 @@ use crate::auth::CurrentPrincipal;
 use crate::integrations::sync_model_settings;
 use crate::models::{
     UpdateUserModelSettingsRequest, UserModelConfigRecord, UserModelSettingsRecord,
+    DEFAULT_MODEL_REQUEST_MAX_RETRIES, MAX_MODEL_REQUEST_MAX_RETRIES,
 };
 use crate::state::AppState;
 use crate::store::now_rfc3339;
@@ -34,6 +35,7 @@ pub(in crate::api) async fn get_model_settings(
         .map_err(internal_error)?
         .unwrap_or(UserModelSettingsRecord {
             user_id: user_id.clone(),
+            model_request_max_retries: DEFAULT_MODEL_REQUEST_MAX_RETRIES,
             memory_summary_model_config_id: None,
             memory_summary_thinking_level: None,
             project_management_agent_model_config_id: None,
@@ -62,6 +64,7 @@ pub(in crate::api) async fn put_model_settings(
         .map_err(internal_error)?
         .unwrap_or(UserModelSettingsRecord {
             user_id: user_id.clone(),
+            model_request_max_retries: DEFAULT_MODEL_REQUEST_MAX_RETRIES,
             memory_summary_model_config_id: None,
             memory_summary_thinking_level: None,
             project_management_agent_model_config_id: None,
@@ -70,6 +73,11 @@ pub(in crate::api) async fn put_model_settings(
             environment_initialization_thinking_level: None,
             updated_at: now_rfc3339(),
         });
+    let model_request_max_retries = resolve_model_request_max_retries(
+        input.model_request_max_retries,
+        current.model_request_max_retries,
+    )
+    .map_err(bad_request)?;
     let memory_summary_model_config_id = resolve_optional_update(
         input.memory_summary_model_config_id,
         current.memory_summary_model_config_id,
@@ -134,6 +142,7 @@ pub(in crate::api) async fn put_model_settings(
 
     let settings = UserModelSettingsRecord {
         user_id,
+        model_request_max_retries,
         memory_summary_model_config_id,
         memory_summary_thinking_level: normalize_thinking_level_input(
             memory_summary_provider,
@@ -161,6 +170,16 @@ pub(in crate::api) async fn put_model_settings(
         saved,
         Some(sync_warnings),
     )))
+}
+
+fn resolve_model_request_max_retries(input: Option<i64>, current: i64) -> Result<i64, String> {
+    let value = input.unwrap_or(current);
+    if !(0..=MAX_MODEL_REQUEST_MAX_RETRIES).contains(&value) {
+        return Err(format!(
+            "model_request_max_retries must be between 0 and {MAX_MODEL_REQUEST_MAX_RETRIES}"
+        ));
+    }
+    Ok(value)
 }
 
 fn resolve_optional_update(
@@ -216,4 +235,18 @@ async fn validate_settings_model_config(
         )));
     }
     Ok(Some(model_config))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::resolve_model_request_max_retries;
+
+    #[test]
+    fn model_request_retry_setting_defaults_to_current_value_and_validates_bounds() {
+        assert_eq!(resolve_model_request_max_retries(None, 5), Ok(5));
+        assert_eq!(resolve_model_request_max_retries(Some(0), 5), Ok(0));
+        assert_eq!(resolve_model_request_max_retries(Some(10), 5), Ok(10));
+        assert!(resolve_model_request_max_retries(Some(-1), 5).is_err());
+        assert!(resolve_model_request_max_retries(Some(11), 5).is_err());
+    }
 }

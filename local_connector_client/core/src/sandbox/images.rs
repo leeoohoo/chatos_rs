@@ -373,7 +373,7 @@ fn recover_imported_sandbox_features(image_ref: &str) -> Option<Vec<String>> {
             candidates.push((slug, feature));
         }
     }
-    candidates.sort_by(|left, right| right.0.len().cmp(&left.0.len()));
+    candidates.sort_by_key(|candidate| std::cmp::Reverse(candidate.0.len()));
 
     let mut features = Vec::new();
     if !parse_imported_feature_slug(feature_slug, candidates.as_slice(), &mut features) {

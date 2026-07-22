@@ -15,3 +15,4 @@ import './sessions.selectSession.test/realtimeSync';
 import './sessions.selectSession.test/selectionFlow';
 import './sessions.selectSession.test/cache';
 import './sessions.selectSession.test/pagination';
+import './sessions.selectSession.test/runtimeRecovery';

@@ -29,6 +29,7 @@ pub(super) struct BrowserVisionCandidate {
     pub(super) api_key: String,
     pub(super) base_url: String,
     pub(super) request_body_limit_bytes: Option<usize>,
+    pub(super) max_transient_retries: Option<usize>,
 }
 
 #[derive(Debug, Clone)]

@@ -5,11 +5,11 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use chatos_builtin_tools::{
+use chatos_mcp::{
     extract_patch_targets, CodeMaintainerService, TerminalControllerService,
 };
 use chatos_mcp_service::{sort_tools_by_name, tool_name_set, McpRequestContext, McpToolProvider};
-use serde_json::{json, Value};
+use serde_json::Value;
 
 use crate::command_sandbox::FileToolAccessPolicy;
 use crate::quota::WorkspaceQuota;
@@ -33,8 +33,7 @@ impl SandboxMcpToolProvider {
         file_access_policy: Arc<FileToolAccessPolicy>,
     ) -> Self {
         let file_tools = sort_tools_by_name(file_service.list_tools());
-        let mut terminal_tools = sort_tools_by_name(terminal_service.list_tools());
-        expose_command_permission_request(&mut terminal_tools);
+        let terminal_tools = sort_tools_by_name(terminal_service.list_tools());
         let file_tool_names = tool_name_set(&file_tools);
         let terminal_tool_names = tool_name_set(&terminal_tools);
         let tools = sort_tools_by_name(file_tools.into_iter().chain(terminal_tools).collect());
@@ -52,98 +51,6 @@ impl SandboxMcpToolProvider {
     pub fn tools(&self) -> Vec<Value> {
         self.tools.clone()
     }
-}
-
-fn expose_command_permission_request(tools: &mut [Value]) {
-    let Some(schema) = tools
-        .iter_mut()
-        .find(|tool| tool.get("name").and_then(Value::as_str) == Some("execute_command"))
-        .and_then(|tool| tool.get_mut("inputSchema"))
-    else {
-        return;
-    };
-    let Some(properties) = schema.get_mut("properties").and_then(Value::as_object_mut) else {
-        return;
-    };
-    properties.insert(
-        "additionalPermissions".to_string(),
-        json!({
-            "type": "object",
-            "description": "Optional per-command permission overlay. This is a request only: the local approval broker must grant it before execution.",
-            "properties": {
-                "fileSystem": {
-                    "type": ["object", "null"],
-                    "properties": {
-                        "entries": {
-                            "type": ["array", "null"],
-                            "items": {
-                                "type": "object",
-                                "required": ["access", "path"],
-                                "properties": {
-                                    "access": { "type": "string", "enum": ["read", "write", "deny"] },
-                                    "path": {
-                                        "oneOf": [
-                                            {
-                                                "type": "object",
-                                                "required": ["type", "path"],
-                                                "properties": {
-                                                    "type": { "const": "path" },
-                                                    "path": { "type": "string" }
-                                                },
-                                                "additionalProperties": false
-                                            },
-                                            {
-                                                "type": "object",
-                                                "required": ["type", "pattern"],
-                                                "properties": {
-                                                    "type": { "const": "glob_pattern" },
-                                                    "pattern": { "type": "string" }
-                                                },
-                                                "additionalProperties": false
-                                            },
-                                            {
-                                                "type": "object",
-                                                "required": ["type", "value"],
-                                                "properties": {
-                                                    "type": { "const": "special" },
-                                                    "value": {
-                                                        "type": "object",
-                                                        "required": ["kind"],
-                                                        "properties": {
-                                                            "kind": {
-                                                                "type": "string",
-                                                                "enum": ["root", "minimal", "project_roots", "tmpdir", "slash_tmp", "unknown"]
-                                                            },
-                                                            "path": { "type": ["string", "null"] },
-                                                            "subpath": { "type": ["string", "null"] }
-                                                        }
-                                                    }
-                                                },
-                                                "additionalProperties": false
-                                            }
-                                        ]
-                                    }
-                                },
-                                "additionalProperties": false
-                            }
-                        },
-                        "globScanMaxDepth": { "type": ["integer", "null"], "minimum": 1 },
-                        "read": { "type": ["array", "null"], "items": { "type": "string" } },
-                        "write": { "type": ["array", "null"], "items": { "type": "string" } }
-                    },
-                    "additionalProperties": false
-                },
-                "network": {
-                    "type": ["object", "null"],
-                    "properties": {
-                        "enabled": { "type": ["boolean", "null"] }
-                    },
-                    "additionalProperties": false
-                }
-            },
-            "additionalProperties": false
-        }),
-    );
 }
 
 #[async_trait]

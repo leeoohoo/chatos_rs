@@ -275,7 +275,7 @@ pub async fn load_mcp_configs_for_user(
 mod tests {
     use super::build_servers_from_configs;
     use crate::models::mcp_config::McpConfig;
-    use crate::services::builtin_mcp::{
+    use chatos_mcp_runtime::{
         BROWSER_TOOLS_COMMAND, BROWSER_TOOLS_MCP_ID, BROWSER_TOOLS_SERVER_NAME,
     };
 

@@ -7,7 +7,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use serde_json::Value;
 
-use chatos_builtin_tools::{
+use chatos_mcp::{
     build_shared_builtin_tool_service, AskUserOptions, AskUserService, AskUserStoreRef,
     NotepadBuiltinService, NotepadOptions, NotepadStoreRef, RemoteConnectionControllerOptions,
     RemoteConnectionControllerService, RemoteConnectionControllerStoreRef,

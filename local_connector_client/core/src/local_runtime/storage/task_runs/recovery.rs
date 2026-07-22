@@ -17,14 +17,33 @@ impl LocalDatabase {
         sqlx::query(
             r#"
             UPDATE project_work_items SET status = 'blocked', updated_at = ?
-            WHERE id IN (SELECT task_id FROM local_task_runs WHERE status = 'running')
-              AND status NOT IN ('done', 'completed', 'archived')
+            WHERE id IN (
+                SELECT task_id FROM local_task_runs
+                WHERE status = 'running' AND task_kind = 'project_work_item'
+            )
+              AND LOWER(TRIM(status)) NOT IN
+                  ('done', 'completed', 'succeeded', 'success', 'archived')
             "#,
         )
         .bind(now.as_str())
         .execute(&mut *transaction)
         .await
         .context("mark interrupted local work items blocked")?;
+        sqlx::query(
+            r#"
+            UPDATE task_board_tasks SET status = 'blocked',
+                blocker_reason = 'Local Connector stopped while this task was running',
+                updated_at = ?
+            WHERE id IN (
+                SELECT task_id FROM local_task_runs
+                WHERE status = 'running' AND task_kind = 'conversation_task'
+            ) AND status NOT IN ('done', 'blocked')
+            "#,
+        )
+        .bind(now.as_str())
+        .execute(&mut *transaction)
+        .await
+        .context("mark interrupted local conversation tasks blocked")?;
         sqlx::query(
             r#"
             UPDATE turns SET status = 'failed', error_code = 'local_task_run_interrupted',

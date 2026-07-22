@@ -13,6 +13,14 @@ impl LocalDatabase {
         &self,
         input: CreateLocalSessionInput,
     ) -> Result<LocalSessionRecord> {
+        self.create_session_with_contact(input, None).await
+    }
+
+    pub(crate) async fn create_session_with_contact(
+        &self,
+        input: CreateLocalSessionInput,
+        contact_id: Option<String>,
+    ) -> Result<LocalSessionRecord> {
         let project_exists = sqlx::query_scalar::<_, i64>(
             "SELECT COUNT(*) FROM local_projects WHERE project_id = ? AND owner_user_id = ?",
         )
@@ -31,15 +39,16 @@ impl LocalDatabase {
         sqlx::query(
             r#"
             INSERT INTO sessions (
-                id, project_id, owner_user_id, title, selected_model_id,
+                id, project_id, owner_user_id, title, contact_id, selected_model_id,
                 selected_agent_id, status, message_count, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, 'active', 0, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, 'active', 0, ?, ?)
             "#,
         )
         .bind(session_id.as_str())
         .bind(input.project_id.as_str())
         .bind(input.owner_user_id.as_str())
         .bind(input.title.as_str())
+        .bind(contact_id.as_deref())
         .bind(input.selected_model_id.as_deref())
         .bind(input.selected_agent_id.as_deref())
         .bind(now.as_str())
@@ -77,8 +86,8 @@ impl LocalDatabase {
     ) -> Result<Option<LocalSessionRecord>> {
         sqlx::query_as::<_, LocalSessionRecord>(
             r#"
-            SELECT id, project_id, owner_user_id, title, selected_model_id,
-                   selected_agent_id, status, message_count, created_at, updated_at
+            SELECT id, project_id, owner_user_id, title, contact_id,
+                   selected_model_id, selected_agent_id, status, message_count, created_at, updated_at
             FROM sessions
             WHERE id = ? AND owner_user_id = ?
             "#,
@@ -97,8 +106,8 @@ impl LocalDatabase {
     ) -> Result<Vec<LocalSessionRecord>> {
         sqlx::query_as::<_, LocalSessionRecord>(
             r#"
-            SELECT id, project_id, owner_user_id, title, selected_model_id,
-                   selected_agent_id, status, message_count, created_at, updated_at
+            SELECT id, project_id, owner_user_id, title, contact_id,
+                   selected_model_id, selected_agent_id, status, message_count, created_at, updated_at
             FROM sessions
             WHERE owner_user_id = ? AND project_id = ? AND status = 'active'
             ORDER BY updated_at DESC, id ASC

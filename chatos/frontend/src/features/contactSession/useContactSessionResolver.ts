@@ -44,6 +44,8 @@ interface SessionResolverApiClient {
     sessionId: string,
     params?: { limit?: number; offset?: number; compact?: boolean },
   ) => Promise<unknown[]>;
+  sessionScopeUsesLocalRuntime?: (projectId?: string | null) => boolean;
+  sessionUsesLocalRuntime?: (sessionId?: string | null) => boolean;
 }
 
 interface UseContactSessionResolverOptions {
@@ -119,6 +121,17 @@ export const useContactSessionResolver = ({
     return matched || null;
   }, [sessions]);
 
+  const sessionMatchesExecutionPlane = useCallback((
+    sessionId: string,
+    projectId?: string | null,
+  ): boolean => {
+    if (!apiClient?.sessionScopeUsesLocalRuntime || !apiClient.sessionUsesLocalRuntime) {
+      return true;
+    }
+    return apiClient.sessionUsesLocalRuntime(sessionId)
+      === apiClient.sessionScopeUsesLocalRuntime(resolveProjectId(projectId));
+  }, [apiClient, resolveProjectId]);
+
   const isSessionIdStillMatched = useCallback((
     sessionId: string,
     contact: ContactSessionEntity,
@@ -128,8 +141,9 @@ export const useContactSessionResolver = ({
     if (!matchedSession) {
       return false;
     }
-    return isSessionMatchedContactAndProject(matchedSession, contact, resolveProjectId(projectId));
-  }, [findSessionInStoreById, resolveProjectId]);
+    return sessionMatchesExecutionPlane(sessionId, projectId)
+      && isSessionMatchedContactAndProject(matchedSession, contact, resolveProjectId(projectId));
+  }, [findSessionInStoreById, resolveProjectId, sessionMatchesExecutionPlane]);
 
   const findExistingSessionIdInStore = useCallback((
     contact: ContactSessionEntity,
@@ -137,14 +151,14 @@ export const useContactSessionResolver = ({
     preferredSessionId?: string | null,
   ): string | null => {
     const matched = findBestMatchedSession(
-      sessions || [],
+      (sessions || []).filter((session) => sessionMatchesExecutionPlane(session.id, projectId)),
       contact,
       resolveProjectId(projectId),
       preferredSessionId,
     );
     const sessionId = typeof matched?.id === 'string' ? matched.id.trim() : '';
     return sessionId || null;
-  }, [resolveProjectId, sessions]);
+  }, [resolveProjectId, sessionMatchesExecutionPlane, sessions]);
 
   const findExistingSessionIdFromApi = useCallback(async (
     contact: ContactSessionEntity,
@@ -293,6 +307,7 @@ export const useContactSessionResolver = ({
     const normalizedContactAgentId = typeof contact.agentId === 'string' ? contact.agentId.trim() : '';
     if (
       currentSession?.id
+      && sessionMatchesExecutionPlane(currentSession.id, normalizedProjectId)
       && (normalizedContactId
         ? currentContactId === normalizedContactId
         : Boolean(normalizedContactAgentId && currentContactAgentId === normalizedContactAgentId))
@@ -333,6 +348,7 @@ export const useContactSessionResolver = ({
     readCachedSessionId,
     resolveCacheKey,
     resolveProjectId,
+    sessionMatchesExecutionPlane,
   ]);
 
   const buildDisplayRuntimeSessionIdMap = useCallback((
@@ -362,14 +378,29 @@ export const useContactSessionResolver = ({
     const preferredSessionId = normalizeSessionId(options?.preferredSessionId);
 
     if (preferredSessionId && options?.preferredSessionHasMessages === true) {
-      const preferredLocalSession = findSessionInStoreById(preferredSessionId);
-      if (
-        !preferredLocalSession
-        || isSessionMatchedContactAndProject(preferredLocalSession, contact, normalizedProjectId)
-      ) {
-        sessionCacheRef.current[cacheKey] = preferredSessionId;
-        apiLookupResultRef.current[cacheKey] = preferredSessionId;
-        return preferredSessionId;
+      if (!sessionMatchesExecutionPlane(preferredSessionId, normalizedProjectId)) {
+        delete sessionCacheRef.current[cacheKey];
+        delete apiLookupResultRef.current[cacheKey];
+      } else {
+        const preferredLocalSession = findSessionInStoreById(preferredSessionId);
+        const preferredContactId = resolveContactIdFromSession(preferredLocalSession);
+        const preferredContactAgentId = resolveContactAgentIdFromSession(preferredLocalSession);
+        const preferredProjectId = resolveSessionProjectScopeId(preferredLocalSession);
+        const legacyPreferredSessionMatches = Boolean(
+          preferredLocalSession
+          && !preferredContactId
+          && preferredContactAgentId === contact.agentId
+          && preferredProjectId === normalizedProjectId,
+        );
+        if (
+          !preferredLocalSession
+          || isSessionMatchedContactAndProject(preferredLocalSession, contact, normalizedProjectId)
+          || legacyPreferredSessionMatches
+        ) {
+          sessionCacheRef.current[cacheKey] = preferredSessionId;
+          apiLookupResultRef.current[cacheKey] = preferredSessionId;
+          return preferredSessionId;
+        }
       }
     }
 
@@ -435,6 +466,7 @@ export const useContactSessionResolver = ({
     resolveDisplayRuntimeSessionId,
     resolveExistingSessionIdFromApi,
     resolveProjectId,
+    sessionMatchesExecutionPlane,
   ]);
 
   const clearCachedSessionIdsForContact = useCallback((

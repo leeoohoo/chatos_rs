@@ -10,7 +10,7 @@ import { getUserVisiblePath } from '../../lib/domain/filesystem';
 import { useTheme } from '../../hooks/useTheme';
 import EmbeddedTerminalView from '../terminal/EmbeddedTerminalView';
 import { RunEnvironmentDetails } from './projectRunSettingsPanel/RunEnvironmentDetails';
-import { formatRunTargetOptionHint, formatRunTargetSource, getRunStatusLabel, resolveConfigKindsForTarget } from './projectRunSettingsPanel/model';
+import { formatRunTargetOptionHint, formatRunTargetSource, getRunStatusLabel, getRunStatusTone, getSandboxStatusText, resolveConfigKindsForTarget } from './projectRunSettingsPanel/model';
 import type { ProjectRunSettingsPanelProps } from './projectRunSettingsPanel/types';
 
 export const ProjectRunSettingsPanel: React.FC<ProjectRunSettingsPanelProps> = ({
@@ -84,11 +84,7 @@ export const ProjectRunSettingsPanel: React.FC<ProjectRunSettingsPanelProps> = (
     selectedTarget?.id && issue.targetId && issue.targetId !== selectedTarget.id
   ));
   const statusLabel = getRunStatusLabel(runStatus, t);
-  const statusTone = runStatus === 'ready'
-    ? 'text-emerald-700 border-emerald-500/30 bg-emerald-500/10'
-    : runStatus === 'error'
-      ? 'text-destructive border-destructive/30 bg-destructive/10'
-      : 'text-muted-foreground border-border bg-background';
+  const statusTone = getRunStatusTone(runStatus);
   const visibleProjectRootPath = projectRootPath
     ? getUserVisiblePath(projectRootPath)
     : t('runSettings.noProjectRoot');
@@ -102,13 +98,7 @@ export const ProjectRunSettingsPanel: React.FC<ProjectRunSettingsPanelProps> = (
     ? getUserVisiblePath(selectedTarget.manifestPath, projectRootPath)
     : '';
   const sandboxToggleDisabled = sandboxLoading || sandboxSaving;
-  const sandboxStatusText = sandboxLoading
-    ? t('runSettings.sandboxLoading')
-    : sandboxSaving
-      ? t('runSettings.sandboxSaving')
-      : sandboxEnabled
-        ? t('runSettings.sandboxEnabled')
-        : t('runSettings.sandboxDisabled');
+  const sandboxStatusText = getSandboxStatusText(sandboxLoading, sandboxSaving, sandboxEnabled, t);
 
   return (
     <div className="rounded-lg border border-border bg-card">

@@ -59,7 +59,18 @@ impl RunService {
             return;
         }
         let capability_policy = match self.resolve_task_runner_policy_for_task(&task).await {
-            Ok(policy) => policy,
+            Ok(Some(policy)) => policy,
+            Ok(None) => {
+                self.finish_failed_before_execution(
+                    &task,
+                    &mut run,
+                    ".",
+                    "Plugin Management capability configuration is required before Task Runner Agent execution"
+                        .to_string(),
+                )
+                .await;
+                return;
+            }
             Err(err) => {
                 self.finish_failed_before_execution(&task, &mut run, ".", err)
                     .await;
@@ -67,19 +78,14 @@ impl RunService {
             }
         };
         let mut task = task;
-        if let Some(policy) = capability_policy.as_ref() {
-            if let Err(err) = policy.apply_to_task(&mut task) {
-                self.finish_failed_before_execution(&task, &mut run, ".", err)
-                    .await;
-                return;
-            }
+        if let Err(err) = capability_policy.apply_to_task(&mut task) {
+            self.finish_failed_before_execution(&task, &mut run, ".", err)
+                .await;
+            return;
         }
-        let routed_task = if capability_policy.is_some() {
+        let routed_task =
             task_with_runtime_mcp_routing_authoritative(&self.config, &self.store, task.clone())
-                .await
-        } else {
-            task_with_runtime_mcp_routing(&self.config, &self.store, task.clone()).await
-        };
+                .await;
         let task = match routed_task {
             Ok(task) => task,
             Err(err) => {
@@ -115,7 +121,7 @@ impl RunService {
             run,
             input,
             effective_workspace_dir,
-            capability_policy,
+            Some(capability_policy),
         )
         .await;
     }

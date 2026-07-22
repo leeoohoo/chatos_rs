@@ -24,7 +24,6 @@ interface ProjectContactSettingsCardProps {
 interface ContactOption {
   id: string;
   name: string;
-  agentId: string;
 }
 
 const readString = (value: unknown): string => (
@@ -34,14 +33,13 @@ const readString = (value: unknown): string => (
 const normalizeProjectContact = (value: ProjectContactLinkResponse | null | undefined) => {
   const contactId = readString(value?.contact_id ?? value?.contactId);
   const agentId = readString(value?.agent_id ?? value?.agentId);
-  const name = readString(value?.agent_name_snapshot ?? value?.agentNameSnapshot) || contactId;
   if (!contactId || !agentId) {
     return null;
   }
   return {
     contactId,
     agentId,
-    name,
+    name: readString(value?.agent_name_snapshot ?? value?.agentNameSnapshot),
     updatedAt: readString(value?.updated_at ?? value?.updatedAt),
   };
 };
@@ -56,15 +54,17 @@ const chooseLatestProjectContact = (
   return normalized[0] || null;
 };
 
-const normalizeContactOptions = (rows: ContactResponse[] | unknown): ContactOption[] => (
+const normalizeContactOptions = (
+  rows: ContactResponse[] | unknown,
+  unnamedContactLabel: string,
+): ContactOption[] => (
   (Array.isArray(rows) ? rows : [])
     .map(normalizeContact)
     .filter((item): item is NonNullable<typeof item> => Boolean(item))
     .filter((item) => item.status !== 'archived')
     .map((item) => ({
       id: item.id,
-      name: item.name || item.agentId,
-      agentId: item.agentId,
+      name: item.name || unnamedContactLabel,
     }))
 );
 
@@ -97,7 +97,7 @@ const ProjectContactSettingsCard: React.FC<ProjectContactSettingsCardProps> = ({
       setProjectContactRows(
         syncProjectRunnerContactRows(apiClient, project.id, projectContacts) || projectContacts,
       );
-      setContacts(normalizeContactOptions(allContacts));
+      setContacts(normalizeContactOptions(allContacts, t('projectContact.unnamedContact')));
       setLocked(lockState.locked === true);
     } catch (err) {
       setError(err instanceof Error ? err.message : t('projectContact.error.loadFailed'));
@@ -176,41 +176,32 @@ const ProjectContactSettingsCard: React.FC<ProjectContactSettingsCardProps> = ({
 
   return (
     <>
-      <section className="mb-4 rounded-xl border border-border bg-card p-4 shadow-sm">
-        <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0">
-            <h2 className="text-sm font-semibold text-foreground">{t('projectContact.title')}</h2>
-            <p className="mt-1 text-xs leading-5 text-muted-foreground">
-              {t('projectContact.description')}
-            </p>
+      <section className="mb-2 rounded-lg border border-border bg-card px-3 py-2">
+        <div className="flex min-h-8 items-center justify-between gap-3">
+          <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-3 gap-y-1">
+            <h2 className="shrink-0 text-xs font-semibold text-foreground">
+              {t('projectContact.title')}
+            </h2>
+            {currentContact ? (
+              <>
+                <span className="hidden h-4 w-px bg-border sm:block" aria-hidden="true" />
+                <span className="truncate text-sm font-medium text-foreground">
+                  {currentContact.name || t('projectContact.unnamedContact')}
+                </span>
+              </>
+            ) : (
+              <span className="truncate text-xs text-muted-foreground">
+                {t('projectContact.emptyTitle')}
+              </span>
+            )}
           </div>
-          <button
-            type="button"
-            className="rounded-md border border-border bg-background p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground disabled:opacity-60"
-            onClick={() => void loadProjectContact()}
-            disabled={loading || saving}
-            aria-label={t('projectContact.refresh')}
-            title={t('projectContact.refresh')}
-          >
-            <RefreshCw className={cn('h-4 w-4', loading && 'animate-spin')} />
-          </button>
-        </div>
 
-        <div className="mt-4 rounded-lg border border-border bg-background px-3 py-3">
-          {currentContact ? (
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-              <div className="min-w-0">
-                <div className="truncate text-sm font-medium text-foreground">
-                  {currentContact.name}
-                </div>
-                <div className="mt-1 truncate text-xs text-muted-foreground">
-                  {t('projectContact.agentId', { id: currentContact.agentId })}
-                </div>
-              </div>
-              <div className="flex shrink-0 items-center gap-2">
+          <div className="flex shrink-0 items-center gap-1.5">
+            {currentContact ? (
+              <>
                 <button
                   type="button"
-                  className="rounded-md border border-border px-3 py-1.5 text-xs text-muted-foreground hover:bg-accent hover:text-foreground disabled:opacity-60"
+                  className="rounded-md border border-border px-2.5 py-1 text-[11px] text-muted-foreground hover:bg-accent hover:text-foreground disabled:opacity-60"
                   disabled={actionsDisabled}
                   onClick={openPicker}
                 >
@@ -218,40 +209,44 @@ const ProjectContactSettingsCard: React.FC<ProjectContactSettingsCardProps> = ({
                 </button>
                 <button
                   type="button"
-                  className="rounded-md border border-border px-3 py-1.5 text-xs text-muted-foreground hover:border-destructive hover:text-destructive disabled:opacity-60"
+                  className="rounded-md border border-border px-2.5 py-1 text-[11px] text-muted-foreground hover:border-destructive hover:text-destructive disabled:opacity-60"
                   disabled={actionsDisabled}
                   onClick={() => void handleUnbind()}
                 >
                   {t('projectContact.unbind')}
                 </button>
-              </div>
-            </div>
-          ) : (
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-              <div>
-                <div className="text-sm font-medium text-foreground">{t('projectContact.emptyTitle')}</div>
-                <div className="mt-1 text-xs text-muted-foreground">{t('projectContact.emptyDescription')}</div>
-              </div>
+              </>
+            ) : (
               <button
                 type="button"
-                className="rounded-md bg-primary px-3 py-1.5 text-xs text-primary-foreground hover:bg-primary/90 disabled:opacity-60"
+                className="rounded-md bg-primary px-2.5 py-1 text-[11px] text-primary-foreground hover:bg-primary/90 disabled:opacity-60"
                 disabled={actionsDisabled}
                 onClick={openPicker}
               >
                 {t('projectContact.bind')}
               </button>
-            </div>
-          )}
+            )}
+            <button
+              type="button"
+              className="rounded-md border border-border bg-background p-1 text-muted-foreground hover:bg-accent hover:text-foreground disabled:opacity-60"
+              onClick={() => void loadProjectContact()}
+              disabled={loading || saving}
+              aria-label={t('projectContact.refresh')}
+              title={t('projectContact.refresh')}
+            >
+              <RefreshCw className={cn('h-3.5 w-3.5', loading && 'animate-spin')} />
+            </button>
+          </div>
         </div>
 
         {locked ? (
-          <div className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+          <div className="mt-1.5 rounded-md border border-amber-200 bg-amber-50 px-2 py-1 text-[11px] text-amber-800">
             {t('projectContact.locked')}
           </div>
         ) : null}
 
         {error ? (
-          <div className="mt-3 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+          <div className="mt-1.5 rounded-md border border-destructive/30 bg-destructive/10 px-2 py-1 text-[11px] text-destructive">
             {error}
           </div>
         ) : null}

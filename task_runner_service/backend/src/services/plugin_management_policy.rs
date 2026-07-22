@@ -3,6 +3,9 @@
 
 use std::collections::HashSet;
 
+use chatos_mcp::{
+    system_mcp_descriptor_for_record, SystemMcpBackend, SystemMcpDescriptor, SystemMcpHost,
+};
 use chatos_mcp_runtime::{builtin_kind_by_any, BuiltinMcpKind};
 use chatos_plugin_management_sdk::{
     McpRecord as PluginMcpRecord, PluginManagementClient, ResolveAgentCapabilitiesRequest,
@@ -10,13 +13,15 @@ use chatos_plugin_management_sdk::{
 };
 use serde::Serialize;
 
+use super::status_display::TaskScheduleModeExt;
 use super::{RunService, TaskService};
 use crate::auth::{get_current_access_token, CurrentUser};
 use crate::models::{TaskMcpConfig, TaskRecord};
 
-const BUILTIN_RUNTIME_KIND: &str = "builtin";
 const LOCAL_CONNECTOR_DISCOVERED_SOURCE_KIND: &str = "local_connector_discovered";
-const CLOUD_EXTERNAL_RUNTIME_KINDS: [&str; 3] = ["http", "stdio_cloud", "system_routed"];
+const CLOUD_EXTERNAL_RUNTIME_KINDS: [&str; 2] = ["http", "stdio_cloud"];
+#[cfg(test)]
+const BUILTIN_RUNTIME_KIND: &str = chatos_plugin_management_sdk::LEGACY_BUILTIN_MCP_RUNTIME_KIND;
 
 #[derive(Debug, Clone)]
 pub(crate) struct TaskRunnerCapabilityPolicy {
@@ -60,6 +65,13 @@ pub(crate) struct TaskSkillSnapshotView {
 
 impl TaskRunnerCapabilityPolicy {
     fn new(capabilities: ResolvedAgentCapabilities) -> Result<Self, String> {
+        if !capabilities.agent_enabled {
+            return Err(format!(
+                "Task Runner Agent is disabled by Plugin Management: {}",
+                capabilities.agent_key
+            ));
+        }
+        let planning_agent = capabilities.agent_key == SystemAgentKey::TaskRunnerPlanPhase.as_str();
         capabilities
             .ensure_required_available()
             .map_err(|err| err.to_string())?;
@@ -67,10 +79,24 @@ impl TaskRunnerCapabilityPolicy {
             .ensure_required_skills_supported(std::iter::empty::<&str>())
             .map_err(|err| err.to_string())?;
         for item in capabilities.required_mcps() {
-            if plugin_builtin_kind(item).is_none() {
+            if let Some(kind) = plugin_builtin_kind(item) {
+                if planning_agent && !planning_builtin_kind_allowed(kind) {
+                    return Err(format!(
+                        "mutating builtin MCP cannot be required for task_runner_plan_phase: {}",
+                        kind.kind_name()
+                    ));
+                }
+            } else {
                 validate_cloud_external_mcp_runtime(item)?;
+                if planning_agent && item.resource.security.allow_writes != Some(false) {
+                    return Err(format!(
+                        "external MCP required by task_runner_plan_phase must explicitly disallow writes: {}",
+                        item.resource.id
+                    ));
+                }
             }
         }
+        validate_configured_builtin_dependencies(&capabilities)?;
         Ok(Self { capabilities })
     }
 
@@ -83,6 +109,7 @@ impl TaskRunnerCapabilityPolicy {
             .capabilities
             .selectable_mcps()
             .filter_map(plugin_builtin_kind)
+            .filter(|kind| !self.is_planning_agent() || planning_builtin_kind_allowed(*kind))
             .collect::<Vec<_>>();
         dedupe_builtin_kinds(&mut out);
         out
@@ -99,6 +126,9 @@ impl TaskRunnerCapabilityPolicy {
         self.capabilities
             .selectable_mcps()
             .filter(|item| plugin_builtin_kind(item).is_none())
+            .filter(|item| {
+                !self.is_planning_agent() || item.resource.security.allow_writes == Some(false)
+            })
             .filter(|item| validate_cloud_external_mcp_runtime(item).is_ok())
             .collect()
     }
@@ -169,7 +199,8 @@ impl TaskRunnerCapabilityPolicy {
                 .ok_or_else(|| format!("unknown builtin MCP kind: {value}"))?;
             if !allowed_builtin.contains(&kind) {
                 return Err(format!(
-                    "builtin MCP is not selectable for task_runner_run_phase: {}",
+                    "builtin MCP is not selectable for {}: {}",
+                    self.capabilities.agent_key,
                     kind.kind_name()
                 ));
             }
@@ -182,7 +213,8 @@ impl TaskRunnerCapabilityPolicy {
         for resource_id in &config.external_mcp_config_ids {
             if !allowed_external.contains(resource_id) {
                 return Err(format!(
-                    "external MCP is not selectable for task_runner_run_phase: {resource_id}"
+                    "external MCP is not selectable for {}: {resource_id}",
+                    self.capabilities.agent_key
                 ));
             }
         }
@@ -193,7 +225,8 @@ impl TaskRunnerCapabilityPolicy {
         for skill_id in &config.selected_skill_ids {
             if !allowed_skills.contains(skill_id) {
                 return Err(format!(
-                    "Skill is not selectable for task_runner_run_phase: {skill_id}"
+                    "Skill is not selectable for {}: {skill_id}",
+                    self.capabilities.agent_key
                 ));
             }
         }
@@ -223,6 +256,9 @@ impl TaskRunnerCapabilityPolicy {
                 .filter(|item| item.available)
                 .filter_map(plugin_builtin_kind),
         );
+        if self.is_planning_agent() {
+            effective_builtin.extend(self.selectable_builtin_kinds());
+        }
         dedupe_builtin_kinds(&mut effective_builtin);
         task.mcp_config.enabled_builtin_kinds = effective_builtin
             .into_iter()
@@ -340,6 +376,10 @@ impl TaskRunnerCapabilityPolicy {
         self.capabilities
             .compose_provider_skills_prompt(effective_mcp_identifiers, Some(locale))
     }
+
+    fn is_planning_agent(&self) -> bool {
+        self.capabilities.agent_key == SystemAgentKey::TaskRunnerPlanPhase.as_str()
+    }
 }
 
 impl TaskService {
@@ -348,11 +388,34 @@ impl TaskService {
         current_user: Option<&CurrentUser>,
         owner_user_id: Option<&str>,
     ) -> Result<Option<TaskRunnerCapabilityPolicy>, String> {
+        self.resolve_task_runner_policy_for_agent(
+            current_user,
+            owner_user_id,
+            SystemAgentKey::TaskRunnerRunPhase,
+        )
+        .await
+    }
+
+    pub(crate) async fn resolve_task_runner_policy_for_agent(
+        &self,
+        current_user: Option<&CurrentUser>,
+        owner_user_id: Option<&str>,
+        agent_key: SystemAgentKey,
+    ) -> Result<Option<TaskRunnerCapabilityPolicy>, String> {
         let Some(client) = self.plugin_management_client.as_ref() else {
+            // Task definition CRUD does not execute an Agent or grant tools. The run path below
+            // remains fail-closed and must resolve Plugin Management before model execution.
             return Ok(None);
         };
         let owner_user_id = resolved_owner_user_id(current_user, owner_user_id)?;
-        resolve_policy(client, owner_user_id, get_current_access_token().as_deref()).await
+        resolve_policy(
+            client,
+            owner_user_id,
+            get_current_access_token().as_deref(),
+            agent_key,
+            None,
+        )
+        .await
     }
 }
 
@@ -366,17 +429,61 @@ impl RunService {
         };
         let owner_user_id = task_owner_user_id(task)
             .ok_or_else(|| "task owner user id is required for plugin policy".to_string())?;
-        resolve_policy(client, owner_user_id, None).await
+        let project_source_type = self.task_project_source_type(task).await?;
+        resolve_policy(
+            client,
+            owner_user_id,
+            None,
+            crate::models::task_runner_agent_key_for(
+                task.task_profile.as_str(),
+                task.mcp_config.requires_execution,
+            ),
+            Some(TaskRunnerPolicyRuntimeContext {
+                task_profile: Some(task.task_profile.clone()),
+                project_source_type,
+                runtime_provider: Some("cloud".to_string()),
+                schedule_mode: Some(task.schedule.mode.mode_key().to_string()),
+            }),
+        )
+        .await
     }
+
+    async fn task_project_source_type(&self, task: &TaskRecord) -> Result<Option<String>, String> {
+        if task.project_id == crate::models::PUBLIC_PROJECT_ID {
+            return Ok(Some("public".to_string()));
+        }
+        let project_service =
+            super::TaskProjectService::new_with_config(self.store.clone(), self.config.clone());
+        Ok(project_service
+            .get_project(task.project_id.as_str())
+            .await?
+            .and_then(|project| normalized_text(project.source_type)))
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+struct TaskRunnerPolicyRuntimeContext {
+    task_profile: Option<String>,
+    project_source_type: Option<String>,
+    runtime_provider: Option<String>,
+    schedule_mode: Option<String>,
 }
 
 async fn resolve_policy(
     client: &PluginManagementClient,
     owner_user_id: &str,
     access_token: Option<&str>,
+    agent_key: SystemAgentKey,
+    runtime_context: Option<TaskRunnerPolicyRuntimeContext>,
 ) -> Result<Option<TaskRunnerCapabilityPolicy>, String> {
-    let request =
-        ResolveAgentCapabilitiesRequest::new(SystemAgentKey::TaskRunnerRunPhase, owner_user_id);
+    let runtime_context = runtime_context.unwrap_or_default();
+    let request = ResolveAgentCapabilitiesRequest::new(agent_key, owner_user_id)
+        .with_runtime_context(
+            runtime_context.task_profile,
+            runtime_context.project_source_type,
+            runtime_context.runtime_provider,
+            runtime_context.schedule_mode,
+        );
     let capabilities = if let Some(access_token) = access_token {
         client
             .resolve_for_user(&request, access_token)
@@ -389,6 +496,12 @@ async fn resolve_policy(
             .map_err(|err| err.to_string())?
     };
     TaskRunnerCapabilityPolicy::new(capabilities).map(Some)
+}
+
+fn normalized_text(value: Option<String>) -> Option<String> {
+    value
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
 }
 
 fn resolved_owner_user_id<'a>(
@@ -418,14 +531,40 @@ fn task_owner_user_id(task: &TaskRecord) -> Option<&str> {
 }
 
 fn plugin_builtin_kind(item: &ResolvedMcp) -> Option<BuiltinMcpKind> {
-    if item.resource.runtime.kind != BUILTIN_RUNTIME_KIND {
-        return None;
+    plugin_system_mcp_descriptor(item).and_then(|descriptor| descriptor.embedded_kind)
+}
+
+fn plugin_system_mcp_descriptor(item: &ResolvedMcp) -> Option<&'static SystemMcpDescriptor> {
+    system_mcp_descriptor_for_record(&item.resource)
+}
+
+fn planning_builtin_kind_allowed(kind: BuiltinMcpKind) -> bool {
+    !matches!(
+        kind,
+        BuiltinMcpKind::CodeMaintainerWrite
+            | BuiltinMcpKind::TerminalController
+            | BuiltinMcpKind::RemoteConnectionController
+    )
+}
+
+fn validate_configured_builtin_dependencies(
+    capabilities: &ResolvedAgentCapabilities,
+) -> Result<(), String> {
+    let configured = capabilities
+        .mcps
+        .iter()
+        .filter(|item| item.available && item.binding.enabled && item.resource.enabled)
+        .filter_map(plugin_builtin_kind)
+        .collect::<HashSet<_>>();
+    if configured.contains(&BuiltinMcpKind::CodeMaintainerWrite)
+        && !configured.contains(&BuiltinMcpKind::CodeMaintainerRead)
+    {
+        return Err(format!(
+            "Plugin Management config for {} enables CodeMaintainerWrite without CodeMaintainerRead",
+            capabilities.agent_key
+        ));
     }
-    item.resource
-        .runtime
-        .builtin_kind
-        .as_deref()
-        .and_then(builtin_kind_by_any)
+    Ok(())
 }
 
 fn validate_cloud_external_mcp_runtime(item: &ResolvedMcp) -> Result<(), String> {
@@ -438,6 +577,26 @@ fn validate_cloud_external_mcp_runtime(item: &ResolvedMcp) -> Result<(), String>
             "Local Connector MCP is unavailable in cloud Task Runner: {}",
             item.resource.id
         ));
+    }
+    if let Some(descriptor) = plugin_system_mcp_descriptor(item) {
+        if descriptor.embedded_kind.is_some() {
+            return Err(format!(
+                "embedded system MCP cannot be loaded as an external MCP: {}",
+                descriptor.server_name
+            ));
+        }
+        if !descriptor.supports_host(SystemMcpHost::TaskRunner)
+            || !matches!(
+                descriptor.backend,
+                SystemMcpBackend::ServiceHttp | SystemMcpBackend::ServiceDynamic
+            )
+        {
+            return Err(format!(
+                "system MCP {} has no Task Runner service backend",
+                descriptor.server_name
+            ));
+        }
+        return Ok(());
     }
     if !CLOUD_EXTERNAL_RUNTIME_KINDS.contains(&runtime_kind) {
         return Err(format!(

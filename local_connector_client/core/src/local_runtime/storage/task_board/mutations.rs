@@ -2,7 +2,7 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use anyhow::{Context, Result};
-use chatos_builtin_tools::TaskUpdatePatch;
+use chatos_mcp::TaskUpdatePatch;
 
 use crate::local_now_rfc3339;
 use crate::local_runtime::task_board::{

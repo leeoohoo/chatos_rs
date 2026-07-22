@@ -1,7 +1,7 @@
 # API Surface Baseline
 
-main_backend_route_count=202
-total_route_count=202
+main_backend_route_count=203
+total_route_count=203
 
 ## chatos/backend/src/api (.route lines)
 chatos/backend/src/api/agent_chat.rs: .route(
@@ -137,6 +137,7 @@ chatos/backend/src/api/notepad.rs: .route("/api/notepad/init", get(init_notepad)
 chatos/backend/src/api/notepad.rs: .route("/api/notepad/notes", get(list_notes).post(create_note))
 chatos/backend/src/api/notepad.rs: .route("/api/notepad/search", get(search_notes))
 chatos/backend/src/api/notepad.rs: .route("/api/notepad/tags", get(list_tags))
+chatos/backend/src/api/projects.rs: .route(
 chatos/backend/src/api/projects.rs: .route(
 chatos/backend/src/api/projects.rs: .route(
 chatos/backend/src/api/projects.rs: .route(

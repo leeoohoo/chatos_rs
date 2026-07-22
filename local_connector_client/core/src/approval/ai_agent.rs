@@ -134,6 +134,13 @@ pub(crate) async fn run_auto_approval_agent(
             memory.conversation_id.clone(),
         )
     });
+    let retry_model_config = model_config.clone();
+    let retry_conversation_id = conversation_id.clone();
+    let retry_prompt_source = prompt.clone();
+    let retry_executor = executor.clone();
+    let retry_memory = agent_memory.clone();
+    let retry_system_prompt = installed_prompt.content.clone();
+    let retry_metadata_source = metadata.clone();
     let turn_request = AgentTurnRequest::new(model_config, conversation_id, run_id, prompt)
         .with_tool_executor(executor)
         .with_memory(agent_memory)
@@ -144,6 +151,36 @@ pub(crate) async fn run_auto_approval_agent(
         .run(&COMMAND_APPROVAL_AGENT, turn_request)
         .await
         .map_err(|error| anyhow!(error.message().to_string()))?;
+
+    if decision
+        .lock()
+        .ok()
+        .and_then(|guard| guard.clone())
+        .is_none()
+    {
+        let retry_run_id = format!("approval-agent-retry-{}", Uuid::new_v4());
+        let retry_prompt = format!(
+            "{retry_prompt_source}\n\n上一轮没有调用 `{APPROVAL_DECISION_TOOL}`，因此没有形成有效审批结果。现在必须调用 `{APPROVAL_DECISION_TOOL}`，并且只能通过该工具返回 approve、deny 或 ask_user 之一；不要只输出文字结论。"
+        );
+        let mut retry_metadata = retry_metadata_source;
+        retry_metadata["run_id"] = json!(retry_run_id);
+        retry_metadata["retry_after_missing_decision"] = json!(true);
+        let retry_request = AgentTurnRequest::new(
+            retry_model_config,
+            retry_conversation_id,
+            retry_run_id,
+            retry_prompt,
+        )
+        .with_tool_executor(retry_executor)
+        .with_memory(retry_memory)
+        .with_max_iterations(capability_policy.max_iterations)
+        .with_system_prompt(retry_system_prompt)
+        .with_metadata(retry_metadata);
+        AgentExecutor::new()
+            .run(&COMMAND_APPROVAL_AGENT, retry_request)
+            .await
+            .map_err(|error| anyhow!(error.message().to_string()))?;
+    }
 
     let decision = decision
         .lock()
@@ -299,6 +336,7 @@ fn approval_model_config(
         .with_temperature(runtime.temperature.or(Some(0.0)))
         .with_max_output_tokens(runtime.max_output_tokens.or(Some(1_200)))
         .with_thinking_level(thinking_level)
+        .with_max_transient_retries(Some(runtime.model_request_max_retries))
         .with_request_cwd(Some(root.display().to_string())),
         prompt_vendor,
     ))

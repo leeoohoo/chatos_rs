@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use std::time::Duration;
+use std::{collections::HashMap, time::Duration};
 
 use memory_engine_sdk::{
     ComposeContextBlock, ComposeContextMeta, ComposeContextPolicy, ComposeContextResponse,
@@ -10,8 +10,10 @@ use memory_engine_sdk::{
 use serde_json::json;
 
 use super::{
-    compose_response_to_input_items, MemoryContextComposer, MemoryRecordScope, MemoryScope,
+    compose_response_to_input_items, compose_response_to_input_items_with_budget,
+    MemoryContextComposer, MemoryRecordScope, MemoryScope,
 };
+use crate::tool_runtime::ToolResultModelBudgetLimits;
 
 #[test]
 fn memory_scope_builder_keeps_runtime_source_key() {
@@ -307,6 +309,97 @@ fn compose_response_to_input_items_omits_large_tool_outputs() {
     assert!(output.contains("Tool result omitted"));
     assert!(output.contains("code.read_file"));
     assert!(output.len() < 1_000);
+}
+
+#[test]
+fn compose_response_to_input_items_prioritizes_latest_tool_output_with_total_budget() {
+    let tool_call_record = |record_id: &str, call_id: &str, created_at: &str| EngineRecord {
+        id: record_id.to_string(),
+        thread_id: "thread-1".to_string(),
+        tenant_id: "tenant-1".to_string(),
+        source_id: "task".to_string(),
+        external_record_id: None,
+        role: "assistant".to_string(),
+        record_type: "message".to_string(),
+        content: "calling tool".to_string(),
+        structured_payload: None,
+        metadata: Some(json!({
+            "tool_calls": [{
+                "id": call_id,
+                "type": "function",
+                "function": {"name": "task_manager_list_tasks", "arguments": "{}"}
+            }]
+        })),
+        summary_status: "pending".to_string(),
+        summary_id: None,
+        summarized_at: None,
+        created_at: created_at.to_string(),
+    };
+    let tool_output_record =
+        |record_id: &str, call_id: &str, content: &str, created_at: &str| EngineRecord {
+            id: record_id.to_string(),
+            thread_id: "thread-1".to_string(),
+            tenant_id: "tenant-1".to_string(),
+            source_id: "task".to_string(),
+            external_record_id: None,
+            role: "tool".to_string(),
+            record_type: "message".to_string(),
+            content: content.to_string(),
+            structured_payload: None,
+            metadata: Some(json!({
+                "tool_call_id": call_id,
+                "name": "task_manager_list_tasks"
+            })),
+            summary_status: "pending".to_string(),
+            summary_id: None,
+            summarized_at: None,
+            created_at: created_at.to_string(),
+        };
+    let response = ComposeContextResponse {
+        thread_id: "thread-1".to_string(),
+        blocks: Vec::new(),
+        recent_records: vec![
+            tool_call_record("rec-1", "call_old", "2026-06-08T00:00:00Z"),
+            tool_output_record(
+                "rec-2",
+                "call_old",
+                "{\"count\":3,\"tasks\":[\"older-task-state\"]}",
+                "2026-06-08T00:00:01Z",
+            ),
+            tool_call_record("rec-3", "call_new", "2026-06-08T00:00:02Z"),
+            tool_output_record(
+                "rec-4",
+                "call_new",
+                "{\"count\":0,\"tasks\":[]}",
+                "2026-06-08T00:00:03Z",
+            ),
+        ],
+        meta: ComposeContextMeta {
+            summary_count: 0,
+            recent_record_count: 4,
+        },
+    };
+
+    let items = compose_response_to_input_items_with_budget(
+        &response,
+        Some(ToolResultModelBudgetLimits::new(100, 30)),
+    );
+    let outputs = items
+        .iter()
+        .filter_map(|item| {
+            let call_id = item.get("call_id").and_then(|value| value.as_str())?;
+            let output = item.get("output").and_then(|value| value.as_str())?;
+            Some((call_id, output))
+        })
+        .collect::<HashMap<_, _>>();
+
+    assert_eq!(
+        outputs.get("call_new").copied(),
+        Some("{\"count\":0,\"tasks\":[]}")
+    );
+    assert!(outputs
+        .get("call_old")
+        .is_some_and(|output| output.contains("combined tool results exceed")));
 }
 
 #[test]

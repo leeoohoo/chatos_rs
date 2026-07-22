@@ -45,6 +45,7 @@ import {
   analyzeLocalProjectRuntimeEnvironment,
   getLocalProjectRuntimeEnvironment,
   getLocalProjectRuntimeEnvironmentProgress,
+  startLocalProjectRuntimeEnvironment,
   updateLocalProjectRuntimeEnvironmentSettings,
 } from './runtimeEnvironment';
 import type { LocalRuntimeProjectRecord } from './types';
@@ -118,6 +119,8 @@ export class LocalRuntimeProjectClient extends LocalRuntimeResourceClient {
     requirementId: string,
     data: {
       contact_id?: string;
+      model_config_id?: string;
+      modelConfigId?: string;
       include_prerequisite_dependents?: boolean;
       includePrerequisiteDependents?: boolean;
     } = {},
@@ -150,6 +153,12 @@ export class LocalRuntimeProjectClient extends LocalRuntimeResourceClient {
     projectId: string,
   ): Promise<ProjectRuntimeEnvironmentResponse> {
     return analyzeLocalProjectRuntimeEnvironment(projectId);
+  }
+
+  async startProjectRuntimeEnvironment(
+    projectId: string,
+  ): Promise<ProjectRuntimeEnvironmentResponse> {
+    return startLocalProjectRuntimeEnvironment(projectId);
   }
 
   async getProjectRuntimeEnvironmentProgress(

@@ -4,7 +4,7 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use chatos_builtin_tools::{
+use chatos_mcp::{
     TaskManagerOptions, TaskManagerService, TaskManagerStoreRef, REVIEW_TIMEOUT_MS_DEFAULT,
 };
 use chatos_mcp_runtime::{

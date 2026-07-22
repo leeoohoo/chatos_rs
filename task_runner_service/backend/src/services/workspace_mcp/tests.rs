@@ -31,13 +31,14 @@ fn default_config_has_no_optional_builtin_selection() {
 
 #[test]
 fn plan_task_builtin_selection_uses_fixed_allowlist() {
-    let task = sample_task(
+    let mut task = sample_task(
         TASK_PROFILE_CHATOS_PLAN,
         vec![
             "CodeMaintainerWrite".to_string(),
             "AgentBuilder".to_string(),
         ],
     );
+    task.mcp_config.requires_execution = false;
 
     let selected = runtime_selected_builtin_kinds(&task);
 
@@ -45,6 +46,7 @@ fn plan_task_builtin_selection_uses_fixed_allowlist() {
     assert!(selected.contains(&BuiltinMcpKind::TaskManager));
     assert!(selected.contains(&BuiltinMcpKind::ProjectManagement));
     assert!(selected.contains(&BuiltinMcpKind::BrowserTools));
+    assert!(!selected.contains(&BuiltinMcpKind::TerminalController));
     assert!(!selected.contains(&BuiltinMcpKind::CodeMaintainerWrite));
     assert!(!selected.contains(&BuiltinMcpKind::AgentBuilder));
 }
@@ -109,6 +111,7 @@ fn harness_code_task_removes_server_local_code_builtin_kinds() {
 #[test]
 fn harness_code_plan_task_removes_fixed_server_local_code_builtin_kinds() {
     let mut task = sample_task(TASK_PROFILE_CHATOS_PLAN, Vec::new());
+    task.mcp_config.requires_execution = false;
     task.mcp_config
         .ephemeral_http_servers
         .push(harness_code_server());
@@ -117,10 +120,33 @@ fn harness_code_plan_task_removes_fixed_server_local_code_builtin_kinds() {
 
     assert!(!selected.contains(&BuiltinMcpKind::CodeMaintainerRead));
     assert!(!selected.contains(&BuiltinMcpKind::CodeMaintainerWrite));
-    assert!(selected.contains(&BuiltinMcpKind::TerminalController));
+    assert!(!selected.contains(&BuiltinMcpKind::TerminalController));
     assert!(selected.contains(&BuiltinMcpKind::BrowserTools));
     assert!(selected.contains(&BuiltinMcpKind::TaskManager));
     assert!(selected.contains(&BuiltinMcpKind::ProjectManagement));
+}
+
+#[test]
+fn authoritative_plan_with_harness_read_does_not_require_sandbox() {
+    let mut task = sample_task(
+        TASK_PROFILE_CHATOS_PLAN,
+        vec![
+            "CodeMaintainerRead".to_string(),
+            "TaskManager".to_string(),
+            "AskUser".to_string(),
+        ],
+    );
+    task.mcp_config.requires_execution = false;
+    task.mcp_config
+        .ephemeral_http_servers
+        .push(harness_code_server());
+
+    assert!(!crate::services::sandbox_runtime::task_requires_sandbox(
+        &task, true
+    ));
+    assert!(!crate::services::sandbox_runtime::task_requires_sandbox(
+        &task, false
+    ));
 }
 
 #[test]

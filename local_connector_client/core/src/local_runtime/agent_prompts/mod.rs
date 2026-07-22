@@ -27,6 +27,8 @@ pub(crate) struct LocalAgentPromptStatus {
     pub(crate) required: bool,
     pub(crate) prompt_count: i64,
     pub(crate) expected_prompt_count: usize,
+    pub(crate) capability_count: i64,
+    pub(crate) expected_capability_count: usize,
     pub(crate) last_checked_at: Option<String>,
     pub(crate) last_synced_at: Option<String>,
     pub(crate) last_error: Option<String>,
@@ -45,10 +47,26 @@ pub(crate) async fn agent_prompt_status(runtime: &LocalRuntime) -> Result<LocalA
             .is_some_and(|source| state.source_instance_id == source)
     });
     let expected_prompt_count = SystemAgentKey::ALL.len() * AgentPromptVendor::ALL.len();
+    let expected_capability_count = SystemAgentKey::ALL.len();
+    let owner_user_id = current_owner_user_id(runtime).await;
+    let (capability_count, capability_set_complete) = match owner_user_id.as_deref() {
+        Some(owner_user_id) => {
+            let database = runtime.local_database()?;
+            (
+                database.count_capability_snapshots(owner_user_id).await?,
+                database
+                    .capability_snapshot_set_is_complete(owner_user_id)
+                    .await?,
+            )
+        }
+        None => (0, false),
+    };
     Ok(LocalAgentPromptStatus {
         configured: config.is_some(),
         initialized: state.as_ref().is_some_and(|state| {
-            state.installed_bundle_version > 0 && state.prompt_count == expected_prompt_count as i64
+            state.installed_bundle_version > 0
+                && state.prompt_count == expected_prompt_count as i64
+                && capability_set_complete
         }),
         source_instance_id,
         installed_bundle_version: state
@@ -66,6 +84,8 @@ pub(crate) async fn agent_prompt_status(runtime: &LocalRuntime) -> Result<LocalA
             .map(|state| state.prompt_count)
             .unwrap_or_default(),
         expected_prompt_count,
+        capability_count,
+        expected_capability_count,
         last_checked_at: state
             .as_ref()
             .and_then(|state| state.last_checked_at.clone()),
@@ -81,11 +101,25 @@ pub(crate) async fn check_agent_prompt_updates(
 ) -> Result<LocalAgentPromptStatus> {
     let config = require_current_config(runtime).await?;
     let source = prompt_source_instance_id(&config);
-    match remote::fetch_manifest(runtime, &config).await {
-        Ok(manifest) => {
+    let check = async {
+        let snapshots = crate::local_runtime::fetch_all_capability_snapshots(runtime).await?;
+        let owner_user_id = snapshots
+            .first()
+            .map(|snapshot| snapshot.owner_user_id.as_str())
+            .ok_or_else(|| anyhow::anyhow!("system Agent capability bundle is empty"))?;
+        let capability_update_available = !runtime
+            .local_database()?
+            .capability_snapshots_match(owner_user_id, snapshots.as_slice())
+            .await?;
+        let manifest = remote::fetch_manifest(runtime, &config).await?;
+        Ok::<_, anyhow::Error>((manifest, capability_update_available))
+    }
+    .await;
+    match check {
+        Ok((manifest, capability_update_available)) => {
             runtime
                 .local_database()?
-                .save_agent_prompt_manifest(source.as_str(), &manifest)
+                .save_agent_prompt_manifest(source.as_str(), &manifest, capability_update_available)
                 .await?
         }
         Err(err) => {
@@ -106,9 +140,10 @@ pub(crate) async fn update_agent_prompt_bundle(
     let source = prompt_source_instance_id(&config);
     let bundle = remote::fetch_bundle(runtime, &config).await?;
     validation::validate_bundle(&bundle)?;
+    let snapshots = crate::local_runtime::fetch_all_capability_snapshots(runtime).await?;
     runtime
         .local_database()?
-        .install_agent_prompt_bundle(source.as_str(), &bundle)
+        .install_agent_configuration_bundle(source.as_str(), &bundle, snapshots.as_slice())
         .await?;
     agent_prompt_status(runtime).await
 }
@@ -151,6 +186,24 @@ pub(crate) async fn load_installed_agent_prompt_from_database(
 async fn current_config(runtime: &LocalRuntime) -> Option<ClientConfig> {
     let state = runtime.state.read().await;
     ClientConfig::from_state(&state, runtime.state_path.clone())
+}
+
+async fn current_owner_user_id(runtime: &LocalRuntime) -> Option<String> {
+    let state = runtime.state.read().await;
+    state
+        .auth
+        .as_ref()
+        .and_then(|auth| auth.user.as_ref())
+        .map(|user| user.id.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .or_else(|| {
+            state
+                .paired_user_id
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_string)
+        })
 }
 
 async fn require_current_config(runtime: &LocalRuntime) -> Result<ClientConfig> {

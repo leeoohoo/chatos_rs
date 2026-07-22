@@ -287,6 +287,7 @@ pub fn shared_model_runtime_config_from_resolved(
     .with_temperature(Some(resolved.temperature))
     .with_thinking_level(resolved.thinking_level.clone())
     .with_instructions(resolved.system_prompt.clone())
+    .with_max_transient_retries(Some(resolved.model_request_max_retries))
 }
 
 pub async fn resolve_shared_model_runtime_config_for_request(

@@ -15,7 +15,7 @@ import {
   buildTimelineItems,
   buildTimelineSummary,
   formatTime,
-  isProcessMessage,
+  selectTurnProcessMessages,
 } from './ConversationProcessTimelineModel';
 
 interface ConversationProcessTimelineModalProps {
@@ -34,8 +34,8 @@ export const ConversationProcessTimelineModal: React.FC<ConversationProcessTimel
   onClose,
 }) => {
   const processMessages = useMemo(
-    () => messages.filter(isProcessMessage),
-    [messages],
+    () => selectTurnProcessMessages(messages, item),
+    [item, messages],
   );
   const timelineItems = useMemo(
     () => buildTimelineItems(processMessages),
@@ -63,7 +63,7 @@ export const ConversationProcessTimelineModal: React.FC<ConversationProcessTimel
           <div className="min-w-0">
             <h2 className="text-sm font-semibold text-foreground">执行过程</h2>
             <p className="mt-0.5 truncate text-xs text-muted-foreground">
-              {formatTime(item.userMessage.createdAt)} · {item.processMessageCount} 条过程消息 · {timelineItems.length} 个事件
+              {formatTime(item.userMessage.createdAt)} · {loading ? item.processMessageCount : processMessages.length} 条过程消息 · {timelineItems.length} 个事件
             </p>
           </div>
           <button
@@ -98,13 +98,13 @@ export const ConversationProcessTimelineModal: React.FC<ConversationProcessTimel
                 <SummaryPill label="错误" value={summary.error} />
               </div>
               <ol className="relative space-y-3 before:absolute before:bottom-4 before:left-[13px] before:top-4 before:w-px before:bg-border">
-                {timelineItems.map((timelineItem, index) => (
+                {timelineItems.map((timelineItem) => (
                   <li key={timelineItem.id} className="relative pl-9">
                     <TimelineDot
                       type={timelineItem.type}
                       status={'status' in timelineItem ? timelineItem.status : undefined}
                     />
-                    {renderTimelineCard(timelineItem, index)}
+                    {renderTimelineCard(timelineItem)}
                   </li>
                 ))}
               </ol>

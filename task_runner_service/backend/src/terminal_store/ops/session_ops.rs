@@ -75,11 +75,10 @@ impl TaskRunnerTerminalControllerStore {
             }
             {
                 let mut child = session.child.lock().await;
-                if let Err(err) = child.kill().await {
+                if let Err(err) = terminate_task_terminal_process_tree(&mut child).await {
                     errors.push(format!("kill {} failed: {}", meta.id, err));
                     continue;
                 }
-                let _ = child.wait().await;
             }
             mark_session_exited(&session, None).await;
             append_log(

@@ -11,13 +11,14 @@ pub(crate) fn create_task_schema() -> Value {
     json!({
         "type": "object",
         "properties": {
-            "title": { "type": "string", "minLength": 1, "description": "Task title." },
-            "description": { "type": "string", "description": "Task background or context." },
-            "objective": { "type": "string", "minLength": 1, "description": "Concrete execution objective." },
+            "title": { "type": "string", "minLength": 1, "description": "Task title in the current user's language; preserve technical identifiers and proper nouns." },
+            "description": { "type": "string", "description": "Task background or context in the current user's language." },
+            "objective": { "type": "string", "minLength": 1, "description": "Concrete execution objective in the current user's language; preserve code, commands, paths, APIs, and product names." },
             "input_payload": { "description": "Structured JSON input, references, or material needed for execution." },
             "priority": { "type": "integer", "description": "Higher numbers mean higher priority." },
             "tags": { "type": "array", "items": { "type": "string" }, "description": "Task tags." },
             "default_model_config_id": default_model_config_id_schema(),
+            "is_planning_task": planning_task_schema(),
             "requires_execution": requires_execution_schema(),
             "schedule": { "type": "object", "description": "Optional task schedule configuration." },
             "prerequisite_task_ids": prerequisite_task_ids_schema(),
@@ -78,13 +79,14 @@ pub(crate) fn create_tasks_with_prerequisites_schema() -> Value {
                             "minLength": 1,
                             "description": "Temporary reference within this tool call. Task Runner returns real task ids."
                         },
-                        "title": { "type": "string", "minLength": 1 },
-                        "description": { "type": "string" },
-                        "objective": { "type": "string", "minLength": 1 },
+                        "title": { "type": "string", "minLength": 1, "description": "Task title in the current user's language." },
+                        "description": { "type": "string", "description": "Task description in the current user's language." },
+                        "objective": { "type": "string", "minLength": 1, "description": "Task objective in the current user's language; preserve technical identifiers and proper nouns." },
                         "input_payload": {},
                         "priority": { "type": "integer" },
                         "tags": { "type": "array", "items": { "type": "string" } },
                         "default_model_config_id": default_model_config_id_schema(),
+                        "is_planning_task": planning_task_schema(),
                         "requires_execution": requires_execution_schema(),
                         "schedule": { "type": "object" },
                         "enabled_builtin_kinds": {
@@ -129,6 +131,14 @@ fn requires_execution_schema() -> Value {
     })
 }
 
+fn planning_task_schema() -> Value {
+    json!({
+        "type": "boolean",
+        "default": false,
+        "description": "Whether the task itself is planning, requirement decomposition, or project-management maintenance. Set false for coding, testing, fixing, documentation delivery, deployment, and other implementation work. This is independent from requires_execution."
+    })
+}
+
 pub(crate) fn create_project_execution_tasks_schema() -> Value {
     json!({
         "type": "object",
@@ -164,9 +174,9 @@ pub(crate) fn create_project_execution_tasks_schema() -> Value {
                             "minLength": 1,
                             "description": "Project-management task/work item id this execution task contributes to."
                         },
-                        "title": { "type": "string", "minLength": 1 },
-                        "description": { "type": "string" },
-                        "objective": { "type": "string", "minLength": 1 },
+                        "title": { "type": "string", "minLength": 1, "description": "Execution-task title in the current user's language." },
+                        "description": { "type": "string", "description": "Execution-task description in the current user's language." },
+                        "objective": { "type": "string", "minLength": 1, "description": "Execution objective in the current user's language; preserve code, commands, paths, APIs, and product names." },
                         "input_payload": {},
                         "priority": { "type": "integer" },
                         "tags": { "type": "array", "items": { "type": "string" } },
@@ -174,6 +184,7 @@ pub(crate) fn create_project_execution_tasks_schema() -> Value {
                             "type": "string",
                             "description": "Optional Task Runner execution model config id. Omit to use the current user's default."
                         },
+                        "is_planning_task": planning_task_schema(),
                         "requires_execution": requires_execution_schema(),
                         "enabled_builtin_kinds": {
                             "type": "array",
@@ -191,7 +202,7 @@ pub(crate) fn create_project_execution_tasks_schema() -> Value {
                         },
                         "prerequisite_task_ids": prerequisite_task_ids_schema()
                     },
-                    "required": ["client_ref", "project_task_id", "title", "objective"],
+                    "required": ["client_ref", "project_task_id", "title", "objective", "is_planning_task"],
                     "additionalProperties": false
                 }
             }
@@ -299,6 +310,25 @@ pub(crate) fn normalize_mcp_builtin_kind_names(values: Vec<String>) -> Result<Ve
         .into_iter()
         .map(|kind| kind.kind_name().to_string())
         .collect())
+}
+
+#[cfg(test)]
+mod language_tests {
+    use super::*;
+
+    #[test]
+    fn project_execution_task_schema_requires_user_language_fields() {
+        let schema = create_project_execution_tasks_schema();
+        for field in ["title", "description", "objective"] {
+            let description = schema
+                .pointer(&format!(
+                    "/properties/tasks/items/properties/{field}/description"
+                ))
+                .and_then(Value::as_str)
+                .unwrap_or_else(|| panic!("{field} description"));
+            assert!(description.contains("current user's language"), "{field}");
+        }
+    }
 }
 
 pub(crate) fn task_status_values() -> Vec<&'static str> {

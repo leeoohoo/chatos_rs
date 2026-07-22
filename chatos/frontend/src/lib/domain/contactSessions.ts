@@ -162,6 +162,22 @@ export const isSessionMatchedContactAndProject = (
   })
 );
 
+export const isLegacySessionMatchedContactAndProject = (
+  session: unknown,
+  contact: ContactSessionRef,
+  projectId: string | null | undefined,
+): boolean => {
+  if (!isSessionActive(session)) {
+    return false;
+  }
+  const identity = resolveSessionContactIdentity(session);
+  const contactAgentId = typeof contact.agentId === 'string' ? contact.agentId.trim() : '';
+  if (identity.contactId || !contactAgentId || identity.contactAgentId !== contactAgentId) {
+    return false;
+  }
+  return resolveSessionProjectScopeId(session) === normalizeProjectScopeId(projectId);
+};
+
 export const findLatestMatchedSession = (
   sessions: Session[],
   contact: ContactSessionRef,
@@ -206,6 +222,19 @@ export const findBestMatchedSession = (
   }
 
   return preferredSession || candidates[0] || null;
+};
+
+export const findBestLegacyMatchedSession = (
+  sessions: Session[],
+  contact: ContactSessionRef,
+  projectId: string | null | undefined,
+): Session | null => {
+  const candidates = (sessions || [])
+    .filter((session: Session) => (
+      isLegacySessionMatchedContactAndProject(session, contact, projectId)
+    ))
+    .sort((left, right) => resolveSessionTimestamp(right) - resolveSessionTimestamp(left));
+  return candidates.find(hasSessionMessages) || candidates[0] || null;
 };
 
 export const splitSessionsByMappedContacts = (

@@ -18,12 +18,17 @@ use crate::core::session_access::{ensure_owned_session, map_session_access_error
 use crate::models::message::Message;
 use crate::modules::conversation_runtime::messages as conversation_messages;
 use crate::services::chatos_memory_engine;
+use crate::services::runtime_guidance_manager::runtime_guidance_manager;
 
 use super::super::contracts::CompactHistoryQuery;
 use super::super::history::{
     build_compact_history_messages_from_turn_slices,
     build_compact_history_messages_from_turn_slices_with_process, build_turn_display_messages,
-    turn_slice_final_assistant_is_task_runner_callback,
+    turn_slice_needs_task_runner_callback_process_messages,
+};
+use super::super::history_process_support::{
+    contact_async_user_status_needs_runtime_reconciliation,
+    reconcile_contact_async_user_status_for_display,
 };
 use super::super::support::list_all_session_messages;
 
@@ -166,7 +171,7 @@ async fn load_task_runner_callback_process_messages(
 ) -> HashMap<String, Vec<Message>> {
     let mut process_messages_by_turn = HashMap::new();
     for slice in slices {
-        if !turn_slice_final_assistant_is_task_runner_callback(slice) {
+        if !turn_slice_needs_task_runner_callback_process_messages(slice) {
             continue;
         }
 
@@ -191,6 +196,37 @@ async fn load_task_runner_callback_process_messages(
     }
 
     process_messages_by_turn
+}
+
+async fn reconcile_contact_async_runtime_statuses(conversation_id: &str, messages: &mut [Message]) {
+    for message in messages.iter_mut() {
+        if !contact_async_user_status_needs_runtime_reconciliation(message) {
+            continue;
+        }
+        let Some(turn_id) = message_turn_id(message).map(str::to_string) else {
+            continue;
+        };
+        let active_in_runtime =
+            runtime_guidance_manager().is_active_turn(conversation_id, turn_id.as_str());
+        match conversation_messages::get_turn_runtime_snapshot_by_turn(
+            conversation_id,
+            turn_id.as_str(),
+        )
+        .await
+        {
+            Ok(lookup) => reconcile_contact_async_user_status_for_display(
+                message,
+                Some(lookup.status.as_str()),
+                active_in_runtime,
+            ),
+            Err(err) => warn!(
+                conversation_id,
+                turn_id = turn_id.as_str(),
+                error = err.as_str(),
+                "failed to reconcile contact async runtime status for compact history"
+            ),
+        }
+    }
 }
 
 pub(in crate::api::sessions) async fn get_session_compact_history(
@@ -231,6 +267,7 @@ pub(in crate::api::sessions) async fn get_session_compact_history(
             &process_messages_by_turn,
         )
     };
+    reconcile_contact_async_runtime_statuses(&conversation_id, &mut messages).await;
     if before_turn_id.is_none() {
         match list_all_session_messages(&conversation_id).await {
             Ok(all_messages) => {

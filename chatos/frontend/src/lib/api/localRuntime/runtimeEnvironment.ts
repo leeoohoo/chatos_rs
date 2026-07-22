@@ -33,6 +33,13 @@ export const analyzeLocalProjectRuntimeEnvironment = (
   { method: 'POST' },
 );
 
+export const startLocalProjectRuntimeEnvironment = (
+  projectId: string,
+): Promise<ProjectRuntimeEnvironmentResponse> => requestLocalRuntime(
+  environmentPath(projectId, '/start'),
+  { method: 'POST' },
+);
+
 export const getLocalProjectRuntimeEnvironmentProgress = (
   projectId: string,
 ): Promise<ProjectRuntimeEnvironmentProgressResponse> => requestLocalRuntime(

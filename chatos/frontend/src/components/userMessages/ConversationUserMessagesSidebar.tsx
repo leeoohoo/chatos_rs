@@ -18,6 +18,7 @@ interface ConversationUserMessagesSidebarProps {
   sessionId: string | null | undefined;
   hasProjectContact?: boolean;
   refreshKey?: string | number | null;
+  liveMessages?: Message[];
   className?: string;
   summaryActive?: boolean;
   runtimeContextActive?: boolean;
@@ -58,6 +59,7 @@ const ConversationUserMessagesSidebar: React.FC<ConversationUserMessagesSidebarP
   sessionId,
   hasProjectContact = Boolean(sessionId),
   refreshKey,
+  liveMessages,
   className,
   summaryActive = false,
   runtimeContextActive = false,
@@ -85,7 +87,7 @@ const ConversationUserMessagesSidebar: React.FC<ConversationUserMessagesSidebarP
     hasMore,
     reload,
     loadMore,
-  } = useConversationUserMessages(sessionId, { refreshKey });
+  } = useConversationUserMessages(sessionId, { refreshKey, liveMessages });
   const [selectedMessageId, setSelectedMessageId] = useState<string | null>(null);
   const [processTimelineItem, setProcessTimelineItem] = useState<UserMessageTurn | null>(null);
   const [processTimelineMessages, setProcessTimelineMessages] = useState<Message[]>([]);

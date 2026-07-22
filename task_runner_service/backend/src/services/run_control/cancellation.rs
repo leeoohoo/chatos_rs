@@ -25,12 +25,34 @@ impl RunService {
             }
         }
         if current_run.cancel_requested {
+            if let Err(err) = self
+                .ask_user_prompt_service
+                .cancel_pending_prompts_for_run(run_id, "run cancellation requested")
+                .await
+            {
+                warn!(
+                    run_id,
+                    error = err.as_str(),
+                    "failed to cancel pending ask user prompts"
+                );
+            }
             return Ok(Some(current_run));
         }
 
         let Some(mut run) = self.store.mark_cancel_requested(run_id).await? else {
             return Ok(None);
         };
+        if let Err(err) = self
+            .ask_user_prompt_service
+            .cancel_pending_prompts_for_run(run_id, "run cancellation requested")
+            .await
+        {
+            warn!(
+                run_id,
+                error = err.as_str(),
+                "failed to cancel pending ask user prompts"
+            );
+        }
         self.store
             .append_run_event(TaskRunEventRecord::new(
                 run_id.to_string(),
@@ -96,16 +118,33 @@ impl RunService {
             .get("prompt_override")
             .and_then(Value::as_str)
             .map(ToOwned::to_owned);
-        let request = StartTaskRunRequest {
-            model_config_id: Some(run.model_config_id.clone()),
-            prompt_override,
-        };
-        let restarted = if let Some(current_user) = current_user {
-            self.start_run_for_user(&run.task_id, request, current_user)
-                .await?
-        } else {
-            self.start_run(&run.task_id, request).await?
-        };
+        let request = retry_request_with_current_task_config(prompt_override);
+        let restarted = self
+            .start_retry_run_with_user(&run.task_id, request, current_user)
+            .await?;
         Ok(Some(restarted))
+    }
+}
+
+fn retry_request_with_current_task_config(prompt_override: Option<String>) -> StartTaskRunRequest {
+    StartTaskRunRequest {
+        // A retry is explicitly described in the UI as using the task's current
+        // configuration. Leaving this unset lets start_run_with_trigger resolve
+        // the latest task default instead of pinning the failed run's old model.
+        model_config_id: None,
+        prompt_override,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::retry_request_with_current_task_config;
+
+    #[test]
+    fn retry_uses_current_task_model_configuration() {
+        let request = retry_request_with_current_task_config(Some("keep prompt".to_string()));
+
+        assert_eq!(request.model_config_id, None);
+        assert_eq!(request.prompt_override.as_deref(), Some("keep prompt"));
     }
 }

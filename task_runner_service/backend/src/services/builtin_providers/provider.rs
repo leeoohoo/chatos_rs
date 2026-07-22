@@ -56,8 +56,7 @@ impl TaskRunnerBuiltinToolService {
                 context.conversation_id.as_deref(),
                 context.conversation_turn_id.as_deref(),
                 on_stream_chunk.map(|callback| {
-                    Arc::new(move |chunk| callback(chunk))
-                        as chatos_builtin_tools::AskUserStreamChunkCallback
+                    Arc::new(move |chunk| callback(chunk)) as chatos_mcp::AskUserStreamChunkCallback
                 }),
             ),
             Self::ProjectManagement(service) => service.call_tool(name, args).await,

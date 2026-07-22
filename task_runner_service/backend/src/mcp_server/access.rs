@@ -287,6 +287,11 @@ impl TaskRunnerMcpService {
             if !model_visible_to_user(&model, current_user) {
                 return Err(format!("model config not found: {model_config_id}"));
             }
+            if !super::support::model_has_cloud_runtime_credentials(&model) {
+                return Err(format!(
+                    "cloud_model_credentials_required: task runner model config {model_config_id} must contain cloud-resident api_key and base_url; Local Connector credential lookup is disabled"
+                ));
+            }
             return Ok(());
         }
 

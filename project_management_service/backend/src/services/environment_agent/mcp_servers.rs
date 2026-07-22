@@ -19,7 +19,7 @@ use chatos_mcp_service::{
 use chatos_plugin_management_sdk::{
     ResolvedAgentCapabilities, PROJECT_ENVIRONMENT_MCP_RESOURCE_ID, SANDBOX_IMAGES_MCP_RESOURCE_ID,
 };
-use chatos_sandbox_image_mcp::{SANDBOX_IMAGE_PROJECT_ID_HEADER, SANDBOX_IMAGE_RUN_ID_HEADER};
+use chatos_mcp::sandbox_images::{SANDBOX_IMAGE_PROJECT_ID_HEADER, SANDBOX_IMAGE_RUN_ID_HEADER};
 use chatos_service_runtime::http_body::{
     read_response_json_limited, read_response_preview_text_limited_or_message,
     ERROR_BODY_PREVIEW_LIMIT_BYTES, JSON_BODY_LIMIT_BYTES,
@@ -37,7 +37,6 @@ use super::routing::{
 use super::tool_provider::ProjectEnvironmentToolProvider;
 use super::{
     CLOUD_SANDBOX_IMAGE_MCP_PATH, LOCAL_CONNECTOR_ROOT_PREFIX, LOCAL_SANDBOX_IMAGE_MCP_PATH,
-    PROJECT_ENVIRONMENT_MCP_SERVER_NAME, SANDBOX_IMAGE_MCP_SERVER_NAME,
 };
 
 pub(super) async fn build_project_environment_mcp_executor(
@@ -104,7 +103,7 @@ pub(super) async fn build_project_environment_mcp_executor(
                             .with_project_id(project.id.clone())
                             .with_limits(512 * 1024, 5 * 1024 * 1024, 80),
                     );
-                    let provider = chatos_builtin_tools::build_shared_builtin_provider(&server)?
+                    let provider = chatos_mcp::build_shared_builtin_provider(&server)?
                         .ok_or_else(|| {
                             "CodeMaintainerRead builtin provider is unavailable".to_string()
                         })?;
@@ -455,14 +454,17 @@ fn local_connector_facade_base(
 fn capability_allows_builtin(policy: &ResolvedAgentCapabilities, kind: BuiltinMcpKind) -> bool {
     policy.mcps.iter().any(|item| {
         item.available
-            && item.resource.runtime.kind == "builtin"
-            && item.resource.runtime.builtin_kind.as_deref() == Some(kind.kind_name())
+            && chatos_mcp::system_mcp_descriptor_for_record(&item.resource)
+                .is_some_and(|descriptor| descriptor.embedded_kind == Some(kind))
     })
 }
 
 fn project_environment_builtin_server() -> McpBuiltinServer {
+    let descriptor = chatos_mcp::system_mcp_descriptor(
+        chatos_plugin_management_sdk::SystemMcpKey::ProjectEnvironment,
+    );
     McpBuiltinServer {
-        name: PROJECT_ENVIRONMENT_MCP_SERVER_NAME.to_string(),
+        name: descriptor.server_name.to_string(),
         kind: "ProjectEnvironmentRuntime".to_string(),
         workspace_dir: String::new(),
         user_id: None,
@@ -645,9 +647,15 @@ fn cloud_sandbox_image_mcp_server(
         CLOUD_SANDBOX_IMAGE_MCP_PATH
     );
     Ok(Some(
-        McpHttpServer::new(SANDBOX_IMAGE_MCP_SERVER_NAME, url)
-            .with_headers(headers)
-            .with_timeout(config.sandbox_image_mcp_request_timeout),
+        McpHttpServer::new(
+            chatos_mcp::system_mcp_descriptor(
+                chatos_plugin_management_sdk::SystemMcpKey::SandboxImages,
+            )
+            .server_name,
+            url,
+        )
+        .with_headers(headers)
+        .with_timeout(config.sandbox_image_mcp_request_timeout),
     ))
 }
 
@@ -680,7 +688,10 @@ async fn local_connector_sandbox_image_mcp_server(
     headers.insert(SANDBOX_IMAGE_RUN_ID_HEADER.to_string(), run_id.to_string());
     Ok(Some(
         McpHttpServer::new(
-            SANDBOX_IMAGE_MCP_SERVER_NAME,
+            chatos_mcp::system_mcp_descriptor(
+                chatos_plugin_management_sdk::SystemMcpKey::SandboxImages,
+            )
+            .server_name,
             format!(
                 "{}{}",
                 facade_base.trim_end_matches('/'),

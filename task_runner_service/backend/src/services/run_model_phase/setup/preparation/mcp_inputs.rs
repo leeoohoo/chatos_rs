@@ -6,12 +6,17 @@ use crate::services::TaskRunnerCapabilityPolicy;
 
 use std::collections::BTreeSet;
 
+use chatos_mcp::{
+    system_mcp_descriptor_for_record, ResolvedSystemMcpBackend, SystemMcpHostAdapter,
+    SystemMcpResolveContext,
+};
 use chatos_mcp_runtime::{
     BuiltinMcpKind, McpToolNameAlias, BROWSER_TOOLS_SERVER_NAME, CODE_MAINTAINER_READ_SERVER_NAME,
     CODE_MAINTAINER_WRITE_SERVER_NAME, TERMINAL_CONTROLLER_SERVER_NAME,
 };
 
 use crate::models::ExternalMcpConfigRecord;
+use crate::services::system_mcp_adapter::TaskRunnerSystemMcpAdapter;
 
 #[derive(Debug, Clone)]
 pub(super) struct LoadedExternalMcpServers {
@@ -50,7 +55,8 @@ pub(super) async fn load_external_mcp_servers(
     if let Some(policy) = capability_policy {
         for resource in policy.effective_external_mcps(task)? {
             let loaded =
-                plugin_mcp_server_for_resource(service, task, resource, effective_workspace_dir)?;
+                plugin_mcp_server_for_resource(service, task, resource, effective_workspace_dir)
+                    .await?;
             if let Some(server) = loaded.http_server {
                 http_servers.push(server);
             }
@@ -135,7 +141,7 @@ struct LoadedPluginMcpServer {
     stdio_server: Option<McpStdioServer>,
 }
 
-fn plugin_mcp_server_for_resource(
+async fn plugin_mcp_server_for_resource(
     service: &RunService,
     task: &TaskRecord,
     resource: &chatos_plugin_management_sdk::McpRecord,
@@ -150,67 +156,35 @@ fn plugin_mcp_server_for_resource(
         .filter(|value| !value.is_empty())
         .unwrap_or(resource.name.as_str())
         .to_string();
-    match resource.runtime.kind.as_str() {
-        "system_routed" => {
-            if resource.id
-                != chatos_plugin_management_sdk::PROJECT_RUNTIME_ENVIRONMENT_MCP_RESOURCE_ID
-            {
-                return Err(format!(
-                    "plugin MCP {} uses an unsupported Task Runner system route",
-                    resource.id
-                ));
-            }
-            let project_id = crate::models::normalize_project_id(Some(task.project_id.clone()));
-            if project_id == crate::models::PUBLIC_PROJECT_ID {
-                return Err(
-                    "project runtime environment MCP requires a project-scoped task".to_string(),
-                );
-            }
-            let base_url = service
-                .config
-                .project_service_base_url
-                .as_deref()
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .ok_or_else(|| {
-                    "TASK_RUNNER_PROJECT_SERVICE_BASE_URL is required for the project runtime environment MCP"
-                        .to_string()
-                })?
-                .trim_end_matches('/');
-            let secret = service
-                .config
-                .project_service_sync_secret
-                .as_deref()
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .ok_or_else(|| {
-                    "TASK_RUNNER_PROJECT_SERVICE_SYNC_SECRET is required for the project runtime environment MCP"
-                        .to_string()
-                })?;
-            let url = format!(
-                "{base_url}/api/chatos-sync/projects/{}/runtime-environment/mcp",
-                urlencoding::encode(project_id.as_str())
-            );
-            let mut headers = resource.runtime.headers.clone();
-            crate::services::project_management_api_client::insert_project_service_mcp_signing_headers(
-                &mut headers,
-                secret,
-                crate::services::project_management_api_client::PROJECT_READ_SCOPE,
-            )?;
-            headers.insert("x-task-runner-task-id".to_string(), task.id.clone());
-            headers.insert("x-task-runner-project-id".to_string(), project_id);
-            if let Some(owner_user_id) = normalized_task_owner_user_id(task) {
-                headers.insert("x-task-runner-owner-user-id".to_string(), owner_user_id);
-            }
-            let server = McpHttpServer::new(server_name.clone(), url)
-                .with_headers(headers.into_iter().collect());
-            Ok(LoadedPluginMcpServer {
+    if let Some(descriptor) = system_mcp_descriptor_for_record(resource) {
+        let context = SystemMcpResolveContext {
+            workspace_dir: Some(effective_workspace_dir.to_string()),
+            owner_user_id: normalized_task_owner_user_id(task),
+            project_id: Some(crate::models::normalize_project_id(Some(
+                task.project_id.clone(),
+            ))),
+            task_id: Some(task.id.clone()),
+            headers: resource.runtime.headers.clone(),
+            ..SystemMcpResolveContext::default()
+        };
+        return match TaskRunnerSystemMcpAdapter::new(&service.config)
+            .resolve(descriptor.key, &context)
+            .await?
+        {
+            ResolvedSystemMcpBackend::Http(server) => Ok(LoadedPluginMcpServer {
                 name: server_name,
                 transport: "http".to_string(),
                 http_server: Some(server),
                 stdio_server: None,
-            })
-        }
+            }),
+            ResolvedSystemMcpBackend::Unavailable(reason) => Err(reason),
+            ResolvedSystemMcpBackend::Embedded { .. } => Err(format!(
+                "embedded system MCP cannot be loaded as an external MCP: {}",
+                descriptor.server_name
+            )),
+        };
+    }
+    match resource.runtime.kind.as_str() {
         "http" => {
             let url = resource
                 .runtime

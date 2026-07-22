@@ -78,6 +78,8 @@ export interface MessageMetadata extends UnknownRecord {
   historyProcessTurnId?: string;
   historyProcessPlaceholder?: boolean;
   historyDraftUserMessage?: DraftUserMessageSnapshot;
+  clientOptimistic?: boolean;
+  clientPendingSync?: boolean;
   unavailableTools?: UnavailableToolInfo[];
   requestError?: string;
   task_turn_review?: {

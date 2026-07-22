@@ -27,8 +27,12 @@ export const useTeamMemberWorkspaceProps = ({
     attachments,
     runtimeOptions,
   ) => {
-    await resources.composer.flushRuntimeSettings();
-    await resources.conversation.handleSendMessage(content, attachments, runtimeOptions);
+    await resources.conversation.handleSendMessage(
+      content,
+      attachments,
+      runtimeOptions,
+      resources.composer.flushRuntimeSettings,
+    );
   };
 
   return ({

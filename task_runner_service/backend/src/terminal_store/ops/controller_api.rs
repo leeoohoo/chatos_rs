@@ -15,7 +15,7 @@ impl TerminalControllerStore for TaskRunnerTerminalControllerStore {
         path: String,
         command: String,
         background: bool,
-        permissions: chatos_builtin_tools::TerminalCommandPermissions,
+        permissions: chatos_mcp::TerminalCommandPermissions,
     ) -> Result<Value, String> {
         if !permissions.is_empty() {
             return Err(

@@ -3,6 +3,10 @@
 
 import { buildWsUrl } from './buildWsUrl';
 import { debugLog } from '../utils';
+import {
+  applyRealtimeTopicAckSnapshot,
+  clearRealtimeTopicAckSnapshot,
+} from './state';
 import type {
   RealtimeAckMessage,
   RealtimeConnectionState,
@@ -186,6 +190,7 @@ export class RealtimeClient {
     this.topicListeners.clear();
     this.debugListeners.clear();
     this.lastSentTopicKeys = new Set();
+    clearRealtimeTopicAckSnapshot();
     this.setState('idle');
   }
 
@@ -411,6 +416,7 @@ export class RealtimeClient {
         }
         this.reconnectAttempt = 0;
         this.lastSentTopicKeys = new Set();
+        clearRealtimeTopicAckSnapshot();
         this.setState('connected');
         this.syncTopics(true);
       };
@@ -440,6 +446,7 @@ export class RealtimeClient {
           if (parsed && parsed.type === 'ack') {
             this.lastAck = parsed as RealtimeAckMessage;
             this.lastError = null;
+            applyRealtimeTopicAckSnapshot(this.lastAck.acked, this.lastAck.topics);
             debugLog('[realtime] ack', this.lastAck);
             this.notifyDebugListeners();
             return;
@@ -470,6 +477,7 @@ export class RealtimeClient {
         if (this.socket === socket) {
           this.socket = null;
         }
+        clearRealtimeTopicAckSnapshot();
         if (this.manuallyClosed || !this.accessToken) {
           this.setState(this.accessToken ? 'disconnected' : 'idle');
           return;

@@ -8,6 +8,10 @@ use axum::{
 };
 use serde_json::Value;
 
+use crate::api::sessions::history_process_support::{
+    contact_async_user_status_needs_runtime_reconciliation,
+    reconcile_contact_async_user_status_for_display,
+};
 use crate::core::auth::AuthUser;
 use crate::core::project_access::{
     ensure_owned_project, map_project_access_error, ProjectAccessError,
@@ -17,7 +21,8 @@ use crate::core::validation::normalize_non_empty;
 use crate::models::memory_mapping_types::{MemoryContactDto, SyncProjectAgentLinkRequestDto};
 use crate::modules::conversation_runtime::messages as conversation_messages;
 use crate::services::realtime::publish_project_members_updated;
-use crate::services::{chatos_memory_mappings, chatos_sessions};
+use crate::services::runtime_guidance_manager::runtime_guidance_manager;
+use crate::services::{chatos_memory_engine, chatos_memory_mappings, chatos_sessions};
 
 use super::contracts::{AddProjectContactRequest, LocalProjectRequestQuery, ProjectContactsQuery};
 use super::session_resolver::resolve_project_contact_session_id;
@@ -83,8 +88,30 @@ fn metadata_has_running_task_marker(metadata: Option<&Value>) -> bool {
     false
 }
 
-fn turn_slice_has_running_task(slice: &memory_engine_sdk::TurnRecordSlice) -> bool {
-    metadata_has_running_task_marker(slice.user_record.metadata.as_ref())
+async fn turn_slice_has_running_task(
+    session_id: &str,
+    slice: &memory_engine_sdk::TurnRecordSlice,
+) -> bool {
+    let mut user_message =
+        chatos_memory_engine::engine_record_to_message(slice.user_record.clone());
+    if contact_async_user_status_needs_runtime_reconciliation(&user_message) {
+        let active_in_runtime =
+            runtime_guidance_manager().is_active_turn(session_id, slice.turn_id.as_str());
+        if let Ok(snapshot) = conversation_messages::get_turn_runtime_snapshot_by_turn(
+            session_id,
+            slice.turn_id.as_str(),
+        )
+        .await
+        {
+            reconcile_contact_async_user_status_for_display(
+                &mut user_message,
+                Some(snapshot.status.as_str()),
+                active_in_runtime,
+            );
+        }
+    }
+
+    metadata_has_running_task_marker(user_message.metadata.as_ref())
         || slice
             .final_assistant_record
             .as_ref()
@@ -108,8 +135,10 @@ async fn project_has_running_user_message_tasks(
                 before_turn_id.as_deref(),
             )
             .await?;
-            if page.items.iter().any(turn_slice_has_running_task) {
-                return Ok(true);
+            for slice in &page.items {
+                if turn_slice_has_running_task(session.id.as_str(), slice).await {
+                    return Ok(true);
+                }
             }
             if !page.has_more {
                 break;
