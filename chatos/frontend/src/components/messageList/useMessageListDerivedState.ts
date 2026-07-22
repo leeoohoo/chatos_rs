@@ -1,13 +1,12 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-import { useMemo, useRef } from 'react';
+import { useMemo } from 'react';
 
 import type { Message } from '../../types';
 import {
   buildVisibleMessageState,
   parseMessageForList,
-  type ParsedMessageCacheEntry,
 } from './derivedData';
 import {
   getMessageContentSegments,
@@ -16,44 +15,12 @@ import {
 } from '../messageItem/messageReaders';
 
 export const useMessageListDerivedState = (messages: Message[]) => {
-  const parsedMessageCacheRef = useRef<Map<string, ParsedMessageCacheEntry>>(new Map());
-
-  const parsedMessages = useMemo(() => {
-    const previousCache = parsedMessageCacheRef.current;
-    const nextCache = new Map<string, ParsedMessageCacheEntry>();
-    const list = (messages || []).map((message) => {
-      const cacheKey = String(message.id);
-      const metadataRef = message.metadata;
-      const updatedAt = message.updatedAt;
-      const cached = previousCache.get(cacheKey);
-
-      if (
-        cached
-        && cached.ref === message
-        && cached.metadataRef === metadataRef
-        && cached.content === message.content
-        && cached.status === message.status
-        && cached.updatedAt === updatedAt
-      ) {
-        nextCache.set(cacheKey, cached);
-        return cached.parsed;
-      }
-
-      const parsed = parseMessageForList(message);
-      nextCache.set(cacheKey, {
-        ref: message,
-        metadataRef,
-        content: message.content,
-        status: message.status,
-        updatedAt,
-        parsed,
-      });
-      return parsed;
-    });
-
-    parsedMessageCacheRef.current = nextCache;
-    return list;
-  }, [messages]);
+  // Realtime tool/thinking events can mutate an existing message metadata
+  // object in place. Reference-based caching therefore leaves visibility
+  // classification stale while the renderer sees the new tool segments.
+  // Reparse on each render so intermediate process messages cannot leak into
+  // the normal conversation surface.
+  const parsedMessages = (messages || []).map(parseMessageForList);
 
   const {
     visibleMessages,
