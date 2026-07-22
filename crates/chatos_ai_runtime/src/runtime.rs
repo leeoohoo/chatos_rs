@@ -171,9 +171,14 @@ impl AiRuntime {
             let input_bytes = json_value_size_bytes(&iteration_request.input);
             let tool_count = iteration_request.tools.len();
             let mut transient_retry_count = 0usize;
+            let mut recovery_request_handler: Option<AiRequestHandler> = None;
             let mut response = loop {
+                let request_handler = recovery_request_handler
+                    .as_ref()
+                    .unwrap_or(&self.request_handler);
+                let force_identity_encoding = recovery_request_handler.is_some();
                 let response = dispatch_model_request(
-                    &self.request_handler,
+                    request_handler,
                     &iteration_request,
                     &options,
                     iteration,
@@ -182,6 +187,7 @@ impl AiRuntime {
                     input_bytes,
                     tool_count,
                     lifecycle_before.stream_output,
+                    force_identity_encoding,
                 )
                 .await;
                 match response {
@@ -210,7 +216,13 @@ impl AiRuntime {
                                 iteration_reason = "context_overflow_recovery".to_string();
                                 continue 'runtime_loop;
                             }
-                            ModelRequestErrorAction::RetryRequest => continue,
+                            ModelRequestErrorAction::RetryRequest => {
+                                // A retry must not inherit a potentially unhealthy pooled
+                                // connection. Build a new client for every retry attempt and
+                                // ask the provider to close that isolated connection afterward.
+                                recovery_request_handler = Some(AiRequestHandler::new());
+                                continue;
+                            }
                             ModelRequestErrorAction::Fail(err) => return Err(err),
                         }
                     }

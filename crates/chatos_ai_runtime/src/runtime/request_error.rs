@@ -5,8 +5,8 @@ use serde_json::Value;
 use tracing::{info, warn};
 
 use crate::error_policy::{
-    handle_transient_retry, is_context_length_exceeded_error, is_missing_tool_call_error,
-    is_request_body_too_large_error,
+    handle_transient_retry_with_abort, is_context_length_exceeded_error,
+    is_missing_tool_call_error, is_request_body_too_large_error,
 };
 use crate::traits::ModelRequest;
 use crate::DEFAULT_MODEL_REQUEST_MAX_RETRIES;
@@ -83,13 +83,14 @@ pub(super) async fn handle_model_request_error(
         }
     }
 
-    if handle_transient_retry(
+    if handle_transient_retry_with_abort(
         "ai runtime model request",
         err.as_str(),
         transient_retry_count,
         request
             .max_transient_retries
             .unwrap_or(DEFAULT_MODEL_REQUEST_MAX_RETRIES),
+        options.abort_token.as_ref(),
     )
     .await?
     {

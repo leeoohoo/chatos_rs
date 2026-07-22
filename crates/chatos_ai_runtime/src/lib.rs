@@ -31,11 +31,12 @@ pub use compat::{
 };
 pub use error_policy::{
     classify_transient_retry, classify_user_facing_ai_error, exhausted_transient_retry_message,
-    handle_transient_retry, is_context_length_exceeded_error, is_invalid_input_text_error,
-    is_missing_tool_call_error, is_rate_limited_provider_error, is_request_body_too_large_error,
-    is_response_parse_error, is_retryable_provider_backpressure_error,
-    is_retryable_provider_overload_error, is_transient_network_error,
-    is_transient_transport_or_parse_error, replay_request_error_policy, transient_retry_backoff_ms,
+    handle_transient_retry, handle_transient_retry_with_abort, is_context_length_exceeded_error,
+    is_invalid_input_text_error, is_missing_tool_call_error, is_rate_limited_provider_error,
+    is_request_body_too_large_error, is_response_parse_error,
+    is_retryable_provider_backpressure_error, is_retryable_provider_overload_error,
+    is_transient_network_error, is_transient_transport_or_parse_error,
+    is_upstream_auth_unavailable_error, replay_request_error_policy, transient_retry_backoff_ms,
     transient_retry_kind_label, RequestErrorReplay, TransientRetryAction,
 };
 pub use input_transform::{
