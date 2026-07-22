@@ -203,6 +203,8 @@ pub struct AgentAccountListItem {
 pub struct UserModelConfigRecord {
     pub id: String,
     pub owner_user_id: String,
+    #[serde(default)]
+    pub source_provider_id: Option<String>,
     pub name: String,
     pub provider: String,
     #[serde(default)]
