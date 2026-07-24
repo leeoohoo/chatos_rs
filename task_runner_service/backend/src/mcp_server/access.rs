@@ -161,7 +161,10 @@ impl TaskRunnerMcpService {
         current_user: &CurrentUser,
         request_context: &McpRequestContext,
     ) -> Result<Vec<TaskRecord>, String> {
-        if request_context.tool_profile() != McpToolProfile::ChatosAsyncPlanner {
+        if !matches!(
+            request_context.tool_profile(),
+            McpToolProfile::ChatosAsyncPlanner | McpToolProfile::ProjectRequirementExecutionPlanner
+        ) {
             return Ok(Vec::new());
         }
         let (source_session_id, source_user_message_id) =

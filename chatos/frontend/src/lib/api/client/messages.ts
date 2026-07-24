@@ -7,6 +7,7 @@ import type {
   MessageTaskRunnerRunDetailResponse,
   MessageTaskRunnerRunOutputChangesResponse,
   MessageTaskRunnerRunOutputDiffResponse,
+  MessageTaskRunnerRetryRunResponse,
   MessageTaskRunnerTask,
   MessageTaskRunnerTasksResponse,
   SessionMessageResponse,
@@ -21,6 +22,7 @@ import {
   getLocalTaskRunnerRunDetail,
   getLocalTaskRunnerRunOutputChanges,
   getLocalTaskRunnerRunOutputDiff,
+  retryLocalTaskRunnerRun,
 } from '../localRuntime/taskBoard';
 
 export interface MessageTaskRunnerLookupOptions {
@@ -112,6 +114,21 @@ export const getMessageTaskRunnerRun = (
   }
   return request<MessageTaskRunnerRunDetailResponse>(
     `/messages/${encodeURIComponent(messageId)}/task-runner/runs/${encodeURIComponent(runId)}${messageTaskRunnerLookupQuery(options)}`,
+  );
+};
+
+export const retryMessageTaskRunnerRun = (
+  request: ApiRequestFn,
+  messageId: string,
+  runId: string,
+  options?: MessageTaskRunnerLookupOptions,
+): Promise<MessageTaskRunnerRetryRunResponse> => {
+  if (options?.sessionId && isLocalRuntimeSessionId(options.sessionId)) {
+    return retryLocalTaskRunnerRun(runId);
+  }
+  return request<MessageTaskRunnerRetryRunResponse>(
+    `/messages/${encodeURIComponent(messageId)}/task-runner/runs/${encodeURIComponent(runId)}/retry${messageTaskRunnerLookupQuery(options)}`,
+    { method: 'POST' },
   );
 };
 

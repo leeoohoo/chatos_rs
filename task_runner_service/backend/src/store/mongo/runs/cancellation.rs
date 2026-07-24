@@ -54,6 +54,16 @@ impl MongoStore {
         });
     }
 
+    pub(in crate::store) fn signal_local_run_abort(&self, run_id: &str) {
+        self.cancel_requested_runs
+            .write()
+            .insert(run_id.to_string());
+    }
+
+    pub(in crate::store) fn clear_local_run_abort(&self, run_id: &str) {
+        self.cancel_requested_runs.write().remove(run_id);
+    }
+
     pub(in crate::store) fn is_cancel_requested(&self, run_id: &str) -> bool {
         self.cancel_requested_runs.read().contains(run_id)
     }

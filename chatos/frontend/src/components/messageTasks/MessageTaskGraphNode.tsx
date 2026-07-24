@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-import { memo, type MouseEvent } from 'react';
+import { memo, useEffect, useState, type MouseEvent } from 'react';
 import { Activity, FileDiff, FileText, ScrollText } from 'lucide-react';
 
 import { cn } from '../../lib/utils';
@@ -83,6 +83,14 @@ export const MessageTaskCardNode = memo(({ node }: { node: PositionedTaskNode })
     onOpenRun,
   } = node.data;
   const { task } = graphNode;
+  const groupedTasks = graphNode.groupedTasks?.length ? graphNode.groupedTasks : [task];
+  const [selectedStageTaskId, setSelectedStageTaskId] = useState(task.id);
+  useEffect(() => {
+    if (!groupedTasks.some((stageTask) => stageTask.id === selectedStageTaskId)) {
+      setSelectedStageTaskId(task.id);
+    }
+  }, [groupedTasks, selectedStageTaskId, task.id]);
+  const actionTask = groupedTasks.find((stageTask) => stageTask.id === selectedStageTaskId) || task;
   const isRunning = isRunningTask(task);
   const description = readString(task.description)
     || readString(task.objective)
@@ -125,6 +133,11 @@ export const MessageTaskCardNode = memo(({ node }: { node: PositionedTaskNode })
             深度 {graphNode.depth}
           </span>
           <StatusBadge status={displayStatus} />
+          {groupedTasks.length > 1 ? (
+            <span className="rounded-full border border-violet-200 bg-violet-50 px-2 py-0.5 text-[11px] text-violet-700 dark:border-violet-400/30 dark:bg-violet-500/10 dark:text-violet-200">
+              {groupedTasks.length} 个阶段
+            </span>
+          ) : null}
         </div>
 
         <div className="mt-3 min-h-0 flex-1 overflow-hidden">
@@ -135,6 +148,22 @@ export const MessageTaskCardNode = memo(({ node }: { node: PositionedTaskNode })
             <p className="mt-1 truncate text-[11px] text-muted-foreground">
               源消息 {shortId(sourceUserMessageId)}
             </p>
+          ) : null}
+          {groupedTasks.length > 1 ? (
+            <label className="mt-2 flex items-center gap-2 text-[11px] text-muted-foreground">
+              <span className="shrink-0">查看阶段</span>
+              <select
+                className="min-w-0 flex-1 rounded-md border border-border bg-background px-2 py-1 text-xs text-foreground"
+                value={actionTask.id}
+                onChange={(event) => setSelectedStageTaskId(event.target.value)}
+              >
+                {groupedTasks.map((stageTask, index) => (
+                  <option key={stageTask.id} value={stageTask.id}>
+                    {index + 1}. {stageTask.title || stageTask.id}
+                  </option>
+                ))}
+              </select>
+            </label>
           ) : null}
           <p
             className="mt-2 break-words text-sm leading-5 text-muted-foreground"
@@ -148,7 +177,7 @@ export const MessageTaskCardNode = memo(({ node }: { node: PositionedTaskNode })
           <div className="flex items-center justify-between gap-3 text-[11px] text-muted-foreground">
             <span className="truncate">前置依赖 {prerequisiteCount}</span>
             <span className="truncate">
-              {task.last_run_id ? '有运行记录' : '暂无运行记录'}
+              {actionTask.last_run_id ? '有运行记录' : '暂无运行记录'}
             </span>
           </div>
 
@@ -160,7 +189,7 @@ export const MessageTaskCardNode = memo(({ node }: { node: PositionedTaskNode })
               onMouseDown={stopNodeButtonEvent}
               onClick={(event) => {
                 stopNodeButtonEvent(event);
-                void onOpenProcessLog(task);
+                void onOpenProcessLog(actionTask);
               }}
             >
               <ScrollText className="h-3.5 w-3.5" />
@@ -169,11 +198,11 @@ export const MessageTaskCardNode = memo(({ node }: { node: PositionedTaskNode })
             <button
               type="button"
               className="inline-flex items-center justify-center gap-1 rounded-md border border-border bg-background px-2 py-1.5 text-xs text-foreground hover:bg-accent disabled:cursor-not-allowed disabled:opacity-60"
-              disabled={loadingChanges || !task.last_run_id}
+              disabled={loadingChanges || !actionTask.last_run_id}
               onMouseDown={stopNodeButtonEvent}
               onClick={(event) => {
                 stopNodeButtonEvent(event);
-                void onOpenChanges(task);
+                void onOpenChanges(actionTask);
               }}
             >
               <FileDiff className="h-3.5 w-3.5" />
@@ -185,7 +214,7 @@ export const MessageTaskCardNode = memo(({ node }: { node: PositionedTaskNode })
               onMouseDown={stopNodeButtonEvent}
               onClick={(event) => {
                 stopNodeButtonEvent(event);
-                onOpenDetail(task);
+                onOpenDetail(actionTask);
               }}
             >
               <FileText className="h-3.5 w-3.5" />
@@ -194,11 +223,11 @@ export const MessageTaskCardNode = memo(({ node }: { node: PositionedTaskNode })
             <button
               type="button"
               className="inline-flex items-center justify-center gap-1 rounded-md border border-border bg-background px-2 py-1.5 text-xs text-foreground hover:bg-accent disabled:cursor-not-allowed disabled:opacity-60"
-              disabled={loadingRun || !task.last_run_id}
+              disabled={loadingRun || !actionTask.last_run_id}
               onMouseDown={stopNodeButtonEvent}
               onClick={(event) => {
                 stopNodeButtonEvent(event);
-                void onOpenRun(task);
+                void onOpenRun(actionTask);
               }}
             >
               <Activity className="h-3.5 w-3.5" />

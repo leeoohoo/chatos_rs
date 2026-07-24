@@ -1,11 +1,10 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { useApiClient } from '../../lib/api/ApiClientContext';
 import { useChatStore } from '../../lib/store';
-import { normalizeRawMessages } from '../../lib/domain/messages';
 import type {
   ProjectDependencyGraphResponse,
   ProjectPlanResponse,
@@ -24,6 +23,12 @@ import {
 } from './projectPlanPane/components';
 import { PlanRequirementColumns } from './projectPlanPane/PlanRequirementColumns';
 import { PlanRequirementDetail, type DetailTabId } from './projectPlanPane/PlanRequirementDetail';
+import {
+  buildRequirementExecutionProcess,
+  RequirementExecutionProcessModal,
+  RequirementExecutionStartingModal,
+  type RequirementExecutionProcess,
+} from './projectPlanPane/RequirementExecutionProcessModal';
 import {
   normalizeRequirementWorkItemsResponse,
   planWorkItemCounts,
@@ -45,7 +50,6 @@ import {
   countOpenItems,
   isCompletedStatus,
   mergeDependencyMaps,
-  readText,
   sortWorkItemsByDependencies,
 } from './projectPlanPane/model';
 
@@ -53,6 +57,29 @@ interface ProjectPlanPaneProps {
   project: Project;
   className?: string;
 }
+
+export const isActiveRequirementExecutionConflict = (message: string): boolean => (
+  message.includes('正在执行或待执行')
+  || message.includes('已有执行中的任务')
+  || message.includes('已有正在生成或等待确认的执行计划')
+  || message.includes('已有执行中的 Task Runner 任务')
+  || message.includes('already has active task runs')
+  || message.includes('already has a task graph being generated')
+  || message.includes('already has a generated task graph awaiting confirmation')
+);
+
+export const isTerminalRequirementExecutionStatus = (status?: string | null): boolean => (
+  [
+    'completed',
+    'succeeded',
+    'success',
+    'failed',
+    'error',
+    'stopped',
+    'cancelled',
+    'canceled',
+  ].includes((status || '').trim().toLowerCase())
+);
 
 export const ProjectPlanPane: React.FC<ProjectPlanPaneProps> = ({ project, className }) => {
   const apiClient = useApiClient();
@@ -68,13 +95,17 @@ export const ProjectPlanPane: React.FC<ProjectPlanPaneProps> = ({ project, class
   const [activeDetailTab, setActiveDetailTab] = useState<DetailTabId>('requirement');
   const [executingRequirementId, setExecutingRequirementId] = useState<string | null>(null);
   const [executionPreviewRequirement, setExecutionPreviewRequirement] = useState<ProjectRequirementResponse | null>(null);
-  const [executionPreviewCanConfirm, setExecutionPreviewCanConfirm] = useState(false);
+  const [startingExecutionRequirement, setStartingExecutionRequirement] = useState<ProjectRequirementResponse | null>(null);
+  const [executionProcess, setExecutionProcess] = useState<RequirementExecutionProcess | null>(null);
+  const [executionProcessOpen, setExecutionProcessOpen] = useState(false);
+  const [loadingExecutionPlanRequirementId, setLoadingExecutionPlanRequirementId] = useState<string | null>(null);
+  const [activeExecutionBlockedRequirementId, setActiveExecutionBlockedRequirementId] = useState<string | null>(null);
+  const [stoppingActiveExecution, setStoppingActiveExecution] = useState(false);
   const [executionMessage, setExecutionMessage] = useState<string | null>(null);
+  const refreshedTerminalExecutionKeysRef = useRef(new Set<string>());
   const [visibleWorkItemLimit, setVisibleWorkItemLimit] = useState(SELECTED_WORK_ITEM_INITIAL_RENDER_LIMIT);
   const refreshSessionById = useChatStore((state) => state.refreshSessionById);
-  const selectSession = useChatStore((state) => state.selectSession);
   const selectedModelId = useChatStore((state) => state.selectedModelId);
-  const upsertSessionMessage = useChatStore((state) => state.upsertSessionMessage);
 
   const loadPlan = useCallback(async () => {
     setLoading(true);
@@ -93,6 +124,7 @@ export const ProjectPlanPane: React.FC<ProjectPlanPaneProps> = ({ project, class
   }, [apiClient, project.id]);
 
   useEffect(() => {
+    refreshedTerminalExecutionKeysRef.current.clear();
     setPlan(null);
     setWorkItemsByRequirement(new Map());
     setWorkItemGraphsByRequirement(new Map());
@@ -100,6 +132,12 @@ export const ProjectPlanPane: React.FC<ProjectPlanPaneProps> = ({ project, class
     setLoadingWorkItemsRequirementId(null);
     setLoadingDocumentsRequirementId(null);
     setSelectedRequirementId(null);
+    setStartingExecutionRequirement(null);
+    setExecutionProcess(null);
+    setExecutionProcessOpen(false);
+    setLoadingExecutionPlanRequirementId(null);
+    setActiveExecutionBlockedRequirementId(null);
+    setStoppingActiveExecution(false);
     void loadPlan();
   }, [loadPlan]);
 
@@ -157,14 +195,28 @@ export const ProjectPlanPane: React.FC<ProjectPlanPaneProps> = ({ project, class
     }
   }, [apiClient, documentsByRequirement, project.id]);
 
+  const openRequirementExecutionStarter = useCallback((
+    requirement: ProjectRequirementResponse,
+  ) => {
+    setStartingExecutionRequirement(requirement);
+    setExecutionProcess(null);
+    setExecutionProcessOpen(true);
+    setExecutionMessage(null);
+    setError(null);
+  }, []);
+
   const executeRequirement = useCallback(async (
     requirement: ProjectRequirementResponse,
-    options?: { includePrerequisiteDependents?: boolean },
+    options?: {
+      includePrerequisiteDependents?: boolean;
+      planningFeedback?: string;
+    },
   ) => {
     if (executingRequirementId) {
       return;
     }
     setExecutingRequirementId(requirement.id);
+    setStartingExecutionRequirement(requirement);
     setExecutionMessage(null);
     setError(null);
     try {
@@ -173,61 +225,64 @@ export const ProjectPlanPane: React.FC<ProjectPlanPaneProps> = ({ project, class
         requirement.id,
         buildRequirementExecutionPayload({
           includePrerequisiteDependents: options?.includePrerequisiteDependents,
+          planningFeedback: options?.planningFeedback,
           selectedModelId,
         }),
       );
-      await loadPlan();
-      const conversationId = readText(result.conversation_id) || readText(result.conversationId);
-      if (!conversationId) {
-        setExecutionMessage('需求执行规划已启动，但后端没有返回执行会话');
-        return;
+      const nextProcess = buildRequirementExecutionProcess({
+        projectId: project.id,
+        requirement,
+        response: result,
+      });
+      if (!nextProcess) {
+        throw new Error('后端已接受执行请求，但没有返回完整的规划会话和执行批次标识，无法安全展示执行过程');
       }
+      setExecutionProcess(nextProcess);
+      setStartingExecutionRequirement(null);
+      setActiveExecutionBlockedRequirementId(null);
+      setExecutionMessage('执行计划工作台已打开；点击“执行”前 Task Runner 不会启动');
+      void loadPlan();
       try {
-        await refreshSessionById(conversationId);
-        const [executionMessage] = result.message
-          ? normalizeRawMessages([result.message], conversationId)
-          : [];
-        await selectSession(conversationId, {
-          initialPageSize: 25,
-          forceRefreshMessages: true,
-        });
-        if (result.message) {
-          if (executionMessage) {
-            upsertSessionMessage(executionMessage);
-          }
-        }
-        setExecutionMessage('需求执行规划已启动，已打开执行会话');
-      } catch (navigationErr) {
-        setExecutionMessage('需求执行规划已启动');
-        setError(navigationErr instanceof Error
-          ? `需求执行规划已启动，但打开执行会话失败：${navigationErr.message}`
-          : '需求执行规划已启动，但打开执行会话失败');
+        await refreshSessionById(nextProcess.conversationId);
+      } catch (refreshErr) {
+        setError(refreshErr instanceof Error
+          ? `执行计划窗口已打开，但刷新规划会话失败：${refreshErr.message}`
+          : '执行计划窗口已打开，但刷新规划会话失败');
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : '执行需求失败');
+      const errorMessage = err instanceof Error ? err.message : '生成执行计划失败';
+      if (isActiveRequirementExecutionConflict(errorMessage)) {
+        setStartingExecutionRequirement(null);
+        setActiveExecutionBlockedRequirementId(requirement.id);
+        try {
+          const response = await apiClient.getProjectRequirementExecutionPlan(
+            project.id,
+            requirement.id,
+          );
+          const restored = buildRequirementExecutionProcess({
+            projectId: project.id,
+            requirement,
+            response,
+          });
+          if (restored) {
+            setExecutionProcess(restored);
+            setExecutionProcessOpen(true);
+            setExecutionMessage('检测到尚未停止的执行批次，可在工作台中查看并停止');
+          } else {
+            setExecutionProcessOpen(false);
+          }
+        } catch {
+          setExecutionProcessOpen(false);
+        }
+      } else {
+        setStartingExecutionRequirement(requirement);
+        setExecutionProcessOpen(true);
+      }
+      setError(errorMessage);
     } finally {
       setExecutingRequirementId(null);
     }
-  }, [apiClient, executingRequirementId, loadPlan, project.id, refreshSessionById, selectSession, selectedModelId, upsertSessionMessage]);
-
-  const stopRequirementExecution = useCallback(async (requirement: ProjectRequirementResponse) => {
-    if (executingRequirementId) {
-      return;
-    }
-    setExecutingRequirementId(requirement.id);
-    setExecutionMessage(null);
-    setError(null);
-    try {
-      const result = await apiClient.stopProjectRequirementExecution(project.id, requirement.id);
-      const cancelledTasks = result.cancelled_tasks || result.cancelledTasks || [];
-      setExecutionMessage(`已停止 ${cancelledTasks.length} 个执行任务`);
-      await loadPlan();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : '停止需求执行失败');
-    } finally {
-      setExecutingRequirementId(null);
-    }
-  }, [apiClient, executingRequirementId, loadPlan, project.id]);
+  }, [apiClient, executingRequirementId, loadPlan, project.id, refreshSessionById, selectedModelId]);
 
   const requirements = useMemo(
     () => (Array.isArray(plan?.requirements) ? plan.requirements : []),
@@ -309,6 +364,33 @@ export const ProjectPlanPane: React.FC<ProjectPlanPaneProps> = ({ project, class
     () => requirements.find((requirement) => requirement.id === selectedRequirementId) || null,
     [requirements, selectedRequirementId],
   );
+  const stopActiveRequirementExecution = useCallback(async () => {
+    if (!selectedRequirement || stoppingActiveExecution) return;
+    setStoppingActiveExecution(true);
+    setError(null);
+    try {
+      await apiClient.stopProjectRequirementExecution(
+        project.id,
+        selectedRequirement.id,
+        {},
+      );
+      setActiveExecutionBlockedRequirementId(null);
+      setExecutionProcess(null);
+      setExecutionProcessOpen(false);
+      setExecutionMessage('当前执行批次已停止，可以重新生成执行流程');
+      await loadPlan();
+    } catch (stopError) {
+      setError(stopError instanceof Error ? stopError.message : '取消当前执行失败');
+    } finally {
+      setStoppingActiveExecution(false);
+    }
+  }, [
+    apiClient,
+    loadPlan,
+    project.id,
+    selectedRequirement,
+    stoppingActiveExecution,
+  ]);
   useEffect(() => {
     if (!selectedRequirement) {
       return;
@@ -316,12 +398,57 @@ export const ProjectPlanPane: React.FC<ProjectPlanPaneProps> = ({ project, class
     void loadRequirementWorkItems(selectedRequirement.id);
     void loadRequirementDocuments(selectedRequirement.id);
   }, [loadRequirementDocuments, loadRequirementWorkItems, selectedRequirement]);
-  const selectedRequirementIsExecuting = selectedRequirement?.status === 'in_progress';
+  useEffect(() => {
+    if (!selectedRequirement) {
+      return undefined;
+    }
+    let cancelled = false;
+    setLoadingExecutionPlanRequirementId(selectedRequirement.id);
+    void apiClient
+      .getProjectRequirementExecutionPlan(project.id, selectedRequirement.id)
+      .then((response) => {
+        if (cancelled) return;
+        setExecutionProcess((current) => {
+          const restored = buildRequirementExecutionProcess({
+            fallback: current?.requirement.id === selectedRequirement.id ? current : null,
+            projectId: project.id,
+            requirement: selectedRequirement,
+            response,
+          });
+          return restored
+            || (current?.requirement.id === selectedRequirement.id ? current : null);
+        });
+      })
+      .catch((planError) => {
+        if (!cancelled) {
+          setError(planError instanceof Error
+            ? `读取当前执行计划失败：${planError.message}`
+            : '读取当前执行计划失败');
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setLoadingExecutionPlanRequirementId((current) => (
+            current === selectedRequirement.id ? null : current
+          ));
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [apiClient, project.id, selectedRequirement]);
+  const selectedRequirementExecutionProcess = selectedRequirement
+    && executionProcess?.requirement.id === selectedRequirement.id
+    ? executionProcess
+    : null;
   const selectedRequirementCanShowAction = Boolean(
     selectedRequirement && canShowRequirementExecutionAction(selectedRequirement.status),
   );
   const selectedRequirementActionBusy = Boolean(
-    selectedRequirement && executingRequirementId === selectedRequirement.id,
+    selectedRequirement && (
+      executingRequirementId === selectedRequirement.id
+      || loadingExecutionPlanRequirementId === selectedRequirement.id
+    ),
   );
   const selectedRequirementWorkItemsLoaded = selectedRequirement
     ? workItemsByRequirement.has(selectedRequirement.id)
@@ -402,7 +529,18 @@ export const ProjectPlanPane: React.FC<ProjectPlanPaneProps> = ({ project, class
         workItemCount={totalWorkItemCount}
       />
 
-      <PlanBannerMessages error={error} executionMessage={executionMessage} />
+      <PlanBannerMessages
+        error={error}
+        executionMessage={executionMessage}
+        onOpenExecutionProcess={selectedRequirementExecutionProcess
+          ? () => setExecutionProcessOpen(true)
+          : undefined}
+        onStopActiveExecution={selectedRequirement
+          && activeExecutionBlockedRequirementId === selectedRequirement.id
+          ? () => void stopActiveRequirementExecution()
+          : undefined}
+        stoppingActiveExecution={stoppingActiveExecution}
+      />
 
       {loading && !plan ? (
         <PlanLoadingState />
@@ -428,20 +566,18 @@ export const ProjectPlanPane: React.FC<ProjectPlanPaneProps> = ({ project, class
           />
 
           <PlanRequirementDetail
-            actionDisabled={Boolean(executingRequirementId)}
+            actionDisabled={Boolean(executingRequirementId || loadingExecutionPlanRequirementId)}
             activeDetailTab={activeDetailTab}
             dependencyMaps={dependencyMaps}
             onActiveDetailTabChange={setActiveDetailTab}
             onLoadMoreWorkItems={() => {
               setVisibleWorkItemLimit((value) => value + SELECTED_WORK_ITEM_RENDER_INCREMENT);
             }}
-            onPreviewRequirement={(requirement, canConfirm) => {
-              setExecutionPreviewCanConfirm(canConfirm);
-              setExecutionPreviewRequirement(requirement);
+            onGenerateRequirementExecution={(requirement) => {
+              openRequirementExecutionStarter(requirement);
             }}
-            onStopRequirementExecution={(requirement) => {
-              void stopRequirementExecution(requirement);
-            }}
+            onPreviewRequirement={setExecutionPreviewRequirement}
+            onOpenRequirementExecution={() => setExecutionProcessOpen(true)}
             resolveRequirementTitle={resolveRequirementTitle}
             resolveWorkItemTitle={resolveWorkItemTitle}
             selectedDocumentsLoading={selectedDocumentsLoading}
@@ -452,7 +588,7 @@ export const ProjectPlanPane: React.FC<ProjectPlanPaneProps> = ({ project, class
             selectedRequirementChildren={selectedRequirementChildren}
             selectedRequirementDependents={selectedRequirementDependents}
             selectedRequirementDocuments={selectedRequirementDocuments}
-            selectedRequirementIsExecuting={selectedRequirementIsExecuting}
+            selectedRequirementExecutionProcess={selectedRequirementExecutionProcess}
             selectedRequirementPrerequisites={selectedRequirementPrerequisites}
             selectedWorkItems={selectedWorkItems}
             selectedWorkItemsLoading={selectedWorkItemsLoading}
@@ -466,18 +602,34 @@ export const ProjectPlanPane: React.FC<ProjectPlanPaneProps> = ({ project, class
           requirement={executionPreviewRequirement}
           requirements={requirements}
           running={Boolean(executingRequirementId)}
-          onClose={() => {
-            setExecutionPreviewRequirement(null);
-            setExecutionPreviewCanConfirm(false);
+          onClose={() => setExecutionPreviewRequirement(null)}
+        />
+      ) : null}
+      {startingExecutionRequirement && executionProcessOpen ? (
+        <RequirementExecutionStartingModal
+          requirement={startingExecutionRequirement}
+          executionPlane={project.executionPlane}
+          starting={executingRequirementId === startingExecutionRequirement.id}
+          onClose={() => setExecutionProcessOpen(false)}
+          onStart={(planningFeedback) => {
+            void executeRequirement(startingExecutionRequirement, { planningFeedback });
           }}
-          onConfirm={executionPreviewCanConfirm
-            ? (includePrerequisiteDependents) => {
-              const requirementToExecute = executionPreviewRequirement;
-              setExecutionPreviewRequirement(null);
-              setExecutionPreviewCanConfirm(false);
-              void executeRequirement(requirementToExecute, { includePrerequisiteDependents });
+        />
+      ) : executionProcess && executionProcessOpen ? (
+        <RequirementExecutionProcessModal
+          process={executionProcess}
+          onClose={() => setExecutionProcessOpen(false)}
+          onProcessChange={(nextProcess) => {
+            setExecutionProcess(nextProcess);
+            setExecutionProcessOpen(true);
+            if (isTerminalRequirementExecutionStatus(nextProcess.serverStatus)) {
+              const refreshKey = `${nextProcess.executionGroupId}:${nextProcess.serverStatus}`;
+              if (!refreshedTerminalExecutionKeysRef.current.has(refreshKey)) {
+                refreshedTerminalExecutionKeysRef.current.add(refreshKey);
+                void loadPlan();
+              }
             }
-            : undefined}
+          }}
         />
       ) : null}
     </div>

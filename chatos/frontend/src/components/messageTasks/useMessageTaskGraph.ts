@@ -1,7 +1,13 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import { useApiClient } from '../../lib/api/ApiClientContext';
 import {
   getMessageTaskRunnerGraph,
@@ -9,6 +15,7 @@ import {
   getMessageTaskRunnerRunOutputChanges,
   getMessageTaskRunnerRunOutputDiff,
   getMessageTaskRunnerTask,
+  retryMessageTaskRunnerRun,
 } from '../../lib/api/client/messages';
 import type { MessageTaskRunnerLookupOptions } from '../../lib/api/client/messages';
 import type {
@@ -25,11 +32,16 @@ interface UseMessageTaskGraphArgs {
   open: boolean;
   messageId: string;
   lookup?: MessageTaskRunnerLookupOptions;
+  isTransientError?: (error: unknown) => boolean;
 }
 
 interface TaskSourceLookup {
   messageId: string;
   lookup?: MessageTaskRunnerLookupOptions;
+}
+
+interface ReloadMessageTaskGraphOptions {
+  silent?: boolean;
 }
 
 const EMPTY_GRAPH: MessageTaskRunnerGraphResponse = {
@@ -104,7 +116,12 @@ export const buildTaskSourceLookup = ({
   };
 };
 
-export function useMessageTaskGraph({ open, messageId, lookup }: UseMessageTaskGraphArgs) {
+export function useMessageTaskGraph({
+  open,
+  messageId,
+  lookup,
+  isTransientError,
+}: UseMessageTaskGraphArgs) {
   const apiClient = useApiClient();
   const [graph, setGraph] = useState<MessageTaskRunnerGraphResponse>(EMPTY_GRAPH);
   const [loading, setLoading] = useState(false);
@@ -121,12 +138,38 @@ export function useMessageTaskGraph({ open, messageId, lookup }: UseMessageTaskG
   const [loadingRunId, setLoadingRunId] = useState<string | null>(null);
   const [loadingChangesRunId, setLoadingChangesRunId] = useState<string | null>(null);
   const [loadingDiffPath, setLoadingDiffPath] = useState<string | null>(null);
+  const [retryingTaskId, setRetryingTaskId] = useState<string | null>(null);
+  const graphRequestSequenceRef = useRef(0);
+  const graphRequestIdentity = useMemo(() => JSON.stringify([
+    messageId,
+    lookup?.sessionId ?? null,
+    lookup?.turnId ?? null,
+    lookup?.sourceUserMessageId ?? null,
+  ]), [
+    lookup?.sessionId,
+    lookup?.sourceUserMessageId,
+    lookup?.turnId,
+    messageId,
+  ]);
+  const activeGraphRequestIdentityRef = useRef(graphRequestIdentity);
+  activeGraphRequestIdentityRef.current = graphRequestIdentity;
 
-  const reloadGraph = useCallback(async () => {
-    setLoading(true);
+  const reloadGraph = useCallback(async (options: ReloadMessageTaskGraphOptions = {}) => {
+    const requestIdentity = graphRequestIdentity;
+    const requestSequence = graphRequestSequenceRef.current + 1;
+    graphRequestSequenceRef.current = requestSequence;
+    if (!options.silent) {
+      setLoading(true);
+    }
     setError(null);
     try {
       const response = await getMessageTaskRunnerGraph(apiClient.getRequestFn(), messageId, lookup);
+      if (
+        activeGraphRequestIdentityRef.current !== requestIdentity
+        || graphRequestSequenceRef.current !== requestSequence
+      ) {
+        return;
+      }
       setGraph({
         root_task_ids: Array.isArray(response.root_task_ids) ? response.root_task_ids : [],
         nodes: Array.isArray(response.nodes) ? response.nodes : [],
@@ -136,12 +179,32 @@ export function useMessageTaskGraph({ open, messageId, lookup }: UseMessageTaskG
         source_user_message_id: response.source_user_message_id ?? null,
       });
     } catch (err) {
+      if (
+        activeGraphRequestIdentityRef.current !== requestIdentity
+        || graphRequestSequenceRef.current !== requestSequence
+      ) {
+        return;
+      }
+      if (isTransientError?.(err)) {
+        setError(null);
+        if (!options.silent) {
+          setGraph(EMPTY_GRAPH);
+        }
+        return;
+      }
       setError(err instanceof Error ? err.message : '读取任务流程图失败');
-      setGraph(EMPTY_GRAPH);
+      if (!options.silent) {
+        setGraph(EMPTY_GRAPH);
+      }
     } finally {
-      setLoading(false);
+      if (
+        activeGraphRequestIdentityRef.current === requestIdentity
+        && graphRequestSequenceRef.current === requestSequence
+      ) {
+        setLoading(false);
+      }
     }
-  }, [apiClient, lookup, messageId]);
+  }, [apiClient, graphRequestIdentity, isTransientError, lookup, messageId]);
 
   const taskById = useMemo(() => {
     const map = new Map<string, MessageTaskRunnerTask>();
@@ -233,6 +296,49 @@ export function useMessageTaskGraph({ open, messageId, lookup }: UseMessageTaskG
       setLoadingRunId(null);
     }
   }, [apiClient, graph, lookup, messageId]);
+
+  const retryTask = useCallback(async (task: MessageTaskRunnerTask) => {
+    const taskId = readString(task.id);
+    const runId = readString(task.last_run_id);
+    const status = readString(task.status)?.toLowerCase();
+    if (!taskId || !runId || status !== 'failed' || retryingTaskId) {
+      return false;
+    }
+    const source = buildTaskSourceLookup({
+      task,
+      graph,
+      fallbackMessageId: messageId,
+      fallbackLookup: lookup,
+    });
+    setRetryingTaskId(taskId);
+    setError(null);
+    try {
+      const response = await retryMessageTaskRunnerRun(
+        apiClient.getRequestFn(),
+        source.messageId,
+        runId,
+        source.lookup,
+      );
+      setDetailTask((current) => (
+        current?.id === taskId
+          ? {
+            ...current,
+            status: readString(response.run.status) || 'queued',
+            last_run_id: response.run.id,
+            last_run: response.run,
+            result_summary: null,
+          }
+          : current
+      ));
+      await reloadGraph();
+      return true;
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '重试任务节点失败');
+      return false;
+    } finally {
+      setRetryingTaskId(null);
+    }
+  }, [apiClient, graph, lookup, messageId, reloadGraph, retryingTaskId]);
 
   const loadChangeDiff = useCallback(async (
     task: MessageTaskRunnerTask,
@@ -365,6 +471,7 @@ export function useMessageTaskGraph({ open, messageId, lookup }: UseMessageTaskG
       setOutputChanges(null);
       setOutputDiff(null);
       setSelectedChangePath(null);
+      setRetryingTaskId(null);
       setError(null);
     }
   }, [open]);
@@ -387,11 +494,13 @@ export function useMessageTaskGraph({ open, messageId, lookup }: UseMessageTaskG
     loadingRunId,
     loadingChangesRunId,
     loadingDiffPath,
+    retryingTaskId,
     reloadGraph,
     openDetail,
     openProcessLog,
     openRun,
     openChanges,
+    retryTask,
     selectChangeFile,
     loadMoreRunEvents,
     closeDetail: () => setDetailTask(null),

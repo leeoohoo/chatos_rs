@@ -8,6 +8,7 @@ use std::time::Duration;
 use serde_json::json;
 use serde_json::Value;
 
+use chatos_mcp::sandbox_images::{SANDBOX_IMAGE_PROJECT_ID_HEADER, SANDBOX_IMAGE_RUN_ID_HEADER};
 use chatos_mcp_runtime::{
     BuiltinMcpKind, BuiltinMcpServerOptions, McpBuiltinServer, McpExecutor, McpHttpServer,
     McpToolNameAlias,
@@ -19,7 +20,6 @@ use chatos_mcp_service::{
 use chatos_plugin_management_sdk::{
     ResolvedAgentCapabilities, PROJECT_ENVIRONMENT_MCP_RESOURCE_ID, SANDBOX_IMAGES_MCP_RESOURCE_ID,
 };
-use chatos_mcp::sandbox_images::{SANDBOX_IMAGE_PROJECT_ID_HEADER, SANDBOX_IMAGE_RUN_ID_HEADER};
 use chatos_service_runtime::http_body::{
     read_response_json_limited, read_response_preview_text_limited_or_message,
     ERROR_BODY_PREVIEW_LIMIT_BYTES, JSON_BODY_LIMIT_BYTES,
@@ -103,8 +103,8 @@ pub(super) async fn build_project_environment_mcp_executor(
                             .with_project_id(project.id.clone())
                             .with_limits(512 * 1024, 5 * 1024 * 1024, 80),
                     );
-                    let provider = chatos_mcp::build_shared_builtin_provider(&server)?
-                        .ok_or_else(|| {
+                    let provider =
+                        chatos_mcp::build_shared_builtin_provider(&server)?.ok_or_else(|| {
                             "CodeMaintainerRead builtin provider is unavailable".to_string()
                         })?;
                     builder = builder

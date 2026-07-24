@@ -11,6 +11,43 @@ use super::super::LocalDatabase;
 use super::validation::require_local_task_scope;
 
 impl LocalDatabase {
+    pub(crate) async fn list_local_project_execution_tasks(
+        &self,
+        owner_user_id: &str,
+        project_id: &str,
+    ) -> Result<Vec<LocalTaskBoardTaskRecord>> {
+        let rows = sqlx::query_as::<_, LocalTaskBoardTaskRow>(
+            r#"
+            SELECT tasks.id, tasks.session_id, tasks.turn_id, turns.user_message_id AS source_user_message_id,
+                   tasks.title, tasks.details, tasks.priority, tasks.status,
+                   tasks.tags_json, tasks.prerequisite_task_ids_json, tasks.due_at,
+                   tasks.outcome_summary, tasks.outcome_items_json, tasks.resume_hint,
+                   tasks.blocker_reason, tasks.blocker_needs_json, tasks.blocker_kind,
+                   tasks.completed_at, tasks.last_outcome_at, tasks.created_at, tasks.updated_at,
+                   tasks.task_kind, tasks.objective, tasks.model_config_id,
+                   tasks.is_planning_task, tasks.enabled_builtin_kinds_json,
+                   tasks.external_mcp_config_ids_json, tasks.selected_skill_ids_json,
+                   tasks.last_run_id, tasks.project_work_item_id, tasks.requirement_id,
+                   tasks.execution_group_id, tasks.execution_client_ref,
+                   tasks.dependency_context_refs_json
+            FROM task_board_tasks AS tasks
+            INNER JOIN turns ON turns.id = tasks.turn_id
+            INNER JOIN sessions ON sessions.id = tasks.session_id
+            WHERE tasks.owner_user_id = ? AND sessions.project_id = ?
+              AND tasks.task_kind = 'task_runner'
+              AND tasks.project_work_item_id IS NOT NULL
+            ORDER BY tasks.created_at ASC, tasks.id ASC
+            LIMIT 1000
+            "#,
+        )
+        .bind(owner_user_id)
+        .bind(project_id)
+        .fetch_all(self.pool())
+        .await
+        .context("list local project execution tasks")?;
+        Ok(rows.into_iter().map(Into::into).collect())
+    }
+
     pub(crate) async fn get_local_task_board_task(
         &self,
         owner_user_id: &str,
@@ -41,7 +78,9 @@ impl LocalDatabase {
                    tasks.task_kind, tasks.objective, tasks.model_config_id,
                    tasks.is_planning_task, tasks.enabled_builtin_kinds_json,
                    tasks.external_mcp_config_ids_json, tasks.selected_skill_ids_json,
-                   tasks.last_run_id
+                   tasks.last_run_id, tasks.project_work_item_id, tasks.requirement_id,
+                   tasks.execution_group_id, tasks.execution_client_ref,
+                   tasks.dependency_context_refs_json
             FROM task_board_tasks AS tasks
             INNER JOIN turns ON turns.id = tasks.turn_id
             WHERE tasks.owner_user_id = ? AND tasks.session_id = ?
@@ -92,7 +131,9 @@ pub(super) async fn select_task(
                tasks.task_kind, tasks.objective, tasks.model_config_id,
                tasks.is_planning_task, tasks.enabled_builtin_kinds_json,
                tasks.external_mcp_config_ids_json, tasks.selected_skill_ids_json,
-               tasks.last_run_id
+               tasks.last_run_id, tasks.project_work_item_id, tasks.requirement_id,
+               tasks.execution_group_id, tasks.execution_client_ref,
+               tasks.dependency_context_refs_json
         FROM task_board_tasks AS tasks
         INNER JOIN turns ON turns.id = tasks.turn_id
         WHERE tasks.id = ? AND tasks.session_id = ? AND tasks.owner_user_id = ?

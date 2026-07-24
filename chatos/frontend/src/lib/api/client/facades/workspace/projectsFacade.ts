@@ -10,9 +10,12 @@ import type {
   ProjectPlanOptions,
   ProjectPlanResponse,
   ProjectRequirementDocumentResponse,
+  ProjectRequirementConfirmResponse,
   ProjectRequirementWorkItemsOptions,
   ProjectRequirementWorkItemsResponse,
   ProjectRequirementExecuteResponse,
+  ProjectRequirementExecutionPlanResponse,
+  ProjectRequirementDispatchResponse,
   ProjectRequirementStopResponse,
   ProjectRuntimeEnvironmentResponse,
   ProjectRuntimeEnvironmentProgressResponse,
@@ -99,13 +102,65 @@ export interface WorkspaceProjectFacade {
       modelConfigId?: string;
       include_prerequisite_dependents?: boolean;
       includePrerequisiteDependents?: boolean;
+      planning_feedback?: string;
+      planningFeedback?: string;
+      replaces_execution_group_id?: string;
+      replacesExecutionGroupId?: string;
+      replaces_conversation_id?: string;
+      replacesConversationId?: string;
     },
   ): Promise<ProjectRequirementExecuteResponse>;
+  getProjectRequirementExecutionPlan(
+    projectId: string,
+    requirementId: string,
+    identity?: { conversationId?: string; executionGroupId?: string },
+  ): Promise<ProjectRequirementExecutionPlanResponse>;
+  confirmProjectRequirementExecution(
+    projectId: string,
+    requirementId: string,
+    data: {
+      execution_group_id: string;
+      conversation_id: string;
+      contact_id?: string;
+    },
+  ): Promise<ProjectRequirementConfirmResponse>;
+  pauseProjectRequirementExecution(
+    projectId: string,
+    requirementId: string,
+    data: {
+      execution_group_id: string;
+      conversation_id: string;
+      contact_id?: string;
+    },
+  ): Promise<ProjectRequirementDispatchResponse>;
+  resumeProjectRequirementExecution(
+    projectId: string,
+    requirementId: string,
+    data: {
+      execution_group_id: string;
+      conversation_id: string;
+      contact_id?: string;
+    },
+  ): Promise<ProjectRequirementDispatchResponse>;
   stopProjectRequirementExecution(
     projectId: string,
     requirementId: string,
-    data?: { contact_id?: string },
+    data?: {
+      contact_id?: string;
+      execution_group_id?: string;
+      conversation_id?: string;
+      discard_tasks?: boolean;
+    },
   ): Promise<ProjectRequirementStopResponse>;
+  rerunProjectRequirementExecution(
+    projectId: string,
+    requirementId: string,
+    data: {
+      execution_group_id: string;
+      conversation_id: string;
+      contact_id?: string;
+    },
+  ): Promise<ProjectRequirementExecuteResponse>;
   analyzeProjectRun(projectId: string): Promise<ProjectRunCatalogResponse>;
   getProjectRunCatalog(projectId: string): Promise<ProjectRunCatalogResponse>;
   getProjectRunState(projectId: string): Promise<ProjectRunStateResponse>;
@@ -262,6 +317,66 @@ export const workspaceProjectFacade: WorkspaceProjectFacade & ThisType<ApiClient
     }
     return workspaceApi.executeProjectRequirement(this.getRequestFn(), projectId, requirementId, data);
   },
+  async getProjectRequirementExecutionPlan(projectId, requirementId, identity) {
+    if (this.projectUsesLocalRuntime(projectId)) {
+      return this.getLocalRuntimeClient().getProjectRequirementExecutionPlan(
+        projectId,
+        requirementId,
+        identity,
+      );
+    }
+    return workspaceApi.getProjectRequirementExecutionPlan(
+      this.getRequestFn(),
+      projectId,
+      requirementId,
+      identity,
+    );
+  },
+  async confirmProjectRequirementExecution(projectId, requirementId, data) {
+    if (this.projectUsesLocalRuntime(projectId)) {
+      return this.getLocalRuntimeClient().confirmProjectRequirementExecution(
+        projectId,
+        requirementId,
+        data,
+      );
+    }
+    return workspaceApi.confirmProjectRequirementExecution(
+      this.getRequestFn(),
+      projectId,
+      requirementId,
+      data,
+    );
+  },
+  async pauseProjectRequirementExecution(projectId, requirementId, data) {
+    if (this.projectUsesLocalRuntime(projectId)) {
+      return this.getLocalRuntimeClient().pauseProjectRequirementExecution(
+        projectId,
+        requirementId,
+        data,
+      );
+    }
+    return workspaceApi.pauseProjectRequirementExecution(
+      this.getRequestFn(),
+      projectId,
+      requirementId,
+      data,
+    );
+  },
+  async resumeProjectRequirementExecution(projectId, requirementId, data) {
+    if (this.projectUsesLocalRuntime(projectId)) {
+      return this.getLocalRuntimeClient().resumeProjectRequirementExecution(
+        projectId,
+        requirementId,
+        data,
+      );
+    }
+    return workspaceApi.resumeProjectRequirementExecution(
+      this.getRequestFn(),
+      projectId,
+      requirementId,
+      data,
+    );
+  },
   async stopProjectRequirementExecution(projectId, requirementId, data) {
     if (this.projectUsesLocalRuntime(projectId)) {
       return this.getLocalRuntimeClient().stopProjectRequirementExecution(
@@ -271,6 +386,21 @@ export const workspaceProjectFacade: WorkspaceProjectFacade & ThisType<ApiClient
       );
     }
     return workspaceApi.stopProjectRequirementExecution(this.getRequestFn(), projectId, requirementId, data);
+  },
+  async rerunProjectRequirementExecution(projectId, requirementId, data) {
+    if (this.projectUsesLocalRuntime(projectId)) {
+      return this.getLocalRuntimeClient().rerunProjectRequirementExecution(
+        projectId,
+        requirementId,
+        data,
+      );
+    }
+    return workspaceApi.rerunProjectRequirementExecution(
+      this.getRequestFn(),
+      projectId,
+      requirementId,
+      data,
+    );
   },
   async analyzeProjectRun(projectId) {
     if (this.projectUsesLocalRuntime(projectId)) {

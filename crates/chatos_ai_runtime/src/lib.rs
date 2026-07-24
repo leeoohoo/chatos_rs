@@ -36,7 +36,8 @@ pub use error_policy::{
     is_request_body_too_large_error, is_response_parse_error,
     is_retryable_provider_backpressure_error, is_retryable_provider_overload_error,
     is_transient_network_error, is_transient_transport_or_parse_error,
-    is_upstream_auth_unavailable_error, replay_request_error_policy, transient_retry_backoff_ms,
+    is_upstream_auth_unavailable_error, is_upstream_connection_interrupted_error,
+    replay_request_error_policy, should_retry_without_stream, transient_retry_backoff_ms,
     transient_retry_kind_label, RequestErrorReplay, TransientRetryAction,
 };
 pub use input_transform::{
@@ -47,7 +48,7 @@ pub use input_transform::{
 };
 pub use lifecycle::{
     RuntimeBeforeModelRequest, RuntimeFinalResponseAction, RuntimeFinalResponseContext,
-    RuntimeIterationContext, RuntimeLifecycleHook,
+    RuntimeIterationContext, RuntimeLifecycleHook, TaskFinalizationLifecycleHook,
 };
 pub use mcp_executor::McpRuntimeToolExecutor;
 pub use memory_context::{
@@ -72,7 +73,7 @@ pub use stateless_history::{
 pub use task::{
     TaskBuiltinMcpPromptMode, TaskBuiltinMcpPromptSnapshot, TaskMcpInitMode,
     TaskMemoryRuntimeConfig, TaskRunExecution, TaskRunReport, TaskRunSpec, TaskRuntime,
-    TaskRuntimeBuilder, TaskRuntimeConfig,
+    TaskRuntimeBuilder, TaskRuntimeConfig, DEFAULT_TASK_RUN_MAX_ITERATIONS,
 };
 pub use tool_runtime::{
     append_responses_tool_results, append_tool_results, append_tool_results_with_budget,

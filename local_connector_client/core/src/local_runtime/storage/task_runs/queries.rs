@@ -11,7 +11,7 @@ pub(super) const TASK_RUN_COLUMNS: &str = r#"
     id, owner_user_id, project_id, requirement_id, task_kind, task_id, session_id,
     turn_id, execution_group_id, status, priority, prompt, model_config_id,
     attempt, max_attempts, worker_id, lease_expires_at, heartbeat_at,
-    cancel_requested, result_content, result_reasoning, tool_calls_json,
+    cancel_requested, dispatch_paused, result_content, result_reasoning, tool_calls_json,
     finish_reason, usage_json, error, created_at, started_at, finished_at, updated_at
 "#;
 
@@ -52,6 +52,31 @@ impl LocalDatabase {
             .fetch_all(self.pool())
             .await
             .context("list local requirement task runs")
+    }
+
+    pub(crate) async fn list_local_execution_group_task_runs(
+        &self,
+        owner_user_id: &str,
+        project_id: &str,
+        session_id: &str,
+        execution_group_id: &str,
+    ) -> Result<Vec<LocalTaskRunRecord>> {
+        let sql = format!(
+            r#"
+            SELECT {TASK_RUN_COLUMNS} FROM local_task_runs
+            WHERE owner_user_id = ? AND project_id = ? AND session_id = ?
+              AND execution_group_id = ?
+            ORDER BY created_at DESC, id DESC
+            "#
+        );
+        sqlx::query_as::<_, LocalTaskRunRecord>(sql.as_str())
+            .bind(owner_user_id)
+            .bind(project_id)
+            .bind(session_id)
+            .bind(execution_group_id)
+            .fetch_all(self.pool())
+            .await
+            .context("list local execution group task runs")
     }
 
     pub(crate) async fn local_task_run_cancel_requested(&self, run_id: &str) -> Result<bool> {

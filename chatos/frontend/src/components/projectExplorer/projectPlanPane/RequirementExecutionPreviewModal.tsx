@@ -274,7 +274,7 @@ export const RequirementExecutionPreviewModal: React.FC<{
     <div className="fixed inset-0 z-[70]">
       <button
         type="button"
-        aria-label="关闭执行预览"
+        aria-label="关闭规划范围预览"
         className="absolute inset-0 bg-black/45"
         onClick={onClose}
       />
@@ -283,7 +283,7 @@ export const RequirementExecutionPreviewModal: React.FC<{
           <div className="min-w-0">
             <div className="flex items-center gap-2 text-xs text-muted-foreground">
               <GitBranch className="h-3.5 w-3.5" />
-              <span>{onConfirm ? '执行预览' : '流程预览'}</span>
+              <span>{onConfirm ? '规划范围预览' : '流程预览'}</span>
             </div>
             <h2 className="mt-1 break-words text-sm font-semibold text-foreground">
               {requirement.title || requirement.id}
@@ -423,9 +423,11 @@ export const RequirementExecutionPreviewModal: React.FC<{
 
         <footer className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-t border-border px-4 py-3">
           <div className="text-xs text-muted-foreground">
-            {optionalAvailable
-              ? '切换开关可预览是否纳入前置解锁出的额外后续需求。'
-              : '当前没有前置解锁出的额外后续需求。'}
+            {onConfirm
+              ? '这里只选择 Agent 生成计划时覆盖的范围，不会启动 Task Runner。'
+              : optionalAvailable
+                ? '切换开关可预览是否纳入前置解锁出的额外后续需求。'
+                : '当前没有前置解锁出的额外后续需求。'}
           </div>
           <div className="flex items-center gap-2">
             <button
@@ -443,7 +445,7 @@ export const RequirementExecutionPreviewModal: React.FC<{
                 onClick={() => onConfirm(includePrerequisiteDependents)}
               >
                 <Play className="h-3.5 w-3.5" />
-                {running ? '执行中' : '按当前范围执行'}
+                {running ? '生成中' : '生成执行计划'}
               </button>
             ) : null}
           </div>

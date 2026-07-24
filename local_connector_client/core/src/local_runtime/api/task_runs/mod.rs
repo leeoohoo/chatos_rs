@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-mod prompt;
 mod requirement;
 mod runs;
 
@@ -17,8 +16,28 @@ pub(super) fn router() -> Router<LocalRuntime> {
             post(requirement::execute_requirement),
         )
         .route(
+            "/api/local/runtime/projects/{project_id}/requirements/{requirement_id}/execution-plan",
+            get(requirement::get_requirement_execution_plan),
+        )
+        .route(
+            "/api/local/runtime/projects/{project_id}/requirements/{requirement_id}/confirm-execution",
+            post(requirement::confirm_requirement_execution),
+        )
+        .route(
+            "/api/local/runtime/projects/{project_id}/requirements/{requirement_id}/pause",
+            post(requirement::pause_requirement_execution),
+        )
+        .route(
+            "/api/local/runtime/projects/{project_id}/requirements/{requirement_id}/resume",
+            post(requirement::resume_requirement_execution),
+        )
+        .route(
             "/api/local/runtime/projects/{project_id}/requirements/{requirement_id}/stop",
             post(requirement::stop_requirement),
+        )
+        .route(
+            "/api/local/runtime/projects/{project_id}/requirements/{requirement_id}/rerun",
+            post(requirement::rerun_requirement_execution),
         )
         .route("/api/local/runtime/task-runs/{run_id}", get(runs::get_run))
         .route(

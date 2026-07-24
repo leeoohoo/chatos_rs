@@ -80,6 +80,7 @@ fn runtime_context(
         resolved_project_name: Some("Demo Project".to_string()),
         resolved_project_source_type: Some("local".to_string()),
         resolved_project_root: Some("C:/project/demo".to_string()),
+        local_project_workspace_root: Some("C:/project/demo".to_string()),
         default_remote_connection_id: None,
         workspace_root: Some("C:/project/demo".to_string()),
         mcp_enabled: true,
@@ -231,7 +232,7 @@ fn builds_shared_runtime_execution_contract_from_chat_context() {
 #[test]
 fn shared_runtime_record_contract_preserves_chatos_message_metadata() {
     let record_options =
-        build_chatos_record_options(TASK_RUNNER_ASYNC_PLAN_MESSAGE_MODE, "model-source");
+        build_chatos_record_options(TASK_RUNNER_ASYNC_PLAN_MESSAGE_MODE, "model-source", false);
     let user_record = build_chatos_user_record(
         "session-1",
         Some("turn-1".to_string()),
@@ -267,6 +268,29 @@ fn shared_runtime_record_contract_preserves_chatos_message_metadata() {
     );
     assert_eq!(user_record.message_source.as_deref(), Some("model-source"));
     assert_eq!(user_record.content, "hello");
+}
+
+#[test]
+fn hidden_planning_turn_hides_assistant_and_tool_records_until_confirmation() {
+    let record_options =
+        build_chatos_record_options(TASK_RUNNER_ASYNC_PLAN_MESSAGE_MODE, "model-source", true);
+
+    assert_eq!(
+        record_options
+            .assistant_metadata
+            .as_ref()
+            .and_then(|value| value.get("hidden"))
+            .and_then(Value::as_bool),
+        Some(true)
+    );
+    assert_eq!(
+        record_options
+            .tool_metadata
+            .as_ref()
+            .and_then(|value| value.get("hidden"))
+            .and_then(Value::as_bool),
+        Some(true)
+    );
 }
 
 #[test]

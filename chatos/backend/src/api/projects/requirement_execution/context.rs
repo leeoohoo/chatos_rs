@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
+use chatos_project_execution::STATUS_PLANNING;
 use serde_json::{json, Value};
 
 use crate::config::Config;
@@ -240,6 +241,11 @@ pub(in crate::api::projects) async fn create_execution_message(
     contact: &MemoryProjectContactDto,
     work_items: &[WorkItemPlanItem],
     content: String,
+    planning_feedback: Option<&str>,
+    planning_feedback_history: &[String],
+    replaced_execution_group_id: Option<&str>,
+    replaced_conversation_id: Option<&str>,
+    include_prerequisite_dependents: bool,
 ) -> Result<Message, HandlerError> {
     let mut message = build_message(
         session.id.clone(),
@@ -249,6 +255,7 @@ pub(in crate::api::projects) async fn create_execution_message(
             message_mode: Some("project_requirement_execution".to_string()),
             message_source: Some("project_management".to_string()),
             metadata: Some(json!({
+                "hidden": true,
                 "project_requirement_execution": {
                     "project_id": project_id,
                     "requirement_id": requirement.id,
@@ -258,10 +265,16 @@ pub(in crate::api::projects) async fn create_execution_message(
                     "project_task_ids": work_items.iter().map(|item| item.id.clone()).collect::<Vec<_>>(),
                     "user_visible_content": content,
                     "task_links": [],
+                    "planning_feedback": planning_feedback,
+                    "planning_feedback_history": planning_feedback_history,
+                    "replaced_execution_group_id": replaced_execution_group_id,
+                    "replaced_conversation_id": replaced_conversation_id,
+                    "include_prerequisite_dependents": include_prerequisite_dependents,
                 },
                 "task_runner_async": {
                     "mode": "project_requirement_execution",
-                    "overall_status": "queued",
+                    "overall_status": STATUS_PLANNING,
+                    "confirmation_status": STATUS_PLANNING,
                     "source": "project_requirement_execute_button",
                     "project_id": project_id,
                     "requirement_id": requirement.id,
@@ -280,6 +293,20 @@ pub(in crate::api::projects) async fn create_execution_message(
         "conversation_turn_id".to_string(),
         Value::String(turn_id.clone()),
     );
+    if let Some(Value::Object(execution)) = metadata.get_mut("project_requirement_execution") {
+        execution.insert(
+            "execution_group_id".to_string(),
+            Value::String(turn_id.clone()),
+        );
+        execution.insert(
+            "execution_plane".to_string(),
+            Value::String(
+                chatos_project_execution::ExecutionPlane::Cloud
+                    .as_str()
+                    .to_string(),
+            ),
+        );
+    }
     if let Some(Value::Object(task_runner_async)) = metadata.get_mut("task_runner_async") {
         task_runner_async.insert("source_turn_id".to_string(), Value::String(turn_id));
     }
@@ -301,6 +328,7 @@ pub(in crate::api::projects) async fn create_execution_planner_failure_message(
             message_mode: Some("project_requirement_execution_error".to_string()),
             message_source: Some("project_management".to_string()),
             metadata: Some(json!({
+                "hidden": true,
                 "conversation_turn_id": execution_group_id,
                 "project_requirement_execution": {
                     "execution_group_id": execution_group_id,

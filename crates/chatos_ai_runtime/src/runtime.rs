@@ -172,11 +172,15 @@ impl AiRuntime {
             let tool_count = iteration_request.tools.len();
             let mut transient_retry_count = 0usize;
             let mut recovery_request_handler: Option<AiRequestHandler> = None;
+            let mut force_non_stream = false;
+            let mut request_attempt = 0usize;
             let mut response = loop {
+                request_attempt = request_attempt.saturating_add(1);
                 let request_handler = recovery_request_handler
                     .as_ref()
                     .unwrap_or(&self.request_handler);
                 let force_identity_encoding = recovery_request_handler.is_some();
+                let provider_stream = !force_non_stream;
                 let response = dispatch_model_request(
                     request_handler,
                     &iteration_request,
@@ -186,7 +190,9 @@ impl AiRuntime {
                     input_item_count,
                     input_bytes,
                     tool_count,
+                    request_attempt,
                     lifecycle_before.stream_output,
+                    provider_stream,
                     force_identity_encoding,
                 )
                 .await;
@@ -203,6 +209,7 @@ impl AiRuntime {
                             pending_tool_outputs.as_deref(),
                             &mut context_overflow_recovery_attempted,
                             &mut transient_retry_count,
+                            provider_stream,
                         )
                         .await?
                         {
@@ -216,10 +223,11 @@ impl AiRuntime {
                                 iteration_reason = "context_overflow_recovery".to_string();
                                 continue 'runtime_loop;
                             }
-                            ModelRequestErrorAction::RetryRequest => {
+                            ModelRequestErrorAction::RetryRequest { disable_stream } => {
                                 // A retry must not inherit a potentially unhealthy pooled
                                 // connection. Build a new client for every retry attempt and
                                 // ask the provider to close that isolated connection afterward.
+                                force_non_stream |= disable_stream;
                                 recovery_request_handler = Some(AiRequestHandler::new());
                                 continue;
                             }

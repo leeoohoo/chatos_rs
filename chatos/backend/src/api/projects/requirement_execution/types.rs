@@ -2,26 +2,9 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use crate::models::memory_mapping_types::MemoryProjectContactDto;
-
-#[derive(Debug, Clone)]
-pub(in crate::api::projects) struct RequirementPlanItem {
-    pub(in crate::api::projects) id: String,
-    pub(in crate::api::projects) title: String,
-    pub(in crate::api::projects) status: String,
-    pub(in crate::api::projects) parent_requirement_id: Option<String>,
-}
-
-#[derive(Debug, Clone)]
-pub(in crate::api::projects) struct WorkItemPlanItem {
-    pub(in crate::api::projects) id: String,
-    pub(in crate::api::projects) requirement_id: String,
-    pub(in crate::api::projects) title: String,
-    pub(in crate::api::projects) description: Option<String>,
-    pub(in crate::api::projects) status: String,
-    pub(in crate::api::projects) priority: i32,
-    pub(in crate::api::projects) tags: Vec<String>,
-    pub(in crate::api::projects) is_planning_task: bool,
-}
+pub(in crate::api::projects) use chatos_project_execution::{
+    RequirementPlanItem, WorkItemPlanItem,
+};
 
 #[derive(Debug, Clone)]
 pub(in crate::api::projects) struct SelectedContactRuntime {
@@ -32,6 +15,7 @@ pub(in crate::api::projects) struct SelectedContactRuntime {
 
 #[derive(Debug, Clone)]
 pub(in crate::api::projects) struct ExecutionLink {
+    pub(in crate::api::projects) link_id: Option<String>,
     pub(in crate::api::projects) work_item_id: String,
     pub(in crate::api::projects) task_runner_task_id: String,
     pub(in crate::api::projects) task_runner_run_id: Option<String>,

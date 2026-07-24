@@ -178,6 +178,14 @@ pub async fn get_message_by_id_in_session(
     chatos_memory_engine::get_chatos_message_by_id_in_session(session, message_id).await
 }
 
+pub async fn get_message_by_id_in_session_including_hidden(
+    session: &Session,
+    message_id: &str,
+) -> Result<Option<Message>, String> {
+    chatos_memory_engine::get_chatos_message_by_id_in_session_including_hidden(session, message_id)
+        .await
+}
+
 pub async fn delete_message(message_id: &str) -> Result<bool, String> {
     chatos_memory_engine::delete_chatos_message_by_id(message_id).await
 }

@@ -25,7 +25,10 @@ pub(in crate::local_runtime) async fn seed_chat_capabilities(
             .save_capability_snapshot(&capabilities(
                 owner_user_id,
                 agent_key,
-                vec![resolved_task_runner(agent_key)],
+                vec![
+                    resolved_task_runner(agent_key),
+                    resolved_builtin(agent_key, BuiltinMcpKind::ProjectManagement, false),
+                ],
             ))
             .await?;
     }
@@ -85,13 +88,16 @@ pub(in crate::local_runtime) async fn grant_required_builtin(
     agent_key: SystemAgentKey,
     kind: BuiltinMcpKind,
 ) -> anyhow::Result<()> {
-    database
-        .save_capability_snapshot(&capabilities(
-            owner_user_id,
-            agent_key,
-            vec![resolved_builtin(agent_key, kind, true)],
-        ))
-        .await
+    let mut snapshot = database
+        .get_capability_snapshot(owner_user_id, agent_key.as_str())
+        .await?
+        .unwrap_or_else(|| capabilities(owner_user_id, agent_key, Vec::new()));
+    let granted = resolved_builtin(agent_key, kind, true);
+    snapshot
+        .mcps
+        .retain(|item| item.resource.id != granted.resource.id);
+    snapshot.mcps.push(granted);
+    database.save_capability_snapshot(&snapshot).await
 }
 
 fn test_agent_prompt_bundle() -> AgentPromptBundle {
@@ -305,6 +311,7 @@ async fn conversation_and_planning_agents_do_not_inherit_task_runner_file_permis
             &request,
             agent_key,
             false,
+            false,
             Vec::new(),
         )
         .await
@@ -314,6 +321,23 @@ async fn conversation_and_planning_agents_do_not_inherit_task_runner_file_permis
             resolved.host_system_mcps,
             vec![chatos_plugin_management_sdk::SystemMcpKey::TaskRunnerService]
         );
+
+        let project_scoped = resolve_local_chat_capabilities(
+            &database,
+            "user-1",
+            &settings,
+            &LocalState::default(),
+            &request,
+            agent_key,
+            false,
+            true,
+            Vec::new(),
+        )
+        .await
+        .expect("resolve concrete-project Agent capability");
+        assert!(project_scoped
+            .builtin_kinds
+            .contains(&BuiltinMcpKind::ProjectManagement));
     }
 
     let task_runner = resolve_local_chat_capabilities(
@@ -324,6 +348,7 @@ async fn conversation_and_planning_agents_do_not_inherit_task_runner_file_permis
         &request,
         SystemAgentKey::TaskRunnerRunPhase,
         true,
+        false,
         Vec::new(),
     )
     .await

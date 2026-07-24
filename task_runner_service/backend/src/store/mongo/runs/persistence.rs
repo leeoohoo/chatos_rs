@@ -66,7 +66,10 @@ impl MongoStore {
         let now = Utc::now().to_rfc3339();
         self.runs
             .find_one_and_update(
-                doc! { "status": "queued" },
+                doc! {
+                    "status": "queued",
+                    "dispatch_paused": { "$ne": true },
+                },
                 doc! {
                     "$set": {
                         "status": "running",
@@ -84,6 +87,33 @@ impl MongoStore {
                     .build(),
             )
             .await
+            .map_err(|err| err.to_string())
+    }
+
+    pub(in crate::store) async fn set_queued_runs_dispatch_paused(
+        &self,
+        task_ids: &[String],
+        paused: bool,
+    ) -> Result<u64, String> {
+        if task_ids.is_empty() {
+            return Ok(0);
+        }
+        self.runs
+            .update_many(
+                doc! {
+                    "task_id": { "$in": task_ids },
+                    "status": "queued",
+                },
+                doc! {
+                    "$set": {
+                        "dispatch_paused": paused,
+                        "updated_at": Utc::now().to_rfc3339(),
+                    }
+                },
+                None,
+            )
+            .await
+            .map(|result| result.modified_count)
             .map_err(|err| err.to_string())
     }
 
@@ -118,14 +148,15 @@ impl MongoStore {
 
     pub(in crate::store) async fn fail_expired_run_claims(
         &self,
-        now: &str,
+        expired_before: &str,
+        failed_at: &str,
     ) -> Result<Vec<TaskRunRecord>, String> {
         let candidates = self
             .runs
             .find(
                 doc! {
                     "status": "running",
-                    "claim_until": { "$lte": now },
+                    "claim_until": { "$lte": expired_before },
                 },
                 None,
             )
@@ -142,13 +173,13 @@ impl MongoStore {
                     doc! {
                         "id": run.id.as_str(),
                         "status": "running",
-                        "claim_until": { "$lte": now },
+                        "claim_until": { "$lte": expired_before },
                     },
                     doc! {
                         "$set": {
                             "status": "failed",
-                            "finished_at": now,
-                            "updated_at": now,
+                            "finished_at": failed_at,
+                            "updated_at": failed_at,
                             "result_summary": "任务运行节点心跳过期，已标记为失败",
                             "error_message": "worker claim expired",
                             "cancel_requested": false,
@@ -156,9 +187,9 @@ impl MongoStore {
                                 event: "task.failed".to_string(),
                                 status: ChatosCallbackDeliveryStatus::Pending,
                                 attempt_count: 0,
-                                next_attempt_at: Some(now.to_string()),
+                                next_attempt_at: Some(failed_at.to_string()),
                                 last_error: None,
-                                updated_at: now.to_string(),
+                                updated_at: failed_at.to_string(),
                             }).map_err(|err| err.to_string())?,
                         },
                         "$unset": {
@@ -174,8 +205,8 @@ impl MongoStore {
                 continue;
             }
             run.status = TaskRunStatus::Failed;
-            run.finished_at = Some(now.to_string());
-            run.updated_at = now.to_string();
+            run.finished_at = Some(failed_at.to_string());
+            run.updated_at = failed_at.to_string();
             run.result_summary = Some("任务运行节点心跳过期，已标记为失败".to_string());
             run.error_message = Some("worker claim expired".to_string());
             run.cancel_requested = false;

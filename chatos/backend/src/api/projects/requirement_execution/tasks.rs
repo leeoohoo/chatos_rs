@@ -44,9 +44,15 @@ pub(in crate::api::projects) async fn ensure_requirement_execution_not_active(
         .await?;
     }
 
-    if requirement.status == "in_progress" && requirement_execution_should_block(&links) {
+    if matches!(requirement.status.as_str(), "reviewing" | "in_progress")
+        && requirement_execution_should_block(&links)
+    {
         return Err(HandlerError::bad_request(
-            "该需求已有执行中的任务，请先停止当前执行",
+            if requirement.status == "reviewing" {
+                "该需求已有正在生成或等待确认的执行计划，请先完成或停止当前计划"
+            } else {
+                "该需求已有执行中的任务，请先停止当前执行"
+            },
         ));
     }
     if let Some(item) = active_work_item_blocker(work_items, &links) {
@@ -116,6 +122,7 @@ mod tests {
 
     fn execution_link(work_item_id: &str, status: &str) -> ExecutionLink {
         ExecutionLink {
+            link_id: None,
             work_item_id: work_item_id.to_string(),
             task_runner_task_id: format!("runner-{work_item_id}"),
             task_runner_run_id: None,

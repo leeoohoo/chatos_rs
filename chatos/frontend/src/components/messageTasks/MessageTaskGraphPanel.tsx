@@ -17,6 +17,7 @@ import {
   edgePath,
   getNodeDimensions,
   normalizeMessageTaskGraphForDisplay,
+  type TaskGraphDisplayMode,
   walkTaskIds,
 } from './MessageTaskGraphModel';
 import { MessageTaskCardNode } from './MessageTaskGraphNode';
@@ -54,10 +55,11 @@ export const MessageTaskGraphPanel: FC<MessageTaskGraphPanelProps> = ({
   onOpenChanges,
 }) => {
   const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
+  const [displayMode, setDisplayMode] = useState<TaskGraphDisplayMode>('reduced');
 
   const displayGraph = useMemo(
-    () => normalizeMessageTaskGraphForDisplay(graph),
-    [graph],
+    () => normalizeMessageTaskGraphForDisplay(graph, displayMode),
+    [displayMode, graph],
   );
 
   const taskById = useMemo(
@@ -224,6 +226,12 @@ export const MessageTaskGraphPanel: FC<MessageTaskGraphPanelProps> = ({
             <span className="h-2.5 w-2.5 rounded-full bg-slate-300" />
             间接前置
           </span>
+          {displayMode === 'full' ? (
+            <span className="inline-flex items-center gap-1.5">
+              <span className="w-4 border-t border-dashed border-slate-400" />
+              上下文关联（不阻塞）
+            </span>
+          ) : null}
         </div>
         {activeContext ? (
           <div className="rounded-xl border border-primary/15 bg-background/92 px-3 py-2 text-xs shadow-sm backdrop-blur-sm">
@@ -238,6 +246,21 @@ export const MessageTaskGraphPanel: FC<MessageTaskGraphPanelProps> = ({
       </div>
 
       <div className="absolute right-4 top-4 z-20 flex gap-2">
+        <div className="inline-flex rounded-md border border-border bg-background/92 p-0.5 text-xs shadow-sm backdrop-blur-sm">
+          {(['reduced', 'full'] as const).map((mode) => (
+            <button
+              key={mode}
+              type="button"
+              className={`rounded px-2.5 py-1 ${displayMode === mode ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:bg-accent hover:text-foreground'}`}
+              onClick={() => {
+                setActiveTaskId(null);
+                setDisplayMode(mode);
+              }}
+            >
+              {mode === 'reduced' ? '精简图' : '完整图'}
+            </button>
+          ))}
+        </div>
         {activeTaskId ? (
           <button
             type="button"
@@ -318,6 +341,7 @@ export const MessageTaskGraphPanel: FC<MessageTaskGraphPanelProps> = ({
                     stroke,
                     strokeWidth: typeof edge.style?.strokeWidth === 'number' ? edge.style.strokeWidth : 1.6,
                     opacity: typeof edge.style?.opacity === 'number' ? edge.style.opacity : 1,
+                    strokeDasharray: edge.data?.dashArray,
                   }}
                   markerEnd={`url(#${edge.data?.markerId || 'task-graph-arrow'})`}
                 />

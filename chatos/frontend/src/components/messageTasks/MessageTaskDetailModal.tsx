@@ -2,6 +2,7 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 import type { FC } from 'react';
+import { LoaderCircle, RotateCcw } from 'lucide-react';
 import type {
   MessageTaskRunnerModelConfigSummary,
   MessageTaskRunnerRunSummary,
@@ -15,6 +16,8 @@ import { formatDateTime, isRecord, readString, readStringArray } from './utils';
 interface MessageTaskDetailModalProps {
   task: MessageTaskRunnerTask | null;
   relatedTasks?: MessageTaskRunnerTask[];
+  onRetry?: (task: MessageTaskRunnerTask) => unknown | Promise<unknown>;
+  retrying?: boolean;
   onClose: () => void;
 }
 
@@ -25,6 +28,11 @@ interface MessageTaskProcessLogModalProps {
 
 const shortId = (value: string): string => (
   value.length > 16 ? `${value.slice(0, 8)}...${value.slice(-4)}` : value
+);
+
+export const canRetryMessageTask = (task: MessageTaskRunnerTask): boolean => (
+  readString(task.status)?.toLowerCase() === 'failed'
+  && Boolean(readString(task.last_run_id))
 );
 
 const formatModelConfig = (
@@ -78,6 +86,8 @@ const formatTaskSummary = (
 export const MessageTaskDetailModal: FC<MessageTaskDetailModalProps> = ({
   task,
   relatedTasks = [],
+  onRetry,
+  retrying = false,
   onClose,
 }) => {
   if (!task) {
@@ -123,6 +133,30 @@ export const MessageTaskDetailModal: FC<MessageTaskDetailModalProps> = ({
       onClose={onClose}
       widthClassName="max-w-5xl"
     >
+      {canRetryMessageTask(task) && onRetry ? (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-amber-300 bg-amber-50 px-3 py-2.5 dark:border-amber-800 dark:bg-amber-950/30">
+          <div>
+            <div className="text-sm font-medium text-amber-900 dark:text-amber-100">
+              当前节点执行失败
+            </div>
+            <p className="mt-0.5 text-xs text-amber-800 dark:text-amber-200">
+              仅重新运行此节点；成功后，满足依赖条件的后续节点会继续调度。
+            </p>
+          </div>
+          <button
+            type="button"
+            className="inline-flex items-center gap-1.5 rounded-md bg-amber-600 px-3 py-2 text-xs font-semibold text-white hover:bg-amber-700 disabled:cursor-not-allowed disabled:opacity-60"
+            disabled={retrying}
+            onClick={() => void onRetry(task)}
+          >
+            {retrying
+              ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
+              : <RotateCcw className="h-3.5 w-3.5" />}
+            {retrying ? '正在重试' : '重试此任务'}
+          </button>
+        </div>
+      ) : null}
+
       <FieldGrid
         items={[
           ['任务 ID', task.id],

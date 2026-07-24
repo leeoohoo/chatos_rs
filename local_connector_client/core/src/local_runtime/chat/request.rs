@@ -19,6 +19,14 @@ pub(crate) struct LocalChatSendRequest {
     pub(crate) idempotency_key: Option<String>,
     pub(crate) model_config_id: Option<String>,
     pub(crate) reasoning_enabled: Option<bool>,
+    #[serde(default)]
+    pub(crate) project_requirement_execution_planner: bool,
+    #[serde(skip)]
+    pub(crate) resume_precreated_turn: bool,
+    #[serde(default)]
+    pub(crate) project_requirement_execution_task_ids: Vec<String>,
+    pub(crate) project_requirement_execution_requirement_id: Option<String>,
+    pub(crate) project_requirement_execution_requirement_title: Option<String>,
     pub(crate) system_prompt: Option<String>,
     #[serde(default)]
     pub(crate) attachments: Vec<Value>,

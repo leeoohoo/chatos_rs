@@ -142,7 +142,7 @@ export const requirementDocumentTypeLabel = (type?: string): string => {
 export const canShowRequirementExecutionAction = (status?: string): boolean => {
   const normalizedStatus = readText(status).toLowerCase();
   return !isCompletedStatus(normalizedStatus)
-    && !['cancelled', 'archived'].includes(normalizedStatus);
+    && !['reviewing', 'cancelled', 'archived'].includes(normalizedStatus);
 };
 
 export const statusClassName = (status?: string): string => {
@@ -488,18 +488,23 @@ export const countOpenItems = (items: ProjectWorkItemResponse[]): number => (
 
 export const buildRequirementExecutionPayload = ({
   includePrerequisiteDependents,
+  planningFeedback,
   selectedModelId,
 }: {
   includePrerequisiteDependents?: boolean;
+  planningFeedback?: string | null;
   selectedModelId?: string | null;
 }): {
   include_prerequisite_dependents: boolean;
   model_config_id?: string;
+  planning_feedback?: string;
 } => {
   const normalizedModelId = readText(selectedModelId);
+  const normalizedPlanningFeedback = readText(planningFeedback);
   return {
     include_prerequisite_dependents: Boolean(includePrerequisiteDependents),
     ...(normalizedModelId ? { model_config_id: normalizedModelId } : {}),
+    ...(normalizedPlanningFeedback ? { planning_feedback: normalizedPlanningFeedback } : {}),
   };
 };
 

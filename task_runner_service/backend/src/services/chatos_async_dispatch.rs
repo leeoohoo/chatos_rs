@@ -4,9 +4,79 @@
 use std::future::Future;
 use std::pin::Pin;
 
+use crate::models::TaskScheduleConfig;
+
 use super::*;
 
 impl RunService {
+    pub(crate) async fn set_project_execution_paused(
+        &self,
+        tasks: &[TaskRecord],
+        paused: bool,
+    ) -> Result<Vec<TaskRunRecord>, String> {
+        let mut task_ids = tasks.iter().map(|task| task.id.clone()).collect::<Vec<_>>();
+        task_ids.sort();
+        task_ids.dedup();
+        let mut start_guards = Vec::with_capacity(task_ids.len());
+        for task_id in &task_ids {
+            start_guards.push(
+                self.start_lock_for_task(task_id.as_str())
+                    .lock_owned()
+                    .await,
+            );
+        }
+        self.store
+            .set_tasks_execution_paused(task_ids.as_slice(), paused)
+            .await?;
+        self.store
+            .set_queued_runs_dispatch_paused(task_ids.as_slice(), paused)
+            .await?;
+        drop(start_guards);
+        if paused {
+            return Ok(Vec::new());
+        }
+        let mut refreshed_tasks = Vec::with_capacity(task_ids.len());
+        for task_id in &task_ids {
+            if let Some(task) = self.store.get_task(task_id.as_str()).await? {
+                refreshed_tasks.push(task);
+            }
+        }
+        self.dispatch_ready_chatos_async_tasks(refreshed_tasks.as_slice())
+            .await
+    }
+
+    pub(crate) fn dispatch_confirmed_project_execution_tasks<'a>(
+        &'a self,
+        tasks: &'a [TaskRecord],
+    ) -> Pin<Box<dyn Future<Output = Result<Vec<TaskRunRecord>, String>> + Send + 'a>> {
+        Box::pin(async move {
+            let activated_at = now_rfc3339();
+            let mut activated_tasks = Vec::with_capacity(tasks.len());
+            for task in tasks {
+                let mut task = self
+                    .store
+                    .get_task(task.id.as_str())
+                    .await?
+                    .ok_or_else(|| format!("task not found: {}", task.id))?;
+                task.schedule = TaskScheduleConfig {
+                    mode: TaskScheduleMode::ContactAsync,
+                    run_at: Some(activated_at.clone()),
+                    interval_seconds: None,
+                    // The dedicated DAG dispatcher starts roots and unlocks
+                    // dependants only after every prerequisite has succeeded.
+                    // Keeping next_run_at empty prevents the global scheduler
+                    // from bypassing that dependency gate.
+                    next_run_at: None,
+                    last_scheduled_at: task.schedule.last_scheduled_at.clone(),
+                };
+                task.updated_at = now_rfc3339();
+                activated_tasks.push(self.store.save_task(task).await?);
+            }
+            self.dispatch_ready_chatos_async_tasks(activated_tasks.as_slice())
+                .await
+        })
+    }
+
     pub(crate) fn dispatch_ready_chatos_async_tasks<'a>(
         &'a self,
         tasks: &'a [TaskRecord],
@@ -115,7 +185,9 @@ impl RunService {
     }
 
     fn should_dispatch_chatos_async_task(&self, task: &TaskRecord) -> bool {
-        task.schedule.mode == TaskScheduleMode::ContactAsync && task.status == TaskStatus::Ready
+        task.schedule.mode == TaskScheduleMode::ContactAsync
+            && task.status == TaskStatus::Ready
+            && !task.task_tool_state.execution_paused
     }
 
     async fn task_prerequisites_have_succeeded(

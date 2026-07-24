@@ -11,6 +11,7 @@ impl RunService {
         model_config: &ModelConfigRecord,
         run_spec: &TaskRunSpec,
         tool_result_model_budget_limits: ToolResultModelBudgetLimits,
+        max_iterations: usize,
         effective_workspace_dir: &str,
     ) -> RuntimeExecutionState {
         let path_redactor = crate::services::path_redaction::WorkspacePathRedactor::for_workspace(
@@ -41,6 +42,9 @@ impl RunService {
             .with_caller_model(Some(model_config.model.clone()))
             .with_record_options(run_spec.record_options.clone())
             .with_tool_result_model_budget_limits(Some(tool_result_model_budget_limits))
+            .with_lifecycle_hook(Some(Arc::new(TaskFinalizationLifecycleHook::new(
+                max_iterations,
+            ))))
             .with_callbacks(callbacks)
             .with_abort_token(Some(abort_token))
             .with_abort_checker(Some(Arc::new({

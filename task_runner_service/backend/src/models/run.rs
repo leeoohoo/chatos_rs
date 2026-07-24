@@ -70,6 +70,8 @@ pub struct TaskRunRecord {
     pub usage: Option<Value>,
     pub report: Option<Value>,
     pub cancel_requested: bool,
+    #[serde(default)]
+    pub dispatch_paused: bool,
     pub summary_job_run_id: Option<String>,
     #[serde(default)]
     pub worker_id: Option<String>,
@@ -109,6 +111,7 @@ impl TaskRunRecord {
             usage: None,
             report: None,
             cancel_requested: false,
+            dispatch_paused: false,
             summary_job_run_id: None,
             worker_id: None,
             claim_token: None,

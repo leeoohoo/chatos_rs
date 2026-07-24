@@ -90,8 +90,10 @@ export interface MessageMetadata extends UnknownRecord {
   };
   task_runner_async?: {
     mode?: string;
+    execution_kind?: string;
     message_kind?: string;
     overall_status?: 'pending' | 'processing' | 'completed' | string;
+    confirmation_status?: string;
     source_user_message_id?: string;
     source_turn_id?: string;
     task_id?: string;
@@ -106,6 +108,17 @@ export interface MessageMetadata extends UnknownRecord {
     failed_task_ids?: string[];
     blocked_task_ids?: string[];
     cancelled_task_ids?: string[];
+    [key: string]: unknown;
+  };
+  project_requirement_execution?: {
+    project_id?: string;
+    requirement_id?: string;
+    requirement_title?: string;
+    contact_id?: string;
+    contact_agent_id?: string;
+    execution_group_id?: string;
+    execution_plane?: string;
+    project_task_ids?: string[];
     [key: string]: unknown;
   };
 }

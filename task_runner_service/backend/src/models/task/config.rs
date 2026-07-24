@@ -210,6 +210,8 @@ pub struct TaskToolOutcomeItem {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct TaskToolState {
     #[serde(default)]
+    pub execution_paused: bool,
+    #[serde(default)]
     pub due_at: Option<String>,
     #[serde(default)]
     pub outcome_items: Vec<TaskToolOutcomeItem>,

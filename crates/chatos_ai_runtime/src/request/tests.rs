@@ -7,7 +7,7 @@ use serde_json::{json, Value};
 
 use super::{
     build_chat_completions_request_payload, build_responses_request_payload,
-    effective_provider_for_request, emit_finalized_stream_callbacks,
+    effective_provider_for_request, emit_finalized_stream_callbacks, parse_timeout_seconds,
     response_items_to_chat_messages, validate_request_payload_size, AiRequestHandler,
     AiRequestOptions, StreamCallbacks,
 };
@@ -105,6 +105,7 @@ fn responses_payload_supports_prompt_cache_and_cwd() {
         request_body_limit_bytes: None,
         abort_token: None,
         force_identity_encoding: false,
+        stream: true,
     };
     let payload = build_responses_request_payload(
         json!([]),
@@ -133,6 +134,14 @@ fn responses_payload_supports_prompt_cache_and_cwd() {
         payload.get("cwd"),
         Some(&Value::String("/workspace".to_string()))
     );
+}
+
+#[test]
+fn ai_read_timeout_defaults_to_five_minutes_and_accepts_valid_override() {
+    assert_eq!(parse_timeout_seconds(None, 300), 300);
+    assert_eq!(parse_timeout_seconds(Some("450"), 300), 450);
+    assert_eq!(parse_timeout_seconds(Some("0"), 300), 300);
+    assert_eq!(parse_timeout_seconds(Some("invalid"), 300), 300);
 }
 
 #[test]

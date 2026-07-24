@@ -85,6 +85,7 @@ pub(super) async fn build_contact_task_runner_runtime(
     conversation_turn_id: Option<&str>,
     source_user_message_id: Option<&str>,
     model_config_id: Option<&str>,
+    project_requirement_execution_task_ids: &[String],
     locale: InternalContextLocale,
     agent_profile: ChatosAgentProfile,
 ) -> Option<ContactTaskRunnerRuntime> {
@@ -166,6 +167,7 @@ pub(super) async fn build_contact_task_runner_runtime(
         headers.insert("X-Chatos-User-Message-Id".to_string(), user_message_id);
     }
     insert_planner_default_model_header(&mut headers, agent_profile, model_config_id);
+    insert_project_execution_scope_header(&mut headers, project_requirement_execution_task_ids);
     if let Some(workspace_dir) = normalize_optional_text(workspace_dir) {
         headers.insert("X-Task-Runner-Workspace-Dir".to_string(), workspace_dir);
     }
@@ -190,6 +192,25 @@ pub(super) async fn build_contact_task_runner_runtime(
             header_provider: Some(header_provider),
         },
     })
+}
+
+fn insert_project_execution_scope_header(
+    headers: &mut HashMap<String, String>,
+    project_task_ids: &[String],
+) {
+    let mut project_task_ids = project_task_ids
+        .iter()
+        .map(|value| value.trim())
+        .filter(|value| !value.is_empty() && !value.contains(','))
+        .collect::<Vec<_>>();
+    project_task_ids.sort_unstable();
+    project_task_ids.dedup();
+    if !project_task_ids.is_empty() {
+        headers.insert(
+            "X-Task-Runner-Expected-Project-Task-Ids".to_string(),
+            project_task_ids.join(","),
+        );
+    }
 }
 
 fn insert_planner_default_model_header(
@@ -240,6 +261,26 @@ mod tests {
                 .get("X-Task-Runner-Default-Model-Config-Id")
                 .map(String::as_str),
             Some("model-selected")
+        );
+    }
+
+    #[test]
+    fn requirement_planner_forwards_exact_project_task_scope_to_task_runner() {
+        let mut headers = HashMap::new();
+        insert_project_execution_scope_header(
+            &mut headers,
+            &[
+                " project-task-b ".to_string(),
+                "project-task-a".to_string(),
+                "project-task-a".to_string(),
+            ],
+        );
+
+        assert_eq!(
+            headers
+                .get("X-Task-Runner-Expected-Project-Task-Ids")
+                .map(String::as_str),
+            Some("project-task-a,project-task-b")
         );
     }
 

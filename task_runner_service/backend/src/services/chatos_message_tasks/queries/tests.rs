@@ -110,6 +110,7 @@ fn failed_run_for_task(task: &TaskRecord, run_id: &str) -> TaskRunRecord {
         usage: None,
         report: None,
         cancel_requested: false,
+        dispatch_paused: false,
         summary_job_run_id: None,
         worker_id: None,
         claim_token: None,

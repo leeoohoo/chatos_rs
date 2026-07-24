@@ -36,6 +36,11 @@ pub(crate) struct LocalTaskBoardTaskRow {
     pub(crate) external_mcp_config_ids_json: String,
     pub(crate) selected_skill_ids_json: String,
     pub(crate) last_run_id: Option<String>,
+    pub(crate) project_work_item_id: Option<String>,
+    pub(crate) requirement_id: Option<String>,
+    pub(crate) execution_group_id: Option<String>,
+    pub(crate) execution_client_ref: Option<String>,
+    pub(crate) dependency_context_refs_json: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -71,6 +76,11 @@ pub(crate) struct LocalTaskBoardTaskRecord {
     pub(crate) external_mcp_config_ids: Vec<String>,
     pub(crate) selected_skill_ids: Vec<String>,
     pub(crate) last_run_id: Option<String>,
+    pub(crate) project_work_item_id: Option<String>,
+    pub(crate) requirement_id: Option<String>,
+    pub(crate) execution_group_id: Option<String>,
+    pub(crate) execution_client_ref: Option<String>,
+    pub(crate) dependency_context_refs: Vec<String>,
 }
 
 impl From<LocalTaskBoardTaskRow> for LocalTaskBoardTaskRecord {
@@ -107,6 +117,11 @@ impl From<LocalTaskBoardTaskRow> for LocalTaskBoardTaskRecord {
             external_mcp_config_ids: parse_json(row.external_mcp_config_ids_json.as_str()),
             selected_skill_ids: parse_json(row.selected_skill_ids_json.as_str()),
             last_run_id: row.last_run_id,
+            project_work_item_id: row.project_work_item_id,
+            requirement_id: row.requirement_id,
+            execution_group_id: row.execution_group_id,
+            execution_client_ref: row.execution_client_ref,
+            dependency_context_refs: parse_json(row.dependency_context_refs_json.as_str()),
         }
     }
 }

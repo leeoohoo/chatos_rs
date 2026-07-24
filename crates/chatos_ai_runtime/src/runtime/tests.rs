@@ -8,6 +8,7 @@ use async_trait::async_trait;
 use axum::{
     extract::State,
     http::{HeaderMap, StatusCode},
+    response::{IntoResponse, Response},
     routing::post,
     Json, Router,
 };
@@ -23,7 +24,7 @@ use super::{
 };
 use crate::{
     AiResponse, AiRuntime, AiRuntimeOptions, AiRuntimeResult, AiTurnReport, AiTurnStatus,
-    ModelRequest, RuntimeBeforeModelRequest, RuntimeFinalResponseAction,
+    ModelRequest, RuntimeBeforeModelRequest, RuntimeCallbacks, RuntimeFinalResponseAction,
     RuntimeFinalResponseContext, RuntimeIterationContext, RuntimeLifecycleHook,
 };
 
@@ -139,6 +140,78 @@ async fn start_lifecycle_mock_provider(
         connection_headers,
         server,
     )
+}
+
+#[derive(Clone, Default)]
+struct ParseRecoveryProviderState {
+    requests: Arc<AsyncMutex<Vec<Value>>>,
+    connection_headers: Arc<AsyncMutex<Vec<Option<String>>>>,
+    accept_encoding_headers: Arc<AsyncMutex<Vec<Option<String>>>>,
+    always_fail: bool,
+}
+
+async fn mock_parse_recovery_provider(
+    State(state): State<ParseRecoveryProviderState>,
+    headers: HeaderMap,
+    Json(payload): Json<Value>,
+) -> Response {
+    let mut requests = state.requests.lock().await;
+    requests.push(payload);
+    let request_count = requests.len();
+    drop(requests);
+    state.connection_headers.lock().await.push(
+        headers
+            .get(reqwest::header::CONNECTION)
+            .and_then(|value| value.to_str().ok())
+            .map(ToOwned::to_owned),
+    );
+    state.accept_encoding_headers.lock().await.push(
+        headers
+            .get(reqwest::header::ACCEPT_ENCODING)
+            .and_then(|value| value.to_str().ok())
+            .map(ToOwned::to_owned),
+    );
+
+    if request_count == 1 || state.always_fail {
+        return (
+            StatusCode::OK,
+            [(reqwest::header::CONTENT_TYPE, "application/json")],
+            "{truncated json",
+        )
+            .into_response();
+    }
+
+    Json(json!({
+        "id": "response-recovered",
+        "status": "completed",
+        "output_text": "completed through non-stream fallback",
+        "output": []
+    }))
+    .into_response()
+}
+
+async fn start_parse_recovery_mock_provider(
+    always_fail: bool,
+) -> (
+    String,
+    ParseRecoveryProviderState,
+    tokio::task::JoinHandle<()>,
+) {
+    let state = ParseRecoveryProviderState {
+        always_fail,
+        ..ParseRecoveryProviderState::default()
+    };
+    let app = Router::new()
+        .route("/responses", post(mock_parse_recovery_provider))
+        .with_state(state.clone());
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind parse recovery mock provider");
+    let address = listener.local_addr().expect("mock provider address");
+    let server = tokio::spawn(async move {
+        let _ = axum::serve(listener, app).await;
+    });
+    (format!("http://{address}"), state, server)
 }
 
 #[derive(Default)]
@@ -335,6 +408,94 @@ async fn model_request_uses_configured_transient_retry_limit() {
 
     assert!(error.contains("已重试 2 次"));
     assert_eq!(requests.lock().await.len(), 3);
+}
+
+#[tokio::test]
+async fn stream_parse_failure_retries_once_in_non_stream_isolated_mode() {
+    let (base_url, state, server) = start_parse_recovery_mock_provider(false).await;
+    let diagnostics = Arc::new(Mutex::new(Vec::new()));
+    let request = ModelRequest::openai_compatible(
+        base_url,
+        "test-key",
+        "gpt-test",
+        "openai",
+        json!([{"role": "user", "content": "complete the task"}]),
+    )
+    .with_responses_support(true)
+    .with_max_transient_retries(Some(1));
+
+    let result = AiRuntime::new(None)
+        .with_max_iterations(2)
+        .run_turn(
+            request,
+            AiRuntimeOptions::for_conversation("session-parse-recovery").with_callbacks(
+                RuntimeCallbacks {
+                    on_before_model_request: Some(Arc::new({
+                        let diagnostics = Arc::clone(&diagnostics);
+                        move |payload| diagnostics.lock().expect("diagnostics").push(payload)
+                    })),
+                    ..RuntimeCallbacks::default()
+                },
+            ),
+        )
+        .await
+        .expect("non-stream recovery should succeed");
+    server.abort();
+
+    assert_eq!(result.content, "completed through non-stream fallback");
+    let requests = state.requests.lock().await;
+    assert_eq!(requests.len(), 2);
+    assert_eq!(requests[0].get("stream"), Some(&Value::Bool(true)));
+    assert_eq!(requests[1].get("stream"), Some(&Value::Bool(false)));
+    drop(requests);
+
+    let connection_headers = state.connection_headers.lock().await;
+    assert_eq!(connection_headers[0], None);
+    assert_eq!(connection_headers[1].as_deref(), Some("close"));
+    drop(connection_headers);
+
+    let accept_encoding_headers = state.accept_encoding_headers.lock().await;
+    assert_eq!(accept_encoding_headers[1].as_deref(), Some("identity"));
+
+    let diagnostics = diagnostics.lock().expect("diagnostics");
+    assert_eq!(diagnostics.len(), 2);
+    assert_eq!(diagnostics[0]["task_runner_debug"]["request_attempt"], 1);
+    assert_eq!(diagnostics[0]["task_runner_debug"]["stream"], true);
+    assert_eq!(diagnostics[1]["task_runner_debug"]["request_attempt"], 2);
+    assert_eq!(diagnostics[1]["task_runner_debug"]["stream"], false);
+    assert_eq!(
+        diagnostics[1]["task_runner_debug"]["connection_mode"],
+        "isolated_retry"
+    );
+}
+
+#[tokio::test]
+async fn exhausted_parse_recovery_reports_non_stream_fallback_without_raw_body() {
+    let (base_url, state, server) = start_parse_recovery_mock_provider(true).await;
+    let request = ModelRequest::openai_compatible(
+        base_url,
+        "test-key",
+        "gpt-test",
+        "openai",
+        json!([{"role": "user", "content": "complete the task"}]),
+    )
+    .with_responses_support(true)
+    .with_max_transient_retries(Some(1));
+
+    let error = AiRuntime::new(None)
+        .with_max_iterations(2)
+        .run_turn(
+            request,
+            AiRuntimeOptions::for_conversation("session-parse-exhausted"),
+        )
+        .await
+        .expect_err("two malformed responses should exhaust recovery");
+    server.abort();
+
+    assert_eq!(state.requests.lock().await.len(), 2);
+    assert!(error.contains("最后一次响应包含无法解析的数据"));
+    assert!(error.contains("已自动切换为非流式响应"));
+    assert!(!error.contains("truncated json"));
 }
 
 #[test]

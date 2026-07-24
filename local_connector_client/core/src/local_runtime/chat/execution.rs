@@ -4,7 +4,7 @@
 use std::sync::Arc;
 
 use chatos_plugin_management_sdk::{required_agent_prompt_vendor, SystemAgentKey};
-use serde_json::json;
+use serde_json::{json, Value};
 use uuid::Uuid;
 
 use crate::local_runtime::capabilities::merge_system_prompts;
@@ -77,6 +77,7 @@ pub(crate) async fn execute_chat_turn(
     owner_user_id: &str,
     request: LocalChatSendRequest,
 ) -> Result<LocalChatResult, LocalChatExecutionError> {
+    let resume_precreated_turn = request.resume_precreated_turn;
     let session_id = required(request.conversation_id, "conversation_id")?;
     if !session_id.starts_with("lc_session_") {
         return Err(LocalChatExecutionError::new(
@@ -153,7 +154,9 @@ pub(crate) async fn execute_chat_turn(
         )?
     };
     let effective_model_name = resolved_model.model.clone();
-    let agent_key = if settings.plan_mode_enabled {
+    let agent_key = if request.project_requirement_execution_planner {
+        SystemAgentKey::ProjectRequirementExecutionPlannerAgent
+    } else if settings.plan_mode_enabled {
         SystemAgentKey::ChatosPlanningAgent
     } else {
         SystemAgentKey::ChatosConversationAgent
@@ -184,7 +187,7 @@ pub(crate) async fn execute_chat_turn(
         .unwrap_or_else(|| format!("lc_turn_{}", Uuid::new_v4()));
     let idempotency_key =
         normalize_optional(request.idempotency_key).unwrap_or_else(|| turn_id.clone());
-    let user_metadata = json!({
+    let mut user_metadata = json!({
         "conversation_turn_id": turn_id,
         "model_config_id": model_config_id,
         "model": effective_model_name,
@@ -193,6 +196,26 @@ pub(crate) async fn execute_chat_turn(
         "agent_prompt_revision": installed_prompt.revision,
         "agent_prompt_checksum": installed_prompt.checksum,
     });
+    if request.project_requirement_execution_planner {
+        user_metadata["project_requirement_execution"] = json!({
+            "project_id": project.project_id,
+            "requirement_id": request.project_requirement_execution_requirement_id,
+            "requirement_title": request.project_requirement_execution_requirement_title,
+            "project_task_ids": request.project_requirement_execution_task_ids,
+            "execution_plane": "local_connector",
+        });
+        user_metadata["task_runner_async"] = json!({
+            "mode": "project_requirement_execution",
+            "overall_status": "planning",
+            "confirmation_status": "planning",
+            "source": "project_requirement_execute_button",
+            "project_id": project.project_id,
+            "requirement_id": request.project_requirement_execution_requirement_id,
+            "created_task_ids": [],
+            "running_task_ids": [],
+            "terminal_task_ids": [],
+        });
+    }
     let begin = database
         .begin_turn(BeginLocalTurnInput {
             session_id: session_id.clone(),
@@ -221,6 +244,11 @@ pub(crate) async fn execute_chat_turn(
                 snapshot,
                 reused: true,
             });
+        }
+        BeginLocalTurnResult::Existing(snapshot)
+            if snapshot.turn.status == "running" && resume_precreated_turn =>
+        {
+            snapshot
         }
         BeginLocalTurnResult::Existing(snapshot) if snapshot.turn.status == "running" => {
             return Err(LocalChatExecutionError::new(
@@ -272,6 +300,7 @@ pub(crate) async fn execute_chat_turn(
         &tool_settings,
         agent_key,
         false,
+        request.project_requirement_execution_task_ids.as_slice(),
     )
     .await
     {
@@ -326,12 +355,15 @@ pub(crate) async fn execute_chat_turn(
         .local_task_board_prompt(owner_user_id, session_id.as_str())
         .await
         .map_err(LocalChatExecutionError::internal)?;
-    let record_writer = Arc::new(LocalChatRecordWriter::new(
-        database.clone(),
-        owner_user_id,
-        session_id.as_str(),
-        turn_id.as_str(),
-    ));
+    let record_writer = Arc::new(
+        LocalChatRecordWriter::new(
+            database.clone(),
+            owner_user_id,
+            session_id.as_str(),
+            turn_id.as_str(),
+        )
+        .with_hidden(request.project_requirement_execution_planner),
+    );
     let guidance_hook = Arc::new(LocalGuidanceLifecycleHook::new(
         runtime.turn_control.clone(),
         database.clone(),
@@ -404,7 +436,7 @@ pub(crate) async fn execute_chat_turn(
         return Err(cancelled_turn_error(database, owner_user_id, &started_snapshot).await);
     }
     let _ = event_stream.finish().await;
-    let assistant_metadata = json!({
+    let mut assistant_metadata = json!({
         "conversation_turn_id": turn_id,
         "model_config_id": model_config_id,
         "model": effective_model_name,
@@ -414,6 +446,9 @@ pub(crate) async fn execute_chat_turn(
         "usage": result.usage,
         "response_id": result.response_id,
     });
+    if request.project_requirement_execution_planner {
+        assistant_metadata["hidden"] = Value::Bool(true);
+    }
     let completed = match database
         .complete_turn(CompleteLocalTurnInput {
             turn_id,

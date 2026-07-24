@@ -323,7 +323,7 @@ async fn project_execution_planner_creates_multiple_runner_tasks_and_syncs_links
             json!({
                 "project_id": project.id.clone(),
                 "requirement_id": "requirement-1",
-                "execution_group_id": "execution-group-1",
+                "execution_group_id": "model-supplied-wrong-execution-group",
                 "tasks": [
                     {
                         "client_ref": "prepare",
@@ -343,6 +343,7 @@ async fn project_execution_planner_creates_multiple_runner_tasks_and_syncs_links
                         "objective": "Apply the code changes and verify the behavior.",
                         "default_model_config_id": "another-model-that-must-be-overridden",
                         "prerequisite_refs": ["prepare"],
+                        "context_refs": ["prepare"],
                         "input_payload": { "slice": "code" }
                     }
                 ]
@@ -354,11 +355,14 @@ async fn project_execution_planner_creates_multiple_runner_tasks_and_syncs_links
                 source_user_message_id: Some("execution-group-1".to_string()),
                 default_model_config_id: Some("model-1".to_string()),
                 tool_profile: Some("project_requirement_execution_planner".to_string()),
+                expected_project_task_ids: std::collections::BTreeSet::from([
+                    "project-task-1".to_string()
+                ]),
                 ..McpRequestContext::default()
             },
         )
         .await
-        .expect("create project execution tasks");
+        .expect("bind project execution tasks to the trusted Chatos source message");
 
     let structured = result.get("_structured_result").expect("structured result");
     let created_tasks = structured
@@ -403,12 +407,12 @@ async fn project_execution_planner_creates_multiple_runner_tasks_and_syncs_links
         .get("auto_started_runs")
         .and_then(|value| value.as_array())
         .expect("auto started runs");
-    assert_eq!(auto_started_runs.len(), 1);
+    assert!(auto_started_runs.is_empty());
     assert_eq!(
-        auto_started_runs[0]
-            .get("task_id")
-            .and_then(|value| value.as_str()),
-        Some(prepare_task_id.as_str())
+        structured
+            .get("awaiting_confirmation")
+            .and_then(|value| value.as_bool()),
+        Some(true)
     );
 
     let task_links = structured
@@ -438,8 +442,29 @@ async fn project_execution_planner_creates_multiple_runner_tasks_and_syncs_links
         .await
         .expect("get implement task")
         .expect("implement task");
-    assert_eq!(prepare_task.status, TaskStatus::Queued);
+    assert_eq!(prepare_task.status, TaskStatus::Ready);
     assert_eq!(implement_task.status, TaskStatus::Ready);
+    assert_eq!(prepare_task.schedule.mode, TaskScheduleMode::Manual);
+    assert_eq!(implement_task.schedule.mode, TaskScheduleMode::Manual);
+    assert!(prepare_task.schedule.next_run_at.is_none());
+    assert!(implement_task.schedule.next_run_at.is_none());
+    assert!(task_service
+        .list_due_scheduled_tasks(chrono::Utc::now())
+        .await
+        .expect("list due tasks before confirmation")
+        .is_empty());
+    assert!(mcp_service
+        .run_service
+        .list_runs(Some(prepare_task_id.as_str()))
+        .await
+        .expect("list root runs before confirmation")
+        .is_empty());
+    assert!(mcp_service
+        .run_service
+        .list_runs(Some(implement_task_id.as_str()))
+        .await
+        .expect("list dependent runs before confirmation")
+        .is_empty());
     assert_eq!(
         prepare_task.default_model_config_id.as_deref(),
         Some("model-1")
@@ -510,6 +535,79 @@ async fn project_execution_planner_creates_multiple_runner_tasks_and_syncs_links
             .and_then(|value| value.as_str()),
         Some("requirement-1")
     );
+    assert_eq!(
+        implement_payload
+            .get("execution_client_ref")
+            .and_then(|value| value.as_str()),
+        Some("implement")
+    );
+    assert_eq!(
+        implement_payload
+            .get("dependency_context_refs")
+            .and_then(|value| value.as_array())
+            .and_then(|values| values.first())
+            .and_then(|value| value.as_str()),
+        Some("prepare")
+    );
+
+    let reused = mcp_service
+        .call_tool(
+            "create_project_execution_tasks",
+            json!({
+                "project_id": project.id.clone(),
+                "requirement_id": "requirement-1",
+                "execution_group_id": "execution-group-1",
+                "tasks": [
+                    {
+                        "client_ref": "prepare",
+                        "project_task_id": "project-task-1",
+                        "title": "Prepare implementation",
+                        "objective": "Inspect the current implementation and prepare the change."
+                    },
+                    {
+                        "client_ref": "implement",
+                        "project_task_id": "project-task-1",
+                        "title": "Implement change",
+                        "objective": "Apply the code changes and verify the behavior.",
+                        "prerequisite_refs": ["prepare"]
+                    }
+                ]
+            }),
+            &current_user,
+            &McpRequestContext {
+                project_id: Some(project.id.clone()),
+                source_session_id: Some("session-1".to_string()),
+                source_user_message_id: Some("execution-group-1".to_string()),
+                default_model_config_id: Some("model-1".to_string()),
+                tool_profile: Some("project_requirement_execution_planner".to_string()),
+                expected_project_task_ids: std::collections::BTreeSet::from([
+                    "project-task-1".to_string()
+                ]),
+                ..McpRequestContext::default()
+            },
+        )
+        .await
+        .expect("reuse the already generated execution graph");
+    let reused = reused.get("_structured_result").expect("reused result");
+    assert_eq!(
+        reused
+            .get("idempotent_reused")
+            .and_then(serde_json::Value::as_bool),
+        Some(true)
+    );
+    assert!(reused
+        .get("auto_started_runs")
+        .and_then(serde_json::Value::as_array)
+        .expect("reused auto started runs")
+        .is_empty());
+    assert_eq!(
+        task_service
+            .list_tasks_for_chatos_source("session-1", Some("execution-group-1"), None)
+            .await
+            .expect("load graph after idempotent retry")
+            .len(),
+        2
+    );
 
     let calls = sync_calls.lock().expect("project sync calls").clone();
     assert_eq!(calls.len(), 2);
@@ -521,7 +619,7 @@ async fn project_execution_planner_creates_multiple_runner_tasks_and_syncs_links
                 call.payload
                     .get("task_runner_status")
                     .and_then(|value| value.as_str()),
-                Some("queued")
+                Some("ready")
             );
             assert_eq!(
                 call.payload
@@ -549,7 +647,7 @@ async fn project_execution_planner_creates_multiple_runner_tasks_and_syncs_links
         })
         .collect::<Vec<_>>();
     callback_task_ids.sort();
-    let mut expected_task_ids = vec![prepare_task_id, implement_task_id];
+    let mut expected_task_ids = vec![prepare_task_id.clone(), implement_task_id.clone()];
     expected_task_ids.sort();
     assert_eq!(callback_task_ids, expected_task_ids);
     assert_eq!(
@@ -562,6 +660,43 @@ async fn project_execution_planner_creates_multiple_runner_tasks_and_syncs_links
                     .is_some()
             })
             .count(),
-        1
+        0
     );
+
+    let planned_tasks = task_service
+        .list_tasks_for_chatos_source("session-1", Some("execution-group-1"), None)
+        .await
+        .expect("load planned execution graph for confirmation");
+    let confirmed_runs = mcp_service
+        .run_service
+        .dispatch_confirmed_project_execution_tasks(planned_tasks.as_slice())
+        .await
+        .expect("confirm planned execution graph");
+    assert_eq!(confirmed_runs.len(), 1);
+    assert_eq!(confirmed_runs[0].task_id, prepare_task_id);
+    let confirmed_root = task_service
+        .get_task(prepare_task_id.as_str())
+        .await
+        .expect("load root task after confirmation")
+        .expect("root task after confirmation");
+    let confirmed_dependent = task_service
+        .get_task(implement_task_id.as_str())
+        .await
+        .expect("load dependent task after confirmation")
+        .expect("dependent task after confirmation");
+    assert_eq!(confirmed_root.status, TaskStatus::Queued);
+    assert_eq!(confirmed_dependent.status, TaskStatus::Ready);
+    assert_eq!(confirmed_root.schedule.mode, TaskScheduleMode::ContactAsync);
+    assert_eq!(
+        confirmed_dependent.schedule.mode,
+        TaskScheduleMode::ContactAsync
+    );
+    assert!(confirmed_root.schedule.next_run_at.is_none());
+    assert!(confirmed_dependent.schedule.next_run_at.is_none());
+    assert!(mcp_service
+        .run_service
+        .list_runs(Some(implement_task_id.as_str()))
+        .await
+        .expect("list dependent runs after confirmation")
+        .is_empty());
 }

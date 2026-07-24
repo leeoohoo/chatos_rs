@@ -101,7 +101,6 @@ pub(crate) fn agent_tool_allowed_for_profile(name: &str, tool_profile: McpToolPr
                 | "list_external_mcp_configs"
                 | "list_available_skills"
                 | "create_project_execution_tasks"
-                | "cancel_task"
         ),
     }
 }

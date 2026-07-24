@@ -122,26 +122,27 @@ pub(super) async fn task_runner_callback(
             );
         }
     };
-    let mut user_message = match conversation_messages::get_message_by_id_in_session(
-        &session,
-        user_message_id.as_str(),
-    )
-    .await
-    {
-        Ok(Some(message)) => message,
-        Ok(None) => {
-            return (
-                StatusCode::NOT_FOUND,
-                Json(json!({ "accepted": false, "error": "user message not found" })),
-            );
-        }
-        Err(err) => {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({ "accepted": false, "error": err })),
-            );
-        }
-    };
+    let mut user_message =
+        match conversation_messages::get_message_by_id_in_session_including_hidden(
+            &session,
+            user_message_id.as_str(),
+        )
+        .await
+        {
+            Ok(Some(message)) => message,
+            Ok(None) => {
+                return (
+                    StatusCode::NOT_FOUND,
+                    Json(json!({ "accepted": false, "error": "user message not found" })),
+                );
+            }
+            Err(err) => {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({ "accepted": false, "error": err })),
+                );
+            }
+        };
     if user_message.session_id != session.id {
         return (
             StatusCode::BAD_REQUEST,

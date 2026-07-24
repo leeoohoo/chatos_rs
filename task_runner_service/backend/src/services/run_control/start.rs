@@ -52,7 +52,7 @@ impl RunService {
             .await
     }
 
-    pub(super) fn start_lock_for_task(&self, task_id: &str) -> Arc<AsyncMutex<()>> {
+    pub(crate) fn start_lock_for_task(&self, task_id: &str) -> Arc<AsyncMutex<()>> {
         let mut locks = self.start_locks.lock();
         locks
             .entry(task_id.to_string())
@@ -177,7 +177,7 @@ impl RunService {
             "sandbox_enabled": sandbox_enabled,
         });
         let now = now_rfc3339();
-        let run = TaskRunRecord::queued(
+        let mut run = TaskRunRecord::queued(
             run_id.clone(),
             task.id.clone(),
             model_config_id.clone(),
@@ -185,6 +185,7 @@ impl RunService {
             input_snapshot,
             now,
         );
+        run.dispatch_paused = task.task_tool_state.execution_paused;
         self.store.save_run(run.clone()).await?;
         info!(
             run_id = run.id.as_str(),

@@ -68,6 +68,9 @@ export interface MessageTaskRunnerTask {
   source_user_message_id?: string | null;
   prerequisite_task_ids?: string[];
   prerequisite_tasks?: MessageTaskRunnerTaskSummary[];
+  project_task_id?: string | null;
+  execution_client_ref?: string | null;
+  dependency_context_refs?: string[];
   task_tool_state?: UnknownRecord | null;
   mcp_config?: UnknownRecord | null;
   input_payload?: unknown;
@@ -146,6 +149,11 @@ export interface MessageTaskRunnerRunDetailResponse {
   events_limit?: number;
   events_offset?: number;
   events_has_more?: boolean;
+}
+
+export interface MessageTaskRunnerRetryRunResponse {
+  success: boolean;
+  run: MessageTaskRunnerRun;
 }
 
 export interface MessageTaskRunnerFileChangeCounts {

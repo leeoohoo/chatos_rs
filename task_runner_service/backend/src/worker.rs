@@ -9,7 +9,7 @@ use tokio::task::JoinHandle;
 use tracing::{info, warn};
 
 use crate::config::AppConfig;
-use crate::services::RunService;
+use crate::services::{RejectedRunClaimHeartbeatAction, RunService};
 
 pub fn spawn_task_worker(config: AppConfig, run_service: RunService) -> JoinHandle<()> {
     tokio::spawn(async move {
@@ -21,12 +21,17 @@ pub fn spawn_task_worker(config: AppConfig, run_service: RunService) -> JoinHand
             concurrency = config.worker_concurrency,
             poll_ms = config.worker_poll_interval.as_millis(),
             claim_ttl_ms = config.worker_claim_ttl.as_millis(),
+            claim_expiry_grace_ms =
+                crate::services::worker_claim_expiry_grace(config.worker_claim_ttl).as_millis(),
             "task runner worker started"
         );
 
         loop {
             if last_stale_recovery.elapsed() >= config.worker_claim_ttl {
-                match run_service.fail_expired_run_claims().await {
+                match run_service
+                    .fail_expired_run_claims(config.worker_claim_ttl)
+                    .await
+                {
                     Ok(count) if count > 0 => {
                         warn!(
                             worker_id = config.worker_id.as_str(),
@@ -90,6 +95,7 @@ fn spawn_claimed_run(
 ) {
     tokio::spawn(async move {
         let _permit = permit;
+        let run_id = run.id.clone();
         let heartbeat = spawn_claim_heartbeat(
             run_service.clone(),
             worker_id.clone(),
@@ -105,6 +111,7 @@ fn spawn_claimed_run(
         );
         run_service.execute_claimed_run(run).await;
         heartbeat.abort();
+        run_service.clear_local_run_abort(run_id.as_str());
     });
 }
 
@@ -124,12 +131,44 @@ fn spawn_claim_heartbeat(
             {
                 Ok(true) => {}
                 Ok(false) => {
-                    warn!(
-                        worker_id = worker_id.as_str(),
-                        run_id = run.id.as_str(),
-                        "task runner worker lost run claim heartbeat"
-                    );
-                    break;
+                    match run_service
+                        .handle_rejected_run_claim_heartbeat(&run, worker_id.as_str())
+                        .await
+                    {
+                        Ok(RejectedRunClaimHeartbeatAction::Abort) => {
+                            warn!(
+                                worker_id = worker_id.as_str(),
+                                run_id = run.id.as_str(),
+                                "task runner worker lost run claim; execution abort requested"
+                            );
+                            break;
+                        }
+                        Ok(RejectedRunClaimHeartbeatAction::Stop) => {
+                            info!(
+                                worker_id = worker_id.as_str(),
+                                run_id = run.id.as_str(),
+                                "task runner heartbeat stopped after run reached terminal state"
+                            );
+                            break;
+                        }
+                        Ok(RejectedRunClaimHeartbeatAction::Continue) => {
+                            warn!(
+                                worker_id = worker_id.as_str(),
+                                run_id = run.id.as_str(),
+                                "task runner heartbeat renewal was rejected but claim is still current; retrying"
+                            );
+                        }
+                        Err(err) => {
+                            run_service.signal_local_run_abort(run.id.as_str());
+                            warn!(
+                                worker_id = worker_id.as_str(),
+                                run_id = run.id.as_str(),
+                                error = err.as_str(),
+                                "task runner could not verify rejected heartbeat; execution abort requested defensively"
+                            );
+                            break;
+                        }
+                    }
                 }
                 Err(err) => {
                     warn!(

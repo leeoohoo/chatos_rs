@@ -590,6 +590,7 @@ dependencies = [
  "chatos_mcp_runtime",
  "chatos_mcp_service",
  "chatos_plugin_management_sdk",
+ "chatos_project_execution",
  "chatos_remote_runtime",
  "chatos_service_runtime",
  "chrono",
@@ -746,6 +747,14 @@ dependencies = [
  "thiserror 2.0.18",
  "tokio",
  "urlencoding",
+]
+
+[[package]]
+name = "chatos_project_execution"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -2538,6 +2547,7 @@ dependencies = [
  "chatos_mcp_runtime",
  "chatos_mcp_service",
  "chatos_plugin_management_sdk",
+ "chatos_project_execution",
  "chatos_sandbox_contract",
  "chrono",
  "dotenvy",
@@ -4794,6 +4804,7 @@ dependencies = [
  "chatos_mcp_runtime",
  "chatos_mcp_service",
  "chatos_plugin_management_sdk",
+ "chatos_project_execution",
  "chatos_remote_runtime",
  "chatos_sandbox_contract",
  "chatos_service_runtime",

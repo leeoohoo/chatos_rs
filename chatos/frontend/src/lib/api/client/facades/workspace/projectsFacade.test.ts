@@ -274,7 +274,11 @@ describe('workspaceProjectFacade local project management routing', () => {
 
   it('routes local requirement execution to the desktop Task Runner', async () => {
     const executeProjectRequirement = vi.fn().mockResolvedValue({ status: 'queued' });
+    const getProjectRequirementExecutionPlan = vi.fn().mockResolvedValue({ found: true });
     const stopProjectRequirementExecution = vi.fn().mockResolvedValue({ success: true });
+    const pauseProjectRequirementExecution = vi.fn().mockResolvedValue({ success: true });
+    const resumeProjectRequirementExecution = vi.fn().mockResolvedValue({ success: true });
+    const rerunProjectRequirementExecution = vi.fn().mockResolvedValue({ success: true });
     const cloudRequest = vi.fn(() => {
       throw new Error('cloud Task Runner request must not run');
     });
@@ -282,7 +286,11 @@ describe('workspaceProjectFacade local project management routing', () => {
       projectUsesLocalRuntime: () => true,
       getLocalRuntimeClient: () => ({
         executeProjectRequirement,
+        getProjectRequirementExecutionPlan,
         stopProjectRequirementExecution,
+        pauseProjectRequirementExecution,
+        resumeProjectRequirementExecution,
+        rerunProjectRequirementExecution,
       }),
       getRequestFn: () => cloudRequest,
     };
@@ -291,24 +299,94 @@ describe('workspaceProjectFacade local project management routing', () => {
       context as never,
       'project-local',
       'requirement-local',
-      { include_prerequisite_dependents: true },
+      { include_prerequisite_dependents: true, planning_feedback: '先补测试' },
+    );
+    await workspaceProjectFacade.getProjectRequirementExecutionPlan.call(
+      context as never,
+      'project-local',
+      'requirement-local',
+      { conversationId: 'session-1', executionGroupId: 'execution-group-1' },
     );
     await workspaceProjectFacade.stopProjectRequirementExecution.call(
       context as never,
       'project-local',
       'requirement-local',
-      {},
+      {
+        execution_group_id: 'execution-group-1',
+        conversation_id: 'session-1',
+        discard_tasks: true,
+      },
+    );
+    await workspaceProjectFacade.pauseProjectRequirementExecution.call(
+      context as never,
+      'project-local',
+      'requirement-local',
+      {
+        execution_group_id: 'execution-group-1',
+        conversation_id: 'session-1',
+      },
+    );
+    await workspaceProjectFacade.resumeProjectRequirementExecution.call(
+      context as never,
+      'project-local',
+      'requirement-local',
+      {
+        execution_group_id: 'execution-group-1',
+        conversation_id: 'session-1',
+      },
+    );
+    await workspaceProjectFacade.rerunProjectRequirementExecution.call(
+      context as never,
+      'project-local',
+      'requirement-local',
+      {
+        execution_group_id: 'execution-group-1',
+        conversation_id: 'session-1',
+      },
     );
 
     expect(executeProjectRequirement).toHaveBeenCalledWith(
       'project-local',
       'requirement-local',
-      { include_prerequisite_dependents: true },
+      { include_prerequisite_dependents: true, planning_feedback: '先补测试' },
+    );
+    expect(getProjectRequirementExecutionPlan).toHaveBeenCalledWith(
+      'project-local',
+      'requirement-local',
+      { conversationId: 'session-1', executionGroupId: 'execution-group-1' },
     );
     expect(stopProjectRequirementExecution).toHaveBeenCalledWith(
       'project-local',
       'requirement-local',
-      {},
+      {
+        execution_group_id: 'execution-group-1',
+        conversation_id: 'session-1',
+        discard_tasks: true,
+      },
+    );
+    expect(pauseProjectRequirementExecution).toHaveBeenCalledWith(
+      'project-local',
+      'requirement-local',
+      {
+        execution_group_id: 'execution-group-1',
+        conversation_id: 'session-1',
+      },
+    );
+    expect(resumeProjectRequirementExecution).toHaveBeenCalledWith(
+      'project-local',
+      'requirement-local',
+      {
+        execution_group_id: 'execution-group-1',
+        conversation_id: 'session-1',
+      },
+    );
+    expect(rerunProjectRequirementExecution).toHaveBeenCalledWith(
+      'project-local',
+      'requirement-local',
+      {
+        execution_group_id: 'execution-group-1',
+        conversation_id: 'session-1',
+      },
     );
     expect(cloudRequest).not.toHaveBeenCalled();
   });

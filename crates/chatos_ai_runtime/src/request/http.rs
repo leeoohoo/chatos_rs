@@ -39,7 +39,7 @@ pub(super) async fn send_json_request(
     }
 }
 
-fn format_reqwest_error(err: reqwest::Error) -> String {
+pub(super) fn format_reqwest_error(err: reqwest::Error) -> String {
     let kind = if err.is_timeout() {
         "timeout"
     } else if err.is_connect() {

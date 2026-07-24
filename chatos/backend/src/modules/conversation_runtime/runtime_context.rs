@@ -25,7 +25,7 @@ use self::policy::{merge_optional_system_prompts, resolve_chatos_mcp_policy};
 use self::project_mcp::build_project_management_mcp_runtime;
 use self::support::{is_concrete_project_id, normalize_optional_text};
 use self::task_runner::build_contact_task_runner_runtime;
-use self::workspace::authorize_runtime_workspace_dir;
+use self::workspace::{authorize_runtime_workspace_dir, resolve_runtime_project_root};
 use crate::config::Config;
 use crate::core::builtin_mcp_prompt::compose_builtin_mcp_system_prompt;
 use crate::core::chat_context::resolve_system_prompt;
@@ -52,6 +52,7 @@ pub struct ConversationRuntimeRequest {
     pub remote_connection_id: Option<String>,
     pub plan_mode: bool,
     pub project_requirement_execution_planner: bool,
+    pub project_requirement_execution_task_ids: Vec<String>,
     pub model_config_id: Option<String>,
     pub model_provider: String,
     pub prompt_vendor: Option<String>,
@@ -74,6 +75,7 @@ pub struct ResolvedConversationRuntimeContext {
     pub resolved_project_name: Option<String>,
     pub resolved_project_source_type: Option<String>,
     pub resolved_project_root: Option<String>,
+    pub local_project_workspace_root: Option<String>,
     pub default_remote_connection_id: Option<String>,
     pub workspace_root: Option<String>,
     pub mcp_enabled: bool,
@@ -188,11 +190,13 @@ pub async fn resolve_runtime_context(
     let resolved_project_id = resolved_project_runtime.project_id;
     let resolved_project_name = resolved_project_runtime.project_name;
     let resolved_project_source_type = resolved_project_runtime.source_type;
-    let resolved_project_root = authorize_runtime_workspace_dir(
+    let resolved_project_root = resolve_runtime_project_root(
         effective_user_id.as_deref(),
         resolved_project_runtime.project_root,
     )
     .await;
+    let local_project_workspace_root = resolved_project_root.local_workspace_root;
+    let resolved_project_root = resolved_project_root.logical_root;
 
     let default_remote_connection_id = normalize_id(req.remote_connection_id.clone())
         .or_else(|| runtime_metadata.remote_connection_id.clone());
@@ -223,6 +227,9 @@ pub async fn resolve_runtime_context(
     };
 
     let requires_concrete_project = agent_profile.requires_concrete_project();
+    let has_concrete_project_scope = resolved_project_id
+        .as_deref()
+        .is_some_and(is_concrete_project_id);
     let task_runner_project_id = if requires_concrete_project {
         resolved_project_id
             .as_deref()
@@ -235,8 +242,12 @@ pub async fn resolve_runtime_context(
     }
 
     if runtime_error.is_none() {
-        let policy_result =
-            resolve_chatos_mcp_policy(agent_profile, effective_user_id.as_deref()).await;
+        let policy_result = resolve_chatos_mcp_policy(
+            agent_profile,
+            effective_user_id.as_deref(),
+            has_concrete_project_scope,
+        )
+        .await;
         match policy_result {
             Ok(policy) => capability_policy = Some(policy),
             Err(err) => {
@@ -260,11 +271,12 @@ pub async fn resolve_runtime_context(
             task_runner_project_id,
             workspace_root
                 .as_deref()
-                .or(resolved_project_root.as_deref()),
+                .or(local_project_workspace_root.as_deref()),
             default_remote_connection_id.as_deref(),
             req.conversation_turn_id.as_deref(),
             req.source_user_message_id.as_deref(),
             req.model_config_id.as_deref(),
+            req.project_requirement_execution_task_ids.as_slice(),
             user_output_locale,
             agent_profile,
         )
@@ -281,7 +293,7 @@ pub async fn resolve_runtime_context(
         }
     }
 
-    if runtime_error.is_none() && agent_profile.requires_project_management_mcp() {
+    if runtime_error.is_none() && has_concrete_project_scope {
         match Config::try_get()
             .map_err(|err| err.to_string())
             .and_then(|cfg| {
@@ -289,6 +301,7 @@ pub async fn resolve_runtime_context(
                     cfg,
                     effective_user_id.as_deref(),
                     task_runner_project_id,
+                    agent_profile.requires_project_management_mcp(),
                 )
             }) {
             Ok(server) => {
@@ -348,6 +361,7 @@ pub async fn resolve_runtime_context(
         resolved_project_name,
         resolved_project_source_type,
         resolved_project_root,
+        local_project_workspace_root,
         default_remote_connection_id,
         workspace_root,
         mcp_enabled: true,

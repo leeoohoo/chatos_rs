@@ -71,9 +71,13 @@ fn normal_and_plan_modes_use_distinct_system_agent_keys() {
 
 #[test]
 fn project_planner_project_mcp_is_project_scoped_and_read_only() {
-    let server =
-        build_project_management_mcp_runtime(&test_config(), Some("user-1"), Some("project-1"))
-            .expect("build project mcp runtime");
+    let server = build_project_management_mcp_runtime(
+        &test_config(),
+        Some("user-1"),
+        Some("project-1"),
+        true,
+    )
+    .expect("build project mcp runtime");
 
     assert_eq!(server.name, PROJECT_MANAGEMENT_SERVER_NAME);
     assert_eq!(server.url, "http://127.0.0.1:3999/mcp");
@@ -115,11 +119,47 @@ fn project_planner_project_mcp_is_project_scoped_and_read_only() {
 }
 
 #[test]
+fn ordinary_project_agent_gets_project_scoped_write_tools() {
+    let server = build_project_management_mcp_runtime(
+        &test_config(),
+        Some("user-1"),
+        Some("project-1"),
+        false,
+    )
+    .expect("build writable project mcp runtime");
+
+    let headers = server.headers.expect("headers");
+    assert_eq!(
+        headers.get("X-Chatos-Project-Id").map(String::as_str),
+        Some("project-1")
+    );
+    let tools = server.allowed_tool_names.expect("tool allowlist");
+    assert!(tools.contains(&"create_requirement".to_string()));
+    assert!(tools.contains(&"upsert_requirement_technical_document".to_string()));
+    assert!(tools.contains(&"create_project_task".to_string()));
+}
+
+#[test]
+fn project_mcp_rejects_missing_or_public_project_scope() {
+    for project_id in [
+        None,
+        Some(""),
+        Some(crate::models::project::PUBLIC_PROJECT_ID),
+    ] {
+        let error =
+            build_project_management_mcp_runtime(&test_config(), Some("user-1"), project_id, false)
+                .expect_err("project MCP must be bound to one concrete project");
+        assert!(error.contains("concrete project_id"));
+    }
+}
+
+#[test]
 fn project_planner_project_mcp_requires_sync_secret() {
     let mut config = test_config();
     config.project_service_sync_secret = None;
-    let err = build_project_management_mcp_runtime(&config, Some("user-1"), Some("project-1"))
-        .expect_err("missing sync secret should fail");
+    let err =
+        build_project_management_mcp_runtime(&config, Some("user-1"), Some("project-1"), true)
+            .expect_err("missing sync secret should fail");
 
     assert!(err.contains("PROJECT_SERVICE_SYNC_SECRET"));
 }

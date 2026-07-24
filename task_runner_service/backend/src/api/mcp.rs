@@ -251,7 +251,25 @@ fn mcp_request_context_from_headers(headers: &HeaderMap) -> McpRequestContext {
         builtin_prompt_locale: header_text(headers, "x-task-runner-builtin-prompt-locale")
             .or_else(|| header_text(headers, "x-chatos-internal-context-locale")),
         chatos_plan_mode: header_bool(headers, "x-chatos-plan-mode"),
+        expected_project_task_ids: header_csv_set(
+            headers,
+            "x-task-runner-expected-project-task-ids",
+        ),
     }
+}
+
+fn header_csv_set(headers: &HeaderMap, key: &'static str) -> std::collections::BTreeSet<String> {
+    header_text(headers, key)
+        .into_iter()
+        .flat_map(|value| {
+            value
+                .split(',')
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(ToOwned::to_owned)
+                .collect::<Vec<_>>()
+        })
+        .collect()
 }
 
 fn header_text(headers: &HeaderMap, key: &'static str) -> Option<String> {
@@ -288,6 +306,22 @@ mod tests {
         assert_eq!(
             context.default_model_config_id.as_deref(),
             Some("model-selected")
+        );
+    }
+
+    #[test]
+    fn request_context_reads_exact_project_task_scope_header() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "x-task-runner-expected-project-task-ids",
+            " task-b,task-a,task-a ".parse().expect("valid header"),
+        );
+
+        let context = mcp_request_context_from_headers(&headers);
+
+        assert_eq!(
+            context.expected_project_task_ids,
+            std::collections::BTreeSet::from(["task-a".to_string(), "task-b".to_string()])
         );
     }
 }

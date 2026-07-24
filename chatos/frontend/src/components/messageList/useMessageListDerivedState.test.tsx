@@ -58,7 +58,7 @@ describe('useMessageListDerivedState', () => {
     });
     assistantMessage.metadata!.contentSegments!.push(
       { type: 'thinking', content: 'Planning task status listing' },
-      { type: 'tool_call', toolCallId: 'call-live-mutation-1' },
+      { type: 'tool_call', toolCallId: 'call-live-mutation-1', content: '' },
     );
 
     rerender({ items: messages });

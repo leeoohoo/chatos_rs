@@ -106,6 +106,13 @@ pub async fn get_message_by_id_in_session(
     chatos_sessions::get_message_by_id_in_session(session, message_id).await
 }
 
+pub async fn get_message_by_id_in_session_including_hidden(
+    session: &Session,
+    message_id: &str,
+) -> Result<Option<Message>, String> {
+    chatos_sessions::get_message_by_id_in_session_including_hidden(session, message_id).await
+}
+
 pub async fn upsert_message(message: &Message) -> Result<Message, String> {
     chatos_sessions::upsert_message(message).await
 }

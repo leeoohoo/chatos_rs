@@ -266,6 +266,19 @@ async fn seed_agent_bindings(store: &AppStore, admin_user_id: &str) -> Result<()
             10,
         )
         .await?;
+        // Project management is selected by the concrete project runtime, not
+        // globally. Keeping this optional lets cloud and Local Connector use
+        // the same policy record without exposing project-scoped tools in an
+        // unscoped conversation.
+        seed_agent_mcp_binding(
+            store,
+            admin_user_id,
+            agent_key,
+            builtin_resource_id(BuiltinMcpKind::ProjectManagement).as_str(),
+            false,
+            20,
+        )
+        .await?;
     }
     seed_agent_mcp_binding_with_conditions(
         store,

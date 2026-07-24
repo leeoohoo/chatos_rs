@@ -52,6 +52,109 @@ async fn claims_each_queued_local_task_run_once() {
     fs::remove_dir_all(root).expect("cleanup database");
 }
 
+#[tokio::test]
+async fn paused_local_execution_run_is_not_claimed_until_resumed() {
+    let root = std::env::temp_dir().join(format!("chatos-local-task-pause-{}", Uuid::new_v4()));
+    let database = LocalDatabase::open(root.join("runtime.sqlite3"))
+        .await
+        .expect("open database");
+    let (session_id, task_id) = seed_scope(&database).await;
+    let run = database
+        .enqueue_local_task_run(EnqueueLocalTaskRunInput {
+            owner_user_id: "user-run".to_string(),
+            project_id: "project-run".to_string(),
+            requirement_id: None,
+            task_kind: "project_work_item".to_string(),
+            task_id,
+            session_id: session_id.clone(),
+            execution_group_id: "group-pause".to_string(),
+            priority: 10,
+            prompt: "Execute task".to_string(),
+            model_config_id: "model-run".to_string(),
+        })
+        .await
+        .expect("enqueue run");
+    database
+        .set_local_execution_group_dispatch_paused(
+            "user-run",
+            "project-run",
+            session_id.as_str(),
+            "group-pause",
+            true,
+        )
+        .await
+        .expect("pause run");
+    assert!(database
+        .claim_next_local_task_run("worker-paused")
+        .await
+        .expect("claim paused run")
+        .is_none());
+    database
+        .set_local_execution_group_dispatch_paused(
+            "user-run",
+            "project-run",
+            session_id.as_str(),
+            "group-pause",
+            false,
+        )
+        .await
+        .expect("resume run");
+    let claimed = database
+        .claim_next_local_task_run("worker-resumed")
+        .await
+        .expect("claim resumed run")
+        .expect("resumed queued run");
+    assert_eq!(claimed.id, run.id);
+
+    database.close().await;
+    fs::remove_dir_all(root).expect("cleanup database");
+}
+
+#[tokio::test]
+async fn manual_retry_requeues_an_exhausted_failed_run_with_a_fresh_attempt_budget() {
+    let root = std::env::temp_dir().join(format!("chatos-local-task-retry-{}", Uuid::new_v4()));
+    let database = LocalDatabase::open(root.join("runtime.sqlite3"))
+        .await
+        .expect("open database");
+    let (session_id, task_id) = seed_scope(&database).await;
+    let queued = database
+        .enqueue_local_task_run(EnqueueLocalTaskRunInput {
+            owner_user_id: "user-run".to_string(),
+            project_id: "project-run".to_string(),
+            requirement_id: None,
+            task_kind: "project_work_item".to_string(),
+            task_id,
+            session_id,
+            execution_group_id: "group-retry".to_string(),
+            priority: 10,
+            prompt: "Retry task".to_string(),
+            model_config_id: "model-original".to_string(),
+        })
+        .await
+        .expect("enqueue run");
+    sqlx::query(
+        "UPDATE local_task_runs SET status = 'failed', attempt = max_attempts, error = 'boom' WHERE id = ?",
+    )
+    .bind(queued.id.as_str())
+    .execute(database.pool())
+    .await
+    .expect("mark run exhausted and failed");
+
+    let retried = database
+        .retry_local_task_run("user-run", queued.id.as_str(), "model-current")
+        .await
+        .expect("retry failed run")
+        .expect("retryable run");
+
+    assert_eq!(retried.status, "queued");
+    assert_eq!(retried.attempt, 0);
+    assert_eq!(retried.model_config_id, "model-current");
+    assert_eq!(retried.error, None);
+
+    database.close().await;
+    fs::remove_dir_all(root).expect("cleanup database");
+}
+
 async fn seed_scope(database: &LocalDatabase) -> (String, String) {
     database
         .upsert_project(UpsertLocalProjectInput {

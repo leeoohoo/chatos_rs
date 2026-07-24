@@ -4,7 +4,7 @@
 use super::*;
 
 impl RunService {
-    pub(in crate::services) async fn release_sandboxes_for_terminal_run(
+    pub(crate) async fn release_sandboxes_for_terminal_run(
         &self,
         run: &TaskRunRecord,
     ) -> Result<usize, String> {

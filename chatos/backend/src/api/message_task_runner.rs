@@ -43,6 +43,10 @@ pub fn router() -> Router {
             get(get_message_task_runner_run),
         )
         .route(
+            "/api/messages/{message_id}/task-runner/runs/{run_id}/retry",
+            post(retry_message_task_runner_run),
+        )
+        .route(
             "/api/messages/{message_id}/task-runner/runs/{run_id}/output/changes",
             get(get_message_task_runner_run_output_changes),
         )
@@ -408,6 +412,38 @@ async fn get_message_task_runner_run(
         );
     }
     (StatusCode::OK, Json(payload))
+}
+
+async fn retry_message_task_runner_run(
+    auth: AuthUser,
+    Path((message_id, run_id)): Path<(String, String)>,
+    Query(query): Query<MessageTaskRunnerLookupQuery>,
+) -> (StatusCode, Json<Value>) {
+    let context = match resolve_message_task_runner_context(&auth, &message_id, &query).await {
+        Ok(Some(context)) => context,
+        Ok(None) => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(json!({"error": "当前消息没有关联的任务来源"})),
+            );
+        }
+        Err(err) => return err,
+    };
+    match task_runner_api_client::retry_message_run(
+        context.base_url.as_str(),
+        run_id.as_str(),
+        context.source_session_id.as_str(),
+        context.source_user_message_id.as_deref(),
+        context.source_turn_id.as_deref(),
+    )
+    .await
+    {
+        Ok(payload) => (StatusCode::CREATED, Json(payload)),
+        Err(err) => (
+            StatusCode::BAD_GATEWAY,
+            Json(json!({"error": "重试任务节点失败", "detail": err})),
+        ),
+    }
 }
 
 async fn get_message_task_runner_run_output_changes(

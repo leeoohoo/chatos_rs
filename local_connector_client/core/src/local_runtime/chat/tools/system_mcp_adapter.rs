@@ -61,6 +61,8 @@ impl SystemMcpHostAdapter for LocalConnectorSystemMcpAdapter {
                     self.context.session_id.clone(),
                     self.context.source_turn_id.clone(),
                     self.context.default_model_config_id.clone(),
+                    self.context.agent_key,
+                    self.context.expected_project_task_ids.clone(),
                     &self.context.state,
                 )
                 .await?,

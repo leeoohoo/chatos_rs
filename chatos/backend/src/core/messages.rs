@@ -186,12 +186,54 @@ pub async fn set_task_runner_async_overall_status_for_session(
     let Some(session) = chatos_sessions::get_session_by_id(normalized_session_id).await? else {
         return Ok(None);
     };
-    let Some(mut message) =
-        chatos_sessions::get_message_by_id_in_session(&session, normalized_message_id).await?
+    let Some(mut message) = chatos_sessions::get_message_by_id_in_session_including_hidden(
+        &session,
+        normalized_message_id,
+    )
+    .await?
     else {
         return Ok(None);
     };
     apply_task_runner_async_overall_status(&mut message, overall_status);
+    let saved = chatos_sessions::upsert_message_in_session(&session, &message).await?;
+    Ok(Some(saved))
+}
+
+pub async fn set_task_runner_async_execution_paused_for_session(
+    session_id: &str,
+    message_id: &str,
+    paused: bool,
+) -> Result<Option<Message>, String> {
+    let normalized_session_id = session_id.trim();
+    let normalized_message_id = message_id.trim();
+    if normalized_session_id.is_empty() || normalized_message_id.is_empty() {
+        return Ok(None);
+    }
+    let Some(session) = chatos_sessions::get_session_by_id(normalized_session_id).await? else {
+        return Ok(None);
+    };
+    let Some(mut message) = chatos_sessions::get_message_by_id_in_session_including_hidden(
+        &session,
+        normalized_message_id,
+    )
+    .await?
+    else {
+        return Ok(None);
+    };
+    let metadata = ensure_message_metadata_object(&mut message);
+    let task_runner_async = metadata
+        .entry("task_runner_async".to_string())
+        .or_insert_with(|| Value::Object(serde_json::Map::new()));
+    if !task_runner_async.is_object() {
+        *task_runner_async = Value::Object(serde_json::Map::new());
+    }
+    if let Value::Object(task_runner_async) = task_runner_async {
+        task_runner_async.insert("execution_paused".to_string(), Value::Bool(paused));
+        task_runner_async.insert(
+            "overall_status".to_string(),
+            Value::String(if paused { "paused" } else { "processing" }.to_string()),
+        );
+    }
     let saved = chatos_sessions::upsert_message_in_session(&session, &message).await?;
     Ok(Some(saved))
 }
@@ -205,14 +247,22 @@ fn apply_task_runner_async_overall_status(message: &mut Message, overall_status:
         *task_runner_async = Value::Object(serde_json::Map::new());
     }
     if let Value::Object(task_runner_async_map) = task_runner_async {
-        task_runner_async_map.insert(
-            "mode".to_string(),
-            Value::String("contact_async".to_string()),
-        );
+        task_runner_async_map
+            .entry("mode".to_string())
+            .or_insert_with(|| Value::String("contact_async".to_string()));
         task_runner_async_map.insert(
             "overall_status".to_string(),
             Value::String(overall_status.to_string()),
         );
+        if matches!(
+            overall_status.trim().to_ascii_lowercase().as_str(),
+            "failed" | "error" | "stopping" | "stopped" | "cancelled" | "canceled"
+        ) {
+            task_runner_async_map.insert(
+                "confirmation_status".to_string(),
+                Value::String(overall_status.to_string()),
+            );
+        }
     }
 }
 
@@ -388,10 +438,10 @@ mod tests {
     use serde_json::{json, Value};
 
     use super::{
-        ensure_message_metadata_object, extract_message_tool_calls_for_display,
-        extract_non_empty_text_value, flatten_text_value, is_session_summary_message,
-        join_text_lines_or_json, message_metadata_string_alias, message_turn_id,
-        object_string_alias, optional_text_has_content, owned_non_empty_text,
+        apply_task_runner_async_overall_status, ensure_message_metadata_object,
+        extract_message_tool_calls_for_display, extract_non_empty_text_value, flatten_text_value,
+        is_session_summary_message, join_text_lines_or_json, message_metadata_string_alias,
+        message_turn_id, object_string_alias, optional_text_has_content, owned_non_empty_text,
         select_preferred_text, text_has_content, text_value_or_json, MessageOut,
     };
     use crate::models::message::Message;
@@ -603,5 +653,39 @@ mod tests {
         let calls = extract_message_tool_calls_for_display(&message);
         assert_eq!(calls.len(), 1);
         assert_eq!(calls[0].get("id").and_then(Value::as_str), Some("call_1"));
+    }
+
+    #[test]
+    fn terminal_planning_status_updates_confirmation_without_clobbering_mode() {
+        let mut message = Message::new(
+            "session_1".to_string(),
+            "user".to_string(),
+            "plan".to_string(),
+        );
+        message.metadata = Some(json!({
+            "task_runner_async": {
+                "mode": "project_requirement_execution",
+                "overall_status": "awaiting_confirmation",
+                "confirmation_status": "awaiting_confirmation"
+            }
+        }));
+
+        apply_task_runner_async_overall_status(&mut message, "stopped");
+
+        let task_runner = message
+            .metadata
+            .as_ref()
+            .and_then(|metadata| metadata.get("task_runner_async"))
+            .expect("task runner metadata");
+        assert_eq!(
+            task_runner.get("mode").and_then(Value::as_str),
+            Some("project_requirement_execution")
+        );
+        assert_eq!(
+            task_runner
+                .get("confirmation_status")
+                .and_then(Value::as_str),
+            Some("stopped")
+        );
     }
 }

@@ -96,6 +96,17 @@ impl AppStore {
         }
     }
 
+    pub async fn set_tasks_execution_paused(
+        &self,
+        task_ids: &[String],
+        paused: bool,
+    ) -> Result<u64, String> {
+        match self {
+            Self::InMemory(store) => Ok(store.set_tasks_execution_paused(task_ids, paused) as u64),
+            Self::Mongo(store) => store.set_tasks_execution_paused(task_ids, paused).await,
+        }
+    }
+
     pub async fn update_task_schedule_if_next_run_at(
         &self,
         task_id: &str,

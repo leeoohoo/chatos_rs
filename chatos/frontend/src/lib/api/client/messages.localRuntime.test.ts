@@ -10,6 +10,7 @@ const localTasks = vi.hoisted(() => ({
   getLocalTaskRunnerRunDetail: vi.fn(),
   getLocalTaskRunnerRunOutputChanges: vi.fn(),
   getLocalTaskRunnerRunOutputDiff: vi.fn(),
+  retryLocalTaskRunnerRun: vi.fn(),
 }));
 
 vi.mock('../localRuntime/taskBoard', () => localTasks);
@@ -21,6 +22,7 @@ import {
   getMessageTaskRunnerRunOutputDiff,
   getMessageTaskRunnerTask,
   getMessageTaskRunnerTasks,
+  retryMessageTaskRunnerRun,
 } from './messages';
 
 describe('message task runner local routing', () => {
@@ -36,6 +38,7 @@ describe('message task runner local routing', () => {
     localTasks.getLocalTaskRunnerRunDetail.mockResolvedValue({ task: { id: 'task-1', title: 'Task' }, run: { id: 'run-1', task_id: 'task-1' }, events: [] });
     localTasks.getLocalTaskRunnerRunOutputChanges.mockResolvedValue({ run_id: 'run-1', counts: {}, files: [], total: 0, limit: 200, offset: 0, has_more: false });
     localTasks.getLocalTaskRunnerRunOutputDiff.mockResolvedValue({ run_id: 'run-1', path: 'a.txt', status: 'unavailable' });
+    localTasks.retryLocalTaskRunnerRun.mockResolvedValue({ success: true, run: { id: 'run-2', task_id: 'task-1', status: 'queued' } });
   });
 
   it('routes local task list and graph reads to SQLite runtime APIs', async () => {
@@ -54,6 +57,7 @@ describe('message task runner local routing', () => {
     await getMessageTaskRunnerGraphRun(cloudRequest, 'lc_message_1', 'run-1', lookup);
     await getMessageTaskRunnerRunOutputChanges(cloudRequest, 'lc_message_1', 'run-1', lookup);
     await getMessageTaskRunnerRunOutputDiff(cloudRequest, 'lc_message_1', 'run-1', 'a.txt', lookup);
+    await retryMessageTaskRunnerRun(cloudRequest, 'lc_message_1', 'run-1', lookup);
 
     expect(localTasks.getLocalTaskBoardTasks).toHaveBeenCalledWith(
       'lc_session_1',
@@ -64,6 +68,7 @@ describe('message task runner local routing', () => {
     expect(localTasks.getLocalTaskRunnerRunDetail).toHaveBeenCalledWith('run-1', lookup);
     expect(localTasks.getLocalTaskRunnerRunOutputChanges).toHaveBeenCalledWith('run-1', lookup);
     expect(localTasks.getLocalTaskRunnerRunOutputDiff).toHaveBeenCalledWith('run-1', 'a.txt');
+    expect(localTasks.retryLocalTaskRunnerRun).toHaveBeenCalledWith('run-1');
     expect(cloudRequest).not.toHaveBeenCalled();
   });
 });

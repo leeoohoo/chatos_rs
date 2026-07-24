@@ -173,8 +173,6 @@ pub(in crate::mcp_server) struct CreateProjectExecutionTasksArgs {
     pub(in crate::mcp_server) project_id: String,
     pub(in crate::mcp_server) requirement_id: String,
     #[serde(default)]
-    pub(in crate::mcp_server) execution_group_id: Option<String>,
-    #[serde(default)]
     pub(in crate::mcp_server) tasks: Vec<CreateProjectExecutionTaskItem>,
 }
 
@@ -207,6 +205,8 @@ pub(in crate::mcp_server) struct CreateProjectExecutionTaskItem {
     #[serde(default)]
     pub(in crate::mcp_server) prerequisite_refs: Vec<String>,
     #[serde(default)]
+    pub(in crate::mcp_server) context_refs: Vec<String>,
+    #[serde(default)]
     pub(in crate::mcp_server) prerequisite_task_ids: Vec<String>,
 }
 
@@ -217,6 +217,8 @@ pub(in crate::mcp_server) struct CreateTaskWithPrerequisitesItem {
     pub(in crate::mcp_server) task: CreateTaskArgs,
     #[serde(default)]
     pub(in crate::mcp_server) prerequisite_refs: Vec<String>,
+    #[serde(default)]
+    pub(in crate::mcp_server) context_refs: Vec<String>,
 }
 
 pub(in crate::mcp_server) fn normalize_external_mcp_config_ids(values: Vec<String>) -> Vec<String> {

@@ -35,6 +35,14 @@ impl HandlerError {
         }
     }
 
+    pub(in crate::api::projects) fn conflict(message: impl Into<String>) -> Self {
+        Self {
+            status: StatusCode::CONFLICT,
+            error: message.into(),
+            detail: None,
+        }
+    }
+
     pub(in crate::api::projects) fn not_found(message: impl Into<String>) -> Self {
         Self {
             status: StatusCode::NOT_FOUND,

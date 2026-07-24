@@ -42,6 +42,8 @@ pub(super) struct LocalChatToolContext {
     pub(super) session_id: String,
     pub(super) source_turn_id: String,
     pub(super) default_model_config_id: Option<String>,
+    pub(super) agent_key: SystemAgentKey,
+    pub(super) expected_project_task_ids: std::collections::BTreeSet<String>,
     pub(super) enabled: bool,
 }
 
@@ -53,6 +55,7 @@ pub(super) async fn resolve_local_chat_tool_context(
     settings: &LocalRuntimeSettingsRecord,
     agent_key: SystemAgentKey,
     include_all_configured: bool,
+    expected_project_task_ids: &[String],
 ) -> Result<LocalChatToolContext, String> {
     let mut state = runtime.state.read().await.clone();
     if state.device_id.as_deref() != Some(project.device_id.as_str()) {
@@ -141,6 +144,7 @@ pub(super) async fn resolve_local_chat_tool_context(
         &request,
         agent_key,
         include_all_configured,
+        !unscoped,
         manifest_candidates,
     )
     .await?;
@@ -180,6 +184,12 @@ pub(super) async fn resolve_local_chat_tool_context(
         session_id: settings.session_id.clone(),
         source_turn_id: request_id.to_string(),
         default_model_config_id: settings.selected_model_id.clone(),
+        agent_key,
+        expected_project_task_ids: expected_project_task_ids
+            .iter()
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+            .collect(),
         enabled,
     })
 }

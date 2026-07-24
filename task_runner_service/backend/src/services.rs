@@ -83,6 +83,7 @@ mod run_model_phase;
 mod run_prerequisites;
 mod run_recovery;
 mod run_service;
+pub(crate) use self::run_service::{worker_claim_expiry_grace, RejectedRunClaimHeartbeatAction};
 mod sandbox_runtime;
 mod schedule_helpers;
 mod status_display;
@@ -142,6 +143,13 @@ pub struct TaskService {
     config: AppConfig,
     store: AppStore,
     plugin_management_client: Option<PluginManagementClient>,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct ClonedProjectExecutionTask {
+    pub(crate) old_task_id: String,
+    pub(crate) project_task_id: String,
+    pub(crate) task: TaskRecord,
 }
 
 #[derive(Clone)]

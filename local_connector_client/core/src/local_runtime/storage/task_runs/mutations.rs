@@ -11,6 +11,35 @@ use crate::local_runtime::task_runner::{EnqueueLocalTaskRunInput, LocalTaskRunRe
 use super::super::LocalDatabase;
 
 impl LocalDatabase {
+    pub(crate) async fn set_local_execution_group_dispatch_paused(
+        &self,
+        owner_user_id: &str,
+        project_id: &str,
+        session_id: &str,
+        execution_group_id: &str,
+        paused: bool,
+    ) -> Result<u64> {
+        let now = local_now_rfc3339();
+        sqlx::query(
+            r#"
+            UPDATE local_task_runs
+            SET dispatch_paused = ?, updated_at = ?
+            WHERE owner_user_id = ? AND project_id = ? AND session_id = ?
+              AND execution_group_id = ? AND status IN ('queued', 'running')
+            "#,
+        )
+        .bind(paused)
+        .bind(now)
+        .bind(owner_user_id)
+        .bind(project_id)
+        .bind(session_id)
+        .bind(execution_group_id)
+        .execute(self.pool())
+        .await
+        .context("update local execution dispatch pause")
+        .map(|result| result.rows_affected())
+    }
+
     pub(crate) async fn enqueue_local_task_run(
         &self,
         input: EnqueueLocalTaskRunInput,
@@ -132,20 +161,45 @@ impl LocalDatabase {
         model_config_id: &str,
     ) -> Result<Option<LocalTaskRunRecord>> {
         let now = local_now_rfc3339();
+        let dispatch_paused = sqlx::query_scalar::<_, bool>(
+            r#"
+            SELECT CASE WHEN EXISTS (
+                SELECT 1
+                FROM local_task_runs AS runs
+                INNER JOIN messages
+                    ON messages.session_id = runs.session_id
+                   AND messages.turn_id = runs.execution_group_id
+                   AND messages.role = 'user'
+                WHERE runs.id = ? AND runs.owner_user_id = ?
+                  AND (
+                    COALESCE(json_extract(messages.metadata_json, '$.task_runner_async.execution_paused'), 0) = 1
+                    OR LOWER(COALESCE(json_extract(messages.metadata_json, '$.task_runner_async.overall_status'), '')) = 'paused'
+                  )
+            ) THEN 1 ELSE 0 END
+            "#,
+        )
+        .bind(run_id)
+        .bind(owner_user_id)
+        .fetch_one(self.pool())
+        .await
+        .context("read local execution pause before retry")?;
         let turn_id = format!("lc_turn_task_{}", Uuid::new_v4());
         let result = sqlx::query(
             r#"
-            UPDATE local_task_runs SET status = 'queued', turn_id = ?, model_config_id = ?, cancel_requested = 0,
+            UPDATE local_task_runs SET status = 'queued', turn_id = ?, model_config_id = ?,
+                attempt = 0, cancel_requested = 0,
+                dispatch_paused = ?,
                 worker_id = NULL, lease_expires_at = NULL, heartbeat_at = NULL,
                 result_content = NULL, result_reasoning = NULL, tool_calls_json = NULL,
                 finish_reason = NULL, usage_json = NULL, error = NULL,
                 started_at = NULL, finished_at = NULL, updated_at = ?
             WHERE id = ? AND owner_user_id = ?
-              AND status IN ('failed', 'canceled', 'interrupted') AND attempt < max_attempts
+              AND status = 'failed'
             "#,
         )
         .bind(turn_id)
         .bind(model_config_id)
+        .bind(dispatch_paused)
         .bind(now.as_str())
         .bind(run_id)
         .bind(owner_user_id)

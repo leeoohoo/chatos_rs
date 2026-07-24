@@ -5,9 +5,7 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use chatos_mcp::{
-    extract_patch_targets, CodeMaintainerService, TerminalControllerService,
-};
+use chatos_mcp::{extract_patch_targets, CodeMaintainerService, TerminalControllerService};
 use chatos_mcp_service::{sort_tools_by_name, tool_name_set, McpRequestContext, McpToolProvider};
 use serde_json::Value;
 

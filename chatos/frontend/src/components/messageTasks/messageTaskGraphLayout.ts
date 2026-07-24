@@ -5,7 +5,7 @@ import { Position, type Edge, type Node } from '@xyflow/react';
 import dagre from '@dagrejs/dagre';
 
 export const TASK_GRAPH_NODE_WIDTH = 320;
-export const TASK_GRAPH_NODE_HEIGHT = 272;
+export const TASK_GRAPH_NODE_HEIGHT = 300;
 
 export interface TaskGraphLayoutPoint {
   x: number;

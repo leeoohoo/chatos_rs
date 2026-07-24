@@ -6,8 +6,9 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use chatos_ai_runtime::{
-    DEFAULT_TOOL_RESULTS_MODEL_TOTAL_MAX_CHARS, DEFAULT_TOOL_RESULT_MODEL_MAX_CHARS,
-    TOOL_RESULTS_MODEL_TOTAL_MAX_CHARS_ENV, TOOL_RESULT_MODEL_MAX_CHARS_ENV,
+    DEFAULT_TASK_RUN_MAX_ITERATIONS, DEFAULT_TOOL_RESULTS_MODEL_TOTAL_MAX_CHARS,
+    DEFAULT_TOOL_RESULT_MODEL_MAX_CHARS, TOOL_RESULTS_MODEL_TOTAL_MAX_CHARS_ENV,
+    TOOL_RESULT_MODEL_MAX_CHARS_ENV,
 };
 pub(super) use chatos_service_runtime::env_text as normalized_env;
 use chatos_service_runtime::{
@@ -72,7 +73,10 @@ impl AppConfig {
                 )
             })
             .unwrap_or(false);
-        let default_task_execution_max_iterations = chatos_agent::agent_max_iterations_from_env();
+        let default_task_execution_max_iterations = env_usize(
+            "TASK_RUNNER_EXECUTION_MAX_ITERATIONS",
+            DEFAULT_TASK_RUN_MAX_ITERATIONS,
+        );
         let default_tool_result_model_max_chars = env_usize(
             TOOL_RESULT_MODEL_MAX_CHARS_ENV,
             DEFAULT_TOOL_RESULT_MODEL_MAX_CHARS,

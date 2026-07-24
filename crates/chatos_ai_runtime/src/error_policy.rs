@@ -67,9 +67,18 @@ pub fn is_response_parse_error(err: &str) -> bool {
     let message = err.to_lowercase();
     message.contains("invalid json response")
         || message.contains("stream response parse failed")
+        || message.contains("stream response body failed")
+        || message.contains("malformed sse event")
         || message.contains("error decoding response body")
         || message.contains("unexpected end of json input")
         || message.contains("eof while parsing")
+}
+
+/// A streaming response that failed while reading or parsing should not be
+/// replayed in the same fragile mode. The runtime keeps non-stream mode for
+/// the rest of the current model iteration once this recovery is activated.
+pub fn should_retry_without_stream(err: &str) -> bool {
+    is_response_parse_error(err)
 }
 
 pub fn is_transient_network_error(err: &str) -> bool {
@@ -106,6 +115,18 @@ pub fn is_transient_network_error(err: &str) -> bool {
         || is_upstream_auth_unavailable_error(err)
         || is_retryable_failed_provider_response(err)
         || is_retryable_provider_backpressure_error(err)
+}
+
+/// Detects failures where the HTTP connection ended before the provider
+/// completed a response. Gateways commonly record these attempts with zero
+/// input/output tokens because model processing never started.
+pub fn is_upstream_connection_interrupted_error(err: &str) -> bool {
+    let message = err.to_lowercase();
+    message.contains("connection closed before message completed")
+        || message.contains("disconnect/reset before headers")
+        || message.contains("upstream connect error")
+        || message.contains("connection reset by peer")
+        || message.contains("peer closed connection")
 }
 
 /// Detects a gateway's temporary lack of provider-side credentials/accounts.
@@ -198,6 +219,8 @@ pub fn is_transient_transport_or_parse_error(err: &str) -> bool {
 pub fn transient_retry_kind_label(err: &str) -> &'static str {
     if is_upstream_auth_unavailable_error(err) {
         "上游认证资源暂不可用"
+    } else if is_upstream_connection_interrupted_error(err) {
+        "上游连接在开始处理前中断"
     } else if is_response_parse_error(err) {
         "响应解析异常"
     } else if is_rate_limited_provider_error(err) {
@@ -218,9 +241,16 @@ pub fn transient_retry_backoff_ms(err: &str, retry_count: usize) -> u64 {
         || is_retryable_provider_overload_error(err)
     {
         (2_000_u64, 30_000_u64)
+    } else if is_upstream_connection_interrupted_error(err) {
+        // A request that failed before model processing often leaves the
+        // gateway/provider route unhealthy for several seconds. Avoid sending
+        // a burst of zero-token retries into the same failure window.
+        (3_000_u64, 30_000_u64)
     } else if is_retryable_gateway_error(err) {
         (1_000_u64, 16_000_u64)
-    } else if is_response_parse_error(err) || is_retryable_failed_provider_response(err) {
+    } else if is_response_parse_error(err) {
+        (2_000_u64, 30_000_u64)
+    } else if is_retryable_failed_provider_response(err) {
         (250_u64, 4_000_u64)
     } else {
         (750_u64, 12_000_u64)
@@ -274,10 +304,30 @@ pub fn exhausted_transient_retry_message(
     max_transient_retries: usize,
     err: &str,
 ) -> String {
+    if is_response_parse_error(err) {
+        let detail = sanitized_response_parse_failure_detail(err);
+        return format!(
+            "AI 请求失败：{}，已重试 {} 次。{}。",
+            retry_kind, max_transient_retries, detail
+        );
+    }
     format!(
         "AI 请求失败：{}，已重试 {} 次，最后错误：{}",
         retry_kind, max_transient_retries, err
     )
+}
+
+fn sanitized_response_parse_failure_detail(err: &str) -> &'static str {
+    let message = err.to_lowercase();
+    if message.contains("timed out") || message.contains("timeout") {
+        "最后一次失败为上游响应读取超时"
+    } else if message.contains("malformed sse event") {
+        "最后一次响应包含无法解析的数据"
+    } else if message.contains("no valid sse events") {
+        "最后一次请求未收到可解析的上游响应事件"
+    } else {
+        "最后一次上游响应在传输或解码过程中中断"
+    }
 }
 
 pub fn classify_transient_retry(
@@ -381,7 +431,8 @@ mod tests {
         is_retryable_failed_provider_response, is_retryable_provider_backpressure_error,
         is_retryable_provider_overload_error, is_transient_network_error,
         is_transient_transport_or_parse_error, is_upstream_auth_unavailable_error,
-        replay_request_error_policy, transient_retry_backoff_ms, transient_retry_kind_label,
+        is_upstream_connection_interrupted_error, replay_request_error_policy,
+        should_retry_without_stream, transient_retry_backoff_ms, transient_retry_kind_label,
         RequestErrorReplay, TransientRetryAction,
     };
 
@@ -440,6 +491,12 @@ mod tests {
         assert!(is_response_parse_error(
             "stream response parse failed: no valid SSE events parsed from provider"
         ));
+        assert!(is_response_parse_error(
+            "stream response body failed after 3 valid events: operation timed out"
+        ));
+        assert!(should_retry_without_stream(
+            "stream response body failed: error decoding response body"
+        ));
         assert!(!is_response_parse_error("status 401: unauthorized"));
     }
 
@@ -467,6 +524,22 @@ mod tests {
             "status 429 Too Many Requests: {\"error\":{\"message\":\"Rate limit exceeded\"}}"
         ));
         assert!(!is_transient_network_error("status 401: invalid api key"));
+    }
+
+    #[test]
+    fn detects_upstream_connections_that_end_before_processing() {
+        assert!(is_upstream_connection_interrupted_error(
+            "connection closed before message completed"
+        ));
+        assert!(is_upstream_connection_interrupted_error(
+            "upstream connect error or disconnect/reset before headers"
+        ));
+        assert!(is_upstream_connection_interrupted_error(
+            "connection reset by peer"
+        ));
+        assert!(!is_upstream_connection_interrupted_error(
+            "status 503: service unavailable"
+        ));
     }
 
     #[test]
@@ -569,6 +642,10 @@ mod tests {
             "响应解析异常"
         );
         assert_eq!(
+            transient_retry_kind_label("connection closed before message completed"),
+            "上游连接在开始处理前中断"
+        );
+        assert_eq!(
             transient_retry_kind_label("status 503: service unavailable"),
             "上游服务暂不可用"
         );
@@ -611,6 +688,26 @@ mod tests {
         assert_eq!(
             transient_retry_backoff_ms("status 503 [retry_after_ms=45000]: service unavailable", 2,),
             45000
+        );
+        let interrupted = "connection closed before message completed";
+        assert_eq!(transient_retry_backoff_ms(interrupted, 1), 3000);
+        assert_eq!(transient_retry_backoff_ms(interrupted, 2), 6000);
+        assert_eq!(transient_retry_backoff_ms(interrupted, 3), 12000);
+        assert_eq!(transient_retry_backoff_ms(interrupted, 4), 24000);
+        assert_eq!(transient_retry_backoff_ms(interrupted, 5), 30000);
+        assert_eq!(
+            transient_retry_backoff_ms(
+                "stream response body failed: error decoding response body",
+                1,
+            ),
+            2000
+        );
+        assert_eq!(
+            transient_retry_backoff_ms(
+                "stream response body failed: error decoding response body",
+                5,
+            ),
+            30000
         );
     }
 
@@ -717,5 +814,23 @@ mod tests {
         .expect("should classify rate limit");
         assert_eq!(classified.0, "RATE_LIMITED");
         assert!(classified.1.contains("请求过于频繁"));
+    }
+
+    #[test]
+    fn exhausted_parse_error_keeps_sanitized_failure_class() {
+        let message = exhausted_transient_retry_message(
+            "响应解析异常",
+            5,
+            "AI transport error (kind=decode): error decoding response body",
+        );
+        assert!(message.contains("上游响应在传输或解码过程中中断"));
+        assert!(!message.contains("error decoding response body"));
+
+        let timeout_message = exhausted_transient_retry_message(
+            "响应解析异常",
+            5,
+            "stream response body failed: operation timed out",
+        );
+        assert!(timeout_message.contains("上游响应读取超时"));
     }
 }

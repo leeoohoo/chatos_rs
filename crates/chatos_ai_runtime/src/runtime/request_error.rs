@@ -6,7 +6,7 @@ use tracing::{info, warn};
 
 use crate::error_policy::{
     handle_transient_retry_with_abort, is_context_length_exceeded_error,
-    is_missing_tool_call_error, is_request_body_too_large_error,
+    is_missing_tool_call_error, is_request_body_too_large_error, should_retry_without_stream,
 };
 use crate::traits::ModelRequest;
 use crate::DEFAULT_MODEL_REQUEST_MAX_RETRIES;
@@ -17,7 +17,7 @@ use super::options::AiRuntimeOptions;
 pub(super) enum ModelRequestErrorAction {
     ReplayMissingToolTurn(Value),
     ContextRecovered,
-    RetryRequest,
+    RetryRequest { disable_stream: bool },
     Fail(String),
 }
 
@@ -31,6 +31,7 @@ pub(super) async fn handle_model_request_error(
     pending_tool_outputs: Option<&[Value]>,
     context_overflow_recovery_attempted: &mut bool,
     transient_retry_count: &mut usize,
+    provider_stream: bool,
 ) -> Result<ModelRequestErrorAction, String> {
     if !missing_tool_turn_replay_attempted
         && request.supports_responses
@@ -83,7 +84,7 @@ pub(super) async fn handle_model_request_error(
         }
     }
 
-    if handle_transient_retry_with_abort(
+    let retry_result = handle_transient_retry_with_abort(
         "ai runtime model request",
         err.as_str(),
         transient_retry_count,
@@ -92,9 +93,25 @@ pub(super) async fn handle_model_request_error(
             .unwrap_or(DEFAULT_MODEL_REQUEST_MAX_RETRIES),
         options.abort_token.as_ref(),
     )
-    .await?
-    {
-        return Ok(ModelRequestErrorAction::RetryRequest);
+    .await;
+    match retry_result {
+        Ok(true) => {
+            return Ok(ModelRequestErrorAction::RetryRequest {
+                disable_stream: provider_stream && should_retry_without_stream(err.as_str()),
+            });
+        }
+        Ok(false) => {}
+        Err(final_error) => {
+            if final_error == "aborted" {
+                return Err(final_error);
+            }
+            if !provider_stream {
+                return Err(format!(
+                    "{final_error} 系统已自动切换为非流式响应，并使用独立 HTTP/1.1 连接重试。"
+                ));
+            }
+            return Err(final_error);
+        }
     }
 
     Ok(ModelRequestErrorAction::Fail(err))

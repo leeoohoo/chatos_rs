@@ -364,6 +364,8 @@ export const zhCNSettings: MessageDictionary = {
   'runs.detail.executionAgent': 'Task Runner 执行任务智能体',
   'runs.detail.errorMessage': '错误信息',
   'runs.error.environmentPreparationFailed': '运行环境准备失败，请检查项目环境配置后重试。',
+  'runs.error.modelConnectionInterrupted': '模型连接在开始处理前中断，自动重试后仍未恢复。',
+  'runs.error.modelConnectionInterruptedWithRetries': '模型连接在开始处理前中断，已自动重试 {count} 次仍未恢复。',
   'runs.error.serviceUnavailable': '服务暂时不可用，请稍后重试。',
   'runs.error.requestFailed': '请求失败，请稍后重试。',
   'runs.detail.toolCallCount': '工具调用数',

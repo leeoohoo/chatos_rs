@@ -88,6 +88,7 @@ fn planner_task_creation_schemas_require_explicit_task_nature() {
         .is_some());
 
     let project = create_project_execution_tasks_schema();
+    assert!(project.pointer("/properties/execution_group_id").is_none());
     assert!(project
         .pointer("/properties/tasks/items/properties/is_planning_task")
         .is_some());

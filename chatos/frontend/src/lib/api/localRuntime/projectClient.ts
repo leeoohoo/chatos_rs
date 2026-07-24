@@ -7,8 +7,10 @@ import type {
   DeleteSuccessResponse,
   ProjectPlanOptions,
   ProjectPlanResponse,
+  ProjectRequirementConfirmResponse,
   ProjectRequirementDocumentResponse,
   ProjectRequirementExecuteResponse,
+  ProjectRequirementExecutionPlanResponse,
   ProjectRequirementStopResponse,
   ProjectRequirementWorkItemsOptions,
   ProjectRequirementWorkItemsResponse,
@@ -37,7 +39,12 @@ import {
   updateLocalRuntimeProject,
 } from './projects';
 import {
+  confirmLocalProjectRequirementExecution,
   executeLocalProjectRequirement,
+  getLocalProjectRequirementExecutionPlan,
+  rerunLocalProjectRequirementExecution,
+  pauseLocalProjectRequirementExecution,
+  resumeLocalProjectRequirementExecution,
   stopLocalProjectRequirement,
 } from './requirementExecution';
 import { LocalRuntimeResourceClient } from './resourceClient';
@@ -123,17 +130,84 @@ export class LocalRuntimeProjectClient extends LocalRuntimeResourceClient {
       modelConfigId?: string;
       include_prerequisite_dependents?: boolean;
       includePrerequisiteDependents?: boolean;
+      planning_feedback?: string;
+      planningFeedback?: string;
+      replaces_execution_group_id?: string;
+      replacesExecutionGroupId?: string;
+      replaces_conversation_id?: string;
+      replacesConversationId?: string;
     } = {},
   ): Promise<ProjectRequirementExecuteResponse> {
     return executeLocalProjectRequirement(projectId, requirementId, data);
   }
 
+  async getProjectRequirementExecutionPlan(
+    projectId: string,
+    requirementId: string,
+    identity?: { conversationId?: string; executionGroupId?: string },
+  ): Promise<ProjectRequirementExecutionPlanResponse> {
+    return getLocalProjectRequirementExecutionPlan(projectId, requirementId, identity);
+  }
+
   async stopProjectRequirementExecution(
     projectId: string,
     requirementId: string,
-    data: { contact_id?: string } = {},
+    data: {
+      contact_id?: string;
+      execution_group_id?: string;
+      conversation_id?: string;
+      discard_tasks?: boolean;
+    } = {},
   ): Promise<ProjectRequirementStopResponse> {
     return stopLocalProjectRequirement(projectId, requirementId, data);
+  }
+
+  async confirmProjectRequirementExecution(
+    projectId: string,
+    requirementId: string,
+    data: {
+      execution_group_id: string;
+      conversation_id: string;
+      contact_id?: string;
+    },
+  ): Promise<ProjectRequirementConfirmResponse> {
+    return confirmLocalProjectRequirementExecution(projectId, requirementId, data);
+  }
+
+  async pauseProjectRequirementExecution(
+    projectId: string,
+    requirementId: string,
+    data: {
+      execution_group_id: string;
+      conversation_id: string;
+      contact_id?: string;
+    },
+  ) {
+    return pauseLocalProjectRequirementExecution(projectId, requirementId, data);
+  }
+
+  async resumeProjectRequirementExecution(
+    projectId: string,
+    requirementId: string,
+    data: {
+      execution_group_id: string;
+      conversation_id: string;
+      contact_id?: string;
+    },
+  ) {
+    return resumeLocalProjectRequirementExecution(projectId, requirementId, data);
+  }
+
+  async rerunProjectRequirementExecution(
+    projectId: string,
+    requirementId: string,
+    data: {
+      execution_group_id: string;
+      conversation_id: string;
+      contact_id?: string;
+    },
+  ): Promise<ProjectRequirementExecuteResponse> {
+    return rerunLocalProjectRequirementExecution(projectId, requirementId, data);
   }
 
   async getProjectRuntimeEnvironment(

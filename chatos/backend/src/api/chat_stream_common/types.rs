@@ -27,4 +27,6 @@ pub(crate) struct ChatStreamRequest {
     pub user_message_id: Option<String>,
     #[serde(skip_deserializing)]
     pub project_requirement_execution_planner: bool,
+    #[serde(skip_deserializing, default)]
+    pub project_requirement_execution_task_ids: Vec<String>,
 }

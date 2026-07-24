@@ -364,6 +364,8 @@ export const enUSSettings: MessageDictionary = {
   'runs.detail.executionAgent': 'Task Runner Execution Agent',
   'runs.detail.errorMessage': 'Error message',
   'runs.error.environmentPreparationFailed': 'The runtime environment could not be prepared. Check the project environment configuration and try again.',
+  'runs.error.modelConnectionInterrupted': 'The model connection ended before processing started and did not recover after automatic retries.',
+  'runs.error.modelConnectionInterruptedWithRetries': 'The model connection ended before processing started and did not recover after {count} automatic retries.',
   'runs.error.serviceUnavailable': 'The service is temporarily unavailable. Please try again later.',
   'runs.error.requestFailed': 'The request failed. Please try again later.',
   'runs.detail.toolCallCount': 'Tool calls',

@@ -5,13 +5,13 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use axum::http::StatusCode;
+use chatos_mcp::project_management_contract::mcp;
+#[cfg(test)]
+use chatos_mcp::project_management_contract::schemas;
 use chatos_mcp_service::{
     McpJsonRpcService, McpRequestContext, McpServerInfo as SharedMcpServerInfo, McpToolProvider,
 };
 use chatos_plugin_management_sdk::SystemMcpKey;
-use chatos_mcp::project_management_contract::mcp;
-#[cfg(test)]
-use chatos_mcp::project_management_contract::schemas;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 

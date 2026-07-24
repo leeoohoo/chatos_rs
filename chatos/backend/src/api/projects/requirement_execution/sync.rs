@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
+use chatos_project_execution::STATUS_AWAITING_CONFIRMATION;
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::core::messages::ensure_message_metadata_object;
+use crate::core::messages::{ensure_message_metadata_object, message_turn_id};
 use crate::core::time::now_rfc3339;
 use crate::modules::conversation_runtime::messages as conversation_messages;
 use crate::services::{chatos_sessions, project_management_api_client};
@@ -33,6 +34,7 @@ pub(in crate::api::projects) async fn load_execution_links_for_work_items(
                 continue;
             };
             links.push(ExecutionLink {
+                link_id: value_string(&value, "id"),
                 work_item_id: work_item.id.clone(),
                 task_runner_task_id,
                 task_runner_run_id: value_string(&value, "task_runner_run_id"),
@@ -107,10 +109,11 @@ pub(in crate::api::projects) async fn sync_execution_message_task_tracking(
         .await
         .map_err(|err| HandlerError::internal("读取需求执行会话失败", err))?
         .ok_or_else(|| HandlerError::not_found("需求执行会话不存在"))?;
-    let mut message = conversation_messages::get_message_by_id_in_session(&session, message_id)
-        .await
-        .map_err(|err| HandlerError::internal("读取需求执行消息失败", err))?
-        .ok_or_else(|| HandlerError::not_found("需求执行消息不存在"))?;
+    let mut message =
+        conversation_messages::get_message_by_id_in_session_including_hidden(&session, message_id)
+            .await
+            .map_err(|err| HandlerError::internal("读取需求执行消息失败", err))?
+            .ok_or_else(|| HandlerError::not_found("需求执行消息不存在"))?;
     let metadata = ensure_message_metadata_object(&mut message);
     let async_meta = metadata
         .entry("task_runner_async".to_string())
@@ -125,6 +128,49 @@ pub(in crate::api::projects) async fn sync_execution_message_task_tracking(
         .await
         .map(|_| ())
         .map_err(|err| HandlerError::internal("更新需求执行任务跟踪失败", err))
+}
+
+pub(in crate::api::projects) async fn set_execution_turn_hidden(
+    session_id: &str,
+    turn_id: &str,
+    hidden: bool,
+) -> Result<(), HandlerError> {
+    const PAGE_SIZE: i64 = 500;
+    let session = chatos_sessions::get_session_by_id(session_id)
+        .await
+        .map_err(|err| HandlerError::internal("读取需求执行会话失败", err))?
+        .ok_or_else(|| HandlerError::not_found("需求执行会话不存在"))?;
+    let mut offset = 0i64;
+    loop {
+        let messages = chatos_sessions::list_messages_including_hidden(
+            session_id,
+            Some(PAGE_SIZE),
+            offset,
+            true,
+        )
+        .await
+        .map_err(|err| HandlerError::internal("读取需求执行规划消息失败", err))?;
+        let count = messages.len();
+        for mut message in messages {
+            if message_turn_id(&message) != Some(turn_id) {
+                continue;
+            }
+            let metadata = ensure_message_metadata_object(&mut message);
+            if hidden {
+                metadata.insert("hidden".to_string(), Value::Bool(true));
+            } else {
+                metadata.remove("hidden");
+            }
+            conversation_messages::upsert_message_in_session(&session, &message)
+                .await
+                .map_err(|err| HandlerError::internal("更新需求执行消息可见性失败", err))?;
+        }
+        offset += count as i64;
+        if count < PAGE_SIZE as usize {
+            break;
+        }
+    }
+    Ok(())
 }
 
 fn apply_execution_links_to_task_tracking(
@@ -184,6 +230,9 @@ fn apply_execution_links_to_task_tracking(
                 failed.remove(task_id);
                 blocked.remove(task_id);
             }
+            _ if status == "ready" && link.task_runner_run_id.is_none() => {
+                running.remove(task_id);
+            }
             _ if task_runner_status_is_active(Some(status.as_str())) => {
                 if !terminal.contains(task_id) {
                     running.insert(task_id.to_string());
@@ -197,8 +246,23 @@ fn apply_execution_links_to_task_tracking(
         }
     }
 
+    let awaiting_confirmation = !created.is_empty()
+        && links.iter().all(|link| {
+            link.task_runner_run_id.is_none()
+                && link
+                    .task_runner_status
+                    .as_deref()
+                    .is_some_and(|status| status.trim().eq_ignore_ascii_case("ready"))
+        });
     let all_terminal =
         !created.is_empty() && created.iter().all(|task_id| terminal.contains(task_id));
+    let execution_paused = async_meta
+        .get("execution_paused")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    if all_terminal && execution_paused {
+        async_meta.insert("execution_paused".to_string(), Value::Bool(false));
+    }
     async_meta.insert(
         "mode".to_string(),
         Value::String("contact_async".to_string()),
@@ -212,8 +276,23 @@ fn apply_execution_links_to_task_tracking(
         Value::String(
             if all_terminal {
                 "completed"
+            } else if execution_paused {
+                "paused"
+            } else if awaiting_confirmation {
+                STATUS_AWAITING_CONFIRMATION
             } else {
                 "processing"
+            }
+            .to_string(),
+        ),
+    );
+    async_meta.insert(
+        "confirmation_status".to_string(),
+        Value::String(
+            if awaiting_confirmation {
+                STATUS_AWAITING_CONFIRMATION
+            } else {
+                "confirmed"
             }
             .to_string(),
         ),
@@ -273,8 +352,11 @@ pub(in crate::api::projects) async fn mark_execution_messages_for_stop(
             continue;
         };
         let Ok(Some(mut message)) =
-            conversation_messages::get_message_by_id_in_session(&session, message_id.as_str())
-                .await
+            conversation_messages::get_message_by_id_in_session_including_hidden(
+                &session,
+                message_id.as_str(),
+            )
+            .await
         else {
             continue;
         };
@@ -299,6 +381,10 @@ pub(in crate::api::projects) async fn mark_execution_messages_for_stop(
                 "overall_status".to_string(),
                 Value::String(overall_status.to_string()),
             );
+            async_meta.insert(
+                "confirmation_status".to_string(),
+                Value::String(overall_status.to_string()),
+            );
             async_meta.insert("stopped_at".to_string(), Value::String(now_rfc3339()));
             async_meta.insert(
                 "stopped_task_ids".to_string(),
@@ -315,6 +401,7 @@ mod tests {
 
     fn link(task_id: &str, status: &str) -> ExecutionLink {
         ExecutionLink {
+            link_id: None,
             work_item_id: format!("work-{task_id}"),
             task_runner_task_id: task_id.to_string(),
             task_runner_run_id: None,
@@ -343,5 +430,24 @@ mod tests {
         assert_eq!(read_string_set(metadata.get("created_task_ids")).len(), 2);
         assert_eq!(read_string_set(metadata.get("terminal_task_ids")).len(), 1);
         assert!(read_string_set(metadata.get("running_task_ids")).contains("task-2"));
+    }
+
+    #[test]
+    fn ready_graph_waits_for_user_confirmation_without_marking_tasks_running() {
+        let mut metadata = serde_json::Map::new();
+        apply_execution_links_to_task_tracking(
+            &mut metadata,
+            &[link("task-1", "ready"), link("task-2", "ready")],
+        );
+
+        assert_eq!(
+            metadata.get("overall_status").and_then(Value::as_str),
+            Some("awaiting_confirmation")
+        );
+        assert_eq!(
+            metadata.get("confirmation_status").and_then(Value::as_str),
+            Some("awaiting_confirmation")
+        );
+        assert!(read_string_set(metadata.get("running_task_ids")).is_empty());
     }
 }

@@ -105,6 +105,8 @@ export interface ProjectRunExecuteResponse {
 export interface ProjectRequirementExecuteResponse {
   success?: boolean;
   status?: string;
+  execution_plane?: string;
+  executionPlane?: string;
   project_id?: string;
   projectId?: string;
   requirement_id?: string;
@@ -116,28 +118,127 @@ export interface ProjectRequirementExecuteResponse {
   message_id?: string;
   messageId?: string;
   message?: SessionMessageResponse | null;
+  model_config_id?: string | null;
+  modelConfigId?: string | null;
   execution_group_id?: string;
   executionGroupId?: string;
   planner_agent_key?: string;
   plannerAgentKey?: string;
   plan_mode_enabled?: boolean;
   planModeEnabled?: boolean;
+  include_prerequisite_dependents?: boolean;
+  includePrerequisiteDependents?: boolean;
+  planning_feedback?: string | null;
+  planningFeedback?: string | null;
+  planning_feedback_history?: string[] | null;
+  planningFeedbackHistory?: string[] | null;
+  confirmation_status?: string;
+  confirmationStatus?: string;
+  has_started_runs?: boolean;
+  hasStartedRuns?: boolean;
+  execution_paused?: boolean;
+  executionPaused?: boolean;
+  next_action?: string;
+  nextAction?: string;
+}
+
+export interface ProjectRequirementExecutionPlanResponse {
+  found?: boolean;
+  execution_plane?: string;
+  executionPlane?: string;
+  project_id?: string;
+  projectId?: string;
+  requirement_id?: string;
+  requirementId?: string;
+  contact_id?: string | null;
+  contactId?: string | null;
+  conversation_id?: string;
+  conversationId?: string;
+  execution_group_id?: string;
+  executionGroupId?: string;
+  message_id?: string;
+  messageId?: string;
+  model_config_id?: string | null;
+  modelConfigId?: string | null;
+  include_prerequisite_dependents?: boolean;
+  includePrerequisiteDependents?: boolean;
+  planning_feedback?: string | null;
+  planningFeedback?: string | null;
+  planning_feedback_history?: string[] | null;
+  planningFeedbackHistory?: string[] | null;
+  status?: string;
+  confirmation_status?: string;
+  confirmationStatus?: string;
+  task_count?: number;
+  taskCount?: number;
+  has_started_runs?: boolean;
+  hasStartedRuns?: boolean;
+  execution_paused?: boolean;
+  executionPaused?: boolean;
+  created_at?: string;
+  createdAt?: string;
+  message?: SessionMessageResponse | null;
+}
+
+export interface ProjectRequirementConfirmResponse {
+  success?: boolean;
+  status?: string;
+  execution_plane?: string;
+  executionPlane?: string;
+  project_id?: string;
+  projectId?: string;
+  requirement_id?: string;
+  requirementId?: string;
+  conversation_id?: string;
+  conversationId?: string;
+  execution_group_id?: string;
+  executionGroupId?: string;
+  task_ids?: string[];
+  taskIds?: string[];
+  root_task_ids?: string[];
+  rootTaskIds?: string[];
+  started_runs?: unknown[];
+  startedRuns?: unknown[];
+}
+
+export interface ProjectRequirementDispatchResponse extends ProjectRequirementConfirmResponse {
+  execution_paused?: boolean;
+  executionPaused?: boolean;
+  pause_scope?: 'future_dispatch';
+  pauseScope?: 'future_dispatch';
+  active_runs_continue?: boolean;
+  activeRunsContinue?: boolean;
+  running_count?: number;
+  runningCount?: number;
+  queued_count?: number;
+  queuedCount?: number;
 }
 
 export interface ProjectRequirementStopResponse {
   success?: boolean;
+  status?: string;
+  execution_plane?: string;
+  executionPlane?: string;
   project_id?: string;
   projectId?: string;
   requirement_id?: string;
   requirementId?: string;
   contact_id?: string;
   contactId?: string;
+  conversation_id?: string;
+  conversationId?: string;
+  execution_group_id?: string;
+  executionGroupId?: string;
   cancelled_tasks?: unknown[];
   cancelledTasks?: unknown[];
+  cancelled_planned_task_ids?: string[];
+  cancelledPlannedTaskIds?: string[];
   skipped_tasks?: unknown[];
   skippedTasks?: unknown[];
   reset_work_item_ids?: string[];
   resetWorkItemIds?: string[];
+  reset_requirement_ids?: string[];
+  resetRequirementIds?: string[];
 }
 
 export interface ProjectRunStateResponse {

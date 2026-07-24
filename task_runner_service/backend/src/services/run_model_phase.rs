@@ -11,8 +11,8 @@ use chatos_agent::{
 };
 use chatos_ai_runtime::{
     AiRuntimeOptions, AiTurnReport, MemoryRecordScope, MemoryScope, RuntimeCallbacks,
-    TaskMemoryRuntimeConfig, TaskRunReport, TaskRunSpec, TaskRuntime, TaskRuntimeConfig,
-    ToolResultModelBudgetLimits,
+    TaskFinalizationLifecycleHook, TaskMemoryRuntimeConfig, TaskRunReport, TaskRunSpec,
+    TaskRuntime, TaskRuntimeConfig, ToolResultModelBudgetLimits, DEFAULT_TASK_RUN_MAX_ITERATIONS,
 };
 use chatos_mcp_runtime::{
     builtin_servers_from_kinds, BuiltinMcpPromptLocale, BuiltinMcpServerOptions,
@@ -132,6 +132,18 @@ impl RunService {
         } else {
             None
         };
+        if !self.run_claim_is_current(&run).await {
+            warn!(
+                run_id = run.id.as_str(),
+                task_id = task.id.as_str(),
+                "task runner stopped stale execution before committing output"
+            );
+            if let Some(context) = harness_run_context.as_ref() {
+                self.cleanup_harness_run_workspace(context);
+            }
+            self.clear_local_run_abort(run.id.as_str());
+            return;
+        }
         let harness_output = if let Some(context) = harness_run_context.as_ref() {
             Some(
                 self.commit_harness_run_output(

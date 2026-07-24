@@ -13,6 +13,7 @@ pub(crate) struct LocalChatRecordWriter {
     owner_user_id: String,
     session_id: String,
     turn_id: String,
+    hidden: bool,
 }
 
 impl LocalChatRecordWriter {
@@ -27,7 +28,13 @@ impl LocalChatRecordWriter {
             owner_user_id: owner_user_id.into(),
             session_id: session_id.into(),
             turn_id: turn_id.into(),
+            hidden: false,
         }
+    }
+
+    pub(crate) fn with_hidden(mut self, hidden: bool) -> Self {
+        self.hidden = hidden;
+        self
     }
 
     fn should_persist(input: &SaveRecordInput) -> bool {
@@ -50,7 +57,7 @@ impl MemoryRecordWriter for LocalChatRecordWriter {
             return Err("local runtime record turn does not match active turn".to_string());
         }
 
-        let metadata = local_record_metadata(&input);
+        let metadata = local_record_metadata(&input, self.hidden);
         self.database
             .append_turn_message(AppendLocalMessageInput {
                 session_id: self.session_id.clone(),
@@ -71,7 +78,7 @@ impl MemoryRecordWriter for LocalChatRecordWriter {
     }
 }
 
-fn local_record_metadata(input: &SaveRecordInput) -> Option<Value> {
+fn local_record_metadata(input: &SaveRecordInput, hidden: bool) -> Option<Value> {
     let mut metadata = match input.packed_metadata() {
         Some(Value::Object(values)) => values,
         Some(value) => Map::from_iter([("metadata".to_string(), value)]),
@@ -88,6 +95,9 @@ fn local_record_metadata(input: &SaveRecordInput) -> Option<Value> {
         "runtime_origin".to_string(),
         Value::String("local_device".to_string()),
     );
+    if hidden {
+        metadata.insert("hidden".to_string(), Value::Bool(true));
+    }
     (!metadata.is_empty()).then_some(Value::Object(metadata))
 }
 

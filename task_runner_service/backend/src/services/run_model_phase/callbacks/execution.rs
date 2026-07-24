@@ -14,12 +14,17 @@ impl RunService {
         model_config: &ModelConfigRecord,
         prepared_execution: PreparedModelExecution,
     ) -> TaskRunReport {
+        let max_iterations = prepared_execution
+            .runtime_config
+            .max_iterations
+            .unwrap_or(DEFAULT_TASK_RUN_MAX_ITERATIONS);
         let runtime_execution = self.build_runtime_execution_state(
             task.id.as_str(),
             run,
             model_config,
             &prepared_execution.run_spec,
             prepared_execution.tool_result_model_budget_limits,
+            max_iterations,
             prepared_execution.effective_workspace_dir.as_str(),
         );
         let path_redactor = crate::services::path_redaction::WorkspacePathRedactor::for_workspace(

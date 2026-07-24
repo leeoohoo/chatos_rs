@@ -3,6 +3,8 @@
 
 use std::sync::OnceLock;
 
+use chatos_ai_runtime::is_upstream_connection_interrupted_error;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TaskRunnerCallbackLanguage {
     ZhCn,
@@ -39,6 +41,23 @@ pub fn sanitize_user_visible_callback_detail(
     value: &str,
     language: TaskRunnerCallbackLanguage,
 ) -> String {
+    if is_upstream_connection_interrupted_error(value) {
+        let retry_count = callback_detail_retry_count(value);
+        return match (language, retry_count) {
+            (TaskRunnerCallbackLanguage::EnUs, Some(count)) => format!(
+                "The model connection ended before processing started and did not recover after {count} automatic retries."
+            ),
+            (TaskRunnerCallbackLanguage::EnUs, None) =>
+                "The model connection ended before processing started and did not recover after automatic retries."
+                    .to_string(),
+            (TaskRunnerCallbackLanguage::ZhCn, Some(count)) => {
+                format!("模型连接在开始处理前中断，已自动重试 {count} 次仍未恢复。")
+            }
+            (TaskRunnerCallbackLanguage::ZhCn, None) => {
+                "模型连接在开始处理前中断，自动重试后仍未恢复。".to_string()
+            }
+        };
+    }
     if callback_detail_is_transient_service_error(value) {
         return if language.is_english() {
             "The service is temporarily unavailable. Please try again later.".to_string()
@@ -82,6 +101,19 @@ pub fn sanitize_user_visible_callback_detail(
         lines.pop();
     }
     lines.join("\n")
+}
+
+fn callback_detail_retry_count(value: &str) -> Option<usize> {
+    static RETRY_COUNT_RE: OnceLock<Result<regex::Regex, regex::Error>> = OnceLock::new();
+    let captures = RETRY_COUNT_RE
+        .get_or_init(|| regex::Regex::new(r"(?i)(?:已重试\s*(\d+)\s*次|retried\s*(\d+)\s*times?)"))
+        .as_ref()
+        .ok()?
+        .captures(value)?;
+    captures
+        .get(1)
+        .or_else(|| captures.get(2))
+        .and_then(|value| value.as_str().parse::<usize>().ok())
 }
 
 pub fn task_runner_callback_completion_detail(
@@ -607,6 +639,19 @@ mod tests {
             ),
             "The service is temporarily unavailable. Please try again later."
         );
+    }
+
+    #[test]
+    fn interrupted_model_connection_keeps_retry_count_and_hides_internal_url() {
+        let detail = "AI 请求失败：上游连接在开始处理前中断，已重试 5 次，最后错误：AI transport error: error sending request for url (https://internal.example/v1/responses); caused by: connection closed before message completed";
+        let sanitized =
+            sanitize_user_visible_callback_detail(detail, TaskRunnerCallbackLanguage::ZhCn);
+
+        assert_eq!(
+            sanitized,
+            "模型连接在开始处理前中断，已自动重试 5 次仍未恢复。"
+        );
+        assert!(!sanitized.contains("https://"));
     }
 
     #[test]

@@ -103,6 +103,12 @@ pub(crate) fn create_tasks_with_prerequisites_schema() -> Value {
                             "uniqueItems": true,
                             "description": "References to other client_ref values from the same create_tasks_with_prerequisites request."
                         },
+                        "context_refs": {
+                            "type": "array",
+                            "items": { "type": "string", "minLength": 1 },
+                            "uniqueItems": true,
+                            "description": "Non-blocking context relationships to other client_ref values. They are preserved for explanation and graph display but never delay scheduling."
+                        },
                         "prerequisite_task_ids": prerequisite_task_ids_schema()
                     },
                     "required": ["client_ref", "title", "objective"],
@@ -153,10 +159,6 @@ pub(crate) fn create_project_execution_tasks_schema() -> Value {
                 "minLength": 1,
                 "description": "Requirement id being executed."
             },
-            "execution_group_id": {
-                "type": "string",
-                "description": "Execution group id. Use the source_user_message_id provided by Chatos when available."
-            },
             "tasks": {
                 "type": "array",
                 "minItems": 1,
@@ -198,7 +200,13 @@ pub(crate) fn create_project_execution_tasks_schema() -> Value {
                             "type": "array",
                             "items": { "type": "string", "minLength": 1 },
                             "uniqueItems": true,
-                            "description": "References to other client_ref values from this same request."
+                            "description": "Direct hard-blocking references to other client_ref values from this request. Do not include a relation already implied by another prerequisite path."
+                        },
+                        "context_refs": {
+                            "type": "array",
+                            "items": { "type": "string", "minLength": 1 },
+                            "uniqueItems": true,
+                            "description": "Non-blocking relationship references used only to pass context and render the complete graph."
                         },
                         "prerequisite_task_ids": prerequisite_task_ids_schema()
                     },

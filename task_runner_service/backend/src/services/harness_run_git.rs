@@ -57,6 +57,100 @@ impl HarnessRunContext {
     }
 }
 
+impl RunService {
+    pub(crate) async fn cleanup_harness_artifacts_for_run(
+        &self,
+        run: &TaskRunRecord,
+    ) -> Result<Vec<String>, String> {
+        let mut cleaned = cleanup_managed_harness_temp_dirs(run.id.as_str())?;
+        let Some(harness) = run.input_snapshot.get("harness") else {
+            return Ok(cleaned);
+        };
+        let Some(project_id) = harness
+            .get("project_id")
+            .and_then(serde_json::Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        else {
+            return Ok(cleaned);
+        };
+        let Some(run_branch) = harness
+            .get("run_branch")
+            .and_then(serde_json::Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        else {
+            return Ok(cleaned);
+        };
+        let expected_branch = format!(
+            "chatos/runs/{}",
+            normalize_run_branch_component(run.id.as_str())
+        );
+        if run_branch != expected_branch {
+            return Err(format!(
+                "refusing to delete unexpected run branch: {run_branch}"
+            ));
+        }
+        let access =
+            project_management_api_client::get_project_harness_git_access(&self.config, project_id)
+                .await?;
+        let authenticated_url = authenticated_git_url(&access)?;
+        let secrets = [access.access_token.as_str()];
+        let branch_ref = format!("refs/heads/{run_branch}");
+        let existing = run_git_output(
+            vec![
+                "ls-remote".to_string(),
+                "--heads".to_string(),
+                authenticated_url.clone(),
+                branch_ref,
+            ],
+            None,
+            &secrets,
+        )
+        .await?;
+        if !existing.trim().is_empty() {
+            run_git(
+                vec![
+                    "push".to_string(),
+                    authenticated_url,
+                    "--delete".to_string(),
+                    run_branch.to_string(),
+                ],
+                None,
+                &secrets,
+            )
+            .await?;
+            cleaned.push(format!("branch:{run_branch}"));
+        }
+        Ok(cleaned)
+    }
+}
+
+fn cleanup_managed_harness_temp_dirs(run_id: &str) -> Result<Vec<String>, String> {
+    let prefix = format!(
+        "chatos-harness-run-{}-",
+        normalize_run_branch_component(run_id)
+    );
+    let mut cleaned = Vec::new();
+    let entries = std::fs::read_dir(std::env::temp_dir()).map_err(|error| error.to_string())?;
+    for entry in entries {
+        let entry = entry.map_err(|error| error.to_string())?;
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if !name.starts_with(prefix.as_str()) {
+            continue;
+        }
+        let path = entry.path();
+        if path.is_dir() {
+            std::fs::remove_dir_all(path.as_path()).map_err(|error| {
+                format!("remove managed Harness temp directory failed: {error}")
+            })?;
+            cleaned.push(format!("directory:{}", path.display()));
+        }
+    }
+    Ok(cleaned)
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(super) struct HarnessRunOutputReport {
     pub enabled: bool,
