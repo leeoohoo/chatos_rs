@@ -135,14 +135,14 @@ fn spreadsheets_release_publishes_rendering_multi_sheet_and_safe_range_editing_t
 }
 
 #[test]
-fn excel_live_control_release_publishes_only_read_only_no_launch_discovery() {
+fn excel_live_control_release_publishes_bounded_read_only_no_launch_range_reads() {
     let catalog_item = internal_skill_catalog()
         .expect("catalog")
         .skills
         .into_iter()
         .find(|item| item.skill_id == "internal_skill_excel_live_control")
         .expect("Excel Live Control catalog item");
-    assert_eq!(catalog_item.version, "1.1.0");
+    assert_eq!(catalog_item.version, "1.2.0");
     assert_eq!(catalog_item.implementation_status, "ready");
     assert!(!catalog_item.requires_workspace);
     assert_eq!(catalog_item.permissions, vec!["office.excel.control"]);
@@ -166,10 +166,11 @@ fn excel_live_control_release_publishes_only_read_only_no_launch_discovery() {
         .iter()
         .filter_map(|tool| tool.get("name").and_then(Value::as_str))
         .collect::<HashSet<_>>();
-    assert_eq!(tools.len(), 3);
+    assert_eq!(tools.len(), 4);
     assert!(names.contains("excel_live_status"));
     assert!(names.contains("excel_list_open_workbooks"));
     assert!(names.contains("excel_inspect_workbook"));
+    assert!(names.contains("excel_read_range"));
     assert!(!native::requires_interactive_approval(
         "internal_skill_excel_live_control",
         "excel_inspect_workbook"
@@ -177,9 +178,13 @@ fn excel_live_control_release_publishes_only_read_only_no_launch_discovery() {
 
     let instructions = internal_skill_instructions("internal_skill_excel_live_control")
         .expect("Excel Live Control instructions");
-    assert!(instructions.contains("read-only, no-launch discovery"));
+    assert!(instructions.contains("read-only, no-launch discovery and bounded range reading"));
     assert!(instructions.contains("never returned in tool results"));
-    assert!(instructions.contains("Never launch, activate, close, save, or reopen"));
+    assert!(instructions
+        .contains("Never launch, activate, select, close, save, export, reopen, or recalculate"));
+    assert!(instructions.contains("exact `worksheet_id`"));
+    assert!(instructions.contains("at most 256 cells"));
+    assert!(instructions.contains("Hidden formulas are omitted"));
     assert!(instructions.contains("does not complete live workbook editing"));
 }
 
@@ -690,7 +695,7 @@ fn ready_bundle_v2_fingerprint_matches_plugin_management_seed() {
         .join("\n");
     assert_eq!(
         hex::encode(Sha256::digest(rows.as_bytes())),
-        "777826b4dd80c501ceb8601422ad5b58a68e738f49dc02812c0cf6b1964c734a"
+        "fcec11e167927bf34c7d85a1ce5a355158f6d21da5b301ef1c56f71dbc9c7286"
     );
 }
 
@@ -705,7 +710,7 @@ fn all_28_bundled_skill_fingerprints_match_plugin_management_seed() {
         .join("\n");
     assert_eq!(
         hex::encode(Sha256::digest(rows.as_bytes())),
-        "fa8b109cb993e5f7b9ac9110e3afaf8b34d6705c85d8137ea3be51e25460dc3f"
+        "caf285f36d63235cb3d00127e2b3ce100ab9840678b0f0f76ef0b79e10408ef7"
     );
 }
 

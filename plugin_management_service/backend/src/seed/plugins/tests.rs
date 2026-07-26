@@ -70,8 +70,8 @@ fn bundled_plugin_specs_cover_all_twenty_eight_internal_skills_once() {
         .iter()
         .find(|spec| spec.name == "spreadsheets")
         .expect("Spreadsheets spec");
-    assert_eq!(spreadsheets.release_version, "1.3.0");
-    assert_eq!(spreadsheets.artifact_revision, "spreadsheets-1.3.0");
+    assert_eq!(spreadsheets.release_version, "1.4.0");
+    assert_eq!(spreadsheets.artifact_revision, "spreadsheets-1.4.0");
     let presentations = bundled_plugin_specs()
         .iter()
         .find(|spec| spec.name == "presentations")
@@ -184,8 +184,8 @@ fn bundled_releases_have_stable_component_and_content_snapshots() {
         (
             "spreadsheets",
             (
-                "fac92f4d8dbf5a2a17223de9c6da4eb5a56497ab6f9b95ba7dbe064dd37a66f4",
-                "43222b7a73c4ced939c6c7284860dfe51b4da8e38b3a92c903b68510f919f5e8",
+                "7c0af17b77a296291ef86441ff3eaaced24f0e154402d2ede2e741946f8fe39e",
+                "501b5f7a6938a91982644f93a66e143bffc63583159cdc8d7cabf0cc7f6c672c",
             ),
         ),
         (
