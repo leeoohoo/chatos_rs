@@ -92,23 +92,23 @@ test('stages complete Plugin Bundles and rejects staged file tampering', () => {
       true,
     );
     const spreadsheets = index.plugins.find((plugin) => plugin.name === 'spreadsheets');
-    assert.equal(spreadsheets.release_id, 'bundled-release-spreadsheets-1-4-0');
-    assert.equal(spreadsheets.version, '1.4.0');
-    assert.equal(spreadsheets.published_at, '2026-07-26T18:00:00Z');
+    assert.equal(spreadsheets.release_id, 'bundled-release-spreadsheets-1-5-0');
+    assert.equal(spreadsheets.version, '1.5.0');
+    assert.equal(spreadsheets.published_at, '2026-07-26T19:00:00Z');
     assert.equal(
       spreadsheets.skills.find((skill) => skill.skill_id === 'internal_skill_spreadsheets').bundle_hash,
       '3ee6b5a2c4473a0b70612697db8e35185f434662b9967d2ff8022ecf7d869246',
     );
     assert.equal(
       spreadsheets.skills.find((skill) => skill.skill_id === 'internal_skill_excel_live_control').bundle_hash,
-      '6b6afa61d864563b7d05c7ad1a45661147d3f2558b3122607c70ccbd86d0288c',
+      '357fb4945b904d5ef6c460fed3a861f232668143908d94815692f703833a0f0d',
     );
     assert.equal(
       fs.existsSync(path.join(
         output,
         'internal',
         'spreadsheets',
-        '1.4.0',
+        '1.5.0',
         'skills',
         'spreadsheets',
         'SKILL.md',
@@ -120,7 +120,7 @@ test('stages complete Plugin Bundles and rejects staged file tampering', () => {
         output,
         'internal',
         'spreadsheets',
-        '1.4.0',
+        '1.5.0',
         'skills',
         'excel-live-control',
         'SKILL.md',

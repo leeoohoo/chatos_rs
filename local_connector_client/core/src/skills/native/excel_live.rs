@@ -5,6 +5,8 @@ use std::fs;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Mutex;
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -14,6 +16,7 @@ use sha2::{Digest, Sha256};
 
 const MAX_BRIDGE_OUTPUT_BYTES: u64 = 512 * 1024;
 const BRIDGE_TIMEOUT: Duration = Duration::from_secs(8);
+const WRITE_BRIDGE_TIMEOUT: Duration = Duration::from_secs(20);
 const MAX_OPEN_WORKBOOKS: usize = 32;
 const MAX_WORKSHEETS_PER_WORKBOOK: usize = 64;
 const MAX_WORKBOOK_NAME_CHARACTERS: usize = 512;
@@ -21,11 +24,13 @@ const MAX_WORKSHEET_NAME_CHARACTERS: usize = 64;
 const MAX_IDENTITY_SOURCE_CHARACTERS: usize = 4096;
 const MAX_RANGE_CELLS: usize = 256;
 const MAX_CELL_TEXT_CHARACTERS: usize = 128;
+const MAX_SNAPSHOT_ID_CHARACTERS: usize = 96;
 const MAX_EXCEL_ROWS: usize = 1_048_576;
 const MAX_EXCEL_COLUMNS: usize = 16_384;
 
 const MACOS_OSASCRIPT_PATH: &str = "/usr/bin/osascript";
 const MACOS_EXCEL_APPLICATION_PATH: &str = "/Applications/Microsoft Excel.app";
+static EXCEL_WRITE_LOCK: Mutex<()> = Mutex::new(());
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct A1Range {
@@ -46,10 +51,37 @@ struct RangeReadTarget {
     workbook_index: usize,
     workbook_name: String,
     workbook_identity_source: String,
+    workbook_read_only: bool,
     worksheet_id: String,
     worksheet_index: usize,
     worksheet_name: String,
+    worksheet_visibility: String,
     worksheet_protected: bool,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+enum WriteCell {
+    Blank,
+    Value(Value),
+    Formula(String),
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct RangeWriteInput {
+    workbook_id: String,
+    worksheet_id: String,
+    range: A1Range,
+    expected_snapshot_id: String,
+    cells: Vec<WriteCell>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct WriteCellSummary {
+    blank_cells: usize,
+    value_cells: usize,
+    formula_cells: usize,
+    text_characters: usize,
+    content_sha256: String,
 }
 
 const MACOS_STATUS_SCRIPT: &str = r#"
@@ -634,8 +666,627 @@ $result = [ordered]@{
 $result | ConvertTo-Json -Depth 8 -Compress
 "#;
 
-pub(super) fn tool_definitions() -> Vec<Value> {
-    vec![
+const MACOS_RANGE_WRITE_SCRIPT: &str = r#"
+(function () {
+  ObjC.import("Foundation");
+  ObjC.import("AppKit");
+
+  const inputData = $.NSFileHandle.fileHandleWithStandardInput.readDataToEndOfFile;
+  const inputText = ObjC.unwrap($.NSString.alloc.initWithDataEncoding(inputData, $.NSUTF8StringEncoding));
+  const request = JSON.parse(String(inputText));
+  const excel = Application("Microsoft Excel");
+  if (!excel.running()) throw new Error("Microsoft Excel is not running");
+
+  function runtimeInstance() {
+    const running = $.NSRunningApplication.runningApplicationsWithBundleIdentifier("com.microsoft.Excel");
+    if (running.count < 1) throw new Error("Excel process identity is unavailable");
+    return String(running.objectAtIndex(0).processIdentifier);
+  }
+
+  function boundedText(raw) {
+    const clean = Array.from(String(raw).replace(/[\u0000-\u001f\u007f]/g, "\ufffd"));
+    return { value: clean.slice(0, 128).join(""), truncated: clean.length > 128 };
+  }
+
+  function externalFormula(formula) {
+    return /\[[^\]]+\][^!]*!/i.test(formula) ||
+      /(?:https?|file):\/\//i.test(formula) ||
+      /\\\\/.test(formula) ||
+      /[A-Za-z]:\\/.test(formula);
+  }
+
+  function safeScalar(raw) {
+    if (raw === null || raw === undefined) return { value: null, truncated: false };
+    if (typeof raw === "boolean") return { value: raw, truncated: false };
+    if (typeof raw === "number" && Number.isFinite(raw)) return { value: raw, truncated: false };
+    if (typeof raw === "string") return boundedText(raw);
+    return { value: null, truncated: false };
+  }
+
+  function sheetVisibility(raw) {
+    const number = Number(raw);
+    if (number === -1) return "visible";
+    if (number === 0) return "hidden";
+    if (number === 2) return "very_hidden";
+    const text = String(raw).toLowerCase();
+    if (text.indexOf("very") >= 0 && text.indexOf("hidden") >= 0) return "very_hidden";
+    if (text.indexOf("hidden") >= 0) return "hidden";
+    if (text.indexOf("visible") >= 0) return "visible";
+    return "unknown";
+  }
+
+  function selectAndVerify() {
+    if (runtimeInstance() !== request.runtime_instance) throw new Error("Excel process identity changed");
+    const workbooks = excel.workbooks();
+    if (request.workbook_index < 1 || request.workbook_index > workbooks.length) {
+      throw new Error("Excel workbook position is stale");
+    }
+    const workbook = workbooks[request.workbook_index - 1];
+    const workbookName = String(workbook.name());
+    let workbookFullName = workbookName;
+    try { workbookFullName = String(workbook.fullName()); } catch (_) {}
+    let readOnly = true;
+    try { readOnly = Boolean(workbook.readOnly()); } catch (_) {}
+    if (workbookName !== request.workbook_name ||
+        workbookFullName !== request.workbook_identity_source ||
+        readOnly !== request.workbook_read_only || readOnly) {
+      throw new Error("Excel workbook identity or writable state is stale");
+    }
+    const worksheets = workbook.worksheets();
+    if (request.worksheet_index < 1 || request.worksheet_index > worksheets.length) {
+      throw new Error("Excel worksheet position is stale");
+    }
+    const worksheet = worksheets[request.worksheet_index - 1];
+    let protectedContents = true;
+    let visibility = "unknown";
+    try { protectedContents = Boolean(worksheet.protectContents()); } catch (_) {}
+    try { visibility = sheetVisibility(worksheet.visible()); } catch (_) {}
+    if (String(worksheet.name()) !== request.worksheet_name ||
+        protectedContents !== request.worksheet_protected || protectedContents ||
+        visibility !== request.worksheet_visibility || visibility !== "visible") {
+      throw new Error("Excel worksheet identity or writable state is stale");
+    }
+    return { workbook: workbook, worksheet: worksheet };
+  }
+
+  function exactRange(worksheet) {
+    const targetRange = worksheet.ranges.byName(request.range_address);
+    if (Number(targetRange.firstRowIndex()) !== request.start_row ||
+        Number(targetRange.firstColumnIndex()) !== request.start_column ||
+        targetRange.rows().length !== request.row_count ||
+        targetRange.columns().length !== request.column_count) {
+      throw new Error("Excel returned a non-exact range");
+    }
+    const cells = targetRange.cells();
+    if (cells.length !== request.cell_count) throw new Error("Excel returned an unexpected cell count");
+    return { range: targetRange, cells: cells };
+  }
+
+  function cellState(cell, index) {
+    let hasFormula = false;
+    let formulaHidden = false;
+    let rawFormula = null;
+    try { hasFormula = Boolean(cell.hasFormula()); } catch (_) {}
+    try { formulaHidden = Boolean(cell.formulaHidden()); } catch (_) {}
+    if (hasFormula && !formulaHidden) {
+      try { rawFormula = cell.formula2(); } catch (_) {
+        try { rawFormula = cell.formula(); } catch (_) {}
+      }
+    }
+    let rawValue = null;
+    try { rawValue = cell.value2(); } catch (_) {}
+    let rawDisplay = "";
+    try { rawDisplay = cell.stringValue(); } catch (_) {}
+    const displayed = boundedText(rawDisplay === null || rawDisplay === undefined ? "" : rawDisplay);
+    const isError = hasFormula && typeof rawValue !== "string" &&
+      /^(?:#NULL!|#DIV\/0!|#VALUE!|#REF!|#NAME\?|#NUM!|#N\/A|#GETTING_DATA|#SPILL!|#CALC!|#FIELD!|#BLOCKED!|#UNKNOWN!|#CONNECT!|#BUSY!|#PYTHON!)/i.test(displayed.value);
+    const value = isError ? { value: null, truncated: false } : safeScalar(rawValue);
+    let formula = null;
+    let formulaTruncated = false;
+    let formulaExternalReference = false;
+    if (hasFormula && !formulaHidden && rawFormula !== null && rawFormula !== undefined) {
+      const formulaText = String(rawFormula);
+      formulaExternalReference = externalFormula(formulaText);
+      if (!formulaExternalReference) {
+        const boundedFormula = boundedText(formulaText);
+        formula = boundedFormula.value;
+        formulaTruncated = boundedFormula.truncated;
+      }
+    }
+    const status = isError ? "error" : hasFormula ? "formula" :
+      ((value.value === null || value.value === "") && displayed.value === "" ? "blank" : "value");
+    return {
+      row_offset: Math.floor(index / request.column_count),
+      column_offset: index % request.column_count,
+      value: value.value,
+      value_truncated: value.truncated,
+      displayed_text: displayed.value,
+      displayed_text_truncated: displayed.truncated,
+      has_formula: hasFormula,
+      formula: formula,
+      formula_truncated: formulaTruncated,
+      formula_hidden: formulaHidden,
+      formula_external_reference: formulaExternalReference,
+      is_error: isError,
+      status: status
+    };
+  }
+
+  function readCells(cells) {
+    const states = [];
+    for (let index = 0; index < cells.length; index += 1) states.push(cellState(cells[index], index));
+    return states;
+  }
+
+  function sameScalar(left, right) {
+    if (typeof left === "number" && typeof right === "number") return Object.is(left, right);
+    return left === right;
+  }
+
+  function sameExpected(expected, actual) {
+    return sameScalar(expected.value, actual.value) &&
+      expected.value_truncated === actual.value_truncated &&
+      expected.displayed_text === actual.displayed_text &&
+      expected.displayed_text_truncated === actual.displayed_text_truncated &&
+      expected.has_formula === actual.has_formula &&
+      expected.formula === actual.formula &&
+      expected.formula_truncated === actual.formula_truncated &&
+      expected.formula_hidden === actual.formula_hidden &&
+      expected.formula_external_reference === actual.formula_external_reference &&
+      expected.status === actual.status;
+  }
+
+  function writeMatches(write, actual) {
+    if (write.kind === "blank") return !actual.has_formula && actual.status === "blank" && actual.value === null;
+    if (write.kind === "value") return !actual.has_formula && actual.status === "value" && sameScalar(write.value, actual.value);
+    if (write.kind === "formula") {
+      return actual.has_formula && !actual.formula_hidden && !actual.formula_external_reference &&
+        actual.formula === write.formula;
+    }
+    return false;
+  }
+
+  function cellHasComment(cell) {
+    try {
+      const comment = cell.comment();
+      if (comment !== null && comment !== undefined && String(comment).length > 0) return true;
+    } catch (_) {}
+    return false;
+  }
+
+  function ensureSimpleCell(cell) {
+    try { if (Boolean(cell.mergeCells())) throw new Error("merged cells are not writable"); } catch (error) {
+      if (String(error).indexOf("merged cells") >= 0) throw error;
+    }
+    try { if (Boolean(cell.hasArray())) throw new Error("array formula cells are not writable"); } catch (error) {
+      if (String(error).indexOf("array formula") >= 0) throw error;
+    }
+    if (cellHasComment(cell)) throw new Error("commented cells are not writable");
+  }
+
+  function assignCell(cell, write) {
+    if (write.kind === "blank") {
+      cell.clearContents();
+    } else if (write.kind === "value") {
+      cell.value2 = write.value;
+    } else if (write.kind === "formula") {
+      try { cell.formula2 = write.formula; } catch (_) { cell.formula = write.formula; }
+    } else {
+      throw new Error("unsupported Excel write cell kind");
+    }
+  }
+
+  function restoreCell(cell, previous) {
+    if (previous.has_formula) {
+      try { cell.formula2 = previous.formula; } catch (_) { cell.formula = previous.formula; }
+    } else if (previous.status === "blank") {
+      cell.clearContents();
+    } else {
+      cell.value2 = previous.value;
+    }
+  }
+
+  function result(status, cells) {
+    return JSON.stringify({
+      schema_version: 1,
+      write_status: status,
+      runtime_instance: request.runtime_instance,
+      workbook_index: request.workbook_index,
+      workbook_name: request.workbook_name,
+      worksheet_index: request.worksheet_index,
+      worksheet_name: request.worksheet_name,
+      range_address: request.range_address,
+      start_row: request.start_row,
+      start_column: request.start_column,
+      row_count: request.row_count,
+      column_count: request.column_count,
+      cell_count: request.cell_count,
+      cells: cells
+    });
+  }
+
+  const selected = selectAndVerify();
+  const exact = exactRange(selected.worksheet);
+  if (!Array.isArray(request.expected_cells) || request.expected_cells.length !== request.cell_count ||
+      !Array.isArray(request.write_cells) || request.write_cells.length !== request.cell_count) {
+    throw new Error("Excel write request cell count is invalid");
+  }
+  const before = readCells(exact.cells);
+  for (let index = 0; index < exact.cells.length; index += 1) {
+    ensureSimpleCell(exact.cells[index]);
+    if (!sameExpected(request.expected_cells[index], before[index])) {
+      throw new Error("Excel range snapshot is stale");
+    }
+  }
+  selectAndVerify();
+
+  let mutated = false;
+  try {
+    for (let index = 0; index < exact.cells.length; index += 1) {
+      mutated = true;
+      assignCell(exact.cells[index], request.write_cells[index]);
+    }
+    selectAndVerify();
+    const written = readCells(exact.cells);
+    for (let index = 0; index < written.length; index += 1) {
+      if (!writeMatches(request.write_cells[index], written[index])) {
+        throw new Error("Excel write verification failed");
+      }
+    }
+    selectAndVerify();
+    return result("written", written);
+  } catch (_) {
+    if (!mutated) throw new Error("Excel write failed before mutation");
+    try {
+      selectAndVerify();
+      for (let index = 0; index < exact.cells.length; index += 1) restoreCell(exact.cells[index], before[index]);
+      selectAndVerify();
+      const restored = readCells(exact.cells);
+      for (let index = 0; index < restored.length; index += 1) {
+        if (!sameExpected(request.expected_cells[index], restored[index])) {
+          return result("rollback_failed", []);
+        }
+      }
+      return result("rolled_back", restored);
+    } catch (_) {
+      return result("rollback_failed", []);
+    }
+  }
+})()
+"#;
+
+const WINDOWS_RANGE_WRITE_SCRIPT: &str = r#"
+$ErrorActionPreference = 'Stop'
+$utf8 = New-Object System.Text.UTF8Encoding($false)
+[Console]::InputEncoding = $utf8
+[Console]::OutputEncoding = $utf8
+$requestText = [Console]::In.ReadToEnd()
+$request = $requestText | ConvertFrom-Json
+
+function Get-ExcelRuntimeInstance($excel) {
+  $runtime = 'hwnd:' + [string]$excel.Hwnd
+  $process = Get-Process -Name EXCEL -ErrorAction SilentlyContinue |
+    Where-Object { $_.MainWindowHandle -eq $excel.Hwnd } |
+    Select-Object -First 1
+  if ($null -ne $process) { return [string]$process.Id }
+  return $runtime
+}
+
+function Convert-BoundedText($raw) {
+  $clean = ([string]$raw) -replace '[\x00-\x1F\x7F]', [char]0xFFFD
+  $truncated = $clean.Length -gt 128
+  if ($truncated) { $clean = $clean.Substring(0, 128) }
+  return [ordered]@{ value = $clean; truncated = $truncated }
+}
+
+function Test-ExternalFormula([string]$formula) {
+  return $formula -match '\[[^\]]+\][^!]*!' -or
+    $formula -match '(?i)(https?|file)://' -or
+    $formula -match '\\\\' -or
+    $formula -match '[A-Za-z]:\\'
+}
+
+function Get-SheetVisibility($raw) {
+  switch ([int]$raw) {
+    -1 { return 'visible' }
+    0 { return 'hidden' }
+    2 { return 'very_hidden' }
+    default { return 'unknown' }
+  }
+}
+
+function Select-AndVerify($excel, $request) {
+  if ((Get-ExcelRuntimeInstance $excel) -cne [string]$request.runtime_instance) {
+    throw 'Excel process identity changed'
+  }
+  $workbookIndex = [int]$request.workbook_index
+  if ($workbookIndex -lt 1 -or $workbookIndex -gt [int]$excel.Workbooks.Count) {
+    throw 'Excel workbook position is stale'
+  }
+  $workbook = $excel.Workbooks.Item($workbookIndex)
+  $workbookName = [string]$workbook.Name
+  try { $workbookFullName = [string]$workbook.FullName } catch { $workbookFullName = $workbookName }
+  $readOnly = [bool]$workbook.ReadOnly
+  if ($workbookName -cne [string]$request.workbook_name -or
+      $workbookFullName -cne [string]$request.workbook_identity_source -or
+      $readOnly -ne [bool]$request.workbook_read_only -or $readOnly) {
+    throw 'Excel workbook identity or writable state is stale'
+  }
+  $worksheetIndex = [int]$request.worksheet_index
+  if ($worksheetIndex -lt 1 -or $worksheetIndex -gt [int]$workbook.Worksheets.Count) {
+    throw 'Excel worksheet position is stale'
+  }
+  $worksheet = $workbook.Worksheets.Item($worksheetIndex)
+  $protected = [bool]$worksheet.ProtectContents
+  $visibility = Get-SheetVisibility $worksheet.Visible
+  if ([string]$worksheet.Name -cne [string]$request.worksheet_name -or
+      $protected -ne [bool]$request.worksheet_protected -or $protected -or
+      $visibility -cne [string]$request.worksheet_visibility -or $visibility -cne 'visible') {
+    throw 'Excel worksheet identity or writable state is stale'
+  }
+  return [ordered]@{ workbook = $workbook; worksheet = $worksheet }
+}
+
+function Get-ExactRange($worksheet, $request) {
+  $range = $worksheet.Range([string]$request.range_address)
+  if ([int]$range.Row -ne [int]$request.start_row -or
+      [int]$range.Column -ne [int]$request.start_column -or
+      [int]$range.Rows.Count -ne [int]$request.row_count -or
+      [int]$range.Columns.Count -ne [int]$request.column_count -or
+      [int]$range.Cells.Count -ne [int]$request.cell_count) {
+    throw 'Excel returned a non-exact range'
+  }
+  return $range
+}
+
+function Get-CellState($cell, [int]$rowOffset, [int]$columnOffset) {
+  $hasFormula = $false
+  $formulaHidden = $false
+  try { $hasFormula = [bool]$cell.HasFormula } catch {}
+  try { $formulaHidden = [bool]$cell.FormulaHidden } catch {}
+  $rawFormula = $null
+  if ($hasFormula -and -not $formulaHidden) {
+    try { $rawFormula = $cell.Formula2 } catch {
+      try { $rawFormula = $cell.Formula } catch {}
+    }
+  }
+  try { $rawValue = $cell.Value2 } catch { $rawValue = $null }
+  try { $rawDisplay = [string]$cell.Text } catch { $rawDisplay = '' }
+  $displayed = Convert-BoundedText $rawDisplay
+  $isError = [bool]($hasFormula -and -not ($rawValue -is [string]) -and
+    $displayed.value -match '^(?i:#NULL!|#DIV/0!|#VALUE!|#REF!|#NAME\?|#NUM!|#N/A|#GETTING_DATA|#SPILL!|#CALC!|#FIELD!|#BLOCKED!|#UNKNOWN!|#CONNECT!|#BUSY!|#PYTHON!)')
+  $value = $null
+  $valueTruncated = $false
+  if (-not $isError -and $null -ne $rawValue) {
+    if ($rawValue -is [string]) {
+      $boundedValue = Convert-BoundedText $rawValue
+      $value = $boundedValue.value
+      $valueTruncated = $boundedValue.truncated
+    } elseif ($rawValue -is [bool] -or
+              $rawValue -is [byte] -or $rawValue -is [sbyte] -or
+              $rawValue -is [int16] -or $rawValue -is [uint16] -or
+              $rawValue -is [int32] -or $rawValue -is [uint32] -or
+              $rawValue -is [int64] -or $rawValue -is [uint64] -or
+              $rawValue -is [single] -or $rawValue -is [double] -or
+              $rawValue -is [decimal]) {
+      $value = $rawValue
+    }
+  }
+  $formula = $null
+  $formulaTruncated = $false
+  $formulaExternalReference = $false
+  if ($hasFormula -and -not $formulaHidden -and $null -ne $rawFormula) {
+    $formulaText = [string]$rawFormula
+    $formulaExternalReference = Test-ExternalFormula $formulaText
+    if (-not $formulaExternalReference) {
+      $boundedFormula = Convert-BoundedText $formulaText
+      $formula = $boundedFormula.value
+      $formulaTruncated = $boundedFormula.truncated
+    }
+  }
+  $status = if ($isError) { 'error' } elseif ($hasFormula) { 'formula' } elseif (
+    ($null -eq $value -or $value -eq '') -and $displayed.value -eq '') { 'blank' } else { 'value' }
+  return [ordered]@{
+    row_offset = $rowOffset
+    column_offset = $columnOffset
+    value = $value
+    value_truncated = $valueTruncated
+    displayed_text = $displayed.value
+    displayed_text_truncated = $displayed.truncated
+    has_formula = $hasFormula
+    formula = $formula
+    formula_truncated = $formulaTruncated
+    formula_hidden = $formulaHidden
+    formula_external_reference = $formulaExternalReference
+    is_error = $isError
+    status = $status
+  }
+}
+
+function Read-Cells($range, $request) {
+  $states = @()
+  for ($row = 1; $row -le [int]$request.row_count; $row += 1) {
+    for ($column = 1; $column -le [int]$request.column_count; $column += 1) {
+      $states += Get-CellState ($range.Cells.Item($row, $column)) ($row - 1) ($column - 1)
+    }
+  }
+  return @($states)
+}
+
+function Test-SameScalar($left, $right) {
+  $leftNumber = $left -is [byte] -or $left -is [sbyte] -or
+    $left -is [int16] -or $left -is [uint16] -or $left -is [int32] -or
+    $left -is [uint32] -or $left -is [int64] -or $left -is [uint64] -or
+    $left -is [single] -or $left -is [double] -or $left -is [decimal]
+  $rightNumber = $right -is [byte] -or $right -is [sbyte] -or
+    $right -is [int16] -or $right -is [uint16] -or $right -is [int32] -or
+    $right -is [uint32] -or $right -is [int64] -or $right -is [uint64] -or
+    $right -is [single] -or $right -is [double] -or $right -is [decimal]
+  if ($leftNumber -and $rightNumber) { return [double]$left -eq [double]$right }
+  if ($null -eq $left -or $null -eq $right) { return $null -eq $left -and $null -eq $right }
+  return $left.GetType() -eq $right.GetType() -and $left -ceq $right
+}
+
+function Test-ExpectedCell($expected, $actual) {
+  return (Test-SameScalar $expected.value $actual.value) -and
+    [bool]$expected.value_truncated -eq [bool]$actual.value_truncated -and
+    [string]$expected.displayed_text -ceq [string]$actual.displayed_text -and
+    [bool]$expected.displayed_text_truncated -eq [bool]$actual.displayed_text_truncated -and
+    [bool]$expected.has_formula -eq [bool]$actual.has_formula -and
+    (($null -eq $expected.formula -and $null -eq $actual.formula) -or
+      [string]$expected.formula -ceq [string]$actual.formula) -and
+    [bool]$expected.formula_truncated -eq [bool]$actual.formula_truncated -and
+    [bool]$expected.formula_hidden -eq [bool]$actual.formula_hidden -and
+    [bool]$expected.formula_external_reference -eq [bool]$actual.formula_external_reference -and
+    [string]$expected.status -ceq [string]$actual.status
+}
+
+function Test-WriteMatches($write, $actual) {
+  if ([string]$write.kind -ceq 'blank') {
+    return -not [bool]$actual.has_formula -and [string]$actual.status -ceq 'blank' -and $null -eq $actual.value
+  }
+  if ([string]$write.kind -ceq 'value') {
+    return -not [bool]$actual.has_formula -and [string]$actual.status -ceq 'value' -and
+      (Test-SameScalar $write.value $actual.value)
+  }
+  if ([string]$write.kind -ceq 'formula') {
+    return [bool]$actual.has_formula -and -not [bool]$actual.formula_hidden -and
+      -not [bool]$actual.formula_external_reference -and
+      [string]$actual.formula -ceq [string]$write.formula
+  }
+  return $false
+}
+
+function Assert-SimpleCell($cell) {
+  try { if ([bool]$cell.MergeCells) { throw 'merged cells are not writable' } } catch {
+    if ([string]$_ -match 'merged cells') { throw }
+  }
+  try { if ([bool]$cell.HasArray) { throw 'array formula cells are not writable' } } catch {
+    if ([string]$_ -match 'array formula') { throw }
+  }
+  try { if ($null -ne $cell.Comment) { throw 'commented cells are not writable' } } catch {
+    if ([string]$_ -match 'commented cells') { throw }
+  }
+  try { if ($null -ne $cell.CommentThreaded) { throw 'threaded-comment cells are not writable' } } catch {
+    if ([string]$_ -match 'threaded-comment') { throw }
+  }
+}
+
+function Set-WriteCell($cell, $write) {
+  switch ([string]$write.kind) {
+    'blank' { $null = $cell.ClearContents(); return }
+    'value' { $cell.Value2 = $write.value; return }
+    'formula' {
+      try { $cell.Formula2 = [string]$write.formula } catch { $cell.Formula = [string]$write.formula }
+      return
+    }
+    default { throw 'unsupported Excel write cell kind' }
+  }
+}
+
+function Restore-Cell($cell, $previous) {
+  if ([bool]$previous.has_formula) {
+    try { $cell.Formula2 = [string]$previous.formula } catch { $cell.Formula = [string]$previous.formula }
+  } elseif ([string]$previous.status -ceq 'blank') {
+    $null = $cell.ClearContents()
+  } else {
+    $cell.Value2 = $previous.value
+  }
+}
+
+function New-Result([string]$status, $cells, $request) {
+  return [ordered]@{
+    schema_version = 1
+    write_status = $status
+    runtime_instance = [string]$request.runtime_instance
+    workbook_index = [int]$request.workbook_index
+    workbook_name = [string]$request.workbook_name
+    worksheet_index = [int]$request.worksheet_index
+    worksheet_name = [string]$request.worksheet_name
+    range_address = [string]$request.range_address
+    start_row = [int]$request.start_row
+    start_column = [int]$request.start_column
+    row_count = [int]$request.row_count
+    column_count = [int]$request.column_count
+    cell_count = [int]$request.cell_count
+    cells = @($cells)
+  }
+}
+
+$excelType = [Type]::GetTypeFromProgID('Excel.Application', $false)
+if ($null -eq $excelType) { throw 'Microsoft Excel is not installed' }
+$excel = [Runtime.InteropServices.Marshal]::GetActiveObject('Excel.Application')
+$selected = Select-AndVerify $excel $request
+$range = Get-ExactRange $selected.worksheet $request
+$expectedCells = @($request.expected_cells)
+$writeCells = @($request.write_cells)
+if ($expectedCells.Count -ne [int]$request.cell_count -or $writeCells.Count -ne [int]$request.cell_count) {
+  throw 'Excel write request cell count is invalid'
+}
+$before = @(Read-Cells $range $request)
+$position = 0
+for ($row = 1; $row -le [int]$request.row_count; $row += 1) {
+  for ($column = 1; $column -le [int]$request.column_count; $column += 1) {
+    $cell = $range.Cells.Item($row, $column)
+    Assert-SimpleCell $cell
+    if (-not (Test-ExpectedCell $expectedCells[$position] $before[$position])) {
+      throw 'Excel range snapshot is stale'
+    }
+    $position += 1
+  }
+}
+$null = Select-AndVerify $excel $request
+
+$mutated = $false
+try {
+  $position = 0
+  for ($row = 1; $row -le [int]$request.row_count; $row += 1) {
+    for ($column = 1; $column -le [int]$request.column_count; $column += 1) {
+      $mutated = $true
+      Set-WriteCell ($range.Cells.Item($row, $column)) ($writeCells[$position])
+      $position += 1
+    }
+  }
+  $null = Select-AndVerify $excel $request
+  $written = @(Read-Cells $range $request)
+  for ($index = 0; $index -lt $written.Count; $index += 1) {
+    if (-not (Test-WriteMatches $writeCells[$index] $written[$index])) {
+      throw 'Excel write verification failed'
+    }
+  }
+  $null = Select-AndVerify $excel $request
+  New-Result 'written' $written $request | ConvertTo-Json -Depth 8 -Compress
+  exit 0
+} catch {
+  if (-not $mutated) { throw }
+  try {
+    $null = Select-AndVerify $excel $request
+    $position = 0
+    for ($row = 1; $row -le [int]$request.row_count; $row += 1) {
+      for ($column = 1; $column -le [int]$request.column_count; $column += 1) {
+        Restore-Cell ($range.Cells.Item($row, $column)) ($before[$position])
+        $position += 1
+      }
+    }
+    $null = Select-AndVerify $excel $request
+    $restored = @(Read-Cells $range $request)
+    for ($index = 0; $index -lt $restored.Count; $index += 1) {
+      if (-not (Test-ExpectedCell $expectedCells[$index] $restored[$index])) {
+        New-Result 'rollback_failed' @() $request | ConvertTo-Json -Depth 8 -Compress
+        exit 0
+      }
+    }
+    New-Result 'rolled_back' $restored $request | ConvertTo-Json -Depth 8 -Compress
+    exit 0
+  } catch {
+    New-Result 'rollback_failed' @() $request | ConvertTo-Json -Depth 8 -Compress
+    exit 0
+  }
+}
+"#;
+
+pub(super) fn tool_definitions(include_write: bool) -> Vec<Value> {
+    let mut tools = vec![
         json!({
             "name": "excel_live_status",
             "description": "Inspect whether Microsoft Excel is installed and already running, without launching it or reading workbook names or cell contents.",
@@ -700,7 +1351,131 @@ pub(super) fn tool_definitions() -> Vec<Value> {
                 "additionalProperties": false
             }
         }),
-    ]
+    ];
+    if include_write {
+        tools.push(json!({
+            "name": "excel_write_range",
+            "description": "After mandatory interactive approval, replace the contents of up to 256 exact visible, unprotected cells in an already-open writable Excel workbook. Requires the exact optimistic snapshot ID from a fresh excel_read_range result; writes only typed blanks, scalar constants, or strictly allowlisted local formulas, verifies the result, and attempts verified rollback on partial failure. Does not save, export, activate, select, format, or explicitly recalculate Excel.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "workbook_id": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 96,
+                        "description": "Exact opaque workbook identity from the current Excel discovery snapshot."
+                    },
+                    "worksheet_id": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 96,
+                        "description": "Exact opaque worksheet identity from the current workbook inspection."
+                    },
+                    "range": {
+                        "type": "string",
+                        "pattern": "^[A-Z]{1,3}[1-9][0-9]*(?::[A-Z]{1,3}[1-9][0-9]*)?$",
+                        "maxLength": 32,
+                        "description": "The exact canonical uppercase A1 range used for the fresh read snapshot."
+                    },
+                    "expected_snapshot_id": {
+                        "type": "string",
+                        "pattern": "^excel_range_[0-9a-f]{64}$",
+                        "maxLength": 96,
+                        "description": "Exact range_snapshot_id returned by a fresh excel_read_range for the same workbook, worksheet, and range."
+                    },
+                    "cells": {
+                        "type": "array",
+                        "minItems": 1,
+                        "maxItems": 256,
+                        "description": "Exact rectangular row matrix matching the target range geometry.",
+                        "items": {
+                            "type": "array",
+                            "minItems": 1,
+                            "maxItems": 256,
+                            "items": {
+                                "oneOf": [
+                                    {
+                                        "type": "object",
+                                        "properties": {"kind": {"const": "blank"}},
+                                        "required": ["kind"],
+                                        "additionalProperties": false
+                                    },
+                                    {
+                                        "type": "object",
+                                        "properties": {
+                                            "kind": {"const": "value"},
+                                            "value": {"type": ["boolean", "number", "string"], "maxLength": 128}
+                                        },
+                                        "required": ["kind", "value"],
+                                        "additionalProperties": false
+                                    },
+                                    {
+                                        "type": "object",
+                                        "properties": {
+                                            "kind": {"const": "formula"},
+                                            "formula": {"type": "string", "minLength": 2, "maxLength": 128, "pattern": "^="}
+                                        },
+                                        "required": ["kind", "formula"],
+                                        "additionalProperties": false
+                                    }
+                                ]
+                            }
+                        }
+                    }
+                },
+                "required": ["workbook_id", "worksheet_id", "range", "expected_snapshot_id", "cells"],
+                "additionalProperties": false
+            }
+        }));
+    }
+    tools
+}
+
+pub(super) fn requires_interactive_approval(operation: &str) -> bool {
+    operation == "excel_write_range"
+}
+
+pub(super) fn approval_command(
+    operation: &str,
+    arguments: &Value,
+) -> Result<(String, Vec<String>)> {
+    if operation != "excel_write_range" {
+        bail!("Excel Live Control operation does not support interactive approval");
+    }
+    let input = parse_range_write_input(arguments)?;
+    let summary = write_cell_summary(input.cells.as_slice())?;
+    Ok((
+        "chatos-excel-live".to_string(),
+        vec![
+            "write_range".to_string(),
+            format!("workbook_id={}", input.workbook_id),
+            format!("worksheet_id={}", input.worksheet_id),
+            format!("range={}", input.range.canonical),
+            format!("expected_snapshot_id={}", input.expected_snapshot_id),
+            format!("cell_count={}", input.range.cell_count),
+            format!("blank_cells={}", summary.blank_cells),
+            format!("value_cells={}", summary.value_cells),
+            format!("formula_cells={}", summary.formula_cells),
+            format!("text_characters={}", summary.text_characters),
+            format!("content_sha256={}", summary.content_sha256),
+        ],
+    ))
+}
+
+pub(super) fn execute_approved(
+    operation: &str,
+    arguments: &Value,
+    approved_command_args: Option<&[String]>,
+    action_cancelled: Option<&AtomicBool>,
+) -> Result<Value> {
+    if operation != "excel_write_range" {
+        bail!("Excel Live Control operation does not support approved execution");
+    }
+    let (_, expected) = approval_command(operation, arguments)?;
+    if approved_command_args != Some(expected.as_slice()) {
+        bail!("approved Excel write no longer matches the exact reviewed arguments");
+    }
+    execute_range_write(arguments, action_cancelled)
 }
 
 pub(super) fn dependency_error() -> Option<String> {
@@ -720,6 +1495,9 @@ pub(super) fn dependency_error() -> Option<String> {
 }
 
 pub(super) fn execute(operation: &str, arguments: &Value) -> Result<Value> {
+    if operation == "excel_write_range" {
+        bail!("Excel live range writes require the signed Plugin runtime and interactive approval");
+    }
     if operation == "excel_read_range" {
         return execute_range_read(arguments);
     }
@@ -763,6 +1541,313 @@ fn execute_range_read(arguments: &Value) -> Result<Value> {
     }
 
     Ok(range_read_response(&target, &range, cells))
+}
+
+fn execute_range_write(arguments: &Value, action_cancelled: Option<&AtomicBool>) -> Result<Value> {
+    if action_cancelled.is_some_and(|cancelled| cancelled.load(Ordering::SeqCst)) {
+        bail!("approved Excel write was cancelled before execution");
+    }
+    let _write_guard = EXCEL_WRITE_LOCK
+        .lock()
+        .map_err(|_| anyhow!("Excel live write lock is unavailable"))?;
+    if action_cancelled.is_some_and(|cancelled| cancelled.load(Ordering::SeqCst)) {
+        bail!("approved Excel write was cancelled while waiting for another write");
+    }
+    let input = parse_range_write_input(arguments)?;
+    let before = read_platform_snapshot()?;
+    let normalized_before = normalize_snapshot(before.clone())?;
+    if !normalized_before
+        .get("running")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+    {
+        return Err(excel_not_running_error(&normalized_before));
+    }
+    let target = resolve_range_read_target(
+        &before,
+        &normalized_before,
+        input.workbook_id.as_str(),
+        input.worksheet_id.as_str(),
+    )?;
+    ensure_write_target_is_mutable(&target)?;
+
+    let current = read_platform_range(&range_read_bridge_request(&target, &input.range))?;
+    let current_cells = normalize_range_read_response(current, &target, &input.range)?;
+    let current_snapshot_id = range_snapshot_id(&target, &input.range, current_cells.as_slice());
+    if current_snapshot_id != input.expected_snapshot_id {
+        bail!("Excel range changed after it was read; read the exact range again before writing");
+    }
+    ensure_snapshot_cells_are_write_safe(current_cells.as_slice())?;
+    if action_cancelled.is_some_and(|cancelled| cancelled.load(Ordering::SeqCst)) {
+        bail!("approved Excel write was cancelled before mutation");
+    }
+
+    let request = range_write_bridge_request(&target, &input, current_cells.as_slice());
+    let response = write_platform_range(&request)?;
+    normalize_range_write_response(response, &target, &input, current_cells.as_slice())?;
+
+    let after = read_platform_snapshot()?;
+    let normalized_after = normalize_snapshot(after.clone())?;
+    let refreshed = resolve_range_read_target(
+        &after,
+        &normalized_after,
+        target.workbook_id.as_str(),
+        target.worksheet_id.as_str(),
+    )?;
+    if refreshed != target {
+        bail!("Excel workbook or worksheet identity changed after the verified write; inspect it again");
+    }
+
+    let final_response = read_platform_range(&range_read_bridge_request(&target, &input.range))?;
+    let final_cells = normalize_range_read_response(final_response, &target, &input.range)?;
+    if !desired_cells_match(input.cells.as_slice(), final_cells.as_slice())? {
+        bail!("Excel range changed after the bridge verified the write; inspect the range before any retry");
+    }
+    Ok(range_write_response(
+        &target,
+        &input.range,
+        final_cells,
+        action_cancelled.is_some_and(|cancelled| cancelled.load(Ordering::SeqCst)),
+    ))
+}
+
+fn ensure_write_target_is_mutable(target: &RangeReadTarget) -> Result<()> {
+    if target.workbook_read_only {
+        bail!("Excel workbook is read-only; live range writes are disabled");
+    }
+    if target.worksheet_protected {
+        bail!("Excel worksheet is protected; live range writes are disabled");
+    }
+    if target.worksheet_visibility != "visible" {
+        bail!("Excel live range writes require an exact visible worksheet");
+    }
+    Ok(())
+}
+
+fn ensure_snapshot_cells_are_write_safe(cells: &[Value]) -> Result<()> {
+    for cell in cells {
+        let object = cell
+            .as_object()
+            .expect("normalized Excel range cell object");
+        let address = object
+            .get("address")
+            .and_then(Value::as_str)
+            .expect("normalized Excel range cell address");
+        if object
+            .get("value_truncated")
+            .and_then(Value::as_bool)
+            .unwrap_or(true)
+            || object
+                .get("displayed_text_truncated")
+                .and_then(Value::as_bool)
+                .unwrap_or(true)
+            || object
+                .get("formula_truncated")
+                .and_then(Value::as_bool)
+                .unwrap_or(true)
+        {
+            bail!("Excel cell {address} has truncated state and cannot be safely replaced");
+        }
+        if object
+            .get("formula_hidden")
+            .and_then(Value::as_bool)
+            .unwrap_or(true)
+            || object
+                .get("formula_external_reference")
+                .and_then(Value::as_bool)
+                .unwrap_or(true)
+        {
+            bail!("Excel cell {address} has a hidden or external formula and cannot be safely replaced");
+        }
+        let status = object
+            .get("status")
+            .and_then(Value::as_str)
+            .expect("normalized Excel range cell status");
+        match status {
+            "blank" => {}
+            "value" => {
+                let value = object
+                    .get("value")
+                    .expect("normalized Excel range cell value");
+                if value.is_null() {
+                    bail!("Excel cell {address} has an unsupported non-scalar value");
+                }
+                if let Some(value) = value.as_str() {
+                    validate_safe_live_text(value, "existing Excel cell text")?;
+                }
+            }
+            "formula" | "error" => {
+                let formula = object
+                    .get("formula")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| anyhow!("Excel cell {address} formula cannot be restored"))?;
+                validate_live_formula(formula).with_context(|| {
+                    format!("Excel cell {address} uses a formula outside the rollback allowlist")
+                })?;
+            }
+            _ => bail!("Excel cell {address} has an unsupported state"),
+        }
+    }
+    Ok(())
+}
+
+fn range_write_bridge_request(
+    target: &RangeReadTarget,
+    input: &RangeWriteInput,
+    expected_cells: &[Value],
+) -> Value {
+    json!({
+        "schema_version": 1,
+        "runtime_instance": target.runtime_instance,
+        "workbook_index": target.workbook_index,
+        "workbook_name": target.workbook_name,
+        "workbook_identity_source": target.workbook_identity_source,
+        "workbook_read_only": target.workbook_read_only,
+        "worksheet_index": target.worksheet_index,
+        "worksheet_name": target.worksheet_name,
+        "worksheet_visibility": target.worksheet_visibility,
+        "worksheet_protected": target.worksheet_protected,
+        "range_address": input.range.canonical,
+        "start_row": input.range.start_row,
+        "start_column": input.range.start_column,
+        "row_count": input.range.row_count,
+        "column_count": input.range.column_count,
+        "cell_count": input.range.cell_count,
+        "expected_cells": expected_cells,
+        "write_cells": write_cells_bridge_value(input.cells.as_slice()),
+    })
+}
+
+fn normalize_range_write_response(
+    response: Value,
+    target: &RangeReadTarget,
+    input: &RangeWriteInput,
+    expected_cells: &[Value],
+) -> Result<Vec<Value>> {
+    let status = response
+        .get("write_status")
+        .and_then(Value::as_str)
+        .context("Excel range write response is missing write_status")?
+        .to_string();
+    if status == "rollback_failed" {
+        bail!("Excel write failed and the bridge could not verify complete rollback; inspect the workbook immediately and do not retry automatically");
+    }
+    let cells = normalize_range_read_response(response, target, &input.range)?;
+    match status.as_str() {
+        "written" => {
+            if !desired_cells_match(input.cells.as_slice(), cells.as_slice())? {
+                bail!(
+                    "Excel bridge returned a write result that does not match the approved cells"
+                );
+            }
+            Ok(cells)
+        }
+        "rolled_back" => {
+            if cells != expected_cells {
+                bail!("Excel write failed and rollback verification did not reproduce the exact prior snapshot");
+            }
+            bail!("Excel write failed after mutation, but the exact target range was restored and verified; inspect it before retrying")
+        }
+        _ => bail!("Excel range write response has an unsupported status"),
+    }
+}
+
+fn desired_cells_match(desired: &[WriteCell], actual: &[Value]) -> Result<bool> {
+    if desired.len() != actual.len() {
+        return Ok(false);
+    }
+    for (desired, actual) in desired.iter().zip(actual) {
+        let actual = actual
+            .as_object()
+            .context("normalized Excel write result cell must be an object")?;
+        let has_formula = actual
+            .get("has_formula")
+            .and_then(Value::as_bool)
+            .context("normalized Excel write result formula state is missing")?;
+        let matches = match desired {
+            WriteCell::Blank => {
+                !has_formula
+                    && actual.get("status").and_then(Value::as_str) == Some("blank")
+                    && actual.get("value").is_some_and(Value::is_null)
+            }
+            WriteCell::Value(value) => {
+                !has_formula
+                    && actual.get("status").and_then(Value::as_str) == Some("value")
+                    && same_cell_scalar(value, actual.get("value"))
+            }
+            WriteCell::Formula(formula) => {
+                has_formula
+                    && actual.get("formula").and_then(Value::as_str) == Some(formula.as_str())
+                    && actual.get("formula_hidden").and_then(Value::as_bool) == Some(false)
+                    && actual
+                        .get("formula_external_reference")
+                        .and_then(Value::as_bool)
+                        == Some(false)
+            }
+        };
+        if !matches {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+fn same_cell_scalar(expected: &Value, actual: Option<&Value>) -> bool {
+    let Some(actual) = actual else {
+        return false;
+    };
+    match (expected, actual) {
+        (Value::Number(expected), Value::Number(actual)) => expected
+            .as_f64()
+            .zip(actual.as_f64())
+            .is_some_and(|(expected, actual)| expected.to_bits() == actual.to_bits()),
+        _ => expected == actual,
+    }
+}
+
+fn range_write_response(
+    target: &RangeReadTarget,
+    range: &A1Range,
+    cells: Vec<Value>,
+    cancel_requested_after_commit: bool,
+) -> Value {
+    let range_snapshot_id = range_snapshot_id(target, range, cells.as_slice());
+    let rows = cells
+        .chunks(range.column_count)
+        .map(|row| Value::Array(row.to_vec()))
+        .collect::<Vec<_>>();
+    json!({
+        "platform": std::env::consts::OS,
+        "excel_running": true,
+        "safe_no_launch": true,
+        "write_verified": true,
+        "rollback_status": "not_needed",
+        "save_performed": false,
+        "export_performed": false,
+        "explicit_recalculation_performed": false,
+        "cancel_requested_after_commit": cancel_requested_after_commit,
+        "range_snapshot_id": range_snapshot_id,
+        "workbook": {
+            "workbook_id": target.workbook_id,
+            "name": target.workbook_name,
+            "index": target.workbook_index,
+        },
+        "worksheet": {
+            "worksheet_id": target.worksheet_id,
+            "name": target.worksheet_name,
+            "index": target.worksheet_index,
+            "protected": target.worksheet_protected,
+        },
+        "range": {
+            "address": range.canonical,
+            "start_row": range.start_row,
+            "start_column": range.start_column,
+            "row_count": range.row_count,
+            "column_count": range.column_count,
+            "cell_count": range.cell_count,
+        },
+        "cells": rows,
+    })
 }
 
 fn execute_with_snapshot(operation: &str, arguments: &Value, snapshot: Value) -> Result<Value> {
@@ -871,6 +1956,35 @@ fn read_platform_range(request: &Value) -> Result<Value> {
                 ],
                 request,
                 "Windows Excel bounded range bridge",
+            )
+        }
+        _ => Err(anyhow!(
+            "Excel Live Control is currently available only on macOS and Windows"
+        )),
+    }
+}
+
+fn write_platform_range(request: &Value) -> Result<Value> {
+    match std::env::consts::OS {
+        "macos" => run_json_command_with_stdin(
+            MACOS_OSASCRIPT_PATH,
+            &["-l", "JavaScript", "-e", MACOS_RANGE_WRITE_SCRIPT],
+            request,
+            "macOS Excel bounded range write bridge",
+        ),
+        "windows" => {
+            let powershell = windows_powershell_path()?;
+            run_json_command_with_stdin(
+                powershell.as_path(),
+                &[
+                    "-NoLogo",
+                    "-NoProfile",
+                    "-NonInteractive",
+                    "-Command",
+                    WINDOWS_RANGE_WRITE_SCRIPT,
+                ],
+                request,
+                "Windows Excel bounded range write bridge",
             )
         }
         _ => Err(anyhow!(
@@ -1016,6 +2130,7 @@ fn run_json_command_bytes<P: AsRef<Path>>(
     stdin: Option<&[u8]>,
     label: &str,
 ) -> Result<Value> {
+    let is_write_bridge = label.contains("range write bridge");
     let mut child = Command::new(program.as_ref())
         .args(args)
         .stdin(if stdin.is_some() {
@@ -1046,7 +2161,12 @@ fn run_json_command_bytes<P: AsRef<Path>>(
         thread::spawn(move || read_bounded_pipe(stdout_reader, "Excel bridge stdout"));
     let stderr_thread =
         thread::spawn(move || read_bounded_pipe(stderr_reader, "Excel bridge stderr"));
-    let deadline = Instant::now() + BRIDGE_TIMEOUT;
+    let deadline = Instant::now()
+        + if is_write_bridge {
+            WRITE_BRIDGE_TIMEOUT
+        } else {
+            BRIDGE_TIMEOUT
+        };
     let status = loop {
         if let Some(status) = child
             .try_wait()
@@ -1057,6 +2177,9 @@ fn run_json_command_bytes<P: AsRef<Path>>(
         if Instant::now() >= deadline {
             let _ = child.kill();
             let _ = child.wait();
+            if is_write_bridge {
+                bail!("{label} timed out; exact mutation and rollback state could not be verified, so inspect the target range before any retry");
+            }
             bail!("{label} timed out without launching or closing Microsoft Excel");
         }
         thread::sleep(Duration::from_millis(20));
@@ -1064,10 +2187,24 @@ fn run_json_command_bytes<P: AsRef<Path>>(
 
     let stdout = stdout_thread
         .join()
-        .map_err(|_| anyhow!("Excel bridge stdout reader failed"))??;
+        .map_err(|_| anyhow!("Excel bridge stdout reader failed"))?;
     let stderr = stderr_thread
         .join()
-        .map_err(|_| anyhow!("Excel bridge stderr reader failed"))??;
+        .map_err(|_| anyhow!("Excel bridge stderr reader failed"))?;
+    let stdout = match stdout {
+        Ok(stdout) => stdout,
+        Err(_) if is_write_bridge => bail!(
+            "{label} returned an oversized or unreadable result; inspect the target range before any retry"
+        ),
+        Err(error) => return Err(error),
+    };
+    let stderr = match stderr {
+        Ok(stderr) => stderr,
+        Err(_) if is_write_bridge => bail!(
+            "{label} returned oversized diagnostics; inspect the target range before any retry"
+        ),
+        Err(error) => return Err(error),
+    };
     if !status.success() {
         let stderr = String::from_utf8_lossy(&stderr);
         if stderr.contains("-1743") || stderr.to_ascii_lowercase().contains("not authorized") {
@@ -1075,13 +2212,24 @@ fn run_json_command_bytes<P: AsRef<Path>>(
                 "macOS denied Microsoft Excel Automation access; allow ChatOS to control Microsoft Excel in System Settings"
             );
         }
+        if is_write_bridge {
+            bail!("{label} failed; exact mutation and rollback state could not be verified, so inspect the target range before any retry");
+        }
         bail!("{label} failed without changing Microsoft Excel");
     }
     if !stderr.is_empty() {
+        if is_write_bridge {
+            bail!("{label} returned unexpected diagnostics; inspect the target range before any retry");
+        }
         bail!("{label} returned unexpected diagnostic output");
     }
-    serde_json::from_slice(stdout.as_slice())
-        .with_context(|| format!("decode bounded {label} response"))
+    match serde_json::from_slice(stdout.as_slice()) {
+        Ok(value) => Ok(value),
+        Err(_) if is_write_bridge => {
+            bail!("{label} returned an invalid result; inspect the target range before any retry")
+        }
+        Err(error) => Err(error).with_context(|| format!("decode bounded {label} response")),
+    }
 }
 
 fn read_bounded_pipe<R: Read>(reader: R, label: &str) -> Result<Vec<u8>> {
@@ -1284,7 +2432,7 @@ fn status_response(snapshot: &Value) -> Value {
     } else if !running {
         "excel_not_running"
     } else {
-        "ready_read_only"
+        "ready"
     };
     json!({
         "platform": snapshot.get("platform"),
@@ -1294,11 +2442,14 @@ fn status_response(snapshot: &Value) -> Value {
         "application_version": snapshot.get("application_version"),
         "open_workbook_count": snapshot.get("workbooks_total"),
         "workbooks_truncated": snapshot.get("workbooks_truncated"),
-        "read_only": true,
+        "read_only": false,
+        "discovery_read_only": true,
         "safe_no_launch": true,
         "cell_content_access": true,
         "max_range_cells": MAX_RANGE_CELLS,
-        "write_access": false,
+        "write_access": true,
+        "write_requires_interactive_approval": true,
+        "write_saves_workbook": false,
     })
 }
 
@@ -1443,9 +2594,18 @@ fn resolve_range_read_target(
         workbook_index,
         workbook_name,
         workbook_identity_source,
+        workbook_read_only: workbook
+            .get("read_only")
+            .and_then(Value::as_bool)
+            .expect("normalized Excel workbook read-only state"),
         worksheet_id: worksheet_id.to_string(),
         worksheet_index,
         worksheet_name,
+        worksheet_visibility: worksheet
+            .get("visible")
+            .and_then(Value::as_str)
+            .expect("normalized Excel worksheet visibility")
+            .to_string(),
         worksheet_protected: worksheet
             .get("protected")
             .and_then(Value::as_bool)
@@ -1619,6 +2779,7 @@ fn required_bounded_cell_text<'a>(object: &'a Map<String, Value>, field: &str) -
 }
 
 fn range_read_response(target: &RangeReadTarget, range: &A1Range, cells: Vec<Value>) -> Value {
+    let range_snapshot_id = range_snapshot_id(target, range, cells.as_slice());
     let rows = cells
         .chunks(range.column_count)
         .map(|row| Value::Array(row.to_vec()))
@@ -1628,6 +2789,7 @@ fn range_read_response(target: &RangeReadTarget, range: &A1Range, cells: Vec<Val
         "excel_running": true,
         "read_only": true,
         "safe_no_launch": true,
+        "range_snapshot_id": range_snapshot_id,
         "workbook": {
             "workbook_id": target.workbook_id,
             "name": target.workbook_name,
@@ -1648,6 +2810,333 @@ fn range_read_response(target: &RangeReadTarget, range: &A1Range, cells: Vec<Val
             "cell_count": range.cell_count,
         },
         "cells": rows,
+    })
+}
+
+fn range_snapshot_id(target: &RangeReadTarget, range: &A1Range, cells: &[Value]) -> String {
+    let mut hasher = Sha256::new();
+    for value in [
+        "chatos-excel-range-snapshot-v1",
+        std::env::consts::OS,
+        target.runtime_instance.as_str(),
+        target.workbook_id.as_str(),
+        target.worksheet_id.as_str(),
+        range.canonical.as_str(),
+    ] {
+        hasher.update((value.len() as u64).to_be_bytes());
+        hasher.update(value.as_bytes());
+    }
+    let cells = serde_json::to_vec(cells).expect("normalized Excel range cells serialize");
+    hasher.update((cells.len() as u64).to_be_bytes());
+    hasher.update(cells);
+    format!("excel_range_{}", hex::encode(hasher.finalize()))
+}
+
+fn parse_range_write_input(arguments: &Value) -> Result<RangeWriteInput> {
+    ensure_exact_arguments(
+        arguments,
+        &[
+            "workbook_id",
+            "worksheet_id",
+            "range",
+            "expected_snapshot_id",
+            "cells",
+        ],
+    )?;
+    let workbook_id = required_text(arguments, "workbook_id", 96)?.to_string();
+    let worksheet_id = required_text(arguments, "worksheet_id", 96)?.to_string();
+    let range = parse_a1_range(required_text(arguments, "range", 32)?)?;
+    let expected_snapshot_id = required_text(
+        arguments,
+        "expected_snapshot_id",
+        MAX_SNAPSHOT_ID_CHARACTERS,
+    )?;
+    let snapshot_suffix = expected_snapshot_id
+        .strip_prefix("excel_range_")
+        .filter(|value| {
+            value.len() == 64
+                && value
+                    .bytes()
+                    .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+        })
+        .ok_or_else(|| anyhow!("expected_snapshot_id must come from excel_read_range"))?;
+    debug_assert_eq!(snapshot_suffix.len(), 64);
+
+    let rows = arguments
+        .get("cells")
+        .and_then(Value::as_array)
+        .context("cells must be an exact rectangular row matrix")?;
+    if rows.len() != range.row_count {
+        bail!("cells row count must exactly match the target range");
+    }
+    let mut cells = Vec::with_capacity(range.cell_count);
+    for row in rows {
+        let row = row.as_array().context("each cells row must be an array")?;
+        if row.len() != range.column_count {
+            bail!("cells column count must exactly match the target range");
+        }
+        for cell in row {
+            cells.push(parse_write_cell(cell)?);
+        }
+    }
+    if cells.len() != range.cell_count {
+        bail!("cells count must exactly match the target range");
+    }
+    Ok(RangeWriteInput {
+        workbook_id,
+        worksheet_id,
+        range,
+        expected_snapshot_id: expected_snapshot_id.to_string(),
+        cells,
+    })
+}
+
+fn parse_write_cell(value: &Value) -> Result<WriteCell> {
+    let object = value
+        .as_object()
+        .context("each Excel write cell must be a typed object")?;
+    let kind = object
+        .get("kind")
+        .and_then(Value::as_str)
+        .context("each Excel write cell requires a kind")?;
+    match kind {
+        "blank" => {
+            ensure_exact_object_fields(object, &["kind"], "Excel blank write cell")?;
+            Ok(WriteCell::Blank)
+        }
+        "value" => {
+            ensure_exact_object_fields(object, &["kind", "value"], "Excel value write cell")?;
+            let value = object
+                .get("value")
+                .context("Excel value write cell is missing value")?;
+            let value = match value {
+                Value::Bool(value) => Value::Bool(*value),
+                Value::Number(value)
+                    if value
+                        .as_f64()
+                        .is_some_and(|value| value.is_finite() && value.abs() <= 1.0e15) =>
+                {
+                    Value::Number(value.clone())
+                }
+                Value::String(value) => {
+                    validate_safe_live_text(value, "write cell value")?;
+                    Value::String(value.clone())
+                }
+                _ => bail!(
+                    "Excel value write cell must contain a bounded boolean, number, or string"
+                ),
+            };
+            Ok(WriteCell::Value(value))
+        }
+        "formula" => {
+            ensure_exact_object_fields(object, &["kind", "formula"], "Excel formula write cell")?;
+            let formula = object
+                .get("formula")
+                .and_then(Value::as_str)
+                .context("Excel formula write cell is missing formula text")?;
+            Ok(WriteCell::Formula(validate_live_formula(formula)?))
+        }
+        _ => bail!("Excel write cell kind must be blank, value, or formula"),
+    }
+}
+
+fn ensure_exact_object_fields(
+    object: &Map<String, Value>,
+    allowed: &[&str],
+    label: &str,
+) -> Result<()> {
+    if object.len() != allowed.len()
+        || object
+            .keys()
+            .any(|key| !allowed.iter().any(|allowed| key == allowed))
+    {
+        bail!("{label} contains unknown or missing fields");
+    }
+    Ok(())
+}
+
+fn validate_live_formula(value: &str) -> Result<String> {
+    validate_bounded_text(value, "write formula", MAX_CELL_TEXT_CHARACTERS)?;
+    if value.trim() != value || !value.starts_with('=') || value.len() < 2 {
+        bail!("Excel write formula must start with one equals sign and have no outer whitespace");
+    }
+    let expression = &value[1..];
+    if !expression.is_ascii()
+        || expression.bytes().any(|byte| {
+            !(byte.is_ascii_alphanumeric()
+                || matches!(
+                    byte,
+                    b'_' | b'.'
+                        | b'$'
+                        | b':'
+                        | b','
+                        | b'+'
+                        | b'-'
+                        | b'*'
+                        | b'/'
+                        | b'%'
+                        | b'^'
+                        | b'<'
+                        | b'>'
+                        | b'='
+                        | b'('
+                        | b')'
+                        | b'!'
+                        | b'\''
+                        | b' '
+                ))
+        })
+        || formula_contains_external_reference(value)
+    {
+        bail!("Excel write formula contains unsupported dynamic, string, or external-link syntax");
+    }
+    let allowed_functions = [
+        "ABS", "AND", "AVERAGE", "COUNT", "COUNTA", "IF", "MAX", "MIN", "NOT", "OR", "ROUND", "SUM",
+    ];
+    let bytes = expression.as_bytes();
+    let mut cursor = 0usize;
+    while cursor < bytes.len() {
+        if bytes[cursor] == b'\'' {
+            let end = expression[cursor + 1..]
+                .find('\'')
+                .map(|offset| cursor + 1 + offset)
+                .ok_or_else(|| {
+                    anyhow!("Excel write formula contains an unterminated worksheet name")
+                })?;
+            validate_formula_sheet_name(&expression[cursor + 1..end])?;
+            if bytes.get(end + 1) != Some(&b'!') {
+                bail!("quoted Excel formula identifiers are only allowed as worksheet references");
+            }
+            cursor = end + 2;
+            continue;
+        }
+        if bytes[cursor].is_ascii_alphabetic()
+            || bytes[cursor] == b'_'
+            || (bytes[cursor] == b'$' && bytes.get(cursor + 1).is_some_and(u8::is_ascii_alphabetic))
+        {
+            let start = cursor;
+            cursor += 1;
+            while cursor < bytes.len()
+                && (bytes[cursor].is_ascii_alphanumeric()
+                    || matches!(bytes[cursor], b'_' | b'.' | b'$'))
+            {
+                cursor += 1;
+            }
+            let mut lookahead = cursor;
+            while lookahead < bytes.len() && bytes[lookahead] == b' ' {
+                lookahead += 1;
+            }
+            let identifier = &expression[start..cursor];
+            if bytes.get(lookahead) == Some(&b'(') {
+                let function = identifier.to_ascii_uppercase();
+                if !allowed_functions.contains(&function.as_str()) {
+                    bail!(
+                        "Excel formula function is not in the local safety allowlist: {function}"
+                    );
+                }
+                continue;
+            }
+            let is_sheet_reference = bytes.get(lookahead) == Some(&b'!');
+            let plain_identifier = identifier.replace('$', "");
+            let is_boolean = matches!(plain_identifier.as_str(), "TRUE" | "FALSE");
+            let is_cell_reference = parse_a1_cell(plain_identifier.as_str()).is_ok();
+            let exponent_digit_index = if matches!(bytes.get(lookahead), Some(b'+' | b'-')) {
+                lookahead + 1
+            } else {
+                lookahead
+            };
+            let is_numeric_exponent = matches!(identifier, "E" | "e")
+                && start > 0
+                && bytes[start - 1].is_ascii_digit()
+                && bytes
+                    .get(exponent_digit_index)
+                    .is_some_and(u8::is_ascii_digit);
+            if is_sheet_reference {
+                validate_formula_sheet_name(identifier)?;
+            } else if !is_boolean && !is_cell_reference && !is_numeric_exponent {
+                bail!("Excel formula named ranges are disabled; use cells, booleans, safe functions, or worksheet references");
+            }
+        } else {
+            cursor += 1;
+        }
+    }
+    Ok(value.to_string())
+}
+
+fn validate_safe_live_text(value: &str, field: &str) -> Result<()> {
+    validate_bounded_text(value, field, MAX_CELL_TEXT_CHARACTERS)?;
+    if value.is_empty() {
+        bail!("empty Excel text must be written as an explicit blank cell");
+    }
+    if value
+        .trim_start()
+        .chars()
+        .next()
+        .is_some_and(|character| matches!(character, '=' | '+' | '-' | '@' | '\''))
+    {
+        bail!("Excel text that could be interpreted as a formula is disabled");
+    }
+    Ok(())
+}
+
+fn validate_formula_sheet_name(value: &str) -> Result<()> {
+    let characters = value.chars().count();
+    if characters == 0
+        || characters > 31
+        || value.trim().is_empty()
+        || value.starts_with('\'')
+        || value.ends_with('\'')
+        || value.chars().any(|character| {
+            character.is_control() || matches!(character, ':' | '\\' | '/' | '?' | '*' | '[' | ']')
+        })
+    {
+        bail!("Excel formula worksheet name is invalid");
+    }
+    Ok(())
+}
+
+fn write_cells_bridge_value(cells: &[WriteCell]) -> Value {
+    Value::Array(
+        cells
+            .iter()
+            .map(|cell| match cell {
+                WriteCell::Blank => json!({"kind": "blank"}),
+                WriteCell::Value(value) => json!({"kind": "value", "value": value}),
+                WriteCell::Formula(formula) => {
+                    json!({"kind": "formula", "formula": formula})
+                }
+            })
+            .collect(),
+    )
+}
+
+fn write_cell_summary(cells: &[WriteCell]) -> Result<WriteCellSummary> {
+    let mut blank_cells = 0usize;
+    let mut value_cells = 0usize;
+    let mut formula_cells = 0usize;
+    let mut text_characters = 0usize;
+    for cell in cells {
+        match cell {
+            WriteCell::Blank => blank_cells += 1,
+            WriteCell::Value(Value::String(value)) => {
+                value_cells += 1;
+                text_characters += value.chars().count();
+            }
+            WriteCell::Value(_) => value_cells += 1,
+            WriteCell::Formula(formula) => {
+                formula_cells += 1;
+                text_characters += formula.chars().count();
+            }
+        }
+    }
+    let encoded = serde_json::to_vec(&write_cells_bridge_value(cells))
+        .context("encode Excel write approval summary")?;
+    Ok(WriteCellSummary {
+        blank_cells,
+        value_cells,
+        formula_cells,
+        text_characters,
+        content_sha256: hex::encode(Sha256::digest(encoded)),
     })
 }
 
@@ -1884,9 +3373,70 @@ mod tests {
         })
     }
 
+    fn sample_range_bridge_response(
+        target: &RangeReadTarget,
+        range: &A1Range,
+        first_value: Value,
+        second_value: Value,
+        second_formula: &str,
+    ) -> Value {
+        let first_display = first_value
+            .as_str()
+            .map(str::to_string)
+            .unwrap_or_else(|| first_value.to_string());
+        let second_display = second_value
+            .as_str()
+            .map(str::to_string)
+            .unwrap_or_else(|| second_value.to_string());
+        json!({
+            "schema_version": 1,
+            "runtime_instance": target.runtime_instance,
+            "workbook_index": target.workbook_index,
+            "workbook_name": target.workbook_name,
+            "worksheet_index": target.worksheet_index,
+            "worksheet_name": target.worksheet_name,
+            "range_address": range.canonical,
+            "start_row": range.start_row,
+            "start_column": range.start_column,
+            "row_count": range.row_count,
+            "column_count": range.column_count,
+            "cell_count": range.cell_count,
+            "cells": [
+                {
+                    "row_offset": 0,
+                    "column_offset": 0,
+                    "value": first_value,
+                    "value_truncated": false,
+                    "displayed_text": first_display,
+                    "displayed_text_truncated": false,
+                    "has_formula": false,
+                    "formula": null,
+                    "formula_truncated": false,
+                    "formula_hidden": false,
+                    "formula_external_reference": false,
+                    "is_error": false
+                },
+                {
+                    "row_offset": 0,
+                    "column_offset": 1,
+                    "value": second_value,
+                    "value_truncated": false,
+                    "displayed_text": second_display,
+                    "displayed_text_truncated": false,
+                    "has_formula": true,
+                    "formula": second_formula,
+                    "formula_truncated": false,
+                    "formula_hidden": false,
+                    "formula_external_reference": false,
+                    "is_error": false
+                }
+            ]
+        })
+    }
+
     #[test]
     fn publishes_bounded_read_only_no_launch_tools() {
-        let tools = tool_definitions();
+        let tools = tool_definitions(false);
         assert_eq!(tools.len(), 4);
         let names = tools
             .iter()
@@ -1917,6 +3467,35 @@ mod tests {
         assert!(WINDOWS_RANGE_READ_SCRIPT.contains("[Console]::In.ReadToEnd()"));
         assert!(WINDOWS_SNAPSHOT_SCRIPT.contains("GetActiveObject"));
         assert!(WINDOWS_RANGE_READ_SCRIPT.contains("GetActiveObject"));
+
+        let approved_tools = tool_definitions(true);
+        assert_eq!(approved_tools.len(), 5);
+        assert_eq!(
+            approved_tools
+                .last()
+                .and_then(|tool| tool.get("name"))
+                .and_then(Value::as_str),
+            Some("excel_write_range")
+        );
+        assert!(requires_interactive_approval("excel_write_range"));
+        assert!(!requires_interactive_approval("excel_read_range"));
+        assert!(execute("excel_write_range", &json!({}))
+            .expect_err("direct Excel write execution must fail before platform access")
+            .to_string()
+            .contains("interactive approval"));
+        assert!(!MACOS_RANGE_WRITE_SCRIPT.contains(".activate("));
+        assert!(!MACOS_RANGE_WRITE_SCRIPT.contains(".open("));
+        assert!(!MACOS_RANGE_WRITE_SCRIPT.contains(".save("));
+        assert!(!MACOS_RANGE_WRITE_SCRIPT.contains(".select("));
+        assert!(!MACOS_RANGE_WRITE_SCRIPT.contains(".calculate("));
+        assert!(!WINDOWS_RANGE_WRITE_SCRIPT.contains("Workbooks.Open"));
+        assert!(!WINDOWS_RANGE_WRITE_SCRIPT.contains(".Activate("));
+        assert!(!WINDOWS_RANGE_WRITE_SCRIPT.contains(".Save("));
+        assert!(!WINDOWS_RANGE_WRITE_SCRIPT.contains(".Select("));
+        assert!(!WINDOWS_RANGE_WRITE_SCRIPT.contains(".Calculate("));
+        assert!(MACOS_RANGE_WRITE_SCRIPT.contains("fileHandleWithStandardInput"));
+        assert!(WINDOWS_RANGE_WRITE_SCRIPT.contains("[Console]::In.ReadToEnd()"));
+        assert!(WINDOWS_RANGE_WRITE_SCRIPT.contains("GetActiveObject"));
     }
 
     #[test]
@@ -2084,6 +3663,73 @@ mod tests {
     }
 
     #[test]
+    fn write_inputs_are_exact_typed_bounded_and_formula_allowlisted() {
+        let snapshot_id = format!("excel_range_{}", "a".repeat(64));
+        let arguments = json!({
+            "workbook_id": "excel_wb_current",
+            "worksheet_id": "excel_ws_current",
+            "range": "A1:B2",
+            "expected_snapshot_id": snapshot_id,
+            "cells": [
+                [{"kind":"blank"},{"kind":"value","value":42.5}],
+                [{"kind":"value","value":"Quarter 1"},{"kind":"formula","formula":"=SUM(A1:A2)"}]
+            ]
+        });
+        let parsed = parse_range_write_input(&arguments).expect("safe write input");
+        assert_eq!(parsed.range.cell_count, 4);
+        assert_eq!(parsed.cells.len(), 4);
+        assert_eq!(
+            validate_live_formula("=ROUND(SUM(A1:A2),2)").expect("safe formula"),
+            "=ROUND(SUM(A1:A2),2)"
+        );
+        for formula in [
+            "=WEBSERVICE(A1)",
+            "=RTD(A1)",
+            "='[Book.xlsx]Sheet1'!A1",
+            "=HYPERLINK(A1)",
+            "=SUM(Table1[Amount])",
+            "=\"secret\"",
+        ] {
+            assert!(validate_live_formula(formula).is_err(), "reject {formula}");
+        }
+
+        let mut dangerous_text = arguments.clone();
+        dangerous_text["cells"][1][0] = json!({"kind":"value","value":"=CMD()"});
+        assert!(parse_range_write_input(&dangerous_text).is_err());
+
+        let mut wrong_shape = arguments.clone();
+        wrong_shape["cells"][1] = json!([{"kind":"blank"}]);
+        assert!(parse_range_write_input(&wrong_shape).is_err());
+
+        let mut bad_snapshot = arguments.clone();
+        bad_snapshot["expected_snapshot_id"] = json!("excel_range_stale");
+        assert!(parse_range_write_input(&bad_snapshot).is_err());
+    }
+
+    #[test]
+    fn write_approval_arguments_bind_content_without_exposing_cell_text() {
+        let arguments = json!({
+            "workbook_id": "excel_wb_current",
+            "worksheet_id": "excel_ws_current",
+            "range": "A1:B1",
+            "expected_snapshot_id": format!("excel_range_{}", "b".repeat(64)),
+            "cells": [[
+                {"kind":"value","value":"private budget note"},
+                {"kind":"formula","formula":"=A1"}
+            ]]
+        });
+        let (command, args) = approval_command("excel_write_range", &arguments)
+            .expect("Excel write approval command");
+        assert_eq!(command, "chatos-excel-live");
+        let serialized = args.join("\n");
+        assert!(serialized.contains("range=A1:B1"));
+        assert!(serialized.contains("cell_count=2"));
+        assert!(serialized.contains("content_sha256="));
+        assert!(!serialized.contains("private budget note"));
+        assert!(!serialized.contains("formula==A1"));
+    }
+
+    #[test]
     fn range_target_uses_exact_opaque_workbook_and_worksheet_identities() {
         let raw = sample_snapshot();
         let normalized = normalize_snapshot(raw.clone()).expect("normalized snapshot");
@@ -2189,6 +3835,137 @@ mod tests {
         let serialized = serde_json::to_string(&projected).expect("serialized tool response");
         assert!(!serialized.contains("/private/secret"));
         assert!(!serialized.contains("identity_source"));
+        assert!(projected
+            .get("range_snapshot_id")
+            .and_then(Value::as_str)
+            .is_some_and(|value| value.starts_with("excel_range_") && value.len() == 76));
+    }
+
+    #[test]
+    fn write_result_requires_exact_snapshot_safe_cells_and_verified_values() {
+        let raw = sample_snapshot();
+        let normalized = normalize_snapshot(raw.clone()).expect("normalized snapshot");
+        let workbook_id = normalized
+            .pointer("/workbooks/0/workbook_id")
+            .and_then(Value::as_str)
+            .expect("workbook ID");
+        let worksheet_id = normalized
+            .pointer("/workbooks/0/sheets/0/worksheet_id")
+            .and_then(Value::as_str)
+            .expect("worksheet ID");
+        let target = resolve_range_read_target(&raw, &normalized, workbook_id, worksheet_id)
+            .expect("exact range target");
+        ensure_write_target_is_mutable(&target).expect("mutable exact target");
+        let range = parse_a1_range("A1:B1").expect("range");
+        let current = normalize_range_read_response(
+            sample_range_bridge_response(&target, &range, json!(42.5), json!(85.0), "=A1*2"),
+            &target,
+            &range,
+        )
+        .expect("current cells");
+        ensure_snapshot_cells_are_write_safe(current.as_slice()).expect("safe rollback snapshot");
+        let snapshot_id = range_snapshot_id(&target, &range, current.as_slice());
+        let input = RangeWriteInput {
+            workbook_id: workbook_id.to_string(),
+            worksheet_id: worksheet_id.to_string(),
+            range: range.clone(),
+            expected_snapshot_id: snapshot_id,
+            cells: vec![
+                WriteCell::Value(json!(43.0)),
+                WriteCell::Formula("=A1*3".to_string()),
+            ],
+        };
+
+        let mut written =
+            sample_range_bridge_response(&target, &range, json!(43.0), json!(129.0), "=A1*3");
+        written["write_status"] = json!("written");
+        let normalized_written =
+            normalize_range_write_response(written, &target, &input, current.as_slice())
+                .expect("verified write result");
+        assert!(
+            desired_cells_match(input.cells.as_slice(), normalized_written.as_slice())
+                .expect("desired write comparison")
+        );
+
+        let mut rolled_back =
+            sample_range_bridge_response(&target, &range, json!(42.5), json!(85.0), "=A1*2");
+        rolled_back["write_status"] = json!("rolled_back");
+        assert!(
+            normalize_range_write_response(rolled_back, &target, &input, current.as_slice(),)
+                .expect_err("rolled-back write must not report success")
+                .to_string()
+                .contains("restored and verified")
+        );
+    }
+
+    #[test]
+    fn write_safety_rejects_read_only_hidden_protected_and_ambiguous_snapshots() {
+        let raw = sample_snapshot();
+        let normalized = normalize_snapshot(raw.clone()).expect("normalized snapshot");
+        let workbook_id = normalized
+            .pointer("/workbooks/0/workbook_id")
+            .and_then(Value::as_str)
+            .expect("workbook ID");
+        let visible_id = normalized
+            .pointer("/workbooks/0/sheets/0/worksheet_id")
+            .and_then(Value::as_str)
+            .expect("visible worksheet ID");
+        let protected_id = normalized
+            .pointer("/workbooks/0/sheets/1/worksheet_id")
+            .and_then(Value::as_str)
+            .expect("protected worksheet ID");
+        let visible = resolve_range_read_target(&raw, &normalized, workbook_id, visible_id)
+            .expect("visible target");
+        let protected = resolve_range_read_target(&raw, &normalized, workbook_id, protected_id)
+            .expect("protected target");
+        assert!(ensure_write_target_is_mutable(&visible).is_ok());
+        assert!(ensure_write_target_is_mutable(&protected).is_err());
+
+        let mut read_only_raw = sample_snapshot();
+        read_only_raw["workbooks"][0]["read_only"] = json!(true);
+        let read_only_normalized =
+            normalize_snapshot(read_only_raw.clone()).expect("read-only normalized snapshot");
+        let read_only_target = resolve_range_read_target(
+            &read_only_raw,
+            &read_only_normalized,
+            read_only_normalized
+                .pointer("/workbooks/0/workbook_id")
+                .and_then(Value::as_str)
+                .expect("read-only workbook ID"),
+            read_only_normalized
+                .pointer("/workbooks/0/sheets/0/worksheet_id")
+                .and_then(Value::as_str)
+                .expect("read-only worksheet ID"),
+        )
+        .expect("read-only target");
+        assert!(ensure_write_target_is_mutable(&read_only_target).is_err());
+
+        let mut hidden_raw = sample_snapshot();
+        hidden_raw["workbooks"][0]["sheets"][1]["protected"] = json!(false);
+        let hidden_normalized =
+            normalize_snapshot(hidden_raw.clone()).expect("hidden normalized snapshot");
+        let hidden_target = resolve_range_read_target(
+            &hidden_raw,
+            &hidden_normalized,
+            hidden_normalized
+                .pointer("/workbooks/0/workbook_id")
+                .and_then(Value::as_str)
+                .expect("hidden workbook ID"),
+            hidden_normalized
+                .pointer("/workbooks/0/sheets/1/worksheet_id")
+                .and_then(Value::as_str)
+                .expect("hidden worksheet ID"),
+        )
+        .expect("hidden target");
+        assert!(ensure_write_target_is_mutable(&hidden_target).is_err());
+
+        let range = parse_a1_range("A1:B1").expect("range");
+        let mut response =
+            sample_range_bridge_response(&visible, &range, json!(42.5), json!(85.0), "=A1*2");
+        response["cells"][0]["displayed_text_truncated"] = json!(true);
+        let cells = normalize_range_read_response(response, &visible, &range)
+            .expect("normalized ambiguous cells");
+        assert!(ensure_snapshot_cells_are_write_safe(cells.as_slice()).is_err());
     }
 
     #[test]
@@ -2254,6 +4031,7 @@ mod tests {
             MACOS_STATUS_SCRIPT,
             MACOS_SNAPSHOT_SCRIPT,
             MACOS_RANGE_READ_SCRIPT,
+            MACOS_RANGE_WRITE_SCRIPT,
         ]
         .into_iter()
         .enumerate()
@@ -2287,7 +4065,7 @@ mod tests {
         );
         assert_eq!(
             status.get("write_access").and_then(Value::as_bool),
-            Some(false)
+            Some(true)
         );
         if status.get("excel_installed").and_then(Value::as_bool) == Some(true)
             && status.get("excel_running").and_then(Value::as_bool) == Some(false)

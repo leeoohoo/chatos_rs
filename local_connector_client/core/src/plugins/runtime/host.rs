@@ -1577,6 +1577,7 @@ impl PluginRuntimeHost {
                             source: match native_skill.binding.skill_id.as_str() {
                                 "internal_skill_computer_use" => "plugin_computer_use",
                                 "internal_skill_chrome" => "plugin_chrome_existing_session",
+                                "internal_skill_excel_live_control" => "plugin_excel_live_control",
                                 _ => "plugin_privileged_browser",
                             }
                             .to_string(),

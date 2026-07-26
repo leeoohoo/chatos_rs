@@ -51,7 +51,7 @@ pub(crate) fn tool_definitions(
         "internal_skill_visualize" => vec![write_visualization_html_tool()],
         "internal_skill_chrome" => chrome::tool_definitions(false),
         "internal_skill_computer_use" => computer_use::tool_definitions(false),
-        "internal_skill_excel_live_control" => excel_live::tool_definitions(),
+        "internal_skill_excel_live_control" => excel_live::tool_definitions(false),
         _ => artifacts::tool_definitions(skill_id),
     };
     if tools.is_empty() {
@@ -87,6 +87,9 @@ pub(crate) fn plugin_tool_definitions(
         }
         return Ok(tools);
     }
+    if skill_id == "internal_skill_excel_live_control" {
+        return Ok(excel_live::tool_definitions(interactive_approval_available));
+    }
     tool_definitions(skill_id, state, request)
 }
 
@@ -96,6 +99,8 @@ pub(crate) fn requires_interactive_approval(skill_id: &str, operation: &str) -> 
         || (skill_id == "internal_skill_chrome" && chrome::requires_interactive_approval(operation))
         || (skill_id == "internal_skill_browser"
             && matches!(operation, "browser_route_add" | "browser_cdp_command"))
+        || (skill_id == "internal_skill_excel_live_control"
+            && excel_live::requires_interactive_approval(operation))
 }
 
 pub(crate) struct NativeApprovalCommand {
@@ -127,6 +132,14 @@ pub(crate) fn approval_command(
     }
     if skill_id == "internal_skill_browser" {
         let (command, args) = web::browser_interactive_approval_command(operation, arguments)?;
+        return Ok(NativeApprovalCommand {
+            command,
+            args,
+            action_audit: None,
+        });
+    }
+    if skill_id == "internal_skill_excel_live_control" {
+        let (command, args) = excel_live::approval_command(operation, arguments)?;
         return Ok(NativeApprovalCommand {
             command,
             args,
@@ -180,6 +193,14 @@ pub(crate) fn execute_approved(
             state,
             request,
             approved_command_args,
+        );
+    }
+    if skill_id == "internal_skill_excel_live_control" {
+        return excel_live::execute_approved(
+            operation,
+            arguments,
+            approved_command_args,
+            action_cancelled,
         );
     }
     execute(skill_id, operation, arguments, state, request)

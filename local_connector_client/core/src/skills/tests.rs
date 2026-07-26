@@ -135,14 +135,14 @@ fn spreadsheets_release_publishes_rendering_multi_sheet_and_safe_range_editing_t
 }
 
 #[test]
-fn excel_live_control_release_publishes_bounded_read_only_no_launch_range_reads() {
+fn excel_live_control_release_gates_exact_snapshot_range_writes_on_approval() {
     let catalog_item = internal_skill_catalog()
         .expect("catalog")
         .skills
         .into_iter()
         .find(|item| item.skill_id == "internal_skill_excel_live_control")
         .expect("Excel Live Control catalog item");
-    assert_eq!(catalog_item.version, "1.2.0");
+    assert_eq!(catalog_item.version, "1.3.0");
     assert_eq!(catalog_item.implementation_status, "ready");
     assert!(!catalog_item.requires_workspace);
     assert_eq!(catalog_item.permissions, vec!["office.excel.control"]);
@@ -176,15 +176,45 @@ fn excel_live_control_release_publishes_bounded_read_only_no_launch_range_reads(
         "excel_inspect_workbook"
     ));
 
+    let approved_tools = native::plugin_tool_definitions(
+        "internal_skill_excel_live_control",
+        &LocalState::default(),
+        &request,
+        false,
+        true,
+    )
+    .expect("approval-gated Excel Live Control tools");
+    assert_eq!(approved_tools.len(), 5);
+    assert!(approved_tools
+        .iter()
+        .any(|tool| { tool.get("name").and_then(Value::as_str) == Some("excel_write_range") }));
+    let unapproved_tools = native::plugin_tool_definitions(
+        "internal_skill_excel_live_control",
+        &LocalState::default(),
+        &request,
+        false,
+        false,
+    )
+    .expect("read-only Excel Live Control tools without approval");
+    assert_eq!(unapproved_tools.len(), 4);
+    assert!(!unapproved_tools
+        .iter()
+        .any(|tool| { tool.get("name").and_then(Value::as_str) == Some("excel_write_range") }));
+    assert!(native::requires_interactive_approval(
+        "internal_skill_excel_live_control",
+        "excel_write_range"
+    ));
+
     let instructions = internal_skill_instructions("internal_skill_excel_live_control")
         .expect("Excel Live Control instructions");
-    assert!(instructions.contains("read-only, no-launch discovery and bounded range reading"));
-    assert!(instructions.contains("never returned in tool results"));
-    assert!(instructions
-        .contains("Never launch, activate, select, close, save, export, reopen, or recalculate"));
+    assert!(instructions.contains("approval-gated, exact-snapshot-bound cell-content replacement"));
+    assert!(instructions.contains("never placed in process arguments"));
+    assert!(instructions.contains("Never launch, activate, select, close, save, export, reopen"));
     assert!(instructions.contains("exact `worksheet_id`"));
     assert!(instructions.contains("at most 256 cells"));
-    assert!(instructions.contains("Hidden formulas are omitted"));
+    assert!(instructions.contains("`range_snapshot_id`"));
+    assert!(instructions.contains("attempts to restore every target cell"));
+    assert!(instructions.contains("not a workbook transaction"));
     assert!(instructions.contains("does not complete live workbook editing"));
 }
 
@@ -695,7 +725,7 @@ fn ready_bundle_v2_fingerprint_matches_plugin_management_seed() {
         .join("\n");
     assert_eq!(
         hex::encode(Sha256::digest(rows.as_bytes())),
-        "fcec11e167927bf34c7d85a1ce5a355158f6d21da5b301ef1c56f71dbc9c7286"
+        "841d1f625eff8cdc1bbe52dda0b6102494651917e2972a7fa0bb6789b8d66654"
     );
 }
 
@@ -710,7 +740,7 @@ fn all_28_bundled_skill_fingerprints_match_plugin_management_seed() {
         .join("\n");
     assert_eq!(
         hex::encode(Sha256::digest(rows.as_bytes())),
-        "caf285f36d63235cb3d00127e2b3ce100ab9840678b0f0f76ef0b79e10408ef7"
+        "530795e0bf61dfb2f47bc647b310f2e1c5cfa35b8e390c3603e76e17a7ce7b66"
     );
 }
 
