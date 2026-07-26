@@ -13,12 +13,16 @@ import { RuntimePreviewPage } from './pages/RuntimePreviewPage';
 import { SkillCatalogPage } from './pages/SkillCatalogPage';
 import { SkillPackagesPage } from './pages/SkillPackagesPage';
 import { SystemAgentsPage } from './pages/SystemAgentsPage';
+import { PluginCatalogAdminPage } from './pages/PluginCatalogAdminPage';
+import { PluginMarketplacesPage } from './pages/PluginMarketplacesPage';
+import { PluginReleasesPage } from './pages/PluginReleasesPage';
 import { AgentPromptVersionsPage } from './pages/agentPrompts/AgentPromptVersionsPage';
 
 export function App() {
   const [authVersion, setAuthVersion] = useState(0);
   const [section, setSection] = useState<AppSection>('mcps');
   const [promptAgentKey, setPromptAgentKey] = useState<string | null>(null);
+  const [releasePluginId, setReleasePluginId] = useState<string | null>(null);
   const hasToken = Boolean(getAuthToken());
   const currentUserQuery = useQuery({
     queryKey: ['current-user', authVersion],
@@ -59,6 +63,19 @@ export function App() {
       {section === 'mcps' ? <McpCatalogPage user={user} /> : null}
       {section === 'skills' ? <SkillCatalogPage user={user} /> : null}
       {section === 'packages' ? <SkillPackagesPage user={user} /> : null}
+      {section === 'marketplaces' ? <PluginMarketplacesPage user={user} /> : null}
+      {section === 'plugins' ? (
+        <PluginCatalogAdminPage
+          user={user}
+          onOpenReleases={(pluginId) => {
+            setReleasePluginId(pluginId);
+            setSection('releases');
+          }}
+        />
+      ) : null}
+      {section === 'releases' ? (
+        <PluginReleasesPage user={user} initialPluginId={releasePluginId} />
+      ) : null}
       {section === 'agents' && promptAgentKey ? (
         <AgentPromptVersionsPage
           user={user}

@@ -26,6 +26,7 @@ pub(super) fn merge_snapshot_result(
             "element_count",
             "page_state_available",
             "page_state_warning",
+            "browser_session",
         ],
     );
     if !success {
@@ -63,6 +64,7 @@ pub(super) fn merge_console_result(
             "console_messages",
             "js_errors",
             "console_warning",
+            "browser_session",
         ],
     );
     if !success {
@@ -97,6 +99,7 @@ pub(super) fn merge_vision_result(
             "screenshot_path",
             "annotations",
             "vision",
+            "browser_session",
         ],
     );
     if !enabled {

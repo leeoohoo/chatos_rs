@@ -23,6 +23,14 @@ pub(super) async fn prepare_model_execution(
     prerequisite_context: &[PrerequisiteTaskContext],
     capability_policy: Option<&TaskRunnerCapabilityPolicy>,
 ) -> Result<PreparedModelExecution, String> {
+    let command_constraints =
+        crate::services::plugin_runtime_relay::plugin_command_execution_constraints(run)?;
+    validate_command_target_agent(task, &command_constraints)?;
+    if !command_constraints.tool_allowlists.is_empty() && !task.mcp_config.enabled {
+        return Err(
+            "Plugin Command allowed tools require the task MCP runtime to be enabled".to_string(),
+        );
+    }
     crate::services::model_runtime_resolver::ensure_cloud_task_project_execution(
         &service.config,
         task,
@@ -96,12 +104,16 @@ pub(super) async fn prepare_model_execution(
         .effective_tool_result_model_budget_limits()
         .await
         .map_err(|err| format!("加载运行时配置失败: {err}"))?;
-    let runtime_config = build_runtime_config(service, task).await?;
+    let runtime_config =
+        build_runtime_config(service, task, command_constraints.max_iterations).await?;
 
-    let runtime_config = service.apply_task_mcp_config(runtime_config, &task.mcp_config);
+    let mut runtime_config = service.apply_task_mcp_config(runtime_config, &task.mcp_config);
+    if !command_constraints.tool_allowlists.is_empty() {
+        runtime_config.builtin_prompt_mode = chatos_ai_runtime::TaskBuiltinMcpPromptMode::Effective;
+    }
 
     let task_service = TaskService::new(service.config.clone(), service.store.clone());
-    let (builtin_servers, builtin_registry) = build_mcp_builder_parts(
+    let (mut builtin_servers, mut builtin_registry) = build_mcp_builder_parts(
         service,
         task,
         run,
@@ -112,6 +124,20 @@ pub(super) async fn prepare_model_execution(
         authoritative_policy,
     )
     .await;
+    let prepared_plugin_runtime = service
+        .prepare_plugin_runtime(task, run, effective_workspace_dir.as_str())
+        .await?;
+    let plugin_tool_lifecycle_hook = prepared_plugin_runtime.tool_lifecycle_hook(
+        crate::models::task_runner_agent_key_for(
+            task.task_profile.as_str(),
+            task.mcp_config.requires_execution,
+        )
+        .as_str(),
+    );
+    builtin_servers.extend(prepared_plugin_runtime.builtin_servers.clone());
+    for provider in &prepared_plugin_runtime.providers {
+        builtin_registry.register_arc(provider.clone());
+    }
     let mut prefixed_input_items = external_mcp_prefixed_input_items(
         loaded_external_mcp.summaries.as_slice(),
         task.mcp_config.locale(),
@@ -133,6 +159,7 @@ pub(super) async fn prepare_model_execution(
     prefixed_input_items.extend(mcp_provider_skills_prefixed_input_items(
         provider_skills_prompt,
     ));
+    prefixed_input_items.extend(prepared_plugin_runtime.prompt_items.clone());
     let mut run_spec = build_run_spec(
         &agent,
         task,
@@ -169,12 +196,18 @@ pub(super) async fn prepare_model_execution(
         );
     }
 
-    let mcp_builder = McpExecutorBuilder::new()
+    let mut mcp_builder = McpExecutorBuilder::new()
         .with_http_servers(system_http_servers)
         .with_http_servers(loaded_external_mcp.http_servers)
         .with_stdio_servers(loaded_external_mcp.stdio_servers)
         .with_builtin_servers(builtin_servers)
         .with_builtin_registry(builtin_registry);
+    for allowed_tools in command_constraints.tool_allowlists {
+        mcp_builder = mcp_builder.with_allowed_tool_names(allowed_tools);
+    }
+    if let Some(hook) = plugin_tool_lifecycle_hook {
+        mcp_builder = mcp_builder.with_tool_lifecycle_hook(hook);
+    }
 
     Ok(PreparedModelExecution {
         agent,
@@ -185,7 +218,27 @@ pub(super) async fn prepare_model_execution(
         sandbox_context,
         harness_run_context,
         effective_workspace_dir,
+        plugin_sessions: prepared_plugin_runtime.sessions,
     })
+}
+
+fn validate_command_target_agent(
+    task: &TaskRecord,
+    constraints: &crate::services::plugin_runtime_relay::PluginCommandExecutionConstraints,
+) -> Result<(), String> {
+    let task_agent_key = crate::models::task_runner_agent_key_for(
+        task.task_profile.as_str(),
+        task.mcp_config.requires_execution,
+    );
+    if let Some(target_agent) = constraints.target_agent.as_deref() {
+        if target_agent != task_agent_key.as_str() {
+            return Err(format!(
+                "Plugin Command target Agent {target_agent} is incompatible with the current task Agent {}",
+                task_agent_key.as_str()
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn sandbox_run_fact_input_item(locale: BuiltinMcpPromptLocale, run_workspace: &str) -> Value {
@@ -301,11 +354,14 @@ fn build_memory_scope(service: &RunService, task: &TaskRecord) -> MemoryScope {
 async fn build_runtime_config(
     service: &RunService,
     task: &TaskRecord,
+    plugin_max_iterations: Option<usize>,
 ) -> Result<TaskRuntimeConfig, String> {
-    let max_iterations = service
+    let configured_max_iterations = service
         .effective_task_execution_max_iterations()
         .await
         .map_err(|err| format!("加载运行时配置失败: {err}"))?;
+    let max_iterations =
+        bounded_plugin_max_iterations(configured_max_iterations, plugin_max_iterations);
 
     let mut runtime_config = TaskRuntimeConfig::new().with_max_iterations(Some(max_iterations));
     if let Some(memory_engine_base_url) = service.config.memory_engine_base_url.clone() {
@@ -328,6 +384,12 @@ async fn build_runtime_config(
     }
 
     Ok(runtime_config)
+}
+
+fn bounded_plugin_max_iterations(configured: usize, plugin_limit: Option<usize>) -> usize {
+    plugin_limit
+        .map(|limit| configured.min(limit))
+        .unwrap_or(configured)
 }
 
 async fn persist_context_snapshot(
@@ -388,6 +450,36 @@ mod tests {
             task_runner_agent_for_task(&executing).descriptor().key,
             TASK_RUNNER_AGENT.descriptor().key
         );
+    }
+
+    #[test]
+    fn command_target_agent_must_match_the_existing_task_agent() {
+        let mut task = sample_task(crate::models::TASK_PROFILE_CHATOS_PLAN, "project-1");
+        task.mcp_config.requires_execution = false;
+        let plan_constraints =
+            crate::services::plugin_runtime_relay::PluginCommandExecutionConstraints {
+                target_agent: Some("task_runner_plan_phase".to_string()),
+                tool_allowlists: Vec::new(),
+                ..Default::default()
+            };
+        validate_command_target_agent(&task, &plan_constraints).expect("matching target Agent");
+
+        let run_constraints =
+            crate::services::plugin_runtime_relay::PluginCommandExecutionConstraints {
+                target_agent: Some("task_runner_run_phase".to_string()),
+                tool_allowlists: Vec::new(),
+                ..Default::default()
+            };
+        assert!(validate_command_target_agent(&task, &run_constraints)
+            .expect_err("Command must not upgrade the task Agent")
+            .contains("incompatible"));
+    }
+
+    #[test]
+    fn plugin_agent_iteration_limit_can_only_narrow_the_runtime() {
+        assert_eq!(bounded_plugin_max_iterations(600, Some(12)), 12);
+        assert_eq!(bounded_plugin_max_iterations(8, Some(12)), 8);
+        assert_eq!(bounded_plugin_max_iterations(600, None), 600);
     }
 
     #[tokio::test]
@@ -566,6 +658,7 @@ mod tests {
             source_user_message_id: None,
             prerequisite_task_ids: Vec::new(),
             task_tool_state: Default::default(),
+            plugin_config: Default::default(),
             mcp_config: TaskMcpConfig::default(),
             created_at: now.clone(),
             updated_at: now,
@@ -584,6 +677,7 @@ mod tests {
             started_at: None,
             finished_at: None,
             input_snapshot: json!({}),
+            plugin_snapshots: Vec::new(),
             context_snapshot: None,
             result_summary: None,
             error_message: None,

@@ -141,6 +141,7 @@ impl TaskService {
                 prerequisite_task_ids: prerequisite_task_ids.clone(),
                 task_tool_state: TaskToolState::default(),
                 mcp_config: original.mcp_config,
+                plugin_config: original.plugin_config,
                 created_at: now.clone(),
                 updated_at: now,
                 deleted_at: None,

@@ -23,7 +23,7 @@ interface ChatInterfaceMainContentProps {
   onToggleSidebar: () => void;
   onSelectSession: () => void;
   onToggleSessionSummary: (sessionId: string) => void;
-  onOpenSessionRuntimeContext: (sessionId: string) => void;
+  onOpenSessionRuntimeContext: (sessionId: string, turnId?: string | null) => void;
   sessionListProps: ComponentProps<typeof SessionList>;
   conversationPaneProps: ComponentProps<typeof ChatConversationPane>;
 }

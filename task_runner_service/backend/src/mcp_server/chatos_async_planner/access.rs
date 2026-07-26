@@ -10,6 +10,7 @@ pub(in crate::mcp_server) fn planner_agent_tool_allowed(name: &str) -> bool {
             | "list_mcp_builtin_catalog"
             | "list_external_mcp_configs"
             | "list_available_skills"
+            | "list_available_plugins"
             | "create_tasks_with_prerequisites"
             | "cancel_task"
             | "wait_for_task_completion"

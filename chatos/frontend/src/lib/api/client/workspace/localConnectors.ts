@@ -12,6 +12,7 @@ import type {
   LocalConnectorTerminalExecRequest,
   LocalConnectorTerminalExecResponse,
   LocalConnectorWorkspaceResponse,
+  TaskRunnerAvailablePluginsResponse,
 } from '../types';
 import type { ApiRequestFn } from './common';
 
@@ -29,6 +30,18 @@ export const listLocalConnectorWorkspaces = (
 ): Promise<LocalConnectorWorkspaceResponse[]> => {
   const query = buildQuery({ device_id: deviceId });
   return request<LocalConnectorWorkspaceResponse[]>(`/local-connectors/workspaces${query}`);
+};
+
+export const listTaskRunnerAvailablePlugins = (
+  request: ApiRequestFn,
+  deviceId: string,
+  planMode = false,
+): Promise<TaskRunnerAvailablePluginsResponse> => {
+  const query = buildQuery({
+    device_id: deviceId,
+    plan_mode: planMode ? 'true' : undefined,
+  });
+  return request<TaskRunnerAvailablePluginsResponse>(`/task-runner/available-plugins${query}`);
 };
 
 export const listLocalConnectorDirectory = (

@@ -2,6 +2,7 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use chatos_mcp::{AskUserPromptPayload, AskUserResponseSubmission};
+use chatos_plugin_management_sdk::RunPluginSnapshot;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use uuid::Uuid;
@@ -64,6 +65,8 @@ pub struct TaskRunRecord {
     pub started_at: Option<String>,
     pub finished_at: Option<String>,
     pub input_snapshot: Value,
+    #[serde(default)]
+    pub plugin_snapshots: Vec<RunPluginSnapshot>,
     pub context_snapshot: Option<Value>,
     pub result_summary: Option<String>,
     pub error_message: Option<String>,
@@ -94,6 +97,7 @@ impl TaskRunRecord {
         model_config_id: String,
         memory_thread_id: String,
         input_snapshot: Value,
+        plugin_snapshots: Vec<RunPluginSnapshot>,
         now: String,
     ) -> Self {
         Self {
@@ -105,6 +109,7 @@ impl TaskRunRecord {
             started_at: None,
             finished_at: None,
             input_snapshot,
+            plugin_snapshots,
             context_snapshot: None,
             result_summary: None,
             error_message: None,

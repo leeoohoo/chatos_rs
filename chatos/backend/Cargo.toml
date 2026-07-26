@@ -70,3 +70,4 @@ chatos_project_execution = { path = "../../crates/chatos_project_execution" }
 
 [features]
 pdf = []
+test-support = []

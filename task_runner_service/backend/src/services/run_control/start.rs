@@ -135,6 +135,12 @@ impl RunService {
             }
         }
         let capability_policy = self.resolve_task_runner_policy_for_task(&task).await?;
+        if capability_policy.is_none() && !task.plugin_config.selected_plugins.is_empty() {
+            return Err(
+                "Plugin Management is required to resolve selected Plugins before execution"
+                    .to_string(),
+            );
+        }
         let agent_key = crate::models::task_runner_agent_key_for(
             task.task_profile.as_str(),
             task.mcp_config.requires_execution,
@@ -169,6 +175,11 @@ impl RunService {
             .map(|policy| policy.skill_snapshots(&runtime_task))
             .transpose()?
             .unwrap_or_default();
+        let plugin_snapshots = capability_policy
+            .as_ref()
+            .map(|policy| policy.plugin_snapshots(&runtime_task))
+            .transpose()?
+            .unwrap_or_default();
         let input_snapshot = json!({
             "agent_key": agent_key.as_str(),
             "task_id": task.id,
@@ -179,8 +190,10 @@ impl RunService {
             "prompt_override": input.prompt_override,
             "retry_instruction": input.retry_instruction,
             "model_config_id": model_config_id,
+            "plugin_config": runtime_task.plugin_config,
             "mcp_config": runtime_task.mcp_config,
             "skill_snapshots": skill_snapshots,
+            "plugin_snapshots": plugin_snapshots,
             "effective_workspace_dir": effective_workspace_dir.as_str(),
             "execution_environment_mode": execution_environment_mode,
             "sandbox_enabled": sandbox_enabled,
@@ -192,6 +205,7 @@ impl RunService {
             model_config_id.clone(),
             task.memory_thread_id.clone(),
             input_snapshot,
+            plugin_snapshots,
             now,
         );
         let requested_dispatch_paused = task.task_tool_state.execution_paused;

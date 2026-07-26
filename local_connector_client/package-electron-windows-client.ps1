@@ -12,14 +12,17 @@ $FrontendDir = Join-Path $ClientDir "frontend"
 $ChatosFrontendDir = Join-Path $RootDir "chatos\frontend"
 $ElectronResourcesDir = Join-Path $FrontendDir "electron\resources"
 $SkillCatalogPath = Join-Path $ClientDir "skill_bundles\catalog\internal-skill-catalog.json"
+$PluginCatalogPath = Join-Path $ClientDir "plugin_bundles\catalog\bundled-plugin-catalog.json"
+$PluginBundleTool = Join-Path $ClientDir "prepare-plugin-bundles.mjs"
+$InstalledPackageVerifier = Join-Path $ClientDir "verify-installed-package.mjs"
 
 function Test-SkillBundles {
   if (!(Test-Path -LiteralPath $SkillCatalogPath)) {
     throw "Local Connector internal Skill catalog is missing: $SkillCatalogPath"
   }
   $catalog = Get-Content -LiteralPath $SkillCatalogPath -Raw | ConvertFrom-Json
-  if ($catalog.schema_version -ne 1 -or $catalog.skills.Count -ne 27) {
-    throw "Local Connector internal Skill catalog must contain exactly 27 schema-v1 entries"
+  if ($catalog.schema_version -ne 1 -or $catalog.skills.Count -ne 28) {
+    throw "Local Connector internal Skill catalog must contain exactly 28 schema-v1 entries"
   }
   $catalog.skills | ForEach-Object {
     $bundleDir = Join-Path $ClientDir "skill_bundles\internal\$($_.name)\$($_.version)"
@@ -50,12 +53,66 @@ function Get-SandboxAgentBin {
   Join-Path (Get-CargoTargetDir) "release\chatos_sandbox_mcp_server.exe"
 }
 
+function Get-ChromeNativeHostBin {
+  Join-Path (Get-CargoTargetDir) "release\chatos_chrome_native_host.exe"
+}
+
 function Get-PlatformDir {
   $arch = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture
   switch ($arch) {
     "Arm64" { "windows-arm64"; break }
     "X64" { "windows-x64"; break }
     default { throw "Unsupported Windows architecture: $arch" }
+  }
+}
+
+function Invoke-PluginBundleTool {
+  param(
+    [Parameter(Mandatory = $true)]
+    [string]$OutputDir,
+    [Parameter(Mandatory = $true)]
+    [string]$Platform,
+    [switch]$VerifyOnly
+  )
+  $arguments = @($PluginBundleTool)
+  if ($VerifyOnly) {
+    $arguments += "--verify-only"
+  }
+  $arguments += @(
+    "--plugin-catalog", $PluginCatalogPath,
+    "--skill-catalog", $SkillCatalogPath,
+    "--skill-root", (Join-Path $ClientDir "skill_bundles\internal"),
+    "--output", $OutputDir,
+    "--platform", $Platform
+  )
+  & node @arguments
+  if ($LASTEXITCODE -ne 0) {
+    throw "Plugin Bundle staging or verification failed for $Platform"
+  }
+}
+
+function Invoke-InstalledPackageVerification {
+  param(
+    [Parameter(Mandatory = $true)]
+    [string]$ResourcesDir,
+    [Parameter(Mandatory = $true)]
+    [string]$Platform,
+    [Parameter(Mandatory = $true)]
+    [string]$ReportPath
+  )
+  $arguments = @(
+    $InstalledPackageVerifier,
+    "--platform", $Platform,
+    "--resources", $ResourcesDir,
+    "--plugin-catalog", $PluginCatalogPath,
+    "--skill-catalog", $SkillCatalogPath,
+    "--electron-runtime-source", (Join-Path $FrontendDir "electron\core-runtime.cjs"),
+    "--chrome-extension-source", (Join-Path $ClientDir "chrome_extension"),
+    "--report", $ReportPath
+  )
+  & node @arguments | Out-Null
+  if ($LASTEXITCODE -ne 0) {
+    throw "Installed-package verification failed for $Platform"
   }
 }
 
@@ -105,7 +162,9 @@ function Sync-ElectronResources {
 
   New-Item -ItemType Directory -Force -Path $ElectronResourcesDir | Out-Null
   Copy-Item -LiteralPath (Get-CoreBin) -Destination (Join-Path $ElectronResourcesDir "local_connector_client_core.exe") -Force
+  Copy-Item -LiteralPath (Get-ChromeNativeHostBin) -Destination (Join-Path $ElectronResourcesDir "chatos_chrome_native_host.exe") -Force
   Copy-Item -LiteralPath (Get-SandboxAgentBin) -Destination (Join-Path $ElectronResourcesDir "chatos_sandbox_mcp_server.exe") -Force
+  Copy-Item -LiteralPath (Join-Path $ClientDir "chrome_extension") -Destination (Join-Path $ElectronResourcesDir "chrome-extension") -Recurse -Force
 
   $platform = Get-PlatformDir
   $sourceTools = Join-Path $RootDir "bundled-tools\$platform"
@@ -119,8 +178,13 @@ function Sync-ElectronResources {
 
   $prepareBrowserRuntime = Join-Path $ClientDir "prepare-browser-runtime-windows.ps1"
   & $prepareBrowserRuntime -DestinationDir (Join-Path $destToolsRoot $platform) -Platform $platform
+  $prepareDocumentRuntime = Join-Path $ClientDir "prepare-document-runtime-windows.ps1"
+  & $prepareDocumentRuntime -DestinationDir (Join-Path $destToolsRoot "$platform\documents-runtime") -Platform $platform
 
   Copy-Item -LiteralPath (Join-Path $ClientDir "skill_bundles") -Destination $ElectronResourcesDir -Recurse -Force
+  $pluginBundlesDir = Join-Path $ElectronResourcesDir "plugin-bundles"
+  Invoke-PluginBundleTool -OutputDir $pluginBundlesDir -Platform $platform
+  Invoke-PluginBundleTool -OutputDir $pluginBundlesDir -Platform $platform -VerifyOnly
   Copy-Item -LiteralPath (Join-Path $ChatosFrontendDir "dist") -Destination (Join-Path $ElectronResourcesDir "chatos-frontend") -Recurse -Force
   Copy-Item -LiteralPath (Join-Path $ClientDir "core\migrations") -Destination (Join-Path $ElectronResourcesDir "sqlite-migrations") -Recurse -Force
 }
@@ -163,19 +227,29 @@ function New-ManualElectronPackage {
   Set-Content -LiteralPath (Join-Path $appResourcesDir "package.json") -Value $appPackageJson -Encoding ASCII
 
   Copy-Item -LiteralPath (Join-Path $ElectronResourcesDir "local_connector_client_core.exe") -Destination (Join-Path $resourcesDir "local_connector_client_core.exe") -Force
+  Copy-Item -LiteralPath (Join-Path $ElectronResourcesDir "chatos_chrome_native_host.exe") -Destination (Join-Path $resourcesDir "chatos_chrome_native_host.exe") -Force
   Copy-Item -LiteralPath (Join-Path $ElectronResourcesDir "chatos_sandbox_mcp_server.exe") -Destination (Join-Path $resourcesDir "chatos_sandbox_mcp_server.exe") -Force
   Copy-Item -LiteralPath (Join-Path $ElectronResourcesDir "bundled-tools") -Destination $resourcesDir -Recurse -Force
   Copy-Item -LiteralPath (Join-Path $ElectronResourcesDir "skill_bundles") -Destination (Join-Path $resourcesDir "skill-bundles") -Recurse -Force
+  Copy-Item -LiteralPath (Join-Path $ElectronResourcesDir "plugin-bundles") -Destination $resourcesDir -Recurse -Force
   Copy-Item -LiteralPath (Join-Path $ElectronResourcesDir "chatos-frontend") -Destination $resourcesDir -Recurse -Force
+  Copy-Item -LiteralPath (Join-Path $ElectronResourcesDir "chrome-extension") -Destination $resourcesDir -Recurse -Force
   Copy-Item -LiteralPath (Join-Path $ElectronResourcesDir "sqlite-migrations") -Destination $resourcesDir -Recurse -Force
 
-  $zipPath = Join-Path $outRoot "Chat-OS-Local-Connector-windows-x64.zip"
+  Invoke-PluginBundleTool -OutputDir (Join-Path $resourcesDir "plugin-bundles") -Platform (Get-PlatformDir) -VerifyOnly
+
+  $platform = Get-PlatformDir
+  $packageArchitecture = $platform.Replace("windows-", "")
+  $zipPath = Join-Path $outRoot "Chat-OS-Local-Connector-windows-$packageArchitecture.zip"
+  $verificationReport = "$zipPath.verification.json"
+  Invoke-InstalledPackageVerification -ResourcesDir $resourcesDir -Platform $platform -ReportPath $verificationReport
   if (Test-Path -LiteralPath $zipPath) {
     Remove-Item -LiteralPath $zipPath -Force
   }
   Compress-Archive -LiteralPath $appDir -DestinationPath $zipPath -Force
   Write-Host "[OK] Electron desktop app: $appDir"
   Write-Host "[OK] Electron desktop zip: $zipPath"
+  Write-Host "[OK] Installed-package verification: $verificationReport"
 }
 
 Test-SkillBundles

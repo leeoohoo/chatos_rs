@@ -26,6 +26,10 @@ pub struct AppConfig {
     pub require_signed_internal_requests: bool,
     pub local_connector_check_ttl: Duration,
     pub local_connector_max_tool_snapshot_bytes: usize,
+    pub plugin_catalog_sync_enabled: bool,
+    pub plugin_catalog_sync_interval: Duration,
+    pub plugin_catalog_request_timeout: Duration,
+    pub plugin_catalog_max_bytes: usize,
     pub super_admin_username: String,
     pub super_admin_password: String,
     pub seed_system_resources: bool,
@@ -100,6 +104,26 @@ impl AppConfig {
             .and_then(|value| value.parse::<usize>().ok())
             .unwrap_or(512 * 1024)
             .clamp(16 * 1024, 4 * 1024 * 1024),
+            plugin_catalog_sync_enabled: read_bool_env(
+                "PLUGIN_MANAGEMENT_CATALOG_SYNC_ENABLED",
+                true,
+            )?,
+            plugin_catalog_sync_interval: Duration::from_secs(
+                normalized_env("PLUGIN_MANAGEMENT_CATALOG_SYNC_INTERVAL_SECONDS")
+                    .and_then(|value| value.parse::<u64>().ok())
+                    .unwrap_or(15 * 60)
+                    .clamp(60, 24 * 60 * 60),
+            ),
+            plugin_catalog_request_timeout: Duration::from_millis(
+                normalized_env("PLUGIN_MANAGEMENT_CATALOG_REQUEST_TIMEOUT_MS")
+                    .and_then(|value| value.parse::<u64>().ok())
+                    .unwrap_or(30_000)
+                    .clamp(1_000, 5 * 60 * 1_000),
+            ),
+            plugin_catalog_max_bytes: normalized_env("PLUGIN_MANAGEMENT_CATALOG_MAX_BYTES")
+                .and_then(|value| value.parse::<usize>().ok())
+                .unwrap_or(8 * 1024 * 1024)
+                .clamp(256 * 1024, 12 * 1024 * 1024),
             super_admin_username: normalized_env("PLUGIN_MANAGEMENT_SERVICE_SUPER_ADMIN_USERNAME")
                 .unwrap_or_else(|| "admin".to_string()),
             super_admin_password: normalized_env("PLUGIN_MANAGEMENT_SERVICE_SUPER_ADMIN_PASSWORD")

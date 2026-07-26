@@ -20,7 +20,7 @@ use super::actions_research_payloads::{
 use super::actions_research_text::{
     build_browser_research_findings, build_browser_research_summary,
 };
-use super::actions_shared::summarize_browser_failure;
+use super::actions_shared::{copy_response_fields, summarize_browser_failure};
 use super::{
     browser_inspect_with_context, BoundContext, DEFAULT_BROWSER_RESEARCH_LIMIT,
     DEFAULT_BROWSER_RESEARCH_MAX_EXTRACT_CHARS, DEFAULT_BROWSER_RESEARCH_REQUEST_TIMEOUT_SECONDS,
@@ -60,6 +60,7 @@ pub(super) async fn browser_research_with_context(
         .get("success")
         .and_then(|value| value.as_bool())
         .unwrap_or(false);
+    copy_response_fields(&mut response, &page, &["browser_session"]);
     response["page"] = page.clone();
     if !page_success {
         warnings.push(format!(

@@ -79,6 +79,37 @@ pub async fn get_task_runner_task(
     .await
 }
 
+pub async fn list_task_runner_available_plugins(
+    base_url: &str,
+    access_token: &str,
+    device_id: &str,
+    plan_mode: bool,
+) -> Result<Value, String> {
+    let device_id = device_id.trim();
+    if device_id.is_empty() {
+        return Err("device_id is required".to_string());
+    }
+    let request = task_runner_request(
+        base_url,
+        access_token,
+        reqwest::Method::GET,
+        "/api/tasks/capabilities/catalog",
+    )
+    .await
+    .query(&[
+        (
+            "task_profile",
+            if plan_mode { "chatos_plan" } else { "default" },
+        ),
+        (
+            "requires_execution",
+            if plan_mode { "false" } else { "true" },
+        ),
+        ("device_id", device_id),
+    ]);
+    send_task_runner_response(request).await
+}
+
 pub async fn cancel_task_runner_task(
     base_url: &str,
     access_token: &str,
@@ -633,6 +664,29 @@ pub async fn retry_message_run(
         "chatos.execution.start",
     )
     .await
+}
+
+pub async fn get_message_run_event(
+    base_url: &str,
+    run_id: &str,
+    event_id: &str,
+    source_session_id: &str,
+    source_user_message_id: Option<&str>,
+    source_turn_id: Option<&str>,
+) -> Result<Value, String> {
+    let path = format!(
+        "/internal/chatos/message-runs/{}/events/{}",
+        urlencoding::encode(run_id.trim()),
+        urlencoding::encode(event_id.trim())
+    );
+    let mut query = vec![("source_session_id", source_session_id)];
+    if let Some(source_user_message_id) = source_user_message_id {
+        query.push(("source_user_message_id", source_user_message_id));
+    }
+    if let Some(source_turn_id) = source_turn_id {
+        query.push(("source_turn_id", source_turn_id));
+    }
+    get_internal_json(base_url, path.as_str(), query.as_slice()).await
 }
 
 pub async fn get_message_run_output_changes(

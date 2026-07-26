@@ -423,6 +423,7 @@ mod tests {
             source_user_message_id: None,
             prerequisite_task_ids: Vec::new(),
             task_tool_state: TaskToolState::default(),
+            plugin_config: Default::default(),
             mcp_config: TaskMcpConfig {
                 external_mcp_config_ids: vec![config_id.to_string()],
                 ..TaskMcpConfig::default()

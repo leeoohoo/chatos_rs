@@ -16,6 +16,7 @@ interface ChatosLocalConnectorBridge {
   closeSettings?: () => Promise<boolean>;
   reloadChatOS?: () => Promise<void>;
   setDeveloperMode?: (enabled: boolean) => Promise<boolean>;
+  showChromeExtensionDirectory?: () => Promise<boolean>;
   getDesktopSystemPermissions?: () => Promise<Record<string, {
     status: string;
     status_label: string;

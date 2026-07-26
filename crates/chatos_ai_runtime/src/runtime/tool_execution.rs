@@ -50,6 +50,13 @@ pub(super) fn repeated_tool_failure_error(
     format!("连续 {failed_batch_count} 轮工具调用全部失败，已停止自动重试。最后错误：{last_error}")
 }
 
+pub(super) fn fatal_tool_execution_error(tool_results: &[ToolResult]) -> Option<String> {
+    tool_results
+        .iter()
+        .find(|result| result.fatal_error)
+        .map(|result| result.content.clone())
+}
+
 fn truncate_chars(value: &str, max_chars: usize) -> String {
     let mut chars = value.chars();
     let mut output = chars.by_ref().take(max_chars).collect::<String>();
@@ -90,6 +97,9 @@ pub(super) async fn execute_runtime_tools(
     if let Some(cb) = &options.callbacks.on_tools_end {
         cb(json!({ "tool_results": tool_results }));
     }
+    if let Some(error) = fatal_tool_execution_error(tool_results.as_slice()) {
+        return Err(error);
+    }
 
     let tool_result_count = tool_results.len();
     let tool_call_items = build_tool_call_items(tool_call_values);
@@ -119,7 +129,10 @@ pub(super) async fn execute_runtime_tools(
 mod tests {
     use chatos_mcp_runtime::ToolResult;
 
-    use super::{next_consecutive_failed_tool_batch_count, repeated_tool_failure_error};
+    use super::{
+        fatal_tool_execution_error, next_consecutive_failed_tool_batch_count,
+        repeated_tool_failure_error,
+    };
 
     fn tool_result(success: bool, content: &str) -> ToolResult {
         ToolResult {
@@ -131,6 +144,8 @@ mod tests {
             conversation_turn_id: None,
             content: content.to_string(),
             result: None,
+            fatal_error: false,
+            transient_model_input: None,
         }
     }
 
@@ -162,5 +177,17 @@ mod tests {
 
         assert!(message.contains("连续 8 轮"));
         assert!(message.contains("参数解析失败: expected comma"));
+    }
+
+    #[test]
+    fn fatal_tool_errors_stop_the_runtime_immediately() {
+        let mut result = tool_result(false, "Plugin Hook PreToolUse blocked the Run");
+        result.fatal_error = true;
+
+        assert_eq!(
+            fatal_tool_execution_error(&[result]).as_deref(),
+            Some("Plugin Hook PreToolUse blocked the Run")
+        );
+        assert!(fatal_tool_execution_error(&[tool_result(false, "ordinary tool error")]).is_none());
     }
 }

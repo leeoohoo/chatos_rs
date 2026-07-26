@@ -31,6 +31,23 @@
   border-color: color-mix(in srgb, var(--accent) 32%, transparent);
 }
 
+.developerModeCard.highRisk {
+  border-color: color-mix(in srgb, var(--warning) 46%, var(--border));
+}
+
+.developerModeCard.highRisk.active {
+  background: var(--warning-soft);
+  border-color: var(--warning);
+}
+
+.riskLabel {
+  display: inline-flex !important;
+  width: fit-content;
+  margin: 2px 0 5px;
+  color: var(--warning) !important;
+  font-weight: 700;
+}
+
 .developerModeHeading {
   align-items: center;
   display: grid;
@@ -221,6 +238,125 @@
   display: grid;
   gap: 7px;
   grid-template-columns: auto minmax(180px, 1fr) auto auto;
+}
+
+.singleUseApproval {
+  color: var(--warning);
+  font-size: 10px;
+  font-weight: 650;
+}
+
+.highRiskConfirmation {
+  background: var(--warning-soft);
+  border: 1px solid color-mix(in srgb, var(--warning) 55%, var(--border));
+  border-radius: 8px;
+  display: grid;
+  gap: 7px;
+  grid-template-columns: minmax(0, 1fr) auto minmax(160px, 0.7fr);
+  padding: 10px;
+}
+
+.highRiskConfirmation strong,
+.highRiskConfirmation > span:first-of-type {
+  grid-column: 1 / -1;
+}
+
+.highRiskConfirmation strong {
+  color: var(--warning);
+  font-size: 11px;
+}
+
+.highRiskConfirmation span {
+  color: var(--text-secondary);
+  font-size: 10px;
+  line-height: 1.45;
+}
+
+.highRiskConfirmation code {
+  align-self: center;
+  color: var(--warning);
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.highRiskConfirmation input {
+  min-width: 0;
+}
+
+.actionAuditCard {
+  background: color-mix(in srgb, var(--accent-soft) 48%, var(--panel-subtle));
+  border: 1px solid color-mix(in srgb, var(--accent) 20%, var(--border-subtle));
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  width: 100%;
+}
+
+.actionAuditHeader {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  justify-content: space-between;
+}
+
+.actionAuditHeader span {
+  color: var(--accent);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.actionAuditHeader strong {
+  color: var(--text);
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 680;
+}
+
+.actionAuditGrid {
+  display: grid;
+  gap: 6px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.actionAuditGrid > div {
+  background: color-mix(in srgb, var(--panel-bg) 76%, transparent);
+  border: 1px solid var(--border-subtle);
+  border-radius: 7px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+  padding: 7px 8px;
+}
+
+.actionAuditGrid span {
+  color: var(--text-tertiary);
+  font-size: 9px;
+}
+
+.actionAuditGrid code {
+  color: var(--text-secondary);
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 9px;
+  overflow-wrap: anywhere;
+}
+
+.actionAuditNotes {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.actionAuditNotes span {
+  color: var(--warning);
+  font-size: 9px;
+  line-height: 1.45;
 }
 
 .inlineCheck,

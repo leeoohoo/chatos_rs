@@ -96,7 +96,7 @@ pub fn mcp_builtin_kind_guide(kind: BuiltinMcpKind) -> McpBuiltinKindGuide {
         BuiltinMcpKind::BrowserTools => McpBuiltinKindGuide {
             description: "浏览器自动化和观察工具，适合需要打开页面、检查 UI 状态、操作网页或读取浏览器控制台的任务。",
             use_cases: &["检查页面显示", "操作网页", "观察浏览器状态", "调试前端交互"],
-            capabilities: &["打开页面", "点击输入", "截图观察", "读取控制台信息"],
+            capabilities: &["打开页面", "点击输入", "工作区文件上传下载", "CDP 网络请求诊断", "截图观察", "读取控制台信息"],
         },
         BuiltinMcpKind::MemorySkillReader => McpBuiltinKindGuide {
             description: "记忆中的 skill 读取工具，适合查找当前上下文可复用的技能说明。",

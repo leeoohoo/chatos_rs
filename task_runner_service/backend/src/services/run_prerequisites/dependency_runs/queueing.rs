@@ -2,6 +2,9 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use super::*;
+use crate::services::workspace_mcp::{
+    task_with_runtime_mcp_routing, task_with_runtime_mcp_routing_authoritative,
+};
 
 impl RunService {
     pub(super) async fn queue_dependency_run(
@@ -32,10 +35,40 @@ impl RunService {
         if !model_config.enabled {
             return Err(format!("模型配置已禁用: {model_config_id}"));
         }
+        let capability_policy = self.resolve_task_runner_policy_for_task(&task).await?;
+        if capability_policy.is_none() && !task.plugin_config.selected_plugins.is_empty() {
+            return Err(
+                "Plugin Management is required to resolve selected Plugins before execution"
+                    .to_string(),
+            );
+        }
+        let mut runtime_task = task.clone();
+        if let Some(policy) = capability_policy.as_ref() {
+            policy.apply_to_task(&mut runtime_task)?;
+            runtime_task = task_with_runtime_mcp_routing_authoritative(
+                &self.config,
+                &self.store,
+                runtime_task,
+            )
+            .await?;
+        } else {
+            runtime_task =
+                task_with_runtime_mcp_routing(&self.config, &self.store, runtime_task).await?;
+        }
         let effective_workspace_dir =
-            ensure_effective_task_workspace_dir(&self.config, &task, &model_config)?;
+            ensure_effective_task_workspace_dir(&self.config, &runtime_task, &model_config)?;
 
         let run_id = Uuid::new_v4().to_string();
+        let skill_snapshots = capability_policy
+            .as_ref()
+            .map(|policy| policy.skill_snapshots(&runtime_task))
+            .transpose()?
+            .unwrap_or_default();
+        let plugin_snapshots = capability_policy
+            .as_ref()
+            .map(|policy| policy.plugin_snapshots(&runtime_task))
+            .transpose()?
+            .unwrap_or_default();
         let input_snapshot = json!({
             "task_id": task.id,
             "task_title": task.title,
@@ -44,7 +77,10 @@ impl RunService {
             "input_payload": task.input_payload,
             "prompt_override": input.prompt_override,
             "model_config_id": model_config_id,
-            "mcp_config": task.mcp_config,
+            "plugin_config": runtime_task.plugin_config,
+            "mcp_config": runtime_task.mcp_config,
+            "skill_snapshots": skill_snapshots,
+            "plugin_snapshots": plugin_snapshots,
             "effective_workspace_dir": effective_workspace_dir.as_str(),
             "started_as_prerequisite": true,
         });
@@ -55,6 +91,7 @@ impl RunService {
             model_config_id.clone(),
             task.memory_thread_id.clone(),
             input_snapshot,
+            plugin_snapshots,
             now,
         );
         self.store.save_run(run.clone()).await?;

@@ -5,6 +5,10 @@ use chatos_plugin_management_sdk::AgentPromptVendor;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+mod plugins;
+
+pub use plugins::*;
+
 pub use chatos_plugin_management_sdk::{
     AgentBindingRecord, BindingConditions,
     LocalConnectorMcpStatusBatchRequest as LocalConnectorMcpStatusBatchPayload,
@@ -12,11 +16,19 @@ pub use chatos_plugin_management_sdk::{
     LocalConnectorMcpSyncRequest as LocalConnectorMcpSyncPayload, LocalConnectorRef,
     LocalConnectorRequirement, LocalConnectorSkillInventoryItem,
     LocalConnectorSkillInventoryRequest as LocalConnectorSkillInventoryPayload, McpProviderSkill,
-    McpRecord, McpRuntime, ResolveAgentCapabilitiesRequest as RuntimeCapabilitiesRequest,
-    ResolvedAgentCapabilities as RuntimeCapabilitiesResponse, ResolvedMcp, ResolvedSkill,
-    ResourceCheckRecord, ResourceMetadata, ResourceSecurity, SkillContent, SkillInstallationRecord,
-    SkillRecord, UpdateUserSkillPreferenceRequest as UpdateUserSkillPreferencePayload,
-    UserSkillCatalogItem, UserSkillCatalogResponse,
+    McpRecord, McpRuntime, PluginAuditLogRecord, PluginAvailabilityStatus, PluginCatalogDocument,
+    PluginCatalogRecord, PluginComponentKind, PluginComponentOwnership, PluginComponentSnapshot,
+    PluginComponentStatus, PluginInstallStatus, PluginInstallationRecord, PluginInterfaceMetadata,
+    PluginLicenseMetadata, PluginManifest, PluginManifestSource, PluginMarketplaceRecord,
+    PluginOAuthConnectionRecord, PluginOAuthStatusSyncPayload, PluginPublisher,
+    PluginReleaseRecord, PluginReleaseSignature, PluginRequirementStatus,
+    ResolveAgentCapabilitiesRequest as RuntimeCapabilitiesRequest,
+    ResolvedAgentCapabilities as RuntimeCapabilitiesResponse, ResolvedMcp, ResolvedPlugin,
+    ResolvedPluginComponent, ResolvedSkill, ResourceCheckRecord, ResourceMetadata,
+    ResourceSecurity, SigningKeyRef, SkillContent, SkillInstallationRecord, SkillRecord,
+    UpdateUserPluginPreferenceRequest, UpdateUserPluginPreferenceResponse,
+    UpdateUserSkillPreferenceRequest as UpdateUserSkillPreferencePayload,
+    UserPluginPreferenceRecord, UserSkillCatalogItem, UserSkillCatalogResponse,
 };
 
 pub const USER_ROLE_SUPER_ADMIN: &str = "super_admin";
@@ -47,6 +59,8 @@ pub const RUNTIME_KIND_LOCAL_CONNECTOR_BUILTIN_PROXY: &str = "local_connector_bu
 pub const RESOURCE_KIND_MCP: &str = "mcp";
 pub const RESOURCE_KIND_SKILL: &str = "skill";
 pub const RESOURCE_KIND_SKILL_PACKAGE: &str = "skill_package";
+pub const RESOURCE_KIND_PLUGIN: &str = "plugin";
+pub const RESOURCE_KIND_PLUGIN_COMPONENT: &str = "plugin_component";
 pub const SKILL_CONTENT_KIND_LOCAL_CONNECTOR_BUNDLE: &str = "local_connector_bundle";
 
 pub const BINDING_SCOPE_GLOBAL_DEFAULT: &str = "global_default";
@@ -186,6 +200,8 @@ pub struct SystemAgentRecord {
     pub managed_by: String,
     #[serde(default)]
     pub include_user_resources: bool,
+    #[serde(flatten, default)]
+    pub plugin_component: PluginComponentOwnership,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -294,6 +310,22 @@ pub struct AgentMcpBindingsResponse {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentPluginBindingView {
+    pub plugin: PluginCatalogRecord,
+    pub mode: String,
+    #[serde(default)]
+    pub component_allowlist: Vec<String>,
+    #[serde(default)]
+    pub conditions: BindingConditions,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentPluginBindingsResponse {
+    pub agent: SystemAgentRecord,
+    pub items: Vec<AgentPluginBindingView>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentMcpBindingSelection {
     pub mcp_id: String,
     pub mode: String,
@@ -303,6 +335,22 @@ pub struct AgentMcpBindingSelection {
 pub struct UpdateAgentMcpBindingsRequest {
     #[serde(default)]
     pub bindings: Vec<AgentMcpBindingSelection>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentPluginBindingSelection {
+    pub plugin_id: String,
+    pub mode: String,
+    #[serde(default)]
+    pub component_allowlist: Vec<String>,
+    #[serde(default)]
+    pub conditions: BindingConditions,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct UpdateAgentPluginBindingsRequest {
+    #[serde(default)]
+    pub bindings: Vec<AgentPluginBindingSelection>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -315,6 +363,7 @@ pub struct AgentBindingPayload {
     pub required: Option<bool>,
     pub priority: Option<i64>,
     pub conditions: Option<BindingConditions>,
+    pub component_allowlist: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -373,4 +422,5 @@ pub struct RuntimeCapabilitiesQuery {
     pub project_source_type: Option<String>,
     pub runtime_provider: Option<String>,
     pub schedule_mode: Option<String>,
+    pub device_id: Option<String>,
 }

@@ -19,19 +19,23 @@ use super::{
     get_agent_prompt_bundle, get_agent_prompt_bundle_manifest, get_device,
     get_managed_memory_policy, get_managed_requirements, health_handler, heartbeat_device,
     list_devices, list_local_mcps, list_managed_requirements_assignments,
-    list_managed_requirements_policies, list_project_bindings, list_sandbox_pairings,
-    list_user_skills, list_workspaces, mcp_relay, memory_engine_proxy, require_auth,
+    list_managed_requirements_policies, list_plugin_install_sources, list_project_bindings,
+    list_sandbox_pairings, list_user_skills, list_workspaces, mcp_relay, memory_engine_proxy,
+    plugin_artifact_create_relay, plugin_artifact_list_relay, plugin_artifact_read_relay,
+    plugin_artifact_update_relay, plugin_cancel_relay, plugin_execute_relay, plugin_prepare_relay,
+    plugin_ui_asset_relay, proxy_plugin_release_artifact, require_auth,
     resolve_local_command_approval_capabilities, resolve_local_runtime_capabilities,
     resolve_model_runtime, revoke_device, sandbox_facade_path, sandbox_facade_root,
     skill_cancel_relay, skill_execute_relay, skill_prepare_relay, sync_user_skill_inventory,
     terminal_exec_relay, terminal_input_relay, terminal_session_create_relay, terminal_ws_relay,
     update_local_mcp, update_local_mcp_status, update_managed_requirements_assignment,
-    update_managed_requirements_policy, update_project_binding, update_sandbox_pairing,
-    update_user_skill_preference, update_workspace, user_service_protected_proxy,
-    user_service_public_proxy,
+    update_managed_requirements_policy, update_plugin_preference, update_project_binding,
+    update_sandbox_pairing, update_user_skill_preference, update_workspace,
+    user_service_protected_proxy, user_service_public_proxy, AuthState,
 };
 
 pub fn build_router(state: AppState) -> Router {
+    let auth_state = AuthState::from_app_state(&state);
     let protected_api = Router::new()
         .route("/api/auth/me", get(current_user_handler))
         .route("/api/model-configs", any(user_service_protected_proxy))
@@ -122,6 +126,23 @@ pub fn build_router(state: AppState) -> Router {
             post(skill_cancel_relay),
         )
         .route(
+            "/api/local-connectors/relay/{device_id}/plugins/prepare",
+            post(plugin_prepare_relay),
+        )
+        .route(
+            "/api/local-connectors/relay/{device_id}/plugins/execute",
+            post(plugin_execute_relay),
+        )
+        .route(
+            "/api/local-connectors/relay/{device_id}/plugins/cancel",
+            post(plugin_cancel_relay),
+        )
+        .route(
+            "/api/local-connectors/relay/{device_id}/plugins/ui/assets",
+            post(plugin_ui_asset_relay),
+        )
+        .merge(plugin_artifact_routes())
+        .route(
             "/api/local-connectors/model-runtime/{model_config_id}",
             get(resolve_model_runtime),
         )
@@ -159,6 +180,18 @@ pub fn build_router(state: AppState) -> Router {
         )
         .route("/api/plugin-management/skills", get(list_user_skills))
         .route(
+            "/api/plugin-management/plugins/install-sources",
+            get(list_plugin_install_sources),
+        )
+        .route(
+            "/api/plugin-management/plugins/{plugin_id}/preference",
+            axum::routing::put(update_plugin_preference),
+        )
+        .route(
+            "/api/plugin-management/plugins/{plugin_id}/releases/{release_id}/artifact",
+            get(proxy_plugin_release_artifact),
+        )
+        .route(
             "/api/plugin-management/skills/inventory",
             put(sync_user_skill_inventory),
         )
@@ -194,7 +227,7 @@ pub fn build_router(state: AppState) -> Router {
             "/api/local-connectors/sandbox-facade/{pairing_id}/{*path}",
             any(sandbox_facade_path),
         )
-        .route_layer(middleware::from_fn_with_state(state.clone(), require_auth));
+        .route_layer(middleware::from_fn_with_state(auth_state, require_auth));
 
     Router::new()
         .route("/api/health", get(health_handler))
@@ -225,4 +258,64 @@ pub fn build_router(state: AppState) -> Router {
         .layer(middleware::from_fn(
             chatos_service_runtime::request_id_middleware,
         ))
+}
+
+fn plugin_artifact_routes<S>() -> Router<S>
+where
+    S: Clone + Send + Sync + 'static,
+    super::PluginArtifactRelayState: axum::extract::FromRef<S>,
+{
+    Router::new()
+        .route(
+            "/api/local-connectors/relay/{device_id}/plugins/artifacts/list",
+            post(plugin_artifact_list_relay),
+        )
+        .route(
+            "/api/local-connectors/relay/{device_id}/plugins/artifacts/read",
+            post(plugin_artifact_read_relay),
+        )
+        .route(
+            "/api/local-connectors/relay/{device_id}/plugins/artifacts/create",
+            post(plugin_artifact_create_relay),
+        )
+        .route(
+            "/api/local-connectors/relay/{device_id}/plugins/artifacts/update",
+            post(plugin_artifact_update_relay),
+        )
+}
+
+#[cfg(feature = "test-support")]
+pub fn build_plugin_artifact_relay_test_router(
+    config: crate::config::AppConfig,
+    relay: crate::relay::ConnectorRelay,
+    scope: super::PluginArtifactRelayTestScope,
+) -> Result<Router, String> {
+    let auth_state = AuthState::for_test(config.clone())?;
+    let relay_state = super::PluginArtifactRelayState::for_test(
+        relay,
+        config.relay_request_timeout,
+        config.plugin_hook_relay_request_timeout,
+        scope,
+    );
+    Ok(plugin_artifact_routes::<super::PluginArtifactRelayState>()
+        .route_layer(middleware::from_fn_with_state(auth_state, require_auth))
+        .with_state(relay_state))
+}
+
+#[cfg(feature = "test-support")]
+pub fn build_plugin_artifact_relay_store_test_router(
+    config: crate::config::AppConfig,
+    relay: crate::relay::ConnectorRelay,
+    store: crate::store::ConnectorStore,
+) -> Result<Router, String> {
+    let auth_state = AuthState::for_test(config.clone())?;
+    let relay_state = super::PluginArtifactRelayState::for_store_test(
+        relay,
+        config.relay_request_timeout,
+        config.plugin_hook_relay_request_timeout,
+        store,
+    );
+    Ok(plugin_artifact_routes::<super::PluginArtifactRelayState>()
+        .route_layer(middleware::from_fn_with_state(auth_state, require_auth))
+        .with_state(relay_state))
 }

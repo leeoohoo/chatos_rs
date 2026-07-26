@@ -127,6 +127,10 @@ impl TaskService {
             task.mcp_config = sanitize_task_mcp_config(mcp_config);
             capability_boundary_changed = true;
         }
+        if let Some(plugin_config) = patch.plugin_config {
+            task.plugin_config = plugin_config;
+            capability_boundary_changed = true;
+        }
         if capability_boundary_changed {
             let task_owner_user_id = task_owner_or_creator(&task);
             let agent_key = crate::models::task_runner_agent_key_for(
@@ -135,13 +139,24 @@ impl TaskService {
             );
             self.validate_task_mcp_config_for_agent(
                 &task.mcp_config,
+                &task.plugin_config,
                 current_user,
                 task_owner_user_id,
                 agent_key,
             )
             .await?;
             if let Some(policy) = self
-                .resolve_task_runner_policy_for_agent(current_user, task_owner_user_id, agent_key)
+                .resolve_task_runner_policy_for_agent_on_device(
+                    current_user,
+                    task_owner_user_id,
+                    agent_key,
+                    task.plugin_config
+                        .device_id
+                        .as_deref()
+                        .map(str::trim)
+                        .filter(|value| !value.is_empty())
+                        .map(str::to_string),
+                )
                 .await?
             {
                 task.mcp_config.skill_policy_revision = Some(policy.policy_revision().to_string());
@@ -243,13 +258,24 @@ impl TaskService {
         );
         self.validate_task_mcp_config_for_agent(
             &task.mcp_config,
+            &task.plugin_config,
             current_user,
             task_owner_user_id,
             agent_key,
         )
         .await?;
         if let Some(policy) = self
-            .resolve_task_runner_policy_for_agent(current_user, task_owner_user_id, agent_key)
+            .resolve_task_runner_policy_for_agent_on_device(
+                current_user,
+                task_owner_user_id,
+                agent_key,
+                task.plugin_config
+                    .device_id
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(str::to_string),
+            )
             .await?
         {
             task.mcp_config.skill_policy_revision = Some(policy.policy_revision().to_string());
@@ -348,6 +374,7 @@ mod tests {
                     tenant_id: None,
                     subject_id: None,
                     schedule: None,
+                    plugin_config: Default::default(),
                     mcp_config: None,
                     prerequisite_task_ids: None,
                 },

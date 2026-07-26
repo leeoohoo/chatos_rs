@@ -158,6 +158,78 @@ pub(super) fn validate_system_seed_mcp_update(payload: &McpPayload) -> Result<()
     }
 }
 
+pub(super) fn validate_release_managed_mcp_update(
+    ownership: &PluginComponentOwnership,
+    payload: &McpPayload,
+) -> Result<(), ApiError> {
+    if !ownership.is_release_managed() {
+        return Ok(());
+    }
+    let modifies_release_fields = payload.owner_user_id.is_some()
+        || payload.visibility.is_some()
+        || payload.source_kind.is_some()
+        || payload.name.is_some()
+        || payload.runtime.is_some()
+        || payload.security.is_some();
+    if modifies_release_fields {
+        Err(ApiError::conflict(
+            "Plugin Release MCP identity, runtime, and security are immutable",
+        ))
+    } else {
+        Ok(())
+    }
+}
+
+pub(super) fn validate_release_managed_skill_update(
+    ownership: &PluginComponentOwnership,
+    payload: &SkillPayload,
+) -> Result<(), ApiError> {
+    if !ownership.is_release_managed() {
+        return Ok(());
+    }
+    let modifies_release_fields = payload.owner_user_id.is_some()
+        || payload.visibility.is_some()
+        || payload.source_kind.is_some()
+        || payload.name.is_some()
+        || payload.content.is_some();
+    if modifies_release_fields {
+        Err(ApiError::conflict(
+            "Plugin Release Skill identity and content are immutable",
+        ))
+    } else {
+        Ok(())
+    }
+}
+
+pub(super) fn validate_release_managed_agent_update(
+    ownership: &PluginComponentOwnership,
+    payload: &SystemAgentPayload,
+) -> Result<(), ApiError> {
+    if !ownership.is_release_managed() {
+        return Ok(());
+    }
+    if payload.agent_key.is_some() || payload.service_name.is_some() || payload.managed_by.is_some()
+    {
+        Err(ApiError::conflict(
+            "Plugin Release Agent identity and runtime ownership are immutable",
+        ))
+    } else {
+        Ok(())
+    }
+}
+
+pub(super) fn ensure_release_managed_resource_not_deleted(
+    ownership: &PluginComponentOwnership,
+) -> Result<(), ApiError> {
+    if ownership.is_release_managed() {
+        Err(ApiError::conflict(
+            "Plugin Release components must be removed through Plugin uninstall or release lifecycle",
+        ))
+    } else {
+        Ok(())
+    }
+}
+
 pub(super) fn validate_mcp_runtime(runtime: &McpRuntime) -> Result<(), ApiError> {
     match runtime.kind.as_str() {
         RUNTIME_KIND_SYSTEM => {
@@ -327,6 +399,18 @@ pub(super) fn validate_skill_content(content: &SkillContent) -> Result<(), ApiEr
     Ok(())
 }
 
+pub(super) fn validate_plugin_managed_skill_content(
+    content: &SkillContent,
+) -> Result<(), ApiError> {
+    validate_skill_content(content)?;
+    if content.kind != SKILL_CONTENT_KIND_LOCAL_CONNECTOR_BUNDLE {
+        return Err(ApiError::bad_request(
+            "cloud executable skill content is frozen; skills must reference an internal Local Connector bundle",
+        ));
+    }
+    Ok(())
+}
+
 pub(super) fn validate_mcp_binding_mode(value: &str) -> Result<(), ApiError> {
     match value {
         MCP_BINDING_MODE_DISABLED | MCP_BINDING_MODE_OPTIONAL | MCP_BINDING_MODE_REQUIRED => Ok(()),
@@ -344,4 +428,34 @@ pub(super) fn mcp_binding_state(value: &str) -> Result<(bool, bool, &'static str
         MCP_BINDING_MODE_REQUIRED => (true, true, BINDING_SCOPE_SYSTEM_REQUIRED),
         _ => unreachable!("validated MCP binding mode"),
     })
+}
+
+#[cfg(test)]
+mod skill_content_tests {
+    use super::*;
+
+    #[test]
+    fn plugin_managed_skill_content_accepts_only_internal_bundles() {
+        let allowed = SkillContent {
+            kind: SKILL_CONTENT_KIND_LOCAL_CONNECTOR_BUNDLE.to_string(),
+            bundle_id: Some("documents".to_string()),
+            bundle_version: Some("1.0.0".to_string()),
+            entrypoint_kind: Some("native_adapter".to_string()),
+            ..SkillContent::default()
+        };
+        assert!(validate_plugin_managed_skill_content(&allowed).is_ok());
+
+        let cloud = SkillContent {
+            kind: "cloud_package".to_string(),
+            ..SkillContent::default()
+        };
+        assert!(validate_plugin_managed_skill_content(&cloud).is_err());
+
+        let inline = SkillContent {
+            kind: "inline_content".to_string(),
+            inline: Some("prompt".to_string()),
+            ..SkillContent::default()
+        };
+        assert!(validate_plugin_managed_skill_content(&inline).is_err());
+    }
 }

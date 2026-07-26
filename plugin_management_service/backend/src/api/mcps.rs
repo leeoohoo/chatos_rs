@@ -154,6 +154,7 @@ pub(super) async fn create_mcp(
         runtime,
         security: payload.security.unwrap_or_default(),
         metadata: payload.metadata.unwrap_or_default(),
+        plugin_component: PluginComponentOwnership::default(),
         created_by: user.user_id.clone(),
         updated_by: user.user_id.clone(),
         created_at: now.clone(),
@@ -371,6 +372,7 @@ pub(super) async fn update_mcp(
         record.owner_user_id.as_str(),
         record.visibility.as_str(),
     )?;
+    validate_release_managed_mcp_update(&record.plugin_component, &payload)?;
     if record.source_kind == SOURCE_KIND_SYSTEM_SEED {
         validate_system_seed_mcp_update(&payload)?;
         if let Some(enabled) = payload.enabled {
@@ -449,6 +451,7 @@ pub(super) async fn delete_mcp(
         record.owner_user_id.as_str(),
         record.visibility.as_str(),
     )?;
+    ensure_release_managed_resource_not_deleted(&record.plugin_component)?;
     if record.source_kind == SOURCE_KIND_SYSTEM_SEED {
         record.enabled = false;
         record.updated_at = now_rfc3339();

@@ -225,6 +225,7 @@ mod tests {
             source_user_message_id: None,
             prerequisite_task_ids: Vec::new(),
             task_tool_state: TaskToolState::default(),
+            plugin_config: Default::default(),
             mcp_config: TaskMcpConfig::default(),
             created_at: now_rfc3339(),
             updated_at: now_rfc3339(),

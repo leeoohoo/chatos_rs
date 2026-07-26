@@ -30,6 +30,7 @@ fn binding(scope: &str) -> AgentBindingRecord {
         required: false,
         priority: 100,
         conditions: BindingConditions::default(),
+        component_allowlist: Vec::new(),
         created_by: "user-1".to_string(),
         updated_by: "user-1".to_string(),
         created_at: "now".to_string(),
@@ -62,6 +63,7 @@ fn local_connector_record() -> McpRecord {
         },
         security: ResourceSecurity::default(),
         metadata: ResourceMetadata::default(),
+        plugin_component: PluginComponentOwnership::default(),
         created_by: "local-connector-service".to_string(),
         updated_by: "local-connector-service".to_string(),
         created_at: "now".to_string(),
@@ -388,4 +390,66 @@ fn automatic_user_resources_are_optional_and_owner_scoped() {
     assert!(!binding.required);
     assert_eq!(binding.owner_user_id.as_deref(), Some("user-1"));
     assert_eq!(binding.resource_kind, RESOURCE_KIND_MCP);
+}
+
+#[test]
+fn release_managed_components_only_allow_rollout_overrides() {
+    let ownership = PluginComponentOwnership {
+        plugin_id: Some("plugin-1".to_string()),
+        release_id: Some("release-1".to_string()),
+        component_key: Some("main".to_string()),
+        managed_by_plugin: true,
+        immutable_from_release: true,
+    };
+    assert!(validate_release_managed_mcp_update(
+        &ownership,
+        &McpPayload {
+            display_name: Some("Friendly name".to_string()),
+            enabled: Some(false),
+            ..McpPayload::default()
+        }
+    )
+    .is_ok());
+    assert_eq!(
+        validate_release_managed_mcp_update(
+            &ownership,
+            &McpPayload {
+                runtime: Some(McpRuntime::default()),
+                ..McpPayload::default()
+            }
+        )
+        .unwrap_err()
+        .status,
+        StatusCode::CONFLICT
+    );
+    assert_eq!(
+        validate_release_managed_skill_update(
+            &ownership,
+            &SkillPayload {
+                content: Some(SkillContent::default()),
+                ..SkillPayload::default()
+            }
+        )
+        .unwrap_err()
+        .status,
+        StatusCode::CONFLICT
+    );
+    assert_eq!(
+        validate_release_managed_agent_update(
+            &ownership,
+            &SystemAgentPayload {
+                service_name: Some("other-service".to_string()),
+                ..SystemAgentPayload::default()
+            }
+        )
+        .unwrap_err()
+        .status,
+        StatusCode::CONFLICT
+    );
+    assert_eq!(
+        ensure_release_managed_resource_not_deleted(&ownership)
+            .unwrap_err()
+            .status,
+        StatusCode::CONFLICT
+    );
 }

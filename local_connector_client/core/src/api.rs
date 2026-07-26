@@ -3,7 +3,6 @@
 
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::PathBuf;
-use std::process::Stdio;
 
 use anyhow::{Context as _, Result};
 use axum::body::Body;
@@ -11,7 +10,7 @@ use axum::extract::State;
 use axum::http::{header, HeaderMap, HeaderValue, Method, Request, StatusCode};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
-use axum::routing::{delete, get, post};
+use axum::routing::{delete, get, post, put};
 use axum::{Json, Router};
 use hyper_util::rt::{TokioExecutor, TokioIo};
 use hyper_util::server::conn::auto::Builder as HyperConnectionBuilder;
@@ -28,25 +27,35 @@ use crate::{tracing_stdout, LocalRuntime};
 mod handlers;
 mod types;
 
+pub(crate) use handlers::spawn_plugin_auto_update_checker;
+
 use handlers::{
     local_add_workspace, local_agent_prompt_status, local_approval_settings,
-    local_approve_pending_approval, local_check_agent_prompt_updates, local_clear_command_history,
-    local_command_history, local_delete_mcp_config, local_delete_model_config,
-    local_delete_sandbox_image, local_deny_pending_approval, local_desktop_ticket,
-    local_disable_mcp_config, local_docker_status, local_enable_mcp_config, local_fs_list_handler,
-    local_get_mcp_config, local_initialize_sandbox_image, local_login, local_logout,
-    local_mcp_configs, local_model_configs, local_model_settings, local_pending_approvals,
-    local_preview_model_catalog, local_register, local_reinitialize_sandbox_image,
-    local_remove_workspace, local_request_system_permission, local_runtime_settings,
-    local_sandbox_capabilities, local_sandbox_image_jobs, local_sandbox_image_mcp,
-    local_sandbox_images, local_sandbox_leases, local_sandbox_settings, local_save_mcp_config,
-    local_save_model_config, local_send_register_email_code, local_shutdown_sandboxes,
-    local_skills, local_status, local_sync_mcp_config, local_sync_model_config,
-    local_sync_skill_inventory, local_system_permissions, local_terminal_exec,
-    local_test_mcp_config, local_toggle_sandbox, local_update_agent_prompt_bundle,
-    local_update_approval_settings, local_update_mcp_config, local_update_model_config,
-    local_update_model_settings, local_update_runtime_settings, local_update_sandbox_settings,
-    local_update_skill_preference, local_update_workspace_project_config_trust,
+    local_approve_pending_approval, local_begin_plugin_oauth, local_browser_session_command,
+    local_check_agent_prompt_updates, local_check_plugin_updates, local_chrome_integration_status,
+    local_chrome_native_connect, local_chrome_native_disconnect, local_chrome_native_event,
+    local_chrome_native_next, local_clear_command_history, local_command_history,
+    local_complete_plugin_oauth, local_complete_plugin_oauth_query, local_delete_mcp_config,
+    local_delete_model_config, local_delete_plugin_credential, local_delete_sandbox_image,
+    local_deny_pending_approval, local_desktop_ticket, local_disable_chrome_integration,
+    local_disable_mcp_config, local_disconnect_plugin_oauth, local_docker_status,
+    local_enable_chrome_integration, local_enable_mcp_config, local_fs_list_handler,
+    local_get_mcp_config, local_initialize_sandbox_image, local_install_plugin, local_login,
+    local_logout, local_mcp_configs, local_model_configs, local_model_settings,
+    local_pending_approvals, local_plugin_catalog, local_plugin_credentials, local_plugin_events,
+    local_plugin_oauth_connections, local_plugin_status, local_preview_model_catalog,
+    local_recover_plugin_transactions, local_register, local_reinitialize_sandbox_image,
+    local_remove_workspace, local_request_system_permission, local_rollback_plugin,
+    local_runtime_settings, local_sandbox_capabilities, local_sandbox_image_jobs,
+    local_sandbox_image_mcp, local_sandbox_images, local_sandbox_leases, local_sandbox_settings,
+    local_save_mcp_config, local_save_model_config, local_send_register_email_code,
+    local_shutdown_sandboxes, local_skills, local_status, local_sync_mcp_config,
+    local_sync_model_config, local_sync_skill_inventory, local_system_permissions,
+    local_terminal_exec, local_test_mcp_config, local_toggle_sandbox, local_uninstall_plugin,
+    local_update_agent_prompt_bundle, local_update_approval_settings, local_update_mcp_config,
+    local_update_model_config, local_update_model_settings, local_update_plugin_preference,
+    local_update_runtime_settings, local_update_sandbox_settings, local_update_skill_preference,
+    local_update_workspace_project_config_trust, local_upsert_plugin_credential,
 };
 
 pub(crate) async fn serve_local_api(runtime: LocalRuntime) -> Result<()> {
@@ -61,6 +70,25 @@ pub(crate) async fn serve_local_api(runtime: LocalRuntime) -> Result<()> {
             "LOCAL_CONNECTOR_DESKTOP_AUTH_TOKEN is required when the Local Connector TCP API or Windows named-pipe API is enabled"
         ));
     }
+    let _chrome_rendezvous = if tcp_enabled {
+        desktop_auth_token.as_deref().and_then(|token| {
+            match crate::chrome_integration::publish_chrome_native_rendezvous(
+                runtime.state_path.as_path(),
+                token,
+                local_api_port(),
+            ) {
+                Ok(guard) => Some(guard),
+                Err(error) => {
+                    tracing_stdout(
+                        format!("Chrome Native Host rendezvous is unavailable: {error}").as_str(),
+                    );
+                    None
+                }
+            }
+        })
+    } else {
+        None
+    };
     let app = local_api_app(runtime, desktop_auth_token);
     if let Some(endpoint) = ipc_endpoint {
         if env_flag("LOCAL_CONNECTOR_ENABLE_TCP_API") {
@@ -91,7 +119,7 @@ fn local_api_app(runtime: LocalRuntime, desktop_auth_token: Option<String>) -> R
 }
 
 fn local_api_routes(desktop_auth_token: Option<String>) -> Router<LocalRuntime> {
-    Router::new()
+    let protected = Router::new()
         .merge(crate::local_runtime::api::router())
         .route("/api/local/status", get(local_status))
         .route("/api/local/auth/login", post(local_login))
@@ -178,6 +206,38 @@ fn local_api_routes(desktop_auth_token: Option<String>) -> Router<LocalRuntime> 
         )
         .route("/api/local/terminal/exec", post(local_terminal_exec))
         .route(
+            "/api/local/runtime/browser/sessions/{session_id}/command",
+            post(local_browser_session_command),
+        )
+        .route(
+            "/api/local/chrome-integration",
+            get(local_chrome_integration_status),
+        )
+        .route(
+            "/api/local/chrome-integration/enable",
+            post(local_enable_chrome_integration),
+        )
+        .route(
+            "/api/local/chrome-integration/disable",
+            post(local_disable_chrome_integration),
+        )
+        .route(
+            "/api/local/chrome/native/connect",
+            post(local_chrome_native_connect),
+        )
+        .route(
+            "/api/local/chrome/native/event",
+            post(local_chrome_native_event),
+        )
+        .route(
+            "/api/local/chrome/native/next",
+            post(local_chrome_native_next),
+        )
+        .route(
+            "/api/local/chrome/native/disconnect",
+            post(local_chrome_native_disconnect),
+        )
+        .route(
             "/api/local/model-configs",
             get(local_model_configs).post(local_save_model_config),
         )
@@ -209,6 +269,53 @@ fn local_api_routes(desktop_auth_token: Option<String>) -> Router<LocalRuntime> 
         )
         .route("/api/local/skills", get(local_skills))
         .route("/api/local/skills/sync", post(local_sync_skill_inventory))
+        .route("/api/local/plugins", get(local_plugin_status))
+        .route("/api/local/plugins/catalog", get(local_plugin_catalog))
+        .route("/api/local/plugins/events", get(local_plugin_events))
+        .route(
+            "/api/local/plugins/check-updates",
+            post(local_check_plugin_updates),
+        )
+        .route(
+            "/api/local/plugins/{plugin_id}",
+            delete(local_uninstall_plugin),
+        )
+        .route(
+            "/api/local/plugins/{plugin_id}/rollback",
+            post(local_rollback_plugin),
+        )
+        .route(
+            "/api/local/plugins/{plugin_id}/install",
+            post(local_install_plugin),
+        )
+        .route(
+            "/api/local/plugins/{plugin_id}/preference",
+            put(local_update_plugin_preference),
+        )
+        .route(
+            "/api/local/plugins/{plugin_id}/credentials",
+            get(local_plugin_credentials),
+        )
+        .route(
+            "/api/local/plugins/{plugin_id}/components/{component_key}/credentials/{secret_name}",
+            put(local_upsert_plugin_credential).delete(local_delete_plugin_credential),
+        )
+        .route(
+            "/api/local/plugins/{plugin_id}/oauth",
+            get(local_plugin_oauth_connections),
+        )
+        .route(
+            "/api/local/plugins/{plugin_id}/components/{component_key}/oauth/start",
+            post(local_begin_plugin_oauth),
+        )
+        .route(
+            "/api/local/plugins/{plugin_id}/components/{component_key}/oauth/{provider}",
+            delete(local_disconnect_plugin_oauth),
+        )
+        .route(
+            "/api/local/plugins/recover",
+            post(local_recover_plugin_transactions),
+        )
         .route(
             "/api/local/skills/{skill_id}/preference",
             post(local_update_skill_preference),
@@ -245,7 +352,11 @@ fn local_api_routes(desktop_auth_token: Option<String>) -> Router<LocalRuntime> 
         .route_layer(middleware::from_fn_with_state(
             desktop_auth_token,
             require_local_desktop_auth,
-        ))
+        ));
+    Router::new().merge(protected).route(
+        "/api/local/plugins/oauth/callback",
+        get(local_complete_plugin_oauth_query).post(local_complete_plugin_oauth),
+    )
 }
 
 async fn serve_tcp_local_api(app: Router) -> Result<()> {
@@ -255,7 +366,7 @@ async fn serve_tcp_local_api(app: Router) -> Result<()> {
     if should_open_local_ui() {
         let url = format!("http://{bind_addr}");
         tokio::spawn(async move {
-            if let Err(err) = open_local_ui(url.as_str()).await {
+            if let Err(err) = crate::external_url::open_external_url(url.as_str()).await {
                 tracing_stdout(format!("open local connector UI failed: {err}").as_str());
             }
         });
@@ -457,32 +568,6 @@ fn env_flag(name: &str) -> bool {
         .unwrap_or(false)
 }
 
-async fn open_local_ui(url: &str) -> Result<()> {
-    let mut command = match std::env::consts::OS {
-        "macos" => {
-            let mut command = tokio::process::Command::new("open");
-            command.arg(url);
-            command
-        }
-        "windows" => {
-            let mut command = tokio::process::Command::new("cmd");
-            command.args(["/C", "start", "", url]);
-            command
-        }
-        _ => {
-            let mut command = tokio::process::Command::new("xdg-open");
-            command.arg(url);
-            command
-        }
-    };
-    command
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null());
-    command.spawn()?.wait().await?;
-    Ok(())
-}
-
 fn local_desktop_auth_token() -> Option<String> {
     optional_env("LOCAL_CONNECTOR_DESKTOP_AUTH_TOKEN")
 }
@@ -491,6 +576,13 @@ fn local_api_port() -> u16 {
     optional_env("LOCAL_CONNECTOR_CORE_API_PORT")
         .and_then(|value| value.parse::<u16>().ok())
         .unwrap_or(DEFAULT_LOCAL_API_PORT)
+}
+
+fn local_plugin_oauth_redirect_uri() -> String {
+    format!(
+        "http://127.0.0.1:{}/api/local/plugins/oauth/callback",
+        local_api_port()
+    )
 }
 
 fn local_api_cors() -> CorsLayer {

@@ -10,6 +10,12 @@ import type {
   MessageTaskRunnerRetryRunResponse,
   MessageTaskRunnerTask,
   MessageTaskRunnerTasksResponse,
+  PluginUiWorkbenchSessionResponse,
+  PluginArtifactListResponse,
+  PluginArtifactCreateRequest,
+  PluginArtifactReadResponse,
+  PluginArtifactUpdateRequest,
+  PluginArtifactWriteResponse,
   SessionMessageResponse,
 } from './types';
 import { buildQuery } from './shared';
@@ -141,6 +147,80 @@ export const retryMessageTaskRunnerRun = (
       : { method: 'POST' },
   );
 };
+
+export const createPluginUiWorkbenchSession = (
+  request: ApiRequestFn,
+  messageId: string,
+  runId: string,
+  eventId: string,
+  options?: MessageTaskRunnerLookupOptions,
+): Promise<PluginUiWorkbenchSessionResponse> => request<PluginUiWorkbenchSessionResponse>(
+  `/messages/${encodeURIComponent(messageId)}/task-runner/runs/${encodeURIComponent(runId)}/plugin-ui/${encodeURIComponent(eventId)}/workbench-sessions${messageTaskRunnerLookupQuery(options)}`,
+  { method: 'POST' },
+);
+
+export const revokePluginUiWorkbenchSession = (
+  request: ApiRequestFn,
+  messageId: string,
+  runId: string,
+  eventId: string,
+  sessionId: string,
+): Promise<void> => request<void>(
+  `/messages/${encodeURIComponent(messageId)}/task-runner/runs/${encodeURIComponent(runId)}/plugin-ui/${encodeURIComponent(eventId)}/workbench-sessions/${encodeURIComponent(sessionId)}`,
+  { method: 'DELETE' },
+);
+
+export const listPluginUiWorkbenchArtifacts = (
+  request: ApiRequestFn,
+  messageId: string,
+  runId: string,
+  eventId: string,
+  sessionId: string,
+): Promise<PluginArtifactListResponse> => request<PluginArtifactListResponse>(
+  `/messages/${encodeURIComponent(messageId)}/task-runner/runs/${encodeURIComponent(runId)}/plugin-ui/${encodeURIComponent(eventId)}/workbench-sessions/${encodeURIComponent(sessionId)}/artifacts`,
+);
+
+export const readPluginUiWorkbenchArtifact = (
+  request: ApiRequestFn,
+  messageId: string,
+  runId: string,
+  eventId: string,
+  sessionId: string,
+  artifactId: string,
+): Promise<PluginArtifactReadResponse> => request<PluginArtifactReadResponse>(
+  `/messages/${encodeURIComponent(messageId)}/task-runner/runs/${encodeURIComponent(runId)}/plugin-ui/${encodeURIComponent(eventId)}/workbench-sessions/${encodeURIComponent(sessionId)}/artifacts/${encodeURIComponent(artifactId)}`,
+);
+
+export const createPluginUiWorkbenchArtifact = (
+  request: ApiRequestFn,
+  messageId: string,
+  runId: string,
+  eventId: string,
+  sessionId: string,
+  payload: PluginArtifactCreateRequest,
+): Promise<PluginArtifactWriteResponse> => request<PluginArtifactWriteResponse>(
+  `/messages/${encodeURIComponent(messageId)}/task-runner/runs/${encodeURIComponent(runId)}/plugin-ui/${encodeURIComponent(eventId)}/workbench-sessions/${encodeURIComponent(sessionId)}/artifacts`,
+  {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  },
+);
+
+export const updatePluginUiWorkbenchArtifact = (
+  request: ApiRequestFn,
+  messageId: string,
+  runId: string,
+  eventId: string,
+  sessionId: string,
+  artifactId: string,
+  payload: PluginArtifactUpdateRequest,
+): Promise<PluginArtifactWriteResponse> => request<PluginArtifactWriteResponse>(
+  `/messages/${encodeURIComponent(messageId)}/task-runner/runs/${encodeURIComponent(runId)}/plugin-ui/${encodeURIComponent(eventId)}/workbench-sessions/${encodeURIComponent(sessionId)}/artifacts/${encodeURIComponent(artifactId)}`,
+  {
+    method: 'PUT',
+    body: JSON.stringify(payload),
+  },
+);
 
 export const getMessageTaskRunnerGraphRun = (
   request: ApiRequestFn,

@@ -3,7 +3,7 @@
 
 use std::collections::HashSet;
 
-use crate::dto::{ResolvedAgentCapabilities, ResolvedMcp, ResolvedSkill};
+use crate::dto::{ResolvedAgentCapabilities, ResolvedMcp, ResolvedPlugin, ResolvedSkill};
 use crate::error::PolicyError;
 
 impl ResolvedAgentCapabilities {
@@ -19,6 +19,16 @@ impl ResolvedAgentCapabilities {
 
     pub fn selectable_skills(&self) -> impl Iterator<Item = &ResolvedSkill> {
         self.skills
+            .iter()
+            .filter(|item| !item.binding.required && item.available)
+    }
+
+    pub fn required_plugins(&self) -> impl Iterator<Item = &ResolvedPlugin> {
+        self.plugins.iter().filter(|item| item.binding.required)
+    }
+
+    pub fn selectable_plugins(&self) -> impl Iterator<Item = &ResolvedPlugin> {
+        self.plugins
             .iter()
             .filter(|item| !item.binding.required && item.available)
     }
@@ -40,6 +50,17 @@ impl ResolvedAgentCapabilities {
                 });
             }
         }
+        for item in self.required_plugins() {
+            if !item.available {
+                return Err(PolicyError::RequiredUnavailable {
+                    resource_id: item.catalog.id.clone(),
+                    reason: item
+                        .reason
+                        .clone()
+                        .unwrap_or_else(|| format!("{:?}", item.status)),
+                });
+            }
+        }
         Ok(())
     }
 
@@ -54,6 +75,29 @@ impl ResolvedAgentCapabilities {
             }
         }
         Ok(())
+    }
+
+    pub fn ensure_required_plugins_supported<'a>(
+        &self,
+        supported_plugin_ids: impl IntoIterator<Item = &'a str>,
+    ) -> Result<(), PolicyError> {
+        let supported = supported_plugin_ids.into_iter().collect::<HashSet<_>>();
+        for item in self.required_plugins() {
+            if !supported.contains(item.catalog.id.as_str()) {
+                return Err(PolicyError::RequiredUnsupported(item.catalog.id.clone()));
+            }
+        }
+        Ok(())
+    }
+
+    pub fn ensure_required_runtime_supported<'a, 'b>(
+        &self,
+        supported_skill_ids: impl IntoIterator<Item = &'a str>,
+        supported_plugin_ids: impl IntoIterator<Item = &'b str>,
+    ) -> Result<(), PolicyError> {
+        self.ensure_required_available()?;
+        self.ensure_required_skills_supported(supported_skill_ids)?;
+        self.ensure_required_plugins_supported(supported_plugin_ids)
     }
 
     pub fn require_available_mcp(&self, resource_id: &str) -> Result<&ResolvedMcp, PolicyError> {
@@ -81,6 +125,10 @@ impl ResolvedAgentCapabilities {
             .chain(
                 self.selectable_skills()
                     .map(|item| item.resource.id.as_str()),
+            )
+            .chain(
+                self.selectable_plugins()
+                    .map(|item| item.catalog.id.as_str()),
             )
             .collect::<HashSet<_>>();
         for resource_id in resource_ids {
@@ -138,6 +186,7 @@ mod tests {
                 runtime: McpRuntime::default(),
                 security: ResourceSecurity::default(),
                 metadata: ResourceMetadata::default(),
+                plugin_component: Default::default(),
                 created_by: "system".to_string(),
                 updated_by: "system".to_string(),
                 created_at: "now".to_string(),
@@ -158,6 +207,7 @@ mod tests {
                 required,
                 priority: 0,
                 conditions: BindingConditions::default(),
+                component_allowlist: Vec::new(),
                 created_by: "system".to_string(),
                 updated_by: "system".to_string(),
                 created_at: "now".to_string(),
@@ -182,6 +232,7 @@ mod tests {
                 mcp("unavailable", false, false),
             ],
             skills: Vec::new(),
+            plugins: Vec::new(),
             local_connector_requirements: Vec::new(),
         }
     }
@@ -200,6 +251,7 @@ mod tests {
                 enabled: true,
                 content: SkillContent::default(),
                 metadata: ResourceMetadata::default(),
+                plugin_component: Default::default(),
                 created_by: "system".to_string(),
                 updated_by: "system".to_string(),
                 created_at: "now".to_string(),
@@ -216,6 +268,7 @@ mod tests {
                 required: true,
                 priority: 0,
                 conditions: BindingConditions::default(),
+                component_allowlist: Vec::new(),
                 created_by: "system".to_string(),
                 updated_by: "system".to_string(),
                 created_at: "now".to_string(),

@@ -335,6 +335,7 @@ mod tests {
             started_at: None,
             finished_at: None,
             input_snapshot: serde_json::json!({}),
+            plugin_snapshots: Vec::new(),
             context_snapshot: None,
             result_summary: None,
             error_message: None,

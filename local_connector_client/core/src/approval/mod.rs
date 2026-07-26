@@ -11,15 +11,18 @@ mod whitelist;
 
 pub(crate) use ai_agent::{run_auto_approval_agent, AutoApprovalDecision};
 pub(crate) use pending::{
-    approve_pending_approval, deny_pending_approval, finish_in_progress_approval,
-    list_in_progress_approvals, list_pending_approvals, start_in_progress_approval,
+    approve_pending_approval, cancel_pending_approvals_for_session, deny_pending_approval,
+    finish_in_progress_approval, list_in_progress_approvals, list_pending_approvals,
+    start_in_progress_approval,
 };
 pub(crate) use service::{
-    approval_project_key_from_request, clear_session_approvals, CommandApprovalService,
+    approval_project_key_for_relay_scope, approval_project_key_from_request,
+    clear_session_approvals, CommandApprovalService,
 };
 #[cfg(test)]
 pub(crate) use types::ApprovalProjectKey;
 pub(crate) use types::{
-    ApprovalAiSettings, ApprovalDecision, ApprovalMemorySettings, ApprovalMode, ApprovalState,
-    CommandApprovalRequest, ProjectApprovalState,
+    ApprovalActionAudit, ApprovalActionAuditDetail, ApprovalAiSettings, ApprovalDecision,
+    ApprovalMemorySettings, ApprovalMode, ApprovalState, CommandApprovalRequest,
+    ProjectApprovalState,
 };

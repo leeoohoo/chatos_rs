@@ -48,6 +48,12 @@ export type TaskFormValues = {
   defaultRemoteServerId?: string;
   externalMcpConfigIds?: string[];
   selectedSkillIds?: string[];
+  pluginDeviceId?: string;
+  pluginWorkspaceId?: string;
+  selectedPluginIds?: string[];
+  pluginCommandSelections?: Record<string, boolean>;
+  pluginCommandArguments?: Record<string, string>;
+  pluginAgentSelection?: string;
   scheduleMode: TaskScheduleMode;
   scheduleRunAt?: string;
   scheduleIntervalSeconds?: number;
@@ -83,6 +89,12 @@ export function buildCreateTaskFormValues(
     defaultRemoteServerId: undefined,
     externalMcpConfigIds: [],
     selectedSkillIds: [],
+    pluginDeviceId: undefined,
+    pluginWorkspaceId: undefined,
+    selectedPluginIds: [],
+    pluginCommandSelections: {},
+    pluginCommandArguments: {},
+    pluginAgentSelection: undefined,
     scheduleMode: 'manual',
     scheduleRunAt: undefined,
     scheduleIntervalSeconds: undefined,
@@ -110,6 +122,32 @@ export function buildEditTaskFormValues(task: TaskRecord): TaskFormValues {
     defaultRemoteServerId: task.mcp_config.default_remote_server_id || undefined,
     externalMcpConfigIds: task.mcp_config.external_mcp_config_ids || [],
     selectedSkillIds: task.mcp_config.selected_skill_ids || [],
+    pluginDeviceId: task.plugin_config?.device_id || undefined,
+    pluginWorkspaceId: task.plugin_config?.workspace_id || undefined,
+    selectedPluginIds:
+      task.plugin_config?.selected_plugins?.map((plugin) => plugin.plugin_id) || [],
+    pluginCommandSelections: Object.fromEntries(
+      (task.plugin_config?.selected_plugins || []).flatMap((plugin) =>
+        (plugin.selected_command_ids || []).map((commandId) => [
+          taskPluginCommandKey(plugin.plugin_id, commandId),
+          true,
+        ]),
+      ),
+    ),
+    pluginCommandArguments: Object.fromEntries(
+      (task.plugin_config?.command_invocations || [])
+        .filter((invocation) => invocation.arguments?.trim())
+        .map((invocation) => [
+          taskPluginCommandKey(invocation.plugin_id, invocation.command_id),
+          invocation.arguments!.trim(),
+        ]),
+    ),
+    pluginAgentSelection: (task.plugin_config?.selected_plugins || [])
+      .flatMap((plugin) =>
+        (plugin.selected_agent_ids || []).map((agentId) =>
+          taskPluginAgentKey(plugin.plugin_id, agentId),
+        ),
+      )[0],
     scheduleMode: task.schedule.mode,
     scheduleRunAt: formatScheduleInput(task.schedule.run_at ?? task.schedule.next_run_at),
     scheduleIntervalSeconds: task.schedule.interval_seconds || undefined,
@@ -131,6 +169,38 @@ export function buildTaskPayload(
     values.enabledBuiltinKinds,
   );
 
+  const selectedPluginIds = values.selectedPluginIds || [];
+  const selectedPluginIdSet = new Set(selectedPluginIds);
+  const selectedCommandsByPlugin = new Map<string, string[]>();
+  Object.entries(values.pluginCommandSelections || {}).forEach(([key, selected]) => {
+    if (!selected) {
+      return;
+    }
+    const parsed = parseTaskPluginCommandKey(key);
+    if (!parsed || !selectedPluginIdSet.has(parsed.pluginId)) {
+      return;
+    }
+    const commands = selectedCommandsByPlugin.get(parsed.pluginId) || [];
+    if (!commands.includes(parsed.commandId)) {
+      commands.push(parsed.commandId);
+    }
+    selectedCommandsByPlugin.set(parsed.pluginId, commands);
+  });
+  const commandInvocations = Array.from(selectedCommandsByPlugin.entries()).flatMap(
+    ([pluginId, commandIds]) =>
+      commandIds.flatMap((commandId) => {
+        const argumentsValue = values.pluginCommandArguments?.[
+          taskPluginCommandKey(pluginId, commandId)
+        ]?.trim();
+        return argumentsValue
+          ? [{ plugin_id: pluginId, command_id: commandId, arguments: argumentsValue }]
+          : [];
+      }),
+  );
+  const selectedAgent = values.pluginAgentSelection
+    ? parseTaskPluginAgentKey(values.pluginAgentSelection)
+    : null;
+
   return {
     title: values.title,
     objective: values.objective,
@@ -146,6 +216,20 @@ export function buildTaskPayload(
       .map((item) => item.trim())
       .filter(Boolean),
     schedule,
+    plugin_config: {
+      device_id: values.pluginDeviceId?.trim() || undefined,
+      workspace_id: values.pluginWorkspaceId?.trim() || undefined,
+      selected_plugins: selectedPluginIds.map((pluginId) => ({
+        plugin_id: pluginId,
+        selected_skill_ids: [],
+        selected_command_ids: selectedCommandsByPlugin.get(pluginId) || [],
+        selected_agent_ids:
+          selectedAgent?.pluginId === pluginId && selectedPluginIdSet.has(pluginId)
+            ? [selectedAgent.agentId]
+            : [],
+      })),
+      command_invocations: commandInvocations,
+    },
     mcp_config: {
       enabled: values.mcpEnabled,
       requires_execution: values.requiresExecution,
@@ -159,6 +243,56 @@ export function buildTaskPayload(
       selected_skill_ids: values.selectedSkillIds || [],
     },
   };
+}
+
+export function taskPluginCommandKey(pluginId: string, commandId: string): string {
+  return JSON.stringify([pluginId, commandId]);
+}
+
+export function taskPluginAgentKey(pluginId: string, agentId: string): string {
+  return JSON.stringify([pluginId, agentId]);
+}
+
+function parseTaskPluginAgentKey(
+  value: string,
+): { pluginId: string; agentId: string } | null {
+  try {
+    const parsed = JSON.parse(value);
+    if (
+      !Array.isArray(parsed) ||
+      parsed.length !== 2 ||
+      typeof parsed[0] !== 'string' ||
+      typeof parsed[1] !== 'string'
+    ) {
+      return null;
+    }
+    const pluginId = parsed[0].trim();
+    const agentId = parsed[1].trim();
+    return pluginId && agentId ? { pluginId, agentId } : null;
+  } catch {
+    return null;
+  }
+}
+
+function parseTaskPluginCommandKey(
+  value: string,
+): { pluginId: string; commandId: string } | null {
+  try {
+    const parsed = JSON.parse(value);
+    if (
+      !Array.isArray(parsed) ||
+      parsed.length !== 2 ||
+      typeof parsed[0] !== 'string' ||
+      typeof parsed[1] !== 'string' ||
+      !parsed[0].trim() ||
+      !parsed[1].trim()
+    ) {
+      return null;
+    }
+    return { pluginId: parsed[0], commandId: parsed[1] };
+  } catch {
+    return null;
+  }
 }
 
 function normalizeTaskProjectId(value?: string | null): string {

@@ -684,6 +684,7 @@ name = "chatos_mcp"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "base64 0.22.1",
  "chatos_mcp_runtime",
  "chatos_plugin_management_sdk",
  "chatos_sandbox_contract",
@@ -703,6 +704,7 @@ dependencies = [
  "serde_json",
  "sha2 0.11.0",
  "tokio",
+ "tokio-tungstenite 0.30.0",
  "tracing",
  "url",
  "urlencoding",
@@ -715,10 +717,14 @@ name = "chatos_mcp_runtime"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "base64 0.22.1",
  "chatos_service_runtime",
+ "hex",
+ "libc",
  "reqwest",
  "serde",
  "serde_json",
+ "sha2 0.11.0",
  "tokio",
  "tracing",
  "uuid",
@@ -738,9 +744,13 @@ dependencies = [
 name = "chatos_plugin_management_sdk"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
  "chatos_service_runtime",
+ "chrono",
  "hex",
  "reqwest",
+ "ring",
+ "semver 1.0.28",
  "serde",
  "serde_json",
  "sha2 0.11.0",
@@ -2541,6 +2551,7 @@ dependencies = [
  "async-trait",
  "axum",
  "base64 0.22.1",
+ "chat_app_server_rs",
  "chatos_agent",
  "chatos_ai_runtime",
  "chatos_mcp",
@@ -2550,28 +2561,39 @@ dependencies = [
  "chatos_project_execution",
  "chatos_sandbox_contract",
  "chrono",
+ "crc32fast",
  "dotenvy",
+ "flate2",
  "futures-util",
  "hex",
  "hyper-util",
  "libc",
+ "local_connector_service_backend",
  "lopdf",
  "memory_engine_sdk",
+ "mongodb",
  "portable-pty",
+ "quick-xml",
  "reqwest",
  "ring",
+ "semver 1.0.28",
  "serde",
  "serde_json",
  "sha2 0.11.0",
  "sqlx",
+ "tempfile",
  "tokio",
  "tokio-tungstenite 0.30.0",
  "tokio-util",
+ "tower",
  "tower-http 0.7.0",
  "url",
  "urlencoding",
  "uuid",
+ "windows",
  "windows-sys 0.61.2",
+ "winreg",
+ "zeroize",
  "zip 2.4.2",
 ]
 
@@ -3300,6 +3322,7 @@ name = "plugin_management_service_backend"
 version = "0.1.0"
 dependencies = [
  "axum",
+ "base64 0.22.1",
  "chatos_agent",
  "chatos_ai_runtime",
  "chatos_mcp",
@@ -3311,6 +3334,8 @@ dependencies = [
  "hex",
  "mongodb",
  "reqwest",
+ "ring",
+ "semver 1.0.28",
  "serde",
  "serde_json",
  "sha2 0.11.0",
@@ -4811,6 +4836,7 @@ dependencies = [
  "chatos_terminal_runtime",
  "chrono",
  "futures-util",
+ "hex",
  "jsonwebtoken",
  "libc",
  "memory_engine_sdk",
@@ -4820,6 +4846,7 @@ dependencies = [
  "reqwest",
  "serde",
  "serde_json",
+ "sha2 0.11.0",
  "ssh2",
  "tokio",
  "tokio-stream",
@@ -5713,6 +5740,27 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "712e227841d057c1ee1cd2fb22fa7e5a5461ae8e48fa2ca79ec42cfc1931183f"
 
 [[package]]
+name = "windows"
+version = "0.62.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "527fadee13e0c05939a6a05d5bd6eec6cd2e3dbd648b9f8e447c6518133d8580"
+dependencies = [
+ "windows-collections",
+ "windows-core",
+ "windows-future",
+ "windows-numerics",
+]
+
+[[package]]
+name = "windows-collections"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "23b2d95af1a8a14a3c7367e1ed4fc9c20e0a26e79551b1454d72583c97cc6610"
+dependencies = [
+ "windows-core",
+]
+
+[[package]]
 name = "windows-core"
 version = "0.62.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5723,6 +5771,17 @@ dependencies = [
  "windows-link",
  "windows-result",
  "windows-strings",
+]
+
+[[package]]
+name = "windows-future"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e1d6f90251fe18a279739e78025bd6ddc52a7e22f921070ccdc67dde84c605cb"
+dependencies = [
+ "windows-core",
+ "windows-link",
+ "windows-threading",
 ]
 
 [[package]]
@@ -5752,6 +5811,16 @@ name = "windows-link"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f0805222e57f7521d6a62e36fa9163bc891acd422f971defe97d64e70d0a4fe5"
+
+[[package]]
+name = "windows-numerics"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6e2e40844ac143cdb44aead537bbf727de9b044e107a0f1220392177d15b0f26"
+dependencies = [
+ "windows-core",
+ "windows-link",
+]
 
 [[package]]
 name = "windows-registry"
@@ -5838,6 +5907,15 @@ dependencies = [
  "windows_x86_64_gnu 0.52.6",
  "windows_x86_64_gnullvm 0.52.6",
  "windows_x86_64_msvc 0.52.6",
+]
+
+[[package]]
+name = "windows-threading"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3949bd5b99cafdf1c7ca86b43ca564028dfe27d66958f2470940f73d86d75b37"
+dependencies = [
+ "windows-link",
 ]
 
 [[package]]

@@ -255,6 +255,10 @@ Additional rules:
 
 ## [builtin_browser_tools]
 When these tools exist, they are responsible for observing, interacting with, and researching the current browser page:
+`browser_tools_browser_tabs`
+`browser_tools_browser_tab_new`
+`browser_tools_browser_tab_switch`
+`browser_tools_browser_tab_close`
 `browser_tools_browser_navigate`
 `browser_tools_browser_snapshot`
 `browser_tools_browser_click`
@@ -262,24 +266,52 @@ When these tools exist, they are responsible for observing, interacting with, an
 `browser_tools_browser_scroll`
 `browser_tools_browser_back`
 `browser_tools_browser_press`
+`browser_tools_browser_upload`
+`browser_tools_browser_download`
 `browser_tools_browser_console`
+`browser_tools_browser_network`
+`browser_tools_browser_network_request`
+`browser_tools_browser_har_start`
+`browser_tools_browser_har_stop`
+`browser_tools_browser_websocket_start`
+`browser_tools_browser_websocket_frames`
+`browser_tools_browser_websocket_stop`
+`browser_tools_browser_route_add`
+`browser_tools_browser_route_list`
+`browser_tools_browser_route_remove`
+`browser_tools_browser_route_clear`
+`browser_tools_browser_cdp_command`
 `browser_tools_browser_get_images`
 `browser_tools_browser_inspect`
 `browser_tools_browser_research`
 `browser_tools_browser_vision`
 
 Default strategy:
-1. If the question is about the current browser page, call `browser_tools_browser_inspect` first. Do not start by clicking, typing, or searching the public web.
-2. Use `browser_tools_browser_snapshot` when you need refs or a full snapshot.
-3. Only use `browser_tools_browser_click` or `browser_tools_browser_type` after getting fresh refs. If the page visibly changed, inspect or snapshot again first.
-4. Only use `browser_tools_browser_console` when console errors, JS evaluation, or console cleanup is actually needed.
-5. Only prioritize `browser_tools_browser_vision` when layout screenshots, visual details, or purely visual judgment is key.
-6. When the answer depends on both the current page and outside public sources, prefer `browser_tools_browser_research`.
+1. To view, create, switch, or close tabs, first call `browser_tools_browser_tabs` for stable `tab_id` values. Switch and close only by that ID; the last remaining tab cannot be closed.
+2. If the question is about the current browser page, call `browser_tools_browser_inspect` first. Do not start by clicking, typing, or searching the public web.
+3. Use `browser_tools_browser_snapshot` when you need refs or a full snapshot.
+4. Only use `browser_tools_browser_click` or `browser_tools_browser_type` after getting fresh refs. After switching tabs or a visible page change, inspect or snapshot again first.
+5. Only use `browser_tools_browser_console` when console errors, JS evaluation, or console cleanup is actually needed.
+6. Use `browser_tools_browser_network` first for real HTTP method/status/type/header diagnostics. Only after obtaining a request_id, and only when necessary, use `browser_tools_browser_network_request` for one request detail or explicitly requested redacted text bodies.
+7. Only when the user explicitly needs a reusable network archive or cross-request timing diagnosis, call `browser_tools_browser_har_start` immediately before the target flow and promptly call `browser_tools_browser_har_stop` to write a new workspace-relative `.har` file. Omit bodies by default; if bodies are necessary, enable only the minimum direction and character limit.
+8. For WebSocket diagnosis, call `browser_tools_browser_websocket_start` immediately before the target flow, read bounded metadata with `browser_tools_browser_websocket_frames`, and promptly call `browser_tools_browser_websocket_stop`. Text payloads are opt-in and sanitized; binary payloads are never returned.
+9. Only call `browser_tools_browser_route_add` when the current session explicitly needs an approved request abort or fixed JSON mock. Manage only ChatOS-owned rules with list/remove/clear and do not attempt to extend their 30-minute TTL.
+10. `browser_tools_browser_cdp_command` appears only when the device has enabled the high-risk full-CDP mode. Do not use it when bounded browser tools suffice; when required, send the narrowest single method/params object and wait for local approval on every call.
+11. Only prioritize `browser_tools_browser_vision` when layout screenshots, visual details, or purely visual judgment is key.
+12. When the answer depends on both the current page and outside public sources, prefer `browser_tools_browser_research`.
+13. Use `browser_tools_browser_upload` only for existing workspace-relative files. Use `browser_tools_browser_download` only for a new workspace-relative target whose parent already exists; it never overwrites an existing file.
 
 Do not do this:
 1. Do not escalate a purely on-page problem directly into public web search.
 2. Do not keep using stale refs after the page state changes.
 3. Do not perform high-intervention actions too early when simple observation is enough.
+4. Do not pass outside-workspace paths, symlinks, or existing targets to browser upload/download tools.
+5. Do not claim network detail contains unredacted credentials. Query values, Cookie, Authorization, and token/password/secret fields are always sanitized; binary or base64 bodies are never returned.
+6. Do not leave HAR recording running indefinitely, request the raw HAR path, or claim the exported HAR preserves credential values. Raw capture is deleted from a private temporary directory, and the published file is always sanitized and never overwrites an existing target.
+7. Do not treat WebSocket observation as a control channel, request binary payloads, or claim returned text is raw. Observation is read-only, bounded, session-scoped, and explicit text reads are redacted.
+8. Do not use tab array indexes in place of stable `tab_id` values, close the last tab, or claim the tab list returns data/file URLs or unredacted query values.
+9. Do not use route tools to inject headers, credentials, scripts, or arbitrary status codes. Only an approved abort or fixed JSON body is allowed, and list results never return the mock body.
+10. Do not request, persist, or expose the CDP URL, debugger port, or browser WebSocket to the renderer/model. Full CDP remains available only through the authenticated, per-command approved Local Connector tool.
 
 ## [builtin_web_tools]
 When these tools exist, they handle public-web research and external source retrieval:

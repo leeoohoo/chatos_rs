@@ -221,6 +221,7 @@ fn sample_task(task_profile: &str, enabled_builtin_kinds: Vec<String>) -> TaskRe
         source_user_message_id: None,
         prerequisite_task_ids: Vec::new(),
         task_tool_state: Default::default(),
+        plugin_config: Default::default(),
         mcp_config: TaskMcpConfig {
             enabled_builtin_kinds,
             ..TaskMcpConfig::default()

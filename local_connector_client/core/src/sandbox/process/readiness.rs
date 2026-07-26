@@ -68,24 +68,55 @@ pub(crate) fn native_sandbox_agent_executable() -> Result<PathBuf, String> {
     )
 }
 
+pub(crate) fn plugin_stdio_sandbox_agent_executable() -> Result<PathBuf, String> {
+    #[cfg(target_os = "macos")]
+    {
+        let agent = native_sandbox_agent_executable()?;
+        let sandbox_exec = Path::new("/usr/bin/sandbox-exec");
+        if !executable_file(sandbox_exec) {
+            return Err("macOS Seatbelt launcher /usr/bin/sandbox-exec is unavailable".to_string());
+        }
+        Ok(agent)
+    }
+    #[cfg(target_os = "linux")]
+    {
+        let agent = native_sandbox_agent_executable()?;
+        system_bwrap_executable().ok_or_else(|| {
+            "Linux Bubblewrap launcher is unavailable or is not a trusted system executable"
+                .to_string()
+        })?;
+        Ok(agent)
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    {
+        Err("Plugin stdio OS sandbox is currently supported only on macOS and Linux".to_string())
+    }
+}
+
 #[cfg(target_os = "linux")]
 pub(crate) fn system_bwrap_executable() -> Option<PathBuf> {
-    let search_path = std::env::var_os("PATH")?;
-    let current_dir = std::env::current_dir()
-        .ok()
-        .and_then(|path| path.canonicalize().ok());
-    for directory in std::env::split_paths(&search_path) {
-        let candidate = directory.join("bwrap");
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+
+    let mut candidates = vec![PathBuf::from("/usr/bin/bwrap"), PathBuf::from("/bin/bwrap")];
+    if let Some(search_path) = std::env::var_os("PATH") {
+        candidates
+            .extend(std::env::split_paths(&search_path).map(|directory| directory.join("bwrap")));
+    }
+    let mut visited = std::collections::BTreeSet::new();
+    for candidate in candidates {
         let Ok(candidate) = candidate.canonicalize() else {
             continue;
         };
-        if current_dir
-            .as_ref()
-            .is_some_and(|current_dir| candidate.starts_with(current_dir))
-        {
+        if !visited.insert(candidate.clone()) {
             continue;
         }
-        if executable_file(candidate.as_path()) {
+        let Ok(metadata) = candidate.metadata() else {
+            continue;
+        };
+        if executable_file(candidate.as_path())
+            && metadata.uid() == 0
+            && metadata.permissions().mode() & 0o022 == 0
+        {
             return Some(candidate);
         }
     }

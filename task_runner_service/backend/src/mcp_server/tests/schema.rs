@@ -22,6 +22,9 @@ fn create_task_schema_hides_memory_scope_fields() {
     assert!(properties.contains_key("default_model_config_id"));
     assert!(properties.contains_key("enabled_builtin_kinds"));
     assert!(properties.contains_key("external_mcp_config_ids"));
+    assert!(properties.contains_key("plugin_device_id"));
+    assert!(properties.contains_key("plugin_workspace_id"));
+    assert!(properties.contains_key("selected_plugins"));
 
     let kind_enum = properties
         .get("enabled_builtin_kinds")
@@ -117,6 +120,9 @@ fn ai_task_input_cannot_select_execution_service() {
         enabled_builtin_kinds: None,
         external_mcp_config_ids: None,
         selected_skill_ids: None,
+        plugin_device_id: None,
+        plugin_workspace_id: None,
+        selected_plugins: None,
         prerequisite_task_ids: None,
         mcp_config: Some(TaskMcpConfig {
             execution_service_id: Some("services-api".to_string()),
@@ -185,6 +191,9 @@ fn create_task_args_preserve_external_mcp_ids_without_implicit_builtin_selection
             " internal_skill_remotion ".to_string(),
             "internal_skill_remotion".to_string(),
         ]),
+        plugin_device_id: None,
+        plugin_workspace_id: None,
+        selected_plugins: None,
         prerequisite_task_ids: None,
         mcp_config: None,
     }
@@ -201,6 +210,129 @@ fn create_task_args_preserve_external_mcp_ids_without_implicit_builtin_selection
     assert_eq!(
         mcp_config.selected_skill_ids,
         vec!["internal_skill_remotion".to_string()]
+    );
+}
+
+#[test]
+fn create_task_args_preserve_exact_plugin_device_workspace_and_selection() {
+    let request = CreateTaskArgs {
+        title: "browser task".to_string(),
+        description: None,
+        objective: "control browser".to_string(),
+        input_payload: None,
+        priority: None,
+        tags: None,
+        default_model_config_id: None,
+        requires_execution: Some(true),
+        is_planning_task: Some(false),
+        schedule: None,
+        enabled_builtin_kinds: None,
+        external_mcp_config_ids: None,
+        selected_skill_ids: None,
+        plugin_device_id: Some(" device-1 ".to_string()),
+        plugin_workspace_id: Some(" workspace-1 ".to_string()),
+        selected_plugins: Some(vec![
+            chatos_plugin_management_sdk::SelectedPluginRef {
+                plugin_id: " plugin-browser ".to_string(),
+                selected_skill_ids: Vec::new(),
+                selected_command_ids: Vec::new(),
+                selected_agent_ids: Vec::new(),
+            },
+            chatos_plugin_management_sdk::SelectedPluginRef {
+                plugin_id: "plugin-browser".to_string(),
+                selected_skill_ids: Vec::new(),
+                selected_command_ids: Vec::new(),
+                selected_agent_ids: Vec::new(),
+            },
+        ]),
+        prerequisite_task_ids: None,
+        mcp_config: None,
+    }
+    .into_request()
+    .expect("Plugin task request");
+
+    assert_eq!(request.plugin_config.device_id.as_deref(), Some("device-1"));
+    assert_eq!(
+        request.plugin_config.workspace_id.as_deref(),
+        Some("workspace-1")
+    );
+    assert_eq!(request.plugin_config.selected_plugins.len(), 1);
+    assert_eq!(
+        request.plugin_config.selected_plugins[0].plugin_id,
+        "plugin-browser"
+    );
+}
+
+#[test]
+fn request_context_plugin_selection_overrides_model_supplied_plugin_config() {
+    let mut request = CreateTaskArgs {
+        title: "browser task".to_string(),
+        description: None,
+        objective: "control browser".to_string(),
+        input_payload: None,
+        priority: None,
+        tags: None,
+        default_model_config_id: None,
+        requires_execution: Some(true),
+        is_planning_task: Some(false),
+        schedule: None,
+        enabled_builtin_kinds: None,
+        external_mcp_config_ids: None,
+        selected_skill_ids: None,
+        plugin_device_id: Some("model-device".to_string()),
+        plugin_workspace_id: Some("model-workspace".to_string()),
+        selected_plugins: Some(vec![chatos_plugin_management_sdk::SelectedPluginRef {
+            plugin_id: "model-plugin".to_string(),
+            selected_skill_ids: Vec::new(),
+            selected_command_ids: Vec::new(),
+            selected_agent_ids: Vec::new(),
+        }]),
+        prerequisite_task_ids: None,
+        mcp_config: None,
+    }
+    .into_request()
+    .expect("model request");
+    let context = McpRequestContext {
+        plugin_config_override: Some(chatos_plugin_management_sdk::TaskPluginConfig {
+            device_id: Some("user-device".to_string()),
+            workspace_id: Some("user-workspace".to_string()),
+            selected_plugins: vec![chatos_plugin_management_sdk::SelectedPluginRef {
+                plugin_id: "user-plugin".to_string(),
+                selected_skill_ids: Vec::new(),
+                selected_command_ids: vec!["review".to_string()],
+                selected_agent_ids: Vec::new(),
+            }],
+            command_invocations: vec![chatos_plugin_management_sdk::PluginCommandInvocation {
+                plugin_id: "user-plugin".to_string(),
+                command_id: "review".to_string(),
+                arguments: Some("src/lib.rs".to_string()),
+            }],
+        }),
+        ..McpRequestContext::default()
+    };
+
+    context.enforce_plugin_config(&mut request);
+
+    assert_eq!(
+        request.plugin_config.device_id.as_deref(),
+        Some("user-device")
+    );
+    assert_eq!(
+        request.plugin_config.workspace_id.as_deref(),
+        Some("user-workspace")
+    );
+    assert_eq!(request.plugin_config.selected_plugins.len(), 1);
+    assert_eq!(
+        request.plugin_config.selected_plugins[0].plugin_id,
+        "user-plugin"
+    );
+    assert_eq!(
+        request.plugin_config.command_invocations,
+        vec![chatos_plugin_management_sdk::PluginCommandInvocation {
+            plugin_id: "user-plugin".to_string(),
+            command_id: "review".to_string(),
+            arguments: Some("src/lib.rs".to_string()),
+        }]
     );
 }
 
@@ -300,6 +432,12 @@ fn async_planner_profile_exposes_only_planning_tools() {
         "list_external_mcp_configs"
     ));
     assert!(chatos_async_planner::planner_agent_tool_allowed(
+        "list_available_skills"
+    ));
+    assert!(chatos_async_planner::planner_agent_tool_allowed(
+        "list_available_plugins"
+    ));
+    assert!(chatos_async_planner::planner_agent_tool_allowed(
         "cancel_task"
     ));
     assert!(chatos_async_planner::planner_agent_tool_allowed(
@@ -345,7 +483,7 @@ async fn provider_descriptor_exposes_only_chatos_planner_tools() {
         .filter_map(|tool| tool.get("name").and_then(serde_json::Value::as_str))
         .collect::<Vec<_>>();
 
-    assert_eq!(tool_names.len(), 10);
+    assert_eq!(tool_names.len(), 11);
     for expected in [
         "list_tasks",
         "get_task",
@@ -353,6 +491,7 @@ async fn provider_descriptor_exposes_only_chatos_planner_tools() {
         "list_mcp_builtin_catalog",
         "list_external_mcp_configs",
         "list_available_skills",
+        "list_available_plugins",
         "create_tasks_with_prerequisites",
         "cancel_task",
         "wait_for_task_completion",
@@ -430,6 +569,7 @@ fn async_planner_tasks_keep_fixed_mcp_out_of_stored_selection() {
         tenant_id: None,
         subject_id: None,
         schedule: None,
+        plugin_config: Default::default(),
         mcp_config: Some(TaskMcpConfig {
             enabled_builtin_kinds: vec!["CodeMaintainerRead".to_string()],
             ..TaskMcpConfig::default()

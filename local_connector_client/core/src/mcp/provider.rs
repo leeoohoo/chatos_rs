@@ -5,9 +5,14 @@ use anyhow::Result;
 use chatos_mcp_service::{McpRequestContext, McpToolProvider};
 use serde_json::Value;
 
+use crate::approval::{
+    approval_project_key_from_request, ApprovalDecision, CommandApprovalRequest,
+    CommandApprovalService,
+};
 use crate::history::CommandHistoryRecorder;
 use crate::relay::RelayRequest;
-use crate::workspace::paths::workspace_for_request;
+use crate::terminal::controller::local_mcp_terminal_project_id;
+use crate::workspace::paths::{relative_to_workspace, workspace_for_request};
 use crate::LocalState;
 
 use super::selection::{
@@ -80,8 +85,11 @@ pub(crate) fn local_mcp_builtin_compatible_tools(
         tools.extend(terminal_service.list_tools());
     }
     if selection.browser {
-        let browser_service =
-            local_browser_tools_service_for_root(project_root.as_path(), request)?;
+        let browser_service = local_browser_tools_service_for_root(
+            project_root.as_path(),
+            request,
+            state.runtime_settings.browser_full_cdp_access_enabled,
+        )?;
         tools.extend(browser_service.list_tools());
     }
     Ok(tools)
@@ -134,15 +142,161 @@ pub(crate) async fn call_builtin_compatible_local_tool(
             return Ok(None);
         }
         let project_root = request_project_root(workspace, request)?;
-        let service = local_browser_tools_service_for_root(project_root.as_path(), request)?;
-        let result = service
+        if matches!(name, "browser_route_add" | "browser_cdp_command") {
+            if name == "browser_cdp_command"
+                && !state.runtime_settings.browser_full_cdp_access_enabled
+            {
+                return Ok(Some(browser_approval_denied_result(
+                    name,
+                    "full browser CDP access is disabled in Local Connector settings",
+                )));
+            }
+            let (command, approval_args) =
+                chatos_mcp::browser_interactive_approval_command(name, &arguments)
+                    .map_err(anyhow::Error::msg)?;
+            let project_key = approval_project_key_from_request(
+                state,
+                request,
+                workspace,
+                relative_to_workspace(workspace, project_root.as_path()),
+            );
+            let approval = CommandApprovalService::new(
+                history_recorder.state_path.clone(),
+                history_recorder.state.clone(),
+            )
+            .approve_interactive(CommandApprovalRequest {
+                request_id: request.request_id.clone(),
+                project_key,
+                command,
+                args: approval_args,
+                redact_arguments_in_history: true,
+                cwd: ".".to_string(),
+                source: "browser_privileged_action".to_string(),
+                requested_permissions: None,
+                session_id: Some(local_browser_conversation_id(request)),
+                action_audit: None,
+            })
+            .await?;
+            if let ApprovalDecision::Denied { reason, .. } = approval {
+                return Ok(Some(browser_approval_denied_result(name, reason.as_str())));
+            }
+        }
+        let service = local_browser_tools_service_for_root(
+            project_root.as_path(),
+            request,
+            state.runtime_settings.browser_full_cdp_access_enabled,
+        )?;
+        let mut result = service
             .call_tool(
                 name,
                 arguments,
                 Some(local_browser_conversation_id(request).as_str()),
             )
             .map_err(anyhow::Error::msg)?;
+        annotate_browser_session_context(
+            &mut result,
+            request.workspace_id.as_str(),
+            state.device_id.as_deref(),
+            local_mcp_terminal_project_id(request).as_deref(),
+        );
         return Ok(Some(result));
     }
     Ok(None)
+}
+
+fn browser_approval_denied_result(tool_name: &str, reason: &str) -> Value {
+    let payload = serde_json::json!({
+        "success": false,
+        "tool_name": tool_name,
+        "error": reason,
+        "approval_decision": "denied",
+        "approval_reason": reason,
+    });
+    serde_json::json!({
+        "content": [{
+            "type": "text",
+            "text": serde_json::to_string_pretty(&payload).unwrap_or_else(|_| "{}".to_string()),
+        }],
+        "_structured_result": payload,
+    })
+}
+
+fn annotate_browser_session_context(
+    value: &mut Value,
+    workspace_id: &str,
+    device_id: Option<&str>,
+    project_id: Option<&str>,
+) {
+    match value {
+        Value::Object(map) => {
+            if let Some(session) = map
+                .get_mut("browser_session")
+                .and_then(Value::as_object_mut)
+            {
+                session.insert(
+                    "workspace_id".to_string(),
+                    Value::String(workspace_id.to_string()),
+                );
+                if let Some(device_id) = device_id.map(str::trim).filter(|value| !value.is_empty())
+                {
+                    session.insert(
+                        "device_id".to_string(),
+                        Value::String(device_id.to_string()),
+                    );
+                }
+                if let Some(project_id) =
+                    project_id.map(str::trim).filter(|value| !value.is_empty())
+                {
+                    session.insert(
+                        "project_id".to_string(),
+                        Value::String(project_id.to_string()),
+                    );
+                }
+            }
+            for child in map.values_mut() {
+                annotate_browser_session_context(child, workspace_id, device_id, project_id);
+            }
+        }
+        Value::Array(items) => {
+            for child in items {
+                annotate_browser_session_context(child, workspace_id, device_id, project_id);
+            }
+        }
+        _ => {}
+    }
+}
+
+#[cfg(test)]
+mod browser_session_context_tests {
+    use super::annotate_browser_session_context;
+    use serde_json::json;
+
+    #[test]
+    fn browser_session_context_adds_local_routing_identity() {
+        let mut value = json!({
+            "content": [{"type": "text", "text": "ok"}],
+            "_structured_result": {
+                "browser_session": {
+                    "id": "h_session",
+                    "mode": "managed"
+                }
+            }
+        });
+
+        annotate_browser_session_context(
+            &mut value,
+            "workspace-1",
+            Some("device-1"),
+            Some("project-1"),
+        );
+
+        assert_eq!(
+            value["_structured_result"]["browser_session"]["workspace_id"],
+            "workspace-1"
+        );
+        assert_eq!(
+            value["_structured_result"]["browser_session"]["device_id"],
+            "device-1"
+        );
+    }
 }

@@ -187,6 +187,10 @@
 
 ## [builtin_browser_tools]
 当存在这些工具时，它们负责“当前浏览器页”的观察、交互和页内研究：
+`browser_tools_browser_tabs`
+`browser_tools_browser_tab_new`
+`browser_tools_browser_tab_switch`
+`browser_tools_browser_tab_close`
 `browser_tools_browser_navigate`
 `browser_tools_browser_snapshot`
 `browser_tools_browser_click`
@@ -194,24 +198,51 @@
 `browser_tools_browser_scroll`
 `browser_tools_browser_back`
 `browser_tools_browser_press`
+`browser_tools_browser_upload`
+`browser_tools_browser_download`
 `browser_tools_browser_console`
+`browser_tools_browser_network`
+`browser_tools_browser_network_request`
+`browser_tools_browser_har_start`
+`browser_tools_browser_har_stop`
+`browser_tools_browser_websocket_start`
+`browser_tools_browser_websocket_frames`
+`browser_tools_browser_websocket_stop`
+`browser_tools_browser_route_add`
+`browser_tools_browser_route_list`
+`browser_tools_browser_route_remove`
+`browser_tools_browser_route_clear`
+`browser_tools_browser_cdp_command`
 `browser_tools_browser_get_images`
 `browser_tools_browser_inspect`
 `browser_tools_browser_research`
 `browser_tools_browser_vision`
 
 默认策略：
-1. 只要问题和当前浏览器页有关，默认先调用 `browser_tools_browser_inspect`，不要一上来就点、输、搜公网。
-2. 需要 refs 或完整快照时，再用 `browser_tools_browser_snapshot`。
-3. 只有在拿到新鲜 refs 后，才用 `browser_tools_browser_click` 或 `browser_tools_browser_type` 做交互；页面明显变化后先重新 inspect 或 snapshot。
-4. 只有在需要控制台错误、JS 求值或清理 console 时，才用 `browser_tools_browser_console`。
-5. 只有在截图布局、视觉细节、纯视觉判断是关键时，才优先 `browser_tools_browser_vision`。
-6. 当答案既依赖当前页，又依赖外部公开来源时，优先 `browser_tools_browser_research`。
+1. 需要查看、新建、切换或关闭标签页时，先用 `browser_tools_browser_tabs` 获取稳定的 `tab_id`；切换和关闭只使用该 ID，最后一个标签页不能关闭。
+2. 只要问题和当前浏览器页有关，默认先调用 `browser_tools_browser_inspect`，不要一上来就点、输、搜公网。
+3. 需要 refs 或完整快照时，再用 `browser_tools_browser_snapshot`。
+4. 只有在拿到新鲜 refs 后，才用 `browser_tools_browser_click` 或 `browser_tools_browser_type` 做交互；切换标签页或页面明显变化后先重新 inspect 或 snapshot。
+5. 只有在需要控制台错误、JS 求值或清理 console 时，才用 `browser_tools_browser_console`。
+6. 需要真实 HTTP method/status/type/header 诊断时先用 `browser_tools_browser_network`；只有拿到 request_id 且确有必要时，才用 `browser_tools_browser_network_request` 显式读取单个请求详情或经过脱敏的文本 body。
+7. 只有用户明确需要可复用的网络归档或跨请求时序诊断时，才用 `browser_tools_browser_har_start` 在目标操作前开始捕获，并尽快用 `browser_tools_browser_har_stop` 导出新的工作区相对 `.har` 文件。
+8. 需要诊断 WebSocket 时，在目标操作前立即调用 `browser_tools_browser_websocket_start`，用 `browser_tools_browser_websocket_frames` 读取有界元数据，并尽快调用 `browser_tools_browser_websocket_stop`。文本载荷必须显式请求且会脱敏，二进制载荷永不返回。
+9. 只有明确需要在当前会话中阻断请求或返回固定 JSON mock 时，才调用 `browser_tools_browser_route_add` 并等待本机审批；用 list/remove/clear 管理 ChatOS 自己的规则。
+10. `browser_tools_browser_cdp_command` 只有设备端已开启高风险完整 CDP 模式时才会出现。普通工具能完成时不要使用；确需使用时，每次只发送最窄的一条 method/params，并等待本机逐次审批。
+11. 只有在截图布局、视觉细节、纯视觉判断是关键时，才优先 `browser_tools_browser_vision`。
+12. 当答案既依赖当前页，又依赖外部公开来源时，优先 `browser_tools_browser_research`。
+13. 上传文件时只使用 `browser_tools_browser_upload` 读取工作区内已存在的相对路径；下载时使用 `browser_tools_browser_download` 写入新的工作区相对路径，父目录必须存在且不会覆盖已有文件。
 
 不要这样做：
 1. 不要把纯页内问题直接升级成公网搜索。
 2. 不要在页面状态已经变化后继续使用陈旧 refs。
 3. 不要为了简单观察而过早执行高干预操作。
+4. 不要把工作区外路径、符号链接或已有目标路径交给浏览器上传/下载工具。
+5. 不要声称网络详情、HAR 或 WebSocket 文本包含未脱敏凭据；二进制 WebSocket 载荷不会返回。
+6. 不要把 HAR 或 WebSocket 观察长时间保持在记录状态，也不要把 WebSocket 观察当作控制通道。
+7. 不要使用标签页数组下标代替稳定 `tab_id`，不要关闭最后一个标签页。
+8. 不要用 route 工具注入 Header、凭据、脚本或任意状态码；只允许审批后的 abort 或固定 JSON body。
+9. 不要要求、记录或向前端暴露 CDP URL、调试端口或浏览器 WebSocket；完整 CDP 只通过受认证 Local Connector 的逐命令审批工具执行。
 
 ## [builtin_web_tools]
 当存在这些工具时，它们负责公网研究与外部来源获取：

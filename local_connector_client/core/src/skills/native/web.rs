@@ -93,7 +93,35 @@ fn browser_service(
         ));
     }
     let workspace = workspace_for_request(state, request.workspace_id.as_str())?;
-    local_browser_tools_service_for_root(workspace.absolute_root.as_path(), request)
+    local_browser_tools_service_for_root(
+        workspace.absolute_root.as_path(),
+        request,
+        state.runtime_settings.browser_full_cdp_access_enabled,
+    )
+}
+
+pub(super) fn browser_interactive_approval_command(
+    operation: &str,
+    arguments: &Value,
+) -> Result<(String, Vec<String>)> {
+    chatos_mcp::browser_interactive_approval_command(operation, arguments)
+        .map_err(|error| anyhow!(error))
+}
+
+pub(super) fn execute_browser_tool_approved(
+    operation: &str,
+    arguments: &Value,
+    state: &LocalState,
+    request: &RelayRequest,
+    approved_command_args: Option<&[String]>,
+) -> Result<Value> {
+    let (_, expected_args) = browser_interactive_approval_command(operation, arguments)?;
+    if approved_command_args != Some(expected_args.as_slice()) {
+        return Err(anyhow!(
+            "approved Browser action no longer matches the exact reviewed arguments"
+        ));
+    }
+    execute_browser_tool(operation, arguments, state, request)
 }
 
 fn browser_dependency_error() -> Option<String> {

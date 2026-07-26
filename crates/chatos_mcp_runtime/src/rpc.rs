@@ -7,6 +7,7 @@ use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 use crate::types::McpStdioServer;
@@ -218,7 +219,11 @@ fn tools_list_http_cache_key(
         let mut entries = headers.iter().collect::<Vec<_>>();
         entries.sort_by(|left, right| left.0.cmp(right.0));
         for (key, value) in entries {
-            parts.push(format!("header:{}={}", key.trim(), value.trim()));
+            parts.push(format!(
+                "header:{}:sha256={}",
+                key.trim(),
+                hex::encode(Sha256::digest(value.as_bytes()))
+            ));
         }
     }
     parts.join("\n")
@@ -241,7 +246,11 @@ fn tools_list_stdio_cache_key(cfg: &McpStdioServer) -> String {
         let mut entries = env.iter().collect::<Vec<_>>();
         entries.sort_by(|left, right| left.0.cmp(right.0));
         for (key, value) in entries {
-            parts.push(format!("env:{}={}", key.trim(), value.trim()));
+            parts.push(format!(
+                "env:{}:sha256={}",
+                key.trim(),
+                hex::encode(Sha256::digest(value.as_bytes()))
+            ));
         }
     }
     parts.join("\n")
@@ -375,10 +384,14 @@ mod tests {
             ("X-Zed".to_string(), "last".to_string()),
         ]);
 
+        let cache_key =
+            tools_list_http_cache_key("https://example.test/mcp", Some(&headers_a), None);
         assert_eq!(
-            tools_list_http_cache_key("https://example.test/mcp", Some(&headers_a), None),
+            cache_key,
             tools_list_http_cache_key("https://example.test/mcp", Some(&headers_b), None)
         );
+        assert!(!cache_key.contains("first"));
+        assert!(!cache_key.contains("last"));
     }
 
     #[test]
@@ -398,6 +411,7 @@ mod tests {
             tools_list_stdio_cache_key(&base),
             tools_list_stdio_cache_key(&changed)
         );
+        assert!(!tools_list_stdio_cache_key(&base).contains("one"));
     }
 
     #[test]
@@ -447,6 +461,35 @@ mod tests {
         assert_eq!(
             stdio_session_cache_key(&first),
             stdio_session_cache_key(&second)
+        );
+    }
+
+    #[test]
+    fn explicit_stdio_user_session_identity_does_not_persist_rotating_env_secrets() {
+        let first = McpStdioServer {
+            name: "demo".to_string(),
+            command: "node".to_string(),
+            args: Some(vec!["server.js".to_string()]),
+            cwd: Some("/workspace".to_string()),
+            env: Some(HashMap::from([(
+                "TOKEN".to_string(),
+                "secret-one".to_string(),
+            )])),
+            user_id: Some("owner:device:session".to_string()),
+        };
+        let mut second = first.clone();
+        second.env = Some(HashMap::from([(
+            "TOKEN".to_string(),
+            "secret-two".to_string(),
+        )]));
+
+        let session_key = stdio_session_cache_key(&first);
+        assert_eq!(session_key, stdio_session_cache_key(&second));
+        assert!(!session_key.contains("secret-one"));
+        assert!(!session_key.contains("secret-two"));
+        assert_ne!(
+            tools_list_stdio_cache_key(&first),
+            tools_list_stdio_cache_key(&second)
         );
     }
 

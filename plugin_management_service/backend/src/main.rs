@@ -2,7 +2,8 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use plugin_management_service_backend::{
-    build_router, load_plugin_management_dotenv, AppConfig, AppState,
+    build_router, load_plugin_management_dotenv, start_plugin_catalog_sync_loop, AppConfig,
+    AppState,
 };
 use tracing_subscriber::EnvFilter;
 
@@ -16,6 +17,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     resolve_downstream_services(&mut config).await;
     let bind_addr = config.bind_addr();
     let state = AppState::new(config.clone()).await?;
+    start_plugin_catalog_sync_loop(state.clone());
     let app = build_router(state);
     let _service_runtime = chatos_service_runtime::register_current_service(
         "plugin-management-service",

@@ -571,10 +571,12 @@ mod tests {
             },
             command: "cargo".to_string(),
             args: vec!["test".to_string()],
+            redact_arguments_in_history: false,
             cwd: ".".to_string(),
             source: "test".to_string(),
             requested_permissions: None,
             session_id: Some("session-1".to_string()),
+            action_audit: None,
         };
 
         assert_eq!(

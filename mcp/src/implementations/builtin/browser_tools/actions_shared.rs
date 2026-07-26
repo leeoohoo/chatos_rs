@@ -42,6 +42,7 @@ pub(super) async fn enrich_response_with_page_state(
     .await;
     match snapshot_result {
         Ok(value) if is_success(&value) => {
+            copy_response_fields(response, &value, &["browser_session"]);
             let data = value.get("data").cloned().unwrap_or_else(|| json!({}));
             apply_snapshot_payload(response, &data, ctx.max_snapshot_chars);
         }
@@ -112,6 +113,9 @@ pub(super) async fn enrich_response_with_page_metadata(
     )
     .await;
 
+    if let Ok(value) = metadata_result.as_ref() {
+        copy_response_fields(response, value, &["browser_session"]);
+    }
     match metadata_result {
         Ok(value) if is_success(&value) => {
             let raw = value
@@ -388,19 +392,52 @@ pub(super) async fn run_browser_command(
     args: Vec<String>,
     timeout_seconds: u64,
 ) -> Result<Value, String> {
-    let session = get_or_create_session(ctx, conversation_key);
-    runtime_run_browser_command(&ctx.workspace_dir, &session, command, args, timeout_seconds).await
+    let (session, created) = get_or_create_session(ctx, conversation_key);
+    let mut response =
+        runtime_run_browser_command(&ctx.workspace_dir, &session, command, args, timeout_seconds)
+            .await?;
+    let success = is_success(&response);
+    attach_browser_session_metadata(
+        &mut response,
+        &session,
+        if success { "active" } else { "error" },
+        if created { "started" } else { "updated" },
+    );
+    Ok(response)
 }
 
-fn get_or_create_session(ctx: &BoundContext, conversation_key: &str) -> BrowserRuntimeSession {
+pub(super) fn get_or_create_session(
+    ctx: &BoundContext,
+    conversation_key: &str,
+) -> (BrowserRuntimeSession, bool) {
     let mut sessions = ctx.sessions.lock();
     if let Some(existing) = sessions.get(conversation_key) {
-        return existing.clone();
+        return (existing.clone(), false);
     }
 
     let session = new_browser_session();
     sessions.insert(conversation_key.to_string(), session.clone());
-    session
+    (session, true)
+}
+
+fn attach_browser_session_metadata(
+    response: &mut Value,
+    session: &BrowserRuntimeSession,
+    status: &str,
+    event: &str,
+) {
+    let Some(map) = response.as_object_mut() else {
+        return;
+    };
+    map.insert(
+        "browser_session".to_string(),
+        json!({
+            "id": session.session_name,
+            "mode": if session.cdp_url.is_some() { "cdp" } else { "managed" },
+            "status": status,
+            "event": event,
+        }),
+    );
 }
 
 pub(super) fn is_success(value: &Value) -> bool {
@@ -413,11 +450,13 @@ pub(super) fn browser_error_message(value: &Value, fallback: &str) -> String {
 
 pub(super) fn fail_json(value: &Value, fallback: &str) -> Value {
     let error = browser_error_message(value, fallback);
-    json!({
+    let mut response = json!({
         "_summary_text": format!("Browser action failed: {}.", normalize_inline_text(error.as_str(), 180)),
         "success": false,
         "error": error
-    })
+    });
+    copy_response_fields(&mut response, value, &["browser_session"]);
+    response
 }
 
 pub(super) fn normalize_ref(reference: String) -> String {
@@ -438,4 +477,26 @@ fn truncate_chars(text: &str, max_chars: usize) -> String {
         return text.to_string();
     }
     text.chars().take(max_chars).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::attach_browser_session_metadata;
+    use crate::browser_runtime::BrowserRuntimeSession;
+    use serde_json::json;
+
+    #[test]
+    fn browser_session_metadata_exposes_non_secret_runtime_identity() {
+        let session = BrowserRuntimeSession {
+            session_name: "h_test_session".to_string(),
+            cdp_url: None,
+        };
+        let mut response = json!({ "success": true });
+        attach_browser_session_metadata(&mut response, &session, "active", "started");
+
+        assert_eq!(response["browser_session"]["id"], "h_test_session");
+        assert_eq!(response["browser_session"]["mode"], "managed");
+        assert_eq!(response["browser_session"]["status"], "active");
+        assert_eq!(response["browser_session"]["event"], "started");
+    }
 }

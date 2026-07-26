@@ -55,17 +55,35 @@ async fn exposes_builtin_compatible_tools_and_project_relative_args() {
     assert!(names.contains("process_kill"));
     assert!(!names.contains("local_fs_read"));
     assert!(!names.contains("local_terminal_exec"));
-    let browser_service =
-        local_browser_tools_service_for_root(project.as_path(), &request).expect("browser service");
+    let browser_service = local_browser_tools_service_for_root(project.as_path(), &request, false)
+        .expect("browser service");
     let browser_names = browser_service
         .list_tools()
         .into_iter()
         .filter_map(|tool| tool.get("name").and_then(Value::as_str).map(str::to_string))
         .collect::<BTreeSet<_>>();
     if browser_names.contains("browser_navigate") {
+        assert!(names.contains("browser_tabs"));
+        assert!(names.contains("browser_tab_new"));
+        assert!(names.contains("browser_tab_switch"));
+        assert!(names.contains("browser_tab_close"));
         assert!(names.contains("browser_navigate"));
         assert!(names.contains("browser_snapshot"));
         assert!(names.contains("browser_inspect"));
+        assert!(names.contains("browser_upload"));
+        assert!(names.contains("browser_download"));
+        assert!(names.contains("browser_network"));
+        assert!(names.contains("browser_network_request"));
+        assert!(names.contains("browser_har_start"));
+        assert!(names.contains("browser_har_stop"));
+        assert!(names.contains("browser_websocket_start"));
+        assert!(names.contains("browser_websocket_frames"));
+        assert!(names.contains("browser_websocket_stop"));
+        assert!(names.contains("browser_route_add"));
+        assert!(names.contains("browser_route_list"));
+        assert!(names.contains("browser_route_remove"));
+        assert!(names.contains("browser_route_clear"));
+        assert!(!names.contains("browser_cdp_command"));
         assert!(!names.contains("browser_vision"));
     }
 
@@ -250,6 +268,39 @@ async fn exposes_builtin_compatible_tools_and_project_relative_args() {
         .await
         .expect("cleanup local shell");
     fs::remove_dir_all(root.as_path()).expect("cleanup");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn full_browser_cdp_tool_tracks_the_device_runtime_setting() {
+    let root = temp_test_dir("browser-full-cdp-setting");
+    let workspace = test_workspace(root.as_path());
+    let mut state = test_state_with_full_control_workspace(workspace);
+    let request = request_with_cwd_and_builtin_kinds(".", "BrowserTools");
+
+    let disabled = local_mcp_builtin_compatible_tools(&request, &state).expect("list tools");
+    let disabled_names = disabled
+        .iter()
+        .filter_map(|tool| tool.get("name").and_then(Value::as_str))
+        .collect::<BTreeSet<_>>();
+    if !disabled_names.contains("browser_navigate") {
+        return;
+    }
+    assert!(!disabled_names.contains("browser_cdp_command"));
+
+    state.runtime_settings.browser_full_cdp_access_enabled = true;
+    let enabled = local_mcp_builtin_compatible_tools(&request, &state).expect("list enabled tools");
+    let enabled_names = enabled
+        .iter()
+        .filter_map(|tool| tool.get("name").and_then(Value::as_str))
+        .collect::<BTreeSet<_>>();
+    assert!(enabled_names.contains("browser_cdp_command"));
+
+    state.runtime_settings.browser_full_cdp_access_enabled = false;
+    let disabled_again =
+        local_mcp_builtin_compatible_tools(&request, &state).expect("list disabled tools again");
+    assert!(!disabled_again
+        .iter()
+        .any(|tool| { tool.get("name").and_then(Value::as_str) == Some("browser_cdp_command") }));
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -471,17 +522,17 @@ async fn process_kill_terminates_nested_background_processes() {
         .to_string();
 
     let child_pid_path = project.join("child.pid");
+    let mut child_pid = None;
     for _ in 0..100 {
-        if child_pid_path.exists() {
+        child_pid = fs::read_to_string(child_pid_path.as_path())
+            .ok()
+            .and_then(|value| value.trim().parse::<i32>().ok());
+        if child_pid.is_some() {
             break;
         }
         tokio::time::sleep(std::time::Duration::from_millis(20)).await;
     }
-    let child_pid = fs::read_to_string(child_pid_path.as_path())
-        .expect("nested child pid file")
-        .trim()
-        .parse::<i32>()
-        .expect("nested child pid");
+    let child_pid = child_pid.expect("nested child pid");
     assert!(unix_process_exists(child_pid));
 
     let killed = call_builtin_compatible_local_tool(

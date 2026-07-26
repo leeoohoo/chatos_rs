@@ -11,18 +11,24 @@ use tokio::sync::RwLock;
 
 mod api;
 mod approval;
+mod chrome_bridge;
+mod chrome_integration;
+mod chrome_native_host;
 mod config;
 mod connector;
 mod device_keys;
+mod external_url;
 mod history;
 mod local_runtime;
 mod mcp;
 mod model_configs;
+pub mod plugins;
 mod process_lifetime;
 mod registration;
 mod relay;
 mod runtime;
 mod sandbox;
+mod secure_storage;
 mod skills;
 mod state;
 mod system_permissions;
@@ -44,6 +50,12 @@ pub(crate) use runtime::LocalRuntime;
 pub(crate) use state::{
     AuthState, AuthUserState, LocalState, WorkspaceProjectConfigTrust, WorkspaceState,
 };
+
+pub use chrome_native_host::run_chrome_native_host;
+
+pub fn run_computer_use_helper() -> Result<()> {
+    skills::native::run_computer_use_helper()
+}
 
 pub(crate) const DEFAULT_LOCAL_SANDBOX_IMAGE: &str = "chatos-sandbox-agent:latest";
 pub(crate) const DEFAULT_LOCAL_SANDBOX_IMAGE_TAG_PREFIX: &str = "chatos-sandbox-agent";
@@ -123,6 +135,31 @@ pub async fn run_local_connector() -> Result<()> {
     .await?;
 
     let runtime = LocalRuntime::new(state_path, state, http_client, database);
+    match runtime.plugin_installer.recover_incomplete_transactions() {
+        Ok(report) => {
+            if report.completed_transactions > 0
+                || report.rolled_back_transactions > 0
+                || report.cleaned_paths > 0
+            {
+                tracing_stdout(
+                    format!(
+                        "Plugin recovery completed: {} committed, {} rolled back, {} paths cleaned",
+                        report.completed_transactions,
+                        report.rolled_back_transactions,
+                        report.cleaned_paths
+                    )
+                    .as_str(),
+                );
+            }
+            for error in report.errors {
+                tracing_stdout(format!("Plugin recovery warning: {error}").as_str());
+            }
+        }
+        Err(error) => tracing_stdout(
+            format!("Plugin recovery failed closed; installed Plugins remain unavailable: {error}")
+                .as_str(),
+        ),
+    }
     if let Err(err) = sandbox::docker::destroy_all_local_sandbox_containers().await {
         tracing_stdout(format!("stale local sandbox cleanup skipped: {err}").as_str());
     }
@@ -132,6 +169,7 @@ pub async fn run_local_connector() -> Result<()> {
         refresh.spawn(runtime.http_client.clone());
     }
     runtime.start_local_task_worker().await;
+    let _plugin_auto_update_checker = api::spawn_plugin_auto_update_checker(runtime.clone());
     if let Err(err) = runtime.start_connector_if_configured().await {
         tracing_stdout(format!("start connector from saved config failed: {err}").as_str());
     }

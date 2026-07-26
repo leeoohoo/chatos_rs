@@ -232,6 +232,38 @@ pub struct ToolResult {
     pub content: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub result: Option<Value>,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub fatal_error: bool,
+    #[serde(skip)]
+    pub transient_model_input: Option<TransientToolModelInput>,
+}
+
+#[derive(Clone, Default)]
+pub struct TransientToolModelInput {
+    items: Vec<Value>,
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
+}
+
+impl TransientToolModelInput {
+    pub(crate) fn new(items: Vec<Value>) -> Self {
+        Self { items }
+    }
+
+    pub fn items(&self) -> &[Value] {
+        self.items.as_slice()
+    }
+}
+
+impl std::fmt::Debug for TransientToolModelInput {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("TransientToolModelInput")
+            .field("item_count", &self.items.len())
+            .finish()
+    }
 }
 
 #[derive(Clone, Default)]
@@ -414,6 +446,76 @@ pub struct ParsedToolDefinition {
 pub type ToolResultCallback = Arc<dyn Fn(&ToolResult) + Send + Sync>;
 pub type ToolStreamChunkCallback = Arc<dyn Fn(String) + Send + Sync>;
 pub type ToolAbortCheckCallback = Arc<dyn Fn(&str) -> bool + Send + Sync>;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ToolCallError {
+    message: String,
+    fatal: bool,
+}
+
+impl ToolCallError {
+    pub fn non_fatal(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+            fatal: false,
+        }
+    }
+
+    pub fn fatal(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+            fatal: true,
+        }
+    }
+
+    pub fn is_fatal(&self) -> bool {
+        self.fatal
+    }
+}
+
+impl std::fmt::Display for ToolCallError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(self.message.as_str())
+    }
+}
+
+impl std::error::Error for ToolCallError {}
+
+impl From<String> for ToolCallError {
+    fn from(message: String) -> Self {
+        Self::non_fatal(message)
+    }
+}
+
+impl From<&str> for ToolCallError {
+    fn from(message: &str) -> Self {
+        Self::non_fatal(message)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ToolLifecycleOutcome {
+    Succeeded,
+    Failed,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ToolLifecycleEvent {
+    pub tool_name: String,
+    pub original_name: String,
+    pub server_name: String,
+    pub server_type: String,
+    pub arguments_sha256: String,
+    pub outcome: Option<ToolLifecycleOutcome>,
+    pub result_sha256: Option<String>,
+}
+
+#[async_trait]
+pub trait ToolLifecycleHook: Debug + Send + Sync {
+    async fn before_tool_use(&self, event: &ToolLifecycleEvent) -> Result<(), String>;
+
+    async fn after_tool_use(&self, event: &ToolLifecycleEvent) -> Result<(), String>;
+}
 
 #[cfg(test)]
 mod tests {

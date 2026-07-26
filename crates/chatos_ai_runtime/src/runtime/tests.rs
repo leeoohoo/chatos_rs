@@ -702,5 +702,7 @@ fn tool_result(
         conversation_turn_id: Some("turn_1".to_string()),
         content: content.to_string(),
         result,
+        fatal_error: false,
+        transient_model_input: None,
     }
 }

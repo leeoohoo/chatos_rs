@@ -13,6 +13,7 @@ import type {
   LocalConnectorTerminalExecRequest,
   LocalConnectorTerminalExecResponse,
   LocalConnectorWorkspaceResponse,
+  TaskRunnerAvailablePluginsResponse,
 } from '../../types';
 import { localRuntimeBridgeAvailable } from '../../../localRuntime';
 
@@ -25,6 +26,10 @@ const requireLocalConnectorDesktop = (): void => {
 export interface WorkspaceLocalConnectorFacade {
   listLocalConnectorDevices(userId?: string): Promise<LocalConnectorDeviceResponse[]>;
   listLocalConnectorWorkspaces(deviceId?: string): Promise<LocalConnectorWorkspaceResponse[]>;
+  listTaskRunnerAvailablePlugins(
+    deviceId: string,
+    planMode?: boolean,
+  ): Promise<TaskRunnerAvailablePluginsResponse>;
   listLocalConnectorDirectory(data: {
     device_id: string;
     workspace_id: string;
@@ -46,6 +51,10 @@ export const workspaceLocalConnectorFacade: WorkspaceLocalConnectorFacade & This
     requireLocalConnectorDesktop();
     void deviceId;
     return this.getLocalRuntimeClient().listConnectorWorkspaces();
+  },
+  async listTaskRunnerAvailablePlugins(deviceId, planMode = false) {
+    requireLocalConnectorDesktop();
+    return workspaceApi.listTaskRunnerAvailablePlugins(this.getRequestFn(), deviceId, planMode);
   },
   async listLocalConnectorDirectory(data) {
     requireLocalConnectorDesktop();

@@ -122,6 +122,7 @@ mod tests {
             source_user_message_id: None,
             prerequisite_task_ids: Vec::new(),
             task_tool_state: crate::models::TaskToolState::default(),
+            plugin_config: Default::default(),
             mcp_config: crate::models::TaskMcpConfig::default(),
             created_at: "2026-01-01T00:00:00Z".to_string(),
             updated_at: "2026-01-01T00:00:00Z".to_string(),

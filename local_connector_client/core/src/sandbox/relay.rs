@@ -195,6 +195,23 @@ fn relay_local_runtime(
     sandbox_runtime: &LocalSandboxRuntime,
     history_recorder: &CommandHistoryRecorder,
 ) -> LocalRuntime {
+    let plugin_credentials = crate::plugins::PluginCredentialVault::for_state_path(
+        history_recorder.state_path.as_path(),
+    );
+    let plugin_installer =
+        crate::plugins::PluginInstaller::for_state_path(history_recorder.state_path.as_path())
+            .with_credential_vault(plugin_credentials.clone());
+    let plugin_oauth = crate::plugins::PluginOAuthBroker::new(
+        plugin_installer.clone(),
+        plugin_credentials.clone(),
+    );
+    let plugin_runtime = crate::plugins::PluginRuntimeHost::new(
+        crate::plugins::PluginSkillLoader::new(plugin_installer.clone()),
+        crate::plugins::PluginMcpAdapter::new(plugin_installer.clone())
+            .with_oauth_broker(plugin_oauth.clone()),
+    )
+    .with_local_state(history_recorder.state.clone())
+    .with_approval_state_path(history_recorder.state_path.clone());
     LocalRuntime {
         state_path: history_recorder.state_path.clone(),
         state: history_recorder.state.clone(),
@@ -207,7 +224,12 @@ fn relay_local_runtime(
         connector_task: Arc::new(Mutex::new(None)),
         task_worker_task: Arc::new(Mutex::new(None)),
         agent_prompt_check_task: Arc::new(Mutex::new(None)),
+        plugin_auto_update_lock: Arc::new(Mutex::new(())),
         sandbox_runtime: sandbox_runtime.clone(),
+        plugin_installer,
+        plugin_credentials,
+        plugin_oauth,
+        plugin_runtime,
     }
 }
 

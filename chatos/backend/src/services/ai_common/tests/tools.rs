@@ -14,6 +14,8 @@ fn build_tool_result_metadata_keeps_tool_flags() {
         conversation_turn_id: Some("turn_abc".to_string()),
         content: "ok".to_string(),
         result: Some(serde_json::json!({"answer": 42})),
+        fatal_error: false,
+        transient_model_input: None,
     };
 
     let metadata = build_tool_result_metadata(&result);

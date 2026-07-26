@@ -11,6 +11,10 @@ pub(super) const TOKEN_AUDIENCE: &str = "local-connector-service";
 pub(super) const MCP_RELAY_SCOPE: &str = "relay.mcp";
 pub(super) const TERMINAL_RELAY_SCOPE: &str = "relay.terminal";
 pub(super) const SKILL_RELAY_SCOPE: &str = "relay.skill";
+pub(super) const PLUGIN_RELAY_SCOPE: &str = "plugin.execute";
+pub(super) const PLUGIN_UI_READ_SCOPE: &str = "plugin.ui.read";
+pub(super) const PLUGIN_ARTIFACT_READ_SCOPE: &str = "plugin.artifact.read";
+pub(super) const PLUGIN_ARTIFACT_WRITE_SCOPE: &str = "plugin.artifact.write";
 pub(super) const MODEL_RUNTIME_READ_SCOPE: &str = "model-runtime.read";
 pub(super) const SANDBOX_ROUTING_READ_SCOPE: &str = "sandbox-routing.read";
 pub(super) const SANDBOX_SERVICE_SCOPE: &str = "sandbox.service";
@@ -134,6 +138,33 @@ fn internal_access_for_request(method: &Method, path: &str) -> Option<InternalAc
             scope: SKILL_RELAY_SCOPE,
             allowed_callers: &[TASK_RUNNER_CALLER],
         }),
+        (
+            &Method::POST,
+            ["api", "local-connectors", "relay", _, "plugins", "prepare" | "execute" | "cancel"],
+        ) => Some(InternalAccess {
+            scope: PLUGIN_RELAY_SCOPE,
+            allowed_callers: &[TASK_RUNNER_CALLER],
+        }),
+        (&Method::POST, ["api", "local-connectors", "relay", _, "plugins", "ui", "assets"]) => {
+            Some(InternalAccess {
+                scope: PLUGIN_UI_READ_SCOPE,
+                allowed_callers: &[CHATOS_CALLER],
+            })
+        }
+        (
+            &Method::POST,
+            ["api", "local-connectors", "relay", _, "plugins", "artifacts", "list" | "read"],
+        ) => Some(InternalAccess {
+            scope: PLUGIN_ARTIFACT_READ_SCOPE,
+            allowed_callers: &[CHATOS_CALLER],
+        }),
+        (
+            &Method::POST,
+            ["api", "local-connectors", "relay", _, "plugins", "artifacts", "create" | "update"],
+        ) => Some(InternalAccess {
+            scope: PLUGIN_ARTIFACT_WRITE_SCOPE,
+            allowed_callers: &[CHATOS_CALLER],
+        }),
         (&Method::GET, ["api", "local-connectors", "model-runtime", _]) => Some(InternalAccess {
             scope: MODEL_RUNTIME_READ_SCOPE,
             allowed_callers: &[
@@ -163,6 +194,19 @@ fn internal_access_for_request(method: &Method, path: &str) -> Option<InternalAc
         }
         _ => None,
     }
+}
+
+pub(super) fn require_chatos_service_caller(user: &CurrentUser) -> Result<(), ApiError> {
+    let owner_user_id = user.owner_user_id.as_deref().unwrap_or_default();
+    if user.principal_type == "service"
+        && !owner_user_id.is_empty()
+        && user.user_id == format!("service:{CHATOS_CALLER}:{owner_user_id}")
+    {
+        return Ok(());
+    }
+    Err(ApiError::forbidden(
+        "Plugin UI asset relay is restricted to ChatOS backend",
+    ))
 }
 
 fn require_legacy_secret(provided: Option<&str>, expected: &str) -> Result<(), ApiError> {
@@ -264,6 +308,171 @@ mod tests {
     }
 
     #[test]
+    fn task_runner_plugin_relay_token_is_scope_and_path_bound() {
+        let mut config = test_config();
+        config.require_signed_internal_requests = true;
+        config.internal_api_secrets.insert(
+            TASK_RUNNER_CALLER.to_string(),
+            "a-long-task-runner-local-connector-secret".to_string(),
+        );
+        let token = chatos_service_runtime::issue_internal_service_token(
+            "a-long-task-runner-local-connector-secret",
+            TASK_RUNNER_CALLER,
+            TOKEN_AUDIENCE,
+            PLUGIN_RELAY_SCOPE,
+            60,
+        )
+        .expect("issue Plugin relay token");
+        let headers = signed_headers(TASK_RUNNER_CALLER, token.as_str());
+        let user = internal_service_user_from_request(
+            &config,
+            &headers,
+            &Method::POST,
+            "/api/local-connectors/relay/device-1/plugins/prepare",
+        )
+        .expect("matching Plugin request")
+        .expect("service user");
+        assert_eq!(user.owner_user_id.as_deref(), Some("user-1"));
+        assert!(internal_service_user_from_request(
+            &config,
+            &headers,
+            &Method::POST,
+            "/api/local-connectors/relay/device-1/skills/prepare",
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn chatos_plugin_ui_read_token_is_scope_caller_and_path_bound() {
+        let mut config = test_config();
+        config.require_signed_internal_requests = true;
+        config.internal_api_secrets.insert(
+            CHATOS_CALLER.to_string(),
+            "a-long-chatos-local-connector-secret".to_string(),
+        );
+        config.internal_api_secrets.insert(
+            TASK_RUNNER_CALLER.to_string(),
+            "a-long-task-runner-local-connector-secret".to_string(),
+        );
+        let token = chatos_service_runtime::issue_internal_service_token(
+            "a-long-chatos-local-connector-secret",
+            CHATOS_CALLER,
+            TOKEN_AUDIENCE,
+            PLUGIN_UI_READ_SCOPE,
+            60,
+        )
+        .expect("issue Plugin UI read token");
+        let headers = signed_headers(CHATOS_CALLER, token.as_str());
+        let user = internal_service_user_from_request(
+            &config,
+            &headers,
+            &Method::POST,
+            "/api/local-connectors/relay/device-1/plugins/ui/assets",
+        )
+        .expect("matching Plugin UI asset request")
+        .expect("service user");
+        require_chatos_service_caller(&user).expect("ChatOS service caller");
+        assert!(internal_service_user_from_request(
+            &config,
+            &headers,
+            &Method::POST,
+            "/api/local-connectors/relay/device-1/plugins/execute",
+        )
+        .is_err());
+
+        let task_runner_token = chatos_service_runtime::issue_internal_service_token(
+            "a-long-task-runner-local-connector-secret",
+            TASK_RUNNER_CALLER,
+            TOKEN_AUDIENCE,
+            PLUGIN_UI_READ_SCOPE,
+            60,
+        )
+        .expect("issue wrong-caller Plugin UI token");
+        let task_runner_headers = signed_headers(TASK_RUNNER_CALLER, task_runner_token.as_str());
+        assert!(internal_service_user_from_request(
+            &config,
+            &task_runner_headers,
+            &Method::POST,
+            "/api/local-connectors/relay/device-1/plugins/ui/assets",
+        )
+        .is_err());
+
+        let artifact_token = chatos_service_runtime::issue_internal_service_token(
+            "a-long-chatos-local-connector-secret",
+            CHATOS_CALLER,
+            TOKEN_AUDIENCE,
+            PLUGIN_ARTIFACT_READ_SCOPE,
+            60,
+        )
+        .expect("issue Plugin Artifact token");
+        let artifact_headers = signed_headers(CHATOS_CALLER, artifact_token.as_str());
+        internal_service_user_from_request(
+            &config,
+            &artifact_headers,
+            &Method::POST,
+            "/api/local-connectors/relay/device-1/plugins/artifacts/list",
+        )
+        .expect("matching Plugin Artifact request")
+        .expect("service user");
+        assert!(internal_service_user_from_request(
+            &config,
+            &headers,
+            &Method::POST,
+            "/api/local-connectors/relay/device-1/plugins/artifacts/read",
+        )
+        .is_err());
+        assert!(internal_service_user_from_request(
+            &config,
+            &artifact_headers,
+            &Method::POST,
+            "/api/local-connectors/relay/device-1/plugins/ui/assets",
+        )
+        .is_err());
+
+        let artifact_write_token = chatos_service_runtime::issue_internal_service_token(
+            "a-long-chatos-local-connector-secret",
+            CHATOS_CALLER,
+            TOKEN_AUDIENCE,
+            PLUGIN_ARTIFACT_WRITE_SCOPE,
+            60,
+        )
+        .expect("issue Plugin Artifact write token");
+        let artifact_write_headers = signed_headers(CHATOS_CALLER, artifact_write_token.as_str());
+        internal_service_user_from_request(
+            &config,
+            &artifact_write_headers,
+            &Method::POST,
+            "/api/local-connectors/relay/device-1/plugins/artifacts/create",
+        )
+        .expect("matching Plugin Artifact write request")
+        .expect("service user");
+        assert!(internal_service_user_from_request(
+            &config,
+            &artifact_write_headers,
+            &Method::POST,
+            "/api/local-connectors/relay/device-1/plugins/artifacts/read",
+        )
+        .is_err());
+        assert!(internal_service_user_from_request(
+            &config,
+            &artifact_headers,
+            &Method::POST,
+            "/api/local-connectors/relay/device-1/plugins/artifacts/update",
+        )
+        .is_err());
+
+        let human = CurrentUser {
+            principal_type: "human_user".to_string(),
+            user_id: "user-1".to_string(),
+            username: None,
+            display_name: None,
+            role: "user".to_string(),
+            owner_user_id: None,
+        };
+        assert!(require_chatos_service_caller(&human).is_err());
+    }
+
+    #[test]
     fn task_runner_can_read_sandbox_routing_and_use_facade_with_scoped_tokens() {
         let mut config = test_config();
         config.require_signed_internal_requests = true;
@@ -321,6 +530,7 @@ mod tests {
             user_service_base_url: "http://127.0.0.1:39190".to_string(),
             user_service_request_timeout: Duration::from_secs(1),
             relay_request_timeout: Duration::from_secs(1),
+            plugin_hook_relay_request_timeout: Duration::from_secs(1),
             sandbox_image_relay_request_timeout: Duration::from_secs(1),
             public_base_url: None,
             legacy_internal_api_secret: Some("legacy-local-connector-secret".to_string()),

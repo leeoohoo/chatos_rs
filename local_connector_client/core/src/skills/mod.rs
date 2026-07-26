@@ -16,13 +16,15 @@ use crate::relay::{RelayRequest, RelayResponse};
 use crate::{LocalRuntime, LocalState};
 
 mod bundled;
-mod native;
+pub(crate) mod native;
 mod runtime;
 
 pub(crate) use runtime::prepare_local_skill;
 pub(crate) use runtime::PreparedLocalSkill;
 
-use bundled::{internal_skill_bundle_hash, internal_skill_instructions, internal_skill_manifest};
+pub(crate) use bundled::{
+    internal_skill_bundle_hash, internal_skill_instructions, internal_skill_manifest,
+};
 
 const PREPARED_SKILL_SESSION_TTL_SECONDS: i64 = 2 * 60 * 60;
 
@@ -86,9 +88,9 @@ pub(crate) fn internal_skill_catalog() -> Result<InternalSkillCatalog> {
             catalog.schema_version
         ));
     }
-    if catalog.catalog_revision.trim().is_empty() || catalog.skills.len() != 27 {
+    if catalog.catalog_revision.trim().is_empty() || catalog.skills.len() != 28 {
         return Err(anyhow!(
-            "embedded internal Skill catalog is incomplete; expected 27 entries"
+            "embedded internal Skill catalog is incomplete; expected 28 entries"
         ));
     }
     if catalog.skills.iter().any(|item| {
@@ -348,6 +350,9 @@ fn prepare_skill(request: &RelayRequest, state: &LocalState) -> Result<Value, (u
                 item.display_name
             ),
         ));
+    }
+    if let Some(error) = native::dependency_error(skill_id.as_str()) {
+        return Err((409, error));
     }
     if item.bundle_id != bundle_id
         || item.version != version

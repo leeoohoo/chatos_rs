@@ -66,7 +66,7 @@ impl LocalTaskRunnerServiceProvider {
                 "Plugin capability snapshot is missing for task_runner_run_phase".to_string()
             })?;
         capabilities
-            .ensure_required_available()
+            .ensure_required_runtime_supported([], [])
             .map_err(|error| error.to_string())?;
         let planning_capabilities = database
             .get_capability_snapshot(
@@ -79,7 +79,7 @@ impl LocalTaskRunnerServiceProvider {
                 "Plugin capability snapshot is missing for task_runner_plan_phase".to_string()
             })?;
         planning_capabilities
-            .ensure_required_available()
+            .ensure_required_runtime_supported([], [])
             .map_err(|error| error.to_string())?;
         let manifests = database
             .list_mcp_manifests(

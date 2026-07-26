@@ -162,6 +162,9 @@ impl TaskRunnerMcpService {
                     enabled_builtin_kinds: item.enabled_builtin_kinds,
                     external_mcp_config_ids: item.external_mcp_config_ids,
                     selected_skill_ids: item.selected_skill_ids,
+                    plugin_device_id: None,
+                    plugin_workspace_id: None,
+                    selected_plugins: None,
                     prerequisite_task_ids: Some(item.prerequisite_task_ids),
                     mcp_config: None,
                 },
@@ -349,6 +352,7 @@ impl TaskRunnerMcpService {
                 client_ref.as_str(),
                 context_refs.as_slice(),
             );
+            request_context.enforce_plugin_config(&mut request);
             request.status = if tool_profile == McpToolProfile::ProjectRequirementExecutionPlanner {
                 Some(TaskStatus::Ready)
             } else {

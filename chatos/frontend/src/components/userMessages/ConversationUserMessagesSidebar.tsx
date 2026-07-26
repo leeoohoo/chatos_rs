@@ -31,6 +31,7 @@ interface ConversationUserMessagesSidebarProps {
   reviewRepairPendingCount?: number | null;
   onOpenSummary?: () => void | Promise<void>;
   onOpenRuntimeContext?: () => void | Promise<void>;
+  onOpenTurnRuntimeContext?: (item: UserMessageTurn) => void | Promise<void>;
   onReviewRepair?: () => void | Promise<void>;
   onSelectMessage?: (message: Message) => void;
   onLoadMoreHistory?: (oldestLoadedMessage: Message | null) => void | Promise<void>;
@@ -72,6 +73,7 @@ const ConversationUserMessagesSidebar: React.FC<ConversationUserMessagesSidebarP
   reviewRepairPendingCount = null,
   onOpenSummary,
   onOpenRuntimeContext,
+  onOpenTurnRuntimeContext,
   onReviewRepair,
   onSelectMessage,
   onLoadMoreHistory,
@@ -310,6 +312,9 @@ const ConversationUserMessagesSidebar: React.FC<ConversationUserMessagesSidebarP
                   void openProcessTimeline(target);
                 }}
                 onOpenTasks={onOpenTasks}
+                onOpenRuntimeContext={onOpenTurnRuntimeContext ? (target) => {
+                  void onOpenTurnRuntimeContext(target);
+                } : undefined}
               />
             ))}
           </div>

@@ -60,6 +60,32 @@ describe('workspaceLocalConnectorFacade desktop routing', () => {
     ).rejects.toThrow('Local Connector 功能只能在 Chat OS 桌面客户端中使用');
   });
 
+  it('loads the Task Runner executable Plugin catalog for the exact device', async () => {
+    vi.stubGlobal('window', {
+      chatosLocalRuntime: { apiRequest: vi.fn() },
+    });
+    const request = vi.fn().mockResolvedValue({ selectable_plugins: [] });
+    const context = { getRequestFn: () => request };
+
+    await workspaceLocalConnectorFacade.listTaskRunnerAvailablePlugins.call(
+      context as never,
+      'device-1',
+    );
+
+    expect(request).toHaveBeenCalledWith(
+      '/task-runner/available-plugins?device_id=device-1',
+    );
+
+    await workspaceLocalConnectorFacade.listTaskRunnerAvailablePlugins.call(
+      context as never,
+      'device-1',
+      true,
+    );
+    expect(request).toHaveBeenLastCalledWith(
+      '/task-runner/available-plugins?device_id=device-1&plan_mode=true',
+    );
+  });
+
   it('registers a newly created local project before it is selected', async () => {
     vi.stubGlobal('window', {
       chatosLocalRuntime: { apiRequest: vi.fn() },

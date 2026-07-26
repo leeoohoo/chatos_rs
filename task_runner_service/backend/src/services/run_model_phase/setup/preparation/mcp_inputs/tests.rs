@@ -46,6 +46,7 @@ fn sample_task(enabled_builtin_kinds: Vec<&str>) -> TaskRecord {
         source_user_message_id: None,
         prerequisite_task_ids: Vec::new(),
         task_tool_state: Default::default(),
+        plugin_config: Default::default(),
         mcp_config,
         created_at: now.clone(),
         updated_at: now,
@@ -206,7 +207,31 @@ fn internal_host_tool_aliases_use_stable_builtin_server_prefixes() {
             && alias.public_server_name == chatos_mcp_runtime::TERMINAL_CONTROLLER_SERVER_NAME
     }));
     assert!(aliases.iter().any(|alias| {
+        alias.tool_name == "browser_tabs"
+            && alias.public_server_name == chatos_mcp_runtime::BROWSER_TOOLS_SERVER_NAME
+    }));
+    assert!(aliases.iter().any(|alias| {
         alias.tool_name == "browser_navigate"
+            && alias.public_server_name == chatos_mcp_runtime::BROWSER_TOOLS_SERVER_NAME
+    }));
+    assert!(aliases.iter().any(|alias| {
+        alias.tool_name == "browser_upload"
+            && alias.public_server_name == chatos_mcp_runtime::BROWSER_TOOLS_SERVER_NAME
+    }));
+    assert!(aliases.iter().any(|alias| {
+        alias.tool_name == "browser_download"
+            && alias.public_server_name == chatos_mcp_runtime::BROWSER_TOOLS_SERVER_NAME
+    }));
+    assert!(aliases.iter().any(|alias| {
+        alias.tool_name == "browser_network_request"
+            && alias.public_server_name == chatos_mcp_runtime::BROWSER_TOOLS_SERVER_NAME
+    }));
+    assert!(aliases.iter().any(|alias| {
+        alias.tool_name == "browser_har_stop"
+            && alias.public_server_name == chatos_mcp_runtime::BROWSER_TOOLS_SERVER_NAME
+    }));
+    assert!(aliases.iter().any(|alias| {
+        alias.tool_name == "browser_websocket_frames"
             && alias.public_server_name == chatos_mcp_runtime::BROWSER_TOOLS_SERVER_NAME
     }));
 }

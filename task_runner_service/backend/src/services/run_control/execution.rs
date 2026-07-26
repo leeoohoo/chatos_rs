@@ -86,6 +86,25 @@ impl RunService {
                 .await;
             return;
         }
+        let current_plugin_snapshots = match capability_policy.plugin_snapshots(&task) {
+            Ok(snapshots) => snapshots,
+            Err(err) => {
+                self.finish_failed_before_execution(&task, &mut run, ".", err)
+                    .await;
+                return;
+            }
+        };
+        if current_plugin_snapshots != run.plugin_snapshots {
+            self.finish_failed_before_execution(
+                &task,
+                &mut run,
+                ".",
+                "Plugin Release, installation, component, permission, auth, device, or workspace snapshot changed after this run was queued"
+                    .to_string(),
+            )
+            .await;
+            return;
+        }
         let routed_task =
             task_with_runtime_mcp_routing_authoritative(&self.config, &self.store, task.clone())
                 .await;

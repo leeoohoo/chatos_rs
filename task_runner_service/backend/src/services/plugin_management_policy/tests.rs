@@ -6,9 +6,15 @@ use crate::models::{
     now_rfc3339, TaskMcpConfig, TaskRecord, TaskScheduleConfig, TaskStatus, TaskToolState,
 };
 use chatos_plugin_management_sdk::{
-    AgentBindingRecord, BindingConditions, McpRuntime, ResourceMetadata, ResourceSecurity,
-    SkillContent, SkillInstallationRecord, SkillRecord,
+    parse_plugin_manifest, plugin_component_descriptors, AgentBindingRecord, BindingConditions,
+    McpRuntime, PluginAvailabilityStatus, PluginCatalogRecord, PluginCommandInvocation,
+    PluginComponentSnapshot, PluginComponentStatus, PluginInstallStatus, PluginInstallationRecord,
+    PluginLicenseMetadata, PluginManifestSource, PluginPublisher, PluginReleaseRecord,
+    PluginReleaseSignature, PluginRequirementStatus, ResolvedPlugin, ResolvedPluginComponent,
+    ResourceMetadata, ResourceSecurity, SelectedPluginRef, SkillContent, SkillInstallationRecord,
+    SkillRecord, TaskPluginConfig, UserPluginPreferenceRecord, PLUGIN_SIGNATURE_ALGORITHM_ED25519,
 };
+use serde_json::json;
 
 fn resolved_mcp(
     id: &str,
@@ -41,6 +47,7 @@ fn resolved_mcp(
             },
             security: ResourceSecurity::default(),
             metadata: ResourceMetadata::default(),
+            plugin_component: Default::default(),
             created_by: "system".to_string(),
             updated_by: "system".to_string(),
             created_at: "now".to_string(),
@@ -61,6 +68,7 @@ fn resolved_mcp(
             required,
             priority: 0,
             conditions: BindingConditions::default(),
+            component_allowlist: Vec::new(),
             created_by: "system".to_string(),
             updated_by: "system".to_string(),
             created_at: "now".to_string(),
@@ -93,6 +101,7 @@ fn resolved_skill(id: &str, required: bool, available: bool) -> ResolvedSkill {
                 ..SkillContent::default()
             },
             metadata: ResourceMetadata::default(),
+            plugin_component: Default::default(),
             created_by: "system".to_string(),
             updated_by: "system".to_string(),
             created_at: "now".to_string(),
@@ -113,6 +122,7 @@ fn resolved_skill(id: &str, required: bool, available: bool) -> ResolvedSkill {
             required,
             priority: 0,
             conditions: BindingConditions::default(),
+            component_allowlist: Vec::new(),
             created_by: "system".to_string(),
             updated_by: "system".to_string(),
             created_at: "now".to_string(),
@@ -136,6 +146,509 @@ fn resolved_skill(id: &str, required: bool, available: bool) -> ResolvedSkill {
             last_checked_at: "now".to_string(),
         }),
     }
+}
+
+fn resolved_plugin(required: bool) -> ResolvedPlugin {
+    let manifest = parse_plugin_manifest(
+        r#"{
+            "schemaVersion": 1,
+            "name": "browser",
+            "version": "1.0.0",
+            "description": "Browser control plugin",
+            "author": {"name": "ChatOS"},
+            "mcpServers": {
+                "browser": {
+                    "type": "http",
+                    "url": "https://browser.example.com/mcp"
+                }
+            },
+            "interface": {
+                "displayName": "Browser",
+                "shortDescription": "Control browser",
+                "longDescription": "Control the in-app browser through signed Plugin tools.",
+                "developerName": "ChatOS",
+                "category": "Productivity"
+            },
+            "permissions": ["browser.control"]
+        }"#,
+        PluginManifestSource::Chatos,
+    )
+    .expect("Plugin Manifest");
+    let components = plugin_component_descriptors(&manifest);
+    let catalog = PluginCatalogRecord {
+        id: "plugin-browser".to_string(),
+        plugin_key: "browser@official".to_string(),
+        marketplace_id: "official".to_string(),
+        owner_user_id: None,
+        name: manifest.name.clone(),
+        display_name: "Browser".to_string(),
+        description: manifest.description.clone(),
+        publisher: PluginPublisher {
+            id: "publisher-chatos".to_string(),
+            name: "ChatOS".to_string(),
+            website: None,
+            verified: true,
+        },
+        interface: manifest.interface.clone(),
+        keywords: vec!["browser".to_string()],
+        visibility: "public".to_string(),
+        featured: true,
+        enabled: true,
+        latest_release_id: "release-browser-1".to_string(),
+        license: PluginLicenseMetadata {
+            license_id: "MIT".to_string(),
+            license_url: None,
+            redistributable: true,
+            reviewed_at: Some("now".to_string()),
+        },
+        created_at: "now".to_string(),
+        updated_at: "now".to_string(),
+    };
+    let release = PluginReleaseRecord {
+        id: "release-browser-1".to_string(),
+        plugin_id: catalog.id.clone(),
+        version: manifest.version.clone(),
+        manifest_schema_version: manifest.schema_version,
+        normalized_manifest: manifest.clone(),
+        artifact_ref: "https://plugins.example.com/browser.zip".to_string(),
+        artifact_sha256: "a".repeat(64),
+        signature: PluginReleaseSignature {
+            key_id: "key-1".to_string(),
+            publisher_id: catalog.publisher.id.clone(),
+            marketplace_id: catalog.marketplace_id.clone(),
+            algorithm: PLUGIN_SIGNATURE_ALGORITHM_ED25519.to_string(),
+            signature_base64: "signature".to_string(),
+            signed_at: "now".to_string(),
+            manifest_sha256: "b".repeat(64),
+        },
+        sbom_ref: None,
+        supported_platforms: vec!["macos-arm64".to_string()],
+        components: components.clone(),
+        dependencies: manifest.dependencies.clone(),
+        permissions: manifest.permissions.clone(),
+        release_channel: "stable".to_string(),
+        published_at: "now".to_string(),
+        revoked_at: None,
+    };
+    let installation = PluginInstallationRecord {
+        id: "owner-1:device-1:plugin-browser".to_string(),
+        owner_user_id: "owner-1".to_string(),
+        device_id: "device-1".to_string(),
+        plugin_id: catalog.id.clone(),
+        release_id: release.id.clone(),
+        version: release.version.clone(),
+        artifact_sha256: release.artifact_sha256.clone(),
+        platform: "macos-arm64".to_string(),
+        install_status: PluginInstallStatus::Installed,
+        availability_status: PluginAvailabilityStatus::Ready,
+        dependency_status: PluginRequirementStatus::Satisfied,
+        permission_status: PluginRequirementStatus::Satisfied,
+        auth_status: PluginRequirementStatus::Satisfied,
+        component_statuses: components
+            .iter()
+            .map(|component| PluginComponentStatus {
+                component_key: component.component_key.clone(),
+                kind: component.kind,
+                availability_status: PluginAvailabilityStatus::Ready,
+                last_error: None,
+                last_checked_at: "now".to_string(),
+            })
+            .collect(),
+        active: true,
+        previous_release_id: None,
+        installed_at: "now".to_string(),
+        last_checked_at: "now".to_string(),
+        last_error: None,
+    };
+    let binding = AgentBindingRecord {
+        id: "binding-plugin-browser".to_string(),
+        agent_key: SystemAgentKey::TaskRunnerRunPhase.as_str().to_string(),
+        binding_scope: if required {
+            "system_required".to_string()
+        } else {
+            "global_default".to_string()
+        },
+        owner_user_id: None,
+        resource_kind: "plugin".to_string(),
+        resource_id: catalog.id.clone(),
+        enabled: true,
+        required,
+        priority: 0,
+        conditions: BindingConditions::default(),
+        component_allowlist: vec!["browser".to_string()],
+        created_by: "system".to_string(),
+        updated_by: "system".to_string(),
+        created_at: "now".to_string(),
+        updated_at: "now".to_string(),
+    };
+    ResolvedPlugin {
+        catalog: catalog.clone(),
+        release: Some(release.clone()),
+        binding,
+        installation: Some(installation),
+        preference: Some(UserPluginPreferenceRecord {
+            owner_user_id: "owner-1".to_string(),
+            plugin_id: catalog.id.clone(),
+            enabled: true,
+            auto_update: false,
+            release_channel: "stable".to_string(),
+            enabled_components: vec!["browser".to_string()],
+            updated_at: "now".to_string(),
+        }),
+        components: components
+            .iter()
+            .cloned()
+            .map(|component| ResolvedPluginComponent {
+                component,
+                available: true,
+                status: PluginAvailabilityStatus::Ready,
+                reason: None,
+            })
+            .collect(),
+        component_snapshots: components
+            .into_iter()
+            .map(|component| PluginComponentSnapshot {
+                plugin_id: catalog.id.clone(),
+                release_id: release.id.clone(),
+                component,
+                content_sha256: "c".repeat(64),
+            })
+            .collect(),
+        auth_connection_ids: vec!["oauth-browser-account".to_string()],
+        available: true,
+        status: PluginAvailabilityStatus::Ready,
+        reason: None,
+    }
+}
+
+fn resolved_ui_plugin() -> ResolvedPlugin {
+    let mut plugin = resolved_plugin(false);
+    let manifest = parse_plugin_manifest(
+        r#"{
+            "schemaVersion": 1,
+            "name": "browser",
+            "version": "1.0.0",
+            "description": "Signed browser workbench",
+            "author": {"name": "ChatOS"},
+            "ui": [{
+                "componentKey": "security-workbench",
+                "source": "./ui/index.html",
+                "title": "Security Workbench",
+                "surface": "workbench",
+                "assets": ["./ui/app.js", "./ui/styles.css"],
+                "bridgeCapabilities": ["artifact.read", "host.context.read"],
+                "artifactMimeTypes": ["application/json"]
+            }],
+            "interface": {
+                "displayName": "Browser",
+                "shortDescription": "Signed workbench",
+                "longDescription": "A signed sandboxed Plugin workbench.",
+                "developerName": "ChatOS",
+                "category": "Productivity"
+            },
+            "permissions": [{
+                "permission": "artifact.read",
+                "required": true,
+                "components": ["security-workbench"]
+            }]
+        }"#,
+        PluginManifestSource::Chatos,
+    )
+    .expect("Plugin UI Manifest");
+    let components = plugin_component_descriptors(&manifest);
+    let release_id = {
+        let release = plugin.release.as_mut().expect("Plugin Release");
+        release.normalized_manifest = manifest.clone();
+        release.components = components.clone();
+        release.dependencies = manifest.dependencies.clone();
+        release.permissions = manifest.permissions.clone();
+        release.id.clone()
+    };
+    let installation = plugin.installation.as_mut().expect("Plugin installation");
+    installation.component_statuses = components
+        .iter()
+        .map(|component| PluginComponentStatus {
+            component_key: component.component_key.clone(),
+            kind: component.kind,
+            availability_status: PluginAvailabilityStatus::Ready,
+            last_error: None,
+            last_checked_at: "now".to_string(),
+        })
+        .collect();
+    plugin.binding.component_allowlist = vec!["security-workbench".to_string()];
+    plugin
+        .preference
+        .as_mut()
+        .expect("Plugin preference")
+        .enabled_components = vec!["security-workbench".to_string()];
+    plugin.components = components
+        .iter()
+        .cloned()
+        .map(|component| ResolvedPluginComponent {
+            component,
+            available: true,
+            status: PluginAvailabilityStatus::Ready,
+            reason: None,
+        })
+        .collect();
+    plugin.component_snapshots = components
+        .into_iter()
+        .map(|component| PluginComponentSnapshot {
+            plugin_id: plugin.catalog.id.clone(),
+            release_id: release_id.clone(),
+            component,
+            content_sha256: "c".repeat(64),
+        })
+        .collect();
+    plugin.auth_connection_ids.clear();
+    plugin
+}
+
+fn resolved_command_plugin(requires_confirmation: bool) -> ResolvedPlugin {
+    let manifest = parse_plugin_manifest(
+        format!(
+            r#"{{
+                "schemaVersion": 1,
+                "name": "review-command",
+                "version": "1.0.0",
+                "description": "Signed review command",
+                "author": {{"name": "ChatOS"}},
+                "commands": [{{
+                    "componentKey": "review",
+                    "source": "./commands/review.md",
+                    "description": "Review the current change",
+                    "argumentHint": "[path]",
+                    "requiresConfirmation": {requires_confirmation},
+                    "targetAgent": "task_runner_run_phase",
+                    "allowedTools": ["browser_tools_browser_snapshot"]
+                }}],
+                "interface": {{
+                    "displayName": "Review Command",
+                    "shortDescription": "Review a change",
+                    "longDescription": "Review a change through a signed Plugin Command.",
+                    "developerName": "ChatOS",
+                    "category": "Productivity"
+                }},
+                "permissions": [{{
+                    "permission": "workspace.read",
+                    "components": ["review"]
+                }}]
+            }}"#
+        )
+        .as_str(),
+        PluginManifestSource::Chatos,
+    )
+    .expect("Command Plugin Manifest");
+    let components = plugin_component_descriptors(&manifest);
+    let mut plugin = resolved_plugin(false);
+    plugin.catalog.name = manifest.name.clone();
+    plugin.catalog.display_name = manifest.interface.display_name.clone();
+    plugin.catalog.description = manifest.description.clone();
+    plugin.catalog.interface = manifest.interface.clone();
+    plugin.binding.component_allowlist = vec!["review".to_string()];
+    let release = plugin.release.as_mut().expect("Plugin Release");
+    release.normalized_manifest = manifest.clone();
+    release.components = components.clone();
+    release.permissions = manifest.permissions.clone();
+    let release_id = release.id.clone();
+    let installation = plugin.installation.as_mut().expect("Plugin installation");
+    installation.component_statuses = components
+        .iter()
+        .map(|component| PluginComponentStatus {
+            component_key: component.component_key.clone(),
+            kind: component.kind,
+            availability_status: PluginAvailabilityStatus::Ready,
+            last_error: None,
+            last_checked_at: "now".to_string(),
+        })
+        .collect();
+    plugin
+        .preference
+        .as_mut()
+        .expect("Plugin preference")
+        .enabled_components = vec!["review".to_string()];
+    plugin.components = components
+        .iter()
+        .cloned()
+        .map(|component| ResolvedPluginComponent {
+            component,
+            available: true,
+            status: PluginAvailabilityStatus::Ready,
+            reason: None,
+        })
+        .collect();
+    plugin.component_snapshots = components
+        .into_iter()
+        .map(|component| PluginComponentSnapshot {
+            plugin_id: plugin.catalog.id.clone(),
+            release_id: release_id.clone(),
+            component,
+            content_sha256: "d".repeat(64),
+        })
+        .collect();
+    plugin
+}
+
+fn resolved_agent_plugin(base_agent: &str) -> ResolvedPlugin {
+    let manifest = parse_plugin_manifest(
+        format!(
+            r#"{{
+                "schemaVersion": 1,
+                "name": "review-agent",
+                "version": "1.0.0",
+                "description": "Signed review Agent",
+                "author": {{"name": "ChatOS"}},
+                "agents": [{{
+                    "componentKey": "reviewer",
+                    "source": "./agents/reviewer.md",
+                    "description": "Review the current change",
+                    "baseAgent": "{base_agent}",
+                    "allowedTools": ["browser_tools_browser_snapshot"],
+                    "maxIterations": 12
+                }}],
+                "interface": {{
+                    "displayName": "Review Agent",
+                    "shortDescription": "Review a change",
+                    "longDescription": "Review a change through a signed Plugin Agent.",
+                    "developerName": "ChatOS",
+                    "category": "Productivity"
+                }},
+                "permissions": [{{
+                    "permission": "workspace.read",
+                    "components": ["reviewer"]
+                }}]
+            }}"#
+        )
+        .as_str(),
+        PluginManifestSource::Chatos,
+    )
+    .expect("Agent Plugin Manifest");
+    let components = plugin_component_descriptors(&manifest);
+    let mut plugin = resolved_plugin(false);
+    plugin.catalog.name = manifest.name.clone();
+    plugin.catalog.display_name = manifest.interface.display_name.clone();
+    plugin.catalog.description = manifest.description.clone();
+    plugin.catalog.interface = manifest.interface.clone();
+    plugin.binding.agent_key = base_agent.to_string();
+    plugin.binding.component_allowlist = vec!["reviewer".to_string()];
+    let release = plugin.release.as_mut().expect("Plugin Release");
+    release.normalized_manifest = manifest.clone();
+    release.components = components.clone();
+    release.permissions = manifest.permissions.clone();
+    let release_id = release.id.clone();
+    let installation = plugin.installation.as_mut().expect("Plugin installation");
+    installation.component_statuses = components
+        .iter()
+        .map(|component| PluginComponentStatus {
+            component_key: component.component_key.clone(),
+            kind: component.kind,
+            availability_status: PluginAvailabilityStatus::Ready,
+            last_error: None,
+            last_checked_at: "now".to_string(),
+        })
+        .collect();
+    plugin
+        .preference
+        .as_mut()
+        .expect("Plugin preference")
+        .enabled_components = vec!["reviewer".to_string()];
+    plugin.components = components
+        .iter()
+        .cloned()
+        .map(|component| ResolvedPluginComponent {
+            component,
+            available: true,
+            status: PluginAvailabilityStatus::Ready,
+            reason: None,
+        })
+        .collect();
+    plugin.component_snapshots = components
+        .into_iter()
+        .map(|component| PluginComponentSnapshot {
+            plugin_id: plugin.catalog.id.clone(),
+            release_id: release_id.clone(),
+            component,
+            content_sha256: "e".repeat(64),
+        })
+        .collect();
+    plugin
+}
+
+fn resolved_hook_plugin() -> ResolvedPlugin {
+    let manifest = parse_plugin_manifest(
+        r#"{
+            "schemaVersion": 1,
+            "name": "lifecycle-hooks",
+            "version": "1.0.0",
+            "description": "Signed lifecycle Hooks",
+            "author": {"name": "ChatOS"},
+            "hooks": [{
+                "componentKey": "lifecycle-hooks",
+                "source": "./hooks.json"
+            }],
+            "interface": {
+                "displayName": "Lifecycle Hooks",
+                "shortDescription": "Audit lifecycle events",
+                "longDescription": "Audit lifecycle events through signed Plugin Hooks.",
+                "developerName": "ChatOS",
+                "category": "Productivity"
+            },
+            "permissions": [{
+                "permission": "process.spawn",
+                "components": ["lifecycle-hooks"]
+            }]
+        }"#,
+        PluginManifestSource::Chatos,
+    )
+    .expect("Hook Plugin Manifest");
+    let components = plugin_component_descriptors(&manifest);
+    let mut plugin = resolved_plugin(false);
+    plugin.catalog.name = manifest.name.clone();
+    plugin.catalog.display_name = manifest.interface.display_name.clone();
+    plugin.catalog.description = manifest.description.clone();
+    plugin.catalog.interface = manifest.interface.clone();
+    plugin.binding.component_allowlist = vec!["lifecycle-hooks".to_string()];
+    let release = plugin.release.as_mut().expect("Plugin Release");
+    release.normalized_manifest = manifest.clone();
+    release.components = components.clone();
+    release.permissions = manifest.permissions.clone();
+    let release_id = release.id.clone();
+    let installation = plugin.installation.as_mut().expect("Plugin installation");
+    installation.component_statuses = components
+        .iter()
+        .map(|component| PluginComponentStatus {
+            component_key: component.component_key.clone(),
+            kind: component.kind,
+            availability_status: PluginAvailabilityStatus::Ready,
+            last_error: None,
+            last_checked_at: "now".to_string(),
+        })
+        .collect();
+    plugin
+        .preference
+        .as_mut()
+        .expect("Plugin preference")
+        .enabled_components = vec!["lifecycle-hooks".to_string()];
+    plugin.components = components
+        .iter()
+        .cloned()
+        .map(|component| ResolvedPluginComponent {
+            component,
+            available: true,
+            status: PluginAvailabilityStatus::Ready,
+            reason: None,
+        })
+        .collect();
+    plugin.component_snapshots = components
+        .into_iter()
+        .map(|component| PluginComponentSnapshot {
+            plugin_id: plugin.catalog.id.clone(),
+            release_id: release_id.clone(),
+            component,
+            content_sha256: "f".repeat(64),
+        })
+        .collect();
+    plugin
 }
 
 fn policy() -> TaskRunnerCapabilityPolicy {
@@ -177,6 +690,7 @@ fn policy() -> TaskRunnerCapabilityPolicy {
             resolved_mcp("external-1", "http", None, false, true),
         ],
         skills: vec![resolved_skill("internal_skill_remotion", false, true)],
+        plugins: Vec::new(),
         local_connector_requirements: Vec::new(),
     })
     .expect("policy")
@@ -216,6 +730,7 @@ fn task() -> TaskRecord {
         source_user_message_id: None,
         prerequisite_task_ids: Vec::new(),
         task_tool_state: TaskToolState::default(),
+        plugin_config: Default::default(),
         mcp_config: TaskMcpConfig {
             enabled: false,
             enabled_builtin_kinds: vec![
@@ -389,6 +904,7 @@ fn cloud_policy_excludes_local_connector_mcps() {
         agent_enabled: true,
         mcps: vec![local, cloud],
         skills: Vec::new(),
+        plugins: Vec::new(),
         local_connector_requirements: Vec::new(),
     })
     .expect("policy");
@@ -416,6 +932,7 @@ fn unified_service_system_mcp_is_selected_as_a_task_runner_backend() {
         agent_enabled: true,
         mcps: vec![system],
         skills: Vec::new(),
+        plugins: Vec::new(),
         local_connector_requirements: Vec::new(),
     })
     .expect("policy");
@@ -440,4 +957,465 @@ fn user_created_cloud_mcp_is_allowed_and_local_connector_mcp_is_rejected() {
     let err = validate_cloud_external_mcp_runtime(&local)
         .expect_err("Local Connector MCP must be rejected by cloud policy");
     assert!(err.contains("unavailable in cloud Task Runner"));
+}
+
+#[test]
+fn plugin_selection_requires_exact_device_and_produces_immutable_run_snapshot() {
+    let mut capabilities = policy().capabilities;
+    capabilities.plugins = vec![resolved_plugin(false)];
+    capabilities.mcps.push(resolved_mcp(
+        "browser-tools",
+        BUILTIN_RUNTIME_KIND,
+        Some("BrowserTools"),
+        false,
+        true,
+    ));
+    let policy = TaskRunnerCapabilityPolicy::new(capabilities).expect("Plugin policy");
+    let mut task = task();
+    task.plugin_config = TaskPluginConfig {
+        device_id: Some("device-1".to_string()),
+        workspace_id: Some("workspace-1".to_string()),
+        selected_plugins: vec![SelectedPluginRef {
+            plugin_id: "plugin-browser".to_string(),
+            selected_skill_ids: Vec::new(),
+            selected_command_ids: Vec::new(),
+            selected_agent_ids: Vec::new(),
+        }],
+        command_invocations: Vec::new(),
+    };
+
+    policy
+        .apply_to_task(&mut task)
+        .expect("apply Plugin policy");
+    let snapshots = policy.plugin_snapshots(&task).expect("Plugin snapshots");
+
+    assert_eq!(snapshots.len(), 1);
+    assert_eq!(snapshots[0].plugin_id, "plugin-browser");
+    assert_eq!(snapshots[0].release_id, "release-browser-1");
+    assert_eq!(snapshots[0].device_id, "device-1");
+    assert_eq!(snapshots[0].workspace_id.as_deref(), Some("workspace-1"));
+    assert_eq!(snapshots[0].artifact_sha256, "a".repeat(64));
+    assert_eq!(snapshots[0].component_snapshots.len(), 1);
+    assert_eq!(snapshots[0].component_snapshots[0].component_key, "browser");
+    assert_eq!(
+        snapshots[0].component_snapshots[0].content_sha256,
+        "c".repeat(64)
+    );
+    assert_eq!(snapshots[0].permission_snapshot, vec!["browser.control"]);
+    assert_eq!(
+        snapshots[0].auth_connection_ids,
+        vec!["oauth-browser-account"]
+    );
+    assert!(task
+        .mcp_config
+        .enabled_builtin_kinds
+        .iter()
+        .any(|kind| kind == "BrowserTools"));
+}
+
+#[test]
+fn plugin_ui_is_pinned_as_a_signed_run_component_without_executable_operations() {
+    let mut capabilities = policy().capabilities;
+    capabilities.plugins = vec![resolved_ui_plugin()];
+    capabilities.mcps.push(resolved_mcp(
+        "browser-tools",
+        BUILTIN_RUNTIME_KIND,
+        Some("BrowserTools"),
+        false,
+        true,
+    ));
+    let policy = TaskRunnerCapabilityPolicy::new(capabilities).expect("Plugin UI policy");
+    let mut task = task();
+    task.plugin_config = TaskPluginConfig {
+        device_id: Some("device-1".to_string()),
+        workspace_id: Some("workspace-1".to_string()),
+        selected_plugins: vec![SelectedPluginRef {
+            plugin_id: "plugin-browser".to_string(),
+            selected_skill_ids: Vec::new(),
+            selected_command_ids: Vec::new(),
+            selected_agent_ids: Vec::new(),
+        }],
+        command_invocations: Vec::new(),
+    };
+
+    policy
+        .apply_to_task(&mut task)
+        .expect("apply Plugin UI policy");
+    let snapshots = policy.plugin_snapshots(&task).expect("Plugin UI snapshots");
+    assert_eq!(snapshots.len(), 1);
+    assert_eq!(snapshots[0].component_snapshots.len(), 1);
+    let component = &snapshots[0].component_snapshots[0];
+    assert_eq!(component.kind, PluginComponentKind::UiContribution);
+    assert_eq!(component.component_key, "security-workbench");
+    assert_eq!(component.content_sha256, "c".repeat(64));
+    assert_eq!(
+        component.runtime.get("runtime_kind"),
+        Some(&json!("sandboxed_ui"))
+    );
+    assert_eq!(
+        component.runtime.get("entrypoint"),
+        Some(&json!("./ui/index.html"))
+    );
+    assert_eq!(
+        component
+            .runtime
+            .get("metadata")
+            .and_then(|metadata| metadata.get("assets")),
+        Some(&json!(["./ui/app.js", "./ui/styles.css"]))
+    );
+    assert_eq!(snapshots[0].permission_snapshot, vec!["artifact.read"]);
+}
+
+#[test]
+fn plugin_selection_without_device_fails_closed() {
+    let mut capabilities = policy().capabilities;
+    capabilities.plugins = vec![resolved_plugin(false)];
+    capabilities.mcps.push(resolved_mcp(
+        "browser-tools",
+        BUILTIN_RUNTIME_KIND,
+        Some("BrowserTools"),
+        false,
+        true,
+    ));
+    let policy = TaskRunnerCapabilityPolicy::new(capabilities).expect("Plugin policy");
+    let config = TaskPluginConfig {
+        selected_plugins: vec![SelectedPluginRef {
+            plugin_id: "plugin-browser".to_string(),
+            selected_skill_ids: Vec::new(),
+            selected_command_ids: Vec::new(),
+            selected_agent_ids: Vec::new(),
+        }],
+        ..TaskPluginConfig::default()
+    };
+
+    let error = policy
+        .validate_plugin_config(&config)
+        .expect_err("device-less Plugin selection must fail closed");
+    assert!(error.contains("device_id"));
+}
+
+#[test]
+fn selected_command_enters_the_immutable_run_snapshot() {
+    let mut capabilities = policy().capabilities;
+    capabilities.plugins = vec![resolved_command_plugin(false)];
+    let policy = TaskRunnerCapabilityPolicy::new(capabilities).expect("Command Plugin policy");
+    let mut task = task();
+    task.plugin_config = TaskPluginConfig {
+        device_id: Some("device-1".to_string()),
+        workspace_id: Some("workspace-1".to_string()),
+        selected_plugins: vec![SelectedPluginRef {
+            plugin_id: "plugin-browser".to_string(),
+            selected_skill_ids: Vec::new(),
+            selected_command_ids: vec!["review".to_string()],
+            selected_agent_ids: Vec::new(),
+        }],
+        command_invocations: vec![PluginCommandInvocation {
+            plugin_id: "plugin-browser".to_string(),
+            command_id: "review".to_string(),
+            arguments: Some("src/lib.rs".to_string()),
+        }],
+    };
+
+    policy
+        .apply_to_task(&mut task)
+        .expect("apply Command Plugin policy");
+    let snapshots = policy
+        .plugin_snapshots(&task)
+        .expect("Command Plugin snapshots");
+
+    assert_eq!(snapshots.len(), 1);
+    assert_eq!(snapshots[0].component_snapshots.len(), 1);
+    let component = &snapshots[0].component_snapshots[0];
+    assert_eq!(component.component_key, "review");
+    assert_eq!(component.kind, PluginComponentKind::Command);
+    assert_eq!(component.content_sha256, "d".repeat(64));
+    assert_eq!(
+        component.runtime.get("entrypoint"),
+        Some(&json!("./commands/review.md"))
+    );
+    assert_eq!(
+        component
+            .runtime
+            .get("metadata")
+            .and_then(|metadata| metadata.get("description")),
+        Some(&json!("Review the current change"))
+    );
+    assert_eq!(
+        component
+            .runtime
+            .get("metadata")
+            .and_then(|metadata| metadata.get("argument_hint")),
+        Some(&json!("[path]"))
+    );
+    assert_eq!(
+        component
+            .runtime
+            .get("metadata")
+            .and_then(|metadata| metadata.get("requires_confirmation")),
+        Some(&json!(false))
+    );
+    assert_eq!(
+        component
+            .runtime
+            .get("metadata")
+            .and_then(|metadata| metadata.get("target_agent")),
+        Some(&json!("task_runner_run_phase"))
+    );
+    assert_eq!(
+        component
+            .runtime
+            .get("metadata")
+            .and_then(|metadata| metadata.get("allowed_tools")),
+        Some(&json!(["browser_tools_browser_snapshot"]))
+    );
+    assert_eq!(
+        component.runtime.get("arguments"),
+        Some(&json!("src/lib.rs"))
+    );
+    assert_eq!(snapshots[0].permission_snapshot, vec!["workspace.read"]);
+}
+
+#[test]
+fn selected_agent_enters_the_immutable_run_snapshot_and_catalog() {
+    let mut capabilities = policy().capabilities;
+    capabilities.plugins = vec![resolved_agent_plugin("task_runner_run_phase")];
+    let policy = TaskRunnerCapabilityPolicy::new(capabilities).expect("Agent Plugin policy");
+    let views = policy.selectable_plugin_views();
+    assert_eq!(views[0].agents.len(), 1);
+    assert_eq!(views[0].agents[0].agent_id, "reviewer");
+    assert_eq!(views[0].agents[0].max_iterations, 12);
+
+    let mut task = task();
+    task.plugin_config = TaskPluginConfig {
+        device_id: Some("device-1".to_string()),
+        workspace_id: Some("workspace-1".to_string()),
+        selected_plugins: vec![SelectedPluginRef {
+            plugin_id: "plugin-browser".to_string(),
+            selected_skill_ids: Vec::new(),
+            selected_command_ids: Vec::new(),
+            selected_agent_ids: vec!["reviewer".to_string()],
+        }],
+        command_invocations: Vec::new(),
+    };
+    policy
+        .apply_to_task(&mut task)
+        .expect("apply Agent Plugin policy");
+    let snapshots = policy
+        .plugin_snapshots(&task)
+        .expect("Agent Plugin snapshots");
+    assert_eq!(snapshots[0].component_snapshots.len(), 1);
+    let component = &snapshots[0].component_snapshots[0];
+    assert_eq!(component.component_key, "reviewer");
+    assert_eq!(component.kind, PluginComponentKind::Agent);
+    assert_eq!(component.content_sha256, "e".repeat(64));
+    assert_eq!(
+        component
+            .runtime
+            .get("metadata")
+            .and_then(|metadata| metadata.get("base_agent")),
+        Some(&json!("task_runner_run_phase"))
+    );
+    assert_eq!(
+        component
+            .runtime
+            .get("metadata")
+            .and_then(|metadata| metadata.get("max_iterations")),
+        Some(&json!(12))
+    );
+}
+
+#[test]
+fn hook_set_is_automatically_bound_to_the_immutable_run_snapshot() {
+    let mut capabilities = policy().capabilities;
+    capabilities.plugins = vec![resolved_hook_plugin()];
+    let policy = TaskRunnerCapabilityPolicy::new(capabilities).expect("Hook Plugin policy");
+    let mut task = task();
+    task.plugin_config = TaskPluginConfig {
+        device_id: Some("device-1".to_string()),
+        workspace_id: Some("workspace-1".to_string()),
+        selected_plugins: vec![SelectedPluginRef {
+            plugin_id: "plugin-browser".to_string(),
+            selected_skill_ids: Vec::new(),
+            selected_command_ids: Vec::new(),
+            selected_agent_ids: Vec::new(),
+        }],
+        command_invocations: Vec::new(),
+    };
+
+    policy.apply_to_task(&mut task).expect("apply Hook policy");
+    let snapshots = policy.plugin_snapshots(&task).expect("Hook snapshots");
+    assert_eq!(snapshots[0].component_snapshots.len(), 1);
+    let component = &snapshots[0].component_snapshots[0];
+    assert_eq!(component.kind, PluginComponentKind::HookSet);
+    assert_eq!(component.component_key, "lifecycle-hooks");
+    assert_eq!(component.content_sha256, "f".repeat(64));
+    assert_eq!(
+        component.runtime.get("entrypoint"),
+        Some(&json!("./hooks.json"))
+    );
+    assert_eq!(snapshots[0].permission_snapshot, vec!["process.spawn"]);
+}
+
+#[test]
+fn plugin_agent_must_match_the_existing_plan_or_run_agent() {
+    let mut run_capabilities = policy().capabilities;
+    run_capabilities.plugins = vec![resolved_agent_plugin("task_runner_plan_phase")];
+    let run_policy = TaskRunnerCapabilityPolicy::new(run_capabilities)
+        .expect("incompatible optional Agent components are filtered");
+    assert!(run_policy.selectable_plugin_views().is_empty());
+
+    let mut plan_capabilities = policy().capabilities;
+    plan_capabilities.agent_key = SystemAgentKey::TaskRunnerPlanPhase.as_str().to_string();
+    plan_capabilities.plugins = vec![resolved_agent_plugin("task_runner_plan_phase")];
+    let policy =
+        TaskRunnerCapabilityPolicy::new(plan_capabilities).expect("plan Agent Plugin policy");
+    assert_eq!(
+        policy.selectable_plugin_views()[0].agents[0].agent_id,
+        "reviewer"
+    );
+}
+
+#[test]
+fn a_task_may_select_only_one_plugin_agent() {
+    let mut capabilities = policy().capabilities;
+    capabilities.plugins = vec![resolved_agent_plugin("task_runner_run_phase")];
+    let policy = TaskRunnerCapabilityPolicy::new(capabilities).expect("Agent Plugin policy");
+    let config = TaskPluginConfig {
+        device_id: Some("device-1".to_string()),
+        selected_plugins: vec![SelectedPluginRef {
+            plugin_id: "plugin-browser".to_string(),
+            selected_skill_ids: Vec::new(),
+            selected_command_ids: Vec::new(),
+            selected_agent_ids: vec!["reviewer".to_string(), "second".to_string()],
+        }],
+        ..TaskPluginConfig::default()
+    };
+    assert!(policy
+        .validate_plugin_config(&config)
+        .expect_err("multiple Plugin Agents must fail")
+        .contains("more than one Agent"));
+}
+
+#[test]
+fn command_requiring_confirmation_is_preserved_for_local_device_approval() {
+    let mut capabilities = policy().capabilities;
+    capabilities.plugins = vec![resolved_command_plugin(true)];
+    let policy = TaskRunnerCapabilityPolicy::new(capabilities).expect("Command Plugin policy");
+    let config = TaskPluginConfig {
+        device_id: Some("device-1".to_string()),
+        selected_plugins: vec![SelectedPluginRef {
+            plugin_id: "plugin-browser".to_string(),
+            selected_skill_ids: Vec::new(),
+            selected_command_ids: vec!["review".to_string()],
+            selected_agent_ids: Vec::new(),
+        }],
+        ..TaskPluginConfig::default()
+    };
+
+    policy
+        .validate_plugin_config(&config)
+        .expect("confirmation is enforced by the Local Connector at prepare time");
+}
+
+#[test]
+fn command_invocation_arguments_must_reference_one_exact_selected_command() {
+    let mut capabilities = policy().capabilities;
+    capabilities.plugins = vec![resolved_command_plugin(false)];
+    let policy = TaskRunnerCapabilityPolicy::new(capabilities).expect("Command Plugin policy");
+    let mut config = TaskPluginConfig {
+        device_id: Some("device-1".to_string()),
+        selected_plugins: vec![SelectedPluginRef {
+            plugin_id: "plugin-browser".to_string(),
+            selected_skill_ids: Vec::new(),
+            selected_command_ids: vec!["review".to_string()],
+            selected_agent_ids: Vec::new(),
+        }],
+        command_invocations: vec![PluginCommandInvocation {
+            plugin_id: "plugin-browser".to_string(),
+            command_id: "unknown".to_string(),
+            arguments: Some("src/lib.rs".to_string()),
+        }],
+        ..TaskPluginConfig::default()
+    };
+    assert!(policy
+        .validate_plugin_config(&config)
+        .expect_err("unselected Command invocation must fail")
+        .contains("unselected Command"));
+
+    config.command_invocations[0].command_id = "review".to_string();
+    config
+        .command_invocations
+        .push(config.command_invocations[0].clone());
+    assert!(policy
+        .validate_plugin_config(&config)
+        .expect_err("duplicate Command invocation must fail")
+        .contains("duplicated"));
+
+    config.command_invocations.truncate(1);
+    config.command_invocations[0].arguments = Some("x".repeat(16 * 1024 + 1));
+    assert!(policy
+        .validate_plugin_config(&config)
+        .expect_err("oversized Command arguments must fail")
+        .contains("exceed"));
+}
+
+#[test]
+fn command_targeting_the_plan_agent_is_not_selectable_for_run_phase() {
+    let mut command_plugin = resolved_command_plugin(false);
+    let component = command_plugin
+        .components
+        .iter_mut()
+        .find(|component| component.component.kind == PluginComponentKind::Command)
+        .expect("Command component");
+    component
+        .component
+        .metadata
+        .insert("target_agent".to_string(), json!("task_runner_plan_phase"));
+    let mut capabilities = policy().capabilities;
+    capabilities.plugins = vec![command_plugin];
+    let policy = TaskRunnerCapabilityPolicy::new(capabilities).expect("Command Plugin policy");
+    let config = TaskPluginConfig {
+        device_id: Some("device-1".to_string()),
+        selected_plugins: vec![SelectedPluginRef {
+            plugin_id: "plugin-browser".to_string(),
+            selected_skill_ids: Vec::new(),
+            selected_command_ids: vec!["review".to_string()],
+            selected_agent_ids: Vec::new(),
+        }],
+        ..TaskPluginConfig::default()
+    };
+
+    let error = policy
+        .validate_plugin_config(&config)
+        .expect_err("incompatible target Agent must fail");
+    assert!(
+        error.contains("not selectable") || error.contains("incompatible"),
+        "unexpected fail-closed error: {error}"
+    );
+}
+
+#[test]
+fn required_plugin_is_injected_into_effective_task_config() {
+    let mut capabilities = policy().capabilities;
+    capabilities.plugins = vec![resolved_plugin(true)];
+    capabilities.mcps.push(resolved_mcp(
+        "browser-tools",
+        BUILTIN_RUNTIME_KIND,
+        Some("BrowserTools"),
+        false,
+        true,
+    ));
+    let policy = TaskRunnerCapabilityPolicy::new(capabilities).expect("required Plugin policy");
+    let mut task = task();
+    task.plugin_config.device_id = Some("device-1".to_string());
+
+    policy
+        .apply_to_task(&mut task)
+        .expect("apply required Plugin");
+
+    assert_eq!(task.plugin_config.selected_plugins.len(), 1);
+    assert_eq!(
+        task.plugin_config.selected_plugins[0].plugin_id,
+        "plugin-browser"
+    );
 }

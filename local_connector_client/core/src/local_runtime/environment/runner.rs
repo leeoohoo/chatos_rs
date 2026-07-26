@@ -43,7 +43,7 @@ pub(crate) async fn run_local_environment_analysis(
         return Err("Project Environment Agent is disabled by Plugin Management".to_string());
     }
     capability
-        .ensure_required_available()
+        .ensure_required_runtime_supported([], [])
         .map_err(|error| error.to_string())?;
     let code_read_resource_id = BuiltinMcpKind::CodeMaintainerRead
         .config_id()

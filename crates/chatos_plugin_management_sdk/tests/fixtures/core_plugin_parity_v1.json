@@ -1,0 +1,109 @@
+{
+  "schema_version": 1,
+  "plugins": [
+    {
+      "plugin": "documents",
+      "wave": "A",
+      "license_class": "open_source",
+      "redistribution_review": "pending",
+      "required_components": ["skills"],
+      "acceptance": ["create", "edit", "render", "visual_qa", "docx_export"]
+    },
+    {
+      "plugin": "pdf",
+      "wave": "A",
+      "license_class": "open_source",
+      "redistribution_review": "pending",
+      "required_components": ["skills"],
+      "acceptance": ["read", "create", "edit", "ocr", "render", "visual_qa"]
+    },
+    {
+      "plugin": "spreadsheets",
+      "wave": "A",
+      "license_class": "open_source",
+      "redistribution_review": "pending",
+      "required_components": ["skills", "apps"],
+      "acceptance": ["create", "edit", "formula", "chart", "recalculate", "render"]
+    },
+    {
+      "plugin": "presentations",
+      "wave": "A",
+      "license_class": "open_source",
+      "redistribution_review": "pending",
+      "required_components": ["skills"],
+      "acceptance": ["create", "edit", "layout", "notes", "render", "visual_qa"]
+    },
+    {
+      "plugin": "template-creator",
+      "wave": "A",
+      "license_class": "proprietary_reimplementation",
+      "redistribution_review": "pending",
+      "required_components": ["skills"],
+      "acceptance": ["extract_template", "preserve_style", "instantiate", "verify"]
+    },
+    {
+      "plugin": "remotion",
+      "wave": "A",
+      "license_class": "open_source",
+      "redistribution_review": "pending",
+      "required_components": ["skills"],
+      "acceptance": ["dependency_check", "preview", "render", "media_verify"]
+    },
+    {
+      "plugin": "visualize",
+      "wave": "A",
+      "license_class": "proprietary_reimplementation",
+      "redistribution_review": "pending",
+      "required_components": ["skills", "ui"],
+      "acceptance": ["chart", "map", "diagram", "simulation", "3d", "state_bridge"]
+    },
+    {
+      "plugin": "browser",
+      "wave": "B",
+      "license_class": "proprietary_reimplementation",
+      "redistribution_review": "pending",
+      "required_components": ["skills", "mcp", "ui"],
+      "acceptance": ["navigate", "inspect", "input", "screenshot", "console", "network"]
+    },
+    {
+      "plugin": "chrome",
+      "wave": "B",
+      "license_class": "proprietary_reimplementation",
+      "redistribution_review": "pending",
+      "required_components": ["skills", "mcp", "apps"],
+      "acceptance": ["claim_tab", "logged_in_state", "site_consent", "interrupt", "resume"]
+    },
+    {
+      "plugin": "computer-use",
+      "wave": "C",
+      "license_class": "proprietary_reimplementation",
+      "redistribution_review": "pending",
+      "required_components": ["skills", "mcp"],
+      "acceptance": ["observe", "accessibility_tree", "input", "multi_display", "interrupt"]
+    },
+    {
+      "plugin": "figma",
+      "wave": "D",
+      "license_class": "restricted_api_integration",
+      "redistribution_review": "pending",
+      "required_components": ["skills", "mcp", "apps", "ui"],
+      "acceptance": ["oauth", "read", "write", "figjam", "slides", "motion", "code_connect"]
+    },
+    {
+      "plugin": "game-studio",
+      "wave": "E",
+      "license_class": "open_source",
+      "redistribution_review": "pending",
+      "required_components": ["skills"],
+      "acceptance": ["2d", "3d", "ui", "sprite_pipeline", "asset_pipeline", "playtest"]
+    },
+    {
+      "plugin": "chatos-security",
+      "wave": "F",
+      "license_class": "proprietary_reimplementation",
+      "redistribution_review": "pending",
+      "required_components": ["skills", "mcp", "apps", "ui"],
+      "acceptance": ["threat_model", "repo_scan", "diff_scan", "validation", "sarif", "tracking"]
+    }
+  ]
+}

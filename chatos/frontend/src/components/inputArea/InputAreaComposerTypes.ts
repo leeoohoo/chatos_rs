@@ -9,6 +9,7 @@ import type {
   KeyboardEvent,
   RefObject,
   SetStateAction,
+  SyntheticEvent,
 } from 'react';
 
 import type {
@@ -17,6 +18,7 @@ import type {
   Project,
   RemoteConnection,
 } from '../../types';
+import type { useTaskPluginPicker } from './useTaskPluginPicker';
 
 export type InputAreaRefObject<T> = RefObject<T> | RefObject<T | null>;
 
@@ -43,6 +45,7 @@ export interface InputAreaComposerProps {
   onProjectChange?: (projectId: string | null) => void;
   showProjectSelector: boolean;
   showWorkspaceRootPicker: boolean;
+  pluginPicker: ReturnType<typeof useTaskPluginPicker>;
   currentRemoteConnectionId: string | null;
   availableRemoteConnections: RemoteConnection[];
   onRemoteConnectionChange?: (connectionId: string | null) => void;
@@ -97,6 +100,7 @@ export interface InputAreaComposerProps {
   loadWorkspaceDirectories: (path?: string | null) => void | Promise<void>;
   handleSelectWorkspaceRoot: (path: string | null) => void;
   handleInputChange: (event: ChangeEvent<HTMLTextAreaElement>) => void;
+  handleTextareaSelect: (event: SyntheticEvent<HTMLTextAreaElement>) => void;
   handleKeyDown: (event: KeyboardEvent<HTMLTextAreaElement>) => void;
   handlePaste: (event: ClipboardEvent<HTMLTextAreaElement>) => void;
   handleSend: () => void;

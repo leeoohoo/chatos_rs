@@ -20,6 +20,7 @@ pub struct AppConfig {
     pub user_service_base_url: String,
     pub user_service_request_timeout: Duration,
     pub relay_request_timeout: Duration,
+    pub plugin_hook_relay_request_timeout: Duration,
     pub sandbox_image_relay_request_timeout: Duration,
     pub public_base_url: Option<String>,
     pub legacy_internal_api_secret: Option<String>,
@@ -60,6 +61,12 @@ impl AppConfig {
             .and_then(|value| value.parse::<u64>().ok())
             .unwrap_or(30_000)
             .max(1_000);
+        let plugin_hook_relay_timeout_ms =
+            std::env::var("LOCAL_CONNECTOR_PLUGIN_HOOK_RELAY_REQUEST_TIMEOUT_MS")
+                .ok()
+                .and_then(|value| value.parse::<u64>().ok())
+                .unwrap_or(5 * 60 * 1_000 + 15_000)
+                .clamp(30_000, 10 * 60 * 1_000);
         let sandbox_image_relay_timeout_ms =
             std::env::var("LOCAL_CONNECTOR_SANDBOX_IMAGE_RELAY_REQUEST_TIMEOUT_MS")
                 .ok()
@@ -100,6 +107,7 @@ impl AppConfig {
                 .unwrap_or_else(default_user_service_base_url),
             user_service_request_timeout: Duration::from_millis(timeout_ms),
             relay_request_timeout: Duration::from_millis(relay_timeout_ms),
+            plugin_hook_relay_request_timeout: Duration::from_millis(plugin_hook_relay_timeout_ms),
             sandbox_image_relay_request_timeout: Duration::from_millis(
                 sandbox_image_relay_timeout_ms,
             ),
@@ -212,6 +220,37 @@ impl AppConfig {
         match self.public_base_url.as_deref() {
             Some(base) => format!("{}{}", base.trim_end_matches('/'), path),
             None => path,
+        }
+    }
+
+    #[cfg(feature = "test-support")]
+    pub fn for_plugin_artifact_relay_test(secret: &str) -> Self {
+        let mut internal_api_secrets = HashMap::new();
+        internal_api_secrets.insert("chatos-backend".to_string(), secret.to_string());
+        Self {
+            host: IpAddr::V4(Ipv4Addr::LOCALHOST),
+            port: 0,
+            database_url: "memory://plugin-artifact-relay-test".to_string(),
+            user_service_base_url: "http://127.0.0.1.invalid".to_string(),
+            user_service_request_timeout: Duration::from_secs(1),
+            relay_request_timeout: Duration::from_secs(2),
+            plugin_hook_relay_request_timeout: Duration::from_secs(2),
+            sandbox_image_relay_request_timeout: Duration::from_secs(2),
+            public_base_url: None,
+            legacy_internal_api_secret: None,
+            internal_api_secrets,
+            require_signed_internal_requests: true,
+            memory_engine_base_url: "http://127.0.0.1.invalid/api/memory-engine/v1".to_string(),
+            memory_engine_operator_token: None,
+            memory_engine_request_timeout: Duration::from_secs(1),
+            require_device_connect_signature: true,
+            allow_device_connect_query_token: false,
+            device_connect_signature_max_skew: Duration::from_secs(300),
+            active_session_lease_ttl: Duration::from_secs(90),
+            managed_requirements_toml_path: None,
+            managed_requirements_signing_key_path: None,
+            managed_requirements_signing_key_id: None,
+            managed_requirements_bundle_ttl: Duration::from_secs(3600),
         }
     }
 }

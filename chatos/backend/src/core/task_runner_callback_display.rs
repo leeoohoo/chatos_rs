@@ -229,12 +229,12 @@ fn remove_callback_code_fences(value: &str) -> String {
     let mut in_code_fence = false;
     value
         .lines()
-        .filter_map(|line| {
+        .filter(|line| {
             if line.trim_start().starts_with("```") {
                 in_code_fence = !in_code_fence;
-                return None;
+                return false;
             }
-            (!in_code_fence).then_some(line)
+            !in_code_fence
         })
         .collect::<Vec<_>>()
         .join("\n")

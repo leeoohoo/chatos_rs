@@ -12,7 +12,9 @@ use tracing::{error, warn};
 
 use crate::arguments::{parse_json_tool_args, parse_tool_args};
 use crate::tool_call::{clone_tool_call_arguments, extract_tool_call_id, extract_tool_call_name};
-use crate::types::{ToolCallContext, ToolResult, ToolResultCallback, ToolStreamChunkCallback};
+use crate::types::{
+    ToolCallContext, ToolCallError, ToolResult, ToolResultCallback, ToolStreamChunkCallback,
+};
 
 const TOOL_ABORT_POLL_INTERVAL: Duration = Duration::from_millis(50);
 
@@ -24,7 +26,7 @@ pub async fn execute_tool_calls_stream<F, Fut>(
 ) -> Vec<ToolResult>
 where
     F: FnMut(String, Value, Option<ToolStreamChunkCallback>) -> Fut,
-    Fut: Future<Output = Result<(String, Option<Value>), String>>,
+    Fut: Future<Output = Result<(String, Option<Value>), ToolCallError>>,
 {
     let mut results = Vec::new();
 
@@ -44,6 +46,7 @@ where
                     "unknown".to_string(),
                     context.conversation_turn_id.clone(),
                     "工具名称不能为空".to_string(),
+                    false,
                 ),
                 &context,
                 on_tool_result.as_ref(),
@@ -65,6 +68,7 @@ where
                         tool_name,
                         context.conversation_turn_id.clone(),
                         format!("参数解析失败: {err}"),
+                        false,
                     ),
                     &context,
                     on_tool_result.as_ref(),
@@ -112,13 +116,14 @@ where
                 on_tool_result.as_ref(),
             ),
             Err(err) => {
-                if err == "aborted" {
+                if err.to_string() == "aborted" {
                     break;
                 }
                 warn!(
                     "[MCP] tool execution failed: tool={}, call_id={}, err={}",
                     tool_name, call_id, err
                 );
+                let fatal_error = err.is_fatal();
                 push_tool_result(
                     &mut results,
                     tool_result_error(
@@ -126,10 +131,14 @@ where
                         tool_name,
                         context.conversation_turn_id.clone(),
                         format!("工具执行失败: {err}"),
+                        fatal_error,
                     ),
                     &context,
                     on_tool_result.as_ref(),
                 );
+                if fatal_error {
+                    break;
+                }
             }
         }
     }
@@ -149,7 +158,7 @@ where
         + Send
         + Sync
         + 'static,
-    Fut: Future<Output = Result<(String, Option<Value>), String>> + Send + 'static,
+    Fut: Future<Output = Result<(String, Option<Value>), ToolCallError>> + Send + 'static,
 {
     let mut results: Vec<Option<ToolResult>> = vec![None; tool_calls.len()];
     let mut join_set: JoinSet<(usize, ToolResult)> = JoinSet::new();
@@ -168,6 +177,7 @@ where
                 "unknown".to_string(),
                 context.conversation_turn_id.clone(),
                 "工具名称不能为空".to_string(),
+                false,
             ));
             continue;
         }
@@ -180,6 +190,7 @@ where
                     tool_name,
                     context.conversation_turn_id.clone(),
                     format!("参数解析失败: {err}"),
+                    false,
                 ));
                 continue;
             }
@@ -203,6 +214,7 @@ where
                     tool_name,
                     task_context.conversation_turn_id.clone(),
                     "工具执行已中止".to_string(),
+                    false,
                 )
             } else {
                 match execute_one(
@@ -220,12 +232,16 @@ where
                         content,
                         structured_result,
                     ),
-                    Err(err) => tool_result_error(
-                        call_id,
-                        tool_name,
-                        task_context.conversation_turn_id.clone(),
-                        format!("工具执行失败: {err}"),
-                    ),
+                    Err(err) => {
+                        let fatal_error = err.is_fatal();
+                        tool_result_error(
+                            call_id,
+                            tool_name,
+                            task_context.conversation_turn_id.clone(),
+                            format!("工具执行失败: {err}"),
+                            fatal_error,
+                        )
+                    }
                 }
             };
             (index, result)
@@ -274,6 +290,7 @@ where
                         pending.tool_name,
                         pending.conversation_turn_id,
                         join_error_message(&err),
+                        false,
                     ));
                 } else {
                     warn!("parallel tool join error without context: {err}");
@@ -326,6 +343,8 @@ fn build_stream_callback(
                 conversation_turn_id: context.conversation_turn_id.clone(),
                 content: chunk,
                 result: None,
+                fatal_error: false,
+                transient_model_input: None,
             });
         }) as ToolStreamChunkCallback
     })
@@ -350,8 +369,9 @@ fn tool_result_success(
     name: String,
     conversation_turn_id: Option<String>,
     content: String,
-    result: Option<Value>,
+    mut result: Option<Value>,
 ) -> ToolResult {
+    let transient_model_input = crate::text::take_transient_model_input(&mut result);
     ToolResult {
         tool_call_id,
         name,
@@ -361,6 +381,8 @@ fn tool_result_success(
         conversation_turn_id,
         content,
         result,
+        fatal_error: false,
+        transient_model_input,
     }
 }
 
@@ -369,6 +391,7 @@ fn tool_result_error(
     name: String,
     conversation_turn_id: Option<String>,
     content: String,
+    fatal_error: bool,
 ) -> ToolResult {
     ToolResult {
         tool_call_id,
@@ -379,6 +402,8 @@ fn tool_result_error(
         conversation_turn_id,
         content,
         result: None,
+        fatal_error,
+        transient_model_input: None,
     }
 }
 

@@ -4,6 +4,7 @@
 import { Suspense, lazy, type ComponentProps, type ReactNode } from 'react';
 
 import TurnRuntimeContextDrawer from './TurnRuntimeContextDrawer';
+import BrowserSessionPanel from '../browser/BrowserSessionPanel';
 import { useI18n } from '../../i18n/I18nProvider';
 
 const AgentManager = lazy(() => import('../AgentManager'));
@@ -57,6 +58,8 @@ export default function ChatInterfaceOverlays({
   return (
     <>
       <TurnRuntimeContextDrawer {...runtimeContextProps} />
+
+      <BrowserSessionPanel />
 
       <LazyOverlay open={showNotepadPanel}>
         <NotepadPanel
