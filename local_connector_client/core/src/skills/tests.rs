@@ -35,7 +35,7 @@ fn pdf_release_publishes_bounded_generation_and_editing_tools() {
         .into_iter()
         .find(|item| item.skill_id == "internal_skill_pdf")
         .expect("PDF catalog item");
-    assert_eq!(catalog_item.version, "1.9.0");
+    assert_eq!(catalog_item.version, "1.10.0");
     assert_eq!(
         catalog_item.permissions,
         vec!["workspace.read", "workspace.write"]
@@ -56,12 +56,13 @@ fn pdf_release_publishes_bounded_generation_and_editing_tools() {
         .iter()
         .filter_map(|tool| tool.get("name").and_then(Value::as_str))
         .collect::<HashSet<_>>();
-    assert_eq!(tools.len(), 13);
+    assert_eq!(tools.len(), 14);
     assert!(names.contains("inspect_pdf"));
     assert!(names.contains("extract_pdf_text"));
     assert!(names.contains("render_pdf_pages"));
     assert!(names.contains("create_text_pdf"));
     assert!(names.contains("update_pdf_metadata"));
+    assert!(names.contains("fill_pdf_form_fields"));
     assert!(names.contains("merge_pdfs"));
     assert!(names.contains("extract_pdf_pages"));
     assert!(names.contains("arrange_pdf_pages"));
@@ -82,6 +83,8 @@ fn pdf_release_publishes_bounded_generation_and_editing_tools() {
     assert!(instructions.contains("semantic no-op fails"));
     assert!(instructions.contains("manifest-verified local PDF page rendering"));
     assert!(instructions.contains("visual_review_status=pending_model_review"));
+    assert!(instructions.contains("exact `expected_value`"));
+    assert!(instructions.contains("XFA"));
 }
 
 #[test]

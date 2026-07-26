@@ -57,7 +57,7 @@ test('stages complete Plugin Bundles and rejects staged file tampering', () => {
     assert.equal(documents.published_at, '2026-07-25T16:00:00Z');
     assert.equal(
       documents.skills[0].bundle_hash,
-      'c52035d10e378ef850ef56818e15ea90c6711285f04f166656c934566671bd7e',
+      '90d823cae21b254f458d24da9dcf86dcbc8ffde494cb0c398c3bbdb7843a1721',
     );
     assert.equal(
       fs.existsSync(path.join(
@@ -72,19 +72,19 @@ test('stages complete Plugin Bundles and rejects staged file tampering', () => {
       true,
     );
     const pdf = index.plugins.find((plugin) => plugin.name === 'pdf');
-    assert.equal(pdf.release_id, 'bundled-release-pdf-1-9-0');
-    assert.equal(pdf.version, '1.9.0');
-    assert.equal(pdf.published_at, '2026-07-25T17:00:00Z');
+    assert.equal(pdf.release_id, 'bundled-release-pdf-1-10-0');
+    assert.equal(pdf.version, '1.10.0');
+    assert.equal(pdf.published_at, '2026-07-26T14:00:00Z');
     assert.equal(
       pdf.skills[0].bundle_hash,
-      'f387766f7fe6f39550ec65e65a0f9f3729252b79a672c0692c3b88f764dd8e52',
+      '7c0ab4a2a8fc12e94bf52d2458eec7cf0a2842835b765fc732b3735db8c601bd',
     );
     assert.equal(
       fs.existsSync(path.join(
         output,
         'internal',
         'pdf',
-        '1.9.0',
+        '1.10.0',
         'skills',
         'pdf',
         'SKILL.md',
@@ -117,7 +117,7 @@ test('stages complete Plugin Bundles and rejects staged file tampering', () => {
     assert.equal(presentations.published_at, '2026-07-26T13:00:00Z');
     assert.equal(
       presentations.skills[0].bundle_hash,
-      'bdcc9542b49a5efc6b49d5b801552813e587596b693134715b95fe66dab8043d',
+      '7798008e1fe66d3f9e27d7552e43ff1843ce0c1e654250a6779b982414b968e2',
     );
     assert.equal(
       fs.existsSync(path.join(

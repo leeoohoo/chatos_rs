@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::fs;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
@@ -39,6 +39,13 @@ const MAX_PDF_ANNOTATION_CHARACTERS: usize = 4_096;
 const MAX_PDF_ANNOTATION_AUTHOR_CHARACTERS: usize = 256;
 const MAX_PDF_INFO_VALUE_CHARACTERS: usize = 100_000;
 const MAX_PDF_INFO_PREVIEW_CHARACTERS: usize = 4_096;
+const MAX_PDF_FORM_FIELDS: usize = 2_000;
+const MAX_PDF_FORM_FIELD_PREVIEW: usize = 200;
+const MAX_PDF_FORM_UPDATES: usize = 200;
+const MAX_PDF_FORM_NAME_CHARACTERS: usize = 512;
+const MAX_PDF_FORM_VALUE_CHARACTERS: usize = 16_384;
+const MAX_PDF_FORM_VALUE_PREVIEW_CHARACTERS: usize = 1_000;
+const MAX_PDF_FORM_DEPTH: usize = 32;
 const MAX_PDF_STAMP_IMAGE_BYTES: usize = 10 * 1024 * 1024;
 const MAX_PDF_STAMP_IMAGE_EDGE: u32 = 10_000;
 const MAX_PDF_STAMP_IMAGE_PIXELS: u64 = 16_000_000;
@@ -122,6 +129,54 @@ struct PdfStampImage {
     encoded_alpha: Option<Vec<u8>>,
     filter: &'static str,
     sha256: String,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum PdfFormFieldKind {
+    Text,
+    Checkbox,
+    Unsupported,
+}
+
+impl PdfFormFieldKind {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Text => "text",
+            Self::Checkbox => "checkbox",
+            Self::Unsupported => "unsupported",
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct PdfFormField {
+    object_id: ObjectId,
+    name: String,
+    kind: PdfFormFieldKind,
+    field_type: String,
+    flags: i64,
+    current_value: Value,
+    value_truncated: bool,
+    widget_ids: Vec<ObjectId>,
+    checkbox_on_state: Option<Vec<u8>>,
+    max_length: Option<usize>,
+    multiline: bool,
+    sensitive: bool,
+    supported: bool,
+    unsupported_reason: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+struct PdfFormUpdate {
+    name: String,
+    expected_value: Value,
+    value: Value,
+}
+
+#[derive(Debug, Clone)]
+struct PdfAcroForm {
+    object_id: Option<ObjectId>,
+    dictionary: Dictionary,
 }
 
 pub(super) fn create_text_pdf(
@@ -952,6 +1007,935 @@ pub(super) fn inspect_pdf_metadata(document: &Document) -> Result<Value> {
     result["truncated_fields"] = json!(truncated_fields);
     result["other_field_count"] = json!(info.len().saturating_sub(known_count));
     Ok(result)
+}
+
+pub(super) fn inspect_pdf_form(document: &Document) -> Result<Value> {
+    let Some(acroform) = pdf_acroform(document)? else {
+        return Ok(json!({
+            "present": false,
+            "xfa": false,
+            "need_appearances": false,
+            "field_count": 0,
+            "fillable_field_count": 0,
+            "field_types": {},
+            "preview": [],
+            "preview_truncated": false,
+        }));
+    };
+    let xfa = acroform.dictionary.has(b"XFA");
+    let need_appearances = acroform
+        .dictionary
+        .get(b"NeedAppearances")
+        .and_then(Object::as_bool)
+        .unwrap_or(false);
+    if xfa {
+        return Ok(json!({
+            "present": true,
+            "xfa": true,
+            "need_appearances": need_appearances,
+            "field_count": 0,
+            "fillable_field_count": 0,
+            "field_types": {},
+            "preview": [],
+            "preview_truncated": false,
+            "unsupported_reason": "XFA forms are not supported by the bounded AcroForm workflow",
+        }));
+    }
+    let fields = collect_pdf_form_fields(document, &acroform)?;
+    Ok(pdf_form_summary(fields.as_slice(), need_appearances, false))
+}
+
+pub(super) fn fill_pdf_form_fields(
+    arguments: &Value,
+    state: &LocalState,
+    request: &RelayRequest,
+) -> Result<Value> {
+    let (source, source_relative) =
+        input_file(state, request, required_text(arguments, "path")?, ".pdf")?;
+    let target_requested = required_text(arguments, "target_path")?;
+    let (target, target_relative) = pdf_output_path(
+        state,
+        request,
+        target_requested,
+        std::slice::from_ref(&source),
+    )?;
+    let mut document = load_editable_pdf(source.as_path())?;
+    if document
+        .catalog()
+        .context("read PDF catalog")?
+        .has(b"Perms")
+    {
+        return Err(anyhow!(
+            "PDF form filling refuses documents with catalog permission/signature transforms"
+        ));
+    }
+    let acroform = pdf_acroform(&document)?
+        .ok_or_else(|| anyhow!("PDF does not contain an AcroForm field dictionary"))?;
+    if acroform.dictionary.has(b"XFA") {
+        return Err(anyhow!(
+            "XFA forms are not supported by the bounded AcroForm workflow"
+        ));
+    }
+    let fields = collect_pdf_form_fields(&document, &acroform)?;
+    if fields.iter().any(|field| field.field_type == "Sig") {
+        return Err(anyhow!(
+            "PDF form filling refuses documents that contain signature fields"
+        ));
+    }
+    let updates = required_pdf_form_updates(arguments)?;
+    let by_name = fields
+        .iter()
+        .map(|field| (field.name.as_str(), field))
+        .collect::<BTreeMap<_, _>>();
+    let mut resolved = Vec::with_capacity(updates.len());
+    for update in updates {
+        let field = by_name
+            .get(update.name.as_str())
+            .copied()
+            .ok_or_else(|| anyhow!("PDF form field does not exist: {}", update.name))?;
+        if !field.supported {
+            return Err(anyhow!(
+                "PDF form field {} is not safely fillable: {}",
+                field.name,
+                field
+                    .unsupported_reason
+                    .as_deref()
+                    .unwrap_or("unsupported field shape")
+            ));
+        }
+        validate_pdf_form_update(field, &update)?;
+        resolved.push((field.clone(), update));
+    }
+
+    let mut updated_fields = Vec::with_capacity(resolved.len());
+    let mut text_updated = false;
+    for (field, update) in &resolved {
+        match field.kind {
+            PdfFormFieldKind::Text => {
+                let value = update
+                    .value
+                    .as_str()
+                    .expect("validated PDF text field value");
+                update_pdf_text_form_field(&mut document, field, value)?;
+                text_updated = true;
+            }
+            PdfFormFieldKind::Checkbox => {
+                let checked = update
+                    .value
+                    .as_bool()
+                    .expect("validated PDF checkbox value");
+                update_pdf_checkbox_form_field(&mut document, field, checked)?;
+            }
+            PdfFormFieldKind::Unsupported => unreachable!("unsupported fields are rejected"),
+        }
+        updated_fields.push(json!({
+            "name": field.name,
+            "field_type": field.kind.as_str(),
+            "previous_value": field.current_value,
+            "value": update.value,
+        }));
+    }
+    if text_updated {
+        set_pdf_acroform_need_appearances(&mut document, &acroform)?;
+    }
+    let verified_acroform = pdf_acroform(&document)?
+        .ok_or_else(|| anyhow!("PDF AcroForm disappeared after field update"))?;
+    let verified_fields = collect_pdf_form_fields(&document, &verified_acroform)?;
+    let need_appearances = verified_acroform
+        .dictionary
+        .get(b"NeedAppearances")
+        .and_then(Object::as_bool)
+        .unwrap_or(false);
+    let verified_by_name = verified_fields
+        .iter()
+        .map(|field| (field.name.as_str(), field))
+        .collect::<BTreeMap<_, _>>();
+    for (_, update) in &resolved {
+        let verified = verified_by_name
+            .get(update.name.as_str())
+            .copied()
+            .ok_or_else(|| anyhow!("updated PDF form field disappeared: {}", update.name))?;
+        if verified.current_value != update.value {
+            return Err(anyhow!(
+                "updated PDF form field failed exact value verification: {}",
+                update.name
+            ));
+        }
+    }
+
+    let bytes = save_pdf_document(
+        &mut document,
+        target.as_path(),
+        optional_bool(arguments, "overwrite"),
+    )?;
+    Ok(json!({
+        "created": true,
+        "operation": "fill_form_fields",
+        "source_path": source_relative,
+        "path": target_relative,
+        "updated_fields": updated_fields,
+        "updated_field_count": updated_fields.len(),
+        "appearance_mode": if text_updated { "viewer_regeneration_requested" } else { "existing_widget_appearances" },
+        "need_appearances": need_appearances,
+        "bytes": bytes,
+    }))
+}
+
+fn pdf_acroform(document: &Document) -> Result<Option<PdfAcroForm>> {
+    let catalog = document.catalog().context("read PDF catalog")?;
+    let Ok(value) = catalog.get(b"AcroForm") else {
+        return Ok(None);
+    };
+    match value {
+        Object::Null => Ok(None),
+        Object::Reference(object_id) => {
+            let dictionary = document
+                .get_object(*object_id)
+                .and_then(Object::as_dict)
+                .context("read PDF AcroForm dictionary")?
+                .clone();
+            Ok(Some(PdfAcroForm {
+                object_id: Some(*object_id),
+                dictionary,
+            }))
+        }
+        Object::Dictionary(dictionary) => Ok(Some(PdfAcroForm {
+            object_id: None,
+            dictionary: dictionary.clone(),
+        })),
+        _ => Err(anyhow!("PDF catalog AcroForm must be a dictionary")),
+    }
+}
+
+fn collect_pdf_form_fields(
+    document: &Document,
+    acroform: &PdfAcroForm,
+) -> Result<Vec<PdfFormField>> {
+    let roots = acroform
+        .dictionary
+        .get(b"Fields")
+        .context("PDF AcroForm is missing Fields")?;
+    let roots = resolved_pdf_object(document, roots.clone(), "PDF AcroForm Fields")?;
+    let roots = roots
+        .as_array()
+        .context("PDF AcroForm Fields must be an array")?;
+    if roots.len() > MAX_PDF_FORM_FIELDS {
+        return Err(anyhow!(
+            "PDF exceeds the {MAX_PDF_FORM_FIELDS} form field safety limit"
+        ));
+    }
+    let mut fields = Vec::new();
+    let mut visited = HashSet::new();
+    let mut active = HashSet::new();
+    for root in roots {
+        let object_id = root
+            .as_reference()
+            .context("PDF AcroForm root fields must be indirect references")?;
+        visit_pdf_form_field(
+            document,
+            object_id,
+            None,
+            None,
+            None,
+            0,
+            None,
+            None,
+            0,
+            &mut visited,
+            &mut active,
+            &mut fields,
+        )?;
+    }
+    let mut names = BTreeSet::new();
+    for field in &fields {
+        if !names.insert(field.name.as_str()) {
+            return Err(anyhow!(
+                "PDF AcroForm contains duplicate fully qualified field name: {}",
+                field.name
+            ));
+        }
+    }
+    Ok(fields)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn visit_pdf_form_field(
+    document: &Document,
+    object_id: ObjectId,
+    expected_parent: Option<ObjectId>,
+    parent_name: Option<&str>,
+    inherited_field_type: Option<&[u8]>,
+    inherited_flags: i64,
+    inherited_max_length: Option<usize>,
+    inherited_value: Option<&Object>,
+    depth: usize,
+    visited: &mut HashSet<ObjectId>,
+    active: &mut HashSet<ObjectId>,
+    fields: &mut Vec<PdfFormField>,
+) -> Result<()> {
+    if depth > MAX_PDF_FORM_DEPTH {
+        return Err(anyhow!(
+            "PDF AcroForm exceeds the {MAX_PDF_FORM_DEPTH} level nesting limit"
+        ));
+    }
+    if !active.insert(object_id) {
+        return Err(anyhow!("PDF AcroForm field tree contains a cycle"));
+    }
+    if !visited.insert(object_id) {
+        return Err(anyhow!(
+            "PDF AcroForm field object is referenced more than once"
+        ));
+    }
+    if visited.len() > MAX_PDF_FORM_FIELDS {
+        return Err(anyhow!(
+            "PDF exceeds the {MAX_PDF_FORM_FIELDS} form field safety limit"
+        ));
+    }
+    let dictionary = document
+        .get_object(object_id)
+        .and_then(Object::as_dict)
+        .context("read PDF AcroForm field dictionary")?;
+    if let Some(expected_parent) = expected_parent {
+        let parent = dictionary
+            .get(b"Parent")
+            .and_then(Object::as_reference)
+            .context("PDF AcroForm child field is missing its exact Parent reference")?;
+        if parent != expected_parent {
+            return Err(anyhow!(
+                "PDF AcroForm child field Parent reference does not match its field tree"
+            ));
+        }
+    } else if dictionary.has(b"Parent") {
+        return Err(anyhow!(
+            "PDF AcroForm root field must not contain a Parent reference"
+        ));
+    }
+    let partial_name = dictionary
+        .get(b"T")
+        .ok()
+        .map(|value| decode_pdf_form_text(value, "PDF AcroForm field name"))
+        .transpose()?;
+    let full_name = match (parent_name, partial_name.as_deref()) {
+        (Some(parent), Some(partial)) => format!("{parent}.{partial}"),
+        (Some(parent), None) => parent.to_string(),
+        (None, Some(partial)) => partial.to_string(),
+        (None, None) => String::new(),
+    };
+    if full_name.chars().count() > MAX_PDF_FORM_NAME_CHARACTERS {
+        return Err(anyhow!(
+            "PDF AcroForm field name exceeds the {MAX_PDF_FORM_NAME_CHARACTERS} character limit"
+        ));
+    }
+    let field_type = dictionary
+        .get(b"FT")
+        .and_then(Object::as_name)
+        .ok()
+        .map(<[u8]>::to_vec)
+        .or_else(|| inherited_field_type.map(<[u8]>::to_vec));
+    let flags = match dictionary.get(b"Ff") {
+        Ok(value) => value
+            .as_i64()
+            .ok()
+            .filter(|value| (0..=u32::MAX as i64).contains(value))
+            .ok_or_else(|| anyhow!("PDF AcroForm field Ff must be an unsigned 32-bit integer"))?,
+        Err(_) => inherited_flags,
+    };
+    let max_length = match dictionary.get(b"MaxLen") {
+        Ok(value) => Some(
+            value
+                .as_i64()
+                .ok()
+                .and_then(|value| usize::try_from(value).ok())
+                .filter(|value| *value > 0 && *value <= MAX_PDF_FORM_VALUE_CHARACTERS)
+                .ok_or_else(|| {
+                    anyhow!(
+                        "PDF text form field MaxLen must be between 1 and {MAX_PDF_FORM_VALUE_CHARACTERS}"
+                    )
+                })?,
+        ),
+        Err(_) => inherited_max_length,
+    };
+    let value = dictionary.get(b"V").ok().or(inherited_value).cloned();
+    let kids = match dictionary.get(b"Kids") {
+        Ok(value) => resolved_pdf_object(document, value.clone(), "PDF AcroForm field Kids")?
+            .as_array()
+            .context("PDF AcroForm field Kids must be an array")?
+            .clone(),
+        Err(_) => Vec::new(),
+    };
+    let mut field_children = Vec::new();
+    let mut widget_ids = Vec::new();
+    for kid in kids {
+        let kid_id = kid
+            .as_reference()
+            .context("PDF AcroForm Kids must contain only indirect references")?;
+        let kid_dictionary = document
+            .get_object(kid_id)
+            .and_then(Object::as_dict)
+            .context("read PDF AcroForm kid dictionary")?;
+        let is_widget = kid_dictionary
+            .get(b"Subtype")
+            .and_then(Object::as_name)
+            .is_ok_and(|name| name == b"Widget");
+        let defines_field =
+            kid_dictionary.has(b"T") || kid_dictionary.has(b"FT") || kid_dictionary.has(b"Kids");
+        if is_widget && !defines_field {
+            let parent = kid_dictionary
+                .get(b"Parent")
+                .and_then(Object::as_reference)
+                .context("PDF AcroForm widget is missing its exact Parent reference")?;
+            if parent != object_id {
+                return Err(anyhow!(
+                    "PDF AcroForm widget Parent reference does not match its field"
+                ));
+            }
+            widget_ids.push(kid_id);
+        } else {
+            field_children.push(kid_id);
+        }
+    }
+    if !field_children.is_empty() {
+        if !widget_ids.is_empty() {
+            return Err(anyhow!(
+                "PDF AcroForm field mixes child fields and widget annotations"
+            ));
+        }
+        for child in field_children {
+            visit_pdf_form_field(
+                document,
+                child,
+                Some(object_id),
+                (!full_name.is_empty()).then_some(full_name.as_str()),
+                field_type.as_deref(),
+                flags,
+                max_length,
+                value.as_ref(),
+                depth + 1,
+                visited,
+                active,
+                fields,
+            )?;
+        }
+        active.remove(&object_id);
+        return Ok(());
+    }
+    if full_name.is_empty() {
+        return Err(anyhow!(
+            "PDF AcroForm terminal field is missing a fully qualified name"
+        ));
+    }
+    if dictionary
+        .get(b"Subtype")
+        .and_then(Object::as_name)
+        .is_ok_and(|name| name == b"Widget")
+    {
+        widget_ids.push(object_id);
+    }
+    widget_ids.sort_unstable();
+    widget_ids.dedup();
+    fields.push(describe_pdf_form_field(
+        document,
+        object_id,
+        full_name,
+        field_type.as_deref(),
+        flags,
+        max_length,
+        value.as_ref(),
+        widget_ids,
+    )?);
+    active.remove(&object_id);
+    Ok(())
+}
+
+fn describe_pdf_form_field(
+    document: &Document,
+    object_id: ObjectId,
+    name: String,
+    field_type: Option<&[u8]>,
+    flags: i64,
+    max_length: Option<usize>,
+    value: Option<&Object>,
+    widget_ids: Vec<ObjectId>,
+) -> Result<PdfFormField> {
+    const READ_ONLY: i64 = 1;
+    const TEXT_MULTILINE: i64 = 1 << 12;
+    const TEXT_PASSWORD: i64 = 1 << 13;
+    const BUTTON_RADIO: i64 = 1 << 15;
+    const BUTTON_PUSH: i64 = 1 << 16;
+    const TEXT_FILE_SELECT: i64 = 1 << 20;
+    const TEXT_RICH_TEXT: i64 = 1 << 25;
+
+    let raw_type = field_type.unwrap_or_default();
+    let field_type_name = if raw_type.is_empty() {
+        "missing".to_string()
+    } else {
+        String::from_utf8_lossy(raw_type).to_string()
+    };
+    let mut supported = flags & READ_ONLY == 0;
+    let mut unsupported_reason = (flags & READ_ONLY != 0).then(|| "field is read-only".to_string());
+    let mut kind = PdfFormFieldKind::Unsupported;
+    let mut current_value = Value::Null;
+    let mut value_truncated = false;
+    let mut checkbox_on_state = None;
+    let mut multiline = false;
+    let mut sensitive = false;
+
+    match raw_type {
+        b"Tx" => {
+            kind = PdfFormFieldKind::Text;
+            multiline = flags & TEXT_MULTILINE != 0;
+            sensitive = flags & TEXT_PASSWORD != 0;
+            if sensitive {
+                supported = false;
+                unsupported_reason = Some("password fields are not exposed or filled".to_string());
+            } else if flags & TEXT_FILE_SELECT != 0 {
+                supported = false;
+                unsupported_reason = Some("file-select text fields are unsupported".to_string());
+            } else if flags & TEXT_RICH_TEXT != 0 {
+                supported = false;
+                unsupported_reason = Some("rich-text form fields are unsupported".to_string());
+            }
+            let text = match value {
+                None | Some(Object::Null) => String::new(),
+                Some(value) => decode_pdf_form_text(value, "PDF text form field value")?,
+            };
+            value_truncated = text.chars().count() > MAX_PDF_FORM_VALUE_CHARACTERS;
+            if value_truncated {
+                supported = false;
+                unsupported_reason = Some(format!(
+                    "current value exceeds the {MAX_PDF_FORM_VALUE_CHARACTERS} character safety limit"
+                ));
+            }
+            if !sensitive {
+                current_value = Value::String(text);
+            }
+        }
+        b"Btn" if flags & BUTTON_RADIO == 0 && flags & BUTTON_PUSH == 0 => {
+            kind = PdfFormFieldKind::Checkbox;
+            let on_states = pdf_checkbox_on_states(document, widget_ids.as_slice())?;
+            if on_states.len() == 1 {
+                checkbox_on_state = on_states.into_iter().next();
+            } else {
+                supported = false;
+                unsupported_reason = Some(
+                    "checkbox must expose exactly one non-Off widget appearance state".to_string(),
+                );
+            }
+            current_value = match value {
+                None | Some(Object::Null) => Value::Bool(false),
+                Some(Object::Name(name)) if name == b"Off" => Value::Bool(false),
+                Some(Object::Name(name)) => {
+                    if checkbox_on_state.as_deref() != Some(name.as_slice()) {
+                        supported = false;
+                        unsupported_reason = Some(
+                            "checkbox value does not match its unique widget appearance state"
+                                .to_string(),
+                        );
+                    }
+                    Value::Bool(true)
+                }
+                Some(_) => {
+                    return Err(anyhow!(
+                        "PDF checkbox form field value must be a name object"
+                    ))
+                }
+            };
+            if let Some(on_state) = checkbox_on_state.as_deref() {
+                let expected_state = if current_value.as_bool() == Some(true) {
+                    on_state
+                } else {
+                    b"Off"
+                };
+                for widget_id in &widget_ids {
+                    let appearance_state = document
+                        .get_object(*widget_id)
+                        .and_then(Object::as_dict)
+                        .and_then(|widget| widget.get(b"AS"))
+                        .and_then(Object::as_name)
+                        .context("PDF checkbox widget is missing a valid AS state")?;
+                    if appearance_state != expected_state {
+                        supported = false;
+                        unsupported_reason = Some(
+                            "checkbox field value and widget appearance state do not match"
+                                .to_string(),
+                        );
+                    }
+                }
+            }
+        }
+        b"Btn" => {
+            supported = false;
+            unsupported_reason = Some(
+                if flags & BUTTON_PUSH != 0 {
+                    "push buttons are not fillable values"
+                } else {
+                    "radio button groups are not yet supported"
+                }
+                .to_string(),
+            );
+        }
+        b"Ch" => {
+            supported = false;
+            unsupported_reason = Some("choice fields are not yet supported".to_string());
+        }
+        b"Sig" => {
+            supported = false;
+            sensitive = true;
+            unsupported_reason = Some("signature fields are never modified".to_string());
+        }
+        _ => {
+            supported = false;
+            unsupported_reason = Some("field type is missing or unsupported".to_string());
+        }
+    }
+    Ok(PdfFormField {
+        object_id,
+        name,
+        kind,
+        field_type: field_type_name,
+        flags,
+        current_value,
+        value_truncated,
+        widget_ids,
+        checkbox_on_state,
+        max_length,
+        multiline,
+        sensitive,
+        supported,
+        unsupported_reason,
+    })
+}
+
+fn pdf_checkbox_on_states(
+    document: &Document,
+    widget_ids: &[ObjectId],
+) -> Result<BTreeSet<Vec<u8>>> {
+    let mut states = BTreeSet::new();
+    for widget_id in widget_ids {
+        let widget = document
+            .get_object(*widget_id)
+            .and_then(Object::as_dict)
+            .context("read PDF checkbox widget dictionary")?;
+        let appearance = widget
+            .get(b"AP")
+            .context("PDF checkbox widget is missing AP")?;
+        let appearance =
+            resolved_pdf_dictionary(document, appearance.clone(), "PDF checkbox widget AP")?;
+        let normal = appearance
+            .get(b"N")
+            .context("PDF checkbox widget is missing AP/N")?;
+        let normal = resolved_pdf_dictionary(document, normal.clone(), "PDF checkbox widget AP/N")?;
+        let off = normal
+            .get(b"Off")
+            .context("PDF checkbox widget AP/N is missing the Off state")?;
+        validate_pdf_appearance_stream(document, off, "PDF checkbox Off appearance")?;
+        let mut widget_on_states = BTreeSet::new();
+        for (state, value) in normal.iter() {
+            if state.as_slice() == b"Off" {
+                continue;
+            }
+            validate_pdf_appearance_stream(document, value, "PDF checkbox on appearance")?;
+            widget_on_states.insert(state.clone());
+            states.insert(state.clone());
+        }
+        if widget_on_states.len() != 1 {
+            return Err(anyhow!(
+                "each PDF checkbox widget must expose exactly one non-Off appearance state"
+            ));
+        }
+    }
+    Ok(states)
+}
+
+fn validate_pdf_appearance_stream(document: &Document, value: &Object, label: &str) -> Result<()> {
+    match value {
+        Object::Stream(_) => Ok(()),
+        Object::Reference(object_id) => document
+            .get_object(*object_id)
+            .and_then(Object::as_stream)
+            .with_context(|| format!("{label} must reference a stream"))
+            .map(|_| ()),
+        _ => Err(anyhow!("{label} must be a stream or stream reference")),
+    }
+}
+
+fn pdf_form_summary(fields: &[PdfFormField], need_appearances: bool, xfa: bool) -> Value {
+    let mut field_types = BTreeMap::<String, usize>::new();
+    let mut fillable_field_count = 0usize;
+    let preview = fields
+        .iter()
+        .take(MAX_PDF_FORM_FIELD_PREVIEW)
+        .map(|field| {
+            *field_types.entry(field.field_type.clone()).or_default() += 1;
+            if field.supported {
+                fillable_field_count += 1;
+            }
+            let current_value = if field.sensitive {
+                Value::Null
+            } else if let Some(value) = field.current_value.as_str() {
+                Value::String(
+                    value
+                        .chars()
+                        .take(MAX_PDF_FORM_VALUE_PREVIEW_CHARACTERS)
+                        .collect(),
+                )
+            } else {
+                field.current_value.clone()
+            };
+            json!({
+                "name": field.name,
+                "field_type": field.field_type,
+                "value_type": field.kind.as_str(),
+                "current_value": current_value,
+                "value_truncated": field.value_truncated || field.current_value.as_str().is_some_and(|value| value.chars().count() > MAX_PDF_FORM_VALUE_PREVIEW_CHARACTERS),
+                "read_only": field.flags & 1 != 0,
+                "multiline": field.multiline,
+                "max_length": field.max_length,
+                "sensitive": field.sensitive,
+                "fillable": field.supported,
+                "unsupported_reason": field.unsupported_reason,
+                "widget_count": field.widget_ids.len(),
+            })
+        })
+        .collect::<Vec<_>>();
+    for field in fields.iter().skip(MAX_PDF_FORM_FIELD_PREVIEW) {
+        *field_types.entry(field.field_type.clone()).or_default() += 1;
+        if field.supported {
+            fillable_field_count += 1;
+        }
+    }
+    json!({
+        "present": true,
+        "xfa": xfa,
+        "need_appearances": need_appearances,
+        "field_count": fields.len(),
+        "fillable_field_count": fillable_field_count,
+        "field_types": field_types,
+        "preview": preview,
+        "preview_truncated": fields.len() > MAX_PDF_FORM_FIELD_PREVIEW,
+    })
+}
+
+fn required_pdf_form_updates(arguments: &Value) -> Result<Vec<PdfFormUpdate>> {
+    let values = arguments
+        .get("fields")
+        .and_then(Value::as_array)
+        .ok_or_else(|| anyhow!("fields must be an array"))?;
+    if values.is_empty() || values.len() > MAX_PDF_FORM_UPDATES {
+        return Err(anyhow!(
+            "fields must contain between 1 and {MAX_PDF_FORM_UPDATES} updates"
+        ));
+    }
+    let mut seen = BTreeSet::new();
+    let mut updates = Vec::with_capacity(values.len());
+    for value in values {
+        let object = value
+            .as_object()
+            .ok_or_else(|| anyhow!("fields entries must be objects"))?;
+        if object
+            .keys()
+            .any(|key| !matches!(key.as_str(), "name" | "expected_value" | "value"))
+        {
+            return Err(anyhow!(
+                "fields entries support only name, expected_value, and value"
+            ));
+        }
+        let name = object
+            .get("name")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| anyhow!("PDF form field name must be a non-empty string"))?;
+        if name.chars().count() > MAX_PDF_FORM_NAME_CHARACTERS {
+            return Err(anyhow!(
+                "PDF form field name exceeds the {MAX_PDF_FORM_NAME_CHARACTERS} character limit"
+            ));
+        }
+        if !seen.insert(name.to_string()) {
+            return Err(anyhow!("PDF form field updates must use unique names"));
+        }
+        let expected_value = object
+            .get("expected_value")
+            .filter(|value| value.is_string() || value.is_boolean())
+            .cloned()
+            .ok_or_else(|| anyhow!("expected_value must be a string or boolean"))?;
+        let update_value = object
+            .get("value")
+            .filter(|value| value.is_string() || value.is_boolean())
+            .cloned()
+            .ok_or_else(|| anyhow!("value must be a string or boolean"))?;
+        for (label, value) in [
+            ("expected_value", &expected_value),
+            ("value", &update_value),
+        ] {
+            if value
+                .as_str()
+                .is_some_and(|value| value.chars().count() > MAX_PDF_FORM_VALUE_CHARACTERS)
+            {
+                return Err(anyhow!(
+                    "{label} exceeds the {MAX_PDF_FORM_VALUE_CHARACTERS} character limit"
+                ));
+            }
+        }
+        updates.push(PdfFormUpdate {
+            name: name.to_string(),
+            expected_value,
+            value: update_value,
+        });
+    }
+    Ok(updates)
+}
+
+fn validate_pdf_form_update(field: &PdfFormField, update: &PdfFormUpdate) -> Result<()> {
+    if field.value_truncated {
+        return Err(anyhow!(
+            "PDF form field {} current value is too large for exact update",
+            field.name
+        ));
+    }
+    if update.expected_value != field.current_value {
+        return Err(anyhow!(
+            "PDF form field {} expected_value does not match the current value",
+            field.name
+        ));
+    }
+    if update.value == field.current_value {
+        return Err(anyhow!(
+            "PDF form field {} update would not change the value",
+            field.name
+        ));
+    }
+    match field.kind {
+        PdfFormFieldKind::Text => {
+            let value = update
+                .value
+                .as_str()
+                .ok_or_else(|| anyhow!("PDF text form field value must be a string"))?;
+            validate_pdf_form_text_value(field, value)?;
+        }
+        PdfFormFieldKind::Checkbox => {
+            if !update.value.is_boolean() {
+                return Err(anyhow!("PDF checkbox form field value must be a boolean"));
+            }
+        }
+        PdfFormFieldKind::Unsupported => {
+            return Err(anyhow!("PDF form field is not safely fillable"))
+        }
+    }
+    Ok(())
+}
+
+fn validate_pdf_form_text_value(field: &PdfFormField, value: &str) -> Result<()> {
+    let characters = value.chars().count();
+    if characters > MAX_PDF_FORM_VALUE_CHARACTERS {
+        return Err(anyhow!(
+            "PDF form field {} exceeds the {MAX_PDF_FORM_VALUE_CHARACTERS} character limit",
+            field.name
+        ));
+    }
+    if field.max_length.is_some_and(|max| characters > max) {
+        return Err(anyhow!(
+            "PDF form field {} exceeds its MaxLen of {} characters",
+            field.name,
+            field.max_length.expect("checked MaxLen")
+        ));
+    }
+    if value.chars().any(|character| {
+        character.is_control() && !(field.multiline && matches!(character, '\n' | '\t'))
+    }) {
+        return Err(anyhow!(
+            "PDF form field {} contains a control character that its field type does not allow",
+            field.name
+        ));
+    }
+    if !field.multiline && (value.contains('\r') || value.contains('\n')) {
+        return Err(anyhow!(
+            "PDF form field {} is single-line and cannot contain line breaks",
+            field.name
+        ));
+    }
+    Ok(())
+}
+
+fn update_pdf_text_form_field(
+    document: &mut Document,
+    field: &PdfFormField,
+    value: &str,
+) -> Result<()> {
+    let dictionary = document
+        .get_object_mut(field.object_id)
+        .and_then(Object::as_dict_mut)
+        .context("read mutable PDF text form field")?;
+    dictionary.set("V", text_string(value));
+    let mut appearance_ids = field.widget_ids.iter().copied().collect::<BTreeSet<_>>();
+    appearance_ids.insert(field.object_id);
+    for object_id in appearance_ids {
+        let dictionary = document
+            .get_object_mut(object_id)
+            .and_then(Object::as_dict_mut)
+            .context("read mutable PDF text field widget")?;
+        dictionary.remove(b"AP");
+        dictionary.remove(b"AS");
+    }
+    Ok(())
+}
+
+fn update_pdf_checkbox_form_field(
+    document: &mut Document,
+    field: &PdfFormField,
+    checked: bool,
+) -> Result<()> {
+    let state = if checked {
+        field
+            .checkbox_on_state
+            .as_ref()
+            .context("PDF checkbox is missing its verified on-state")?
+            .clone()
+    } else {
+        b"Off".to_vec()
+    };
+    document
+        .get_object_mut(field.object_id)
+        .and_then(Object::as_dict_mut)
+        .context("read mutable PDF checkbox field")?
+        .set("V", Object::Name(state.clone()));
+    for widget_id in &field.widget_ids {
+        document
+            .get_object_mut(*widget_id)
+            .and_then(Object::as_dict_mut)
+            .context("read mutable PDF checkbox widget")?
+            .set("AS", Object::Name(state.clone()));
+    }
+    Ok(())
+}
+
+fn set_pdf_acroform_need_appearances(
+    document: &mut Document,
+    acroform: &PdfAcroForm,
+) -> Result<()> {
+    if let Some(object_id) = acroform.object_id {
+        document
+            .get_object_mut(object_id)
+            .and_then(Object::as_dict_mut)
+            .context("read mutable PDF AcroForm dictionary")?
+            .set("NeedAppearances", true);
+    } else {
+        let mut dictionary = acroform.dictionary.clone();
+        dictionary.set("NeedAppearances", true);
+        document
+            .catalog_mut()
+            .context("read mutable PDF catalog")?
+            .set("AcroForm", Object::Dictionary(dictionary));
+    }
+    Ok(())
+}
+
+fn decode_pdf_form_text(value: &Object, label: &str) -> Result<String> {
+    let decoded = decode_text_string(value).with_context(|| format!("decode {label}"))?;
+    if decoded.chars().any(|character| character == '\0') {
+        return Err(anyhow!("{label} contains a NUL character"));
+    }
+    Ok(decoded)
 }
 
 pub(super) fn inspect_pdf_annotations(

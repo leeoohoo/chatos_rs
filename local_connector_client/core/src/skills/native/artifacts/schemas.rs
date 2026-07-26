@@ -11,6 +11,7 @@ pub(super) fn tool_definitions(skill_id: &str) -> Vec<Value> {
             render_pdf_pages_tool(),
             create_text_pdf_tool(),
             update_pdf_metadata_tool(),
+            fill_pdf_form_fields_tool(),
             merge_pdfs_tool(),
             extract_pdf_pages_tool(),
             arrange_pdf_pages_tool(),
@@ -213,6 +214,38 @@ fn update_pdf_metadata_tool() -> Value {
                 "overwrite":{"type":"boolean","default":false}
             },
             "required":["path","target_path"],
+            "additionalProperties":false
+        }),
+    )
+}
+
+fn fill_pdf_form_fields_tool() -> Value {
+    tool(
+        "fill_pdf_form_fields",
+        "Safely fill bounded standard AcroForm text and checkbox fields in a distinct output PDF. Every update is bound to the exact current value; XFA, signatures, password/file/rich-text fields, radio groups, choice fields, read-only fields, ambiguous names, and malformed widget appearances fail closed.",
+        json!({
+            "type":"object",
+            "properties":{
+                "path":{"type":"string","description":"Workspace-relative source .pdf path."},
+                "fields":{
+                    "type":"array",
+                    "minItems":1,
+                    "maxItems":200,
+                    "items":{
+                        "type":"object",
+                        "properties":{
+                            "name":{"type":"string","minLength":1,"maxLength":512,"description":"Exact fully qualified field name returned by inspect_pdf.form.preview."},
+                            "expected_value":{"oneOf":[{"type":"string","maxLength":16384},{"type":"boolean"}],"description":"Exact current value returned by inspect_pdf; protects against stale or unintended writes."},
+                            "value":{"oneOf":[{"type":"string","maxLength":16384},{"type":"boolean"}]}
+                        },
+                        "required":["name","expected_value","value"],
+                        "additionalProperties":false
+                    }
+                },
+                "target_path":{"type":"string","description":"Distinct workspace-relative .pdf output path."},
+                "overwrite":{"type":"boolean","default":false}
+            },
+            "required":["path","fields","target_path"],
             "additionalProperties":false
         }),
     )

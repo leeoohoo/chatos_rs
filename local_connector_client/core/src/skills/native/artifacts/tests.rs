@@ -6,7 +6,7 @@ use std::fs::{self, File};
 use std::path::{Path, PathBuf};
 
 use base64::Engine;
-use lopdf::{dictionary, Document, Object};
+use lopdf::{dictionary, Document, Object, Stream};
 use serde_json::{json, Value};
 use uuid::Uuid;
 
@@ -68,6 +68,98 @@ fn write_blank_pdf(path: &Path, page_count: usize) {
     });
     document.trailer.set("Root", catalog_id);
     document.save(path).expect("save test PDF");
+}
+
+fn write_acroform_pdf(path: &Path) {
+    let parent = path.parent().expect("PDF parent");
+    fs::create_dir_all(parent).expect("PDF directory");
+    let mut document = Document::with_version("1.7");
+    let pages_id = document.new_object_id();
+    let page_id = document.new_object_id();
+
+    let text_field_id = document.new_object_id();
+    let text_appearance_id =
+        document.add_object(Stream::new(dictionary! {}, b"q 0 0 100 20 re S Q".to_vec()));
+    let text_widget_id = document.add_object(dictionary! {
+        "Type" => "Annot",
+        "Subtype" => "Widget",
+        "Parent" => text_field_id,
+        "P" => page_id,
+        "Rect" => vec![36.into(), 760.into(), 240.into(), 790.into()],
+        "AP" => dictionary! { "N" => text_appearance_id },
+    });
+    document.objects.insert(
+        text_field_id,
+        Object::Dictionary(dictionary! {
+            "FT" => "Tx",
+            "T" => lopdf::text_string("profile.name"),
+            "V" => lopdf::text_string("Alice"),
+            "MaxLen" => 40,
+            "Kids" => vec![Object::Reference(text_widget_id)],
+        }),
+    );
+
+    let checkbox_field_id = document.new_object_id();
+    let checkbox_off_id = document.add_object(Stream::new(dictionary! {}, Vec::new()));
+    let checkbox_yes_id = document.add_object(Stream::new(dictionary! {}, Vec::new()));
+    let checkbox_widget_id = document.add_object(dictionary! {
+        "Type" => "Annot",
+        "Subtype" => "Widget",
+        "Parent" => checkbox_field_id,
+        "P" => page_id,
+        "Rect" => vec![36.into(), 710.into(), 56.into(), 730.into()],
+        "AS" => "Off",
+        "AP" => dictionary! {
+            "N" => dictionary! {
+                "Off" => checkbox_off_id,
+                "Yes" => checkbox_yes_id,
+            }
+        },
+    });
+    document.objects.insert(
+        checkbox_field_id,
+        Object::Dictionary(dictionary! {
+            "FT" => "Btn",
+            "T" => lopdf::text_string("terms.accepted"),
+            "V" => "Off",
+            "Kids" => vec![Object::Reference(checkbox_widget_id)],
+        }),
+    );
+
+    document.objects.insert(
+        page_id,
+        Object::Dictionary(dictionary! {
+            "Type" => "Page",
+            "Parent" => pages_id,
+            "MediaBox" => vec![0.into(), 0.into(), 595.into(), 842.into()],
+            "Annots" => vec![
+                Object::Reference(text_widget_id),
+                Object::Reference(checkbox_widget_id),
+            ],
+        }),
+    );
+    document.objects.insert(
+        pages_id,
+        Object::Dictionary(dictionary! {
+            "Type" => "Pages",
+            "Kids" => vec![Object::Reference(page_id)],
+            "Count" => 1,
+        }),
+    );
+    let acroform_id = document.add_object(dictionary! {
+        "Fields" => vec![
+            Object::Reference(text_field_id),
+            Object::Reference(checkbox_field_id),
+        ],
+        "NeedAppearances" => false,
+    });
+    let catalog_id = document.add_object(dictionary! {
+        "Type" => "Catalog",
+        "Pages" => pages_id,
+        "AcroForm" => acroform_id,
+    });
+    document.trailer.set("Root", catalog_id);
+    document.save(path).expect("save AcroForm test PDF");
 }
 
 fn rewrite_zip_text_entry<F>(path: &Path, entry_name: &str, rewrite: F)
@@ -11039,6 +11131,291 @@ fn pdf_metadata_update_rejects_missing_overlap_noop_controls_malformed_info_and_
         .to_string()
         .contains("Info must be a dictionary"));
     assert!(!root.join("malformed-output.pdf").exists());
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn inspects_and_fills_exact_acroform_text_and_checkbox_values() {
+    let (root, state, request) = test_context();
+    let source = root.join("forms/source.pdf");
+    write_acroform_pdf(source.as_path());
+    let source_before = fs::read(source.as_path()).expect("source AcroForm PDF bytes");
+
+    let inspected = inspect_pdf(&json!({"path":"forms/source.pdf"}), &state, &request)
+        .expect("inspect AcroForm PDF");
+    assert_eq!(
+        inspected.pointer("/form/present").and_then(Value::as_bool),
+        Some(true)
+    );
+    assert_eq!(
+        inspected
+            .pointer("/form/field_count")
+            .and_then(Value::as_u64),
+        Some(2)
+    );
+    assert_eq!(
+        inspected
+            .pointer("/form/fillable_field_count")
+            .and_then(Value::as_u64),
+        Some(2)
+    );
+    assert_eq!(
+        inspected
+            .pointer("/form/preview/0/current_value")
+            .and_then(Value::as_str),
+        Some("Alice")
+    );
+    assert_eq!(
+        inspected
+            .pointer("/form/preview/1/current_value")
+            .and_then(Value::as_bool),
+        Some(false)
+    );
+
+    let filled = pdf_edit::fill_pdf_form_fields(
+        &json!({
+            "path":"forms/source.pdf",
+            "fields":[
+                {"name":"profile.name","expected_value":"Alice","value":"李雷"},
+                {"name":"terms.accepted","expected_value":false,"value":true}
+            ],
+            "target_path":"forms/filled.pdf"
+        }),
+        &state,
+        &request,
+    )
+    .expect("fill AcroForm PDF");
+    assert_eq!(
+        filled.get("operation").and_then(Value::as_str),
+        Some("fill_form_fields")
+    );
+    assert_eq!(
+        filled.get("updated_field_count").and_then(Value::as_u64),
+        Some(2)
+    );
+    assert_eq!(
+        filled.get("appearance_mode").and_then(Value::as_str),
+        Some("viewer_regeneration_requested")
+    );
+
+    let output = Document::load(root.join("forms/filled.pdf")).expect("filled AcroForm PDF");
+    let form = pdf_edit::inspect_pdf_form(&output).expect("inspect filled AcroForm values");
+    assert_eq!(
+        form.pointer("/preview/0/current_value")
+            .and_then(Value::as_str),
+        Some("李雷")
+    );
+    assert_eq!(
+        form.pointer("/preview/1/current_value")
+            .and_then(Value::as_bool),
+        Some(true)
+    );
+    assert_eq!(
+        form.get("need_appearances").and_then(Value::as_bool),
+        Some(true)
+    );
+    let catalog = output.catalog().expect("filled PDF catalog");
+    let acroform_id = catalog
+        .get(b"AcroForm")
+        .and_then(Object::as_reference)
+        .expect("AcroForm reference");
+    let acroform = output
+        .get_object(acroform_id)
+        .and_then(Object::as_dict)
+        .expect("AcroForm dictionary");
+    let fields = acroform
+        .get(b"Fields")
+        .and_then(Object::as_array)
+        .expect("AcroForm fields");
+    let text_field_id = fields[0].as_reference().expect("text field reference");
+    let text_field = output
+        .get_object(text_field_id)
+        .and_then(Object::as_dict)
+        .expect("text field");
+    assert_eq!(
+        lopdf::decode_text_string(text_field.get(b"V").expect("text field value"))
+            .expect("decode text field value"),
+        "李雷"
+    );
+    let text_widget_id = text_field
+        .get(b"Kids")
+        .and_then(Object::as_array)
+        .expect("text field widgets")[0]
+        .as_reference()
+        .expect("text widget reference");
+    assert!(!output
+        .get_object(text_widget_id)
+        .and_then(Object::as_dict)
+        .expect("text widget")
+        .has(b"AP"));
+    let checkbox_field_id = fields[1].as_reference().expect("checkbox field reference");
+    let checkbox_field = output
+        .get_object(checkbox_field_id)
+        .and_then(Object::as_dict)
+        .expect("checkbox field");
+    assert_eq!(
+        checkbox_field
+            .get(b"V")
+            .and_then(Object::as_name)
+            .expect("checkbox value"),
+        b"Yes"
+    );
+    let checkbox_widget_id = checkbox_field
+        .get(b"Kids")
+        .and_then(Object::as_array)
+        .expect("checkbox widgets")[0]
+        .as_reference()
+        .expect("checkbox widget reference");
+    let checkbox_widget = output
+        .get_object(checkbox_widget_id)
+        .and_then(Object::as_dict)
+        .expect("checkbox widget");
+    assert_eq!(
+        checkbox_widget
+            .get(b"AS")
+            .and_then(Object::as_name)
+            .expect("checkbox appearance state"),
+        b"Yes"
+    );
+    assert!(checkbox_widget.has(b"AP"));
+    assert_eq!(
+        fs::read(source.as_path()).expect("source after form fill"),
+        source_before
+    );
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn pdf_form_fill_rejects_stale_unsafe_noop_and_xfa_requests() {
+    let (root, state, request) = test_context();
+    let source = root.join("source.pdf");
+    write_acroform_pdf(source.as_path());
+    let source_before = fs::read(source.as_path()).expect("source AcroForm PDF bytes");
+
+    for (target, field, expected) in [
+        (
+            "stale.pdf",
+            json!({"name":"profile.name","expected_value":"Bob","value":"李雷"}),
+            "expected_value does not match",
+        ),
+        (
+            "wrong-type.pdf",
+            json!({"name":"profile.name","expected_value":"Alice","value":true}),
+            "text form field value must be a string",
+        ),
+        (
+            "noop.pdf",
+            json!({"name":"terms.accepted","expected_value":false,"value":false}),
+            "would not change",
+        ),
+    ] {
+        let error = pdf_edit::fill_pdf_form_fields(
+            &json!({
+                "path":"source.pdf",
+                "fields":[field],
+                "target_path":target
+            }),
+            &state,
+            &request,
+        )
+        .expect_err("unsafe form update must fail");
+        assert!(error.to_string().contains(expected), "{error:#}");
+        assert!(!root.join(target).exists());
+    }
+
+    let in_place = pdf_edit::fill_pdf_form_fields(
+        &json!({
+            "path":"source.pdf",
+            "fields":[{"name":"profile.name","expected_value":"Alice","value":"Li Lei"}],
+            "target_path":"source.pdf"
+        }),
+        &state,
+        &request,
+    )
+    .expect_err("in-place form update must fail");
+    assert!(in_place.to_string().contains("distinct target_path"));
+
+    let xfa = root.join("xfa.pdf");
+    fs::copy(source.as_path(), xfa.as_path()).expect("copy XFA fixture");
+    let mut xfa_document = Document::load(xfa.as_path()).expect("load XFA fixture");
+    let acroform_id = xfa_document
+        .catalog()
+        .expect("XFA catalog")
+        .get(b"AcroForm")
+        .and_then(Object::as_reference)
+        .expect("XFA AcroForm reference");
+    xfa_document
+        .get_object_mut(acroform_id)
+        .and_then(Object::as_dict_mut)
+        .expect("XFA AcroForm")
+        .set("XFA", lopdf::text_string("unsupported"));
+    xfa_document.save(xfa.as_path()).expect("save XFA fixture");
+    let xfa_error = pdf_edit::fill_pdf_form_fields(
+        &json!({
+            "path":"xfa.pdf",
+            "fields":[{"name":"profile.name","expected_value":"Alice","value":"Li Lei"}],
+            "target_path":"xfa-filled.pdf"
+        }),
+        &state,
+        &request,
+    )
+    .expect_err("XFA form fill must fail");
+    assert!(xfa_error
+        .to_string()
+        .contains("XFA forms are not supported"));
+
+    let signed = root.join("signed.pdf");
+    fs::copy(source.as_path(), signed.as_path()).expect("copy signed-form fixture");
+    let mut signed_document = Document::load(signed.as_path()).expect("load signed-form fixture");
+    let acroform_id = signed_document
+        .catalog()
+        .expect("signed-form catalog")
+        .get(b"AcroForm")
+        .and_then(Object::as_reference)
+        .expect("signed-form AcroForm reference");
+    let signature_id = signed_document.add_object(dictionary! {
+        "Type" => "Sig",
+        "Filter" => "Adobe.PPKLite",
+    });
+    let signature_field_id = signed_document.add_object(dictionary! {
+        "FT" => "Sig",
+        "T" => lopdf::text_string("approval.signature"),
+        "V" => signature_id,
+    });
+    let mut signed_fields = signed_document
+        .get_object(acroform_id)
+        .and_then(Object::as_dict)
+        .expect("signed-form AcroForm")
+        .get(b"Fields")
+        .and_then(Object::as_array)
+        .expect("signed-form fields")
+        .clone();
+    signed_fields.push(Object::Reference(signature_field_id));
+    signed_document
+        .get_object_mut(acroform_id)
+        .and_then(Object::as_dict_mut)
+        .expect("mutable signed-form AcroForm")
+        .set("Fields", signed_fields);
+    signed_document
+        .save(signed.as_path())
+        .expect("save signed-form fixture");
+    let signature_error = pdf_edit::fill_pdf_form_fields(
+        &json!({
+            "path":"signed.pdf",
+            "fields":[{"name":"profile.name","expected_value":"Alice","value":"Li Lei"}],
+            "target_path":"signed-filled.pdf"
+        }),
+        &state,
+        &request,
+    )
+    .expect_err("signed form fill must fail");
+    assert!(signature_error
+        .to_string()
+        .contains("contain signature fields"));
+    assert_eq!(
+        fs::read(source.as_path()).expect("source after rejected form fills"),
+        source_before
+    );
     let _ = fs::remove_dir_all(root);
 }
 

@@ -58,8 +58,8 @@ fn bundled_plugin_specs_cover_all_twenty_eight_internal_skills_once() {
         .iter()
         .find(|spec| spec.name == "pdf")
         .expect("PDF spec");
-    assert_eq!(pdf.release_version, "1.9.0");
-    assert_eq!(pdf.artifact_revision, "pdf-1.9.0");
+    assert_eq!(pdf.release_version, "1.10.0");
+    assert_eq!(pdf.artifact_revision, "pdf-1.10.0");
     let documents = bundled_plugin_specs()
         .iter()
         .find(|spec| spec.name == "documents")
@@ -171,14 +171,14 @@ fn bundled_releases_have_stable_component_and_content_snapshots() {
             "documents",
             (
                 "015bd4c3905bea73663a5eeb95d16128d78a6b2142c8fd65a842727722559c81",
-                "d79ce7d8f251c5cbbcec5eb28ed63b4db5c71905496fab330473d82ba586adba",
+                "0ec9a34cad2516c578abda5e3c8828dfed6d2dfd2347c7e60e43e368b83e09ae",
             ),
         ),
         (
             "pdf",
             (
-                "651502d7cdd2ac2283fe99e1f4ee364682ee8d3d25a4a462fb97fd0df48de114",
-                "035085fba86246c7853de1e964a2f9e02a160e1815d4cc74c9322d1e00f0aa4d",
+                "259863adbeef116e6e3e7fd1c878ed3c6ff4eabd036e8a2ef2081ee53a0eb24a",
+                "85ee0df6b2f30e25886f8e07d22e18a57597029f27eda1caf2daf72800229f16",
             ),
         ),
         (
@@ -192,7 +192,7 @@ fn bundled_releases_have_stable_component_and_content_snapshots() {
             "presentations",
             (
                 "bfd265c913410e734ee284ca9c2584364797fce99319b3ce90e9918739de7fbc",
-                "05ae3eaada30fb65569c5523b2d2ccccba2315a12db437adfba922a8d6d912dc",
+                "1e5063498ae1e4a9133fe2fcff4b955694d86773285d6d95ff73d980f0c83efd",
             ),
         ),
         (

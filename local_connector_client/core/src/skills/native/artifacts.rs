@@ -63,6 +63,9 @@ pub(super) fn execute_with_cancellation(
         ("internal_skill_pdf", "update_pdf_metadata") => {
             pdf_edit::update_pdf_metadata(arguments, state, request)
         }
+        ("internal_skill_pdf", "fill_pdf_form_fields") => {
+            pdf_edit::fill_pdf_form_fields(arguments, state, request)
+        }
         ("internal_skill_pdf", "merge_pdfs") => pdf_edit::merge_pdfs(arguments, state, request),
         ("internal_skill_pdf", "extract_pdf_pages") => {
             pdf_edit::extract_pdf_pages(arguments, state, request)
@@ -264,6 +267,11 @@ fn inspect_pdf(arguments: &Value, state: &LocalState, request: &RelayRequest) ->
     } else {
         pdf_edit::inspect_pdf_metadata(&document)?
     };
+    let form = if document.is_encrypted() {
+        Value::Null
+    } else {
+        pdf_edit::inspect_pdf_form(&document)?
+    };
     Ok(json!({
         "path": relative,
         "bytes": file_size(path.as_path())?,
@@ -272,6 +280,7 @@ fn inspect_pdf(arguments: &Value, state: &LocalState, request: &RelayRequest) ->
         "encrypted": document.is_encrypted(),
         "metadata": metadata,
         "annotations": annotations,
+        "form": form,
     }))
 }
 
