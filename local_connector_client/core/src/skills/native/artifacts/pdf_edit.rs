@@ -184,6 +184,8 @@ struct PdfFormField {
     choice_options: Vec<PdfChoiceOption>,
     allows_empty: bool,
     choice_combo: bool,
+    choice_editable: bool,
+    choice_multiselect: bool,
     max_length: Option<usize>,
     multiline: bool,
     sensitive: bool,
@@ -1155,7 +1157,7 @@ pub(super) fn fill_pdf_form_fields(
                 update_pdf_radio_form_field(&mut document, field, update.value.as_str())?;
             }
             PdfFormFieldKind::Choice => {
-                update_pdf_choice_form_field(&mut document, field, update.value.as_str())?;
+                update_pdf_choice_form_field(&mut document, field, &update.value)?;
                 viewer_regeneration_requested = true;
             }
             PdfFormFieldKind::Unsupported => unreachable!("unsupported fields are rejected"),
@@ -1519,6 +1521,8 @@ fn describe_pdf_form_field(
     let mut choice_options = Vec::new();
     let mut allows_empty = false;
     let mut choice_combo = false;
+    let mut choice_editable = false;
+    let mut choice_multiselect = false;
     let mut multiline = false;
     let mut sensitive = false;
 
@@ -1663,42 +1667,66 @@ fn describe_pdf_form_field(
             kind = PdfFormFieldKind::Choice;
             allows_empty = true;
             choice_combo = flags & CHOICE_COMBO != 0;
-            let unsupported_choice_shape = if flags & CHOICE_EDIT != 0 {
+            choice_editable = flags & CHOICE_EDIT != 0;
+            choice_multiselect = flags & CHOICE_MULTI_SELECT != 0;
+            let unsupported_choice_shape = if choice_editable && choice_multiselect {
                 supported = false;
-                unsupported_reason = Some("editable choice fields are unsupported".to_string());
+                unsupported_reason =
+                    Some("choice field cannot be both editable and multi-select".to_string());
                 true
-            } else if flags & CHOICE_MULTI_SELECT != 0 {
+            } else if choice_editable && !choice_combo {
                 supported = false;
-                unsupported_reason = Some("multi-select choice fields are unsupported".to_string());
+                unsupported_reason =
+                    Some("editable choice field requires the combo flag".to_string());
+                true
+            } else if choice_multiselect && choice_combo {
+                supported = false;
+                unsupported_reason =
+                    Some("multi-select choice field must be a list box".to_string());
                 true
             } else {
                 false
             };
             choice_options = pdf_choice_options(document, dictionary)?;
-            if choice_options.is_empty() {
+            if choice_options.is_empty() && !choice_editable {
                 supported = false;
                 unsupported_reason = Some("choice field is missing bounded options".to_string());
             }
             if !unsupported_choice_shape {
-                current_value = match value {
-                    None | Some(Object::Null) => Value::Null,
-                    Some(value) => {
-                        let selected = decode_pdf_form_text(value, "PDF choice form field value")?;
-                        if !choice_options.iter().any(|option| option.value == selected) {
-                            supported = false;
-                            unsupported_reason = Some(
-                                "choice value is not present in its exact option list".to_string(),
-                            );
+                if choice_multiselect {
+                    let selected = pdf_multi_choice_value(value)?;
+                    validate_pdf_multi_choice_indices(
+                        document,
+                        dictionary,
+                        selected.as_slice(),
+                        &choice_options,
+                    )?;
+                    current_value = Value::Array(selected.into_iter().map(Value::String).collect());
+                } else {
+                    current_value = match value {
+                        None | Some(Object::Null) => Value::Null,
+                        Some(value) => {
+                            let selected =
+                                decode_pdf_form_choice_value(value, "PDF choice form field value")?;
+                            if !choice_editable
+                                && !choice_options.iter().any(|option| option.value == selected)
+                            {
+                                supported = false;
+                                unsupported_reason = Some(
+                                    "choice value is not present in its exact option list"
+                                        .to_string(),
+                                );
+                            }
+                            Value::String(selected)
                         }
-                        Value::String(selected)
-                    }
-                };
-                validate_pdf_choice_indices(
-                    document,
-                    dictionary,
-                    current_value.as_str(),
-                    &choice_options,
-                )?;
+                    };
+                    validate_pdf_single_choice_index(
+                        document,
+                        dictionary,
+                        current_value.as_str(),
+                        &choice_options,
+                    )?;
+                }
             }
         }
         b"Sig" => {
@@ -1725,6 +1753,8 @@ fn describe_pdf_form_field(
         choice_options,
         allows_empty,
         choice_combo,
+        choice_editable,
+        choice_multiselect,
         max_length,
         multiline,
         sensitive,
@@ -1874,7 +1904,39 @@ fn pdf_choice_options(
     Ok(parsed)
 }
 
-fn validate_pdf_choice_indices(
+fn pdf_multi_choice_value(value: Option<&Object>) -> Result<Vec<String>> {
+    let Some(value) = value.filter(|value| !matches!(value, Object::Null)) else {
+        return Ok(Vec::new());
+    };
+    let values = match value {
+        Object::Array(values) => values.as_slice(),
+        Object::String(_, _) => std::slice::from_ref(value),
+        _ => {
+            return Err(anyhow!(
+                "PDF multi-select choice field value must be a text string or text string array"
+            ))
+        }
+    };
+    if values.len() > MAX_PDF_FORM_OPTIONS {
+        return Err(anyhow!(
+            "PDF multi-select choice field exceeds the {MAX_PDF_FORM_OPTIONS} selection limit"
+        ));
+    }
+    let mut seen = BTreeSet::new();
+    let mut selected = Vec::with_capacity(values.len());
+    for value in values {
+        let value = decode_pdf_form_option_text(value, "PDF multi-select choice value")?;
+        if !seen.insert(value.clone()) {
+            return Err(anyhow!(
+                "PDF multi-select choice field contains duplicate selected values"
+            ));
+        }
+        selected.push(value);
+    }
+    Ok(selected)
+}
+
+fn validate_pdf_single_choice_index(
     document: &Document,
     dictionary: &Dictionary,
     selected: Option<&str>,
@@ -1912,6 +1974,54 @@ fn validate_pdf_choice_indices(
         return Err(anyhow!(
             "PDF choice selected index does not match its selected value"
         ));
+    }
+    Ok(())
+}
+
+fn validate_pdf_multi_choice_indices(
+    document: &Document,
+    dictionary: &Dictionary,
+    selected: &[String],
+    options: &[PdfChoiceOption],
+) -> Result<()> {
+    let Ok(indices) = dictionary.get(b"I") else {
+        if selected.is_empty() {
+            return Ok(());
+        }
+        return Err(anyhow!(
+            "PDF multi-select choice field is missing exact selected indices"
+        ));
+    };
+    let indices = resolved_pdf_object(document, indices.clone(), "PDF choice field I")?;
+    let indices = indices
+        .as_array()
+        .context("PDF choice field I must be an array")?;
+    if indices.len() != selected.len() {
+        return Err(anyhow!(
+            "PDF multi-select choice values and selected indices have different lengths"
+        ));
+    }
+    let mut previous = None;
+    for (position, index) in indices.iter().enumerate() {
+        let index = index
+            .as_i64()
+            .ok()
+            .and_then(|value| usize::try_from(value).ok())
+            .ok_or_else(|| anyhow!("PDF choice selected index must be a non-negative integer"))?;
+        if previous.is_some_and(|previous| previous >= index) {
+            return Err(anyhow!(
+                "PDF multi-select choice indices must be unique and strictly ascending"
+            ));
+        }
+        let option = options
+            .get(index)
+            .ok_or_else(|| anyhow!("PDF choice selected index is outside its option list"))?;
+        if option.value != selected[position] {
+            return Err(anyhow!(
+                "PDF multi-select choice indices do not match selected values"
+            ));
+        }
+        previous = Some(index);
     }
     Ok(())
 }
@@ -1971,6 +2081,17 @@ fn pdf_form_summary(fields: &[PdfFormField], need_appearances: bool, xfa: bool) 
                 PdfFormFieldKind::Choice => field.choice_options.len(),
                 _ => 0,
             };
+            let choice_style = (field.kind == PdfFormFieldKind::Choice).then_some(
+                if field.choice_multiselect {
+                    "multi_select_list"
+                } else if field.choice_editable {
+                    "editable_combo"
+                } else if field.choice_combo {
+                    "combo"
+                } else {
+                    "list"
+                },
+            );
             json!({
                 "name": field.name,
                 "field_type": field.field_type,
@@ -1985,7 +2106,9 @@ fn pdf_form_summary(fields: &[PdfFormField], need_appearances: bool, xfa: bool) 
                 "unsupported_reason": field.unsupported_reason,
                 "widget_count": field.widget_ids.len(),
                 "allows_empty": field.allows_empty,
-                "choice_style": (field.kind == PdfFormFieldKind::Choice).then_some(if field.choice_combo { "combo" } else { "list" }),
+                "choice_style": choice_style,
+                "choice_editable": field.choice_editable,
+                "choice_multiselect": field.choice_multiselect,
                 "option_count": option_count,
                 "options": options,
                 "options_truncated": option_count > MAX_PDF_FORM_OPTION_PREVIEW,
@@ -2049,14 +2172,18 @@ fn required_pdf_form_updates(arguments: &Value) -> Result<Vec<PdfFormUpdate>> {
         }
         let expected_value = object
             .get("expected_value")
-            .filter(|value| value.is_string() || value.is_boolean() || value.is_null())
+            .filter(|value| {
+                value.is_string() || value.is_boolean() || value.is_null() || value.is_array()
+            })
             .cloned()
-            .ok_or_else(|| anyhow!("expected_value must be a string, boolean, or null"))?;
+            .ok_or_else(|| anyhow!("expected_value must be a string, boolean, array, or null"))?;
         let update_value = object
             .get("value")
-            .filter(|value| value.is_string() || value.is_boolean() || value.is_null())
+            .filter(|value| {
+                value.is_string() || value.is_boolean() || value.is_null() || value.is_array()
+            })
             .cloned()
-            .ok_or_else(|| anyhow!("value must be a string, boolean, or null"))?;
+            .ok_or_else(|| anyhow!("value must be a string, boolean, array, or null"))?;
         for (label, value) in [
             ("expected_value", &expected_value),
             ("value", &update_value),
@@ -2068,6 +2195,27 @@ fn required_pdf_form_updates(arguments: &Value) -> Result<Vec<PdfFormUpdate>> {
                 return Err(anyhow!(
                     "{label} exceeds the {MAX_PDF_FORM_VALUE_CHARACTERS} character limit"
                 ));
+            }
+            if let Some(values) = value.as_array() {
+                if values.len() > MAX_PDF_FORM_OPTIONS {
+                    return Err(anyhow!(
+                        "{label} exceeds the {MAX_PDF_FORM_OPTIONS} selection limit"
+                    ));
+                }
+                let mut seen = BTreeSet::new();
+                for value in values {
+                    let value = value
+                        .as_str()
+                        .ok_or_else(|| anyhow!("{label} arrays must contain only string values"))?;
+                    if value.chars().count() > MAX_PDF_FORM_OPTION_CHARACTERS {
+                        return Err(anyhow!(
+                            "{label} array value exceeds the {MAX_PDF_FORM_OPTION_CHARACTERS} character limit"
+                        ));
+                    }
+                    if !seen.insert(value) {
+                        return Err(anyhow!("{label} array values must be unique"));
+                    }
+                }
             }
         }
         updates.push(PdfFormUpdate {
@@ -2136,11 +2284,40 @@ fn validate_pdf_form_update(field: &PdfFormField, update: &PdfFormUpdate) -> Res
             }
         }
         PdfFormFieldKind::Choice => {
-            if let Some(value) = update.value.as_str() {
-                if !field
-                    .choice_options
-                    .iter()
-                    .any(|option| option.value == value)
+            if field.choice_multiselect {
+                let values = update.value.as_array().ok_or_else(|| {
+                    anyhow!("PDF multi-select choice form field value must be an array")
+                })?;
+                let mut previous = None;
+                for value in values {
+                    let value = value
+                        .as_str()
+                        .expect("validated PDF multi-select choice string");
+                    let option = field
+                        .choice_options
+                        .iter()
+                        .find(|option| option.value == value)
+                        .ok_or_else(|| {
+                            anyhow!(
+                                "PDF multi-select choice form field {} value is not one of its exact options",
+                                field.name
+                            )
+                        })?;
+                    if previous.is_some_and(|previous| previous >= option.index) {
+                        return Err(anyhow!(
+                            "PDF multi-select choice form field {} values must follow exact option order",
+                            field.name
+                        ));
+                    }
+                    previous = Some(option.index);
+                }
+            } else if let Some(value) = update.value.as_str() {
+                validate_pdf_form_choice_text(field, value)?;
+                if !field.choice_editable
+                    && !field
+                        .choice_options
+                        .iter()
+                        .any(|option| option.value == value)
                 {
                     return Err(anyhow!(
                         "PDF choice form field {} value is not one of its exact options",
@@ -2186,6 +2363,22 @@ fn validate_pdf_form_text_value(field: &PdfFormField, value: &str) -> Result<()>
     if !field.multiline && (value.contains('\r') || value.contains('\n')) {
         return Err(anyhow!(
             "PDF form field {} is single-line and cannot contain line breaks",
+            field.name
+        ));
+    }
+    Ok(())
+}
+
+fn validate_pdf_form_choice_text(field: &PdfFormField, value: &str) -> Result<()> {
+    if value.chars().count() > MAX_PDF_FORM_VALUE_CHARACTERS {
+        return Err(anyhow!(
+            "PDF choice form field {} exceeds the {MAX_PDF_FORM_VALUE_CHARACTERS} character limit",
+            field.name
+        ));
+    }
+    if value.chars().any(char::is_control) {
+        return Err(anyhow!(
+            "PDF choice form field {} contains a control character",
             field.name
         ));
     }
@@ -2294,20 +2487,48 @@ fn update_pdf_radio_form_field(
 fn update_pdf_choice_form_field(
     document: &mut Document,
     field: &PdfFormField,
-    value: Option<&str>,
+    value: &Value,
 ) -> Result<()> {
     let dictionary = document
         .get_object_mut(field.object_id)
         .and_then(Object::as_dict_mut)
         .context("read mutable PDF choice field")?;
-    if let Some(value) = value {
-        let option = field
+    if field.choice_multiselect {
+        let values = value
+            .as_array()
+            .expect("validated PDF multi-select choice values");
+        if values.is_empty() {
+            dictionary.remove(b"V");
+            dictionary.remove(b"I");
+        } else {
+            let mut selected_values = Vec::with_capacity(values.len());
+            let mut selected_indices = Vec::with_capacity(values.len());
+            for value in values {
+                let value = value
+                    .as_str()
+                    .expect("validated PDF multi-select choice string");
+                let option = field
+                    .choice_options
+                    .iter()
+                    .find(|option| option.value == value)
+                    .context("PDF multi-select choice value is missing its exact option")?;
+                selected_values.push(text_string(value));
+                selected_indices.push(Object::Integer(option.index as i64));
+            }
+            dictionary.set("V", Object::Array(selected_values));
+            dictionary.set("I", Object::Array(selected_indices));
+        }
+    } else if let Some(value) = value.as_str() {
+        dictionary.set("V", text_string(value));
+        if let Some(option) = field
             .choice_options
             .iter()
             .find(|option| option.value == value)
-            .context("PDF choice value is missing its exact option")?;
-        dictionary.set("V", text_string(value));
-        dictionary.set("I", vec![Object::Integer(option.index as i64)]);
+        {
+            dictionary.set("I", vec![Object::Integer(option.index as i64)]);
+        } else {
+            dictionary.remove(b"I");
+        }
     } else {
         dictionary.remove(b"V");
         dictionary.remove(b"I");
@@ -2349,6 +2570,19 @@ fn decode_pdf_form_option_text(value: &Object, label: &str) -> Result<String> {
     if decoded.chars().count() > MAX_PDF_FORM_OPTION_CHARACTERS {
         return Err(anyhow!(
             "{label} exceeds the {MAX_PDF_FORM_OPTION_CHARACTERS} character limit"
+        ));
+    }
+    if decoded.chars().any(char::is_control) {
+        return Err(anyhow!("{label} contains a control character"));
+    }
+    Ok(decoded)
+}
+
+fn decode_pdf_form_choice_value(value: &Object, label: &str) -> Result<String> {
+    let decoded = decode_pdf_form_text(value, label)?;
+    if decoded.chars().count() > MAX_PDF_FORM_VALUE_CHARACTERS {
+        return Err(anyhow!(
+            "{label} exceeds the {MAX_PDF_FORM_VALUE_CHARACTERS} character limit"
         ));
     }
     if decoded.chars().any(char::is_control) {

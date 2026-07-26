@@ -206,6 +206,78 @@ fn write_acroform_pdf(path: &Path) {
         }),
     );
 
+    let editable_choice_field_id = document.new_object_id();
+    let editable_choice_appearance_id =
+        document.add_object(Stream::new(dictionary! {}, b"q 0 0 100 20 re S Q".to_vec()));
+    let editable_choice_widget_id = document.add_object(dictionary! {
+        "Type" => "Annot",
+        "Subtype" => "Widget",
+        "Parent" => editable_choice_field_id,
+        "P" => page_id,
+        "Rect" => vec![36.into(), 560.into(), 240.into(), 590.into()],
+        "AP" => dictionary! { "N" => editable_choice_appearance_id },
+    });
+    document.objects.insert(
+        editable_choice_field_id,
+        Object::Dictionary(dictionary! {
+            "FT" => "Ch",
+            "T" => lopdf::text_string("profile.city"),
+            "Ff" => (1_i64 << 17) | (1_i64 << 18),
+            "V" => lopdf::text_string("上海"),
+            "Opt" => vec![
+                Object::Array(vec![
+                    lopdf::text_string("beijing"),
+                    lopdf::text_string("北京"),
+                ]),
+                Object::Array(vec![
+                    lopdf::text_string("guangzhou"),
+                    lopdf::text_string("广州"),
+                ]),
+            ],
+            "Kids" => vec![Object::Reference(editable_choice_widget_id)],
+        }),
+    );
+
+    let multi_choice_field_id = document.new_object_id();
+    let multi_choice_appearance_id =
+        document.add_object(Stream::new(dictionary! {}, b"q 0 0 100 20 re S Q".to_vec()));
+    let multi_choice_widget_id = document.add_object(dictionary! {
+        "Type" => "Annot",
+        "Subtype" => "Widget",
+        "Parent" => multi_choice_field_id,
+        "P" => page_id,
+        "Rect" => vec![36.into(), 490.into(), 240.into(), 540.into()],
+        "AP" => dictionary! { "N" => multi_choice_appearance_id },
+    });
+    document.objects.insert(
+        multi_choice_field_id,
+        Object::Dictionary(dictionary! {
+            "FT" => "Ch",
+            "T" => lopdf::text_string("preferences.colors"),
+            "Ff" => 1_i64 << 21,
+            "V" => Object::Array(vec![
+                lopdf::text_string("red"),
+                lopdf::text_string("blue"),
+            ]),
+            "I" => vec![Object::Integer(0), Object::Integer(2)],
+            "Opt" => vec![
+                Object::Array(vec![
+                    lopdf::text_string("red"),
+                    lopdf::text_string("红色"),
+                ]),
+                Object::Array(vec![
+                    lopdf::text_string("green"),
+                    lopdf::text_string("绿色"),
+                ]),
+                Object::Array(vec![
+                    lopdf::text_string("blue"),
+                    lopdf::text_string("蓝色"),
+                ]),
+            ],
+            "Kids" => vec![Object::Reference(multi_choice_widget_id)],
+        }),
+    );
+
     document.objects.insert(
         page_id,
         Object::Dictionary(dictionary! {
@@ -218,6 +290,8 @@ fn write_acroform_pdf(path: &Path) {
                 Object::Reference(radio_basic_widget_id),
                 Object::Reference(radio_premium_widget_id),
                 Object::Reference(choice_widget_id),
+                Object::Reference(editable_choice_widget_id),
+                Object::Reference(multi_choice_widget_id),
             ],
         }),
     );
@@ -235,6 +309,8 @@ fn write_acroform_pdf(path: &Path) {
             Object::Reference(checkbox_field_id),
             Object::Reference(radio_field_id),
             Object::Reference(choice_field_id),
+            Object::Reference(editable_choice_field_id),
+            Object::Reference(multi_choice_field_id),
         ],
         "NeedAppearances" => false,
     });
@@ -11220,7 +11296,7 @@ fn pdf_metadata_update_rejects_missing_overlap_noop_controls_malformed_info_and_
 }
 
 #[test]
-fn inspects_and_fills_exact_acroform_text_checkbox_radio_and_choice_values() {
+fn inspects_and_fills_all_supported_exact_acroform_values() {
     let (root, state, request) = test_context();
     let source = root.join("forms/source.pdf");
     write_acroform_pdf(source.as_path());
@@ -11236,13 +11312,13 @@ fn inspects_and_fills_exact_acroform_text_checkbox_radio_and_choice_values() {
         inspected
             .pointer("/form/field_count")
             .and_then(Value::as_u64),
-        Some(4)
+        Some(6)
     );
     assert_eq!(
         inspected
             .pointer("/form/fillable_field_count")
             .and_then(Value::as_u64),
-        Some(4)
+        Some(6)
     );
     assert_eq!(
         inspected
@@ -11286,6 +11362,36 @@ fn inspects_and_fills_exact_acroform_text_checkbox_radio_and_choice_values() {
             .and_then(Value::as_str),
         Some("combo")
     );
+    assert_eq!(
+        inspected
+            .pointer("/form/preview/4/current_value")
+            .and_then(Value::as_str),
+        Some("上海")
+    );
+    assert_eq!(
+        inspected
+            .pointer("/form/preview/4/choice_style")
+            .and_then(Value::as_str),
+        Some("editable_combo")
+    );
+    assert_eq!(
+        inspected
+            .pointer("/form/preview/5/current_value/0")
+            .and_then(Value::as_str),
+        Some("red")
+    );
+    assert_eq!(
+        inspected
+            .pointer("/form/preview/5/current_value/1")
+            .and_then(Value::as_str),
+        Some("blue")
+    );
+    assert_eq!(
+        inspected
+            .pointer("/form/preview/5/choice_style")
+            .and_then(Value::as_str),
+        Some("multi_select_list")
+    );
 
     let filled = pdf_edit::fill_pdf_form_fields(
         &json!({
@@ -11294,7 +11400,9 @@ fn inspects_and_fills_exact_acroform_text_checkbox_radio_and_choice_values() {
                 {"name":"profile.name","expected_value":"Alice","value":"李雷"},
                 {"name":"terms.accepted","expected_value":false,"value":true},
                 {"name":"subscription.plan","expected_value":"Basic","value":"Premium"},
-                {"name":"profile.region","expected_value":"cn","value":"us"}
+                {"name":"profile.region","expected_value":"cn","value":"us"},
+                {"name":"profile.city","expected_value":"上海","value":"深圳"},
+                {"name":"preferences.colors","expected_value":["red","blue"],"value":["green","blue"]}
             ],
             "target_path":"forms/filled.pdf"
         }),
@@ -11308,7 +11416,7 @@ fn inspects_and_fills_exact_acroform_text_checkbox_radio_and_choice_values() {
     );
     assert_eq!(
         filled.get("updated_field_count").and_then(Value::as_u64),
-        Some(4)
+        Some(6)
     );
     assert_eq!(
         filled.get("appearance_mode").and_then(Value::as_str),
@@ -11336,6 +11444,21 @@ fn inspects_and_fills_exact_acroform_text_checkbox_radio_and_choice_values() {
         form.pointer("/preview/3/current_value")
             .and_then(Value::as_str),
         Some("us")
+    );
+    assert_eq!(
+        form.pointer("/preview/4/current_value")
+            .and_then(Value::as_str),
+        Some("深圳")
+    );
+    assert_eq!(
+        form.pointer("/preview/5/current_value/0")
+            .and_then(Value::as_str),
+        Some("green")
+    );
+    assert_eq!(
+        form.pointer("/preview/5/current_value/1")
+            .and_then(Value::as_str),
+        Some("blue")
     );
     assert_eq!(
         form.get("need_appearances").and_then(Value::as_bool),
@@ -11471,6 +11594,68 @@ fn inspects_and_fills_exact_acroform_text_checkbox_radio_and_choice_values() {
         .and_then(Object::as_dict)
         .expect("choice widget")
         .has(b"AP"));
+    let editable_choice_field_id = fields[4]
+        .as_reference()
+        .expect("editable choice field reference");
+    let editable_choice_field = output
+        .get_object(editable_choice_field_id)
+        .and_then(Object::as_dict)
+        .expect("editable choice field");
+    assert_eq!(
+        lopdf::decode_text_string(
+            editable_choice_field
+                .get(b"V")
+                .expect("editable choice value")
+        )
+        .expect("decode editable choice value"),
+        "深圳"
+    );
+    assert!(!editable_choice_field.has(b"I"));
+    let editable_choice_widget_id = editable_choice_field
+        .get(b"Kids")
+        .and_then(Object::as_array)
+        .expect("editable choice widgets")[0]
+        .as_reference()
+        .expect("editable choice widget reference");
+    assert!(!output
+        .get_object(editable_choice_widget_id)
+        .and_then(Object::as_dict)
+        .expect("editable choice widget")
+        .has(b"AP"));
+    let multi_choice_field_id = fields[5]
+        .as_reference()
+        .expect("multi-select choice field reference");
+    let multi_choice_field = output
+        .get_object(multi_choice_field_id)
+        .and_then(Object::as_dict)
+        .expect("multi-select choice field");
+    let multi_choice_values = multi_choice_field
+        .get(b"V")
+        .and_then(Object::as_array)
+        .expect("multi-select choice values")
+        .iter()
+        .map(|value| lopdf::decode_text_string(value).expect("decode multi-select choice value"))
+        .collect::<Vec<_>>();
+    assert_eq!(multi_choice_values, vec!["green", "blue"]);
+    let multi_choice_indices = multi_choice_field
+        .get(b"I")
+        .and_then(Object::as_array)
+        .expect("multi-select choice indices")
+        .iter()
+        .map(|value| value.as_i64().expect("multi-select choice index"))
+        .collect::<Vec<_>>();
+    assert_eq!(multi_choice_indices, vec![1, 2]);
+    let multi_choice_widget_id = multi_choice_field
+        .get(b"Kids")
+        .and_then(Object::as_array)
+        .expect("multi-select choice widgets")[0]
+        .as_reference()
+        .expect("multi-select choice widget reference");
+    assert!(!output
+        .get_object(multi_choice_widget_id)
+        .and_then(Object::as_dict)
+        .expect("multi-select choice widget")
+        .has(b"AP"));
     assert_eq!(
         fs::read(source.as_path()).expect("source after form fill"),
         source_before
@@ -11490,7 +11675,9 @@ fn clears_nullable_acroform_radio_and_choice_values() {
             "path":"source.pdf",
             "fields":[
                 {"name":"subscription.plan","expected_value":"Basic","value":null},
-                {"name":"profile.region","expected_value":"cn","value":null}
+                {"name":"profile.region","expected_value":"cn","value":null},
+                {"name":"profile.city","expected_value":"上海","value":null},
+                {"name":"preferences.colors","expected_value":["red","blue"],"value":[]}
             ],
             "target_path":"cleared.pdf"
         }),
@@ -11507,6 +11694,15 @@ fn clears_nullable_acroform_radio_and_choice_values() {
     assert!(form
         .pointer("/preview/3/current_value")
         .is_some_and(Value::is_null));
+    assert!(form
+        .pointer("/preview/4/current_value")
+        .is_some_and(Value::is_null));
+    assert_eq!(
+        form.pointer("/preview/5/current_value")
+            .and_then(Value::as_array)
+            .map(Vec::len),
+        Some(0)
+    );
     let catalog = output.catalog().expect("cleared PDF catalog");
     let acroform_id = catalog
         .get(b"AcroForm")
@@ -11553,6 +11749,18 @@ fn clears_nullable_acroform_radio_and_choice_values() {
         .expect("choice field");
     assert!(!choice.has(b"V"));
     assert!(!choice.has(b"I"));
+    for index in [4_usize, 5_usize] {
+        let choice = output
+            .get_object(
+                fields[index]
+                    .as_reference()
+                    .expect("choice field reference"),
+            )
+            .and_then(Object::as_dict)
+            .expect("choice field");
+        assert!(!choice.has(b"V"));
+        assert!(!choice.has(b"I"));
+    }
     assert_eq!(
         fs::read(source.as_path()).expect("source after cleared form output"),
         source_before
@@ -11592,6 +11800,26 @@ fn pdf_form_fill_rejects_stale_unsafe_noop_and_xfa_requests() {
             "wrong-choice-type.pdf",
             json!({"name":"profile.region","expected_value":"cn","value":true}),
             "choice form field value must be a string or null",
+        ),
+        (
+            "editable-choice-control.pdf",
+            json!({"name":"profile.city","expected_value":"上海","value":"深圳\n"}),
+            "contains a control character",
+        ),
+        (
+            "wrong-multi-choice-type.pdf",
+            json!({"name":"preferences.colors","expected_value":["red","blue"],"value":"green"}),
+            "multi-select choice form field value must be an array",
+        ),
+        (
+            "unknown-multi-choice.pdf",
+            json!({"name":"preferences.colors","expected_value":["red","blue"],"value":["red","purple"]}),
+            "is not one of its exact options",
+        ),
+        (
+            "unordered-multi-choice.pdf",
+            json!({"name":"preferences.colors","expected_value":["red","blue"],"value":["blue","green"]}),
+            "must follow exact option order",
         ),
     ] {
         let error = pdf_edit::fill_pdf_form_fields(
@@ -11702,7 +11930,7 @@ fn pdf_form_fill_rejects_stale_unsafe_noop_and_xfa_requests() {
         inspected_multi_choice
             .pointer("/form/preview/3/unsupported_reason")
             .and_then(Value::as_str),
-        Some("multi-select choice fields are unsupported")
+        Some("multi-select choice field must be a list box")
     );
     let multi_choice_error = pdf_edit::fill_pdf_form_fields(
         &json!({
@@ -11716,7 +11944,7 @@ fn pdf_form_fill_rejects_stale_unsafe_noop_and_xfa_requests() {
     .expect_err("multi-select choice fill must fail");
     assert!(multi_choice_error
         .to_string()
-        .contains("multi-select choice fields are unsupported"));
+        .contains("multi-select choice field must be a list box"));
 
     let xfa = root.join("xfa.pdf");
     fs::copy(source.as_path(), xfa.as_path()).expect("copy XFA fixture");
@@ -11907,6 +12135,48 @@ fn pdf_form_fill_rejects_ambiguous_radio_appearances_and_choice_indices() {
     assert!(stale_choice_error
         .to_string()
         .contains("selected index does not match its selected value"));
+
+    let stale_multi_choice = root.join("stale-multi-choice-index.pdf");
+    fs::copy(source.as_path(), stale_multi_choice.as_path())
+        .expect("copy stale multi-choice fixture");
+    let mut stale_multi_choice_document =
+        Document::load(stale_multi_choice.as_path()).expect("load stale multi-choice PDF");
+    let acroform_id = stale_multi_choice_document
+        .catalog()
+        .expect("stale multi-choice catalog")
+        .get(b"AcroForm")
+        .and_then(Object::as_reference)
+        .expect("stale multi-choice AcroForm reference");
+    let choice_id = stale_multi_choice_document
+        .get_object(acroform_id)
+        .and_then(Object::as_dict)
+        .expect("stale multi-choice AcroForm")
+        .get(b"Fields")
+        .and_then(Object::as_array)
+        .expect("stale multi-choice fields")[5]
+        .as_reference()
+        .expect("stale multi-choice field reference");
+    stale_multi_choice_document
+        .get_object_mut(choice_id)
+        .and_then(Object::as_dict_mut)
+        .expect("stale multi-choice field")
+        .set("I", vec![Object::Integer(0), Object::Integer(1)]);
+    stale_multi_choice_document
+        .save(stale_multi_choice.as_path())
+        .expect("save stale multi-choice fixture");
+    let stale_multi_choice_error = pdf_edit::fill_pdf_form_fields(
+        &json!({
+            "path":"stale-multi-choice-index.pdf",
+            "fields":[{"name":"preferences.colors","expected_value":["red","blue"],"value":["green","blue"]}],
+            "target_path":"stale-multi-choice-filled.pdf"
+        }),
+        &state,
+        &request,
+    )
+    .expect_err("inconsistent multi-choice V/I snapshot must fail");
+    assert!(stale_multi_choice_error
+        .to_string()
+        .contains("indices do not match selected values"));
     let _ = fs::remove_dir_all(root);
 }
 
