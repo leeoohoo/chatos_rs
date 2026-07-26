@@ -51,7 +51,7 @@ pub(crate) fn internal_skill_manifest(skill_id: &str) -> Option<&'static str> {
             "../../../skill_bundles/internal/documents/1.22.0/skill.json"
         )),
         "internal_skill_pdf" => Some(include_str!(
-            "../../../skill_bundles/internal/pdf/1.10.0/skill.json"
+            "../../../skill_bundles/internal/pdf/1.11.0/skill.json"
         )),
         "internal_skill_presentations" => Some(include_str!(
             "../../../skill_bundles/internal/presentations/1.24.0/skill.json"
@@ -141,7 +141,7 @@ pub(crate) fn internal_skill_instructions(skill_id: &str) -> Option<&'static str
             "../../../skill_bundles/internal/documents/1.22.0/instructions.md"
         )),
         "internal_skill_pdf" => Some(include_str!(
-            "../../../skill_bundles/internal/pdf/1.10.0/instructions.md"
+            "../../../skill_bundles/internal/pdf/1.11.0/instructions.md"
         )),
         "internal_skill_presentations" => Some(include_str!(
             "../../../skill_bundles/internal/presentations/1.24.0/instructions.md"

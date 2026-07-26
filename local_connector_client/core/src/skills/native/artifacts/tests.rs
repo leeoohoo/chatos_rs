@@ -126,6 +126,86 @@ fn write_acroform_pdf(path: &Path) {
         }),
     );
 
+    let radio_field_id = document.new_object_id();
+    let radio_basic_off_id = document.add_object(Stream::new(dictionary! {}, Vec::new()));
+    let radio_basic_on_id = document.add_object(Stream::new(dictionary! {}, Vec::new()));
+    let radio_basic_widget_id = document.add_object(dictionary! {
+        "Type" => "Annot",
+        "Subtype" => "Widget",
+        "Parent" => radio_field_id,
+        "P" => page_id,
+        "Rect" => vec![36.into(), 660.into(), 56.into(), 680.into()],
+        "AS" => "Basic",
+        "AP" => dictionary! {
+            "N" => dictionary! {
+                "Off" => radio_basic_off_id,
+                "Basic" => radio_basic_on_id,
+            }
+        },
+    });
+    let radio_premium_off_id = document.add_object(Stream::new(dictionary! {}, Vec::new()));
+    let radio_premium_on_id = document.add_object(Stream::new(dictionary! {}, Vec::new()));
+    let radio_premium_widget_id = document.add_object(dictionary! {
+        "Type" => "Annot",
+        "Subtype" => "Widget",
+        "Parent" => radio_field_id,
+        "P" => page_id,
+        "Rect" => vec![76.into(), 660.into(), 96.into(), 680.into()],
+        "AS" => "Off",
+        "AP" => dictionary! {
+            "N" => dictionary! {
+                "Off" => radio_premium_off_id,
+                "Premium" => radio_premium_on_id,
+            }
+        },
+    });
+    document.objects.insert(
+        radio_field_id,
+        Object::Dictionary(dictionary! {
+            "FT" => "Btn",
+            "T" => lopdf::text_string("subscription.plan"),
+            "Ff" => 1_i64 << 15,
+            "V" => "Basic",
+            "Kids" => vec![
+                Object::Reference(radio_basic_widget_id),
+                Object::Reference(radio_premium_widget_id),
+            ],
+        }),
+    );
+
+    let choice_field_id = document.new_object_id();
+    let choice_appearance_id =
+        document.add_object(Stream::new(dictionary! {}, b"q 0 0 100 20 re S Q".to_vec()));
+    let choice_widget_id = document.add_object(dictionary! {
+        "Type" => "Annot",
+        "Subtype" => "Widget",
+        "Parent" => choice_field_id,
+        "P" => page_id,
+        "Rect" => vec![36.into(), 610.into(), 240.into(), 640.into()],
+        "AP" => dictionary! { "N" => choice_appearance_id },
+    });
+    document.objects.insert(
+        choice_field_id,
+        Object::Dictionary(dictionary! {
+            "FT" => "Ch",
+            "T" => lopdf::text_string("profile.region"),
+            "Ff" => 1_i64 << 17,
+            "V" => lopdf::text_string("cn"),
+            "I" => vec![Object::Integer(0)],
+            "Opt" => vec![
+                Object::Array(vec![
+                    lopdf::text_string("cn"),
+                    lopdf::text_string("中国"),
+                ]),
+                Object::Array(vec![
+                    lopdf::text_string("us"),
+                    lopdf::text_string("United States"),
+                ]),
+            ],
+            "Kids" => vec![Object::Reference(choice_widget_id)],
+        }),
+    );
+
     document.objects.insert(
         page_id,
         Object::Dictionary(dictionary! {
@@ -135,6 +215,9 @@ fn write_acroform_pdf(path: &Path) {
             "Annots" => vec![
                 Object::Reference(text_widget_id),
                 Object::Reference(checkbox_widget_id),
+                Object::Reference(radio_basic_widget_id),
+                Object::Reference(radio_premium_widget_id),
+                Object::Reference(choice_widget_id),
             ],
         }),
     );
@@ -150,6 +233,8 @@ fn write_acroform_pdf(path: &Path) {
         "Fields" => vec![
             Object::Reference(text_field_id),
             Object::Reference(checkbox_field_id),
+            Object::Reference(radio_field_id),
+            Object::Reference(choice_field_id),
         ],
         "NeedAppearances" => false,
     });
@@ -11135,7 +11220,7 @@ fn pdf_metadata_update_rejects_missing_overlap_noop_controls_malformed_info_and_
 }
 
 #[test]
-fn inspects_and_fills_exact_acroform_text_and_checkbox_values() {
+fn inspects_and_fills_exact_acroform_text_checkbox_radio_and_choice_values() {
     let (root, state, request) = test_context();
     let source = root.join("forms/source.pdf");
     write_acroform_pdf(source.as_path());
@@ -11151,13 +11236,13 @@ fn inspects_and_fills_exact_acroform_text_and_checkbox_values() {
         inspected
             .pointer("/form/field_count")
             .and_then(Value::as_u64),
-        Some(2)
+        Some(4)
     );
     assert_eq!(
         inspected
             .pointer("/form/fillable_field_count")
             .and_then(Value::as_u64),
-        Some(2)
+        Some(4)
     );
     assert_eq!(
         inspected
@@ -11171,13 +11256,45 @@ fn inspects_and_fills_exact_acroform_text_and_checkbox_values() {
             .and_then(Value::as_bool),
         Some(false)
     );
+    assert_eq!(
+        inspected
+            .pointer("/form/preview/2/current_value")
+            .and_then(Value::as_str),
+        Some("Basic")
+    );
+    assert_eq!(
+        inspected
+            .pointer("/form/preview/2/options/1/value")
+            .and_then(Value::as_str),
+        Some("Premium")
+    );
+    assert_eq!(
+        inspected
+            .pointer("/form/preview/3/current_value")
+            .and_then(Value::as_str),
+        Some("cn")
+    );
+    assert_eq!(
+        inspected
+            .pointer("/form/preview/3/options/0/label")
+            .and_then(Value::as_str),
+        Some("中国")
+    );
+    assert_eq!(
+        inspected
+            .pointer("/form/preview/3/choice_style")
+            .and_then(Value::as_str),
+        Some("combo")
+    );
 
     let filled = pdf_edit::fill_pdf_form_fields(
         &json!({
             "path":"forms/source.pdf",
             "fields":[
                 {"name":"profile.name","expected_value":"Alice","value":"李雷"},
-                {"name":"terms.accepted","expected_value":false,"value":true}
+                {"name":"terms.accepted","expected_value":false,"value":true},
+                {"name":"subscription.plan","expected_value":"Basic","value":"Premium"},
+                {"name":"profile.region","expected_value":"cn","value":"us"}
             ],
             "target_path":"forms/filled.pdf"
         }),
@@ -11191,7 +11308,7 @@ fn inspects_and_fills_exact_acroform_text_and_checkbox_values() {
     );
     assert_eq!(
         filled.get("updated_field_count").and_then(Value::as_u64),
-        Some(2)
+        Some(4)
     );
     assert_eq!(
         filled.get("appearance_mode").and_then(Value::as_str),
@@ -11209,6 +11326,16 @@ fn inspects_and_fills_exact_acroform_text_and_checkbox_values() {
         form.pointer("/preview/1/current_value")
             .and_then(Value::as_bool),
         Some(true)
+    );
+    assert_eq!(
+        form.pointer("/preview/2/current_value")
+            .and_then(Value::as_str),
+        Some("Premium")
+    );
+    assert_eq!(
+        form.pointer("/preview/3/current_value")
+            .and_then(Value::as_str),
+        Some("us")
     );
     assert_eq!(
         form.get("need_appearances").and_then(Value::as_bool),
@@ -11278,8 +11405,156 @@ fn inspects_and_fills_exact_acroform_text_and_checkbox_values() {
         b"Yes"
     );
     assert!(checkbox_widget.has(b"AP"));
+    let radio_field_id = fields[2].as_reference().expect("radio field reference");
+    let radio_field = output
+        .get_object(radio_field_id)
+        .and_then(Object::as_dict)
+        .expect("radio field");
+    assert_eq!(
+        radio_field
+            .get(b"V")
+            .and_then(Object::as_name)
+            .expect("radio value"),
+        b"Premium"
+    );
+    let radio_widgets = radio_field
+        .get(b"Kids")
+        .and_then(Object::as_array)
+        .expect("radio widgets");
+    for (index, expected) in [b"Off".as_slice(), b"Premium".as_slice()]
+        .into_iter()
+        .enumerate()
+    {
+        let widget_id = radio_widgets[index]
+            .as_reference()
+            .expect("radio widget reference");
+        let widget = output
+            .get_object(widget_id)
+            .and_then(Object::as_dict)
+            .expect("radio widget");
+        assert_eq!(
+            widget
+                .get(b"AS")
+                .and_then(Object::as_name)
+                .expect("radio appearance state"),
+            expected
+        );
+        assert!(widget.has(b"AP"));
+    }
+    let choice_field_id = fields[3].as_reference().expect("choice field reference");
+    let choice_field = output
+        .get_object(choice_field_id)
+        .and_then(Object::as_dict)
+        .expect("choice field");
+    assert_eq!(
+        lopdf::decode_text_string(choice_field.get(b"V").expect("choice value"))
+            .expect("decode choice value"),
+        "us"
+    );
+    assert_eq!(
+        choice_field
+            .get(b"I")
+            .and_then(Object::as_array)
+            .expect("choice selected index")[0]
+            .as_i64()
+            .expect("choice selected index value"),
+        1
+    );
+    let choice_widget_id = choice_field
+        .get(b"Kids")
+        .and_then(Object::as_array)
+        .expect("choice widgets")[0]
+        .as_reference()
+        .expect("choice widget reference");
+    assert!(!output
+        .get_object(choice_widget_id)
+        .and_then(Object::as_dict)
+        .expect("choice widget")
+        .has(b"AP"));
     assert_eq!(
         fs::read(source.as_path()).expect("source after form fill"),
+        source_before
+    );
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn clears_nullable_acroform_radio_and_choice_values() {
+    let (root, state, request) = test_context();
+    let source = root.join("source.pdf");
+    write_acroform_pdf(source.as_path());
+    let source_before = fs::read(source.as_path()).expect("source AcroForm PDF bytes");
+
+    pdf_edit::fill_pdf_form_fields(
+        &json!({
+            "path":"source.pdf",
+            "fields":[
+                {"name":"subscription.plan","expected_value":"Basic","value":null},
+                {"name":"profile.region","expected_value":"cn","value":null}
+            ],
+            "target_path":"cleared.pdf"
+        }),
+        &state,
+        &request,
+    )
+    .expect("clear nullable AcroForm selections");
+
+    let output = Document::load(root.join("cleared.pdf")).expect("cleared AcroForm PDF");
+    let form = pdf_edit::inspect_pdf_form(&output).expect("inspect cleared AcroForm values");
+    assert!(form
+        .pointer("/preview/2/current_value")
+        .is_some_and(Value::is_null));
+    assert!(form
+        .pointer("/preview/3/current_value")
+        .is_some_and(Value::is_null));
+    let catalog = output.catalog().expect("cleared PDF catalog");
+    let acroform_id = catalog
+        .get(b"AcroForm")
+        .and_then(Object::as_reference)
+        .expect("AcroForm reference");
+    let fields = output
+        .get_object(acroform_id)
+        .and_then(Object::as_dict)
+        .expect("AcroForm dictionary")
+        .get(b"Fields")
+        .and_then(Object::as_array)
+        .expect("AcroForm fields");
+    let radio = output
+        .get_object(fields[2].as_reference().expect("radio field reference"))
+        .and_then(Object::as_dict)
+        .expect("radio field");
+    assert_eq!(
+        radio
+            .get(b"V")
+            .and_then(Object::as_name)
+            .expect("cleared radio value"),
+        b"Off"
+    );
+    for widget in radio
+        .get(b"Kids")
+        .and_then(Object::as_array)
+        .expect("radio widgets")
+    {
+        let widget = output
+            .get_object(widget.as_reference().expect("radio widget reference"))
+            .and_then(Object::as_dict)
+            .expect("radio widget");
+        assert_eq!(
+            widget
+                .get(b"AS")
+                .and_then(Object::as_name)
+                .expect("radio widget appearance state"),
+            b"Off"
+        );
+    }
+    let choice = output
+        .get_object(fields[3].as_reference().expect("choice field reference"))
+        .and_then(Object::as_dict)
+        .expect("choice field");
+    assert!(!choice.has(b"V"));
+    assert!(!choice.has(b"I"));
+    assert_eq!(
+        fs::read(source.as_path()).expect("source after cleared form output"),
         source_before
     );
     let _ = fs::remove_dir_all(root);
@@ -11308,6 +11583,16 @@ fn pdf_form_fill_rejects_stale_unsafe_noop_and_xfa_requests() {
             json!({"name":"terms.accepted","expected_value":false,"value":false}),
             "would not change",
         ),
+        (
+            "unknown-radio.pdf",
+            json!({"name":"subscription.plan","expected_value":"Basic","value":"Enterprise"}),
+            "is not one of its verified options",
+        ),
+        (
+            "wrong-choice-type.pdf",
+            json!({"name":"profile.region","expected_value":"cn","value":true}),
+            "choice form field value must be a string or null",
+        ),
     ] {
         let error = pdf_edit::fill_pdf_form_fields(
             &json!({
@@ -11334,6 +11619,104 @@ fn pdf_form_fill_rejects_stale_unsafe_noop_and_xfa_requests() {
     )
     .expect_err("in-place form update must fail");
     assert!(in_place.to_string().contains("distinct target_path"));
+
+    let no_toggle = root.join("no-toggle.pdf");
+    fs::copy(source.as_path(), no_toggle.as_path()).expect("copy no-toggle fixture");
+    let mut no_toggle_document = Document::load(no_toggle.as_path()).expect("load no-toggle PDF");
+    let no_toggle_acroform_id = no_toggle_document
+        .catalog()
+        .expect("no-toggle catalog")
+        .get(b"AcroForm")
+        .and_then(Object::as_reference)
+        .expect("no-toggle AcroForm reference");
+    let no_toggle_radio_id = no_toggle_document
+        .get_object(no_toggle_acroform_id)
+        .and_then(Object::as_dict)
+        .expect("no-toggle AcroForm")
+        .get(b"Fields")
+        .and_then(Object::as_array)
+        .expect("no-toggle fields")[2]
+        .as_reference()
+        .expect("no-toggle radio reference");
+    no_toggle_document
+        .get_object_mut(no_toggle_radio_id)
+        .and_then(Object::as_dict_mut)
+        .expect("no-toggle radio")
+        .set("Ff", Object::Integer((1_i64 << 15) | (1_i64 << 14)));
+    no_toggle_document
+        .save(no_toggle.as_path())
+        .expect("save no-toggle fixture");
+    let no_toggle_error = pdf_edit::fill_pdf_form_fields(
+        &json!({
+            "path":"no-toggle.pdf",
+            "fields":[{"name":"subscription.plan","expected_value":"Basic","value":null}],
+            "target_path":"no-toggle-filled.pdf"
+        }),
+        &state,
+        &request,
+    )
+    .expect_err("NoToggleToOff radio clear must fail");
+    assert!(no_toggle_error.to_string().contains("NoToggleToOff"));
+
+    let multi_choice = root.join("multi-choice.pdf");
+    fs::copy(source.as_path(), multi_choice.as_path()).expect("copy multi-choice fixture");
+    let mut multi_choice_document =
+        Document::load(multi_choice.as_path()).expect("load multi-choice PDF");
+    let multi_choice_acroform_id = multi_choice_document
+        .catalog()
+        .expect("multi-choice catalog")
+        .get(b"AcroForm")
+        .and_then(Object::as_reference)
+        .expect("multi-choice AcroForm reference");
+    let multi_choice_field_id = multi_choice_document
+        .get_object(multi_choice_acroform_id)
+        .and_then(Object::as_dict)
+        .expect("multi-choice AcroForm")
+        .get(b"Fields")
+        .and_then(Object::as_array)
+        .expect("multi-choice fields")[3]
+        .as_reference()
+        .expect("multi-choice field reference");
+    let multi_choice_field = multi_choice_document
+        .get_object_mut(multi_choice_field_id)
+        .and_then(Object::as_dict_mut)
+        .expect("multi-choice field");
+    multi_choice_field.set("Ff", Object::Integer((1_i64 << 17) | (1_i64 << 21)));
+    multi_choice_field.set(
+        "V",
+        Object::Array(vec![lopdf::text_string("cn"), lopdf::text_string("us")]),
+    );
+    multi_choice_field.set("I", vec![Object::Integer(0), Object::Integer(1)]);
+    multi_choice_document
+        .save(multi_choice.as_path())
+        .expect("save multi-choice fixture");
+    let inspected_multi_choice = inspect_pdf(&json!({"path":"multi-choice.pdf"}), &state, &request)
+        .expect("inspect unsupported multi-select choice");
+    assert_eq!(
+        inspected_multi_choice
+            .pointer("/form/preview/3/fillable")
+            .and_then(Value::as_bool),
+        Some(false)
+    );
+    assert_eq!(
+        inspected_multi_choice
+            .pointer("/form/preview/3/unsupported_reason")
+            .and_then(Value::as_str),
+        Some("multi-select choice fields are unsupported")
+    );
+    let multi_choice_error = pdf_edit::fill_pdf_form_fields(
+        &json!({
+            "path":"multi-choice.pdf",
+            "fields":[{"name":"profile.region","expected_value":"cn","value":"us"}],
+            "target_path":"multi-choice-filled.pdf"
+        }),
+        &state,
+        &request,
+    )
+    .expect_err("multi-select choice fill must fail");
+    assert!(multi_choice_error
+        .to_string()
+        .contains("multi-select choice fields are unsupported"));
 
     let xfa = root.join("xfa.pdf");
     fs::copy(source.as_path(), xfa.as_path()).expect("copy XFA fixture");
@@ -11416,6 +11799,114 @@ fn pdf_form_fill_rejects_stale_unsafe_noop_and_xfa_requests() {
         fs::read(source.as_path()).expect("source after rejected form fills"),
         source_before
     );
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn pdf_form_fill_rejects_ambiguous_radio_appearances_and_choice_indices() {
+    let (root, state, request) = test_context();
+    let source = root.join("source.pdf");
+    write_acroform_pdf(source.as_path());
+
+    let duplicate_radio = root.join("duplicate-radio.pdf");
+    fs::copy(source.as_path(), duplicate_radio.as_path()).expect("copy duplicate-radio fixture");
+    let mut duplicate_radio_document =
+        Document::load(duplicate_radio.as_path()).expect("load duplicate-radio PDF");
+    let acroform_id = duplicate_radio_document
+        .catalog()
+        .expect("duplicate-radio catalog")
+        .get(b"AcroForm")
+        .and_then(Object::as_reference)
+        .expect("duplicate-radio AcroForm reference");
+    let radio_id = duplicate_radio_document
+        .get_object(acroform_id)
+        .and_then(Object::as_dict)
+        .expect("duplicate-radio AcroForm")
+        .get(b"Fields")
+        .and_then(Object::as_array)
+        .expect("duplicate-radio fields")[2]
+        .as_reference()
+        .expect("duplicate-radio field reference");
+    let second_widget_id = duplicate_radio_document
+        .get_object(radio_id)
+        .and_then(Object::as_dict)
+        .expect("duplicate-radio field")
+        .get(b"Kids")
+        .and_then(Object::as_array)
+        .expect("duplicate-radio widgets")[1]
+        .as_reference()
+        .expect("duplicate-radio widget reference");
+    let normal_appearance = duplicate_radio_document
+        .get_object_mut(second_widget_id)
+        .and_then(Object::as_dict_mut)
+        .expect("duplicate-radio widget")
+        .get_mut(b"AP")
+        .and_then(Object::as_dict_mut)
+        .expect("duplicate-radio AP")
+        .get_mut(b"N")
+        .and_then(Object::as_dict_mut)
+        .expect("duplicate-radio AP/N");
+    let premium = normal_appearance
+        .remove(b"Premium")
+        .expect("Premium appearance state");
+    normal_appearance.set("Basic", premium);
+    duplicate_radio_document
+        .save(duplicate_radio.as_path())
+        .expect("save duplicate-radio fixture");
+    let duplicate_radio_error = pdf_edit::fill_pdf_form_fields(
+        &json!({
+            "path":"duplicate-radio.pdf",
+            "fields":[{"name":"subscription.plan","expected_value":"Basic","value":null}],
+            "target_path":"duplicate-radio-filled.pdf"
+        }),
+        &state,
+        &request,
+    )
+    .expect_err("ambiguous radio appearances must fail");
+    assert!(duplicate_radio_error
+        .to_string()
+        .contains("unique non-Off appearance states"));
+
+    let stale_choice = root.join("stale-choice-index.pdf");
+    fs::copy(source.as_path(), stale_choice.as_path()).expect("copy stale-choice fixture");
+    let mut stale_choice_document =
+        Document::load(stale_choice.as_path()).expect("load stale-choice PDF");
+    let acroform_id = stale_choice_document
+        .catalog()
+        .expect("stale-choice catalog")
+        .get(b"AcroForm")
+        .and_then(Object::as_reference)
+        .expect("stale-choice AcroForm reference");
+    let choice_id = stale_choice_document
+        .get_object(acroform_id)
+        .and_then(Object::as_dict)
+        .expect("stale-choice AcroForm")
+        .get(b"Fields")
+        .and_then(Object::as_array)
+        .expect("stale-choice fields")[3]
+        .as_reference()
+        .expect("stale-choice field reference");
+    stale_choice_document
+        .get_object_mut(choice_id)
+        .and_then(Object::as_dict_mut)
+        .expect("stale-choice field")
+        .set("I", vec![Object::Integer(1)]);
+    stale_choice_document
+        .save(stale_choice.as_path())
+        .expect("save stale-choice fixture");
+    let stale_choice_error = pdf_edit::fill_pdf_form_fields(
+        &json!({
+            "path":"stale-choice-index.pdf",
+            "fields":[{"name":"profile.region","expected_value":"cn","value":"us"}],
+            "target_path":"stale-choice-filled.pdf"
+        }),
+        &state,
+        &request,
+    )
+    .expect_err("inconsistent choice V/I snapshot must fail");
+    assert!(stale_choice_error
+        .to_string()
+        .contains("selected index does not match its selected value"));
     let _ = fs::remove_dir_all(root);
 }
 

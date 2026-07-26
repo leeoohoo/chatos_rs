@@ -222,7 +222,7 @@ fn update_pdf_metadata_tool() -> Value {
 fn fill_pdf_form_fields_tool() -> Value {
     tool(
         "fill_pdf_form_fields",
-        "Safely fill bounded standard AcroForm text and checkbox fields in a distinct output PDF. Every update is bound to the exact current value; XFA, signatures, password/file/rich-text fields, radio groups, choice fields, read-only fields, ambiguous names, and malformed widget appearances fail closed.",
+        "Safely fill bounded standard AcroForm text, checkbox, radio, and single-select choice fields in a distinct output PDF. Every update is bound to the exact current value; XFA, signatures, password/file/rich-text fields, push buttons, editable or multi-select choices, read-only fields, ambiguous names, and malformed widget appearances fail closed.",
         json!({
             "type":"object",
             "properties":{
@@ -235,8 +235,8 @@ fn fill_pdf_form_fields_tool() -> Value {
                         "type":"object",
                         "properties":{
                             "name":{"type":"string","minLength":1,"maxLength":512,"description":"Exact fully qualified field name returned by inspect_pdf.form.preview."},
-                            "expected_value":{"oneOf":[{"type":"string","maxLength":16384},{"type":"boolean"}],"description":"Exact current value returned by inspect_pdf; protects against stale or unintended writes."},
-                            "value":{"oneOf":[{"type":"string","maxLength":16384},{"type":"boolean"}]}
+                            "expected_value":{"oneOf":[{"type":"string","maxLength":16384},{"type":"boolean"},{"type":"null"}],"description":"Exact current value returned by inspect_pdf; protects against stale or unintended writes. Null represents an unselected radio or choice field."},
+                            "value":{"oneOf":[{"type":"string","maxLength":16384},{"type":"boolean"},{"type":"null"}],"description":"New exact value. Radio and choice strings must match an option returned by inspect_pdf; null clears the selection when allowed."}
                         },
                         "required":["name","expected_value","value"],
                         "additionalProperties":false

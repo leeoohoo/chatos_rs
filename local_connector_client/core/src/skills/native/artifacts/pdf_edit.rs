@@ -45,6 +45,9 @@ const MAX_PDF_FORM_UPDATES: usize = 200;
 const MAX_PDF_FORM_NAME_CHARACTERS: usize = 512;
 const MAX_PDF_FORM_VALUE_CHARACTERS: usize = 16_384;
 const MAX_PDF_FORM_VALUE_PREVIEW_CHARACTERS: usize = 1_000;
+const MAX_PDF_FORM_OPTIONS: usize = 500;
+const MAX_PDF_FORM_OPTION_PREVIEW: usize = 100;
+const MAX_PDF_FORM_OPTION_CHARACTERS: usize = 1_024;
 const MAX_PDF_FORM_DEPTH: usize = 32;
 const MAX_PDF_STAMP_IMAGE_BYTES: usize = 10 * 1024 * 1024;
 const MAX_PDF_STAMP_IMAGE_EDGE: u32 = 10_000;
@@ -135,6 +138,8 @@ struct PdfStampImage {
 enum PdfFormFieldKind {
     Text,
     Checkbox,
+    Radio,
+    Choice,
     Unsupported,
 }
 
@@ -143,9 +148,25 @@ impl PdfFormFieldKind {
         match self {
             Self::Text => "text",
             Self::Checkbox => "checkbox",
+            Self::Radio => "radio",
+            Self::Choice => "choice",
             Self::Unsupported => "unsupported",
         }
     }
+}
+
+#[derive(Debug, Clone)]
+struct PdfRadioOption {
+    value: String,
+    appearance_state: Vec<u8>,
+    widget_id: ObjectId,
+}
+
+#[derive(Debug, Clone)]
+struct PdfChoiceOption {
+    value: String,
+    label: String,
+    index: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -159,6 +180,10 @@ struct PdfFormField {
     value_truncated: bool,
     widget_ids: Vec<ObjectId>,
     checkbox_on_state: Option<Vec<u8>>,
+    radio_options: Vec<PdfRadioOption>,
+    choice_options: Vec<PdfChoiceOption>,
+    allows_empty: bool,
+    choice_combo: bool,
     max_length: Option<usize>,
     multiline: bool,
     sensitive: bool,
@@ -1108,7 +1133,7 @@ pub(super) fn fill_pdf_form_fields(
     }
 
     let mut updated_fields = Vec::with_capacity(resolved.len());
-    let mut text_updated = false;
+    let mut viewer_regeneration_requested = false;
     for (field, update) in &resolved {
         match field.kind {
             PdfFormFieldKind::Text => {
@@ -1117,7 +1142,7 @@ pub(super) fn fill_pdf_form_fields(
                     .as_str()
                     .expect("validated PDF text field value");
                 update_pdf_text_form_field(&mut document, field, value)?;
-                text_updated = true;
+                viewer_regeneration_requested = true;
             }
             PdfFormFieldKind::Checkbox => {
                 let checked = update
@@ -1125,6 +1150,13 @@ pub(super) fn fill_pdf_form_fields(
                     .as_bool()
                     .expect("validated PDF checkbox value");
                 update_pdf_checkbox_form_field(&mut document, field, checked)?;
+            }
+            PdfFormFieldKind::Radio => {
+                update_pdf_radio_form_field(&mut document, field, update.value.as_str())?;
+            }
+            PdfFormFieldKind::Choice => {
+                update_pdf_choice_form_field(&mut document, field, update.value.as_str())?;
+                viewer_regeneration_requested = true;
             }
             PdfFormFieldKind::Unsupported => unreachable!("unsupported fields are rejected"),
         }
@@ -1135,7 +1167,7 @@ pub(super) fn fill_pdf_form_fields(
             "value": update.value,
         }));
     }
-    if text_updated {
+    if viewer_regeneration_requested {
         set_pdf_acroform_need_appearances(&mut document, &acroform)?;
     }
     let verified_acroform = pdf_acroform(&document)?
@@ -1175,7 +1207,7 @@ pub(super) fn fill_pdf_form_fields(
         "path": target_relative,
         "updated_fields": updated_fields,
         "updated_field_count": updated_fields.len(),
-        "appearance_mode": if text_updated { "viewer_regeneration_requested" } else { "existing_widget_appearances" },
+        "appearance_mode": if viewer_regeneration_requested { "viewer_regeneration_requested" } else { "existing_widget_appearances" },
         "need_appearances": need_appearances,
         "bytes": bytes,
     }))
@@ -1436,6 +1468,7 @@ fn visit_pdf_form_field(
     fields.push(describe_pdf_form_field(
         document,
         object_id,
+        dictionary,
         full_name,
         field_type.as_deref(),
         flags,
@@ -1450,6 +1483,7 @@ fn visit_pdf_form_field(
 fn describe_pdf_form_field(
     document: &Document,
     object_id: ObjectId,
+    dictionary: &Dictionary,
     name: String,
     field_type: Option<&[u8]>,
     flags: i64,
@@ -1460,9 +1494,13 @@ fn describe_pdf_form_field(
     const READ_ONLY: i64 = 1;
     const TEXT_MULTILINE: i64 = 1 << 12;
     const TEXT_PASSWORD: i64 = 1 << 13;
+    const BUTTON_NO_TOGGLE_TO_OFF: i64 = 1 << 14;
     const BUTTON_RADIO: i64 = 1 << 15;
     const BUTTON_PUSH: i64 = 1 << 16;
+    const CHOICE_COMBO: i64 = 1 << 17;
+    const CHOICE_EDIT: i64 = 1 << 18;
     const TEXT_FILE_SELECT: i64 = 1 << 20;
+    const CHOICE_MULTI_SELECT: i64 = 1 << 21;
     const TEXT_RICH_TEXT: i64 = 1 << 25;
 
     let raw_type = field_type.unwrap_or_default();
@@ -1477,6 +1515,10 @@ fn describe_pdf_form_field(
     let mut current_value = Value::Null;
     let mut value_truncated = false;
     let mut checkbox_on_state = None;
+    let mut radio_options = Vec::new();
+    let mut choice_options = Vec::new();
+    let mut allows_empty = false;
+    let mut choice_combo = false;
     let mut multiline = false;
     let mut sensitive = false;
 
@@ -1563,20 +1605,101 @@ fn describe_pdf_form_field(
                 }
             }
         }
+        b"Btn" if flags & BUTTON_RADIO != 0 && flags & BUTTON_PUSH == 0 => {
+            kind = PdfFormFieldKind::Radio;
+            allows_empty = flags & BUTTON_NO_TOGGLE_TO_OFF == 0;
+            radio_options = pdf_radio_options(document, widget_ids.as_slice())?;
+            current_value = match value {
+                None | Some(Object::Null) => Value::Null,
+                Some(Object::Name(name)) if name == b"Off" => Value::Null,
+                Some(Object::Name(name)) => {
+                    let selected = radio_options
+                        .iter()
+                        .find(|option| option.appearance_state.as_slice() == name.as_slice());
+                    if selected.is_none() {
+                        supported = false;
+                        unsupported_reason = Some(
+                            "radio value does not match a unique widget appearance state"
+                                .to_string(),
+                        );
+                    }
+                    selected
+                        .map(|option| Value::String(option.value.clone()))
+                        .unwrap_or(Value::Null)
+                }
+                Some(_) => return Err(anyhow!("PDF radio form field value must be a name object")),
+            };
+            let selected_state = current_value.as_str().and_then(|selected| {
+                radio_options
+                    .iter()
+                    .find(|option| option.value == selected)
+                    .map(|option| option.appearance_state.as_slice())
+            });
+            for option in &radio_options {
+                let expected_state = if selected_state == Some(option.appearance_state.as_slice()) {
+                    option.appearance_state.as_slice()
+                } else {
+                    b"Off"
+                };
+                let appearance_state = document
+                    .get_object(option.widget_id)
+                    .and_then(Object::as_dict)
+                    .and_then(|widget| widget.get(b"AS"))
+                    .and_then(Object::as_name)
+                    .context("PDF radio widget is missing a valid AS state")?;
+                if appearance_state != expected_state {
+                    supported = false;
+                    unsupported_reason = Some(
+                        "radio field value and widget appearance states do not match".to_string(),
+                    );
+                }
+            }
+        }
         b"Btn" => {
             supported = false;
-            unsupported_reason = Some(
-                if flags & BUTTON_PUSH != 0 {
-                    "push buttons are not fillable values"
-                } else {
-                    "radio button groups are not yet supported"
-                }
-                .to_string(),
-            );
+            unsupported_reason = Some("push buttons are not fillable values".to_string());
         }
         b"Ch" => {
-            supported = false;
-            unsupported_reason = Some("choice fields are not yet supported".to_string());
+            kind = PdfFormFieldKind::Choice;
+            allows_empty = true;
+            choice_combo = flags & CHOICE_COMBO != 0;
+            let unsupported_choice_shape = if flags & CHOICE_EDIT != 0 {
+                supported = false;
+                unsupported_reason = Some("editable choice fields are unsupported".to_string());
+                true
+            } else if flags & CHOICE_MULTI_SELECT != 0 {
+                supported = false;
+                unsupported_reason = Some("multi-select choice fields are unsupported".to_string());
+                true
+            } else {
+                false
+            };
+            choice_options = pdf_choice_options(document, dictionary)?;
+            if choice_options.is_empty() {
+                supported = false;
+                unsupported_reason = Some("choice field is missing bounded options".to_string());
+            }
+            if !unsupported_choice_shape {
+                current_value = match value {
+                    None | Some(Object::Null) => Value::Null,
+                    Some(value) => {
+                        let selected = decode_pdf_form_text(value, "PDF choice form field value")?;
+                        if !choice_options.iter().any(|option| option.value == selected) {
+                            supported = false;
+                            unsupported_reason = Some(
+                                "choice value is not present in its exact option list".to_string(),
+                            );
+                        }
+                        Value::String(selected)
+                    }
+                };
+                validate_pdf_choice_indices(
+                    document,
+                    dictionary,
+                    current_value.as_str(),
+                    &choice_options,
+                )?;
+            }
         }
         b"Sig" => {
             supported = false;
@@ -1598,6 +1721,10 @@ fn describe_pdf_form_field(
         value_truncated,
         widget_ids,
         checkbox_on_state,
+        radio_options,
+        choice_options,
+        allows_empty,
+        choice_combo,
         max_length,
         multiline,
         sensitive,
@@ -1612,39 +1739,181 @@ fn pdf_checkbox_on_states(
 ) -> Result<BTreeSet<Vec<u8>>> {
     let mut states = BTreeSet::new();
     for widget_id in widget_ids {
-        let widget = document
-            .get_object(*widget_id)
-            .and_then(Object::as_dict)
-            .context("read PDF checkbox widget dictionary")?;
-        let appearance = widget
-            .get(b"AP")
-            .context("PDF checkbox widget is missing AP")?;
-        let appearance =
-            resolved_pdf_dictionary(document, appearance.clone(), "PDF checkbox widget AP")?;
-        let normal = appearance
-            .get(b"N")
-            .context("PDF checkbox widget is missing AP/N")?;
-        let normal = resolved_pdf_dictionary(document, normal.clone(), "PDF checkbox widget AP/N")?;
-        let off = normal
-            .get(b"Off")
-            .context("PDF checkbox widget AP/N is missing the Off state")?;
-        validate_pdf_appearance_stream(document, off, "PDF checkbox Off appearance")?;
-        let mut widget_on_states = BTreeSet::new();
-        for (state, value) in normal.iter() {
-            if state.as_slice() == b"Off" {
-                continue;
-            }
-            validate_pdf_appearance_stream(document, value, "PDF checkbox on appearance")?;
-            widget_on_states.insert(state.clone());
-            states.insert(state.clone());
-        }
-        if widget_on_states.len() != 1 {
-            return Err(anyhow!(
-                "each PDF checkbox widget must expose exactly one non-Off appearance state"
-            ));
-        }
+        states.insert(pdf_widget_on_state(document, *widget_id, "checkbox")?);
     }
     Ok(states)
+}
+
+fn pdf_radio_options(document: &Document, widget_ids: &[ObjectId]) -> Result<Vec<PdfRadioOption>> {
+    if widget_ids.is_empty() || widget_ids.len() > MAX_PDF_FORM_OPTIONS {
+        return Err(anyhow!(
+            "PDF radio field must contain between 1 and {MAX_PDF_FORM_OPTIONS} widgets"
+        ));
+    }
+    let mut seen = BTreeSet::new();
+    let mut options = Vec::with_capacity(widget_ids.len());
+    for widget_id in widget_ids {
+        let appearance_state = pdf_widget_on_state(document, *widget_id, "radio")?;
+        let value = decode_pdf_form_name(
+            appearance_state.as_slice(),
+            "PDF radio widget appearance state",
+        )?;
+        if !seen.insert(value.clone()) {
+            return Err(anyhow!(
+                "PDF radio widgets must expose unique non-Off appearance states"
+            ));
+        }
+        options.push(PdfRadioOption {
+            value,
+            appearance_state,
+            widget_id: *widget_id,
+        });
+    }
+    Ok(options)
+}
+
+fn pdf_widget_on_state(
+    document: &Document,
+    widget_id: ObjectId,
+    field_kind: &str,
+) -> Result<Vec<u8>> {
+    let widget = document
+        .get_object(widget_id)
+        .and_then(Object::as_dict)
+        .with_context(|| format!("read PDF {field_kind} widget dictionary"))?;
+    let appearance = widget
+        .get(b"AP")
+        .with_context(|| format!("PDF {field_kind} widget is missing AP"))?;
+    let appearance = resolved_pdf_dictionary(
+        document,
+        appearance.clone(),
+        format!("PDF {field_kind} widget AP").as_str(),
+    )?;
+    let normal = appearance
+        .get(b"N")
+        .with_context(|| format!("PDF {field_kind} widget is missing AP/N"))?;
+    let normal = resolved_pdf_dictionary(
+        document,
+        normal.clone(),
+        format!("PDF {field_kind} widget AP/N").as_str(),
+    )?;
+    let off = normal
+        .get(b"Off")
+        .with_context(|| format!("PDF {field_kind} widget AP/N is missing the Off state"))?;
+    validate_pdf_appearance_stream(
+        document,
+        off,
+        format!("PDF {field_kind} Off appearance").as_str(),
+    )?;
+    let mut on_state = None;
+    for (state, value) in normal.iter() {
+        if state.as_slice() == b"Off" {
+            continue;
+        }
+        if on_state.is_some() {
+            return Err(anyhow!(
+                "each PDF {field_kind} widget must expose exactly one non-Off appearance state"
+            ));
+        }
+        validate_pdf_appearance_stream(
+            document,
+            value,
+            format!("PDF {field_kind} on appearance").as_str(),
+        )?;
+        on_state = Some(state.clone());
+    }
+    on_state.ok_or_else(|| {
+        anyhow!("each PDF {field_kind} widget must expose exactly one non-Off appearance state")
+    })
+}
+
+fn pdf_choice_options(
+    document: &Document,
+    dictionary: &Dictionary,
+) -> Result<Vec<PdfChoiceOption>> {
+    let Ok(options) = dictionary.get(b"Opt") else {
+        return Ok(Vec::new());
+    };
+    let options = resolved_pdf_object(document, options.clone(), "PDF choice field Opt")?;
+    let options = options
+        .as_array()
+        .context("PDF choice field Opt must be an array")?;
+    if options.len() > MAX_PDF_FORM_OPTIONS {
+        return Err(anyhow!(
+            "PDF choice field exceeds the {MAX_PDF_FORM_OPTIONS} option safety limit"
+        ));
+    }
+    let mut seen = BTreeSet::new();
+    let mut parsed = Vec::with_capacity(options.len());
+    for (index, option) in options.iter().enumerate() {
+        let option = resolved_pdf_object(document, option.clone(), "PDF choice field option")?;
+        let (value, label) = match &option {
+            Object::Array(parts) if parts.len() == 2 => (
+                decode_pdf_form_option_text(&parts[0], "PDF choice export value")?,
+                decode_pdf_form_option_text(&parts[1], "PDF choice display value")?,
+            ),
+            Object::String(_, _) => {
+                let value = decode_pdf_form_option_text(&option, "PDF choice option")?;
+                (value.clone(), value)
+            }
+            _ => {
+                return Err(anyhow!(
+                    "PDF choice field options must be text strings or two-string arrays"
+                ))
+            }
+        };
+        if !seen.insert(value.clone()) {
+            return Err(anyhow!("PDF choice field export values must be unique"));
+        }
+        parsed.push(PdfChoiceOption {
+            value,
+            label,
+            index,
+        });
+    }
+    Ok(parsed)
+}
+
+fn validate_pdf_choice_indices(
+    document: &Document,
+    dictionary: &Dictionary,
+    selected: Option<&str>,
+    options: &[PdfChoiceOption],
+) -> Result<()> {
+    let Ok(indices) = dictionary.get(b"I") else {
+        return Ok(());
+    };
+    let indices = resolved_pdf_object(document, indices.clone(), "PDF choice field I")?;
+    let indices = indices
+        .as_array()
+        .context("PDF choice field I must be an array")?;
+    if selected.is_none() {
+        if indices.is_empty() {
+            return Ok(());
+        }
+        return Err(anyhow!(
+            "PDF choice field has selection indices without a selected value"
+        ));
+    }
+    if indices.len() != 1 {
+        return Err(anyhow!(
+            "single-select PDF choice field must contain exactly one selected index"
+        ));
+    }
+    let index = indices[0]
+        .as_i64()
+        .ok()
+        .and_then(|value| usize::try_from(value).ok())
+        .ok_or_else(|| anyhow!("PDF choice selected index must be a non-negative integer"))?;
+    let option = options
+        .get(index)
+        .ok_or_else(|| anyhow!("PDF choice selected index is outside its option list"))?;
+    if Some(option.value.as_str()) != selected {
+        return Err(anyhow!(
+            "PDF choice selected index does not match its selected value"
+        ));
+    }
+    Ok(())
 }
 
 fn validate_pdf_appearance_stream(document: &Document, value: &Object, label: &str) -> Result<()> {
@@ -1682,6 +1951,26 @@ fn pdf_form_summary(fields: &[PdfFormField], need_appearances: bool, xfa: bool) 
             } else {
                 field.current_value.clone()
             };
+            let options = match field.kind {
+                PdfFormFieldKind::Radio => field
+                    .radio_options
+                    .iter()
+                    .take(MAX_PDF_FORM_OPTION_PREVIEW)
+                    .map(|option| json!({"value":option.value,"label":option.value}))
+                    .collect::<Vec<_>>(),
+                PdfFormFieldKind::Choice => field
+                    .choice_options
+                    .iter()
+                    .take(MAX_PDF_FORM_OPTION_PREVIEW)
+                    .map(|option| json!({"value":option.value,"label":option.label}))
+                    .collect::<Vec<_>>(),
+                _ => Vec::new(),
+            };
+            let option_count = match field.kind {
+                PdfFormFieldKind::Radio => field.radio_options.len(),
+                PdfFormFieldKind::Choice => field.choice_options.len(),
+                _ => 0,
+            };
             json!({
                 "name": field.name,
                 "field_type": field.field_type,
@@ -1695,6 +1984,11 @@ fn pdf_form_summary(fields: &[PdfFormField], need_appearances: bool, xfa: bool) 
                 "fillable": field.supported,
                 "unsupported_reason": field.unsupported_reason,
                 "widget_count": field.widget_ids.len(),
+                "allows_empty": field.allows_empty,
+                "choice_style": (field.kind == PdfFormFieldKind::Choice).then_some(if field.choice_combo { "combo" } else { "list" }),
+                "option_count": option_count,
+                "options": options,
+                "options_truncated": option_count > MAX_PDF_FORM_OPTION_PREVIEW,
             })
         })
         .collect::<Vec<_>>();
@@ -1743,7 +2037,6 @@ fn required_pdf_form_updates(arguments: &Value) -> Result<Vec<PdfFormUpdate>> {
         let name = object
             .get("name")
             .and_then(Value::as_str)
-            .map(str::trim)
             .filter(|value| !value.is_empty())
             .ok_or_else(|| anyhow!("PDF form field name must be a non-empty string"))?;
         if name.chars().count() > MAX_PDF_FORM_NAME_CHARACTERS {
@@ -1756,14 +2049,14 @@ fn required_pdf_form_updates(arguments: &Value) -> Result<Vec<PdfFormUpdate>> {
         }
         let expected_value = object
             .get("expected_value")
-            .filter(|value| value.is_string() || value.is_boolean())
+            .filter(|value| value.is_string() || value.is_boolean() || value.is_null())
             .cloned()
-            .ok_or_else(|| anyhow!("expected_value must be a string or boolean"))?;
+            .ok_or_else(|| anyhow!("expected_value must be a string, boolean, or null"))?;
         let update_value = object
             .get("value")
-            .filter(|value| value.is_string() || value.is_boolean())
+            .filter(|value| value.is_string() || value.is_boolean() || value.is_null())
             .cloned()
-            .ok_or_else(|| anyhow!("value must be a string or boolean"))?;
+            .ok_or_else(|| anyhow!("value must be a string, boolean, or null"))?;
         for (label, value) in [
             ("expected_value", &expected_value),
             ("value", &update_value),
@@ -1818,6 +2111,48 @@ fn validate_pdf_form_update(field: &PdfFormField, update: &PdfFormUpdate) -> Res
                 return Err(anyhow!("PDF checkbox form field value must be a boolean"));
             }
         }
+        PdfFormFieldKind::Radio => {
+            if update.value.is_null() {
+                if !field.allows_empty {
+                    return Err(anyhow!(
+                        "PDF radio form field {} cannot be cleared because NoToggleToOff is set",
+                        field.name
+                    ));
+                }
+            } else {
+                let value = update.value.as_str().ok_or_else(|| {
+                    anyhow!("PDF radio form field value must be a string or null")
+                })?;
+                if !field
+                    .radio_options
+                    .iter()
+                    .any(|option| option.value == value)
+                {
+                    return Err(anyhow!(
+                        "PDF radio form field {} value is not one of its verified options",
+                        field.name
+                    ));
+                }
+            }
+        }
+        PdfFormFieldKind::Choice => {
+            if let Some(value) = update.value.as_str() {
+                if !field
+                    .choice_options
+                    .iter()
+                    .any(|option| option.value == value)
+                {
+                    return Err(anyhow!(
+                        "PDF choice form field {} value is not one of its exact options",
+                        field.name
+                    ));
+                }
+            } else if !update.value.is_null() {
+                return Err(anyhow!(
+                    "PDF choice form field value must be a string or null"
+                ));
+            }
+        }
         PdfFormFieldKind::Unsupported => {
             return Err(anyhow!("PDF form field is not safely fillable"))
         }
@@ -1867,13 +2202,21 @@ fn update_pdf_text_form_field(
         .and_then(Object::as_dict_mut)
         .context("read mutable PDF text form field")?;
     dictionary.set("V", text_string(value));
+    clear_pdf_form_widget_appearances(document, field, "text")
+}
+
+fn clear_pdf_form_widget_appearances(
+    document: &mut Document,
+    field: &PdfFormField,
+    field_kind: &str,
+) -> Result<()> {
     let mut appearance_ids = field.widget_ids.iter().copied().collect::<BTreeSet<_>>();
     appearance_ids.insert(field.object_id);
     for object_id in appearance_ids {
         let dictionary = document
             .get_object_mut(object_id)
             .and_then(Object::as_dict_mut)
-            .context("read mutable PDF text field widget")?;
+            .with_context(|| format!("read mutable PDF {field_kind} field widget"))?;
         dictionary.remove(b"AP");
         dictionary.remove(b"AS");
     }
@@ -1909,6 +2252,69 @@ fn update_pdf_checkbox_form_field(
     Ok(())
 }
 
+fn update_pdf_radio_form_field(
+    document: &mut Document,
+    field: &PdfFormField,
+    value: Option<&str>,
+) -> Result<()> {
+    let selected = value
+        .map(|value| {
+            field
+                .radio_options
+                .iter()
+                .find(|option| option.value == value)
+                .context("PDF radio value is missing its verified appearance state")
+        })
+        .transpose()?;
+    let state = selected
+        .map(|option| option.appearance_state.clone())
+        .unwrap_or_else(|| b"Off".to_vec());
+    document
+        .get_object_mut(field.object_id)
+        .and_then(Object::as_dict_mut)
+        .context("read mutable PDF radio field")?
+        .set("V", Object::Name(state.clone()));
+    for option in &field.radio_options {
+        let appearance_state = if selected
+            .is_some_and(|selected| selected.appearance_state == option.appearance_state)
+        {
+            option.appearance_state.clone()
+        } else {
+            b"Off".to_vec()
+        };
+        document
+            .get_object_mut(option.widget_id)
+            .and_then(Object::as_dict_mut)
+            .context("read mutable PDF radio widget")?
+            .set("AS", Object::Name(appearance_state));
+    }
+    Ok(())
+}
+
+fn update_pdf_choice_form_field(
+    document: &mut Document,
+    field: &PdfFormField,
+    value: Option<&str>,
+) -> Result<()> {
+    let dictionary = document
+        .get_object_mut(field.object_id)
+        .and_then(Object::as_dict_mut)
+        .context("read mutable PDF choice field")?;
+    if let Some(value) = value {
+        let option = field
+            .choice_options
+            .iter()
+            .find(|option| option.value == value)
+            .context("PDF choice value is missing its exact option")?;
+        dictionary.set("V", text_string(value));
+        dictionary.set("I", vec![Object::Integer(option.index as i64)]);
+    } else {
+        dictionary.remove(b"V");
+        dictionary.remove(b"I");
+    }
+    clear_pdf_form_widget_appearances(document, field, "choice")
+}
+
 fn set_pdf_acroform_need_appearances(
     document: &mut Document,
     acroform: &PdfAcroForm,
@@ -1934,6 +2340,37 @@ fn decode_pdf_form_text(value: &Object, label: &str) -> Result<String> {
     let decoded = decode_text_string(value).with_context(|| format!("decode {label}"))?;
     if decoded.chars().any(|character| character == '\0') {
         return Err(anyhow!("{label} contains a NUL character"));
+    }
+    Ok(decoded)
+}
+
+fn decode_pdf_form_option_text(value: &Object, label: &str) -> Result<String> {
+    let decoded = decode_pdf_form_text(value, label)?;
+    if decoded.chars().count() > MAX_PDF_FORM_OPTION_CHARACTERS {
+        return Err(anyhow!(
+            "{label} exceeds the {MAX_PDF_FORM_OPTION_CHARACTERS} character limit"
+        ));
+    }
+    if decoded.chars().any(char::is_control) {
+        return Err(anyhow!("{label} contains a control character"));
+    }
+    Ok(decoded)
+}
+
+fn decode_pdf_form_name(value: &[u8], label: &str) -> Result<String> {
+    let decoded = std::str::from_utf8(value)
+        .with_context(|| format!("{label} must use UTF-8-compatible bytes"))?
+        .to_string();
+    if decoded.is_empty() || decoded == "Off" {
+        return Err(anyhow!("{label} must be a non-Off name"));
+    }
+    if decoded.chars().count() > MAX_PDF_FORM_OPTION_CHARACTERS {
+        return Err(anyhow!(
+            "{label} exceeds the {MAX_PDF_FORM_OPTION_CHARACTERS} character limit"
+        ));
+    }
+    if decoded.chars().any(char::is_control) {
+        return Err(anyhow!("{label} contains a control character"));
     }
     Ok(decoded)
 }

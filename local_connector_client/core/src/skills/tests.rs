@@ -35,7 +35,7 @@ fn pdf_release_publishes_bounded_generation_and_editing_tools() {
         .into_iter()
         .find(|item| item.skill_id == "internal_skill_pdf")
         .expect("PDF catalog item");
-    assert_eq!(catalog_item.version, "1.10.0");
+    assert_eq!(catalog_item.version, "1.11.0");
     assert_eq!(
         catalog_item.permissions,
         vec!["workspace.read", "workspace.write"]
@@ -85,6 +85,8 @@ fn pdf_release_publishes_bounded_generation_and_editing_tools() {
     assert!(instructions.contains("visual_review_status=pending_model_review"));
     assert!(instructions.contains("exact `expected_value`"));
     assert!(instructions.contains("XFA"));
+    assert!(instructions.contains("NoToggleToOff"));
+    assert!(instructions.contains("multi-select choice fields"));
 }
 
 #[test]

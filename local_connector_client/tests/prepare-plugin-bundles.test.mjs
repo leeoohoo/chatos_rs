@@ -72,19 +72,19 @@ test('stages complete Plugin Bundles and rejects staged file tampering', () => {
       true,
     );
     const pdf = index.plugins.find((plugin) => plugin.name === 'pdf');
-    assert.equal(pdf.release_id, 'bundled-release-pdf-1-10-0');
-    assert.equal(pdf.version, '1.10.0');
-    assert.equal(pdf.published_at, '2026-07-26T14:00:00Z');
+    assert.equal(pdf.release_id, 'bundled-release-pdf-1-11-0');
+    assert.equal(pdf.version, '1.11.0');
+    assert.equal(pdf.published_at, '2026-07-26T15:00:00Z');
     assert.equal(
       pdf.skills[0].bundle_hash,
-      '7c0ab4a2a8fc12e94bf52d2458eec7cf0a2842835b765fc732b3735db8c601bd',
+      '5c3607a91ecefd6778f30cbf9e2f2b59febc129f7fe6bf73d2e076499d4d74ad',
     );
     assert.equal(
       fs.existsSync(path.join(
         output,
         'internal',
         'pdf',
-        '1.10.0',
+        '1.11.0',
         'skills',
         'pdf',
         'SKILL.md',
