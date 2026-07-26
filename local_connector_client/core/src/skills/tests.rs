@@ -135,14 +135,14 @@ fn spreadsheets_release_publishes_rendering_multi_sheet_and_safe_range_editing_t
 }
 
 #[test]
-fn excel_live_control_release_gates_exact_snapshot_range_writes_on_approval() {
+fn excel_live_control_release_gates_content_and_number_format_writes_on_approval() {
     let catalog_item = internal_skill_catalog()
         .expect("catalog")
         .skills
         .into_iter()
         .find(|item| item.skill_id == "internal_skill_excel_live_control")
         .expect("Excel Live Control catalog item");
-    assert_eq!(catalog_item.version, "1.3.0");
+    assert_eq!(catalog_item.version, "1.4.0");
     assert_eq!(catalog_item.implementation_status, "ready");
     assert!(!catalog_item.requires_workspace);
     assert_eq!(catalog_item.permissions, vec!["office.excel.control"]);
@@ -184,10 +184,13 @@ fn excel_live_control_release_gates_exact_snapshot_range_writes_on_approval() {
         true,
     )
     .expect("approval-gated Excel Live Control tools");
-    assert_eq!(approved_tools.len(), 5);
+    assert_eq!(approved_tools.len(), 6);
     assert!(approved_tools
         .iter()
         .any(|tool| { tool.get("name").and_then(Value::as_str) == Some("excel_write_range") }));
+    assert!(approved_tools.iter().any(|tool| {
+        tool.get("name").and_then(Value::as_str) == Some("excel_set_number_format")
+    }));
     let unapproved_tools = native::plugin_tool_definitions(
         "internal_skill_excel_live_control",
         &LocalState::default(),
@@ -200,20 +203,30 @@ fn excel_live_control_release_gates_exact_snapshot_range_writes_on_approval() {
     assert!(!unapproved_tools
         .iter()
         .any(|tool| { tool.get("name").and_then(Value::as_str) == Some("excel_write_range") }));
+    assert!(!unapproved_tools.iter().any(|tool| {
+        tool.get("name").and_then(Value::as_str) == Some("excel_set_number_format")
+    }));
     assert!(native::requires_interactive_approval(
         "internal_skill_excel_live_control",
         "excel_write_range"
     ));
+    assert!(native::requires_interactive_approval(
+        "internal_skill_excel_live_control",
+        "excel_set_number_format"
+    ));
 
     let instructions = internal_skill_instructions("internal_skill_excel_live_control")
         .expect("Excel Live Control instructions");
-    assert!(instructions.contains("approval-gated, exact-snapshot-bound cell-content replacement"));
+    assert!(instructions.contains("approval-gated, exact-snapshot-bound number-format replacement"));
+    assert!(instructions.contains("seven fixed presets"));
+    assert!(instructions.contains("arbitrary custom format text is not returned"));
     assert!(instructions.contains("never placed in process arguments"));
     assert!(instructions.contains("Never launch, activate, select, close, save, export, reopen"));
     assert!(instructions.contains("exact `worksheet_id`"));
     assert!(instructions.contains("at most 256 cells"));
     assert!(instructions.contains("`range_snapshot_id`"));
-    assert!(instructions.contains("attempts to restore every target cell"));
+    assert!(instructions
+        .contains("attempts to restore the exact target contents or exact prior number formats"));
     assert!(instructions.contains("not a workbook transaction"));
     assert!(instructions.contains("does not complete live workbook editing"));
 }
@@ -725,7 +738,7 @@ fn ready_bundle_v2_fingerprint_matches_plugin_management_seed() {
         .join("\n");
     assert_eq!(
         hex::encode(Sha256::digest(rows.as_bytes())),
-        "841d1f625eff8cdc1bbe52dda0b6102494651917e2972a7fa0bb6789b8d66654"
+        "f38eed03d5373870fa520f15643e7a57332e0cc01d2766abfb763014a7cf4b70"
     );
 }
 
@@ -740,7 +753,7 @@ fn all_28_bundled_skill_fingerprints_match_plugin_management_seed() {
         .join("\n");
     assert_eq!(
         hex::encode(Sha256::digest(rows.as_bytes())),
-        "530795e0bf61dfb2f47bc647b310f2e1c5cfa35b8e390c3603e76e17a7ce7b66"
+        "7a70c58ef4e27602ce728b55ca04a0c57e484d13be153f7f7c793a812f931d19"
     );
 }
 

@@ -218,7 +218,7 @@ fn internal_skill_manifest(skill_id: &str) -> Option<&'static str> {
             "../../../../local_connector_client/skill_bundles/internal/computer-use/1.15.0/skill.json"
         )),
         "internal_skill_excel_live_control" => Some(include_str!(
-            "../../../../local_connector_client/skill_bundles/internal/excel-live-control/1.3.0/skill.json"
+            "../../../../local_connector_client/skill_bundles/internal/excel-live-control/1.4.0/skill.json"
         )),
         _ => None,
     }
@@ -308,7 +308,7 @@ fn internal_skill_instructions(skill_id: &str) -> Option<&'static str> {
             "../../../../local_connector_client/skill_bundles/internal/computer-use/1.15.0/instructions.md"
         )),
         "internal_skill_excel_live_control" => Some(include_str!(
-            "../../../../local_connector_client/skill_bundles/internal/excel-live-control/1.3.0/instructions.md"
+            "../../../../local_connector_client/skill_bundles/internal/excel-live-control/1.4.0/instructions.md"
         )),
         _ => None,
     }
@@ -338,7 +338,7 @@ mod tests {
             .join("\n");
         assert_eq!(
             hex::encode(Sha256::digest(rows.as_bytes())),
-            "841d1f625eff8cdc1bbe52dda0b6102494651917e2972a7fa0bb6789b8d66654"
+            "f38eed03d5373870fa520f15643e7a57332e0cc01d2766abfb763014a7cf4b70"
         );
     }
 
@@ -354,7 +354,7 @@ mod tests {
             .join("\n");
         assert_eq!(
             hex::encode(Sha256::digest(rows.as_bytes())),
-            "530795e0bf61dfb2f47bc647b310f2e1c5cfa35b8e390c3603e76e17a7ce7b66"
+            "7a70c58ef4e27602ce728b55ca04a0c57e484d13be153f7f7c793a812f931d19"
         );
     }
 }

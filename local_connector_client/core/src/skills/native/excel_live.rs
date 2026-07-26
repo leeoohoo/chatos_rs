@@ -24,6 +24,7 @@ const MAX_WORKSHEET_NAME_CHARACTERS: usize = 64;
 const MAX_IDENTITY_SOURCE_CHARACTERS: usize = 4096;
 const MAX_RANGE_CELLS: usize = 256;
 const MAX_CELL_TEXT_CHARACTERS: usize = 128;
+const MAX_NUMBER_FORMAT_CHARACTERS: usize = 128;
 const MAX_SNAPSHOT_ID_CHARACTERS: usize = 96;
 const MAX_EXCEL_ROWS: usize = 1_048_576;
 const MAX_EXCEL_COLUMNS: usize = 16_384;
@@ -73,6 +74,16 @@ struct RangeWriteInput {
     range: A1Range,
     expected_snapshot_id: String,
     cells: Vec<WriteCell>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct RangeFormatInput {
+    workbook_id: String,
+    worksheet_id: String,
+    range: A1Range,
+    expected_snapshot_id: String,
+    preset: String,
+    number_format: String,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -394,6 +405,16 @@ const MACOS_RANGE_READ_SCRIPT: &str = r#"
     };
   }
 
+  function boundedIdentityText(raw) {
+    const source = String(raw);
+    const lossy = /[\u0000-\u001f\u007f]/.test(source);
+    const clean = Array.from(source.replace(/[\u0000-\u001f\u007f]/g, "\ufffd"));
+    return {
+      value: clean.slice(0, 128).join(""),
+      truncated: lossy || clean.length > 128
+    };
+  }
+
   function externalFormula(formula) {
     return /\[[^\]]+\][^!]*!/i.test(formula) ||
       /(?:https?|file):\/\//i.test(formula) ||
@@ -457,6 +478,13 @@ const MACOS_RANGE_READ_SCRIPT: &str = r#"
         try { rawFormula = cell.formula(); } catch (_) {}
       }
     }
+    let numberFormat = { value: null, truncated: false };
+    let numberFormatUnavailable = false;
+    try {
+      const rawNumberFormat = cell.numberFormat();
+      if (rawNumberFormat === null || rawNumberFormat === undefined) numberFormatUnavailable = true;
+      else numberFormat = boundedIdentityText(rawNumberFormat);
+    } catch (_) { numberFormatUnavailable = true; }
     let rawValue = null;
     try { rawValue = cell.value2(); } catch (_) {}
     let rawDisplay = "";
@@ -489,6 +517,9 @@ const MACOS_RANGE_READ_SCRIPT: &str = r#"
       formula_truncated: formulaTruncated,
       formula_hidden: formulaHidden,
       formula_external_reference: formulaExternalReference,
+      number_format: numberFormat.value,
+      number_format_truncated: numberFormat.truncated,
+      number_format_unavailable: numberFormatUnavailable,
       is_error: isError
     });
   }
@@ -533,6 +564,15 @@ function Convert-BoundedText($raw) {
   $clean = ([string]$raw) -replace '[\x00-\x1F\x7F]', [char]0xFFFD
   $truncated = $clean.Length -gt 128
   if ($truncated) { $clean = $clean.Substring(0, 128) }
+  return [ordered]@{ value = $clean; truncated = $truncated }
+}
+
+function Convert-BoundedIdentityText($raw) {
+  $source = [string]$raw
+  $lossy = $source -match '[\x00-\x1F\x7F]'
+  $clean = $source -replace '[\x00-\x1F\x7F]', [char]0xFFFD
+  $truncated = $lossy -or $clean.Length -gt 128
+  if ($clean.Length -gt 128) { $clean = $clean.Substring(0, 128) }
   return [ordered]@{ value = $clean; truncated = $truncated }
 }
 
@@ -596,6 +636,12 @@ for ($row = 1; $row -le [int]$request.row_count; $row += 1) {
         try { $rawFormula = $cell.Formula } catch {}
       }
     }
+    $numberFormat = [ordered]@{ value = $null; truncated = $false }
+    $numberFormatUnavailable = $false
+    try {
+      if ($null -eq $cell.NumberFormat) { $numberFormatUnavailable = $true }
+      else { $numberFormat = Convert-BoundedIdentityText $cell.NumberFormat }
+    } catch { $numberFormatUnavailable = $true }
     try { $rawValue = $cell.Value2 } catch { $rawValue = $null }
     try { $rawDisplay = [string]$cell.Text } catch { $rawDisplay = '' }
     $displayed = Convert-BoundedText $rawDisplay
@@ -642,6 +688,9 @@ for ($row = 1; $row -le [int]$request.row_count; $row += 1) {
       formula_truncated = $formulaTruncated
       formula_hidden = $formulaHidden
       formula_external_reference = $formulaExternalReference
+      number_format = $numberFormat.value
+      number_format_truncated = $numberFormat.truncated
+      number_format_unavailable = $numberFormatUnavailable
       is_error = $isError
     }
   }
@@ -686,6 +735,16 @@ const MACOS_RANGE_WRITE_SCRIPT: &str = r#"
   function boundedText(raw) {
     const clean = Array.from(String(raw).replace(/[\u0000-\u001f\u007f]/g, "\ufffd"));
     return { value: clean.slice(0, 128).join(""), truncated: clean.length > 128 };
+  }
+
+  function boundedIdentityText(raw) {
+    const source = String(raw);
+    const lossy = /[\u0000-\u001f\u007f]/.test(source);
+    const clean = Array.from(source.replace(/[\u0000-\u001f\u007f]/g, "\ufffd"));
+    return {
+      value: clean.slice(0, 128).join(""),
+      truncated: lossy || clean.length > 128
+    };
   }
 
   function externalFormula(formula) {
@@ -773,6 +832,13 @@ const MACOS_RANGE_WRITE_SCRIPT: &str = r#"
         try { rawFormula = cell.formula(); } catch (_) {}
       }
     }
+    let numberFormat = { value: null, truncated: false };
+    let numberFormatUnavailable = false;
+    try {
+      const rawNumberFormat = cell.numberFormat();
+      if (rawNumberFormat === null || rawNumberFormat === undefined) numberFormatUnavailable = true;
+      else numberFormat = boundedIdentityText(rawNumberFormat);
+    } catch (_) { numberFormatUnavailable = true; }
     let rawValue = null;
     try { rawValue = cell.value2(); } catch (_) {}
     let rawDisplay = "";
@@ -807,6 +873,9 @@ const MACOS_RANGE_WRITE_SCRIPT: &str = r#"
       formula_truncated: formulaTruncated,
       formula_hidden: formulaHidden,
       formula_external_reference: formulaExternalReference,
+      number_format: numberFormat.value,
+      number_format_truncated: numberFormat.truncated,
+      number_format_unavailable: numberFormatUnavailable,
       is_error: isError,
       status: status
     };
@@ -833,7 +902,27 @@ const MACOS_RANGE_WRITE_SCRIPT: &str = r#"
       expected.formula_truncated === actual.formula_truncated &&
       expected.formula_hidden === actual.formula_hidden &&
       expected.formula_external_reference === actual.formula_external_reference &&
+      expected.number_format === actual.number_format &&
+      expected.number_format_truncated === actual.number_format_truncated &&
+      expected.number_format_unavailable === actual.number_format_unavailable &&
       expected.status === actual.status;
+  }
+
+  function sameContent(expected, actual) {
+    return sameScalar(expected.value, actual.value) &&
+      expected.value_truncated === actual.value_truncated &&
+      expected.has_formula === actual.has_formula &&
+      expected.formula === actual.formula &&
+      expected.formula_truncated === actual.formula_truncated &&
+      expected.formula_hidden === actual.formula_hidden &&
+      expected.formula_external_reference === actual.formula_external_reference &&
+      expected.status === actual.status;
+  }
+
+  function sameFormat(expected, actual) {
+    return expected.number_format === actual.number_format &&
+      expected.number_format_truncated === actual.number_format_truncated &&
+      expected.number_format_unavailable === actual.number_format_unavailable;
   }
 
   function writeMatches(write, actual) {
@@ -886,6 +975,18 @@ const MACOS_RANGE_WRITE_SCRIPT: &str = r#"
     }
   }
 
+  function assignNumberFormat(cell, numberFormat) {
+    cell.numberFormat = numberFormat;
+  }
+
+  function restoreNumberFormat(cell, previous) {
+    if (previous.number_format_unavailable || previous.number_format_truncated ||
+        previous.number_format === null || previous.number_format === undefined) {
+      throw new Error("previous Excel number format is not safely restorable");
+    }
+    cell.numberFormat = previous.number_format;
+  }
+
   function result(status, cells) {
     return JSON.stringify({
       schema_version: 1,
@@ -907,9 +1008,20 @@ const MACOS_RANGE_WRITE_SCRIPT: &str = r#"
 
   const selected = selectAndVerify();
   const exact = exactRange(selected.worksheet);
-  if (!Array.isArray(request.expected_cells) || request.expected_cells.length !== request.cell_count ||
-      !Array.isArray(request.write_cells) || request.write_cells.length !== request.cell_count) {
-    throw new Error("Excel write request cell count is invalid");
+  if (!Array.isArray(request.expected_cells) || request.expected_cells.length !== request.cell_count) {
+    throw new Error("Excel write request snapshot cell count is invalid");
+  }
+  if (request.mutation_kind === "content" &&
+      (!Array.isArray(request.write_cells) || request.write_cells.length !== request.cell_count)) {
+    throw new Error("Excel content write request cell count is invalid");
+  }
+  if (request.mutation_kind === "number_format" &&
+      (typeof request.number_format !== "string" || request.number_format.length < 1 ||
+       request.number_format.length > 128)) {
+    throw new Error("Excel number format request is invalid");
+  }
+  if (request.mutation_kind !== "content" && request.mutation_kind !== "number_format") {
+    throw new Error("Excel mutation kind is unsupported");
   }
   const before = readCells(exact.cells);
   for (let index = 0; index < exact.cells.length; index += 1) {
@@ -924,22 +1036,37 @@ const MACOS_RANGE_WRITE_SCRIPT: &str = r#"
   try {
     for (let index = 0; index < exact.cells.length; index += 1) {
       mutated = true;
-      assignCell(exact.cells[index], request.write_cells[index]);
+      if (request.mutation_kind === "content") {
+        assignCell(exact.cells[index], request.write_cells[index]);
+      } else {
+        assignNumberFormat(exact.cells[index], request.number_format);
+      }
     }
     selectAndVerify();
     const written = readCells(exact.cells);
     for (let index = 0; index < written.length; index += 1) {
-      if (!writeMatches(request.write_cells[index], written[index])) {
-        throw new Error("Excel write verification failed");
+      if (request.mutation_kind === "content") {
+        if (!writeMatches(request.write_cells[index], written[index]) ||
+            !sameFormat(before[index], written[index])) {
+          throw new Error("Excel content write verification failed");
+        }
+      } else if (!sameContent(before[index], written[index]) ||
+                 written[index].number_format !== request.number_format ||
+                 written[index].number_format_truncated ||
+                 written[index].number_format_unavailable) {
+        throw new Error("Excel number format verification failed");
       }
     }
     selectAndVerify();
-    return result("written", written);
+    return result(request.mutation_kind === "content" ? "written" : "formatted", written);
   } catch (_) {
     if (!mutated) throw new Error("Excel write failed before mutation");
     try {
       selectAndVerify();
-      for (let index = 0; index < exact.cells.length; index += 1) restoreCell(exact.cells[index], before[index]);
+      for (let index = 0; index < exact.cells.length; index += 1) {
+        if (request.mutation_kind === "content") restoreCell(exact.cells[index], before[index]);
+        else restoreNumberFormat(exact.cells[index], before[index]);
+      }
       selectAndVerify();
       const restored = readCells(exact.cells);
       for (let index = 0; index < restored.length; index += 1) {
@@ -976,6 +1103,15 @@ function Convert-BoundedText($raw) {
   $clean = ([string]$raw) -replace '[\x00-\x1F\x7F]', [char]0xFFFD
   $truncated = $clean.Length -gt 128
   if ($truncated) { $clean = $clean.Substring(0, 128) }
+  return [ordered]@{ value = $clean; truncated = $truncated }
+}
+
+function Convert-BoundedIdentityText($raw) {
+  $source = [string]$raw
+  $lossy = $source -match '[\x00-\x1F\x7F]'
+  $clean = $source -replace '[\x00-\x1F\x7F]', [char]0xFFFD
+  $truncated = $lossy -or $clean.Length -gt 128
+  if ($clean.Length -gt 128) { $clean = $clean.Substring(0, 128) }
   return [ordered]@{ value = $clean; truncated = $truncated }
 }
 
@@ -1050,6 +1186,12 @@ function Get-CellState($cell, [int]$rowOffset, [int]$columnOffset) {
       try { $rawFormula = $cell.Formula } catch {}
     }
   }
+  $numberFormat = [ordered]@{ value = $null; truncated = $false }
+  $numberFormatUnavailable = $false
+  try {
+    if ($null -eq $cell.NumberFormat) { $numberFormatUnavailable = $true }
+    else { $numberFormat = Convert-BoundedIdentityText $cell.NumberFormat }
+  } catch { $numberFormatUnavailable = $true }
   try { $rawValue = $cell.Value2 } catch { $rawValue = $null }
   try { $rawDisplay = [string]$cell.Text } catch { $rawDisplay = '' }
   $displayed = Convert-BoundedText $rawDisplay
@@ -1098,6 +1240,9 @@ function Get-CellState($cell, [int]$rowOffset, [int]$columnOffset) {
     formula_truncated = $formulaTruncated
     formula_hidden = $formulaHidden
     formula_external_reference = $formulaExternalReference
+    number_format = $numberFormat.value
+    number_format_truncated = $numberFormat.truncated
+    number_format_unavailable = $numberFormatUnavailable
     is_error = $isError
     status = $status
   }
@@ -1138,7 +1283,30 @@ function Test-ExpectedCell($expected, $actual) {
     [bool]$expected.formula_truncated -eq [bool]$actual.formula_truncated -and
     [bool]$expected.formula_hidden -eq [bool]$actual.formula_hidden -and
     [bool]$expected.formula_external_reference -eq [bool]$actual.formula_external_reference -and
+    (($null -eq $expected.number_format -and $null -eq $actual.number_format) -or
+      [string]$expected.number_format -ceq [string]$actual.number_format) -and
+    [bool]$expected.number_format_truncated -eq [bool]$actual.number_format_truncated -and
+    [bool]$expected.number_format_unavailable -eq [bool]$actual.number_format_unavailable -and
     [string]$expected.status -ceq [string]$actual.status
+}
+
+function Test-SameContent($expected, $actual) {
+  return (Test-SameScalar $expected.value $actual.value) -and
+    [bool]$expected.value_truncated -eq [bool]$actual.value_truncated -and
+    [bool]$expected.has_formula -eq [bool]$actual.has_formula -and
+    (($null -eq $expected.formula -and $null -eq $actual.formula) -or
+      [string]$expected.formula -ceq [string]$actual.formula) -and
+    [bool]$expected.formula_truncated -eq [bool]$actual.formula_truncated -and
+    [bool]$expected.formula_hidden -eq [bool]$actual.formula_hidden -and
+    [bool]$expected.formula_external_reference -eq [bool]$actual.formula_external_reference -and
+    [string]$expected.status -ceq [string]$actual.status
+}
+
+function Test-SameFormat($expected, $actual) {
+  return (($null -eq $expected.number_format -and $null -eq $actual.number_format) -or
+      [string]$expected.number_format -ceq [string]$actual.number_format) -and
+    [bool]$expected.number_format_truncated -eq [bool]$actual.number_format_truncated -and
+    [bool]$expected.number_format_unavailable -eq [bool]$actual.number_format_unavailable
 }
 
 function Test-WriteMatches($write, $actual) {
@@ -1194,6 +1362,18 @@ function Restore-Cell($cell, $previous) {
   }
 }
 
+function Set-NumberFormat($cell, [string]$numberFormat) {
+  $cell.NumberFormat = $numberFormat
+}
+
+function Restore-NumberFormat($cell, $previous) {
+  if ([bool]$previous.number_format_unavailable -or [bool]$previous.number_format_truncated -or
+      $null -eq $previous.number_format) {
+    throw 'previous Excel number format is not safely restorable'
+  }
+  $cell.NumberFormat = [string]$previous.number_format
+}
+
 function New-Result([string]$status, $cells, $request) {
   return [ordered]@{
     schema_version = 1
@@ -1219,9 +1399,22 @@ $excel = [Runtime.InteropServices.Marshal]::GetActiveObject('Excel.Application')
 $selected = Select-AndVerify $excel $request
 $range = Get-ExactRange $selected.worksheet $request
 $expectedCells = @($request.expected_cells)
-$writeCells = @($request.write_cells)
-if ($expectedCells.Count -ne [int]$request.cell_count -or $writeCells.Count -ne [int]$request.cell_count) {
-  throw 'Excel write request cell count is invalid'
+if ($expectedCells.Count -ne [int]$request.cell_count) {
+  throw 'Excel write request snapshot cell count is invalid'
+}
+$writeCells = @()
+if ([string]$request.mutation_kind -ceq 'content') {
+  $writeCells = @($request.write_cells)
+  if ($writeCells.Count -ne [int]$request.cell_count) {
+    throw 'Excel content write request cell count is invalid'
+  }
+} elseif ([string]$request.mutation_kind -ceq 'number_format') {
+  if ($null -eq $request.number_format -or [string]$request.number_format -eq '' -or
+      ([string]$request.number_format).Length -gt 128) {
+    throw 'Excel number format request is invalid'
+  }
+} else {
+  throw 'Excel mutation kind is unsupported'
 }
 $before = @(Read-Cells $range $request)
 $position = 0
@@ -1243,19 +1436,32 @@ try {
   for ($row = 1; $row -le [int]$request.row_count; $row += 1) {
     for ($column = 1; $column -le [int]$request.column_count; $column += 1) {
       $mutated = $true
-      Set-WriteCell ($range.Cells.Item($row, $column)) ($writeCells[$position])
+      if ([string]$request.mutation_kind -ceq 'content') {
+        Set-WriteCell ($range.Cells.Item($row, $column)) ($writeCells[$position])
+      } else {
+        Set-NumberFormat ($range.Cells.Item($row, $column)) ([string]$request.number_format)
+      }
       $position += 1
     }
   }
   $null = Select-AndVerify $excel $request
   $written = @(Read-Cells $range $request)
   for ($index = 0; $index -lt $written.Count; $index += 1) {
-    if (-not (Test-WriteMatches $writeCells[$index] $written[$index])) {
-      throw 'Excel write verification failed'
+    if ([string]$request.mutation_kind -ceq 'content') {
+      if (-not (Test-WriteMatches $writeCells[$index] $written[$index]) -or
+          -not (Test-SameFormat $before[$index] $written[$index])) {
+        throw 'Excel content write verification failed'
+      }
+    } elseif (-not (Test-SameContent $before[$index] $written[$index]) -or
+              [string]$written[$index].number_format -cne [string]$request.number_format -or
+              [bool]$written[$index].number_format_truncated -or
+              [bool]$written[$index].number_format_unavailable) {
+      throw 'Excel number format verification failed'
     }
   }
   $null = Select-AndVerify $excel $request
-  New-Result 'written' $written $request | ConvertTo-Json -Depth 8 -Compress
+  $status = if ([string]$request.mutation_kind -ceq 'content') { 'written' } else { 'formatted' }
+  New-Result $status $written $request | ConvertTo-Json -Depth 8 -Compress
   exit 0
 } catch {
   if (-not $mutated) { throw }
@@ -1264,7 +1470,11 @@ try {
     $position = 0
     for ($row = 1; $row -le [int]$request.row_count; $row += 1) {
       for ($column = 1; $column -le [int]$request.column_count; $column += 1) {
-        Restore-Cell ($range.Cells.Item($row, $column)) ($before[$position])
+        if ([string]$request.mutation_kind -ceq 'content') {
+          Restore-Cell ($range.Cells.Item($row, $column)) ($before[$position])
+        } else {
+          Restore-NumberFormat ($range.Cells.Item($row, $column)) ($before[$position])
+        }
         $position += 1
       }
     }
@@ -1324,7 +1534,7 @@ pub(super) fn tool_definitions(include_write: bool) -> Vec<Value> {
         }),
         json!({
             "name": "excel_read_range",
-            "description": "Read up to 256 cells from one exact worksheet and canonical A1 range in an already-open Microsoft Excel workbook. Returns bounded scalar values, displayed text, and non-hidden non-external formulas without activating, recalculating, or mutating Excel.",
+            "description": "Read up to 256 cells from one exact worksheet and canonical A1 range in an already-open Microsoft Excel workbook. Returns bounded scalar values, displayed text, non-hidden non-external formulas, and a safe number-format classification without activating, recalculating, or mutating Excel.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -1355,7 +1565,7 @@ pub(super) fn tool_definitions(include_write: bool) -> Vec<Value> {
     if include_write {
         tools.push(json!({
             "name": "excel_write_range",
-            "description": "After mandatory interactive approval, replace the contents of up to 256 exact visible, unprotected cells in an already-open writable Excel workbook. Requires the exact optimistic snapshot ID from a fresh excel_read_range result; writes only typed blanks, scalar constants, or strictly allowlisted local formulas, verifies the result, and attempts verified rollback on partial failure. Does not save, export, activate, select, format, or explicitly recalculate Excel.",
+            "description": "After mandatory interactive approval, replace the contents of up to 256 exact visible, unprotected cells in an already-open writable Excel workbook. Requires the exact optimistic snapshot ID from a fresh excel_read_range result; writes only typed blanks, scalar constants, or strictly allowlisted local formulas, verifies content and number-format preservation, and attempts verified rollback on partial failure. Does not save, export, activate, select, format, or explicitly recalculate Excel.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -1427,39 +1637,91 @@ pub(super) fn tool_definitions(include_write: bool) -> Vec<Value> {
                 "additionalProperties": false
             }
         }));
+        tools.push(json!({
+            "name": "excel_set_number_format",
+            "description": "After mandatory interactive approval, apply one fixed allowlisted number-format preset to up to 256 exact visible, unprotected cells in an already-open writable Excel workbook. Requires the exact snapshot ID from a fresh excel_read_range, preserves cell contents and formulas, verifies the result, and attempts exact format rollback on partial failure. Does not save, export, activate, select, or explicitly recalculate Excel.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "workbook_id": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 96,
+                        "description": "Exact opaque workbook identity from the current Excel discovery snapshot."
+                    },
+                    "worksheet_id": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 96,
+                        "description": "Exact opaque worksheet identity from the current workbook inspection."
+                    },
+                    "range": {
+                        "type": "string",
+                        "pattern": "^[A-Z]{1,3}[1-9][0-9]*(?::[A-Z]{1,3}[1-9][0-9]*)?$",
+                        "maxLength": 32,
+                        "description": "The exact canonical uppercase A1 range used for the fresh read snapshot."
+                    },
+                    "expected_snapshot_id": {
+                        "type": "string",
+                        "pattern": "^excel_range_[0-9a-f]{64}$",
+                        "maxLength": 96,
+                        "description": "Exact range_snapshot_id returned by a fresh excel_read_range for the same workbook, worksheet, and range."
+                    },
+                    "preset": {
+                        "type": "string",
+                        "enum": ["general", "integer", "decimal_2", "percent_2", "date", "datetime", "text"],
+                        "description": "Fixed locale-independent number-format preset; arbitrary custom format strings are not accepted."
+                    }
+                },
+                "required": ["workbook_id", "worksheet_id", "range", "expected_snapshot_id", "preset"],
+                "additionalProperties": false
+            }
+        }));
     }
     tools
 }
 
 pub(super) fn requires_interactive_approval(operation: &str) -> bool {
-    operation == "excel_write_range"
+    matches!(operation, "excel_write_range" | "excel_set_number_format")
 }
 
 pub(super) fn approval_command(
     operation: &str,
     arguments: &Value,
 ) -> Result<(String, Vec<String>)> {
-    if operation != "excel_write_range" {
-        bail!("Excel Live Control operation does not support interactive approval");
-    }
-    let input = parse_range_write_input(arguments)?;
-    let summary = write_cell_summary(input.cells.as_slice())?;
-    Ok((
-        "chatos-excel-live".to_string(),
-        vec![
-            "write_range".to_string(),
-            format!("workbook_id={}", input.workbook_id),
-            format!("worksheet_id={}", input.worksheet_id),
-            format!("range={}", input.range.canonical),
-            format!("expected_snapshot_id={}", input.expected_snapshot_id),
-            format!("cell_count={}", input.range.cell_count),
-            format!("blank_cells={}", summary.blank_cells),
-            format!("value_cells={}", summary.value_cells),
-            format!("formula_cells={}", summary.formula_cells),
-            format!("text_characters={}", summary.text_characters),
-            format!("content_sha256={}", summary.content_sha256),
-        ],
-    ))
+    let args = match operation {
+        "excel_write_range" => {
+            let input = parse_range_write_input(arguments)?;
+            let summary = write_cell_summary(input.cells.as_slice())?;
+            vec![
+                "write_range".to_string(),
+                format!("workbook_id={}", input.workbook_id),
+                format!("worksheet_id={}", input.worksheet_id),
+                format!("range={}", input.range.canonical),
+                format!("expected_snapshot_id={}", input.expected_snapshot_id),
+                format!("cell_count={}", input.range.cell_count),
+                format!("blank_cells={}", summary.blank_cells),
+                format!("value_cells={}", summary.value_cells),
+                format!("formula_cells={}", summary.formula_cells),
+                format!("text_characters={}", summary.text_characters),
+                format!("content_sha256={}", summary.content_sha256),
+            ]
+        }
+        "excel_set_number_format" => {
+            let input = parse_range_format_input(arguments)?;
+            vec![
+                "set_number_format".to_string(),
+                format!("workbook_id={}", input.workbook_id),
+                format!("worksheet_id={}", input.worksheet_id),
+                format!("range={}", input.range.canonical),
+                format!("expected_snapshot_id={}", input.expected_snapshot_id),
+                format!("cell_count={}", input.range.cell_count),
+                format!("preset={}", input.preset),
+            ]
+        }
+        _ => bail!("Excel Live Control operation does not support interactive approval"),
+    };
+    Ok(("chatos-excel-live".to_string(), args))
 }
 
 pub(super) fn execute_approved(
@@ -1468,14 +1730,18 @@ pub(super) fn execute_approved(
     approved_command_args: Option<&[String]>,
     action_cancelled: Option<&AtomicBool>,
 ) -> Result<Value> {
-    if operation != "excel_write_range" {
+    if !requires_interactive_approval(operation) {
         bail!("Excel Live Control operation does not support approved execution");
     }
     let (_, expected) = approval_command(operation, arguments)?;
     if approved_command_args != Some(expected.as_slice()) {
         bail!("approved Excel write no longer matches the exact reviewed arguments");
     }
-    execute_range_write(arguments, action_cancelled)
+    match operation {
+        "excel_write_range" => execute_range_write(arguments, action_cancelled),
+        "excel_set_number_format" => execute_range_format_write(arguments, action_cancelled),
+        _ => unreachable!("approval-gated Excel operation was already checked"),
+    }
 }
 
 pub(super) fn dependency_error() -> Option<String> {
@@ -1495,8 +1761,10 @@ pub(super) fn dependency_error() -> Option<String> {
 }
 
 pub(super) fn execute(operation: &str, arguments: &Value) -> Result<Value> {
-    if operation == "excel_write_range" {
-        bail!("Excel live range writes require the signed Plugin runtime and interactive approval");
+    if requires_interactive_approval(operation) {
+        bail!(
+            "Excel live range mutations require the signed Plugin runtime and interactive approval"
+        );
     }
     if operation == "excel_read_range" {
         return execute_range_read(arguments);
@@ -1600,12 +1868,91 @@ fn execute_range_write(arguments: &Value, action_cancelled: Option<&AtomicBool>)
 
     let final_response = read_platform_range(&range_read_bridge_request(&target, &input.range))?;
     let final_cells = normalize_range_read_response(final_response, &target, &input.range)?;
-    if !desired_cells_match(input.cells.as_slice(), final_cells.as_slice())? {
+    if !desired_cells_match(input.cells.as_slice(), final_cells.as_slice())?
+        || !same_number_formats(current_cells.as_slice(), final_cells.as_slice())?
+    {
         bail!("Excel range changed after the bridge verified the write; inspect the range before any retry");
     }
     Ok(range_write_response(
         &target,
         &input.range,
+        final_cells,
+        action_cancelled.is_some_and(|cancelled| cancelled.load(Ordering::SeqCst)),
+    ))
+}
+
+fn execute_range_format_write(
+    arguments: &Value,
+    action_cancelled: Option<&AtomicBool>,
+) -> Result<Value> {
+    if action_cancelled.is_some_and(|cancelled| cancelled.load(Ordering::SeqCst)) {
+        bail!("approved Excel number format write was cancelled before execution");
+    }
+    let _write_guard = EXCEL_WRITE_LOCK
+        .lock()
+        .map_err(|_| anyhow!("Excel live write lock is unavailable"))?;
+    if action_cancelled.is_some_and(|cancelled| cancelled.load(Ordering::SeqCst)) {
+        bail!("approved Excel number format write was cancelled while waiting for another write");
+    }
+    let input = parse_range_format_input(arguments)?;
+    let before = read_platform_snapshot()?;
+    let normalized_before = normalize_snapshot(before.clone())?;
+    if !normalized_before
+        .get("running")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+    {
+        return Err(excel_not_running_error(&normalized_before));
+    }
+    let target = resolve_range_read_target(
+        &before,
+        &normalized_before,
+        input.workbook_id.as_str(),
+        input.worksheet_id.as_str(),
+    )?;
+    ensure_write_target_is_mutable(&target)?;
+
+    let current = read_platform_range(&range_read_bridge_request(&target, &input.range))?;
+    let current_cells = normalize_range_read_response(current, &target, &input.range)?;
+    let current_snapshot_id = range_snapshot_id(&target, &input.range, current_cells.as_slice());
+    if current_snapshot_id != input.expected_snapshot_id {
+        bail!(
+            "Excel range changed after it was read; read the exact range again before formatting"
+        );
+    }
+    ensure_snapshot_cells_are_format_safe(current_cells.as_slice())?;
+    if action_cancelled.is_some_and(|cancelled| cancelled.load(Ordering::SeqCst)) {
+        bail!("approved Excel number format write was cancelled before mutation");
+    }
+
+    let request = range_format_bridge_request(&target, &input, current_cells.as_slice());
+    let response = write_platform_range(&request)?;
+    normalize_range_format_response(response, &target, &input, current_cells.as_slice())?;
+
+    let after = read_platform_snapshot()?;
+    let normalized_after = normalize_snapshot(after.clone())?;
+    let refreshed = resolve_range_read_target(
+        &after,
+        &normalized_after,
+        target.workbook_id.as_str(),
+        target.worksheet_id.as_str(),
+    )?;
+    if refreshed != target {
+        bail!("Excel workbook or worksheet identity changed after the verified number format write; inspect it again");
+    }
+
+    let final_response = read_platform_range(&range_read_bridge_request(&target, &input.range))?;
+    let final_cells = normalize_range_read_response(final_response, &target, &input.range)?;
+    if !formatted_cells_match(
+        current_cells.as_slice(),
+        final_cells.as_slice(),
+        input.number_format.as_str(),
+    )? {
+        bail!("Excel range changed after the bridge verified the number format; inspect the range before any retry");
+    }
+    Ok(range_format_response(
+        &target,
+        &input,
         final_cells,
         action_cancelled.is_some_and(|cancelled| cancelled.load(Ordering::SeqCst)),
     ))
@@ -1620,6 +1967,60 @@ fn ensure_write_target_is_mutable(target: &RangeReadTarget) -> Result<()> {
     }
     if target.worksheet_visibility != "visible" {
         bail!("Excel live range writes require an exact visible worksheet");
+    }
+    Ok(())
+}
+
+fn ensure_snapshot_cells_are_format_safe(cells: &[Value]) -> Result<()> {
+    for cell in cells {
+        let object = cell
+            .as_object()
+            .expect("normalized Excel range cell object");
+        let address = object
+            .get("address")
+            .and_then(Value::as_str)
+            .expect("normalized Excel range cell address");
+        if object
+            .get("value_truncated")
+            .and_then(Value::as_bool)
+            .unwrap_or(true)
+            || object
+                .get("displayed_text_truncated")
+                .and_then(Value::as_bool)
+                .unwrap_or(true)
+            || object
+                .get("formula_truncated")
+                .and_then(Value::as_bool)
+                .unwrap_or(true)
+            || object
+                .get("number_format_truncated")
+                .and_then(Value::as_bool)
+                .unwrap_or(true)
+        {
+            bail!("Excel cell {address} has truncated state and cannot be safely formatted");
+        }
+        if object
+            .get("formula_hidden")
+            .and_then(Value::as_bool)
+            .unwrap_or(true)
+            || object
+                .get("formula_external_reference")
+                .and_then(Value::as_bool)
+                .unwrap_or(true)
+        {
+            bail!("Excel cell {address} has a hidden or external formula and cannot be safely formatted");
+        }
+        if object
+            .get("number_format_unavailable")
+            .and_then(Value::as_bool)
+            .unwrap_or(true)
+            || object
+                .get("number_format")
+                .and_then(Value::as_str)
+                .is_none()
+        {
+            bail!("Excel cell {address} number format cannot be read and restored exactly");
+        }
     }
     Ok(())
 }
@@ -1645,8 +2046,25 @@ fn ensure_snapshot_cells_are_write_safe(cells: &[Value]) -> Result<()> {
                 .get("formula_truncated")
                 .and_then(Value::as_bool)
                 .unwrap_or(true)
+            || object
+                .get("number_format_truncated")
+                .and_then(Value::as_bool)
+                .unwrap_or(true)
         {
             bail!("Excel cell {address} has truncated state and cannot be safely replaced");
+        }
+        if object
+            .get("number_format_unavailable")
+            .and_then(Value::as_bool)
+            .unwrap_or(true)
+            || object
+                .get("number_format")
+                .and_then(Value::as_str)
+                .is_none()
+        {
+            bail!(
+                "Excel cell {address} number format cannot be verified before content replacement"
+            );
         }
         if object
             .get("formula_hidden")
@@ -1698,6 +2116,7 @@ fn range_write_bridge_request(
 ) -> Value {
     json!({
         "schema_version": 1,
+        "mutation_kind": "content",
         "runtime_instance": target.runtime_instance,
         "workbook_index": target.workbook_index,
         "workbook_name": target.workbook_name,
@@ -1718,6 +2137,34 @@ fn range_write_bridge_request(
     })
 }
 
+fn range_format_bridge_request(
+    target: &RangeReadTarget,
+    input: &RangeFormatInput,
+    expected_cells: &[Value],
+) -> Value {
+    json!({
+        "schema_version": 1,
+        "mutation_kind": "number_format",
+        "runtime_instance": target.runtime_instance,
+        "workbook_index": target.workbook_index,
+        "workbook_name": target.workbook_name,
+        "workbook_identity_source": target.workbook_identity_source,
+        "workbook_read_only": target.workbook_read_only,
+        "worksheet_index": target.worksheet_index,
+        "worksheet_name": target.worksheet_name,
+        "worksheet_visibility": target.worksheet_visibility,
+        "worksheet_protected": target.worksheet_protected,
+        "range_address": input.range.canonical,
+        "start_row": input.range.start_row,
+        "start_column": input.range.start_column,
+        "row_count": input.range.row_count,
+        "column_count": input.range.column_count,
+        "cell_count": input.range.cell_count,
+        "expected_cells": expected_cells,
+        "number_format": input.number_format,
+    })
+}
+
 fn normalize_range_write_response(
     response: Value,
     target: &RangeReadTarget,
@@ -1735,9 +2182,11 @@ fn normalize_range_write_response(
     let cells = normalize_range_read_response(response, target, &input.range)?;
     match status.as_str() {
         "written" => {
-            if !desired_cells_match(input.cells.as_slice(), cells.as_slice())? {
+            if !desired_cells_match(input.cells.as_slice(), cells.as_slice())?
+                || !same_number_formats(expected_cells, cells.as_slice())?
+            {
                 bail!(
-                    "Excel bridge returned a write result that does not match the approved cells"
+                    "Excel bridge returned a write result that does not match the approved cells or preserve their number formats"
                 );
             }
             Ok(cells)
@@ -1750,6 +2199,112 @@ fn normalize_range_write_response(
         }
         _ => bail!("Excel range write response has an unsupported status"),
     }
+}
+
+fn normalize_range_format_response(
+    response: Value,
+    target: &RangeReadTarget,
+    input: &RangeFormatInput,
+    expected_cells: &[Value],
+) -> Result<Vec<Value>> {
+    let status = response
+        .get("write_status")
+        .and_then(Value::as_str)
+        .context("Excel number format response is missing write_status")?
+        .to_string();
+    if status == "rollback_failed" {
+        bail!("Excel number format write failed and the bridge could not verify complete rollback; inspect the workbook immediately and do not retry automatically");
+    }
+    let cells = normalize_range_read_response(response, target, &input.range)?;
+    match status.as_str() {
+        "formatted" => {
+            if !formatted_cells_match(
+                expected_cells,
+                cells.as_slice(),
+                input.number_format.as_str(),
+            )? {
+                bail!("Excel bridge returned a number format result that changed cell contents or did not match the approved preset");
+            }
+            Ok(cells)
+        }
+        "rolled_back" => {
+            if cells != expected_cells {
+                bail!("Excel number format write failed and rollback verification did not reproduce the exact prior snapshot");
+            }
+            bail!("Excel number format write failed after mutation, but the exact target range was restored and verified; inspect it before retrying")
+        }
+        _ => bail!("Excel number format response has an unsupported status"),
+    }
+}
+
+fn same_number_formats(expected: &[Value], actual: &[Value]) -> Result<bool> {
+    if expected.len() != actual.len() {
+        return Ok(false);
+    }
+    for (expected, actual) in expected.iter().zip(actual) {
+        let expected = expected
+            .as_object()
+            .context("normalized expected Excel cell must be an object")?;
+        let actual = actual
+            .as_object()
+            .context("normalized actual Excel cell must be an object")?;
+        if expected.get("number_format") != actual.get("number_format")
+            || expected.get("number_format_truncated") != actual.get("number_format_truncated")
+            || expected.get("number_format_unavailable") != actual.get("number_format_unavailable")
+        {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+fn formatted_cells_match(
+    expected: &[Value],
+    actual: &[Value],
+    number_format: &str,
+) -> Result<bool> {
+    if expected.len() != actual.len() {
+        return Ok(false);
+    }
+    for (expected, actual) in expected.iter().zip(actual) {
+        let expected = expected
+            .as_object()
+            .context("normalized expected Excel format cell must be an object")?;
+        let actual = actual
+            .as_object()
+            .context("normalized actual Excel format cell must be an object")?;
+        if !same_cell_content(expected, actual)
+            || actual.get("number_format").and_then(Value::as_str) != Some(number_format)
+            || actual
+                .get("number_format_truncated")
+                .and_then(Value::as_bool)
+                != Some(false)
+            || actual
+                .get("number_format_unavailable")
+                .and_then(Value::as_bool)
+                != Some(false)
+        {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+fn same_cell_content(expected: &Map<String, Value>, actual: &Map<String, Value>) -> bool {
+    same_cell_scalar(
+        expected.get("value").unwrap_or(&Value::Null),
+        actual.get("value"),
+    ) && [
+        "value_truncated",
+        "has_formula",
+        "formula",
+        "formula_truncated",
+        "formula_hidden",
+        "formula_external_reference",
+        "status",
+    ]
+    .into_iter()
+    .all(|field| expected.get(field) == actual.get(field))
 }
 
 fn desired_cells_match(desired: &[WriteCell], actual: &[Value]) -> Result<bool> {
@@ -1814,7 +2369,7 @@ fn range_write_response(
     let range_snapshot_id = range_snapshot_id(target, range, cells.as_slice());
     let rows = cells
         .chunks(range.column_count)
-        .map(|row| Value::Array(row.to_vec()))
+        .map(|row| Value::Array(row.iter().map(public_cell_projection).collect()))
         .collect::<Vec<_>>();
     json!({
         "platform": std::env::consts::OS,
@@ -1845,6 +2400,52 @@ fn range_write_response(
             "row_count": range.row_count,
             "column_count": range.column_count,
             "cell_count": range.cell_count,
+        },
+        "cells": rows,
+    })
+}
+
+fn range_format_response(
+    target: &RangeReadTarget,
+    input: &RangeFormatInput,
+    cells: Vec<Value>,
+    cancel_requested_after_commit: bool,
+) -> Value {
+    let range_snapshot_id = range_snapshot_id(target, &input.range, cells.as_slice());
+    let rows = cells
+        .chunks(input.range.column_count)
+        .map(|row| Value::Array(row.iter().map(public_cell_projection).collect()))
+        .collect::<Vec<_>>();
+    json!({
+        "platform": std::env::consts::OS,
+        "excel_running": true,
+        "safe_no_launch": true,
+        "format_verified": true,
+        "number_format_preset": input.preset,
+        "rollback_status": "not_needed",
+        "save_performed": false,
+        "export_performed": false,
+        "explicit_recalculation_performed": false,
+        "cancel_requested_after_commit": cancel_requested_after_commit,
+        "range_snapshot_id": range_snapshot_id,
+        "workbook": {
+            "workbook_id": target.workbook_id,
+            "name": target.workbook_name,
+            "index": target.workbook_index,
+        },
+        "worksheet": {
+            "worksheet_id": target.worksheet_id,
+            "name": target.worksheet_name,
+            "index": target.worksheet_index,
+            "protected": target.worksheet_protected,
+        },
+        "range": {
+            "address": input.range.canonical,
+            "start_row": input.range.start_row,
+            "start_column": input.range.start_column,
+            "row_count": input.range.row_count,
+            "column_count": input.range.column_count,
+            "cell_count": input.range.cell_count,
         },
         "cells": rows,
     })
@@ -2449,6 +3050,8 @@ fn status_response(snapshot: &Value) -> Value {
         "max_range_cells": MAX_RANGE_CELLS,
         "write_access": true,
         "write_requires_interactive_approval": true,
+        "number_format_write_access": true,
+        "number_format_presets": ["general", "integer", "decimal_2", "percent_2", "date", "datetime", "text"],
         "write_saves_workbook": false,
     })
 }
@@ -2693,6 +3296,8 @@ fn normalize_range_read_response(
         let formula_truncated = required_bool(cell, "formula_truncated")?;
         let formula_hidden = required_bool(cell, "formula_hidden")?;
         let formula_external_reference = required_bool(cell, "formula_external_reference")?;
+        let number_format_truncated = required_bool(cell, "number_format_truncated")?;
+        let number_format_unavailable = required_bool(cell, "number_format_unavailable")?;
         let is_error = required_bool(cell, "is_error")?;
         if (formula_hidden || formula_external_reference) && !has_formula {
             bail!("Excel range response formula redaction metadata is inconsistent");
@@ -2720,9 +3325,33 @@ fn normalize_range_read_response(
         if formula.is_none() && formula_truncated {
             bail!("Excel range response formula truncation metadata is inconsistent");
         }
+        let number_format = match cell.get("number_format") {
+            None | Some(Value::Null) => None,
+            Some(Value::String(number_format)) => {
+                validate_bounded_text(
+                    number_format,
+                    "number format",
+                    MAX_NUMBER_FORMAT_CHARACTERS,
+                )?;
+                Some(number_format.clone())
+            }
+            _ => bail!("Excel range response number format must be text or null"),
+        };
+        if number_format_unavailable {
+            if number_format.is_some() || number_format_truncated {
+                bail!("Excel range response unavailable number format metadata is inconsistent");
+            }
+        } else if number_format.as_deref().is_none_or(str::is_empty) {
+            bail!("Excel range response omitted an available non-empty number format");
+        }
         if value_truncated && !value.as_ref().is_some_and(Value::is_string) {
             bail!("Excel range response value truncation metadata is inconsistent");
         }
+        let number_format_preset = number_format
+            .as_deref()
+            .and_then(number_format_preset_for_code);
+        let number_format_available = !number_format_unavailable;
+        let number_format_custom = number_format_available && number_format_preset.is_none();
         let row = range.start_row + expected_row_offset;
         let column = range.start_column + expected_column_offset;
         let status = if is_error {
@@ -2749,6 +3378,13 @@ fn normalize_range_read_response(
             "formula_truncated": formula_truncated,
             "formula_hidden": formula_hidden,
             "formula_external_reference": formula_external_reference,
+            "number_format": number_format,
+            "number_format_truncated": number_format_truncated,
+            "number_format_unavailable": number_format_unavailable,
+            "number_format_available": number_format_available,
+            "number_format_exact": number_format_available && !number_format_truncated,
+            "number_format_preset": number_format_preset,
+            "number_format_custom": number_format_custom,
             "status": status,
         }));
     }
@@ -2782,7 +3418,7 @@ fn range_read_response(target: &RangeReadTarget, range: &A1Range, cells: Vec<Val
     let range_snapshot_id = range_snapshot_id(target, range, cells.as_slice());
     let rows = cells
         .chunks(range.column_count)
-        .map(|row| Value::Array(row.to_vec()))
+        .map(|row| Value::Array(row.iter().map(public_cell_projection).collect()))
         .collect::<Vec<_>>();
     json!({
         "platform": std::env::consts::OS,
@@ -2813,10 +3449,21 @@ fn range_read_response(target: &RangeReadTarget, range: &A1Range, cells: Vec<Val
     })
 }
 
+fn public_cell_projection(cell: &Value) -> Value {
+    let mut object = cell
+        .as_object()
+        .expect("normalized Excel range cell object")
+        .clone();
+    object.remove("number_format");
+    object.remove("number_format_truncated");
+    object.remove("number_format_unavailable");
+    Value::Object(object)
+}
+
 fn range_snapshot_id(target: &RangeReadTarget, range: &A1Range, cells: &[Value]) -> String {
     let mut hasher = Sha256::new();
     for value in [
-        "chatos-excel-range-snapshot-v1",
+        "chatos-excel-range-snapshot-v2",
         std::env::consts::OS,
         target.runtime_instance.as_str(),
         target.workbook_id.as_str(),
@@ -2889,6 +3536,72 @@ fn parse_range_write_input(arguments: &Value) -> Result<RangeWriteInput> {
         expected_snapshot_id: expected_snapshot_id.to_string(),
         cells,
     })
+}
+
+fn parse_range_format_input(arguments: &Value) -> Result<RangeFormatInput> {
+    ensure_exact_arguments(
+        arguments,
+        &[
+            "workbook_id",
+            "worksheet_id",
+            "range",
+            "expected_snapshot_id",
+            "preset",
+        ],
+    )?;
+    let workbook_id = required_text(arguments, "workbook_id", 96)?.to_string();
+    let worksheet_id = required_text(arguments, "worksheet_id", 96)?.to_string();
+    let range = parse_a1_range(required_text(arguments, "range", 32)?)?;
+    let expected_snapshot_id = required_text(
+        arguments,
+        "expected_snapshot_id",
+        MAX_SNAPSHOT_ID_CHARACTERS,
+    )?;
+    expected_snapshot_id
+        .strip_prefix("excel_range_")
+        .filter(|value| {
+            value.len() == 64
+                && value
+                    .bytes()
+                    .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+        })
+        .ok_or_else(|| anyhow!("expected_snapshot_id must come from excel_read_range"))?;
+    let preset = required_text(arguments, "preset", 32)?;
+    let number_format = number_format_code_for_preset(preset)?;
+    Ok(RangeFormatInput {
+        workbook_id,
+        worksheet_id,
+        range,
+        expected_snapshot_id: expected_snapshot_id.to_string(),
+        preset: preset.to_string(),
+        number_format: number_format.to_string(),
+    })
+}
+
+fn number_format_code_for_preset(preset: &str) -> Result<&'static str> {
+    match preset {
+        "general" => Ok("General"),
+        "integer" => Ok("0"),
+        "decimal_2" => Ok("0.00"),
+        "percent_2" => Ok("0.00%"),
+        "date" => Ok("yyyy-mm-dd"),
+        "datetime" => Ok("yyyy-mm-dd hh:mm"),
+        "text" => Ok("@"),
+        _ => bail!("Excel number format preset is not allowlisted"),
+    }
+}
+
+fn number_format_preset_for_code(number_format: &str) -> Option<&'static str> {
+    match number_format {
+        "General" => Some("general"),
+        "0" => Some("integer"),
+        "0.00" => Some("decimal_2"),
+        "0.00%" => Some("percent_2"),
+        "yyyy-mm-dd" => Some("date"),
+        "yyyy-mm-dd hh:mm" => Some("datetime"),
+        "@" => Some("text"),
+        _ => None,
+    }
 }
 
 fn parse_write_cell(value: &Value) -> Result<WriteCell> {
@@ -3414,6 +4127,9 @@ mod tests {
                     "formula_truncated": false,
                     "formula_hidden": false,
                     "formula_external_reference": false,
+                    "number_format": "0.000 \"private-budget\"",
+                    "number_format_truncated": false,
+                    "number_format_unavailable": false,
                     "is_error": false
                 },
                 {
@@ -3428,6 +4144,9 @@ mod tests {
                     "formula_truncated": false,
                     "formula_hidden": false,
                     "formula_external_reference": false,
+                    "number_format": "0.00",
+                    "number_format_truncated": false,
+                    "number_format_unavailable": false,
                     "is_error": false
                 }
             ]
@@ -3469,18 +4188,30 @@ mod tests {
         assert!(WINDOWS_RANGE_READ_SCRIPT.contains("GetActiveObject"));
 
         let approved_tools = tool_definitions(true);
-        assert_eq!(approved_tools.len(), 5);
+        assert_eq!(approved_tools.len(), 6);
+        assert_eq!(
+            approved_tools
+                .get(4)
+                .and_then(|tool| tool.get("name"))
+                .and_then(Value::as_str),
+            Some("excel_write_range")
+        );
         assert_eq!(
             approved_tools
                 .last()
                 .and_then(|tool| tool.get("name"))
                 .and_then(Value::as_str),
-            Some("excel_write_range")
+            Some("excel_set_number_format")
         );
         assert!(requires_interactive_approval("excel_write_range"));
+        assert!(requires_interactive_approval("excel_set_number_format"));
         assert!(!requires_interactive_approval("excel_read_range"));
         assert!(execute("excel_write_range", &json!({}))
             .expect_err("direct Excel write execution must fail before platform access")
+            .to_string()
+            .contains("interactive approval"));
+        assert!(execute("excel_set_number_format", &json!({}))
+            .expect_err("direct Excel format execution must fail before platform access")
             .to_string()
             .contains("interactive approval"));
         assert!(!MACOS_RANGE_WRITE_SCRIPT.contains(".activate("));
@@ -3730,6 +4461,34 @@ mod tests {
     }
 
     #[test]
+    fn number_format_inputs_and_approval_are_exact_and_allowlisted() {
+        let arguments = json!({
+            "workbook_id": "excel_wb_current",
+            "worksheet_id": "excel_ws_current",
+            "range": "A1:B2",
+            "expected_snapshot_id": format!("excel_range_{}", "c".repeat(64)),
+            "preset": "percent_2"
+        });
+        let parsed = parse_range_format_input(&arguments).expect("safe number format input");
+        assert_eq!(parsed.range.cell_count, 4);
+        assert_eq!(parsed.number_format, "0.00%");
+        assert_eq!(number_format_preset_for_code("0.00%"), Some("percent_2"));
+        let (command, args) = approval_command("excel_set_number_format", &arguments)
+            .expect("Excel number format approval command");
+        assert_eq!(command, "chatos-excel-live");
+        assert!(args.iter().any(|value| value == "set_number_format"));
+        assert!(args.iter().any(|value| value == "preset=percent_2"));
+        assert!(args.iter().any(|value| value == "cell_count=4"));
+
+        let mut arbitrary = arguments.clone();
+        arbitrary["preset"] = json!("$#,##0.00");
+        assert!(parse_range_format_input(&arbitrary).is_err());
+        let mut extra = arguments.clone();
+        extra["custom_format"] = json!("secret");
+        assert!(parse_range_format_input(&extra).is_err());
+    }
+
+    #[test]
     fn range_target_uses_exact_opaque_workbook_and_worksheet_identities() {
         let raw = sample_snapshot();
         let normalized = normalize_snapshot(raw.clone()).expect("normalized snapshot");
@@ -3799,6 +4558,9 @@ mod tests {
                     "formula_truncated": false,
                     "formula_hidden": false,
                     "formula_external_reference": false,
+                    "number_format": "0.000 \"private-budget\"",
+                    "number_format_truncated": false,
+                    "number_format_unavailable": false,
                     "is_error": false
                 },
                 {
@@ -3813,12 +4575,24 @@ mod tests {
                     "formula_truncated": false,
                     "formula_hidden": false,
                     "formula_external_reference": false,
+                    "number_format": "0.00",
+                    "number_format_truncated": false,
+                    "number_format_unavailable": false,
                     "is_error": false
                 }
             ]
         });
         let cells = normalize_range_read_response(response, &target, &range)
             .expect("normalized range cells");
+        let snapshot_id = range_snapshot_id(&target, &range, cells.as_slice());
+        let mut reformatted = cells.clone();
+        reformatted[0]["number_format"] = json!("0");
+        reformatted[0]["number_format_preset"] = json!("integer");
+        reformatted[0]["number_format_custom"] = json!(false);
+        assert_ne!(
+            snapshot_id,
+            range_snapshot_id(&target, &range, reformatted.as_slice())
+        );
         let projected = range_read_response(&target, &range, cells);
         assert_eq!(
             projected
@@ -3832,9 +4606,23 @@ mod tests {
                 .and_then(Value::as_str),
             Some("B1")
         );
+        assert_eq!(
+            projected
+                .pointer("/cells/0/1/number_format_preset")
+                .and_then(Value::as_str),
+            Some("decimal_2")
+        );
+        assert_eq!(
+            projected
+                .pointer("/cells/0/0/number_format_custom")
+                .and_then(Value::as_bool),
+            Some(true)
+        );
+        assert!(projected.pointer("/cells/0/1/number_format").is_none());
         let serialized = serde_json::to_string(&projected).expect("serialized tool response");
         assert!(!serialized.contains("/private/secret"));
         assert!(!serialized.contains("identity_source"));
+        assert!(!serialized.contains("private-budget"));
         assert!(projected
             .get("range_snapshot_id")
             .and_then(Value::as_str)
@@ -3896,6 +4684,67 @@ mod tests {
                 .to_string()
                 .contains("restored and verified")
         );
+    }
+
+    #[test]
+    fn number_format_result_preserves_contents_and_verifies_exact_preset() {
+        let raw = sample_snapshot();
+        let normalized = normalize_snapshot(raw.clone()).expect("normalized snapshot");
+        let workbook_id = normalized
+            .pointer("/workbooks/0/workbook_id")
+            .and_then(Value::as_str)
+            .expect("workbook ID");
+        let worksheet_id = normalized
+            .pointer("/workbooks/0/sheets/0/worksheet_id")
+            .and_then(Value::as_str)
+            .expect("worksheet ID");
+        let target = resolve_range_read_target(&raw, &normalized, workbook_id, worksheet_id)
+            .expect("exact range target");
+        let range = parse_a1_range("A1:B1").expect("range");
+        let current = normalize_range_read_response(
+            sample_range_bridge_response(&target, &range, json!(42.5), json!(85.0), "=A1*2"),
+            &target,
+            &range,
+        )
+        .expect("current cells");
+        ensure_snapshot_cells_are_format_safe(current.as_slice()).expect("safe format snapshot");
+        let input = RangeFormatInput {
+            workbook_id: workbook_id.to_string(),
+            worksheet_id: worksheet_id.to_string(),
+            range: range.clone(),
+            expected_snapshot_id: range_snapshot_id(&target, &range, current.as_slice()),
+            preset: "percent_2".to_string(),
+            number_format: "0.00%".to_string(),
+        };
+        let mut formatted =
+            sample_range_bridge_response(&target, &range, json!(42.5), json!(85.0), "=A1*2");
+        formatted["write_status"] = json!("formatted");
+        formatted["cells"][0]["displayed_text"] = json!("4250.00%");
+        formatted["cells"][1]["displayed_text"] = json!("8500.00%");
+        formatted["cells"][0]["number_format"] = json!("0.00%");
+        formatted["cells"][1]["number_format"] = json!("0.00%");
+        let normalized_formatted =
+            normalize_range_format_response(formatted, &target, &input, current.as_slice())
+                .expect("verified number format result");
+        assert!(formatted_cells_match(
+            current.as_slice(),
+            normalized_formatted.as_slice(),
+            "0.00%"
+        )
+        .expect("formatted comparison"));
+
+        let result = range_format_response(&target, &input, normalized_formatted, false);
+        assert_eq!(
+            result.get("number_format_preset").and_then(Value::as_str),
+            Some("percent_2")
+        );
+        assert_eq!(
+            result
+                .pointer("/cells/0/0/number_format_preset")
+                .and_then(Value::as_str),
+            Some("percent_2")
+        );
+        assert!(result.pointer("/cells/0/0/number_format").is_none());
     }
 
     #[test]
@@ -3966,6 +4815,13 @@ mod tests {
         let cells = normalize_range_read_response(response, &visible, &range)
             .expect("normalized ambiguous cells");
         assert!(ensure_snapshot_cells_are_write_safe(cells.as_slice()).is_err());
+
+        let mut unsafe_format =
+            sample_range_bridge_response(&visible, &range, json!(42.5), json!(85.0), "=A1*2");
+        unsafe_format["cells"][0]["number_format_truncated"] = json!(true);
+        let cells = normalize_range_read_response(unsafe_format, &visible, &range)
+            .expect("normalized unsafe format cells");
+        assert!(ensure_snapshot_cells_are_format_safe(cells.as_slice()).is_err());
     }
 
     #[test]
@@ -4017,6 +4873,9 @@ mod tests {
                 "formula_truncated": false,
                 "formula_hidden": false,
                 "formula_external_reference": false,
+                "number_format": "General",
+                "number_format_truncated": false,
+                "number_format_unavailable": false,
                 "is_error": false
             }]
         });
