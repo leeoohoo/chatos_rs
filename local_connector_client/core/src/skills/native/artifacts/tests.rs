@@ -739,6 +739,247 @@ fn xlsx_updates_fail_closed_for_in_place_and_unsafe_formula_requests() {
 }
 
 #[test]
+fn creates_inspects_and_safely_updates_bounded_tsv() {
+    let (root, state, request) = test_context();
+    let created = create_tsv(
+        &json!({
+            "target_path":"artifacts/source.tsv",
+            "rows":[
+                ["Name","Note","Value"],
+                ["Alice","tab\tline\n\"quote\"","=SUM(A1:A2)"],
+                ["Bob",null,-3]
+            ]
+        }),
+        &state,
+        &request,
+    )
+    .expect("create TSV");
+    assert_eq!(created.get("rows").and_then(Value::as_u64), Some(3));
+    assert_eq!(created.get("columns").and_then(Value::as_u64), Some(3));
+
+    let source = root.join("artifacts/source.tsv");
+    let source_text = fs::read_to_string(source.as_path()).expect("source TSV");
+    assert_eq!(
+        source_text,
+        "Name\tNote\tValue\r\nAlice\t\"tab\tline\n\"\"quote\"\"\"\t'=SUM(A1:A2)\r\nBob\t\t-3\r\n"
+    );
+    let inspected = inspect_spreadsheet(&json!({"path":"artifacts/source.tsv"}), &state, &request)
+        .expect("inspect TSV");
+    assert_eq!(inspected.get("format").and_then(Value::as_str), Some("tsv"));
+    assert_eq!(inspected.get("rows").and_then(Value::as_u64), Some(3));
+    assert_eq!(inspected.get("columns").and_then(Value::as_u64), Some(3));
+    assert_eq!(
+        inspected.get("rectangular").and_then(Value::as_bool),
+        Some(true)
+    );
+    assert_eq!(
+        inspected.get("line_ending").and_then(Value::as_str),
+        Some("crlf")
+    );
+    let source_sha256 = inspected
+        .get("sha256")
+        .and_then(Value::as_str)
+        .expect("TSV SHA-256")
+        .to_string();
+
+    let updated = update_tsv_range(
+        &json!({
+            "path":"artifacts/source.tsv",
+            "expected_sha256":source_sha256,
+            "start_cell":"B2",
+            "end_cell":"C2",
+            "values":[["changed\tvalue","+danger"]],
+            "target_path":"artifacts/updated.tsv"
+        }),
+        &state,
+        &request,
+    )
+    .expect("update TSV");
+    assert_eq!(
+        updated.get("updated_cells").and_then(Value::as_u64),
+        Some(2)
+    );
+    assert_eq!(
+        sha256_file(source.as_path()).expect("source hash after update"),
+        source_sha256
+    );
+    let updated_text = fs::read_to_string(root.join("artifacts/updated.tsv")).expect("updated TSV");
+    let parsed = parse_tsv(updated_text.as_str()).expect("parse updated TSV");
+    assert_eq!(parsed.rows[0], vec!["Name", "Note", "Value"]);
+    assert_eq!(parsed.rows[1], vec!["Alice", "changed\tvalue", "'+danger"]);
+    assert_eq!(parsed.rows[2], vec!["Bob", "", "-3"]);
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn tsv_updates_fail_closed_for_stale_geometry_ragged_and_unsafe_paths() {
+    let (root, state, request) = test_context();
+    let empty_row = create_tsv(
+        &json!({"target_path":"empty-row.tsv","rows":[[]]}),
+        &state,
+        &request,
+    )
+    .expect_err("zero-cell TSV row must fail");
+    assert!(empty_row.to_string().contains("at least one cell"));
+    create_tsv(
+        &json!({"target_path":"source.tsv","rows":[["a","b"],["c","d"]]}),
+        &state,
+        &request,
+    )
+    .expect("source TSV");
+    let source = root.join("source.tsv");
+    let source_sha256 = sha256_file(source.as_path()).expect("source hash");
+
+    let stale = update_tsv_range(
+        &json!({
+            "path":"source.tsv",
+            "expected_sha256":"0".repeat(64),
+            "start_cell":"A1",
+            "end_cell":"A1",
+            "values":[["x"]],
+            "target_path":"stale.tsv"
+        }),
+        &state,
+        &request,
+    )
+    .expect_err("stale TSV hash must fail");
+    assert!(stale.to_string().contains("expected_sha256"));
+    assert!(!root.join("stale.tsv").exists());
+
+    let wrong_geometry = update_tsv_range(
+        &json!({
+            "path":"source.tsv",
+            "expected_sha256":source_sha256,
+            "start_cell":"A1",
+            "end_cell":"B2",
+            "values":[["x","y"]],
+            "target_path":"wrong.tsv"
+        }),
+        &state,
+        &request,
+    )
+    .expect_err("wrong TSV geometry must fail");
+    assert!(wrong_geometry.to_string().contains("geometry"));
+    assert!(!root.join("wrong.tsv").exists());
+
+    let in_place = update_tsv_range(
+        &json!({
+            "path":"source.tsv",
+            "expected_sha256":source_sha256,
+            "start_cell":"A1",
+            "end_cell":"A1",
+            "values":[["x"]],
+            "target_path":"source.tsv",
+            "overwrite":true
+        }),
+        &state,
+        &request,
+    )
+    .expect_err("in-place TSV update must fail");
+    assert!(in_place.to_string().contains("distinct target_path"));
+
+    fs::hard_link(source.as_path(), root.join("source-hard-link.tsv"))
+        .expect("TSV source hard link");
+    let hard_link = update_tsv_range(
+        &json!({
+            "path":"source.tsv",
+            "expected_sha256":source_sha256,
+            "start_cell":"A1",
+            "end_cell":"A1",
+            "values":[["x"]],
+            "target_path":"source-hard-link.tsv",
+            "overwrite":true
+        }),
+        &state,
+        &request,
+    )
+    .expect_err("hard-linked TSV target must fail");
+    assert!(hard_link.to_string().contains("distinct target_path"));
+
+    fs::write(root.join("ragged.tsv"), b"a\tb\r\nc\r\n").expect("ragged TSV");
+    let ragged_inspection = inspect_spreadsheet(&json!({"path":"ragged.tsv"}), &state, &request)
+        .expect("inspect ragged TSV");
+    assert_eq!(
+        ragged_inspection
+            .get("rectangular")
+            .and_then(Value::as_bool),
+        Some(false)
+    );
+    let ragged_hash = ragged_inspection
+        .get("sha256")
+        .and_then(Value::as_str)
+        .expect("ragged TSV hash");
+    let ragged = update_tsv_range(
+        &json!({
+            "path":"ragged.tsv",
+            "expected_sha256":ragged_hash,
+            "start_cell":"A1",
+            "end_cell":"A1",
+            "values":[["x"]],
+            "target_path":"ragged-updated.tsv"
+        }),
+        &state,
+        &request,
+    )
+    .expect_err("ragged TSV update must fail");
+    assert!(ragged.to_string().contains("rectangular"));
+
+    let oversize_path = root.join("oversize.tsv");
+    File::create(oversize_path.as_path())
+        .expect("oversize TSV")
+        .set_len(MAX_ARTIFACT_BYTES + 1)
+        .expect("oversize TSV length");
+    let oversize = inspect_spreadsheet(&json!({"path":"oversize.tsv"}), &state, &request)
+        .expect_err("oversize TSV must fail");
+    assert!(oversize.to_string().contains("100 MiB"));
+
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(source.as_path(), root.join("source-link.tsv"))
+            .expect("TSV source symlink");
+        let symlink = inspect_spreadsheet(&json!({"path":"source-link.tsv"}), &state, &request)
+            .expect_err("TSV source symlink must fail");
+        assert!(symlink.to_string().contains("non-symlink"));
+
+        std::os::unix::fs::symlink(root.join("target-real.tsv"), root.join("target-link.tsv"))
+            .expect("TSV target symlink");
+        fs::write(root.join("target-real.tsv"), b"old\r\n").expect("TSV target");
+        let target_symlink = update_tsv_range(
+            &json!({
+                "path":"source.tsv",
+                "expected_sha256":source_sha256,
+                "start_cell":"A1",
+                "end_cell":"A1",
+                "values":[["x"]],
+                "target_path":"target-link.tsv",
+                "overwrite":true
+            }),
+            &state,
+            &request,
+        )
+        .expect_err("TSV target symlink must fail");
+        assert!(target_symlink.to_string().contains("non-symlink"));
+    }
+
+    assert_eq!(
+        sha256_file(source.as_path()).expect("source hash after failures"),
+        source_sha256
+    );
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn tsv_parser_rejects_ambiguous_quoting_and_mixed_record_endings() {
+    let quote = parse_tsv("a\tbad\"quote\r\n").expect_err("unquoted TSV quote must fail");
+    assert!(quote.to_string().contains("quote must begin"));
+    let trailing = parse_tsv("a\t\"quoted\"tail\r\n")
+        .expect_err("characters after a quoted TSV field must fail");
+    assert!(trailing.to_string().contains("closing quote"));
+    let mixed = parse_tsv("a\tb\r\nc\td\n").expect_err("mixed TSV endings must fail");
+    assert!(mixed.to_string().contains("mixed"));
+}
+
+#[test]
 fn creates_and_inspects_pptx_layouts_images_and_speaker_notes() {
     let (root, state, request) = test_context();
     let image = base64::engine::general_purpose::STANDARD

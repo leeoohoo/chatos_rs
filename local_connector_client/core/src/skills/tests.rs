@@ -91,14 +91,14 @@ fn pdf_release_publishes_bounded_generation_and_editing_tools() {
 }
 
 #[test]
-fn spreadsheets_release_publishes_rendering_multi_sheet_and_safe_range_editing_tools() {
+fn spreadsheets_release_publishes_xlsx_rendering_and_safe_tsv_range_editing_tools() {
     let catalog_item = internal_skill_catalog()
         .expect("catalog")
         .skills
         .into_iter()
         .find(|item| item.skill_id == "internal_skill_spreadsheets")
         .expect("Spreadsheets catalog item");
-    assert_eq!(catalog_item.version, "1.2.0");
+    assert_eq!(catalog_item.version, "1.3.0");
     let instructions = internal_skill_instructions("internal_skill_spreadsheets")
         .expect("Spreadsheets instructions");
     assert!(instructions.contains("update_xlsx_range"));
@@ -106,6 +106,9 @@ fn spreadsheets_release_publishes_rendering_multi_sheet_and_safe_range_editing_t
     assert!(instructions.contains("External-workbook syntax"));
     assert!(instructions.contains("render_spreadsheet_pages"));
     assert!(instructions.contains("visual_review_status=pending_model_review"));
+    assert!(instructions.contains("update_tsv_range"));
+    assert!(instructions.contains("expected_sha256"));
+    assert!(instructions.contains("mixed LF/CRLF"));
 
     let request = serde_json::from_value(json!({
         "type": "skill_prepare_request",
@@ -126,12 +129,14 @@ fn spreadsheets_release_publishes_rendering_multi_sheet_and_safe_range_editing_t
         .iter()
         .filter_map(|tool| tool.get("name").and_then(Value::as_str))
         .collect::<HashSet<_>>();
-    assert_eq!(tools.len(), 5);
+    assert_eq!(tools.len(), 7);
     assert!(names.contains("inspect_spreadsheet"));
     assert!(names.contains("render_spreadsheet_pages"));
     assert!(names.contains("create_xlsx"));
     assert!(names.contains("update_xlsx_range"));
     assert!(names.contains("create_csv"));
+    assert!(names.contains("create_tsv"));
+    assert!(names.contains("update_tsv_range"));
 }
 
 #[test]
@@ -738,7 +743,7 @@ fn ready_bundle_v2_fingerprint_matches_plugin_management_seed() {
         .join("\n");
     assert_eq!(
         hex::encode(Sha256::digest(rows.as_bytes())),
-        "f38eed03d5373870fa520f15643e7a57332e0cc01d2766abfb763014a7cf4b70"
+        "2c33a8b15ba87e181403d8cc4328210835a2521e0a3056b26e0ff593becabfcd"
     );
 }
 
@@ -753,7 +758,7 @@ fn all_28_bundled_skill_fingerprints_match_plugin_management_seed() {
         .join("\n");
     assert_eq!(
         hex::encode(Sha256::digest(rows.as_bytes())),
-        "7a70c58ef4e27602ce728b55ca04a0c57e484d13be153f7f7c793a812f931d19"
+        "85161d5822c35a1679d8b946b4a7788fb3d85926e2ca10213cb7b85a86282f6b"
     );
 }
 

@@ -54,7 +54,7 @@ pub(super) fn csv_cell(value: &Value) -> String {
     }
 }
 
-fn csv_formula_injection_risk(value: &str) -> bool {
+pub(super) fn csv_formula_injection_risk(value: &str) -> bool {
     let trimmed = value.trim_start_matches([' ', '\t', '\r', '\n']);
     value.starts_with(['\t', '\r', '\n'])
         || trimmed
@@ -155,6 +155,10 @@ pub(super) fn sha256_file(path: &Path) -> Result<String> {
         digest.update(&buffer[..read]);
     }
     Ok(hex::encode(digest.finalize()))
+}
+
+pub(super) fn sha256_bytes(bytes: &[u8]) -> String {
+    hex::encode(Sha256::digest(bytes))
 }
 
 pub(super) fn extract_tag_text(xml: &str, tag: &str) -> String {

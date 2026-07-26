@@ -28,9 +28,9 @@ mod schemas;
 mod spreadsheet;
 
 use format_helpers::{
-    count_tag_starts, csv_cell, docx_paragraph, extract_tag_text, office_root_relationships,
-    parse_csv_line, read_template_manifest, required_json_text, sha256_file,
-    supported_artifact_extension, template_artifact_file,
+    count_tag_starts, csv_cell, csv_formula_injection_risk, docx_paragraph, extract_tag_text,
+    office_root_relationships, parse_csv_line, read_template_manifest, required_json_text,
+    sha256_bytes, sha256_file, supported_artifact_extension, template_artifact_file,
 };
 #[cfg(test)]
 use format_helpers::{docx_content_types, empty_relationships};
@@ -38,6 +38,9 @@ use format_helpers::{docx_content_types, empty_relationships};
 const MAX_ARTIFACT_BYTES: u64 = 100 * 1024 * 1024;
 const MAX_XML_BYTES: usize = 16 * 1024 * 1024;
 const MAX_TABLE_CELLS: usize = 100_000;
+const MAX_TEXT_TABLE_ROWS: usize = 10_000;
+const MAX_TEXT_TABLE_COLUMNS: usize = 16_384;
+const MAX_TEXT_CELL_CHARS: usize = 32_767;
 
 pub(super) fn tool_definitions(skill_id: &str) -> Vec<Value> {
     schemas::tool_definitions(skill_id)
@@ -175,6 +178,10 @@ pub(super) fn execute_with_cancellation(
             spreadsheet::update_xlsx_range(arguments, state, request)
         }
         ("internal_skill_spreadsheets", "create_csv") => create_csv(arguments, state, request),
+        ("internal_skill_spreadsheets", "create_tsv") => create_tsv(arguments, state, request),
+        ("internal_skill_spreadsheets", "update_tsv_range") => {
+            update_tsv_range(arguments, state, request)
+        }
         ("internal_skill_presentations", "inspect_pptx") => {
             presentation::inspect_pptx(arguments, state, request)
         }
@@ -499,11 +506,14 @@ fn inspect_spreadsheet(
                 json!({"path":relative,"format":"csv","bytes":file_size(path.as_path())?,"rows":rows,"columns":max_columns}),
             )
         }
+        "tsv" => inspect_tsv(arguments, state, request),
         "xlsx" => {
             let (path, relative) = input_file(state, request, requested, ".xlsx")?;
             spreadsheet::inspect_xlsx(path.as_path(), relative.as_str())
         }
-        _ => Err(anyhow!("spreadsheet path must end with .csv or .xlsx")),
+        _ => Err(anyhow!(
+            "spreadsheet path must end with .csv, .tsv, or .xlsx"
+        )),
     }
 }
 
@@ -526,6 +536,606 @@ fn create_csv(arguments: &Value, state: &LocalState, request: &RelayRequest) -> 
     Ok(
         json!({"created":true,"path":relative,"rows":rows.len(),"columns":rows.iter().map(Vec::len).max().unwrap_or(0),"bytes":output.len()}),
     )
+}
+
+#[derive(Debug)]
+struct TsvDocument {
+    rows: Vec<Vec<String>>,
+    line_ending: Option<&'static str>,
+    terminal_record_separator: bool,
+    utf8_bom: bool,
+}
+
+fn inspect_tsv(arguments: &Value, state: &LocalState, request: &RelayRequest) -> Result<Value> {
+    let requested = required_text(arguments, "path")?;
+    let (path, relative) = regular_non_symlink_input_file(state, request, requested, ".tsv")?;
+    let (text, source_sha256, bytes) = read_bounded_utf8_tsv(path.as_path())?;
+    let document = parse_tsv(text.as_str())?;
+    let columns = document.rows.iter().map(Vec::len).max().unwrap_or(0);
+    let rectangular = document
+        .rows
+        .first()
+        .is_none_or(|first| document.rows.iter().all(|row| row.len() == first.len()));
+    Ok(json!({
+        "path":relative,
+        "format":"tsv",
+        "encoding":"utf-8",
+        "bytes":bytes,
+        "sha256":source_sha256,
+        "rows":document.rows.len(),
+        "columns":columns,
+        "cells":document.rows.iter().map(Vec::len).sum::<usize>(),
+        "rectangular":rectangular,
+        "line_ending":match document.line_ending {
+            Some("\r\n") => "crlf",
+            Some("\n") => "lf",
+            _ => "none",
+        },
+        "terminal_record_separator":document.terminal_record_separator,
+        "utf8_bom":document.utf8_bom,
+    }))
+}
+
+fn create_tsv(arguments: &Value, state: &LocalState, request: &RelayRequest) -> Result<Value> {
+    let target = required_text(arguments, "target_path")?;
+    require_extension(target, ".tsv")?;
+    let rows = text_table_rows(arguments, "rows", false)?;
+    let output = serialize_tsv(rows.as_slice(), "\r\n", true, false)?;
+    let (path, relative) = safe_workspace_path(state, request, target)?;
+    write_new_tsv(
+        path.as_path(),
+        output.as_bytes(),
+        optional_bool(arguments, "overwrite"),
+    )?;
+    Ok(json!({
+        "created":true,
+        "path":relative,
+        "format":"tsv",
+        "encoding":"utf-8",
+        "rows":rows.len(),
+        "columns":rows.iter().map(Vec::len).max().unwrap_or(0),
+        "cells":rows.iter().map(Vec::len).sum::<usize>(),
+        "bytes":output.len(),
+        "sha256":sha256_file(path.as_path())?,
+        "line_ending":"crlf",
+        "terminal_record_separator":!rows.is_empty(),
+        "formula_injection_protection":true,
+    }))
+}
+
+fn update_tsv_range(
+    arguments: &Value,
+    state: &LocalState,
+    request: &RelayRequest,
+) -> Result<Value> {
+    let requested = required_text(arguments, "path")?;
+    let target = required_text(arguments, "target_path")?;
+    require_extension(target, ".tsv")?;
+    let expected_sha256 = required_lowercase_sha256(arguments, "expected_sha256")?;
+    let (source, source_relative) =
+        regular_non_symlink_input_file(state, request, requested, ".tsv")?;
+    let (target_path, target_relative) = safe_workspace_path(state, request, target)?;
+    ensure_distinct_tsv_paths(source.as_path(), target_path.as_path())?;
+
+    let (source_text, source_sha256, _) = read_bounded_utf8_tsv(source.as_path())?;
+    if source_sha256 != expected_sha256 {
+        return Err(anyhow!(
+            "TSV source does not match expected_sha256; inspect the current file before editing"
+        ));
+    }
+    let mut document = parse_tsv(source_text.as_str())?;
+    let Some(first_row) = document.rows.first() else {
+        return Err(anyhow!(
+            "TSV range editing requires a non-empty source table"
+        ));
+    };
+    let columns = first_row.len();
+    if columns == 0 || document.rows.iter().any(|row| row.len() != columns) {
+        return Err(anyhow!(
+            "TSV range editing requires a rectangular source table"
+        ));
+    }
+
+    let (start_column, start_row) =
+        parse_text_cell_reference(required_text(arguments, "start_cell")?)?;
+    let (end_column, end_row) = parse_text_cell_reference(required_text(arguments, "end_cell")?)?;
+    if end_row < start_row || end_column < start_column {
+        return Err(anyhow!(
+            "end_cell must be at or below and to the right of start_cell"
+        ));
+    }
+    if end_row > document.rows.len() || end_column > columns {
+        return Err(anyhow!(
+            "TSV edit range must stay within the existing rectangular table"
+        ));
+    }
+    let replacement = text_table_rows(arguments, "values", true)?;
+    let expected_rows = end_row - start_row + 1;
+    let expected_columns = end_column - start_column + 1;
+    if replacement.len() != expected_rows
+        || replacement.iter().any(|row| row.len() != expected_columns)
+    {
+        return Err(anyhow!(
+            "values geometry must exactly match the start_cell/end_cell rectangle"
+        ));
+    }
+
+    for (row_offset, replacement_row) in replacement.iter().enumerate() {
+        for (column_offset, value) in replacement_row.iter().enumerate() {
+            document.rows[start_row - 1 + row_offset][start_column - 1 + column_offset] =
+                value.clone();
+        }
+    }
+    let line_ending = document.line_ending.unwrap_or("\r\n");
+    let output = serialize_tsv(
+        document.rows.as_slice(),
+        line_ending,
+        document.terminal_record_separator,
+        document.utf8_bom,
+    )?;
+    write_updated_tsv(
+        source.as_path(),
+        source_sha256.as_str(),
+        target_path.as_path(),
+        output.as_bytes(),
+        optional_bool(arguments, "overwrite"),
+    )?;
+    Ok(json!({
+        "updated":true,
+        "source_path":source_relative,
+        "path":target_relative,
+        "format":"tsv",
+        "encoding":"utf-8",
+        "source_sha256":source_sha256,
+        "sha256":sha256_file(target_path.as_path())?,
+        "start_cell":required_text(arguments, "start_cell")?.to_ascii_uppercase(),
+        "end_cell":required_text(arguments, "end_cell")?.to_ascii_uppercase(),
+        "updated_rows":expected_rows,
+        "updated_columns":expected_columns,
+        "updated_cells":expected_rows.saturating_mul(expected_columns),
+        "rows":document.rows.len(),
+        "columns":columns,
+        "bytes":output.len(),
+        "formula_injection_protection":true,
+    }))
+}
+
+fn text_table_rows(
+    arguments: &Value,
+    field: &str,
+    require_non_empty: bool,
+) -> Result<Vec<Vec<String>>> {
+    let rows = arguments
+        .get(field)
+        .and_then(Value::as_array)
+        .ok_or_else(|| anyhow!("{field} must be an array"))?;
+    if rows.len() > MAX_TEXT_TABLE_ROWS || (require_non_empty && rows.is_empty()) {
+        return Err(anyhow!(
+            "{field} must contain between {} and {MAX_TEXT_TABLE_ROWS} rows",
+            usize::from(require_non_empty)
+        ));
+    }
+    let mut output = Vec::with_capacity(rows.len());
+    let mut cell_count = 0usize;
+    for row in rows {
+        let cells = row
+            .as_array()
+            .ok_or_else(|| anyhow!("each {field} row must be an array"))?;
+        if cells.is_empty() {
+            return Err(anyhow!("each {field} row must contain at least one cell"));
+        }
+        if cells.len() > MAX_TEXT_TABLE_COLUMNS {
+            return Err(anyhow!(
+                "{field} row exceeds the {MAX_TEXT_TABLE_COLUMNS} column safety limit"
+            ));
+        }
+        cell_count = cell_count.saturating_add(cells.len());
+        if cell_count > MAX_TABLE_CELLS {
+            return Err(anyhow!(
+                "{field} exceeds the {MAX_TABLE_CELLS} cell safety limit"
+            ));
+        }
+        let mut converted = Vec::with_capacity(cells.len());
+        for value in cells {
+            let mut cell = match value {
+                Value::Null => String::new(),
+                Value::Bool(value) => value.to_string(),
+                Value::Number(value) => value.to_string(),
+                Value::String(value) => value.clone(),
+                _ => {
+                    return Err(anyhow!(
+                        "{field} cells must be null, boolean, number, or string values"
+                    ))
+                }
+            };
+            if matches!(value, Value::String(_)) && csv_formula_injection_risk(cell.as_str()) {
+                cell.insert(0, '\'');
+            }
+            if cell.chars().count() > MAX_TEXT_CELL_CHARS {
+                return Err(anyhow!(
+                    "{field} cell exceeds the {MAX_TEXT_CELL_CHARS} character safety limit"
+                ));
+            }
+            converted.push(cell);
+        }
+        output.push(converted);
+    }
+    Ok(output)
+}
+
+fn parse_tsv(text: &str) -> Result<TsvDocument> {
+    let (utf8_bom, text) = text
+        .strip_prefix('\u{feff}')
+        .map_or((false, text), |stripped| (true, stripped));
+    if text.is_empty() {
+        return Ok(TsvDocument {
+            rows: Vec::new(),
+            line_ending: None,
+            terminal_record_separator: false,
+            utf8_bom,
+        });
+    }
+    let mut rows = Vec::new();
+    let mut row = Vec::new();
+    let mut cell = String::new();
+    let mut cell_chars = 0usize;
+    let mut cell_started = false;
+    let mut quoted = false;
+    let mut closed_quote = false;
+    let mut line_ending = None;
+    let mut terminal_record_separator = false;
+    let mut cell_count = 0usize;
+    let mut chars = text.chars().peekable();
+    while let Some(character) = chars.next() {
+        if quoted {
+            if character == '"' {
+                if chars.peek() == Some(&'"') {
+                    chars.next();
+                    cell.push('"');
+                    cell_chars = cell_chars.saturating_add(1);
+                } else {
+                    quoted = false;
+                    closed_quote = true;
+                }
+            } else {
+                cell.push(character);
+                cell_chars = cell_chars.saturating_add(1);
+            }
+            if cell_chars > MAX_TEXT_CELL_CHARS {
+                return Err(anyhow!(
+                    "TSV cell exceeds the {MAX_TEXT_CELL_CHARS} character safety limit"
+                ));
+            }
+            continue;
+        }
+        if closed_quote && !matches!(character, '\t' | '\r' | '\n') {
+            return Err(anyhow!(
+                "TSV quoted field contains characters after its closing quote"
+            ));
+        }
+        match character {
+            '"' if !cell_started => {
+                quoted = true;
+                cell_started = true;
+                terminal_record_separator = false;
+            }
+            '"' => return Err(anyhow!("TSV quote must begin a quoted field")),
+            '\t' => {
+                push_tsv_cell(&mut row, &mut cell, &mut cell_count)?;
+                cell_chars = 0;
+                cell_started = false;
+                closed_quote = false;
+                terminal_record_separator = false;
+            }
+            '\r' => {
+                if chars.next() != Some('\n') {
+                    return Err(anyhow!("TSV records must use LF or CRLF line endings"));
+                }
+                note_tsv_line_ending(&mut line_ending, "\r\n")?;
+                push_tsv_record(&mut rows, &mut row, &mut cell, &mut cell_count)?;
+                cell_chars = 0;
+                cell_started = false;
+                closed_quote = false;
+                terminal_record_separator = true;
+            }
+            '\n' => {
+                note_tsv_line_ending(&mut line_ending, "\n")?;
+                push_tsv_record(&mut rows, &mut row, &mut cell, &mut cell_count)?;
+                cell_chars = 0;
+                cell_started = false;
+                closed_quote = false;
+                terminal_record_separator = true;
+            }
+            _ => {
+                cell.push(character);
+                cell_chars = cell_chars.saturating_add(1);
+                cell_started = true;
+                terminal_record_separator = false;
+                if cell_chars > MAX_TEXT_CELL_CHARS {
+                    return Err(anyhow!(
+                        "TSV cell exceeds the {MAX_TEXT_CELL_CHARS} character safety limit"
+                    ));
+                }
+            }
+        }
+    }
+    if quoted {
+        return Err(anyhow!("TSV contains an unterminated quoted field"));
+    }
+    if !terminal_record_separator {
+        push_tsv_record(&mut rows, &mut row, &mut cell, &mut cell_count)?;
+    }
+    Ok(TsvDocument {
+        rows,
+        line_ending,
+        terminal_record_separator,
+        utf8_bom,
+    })
+}
+
+fn note_tsv_line_ending(current: &mut Option<&'static str>, next: &'static str) -> Result<()> {
+    if current.is_some_and(|value| value != next) {
+        return Err(anyhow!("TSV contains mixed record line endings"));
+    }
+    *current = Some(next);
+    Ok(())
+}
+
+fn push_tsv_cell(row: &mut Vec<String>, cell: &mut String, cell_count: &mut usize) -> Result<()> {
+    if row.len() >= MAX_TEXT_TABLE_COLUMNS {
+        return Err(anyhow!(
+            "TSV row exceeds the {MAX_TEXT_TABLE_COLUMNS} column safety limit"
+        ));
+    }
+    *cell_count = cell_count.saturating_add(1);
+    if *cell_count > MAX_TABLE_CELLS {
+        return Err(anyhow!(
+            "TSV exceeds the {MAX_TABLE_CELLS} cell safety limit"
+        ));
+    }
+    row.push(std::mem::take(cell));
+    Ok(())
+}
+
+fn push_tsv_record(
+    rows: &mut Vec<Vec<String>>,
+    row: &mut Vec<String>,
+    cell: &mut String,
+    cell_count: &mut usize,
+) -> Result<()> {
+    if rows.len() >= MAX_TEXT_TABLE_ROWS {
+        return Err(anyhow!(
+            "TSV exceeds the {MAX_TEXT_TABLE_ROWS} row safety limit"
+        ));
+    }
+    push_tsv_cell(row, cell, cell_count)?;
+    rows.push(std::mem::take(row));
+    Ok(())
+}
+
+fn serialize_tsv(
+    rows: &[Vec<String>],
+    line_ending: &str,
+    terminal_record_separator: bool,
+    utf8_bom: bool,
+) -> Result<String> {
+    if !matches!(line_ending, "\r\n" | "\n") {
+        return Err(anyhow!("TSV line ending must be LF or CRLF"));
+    }
+    let mut output = String::new();
+    if utf8_bom {
+        output.push('\u{feff}');
+    }
+    for (row_index, row) in rows.iter().enumerate() {
+        if row_index > 0 {
+            output.push_str(line_ending);
+        }
+        for (column_index, cell) in row.iter().enumerate() {
+            if column_index > 0 {
+                output.push('\t');
+            }
+            if cell.contains(['\t', '"', '\r', '\n']) {
+                output.push('"');
+                output.push_str(cell.replace('"', "\"\"").as_str());
+                output.push('"');
+            } else {
+                output.push_str(cell.as_str());
+            }
+            if output.len() as u64 > MAX_ARTIFACT_BYTES {
+                return Err(anyhow!("TSV exceeds the 100 MiB safety limit"));
+            }
+        }
+    }
+    if terminal_record_separator && !rows.is_empty() {
+        output.push_str(line_ending);
+    }
+    if output.len() as u64 > MAX_ARTIFACT_BYTES {
+        return Err(anyhow!("TSV exceeds the 100 MiB safety limit"));
+    }
+    Ok(output)
+}
+
+fn parse_text_cell_reference(value: &str) -> Result<(usize, usize)> {
+    let split = value
+        .bytes()
+        .position(|byte| byte.is_ascii_digit())
+        .ok_or_else(|| anyhow!("TSV cell reference must use A1 notation"))?;
+    let (column, row) = value.split_at(split);
+    if column.is_empty()
+        || column.len() > 3
+        || !column.bytes().all(|byte| byte.is_ascii_alphabetic())
+        || row.is_empty()
+        || !row.bytes().all(|byte| byte.is_ascii_digit())
+    {
+        return Err(anyhow!("TSV cell reference must use A1 notation"));
+    }
+    let mut column_number = 0usize;
+    for byte in column.bytes() {
+        column_number = column_number
+            .saturating_mul(26)
+            .saturating_add((byte.to_ascii_uppercase() - b'A' + 1) as usize);
+    }
+    let row_number = row
+        .parse::<usize>()
+        .context("TSV cell row is outside the supported range")?;
+    if column_number == 0
+        || column_number > MAX_TEXT_TABLE_COLUMNS
+        || row_number == 0
+        || row_number > MAX_TEXT_TABLE_ROWS
+    {
+        return Err(anyhow!("TSV cell reference is outside the supported range"));
+    }
+    Ok((column_number, row_number))
+}
+
+fn required_lowercase_sha256(arguments: &Value, field: &str) -> Result<String> {
+    let value = required_text(arguments, field)?;
+    if value.len() != 64
+        || !value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    {
+        return Err(anyhow!("{field} must be one lowercase SHA-256 value"));
+    }
+    Ok(value.to_string())
+}
+
+fn regular_non_symlink_input_file(
+    state: &LocalState,
+    request: &RelayRequest,
+    requested: &str,
+    extension: &str,
+) -> Result<(PathBuf, String)> {
+    require_extension(requested, extension)?;
+    let (path, relative) = safe_workspace_path(state, request, requested)?;
+    let metadata = fs::symlink_metadata(path.as_path())
+        .with_context(|| format!("inspect local artifact {}", path.display()))?;
+    if metadata.file_type().is_symlink() || !metadata.is_file() {
+        return Err(anyhow!(
+            "local artifact must be a regular non-symlink file: {relative}"
+        ));
+    }
+    if metadata.len() > MAX_ARTIFACT_BYTES {
+        return Err(anyhow!("local artifact exceeds the 100 MiB safety limit"));
+    }
+    Ok((path, relative))
+}
+
+fn read_bounded_utf8_tsv(path: &Path) -> Result<(String, String, usize)> {
+    let bytes = fs::read(path).with_context(|| format!("read UTF-8 TSV {}", path.display()))?;
+    if bytes.len() as u64 > MAX_ARTIFACT_BYTES {
+        return Err(anyhow!("local artifact exceeds the 100 MiB safety limit"));
+    }
+    let source_sha256 = sha256_bytes(bytes.as_slice());
+    if sha256_file(path)? != source_sha256 {
+        return Err(anyhow!(
+            "TSV source changed while it was being read; inspect the current file again"
+        ));
+    }
+    let bytes_len = bytes.len();
+    let text = String::from_utf8(bytes)
+        .with_context(|| format!("TSV must be valid UTF-8: {}", path.display()))?;
+    Ok((text, source_sha256, bytes_len))
+}
+
+fn ensure_distinct_tsv_paths(source: &Path, target: &Path) -> Result<()> {
+    if source == target {
+        return Err(anyhow!(
+            "TSV editing requires a distinct target_path; source files are never modified in place"
+        ));
+    }
+    if target.exists() {
+        let metadata = fs::symlink_metadata(target)
+            .with_context(|| format!("inspect TSV target {}", target.display()))?;
+        if metadata.file_type().is_symlink() || !metadata.is_file() {
+            return Err(anyhow!(
+                "TSV target exists and is not a regular non-symlink file"
+            ));
+        }
+        if same_file::is_same_file(source, target)? {
+            return Err(anyhow!(
+                "TSV editing requires a distinct target_path; source files are never modified in place"
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn write_new_tsv(target: &Path, content: &[u8], overwrite: bool) -> Result<()> {
+    if target.exists() {
+        let metadata = fs::symlink_metadata(target)
+            .with_context(|| format!("inspect TSV target {}", target.display()))?;
+        if metadata.file_type().is_symlink() || !metadata.is_file() {
+            return Err(anyhow!(
+                "TSV target exists and is not a regular non-symlink file"
+            ));
+        }
+        if !overwrite {
+            return Err(anyhow!(
+                "refusing to overwrite existing TSV without overwrite=true"
+            ));
+        }
+    }
+    persist_tsv(target, content)
+}
+
+fn write_updated_tsv(
+    source: &Path,
+    source_sha256: &str,
+    target: &Path,
+    content: &[u8],
+    overwrite: bool,
+) -> Result<()> {
+    if target.exists() && !overwrite {
+        return Err(anyhow!(
+            "refusing to overwrite existing TSV without overwrite=true"
+        ));
+    }
+    let parent = target
+        .parent()
+        .ok_or_else(|| anyhow!("TSV output path has no parent"))?;
+    fs::create_dir_all(parent)
+        .with_context(|| format!("create TSV output directory {}", parent.display()))?;
+    let mut temporary = NamedTempFile::new_in(parent)
+        .with_context(|| format!("create temporary TSV in {}", parent.display()))?;
+    temporary.write_all(content)?;
+    temporary.as_file().sync_all()?;
+    if sha256_file(source)? != source_sha256 {
+        return Err(anyhow!(
+            "TSV source changed while the edit was being prepared; no output was written"
+        ));
+    }
+    if target.exists() {
+        fs::remove_file(target)
+            .with_context(|| format!("replace existing TSV {}", target.display()))?;
+    }
+    temporary
+        .persist(target)
+        .map_err(|error| anyhow!("persist TSV {}: {}", target.display(), error.error))?;
+    Ok(())
+}
+
+fn persist_tsv(target: &Path, content: &[u8]) -> Result<()> {
+    if content.len() as u64 > MAX_ARTIFACT_BYTES {
+        return Err(anyhow!("TSV exceeds the 100 MiB safety limit"));
+    }
+    let parent = target
+        .parent()
+        .ok_or_else(|| anyhow!("TSV output path has no parent"))?;
+    fs::create_dir_all(parent)
+        .with_context(|| format!("create TSV output directory {}", parent.display()))?;
+    let mut temporary = NamedTempFile::new_in(parent)
+        .with_context(|| format!("create temporary TSV in {}", parent.display()))?;
+    temporary.write_all(content)?;
+    temporary.as_file().sync_all()?;
+    if target.exists() {
+        fs::remove_file(target)
+            .with_context(|| format!("replace existing TSV {}", target.display()))?;
+    }
+    temporary
+        .persist(target)
+        .map_err(|error| anyhow!("persist TSV {}: {}", target.display(), error.error))?;
+    Ok(())
 }
 
 fn inspect_artifact_template(
