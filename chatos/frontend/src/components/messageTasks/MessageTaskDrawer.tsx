@@ -270,6 +270,8 @@ export const MessageTaskDrawer: FC<MessageTaskDrawerProps> = ({
       <MessageTaskProcessLogModal task={processTask} onClose={closeProcessLog} />
       <MessageTaskRunDetailModal
         detail={runDetail}
+        messageId={message.id}
+        taskLookup={taskLookup}
         loadingMoreEvents={Boolean(runDetail && loadingRunId === runDetail.run?.id)}
         onLoadMoreEvents={loadMoreRunEvents}
         onClose={closeRun}

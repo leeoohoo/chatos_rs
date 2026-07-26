@@ -264,7 +264,7 @@ fn validate_primary(capabilities: &ResolvedAgentCapabilities) -> Result<(), Stri
         ));
     }
     capabilities
-        .ensure_required_available()
+        .ensure_required_runtime_supported([], [])
         .map_err(|error| error.to_string())
 }
 
@@ -341,6 +341,7 @@ mod tests {
                     },
                     security: ResourceSecurity::default(),
                     metadata: ResourceMetadata::default(),
+                    plugin_component: Default::default(),
                     created_by: "system".to_string(),
                     updated_by: "system".to_string(),
                     created_at: "now".to_string(),
@@ -357,6 +358,7 @@ mod tests {
                     required: true,
                     priority: 10,
                     conditions: BindingConditions::default(),
+                    component_allowlist: Vec::new(),
                     created_by: "system".to_string(),
                     updated_by: "system".to_string(),
                     created_at: "now".to_string(),
@@ -367,6 +369,7 @@ mod tests {
                 reason: None,
             }],
             skills: Vec::new(),
+            plugins: Vec::new(),
             local_connector_requirements: Vec::new(),
         };
 

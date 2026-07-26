@@ -23,7 +23,9 @@ import type {
   ExternalMcpConfigRecord,
   McpCatalogEntry,
   RemoteServerRecord,
+  SelectableTaskPlugin,
   SelectableTaskSkill,
+  TaskPluginConnectorsResponse,
   TaskProjectRuntimeEnvironmentResponse,
   TaskRecord,
   TaskScheduleMode,
@@ -36,6 +38,8 @@ import {
   scheduleModeDescriptionKeys,
   scheduleModeLabelKeys,
   taskProfileLabel,
+  taskPluginAgentKey,
+  taskPluginCommandKey,
   taskProfileValues,
   taskStatusValues,
   type TaskFormValues,
@@ -60,6 +64,11 @@ type TaskEditorDrawerProps = {
   remoteServers?: RemoteServerRecord[];
   externalMcpConfigs?: ExternalMcpConfigRecord[];
   selectableSkills?: SelectableTaskSkill[];
+  selectablePlugins?: SelectableTaskPlugin[];
+  pluginConnectors?: TaskPluginConnectorsResponse;
+  pluginConnectorsLoading?: boolean;
+  pluginConnectorsUnavailable?: boolean;
+  pluginCatalogLoading?: boolean;
   runtimeEnvironment?: TaskProjectRuntimeEnvironmentResponse;
   runtimeEnvironmentLoading?: boolean;
   runtimeEnvironmentUnavailable?: boolean;
@@ -83,6 +92,11 @@ export function TaskEditorDrawer({
   remoteServers = [],
   externalMcpConfigs = [],
   selectableSkills = [],
+  selectablePlugins = [],
+  pluginConnectors,
+  pluginConnectorsLoading = false,
+  pluginConnectorsUnavailable = false,
+  pluginCatalogLoading = false,
   runtimeEnvironment,
   runtimeEnvironmentLoading = false,
   runtimeEnvironmentUnavailable = false,
@@ -100,6 +114,11 @@ export function TaskEditorDrawer({
   const enabledBuiltinKinds = Form.useWatch('enabledBuiltinKinds', form) || [];
   const defaultRemoteServerId = Form.useWatch('defaultRemoteServerId', form);
   const scheduleMode = Form.useWatch('scheduleMode', form);
+  const pluginDeviceId = Form.useWatch('pluginDeviceId', form);
+  const pluginWorkspaceId = Form.useWatch('pluginWorkspaceId', form);
+  const selectedPluginIds = Form.useWatch('selectedPluginIds', form) || [];
+  const pluginCommandSelections =
+    Form.useWatch('pluginCommandSelections', form) || {};
   const effectiveScheduleMode = scheduleMode ?? 'manual';
   const scheduleModeLabels = useMemo(
     () =>
@@ -237,6 +256,79 @@ export function TaskEditorDrawer({
       })),
     [selectableSkills],
   );
+  const onlinePluginDevices = useMemo(
+    () => (pluginConnectors?.devices || []).filter((device) => device.status === 'online'),
+    [pluginConnectors?.devices],
+  );
+  const pluginDeviceOptions = useMemo(
+    () =>
+      (pluginConnectors?.devices || []).map((device) => ({
+        label: `${device.display_name} (${device.os || 'unknown'}) / ${device.status}`,
+        value: device.id,
+        disabled: device.status !== 'online',
+      })),
+    [pluginConnectors?.devices],
+  );
+  const activePluginWorkspaces = useMemo(
+    () =>
+      (pluginConnectors?.workspaces || []).filter(
+        (workspace) =>
+          workspace.device_id === pluginDeviceId && workspace.status === 'active',
+      ),
+    [pluginConnectors?.workspaces, pluginDeviceId],
+  );
+  const pluginWorkspaceOptions = useMemo(
+    () =>
+      (pluginConnectors?.workspaces || [])
+        .filter((workspace) => workspace.device_id === pluginDeviceId)
+        .map((workspace) => ({
+          label: `${workspace.display_name} (${workspace.local_path_alias}) / ${workspace.status}`,
+          value: workspace.id,
+          disabled: workspace.status !== 'active',
+        })),
+    [pluginConnectors?.workspaces, pluginDeviceId],
+  );
+  const pluginOptions = useMemo(
+    () =>
+      selectablePlugins.map((plugin) => ({
+        label: `${plugin.display_name} / v${plugin.version}`,
+        value: plugin.id,
+      })),
+    [selectablePlugins],
+  );
+  const selectedPluginDetails = useMemo(
+    () =>
+      selectedPluginIds.map((pluginId) => ({
+        pluginId,
+        plugin: selectablePlugins.find((candidate) => candidate.id === pluginId),
+      })),
+    [selectablePlugins, selectedPluginIds],
+  );
+  const browserPluginSelected = selectedPluginDetails.some(
+    ({ plugin }) => plugin?.plugin_key === 'browser',
+  );
+  const pluginAgentOptions = useMemo(
+    () =>
+      selectedPluginDetails.flatMap(({ pluginId, plugin }) =>
+        (plugin?.agents || []).map((agent) => ({
+          label: `${plugin?.display_name || pluginId} / ${agent.display_name} / ${agent.base_agent} / ${agent.max_iterations}`,
+          value: taskPluginAgentKey(pluginId, agent.agent_id),
+        })),
+      ),
+    [selectedPluginDetails],
+  );
+  useEffect(() => {
+    if (pluginDeviceId || onlinePluginDevices.length !== 1) {
+      return;
+    }
+    form.setFieldValue('pluginDeviceId', onlinePluginDevices[0].id);
+  }, [form, onlinePluginDevices, pluginDeviceId]);
+  useEffect(() => {
+    if (!pluginDeviceId || pluginWorkspaceId || activePluginWorkspaces.length !== 1) {
+      return;
+    }
+    form.setFieldValue('pluginWorkspaceId', activePluginWorkspaces[0].id);
+  }, [activePluginWorkspaces, form, pluginDeviceId, pluginWorkspaceId]);
   const runtimeApplicationOptions = useMemo(
     () =>
       (runtimeEnvironment?.images || [])
@@ -464,6 +556,288 @@ export function TaskEditorDrawer({
         <Form.Item name="tagsText" label={t('tasks.form.tags')}>
           <Input placeholder={t('tasks.form.tagsPlaceholder')} />
         </Form.Item>
+
+        <Typography.Title level={5} style={{ marginTop: 8 }}>
+          {t('tasks.form.plugins')}
+        </Typography.Title>
+
+        {pluginConnectorsUnavailable ? (
+          <Alert
+            type="warning"
+            showIcon
+            style={{ marginBottom: 16 }}
+            message={t('tasks.form.pluginConnectorsUnavailable')}
+          />
+        ) : !pluginConnectorsLoading && !onlinePluginDevices.length ? (
+          <Alert
+            type="info"
+            showIcon
+            style={{ marginBottom: 16 }}
+            message={t('tasks.form.pluginConnectorsOffline')}
+          />
+        ) : null}
+
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)',
+            columnGap: 16,
+            alignItems: 'start',
+          }}
+        >
+          <Form.Item
+            name="pluginDeviceId"
+            label={t('tasks.form.pluginDevice')}
+            extra={t('tasks.form.pluginDeviceHelp')}
+            rules={[
+              {
+                validator: async (_, value) => {
+                  if (!selectedPluginIds.length || value) {
+                    return;
+                  }
+                  throw new Error(t('tasks.form.pluginDeviceRequired'));
+                },
+              },
+            ]}
+          >
+            <Select
+              allowClear
+              showSearch
+              loading={pluginConnectorsLoading}
+              optionFilterProp="label"
+              options={pluginDeviceOptions}
+              placeholder={t('tasks.form.pluginDevicePlaceholder')}
+              onChange={(value) => {
+                if (value !== pluginDeviceId) {
+                  form.setFieldsValue({
+                    pluginWorkspaceId: undefined,
+                    selectedPluginIds: [],
+                    pluginCommandSelections: {},
+                    pluginCommandArguments: {},
+                    pluginAgentSelection: undefined,
+                  });
+                }
+              }}
+            />
+          </Form.Item>
+          <Form.Item
+            name="pluginWorkspaceId"
+            label={t('tasks.form.pluginWorkspace')}
+            extra={t('tasks.form.pluginWorkspaceHelp')}
+            rules={[
+              {
+                validator: async (_, value) => {
+                  if (!browserPluginSelected || value) {
+                    return;
+                  }
+                  throw new Error(t('tasks.form.pluginWorkspaceRequired'));
+                },
+              },
+            ]}
+          >
+            <Select
+              allowClear
+              showSearch
+              disabled={!pluginDeviceId}
+              optionFilterProp="label"
+              options={pluginWorkspaceOptions}
+              placeholder={t('tasks.form.pluginWorkspacePlaceholder')}
+            />
+          </Form.Item>
+        </div>
+
+        <Form.Item
+          name="selectedPluginIds"
+          label={t('tasks.form.plugins')}
+          extra={
+            pluginDeviceId
+              ? selectablePlugins.length
+                ? t('tasks.form.pluginsHelp')
+                : t('tasks.form.pluginsEmpty')
+              : t('tasks.form.pluginsChooseDevice')
+          }
+        >
+          <Select
+            mode="multiple"
+            allowClear
+            showSearch
+            disabled={!pluginDeviceId}
+            loading={pluginCatalogLoading}
+            optionFilterProp="label"
+            maxTagCount="responsive"
+            options={pluginOptions}
+            placeholder={t('tasks.form.pluginsPlaceholder')}
+          />
+        </Form.Item>
+
+        <Form.Item
+          name="pluginAgentSelection"
+          label={t('tasks.form.pluginAgents')}
+          extra={
+            pluginAgentOptions.length
+              ? t('tasks.form.pluginAgentsHelp')
+              : t('tasks.form.pluginAgentsEmpty')
+          }
+        >
+          <Select
+            allowClear
+            showSearch
+            disabled={!pluginAgentOptions.length}
+            optionFilterProp="label"
+            options={pluginAgentOptions}
+            placeholder={t('tasks.form.pluginAgentsPlaceholder')}
+          />
+        </Form.Item>
+
+        {selectedPluginDetails.length ? (
+          <Space direction="vertical" size={8} style={{ width: '100%', marginBottom: 16 }}>
+            {selectedPluginDetails.map(({ pluginId, plugin }) => (
+              <div
+                key={pluginId}
+                style={{
+                  border: '1px solid #e5e7eb',
+                  borderRadius: 8,
+                  padding: 12,
+                  background: '#fafafa',
+                }}
+              >
+                <Space direction="vertical" size={4} style={{ width: '100%' }}>
+                  <Space wrap>
+                    <Typography.Text strong>
+                      {plugin?.display_name || pluginId}
+                    </Typography.Text>
+                    {plugin ? <Tag color="blue">v{plugin.version}</Tag> : <Tag color="warning">unavailable</Tag>}
+                    {(plugin?.component_keys || []).map((componentKey) => (
+                      <Tag key={`${pluginId}:${componentKey}`} color="purple">
+                        {componentKey}
+                      </Tag>
+                    ))}
+                  </Space>
+                  <Typography.Text type="secondary">
+                    {plugin?.description || t('tasks.form.pluginUnavailable')}
+                  </Typography.Text>
+                  {(plugin?.agents || []).length ? (
+                    <Space direction="vertical" size={4} style={{ width: '100%' }}>
+                      <Typography.Text strong>
+                        {t('tasks.form.pluginAgents')}
+                      </Typography.Text>
+                      {(plugin?.agents || []).map((agent) => (
+                        <Space key={`${pluginId}:${agent.agent_id}`} wrap>
+                          <Tag color="magenta">@{agent.agent_id}</Tag>
+                          <Tag>{agent.base_agent}</Tag>
+                          <Tag color="cyan">
+                            {t('tasks.form.pluginAgentMaxIterations', {
+                              count: agent.max_iterations,
+                            })}
+                          </Tag>
+                          {agent.allowed_tools?.length ? (
+                            <Typography.Text type="secondary">
+                              {agent.allowed_tools.join(', ')}
+                            </Typography.Text>
+                          ) : null}
+                        </Space>
+                      ))}
+                    </Space>
+                  ) : null}
+                  {(plugin?.commands || []).length ? (
+                    <Space direction="vertical" size={8} style={{ width: '100%' }}>
+                      <Typography.Text strong>
+                        {t('tasks.form.pluginCommands')}
+                      </Typography.Text>
+                      {(plugin?.commands || []).map((command) => {
+                        const commandKey = taskPluginCommandKey(
+                          pluginId,
+                          command.command_id,
+                        );
+                        const selected = Boolean(pluginCommandSelections[commandKey]);
+                        return (
+                          <div
+                            key={commandKey}
+                            style={{
+                              border: '1px solid #d8dee9',
+                              borderRadius: 6,
+                              padding: 10,
+                              background: '#fff',
+                            }}
+                          >
+                            <Space direction="vertical" size={6} style={{ width: '100%' }}>
+                              <Space wrap>
+                                <Form.Item
+                                  name={['pluginCommandSelections', commandKey]}
+                                  valuePropName="checked"
+                                  noStyle
+                                >
+                                  <Checkbox>{command.display_name}</Checkbox>
+                                </Form.Item>
+                                <Tag color="purple">/{command.command_id}</Tag>
+                                {command.requires_confirmation ? (
+                                  <Tag color="orange">
+                                    {t('tasks.form.pluginCommandConfirmationRequired')}
+                                  </Tag>
+                                ) : null}
+                              </Space>
+                              {command.description ? (
+                                <Typography.Text type="secondary">
+                                  {command.description}
+                                </Typography.Text>
+                              ) : null}
+                              {selected ? (
+                                <Form.Item
+                                  name={['pluginCommandArguments', commandKey]}
+                                  label={t('tasks.form.pluginCommandArguments')}
+                                  extra={
+                                    command.requires_confirmation
+                                      ? t('tasks.form.pluginCommandApprovalHelp')
+                                      : t('tasks.form.pluginCommandArgumentsHelp')
+                                  }
+                                  rules={[
+                                    {
+                                      validator: async (_, value) => {
+                                        if (
+                                          !value ||
+                                          new TextEncoder().encode(value.trim()).length <= 16384
+                                        ) {
+                                          return;
+                                        }
+                                        throw new Error(
+                                          t('tasks.form.pluginCommandArgumentsTooLarge'),
+                                        );
+                                      },
+                                    },
+                                  ]}
+                                  style={{ marginBottom: 0 }}
+                                >
+                                  <Input.TextArea
+                                    rows={2}
+                                    showCount
+                                    placeholder={
+                                      command.argument_hint ||
+                                      t('tasks.form.pluginCommandArgumentsPlaceholder')
+                                    }
+                                  />
+                                </Form.Item>
+                              ) : null}
+                            </Space>
+                          </div>
+                        );
+                      })}
+                    </Space>
+                  ) : null}
+                </Space>
+              </div>
+            ))}
+          </Space>
+        ) : null}
+
+        {browserPluginSelected ? (
+          <Alert
+            type="success"
+            showIcon
+            style={{ marginBottom: 16 }}
+            message={t('tasks.form.browserPluginReady')}
+            description={t('tasks.form.browserPluginHelp')}
+          />
+        ) : null}
 
         <Typography.Title level={5} style={{ marginTop: 8 }}>
           {t('tasks.form.skills')}

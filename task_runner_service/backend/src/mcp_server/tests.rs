@@ -51,6 +51,7 @@ fn valid_planner_create_request() -> CreateTaskRequest {
         tenant_id: None,
         subject_id: None,
         schedule: None,
+        plugin_config: Default::default(),
         mcp_config: Some(TaskMcpConfig {
             enabled_builtin_kinds: vec!["CodeMaintainerRead".to_string()],
             ..TaskMcpConfig::default()
@@ -242,6 +243,7 @@ fn test_create_task_request(title: &str) -> CreateTaskRequest {
         tenant_id: None,
         subject_id: None,
         schedule: None,
+        plugin_config: Default::default(),
         mcp_config: None,
         prerequisite_task_ids: None,
     }

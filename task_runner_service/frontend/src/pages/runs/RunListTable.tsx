@@ -91,6 +91,13 @@ export function RunListTable({
       ),
     },
     {
+      title: t('runs.column.plugins'),
+      dataIndex: 'plugin_snapshots',
+      width: 130,
+      render: (plugins: TaskRunRecord['plugin_snapshots']) =>
+        plugins?.length ? <Tag color="purple">{plugins.length}</Tag> : '-',
+    },
+    {
       title: t('runs.column.modelConfig'),
       dataIndex: 'model_config_id',
       width: 220,

@@ -20,6 +20,15 @@ import type {
   LocalModelConfigListResponse,
   LocalModelSettings,
   LocalRuntimeSettings,
+  LocalPluginStatusSnapshot,
+  LocalPluginStatusEvent,
+  LocalPluginStoreSnapshot,
+  LocalPluginAutoUpdateReport,
+  LocalPluginOAuthConnection,
+  PluginOAuthAuthorizationStart,
+  UserPluginPreferenceRecord,
+  ChromeIntegrationStatus,
+  UpdateLocalRuntimeSettingsPayload,
   LocalSkillCatalogItem,
   LocalSkillCatalogResponse,
   LocalSkillInstallation,
@@ -155,11 +164,23 @@ export const api = {
       method: 'DELETE',
     }),
   runtimeSettings: () => request<LocalRuntimeSettings>('/api/local/runtime-settings'),
-  updateRuntimeSettings: (payload: Partial<LocalRuntimeSettings>) =>
+  updateRuntimeSettings: (payload: UpdateLocalRuntimeSettingsPayload) =>
     request<LocalRuntimeSettings>('/api/local/runtime-settings', {
       method: 'POST',
       body: JSON.stringify(payload),
     }),
+  chromeIntegration: () => request<ChromeIntegrationStatus>('/api/local/chrome-integration'),
+  enableChromeIntegration: () => request<ChromeIntegrationStatus>(
+    '/api/local/chrome-integration/enable',
+    {
+      method: 'POST',
+      body: JSON.stringify({ acknowledge_sensitive_browser_access: true }),
+    },
+  ),
+  disableChromeIntegration: () => request<ChromeIntegrationStatus>(
+    '/api/local/chrome-integration/disable',
+    { method: 'POST' },
+  ),
   agentPromptStatus: () =>
     request<AgentPromptUpdateStatus>('/api/local/agent-prompts/status'),
   checkAgentPromptUpdates: () =>
@@ -191,6 +212,7 @@ export const api = {
       remember_allow?: boolean;
       decision?: CommandExecutionApprovalDecision;
       risk_acknowledged?: boolean;
+      confirmation_response?: string;
     } = {},
   ) =>
     request<{ ok: boolean }>(`/api/local/approval/pending/${encodeURIComponent(id)}/approve`, {
@@ -232,6 +254,67 @@ export const api = {
       body: JSON.stringify({ ...payload, sync }),
     }),
   mcpConfigs: () => request<LocalMcpConfig[]>('/api/local/mcp-configs'),
+  plugins: () => request<LocalPluginStoreSnapshot>('/api/local/plugins/catalog'),
+  pluginStatus: () => request<LocalPluginStatusSnapshot>('/api/local/plugins'),
+  pluginEvents: (cursor?: string) => {
+    const query = new URLSearchParams({ timeout_ms: '25000' });
+    if (cursor) query.set('cursor', cursor);
+    return request<LocalPluginStatusEvent>(`/api/local/plugins/events?${query.toString()}`);
+  },
+  recoverPlugins: () => request<{
+    completed_transactions: number;
+    rolled_back_transactions: number;
+    cleaned_paths: number;
+    errors: string[];
+  }>('/api/local/plugins/recover', { method: 'POST' }),
+  checkPluginUpdates: () => request<LocalPluginAutoUpdateReport>(
+    '/api/local/plugins/check-updates',
+    { method: 'POST' },
+  ),
+  updatePluginPreference: (
+    pluginId: string,
+    payload: {
+      enabled: boolean;
+      auto_update?: boolean;
+      release_channel?: string;
+      enabled_components?: string[];
+    },
+  ) => request<UserPluginPreferenceRecord>(
+    `/api/local/plugins/${encodeURIComponent(pluginId)}/preference`,
+    { method: 'PUT', body: JSON.stringify(payload) },
+  ),
+  rollbackPlugin: (pluginId: string) =>
+    request<LocalPluginStatusSnapshot>(
+      `/api/local/plugins/${encodeURIComponent(pluginId)}/rollback`,
+      { method: 'POST' },
+    ),
+  installPlugin: (pluginId: string) =>
+    request<LocalPluginStatusSnapshot>(
+      `/api/local/plugins/${encodeURIComponent(pluginId)}/install`,
+      { method: 'POST' },
+    ),
+  uninstallPlugin: (pluginId: string) =>
+    request<LocalPluginStatusSnapshot>(`/api/local/plugins/${encodeURIComponent(pluginId)}`, {
+      method: 'DELETE',
+      body: JSON.stringify({ acknowledge_plugin_data_removal: true }),
+    }),
+  pluginOAuthConnections: (pluginId: string) =>
+    request<LocalPluginOAuthConnection[]>(
+      `/api/local/plugins/${encodeURIComponent(pluginId)}/oauth`,
+    ),
+  beginPluginOAuth: (pluginId: string, componentKey: string) =>
+    request<PluginOAuthAuthorizationStart>(
+      `/api/local/plugins/${encodeURIComponent(pluginId)}/components/${encodeURIComponent(componentKey)}/oauth/start`,
+      {
+        method: 'POST',
+        body: JSON.stringify({ open_browser: true }),
+      },
+    ),
+  disconnectPluginOAuth: (pluginId: string, componentKey: string, provider: string) =>
+    request<{ disconnected: boolean }>(
+      `/api/local/plugins/${encodeURIComponent(pluginId)}/components/${encodeURIComponent(componentKey)}/oauth/${encodeURIComponent(provider)}`,
+      { method: 'DELETE' },
+    ),
   skills: () => request<LocalSkillCatalogResponse>('/api/local/skills'),
   syncSkills: () => request<LocalSkillInstallation[]>('/api/local/skills/sync', { method: 'POST' }),
   setSkillEnabled: (skillId: string, enabled: boolean) =>

@@ -3,6 +3,7 @@
 
 use chatos_ai_runtime::{TaskBuiltinMcpPromptMode, TaskMcpInitMode};
 use chatos_mcp_runtime::BuiltinMcpPromptLocale;
+use chatos_plugin_management_sdk::TaskPluginConfig;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 

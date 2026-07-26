@@ -36,7 +36,7 @@ import { ModelConfigPanel } from './components/ModelConfigPanel';
 import { McpConfigPanel } from './components/McpConfigPanel';
 import { RuntimeSettingsPanel } from './components/RuntimeSettingsPanel';
 import { SandboxPanel } from './components/SandboxPanel';
-import { SkillSettingsPanel } from './components/SkillSettingsPanel';
+import { PluginMarketplacePanel } from './components/plugins/PluginMarketplacePanel';
 import { TerminalPanel } from './components/TerminalPanel';
 import './styles.css';
 import './styles-controls.css';
@@ -47,9 +47,10 @@ import './styles-mcp.css';
 import './styles-command-history.css';
 import './styles-sandbox.css';
 import './styles-skills.css';
+import './styles-plugins.css';
 import './styles-responsive.css';
 
-type AppTab = 'overview' | 'workspaces' | 'mcps' | 'skills' | 'terminal' | 'models' | 'approval' | 'settings' | 'sandbox';
+type AppTab = 'overview' | 'workspaces' | 'mcps' | 'plugins' | 'terminal' | 'models' | 'approval' | 'settings' | 'sandbox';
 type LocalIcon = typeof Server;
 type ThemeMode = 'light' | 'dark';
 
@@ -82,10 +83,10 @@ const TABS: Array<{
     icon: Plug,
   },
   {
-    id: 'skills',
-    label: 'Skills',
-    eyebrow: 'LOCAL SKILLS',
-    description: '启用安装包内置并由本机执行的系统 Skills。',
+    id: 'plugins',
+    label: '外挂程式',
+    eyebrow: 'PLUGIN MARKETPLACE',
+    description: '浏览、检查并管理这台设备上的 Plugin 与 Skills 组件。',
     icon: PackageCheck,
   },
   {
@@ -349,8 +350,8 @@ function SettingsApp() {
               ) : null}
               {activeTab === 'workspaces' ? <WorkspacePanel status={status} onStatus={setStatus} /> : null}
               {activeTab === 'mcps' ? <McpConfigPanel /> : null}
-              {activeTab === 'skills' ? (
-                <SkillSettingsPanel onOpenPermissions={() => setActiveTab('settings')} />
+              {activeTab === 'plugins' ? (
+                <PluginMarketplacePanel onOpenPermissions={() => setActiveTab('settings')} />
               ) : null}
               {activeTab === 'terminal' ? <TerminalPanel status={status} /> : null}
               {activeTab === 'models' ? <ModelConfigPanel /> : null}

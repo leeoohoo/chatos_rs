@@ -149,6 +149,13 @@ export function RunDetailDrawer({
 
           <JsonBlock title={t('runs.snapshot.input')} value={run.input_snapshot} t={t} />
           <JsonBlock
+            title={t('runs.snapshot.plugins')}
+            value={run.plugin_snapshots}
+            collapsible
+            defaultOpen={false}
+            t={t}
+          />
+          <JsonBlock
             title={t('runs.snapshot.context')}
             value={run.context_snapshot}
             collapsible

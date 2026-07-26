@@ -82,6 +82,8 @@ export interface MessageMetadata extends UnknownRecord {
   clientPendingSync?: boolean;
   unavailableTools?: UnavailableToolInfo[];
   requestError?: string;
+  plugin_command_invocations?: PluginCommandAuditEntry[];
+  plugin_agent_selection?: PluginAgentAuditEntry;
   task_turn_review?: {
     attempted?: boolean;
     outcome?: string;
@@ -108,6 +110,18 @@ export interface MessageMetadata extends UnknownRecord {
     cancelled_task_ids?: string[];
     [key: string]: unknown;
   };
+}
+
+export interface PluginCommandAuditEntry {
+  plugin_id: string;
+  command_id: string;
+  arguments_present?: boolean;
+  arguments_sha256?: string | null;
+}
+
+export interface PluginAgentAuditEntry {
+  plugin_id: string;
+  agent_id: string;
 }
 
 export interface Message {

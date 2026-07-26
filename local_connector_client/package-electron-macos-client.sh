@@ -11,7 +11,37 @@ CHATOS_FRONTEND_DIR="$ROOT_DIR/chatos/frontend"
 STAGING_DIR="$CLIENT_DIR/.package/macos"
 BUILDER_CONFIG="$CLIENT_DIR/electron-builder-macos.yml"
 SKILL_CATALOG="$CLIENT_DIR/skill_bundles/catalog/internal-skill-catalog.json"
+PLUGIN_CATALOG="$CLIENT_DIR/plugin_bundles/catalog/bundled-plugin-catalog.json"
+PLUGIN_BUNDLE_TOOL="$CLIENT_DIR/prepare-plugin-bundles.mjs"
+INSTALLED_PACKAGE_VERIFIER="$CLIENT_DIR/verify-installed-package.mjs"
 APP_ICON_SOURCE="${CHATOS_APP_ICON_SOURCE:-$ROOT_DIR/official_website_service/frontend/public/brand/okra-logo-mark.png}"
+PACKAGE_TARGET_OWNED=0
+if [[ -n "${CHATOS_CARGO_TARGET_DIR:-}" ]]; then
+  export CARGO_TARGET_DIR="$CHATOS_CARGO_TARGET_DIR"
+elif [[ -z "${CARGO_TARGET_DIR:-}" ]]; then
+  export CARGO_TARGET_DIR="/tmp/chatos-local-connector-package-target-$$"
+  PACKAGE_TARGET_OWNED=1
+fi
+
+cleanup_package_target() {
+  if [[ "$PACKAGE_TARGET_OWNED" != "1" ]]; then
+    return
+  fi
+  case "$CARGO_TARGET_DIR" in
+    /tmp/chatos-local-connector-package-target-*) ;;
+    *)
+      echo "[WARN] Refusing to clean unexpected Cargo target path: $CARGO_TARGET_DIR" >&2
+      return
+      ;;
+  esac
+  if [[ -e "$CARGO_TARGET_DIR" ]]; then
+    echo "[INFO] Cleaning temporary Cargo target:"
+    /usr/bin/du -sh "$CARGO_TARGET_DIR" || true
+    /usr/bin/find "$CARGO_TARGET_DIR" -depth -delete || true
+  fi
+  /bin/df -h /tmp || true
+}
+trap cleanup_package_target EXIT
 
 case "$(uname -m)" in
   arm64|aarch64)
@@ -46,8 +76,8 @@ const path = require("path");
 const catalogPath = process.argv[1];
 const clientDir = process.argv[2];
 const catalog = JSON.parse(fs.readFileSync(catalogPath, "utf8"));
-if (catalog.schema_version !== 1 || !Array.isArray(catalog.skills) || catalog.skills.length !== 27) {
-  throw new Error("Local Connector internal Skill catalog must contain exactly 27 schema-v1 entries");
+if (catalog.schema_version !== 1 || !Array.isArray(catalog.skills) || catalog.skills.length !== 28) {
+  throw new Error("Local Connector internal Skill catalog must contain exactly 28 schema-v1 entries");
 }
 for (const skill of catalog.skills) {
   const bundleDir = path.join("skill_bundles", "internal", skill.name, skill.version);
@@ -102,11 +132,23 @@ process.stdin.on("data", (chunk) => input += chunk);
 process.stdin.on("end", () => process.stdout.write(JSON.parse(input).target_directory));
 ')"
 CORE_BIN="$TARGET_DIR/release/local_connector_client_core"
+CHROME_NATIVE_HOST_BIN="$TARGET_DIR/release/chatos_chrome_native_host"
+COMPUTER_USE_HELPER_BIN="$TARGET_DIR/release/chatos_computer_use_helper"
 SANDBOX_AGENT_BIN="$TARGET_DIR/release/chatos_sandbox_mcp_server"
 TOOLS_DIR="$ROOT_DIR/bundled-tools/$TOOLS_PLATFORM"
 
 if [[ ! -x "$CORE_BIN" ]]; then
   echo "Local Connector Core was not built: $CORE_BIN" >&2
+  exit 1
+fi
+
+if [[ ! -x "$CHROME_NATIVE_HOST_BIN" ]]; then
+  echo "ChatOS Chrome Native Host was not built: $CHROME_NATIVE_HOST_BIN" >&2
+  exit 1
+fi
+
+if [[ ! -x "$COMPUTER_USE_HELPER_BIN" ]]; then
+  echo "ChatOS Computer Use helper was not built: $COMPUTER_USE_HELPER_BIN" >&2
   exit 1
 fi
 
@@ -120,24 +162,51 @@ if [[ ! -d "$TOOLS_DIR" ]]; then
   exit 1
 fi
 
-rm -rf "$STAGING_DIR"
+if [[ -e "$STAGING_DIR" ]]; then
+  /usr/bin/find "$STAGING_DIR" -depth -delete
+fi
 mkdir -p \
   "$STAGING_DIR/bundled-tools" \
+  "$STAGING_DIR/chrome-extension" \
+  "$STAGING_DIR/plugin-bundles" \
   "$STAGING_DIR/skill-bundles" \
   "$STAGING_DIR/chatos-frontend" \
   "$STAGING_DIR/sqlite-migrations"
 cp "$CORE_BIN" "$STAGING_DIR/local_connector_client_core"
+cp "$CHROME_NATIVE_HOST_BIN" "$STAGING_DIR/chatos_chrome_native_host"
+cp "$COMPUTER_USE_HELPER_BIN" "$STAGING_DIR/chatos_computer_use_helper"
 cp "$SANDBOX_AGENT_BIN" "$STAGING_DIR/chatos_sandbox_mcp_server"
+cp -R "$CLIENT_DIR/chrome_extension/." "$STAGING_DIR/chrome-extension/"
 cp -R "$TOOLS_DIR" "$STAGING_DIR/bundled-tools/$TOOLS_PLATFORM"
 cp -R "$CLIENT_DIR/skill_bundles/." "$STAGING_DIR/skill-bundles/"
+node "$PLUGIN_BUNDLE_TOOL" \
+  --plugin-catalog "$PLUGIN_CATALOG" \
+  --skill-catalog "$SKILL_CATALOG" \
+  --skill-root "$CLIENT_DIR/skill_bundles/internal" \
+  --output "$STAGING_DIR/plugin-bundles" \
+  --platform "$TOOLS_PLATFORM"
+node "$PLUGIN_BUNDLE_TOOL" \
+  --verify-only \
+  --plugin-catalog "$PLUGIN_CATALOG" \
+  --skill-catalog "$SKILL_CATALOG" \
+  --skill-root "$CLIENT_DIR/skill_bundles/internal" \
+  --output "$STAGING_DIR/plugin-bundles" \
+  --platform "$TOOLS_PLATFORM"
 cp -R "$CHATOS_FRONTEND_DIR/dist/." "$STAGING_DIR/chatos-frontend/"
 cp -R "$CLIENT_DIR/core/migrations/." "$STAGING_DIR/sqlite-migrations/"
-chmod +x "$STAGING_DIR/local_connector_client_core" "$STAGING_DIR/chatos_sandbox_mcp_server"
+chmod +x \
+  "$STAGING_DIR/local_connector_client_core" \
+  "$STAGING_DIR/chatos_chrome_native_host" \
+  "$STAGING_DIR/chatos_computer_use_helper" \
+  "$STAGING_DIR/chatos_sandbox_mcp_server"
 bash "$CLIENT_DIR/prepare-app-icon-macos.sh" \
   "$APP_ICON_SOURCE" \
   "$STAGING_DIR/ChatOS.icns"
 "$CLIENT_DIR/prepare-browser-runtime-macos.sh" \
   "$STAGING_DIR/bundled-tools/$TOOLS_PLATFORM" \
+  "$TOOLS_PLATFORM"
+"$CLIENT_DIR/prepare-document-runtime-macos.sh" \
+  "$STAGING_DIR/bundled-tools/$TOOLS_PLATFORM/documents-runtime" \
   "$TOOLS_PLATFORM"
 
 ELECTRON_VERSION="$(node -p "require('$FRONTEND_DIR/node_modules/electron/package.json').version")"
@@ -163,7 +232,9 @@ else
   for cache_root in "${ELECTRON_CACHE_ROOTS[@]}"; do
     [[ -d "$cache_root" ]] || continue
     while IFS= read -r -d '' cached_archive; do
-      rm -rf "$ELECTRON_DIST_DIR"
+      if [[ -e "$ELECTRON_DIST_DIR" ]]; then
+        /usr/bin/find "$ELECTRON_DIST_DIR" -depth -delete
+      fi
       mkdir -p "$ELECTRON_DIST_DIR"
       if ditto -x -k "$cached_archive" "$ELECTRON_DIST_DIR" \
         && [[ -d "$ELECTRON_DIST_DIR/Electron.app" ]]; then
@@ -202,14 +273,47 @@ fi
 
 VERSION="$(node -p "require('$FRONTEND_DIR/package.json').version")"
 DMG_PATH="$CLIENT_DIR/dist/electron-macos/Chat-OS-Local-Connector-$VERSION-$ELECTRON_ARCH.dmg"
+if [[ "$ELECTRON_ARCH" == "arm64" ]]; then
+  APP_PATH="$CLIENT_DIR/dist/electron-macos/mac-arm64/Chat OS Local Connector.app"
+else
+  APP_PATH="$CLIENT_DIR/dist/electron-macos/mac/Chat OS Local Connector.app"
+fi
+RESOURCES_PATH="$APP_PATH/Contents/Resources"
+VERIFICATION_REPORT="$DMG_PATH.verification.json"
 
 if [[ ! -f "$DMG_PATH" ]]; then
   echo "DMG output was not created: $DMG_PATH" >&2
   exit 1
 fi
+if [[ ! -d "$RESOURCES_PATH" || -L "$RESOURCES_PATH" ]]; then
+  echo "Packaged macOS app Resources were not created: $RESOURCES_PATH" >&2
+  exit 1
+fi
+
+VERIFY_ARGS=(
+  --platform
+  "$TOOLS_PLATFORM"
+  --resources
+  "$RESOURCES_PATH"
+  --plugin-catalog
+  "$PLUGIN_CATALOG"
+  --skill-catalog
+  "$SKILL_CATALOG"
+  --electron-runtime-source
+  "$FRONTEND_DIR/electron/core-runtime.cjs"
+  --chrome-extension-source
+  "$CLIENT_DIR/chrome_extension"
+  --report
+  "$VERIFICATION_REPORT"
+)
+if [[ "${CHATOS_MAC_SIGN:-0}" == "1" ]]; then
+  VERIFY_ARGS+=(--require-signed)
+fi
+node "$INSTALLED_PACKAGE_VERIFIER" "${VERIFY_ARGS[@]}" >/dev/null
 
 hdiutil verify "$DMG_PATH" >/dev/null
 echo "[OK] macOS desktop installer: $DMG_PATH"
+echo "[OK] Installed-package verification: $VERIFICATION_REPORT"
 echo "[OK] SHA-256: $(shasum -a 256 "$DMG_PATH" | awk '{print $1}')"
 
 if [[ "${CHATOS_MAC_SIGN:-0}" != "1" ]]; then

@@ -76,6 +76,20 @@ pub(super) fn task_tool_definitions() -> Vec<Value> {
             empty_object_schema(),
         ),
         tool_definition(
+            "list_available_plugins",
+            "List Plugins enabled for the current user and available on an exact Local Connector device. Use returned id values as selected_plugins when creating execution tasks.",
+            required_object_schema(
+                json!({
+                    "device_id": {
+                        "type": "string",
+                        "minLength": 1,
+                        "description": "Exact Local Connector device id selected by the user or client."
+                    }
+                }),
+                &["device_id"],
+            ),
+        ),
+        tool_definition(
             "create_tasks_with_prerequisites",
             "Create multiple internal asynchronous tasks for the current user and project, connecting prerequisite edges with temporary client_ref values plus existing prerequisite_task_ids. Project and execution context are attached automatically. Use this for investigation, implementation and review stages instead of asking the user to provide the project again.",
             create_tasks_with_prerequisites_schema(),

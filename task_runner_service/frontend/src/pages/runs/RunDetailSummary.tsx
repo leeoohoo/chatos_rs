@@ -97,6 +97,39 @@ export function RunDetailSummary({
           <Tag color={runColorMap[run.status]}>{runStatusLabel(run.status)}</Tag>
         </Descriptions.Item>
         <Descriptions.Item label={t('runs.detail.agent')}>{agentLabel}</Descriptions.Item>
+        <Descriptions.Item label={t('runs.detail.plugins')}>
+          {run.plugin_snapshots?.length ? (
+            <Space wrap>
+              {run.plugin_snapshots.map((plugin) => (
+                <Tag key={`${plugin.plugin_id}:${plugin.release_id}`} color="purple">
+                  {plugin.plugin_id} / v{plugin.version} / {plugin.component_snapshots.length}{' '}
+                  {t('runs.detail.pluginComponents')}
+                </Tag>
+              ))}
+            </Space>
+          ) : (
+            '-'
+          )}
+        </Descriptions.Item>
+        <Descriptions.Item label={t('runs.detail.pluginTarget')}>
+          {run.plugin_snapshots?.length ? (
+            <Space wrap>
+              {Array.from(
+                new Set(
+                  run.plugin_snapshots.map(
+                    (plugin) => `${plugin.device_id}/${plugin.workspace_id || '-'}`,
+                  ),
+                ),
+              ).map((target) => (
+                <Tag key={target} color="cyan">
+                  {target}
+                </Tag>
+              ))}
+            </Space>
+          ) : (
+            '-'
+          )}
+        </Descriptions.Item>
         <Descriptions.Item label={t('runs.column.modelConfig')}>
           <Button
             type="link"

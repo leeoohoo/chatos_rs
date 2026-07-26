@@ -7,10 +7,14 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+base64 = "0.22"
 chatos_service_runtime = { path = "../chatos_service_runtime" }
+chrono = "0.4"
 reqwest = { version = "0.12", features = ["json", "rustls-tls"] }
+ring = "0.17"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+semver = "1"
 sha2 = "0.11"
 hex = "0.4"
 thiserror = "2"

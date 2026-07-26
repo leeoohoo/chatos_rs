@@ -106,7 +106,10 @@ async fn sequential_execution_stops_while_a_tool_is_still_waiting() {
             context,
             None,
             |_name, _args, _stream| async move {
-                std::future::pending::<Result<(String, Option<serde_json::Value>), String>>().await
+                std::future::pending::<
+                    Result<(String, Option<serde_json::Value>), crate::ToolCallError>,
+                >()
+                .await
             },
         ),
     )
@@ -140,7 +143,10 @@ async fn parallel_execution_stops_while_tools_are_still_waiting() {
             context,
             None,
             |_name, _args, _context, _stream| async move {
-                std::future::pending::<Result<(String, Option<serde_json::Value>), String>>().await
+                std::future::pending::<
+                    Result<(String, Option<serde_json::Value>), crate::ToolCallError>,
+                >()
+                .await
             },
         ),
     )

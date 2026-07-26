@@ -224,6 +224,11 @@ async fn execute_requirement_inner(
         project_root: Some(project.root_path.clone()),
         workspace_root: Some(project.root_path.clone()),
         remote_connection_id: None,
+        plugin_device_id: None,
+        plugin_workspace_id: None,
+        selected_plugin_ids: Vec::new(),
+        plugin_command_invocations: Vec::new(),
+        plugin_agent_selection: None,
         user_message_id: Some(execution_group_id.clone()),
         project_requirement_execution_planner: true,
     };

@@ -101,6 +101,8 @@ impl ToolExecutor for ApprovalAgentToolExecutor {
                             conversation_turn_id: context.conversation_turn_id.clone(),
                             content: format!("参数解析失败: {err}"),
                             result: None,
+                            fatal_error: false,
+                            transient_model_input: None,
                         },
                         on_tool_result.as_ref(),
                     );
@@ -121,6 +123,8 @@ impl ToolExecutor for ApprovalAgentToolExecutor {
                     conversation_turn_id: context.conversation_turn_id.clone(),
                     content: "approval agent capability is not allowed by policy".to_string(),
                     result: None,
+                    fatal_error: false,
+                    transient_model_input: None,
                 }
             };
             push_result(&mut results, result, on_tool_result.as_ref());
@@ -149,6 +153,8 @@ impl ApprovalAgentToolExecutor {
                     conversation_turn_id: context.conversation_turn_id.clone(),
                     content: format!("approval_decision 参数无效: {err}"),
                     result: None,
+                    fatal_error: false,
+                    transient_model_input: None,
                 };
             }
         };
@@ -164,6 +170,8 @@ impl ApprovalAgentToolExecutor {
                 content: "approval_decision.decision must be approve, deny, or ask_user"
                     .to_string(),
                 result: None,
+                fatal_error: false,
+                transient_model_input: None,
             };
         }
         let reason = parsed.reason.trim().to_string();
@@ -177,6 +185,8 @@ impl ApprovalAgentToolExecutor {
                 conversation_turn_id: context.conversation_turn_id.clone(),
                 content: "approval_decision.reason is required".to_string(),
                 result: None,
+                fatal_error: false,
+                transient_model_input: None,
             };
         }
         let remember_allow = decision == "approve" && parsed.remember_allow;
@@ -192,6 +202,8 @@ impl ApprovalAgentToolExecutor {
                     content: "approval_decision has already been called for this request"
                         .to_string(),
                     result: None,
+                    fatal_error: false,
+                    transient_model_input: None,
                 };
             }
             *guard = Some(ApprovalToolDecision {
@@ -213,6 +225,8 @@ impl ApprovalAgentToolExecutor {
             conversation_turn_id: context.conversation_turn_id.clone(),
             content: structured.to_string(),
             result: Some(structured),
+            fatal_error: false,
+            transient_model_input: None,
         }
     }
 
@@ -236,6 +250,8 @@ impl ApprovalAgentToolExecutor {
                 conversation_turn_id: context.conversation_turn_id.clone(),
                 content: format!("approval agent tool is not allowed: {name}"),
                 result: None,
+                fatal_error: false,
+                transient_model_input: None,
             };
         }
         match self.code_service.call_tool(name, args, None) {
@@ -250,6 +266,8 @@ impl ApprovalAgentToolExecutor {
                     conversation_turn_id: context.conversation_turn_id.clone(),
                     content,
                     result: structured,
+                    fatal_error: false,
+                    transient_model_input: None,
                 }
             }
             Err(err) => ToolResult {
@@ -261,6 +279,8 @@ impl ApprovalAgentToolExecutor {
                 conversation_turn_id: context.conversation_turn_id.clone(),
                 content: format!("工具执行失败: {err}"),
                 result: None,
+                fatal_error: false,
+                transient_model_input: None,
             },
         }
     }

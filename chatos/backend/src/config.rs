@@ -2,6 +2,7 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use once_cell::sync::OnceCell;
+use url::Url;
 
 use chatos_service_runtime::{validate_production_secret, DEFAULT_MEMORY_ENGINE_OPERATOR_TOKEN};
 
@@ -39,7 +40,10 @@ pub struct Config {
     pub task_runner_internal_api_secret: Option<String>,
     pub task_runner_request_timeout_ms: i64,
     pub local_connector_service_base_url: String,
+    pub local_connector_internal_api_secret: Option<String>,
     pub local_connector_service_request_timeout_ms: i64,
+    pub plugin_ui_parent_origin: Option<String>,
+    pub plugin_ui_resource_origin: Option<String>,
     pub memory_engine_base_url: String,
     pub memory_engine_operator_token: Option<String>,
     pub memory_engine_request_timeout_ms: i64,
@@ -172,12 +176,28 @@ impl Config {
             read_optional_env("CHATOS_LOCAL_CONNECTOR_SERVICE_BASE_URL")
                 .or_else(|| read_optional_env("LOCAL_CONNECTOR_SERVICE_BASE_URL"))
                 .unwrap_or_else(default_local_connector_service_base_url);
+        let local_connector_internal_api_secret =
+            read_optional_env("CHATOS_LOCAL_CONNECTOR_INTERNAL_API_SECRET");
         let local_connector_service_request_timeout_ms =
             read_optional_env("CHATOS_LOCAL_CONNECTOR_SERVICE_REQUEST_TIMEOUT_MS")
                 .or_else(|| read_optional_env("LOCAL_CONNECTOR_SERVICE_REQUEST_TIMEOUT_MS"))
                 .and_then(|value| value.parse::<i64>().ok())
                 .unwrap_or(30_000)
                 .max(300);
+        let plugin_ui_parent_origin = normalize_plugin_ui_origin(
+            "CHATOS_PLUGIN_UI_PARENT_ORIGIN",
+            read_optional_env("CHATOS_PLUGIN_UI_PARENT_ORIGIN"),
+            normalized_env,
+        )?;
+        let plugin_ui_resource_origin = normalize_plugin_ui_origin(
+            "CHATOS_PLUGIN_UI_RESOURCE_ORIGIN",
+            read_optional_env("CHATOS_PLUGIN_UI_RESOURCE_ORIGIN"),
+            normalized_env,
+        )?;
+        validate_plugin_ui_origin_pair(
+            plugin_ui_parent_origin.as_deref(),
+            plugin_ui_resource_origin.as_deref(),
+        )?;
         let memory_engine_base_url = std::env::var("MEMORY_ENGINE_BASE_URL")
             .unwrap_or_else(|_| default_memory_engine_base_url());
         let memory_engine_operator_token = Some(
@@ -271,7 +291,10 @@ impl Config {
             task_runner_internal_api_secret,
             task_runner_request_timeout_ms,
             local_connector_service_base_url,
+            local_connector_internal_api_secret,
             local_connector_service_request_timeout_ms,
+            plugin_ui_parent_origin,
+            plugin_ui_resource_origin,
             memory_engine_base_url,
             memory_engine_operator_token,
             memory_engine_request_timeout_ms,
@@ -424,6 +447,54 @@ fn normalize_env(value: &str) -> &str {
     }
 }
 
+fn normalize_plugin_ui_origin(
+    key: &str,
+    value: Option<String>,
+    normalized_env: &str,
+) -> Result<Option<String>, String> {
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    if value.len() > 512 {
+        return Err(format!("{key} exceeds the 512-byte origin limit"));
+    }
+    let url = Url::parse(value.as_str()).map_err(|_| format!("{key} must be a valid origin"))?;
+    if !matches!(url.scheme(), "http" | "https")
+        || url.host_str().is_none()
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || !matches!(url.path(), "" | "/")
+        || url.query().is_some()
+        || url.fragment().is_some()
+    {
+        return Err(format!(
+            "{key} must contain only an http(s) scheme and authority"
+        ));
+    }
+    if normalized_env == "production" && url.scheme() != "https" {
+        return Err(format!("{key} must use https in production"));
+    }
+    Ok(Some(url.origin().ascii_serialization()))
+}
+
+fn validate_plugin_ui_origin_pair(
+    parent_origin: Option<&str>,
+    resource_origin: Option<&str>,
+) -> Result<(), String> {
+    match (parent_origin, resource_origin) {
+        (None, None) => Ok(()),
+        (Some(parent), Some(resource)) if parent != resource => Ok(()),
+        (Some(_), Some(_)) => Err(
+            "CHATOS_PLUGIN_UI_PARENT_ORIGIN and CHATOS_PLUGIN_UI_RESOURCE_ORIGIN must be different"
+                .to_string(),
+        ),
+        _ => Err(
+            "CHATOS_PLUGIN_UI_PARENT_ORIGIN and CHATOS_PLUGIN_UI_RESOURCE_ORIGIN must be configured together"
+                .to_string(),
+        ),
+    }
+}
+
 fn require_secret_for_env(
     value: Option<String>,
     env_key: &str,
@@ -476,7 +547,8 @@ fn validate_config(
 mod tests {
     use super::{
         build_memory_engine_base_url, build_task_runner_base_url, build_user_service_base_url,
-        client_accessible_host, normalize_env, require_secret_for_env, validate_config,
+        client_accessible_host, normalize_env, normalize_plugin_ui_origin, require_secret_for_env,
+        validate_config, validate_plugin_ui_origin_pair,
     };
 
     #[test]
@@ -540,6 +612,44 @@ mod tests {
             "https://memory.example.com/api/memory-engine/v1",
         )
         .expect("valid production config");
+    }
+
+    #[test]
+    fn plugin_ui_origins_are_https_origin_only_and_distinct_in_production() {
+        assert_eq!(
+            normalize_plugin_ui_origin(
+                "CHATOS_PLUGIN_UI_RESOURCE_ORIGIN",
+                Some("https://plugin-ui.example.com/".to_string()),
+                "production",
+            )
+            .expect("valid resource origin")
+            .as_deref(),
+            Some("https://plugin-ui.example.com")
+        );
+        for invalid in [
+            "http://plugin-ui.example.com",
+            "https://user@plugin-ui.example.com",
+            "https://plugin-ui.example.com/assets",
+            "https://plugin-ui.example.com/?token=secret",
+        ] {
+            assert!(normalize_plugin_ui_origin(
+                "CHATOS_PLUGIN_UI_RESOURCE_ORIGIN",
+                Some(invalid.to_string()),
+                "production",
+            )
+            .is_err());
+        }
+        assert!(validate_plugin_ui_origin_pair(
+            Some("https://app.example.com"),
+            Some("https://plugin-ui.example.com"),
+        )
+        .is_ok());
+        assert!(validate_plugin_ui_origin_pair(
+            Some("https://app.example.com"),
+            Some("https://app.example.com"),
+        )
+        .is_err());
+        assert!(validate_plugin_ui_origin_pair(Some("https://app.example.com"), None).is_err());
     }
 
     #[test]

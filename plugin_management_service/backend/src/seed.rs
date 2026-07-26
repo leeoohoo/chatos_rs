@@ -17,9 +17,11 @@ use crate::store::{now_rfc3339, AppStore};
 
 mod agent_prompts;
 mod internal_skills;
+mod plugins;
 
 use agent_prompts::{backfill_agent_prompt_versions, seed_agent_prompts};
 use internal_skills::{internal_skill_catalog, seed_internal_skills};
+use plugins::seed_bundled_plugins;
 
 pub use chatos_plugin_management_sdk::{
     CHATOS_TASK_RUNNER_MCP_RESOURCE_ID, LOCAL_CONNECTOR_APPROVAL_MCP_RESOURCE_ID,
@@ -39,6 +41,7 @@ pub async fn seed_system_resources(store: &AppStore, admin_user_id: &str) -> Res
     remove_retired_system_agents(store).await?;
     seed_system_mcps(store, admin_user_id).await?;
     seed_internal_skills(store, admin_user_id).await?;
+    seed_bundled_plugins(store).await?;
     seed_agents(store).await?;
     seed_agent_prompts(store, admin_user_id).await?;
     seed_agent_bindings(store, admin_user_id).await?;
@@ -154,6 +157,7 @@ fn system_mcp_record(
             extra,
             ..ResourceMetadata::default()
         },
+        plugin_component: PluginComponentOwnership::default(),
         created_by: admin_user_id.to_string(),
         updated_by: admin_user_id.to_string(),
         created_at: now.to_string(),
@@ -232,6 +236,7 @@ async fn seed_agents(store: &AppStore) -> Result<(), String> {
             enabled: true,
             managed_by: "system".to_string(),
             include_user_resources,
+            plugin_component: PluginComponentOwnership::default(),
             created_at: now.clone(),
             updated_at: now,
         };
@@ -549,6 +554,7 @@ async fn seed_agent_resource_binding_with_conditions(
         required,
         priority,
         conditions,
+        component_allowlist: Vec::new(),
         created_by: admin_user_id.to_string(),
         updated_by: admin_user_id.to_string(),
         created_at,

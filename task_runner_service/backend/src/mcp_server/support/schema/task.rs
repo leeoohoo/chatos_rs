@@ -29,7 +29,10 @@ pub(crate) fn create_task_schema() -> Value {
                 "description": enabled_builtin_kinds_description
             },
             "external_mcp_config_ids": external_mcp_config_ids_schema()
-            ,"selected_skill_ids": selected_skill_ids_schema()
+            ,"selected_skill_ids": selected_skill_ids_schema(),
+            "plugin_device_id": plugin_device_id_schema(),
+            "plugin_workspace_id": plugin_workspace_id_schema(),
+            "selected_plugins": selected_plugins_schema()
         },
         "required": ["title", "objective"],
         "additionalProperties": false
@@ -48,7 +51,8 @@ pub(crate) fn update_task_schema() -> Value {
             "tags": { "type": "array", "items": { "type": "string" } },
             "schedule": { "type": "object" },
             "prerequisite_task_ids": prerequisite_task_ids_schema(),
-            "mcp_config": task_mcp_config_schema()
+            "mcp_config": task_mcp_config_schema(),
+            "plugin_config": task_plugin_config_schema()
         },
         "additionalProperties": false
     })
@@ -97,6 +101,9 @@ pub(crate) fn create_tasks_with_prerequisites_schema() -> Value {
                         },
                         "external_mcp_config_ids": external_mcp_config_ids_schema(),
                         "selected_skill_ids": selected_skill_ids_schema(),
+                        "plugin_device_id": plugin_device_id_schema(),
+                        "plugin_workspace_id": plugin_workspace_id_schema(),
+                        "selected_plugins": selected_plugins_schema(),
                         "prerequisite_refs": {
                             "type": "array",
                             "items": { "type": "string", "minLength": 1 },
@@ -256,6 +263,83 @@ pub(crate) fn selected_skill_ids_schema() -> Value {
         "items": { "type": "string", "minLength": 1 },
         "uniqueItems": true,
         "description": "Local Connector Skill ids to prepare for task execution. Use only ids returned by list_available_skills."
+    })
+}
+
+pub(crate) fn task_plugin_config_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "device_id": plugin_device_id_schema(),
+            "workspace_id": plugin_workspace_id_schema(),
+            "selected_plugins": selected_plugins_schema(),
+            "command_invocations": plugin_command_invocations_schema()
+        },
+        "additionalProperties": false
+    })
+}
+
+fn plugin_command_invocations_schema() -> Value {
+    json!({
+        "type": "array",
+        "maxItems": 64,
+        "items": {
+            "type": "object",
+            "properties": {
+                "plugin_id": { "type": "string", "minLength": 1 },
+                "command_id": { "type": "string", "minLength": 1 },
+                "arguments": { "type": "string", "maxLength": 16384 }
+            },
+            "required": ["plugin_id", "command_id"],
+            "additionalProperties": false
+        },
+        "description": "Optional immutable arguments for selected Plugin Commands. Commands requiring confirmation are approved interactively on the exact Local Connector device during prepare."
+    })
+}
+
+fn plugin_device_id_schema() -> Value {
+    json!({
+        "type": "string",
+        "minLength": 1,
+        "description": "Exact Local Connector device id selected by the user or client. Required when selected_plugins is not empty."
+    })
+}
+
+fn plugin_workspace_id_schema() -> Value {
+    json!({
+        "type": "string",
+        "minLength": 1,
+        "description": "Optional Local Connector workspace id to bind Plugin prepare/execute/cancel sessions."
+    })
+}
+
+fn selected_plugins_schema() -> Value {
+    json!({
+        "type": "array",
+        "items": {
+            "type": "object",
+            "properties": {
+                "plugin_id": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "Exact Plugin id returned by list_available_plugins."
+                },
+                "selected_skill_ids": {
+                    "type": "array",
+                    "items": { "type": "string", "minLength": 1 },
+                    "uniqueItems": true
+                },
+                "selected_command_ids": {
+                    "type": "array",
+                    "items": { "type": "string", "minLength": 1 },
+                    "uniqueItems": true
+                }
+            },
+            "required": ["plugin_id"],
+            "additionalProperties": false
+        },
+        "uniqueItems": true,
+        "description": "Optional exact Plugins to prepare through Local Connector. Use only ids returned by list_available_plugins for plugin_device_id."
     })
 }
 

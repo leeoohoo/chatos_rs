@@ -25,6 +25,7 @@ export default function InputAreaComposer(props: InputAreaComposerProps) {
   textareaRef,
   message,
   handleInputChange,
+  handleTextareaSelect,
   handleKeyDown,
   handlePaste,
   handleSend,
@@ -53,6 +54,7 @@ export default function InputAreaComposer(props: InputAreaComposerProps) {
         ref={textareaRef as Ref<HTMLTextAreaElement>}
         value={message}
         onChange={handleInputChange}
+        onSelect={handleTextareaSelect}
         onKeyDown={handleKeyDown}
         onPaste={handlePaste}
         placeholder={placeholder}

@@ -9,6 +9,8 @@ use anyhow::{anyhow, Context, Result};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
+const MAX_TEMPLATE_MANIFEST_BYTES: u64 = 1024 * 1024;
+
 pub(super) fn docx_paragraph(text: &str, title: bool) -> String {
     let style = if title {
         "<w:pPr><w:pStyle w:val=\"Title\"/></w:pPr>"
@@ -21,6 +23,7 @@ pub(super) fn docx_paragraph(text: &str, title: bool) -> String {
     )
 }
 
+#[cfg(test)]
 pub(super) fn docx_content_types() -> String {
     r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>"#.to_string()
 }
@@ -35,94 +38,29 @@ pub(super) fn empty_relationships() -> String {
     r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"/>"#.to_string()
 }
 
-pub(super) fn xlsx_content_types() -> String {
-    r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/></Types>"#.to_string()
-}
-
-pub(super) fn xlsx_workbook_xml(sheet_name: &str) -> String {
-    format!(
-        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="{}" sheetId="1" r:id="rId1"/></sheets></workbook>"#,
-        escape_xml(sheet_name)
-    )
-}
-
-pub(super) fn xlsx_workbook_relationships() -> String {
-    r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>"#.to_string()
-}
-
-pub(super) fn xlsx_styles_xml() -> String {
-    r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><fonts count="1"><font><sz val="11"/><name val="Calibri"/></font></fonts><fills count="1"><fill><patternFill patternType="none"/></fill></fills><borders count="1"><border/></borders><cellStyleXfs count="1"><xf/></cellStyleXfs><cellXfs count="1"><xf xfId="0"/></cellXfs></styleSheet>"#.to_string()
-}
-
-pub(super) fn xlsx_sheet_xml(rows: &[Vec<Value>]) -> String {
-    let mut sheet_data = String::new();
-    for (row_index, row) in rows.iter().enumerate() {
-        let row_number = row_index + 1;
-        sheet_data.push_str(format!("<row r=\"{row_number}\">").as_str());
-        for (column_index, value) in row.iter().enumerate() {
-            let reference = format!("{}{}", xlsx_column_name(column_index + 1), row_number);
-            sheet_data.push_str(xlsx_cell(reference.as_str(), value).as_str());
-        }
-        sheet_data.push_str("</row>");
-    }
-    format!(
-        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>{sheet_data}</sheetData></worksheet>"#
-    )
-}
-
-fn xlsx_cell(reference: &str, value: &Value) -> String {
-    match value {
-        Value::Null => format!("<c r=\"{reference}\"/>"),
-        Value::Bool(value) => format!(
-            "<c r=\"{reference}\" t=\"b\"><v>{}</v></c>",
-            if *value { 1 } else { 0 }
-        ),
-        Value::Number(value) => format!("<c r=\"{reference}\"><v>{value}</v></c>"),
-        Value::String(value) => format!(
-            "<c r=\"{reference}\" t=\"inlineStr\"><is><t xml:space=\"preserve\">{}</t></is></c>",
-            escape_xml(value)
-        ),
-        other => format!(
-            "<c r=\"{reference}\" t=\"inlineStr\"><is><t>{}</t></is></c>",
-            escape_xml(other.to_string().as_str())
-        ),
-    }
-}
-
-fn xlsx_column_name(mut index: usize) -> String {
-    let mut output = String::new();
-    while index > 0 {
-        let remainder = (index - 1) % 26;
-        output.insert(0, (b'A' + remainder as u8) as char);
-        index = (index - 1) / 26;
-    }
-    output
-}
-
-pub(super) fn sanitize_sheet_name(value: &str) -> String {
-    let cleaned = value
-        .chars()
-        .filter(|character| !matches!(character, ':' | '\\' | '/' | '?' | '*' | '[' | ']'))
-        .take(31)
-        .collect::<String>();
-    if cleaned.trim().is_empty() {
-        "Sheet1".to_string()
-    } else {
-        cleaned
-    }
-}
-
 pub(super) fn csv_cell(value: &Value) -> String {
-    let raw = match value {
+    let mut raw = match value {
         Value::Null => String::new(),
         Value::String(value) => value.clone(),
         other => other.to_string(),
     };
+    if matches!(value, Value::String(_)) && csv_formula_injection_risk(raw.as_str()) {
+        raw.insert(0, '\'');
+    }
     if raw.contains([',', '"', '\n', '\r']) {
         format!("\"{}\"", raw.replace('"', "\"\""))
     } else {
         raw
     }
+}
+
+fn csv_formula_injection_risk(value: &str) -> bool {
+    let trimmed = value.trim_start_matches([' ', '\t', '\r', '\n']);
+    value.starts_with(['\t', '\r', '\n'])
+        || trimmed
+            .chars()
+            .next()
+            .is_some_and(|character| matches!(character, '=' | '+' | '-' | '@'))
 }
 
 pub(super) fn parse_csv_line(line: &str) -> Vec<String> {
@@ -145,153 +83,26 @@ pub(super) fn parse_csv_line(line: &str) -> Vec<String> {
     cells
 }
 
-pub(super) fn pptx_base_entries(slide_count: usize) -> Vec<(String, String)> {
-    vec![
-        (
-            "[Content_Types].xml".to_string(),
-            pptx_content_types(slide_count),
-        ),
-        (
-            "_rels/.rels".to_string(),
-            office_root_relationships("ppt/presentation.xml"),
-        ),
-        (
-            "ppt/presentation.xml".to_string(),
-            pptx_presentation_xml(slide_count),
-        ),
-        (
-            "ppt/_rels/presentation.xml.rels".to_string(),
-            pptx_presentation_relationships(slide_count),
-        ),
-        (
-            "ppt/slideMasters/slideMaster1.xml".to_string(),
-            pptx_slide_master(),
-        ),
-        (
-            "ppt/slideMasters/_rels/slideMaster1.xml.rels".to_string(),
-            pptx_slide_master_relationships(),
-        ),
-        (
-            "ppt/slideLayouts/slideLayout1.xml".to_string(),
-            pptx_slide_layout(),
-        ),
-        (
-            "ppt/slideLayouts/_rels/slideLayout1.xml.rels".to_string(),
-            pptx_slide_layout_relationships(),
-        ),
-        ("ppt/theme/theme1.xml".to_string(), pptx_theme()),
-    ]
-}
-
-fn pptx_content_types(slide_count: usize) -> String {
-    let slides = (1..=slide_count)
-        .map(|index| format!("<Override PartName=\"/ppt/slides/slide{index}.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.presentationml.slide+xml\"/>"))
-        .collect::<String>();
-    format!(
-        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/ppt/presentation.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.presentation.main+xml"/><Override PartName="/ppt/slideMasters/slideMaster1.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slideMaster+xml"/><Override PartName="/ppt/slideLayouts/slideLayout1.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slideLayout+xml"/><Override PartName="/ppt/theme/theme1.xml" ContentType="application/vnd.openxmlformats-officedocument.theme+xml"/>{slides}</Types>"#
-    )
-}
-
-fn pptx_presentation_xml(slide_count: usize) -> String {
-    let slide_ids = (1..=slide_count)
-        .map(|index| {
-            format!(
-                "<p:sldId id=\"{}\" r:id=\"rId{}\"/>",
-                255 + index,
-                index + 1
-            )
-        })
-        .collect::<String>();
-    format!(
-        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><p:presentation xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"><p:sldMasterIdLst><p:sldMasterId id="2147483648" r:id="rId1"/></p:sldMasterIdLst><p:sldIdLst>{slide_ids}</p:sldIdLst><p:sldSz cx="12192000" cy="6858000" type="screen16x9"/><p:notesSz cx="6858000" cy="9144000"/></p:presentation>"#
-    )
-}
-
-fn pptx_presentation_relationships(slide_count: usize) -> String {
-    let slides = (1..=slide_count)
-        .map(|index| format!("<Relationship Id=\"rId{}\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide\" Target=\"slides/slide{index}.xml\"/>", index + 1))
-        .collect::<String>();
-    format!(
-        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slideMaster" Target="slideMasters/slideMaster1.xml"/>{slides}</Relationships>"#
-    )
-}
-
-pub(super) fn pptx_slide_xml(title: &str, body: &str) -> String {
-    format!(
-        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><p:sld xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"><p:cSld><p:spTree>{}{}{}</p:spTree></p:cSld><p:clrMapOvr><a:masterClrMapping/></p:clrMapOvr></p:sld>"#,
-        pptx_group_shape(),
-        pptx_text_shape(2, "Title", 685800, 457200, 10820400, 1143000, 2800, title, true),
-        pptx_text_shape(3, "Body", 914400, 1828800, 10363200, 4114800, 1800, body, false)
-    )
-}
-
-fn pptx_group_shape() -> String {
-    r#"<p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr><p:grpSpPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="0" cy="0"/><a:chOff x="0" y="0"/><a:chExt cx="0" cy="0"/></a:xfrm></p:grpSpPr>"#.to_string()
-}
-
-#[allow(clippy::too_many_arguments)]
-fn pptx_text_shape(
-    id: usize,
-    name: &str,
-    x: usize,
-    y: usize,
-    cx: usize,
-    cy: usize,
-    font_size: usize,
-    text: &str,
-    bold: bool,
-) -> String {
-    let paragraphs = if text.is_empty() {
-        "<a:p><a:endParaRPr lang=\"zh-CN\"/></a:p>".to_string()
-    } else {
-        text.lines()
-            .map(|line| format!("<a:p><a:r><a:rPr lang=\"zh-CN\" sz=\"{font_size}\" b=\"{}\"/><a:t>{}</a:t></a:r><a:endParaRPr lang=\"zh-CN\"/></a:p>", if bold { 1 } else { 0 }, escape_xml(line)))
-            .collect::<String>()
-    };
-    format!(
-        r#"<p:sp><p:nvSpPr><p:cNvPr id="{id}" name="{}"/><p:cNvSpPr txBox="1"/><p:nvPr/></p:nvSpPr><p:spPr><a:xfrm><a:off x="{x}" y="{y}"/><a:ext cx="{cx}" cy="{cy}"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:noFill/><a:ln><a:noFill/></a:ln></p:spPr><p:txBody><a:bodyPr wrap="square"/><a:lstStyle/>{paragraphs}</p:txBody></p:sp>"#,
-        escape_xml(name)
-    )
-}
-
-pub(super) fn pptx_slide_relationships() -> String {
-    r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slideLayout" Target="../slideLayouts/slideLayout1.xml"/></Relationships>"#.to_string()
-}
-
-fn pptx_slide_master() -> String {
-    format!(
-        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><p:sldMaster xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"><p:cSld><p:spTree>{}</p:spTree></p:cSld><p:clrMap accent1="accent1" accent2="accent2" accent3="accent3" accent4="accent4" accent5="accent5" accent6="accent6" bg1="lt1" bg2="lt2" folHlink="folHlink" hlink="hlink" tx1="dk1" tx2="dk2"/><p:sldLayoutIdLst><p:sldLayoutId id="1" r:id="rId1"/></p:sldLayoutIdLst><p:txStyles><p:titleStyle/><p:bodyStyle/><p:otherStyle/></p:txStyles></p:sldMaster>"#,
-        pptx_group_shape()
-    )
-}
-
-fn pptx_slide_master_relationships() -> String {
-    r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slideLayout" Target="../slideLayouts/slideLayout1.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/theme" Target="../theme/theme1.xml"/></Relationships>"#.to_string()
-}
-
-fn pptx_slide_layout() -> String {
-    format!(
-        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><p:sldLayout xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" type="blank" preserve="1"><p:cSld name="Blank"><p:spTree>{}</p:spTree></p:cSld><p:clrMapOvr><a:masterClrMapping/></p:clrMapOvr></p:sldLayout>"#,
-        pptx_group_shape()
-    )
-}
-
-fn pptx_slide_layout_relationships() -> String {
-    r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slideMaster" Target="../slideMasters/slideMaster1.xml"/></Relationships>"#.to_string()
-}
-
-fn pptx_theme() -> String {
-    r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><a:theme xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" name="ChatOS"><a:themeElements><a:clrScheme name="ChatOS"><a:dk1><a:sysClr val="windowText" lastClr="000000"/></a:dk1><a:lt1><a:sysClr val="window" lastClr="FFFFFF"/></a:lt1><a:dk2><a:srgbClr val="1F2937"/></a:dk2><a:lt2><a:srgbClr val="F3F4F6"/></a:lt2><a:accent1><a:srgbClr val="2563EB"/></a:accent1><a:accent2><a:srgbClr val="0F766E"/></a:accent2><a:accent3><a:srgbClr val="7C3AED"/></a:accent3><a:accent4><a:srgbClr val="EA580C"/></a:accent4><a:accent5><a:srgbClr val="DB2777"/></a:accent5><a:accent6><a:srgbClr val="4B5563"/></a:accent6><a:hlink><a:srgbClr val="0000FF"/></a:hlink><a:folHlink><a:srgbClr val="800080"/></a:folHlink></a:clrScheme><a:fontScheme name="ChatOS"><a:majorFont><a:latin typeface="Aptos Display"/><a:ea typeface=""/><a:cs typeface=""/></a:majorFont><a:minorFont><a:latin typeface="Aptos"/><a:ea typeface=""/><a:cs typeface=""/></a:minorFont></a:fontScheme><a:fmtScheme name="ChatOS"><a:fillStyleLst><a:solidFill><a:schemeClr val="phClr"/></a:solidFill></a:fillStyleLst><a:lnStyleLst><a:ln w="9525"><a:solidFill><a:schemeClr val="phClr"/></a:solidFill></a:ln></a:lnStyleLst><a:effectStyleLst><a:effectStyle><a:effectLst/></a:effectStyle></a:effectStyleLst><a:bgFillStyleLst><a:solidFill><a:schemeClr val="phClr"/></a:solidFill></a:bgFillStyleLst></a:fmtScheme></a:themeElements></a:theme>"#.to_string()
-}
-
 pub(super) fn read_template_manifest(directory: &Path) -> Result<Value> {
     if !directory.is_dir() {
         return Err(anyhow!("template directory does not exist"));
     }
-    let text = fs::read_to_string(directory.join("template.json"))
+    let manifest_path = directory.join("template.json");
+    let metadata = fs::symlink_metadata(manifest_path.as_path())
+        .with_context(|| format!("inspect template manifest {}", directory.display()))?;
+    if metadata.file_type().is_symlink() || !metadata.is_file() {
+        return Err(anyhow!("template.json must be a regular non-symlink file"));
+    }
+    if metadata.len() == 0 || metadata.len() > MAX_TEMPLATE_MANIFEST_BYTES {
+        return Err(anyhow!("template.json must be between 1 byte and 1 MiB"));
+    }
+    let text = fs::read_to_string(manifest_path)
         .with_context(|| format!("read template manifest {}", directory.display()))?;
     let manifest = serde_json::from_str::<Value>(&text).context("decode template.json")?;
-    if manifest.get("schema_version").and_then(Value::as_u64) != Some(1) {
+    if !matches!(
+        manifest.get("schema_version").and_then(Value::as_u64),
+        Some(1 | 2)
+    ) {
         return Err(anyhow!("unsupported artifact template schema version"));
     }
     Ok(manifest)
@@ -369,22 +180,22 @@ pub(super) fn extract_tag_text(xml: &str, tag: &str) -> String {
     output
 }
 
-pub(super) fn extract_attribute_values(xml: &str, attribute: &str) -> Vec<String> {
-    let needle = format!(" {attribute}=\"");
-    let mut values = Vec::new();
+pub(super) fn count_tag_starts(xml: &str, tag: &str) -> usize {
+    let needle = format!("<{tag}");
     let mut cursor = 0usize;
-    while let Some(start) = xml[cursor..].find(needle.as_str()) {
-        let value_start = cursor + start + needle.len();
-        let Some(end) = xml[value_start..].find('"') else {
-            break;
-        };
-        values.push(unescape_xml(&xml[value_start..value_start + end]));
-        cursor = value_start + end + 1;
+    let mut count = 0usize;
+    while let Some(offset) = xml[cursor..].find(needle.as_str()) {
+        let start = cursor + offset;
+        let suffix = xml.as_bytes().get(start + needle.len()).copied();
+        if suffix.is_some_and(|byte| byte == b'>' || byte.is_ascii_whitespace()) {
+            count += 1;
+        }
+        cursor = start + needle.len();
     }
-    values
+    count
 }
 
-fn escape_xml(value: &str) -> String {
+pub(super) fn escape_xml(value: &str) -> String {
     value
         .replace('&', "&amp;")
         .replace('<', "&lt;")
@@ -393,7 +204,7 @@ fn escape_xml(value: &str) -> String {
         .replace('\'', "&apos;")
 }
 
-fn unescape_xml(value: &str) -> String {
+pub(super) fn unescape_xml(value: &str) -> String {
     value
         .replace("&lt;", "<")
         .replace("&gt;", ">")

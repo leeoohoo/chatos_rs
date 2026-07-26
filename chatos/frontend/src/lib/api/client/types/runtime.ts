@@ -2,6 +2,10 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 import type { SessionMessageResponse } from './session';
+import type {
+  PluginAgentSelectionPayload,
+  PluginCommandInvocationPayload,
+} from '../../../../types';
 
 export interface MemoryAgentSkillResponse {
   id: string;
@@ -189,6 +193,11 @@ export interface StreamChatOptions {
   projectId?: string | null;
   projectRoot?: string | null;
   workspaceRoot?: string | null;
+  pluginDeviceId?: string | null;
+  pluginWorkspaceId?: string | null;
+  selectedPluginIds?: string[];
+  pluginCommandInvocations?: PluginCommandInvocationPayload[];
+  pluginAgentSelection?: PluginAgentSelectionPayload | null;
   planMode?: boolean;
   systemPrompt?: string | null;
 }
@@ -354,6 +363,18 @@ export interface TurnRuntimeSnapshotSelectedCommand {
   arguments?: string | null;
 }
 
+export interface TurnRuntimeSnapshotPluginCommandInvocation {
+  plugin_id: string;
+  command_id: string;
+  arguments_present?: boolean;
+  arguments_sha256?: string | null;
+}
+
+export interface TurnRuntimeSnapshotPluginAgentSelection {
+  plugin_id: string;
+  agent_id: string;
+}
+
 export interface TurnRuntimeSnapshotContextItem {
   role?: string | null;
   type?: string | null;
@@ -372,6 +393,8 @@ export interface TurnRuntimeSnapshotRuntime {
   mcp_enabled?: boolean | null;
   enabled_mcp_ids?: string[];
   selected_commands?: TurnRuntimeSnapshotSelectedCommand[];
+  plugin_command_invocations?: TurnRuntimeSnapshotPluginCommandInvocation[];
+  plugin_agent_selection?: TurnRuntimeSnapshotPluginAgentSelection | null;
   unavailable_builtin_tools?: Array<{
     server_name: string;
     tool_name: string;

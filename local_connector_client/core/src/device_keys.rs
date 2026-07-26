@@ -9,14 +9,14 @@ use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine as _;
 use ring::rand::SystemRandom;
 use ring::signature::{Ed25519KeyPair, KeyPair, UnparsedPublicKey, ED25519};
+use sha2::{Digest, Sha256};
 
+use crate::secure_storage::SecureStorage;
 use crate::LocalState;
-
-#[cfg(target_os = "macos")]
-mod macos_keychain;
 
 const PUBLIC_KEY_PREFIX: &str = "ed25519:";
 const KEY_FILE_NAME: &str = "device-signing-key.bin";
+const DEVICE_KEY_SERVICE: &str = "Chat OS Local Connector Device Key";
 
 pub(crate) fn ensure_device_keypair(
     state_path: &Path,
@@ -123,11 +123,8 @@ fn public_key_from_pkcs8(pkcs8: &[u8]) -> Result<String> {
 
 fn load_private_key(state_path: &Path) -> Result<Option<Vec<u8>>> {
     let path = private_key_path(state_path);
-    #[cfg(not(target_os = "macos"))]
-    if !path.is_file() {
-        return Ok(None);
-    }
-    secret_store::load(path.as_path())
+    SecureStorage::platform(DEVICE_KEY_SERVICE)
+        .load(device_key_account(path.as_path()).as_str(), path.as_path())
         .with_context(|| format!("load local connector device key {}", path.display()))
 }
 
@@ -137,7 +134,12 @@ fn save_private_key(state_path: &Path, pkcs8: &[u8]) -> Result<()> {
         fs::create_dir_all(parent)
             .with_context(|| format!("create local connector key dir {}", parent.display()))?;
     }
-    secret_store::save(path.as_path(), pkcs8)
+    SecureStorage::platform(DEVICE_KEY_SERVICE)
+        .save(
+            device_key_account(path.as_path()).as_str(),
+            path.as_path(),
+            pkcs8,
+        )
         .with_context(|| format!("save local connector device key {}", path.display()))
 }
 
@@ -148,129 +150,7 @@ fn private_key_path(state_path: &Path) -> PathBuf {
         .join(KEY_FILE_NAME)
 }
 
-mod secret_store {
-    use super::*;
-
-    #[cfg(windows)]
-    const DPAPI_MAGIC: &[u8] = b"dpapi-v1\n";
-
-    #[cfg(windows)]
-    pub(super) fn load(path: &Path) -> Result<Option<Vec<u8>>> {
-        let content = fs::read(path)?;
-        if let Some(encrypted) = content.strip_prefix(DPAPI_MAGIC) {
-            return dpapi_unprotect(encrypted).map(Some);
-        }
-        Ok(Some(content))
-    }
-
-    #[cfg(windows)]
-    pub(super) fn save(path: &Path, value: &[u8]) -> Result<()> {
-        let encrypted = dpapi_protect(value)?;
-        let mut content = DPAPI_MAGIC.to_vec();
-        content.extend_from_slice(encrypted.as_slice());
-        fs::write(path, content)?;
-        Ok(())
-    }
-
-    #[cfg(target_os = "macos")]
-    pub(super) fn load(path: &Path) -> Result<Option<Vec<u8>>> {
-        macos_keychain::load(path)
-    }
-
-    #[cfg(target_os = "macos")]
-    pub(super) fn save(path: &Path, value: &[u8]) -> Result<()> {
-        macos_keychain::save(path, value)
-    }
-
-    #[cfg(all(not(windows), not(target_os = "macos")))]
-    pub(super) fn load(path: &Path) -> Result<Option<Vec<u8>>> {
-        Ok(Some(fs::read(path)?))
-    }
-
-    #[cfg(all(not(windows), not(target_os = "macos")))]
-    pub(super) fn save(path: &Path, value: &[u8]) -> Result<()> {
-        fs::write(path, value)?;
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
-        }
-        Ok(())
-    }
-
-    #[cfg(windows)]
-    fn dpapi_protect(value: &[u8]) -> Result<Vec<u8>> {
-        use std::ptr::{null, null_mut};
-        use windows_sys::Win32::Foundation::LocalFree;
-        use windows_sys::Win32::Security::Cryptography::{
-            CryptProtectData, CRYPTPROTECT_UI_FORBIDDEN, CRYPT_INTEGER_BLOB,
-        };
-
-        let input = CRYPT_INTEGER_BLOB {
-            cbData: value.len() as u32,
-            pbData: value.as_ptr() as *mut u8,
-        };
-        let mut output = CRYPT_INTEGER_BLOB {
-            cbData: 0,
-            pbData: null_mut(),
-        };
-        let ok = unsafe {
-            CryptProtectData(
-                &input,
-                null(),
-                null(),
-                null_mut(),
-                null(),
-                CRYPTPROTECT_UI_FORBIDDEN,
-                &mut output,
-            )
-        };
-        if ok == 0 {
-            return Err(std::io::Error::last_os_error().into());
-        }
-        let protected =
-            unsafe { std::slice::from_raw_parts(output.pbData, output.cbData as usize).to_vec() };
-        unsafe {
-            LocalFree(output.pbData as _);
-        }
-        Ok(protected)
-    }
-
-    #[cfg(windows)]
-    fn dpapi_unprotect(value: &[u8]) -> Result<Vec<u8>> {
-        use std::ptr::{null, null_mut};
-        use windows_sys::Win32::Foundation::LocalFree;
-        use windows_sys::Win32::Security::Cryptography::{
-            CryptUnprotectData, CRYPTPROTECT_UI_FORBIDDEN, CRYPT_INTEGER_BLOB,
-        };
-
-        let input = CRYPT_INTEGER_BLOB {
-            cbData: value.len() as u32,
-            pbData: value.as_ptr() as *mut u8,
-        };
-        let mut output = CRYPT_INTEGER_BLOB {
-            cbData: 0,
-            pbData: null_mut(),
-        };
-        let ok = unsafe {
-            CryptUnprotectData(
-                &input,
-                null_mut(),
-                null(),
-                null_mut(),
-                null(),
-                CRYPTPROTECT_UI_FORBIDDEN,
-                &mut output,
-            )
-        };
-        if ok == 0 {
-            return Err(std::io::Error::last_os_error().into());
-        }
-        let unprotected =
-            unsafe { std::slice::from_raw_parts(output.pbData, output.cbData as usize).to_vec() };
-        unsafe {
-            LocalFree(output.pbData as _);
-        }
-        Ok(unprotected)
-    }
+fn device_key_account(path: &Path) -> String {
+    let digest = Sha256::digest(path.to_string_lossy().as_bytes());
+    format!("chatos-local-connector-{}", hex::encode(digest))
 }

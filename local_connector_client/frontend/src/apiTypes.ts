@@ -57,6 +57,7 @@ export interface ConnectorStatus {
   configured: boolean;
   connector_running: boolean;
   developer_mode?: boolean;
+  browser_full_cdp_access_enabled?: boolean;
   developer_cloud_base_url?: string | null;
   developer_user_service_base_url?: string | null;
   developer_chatos_web_url?: string | null;
@@ -169,6 +170,26 @@ export interface CommandWhitelistEntry {
   enabled: boolean;
 }
 
+export interface ApprovalActionAuditDetail {
+  key: string;
+  value: string;
+}
+
+export interface ApprovalActionAudit {
+  kind: string;
+  operation: string;
+  details?: ApprovalActionAuditDetail[];
+  privacy?: string | null;
+  safety?: string | null;
+  recovery?: string | null;
+}
+
+export interface ApprovalConfirmationRequirement {
+  kind: string;
+  risk: string;
+  challenge: string;
+}
+
 export interface ApprovalHistoryEntry {
   id: string;
   request_id: string;
@@ -184,6 +205,7 @@ export interface ApprovalHistoryEntry {
   reason?: string | null;
   whitelist_entry_id?: string | null;
   permission_scope?: 'turn' | 'session' | null;
+  action_audit?: ApprovalActionAudit | null;
   created_at: string;
 }
 
@@ -228,6 +250,8 @@ export interface PendingApprovalItem {
   reason?: string | null;
   created_at: string;
   requested_permissions?: RequestPermissionProfile | null;
+  action_audit?: ApprovalActionAudit | null;
+  confirmation?: ApprovalConfirmationRequirement | null;
   available_decisions?: CommandExecutionApprovalDecision[];
 }
 
@@ -289,9 +313,307 @@ export interface LocalModelConfigListResponse {
 
 export interface LocalRuntimeSettings {
   developer_mode: boolean;
+  browser_full_cdp_access_enabled: boolean;
   developer_cloud_base_url: string;
   developer_user_service_base_url: string;
   developer_chatos_web_url: string;
+}
+
+export type PluginInstallStatus =
+  | 'not_installed'
+  | 'downloading'
+  | 'verifying'
+  | 'rejected'
+  | 'installing'
+  | 'installed'
+  | 'updating'
+  | 'rolling_back'
+  | 'uninstalling';
+
+export type PluginTransactionOperation = 'install' | 'update' | 'rollback' | 'uninstall';
+
+export interface LocalPluginPermissionRequirement {
+  permission: string;
+  required: boolean;
+  reason?: string | null;
+  components?: string[];
+}
+
+export interface LocalPluginComponentDescriptor {
+  component_key: string;
+  kind:
+    | 'skill_collection'
+    | 'mcp_server'
+    | 'connected_app'
+    | 'command'
+    | 'agent'
+    | 'hook_set'
+    | 'ui_contribution';
+  display_name: string;
+  runtime_kind: string;
+  entrypoint?: { path: string } | null;
+  required: boolean;
+  permissions: LocalPluginPermissionRequirement[];
+  metadata: Record<string, unknown>;
+}
+
+export interface LocalInstalledPluginVersion {
+  release_id: string;
+  version: string;
+  artifact_sha256: string;
+  manifest_sha256: string;
+  signature_key_id: string;
+  relative_installation_path: string;
+  installed_at: string;
+  package_file_sha256: Record<string, string>;
+  inventory: {
+    dependencies: Record<string, unknown>;
+    permissions: LocalPluginPermissionRequirement[];
+    auth_component_keys: string[];
+    components: LocalPluginComponentDescriptor[];
+  };
+}
+
+export interface LocalInstalledPlugin {
+  plugin_id: string;
+  marketplace_id: string;
+  plugin_name: string;
+  active_version?: string | null;
+  previous_version?: string | null;
+  versions: Record<string, LocalInstalledPluginVersion>;
+}
+
+export interface LocalPluginTransactionRecord {
+  transaction_id: string;
+  operation: PluginTransactionOperation;
+  status: PluginInstallStatus;
+  plugin_id: string;
+  release_id?: string | null;
+  from_version?: string | null;
+  target_version?: string | null;
+  relative_staging_path?: string | null;
+  relative_final_path?: string | null;
+  relative_storage_path?: string | null;
+  relative_trash_path?: string | null;
+  downloaded_bytes: number;
+  total_bytes?: number | null;
+  started_at: string;
+  updated_at: string;
+  completed_at?: string | null;
+  recovered_after_restart: boolean;
+  last_error?: string | null;
+}
+
+export interface LocalPluginStatusSnapshot {
+  registry: {
+    schema_version: number;
+    plugins: Record<string, LocalInstalledPlugin>;
+  };
+  transactions: {
+    schema_version: number;
+    active: Record<string, LocalPluginTransactionRecord>;
+    history: LocalPluginTransactionRecord[];
+  };
+  runtime: PluginRuntimeTelemetrySnapshot;
+}
+
+export type PluginRuntimeSessionStatus =
+  | 'ready'
+  | 'executing'
+  | 'degraded'
+  | 'failed'
+  | 'cancelled'
+  | 'expired';
+
+export type PluginRuntimeTelemetryPhase =
+  | 'prepare'
+  | 'execute'
+  | 'health'
+  | 'cancel'
+  | 'lifecycle';
+export type PluginRuntimeTelemetryEventStatus =
+  | 'started'
+  | 'succeeded'
+  | 'failed'
+  | 'cancelled'
+  | 'expired';
+
+export interface PluginRuntimeSessionTelemetry {
+  run_id: string;
+  adapter_session_id: string;
+  plugin_id: string;
+  release_id: string;
+  component_key: string;
+  status: PluginRuntimeSessionStatus;
+  active_executions: number;
+  execution_count: number;
+  last_operation?: string | null;
+  last_tool_name?: string | null;
+  health_status?: string | null;
+  started_at: string;
+  updated_at: string;
+  completed_at?: string | null;
+  expires_at: number;
+  last_error?: string | null;
+}
+
+export interface PluginRuntimeTelemetryEvent {
+  sequence: number;
+  run_id: string;
+  adapter_session_id?: string | null;
+  plugin_id: string;
+  release_id: string;
+  component_key: string;
+  phase: PluginRuntimeTelemetryPhase;
+  status: PluginRuntimeTelemetryEventStatus;
+  operation?: string | null;
+  tool_name?: string | null;
+  timestamp: string;
+  duration_ms?: number | null;
+  health_status?: string | null;
+  error?: string | null;
+}
+
+export interface PluginRuntimeTelemetrySnapshot {
+  schema_version: number;
+  revision: number;
+  sessions: PluginRuntimeSessionTelemetry[];
+  recent_events: PluginRuntimeTelemetryEvent[];
+}
+
+export interface LocalPluginStatusEvent {
+  schema_version: number;
+  cursor: string;
+  changed: boolean;
+  snapshot?: LocalPluginStatusSnapshot | null;
+}
+
+export interface LocalPluginStoreItem {
+  plugin_id: string;
+  marketplace_id: string;
+  name: string;
+  display_name: string;
+  description: string;
+  category: string;
+  publisher: string;
+  visibility: 'public' | 'personal';
+  featured: boolean;
+  latest_version: string;
+  latest_release_id: string;
+  published_at: string;
+  artifact_revision: string;
+  skill_ids: string[];
+  install_source: 'bundled' | 'network' | 'installed';
+  install_available: boolean;
+  lifecycle_status: string;
+  update_available: boolean;
+  rollback_available: boolean;
+  preference?: UserPluginPreferenceRecord | null;
+  auto_update_state?: LocalPluginAutoUpdateRecord | null;
+  installation?: LocalInstalledPlugin | null;
+  active_transaction?: LocalPluginTransactionRecord | null;
+  latest_transaction?: LocalPluginTransactionRecord | null;
+}
+
+export interface LocalPluginStoreSnapshot {
+  schema_version: number;
+  catalog_revision: string;
+  marketplace_id: string;
+  marketplace_name: string;
+  bundled_install_available: boolean;
+  network_install_available: boolean;
+  network_catalog_error?: string | null;
+  auto_update_error?: string | null;
+  runtime: PluginRuntimeTelemetrySnapshot;
+  items: LocalPluginStoreItem[];
+}
+
+export interface UserPluginPreferenceRecord {
+  owner_user_id: string;
+  plugin_id: string;
+  enabled: boolean;
+  auto_update: boolean;
+  release_channel: string;
+  enabled_components: string[];
+  updated_at: string;
+}
+
+export interface LocalPluginAutoUpdateRecord {
+  plugin_id: string;
+  target_release_id?: string | null;
+  last_checked_at?: string | null;
+  last_attempted_at?: string | null;
+  last_succeeded_at?: string | null;
+  next_retry_at?: string | null;
+  consecutive_failures: number;
+  last_error?: string | null;
+}
+
+export interface LocalPluginAutoUpdateReport {
+  schema_version: number;
+  catalog_items: number;
+  eligible: number;
+  attempted: number;
+  updated: number;
+  deferred: number;
+  busy: number;
+  failures: number;
+  skipped_reason?: string | null;
+  errors: string[];
+}
+
+export interface LocalPluginOAuthConnection {
+  id: string;
+  owner_user_id: string;
+  device_id: string;
+  plugin_id: string;
+  release_id: string;
+  component_key: string;
+  provider: string;
+  resource: string;
+  scopes: string[];
+  connected: boolean;
+  needs_auth: boolean;
+  expires_at?: string | null;
+  account_display?: string | null;
+  updated_at: string;
+}
+
+export interface PluginOAuthAuthorizationStart {
+  transaction_id: string;
+  authorization_url: string;
+  expires_at: string;
+  browser_opened: boolean;
+  browser_error?: string | null;
+}
+
+export interface UpdateLocalRuntimeSettingsPayload extends Partial<LocalRuntimeSettings> {
+  acknowledge_browser_full_cdp_risk?: boolean;
+}
+
+export interface ChromeBridgeStatus {
+  connected: boolean;
+  extension_id: string;
+  extension_version?: string | null;
+  extension_compatible: boolean;
+  connected_at_ms?: number | null;
+  last_seen_at_ms?: number | null;
+  claimed_tab_count: number;
+  authorized_origin_count: number;
+  pending_command_count: number;
+}
+
+export interface ChromeIntegrationStatus {
+  platform_supported: boolean;
+  enabled: boolean;
+  native_host_available: boolean;
+  native_host_manifest_path?: string | null;
+  extension_available: boolean;
+  extension_directory?: string | null;
+  extension_id: string;
+  bridge: ChromeBridgeStatus;
+  setup_note: string;
+  last_error?: string | null;
 }
 
 export interface AgentPromptUpdateStatus {

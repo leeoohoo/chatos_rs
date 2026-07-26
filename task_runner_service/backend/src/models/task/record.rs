@@ -53,6 +53,8 @@ pub struct TaskRecord {
     pub prerequisite_task_ids: Vec<String>,
     #[serde(default)]
     pub task_tool_state: TaskToolState,
+    #[serde(default)]
+    pub plugin_config: TaskPluginConfig,
     pub mcp_config: TaskMcpConfig,
     pub created_at: String,
     pub updated_at: String,

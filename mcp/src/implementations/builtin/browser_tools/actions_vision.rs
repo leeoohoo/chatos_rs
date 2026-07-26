@@ -6,7 +6,9 @@ use serde_json::{json, Value};
 use uuid::Uuid;
 
 use super::super::{context, BoundContext, BrowserVisionRequest};
-use super::actions_shared::{fail_json, is_success, normalize_inline_text, run_browser_command};
+use super::actions_shared::{
+    copy_response_fields, fail_json, is_success, normalize_inline_text, run_browser_command,
+};
 
 pub(super) async fn browser_vision_with_context(
     ctx: BoundContext,
@@ -90,7 +92,7 @@ pub(super) async fn browser_vision_with_context(
         ),
     };
 
-    Ok(json!({
+    let mut response = json!({
         "_summary_text": format!(
             "Captured a browser screenshot and produced vision analysis (vision available: {}, mode: {}, transport: {}).",
             if vision.get("enabled").and_then(|v| v.as_bool()).unwrap_or(false) {
@@ -110,5 +112,7 @@ pub(super) async fn browser_vision_with_context(
         "screenshot_path": actual_path,
         "annotations": result.get("data").and_then(|v| v.get("annotations")).cloned().unwrap_or(Value::Null),
         "vision": vision,
-    }))
+    });
+    copy_response_fields(&mut response, &result, &["browser_session"]);
+    Ok(response)
 }

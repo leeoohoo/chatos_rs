@@ -312,6 +312,7 @@ fn sample_task(mcp_config: TaskMcpConfig) -> TaskRecord {
         source_user_message_id: None,
         prerequisite_task_ids: Vec::new(),
         task_tool_state: crate::models::TaskToolState::default(),
+        plugin_config: Default::default(),
         mcp_config,
         created_at: now.clone(),
         updated_at: now,

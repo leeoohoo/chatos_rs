@@ -38,12 +38,7 @@ pub(super) async fn create_skill(
     let content = payload
         .content
         .ok_or_else(|| ApiError::bad_request("content is required"))?;
-    validate_skill_content(&content)?;
-    if content.kind != SKILL_CONTENT_KIND_LOCAL_CONNECTOR_BUNDLE {
-        return Err(ApiError::bad_request(
-            "new skills must reference an internal Local Connector bundle",
-        ));
-    }
+    validate_plugin_managed_skill_content(&content)?;
     let now = now_rfc3339();
     let record = SkillRecord {
         id: Uuid::new_v4().to_string(),
@@ -59,6 +54,7 @@ pub(super) async fn create_skill(
         enabled: payload.enabled.unwrap_or(true),
         content,
         metadata: payload.metadata.unwrap_or_default(),
+        plugin_component: PluginComponentOwnership::default(),
         created_by: user.user_id.clone(),
         updated_by: user.user_id.clone(),
         created_at: now.clone(),
@@ -109,6 +105,7 @@ pub(super) async fn update_skill(
         record.owner_user_id.as_str(),
         record.visibility.as_str(),
     )?;
+    validate_release_managed_skill_update(&record.plugin_component, &payload)?;
     if let Some(owner_user_id) = payload.owner_user_id.as_deref() {
         record.owner_user_id = requested_owner_user_id(Some(owner_user_id), &user)?;
     }
@@ -140,12 +137,7 @@ pub(super) async fn update_skill(
         record.enabled = enabled;
     }
     if let Some(content) = payload.content {
-        validate_skill_content(&content)?;
-        if content.kind != SKILL_CONTENT_KIND_LOCAL_CONNECTOR_BUNDLE {
-            return Err(ApiError::bad_request(
-                "skills must reference an internal Local Connector bundle",
-            ));
-        }
+        validate_plugin_managed_skill_content(&content)?;
         record.content = content;
     }
     if let Some(metadata) = payload.metadata {
@@ -178,6 +170,7 @@ pub(super) async fn delete_skill(
         record.owner_user_id.as_str(),
         record.visibility.as_str(),
     )?;
+    ensure_release_managed_resource_not_deleted(&record.plugin_component)?;
     state
         .store
         .delete_skill(skill_id.as_str())

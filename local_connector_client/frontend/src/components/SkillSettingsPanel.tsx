@@ -26,7 +26,15 @@ const CATEGORY_LABELS: Record<string, string> = {
   video: '视频',
 };
 
-export function SkillSettingsPanel({ onOpenPermissions }: { onOpenPermissions?: () => void }) {
+export function SkillSettingsPanel({
+  onOpenPermissions,
+  skillIds,
+  embedded = false,
+}: {
+  onOpenPermissions?: () => void;
+  skillIds?: string[];
+  embedded?: boolean;
+}) {
   const [catalog, setCatalog] = React.useState<LocalSkillCatalogResponse | null>(null);
   const [permissions, setPermissions] = React.useState<SystemPermissionsResponse | null>(null);
   const [loading, setLoading] = React.useState(true);
@@ -93,25 +101,34 @@ export function SkillSettingsPanel({ onOpenPermissions }: { onOpenPermissions?: 
     }
   };
 
+  const selectedSkillIds = React.useMemo(
+    () => skillIds ? new Set(skillIds) : null,
+    [skillIds],
+  );
+  const scopedItems = (catalog?.items || []).filter((item) => (
+    !selectedSkillIds || selectedSkillIds.has(item.skill.id)
+  ));
   const normalizedQuery = query.trim().toLocaleLowerCase();
-  const visibleItems = (catalog?.items || []).filter((item) => {
+  const visibleItems = scopedItems.filter((item) => {
     if (!normalizedQuery) return true;
     return [item.skill.name, item.skill.display_name, item.skill.description || '']
       .some((value) => value.toLocaleLowerCase().includes(normalizedQuery));
   });
-  const enabledCount = (catalog?.items || []).filter((item) => item.user_enabled).length;
-  const availableCount = (catalog?.items || []).filter((item) => item.available).length;
+  const enabledCount = scopedItems.filter((item) => item.user_enabled).length;
+  const availableCount = scopedItems.filter((item) => item.available).length;
 
   return (
-    <section className="skillsPage">
+    <section className={`skillsPage ${embedded ? 'embedded' : ''}`}>
       <div className="skillsSummary">
         <div>
           <span className="pageEyebrow">SIGNED INTERNAL BUNDLES</span>
-          <h3>本机 Skills</h3>
-          <p>安装包内置的 Admin Skills 默认关闭。只有你在这台 Local Connector 上启用后，Task Runner 才能选择。</p>
+          <h3>{embedded ? 'Plugin Skills' : '本机 Skills'}</h3>
+          <p>{embedded
+            ? '这些 Skill 组件属于当前 Plugin；启用前仍会检查本机依赖与系统权限。'
+            : '安装包内置的 Admin Skills 默认关闭。只有你在这台 Local Connector 上启用后，Task Runner 才能选择。'}</p>
         </div>
         <div className="skillsMetrics">
-          <span><strong>{catalog?.total || 0}</strong> 内置</span>
+          <span><strong>{scopedItems.length}</strong> 组件</span>
           <span><strong>{availableCount}</strong> 当前可用</span>
           <span><strong>{enabledCount}</strong> 已启用</span>
         </div>
@@ -195,11 +212,11 @@ export function SkillSettingsPanel({ onOpenPermissions }: { onOpenPermissions?: 
         })}
       </div>
 
-      <div className="skillsFuture">
+      {!embedded ? <div className="skillsFuture">
         <CheckCircle2 size={18} />
         <div><strong>用户安装 Skills</strong><p>接口和页面位置已预留，当前版本只允许使用安装包原生签名 Bundle。</p></div>
         <button type="button" className="ghostButton compact" disabled>即将开放</button>
-      </div>
+      </div> : null}
     </section>
   );
 }

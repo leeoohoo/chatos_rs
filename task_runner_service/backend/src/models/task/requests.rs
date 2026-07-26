@@ -20,6 +20,8 @@ pub struct CreateTaskRequest {
     pub tenant_id: Option<String>,
     pub subject_id: Option<String>,
     pub schedule: Option<TaskScheduleConfig>,
+    #[serde(default)]
+    pub plugin_config: TaskPluginConfig,
     pub mcp_config: Option<TaskMcpConfig>,
     #[serde(default)]
     pub prerequisite_task_ids: Option<Vec<String>>,
@@ -52,6 +54,8 @@ pub struct UpdateTaskRequest {
     #[serde(default)]
     pub task_profile: Option<String>,
     pub schedule: Option<TaskScheduleConfig>,
+    #[serde(default)]
+    pub plugin_config: Option<TaskPluginConfig>,
     pub mcp_config: Option<TaskMcpConfig>,
     #[serde(default)]
     pub prerequisite_task_ids: Option<Vec<String>>,

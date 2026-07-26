@@ -49,6 +49,10 @@ pub fn router() -> Router<AppState> {
             get(get_chatos_message_run),
         )
         .route(
+            "/internal/chatos/message-runs/{run_id}/events/{event_id}",
+            get(get_chatos_message_run_event),
+        )
+        .route(
             "/internal/chatos/message-runs/{run_id}/output/changes",
             get(get_chatos_message_run_output_changes),
         )
@@ -468,6 +472,41 @@ async fn get_chatos_message_run(
             events_offset: event_offset,
             events_has_more,
         },
+    )?))
+}
+
+async fn get_chatos_message_run_event(
+    Path((run_id, event_id)): Path<(String, String)>,
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(query): Query<ChatosMessageTaskQuery>,
+) -> Result<Json<Value>, InternalApiError> {
+    require_chatos_internal_auth(&state, &headers)?;
+    let (source_session_id, source_user_message_id, source_turn_id) =
+        validate_chatos_message_query(&query)?;
+    let run = require_chatos_message_run(
+        &state,
+        run_id.trim(),
+        source_session_id,
+        source_user_message_id,
+        source_turn_id,
+    )
+    .await?;
+    let event_id = event_id.trim();
+    if event_id.is_empty() {
+        return Err(InternalApiError::bad_request("run event id is required"));
+    }
+    let event = state
+        .run_service
+        .list_run_events(run.id.as_str())
+        .await
+        .map_err(InternalApiError::internal)?
+        .into_iter()
+        .find(|event| event.id == event_id && event.run_id == run.id)
+        .ok_or_else(|| InternalApiError::not_found("run event not found for message"))?;
+    Ok(Json(redact_workspace_paths_internal(
+        &state,
+        ChatosMessageTaskRunEvent::from(event),
     )?))
 }
 

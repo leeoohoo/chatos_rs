@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "bundle_id": "chatos.internal.computer-use",
+  "skill_id": "internal_skill_computer_use",
+  "name": "computer-use",
+  "display_name": "本机桌面观察、审批控制、安全文本与激活回滚",
+  "version": "1.15.0",
+  "publisher": "chatos",
+  "source_kind": "admin_created",
+  "entrypoint": { "kind": "native_adapter", "adapter": "computer-use" },
+  "instructions_path": "instructions.md",
+  "requires_workspace": false,
+  "permissions": ["system.accessibility", "desktop.observe", "desktop.control"],
+  "platforms": ["macos-arm64", "macos-x64", "windows-arm64", "windows-x64"]
+}

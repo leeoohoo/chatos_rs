@@ -157,18 +157,100 @@ env_flag_enabled() {
   esac
 }
 
-validate_production_secrets() {
+is_production_environment() {
   local environment
   environment="$(env_value CHATOS_ENV "$(env_value NODE_ENV local)")"
-  case "${environment,,}" in
-    production|prod)
-      ;;
-    *)
+  case "$environment" in
+    production|prod|PRODUCTION|PROD|Production|Prod)
       return 0
       ;;
+    *)
+      return 1
+      ;;
   esac
+}
 
+validate_https_origin() {
+  local key="$1"
+  local origin="$2"
+  local authority lowercase_authority host port
+  local hostname_pattern='^([A-Za-z0-9]|[A-Za-z0-9][A-Za-z0-9.-]*[A-Za-z0-9])(:([0-9]{1,5}))?$'
+  local ipv6_pattern='^(\[[0-9A-Fa-f:.]+\])(:([0-9]{1,5}))?$'
+
+  if [[ "$origin" != https://* ]]; then
+    echo "[ERROR] $key must use an exact https:// origin" >&2
+    return 1
+  fi
+  authority="${origin#https://}"
+  if [[ -z "$authority" || "$authority" == *[/?#@]* || "$authority" =~ [[:space:]] ]]; then
+    echo "[ERROR] $key must not contain credentials, path, query, fragment, or whitespace" >&2
+    return 1
+  fi
+  lowercase_authority="$(printf '%s' "$authority" | tr '[:upper:]' '[:lower:]')"
+  if [[ "$authority" != "$lowercase_authority" ]]; then
+    echo "[ERROR] $key must use a lowercase canonical authority" >&2
+    return 1
+  fi
+  if [[ "$authority" =~ $ipv6_pattern ]]; then
+    host="${BASH_REMATCH[1]}"
+    port="${BASH_REMATCH[3]:-}"
+  elif [[ "$authority" =~ $hostname_pattern ]]; then
+    host="${BASH_REMATCH[1]}"
+    port="${BASH_REMATCH[3]:-}"
+    if [[ "$host" == *..* || "$host" == *.-* || "$host" == *-. ]]; then
+      echo "[ERROR] $key contains an invalid hostname" >&2
+      return 1
+    fi
+  else
+    echo "[ERROR] $key must be a canonical HTTPS origin with an optional explicit port" >&2
+    return 1
+  fi
+  if [[ -n "$port" ]] && (( 10#$port < 1 || 10#$port > 65535 )); then
+    echo "[ERROR] $key contains an invalid port" >&2
+    return 1
+  fi
+  if [[ "$port" == "443" ]]; then
+    echo "[ERROR] $key must omit the default HTTPS port" >&2
+    return 1
+  fi
+}
+
+validate_plugin_ui_origins() {
+  local require_pair="${1:-auto}"
+  local parent_origin resource_origin failures=0
+  parent_origin="$(env_value CHATOS_PLUGIN_UI_PARENT_ORIGIN "")"
+  resource_origin="$(env_value CHATOS_PLUGIN_UI_RESOURCE_ORIGIN "")"
+
+  if [[ -z "$parent_origin" && -z "$resource_origin" ]]; then
+    if [[ "$require_pair" == "true" ]] || is_production_environment; then
+      echo "[ERROR] production requires CHATOS_PLUGIN_UI_PARENT_ORIGIN and CHATOS_PLUGIN_UI_RESOURCE_ORIGIN" >&2
+      return 1
+    fi
+    return 0
+  fi
+  if [[ -z "$parent_origin" || -z "$resource_origin" ]]; then
+    echo "[ERROR] CHATOS_PLUGIN_UI_PARENT_ORIGIN and CHATOS_PLUGIN_UI_RESOURCE_ORIGIN must be configured together" >&2
+    return 1
+  fi
+  validate_https_origin CHATOS_PLUGIN_UI_PARENT_ORIGIN "$parent_origin" || failures=1
+  validate_https_origin CHATOS_PLUGIN_UI_RESOURCE_ORIGIN "$resource_origin" || failures=1
+  if [[ "$parent_origin" == "$resource_origin" ]]; then
+    echo "[ERROR] Plugin UI parent and resource origins must be different" >&2
+    failures=1
+  fi
+  (( failures == 0 ))
+}
+
+validate_production_secrets() {
   local failures=0
+  validate_plugin_ui_origins || failures=1
+  if ! is_production_environment; then
+    if (( failures > 0 )); then
+      exit 2
+    fi
+    return 0
+  fi
+
   local key value default_value
   while IFS='|' read -r key default_value; do
     value="$(env_value "$key" "$default_value")"
@@ -377,6 +459,14 @@ if [[ "$ACTION" == "build-services" ]]; then
   exit 0
 fi
 
+if [[ "$ACTION" == "validate-plugin-ui-origin" ]]; then
+  if validate_plugin_ui_origins true; then
+    echo "[OK] Plugin UI parent/resource origin configuration is valid."
+    exit 0
+  fi
+  exit 2
+fi
+
 ensure_docker_ready
 cd "$ROOT_DIR"
 
@@ -449,13 +539,14 @@ case "$ACTION" in
     print_build_services
     ;;
   *)
-    echo "Usage: $0 [up|fast|restart|restart-fast|dev|restart-dev|rebuild|build|down|reset|logs|ps|pull|clean-images|services|build-services] [service...]" >&2
+    echo "Usage: $0 [up|fast|restart|restart-fast|dev|restart-dev|rebuild|build|down|reset|logs|ps|pull|clean-images|services|build-services|validate-plugin-ui-origin] [service...]" >&2
     echo "  up/restart pull prebuilt images by default." >&2
     echo "  fast/restart-fast reuse existing images and skip pull/build." >&2
     echo "  dev/restart-dev build local images; rebuild builds only the given build-service names." >&2
     echo "  clean-images removes dangling <none>:<none> images." >&2
     echo "  service names can be listed with: $0 services" >&2
     echo "  buildable service names can be listed with: $0 build-services" >&2
+    echo "  Plugin UI origins can be checked without Docker using: $0 validate-plugin-ui-origin" >&2
     exit 2
     ;;
 esac

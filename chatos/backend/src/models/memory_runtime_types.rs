@@ -41,6 +41,22 @@ pub struct TurnRuntimeSnapshotSelectedCommandDto {
     pub arguments: Option<String>,
 }
 
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+pub struct TurnRuntimeSnapshotPluginCommandInvocationDto {
+    pub plugin_id: String,
+    pub command_id: String,
+    #[serde(default)]
+    pub arguments_present: bool,
+    #[serde(default)]
+    pub arguments_sha256: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+pub struct TurnRuntimeSnapshotPluginAgentSelectionDto {
+    pub plugin_id: String,
+    pub agent_id: String,
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct TurnRuntimeSnapshotSystemMessageDto {
     pub id: String,
@@ -104,6 +120,10 @@ pub struct TurnRuntimeSnapshotRuntimeDto {
     pub enabled_mcp_ids: Vec<String>,
     #[serde(default)]
     pub selected_commands: Vec<TurnRuntimeSnapshotSelectedCommandDto>,
+    #[serde(default)]
+    pub plugin_command_invocations: Vec<TurnRuntimeSnapshotPluginCommandInvocationDto>,
+    #[serde(default)]
+    pub plugin_agent_selection: Option<TurnRuntimeSnapshotPluginAgentSelectionDto>,
     #[serde(default)]
     pub unavailable_builtin_tools: Vec<TurnRuntimeSnapshotUnavailableToolDto>,
     pub builtin_mcp_prompt: Option<TurnRuntimeSnapshotBuiltinMcpPromptDto>,

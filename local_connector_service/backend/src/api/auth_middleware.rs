@@ -13,6 +13,33 @@ use crate::state::AppState;
 
 use super::internal_auth::internal_service_user_from_request;
 
+#[derive(Clone)]
+pub(super) struct AuthState {
+    config: crate::config::AppConfig,
+    user_service_http: reqwest::Client,
+}
+
+impl AuthState {
+    pub(super) fn from_app_state(state: &AppState) -> Self {
+        Self {
+            config: state.config.clone(),
+            user_service_http: state.user_service_http().clone(),
+        }
+    }
+
+    #[cfg(feature = "test-support")]
+    pub(super) fn for_test(config: crate::config::AppConfig) -> Result<Self, String> {
+        let user_service_http = reqwest::Client::builder()
+            .timeout(config.user_service_request_timeout)
+            .build()
+            .map_err(|error| format!("build test auth client failed: {error}"))?;
+        Ok(Self {
+            config,
+            user_service_http,
+        })
+    }
+}
+
 #[derive(Debug)]
 pub struct ApiError {
     status: StatusCode,
@@ -120,7 +147,7 @@ impl IntoResponse for ApiError {
 }
 
 pub(super) async fn require_auth(
-    State(state): State<AppState>,
+    State(state): State<AuthState>,
     mut request: Request<axum::body::Body>,
     next: Next,
 ) -> Result<Response, ApiError> {
@@ -139,7 +166,7 @@ pub(super) async fn require_auth(
     let token = bearer_token_from_request(&request, state.config.allow_device_connect_query_token)
         .map_err(ApiError::unauthorized)?;
     let user =
-        verify_token_via_user_service(&state.config, state.user_service_http(), token.as_str())
+        verify_token_via_user_service(&state.config, &state.user_service_http, token.as_str())
             .await
             .map_err(ApiError::unauthorized)?;
     request.extensions_mut().insert(user);

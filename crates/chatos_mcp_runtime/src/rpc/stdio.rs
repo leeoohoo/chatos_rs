@@ -29,6 +29,16 @@ struct StdioRpcSession {
     reader: BufReader<ChildStdout>,
 }
 
+impl Drop for StdioRpcSession {
+    fn drop(&mut self) {
+        let running = self.child.try_wait().is_ok_and(|status| status.is_none());
+        if !running {
+            return;
+        }
+        terminate_stdio_process_tree(&mut self.child);
+    }
+}
+
 #[derive(Clone)]
 struct StdioSessionEntry {
     session: Arc<AsyncMutex<StdioRpcSession>>,
@@ -37,6 +47,14 @@ struct StdioSessionEntry {
 }
 
 pub(super) fn stdio_session_cache_key(cfg: &McpStdioServer) -> String {
+    if let Some(user_id) = cfg
+        .user_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        return format!("stdio-session:name={}\nuser_id={user_id}", cfg.name.trim());
+    }
     format!(
         "stdio-session:name={}\n{}",
         cfg.name.trim(),
@@ -274,6 +292,7 @@ async fn spawn_stdio_session(cfg: &McpStdioServer) -> Result<StdioRpcSession, St
 
 fn build_stdio_command(cfg: &McpStdioServer) -> Result<tokio::process::Command, String> {
     let mut cmd = tokio::process::Command::new(&cfg.command);
+    configure_stdio_process_tree(&mut cmd);
     if let Some(args) = &cfg.args {
         cmd.args(args);
     }
@@ -285,6 +304,35 @@ fn build_stdio_command(cfg: &McpStdioServer) -> Result<tokio::process::Command, 
         cmd.current_dir(cwd);
     }
     Ok(cmd)
+}
+
+#[cfg(unix)]
+fn configure_stdio_process_tree(command: &mut tokio::process::Command) {
+    use std::os::unix::process::CommandExt;
+
+    command.as_std_mut().process_group(0);
+}
+
+#[cfg(not(unix))]
+fn configure_stdio_process_tree(_command: &mut tokio::process::Command) {}
+
+#[cfg(unix)]
+fn terminate_stdio_process_tree(child: &mut Child) {
+    if let Some(pid) = child.id() {
+        let result = unsafe { libc::kill(-(pid as i32), libc::SIGKILL) };
+        if result != 0 {
+            let error = std::io::Error::last_os_error();
+            if error.raw_os_error() != Some(libc::ESRCH) {
+                warn!(pid, error = %error, "failed to terminate stdio MCP process group");
+            }
+        }
+    }
+    let _ = child.start_kill();
+}
+
+#[cfg(not(unix))]
+fn terminate_stdio_process_tree(child: &mut Child) {
+    let _ = child.start_kill();
 }
 
 impl StdioRpcSession {

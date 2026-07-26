@@ -17,6 +17,10 @@ use crate::local_runtime::{
     LocalDatabase, LocalEnvironmentJobRegistry, LocalMemoryJobRegistry, LocalTurnControlRegistry,
 };
 use crate::model_configs::reconcile_local_model_configs;
+use crate::plugins::{
+    PluginCredentialVault, PluginInstaller, PluginMcpAdapter, PluginOAuthBroker, PluginRuntimeHost,
+    PluginSkillLoader,
+};
 use crate::registration::{
     ensure_device_registered, ensure_workspace_registered, is_cloud_authentication_expired,
 };
@@ -39,7 +43,12 @@ pub(crate) struct LocalRuntime {
     pub(crate) connector_task: Arc<Mutex<Option<JoinHandle<()>>>>,
     pub(crate) task_worker_task: Arc<Mutex<Option<JoinHandle<()>>>>,
     pub(crate) agent_prompt_check_task: Arc<Mutex<Option<JoinHandle<()>>>>,
+    pub(crate) plugin_auto_update_lock: Arc<Mutex<()>>,
     pub(crate) sandbox_runtime: LocalSandboxRuntime,
+    pub(crate) plugin_installer: PluginInstaller,
+    pub(crate) plugin_credentials: PluginCredentialVault,
+    pub(crate) plugin_oauth: PluginOAuthBroker,
+    pub(crate) plugin_runtime: PluginRuntimeHost,
 }
 
 impl LocalRuntime {
@@ -49,6 +58,17 @@ impl LocalRuntime {
         http_client: reqwest::Client,
         database: LocalDatabase,
     ) -> Self {
+        let plugin_credentials = PluginCredentialVault::for_state_path(state_path.as_path());
+        let plugin_installer = PluginInstaller::for_state_path(state_path.as_path())
+            .with_credential_vault(plugin_credentials.clone());
+        let plugin_oauth =
+            PluginOAuthBroker::new(plugin_installer.clone(), plugin_credentials.clone());
+        let plugin_runtime = PluginRuntimeHost::new(
+            PluginSkillLoader::new(plugin_installer.clone()),
+            PluginMcpAdapter::new(plugin_installer.clone()).with_oauth_broker(plugin_oauth.clone()),
+        )
+        .with_local_state(state.clone())
+        .with_approval_state_path(state_path.clone());
         Self {
             state_path,
             state,
@@ -61,7 +81,12 @@ impl LocalRuntime {
             connector_task: Arc::new(Mutex::new(None)),
             task_worker_task: Arc::new(Mutex::new(None)),
             agent_prompt_check_task: Arc::new(Mutex::new(None)),
+            plugin_auto_update_lock: Arc::new(Mutex::new(())),
             sandbox_runtime: LocalSandboxRuntime::default(),
+            plugin_installer,
+            plugin_credentials,
+            plugin_oauth,
+            plugin_runtime,
         }
     }
 
@@ -263,6 +288,8 @@ impl LocalRuntime {
                     runtime.state.clone(),
                     database.clone(),
                     runtime.sandbox_runtime.clone(),
+                    runtime.plugin_runtime.clone(),
+                    runtime.plugin_oauth.clone(),
                     device_id,
                 )
                 .await

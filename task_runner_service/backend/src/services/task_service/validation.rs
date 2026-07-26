@@ -119,6 +119,7 @@ impl TaskService {
     pub(super) async fn validate_task_mcp_config_for_agent(
         &self,
         config: &TaskMcpConfig,
+        plugin_config: &chatos_plugin_management_sdk::TaskPluginConfig,
         current_user: Option<&CurrentUser>,
         task_owner_user_id: Option<&str>,
         agent_key: chatos_plugin_management_sdk::SystemAgentKey,
@@ -126,6 +127,7 @@ impl TaskService {
         let centralized_policy = self
             .validate_task_capability_selection_for_agent(
                 config,
+                plugin_config,
                 current_user,
                 task_owner_user_id,
                 agent_key,
@@ -152,17 +154,29 @@ impl TaskService {
     pub(super) async fn validate_task_capability_selection_for_agent(
         &self,
         config: &TaskMcpConfig,
+        plugin_config: &chatos_plugin_management_sdk::TaskPluginConfig,
         current_user: Option<&CurrentUser>,
         task_owner_user_id: Option<&str>,
         agent_key: chatos_plugin_management_sdk::SystemAgentKey,
     ) -> Result<bool, String> {
         let Some(policy) = self
-            .resolve_task_runner_policy_for_agent(current_user, task_owner_user_id, agent_key)
+            .resolve_task_runner_policy_for_agent_on_device(
+                current_user,
+                task_owner_user_id,
+                agent_key,
+                plugin_config
+                    .device_id
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(str::to_string),
+            )
             .await?
         else {
             return Ok(false);
         };
         policy.validate_optional_config(config)?;
+        policy.validate_plugin_config(plugin_config)?;
         Ok(true)
     }
 }

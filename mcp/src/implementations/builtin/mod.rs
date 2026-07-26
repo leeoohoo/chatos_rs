@@ -38,8 +38,9 @@ pub use ask_user::{
     AskUserStreamChunkCallback, ASK_USER_PROMPT_TIMEOUT_MS_DEFAULT,
 };
 pub use browser_tools::{
-    BrowserToolCallContext, BrowserToolsOptions, BrowserToolsService, BrowserVisionAdapter,
-    BrowserVisionAdapterRef, BrowserVisionFailure, BrowserVisionRequest, BrowserVisionResponse,
+    browser_interactive_approval_command, BrowserToolCallContext, BrowserToolsOptions,
+    BrowserToolsService, BrowserVisionAdapter, BrowserVisionAdapterRef, BrowserVisionFailure,
+    BrowserVisionRequest, BrowserVisionResponse,
 };
 pub use bundled_tools::{
     agent_browser_binary_path, bundled_tool_path, discover_bundled_tool_dirs,

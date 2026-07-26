@@ -720,13 +720,40 @@ pub fn build_agent_chat_options(
         .with_request_body_limit_bytes(Some(request_body_limit_bytes_from_settings(
             effective_settings,
         )));
+    let plugin_audit_metadata = if runtime_context
+        .plugin_command_invocations_for_snapshot
+        .is_empty()
+        && runtime_context
+            .plugin_agent_selection_for_snapshot
+            .is_none()
+    {
+        None
+    } else {
+        let mut metadata = serde_json::Map::new();
+        if !runtime_context
+            .plugin_command_invocations_for_snapshot
+            .is_empty()
+        {
+            metadata.insert(
+                "plugin_command_invocations".to_string(),
+                json!(runtime_context.plugin_command_invocations_for_snapshot),
+            );
+        }
+        if let Some(selection) = runtime_context.plugin_agent_selection_for_snapshot.as_ref() {
+            metadata.insert("plugin_agent_selection".to_string(), json!(selection));
+        }
+        Some(Value::Object(metadata))
+    };
     ChatosAgentExecutionOptions {
         use_tools: input.use_tools,
         attachments: input.attachments,
         turn_id: input.turn_id,
         user_message_id: input.user_message_id,
         persisted_user_message_content: input.persisted_user_message_content,
-        persisted_user_message_metadata: input.persisted_user_message_metadata,
+        persisted_user_message_metadata: merge_user_record_metadata(
+            input.persisted_user_message_metadata,
+            plugin_audit_metadata,
+        ),
         message_mode: TASK_RUNNER_ASYNC_PLAN_MESSAGE_MODE.to_string(),
         message_source: input.message_source,
         prefixed_input_items,

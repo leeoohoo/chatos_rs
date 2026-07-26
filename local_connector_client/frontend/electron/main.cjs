@@ -635,6 +635,16 @@ app.whenReady().then(async () => {
     }
     return true;
   });
+  ipcMain.handle('local-connector:chrome-extension-directory-show', async (event) => {
+    if (!isTrustedLocalEvent(event)) {
+      return false;
+    }
+    const error = await shell.openPath(coreRuntime.chromeExtensionPath());
+    if (error) {
+      throw new Error(error);
+    }
+    return true;
+  });
   coreRuntime.startCore();
   createWindow();
   void refreshDeveloperModeFromCore();

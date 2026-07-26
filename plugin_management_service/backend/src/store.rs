@@ -10,6 +10,7 @@ use mongodb::{Collection, Database};
 use crate::models::*;
 
 mod indexes;
+mod plugins;
 
 #[derive(Clone)]
 pub struct AppStore {
@@ -24,6 +25,15 @@ pub struct AppStore {
     checks: Collection<ResourceCheckRecord>,
     skill_preferences: Collection<UserSkillPreferenceRecord>,
     skill_installations: Collection<SkillInstallationRecord>,
+    plugin_marketplaces: Collection<PluginMarketplaceRecord>,
+    plugin_catalog_syncs: Collection<PluginCatalogSyncRecord>,
+    plugin_catalog_entries: Collection<PluginCatalogRecord>,
+    plugin_releases: Collection<PluginReleaseRecord>,
+    plugin_installations: Collection<PluginInstallationRecord>,
+    plugin_preferences: Collection<UserPluginPreferenceRecord>,
+    plugin_component_snapshots: Collection<PluginComponentSnapshot>,
+    plugin_oauth_connections: Collection<PluginOAuthConnectionRecord>,
+    plugin_audit_logs: Collection<PluginAuditLogRecord>,
 }
 
 impl AppStore {
@@ -40,6 +50,15 @@ impl AppStore {
             checks: db.collection("plugin_resource_checks"),
             skill_preferences: db.collection("plugin_user_skill_preferences"),
             skill_installations: db.collection("plugin_skill_installations"),
+            plugin_marketplaces: db.collection("plugin_marketplaces"),
+            plugin_catalog_syncs: db.collection("plugin_catalog_syncs"),
+            plugin_catalog_entries: db.collection("plugin_catalog_entries"),
+            plugin_releases: db.collection("plugin_releases"),
+            plugin_installations: db.collection("plugin_installations"),
+            plugin_preferences: db.collection("plugin_user_preferences"),
+            plugin_component_snapshots: db.collection("plugin_component_snapshots"),
+            plugin_oauth_connections: db.collection("plugin_oauth_connections"),
+            plugin_audit_logs: db.collection("plugin_audit_logs"),
         }
     }
 

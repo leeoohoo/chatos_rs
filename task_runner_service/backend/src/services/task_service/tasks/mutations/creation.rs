@@ -55,6 +55,7 @@ impl TaskService {
         )
         .await?;
         let schedule = sanitize_task_schedule_config(input.schedule.unwrap_or_default(), None)?;
+        let plugin_config = input.plugin_config;
         let mut mcp_config = sanitize_task_mcp_config(input.mcp_config.unwrap_or_default());
         let agent_key = crate::models::task_runner_agent_key_for(
             task_profile.as_str(),
@@ -97,6 +98,7 @@ impl TaskService {
         if passthrough_remote_server_id.is_none() {
             self.validate_task_mcp_config_for_agent(
                 &mcp_config,
+                &plugin_config,
                 creator,
                 task_owner_user_id.as_deref(),
                 agent_key,
@@ -106,6 +108,7 @@ impl TaskService {
             let centralized_policy = self
                 .validate_task_capability_selection_for_agent(
                     &mcp_config,
+                    &plugin_config,
                     creator,
                     task_owner_user_id.as_deref(),
                     agent_key,
@@ -122,7 +125,17 @@ impl TaskService {
             self.validate_task_ephemeral_http_servers(&mcp_config)?;
         }
         if let Some(policy) = self
-            .resolve_task_runner_policy_for_agent(creator, task_owner_user_id.as_deref(), agent_key)
+            .resolve_task_runner_policy_for_agent_on_device(
+                creator,
+                task_owner_user_id.as_deref(),
+                agent_key,
+                plugin_config
+                    .device_id
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(str::to_string),
+            )
             .await?
         {
             mcp_config.skill_policy_revision = Some(policy.policy_revision().to_string());
@@ -167,6 +180,7 @@ impl TaskService {
             source_user_message_id: normalized_optional(source_context.source_user_message_id),
             prerequisite_task_ids: prerequisite_task_ids.clone(),
             task_tool_state: TaskToolState::default(),
+            plugin_config,
             mcp_config,
             created_at: now.clone(),
             updated_at: now,
@@ -178,7 +192,8 @@ impl TaskService {
             builtin_mcp_kinds = %task.mcp_config.enabled_builtin_kinds.join(","),
             external_mcp_config_ids = %task.mcp_config.external_mcp_config_ids.join(","),
             selected_skill_ids = %task.mcp_config.selected_skill_ids.join(","),
-            "task runner created task with MCP and Skill selection"
+            selected_plugin_ids = %task.plugin_config.selected_plugins.iter().map(|plugin| plugin.plugin_id.as_str()).collect::<Vec<_>>().join(","),
+            "task runner created task with MCP, Skill, and Plugin selection"
         );
         self.ensure_task_thread(&task).await?;
         if let Some(remote_server) = passthrough_remote_server_to_save {
@@ -320,6 +335,7 @@ mod tests {
             tenant_id: None,
             subject_id: None,
             schedule: None,
+            plugin_config: Default::default(),
             mcp_config: None,
             prerequisite_task_ids: None,
         }

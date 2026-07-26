@@ -21,10 +21,7 @@ pub(super) async fn resolve_chatos_mcp_policy(
     )
     .await?;
     capabilities
-        .ensure_required_available()
-        .map_err(|err| err.to_string())?;
-    capabilities
-        .ensure_required_skills_supported(std::iter::empty::<&str>())
+        .ensure_required_runtime_supported([], [])
         .map_err(|err| err.to_string())?;
     capabilities
         .require_available_mcp(CHATOS_TASK_RUNNER_MCP_RESOURCE_ID)

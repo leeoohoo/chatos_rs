@@ -17,6 +17,15 @@ use crate::services::task_runner_api_client;
 
 mod context;
 mod graph;
+mod plugin_ui;
+
+#[cfg(feature = "test-support")]
+pub use self::plugin_ui::{
+    prepare_plugin_artifact_relay_request_for_test,
+    validate_plugin_artifact_list_response_for_test,
+    validate_plugin_artifact_read_response_for_test,
+    validate_plugin_artifact_write_response_for_test, PreparedPluginArtifactRelayRequest,
+};
 
 use self::context::{
     resolve_message_task_runner_context, resolve_session_task_runner_context,
@@ -26,6 +35,7 @@ use self::graph::normalize_message_task_graph_payload_edges_with_tasks;
 
 pub fn router() -> Router {
     Router::new()
+        .merge(plugin_ui::router())
         .route(
             "/api/messages/{id}/task-runner/tasks",
             get(list_message_task_runner_tasks),
@@ -58,6 +68,10 @@ pub fn router() -> Router {
             "/api/conversations/{conversation_id}/task-runner/active-message-tasks",
             post(get_conversation_task_runner_active_message_tasks),
         )
+}
+
+pub fn plugin_ui_public_router() -> Router {
+    plugin_ui::public_router()
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]

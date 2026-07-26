@@ -9,7 +9,12 @@ import {
   type KeyboardEvent,
 } from 'react';
 
-import type { InputAreaProps, Project } from '../../types';
+import type {
+  InputAreaProps,
+  PluginAgentSelectionPayload,
+  PluginCommandInvocationPayload,
+  Project,
+} from '../../types';
 
 interface UseInputAreaMessageDraftOptions {
   attachments: File[];
@@ -19,6 +24,14 @@ interface UseInputAreaMessageDraftOptions {
   maxLength: number;
   onSend: InputAreaProps['onSend'];
   requireModelSelection: () => boolean;
+  requireValidPluginSelection: () => boolean;
+  pluginDeviceId: string | null;
+  pluginWorkspaceId: string | null;
+  selectedPluginIds: string[];
+  pluginCommandInvocations: PluginCommandInvocationPayload[];
+  pluginAgentSelection: PluginAgentSelectionPayload | null;
+  commandMessageFallback: string;
+  clearSelectedPlugins: () => void;
   selectedProjectId: string | null;
   selectedRuntimeProject: Project | null;
 }
@@ -31,6 +44,14 @@ export const useInputAreaMessageDraft = ({
   maxLength,
   onSend,
   requireModelSelection,
+  requireValidPluginSelection,
+  pluginDeviceId,
+  pluginWorkspaceId,
+  selectedPluginIds,
+  pluginCommandInvocations,
+  pluginAgentSelection,
+  commandMessageFallback,
+  clearSelectedPlugins,
   selectedProjectId,
   selectedRuntimeProject,
 }: UseInputAreaMessageDraftOptions) => {
@@ -51,22 +72,31 @@ export const useInputAreaMessageDraft = ({
   const resetComposer = useCallback(() => {
     setMessage('');
     clearAttachments();
+    clearSelectedPlugins();
     if (textareaRef.current) {
       textareaRef.current.style.height = 'auto';
     }
-  }, [clearAttachments]);
+  }, [clearAttachments, clearSelectedPlugins]);
 
-  const handleInputChange = useCallback((event: ChangeEvent<HTMLTextAreaElement>) => {
-    const value = event.target.value;
+  const setMessageValue = useCallback((value: string) => {
     if (value.length <= maxLength) {
       setMessage(value);
-      adjustTextareaHeight();
+      window.requestAnimationFrame(adjustTextareaHeight);
     }
   }, [adjustTextareaHeight, maxLength]);
 
+  const handleInputChange = useCallback((event: ChangeEvent<HTMLTextAreaElement>) => {
+    setMessageValue(event.target.value);
+  }, [setMessageValue]);
+
   const handleSend = useCallback(() => {
     const trimmedMessage = message.trim();
-    if (!trimmedMessage && (!effectiveAllowAttachments || attachments.length === 0)) {
+    const content = trimmedMessage || commandMessageFallback;
+    if (
+      !content
+      && (!effectiveAllowAttachments || attachments.length === 0)
+      && pluginCommandInvocations.length === 0
+    ) {
       return;
     }
     if (disabled) {
@@ -76,15 +106,23 @@ export const useInputAreaMessageDraft = ({
     if (requireModelSelection()) {
       return;
     }
+    if (requireValidPluginSelection()) {
+      return;
+    }
 
     const runtimeProjectId = selectedRuntimeProject?.id?.trim() || selectedProjectId?.trim() || '0';
     const runtimeProjectRoot = runtimeProjectId === '0'
       ? null
       : (selectedRuntimeProject?.rootPath || null);
 
-    onSend(trimmedMessage, attachments, {
+    onSend(content, attachments, {
       projectId: runtimeProjectId,
       projectRoot: runtimeProjectRoot,
+      pluginDeviceId: selectedPluginIds.length > 0 ? pluginDeviceId : null,
+      pluginWorkspaceId: selectedPluginIds.length > 0 ? pluginWorkspaceId : null,
+      selectedPluginIds,
+      pluginCommandInvocations,
+      pluginAgentSelection,
     });
     resetComposer();
   }, [
@@ -93,9 +131,16 @@ export const useInputAreaMessageDraft = ({
     effectiveAllowAttachments,
     message,
     onSend,
+    commandMessageFallback,
+    pluginCommandInvocations,
+    pluginAgentSelection,
     requireModelSelection,
+    requireValidPluginSelection,
     resetComposer,
     selectedProjectId,
+    pluginDeviceId,
+    pluginWorkspaceId,
+    selectedPluginIds,
     selectedRuntimeProject,
   ]);
 
@@ -110,8 +155,13 @@ export const useInputAreaMessageDraft = ({
     message,
     textareaRef,
     handleInputChange,
+    setMessageValue,
     handleKeyDown,
     handleSend,
-    canSend: Boolean(message.trim() || attachments.length > 0),
+    canSend: Boolean(
+      message.trim()
+      || attachments.length > 0
+      || pluginCommandInvocations.length > 0
+    ),
   };
 };

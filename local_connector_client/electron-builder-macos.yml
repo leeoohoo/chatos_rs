@@ -6,17 +6,28 @@ files:
   - dist/**/*
   - electron/*.cjs
   - package.json
+asar: true
+asarUnpack:
+  - electron/core-runtime.cjs
 extraResources:
   - from: ../.package/macos/local_connector_client_core
     to: local_connector_client_core
+  - from: ../.package/macos/chatos_chrome_native_host
+    to: chatos_chrome_native_host
+  - from: ../.package/macos/chatos_computer_use_helper
+    to: chatos_computer_use_helper
   - from: ../.package/macos/chatos_sandbox_mcp_server
     to: chatos_sandbox_mcp_server
   - from: ../.package/macos/bundled-tools
     to: bundled-tools
   - from: ../.package/macos/skill-bundles
     to: skill-bundles
+  - from: ../.package/macos/plugin-bundles
+    to: plugin-bundles
   - from: ../.package/macos/chatos-frontend
     to: chatos-frontend
+  - from: ../.package/macos/chrome-extension
+    to: chrome-extension
   - from: ../.package/macos/sqlite-migrations
     to: sqlite-migrations
 mac:

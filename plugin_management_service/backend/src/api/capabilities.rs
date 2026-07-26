@@ -3,6 +3,15 @@
 
 use super::*;
 
+mod plugins;
+mod revision;
+
+use plugins::{
+    availability_for_mcp_with_plugin_gate, availability_for_skill_with_plugin_gate,
+    plugin_component_gate, resolve_plugin_binding,
+};
+use revision::capability_policy_revision;
+
 pub(super) async fn resolve_agent_capabilities(
     State(state): State<AppState>,
     Extension(user): Extension<CurrentUser>,
@@ -37,6 +46,7 @@ pub(super) async fn resolve_agent_capabilities(
             runtime_provider: normalized(query.runtime_provider.as_deref()),
             schedule_mode: normalized(query.schedule_mode.as_deref()),
         },
+        normalized(query.device_id.as_deref()),
     )
     .await
     .map(Json)
@@ -68,6 +78,7 @@ pub(super) async fn resolve_agent_capabilities_internal(
             runtime_provider: normalized(input.runtime_provider.as_deref()),
             schedule_mode: normalized(input.schedule_mode.as_deref()),
         },
+        normalized(input.device_id.as_deref()),
     )
     .await
     .map(Json)
@@ -79,6 +90,7 @@ async fn resolve_agent_capabilities_for_owner(
     owner_user_id: String,
     include_unavailable: bool,
     runtime_context: BindingConditions,
+    device_id: Option<String>,
 ) -> Result<RuntimeCapabilitiesResponse, ApiError> {
     let agent = state
         .store
@@ -89,6 +101,22 @@ async fn resolve_agent_capabilities_for_owner(
     if !agent.enabled {
         return Err(ApiError::bad_request("System agent is disabled"));
     }
+    if let Some(gate) = plugin_component_gate(
+        state,
+        &agent.plugin_component,
+        owner_user_id.as_str(),
+        device_id.as_deref(),
+    )
+    .await?
+    {
+        if !gate.available {
+            return Err(ApiError::conflict(format!(
+                "Plugin-managed Agent is unavailable: {}",
+                gate.reason
+                    .unwrap_or_else(|| "Plugin component is not ready".to_string())
+            )));
+        }
+    }
     let bindings = state
         .store
         .list_bindings_for_runtime(agent_key.as_str(), owner_user_id.as_str())
@@ -96,6 +124,7 @@ async fn resolve_agent_capabilities_for_owner(
         .map_err(ApiError::internal)?;
     let mut mcps = Vec::new();
     let mut skills = Vec::new();
+    let mut plugins = Vec::new();
     let mut local_connector_requirements = Vec::new();
 
     for binding in bindings {
@@ -120,7 +149,13 @@ async fn resolve_agent_capabilities_for_owner(
                 ) {
                     continue;
                 }
-                let (available, status, reason) = availability_for_mcp(state, &resource).await?;
+                let (available, status, reason) = availability_for_mcp_with_plugin_gate(
+                    state,
+                    &resource,
+                    owner_user_id.as_str(),
+                    device_id.as_deref(),
+                )
+                .await?;
                 collect_local_connector_requirement_for_mcp(
                     &mut local_connector_requirements,
                     &resource,
@@ -162,7 +197,13 @@ async fn resolve_agent_capabilities_for_owner(
                     continue;
                 }
                 let (available, status, reason, installation) =
-                    availability_for_skill(state, &resource, owner_user_id.as_str()).await?;
+                    availability_for_skill_with_plugin_gate(
+                        state,
+                        &resource,
+                        owner_user_id.as_str(),
+                        device_id.as_deref(),
+                    )
+                    .await?;
                 collect_local_connector_requirement_for_skill(
                     &mut local_connector_requirements,
                     &resource,
@@ -225,7 +266,13 @@ async fn resolve_agent_capabilities_for_owner(
                         continue;
                     }
                     let (available, status, reason, installation) =
-                        availability_for_skill(state, &resource, owner_user_id.as_str()).await?;
+                        availability_for_skill_with_plugin_gate(
+                            state,
+                            &resource,
+                            owner_user_id.as_str(),
+                            device_id.as_deref(),
+                        )
+                        .await?;
                     collect_local_connector_requirement_for_skill(
                         &mut local_connector_requirements,
                         &resource,
@@ -243,6 +290,20 @@ async fn resolve_agent_capabilities_for_owner(
                             reason,
                             installation,
                         });
+                    }
+                }
+            }
+            RESOURCE_KIND_PLUGIN | RESOURCE_KIND_PLUGIN_COMPONENT => {
+                if let Some(plugin) = resolve_plugin_binding(
+                    state,
+                    binding,
+                    owner_user_id.as_str(),
+                    device_id.as_deref(),
+                )
+                .await?
+                {
+                    if plugin.available || include_unavailable {
+                        plugins.push(plugin);
                     }
                 }
             }
@@ -270,7 +331,13 @@ async fn resolve_agent_capabilities_for_owner(
                 RESOURCE_KIND_MCP,
                 resource.id.as_str(),
             );
-            let (available, status, reason) = availability_for_mcp(state, &resource).await?;
+            let (available, status, reason) = availability_for_mcp_with_plugin_gate(
+                state,
+                &resource,
+                owner_user_id.as_str(),
+                device_id.as_deref(),
+            )
+            .await?;
             collect_local_connector_requirement_for_mcp(
                 &mut local_connector_requirements,
                 &resource,
@@ -314,7 +381,13 @@ async fn resolve_agent_capabilities_for_owner(
                 continue;
             }
             let (available, status, reason, installation) =
-                availability_for_skill(state, &resource, owner_user_id.as_str()).await?;
+                availability_for_skill_with_plugin_gate(
+                    state,
+                    &resource,
+                    owner_user_id.as_str(),
+                    device_id.as_deref(),
+                )
+                .await?;
             collect_local_connector_requirement_for_skill(
                 &mut local_connector_requirements,
                 &resource,
@@ -337,7 +410,7 @@ async fn resolve_agent_capabilities_for_owner(
     }
 
     let generated_at = now_rfc3339();
-    let policy_revision = capability_policy_revision(&agent, &mcps, &skills);
+    let policy_revision = capability_policy_revision(&agent, &mcps, &skills, &plugins);
     Ok(RuntimeCapabilitiesResponse {
         agent_key,
         owner_user_id,
@@ -346,6 +419,7 @@ async fn resolve_agent_capabilities_for_owner(
         agent_enabled: agent.enabled,
         mcps,
         skills,
+        plugins,
         local_connector_requirements,
     })
 }
@@ -389,43 +463,6 @@ async fn user_skill_enabled(
         .map_err(ApiError::internal)
 }
 
-fn capability_policy_revision(
-    agent: &SystemAgentRecord,
-    mcps: &[ResolvedMcp],
-    skills: &[ResolvedSkill],
-) -> String {
-    let mut revision_parts = vec![format!(
-        "agent:{}:{}:{}",
-        agent.agent_key, agent.enabled, agent.updated_at
-    )];
-    revision_parts.extend(mcps.iter().map(|item| {
-        format!(
-            "mcp:{}:{}:{}:{}:{}:{}",
-            item.resource.id,
-            item.resource.enabled,
-            item.resource.updated_at,
-            item.binding.required,
-            item.binding.enabled,
-            item.binding.updated_at
-        )
-    }));
-    revision_parts.extend(skills.iter().map(|item| {
-        format!(
-            "skill:{}:{}:{}:{}:{}:{}",
-            item.resource.id,
-            item.resource.enabled,
-            item.resource.updated_at,
-            item.binding.required,
-            item.binding.enabled,
-            item.binding.updated_at
-        )
-    }));
-    revision_parts.sort();
-    let mut hasher = DefaultHasher::new();
-    revision_parts.hash(&mut hasher);
-    format!("{:016x}", hasher.finish())
-}
-
 pub(super) fn automatic_user_binding(
     agent_key: &str,
     owner_user_id: &str,
@@ -444,6 +481,7 @@ pub(super) fn automatic_user_binding(
         required: false,
         priority: 1_000,
         conditions: BindingConditions::default(),
+        component_allowlist: Vec::new(),
         created_by: "system".to_string(),
         updated_by: "system".to_string(),
         created_at: now.clone(),
@@ -452,45 +490,4 @@ pub(super) fn automatic_user_binding(
 }
 
 #[cfg(test)]
-mod condition_tests {
-    use super::*;
-
-    #[test]
-    fn project_scoped_binding_only_matches_cloud_project_context() {
-        let conditions = BindingConditions {
-            project_source_type: Some("cloud".to_string()),
-            ..BindingConditions::default()
-        };
-        assert!(binding_matches_runtime_context(
-            &conditions,
-            &BindingConditions {
-                project_source_type: Some("CLOUD".to_string()),
-                ..BindingConditions::default()
-            }
-        ));
-        assert!(!binding_matches_runtime_context(
-            &conditions,
-            &BindingConditions {
-                project_source_type: Some("public".to_string()),
-                ..BindingConditions::default()
-            }
-        ));
-        assert!(!binding_matches_runtime_context(
-            &conditions,
-            &BindingConditions::default()
-        ));
-    }
-
-    #[test]
-    fn unconditional_binding_matches_every_runtime_context() {
-        assert!(binding_matches_runtime_context(
-            &BindingConditions::default(),
-            &BindingConditions {
-                task_profile: Some("default".to_string()),
-                project_source_type: Some("public".to_string()),
-                schedule_mode: Some("contact_async".to_string()),
-                ..BindingConditions::default()
-            }
-        ));
-    }
-}
+mod tests;

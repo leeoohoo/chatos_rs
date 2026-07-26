@@ -49,6 +49,7 @@ fn complete_capability_bundle(
             agent_enabled: true,
             mcps: Vec::new(),
             skills: Vec::new(),
+            plugins: Vec::new(),
             local_connector_requirements: Vec::new(),
         })
         .collect()

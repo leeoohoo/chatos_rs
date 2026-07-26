@@ -65,6 +65,7 @@ export const TeamMemberWorkspaceComposer: React.FC<TeamMemberWorkspaceComposerPr
 
   return (
     <ChatComposerPanel
+      conversationId={selectedProjectSession?.id || null}
       onSend={onSend}
       inputDisabled={selectedProjectSession ? (!isSelectedSessionActive || reviewRepairRunning) : reviewRepairRunning}
       supportedFileTypes={supportedFileTypes}

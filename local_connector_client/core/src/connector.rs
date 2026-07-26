@@ -23,6 +23,7 @@ use crate::mcp::manifest::mcp_status_message;
 use crate::mcp::repository::state_identity;
 use crate::mcp::service::handle_mcp_request;
 use crate::model_configs::handle_model_runtime_request;
+use crate::plugins::{oauth_status_message, PluginOAuthBroker, PluginRuntimeHost};
 use crate::registration::cloud_authentication_expired;
 use crate::relay::{relay_error_response, RelayRequest, MCP_RELAY_MESSAGE_TYPE};
 use crate::sandbox::pairing::reconcile_sandbox_pairings;
@@ -47,6 +48,8 @@ pub(crate) async fn connect_loop(
     state: Arc<RwLock<LocalState>>,
     database: LocalDatabase,
     sandbox_runtime: LocalSandboxRuntime,
+    plugin_runtime: PluginRuntimeHost,
+    plugin_oauth: PluginOAuthBroker,
     device_id: String,
 ) -> Result<()> {
     let http_client = reqwest::Client::builder()
@@ -82,6 +85,7 @@ pub(crate) async fn connect_loop(
     let (outbound_tx, mut outbound_rx) = mpsc::unbounded_channel::<Value>();
     let mut heartbeat = tokio::time::interval(Duration::from_secs(HEARTBEAT_INTERVAL_SECONDS));
     let mut mcp_check = tokio::time::interval(Duration::from_secs(MCP_CHECK_INTERVAL_SECONDS));
+    let mut plugin_execute_tasks = tokio::task::JoinSet::new();
     mcp_check.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     tracing_stdout("connected to local_connector_service");
     match reconcile_sandbox_pairings(&http_client, &config, &state, device_id.as_str()).await {
@@ -121,6 +125,17 @@ pub(crate) async fn connect_loop(
                     .send(Message::Text(skill_inventory.to_string().into()))
                     .await
                     .context("send Skill inventory status")?;
+                let oauth_connections = plugin_oauth
+                    .status_connections(owner_user_id.as_str(), current_device_id.as_str())
+                    .context("load Plugin OAuth status")?;
+                write
+                    .send(Message::Text(
+                        oauth_status_message(oauth_connections.as_slice())
+                            .to_string()
+                            .into(),
+                    ))
+                    .await
+                    .context("send Plugin OAuth status")?;
             }
             outbound = outbound_rx.recv() => {
                 let Some(outbound) = outbound else {
@@ -131,6 +146,11 @@ pub(crate) async fn connect_loop(
                     .await
                     .context("send relay event")?;
             }
+            completed = plugin_execute_tasks.join_next(), if !plugin_execute_tasks.is_empty() => {
+                if let Some(Err(error)) = completed {
+                    tracing_stdout(format!("Plugin execute relay task failed: {error}").as_str());
+                }
+            }
             message = read.next() => {
                 let Some(message) = message else {
                     return Err(anyhow!("local connector websocket closed"));
@@ -139,6 +159,36 @@ pub(crate) async fn connect_loop(
                 match message {
                     Message::Text(text) => {
                         let state_snapshot = state.read().await.clone();
+                        if let Ok(value) = serde_json::from_str::<Value>(text.as_str()) {
+                            if value.get("type").and_then(Value::as_str)
+                                == Some("plugin_execute_request")
+                            {
+                                if let Err(err) = validate_remote_control_context(
+                                    "plugin_execute_request",
+                                    &value,
+                                    &state_snapshot,
+                                ) {
+                                    if let Some(response) = remote_control_error_response(
+                                        "plugin_execute_request",
+                                        &value,
+                                        err,
+                                    ) {
+                                        write
+                                            .send(Message::Text(response.to_string().into()))
+                                            .await
+                                            .context("send Plugin execute validation response")?;
+                                    }
+                                } else {
+                                    let plugin_runtime = plugin_runtime.clone();
+                                    let outbound_tx = outbound_tx.clone();
+                                    plugin_execute_tasks.spawn(async move {
+                                        let response = plugin_runtime.handle_execute(value).await;
+                                        let _ = outbound_tx.send(response);
+                                    });
+                                }
+                                continue;
+                            }
+                        }
                         if let Some(response) =
                             handle_text_message(
                                 text.as_str(),
@@ -148,6 +198,7 @@ pub(crate) async fn connect_loop(
                                 &sandbox_runtime,
                                 &terminal_manager,
                                 &history_recorder,
+                                &plugin_runtime,
                                 outbound_tx.clone(),
                             ).await
                         {
@@ -176,6 +227,7 @@ async fn handle_text_message(
     sandbox_runtime: &LocalSandboxRuntime,
     terminal_manager: &LocalTerminalManager,
     history_recorder: &CommandHistoryRecorder,
+    plugin_runtime: &PluginRuntimeHost,
     outbound_tx: mpsc::UnboundedSender<Value>,
 ) -> Option<Value> {
     let value = serde_json::from_str::<Value>(text).ok()?;
@@ -190,7 +242,12 @@ async fn handle_text_message(
         }
     }
     match message_type {
-        "connected" | "pong" | "ack" | "mcp_manifest_status_ack" | "skill_inventory_status_ack" => {
+        "connected"
+        | "pong"
+        | "ack"
+        | "mcp_manifest_status_ack"
+        | "skill_inventory_status_ack"
+        | "plugin_oauth_status_ack" => {
             tracing_stdout(format!("service message: {message_type}").as_str());
             None
         }
@@ -208,6 +265,18 @@ async fn handle_text_message(
         "skill_prepare_request" => Some(handle_skill_prepare(value, state)),
         "skill_execute_request" => Some(handle_skill_execute(value, state)),
         "skill_cancel_request" => Some(handle_skill_cancel(value)),
+        "plugin_prepare_request" => Some(plugin_runtime.handle_prepare(value).await),
+        "plugin_execute_request" => Some(plugin_runtime.handle_execute(value).await),
+        "plugin_cancel_request" => Some(plugin_runtime.handle_cancel(value).await),
+        "plugin_ui_asset_request" => Some(plugin_runtime.handle_ui_asset(value).await),
+        "plugin_artifact_list_request" => Some(plugin_runtime.handle_artifact_list(value).await),
+        "plugin_artifact_read_request" => Some(plugin_runtime.handle_artifact_read(value).await),
+        "plugin_artifact_create_request" => {
+            Some(plugin_runtime.handle_artifact_create(value).await)
+        }
+        "plugin_artifact_update_request" => {
+            Some(plugin_runtime.handle_artifact_update(value).await)
+        }
         "terminal_session_create_request" => Some(
             handle_terminal_session_create_request(value, state, terminal_manager, outbound_tx)
                 .await,
@@ -256,6 +325,14 @@ fn is_remote_control_message(message_type: &str) -> bool {
             | "skill_prepare_request"
             | "skill_execute_request"
             | "skill_cancel_request"
+            | "plugin_prepare_request"
+            | "plugin_execute_request"
+            | "plugin_cancel_request"
+            | "plugin_ui_asset_request"
+            | "plugin_artifact_list_request"
+            | "plugin_artifact_read_request"
+            | "plugin_artifact_create_request"
+            | "plugin_artifact_update_request"
             | "terminal_session_create_request"
             | "terminal_input"
             | "terminal_command"
@@ -307,7 +384,17 @@ fn relay_allows_empty_workspace(message_type: &str, request: &RelayRequest) -> b
     }
     if matches!(
         message_type,
-        "skill_prepare_request" | "skill_execute_request" | "skill_cancel_request"
+        "skill_prepare_request"
+            | "skill_execute_request"
+            | "skill_cancel_request"
+            | "plugin_prepare_request"
+            | "plugin_execute_request"
+            | "plugin_cancel_request"
+            | "plugin_ui_asset_request"
+            | "plugin_artifact_list_request"
+            | "plugin_artifact_read_request"
+            | "plugin_artifact_create_request"
+            | "plugin_artifact_update_request"
     ) {
         return true;
     }
@@ -359,6 +446,10 @@ fn remote_control_error_response(
         "skill_prepare_request" => "skill_prepare_response",
         "skill_execute_request" => "skill_execute_response",
         "skill_cancel_request" => "skill_cancel_response",
+        "plugin_prepare_request" => "plugin_prepare_response",
+        "plugin_execute_request" => "plugin_execute_response",
+        "plugin_cancel_request" => "plugin_cancel_response",
+        "plugin_ui_asset_request" => "plugin_ui_asset_response",
         _ => return None,
     };
     Some(relay_error_response(

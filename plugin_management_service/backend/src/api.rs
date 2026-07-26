@@ -32,6 +32,15 @@ mod internal_auth;
 mod local_connector;
 mod local_connector_skills;
 mod mcps;
+mod plugin_audit;
+mod plugin_catalog_sync;
+mod plugin_install_sources;
+mod plugin_installations;
+mod plugin_marketplaces;
+mod plugin_oauth;
+mod plugin_releases;
+mod plugin_support;
+mod plugins;
 mod resource_policy;
 mod runtime_agent_prompts;
 mod skill_packages;
@@ -43,8 +52,8 @@ use agent_provider_prompts::{
     update_agent_provider_prompt_draft,
 };
 use agents::{
-    create_system_agent, get_agent_mcp_bindings, list_system_agents, update_agent_mcp_bindings,
-    update_system_agent,
+    create_system_agent, get_agent_mcp_bindings, get_agent_plugin_bindings, list_system_agents,
+    update_agent_mcp_bindings, update_agent_plugin_bindings, update_system_agent,
 };
 use availability::*;
 #[cfg(test)]
@@ -68,6 +77,24 @@ use mcps::{
     check_mcp, create_mcp, delete_mcp, get_mcp, get_mcp_descriptor, list_admin_ai_models,
     list_mcps, optimize_mcp_provider_skill, optimize_mcp_provider_skill_stream, update_mcp,
     update_mcp_provider_skill,
+};
+use plugin_audit::list_plugin_audit;
+pub use plugin_catalog_sync::start_plugin_catalog_sync_loop;
+use plugin_catalog_sync::{sync_admin_plugin_marketplace, sync_plugin_marketplace};
+use plugin_install_sources::{
+    get_plugin_install_source_internal, list_plugin_install_sources_internal,
+};
+use plugin_installations::{list_installed_plugins, sync_plugin_installation_internal};
+use plugin_marketplaces::{
+    create_admin_plugin_marketplace, create_plugin_marketplace, list_admin_plugin_marketplaces,
+    list_plugin_marketplaces,
+};
+use plugin_oauth::{list_plugin_oauth_connections, sync_plugin_oauth_status_internal};
+use plugin_releases::{create_plugin_release, list_plugin_releases, revoke_plugin_release};
+use plugin_support::*;
+use plugins::{
+    create_plugin_catalog_entry, get_plugin_catalog_entry, list_admin_plugins, list_plugin_catalog,
+    update_user_plugin_preference, update_user_plugin_preference_internal,
 };
 use resource_policy::*;
 use runtime_agent_prompts::{
@@ -235,9 +262,60 @@ pub fn build_router(state: AppState) -> Router {
             get(get_agent_mcp_bindings).put(update_agent_mcp_bindings),
         )
         .route(
+            "/api/system-agents/{agent_key}/plugin-bindings",
+            get(get_agent_plugin_bindings).put(update_agent_plugin_bindings),
+        )
+        .route(
             "/api/runtime/agent-capabilities",
             get(resolve_agent_capabilities),
         )
+        .route("/api/plugins/catalog", get(list_plugin_catalog))
+        .route(
+            "/api/plugins/catalog/{plugin_id}",
+            get(get_plugin_catalog_entry),
+        )
+        .route("/api/plugins/installed", get(list_installed_plugins))
+        .route(
+            "/api/plugins/{plugin_id}/releases",
+            get(list_plugin_releases),
+        )
+        .route(
+            "/api/plugins/{plugin_id}/preference",
+            axum::routing::put(update_user_plugin_preference),
+        )
+        .route(
+            "/api/plugins/{plugin_id}/oauth",
+            get(list_plugin_oauth_connections),
+        )
+        .route(
+            "/api/plugin-marketplaces",
+            get(list_plugin_marketplaces).post(create_plugin_marketplace),
+        )
+        .route(
+            "/api/plugin-marketplaces/{marketplace_id}/sync",
+            post(sync_plugin_marketplace),
+        )
+        .route(
+            "/api/admin/plugin-marketplaces",
+            get(list_admin_plugin_marketplaces).post(create_admin_plugin_marketplace),
+        )
+        .route(
+            "/api/admin/plugin-marketplaces/{marketplace_id}/sync",
+            post(sync_admin_plugin_marketplace),
+        )
+        .route(
+            "/api/admin/plugins",
+            get(list_admin_plugins).post(create_plugin_catalog_entry),
+        )
+        .route(
+            "/api/admin/plugins/{plugin_id}/releases",
+            get(list_plugin_releases).post(create_plugin_release),
+        )
+        .route(
+            "/api/admin/plugin-releases/{release_id}/revoke",
+            post(revoke_plugin_release),
+        )
+        .route("/api/admin/plugin-audit", get(list_plugin_audit))
         .route_layer(middleware::from_fn_with_state(state.clone(), require_auth));
 
     let internal_api = Router::new()
@@ -272,6 +350,26 @@ pub fn build_router(state: AppState) -> Router {
         .route(
             "/api/internal/local-connector/skills/{skill_id}/preference",
             axum::routing::put(update_user_skill_preference_internal),
+        )
+        .route(
+            "/api/internal/local-connector/plugins/installations",
+            axum::routing::put(sync_plugin_installation_internal),
+        )
+        .route(
+            "/api/internal/local-connector/plugins/install-sources",
+            get(list_plugin_install_sources_internal),
+        )
+        .route(
+            "/api/internal/local-connector/plugins/install-sources/{plugin_id}/{release_id}",
+            get(get_plugin_install_source_internal),
+        )
+        .route(
+            "/api/internal/local-connector/plugins/{plugin_id}/preference",
+            axum::routing::put(update_user_plugin_preference_internal),
+        )
+        .route(
+            "/api/internal/local-connector/plugins/oauth",
+            axum::routing::put(sync_plugin_oauth_status_internal),
         )
         .route(
             "/api/internal/local-connector/mcps/{mcp_id}",

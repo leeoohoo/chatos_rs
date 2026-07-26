@@ -67,10 +67,12 @@ pub(crate) async fn call_local_terminal_controller_tool(
                 project_key,
                 command: command.clone(),
                 args: Vec::new(),
+                redact_arguments_in_history: false,
                 cwd: cwd_label.clone(),
                 source: "local_mcp".to_string(),
                 requested_permissions: None,
                 session_id: None,
+                action_audit: None,
             })
             .await?;
             if let ApprovalDecision::Denied { reason, .. } = approval {

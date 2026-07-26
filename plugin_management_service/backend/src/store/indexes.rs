@@ -19,6 +19,11 @@ impl AppStore {
         create_index(&self.mcps, doc! { "runtime.kind": 1 }).await?;
         create_index(
             &self.mcps,
+            doc! { "plugin_id": 1, "release_id": 1, "component_key": 1 },
+        )
+        .await?;
+        create_index(
+            &self.mcps,
             doc! { "runtime.local_connector.device_id": 1, "runtime.local_connector.workspace_id": 1 },
         )
         .await?;
@@ -40,6 +45,11 @@ impl AppStore {
         .await?;
         create_index(&self.skills, doc! { "visibility": 1, "enabled": 1 }).await?;
         create_index(&self.skills, doc! { "content.kind": 1 }).await?;
+        create_index(
+            &self.skills,
+            doc! { "plugin_id": 1, "release_id": 1, "component_key": 1 },
+        )
+        .await?;
 
         create_unique_index(&self.skill_packages, doc! { "id": 1 }).await?;
         create_index(
@@ -50,6 +60,11 @@ impl AppStore {
 
         create_unique_index(&self.agents, doc! { "agent_key": 1 }).await?;
         create_index(&self.agents, doc! { "service_name": 1, "enabled": 1 }).await?;
+        create_index(
+            &self.agents,
+            doc! { "plugin_id": 1, "release_id": 1, "component_key": 1 },
+        )
+        .await?;
 
         create_unique_index(&self.agent_prompts, doc! { "id": 1 }).await?;
         create_unique_index(&self.agent_prompts, doc! { "agent_key": 1, "vendor": 1 }).await?;
@@ -94,6 +109,101 @@ impl AppStore {
         create_index(
             &self.skill_installations,
             doc! { "owner_user_id": 1, "skill_id": 1, "status": 1 },
+        )
+        .await?;
+
+        create_unique_index(&self.plugin_marketplaces, doc! { "id": 1 }).await?;
+        create_unique_index(&self.plugin_marketplaces, doc! { "name": 1 }).await?;
+        create_index(
+            &self.plugin_marketplaces,
+            doc! { "visibility": 1, "owner_user_id": 1, "enabled": 1, "trust_level": 1 },
+        )
+        .await?;
+
+        create_unique_index(&self.plugin_catalog_syncs, doc! { "marketplace_id": 1 }).await?;
+
+        create_unique_index(&self.plugin_catalog_entries, doc! { "id": 1 }).await?;
+        create_unique_index(&self.plugin_catalog_entries, doc! { "plugin_key": 1 }).await?;
+        create_unique_index(
+            &self.plugin_catalog_entries,
+            doc! { "marketplace_id": 1, "name": 1 },
+        )
+        .await?;
+        create_index(
+            &self.plugin_catalog_entries,
+            doc! { "visibility": 1, "owner_user_id": 1, "enabled": 1, "featured": -1 },
+        )
+        .await?;
+        create_index(
+            &self.plugin_catalog_entries,
+            doc! { "interface.category": 1, "display_name": 1 },
+        )
+        .await?;
+
+        create_unique_index(&self.plugin_releases, doc! { "id": 1 }).await?;
+        create_unique_index(&self.plugin_releases, doc! { "plugin_id": 1, "version": 1 }).await?;
+        create_index(
+            &self.plugin_releases,
+            doc! { "plugin_id": 1, "published_at": -1, "revoked_at": 1 },
+        )
+        .await?;
+
+        create_unique_index(&self.plugin_installations, doc! { "id": 1 }).await?;
+        create_unique_index(
+            &self.plugin_installations,
+            doc! { "owner_user_id": 1, "device_id": 1, "plugin_id": 1 },
+        )
+        .await?;
+        create_index(
+            &self.plugin_installations,
+            doc! { "owner_user_id": 1, "device_id": 1, "active": 1 },
+        )
+        .await?;
+
+        create_unique_index(
+            &self.plugin_preferences,
+            doc! { "owner_user_id": 1, "plugin_id": 1 },
+        )
+        .await?;
+        create_index(
+            &self.plugin_preferences,
+            doc! { "owner_user_id": 1, "enabled": 1 },
+        )
+        .await?;
+
+        create_unique_index(
+            &self.plugin_component_snapshots,
+            doc! { "plugin_id": 1, "release_id": 1, "component.component_key": 1 },
+        )
+        .await?;
+        create_index(
+            &self.plugin_component_snapshots,
+            doc! { "release_id": 1, "component.kind": 1 },
+        )
+        .await?;
+
+        create_unique_index(&self.plugin_oauth_connections, doc! { "id": 1 }).await?;
+        create_unique_index(
+            &self.plugin_oauth_connections,
+            doc! {
+                "owner_user_id": 1,
+                "device_id": 1,
+                "plugin_id": 1,
+                "component_key": 1,
+                "provider": 1,
+            },
+        )
+        .await?;
+
+        create_unique_index(&self.plugin_audit_logs, doc! { "id": 1 }).await?;
+        create_index(
+            &self.plugin_audit_logs,
+            doc! { "plugin_id": 1, "created_at": -1 },
+        )
+        .await?;
+        create_index(
+            &self.plugin_audit_logs,
+            doc! { "owner_user_id": 1, "device_id": 1, "created_at": -1 },
         )
         .await?;
         Ok(())

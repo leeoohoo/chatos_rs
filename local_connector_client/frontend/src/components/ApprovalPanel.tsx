@@ -6,6 +6,7 @@ import { BellRing, CheckCircle2, ListChecks, RefreshCw, ShieldCheck, XCircle } f
 
 import {
   api,
+  type ApprovalActionAudit,
   type ApprovalMode,
   type ApprovalSettings,
   type PendingApprovalItem,
@@ -25,6 +26,124 @@ import {
   formatHistoryTime,
   sourceLabel,
 } from '../utils/terminalFormat';
+
+const actionLabels: Record<string, string> = {
+  computer_click: '鼠标点击',
+  computer_drag: '鼠标拖拽',
+  computer_press_key: '键盘导航',
+  computer_type_text: '文本输入',
+  computer_scroll: '滚动',
+  computer_activate_application: '激活应用',
+  BeforePluginPrepare: '插件准备前',
+  SessionStart: '插件会话开始',
+  PreToolUse: '工具调用前',
+  PostToolUse: '工具调用后',
+  RunCompleted: '运行完成',
+  RunFailed: '运行失败',
+  PluginDisabled: '插件禁用',
+};
+
+const auditDetailLabels: Record<string, string> = {
+  display_index: '显示器序号',
+  display_id: '显示器身份',
+  point: '目标坐标',
+  start_point: '起点',
+  end_point: '终点',
+  button: '鼠标按钮',
+  click_count: '点击次数',
+  duration_ms: '持续时间（毫秒）',
+  display_geometry: '审批时显示器几何',
+  key: '按键',
+  modifiers: '修饰键',
+  target: '目标',
+  character_count: '字符数',
+  utf16_units: 'UTF-16 单元',
+  text_sha256: '文本 SHA-256',
+  delta_y: '纵向滚动',
+  delta_x: '横向滚动',
+  pid: '进程 PID',
+  application: '应用身份',
+  confirmation_risk: '专用确认风险',
+  plugin_id: '插件 ID',
+  component_key: 'Hook 组件',
+  hook_id: 'Hook ID',
+  hook_snapshot_sha256: '签名快照 SHA-256',
+  workspace_id: '工作区 ID',
+};
+
+const auditValueLabels: Record<string, string> = {
+  left: '左键',
+  right: '右键',
+  none: '无',
+  current_pointer_target: '当前指针所在目标',
+  focused_non_secure_editable_control: '当前聚焦的非安全可编辑控件',
+  sensitive_text_entry: '敏感文本写入',
+  submit_or_activate: '提交或激活',
+  destructive_key: '删除或返回键',
+  application_shortcut: '应用或系统快捷键',
+};
+
+const auditNoteLabels: Record<string, string> = {
+  text_redacted_from_persistent_history: '文本原文只在本次临时审批中显示，历史仅保存长度与 SHA-256。',
+  display_identity_and_geometry_revalidated: '执行前会重新核对显示器身份和完整几何，发生漂移即拒绝。',
+  reviewed_navigation_key_allowlist: '仅允许已审核的导航键和修饰键，不允许任意字母键。',
+  focused_target_revalidated_before_input: '执行前会重新核对前台应用和聚焦文本控件，目标变化即拒绝。',
+  bounded_single_scroll_event: '只发送一次有界滚动事件，不执行无限或惯性滚动。',
+  process_identity_revalidated_before_activation: '执行前会重新核对 PID 对应的应用身份。',
+  post_action_observation_and_mouse_up_recovery:
+    '动作完成后会尝试附加不持久化的桌面截图；鼠标按下后由释放守卫在异常路径尝试补发抬起事件。',
+  post_action_observation_double_click_and_mouse_up_recovery:
+    '双击仅在完整事件对之间响应取消；完成后会尝试附加瞬时截图，并由释放守卫避免鼠标按键残留。',
+  post_action_observation_and_key_up_recovery:
+    '动作完成后会尝试附加不持久化的桌面截图；部分发送或异常时会补发按键抬起事件。',
+  post_action_observation_before_retry:
+    '动作完成后会尝试附加不持久化的桌面截图；观察失败不代表动作失败，重新操作前必须先观察。',
+  cancel_between_complete_click_pairs: '双击仅在完整按下/抬起事件对之间响应取消。',
+  mouse_up_guaranteed_on_cancel_or_failure: '拖拽取消或失败时会尽力强制释放鼠标按键。',
+  best_effort_key_release_on_partial_send: 'Windows 部分发送失败时会尽力补发按键抬起事件。',
+};
+
+const confirmationRiskLabels: Record<string, string> = {
+  sensitive_text_entry: '文本会写入当前聚焦控件，可能向应用或网站披露信息。',
+  submit_or_activate: 'Enter 可能提交表单、发送内容或触发当前默认操作。',
+  destructive_key: 'Backspace 可能删除内容或触发返回导航。',
+  application_shortcut: '带修饰键的快捷键可能触发应用或系统级操作。',
+};
+
+function auditValue(value: string): string {
+  return auditValueLabels[value] || value;
+}
+
+function ActionAuditCard({ audit }: { audit?: ApprovalActionAudit | null }) {
+  if (!audit || !['computer_use', 'plugin_hook_workspace_write'].includes(audit.kind)) return null;
+  const isPluginHook = audit.kind === 'plugin_hook_workspace_write';
+  const notes = [audit.privacy, audit.safety, audit.recovery]
+    .filter((value): value is string => Boolean(value))
+    .map((value) => auditNoteLabels[value] || value);
+  return (
+    <div className="actionAuditCard">
+      <div className="actionAuditHeader">
+        <span>{isPluginHook ? 'Plugin Hook 工作区写入审批' : 'Computer Use 操作审计'}</span>
+        <strong>{actionLabels[audit.operation] || audit.operation}</strong>
+      </div>
+      {audit.details?.length ? (
+        <div className="actionAuditGrid">
+          {audit.details.map((detail) => (
+            <div key={`${detail.key}:${detail.value}`}>
+              <span>{auditDetailLabels[detail.key] || detail.key}</span>
+              <code>{auditValue(detail.value)}</code>
+            </div>
+          ))}
+        </div>
+      ) : null}
+      {notes.length ? (
+        <div className="actionAuditNotes">
+          {notes.map((note) => <span key={note}>{note}</span>)}
+        </div>
+      ) : null}
+    </div>
+  );
+}
 
 function formatRequestedPermissions(permissions: RequestPermissionProfile): string {
   const labels: string[] = [];
@@ -48,6 +167,7 @@ export function ApprovalPanel() {
   const [pending, setPending] = React.useState<PendingApprovalItem[]>([]);
   const [reviewing, setReviewing] = React.useState<PendingApprovalItem[]>([]);
   const [rememberAllow, setRememberAllow] = React.useState<Record<string, boolean>>({});
+  const [confirmationResponses, setConfirmationResponses] = React.useState<Record<string, string>>({});
   const [denyReasons, setDenyReasons] = React.useState<Record<string, string>>({});
   const [loading, setLoading] = React.useState(true);
   const [saving, setSaving] = React.useState(false);
@@ -130,7 +250,13 @@ export function ApprovalPanel() {
 
   const approve = async (item: PendingApprovalItem) => {
     setError(null);
-    const remember = rememberAllow[item.id] || false;
+    const canRemember = item.available_decisions?.includes('acceptForSession') ?? true;
+    const remember = canRemember && (rememberAllow[item.id] || false);
+    const confirmationResponse = confirmationResponses[item.id]?.trim() || '';
+    if (item.confirmation && confirmationResponse !== item.confirmation.challenge) {
+      setError(`请输入完整确认口令 ${item.confirmation.challenge}`);
+      return;
+    }
     if (
       remember
       && !window.confirm('选择“本会话允许”后，仅本次沙箱会话内相同命令和相同权限请求不再询问。确认继续吗？')
@@ -140,7 +266,8 @@ export function ApprovalPanel() {
     try {
       await api.approvePendingApproval(item.id, {
         decision: remember ? 'acceptForSession' : 'accept',
-        risk_acknowledged: remember,
+        risk_acknowledged: remember || Boolean(item.confirmation),
+        confirmation_response: item.confirmation ? confirmationResponse : undefined,
       });
       setMessage(`已通过: ${item.command}`);
       await loadSettings();
@@ -182,7 +309,7 @@ export function ApprovalPanel() {
       <section className="panel">
         <div className="panelHeader">
           <div>
-            <h2><ShieldCheck size={18} />命令审批</h2>
+            <h2><ShieldCheck size={18} />命令与本机操作审批</h2>
             <p>当前级别: {approvalModeLabel(settings.default_mode)}</p>
             <p>策略版本: {settings.settings_revision || '默认'}</p>
           </div>
@@ -214,10 +341,10 @@ export function ApprovalPanel() {
             <h2><BellRing size={18} />待审批</h2>
             <p>
               {reviewing.length
-                ? `${reviewing.length} 条命令正在 AI 审批`
+                ? `${reviewing.length} 项正在 AI 审批`
                 : pending.length
-                  ? `${pending.length} 条命令等待处理`
-                  : '当前没有待审批命令'}
+                  ? `${pending.length} 项等待处理`
+                  : '当前没有待审批命令或操作'}
             </p>
           </div>
         </div>
@@ -238,10 +365,16 @@ export function ApprovalPanel() {
                   请求的临时权限：{formatRequestedPermissions(item.requested_permissions)}
                 </div>
               ) : null}
+              <ActionAuditCard audit={item.action_audit} />
             </div>
           ))}
-          {pending.map((item) => (
-            <div className="approvalPendingRow" key={item.id}>
+          {pending.map((item) => {
+            const canRemember = item.available_decisions?.includes('acceptForSession') ?? true;
+            const confirmationResponse = confirmationResponses[item.id]?.trim() || '';
+            const confirmationSatisfied = !item.confirmation
+              || confirmationResponse === item.confirmation.challenge;
+            return (
+              <div className="approvalPendingRow" key={item.id}>
               <div className="approvalCommandLine">
                 <span className={riskStatusClass(item.risk)}>{riskLabel(item.risk)}</span>
                 <strong>{item.command}</strong>
@@ -255,18 +388,42 @@ export function ApprovalPanel() {
                   请求的临时权限：{formatRequestedPermissions(item.requested_permissions)}
                 </div>
               ) : null}
-              <div className="approvalActions">
-                <label className="inlineCheck">
+              <ActionAuditCard audit={item.action_audit} />
+              {item.confirmation ? (
+                <div className="highRiskConfirmation">
+                  <strong>高风险操作需要专用确认</strong>
+                  <span>
+                    {confirmationRiskLabels[item.confirmation.risk] || '此操作可能产生难以撤销的本机副作用。'}
+                    {' '}本次只允许单次通过，不能加入会话白名单。
+                  </span>
+                  <span>请完整输入确认口令：</span>
+                  <code>{item.confirmation.challenge}</code>
                   <input
-                    type="checkbox"
-                    checked={rememberAllow[item.id] || false}
-                    onChange={(event) => setRememberAllow((current) => ({
+                    autoComplete="off"
+                    spellCheck={false}
+                    value={confirmationResponses[item.id] || ''}
+                    onChange={(event) => setConfirmationResponses((current) => ({
                       ...current,
-                      [item.id]: event.target.checked,
+                      [item.id]: event.target.value,
                     }))}
+                    placeholder={item.confirmation.challenge}
                   />
-                  本会话允许
-                </label>
+                </div>
+              ) : null}
+              <div className="approvalActions">
+                {canRemember ? (
+                  <label className="inlineCheck">
+                    <input
+                      type="checkbox"
+                      checked={rememberAllow[item.id] || false}
+                      onChange={(event) => setRememberAllow((current) => ({
+                        ...current,
+                        [item.id]: event.target.checked,
+                      }))}
+                    />
+                    本会话允许
+                  </label>
+                ) : <span className="singleUseApproval">仅允许本次操作</span>}
                 <input
                   value={denyReasons[item.id] || ''}
                   onChange={(event) => setDenyReasons((current) => ({
@@ -275,16 +432,21 @@ export function ApprovalPanel() {
                   }))}
                   placeholder="拒绝原因"
                 />
-                <button className="primaryButton compact" onClick={() => void approve(item)}>
+                <button
+                  className="primaryButton compact"
+                  disabled={!confirmationSatisfied}
+                  onClick={() => void approve(item)}
+                >
                   <CheckCircle2 size={16} />通过
                 </button>
                 <button className="ghostButton compact dangerText" onClick={() => void deny(item)}>
                   <XCircle size={16} />拒绝
                 </button>
               </div>
-            </div>
-          ))}
-          {!pending.length && !reviewing.length ? <div className="emptyState">没有待审批命令。</div> : null}
+              </div>
+            );
+          })}
+          {!pending.length && !reviewing.length ? <div className="emptyState">没有待审批命令或操作。</div> : null}
         </div>
       </section>
 
@@ -327,6 +489,7 @@ export function ApprovalPanel() {
                 </div>
                 <span>{approvalModeLabel(entry.mode)} · {sourceLabel(entry.source)} · {entry.cwd} · {formatHistoryTime(entry.created_at)}</span>
                 {entry.reason ? <span>{entry.reason}</span> : null}
+                <ActionAuditCard audit={entry.action_audit} />
               </div>
             </div>
           ))}

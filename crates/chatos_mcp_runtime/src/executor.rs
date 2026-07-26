@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
+use std::sync::Arc;
 use std::time::Instant;
 
 use serde_json::{json, Value};
@@ -11,7 +12,7 @@ use crate::builtin_prompt::{BuiltinMcpPromptBuildResult, BuiltinMcpPromptLocale}
 use crate::parallelism::should_parallelize_tool_batch;
 use crate::registry::BuiltinToolRegistry;
 use crate::tool_call::extract_tool_call_name;
-use crate::types::{McpBuiltinServer, McpHttpServer, McpStdioServer, ToolInfo};
+use crate::types::{McpBuiltinServer, McpHttpServer, McpStdioServer, ToolInfo, ToolLifecycleHook};
 
 const PUBLIC_ISOLATED_WORKSPACE_CWD: &str = "/workspace";
 
@@ -25,6 +26,9 @@ pub struct McpExecutor {
     unavailable_tools: Vec<Value>,
     tool_metadata: HashMap<String, ToolInfo>,
     tool_aliases: HashMap<String, String>,
+    allowed_tool_names: Option<BTreeSet<String>>,
+    declared_allowed_tool_names: BTreeSet<String>,
+    tool_lifecycle_hook: Option<Arc<dyn ToolLifecycleHook>>,
 }
 
 mod execution;
@@ -41,6 +45,26 @@ impl McpExecutor {
         builtin_servers: Vec<McpBuiltinServer>,
         builtin_registry: BuiltinToolRegistry,
     ) -> Self {
+        Self::new_with_tool_constraints(
+            http_servers,
+            stdio_servers,
+            builtin_servers,
+            builtin_registry,
+            None,
+            BTreeSet::new(),
+            None,
+        )
+    }
+
+    pub(crate) fn new_with_tool_constraints(
+        http_servers: Vec<McpHttpServer>,
+        stdio_servers: Vec<McpStdioServer>,
+        builtin_servers: Vec<McpBuiltinServer>,
+        builtin_registry: BuiltinToolRegistry,
+        allowed_tool_names: Option<BTreeSet<String>>,
+        declared_allowed_tool_names: BTreeSet<String>,
+        tool_lifecycle_hook: Option<Arc<dyn ToolLifecycleHook>>,
+    ) -> Self {
         Self {
             http_servers,
             stdio_servers,
@@ -50,6 +74,9 @@ impl McpExecutor {
             unavailable_tools: Vec::new(),
             tool_metadata: HashMap::new(),
             tool_aliases: HashMap::new(),
+            allowed_tool_names,
+            declared_allowed_tool_names,
+            tool_lifecycle_hook,
         }
     }
 
@@ -62,6 +89,7 @@ impl McpExecutor {
         self.register_http_tools().await;
         self.register_stdio_tools().await;
         self.register_builtin_tools();
+        self.apply_tool_allowlist()?;
         info!(
             mcp_init_mode = "full",
             http_server_count = self.http_servers.len(),
@@ -82,6 +110,7 @@ impl McpExecutor {
         self.tool_metadata.clear();
         self.tool_aliases.clear();
         self.register_builtin_tools();
+        self.apply_tool_allowlist()?;
         info!(
             mcp_init_mode = "builtin_only",
             http_server_count = self.http_servers.len(),
@@ -171,6 +200,36 @@ impl McpExecutor {
         }
     }
 
+    fn apply_tool_allowlist(&mut self) -> Result<(), String> {
+        let Some(allowed_tool_names) = self.allowed_tool_names.clone() else {
+            return Ok(());
+        };
+        let missing = self
+            .declared_allowed_tool_names
+            .iter()
+            .filter(|tool_name| !self.tool_metadata.contains_key(tool_name.as_str()))
+            .cloned()
+            .collect::<Vec<_>>();
+        if !missing.is_empty() {
+            return Err(format!(
+                "allowed MCP tools are unavailable or unknown: {}",
+                missing.join(",")
+            ));
+        }
+        self.available_tools.retain(|tool| {
+            tool.get("name")
+                .and_then(Value::as_str)
+                .is_some_and(|name| allowed_tool_names.contains(name))
+        });
+        self.tool_metadata
+            .retain(|name, _| allowed_tool_names.contains(name));
+        let retained_tool_names = self.tool_metadata.keys().cloned().collect::<BTreeSet<_>>();
+        self.tool_aliases
+            .retain(|_, target| retained_tool_names.contains(target));
+        self.unavailable_tools.clear();
+        Ok(())
+    }
+
     fn normalize_tool_calls(&self, tool_calls: &[Value]) -> Vec<Value> {
         tool_calls
             .iter()
@@ -216,6 +275,10 @@ impl McpExecutor {
                 );
                 continue;
             }
+            let gateway_allowed_tools = self.gateway_allowed_tools(server.name.as_str(), "http");
+            if gateway_allowed_tools.as_ref().is_some_and(Vec::is_empty) {
+                continue;
+            }
             let mut item = json!({
                 "type": "mcp",
                 "server_label": server.name,
@@ -233,9 +296,16 @@ impl McpExecutor {
                     ),
                 }
             }
+            if let Some(allowed_tools) = gateway_allowed_tools {
+                item["allowed_tools"] = json!(allowed_tools);
+            }
             out.push(item);
         }
         for server in &self.stdio_servers {
+            let gateway_allowed_tools = self.gateway_allowed_tools(server.name.as_str(), "stdio");
+            if gateway_allowed_tools.as_ref().is_some_and(Vec::is_empty) {
+                continue;
+            }
             let mut item = json!({
                 "type": "mcp",
                 "server_label": server.name,
@@ -250,6 +320,9 @@ impl McpExecutor {
             }
             if let Some(env) = &server.env {
                 item["env"] = json!(env);
+            }
+            if let Some(allowed_tools) = gateway_allowed_tools {
+                item["allowed_tools"] = json!(allowed_tools);
             }
             out.push(item);
         }
@@ -274,6 +347,19 @@ impl McpExecutor {
         }
         out
     }
+
+    fn gateway_allowed_tools(&self, server_name: &str, server_type: &str) -> Option<Vec<String>> {
+        self.allowed_tool_names.as_ref()?;
+        let mut tool_names = self
+            .tool_metadata
+            .values()
+            .filter(|info| info.server_name == server_name && info.server_type == server_type)
+            .map(|info| info.original_name.clone())
+            .collect::<Vec<_>>();
+        tool_names.sort();
+        tool_names.dedup();
+        Some(tool_names)
+    }
 }
 
 fn public_stdio_cwd(server: &McpStdioServer) -> Option<&str> {
@@ -290,7 +376,7 @@ fn public_stdio_cwd(server: &McpStdioServer) -> Option<&str> {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
+    use std::collections::{BTreeSet, HashMap};
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
 
@@ -301,7 +387,7 @@ mod tests {
     use crate::{
         BuiltinMcpKind, BuiltinMcpPromptLocale, BuiltinMcpServerOptions, BuiltinToolProvider,
         BuiltinToolRegistry, McpBuiltinServer, McpExecutor, McpHttpServer, McpStdioServer,
-        ToolCallContext, ToolResultCallback, ToolStreamChunkCallback,
+        ToolCallContext, ToolInfo, ToolResultCallback, ToolStreamChunkCallback,
     };
 
     #[tokio::test]
@@ -461,6 +547,41 @@ mod tests {
             tools[0].get("cwd").and_then(Value::as_str),
             Some("/tmp/project")
         );
+    }
+
+    #[test]
+    fn codex_gateway_request_tools_carries_the_global_tool_allowlist() {
+        let mut executor = McpExecutor::new_with_tool_constraints(
+            vec![
+                McpHttpServer::new("remote", "https://example.test/mcp"),
+                McpHttpServer::new("blocked", "https://blocked.example.test/mcp"),
+            ],
+            Vec::new(),
+            Vec::new(),
+            BuiltinToolRegistry::new(),
+            Some(BTreeSet::from(["remote_read".to_string()])),
+            BTreeSet::from(["remote_read".to_string()]),
+            None,
+        );
+        executor.tool_metadata.insert(
+            "remote_read".to_string(),
+            ToolInfo {
+                original_name: "read".to_string(),
+                server_name: "remote".to_string(),
+                server_type: "http".to_string(),
+                server_url: Some("https://example.test/mcp".to_string()),
+                server_headers: None,
+                server_header_provider: None,
+                server_timeout: None,
+                server_config: None,
+                tool_info: json!({}),
+            },
+        );
+
+        let tools = executor.codex_gateway_request_tools();
+        assert_eq!(tools.len(), 1);
+        assert_eq!(tools[0]["server_label"], "remote");
+        assert_eq!(tools[0]["allowed_tools"], json!(["read"]));
     }
 
     struct DisabledToolProvider;

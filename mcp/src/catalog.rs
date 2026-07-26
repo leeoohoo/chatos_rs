@@ -465,6 +465,7 @@ mod tests {
             },
             security: ResourceSecurity::default(),
             metadata: ResourceMetadata::default(),
+            plugin_component: Default::default(),
             created_by: "system".to_string(),
             updated_by: "system".to_string(),
             created_at: "now".to_string(),

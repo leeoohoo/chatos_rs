@@ -6,6 +6,9 @@ name = "local_connector_service_backend"
 version = "0.1.0"
 edition = "2021"
 
+[features]
+test-support = []
+
 [dependencies]
 axum = { version = "0.8", features = ["json", "ws"] }
 chatos_agent = { path = "../../agent", default-features = false, features = ["managed-config"] }

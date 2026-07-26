@@ -7,6 +7,7 @@ import { InputAreaFloatingModelPicker } from './InlineWidgets';
 import type { InputAreaComposerProps } from './InputAreaComposerTypes';
 import {
   InputAreaProjectFilePicker,
+  InputAreaPluginPicker,
   InputAreaProjectSelector,
   InputAreaRemoteConnectionPicker,
   InputAreaWorkspacePicker,
@@ -28,6 +29,7 @@ export function InputAreaComposerControls({
   onProjectChange,
   showProjectSelector,
   showWorkspaceRootPicker,
+  pluginPicker,
   currentRemoteConnectionId,
   availableRemoteConnections,
   onRemoteConnectionChange,
@@ -145,6 +147,11 @@ export function InputAreaComposerControls({
         disabled={disabled}
         isStreaming={false}
         isStopping={false}
+      />
+
+      <InputAreaPluginPicker
+        pluginPicker={pluginPicker}
+        disabled={disabled}
       />
 
       <InputAreaWorkspacePicker

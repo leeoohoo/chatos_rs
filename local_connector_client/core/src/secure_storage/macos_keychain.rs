@@ -2,30 +2,19 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use std::io::Write;
-use std::path::Path;
 use std::process::{Command, Output, Stdio};
 use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, Context, Result};
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine as _;
-use sha2::Digest as _;
 
 const KEYCHAIN_COMMAND_TIMEOUT: Duration = Duration::from_secs(15);
-const KEYCHAIN_SERVICE: &str = "Chat OS Local Connector Device Key";
 
-pub(super) fn load(path: &Path) -> Result<Option<Vec<u8>>> {
-    let account = keychain_account(path);
+pub(super) fn load(service: &str, account: &str) -> Result<Option<Vec<u8>>> {
     let output = run_command_with_timeout(
         "security",
-        &[
-            "find-generic-password",
-            "-a",
-            account.as_str(),
-            "-s",
-            KEYCHAIN_SERVICE,
-            "-w",
-        ],
+        &["find-generic-password", "-a", account, "-s", service, "-w"],
         None,
         KEYCHAIN_COMMAND_TIMEOUT,
     )?;
@@ -33,36 +22,58 @@ pub(super) fn load(path: &Path) -> Result<Option<Vec<u8>>> {
         if output.status.code() == Some(44) {
             return Ok(None);
         }
-        return Err(command_failed("read macOS Keychain device key", &output));
+        return Err(command_failed("read macOS Keychain secret", &output));
     }
-    let value = String::from_utf8(output.stdout)?;
-    URL_SAFE_NO_PAD
-        .decode(value.trim().as_bytes())
+    let mut encoded = output.stdout;
+    while encoded.last().is_some_and(u8::is_ascii_whitespace) {
+        encoded.pop();
+    }
+    let decoded = URL_SAFE_NO_PAD
+        .decode(encoded.as_slice())
         .map(Some)
-        .map_err(|err| anyhow!("decode macOS Keychain local connector device key failed: {err}"))
+        .map_err(|err| anyhow!("decode macOS Keychain secret failed: {err}"));
+    encoded.fill(0);
+    decoded
 }
 
-pub(super) fn save(path: &Path, value: &[u8]) -> Result<()> {
-    let account = keychain_account(path);
-    let encoded = URL_SAFE_NO_PAD.encode(value);
+pub(super) fn save(service: &str, account: &str, value: &[u8]) -> Result<()> {
+    let mut encoded = URL_SAFE_NO_PAD.encode(value).into_bytes();
     let output = run_command_with_timeout(
         "security",
         &[
             "add-generic-password",
             "-a",
-            account.as_str(),
+            account,
             "-s",
-            KEYCHAIN_SERVICE,
+            service,
             "-U",
             "-w",
         ],
-        Some(encoded.as_bytes()),
+        Some(encoded.as_slice()),
         KEYCHAIN_COMMAND_TIMEOUT,
-    )?;
+    );
+    encoded.fill(0);
+    let output = output?;
     if !output.status.success() {
-        return Err(command_failed("store macOS Keychain device key", &output));
+        return Err(command_failed("store macOS Keychain secret", &output));
     }
     Ok(())
+}
+
+pub(super) fn delete(service: &str, account: &str) -> Result<bool> {
+    let output = run_command_with_timeout(
+        "security",
+        &["delete-generic-password", "-a", account, "-s", service],
+        None,
+        KEYCHAIN_COMMAND_TIMEOUT,
+    )?;
+    if output.status.success() {
+        return Ok(true);
+    }
+    if output.status.code() == Some(44) {
+        return Ok(false);
+    }
+    Err(command_failed("delete macOS Keychain secret", &output))
 }
 
 fn run_command_with_timeout(
@@ -130,11 +141,6 @@ fn command_failed(action: &str, output: &Output) -> anyhow::Error {
     } else {
         anyhow!("{action} failed: {detail}")
     }
-}
-
-fn keychain_account(path: &Path) -> String {
-    let digest = sha2::Sha256::digest(path.to_string_lossy().as_bytes());
-    format!("chatos-local-connector-{}", hex::encode(digest))
 }
 
 #[cfg(test)]

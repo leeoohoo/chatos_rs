@@ -14,4 +14,7 @@ contextBridge.exposeInMainWorld('chatosLocalConnector', {
   closeSettings: () => ipcRenderer.invoke('local-connector:settings-close'),
   reloadChatOS: () => ipcRenderer.invoke('local-connector:chatos-reload'),
   setDeveloperMode: (enabled) => ipcRenderer.invoke('local-connector:developer-mode', enabled),
+  showChromeExtensionDirectory: () => (
+    ipcRenderer.invoke('local-connector:chrome-extension-directory-show')
+  ),
 });

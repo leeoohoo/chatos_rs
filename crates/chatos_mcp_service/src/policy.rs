@@ -194,11 +194,36 @@ pub fn classify_builtin_tool(name: &str) -> Option<BuiltinToolAccess> {
         | "process_wait" | "process_write" | "process_kill" | "process" => {
             Some(BuiltinToolAccess::Terminal)
         }
-        "browser_navigate" | "browser_snapshot" | "browser_click" | "browser_type"
-        | "browser_scroll" | "browser_back" | "browser_press" | "browser_console"
-        | "browser_get_images" | "browser_inspect" | "browser_research" | "browser_vision" => {
-            Some(BuiltinToolAccess::Browser)
-        }
+        "browser_tabs"
+        | "browser_tab_new"
+        | "browser_tab_switch"
+        | "browser_tab_close"
+        | "browser_navigate"
+        | "browser_snapshot"
+        | "browser_click"
+        | "browser_type"
+        | "browser_scroll"
+        | "browser_back"
+        | "browser_press"
+        | "browser_upload"
+        | "browser_download"
+        | "browser_console"
+        | "browser_network"
+        | "browser_get_images"
+        | "browser_network_request"
+        | "browser_har_start"
+        | "browser_har_stop"
+        | "browser_websocket_start"
+        | "browser_websocket_frames"
+        | "browser_websocket_stop"
+        | "browser_route_add"
+        | "browser_route_list"
+        | "browser_route_remove"
+        | "browser_route_clear"
+        | "browser_cdp_command"
+        | "browser_inspect"
+        | "browser_research"
+        | "browser_vision" => Some(BuiltinToolAccess::Browser),
         _ => None,
     }
 }
@@ -262,6 +287,38 @@ mod tests {
         );
         assert_eq!(
             classify_builtin_tool("browser_inspect"),
+            Some(BuiltinToolAccess::Browser)
+        );
+        assert_eq!(
+            classify_builtin_tool("browser_tab_switch"),
+            Some(BuiltinToolAccess::Browser)
+        );
+        assert_eq!(
+            classify_builtin_tool("browser_upload"),
+            Some(BuiltinToolAccess::Browser)
+        );
+        assert_eq!(
+            classify_builtin_tool("browser_download"),
+            Some(BuiltinToolAccess::Browser)
+        );
+        assert_eq!(
+            classify_builtin_tool("browser_network_request"),
+            Some(BuiltinToolAccess::Browser)
+        );
+        assert_eq!(
+            classify_builtin_tool("browser_har_stop"),
+            Some(BuiltinToolAccess::Browser)
+        );
+        assert_eq!(
+            classify_builtin_tool("browser_websocket_frames"),
+            Some(BuiltinToolAccess::Browser)
+        );
+        assert_eq!(
+            classify_builtin_tool("browser_route_add"),
+            Some(BuiltinToolAccess::Browser)
+        );
+        assert_eq!(
+            classify_builtin_tool("browser_cdp_command"),
             Some(BuiltinToolAccess::Browser)
         );
         assert_eq!(classify_builtin_tool("local_fs_read"), None);

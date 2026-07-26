@@ -69,3 +69,4 @@ chatos_plugin_management_sdk = { path = "../../crates/chatos_plugin_management_s
 
 [features]
 pdf = []
+test-support = []

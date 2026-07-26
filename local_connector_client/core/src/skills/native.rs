@@ -3,10 +3,12 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::AtomicBool;
 
 use anyhow::{anyhow, Context, Result};
 use serde_json::{json, Value};
 
+use crate::approval::ApprovalActionAudit;
 use crate::relay::RelayRequest;
 use crate::workspace::paths::{
     canonicalize_existing_dir, normalize_request_workspace_relative_path, workspace_for_request,
@@ -14,17 +16,29 @@ use crate::workspace::paths::{
 use crate::LocalState;
 
 mod artifacts;
+mod chrome;
+mod computer_use;
 mod web;
 
 const MAX_MANIFEST_BYTES: usize = 256 * 1024;
 const MAX_INSTRUCTIONS_BYTES: usize = 512 * 1024;
 const MAX_VISUALIZATION_BYTES: usize = 2 * 1024 * 1024;
 
-pub(super) fn tool_definitions(
+pub(crate) fn tool_definitions(
     skill_id: &str,
     state: &LocalState,
     request: &RelayRequest,
 ) -> Result<Vec<Value>> {
+    if skill_id == "internal_skill_browser" {
+        let mut tools = web::tool_definitions(skill_id, state, request)?;
+        tools.retain(|tool| {
+            !matches!(
+                tool.get("name").and_then(Value::as_str),
+                Some("browser_route_add" | "browser_cdp_command")
+            )
+        });
+        return Ok(tools);
+    }
     let tools = match skill_id {
         "internal_skill_skill_creator" => vec![
             validate_skill_bundle_manifest_tool(),
@@ -34,6 +48,8 @@ pub(super) fn tool_definitions(
             vec![validate_plugin_manifest_tool(), scaffold_plugin_tool()]
         }
         "internal_skill_visualize" => vec![write_visualization_html_tool()],
+        "internal_skill_chrome" => chrome::tool_definitions(false),
+        "internal_skill_computer_use" => computer_use::tool_definitions(false),
         _ => artifacts::tool_definitions(skill_id),
     };
     if tools.is_empty() {
@@ -43,16 +59,165 @@ pub(super) fn tool_definitions(
     }
 }
 
-pub(super) fn dependency_error(skill_id: &str) -> Option<String> {
-    web::dependency_error(skill_id)
+pub(crate) fn plugin_tool_definitions(
+    skill_id: &str,
+    state: &LocalState,
+    request: &RelayRequest,
+    allow_interactive_control: bool,
+    interactive_approval_available: bool,
+) -> Result<Vec<Value>> {
+    if skill_id == "internal_skill_computer_use" {
+        let include_control = interactive_approval_available && allow_interactive_control;
+        return Ok(computer_use::tool_definitions(include_control));
+    }
+    if skill_id == "internal_skill_chrome" {
+        return Ok(chrome::tool_definitions(interactive_approval_available));
+    }
+    if skill_id == "internal_skill_browser" {
+        let mut tools = web::tool_definitions(skill_id, state, request)?;
+        if !interactive_approval_available {
+            tools.retain(|tool| {
+                !matches!(
+                    tool.get("name").and_then(Value::as_str),
+                    Some("browser_route_add" | "browser_cdp_command")
+                )
+            });
+        }
+        return Ok(tools);
+    }
+    tool_definitions(skill_id, state, request)
 }
 
-pub(super) fn execute(
+pub(crate) fn requires_interactive_approval(skill_id: &str, operation: &str) -> bool {
+    (skill_id == "internal_skill_computer_use"
+        && computer_use::requires_interactive_approval(operation))
+        || (skill_id == "internal_skill_chrome" && chrome::requires_interactive_approval(operation))
+        || (skill_id == "internal_skill_browser"
+            && matches!(operation, "browser_route_add" | "browser_cdp_command"))
+}
+
+pub(crate) struct NativeApprovalCommand {
+    pub(crate) command: String,
+    pub(crate) args: Vec<String>,
+    pub(crate) action_audit: Option<ApprovalActionAudit>,
+}
+
+pub(crate) fn approval_command(
+    skill_id: &str,
+    operation: &str,
+    arguments: &Value,
+) -> Result<NativeApprovalCommand> {
+    if skill_id == "internal_skill_computer_use" {
+        let (command, args, action_audit) = computer_use::approval_command(operation, arguments)?;
+        return Ok(NativeApprovalCommand {
+            command,
+            args,
+            action_audit: Some(action_audit),
+        });
+    }
+    if skill_id == "internal_skill_chrome" {
+        let (command, args) = chrome::approval_command(operation, arguments)?;
+        return Ok(NativeApprovalCommand {
+            command,
+            args,
+            action_audit: None,
+        });
+    }
+    if skill_id == "internal_skill_browser" {
+        let (command, args) = web::browser_interactive_approval_command(operation, arguments)?;
+        return Ok(NativeApprovalCommand {
+            command,
+            args,
+            action_audit: None,
+        });
+    }
+    Err(anyhow!(
+        "Skill operation does not support interactive approval: {skill_id}/{operation}"
+    ))
+}
+
+pub(crate) fn redact_approval_arguments(skill_id: &str, operation: &str) -> bool {
+    (skill_id == "internal_skill_computer_use"
+        && computer_use::redact_approval_arguments(operation))
+        || skill_id == "internal_skill_chrome"
+        || (skill_id == "internal_skill_browser"
+            && matches!(operation, "browser_route_add" | "browser_cdp_command"))
+}
+
+pub(crate) fn execute_approved(
     skill_id: &str,
     operation: &str,
     arguments: &Value,
     state: &LocalState,
     request: &RelayRequest,
+    approved_command_args: Option<&[String]>,
+    action_cancelled: Option<&AtomicBool>,
+) -> Result<Value> {
+    if skill_id == "internal_skill_computer_use" {
+        return computer_use::execute_approved(
+            operation,
+            arguments,
+            approved_command_args,
+            action_cancelled,
+        );
+    }
+    if skill_id == "internal_skill_chrome" {
+        return chrome::execute(
+            operation,
+            arguments,
+            state,
+            request,
+            approved_command_args,
+            action_cancelled,
+        );
+    }
+    if skill_id == "internal_skill_browser" {
+        return web::execute_browser_tool_approved(
+            operation,
+            arguments,
+            state,
+            request,
+            approved_command_args,
+        );
+    }
+    execute(skill_id, operation, arguments, state, request)
+}
+
+pub(crate) fn dependency_error(skill_id: &str) -> Option<String> {
+    if skill_id == "internal_skill_computer_use" {
+        return computer_use::dependency_error();
+    }
+    if skill_id == "internal_skill_chrome" {
+        return chrome::dependency_error();
+    }
+    web::dependency_error(skill_id)
+}
+
+pub(crate) fn computer_use_screen_capture_dependency_error() -> Option<String> {
+    computer_use::screen_capture_dependency_error()
+}
+
+pub(crate) fn run_computer_use_helper() -> Result<()> {
+    computer_use::run_helper()
+}
+
+pub(crate) fn execute(
+    skill_id: &str,
+    operation: &str,
+    arguments: &Value,
+    state: &LocalState,
+    request: &RelayRequest,
+) -> Result<Value> {
+    execute_with_cancellation(skill_id, operation, arguments, state, request, None)
+}
+
+pub(crate) fn execute_with_cancellation(
+    skill_id: &str,
+    operation: &str,
+    arguments: &Value,
+    state: &LocalState,
+    request: &RelayRequest,
+    action_cancelled: Option<&AtomicBool>,
 ) -> Result<Value> {
     match (skill_id, operation) {
         ("internal_skill_skill_creator", "validate_skill_bundle_manifest") => {
@@ -70,13 +235,24 @@ pub(super) fn execute(
         ("internal_skill_visualize", "write_visualization_html") => {
             write_visualization_html(arguments, state, request)
         }
-        _ => artifacts::execute(skill_id, operation, arguments, state, request)
-            .or_else(|| web::execute(skill_id, operation, arguments, state, request))
-            .unwrap_or_else(|| {
-                Err(anyhow!(
-                    "Skill operation is not implemented: {skill_id}/{operation}"
-                ))
-            }),
+        ("internal_skill_chrome", operation) => {
+            chrome::execute(operation, arguments, state, request, None, None)
+        }
+        ("internal_skill_computer_use", operation) => computer_use::execute(operation, arguments),
+        _ => artifacts::execute_with_cancellation(
+            skill_id,
+            operation,
+            arguments,
+            state,
+            request,
+            action_cancelled,
+        )
+        .or_else(|| web::execute(skill_id, operation, arguments, state, request))
+        .unwrap_or_else(|| {
+            Err(anyhow!(
+                "Skill operation is not implemented: {skill_id}/{operation}"
+            ))
+        }),
     }
 }
 
@@ -360,7 +536,7 @@ fn write_visualization_html(
     }))
 }
 
-fn safe_workspace_path(
+pub(crate) fn safe_workspace_path(
     state: &LocalState,
     request: &RelayRequest,
     requested: &str,

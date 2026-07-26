@@ -15,9 +15,10 @@ use crate::workspace::paths::canonicalize_existing_dir;
 pub(crate) fn local_browser_tools_service_for_root(
     root: &Path,
     request: &RelayRequest,
+    full_cdp_access_enabled: bool,
 ) -> Result<BrowserToolsService> {
     let root = canonicalize_existing_dir(root)?;
-    let key = local_browser_tools_registry_key(root.as_path(), request);
+    let key = local_browser_tools_registry_key(root.as_path(), request, full_cdp_access_enabled);
     {
         let registry = local_browser_tools_registry()
             .services
@@ -33,6 +34,8 @@ pub(crate) fn local_browser_tools_service_for_root(
         command_timeout_seconds: 30,
         max_snapshot_chars: 8_000,
         vision_adapter: None,
+        route_interception_enabled: true,
+        full_cdp_access_enabled,
         schema_catalog_only: false,
     })
     .map_err(|err| anyhow!(err))?;
@@ -60,7 +63,11 @@ fn local_browser_tools_registry() -> &'static LocalBrowserToolsRegistry {
     REGISTRY.get_or_init(LocalBrowserToolsRegistry::default)
 }
 
-fn local_browser_tools_registry_key(root: &Path, request: &RelayRequest) -> String {
+fn local_browser_tools_registry_key(
+    root: &Path,
+    request: &RelayRequest,
+    full_cdp_access_enabled: bool,
+) -> String {
     let user = request
         .owner_user_id
         .as_deref()
@@ -70,9 +77,10 @@ fn local_browser_tools_registry_key(root: &Path, request: &RelayRequest) -> Stri
     let project =
         local_mcp_terminal_project_id(request).unwrap_or_else(|| request.workspace_id.clone());
     format!(
-        "{}|{}|{}",
+        "{}|{}|{}|cdp:{}",
         user,
         project,
-        root.to_string_lossy().replace('\\', "/")
+        root.to_string_lossy().replace('\\', "/"),
+        full_cdp_access_enabled,
     )
 }

@@ -11,5 +11,10 @@ pub mod state;
 pub mod store;
 
 pub use api::build_router;
+#[cfg(feature = "test-support")]
+pub use api::{
+    build_plugin_artifact_relay_store_test_router, build_plugin_artifact_relay_test_router,
+    PluginArtifactRelayTestScope,
+};
 pub use config::{load_local_connector_dotenv, AppConfig};
 pub use state::AppState;

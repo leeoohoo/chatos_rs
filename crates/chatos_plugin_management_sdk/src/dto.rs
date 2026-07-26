@@ -8,6 +8,11 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::agent_prompts::AgentPromptVendor;
+use crate::plugin_runtime::{
+    PluginAvailabilityStatus, PluginCatalogRecord, PluginComponentDescriptor,
+    PluginComponentSnapshot, PluginInstallationRecord, PluginReleaseRecord,
+    UserPluginPreferenceRecord,
+};
 
 pub const CHATOS_TASK_RUNNER_MCP_RESOURCE_ID: &str = "system_mcp_chatos_task_runner";
 pub const SANDBOX_IMAGES_MCP_RESOURCE_ID: &str = "system_mcp_sandbox_images";
@@ -223,6 +228,8 @@ pub struct ResolveAgentCapabilitiesRequest {
     pub runtime_provider: Option<String>,
     #[serde(default)]
     pub schedule_mode: Option<String>,
+    #[serde(default)]
+    pub device_id: Option<String>,
 }
 
 impl ResolveAgentCapabilitiesRequest {
@@ -235,6 +242,7 @@ impl ResolveAgentCapabilitiesRequest {
             project_source_type: None,
             runtime_provider: None,
             schedule_mode: None,
+            device_id: None,
         }
     }
 
@@ -249,6 +257,11 @@ impl ResolveAgentCapabilitiesRequest {
         self.project_source_type = project_source_type;
         self.runtime_provider = runtime_provider;
         self.schedule_mode = schedule_mode;
+        self
+    }
+
+    pub fn with_device_id(mut self, device_id: Option<String>) -> Self {
+        self.device_id = device_id;
         self
     }
 }
@@ -323,6 +336,40 @@ pub struct ResourceMetadata {
     pub extra: BTreeMap<String, Value>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+pub struct PluginComponentOwnership {
+    #[serde(default)]
+    pub plugin_id: Option<String>,
+    #[serde(default)]
+    pub release_id: Option<String>,
+    #[serde(default)]
+    pub component_key: Option<String>,
+    #[serde(default)]
+    pub managed_by_plugin: bool,
+    #[serde(default)]
+    pub immutable_from_release: bool,
+}
+
+impl PluginComponentOwnership {
+    pub fn is_release_managed(&self) -> bool {
+        self.managed_by_plugin && self.immutable_from_release
+    }
+
+    pub fn complete_identity(&self) -> Option<(&str, &str, &str)> {
+        if !self.managed_by_plugin {
+            return None;
+        }
+        Some((
+            self.plugin_id.as_deref()?.trim(),
+            self.release_id.as_deref()?.trim(),
+            self.component_key.as_deref()?.trim(),
+        ))
+        .filter(|(plugin_id, release_id, component_key)| {
+            !plugin_id.is_empty() && !release_id.is_empty() && !component_key.is_empty()
+        })
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct McpRecord {
     pub id: String,
@@ -337,6 +384,8 @@ pub struct McpRecord {
     pub runtime: McpRuntime,
     pub security: ResourceSecurity,
     pub metadata: ResourceMetadata,
+    #[serde(flatten, default)]
+    pub plugin_component: PluginComponentOwnership,
     pub created_by: String,
     pub updated_by: String,
     pub created_at: String,
@@ -375,6 +424,8 @@ pub struct SkillRecord {
     pub enabled: bool,
     pub content: SkillContent,
     pub metadata: ResourceMetadata,
+    #[serde(flatten, default)]
+    pub plugin_component: PluginComponentOwnership,
     pub created_by: String,
     pub updated_by: String,
     pub created_at: String,
@@ -401,6 +452,8 @@ pub struct AgentBindingRecord {
     pub required: bool,
     pub priority: i64,
     pub conditions: BindingConditions,
+    #[serde(default)]
+    pub component_allowlist: Vec<String>,
     pub created_by: String,
     pub updated_by: String,
     pub created_at: String,
@@ -425,6 +478,35 @@ pub struct ResolvedSkill {
     pub reason: Option<String>,
     #[serde(default)]
     pub installation: Option<SkillInstallationRecord>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResolvedPluginComponent {
+    pub component: PluginComponentDescriptor,
+    pub available: bool,
+    pub status: PluginAvailabilityStatus,
+    pub reason: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResolvedPlugin {
+    pub catalog: PluginCatalogRecord,
+    #[serde(default)]
+    pub release: Option<PluginReleaseRecord>,
+    pub binding: AgentBindingRecord,
+    #[serde(default)]
+    pub installation: Option<PluginInstallationRecord>,
+    #[serde(default)]
+    pub preference: Option<UserPluginPreferenceRecord>,
+    #[serde(default)]
+    pub components: Vec<ResolvedPluginComponent>,
+    #[serde(default)]
+    pub component_snapshots: Vec<PluginComponentSnapshot>,
+    #[serde(default)]
+    pub auth_connection_ids: Vec<String>,
+    pub available: bool,
+    pub status: PluginAvailabilityStatus,
+    pub reason: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -576,6 +658,8 @@ pub struct ResolvedAgentCapabilities {
     #[serde(default)]
     pub skills: Vec<ResolvedSkill>,
     #[serde(default)]
+    pub plugins: Vec<ResolvedPlugin>,
+    #[serde(default)]
     pub local_connector_requirements: Vec<LocalConnectorRequirement>,
 }
 
@@ -664,5 +748,53 @@ mod tests {
             serde_json::to_value(batch).expect("encode status batch"),
             snapshot
         );
+    }
+
+    #[test]
+    fn plugin_component_ownership_is_flattened_and_legacy_compatible() {
+        let mut snapshot = serde_json::json!({
+            "id": "mcp-1",
+            "owner_user_id": "system",
+            "owner_kind": "system",
+            "visibility": "system_private",
+            "source_kind": "plugin_release",
+            "name": "demo",
+            "display_name": "Demo",
+            "description": null,
+            "enabled": true,
+            "runtime": {"kind": "http"},
+            "security": {},
+            "metadata": {},
+            "plugin_id": "plugin-1",
+            "release_id": "release-1",
+            "component_key": "main",
+            "managed_by_plugin": true,
+            "immutable_from_release": true,
+            "created_by": "system",
+            "updated_by": "system",
+            "created_at": "now",
+            "updated_at": "now"
+        });
+        let record: McpRecord =
+            serde_json::from_value(snapshot.clone()).expect("decode Plugin-owned MCP");
+        assert_eq!(
+            record.plugin_component.complete_identity(),
+            Some(("plugin-1", "release-1", "main"))
+        );
+        let encoded = serde_json::to_value(&record).expect("encode Plugin-owned MCP");
+        assert_eq!(encoded["plugin_id"], "plugin-1");
+        assert!(encoded.get("plugin_component").is_none());
+
+        for field in [
+            "plugin_id",
+            "release_id",
+            "component_key",
+            "managed_by_plugin",
+            "immutable_from_release",
+        ] {
+            snapshot.as_object_mut().expect("object").remove(field);
+        }
+        let legacy: McpRecord = serde_json::from_value(snapshot).expect("decode legacy MCP");
+        assert_eq!(legacy.plugin_component, PluginComponentOwnership::default());
     }
 }

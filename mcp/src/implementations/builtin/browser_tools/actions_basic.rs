@@ -263,10 +263,12 @@ pub(super) async fn browser_get_images_with_context(
     let parsed = parse_browser_eval_payload(raw);
     let images = parsed.as_array().cloned().unwrap_or_default();
     let count = images.len();
-    Ok(json!({
+    let mut response = json!({
         "_summary_text": format!("Found {} image(s) in the current page DOM.", count),
         "success": true,
         "images": images,
         "count": count
-    }))
+    });
+    super::actions_shared::copy_response_fields(&mut response, &result, &["browser_session"]);
+    Ok(response)
 }

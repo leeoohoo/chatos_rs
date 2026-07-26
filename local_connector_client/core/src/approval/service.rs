@@ -10,6 +10,7 @@ use chatos_sandbox_contract::{
     CommandExecutionApprovalDecision, GrantedPermissionProfile, PermissionGrantScope,
     SimpleCommandExecutionApprovalDecision,
 };
+use sha2::{Digest, Sha256};
 use tokio::sync::{Mutex, RwLock};
 use uuid::Uuid;
 
@@ -31,7 +32,7 @@ use super::{
 
 const MAX_APPROVAL_HISTORY_ENTRIES: usize = 1_000;
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub(crate) struct CommandApprovalService {
     state_path: PathBuf,
     state: Arc<RwLock<LocalState>>,
@@ -54,13 +55,33 @@ impl CommandApprovalService {
         request: CommandApprovalRequest,
         mode: ApprovalMode,
     ) -> Result<ApprovalDecision> {
-        self.approve_with_optional_mode(request, Some(mode)).await
+        self.approve_with_options(request, Some(mode), true, true)
+            .await
+    }
+
+    pub(crate) async fn approve_interactive(
+        &self,
+        request: CommandApprovalRequest,
+    ) -> Result<ApprovalDecision> {
+        self.approve_with_options(request, Some(ApprovalMode::RequestApproval), false, false)
+            .await
     }
 
     async fn approve_with_optional_mode(
         &self,
         request: CommandApprovalRequest,
         forced_mode: Option<ApprovalMode>,
+    ) -> Result<ApprovalDecision> {
+        self.approve_with_options(request, forced_mode, true, true)
+            .await
+    }
+
+    async fn approve_with_options(
+        &self,
+        request: CommandApprovalRequest,
+        forced_mode: Option<ApprovalMode>,
+        allow_whitelist: bool,
+        allow_session_approval: bool,
     ) -> Result<ApprovalDecision> {
         let state_snapshot = self.state.read().await.clone();
         let mode =
@@ -70,7 +91,7 @@ impl CommandApprovalService {
             request.requested_permissions.as_ref(),
         );
 
-        if session_approval_matches(&request).await {
+        if allow_session_approval && session_approval_matches(&request).await {
             let decision = ApprovalDecision::Approved {
                 source: ApprovalSource::User,
                 reason: Some("matched session-scoped approval".to_string()),
@@ -83,9 +104,7 @@ impl CommandApprovalService {
             return Ok(decision);
         }
 
-        if let Some(entry) = request
-            .requested_permissions
-            .is_none()
+        if let Some(entry) = (allow_whitelist && request.requested_permissions.is_none())
             .then(|| {
                 find_matching_whitelist(
                     state_snapshot.approval.whitelist.as_slice(),
@@ -311,15 +330,24 @@ impl CommandApprovalService {
                     None,
                 ),
             };
+        let normalized_command =
+            normalized_command(request.command.as_str(), request.args.as_slice());
+        let history_normalized_command = if request.redact_arguments_in_history {
+            format!(
+                "{} [arguments redacted; count={}; sha256={}]",
+                request.command.trim(),
+                request.args.len(),
+                hex::encode(Sha256::digest(normalized_command.as_bytes()))
+            )
+        } else {
+            normalized_command
+        };
         let entry = ApprovalHistoryEntry {
             id: format!("approval-history-{}", Uuid::new_v4()),
             request_id: request.request_id.clone(),
             project_key: request.project_key.clone(),
             command: request.command.clone(),
-            normalized_command: normalized_command(
-                request.command.as_str(),
-                request.args.as_slice(),
-            ),
+            normalized_command: history_normalized_command,
             cwd: request.cwd.clone(),
             source: request.source.clone(),
             mode,
@@ -329,6 +357,7 @@ impl CommandApprovalService {
             reason,
             whitelist_entry_id,
             permission_scope,
+            action_audit: request.action_audit.clone(),
             created_at: local_now_rfc3339(),
         };
         let mut state = self.state.write().await;
@@ -454,6 +483,38 @@ pub(crate) fn approval_project_key_from_request(
     }
 }
 
+pub(crate) fn approval_project_key_for_relay_scope(
+    state: &LocalState,
+    request: &RelayRequest,
+) -> ApprovalProjectKey {
+    let owner_user_id = request
+        .owner_user_id
+        .clone()
+        .or_else(|| {
+            state
+                .auth
+                .as_ref()
+                .and_then(|auth| auth.user.as_ref().map(|user| user.id.clone()))
+        })
+        .or_else(|| state.paired_user_id.clone())
+        .unwrap_or_else(|| "unknown".to_string());
+    let device_id = request
+        .device_id
+        .clone()
+        .or_else(|| state.device_id.clone())
+        .unwrap_or_else(|| "unknown".to_string());
+    ApprovalProjectKey {
+        owner_user_id,
+        device_id,
+        workspace_id: request.workspace_id.trim().to_string(),
+        project_id: header_value(request, "x-local-connector-project-id")
+            .or_else(|| header_value(request, "x-project-id")),
+        project_root_relative_path: header_value(request, "x-local-connector-project-root")
+            .unwrap_or_else(|| ".".to_string()),
+        project_anchor_relative_path: header_value(request, "x-local-connector-project-anchor"),
+    }
+}
+
 fn header_value(request: &RelayRequest, name: &str) -> Option<String> {
     request
         .headers
@@ -466,8 +527,13 @@ fn header_value(request: &RelayRequest, name: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+    use std::time::Duration;
+
     use super::*;
+    use crate::approval::{ApprovalActionAudit, ApprovalActionAuditDetail};
     use chatos_sandbox_contract::{AdditionalNetworkPermissions, RequestPermissionProfile};
+    use tokio::sync::RwLock;
 
     fn request(session_id: &str, network: bool) -> CommandApprovalRequest {
         CommandApprovalRequest {
@@ -482,6 +548,7 @@ mod tests {
             },
             command: "cargo".to_string(),
             args: vec!["test".to_string()],
+            redact_arguments_in_history: false,
             cwd: ".".to_string(),
             source: "test".to_string(),
             requested_permissions: network.then_some(RequestPermissionProfile {
@@ -491,6 +558,7 @@ mod tests {
                 }),
             }),
             session_id: Some(session_id.to_string()),
+            action_audit: None,
         }
     }
 
@@ -505,5 +573,113 @@ mod tests {
         assert!(session_approval_matches(&approved).await);
         assert!(!session_approval_matches(&request(session_id.as_str(), false)).await);
         assert!(!session_approval_matches(&request("another-session", true)).await);
+    }
+
+    #[tokio::test]
+    async fn interactive_approval_cannot_be_bypassed_by_full_control_mode() {
+        let session_id = format!("desktop-session-{}", uuid::Uuid::new_v4());
+        let request_id = format!("desktop-request-{}", uuid::Uuid::new_v4());
+        let mut state = LocalState::default();
+        state.approval.default_mode = ApprovalMode::FullControl;
+        let state = Arc::new(RwLock::new(state));
+        let temp = tempfile::tempdir().expect("approval state directory");
+        let service = CommandApprovalService::new(temp.path().join("state.json"), state);
+        let mut desktop_request = request(session_id.as_str(), false);
+        desktop_request.request_id = request_id.clone();
+        desktop_request.command = "computer_press_key".to_string();
+        desktop_request.args = vec!["--key=enter".to_string()];
+        desktop_request.source = "plugin_computer_use".to_string();
+
+        let approval = tokio::spawn(async move {
+            service
+                .approve_interactive(desktop_request)
+                .await
+                .expect("interactive approval result")
+        });
+        tokio::time::timeout(Duration::from_secs(1), async {
+            loop {
+                if crate::approval::list_pending_approvals()
+                    .await
+                    .iter()
+                    .any(|item| item.request_id == request_id)
+                {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("interactive approval must remain pending");
+        assert_eq!(
+            crate::approval::cancel_pending_approvals_for_session(
+                session_id.as_str(),
+                "test emergency stop",
+            )
+            .await,
+            1
+        );
+        assert!(matches!(
+            approval.await.expect("interactive approval task"),
+            ApprovalDecision::Denied { .. }
+        ));
+    }
+
+    #[tokio::test]
+    async fn sensitive_interactive_arguments_are_redacted_from_persisted_history() {
+        let secret = "private text for the focused field";
+        let state = Arc::new(RwLock::new(LocalState::default()));
+        let temp = tempfile::tempdir().expect("approval state directory");
+        let service = CommandApprovalService::new(temp.path().join("state.json"), state.clone());
+        let mut desktop_request = request("desktop-redaction", false);
+        desktop_request.command = "computer_type_text".to_string();
+        desktop_request.args = vec![format!(
+            "--text-json={}",
+            serde_json::to_string(secret).unwrap()
+        )];
+        desktop_request.redact_arguments_in_history = true;
+        desktop_request.action_audit = Some(ApprovalActionAudit {
+            kind: "computer_use".to_string(),
+            operation: "computer_type_text".to_string(),
+            details: vec![ApprovalActionAuditDetail {
+                key: "character_count".to_string(),
+                value: secret.chars().count().to_string(),
+            }],
+            privacy: Some("text_redacted_from_persistent_history".to_string()),
+            safety: Some("focused_target_revalidated_before_input".to_string()),
+            recovery: None,
+        });
+        service
+            .append_history(
+                &desktop_request,
+                ApprovalMode::RequestApproval,
+                &ApprovalDecision::Approved {
+                    source: ApprovalSource::User,
+                    reason: Some("approved by user".to_string()),
+                    whitelist_entry_id: None,
+                    granted_permissions: None,
+                    permission_scope: PermissionGrantScope::Turn,
+                },
+                "high".to_string(),
+                None,
+            )
+            .await
+            .expect("append redacted approval history");
+
+        let state = state.read().await;
+        let history = state.approval.history.last().expect("approval history");
+        assert_eq!(history.command, "computer_type_text");
+        assert!(history.normalized_command.contains("arguments redacted"));
+        assert!(history.normalized_command.contains("sha256="));
+        assert!(!history.normalized_command.contains(secret));
+        assert_eq!(
+            history
+                .action_audit
+                .as_ref()
+                .map(|audit| audit.operation.as_str()),
+            Some("computer_type_text")
+        );
+        assert!(!serde_json::to_string(&history.action_audit)
+            .unwrap()
+            .contains(secret));
     }
 }

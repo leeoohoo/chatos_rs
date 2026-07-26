@@ -79,6 +79,7 @@ pub(crate) async fn status_payload(runtime: &LocalRuntime) -> Value {
         "configured": state.auth.is_some(),
         "connector_running": connector_running,
         "developer_mode": state.runtime_settings.developer_mode,
+        "browser_full_cdp_access_enabled": state.runtime_settings.browser_full_cdp_access_enabled,
         "developer_cloud_base_url": state.runtime_settings.developer_cloud_base_url,
         "developer_user_service_base_url": state.runtime_settings.developer_user_service_base_url,
         "developer_chatos_web_url": state.runtime_settings.developer_chatos_web_url,

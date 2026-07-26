@@ -50,6 +50,7 @@ import type {
   TaskListFilters,
   TaskProjectRecord,
   TaskProjectRuntimeEnvironmentResponse,
+  TaskPluginConnectorsResponse,
   TaskRecord,
   TaskRunEventRecord,
   TaskRunRecord,
@@ -169,6 +170,7 @@ export const api = {
   listTaskCapabilityCatalog: (options?: {
     task_profile?: 'default' | 'chatos_plan';
     requires_execution?: boolean;
+    device_id?: string;
   }) =>
     request<TaskCapabilityCatalogResponse>(
       withQuery('/api/tasks/capabilities/catalog', {
@@ -177,8 +179,11 @@ export const api = {
           options?.requires_execution === undefined
             ? undefined
             : String(options.requires_execution),
+        device_id: options?.device_id,
       }),
     ),
+  listTaskPluginConnectors: () =>
+    request<TaskPluginConnectorsResponse>('/api/tasks/plugin-connectors'),
   listTaskSummaries: (filters?: {
     ids?: string[];
     keyword?: string;

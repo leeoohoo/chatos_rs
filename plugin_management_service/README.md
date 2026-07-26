@@ -1,8 +1,6 @@
 # Plugin Management Service
 
-插件管理服务负责 MCP、skills、skill packages、系统内部 agent 和 agent capability bindings 的统一管理。
-
-当前阶段已经实现服务自身的管理闭环，尚未接入 Chat OS、Task Runner、Project Management 和 Local Connector 的业务执行链路。
+插件管理服务负责 Plugin Marketplace、不可变 Release、MCP、skills、skill packages、系统内部 agent 和 agent capability bindings 的统一管理，并向 ChatOS、Task Runner 与 Local Connector 提供经过签名验证的能力和安装来源。
 
 ## 目录
 
@@ -48,6 +46,7 @@ Vite 会把 `/api` 代理到 `http://127.0.0.1:39260`。
 - 保护接口使用 Bearer token。
 - 后端通过 User Service `/api/auth/verify` 校验 token。
 - `super_admin` 可以管理 public、system_private 和系统 agent 的内部 MCP 矩阵。
+- 普通用户可以创建仅自己可见的 personal Plugin Marketplace；服务端会强制使用 private visibility、`admin_registry`、HTTPS signed Catalog 和显式 Catalog trust root。
 - 系统 agent 配置页面及接口不向普通用户开放。
 - 普通用户自己的 MCP/skills 后续由 Local Connector Client 上报。
 
@@ -58,7 +57,15 @@ Vite 会把 `/api` 代理到 `http://127.0.0.1:39260`。
 - `/api/skill-packages`
 - `/api/system-agents`
 - `/api/system-agents/:agent_key/mcp-bindings`
+- `/api/plugin-marketplaces`
+- `/api/plugin-marketplaces/:marketplace_id/sync`
+- `/api/admin/plugin-marketplaces`
+- `/api/admin/plugin-marketplaces/:marketplace_id/sync`
+- `/api/admin/plugins`
+- `/api/admin/plugins/:plugin_id/releases`
 - `/api/runtime/agent-capabilities`
+
+可信网络 Marketplace 的 Catalog 同步同时支持 owner/管理员手动触发和后台定时触发。Catalog 只允许无 credential/fragment 的 HTTPS URL，抓取时禁用 redirect 与系统代理、阻断非公网 DNS 地址，并在写入前验证 Catalog/Release Ed25519 签名、显式 key usage、密钥轮换/撤销、单调 revision/issued_at、Release 不可变性和 artifact URL。personal Marketplace 的 Catalog 和安装源在服务端强制绑定 owner；Local Connector 列表与 exact artifact 代理都会传递并重新校验同一个 effective owner ID，不能通过猜测 Plugin/Release ID 读取其他用户的 private 来源。
 
 系统 agent 的 MCP 配置只有三种状态：
 
@@ -94,6 +101,10 @@ Chat OS 的两个角色共用会话模型循环，但普通模式与规划模式
 - `PLUGIN_MANAGEMENT_SERVICE_SUPER_ADMIN_USERNAME`
 - `PLUGIN_MANAGEMENT_SERVICE_SUPER_ADMIN_PASSWORD`
 - `PLUGIN_MANAGEMENT_SERVICE_SEED_SYSTEM_RESOURCES`
+- `PLUGIN_MANAGEMENT_CATALOG_SYNC_ENABLED`：默认 `true`
+- `PLUGIN_MANAGEMENT_CATALOG_SYNC_INTERVAL_SECONDS`：默认 `900`，范围 `60`–`86400`
+- `PLUGIN_MANAGEMENT_CATALOG_REQUEST_TIMEOUT_MS`：默认 `30000`
+- `PLUGIN_MANAGEMENT_CATALOG_MAX_BYTES`：默认 `8388608`，最大 `12582912`
 
 ## 系统 Seed
 

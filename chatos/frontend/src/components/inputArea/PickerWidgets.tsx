@@ -3,5 +3,6 @@
 
 export { InputAreaProjectFilePicker } from './pickerWidgets/InputAreaProjectFilePicker';
 export { InputAreaProjectSelector } from './pickerWidgets/InputAreaProjectSelector';
+export { InputAreaPluginPicker } from './pickerWidgets/InputAreaPluginPicker';
 export { InputAreaRemoteConnectionPicker } from './pickerWidgets/InputAreaRemoteConnectionPicker';
 export { InputAreaWorkspacePicker } from './pickerWidgets/InputAreaWorkspacePicker';

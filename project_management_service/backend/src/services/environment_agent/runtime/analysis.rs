@@ -352,10 +352,7 @@ async fn resolve_project_agent_capabilities(
             .map_err(|err| err.to_string())?
     };
     capabilities
-        .ensure_required_available()
-        .map_err(|err| err.to_string())?;
-    capabilities
-        .ensure_required_skills_supported(std::iter::empty::<&str>())
+        .ensure_required_runtime_supported([], [])
         .map_err(|err| err.to_string())?;
     let code_read_resource_id = BuiltinMcpKind::CodeMaintainerRead
         .config_id()

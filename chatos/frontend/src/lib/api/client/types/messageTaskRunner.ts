@@ -148,6 +148,93 @@ export interface MessageTaskRunnerRunDetailResponse {
   events_has_more?: boolean;
 }
 
+export interface PluginUiWorkbenchHostContext {
+  run_id: string;
+  plugin_id: string;
+  release_id: string;
+  component_key: string;
+  title: string;
+  surface: string;
+}
+
+export interface PluginUiWorkbenchSessionResponse {
+  session_id: string;
+  expires_in: number;
+  expires_at: string;
+  iframe_path: string;
+  bridge_protocol_version: number;
+  adapter_session_id: string;
+  host_session_nonce: string;
+  bridge_capabilities: string[];
+  host_context: PluginUiWorkbenchHostContext;
+}
+
+export interface PluginArtifactOwner {
+  owner_user_id: string;
+  run_id: string;
+  device_id: string;
+  workspace_id: string;
+  plugin_id: string;
+  release_id: string;
+  artifact_sha256: string;
+  component_key: string;
+  adapter_session_id: string;
+}
+
+export interface PluginArtifactDescriptor {
+  artifact_id: string;
+  owner: PluginArtifactOwner;
+  workspace_relative_path: string;
+  display_name: string;
+  media_type: string;
+  size_bytes: number;
+  sha256: string;
+  created_at: string;
+  producer_tool_name: string;
+  downloadable: boolean;
+  mutable: boolean;
+}
+
+export interface PluginArtifactUiAccess {
+  run_id: string;
+  plugin_id: string;
+  release_id: string;
+  artifact_sha256: string;
+  component_key: string;
+  adapter_session_id: string;
+  ui_snapshot_sha256: string;
+}
+
+export interface PluginArtifactListResponse {
+  access: PluginArtifactUiAccess;
+  artifacts: PluginArtifactDescriptor[];
+}
+
+export interface PluginArtifactReadResponse {
+  access: PluginArtifactUiAccess;
+  artifact: PluginArtifactDescriptor;
+  body_base64: string;
+}
+
+export interface PluginArtifactCreateRequest {
+  display_name: string;
+  media_type: string;
+  body_base64: string;
+}
+
+export interface PluginArtifactUpdateRequest {
+  expected_sha256: string;
+  body_base64: string;
+}
+
+export type PluginArtifactWriteOperation = 'create' | 'update';
+
+export interface PluginArtifactWriteResponse {
+  access: PluginArtifactUiAccess;
+  operation: PluginArtifactWriteOperation;
+  artifact: PluginArtifactDescriptor;
+}
+
 export interface MessageTaskRunnerFileChangeCounts {
   added?: number;
   modified?: number;

@@ -72,6 +72,23 @@ pub(super) struct CommandHistoryQuery {
     pub(super) source: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+pub(super) struct PluginEventsQuery {
+    pub(super) cursor: Option<String>,
+    pub(super) timeout_ms: Option<u64>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct UpdatePluginPreferenceRequest {
+    pub(super) enabled: bool,
+    #[serde(default)]
+    pub(super) auto_update: Option<bool>,
+    #[serde(default)]
+    pub(super) release_channel: Option<String>,
+    #[serde(default)]
+    pub(super) enabled_components: Option<Vec<String>>,
+}
+
 #[derive(Debug, Serialize)]
 pub(super) struct FsListResponse {
     pub(super) path: String,
@@ -135,6 +152,84 @@ pub(super) struct LocalTerminalExecRequest {
 }
 
 #[derive(Debug, Deserialize)]
+pub(super) struct LocalBrowserSessionCommandRequest {
+    pub(super) workspace_id: String,
+    pub(super) action: String,
+    #[serde(default)]
+    pub(super) url: Option<String>,
+    #[serde(default)]
+    pub(super) tab_id: Option<String>,
+    #[serde(default)]
+    pub(super) direction: Option<String>,
+    #[serde(default)]
+    pub(super) key: Option<String>,
+    #[serde(default, rename = "ref")]
+    pub(super) reference: Option<String>,
+    #[serde(default)]
+    pub(super) text: Option<String>,
+    #[serde(default)]
+    pub(super) path: Option<String>,
+    #[serde(default)]
+    pub(super) paths: Option<Vec<String>>,
+    #[serde(default)]
+    pub(super) clear: bool,
+    #[serde(default)]
+    pub(super) limit: Option<usize>,
+    #[serde(default)]
+    pub(super) filter: Option<String>,
+    #[serde(default)]
+    pub(super) resource_types: Option<Vec<String>>,
+    #[serde(default)]
+    pub(super) method: Option<String>,
+    #[serde(default)]
+    pub(super) status: Option<String>,
+    #[serde(default)]
+    pub(super) request_id: Option<String>,
+    #[serde(default)]
+    pub(super) include_request_body: bool,
+    #[serde(default)]
+    pub(super) include_response_body: bool,
+    #[serde(default)]
+    pub(super) max_body_chars: Option<usize>,
+    #[serde(default)]
+    pub(super) include_text_payloads: bool,
+    #[serde(default)]
+    pub(super) max_payload_chars: Option<usize>,
+    #[serde(default)]
+    pub(super) include_request_bodies: bool,
+    #[serde(default)]
+    pub(super) include_response_bodies: bool,
+    #[serde(default)]
+    pub(super) max_entries: Option<usize>,
+    #[serde(default)]
+    pub(super) after_frame_sequence: Option<u64>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct ChromeIntegrationEnableRequest {
+    #[serde(default)]
+    pub(super) acknowledge_sensitive_browser_access: bool,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct ChromeNativeConnectRequest {
+    pub(super) connection_id: String,
+    pub(super) origin: String,
+    pub(super) protocol_version: u32,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct ChromeNativeConnectionRequest {
+    pub(super) connection_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct ChromeNativeEventRequest {
+    pub(super) connection_id: String,
+    pub(super) event: Value,
+}
+
+#[derive(Debug, Deserialize)]
 pub(super) struct UpdateApprovalSettingsRequest {
     pub(super) default_mode: Option<ApprovalMode>,
     pub(super) projects: Option<Vec<ProjectApprovalState>>,
@@ -154,6 +249,8 @@ pub(super) struct ResolveApprovalRequest {
     pub(super) reason: Option<String>,
     #[serde(default)]
     pub(super) risk_acknowledged: bool,
+    #[serde(default)]
+    pub(super) confirmation_response: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -204,6 +301,40 @@ pub(super) struct UpdateLocalModelSettingsRequest {
 pub(super) struct UpdateLocalRuntimeSettingsRequest {
     #[serde(default)]
     pub(super) developer_mode: Option<bool>,
+    #[serde(default)]
+    pub(super) browser_full_cdp_access_enabled: Option<bool>,
+    #[serde(default)]
+    pub(super) acknowledge_browser_full_cdp_risk: bool,
+}
+
+#[derive(Deserialize)]
+pub(super) struct UpsertPluginCredentialRequest {
+    pub(super) value: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct UninstallPluginRequest {
+    #[serde(default)]
+    pub(super) acknowledge_plugin_data_removal: bool,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct BeginPluginOAuthRequest {
+    #[serde(default)]
+    pub(super) redirect_uri: Option<String>,
+    #[serde(default)]
+    pub(super) open_browser: Option<bool>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct CompletePluginOAuthRequest {
+    pub(super) state: String,
+    #[serde(default)]
+    pub(super) code: Option<String>,
+    #[serde(default)]
+    pub(super) error: Option<String>,
+    #[serde(default)]
+    pub(super) error_description: Option<String>,
 }
 
 #[derive(Debug)]

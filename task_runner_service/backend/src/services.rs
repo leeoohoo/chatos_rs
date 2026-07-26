@@ -71,6 +71,8 @@ mod model_runtime_resolver;
 pub(crate) mod path_redaction;
 mod plugin_management_policy;
 mod plugin_management_prompts;
+mod plugin_runtime_relay;
+pub(crate) use plugin_runtime_relay::plugin_relay_base_url;
 mod prerequisite_context;
 mod process_log_text;
 pub(crate) mod project_management_api_client;

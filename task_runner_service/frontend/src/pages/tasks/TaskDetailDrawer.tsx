@@ -255,6 +255,41 @@ export function TaskDetailDrawer({
                 t('common.noData')
               )}
             </Descriptions.Item>
+            <Descriptions.Item label={t('tasks.detail.pluginTarget')}>
+              {task.plugin_config?.device_id ? (
+                <Space wrap>
+                  <Tag color="cyan">{task.plugin_config.device_id}</Tag>
+                  {task.plugin_config.workspace_id ? (
+                    <Tag color="geekblue">{task.plugin_config.workspace_id}</Tag>
+                  ) : null}
+                </Space>
+              ) : (
+                t('common.noData')
+              )}
+            </Descriptions.Item>
+            <Descriptions.Item label={t('tasks.detail.plugins')}>
+              {task.plugin_config?.selected_plugins?.length ? (
+                <Space wrap>
+                  {task.plugin_config.selected_plugins.map((plugin) => (
+                    <Space key={plugin.plugin_id} wrap size={4}>
+                      <Tag color="purple">{plugin.plugin_id}</Tag>
+                      {(plugin.selected_command_ids || []).map((commandId) => (
+                        <Tag key={`${plugin.plugin_id}:${commandId}`} color="orange">
+                          /{commandId}
+                        </Tag>
+                      ))}
+                      {(plugin.selected_agent_ids || []).map((agentId) => (
+                        <Tag key={`${plugin.plugin_id}:${agentId}`} color="magenta">
+                          @{agentId}
+                        </Tag>
+                      ))}
+                    </Space>
+                  ))}
+                </Space>
+              ) : (
+                t('common.noData')
+              )}
+            </Descriptions.Item>
             <Descriptions.Item label={t('tasks.detail.skills')}>
               {task.mcp_config.selected_skill_ids?.length ? (
                 <Space wrap>
