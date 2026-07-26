@@ -9,7 +9,7 @@ pub(super) fn task_belongs_to_context(task: &TaskRecord, root_task_id: &str) -> 
 
 pub(super) fn task_to_manager_value(task: &TaskRecord) -> Value {
     let manager_status = task_manager_status_from_task_status(task.status);
-    let is_done = manager_status == "done";
+    let is_done = super::super::task_manager_lifecycle::task_closure_is_terminal(task);
     json!({
         "id": task.id.clone(),
         "title": task.title.clone(),
@@ -30,6 +30,12 @@ pub(super) fn task_to_manager_value(task: &TaskRecord) -> Value {
         "blocker_kind": if is_done { None } else { task.task_tool_state.blocker_kind.clone() },
         "completed_at": task.task_tool_state.completed_at.clone(),
         "last_outcome_at": task.task_tool_state.last_outcome_at.clone(),
+        "scope": super::super::task_manager_lifecycle::effective_task_manager_scope(task),
+        "task_session_id": super::super::task_manager_lifecycle::effective_task_session_id(task),
+        "required_for_parent_completion": super::super::task_manager_lifecycle::effective_task_required_for_parent_completion(task),
+        "closure_state": super::super::task_manager_lifecycle::effective_task_closure_state(task),
+        "closure_reason": task.task_tool_state.closure_reason.clone(),
+        "closure_terminal": is_done,
         "created_at": task.created_at.clone(),
         "updated_at": task.updated_at.clone(),
     })
@@ -122,8 +128,11 @@ pub(super) fn task_status_from_manager_status(value: &str) -> TaskStatus {
 pub(super) fn task_manager_status_from_task_status(status: TaskStatus) -> &'static str {
     match status {
         TaskStatus::Running => "doing",
-        TaskStatus::Blocked | TaskStatus::Failed => "blocked",
-        TaskStatus::Succeeded | TaskStatus::Cancelled | TaskStatus::Archived => "done",
+        TaskStatus::Blocked => "blocked",
+        TaskStatus::Failed => "failed",
+        TaskStatus::Succeeded => "done",
+        TaskStatus::Cancelled => "cancelled",
+        TaskStatus::Archived => "archived",
         TaskStatus::Draft | TaskStatus::Ready | TaskStatus::Queued => "todo",
     }
 }

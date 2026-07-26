@@ -29,7 +29,10 @@ impl LocalDatabase {
                    tasks.external_mcp_config_ids_json, tasks.selected_skill_ids_json,
                    tasks.last_run_id, tasks.project_work_item_id, tasks.requirement_id,
                    tasks.execution_group_id, tasks.execution_client_ref,
-                   tasks.dependency_context_refs_json
+                   tasks.dependency_context_refs_json, tasks.manager_scope,
+                   tasks.task_session_id, tasks.required_for_parent_completion,
+                   tasks.closure_state, tasks.closure_reason, tasks.idempotency_key,
+                   tasks.lifecycle_updated_at
             FROM task_board_tasks AS tasks
             INNER JOIN turns ON turns.id = tasks.turn_id
             INNER JOIN sessions ON sessions.id = tasks.session_id
@@ -80,7 +83,10 @@ impl LocalDatabase {
                    tasks.external_mcp_config_ids_json, tasks.selected_skill_ids_json,
                    tasks.last_run_id, tasks.project_work_item_id, tasks.requirement_id,
                    tasks.execution_group_id, tasks.execution_client_ref,
-                   tasks.dependency_context_refs_json
+                   tasks.dependency_context_refs_json, tasks.manager_scope,
+                   tasks.task_session_id, tasks.required_for_parent_completion,
+                   tasks.closure_state, tasks.closure_reason, tasks.idempotency_key,
+                   tasks.lifecycle_updated_at
             FROM task_board_tasks AS tasks
             INNER JOIN turns ON turns.id = tasks.turn_id
             WHERE tasks.owner_user_id = ? AND tasks.session_id = ?
@@ -133,7 +139,10 @@ pub(super) async fn select_task(
                tasks.external_mcp_config_ids_json, tasks.selected_skill_ids_json,
                tasks.last_run_id, tasks.project_work_item_id, tasks.requirement_id,
                tasks.execution_group_id, tasks.execution_client_ref,
-               tasks.dependency_context_refs_json
+               tasks.dependency_context_refs_json, tasks.manager_scope,
+               tasks.task_session_id, tasks.required_for_parent_completion,
+               tasks.closure_state, tasks.closure_reason, tasks.idempotency_key,
+               tasks.lifecycle_updated_at
         FROM task_board_tasks AS tasks
         INNER JOIN turns ON turns.id = tasks.turn_id
         WHERE tasks.id = ? AND tasks.session_id = ? AND tasks.owner_user_id = ?

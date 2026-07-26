@@ -148,5 +148,8 @@ fn draft(title: &str) -> TaskDraft {
         blocker_reason: String::new(),
         blocker_needs: Vec::new(),
         blocker_kind: String::new(),
+        scope: "run_checklist".to_string(),
+        required_for_parent_completion: true,
+        idempotency_key: None,
     }
 }

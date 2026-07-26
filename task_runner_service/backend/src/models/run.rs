@@ -261,6 +261,7 @@ pub struct AskUserPromptTaskCountRecord {
 pub struct StartTaskRunRequest {
     pub model_config_id: Option<String>,
     pub prompt_override: Option<String>,
+    pub retry_instruction: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

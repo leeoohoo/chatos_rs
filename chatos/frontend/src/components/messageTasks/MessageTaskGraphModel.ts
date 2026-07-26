@@ -32,6 +32,7 @@ export interface TaskGraphNodeData extends Record<string, unknown> {
   graphNode: MessageTaskGraphDisplayNode;
   currentSourceUserMessageId: string | null;
   isActive: boolean;
+  isFocusEmphasized: boolean;
   isDimmed: boolean;
   loadingProcessLog: boolean;
   loadingRun: boolean;
@@ -48,6 +49,8 @@ export type TaskGraphEdgeData = {
   stroke: string;
   animated: boolean;
   markerId: string;
+  kind: string;
+  focusAnimated: boolean;
   dashArray?: string;
   layoutPoints?: TaskGraphLayoutPoint[];
 };
@@ -367,6 +370,7 @@ export const buildFlowNodes = (
   currentSourceUserMessageId: string | null,
   activeTaskId: string | null,
   relatedTaskIds: Set<string> | null,
+  focusTaskIds: Set<string> | null,
   loadingProcessTaskId: string | null,
   loadingRunId: string | null,
   loadingChangesRunId: string | null,
@@ -388,6 +392,7 @@ export const buildFlowNodes = (
         currentSourceUserMessageId,
         graphNode,
         isActive: activeTaskId === graphNode.task.id,
+        isFocusEmphasized: Boolean(focusTaskIds?.has(graphNode.task.id)),
         isDimmed: Boolean(activeTaskId && relatedTaskIds && !relatedTaskIds.has(graphNode.task.id)),
         loadingProcessLog: groupedTasks.some((task) => task.id === loadingProcessTaskId),
         loadingRun: groupedTasks.some((task) => Boolean(task.last_run_id && task.last_run_id === loadingRunId)),
@@ -445,7 +450,15 @@ export const buildFlowEdges = (
       data: {
         stroke,
         animated: !isContextEdge && isRunningEdge,
-        markerId: isRunningEdge ? 'task-graph-arrow-running' : 'task-graph-arrow',
+        markerId: isContextEdge
+          ? 'task-graph-arrow-context'
+          : isActiveLink
+            ? 'task-graph-arrow-focus'
+          : isRunningEdge
+            ? 'task-graph-arrow-running'
+            : 'task-graph-arrow',
+        kind: edge.kind || 'prerequisite',
+        focusAnimated: isActiveLink,
         dashArray: isContextEdge ? '7 7' : undefined,
       },
     };

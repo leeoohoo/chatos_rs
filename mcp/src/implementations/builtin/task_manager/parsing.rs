@@ -3,7 +3,10 @@
 
 use serde_json::{Map, Value};
 
-use super::{default_priority, default_status, TaskDraft, TaskOutcomeItem, TaskUpdatePatch};
+use super::{
+    default_priority, default_status, default_task_scope, TaskDraft, TaskOutcomeItem,
+    TaskUpdatePatch,
+};
 
 pub fn parse_task_drafts(args: &Value) -> Result<Vec<TaskDraft>, String> {
     if let Some(items) = args.get("tasks").and_then(Value::as_array) {
@@ -114,6 +117,12 @@ fn task_draft_from_map(map: &Map<String, Value>) -> Result<TaskDraft, String> {
         .and_then(Value::as_str)
         .ok_or_else(|| "task title is required".to_string())?
         .to_string();
+    let scope = optional_string(map, "scope").unwrap_or_else(default_task_scope);
+    let required_for_parent_completion = map
+        .get("required_for_parent_completion")
+        .or_else(|| map.get("requiredForParentCompletion"))
+        .and_then(Value::as_bool)
+        .unwrap_or_else(|| scope != "durable_followup");
     Ok(TaskDraft {
         title,
         details: optional_string(map, "details")
@@ -150,6 +159,10 @@ fn task_draft_from_map(map: &Map<String, Value>) -> Result<TaskDraft, String> {
         blocker_kind: optional_string(map, "blocker_kind")
             .or_else(|| optional_string(map, "blockerKind"))
             .unwrap_or_default(),
+        scope,
+        required_for_parent_completion,
+        idempotency_key: optional_string(map, "idempotency_key")
+            .or_else(|| optional_string(map, "idempotencyKey")),
     })
 }
 

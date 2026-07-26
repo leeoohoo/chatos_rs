@@ -3,6 +3,10 @@
 
 use super::*;
 
+use crate::services::task_manager_lifecycle::{
+    append_task_session_finalized_event, finalize_task_session_entries,
+};
+
 const MIN_WORKER_CLAIM_EXPIRY_GRACE: Duration = Duration::from_secs(120);
 const WORKER_CLAIM_EXPIRED_ERROR: &str = "worker claim expired";
 
@@ -238,6 +242,23 @@ impl RunService {
                     })),
                 ))
                 .await?;
+            match finalize_task_session_entries(
+                &self.store,
+                run.task_id.as_str(),
+                run.id.as_str(),
+                run.status,
+            )
+            .await
+            {
+                Ok(summary) => {
+                    append_task_session_finalized_event(&self.store, run, &summary).await
+                }
+                Err(err) => tracing::warn!(
+                    run_id = run.id.as_str(),
+                    error = err.as_str(),
+                    "failed to finalize Task Manager session after worker claim expiry"
+                ),
+            }
             if let Err(err) = self.release_sandboxes_for_terminal_run(run).await {
                 tracing::warn!(
                     run_id = run.id.as_str(),
@@ -365,6 +386,7 @@ impl RunService {
                     StartTaskRunRequest {
                         model_config_id: request.model_config_id.clone(),
                         prompt_override: request.prompt_override.clone(),
+                        retry_instruction: None,
                     },
                     current_user,
                 )
@@ -375,6 +397,7 @@ impl RunService {
                     StartTaskRunRequest {
                         model_config_id: request.model_config_id.clone(),
                         prompt_override: request.prompt_override.clone(),
+                        retry_instruction: None,
                     },
                 )
                 .await

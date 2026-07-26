@@ -95,6 +95,7 @@ impl RunService {
                 StartTaskRunRequest {
                     model_config_id: input.model_config_id.clone(),
                     prompt_override: None,
+                    retry_instruction: None,
                 },
             )
             .await?

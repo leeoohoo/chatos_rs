@@ -4,6 +4,10 @@
 use super::*;
 use std::time::Instant;
 
+use crate::services::task_manager_lifecycle::{
+    load_task_session_snapshot, waive_open_task_session_entries,
+};
+
 const MAX_COMPLETION_GATE_FOLLOWUPS: usize = 3;
 
 impl RunService {
@@ -85,6 +89,7 @@ impl RunService {
                 .await;
             append_external_mcp_runtime_notice(&mut run_spec, task, &runtime);
             let mut completion_gate_attempts = 0usize;
+            let mut previous_completion_gate_signature = None::<String>;
             loop {
                 let report = agent
                     .run_report_with_runtime_options(
@@ -104,9 +109,9 @@ impl RunService {
                     .ok()
                     .flatten()
                     .unwrap_or_else(|| task.clone());
-                let unfinished =
-                    match unfinished_subtasks_for_task(&self.store, &task_for_validation).await {
-                        Ok(unfinished) => unfinished,
+                let session_snapshot =
+                    match load_task_session_snapshot(&self.store, &task.id, &run.id).await {
+                        Ok(snapshot) => snapshot,
                         Err(err) => {
                             return TaskRunReport::from_ai_report(
                                 task.id.clone(),
@@ -118,10 +123,18 @@ impl RunService {
                             );
                         }
                     };
+                if !session_snapshot.terminal_blocked.is_empty() {
+                    return report;
+                }
+                let progress_signature = session_snapshot.progress_signature();
+                let unfinished = session_snapshot.open_required;
                 if unfinished.is_empty() {
                     return report;
                 }
                 completion_gate_attempts += 1;
+                let no_progress = previous_completion_gate_signature
+                    .as_deref()
+                    .is_some_and(|previous| previous == progress_signature.as_str());
                 let message = unfinished_subtasks_error(&task_for_validation, &unfinished);
                 if let Err(err) = self
                     .store
@@ -138,6 +151,8 @@ impl RunService {
                                 .map(|subtask| subtask.id.clone())
                                 .collect::<Vec<_>>(),
                             "attempt": completion_gate_attempts,
+                            "progress_signature": progress_signature,
+                            "no_progress": no_progress,
                         })),
                     ))
                     .await
@@ -147,17 +162,60 @@ impl RunService {
                         run.id, err
                     );
                 }
-                if completion_gate_attempts >= MAX_COMPLETION_GATE_FOLLOWUPS {
-                    return TaskRunReport::from_ai_report(
-                        task.id.clone(),
-                        run.id.clone(),
-                        Some(model_config.id.clone()),
-                        AiTurnReport::failed(format!(
-                            "父任务暂不能完成，已连续 {} 次要求继续处理子任务但仍未完成：{message}",
-                            completion_gate_attempts
-                        )),
-                    );
+                if no_progress || completion_gate_attempts >= MAX_COMPLETION_GATE_FOLLOWUPS {
+                    let reason = if no_progress {
+                        "模型完成声明后，连续两次 Task Manager 校验没有状态进展；系统未伪造成功，而是将遗漏关闭的运行内清单记录为 waived"
+                    } else {
+                        "模型完成声明后达到 Task Manager 最大收口轮次；系统未伪造成功，而是将遗漏关闭的运行内清单记录为 waived"
+                    };
+                    let waived = match waive_open_task_session_entries(
+                        &self.store,
+                        task.id.as_str(),
+                        run.id.as_str(),
+                        reason,
+                        true,
+                    )
+                    .await
+                    {
+                        Ok(waived) => waived,
+                        Err(err) => {
+                            return TaskRunReport::from_ai_report(
+                                task.id.clone(),
+                                run.id.clone(),
+                                Some(model_config.id.clone()),
+                                AiTurnReport::failed(format!(
+                                    "failed to reconcile Task Manager session: {err}"
+                                )),
+                            );
+                        }
+                    };
+                    if let Err(err) = self
+                        .store
+                        .append_run_event(TaskRunEventRecord::new(
+                            run.id.clone(),
+                            "completion_gate_reconciled",
+                            Some(format!(
+                                "Task Manager 会话已程序化收口，{} 个遗漏关闭的运行内清单被标记为 waived",
+                                waived.len()
+                            )),
+                            Some(json!({
+                                "task_id": task.id,
+                                "waived_task_ids": waived.iter().map(|task| task.id.clone()).collect::<Vec<_>>(),
+                                "attempt": completion_gate_attempts,
+                                "reason": reason,
+                            })),
+                        ))
+                        .await
+                    {
+                        warn!(
+                            run_id = run.id.as_str(),
+                            error = err.as_str(),
+                            "failed to append completion gate reconciliation event"
+                        );
+                    }
+                    return report;
                 }
+                previous_completion_gate_signature = Some(progress_signature);
                 Self::append_completion_gate_feedback(
                     &mut run_spec,
                     message.as_str(),
@@ -222,7 +280,7 @@ impl RunService {
         json!({
             "role": "system",
             "content": format!(
-                "[Task Runner completion gate]\n{message}\n这是第 {attempt} 次完成前校验反馈。本门禁优先级高于空响应补偿或普通收尾提示：不要结束当前任务，也不要输出最终总结。请继续调用必要工具推进上述子任务；对子任务只能在有真实完成证据时调用 TaskManager 标记成功，或在有可核验证据时标记 blocked 并写明阻塞。只有所有子任务都成功后，父任务才能给出最终完成答复。"
+                "[Task Runner Task Session reconciliation]\n{message}\n这是第 {attempt} 次完成前校验反馈。不要重复输出最终总结。请继续推进真实未完成工作，并使用 `task_manager_reconcile_tasks` 原子收口：有完成证据时用 satisfied；存在可核验且本次运行无法解除的阻塞时用 blocked_terminal 并写明原因；重复或不再需要的任务用 superseded/waived。blocked_terminal 会让父任务进入 blocked，而不是伪装成功。最后调用 `task_manager_finalize_session` 检查当前运行会话。"
             )
         })
     }
@@ -400,10 +458,10 @@ mod tests {
             .and_then(Value::as_str)
             .expect("feedback content");
         assert!(content.contains("第 2 次完成前校验反馈"));
-        assert!(content.contains("不要结束当前任务"));
-        assert!(content.contains("不要输出最终总结"));
-        assert!(content.contains("继续调用必要工具"));
-        assert!(content.contains("调用 TaskManager 标记成功"));
-        assert!(content.contains("标记 blocked"));
+        assert!(content.contains("不要重复输出最终总结"));
+        assert!(content.contains("task_manager_reconcile_tasks"));
+        assert!(content.contains("satisfied"));
+        assert!(content.contains("blocked_terminal"));
+        assert!(content.contains("task_manager_finalize_session"));
     }
 }

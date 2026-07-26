@@ -61,6 +61,8 @@ impl TaskManagerStore for TaskRunnerTaskManagerStore {
             "confirmed": true,
             "cancelled": false,
             "auto_created": true,
+            "lifecycle": "run_scoped_task_session",
+            "closure_required": true,
             "created_count": tasks.len(),
             "tasks": tasks,
             "conversation_id": root_task_id,
@@ -102,6 +104,26 @@ impl TaskManagerStore for TaskRunnerTaskManagerStore {
         Ok(task_to_manager_value(&task))
     }
 
+    async fn update_task_for_turn(
+        &self,
+        conversation_id: &str,
+        conversation_turn_id: &str,
+        task_id: &str,
+        patch: SharedTaskUpdatePatch,
+    ) -> Result<Value, String> {
+        let root_task_id = self.root_task_id(conversation_id).to_string();
+        let task = self
+            .task_service
+            .update_task_from_tool_in_session(
+                root_task_id.as_str(),
+                Some(conversation_turn_id),
+                task_id,
+                patch,
+            )
+            .await?;
+        Ok(task_to_manager_value(&task))
+    }
+
     async fn complete_task_by_id(
         &self,
         conversation_id: &str,
@@ -116,6 +138,26 @@ impl TaskManagerStore for TaskRunnerTaskManagerStore {
         Ok(task_to_manager_value(&task))
     }
 
+    async fn complete_task_for_turn(
+        &self,
+        conversation_id: &str,
+        conversation_turn_id: &str,
+        task_id: &str,
+        patch: Option<SharedTaskUpdatePatch>,
+    ) -> Result<Value, String> {
+        let root_task_id = self.root_task_id(conversation_id).to_string();
+        let task = self
+            .task_service
+            .complete_task_from_tool_in_session(
+                root_task_id.as_str(),
+                Some(conversation_turn_id),
+                task_id,
+                patch,
+            )
+            .await?;
+        Ok(task_to_manager_value(&task))
+    }
+
     async fn delete_task_by_id(
         &self,
         conversation_id: &str,
@@ -124,6 +166,45 @@ impl TaskManagerStore for TaskRunnerTaskManagerStore {
         let root_task_id = self.root_task_id(conversation_id).to_string();
         self.task_service
             .delete_task_from_tool(root_task_id.as_str(), task_id)
+            .await
+    }
+
+    async fn delete_task_for_turn(
+        &self,
+        conversation_id: &str,
+        conversation_turn_id: &str,
+        task_id: &str,
+    ) -> Result<bool, String> {
+        let root_task_id = self.root_task_id(conversation_id).to_string();
+        self.task_service
+            .delete_task_from_tool_in_session(
+                root_task_id.as_str(),
+                Some(conversation_turn_id),
+                task_id,
+            )
+            .await
+    }
+
+    async fn reconcile_tasks_for_turn(
+        &self,
+        conversation_id: &str,
+        conversation_turn_id: &str,
+        decisions: Vec<SharedTaskClosureDecision>,
+    ) -> Result<Value, String> {
+        let root_task_id = self.root_task_id(conversation_id).to_string();
+        self.task_service
+            .reconcile_tool_tasks(root_task_id.as_str(), conversation_turn_id, decisions)
+            .await
+    }
+
+    async fn finalize_session_for_turn(
+        &self,
+        conversation_id: &str,
+        conversation_turn_id: &str,
+    ) -> Result<Value, String> {
+        let root_task_id = self.root_task_id(conversation_id).to_string();
+        self.task_service
+            .finalize_tool_task_session(root_task_id.as_str(), conversation_turn_id)
             .await
     }
 

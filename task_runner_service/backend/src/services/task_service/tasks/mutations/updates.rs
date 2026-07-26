@@ -3,6 +3,7 @@
 
 use super::*;
 use crate::models::normalize_task_profile;
+use crate::services::task_manager_lifecycle::{apply_task_closure, task_has_manager_lifecycle};
 
 impl TaskService {
     pub async fn update_task(
@@ -69,6 +70,35 @@ impl TaskService {
                 ensure_task_has_no_unfinished_subtasks(&self.store, &task).await?;
             }
             task.status = status;
+            if task_has_manager_lifecycle(&task) {
+                let now = now_rfc3339();
+                match status {
+                    TaskStatus::Succeeded => apply_task_closure(
+                        &mut task,
+                        TaskClosureState::Satisfied,
+                        None,
+                        now.as_str(),
+                    )?,
+                    TaskStatus::Archived => apply_task_closure(
+                        &mut task,
+                        TaskClosureState::Superseded,
+                        Some("任务已归档，不再阻止所属运行完成".to_string()),
+                        now.as_str(),
+                    )?,
+                    TaskStatus::Draft
+                    | TaskStatus::Ready
+                    | TaskStatus::Queued
+                    | TaskStatus::Running
+                    | TaskStatus::Failed
+                    | TaskStatus::Blocked
+                    | TaskStatus::Cancelled => {
+                        task.task_tool_state.closure_state = Some(TaskClosureState::Open);
+                        task.task_tool_state.closure_reason = None;
+                        task.task_tool_state.completed_at = None;
+                        task.task_tool_state.lifecycle_updated_at = Some(now);
+                    }
+                }
+            }
         }
         if let Some(priority) = patch.priority {
             task.priority = priority;

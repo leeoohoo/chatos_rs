@@ -70,6 +70,11 @@ struct ConversationTaskRunnerActiveMessageTasksRequest {
     source_turn_ids: Option<Vec<String>>,
 }
 
+#[derive(Debug, Clone, Default, Deserialize)]
+struct RetryMessageTaskRunnerRunRequest {
+    retry_instruction: Option<String>,
+}
+
 fn normalize_text(value: Option<&str>) -> Option<String> {
     value
         .map(str::trim)
@@ -418,6 +423,7 @@ async fn retry_message_task_runner_run(
     auth: AuthUser,
     Path((message_id, run_id)): Path<(String, String)>,
     Query(query): Query<MessageTaskRunnerLookupQuery>,
+    payload: Option<Json<RetryMessageTaskRunnerRunRequest>>,
 ) -> (StatusCode, Json<Value>) {
     let context = match resolve_message_task_runner_context(&auth, &message_id, &query).await {
         Ok(Some(context)) => context,
@@ -429,12 +435,27 @@ async fn retry_message_task_runner_run(
         }
         Err(err) => return err,
     };
+    let retry_instruction = normalize_text(
+        payload
+            .as_ref()
+            .and_then(|Json(payload)| payload.retry_instruction.as_deref()),
+    );
+    if retry_instruction
+        .as_deref()
+        .is_some_and(|value| value.chars().count() > 4000)
+    {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": "阻塞处理意见不能超过 4000 个字符"})),
+        );
+    }
     match task_runner_api_client::retry_message_run(
         context.base_url.as_str(),
         run_id.as_str(),
         context.source_session_id.as_str(),
         context.source_user_message_id.as_deref(),
         context.source_turn_id.as_deref(),
+        retry_instruction.as_deref(),
     )
     .await
     {

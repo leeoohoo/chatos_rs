@@ -22,7 +22,8 @@ pub(super) async fn finish_task_run(
     let database = runtime
         .local_database()
         .map_err(|error| error.to_string())?;
-    if canceled || report.status == AiTurnStatus::Aborted {
+    if canceled {
+        finalize_task_manager_session(database, run, "canceled").await?;
         let _ = persist_task_run_receipt(
             database,
             run,
@@ -62,6 +63,7 @@ pub(super) async fn finish_task_run(
             .error
             .clone()
             .unwrap_or_else(|| report.user_message());
+        finalize_task_manager_session(database, run, "failed").await?;
         let _ = persist_task_run_receipt(
             database,
             run,
@@ -97,6 +99,50 @@ pub(super) async fn finish_task_run(
         set_requirement_status(runtime, run, "failed").await?;
         return Ok(());
     }
+    let task_session = database
+        .local_task_manager_session_snapshot(
+            run.owner_user_id.as_str(),
+            run.session_id.as_str(),
+            run.id.as_str(),
+        )
+        .await
+        .map_err(|error| error.to_string())?;
+    if !task_session.terminal_blocked.is_empty() {
+        let error = format!(
+            "Task Manager 运行会话存在 {} 个终态阻塞清单，父任务不能标记成功",
+            task_session.terminal_blocked.len()
+        );
+        finalize_task_manager_session(database, run, "blocked").await?;
+        let _ = persist_task_run_receipt(database, run, "blocked", error.clone()).await;
+        database
+            .fail_turn(
+                run.owner_user_id.as_str(),
+                run.turn_id.as_str(),
+                "task_run_blocked",
+                error.as_str(),
+            )
+            .await
+            .map_err(|failure| failure.to_string())?;
+        database
+            .fail_local_task_run(run, "blocked", error.as_str())
+            .await
+            .map_err(|failure| failure.to_string())?;
+        if run.task_kind == "conversation_task" {
+            set_conversation_task_status_and_sync(
+                runtime,
+                run,
+                "blocked",
+                None,
+                Some(error.as_str()),
+            )
+            .await?;
+        } else {
+            set_work_item_status(runtime, run, "blocked").await?;
+        }
+        set_requirement_status(runtime, run, "blocked").await?;
+        return Ok(());
+    }
+    finalize_task_manager_session(database, run, "completed").await?;
     let completion_content = report
         .content
         .clone()
@@ -144,6 +190,43 @@ pub(super) async fn finish_task_run(
         set_work_item_status(runtime, run, "done").await?;
     }
     complete_requirement_if_done(runtime, run).await
+}
+
+pub(in crate::local_runtime::task_runner) async fn finalize_task_manager_session(
+    database: &LocalDatabase,
+    run: &LocalTaskRunRecord,
+    terminal_status: &str,
+) -> Result<(), String> {
+    let summary = database
+        .finalize_local_task_manager_session(
+            run.owner_user_id.as_str(),
+            run.session_id.as_str(),
+            run.id.as_str(),
+            terminal_status,
+        )
+        .await
+        .map_err(|error| error.to_string())?;
+    if summary.total_changed() > 0 || summary.blocked_terminal > 0 {
+        database
+            .append_local_task_run_event(
+                run.owner_user_id.as_str(),
+                run.id.as_str(),
+                "task_session_finalized",
+                json!({
+                    "task_session_id": run.id,
+                    "terminal_status": terminal_status,
+                    "satisfied": summary.satisfied,
+                    "waived": summary.waived,
+                    "blocked_terminal": summary.blocked_terminal,
+                    "cancelled": summary.cancelled,
+                    "orphaned": summary.orphaned,
+                    "durable_detached": summary.durable_detached,
+                }),
+            )
+            .await
+            .map_err(|error| error.to_string())?;
+    }
+    Ok(())
 }
 
 pub(in crate::local_runtime::task_runner) async fn persist_task_run_receipt(

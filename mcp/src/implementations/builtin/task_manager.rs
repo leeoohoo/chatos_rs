@@ -62,6 +62,26 @@ pub struct TaskDraft {
     pub blocker_needs: Vec<String>,
     #[serde(default)]
     pub blocker_kind: String,
+    #[serde(default = "default_task_scope")]
+    pub scope: String,
+    #[serde(default = "default_required_for_parent_completion")]
+    pub required_for_parent_completion: bool,
+    #[serde(default)]
+    pub idempotency_key: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TaskClosureDecision {
+    pub task_id: String,
+    pub closure_state: String,
+    #[serde(default)]
+    pub reason: String,
+    #[serde(default)]
+    pub outcome_summary: String,
+    #[serde(default)]
+    pub outcome_items: Vec<TaskOutcomeItem>,
+    #[serde(default)]
+    pub resume_hint: String,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -104,6 +124,14 @@ fn default_status() -> String {
     "todo".to_string()
 }
 
+fn default_task_scope() -> String {
+    "run_checklist".to_string()
+}
+
+fn default_required_for_parent_completion() -> bool {
+    true
+}
+
 #[async_trait]
 pub trait TaskManagerStore: Send + Sync {
     async fn create_tasks_for_turn(
@@ -137,6 +165,17 @@ pub trait TaskManagerStore: Send + Sync {
         patch: TaskUpdatePatch,
     ) -> Result<Value, String>;
 
+    async fn update_task_for_turn(
+        &self,
+        conversation_id: &str,
+        _conversation_turn_id: &str,
+        task_id: &str,
+        patch: TaskUpdatePatch,
+    ) -> Result<Value, String> {
+        self.update_task_by_id(conversation_id, task_id, patch)
+            .await
+    }
+
     async fn complete_task_by_id(
         &self,
         conversation_id: &str,
@@ -144,8 +183,45 @@ pub trait TaskManagerStore: Send + Sync {
         patch: Option<TaskUpdatePatch>,
     ) -> Result<Value, String>;
 
+    async fn complete_task_for_turn(
+        &self,
+        conversation_id: &str,
+        _conversation_turn_id: &str,
+        task_id: &str,
+        patch: Option<TaskUpdatePatch>,
+    ) -> Result<Value, String> {
+        self.complete_task_by_id(conversation_id, task_id, patch)
+            .await
+    }
+
     async fn delete_task_by_id(&self, conversation_id: &str, task_id: &str)
         -> Result<bool, String>;
+
+    async fn delete_task_for_turn(
+        &self,
+        conversation_id: &str,
+        _conversation_turn_id: &str,
+        task_id: &str,
+    ) -> Result<bool, String> {
+        self.delete_task_by_id(conversation_id, task_id).await
+    }
+
+    async fn reconcile_tasks_for_turn(
+        &self,
+        _conversation_id: &str,
+        _conversation_turn_id: &str,
+        _decisions: Vec<TaskClosureDecision>,
+    ) -> Result<Value, String> {
+        Err("task lifecycle reconciliation is unavailable in this host".to_string())
+    }
+
+    async fn finalize_session_for_turn(
+        &self,
+        _conversation_id: &str,
+        _conversation_turn_id: &str,
+    ) -> Result<Value, String> {
+        Err("task lifecycle finalization is unavailable in this host".to_string())
+    }
 
     async fn task_board_updated_event(
         &self,
@@ -180,6 +256,8 @@ pub struct TaskManagerOptions {
     pub review_timeout_ms: u64,
     pub auto_create_task: bool,
     pub expose_context_ids: bool,
+    pub default_current_turn_only: bool,
+    pub lifecycle_tools_enabled: bool,
     pub store: TaskManagerStoreRef,
 }
 
@@ -188,6 +266,7 @@ pub struct TaskManagerService {
     registry: ToolRegistry<ToolHandler>,
     auto_create_task: bool,
     expose_context_ids: bool,
+    default_current_turn_only: bool,
     store: TaskManagerStoreRef,
 }
 
@@ -198,6 +277,7 @@ struct ToolContext {
     conversation_turn_id: String,
     auto_create_task: bool,
     expose_context_ids: bool,
+    default_current_turn_only: bool,
     on_stream_chunk: Option<TaskStreamChunkCallback>,
     store: TaskManagerStoreRef,
 }
@@ -226,17 +306,27 @@ impl TaskManagerService {
             registry: ToolRegistry::new(),
             auto_create_task: opts.auto_create_task,
             expose_context_ids: opts.expose_context_ids,
+            default_current_turn_only: opts.default_current_turn_only,
             store: opts.store,
         };
         let add_timeout = opts.review_timeout_ms.max(10_000);
         let auto_create_task = opts.auto_create_task;
         let server_name = opts.server_name;
 
-        service.register_add_task(add_timeout, server_name.as_str(), auto_create_task);
+        service.register_add_task(
+            add_timeout,
+            server_name.as_str(),
+            auto_create_task,
+            opts.lifecycle_tools_enabled,
+        );
         service.register_list_tasks();
         service.register_update_task();
         service.register_complete_task();
         service.register_delete_task();
+        if opts.lifecycle_tools_enabled {
+            service.register_reconcile_tasks();
+            service.register_finalize_session();
+        }
         Ok(service)
     }
 
@@ -267,6 +357,7 @@ impl TaskManagerService {
             conversation_turn_id: turn.to_string(),
             auto_create_task: self.auto_create_task,
             expose_context_ids: self.expose_context_ids,
+            default_current_turn_only: self.default_current_turn_only,
             on_stream_chunk,
             store: self.store.clone(),
         };
@@ -284,8 +375,18 @@ impl TaskManagerService {
             .register_tool(name, description, input_schema, handler);
     }
 
-    fn register_add_task(&mut self, add_timeout: u64, server_name: &str, auto_create_task: bool) {
-        let description = if auto_create_task {
+    fn register_add_task(
+        &mut self,
+        add_timeout: u64,
+        server_name: &str,
+        auto_create_task: bool,
+        lifecycle_tools_enabled: bool,
+    ) {
+        let description = if auto_create_task && lifecycle_tools_enabled {
+            format!(
+                "Create one or more persisted tasks for the current run-scoped Task Session without user confirmation. Run checklists must be reconciled before parent completion (server: {server_name})."
+            )
+        } else if auto_create_task {
             format!(
                 "Create one or more tasks for the current conversation turn. Task drafts will be persisted automatically without user confirmation (server: {server_name})."
             )
@@ -298,7 +399,9 @@ impl TaskManagerService {
             "add_task",
             &description,
             task_payload_schema(),
-            Arc::new(move |args, ctx| handle_add_task(args, ctx, add_timeout)),
+            Arc::new(move |args, ctx| {
+                handle_add_task(args, ctx, add_timeout, lifecycle_tools_enabled)
+            }),
         );
     }
 
@@ -323,7 +426,7 @@ impl TaskManagerService {
                 let current_turn_only = args
                     .get("current_turn_only")
                     .and_then(Value::as_bool)
-                    .unwrap_or(false);
+                    .unwrap_or(ctx.default_current_turn_only);
                 let limit = args
                     .get("limit")
                     .and_then(Value::as_u64)
@@ -378,8 +481,9 @@ impl TaskManagerService {
                     .get("changes")
                     .ok_or_else(|| "changes is required".to_string())?;
                 let patch = parse_update_patch(changes)?;
-                let task = block_on_result(ctx.store.inner().update_task_by_id(
+                let task = block_on_result(ctx.store.inner().update_task_for_turn(
                     ctx.conversation_id.as_str(),
+                    ctx.conversation_turn_id.as_str(),
                     task_id.as_str(),
                     patch,
                 ))?;
@@ -425,8 +529,9 @@ impl TaskManagerService {
                 } else {
                     Some(parse_update_patch(&Value::Object(patch_args))?)
                 };
-                let task = block_on_result(ctx.store.inner().complete_task_by_id(
+                let task = block_on_result(ctx.store.inner().complete_task_for_turn(
                     ctx.conversation_id.as_str(),
+                    ctx.conversation_turn_id.as_str(),
                     task_id.as_str(),
                     patch,
                 ))?;
@@ -456,11 +561,11 @@ impl TaskManagerService {
             }),
             Arc::new(move |args, ctx| {
                 let task_id = required_string_arg(&args, "task_id")?;
-                let deleted = block_on_result(
-                    ctx.store
-                        .inner()
-                        .delete_task_by_id(ctx.conversation_id.as_str(), task_id.as_str()),
-                )?;
+                let deleted = block_on_result(ctx.store.inner().delete_task_for_turn(
+                    ctx.conversation_id.as_str(),
+                    ctx.conversation_turn_id.as_str(),
+                    task_id.as_str(),
+                ))?;
                 Ok(text_result(ctx.with_context_ids(
                     json!({
                         "deleted": deleted,
@@ -476,12 +581,90 @@ impl TaskManagerService {
             }),
         );
     }
+
+    fn register_reconcile_tasks(&mut self) {
+        self.register_tool(
+            "reconcile_tasks",
+            "Validate and batch-reconcile current-run Task Manager entries before finalizing. Use satisfied only with real evidence; use blocked_terminal for a verified blocker; use waived, superseded, or cancelled with an explicit reason.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "tasks": {
+                        "type": "array",
+                        "minItems": 1,
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "task_id": { "type": "string" },
+                                "closure_state": {
+                                    "type": "string",
+                                    "enum": ["satisfied", "blocked_terminal", "cancelled", "superseded", "waived"]
+                                },
+                                "reason": { "type": "string" },
+                                "outcome_summary": { "type": "string" },
+                                "outcome_items": { "type": "array", "items": outcome_item_schema() },
+                                "resume_hint": { "type": "string" }
+                            },
+                            "required": ["task_id", "closure_state"],
+                            "additionalProperties": false
+                        }
+                    }
+                },
+                "required": ["tasks"],
+                "additionalProperties": false
+            }),
+            Arc::new(move |args, ctx| {
+                let raw = args
+                    .get("tasks")
+                    .cloned()
+                    .ok_or_else(|| "tasks is required".to_string())?;
+                let decisions: Vec<TaskClosureDecision> = serde_json::from_value(raw)
+                    .map_err(|err| format!("invalid reconciliation tasks: {err}"))?;
+                if decisions.is_empty() {
+                    return Err("tasks is required".to_string());
+                }
+                let result = block_on_result(ctx.store.inner().reconcile_tasks_for_turn(
+                    ctx.conversation_id.as_str(),
+                    ctx.conversation_turn_id.as_str(),
+                    decisions,
+                ))?;
+                emit_task_board_refresh(ctx);
+                Ok(text_result(ctx.with_context_ids(
+                    result,
+                    Some(Value::String(ctx.conversation_turn_id.clone())),
+                )))
+            }),
+        );
+    }
+
+    fn register_finalize_session(&mut self) {
+        self.register_tool(
+            "finalize_session",
+            "Validate the current run's Task Manager session before producing the final answer. Returns remaining open required tasks and terminal blockers; it does not invent successful outcomes.",
+            json!({
+                "type": "object",
+                "properties": {},
+                "additionalProperties": false
+            }),
+            Arc::new(move |_args, ctx| {
+                let result = block_on_result(ctx.store.inner().finalize_session_for_turn(
+                    ctx.conversation_id.as_str(),
+                    ctx.conversation_turn_id.as_str(),
+                ))?;
+                Ok(text_result(ctx.with_context_ids(
+                    result,
+                    Some(Value::String(ctx.conversation_turn_id.clone())),
+                )))
+            }),
+        );
+    }
 }
 
 fn handle_add_task(
     args: Value,
     ctx: &ToolContext,
     default_timeout_ms: u64,
+    lifecycle_tools_enabled: bool,
 ) -> Result<Value, String> {
     let draft_tasks = parse_task_drafts(&args)?;
     if draft_tasks.is_empty() {
@@ -499,6 +682,10 @@ fn handle_add_task(
                 "confirmed": true,
                 "cancelled": false,
                 "auto_created": true,
+                "persistent": true,
+                "run_scoped_lifecycle": lifecycle_tools_enabled,
+                "closure_required": lifecycle_tools_enabled,
+                "lifecycle_notice": lifecycle_tools_enabled.then_some("Tasks are persisted. Before ending this turn, close every current-run required task as satisfied, blocked_terminal, cancelled, superseded, or waived."),
                 "created_count": tasks.len(),
                 "tasks": tasks,
             }),

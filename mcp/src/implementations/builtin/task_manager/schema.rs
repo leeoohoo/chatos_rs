@@ -32,6 +32,19 @@ pub(super) fn task_payload_schema() -> Value {
             "blocker_kind": {
                 "type": "string",
                 "enum": ["external_dependency", "permission", "missing_information", "design_decision", "environment_failure", "upstream_bug", "unknown"]
+            },
+            "scope": {
+                "type": "string",
+                "enum": ["run_checklist", "durable_followup"],
+                "description": "run_checklist belongs to the current execution session; durable_followup survives independently after the current run."
+            },
+            "required_for_parent_completion": {
+                "type": "boolean",
+                "description": "Whether a run_checklist entry blocks parent completion. Ignored for durable_followup."
+            },
+            "idempotency_key": {
+                "type": "string",
+                "description": "Stable semantic key used to reuse an existing task in the current session instead of creating a duplicate."
             }
         },
         "additionalProperties": false
@@ -63,6 +76,19 @@ fn task_item_schema() -> Value {
             "blocker_kind": {
                 "type": "string",
                 "enum": ["external_dependency", "permission", "missing_information", "design_decision", "environment_failure", "upstream_bug", "unknown"]
+            },
+            "scope": {
+                "type": "string",
+                "enum": ["run_checklist", "durable_followup"],
+                "description": "run_checklist belongs to the current execution session; durable_followup survives independently after the current run."
+            },
+            "required_for_parent_completion": {
+                "type": "boolean",
+                "description": "Whether a run_checklist entry blocks parent completion. Ignored for durable_followup."
+            },
+            "idempotency_key": {
+                "type": "string",
+                "description": "Stable semantic key used to reuse an existing task in the current session instead of creating a duplicate."
             }
         },
         "required": ["title"],

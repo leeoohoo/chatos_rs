@@ -606,6 +606,7 @@ struct RetryMessageRunRequest<'a> {
     source_session_id: &'a str,
     source_user_message_id: Option<&'a str>,
     source_turn_id: Option<&'a str>,
+    retry_instruction: Option<&'a str>,
 }
 
 pub async fn retry_message_run(
@@ -614,6 +615,7 @@ pub async fn retry_message_run(
     source_session_id: &str,
     source_user_message_id: Option<&str>,
     source_turn_id: Option<&str>,
+    retry_instruction: Option<&str>,
 ) -> Result<Value, String> {
     let path = format!(
         "/internal/chatos/message-runs/{}/retry",
@@ -626,6 +628,7 @@ pub async fn retry_message_run(
             source_session_id,
             source_user_message_id,
             source_turn_id,
+            retry_instruction,
         },
         "chatos.execution.start",
     )

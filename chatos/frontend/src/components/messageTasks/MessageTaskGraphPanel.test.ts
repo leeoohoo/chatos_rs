@@ -5,9 +5,27 @@ import { describe, expect, it } from 'vitest';
 
 import type { MessageTaskRunnerGraphResponse } from '../../lib/api/client/types';
 import {
+  calculateTaskGraphFitZoom,
+  clampTaskGraphZoom,
   normalizeMessageTaskGraphEdgesForDisplay,
   normalizeMessageTaskGraphForDisplay,
+  TASK_GRAPH_MAX_ZOOM,
+  TASK_GRAPH_MIN_ZOOM,
 } from './MessageTaskGraphPanel';
+
+describe('task graph viewport zoom', () => {
+  it('clamps manual zoom to readable limits', () => {
+    expect(clampTaskGraphZoom(0.1)).toBe(TASK_GRAPH_MIN_ZOOM);
+    expect(clampTaskGraphZoom(1.26)).toBe(1.3);
+    expect(clampTaskGraphZoom(3)).toBe(TASK_GRAPH_MAX_ZOOM);
+  });
+
+  it('fits the whole graph without rounding above the available viewport', () => {
+    expect(calculateTaskGraphFitZoom(900, 600, 1_500, 1_200)).toBe(0.5);
+    expect(calculateTaskGraphFitZoom(900, 700, 1_200, 800)).toBe(0.7);
+    expect(calculateTaskGraphFitZoom(1_600, 1_200, 1_200, 800)).toBe(1);
+  });
+});
 
 describe('normalizeMessageTaskGraphEdgesForDisplay', () => {
   it('keeps multiple direct prerequisites parallel instead of serializing same-depth nodes', () => {

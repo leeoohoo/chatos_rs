@@ -46,7 +46,7 @@ use super::workspace_mcp::{
 };
 use super::{
     build_builtin_registry, summarized_report_content, unfinished_subtasks_error,
-    unfinished_subtasks_for_task, DisabledBuiltinProvider, RunService, TaskService,
+    DisabledBuiltinProvider, RunService, TaskService,
 };
 
 mod callbacks;

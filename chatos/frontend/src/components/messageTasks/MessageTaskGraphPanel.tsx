@@ -1,7 +1,15 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-import { useMemo, useState, type FC } from 'react';
+import {
+  useCallback,
+  useMemo,
+  useRef,
+  useState,
+  type FC,
+  type WheelEvent,
+} from 'react';
+import { Maximize2, Minus, Plus } from 'lucide-react';
 
 import type {
   MessageTaskRunnerGraphResponse,
@@ -26,6 +34,31 @@ export {
   normalizeMessageTaskGraphEdgesForDisplay,
   normalizeMessageTaskGraphForDisplay,
 } from './MessageTaskGraphModel';
+
+export const TASK_GRAPH_MIN_ZOOM = 0.5;
+export const TASK_GRAPH_MAX_ZOOM = 1.6;
+export const TASK_GRAPH_ZOOM_STEP = 0.1;
+
+export const clampTaskGraphZoom = (zoom: number): number => (
+  Math.min(TASK_GRAPH_MAX_ZOOM, Math.max(TASK_GRAPH_MIN_ZOOM, Math.round(zoom * 10) / 10))
+);
+
+export const calculateTaskGraphFitZoom = (
+  availableWidth: number,
+  availableHeight: number,
+  contentWidth: number,
+  contentHeight: number,
+): number => {
+  if (availableWidth <= 0 || availableHeight <= 0 || contentWidth <= 0 || contentHeight <= 0) {
+    return 1;
+  }
+  const rawZoom = Math.min(
+    1,
+    availableWidth / contentWidth,
+    availableHeight / contentHeight,
+  );
+  return Math.max(TASK_GRAPH_MIN_ZOOM, Math.floor(rawZoom * 10) / 10);
+};
 
 interface MessageTaskGraphPanelProps {
   graph: MessageTaskRunnerGraphResponse;
@@ -56,6 +89,8 @@ export const MessageTaskGraphPanel: FC<MessageTaskGraphPanelProps> = ({
 }) => {
   const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
   const [displayMode, setDisplayMode] = useState<TaskGraphDisplayMode>('reduced');
+  const [zoom, setZoom] = useState(1);
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
 
   const displayGraph = useMemo(
     () => normalizeMessageTaskGraphForDisplay(graph, displayMode),
@@ -91,10 +126,16 @@ export const MessageTaskGraphPanel: FC<MessageTaskGraphPanelProps> = ({
     }
     const upstreamIds = walkTaskIds(activeTaskId, parentMap);
     const downstreamIds = walkTaskIds(activeTaskId, childMap);
+    const focusTaskIds = new Set<string>([
+      activeTaskId,
+      ...(parentMap.get(activeTaskId) || []),
+      ...(childMap.get(activeTaskId) || []),
+    ]);
     return {
       activeNode,
       upstreamIds,
       downstreamIds,
+      focusTaskIds,
       relatedTaskIds: new Set<string>([activeTaskId, ...upstreamIds, ...downstreamIds]),
     };
   }, [activeTaskId, childMap, parentMap, taskById]);
@@ -105,6 +146,7 @@ export const MessageTaskGraphPanel: FC<MessageTaskGraphPanelProps> = ({
       readString(graph.source_user_message_id),
       activeTaskId,
       activeContext?.relatedTaskIds || null,
+      activeContext?.focusTaskIds || null,
       loadingProcessTaskId,
       loadingRunId,
       loadingChangesRunId,
@@ -123,6 +165,7 @@ export const MessageTaskGraphPanel: FC<MessageTaskGraphPanelProps> = ({
     return layoutMessageTaskGraph(flowNodes, flowEdges);
   }, [
     activeContext?.relatedTaskIds,
+    activeContext?.focusTaskIds,
     activeTaskId,
     displayGraph.nodes,
     displayEdges,
@@ -166,22 +209,64 @@ export const MessageTaskGraphPanel: FC<MessageTaskGraphPanelProps> = ({
         height: 0,
       };
     }
-    const minX = Math.min(...positionedNodes.map((node) => node.x));
-    const minY = Math.min(...positionedNodes.map((node) => node.y));
-    const maxX = Math.max(...positionedNodes.map((node) => node.x + node.width));
-    const maxY = Math.max(...positionedNodes.map((node) => node.y + node.height));
+    const routedEdgePoints = layout.edges.flatMap((edge) => edge.data?.layoutPoints || []);
+    const minX = Math.min(
+      ...positionedNodes.map((node) => node.x),
+      ...routedEdgePoints.map((point) => point.x),
+    );
+    const minY = Math.min(
+      ...positionedNodes.map((node) => node.y),
+      ...routedEdgePoints.map((point) => point.y),
+    );
+    const maxX = Math.max(
+      ...positionedNodes.map((node) => node.x + node.width),
+      ...routedEdgePoints.map((point) => point.x),
+    );
+    const maxY = Math.max(
+      ...positionedNodes.map((node) => node.y + node.height),
+      ...routedEdgePoints.map((point) => point.y),
+    );
     return {
       minX,
       minY,
       width: maxX - minX,
       height: maxY - minY,
     };
-  }, [positionedNodes]);
+  }, [layout.edges, positionedNodes]);
 
   const contentWidth = Math.max(bounds.width + CANVAS_PADDING * 2, panelWidth - VIEW_PADDING);
   const contentHeight = Math.max(bounds.height + CANVAS_PADDING * 2, 420);
   const offsetX = CANVAS_PADDING - bounds.minX;
   const offsetY = CANVAS_PADDING - bounds.minY;
+
+  const updateZoom = useCallback((nextZoom: number) => {
+    setZoom(clampTaskGraphZoom(nextZoom));
+  }, []);
+
+  const fitGraphToView = useCallback(() => {
+    const container = scrollContainerRef.current;
+    if (!container) return;
+    const nextZoom = calculateTaskGraphFitZoom(
+      Math.max(0, container.clientWidth - 32),
+      Math.max(0, container.clientHeight - 112),
+      contentWidth,
+      contentHeight,
+    );
+    setZoom(nextZoom);
+    window.requestAnimationFrame(() => {
+      if (typeof container.scrollTo === 'function') {
+        container.scrollTo({ left: 0, top: 0, behavior: 'smooth' });
+      }
+    });
+  }, [contentHeight, contentWidth]);
+
+  const handleGraphWheel = useCallback((event: WheelEvent<HTMLDivElement>) => {
+    if (!event.ctrlKey && !event.metaKey) return;
+    event.preventDefault();
+    setZoom((currentZoom) => clampTaskGraphZoom(
+      currentZoom + (event.deltaY > 0 ? -TASK_GRAPH_ZOOM_STEP : TASK_GRAPH_ZOOM_STEP),
+    ));
+  }, []);
 
   if (loading) {
     return (
@@ -211,7 +296,7 @@ export const MessageTaskGraphPanel: FC<MessageTaskGraphPanelProps> = ({
   }
 
   return (
-    <div className="relative h-full min-h-[26rem] overflow-hidden rounded-xl border border-border bg-card">
+    <div className="relative h-full min-h-[26rem] overflow-hidden rounded-xl border border-border bg-card bg-[radial-gradient(circle_at_center,rgba(148,163,184,0.14)_1px,transparent_1px)] bg-[length:20px_20px]">
       <div className="absolute left-4 top-4 z-20 flex max-w-[calc(100%-8rem)] flex-col gap-2">
         <div className="flex flex-wrap gap-2 rounded-full border border-border/80 bg-background/88 px-3 py-2 text-[11px] text-muted-foreground shadow-sm backdrop-blur-sm">
           <span className="inline-flex items-center gap-1.5">
@@ -272,99 +357,204 @@ export const MessageTaskGraphPanel: FC<MessageTaskGraphPanelProps> = ({
         ) : null}
       </div>
 
-      <div className="h-full overflow-auto px-4 pb-4 pt-24">
+      <div
+        ref={scrollContainerRef}
+        className="h-full overflow-auto overscroll-contain px-4 pb-4 pt-24"
+        onWheel={handleGraphWheel}
+      >
         <div
           className="relative mx-auto"
           style={{
-            width: contentWidth,
-            height: contentHeight,
+            width: contentWidth * zoom,
+            height: contentHeight * zoom,
           }}
         >
-          <svg
-            className="pointer-events-none absolute inset-0"
-            width={contentWidth}
-            height={contentHeight}
-            viewBox={`0 0 ${contentWidth} ${contentHeight}`}
-            aria-hidden
+          <div
+            data-testid="message-task-graph-canvas"
+            className="relative origin-top-left will-change-transform transition-transform duration-150 ease-out motion-reduce:transition-none"
+            style={{
+              width: contentWidth,
+              height: contentHeight,
+              transform: `scale(${zoom})`,
+              transformOrigin: 'top left',
+            }}
           >
-            <defs>
-              <marker
-                id="task-graph-arrow"
-                markerWidth="12"
-                markerHeight="12"
-                refX="10"
-                refY="6"
-                orient="auto"
-                markerUnits="strokeWidth"
-              >
-                <path d="M 0 0 L 12 6 L 0 12 z" fill="context-stroke" />
-              </marker>
-              <marker
-                id="task-graph-arrow-running"
-                markerWidth="12"
-                markerHeight="12"
-                refX="10"
-                refY="6"
-                orient="auto"
-                markerUnits="strokeWidth"
-              >
-                <path
-                  className="message-task-running-arrow"
-                  d="M 0 0 L 12 6 L 0 12 z"
-                  fill="context-stroke"
-                />
-              </marker>
-            </defs>
-            {layout.edges.map((edge) => {
-              const source = nodeLookup.get(edge.source);
-              const target = nodeLookup.get(edge.target);
-              if (!source || !target) {
-                return null;
-              }
-              const stroke = edge.data?.stroke || 'rgba(100, 116, 139, 0.72)';
-              const layoutPoints = edge.data?.layoutPoints?.map((point) => ({
-                x: point.x + offsetX,
-                y: point.y + offsetY,
-              }));
-              return (
-                <path
-                  key={edge.id}
-                  className={edge.data?.animated ? 'message-task-running-edge' : undefined}
-                  d={edgePath(
-                    { ...source, x: source.x + offsetX, y: source.y + offsetY },
-                    { ...target, x: target.x + offsetX, y: target.y + offsetY },
-                    layoutPoints,
-                  )}
-                  fill="none"
-                  strokeLinecap="round"
-                  style={{
-                    stroke,
-                    strokeWidth: typeof edge.style?.strokeWidth === 'number' ? edge.style.strokeWidth : 1.6,
-                    opacity: typeof edge.style?.opacity === 'number' ? edge.style.opacity : 1,
-                    strokeDasharray: edge.data?.dashArray,
-                  }}
-                  markerEnd={`url(#${edge.data?.markerId || 'task-graph-arrow'})`}
-                />
-              );
-            })}
-          </svg>
-
-          {positionedNodes.map((node) => (
-            <div
-              key={node.id}
-              className="absolute"
-              style={{
-                left: node.x + offsetX,
-                top: node.y + offsetY,
-                width: node.width,
-                height: node.height,
-                zIndex: node.zIndex,
-              }}
+            <svg
+              className="pointer-events-none absolute inset-0"
+              width={contentWidth}
+              height={contentHeight}
+              viewBox={`0 0 ${contentWidth} ${contentHeight}`}
+              aria-hidden
             >
-              <MessageTaskCardNode node={node} />
-            </div>
-          ))}
+              <defs>
+                <marker
+                  id="task-graph-arrow"
+                  markerWidth="9"
+                  markerHeight="9"
+                  refX="8"
+                  refY="4.5"
+                  orient="auto"
+                  markerUnits="strokeWidth"
+                >
+                  <path d="M 0 0 L 9 4.5 L 0 9 z" fill="context-stroke" />
+                </marker>
+                <marker
+                  id="task-graph-arrow-running"
+                  markerWidth="9"
+                  markerHeight="9"
+                  refX="8"
+                  refY="4.5"
+                  orient="auto"
+                  markerUnits="strokeWidth"
+                >
+                  <path
+                    className="message-task-running-arrow"
+                    d="M 0 0 L 9 4.5 L 0 9 z"
+                    fill="context-stroke"
+                  />
+                </marker>
+                <marker
+                  id="task-graph-arrow-focus"
+                  markerWidth="9"
+                  markerHeight="9"
+                  refX="8"
+                  refY="4.5"
+                  orient="auto"
+                  markerUnits="strokeWidth"
+                >
+                  <path
+                    className="message-task-focus-arrow"
+                    d="M 0 0 L 9 4.5 L 0 9 z"
+                    fill="context-stroke"
+                  />
+                </marker>
+                <marker
+                  id="task-graph-arrow-context"
+                  markerWidth="8"
+                  markerHeight="8"
+                  refX="7"
+                  refY="4"
+                  orient="auto"
+                  markerUnits="strokeWidth"
+                >
+                  <path d="M 0 0 L 8 4 L 0 8 z" fill="context-stroke" />
+                </marker>
+              </defs>
+              {layout.edges.map((edge) => {
+                const source = nodeLookup.get(edge.source);
+                const target = nodeLookup.get(edge.target);
+                if (!source || !target) {
+                  return null;
+                }
+                const stroke = edge.data?.stroke || 'rgba(100, 116, 139, 0.72)';
+                const layoutPoints = edge.data?.layoutPoints?.map((point) => ({
+                  x: point.x + offsetX,
+                  y: point.y + offsetY,
+                }));
+                const path = edgePath(
+                  { ...source, x: source.x + offsetX, y: source.y + offsetY },
+                  { ...target, x: target.x + offsetX, y: target.y + offsetY },
+                  layoutPoints,
+                );
+                const strokeWidth = typeof edge.style?.strokeWidth === 'number'
+                  ? edge.style.strokeWidth
+                  : 1.6;
+                const opacity = typeof edge.style?.opacity === 'number' ? edge.style.opacity : 1;
+                const edgeClassName = [
+                  edge.data?.animated ? 'message-task-running-edge' : null,
+                  edge.data?.focusAnimated ? 'message-task-focus-edge' : null,
+                ].filter(Boolean).join(' ') || undefined;
+                return (
+                  <g key={edge.id}>
+                    <path
+                      d={path}
+                      fill="none"
+                      stroke="hsl(var(--card))"
+                      strokeWidth={strokeWidth + 5}
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      opacity={Math.min(0.92, opacity + 0.18)}
+                    />
+                    <path
+                      data-testid={`message-task-edge-${edge.id}`}
+                      className={edgeClassName}
+                      d={path}
+                      fill="none"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      style={{
+                        stroke,
+                        strokeWidth,
+                        opacity,
+                        strokeDasharray: edge.data?.dashArray,
+                      }}
+                      markerEnd={`url(#${edge.data?.markerId || 'task-graph-arrow'})`}
+                    />
+                  </g>
+                );
+              })}
+            </svg>
+
+            {positionedNodes.map((node) => (
+              <div
+                key={node.id}
+                className="absolute"
+                style={{
+                  left: node.x + offsetX,
+                  top: node.y + offsetY,
+                  width: node.width,
+                  height: node.height,
+                  zIndex: node.zIndex,
+                }}
+              >
+                <MessageTaskCardNode node={node} />
+              </div>
+            ))}
+          </div>
         </div>
+      </div>
+
+      <div className="absolute bottom-4 right-4 z-30 inline-flex items-center rounded-lg border border-border bg-background/94 p-1 text-xs text-foreground shadow-md backdrop-blur-sm">
+        <button
+          type="button"
+          className="inline-flex h-8 w-8 items-center justify-center rounded-md hover:bg-accent disabled:cursor-not-allowed disabled:opacity-40"
+          aria-label="缩小流程图"
+          title="缩小（Ctrl/⌘ + 滚轮）"
+          disabled={zoom <= TASK_GRAPH_MIN_ZOOM}
+          onClick={() => updateZoom(zoom - TASK_GRAPH_ZOOM_STEP)}
+        >
+          <Minus className="h-4 w-4" />
+        </button>
+        <button
+          type="button"
+          className="min-w-[3.75rem] rounded-md px-2 py-1.5 tabular-nums hover:bg-accent"
+          aria-label="重置流程图缩放"
+          title="恢复到 100%"
+          onClick={() => updateZoom(1)}
+        >
+          {Math.round(zoom * 100)}%
+        </button>
+        <button
+          type="button"
+          className="inline-flex h-8 w-8 items-center justify-center rounded-md hover:bg-accent disabled:cursor-not-allowed disabled:opacity-40"
+          aria-label="放大流程图"
+          title="放大（Ctrl/⌘ + 滚轮）"
+          disabled={zoom >= TASK_GRAPH_MAX_ZOOM}
+          onClick={() => updateZoom(zoom + TASK_GRAPH_ZOOM_STEP)}
+        >
+          <Plus className="h-4 w-4" />
+        </button>
+        <span className="mx-1 h-5 w-px bg-border" />
+        <button
+          type="button"
+          className="inline-flex h-8 items-center justify-center gap-1.5 rounded-md px-2 hover:bg-accent"
+          aria-label="适应流程图视图"
+          title="把整个流程图缩放到当前窗口"
+          onClick={fitGraphToView}
+        >
+          <Maximize2 className="h-3.5 w-3.5" />
+          适应
+        </button>
       </div>
 
       {displayEdges.length === 0 ? (

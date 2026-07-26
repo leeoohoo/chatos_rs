@@ -306,9 +306,15 @@ pub(super) async fn cancel_run(
     Ok(Json(json!({ "success": true, "run": run })))
 }
 
+#[derive(Debug, Default, Deserialize)]
+pub(super) struct RetryLocalTaskRunRequest {
+    retry_instruction: Option<String>,
+}
+
 pub(super) async fn retry_run(
     Path(run_id): Path<String>,
     State(runtime): State<LocalRuntime>,
+    payload: Option<Json<RetryLocalTaskRunRequest>>,
 ) -> Result<Json<Value>, LocalRuntimeApiError> {
     let owner = owner_context(&runtime).await?;
     let database = runtime.local_database()?;
@@ -321,10 +327,24 @@ pub(super) async fn retry_run(
                 "Local task run was not found",
             )
         })?;
-    if failed_run.status != "failed" {
+    if !matches!(
+        failed_run.status.as_str(),
+        "failed" | "blocked" | "interrupted"
+    ) {
         return Err(LocalRuntimeApiError::conflict(
             "local_task_run_not_failed",
-            "Only a failed local task run can be retried",
+            "Only a failed, blocked, or interrupted local task run can be retried",
+        ));
+    }
+    let retry_instruction = payload
+        .as_ref()
+        .and_then(|payload| payload.0.retry_instruction.as_deref())
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    if retry_instruction.is_some_and(|value| value.chars().count() > 4000) {
+        return Err(LocalRuntimeApiError::conflict(
+            "local_task_retry_instruction_too_long",
+            "Local task retry instruction must not exceed 4000 characters",
         ));
     }
     let current_task_model_config_id = if failed_run.task_kind == "conversation_task" {
@@ -354,6 +374,7 @@ pub(super) async fn retry_run(
             owner.owner_user_id.as_str(),
             run_id.as_str(),
             model_config_id.as_str(),
+            retry_instruction,
         )
         .await?
         .ok_or_else(|| {

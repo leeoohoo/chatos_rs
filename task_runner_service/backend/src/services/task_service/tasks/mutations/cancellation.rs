@@ -6,6 +6,10 @@ use std::collections::{HashSet, VecDeque};
 use serde_json::json;
 
 use super::*;
+use crate::services::task_manager_lifecycle::{
+    append_task_session_finalized_event, apply_task_closure, finalize_task_session_entries,
+    task_has_manager_lifecycle,
+};
 
 const MAX_CASCADE_CANCEL_TASKS: usize = 500;
 
@@ -181,6 +185,14 @@ impl TaskService {
         let now = now_rfc3339();
         task.status = TaskStatus::Cancelled;
         task.result_summary = Some(format!("任务已取消：{reason}"));
+        if task_has_manager_lifecycle(&task) {
+            apply_task_closure(
+                &mut task,
+                TaskClosureState::Cancelled,
+                Some(reason.to_string()),
+                now.as_str(),
+            )?;
+        }
         if let Some(last_run_id) = active_run_ids.first() {
             task.last_run_id = Some(last_run_id.clone());
         }
@@ -225,6 +237,14 @@ impl TaskService {
                         Some(json!({ "reason": reason })),
                     ))
                     .await?;
+                let summary = finalize_task_session_entries(
+                    &self.store,
+                    run.task_id.as_str(),
+                    run.id.as_str(),
+                    run.status,
+                )
+                .await?;
+                append_task_session_finalized_event(&self.store, &run, &summary).await;
             }
             if run.status == TaskRunStatus::Queued {
                 run.status = TaskRunStatus::Cancelled;

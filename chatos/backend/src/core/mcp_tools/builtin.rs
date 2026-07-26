@@ -99,6 +99,8 @@ pub fn build_builtin_tool_service(server: &McpBuiltinServer) -> Result<BuiltinTo
                 review_timeout_ms: crate::services::task_manager::REVIEW_TIMEOUT_MS_DEFAULT,
                 auto_create_task: server.auto_create_task,
                 expose_context_ids: true,
+                default_current_turn_only: false,
+                lifecycle_tools_enabled: false,
                 store: TaskManagerStoreRef::new(Arc::new(ChatosTaskManagerStore)),
             })?;
             Ok(BuiltinToolService::TaskManager(service))

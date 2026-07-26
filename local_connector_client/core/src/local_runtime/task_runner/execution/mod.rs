@@ -34,7 +34,8 @@ pub(super) use self::completion::complete_requirement_if_done;
 use self::completion::finish_task_run;
 pub(crate) use self::completion::user_visible_task_run_failure_receipt;
 pub(super) use self::completion::{
-    persist_task_run_receipt, set_requirement_status, set_work_item_status,
+    finalize_task_manager_session, persist_task_run_receipt, set_requirement_status,
+    set_work_item_status,
 };
 
 pub(super) async fn execute_local_task_run(
@@ -215,7 +216,11 @@ pub(super) async fn execute_local_task_run(
             format!("local task run {} terminal cleanup failed: {error}", run.id).as_str(),
         );
     }
-    finish_task_run(runtime, run, report, abort_token.is_cancelled()).await
+    let cancel_requested = database
+        .local_task_run_cancel_requested(run.id.as_str())
+        .await
+        .unwrap_or(false);
+    finish_task_run(runtime, run, report, cancel_requested).await
 }
 
 #[cfg(test)]

@@ -264,6 +264,44 @@
   }
 }
 
+@keyframes message-task-focus-card-breathe {
+  0%,
+  100% {
+    border-color: rgba(59, 130, 246, 0.48);
+    box-shadow: 0 0 0 1px rgba(59, 130, 246, 0.2), 0 12px 30px -26px rgba(37, 99, 235, 0.62);
+  }
+  50% {
+    border-color: rgba(59, 130, 246, 0.98);
+    box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.42), 0 0 0 7px rgba(59, 130, 246, 0.12), 0 18px 42px -25px rgba(37, 99, 235, 0.88);
+  }
+}
+
+@keyframes message-task-focus-edge-flow {
+  to {
+    stroke-dashoffset: -34;
+  }
+}
+
+@keyframes message-task-focus-edge-pulse {
+  0%,
+  100% {
+    opacity: 0.72;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+@keyframes message-task-focus-arrow-pulse {
+  0%,
+  100% {
+    opacity: 0.72;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
 .message-task-running-card {
   box-shadow: 0 20px 45px -34px rgba(37, 99, 235, 0.7);
 }
@@ -281,6 +319,36 @@
 
 .message-task-running-arrow {
   animation: message-task-running-arrow-pulse 1s ease-in-out infinite;
+}
+
+.message-task-focus-card {
+  animation: message-task-focus-card-breathe 1.65s ease-in-out infinite;
+  will-change: border-color, box-shadow;
+}
+
+.message-task-focus-card-active {
+  animation-duration: 1.3s;
+}
+
+.message-task-focus-edge {
+  stroke-dasharray: 11 7;
+  filter: drop-shadow(0 0 2px rgba(59, 130, 246, 0.58));
+  animation:
+    message-task-focus-edge-flow 0.9s linear infinite,
+    message-task-focus-edge-pulse 1.65s ease-in-out infinite;
+  will-change: stroke-dashoffset, opacity;
+}
+
+.message-task-focus-arrow {
+  animation: message-task-focus-arrow-pulse 1.3s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .message-task-focus-card,
+  .message-task-focus-edge,
+  .message-task-focus-arrow {
+    animation: none;
+  }
 }
 
 /* 弹框通用样式 */

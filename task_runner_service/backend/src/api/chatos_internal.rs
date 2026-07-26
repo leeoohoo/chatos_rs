@@ -102,6 +102,13 @@ struct ChatosMessageTaskQuery {
 }
 
 #[derive(Debug, Deserialize)]
+struct RetryChatosMessageRunRequest {
+    #[serde(flatten)]
+    source: ChatosMessageTaskQuery,
+    retry_instruction: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
 struct ChatosMessageRunQuery {
     #[serde(flatten)]
     source: ChatosMessageTaskQuery,
@@ -942,11 +949,21 @@ async fn retry_chatos_message_run(
     Path(run_id): Path<String>,
     State(state): State<AppState>,
     headers: HeaderMap,
-    Json(source): Json<ChatosMessageTaskQuery>,
+    Json(request): Json<RetryChatosMessageRunRequest>,
 ) -> Result<(StatusCode, Json<Value>), InternalApiError> {
     require_chatos_execution_mutation(&state, &headers)?;
     let (source_session_id, source_user_message_id, source_turn_id) =
-        validate_chatos_message_query(&source)?;
+        validate_chatos_message_query(&request.source)?;
+    let retry_instruction = request
+        .retry_instruction
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    if retry_instruction.is_some_and(|value| value.chars().count() > 4000) {
+        return Err(InternalApiError::bad_request(
+            "retry_instruction must not exceed 4000 characters",
+        ));
+    }
     let run = require_chatos_message_run(
         &state,
         run_id.trim(),
@@ -955,10 +972,10 @@ async fn retry_chatos_message_run(
         source_turn_id,
     )
     .await?;
-    require_failed_message_run(&run.status)?;
+    require_retryable_message_run(&run.status)?;
     let retried = state
         .run_service
-        .retry_run(run.id.as_str())
+        .retry_run_with_instruction(run.id.as_str(), retry_instruction.map(ToOwned::to_owned))
         .await
         .map_err(InternalApiError::bad_request)?
         .ok_or_else(|| InternalApiError::not_found("run not found for message"))?;
@@ -971,12 +988,12 @@ async fn retry_chatos_message_run(
     ))
 }
 
-fn require_failed_message_run(status: &TaskRunStatus) -> Result<(), InternalApiError> {
-    if status == &TaskRunStatus::Failed {
+fn require_retryable_message_run(status: &TaskRunStatus) -> Result<(), InternalApiError> {
+    if matches!(status, TaskRunStatus::Failed | TaskRunStatus::Blocked) {
         return Ok(());
     }
     Err(InternalApiError::bad_request(
-        "only a failed message task run can be retried",
+        "only a failed or blocked message task run can be retried",
     ))
 }
 
@@ -1138,20 +1155,22 @@ fn require_chatos_internal_auth(
 mod retry_tests {
     use axum::http::StatusCode;
 
-    use super::{require_failed_message_run, TaskRunStatus};
+    use super::{require_retryable_message_run, TaskRunStatus};
 
     #[test]
-    fn message_run_retry_is_limited_to_failed_nodes() {
-        require_failed_message_run(&TaskRunStatus::Failed).expect("failed run should be retryable");
+    fn message_run_retry_accepts_failed_and_blocked_nodes() {
+        for status in [TaskRunStatus::Failed, TaskRunStatus::Blocked] {
+            require_retryable_message_run(&status)
+                .expect("terminal problem run should be retryable");
+        }
         for status in [
             TaskRunStatus::Queued,
             TaskRunStatus::Running,
             TaskRunStatus::Succeeded,
-            TaskRunStatus::Blocked,
             TaskRunStatus::Cancelled,
         ] {
-            let error = require_failed_message_run(&status)
-                .expect_err("non-failed run must not be retried from a message task card");
+            let error = require_retryable_message_run(&status)
+                .expect_err("non-retryable run must not be retried from a message task card");
             assert_eq!(error.status, StatusCode::BAD_REQUEST);
         }
     }

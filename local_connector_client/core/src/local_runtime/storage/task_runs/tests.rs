@@ -141,7 +141,12 @@ async fn manual_retry_requeues_an_exhausted_failed_run_with_a_fresh_attempt_budg
     .expect("mark run exhausted and failed");
 
     let retried = database
-        .retry_local_task_run("user-run", queued.id.as_str(), "model-current")
+        .retry_local_task_run(
+            "user-run",
+            queued.id.as_str(),
+            "model-current",
+            Some("配置已经修复，请重新验证"),
+        )
         .await
         .expect("retry failed run")
         .expect("retryable run");
@@ -150,6 +155,7 @@ async fn manual_retry_requeues_an_exhausted_failed_run_with_a_fresh_attempt_budg
     assert_eq!(retried.attempt, 0);
     assert_eq!(retried.model_config_id, "model-current");
     assert_eq!(retried.error, None);
+    assert!(retried.prompt.contains("配置已经修复，请重新验证"));
 
     database.close().await;
     fs::remove_dir_all(root).expect("cleanup database");

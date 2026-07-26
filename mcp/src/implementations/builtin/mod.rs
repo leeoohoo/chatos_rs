@@ -69,9 +69,9 @@ pub use remote_connection_controller::{
     DEFAULT_MAX_READ_FILE_BYTES, MAX_COMMAND_TIMEOUT_SECONDS,
 };
 pub use task_manager::{
-    TaskDraft, TaskManagerOptions, TaskManagerService, TaskManagerStore, TaskManagerStoreRef,
-    TaskOutcomeItem, TaskStreamChunkCallback, TaskUpdatePatch, REVIEW_TIMEOUT_MS_DEFAULT,
-    TASK_NOT_FOUND_ERR,
+    TaskClosureDecision, TaskDraft, TaskManagerOptions, TaskManagerService, TaskManagerStore,
+    TaskManagerStoreRef, TaskOutcomeItem, TaskStreamChunkCallback, TaskUpdatePatch,
+    REVIEW_TIMEOUT_MS_DEFAULT, TASK_NOT_FOUND_ERR,
 };
 pub use terminal_controller::{
     coerce_process_identifier, resolve_wait_timeout_ms, TerminalCommandPermissions,

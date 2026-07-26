@@ -3,6 +3,7 @@
 
 mod async_tasks;
 mod create;
+mod lifecycle;
 mod mutations;
 mod queries;
 mod validation;

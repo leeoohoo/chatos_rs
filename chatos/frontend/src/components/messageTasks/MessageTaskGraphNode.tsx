@@ -1,8 +1,14 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-import { memo, useEffect, useState, type MouseEvent } from 'react';
-import { Activity, FileDiff, FileText, ScrollText } from 'lucide-react';
+import {
+  memo,
+  useEffect,
+  useRef,
+  useState,
+  type MouseEvent,
+} from 'react';
+import { Activity, CircleAlert, FileDiff, FileText, ScrollText } from 'lucide-react';
 
 import { cn } from '../../lib/utils';
 import { StatusBadge } from './parts';
@@ -19,7 +25,7 @@ const descriptionClampStyle = {
   whiteSpace: 'pre-wrap' as const,
 };
 
-const stopNodeButtonEvent = (event: MouseEvent<HTMLButtonElement>) => {
+const stopNodeControlEvent = (event: MouseEvent<HTMLElement>) => {
   event.stopPropagation();
 };
 
@@ -73,6 +79,7 @@ export const MessageTaskCardNode = memo(({ node }: { node: PositionedTaskNode })
     currentSourceUserMessageId,
     graphNode,
     isActive,
+    isFocusEmphasized,
     isDimmed,
     loadingChanges,
     loadingProcessLog,
@@ -81,16 +88,30 @@ export const MessageTaskCardNode = memo(({ node }: { node: PositionedTaskNode })
     onOpenChanges,
     onOpenProcessLog,
     onOpenRun,
+    onSelectTask,
   } = node.data;
   const { task } = graphNode;
   const groupedTasks = graphNode.groupedTasks?.length ? graphNode.groupedTasks : [task];
   const [selectedStageTaskId, setSelectedStageTaskId] = useState(task.id);
+  const attentionTaskId = groupedTasks.find(
+    (stageTask) => readString(stageTask.status)?.toLowerCase() === 'failed',
+  )?.id || groupedTasks.find(
+    (stageTask) => readString(stageTask.status)?.toLowerCase() === 'blocked',
+  )?.id || null;
+  const previousAttentionTaskIdRef = useRef<string | null>(null);
   useEffect(() => {
     if (!groupedTasks.some((stageTask) => stageTask.id === selectedStageTaskId)) {
       setSelectedStageTaskId(task.id);
     }
   }, [groupedTasks, selectedStageTaskId, task.id]);
+  useEffect(() => {
+    if (attentionTaskId && attentionTaskId !== previousAttentionTaskIdRef.current) {
+      setSelectedStageTaskId(attentionTaskId);
+    }
+    previousAttentionTaskIdRef.current = attentionTaskId;
+  }, [attentionTaskId]);
   const actionTask = groupedTasks.find((stageTask) => stageTask.id === selectedStageTaskId) || task;
+  const actionTaskBlocked = readString(actionTask.status)?.toLowerCase() === 'blocked';
   const isRunning = isRunningTask(task);
   const description = readString(task.description)
     || readString(task.objective)
@@ -104,19 +125,23 @@ export const MessageTaskCardNode = memo(({ node }: { node: PositionedTaskNode })
 
   return (
     <article
+      data-testid={`message-task-node-${task.id}`}
       className={cn(
-        'relative overflow-hidden rounded-xl border p-3 shadow-sm backdrop-blur-sm transition-all duration-150',
+        'relative cursor-pointer overflow-hidden rounded-xl border p-3 shadow-sm backdrop-blur-sm transition-all duration-150',
         cardTone(graphNode),
+        isFocusEmphasized && 'message-task-focus-card',
+        isActive && 'message-task-focus-card-active',
         isActive && 'ring-2 ring-primary/35 shadow-[0_22px_45px_-30px_rgba(37,99,235,0.9)]',
         isDimmed && 'opacity-40 saturate-50',
         isRunning && 'message-task-running-card',
       )}
+      onClick={() => onSelectTask(task.id)}
       style={{
         width: node.width,
         height: node.height,
       }}
     >
-      {isRunning ? (
+      {isRunning && !isFocusEmphasized ? (
         <div className="message-task-running-card-border pointer-events-none absolute inset-0 rounded-[inherit]" />
       ) : null}
       <div className="flex h-full flex-col overflow-hidden">
@@ -150,7 +175,11 @@ export const MessageTaskCardNode = memo(({ node }: { node: PositionedTaskNode })
             </p>
           ) : null}
           {groupedTasks.length > 1 ? (
-            <label className="mt-2 flex items-center gap-2 text-[11px] text-muted-foreground">
+            <label
+              className="mt-2 flex items-center gap-2 text-[11px] text-muted-foreground"
+              onMouseDown={stopNodeControlEvent}
+              onClick={stopNodeControlEvent}
+            >
               <span className="shrink-0">查看阶段</span>
               <select
                 className="min-w-0 flex-1 rounded-md border border-border bg-background px-2 py-1 text-xs text-foreground"
@@ -186,9 +215,9 @@ export const MessageTaskCardNode = memo(({ node }: { node: PositionedTaskNode })
               type="button"
               className="inline-flex items-center justify-center gap-1 rounded-md border border-border bg-background px-2 py-1.5 text-xs text-foreground hover:bg-accent disabled:cursor-wait disabled:opacity-60"
               disabled={loadingProcessLog}
-              onMouseDown={stopNodeButtonEvent}
+              onMouseDown={stopNodeControlEvent}
               onClick={(event) => {
-                stopNodeButtonEvent(event);
+                stopNodeControlEvent(event);
                 void onOpenProcessLog(actionTask);
               }}
             >
@@ -199,9 +228,9 @@ export const MessageTaskCardNode = memo(({ node }: { node: PositionedTaskNode })
               type="button"
               className="inline-flex items-center justify-center gap-1 rounded-md border border-border bg-background px-2 py-1.5 text-xs text-foreground hover:bg-accent disabled:cursor-not-allowed disabled:opacity-60"
               disabled={loadingChanges || !actionTask.last_run_id}
-              onMouseDown={stopNodeButtonEvent}
+              onMouseDown={stopNodeControlEvent}
               onClick={(event) => {
-                stopNodeButtonEvent(event);
+                stopNodeControlEvent(event);
                 void onOpenChanges(actionTask);
               }}
             >
@@ -211,22 +240,24 @@ export const MessageTaskCardNode = memo(({ node }: { node: PositionedTaskNode })
             <button
               type="button"
               className="inline-flex items-center justify-center gap-1 rounded-md border border-border bg-background px-2 py-1.5 text-xs text-foreground hover:bg-accent disabled:opacity-60"
-              onMouseDown={stopNodeButtonEvent}
+              onMouseDown={stopNodeControlEvent}
               onClick={(event) => {
-                stopNodeButtonEvent(event);
+                stopNodeControlEvent(event);
                 onOpenDetail(actionTask);
               }}
             >
-              <FileText className="h-3.5 w-3.5" />
-              详情
+              {actionTaskBlocked
+                ? <CircleAlert className="h-3.5 w-3.5 text-orange-600" />
+                : <FileText className="h-3.5 w-3.5" />}
+              {actionTaskBlocked ? '处理阻塞' : '详情'}
             </button>
             <button
               type="button"
               className="inline-flex items-center justify-center gap-1 rounded-md border border-border bg-background px-2 py-1.5 text-xs text-foreground hover:bg-accent disabled:cursor-not-allowed disabled:opacity-60"
               disabled={loadingRun || !actionTask.last_run_id}
-              onMouseDown={stopNodeButtonEvent}
+              onMouseDown={stopNodeControlEvent}
               onClick={(event) => {
-                stopNodeButtonEvent(event);
+                stopNodeControlEvent(event);
                 void onOpenRun(actionTask);
               }}
             >

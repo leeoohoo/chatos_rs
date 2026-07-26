@@ -70,6 +70,8 @@ pub fn builtin_tool_catalog(kind: BuiltinMcpKind) -> Result<Vec<Value>, String> 
             review_timeout_ms: REVIEW_TIMEOUT_MS_DEFAULT,
             auto_create_task: false,
             expose_context_ids: false,
+            default_current_turn_only: false,
+            lifecycle_tools_enabled: false,
             store: TaskManagerStoreRef::new(store),
         })
         .map(|service| service.list_tools()),

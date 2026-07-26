@@ -71,4 +71,27 @@ describe('message task runner local routing', () => {
     expect(localTasks.retryLocalTaskRunnerRun).toHaveBeenCalledWith('run-1');
     expect(cloudRequest).not.toHaveBeenCalled();
   });
+
+  it('passes blocked-node handling guidance to the local retry API', async () => {
+    const cloudRequest = vi.fn();
+    const lookup = {
+      sessionId: 'lc_session_1',
+      turnId: 'lc_turn_1',
+      sourceUserMessageId: 'lc_message_1',
+    };
+
+    await retryMessageTaskRunnerRun(
+      cloudRequest,
+      'lc_message_1',
+      'run-1',
+      lookup,
+      '  环境变量已经补齐，请继续  ',
+    );
+
+    expect(localTasks.retryLocalTaskRunnerRun).toHaveBeenCalledWith(
+      'run-1',
+      '环境变量已经补齐，请继续',
+    );
+    expect(cloudRequest).not.toHaveBeenCalled();
+  });
 });

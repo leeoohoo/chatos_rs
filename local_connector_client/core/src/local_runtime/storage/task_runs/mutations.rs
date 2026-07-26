@@ -150,6 +150,32 @@ impl LocalDatabase {
         let run = self.get_local_task_run(owner_user_id, run_id).await?;
         if let Some(run) = run.as_ref().filter(|run| run.status == "canceled") {
             reset_local_task_subject(self, run, owner_user_id, now.as_str()).await?;
+            let summary = self
+                .finalize_local_task_manager_session(
+                    owner_user_id,
+                    run.session_id.as_str(),
+                    run.id.as_str(),
+                    "canceled",
+                )
+                .await?;
+            if summary.total_changed() > 0 || summary.blocked_terminal > 0 {
+                self.append_local_task_run_event(
+                    owner_user_id,
+                    run.id.as_str(),
+                    "task_session_finalized",
+                    serde_json::json!({
+                        "task_session_id": run.id,
+                        "terminal_status": "canceled",
+                        "satisfied": summary.satisfied,
+                        "waived": summary.waived,
+                        "blocked_terminal": summary.blocked_terminal,
+                        "cancelled": summary.cancelled,
+                        "orphaned": summary.orphaned,
+                        "durable_detached": summary.durable_detached,
+                    }),
+                )
+                .await?;
+            }
         }
         Ok(run)
     }
@@ -159,8 +185,22 @@ impl LocalDatabase {
         owner_user_id: &str,
         run_id: &str,
         model_config_id: &str,
+        retry_instruction: Option<&str>,
     ) -> Result<Option<LocalTaskRunRecord>> {
         let now = local_now_rfc3339();
+        let Some(current_prompt) = sqlx::query_scalar::<_, String>(
+            "SELECT prompt FROM local_task_runs WHERE id = ? AND owner_user_id = ?",
+        )
+        .bind(run_id)
+        .bind(owner_user_id)
+        .fetch_optional(self.pool())
+        .await
+        .context("read local task prompt before retry")?
+        else {
+            return Ok(None);
+        };
+        let retry_prompt =
+            append_local_retry_instruction(current_prompt.as_str(), retry_instruction);
         let dispatch_paused = sqlx::query_scalar::<_, bool>(
             r#"
             SELECT CASE WHEN EXISTS (
@@ -186,20 +226,20 @@ impl LocalDatabase {
         let turn_id = format!("lc_turn_task_{}", Uuid::new_v4());
         let result = sqlx::query(
             r#"
-            UPDATE local_task_runs SET status = 'queued', turn_id = ?, model_config_id = ?,
+            UPDATE local_task_runs SET status = 'queued', turn_id = ?, model_config_id = ?, prompt = ?,
                 attempt = 0, cancel_requested = 0,
-                dispatch_paused = ?,
+                dispatch_paused = 1,
                 worker_id = NULL, lease_expires_at = NULL, heartbeat_at = NULL,
                 result_content = NULL, result_reasoning = NULL, tool_calls_json = NULL,
                 finish_reason = NULL, usage_json = NULL, error = NULL,
                 started_at = NULL, finished_at = NULL, updated_at = ?
             WHERE id = ? AND owner_user_id = ?
-              AND status = 'failed'
+              AND status IN ('failed', 'blocked', 'interrupted')
             "#,
         )
         .bind(turn_id)
         .bind(model_config_id)
-        .bind(dispatch_paused)
+        .bind(retry_prompt)
         .bind(now.as_str())
         .bind(run_id)
         .bind(owner_user_id)
@@ -209,11 +249,51 @@ impl LocalDatabase {
         if result.rows_affected() == 0 {
             return Ok(None);
         }
-        let run = self.get_local_task_run(owner_user_id, run_id).await?;
-        if let Some(run) = run.as_ref() {
-            reset_local_task_subject(self, run, owner_user_id, now.as_str()).await?;
+        let run = self
+            .get_local_task_run(owner_user_id, run_id)
+            .await?
+            .context("retried local task run was not found")?;
+        let preparation = async {
+            self.adopt_local_task_manager_session_for_retry(
+                owner_user_id,
+                run.session_id.as_str(),
+                run.id.as_str(),
+            )
+            .await?;
+            reset_local_task_subject(self, &run, owner_user_id, now.as_str()).await
         }
-        Ok(run)
+        .await;
+        if let Err(error) = preparation {
+            let failure = format!("prepare local Task Manager retry session failed: {error}");
+            sqlx::query(
+                "UPDATE local_task_runs SET status = 'failed', error = ?, finished_at = ?, updated_at = ? WHERE id = ? AND owner_user_id = ? AND status = 'queued'",
+            )
+            .bind(failure.as_str())
+            .bind(now.as_str())
+            .bind(now.as_str())
+            .bind(run_id)
+            .bind(owner_user_id)
+            .execute(self.pool())
+            .await
+            .context("fail local retry after Task Manager preparation error")?;
+            return Err(anyhow::anyhow!(failure));
+        }
+        let released = sqlx::query(
+            "UPDATE local_task_runs SET dispatch_paused = ?, updated_at = ? WHERE id = ? AND owner_user_id = ? AND status = 'queued'",
+        )
+        .bind(dispatch_paused)
+        .bind(now.as_str())
+        .bind(run_id)
+        .bind(owner_user_id)
+        .execute(self.pool())
+        .await
+        .context("release local retry after Task Manager adoption")?;
+        if released.rows_affected() != 1 {
+            return Err(anyhow::anyhow!(
+                "retried local task run left the queued state before dispatch release"
+            ));
+        }
+        self.get_local_task_run(owner_user_id, run_id).await
     }
 
     pub(crate) async fn append_local_task_run_event(
@@ -236,6 +316,16 @@ impl LocalDatabase {
         .context("append local task run event")?;
         Ok(())
     }
+}
+
+fn append_local_retry_instruction(prompt: &str, retry_instruction: Option<&str>) -> String {
+    let Some(instruction) = retry_instruction
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return prompt.to_string();
+    };
+    format!("{prompt}\n\n[用户对本次重试的补充处理意见]\n{instruction}")
 }
 
 async fn reset_local_task_subject(

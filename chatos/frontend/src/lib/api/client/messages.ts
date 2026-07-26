@@ -122,13 +122,23 @@ export const retryMessageTaskRunnerRun = (
   messageId: string,
   runId: string,
   options?: MessageTaskRunnerLookupOptions,
+  retryInstruction?: string | null,
 ): Promise<MessageTaskRunnerRetryRunResponse> => {
   if (options?.sessionId && isLocalRuntimeSessionId(options.sessionId)) {
-    return retryLocalTaskRunnerRun(runId);
+    const normalizedInstruction = retryInstruction?.trim();
+    return normalizedInstruction
+      ? retryLocalTaskRunnerRun(runId, normalizedInstruction)
+      : retryLocalTaskRunnerRun(runId);
   }
+  const normalizedInstruction = retryInstruction?.trim();
   return request<MessageTaskRunnerRetryRunResponse>(
     `/messages/${encodeURIComponent(messageId)}/task-runner/runs/${encodeURIComponent(runId)}/retry${messageTaskRunnerLookupQuery(options)}`,
-    { method: 'POST' },
+    normalizedInstruction
+      ? {
+        method: 'POST',
+        body: JSON.stringify({ retry_instruction: normalizedInstruction }),
+      }
+      : { method: 'POST' },
   );
 };
 

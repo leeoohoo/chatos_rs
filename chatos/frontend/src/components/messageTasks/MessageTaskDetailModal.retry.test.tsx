@@ -11,7 +11,7 @@ import { canRetryMessageTask, MessageTaskDetailModal } from './MessageTaskDetail
 afterEach(() => cleanup());
 
 describe('message task node retry', () => {
-  it('shows retry only for a failed task with a run and retries that task', async () => {
+  it('shows retry for a failed task with a run and retries that task', async () => {
     const user = userEvent.setup();
     const task = {
       id: 'task-failed',
@@ -22,7 +22,7 @@ describe('message task node retry', () => {
     const onRetry = vi.fn();
 
     expect(canRetryMessageTask(task)).toBe(true);
-    expect(canRetryMessageTask({ ...task, status: 'blocked' })).toBe(false);
+    expect(canRetryMessageTask({ ...task, status: 'blocked' })).toBe(true);
     expect(canRetryMessageTask({ ...task, last_run_id: null })).toBe(false);
 
     render(
@@ -38,5 +38,37 @@ describe('message task node retry', () => {
     expect(onRetry).toHaveBeenCalledTimes(1);
     expect(onRetry).toHaveBeenCalledWith(task);
     expect(screen.getByText('仅重新运行此节点；成功后，满足依赖条件的后续节点会继续调度。')).toBeTruthy();
+  });
+
+  it('shows the blocker and submits user guidance when retrying a blocked node', async () => {
+    const user = userEvent.setup();
+    const task = {
+      id: 'task-blocked',
+      title: '阻塞任务',
+      status: 'blocked',
+      last_run_id: 'run-blocked',
+      last_run: {
+        id: 'run-blocked',
+        error_message: '缺少生产环境回调地址',
+      },
+    };
+    const onRetry = vi.fn();
+
+    render(
+      <MessageTaskDetailModal
+        task={task}
+        onRetry={onRetry}
+        onClose={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText('缺少生产环境回调地址')).toBeTruthy();
+    await user.type(
+      screen.getByRole('textbox', { name: '补充处理意见（可选）' }),
+      '回调地址已经补齐，请重新验证',
+    );
+    await user.click(screen.getByRole('button', { name: '重新处理此节点' }));
+
+    expect(onRetry).toHaveBeenCalledWith(task, '回调地址已经补齐，请重新验证');
   });
 });

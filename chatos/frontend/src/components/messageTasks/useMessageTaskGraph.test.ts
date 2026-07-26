@@ -286,4 +286,68 @@ describe('useMessageTaskGraph', () => {
     expect(result.current.retryingTaskId).toBeNull();
     expect(result.current.error).toBeNull();
   });
+
+  it('retries a blocked node with the user handling instruction', async () => {
+    const blockedTask: MessageTaskRunnerTask = {
+      id: 'task-blocked',
+      title: '阻塞任务',
+      status: 'blocked',
+      last_run_id: 'run-blocked',
+      source_session_id: 'session-1',
+      source_turn_id: 'turn-1',
+      source_user_message_id: 'message-1',
+    };
+    const lookup = {
+      sessionId: 'session-1',
+      turnId: 'turn-1',
+      sourceUserMessageId: 'message-1',
+    };
+    let graphReads = 0;
+    const request = vi.fn((path: string, init?: RequestInit) => {
+      if (path.includes('/retry')) {
+        expect(init).toEqual({
+          method: 'POST',
+          body: JSON.stringify({ retry_instruction: '配置已补齐，请继续' }),
+        });
+        return Promise.resolve({
+          success: true,
+          run: { id: 'run-retry', task_id: blockedTask.id, status: 'queued' },
+        });
+      }
+      graphReads += 1;
+      return Promise.resolve({
+        root_task_ids: [blockedTask.id],
+        nodes: [{
+          task: {
+            ...blockedTask,
+            status: graphReads === 1 ? 'blocked' : 'queued',
+            last_run_id: graphReads === 1 ? 'run-blocked' : 'run-retry',
+          },
+          depth: 0,
+          is_root: true,
+          is_current_message: true,
+        }],
+        edges: [],
+        source_session_id: 'session-1',
+        source_turn_id: 'turn-1',
+        source_user_message_id: 'message-1',
+      });
+    });
+    const { result } = renderHook(() => useMessageTaskGraph({
+      open: true,
+      messageId: 'message-1',
+      lookup,
+    }), { wrapper: createApiWrapper(request) });
+
+    await waitFor(() => expect(result.current.allTasks[0]?.status).toBe('blocked'));
+    await act(async () => {
+      await result.current.retryTask(blockedTask, '配置已补齐，请继续');
+    });
+
+    expect(result.current.allTasks[0]).toMatchObject({
+      id: 'task-blocked',
+      status: 'queued',
+      last_run_id: 'run-retry',
+    });
+  });
 });

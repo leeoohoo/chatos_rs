@@ -180,10 +180,11 @@ impl LocalDatabase {
         status: &str,
         error: &str,
     ) -> Result<()> {
-        let status = if status == "canceled" {
-            "canceled"
-        } else {
-            "failed"
+        let status = match status {
+            "canceled" | "cancelled" => "canceled",
+            "blocked" => "blocked",
+            "interrupted" => "interrupted",
+            _ => "failed",
         };
         let now = local_now_rfc3339();
         sqlx::query(

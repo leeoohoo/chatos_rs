@@ -7,8 +7,9 @@ use tracing::{info, warn};
 use uuid::Uuid;
 
 use chatos_mcp::{
-    TaskDraft as SharedTaskDraft, TaskManagerStore, TaskOutcomeItem as SharedTaskOutcomeItem,
-    TaskStreamChunkCallback, TaskUpdatePatch as SharedTaskUpdatePatch, TASK_NOT_FOUND_ERR,
+    TaskClosureDecision as SharedTaskClosureDecision, TaskDraft as SharedTaskDraft,
+    TaskManagerStore, TaskOutcomeItem as SharedTaskOutcomeItem, TaskStreamChunkCallback,
+    TaskUpdatePatch as SharedTaskUpdatePatch, TASK_NOT_FOUND_ERR,
 };
 
 use crate::models::{

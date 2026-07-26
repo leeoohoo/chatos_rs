@@ -67,11 +67,17 @@ export const getLocalTaskRunnerRunDetail = (
 
 export const retryLocalTaskRunnerRun = (
   runId: string,
+  retryInstruction?: string | null,
 ): Promise<MessageTaskRunnerRetryRunResponse> => requestLocalRuntime<
   MessageTaskRunnerRetryRunResponse
 >(
   `/api/local/runtime/task-runs/${encodeURIComponent(runId)}/retry`,
-  { method: 'POST' },
+  retryInstruction?.trim()
+    ? {
+      method: 'POST',
+      body: JSON.stringify({ retry_instruction: retryInstruction.trim() }),
+    }
+    : { method: 'POST' },
 );
 
 export const getLocalTaskRunnerRunOutputChanges = (

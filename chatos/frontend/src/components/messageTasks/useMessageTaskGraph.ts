@@ -297,11 +297,20 @@ export function useMessageTaskGraph({
     }
   }, [apiClient, graph, lookup, messageId]);
 
-  const retryTask = useCallback(async (task: MessageTaskRunnerTask) => {
+  const retryTask = useCallback(async (
+    task: MessageTaskRunnerTask,
+    retryInstruction?: string,
+  ) => {
     const taskId = readString(task.id);
     const runId = readString(task.last_run_id);
     const status = readString(task.status)?.toLowerCase();
-    if (!taskId || !runId || status !== 'failed' || retryingTaskId) {
+    if (
+      !taskId
+      || !runId
+      || !status
+      || !['failed', 'blocked'].includes(status)
+      || retryingTaskId
+    ) {
       return false;
     }
     const source = buildTaskSourceLookup({
@@ -318,6 +327,7 @@ export function useMessageTaskGraph({
         source.messageId,
         runId,
         source.lookup,
+        retryInstruction,
       );
       setDetailTask((current) => (
         current?.id === taskId

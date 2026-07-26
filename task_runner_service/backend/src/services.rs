@@ -23,12 +23,13 @@ use crate::models::{
     ChatosProjectImportRequest, CreateExternalMcpConfigRequest, CreateTaskProjectRequest,
     CreateTaskRequest, ExternalMcpConfigRecord, HealthResponse, PaginatedResponse,
     RecordTaskProcessRequest, RunListFilters, RunSummaryRecord, RuntimeSettingsRecord,
-    StartTaskRunRequest, SystemConfigResponse, TaskIndexResponse, TaskListFilters, TaskMcpConfig,
-    TaskMcpResolutionResponse, TaskProjectRecord, TaskProjectStatus, TaskRecord,
-    TaskRunEventRecord, TaskRunRecord, TaskRunStatus, TaskRunnerInternalPromptPreviewResponse,
-    TaskScheduleMode, TaskSourceContext, TaskStatsResponse, TaskStatus, TaskSummaryRecord,
-    TaskToolState, UpdateExternalMcpConfigRequest, UpdateRuntimeSettingsRequest,
-    UpdateTaskMcpRequest, UpdateTaskProjectRequest, UpdateTaskRequest, PUBLIC_PROJECT_ID,
+    StartTaskRunRequest, SystemConfigResponse, TaskClosureState, TaskIndexResponse,
+    TaskListFilters, TaskManagerScope, TaskMcpConfig, TaskMcpResolutionResponse, TaskProjectRecord,
+    TaskProjectStatus, TaskRecord, TaskRunEventRecord, TaskRunRecord, TaskRunStatus,
+    TaskRunnerInternalPromptPreviewResponse, TaskScheduleMode, TaskSourceContext,
+    TaskStatsResponse, TaskStatus, TaskSummaryRecord, TaskToolState,
+    UpdateExternalMcpConfigRequest, UpdateRuntimeSettingsRequest, UpdateTaskMcpRequest,
+    UpdateTaskProjectRequest, UpdateTaskRequest, PUBLIC_PROJECT_ID,
 };
 use crate::store::AppStore;
 
@@ -91,6 +92,7 @@ mod stream_events;
 mod system_mcp_adapter;
 mod task_dependencies;
 mod task_manager_bridge;
+mod task_manager_lifecycle;
 mod task_memory;
 mod task_process_log;
 mod task_service;
@@ -120,6 +122,9 @@ use self::process_log_text::apply_task_process_log_update;
 use self::remote_servers::{build_remote_server_record, find_reusable_remote_server};
 use self::schedule_helpers::{advance_task_schedule_after_dispatch, sanitize_task_schedule_config};
 use self::status_display::{TaskScheduleModeExt, TaskStatusExt};
+use self::task_manager_lifecycle::{
+    effective_task_closure_state, effective_task_required_for_parent_completion,
+};
 use self::task_tenant_scope::{
     align_task_tenant_to_owner, resolve_task_tenant_id, save_task_if_tenant_aligned,
 };
@@ -258,7 +263,10 @@ async fn unfinished_subtasks_for_task(
         })
         .await?
         .into_iter()
-        .filter(|subtask| subtask.status != TaskStatus::Succeeded)
+        .filter(|subtask| {
+            effective_task_required_for_parent_completion(subtask)
+                && effective_task_closure_state(subtask) == TaskClosureState::Open
+        })
         .collect::<Vec<_>>();
     subtasks.sort_by(|left, right| right.updated_at.cmp(&left.updated_at));
     Ok(subtasks)

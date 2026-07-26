@@ -41,6 +41,13 @@ pub(crate) struct LocalTaskBoardTaskRow {
     pub(crate) execution_group_id: Option<String>,
     pub(crate) execution_client_ref: Option<String>,
     pub(crate) dependency_context_refs_json: String,
+    pub(crate) manager_scope: Option<String>,
+    pub(crate) task_session_id: Option<String>,
+    pub(crate) required_for_parent_completion: bool,
+    pub(crate) closure_state: Option<String>,
+    pub(crate) closure_reason: Option<String>,
+    pub(crate) idempotency_key: Option<String>,
+    pub(crate) lifecycle_updated_at: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -81,6 +88,13 @@ pub(crate) struct LocalTaskBoardTaskRecord {
     pub(crate) execution_group_id: Option<String>,
     pub(crate) execution_client_ref: Option<String>,
     pub(crate) dependency_context_refs: Vec<String>,
+    pub(crate) manager_scope: Option<String>,
+    pub(crate) task_session_id: Option<String>,
+    pub(crate) required_for_parent_completion: bool,
+    pub(crate) closure_state: Option<String>,
+    pub(crate) closure_reason: Option<String>,
+    pub(crate) idempotency_key: Option<String>,
+    pub(crate) lifecycle_updated_at: Option<String>,
 }
 
 impl From<LocalTaskBoardTaskRow> for LocalTaskBoardTaskRecord {
@@ -122,6 +136,13 @@ impl From<LocalTaskBoardTaskRow> for LocalTaskBoardTaskRecord {
             execution_group_id: row.execution_group_id,
             execution_client_ref: row.execution_client_ref,
             dependency_context_refs: parse_json(row.dependency_context_refs_json.as_str()),
+            manager_scope: row.manager_scope,
+            task_session_id: row.task_session_id,
+            required_for_parent_completion: row.required_for_parent_completion,
+            closure_state: row.closure_state,
+            closure_reason: row.closure_reason,
+            idempotency_key: row.idempotency_key,
+            lifecycle_updated_at: row.lifecycle_updated_at,
         }
     }
 }

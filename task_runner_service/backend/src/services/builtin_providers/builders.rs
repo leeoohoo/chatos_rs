@@ -50,6 +50,8 @@ fn build_task_manager_provider(
         review_timeout_ms: REVIEW_TIMEOUT_MS_DEFAULT,
         auto_create_task: true,
         expose_context_ids: false,
+        default_current_turn_only: true,
+        lifecycle_tools_enabled: true,
         store: TaskManagerStoreRef::new(Arc::new(TaskRunnerTaskManagerStore::new(
             task_service,
             server.project_id.clone(),

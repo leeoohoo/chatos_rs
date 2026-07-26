@@ -64,6 +64,7 @@ pub(super) async fn prepare_model_execution(
     let prompt = build_task_prompt(
         task,
         input.prompt_override.as_deref(),
+        input.retry_instruction.as_deref(),
         prerequisite_context,
         task.mcp_config.locale(),
     );

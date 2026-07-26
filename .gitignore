@@ -92,6 +92,7 @@ __pycache__/
 !/docs/plans/TASK_RUNNER_SKILLS_MANAGEMENT_PLAN.zh-CN.md
 /memory_engine_ext/*
 /harness/
+/users/
 /image.png
 /image copy.png
 /image copy 2.png

@@ -29,7 +29,7 @@ impl RunService {
         input: StartTaskRunRequest,
         current_user: Option<&CurrentUser>,
     ) -> Result<TaskRunRecord, String> {
-        self.start_run_with_trigger(task_id, input, RunTriggerSource::Manual, current_user)
+        self.start_run_with_trigger(task_id, input, RunTriggerSource::Manual, None, current_user)
             .await
     }
 
@@ -38,7 +38,7 @@ impl RunService {
         task_id: &str,
         input: StartTaskRunRequest,
     ) -> Result<TaskRunRecord, String> {
-        self.start_run_with_trigger(task_id, input, RunTriggerSource::Scheduler, None)
+        self.start_run_with_trigger(task_id, input, RunTriggerSource::Scheduler, None, None)
             .await
     }
 
@@ -46,10 +46,17 @@ impl RunService {
         &self,
         task_id: &str,
         input: StartTaskRunRequest,
+        previous_run_id: &str,
         current_user: Option<&CurrentUser>,
     ) -> Result<TaskRunRecord, String> {
-        self.start_run_with_trigger(task_id, input, RunTriggerSource::Retry, current_user)
-            .await
+        self.start_run_with_trigger(
+            task_id,
+            input,
+            RunTriggerSource::Retry,
+            Some(previous_run_id),
+            current_user,
+        )
+        .await
     }
 
     pub(crate) fn start_lock_for_task(&self, task_id: &str) -> Arc<AsyncMutex<()>> {
@@ -65,6 +72,7 @@ impl RunService {
         task_id: &str,
         input: StartTaskRunRequest,
         trigger: RunTriggerSource,
+        retry_of_run_id: Option<&str>,
         current_user: Option<&CurrentUser>,
     ) -> Result<TaskRunRecord, String> {
         let start_lock = self.start_lock_for_task(task_id);
@@ -169,6 +177,7 @@ impl RunService {
             "description": task.description,
             "input_payload": task.input_payload,
             "prompt_override": input.prompt_override,
+            "retry_instruction": input.retry_instruction,
             "model_config_id": model_config_id,
             "mcp_config": runtime_task.mcp_config,
             "skill_snapshots": skill_snapshots,
@@ -185,8 +194,18 @@ impl RunService {
             input_snapshot,
             now,
         );
-        run.dispatch_paused = task.task_tool_state.execution_paused;
+        let requested_dispatch_paused = task.task_tool_state.execution_paused;
+        run.dispatch_paused = requested_dispatch_paused || retry_of_run_id.is_some();
         self.store.save_run(run.clone()).await?;
+        if let Some(previous_run_id) = retry_of_run_id {
+            Box::pin(self.prepare_retry_task_session(
+                task.id.as_str(),
+                previous_run_id,
+                requested_dispatch_paused,
+                &mut run,
+            ))
+            .await?;
+        }
         info!(
             run_id = run.id.as_str(),
             task_id = task.id.as_str(),
@@ -223,6 +242,107 @@ impl RunService {
             .await?;
 
         Ok(run)
+    }
+
+    async fn prepare_retry_task_session(
+        &self,
+        task_id: &str,
+        previous_run_id: &str,
+        requested_dispatch_paused: bool,
+        run: &mut TaskRunRecord,
+    ) -> Result<(), String> {
+        match crate::services::task_manager_lifecycle::adopt_task_session_entries_for_retry(
+            &self.store,
+            task_id,
+            previous_run_id,
+            run.id.as_str(),
+        )
+        .await
+        {
+            Ok(adopted) if !adopted.is_empty() => {
+                if let Err(err) = self
+                    .store
+                    .append_run_event(TaskRunEventRecord::new(
+                        run.id.clone(),
+                        "task_session_retry_adopted",
+                        Some(format!(
+                            "重试运行已接管上一次运行的 {} 个未闭环 Task Manager 任务",
+                            adopted.len()
+                        )),
+                        Some(json!({
+                            "previous_run_id": previous_run_id,
+                            "adopted_task_ids": adopted.iter().map(|task| task.id.clone()).collect::<Vec<_>>(),
+                        })),
+                    ))
+                    .await
+                {
+                    warn!(
+                        run_id = run.id.as_str(),
+                        previous_run_id,
+                        error = err.as_str(),
+                        "failed to append Task Manager retry adoption event"
+                    );
+                }
+            }
+            Ok(_) => {}
+            Err(err) => {
+                warn!(
+                    run_id = run.id.as_str(),
+                    previous_run_id,
+                    error = err.as_str(),
+                    "failed to adopt previous Task Manager session; retry run will be failed before dispatch"
+                );
+                run.status = TaskRunStatus::Failed;
+                run.dispatch_paused = true;
+                run.finished_at = Some(now_rfc3339());
+                run.updated_at = now_rfc3339();
+                run.result_summary = Some(format!(
+                    "重试运行无法接管上一次 Task Manager 会话：{err}"
+                ));
+                run.error_message = run.result_summary.clone();
+                self.store.save_run(run.clone()).await?;
+                if let Err(event_err) = self
+                    .store
+                    .append_run_event(TaskRunEventRecord::new(
+                        run.id.clone(),
+                        "task_session_retry_adopt_failed",
+                        Some(format!("接管上一次 Task Manager 会话失败：{err}")),
+                        Some(json!({ "previous_run_id": previous_run_id })),
+                    ))
+                    .await
+                {
+                    warn!(
+                        run_id = run.id.as_str(),
+                        previous_run_id,
+                        error = event_err.as_str(),
+                        "failed to append Task Manager retry adoption failure event"
+                    );
+                }
+                if let Ok(summary) =
+                    crate::services::task_manager_lifecycle::finalize_task_session_entries(
+                        &self.store,
+                        task_id,
+                        run.id.as_str(),
+                        run.status,
+                    )
+                    .await
+                {
+                    crate::services::task_manager_lifecycle::append_task_session_finalized_event(
+                        &self.store,
+                        run,
+                        &summary,
+                    )
+                    .await;
+                }
+                return Err(format!(
+                    "failed to adopt previous Task Manager session for retry: {err}"
+                ));
+            }
+        }
+        run.dispatch_paused = requested_dispatch_paused;
+        run.updated_at = now_rfc3339();
+        self.store.save_run(run.clone()).await?;
+        Ok(())
     }
 }
 
