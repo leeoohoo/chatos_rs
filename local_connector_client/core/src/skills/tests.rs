@@ -18,7 +18,7 @@ fn embedded_catalog_contains_all_expected_skills() {
             .iter()
             .filter(|item| item.implementation_status == "ready")
             .count(),
-        14
+        15
     );
     assert!(catalog.skills.iter().all(|item| {
         !item.name.trim().is_empty()
@@ -132,6 +132,55 @@ fn spreadsheets_release_publishes_rendering_multi_sheet_and_safe_range_editing_t
     assert!(names.contains("create_xlsx"));
     assert!(names.contains("update_xlsx_range"));
     assert!(names.contains("create_csv"));
+}
+
+#[test]
+fn excel_live_control_release_publishes_only_read_only_no_launch_discovery() {
+    let catalog_item = internal_skill_catalog()
+        .expect("catalog")
+        .skills
+        .into_iter()
+        .find(|item| item.skill_id == "internal_skill_excel_live_control")
+        .expect("Excel Live Control catalog item");
+    assert_eq!(catalog_item.version, "1.1.0");
+    assert_eq!(catalog_item.implementation_status, "ready");
+    assert!(!catalog_item.requires_workspace);
+    assert_eq!(catalog_item.permissions, vec!["office.excel.control"]);
+
+    let request = serde_json::from_value(json!({
+        "type": "skill_prepare_request",
+        "request_id": "excel-live-tools",
+        "owner_user_id": "owner-1",
+        "device_id": "device-1",
+        "workspace_id": "",
+        "body": {}
+    }))
+    .expect("relay request");
+    let tools = native::tool_definitions(
+        "internal_skill_excel_live_control",
+        &LocalState::default(),
+        &request,
+    )
+    .expect("Excel Live Control tool definitions");
+    let names = tools
+        .iter()
+        .filter_map(|tool| tool.get("name").and_then(Value::as_str))
+        .collect::<HashSet<_>>();
+    assert_eq!(tools.len(), 3);
+    assert!(names.contains("excel_live_status"));
+    assert!(names.contains("excel_list_open_workbooks"));
+    assert!(names.contains("excel_inspect_workbook"));
+    assert!(!native::requires_interactive_approval(
+        "internal_skill_excel_live_control",
+        "excel_inspect_workbook"
+    ));
+
+    let instructions = internal_skill_instructions("internal_skill_excel_live_control")
+        .expect("Excel Live Control instructions");
+    assert!(instructions.contains("read-only, no-launch discovery"));
+    assert!(instructions.contains("never returned in tool results"));
+    assert!(instructions.contains("Never launch, activate, close, save, or reopen"));
+    assert!(instructions.contains("does not complete live workbook editing"));
 }
 
 #[test]
@@ -486,7 +535,7 @@ fn inventory_never_reports_planned_adapter_as_available() {
         .iter()
         .filter(|item| item.status == "available")
         .count();
-    assert!((12..=14).contains(&available_count));
+    assert!((12..=15).contains(&available_count));
     let ready_ids = internal_skill_catalog()
         .expect("catalog")
         .skills
@@ -641,7 +690,7 @@ fn ready_bundle_v2_fingerprint_matches_plugin_management_seed() {
         .join("\n");
     assert_eq!(
         hex::encode(Sha256::digest(rows.as_bytes())),
-        "63e4cf2782872258b4897903c544b93532bb41577ee0d34c27b798b6385a73f5"
+        "777826b4dd80c501ceb8601422ad5b58a68e738f49dc02812c0cf6b1964c734a"
     );
 }
 
@@ -656,7 +705,7 @@ fn all_28_bundled_skill_fingerprints_match_plugin_management_seed() {
         .join("\n");
     assert_eq!(
         hex::encode(Sha256::digest(rows.as_bytes())),
-        "4af29afeb23a19a4949f5c43c638f06a627f604c4602dd07ee6f4cd63e5d075b"
+        "fa8b109cb993e5f7b9ac9110e3afaf8b34d6705c85d8137ea3be51e25460dc3f"
     );
 }
 

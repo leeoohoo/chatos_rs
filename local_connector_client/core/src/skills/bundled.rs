@@ -111,7 +111,7 @@ pub(crate) fn internal_skill_manifest(skill_id: &str) -> Option<&'static str> {
             "../../../skill_bundles/internal/computer-use/1.15.0/skill.json"
         )),
         "internal_skill_excel_live_control" => Some(include_str!(
-            "../../../skill_bundles/internal/excel-live-control/1.0.0/skill.json"
+            "../../../skill_bundles/internal/excel-live-control/1.1.0/skill.json"
         )),
         _ => None,
     }
@@ -201,7 +201,7 @@ pub(crate) fn internal_skill_instructions(skill_id: &str) -> Option<&'static str
             "../../../skill_bundles/internal/computer-use/1.15.0/instructions.md"
         )),
         "internal_skill_excel_live_control" => Some(include_str!(
-            "../../../skill_bundles/internal/excel-live-control/1.0.0/instructions.md"
+            "../../../skill_bundles/internal/excel-live-control/1.1.0/instructions.md"
         )),
         _ => None,
     }

@@ -218,7 +218,7 @@ fn internal_skill_manifest(skill_id: &str) -> Option<&'static str> {
             "../../../../local_connector_client/skill_bundles/internal/computer-use/1.15.0/skill.json"
         )),
         "internal_skill_excel_live_control" => Some(include_str!(
-            "../../../../local_connector_client/skill_bundles/internal/excel-live-control/1.0.0/skill.json"
+            "../../../../local_connector_client/skill_bundles/internal/excel-live-control/1.1.0/skill.json"
         )),
         _ => None,
     }
@@ -308,7 +308,7 @@ fn internal_skill_instructions(skill_id: &str) -> Option<&'static str> {
             "../../../../local_connector_client/skill_bundles/internal/computer-use/1.15.0/instructions.md"
         )),
         "internal_skill_excel_live_control" => Some(include_str!(
-            "../../../../local_connector_client/skill_bundles/internal/excel-live-control/1.0.0/instructions.md"
+            "../../../../local_connector_client/skill_bundles/internal/excel-live-control/1.1.0/instructions.md"
         )),
         _ => None,
     }
@@ -327,7 +327,7 @@ mod tests {
                 .iter()
                 .filter(|item| item.implementation_status == "ready")
                 .count(),
-            14
+            15
         );
         let rows = catalog
             .skills
@@ -338,7 +338,7 @@ mod tests {
             .join("\n");
         assert_eq!(
             hex::encode(Sha256::digest(rows.as_bytes())),
-            "63e4cf2782872258b4897903c544b93532bb41577ee0d34c27b798b6385a73f5"
+            "777826b4dd80c501ceb8601422ad5b58a68e738f49dc02812c0cf6b1964c734a"
         );
     }
 
@@ -354,7 +354,7 @@ mod tests {
             .join("\n");
         assert_eq!(
             hex::encode(Sha256::digest(rows.as_bytes())),
-            "4af29afeb23a19a4949f5c43c638f06a627f604c4602dd07ee6f4cd63e5d075b"
+            "fa8b109cb993e5f7b9ac9110e3afaf8b34d6705c85d8137ea3be51e25460dc3f"
         );
     }
 }

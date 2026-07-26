@@ -18,6 +18,7 @@ use crate::LocalState;
 mod artifacts;
 mod chrome;
 mod computer_use;
+mod excel_live;
 mod web;
 
 const MAX_MANIFEST_BYTES: usize = 256 * 1024;
@@ -50,6 +51,7 @@ pub(crate) fn tool_definitions(
         "internal_skill_visualize" => vec![write_visualization_html_tool()],
         "internal_skill_chrome" => chrome::tool_definitions(false),
         "internal_skill_computer_use" => computer_use::tool_definitions(false),
+        "internal_skill_excel_live_control" => excel_live::tool_definitions(),
         _ => artifacts::tool_definitions(skill_id),
     };
     if tools.is_empty() {
@@ -190,6 +192,9 @@ pub(crate) fn dependency_error(skill_id: &str) -> Option<String> {
     if skill_id == "internal_skill_chrome" {
         return chrome::dependency_error();
     }
+    if skill_id == "internal_skill_excel_live_control" {
+        return excel_live::dependency_error();
+    }
     web::dependency_error(skill_id)
 }
 
@@ -239,6 +244,9 @@ pub(crate) fn execute_with_cancellation(
             chrome::execute(operation, arguments, state, request, None, None)
         }
         ("internal_skill_computer_use", operation) => computer_use::execute(operation, arguments),
+        ("internal_skill_excel_live_control", operation) => {
+            excel_live::execute(operation, arguments)
+        }
         _ => artifacts::execute_with_cancellation(
             skill_id,
             operation,

@@ -337,7 +337,9 @@ fn office_automation_permission() -> SystemPermissionItem {
     SystemPermissionItem {
         id: PERMISSION_OFFICE_AUTOMATION.to_string(),
         label: "Office 自动化".to_string(),
-        summary: "用于未来的 Excel Live Control Skill 控制已打开的 Microsoft Excel。".to_string(),
+        summary:
+            "用于 Excel Live Control Skill 只读发现已运行 Microsoft Excel 的工作簿和工作表元数据。"
+                .to_string(),
         status: status.to_string(),
         status_label: status_label.to_string(),
         required: false,

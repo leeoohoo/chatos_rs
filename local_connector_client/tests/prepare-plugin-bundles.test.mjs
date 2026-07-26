@@ -92,21 +92,37 @@ test('stages complete Plugin Bundles and rejects staged file tampering', () => {
       true,
     );
     const spreadsheets = index.plugins.find((plugin) => plugin.name === 'spreadsheets');
-    assert.equal(spreadsheets.release_id, 'bundled-release-spreadsheets-1-2-0');
-    assert.equal(spreadsheets.version, '1.2.0');
-    assert.equal(spreadsheets.published_at, '2026-07-25T18:00:00Z');
+    assert.equal(spreadsheets.release_id, 'bundled-release-spreadsheets-1-3-0');
+    assert.equal(spreadsheets.version, '1.3.0');
+    assert.equal(spreadsheets.published_at, '2026-07-26T17:00:00Z');
     assert.equal(
       spreadsheets.skills.find((skill) => skill.skill_id === 'internal_skill_spreadsheets').bundle_hash,
       '3ee6b5a2c4473a0b70612697db8e35185f434662b9967d2ff8022ecf7d869246',
+    );
+    assert.equal(
+      spreadsheets.skills.find((skill) => skill.skill_id === 'internal_skill_excel_live_control').bundle_hash,
+      '0764d7f0f6b6119e75b6ee2b179c0ed1074ecc7fa4ec3257f6c64902b1dd652d',
     );
     assert.equal(
       fs.existsSync(path.join(
         output,
         'internal',
         'spreadsheets',
-        '1.2.0',
+        '1.3.0',
         'skills',
         'spreadsheets',
+        'SKILL.md',
+      )),
+      true,
+    );
+    assert.equal(
+      fs.existsSync(path.join(
+        output,
+        'internal',
+        'spreadsheets',
+        '1.3.0',
+        'skills',
+        'excel-live-control',
         'SKILL.md',
       )),
       true,
