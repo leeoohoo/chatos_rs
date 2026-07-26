@@ -3,6 +3,7 @@
 
 import type { Project } from '../../../types';
 import type {
+  AnalyzeProjectRuntimeEnvironmentPayload,
   CreateLocalConnectorProjectRequest,
   DeleteSuccessResponse,
   ProjectPlanOptions,
@@ -225,8 +226,9 @@ export class LocalRuntimeProjectClient extends LocalRuntimeResourceClient {
 
   async analyzeProjectRuntimeEnvironment(
     projectId: string,
+    payload: AnalyzeProjectRuntimeEnvironmentPayload = {},
   ): Promise<ProjectRuntimeEnvironmentResponse> {
-    return analyzeLocalProjectRuntimeEnvironment(projectId);
+    return analyzeLocalProjectRuntimeEnvironment(projectId, payload);
   }
 
   async startProjectRuntimeEnvironment(

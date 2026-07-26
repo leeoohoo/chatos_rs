@@ -3,6 +3,7 @@
 
 import * as workspaceApi from '../../workspace';
 import type {
+  AnalyzeProjectRuntimeEnvironmentPayload,
   DeleteSuccessResponse,
   PagingOptions,
   ProjectContactLockResponse,
@@ -75,7 +76,10 @@ export interface WorkspaceProjectFacade {
     projectId: string,
     data: UpdateProjectRuntimeEnvironmentSettingsPayload,
   ): Promise<ProjectRuntimeEnvironmentResponse>;
-  analyzeProjectRuntimeEnvironment(projectId: string): Promise<ProjectRuntimeEnvironmentResponse>;
+  analyzeProjectRuntimeEnvironment(
+    projectId: string,
+    data?: AnalyzeProjectRuntimeEnvironmentPayload,
+  ): Promise<ProjectRuntimeEnvironmentResponse>;
   generateProjectRuntimeEnvironmentImage(
     projectId: string,
     imageRecordId: string,
@@ -251,11 +255,11 @@ export const workspaceProjectFacade: WorkspaceProjectFacade & ThisType<ApiClient
     }
     return workspaceApi.updateProjectRuntimeEnvironmentSettings(this.getRequestFn(), projectId, data);
   },
-  async analyzeProjectRuntimeEnvironment(projectId) {
+  async analyzeProjectRuntimeEnvironment(projectId, data = {}) {
     if (this.projectUsesLocalRuntime(projectId)) {
-      return this.getLocalRuntimeClient().analyzeProjectRuntimeEnvironment(projectId);
+      return this.getLocalRuntimeClient().analyzeProjectRuntimeEnvironment(projectId, data);
     }
-    return workspaceApi.analyzeProjectRuntimeEnvironment(this.getRequestFn(), projectId);
+    return workspaceApi.analyzeProjectRuntimeEnvironment(this.getRequestFn(), projectId, data);
   },
   async generateProjectRuntimeEnvironmentImage(projectId, imageRecordId) {
     if (this.projectUsesLocalRuntime(projectId)) {

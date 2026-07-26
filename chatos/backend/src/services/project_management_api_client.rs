@@ -73,6 +73,11 @@ pub struct UpdateProjectRuntimeEnvironmentSettingsRequest {
     pub sandbox_enabled: Option<bool>,
 }
 
+#[derive(Debug, Default, Serialize)]
+pub struct AnalyzeProjectRuntimeEnvironmentRequest {
+    pub analysis_requirement: Option<String>,
+}
+
 pub async fn list_project_service_projects(
     base_url: &str,
     access_token: &str,
@@ -253,6 +258,7 @@ pub async fn analyze_project_service_runtime_environment(
     base_url: &str,
     access_token: &str,
     project_id: &str,
+    request: &AnalyzeProjectRuntimeEnvironmentRequest,
 ) -> Result<Value, String> {
     let base_url = resolve_project_service_base_url(base_url).await;
     let endpoint = format!(
@@ -263,7 +269,8 @@ pub async fn analyze_project_service_runtime_environment(
     send_json(
         reqwest::Client::new()
             .post(endpoint)
-            .bearer_auth(access_token.trim()),
+            .bearer_auth(access_token.trim())
+            .json(request),
     )
     .await
 }

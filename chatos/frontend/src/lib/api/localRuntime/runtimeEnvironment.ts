@@ -2,6 +2,7 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 import type {
+  AnalyzeProjectRuntimeEnvironmentPayload,
   ProjectRuntimeEnvironmentProgressResponse,
   ProjectRuntimeEnvironmentResponse,
   UpdateProjectRuntimeEnvironmentSettingsPayload,
@@ -28,9 +29,10 @@ export const updateLocalProjectRuntimeEnvironmentSettings = (
 
 export const analyzeLocalProjectRuntimeEnvironment = (
   projectId: string,
+  payload: AnalyzeProjectRuntimeEnvironmentPayload = {},
 ): Promise<ProjectRuntimeEnvironmentResponse> => requestLocalRuntime(
   environmentPath(projectId, '/analyze'),
-  { method: 'POST' },
+  { method: 'POST', body: JSON.stringify(payload) },
 );
 
 export const startLocalProjectRuntimeEnvironment = (

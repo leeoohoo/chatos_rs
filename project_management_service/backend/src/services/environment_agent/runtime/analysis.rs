@@ -8,6 +8,7 @@ pub(in crate::services::environment_agent) async fn analyze_project_runtime_envi
     project: &ProjectRecord,
     user_access_token: Option<&str>,
     run_id: &str,
+    analysis_requirement: Option<&str>,
 ) -> Result<ProjectRuntimeEnvironmentResponse, String> {
     if project.execution_plane == ProjectExecutionPlane::LocalConnector {
         return Err(format!(
@@ -185,6 +186,7 @@ pub(in crate::services::environment_agent) async fn analyze_project_runtime_envi
         user_access_token,
         run_id.as_str(),
         &capability_policy,
+        analysis_requirement,
     )
     .await;
 
@@ -262,6 +264,7 @@ async fn run_project_environment_agent(
     user_access_token: Option<&str>,
     run_id: &str,
     capability_policy: &ResolvedAgentCapabilities,
+    analysis_requirement: Option<&str>,
 ) -> Result<(), String> {
     let agent_prompt = resolve_project_environment_agent_prompt(
         state,
@@ -280,7 +283,12 @@ async fn run_project_environment_agent(
     .await?;
     ensure_agent_required_tools_available(&executor, &routing)?;
 
-    let mut prompt = build_project_environment_agent_prompt(project, local_inspection, run_id)?;
+    let mut prompt = build_project_environment_agent_prompt(
+        project,
+        local_inspection,
+        run_id,
+        analysis_requirement,
+    )?;
     let effective_mcp_resource_ids = effective_project_environment_mcp_resource_ids(&routing);
     if let Some(provider_skills_prompt) = capability_policy.compose_provider_skills_prompt(
         effective_mcp_resource_ids.iter().map(String::as_str),
@@ -377,12 +385,14 @@ fn build_project_environment_agent_prompt(
     project: &ProjectRecord,
     local_inspection: Option<&LocalProjectInspection>,
     run_id: &str,
+    analysis_requirement: Option<&str>,
 ) -> Result<String, String> {
     let context = project_environment_agent_context(
         project.id.as_str(),
         project.name.as_str(),
         local_inspection,
         run_id,
+        analysis_requirement,
     );
     serde_json::to_string_pretty(&context)
         .map_err(|err| format!("serialize project environment run context failed: {err}"))
@@ -393,6 +403,7 @@ fn project_environment_agent_context(
     project_name: &str,
     local_inspection: Option<&LocalProjectInspection>,
     run_id: &str,
+    analysis_requirement: Option<&str>,
 ) -> Value {
     json!({
         "mode": "cloud_tool_execution",
@@ -400,6 +411,11 @@ fn project_environment_agent_context(
         "project": {
             "id": project_id,
             "name": project_name,
+        },
+        "analysis_request": {
+            "user_requirement": analysis_requirement
+                .map(str::trim)
+                .filter(|value| !value.is_empty()),
         },
         "pre_scan": {
             "detected_stack": local_inspection
@@ -455,9 +471,19 @@ mod tests {
 
     #[test]
     fn agent_context_does_not_expose_program_routing_or_environment_state() {
-        let context = project_environment_agent_context("project-1", "Example", None, "run-1");
+        let context = project_environment_agent_context(
+            "project-1",
+            "Example",
+            None,
+            "run-1",
+            Some("Use Node.js 22 and expose port 3000"),
+        );
         assert!(context.get("routing").is_none());
         assert!(context.get("current_environment").is_none());
+        assert_eq!(
+            context["analysis_request"]["user_requirement"],
+            "Use Node.js 22 and expose port 3000"
+        );
         let serialized = serde_json::to_string(&context).expect("serialize context");
         for forbidden in [
             "file_provider",

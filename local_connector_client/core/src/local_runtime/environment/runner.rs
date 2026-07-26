@@ -26,6 +26,7 @@ pub(crate) async fn run_local_environment_analysis(
     project_id: String,
     model_config_id: String,
     run_id: String,
+    analysis_requirement: Option<String>,
 ) -> Result<(), String> {
     let database = runtime
         .local_database()
@@ -101,6 +102,7 @@ pub(crate) async fn run_local_environment_analysis(
         project.project_name.as_str(),
         &evidence,
         capability_prompt.as_deref(),
+        analysis_requirement.as_deref(),
     )?;
     let model = build_local_model_config(
         resolved_model,

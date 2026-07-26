@@ -3,6 +3,7 @@
 
 import { buildQuery } from '../shared';
 import type {
+  AnalyzeProjectRuntimeEnvironmentPayload,
   DeleteSuccessResponse,
   ProjectContactLockResponse,
   ProjectContactLinkResponse,
@@ -94,10 +95,11 @@ export const updateProjectRuntimeEnvironmentSettings = (
 export const analyzeProjectRuntimeEnvironment = (
   request: ApiRequestFn,
   projectId: string,
+  data: AnalyzeProjectRuntimeEnvironmentPayload = {},
 ): Promise<ProjectRuntimeEnvironmentResponse> => {
   return request<ProjectRuntimeEnvironmentResponse>(
     `/projects/${encodeURIComponent(projectId)}/runtime-environment/analyze`,
-    { method: 'POST' },
+    { method: 'POST', body: JSON.stringify(data) },
   );
 };
 

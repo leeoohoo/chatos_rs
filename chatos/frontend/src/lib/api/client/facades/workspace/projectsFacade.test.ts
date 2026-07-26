@@ -215,6 +215,7 @@ describe('workspaceProjectFacade local project management routing', () => {
     await workspaceProjectFacade.analyzeProjectRuntimeEnvironment.call(
       context as never,
       'project-local',
+      { analysis_requirement: 'Use Node.js 22' },
     );
     await workspaceProjectFacade.getProjectRuntimeEnvironmentProgress.call(
       context as never,
@@ -231,7 +232,10 @@ describe('workspaceProjectFacade local project management routing', () => {
       'project-local',
       { sandbox_enabled: true },
     );
-    expect(analyzeProjectRuntimeEnvironment).toHaveBeenCalledWith('project-local');
+    expect(analyzeProjectRuntimeEnvironment).toHaveBeenCalledWith(
+      'project-local',
+      { analysis_requirement: 'Use Node.js 22' },
+    );
     expect(startProjectRuntimeEnvironment).toHaveBeenCalledWith('project-local');
     expect(getProjectRuntimeEnvironmentProgress).toHaveBeenCalledWith('project-local');
     expect(cloudRequest).not.toHaveBeenCalled();

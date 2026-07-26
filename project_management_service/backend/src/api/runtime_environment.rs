@@ -22,6 +22,8 @@ use crate::services::runtime_environment::{
 };
 use crate::state::AppState;
 
+const MAX_ANALYSIS_REQUIREMENT_LENGTH: usize = 4_000;
+
 pub(in crate::api) async fn get_project_runtime_environment(
     Path(project_id): Path<String>,
     State(state): State<AppState>,
@@ -270,10 +272,14 @@ pub(in crate::api) async fn analyze_project_runtime_environment_handler(
     State(state): State<AppState>,
     Extension(user): Extension<CurrentUser>,
     Extension(access_token): Extension<AccessToken>,
+    payload: Option<Json<AnalyzeProjectRuntimeEnvironmentRequest>>,
 ) -> Result<Json<ProjectRuntimeEnvironmentResponse>, ApiError> {
     let project = require_project_access(&state, &project_id, &user).await?;
     ensure_project_writable(&project)?;
     ensure_cloud_agent_execution(&project)?;
+    let analysis_requirement = normalize_analysis_requirement(
+        payload.and_then(|Json(payload)| payload.analysis_requirement),
+    )?;
 
     {
         let mut active = state.runtime_environment_analysis_jobs.lock().await;
@@ -336,6 +342,7 @@ pub(in crate::api) async fn analyze_project_runtime_environment_handler(
     let worker_project_id = project_id.clone();
     let worker_run_id = run_id.clone();
     let worker_access_token = access_token.0.clone();
+    let worker_analysis_requirement = analysis_requirement;
     tokio::spawn(async move {
         let task_state = worker_state.clone();
         let task_project = worker_project.clone();
@@ -346,6 +353,7 @@ pub(in crate::api) async fn analyze_project_runtime_environment_handler(
                 &task_project,
                 Some(worker_access_token.as_str()),
                 task_run_id.as_str(),
+                worker_analysis_requirement.as_deref(),
             )
             .await
         });
@@ -371,6 +379,21 @@ pub(in crate::api) async fn analyze_project_runtime_environment_handler(
     });
 
     Ok(Json(response))
+}
+
+fn normalize_analysis_requirement(value: Option<String>) -> Result<Option<String>, ApiError> {
+    let requirement = value
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    if requirement
+        .as_deref()
+        .is_some_and(|value| value.chars().count() > MAX_ANALYSIS_REQUIREMENT_LENGTH)
+    {
+        return Err(ApiError::bad_request(format!(
+            "analysis_requirement must not exceed {MAX_ANALYSIS_REQUIREMENT_LENGTH} characters"
+        )));
+    }
+    Ok(requirement)
 }
 
 fn reset_environment_for_analysis(environment: &mut ProjectRuntimeEnvironmentRecord, run_id: &str) {
@@ -432,12 +455,23 @@ async fn persist_background_analysis_failure(
 
 #[cfg(test)]
 mod tests {
-    use super::reset_environment_for_analysis;
+    use super::{normalize_analysis_requirement, reset_environment_for_analysis};
     use crate::models::{
         ProjectRuntimeEnvironmentRecord, ProjectRuntimeEnvironmentStatus,
         RuntimeEnvironmentProvider,
     };
     use serde_json::json;
+
+    #[test]
+    fn analysis_requirement_is_trimmed_and_length_limited() {
+        assert_eq!(
+            normalize_analysis_requirement(Some("  Use Node.js 22  ".to_string()))
+                .expect("valid requirement")
+                .as_deref(),
+            Some("Use Node.js 22")
+        );
+        assert!(normalize_analysis_requirement(Some("x".repeat(4_001))).is_err());
+    }
 
     #[test]
     fn reanalysis_clears_stale_provisioning_failure_state() {

@@ -465,6 +465,11 @@ export interface UpdateProjectRuntimeEnvironmentSettingsPayload {
   sandboxEnabled?: boolean;
 }
 
+export interface AnalyzeProjectRuntimeEnvironmentPayload {
+  analysis_requirement?: string;
+  analysisRequirement?: string;
+}
+
 export interface ProjectContactLinkResponse {
   contact_id?: string;
   contactId?: string;
