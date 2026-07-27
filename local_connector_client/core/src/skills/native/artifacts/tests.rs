@@ -14467,6 +14467,414 @@ fn pdf_annotation_reply_rejects_stale_ambiguous_unsupported_and_malformed_target
 }
 
 #[test]
+fn adds_standard_pdf_file_attachment_annotation_and_inspects_bounded_metadata() {
+    let (root, state, request) = test_context();
+    let source = root.join("source.pdf");
+    write_blank_pdf(source.as_path(), 2);
+    let mut document = Document::load(source.as_path()).expect("source PDF");
+    let page_id = document.get_pages()[&2];
+    document
+        .get_object_mut(page_id)
+        .and_then(Object::as_dict_mut)
+        .expect("page dictionary")
+        .set(
+            "CropBox",
+            vec![20.into(), 30.into(), 420.into(), 630.into()],
+        );
+    let existing_id = document.add_object(dictionary! {
+        "Type" => "Annot",
+        "Subtype" => "Text",
+        "Rect" => vec![40.into(), 50.into(), 60.into(), 70.into()],
+        "Contents" => lopdf::text_string("Existing note"),
+        "P" => page_id,
+    });
+    document
+        .get_object_mut(page_id)
+        .and_then(Object::as_dict_mut)
+        .expect("page dictionary")
+        .set("Annots", vec![Object::Reference(existing_id)]);
+    document.save(source.as_path()).expect("save source PDF");
+
+    fs::create_dir_all(root.join("assets")).expect("attachment directory");
+    let attachment = root.join("assets/审计说明.txt");
+    let attachment_bytes = "付款记录已复核。\nReference: INV-2026-0727\n".as_bytes();
+    fs::write(attachment.as_path(), attachment_bytes).expect("attachment");
+    let source_before = fs::read(source.as_path()).expect("source bytes");
+    let attachment_before = fs::read(attachment.as_path()).expect("attachment bytes");
+    let source_sha256 = sha256_file(source.as_path()).expect("source hash");
+    let attachment_sha256 = sha256_file(attachment.as_path()).expect("attachment hash");
+
+    let added = pdf_edit::add_pdf_file_attachment_annotation(
+        &json!({
+            "path":"source.pdf",
+            "expected_source_sha256":source_sha256,
+            "attachment_path":"assets/审计说明.txt",
+            "page":2,
+            "x":10,
+            "y":20,
+            "icon_size":24,
+            "description":"审计附件\n请保留原始文件。",
+            "author":"李雷",
+            "icon":"paperclip",
+            "target_path":"artifacts/attached.pdf"
+        }),
+        &state,
+        &request,
+    )
+    .expect("add PDF file attachment annotation");
+    assert_eq!(
+        added.get("operation").and_then(Value::as_str),
+        Some("add_file_attachment_annotation")
+    );
+    assert_eq!(added.get("page").and_then(Value::as_u64), Some(2));
+    assert_eq!(
+        added.get("annotation_index").and_then(Value::as_u64),
+        Some(2)
+    );
+    assert_eq!(added.get("rect"), Some(&json!([10.0, 20.0, 34.0, 44.0])));
+    assert_eq!(
+        added.get("absolute_rect"),
+        Some(&json!([30.0, 50.0, 54.0, 74.0]))
+    );
+    assert_eq!(
+        added.get("attachment_filename").and_then(Value::as_str),
+        Some("审计说明.txt")
+    );
+    assert_eq!(
+        added.get("portable_filename").and_then(Value::as_str),
+        Some("attachment.txt")
+    );
+    assert_eq!(
+        added.get("attachment_sha256").and_then(Value::as_str),
+        Some(attachment_sha256.as_str())
+    );
+
+    let output_path = root.join("artifacts/attached.pdf");
+    let output = Document::load(output_path.as_path()).expect("attached PDF");
+    let output_page_id = output.get_pages()[&2];
+    let annotations = output
+        .get_object(output_page_id)
+        .and_then(Object::as_dict)
+        .and_then(|page| page.get(b"Annots"))
+        .and_then(Object::as_array)
+        .expect("output annotations");
+    assert_eq!(annotations.len(), 2);
+    let existing = output
+        .get_object(annotations[0].as_reference().expect("existing reference"))
+        .and_then(Object::as_dict)
+        .expect("existing annotation");
+    assert_eq!(
+        existing
+            .get(b"Subtype")
+            .and_then(Object::as_name)
+            .expect("existing subtype"),
+        b"Text"
+    );
+    let annotation = output
+        .get_object(annotations[1].as_reference().expect("attachment reference"))
+        .and_then(Object::as_dict)
+        .expect("attachment annotation");
+    assert_eq!(
+        annotation
+            .get(b"Subtype")
+            .and_then(Object::as_name)
+            .expect("attachment subtype"),
+        b"FileAttachment"
+    );
+    assert_eq!(
+        annotation
+            .get(b"Name")
+            .and_then(Object::as_name)
+            .expect("attachment icon"),
+        b"Paperclip"
+    );
+    assert_eq!(
+        annotation
+            .get(b"P")
+            .and_then(Object::as_reference)
+            .expect("attachment page"),
+        output_page_id
+    );
+    let rect = annotation
+        .get(b"Rect")
+        .and_then(Object::as_array)
+        .expect("attachment Rect")
+        .iter()
+        .map(|value| value.as_float().expect("Rect number"))
+        .collect::<Vec<_>>();
+    assert_eq!(rect, vec![30.0, 50.0, 54.0, 74.0]);
+    let filespec = output
+        .get_object(
+            annotation
+                .get(b"FS")
+                .and_then(Object::as_reference)
+                .expect("Filespec reference"),
+        )
+        .and_then(Object::as_dict)
+        .expect("Filespec dictionary");
+    assert_eq!(
+        filespec
+            .get(b"F")
+            .map(lopdf::decode_text_string)
+            .expect("portable filename")
+            .expect("decode portable filename"),
+        "attachment.txt"
+    );
+    assert_eq!(
+        filespec
+            .get(b"UF")
+            .map(lopdf::decode_text_string)
+            .expect("Unicode filename")
+            .expect("decode Unicode filename"),
+        "审计说明.txt"
+    );
+    let embedded_files = filespec
+        .get(b"EF")
+        .and_then(Object::as_dict)
+        .expect("embedded file dictionary");
+    let embedded_file_id = embedded_files
+        .get(b"F")
+        .and_then(Object::as_reference)
+        .expect("embedded file reference");
+    assert_eq!(
+        embedded_files
+            .get(b"UF")
+            .and_then(Object::as_reference)
+            .expect("Unicode embedded file reference"),
+        embedded_file_id
+    );
+    let embedded_file = output
+        .get_object(embedded_file_id)
+        .and_then(Object::as_stream)
+        .expect("EmbeddedFile stream");
+    assert_eq!(
+        embedded_file
+            .dict
+            .get(b"Subtype")
+            .and_then(Object::as_name)
+            .expect("EmbeddedFile MIME type"),
+        b"text/plain"
+    );
+    assert_eq!(
+        embedded_file
+            .decompressed_content_with_limit(1024)
+            .expect("attachment content"),
+        attachment_bytes
+    );
+
+    let inspected = inspect_pdf(
+        &json!({"path":"artifacts/attached.pdf","annotation_page":2}),
+        &state,
+        &request,
+    )
+    .expect("inspect attached PDF");
+    let summary = inspected.get("annotations").expect("annotation summary");
+    assert_eq!(summary.get("count").and_then(Value::as_u64), Some(2));
+    assert_eq!(summary.get("text_count").and_then(Value::as_u64), Some(1));
+    assert_eq!(
+        summary.get("attachment_count").and_then(Value::as_u64),
+        Some(1)
+    );
+    assert_eq!(
+        summary.get("attachment_bytes").and_then(Value::as_u64),
+        Some(attachment_bytes.len() as u64)
+    );
+    let attachment_preview = summary
+        .get("preview")
+        .and_then(Value::as_array)
+        .and_then(|items| {
+            items
+                .iter()
+                .find(|item| item.get("annotation_index").and_then(Value::as_u64) == Some(2))
+        })
+        .and_then(|item| item.get("attachment"))
+        .expect("attachment preview");
+    assert_eq!(
+        attachment_preview.get("filename").and_then(Value::as_str),
+        Some("审计说明.txt")
+    );
+    assert_eq!(
+        attachment_preview.get("mime_type").and_then(Value::as_str),
+        Some("text/plain")
+    );
+    assert_eq!(
+        attachment_preview.get("sha256").and_then(Value::as_str),
+        Some(attachment_sha256.as_str())
+    );
+    assert!(attachment_preview.get("content").is_none());
+    assert_eq!(
+        fs::read(source.as_path()).expect("source after attachment"),
+        source_before
+    );
+    assert_eq!(
+        fs::read(attachment.as_path()).expect("attachment after embedding"),
+        attachment_before
+    );
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn pdf_file_attachment_rejects_stale_unsafe_malformed_and_overlapping_inputs() {
+    let (root, state, request) = test_context();
+    let source = root.join("source.pdf");
+    write_blank_pdf(source.as_path(), 1);
+    fs::write(root.join("note.txt"), b"safe attachment\n").expect("text attachment");
+    fs::write(root.join("disguised.pdf"), b"not a PDF").expect("disguised PDF");
+    fs::write(root.join("unsafe.exe"), b"MZ").expect("unsafe attachment");
+    let source_before = fs::read(source.as_path()).expect("source bytes");
+    let source_sha256 = sha256_file(source.as_path()).expect("source hash");
+
+    for (target, overrides, expected) in [
+        (
+            "stale.pdf",
+            json!({"expected_source_sha256":"0".repeat(64)}),
+            "expected_source_sha256",
+        ),
+        (
+            "unsafe.pdf",
+            json!({"attachment_path":"unsafe.exe"}),
+            "attachment must be PDF",
+        ),
+        (
+            "disguised-output.pdf",
+            json!({"attachment_path":"disguised.pdf"}),
+            "content does not match",
+        ),
+        (
+            "outside.pdf",
+            json!({"x":590}),
+            "exceeds the effective page bounds",
+        ),
+        (
+            "missing-coordinate.pdf",
+            json!({"x":Value::Null}),
+            "x must be a finite number",
+        ),
+    ] {
+        let mut arguments = json!({
+            "path":"source.pdf",
+            "expected_source_sha256":source_sha256,
+            "attachment_path":"note.txt",
+            "page":1,
+            "x":10,
+            "y":10,
+            "target_path":target,
+        });
+        for (key, value) in overrides.as_object().expect("attachment overrides") {
+            arguments[key] = value.clone();
+        }
+        let error = pdf_edit::add_pdf_file_attachment_annotation(&arguments, &state, &request)
+            .expect_err("invalid attachment request must fail");
+        assert!(
+            error.to_string().contains(expected),
+            "unexpected error for {target}: {error}"
+        );
+        assert!(!root.join(target).exists());
+    }
+
+    let same_file_error = pdf_edit::add_pdf_file_attachment_annotation(
+        &json!({
+            "path":"source.pdf",
+            "expected_source_sha256":source_sha256,
+            "attachment_path":"source.pdf",
+            "page":1,
+            "x":10,
+            "y":10,
+            "target_path":"same-file.pdf",
+        }),
+        &state,
+        &request,
+    )
+    .expect_err("source-as-attachment must fail");
+    assert!(same_file_error
+        .to_string()
+        .contains("must be distinct files"));
+
+    let attachment_pdf = root.join("payload.pdf");
+    write_blank_pdf(attachment_pdf.as_path(), 1);
+    fs::hard_link(
+        attachment_pdf.as_path(),
+        root.join("attachment-hard-link.pdf"),
+    )
+    .expect("attachment hard-linked target");
+    let hard_link_error = pdf_edit::add_pdf_file_attachment_annotation(
+        &json!({
+            "path":"source.pdf",
+            "expected_source_sha256":source_sha256,
+            "attachment_path":"payload.pdf",
+            "page":1,
+            "x":10,
+            "y":10,
+            "target_path":"attachment-hard-link.pdf",
+            "overwrite":true,
+        }),
+        &state,
+        &request,
+    )
+    .expect_err("hard-linked attachment target must fail");
+    assert!(hard_link_error.to_string().contains("distinct target_path"));
+
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(root.join("note.txt"), root.join("linked.txt"))
+            .expect("attachment symlink");
+        let symlink_error = pdf_edit::add_pdf_file_attachment_annotation(
+            &json!({
+                "path":"source.pdf",
+                "expected_source_sha256":source_sha256,
+                "attachment_path":"linked.txt",
+                "page":1,
+                "x":10,
+                "y":10,
+                "target_path":"linked-output.pdf",
+            }),
+            &state,
+            &request,
+        )
+        .expect_err("symlink attachment must fail");
+        assert!(symlink_error.to_string().contains("regular non-symlink"));
+    }
+
+    let malformed = root.join("malformed.pdf");
+    write_blank_pdf(malformed.as_path(), 1);
+    let mut document = Document::load(malformed.as_path()).expect("malformed PDF");
+    let page_id = document.get_pages()[&1];
+    let malformed_id = document.add_object(dictionary! {
+        "Type" => "Annot",
+        "Subtype" => "FileAttachment",
+        "Rect" => vec![10.into(), 10.into(), 34.into(), 34.into()],
+        "FS" => dictionary! {"Type" => "Filespec"},
+        "P" => page_id,
+    });
+    document
+        .get_object_mut(page_id)
+        .and_then(Object::as_dict_mut)
+        .expect("malformed page")
+        .set("Annots", vec![Object::Reference(malformed_id)]);
+    document
+        .save(malformed.as_path())
+        .expect("save malformed PDF");
+    let malformed_error = inspect_pdf(&json!({"path":"malformed.pdf"}), &state, &request)
+        .expect_err("direct Filespec must fail inspection");
+    assert!(malformed_error
+        .to_string()
+        .contains("FS must be an indirect Filespec reference"));
+
+    assert_eq!(
+        fs::read(source.as_path()).expect("source after failures"),
+        source_before
+    );
+    for output in [
+        "same-file.pdf",
+        "linked-output.pdf",
+        "attachment-output.pdf",
+    ] {
+        assert!(!root.join(output).exists(), "unexpected output {output}");
+    }
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
 fn creates_multi_page_pdf_from_png_images_with_bounded_layout() {
     let (root, state, request) = test_context();
     fs::create_dir_all(root.join("assets")).expect("assets");

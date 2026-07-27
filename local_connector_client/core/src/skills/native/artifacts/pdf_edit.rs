@@ -41,6 +41,9 @@ const MAX_PDF_ANNOTATION_PREVIEW: usize = 100;
 const MAX_PDF_ANNOTATION_CHARACTERS: usize = 4_096;
 const MAX_PDF_ANNOTATION_AUTHOR_CHARACTERS: usize = 256;
 const MAX_PDF_MARKUP_RECTANGLES: usize = 64;
+const MAX_PDF_ATTACHMENT_BYTES: usize = 10 * 1024 * 1024;
+const MAX_PDF_ATTACHMENT_TOTAL_BYTES: usize = 100 * 1024 * 1024;
+const MAX_PDF_ATTACHMENT_FILENAME_CHARACTERS: usize = 255;
 const MAX_PDF_INFO_VALUE_CHARACTERS: usize = 100_000;
 const MAX_PDF_INFO_PREVIEW_CHARACTERS: usize = 4_096;
 const MAX_PDF_FORM_FIELDS: usize = 2_000;
@@ -164,6 +167,19 @@ struct PdfEmbeddedImage {
     encoded_alpha: Option<Vec<u8>>,
     filter: &'static str,
     sha256: String,
+}
+
+#[derive(Clone, Copy)]
+struct PdfAttachmentFormat {
+    extension: &'static str,
+    mime_type: &'static str,
+}
+
+struct PdfFileGuard<'a> {
+    path: &'a Path,
+    expected_sha256: &'a str,
+    changed_message: &'a str,
+    require_regular_non_symlink: bool,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -630,6 +646,24 @@ fn bounded_pdf_number(
         })
         .transpose()?
         .unwrap_or(default);
+    if !(minimum..=maximum).contains(&value) {
+        return Err(anyhow!("{field} must be between {minimum} and {maximum}"));
+    }
+    Ok(value)
+}
+
+fn required_bounded_pdf_number(
+    arguments: &Value,
+    field: &str,
+    minimum: f32,
+    maximum: f32,
+) -> Result<f32> {
+    let value = arguments
+        .get(field)
+        .and_then(Value::as_f64)
+        .filter(|number| number.is_finite())
+        .map(|number| number as f32)
+        .ok_or_else(|| anyhow!("{field} must be a finite number"))?;
     if !(minimum..=maximum).contains(&value) {
         return Err(anyhow!("{field} must be between {minimum} and {maximum}"));
     }
@@ -2939,6 +2973,8 @@ pub(super) fn inspect_pdf_annotations(
     let mut total = 0usize;
     let mut text_annotations = 0usize;
     let mut markup_annotations = 0usize;
+    let mut attachment_annotations = 0usize;
+    let mut attachment_bytes = 0usize;
     let mut reply_annotations = 0usize;
     let mut grouped_annotations = 0usize;
     let mut preview_candidates = 0usize;
@@ -3018,6 +3054,23 @@ pub(super) fn inspect_pdf_annotations(
                     return Err(anyhow!("{label} markup opacity is outside 0..=1"));
                 }
                 Some(opacity)
+            } else {
+                None
+            };
+            let attachment_metadata = if subtype == "FileAttachment" {
+                attachment_annotations += 1;
+                let (metadata, bytes) =
+                    inspect_pdf_file_attachment(document, &dictionary, *page_id, label.as_str())?;
+                attachment_bytes = attachment_bytes
+                    .checked_add(bytes)
+                    .filter(|value| *value <= MAX_PDF_ATTACHMENT_TOTAL_BYTES)
+                    .ok_or_else(|| {
+                        anyhow!(
+                            "PDF attachments exceed the {} MiB aggregate inspection limit",
+                            MAX_PDF_ATTACHMENT_TOTAL_BYTES / (1024 * 1024)
+                        )
+                    })?;
+                Some(metadata)
             } else {
                 None
             };
@@ -3110,6 +3163,8 @@ pub(super) fn inspect_pdf_annotations(
                 item["rect"] = json!(rect);
                 item["quadrilateral_count"] = json!(quadrilateral_count);
                 item["opacity"] = json!(opacity);
+            } else if let Some(metadata) = attachment_metadata {
+                item["attachment"] = metadata;
             }
             preview.push(item);
         }
@@ -3132,6 +3187,8 @@ pub(super) fn inspect_pdf_annotations(
         "count": total,
         "text_count": text_annotations,
         "markup_count": markup_annotations,
+        "attachment_count": attachment_annotations,
+        "attachment_bytes": attachment_bytes,
         "reply_count": reply_annotations,
         "group_count": grouped_annotations,
         "subtypes": subtypes,
@@ -3699,6 +3756,281 @@ pub(super) fn add_pdf_annotation_reply(
         "contents_sha256": hex::encode(Sha256::digest(text.as_bytes())),
         "author": author,
         "relation_type": "reply",
+        "bytes": bytes,
+    }))
+}
+
+pub(super) fn add_pdf_file_attachment_annotation(
+    arguments: &Value,
+    state: &LocalState,
+    request: &RelayRequest,
+) -> Result<Value> {
+    let (source, source_relative) =
+        input_file(state, request, required_text(arguments, "path")?, ".pdf")?;
+    let expected_source_sha256 = required_lowercase_sha256(arguments, "expected_source_sha256")?;
+    let source_bytes =
+        fs::read(source.as_path()).with_context(|| format!("read PDF {}", source.display()))?;
+    if source_bytes.len() as u64 > MAX_ARTIFACT_BYTES {
+        return Err(anyhow!("local artifact exceeds the 100 MiB safety limit"));
+    }
+    let actual_source_sha256 = hex::encode(Sha256::digest(source_bytes.as_slice()));
+    if actual_source_sha256 != expected_source_sha256 {
+        return Err(anyhow!(
+            "PDF source SHA-256 does not match expected_source_sha256; inspect the current file again"
+        ));
+    }
+    if sha256_file(source.as_path())? != expected_source_sha256 {
+        return Err(anyhow!(
+            "PDF source changed while it was being read; inspect the current file again"
+        ));
+    }
+
+    let attachment_requested = required_text(arguments, "attachment_path")?;
+    let (attachment, attachment_relative) =
+        safe_workspace_path(state, request, attachment_requested)?;
+    let attachment_metadata = fs::symlink_metadata(attachment.as_path())
+        .with_context(|| format!("inspect PDF attachment {}", attachment.display()))?;
+    if attachment_metadata.file_type().is_symlink() || !attachment_metadata.is_file() {
+        return Err(anyhow!(
+            "PDF attachment must be a regular non-symlink workspace file"
+        ));
+    }
+    let attachment_filename = attachment
+        .file_name()
+        .and_then(|value| value.to_str())
+        .ok_or_else(|| anyhow!("PDF attachment filename must be valid Unicode"))?
+        .to_string();
+    validate_pdf_attachment_filename(attachment_filename.as_str(), "attachment filename")?;
+    let attachment_format = pdf_attachment_format_from_filename(attachment_filename.as_str())?;
+    let attachment_bytes = fs::read(attachment.as_path())
+        .with_context(|| format!("read PDF attachment {}", attachment.display()))?;
+    if attachment_bytes.is_empty() || attachment_bytes.len() > MAX_PDF_ATTACHMENT_BYTES {
+        return Err(anyhow!(
+            "PDF attachment must contain between 1 byte and {} MiB",
+            MAX_PDF_ATTACHMENT_BYTES / (1024 * 1024)
+        ));
+    }
+    validate_pdf_attachment_content(attachment_format, attachment_bytes.as_slice())?;
+    let attachment_sha256 = hex::encode(Sha256::digest(attachment_bytes.as_slice()));
+    let rechecked_attachment_metadata = fs::symlink_metadata(attachment.as_path())
+        .with_context(|| format!("reinspect PDF attachment {}", attachment.display()))?;
+    if rechecked_attachment_metadata.file_type().is_symlink()
+        || !rechecked_attachment_metadata.is_file()
+        || rechecked_attachment_metadata.len() != attachment_bytes.len() as u64
+        || sha256_file(attachment.as_path())? != attachment_sha256
+    {
+        return Err(anyhow!(
+            "PDF attachment changed while it was being read; retry with the current file"
+        ));
+    }
+    if same_file::is_same_file(source.as_path(), attachment.as_path())? {
+        return Err(anyhow!(
+            "PDF source and attachment must be distinct files and must not be hard links"
+        ));
+    }
+
+    let mut document = Document::load_mem(source_bytes.as_slice())
+        .with_context(|| format!("open PDF {}", source.display()))?;
+    if document.is_encrypted() {
+        return Err(anyhow!(
+            "encrypted PDFs cannot be edited without an explicit decryption workflow"
+        ));
+    }
+    if document.get_pages().is_empty() {
+        return Err(anyhow!("PDF contains no pages: {}", source.display()));
+    }
+    let page_map = document.get_pages();
+    if page_map.len() > MAX_PDF_PAGES {
+        return Err(anyhow!(
+            "PDF exceeds the {MAX_PDF_PAGES} page annotation safety limit"
+        ));
+    }
+    let annotation_inspection = inspect_pdf_annotations(&document, &page_map, None)?;
+    if annotation_inspection
+        .get("count")
+        .and_then(Value::as_u64)
+        .is_some_and(|count| count >= MAX_PDF_ANNOTATIONS as u64)
+    {
+        return Err(anyhow!(
+            "PDF already reaches the {MAX_PDF_ANNOTATIONS} annotation limit"
+        ));
+    }
+    let page_number = arguments
+        .get("page")
+        .and_then(Value::as_u64)
+        .and_then(|value| u32::try_from(value).ok())
+        .filter(|value| (1..=MAX_PDF_PAGES as u32).contains(value))
+        .ok_or_else(|| anyhow!("page must be an integer between 1 and {MAX_PDF_PAGES}"))?;
+    let page_id = page_map
+        .get(&page_number)
+        .copied()
+        .ok_or_else(|| anyhow!("page {page_number} does not exist"))?;
+    if pdf_page_rotation(&document, page_id)? != 0 {
+        return Err(anyhow!(
+            "PDF file-attachment annotation geometry currently requires an unrotated page"
+        ));
+    }
+    let x = required_bounded_pdf_number(arguments, "x", 0.0, 20_000.0)?;
+    let y = required_bounded_pdf_number(arguments, "y", 0.0, 20_000.0)?;
+    let icon_size = bounded_pdf_number(arguments, "icon_size", 24.0, 12.0, 72.0)?;
+    let (left, bottom, right, top) = pdf_page_bounds(&document, page_id)?;
+    let annotation_left = left + x;
+    let annotation_bottom = bottom + y;
+    let annotation_right = annotation_left + icon_size;
+    let annotation_top = annotation_bottom + icon_size;
+    if annotation_right > right + 0.01 || annotation_top > top + 0.01 {
+        return Err(anyhow!(
+            "PDF file-attachment annotation Rect exceeds the effective page bounds"
+        ));
+    }
+    let description = match arguments.get("description") {
+        None => None,
+        Some(Value::String(value)) => Some(normalized_pdf_unicode_text(
+            value,
+            "description",
+            MAX_PDF_ANNOTATION_CHARACTERS,
+            true,
+        )?),
+        Some(_) => return Err(anyhow!("description must be a string")),
+    };
+    let author = match arguments.get("author") {
+        None => None,
+        Some(Value::String(value)) => Some(normalized_pdf_unicode_text(
+            value,
+            "author",
+            MAX_PDF_ANNOTATION_AUTHOR_CHARACTERS,
+            false,
+        )?),
+        Some(_) => return Err(anyhow!("author must be a string")),
+    };
+    let icon = arguments
+        .get("icon")
+        .and_then(Value::as_str)
+        .unwrap_or("push_pin");
+    let icon_name = match icon {
+        "graph" => "Graph",
+        "push_pin" => "PushPin",
+        "paperclip" => "Paperclip",
+        "tag" => "Tag",
+        _ => return Err(anyhow!("icon is not a supported PDF FileAttachment icon")),
+    };
+    let portable_filename =
+        portable_pdf_attachment_filename(attachment_filename.as_str(), attachment_format);
+
+    let embedded_file_id = document.add_object(Stream::new(
+        dictionary! {
+            "Type" => "EmbeddedFile",
+            "Subtype" => Object::Name(attachment_format.mime_type.as_bytes().to_vec()),
+            "Params" => dictionary! {
+                "Size" => i64::try_from(attachment_bytes.len())?,
+            },
+        },
+        attachment_bytes.clone(),
+    ));
+    let mut filespec = dictionary! {
+        "Type" => "Filespec",
+        "F" => text_string(portable_filename.as_str()),
+        "UF" => text_string(attachment_filename.as_str()),
+        "EF" => dictionary! {
+            "F" => embedded_file_id,
+            "UF" => embedded_file_id,
+        },
+    };
+    if let Some(description) = description.as_deref() {
+        filespec.set("Desc", text_string(description));
+    }
+    let filespec_id = document.add_object(filespec);
+    let mut annotation = dictionary! {
+        "Type" => "Annot",
+        "Subtype" => "FileAttachment",
+        "Rect" => vec![
+            Object::Real(annotation_left),
+            Object::Real(annotation_bottom),
+            Object::Real(annotation_right),
+            Object::Real(annotation_top),
+        ],
+        "FS" => filespec_id,
+        "Name" => icon_name,
+        "F" => 4,
+        "P" => page_id,
+    };
+    if let Some(description) = description.as_deref() {
+        annotation.set("Contents", text_string(description));
+    }
+    if let Some(author) = author.as_deref() {
+        annotation.set("T", text_string(author));
+    }
+    let annotation_id = document.add_object(annotation);
+    let mut annotations = pdf_page_annotations(
+        &document,
+        page_id,
+        format!("page {page_number} Annots").as_str(),
+    )?;
+    if annotations.len() >= MAX_PDF_ANNOTATIONS {
+        return Err(anyhow!(
+            "page {page_number} already reaches the {MAX_PDF_ANNOTATIONS} annotation limit"
+        ));
+    }
+    let annotation_index = annotations.len() + 1;
+    annotations.push(Object::Reference(annotation_id));
+    document
+        .get_object_mut(page_id)
+        .and_then(Object::as_dict_mut)
+        .with_context(|| format!("read page {page_number} dictionary"))?
+        .set("Annots", annotations);
+
+    let target_requested = required_text(arguments, "target_path")?;
+    let (target, target_relative) = pdf_output_path(
+        state,
+        request,
+        target_requested,
+        &[source.clone(), attachment.clone()],
+    )?;
+    let guards = [
+        PdfFileGuard {
+            path: source.as_path(),
+            expected_sha256: expected_source_sha256.as_str(),
+            changed_message:
+                "PDF source changed while the file attachment was being prepared; no output was written",
+            require_regular_non_symlink: false,
+        },
+        PdfFileGuard {
+            path: attachment.as_path(),
+            expected_sha256: attachment_sha256.as_str(),
+            changed_message:
+                "PDF attachment changed while the file attachment was being prepared; no output was written",
+            require_regular_non_symlink: true,
+        },
+    ];
+    let bytes = save_pdf_document_with_file_guards(
+        &mut document,
+        target.as_path(),
+        optional_bool(arguments, "overwrite"),
+        guards.as_slice(),
+    )?;
+    Ok(json!({
+        "created": true,
+        "operation": "add_file_attachment_annotation",
+        "source_path": source_relative,
+        "source_sha256": expected_source_sha256,
+        "path": target_relative,
+        "page": page_number,
+        "annotation_index": annotation_index,
+        "coordinate_space": "crop_box_relative_lower_left_points",
+        "rect": [x, y, x + icon_size, y + icon_size],
+        "absolute_rect": [annotation_left, annotation_bottom, annotation_right, annotation_top],
+        "x": x,
+        "y": y,
+        "icon_size": icon_size,
+        "icon": icon,
+        "attachment_path": attachment_relative,
+        "attachment_filename": attachment_filename,
+        "portable_filename": portable_filename,
+        "attachment_mime_type": attachment_format.mime_type,
+        "attachment_bytes": attachment_bytes.len(),
+        "attachment_sha256": attachment_sha256,
+        "description_characters": description.as_ref().map(|value| value.chars().count()).unwrap_or(0),
+        "author": author,
         "bytes": bytes,
     }))
 }
@@ -4952,6 +5284,347 @@ fn pdf_annotation_text(dictionary: &Dictionary, key: &[u8], label: &str) -> Resu
         .map(Some)
 }
 
+fn inspect_pdf_file_attachment(
+    document: &Document,
+    annotation: &Dictionary,
+    page_id: ObjectId,
+    label: &str,
+) -> Result<(Value, usize)> {
+    if let Ok(page) = annotation.get(b"P") {
+        let referenced_page = page
+            .as_reference()
+            .with_context(|| format!("{label} P must be an indirect page reference"))?;
+        if referenced_page != page_id {
+            return Err(anyhow!("{label} P does not reference its physical page"));
+        }
+    }
+    let rect = pdf_annotation_number_array(annotation, b"Rect", 4, 4, label)?;
+    if rect[2] <= rect[0] || rect[3] <= rect[1] {
+        return Err(anyhow!("{label} Rect must have positive width and height"));
+    }
+    let (left, bottom, right, top) = pdf_page_bounds(document, page_id)?;
+    if rect[0] < left - 0.01
+        || rect[1] < bottom - 0.01
+        || rect[2] > right + 0.01
+        || rect[3] > top + 0.01
+    {
+        return Err(anyhow!("{label} Rect exceeds the effective page bounds"));
+    }
+
+    let filespec_id = annotation
+        .get(b"FS")
+        .and_then(Object::as_reference)
+        .with_context(|| format!("{label} FS must be an indirect Filespec reference"))?;
+    let filespec = document
+        .get_object(filespec_id)
+        .and_then(Object::as_dict)
+        .with_context(|| format!("read {label} Filespec dictionary"))?;
+    if filespec.get(b"Type").and_then(Object::as_name).ok() != Some(b"Filespec") {
+        return Err(anyhow!("{label} FS Type must be /Filespec"));
+    }
+    let portable_filename = filespec
+        .get(b"F")
+        .map(decode_text_string)
+        .with_context(|| format!("{label} Filespec F is missing"))?
+        .with_context(|| format!("decode {label} Filespec F"))?;
+    if !portable_filename.is_ascii() {
+        return Err(anyhow!(
+            "{label} Filespec F must be an ASCII portable filename"
+        ));
+    }
+    validate_pdf_attachment_filename(portable_filename.as_str(), "Filespec F")?;
+    let filename = filespec
+        .get(b"UF")
+        .map(decode_text_string)
+        .with_context(|| format!("{label} Filespec UF is missing"))?
+        .with_context(|| format!("decode {label} Filespec UF"))?;
+    validate_pdf_attachment_filename(filename.as_str(), "Filespec UF")?;
+    let format = pdf_attachment_format_from_filename(filename.as_str())?;
+    let portable_format = pdf_attachment_format_from_filename(portable_filename.as_str())?;
+    if portable_format.extension != format.extension {
+        return Err(anyhow!(
+            "{label} Filespec F and UF must use the same supported extension"
+        ));
+    }
+
+    let embedded_files = resolved_pdf_dictionary(
+        document,
+        filespec
+            .get(b"EF")
+            .with_context(|| format!("{label} Filespec EF is missing"))?
+            .clone(),
+        format!("{label} Filespec EF").as_str(),
+    )?;
+    let embedded_file_id = embedded_files
+        .get(b"F")
+        .and_then(Object::as_reference)
+        .with_context(|| format!("{label} Filespec EF/F must be an indirect stream reference"))?;
+    let unicode_embedded_file_id = embedded_files
+        .get(b"UF")
+        .and_then(Object::as_reference)
+        .with_context(|| format!("{label} Filespec EF/UF must be an indirect stream reference"))?;
+    if embedded_file_id != unicode_embedded_file_id {
+        return Err(anyhow!(
+            "{label} Filespec EF/F and EF/UF must reference the same embedded file stream"
+        ));
+    }
+    let embedded_file = document
+        .get_object(embedded_file_id)
+        .and_then(Object::as_stream)
+        .with_context(|| format!("read {label} EmbeddedFile stream"))?;
+    if embedded_file
+        .dict
+        .get(b"Type")
+        .and_then(Object::as_name)
+        .ok()
+        != Some(b"EmbeddedFile")
+    {
+        return Err(anyhow!(
+            "{label} embedded stream Type must be /EmbeddedFile"
+        ));
+    }
+    let mime_type = embedded_file
+        .dict
+        .get(b"Subtype")
+        .and_then(Object::as_name)
+        .with_context(|| format!("{label} EmbeddedFile Subtype is missing"))?;
+    if mime_type != format.mime_type.as_bytes() {
+        return Err(anyhow!(
+            "{label} EmbeddedFile MIME type does not match the attachment extension"
+        ));
+    }
+    let content = embedded_file
+        .decompressed_content_with_limit(MAX_PDF_ATTACHMENT_BYTES)
+        .with_context(|| {
+            format!(
+                "decode {label} EmbeddedFile within the {} MiB limit",
+                MAX_PDF_ATTACHMENT_BYTES / (1024 * 1024)
+            )
+        })?;
+    if content.is_empty() {
+        return Err(anyhow!("{label} EmbeddedFile must not be empty"));
+    }
+    validate_pdf_attachment_content(format, content.as_slice())?;
+    let params = resolved_pdf_dictionary(
+        document,
+        embedded_file
+            .dict
+            .get(b"Params")
+            .with_context(|| format!("{label} EmbeddedFile Params is missing"))?
+            .clone(),
+        format!("{label} EmbeddedFile Params").as_str(),
+    )?;
+    let declared_size = params
+        .get(b"Size")
+        .and_then(Object::as_i64)
+        .ok()
+        .and_then(|value| usize::try_from(value).ok())
+        .ok_or_else(|| anyhow!("{label} EmbeddedFile Params/Size must be non-negative"))?;
+    if declared_size != content.len() {
+        return Err(anyhow!(
+            "{label} EmbeddedFile Params/Size does not match the decoded attachment bytes"
+        ));
+    }
+
+    let description = optional_bounded_pdf_text(
+        filespec,
+        b"Desc",
+        format!("{label} Filespec").as_str(),
+        MAX_PDF_ANNOTATION_CHARACTERS,
+        true,
+    )?;
+    let contents = optional_bounded_pdf_text(
+        annotation,
+        b"Contents",
+        label,
+        MAX_PDF_ANNOTATION_CHARACTERS,
+        true,
+    )?;
+    let author = optional_bounded_pdf_text(
+        annotation,
+        b"T",
+        label,
+        MAX_PDF_ANNOTATION_AUTHOR_CHARACTERS,
+        false,
+    )?;
+    let icon = annotation
+        .get(b"Name")
+        .and_then(Object::as_name)
+        .ok()
+        .map(|value| String::from_utf8_lossy(value).to_string())
+        .unwrap_or_else(|| "PushPin".to_string());
+    if !matches!(icon.as_str(), "Graph" | "PushPin" | "Paperclip" | "Tag") {
+        return Err(anyhow!("{label} uses an unsupported FileAttachment icon"));
+    }
+    let bytes = content.len();
+    Ok((
+        json!({
+            "filename": filename,
+            "portable_filename": portable_filename,
+            "mime_type": format.mime_type,
+            "bytes": bytes,
+            "sha256": hex::encode(Sha256::digest(content.as_slice())),
+            "description": description,
+            "contents": contents,
+            "author": author,
+            "icon": icon,
+            "rect": rect,
+        }),
+        bytes,
+    ))
+}
+
+fn optional_bounded_pdf_text(
+    dictionary: &Dictionary,
+    key: &[u8],
+    label: &str,
+    max_characters: usize,
+    multiline: bool,
+) -> Result<Option<String>> {
+    let Ok(value) = dictionary.get(key) else {
+        return Ok(None);
+    };
+    let decoded = decode_text_string(value).with_context(|| {
+        format!(
+            "decode {label} {} text string",
+            String::from_utf8_lossy(key)
+        )
+    })?;
+    normalized_pdf_unicode_text(
+        decoded.as_str(),
+        format!("{label} {}", String::from_utf8_lossy(key)).as_str(),
+        max_characters,
+        multiline,
+    )
+    .map(Some)
+}
+
+fn pdf_attachment_format_from_filename(filename: &str) -> Result<PdfAttachmentFormat> {
+    let extension = Path::new(filename)
+        .extension()
+        .and_then(|value| value.to_str())
+        .map(str::to_ascii_lowercase)
+        .ok_or_else(|| anyhow!("attachment filename must have a supported extension"))?;
+    let format = match extension.as_str() {
+        "pdf" => PdfAttachmentFormat {
+            extension: "pdf",
+            mime_type: "application/pdf",
+        },
+        "txt" => PdfAttachmentFormat {
+            extension: "txt",
+            mime_type: "text/plain",
+        },
+        "md" => PdfAttachmentFormat {
+            extension: "md",
+            mime_type: "text/markdown",
+        },
+        "csv" => PdfAttachmentFormat {
+            extension: "csv",
+            mime_type: "text/csv",
+        },
+        "json" => PdfAttachmentFormat {
+            extension: "json",
+            mime_type: "application/json",
+        },
+        "docx" => PdfAttachmentFormat {
+            extension: "docx",
+            mime_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        },
+        "xlsx" => PdfAttachmentFormat {
+            extension: "xlsx",
+            mime_type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        },
+        "pptx" => PdfAttachmentFormat {
+            extension: "pptx",
+            mime_type: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        },
+        "png" => PdfAttachmentFormat {
+            extension: "png",
+            mime_type: "image/png",
+        },
+        "jpg" => PdfAttachmentFormat {
+            extension: "jpg",
+            mime_type: "image/jpeg",
+        },
+        "jpeg" => PdfAttachmentFormat {
+            extension: "jpeg",
+            mime_type: "image/jpeg",
+        },
+        _ => {
+            return Err(anyhow!(
+                "attachment must be PDF, TXT, MD, CSV, JSON, DOCX, XLSX, PPTX, PNG, JPG, or JPEG"
+            ));
+        }
+    };
+    Ok(format)
+}
+
+fn validate_pdf_attachment_filename(filename: &str, label: &str) -> Result<()> {
+    if filename.trim() != filename
+        || filename.is_empty()
+        || filename.starts_with('.')
+        || filename.ends_with('.')
+        || filename.chars().count() > MAX_PDF_ATTACHMENT_FILENAME_CHARACTERS
+        || filename.chars().any(|character| {
+            character.is_control()
+                || matches!(
+                    character,
+                    '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|'
+                )
+        })
+    {
+        return Err(anyhow!(
+            "{label} is not a safe portable attachment filename"
+        ));
+    }
+    let stem = filename
+        .split('.')
+        .next()
+        .unwrap_or_default()
+        .to_ascii_uppercase();
+    if matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL")
+        || (stem.len() == 4
+            && (stem.starts_with("COM") || stem.starts_with("LPT"))
+            && stem.as_bytes()[3].is_ascii_digit()
+            && stem.as_bytes()[3] != b'0')
+    {
+        return Err(anyhow!("{label} uses a reserved portable filename"));
+    }
+    pdf_attachment_format_from_filename(filename)?;
+    Ok(())
+}
+
+fn portable_pdf_attachment_filename(filename: &str, format: PdfAttachmentFormat) -> String {
+    if filename.is_ascii() {
+        filename.to_string()
+    } else {
+        format!("attachment.{}", format.extension)
+    }
+}
+
+fn validate_pdf_attachment_content(format: PdfAttachmentFormat, bytes: &[u8]) -> Result<()> {
+    let valid = match format.extension {
+        "pdf" => bytes.windows(5).take(1024).any(|window| window == b"%PDF-"),
+        "txt" | "md" | "csv" => !bytes.contains(&0) && std::str::from_utf8(bytes).is_ok(),
+        "json" => !bytes.contains(&0) && serde_json::from_slice::<Value>(bytes).is_ok(),
+        "docx" | "xlsx" | "pptx" => {
+            bytes.starts_with(b"PK\x03\x04")
+                || bytes.starts_with(b"PK\x05\x06")
+                || bytes.starts_with(b"PK\x07\x08")
+        }
+        "png" => bytes.starts_with(b"\x89PNG\r\n\x1a\n"),
+        "jpg" | "jpeg" => bytes.starts_with(b"\xff\xd8\xff"),
+        _ => false,
+    };
+    if !valid {
+        return Err(anyhow!(
+            "attachment content does not match the .{} file type",
+            format.extension
+        ));
+    }
+    Ok(())
+}
+
 fn is_pdf_markup_subtype(subtype: &str) -> bool {
     matches!(
         subtype,
@@ -5338,7 +6011,7 @@ fn pdf_output_path(
 }
 
 fn save_pdf_document(document: &mut Document, target: &Path, overwrite: bool) -> Result<u64> {
-    save_pdf_document_inner(document, target, overwrite, None)
+    save_pdf_document_inner(document, target, overwrite, &[])
 }
 
 fn save_pdf_document_with_source_guard(
@@ -5348,19 +6021,30 @@ fn save_pdf_document_with_source_guard(
     source: &Path,
     expected_source_sha256: &str,
 ) -> Result<u64> {
-    save_pdf_document_inner(
-        document,
-        target,
-        overwrite,
-        Some((source, expected_source_sha256)),
-    )
+    let guards = [PdfFileGuard {
+        path: source,
+        expected_sha256: expected_source_sha256,
+        changed_message:
+            "PDF source changed while the annotation reply was being prepared; no output was written",
+        require_regular_non_symlink: false,
+    }];
+    save_pdf_document_inner(document, target, overwrite, guards.as_slice())
+}
+
+fn save_pdf_document_with_file_guards(
+    document: &mut Document,
+    target: &Path,
+    overwrite: bool,
+    guards: &[PdfFileGuard<'_>],
+) -> Result<u64> {
+    save_pdf_document_inner(document, target, overwrite, guards)
 }
 
 fn save_pdf_document_inner(
     document: &mut Document,
     target: &Path,
     overwrite: bool,
-    source_guard: Option<(&Path, &str)>,
+    file_guards: &[PdfFileGuard<'_>],
 ) -> Result<u64> {
     match fs::symlink_metadata(target) {
         Ok(metadata) => {
@@ -5407,11 +6091,16 @@ fn save_pdf_document_inner(
     if bytes > MAX_ARTIFACT_BYTES {
         return Err(anyhow!("generated PDF exceeds the 100 MiB safety limit"));
     }
-    if let Some((source, expected_source_sha256)) = source_guard {
-        if sha256_file(source)? != expected_source_sha256 {
-            return Err(anyhow!(
-                "PDF source changed while the annotation reply was being prepared; no output was written"
-            ));
+    for guard in file_guards {
+        if guard.require_regular_non_symlink {
+            let metadata = fs::symlink_metadata(guard.path)
+                .with_context(|| format!("reinspect guarded PDF input {}", guard.path.display()))?;
+            if metadata.file_type().is_symlink() || !metadata.is_file() {
+                return Err(anyhow!("{}", guard.changed_message));
+            }
+        }
+        if sha256_file(guard.path)? != guard.expected_sha256 {
+            return Err(anyhow!("{}", guard.changed_message));
         }
     }
     match fs::symlink_metadata(target) {

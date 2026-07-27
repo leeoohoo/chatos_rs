@@ -21,6 +21,7 @@ pub(super) fn tool_definitions(skill_id: &str) -> Vec<Value> {
             add_pdf_text_annotation_tool(),
             add_pdf_markup_annotation_tool(),
             add_pdf_annotation_reply_tool(),
+            add_pdf_file_attachment_annotation_tool(),
             stamp_pdf_text_tool(),
             stamp_pdf_page_numbers_tool(),
             stamp_pdf_image_tool(),
@@ -487,6 +488,32 @@ fn add_pdf_annotation_reply_tool() -> Value {
                 "overwrite":{"type":"boolean","default":false}
             },
             "required":["path","expected_source_sha256","page","annotation_index","text","target_path"],
+            "additionalProperties":false
+        }),
+    )
+}
+
+fn add_pdf_file_attachment_annotation_tool() -> Value {
+    tool(
+        "add_pdf_file_attachment_annotation",
+        "Embed one bounded workspace file and append a standard PDF FileAttachment annotation to an unrotated physical page. The source PDF snapshot, attachment type and content signature, CropBox-relative geometry, indirect object chain, and distinct output are validated fail closed.",
+        json!({
+            "type":"object",
+            "properties":{
+                "path":{"type":"string","description":"Workspace-relative source .pdf path."},
+                "expected_source_sha256":{"type":"string","pattern":"^[0-9a-f]{64}$","description":"Exact source SHA-256 returned by inspect_pdf."},
+                "attachment_path":{"type":"string","description":"Workspace-relative regular non-symlink attachment path. Supported types: PDF, TXT, MD, CSV, JSON, DOCX, XLSX, PPTX, PNG, JPG, and JPEG."},
+                "page":{"type":"integer","minimum":1,"maximum":5000,"description":"One-based physical page position."},
+                "x":{"type":"number","minimum":0,"maximum":20000,"description":"Left edge in PDF points relative to the effective CropBox lower-left corner."},
+                "y":{"type":"number","minimum":0,"maximum":20000,"description":"Bottom edge in PDF points relative to the effective CropBox lower-left corner."},
+                "icon_size":{"type":"number","minimum":12,"maximum":72,"default":24,"description":"Square annotation icon size in PDF points."},
+                "description":{"type":"string","minLength":1,"maxLength":4096,"description":"Optional Unicode attachment description stored in both the Filespec and annotation contents."},
+                "author":{"type":"string","minLength":1,"maxLength":256},
+                "icon":{"type":"string","enum":["graph","push_pin","paperclip","tag"],"default":"push_pin"},
+                "target_path":{"type":"string","description":"Distinct workspace-relative .pdf output path."},
+                "overwrite":{"type":"boolean","default":false}
+            },
+            "required":["path","expected_source_sha256","attachment_path","page","x","y","target_path"],
             "additionalProperties":false
         }),
     )
