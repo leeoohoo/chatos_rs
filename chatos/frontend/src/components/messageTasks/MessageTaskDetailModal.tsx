@@ -21,6 +21,7 @@ interface MessageTaskDetailModalProps {
     retryInstruction?: string,
   ) => unknown | Promise<unknown>;
   retrying?: boolean;
+  retryError?: string | null;
   onClose: () => void;
 }
 
@@ -91,6 +92,7 @@ export const MessageTaskDetailModal: FC<MessageTaskDetailModalProps> = ({
   relatedTasks = [],
   onRetry,
   retrying = false,
+  retryError = null,
   onClose,
 }) => {
   const [retryInstruction, setRetryInstruction] = useState('');
@@ -218,6 +220,16 @@ export const MessageTaskDetailModal: FC<MessageTaskDetailModalProps> = ({
               {retrying ? '正在重新处理' : isBlocked ? '重新处理此节点' : '重试此任务'}
             </button>
           </div>
+
+          {retryError ? (
+            <div
+              role="alert"
+              className="flex items-start gap-2 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs leading-5 text-destructive"
+            >
+              <CircleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+              <span>{retryError}</span>
+            </div>
+          ) : null}
         </div>
       ) : null}
 

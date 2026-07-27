@@ -350,4 +350,55 @@ describe('useMessageTaskGraph', () => {
       last_run_id: 'run-retry',
     });
   });
+
+  it('exposes a retry request failure to the open task detail modal', async () => {
+    const blockedTask: MessageTaskRunnerTask = {
+      id: 'task-blocked',
+      title: '阻塞任务',
+      status: 'blocked',
+      last_run_id: 'run-blocked',
+      source_session_id: 'session-1',
+      source_turn_id: 'turn-1',
+      source_user_message_id: 'message-1',
+    };
+    const request = vi.fn((path: string) => {
+      if (path.includes('/retry')) {
+        return Promise.reject(new Error('模型配置不可用'));
+      }
+      return Promise.resolve({
+        root_task_ids: [blockedTask.id],
+        nodes: [{
+          task: blockedTask,
+          depth: 0,
+          is_root: true,
+          is_current_message: true,
+        }],
+        edges: [],
+        source_session_id: 'session-1',
+        source_turn_id: 'turn-1',
+        source_user_message_id: 'message-1',
+      });
+    });
+    const lookup = {
+      sessionId: 'session-1',
+      turnId: 'turn-1',
+      sourceUserMessageId: 'message-1',
+    };
+    const { result } = renderHook(() => useMessageTaskGraph({
+      open: true,
+      messageId: 'message-1',
+      lookup,
+    }), { wrapper: createApiWrapper(request) });
+
+    await waitFor(() => expect(result.current.allTasks[0]?.status).toBe('blocked'));
+
+    let retried = true;
+    await act(async () => {
+      retried = await result.current.retryTask(blockedTask);
+    });
+
+    expect(retried).toBe(false);
+    expect(result.current.retryError).toBe('模型配置不可用');
+    expect(result.current.retryingTaskId).toBeNull();
+  });
 });

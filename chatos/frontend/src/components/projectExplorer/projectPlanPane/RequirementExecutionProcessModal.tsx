@@ -825,6 +825,7 @@ export const RequirementExecutionProcessModal: React.FC<{
     loadingChangesRunId,
     loadingDiffPath,
     retryingTaskId,
+    retryError,
     reloadGraph,
     openDetail,
     openProcessLog,
@@ -1933,7 +1934,8 @@ export const RequirementExecutionProcessModal: React.FC<{
       <MessageTaskDetailModal
         task={detailTask}
         relatedTasks={allTasks}
-        retrying={Boolean(detailTask && retryingTaskId === detailTask.id)}
+        retrying={Boolean(retryingTaskId)}
+        retryError={retryError}
         onRetry={retryTask}
         onClose={closeDetail}
       />

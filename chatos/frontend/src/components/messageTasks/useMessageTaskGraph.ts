@@ -139,6 +139,7 @@ export function useMessageTaskGraph({
   const [loadingChangesRunId, setLoadingChangesRunId] = useState<string | null>(null);
   const [loadingDiffPath, setLoadingDiffPath] = useState<string | null>(null);
   const [retryingTaskId, setRetryingTaskId] = useState<string | null>(null);
+  const [retryError, setRetryError] = useState<string | null>(null);
   const graphRequestSequenceRef = useRef(0);
   const graphRequestIdentity = useMemo(() => JSON.stringify([
     messageId,
@@ -234,6 +235,7 @@ export function useMessageTaskGraph({
   );
 
   const openDetail = useCallback((task: MessageTaskRunnerTask) => {
+    setRetryError(null);
     setDetailTask(task);
   }, []);
 
@@ -304,13 +306,12 @@ export function useMessageTaskGraph({
     const taskId = readString(task.id);
     const runId = readString(task.last_run_id);
     const status = readString(task.status)?.toLowerCase();
-    if (
-      !taskId
-      || !runId
-      || !status
-      || !['failed', 'blocked'].includes(status)
-      || retryingTaskId
-    ) {
+    if (!taskId || !runId || !status || !['failed', 'blocked'].includes(status)) {
+      setRetryError('当前任务缺少可重试的运行记录，请刷新任务流程后重试。');
+      return false;
+    }
+    if (retryingTaskId) {
+      setRetryError('另一个任务节点正在重新处理，请等待其提交完成后再试。');
       return false;
     }
     const source = buildTaskSourceLookup({
@@ -320,6 +321,7 @@ export function useMessageTaskGraph({
       fallbackLookup: lookup,
     });
     setRetryingTaskId(taskId);
+    setRetryError(null);
     setError(null);
     try {
       const response = await retryMessageTaskRunnerRun(
@@ -341,9 +343,12 @@ export function useMessageTaskGraph({
           : current
       ));
       await reloadGraph();
+      setRetryError(null);
       return true;
     } catch (err) {
-      setError(err instanceof Error ? err.message : '重试任务节点失败');
+      const message = err instanceof Error ? err.message : '重试任务节点失败';
+      setRetryError(message);
+      setError(message);
       return false;
     } finally {
       setRetryingTaskId(null);
@@ -482,6 +487,7 @@ export function useMessageTaskGraph({
       setOutputDiff(null);
       setSelectedChangePath(null);
       setRetryingTaskId(null);
+      setRetryError(null);
       setError(null);
     }
   }, [open]);
@@ -505,6 +511,7 @@ export function useMessageTaskGraph({
     loadingChangesRunId,
     loadingDiffPath,
     retryingTaskId,
+    retryError,
     reloadGraph,
     openDetail,
     openProcessLog,
@@ -513,7 +520,10 @@ export function useMessageTaskGraph({
     retryTask,
     selectChangeFile,
     loadMoreRunEvents,
-    closeDetail: () => setDetailTask(null),
+    closeDetail: () => {
+      setDetailTask(null);
+      setRetryError(null);
+    },
     closeProcessLog: () => setProcessTask(null),
     closeRun: () => setRunDetail(null),
     closeChanges: () => {
