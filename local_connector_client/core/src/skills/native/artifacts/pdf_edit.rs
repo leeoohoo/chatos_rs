@@ -44,6 +44,9 @@ const MAX_PDF_MARKUP_RECTANGLES: usize = 64;
 const MAX_PDF_ATTACHMENT_BYTES: usize = 10 * 1024 * 1024;
 const MAX_PDF_ATTACHMENT_TOTAL_BYTES: usize = 100 * 1024 * 1024;
 const MAX_PDF_ATTACHMENT_FILENAME_CHARACTERS: usize = 255;
+const MAX_PDF_EMBEDDED_FILE_NAME_CHARACTERS: usize = 512;
+const MAX_PDF_EMBEDDED_FILE_TREE_DEPTH: usize = 32;
+const MAX_PDF_EMBEDDED_FILE_TREE_NODES: usize = 10_000;
 const MAX_PDF_INFO_VALUE_CHARACTERS: usize = 100_000;
 const MAX_PDF_INFO_PREVIEW_CHARACTERS: usize = 4_096;
 const MAX_PDF_FORM_FIELDS: usize = 2_000;
@@ -181,6 +184,11 @@ struct InspectedPdfFileAttachment {
     filename: String,
     format: PdfAttachmentFormat,
     sha256: String,
+}
+
+struct InspectedPdfEmbeddedFileEntry {
+    name: String,
+    attachment: InspectedPdfFileAttachment,
 }
 
 struct PdfFileGuard<'a> {
@@ -4184,6 +4192,108 @@ pub(super) fn extract_pdf_file_attachment(
     }))
 }
 
+pub(super) fn extract_pdf_embedded_file(
+    arguments: &Value,
+    state: &LocalState,
+    request: &RelayRequest,
+) -> Result<Value> {
+    let (source, source_relative) =
+        input_file(state, request, required_text(arguments, "path")?, ".pdf")?;
+    let expected_source_sha256 = required_lowercase_sha256(arguments, "expected_source_sha256")?;
+    let expected_attachment_sha256 =
+        required_lowercase_sha256(arguments, "expected_attachment_sha256")?;
+    let source_bytes =
+        fs::read(source.as_path()).with_context(|| format!("read PDF {}", source.display()))?;
+    if source_bytes.len() as u64 > MAX_ARTIFACT_BYTES {
+        return Err(anyhow!("local artifact exceeds the 100 MiB safety limit"));
+    }
+    let actual_source_sha256 = hex::encode(Sha256::digest(source_bytes.as_slice()));
+    if actual_source_sha256 != expected_source_sha256 {
+        return Err(anyhow!(
+            "PDF source SHA-256 does not match expected_source_sha256; inspect the current file again"
+        ));
+    }
+    if sha256_file(source.as_path())? != expected_source_sha256 {
+        return Err(anyhow!(
+            "PDF source changed while it was being read; inspect the current file again"
+        ));
+    }
+
+    let document = Document::load_mem(source_bytes.as_slice())
+        .with_context(|| format!("open PDF {}", source.display()))?;
+    if document.is_encrypted() {
+        return Err(anyhow!(
+            "encrypted PDFs cannot be read without an explicit decryption workflow"
+        ));
+    }
+    let page_count = document.get_pages().len();
+    if page_count == 0 {
+        return Err(anyhow!("PDF contains no pages: {}", source.display()));
+    }
+    if page_count > MAX_PDF_PAGES {
+        return Err(anyhow!(
+            "PDF exceeds the {MAX_PDF_PAGES} page embedded-file-extraction safety limit"
+        ));
+    }
+    let embedded_file_index = arguments
+        .get("embedded_file_index")
+        .and_then(Value::as_u64)
+        .and_then(|value| usize::try_from(value).ok())
+        .filter(|value| (1..=MAX_PDF_ANNOTATION_PREVIEW).contains(value))
+        .ok_or_else(|| {
+            anyhow!(
+                "embedded_file_index must be an integer between 1 and {MAX_PDF_ANNOTATION_PREVIEW}"
+            )
+        })?;
+
+    let (entries, _) = collect_pdf_embedded_files(&document)?;
+    let entry = entries
+        .into_iter()
+        .nth(embedded_file_index - 1)
+        .ok_or_else(|| {
+            anyhow!("embedded_file_index {embedded_file_index} does not exist in the PDF")
+        })?;
+    let InspectedPdfEmbeddedFileEntry { name, attachment } = entry;
+    if attachment.sha256 != expected_attachment_sha256 {
+        return Err(anyhow!(
+            "PDF embedded file SHA-256 does not match expected_attachment_sha256; inspect the current file again"
+        ));
+    }
+
+    let overwrite = optional_bool(arguments, "overwrite");
+    let (target, target_relative) = pdf_attachment_output_path(
+        state,
+        request,
+        required_text(arguments, "target_path")?,
+        source.as_path(),
+        attachment.format,
+        overwrite,
+    )?;
+    let attachment_bytes = attachment.content.len();
+    let bytes = persist_extracted_pdf_attachment(
+        source.as_path(),
+        expected_source_sha256.as_str(),
+        target.as_path(),
+        attachment.content.as_slice(),
+        expected_attachment_sha256.as_str(),
+        overwrite,
+    )?;
+    Ok(json!({
+        "created": true,
+        "operation": "extract_embedded_file",
+        "source_path": source_relative,
+        "source_sha256": expected_source_sha256,
+        "path": target_relative,
+        "embedded_file_index": embedded_file_index,
+        "name": name,
+        "attachment_filename": attachment.filename,
+        "attachment_mime_type": attachment.format.mime_type,
+        "attachment_bytes": attachment_bytes,
+        "attachment_sha256": expected_attachment_sha256,
+        "bytes": bytes,
+    }))
+}
+
 pub(super) fn stamp_pdf_text(
     arguments: &Value,
     state: &LocalState,
@@ -5464,12 +5574,48 @@ fn inspect_pdf_file_attachment(
         .get(b"FS")
         .and_then(Object::as_reference)
         .with_context(|| format!("{label} FS must be an indirect Filespec reference"))?;
+    let mut attachment = inspect_pdf_embedded_filespec(document, filespec_id, label)?;
+    let contents = optional_bounded_pdf_text(
+        annotation,
+        b"Contents",
+        label,
+        MAX_PDF_ANNOTATION_CHARACTERS,
+        true,
+    )?;
+    let author = optional_bounded_pdf_text(
+        annotation,
+        b"T",
+        label,
+        MAX_PDF_ANNOTATION_AUTHOR_CHARACTERS,
+        false,
+    )?;
+    let icon = annotation
+        .get(b"Name")
+        .and_then(Object::as_name)
+        .ok()
+        .map(|value| String::from_utf8_lossy(value).to_string())
+        .unwrap_or_else(|| "PushPin".to_string());
+    if !matches!(icon.as_str(), "Graph" | "PushPin" | "Paperclip" | "Tag") {
+        return Err(anyhow!("{label} uses an unsupported FileAttachment icon"));
+    }
+    attachment.metadata["contents"] = contents.map(Value::String).unwrap_or(Value::Null);
+    attachment.metadata["author"] = author.map(Value::String).unwrap_or(Value::Null);
+    attachment.metadata["icon"] = Value::String(icon);
+    attachment.metadata["rect"] = json!(rect);
+    Ok(attachment)
+}
+
+fn inspect_pdf_embedded_filespec(
+    document: &Document,
+    filespec_id: ObjectId,
+    label: &str,
+) -> Result<InspectedPdfFileAttachment> {
     let filespec = document
         .get_object(filespec_id)
         .and_then(Object::as_dict)
         .with_context(|| format!("read {label} Filespec dictionary"))?;
     if filespec.get(b"Type").and_then(Object::as_name).ok() != Some(b"Filespec") {
-        return Err(anyhow!("{label} FS Type must be /Filespec"));
+        return Err(anyhow!("{label} Filespec Type must be /Filespec"));
     }
     let portable_filename = filespec
         .get(b"F")
@@ -5582,29 +5728,6 @@ fn inspect_pdf_file_attachment(
         MAX_PDF_ANNOTATION_CHARACTERS,
         true,
     )?;
-    let contents = optional_bounded_pdf_text(
-        annotation,
-        b"Contents",
-        label,
-        MAX_PDF_ANNOTATION_CHARACTERS,
-        true,
-    )?;
-    let author = optional_bounded_pdf_text(
-        annotation,
-        b"T",
-        label,
-        MAX_PDF_ANNOTATION_AUTHOR_CHARACTERS,
-        false,
-    )?;
-    let icon = annotation
-        .get(b"Name")
-        .and_then(Object::as_name)
-        .ok()
-        .map(|value| String::from_utf8_lossy(value).to_string())
-        .unwrap_or_else(|| "PushPin".to_string());
-    if !matches!(icon.as_str(), "Graph" | "PushPin" | "Paperclip" | "Tag") {
-        return Err(anyhow!("{label} uses an unsupported FileAttachment icon"));
-    }
     let bytes = content.len();
     let sha256 = hex::encode(Sha256::digest(content.as_slice()));
     let metadata = json!({
@@ -5614,10 +5737,6 @@ fn inspect_pdf_file_attachment(
         "bytes": bytes,
         "sha256": sha256.clone(),
         "description": description,
-        "contents": contents,
-        "author": author,
-        "icon": icon,
-        "rect": rect,
     });
     Ok(InspectedPdfFileAttachment {
         metadata,
@@ -5626,6 +5745,250 @@ fn inspect_pdf_file_attachment(
         format,
         sha256,
     })
+}
+
+pub(super) fn inspect_pdf_embedded_files(document: &Document) -> Result<Value> {
+    let (entries, total_bytes) = collect_pdf_embedded_files(document)?;
+    let preview = entries
+        .iter()
+        .take(MAX_PDF_ANNOTATION_PREVIEW)
+        .enumerate()
+        .map(|(index, entry)| {
+            let mut item = entry.attachment.metadata.clone();
+            item["embedded_file_index"] = json!(index + 1);
+            item["name"] = Value::String(entry.name.clone());
+            item
+        })
+        .collect::<Vec<_>>();
+    Ok(json!({
+        "count": entries.len(),
+        "bytes": total_bytes,
+        "preview": preview,
+        "preview_truncated": entries.len() > MAX_PDF_ANNOTATION_PREVIEW,
+    }))
+}
+
+fn collect_pdf_embedded_files(
+    document: &Document,
+) -> Result<(Vec<InspectedPdfEmbeddedFileEntry>, usize)> {
+    let catalog = document.catalog().context("read PDF catalog")?;
+    let Ok(names_object) = catalog.get(b"Names") else {
+        return Ok((Vec::new(), 0));
+    };
+    if matches!(names_object, Object::Null) {
+        return Ok((Vec::new(), 0));
+    }
+    let names = resolved_pdf_dictionary(document, names_object.clone(), "PDF catalog Names")?;
+    let Ok(root_object) = names.get(b"EmbeddedFiles") else {
+        return Ok((Vec::new(), 0));
+    };
+    if matches!(root_object, Object::Null) {
+        return Ok((Vec::new(), 0));
+    }
+
+    let mut entries = Vec::new();
+    let mut total_bytes = 0usize;
+    let mut visited_nodes = HashSet::new();
+    let mut seen_keys = HashSet::new();
+    let mut last_key = None;
+    let mut node_count = 0usize;
+    collect_pdf_embedded_file_name_tree(
+        document,
+        root_object.clone(),
+        0,
+        &mut node_count,
+        &mut visited_nodes,
+        &mut seen_keys,
+        &mut last_key,
+        &mut total_bytes,
+        &mut entries,
+    )?;
+    Ok((entries, total_bytes))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn collect_pdf_embedded_file_name_tree(
+    document: &Document,
+    node_object: Object,
+    depth: usize,
+    node_count: &mut usize,
+    visited_nodes: &mut HashSet<ObjectId>,
+    seen_keys: &mut HashSet<Vec<u8>>,
+    last_key: &mut Option<Vec<u8>>,
+    total_bytes: &mut usize,
+    entries: &mut Vec<InspectedPdfEmbeddedFileEntry>,
+) -> Result<()> {
+    if depth >= MAX_PDF_EMBEDDED_FILE_TREE_DEPTH {
+        return Err(anyhow!(
+            "PDF EmbeddedFiles Name Tree exceeds the {MAX_PDF_EMBEDDED_FILE_TREE_DEPTH} level depth limit"
+        ));
+    }
+    *node_count = node_count
+        .checked_add(1)
+        .filter(|value| *value <= MAX_PDF_EMBEDDED_FILE_TREE_NODES)
+        .ok_or_else(|| {
+            anyhow!(
+                "PDF EmbeddedFiles Name Tree exceeds the {MAX_PDF_EMBEDDED_FILE_TREE_NODES} node limit"
+            )
+        })?;
+    let node = match node_object {
+        Object::Reference(object_id) => {
+            if !visited_nodes.insert(object_id) {
+                return Err(anyhow!(
+                    "PDF EmbeddedFiles Name Tree contains a repeated or cyclic node reference"
+                ));
+            }
+            document
+                .get_object(object_id)
+                .and_then(Object::as_dict)
+                .context("read PDF EmbeddedFiles Name Tree node")?
+                .clone()
+        }
+        Object::Dictionary(dictionary) => dictionary,
+        _ => {
+            return Err(anyhow!(
+                "PDF EmbeddedFiles Name Tree node must be a dictionary"
+            ));
+        }
+    };
+
+    if let Ok(limits_object) = node.get(b"Limits") {
+        let limits_object =
+            resolved_pdf_object(document, limits_object.clone(), "PDF EmbeddedFiles Limits")?;
+        let limits = limits_object
+            .as_array()
+            .context("PDF EmbeddedFiles Limits must be an array")?;
+        if limits.len() != 2 {
+            return Err(anyhow!(
+                "PDF EmbeddedFiles Limits must contain exactly two name strings"
+            ));
+        }
+        let lower = pdf_embedded_file_name_key(&limits[0], "PDF EmbeddedFiles lower Limit")?;
+        let upper = pdf_embedded_file_name_key(&limits[1], "PDF EmbeddedFiles upper Limit")?;
+        if lower.0 > upper.0 {
+            return Err(anyhow!(
+                "PDF EmbeddedFiles Limits must be ordered from lower to upper"
+            ));
+        }
+    }
+
+    let has_names = node.has(b"Names");
+    let has_kids = node.has(b"Kids");
+    if has_names == has_kids {
+        return Err(anyhow!(
+            "PDF EmbeddedFiles Name Tree node must contain exactly one of Names or Kids"
+        ));
+    }
+    if has_names {
+        let names_object = resolved_pdf_object(
+            document,
+            node.get(b"Names")
+                .context("PDF EmbeddedFiles Names is missing")?
+                .clone(),
+            "PDF EmbeddedFiles Names",
+        )?;
+        let names = names_object
+            .as_array()
+            .context("PDF EmbeddedFiles Names must be an array")?;
+        if names.is_empty() || names.len() % 2 != 0 {
+            return Err(anyhow!(
+                "PDF EmbeddedFiles Names must contain one or more name/Filespec pairs"
+            ));
+        }
+        for pair in names.chunks_exact(2) {
+            if entries.len() >= MAX_PDF_ANNOTATIONS {
+                return Err(anyhow!(
+                    "PDF EmbeddedFiles Name Tree exceeds the {MAX_PDF_ANNOTATIONS} entry limit"
+                ));
+            }
+            let (key_bytes, name) = pdf_embedded_file_name_key(
+                &pair[0],
+                format!("PDF EmbeddedFiles entry {} name", entries.len() + 1).as_str(),
+            )?;
+            if !seen_keys.insert(key_bytes.clone()) {
+                return Err(anyhow!(
+                    "PDF EmbeddedFiles Name Tree contains a duplicate name key"
+                ));
+            }
+            if last_key
+                .as_ref()
+                .is_some_and(|previous| previous >= &key_bytes)
+            {
+                return Err(anyhow!(
+                    "PDF EmbeddedFiles Name Tree keys must be strictly ascending"
+                ));
+            }
+            *last_key = Some(key_bytes);
+            let filespec_id = pair[1].as_reference().with_context(|| {
+                format!(
+                    "PDF EmbeddedFiles entry {} must reference an indirect Filespec",
+                    entries.len() + 1
+                )
+            })?;
+            let label = format!("PDF EmbeddedFiles entry {}", entries.len() + 1);
+            let attachment = inspect_pdf_embedded_filespec(document, filespec_id, label.as_str())?;
+            *total_bytes = total_bytes
+                .checked_add(attachment.content.len())
+                .filter(|value| *value <= MAX_PDF_ATTACHMENT_TOTAL_BYTES)
+                .ok_or_else(|| {
+                    anyhow!(
+                        "PDF embedded files exceed the {} MiB aggregate inspection limit",
+                        MAX_PDF_ATTACHMENT_TOTAL_BYTES / (1024 * 1024)
+                    )
+                })?;
+            entries.push(InspectedPdfEmbeddedFileEntry { name, attachment });
+        }
+        return Ok(());
+    }
+
+    let kids_object = resolved_pdf_object(
+        document,
+        node.get(b"Kids")
+            .context("PDF EmbeddedFiles Kids is missing")?
+            .clone(),
+        "PDF EmbeddedFiles Kids",
+    )?;
+    let kids = kids_object
+        .as_array()
+        .context("PDF EmbeddedFiles Kids must be an array")?;
+    if kids.is_empty() {
+        return Err(anyhow!(
+            "PDF EmbeddedFiles Kids must contain at least one child node"
+        ));
+    }
+    for child in kids {
+        if !matches!(child, Object::Reference(_)) {
+            return Err(anyhow!(
+                "PDF EmbeddedFiles Kids entries must be indirect node references"
+            ));
+        }
+        collect_pdf_embedded_file_name_tree(
+            document,
+            child.clone(),
+            depth + 1,
+            node_count,
+            visited_nodes,
+            seen_keys,
+            last_key,
+            total_bytes,
+            entries,
+        )?;
+    }
+    Ok(())
+}
+
+fn pdf_embedded_file_name_key(value: &Object, label: &str) -> Result<(Vec<u8>, String)> {
+    let Object::String(bytes, _) = value else {
+        return Err(anyhow!("{label} must be a PDF text string"));
+    };
+    let decoded = decode_text_string(value).with_context(|| format!("decode {label}"))?;
+    let normalized = normalized_pdf_unicode_text(
+        decoded.as_str(),
+        label,
+        MAX_PDF_EMBEDDED_FILE_NAME_CHARACTERS,
+        false,
+    )?;
+    Ok((bytes.clone(), normalized))
 }
 
 fn optional_bounded_pdf_text(

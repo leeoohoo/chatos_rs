@@ -100,6 +100,9 @@ pub(super) fn execute_with_cancellation(
         ("internal_skill_pdf", "extract_pdf_file_attachment") => {
             pdf_edit::extract_pdf_file_attachment(arguments, state, request)
         }
+        ("internal_skill_pdf", "extract_pdf_embedded_file") => {
+            pdf_edit::extract_pdf_embedded_file(arguments, state, request)
+        }
         ("internal_skill_pdf", "stamp_pdf_text") => {
             pdf_edit::stamp_pdf_text(arguments, state, request)
         }
@@ -301,6 +304,11 @@ fn inspect_pdf(arguments: &Value, state: &LocalState, request: &RelayRequest) ->
     } else {
         pdf_edit::inspect_pdf_annotations(&document, &pages, arguments.get("annotation_page"))?
     };
+    let embedded_files = if document.is_encrypted() {
+        Value::Null
+    } else {
+        pdf_edit::inspect_pdf_embedded_files(&document)?
+    };
     let page_geometry = if document.is_encrypted() {
         Value::Null
     } else {
@@ -330,6 +338,7 @@ fn inspect_pdf(arguments: &Value, state: &LocalState, request: &RelayRequest) ->
         "encrypted": document.is_encrypted(),
         "metadata": metadata,
         "annotations": annotations,
+        "embedded_files": embedded_files,
         "page_geometry": page_geometry,
         "form": form,
     }))

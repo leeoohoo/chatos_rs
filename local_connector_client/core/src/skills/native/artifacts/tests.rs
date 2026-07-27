@@ -12,6 +12,7 @@ use flate2::Compression;
 use lopdf::content::Content;
 use lopdf::{dictionary, Document, Object, Stream};
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 use super::*;
@@ -72,6 +73,80 @@ fn write_blank_pdf(path: &Path, page_count: usize) {
     });
     document.trailer.set("Root", catalog_id);
     document.save(path).expect("save test PDF");
+}
+
+fn add_test_pdf_embedded_filespec(
+    document: &mut Document,
+    portable_filename: &str,
+    filename: &str,
+    mime_type: &str,
+    description: &str,
+    content: &[u8],
+) -> lopdf::ObjectId {
+    let embedded_file_id = document.add_object(Stream::new(
+        dictionary! {
+            "Type" => "EmbeddedFile",
+            "Subtype" => Object::Name(mime_type.as_bytes().to_vec()),
+            "Params" => dictionary! { "Size" => content.len() as i64 },
+        },
+        content.to_vec(),
+    ));
+    document.add_object(dictionary! {
+        "Type" => "Filespec",
+        "F" => lopdf::text_string(portable_filename),
+        "UF" => lopdf::text_string(filename),
+        "EF" => dictionary! {
+            "F" => embedded_file_id,
+            "UF" => embedded_file_id,
+        },
+        "Desc" => lopdf::text_string(description),
+    })
+}
+
+fn write_pdf_with_nested_embedded_files(path: &Path) -> (Vec<u8>, Vec<u8>) {
+    write_blank_pdf(path, 1);
+    let text_bytes = b"bounded embedded text\n".to_vec();
+    let json_bytes = br#"{"invoice":"INV-2026-0727","verified":true}"#.to_vec();
+    let mut document = Document::load(path).expect("embedded-files PDF");
+    let text_filespec_id = add_test_pdf_embedded_filespec(
+        &mut document,
+        "alpha.txt",
+        "alpha.txt",
+        "text/plain",
+        "First embedded file",
+        text_bytes.as_slice(),
+    );
+    let json_filespec_id = add_test_pdf_embedded_filespec(
+        &mut document,
+        "attachment.json",
+        "审计记录.json",
+        "application/json",
+        "Unicode embedded file",
+        json_bytes.as_slice(),
+    );
+    let first_key = lopdf::text_string("alpha");
+    let second_key = lopdf::text_string("审计");
+    let first_leaf_id = document.add_object(dictionary! {
+        "Limits" => vec![first_key.clone(), first_key.clone()],
+        "Names" => vec![first_key.clone(), Object::Reference(text_filespec_id)],
+    });
+    let second_leaf_id = document.add_object(dictionary! {
+        "Limits" => vec![second_key.clone(), second_key.clone()],
+        "Names" => vec![second_key.clone(), Object::Reference(json_filespec_id)],
+    });
+    let root_id = document.add_object(dictionary! {
+        "Limits" => vec![first_key, second_key],
+        "Kids" => vec![
+            Object::Reference(first_leaf_id),
+            Object::Reference(second_leaf_id),
+        ],
+    });
+    document
+        .catalog_mut()
+        .expect("embedded-files catalog")
+        .set("Names", dictionary! { "EmbeddedFiles" => root_id });
+    document.save(path).expect("save embedded-files PDF");
+    (text_bytes, json_bytes)
 }
 
 fn write_test_rgba_png(path: &Path, width: u32, height: u32, rgba: [u8; 4]) {
@@ -15196,6 +15271,508 @@ fn pdf_file_attachment_extraction_rejects_stale_wrong_direct_and_unsafe_targets(
         fs::read(attached.as_path()).expect("attached PDF after failures"),
         attached_before
     );
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn inspects_and_extracts_nested_pdf_embedded_files_with_exact_hashes() {
+    let (root, state, request) = test_context();
+    let source = root.join("embedded.pdf");
+    let (text_bytes, json_bytes) = write_pdf_with_nested_embedded_files(source.as_path());
+    let source_before = fs::read(source.as_path()).expect("embedded PDF bytes");
+    let source_sha256 = sha256_file(source.as_path()).expect("embedded PDF hash");
+    let text_sha256 = hex::encode(Sha256::digest(text_bytes.as_slice()));
+    let json_sha256 = hex::encode(Sha256::digest(json_bytes.as_slice()));
+
+    let inspected = inspect_pdf(&json!({"path":"embedded.pdf"}), &state, &request)
+        .expect("inspect embedded files");
+    let embedded_files = inspected
+        .get("embedded_files")
+        .expect("embedded files inspection");
+    assert_eq!(embedded_files.get("count").and_then(Value::as_u64), Some(2));
+    assert_eq!(
+        embedded_files.get("bytes").and_then(Value::as_u64),
+        Some((text_bytes.len() + json_bytes.len()) as u64)
+    );
+    assert_eq!(
+        embedded_files
+            .get("preview_truncated")
+            .and_then(Value::as_bool),
+        Some(false)
+    );
+    let preview = embedded_files
+        .get("preview")
+        .and_then(Value::as_array)
+        .expect("embedded files preview");
+    assert_eq!(preview.len(), 2);
+    assert_eq!(
+        preview[0]
+            .get("embedded_file_index")
+            .and_then(Value::as_u64),
+        Some(1)
+    );
+    assert_eq!(
+        preview[0].get("name").and_then(Value::as_str),
+        Some("alpha")
+    );
+    assert_eq!(
+        preview[0].get("filename").and_then(Value::as_str),
+        Some("alpha.txt")
+    );
+    assert_eq!(
+        preview[0].get("sha256").and_then(Value::as_str),
+        Some(text_sha256.as_str())
+    );
+    assert_eq!(
+        preview[1]
+            .get("embedded_file_index")
+            .and_then(Value::as_u64),
+        Some(2)
+    );
+    assert_eq!(preview[1].get("name").and_then(Value::as_str), Some("审计"));
+    assert_eq!(
+        preview[1].get("filename").and_then(Value::as_str),
+        Some("审计记录.json")
+    );
+    assert_eq!(
+        preview[1].get("mime_type").and_then(Value::as_str),
+        Some("application/json")
+    );
+    assert_eq!(
+        preview[1].get("sha256").and_then(Value::as_str),
+        Some(json_sha256.as_str())
+    );
+    assert!(preview.iter().all(|entry| entry.get("content").is_none()));
+
+    let extracted = pdf_edit::extract_pdf_embedded_file(
+        &json!({
+            "path":"embedded.pdf",
+            "expected_source_sha256":source_sha256,
+            "embedded_file_index":2,
+            "expected_attachment_sha256":json_sha256,
+            "target_path":"exports/审计记录.json",
+        }),
+        &state,
+        &request,
+    )
+    .expect("extract embedded file");
+    assert_eq!(
+        extracted.get("operation").and_then(Value::as_str),
+        Some("extract_embedded_file")
+    );
+    assert_eq!(
+        extracted.get("embedded_file_index").and_then(Value::as_u64),
+        Some(2)
+    );
+    assert_eq!(extracted.get("name").and_then(Value::as_str), Some("审计"));
+    assert_eq!(
+        extracted.get("attachment_filename").and_then(Value::as_str),
+        Some("审计记录.json")
+    );
+    assert_eq!(
+        extracted.get("attachment_sha256").and_then(Value::as_str),
+        Some(json_sha256.as_str())
+    );
+    assert!(extracted.get("content").is_none());
+    assert!(extracted.get("attachment_content").is_none());
+    let output = root.join("exports/审计记录.json");
+    assert_eq!(
+        fs::read(output.as_path()).expect("embedded output"),
+        json_bytes
+    );
+
+    fs::write(output.as_path(), b"stale output").expect("replace embedded output");
+    pdf_edit::extract_pdf_embedded_file(
+        &json!({
+            "path":"embedded.pdf",
+            "expected_source_sha256":source_sha256,
+            "embedded_file_index":2,
+            "expected_attachment_sha256":json_sha256,
+            "target_path":"exports/审计记录.json",
+            "overwrite":true,
+        }),
+        &state,
+        &request,
+    )
+    .expect("overwrite embedded output");
+    assert_eq!(
+        fs::read(output.as_path()).expect("overwritten output"),
+        json_bytes
+    );
+    assert_eq!(
+        fs::read(source.as_path()).expect("embedded PDF after extraction"),
+        source_before
+    );
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn pdf_embedded_file_extraction_rejects_stale_missing_and_unsafe_targets() {
+    let (root, state, request) = test_context();
+    let source = root.join("embedded.pdf");
+    let (_, json_bytes) = write_pdf_with_nested_embedded_files(source.as_path());
+    let source_before = fs::read(source.as_path()).expect("embedded PDF bytes");
+    let source_sha256 = sha256_file(source.as_path()).expect("embedded PDF hash");
+    let json_sha256 = hex::encode(Sha256::digest(json_bytes.as_slice()));
+
+    for (target, overrides, expected) in [
+        (
+            "stale-source.json",
+            json!({"expected_source_sha256":"0".repeat(64)}),
+            "expected_source_sha256",
+        ),
+        (
+            "stale-attachment.json",
+            json!({"expected_attachment_sha256":"0".repeat(64)}),
+            "expected_attachment_sha256",
+        ),
+        (
+            "missing.json",
+            json!({"embedded_file_index":3}),
+            "does not exist",
+        ),
+        (
+            "outside.json",
+            json!({"embedded_file_index":101}),
+            "between 1 and 100",
+        ),
+        (
+            "wrong-extension.txt",
+            json!({}),
+            "target extension must match",
+        ),
+        ("CON.json", json!({}), "reserved portable filename"),
+        ("embedded.pdf", json!({}), "requires a distinct target_path"),
+    ] {
+        let mut arguments = json!({
+            "path":"embedded.pdf",
+            "expected_source_sha256":source_sha256,
+            "embedded_file_index":2,
+            "expected_attachment_sha256":json_sha256,
+            "target_path":target,
+        });
+        for (key, value) in overrides.as_object().expect("embedded overrides") {
+            arguments[key] = value.clone();
+        }
+        let error = pdf_edit::extract_pdf_embedded_file(&arguments, &state, &request)
+            .expect_err("invalid embedded extraction must fail");
+        assert!(
+            error.to_string().contains(expected),
+            "unexpected error for {target}: {error}"
+        );
+        if !matches!(target, "embedded.pdf" | "CON.json") {
+            assert!(!root.join(target).exists(), "unexpected output {target}");
+        }
+    }
+
+    fs::write(root.join("existing.json"), b"existing output").expect("existing target");
+    let existing_error = pdf_edit::extract_pdf_embedded_file(
+        &json!({
+            "path":"embedded.pdf",
+            "expected_source_sha256":source_sha256,
+            "embedded_file_index":2,
+            "expected_attachment_sha256":json_sha256,
+            "target_path":"existing.json",
+        }),
+        &state,
+        &request,
+    )
+    .expect_err("existing embedded target must fail");
+    assert!(existing_error
+        .to_string()
+        .contains("without overwrite=true"));
+    assert_eq!(
+        fs::read(root.join("existing.json")).expect("existing bytes"),
+        b"existing output"
+    );
+
+    fs::hard_link(source.as_path(), root.join("source-hard-link.json"))
+        .expect("source hard-linked target");
+    let hard_link_error = pdf_edit::extract_pdf_embedded_file(
+        &json!({
+            "path":"embedded.pdf",
+            "expected_source_sha256":source_sha256,
+            "embedded_file_index":2,
+            "expected_attachment_sha256":json_sha256,
+            "target_path":"source-hard-link.json",
+            "overwrite":true,
+        }),
+        &state,
+        &request,
+    )
+    .expect_err("hard-linked embedded target must fail");
+    assert!(hard_link_error
+        .to_string()
+        .contains("requires a distinct target_path"));
+
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(root.join("existing.json"), root.join("linked-output.json"))
+            .expect("embedded target symlink");
+        let symlink_error = pdf_edit::extract_pdf_embedded_file(
+            &json!({
+                "path":"embedded.pdf",
+                "expected_source_sha256":source_sha256,
+                "embedded_file_index":2,
+                "expected_attachment_sha256":json_sha256,
+                "target_path":"linked-output.json",
+                "overwrite":true,
+            }),
+            &state,
+            &request,
+        )
+        .expect_err("symlink embedded target must fail");
+        assert!(symlink_error.to_string().contains("regular non-symlink"));
+    }
+
+    assert_eq!(
+        fs::read(source.as_path()).expect("embedded PDF after failures"),
+        source_before
+    );
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn pdf_embedded_files_name_tree_rejects_malformed_structures() {
+    let (root, state, request) = test_context();
+
+    let odd = root.join("odd.pdf");
+    write_pdf_with_nested_embedded_files(odd.as_path());
+    let mut odd_document = Document::load(odd.as_path()).expect("odd PDF");
+    let odd_root_id = odd_document
+        .catalog()
+        .and_then(|catalog| catalog.get(b"Names"))
+        .and_then(Object::as_dict)
+        .and_then(|names| names.get(b"EmbeddedFiles"))
+        .and_then(Object::as_reference)
+        .expect("odd root");
+    let odd_leaf_id = odd_document
+        .get_object(odd_root_id)
+        .and_then(Object::as_dict)
+        .and_then(|root| root.get(b"Kids"))
+        .and_then(Object::as_array)
+        .expect("odd root kids")[0]
+        .as_reference()
+        .expect("odd leaf");
+    odd_document
+        .get_object_mut(odd_leaf_id)
+        .and_then(Object::as_dict_mut)
+        .expect("odd leaf dictionary")
+        .set("Names", vec![lopdf::text_string("alpha")]);
+    odd_document.save(odd.as_path()).expect("save odd PDF");
+
+    let direct = root.join("direct.pdf");
+    write_pdf_with_nested_embedded_files(direct.as_path());
+    let mut direct_document = Document::load(direct.as_path()).expect("direct PDF");
+    let direct_root_id = direct_document
+        .catalog()
+        .and_then(|catalog| catalog.get(b"Names"))
+        .and_then(Object::as_dict)
+        .and_then(|names| names.get(b"EmbeddedFiles"))
+        .and_then(Object::as_reference)
+        .expect("direct root");
+    let direct_leaf_id = direct_document
+        .get_object(direct_root_id)
+        .and_then(Object::as_dict)
+        .and_then(|root| root.get(b"Kids"))
+        .and_then(Object::as_array)
+        .expect("direct root kids")[0]
+        .as_reference()
+        .expect("direct leaf");
+    let direct_filespec_id = direct_document
+        .get_object(direct_leaf_id)
+        .and_then(Object::as_dict)
+        .and_then(|leaf| leaf.get(b"Names"))
+        .and_then(Object::as_array)
+        .expect("direct names")[1]
+        .as_reference()
+        .expect("direct Filespec reference");
+    let direct_filespec = direct_document
+        .get_object(direct_filespec_id)
+        .and_then(Object::as_dict)
+        .expect("direct Filespec")
+        .clone();
+    direct_document
+        .get_object_mut(direct_leaf_id)
+        .and_then(Object::as_dict_mut)
+        .expect("direct leaf dictionary")
+        .set(
+            "Names",
+            vec![
+                lopdf::text_string("alpha"),
+                Object::Dictionary(direct_filespec),
+            ],
+        );
+    direct_document
+        .save(direct.as_path())
+        .expect("save direct PDF");
+
+    let both = root.join("both.pdf");
+    write_pdf_with_nested_embedded_files(both.as_path());
+    let mut both_document = Document::load(both.as_path()).expect("both PDF");
+    let both_root_id = both_document
+        .catalog()
+        .and_then(|catalog| catalog.get(b"Names"))
+        .and_then(Object::as_dict)
+        .and_then(|names| names.get(b"EmbeddedFiles"))
+        .and_then(Object::as_reference)
+        .expect("both root");
+    both_document
+        .get_object_mut(both_root_id)
+        .and_then(Object::as_dict_mut)
+        .expect("both root dictionary")
+        .set("Names", vec![lopdf::text_string("extra"), Object::Null]);
+    both_document.save(both.as_path()).expect("save both PDF");
+
+    let repeated = root.join("repeated.pdf");
+    write_pdf_with_nested_embedded_files(repeated.as_path());
+    let mut repeated_document = Document::load(repeated.as_path()).expect("repeated PDF");
+    let repeated_root_id = repeated_document
+        .catalog()
+        .and_then(|catalog| catalog.get(b"Names"))
+        .and_then(Object::as_dict)
+        .and_then(|names| names.get(b"EmbeddedFiles"))
+        .and_then(Object::as_reference)
+        .expect("repeated root");
+    let repeated_leaf = repeated_document
+        .get_object(repeated_root_id)
+        .and_then(Object::as_dict)
+        .and_then(|root| root.get(b"Kids"))
+        .and_then(Object::as_array)
+        .expect("repeated kids")[0]
+        .clone();
+    repeated_document
+        .get_object_mut(repeated_root_id)
+        .and_then(Object::as_dict_mut)
+        .expect("repeated root dictionary")
+        .set("Kids", vec![repeated_leaf.clone(), repeated_leaf]);
+    repeated_document
+        .save(repeated.as_path())
+        .expect("save repeated PDF");
+
+    let cyclic = root.join("cyclic.pdf");
+    write_pdf_with_nested_embedded_files(cyclic.as_path());
+    let mut cyclic_document = Document::load(cyclic.as_path()).expect("cyclic PDF");
+    let cyclic_root_id = cyclic_document
+        .catalog()
+        .and_then(|catalog| catalog.get(b"Names"))
+        .and_then(Object::as_dict)
+        .and_then(|names| names.get(b"EmbeddedFiles"))
+        .and_then(Object::as_reference)
+        .expect("cyclic root");
+    cyclic_document
+        .get_object_mut(cyclic_root_id)
+        .and_then(Object::as_dict_mut)
+        .expect("cyclic root dictionary")
+        .set("Kids", vec![Object::Reference(cyclic_root_id)]);
+    cyclic_document
+        .save(cyclic.as_path())
+        .expect("save cyclic PDF");
+
+    let duplicate = root.join("duplicate.pdf");
+    write_pdf_with_nested_embedded_files(duplicate.as_path());
+    let mut duplicate_document = Document::load(duplicate.as_path()).expect("duplicate PDF");
+    let duplicate_root_id = duplicate_document
+        .catalog()
+        .and_then(|catalog| catalog.get(b"Names"))
+        .and_then(Object::as_dict)
+        .and_then(|names| names.get(b"EmbeddedFiles"))
+        .and_then(Object::as_reference)
+        .expect("duplicate root");
+    let duplicate_second_leaf_id = duplicate_document
+        .get_object(duplicate_root_id)
+        .and_then(Object::as_dict)
+        .and_then(|root| root.get(b"Kids"))
+        .and_then(Object::as_array)
+        .expect("duplicate kids")[1]
+        .as_reference()
+        .expect("duplicate second leaf");
+    let duplicate_filespec = duplicate_document
+        .get_object(duplicate_second_leaf_id)
+        .and_then(Object::as_dict)
+        .and_then(|leaf| leaf.get(b"Names"))
+        .and_then(Object::as_array)
+        .expect("duplicate names")[1]
+        .clone();
+    duplicate_document
+        .get_object_mut(duplicate_second_leaf_id)
+        .and_then(Object::as_dict_mut)
+        .expect("duplicate leaf dictionary")
+        .set(
+            "Names",
+            vec![lopdf::text_string("alpha"), duplicate_filespec],
+        );
+    duplicate_document
+        .save(duplicate.as_path())
+        .expect("save duplicate PDF");
+
+    let unordered = root.join("unordered.pdf");
+    write_pdf_with_nested_embedded_files(unordered.as_path());
+    let mut unordered_document = Document::load(unordered.as_path()).expect("unordered PDF");
+    let unordered_root_id = unordered_document
+        .catalog()
+        .and_then(|catalog| catalog.get(b"Names"))
+        .and_then(Object::as_dict)
+        .and_then(|names| names.get(b"EmbeddedFiles"))
+        .and_then(Object::as_reference)
+        .expect("unordered root");
+    let mut unordered_kids = unordered_document
+        .get_object(unordered_root_id)
+        .and_then(Object::as_dict)
+        .and_then(|root| root.get(b"Kids"))
+        .and_then(Object::as_array)
+        .expect("unordered kids")
+        .clone();
+    unordered_kids.reverse();
+    unordered_document
+        .get_object_mut(unordered_root_id)
+        .and_then(Object::as_dict_mut)
+        .expect("unordered root dictionary")
+        .set("Kids", unordered_kids);
+    unordered_document
+        .save(unordered.as_path())
+        .expect("save unordered PDF");
+
+    let limits = root.join("limits.pdf");
+    write_pdf_with_nested_embedded_files(limits.as_path());
+    let mut limits_document = Document::load(limits.as_path()).expect("limits PDF");
+    let limits_root_id = limits_document
+        .catalog()
+        .and_then(|catalog| catalog.get(b"Names"))
+        .and_then(Object::as_dict)
+        .and_then(|names| names.get(b"EmbeddedFiles"))
+        .and_then(Object::as_reference)
+        .expect("limits root");
+    limits_document
+        .get_object_mut(limits_root_id)
+        .and_then(Object::as_dict_mut)
+        .expect("limits root dictionary")
+        .set(
+            "Limits",
+            vec![lopdf::text_string("审计"), lopdf::text_string("alpha")],
+        );
+    limits_document
+        .save(limits.as_path())
+        .expect("save limits PDF");
+
+    for (path, expected) in [
+        ("odd.pdf", "one or more name/Filespec pairs"),
+        ("direct.pdf", "must reference an indirect Filespec"),
+        ("both.pdf", "exactly one of Names or Kids"),
+        ("repeated.pdf", "repeated or cyclic node reference"),
+        ("cyclic.pdf", "repeated or cyclic node reference"),
+        ("duplicate.pdf", "duplicate name key"),
+        ("unordered.pdf", "keys must be strictly ascending"),
+        ("limits.pdf", "Limits must be ordered"),
+    ] {
+        let error = inspect_pdf(&json!({"path":path}), &state, &request)
+            .expect_err("malformed EmbeddedFiles Name Tree must fail");
+        assert!(
+            error.to_string().contains(expected),
+            "unexpected error for {path}: {error:#}"
+        );
+    }
+
     let _ = fs::remove_dir_all(root);
 }
 

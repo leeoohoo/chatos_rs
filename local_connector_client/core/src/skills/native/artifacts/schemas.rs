@@ -23,6 +23,7 @@ pub(super) fn tool_definitions(skill_id: &str) -> Vec<Value> {
             add_pdf_annotation_reply_tool(),
             add_pdf_file_attachment_annotation_tool(),
             extract_pdf_file_attachment_tool(),
+            extract_pdf_embedded_file_tool(),
             stamp_pdf_text_tool(),
             stamp_pdf_page_numbers_tool(),
             stamp_pdf_image_tool(),
@@ -536,6 +537,26 @@ fn extract_pdf_file_attachment_tool() -> Value {
                 "overwrite":{"type":"boolean","default":false}
             },
             "required":["path","expected_source_sha256","page","annotation_index","expected_attachment_sha256","target_path"],
+            "additionalProperties":false
+        }),
+    )
+}
+
+fn extract_pdf_embedded_file_tool() -> Value {
+    tool(
+        "extract_pdf_embedded_file",
+        "Extract one inspected standard PDF Catalog Names/EmbeddedFiles entry to a distinct workspace file. Exact source and embedded-file SHA-256 values, the bounded inspection index, nested Name Tree structure, indirect Filespec/EmbeddedFile chain, content signature, output extension, and atomic write are validated fail closed without returning content.",
+        json!({
+            "type":"object",
+            "properties":{
+                "path":{"type":"string","description":"Workspace-relative source .pdf path."},
+                "expected_source_sha256":{"type":"string","pattern":"^[0-9a-f]{64}$","description":"Exact source SHA-256 returned by inspect_pdf."},
+                "embedded_file_index":{"type":"integer","minimum":1,"maximum":100,"description":"One-based index returned in inspect_pdf embedded_files.preview."},
+                "expected_attachment_sha256":{"type":"string","pattern":"^[0-9a-f]{64}$","description":"Exact embedded-file SHA-256 returned by inspect_pdf."},
+                "target_path":{"type":"string","description":"Distinct workspace-relative output path whose extension matches the inspected embedded file."},
+                "overwrite":{"type":"boolean","default":false}
+            },
+            "required":["path","expected_source_sha256","embedded_file_index","expected_attachment_sha256","target_path"],
             "additionalProperties":false
         }),
     )
