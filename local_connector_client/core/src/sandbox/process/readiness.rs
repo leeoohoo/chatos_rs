@@ -2,7 +2,9 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use std::path::{Path, PathBuf};
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 use std::process::Stdio;
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 use std::time::Duration;
 
 use chatos_sandbox_contract::{
@@ -87,9 +89,18 @@ pub(crate) fn plugin_stdio_sandbox_agent_executable() -> Result<PathBuf, String>
         })?;
         Ok(agent)
     }
-    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    #[cfg(windows)]
     {
-        Err("Plugin stdio OS sandbox is currently supported only on macOS and Linux".to_string())
+        // The wrapper creates an ephemeral zero-capability AppContainer and fails closed if the
+        // profile, signed-package staging ACL, or Job Object cannot be established.
+        native_sandbox_agent_executable()
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
+    {
+        Err(
+            "Plugin stdio OS sandbox is currently supported only on macOS, Linux, and Windows"
+                .to_string(),
+        )
     }
 }
 

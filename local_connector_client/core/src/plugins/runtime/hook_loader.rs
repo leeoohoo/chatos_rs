@@ -369,6 +369,7 @@ impl PluginHookLoader {
                 installation.installation_path.as_path(),
                 &server,
                 Vec::<String>::new(),
+                &installation.version.package_file_sha256,
                 workspace_root,
             )?
         } else {
@@ -377,6 +378,7 @@ impl PluginHookLoader {
                 installation.installation_path.as_path(),
                 &server,
                 Vec::<String>::new(),
+                &installation.version.package_file_sha256,
             )?
         };
         let input = serde_json::to_vec(&json!({

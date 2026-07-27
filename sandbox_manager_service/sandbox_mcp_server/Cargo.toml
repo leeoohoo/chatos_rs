@@ -31,6 +31,11 @@ url = "2"
 uuid = { version = "1", features = ["v4", "serde"] }
 walkdir = "2.4"
 
+[target.'cfg(windows)'.dependencies]
+hex = "0.4"
+sha2 = "0.10"
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Authorization", "Win32_Security_Isolation", "Win32_Storage_FileSystem", "Win32_System_Com", "Win32_System_Console", "Win32_System_JobObjects", "Win32_System_Threading"] }
+
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 

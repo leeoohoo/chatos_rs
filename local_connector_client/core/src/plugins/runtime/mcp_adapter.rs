@@ -776,6 +776,7 @@ fn prepare_transport(
                         installation.installation_path.as_path(),
                         &server,
                         environment.variable_names(),
+                        &installation.version.package_file_sha256,
                     )?;
                     (server, Some(runtime))
                 }
