@@ -129,21 +129,35 @@ export const retryMessageTaskRunnerRun = (
   runId: string,
   options?: MessageTaskRunnerLookupOptions,
   retryInstruction?: string | null,
+  executionServiceId?: string | null,
 ): Promise<MessageTaskRunnerRetryRunResponse> => {
   if (options?.sessionId && isLocalRuntimeSessionId(options.sessionId)) {
     const normalizedInstruction = retryInstruction?.trim();
-    return normalizedInstruction
-      ? retryLocalTaskRunnerRun(runId, normalizedInstruction)
-      : retryLocalTaskRunnerRun(runId);
+    const normalizedExecutionServiceId = executionServiceId?.trim();
+    if (!normalizedInstruction && !normalizedExecutionServiceId) {
+      return retryLocalTaskRunnerRun(runId);
+    }
+    if (normalizedInstruction && !normalizedExecutionServiceId) {
+      return retryLocalTaskRunnerRun(runId, normalizedInstruction);
+    }
+    return retryLocalTaskRunnerRun(
+      runId,
+      normalizedInstruction || undefined,
+      normalizedExecutionServiceId || undefined,
+    );
   }
   const normalizedInstruction = retryInstruction?.trim();
+  const normalizedExecutionServiceId = executionServiceId?.trim();
   return request<MessageTaskRunnerRetryRunResponse>(
     `/messages/${encodeURIComponent(messageId)}/task-runner/runs/${encodeURIComponent(runId)}/retry${messageTaskRunnerLookupQuery(options)}`,
     {
       method: 'POST',
-      body: JSON.stringify(normalizedInstruction
-        ? { retry_instruction: normalizedInstruction }
-        : {}),
+      body: JSON.stringify({
+        ...(normalizedInstruction ? { retry_instruction: normalizedInstruction } : {}),
+        ...(normalizedExecutionServiceId
+          ? { execution_service_id: normalizedExecutionServiceId }
+          : {}),
+      }),
     },
   );
 };

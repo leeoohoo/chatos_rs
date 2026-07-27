@@ -302,6 +302,7 @@ export function useMessageTaskGraph({
   const retryTask = useCallback(async (
     task: MessageTaskRunnerTask,
     retryInstruction?: string,
+    executionServiceId?: string,
   ) => {
     const taskId = readString(task.id);
     const runId = readString(task.last_run_id);
@@ -330,6 +331,7 @@ export function useMessageTaskGraph({
         runId,
         source.lookup,
         retryInstruction,
+        executionServiceId,
       );
       setDetailTask((current) => (
         current?.id === taskId

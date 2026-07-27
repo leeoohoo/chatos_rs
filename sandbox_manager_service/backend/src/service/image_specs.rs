@@ -549,12 +549,15 @@ fn parse_image_id_segment(segment: &str) -> Option<RuntimeSelectionSpec> {
         names.sort_by_key(|name| std::cmp::Reverse(name.len()));
         for name in names {
             if let Some(version) = segment.strip_prefix(name) {
-                let version = if version.is_empty() {
-                    default_version(runtime)
-                } else {
-                    find_runtime_version(runtime, version)?
-                };
-                return Some(RuntimeSelectionSpec { runtime, version });
+                if version.is_empty() {
+                    return Some(RuntimeSelectionSpec {
+                        runtime,
+                        version: default_version(runtime),
+                    });
+                }
+                if let Some(version) = find_runtime_version(runtime, version) {
+                    return Some(RuntimeSelectionSpec { runtime, version });
+                }
             }
         }
     }
@@ -640,7 +643,7 @@ fn runtime_index(runtime_id: &str) -> usize {
 
 #[cfg(test)]
 mod tests {
-    use super::{canonical_features, selection_feature_token};
+    use super::{canonical_features, parse_generated_image_id, selection_feature_token};
 
     #[test]
     fn build_tool_aliases_resolve_to_supported_language_runtimes() {
@@ -690,5 +693,22 @@ mod tests {
         let error = canonical_features(&["python3.99".to_string()])
             .expect_err("unsupported Python version must be rejected");
         assert!(error.contains("unknown Python version: 3.99"));
+    }
+
+    #[test]
+    fn generated_python_image_ids_are_not_shadowed_by_shorter_runtime_aliases() {
+        for image_id in ["dev-python3.12", "dev-python3.14"] {
+            let parsed = parse_generated_image_id(image_id)
+                .expect("generated Python image id must remain catalog-visible");
+            assert_eq!(parsed.selections.len(), 1);
+            assert_eq!(parsed.selections[0].runtime.id, "python");
+            assert_eq!(
+                format!(
+                    "{}{}",
+                    parsed.selections[0].runtime.id, parsed.selections[0].version.id
+                ),
+                image_id.trim_start_matches("dev-")
+            );
+        }
     }
 }

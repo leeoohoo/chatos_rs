@@ -110,6 +110,7 @@ struct RetryChatosMessageRunRequest {
     #[serde(flatten)]
     source: ChatosMessageTaskQuery,
     retry_instruction: Option<String>,
+    execution_service_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -963,9 +964,19 @@ async fn retry_chatos_message_run(
         .as_deref()
         .map(str::trim)
         .filter(|value| !value.is_empty());
+    let execution_service_id = request
+        .execution_service_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
     if retry_instruction.is_some_and(|value| value.chars().count() > 4000) {
         return Err(InternalApiError::bad_request(
             "retry_instruction must not exceed 4000 characters",
+        ));
+    }
+    if execution_service_id.is_some_and(|value| value.chars().count() > 255) {
+        return Err(InternalApiError::bad_request(
+            "execution_service_id must not exceed 255 characters",
         ));
     }
     let run = require_chatos_message_run(
@@ -979,7 +990,11 @@ async fn retry_chatos_message_run(
     require_retryable_message_run(&run.status)?;
     let retried = state
         .run_service
-        .retry_run_with_instruction(run.id.as_str(), retry_instruction.map(ToOwned::to_owned))
+        .retry_run_with_instruction_and_execution_service(
+            run.id.as_str(),
+            retry_instruction.map(ToOwned::to_owned),
+            execution_service_id.map(ToOwned::to_owned),
+        )
         .await
         .map_err(InternalApiError::bad_request)?
         .ok_or_else(|| InternalApiError::not_found("run not found for message"))?;

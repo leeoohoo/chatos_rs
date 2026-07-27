@@ -20,18 +20,30 @@ const mocks = vi.hoisted(() => ({
       task_id: 'task-failed-1',
       model_config_id: 'model-1',
       status: 'failed',
-      error_message: '上游模型响应在传输过程中被截断或格式不完整',
+      error_message: 'project runtime has multiple application services (mdm-service, web-prototype); execution_service_id must be selected by the user or program',
+    },
+    mcp_config: {
+      requires_execution: true,
+      execution_service_id: null,
     },
   },
   getProjectRequirementExecutionPlan: vi.fn(),
+  getProjectRuntimeEnvironment: vi.fn(),
   reloadGraph: vi.fn(),
   retryTask: vi.fn(),
+  apiClient: null as unknown as {
+    getProjectRequirementExecutionPlan: ReturnType<typeof vi.fn>;
+    getProjectRuntimeEnvironment: ReturnType<typeof vi.fn>;
+  },
 }));
 
+mocks.apiClient = {
+  getProjectRequirementExecutionPlan: mocks.getProjectRequirementExecutionPlan,
+  getProjectRuntimeEnvironment: mocks.getProjectRuntimeEnvironment,
+};
+
 vi.mock('../../../lib/api/ApiClientContext', () => ({
-  useApiClient: () => ({
-    getProjectRequirementExecutionPlan: mocks.getProjectRequirementExecutionPlan,
-  }),
+  useApiClient: () => mocks.apiClient,
 }));
 
 vi.mock('../../../lib/store', () => ({
@@ -128,6 +140,29 @@ beforeEach(() => {
     status: 'failed',
     has_started_runs: true,
   });
+  mocks.getProjectRuntimeEnvironment.mockResolvedValue({
+    environment: { status: 'ready' },
+    images: [
+      {
+        service_id: 'mdm-service',
+        display_name: 'MDM Service',
+        service_role: 'application',
+        status: 'ready',
+      },
+      {
+        service_id: 'web-prototype',
+        display_name: 'Web Prototype',
+        service_role: 'application',
+        status: 'ready',
+      },
+      {
+        service_id: 'postgresql',
+        display_name: 'PostgreSQL',
+        service_role: 'dependency',
+        status: 'ready',
+      },
+    ],
+  });
 });
 
 describe('failed task retry entry in execution workbench', () => {
@@ -161,9 +196,15 @@ describe('failed task retry entry in execution workbench', () => {
     const taskRow = within(retryDialog).getByRole('group', {
       name: `失败任务：${mocks.failedTask.title}`,
     });
-    await user.click(within(taskRow).getByRole('button', { name: '重新开始' }));
+    const retryButton = within(taskRow).getByRole('button', { name: '重新开始' });
+    expect((retryButton as HTMLButtonElement).disabled).toBe(true);
+    await user.selectOptions(
+      within(taskRow).getByRole('combobox', { name: `执行服务：${mocks.failedTask.title}` }),
+      'mdm-service',
+    );
+    await user.click(retryButton);
 
     expect(mocks.retryTask).toHaveBeenCalledTimes(1);
-    expect(mocks.retryTask).toHaveBeenCalledWith(mocks.failedTask);
+    expect(mocks.retryTask).toHaveBeenCalledWith(mocks.failedTask, undefined, 'mdm-service');
   });
 });

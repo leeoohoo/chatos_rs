@@ -10,6 +10,13 @@ use crate::services::project_management_api_client::{
 const LOCAL_CONNECTOR_ROOT_PREFIX: &str = "local://connector/";
 
 impl RunService {
+    pub(crate) async fn validate_sandbox_route_for_task(
+        &self,
+        task: &TaskRecord,
+    ) -> Result<(), String> {
+        self.sandbox_route_for_task(task).await.map(|_| ())
+    }
+
     pub(super) async fn sandbox_route_for_task(
         &self,
         task: &TaskRecord,
@@ -209,12 +216,7 @@ fn sandbox_environment_plan_for_task(
                 image_ref: Some(image_ref.to_string()),
                 dockerfile: None,
                 environment: merged_environment(&global_environment, &image.env_vars),
-                mcp_policy: SandboxEnvironmentMcpPolicyPlan {
-                    managed_by: "system".to_string(),
-                    attachment: "none".to_string(),
-                    filesystem: false,
-                    terminal: false,
-                },
+                mcp_policy: SandboxEnvironmentMcpPolicyPlan::default(),
             });
         }
     }
@@ -296,8 +298,70 @@ fn merged_environment(
     service: &serde_json::Value,
 ) -> std::collections::BTreeMap<String, String> {
     let mut environment = global.clone();
-    environment.extend(json_object_to_string_map(service));
+    environment.extend(
+        json_object_to_string_map(service)
+            .into_iter()
+            .map(|(name, value)| (name, expand_environment_value(value.as_str(), global))),
+    );
     environment
+}
+
+fn expand_environment_value(
+    value: &str,
+    global: &std::collections::BTreeMap<String, String>,
+) -> String {
+    let mut expanded = value.to_string();
+    for _ in 0..8 {
+        let next = expand_environment_value_once(expanded.as_str(), global);
+        if next == expanded {
+            break;
+        }
+        expanded = next;
+    }
+    expanded
+}
+
+fn expand_environment_value_once(
+    value: &str,
+    global: &std::collections::BTreeMap<String, String>,
+) -> String {
+    let mut output = String::with_capacity(value.len());
+    let mut remaining = value;
+    while let Some(start) = remaining.find("${") {
+        output.push_str(&remaining[..start]);
+        let expression = &remaining[start + 2..];
+        let Some(end) = expression.find('}') else {
+            output.push_str(&remaining[start..]);
+            return output;
+        };
+        let token = &expression[..end];
+        let (name, default_value) = token
+            .split_once(":-")
+            .map_or((token, None), |(name, fallback)| (name, Some(fallback)));
+        if valid_environment_variable_name(name) {
+            let replacement = global
+                .get(name)
+                .filter(|value| default_value.is_none() || !value.is_empty())
+                .map(String::as_str)
+                .or(default_value);
+            if let Some(replacement) = replacement {
+                output.push_str(replacement);
+            } else {
+                output.push_str(&remaining[start..start + end + 3]);
+            }
+        } else {
+            output.push_str(&remaining[start..start + end + 3]);
+        }
+        remaining = &expression[end + 1..];
+    }
+    output.push_str(remaining);
+    output
+}
+
+fn valid_environment_variable_name(value: &str) -> bool {
+    let mut chars = value.chars();
+    matches!(chars.next(), Some('_' | 'A'..='Z' | 'a'..='z'))
+        && chars.all(|character| matches!(character, '_' | 'A'..='Z' | 'a'..='z' | '0'..='9'))
 }
 
 fn sandbox_image_id_for_task(
@@ -618,6 +682,84 @@ mod tests {
             .expect_err("explicit project Gateway target must not fall back");
         assert!(error.contains("services-api"));
         assert!(error.contains("not a ready application service"));
+    }
+
+    #[test]
+    fn dependency_services_do_not_serialize_an_mcp_policy() {
+        let application = image("application", "project_gateway_target", true, true);
+        let mut dependency = image("dependency", "none", false, false);
+        dependency.environment_key = "postgresql".to_string();
+        dependency.service_id = "postgresql".to_string();
+        dependency.display_name = "PostgreSQL".to_string();
+        dependency.image_id = None;
+        dependency.image_ref = Some("postgres:16-alpine".to_string());
+        dependency.dockerfile = None;
+        let runtime = ProjectSandboxRuntimeSettings {
+            environment: ProjectRuntimeEnvironmentSettings {
+                sandbox_enabled: true,
+                status: "ready".to_string(),
+                env_vars: serde_json::json!({}),
+                generated_config_files: Vec::new(),
+            },
+            images: vec![application, dependency],
+        };
+        let mut task = task();
+        task.mcp_config.requires_execution = true;
+        task.mcp_config.execution_service_id = Some("services-api".to_string());
+
+        let plan = sandbox_environment_plan_for_task(&task, &runtime, "cloud_sandbox_manager")
+            .expect("environment plan")
+            .expect("environment topology");
+        let services = serde_json::to_value(plan.services).expect("serialize services");
+        let dependency = services
+            .as_array()
+            .and_then(|items| {
+                items.iter().find(|item| {
+                    item.get("service_role").and_then(Value::as_str) == Some("dependency")
+                })
+            })
+            .expect("dependency service");
+        assert!(dependency.get("mcp_policy").is_none());
+    }
+
+    #[test]
+    fn service_environment_templates_resolve_from_project_values() {
+        let global = json_object_to_string_map(&serde_json::json!({
+            "POSTGRES_DB": "mdm_service",
+            "POSTGRES_USER": "mdm_service",
+            "POSTGRES_PASSWORD": "generated-secret",
+        }));
+        let environment = merged_environment(
+            &global,
+            &serde_json::json!({
+                "POSTGRES_DB": "${POSTGRES_DB:-app}",
+                "POSTGRES_USER": "${POSTGRES_USER}",
+                "POSTGRES_PASSWORD": "${POSTGRES_PASSWORD}",
+                "DATABASE_URL": "postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgresql:5432/${POSTGRES_DB}",
+                "UNRESOLVED": "${MISSING_VALUE}",
+            }),
+        );
+
+        assert_eq!(
+            environment.get("POSTGRES_DB").map(String::as_str),
+            Some("mdm_service")
+        );
+        assert_eq!(
+            environment.get("POSTGRES_USER").map(String::as_str),
+            Some("mdm_service")
+        );
+        assert_eq!(
+            environment.get("POSTGRES_PASSWORD").map(String::as_str),
+            Some("generated-secret")
+        );
+        assert_eq!(
+            environment.get("DATABASE_URL").map(String::as_str),
+            Some("postgresql://mdm_service:generated-secret@postgresql:5432/mdm_service")
+        );
+        assert_eq!(
+            environment.get("UNRESOLVED").map(String::as_str),
+            Some("${MISSING_VALUE}")
+        );
     }
 
     fn task() -> TaskRecord {

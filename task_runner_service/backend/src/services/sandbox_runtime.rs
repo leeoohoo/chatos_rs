@@ -74,15 +74,25 @@ struct SandboxEnvironmentServicePlan {
     image_ref: Option<String>,
     dockerfile: Option<String>,
     environment: BTreeMap<String, String>,
+    #[serde(skip_serializing_if = "SandboxEnvironmentMcpPolicyPlan::is_empty")]
     mcp_policy: SandboxEnvironmentMcpPolicyPlan,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Default, Serialize)]
 struct SandboxEnvironmentMcpPolicyPlan {
     managed_by: String,
     attachment: String,
     filesystem: bool,
     terminal: bool,
+}
+
+impl SandboxEnvironmentMcpPolicyPlan {
+    fn is_empty(&self) -> bool {
+        self.managed_by.is_empty()
+            && self.attachment.is_empty()
+            && !self.filesystem
+            && !self.terminal
+    }
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(super) struct SandboxRuntimeContext {

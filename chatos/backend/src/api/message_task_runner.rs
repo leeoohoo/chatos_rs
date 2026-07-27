@@ -88,6 +88,7 @@ struct ConversationTaskRunnerActiveMessageTasksRequest {
 #[derive(Debug, Clone, Default, Deserialize)]
 struct RetryMessageTaskRunnerRunRequest {
     retry_instruction: Option<String>,
+    execution_service_id: Option<String>,
 }
 
 fn parse_retry_message_task_runner_run_request(
@@ -472,6 +473,7 @@ async fn retry_message_task_runner_run(
         Err(err) => return err,
     };
     let retry_instruction = normalize_text(payload.retry_instruction.as_deref());
+    let execution_service_id = normalize_text(payload.execution_service_id.as_deref());
     if retry_instruction
         .as_deref()
         .is_some_and(|value| value.chars().count() > 4000)
@@ -481,6 +483,15 @@ async fn retry_message_task_runner_run(
             Json(json!({"error": "阻塞处理意见不能超过 4000 个字符"})),
         );
     }
+    if execution_service_id
+        .as_deref()
+        .is_some_and(|value| value.chars().count() > 255)
+    {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": "执行服务 ID 不能超过 255 个字符"})),
+        );
+    }
     match task_runner_api_client::retry_message_run(
         context.base_url.as_str(),
         run_id.as_str(),
@@ -488,6 +499,7 @@ async fn retry_message_task_runner_run(
         context.source_user_message_id.as_deref(),
         context.source_turn_id.as_deref(),
         retry_instruction.as_deref(),
+        execution_service_id.as_deref(),
     )
     .await
     {
@@ -592,9 +604,11 @@ mod retry_request_tests {
     #[test]
     fn retry_body_keeps_user_instruction() {
         let request = parse_retry_message_task_runner_run_request(
-            r#"{"retry_instruction":"配置已经补齐"}"#.as_bytes(),
+            r#"{"retry_instruction":"配置已经补齐","execution_service_id":"mdm-service"}"#
+                .as_bytes(),
         )
         .expect("retry instruction body must be parsed");
         assert_eq!(request.retry_instruction.as_deref(), Some("配置已经补齐"));
+        assert_eq!(request.execution_service_id.as_deref(), Some("mdm-service"));
     }
 }
