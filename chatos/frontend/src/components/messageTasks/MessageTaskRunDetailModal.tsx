@@ -12,6 +12,7 @@ import { RunProcessTimeline } from './RunProcessTimeline';
 import { buildRunEventTimelineEntries } from './runEventTimelineUtils';
 import { buildRunProcessTimelineItems } from './runProcessTimelineModel';
 import { BrowserSessionEventsCard } from './BrowserSessionEventsCard';
+import { PluginRunSnapshotCard } from './PluginRunSnapshotCard';
 import { PluginRuntimeEventsCard } from './PluginRuntimeEventsCard';
 import { PluginUiWorkbenchCard } from './PluginUiWorkbenchCard';
 import { extractReportContent, formatDateTime, isRecord, readString } from './utils';
@@ -112,6 +113,7 @@ export const MessageTaskRunDetailModal: FC<MessageTaskRunDetailModalProps> = ({
         ]}
       />
 
+      <PluginRunSnapshotCard inputSnapshot={run.input_snapshot} />
       <BrowserSessionEventsCard events={events} />
       <PluginRuntimeEventsCard events={events} />
       {messageId && taskLookup ? (
