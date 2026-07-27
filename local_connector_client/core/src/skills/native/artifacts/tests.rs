@@ -3347,7 +3347,7 @@ fn creates_and_appends_self_contained_standard_pptx_charts_without_workbooks() {
                     "chart":{
                         "type":"line",
                         "categories":["Jan","Feb","Mar"],
-                        "series":[{"name":"Retention","values":[91,92.5,94],"color":"#336699"}],
+                        "series":[{"name":"Retention","values":[91,92.5,94],"color":"#336699","marker_style":"diamond","marker_size":9}],
                         "show_legend":false
                     }
                 },
@@ -3616,6 +3616,22 @@ fn creates_and_appends_self_contained_standard_pptx_charts_without_workbooks() {
         Some(&json!("#336699"))
     );
     assert_eq!(
+        inspected.pointer("/chart_metadata/1/series/0/marker_style"),
+        Some(&json!("diamond"))
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/1/series/0/marker_style_value"),
+        Some(&json!("diamond"))
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/1/series/0/marker_size"),
+        Some(&json!(9))
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/1/series/0/marker_size_value"),
+        Some(&json!("9"))
+    );
+    assert_eq!(
         inspected.pointer("/chart_metadata/1/legend_position"),
         Some(&Value::Null)
     );
@@ -3626,6 +3642,14 @@ fn creates_and_appends_self_contained_standard_pptx_charts_without_workbooks() {
     assert_eq!(
         inspected.pointer("/chart_metadata/1/self_contained_edit_snapshot/data_labels"),
         Some(&json!("none"))
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/1/self_contained_edit_snapshot/series/0/marker_style"),
+        Some(&json!("diamond"))
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/1/self_contained_edit_snapshot/series/0/marker_size"),
+        Some(&json!(9))
     );
     assert_eq!(
         inspected
@@ -3639,6 +3663,14 @@ fn creates_and_appends_self_contained_standard_pptx_charts_without_workbooks() {
     assert_eq!(
         inspected.pointer("/chart_metadata/2/series/0/color"),
         Some(&json!("#FF8800"))
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/2/series/0/marker_style"),
+        Some(&Value::Null)
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/2/series/0/marker_size"),
+        Some(&Value::Null)
     );
     assert_eq!(
         inspected.pointer("/chart_metadata/3/chart_types/0"),
@@ -3739,6 +3771,9 @@ fn creates_and_appends_self_contained_standard_pptx_charts_without_workbooks() {
     assert!(line_chart.contains(
         "<c:tx><c:v>Retention</c:v></c:tx><c:spPr><a:ln><a:solidFill><a:srgbClr val=\"336699\"/></a:solidFill></a:ln></c:spPr><c:marker>"
     ));
+    assert!(
+        line_chart.contains("<c:marker><c:symbol val=\"diamond\"/><c:size val=\"9\"/></c:marker>")
+    );
     let pie_chart =
         read_zip_text(&mut created_archive, "ppt/charts/chart3.xml").expect("generated pie XML");
     assert!(pie_chart
@@ -3959,12 +3994,12 @@ fn replaces_canonical_self_contained_pptx_chart_without_modifying_source_or_rela
                 "title":"Revenue",
                 "layout":"chart",
                 "chart":{
-                    "type":"area",
+                    "type":"line",
                     "title":"Quarterly revenue",
                     "categories":["Q1","Q2"],
                     "series":[
-                        {"name":"North","values":[10,20],"color":"#112233"},
-                        {"name":"South","values":[12,18],"value_axis":"secondary","color":"#A0B0C0"}
+                        {"name":"North","values":[10,20],"color":"#112233","marker_style":"square","marker_size":8},
+                        {"name":"South","values":[12,18],"value_axis":"secondary","color":"#A0B0C0","marker_style":"none"}
                     ],
                     "show_legend":true,
                     "legend_position":"left",
@@ -4030,6 +4065,22 @@ fn replaces_canonical_self_contained_pptx_chart_without_modifying_source_or_rela
     assert_eq!(
         inspected.pointer("/chart_metadata/0/series/0/color"),
         Some(&json!("#112233"))
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/0/series/0/marker_style"),
+        Some(&json!("square"))
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/0/series/0/marker_size"),
+        Some(&json!(8))
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/0/series/1/marker_style"),
+        Some(&json!("none"))
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/0/series/1/marker_size"),
+        Some(&Value::Null)
     );
     assert_eq!(
         inspected.pointer("/chart_metadata/0/secondary_value_axis_title"),
@@ -4147,6 +4198,7 @@ fn replaces_canonical_self_contained_pptx_chart_without_modifying_source_or_rela
     assert!(output_chart.contains("<c:legendPos val=\"b\"/>"));
     assert!(output_chart.contains("<c:showPercent val=\"1\"/>"));
     assert!(output_chart.contains("<a:srgbClr val=\"CC5500\"/>"));
+    assert!(!output_chart.contains("<c:marker>"));
     assert!(!output_chart.contains("<c:axPos val=\"r\"/>"));
     assert!(!output_chart.contains("<c:majorTickMark"));
     assert!(!output_chart.contains("<c:minorTickMark"));
@@ -4728,6 +4780,98 @@ fn rejects_stale_unsafe_or_noncanonical_pptx_chart_replacements_without_output()
 
     fs::copy(
         source.as_path(),
+        root.join("custom-series-marker-chart.pptx"),
+    )
+    .expect("copy custom series marker fixture");
+    rewrite_zip_text_entry(
+        root.join("custom-series-marker-chart.pptx").as_path(),
+        "ppt/charts/chart1.xml",
+        |xml| xml.replacen("<c:symbol val=\"circle\"/>", "<c:symbol val=\"star\"/>", 1),
+    );
+    let custom_marker_inspection = presentation::inspect_pptx_charts(
+        &json!({"path":"custom-series-marker-chart.pptx"}),
+        &state,
+        &request,
+    )
+    .expect("inspect custom series marker fixture");
+    assert_eq!(
+        custom_marker_inspection.pointer("/chart_metadata/0/series/0/marker_style"),
+        Some(&json!("custom"))
+    );
+    assert_eq!(
+        custom_marker_inspection.pointer("/chart_metadata/0/series/0/marker_style_value"),
+        Some(&json!("star"))
+    );
+    assert_eq!(
+        custom_marker_inspection.pointer("/chart_metadata/0/series/0/marker_size_value"),
+        Some(&json!("5"))
+    );
+    assert_eq!(
+        custom_marker_inspection
+            .pointer("/chart_metadata/0/eligible_for_self_contained_chart_replacement"),
+        Some(&json!(false))
+    );
+    assert!(custom_marker_inspection
+        .pointer("/chart_metadata/0/self_contained_replacement_unsupported_reason")
+        .and_then(Value::as_str)
+        .is_some_and(|reason| reason.contains("series marker styling")));
+
+    for (filename, original, replacement, expected_style, expected_size) in [
+        (
+            "duplicate-series-marker-symbol-chart.pptx",
+            "<c:symbol val=\"circle\"/>",
+            "<c:symbol val=\"circle\"/><c:symbol val=\"square\"/>",
+            "circle",
+            "5",
+        ),
+        (
+            "wrong-namespace-series-marker-chart.pptx",
+            "<c:symbol val=\"circle\"/>",
+            "<a:symbol val=\"circle\"/>",
+            "circle",
+            "5",
+        ),
+        (
+            "oversized-series-marker-chart.pptx",
+            "<c:size val=\"5\"/>",
+            "<c:size val=\"73\"/>",
+            "circle",
+            "73",
+        ),
+    ] {
+        fs::copy(source.as_path(), root.join(filename)).expect("copy custom marker fixture");
+        rewrite_zip_text_entry(
+            root.join(filename).as_path(),
+            "ppt/charts/chart1.xml",
+            |xml| xml.replacen(original, replacement, 1),
+        );
+        let inspection =
+            presentation::inspect_pptx_charts(&json!({"path":filename}), &state, &request)
+                .expect("inspect custom marker fixture");
+        assert_eq!(
+            inspection.pointer("/chart_metadata/0/series/0/marker_style"),
+            Some(&json!("custom"))
+        );
+        assert_eq!(
+            inspection.pointer("/chart_metadata/0/series/0/marker_style_value"),
+            Some(&json!(expected_style))
+        );
+        assert_eq!(
+            inspection.pointer("/chart_metadata/0/series/0/marker_size_value"),
+            Some(&json!(expected_size))
+        );
+        assert_eq!(
+            inspection.pointer("/chart_metadata/0/eligible_for_self_contained_chart_replacement"),
+            Some(&json!(false))
+        );
+        assert!(inspection
+            .pointer("/chart_metadata/0/self_contained_replacement_unsupported_reason")
+            .and_then(Value::as_str)
+            .is_some_and(|reason| reason.contains("series marker styling")));
+    }
+
+    fs::copy(
+        source.as_path(),
         root.join("custom-series-color-transform-chart.pptx"),
     )
     .expect("copy transformed series color fixture");
@@ -5144,6 +5288,46 @@ fn rejects_invalid_self_contained_pptx_chart_inputs_without_output() {
                 "chart":{"type":"pie","categories":["A"],"series":[{"name":"S","values":[1],"color":123}]}
             }),
             "color must be a #RRGGBB string or null",
+        ),
+        (
+            "non-line-series-marker.pptx",
+            json!({
+                "title":"Invalid marker","layout":"chart",
+                "chart":{"type":"column","categories":["A"],"series":[{"name":"S","values":[1],"marker_style":"circle"}]}
+            }),
+            "supported only for line charts",
+        ),
+        (
+            "unknown-series-marker.pptx",
+            json!({
+                "title":"Invalid marker","layout":"chart",
+                "chart":{"type":"line","categories":["A"],"series":[{"name":"S","values":[1],"marker_style":"star"}]}
+            }),
+            "unsupported PPTX line-chart series marker style",
+        ),
+        (
+            "hidden-series-marker-size.pptx",
+            json!({
+                "title":"Invalid marker","layout":"chart",
+                "chart":{"type":"line","categories":["A"],"series":[{"name":"S","values":[1],"marker_style":"none","marker_size":5}]}
+            }),
+            "marker_size must be null or omitted when marker_style=none",
+        ),
+        (
+            "small-series-marker.pptx",
+            json!({
+                "title":"Invalid marker","layout":"chart",
+                "chart":{"type":"line","categories":["A"],"series":[{"name":"S","values":[1],"marker_size":1}]}
+            }),
+            "marker_size must be between 2 and 72",
+        ),
+        (
+            "fractional-series-marker.pptx",
+            json!({
+                "title":"Invalid marker","layout":"chart",
+                "chart":{"type":"line","categories":["A"],"series":[{"name":"S","values":[1],"marker_size":5.5}]}
+            }),
+            "marker_size must be an integer between 2 and 72",
         ),
         (
             "hidden-left-legend.pptx",

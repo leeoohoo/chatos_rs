@@ -276,7 +276,7 @@ fn presentations_release_publishes_render_and_existing_edit_contracts() {
         .into_iter()
         .find(|item| item.skill_id == "internal_skill_presentations")
         .expect("Presentations catalog item");
-    assert_eq!(catalog_item.version, "1.25.0");
+    assert_eq!(catalog_item.version, "1.26.0");
     let instructions = internal_skill_instructions("internal_skill_presentations")
         .expect("Presentations instructions");
     assert!(instructions.contains("image_right"));
@@ -302,6 +302,12 @@ fn presentations_release_publishes_render_and_existing_edit_contracts() {
     assert!(instructions.contains("omission or null preserves the prior theme-driven XML bytes"));
     assert!(instructions.contains("line-only `a:ln/a:solidFill/a:srgbClr`"));
     assert!(instructions.contains("transformed/duplicated/wrong-namespace series color styling"));
+    assert!(instructions.contains("bounded canonical line-series markers"));
+    assert!(instructions.contains("recognized/custom marker style"));
+    assert!(instructions.contains("`marker_style=none|circle|square|diamond|triangle`"));
+    assert!(instructions.contains("integer `marker_size` from 2 through 72"));
+    assert!(instructions.contains("one exact direct-series `c:marker`"));
+    assert!(instructions.contains("out-of-range series marker styling"));
     assert!(instructions.contains("`table` layout"));
     assert!(instructions.contains("1–50 rows and 1–20 string columns"));
     assert!(instructions.contains("immediately eligible for `inspect_pptx_table`"));
@@ -434,6 +440,22 @@ fn presentations_release_publishes_render_and_existing_edit_contracts() {
             .and_then(Value::as_str),
         Some("^#[0-9A-Fa-f]{6}$")
     );
+    assert!(create
+        .pointer("/inputSchema/properties/slides/items/properties/chart/properties/series/items/properties/marker_style/enum")
+        .and_then(Value::as_array)
+        .is_some_and(|values| values.contains(&json!("diamond"))));
+    assert_eq!(
+        create
+            .pointer("/inputSchema/properties/slides/items/properties/chart/properties/series/items/properties/marker_size/minimum")
+            .and_then(Value::as_u64),
+        Some(2)
+    );
+    assert_eq!(
+        create
+            .pointer("/inputSchema/properties/slides/items/properties/chart/properties/series/items/properties/marker_size/maximum")
+            .and_then(Value::as_u64),
+        Some(72)
+    );
     let replace_chart = tools
         .iter()
         .find(|tool| tool.get("name").and_then(Value::as_str) == Some("replace_pptx_chart"))
@@ -442,6 +464,14 @@ fn presentations_release_publishes_render_and_existing_edit_contracts() {
         .pointer("/inputSchema/properties/expected_self_contained_edit_snapshot/properties/series/items/required")
         .and_then(Value::as_array)
         .is_some_and(|required| required.contains(&json!("color"))));
+    assert!(replace_chart
+        .pointer("/inputSchema/properties/expected_self_contained_edit_snapshot/properties/series/items/required")
+        .and_then(Value::as_array)
+        .is_some_and(|required| required.contains(&json!("marker_style"))));
+    assert!(replace_chart
+        .pointer("/inputSchema/properties/expected_self_contained_edit_snapshot/properties/series/items/required")
+        .and_then(Value::as_array)
+        .is_some_and(|required| required.contains(&json!("marker_size"))));
 }
 
 #[test]
@@ -810,7 +840,7 @@ fn ready_bundle_v2_fingerprint_matches_plugin_management_seed() {
         .join("\n");
     assert_eq!(
         hex::encode(Sha256::digest(rows.as_bytes())),
-        "9488ae6994187a5184b9857b332fe20c9ecce7e13220ff44efc352bda92ceae3"
+        "8cc6552aee8f1a90910be6aeed14919412e68e3b5a71e837ab71ffb4496d1e08"
     );
 }
 
@@ -825,7 +855,7 @@ fn all_28_bundled_skill_fingerprints_match_plugin_management_seed() {
         .join("\n");
     assert_eq!(
         hex::encode(Sha256::digest(rows.as_bytes())),
-        "a9747ecbafa1d81cce4c3e5ecdc4cb47737c75d62fcef1e3ff9a59bd9f1ae3b3"
+        "973f039d3770bf3d407d98275b27e9960db78a79dd27c9770eb60ec1ea305ffd"
     );
 }
 

@@ -59,6 +59,9 @@ const MAX_PPTX_CREATE_CHART_SERIES: usize = 10;
 const MAX_PPTX_CREATE_CHART_VALUE_ABS: f64 = 1_000_000_000_000.0;
 const MIN_PPTX_CREATE_CHART_LOG_BASE: f64 = 2.0;
 const MAX_PPTX_CREATE_CHART_LOG_BASE: f64 = 1_000.0;
+const MIN_PPTX_CREATE_CHART_MARKER_SIZE: u8 = 2;
+const MAX_PPTX_CREATE_CHART_MARKER_SIZE: u8 = 72;
+const DEFAULT_PPTX_CREATE_CHART_MARKER_SIZE: u8 = 5;
 const PPTX_PRIMARY_CATEGORY_AXIS_ID: u32 = 45_756_800;
 const PPTX_PRIMARY_VALUE_AXIS_ID: u32 = 45_710_656;
 const PPTX_SECONDARY_CATEGORY_AXIS_ID: u32 = 45_756_801;
@@ -184,6 +187,15 @@ enum PresentationChartAxisTickMark {
     Inside,
     Outside,
     Cross,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum PresentationChartMarkerStyle {
+    None,
+    Circle,
+    Square,
+    Diamond,
+    Triangle,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -327,6 +339,43 @@ impl PresentationChartAxisTickMark {
     }
 }
 
+impl PresentationChartMarkerStyle {
+    fn parse(value: &str) -> Result<Self> {
+        match value {
+            "none" => Ok(Self::None),
+            "circle" => Ok(Self::Circle),
+            "square" => Ok(Self::Square),
+            "diamond" => Ok(Self::Diamond),
+            "triangle" => Ok(Self::Triangle),
+            value => Err(anyhow!(
+                "unsupported PPTX line-chart series marker style: {value}"
+            )),
+        }
+    }
+
+    fn from_ooxml(value: &str) -> Result<Self> {
+        Self::parse(value).with_context(|| {
+            format!(
+                "chart line-series marker style is outside the canonical bounded contract: {value}"
+            )
+        })
+    }
+
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::Circle => "circle",
+            Self::Square => "square",
+            Self::Diamond => "diamond",
+            Self::Triangle => "triangle",
+        }
+    }
+
+    fn as_ooxml(self) -> &'static str {
+        self.as_str()
+    }
+}
+
 impl PresentationChartDataLabels {
     fn parse(value: &str) -> Result<Self> {
         match value {
@@ -429,6 +478,8 @@ struct PresentationChartSeries {
     values: Vec<f64>,
     value_axis: PresentationChartValueAxis,
     color: Option<String>,
+    marker_style: Option<PresentationChartMarkerStyle>,
+    marker_size: Option<u8>,
 }
 
 #[derive(Clone, Debug)]
@@ -602,6 +653,14 @@ struct PptxChartSeriesInspection {
     color_line_count: usize,
     color_solid_fill_count: usize,
     color_srgb_count: usize,
+    marker_style: Option<String>,
+    marker_style_value: Option<String>,
+    marker_size: Option<u8>,
+    marker_size_value: Option<String>,
+    marker_style_custom: bool,
+    marker_count: usize,
+    marker_symbol_count: usize,
+    marker_size_count: usize,
     name: String,
     name_formula: Option<String>,
     category_formula: Option<String>,
@@ -3810,10 +3869,12 @@ fn parse_presentation_chart(value: &Value, slide_number: usize) -> Result<Presen
                 series_index + 1
             )
         })?;
-        if series
-            .keys()
-            .any(|key| !matches!(key.as_str(), "name" | "values" | "value_axis" | "color"))
-        {
+        if series.keys().any(|key| {
+            !matches!(
+                key.as_str(),
+                "name" | "values" | "value_axis" | "color" | "marker_style" | "marker_size"
+            )
+        }) {
             return Err(anyhow!(
                 "slide {slide_number} chart series {} contains unsupported properties",
                 series_index + 1
@@ -3905,11 +3966,20 @@ fn parse_presentation_chart(value: &Value, slide_number: usize) -> Result<Presen
             slide_number,
             series_index + 1,
         )?;
+        let (marker_style, marker_size) = parse_presentation_chart_series_marker(
+            chart_type,
+            series.get("marker_style"),
+            series.get("marker_size"),
+            slide_number,
+            series_index + 1,
+        )?;
         parsed_series.push(PresentationChartSeries {
             name: name.to_string(),
             values,
             value_axis,
             color,
+            marker_style,
+            marker_size,
         });
     }
     let secondary_series = parsed_series
@@ -4077,6 +4147,66 @@ fn normalize_presentation_chart_rgb(value: &str) -> Option<String> {
         return None;
     }
     Some(value.to_ascii_uppercase())
+}
+
+fn parse_presentation_chart_series_marker(
+    chart_type: PresentationChartType,
+    style: Option<&Value>,
+    size: Option<&Value>,
+    slide_number: usize,
+    series_number: usize,
+) -> Result<(Option<PresentationChartMarkerStyle>, Option<u8>)> {
+    if chart_type != PresentationChartType::Line {
+        if style.is_some_and(|value| !value.is_null()) || size.is_some_and(|value| !value.is_null())
+        {
+            return Err(anyhow!(
+                "slide {slide_number} chart series {series_number} marker_style and marker_size are supported only for line charts"
+            ));
+        }
+        return Ok((None, None));
+    }
+    let style = match style {
+        None => PresentationChartMarkerStyle::Circle,
+        Some(value) if value.is_null() => PresentationChartMarkerStyle::Circle,
+        Some(value) => PresentationChartMarkerStyle::parse(value.as_str().ok_or_else(|| {
+            anyhow!(
+                "slide {slide_number} chart series {series_number} marker_style must be none, circle, square, diamond, triangle, or null"
+            )
+        })?)?,
+    };
+    if style == PresentationChartMarkerStyle::None {
+        if size.is_some_and(|value| !value.is_null()) {
+            return Err(anyhow!(
+                "slide {slide_number} chart series {series_number} marker_size must be null or omitted when marker_style=none"
+            ));
+        }
+        return Ok((Some(style), None));
+    }
+    let size = match size {
+        None => DEFAULT_PPTX_CREATE_CHART_MARKER_SIZE,
+        Some(value) if value.is_null() => DEFAULT_PPTX_CREATE_CHART_MARKER_SIZE,
+        Some(value) => {
+            let value = value.as_u64().ok_or_else(|| {
+                anyhow!(
+                    "slide {slide_number} chart series {series_number} marker_size must be an integer between {MIN_PPTX_CREATE_CHART_MARKER_SIZE} and {MAX_PPTX_CREATE_CHART_MARKER_SIZE}, or null"
+                )
+            })?;
+            let value = u8::try_from(value).map_err(|_| {
+                anyhow!(
+                    "slide {slide_number} chart series {series_number} marker_size exceeds the safety limit"
+                )
+            })?;
+            if !(MIN_PPTX_CREATE_CHART_MARKER_SIZE..=MAX_PPTX_CREATE_CHART_MARKER_SIZE)
+                .contains(&value)
+            {
+                return Err(anyhow!(
+                    "slide {slide_number} chart series {series_number} marker_size must be between {MIN_PPTX_CREATE_CHART_MARKER_SIZE} and {MAX_PPTX_CREATE_CHART_MARKER_SIZE}"
+                ));
+            }
+            value
+        }
+    };
+    Ok((Some(style), Some(size)))
 }
 
 fn parse_presentation_chart_axis_bound(
@@ -5085,7 +5215,14 @@ fn presentation_chart_xml(chart: &PresentationChart) -> Result<String> {
             .iter()
             .zip(chart.series.iter())
             .any(|(inspected, expected)| {
-                inspected.color_style_custom || inspected.color != expected.color
+                inspected.color_style_custom
+                    || inspected.color != expected.color
+                    || inspected.marker_style_custom
+                    || inspected.marker_style.as_deref()
+                        != expected
+                            .marker_style
+                            .map(PresentationChartMarkerStyle::as_str)
+                    || inspected.marker_size != expected.marker_size
             })
         || inspection.chart_types.len() != 1
         || inspection.chart_groups.len() != usize::from(has_secondary_axis) + 1
@@ -5154,11 +5291,7 @@ fn presentation_chart_series_xml(
     series: &PresentationChartSeries,
 ) -> String {
     let color = presentation_chart_series_color_xml(chart.chart_type, series.color.as_deref());
-    let marker = if chart.chart_type == PresentationChartType::Line {
-        r#"<c:marker><c:symbol val="circle"/><c:size val="5"/></c:marker>"#
-    } else {
-        ""
-    };
+    let marker = presentation_chart_series_marker_xml(series.marker_style, series.marker_size);
     let smooth = if chart.chart_type == PresentationChartType::Line {
         r#"<c:smooth val="0"/>"#
     } else {
@@ -5169,6 +5302,22 @@ fn presentation_chart_series_xml(
         escape_xml(series.name.as_str()),
         presentation_chart_string_literal(chart.categories.as_slice()),
         presentation_chart_number_literal(series.values.as_slice())
+    )
+}
+
+fn presentation_chart_series_marker_xml(
+    marker_style: Option<PresentationChartMarkerStyle>,
+    marker_size: Option<u8>,
+) -> String {
+    let Some(marker_style) = marker_style else {
+        return String::new();
+    };
+    let size = marker_size
+        .map(|size| format!(r#"<c:size val="{size}"/>"#))
+        .unwrap_or_default();
+    format!(
+        r#"<c:marker><c:symbol val="{}"/>{size}</c:marker>"#,
+        marker_style.as_ooxml()
     )
 }
 
@@ -5240,6 +5389,8 @@ fn presentation_chart_snapshot(chart: &PresentationChart) -> Value {
             "values": series.values,
             "value_axis": series.value_axis.as_str(),
             "color": series.color,
+            "marker_style": series.marker_style.map(PresentationChartMarkerStyle::as_str),
+            "marker_size": series.marker_size,
         })).collect::<Vec<_>>(),
         "show_legend": chart.show_legend,
         "legend_position": chart.legend_position.as_str(),
@@ -5424,11 +5575,35 @@ fn canonical_pptx_chart_snapshot(
                 "canonical self-contained chart series color styling is outside the exact solid RGB contract"
             ));
         }
+        if item.marker_style_custom {
+            return Err(anyhow!(
+                "canonical self-contained chart series marker styling is outside the exact bounded line-marker contract"
+            ));
+        }
+        let marker_style = item
+            .marker_style
+            .as_deref()
+            .map(PresentationChartMarkerStyle::from_ooxml)
+            .transpose()
+            .context("chart series marker style is outside the canonical bounded contract")?;
+        if chart_type == PresentationChartType::Line {
+            if marker_style.is_none() {
+                return Err(anyhow!(
+                    "canonical line chart series requires one marker style"
+                ));
+            }
+        } else if marker_style.is_some() || item.marker_size.is_some() {
+            return Err(anyhow!(
+                "canonical non-line chart series must not contain marker styling"
+            ));
+        }
         series.push(PresentationChartSeries {
             name: item.name.clone(),
             values,
             value_axis,
             color: item.color.clone(),
+            marker_style,
+            marker_size: item.marker_size,
         });
     }
     let candidate = PresentationChart {
@@ -9221,6 +9396,13 @@ fn inspect_standard_pptx_chart_xml(xml: &str) -> Result<PptxChartInspection> {
                     current_series.as_mut(),
                     false,
                 )?;
+                record_pptx_chart_series_marker_element(
+                    &reader,
+                    &event,
+                    stack.as_slice(),
+                    current_series.as_mut(),
+                    false,
+                )?;
                 stack.push(local);
                 if stack.len() > 256 {
                     return Err(anyhow!("PPTX chart XML nesting exceeds the safety limit"));
@@ -9274,6 +9456,13 @@ fn inspect_standard_pptx_chart_xml(xml: &str) -> Result<PptxChartInspection> {
                     current_series.as_mut(),
                     true,
                 )?;
+                record_pptx_chart_series_marker_element(
+                    &reader,
+                    &event,
+                    stack.as_slice(),
+                    current_series.as_mut(),
+                    true,
+                )?;
             }
             Event::Text(text) => {
                 let value = text
@@ -9291,6 +9480,11 @@ fn inspect_standard_pptx_chart_xml(xml: &str) -> Result<PptxChartInspection> {
                         && !value.trim().is_empty()
                     {
                         series.color_style_custom = true;
+                    }
+                    if pptx_chart_series_marker_index(stack.as_slice()).is_some()
+                        && !value.trim().is_empty()
+                    {
+                        series.marker_style_custom = true;
                     }
                 }
                 if current == "t"
@@ -9430,6 +9624,7 @@ fn inspect_standard_pptx_chart_xml(xml: &str) -> Result<PptxChartInspection> {
                         .take()
                         .ok_or_else(|| anyhow!("PPTX chart series boundary is invalid"))?;
                     finalize_pptx_chart_series_color(&mut item);
+                    finalize_pptx_chart_series_marker(&mut item);
                     series.push(item);
                     if series.len() > MAX_PPTX_CHART_SERIES {
                         return Err(anyhow!(
@@ -9781,6 +9976,129 @@ fn finalize_pptx_chart_series_color(series: &mut PptxChartSeriesInspection) {
         || series.color_value.is_none()
     {
         series.color_style_custom = true;
+    }
+}
+
+fn record_pptx_chart_series_marker_element(
+    reader: &Reader<&[u8]>,
+    event: &BytesStart<'_>,
+    stack: &[String],
+    series: Option<&mut PptxChartSeriesInspection>,
+    empty: bool,
+) -> Result<()> {
+    let Some(series) = series else {
+        return Ok(());
+    };
+    let qualified = event.name().as_ref().to_vec();
+    let local = event.local_name().as_ref().to_vec();
+    if local.as_slice() == b"marker" && stack.last().map(String::as_str) == Some("ser") {
+        series.marker_count = series.marker_count.saturating_add(1);
+        if qualified.as_slice() != b"c:marker" || empty || !pptx_xml_attributes_match(event, &[])? {
+            series.marker_style_custom = true;
+        }
+        return Ok(());
+    }
+    let Some(marker_index) = pptx_chart_series_marker_index(stack) else {
+        return Ok(());
+    };
+    let relative_ancestors = &stack[marker_index + 1..];
+    let expected_name = match local.as_slice() {
+        b"symbol" => Some(b"c:symbol".as_slice()),
+        b"size" => Some(b"c:size".as_slice()),
+        _ => None,
+    };
+    if !relative_ancestors.is_empty()
+        || expected_name.is_none()
+        || expected_name.is_some_and(|expected| qualified.as_slice() != expected)
+        || !empty
+        || !pptx_xml_attributes_match(event, &[b"val"])?
+    {
+        series.marker_style_custom = true;
+    }
+    match local.as_slice() {
+        b"symbol" => {
+            series.marker_symbol_count = series.marker_symbol_count.saturating_add(1);
+            let value = optional_xml_attribute(reader, event, "val")?;
+            if series.marker_style_value.is_some() {
+                series.marker_style_custom = true;
+            } else {
+                series.marker_style_value = value.clone();
+            }
+            match value
+                .as_deref()
+                .and_then(|value| PresentationChartMarkerStyle::from_ooxml(value).ok())
+            {
+                Some(style) => series.marker_style = Some(style.as_str().to_string()),
+                None => series.marker_style_custom = true,
+            }
+        }
+        b"size" => {
+            series.marker_size_count = series.marker_size_count.saturating_add(1);
+            let value = optional_xml_attribute(reader, event, "val")?;
+            if series.marker_size_value.is_some() {
+                series.marker_style_custom = true;
+            } else {
+                series.marker_size_value = value.clone();
+            }
+            match value.as_deref().and_then(|value| value.parse::<u8>().ok()) {
+                Some(size)
+                    if (MIN_PPTX_CREATE_CHART_MARKER_SIZE..=MAX_PPTX_CREATE_CHART_MARKER_SIZE)
+                        .contains(&size) =>
+                {
+                    series.marker_size = Some(size);
+                }
+                _ => series.marker_style_custom = true,
+            }
+        }
+        _ => series.marker_style_custom = true,
+    }
+    Ok(())
+}
+
+fn pptx_chart_series_marker_index(stack: &[String]) -> Option<usize> {
+    stack
+        .iter()
+        .enumerate()
+        .rfind(|(index, item)| {
+            item.as_str() == "marker"
+                && index
+                    .checked_sub(1)
+                    .and_then(|parent| stack.get(parent))
+                    .is_some_and(|parent| parent == "ser")
+        })
+        .map(|(index, _)| index)
+}
+
+fn finalize_pptx_chart_series_marker(series: &mut PptxChartSeriesInspection) {
+    if series.chart_type != "line" {
+        if series.marker_count != 0
+            || series.marker_symbol_count != 0
+            || series.marker_size_count != 0
+            || series.marker_style.is_some()
+            || series.marker_style_value.is_some()
+            || series.marker_size.is_some()
+            || series.marker_size_value.is_some()
+        {
+            series.marker_style_custom = true;
+        }
+        return;
+    }
+    let style_is_none = series.marker_style.as_deref() == Some("none");
+    if series.marker_count != 1
+        || series.marker_symbol_count != 1
+        || series.marker_style.is_none()
+        || series.marker_style_value.is_none()
+        || if style_is_none {
+            series.marker_size_count != 0
+                || series.marker_size.is_some()
+                || series.marker_size_value.is_some()
+        } else {
+            series.marker_size_count != 1
+                || series.marker_size.is_none()
+                || series.marker_size_value.is_none()
+        }
+    {
+        series.marker_style_custom = true;
     }
 }
 
@@ -10148,12 +10466,21 @@ fn pptx_chart_series_json(series: &PptxChartSeriesInspection) -> Value {
     } else {
         series.color.clone()
     };
+    let marker_style = if series.marker_style_custom {
+        Some("custom".to_string())
+    } else {
+        series.marker_style.clone()
+    };
     json!({
         "chart_type": series.chart_type,
         "chart_group": series.chart_group_index + 1,
         "value_axis": series.value_axis,
         "color": color,
         "color_value": series.color_value,
+        "marker_style": marker_style,
+        "marker_style_value": series.marker_style_value,
+        "marker_size": if series.marker_style_custom { None } else { series.marker_size },
+        "marker_size_value": series.marker_size_value,
         "name": series.name,
         "name_formula": series.name_formula,
         "category_formula": series.category_formula,
