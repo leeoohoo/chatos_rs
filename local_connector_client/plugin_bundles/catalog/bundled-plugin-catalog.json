@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "catalog_revision": "2026-07-27.2",
+  "catalog_revision": "2026-07-27.3",
   "release_version": "1.0.0",
   "release_epoch": "2026-07-22T00:00:00Z",
   "artifact_revision": "2026-07-13.5",
@@ -21,9 +21,9 @@
       "description": "Read, create, inspect, render, and verify PDF artifacts.",
       "category": "Productivity",
       "skill_ids": ["internal_skill_pdf"],
-      "release_version": "1.12.0",
-      "release_epoch": "2026-07-26T16:00:00Z",
-      "artifact_revision": "pdf-1.12.0"
+      "release_version": "1.13.0",
+      "release_epoch": "2026-07-27T11:00:00Z",
+      "artifact_revision": "pdf-1.13.0"
     },
     {
       "name": "spreadsheets",

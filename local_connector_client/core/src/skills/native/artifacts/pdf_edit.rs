@@ -32,6 +32,9 @@ const MAX_PDF_PAGES: usize = 5_000;
 const MAX_GENERATED_PDF_PAGES: usize = 500;
 const MAX_GENERATED_PDF_CHARACTERS: usize = 500_000;
 const MAX_GENERATED_PDF_PARAGRAPHS: usize = 2_000;
+const MAX_PDF_IMAGE_INPUTS: usize = 100;
+const MAX_PDF_IMAGE_INPUT_BYTES: u64 = 100 * 1024 * 1024;
+const MAX_PDF_IMAGE_INPUT_PIXELS: u64 = 100_000_000;
 const MAX_PDF_STAMP_CHARACTERS: usize = 256;
 const MAX_PDF_ANNOTATIONS: usize = 10_000;
 const MAX_PDF_ANNOTATION_PREVIEW: usize = 100;
@@ -122,11 +125,12 @@ impl PdfStampImageFormat {
     }
 }
 
-struct PdfStampImage {
+struct PdfEmbeddedImage {
     relative: String,
     format: PdfStampImageFormat,
     width: u32,
     height: u32,
+    source_bytes: usize,
     color_space: &'static str,
     encoded_color: Vec<u8>,
     encoded_alpha: Option<Vec<u8>>,
@@ -318,6 +322,250 @@ pub(super) fn create_text_pdf(
         "page_numbers": page_numbers,
         "bytes": bytes,
     }))
+}
+
+pub(super) fn create_pdf_from_images(
+    arguments: &Value,
+    state: &LocalState,
+    request: &RelayRequest,
+) -> Result<Value> {
+    let requested_paths = required_pdf_image_paths(arguments)?;
+    let page_size_name = arguments
+        .get("page_size")
+        .and_then(Value::as_str)
+        .unwrap_or("image");
+    if !matches!(page_size_name, "image" | "a4" | "letter") {
+        return Err(anyhow!("page_size must be image, a4, or letter"));
+    }
+    let fit = arguments
+        .get("fit")
+        .and_then(Value::as_str)
+        .unwrap_or("contain");
+    if !matches!(fit, "contain" | "cover") {
+        return Err(anyhow!("fit must be either contain or cover"));
+    }
+    let margin = bounded_pdf_number(arguments, "margin_points", 0.0, 0.0, 144.0)?;
+
+    let mut source_paths = Vec::with_capacity(requested_paths.len());
+    let mut images = Vec::with_capacity(requested_paths.len());
+    let mut total_input_bytes = 0_u64;
+    let mut total_pixels = 0_u64;
+    for requested in requested_paths {
+        let (source, image) = pdf_embedded_image(state, request, requested.as_str())?;
+        total_input_bytes = total_input_bytes.saturating_add(image.source_bytes as u64);
+        if total_input_bytes > MAX_PDF_IMAGE_INPUT_BYTES {
+            return Err(anyhow!(
+                "PDF image inputs exceed the 100 MiB combined safety limit"
+            ));
+        }
+        total_pixels = total_pixels
+            .saturating_add(u64::from(image.width).saturating_mul(u64::from(image.height)));
+        if total_pixels > MAX_PDF_IMAGE_INPUT_PIXELS {
+            return Err(anyhow!(
+                "PDF image inputs exceed the 100 megapixel combined safety limit"
+            ));
+        }
+        source_paths.push(source);
+        images.push(image);
+    }
+
+    let target_requested = required_text(arguments, "target_path")?;
+    let (target, target_relative) =
+        pdf_output_path(state, request, target_requested, source_paths.as_slice())?;
+    let mut document = build_image_pdf(images.as_slice(), page_size_name, fit, margin)?;
+    let bytes = save_pdf_document(
+        &mut document,
+        target.as_path(),
+        optional_bool(arguments, "overwrite"),
+    )?;
+    let image_summaries = images
+        .iter()
+        .map(|image| {
+            json!({
+                "source_path": image.relative,
+                "format": image.format.as_str(),
+                "width_pixels": image.width,
+                "height_pixels": image.height,
+                "source_bytes": image.source_bytes,
+                "sha256": image.sha256,
+            })
+        })
+        .collect::<Vec<_>>();
+
+    Ok(json!({
+        "created": true,
+        "operation": "create_pdf_from_images",
+        "path": target_relative,
+        "pages": images.len(),
+        "page_size": page_size_name,
+        "fit": fit,
+        "margin_points": margin,
+        "total_input_bytes": total_input_bytes,
+        "total_pixels": total_pixels,
+        "images": image_summaries,
+        "bytes": bytes,
+    }))
+}
+
+fn required_pdf_image_paths(arguments: &Value) -> Result<Vec<String>> {
+    let items = arguments
+        .get("image_paths")
+        .and_then(Value::as_array)
+        .ok_or_else(|| anyhow!("image_paths must be an array"))?;
+    if items.is_empty() || items.len() > MAX_PDF_IMAGE_INPUTS {
+        return Err(anyhow!(
+            "image_paths must contain between 1 and {MAX_PDF_IMAGE_INPUTS} image paths"
+        ));
+    }
+    items
+        .iter()
+        .map(|item| {
+            item.as_str()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_string)
+                .ok_or_else(|| anyhow!("image_paths must contain only non-empty strings"))
+        })
+        .collect()
+}
+
+fn build_image_pdf(
+    images: &[PdfEmbeddedImage],
+    page_size_name: &str,
+    fit: &str,
+    margin: f32,
+) -> Result<Document> {
+    let fixed_page_size = match page_size_name {
+        "image" => None,
+        value => Some(pdf_page_size(value)?),
+    };
+    if fixed_page_size.is_some_and(|page_size| {
+        margin * 2.0 >= page_size.width || margin * 2.0 >= page_size.height
+    }) {
+        return Err(anyhow!("margin_points leaves no usable PDF page area"));
+    }
+
+    let mut document = Document::with_version("1.7");
+    let info_id = document.add_object(dictionary! {
+        "Title" => Object::string_literal("ChatOS Image PDF"),
+        "Creator" => Object::string_literal("ChatOS Local Connector"),
+        "Producer" => Object::string_literal("ChatOS PDF native adapter"),
+    });
+    let pages_id = document.new_object_id();
+    let mut page_ids = Vec::with_capacity(images.len());
+    let mut image_objects = BTreeMap::<String, ObjectId>::new();
+
+    for image in images {
+        let (page_width, page_height) = fixed_page_size
+            .map(|page_size| (page_size.width, page_size.height))
+            .unwrap_or((
+                image.width as f32 + margin * 2.0,
+                image.height as f32 + margin * 2.0,
+            ));
+        if !page_width.is_finite()
+            || !page_height.is_finite()
+            || !(1.0..=20_000.0).contains(&page_width)
+            || !(1.0..=20_000.0).contains(&page_height)
+        {
+            return Err(anyhow!(
+                "generated PDF image page size exceeds local limits"
+            ));
+        }
+        let content_width = page_width - margin * 2.0;
+        let content_height = page_height - margin * 2.0;
+        if content_width <= 0.0 || content_height <= 0.0 {
+            return Err(anyhow!("margin_points leaves no usable PDF page area"));
+        }
+        let width_scale = content_width / image.width as f32;
+        let height_scale = content_height / image.height as f32;
+        let scale = if fit == "cover" {
+            width_scale.max(height_scale)
+        } else {
+            width_scale.min(height_scale)
+        };
+        let draw_width = image.width as f32 * scale;
+        let draw_height = image.height as f32 * scale;
+        let x = margin + (content_width - draw_width) / 2.0;
+        let y = margin + (content_height - draw_height) / 2.0;
+        if ![scale, draw_width, draw_height, x, y]
+            .iter()
+            .all(|value| value.is_finite())
+            || scale <= 0.0
+        {
+            return Err(anyhow!("PDF image fit produced an invalid transform"));
+        }
+
+        let image_id = if let Some(image_id) = image_objects.get(image.sha256.as_str()) {
+            *image_id
+        } else {
+            let image_id = add_pdf_embedded_image(&mut document, image)?;
+            image_objects.insert(image.sha256.clone(), image_id);
+            image_id
+        };
+        let content = Content {
+            operations: vec![
+                Operation::new("q", vec![]),
+                Operation::new(
+                    "re",
+                    vec![
+                        Object::Real(margin),
+                        Object::Real(margin),
+                        Object::Real(content_width),
+                        Object::Real(content_height),
+                    ],
+                ),
+                Operation::new("W", vec![]),
+                Operation::new("n", vec![]),
+                Operation::new(
+                    "cm",
+                    vec![
+                        Object::Real(draw_width),
+                        0.into(),
+                        0.into(),
+                        Object::Real(draw_height),
+                        Object::Real(x),
+                        Object::Real(y),
+                    ],
+                ),
+                Operation::new("Do", vec![Object::Name(b"Im1".to_vec())]),
+                Operation::new("Q", vec![]),
+            ],
+        }
+        .encode()
+        .context("encode generated PDF image page content")?;
+        let content_id = document.add_object(Stream::new(dictionary! {}, content));
+        let resources_id = document.add_object(dictionary! {
+            "XObject" => dictionary! { "Im1" => image_id },
+        });
+        let page_id = document.add_object(dictionary! {
+            "Type" => "Page",
+            "Parent" => pages_id,
+            "Contents" => content_id,
+            "Resources" => resources_id,
+            "MediaBox" => vec![
+                0.into(),
+                0.into(),
+                Object::Real(page_width),
+                Object::Real(page_height),
+            ],
+        });
+        page_ids.push(Object::Reference(page_id));
+    }
+    document.objects.insert(
+        pages_id,
+        Object::Dictionary(dictionary! {
+            "Type" => "Pages",
+            "Kids" => page_ids,
+            "Count" => images.len() as i64,
+        }),
+    );
+    let catalog_id = document.add_object(dictionary! {
+        "Type" => "Catalog",
+        "Pages" => pages_id,
+    });
+    document.trailer.set("Root", catalog_id);
+    document.trailer.set("Info", info_id);
+    Ok(document)
 }
 
 fn pdf_page_size(value: &str) -> Result<PdfPageSize> {
@@ -3070,7 +3318,7 @@ pub(super) fn stamp_pdf_image(
 ) -> Result<Value> {
     let (source, source_relative) =
         input_file(state, request, required_text(arguments, "path")?, ".pdf")?;
-    let image = pdf_stamp_image(state, request, required_text(arguments, "image_path")?)?;
+    let (_, image) = pdf_embedded_image(state, request, required_text(arguments, "image_path")?)?;
     let mut document = load_editable_pdf(source.as_path())?;
     let page_map = document.get_pages();
     let page_count = page_map.len();
@@ -3118,7 +3366,7 @@ pub(super) fn stamp_pdf_image(
         .unwrap_or(0);
     document.version = "1.7".to_string();
 
-    let image_id = add_pdf_stamp_image(&mut document, &image)?;
+    let image_id = add_pdf_embedded_image(&mut document, &image)?;
     let graphics_state_id = document.add_object(dictionary! {
         "Type" => "ExtGState",
         "CA" => opacity,
@@ -3230,26 +3478,25 @@ pub(super) fn stamp_pdf_image(
     }))
 }
 
-fn pdf_stamp_image(
+fn pdf_embedded_image(
     state: &LocalState,
     request: &RelayRequest,
     requested: &str,
-) -> Result<PdfStampImage> {
+) -> Result<(PathBuf, PdfEmbeddedImage)> {
     let (path, relative) = input_file_any(state, request, requested)?;
     let metadata = fs::symlink_metadata(path.as_path())
         .with_context(|| format!("inspect PDF stamp image {}", path.display()))?;
     if metadata.file_type().is_symlink() || !metadata.file_type().is_file() {
         return Err(anyhow!(
-            "PDF stamp image must be a regular non-symlink workspace file"
+            "PDF image must be a regular non-symlink workspace file"
         ));
     }
-    let bytes = fs::read(path.as_path())
-        .with_context(|| format!("read PDF stamp image {}", path.display()))?;
+    let bytes =
+        fs::read(path.as_path()).with_context(|| format!("read PDF image {}", path.display()))?;
     if bytes.is_empty() || bytes.len() > MAX_PDF_STAMP_IMAGE_BYTES {
-        return Err(anyhow!(
-            "PDF stamp image must contain between 1 byte and 10 MiB"
-        ));
+        return Err(anyhow!("PDF image must contain between 1 byte and 10 MiB"));
     }
+    let source_bytes = bytes.len();
     let extension = path
         .extension()
         .and_then(|value| value.to_str())
@@ -3257,16 +3504,17 @@ fn pdf_stamp_image(
         .to_ascii_lowercase();
     let sha256 = hex::encode(Sha256::digest(bytes.as_slice()));
     let mut image = match extension.as_str() {
-        "png" => pdf_stamp_png(bytes.as_slice())?,
-        "jpg" | "jpeg" => pdf_stamp_jpeg(bytes)?,
-        _ => return Err(anyhow!("PDF stamp image must use .png, .jpg, or .jpeg")),
+        "png" => pdf_embedded_png(bytes.as_slice())?,
+        "jpg" | "jpeg" => pdf_embedded_jpeg(bytes)?,
+        _ => return Err(anyhow!("PDF image must use .png, .jpg, or .jpeg")),
     };
     image.relative = relative;
     image.sha256 = sha256;
-    Ok(image)
+    image.source_bytes = source_bytes;
+    Ok((path, image))
 }
 
-fn pdf_stamp_png(bytes: &[u8]) -> Result<PdfStampImage> {
+fn pdf_embedded_png(bytes: &[u8]) -> Result<PdfEmbeddedImage> {
     const PNG_SIGNATURE: &[u8; 8] = b"\x89PNG\r\n\x1a\n";
     if bytes.len() < 33 || !bytes.starts_with(PNG_SIGNATURE) {
         return Err(anyhow!("PNG image has an invalid signature"));
@@ -3319,7 +3567,7 @@ fn pdf_stamp_png(bytes: &[u8]) -> Result<PdfStampImage> {
                     6 => 4,
                     _ => {
                         return Err(anyhow!(
-                            "PNG stamp images support only 8-bit grayscale, RGB, grayscale-alpha, or RGBA"
+                            "PNG PDF images support only 8-bit grayscale, RGB, grayscale-alpha, or RGBA"
                         ));
                     }
                 };
@@ -3329,7 +3577,7 @@ fn pdf_stamp_png(bytes: &[u8]) -> Result<PdfStampImage> {
                     || bytes[data_start + 12] != 0
                 {
                     return Err(anyhow!(
-                        "PNG stamp images must use 8-bit non-interlaced standard compression"
+                        "PNG PDF images must use 8-bit non-interlaced standard compression"
                     ));
                 }
                 validate_pdf_stamp_image_dimensions(width, height)?;
@@ -3387,11 +3635,12 @@ fn pdf_stamp_png(bytes: &[u8]) -> Result<PdfStampImage> {
     }
     let decoded = unfilter_png_rows(filtered.as_slice(), row_bytes, height as usize, channels)?;
     let (colors, color_bytes, alpha_bytes) = split_png_channels(decoded.as_slice(), color_type)?;
-    Ok(PdfStampImage {
+    Ok(PdfEmbeddedImage {
         relative: String::new(),
         format: PdfStampImageFormat::Png,
         width,
         height,
+        source_bytes: bytes.len(),
         color_space: if colors == 1 {
             "DeviceGray"
         } else {
@@ -3407,7 +3656,7 @@ fn pdf_stamp_png(bytes: &[u8]) -> Result<PdfStampImage> {
     })
 }
 
-fn pdf_stamp_jpeg(bytes: Vec<u8>) -> Result<PdfStampImage> {
+fn pdf_embedded_jpeg(bytes: Vec<u8>) -> Result<PdfEmbeddedImage> {
     if bytes.len() < 4 || !bytes.starts_with(&[0xff, 0xd8]) || !bytes.ends_with(&[0xff, 0xd9]) {
         return Err(anyhow!("JPEG image has an invalid start or end marker"));
     }
@@ -3473,15 +3722,17 @@ fn pdf_stamp_jpeg(bytes: Vec<u8>) -> Result<PdfStampImage> {
                 3 => "DeviceRGB",
                 _ => {
                     return Err(anyhow!(
-                        "JPEG stamp images support only grayscale or RGB color components"
+                        "JPEG PDF images support only grayscale or RGB color components"
                     ));
                 }
             };
-            return Ok(PdfStampImage {
+            let source_bytes = bytes.len();
+            return Ok(PdfEmbeddedImage {
                 relative: String::new(),
                 format: PdfStampImageFormat::Jpeg,
                 width,
                 height,
+                source_bytes,
                 color_space,
                 encoded_color: bytes,
                 encoded_alpha: None,
@@ -3607,7 +3858,7 @@ fn zlib_compress(bytes: &[u8]) -> Result<Vec<u8>> {
     encoder.finish().context("finish PDF stamp image data")
 }
 
-fn add_pdf_stamp_image(document: &mut Document, image: &PdfStampImage) -> Result<ObjectId> {
+fn add_pdf_embedded_image(document: &mut Document, image: &PdfEmbeddedImage) -> Result<ObjectId> {
     let soft_mask_id = image.encoded_alpha.as_ref().map(|alpha| {
         document.add_object(Stream::new(
             dictionary! {
@@ -4268,18 +4519,46 @@ fn pdf_output_path(
             "PDF editing requires a distinct target_path; source files are never modified in place"
         ));
     }
+    match fs::symlink_metadata(target.as_path()) {
+        Ok(metadata) => {
+            if metadata.file_type().is_symlink() || !metadata.is_file() {
+                return Err(anyhow!(
+                    "PDF target exists and is not a regular non-symlink file"
+                ));
+            }
+            for source in sources {
+                if same_file::is_same_file(source, target.as_path())? {
+                    return Err(anyhow!(
+                        "PDF editing requires a distinct target_path; source files are never modified in place"
+                    ));
+                }
+            }
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => {
+            return Err(error).with_context(|| format!("inspect PDF target {}", target.display()));
+        }
+    }
     Ok((target, relative))
 }
 
 fn save_pdf_document(document: &mut Document, target: &Path, overwrite: bool) -> Result<u64> {
-    if target.exists() {
-        if !target.is_file() {
-            return Err(anyhow!("PDF target exists and is not a regular file"));
+    match fs::symlink_metadata(target) {
+        Ok(metadata) => {
+            if metadata.file_type().is_symlink() || !metadata.is_file() {
+                return Err(anyhow!(
+                    "PDF target exists and is not a regular non-symlink file"
+                ));
+            }
+            if !overwrite {
+                return Err(anyhow!(
+                    "refusing to overwrite existing PDF without overwrite=true"
+                ));
+            }
         }
-        if !overwrite {
-            return Err(anyhow!(
-                "refusing to overwrite existing PDF without overwrite=true"
-            ));
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => {
+            return Err(error).with_context(|| format!("inspect PDF target {}", target.display()));
         }
     }
     let parent = target
@@ -4309,9 +4588,21 @@ fn save_pdf_document(document: &mut Document, target: &Path, overwrite: bool) ->
     if bytes > MAX_ARTIFACT_BYTES {
         return Err(anyhow!("generated PDF exceeds the 100 MiB safety limit"));
     }
-    if target.exists() {
-        fs::remove_file(target)
-            .with_context(|| format!("replace existing PDF {}", target.display()))?;
+    match fs::symlink_metadata(target) {
+        Ok(metadata) => {
+            if metadata.file_type().is_symlink() || !metadata.is_file() {
+                return Err(anyhow!(
+                    "PDF target changed and is not a regular non-symlink file"
+                ));
+            }
+            fs::remove_file(target)
+                .with_context(|| format!("replace existing PDF {}", target.display()))?;
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => {
+            return Err(error)
+                .with_context(|| format!("reinspect PDF target {}", target.display()));
+        }
     }
     temporary
         .persist(target)

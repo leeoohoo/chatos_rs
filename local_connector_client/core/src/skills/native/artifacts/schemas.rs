@@ -10,6 +10,7 @@ pub(super) fn tool_definitions(skill_id: &str) -> Vec<Value> {
             extract_pdf_text_tool(),
             render_pdf_pages_tool(),
             create_text_pdf_tool(),
+            create_pdf_from_images_tool(),
             update_pdf_metadata_tool(),
             fill_pdf_form_fields_tool(),
             merge_pdfs_tool(),
@@ -189,6 +190,31 @@ fn create_text_pdf_tool() -> Value {
                 "overwrite":{"type":"boolean","default":false}
             },
             "required":["target_path","paragraphs"],
+            "additionalProperties":false
+        }),
+    )
+}
+
+fn create_pdf_from_images_tool() -> Value {
+    tool(
+        "create_pdf_from_images",
+        "Create a bounded multi-page PDF from 1-100 regular non-symlink workspace PNG or JPEG images. Each image becomes one page in input order, with image-sized, A4, or Letter pages and contain/cover fitting. Source images are never modified.",
+        json!({
+            "type":"object",
+            "properties":{
+                "image_paths":{
+                    "type":"array",
+                    "minItems":1,
+                    "maxItems":100,
+                    "items":{"type":"string","description":"Workspace-relative PNG/JPG/JPEG path. Each image is limited to 10 MiB, 10000 px per edge, and 16 megapixels."}
+                },
+                "target_path":{"type":"string","description":"Distinct workspace-relative .pdf output path."},
+                "page_size":{"type":"string","enum":["image","a4","letter"],"default":"image","description":"image uses one PDF point per source pixel plus margins; A4 and Letter use portrait pages."},
+                "fit":{"type":"string","enum":["contain","cover"],"default":"contain","description":"contain preserves the whole image; cover centers and clips it to the page content box."},
+                "margin_points":{"type":"number","minimum":0,"maximum":144,"default":0},
+                "overwrite":{"type":"boolean","default":false}
+            },
+            "required":["image_paths","target_path"],
             "additionalProperties":false
         }),
     )

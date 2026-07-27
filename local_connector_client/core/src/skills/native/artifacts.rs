@@ -63,6 +63,9 @@ pub(super) fn execute_with_cancellation(
         ("internal_skill_pdf", "create_text_pdf") => {
             pdf_edit::create_text_pdf(arguments, state, request)
         }
+        ("internal_skill_pdf", "create_pdf_from_images") => {
+            pdf_edit::create_pdf_from_images(arguments, state, request)
+        }
         ("internal_skill_pdf", "update_pdf_metadata") => {
             pdf_edit::update_pdf_metadata(arguments, state, request)
         }

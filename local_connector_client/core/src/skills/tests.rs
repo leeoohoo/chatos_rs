@@ -35,7 +35,7 @@ fn pdf_release_publishes_bounded_generation_and_editing_tools() {
         .into_iter()
         .find(|item| item.skill_id == "internal_skill_pdf")
         .expect("PDF catalog item");
-    assert_eq!(catalog_item.version, "1.12.0");
+    assert_eq!(catalog_item.version, "1.13.0");
     assert_eq!(
         catalog_item.permissions,
         vec!["workspace.read", "workspace.write"]
@@ -56,11 +56,12 @@ fn pdf_release_publishes_bounded_generation_and_editing_tools() {
         .iter()
         .filter_map(|tool| tool.get("name").and_then(Value::as_str))
         .collect::<HashSet<_>>();
-    assert_eq!(tools.len(), 14);
+    assert_eq!(tools.len(), 15);
     assert!(names.contains("inspect_pdf"));
     assert!(names.contains("extract_pdf_text"));
     assert!(names.contains("render_pdf_pages"));
     assert!(names.contains("create_text_pdf"));
+    assert!(names.contains("create_pdf_from_images"));
     assert!(names.contains("update_pdf_metadata"));
     assert!(names.contains("fill_pdf_form_fields"));
     assert!(names.contains("merge_pdfs"));
@@ -88,6 +89,8 @@ fn pdf_release_publishes_bounded_generation_and_editing_tools() {
     assert!(instructions.contains("NoToggleToOff"));
     assert!(instructions.contains("exact option order"));
     assert!(instructions.contains("Editable choice fields"));
+    assert!(instructions.contains("combined inputs are limited to 100 MiB and 100 megapixels"));
+    assert!(instructions.contains("Always call `render_pdf_pages` on the generated PDF"));
 }
 
 #[test]
@@ -755,7 +758,7 @@ fn ready_bundle_v2_fingerprint_matches_plugin_management_seed() {
         .join("\n");
     assert_eq!(
         hex::encode(Sha256::digest(rows.as_bytes())),
-        "daa920d0166074e8b4edbd2880b666cfa2f393479dfc7d5dd211b4375a89acdc"
+        "997f9d07a72ad17d2408d67c92cd28fd68ad465afbbe6746dc40db284dbb85c0"
     );
 }
 
@@ -770,7 +773,7 @@ fn all_28_bundled_skill_fingerprints_match_plugin_management_seed() {
         .join("\n");
     assert_eq!(
         hex::encode(Sha256::digest(rows.as_bytes())),
-        "ac82e4554d7b8eb45141b1edfc56f247d539b109e079507754cf3aeb37dfabd9"
+        "052c79450ae60346d008665d03fd4f39719e8318bee7a2770fae8c369eadc305"
     );
 }
 

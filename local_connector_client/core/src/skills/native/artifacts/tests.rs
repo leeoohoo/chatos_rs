@@ -3,9 +3,13 @@
 
 use std::collections::BTreeMap;
 use std::fs::{self, File};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use base64::Engine;
+use flate2::write::ZlibEncoder;
+use flate2::Compression;
+use lopdf::content::Content;
 use lopdf::{dictionary, Document, Object, Stream};
 use serde_json::{json, Value};
 use uuid::Uuid;
@@ -68,6 +72,44 @@ fn write_blank_pdf(path: &Path, page_count: usize) {
     });
     document.trailer.set("Root", catalog_id);
     document.save(path).expect("save test PDF");
+}
+
+fn write_test_rgba_png(path: &Path, width: u32, height: u32, rgba: [u8; 4]) {
+    fn append_chunk(bytes: &mut Vec<u8>, kind: &[u8; 4], data: &[u8]) {
+        bytes.extend_from_slice(&(data.len() as u32).to_be_bytes());
+        bytes.extend_from_slice(kind);
+        bytes.extend_from_slice(data);
+        let mut crc = crc32fast::Hasher::new();
+        crc.update(kind);
+        crc.update(data);
+        bytes.extend_from_slice(&crc.finalize().to_be_bytes());
+    }
+
+    assert!(width > 0 && height > 0);
+    let mut row = Vec::with_capacity(width as usize * 4 + 1);
+    row.push(0);
+    for _ in 0..width {
+        row.extend_from_slice(&rgba);
+    }
+    let mut filtered = Vec::with_capacity((width as usize * 4 + 1) * height as usize);
+    for _ in 0..height {
+        filtered.extend_from_slice(row.as_slice());
+    }
+    let mut encoder = ZlibEncoder::new(Vec::new(), Compression::default());
+    encoder
+        .write_all(filtered.as_slice())
+        .expect("compress PNG");
+    let compressed = encoder.finish().expect("finish PNG compression");
+
+    let mut png = b"\x89PNG\r\n\x1a\n".to_vec();
+    let mut ihdr = Vec::with_capacity(13);
+    ihdr.extend_from_slice(&width.to_be_bytes());
+    ihdr.extend_from_slice(&height.to_be_bytes());
+    ihdr.extend_from_slice(&[8, 6, 0, 0, 0]);
+    append_chunk(&mut png, b"IHDR", ihdr.as_slice());
+    append_chunk(&mut png, b"IDAT", compressed.as_slice());
+    append_chunk(&mut png, b"IEND", &[]);
+    fs::write(path, png).expect("write test PNG");
 }
 
 fn write_acroform_pdf(path: &Path) {
@@ -13427,6 +13469,342 @@ fn pdf_text_annotation_rejects_invalid_inputs_rotation_malformed_annots_and_in_p
     .expect_err("malformed annotation array must fail");
     assert!(malformed_error.to_string().contains("must be an array"));
     assert!(!root.join("malformed-output.pdf").exists());
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn creates_multi_page_pdf_from_png_images_with_bounded_layout() {
+    let (root, state, request) = test_context();
+    fs::create_dir_all(root.join("assets")).expect("assets");
+    write_test_rgba_png(
+        root.join("assets/wide.png").as_path(),
+        4,
+        2,
+        [255, 0, 0, 160],
+    );
+    write_test_rgba_png(
+        root.join("assets/tall.png").as_path(),
+        2,
+        4,
+        [0, 0, 255, 255],
+    );
+    let wide_before = fs::read(root.join("assets/wide.png")).expect("wide PNG");
+    let tall_before = fs::read(root.join("assets/tall.png")).expect("tall PNG");
+
+    let created = pdf_edit::create_pdf_from_images(
+        &json!({
+            "image_paths":["assets/wide.png","assets/tall.png"],
+            "target_path":"artifacts/images.pdf",
+            "page_size":"a4",
+            "fit":"contain",
+            "margin_points":36
+        }),
+        &state,
+        &request,
+    )
+    .expect("create PDF from images");
+    assert_eq!(
+        created.get("operation").and_then(Value::as_str),
+        Some("create_pdf_from_images")
+    );
+    assert_eq!(created.get("pages").and_then(Value::as_u64), Some(2));
+    assert_eq!(created.get("page_size").and_then(Value::as_str), Some("a4"));
+    assert_eq!(created.get("fit").and_then(Value::as_str), Some("contain"));
+    assert_eq!(
+        created.pointer("/images/0/format").and_then(Value::as_str),
+        Some("png")
+    );
+    assert_eq!(
+        created
+            .pointer("/images/0/width_pixels")
+            .and_then(Value::as_u64),
+        Some(4)
+    );
+
+    let output_path = root.join("artifacts/images.pdf");
+    let document = Document::load(output_path.as_path()).expect("image PDF");
+    let pages = document.get_pages();
+    assert_eq!(pages.len(), 2);
+    for page_id in pages.values() {
+        let page = document
+            .get_object(*page_id)
+            .and_then(Object::as_dict)
+            .expect("image page");
+        let media_box = page
+            .get(b"MediaBox")
+            .and_then(Object::as_array)
+            .expect("image page MediaBox");
+        assert_eq!(media_box[2].as_float().expect("page width"), 595.0);
+        assert_eq!(media_box[3].as_float().expect("page height"), 842.0);
+        let resources_id = page
+            .get(b"Resources")
+            .and_then(Object::as_reference)
+            .expect("page resources");
+        let resources = document
+            .get_object(resources_id)
+            .and_then(Object::as_dict)
+            .expect("resources dictionary");
+        assert_eq!(
+            resources
+                .get(b"XObject")
+                .and_then(Object::as_dict)
+                .expect("XObject dictionary")
+                .len(),
+            1
+        );
+    }
+    let first_page_id = pages[&1];
+    let first_page = document
+        .get_object(first_page_id)
+        .and_then(Object::as_dict)
+        .expect("first page");
+    let first_resources_id = first_page
+        .get(b"Resources")
+        .and_then(Object::as_reference)
+        .expect("first resources");
+    let first_image_id = document
+        .get_object(first_resources_id)
+        .and_then(Object::as_dict)
+        .and_then(|resources| resources.get(b"XObject"))
+        .and_then(Object::as_dict)
+        .and_then(|xobjects| xobjects.get(b"Im1"))
+        .and_then(Object::as_reference)
+        .expect("first image reference");
+    assert!(document
+        .get_object(first_image_id)
+        .and_then(Object::as_stream)
+        .expect("first image stream")
+        .dict
+        .has(b"SMask"));
+    let first_content = document.get_page_content(first_page_id);
+    let operations = Content::decode(first_content.as_slice())
+        .expect("decode first page content")
+        .operations;
+    assert!(operations.iter().any(|operation| operation.operator == "W"));
+    let transform = operations
+        .iter()
+        .find(|operation| operation.operator == "cm")
+        .expect("image transform");
+    assert!((transform.operands[0].as_float().expect("draw width") - 523.0).abs() < 0.01);
+    assert!((transform.operands[3].as_float().expect("draw height") - 261.5).abs() < 0.01);
+
+    assert_eq!(
+        fs::read(root.join("assets/wide.png")).expect("wide after create"),
+        wide_before
+    );
+    assert_eq!(
+        fs::read(root.join("assets/tall.png")).expect("tall after create"),
+        tall_before
+    );
+    if let Some(visual_output) = std::env::var_os("CHATOS_TEST_PDF_IMAGE_VISUAL_OUTPUT") {
+        fs::copy(output_path, visual_output).expect("copy visual QA PDF");
+    }
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn image_pdf_supports_cover_image_sized_pages_and_jpeg() {
+    let (root, state, request) = test_context();
+    write_test_rgba_png(root.join("wide.png").as_path(), 4, 2, [0, 180, 80, 255]);
+    let covered = pdf_edit::create_pdf_from_images(
+        &json!({
+            "image_paths":["wide.png"],
+            "target_path":"covered.pdf",
+            "page_size":"letter",
+            "fit":"cover",
+            "margin_points":36
+        }),
+        &state,
+        &request,
+    )
+    .expect("create covered image PDF");
+    assert_eq!(covered.get("pages").and_then(Value::as_u64), Some(1));
+    let covered_document = Document::load(root.join("covered.pdf")).expect("covered PDF");
+    let covered_page_id = covered_document.get_pages()[&1];
+    let covered_content = covered_document.get_page_content(covered_page_id);
+    let covered_operations = Content::decode(covered_content.as_slice())
+        .expect("decode covered content")
+        .operations;
+    let transform = covered_operations
+        .iter()
+        .find(|operation| operation.operator == "cm")
+        .expect("cover transform");
+    assert!((transform.operands[0].as_float().expect("cover width") - 1440.0).abs() < 0.01);
+    assert!((transform.operands[3].as_float().expect("cover height") - 720.0).abs() < 0.01);
+    assert!((transform.operands[4].as_float().expect("cover x") + 414.0).abs() < 0.01);
+    assert!((transform.operands[5].as_float().expect("cover y") - 36.0).abs() < 0.01);
+    if let Some(visual_output) = std::env::var_os("CHATOS_TEST_PDF_IMAGE_COVER_VISUAL_OUTPUT") {
+        fs::copy(root.join("covered.pdf"), visual_output).expect("copy cover visual QA PDF");
+    }
+
+    let image_sized = pdf_edit::create_pdf_from_images(
+        &json!({
+            "image_paths":["wide.png"],
+            "target_path":"image-sized.pdf",
+            "margin_points":10
+        }),
+        &state,
+        &request,
+    )
+    .expect("create image-sized PDF");
+    assert_eq!(
+        image_sized.get("page_size").and_then(Value::as_str),
+        Some("image")
+    );
+    let image_document = Document::load(root.join("image-sized.pdf")).expect("image-sized PDF");
+    let image_page = image_document
+        .get_object(image_document.get_pages()[&1])
+        .and_then(Object::as_dict)
+        .expect("image-sized page");
+    let media_box = image_page
+        .get(b"MediaBox")
+        .and_then(Object::as_array)
+        .expect("image-sized MediaBox");
+    assert_eq!(media_box[2].as_float().expect("image page width"), 24.0);
+    assert_eq!(media_box[3].as_float().expect("image page height"), 22.0);
+
+    let minimal_jpeg = vec![
+        0xff, 0xd8, 0xff, 0xc0, 0x00, 0x11, 0x08, 0x00, 0x01, 0x00, 0x01, 0x03, 0x01, 0x11, 0x00,
+        0x02, 0x11, 0x00, 0x03, 0x11, 0x00, 0xff, 0xda, 0x00, 0x0c, 0x03, 0x01, 0x00, 0x02, 0x11,
+        0x03, 0x11, 0x00, 0x3f, 0x00, 0x00, 0xff, 0xd9,
+    ];
+    fs::write(root.join("pixel.jpg"), minimal_jpeg).expect("minimal JPEG");
+    let jpeg = pdf_edit::create_pdf_from_images(
+        &json!({"image_paths":["pixel.jpg"],"target_path":"jpeg.pdf"}),
+        &state,
+        &request,
+    )
+    .expect("create JPEG PDF");
+    assert_eq!(
+        jpeg.pointer("/images/0/format").and_then(Value::as_str),
+        Some("jpeg")
+    );
+    assert!(root.join("jpeg.pdf").is_file());
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn image_pdf_rejects_unsafe_inputs_layouts_and_targets() {
+    let (root, state, request) = test_context();
+    write_test_rgba_png(root.join("valid.png").as_path(), 2, 2, [255, 255, 255, 255]);
+    write_test_rgba_png(
+        root.join("too-wide.png").as_path(),
+        10_001,
+        1,
+        [0, 0, 0, 255],
+    );
+    fs::write(root.join("invalid.png"), b"not a png").expect("invalid PNG");
+    fs::write(root.join("existing.pdf"), b"preserve").expect("existing target");
+    let existing_before = fs::read(root.join("existing.pdf")).expect("existing bytes");
+
+    let too_many = (0..=100)
+        .map(|_| Value::String("valid.png".to_string()))
+        .collect::<Vec<_>>();
+    for (index, arguments, expected) in [
+        (
+            0,
+            json!({"image_paths":[],"target_path":"empty.pdf"}),
+            "between 1 and 100",
+        ),
+        (
+            1,
+            json!({"image_paths":too_many,"target_path":"many.pdf"}),
+            "between 1 and 100",
+        ),
+        (
+            2,
+            json!({"image_paths":["invalid.png"],"target_path":"invalid.pdf"}),
+            "PNG image",
+        ),
+        (
+            3,
+            json!({"image_paths":["too-wide.png"],"target_path":"wide.pdf"}),
+            "10000 px edge",
+        ),
+        (
+            4,
+            json!({"image_paths":["valid.png"],"target_path":"layout.pdf","page_size":"poster"}),
+            "page_size",
+        ),
+        (
+            5,
+            json!({"image_paths":["valid.png"],"target_path":"fit.pdf","fit":"stretch"}),
+            "fit",
+        ),
+        (
+            6,
+            json!({"image_paths":["valid.png"],"target_path":"margin.pdf","page_size":"a4","margin_points":400}),
+            "margin_points",
+        ),
+        (
+            7,
+            json!({"image_paths":["valid.png"],"target_path":"existing.pdf"}),
+            "overwrite=true",
+        ),
+    ] {
+        let error = pdf_edit::create_pdf_from_images(&arguments, &state, &request)
+            .expect_err("unsafe image PDF request must fail");
+        assert!(
+            error.to_string().contains(expected),
+            "case {index}: {error:#}"
+        );
+    }
+    assert_eq!(
+        fs::read(root.join("existing.pdf")).expect("existing after rejection"),
+        existing_before
+    );
+
+    fs::hard_link(root.join("valid.png"), root.join("hard-link.pdf")).expect("hard-linked target");
+    let hard_link_error = pdf_edit::create_pdf_from_images(
+        &json!({
+            "image_paths":["valid.png"],
+            "target_path":"hard-link.pdf",
+            "overwrite":true
+        }),
+        &state,
+        &request,
+    )
+    .expect_err("hard-linked target must fail");
+    assert!(hard_link_error.to_string().contains("distinct target_path"));
+
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(root.join("valid.png"), root.join("linked.png"))
+            .expect("image symlink");
+        let input_symlink_error = pdf_edit::create_pdf_from_images(
+            &json!({"image_paths":["linked.png"],"target_path":"linked-input.pdf"}),
+            &state,
+            &request,
+        )
+        .expect_err("symlink image must fail");
+        assert!(input_symlink_error.to_string().contains("non-symlink"));
+
+        std::os::unix::fs::symlink(root.join("existing.pdf"), root.join("linked-target.pdf"))
+            .expect("target symlink");
+        let target_symlink_error = pdf_edit::create_pdf_from_images(
+            &json!({
+                "image_paths":["valid.png"],
+                "target_path":"linked-target.pdf",
+                "overwrite":true
+            }),
+            &state,
+            &request,
+        )
+        .expect_err("symlink target must fail");
+        assert!(target_symlink_error.to_string().contains("non-symlink"));
+    }
+    for target in [
+        "empty.pdf",
+        "many.pdf",
+        "invalid.pdf",
+        "wide.pdf",
+        "layout.pdf",
+        "fit.pdf",
+        "margin.pdf",
+        "linked-input.pdf",
+    ] {
+        assert!(!root.join(target).exists());
+    }
     let _ = fs::remove_dir_all(root);
 }
 

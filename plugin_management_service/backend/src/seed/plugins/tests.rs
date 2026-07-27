@@ -58,8 +58,8 @@ fn bundled_plugin_specs_cover_all_twenty_eight_internal_skills_once() {
         .iter()
         .find(|spec| spec.name == "pdf")
         .expect("PDF spec");
-    assert_eq!(pdf.release_version, "1.12.0");
-    assert_eq!(pdf.artifact_revision, "pdf-1.12.0");
+    assert_eq!(pdf.release_version, "1.13.0");
+    assert_eq!(pdf.artifact_revision, "pdf-1.13.0");
     let documents = bundled_plugin_specs()
         .iter()
         .find(|spec| spec.name == "documents")
@@ -177,8 +177,8 @@ fn bundled_releases_have_stable_component_and_content_snapshots() {
         (
             "pdf",
             (
-                "21d3fde79f678f2dd98566865328fba3b75a267a917d16224610dad719e85d0c",
-                "f36ed406b169aece35e7b02bc2939d306ff4eefaa67f48d7bfdf095b74cef93f",
+                "95b1fa09d9408fe3cdb351a40e14ad84cd1be6001ff968ae519856a0da0f23a9",
+                "d5216350b34771fc893a1064efb453c57b2ce209417b6902c4435d07dcdfce72",
             ),
         ),
         (
