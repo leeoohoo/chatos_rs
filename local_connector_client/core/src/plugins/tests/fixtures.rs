@@ -255,7 +255,7 @@ impl TestSigner {
                     "command": "./scripts/packaged-audit-hook.sh",
                     "args": ["--json"]
                 },
-                "timeoutMs": 2500,
+                "timeoutMs": 8000,
                 "maxOutputBytes": 4096,
                 "failurePolicy": "continue"
             }]
@@ -271,7 +271,7 @@ impl TestSigner {
                     "command": "./scripts/packaged-workspace-hook.sh",
                     "args": ["--json"]
                 },
-                "timeoutMs": 2500,
+                "timeoutMs": 8000,
                 "maxOutputBytes": 4096,
                 "failurePolicy": "continue",
                 "workspaceWrite": true

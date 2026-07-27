@@ -56,7 +56,6 @@ pub(super) async fn build_project_environment_mcp_executor(
                 state: state.clone(),
                 project: project.clone(),
                 run_id: run_id.to_string(),
-                user_access_token: user_access_token.map(ToOwned::to_owned),
                 selected_dependencies: selected_dependencies.to_vec(),
             });
     }

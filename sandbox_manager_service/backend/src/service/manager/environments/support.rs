@@ -33,33 +33,38 @@ pub(super) fn backend_environment_service_spec(
         image: service.image_ref.clone(),
         dockerfile: service.input.dockerfile.clone(),
         environment: service.input.environment.clone(),
-        mcp_enabled: service.input.service_role == "application",
+        mcp_enabled: service.input.service_role == "workspace"
+            || (service.input.service_role == "application"
+                && service.input.mcp_policy.attachment == "project_gateway_target"),
     }
 }
 
 pub(super) fn ensure_terminal_target(
     service: &SandboxEnvironmentServiceRecord,
 ) -> Result<(), ApiError> {
-    if service.service_role == "application"
+    if matches!(service.service_role.as_str(), "workspace" | "application")
         && service.mcp_policy.terminal
         && service.mcp_policy.managed_by == "system"
     {
         return Ok(());
     }
     Err(ApiError::forbidden(
-        "terminal execution is allowed only for system-managed application targets",
+        "terminal execution is allowed only for the system-managed workspace target",
     ))
 }
 
 pub(super) fn ensure_mcp_target(service: &SandboxEnvironmentServiceRecord) -> Result<(), ApiError> {
-    if service.service_role == "application"
+    if matches!(service.service_role.as_str(), "workspace" | "application")
         && service.mcp_policy.managed_by == "system"
-        && service.mcp_policy.attachment == "project_gateway_target"
+        && matches!(
+            service.mcp_policy.attachment.as_str(),
+            "workspace_gateway_target" | "project_gateway_target"
+        )
     {
         return Ok(());
     }
     Err(ApiError::forbidden(
-        "MCP is allowed only for system-managed application targets",
+        "MCP is allowed only for the system-managed workspace target",
     ))
 }
 
@@ -173,6 +178,38 @@ pub(super) fn validate_application_service(
     Ok(())
 }
 
+pub(super) fn validate_workspace_service(
+    input: &SandboxEnvironmentServiceInput,
+) -> Result<(), ApiError> {
+    if input.mcp_policy
+        != (SandboxEnvironmentMcpPolicy {
+            managed_by: "system".to_string(),
+            attachment: "workspace_gateway_target".to_string(),
+            filesystem: true,
+            terminal: true,
+        })
+    {
+        return Err(ApiError::bad_request(
+            "workspace service must use the system-managed workspace gateway target policy",
+        ));
+    }
+    if input
+        .dockerfile
+        .as_deref()
+        .is_some_and(|value| !value.trim().is_empty())
+    {
+        return Err(ApiError::bad_request(
+            "workspace service cannot provide a business application Dockerfile",
+        ));
+    }
+    if input.image_id.as_deref().is_none_or(str::is_empty) {
+        return Err(ApiError::bad_request(
+            "workspace image_id is required as the program-managed execution image",
+        ));
+    }
+    Ok(())
+}
+
 pub(super) fn validate_dependency_service(
     input: &SandboxEnvironmentServiceInput,
 ) -> Result<(), ApiError> {
@@ -214,10 +251,34 @@ pub(super) fn dockerfile_contains_agent_control(dockerfile: &str) -> bool {
     .any(|marker| dockerfile.contains(marker))
 }
 
-pub(super) fn resolve_primary_service_id(
+pub(super) fn resolve_execution_service_id(
     requested: Option<&str>,
     services: &[PreparedEnvironmentService],
 ) -> Result<String, ApiError> {
+    let workspaces = services
+        .iter()
+        .filter(|service| service.input.service_role == "workspace")
+        .collect::<Vec<_>>();
+    if workspaces.len() == 1 {
+        let workspace = workspaces[0].input.service_id.as_str();
+        if requested
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .is_none_or(|requested| requested == workspace)
+        {
+            return Ok(workspace.to_string());
+        }
+        return Err(ApiError::bad_request(format!(
+            "execution_service_id must reference the project workspace: {workspace}"
+        )));
+    }
+    if workspaces.len() > 1 {
+        return Err(ApiError::bad_request(
+            "environment must contain exactly one workspace service",
+        ));
+    }
+
+    // Compatibility for leases created before workspace execution images were introduced.
     let applications = services
         .iter()
         .filter(|service| service.input.service_role == "application")
@@ -230,13 +291,13 @@ pub(super) fn resolve_primary_service_id(
             return Ok(requested.to_string());
         }
         return Err(ApiError::bad_request(format!(
-            "primary_service_id is not an application service: {requested}"
+            "execution_service_id is not a workspace service: {requested}"
         )));
     }
     if applications.len() == 1 {
         return Ok(applications[0].input.service_id.clone());
     }
     Err(ApiError::bad_request(
-        "primary_service_id is required when multiple application services exist",
+        "execution_service_id is required for a legacy multi-application environment",
     ))
 }

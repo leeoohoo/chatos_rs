@@ -1895,6 +1895,13 @@ async fn workspace_write_hook_requires_one_invocation_user_approval() {
             "context": {},
         }),
     );
+    let approval_request_id = format!(
+        "{}:plugin-hook:write-workspace",
+        execute_request
+            .get("request_id")
+            .and_then(Value::as_str)
+            .expect("workspace-write Hook request id")
+    );
     let execute_task = tokio::spawn({
         let host = host.clone();
         async move { host.handle_execute(execute_request).await }
@@ -1904,7 +1911,7 @@ async fn workspace_write_hook_requires_one_invocation_user_approval() {
             if let Some(item) = list_pending_approvals()
                 .await
                 .into_iter()
-                .find(|item| item.source == "plugin_hook_workspace_write")
+                .find(|item| item.request_id == approval_request_id)
             {
                 break item;
             }
@@ -2327,14 +2334,18 @@ async fn signed_packaged_connector_hooks_run_end_to_end_without_a_listener() {
             .body
             .pointer("/result/executions/0/workspace_write_approved")
             .and_then(Value::as_bool),
-        Some(true)
+        Some(true),
+        "{:#?}",
+        approved.body.pointer("/result/executions/0")
     );
     assert_eq!(
         approved
             .body
             .pointer("/result/executions/0/succeeded")
             .and_then(Value::as_bool),
-        Some(true)
+        Some(true),
+        "{:#?}",
+        approved.body.pointer("/result/executions/0")
     );
     assert_eq!(
         fs::read_to_string(workspace_root.join("hook-was-here"))

@@ -33,20 +33,24 @@ export const CloudRuntimeImagePlans: React.FC<CloudRuntimeImagePlansProps> = ({
 }) => {
   const { t } = useI18n();
   const [expandedImageId, setExpandedImageId] = useState<string | null>(null);
-  const applicationImageId = images
+  const workspaceImageId = images
     .map((image, index) => {
       const record = asRecord(image);
-      return readString(record, ['dockerfile']) && isMcpTargetRecord(record)
+      return isMcpTargetRecord(record)
         ? readString(record, ['id'], `image-${index}`)
         : '';
     })
     .find(Boolean);
   const isPreparingAll = buildingImageId !== null;
-  const requiredImages = images.filter((image) => isRequiredRuntimeImage(asRecord(image)));
+  const requiredImages = images.filter((image) => (
+    isCloudProject
+      ? isRequiredCloudRuntimeImage(asRecord(image))
+      : isRequiredLocalRuntimeImage(asRecord(image))
+  ));
   const allImagesReady = requiredImages.length > 0 && requiredImages.every((image) => (
     READY_IMAGE_STATUSES.has(readString(asRecord(image), ['status']).toLowerCase())
   ));
-  const prepareDisabled = !applicationImageId || isPreparingAll || allImagesReady;
+  const prepareDisabled = !workspaceImageId || isPreparingAll || allImagesReady;
 
   return (
     <section className="border-t border-border px-4 py-4">
@@ -56,9 +60,9 @@ export const CloudRuntimeImagePlans: React.FC<CloudRuntimeImagePlansProps> = ({
           type="button"
           disabled={prepareDisabled}
           onClick={() => {
-            if (applicationImageId) onGenerateImage(applicationImageId);
+            if (workspaceImageId) onGenerateImage(workspaceImageId);
           }}
-          title={!applicationImageId ? t('cloudRuntime.noPreparatableImages') : undefined}
+          title={!workspaceImageId ? t('cloudRuntime.noPreparatableImages') : undefined}
           className="inline-flex h-8 items-center gap-1.5 bg-primary px-3 text-xs text-primary-foreground hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
         >
           {isPreparingAll ? (
@@ -74,7 +78,7 @@ export const CloudRuntimeImagePlans: React.FC<CloudRuntimeImagePlansProps> = ({
               ? isCloudProject
                 ? t('cloudRuntime.allImagesReady')
                 : t('cloudRuntime.localRunning')
-              : applicationImageId
+              : workspaceImageId
                 ? isCloudProject
                   ? t('cloudRuntime.prepareAllImages')
                   : t('cloudRuntime.localBuild')
@@ -128,8 +132,10 @@ export const CloudRuntimeImagePlans: React.FC<CloudRuntimeImagePlansProps> = ({
                         {isMcpTarget
                           ? t('cloudRuntime.mcpTarget')
                           : serviceRole === 'application'
-                            ? t('cloudRuntime.auxiliaryApplication')
-                            : t('cloudRuntime.mcpNone')}
+                            ? t('cloudRuntime.peerApplication')
+                            : serviceRole === 'artifact'
+                              ? t('cloudRuntime.artifactComponent')
+                              : t('cloudRuntime.mcpNone')}
                       </span>
                     </td>
                     <td className="px-3 py-2">{status}</td>
@@ -148,16 +154,18 @@ export const CloudRuntimeImagePlans: React.FC<CloudRuntimeImagePlansProps> = ({
                       ) : '-'}
                     </td>
                     <td className="px-3 py-2">
-                      {isCloudProject && dockerfile && isMcpTarget ? (
+                      {isCloudProject && isMcpTarget ? (
                         <span className={isBuilding ? 'text-primary' : 'text-muted-foreground'}>
                           {isBuilding
                             ? t('cloudRuntime.generatingImage')
                             : t('cloudRuntime.includedInBatchPreparation')}
                         </span>
-                      ) : isCloudProject && dockerfile ? (
+                      ) : isCloudProject && serviceRole === 'application' ? (
                         <span className="text-muted-foreground">
-                          {t('cloudRuntime.auxiliaryApplication')}
+                          {t('cloudRuntime.peerApplication')}
                         </span>
+                      ) : serviceRole === 'artifact' ? (
+                        <span className="text-muted-foreground">{t('cloudRuntime.artifactComponent')}</span>
                       ) : !isCloudProject && dockerfile ? (
                         <span className="text-muted-foreground">{t('cloudRuntime.localDockerfilePlan')}</span>
                       ) : (
@@ -204,12 +212,19 @@ const readString = (record: ImageRecord, keys: string[], fallback = ''): string 
 const isMcpTargetRecord = (record: ImageRecord): boolean => {
   const mcpPolicy = asRecord(record.mcp_policy ?? record.mcpPolicy);
   return readString(mcpPolicy, ['managed_by', 'managedBy']) === 'system'
-    && readString(mcpPolicy, ['attachment']) === 'project_gateway_target';
+    && ['workspace_gateway_target', 'project_gateway_target'].includes(
+      readString(mcpPolicy, ['attachment']),
+    );
 };
 
-const isRequiredRuntimeImage = (record: ImageRecord): boolean => {
+const isRequiredCloudRuntimeImage = (record: ImageRecord): boolean => {
   const serviceRole = readString(record, ['service_role', 'serviceRole']).toLowerCase();
   return serviceRole === 'dependency' || isMcpTargetRecord(record);
+};
+
+const isRequiredLocalRuntimeImage = (record: ImageRecord): boolean => {
+  const serviceRole = readString(record, ['service_role', 'serviceRole']).toLowerCase();
+  return serviceRole === 'application' || serviceRole === 'dependency';
 };
 
 const displayValue = (value: unknown): string => {

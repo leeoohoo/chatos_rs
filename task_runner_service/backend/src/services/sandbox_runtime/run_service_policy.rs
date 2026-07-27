@@ -123,7 +123,7 @@ impl RunService {
                 "provider": route.provider.as_str(),
                 "image_id": route.image_id.as_deref(),
                 "environment_group": route.environment_plan.is_some(),
-                "primary_service_id": route.environment_plan.as_ref().map(|plan| plan.primary_service_id.as_str()),
+                "execution_service_id": route.environment_plan.as_ref().map(|plan| plan.execution_service_id.as_str()),
                 "service_ids": route.environment_plan.as_ref().map(|plan| plan.services.iter().map(|service| service.service_id.as_str()).collect::<Vec<_>>()),
                 "requires_execution": task.mcp_config.requires_execution,
                 "requested_policy": route.policy,

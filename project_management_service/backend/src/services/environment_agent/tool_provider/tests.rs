@@ -16,6 +16,12 @@ fn planned_image(
         display_name: environment_key.to_string(),
         service_id: String::new(),
         service_role: RuntimeServiceRole::Unknown,
+        source_root: ".".to_string(),
+        component_kind: environment_type.to_string(),
+        startup_command: None,
+        test_command: None,
+        depends_on: Vec::new(),
+        auto_start: false,
         mcp_policy: ProgramManagedMcpPolicy::default(),
         image_id: None,
         image_ref: None,
@@ -209,39 +215,15 @@ fn selected_postgres_is_restored_when_the_agent_omits_it() {
 }
 
 #[test]
-fn application_image_can_reuse_an_initialized_catalog_image_id() {
-    let catalog = json!({
-        "images": [{
-            "id": "dev-java8",
-            "image_ref": "chatos-sandbox-agent:dev-java8",
-            "features": ["java@8"],
-            "initialized": true,
-            "status": "ready"
-        }]
+fn application_component_cannot_select_a_workspace_image_id() {
+    let image = json!({
+        "environment_key": "app",
+        "environment_type": "application",
+        "image_id": "dev-java8",
+        "features": ["java@8"],
+        "dockerfile": "FROM maven:3-eclipse-temurin-8"
     });
-    let record = image_input_to_record(
-        "project-1",
-        ProjectRuntimeEnvironmentImageInput {
-            environment_key: Some("app".to_string()),
-            environment_type: Some("application".to_string()),
-            image_id: Some("dev-java8".to_string()),
-            features: Some(json!(["java@8"])),
-            dockerfile: Some("FROM maven:3-eclipse-temurin-8".to_string()),
-            ..ProjectRuntimeEnvironmentImageInput::default()
-        },
-        0,
-        RuntimeEnvironmentProvider::CloudSandboxManager,
-        Some(&catalog),
-    )
-    .expect("reuse catalog image");
-
-    assert_eq!(record.image_id.as_deref(), Some("dev-java8"));
-    assert_eq!(
-        record.image_ref.as_deref(),
-        Some("chatos-sandbox-agent:dev-java8")
-    );
-    assert_eq!(record.features, json!(["java@8"]));
-    assert_eq!(record.status, "ready");
+    assert!(serde_json::from_value::<ProjectRuntimeEnvironmentImageInput>(image).is_err());
 }
 
 #[test]
@@ -399,9 +381,9 @@ fn technical_summary_is_generated_from_program_results() {
     ];
 
     let summary = program_generated_runtime_analysis_summary(&environment, images.as_slice());
-    assert!(summary.contains("1 个应用组件"));
+    assert!(summary.contains("1 个平等应用组件"));
     assert!(summary.contains("1 个依赖服务"));
-    assert!(summary.contains("等待生成应用镜像"));
+    assert!(summary.contains("等待生成工作区执行镜像"));
     assert!(!summary.contains("Harness"));
     assert!(!summary.contains("Sandbox Manager"));
 }
@@ -460,12 +442,14 @@ fn compose_planning_requires_application_dockerfile_and_each_dependency_record()
 
 #[test]
 fn project_compose_groups_application_and_dependencies() {
-    let images = vec![
+    let mut images = vec![
         planned_image("services/api", "application"),
         planned_image("services/worker", "application"),
         planned_image("mysql", "service"),
         planned_image("redis", "service"),
     ];
+    images[0].depends_on = vec!["mysql".to_string()];
+    images[1].depends_on = vec!["redis".to_string()];
     let compose = build_project_compose_yaml(
         "project-123",
         &[],
@@ -485,6 +469,39 @@ fn project_compose_groups_application_and_dependencies() {
     assert!(compose.contains("depends_on:"));
     assert!(compose.contains("127.0.0.1:3306:3306"));
     assert!(compose.contains("127.0.0.1:6379:6379"));
+}
+
+#[test]
+fn project_compose_refresh_excludes_artifacts_and_canonicalizes_postgresql() {
+    let mut application = planned_image("mdm-service", "application");
+    application.depends_on = vec!["postgres".to_string()];
+    let artifact = planned_image("web-prototype", "artifact");
+    let mut files = vec![ProjectRuntimeEnvironmentConfigFileRecord {
+        path: PROJECT_COMPOSE_FILE_PATH.to_string(),
+        format: "yaml".to_string(),
+        content: "services:\n  web-prototype:\n  postgres:\n".to_string(),
+        description: Some("legacy topology".to_string()),
+        source_files: Vec::new(),
+    }];
+
+    upsert_project_compose_config_file(
+        "project-123",
+        &mut files,
+        &[],
+        &json!([{"type": "postgresql"}]),
+        &[application, artifact],
+    )
+    .expect("canonical compose plan");
+
+    let compose = files
+        .iter()
+        .find(|file| file.path == PROJECT_COMPOSE_FILE_PATH)
+        .expect("program-managed compose file");
+    assert!(compose.content.contains("  mdm-service:"));
+    assert!(compose.content.contains("  postgresql:"));
+    assert!(compose.content.contains("      postgresql:"));
+    assert!(!compose.content.contains("  web-prototype:"));
+    assert!(!compose.content.contains("  postgres:\n"));
 }
 
 #[test]
@@ -544,6 +561,16 @@ fn detected_services_receive_local_connection_defaults() {
         "jdbc:mysql://mysql:3306/app?useSSL=false&allowPublicKeyRetrieval=true"
     );
     assert_eq!(env["MYSQL_PASSWORD"], env["SPRING_DATASOURCE_PASSWORD"]);
+}
+
+#[test]
+fn postgres_defaults_use_the_compose_service_name() {
+    let env = generated_environment_variables(&json!([{"type": "postgresql"}]), None);
+    assert_eq!(env["POSTGRES_HOST"], "postgresql");
+    assert_eq!(
+        env["SPRING_DATASOURCE_URL"],
+        "jdbc:postgresql://postgresql:5432/app"
+    );
 }
 
 #[test]

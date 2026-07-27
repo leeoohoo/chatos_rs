@@ -127,9 +127,10 @@ async fn replace_image_plans(
             r#"
             INSERT INTO project_runtime_environment_images (
                 id, project_id, owner_user_id, environment_key, environment_type,
-                display_name, image_ref, image_provider, features_json, ports_json,
-                env_vars_json, dockerfile, status, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, 'local_connector', ?, ?, ?, ?, 'planned', ?, ?)
+                display_name, source_root, component_kind, startup_command, test_command,
+                depends_on_json, auto_start, image_ref, image_provider, features_json,
+                ports_json, env_vars_json, dockerfile, status, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'local_connector', ?, ?, ?, ?, 'planned', ?, ?)
             "#,
         )
         .bind(format!("lc_env_image_{}", Uuid::new_v4()))
@@ -138,6 +139,15 @@ async fn replace_image_plans(
         .bind(plan.environment_key.trim())
         .bind(plan.environment_type.trim())
         .bind(plan.display_name.trim())
+        .bind(normalized_source_root(plan.source_root.as_str()))
+        .bind(normalized_component_kind(
+            plan.component_kind.as_str(),
+            plan.environment_type.as_str(),
+        ))
+        .bind(normalized_optional_text(plan.startup_command.as_deref()))
+        .bind(normalized_optional_text(plan.test_command.as_deref()))
+        .bind(serde_json::to_string(&normalized_depends_on(&plan.depends_on))?)
+        .bind(plan.auto_start)
         .bind(Option::<String>::None)
         .bind(serde_json::to_string(&plan.features)?)
         .bind(serde_json::to_string(&plan.ports)?)
@@ -150,4 +160,35 @@ async fn replace_image_plans(
         .context("save local environment image plan")?;
     }
     Ok(())
+}
+
+fn normalized_source_root(value: &str) -> String {
+    let value = value.trim().trim_matches('/');
+    if value.is_empty() { "." } else { value }.to_string()
+}
+
+fn normalized_component_kind(component_kind: &str, environment_type: &str) -> String {
+    let value = component_kind.trim();
+    if value.is_empty() {
+        environment_type.trim().to_ascii_lowercase()
+    } else {
+        value.to_ascii_lowercase()
+    }
+}
+
+fn normalized_optional_text(value: Option<&str>) -> Option<String> {
+    value
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+}
+
+fn normalized_depends_on(values: &[String]) -> Vec<String> {
+    let mut values = values
+        .iter()
+        .filter_map(|value| normalized_optional_text(Some(value.as_str())))
+        .collect::<Vec<_>>();
+    values.sort();
+    values.dedup();
+    values
 }

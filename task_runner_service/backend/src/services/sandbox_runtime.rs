@@ -53,7 +53,7 @@ struct SandboxTaskRoute {
 
 #[derive(Debug, Clone, Serialize)]
 struct SandboxEnvironmentPlan {
-    primary_service_id: String,
+    execution_service_id: String,
     services: Vec<SandboxEnvironmentServicePlan>,
     generated_config_files: Vec<SandboxGeneratedConfigFile>,
 }
@@ -210,7 +210,7 @@ impl SandboxRuntimeContext {
             lease_id,
             sandbox_id: sandbox_id.clone(),
             is_environment: response.is_environment,
-            service_id: response.primary_service_id,
+            service_id: response.execution_service_id,
             backend_id: response.backend_id,
             agent_token,
             mcp_url: if response.is_environment {

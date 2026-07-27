@@ -50,6 +50,21 @@ pub(super) fn normalize_analysis(
     value
         .images
         .retain(|image| !image.environment_key.trim().is_empty());
+    for image in &mut value.images {
+        image.environment_key = image.environment_key.trim().to_string();
+        image.environment_type = image.environment_type.trim().to_ascii_lowercase();
+        image.display_name = image.display_name.trim().to_string();
+        image.source_root = normalize_component_root(image.source_root.as_str())?;
+        image.component_kind = if image.component_kind.trim().is_empty() {
+            image.environment_type.clone()
+        } else {
+            image.component_kind.trim().to_ascii_lowercase()
+        };
+        image.startup_command = normalized_optional_text(image.startup_command.take());
+        image.test_command = normalized_optional_text(image.test_command.take());
+        image.depends_on = normalized_depends_on(std::mem::take(&mut image.depends_on));
+        image.auto_start = image.component_kind != "artifact";
+    }
     ensure_application_dockerfile(&mut value);
     if let Some(image) = value.images.iter().find(|image| {
         image
@@ -63,6 +78,46 @@ pub(super) fn normalize_analysis(
         ));
     }
     Ok(value)
+}
+
+fn normalize_component_root(value: &str) -> Result<String, String> {
+    let value = value.trim().replace('\\', "/");
+    if value.is_empty() || value == "." {
+        return Ok(".".to_string());
+    }
+    if value.starts_with('/')
+        || value
+            .as_bytes()
+            .get(1)
+            .is_some_and(|separator| *separator == b':')
+    {
+        return Err(format!("invalid local component source_root: {value}"));
+    }
+    let segments = value
+        .split('/')
+        .filter(|segment| !segment.is_empty() && *segment != ".")
+        .collect::<Vec<_>>();
+    if segments.is_empty() || segments.contains(&"..") {
+        return Err(format!("invalid local component source_root: {value}"));
+    }
+    Ok(segments.join("/"))
+}
+
+fn normalized_optional_text(value: Option<String>) -> Option<String> {
+    value.and_then(|value| {
+        let value = value.trim().to_string();
+        (!value.is_empty()).then_some(value)
+    })
+}
+
+fn normalized_depends_on(values: Vec<String>) -> Vec<String> {
+    let mut values = values
+        .into_iter()
+        .filter_map(|value| normalized_optional_text(Some(value)))
+        .collect::<Vec<_>>();
+    values.sort();
+    values.dedup();
+    values
 }
 
 pub(super) fn enforce_selected_dependencies(

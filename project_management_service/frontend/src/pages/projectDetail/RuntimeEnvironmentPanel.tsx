@@ -392,15 +392,17 @@ export function RuntimeEnvironmentPanel({
                   dataIndex: 'service_role',
                   width: 130,
                   render: (value: ProjectRuntimeEnvironmentDeploymentService['service_role']) => (
-                    <Tag color={value === 'application' ? 'blue' : undefined}>{value}</Tag>
+                    <Tag color={value === 'workspace' ? 'green' : value === 'application' ? 'blue' : undefined}>
+                      {value === 'workspace' ? '工作区执行镜像' : value === 'application' ? '平等应用组件' : value}
+                    </Tag>
                   ),
                 },
                 {
                   title: 'MCP',
                   width: 150,
                   render: (_, row) =>
-                    row.mcp_policy.attachment === 'project_gateway_target' ? (
-                      <Tag color="green">系统管理目标</Tag>
+                    ['workspace_gateway_target', 'project_gateway_target'].includes(row.mcp_policy.attachment) ? (
+                      <Tag color="green">工作区执行目标</Tag>
                     ) : (
                       <Tag>无 MCP</Tag>
                     ),

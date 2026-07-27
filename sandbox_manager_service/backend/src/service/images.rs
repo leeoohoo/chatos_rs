@@ -755,8 +755,46 @@ mod tests {
 fn append_job_output(job: &mut SandboxImageJobRecord, text: &str) {
     job.output.push_str(text);
     if job.output.len() > MAX_JOB_OUTPUT_LEN {
-        let keep_from = job.output.len().saturating_sub(MAX_JOB_OUTPUT_LEN);
+        let tail_bytes = MAX_JOB_OUTPUT_LEN.saturating_sub(3);
+        let desired_start = job.output.len().saturating_sub(tail_bytes);
+        let keep_from = job
+            .output
+            .char_indices()
+            .find_map(|(index, _)| (index >= desired_start).then_some(index))
+            .unwrap_or(job.output.len());
         job.output = format!("...{}", &job.output[keep_from..]);
+    }
+}
+
+#[cfg(test)]
+mod output_tests {
+    use super::*;
+
+    #[test]
+    fn job_output_truncation_preserves_utf8_boundaries() {
+        let mut job = SandboxImageJobRecord {
+            id: "job-1".to_string(),
+            image_id: "image-1".to_string(),
+            image_name: "image-1".to_string(),
+            image_ref: "image-1:latest".to_string(),
+            features: Vec::new(),
+            backend: "docker".to_string(),
+            status: "running".to_string(),
+            created_at: "now".to_string(),
+            updated_at: "now".to_string(),
+            started_at: Some("now".to_string()),
+            finished_at: None,
+            output: "→".repeat(MAX_JOB_OUTPUT_LEN / 3),
+            error: None,
+            project_id: Some("project-1".to_string()),
+            run_id: Some("run-1".to_string()),
+        };
+
+        append_job_output(&mut job, "→ done");
+
+        assert!(job.output.starts_with("..."));
+        assert!(job.output.ends_with("→ done"));
+        assert!(job.output.len() <= MAX_JOB_OUTPUT_LEN);
     }
 }
 

@@ -24,10 +24,6 @@ pub fn project_environment_tool_definitions() -> Vec<Value> {
                         "type": ["string", "null"],
                         "description": "Allowed only when no executable application or infrastructure component can be identified. External service/configuration gaps are not valid reasons."
                     },
-                    "primary_application": {
-                        "type": ["string", "null"],
-                        "description": "Stable environment_key or service id of the project's single primary application execution image. Required when application plans exist; auxiliary application components remain in the Compose plan but are not separate task execution targets."
-                    },
                     "detected_stack": {"type": "object"},
                     "required_services": {"type": "array"},
                     "env_vars": {
@@ -114,17 +110,19 @@ pub fn project_environment_tool_definitions() -> Vec<Value> {
                     },
                     "images": {
                         "type": "array",
-                        "description": "Service plans for one project-level Docker Compose environment. Exactly one application is selected by primary_application as the project's main task execution image. Other independently deployable application components may remain as auxiliary Compose plans, but they are not additional task execution targets. Before saving an application plan, search the current sandbox image catalog. If an initialized matching image exists, return its exact image_id; otherwise omit image_id so the program can initialize it when the user executes image preparation. Detected databases, caches, and configuration centers are dependency service records that the platform maps to maintained images under the same Compose project.",
+                        "description": "Peer component and dependency plans for one project workspace. The program creates exactly one workspace execution image from the union of all detected runtimes; no business application is a task execution target. Independently runnable applications are equal peers with stable source roots and commands. Databases, caches, and configuration centers are dependency records. Documentation, static prototypes, examples, demos and fixtures without explicit deployment evidence are artifacts and must not receive Dockerfiles.",
                         "items": {
                             "type": "object",
                             "properties": {
                                 "environment_key": {"type": "string"},
                                 "environment_type": {"type": "string"},
                                 "display_name": {"type": "string"},
-                                "image_id": {
-                                    "type": ["string", "null"],
-                                    "description": "Exact initialized image id returned by sandbox image search. Omit when no matching initialized image exists. Never invent an id."
-                                },
+                                "source_root": {"type": "string"},
+                                "component_kind": {"type": "string"},
+                                "startup_command": {"type": ["string", "null"]},
+                                "test_command": {"type": ["string", "null"]},
+                                "depends_on": {"type": "array", "items": {"type": "string"}},
+                                "auto_start": {"type": "boolean"},
                                 "features": {"type": "array"},
                                 "ports": {"type": "array"},
                                 "env_vars": {"type": "object"},
@@ -132,7 +130,7 @@ pub fn project_environment_tool_definitions() -> Vec<Value> {
                                     "type": ["string", "null"],
                                     "minLength": 1,
                                     "maxLength": 131072,
-                                    "description": "Complete generated Dockerfile for the application runtime. Dependency service records may use null because the platform supplies their maintained images in the project-level Compose file. Do not embed secrets."
+                                    "description": "Complete Dockerfile for a runnable application component. Dependency and artifact records use null. This is a business-service plan, not the workspace execution image. Do not embed secrets."
                                 }
                             },
                             "required": ["environment_key", "environment_type", "display_name"],
@@ -221,7 +219,7 @@ mod tests {
             .pointer("/inputSchema/properties")
             .and_then(Value::as_object)
             .expect("top-level properties");
-        assert!(top_level_properties.contains_key("primary_application"));
+        assert!(!top_level_properties.contains_key("primary_application"));
         for forbidden in [
             "status",
             "analysis_summary",
@@ -248,7 +246,7 @@ mod tests {
         ] {
             assert!(!image_properties.contains_key(forbidden));
         }
-        assert!(image_properties.contains_key("image_id"));
+        assert!(!image_properties.contains_key("image_id"));
         let runtime_info_tools = project_runtime_environment_info_tool_definitions();
         assert_eq!(runtime_info_tools.len(), 1);
         assert_eq!(

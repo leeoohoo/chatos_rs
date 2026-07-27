@@ -22,11 +22,7 @@ pub(in crate::services::environment_agent) async fn generate_project_runtime_env
     for image in &mut images {
         crate::services::runtime_environment::apply_program_managed_image_policy(image);
     }
-    if enforce_project_runtime_boundary(
-        project.execution_plane,
-        &mut environment,
-        images.as_mut_slice(),
-    ) {
+    if enforce_project_runtime_boundary(project.execution_plane, &mut environment, &mut images) {
         state
             .store
             .upsert_project_runtime_environment(&environment)
@@ -40,40 +36,31 @@ pub(in crate::services::environment_agent) async fn generate_project_runtime_env
         .iter()
         .position(|image| image.id == image_record_id.trim())
         .ok_or_else(|| format!("镜像计划不存在: {image_record_id}"))?;
-    if images[requested_index].service_role != RuntimeServiceRole::Application
+    if images[requested_index].service_role != RuntimeServiceRole::Workspace
         || images[requested_index].mcp_policy.attachment
-            != RuntimeMcpAttachment::ProjectGatewayTarget
+            != RuntimeMcpAttachment::WorkspaceGatewayTarget
     {
-        return Err("只有程序确认的应用服务才能生成 MCP 执行镜像".to_string());
+        return Err("只有程序生成的工作区计划才能生成执行镜像".to_string());
     }
     let run_id = format!("project_image_build_{}", uuid::Uuid::new_v4());
-    let application_indexes = images
+    let workspace_indexes = images
         .iter()
         .enumerate()
         .filter_map(|(index, image)| {
-            (image.service_role == RuntimeServiceRole::Application
-                && image.mcp_policy.attachment == RuntimeMcpAttachment::ProjectGatewayTarget)
+            (image.service_role == RuntimeServiceRole::Workspace
+                && image.mcp_policy.attachment == RuntimeMcpAttachment::WorkspaceGatewayTarget)
                 .then_some(index)
         })
         .collect::<Vec<_>>();
-    let include_project_stack_evidence = application_indexes.len() == 1;
-    for index in &application_indexes {
-        if images[*index]
-            .dockerfile
-            .as_deref()
-            .is_none_or(|value| value.trim().is_empty())
-        {
-            return Err(format!(
-                "镜像计划缺少 Dockerfile，请重新分析项目环境: {}",
-                images[*index].service_id
-            ));
-        }
-        let features = program_managed_sandbox_features(
-            &images[*index],
-            &environment.detected_stack,
-            include_project_stack_evidence,
-        );
-        images[*index].features = serde_json::json!(features);
+    if workspace_indexes.len() != 1 {
+        return Err("项目必须且只能包含一个工作区执行镜像计划".to_string());
+    }
+    let features = crate::services::runtime_environment::workspace_runtime_features(
+        images.as_slice(),
+        &environment.detected_stack,
+    );
+    for index in &workspace_indexes {
+        images[*index].features = serde_json::json!(features.clone());
         images[*index].status = "building".to_string();
         images[*index].error = None;
         images[*index].updated_at = now_rfc3339();
@@ -94,12 +81,20 @@ pub(in crate::services::environment_agent) async fn generate_project_runtime_env
         images[*index].error = None;
         images[*index].updated_at = now_rfc3339();
     }
+    environment.status = ProjectRuntimeEnvironmentStatus::PendingImageBuild;
+    environment.last_agent_run_id = Some(run_id.clone());
+    environment.last_error = None;
+    environment.updated_at = now_rfc3339();
+    state
+        .store
+        .upsert_project_runtime_environment(&environment)
+        .await?;
     state
         .store
         .replace_project_runtime_environment_images(project.id.as_str(), images.as_slice())
         .await?;
 
-    let catalog = if application_indexes
+    let catalog = if workspace_indexes
         .iter()
         .any(|index| images[*index].image_id.is_some())
     {
@@ -115,20 +110,20 @@ pub(in crate::services::environment_agent) async fn generate_project_runtime_env
     } else {
         None
     };
-    let application_plans = application_indexes
+    let workspace_plans = workspace_indexes
         .iter()
         .map(|index| (*index, images[*index].clone()))
         .collect::<Vec<_>>();
-    let application_future = async {
-        let mut results = Vec::with_capacity(application_plans.len());
-        for (position, (index, image)) in application_plans.into_iter().enumerate() {
-            let application_run_id = format!("{run_id}_app_{position}");
+    let workspace_future = async {
+        let mut results = Vec::with_capacity(workspace_plans.len());
+        for (position, (index, image)) in workspace_plans.into_iter().enumerate() {
+            let workspace_run_id = format!("{run_id}_workspace_{position}");
             let result = prepare_application_image(
                 state,
                 project,
                 environment.sandbox_provider,
                 user_access_token,
-                application_run_id.as_str(),
+                workspace_run_id.as_str(),
                 &image,
                 catalog.as_ref(),
             )
@@ -144,11 +139,10 @@ pub(in crate::services::environment_agent) async fn generate_project_runtime_env
         run_id.as_str(),
         dependency_image_refs,
     );
-    let (application_results, dependency_result) =
-        tokio::join!(application_future, dependency_future);
+    let (workspace_results, dependency_result) = tokio::join!(workspace_future, dependency_future);
 
     let mut errors = Vec::new();
-    for (index, result) in application_results {
+    for (index, result) in workspace_results {
         match result {
             Ok(result) => {
                 if let Err(error) = apply_prepared_application_result(
@@ -205,6 +199,12 @@ pub(in crate::services::environment_agent) async fn generate_project_runtime_env
         ProjectRuntimeEnvironmentStatus::PendingImageBuild
     };
     environment.last_error = (!errors.is_empty()).then(|| errors.join("; "));
+    environment.analysis_summary = Some(
+        crate::services::runtime_environment::program_generated_runtime_analysis_summary(
+            &environment,
+            images.as_slice(),
+        ),
+    );
     environment.updated_at = now_rfc3339();
     let environment = state
         .store
@@ -339,6 +339,7 @@ fn runtime_image_is_ready(image: &ProjectRuntimeEnvironmentImageRecord) -> bool 
         )
 }
 
+#[cfg(test)]
 fn program_managed_sandbox_features(
     image: &ProjectRuntimeEnvironmentImageRecord,
     detected_stack: &Value,
@@ -443,6 +444,7 @@ fn program_managed_sandbox_features(
         .collect()
 }
 
+#[cfg(test)]
 fn canonical_sandbox_runtime(value: &str) -> Option<(&'static str, String)> {
     let value = value.trim().to_ascii_lowercase();
     if value.is_empty() {
@@ -499,6 +501,7 @@ fn canonical_sandbox_runtime(value: &str) -> Option<(&'static str, String)> {
     None
 }
 
+#[cfg(test)]
 fn sandbox_runtime_for_name(value: &str) -> Option<&'static str> {
     match value {
         "java" | "jdk" | "openjdk" | "maven" | "mvn" | "gradle" | "spring" | "springboot"
@@ -530,7 +533,13 @@ mod tests {
             display_name: "API".to_string(),
             service_id: "api".to_string(),
             service_role: RuntimeServiceRole::Application,
-            mcp_policy: ProgramManagedMcpPolicy::application_target(),
+            source_root: ".".to_string(),
+            component_kind: "application".to_string(),
+            startup_command: None,
+            test_command: None,
+            depends_on: Vec::new(),
+            auto_start: false,
+            mcp_policy: ProgramManagedMcpPolicy::default(),
             image_id: None,
             image_ref: None,
             image_provider: RuntimeEnvironmentProvider::CloudSandboxManager,

@@ -15,23 +15,20 @@ use crate::models::{
     RuntimeEnvironmentProvider, RuntimeEnvironmentVariableSource, RuntimeServiceRole,
 };
 use crate::services::runtime_environment::{
-    assign_requested_primary_application, enforce_project_runtime_boundary,
-    environment_variable_name_is_secret, normalize_environment_variable_name,
-    normalize_environment_variable_records, program_generated_runtime_analysis_summary,
-    refresh_environment_variable_record, required_environment_variables_are_complete,
-    runtime_image_is_execution_required,
+    enforce_project_runtime_boundary, environment_variable_name_is_secret,
+    normalize_environment_variable_name, normalize_environment_variable_records,
+    program_generated_runtime_analysis_summary, refresh_environment_variable_record,
+    required_environment_variables_are_complete, runtime_image_is_execution_required,
 };
 use crate::state::AppState;
 
 use super::super::runtime_environment::default_runtime_environment_for_project;
-use super::mcp_servers::get_sandbox_image_catalog;
 
 #[derive(Clone)]
 pub(super) struct ProjectEnvironmentToolProvider {
     pub(super) state: AppState,
     pub(super) project: ProjectRecord,
     pub(super) run_id: String,
-    pub(super) user_access_token: Option<String>,
     pub(super) selected_dependencies: Vec<String>,
 }
 
@@ -40,8 +37,6 @@ pub(super) struct ProjectEnvironmentToolProvider {
 struct UpdateProjectEnvironmentToolArgs {
     #[serde(default)]
     not_runnable_reason: Option<String>,
-    #[serde(default)]
-    primary_application: Option<String>,
     #[serde(default)]
     detected_stack: Option<Value>,
     #[serde(default)]
@@ -111,7 +106,17 @@ struct ProjectRuntimeEnvironmentImageInput {
     #[serde(default)]
     display_name: Option<String>,
     #[serde(default)]
-    image_id: Option<String>,
+    source_root: Option<String>,
+    #[serde(default)]
+    component_kind: Option<String>,
+    #[serde(default)]
+    startup_command: Option<String>,
+    #[serde(default)]
+    test_command: Option<String>,
+    #[serde(default)]
+    depends_on: Vec<String>,
+    #[serde(default)]
+    auto_start: bool,
     #[serde(default)]
     features: Option<Value>,
     #[serde(default)]
@@ -192,7 +197,6 @@ impl ProjectEnvironmentToolProvider {
 
         let environment_variable_scan =
             require_completed_environment_variable_scan(args.environment_variable_scan.clone())?;
-        let requested_primary_application = args.primary_application.clone();
         let generated_config_files =
             normalize_generated_config_files(args.generated_config_files.ok_or_else(|| {
                 "generated_config_files must be provided before saving the runtime environment"
@@ -281,25 +285,6 @@ impl ProjectEnvironmentToolProvider {
         environment.last_error = None;
         environment.updated_at = now_rfc3339();
 
-        let image_catalog = if args.images.iter().any(|image| {
-            image
-                .image_id
-                .as_deref()
-                .is_some_and(|value| !value.trim().is_empty())
-        }) {
-            Some(
-                get_sandbox_image_catalog(
-                    &self.state,
-                    &self.project,
-                    environment.sandbox_provider,
-                    self.user_access_token.as_deref(),
-                    self.run_id.as_str(),
-                )
-                .await?,
-            )
-        } else {
-            None
-        };
         let mut image_records = Vec::new();
         if environment.status != ProjectRuntimeEnvironmentStatus::NotRunnable {
             for (index, image) in args.images.into_iter().enumerate() {
@@ -308,7 +293,7 @@ impl ProjectEnvironmentToolProvider {
                     image,
                     index,
                     environment.sandbox_provider,
-                    image_catalog.as_ref(),
+                    None,
                 )?);
             }
             ensure_selected_dependency_image_records(
@@ -317,18 +302,13 @@ impl ProjectEnvironmentToolProvider {
                 selected_service_kinds,
                 &mut image_records,
             )?;
-            assign_requested_primary_application(
-                &mut environment,
-                image_records.as_slice(),
-                requested_primary_application.as_deref(),
-            )?;
             enforce_project_runtime_boundary(
                 self.project.execution_plane,
                 &mut environment,
-                image_records.as_mut_slice(),
+                &mut image_records,
             );
         } else {
-            environment.primary_service_id = None;
+            environment.execution_service_id = None;
         }
         environment.generated_config_files = generated_config_files;
         if !matches!(
@@ -453,7 +433,7 @@ fn agent_visible_runtime_state(
         },
         "analysis": {
             "not_runnable_reason": environment.not_runnable_reason,
-            "primary_service_id": environment.primary_service_id,
+            "execution_service_id": environment.execution_service_id,
             "detected_stack": environment.detected_stack,
             "required_services": environment.required_services,
             "environment_variables": environment.environment_variables.iter().map(|record| json!({
@@ -482,7 +462,7 @@ fn agent_visible_runtime_state(
     })
 }
 
-mod compose;
+pub(super) mod compose;
 mod support;
 #[cfg(test)]
 mod tests;

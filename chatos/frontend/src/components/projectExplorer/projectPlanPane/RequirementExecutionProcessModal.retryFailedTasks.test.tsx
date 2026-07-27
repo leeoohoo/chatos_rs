@@ -20,7 +20,7 @@ const mocks = vi.hoisted(() => ({
       task_id: 'task-failed-1',
       model_config_id: 'model-1',
       status: 'failed',
-      error_message: 'project runtime has multiple application services (mdm-service, web-prototype); execution_service_id must be selected by the user or program',
+      error_message: 'project workspace image was not ready',
     },
     mcp_config: {
       requires_execution: true,
@@ -141,19 +141,25 @@ beforeEach(() => {
     has_started_runs: true,
   });
   mocks.getProjectRuntimeEnvironment.mockResolvedValue({
-    environment: { status: 'ready' },
+    environment: { status: 'ready', execution_service_id: 'workspace' },
     images: [
+      {
+        service_id: 'workspace',
+        display_name: 'Project Workspace',
+        service_role: 'workspace',
+        status: 'ready',
+      },
       {
         service_id: 'mdm-service',
         display_name: 'MDM Service',
         service_role: 'application',
-        status: 'ready',
+        status: 'planned',
       },
       {
         service_id: 'web-prototype',
         display_name: 'Web Prototype',
-        service_role: 'application',
-        status: 'ready',
+        service_role: 'artifact',
+        status: 'excluded',
       },
       {
         service_id: 'postgresql',

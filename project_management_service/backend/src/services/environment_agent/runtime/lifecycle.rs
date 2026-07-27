@@ -58,9 +58,11 @@ pub(in crate::services::environment_agent) async fn start_project_runtime_enviro
     let project_name = runtime_compose_project_name(project.id.as_str());
     let env_file = runtime_environment_dotenv(&environment.environment_variables)?;
     for image in &mut images {
-        image.status = "starting".to_string();
-        image.error = None;
-        image.updated_at = now_rfc3339();
+        if runtime_image_is_compose_service(image) {
+            image.status = "starting".to_string();
+            image.error = None;
+            image.updated_at = now_rfc3339();
+        }
     }
     state
         .store
@@ -79,9 +81,11 @@ pub(in crate::services::environment_agent) async fn start_project_runtime_enviro
     .await;
     if let Err(error) = result {
         for image in &mut images {
-            image.status = "failed".to_string();
-            image.error = Some(error.clone());
-            image.updated_at = now_rfc3339();
+            if runtime_image_is_compose_service(image) {
+                image.status = "failed".to_string();
+                image.error = Some(error.clone());
+                image.updated_at = now_rfc3339();
+            }
         }
         environment.status = ProjectRuntimeEnvironmentStatus::Failed;
         environment.last_error = Some(error.clone());
@@ -98,6 +102,9 @@ pub(in crate::services::environment_agent) async fn start_project_runtime_enviro
     }
     let mut application_index = 0usize;
     for image in &mut images {
+        if !runtime_image_is_compose_service(image) {
+            continue;
+        }
         image.status = "running".to_string();
         image.image_provider = RuntimeEnvironmentProvider::LocalConnector;
         image.image_ref = Some(if runtime_image_is_application(image) {
@@ -232,9 +239,11 @@ pub(in crate::services::environment_agent) async fn stop_project_runtime_environ
         .await?;
     for image in &mut images {
         crate::services::runtime_environment::apply_program_managed_image_policy(image);
-        image.status = "stopped".to_string();
-        image.error = None;
-        image.updated_at = now_rfc3339();
+        if runtime_image_is_compose_service(image) {
+            image.status = "stopped".to_string();
+            image.error = None;
+            image.updated_at = now_rfc3339();
+        }
     }
     environment.status = environment_ready_status(&environment);
     environment.last_error = None;
@@ -280,9 +289,11 @@ pub(in crate::services::environment_agent) async fn restart_project_runtime_envi
         .await?;
     for image in &mut images {
         crate::services::runtime_environment::apply_program_managed_image_policy(image);
-        image.status = "starting".to_string();
-        image.error = None;
-        image.updated_at = now_rfc3339();
+        if runtime_image_is_compose_service(image) {
+            image.status = "starting".to_string();
+            image.error = None;
+            image.updated_at = now_rfc3339();
+        }
     }
     state
         .store
@@ -298,9 +309,11 @@ pub(in crate::services::environment_agent) async fn restart_project_runtime_envi
     .await
     {
         for image in &mut images {
-            image.status = "failed".to_string();
-            image.error = Some(error.clone());
-            image.updated_at = now_rfc3339();
+            if runtime_image_is_compose_service(image) {
+                image.status = "failed".to_string();
+                image.error = Some(error.clone());
+                image.updated_at = now_rfc3339();
+            }
         }
         environment.status = ProjectRuntimeEnvironmentStatus::Failed;
         environment.last_error = Some(error.clone());
@@ -369,6 +382,9 @@ fn mark_compose_images_running(
     project_name: &str,
 ) {
     for image in images {
+        if !runtime_image_is_compose_service(image) {
+            continue;
+        }
         image.status = "running".to_string();
         image.image_provider = RuntimeEnvironmentProvider::LocalConnector;
         image.image_ref = Some(if runtime_image_is_application(image) {
@@ -453,6 +469,13 @@ fn runtime_environment_dotenv(
 
 fn runtime_image_is_application(image: &ProjectRuntimeEnvironmentImageRecord) -> bool {
     image.service_role == RuntimeServiceRole::Application
+}
+
+fn runtime_image_is_compose_service(image: &ProjectRuntimeEnvironmentImageRecord) -> bool {
+    matches!(
+        image.service_role,
+        RuntimeServiceRole::Application | RuntimeServiceRole::Dependency
+    )
 }
 
 pub(in crate::services::environment_agent) fn compose_dependency_image_ref_impl(

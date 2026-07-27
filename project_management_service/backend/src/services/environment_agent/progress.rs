@@ -66,13 +66,20 @@ pub async fn get_project_runtime_environment_progress(
             )
         });
     let provider = provider_for_environment(&environment);
+    let active_image_build = environment.status
+        == ProjectRuntimeEnvironmentStatus::PendingImageBuild
+        && environment
+            .last_agent_run_id
+            .as_deref()
+            .is_some_and(|run_id| run_id.starts_with("project_image_build_"));
     let jobs = if environment.sandbox_enabled
-        && matches!(
-            environment.status,
-            ProjectRuntimeEnvironmentStatus::Analyzing
-                | ProjectRuntimeEnvironmentStatus::Ready
-                | ProjectRuntimeEnvironmentStatus::Failed
-        ) {
+        && (active_image_build
+            || matches!(
+                environment.status,
+                ProjectRuntimeEnvironmentStatus::Analyzing
+                    | ProjectRuntimeEnvironmentStatus::Ready
+                    | ProjectRuntimeEnvironmentStatus::Failed
+            )) {
         fetch_image_jobs(state, project, provider, user_access_token).await?
     } else {
         Vec::new()
@@ -274,7 +281,15 @@ fn select_project_job(
     let mut exact = jobs
         .iter()
         .filter(|job| {
-            job.project_id.as_deref() == Some(project_id) && job.run_id.as_deref() == run_id
+            job.project_id.as_deref() == Some(project_id)
+                && run_id.is_some_and(|run_id| {
+                    job.run_id.as_deref().is_some_and(|job_run_id| {
+                        job_run_id == run_id
+                            || job_run_id
+                                .strip_prefix(run_id)
+                                .is_some_and(|suffix| suffix.starts_with("_workspace_"))
+                    })
+                })
         })
         .cloned()
         .collect::<Vec<_>>();
@@ -356,9 +371,12 @@ fn progress_state(
         ProjectRuntimeEnvironmentStatus::PendingConfiguration => {
             ("pending_configuration", "idle", Some(0))
         }
-        ProjectRuntimeEnvironmentStatus::PendingImageBuild => {
-            ("pending_image_build", "idle", Some(0))
-        }
+        ProjectRuntimeEnvironmentStatus::PendingImageBuild => match job_status {
+            Some("running") => ("building_image", "running", build_progress),
+            Some("succeeded") => ("finalizing", "running", Some(90)),
+            Some("failed") => ("failed", "failed", Some(100)),
+            _ => ("pending_image_build", "idle", Some(0)),
+        },
         ProjectRuntimeEnvironmentStatus::Pending => ("pending", "idle", Some(0)),
         ProjectRuntimeEnvironmentStatus::Ready => ("completed", "succeeded", Some(100)),
         ProjectRuntimeEnvironmentStatus::NotRunnable => ("not_runnable", "succeeded", Some(100)),
@@ -488,7 +506,7 @@ mod tests {
             file_provider: RuntimeEnvironmentProvider::LocalConnector,
             analysis_summary: None,
             not_runnable_reason: None,
-            primary_service_id: None,
+            execution_service_id: None,
             detected_stack: json!({}),
             required_services: json!([]),
             env_vars: json!({}),
@@ -536,6 +554,32 @@ mod tests {
         .expect("current project job");
 
         assert_eq!(selected.id, "current");
+    }
+
+    #[test]
+    fn selects_workspace_job_for_the_current_image_build_batch() {
+        let mut environment = analyzing_environment();
+        environment.status = ProjectRuntimeEnvironmentStatus::PendingImageBuild;
+        environment.last_agent_run_id = Some("project_image_build_batch-1".to_string());
+        let selected = select_project_job(
+            vec![SandboxImageJobProgress {
+                id: "workspace-job".to_string(),
+                project_id: Some("project-1".to_string()),
+                run_id: Some("project_image_build_batch-1_workspace_0".to_string()),
+                status: "running".to_string(),
+                created_at: "2026-07-10T10:00:01Z".to_string(),
+                ..SandboxImageJobProgress::default()
+            }],
+            "project-1",
+            &environment,
+        )
+        .expect("current workspace build job");
+
+        assert_eq!(selected.id, "workspace-job");
+        assert_eq!(
+            progress_state(environment.status, Some("running"), Some(42)),
+            ("building_image", "running", Some(42))
+        );
     }
 
     #[test]

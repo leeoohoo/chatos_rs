@@ -110,7 +110,6 @@ export function TaskEditorDrawer({
   const taskProfile = Form.useWatch('taskProfile', form);
   const selectedProjectId = Form.useWatch('projectId', form);
   const requiresExecution = Form.useWatch('requiresExecution', form);
-  const executionServiceId = Form.useWatch('executionServiceId', form);
   const enabledBuiltinKinds = Form.useWatch('enabledBuiltinKinds', form) || [];
   const defaultRemoteServerId = Form.useWatch('defaultRemoteServerId', form);
   const scheduleMode = Form.useWatch('scheduleMode', form);
@@ -329,32 +328,6 @@ export function TaskEditorDrawer({
     }
     form.setFieldValue('pluginWorkspaceId', activePluginWorkspaces[0].id);
   }, [activePluginWorkspaces, form, pluginDeviceId, pluginWorkspaceId]);
-  const runtimeApplicationOptions = useMemo(
-    () =>
-      (runtimeEnvironment?.images || [])
-        .filter((image) => image.service_role === 'application')
-        .filter((image) =>
-          ['ready', 'local', 'available', 'succeeded'].includes(image.status),
-        )
-        .filter(
-          (image) =>
-            image.mcp_policy?.managed_by === 'system' &&
-            image.mcp_policy?.attachment === 'project_gateway_target' &&
-            image.mcp_policy?.filesystem &&
-            image.mcp_policy?.terminal,
-        )
-        .map((image) => ({
-          label: `${image.display_name || image.service_id} (${image.service_id})`,
-          value: image.service_id,
-        })),
-    [runtimeEnvironment?.images],
-  );
-  useEffect(() => {
-    if (!requiresExecution || runtimeApplicationOptions.length !== 1 || executionServiceId) {
-      return;
-    }
-    form.setFieldValue('executionServiceId', runtimeApplicationOptions[0].value);
-  }, [executionServiceId, form, requiresExecution, runtimeApplicationOptions]);
   return (
     <Drawer
       title={editingTask ? t('tasks.drawer.edit') : t('tasks.drawer.create')}
@@ -453,7 +426,6 @@ export function TaskEditorDrawer({
               onChange={(value) => {
                 if (value !== selectedProjectId) {
                   form.setFieldValue('prerequisite_task_ids', []);
-                  form.setFieldValue('executionServiceId', undefined);
                 }
               }}
             />
@@ -500,46 +472,28 @@ export function TaskEditorDrawer({
                   </Space>
                   <Space wrap>
                     {runtimeEnvironment.images.map((image) => {
+                      const isWorkspace = image.service_role === 'workspace';
                       const isApplication = image.service_role === 'application';
+                      const isArtifact = image.service_role === 'artifact';
                       return (
                         <Tag
                           key={image.service_id || image.environment_key}
-                          color={isApplication ? 'green' : 'default'}
+                          color={isWorkspace ? 'green' : isApplication ? 'blue' : 'default'}
                         >
                           {image.display_name || image.service_id} / {image.service_id} /{' '}
-                          {isApplication
-                            ? t('tasks.form.runtimeApplicationTarget')
-                            : t('tasks.form.runtimeDependencyNoMcp')}
+                          {isWorkspace
+                            ? t('tasks.form.runtimeWorkspaceTarget')
+                            : isApplication
+                              ? t('tasks.form.runtimePeerApplication')
+                              : isArtifact
+                                ? t('tasks.form.runtimeArtifact')
+                                : t('tasks.form.runtimeDependencyNoMcp')}
                         </Tag>
                       );
                     })}
                   </Space>
                 </Space>
               </div>
-            ) : null}
-            {requiresExecution && runtimeApplicationOptions.length ? (
-              <Form.Item
-                name="executionServiceId"
-                label={t('tasks.form.executionService')}
-                extra={t('tasks.form.executionServiceHelp')}
-                rules={[
-                  {
-                    validator: async (_, value) => {
-                      if (!requiresExecution || runtimeApplicationOptions.length <= 1 || value) {
-                        return;
-                      }
-                      throw new Error(t('tasks.form.executionServiceRequired'));
-                    },
-                  },
-                ]}
-                style={{ marginBottom: 0 }}
-              >
-                <Select
-                  allowClear={runtimeApplicationOptions.length <= 1}
-                  options={runtimeApplicationOptions}
-                  placeholder={t('tasks.form.executionServicePlaceholder')}
-                />
-              </Form.Item>
             ) : null}
           </Space>
         ) : null}

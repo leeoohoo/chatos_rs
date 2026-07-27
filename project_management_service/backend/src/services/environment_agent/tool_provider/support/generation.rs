@@ -33,7 +33,7 @@ pub(in crate::services::environment_agent::tool_provider) fn generated_environme
                 );
             }
             "postgres" | "postgresql" => {
-                insert_text_default(&mut env_vars, "POSTGRES_HOST", "postgres");
+                insert_text_default(&mut env_vars, "POSTGRES_HOST", "postgresql");
                 insert_text_default(&mut env_vars, "POSTGRES_PORT", "5432");
                 insert_text_default(&mut env_vars, "POSTGRES_USER", "app");
                 insert_secret_default(&mut env_vars, "POSTGRES_PASSWORD");
@@ -41,7 +41,7 @@ pub(in crate::services::environment_agent::tool_provider) fn generated_environme
                 insert_text_default(
                     &mut env_vars,
                     "SPRING_DATASOURCE_URL",
-                    "jdbc:postgresql://postgres:5432/app",
+                    "jdbc:postgresql://postgresql:5432/app",
                 );
                 copy_text_default(&mut env_vars, "POSTGRES_USER", "SPRING_DATASOURCE_USERNAME");
                 copy_text_default(

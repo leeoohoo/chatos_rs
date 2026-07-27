@@ -12,8 +12,8 @@ use crate::models::*;
 use crate::services::environment_agent::{
     analyze_project_runtime_environment, generate_project_runtime_environment_image,
     get_project_runtime_environment_deployment, get_project_runtime_environment_progress,
-    restart_project_runtime_environment, start_project_runtime_environment,
-    stop_project_runtime_environment,
+    refresh_project_runtime_compose_config, restart_project_runtime_environment,
+    start_project_runtime_environment, stop_project_runtime_environment,
 };
 use crate::services::runtime_environment::{
     apply_environment_variable_overrides, default_runtime_environment_for_project,
@@ -46,11 +46,19 @@ pub(in crate::api) async fn get_project_runtime_environment(
         .map_err(ApiError::bad_request)?;
     let mut environment_changed =
         replace_legacy_internal_routing_summary(&mut environment, images.as_slice());
-    if enforce_project_runtime_boundary(
-        project.execution_plane,
-        &mut environment,
-        images.as_mut_slice(),
-    ) {
+    if enforce_project_runtime_boundary(project.execution_plane, &mut environment, &mut images) {
+        environment_changed = true;
+    }
+    if refresh_project_runtime_compose_config(&project_id, &mut environment, images.as_slice())
+        .map_err(ApiError::bad_request)?
+    {
+        environment.analysis_summary = Some(
+            crate::services::runtime_environment::program_generated_runtime_analysis_summary(
+                &environment,
+                images.as_slice(),
+            ),
+        );
+        environment.updated_at = now_rfc3339();
         environment_changed = true;
     }
     if environment_changed {
@@ -96,17 +104,27 @@ pub(in crate::api) async fn update_project_runtime_environment_variables(
         && crate::services::runtime_environment::required_environment_variables_are_complete(
             &environment.environment_variables,
         )
-        && !images.is_empty()
-        && images.iter().all(|image| {
-            matches!(
-                image.status.trim().to_ascii_lowercase().as_str(),
-                "ready" | "available" | "local" | "succeeded" | "running"
-            )
-        })
+        && images
+            .iter()
+            .filter(|image| {
+                crate::services::runtime_environment::runtime_image_is_execution_required(image)
+            })
+            .all(|image| {
+                matches!(
+                    image.status.trim().to_ascii_lowercase().as_str(),
+                    "ready" | "available" | "local" | "succeeded" | "running"
+                )
+            })
     {
         environment.status = ProjectRuntimeEnvironmentStatus::Ready;
         environment.last_error = None;
     }
+    environment.analysis_summary = Some(
+        crate::services::runtime_environment::program_generated_runtime_analysis_summary(
+            &environment,
+            images.as_slice(),
+        ),
+    );
     environment.updated_at = now_rfc3339();
     let environment = state
         .store
@@ -431,7 +449,7 @@ fn reset_environment_for_analysis(environment: &mut ProjectRuntimeEnvironmentRec
     environment.file_provider = RuntimeEnvironmentProvider::None;
     environment.analysis_summary = Some("正在重新分析项目并准备沙箱运行环境。".to_string());
     environment.not_runnable_reason = None;
-    environment.primary_service_id = None;
+    environment.execution_service_id = None;
     environment.detected_stack = empty_object();
     environment.required_services = empty_array();
     refresh_environment_variable_values(environment);
@@ -535,7 +553,7 @@ mod tests {
             file_provider: RuntimeEnvironmentProvider::Harness,
             analysis_summary: Some("old summary".to_string()),
             not_runnable_reason: Some("old reason".to_string()),
-            primary_service_id: Some("old-service".to_string()),
+            execution_service_id: Some("old-service".to_string()),
             detected_stack: json!({"stale": true}),
             required_services: json!([{"stale": true}]),
             env_vars: json!({"STALE": "1"}),
@@ -569,7 +587,7 @@ mod tests {
         assert_eq!(environment.last_agent_run_id.as_deref(), Some("run-new"));
         assert!(environment.last_error.is_none());
         assert!(environment.not_runnable_reason.is_none());
-        assert!(environment.primary_service_id.is_none());
+        assert!(environment.execution_service_id.is_none());
         assert_eq!(environment.detected_stack, json!({}));
         assert_eq!(environment.required_services, json!([]));
         assert_eq!(environment.env_vars, json!({"STALE": "1"}));

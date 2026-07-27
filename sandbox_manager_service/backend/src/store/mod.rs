@@ -261,13 +261,7 @@ impl SandboxStore {
 
     pub async fn count_pending_leases(&self, now: &str) -> Result<usize, String> {
         self.leases
-            .count_documents(
-                doc! {
-                    "status": SandboxStatus::Pending.as_str(),
-                    "expires_at": { "$gt": now },
-                },
-                None,
-            )
+            .count_documents(queued_pending_filter(now), None)
             .await
             .map(|count| count as usize)
             .map_err(|err| format!("count pending sandbox leases failed: {err}"))
@@ -283,13 +277,7 @@ impl SandboxStore {
             .limit(limit.clamp(1, 100))
             .build();
         self.leases
-            .find(
-                doc! {
-                    "status": SandboxStatus::Pending.as_str(),
-                    "expires_at": { "$gt": now },
-                },
-                options,
-            )
+            .find(queued_pending_filter(now), options)
             .await
             .map_err(|err| format!("list pending sandbox leases failed: {err}"))?
             .try_collect()
@@ -311,6 +299,7 @@ impl SandboxStore {
                     "id": lease_id,
                     "status": SandboxStatus::Pending.as_str(),
                     "expires_at": { "$gt": now },
+                    "lease_kind": { "$ne": "environment" },
                 },
                 doc! {
                     "$set": {
@@ -503,6 +492,30 @@ fn active_status_strings() -> Vec<&'static str> {
     .collect()
 }
 
+fn queued_pending_filter(now: &str) -> Document {
+    doc! {
+        "status": SandboxStatus::Pending.as_str(),
+        "expires_at": { "$gt": now },
+        "lease_kind": { "$ne": "environment" },
+    }
+}
+
 pub(crate) fn is_duplicate_key_error(message: &str) -> bool {
     message.contains("E11000") || message.to_ascii_lowercase().contains("duplicate key")
+}
+
+#[cfg(test)]
+mod pending_filter_tests {
+    use super::*;
+
+    #[test]
+    fn queued_pending_filter_excludes_prepared_environment_leases() {
+        let filter = queued_pending_filter("2026-07-27T00:00:00Z");
+        assert_eq!(
+            filter
+                .get_document("lease_kind")
+                .expect("lease kind filter"),
+            &doc! { "$ne": "environment" }
+        );
+    }
 }

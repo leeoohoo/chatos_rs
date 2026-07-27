@@ -215,6 +215,7 @@ export const CloudProjectRuntimeEnvironmentPanel: React.FC<CloudProjectRuntimeEn
   const generateRuntimeImage = useCallback(async (imageId: string) => {
     setBuildingImageId(imageId);
     setError(null);
+    setProgress(null);
     setActionNotice({
       tone: 'info',
       message: isCloudProject
@@ -275,7 +276,7 @@ export const CloudProjectRuntimeEnvironmentPanel: React.FC<CloudProjectRuntimeEn
   const detectedStackText = formatJson(detectedStack);
   const backendAnalyzing = status === 'analyzing';
   const backendBuilding = !isCloudProject && status === 'pending_image_build';
-  const backendBusy = backendAnalyzing || backendBuilding;
+  const backendBusy = backendAnalyzing || backendBuilding || buildingImageId !== null;
   const progressData = asRecord(progress);
   const progressStatus = readString(progressData, ['status']);
   const progressPhase = readString(
@@ -291,7 +292,10 @@ export const CloudProjectRuntimeEnvironmentPanel: React.FC<CloudProjectRuntimeEn
   const progressUpdatedAt = readString(progressData, ['updated_at', 'updatedAt']);
   const progressLogs = readString(progressData, ['logs']);
   const progressError = readString(progressData, ['error']);
-  const showProgress = backendBusy || Boolean(progressJobId || progressLogs || progressError);
+  const progressActive = ['pending', 'queued', 'running', 'building'].includes(
+    progressStatus.toLowerCase(),
+  );
+  const showProgress = backendBusy || progressActive || Boolean(progressError);
   const visibleNotice = status === 'pending_configuration'
     ? actionNotice || {
       tone: 'warning' as const,

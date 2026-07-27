@@ -38,7 +38,6 @@ export type TaskFormValues = {
   projectId: string;
   default_model_config_id?: string;
   requiresExecution: boolean;
-  executionServiceId?: string;
   prerequisite_task_ids?: string[];
   tagsText?: string;
   mcpEnabled: boolean;
@@ -79,7 +78,6 @@ export function buildCreateTaskFormValues(
     projectId: normalizeTaskProjectId(routeProjectId),
     default_model_config_id: undefined,
     requiresExecution: true,
-    executionServiceId: undefined,
     prerequisite_task_ids: [],
     tagsText: '',
     mcpEnabled: true,
@@ -112,7 +110,6 @@ export function buildEditTaskFormValues(task: TaskRecord): TaskFormValues {
     projectId: normalizeTaskProjectId(task.project_id),
     default_model_config_id: task.default_model_config_id || undefined,
     requiresExecution: task.mcp_config.requires_execution ?? true,
-    executionServiceId: task.mcp_config.execution_service_id || undefined,
     prerequisite_task_ids: task.prerequisite_task_ids || [],
     tagsText: task.tags.join(', '),
     mcpEnabled: task.mcp_config.enabled,
@@ -233,7 +230,6 @@ export function buildTaskPayload(
     mcp_config: {
       enabled: values.mcpEnabled,
       requires_execution: values.requiresExecution,
-      execution_service_id: values.executionServiceId?.trim() || undefined,
       init_mode: 'full',
       builtin_prompt_mode: values.builtinPromptMode,
       builtin_prompt_locale: values.builtinPromptLocale,

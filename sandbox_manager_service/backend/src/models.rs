@@ -113,8 +113,12 @@ pub struct SandboxLeaseRecord {
     pub tools: Vec<String>,
     #[serde(default = "default_single_lease_kind")]
     pub lease_kind: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub primary_service_id: Option<String>,
+    #[serde(
+        default,
+        alias = "primary_service_id",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub execution_service_id: Option<String>,
     #[serde(default)]
     pub environment_services: Vec<SandboxEnvironmentServiceRecord>,
     #[serde(default)]
@@ -180,8 +184,8 @@ pub struct CreateSandboxEnvironmentLeaseRequest {
 #[derive(Debug, Clone, Deserialize)]
 pub struct StartSandboxEnvironmentRequest {
     pub lease_id: String,
-    #[serde(default)]
-    pub primary_service_id: Option<String>,
+    #[serde(default, alias = "primary_service_id")]
+    pub execution_service_id: Option<String>,
     #[serde(default)]
     pub services: Vec<SandboxEnvironmentServiceInput>,
 }
@@ -213,7 +217,7 @@ pub struct SandboxEnvironmentLeaseResponse {
     pub status: SandboxStatus,
     pub run_workspace: String,
     pub expires_at: String,
-    pub primary_service_id: Option<String>,
+    pub execution_service_id: Option<String>,
     pub agent_endpoint: Option<String>,
     pub services: Vec<SandboxEnvironmentServiceRecord>,
     pub agent_token: String,

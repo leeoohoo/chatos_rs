@@ -31,15 +31,36 @@ mod tests {
         }
     }
 
+    fn workspace() -> PreparedEnvironmentService {
+        PreparedEnvironmentService {
+            input: SandboxEnvironmentServiceInput {
+                service_id: "workspace".to_string(),
+                environment_key: "workspace".to_string(),
+                display_name: "Project Workspace".to_string(),
+                service_role: "workspace".to_string(),
+                image_id: Some("workspace-image".to_string()),
+                image_ref: None,
+                dockerfile: None,
+                environment: BTreeMap::new(),
+                mcp_policy: SandboxEnvironmentMcpPolicy {
+                    managed_by: "system".to_string(),
+                    attachment: "workspace_gateway_target".to_string(),
+                    filesystem: true,
+                    terminal: true,
+                },
+            },
+            image_ref: "chatos-workspace:latest".to_string(),
+        }
+    }
+
     #[test]
-    fn multiple_applications_require_program_selected_primary_service() {
-        let services = vec![application("api"), application("worker")];
-        assert!(resolve_primary_service_id(None, services.as_slice()).is_err());
+    fn workspace_is_the_only_execution_service_among_peer_applications() {
+        let services = vec![workspace(), application("api"), application("worker")];
         assert_eq!(
-            resolve_primary_service_id(Some("worker"), services.as_slice())
-                .expect("selected primary"),
-            "worker"
+            resolve_execution_service_id(None, services.as_slice()).expect("workspace target"),
+            "workspace"
         );
+        assert!(resolve_execution_service_id(Some("worker"), services.as_slice()).is_err());
     }
 
     #[test]
@@ -64,14 +85,11 @@ mod tests {
     }
 
     #[test]
-    fn application_dockerfile_is_forwarded_but_dependency_never_enables_mcp() {
-        let application = application("api");
-        let application_spec = backend_environment_service_spec(&application);
-        assert_eq!(
-            application_spec.dockerfile.as_deref(),
-            Some("FROM alpine\n")
-        );
-        assert!(application_spec.mcp_enabled);
+    fn workspace_enables_mcp_but_dependency_never_does() {
+        let workspace = workspace();
+        let workspace_spec = backend_environment_service_spec(&workspace);
+        assert!(workspace_spec.dockerfile.is_none());
+        assert!(workspace_spec.mcp_enabled);
 
         let dependency = PreparedEnvironmentService {
             input: SandboxEnvironmentServiceInput {

@@ -89,7 +89,7 @@ impl RunService {
         } else {
             None
         };
-        // Keep the resolved application/base image even when topology v2 is selected.
+        // Keep the resolved workspace/base image even when topology v2 is selected.
         // The environment plan may be stale or temporarily unbuildable after a previous
         // task changes the repository. Generic implementation tasks must still be able to
         // enter a plain execution sandbox and repair the project instead of failing before
@@ -134,7 +134,7 @@ pub(super) fn sandbox_environment_fallback_allowed(
 ) -> bool {
     route.environment_plan.is_some()
         && route.image_id.is_some()
-        && normalized_execution_service_id(task).is_none()
+        && normalized_execution_service_id(task).is_none_or(|service_id| service_id == "workspace")
 }
 
 fn sandbox_environment_plan_for_task(
@@ -147,7 +147,7 @@ fn sandbox_environment_plan_for_task(
     }
     let global_environment = json_object_to_string_map(&runtime.environment.env_vars);
     let mut services = Vec::new();
-    let mut application_service_ids = Vec::new();
+    let mut workspace_service_ids = Vec::new();
     for image in runtime
         .images
         .iter()
@@ -168,14 +168,8 @@ fn sandbox_environment_plan_for_task(
                 .as_deref()
                 .map(str::trim)
                 .filter(|value| !value.is_empty())
-                .ok_or_else(|| format!("application service {service_id} has no ready image_id"))?;
-            let dockerfile = image
-                .dockerfile
-                .as_deref()
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .ok_or_else(|| format!("application service {service_id} has no Dockerfile"))?;
-            application_service_ids.push(service_id.to_string());
+                .ok_or_else(|| format!("workspace service {service_id} has no ready image_id"))?;
+            workspace_service_ids.push(service_id.to_string());
             services.push(SandboxEnvironmentServicePlan {
                 service_id: service_id.to_string(),
                 environment_key: image.environment_key.clone(),
@@ -184,14 +178,14 @@ fn sandbox_environment_plan_for_task(
                 } else {
                     image.display_name.clone()
                 },
-                service_role: "application".to_string(),
+                service_role: "workspace".to_string(),
                 image_id: Some(image_id.to_string()),
                 image_ref: image.image_ref.clone(),
-                dockerfile: Some(dockerfile.to_string()),
+                dockerfile: None,
                 environment: merged_environment(&global_environment, &image.env_vars),
                 mcp_policy: SandboxEnvironmentMcpPolicyPlan {
                     managed_by: "system".to_string(),
-                    attachment: "project_gateway_target".to_string(),
+                    attachment: "workspace_gateway_target".to_string(),
                     filesystem: true,
                     terminal: true,
                 },
@@ -220,21 +214,39 @@ fn sandbox_environment_plan_for_task(
             });
         }
     }
-    if application_service_ids.is_empty() {
+    if workspace_service_ids.is_empty() {
         if let Some(requested) = normalized_execution_service_id(task) {
             return Err(format!(
-                "execution_service_id is not a ready application service: {requested}"
+                "execution_service_id is not the ready project workspace: {requested}"
             ));
         }
         return Ok(None);
     }
-    let primary_service_id = resolve_execution_service_id(
-        task.mcp_config.execution_service_id.as_deref(),
-        runtime.environment.primary_service_id.as_deref(),
-        application_service_ids.as_slice(),
-    )?;
+    if workspace_service_ids.len() != 1 {
+        return Err("project runtime must contain exactly one ready workspace service".to_string());
+    }
+    let execution_service_id = workspace_service_ids[0].clone();
+    if let Some(requested) = normalized_execution_service_id(task) {
+        if requested != execution_service_id {
+            return Err(format!(
+                "execution_service_id is fixed to the project workspace: {execution_service_id}"
+            ));
+        }
+    }
+    if runtime
+        .environment
+        .execution_service_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .is_some_and(|configured| configured != execution_service_id)
+    {
+        return Err(
+            "project execution_service_id does not reference its workspace service".to_string(),
+        );
+    }
     Ok(Some(SandboxEnvironmentPlan {
-        primary_service_id,
+        execution_service_id,
         services,
         generated_config_files: runtime
             .environment
@@ -246,79 +258,6 @@ fn sandbox_environment_plan_for_task(
             })
             .collect(),
     }))
-}
-
-fn resolve_execution_service_id(
-    requested: Option<&str>,
-    project_primary_service_id: Option<&str>,
-    application_service_ids: &[String],
-) -> Result<String, String> {
-    match requested.map(str::trim).filter(|value| !value.is_empty()) {
-        Some(requested)
-            if application_service_ids
-                .iter()
-                .any(|value| value == requested) =>
-        {
-            Ok(requested.to_string())
-        }
-        Some(requested) => Err(format!(
-            "execution_service_id is not a ready application service: {requested}"
-        )),
-        None if project_primary_service_id
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .is_some_and(|primary| {
-                application_service_ids.iter().any(|value| value == primary)
-            }) =>
-        {
-            Ok(project_primary_service_id
-                .expect("validated project primary service")
-                .trim()
-                .to_string())
-        }
-        None if application_service_ids.len() == 1 => Ok(application_service_ids[0].clone()),
-        None => program_selected_execution_service_id(application_service_ids)
-            .ok_or_else(|| "project runtime has no ready application service".to_string()),
-    }
-}
-
-fn program_selected_execution_service_id(application_service_ids: &[String]) -> Option<String> {
-    let mut service_ids = application_service_ids.to_vec();
-    service_ids.sort_by(|left, right| {
-        execution_service_score(right)
-            .cmp(&execution_service_score(left))
-            .then_with(|| left.cmp(right))
-    });
-    service_ids.into_iter().next()
-}
-
-fn execution_service_score(service_id: &str) -> i32 {
-    let service_id = service_id.to_ascii_lowercase();
-    let mut score = 0;
-    if matches!(service_id.as_str(), "app" | "application" | "main") {
-        score += 100;
-    }
-    if ["backend", "api", "server", "service", "core"]
-        .iter()
-        .any(|marker| service_id.contains(marker))
-    {
-        score += 40;
-    }
-    if [
-        "prototype",
-        "demo",
-        "example",
-        "storybook",
-        "docs",
-        "mock",
-        "fixture",
-    ]
-    .iter()
-    .any(|marker| service_id.contains(marker))
-    {
-        score -= 100;
-    }
-    score
 }
 
 fn runtime_image_is_program_managed_dependency(image: &ProjectRuntimeEnvironmentImage) -> bool {
@@ -457,6 +396,11 @@ fn sandbox_image_id_for_runtime(
         })
         .collect::<Vec<_>>();
     if let Some(requested) = requested_service_id {
+        if requested != "workspace" {
+            return Err(format!(
+                "execution_service_id is fixed to the project workspace: workspace"
+            ));
+        }
         return images
             .into_iter()
             .find(|image| image.service_id.trim() == requested)
@@ -465,31 +409,23 @@ fn sandbox_image_id_for_runtime(
             .filter(|value| !value.is_empty())
             .map(|value| Some(value.to_string()))
             .ok_or_else(|| {
-                format!("execution_service_id is not a ready application service: {requested}")
+                format!("execution_service_id is not the ready project workspace: {requested}")
             });
     }
-    let project_primary = runtime
+    let project_workspace = runtime
         .environment
-        .primary_service_id
+        .execution_service_id
         .as_deref()
         .map(str::trim)
         .filter(|value| !value.is_empty())
-        .filter(|primary| {
+        .filter(|workspace| {
             images
                 .iter()
-                .any(|image| image.service_id.trim() == *primary)
+                .any(|image| image.service_id.trim() == *workspace)
         })
         .map(ToOwned::to_owned);
-    let selected_service_id = project_primary.or_else(|| {
-        let service_ids = images
-            .iter()
-            .filter_map(|image| {
-                let service_id = image.service_id.trim();
-                (!service_id.is_empty()).then(|| service_id.to_string())
-            })
-            .collect::<Vec<_>>();
-        program_selected_execution_service_id(service_ids.as_slice())
-    });
+    let selected_service_id = project_workspace
+        .or_else(|| (images.len() == 1).then(|| images[0].service_id.trim().to_string()));
     if let Some(selected_service_id) = selected_service_id {
         return Ok(images
             .iter()
@@ -517,9 +453,11 @@ fn normalized_execution_service_id(task: &TaskRecord) -> Option<&str> {
 
 fn base_sandbox_image_id_for_task(task: &TaskRecord) -> Result<String, String> {
     if let Some(requested) = normalized_execution_service_id(task) {
-        return Err(format!(
-            "execution_service_id requires a ready project runtime application service: {requested}"
-        ));
+        if requested != "workspace" {
+            return Err(format!(
+                "execution_service_id is fixed to the project workspace: workspace"
+            ));
+        }
     }
     Ok(crate::config::configured_sandbox_base_image_id())
 }
@@ -541,12 +479,12 @@ fn image_status_is_available(status: &str) -> bool {
 }
 
 fn runtime_image_is_program_managed_target(image: &ProjectRuntimeEnvironmentImage) -> bool {
-    image.service_role.eq_ignore_ascii_case("application")
+    image.service_role.eq_ignore_ascii_case("workspace")
         && image.mcp_policy.managed_by.eq_ignore_ascii_case("system")
         && image
             .mcp_policy
             .attachment
-            .eq_ignore_ascii_case("project_gateway_target")
+            .eq_ignore_ascii_case("workspace_gateway_target")
         && image.mcp_policy.filesystem
         && image.mcp_policy.terminal
 }
@@ -612,15 +550,15 @@ mod tests {
     }
 
     #[test]
-    fn only_system_managed_application_targets_are_routable() {
+    fn only_system_managed_workspace_targets_are_routable() {
         assert!(runtime_image_is_program_managed_target(&image(
-            "application",
-            "project_gateway_target",
+            "workspace",
+            "workspace_gateway_target",
             true,
             true,
         )));
         assert!(!runtime_image_is_program_managed_target(&image(
-            "dependency",
+            "application",
             "project_gateway_target",
             true,
             true,
@@ -634,62 +572,73 @@ mod tests {
     }
 
     #[test]
-    fn project_primary_application_is_used_without_task_level_selection() {
-        let api = image("application", "project_gateway_target", true, true);
-        let mut worker = image("application", "project_gateway_target", true, true);
-        worker.environment_key = "services/worker".to_string();
-        worker.service_id = "services-worker".to_string();
-        worker.image_id = Some("image-2".to_string());
+    fn project_workspace_is_used_without_task_level_selection() {
+        let mut workspace = image("workspace", "workspace_gateway_target", true, true);
+        workspace.environment_key = "workspace".to_string();
+        workspace.service_id = "workspace".to_string();
+        workspace.display_name = "Project Workspace".to_string();
+        workspace.dockerfile = None;
+        let mut api = image("application", "none", false, false);
+        api.image_id = None;
         let runtime = ProjectSandboxRuntimeSettings {
             environment: ProjectRuntimeEnvironmentSettings {
                 sandbox_enabled: true,
                 status: "ready".to_string(),
-                primary_service_id: Some("services-worker".to_string()),
+                execution_service_id: Some("workspace".to_string()),
                 env_vars: serde_json::json!({}),
                 generated_config_files: Vec::new(),
             },
-            images: vec![api, worker],
+            images: vec![api, workspace],
         };
 
         assert_eq!(
             sandbox_image_id_for_runtime(&runtime, "cloud_sandbox_manager", None)
-                .expect("project primary image"),
-            Some("image-2".to_string())
+                .expect("project workspace image"),
+            Some("image-1".to_string())
         );
     }
 
     #[test]
-    fn environment_execution_service_prefers_explicit_then_project_primary_then_program_default() {
-        let service_ids = vec!["web-prototype".to_string(), "mdm-service".to_string()];
+    fn environment_plan_contains_only_workspace_and_dependencies() {
+        let mut workspace = image("workspace", "workspace_gateway_target", true, true);
+        workspace.environment_key = "workspace".to_string();
+        workspace.service_id = "workspace".to_string();
+        workspace.display_name = "Project Workspace".to_string();
+        workspace.dockerfile = None;
+        let mut application = image("application", "none", false, false);
+        application.image_id = None;
+        let mut artifact = image("artifact", "none", false, false);
+        artifact.service_id = "web-prototype".to_string();
+        artifact.image_id = None;
+        let mut dependency = image("dependency", "none", false, false);
+        dependency.environment_key = "postgresql".to_string();
+        dependency.service_id = "postgresql".to_string();
+        dependency.image_id = None;
+        dependency.image_ref = Some("postgres:16-alpine".to_string());
+        dependency.dockerfile = None;
+        let runtime = ProjectSandboxRuntimeSettings {
+            environment: ProjectRuntimeEnvironmentSettings {
+                sandbox_enabled: true,
+                status: "ready".to_string(),
+                execution_service_id: Some("workspace".to_string()),
+                env_vars: serde_json::json!({}),
+                generated_config_files: Vec::new(),
+            },
+            images: vec![workspace, application, artifact, dependency],
+        };
+        let mut task = task();
+        task.mcp_config.requires_execution = true;
+
+        let plan = sandbox_environment_plan_for_task(&task, &runtime, "cloud_sandbox_manager")
+            .expect("workspace plan")
+            .expect("environment topology");
+        assert_eq!(plan.execution_service_id, "workspace");
         assert_eq!(
-            resolve_execution_service_id(
-                Some("web-prototype"),
-                Some("mdm-service"),
-                service_ids.as_slice()
-            )
-            .expect("explicit selection"),
-            "web-prototype"
-        );
-        assert_eq!(
-            resolve_execution_service_id(None, Some("mdm-service"), service_ids.as_slice())
-                .expect("project primary selection"),
-            "mdm-service"
-        );
-        assert_eq!(
-            resolve_execution_service_id(None, None, service_ids.as_slice())
-                .expect("program default selection"),
-            "mdm-service"
-        );
-        assert!(resolve_execution_service_id(
-            Some("redis"),
-            Some("mdm-service"),
-            service_ids.as_slice()
-        )
-        .is_err());
-        assert_eq!(
-            resolve_execution_service_id(None, None, &["api".to_string()])
-                .expect("single application auto selection"),
-            "api"
+            plan.services
+                .iter()
+                .map(|service| service.service_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["workspace", "postgresql"]
         );
     }
 
@@ -702,7 +651,7 @@ mod tests {
     }
 
     #[test]
-    fn implicit_environment_route_can_fall_back_but_explicit_service_cannot() {
+    fn workspace_route_can_fall_back_but_business_service_cannot() {
         let mut task = task();
         task.mcp_config.requires_execution = true;
         let route = SandboxTaskRoute {
@@ -710,7 +659,7 @@ mod tests {
             auth: None,
             image_id: Some("dev-node24".to_string()),
             environment_plan: Some(SandboxEnvironmentPlan {
-                primary_service_id: "api".to_string(),
+                execution_service_id: "workspace".to_string(),
                 services: Vec::new(),
                 generated_config_files: Vec::new(),
             }),
@@ -720,17 +669,20 @@ mod tests {
 
         assert!(sandbox_environment_fallback_allowed(&task, &route));
 
+        task.mcp_config.execution_service_id = Some("workspace".to_string());
+        assert!(sandbox_environment_fallback_allowed(&task, &route));
+
         task.mcp_config.execution_service_id = Some("api".to_string());
         assert!(!sandbox_environment_fallback_allowed(&task, &route));
     }
 
     #[test]
-    fn code_or_terminal_execution_without_application_target_uses_configured_base_image() {
+    fn code_or_terminal_execution_without_workspace_uses_configured_base_image() {
         let runtime = ProjectSandboxRuntimeSettings {
             environment: ProjectRuntimeEnvironmentSettings {
                 sandbox_enabled: true,
                 status: "pending".to_string(),
-                primary_service_id: None,
+                execution_service_id: None,
                 env_vars: serde_json::json!({}),
                 generated_config_files: Vec::new(),
             },
@@ -752,12 +704,12 @@ mod tests {
     }
 
     #[test]
-    fn explicit_application_execution_still_requires_a_ready_target() {
+    fn explicit_business_service_execution_is_rejected() {
         let runtime = ProjectSandboxRuntimeSettings {
             environment: ProjectRuntimeEnvironmentSettings {
                 sandbox_enabled: true,
                 status: "pending".to_string(),
-                primary_service_id: None,
+                execution_service_id: None,
                 env_vars: serde_json::json!({}),
                 generated_config_files: Vec::new(),
             },
@@ -768,14 +720,18 @@ mod tests {
         task.mcp_config.execution_service_id = Some("services-api".to_string());
 
         let error = sandbox_environment_plan_for_task(&task, &runtime, "cloud_sandbox_manager")
-            .expect_err("explicit project Gateway target must not fall back");
+            .expect_err("business service must not become execution target");
         assert!(error.contains("services-api"));
-        assert!(error.contains("not a ready application service"));
+        assert!(error.contains("not the ready project workspace"));
     }
 
     #[test]
     fn dependency_services_do_not_serialize_an_mcp_policy() {
-        let application = image("application", "project_gateway_target", true, true);
+        let mut workspace = image("workspace", "workspace_gateway_target", true, true);
+        workspace.environment_key = "workspace".to_string();
+        workspace.service_id = "workspace".to_string();
+        workspace.display_name = "Project Workspace".to_string();
+        workspace.dockerfile = None;
         let mut dependency = image("dependency", "none", false, false);
         dependency.environment_key = "postgresql".to_string();
         dependency.service_id = "postgresql".to_string();
@@ -787,15 +743,15 @@ mod tests {
             environment: ProjectRuntimeEnvironmentSettings {
                 sandbox_enabled: true,
                 status: "ready".to_string(),
-                primary_service_id: Some("services-api".to_string()),
+                execution_service_id: Some("workspace".to_string()),
                 env_vars: serde_json::json!({}),
                 generated_config_files: Vec::new(),
             },
-            images: vec![application, dependency],
+            images: vec![workspace, dependency],
         };
         let mut task = task();
         task.mcp_config.requires_execution = true;
-        task.mcp_config.execution_service_id = Some("services-api".to_string());
+        task.mcp_config.execution_service_id = Some("workspace".to_string());
 
         let plan = sandbox_environment_plan_for_task(&task, &runtime, "cloud_sandbox_manager")
             .expect("environment plan")

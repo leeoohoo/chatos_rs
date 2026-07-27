@@ -46,6 +46,54 @@ const CLOUD_SANDBOX_IMAGE_MCP_PATH: &str = "/api/sandbox-images/mcp";
 const LOCAL_SANDBOX_IMAGE_MCP_PATH: &str = "/api/local/sandbox/images/mcp";
 const PROJECT_COMPOSE_FILE_PATH: &str = ".chatos/runtime-environment/docker-compose.chatos.yml";
 
+pub(crate) fn refresh_project_runtime_compose_config(
+    project_id: &str,
+    environment: &mut ProjectRuntimeEnvironmentRecord,
+    images: &[ProjectRuntimeEnvironmentImageRecord],
+) -> Result<bool, String> {
+    let previous = environment
+        .generated_config_files
+        .iter()
+        .find(|file| file.path == PROJECT_COMPOSE_FILE_PATH)
+        .map(|file| {
+            (
+                file.format.clone(),
+                file.content.clone(),
+                file.description.clone(),
+                file.source_files.clone(),
+            )
+        });
+    if images
+        .iter()
+        .any(|image| image.service_role == RuntimeServiceRole::Application)
+    {
+        tool_provider::compose::upsert_project_compose_config_file(
+            project_id,
+            &mut environment.generated_config_files,
+            &environment.environment_variables,
+            &environment.required_services,
+            images,
+        )?;
+    } else {
+        environment
+            .generated_config_files
+            .retain(|file| file.path != PROJECT_COMPOSE_FILE_PATH);
+    }
+    let current = environment
+        .generated_config_files
+        .iter()
+        .find(|file| file.path == PROJECT_COMPOSE_FILE_PATH)
+        .map(|file| {
+            (
+                file.format.clone(),
+                file.content.clone(),
+                file.description.clone(),
+                file.source_files.clone(),
+            )
+        });
+    Ok(previous != current)
+}
+
 mod runtime;
 
 pub async fn start_project_runtime_environment(
