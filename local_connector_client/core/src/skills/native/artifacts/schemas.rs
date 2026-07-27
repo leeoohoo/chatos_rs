@@ -22,6 +22,7 @@ pub(super) fn tool_definitions(skill_id: &str) -> Vec<Value> {
             add_pdf_markup_annotation_tool(),
             add_pdf_link_annotation_tool(),
             add_pdf_annotation_reply_tool(),
+            delete_pdf_annotation_tool(),
             add_pdf_file_attachment_annotation_tool(),
             extract_pdf_file_attachment_tool(),
             extract_pdf_embedded_file_tool(),
@@ -519,6 +520,28 @@ fn add_pdf_annotation_reply_tool() -> Value {
                 "overwrite":{"type":"boolean","default":false}
             },
             "required":["path","expected_source_sha256","page","annotation_index","text","target_path"],
+            "additionalProperties":false
+        }),
+    )
+}
+
+fn delete_pdf_annotation_tool() -> Value {
+    tool(
+        "delete_pdf_annotation",
+        "Delete one inspected standard PDF Text, markup, Link, or FileAttachment annotation from a distinct output using exact source SHA-256, physical page, page-local preview index, subtype, and relation binding. Widgets, unsupported subtypes, structure-tree membership, annotations still referenced by replies/groups/popups or other reachable objects, stale sources, and in-place targets fail closed.",
+        json!({
+            "type":"object",
+            "properties":{
+                "path":{"type":"string","description":"Workspace-relative source .pdf path."},
+                "expected_source_sha256":{"type":"string","pattern":"^[0-9a-f]{64}$","description":"Exact source SHA-256 returned by inspect_pdf."},
+                "page":{"type":"integer","minimum":1,"maximum":5000,"description":"One-based physical page containing the inspected annotation."},
+                "annotation_index":{"type":"integer","minimum":1,"maximum":100,"description":"One-based page-local annotation index returned by inspect_pdf(annotation_page=page)."},
+                "expected_subtype":{"type":"string","enum":["Text","Highlight","Underline","StrikeOut","Squiggly","Link","FileAttachment"],"description":"Exact annotation subtype returned by the focused preview."},
+                "expected_relation_type":{"type":"string","enum":["root","reply","group"],"description":"Use root when the preview has no relation_type; otherwise submit the exact reply or group relation."},
+                "target_path":{"type":"string","description":"Distinct workspace-relative .pdf output path."},
+                "overwrite":{"type":"boolean","default":false}
+            },
+            "required":["path","expected_source_sha256","page","annotation_index","expected_subtype","expected_relation_type","target_path"],
             "additionalProperties":false
         }),
     )

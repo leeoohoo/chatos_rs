@@ -4288,6 +4288,206 @@ pub(super) fn add_pdf_annotation_reply(
     }))
 }
 
+pub(super) fn delete_pdf_annotation(
+    arguments: &Value,
+    state: &LocalState,
+    request: &RelayRequest,
+) -> Result<Value> {
+    let (source, source_relative) =
+        input_file(state, request, required_text(arguments, "path")?, ".pdf")?;
+    let expected_source_sha256 = required_lowercase_sha256(arguments, "expected_source_sha256")?;
+    let source_bytes =
+        fs::read(source.as_path()).with_context(|| format!("read PDF {}", source.display()))?;
+    if source_bytes.len() as u64 > MAX_ARTIFACT_BYTES {
+        return Err(anyhow!("local artifact exceeds the 100 MiB safety limit"));
+    }
+    let actual_source_sha256 = hex::encode(Sha256::digest(source_bytes.as_slice()));
+    if actual_source_sha256 != expected_source_sha256 {
+        return Err(anyhow!(
+            "PDF source SHA-256 does not match expected_source_sha256; inspect the current file again"
+        ));
+    }
+    if sha256_file(source.as_path())? != expected_source_sha256 {
+        return Err(anyhow!(
+            "PDF source changed while it was being read; inspect the current file again"
+        ));
+    }
+
+    let mut document = Document::load_mem(source_bytes.as_slice())
+        .with_context(|| format!("open PDF {}", source.display()))?;
+    if document.is_encrypted() {
+        return Err(anyhow!(
+            "encrypted PDFs cannot be edited without an explicit decryption workflow"
+        ));
+    }
+    let page_map = document.get_pages();
+    if page_map.is_empty() {
+        return Err(anyhow!("PDF contains no pages: {}", source.display()));
+    }
+    if page_map.len() > MAX_PDF_PAGES {
+        return Err(anyhow!(
+            "PDF exceeds the {MAX_PDF_PAGES} page annotation safety limit"
+        ));
+    }
+    let annotation_inspection = inspect_pdf_annotations(&document, &page_map, None)?;
+    let initial_annotation_count = annotation_inspection
+        .get("count")
+        .and_then(Value::as_u64)
+        .ok_or_else(|| anyhow!("PDF annotation inspection did not return a valid count"))?;
+
+    let page_number = arguments
+        .get("page")
+        .and_then(Value::as_u64)
+        .and_then(|value| u32::try_from(value).ok())
+        .filter(|value| (1..=MAX_PDF_PAGES as u32).contains(value))
+        .ok_or_else(|| anyhow!("page must be an integer between 1 and {MAX_PDF_PAGES}"))?;
+    let page_id = page_map
+        .get(&page_number)
+        .copied()
+        .ok_or_else(|| anyhow!("page {page_number} does not exist"))?;
+    let annotation_index = arguments
+        .get("annotation_index")
+        .and_then(Value::as_u64)
+        .and_then(|value| usize::try_from(value).ok())
+        .filter(|value| (1..=MAX_PDF_ANNOTATION_PREVIEW).contains(value))
+        .ok_or_else(|| {
+            anyhow!(
+                "annotation_index must be an integer between 1 and {MAX_PDF_ANNOTATION_PREVIEW}"
+            )
+        })?;
+    let mut annotations = pdf_page_annotations(
+        &document,
+        page_id,
+        format!("page {page_number} Annots").as_str(),
+    )?;
+    let selected_object = annotations
+        .get(annotation_index - 1)
+        .cloned()
+        .ok_or_else(|| {
+            anyhow!("page {page_number} annotation_index {annotation_index} does not exist")
+        })?;
+    let selected_id = selected_object.as_reference().ok();
+    let deleted_indirect_object = selected_id.is_some();
+    let selected_label = format!("page {page_number} annotation {annotation_index}");
+    let selected = resolved_pdf_dictionary(&document, selected_object, selected_label.as_str())?;
+    let subtype = selected
+        .get(b"Subtype")
+        .and_then(Object::as_name)
+        .with_context(|| format!("{selected_label} is missing a valid Subtype"))?;
+    let subtype = String::from_utf8_lossy(subtype).to_string();
+    if subtype != "Text"
+        && subtype != "Link"
+        && subtype != "FileAttachment"
+        && !is_pdf_markup_subtype(subtype.as_str())
+    {
+        return Err(anyhow!(
+            "{selected_label} subtype /{subtype} is not eligible for safe annotation deletion"
+        ));
+    }
+    let expected_subtype = required_text(arguments, "expected_subtype")?;
+    if expected_subtype != subtype {
+        return Err(anyhow!(
+            "expected_subtype does not match {selected_label}; inspect the current PDF again"
+        ));
+    }
+    let relation_type = match selected.get(b"IRT") {
+        Err(_) => "root",
+        Ok(_) => match selected.get(b"RT") {
+            Err(_) => "reply",
+            Ok(value) => match value
+                .as_name()
+                .with_context(|| format!("{selected_label} RT must be a name"))?
+            {
+                b"R" => "reply",
+                b"Group" => "group",
+                _ => return Err(anyhow!("{selected_label} RT must be /R or /Group")),
+            },
+        },
+    };
+    if required_text(arguments, "expected_relation_type")? != relation_type {
+        return Err(anyhow!(
+            "expected_relation_type does not match {selected_label}; inspect the current PDF again"
+        ));
+    }
+    if selected.has(b"StructParent") || selected.has(b"StructParents") {
+        return Err(anyhow!(
+            "{selected_label} participates in the tagged-PDF structure tree and cannot be deleted safely"
+        ));
+    }
+    if selected.has(b"Popup") || selected.has(b"Parent") {
+        return Err(anyhow!(
+            "{selected_label} has a Popup or Parent relationship and cannot be deleted safely"
+        ));
+    }
+
+    annotations.remove(annotation_index - 1);
+    let remaining_annotations_on_page = annotations.len();
+    let page = document
+        .get_object_mut(page_id)
+        .and_then(Object::as_dict_mut)
+        .with_context(|| format!("read page {page_number} dictionary"))?;
+    if annotations.is_empty() {
+        page.remove(b"Annots");
+    } else {
+        page.set("Annots", annotations);
+    }
+
+    document.prune_objects();
+    if selected_id.is_some_and(|object_id| document.objects.contains_key(&object_id)) {
+        return Err(anyhow!(
+            "{selected_label} is still referenced by a reply, group member, popup, or another reachable PDF object"
+        ));
+    }
+    let remaining_page_map = document.get_pages();
+    let remaining_inspection =
+        inspect_pdf_annotations(&document, &remaining_page_map, Some(&json!(page_number)))?;
+    let remaining_annotation_count = remaining_inspection
+        .get("count")
+        .and_then(Value::as_u64)
+        .ok_or_else(|| anyhow!("updated PDF annotation inspection did not return a valid count"))?;
+    if remaining_annotation_count.checked_add(1) != Some(initial_annotation_count) {
+        return Err(anyhow!(
+            "PDF annotation deletion changed an unexpected number of annotations"
+        ));
+    }
+
+    let target_requested = required_text(arguments, "target_path")?;
+    let (target, target_relative) = pdf_output_path(
+        state,
+        request,
+        target_requested,
+        std::slice::from_ref(&source),
+    )?;
+    let guards = [PdfFileGuard {
+        path: source.as_path(),
+        expected_sha256: expected_source_sha256.as_str(),
+        changed_message:
+            "PDF source changed while the annotation deletion was being prepared; no output was written",
+        require_regular_non_symlink: false,
+    }];
+    let bytes = save_pdf_document_with_file_guards(
+        &mut document,
+        target.as_path(),
+        optional_bool(arguments, "overwrite"),
+        guards.as_slice(),
+    )?;
+    Ok(json!({
+        "deleted": true,
+        "operation": "delete_annotation",
+        "source_path": source_relative,
+        "source_sha256": expected_source_sha256,
+        "path": target_relative,
+        "page": page_number,
+        "annotation_index": annotation_index,
+        "subtype": subtype,
+        "relation_type": relation_type,
+        "deleted_indirect_object": deleted_indirect_object,
+        "remaining_annotations_on_page": remaining_annotations_on_page,
+        "remaining_annotations_total": remaining_annotation_count,
+        "bytes": bytes,
+    }))
+}
+
 pub(super) fn add_pdf_file_attachment_annotation(
     arguments: &Value,
     state: &LocalState,

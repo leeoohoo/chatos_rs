@@ -14438,6 +14438,435 @@ fn pdf_link_annotations_reject_stale_unsafe_malformed_and_overlapping_inputs() {
 }
 
 #[test]
+fn deletes_exact_leaf_link_direct_and_attachment_pdf_annotations_without_modifying_sources() {
+    let (root, state, request) = test_context();
+    let source = root.join("source.pdf");
+    write_blank_pdf(source.as_path(), 1);
+    let mut prepared = Document::load(source.as_path()).expect("source PDF");
+    let page_id = prepared.get_pages()[&1];
+    let root_id = prepared.add_object(dictionary! {
+        "Type" => "Annot",
+        "Subtype" => "Text",
+        "Rect" => vec![10.into(), 10.into(), 34.into(), 34.into()],
+        "Contents" => lopdf::text_string("root"),
+        "P" => page_id,
+    });
+    let reply_id = prepared.add_object(dictionary! {
+        "Type" => "Annot",
+        "Subtype" => "Text",
+        "Rect" => vec![10.into(), 10.into(), 34.into(), 34.into()],
+        "Contents" => lopdf::text_string("reply"),
+        "IRT" => root_id,
+        "RT" => "R",
+        "P" => page_id,
+    });
+    let unsafe_link_id = prepared.add_object(dictionary! {
+        "Type" => "Annot",
+        "Subtype" => "Link",
+        "Rect" => vec![40.into(), 10.into(), 140.into(), 30.into()],
+        "A" => dictionary! {
+            "S" => "JavaScript",
+            "JS" => lopdf::text_string("never-return-this"),
+        },
+        "P" => page_id,
+    });
+    let direct_text = Object::Dictionary(dictionary! {
+        "Type" => "Annot",
+        "Subtype" => "Text",
+        "Rect" => vec![150.into(), 10.into(), 174.into(), 34.into()],
+        "Contents" => lopdf::text_string("direct"),
+        "P" => page_id,
+    });
+    prepared
+        .get_object_mut(page_id)
+        .and_then(Object::as_dict_mut)
+        .expect("page dictionary")
+        .set(
+            "Annots",
+            vec![
+                Object::Reference(root_id),
+                Object::Reference(reply_id),
+                Object::Reference(unsafe_link_id),
+                direct_text,
+            ],
+        );
+    prepared.save(source.as_path()).expect("save source PDF");
+    let source_before = fs::read(source.as_path()).expect("source bytes");
+    let source_sha256 = sha256_file(source.as_path()).expect("source hash");
+
+    let deleted_reply = pdf_edit::delete_pdf_annotation(
+        &json!({
+            "path":"source.pdf",
+            "expected_source_sha256":source_sha256,
+            "page":1,
+            "annotation_index":2,
+            "expected_subtype":"Text",
+            "expected_relation_type":"reply",
+            "target_path":"reply-deleted.pdf",
+        }),
+        &state,
+        &request,
+    )
+    .expect("delete exact leaf reply");
+    assert_eq!(deleted_reply.get("deleted"), Some(&Value::Bool(true)));
+    assert_eq!(
+        deleted_reply.get("remaining_annotations_total"),
+        Some(&json!(3))
+    );
+    assert_eq!(
+        deleted_reply.get("deleted_indirect_object"),
+        Some(&Value::Bool(true))
+    );
+    let reply_deleted_path = root.join("reply-deleted.pdf");
+    let reply_deleted_before = fs::read(reply_deleted_path.as_path()).expect("reply-deleted bytes");
+    let reply_deleted_inspection = inspect_pdf(
+        &json!({"path":"reply-deleted.pdf","annotation_page":1}),
+        &state,
+        &request,
+    )
+    .expect("inspect reply-deleted PDF");
+    assert_eq!(
+        reply_deleted_inspection.pointer("/annotations/reply_count"),
+        Some(&json!(0))
+    );
+    assert_eq!(
+        reply_deleted_inspection.pointer("/annotations/unsafe_link_count"),
+        Some(&json!(1))
+    );
+    assert!(!reply_deleted_inspection
+        .to_string()
+        .contains("never-return-this"));
+
+    let reply_deleted_sha256 =
+        sha256_file(reply_deleted_path.as_path()).expect("reply-deleted hash");
+    let deleted_link = pdf_edit::delete_pdf_annotation(
+        &json!({
+            "path":"reply-deleted.pdf",
+            "expected_source_sha256":reply_deleted_sha256,
+            "page":1,
+            "annotation_index":2,
+            "expected_subtype":"Link",
+            "expected_relation_type":"root",
+            "target_path":"link-deleted.pdf",
+        }),
+        &state,
+        &request,
+    )
+    .expect("delete unsafe Link without executing its action");
+    assert_eq!(deleted_link.get("subtype"), Some(&json!("Link")));
+    let link_deleted_path = root.join("link-deleted.pdf");
+    let link_deleted_before = fs::read(link_deleted_path.as_path()).expect("link-deleted bytes");
+    let link_deleted_inspection = inspect_pdf(
+        &json!({"path":"link-deleted.pdf","annotation_page":1}),
+        &state,
+        &request,
+    )
+    .expect("inspect link-deleted PDF");
+    assert_eq!(
+        link_deleted_inspection.pointer("/annotations/link_count"),
+        Some(&json!(0))
+    );
+
+    let link_deleted_sha256 = sha256_file(link_deleted_path.as_path()).expect("link-deleted hash");
+    let deleted_direct = pdf_edit::delete_pdf_annotation(
+        &json!({
+            "path":"link-deleted.pdf",
+            "expected_source_sha256":link_deleted_sha256,
+            "page":1,
+            "annotation_index":2,
+            "expected_subtype":"Text",
+            "expected_relation_type":"root",
+            "target_path":"direct-deleted.pdf",
+        }),
+        &state,
+        &request,
+    )
+    .expect("delete exact direct Text annotation");
+    assert_eq!(
+        deleted_direct.get("deleted_indirect_object"),
+        Some(&Value::Bool(false))
+    );
+    assert_eq!(
+        deleted_direct.get("remaining_annotations_on_page"),
+        Some(&json!(1))
+    );
+    assert_eq!(
+        fs::read(source.as_path()).expect("source after deletions"),
+        source_before
+    );
+    assert_eq!(
+        fs::read(reply_deleted_path.as_path()).expect("reply-deleted after child edit"),
+        reply_deleted_before
+    );
+    assert_eq!(
+        fs::read(link_deleted_path.as_path()).expect("link-deleted after child edit"),
+        link_deleted_before
+    );
+
+    let attachment_source = root.join("attachment-source.pdf");
+    write_blank_pdf(attachment_source.as_path(), 1);
+    fs::write(root.join("note.txt"), b"attachment payload").expect("attachment file");
+    let attachment_source_sha256 =
+        sha256_file(attachment_source.as_path()).expect("attachment source hash");
+    pdf_edit::add_pdf_file_attachment_annotation(
+        &json!({
+            "path":"attachment-source.pdf",
+            "expected_source_sha256":attachment_source_sha256,
+            "attachment_path":"note.txt",
+            "page":1,
+            "x":10,
+            "y":10,
+            "target_path":"attached.pdf",
+        }),
+        &state,
+        &request,
+    )
+    .expect("add attachment annotation for deletion");
+    let attached_path = root.join("attached.pdf");
+    let attached_before = fs::read(attached_path.as_path()).expect("attached bytes");
+    let attached_sha256 = sha256_file(attached_path.as_path()).expect("attached hash");
+    pdf_edit::delete_pdf_annotation(
+        &json!({
+            "path":"attached.pdf",
+            "expected_source_sha256":attached_sha256,
+            "page":1,
+            "annotation_index":1,
+            "expected_subtype":"FileAttachment",
+            "expected_relation_type":"root",
+            "target_path":"attachment-deleted.pdf",
+        }),
+        &state,
+        &request,
+    )
+    .expect("delete FileAttachment annotation and unreachable object chain");
+    assert_eq!(
+        fs::read(attached_path.as_path()).expect("attached source after deletion"),
+        attached_before
+    );
+    let attachment_deleted = inspect_pdf(
+        &json!({"path":"attachment-deleted.pdf","annotation_page":1}),
+        &state,
+        &request,
+    )
+    .expect("inspect attachment-deleted PDF");
+    assert_eq!(
+        attachment_deleted.pointer("/annotations/count"),
+        Some(&json!(0))
+    );
+    assert_eq!(
+        attachment_deleted.pointer("/annotations/attachment_count"),
+        Some(&json!(0))
+    );
+    let attachment_deleted_document =
+        Document::load(root.join("attachment-deleted.pdf")).expect("attachment-deleted PDF");
+    let has_attachment_objects = attachment_deleted_document.objects.values().any(|object| {
+        let dictionary = match object {
+            Object::Dictionary(dictionary) => Some(dictionary),
+            Object::Stream(stream) => Some(&stream.dict),
+            _ => None,
+        };
+        dictionary.is_some_and(|dictionary| {
+            dictionary
+                .get(b"Type")
+                .and_then(Object::as_name)
+                .is_ok_and(|value| value == b"Filespec" || value == b"EmbeddedFile")
+        })
+    });
+    assert!(!has_attachment_objects);
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn pdf_annotation_deletion_rejects_stale_mismatched_referenced_and_unsafe_targets() {
+    let (root, state, request) = test_context();
+    let source = root.join("source.pdf");
+    write_blank_pdf(source.as_path(), 1);
+    let mut prepared = Document::load(source.as_path()).expect("source PDF");
+    let page_id = prepared.get_pages()[&1];
+    let root_id = prepared.add_object(dictionary! {
+        "Type" => "Annot",
+        "Subtype" => "Text",
+        "Rect" => vec![10.into(), 10.into(), 34.into(), 34.into()],
+        "Contents" => lopdf::text_string("root"),
+        "P" => page_id,
+    });
+    let reply_id = prepared.add_object(dictionary! {
+        "Type" => "Annot",
+        "Subtype" => "Text",
+        "Rect" => vec![10.into(), 10.into(), 34.into(), 34.into()],
+        "Contents" => lopdf::text_string("reply"),
+        "IRT" => root_id,
+        "RT" => "R",
+        "P" => page_id,
+    });
+    let widget_id = prepared.add_object(dictionary! {
+        "Type" => "Annot",
+        "Subtype" => "Widget",
+        "Rect" => vec![40.into(), 10.into(), 80.into(), 30.into()],
+        "P" => page_id,
+    });
+    let structured_id = prepared.add_object(dictionary! {
+        "Type" => "Annot",
+        "Subtype" => "Text",
+        "Rect" => vec![90.into(), 10.into(), 114.into(), 34.into()],
+        "StructParent" => 1,
+        "P" => page_id,
+    });
+    let popup_parent_id = prepared.new_object_id();
+    let popup_id = prepared.add_object(dictionary! {
+        "Type" => "Annot",
+        "Subtype" => "Popup",
+        "Rect" => vec![120.into(), 10.into(), 220.into(), 80.into()],
+        "Parent" => popup_parent_id,
+        "P" => page_id,
+    });
+    prepared.objects.insert(
+        popup_parent_id,
+        Object::Dictionary(dictionary! {
+            "Type" => "Annot",
+            "Subtype" => "Text",
+            "Rect" => vec![230.into(), 10.into(), 254.into(), 34.into()],
+            "Popup" => popup_id,
+            "P" => page_id,
+        }),
+    );
+    prepared
+        .get_object_mut(page_id)
+        .and_then(Object::as_dict_mut)
+        .expect("page dictionary")
+        .set(
+            "Annots",
+            vec![
+                Object::Reference(root_id),
+                Object::Reference(reply_id),
+                Object::Reference(widget_id),
+                Object::Reference(structured_id),
+                Object::Reference(popup_parent_id),
+                Object::Reference(popup_id),
+            ],
+        );
+    prepared.save(source.as_path()).expect("save source PDF");
+    let source_before = fs::read(source.as_path()).expect("source bytes");
+    let source_sha256 = sha256_file(source.as_path()).expect("source hash");
+
+    for (target, overrides, expected) in [
+        (
+            "stale.pdf",
+            json!({"expected_source_sha256":"0".repeat(64)}),
+            "expected_source_sha256",
+        ),
+        (
+            "missing.pdf",
+            json!({"annotation_index":7}),
+            "does not exist",
+        ),
+        (
+            "subtype.pdf",
+            json!({"annotation_index":2,"expected_subtype":"Link","expected_relation_type":"reply"}),
+            "expected_subtype does not match",
+        ),
+        (
+            "relation.pdf",
+            json!({"annotation_index":2,"expected_relation_type":"root"}),
+            "expected_relation_type does not match",
+        ),
+        (
+            "widget.pdf",
+            json!({"annotation_index":3,"expected_subtype":"Widget"}),
+            "not eligible for safe annotation deletion",
+        ),
+        (
+            "structured.pdf",
+            json!({"annotation_index":4}),
+            "tagged-PDF structure tree",
+        ),
+        (
+            "popup.pdf",
+            json!({"annotation_index":5}),
+            "Popup or Parent relationship",
+        ),
+        (
+            "referenced.pdf",
+            json!({"annotation_index":1}),
+            "is still referenced",
+        ),
+        (
+            "source.pdf",
+            json!({"annotation_index":2,"expected_relation_type":"reply"}),
+            "distinct target_path",
+        ),
+    ] {
+        let mut arguments = json!({
+            "path":"source.pdf",
+            "expected_source_sha256":source_sha256,
+            "page":1,
+            "annotation_index":1,
+            "expected_subtype":"Text",
+            "expected_relation_type":"root",
+            "target_path":target,
+        });
+        for (key, value) in overrides.as_object().expect("deletion overrides") {
+            arguments[key] = value.clone();
+        }
+        let error = pdf_edit::delete_pdf_annotation(&arguments, &state, &request)
+            .expect_err("unsafe annotation deletion must fail");
+        assert!(
+            error.to_string().contains(expected),
+            "unexpected error for {target}: {error:#}"
+        );
+        if target != "source.pdf" {
+            assert!(!root.join(target).exists(), "unexpected output {target}");
+        }
+    }
+
+    fs::hard_link(source.as_path(), root.join("source-hard-link.pdf"))
+        .expect("hard-linked deletion target");
+    let hard_link_error = pdf_edit::delete_pdf_annotation(
+        &json!({
+            "path":"source.pdf",
+            "expected_source_sha256":source_sha256,
+            "page":1,
+            "annotation_index":2,
+            "expected_subtype":"Text",
+            "expected_relation_type":"reply",
+            "target_path":"source-hard-link.pdf",
+            "overwrite":true,
+        }),
+        &state,
+        &request,
+    )
+    .expect_err("hard-linked deletion target must fail");
+    assert!(hard_link_error.to_string().contains("distinct target_path"));
+
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(source.as_path(), root.join("linked-output.pdf"))
+            .expect("deletion target symlink");
+        let symlink_error = pdf_edit::delete_pdf_annotation(
+            &json!({
+                "path":"source.pdf",
+                "expected_source_sha256":source_sha256,
+                "page":1,
+                "annotation_index":2,
+                "expected_subtype":"Text",
+                "expected_relation_type":"reply",
+                "target_path":"linked-output.pdf",
+                "overwrite":true,
+            }),
+            &state,
+            &request,
+        )
+        .expect_err("symlink deletion target must fail");
+        assert!(symlink_error.to_string().contains("regular non-symlink"));
+    }
+    assert_eq!(
+        fs::read(source.as_path()).expect("source after failed deletions"),
+        source_before
+    );
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
 fn adds_and_inspects_unicode_pdf_annotation_reply_without_modifying_source() {
     let (root, state, request) = test_context();
     let source = root.join("artifacts/source.pdf");
