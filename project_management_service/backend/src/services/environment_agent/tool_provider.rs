@@ -30,6 +30,7 @@ pub(super) struct ProjectEnvironmentToolProvider {
     pub(super) project: ProjectRecord,
     pub(super) run_id: String,
     pub(super) user_access_token: Option<String>,
+    pub(super) selected_dependencies: Vec<String>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -206,12 +207,15 @@ impl ProjectEnvironmentToolProvider {
             .required_services
             .as_ref()
             .unwrap_or(&environment.required_services);
+        let selected_service_kinds =
+            selected_dependency_service_kinds(self.selected_dependencies.as_slice());
         if proposes_not_runnable
-            && environment_has_provisionable_evidence(
-                proposed_stack,
-                proposed_services,
-                args.images.as_slice(),
-            )
+            && (!selected_service_kinds.is_empty()
+                || environment_has_provisionable_evidence(
+                    proposed_stack,
+                    proposed_services,
+                    args.images.as_slice(),
+                ))
         {
             return Err(
                 "not_runnable is rejected because the project contains a provisionable runtime or dependency service. Continue initialization: create/reuse the application runtime image, create local replacements for detected databases/caches/configuration centers, generate connection environment variables, then save ready; use pending_configuration only for irreducible user-supplied business credentials."
@@ -245,6 +249,10 @@ impl ProjectEnvironmentToolProvider {
             args.env_vars.as_ref(),
         );
         ensure_required_service_records(&mut environment.required_services, inferred_service_kinds);
+        ensure_selected_service_records(
+            &mut environment.required_services,
+            selected_service_kinds.clone(),
+        );
         environment.status = if environment.not_runnable_reason.is_some() {
             ProjectRuntimeEnvironmentStatus::NotRunnable
         } else {
@@ -298,6 +306,12 @@ impl ProjectEnvironmentToolProvider {
                     image_catalog.as_ref(),
                 )?);
             }
+            ensure_selected_dependency_image_records(
+                self.project.id.as_str(),
+                environment.sandbox_provider,
+                selected_service_kinds,
+                &mut image_records,
+            )?;
         }
         environment.generated_config_files = generated_config_files;
         if !matches!(
@@ -351,6 +365,61 @@ impl ProjectEnvironmentToolProvider {
             "当前项目运行环境初始化结果已保存。",
             agent_visible_runtime_state(&self.project, &environment, images.as_slice()),
         ))
+    }
+}
+
+fn selected_dependency_service_kinds(
+    selected_dependencies: &[String],
+) -> std::collections::BTreeSet<String> {
+    let mut kinds = std::collections::BTreeSet::new();
+    for dependency in selected_dependencies {
+        infer_service_kinds_from_text(dependency, &mut kinds);
+    }
+    kinds
+}
+
+fn ensure_selected_dependency_image_records(
+    project_id: &str,
+    provider: RuntimeEnvironmentProvider,
+    selected_service_kinds: std::collections::BTreeSet<String>,
+    images: &mut Vec<ProjectRuntimeEnvironmentImageRecord>,
+) -> Result<(), String> {
+    for service in selected_service_kinds {
+        if images
+            .iter()
+            .any(|image| image_matches_service(image, service.as_str()))
+        {
+            continue;
+        }
+        let index = images.len();
+        images.push(image_input_to_record(
+            project_id,
+            ProjectRuntimeEnvironmentImageInput {
+                environment_key: Some(service.clone()),
+                environment_type: Some("service".to_string()),
+                display_name: Some(dependency_service_display_name(service.as_str()).to_string()),
+                ..ProjectRuntimeEnvironmentImageInput::default()
+            },
+            index,
+            provider,
+            None,
+        )?);
+    }
+    Ok(())
+}
+
+fn dependency_service_display_name(service: &str) -> &str {
+    match service {
+        "postgres" => "PostgreSQL",
+        "mysql" => "MySQL / MariaDB",
+        "mongodb" => "MongoDB",
+        "redis" => "Redis-compatible cache",
+        "nacos" => "Nacos",
+        "rabbitmq" => "RabbitMQ",
+        "kafka" => "Apache Kafka-compatible broker",
+        "elasticsearch" => "Elasticsearch-compatible search",
+        "minio" => "MinIO / S3-compatible storage",
+        other => other,
     }
 }
 

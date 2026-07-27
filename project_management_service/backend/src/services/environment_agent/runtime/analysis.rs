@@ -282,6 +282,7 @@ async fn run_project_environment_agent(
         user_access_token,
         run_id,
         capability_policy,
+        selected_dependencies,
     )
     .await?;
     ensure_agent_required_tools_available(&executor, &routing)?;

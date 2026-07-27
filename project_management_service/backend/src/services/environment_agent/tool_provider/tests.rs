@@ -188,6 +188,30 @@ fn dependency_image_plan_uses_platform_image_without_manual_build() {
 }
 
 #[test]
+fn selected_postgres_is_restored_when_the_agent_omits_it() {
+    let selected = selected_dependency_service_kinds(&["PostgreSQL".to_string()]);
+    let mut required_services = json!([]);
+    ensure_selected_service_records(&mut required_services, selected.clone());
+    let mut images = Vec::new();
+
+    ensure_selected_dependency_image_records(
+        "project-1",
+        RuntimeEnvironmentProvider::CloudSandboxManager,
+        selected,
+        &mut images,
+    )
+    .expect("restore selected PostgreSQL dependency");
+
+    assert_eq!(required_services[0]["type"], "postgres");
+    assert_eq!(required_services[0]["source"], "user_selection");
+    assert_eq!(images.len(), 1);
+    assert_eq!(images[0].environment_key, "postgres");
+    assert_eq!(images[0].image_ref.as_deref(), Some("postgres:16-alpine"));
+    assert_eq!(images[0].status, "ready");
+    assert_eq!(images[0].service_role, RuntimeServiceRole::Dependency);
+}
+
+#[test]
 fn application_image_can_reuse_an_initialized_catalog_image_id() {
     let catalog = json!({
         "images": [{

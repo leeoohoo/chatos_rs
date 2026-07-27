@@ -93,11 +93,11 @@ pub(in crate::services::environment_agent::tool_provider) fn infer_service_kinds
         ("mongodb", &["mongodb", "mongo_", "mongo.", "mongo://"]),
         ("mysql", &["mysql", "mariadb"]),
         ("postgres", &["postgres", "postgresql"]),
-        ("redis", &["redis"]),
+        ("redis", &["redis", "valkey", "dragonfly"]),
         ("rabbitmq", &["rabbitmq", "amqp://"]),
-        ("kafka", &["kafka"]),
+        ("kafka", &["kafka", "redpanda"]),
         ("elasticsearch", &["elasticsearch", "opensearch"]),
-        ("minio", &["minio"]),
+        ("minio", &["minio", "s3-compatible", "s3 compatible"]),
     ] {
         if markers.iter().any(|marker| value.contains(marker)) {
             kinds.insert(kind.to_string());
@@ -109,15 +109,34 @@ pub(in crate::services::environment_agent::tool_provider) fn ensure_required_ser
     required_services: &mut Value,
     inferred_kinds: std::collections::BTreeSet<String>,
 ) {
+    ensure_service_records(
+        required_services,
+        inferred_kinds,
+        "environment_variable_scan",
+    );
+}
+
+pub(in crate::services::environment_agent::tool_provider) fn ensure_selected_service_records(
+    required_services: &mut Value,
+    selected_kinds: std::collections::BTreeSet<String>,
+) {
+    ensure_service_records(required_services, selected_kinds, "user_selection");
+}
+
+fn ensure_service_records(
+    required_services: &mut Value,
+    kinds: std::collections::BTreeSet<String>,
+    source: &str,
+) {
     let services = required_services
         .as_array_mut()
         .expect("required services are normalized to an array");
     let existing = provisionable_service_kinds(&Value::Array(services.clone()));
-    for kind in inferred_kinds {
+    for kind in kinds {
         if !existing.contains(kind.as_str()) {
             services.push(json!({
                 "type": kind,
-                "source": "environment_variable_scan"
+                "source": source
             }));
         }
     }

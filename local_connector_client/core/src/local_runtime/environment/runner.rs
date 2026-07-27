@@ -16,7 +16,9 @@ use crate::model_configs::resolve_local_model_runtime;
 use crate::LocalRuntime;
 
 use super::json_output::parse_model_json;
-use super::prompt::{environment_analysis_prompt, normalize_analysis};
+use super::prompt::{
+    enforce_selected_dependencies, environment_analysis_prompt, normalize_analysis,
+};
 use super::scan::scan_local_project;
 use super::LocalEnvironmentAnalysisResult;
 
@@ -125,9 +127,10 @@ pub(crate) async fn run_local_environment_analysis(
         build_responses_text_input,
     )
     .await?;
-    let analysis = normalize_analysis(parse_model_json::<LocalEnvironmentAnalysisResult>(
+    let mut analysis = normalize_analysis(parse_model_json::<LocalEnvironmentAnalysisResult>(
         response.content.as_str(),
     )?)?;
+    enforce_selected_dependencies(&mut analysis, selected_dependencies.as_slice());
     database
         .update_local_environment_progress(
             owner_user_id.as_str(),

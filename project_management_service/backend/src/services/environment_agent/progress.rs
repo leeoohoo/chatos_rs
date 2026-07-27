@@ -307,25 +307,8 @@ fn progress_response(
 ) -> ProjectRuntimeEnvironmentProgressResponse {
     let job_status = job.map(|job| job.status.trim().to_ascii_lowercase());
     let build_progress = job.and_then(|job| estimate_build_progress(job.output.as_str()));
-    let (phase, status, progress_percent) = match environment.status {
-        ProjectRuntimeEnvironmentStatus::Disabled => ("disabled", "idle", Some(0)),
-        ProjectRuntimeEnvironmentStatus::PendingConfiguration => {
-            ("pending_configuration", "idle", Some(0))
-        }
-        ProjectRuntimeEnvironmentStatus::PendingImageBuild => {
-            ("pending_image_build", "idle", Some(100))
-        }
-        ProjectRuntimeEnvironmentStatus::Pending => ("pending", "idle", Some(0)),
-        ProjectRuntimeEnvironmentStatus::Ready => ("completed", "succeeded", Some(100)),
-        ProjectRuntimeEnvironmentStatus::NotRunnable => ("not_runnable", "succeeded", Some(100)),
-        ProjectRuntimeEnvironmentStatus::Failed => ("failed", "failed", Some(100)),
-        ProjectRuntimeEnvironmentStatus::Analyzing => match job_status.as_deref() {
-            Some("running") => ("building_image", "running", build_progress),
-            Some("succeeded") => ("finalizing", "running", Some(90)),
-            Some("failed") => ("failed", "failed", Some(100)),
-            _ => ("analyzing_project", "running", Some(15)),
-        },
-    };
+    let (phase, status, progress_percent) =
+        progress_state(environment.status, job_status.as_deref(), build_progress);
     let logs = job
         .map(|job| tail_utf8(job.output.as_str(), MAX_PROGRESS_LOG_BYTES))
         .unwrap_or_default();
@@ -360,6 +343,32 @@ fn progress_response(
         finished_at: job.and_then(|job| job.finished_at.clone()),
         logs,
         error,
+    }
+}
+
+fn progress_state(
+    environment_status: ProjectRuntimeEnvironmentStatus,
+    job_status: Option<&str>,
+    build_progress: Option<u8>,
+) -> (&'static str, &'static str, Option<u8>) {
+    match environment_status {
+        ProjectRuntimeEnvironmentStatus::Disabled => ("disabled", "idle", Some(0)),
+        ProjectRuntimeEnvironmentStatus::PendingConfiguration => {
+            ("pending_configuration", "idle", Some(0))
+        }
+        ProjectRuntimeEnvironmentStatus::PendingImageBuild => {
+            ("pending_image_build", "idle", Some(0))
+        }
+        ProjectRuntimeEnvironmentStatus::Pending => ("pending", "idle", Some(0)),
+        ProjectRuntimeEnvironmentStatus::Ready => ("completed", "succeeded", Some(100)),
+        ProjectRuntimeEnvironmentStatus::NotRunnable => ("not_runnable", "succeeded", Some(100)),
+        ProjectRuntimeEnvironmentStatus::Failed => ("failed", "failed", Some(100)),
+        ProjectRuntimeEnvironmentStatus::Analyzing => match job_status {
+            Some("running") => ("building_image", "running", build_progress),
+            Some("succeeded") => ("finalizing", "running", Some(90)),
+            Some("failed") => ("failed", "failed", Some(100)),
+            _ => ("analyzing_project", "running", Some(15)),
+        },
     }
 }
 
@@ -562,5 +571,17 @@ mod tests {
         );
 
         assert_eq!(progress, Some(67));
+    }
+
+    #[test]
+    fn pending_image_build_starts_at_zero_percent() {
+        assert_eq!(
+            progress_state(
+                ProjectRuntimeEnvironmentStatus::PendingImageBuild,
+                None,
+                None,
+            ),
+            ("pending_image_build", "idle", Some(0))
+        );
     }
 }

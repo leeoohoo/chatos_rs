@@ -46,6 +46,7 @@ pub(super) async fn build_project_environment_mcp_executor(
     user_access_token: Option<&str>,
     run_id: &str,
     capability_policy: &ResolvedAgentCapabilities,
+    selected_dependencies: &[String],
 ) -> Result<McpExecutor, String> {
     let mut builder = McpExecutor::builder();
     if capability_allows_mcp(capability_policy, PROJECT_ENVIRONMENT_MCP_RESOURCE_ID) {
@@ -56,6 +57,7 @@ pub(super) async fn build_project_environment_mcp_executor(
                 project: project.clone(),
                 run_id: run_id.to_string(),
                 user_access_token: user_access_token.map(ToOwned::to_owned),
+                selected_dependencies: selected_dependencies.to_vec(),
             });
     }
 
