@@ -76,8 +76,8 @@ fn bundled_plugin_specs_cover_all_twenty_eight_internal_skills_once() {
         .iter()
         .find(|spec| spec.name == "presentations")
         .expect("Presentations spec");
-    assert_eq!(presentations.release_version, "1.26.0");
-    assert_eq!(presentations.artifact_revision, "presentations-1.26.0");
+    assert_eq!(presentations.release_version, "1.27.0");
+    assert_eq!(presentations.artifact_revision, "presentations-1.27.0");
     let template_creator = bundled_plugin_specs()
         .iter()
         .find(|spec| spec.name == "template-creator")
@@ -191,8 +191,8 @@ fn bundled_releases_have_stable_component_and_content_snapshots() {
         (
             "presentations",
             (
-                "886a7a6aec7f4fc0c6a45c1f95f7e425a343a8dcf1d5756c284373719d81a5af",
-                "623bdd072fc534a314a44b27b4c299c79e52931eb820cce76d300912995117a6",
+                "31af2bdffd6057ac566a7d1740d74d270992cea04cd2f85251da574503fe3d26",
+                "e21539f566a092f7c2b844e4e1ccf1caf62881cecf473d10e9f23c577df243e3",
             ),
         ),
         (

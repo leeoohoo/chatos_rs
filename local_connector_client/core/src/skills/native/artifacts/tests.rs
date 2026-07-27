@@ -3347,7 +3347,7 @@ fn creates_and_appends_self_contained_standard_pptx_charts_without_workbooks() {
                     "chart":{
                         "type":"line",
                         "categories":["Jan","Feb","Mar"],
-                        "series":[{"name":"Retention","values":[91,92.5,94],"color":"#336699","marker_style":"diamond","marker_size":9}],
+                        "series":[{"name":"Retention","values":[91,92.5,94],"color":"#336699","marker_style":"diamond","marker_size":9,"smooth":true}],
                         "show_legend":false
                     }
                 },
@@ -3632,6 +3632,14 @@ fn creates_and_appends_self_contained_standard_pptx_charts_without_workbooks() {
         Some(&json!("9"))
     );
     assert_eq!(
+        inspected.pointer("/chart_metadata/1/series/0/smooth"),
+        Some(&json!(true))
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/1/series/0/smooth_value"),
+        Some(&json!("1"))
+    );
+    assert_eq!(
         inspected.pointer("/chart_metadata/1/legend_position"),
         Some(&Value::Null)
     );
@@ -3652,6 +3660,10 @@ fn creates_and_appends_self_contained_standard_pptx_charts_without_workbooks() {
         Some(&json!(9))
     );
     assert_eq!(
+        inspected.pointer("/chart_metadata/1/self_contained_edit_snapshot/series/0/smooth"),
+        Some(&json!(true))
+    );
+    assert_eq!(
         inspected
             .pointer("/chart_metadata/1/self_contained_edit_snapshot/value_axis_major_tick_mark"),
         Some(&json!("none"))
@@ -3670,6 +3682,10 @@ fn creates_and_appends_self_contained_standard_pptx_charts_without_workbooks() {
     );
     assert_eq!(
         inspected.pointer("/chart_metadata/2/series/0/marker_size"),
+        Some(&Value::Null)
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/2/series/0/smooth"),
         Some(&Value::Null)
     );
     assert_eq!(
@@ -3774,6 +3790,7 @@ fn creates_and_appends_self_contained_standard_pptx_charts_without_workbooks() {
     assert!(
         line_chart.contains("<c:marker><c:symbol val=\"diamond\"/><c:size val=\"9\"/></c:marker>")
     );
+    assert!(line_chart.contains("<c:smooth val=\"1\"/>"));
     let pie_chart =
         read_zip_text(&mut created_archive, "ppt/charts/chart3.xml").expect("generated pie XML");
     assert!(pie_chart
@@ -3998,8 +4015,8 @@ fn replaces_canonical_self_contained_pptx_chart_without_modifying_source_or_rela
                     "title":"Quarterly revenue",
                     "categories":["Q1","Q2"],
                     "series":[
-                        {"name":"North","values":[10,20],"color":"#112233","marker_style":"square","marker_size":8},
-                        {"name":"South","values":[12,18],"value_axis":"secondary","color":"#A0B0C0","marker_style":"none"}
+                        {"name":"North","values":[10,20],"color":"#112233","marker_style":"square","marker_size":8,"smooth":true},
+                        {"name":"South","values":[12,18],"value_axis":"secondary","color":"#A0B0C0","marker_style":"none","smooth":false}
                     ],
                     "show_legend":true,
                     "legend_position":"left",
@@ -4081,6 +4098,14 @@ fn replaces_canonical_self_contained_pptx_chart_without_modifying_source_or_rela
     assert_eq!(
         inspected.pointer("/chart_metadata/0/series/1/marker_size"),
         Some(&Value::Null)
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/0/series/0/smooth"),
+        Some(&json!(true))
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/0/series/1/smooth"),
+        Some(&json!(false))
     );
     assert_eq!(
         inspected.pointer("/chart_metadata/0/secondary_value_axis_title"),
@@ -4199,6 +4224,7 @@ fn replaces_canonical_self_contained_pptx_chart_without_modifying_source_or_rela
     assert!(output_chart.contains("<c:showPercent val=\"1\"/>"));
     assert!(output_chart.contains("<a:srgbClr val=\"CC5500\"/>"));
     assert!(!output_chart.contains("<c:marker>"));
+    assert!(!output_chart.contains("<c:smooth"));
     assert!(!output_chart.contains("<c:axPos val=\"r\"/>"));
     assert!(!output_chart.contains("<c:majorTickMark"));
     assert!(!output_chart.contains("<c:minorTickMark"));
@@ -4870,6 +4896,77 @@ fn rejects_stale_unsafe_or_noncanonical_pptx_chart_replacements_without_output()
             .is_some_and(|reason| reason.contains("series marker styling")));
     }
 
+    for (filename, replacement, expected_value) in [
+        (
+            "unknown-series-smooth-chart.pptx",
+            "<c:smooth val=\"2\"/>",
+            "2",
+        ),
+        (
+            "duplicate-series-smooth-chart.pptx",
+            "<c:smooth val=\"0\"/><c:smooth val=\"1\"/>",
+            "0",
+        ),
+        (
+            "wrong-namespace-series-smooth-chart.pptx",
+            "<a:smooth val=\"0\"/>",
+            "0",
+        ),
+    ] {
+        fs::copy(source.as_path(), root.join(filename)).expect("copy custom smooth fixture");
+        rewrite_zip_text_entry(
+            root.join(filename).as_path(),
+            "ppt/charts/chart1.xml",
+            |xml| xml.replacen("<c:smooth val=\"0\"/>", replacement, 1),
+        );
+        let inspection =
+            presentation::inspect_pptx_charts(&json!({"path":filename}), &state, &request)
+                .expect("inspect custom smooth fixture");
+        assert_eq!(
+            inspection.pointer("/chart_metadata/0/series/0/smooth"),
+            Some(&json!("custom"))
+        );
+        assert_eq!(
+            inspection.pointer("/chart_metadata/0/series/0/smooth_value"),
+            Some(&json!(expected_value))
+        );
+        assert_eq!(
+            inspection.pointer("/chart_metadata/0/eligible_for_self_contained_chart_replacement"),
+            Some(&json!(false))
+        );
+        assert!(inspection
+            .pointer("/chart_metadata/0/self_contained_replacement_unsupported_reason")
+            .and_then(Value::as_str)
+            .is_some_and(|reason| reason.contains("series smoothing")));
+    }
+
+    fs::copy(
+        source.as_path(),
+        root.join("oversized-series-smooth-value-chart.pptx"),
+    )
+    .expect("copy oversized smooth fixture");
+    rewrite_zip_text_entry(
+        root.join("oversized-series-smooth-value-chart.pptx")
+            .as_path(),
+        "ppt/charts/chart1.xml",
+        |xml| {
+            xml.replacen(
+                "<c:smooth val=\"0\"/>",
+                format!("<c:smooth val=\"{}\"/>", "x".repeat(129)).as_str(),
+                1,
+            )
+        },
+    );
+    let oversized_smooth = presentation::inspect_pptx_charts(
+        &json!({"path":"oversized-series-smooth-value-chart.pptx"}),
+        &state,
+        &request,
+    )
+    .expect_err("oversized series smooth value must fail closed");
+    assert!(oversized_smooth
+        .to_string()
+        .contains("smooth value is empty or exceeds the safety limit"));
+
     fs::copy(
         source.as_path(),
         root.join("custom-series-color-transform-chart.pptx"),
@@ -5328,6 +5425,22 @@ fn rejects_invalid_self_contained_pptx_chart_inputs_without_output() {
                 "chart":{"type":"line","categories":["A"],"series":[{"name":"S","values":[1],"marker_size":5.5}]}
             }),
             "marker_size must be an integer between 2 and 72",
+        ),
+        (
+            "non-line-series-smooth.pptx",
+            json!({
+                "title":"Invalid smoothing","layout":"chart",
+                "chart":{"type":"area","categories":["A"],"series":[{"name":"S","values":[1],"smooth":true}]}
+            }),
+            "smooth is supported only for line charts",
+        ),
+        (
+            "non-boolean-series-smooth.pptx",
+            json!({
+                "title":"Invalid smoothing","layout":"chart",
+                "chart":{"type":"line","categories":["A"],"series":[{"name":"S","values":[1],"smooth":"yes"}]}
+            }),
+            "smooth must be a boolean or null",
         ),
         (
             "hidden-left-legend.pptx",

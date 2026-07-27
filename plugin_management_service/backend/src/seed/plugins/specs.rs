@@ -101,9 +101,9 @@ static BUNDLED_PLUGIN_SPECS: [BundledPluginSpec; 12] = [
         "Create and edit presentation decks with visual verification.",
         "Productivity",
         &["internal_skill_presentations"],
-        "1.26.0",
-        "2026-07-28T01:00:00Z",
-        "presentations-1.26.0",
+        "1.27.0",
+        "2026-07-28T02:00:00Z",
+        "presentations-1.27.0",
     ),
     bundled_plugin_release(
         "template-creator",

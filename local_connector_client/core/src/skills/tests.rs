@@ -276,7 +276,7 @@ fn presentations_release_publishes_render_and_existing_edit_contracts() {
         .into_iter()
         .find(|item| item.skill_id == "internal_skill_presentations")
         .expect("Presentations catalog item");
-    assert_eq!(catalog_item.version, "1.26.0");
+    assert_eq!(catalog_item.version, "1.27.0");
     let instructions = internal_skill_instructions("internal_skill_presentations")
         .expect("Presentations instructions");
     assert!(instructions.contains("image_right"));
@@ -308,6 +308,11 @@ fn presentations_release_publishes_render_and_existing_edit_contracts() {
     assert!(instructions.contains("integer `marker_size` from 2 through 72"));
     assert!(instructions.contains("one exact direct-series `c:marker`"));
     assert!(instructions.contains("out-of-range series marker styling"));
+    assert!(instructions.contains("canonical line smoothing"));
+    assert!(instructions.contains("recognized/custom smoothing state"));
+    assert!(instructions.contains("Line series also accept boolean `smooth`"));
+    assert!(instructions.contains("one exact direct-series `c:smooth` boolean"));
+    assert!(instructions.contains("over-limit series smoothing"));
     assert!(instructions.contains("`table` layout"));
     assert!(instructions.contains("1–50 rows and 1–20 string columns"));
     assert!(instructions.contains("immediately eligible for `inspect_pptx_table`"));
@@ -456,6 +461,11 @@ fn presentations_release_publishes_render_and_existing_edit_contracts() {
             .and_then(Value::as_u64),
         Some(72)
     );
+    assert_eq!(
+        create
+            .pointer("/inputSchema/properties/slides/items/properties/chart/properties/series/items/properties/smooth/type"),
+        Some(&json!(["boolean", "null"]))
+    );
     let replace_chart = tools
         .iter()
         .find(|tool| tool.get("name").and_then(Value::as_str) == Some("replace_pptx_chart"))
@@ -472,6 +482,10 @@ fn presentations_release_publishes_render_and_existing_edit_contracts() {
         .pointer("/inputSchema/properties/expected_self_contained_edit_snapshot/properties/series/items/required")
         .and_then(Value::as_array)
         .is_some_and(|required| required.contains(&json!("marker_size"))));
+    assert!(replace_chart
+        .pointer("/inputSchema/properties/expected_self_contained_edit_snapshot/properties/series/items/required")
+        .and_then(Value::as_array)
+        .is_some_and(|required| required.contains(&json!("smooth"))));
 }
 
 #[test]
@@ -840,7 +854,7 @@ fn ready_bundle_v2_fingerprint_matches_plugin_management_seed() {
         .join("\n");
     assert_eq!(
         hex::encode(Sha256::digest(rows.as_bytes())),
-        "8cc6552aee8f1a90910be6aeed14919412e68e3b5a71e837ab71ffb4496d1e08"
+        "f3ef5c3ca4e0ca316bbe47e1c18df0565b953c69fc14ea7ff1c13db65ae4f886"
     );
 }
 
@@ -855,7 +869,7 @@ fn all_28_bundled_skill_fingerprints_match_plugin_management_seed() {
         .join("\n");
     assert_eq!(
         hex::encode(Sha256::digest(rows.as_bytes())),
-        "973f039d3770bf3d407d98275b27e9960db78a79dd27c9770eb60ec1ea305ffd"
+        "fb40fec30210da55549af244386cbe48524c1ed336ad18a53330a37ea9624920"
     );
 }
 

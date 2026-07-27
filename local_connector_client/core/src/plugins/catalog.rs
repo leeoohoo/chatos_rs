@@ -647,10 +647,10 @@ mod tests {
             .iter()
             .find(|plugin| plugin.name == "presentations")
             .expect("Presentations Plugin");
-        assert_eq!(presentations.latest_version, "1.26.0");
+        assert_eq!(presentations.latest_version, "1.27.0");
         assert_eq!(
             presentations.latest_release_id,
-            "bundled-release-presentations-1-26-0"
+            "bundled-release-presentations-1-27-0"
         );
     }
 

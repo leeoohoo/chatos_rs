@@ -480,6 +480,7 @@ struct PresentationChartSeries {
     color: Option<String>,
     marker_style: Option<PresentationChartMarkerStyle>,
     marker_size: Option<u8>,
+    smooth: Option<bool>,
 }
 
 #[derive(Clone, Debug)]
@@ -661,6 +662,10 @@ struct PptxChartSeriesInspection {
     marker_count: usize,
     marker_symbol_count: usize,
     marker_size_count: usize,
+    smooth: Option<bool>,
+    smooth_value: Option<String>,
+    smooth_custom: bool,
+    smooth_count: usize,
     name: String,
     name_formula: Option<String>,
     category_formula: Option<String>,
@@ -3872,7 +3877,13 @@ fn parse_presentation_chart(value: &Value, slide_number: usize) -> Result<Presen
         if series.keys().any(|key| {
             !matches!(
                 key.as_str(),
-                "name" | "values" | "value_axis" | "color" | "marker_style" | "marker_size"
+                "name"
+                    | "values"
+                    | "value_axis"
+                    | "color"
+                    | "marker_style"
+                    | "marker_size"
+                    | "smooth"
             )
         }) {
             return Err(anyhow!(
@@ -3973,6 +3984,12 @@ fn parse_presentation_chart(value: &Value, slide_number: usize) -> Result<Presen
             slide_number,
             series_index + 1,
         )?;
+        let smooth = parse_presentation_chart_series_smooth(
+            chart_type,
+            series.get("smooth"),
+            slide_number,
+            series_index + 1,
+        )?;
         parsed_series.push(PresentationChartSeries {
             name: name.to_string(),
             values,
@@ -3980,6 +3997,7 @@ fn parse_presentation_chart(value: &Value, slide_number: usize) -> Result<Presen
             color,
             marker_style,
             marker_size,
+            smooth,
         });
     }
     let secondary_series = parsed_series
@@ -4207,6 +4225,31 @@ fn parse_presentation_chart_series_marker(
         }
     };
     Ok((Some(style), Some(size)))
+}
+
+fn parse_presentation_chart_series_smooth(
+    chart_type: PresentationChartType,
+    value: Option<&Value>,
+    slide_number: usize,
+    series_number: usize,
+) -> Result<Option<bool>> {
+    if chart_type != PresentationChartType::Line {
+        if value.is_some_and(|value| !value.is_null()) {
+            return Err(anyhow!(
+                "slide {slide_number} chart series {series_number} smooth is supported only for line charts"
+            ));
+        }
+        return Ok(None);
+    }
+    match value {
+        None => Ok(Some(false)),
+        Some(value) if value.is_null() => Ok(Some(false)),
+        Some(value) => value.as_bool().map(Some).ok_or_else(|| {
+            anyhow!(
+                "slide {slide_number} chart series {series_number} smooth must be a boolean or null"
+            )
+        }),
+    }
 }
 
 fn parse_presentation_chart_axis_bound(
@@ -5223,6 +5266,8 @@ fn presentation_chart_xml(chart: &PresentationChart) -> Result<String> {
                             .marker_style
                             .map(PresentationChartMarkerStyle::as_str)
                     || inspected.marker_size != expected.marker_size
+                    || inspected.smooth_custom
+                    || inspected.smooth != expected.smooth
             })
         || inspection.chart_types.len() != 1
         || inspection.chart_groups.len() != usize::from(has_secondary_axis) + 1
@@ -5292,11 +5337,10 @@ fn presentation_chart_series_xml(
 ) -> String {
     let color = presentation_chart_series_color_xml(chart.chart_type, series.color.as_deref());
     let marker = presentation_chart_series_marker_xml(series.marker_style, series.marker_size);
-    let smooth = if chart.chart_type == PresentationChartType::Line {
-        r#"<c:smooth val="0"/>"#
-    } else {
-        ""
-    };
+    let smooth = series
+        .smooth
+        .map(|smooth| format!(r#"<c:smooth val="{}"/>"#, u8::from(smooth)))
+        .unwrap_or_default();
     format!(
         r#"<c:ser><c:idx val="{index}"/><c:order val="{index}"/><c:tx><c:v>{}</c:v></c:tx>{color}{marker}<c:cat>{}</c:cat><c:val>{}</c:val>{smooth}</c:ser>"#,
         escape_xml(series.name.as_str()),
@@ -5391,6 +5435,7 @@ fn presentation_chart_snapshot(chart: &PresentationChart) -> Value {
             "color": series.color,
             "marker_style": series.marker_style.map(PresentationChartMarkerStyle::as_str),
             "marker_size": series.marker_size,
+            "smooth": series.smooth,
         })).collect::<Vec<_>>(),
         "show_legend": chart.show_legend,
         "legend_position": chart.legend_position.as_str(),
@@ -5597,6 +5642,22 @@ fn canonical_pptx_chart_snapshot(
                 "canonical non-line chart series must not contain marker styling"
             ));
         }
+        if item.smooth_custom {
+            return Err(anyhow!(
+                "canonical self-contained chart series smoothing is outside the exact bounded line-smoothing contract"
+            ));
+        }
+        if chart_type == PresentationChartType::Line {
+            if item.smooth.is_none() {
+                return Err(anyhow!(
+                    "canonical line chart series requires one smooth value"
+                ));
+            }
+        } else if item.smooth.is_some() {
+            return Err(anyhow!(
+                "canonical non-line chart series must not contain smoothing"
+            ));
+        }
         series.push(PresentationChartSeries {
             name: item.name.clone(),
             values,
@@ -5604,6 +5665,7 @@ fn canonical_pptx_chart_snapshot(
             color: item.color.clone(),
             marker_style,
             marker_size: item.marker_size,
+            smooth: item.smooth,
         });
     }
     let candidate = PresentationChart {
@@ -9403,6 +9465,13 @@ fn inspect_standard_pptx_chart_xml(xml: &str) -> Result<PptxChartInspection> {
                     current_series.as_mut(),
                     false,
                 )?;
+                record_pptx_chart_series_smooth_element(
+                    &reader,
+                    &event,
+                    stack.as_slice(),
+                    current_series.as_mut(),
+                    false,
+                )?;
                 stack.push(local);
                 if stack.len() > 256 {
                     return Err(anyhow!("PPTX chart XML nesting exceeds the safety limit"));
@@ -9457,6 +9526,13 @@ fn inspect_standard_pptx_chart_xml(xml: &str) -> Result<PptxChartInspection> {
                     true,
                 )?;
                 record_pptx_chart_series_marker_element(
+                    &reader,
+                    &event,
+                    stack.as_slice(),
+                    current_series.as_mut(),
+                    true,
+                )?;
+                record_pptx_chart_series_smooth_element(
                     &reader,
                     &event,
                     stack.as_slice(),
@@ -9625,6 +9701,7 @@ fn inspect_standard_pptx_chart_xml(xml: &str) -> Result<PptxChartInspection> {
                         .ok_or_else(|| anyhow!("PPTX chart series boundary is invalid"))?;
                     finalize_pptx_chart_series_color(&mut item);
                     finalize_pptx_chart_series_marker(&mut item);
+                    finalize_pptx_chart_series_smooth(&mut item);
                     series.push(item);
                     if series.len() > MAX_PPTX_CHART_SERIES {
                         return Err(anyhow!(
@@ -10102,6 +10179,58 @@ fn finalize_pptx_chart_series_marker(series: &mut PptxChartSeriesInspection) {
     }
 }
 
+fn record_pptx_chart_series_smooth_element(
+    reader: &Reader<&[u8]>,
+    event: &BytesStart<'_>,
+    stack: &[String],
+    series: Option<&mut PptxChartSeriesInspection>,
+    empty: bool,
+) -> Result<()> {
+    let Some(series) = series else {
+        return Ok(());
+    };
+    if event.local_name().as_ref() != b"smooth" || stack.last().map(String::as_str) != Some("ser") {
+        return Ok(());
+    }
+    series.smooth_count = series.smooth_count.saturating_add(1);
+    if event.name().as_ref() != b"c:smooth"
+        || !empty
+        || !pptx_xml_attributes_match(event, &[b"val"])?
+    {
+        series.smooth_custom = true;
+    }
+    let value = optional_xml_attribute(reader, event, "val")?;
+    if value
+        .as_deref()
+        .is_some_and(|value| value.is_empty() || value.len() > 128)
+    {
+        return Err(anyhow!(
+            "PPTX chart series smooth value is empty or exceeds the safety limit"
+        ));
+    }
+    if series.smooth_value.is_some() {
+        series.smooth_custom = true;
+    } else {
+        series.smooth_value = value.clone();
+    }
+    match value.as_deref() {
+        Some("1" | "true") => series.smooth = Some(true),
+        Some("0" | "false") => series.smooth = Some(false),
+        _ => series.smooth_custom = true,
+    }
+    Ok(())
+}
+
+fn finalize_pptx_chart_series_smooth(series: &mut PptxChartSeriesInspection) {
+    if series.chart_type == "line" {
+        if series.smooth_count != 1 || series.smooth.is_none() || series.smooth_value.is_none() {
+            series.smooth_custom = true;
+        }
+    } else if series.smooth_count != 0 || series.smooth.is_some() || series.smooth_value.is_some() {
+        series.smooth_custom = true;
+    }
+}
+
 fn pptx_xml_attributes_match(event: &BytesStart<'_>, expected: &[&[u8]]) -> Result<bool> {
     let mut actual = event
         .attributes()
@@ -10471,6 +10600,11 @@ fn pptx_chart_series_json(series: &PptxChartSeriesInspection) -> Value {
     } else {
         series.marker_style.clone()
     };
+    let smooth = if series.smooth_custom {
+        json!("custom")
+    } else {
+        series.smooth.map(Value::Bool).unwrap_or(Value::Null)
+    };
     json!({
         "chart_type": series.chart_type,
         "chart_group": series.chart_group_index + 1,
@@ -10481,6 +10615,8 @@ fn pptx_chart_series_json(series: &PptxChartSeriesInspection) -> Value {
         "marker_style_value": series.marker_style_value,
         "marker_size": if series.marker_style_custom { None } else { series.marker_size },
         "marker_size_value": series.marker_size_value,
+        "smooth": smooth,
+        "smooth_value": series.smooth_value,
         "name": series.name,
         "name_formula": series.name_formula,
         "category_formula": series.category_formula,
