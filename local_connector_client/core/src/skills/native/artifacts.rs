@@ -88,6 +88,9 @@ pub(super) fn execute_with_cancellation(
         ("internal_skill_pdf", "add_pdf_text_annotation") => {
             pdf_edit::add_pdf_text_annotation(arguments, state, request)
         }
+        ("internal_skill_pdf", "add_pdf_markup_annotation") => {
+            pdf_edit::add_pdf_markup_annotation(arguments, state, request)
+        }
         ("internal_skill_pdf", "stamp_pdf_text") => {
             pdf_edit::stamp_pdf_text(arguments, state, request)
         }
@@ -278,6 +281,11 @@ fn inspect_pdf(arguments: &Value, state: &LocalState, request: &RelayRequest) ->
     } else {
         pdf_edit::inspect_pdf_annotations(&document, &pages)?
     };
+    let page_geometry = if document.is_encrypted() {
+        Value::Null
+    } else {
+        pdf_edit::inspect_pdf_page_geometry(&document, &pages, arguments.get("page_geometry"))?
+    };
     let metadata = if document.is_encrypted() {
         Value::Null
     } else {
@@ -296,6 +304,7 @@ fn inspect_pdf(arguments: &Value, state: &LocalState, request: &RelayRequest) ->
         "encrypted": document.is_encrypted(),
         "metadata": metadata,
         "annotations": annotations,
+        "page_geometry": page_geometry,
         "form": form,
     }))
 }

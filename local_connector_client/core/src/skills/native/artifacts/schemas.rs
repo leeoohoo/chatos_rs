@@ -19,6 +19,7 @@ pub(super) fn tool_definitions(skill_id: &str) -> Vec<Value> {
             arrange_pdf_pages_tool(),
             rotate_pdf_pages_tool(),
             add_pdf_text_annotation_tool(),
+            add_pdf_markup_annotation_tool(),
             stamp_pdf_text_tool(),
             stamp_pdf_page_numbers_tool(),
             stamp_pdf_image_tool(),
@@ -96,10 +97,13 @@ pub(super) fn tool_definitions(skill_id: &str) -> Vec<Value> {
 fn inspect_pdf_tool() -> Value {
     tool(
         "inspect_pdf",
-        "Inspect a PDF inside the authorized local workspace and report its page count and metadata.",
+        "Inspect a PDF inside the authorized local workspace and report its page count, metadata, annotations, forms, and optional exact page geometry and rotation for coordinate-bound annotation work.",
         json!({
             "type":"object",
-            "properties":{"path":{"type":"string"}},
+            "properties":{
+                "path":{"type":"string"},
+                "page_geometry":{"type":"integer","minimum":1,"maximum":5000,"description":"Optional one-based physical page whose effective CropBox/MediaBox bounds and rotation should be returned."}
+            },
             "required":["path"],
             "additionalProperties":false
         }),
@@ -419,6 +423,46 @@ fn add_pdf_text_annotation_tool() -> Value {
                 "overwrite":{"type":"boolean","default":false}
             },
             "required":["path","page","text","target_path"],
+            "additionalProperties":false
+        }),
+    )
+}
+
+fn add_pdf_markup_annotation_tool() -> Value {
+    tool(
+        "add_pdf_markup_annotation",
+        "Add one bounded standard PDF highlight, underline, strikeout, or squiggly markup annotation to an unrotated physical page. Geometry uses CropBox-relative PDF points and is checked against the exact page bounds; existing annotations and the source remain unchanged.",
+        json!({
+            "type":"object",
+            "properties":{
+                "path":{"type":"string","description":"Workspace-relative source .pdf path."},
+                "page":{"type":"integer","minimum":1,"maximum":5000,"description":"One-based physical page position."},
+                "markup":{"type":"string","enum":["highlight","underline","strikeout","squiggly"]},
+                "rectangles":{
+                    "type":"array",
+                    "minItems":1,
+                    "maxItems":64,
+                    "description":"Axis-aligned text rectangles in PDF points relative to the effective page CropBox lower-left corner.",
+                    "items":{
+                        "type":"object",
+                        "properties":{
+                            "x":{"type":"number","minimum":0,"maximum":20000},
+                            "y":{"type":"number","minimum":0,"maximum":20000},
+                            "width":{"type":"number","minimum":0.1,"maximum":20000},
+                            "height":{"type":"number","minimum":0.1,"maximum":20000}
+                        },
+                        "required":["x","y","width","height"],
+                        "additionalProperties":false
+                    }
+                },
+                "text":{"type":"string","minLength":1,"maxLength":4096,"description":"Optional Unicode annotation contents."},
+                "author":{"type":"string","minLength":1,"maxLength":256},
+                "color":{"type":"string","enum":["yellow","blue","green","red"],"default":"yellow"},
+                "opacity":{"type":"number","minimum":0.05,"maximum":1,"default":0.35},
+                "target_path":{"type":"string","description":"Distinct workspace-relative .pdf output path."},
+                "overwrite":{"type":"boolean","default":false}
+            },
+            "required":["path","page","markup","rectangles","target_path"],
             "additionalProperties":false
         }),
     )

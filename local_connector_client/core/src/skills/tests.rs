@@ -35,7 +35,7 @@ fn pdf_release_publishes_bounded_generation_and_editing_tools() {
         .into_iter()
         .find(|item| item.skill_id == "internal_skill_pdf")
         .expect("PDF catalog item");
-    assert_eq!(catalog_item.version, "1.14.0");
+    assert_eq!(catalog_item.version, "1.15.0");
     assert_eq!(
         catalog_item.permissions,
         vec!["workspace.read", "workspace.write"]
@@ -56,7 +56,7 @@ fn pdf_release_publishes_bounded_generation_and_editing_tools() {
         .iter()
         .filter_map(|tool| tool.get("name").and_then(Value::as_str))
         .collect::<HashSet<_>>();
-    assert_eq!(tools.len(), 16);
+    assert_eq!(tools.len(), 17);
     assert!(names.contains("inspect_pdf"));
     assert!(names.contains("extract_pdf_text"));
     assert!(names.contains("render_pdf_pages"));
@@ -70,6 +70,7 @@ fn pdf_release_publishes_bounded_generation_and_editing_tools() {
     assert!(names.contains("arrange_pdf_pages"));
     assert!(names.contains("rotate_pdf_pages"));
     assert!(names.contains("add_pdf_text_annotation"));
+    assert!(names.contains("add_pdf_markup_annotation"));
     assert!(names.contains("stamp_pdf_text"));
     assert!(names.contains("stamp_pdf_page_numbers"));
     assert!(names.contains("stamp_pdf_image"));
@@ -81,6 +82,8 @@ fn pdf_release_publishes_bounded_generation_and_editing_tools() {
     assert!(instructions.contains("retain their original physical offset"));
     assert!(instructions.contains("Unicode sticky-note annotations"));
     assert!(instructions.contains("effective page rotation of zero"));
+    assert!(instructions.contains("CropBox-relative lower-left PDF points"));
+    assert!(instructions.contains("highlight, underline, strikeout, and squiggly"));
     assert!(instructions.contains("Unicode Document Info inspection and updates"));
     assert!(instructions.contains("semantic no-op fails"));
     assert!(instructions.contains("manifest-verified local PDF page rendering"));
@@ -93,7 +96,7 @@ fn pdf_release_publishes_bounded_generation_and_editing_tools() {
     assert!(instructions.contains("combined inputs are limited to 100 MiB and 100 megapixels"));
     assert!(instructions.contains("Always call `render_pdf_pages` on the generated PDF"));
     assert!(instructions.contains("target_directory` that does not already exist"));
-    assert!(instructions.contains("per-file atomic commit"));
+    assert!(instructions.contains("commits each file atomically"));
 }
 
 #[test]
@@ -766,7 +769,7 @@ fn ready_bundle_v2_fingerprint_matches_plugin_management_seed() {
         .join("\n");
     assert_eq!(
         hex::encode(Sha256::digest(rows.as_bytes())),
-        "f7f06221f534a3973bffc12d516c4494e72cffb0b8e9d7b1ffd44560c3f179e1"
+        "ca99fc9536f79490f320975d8189ddd1ef7d8853d24e2ac17712eb13ad6ad715"
     );
 }
 
@@ -781,7 +784,7 @@ fn all_28_bundled_skill_fingerprints_match_plugin_management_seed() {
         .join("\n");
     assert_eq!(
         hex::encode(Sha256::digest(rows.as_bytes())),
-        "d87becf1cc59efc0dae803e69e087a8e4f9d8483b7a9afd908b7c20685a8e2e7"
+        "eb95de2aeb594ea439819ea14f4431417b3c3a7647cc66f4ef56c30f083fa4a8"
     );
 }
 

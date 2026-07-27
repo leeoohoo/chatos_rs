@@ -13473,6 +13473,368 @@ fn pdf_text_annotation_rejects_invalid_inputs_rotation_malformed_annots_and_in_p
 }
 
 #[test]
+fn adds_and_inspects_unicode_pdf_markup_annotation_with_crop_box_geometry() {
+    let (root, state, request) = test_context();
+    let source = root.join("artifacts/source.pdf");
+    write_blank_pdf(source.as_path(), 3);
+    let mut prepared = Document::load(source.as_path()).expect("source PDF");
+    let page_id = prepared.get_pages()[&2];
+    prepared
+        .get_object_mut(page_id)
+        .and_then(Object::as_dict_mut)
+        .expect("page dictionary")
+        .set(
+            "CropBox",
+            vec![10.into(), 20.into(), 510.into(), 720.into()],
+        );
+    let existing_id = prepared.add_object(dictionary! {
+        "Type" => "Annot",
+        "Subtype" => "Text",
+        "Rect" => vec![36.into(), 36.into(), 60.into(), 60.into()],
+        "Contents" => lopdf::text_string("Existing note"),
+        "P" => page_id,
+    });
+    prepared
+        .get_object_mut(page_id)
+        .and_then(Object::as_dict_mut)
+        .expect("page dictionary")
+        .set("Annots", vec![Object::Reference(existing_id)]);
+    prepared.save(source.as_path()).expect("save source PDF");
+    let source_before = fs::read(source.as_path()).expect("source PDF bytes");
+
+    let added = pdf_edit::add_pdf_markup_annotation(
+        &json!({
+            "path":"artifacts/source.pdf",
+            "page":2,
+            "markup":"highlight",
+            "rectangles":[
+                {"x":20,"y":30,"width":100,"height":12},
+                {"x":140,"y":30,"width":80,"height":12}
+            ],
+            "text":"重点：请复核金额。",
+            "author":"李雷",
+            "color":"green",
+            "opacity":0.45,
+            "target_path":"artifacts/highlighted.pdf"
+        }),
+        &state,
+        &request,
+    )
+    .expect("add PDF markup annotation");
+    assert_eq!(
+        added.get("operation").and_then(Value::as_str),
+        Some("add_markup_annotation")
+    );
+    assert_eq!(
+        added.get("markup").and_then(Value::as_str),
+        Some("highlight")
+    );
+    assert_eq!(
+        added.get("quadrilateral_count").and_then(Value::as_u64),
+        Some(2)
+    );
+
+    let document = Document::load(root.join("artifacts/highlighted.pdf")).expect("highlighted PDF");
+    let page_id = document.get_pages()[&2];
+    let annotations = document
+        .get_object(page_id)
+        .and_then(Object::as_dict)
+        .and_then(|page| page.get(b"Annots"))
+        .and_then(Object::as_array)
+        .expect("annotation array");
+    assert_eq!(annotations.len(), 2);
+    let annotation = annotations
+        .iter()
+        .filter_map(|value| value.as_reference().ok())
+        .filter_map(|id| document.get_object(id).ok())
+        .filter_map(|value| value.as_dict().ok())
+        .find(|dictionary| {
+            dictionary
+                .get(b"Subtype")
+                .ok()
+                .and_then(|value| value.as_name().ok())
+                == Some(b"Highlight")
+        })
+        .expect("highlight annotation");
+    assert_eq!(
+        annotation
+            .get(b"Rect")
+            .and_then(Object::as_array)
+            .expect("annotation rect")
+            .iter()
+            .map(|value| value.as_float().expect("rect number"))
+            .collect::<Vec<_>>(),
+        vec![30.0, 50.0, 230.0, 62.0]
+    );
+    assert_eq!(
+        annotation
+            .get(b"QuadPoints")
+            .and_then(Object::as_array)
+            .expect("quad points")
+            .iter()
+            .map(|value| value.as_float().expect("quad number"))
+            .collect::<Vec<_>>(),
+        vec![
+            30.0, 62.0, 130.0, 62.0, 30.0, 50.0, 130.0, 50.0, 150.0, 62.0, 230.0, 62.0, 150.0,
+            50.0, 230.0, 50.0,
+        ]
+    );
+    assert_eq!(
+        annotation
+            .get(b"Contents")
+            .map(lopdf::decode_text_string)
+            .expect("contents")
+            .expect("decode contents"),
+        "重点：请复核金额。"
+    );
+    assert_eq!(
+        annotation
+            .get(b"T")
+            .map(lopdf::decode_text_string)
+            .expect("author")
+            .expect("decode author"),
+        "李雷"
+    );
+    assert_eq!(
+        annotation
+            .get(b"F")
+            .and_then(Object::as_i64)
+            .expect("annotation flags"),
+        4
+    );
+    assert_eq!(
+        annotation
+            .get(b"P")
+            .and_then(Object::as_reference)
+            .expect("page reference"),
+        page_id
+    );
+    assert_eq!(
+        annotation
+            .get(b"C")
+            .and_then(Object::as_array)
+            .expect("annotation color")
+            .iter()
+            .map(|value| value.as_float().expect("color number"))
+            .collect::<Vec<_>>(),
+        vec![0.35, 0.8, 0.4]
+    );
+    assert_eq!(
+        annotation
+            .get(b"CA")
+            .and_then(Object::as_float)
+            .expect("annotation opacity"),
+        0.45
+    );
+
+    let inspected = inspect_pdf(
+        &json!({"path":"artifacts/highlighted.pdf","page_geometry":2}),
+        &state,
+        &request,
+    )
+    .expect("inspect highlighted PDF");
+    let geometry = inspected.get("page_geometry").expect("page geometry");
+    assert_eq!(geometry.get("page").and_then(Value::as_u64), Some(2));
+    assert_eq!(
+        geometry.get("origin_x_points").and_then(Value::as_f64),
+        Some(10.0)
+    );
+    assert_eq!(
+        geometry.get("origin_y_points").and_then(Value::as_f64),
+        Some(20.0)
+    );
+    assert_eq!(
+        geometry.get("width_points").and_then(Value::as_f64),
+        Some(500.0)
+    );
+    assert_eq!(
+        geometry.get("height_points").and_then(Value::as_f64),
+        Some(700.0)
+    );
+    assert_eq!(
+        geometry.get("rotation_degrees").and_then(Value::as_i64),
+        Some(0)
+    );
+    let summary = inspected.get("annotations").expect("annotation summary");
+    assert_eq!(summary.get("count").and_then(Value::as_u64), Some(2));
+    assert_eq!(summary.get("text_count").and_then(Value::as_u64), Some(1));
+    assert_eq!(summary.get("markup_count").and_then(Value::as_u64), Some(1));
+    assert!(summary
+        .get("preview")
+        .and_then(Value::as_array)
+        .is_some_and(|items| items.iter().any(|item| {
+            item.get("subtype").and_then(Value::as_str) == Some("Highlight")
+                && item.get("contents").and_then(Value::as_str) == Some("重点：请复核金额。")
+                && item.get("author").and_then(Value::as_str) == Some("李雷")
+                && item.get("quadrilateral_count").and_then(Value::as_u64) == Some(2)
+                && item.get("rect") == Some(&json!([30.0, 50.0, 230.0, 62.0]))
+        })));
+    assert_eq!(
+        fs::read(source.as_path()).expect("source after annotation"),
+        source_before
+    );
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn pdf_markup_annotation_rejects_invalid_geometry_rotation_existing_markup_and_in_place() {
+    let (root, state, request) = test_context();
+    let source = root.join("source.pdf");
+    write_blank_pdf(source.as_path(), 2);
+    let source_before = fs::read(source.as_path()).expect("source PDF bytes");
+    for (target, arguments, expected) in [
+        (
+            "outside.pdf",
+            json!({"rectangles":[{"x":580,"y":10,"width":20,"height":10}]}),
+            "within the effective page CropBox",
+        ),
+        (
+            "duplicate.pdf",
+            json!({"rectangles":[
+                {"x":10,"y":10,"width":20,"height":10},
+                {"x":10,"y":10,"width":20,"height":10}
+            ]}),
+            "duplicates an earlier rectangle",
+        ),
+        (
+            "small.pdf",
+            json!({"rectangles":[{"x":10,"y":10,"width":0.01,"height":10}]}),
+            "must be at least 0.1 points",
+        ),
+        (
+            "unknown-field.pdf",
+            json!({"rectangles":[{"x":10,"y":10,"width":20,"height":10,"angle":0}]}),
+            "may only contain x, y, width, and height",
+        ),
+        (
+            "markup.pdf",
+            json!({"markup":"box"}),
+            "markup must be highlight, underline, strikeout, or squiggly",
+        ),
+        (
+            "opacity.pdf",
+            json!({"opacity":0.01}),
+            "opacity must be between 0.05 and 1",
+        ),
+    ] {
+        let mut request_arguments = arguments;
+        request_arguments["path"] = json!("source.pdf");
+        request_arguments["page"] = json!(1);
+        request_arguments["markup"] = request_arguments
+            .get("markup")
+            .cloned()
+            .unwrap_or_else(|| json!("highlight"));
+        request_arguments["rectangles"] = request_arguments
+            .get("rectangles")
+            .cloned()
+            .unwrap_or_else(|| json!([{"x":10,"y":10,"width":20,"height":10}]));
+        request_arguments["target_path"] = json!(target);
+        let error = pdf_edit::add_pdf_markup_annotation(&request_arguments, &state, &request)
+            .expect_err("invalid markup request must fail");
+        assert!(
+            error.to_string().contains(expected),
+            "unexpected error for {target}: {error}"
+        );
+        assert!(!root.join(target).exists());
+    }
+
+    let in_place = pdf_edit::add_pdf_markup_annotation(
+        &json!({
+            "path":"source.pdf",
+            "page":1,
+            "markup":"underline",
+            "rectangles":[{"x":10,"y":10,"width":20,"height":10}],
+            "target_path":"source.pdf"
+        }),
+        &state,
+        &request,
+    )
+    .expect_err("in-place markup must fail");
+    assert!(in_place.to_string().contains("distinct target_path"));
+    assert_eq!(
+        fs::read(source.as_path()).expect("source after invalid requests"),
+        source_before
+    );
+
+    let rotated = root.join("rotated.pdf");
+    write_blank_pdf(rotated.as_path(), 1);
+    let mut document = Document::load(rotated.as_path()).expect("rotated source");
+    let page_id = document.get_pages()[&1];
+    document
+        .get_object_mut(page_id)
+        .and_then(Object::as_dict_mut)
+        .expect("rotated page")
+        .set("Rotate", 90);
+    document.save(rotated.as_path()).expect("save rotated PDF");
+    let rotation_error = pdf_edit::add_pdf_markup_annotation(
+        &json!({
+            "path":"rotated.pdf",
+            "page":1,
+            "markup":"strikeout",
+            "rectangles":[{"x":10,"y":10,"width":20,"height":10}],
+            "target_path":"rotated-output.pdf"
+        }),
+        &state,
+        &request,
+    )
+    .expect_err("rotated markup must fail");
+    assert!(rotation_error
+        .to_string()
+        .contains("requires an unrotated page"));
+    assert!(!root.join("rotated-output.pdf").exists());
+
+    let malformed = root.join("malformed.pdf");
+    write_blank_pdf(malformed.as_path(), 1);
+    let mut document = Document::load(malformed.as_path()).expect("malformed source");
+    let page_id = document.get_pages()[&1];
+    let mut annotations = Vec::new();
+    for index in 0..100 {
+        let contents = format!("Existing note {index}");
+        let annotation_id = document.add_object(dictionary! {
+            "Type" => "Annot",
+            "Subtype" => "Text",
+            "Rect" => vec![10.into(), 10.into(), 20.into(), 20.into()],
+            "Contents" => lopdf::text_string(contents.as_str()),
+            "P" => page_id,
+        });
+        annotations.push(Object::Reference(annotation_id));
+    }
+    let malformed_annotation_id = document.add_object(dictionary! {
+        "Type" => "Annot",
+        "Subtype" => "Highlight",
+        "Rect" => vec![10.into(), 10.into(), 30.into(), 20.into()],
+        "QuadPoints" => vec![10.into(), 20.into(), 30.into(), 20.into(), 10.into(), 10.into(), 30.into(), 10.into(), 20.into()],
+        "P" => page_id,
+    });
+    annotations.push(Object::Reference(malformed_annotation_id));
+    document
+        .get_object_mut(page_id)
+        .and_then(Object::as_dict_mut)
+        .expect("malformed page")
+        .set("Annots", annotations);
+    document
+        .save(malformed.as_path())
+        .expect("save malformed PDF");
+    let malformed_error = pdf_edit::add_pdf_markup_annotation(
+        &json!({
+            "path":"malformed.pdf",
+            "page":1,
+            "markup":"squiggly",
+            "rectangles":[{"x":10,"y":10,"width":20,"height":10}],
+            "target_path":"malformed-output.pdf"
+        }),
+        &state,
+        &request,
+    )
+    .expect_err("malformed existing markup must fail");
+    assert!(malformed_error
+        .to_string()
+        .contains("QuadPoints must contain complete eight-number quadrilaterals"));
+    assert!(!root.join("malformed-output.pdf").exists());
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
 fn creates_multi_page_pdf_from_png_images_with_bounded_layout() {
     let (root, state, request) = test_context();
     fs::create_dir_all(root.join("assets")).expect("assets");

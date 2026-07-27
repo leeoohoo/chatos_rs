@@ -40,6 +40,7 @@ const MAX_PDF_ANNOTATIONS: usize = 10_000;
 const MAX_PDF_ANNOTATION_PREVIEW: usize = 100;
 const MAX_PDF_ANNOTATION_CHARACTERS: usize = 4_096;
 const MAX_PDF_ANNOTATION_AUTHOR_CHARACTERS: usize = 256;
+const MAX_PDF_MARKUP_RECTANGLES: usize = 64;
 const MAX_PDF_INFO_VALUE_CHARACTERS: usize = 100_000;
 const MAX_PDF_INFO_PREVIEW_CHARACTERS: usize = 4_096;
 const MAX_PDF_FORM_FIELDS: usize = 2_000;
@@ -98,6 +99,33 @@ struct PositionedPdfTextLine {
     font_size: f32,
     x: f32,
     y: f32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct PdfMarkupRectangle {
+    left: f32,
+    bottom: f32,
+    right: f32,
+    top: f32,
+}
+
+impl PdfMarkupRectangle {
+    fn width(self) -> f32 {
+        self.right - self.left
+    }
+
+    fn height(self) -> f32 {
+        self.top - self.bottom
+    }
+
+    fn relative_to(self, left: f32, bottom: f32) -> Value {
+        json!({
+            "x": self.left - left,
+            "y": self.bottom - bottom,
+            "width": self.width(),
+            "height": self.height(),
+        })
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -2857,12 +2885,43 @@ fn decode_pdf_form_name(value: &[u8], label: &str) -> Result<String> {
     Ok(decoded)
 }
 
+pub(super) fn inspect_pdf_page_geometry(
+    document: &Document,
+    page_map: &BTreeMap<u32, ObjectId>,
+    requested_page: Option<&Value>,
+) -> Result<Value> {
+    let Some(requested_page) = requested_page else {
+        return Ok(Value::Null);
+    };
+    let page_number = requested_page
+        .as_u64()
+        .and_then(|value| u32::try_from(value).ok())
+        .filter(|value| (1..=MAX_PDF_PAGES as u32).contains(value))
+        .ok_or_else(|| anyhow!("page_geometry must be an integer between 1 and {MAX_PDF_PAGES}"))?;
+    let page_id = page_map
+        .get(&page_number)
+        .copied()
+        .ok_or_else(|| anyhow!("page_geometry page {page_number} does not exist"))?;
+    let (left, bottom, right, top) = pdf_page_bounds(document, page_id)?;
+    Ok(json!({
+        "page": page_number,
+        "rotation_degrees": pdf_page_rotation(document, page_id)?,
+        "origin_x_points": left,
+        "origin_y_points": bottom,
+        "width_points": right - left,
+        "height_points": top - bottom,
+        "absolute_bounds": [left, bottom, right, top],
+        "annotation_coordinate_space": "crop_box_relative_lower_left_points",
+    }))
+}
+
 pub(super) fn inspect_pdf_annotations(
     document: &Document,
     page_map: &BTreeMap<u32, ObjectId>,
 ) -> Result<Value> {
     let mut total = 0usize;
     let mut text_annotations = 0usize;
+    let mut markup_annotations = 0usize;
     let mut subtypes = BTreeMap::<String, usize>::new();
     let mut preview = Vec::new();
 
@@ -2894,7 +2953,32 @@ pub(super) fn inspect_pdf_annotations(
             *subtypes.entry(subtype.clone()).or_default() += 1;
             if subtype == "Text" {
                 text_annotations += 1;
+            } else if is_pdf_markup_subtype(subtype.as_str()) {
+                markup_annotations += 1;
             }
+            let markup_geometry = if is_pdf_markup_subtype(subtype.as_str()) {
+                Some(inspect_pdf_markup_geometry(&dictionary, label.as_str())?)
+            } else {
+                None
+            };
+            let markup_opacity = if markup_geometry.is_some() {
+                let opacity = dictionary
+                    .get(b"CA")
+                    .ok()
+                    .map(|value| {
+                        value
+                            .as_float()
+                            .context("PDF markup opacity must be numeric")
+                    })
+                    .transpose()?
+                    .unwrap_or(1.0);
+                if !opacity.is_finite() || !(0.0..=1.0).contains(&opacity) {
+                    return Err(anyhow!("{label} markup opacity is outside 0..=1"));
+                }
+                Some(opacity)
+            } else {
+                None
+            };
             if preview.len() >= MAX_PDF_ANNOTATION_PREVIEW {
                 continue;
             }
@@ -2921,6 +3005,21 @@ pub(super) fn inspect_pdf_annotations(
                 item["author"] = author.map(Value::String).unwrap_or(Value::Null);
                 item["icon"] = icon.map(Value::String).unwrap_or(Value::Null);
                 item["open"] = Value::Bool(open);
+            } else if is_pdf_markup_subtype(subtype.as_str()) {
+                let (rect, quadrilateral_count) = markup_geometry
+                    .ok_or_else(|| anyhow!("{label} markup geometry was not inspected"))?;
+                let contents = pdf_annotation_text(&dictionary, b"Contents", label.as_str())?;
+                let author = pdf_annotation_text(&dictionary, b"T", label.as_str())?;
+                let opacity = markup_opacity
+                    .ok_or_else(|| anyhow!("{label} markup opacity was not inspected"))?;
+                item["contents"] = contents
+                    .map(|value| value.chars().take(1_000).collect::<String>())
+                    .map(Value::String)
+                    .unwrap_or(Value::Null);
+                item["author"] = author.map(Value::String).unwrap_or(Value::Null);
+                item["rect"] = json!(rect);
+                item["quadrilateral_count"] = json!(quadrilateral_count);
+                item["opacity"] = json!(opacity);
             }
             preview.push(item);
         }
@@ -2930,6 +3029,7 @@ pub(super) fn inspect_pdf_annotations(
     Ok(json!({
         "count": total,
         "text_count": text_annotations,
+        "markup_count": markup_annotations,
         "subtypes": subtypes,
         "preview": preview,
         "preview_truncated": preview_truncated,
@@ -3021,13 +3121,7 @@ pub(super) fn add_pdf_text_annotation(
         Some(Value::Bool(value)) => *value,
         Some(_) => return Err(anyhow!("open must be a boolean")),
     };
-    let rotation = match inherited_page_attribute(&document, page_id, b"Rotate") {
-        None => 0,
-        Some(value) => resolved_pdf_object(&document, value, "page Rotate")?
-            .as_i64()
-            .context("PDF page Rotate must be an integer")?
-            .rem_euclid(360),
-    };
+    let rotation = pdf_page_rotation(&document, page_id)?;
     if rotation != 0 {
         return Err(anyhow!(
             "PDF Text annotation corner placement currently requires an unrotated page"
@@ -3096,6 +3190,186 @@ pub(super) fn add_pdf_text_annotation(
         "margin_points": margin,
         "open": open,
         "rect": rect,
+        "bytes": bytes,
+    }))
+}
+
+pub(super) fn add_pdf_markup_annotation(
+    arguments: &Value,
+    state: &LocalState,
+    request: &RelayRequest,
+) -> Result<Value> {
+    let (source, source_relative) =
+        input_file(state, request, required_text(arguments, "path")?, ".pdf")?;
+    let mut document = load_editable_pdf(source.as_path())?;
+    let page_map = document.get_pages();
+    if page_map.len() > MAX_PDF_PAGES {
+        return Err(anyhow!(
+            "PDF exceeds the {MAX_PDF_PAGES} page annotation safety limit"
+        ));
+    }
+    inspect_pdf_annotations(&document, &page_map)?;
+    let page_number = arguments
+        .get("page")
+        .and_then(Value::as_u64)
+        .and_then(|value| u32::try_from(value).ok())
+        .filter(|value| (1..=MAX_PDF_PAGES as u32).contains(value))
+        .ok_or_else(|| anyhow!("page must be an integer between 1 and {MAX_PDF_PAGES}"))?;
+    let page_id = page_map
+        .get(&page_number)
+        .copied()
+        .ok_or_else(|| anyhow!("page {page_number} does not exist"))?;
+    if pdf_page_rotation(&document, page_id)? != 0 {
+        return Err(anyhow!(
+            "PDF markup annotation geometry currently requires an unrotated page"
+        ));
+    }
+    let markup = arguments
+        .get("markup")
+        .and_then(Value::as_str)
+        .ok_or_else(|| anyhow!("markup is required"))?;
+    let subtype = match markup {
+        "highlight" => "Highlight",
+        "underline" => "Underline",
+        "strikeout" => "StrikeOut",
+        "squiggly" => "Squiggly",
+        _ => {
+            return Err(anyhow!(
+                "markup must be highlight, underline, strikeout, or squiggly"
+            ))
+        }
+    };
+    let page_bounds = pdf_page_bounds(&document, page_id)?;
+    let rectangles = required_pdf_markup_rectangles(arguments, page_bounds)?;
+    let text = match arguments.get("text") {
+        None => None,
+        Some(Value::String(value)) => Some(normalized_pdf_unicode_text(
+            value,
+            "text",
+            MAX_PDF_ANNOTATION_CHARACTERS,
+            true,
+        )?),
+        Some(_) => return Err(anyhow!("text must be a string")),
+    };
+    let author = match arguments.get("author") {
+        None => None,
+        Some(Value::String(value)) => Some(normalized_pdf_unicode_text(
+            value,
+            "author",
+            MAX_PDF_ANNOTATION_AUTHOR_CHARACTERS,
+            false,
+        )?),
+        Some(_) => return Err(anyhow!("author must be a string")),
+    };
+    let color = arguments
+        .get("color")
+        .and_then(Value::as_str)
+        .unwrap_or("yellow");
+    let color_components = match color {
+        "yellow" => [1.0, 0.92, 0.2],
+        "blue" => [0.3, 0.6, 1.0],
+        "green" => [0.35, 0.8, 0.4],
+        "red" => [1.0, 0.35, 0.35],
+        _ => return Err(anyhow!("color is not a supported PDF annotation color")),
+    };
+    let opacity = bounded_pdf_number(arguments, "opacity", 0.35, 0.05, 1.0)?;
+    let annotation_bounds = rectangles.iter().fold(
+        [
+            f32::INFINITY,
+            f32::INFINITY,
+            f32::NEG_INFINITY,
+            f32::NEG_INFINITY,
+        ],
+        |mut bounds, rectangle| {
+            bounds[0] = bounds[0].min(rectangle.left);
+            bounds[1] = bounds[1].min(rectangle.bottom);
+            bounds[2] = bounds[2].max(rectangle.right);
+            bounds[3] = bounds[3].max(rectangle.top);
+            bounds
+        },
+    );
+    let quad_points = rectangles
+        .iter()
+        .flat_map(|rectangle| {
+            [
+                rectangle.left,
+                rectangle.top,
+                rectangle.right,
+                rectangle.top,
+                rectangle.left,
+                rectangle.bottom,
+                rectangle.right,
+                rectangle.bottom,
+            ]
+        })
+        .map(Object::Real)
+        .collect::<Vec<_>>();
+    let mut annotation = dictionary! {
+        "Type" => "Annot",
+        "Subtype" => subtype,
+        "Rect" => annotation_bounds.iter().copied().map(Object::Real).collect::<Vec<_>>(),
+        "QuadPoints" => quad_points,
+        "F" => 4,
+        "C" => color_components.iter().copied().map(Object::Real).collect::<Vec<_>>(),
+        "CA" => opacity,
+        "P" => page_id,
+    };
+    if let Some(text) = text.as_deref() {
+        annotation.set("Contents", text_string(text));
+    }
+    if let Some(author) = author.as_deref() {
+        annotation.set("T", text_string(author));
+    }
+    let annotation_id = document.add_object(annotation);
+    let mut annotations = pdf_page_annotations(
+        &document,
+        page_id,
+        format!("page {page_number} Annots").as_str(),
+    )?;
+    if annotations.len() >= MAX_PDF_ANNOTATIONS {
+        return Err(anyhow!(
+            "page {page_number} already reaches the {MAX_PDF_ANNOTATIONS} annotation limit"
+        ));
+    }
+    annotations.push(Object::Reference(annotation_id));
+    document
+        .get_object_mut(page_id)
+        .and_then(Object::as_dict_mut)
+        .with_context(|| format!("read page {page_number} dictionary"))?
+        .set("Annots", annotations);
+
+    let target_requested = required_text(arguments, "target_path")?;
+    let (target, target_relative) = pdf_output_path(
+        state,
+        request,
+        target_requested,
+        std::slice::from_ref(&source),
+    )?;
+    let bytes = save_pdf_document(
+        &mut document,
+        target.as_path(),
+        optional_bool(arguments, "overwrite"),
+    )?;
+    let relative_rectangles = rectangles
+        .iter()
+        .map(|rectangle| rectangle.relative_to(page_bounds.0, page_bounds.1))
+        .collect::<Vec<_>>();
+    Ok(json!({
+        "created": true,
+        "operation": "add_markup_annotation",
+        "source_path": source_relative,
+        "path": target_relative,
+        "page": page_number,
+        "markup": markup,
+        "quadrilateral_count": rectangles.len(),
+        "rectangles": relative_rectangles,
+        "annotation_rect": annotation_bounds,
+        "coordinate_space": "crop_box_relative_lower_left_points",
+        "text_characters": text.as_ref().map(|value| value.chars().count()).unwrap_or(0),
+        "text_sha256": text.as_ref().map(|value| hex::encode(Sha256::digest(value.as_bytes()))),
+        "author": author,
+        "color": color,
+        "opacity": opacity,
         "bytes": bytes,
     }))
 }
@@ -4059,6 +4333,92 @@ fn apply_pdf_text_stamps(
     Ok(())
 }
 
+fn required_pdf_markup_rectangles(
+    arguments: &Value,
+    page_bounds: (f32, f32, f32, f32),
+) -> Result<Vec<PdfMarkupRectangle>> {
+    let values = arguments
+        .get("rectangles")
+        .and_then(Value::as_array)
+        .ok_or_else(|| anyhow!("rectangles must be an array"))?;
+    if values.is_empty() || values.len() > MAX_PDF_MARKUP_RECTANGLES {
+        return Err(anyhow!(
+            "rectangles must contain between 1 and {MAX_PDF_MARKUP_RECTANGLES} items"
+        ));
+    }
+
+    let (page_left, page_bottom, page_right, page_top) = page_bounds;
+    let page_width = page_right - page_left;
+    let page_height = page_top - page_bottom;
+    let mut seen = BTreeSet::new();
+    let mut rectangles = Vec::with_capacity(values.len());
+    for (index, value) in values.iter().enumerate() {
+        let label = format!("rectangles[{}]", index + 1);
+        let object = value
+            .as_object()
+            .ok_or_else(|| anyhow!("{label} must be an object"))?;
+        if object
+            .keys()
+            .any(|key| !matches!(key.as_str(), "x" | "y" | "width" | "height"))
+        {
+            return Err(anyhow!("{label} may only contain x, y, width, and height"));
+        }
+        let number = |field: &str| -> Result<f32> {
+            let value = object
+                .get(field)
+                .and_then(Value::as_f64)
+                .filter(|value| value.is_finite() && *value <= 20_000.0)
+                .ok_or_else(|| anyhow!("{label}.{field} must be a finite number at most 20000"))?;
+            let value = value as f32;
+            if value.is_finite() {
+                Ok(value)
+            } else {
+                Err(anyhow!("{label}.{field} must be a finite number"))
+            }
+        };
+        let x = number("x")?;
+        let y = number("y")?;
+        let width = number("width")?;
+        let height = number("height")?;
+        if x < 0.0 || y < 0.0 {
+            return Err(anyhow!("{label}.x and {label}.y must be non-negative"));
+        }
+        if width < 0.1 || height < 0.1 {
+            return Err(anyhow!(
+                "{label}.width and {label}.height must be at least 0.1 points"
+            ));
+        }
+        let relative_right = x + width;
+        let relative_top = y + height;
+        if !relative_right.is_finite()
+            || !relative_top.is_finite()
+            || relative_right > page_width
+            || relative_top > page_height
+        {
+            return Err(anyhow!(
+                "{label} must stay within the effective page CropBox"
+            ));
+        }
+        let rectangle = PdfMarkupRectangle {
+            left: page_left + x,
+            bottom: page_bottom + y,
+            right: page_left + relative_right,
+            top: page_bottom + relative_top,
+        };
+        let identity = (
+            rectangle.left.to_bits(),
+            rectangle.bottom.to_bits(),
+            rectangle.right.to_bits(),
+            rectangle.top.to_bits(),
+        );
+        if !seen.insert(identity) {
+            return Err(anyhow!("{label} duplicates an earlier rectangle"));
+        }
+        rectangles.push(rectangle);
+    }
+    Ok(rectangles)
+}
+
 fn pdf_page_bounds(document: &Document, page_id: ObjectId) -> Result<(f32, f32, f32, f32)> {
     let value = inherited_page_attribute(document, page_id, b"CropBox")
         .or_else(|| inherited_page_attribute(document, page_id, b"MediaBox"))
@@ -4086,6 +4446,16 @@ fn pdf_page_bounds(document: &Document, page_id: ObjectId) -> Result<(f32, f32, 
         return Err(anyhow!("PDF page box is invalid or exceeds local limits"));
     }
     Ok((left, bottom, right, top))
+}
+
+fn pdf_page_rotation(document: &Document, page_id: ObjectId) -> Result<i64> {
+    match inherited_page_attribute(document, page_id, b"Rotate") {
+        None => Ok(0),
+        Some(value) => Ok(resolved_pdf_object(document, value, "page Rotate")?
+            .as_i64()
+            .context("PDF page Rotate must be an integer")?
+            .rem_euclid(360)),
+    }
 }
 
 fn pdf_stamp_transform(
@@ -4251,6 +4621,102 @@ fn pdf_annotation_text(dictionary: &Dictionary, key: &[u8], label: &str) -> Resu
             )
         })
         .map(Some)
+}
+
+fn is_pdf_markup_subtype(subtype: &str) -> bool {
+    matches!(
+        subtype,
+        "Highlight" | "Underline" | "StrikeOut" | "Squiggly"
+    )
+}
+
+fn inspect_pdf_markup_geometry(dictionary: &Dictionary, label: &str) -> Result<([f32; 4], usize)> {
+    let rect = pdf_annotation_number_array(dictionary, b"Rect", 4, 4, label)?;
+    let quad_points = pdf_annotation_number_array(
+        dictionary,
+        b"QuadPoints",
+        8,
+        MAX_PDF_MARKUP_RECTANGLES * 8,
+        label,
+    )?;
+    if quad_points.len() % 8 != 0 {
+        return Err(anyhow!(
+            "{label} QuadPoints must contain complete eight-number quadrilaterals"
+        ));
+    }
+    let bounds = [rect[0], rect[1], rect[2], rect[3]];
+    if bounds[2] <= bounds[0] || bounds[3] <= bounds[1] {
+        return Err(anyhow!("{label} Rect must have positive width and height"));
+    }
+    let minimum_x = quad_points
+        .iter()
+        .step_by(2)
+        .copied()
+        .fold(f32::INFINITY, f32::min);
+    let maximum_x = quad_points
+        .iter()
+        .step_by(2)
+        .copied()
+        .fold(f32::NEG_INFINITY, f32::max);
+    let minimum_y = quad_points
+        .iter()
+        .skip(1)
+        .step_by(2)
+        .copied()
+        .fold(f32::INFINITY, f32::min);
+    let maximum_y = quad_points
+        .iter()
+        .skip(1)
+        .step_by(2)
+        .copied()
+        .fold(f32::NEG_INFINITY, f32::max);
+    if minimum_x < bounds[0] - 0.01
+        || maximum_x > bounds[2] + 0.01
+        || minimum_y < bounds[1] - 0.01
+        || maximum_y > bounds[3] + 0.01
+    {
+        return Err(anyhow!("{label} QuadPoints exceed the annotation Rect"));
+    }
+    Ok((bounds, quad_points.len() / 8))
+}
+
+fn pdf_annotation_number_array(
+    dictionary: &Dictionary,
+    key: &[u8],
+    minimum: usize,
+    maximum: usize,
+    label: &str,
+) -> Result<Vec<f32>> {
+    let values = dictionary
+        .get(key)
+        .and_then(Object::as_array)
+        .with_context(|| format!("{label} {} must be an array", String::from_utf8_lossy(key)))?;
+    if values.len() < minimum || values.len() > maximum {
+        return Err(anyhow!(
+            "{label} {} must contain between {minimum} and {maximum} numbers",
+            String::from_utf8_lossy(key)
+        ));
+    }
+    values
+        .iter()
+        .map(|value| {
+            value
+                .as_float()
+                .with_context(|| {
+                    format!("{label} {} must be numeric", String::from_utf8_lossy(key))
+                })
+                .and_then(|value| {
+                    if value.is_finite() {
+                        Ok(value)
+                    } else {
+                        Err(anyhow!(
+                            "{label} {} contains a non-finite number",
+                            String::from_utf8_lossy(key)
+                        ))
+                    }
+                })
+        })
+        .collect()
 }
 
 fn normalized_pdf_unicode_text(
