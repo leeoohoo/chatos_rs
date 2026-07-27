@@ -14859,6 +14859,23 @@ fn pdf_file_attachment_rejects_stale_unsafe_malformed_and_overlapping_inputs() {
     assert!(malformed_error
         .to_string()
         .contains("FS must be an indirect Filespec reference"));
+    let malformed_extract_error = pdf_edit::extract_pdf_file_attachment(
+        &json!({
+            "path":"malformed.pdf",
+            "expected_source_sha256":sha256_file(malformed.as_path()).expect("malformed hash"),
+            "page":1,
+            "annotation_index":1,
+            "expected_attachment_sha256":sha256_file(root.join("note.txt").as_path()).expect("note hash"),
+            "target_path":"malformed-extract.txt",
+        }),
+        &state,
+        &request,
+    )
+    .expect_err("malformed Filespec extraction must fail");
+    assert!(malformed_extract_error
+        .to_string()
+        .contains("FS must be an indirect Filespec reference"));
+    assert!(!root.join("malformed-extract.txt").exists());
 
     assert_eq!(
         fs::read(source.as_path()).expect("source after failures"),
@@ -14871,6 +14888,314 @@ fn pdf_file_attachment_rejects_stale_unsafe_malformed_and_overlapping_inputs() {
     ] {
         assert!(!root.join(output).exists(), "unexpected output {output}");
     }
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn extracts_inspected_pdf_file_attachment_with_exact_hashes_and_atomic_overwrite() {
+    let (root, state, request) = test_context();
+    let source = root.join("source.pdf");
+    write_blank_pdf(source.as_path(), 1);
+    fs::create_dir_all(root.join("assets")).expect("attachment directory");
+    let attachment = root.join("assets/审计说明.txt");
+    let attachment_bytes = "付款记录已复核。\nReference: INV-2026-0727\n".as_bytes();
+    fs::write(attachment.as_path(), attachment_bytes).expect("attachment");
+    let source_sha256 = sha256_file(source.as_path()).expect("source hash");
+    let attachment_sha256 = sha256_file(attachment.as_path()).expect("attachment hash");
+    pdf_edit::add_pdf_file_attachment_annotation(
+        &json!({
+            "path":"source.pdf",
+            "expected_source_sha256":source_sha256,
+            "attachment_path":"assets/审计说明.txt",
+            "page":1,
+            "x":10,
+            "y":10,
+            "description":"审计附件",
+            "target_path":"attached.pdf",
+        }),
+        &state,
+        &request,
+    )
+    .expect("add attachment");
+
+    let attached = root.join("attached.pdf");
+    let attached_before = fs::read(attached.as_path()).expect("attached PDF bytes");
+    let attached_sha256 = sha256_file(attached.as_path()).expect("attached PDF hash");
+    let extracted = pdf_edit::extract_pdf_file_attachment(
+        &json!({
+            "path":"attached.pdf",
+            "expected_source_sha256":attached_sha256,
+            "page":1,
+            "annotation_index":1,
+            "expected_attachment_sha256":attachment_sha256,
+            "target_path":"exports/审计说明.txt",
+        }),
+        &state,
+        &request,
+    )
+    .expect("extract attachment");
+    assert_eq!(
+        extracted.get("operation").and_then(Value::as_str),
+        Some("extract_file_attachment")
+    );
+    assert_eq!(extracted.get("page").and_then(Value::as_u64), Some(1));
+    assert_eq!(
+        extracted.get("annotation_index").and_then(Value::as_u64),
+        Some(1)
+    );
+    assert_eq!(
+        extracted.get("attachment_filename").and_then(Value::as_str),
+        Some("审计说明.txt")
+    );
+    assert_eq!(
+        extracted.get("attachment_sha256").and_then(Value::as_str),
+        Some(attachment_sha256.as_str())
+    );
+    assert!(extracted.get("content").is_none());
+    assert!(extracted.get("attachment_content").is_none());
+    let output = root.join("exports/审计说明.txt");
+    assert_eq!(
+        fs::read(output.as_path()).expect("extracted bytes"),
+        attachment_bytes
+    );
+    assert_eq!(
+        sha256_file(output.as_path()).expect("extracted hash"),
+        attachment_sha256
+    );
+
+    fs::write(output.as_path(), b"stale output").expect("replace extracted output");
+    let overwritten = pdf_edit::extract_pdf_file_attachment(
+        &json!({
+            "path":"attached.pdf",
+            "expected_source_sha256":attached_sha256,
+            "page":1,
+            "annotation_index":1,
+            "expected_attachment_sha256":attachment_sha256,
+            "target_path":"exports/审计说明.txt",
+            "overwrite":true,
+        }),
+        &state,
+        &request,
+    )
+    .expect("overwrite extracted attachment");
+    assert_eq!(
+        overwritten.get("bytes").and_then(Value::as_u64),
+        Some(attachment_bytes.len() as u64)
+    );
+    assert_eq!(
+        fs::read(output.as_path()).expect("overwritten bytes"),
+        attachment_bytes
+    );
+    assert_eq!(
+        fs::read(attached.as_path()).expect("attached PDF after extraction"),
+        attached_before
+    );
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn pdf_file_attachment_extraction_rejects_stale_wrong_direct_and_unsafe_targets() {
+    let (root, state, request) = test_context();
+    let source = root.join("source.pdf");
+    write_blank_pdf(source.as_path(), 1);
+    let mut document = Document::load(source.as_path()).expect("source PDF");
+    let page_id = document.get_pages()[&1];
+    let text_id = document.add_object(dictionary! {
+        "Type" => "Annot",
+        "Subtype" => "Text",
+        "Rect" => vec![10.into(), 10.into(), 34.into(), 34.into()],
+        "Contents" => lopdf::text_string("Existing note"),
+        "P" => page_id,
+    });
+    document
+        .get_object_mut(page_id)
+        .and_then(Object::as_dict_mut)
+        .expect("page dictionary")
+        .set("Annots", vec![Object::Reference(text_id)]);
+    document.save(source.as_path()).expect("save source PDF");
+    fs::write(root.join("note.txt"), b"safe attachment\n").expect("attachment");
+    let source_sha256 = sha256_file(source.as_path()).expect("source hash");
+    let attachment_sha256 = sha256_file(root.join("note.txt").as_path()).expect("attachment hash");
+    pdf_edit::add_pdf_file_attachment_annotation(
+        &json!({
+            "path":"source.pdf",
+            "expected_source_sha256":source_sha256,
+            "attachment_path":"note.txt",
+            "page":1,
+            "x":50,
+            "y":50,
+            "target_path":"attached.pdf",
+        }),
+        &state,
+        &request,
+    )
+    .expect("add attachment");
+    let attached = root.join("attached.pdf");
+    let attached_before = fs::read(attached.as_path()).expect("attached bytes");
+    let attached_sha256 = sha256_file(attached.as_path()).expect("attached hash");
+
+    for (target, overrides, expected) in [
+        (
+            "stale-source.txt",
+            json!({"expected_source_sha256":"0".repeat(64)}),
+            "expected_source_sha256",
+        ),
+        (
+            "stale-attachment.txt",
+            json!({"expected_attachment_sha256":"0".repeat(64)}),
+            "expected_attachment_sha256",
+        ),
+        (
+            "wrong-subtype.txt",
+            json!({"annotation_index":1}),
+            "is not a FileAttachment",
+        ),
+        (
+            "missing-index.txt",
+            json!({"annotation_index":3}),
+            "does not exist",
+        ),
+        (
+            "wrong-extension.pdf",
+            json!({}),
+            "target extension must match",
+        ),
+        ("CON.txt", json!({}), "reserved portable filename"),
+        ("attached.pdf", json!({}), "requires a distinct target_path"),
+    ] {
+        let mut arguments = json!({
+            "path":"attached.pdf",
+            "expected_source_sha256":attached_sha256,
+            "page":1,
+            "annotation_index":2,
+            "expected_attachment_sha256":attachment_sha256,
+            "target_path":target,
+        });
+        for (key, value) in overrides.as_object().expect("extraction overrides") {
+            arguments[key] = value.clone();
+        }
+        let error = pdf_edit::extract_pdf_file_attachment(&arguments, &state, &request)
+            .expect_err("invalid extraction request must fail");
+        assert!(
+            error.to_string().contains(expected),
+            "unexpected error for {target}: {error}"
+        );
+        if !matches!(target, "attached.pdf" | "CON.txt") {
+            assert!(!root.join(target).exists(), "unexpected output {target}");
+        }
+    }
+
+    fs::write(root.join("existing.txt"), b"existing output").expect("existing target");
+    let existing_error = pdf_edit::extract_pdf_file_attachment(
+        &json!({
+            "path":"attached.pdf",
+            "expected_source_sha256":attached_sha256,
+            "page":1,
+            "annotation_index":2,
+            "expected_attachment_sha256":attachment_sha256,
+            "target_path":"existing.txt",
+        }),
+        &state,
+        &request,
+    )
+    .expect_err("existing target without overwrite must fail");
+    assert!(existing_error
+        .to_string()
+        .contains("without overwrite=true"));
+    assert_eq!(
+        fs::read(root.join("existing.txt")).expect("existing target bytes"),
+        b"existing output"
+    );
+
+    fs::hard_link(attached.as_path(), root.join("source-hard-link.txt"))
+        .expect("source hard-linked target");
+    let hard_link_error = pdf_edit::extract_pdf_file_attachment(
+        &json!({
+            "path":"attached.pdf",
+            "expected_source_sha256":attached_sha256,
+            "page":1,
+            "annotation_index":2,
+            "expected_attachment_sha256":attachment_sha256,
+            "target_path":"source-hard-link.txt",
+            "overwrite":true,
+        }),
+        &state,
+        &request,
+    )
+    .expect_err("source hard-linked target must fail");
+    assert!(hard_link_error
+        .to_string()
+        .contains("requires a distinct target_path"));
+
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(root.join("note.txt"), root.join("linked-output.txt"))
+            .expect("target symlink");
+        let symlink_error = pdf_edit::extract_pdf_file_attachment(
+            &json!({
+                "path":"attached.pdf",
+                "expected_source_sha256":attached_sha256,
+                "page":1,
+                "annotation_index":2,
+                "expected_attachment_sha256":attachment_sha256,
+                "target_path":"linked-output.txt",
+                "overwrite":true,
+            }),
+            &state,
+            &request,
+        )
+        .expect_err("symlink target must fail");
+        assert!(symlink_error.to_string().contains("regular non-symlink"));
+    }
+
+    let direct = root.join("direct.pdf");
+    fs::copy(attached.as_path(), direct.as_path()).expect("copy direct PDF");
+    let mut direct_document = Document::load(direct.as_path()).expect("direct PDF");
+    let direct_page_id = direct_document.get_pages()[&1];
+    let attachment_object = direct_document
+        .get_object(direct_page_id)
+        .and_then(Object::as_dict)
+        .and_then(|page| page.get(b"Annots"))
+        .and_then(Object::as_array)
+        .expect("direct annotations")[1]
+        .clone();
+    let attachment_dictionary = direct_document
+        .get_object(
+            attachment_object
+                .as_reference()
+                .expect("attachment reference"),
+        )
+        .and_then(Object::as_dict)
+        .expect("attachment dictionary")
+        .clone();
+    direct_document
+        .get_object_mut(direct_page_id)
+        .and_then(Object::as_dict_mut)
+        .expect("direct page")
+        .set("Annots", vec![Object::Dictionary(attachment_dictionary)]);
+    direct_document
+        .save(direct.as_path())
+        .expect("save direct PDF");
+    let direct_error = pdf_edit::extract_pdf_file_attachment(
+        &json!({
+            "path":"direct.pdf",
+            "expected_source_sha256":sha256_file(direct.as_path()).expect("direct hash"),
+            "page":1,
+            "annotation_index":1,
+            "expected_attachment_sha256":attachment_sha256,
+            "target_path":"direct-output.txt",
+        }),
+        &state,
+        &request,
+    )
+    .expect_err("direct attachment annotation must fail");
+    assert!(direct_error.to_string().contains("is direct"));
+    assert!(!root.join("direct-output.txt").exists());
+
+    assert_eq!(
+        fs::read(attached.as_path()).expect("attached PDF after failures"),
+        attached_before
+    );
     let _ = fs::remove_dir_all(root);
 }
 

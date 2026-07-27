@@ -22,6 +22,7 @@ pub(super) fn tool_definitions(skill_id: &str) -> Vec<Value> {
             add_pdf_markup_annotation_tool(),
             add_pdf_annotation_reply_tool(),
             add_pdf_file_attachment_annotation_tool(),
+            extract_pdf_file_attachment_tool(),
             stamp_pdf_text_tool(),
             stamp_pdf_page_numbers_tool(),
             stamp_pdf_image_tool(),
@@ -514,6 +515,27 @@ fn add_pdf_file_attachment_annotation_tool() -> Value {
                 "overwrite":{"type":"boolean","default":false}
             },
             "required":["path","expected_source_sha256","attachment_path","page","x","y","target_path"],
+            "additionalProperties":false
+        }),
+    )
+}
+
+fn extract_pdf_file_attachment_tool() -> Value {
+    tool(
+        "extract_pdf_file_attachment",
+        "Extract one inspected standard PDF FileAttachment to a distinct workspace file. Exact source and attachment SHA-256 values, the focused page-local annotation index, the complete indirect object chain, content signature, output extension, and atomic write are validated fail closed without returning attachment content.",
+        json!({
+            "type":"object",
+            "properties":{
+                "path":{"type":"string","description":"Workspace-relative source .pdf path."},
+                "expected_source_sha256":{"type":"string","pattern":"^[0-9a-f]{64}$","description":"Exact source SHA-256 returned by inspect_pdf."},
+                "page":{"type":"integer","minimum":1,"maximum":5000,"description":"One-based physical page containing the inspected FileAttachment annotation."},
+                "annotation_index":{"type":"integer","minimum":1,"maximum":100,"description":"One-based page-local annotation index returned in the focused inspect_pdf annotation preview."},
+                "expected_attachment_sha256":{"type":"string","pattern":"^[0-9a-f]{64}$","description":"Exact attachment SHA-256 returned in inspect_pdf annotation metadata."},
+                "target_path":{"type":"string","description":"Distinct workspace-relative output path whose extension matches the inspected attachment."},
+                "overwrite":{"type":"boolean","default":false}
+            },
+            "required":["path","expected_source_sha256","page","annotation_index","expected_attachment_sha256","target_path"],
             "additionalProperties":false
         }),
     )

@@ -97,6 +97,9 @@ pub(super) fn execute_with_cancellation(
         ("internal_skill_pdf", "add_pdf_file_attachment_annotation") => {
             pdf_edit::add_pdf_file_attachment_annotation(arguments, state, request)
         }
+        ("internal_skill_pdf", "extract_pdf_file_attachment") => {
+            pdf_edit::extract_pdf_file_attachment(arguments, state, request)
+        }
         ("internal_skill_pdf", "stamp_pdf_text") => {
             pdf_edit::stamp_pdf_text(arguments, state, request)
         }
