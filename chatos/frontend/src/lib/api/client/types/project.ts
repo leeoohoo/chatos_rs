@@ -468,6 +468,8 @@ export interface UpdateProjectRuntimeEnvironmentSettingsPayload {
 export interface AnalyzeProjectRuntimeEnvironmentPayload {
   analysis_requirement?: string;
   analysisRequirement?: string;
+  selected_dependencies?: string[];
+  selectedDependencies?: string[];
 }
 
 export interface ProjectContactLinkResponse {

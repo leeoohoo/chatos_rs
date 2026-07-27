@@ -109,6 +109,7 @@ pub async fn analyze_project_runtime_environment(
     user_access_token: Option<&str>,
     run_id: &str,
     analysis_requirement: Option<&str>,
+    selected_dependencies: &[String],
 ) -> Result<ProjectRuntimeEnvironmentResponse, String> {
     runtime::analysis::analyze_project_runtime_environment_impl(
         state,
@@ -116,6 +117,7 @@ pub async fn analyze_project_runtime_environment(
         user_access_token,
         run_id,
         analysis_requirement,
+        selected_dependencies,
     )
     .await
 }

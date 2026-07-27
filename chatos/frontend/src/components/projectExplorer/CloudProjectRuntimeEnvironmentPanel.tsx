@@ -17,8 +17,7 @@ import {
   type RuntimeActionNotice,
 } from './cloudRuntimeActionNotice';
 import CloudRuntimeImagePlans from './CloudRuntimeImagePlans';
-
-const MAX_ANALYSIS_REQUIREMENT_LENGTH = 4_000;
+import RuntimeAnalysisRequirementDialog from './RuntimeAnalysisRequirementDialog';
 
 interface CloudProjectRuntimeEnvironmentPanelProps {
   projectId: string;
@@ -147,6 +146,7 @@ export const CloudProjectRuntimeEnvironmentPanel: React.FC<CloudProjectRuntimeEn
   const [actionNotice, setActionNotice] = useState<RuntimeActionNotice | null>(null);
   const [analysisDialogOpen, setAnalysisDialogOpen] = useState(false);
   const [analysisRequirement, setAnalysisRequirement] = useState('');
+  const [selectedDependencies, setSelectedDependencies] = useState<string[]>([]);
   const [analysisRequirementError, setAnalysisRequirementError] = useState<string | null>(null);
 
   const loadEnvironment = useCallback(async () => {
@@ -166,14 +166,18 @@ export const CloudProjectRuntimeEnvironmentPanel: React.FC<CloudProjectRuntimeEn
     void loadEnvironment();
   }, [loadEnvironment]);
 
-  const analyzeEnvironment = useCallback(async (requirement: string) => {
+  const analyzeEnvironment = useCallback(async (
+    requirement: string,
+    dependencies: string[],
+  ) => {
     setAnalyzing(true);
     setError(null);
     setActionNotice(null);
     setProgress(null);
     try {
       const nextResponse = await client.analyzeProjectRuntimeEnvironment(projectId, {
-        analysis_requirement: requirement,
+        analysis_requirement: requirement || undefined,
+        selected_dependencies: dependencies,
       });
       const nextEnvironment = asRecord(environmentRecord(nextResponse));
       const nextStatus = readString(nextEnvironment, ['status'], 'pending');
@@ -199,14 +203,14 @@ export const CloudProjectRuntimeEnvironmentPanel: React.FC<CloudProjectRuntimeEn
 
   const submitAnalysisRequirement = useCallback(() => {
     const requirement = analysisRequirement.trim();
-    if (!requirement) {
+    if (!requirement && selectedDependencies.length === 0) {
       setAnalysisRequirementError(t('cloudRuntime.requirementRequired'));
       return;
     }
     setAnalysisRequirementError(null);
     setAnalysisDialogOpen(false);
-    void analyzeEnvironment(requirement);
-  }, [analysisRequirement, analyzeEnvironment, t]);
+    void analyzeEnvironment(requirement, selectedDependencies);
+  }, [analysisRequirement, analyzeEnvironment, selectedDependencies, t]);
 
   const generateRuntimeImage = useCallback(async (imageId: string) => {
     setBuildingImageId(imageId);
@@ -436,81 +440,21 @@ export const CloudProjectRuntimeEnvironmentPanel: React.FC<CloudProjectRuntimeEn
       </div>
 
       {analysisDialogOpen && (
-        <div
-          className="fixed inset-0 z-[70] flex items-center justify-center bg-black/50 p-4"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="runtime-analysis-requirement-title"
-          onKeyDown={(event) => {
-            if (event.key === 'Escape') {
-              closeAnalysisDialog();
-            }
-            if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
-              event.preventDefault();
-              submitAnalysisRequirement();
-            }
+        <RuntimeAnalysisRequirementDialog
+          requirement={analysisRequirement}
+          selectedDependencies={selectedDependencies}
+          error={analysisRequirementError}
+          onRequirementChange={(value) => {
+            setAnalysisRequirement(value);
+            setAnalysisRequirementError(null);
           }}
-        >
-          <div className="w-full max-w-xl rounded-lg border border-border bg-card shadow-xl">
-            <div className="border-b border-border px-5 py-4">
-              <h3
-                id="runtime-analysis-requirement-title"
-                className="text-base font-semibold text-foreground"
-              >
-                {t('cloudRuntime.requirementDialogTitle')}
-              </h3>
-              <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                {t('cloudRuntime.requirementDialogDescription')}
-              </p>
-            </div>
-            <div className="px-5 py-4">
-              <label
-                htmlFor="runtime-analysis-requirement"
-                className="mb-2 block text-xs font-medium text-foreground"
-              >
-                {t('cloudRuntime.requirementLabel')}
-              </label>
-              <textarea
-                id="runtime-analysis-requirement"
-                autoFocus
-                rows={6}
-                maxLength={MAX_ANALYSIS_REQUIREMENT_LENGTH}
-                value={analysisRequirement}
-                onChange={(event) => {
-                  setAnalysisRequirement(event.target.value);
-                  setAnalysisRequirementError(null);
-                }}
-                placeholder={t('cloudRuntime.requirementPlaceholder')}
-                className="w-full resize-y rounded-md border border-border bg-background px-3 py-2 text-sm leading-6 text-foreground outline-none transition-colors placeholder:text-muted-foreground focus:border-primary"
-              />
-              <div className="mt-2 flex items-start justify-between gap-3 text-xs">
-                <span className={analysisRequirementError ? 'text-destructive' : 'text-muted-foreground'}>
-                  {analysisRequirementError || t('cloudRuntime.requirementHint')}
-                </span>
-                <span className="shrink-0 text-muted-foreground">
-                  {analysisRequirement.length}/{MAX_ANALYSIS_REQUIREMENT_LENGTH}
-                </span>
-              </div>
-            </div>
-            <div className="flex justify-end gap-2 border-t border-border px-5 py-4">
-              <button
-                type="button"
-                onClick={closeAnalysisDialog}
-                className="h-9 rounded-md border border-border bg-background px-4 text-sm text-foreground hover:bg-accent"
-              >
-                {t('common.cancel')}
-              </button>
-              <button
-                type="button"
-                onClick={submitAnalysisRequirement}
-                disabled={!analysisRequirement.trim()}
-                className="h-9 rounded-md bg-primary px-4 text-sm text-primary-foreground hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                {t('cloudRuntime.startAnalysis')}
-              </button>
-            </div>
-          </div>
-        </div>
+          onSelectedDependenciesChange={(dependencies) => {
+            setSelectedDependencies(dependencies);
+            setAnalysisRequirementError(null);
+          }}
+          onCancel={closeAnalysisDialog}
+          onSubmit={submitAnalysisRequirement}
+        />
       )}
 
       {visibleNotice && !(error || lastError || notRunnableReason) && (

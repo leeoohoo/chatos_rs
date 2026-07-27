@@ -27,6 +27,7 @@ pub(crate) async fn run_local_environment_analysis(
     model_config_id: String,
     run_id: String,
     analysis_requirement: Option<String>,
+    selected_dependencies: Vec<String>,
 ) -> Result<(), String> {
     let database = runtime
         .local_database()
@@ -103,6 +104,7 @@ pub(crate) async fn run_local_environment_analysis(
         &evidence,
         capability_prompt.as_deref(),
         analysis_requirement.as_deref(),
+        selected_dependencies.as_slice(),
     )?;
     let model = build_local_model_config(
         resolved_model,

@@ -73,16 +73,75 @@ describe('CloudProjectRuntimeEnvironmentPanel', () => {
 
     fireEvent.click(screen.getByRole('button', { name: '初始化/重新分析' }));
     expect(screen.getByRole('dialog', { name: '运行环境分析要求' })).toBeInTheDocument();
-    fireEvent.change(screen.getByLabelText('本次分析要求'), {
+    fireEvent.click(screen.getByRole('checkbox', { name: 'PostgreSQL' }));
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Redis' }));
+    fireEvent.change(screen.getByLabelText('其他分析要求（可选）'), {
       target: { value: '使用 Node.js 22，并将服务暴露在 3000 端口。' },
     });
     fireEvent.click(screen.getByRole('button', { name: '开始分析' }));
     await waitFor(() => {
       expect(analyzeProjectRuntimeEnvironment).toHaveBeenCalledWith('project-1', {
         analysis_requirement: '使用 Node.js 22，并将服务暴露在 3000 端口。',
+        selected_dependencies: ['PostgreSQL', 'Redis'],
       });
     });
     expect(getProjectRuntimeEnvironment).toHaveBeenCalledWith('project-1');
+  });
+
+  it('submits selected dependencies without requiring custom text and supports common selection', async () => {
+    const response = {
+      environment: {
+        project_id: 'project-dependencies',
+        status: 'ready',
+        sandbox_enabled: true,
+        sandbox_provider: 'cloud_sandbox_manager',
+        file_provider: 'harness',
+      },
+      images: [],
+    };
+    const analyzeProjectRuntimeEnvironment = vi.fn(async () => response);
+    const client = {
+      getProjectRuntimeEnvironment: vi.fn(async () => response),
+      analyzeProjectRuntimeEnvironment,
+    } as unknown as ApiClient;
+
+    render(
+      <ApiClientProvider client={client}>
+        <I18nProvider>
+          <CloudProjectRuntimeEnvironmentPanel
+            projectId="project-dependencies"
+            projectName="Dependency project"
+            projectSourceType="cloud"
+          />
+        </I18nProvider>
+      </ApiClientProvider>,
+    );
+
+    fireEvent.click(await screen.findByRole('button', { name: '初始化/重新分析' }));
+    const startButton = screen.getByRole('button', { name: '开始分析' });
+    expect(startButton).toBeDisabled();
+
+    fireEvent.click(screen.getByRole('button', { name: '选择常用组合' }));
+    expect(screen.getByRole('checkbox', { name: 'PostgreSQL' })).toBeChecked();
+    expect(screen.getByRole('checkbox', { name: 'Redis' })).toBeChecked();
+    expect(screen.getByRole('checkbox', { name: 'RabbitMQ' })).toBeChecked();
+    expect(screen.getByText('已选择 6 项')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: '清空' }));
+    expect(screen.getByRole('checkbox', { name: 'PostgreSQL' })).not.toBeChecked();
+    expect(startButton).toBeDisabled();
+
+    fireEvent.click(screen.getByRole('checkbox', { name: 'PostgreSQL' }));
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Redis' }));
+    expect(startButton).toBeEnabled();
+    fireEvent.click(startButton);
+
+    await waitFor(() => {
+      expect(analyzeProjectRuntimeEnvironment).toHaveBeenCalledWith('project-dependencies', {
+        analysis_requirement: undefined,
+        selected_dependencies: ['PostgreSQL', 'Redis'],
+      });
+    });
   });
 
   it('uses the local project boundary when rendering a local sandbox runtime', async () => {
@@ -190,7 +249,7 @@ describe('CloudProjectRuntimeEnvironmentPanel', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent('缺少环境初始化模型。');
     expect(screen.getByRole('button', { name: '暂无可准备镜像' })).toBeDisabled();
     fireEvent.click(screen.getByRole('button', { name: '检查配置并初始化' }));
-    fireEvent.change(screen.getByLabelText('本次分析要求'), {
+    fireEvent.change(screen.getByLabelText('其他分析要求（可选）'), {
       target: { value: '检查现有配置，并继续使用项目声明的运行时版本。' },
     });
     fireEvent.click(screen.getByRole('button', { name: '开始分析' }));
@@ -198,6 +257,7 @@ describe('CloudProjectRuntimeEnvironmentPanel', () => {
     await waitFor(() => {
       expect(analyzeProjectRuntimeEnvironment).toHaveBeenCalledWith('project-config', {
         analysis_requirement: '检查现有配置，并继续使用项目声明的运行时版本。',
+        selected_dependencies: [],
       });
     });
     expect(await screen.findByRole('alert')).toHaveTextContent('已完成检查：缺少环境初始化模型。');

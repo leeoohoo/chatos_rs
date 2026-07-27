@@ -282,6 +282,8 @@ pub struct UpdateProjectRuntimeEnvironmentVariablesRequest {
 pub struct AnalyzeProjectRuntimeEnvironmentRequest {
     #[serde(default, alias = "analysisRequirement")]
     pub analysis_requirement: Option<String>,
+    #[serde(default, alias = "selectedDependencies")]
+    pub selected_dependencies: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

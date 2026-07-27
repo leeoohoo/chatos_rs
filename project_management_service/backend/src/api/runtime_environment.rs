@@ -23,6 +23,8 @@ use crate::services::runtime_environment::{
 use crate::state::AppState;
 
 const MAX_ANALYSIS_REQUIREMENT_LENGTH: usize = 4_000;
+const MAX_SELECTED_DEPENDENCIES: usize = 64;
+const MAX_SELECTED_DEPENDENCY_LENGTH: usize = 80;
 
 pub(in crate::api) async fn get_project_runtime_environment(
     Path(project_id): Path<String>,
@@ -277,9 +279,9 @@ pub(in crate::api) async fn analyze_project_runtime_environment_handler(
     let project = require_project_access(&state, &project_id, &user).await?;
     ensure_project_writable(&project)?;
     ensure_cloud_agent_execution(&project)?;
-    let analysis_requirement = normalize_analysis_requirement(
-        payload.and_then(|Json(payload)| payload.analysis_requirement),
-    )?;
+    let payload = payload.map(|Json(payload)| payload).unwrap_or_default();
+    let analysis_requirement = normalize_analysis_requirement(payload.analysis_requirement)?;
+    let selected_dependencies = normalize_selected_dependencies(payload.selected_dependencies)?;
 
     {
         let mut active = state.runtime_environment_analysis_jobs.lock().await;
@@ -343,6 +345,7 @@ pub(in crate::api) async fn analyze_project_runtime_environment_handler(
     let worker_run_id = run_id.clone();
     let worker_access_token = access_token.0.clone();
     let worker_analysis_requirement = analysis_requirement;
+    let worker_selected_dependencies = selected_dependencies;
     tokio::spawn(async move {
         let task_state = worker_state.clone();
         let task_project = worker_project.clone();
@@ -354,6 +357,7 @@ pub(in crate::api) async fn analyze_project_runtime_environment_handler(
                 Some(worker_access_token.as_str()),
                 task_run_id.as_str(),
                 worker_analysis_requirement.as_deref(),
+                worker_selected_dependencies.as_slice(),
             )
             .await
         });
@@ -394,6 +398,31 @@ fn normalize_analysis_requirement(value: Option<String>) -> Result<Option<String
         )));
     }
     Ok(requirement)
+}
+
+fn normalize_selected_dependencies(values: Vec<String>) -> Result<Vec<String>, ApiError> {
+    let mut normalized = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    for value in values {
+        let value = value.trim();
+        if value.is_empty() {
+            continue;
+        }
+        if value.chars().count() > MAX_SELECTED_DEPENDENCY_LENGTH {
+            return Err(ApiError::bad_request(format!(
+                "selected_dependencies entries must not exceed {MAX_SELECTED_DEPENDENCY_LENGTH} characters"
+            )));
+        }
+        if seen.insert(value.to_lowercase()) {
+            normalized.push(value.to_string());
+        }
+    }
+    if normalized.len() > MAX_SELECTED_DEPENDENCIES {
+        return Err(ApiError::bad_request(format!(
+            "selected_dependencies must not contain more than {MAX_SELECTED_DEPENDENCIES} entries"
+        )));
+    }
+    Ok(normalized)
 }
 
 fn reset_environment_for_analysis(environment: &mut ProjectRuntimeEnvironmentRecord, run_id: &str) {
@@ -455,7 +484,10 @@ async fn persist_background_analysis_failure(
 
 #[cfg(test)]
 mod tests {
-    use super::{normalize_analysis_requirement, reset_environment_for_analysis};
+    use super::{
+        normalize_analysis_requirement, normalize_selected_dependencies,
+        reset_environment_for_analysis,
+    };
     use crate::models::{
         ProjectRuntimeEnvironmentRecord, ProjectRuntimeEnvironmentStatus,
         RuntimeEnvironmentProvider,
@@ -471,6 +503,25 @@ mod tests {
             Some("Use Node.js 22")
         );
         assert!(normalize_analysis_requirement(Some("x".repeat(4_001))).is_err());
+    }
+
+    #[test]
+    fn selected_dependencies_are_trimmed_deduplicated_and_limited() {
+        assert_eq!(
+            normalize_selected_dependencies(vec![
+                " PostgreSQL ".to_string(),
+                "redis".to_string(),
+                "REDIS".to_string(),
+                " ".to_string(),
+            ])
+            .expect("valid dependencies"),
+            vec!["PostgreSQL".to_string(), "redis".to_string()]
+        );
+        assert!(normalize_selected_dependencies(vec!["x".repeat(81)]).is_err());
+        assert!(normalize_selected_dependencies(
+            (0..65).map(|index| format!("service-{index}")).collect()
+        )
+        .is_err());
     }
 
     #[test]
