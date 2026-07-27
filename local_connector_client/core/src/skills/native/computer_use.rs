@@ -70,6 +70,78 @@ struct DisplayTarget {
     rotation_degrees: f64,
 }
 
+#[derive(Debug, Clone)]
+struct FrontmostWindowCaptureTarget {
+    platform: &'static str,
+    application: String,
+    pid: u32,
+    window_id: String,
+    title: String,
+    position: [f64; 2],
+    size: [f64; 2],
+    capture_position: [f64; 2],
+    capture_size: [f64; 2],
+    clipped_to_visible_desktop: bool,
+}
+
+#[cfg(target_os = "macos")]
+#[derive(Debug, Clone, Deserialize)]
+struct MacosFrontmostWindowIdentity {
+    application: String,
+    pid: u32,
+    window_id: u32,
+    title: String,
+    position: [f64; 2],
+    size: [f64; 2],
+}
+
+#[cfg(target_os = "macos")]
+impl MacosFrontmostWindowIdentity {
+    fn validate(&self) -> Result<()> {
+        if self.application.is_empty()
+            || self.application.chars().count() > 240
+            || self.pid == 0
+            || self.window_id == 0
+            || self.title.chars().count() > 500
+            || self
+                .position
+                .iter()
+                .chain(self.size.iter())
+                .any(|value| !value.is_finite())
+            || self.size[0] <= 0.0
+            || self.size[1] <= 0.0
+        {
+            return Err(anyhow!(
+                "macOS frontmost window identity or geometry is invalid"
+            ));
+        }
+        Ok(())
+    }
+
+    fn same_identity_and_geometry(&self, other: &Self) -> bool {
+        self.application == other.application
+            && self.pid == other.pid
+            && self.window_id == other.window_id
+            && self.position == other.position
+            && self.size == other.size
+    }
+
+    fn capture_target(&self) -> FrontmostWindowCaptureTarget {
+        FrontmostWindowCaptureTarget {
+            platform: "macos",
+            application: self.application.clone(),
+            pid: self.pid,
+            window_id: self.window_id.to_string(),
+            title: self.title.clone(),
+            position: self.position,
+            size: self.size,
+            capture_position: self.position,
+            capture_size: self.size,
+            clipped_to_visible_desktop: false,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Deserialize, PartialEq, Serialize)]
 struct ApprovedDisplayGuard {
     index: u32,
@@ -348,6 +420,64 @@ function run(argv) {
 }
 "#;
 
+const FRONTMOST_WINDOW_CAPTURE_TARGET_JXA: &str = r#"
+function safe(callable, fallback) {
+  try { return callable(); } catch (_) { return fallback; }
+}
+function text(value, maxLength) {
+  var output = value === undefined || value === null ? "" : String(value);
+  return output.length <= maxLength ? output : output.slice(0, maxLength);
+}
+function pair(value) {
+  try {
+    var first = Number(value[0]);
+    var second = Number(value[1]);
+    if (!Number.isFinite(first) || !Number.isFinite(second)) return null;
+    return [first, second];
+  } catch (_) {
+    return null;
+  }
+}
+function attributeValue(element, name, fallback) {
+  return safe(function() { return element.attributes.byName(name).value(); }, fallback);
+}
+function run() {
+  var systemEvents = Application("System Events");
+  var processes = systemEvents.applicationProcesses.whose({frontmost: true})();
+  if (processes.length === 0) throw new Error("No frontmost application process is available");
+  var process = processes[0];
+  var windows = safe(function() { return process.windows(); }, []);
+  if (windows.length === 0) throw new Error("The frontmost application has no capturable window");
+  var window = windows[0];
+  var visible = Boolean(safe(function() { return window.visible(); }, true));
+  var minimized = Boolean(attributeValue(window, "AXMinimized", false));
+  var windowId = Number(attributeValue(window, "AXWindowNumber", safe(function() { return window.id(); }, 0)));
+  var pid = Number(safe(function() { return process.unixId(); }, 0));
+  var position = pair(safe(function() { return window.position(); }, null));
+  var size = pair(safe(function() { return window.size(); }, null));
+  if (!visible || minimized) throw new Error("The frontmost window is not visibly capturable");
+  if (!Number.isFinite(windowId) || windowId < 1 || Math.floor(windowId) !== windowId) {
+    throw new Error("The frontmost window identity is invalid");
+  }
+  if (!Number.isFinite(pid) || pid < 1 || Math.floor(pid) !== pid) {
+    throw new Error("The frontmost application identity is invalid");
+  }
+  if (position === null || size === null || size[0] <= 0 || size[1] <= 0) {
+    throw new Error("The frontmost window geometry is invalid");
+  }
+  if (!Boolean(process.frontmost())) throw new Error("The frontmost application changed during observation");
+  return JSON.stringify({
+    platform: "macos",
+    application: text(safe(function() { return process.name(); }, ""), 240),
+    pid: pid,
+    window_id: windowId,
+    title: text(safe(function() { return window.name(); }, ""), 500),
+    position: position,
+    size: size
+  });
+}
+"#;
+
 const LOOKUP_APPLICATION_JXA: &str = r#"
 function text(value, maxLength) {
   var output = value === undefined || value === null ? "" : String(value);
@@ -519,6 +649,15 @@ pub(super) fn tool_definitions(include_control: bool) -> Vec<Value> {
         json!({
             "name": "computer_capture_main_display",
             "description": "Read-only screenshot observation of the main display on the current supported platform. The image is delivered only as transient model input, is never persisted in tool history, and may contain sensitive visible information. Does not click, type, or change desktop state.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {},
+                "additionalProperties": false
+            }
+        }),
+        json!({
+            "name": "computer_capture_frontmost_window",
+            "description": "Read-only screenshot observation limited to the current frontmost visible window on the current supported platform. The exact window identity and geometry are revalidated after capture; any foreground or layout drift fails closed. The image is transient model input and is never persisted in tool history.",
             "inputSchema": {
                 "type": "object",
                 "properties": {},
@@ -1032,6 +1171,7 @@ fn execute_local(operation: &str, arguments: &Value) -> Result<Value> {
             inspect_frontmost_window(max_depth, max_nodes)
         }
         "computer_capture_main_display" => capture_display(None),
+        "computer_capture_frontmost_window" => capture_frontmost_window(),
         "computer_list_displays" => list_displays(),
         "computer_capture_display" => {
             let display_index = required_display_index(arguments)?;
@@ -1376,12 +1516,14 @@ fn post_action_observation_failure(
         PostActionObservationTarget::MainDisplay => {
             json!([
                 "computer_capture_main_display",
+                "computer_capture_frontmost_window",
                 "computer_inspect_frontmost_window"
             ])
         }
         PostActionObservationTarget::ApprovedDisplay(_) => json!([
             "computer_list_displays",
             "computer_capture_display",
+            "computer_capture_frontmost_window",
             "computer_inspect_frontmost_window"
         ]),
     };
@@ -3027,30 +3169,70 @@ fn press_key(_action: KeyAction<'_>) -> Result<Value> {
 }
 
 #[cfg(target_os = "macos")]
-fn capture_display(requested_index: Option<u32>) -> Result<Value> {
-    let display = if let Some(index) = requested_index {
-        active_displays()?
-            .into_iter()
-            .find(|display| display.index == index)
-            .ok_or_else(|| anyhow!("the selected display is no longer active"))?
-    } else {
-        resolve_display(None)?
-    };
+fn macos_frontmost_window_identity() -> Result<MacosFrontmostWindowIdentity> {
+    let value = execute_jxa(FRONTMOST_WINDOW_CAPTURE_TARGET_JXA, &[])?;
+    let identity = serde_json::from_value::<MacosFrontmostWindowIdentity>(value)
+        .context("decode macOS frontmost window capture target")?;
+    identity.validate()?;
+    Ok(identity)
+}
+
+#[cfg(target_os = "macos")]
+fn capture_frontmost_window() -> Result<Value> {
+    let before = macos_frontmost_window_identity()?;
+    let capture_arguments = vec!["-l".to_string(), before.window_id.to_string()];
+    let bytes = capture_macos_jpeg(
+        capture_arguments.as_slice(),
+        format!("window-{}.jpg", before.window_id).as_str(),
+    )?;
+    let after = macos_frontmost_window_identity()?;
+    if !before.same_identity_and_geometry(&after) {
+        return Err(anyhow!(
+            "macOS frontmost window identity or geometry changed during capture"
+        ));
+    }
+    frontmost_window_screenshot_result(bytes.as_slice(), &before.capture_target())
+}
+
+#[cfg(target_os = "windows")]
+fn capture_frontmost_window() -> Result<Value> {
+    windows::capture_frontmost_window()
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+fn capture_frontmost_window() -> Result<Value> {
+    Err(anyhow!(
+        "Computer Use frontmost-window screenshots are unsupported on this platform"
+    ))
+}
+
+#[cfg(target_os = "macos")]
+fn capture_macos_jpeg(capture_arguments: &[String], file_name: &str) -> Result<Vec<u8>> {
+    if capture_arguments.len() > 4
+        || capture_arguments.iter().any(|argument| {
+            argument.is_empty()
+                || argument.len() > 32
+                || !argument
+                    .chars()
+                    .all(|character| character.is_ascii_alphanumeric() || character == '-')
+        })
+        || file_name.is_empty()
+        || file_name.len() > 64
+        || !file_name
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric() || matches!(character, '-' | '.'))
+    {
+        return Err(anyhow!("macOS screenshot target arguments are invalid"));
+    }
     let screenshot_dir = tempfile::Builder::new()
         .prefix("chatos-computer-use-")
         .tempdir()
         .context("create private Computer Use screenshot directory")?;
-    let screenshot_path = screenshot_dir
-        .path()
-        .join(format!("display-{}.jpg", display.index));
+    let screenshot_path = screenshot_dir.path().join(file_name);
     let mut command = Command::new(MACOS_SCREENCAPTURE_PATH);
-    command.arg("-x");
-    if requested_index.is_some() {
-        command.arg("-D").arg(display.index.to_string());
-    } else {
-        command.arg("-m");
-    }
     command
+        .arg("-x")
+        .args(capture_arguments)
         .args(["-t", "jpg"])
         .arg(screenshot_path.as_path())
         .stdin(Stdio::null())
@@ -3100,7 +3282,26 @@ fn capture_display(requested_index: Option<u32>) -> Result<Value> {
             COMPUTER_USE_SCREENSHOT_MAX_BYTES
         ));
     }
-    let bytes = fs::read(screenshot_path.as_path()).context("read Computer Use screenshot")?;
+    fs::read(screenshot_path.as_path()).context("read Computer Use screenshot")
+}
+
+#[cfg(target_os = "macos")]
+fn capture_display(requested_index: Option<u32>) -> Result<Value> {
+    let display = if let Some(index) = requested_index {
+        active_displays()?
+            .into_iter()
+            .find(|display| display.index == index)
+            .ok_or_else(|| anyhow!("the selected display is no longer active"))?
+    } else {
+        resolve_display(None)?
+    };
+    let capture_arguments = if requested_index.is_some() {
+        vec!["-D".to_string(), display.index.to_string()]
+    } else {
+        vec!["-m".to_string()]
+    };
+    let file_name = format!("display-{}.jpg", display.index);
+    let bytes = capture_macos_jpeg(capture_arguments.as_slice(), file_name.as_str())?;
     screenshot_result(bytes.as_slice(), &display)
 }
 
@@ -3151,6 +3352,58 @@ fn screenshot_result(bytes: &[u8], display: &DisplayTarget) -> Result<Value> {
             "display_index": display.index,
             "display_id": display.display_id,
             "is_main": display.is_main,
+            "mime_type": mime_type,
+            "size_bytes": bytes.len(),
+            "sha256": sha256,
+            "persisted": false,
+            "sensitive_content_possible": true
+        },
+        "_model_input": [{
+            "type": "input_image",
+            "image_url": image_url,
+            "detail": "high"
+        }]
+    }))
+}
+
+fn frontmost_window_screenshot_result(
+    bytes: &[u8],
+    target: &FrontmostWindowCaptureTarget,
+) -> Result<Value> {
+    let (mime_type, prefix) = if bytes.starts_with(&[0xff, 0xd8, 0xff]) {
+        ("image/jpeg", "data:image/jpeg;base64,")
+    } else if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
+        ("image/png", "data:image/png;base64,")
+    } else {
+        return Err(anyhow!(
+            "Computer Use frontmost-window screenshot has an unsupported image format"
+        ));
+    };
+    if bytes.is_empty() || bytes.len() > COMPUTER_USE_SCREENSHOT_MAX_BYTES {
+        return Err(anyhow!(
+            "Computer Use frontmost-window screenshot exceeds the {} byte limit",
+            COMPUTER_USE_SCREENSHOT_MAX_BYTES
+        ));
+    }
+    let sha256 = hex::encode(Sha256::digest(bytes));
+    let image_url = format!("{prefix}{}", STANDARD.encode(bytes));
+    Ok(json!({
+        "text": format!("Captured a read-only screenshot of the current {} frontmost window and attached it as transient image input for the next model step.", target.platform),
+        "_structured_result": {
+            "success": true,
+            "mode": "read_only",
+            "capture_scope": "frontmost_window",
+            "platform": target.platform,
+            "application": target.application,
+            "pid": target.pid,
+            "window_id": target.window_id,
+            "window_title": target.title,
+            "window_position": target.position,
+            "window_size": target.size,
+            "capture_position": target.capture_position,
+            "capture_size": target.capture_size,
+            "clipped_to_visible_desktop": target.clipped_to_visible_desktop,
+            "identity_and_geometry_revalidated_after_capture": true,
             "mime_type": mime_type,
             "size_bytes": bytes.len(),
             "sha256": sha256,
@@ -3344,13 +3597,14 @@ mod tests {
     #[test]
     fn tool_contract_is_read_only_and_bounded() {
         let tools = tool_definitions(false);
-        assert_eq!(tools.len(), 5);
+        assert_eq!(tools.len(), 6);
         assert_eq!(tools[0]["name"], "computer_list_windows");
         let names = tools
             .iter()
             .filter_map(|tool| tool.get("name").and_then(Value::as_str))
             .collect::<Vec<_>>();
         assert!(names.contains(&"computer_capture_main_display"));
+        assert!(names.contains(&"computer_capture_frontmost_window"));
         assert!(names.contains(&"computer_list_displays"));
         assert!(names.contains(&"computer_capture_display"));
         assert!(names.contains(&"computer_inspect_frontmost_window"));
@@ -3366,7 +3620,7 @@ mod tests {
     #[test]
     fn control_tools_are_published_only_for_the_approved_plugin_path() {
         let tools = tool_definitions(true);
-        assert_eq!(tools.len(), 11);
+        assert_eq!(tools.len(), 12);
         let find = |name: &str| {
             tools
                 .iter()
@@ -3397,10 +3651,11 @@ mod tests {
             .iter()
             .filter_map(|tool| tool.get("name").and_then(Value::as_str))
             .collect::<Vec<_>>();
-        assert_eq!(tools.len(), 11);
+        assert_eq!(tools.len(), 12);
         assert!(names.contains(&"computer_list_windows"));
         assert!(names.contains(&"computer_inspect_frontmost_window"));
         assert!(names.contains(&"computer_capture_main_display"));
+        assert!(names.contains(&"computer_capture_frontmost_window"));
         assert!(names.contains(&"computer_list_displays"));
         assert!(names.contains(&"computer_capture_display"));
         assert!(names.contains(&"computer_click"));
@@ -3424,6 +3679,9 @@ mod tests {
         assert!(source.contains("UIA_TextEditPatternId"));
         assert!(source.contains("UIA_DocumentControlTypeId"));
         assert!(source.contains("WindowsTextTargetClass::ContentEditable"));
+        assert!(source.contains("pub(super) fn capture_frontmost_window()"));
+        assert!(source.contains("same_identity_and_geometry"));
+        assert!(source.contains("intersect_rect(window_rect, virtual_desktop_rect()?"));
     }
 
     #[test]
@@ -3777,6 +4035,40 @@ mod tests {
     }
 
     #[test]
+    fn frontmost_window_screenshot_is_transient_and_geometry_bound() {
+        let target = FrontmostWindowCaptureTarget {
+            platform: "windows",
+            application: "Example.exe".to_string(),
+            pid: 42,
+            window_id: "0x1234".to_string(),
+            title: "Example".to_string(),
+            position: [-20.0, 10.0],
+            size: [1024.0, 768.0],
+            capture_position: [0.0, 10.0],
+            capture_size: [1004.0, 768.0],
+            clipped_to_visible_desktop: true,
+        };
+        let result =
+            frontmost_window_screenshot_result(b"\x89PNG\r\n\x1a\nwindow-pixels", &target).unwrap();
+        assert!(result
+            .pointer("/_model_input/0/image_url")
+            .and_then(Value::as_str)
+            .is_some_and(|value| value.starts_with("data:image/png;base64,")));
+        let structured = &result["_structured_result"];
+        assert_eq!(structured["capture_scope"], "frontmost_window");
+        assert_eq!(structured["window_id"], "0x1234");
+        assert_eq!(structured["window_position"], json!([-20.0, 10.0]));
+        assert_eq!(structured["capture_position"], json!([0.0, 10.0]));
+        assert_eq!(structured["clipped_to_visible_desktop"], true);
+        assert_eq!(
+            structured["identity_and_geometry_revalidated_after_capture"],
+            true
+        );
+        assert_eq!(structured["persisted"], false);
+        assert!(!structured.to_string().contains("base64"));
+    }
+
+    #[test]
     fn post_action_observation_attaches_transient_pixels_without_persisting_them() {
         let display = DisplayTarget {
             index: 2,
@@ -3862,6 +4154,7 @@ mod tests {
         for (index, script) in [
             LIST_WINDOWS_JXA,
             INSPECT_FRONTMOST_WINDOW_JXA,
+            FRONTMOST_WINDOW_CAPTURE_TARGET_JXA,
             LOOKUP_APPLICATION_JXA,
             ACTIVATE_APPLICATION_JXA,
             FRONTMOST_APPLICATION_JXA,

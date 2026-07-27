@@ -620,7 +620,7 @@ fn computer_use_release_keeps_control_on_the_plugin_approval_path() {
         .find(|item| item.skill_id == "internal_skill_computer_use")
         .expect("computer use catalog item");
     assert_eq!(catalog_item.implementation_status, "ready");
-    assert_eq!(catalog_item.version, "1.15.0");
+    assert_eq!(catalog_item.version, "1.16.0");
     assert_eq!(
         catalog_item.permissions,
         vec!["system.accessibility", "desktop.observe", "desktop.control"]
@@ -651,7 +651,7 @@ fn computer_use_release_keeps_control_on_the_plugin_approval_path() {
         &relay_request,
     )
     .expect("computer use tool definitions");
-    assert_eq!(tools.len(), 5);
+    assert_eq!(tools.len(), 6);
     let plugin_tools = native::plugin_tool_definitions(
         "internal_skill_computer_use",
         &LocalState::default(),
@@ -660,7 +660,7 @@ fn computer_use_release_keeps_control_on_the_plugin_approval_path() {
         true,
     )
     .expect("approved Plugin Computer Use tool definitions");
-    assert_eq!(plugin_tools.len(), 11);
+    assert_eq!(plugin_tools.len(), 12);
     let instructions = internal_skill_instructions("internal_skill_computer_use")
         .expect("Computer Use instructions");
     assert!(instructions.contains("left-button double-click"));
@@ -680,11 +680,13 @@ fn computer_use_release_keeps_control_on_the_plugin_approval_path() {
     assert!(instructions.contains("Activation recovery contract"));
     assert!(instructions.contains("foreground_changed_after_activation"));
     assert!(instructions.contains("frontmost_application_activation_only"));
+    assert!(instructions.contains("computer_capture_frontmost_window"));
+    assert!(instructions.contains("identity/geometry"));
     assert!(instructions.contains("No Computer Use action exposes `acceptForSession`"));
     let manifest: Value = serde_json::from_str(include_str!(
-        "../../../skill_bundles/internal/computer-use/1.15.0/skill.json"
+        "../../../skill_bundles/internal/computer-use/1.16.0/skill.json"
     ))
-    .expect("Computer Use 1.15.0 manifest");
+    .expect("Computer Use 1.16.0 manifest");
     assert_eq!(
         manifest["platforms"],
         json!(["macos-arm64", "macos-x64", "windows-arm64", "windows-x64"])
@@ -697,7 +699,7 @@ fn computer_use_release_keeps_control_on_the_plugin_approval_path() {
         false,
     )
     .expect("fail-closed Plugin Computer Use tool definitions");
-    assert_eq!(plugin_tools_without_approval.len(), 5);
+    assert_eq!(plugin_tools_without_approval.len(), 6);
 
     let bundle_hash = internal_skill_bundle_hash(&catalog_item);
     let prepare = handle_skill_prepare(
@@ -745,7 +747,7 @@ fn ready_bundle_v2_fingerprint_matches_plugin_management_seed() {
         .join("\n");
     assert_eq!(
         hex::encode(Sha256::digest(rows.as_bytes())),
-        "e77e59dc908731b8e248575d872ddabedde72c3368e9c752cde35ae20df1cb5a"
+        "ab968cf0c4e0138cec865d72c442fd5de3e7308ea03bcacbc2482b900e91d201"
     );
 }
 
@@ -760,7 +762,7 @@ fn all_28_bundled_skill_fingerprints_match_plugin_management_seed() {
         .join("\n");
     assert_eq!(
         hex::encode(Sha256::digest(rows.as_bytes())),
-        "708f0c3a0f07340e0e5a0045e5ecb9c990d0375188ccd510d7195c1b72871816"
+        "af84dd2d7b52c5d9b92017070e90dea73151717c4c4d83173e9ece18576ef50c"
     );
 }
 

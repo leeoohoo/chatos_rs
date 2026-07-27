@@ -787,9 +787,9 @@ mod tests {
             .expect("install verified Computer Use Plugin");
         assert_eq!(
             installed.installed_version.release_id,
-            "bundled-release-computer-use-1-15-0"
+            "bundled-release-computer-use-1-16-0"
         );
-        assert_eq!(installed.installed_version.version, "1.15.0");
+        assert_eq!(installed.installed_version.version, "1.16.0");
         assert_eq!(
             installed.installed_version.signature_key_id,
             BUNDLED_SIGNATURE_KEY_ID
@@ -825,7 +825,7 @@ mod tests {
             fixture.path().join(BUNDLE_INDEX_FILE),
         )
         .expect("copy staged index");
-        let relative = Path::new("internal/computer-use/1.15.0");
+        let relative = Path::new("internal/computer-use/1.16.0");
         let source = source_root.join(relative);
         let destination = fixture.path().join(relative);
         let files = verified_directory_files(source.as_path(), PluginArchiveLimits::default())
@@ -873,12 +873,12 @@ mod tests {
         let spec = bundled_plugin_spec("bundled-plugin-computer-use").expect("Computer Use spec");
         let (_, inventory, _) =
             expected_manifest_and_inventory(&spec).expect("Computer Use inventory");
-        let previous_relative_path = "installed/computer-use--fixture/1.14.0";
+        let previous_relative_path = "installed/computer-use--fixture/1.15.0";
         fs::create_dir_all(installer.plugin_root().join(previous_relative_path))
             .expect("create previous immutable version");
         let previous = InstalledPluginVersion {
-            release_id: "bundled-release-computer-use-1-14-0".to_string(),
-            version: "1.14.0".to_string(),
+            release_id: "bundled-release-computer-use-1-15-0".to_string(),
+            version: "1.15.0".to_string(),
             artifact_sha256: "0".repeat(64),
             manifest_sha256: "1".repeat(64),
             signature_key_id: BUNDLED_SIGNATURE_KEY_ID.to_string(),
@@ -909,12 +909,12 @@ mod tests {
         let updated = installer
             .install_bundled_directory(bundled_root.as_path(), spec.plugin_id.as_str())
             .expect("update bundled Plugin");
-        assert_eq!(updated.installed_version.version, "1.15.0");
-        assert_eq!(updated.plugin.previous_version.as_deref(), Some("1.14.0"));
+        assert_eq!(updated.installed_version.version, "1.16.0");
+        assert_eq!(updated.plugin.previous_version.as_deref(), Some("1.15.0"));
         let rolled_back = installer
             .rollback(spec.plugin_id.as_str())
             .expect("rollback to previous bundled version");
-        assert_eq!(rolled_back.version.version, "1.14.0");
+        assert_eq!(rolled_back.version.version, "1.15.0");
         let history = installer
             .status_snapshot()
             .expect("Plugin status")

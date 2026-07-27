@@ -52,9 +52,9 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
 };
 
 use super::{
-    click_result, drag_step_count, ensure_action_not_cancelled, is_unsafe_typed_character,
-    screenshot_result, typed_text_result, ClickAction, DisplayTarget, DragAction, KeyAction,
-    ScrollAction, TypedTextAction,
+    click_result, drag_step_count, ensure_action_not_cancelled, frontmost_window_screenshot_result,
+    is_unsafe_typed_character, screenshot_result, typed_text_result, ClickAction, DisplayTarget,
+    DragAction, FrontmostWindowCaptureTarget, KeyAction, ScrollAction, TypedTextAction,
 };
 
 const MAX_WINDOWS_PER_PROCESS: usize = 20;
@@ -75,6 +75,57 @@ struct WindowRecord {
 struct WindowEnumeration {
     maximum_windows: usize,
     windows: Vec<WindowRecord>,
+}
+
+#[derive(Clone)]
+struct ForegroundWindowCaptureIdentity {
+    hwnd: usize,
+    pid: u32,
+    application: String,
+    title: String,
+    window_rect: RECT,
+    capture_rect: RECT,
+}
+
+impl ForegroundWindowCaptureIdentity {
+    fn same_identity_and_geometry(&self, other: &Self) -> bool {
+        self.hwnd == other.hwnd
+            && self.pid == other.pid
+            && self.application == other.application
+            && rect_equals(&self.window_rect, &other.window_rect)
+            && rect_equals(&self.capture_rect, &other.capture_rect)
+    }
+
+    fn capture_target(&self) -> FrontmostWindowCaptureTarget {
+        let window_width = self.window_rect.right.saturating_sub(self.window_rect.left);
+        let window_height = self.window_rect.bottom.saturating_sub(self.window_rect.top);
+        let capture_width = self
+            .capture_rect
+            .right
+            .saturating_sub(self.capture_rect.left);
+        let capture_height = self
+            .capture_rect
+            .bottom
+            .saturating_sub(self.capture_rect.top);
+        FrontmostWindowCaptureTarget {
+            platform: "windows",
+            application: self.application.clone(),
+            pid: self.pid,
+            window_id: format!("0x{:x}", self.hwnd),
+            title: self.title.clone(),
+            position: [
+                f64::from(self.window_rect.left),
+                f64::from(self.window_rect.top),
+            ],
+            size: [f64::from(window_width), f64::from(window_height)],
+            capture_position: [
+                f64::from(self.capture_rect.left),
+                f64::from(self.capture_rect.top),
+            ],
+            capture_size: [f64::from(capture_width), f64::from(capture_height)],
+            clipped_to_visible_desktop: !rect_equals(&self.window_rect, &self.capture_rect),
+        }
+    }
 }
 
 pub(super) fn list_windows(limit: u64) -> Result<Value> {
@@ -376,6 +427,82 @@ fn foreground_window() -> Result<(HWND, u32)> {
         ));
     }
     Ok((hwnd, pid))
+}
+
+fn foreground_window_capture_identity() -> Result<ForegroundWindowCaptureIdentity> {
+    let (hwnd, pid) = foreground_window()?;
+    // SAFETY: hwnd is the live foreground top-level window. These calls only read its current
+    // visibility, minimized state, bounds, and title.
+    if unsafe { IsWindowVisible(hwnd) } == 0 || unsafe { IsIconic(hwnd) } != 0 {
+        return Err(anyhow!(
+            "Windows foreground window is not visibly capturable"
+        ));
+    }
+    let mut window_rect = RECT::default();
+    if unsafe { GetWindowRect(hwnd, &mut window_rect) } == 0
+        || window_rect.right <= window_rect.left
+        || window_rect.bottom <= window_rect.top
+    {
+        return Err(anyhow!("Windows foreground window geometry is invalid"));
+    }
+    let capture_rect = intersect_rect(window_rect, virtual_desktop_rect()?)
+        .ok_or_else(|| anyhow!("Windows foreground window has no visible desktop pixels"))?;
+    let application = process_name(pid)?;
+    if unsafe { GetForegroundWindow() } != hwnd {
+        return Err(anyhow!(
+            "Windows foreground window changed during capture-target discovery"
+        ));
+    }
+    Ok(ForegroundWindowCaptureIdentity {
+        hwnd: hwnd as usize,
+        pid,
+        application,
+        title: unsafe { window_title(hwnd) },
+        window_rect,
+        capture_rect,
+    })
+}
+
+fn virtual_desktop_rect() -> Result<RECT> {
+    // SAFETY: GetSystemMetrics reads the current interactive desktop metrics without retaining
+    // pointers or mutating desktop state.
+    let left = unsafe { GetSystemMetrics(SM_XVIRTUALSCREEN) };
+    let top = unsafe { GetSystemMetrics(SM_YVIRTUALSCREEN) };
+    let width = unsafe { GetSystemMetrics(SM_CXVIRTUALSCREEN) };
+    let height = unsafe { GetSystemMetrics(SM_CYVIRTUALSCREEN) };
+    if width <= 0 || height <= 0 {
+        return Err(anyhow!("Windows virtual desktop geometry is invalid"));
+    }
+    let right = left
+        .checked_add(width)
+        .ok_or_else(|| anyhow!("Windows virtual desktop width overflowed"))?;
+    let bottom = top
+        .checked_add(height)
+        .ok_or_else(|| anyhow!("Windows virtual desktop height overflowed"))?;
+    Ok(RECT {
+        left,
+        top,
+        right,
+        bottom,
+    })
+}
+
+fn intersect_rect(left: RECT, right: RECT) -> Option<RECT> {
+    let intersection = RECT {
+        left: left.left.max(right.left),
+        top: left.top.max(right.top),
+        right: left.right.min(right.right),
+        bottom: left.bottom.min(right.bottom),
+    };
+    (intersection.right > intersection.left && intersection.bottom > intersection.top)
+        .then_some(intersection)
+}
+
+fn rect_equals(left: &RECT, right: &RECT) -> bool {
+    left.left == right.left
+        && left.top == right.top
+        && left.right == right.right
+        && left.bottom == right.bottom
 }
 
 fn bounded_bstr(value: ::windows::core::BSTR, maximum_chars: usize) -> String {
@@ -862,11 +989,49 @@ unsafe extern "system" fn collect_monitor(
 pub(super) fn capture_display(display: &DisplayTarget) -> Result<Value> {
     let width = checked_dimension(display.width, "width")?;
     let height = checked_dimension(display.height, "height")?;
+    let png = capture_region_png(
+        display.origin_x.round() as i32,
+        display.origin_y.round() as i32,
+        width,
+        height,
+    )?;
+    screenshot_result(png.as_slice(), display)
+}
+
+pub(super) fn capture_frontmost_window() -> Result<Value> {
+    let before = foreground_window_capture_identity()?;
+    let width = before
+        .capture_rect
+        .right
+        .saturating_sub(before.capture_rect.left);
+    let height = before
+        .capture_rect
+        .bottom
+        .saturating_sub(before.capture_rect.top);
+    let png = capture_region_png(
+        before.capture_rect.left,
+        before.capture_rect.top,
+        width,
+        height,
+    )?;
+    let after = foreground_window_capture_identity()?;
+    if !before.same_identity_and_geometry(&after) {
+        return Err(anyhow!(
+            "Windows foreground window identity or geometry changed during capture"
+        ));
+    }
+    frontmost_window_screenshot_result(png.as_slice(), &before.capture_target())
+}
+
+fn capture_region_png(left: i32, top: i32, width: i32, height: i32) -> Result<Vec<u8>> {
+    if width <= 0 || height <= 0 {
+        return Err(anyhow!("Windows screenshot region geometry is invalid"));
+    }
     let raw_bytes = (width as usize)
         .checked_mul(height as usize)
         .and_then(|pixels| pixels.checked_mul(4))
         .filter(|bytes| *bytes <= MAX_CAPTURE_RAW_BYTES)
-        .ok_or_else(|| anyhow!("Windows display capture exceeds the bounded raw pixel limit"))?;
+        .ok_or_else(|| anyhow!("Windows screenshot exceeds the bounded raw pixel limit"))?;
 
     // SAFETY: all GDI handles are checked before use and owned by CaptureHandles, which restores
     // the selected object and releases every acquired handle on all return paths.
@@ -879,13 +1044,13 @@ pub(super) fn capture_display(display: &DisplayTarget) -> Result<Value> {
             width,
             height,
             handles.screen_dc,
-            display.origin_x.round() as i32,
-            display.origin_y.round() as i32,
+            left,
+            top,
             SRCCOPY | CAPTUREBLT,
         )
     };
     if copied == 0 {
-        return Err(anyhow!("Windows display capture failed"));
+        return Err(anyhow!("Windows screenshot capture failed"));
     }
     handles.restore_selection();
 
@@ -920,8 +1085,7 @@ pub(super) fn capture_display(display: &DisplayTarget) -> Result<Value> {
             "Windows display capture returned incomplete pixels"
         ));
     }
-    let png = encode_png(width as u32, height as u32, &bgra)?;
-    screenshot_result(png.as_slice(), display)
+    encode_png(width as u32, height as u32, &bgra)
 }
 
 fn checked_dimension(value: f64, label: &str) -> Result<i32> {
