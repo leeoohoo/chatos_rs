@@ -3315,8 +3315,8 @@ fn creates_and_appends_self_contained_standard_pptx_charts_without_workbooks() {
                         "title":"Revenue by region",
                         "categories":["Q1","Q2","Q3"],
                         "series":[
-                            {"name":"North","values":[10,20,30]},
-                            {"name":"South","values":[12.5,18,36],"value_axis":"secondary"}
+                            {"name":"North","values":[10,20,30],"color":"#1a2b3c"},
+                            {"name":"South","values":[12.5,18,36],"value_axis":"secondary","color":"#DDEEFF"}
                         ],
                         "legend_position":"top",
                         "data_labels":"value",
@@ -3347,7 +3347,7 @@ fn creates_and_appends_self_contained_standard_pptx_charts_without_workbooks() {
                     "chart":{
                         "type":"line",
                         "categories":["Jan","Feb","Mar"],
-                        "series":[{"name":"Retention","values":[91,92.5,94]}],
+                        "series":[{"name":"Retention","values":[91,92.5,94],"color":"#336699"}],
                         "show_legend":false
                     }
                 },
@@ -3358,7 +3358,7 @@ fn creates_and_appends_self_contained_standard_pptx_charts_without_workbooks() {
                         "type":"pie",
                         "title":"Current mix",
                         "categories":["Direct","Partner","Organic"],
-                        "series":[{"name":"Share","values":[45,30,25]}]
+                        "series":[{"name":"Share","values":[45,30,25],"color":"#FF8800"}]
                     }
                 },
                 {
@@ -3369,7 +3369,7 @@ fn creates_and_appends_self_contained_standard_pptx_charts_without_workbooks() {
                         "title":"Capacity by tier",
                         "categories":["Base","Peak","Burst"],
                         "series":[
-                            {"name":"Committed","values":[20,35,-5]},
+                            {"name":"Committed","values":[20,35,-5],"color":"#00AA44"},
                             {"name":"Available","values":[30,45,15]}
                         ]
                     }
@@ -3381,7 +3381,7 @@ fn creates_and_appends_self_contained_standard_pptx_charts_without_workbooks() {
                         "type":"doughnut",
                         "title":"Current allocation",
                         "categories":["Core","Growth","Reserve"],
-                        "series":[{"name":"Allocation","values":[60,30,10]}],
+                        "series":[{"name":"Allocation","values":[60,30,10],"color":"#AABBCC"}],
                         "legend_position":"bottom",
                         "data_labels":"percentage"
                     }
@@ -3421,6 +3421,18 @@ fn creates_and_appends_self_contained_standard_pptx_charts_without_workbooks() {
     assert_eq!(
         inspected.pointer("/chart_metadata/0/series/1/value_axis"),
         Some(&json!("secondary"))
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/0/series/0/color"),
+        Some(&json!("#1A2B3C"))
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/0/series/0/color_value"),
+        Some(&json!("1A2B3C"))
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/0/series/1/color"),
+        Some(&json!("#DDEEFF"))
     );
     assert_eq!(
         inspected.pointer("/chart_metadata/0/chart_group_count"),
@@ -3563,6 +3575,10 @@ fn creates_and_appends_self_contained_standard_pptx_charts_without_workbooks() {
         Some(&json!("secondary"))
     );
     assert_eq!(
+        inspected.pointer("/chart_metadata/0/self_contained_edit_snapshot/series/0/color"),
+        Some(&json!("#1A2B3C"))
+    );
+    assert_eq!(
         inspected.pointer("/chart_metadata/0/self_contained_edit_snapshot/value_axis_minimum"),
         Some(&json!(1.0))
     );
@@ -3596,6 +3612,10 @@ fn creates_and_appends_self_contained_standard_pptx_charts_without_workbooks() {
         Some(&json!("line"))
     );
     assert_eq!(
+        inspected.pointer("/chart_metadata/1/series/0/color"),
+        Some(&json!("#336699"))
+    );
+    assert_eq!(
         inspected.pointer("/chart_metadata/1/legend_position"),
         Some(&Value::Null)
     );
@@ -3617,12 +3637,24 @@ fn creates_and_appends_self_contained_standard_pptx_charts_without_workbooks() {
         Some(&json!("pie"))
     );
     assert_eq!(
+        inspected.pointer("/chart_metadata/2/series/0/color"),
+        Some(&json!("#FF8800"))
+    );
+    assert_eq!(
         inspected.pointer("/chart_metadata/3/chart_types/0"),
         Some(&json!("area"))
     );
     assert_eq!(
         inspected.pointer("/chart_metadata/3/series/0/values_preview/2"),
         Some(&json!("-5"))
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/3/series/0/color"),
+        Some(&json!("#00AA44"))
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/3/series/1/color"),
+        Some(&Value::Null)
     );
     assert_eq!(
         inspected.pointer("/chart_metadata/4/chart_types/0"),
@@ -3635,6 +3667,10 @@ fn creates_and_appends_self_contained_standard_pptx_charts_without_workbooks() {
     assert_eq!(
         inspected.pointer("/chart_metadata/4/data_labels"),
         Some(&json!("percentage"))
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/4/series/0/color"),
+        Some(&json!("#AABBCC"))
     );
     for index in 0..5 {
         assert_eq!(
@@ -3662,6 +3698,12 @@ fn creates_and_appends_self_contained_standard_pptx_charts_without_workbooks() {
     let first_chart =
         read_zip_text(&mut created_archive, "ppt/charts/chart1.xml").expect("generated chart XML");
     assert!(first_chart.contains("<c:tx><c:v>North</c:v></c:tx>"));
+    assert!(first_chart.contains(
+        "<c:tx><c:v>North</c:v></c:tx><c:spPr><a:solidFill><a:srgbClr val=\"1A2B3C\"/></a:solidFill></c:spPr>"
+    ));
+    assert!(first_chart.contains(
+        "<c:tx><c:v>South</c:v></c:tx><c:spPr><a:solidFill><a:srgbClr val=\"DDEEFF\"/></a:solidFill></c:spPr>"
+    ));
     assert!(first_chart.contains("<c:strLit>"));
     assert!(first_chart.contains("<c:numLit>"));
     assert!(!first_chart.contains("<c:strRef>"));
@@ -3692,18 +3734,30 @@ fn creates_and_appends_self_contained_standard_pptx_charts_without_workbooks() {
         "<c:numFmt formatCode=\"0.0\" sourceLinked=\"0\"/><c:majorTickMark val=\"cross\"/><c:minorTickMark val=\"in\"/><c:tickLblPos val=\"nextTo\"/>"
     ));
     assert!(first_chart.contains("<c:majorUnit val=\"10\"/><c:minorUnit val=\"2.5\"/>"));
+    let line_chart =
+        read_zip_text(&mut created_archive, "ppt/charts/chart2.xml").expect("generated line XML");
+    assert!(line_chart.contains(
+        "<c:tx><c:v>Retention</c:v></c:tx><c:spPr><a:ln><a:solidFill><a:srgbClr val=\"336699\"/></a:solidFill></a:ln></c:spPr><c:marker>"
+    ));
+    let pie_chart =
+        read_zip_text(&mut created_archive, "ppt/charts/chart3.xml").expect("generated pie XML");
+    assert!(pie_chart
+        .contains("<c:spPr><a:solidFill><a:srgbClr val=\"FF8800\"/></a:solidFill></c:spPr>"));
     let area_chart =
         read_zip_text(&mut created_archive, "ppt/charts/chart4.xml").expect("generated area XML");
     assert!(area_chart.contains("<c:areaChart>"));
     assert!(area_chart.contains("<c:catAx>"));
     assert!(area_chart.contains("<c:valAx>"));
     assert!(area_chart.contains("<c:crossBetween val=\"midCat\"/>"));
+    assert_eq!(area_chart.matches("<c:spPr>").count(), 1);
+    assert!(area_chart.contains("<a:srgbClr val=\"00AA44\"/>"));
     let doughnut_chart = read_zip_text(&mut created_archive, "ppt/charts/chart5.xml")
         .expect("generated doughnut XML");
     assert!(doughnut_chart.contains("<c:doughnutChart>"));
     assert!(doughnut_chart.contains("<c:holeSize val=\"50\"/>"));
     assert!(doughnut_chart.contains("<c:legendPos val=\"b\"/>"));
     assert!(doughnut_chart.contains("<c:showPercent val=\"1\"/>"));
+    assert!(doughnut_chart.contains("<a:srgbClr val=\"AABBCC\"/>"));
     assert!(!doughnut_chart.contains("<c:catAx>"));
     drop(created_archive);
 
@@ -3720,8 +3774,8 @@ fn creates_and_appends_self_contained_standard_pptx_charts_without_workbooks() {
                         "type":"area",
                         "categories":["Apr","May"],
                         "series":[
-                            {"name":"Forecast","values":[40,-5]},
-                            {"name":"Actual","values":[35,10],"value_axis":"secondary"}
+                            {"name":"Forecast","values":[40,-5],"color":"#445566"},
+                            {"name":"Actual","values":[35,10],"value_axis":"secondary","color":"#778899"}
                         ],
                         "legend_position":"left",
                         "data_labels":"value",
@@ -3810,6 +3864,14 @@ fn creates_and_appends_self_contained_standard_pptx_charts_without_workbooks() {
         Some(&json!("secondary"))
     );
     assert_eq!(
+        appended_inspection.pointer("/chart_metadata/0/series/0/color"),
+        Some(&json!("#445566"))
+    );
+    assert_eq!(
+        appended_inspection.pointer("/chart_metadata/0/series/1/color_value"),
+        Some(&json!("778899"))
+    );
+    assert_eq!(
         appended_inspection.pointer("/chart_metadata/0/secondary_value_axis_title"),
         Some(&json!("Variance"))
     );
@@ -3873,6 +3935,17 @@ fn creates_and_appends_self_contained_standard_pptx_charts_without_workbooks() {
         appended_inspection.pointer("/chart_metadata/1/data_labels"),
         Some(&json!("percentage"))
     );
+    assert_eq!(
+        appended_inspection.pointer("/chart_metadata/1/series/0/color"),
+        Some(&Value::Null)
+    );
+    let mut appended_archive = ZipArchive::new(
+        File::open(root.join("appended-charts.pptx")).expect("appended chart deck"),
+    )
+    .expect("appended chart deck ZIP");
+    let appended_doughnut = read_zip_text(&mut appended_archive, "ppt/charts/chart7.xml")
+        .expect("appended uncolored doughnut XML");
+    assert!(!appended_doughnut.contains("<c:spPr>"));
     let _ = fs::remove_dir_all(root);
 }
 
@@ -3890,8 +3963,8 @@ fn replaces_canonical_self_contained_pptx_chart_without_modifying_source_or_rela
                     "title":"Quarterly revenue",
                     "categories":["Q1","Q2"],
                     "series":[
-                        {"name":"North","values":[10,20]},
-                        {"name":"South","values":[12,18],"value_axis":"secondary"}
+                        {"name":"North","values":[10,20],"color":"#112233"},
+                        {"name":"South","values":[12,18],"value_axis":"secondary","color":"#A0B0C0"}
                     ],
                     "show_legend":true,
                     "legend_position":"left",
@@ -3955,6 +4028,10 @@ fn replaces_canonical_self_contained_pptx_chart_without_modifying_source_or_rela
         Some(&json!([2]))
     );
     assert_eq!(
+        inspected.pointer("/chart_metadata/0/series/0/color"),
+        Some(&json!("#112233"))
+    );
+    assert_eq!(
         inspected.pointer("/chart_metadata/0/secondary_value_axis_title"),
         Some(&json!("Margin"))
     );
@@ -4015,7 +4092,7 @@ fn replaces_canonical_self_contained_pptx_chart_without_modifying_source_or_rela
         "type":"doughnut",
         "title":"Channel mix",
         "categories":["Direct","Partner","Organic"],
-        "series":[{"name":"Share","values":[55,30,15]}],
+        "series":[{"name":"Share","values":[55,30,15],"color":"#CC5500"}],
         "show_legend":true,
         "legend_position":"bottom",
         "data_labels":"percentage"
@@ -4069,6 +4146,7 @@ fn replaces_canonical_self_contained_pptx_chart_without_modifying_source_or_rela
     assert!(output_chart.contains("Channel mix"));
     assert!(output_chart.contains("<c:legendPos val=\"b\"/>"));
     assert!(output_chart.contains("<c:showPercent val=\"1\"/>"));
+    assert!(output_chart.contains("<a:srgbClr val=\"CC5500\"/>"));
     assert!(!output_chart.contains("<c:axPos val=\"r\"/>"));
     assert!(!output_chart.contains("<c:majorTickMark"));
     assert!(!output_chart.contains("<c:minorTickMark"));
@@ -4104,6 +4182,10 @@ fn replaces_canonical_self_contained_pptx_chart_without_modifying_source_or_rela
     assert_eq!(
         inspected_output.pointer("/chart_metadata/0/series/0/values_preview/2"),
         Some(&json!("15"))
+    );
+    assert_eq!(
+        inspected_output.pointer("/chart_metadata/0/series/0/color"),
+        Some(&json!("#CC5500"))
     );
     assert_eq!(
         inspected_output.pointer("/chart_metadata/0/value_axis_minimum"),
@@ -4162,8 +4244,8 @@ fn replaces_canonical_self_contained_pptx_chart_without_modifying_source_or_rela
                 "title":"Channel trend",
                 "categories":["Direct","Partner","Organic"],
                 "series":[
-                    {"name":"Current","values":[55,30,15]},
-                    {"name":"Previous","values":[50,35,15],"value_axis":"secondary"}
+                    {"name":"Current","values":[55,30,15],"color":"#0088FF"},
+                    {"name":"Previous","values":[50,35,15],"value_axis":"secondary","color":"#EEAA00"}
                 ],
                 "show_legend":true,
                 "legend_position":"top",
@@ -4210,6 +4292,14 @@ fn replaces_canonical_self_contained_pptx_chart_without_modifying_source_or_rela
     assert_eq!(
         inspected_area.pointer("/chart_metadata/0/series/1/name"),
         Some(&json!("Previous"))
+    );
+    assert_eq!(
+        inspected_area.pointer("/chart_metadata/0/series/0/color"),
+        Some(&json!("#0088FF"))
+    );
+    assert_eq!(
+        inspected_area.pointer("/chart_metadata/0/series/1/color_value"),
+        Some(&json!("EEAA00"))
     );
     assert_eq!(
         inspected_area.pointer("/chart_metadata/0/legend_position"),
@@ -4303,7 +4393,7 @@ fn rejects_stale_unsafe_or_noncanonical_pptx_chart_replacements_without_output()
                     "type":"line",
                     "title":"Retention",
                     "categories":["Jan","Feb"],
-                    "series":[{"name":"Rate","values":[91,93]}],
+                    "series":[{"name":"Rate","values":[91,93],"color":"#336699"}],
                     "show_legend":false
                 }
             }]
@@ -4636,6 +4726,112 @@ fn rejects_stale_unsafe_or_noncanonical_pptx_chart_replacements_without_output()
         .and_then(Value::as_str)
         .is_some_and(|reason| reason.contains("major tick mark is unsupported")));
 
+    fs::copy(
+        source.as_path(),
+        root.join("custom-series-color-transform-chart.pptx"),
+    )
+    .expect("copy transformed series color fixture");
+    rewrite_zip_text_entry(
+        root.join("custom-series-color-transform-chart.pptx")
+            .as_path(),
+        "ppt/charts/chart1.xml",
+        |xml| {
+            xml.replacen(
+                "<a:srgbClr val=\"336699\"/>",
+                "<a:srgbClr val=\"336699\"><a:alpha val=\"50000\"/></a:srgbClr>",
+                1,
+            )
+        },
+    );
+    let transformed_color_inspection = presentation::inspect_pptx_charts(
+        &json!({"path":"custom-series-color-transform-chart.pptx"}),
+        &state,
+        &request,
+    )
+    .expect("inspect transformed series color fixture");
+    assert_eq!(
+        transformed_color_inspection.pointer("/chart_metadata/0/series/0/color"),
+        Some(&json!("custom"))
+    );
+    assert_eq!(
+        transformed_color_inspection.pointer("/chart_metadata/0/series/0/color_value"),
+        Some(&json!("336699"))
+    );
+    assert_eq!(
+        transformed_color_inspection
+            .pointer("/chart_metadata/0/eligible_for_self_contained_chart_replacement"),
+        Some(&json!(false))
+    );
+    assert!(transformed_color_inspection
+        .pointer("/chart_metadata/0/self_contained_replacement_unsupported_reason")
+        .and_then(Value::as_str)
+        .is_some_and(|reason| reason.contains("series color styling")));
+
+    fs::copy(
+        source.as_path(),
+        root.join("wrong-namespace-series-color-chart.pptx"),
+    )
+    .expect("copy wrong-namespace series color fixture");
+    rewrite_zip_text_entry(
+        root.join("wrong-namespace-series-color-chart.pptx")
+            .as_path(),
+        "ppt/charts/chart1.xml",
+        |xml| {
+            xml.replacen("<a:solidFill>", "<c:solidFill>", 1).replacen(
+                "</a:solidFill>",
+                "</c:solidFill>",
+                1,
+            )
+        },
+    );
+    let wrong_namespace_color_inspection = presentation::inspect_pptx_charts(
+        &json!({"path":"wrong-namespace-series-color-chart.pptx"}),
+        &state,
+        &request,
+    )
+    .expect("inspect wrong-namespace series color fixture");
+    assert_eq!(
+        wrong_namespace_color_inspection.pointer("/chart_metadata/0/series/0/color"),
+        Some(&json!("custom"))
+    );
+    assert_eq!(
+        wrong_namespace_color_inspection
+            .pointer("/chart_metadata/0/eligible_for_self_contained_chart_replacement"),
+        Some(&json!(false))
+    );
+
+    fs::copy(
+        source.as_path(),
+        root.join("duplicate-series-color-chart.pptx"),
+    )
+    .expect("copy duplicate series color fixture");
+    rewrite_zip_text_entry(
+        root.join("duplicate-series-color-chart.pptx").as_path(),
+        "ppt/charts/chart1.xml",
+        |xml| {
+            xml.replacen(
+                "</c:spPr><c:marker>",
+                "</c:spPr><c:spPr><a:ln><a:solidFill><a:srgbClr val=\"112233\"/></a:solidFill></a:ln></c:spPr><c:marker>",
+                1,
+            )
+        },
+    );
+    let duplicate_color_inspection = presentation::inspect_pptx_charts(
+        &json!({"path":"duplicate-series-color-chart.pptx"}),
+        &state,
+        &request,
+    )
+    .expect("inspect duplicate series color fixture");
+    assert_eq!(
+        duplicate_color_inspection.pointer("/chart_metadata/0/series/0/color"),
+        Some(&json!("custom"))
+    );
+    assert_eq!(
+        duplicate_color_inspection
+            .pointer("/chart_metadata/0/eligible_for_self_contained_chart_replacement"),
+        Some(&json!(false))
+    );
+
     assert_eq!(
         fs::read(source.as_path()).expect("chart source after rejected edits"),
         source_before
@@ -4924,6 +5120,30 @@ fn rejects_invalid_self_contained_pptx_chart_inputs_without_output() {
                 "chart":{"type":"area","categories":["A"],"series":[{"name":"S","values":[1],"value_axis":"tertiary"}]}
             }),
             "unsupported PPTX chart value_axis",
+        ),
+        (
+            "missing-series-color-hash.pptx",
+            json!({
+                "title":"Invalid color","layout":"chart",
+                "chart":{"type":"column","categories":["A"],"series":[{"name":"S","values":[1],"color":"336699"}]}
+            }),
+            "color must use exact #RRGGBB syntax",
+        ),
+        (
+            "short-series-color.pptx",
+            json!({
+                "title":"Invalid color","layout":"chart",
+                "chart":{"type":"line","categories":["A"],"series":[{"name":"S","values":[1],"color":"#12345"}]}
+            }),
+            "color must use exact #RRGGBB syntax",
+        ),
+        (
+            "non-string-series-color.pptx",
+            json!({
+                "title":"Invalid color","layout":"chart",
+                "chart":{"type":"pie","categories":["A"],"series":[{"name":"S","values":[1],"color":123}]}
+            }),
+            "color must be a #RRGGBB string or null",
         ),
         (
             "hidden-left-legend.pptx",

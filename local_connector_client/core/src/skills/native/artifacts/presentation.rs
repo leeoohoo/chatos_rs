@@ -428,6 +428,7 @@ struct PresentationChartSeries {
     name: String,
     values: Vec<f64>,
     value_axis: PresentationChartValueAxis,
+    color: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -593,6 +594,14 @@ struct PptxChartSeriesInspection {
     chart_type: String,
     chart_group_index: usize,
     value_axis: String,
+    color: Option<String>,
+    color_value: Option<String>,
+    color_style_present: bool,
+    color_style_custom: bool,
+    color_shape_properties_count: usize,
+    color_line_count: usize,
+    color_solid_fill_count: usize,
+    color_srgb_count: usize,
     name: String,
     name_formula: Option<String>,
     category_formula: Option<String>,
@@ -3803,7 +3812,7 @@ fn parse_presentation_chart(value: &Value, slide_number: usize) -> Result<Presen
         })?;
         if series
             .keys()
-            .any(|key| !matches!(key.as_str(), "name" | "values" | "value_axis"))
+            .any(|key| !matches!(key.as_str(), "name" | "values" | "value_axis" | "color"))
         {
             return Err(anyhow!(
                 "slide {slide_number} chart series {} contains unsupported properties",
@@ -3891,10 +3900,16 @@ fn parse_presentation_chart(value: &Value, slide_number: usize) -> Result<Presen
                 .transpose()?
                 .unwrap_or("primary"),
         )?;
+        let color = parse_presentation_chart_series_color(
+            series.get("color"),
+            slide_number,
+            series_index + 1,
+        )?;
         parsed_series.push(PresentationChartSeries {
             name: name.to_string(),
             values,
             value_axis,
+            color,
         });
     }
     let secondary_series = parsed_series
@@ -4025,6 +4040,43 @@ fn parse_presentation_chart(value: &Value, slide_number: usize) -> Result<Presen
         secondary_value_axis_minor_unit,
         secondary_value_axis_number_format,
     })
+}
+
+fn parse_presentation_chart_series_color(
+    value: Option<&Value>,
+    slide_number: usize,
+    series_number: usize,
+) -> Result<Option<String>> {
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    if value.is_null() {
+        return Ok(None);
+    }
+    let value = value.as_str().ok_or_else(|| {
+        anyhow!(
+            "slide {slide_number} chart series {series_number} color must be a #RRGGBB string or null"
+        )
+    })?;
+    normalize_presentation_chart_api_color(value)
+        .map(Some)
+        .ok_or_else(|| {
+            anyhow!(
+            "slide {slide_number} chart series {series_number} color must use exact #RRGGBB syntax"
+        )
+        })
+}
+
+fn normalize_presentation_chart_api_color(value: &str) -> Option<String> {
+    let rgb = value.strip_prefix('#')?;
+    normalize_presentation_chart_rgb(rgb).map(|rgb| format!("#{rgb}"))
+}
+
+fn normalize_presentation_chart_rgb(value: &str) -> Option<String> {
+    if value.len() != 6 || !value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return None;
+    }
+    Some(value.to_ascii_uppercase())
 }
 
 fn parse_presentation_chart_axis_bound(
@@ -5028,6 +5080,13 @@ fn presentation_chart_xml(chart: &PresentationChart) -> Result<String> {
     );
     let inspection = inspect_standard_pptx_chart_xml(xml.as_str())?;
     if inspection.series.len() != chart.series.len()
+        || inspection
+            .series
+            .iter()
+            .zip(chart.series.iter())
+            .any(|(inspected, expected)| {
+                inspected.color_style_custom || inspected.color != expected.color
+            })
         || inspection.chart_types.len() != 1
         || inspection.chart_groups.len() != usize::from(has_secondary_axis) + 1
         || inspection.cached_points
@@ -5094,6 +5153,7 @@ fn presentation_chart_series_xml(
     index: usize,
     series: &PresentationChartSeries,
 ) -> String {
+    let color = presentation_chart_series_color_xml(chart.chart_type, series.color.as_deref());
     let marker = if chart.chart_type == PresentationChartType::Line {
         r#"<c:marker><c:symbol val="circle"/><c:size val="5"/></c:marker>"#
     } else {
@@ -5105,11 +5165,27 @@ fn presentation_chart_series_xml(
         ""
     };
     format!(
-        r#"<c:ser><c:idx val="{index}"/><c:order val="{index}"/><c:tx><c:v>{}</c:v></c:tx>{marker}<c:cat>{}</c:cat><c:val>{}</c:val>{smooth}</c:ser>"#,
+        r#"<c:ser><c:idx val="{index}"/><c:order val="{index}"/><c:tx><c:v>{}</c:v></c:tx>{color}{marker}<c:cat>{}</c:cat><c:val>{}</c:val>{smooth}</c:ser>"#,
         escape_xml(series.name.as_str()),
         presentation_chart_string_literal(chart.categories.as_slice()),
         presentation_chart_number_literal(series.values.as_slice())
     )
+}
+
+fn presentation_chart_series_color_xml(
+    chart_type: PresentationChartType,
+    color: Option<&str>,
+) -> String {
+    let Some(rgb) = color.and_then(|value| value.strip_prefix('#')) else {
+        return String::new();
+    };
+    if chart_type == PresentationChartType::Line {
+        format!(
+            r#"<c:spPr><a:ln><a:solidFill><a:srgbClr val="{rgb}"/></a:solidFill></a:ln></c:spPr>"#
+        )
+    } else {
+        format!(r#"<c:spPr><a:solidFill><a:srgbClr val="{rgb}"/></a:solidFill></c:spPr>"#)
+    }
 }
 
 fn presentation_chart_string_literal(values: &[String]) -> String {
@@ -5163,6 +5239,7 @@ fn presentation_chart_snapshot(chart: &PresentationChart) -> Value {
             "name": series.name,
             "values": series.values,
             "value_axis": series.value_axis.as_str(),
+            "color": series.color,
         })).collect::<Vec<_>>(),
         "show_legend": chart.show_legend,
         "legend_position": chart.legend_position.as_str(),
@@ -5342,10 +5419,16 @@ fn canonical_pptx_chart_snapshot(
             .collect::<Result<Vec<_>>>()?;
         let value_axis = PresentationChartValueAxis::parse(item.value_axis.as_str())
             .context("chart series axis is outside the canonical primary or secondary contract")?;
+        if item.color_style_custom {
+            return Err(anyhow!(
+                "canonical self-contained chart series color styling is outside the exact solid RGB contract"
+            ));
+        }
         series.push(PresentationChartSeries {
             name: item.name.clone(),
             values,
             value_axis,
+            color: item.color.clone(),
         });
     }
     let candidate = PresentationChart {
@@ -9131,6 +9214,13 @@ fn inspect_standard_pptx_chart_xml(xml: &str) -> Result<PptxChartInspection> {
                         ..PptxChartSeriesInspection::default()
                     });
                 }
+                record_pptx_chart_series_color_element(
+                    &reader,
+                    &event,
+                    stack.as_slice(),
+                    current_series.as_mut(),
+                    false,
+                )?;
                 stack.push(local);
                 if stack.len() > 256 {
                     return Err(anyhow!("PPTX chart XML nesting exceeds the safety limit"));
@@ -9177,6 +9267,13 @@ fn inspect_standard_pptx_chart_xml(xml: &str) -> Result<PptxChartInspection> {
                     current_chart_group.as_mut(),
                     current_axis.as_mut(),
                 )?;
+                record_pptx_chart_series_color_element(
+                    &reader,
+                    &event,
+                    stack.as_slice(),
+                    current_series.as_mut(),
+                    true,
+                )?;
             }
             Event::Text(text) => {
                 let value = text
@@ -9189,6 +9286,13 @@ fn inspect_standard_pptx_chart_xml(xml: &str) -> Result<PptxChartInspection> {
                     }
                     continue;
                 };
+                if let Some(series) = current_series.as_mut() {
+                    if pptx_chart_series_shape_properties_index(stack.as_slice()).is_some()
+                        && !value.trim().is_empty()
+                    {
+                        series.color_style_custom = true;
+                    }
+                }
                 if current == "t"
                     && current_series.is_none()
                     && pptx_chart_is_chart_level_title(stack.as_slice())
@@ -9322,9 +9426,10 @@ fn inspect_standard_pptx_chart_xml(xml: &str) -> Result<PptxChartInspection> {
                     return Err(anyhow!("PPTX chart contains mismatched element boundaries"));
                 }
                 if event.name().as_ref() == b"c:ser" {
-                    let item = current_series
+                    let mut item = current_series
                         .take()
                         .ok_or_else(|| anyhow!("PPTX chart series boundary is invalid"))?;
+                    finalize_pptx_chart_series_color(&mut item);
                     series.push(item);
                     if series.len() > MAX_PPTX_CHART_SERIES {
                         return Err(anyhow!(
@@ -9564,6 +9669,138 @@ fn record_pptx_chart_structure_element(
         }
     }
     Ok(())
+}
+
+fn record_pptx_chart_series_color_element(
+    reader: &Reader<&[u8]>,
+    event: &BytesStart<'_>,
+    stack: &[String],
+    series: Option<&mut PptxChartSeriesInspection>,
+    empty: bool,
+) -> Result<()> {
+    let Some(series) = series else {
+        return Ok(());
+    };
+    let qualified = event.name().as_ref().to_vec();
+    let local = event.local_name().as_ref().to_vec();
+    if local.as_slice() == b"spPr" && stack.last().map(String::as_str) == Some("ser") {
+        series.color_style_present = true;
+        series.color_shape_properties_count = series.color_shape_properties_count.saturating_add(1);
+        if qualified.as_slice() != b"c:spPr" || empty || !pptx_xml_attributes_match(event, &[])? {
+            series.color_style_custom = true;
+        }
+        return Ok(());
+    }
+    let Some(shape_properties_index) = pptx_chart_series_shape_properties_index(stack) else {
+        return Ok(());
+    };
+    series.color_style_present = true;
+    let relative_ancestors = &stack[shape_properties_index + 1..];
+    let expected = match series.chart_type.as_str() {
+        "line" => match (relative_ancestors, local.as_slice()) {
+            ([], b"ln") => Some((b"a:ln".as_slice(), false, &[][..])),
+            ([line], b"solidFill") if line == "ln" => {
+                Some((b"a:solidFill".as_slice(), false, &[][..]))
+            }
+            ([line, fill], b"srgbClr") if line == "ln" && fill == "solidFill" => {
+                Some((b"a:srgbClr".as_slice(), true, &[b"val".as_slice()][..]))
+            }
+            _ => None,
+        },
+        _ => match (relative_ancestors, local.as_slice()) {
+            ([], b"solidFill") => Some((b"a:solidFill".as_slice(), false, &[][..])),
+            ([fill], b"srgbClr") if fill == "solidFill" => {
+                Some((b"a:srgbClr".as_slice(), true, &[b"val".as_slice()][..]))
+            }
+            _ => None,
+        },
+    };
+    let Some((expected_name, expected_empty, expected_attributes)) = expected else {
+        series.color_style_custom = true;
+        return Ok(());
+    };
+    if qualified.as_slice() != expected_name
+        || empty != expected_empty
+        || !pptx_xml_attributes_match(event, expected_attributes)?
+    {
+        series.color_style_custom = true;
+    }
+    match local.as_slice() {
+        b"ln" => {
+            series.color_line_count = series.color_line_count.saturating_add(1);
+        }
+        b"solidFill" => {
+            series.color_solid_fill_count = series.color_solid_fill_count.saturating_add(1);
+        }
+        b"srgbClr" => {
+            series.color_srgb_count = series.color_srgb_count.saturating_add(1);
+            let value = optional_xml_attribute(reader, event, "val")?;
+            if series.color_value.is_some() {
+                series.color_style_custom = true;
+            } else {
+                series.color_value = value.clone();
+            }
+            match value
+                .as_deref()
+                .and_then(normalize_presentation_chart_rgb)
+                .map(|rgb| format!("#{rgb}"))
+            {
+                Some(color) => series.color = Some(color),
+                None => series.color_style_custom = true,
+            }
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+fn pptx_chart_series_shape_properties_index(stack: &[String]) -> Option<usize> {
+    stack
+        .iter()
+        .enumerate()
+        .rfind(|(index, item)| {
+            item.as_str() == "spPr"
+                && index
+                    .checked_sub(1)
+                    .and_then(|parent| stack.get(parent))
+                    .is_some_and(|parent| parent == "ser")
+        })
+        .map(|(index, _)| index)
+}
+
+fn finalize_pptx_chart_series_color(series: &mut PptxChartSeriesInspection) {
+    if !series.color_style_present {
+        return;
+    }
+    let expected_line_count = usize::from(series.chart_type == "line");
+    if series.color_shape_properties_count != 1
+        || series.color_line_count != expected_line_count
+        || series.color_solid_fill_count != 1
+        || series.color_srgb_count != 1
+        || series.color.is_none()
+        || series.color_value.is_none()
+    {
+        series.color_style_custom = true;
+    }
+}
+
+fn pptx_xml_attributes_match(event: &BytesStart<'_>, expected: &[&[u8]]) -> Result<bool> {
+    let mut actual = event
+        .attributes()
+        .with_checks(false)
+        .map(|attribute| {
+            attribute
+                .context("parse PPTX XML attribute")
+                .map(|attribute| attribute.key.as_ref().to_vec())
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let mut expected = expected
+        .iter()
+        .map(|name| name.to_vec())
+        .collect::<Vec<_>>();
+    actual.sort();
+    expected.sort();
+    Ok(actual == expected)
 }
 
 fn resolve_pptx_chart_series_value_axis(
@@ -9906,10 +10143,17 @@ fn pptx_chart_series_json(series: &PptxChartSeriesInspection) -> Value {
     let categories_truncated = series.categories.len() > MAX_PPTX_CHART_PREVIEW_POINTS;
     let values_truncated = series.values.len() > MAX_PPTX_CHART_PREVIEW_POINTS;
     let bubble_sizes_truncated = series.bubble_sizes.len() > MAX_PPTX_CHART_PREVIEW_POINTS;
+    let color = if series.color_style_custom {
+        Some("custom".to_string())
+    } else {
+        series.color.clone()
+    };
     json!({
         "chart_type": series.chart_type,
         "chart_group": series.chart_group_index + 1,
         "value_axis": series.value_axis,
+        "color": color,
+        "color_value": series.color_value,
         "name": series.name,
         "name_formula": series.name_formula,
         "category_formula": series.category_formula,

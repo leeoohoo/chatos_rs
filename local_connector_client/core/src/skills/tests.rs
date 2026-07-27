@@ -276,7 +276,7 @@ fn presentations_release_publishes_render_and_existing_edit_contracts() {
         .into_iter()
         .find(|item| item.skill_id == "internal_skill_presentations")
         .expect("Presentations catalog item");
-    assert_eq!(catalog_item.version, "1.24.0");
+    assert_eq!(catalog_item.version, "1.25.0");
     let instructions = internal_skill_instructions("internal_skill_presentations")
         .expect("Presentations instructions");
     assert!(instructions.contains("image_right"));
@@ -296,6 +296,12 @@ fn presentations_release_publishes_render_and_existing_edit_contracts() {
     assert!(instructions.contains("`secondary_value_axis_minor_tick_mark`"));
     assert!(instructions.contains("`none`, `inside`, `outside`, or `cross`"));
     assert!(instructions.contains("strictly positive"));
+    assert!(instructions.contains("optional canonical per-series RGB colors"));
+    assert!(instructions.contains("recognized/custom RGB color"));
+    assert!(instructions.contains("`color` using exact `#RRGGBB` syntax"));
+    assert!(instructions.contains("omission or null preserves the prior theme-driven XML bytes"));
+    assert!(instructions.contains("line-only `a:ln/a:solidFill/a:srgbClr`"));
+    assert!(instructions.contains("transformed/duplicated/wrong-namespace series color styling"));
     assert!(instructions.contains("`table` layout"));
     assert!(instructions.contains("1–50 rows and 1–20 string columns"));
     assert!(instructions.contains("immediately eligible for `inspect_pptx_table`"));
@@ -422,6 +428,20 @@ fn presentations_release_publishes_render_and_existing_edit_contracts() {
             .and_then(Value::as_u64),
         Some(50)
     );
+    assert_eq!(
+        create
+            .pointer("/inputSchema/properties/slides/items/properties/chart/properties/series/items/properties/color/pattern")
+            .and_then(Value::as_str),
+        Some("^#[0-9A-Fa-f]{6}$")
+    );
+    let replace_chart = tools
+        .iter()
+        .find(|tool| tool.get("name").and_then(Value::as_str) == Some("replace_pptx_chart"))
+        .expect("replace_pptx_chart definition");
+    assert!(replace_chart
+        .pointer("/inputSchema/properties/expected_self_contained_edit_snapshot/properties/series/items/required")
+        .and_then(Value::as_array)
+        .is_some_and(|required| required.contains(&json!("color"))));
 }
 
 #[test]
@@ -790,7 +810,7 @@ fn ready_bundle_v2_fingerprint_matches_plugin_management_seed() {
         .join("\n");
     assert_eq!(
         hex::encode(Sha256::digest(rows.as_bytes())),
-        "acff75f500612b4555c45e3725b4ca3aa57bad2ff54f615a32ca4d9b8fb91b8a"
+        "9488ae6994187a5184b9857b332fe20c9ecce7e13220ff44efc352bda92ceae3"
     );
 }
 
@@ -805,7 +825,7 @@ fn all_28_bundled_skill_fingerprints_match_plugin_management_seed() {
         .join("\n");
     assert_eq!(
         hex::encode(Sha256::digest(rows.as_bytes())),
-        "dd93020395d96fdbfa0c8c0a48cdaa3aa49aba35be98fdf7c7da64d517af28fd"
+        "a9747ecbafa1d81cce4c3e5ecdc4cb47737c75d62fcef1e3ff9a59bd9f1ae3b3"
     );
 }
 
