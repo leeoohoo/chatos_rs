@@ -11,7 +11,7 @@ Current status:
 5. It opens an outbound WebSocket to the cloud service.
 6. It handles MCP, Skill prepare/execute/cancel, terminal PTY, terminal exec, and sandbox relay messages from the cloud service.
 7. One owner can hold only one active Local Connector session lease; a second client is rejected with `409 connector_already_active`.
-8. The installer embeds all 27 internal Skill Bundles. Twelve currently have implemented adapters; Browser includes its pinned native `agent-browser` and Chrome for Testing runtime, while the other fifteen fail closed as unsupported.
+8. The installer embeds all 28 internal Skill Bundles. Fourteen currently have implemented adapters; Browser includes its pinned native `agent-browser` and Chrome for Testing runtime, while Chrome includes a user-authorized macOS/Windows extension and user-level Native Messaging Host path with approved snapshots, same-origin navigation, short-lived target click/type/select actions, bounded scrolling/history/tab activation, workspace upload, hash-verified create-new download handoff and transient viewport capture; the other fourteen fail closed as unsupported.
 
 ## Run the Local Client
 
@@ -56,11 +56,13 @@ Run the reusable packaging script on macOS:
 ./local_connector_client/package-electron-macos-client.sh
 ```
 
-The script validates the 27-entry Skill catalog and every Bundle's `skill.json`/`instructions.md`, detects Apple Silicon versus Intel, installs locked frontend dependencies, builds the React UI and Rust Core, downloads/caches the pinned `agent-browser` and Chrome for Testing runtime, bundles the matching tools, and writes a DMG under:
+The script validates the 28-entry Skill catalog, stages the 12 signed-control-plane Plugin Bundles with exact manifest/artifact hashes, checksums, and SPDX SBOMs, filters platform assets, verifies the staged Plugin index, detects Apple Silicon versus Intel, builds the desktop resources, and writes a DMG under:
 
 ```text
 local_connector_client/dist/electron-macos/
 ```
+
+Before accepting the DMG, packaging runs `verify-installed-package.mjs` against the final `.app/Contents/Resources` directory. The verifier does not launch Electron, Chrome, LibreOffice, or any service. It checks executable architecture, critical non-symlink paths, the fixed least-privilege Chrome extension, Browser and Document runtimes, document hashes, the 28-Skill/12-Plugin catalogs, the packaged Electron resource bindings, and internal resource-tree symlink/case-collision safety. A redacted JSON report is written beside the DMG as `*.dmg.verification.json`. When `CHATOS_MAC_SIGN=1`, the same pass also requires strict app/Core/helper signatures and one shared Team Identifier.
 
 Packaging is unsigned by default so an invalid or revoked local certificate is not selected accidentally. After installing a valid `Developer ID Application` certificate, enable signing explicitly:
 
@@ -78,10 +80,27 @@ Windows desktop packaging must run in PowerShell on Windows:
 powershell -ExecutionPolicy Bypass -File .\local_connector_client\package-electron-windows-client.ps1
 ```
 
-It writes:
+Before creating the archive, the script stages and re-verifies the same 12 Plugin Bundles for the detected Windows architecture, then runs the same final-resources verifier without launching the app or opening a port. Core, Native Host, and Sandbox binaries must match the package architecture; Windows ARM64 explicitly permits the pinned x64 `agent-browser` and Chrome for Testing runtimes through Windows x64 emulation. It writes:
 
 1. `local_connector_client/dist/electron-windows/Chat OS Local Connector/Chat OS Local Connector.exe`
-2. `local_connector_client/dist/electron-windows/Chat-OS-Local-Connector-windows-x64.zip`
+2. `local_connector_client/dist/electron-windows/Chat-OS-Local-Connector-windows-<architecture>.zip`
+3. `local_connector_client/dist/electron-windows/Chat-OS-Local-Connector-windows-<architecture>.zip.verification.json`
+
+An existing unpacked app can be checked again without rebuilding it. Supply its final resources directory to the standalone verifier:
+
+```bash
+node local_connector_client/verify-installed-package.mjs \
+  --platform macos-arm64 \
+  --resources "/Applications/Chat OS Local Connector.app/Contents/Resources" \
+  --plugin-catalog local_connector_client/plugin_bundles/catalog/bundled-plugin-catalog.json \
+  --skill-catalog local_connector_client/skill_bundles/catalog/internal-skill-catalog.json \
+  --report /tmp/chatos-installed-package-verification.json \
+  --require-signed
+```
+
+Use `windows-x64` or `windows-arm64` and the unpacked app's `resources` directory on Windows; omit `--require-signed`, which is the macOS Developer ID contract.
+
+The Windows package includes `chatos_chrome_native_host.exe` and the fixed-identity MV3 extension. Enabling Chrome integration in Local Connector requires an explicit risk acknowledgement, writes the owned manifest under the current user's ChatOS state directory, and registers only `HKCU\Software\Google\Chrome\NativeMessagingHosts\com.chatos.chrome`. Existing registry or manifest ownership conflicts fail closed; disabling removes only the exact ChatOS-owned user registration.
 
 To publish the ZIP to the official website's MinIO release bucket:
 

@@ -12,7 +12,6 @@ import {
   Link2,
   ListChecks,
   Play,
-  Square,
 } from 'lucide-react';
 
 import type {
@@ -21,6 +20,7 @@ import type {
   ProjectWorkItemResponse,
 } from '../../../lib/api/client/types';
 import { cn } from '../../../lib/utils';
+import type { RequirementExecutionProcess } from './RequirementExecutionProcessModal';
 import {
   DependencyLine,
   RequirementContentSection,
@@ -48,9 +48,10 @@ export const PlanRequirementDetail: React.FC<{
   actionDisabled: boolean;
   dependencyMaps: DependencyMaps;
   onActiveDetailTabChange: (tab: DetailTabId) => void;
+  onGenerateRequirementExecution: (requirement: ProjectRequirementResponse) => void;
   onLoadMoreWorkItems: () => void;
-  onPreviewRequirement: (requirement: ProjectRequirementResponse, canConfirm: boolean) => void;
-  onStopRequirementExecution: (requirement: ProjectRequirementResponse) => void;
+  onOpenRequirementExecution: () => void;
+  onPreviewRequirement: (requirement: ProjectRequirementResponse) => void;
   resolveRequirementTitle: (id: string) => string;
   resolveWorkItemTitle: (id: string) => string;
   selectedDocumentsLoading: boolean;
@@ -61,7 +62,7 @@ export const PlanRequirementDetail: React.FC<{
   selectedRequirementChildren: ProjectRequirementResponse[];
   selectedRequirementDependents: string[];
   selectedRequirementDocuments: ProjectRequirementDocumentResponse[];
-  selectedRequirementIsExecuting: boolean;
+  selectedRequirementExecutionProcess: RequirementExecutionProcess | null;
   selectedRequirementPrerequisites: string[];
   selectedWorkItems: ProjectWorkItemResponse[];
   selectedWorkItemsLoading: boolean;
@@ -71,9 +72,10 @@ export const PlanRequirementDetail: React.FC<{
   actionDisabled,
   dependencyMaps,
   onActiveDetailTabChange,
+  onGenerateRequirementExecution,
   onLoadMoreWorkItems,
+  onOpenRequirementExecution,
   onPreviewRequirement,
-  onStopRequirementExecution,
   resolveRequirementTitle,
   resolveWorkItemTitle,
   selectedDocumentsLoading,
@@ -84,7 +86,7 @@ export const PlanRequirementDetail: React.FC<{
   selectedRequirementChildren,
   selectedRequirementDependents,
   selectedRequirementDocuments,
-  selectedRequirementIsExecuting,
+  selectedRequirementExecutionProcess,
   selectedRequirementPrerequisites,
   selectedWorkItems,
   selectedWorkItemsLoading,
@@ -121,33 +123,34 @@ export const PlanRequirementDetail: React.FC<{
             <button
               type="button"
               className="inline-flex items-center gap-1.5 rounded-md border border-border bg-background px-3 py-1.5 text-xs font-medium text-muted-foreground shadow-sm hover:bg-accent hover:text-foreground"
-              onClick={() => onPreviewRequirement(selectedRequirement, false)}
+              onClick={() => onPreviewRequirement(selectedRequirement)}
             >
               <Eye className="h-3.5 w-3.5" />
               预览流程
             </button>
-            {selectedRequirementCanShowAction ? (
+            {selectedRequirementExecutionProcess ? (
               <button
                 type="button"
-                className={cn(
-                  'inline-flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-xs font-medium shadow-sm disabled:cursor-not-allowed disabled:border-border disabled:bg-muted disabled:text-muted-foreground disabled:shadow-none',
-                  selectedRequirementIsExecuting
-                    ? 'border-destructive/40 bg-destructive text-destructive-foreground hover:bg-destructive/90'
-                    : 'border-primary/40 bg-primary text-primary-foreground hover:bg-primary/90',
-                )}
+                className="inline-flex items-center gap-1.5 rounded-md border border-primary/40 bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground shadow-sm hover:bg-primary/90 disabled:cursor-not-allowed disabled:border-border disabled:bg-muted disabled:text-muted-foreground disabled:shadow-none"
                 disabled={actionDisabled}
-                onClick={() => {
-                  if (selectedRequirementIsExecuting) {
-                    onStopRequirementExecution(selectedRequirement);
-                  } else {
-                    onPreviewRequirement(selectedRequirement, true);
-                  }
-                }}
+                onClick={onOpenRequirementExecution}
               >
-                {selectedRequirementIsExecuting ? <Square className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5" />}
+                <Eye className="h-3.5 w-3.5" />
                 {selectedRequirementActionBusy
-                  ? (selectedRequirementIsExecuting ? '停止中' : '执行中')
-                  : (selectedRequirementIsExecuting ? '停止' : '执行关联任务')}
+                  ? '读取中'
+                  : selectedRequirementExecutionProcess.hasStartedRuns
+                    ? '查看执行过程'
+                    : '查看执行计划'}
+              </button>
+            ) : selectedRequirementCanShowAction ? (
+              <button
+                type="button"
+                className="inline-flex items-center gap-1.5 rounded-md border border-primary/40 bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground shadow-sm hover:bg-primary/90 disabled:cursor-not-allowed disabled:border-border disabled:bg-muted disabled:text-muted-foreground disabled:shadow-none"
+                disabled={actionDisabled}
+                onClick={() => onGenerateRequirementExecution(selectedRequirement)}
+              >
+                <Play className="h-3.5 w-3.5" />
+                {selectedRequirementActionBusy ? '生成中' : '打开执行工作台'}
               </button>
             ) : null}
           </div>

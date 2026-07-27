@@ -5,7 +5,7 @@ import { useEffect } from 'react';
 
 import type { Message } from '../../types';
 
-export const TASK_RUNNER_CALLBACK_RECONCILE_INTERVAL_MS = 5_000;
+export const TASK_RUNNER_CALLBACK_RECONCILE_INTERVAL_MS = 10_000;
 
 const readStringArray = (value: unknown): string[] => (
   Array.isArray(value)
@@ -27,6 +27,16 @@ export const hasOutstandingTaskRunnerCallbacks = (messages: Message[]): boolean 
       return false;
     }
 
+    const status = String(
+      taskRunnerAsync.confirmation_status
+      || taskRunnerAsync.overall_status
+      || taskRunnerAsync.status
+      || '',
+    ).trim().toLowerCase();
+    if (status === 'awaiting_confirmation') {
+      return false;
+    }
+
     const createdTaskIds = readStringArray(taskRunnerAsync.created_task_ids);
     const terminalTaskIds = new Set(readStringArray(taskRunnerAsync.terminal_task_ids));
     if (createdTaskIds.some((taskId) => !terminalTaskIds.has(taskId))) {
@@ -44,10 +54,10 @@ export const hasOutstandingTaskRunnerCallbacks = (messages: Message[]): boolean 
     if (createdTaskIds.length > 0) {
       return false;
     }
-    const status = String(taskRunnerAsync.overall_status || taskRunnerAsync.status || '')
-      .trim()
-      .toLowerCase();
-    return status === 'pending' || status === 'processing' || status === 'running';
+    return status === 'planning'
+      || status === 'pending'
+      || status === 'processing'
+      || status === 'running';
   })
 );
 

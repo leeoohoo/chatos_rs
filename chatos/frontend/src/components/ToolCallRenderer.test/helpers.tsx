@@ -49,6 +49,7 @@ export const renderWithEnglishI18n = (ui: ReactElement) => {
 
 export const cleanupToolCallRendererTest = () => {
   window.localStorage.removeItem('chat_ui_locale');
+  delete window.chatosLocalRuntime;
   cleanup();
 };
 

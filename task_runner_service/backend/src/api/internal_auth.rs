@@ -7,6 +7,7 @@ use crate::config::AppConfig;
 
 pub(super) const TASK_RUNNER_TOKEN_AUDIENCE: &str = "task-runner";
 pub(super) const CHATOS_MESSAGES_READ_SCOPE: &str = "chatos.messages.read";
+pub(super) const CHATOS_EXECUTION_START_SCOPE: &str = "chatos.execution.start";
 pub(super) const EXECUTION_OPTIONS_READ_SCOPE: &str = "execution-options.read";
 pub(super) const CHATOS_CALLER: &str = "chatos-backend";
 pub(super) const PROJECT_SERVICE_CALLER: &str = "project-service";

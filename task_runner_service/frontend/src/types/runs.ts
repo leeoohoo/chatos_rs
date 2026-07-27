@@ -9,6 +9,25 @@ export type TaskRunStatus =
   | 'cancelled'
   | 'blocked';
 
+export interface RunPluginComponentSnapshot {
+  component_key: string;
+  kind: string;
+  content_sha256: string;
+  runtime: Record<string, unknown>;
+}
+
+export interface RunPluginSnapshot {
+  plugin_id: string;
+  release_id: string;
+  version: string;
+  artifact_sha256: string;
+  device_id: string;
+  workspace_id?: string | null;
+  component_snapshots: RunPluginComponentSnapshot[];
+  permission_snapshot: string[];
+  auth_connection_ids: string[];
+}
+
 export interface TaskRunRecord {
   id: string;
   task_id: string;
@@ -18,6 +37,7 @@ export interface TaskRunRecord {
   started_at?: string | null;
   finished_at?: string | null;
   input_snapshot: unknown;
+  plugin_snapshots: RunPluginSnapshot[];
   context_snapshot?: unknown;
   result_summary?: string | null;
   error_message?: string | null;

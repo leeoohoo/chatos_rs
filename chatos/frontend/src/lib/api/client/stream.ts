@@ -75,6 +75,15 @@ export const sendChatCommand = async (
       project_id: options?.projectId || undefined,
       project_root: options?.projectRoot || undefined,
       workspace_root: options?.workspaceRoot || undefined,
+      plugin_device_id: options?.pluginDeviceId || undefined,
+      plugin_workspace_id: options?.pluginWorkspaceId || undefined,
+      selected_plugin_ids: options?.selectedPluginIds?.length
+        ? options.selectedPluginIds
+        : undefined,
+      plugin_command_invocations: options?.pluginCommandInvocations?.length
+        ? options.pluginCommandInvocations
+        : undefined,
+      plugin_agent_selection: options?.pluginAgentSelection || undefined,
       plan_mode: options?.planMode === true,
       model_config_id: modelConfig.id,
       ai_model_config: {

@@ -14,7 +14,7 @@ use crate::core::session_access::{ensure_owned_session, map_session_access_error
 use crate::models::message::Message;
 use crate::models::session::Session;
 use crate::modules::conversation_runtime::messages as conversation_messages;
-use crate::services::chatos_memory_mappings;
+use crate::services::{chatos_memory_mappings, chatos_sessions};
 
 use super::normalize_text;
 
@@ -132,9 +132,11 @@ async fn find_message_in_session_by_lookup(
     query: &MessageTaskRunnerLookupQuery,
 ) -> Result<Option<Message>, String> {
     if let Some(source_user_message_id) = query.source_user_message_hint() {
-        if let Some(message) =
-            conversation_messages::get_message_by_id_in_session(session, &source_user_message_id)
-                .await?
+        if let Some(message) = conversation_messages::get_message_by_id_in_session_including_hidden(
+            session,
+            &source_user_message_id,
+        )
+        .await?
         {
             return Ok(Some(message));
         }
@@ -143,7 +145,8 @@ async fn find_message_in_session_by_lookup(
     let Some(turn_id) = query.turn_hint() else {
         return Ok(None);
     };
-    let messages = conversation_messages::list_messages(session.id.as_str(), None, 0, true).await?;
+    let messages =
+        chatos_sessions::list_messages_including_hidden(session.id.as_str(), None, 0, true).await?;
     Ok(messages.into_iter().find(|message| {
         message.role.trim().eq_ignore_ascii_case("user")
             && (message_turn_id(message) == Some(turn_id.as_str())

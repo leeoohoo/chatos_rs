@@ -12,12 +12,16 @@ import {
 import {
   InputAreaAttachmentsPreview,
   InputAreaErrorBanners,
+  InputAreaPluginChips,
 } from './inputArea/InlineWidgets';
 import InputAreaComposer from './inputArea/InputAreaComposer';
 import InputAreaDragOverlay from './inputArea/InputAreaDragOverlay';
+import { InputAreaPluginCommandSuggestions } from './inputArea/InputAreaPluginCommandSuggestions';
+import { InputAreaPluginMentionSuggestions } from './inputArea/InputAreaPluginMentionSuggestions';
 import { useInputAreaController } from './inputArea/useInputAreaController';
 
 export const InputArea: React.FC<InputAreaProps> = ({
+  conversationId = null,
   onSend,
   onStop,
   isRunning = false,
@@ -79,6 +83,17 @@ export const InputArea: React.FC<InputAreaProps> = ({
     workspacePickerRef,
     projectFilePickerRef,
     pickerOpen,
+    pluginPicker,
+    pluginCommandSuggestions,
+    commandSuggestionsOpen,
+    commandSuggestionIndex,
+    setCommandSuggestionIndex,
+    selectPluginCommandSuggestion,
+    pluginMentionSuggestions,
+    pluginMentionSuggestionsOpen,
+    pluginMentionSuggestionIndex,
+    setPluginMentionSuggestionIndex,
+    selectPluginMentionSuggestion,
     normalizedWorkspaceRoot,
     workspacePickerOpen,
     workspacePath,
@@ -121,10 +136,12 @@ export const InputArea: React.FC<InputAreaProps> = ({
     handleAttachProjectFile,
     toRelativeProjectPath,
     handleInputChange,
+    handleTextareaSelect,
     handleKeyDown,
     handleSend,
     canSend,
   } = useInputAreaController({
+    conversationId,
     onSend,
     disabled,
     maxLength,
@@ -145,10 +162,19 @@ export const InputArea: React.FC<InputAreaProps> = ({
     showWorkspaceRootPicker,
     workspaceRoot,
     onWorkspaceRootChange,
+    planModeEnabled,
   });
 
   return (
     <div className="border-t bg-background p-3 sm:p-4">
+      <InputAreaPluginChips
+        plugins={pluginPicker.selectedPlugins}
+        commands={pluginPicker.selectedCommands}
+        agent={pluginPicker.selectedAgent}
+        onRemove={pluginPicker.removePlugin}
+        onRemoveCommand={pluginPicker.removeCommand}
+        onRemoveAgent={pluginPicker.clearSelectedAgent}
+      />
       <InputAreaAttachmentsPreview
         attachments={attachments}
         onRemoveAttachment={removeAttachment}
@@ -160,6 +186,22 @@ export const InputArea: React.FC<InputAreaProps> = ({
       />
 
       <div className="relative">
+        <InputAreaPluginMentionSuggestions
+          open={pluginMentionSuggestionsOpen}
+          loading={pluginPicker.loading}
+          suggestions={pluginMentionSuggestions}
+          activeIndex={pluginMentionSuggestionIndex}
+          onActiveIndexChange={setPluginMentionSuggestionIndex}
+          onSelect={selectPluginMentionSuggestion}
+        />
+        <InputAreaPluginCommandSuggestions
+          open={commandSuggestionsOpen}
+          loading={pluginPicker.loading}
+          suggestions={pluginCommandSuggestions}
+          activeIndex={commandSuggestionIndex}
+          onActiveIndexChange={setCommandSuggestionIndex}
+          onSelect={selectPluginCommandSuggestion}
+        />
         <InputAreaComposer
           disabled={disabled}
           onStop={onStop}
@@ -179,6 +221,7 @@ export const InputArea: React.FC<InputAreaProps> = ({
           onProjectChange={onProjectChange}
           showProjectSelector={showProjectSelector}
           showWorkspaceRootPicker={showWorkspaceRootPicker}
+          pluginPicker={pluginPicker}
           currentRemoteConnectionId={currentRemoteConnectionId}
           availableRemoteConnections={availableRemoteConnections}
           onRemoteConnectionChange={onRemoteConnectionChange}
@@ -233,6 +276,7 @@ export const InputArea: React.FC<InputAreaProps> = ({
           loadWorkspaceDirectories={loadWorkspaceDirectories}
           handleSelectWorkspaceRoot={handleSelectWorkspaceRoot}
           handleInputChange={handleInputChange}
+          handleTextareaSelect={handleTextareaSelect}
           handleKeyDown={handleKeyDown}
           handlePaste={handlePaste}
           handleSend={handleSend}

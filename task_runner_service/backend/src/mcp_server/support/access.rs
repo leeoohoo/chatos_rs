@@ -19,6 +19,7 @@ pub(crate) fn agent_tool_allowed(name: &str) -> bool {
             | "list_mcp_builtin_catalog"
             | "list_external_mcp_configs"
             | "list_available_skills"
+            | "list_available_plugins"
             | "create_tasks_with_prerequisites"
             | "update_task"
             | "set_task_prerequisites"
@@ -100,8 +101,8 @@ pub(crate) fn agent_tool_allowed_for_profile(name: &str, tool_profile: McpToolPr
                 | "list_mcp_builtin_catalog"
                 | "list_external_mcp_configs"
                 | "list_available_skills"
+                | "list_available_plugins"
                 | "create_project_execution_tasks"
-                | "cancel_task"
         ),
     }
 }

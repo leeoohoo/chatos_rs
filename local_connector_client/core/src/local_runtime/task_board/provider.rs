@@ -29,12 +29,48 @@ impl LocalTaskManagerProvider {
         auto_create_task: bool,
         ask_user_prompts: LocalAskUserPromptRegistry,
     ) -> Self {
-        let store = LocalTaskManagerStore::new(database, owner_user_id, ask_user_prompts);
+        Self::build(
+            database,
+            owner_user_id,
+            auto_create_task,
+            ask_user_prompts,
+            None,
+        )
+    }
+
+    pub(crate) fn for_task_run(
+        database: LocalDatabase,
+        owner_user_id: impl Into<String>,
+        auto_create_task: bool,
+        ask_user_prompts: LocalAskUserPromptRegistry,
+        task_session_id: impl Into<String>,
+    ) -> Self {
+        Self::build(
+            database,
+            owner_user_id,
+            auto_create_task,
+            ask_user_prompts,
+            Some(task_session_id.into()),
+        )
+    }
+
+    fn build(
+        database: LocalDatabase,
+        owner_user_id: impl Into<String>,
+        auto_create_task: bool,
+        ask_user_prompts: LocalAskUserPromptRegistry,
+        task_session_id: Option<String>,
+    ) -> Self {
+        let lifecycle_tools_enabled = task_session_id.is_some();
+        let store =
+            LocalTaskManagerStore::new(database, owner_user_id, ask_user_prompts, task_session_id);
         let service = TaskManagerService::new(TaskManagerOptions {
             server_name: TASK_MANAGER_SERVER_NAME.to_string(),
             review_timeout_ms: REVIEW_TIMEOUT_MS_DEFAULT,
             auto_create_task,
             expose_context_ids: true,
+            default_current_turn_only: lifecycle_tools_enabled,
+            lifecycle_tools_enabled,
             store: TaskManagerStoreRef::new(Arc::new(store)),
         })
         .expect("local task manager service configuration is valid");

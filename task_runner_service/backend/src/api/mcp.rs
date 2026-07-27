@@ -3,7 +3,42 @@
 
 use super::core::{bearer_token_from_headers, current_user_from_user_service_token};
 use super::*;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+use base64::Engine as _;
+use chatos_service_runtime::http_body::read_response_bytes_limited;
+use serde::de::DeserializeOwned;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
+use std::collections::HashSet;
+
+const PLUGIN_CONNECTOR_RESPONSE_LIMIT_BYTES: usize = 1024 * 1024;
+const PLUGIN_SELECTION_HEADER_LIMIT_BYTES: usize = 16 * 1024;
+const PLUGIN_SELECTION_MAX_ITEMS: usize = 50;
+const PLUGIN_COMMAND_INVOCATION_HEADER_JSON_LIMIT_BYTES: usize = 256 * 1024;
+const PLUGIN_COMMAND_INVOCATION_HEADER_ENCODED_LIMIT_BYTES: usize =
+    PLUGIN_COMMAND_INVOCATION_HEADER_JSON_LIMIT_BYTES.div_ceil(3) * 4;
+const PLUGIN_COMMAND_INVOCATION_MAX_ITEMS: usize = 64;
+const PLUGIN_COMMAND_ARGUMENT_LIMIT_BYTES: usize = 16 * 1024;
+
+#[derive(Debug, Deserialize, Serialize)]
+pub(super) struct PluginConnectorDeviceView {
+    id: String,
+    display_name: String,
+    client_version: Option<String>,
+    os: Option<String>,
+    status: String,
+    last_seen_at: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+pub(super) struct PluginConnectorWorkspaceView {
+    id: String,
+    device_id: String,
+    display_name: String,
+    local_path_alias: String,
+    capabilities: Vec<String>,
+    status: String,
+}
 
 pub(super) async fn list_mcp_catalog(State(state): State<AppState>) -> Json<Vec<McpCatalogEntry>> {
     Json(state.mcp_catalog_service.list_catalog())
@@ -25,7 +60,12 @@ pub(super) async fn list_task_capability_catalog(
     );
     let policy = state
         .task_service
-        .resolve_task_runner_policy_for_agent(Some(&user), Some(owner_user_id), agent_key)
+        .resolve_task_runner_policy_for_agent_on_device(
+            Some(&user),
+            Some(owner_user_id),
+            agent_key,
+            query.device_id.clone(),
+        )
         .await
         .map_err(ApiError::bad_gateway)?
         .ok_or_else(|| ApiError::internal("plugin management policy resolver is unavailable"))?;
@@ -45,13 +85,99 @@ pub(super) async fn list_task_capability_catalog(
         "selectable_builtin_mcps": selectable_builtin_mcps,
         "selectable_external_mcps": policy.selectable_external_mcp_views(),
         "selectable_skills": policy.selectable_skill_views(),
+        "selectable_plugins": policy.selectable_plugin_views(),
     })))
+}
+
+pub(super) async fn list_plugin_connectors() -> Result<Json<Value>, ApiError> {
+    let access_token = crate::auth::get_current_access_token()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| ApiError::unauthorized("current user access token is unavailable"))?;
+    let base_url = crate::services::plugin_relay_base_url().map_err(ApiError::bad_gateway)?;
+    let timeout_ms = std::env::var("TASK_RUNNER_PLUGIN_CONNECTOR_DISCOVERY_TIMEOUT_MS")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .unwrap_or(10_000)
+        .clamp(1_000, 30_000);
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_millis(timeout_ms))
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .map_err(|error| {
+            ApiError::internal(format!("build Local Connector client failed: {error}"))
+        })?;
+    let devices_url = format!("{base_url}/api/local-connectors/devices");
+    let workspaces_url = format!("{base_url}/api/local-connectors/workspaces");
+    let (devices, workspaces) = tokio::try_join!(
+        fetch_plugin_connector_json::<Vec<PluginConnectorDeviceView>>(
+            &client,
+            devices_url.as_str(),
+            access_token.as_str(),
+        ),
+        fetch_plugin_connector_json::<Vec<PluginConnectorWorkspaceView>>(
+            &client,
+            workspaces_url.as_str(),
+            access_token.as_str(),
+        )
+    )?;
+    Ok(Json(json!({
+        "devices": devices,
+        "workspaces": workspaces,
+    })))
+}
+
+async fn fetch_plugin_connector_json<T>(
+    client: &reqwest::Client,
+    url: &str,
+    access_token: &str,
+) -> Result<T, ApiError>
+where
+    T: DeserializeOwned,
+{
+    let response = client
+        .get(url)
+        .bearer_auth(access_token)
+        .send()
+        .await
+        .map_err(|error| ApiError {
+            status: upstream_gateway_status(&error),
+            message: format!("Local Connector discovery request failed: {error}"),
+        })?;
+    let status = response.status();
+    let bytes = read_response_bytes_limited(response, PLUGIN_CONNECTOR_RESPONSE_LIMIT_BYTES)
+        .await
+        .map_err(|error| {
+            ApiError::bad_gateway(format!(
+                "read Local Connector discovery response failed: {error}"
+            ))
+        })?;
+    if !status.is_success() {
+        let message = serde_json::from_slice::<Value>(bytes.as_slice())
+            .ok()
+            .and_then(|value| {
+                value
+                    .get("error")
+                    .and_then(Value::as_str)
+                    .map(str::to_string)
+            })
+            .unwrap_or_else(|| "Local Connector discovery was rejected".to_string());
+        return Err(ApiError::bad_gateway(format!(
+            "Local Connector discovery failed with {status}: {message}"
+        )));
+    }
+    serde_json::from_slice(bytes.as_slice()).map_err(|error| {
+        ApiError::bad_gateway(format!(
+            "decode Local Connector discovery response failed: {error}"
+        ))
+    })
 }
 
 #[derive(Debug, Deserialize)]
 pub(super) struct TaskCapabilityCatalogQuery {
     task_profile: Option<String>,
     requires_execution: Option<bool>,
+    device_id: Option<String>,
 }
 
 pub(super) async fn get_mcp_server_info(State(state): State<AppState>) -> Json<McpServerInfo> {
@@ -158,7 +284,20 @@ pub(super) async fn mcp_entrypoint(
         tool_name = request_tool_name.as_deref().unwrap_or(""),
         "task runner mcp downstream token resolved"
     );
-    let request_context = mcp_request_context_from_headers(&headers);
+    let request_context = match mcp_request_context_from_headers(&headers) {
+        Ok(value) => value,
+        Err(message) => {
+            return Json(JsonRpcResponse {
+                jsonrpc: "2.0",
+                id,
+                result: None,
+                error: Some(crate::mcp_server::JsonRpcError {
+                    code: -32602,
+                    message,
+                }),
+            });
+        }
+    };
     tracing::info!(
         method = %request_method,
         tool_name = request_tool_name.as_deref().unwrap_or(""),
@@ -232,8 +371,8 @@ fn ensure_same_owner_scope(agent_user: &CurrentUser, user: &CurrentUser) -> Resu
     }
 }
 
-fn mcp_request_context_from_headers(headers: &HeaderMap) -> McpRequestContext {
-    McpRequestContext {
+fn mcp_request_context_from_headers(headers: &HeaderMap) -> Result<McpRequestContext, String> {
+    Ok(McpRequestContext {
         project_id: header_text(headers, "x-chatos-project-id")
             .or_else(|| header_text(headers, "x-task-runner-project-id")),
         source_session_id: header_text(headers, "x-chatos-session-id")
@@ -251,7 +390,198 @@ fn mcp_request_context_from_headers(headers: &HeaderMap) -> McpRequestContext {
         builtin_prompt_locale: header_text(headers, "x-task-runner-builtin-prompt-locale")
             .or_else(|| header_text(headers, "x-chatos-internal-context-locale")),
         chatos_plan_mode: header_bool(headers, "x-chatos-plan-mode"),
+        expected_project_task_ids: header_csv_set(
+            headers,
+            "x-task-runner-expected-project-task-ids",
+        ),
+        plugin_config_override: plugin_config_override_from_headers(headers)?,
+    })
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+enum HeaderSelectedPlugin {
+    Id(String),
+    Ref(chatos_plugin_management_sdk::SelectedPluginRef),
+}
+
+fn plugin_config_override_from_headers(
+    headers: &HeaderMap,
+) -> Result<Option<chatos_plugin_management_sdk::TaskPluginConfig>, String> {
+    let device_id = header_text(headers, "x-task-runner-plugin-device-id");
+    let workspace_id = header_text(headers, "x-task-runner-plugin-workspace-id");
+    let selected_plugins_header = header_text(headers, "x-task-runner-selected-plugins");
+    let command_invocations_header =
+        header_text(headers, "x-task-runner-plugin-command-invocations");
+    if device_id.is_none()
+        && workspace_id.is_none()
+        && selected_plugins_header.is_none()
+        && command_invocations_header.is_none()
+    {
+        return Ok(None);
     }
+
+    let selected_plugins = match selected_plugins_header {
+        Some(value) => {
+            if value.len() > PLUGIN_SELECTION_HEADER_LIMIT_BYTES {
+                return Err(format!(
+                    "x-task-runner-selected-plugins exceeds {PLUGIN_SELECTION_HEADER_LIMIT_BYTES} bytes"
+                ));
+            }
+            let decoded = serde_json::from_str::<Vec<HeaderSelectedPlugin>>(value.as_str())
+                .map_err(|error| format!("invalid x-task-runner-selected-plugins JSON: {error}"))?;
+            if decoded.len() > PLUGIN_SELECTION_MAX_ITEMS {
+                return Err(format!(
+                    "x-task-runner-selected-plugins exceeds {PLUGIN_SELECTION_MAX_ITEMS} items"
+                ));
+            }
+            normalize_header_selected_plugins(decoded)
+        }
+        None => Vec::new(),
+    };
+    let command_invocations = match command_invocations_header {
+        Some(value) => decode_header_plugin_command_invocations(value.as_str())?,
+        None => Vec::new(),
+    };
+
+    Ok(Some(chatos_plugin_management_sdk::TaskPluginConfig {
+        device_id,
+        workspace_id,
+        selected_plugins,
+        command_invocations,
+    }))
+}
+
+fn decode_header_plugin_command_invocations(
+    value: &str,
+) -> Result<Vec<chatos_plugin_management_sdk::PluginCommandInvocation>, String> {
+    if value.len() > PLUGIN_COMMAND_INVOCATION_HEADER_ENCODED_LIMIT_BYTES {
+        return Err(format!(
+            "x-task-runner-plugin-command-invocations exceeds {PLUGIN_COMMAND_INVOCATION_HEADER_ENCODED_LIMIT_BYTES} encoded bytes"
+        ));
+    }
+    let payload = if value.trim_start().starts_with('[') {
+        value.as_bytes().to_vec()
+    } else {
+        URL_SAFE_NO_PAD.decode(value.as_bytes()).map_err(|error| {
+            format!("invalid x-task-runner-plugin-command-invocations base64: {error}")
+        })?
+    };
+    if payload.len() > PLUGIN_COMMAND_INVOCATION_HEADER_JSON_LIMIT_BYTES {
+        return Err(format!(
+            "x-task-runner-plugin-command-invocations exceeds {PLUGIN_COMMAND_INVOCATION_HEADER_JSON_LIMIT_BYTES} decoded bytes"
+        ));
+    }
+    let decoded = serde_json::from_slice::<
+        Vec<chatos_plugin_management_sdk::PluginCommandInvocation>,
+    >(payload.as_slice())
+    .map_err(|error| format!("invalid x-task-runner-plugin-command-invocations JSON: {error}"))?;
+    if decoded.len() > PLUGIN_COMMAND_INVOCATION_MAX_ITEMS {
+        return Err(format!(
+            "x-task-runner-plugin-command-invocations exceeds {PLUGIN_COMMAND_INVOCATION_MAX_ITEMS} items"
+        ));
+    }
+    normalize_header_plugin_command_invocations(decoded)
+}
+
+fn normalize_header_plugin_command_invocations(
+    values: Vec<chatos_plugin_management_sdk::PluginCommandInvocation>,
+) -> Result<Vec<chatos_plugin_management_sdk::PluginCommandInvocation>, String> {
+    let mut seen = HashSet::new();
+    values
+        .into_iter()
+        .map(|value| {
+            let plugin_id = value.plugin_id.trim().to_string();
+            let command_id = value.command_id.trim().to_string();
+            if plugin_id.is_empty() || command_id.is_empty() {
+                return Err(
+                    "Plugin Command invocation requires non-empty plugin_id and command_id"
+                        .to_string(),
+                );
+            }
+            if plugin_id.contains('\0') || command_id.contains('\0') {
+                return Err("Plugin Command invocation identity contains NUL bytes".to_string());
+            }
+            if !seen.insert((plugin_id.clone(), command_id.clone())) {
+                return Err(format!(
+                    "Plugin Command invocation is duplicated: {plugin_id}:{command_id}"
+                ));
+            }
+            let arguments = value
+                .arguments
+                .as_deref()
+                .map(str::trim)
+                .filter(|arguments| !arguments.is_empty());
+            if arguments.is_some_and(|arguments| {
+                arguments.contains('\0')
+                    || arguments.len() > PLUGIN_COMMAND_ARGUMENT_LIMIT_BYTES
+            }) {
+                return Err(format!(
+                    "Plugin Command arguments exceed {PLUGIN_COMMAND_ARGUMENT_LIMIT_BYTES} bytes or contain NUL"
+                ));
+            }
+            Ok(chatos_plugin_management_sdk::PluginCommandInvocation {
+                plugin_id,
+                command_id,
+                arguments: arguments.map(str::to_string),
+            })
+        })
+        .collect()
+}
+
+fn normalize_header_selected_plugins(
+    values: Vec<HeaderSelectedPlugin>,
+) -> Vec<chatos_plugin_management_sdk::SelectedPluginRef> {
+    let mut seen = HashSet::new();
+    values
+        .into_iter()
+        .filter_map(|value| {
+            let mut selected = match value {
+                HeaderSelectedPlugin::Id(plugin_id) => {
+                    chatos_plugin_management_sdk::SelectedPluginRef {
+                        plugin_id,
+                        selected_skill_ids: Vec::new(),
+                        selected_command_ids: Vec::new(),
+                        selected_agent_ids: Vec::new(),
+                    }
+                }
+                HeaderSelectedPlugin::Ref(value) => value,
+            };
+            selected.plugin_id = selected.plugin_id.trim().to_string();
+            if selected.plugin_id.is_empty() || !seen.insert(selected.plugin_id.clone()) {
+                return None;
+            }
+            selected.selected_skill_ids = normalize_header_ids(selected.selected_skill_ids);
+            selected.selected_command_ids = normalize_header_ids(selected.selected_command_ids);
+            selected.selected_agent_ids = normalize_header_ids(selected.selected_agent_ids);
+            Some(selected)
+        })
+        .collect()
+}
+
+fn normalize_header_ids(values: Vec<String>) -> Vec<String> {
+    let mut seen = HashSet::new();
+    values
+        .into_iter()
+        .filter_map(|value| {
+            let value = value.trim().to_string();
+            (!value.is_empty() && seen.insert(value.clone())).then_some(value)
+        })
+        .collect()
+}
+
+fn header_csv_set(headers: &HeaderMap, key: &'static str) -> std::collections::BTreeSet<String> {
+    header_text(headers, key)
+        .into_iter()
+        .flat_map(|value| {
+            value
+                .split(',')
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(ToOwned::to_owned)
+                .collect::<Vec<_>>()
+        })
+        .collect()
 }
 
 fn header_text(headers: &HeaderMap, key: &'static str) -> Option<String> {
@@ -283,11 +613,136 @@ mod tests {
             " model-selected ".parse().expect("valid header"),
         );
 
-        let context = mcp_request_context_from_headers(&headers);
+        let context = mcp_request_context_from_headers(&headers).expect("valid context");
 
         assert_eq!(
             context.default_model_config_id.as_deref(),
             Some("model-selected")
         );
+    }
+
+    #[test]
+    fn request_context_reads_exact_project_task_scope_header() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "x-task-runner-expected-project-task-ids",
+            " task-b,task-a,task-a ".parse().expect("valid header"),
+        );
+
+        let context = mcp_request_context_from_headers(&headers).expect("valid context");
+
+        assert_eq!(
+            context.expected_project_task_ids,
+            std::collections::BTreeSet::from(["task-a".to_string(), "task-b".to_string()])
+        );
+    }
+
+    #[test]
+    fn request_context_reads_and_normalizes_user_plugin_selection() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "x-task-runner-plugin-device-id",
+            " device-1 ".parse().expect("valid header"),
+        );
+        headers.insert(
+            "x-task-runner-plugin-workspace-id",
+            " workspace-1 ".parse().expect("valid header"),
+        );
+        headers.insert(
+            "x-task-runner-selected-plugins",
+            r#"["plugin-a",{"plugin_id":" plugin-a ","selected_skill_ids":[],"selected_command_ids":[]},{"plugin_id":"plugin-b","selected_skill_ids":[" skill-1 ","skill-1"],"selected_command_ids":[" review ","review"]}]"#
+                .parse()
+                .expect("valid header"),
+        );
+        let command_invocations = serde_json::to_vec(&vec![
+            chatos_plugin_management_sdk::PluginCommandInvocation {
+                plugin_id: " plugin-b ".to_string(),
+                command_id: " review ".to_string(),
+                arguments: Some(" 检查中文参数 ".to_string()),
+            },
+        ])
+        .expect("serialize command invocations");
+        headers.insert(
+            "x-task-runner-plugin-command-invocations",
+            URL_SAFE_NO_PAD
+                .encode(command_invocations)
+                .parse()
+                .expect("valid header"),
+        );
+
+        let context = mcp_request_context_from_headers(&headers).expect("valid context");
+        let config = context
+            .plugin_config_override
+            .expect("plugin config override");
+
+        assert_eq!(config.device_id.as_deref(), Some("device-1"));
+        assert_eq!(config.workspace_id.as_deref(), Some("workspace-1"));
+        assert_eq!(config.selected_plugins.len(), 2);
+        assert_eq!(config.selected_plugins[0].plugin_id, "plugin-a");
+        assert_eq!(
+            config.selected_plugins[1].selected_skill_ids,
+            vec!["skill-1".to_string()]
+        );
+        assert_eq!(
+            config.selected_plugins[1].selected_command_ids,
+            vec!["review".to_string()]
+        );
+        assert_eq!(
+            config.command_invocations,
+            vec![chatos_plugin_management_sdk::PluginCommandInvocation {
+                plugin_id: "plugin-b".to_string(),
+                command_id: "review".to_string(),
+                arguments: Some("检查中文参数".to_string()),
+            }]
+        );
+    }
+
+    #[test]
+    fn request_context_rejects_invalid_plugin_selection_json() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "x-task-runner-selected-plugins",
+            "not-json".parse().expect("valid header"),
+        );
+
+        let error = mcp_request_context_from_headers(&headers).expect_err("invalid context");
+
+        assert!(error.contains("invalid x-task-runner-selected-plugins JSON"));
+    }
+
+    #[test]
+    fn request_context_rejects_duplicate_plugin_command_invocations() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "x-task-runner-plugin-command-invocations",
+            r#"[{"plugin_id":"plugin-a","command_id":"review","arguments":null},{"plugin_id":" plugin-a ","command_id":" review ","arguments":"src"}]"#
+                .parse()
+                .expect("valid header"),
+        );
+
+        let error = mcp_request_context_from_headers(&headers).expect_err("invalid context");
+
+        assert!(error.contains("Plugin Command invocation is duplicated"));
+    }
+
+    #[test]
+    fn request_context_rejects_oversized_plugin_command_arguments() {
+        let payload = serde_json::to_string(&vec![
+            chatos_plugin_management_sdk::PluginCommandInvocation {
+                plugin_id: "plugin-a".to_string(),
+                command_id: "review".to_string(),
+                arguments: Some("a".repeat(PLUGIN_COMMAND_ARGUMENT_LIMIT_BYTES + 1)),
+            },
+        ])
+        .expect("serialize command invocations");
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "x-task-runner-plugin-command-invocations",
+            payload.parse().expect("valid header"),
+        );
+
+        let error = mcp_request_context_from_headers(&headers).expect_err("invalid context");
+
+        assert!(error.contains("Plugin Command arguments exceed"));
     }
 }

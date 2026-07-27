@@ -44,4 +44,81 @@ describe('buildLocalUserMessageTurns', () => {
       overall_status: 'running',
     });
   });
+
+  it('marks deferred local project tasks as awaiting confirmation instead of running', () => {
+    const response = buildLocalUserMessageTurns(
+      [
+        {
+          id: 'message-user',
+          turn_id: 'turn-plan',
+          sequence_no: 1,
+          role: 'user',
+          content: 'Plan local tasks',
+          metadata: {
+            project_requirement_execution: {
+              project_id: 'project-1',
+              requirement_id: 'requirement-1',
+            },
+            task_runner_async: {
+              mode: 'project_requirement_execution',
+              overall_status: 'planning',
+            },
+          },
+          created_at: '2026-07-15T01:00:00Z',
+        },
+      ],
+      [
+        {
+          id: 'task-plan',
+          title: 'Deferred task',
+          status: 'todo',
+          last_run_id: null,
+          source_turn_id: 'turn-plan',
+          source_user_message_id: 'message-user',
+        },
+      ],
+    );
+
+    expect(response.items[0].user_message.metadata?.task_runner_async).toMatchObject({
+      mode: 'project_requirement_execution',
+      created_task_ids: ['task-plan'],
+      running_task_ids: [],
+      overall_status: 'awaiting_confirmation',
+      confirmation_status: 'awaiting_confirmation',
+    });
+  });
+
+  it('does not offer confirmation for a partially generated graph marked failed', () => {
+    const response = buildLocalUserMessageTurns(
+      [{
+        id: 'message-user',
+        turn_id: 'turn-failed',
+        sequence_no: 1,
+        role: 'user',
+        content: 'Plan local tasks',
+        metadata: {
+          task_runner_async: {
+            mode: 'project_requirement_execution',
+            overall_status: 'failed',
+            confirmation_status: 'failed',
+          },
+        },
+        created_at: '2026-07-15T01:00:00Z',
+      }],
+      [{
+        id: 'task-partial',
+        title: 'Partial task',
+        status: 'todo',
+        last_run_id: null,
+        source_turn_id: 'turn-failed',
+        source_user_message_id: 'message-user',
+      }],
+    );
+
+    expect(response.items[0].user_message.metadata?.task_runner_async).toMatchObject({
+      overall_status: 'failed',
+      confirmation_status: 'failed',
+      running_task_ids: [],
+    });
+  });
 });

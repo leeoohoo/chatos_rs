@@ -72,6 +72,25 @@ pub(super) fn normalized_base_url(value: Option<&str>) -> String {
         .to_string()
 }
 
+pub(super) fn model_config_belongs_to_provider(
+    source_provider_id: Option<&str>,
+    model_provider: &str,
+    model_base_url: Option<&str>,
+    provider_id: &str,
+    provider: &str,
+    provider_base_url: Option<&str>,
+) -> bool {
+    if let Some(source_provider_id) = source_provider_id
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        return source_provider_id == provider_id.trim();
+    }
+
+    model_provider == provider
+        && normalized_base_url(model_base_url) == normalized_base_url(provider_base_url)
+}
+
 pub(super) fn normalize_provider_input(
     provider: Option<String>,
 ) -> Result<String, (axum::http::StatusCode, Json<serde_json::Value>)> {
@@ -197,5 +216,37 @@ mod tests {
     fn rejects_removed_provider_values() {
         assert!(normalize_provider_input(Some("openai_compatible".to_string())).is_err());
         assert!(normalize_provider_input(Some("minimax".to_string())).is_err());
+    }
+
+    #[test]
+    fn explicit_source_provider_id_is_authoritative() {
+        assert!(model_config_belongs_to_provider(
+            Some("provider-1"),
+            "glm",
+            Some("https://old.example/v1"),
+            "provider-1",
+            "gpt",
+            Some("https://new.example/v1"),
+        ));
+        assert!(!model_config_belongs_to_provider(
+            Some("provider-2"),
+            "glm",
+            Some("https://same.example/v1"),
+            "provider-1",
+            "glm",
+            Some("https://same.example/v1"),
+        ));
+    }
+
+    #[test]
+    fn legacy_models_fall_back_to_provider_and_base_url() {
+        assert!(model_config_belongs_to_provider(
+            None,
+            "glm",
+            Some("https://same.example/v1/"),
+            "provider-1",
+            "glm",
+            Some("https://same.example/v1"),
+        ));
     }
 }

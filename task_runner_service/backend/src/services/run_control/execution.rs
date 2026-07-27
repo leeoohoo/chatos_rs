@@ -2,6 +2,9 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use super::*;
+use crate::services::task_manager_lifecycle::{
+    append_task_session_finalized_event, finalize_task_session_entries,
+};
 use crate::services::TaskRunnerCapabilityPolicy;
 
 impl RunService {
@@ -83,6 +86,25 @@ impl RunService {
                 .await;
             return;
         }
+        let current_plugin_snapshots = match capability_policy.plugin_snapshots(&task) {
+            Ok(snapshots) => snapshots,
+            Err(err) => {
+                self.finish_failed_before_execution(&task, &mut run, ".", err)
+                    .await;
+                return;
+            }
+        };
+        if current_plugin_snapshots != run.plugin_snapshots {
+            self.finish_failed_before_execution(
+                &task,
+                &mut run,
+                ".",
+                "Plugin Release, installation, component, permission, auth, device, or workspace snapshot changed after this run was queued"
+                    .to_string(),
+            )
+            .await;
+            return;
+        }
         let routed_task =
             task_with_runtime_mcp_routing_authoritative(&self.config, &self.store, task.clone())
                 .await;
@@ -100,6 +122,11 @@ impl RunService {
             prompt_override: run
                 .input_snapshot
                 .get("prompt_override")
+                .and_then(|value| value.as_str())
+                .map(ToOwned::to_owned),
+            retry_instruction: run
+                .input_snapshot
+                .get("retry_instruction")
                 .and_then(|value| value.as_str())
                 .map(ToOwned::to_owned),
         };
@@ -195,6 +222,21 @@ impl RunService {
             .await
         {
             warn!("failed to append failed event for run {}: {}", run.id, err);
+        }
+        match finalize_task_session_entries(
+            &self.store,
+            run.task_id.as_str(),
+            run.id.as_str(),
+            run.status,
+        )
+        .await
+        {
+            Ok(summary) => append_task_session_finalized_event(&self.store, run, &summary).await,
+            Err(err) => warn!(
+                run_id = run.id.as_str(),
+                error = err.as_str(),
+                "failed to finalize Task Manager session for a claimed run whose root task disappeared"
+            ),
         }
     }
 }

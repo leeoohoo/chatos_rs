@@ -12,6 +12,7 @@ import type {
 import { useI18n } from '../../i18n/I18nProvider';
 
 interface ChatComposerPanelProps {
+  conversationId?: string | null;
   onSend: SendMessageHandler;
   onStop?: () => void | Promise<void>;
   isRunning?: boolean;
@@ -51,6 +52,7 @@ interface ChatComposerPanelProps {
 }
 
 const ChatComposerPanel: React.FC<ChatComposerPanelProps> = ({
+  conversationId = null,
   onSend,
   onStop,
   isRunning = false,
@@ -89,6 +91,7 @@ const ChatComposerPanel: React.FC<ChatComposerPanelProps> = ({
   return (
   <div className="border-t border-border">
     <InputArea
+      conversationId={conversationId}
       onSend={onSend}
       onStop={onStop}
       isRunning={isRunning}

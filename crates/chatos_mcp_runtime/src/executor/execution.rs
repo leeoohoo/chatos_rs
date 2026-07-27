@@ -4,12 +4,14 @@
 use std::collections::HashMap;
 
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 
 use crate::naming::{canonical_prefixed_tool_name, legacy_prefixed_tool_name};
 use crate::rpc::{jsonrpc_http_call, jsonrpc_stdio_call};
-use crate::text::{inject_agent_builder_args, to_text_and_structured_result};
+use crate::text::{inject_agent_builder_args, to_text_and_structured_result_with_transient};
 use crate::types::{
-    ToolCallContext, ToolInfo, ToolResult, ToolResultCallback, ToolStreamChunkCallback,
+    ToolCallContext, ToolCallError, ToolInfo, ToolLifecycleEvent, ToolLifecycleOutcome, ToolResult,
+    ToolResultCallback, ToolStreamChunkCallback,
 };
 
 use super::McpExecutor;
@@ -23,7 +25,7 @@ impl McpExecutor {
         context: ToolCallContext,
         on_tool_result: Option<ToolResultCallback>,
     ) -> Vec<ToolResult> {
-        if self.should_parallelize_tool_batch(tool_calls) {
+        if self.tool_lifecycle_hook.is_none() && self.should_parallelize_tool_batch(tool_calls) {
             return self
                 .execute_tools_parallel(tool_calls, context, on_tool_result)
                 .await;
@@ -44,7 +46,7 @@ impl McpExecutor {
                             self.unavailable_tools.as_slice(),
                             name.as_str(),
                         ) {
-                            return Err(reason);
+                            return Err(ToolCallError::non_fatal(reason));
                         }
                     }
                     let execution_name = resolved_name.unwrap_or(name);
@@ -77,7 +79,7 @@ impl McpExecutor {
                             executor.unavailable_tools.as_slice(),
                             name.as_str(),
                         ) {
-                            return Err(reason);
+                            return Err(ToolCallError::non_fatal(reason));
                         }
                     }
                     let execution_name = resolved_name.unwrap_or(name);
@@ -95,54 +97,105 @@ impl McpExecutor {
         args: Value,
         context: ToolCallContext,
         on_stream_chunk: Option<ToolStreamChunkCallback>,
-    ) -> Result<(String, Option<Value>), String> {
+    ) -> Result<(String, Option<Value>), ToolCallError> {
         let info = self
             .tool_metadata
             .get(tool_name)
             .ok_or_else(|| format!("工具未找到: {tool_name}"))?;
-        match info.server_type.as_str() {
-            "http" => {
-                let url = info.server_url.clone().ok_or("missing server url")?;
-                let headers = http_tool_call_headers(info, &context).await?;
-                let result = jsonrpc_http_call(
-                    url.as_str(),
-                    headers.as_ref(),
-                    "tools/call",
-                    json!({"name": info.original_name, "arguments": args}),
-                    info.server_timeout,
-                )
-                .await?;
-                Ok(to_text_and_structured_result(&result))
-            }
-            "stdio" => {
-                let config = info.server_config.clone().ok_or("missing server config")?;
-                let result = jsonrpc_stdio_call(
-                    &config,
-                    "tools/call",
-                    json!({"name": info.original_name, "arguments": args}),
-                    context.conversation_id.as_deref(),
-                )
-                .await?;
-                Ok(to_text_and_structured_result(&result))
-            }
-            "builtin" => {
-                let provider = self
-                    .builtin_registry
-                    .get(info.server_name.as_str())
-                    .ok_or_else(|| "missing builtin provider".to_string())?;
-                let args = if info.server_name == "agent_builder" {
-                    inject_agent_builder_args(args, context.caller_model.as_deref())
-                } else {
-                    args
-                };
-                let result = provider
-                    .call_tool(info.original_name.as_str(), args, context, on_stream_chunk)
-                    .await?;
-                Ok(to_text_and_structured_result(&result))
-            }
-            other => Err(format!("unsupported server type: {other}")),
+        let mut lifecycle_event = ToolLifecycleEvent {
+            tool_name: tool_name.to_string(),
+            original_name: info.original_name.clone(),
+            server_name: info.server_name.clone(),
+            server_type: info.server_type.clone(),
+            arguments_sha256: sha256_json(&args)?,
+            outcome: None,
+            result_sha256: None,
+        };
+        if let Some(hook) = &self.tool_lifecycle_hook {
+            hook.before_tool_use(&lifecycle_event)
+                .await
+                .map_err(|error| {
+                    ToolCallError::fatal(format!(
+                        "PreToolUse Hook blocked tool {tool_name}: {error}"
+                    ))
+                })?;
         }
+        let result = async {
+            match info.server_type.as_str() {
+                "http" => {
+                    let url = info.server_url.clone().ok_or("missing server url")?;
+                    let headers = http_tool_call_headers(info, &context).await?;
+                    let result = jsonrpc_http_call(
+                        url.as_str(),
+                        headers.as_ref(),
+                        "tools/call",
+                        json!({"name": info.original_name, "arguments": args}),
+                        info.server_timeout,
+                    )
+                    .await?;
+                    Ok(to_text_and_structured_result_with_transient(&result))
+                }
+                "stdio" => {
+                    let config = info.server_config.clone().ok_or("missing server config")?;
+                    let result = jsonrpc_stdio_call(
+                        &config,
+                        "tools/call",
+                        json!({"name": info.original_name, "arguments": args}),
+                        context.conversation_id.as_deref(),
+                    )
+                    .await?;
+                    Ok(to_text_and_structured_result_with_transient(&result))
+                }
+                "builtin" => {
+                    let provider = self
+                        .builtin_registry
+                        .get(info.server_name.as_str())
+                        .ok_or_else(|| "missing builtin provider".to_string())?;
+                    let args = if info.server_name == "agent_builder" {
+                        inject_agent_builder_args(args, context.caller_model.as_deref())
+                    } else {
+                        args
+                    };
+                    let result = provider
+                        .call_tool(info.original_name.as_str(), args, context, on_stream_chunk)
+                        .await?;
+                    Ok(to_text_and_structured_result_with_transient(&result))
+                }
+                other => Err(ToolCallError::non_fatal(format!(
+                    "unsupported server type: {other}"
+                ))),
+            }
+        }
+        .await;
+        lifecycle_event.outcome = Some(if result.is_ok() {
+            ToolLifecycleOutcome::Succeeded
+        } else {
+            ToolLifecycleOutcome::Failed
+        });
+        lifecycle_event.result_sha256 = Some(match &result {
+            Ok(value) => sha256_json(value)?,
+            Err(error) => hex::encode(Sha256::digest(error.to_string().as_bytes())),
+        });
+        if let Some(hook) = &self.tool_lifecycle_hook {
+            hook.after_tool_use(&lifecycle_event)
+                .await
+                .map_err(|error| {
+                    ToolCallError::fatal(format!(
+                        "PostToolUse Hook failed after tool {tool_name} (underlying_tool_succeeded={}): {error}",
+                        result.is_ok()
+                    ))
+                })?;
+        }
+        result
     }
+}
+
+fn sha256_json(value: &impl serde::Serialize) -> Result<String, ToolCallError> {
+    serde_json::to_vec(value)
+        .map(|bytes| hex::encode(Sha256::digest(bytes)))
+        .map_err(|error| {
+            ToolCallError::non_fatal(format!("hash tool lifecycle payload failed: {error}"))
+        })
 }
 
 fn unavailable_tool_reason(unavailable_tools: &[Value], full_tool_name: &str) -> Option<String> {

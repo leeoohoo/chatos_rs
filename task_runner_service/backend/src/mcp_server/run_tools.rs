@@ -75,6 +75,7 @@ impl TaskRunnerMcpService {
                         StartTaskRunRequest {
                             model_config_id: args.model_config_id,
                             prompt_override: args.prompt_override,
+                            retry_instruction: None,
                         },
                         current_user,
                     )

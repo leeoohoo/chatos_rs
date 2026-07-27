@@ -8,11 +8,14 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
+use chatos_project_execution::{
+    STATUS_ALREADY_CONFIRMED, STATUS_AWAITING_CONFIRMATION, STATUS_EXECUTION_STARTED, STATUS_PAUSED,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 use crate::{
-    models::TaskRunRecord,
+    models::{TaskRunRecord, TaskRunStatus, TaskStatus},
     services::{
         ChatosMessageModelConfigSummary, ChatosMessageRunDetail, ChatosMessageTaskRun,
         ChatosMessageTaskRunEvent, ChatosMessageTaskSummary,
@@ -21,7 +24,8 @@ use crate::{
 };
 
 use super::internal_auth::{
-    require_task_runner_internal_request, CHATOS_CALLER, CHATOS_MESSAGES_READ_SCOPE,
+    require_task_runner_internal_request, CHATOS_CALLER, CHATOS_EXECUTION_START_SCOPE,
+    CHATOS_MESSAGES_READ_SCOPE,
 };
 
 const DEFAULT_RUN_EVENT_LIMIT: usize = 40;
@@ -49,6 +53,14 @@ pub fn router() -> Router<AppState> {
             get(get_chatos_message_run),
         )
         .route(
+            "/internal/chatos/message-runs/{run_id}/retry",
+            post(retry_chatos_message_run),
+        )
+        .route(
+            "/internal/chatos/message-runs/{run_id}/events/{event_id}",
+            get(get_chatos_message_run_event),
+        )
+        .route(
             "/internal/chatos/message-runs/{run_id}/output/changes",
             get(get_chatos_message_run_output_changes),
         )
@@ -64,6 +76,26 @@ pub fn router() -> Router<AppState> {
             "/internal/chatos/session-active-message-tasks",
             post(list_chatos_session_active_message_tasks),
         )
+        .route(
+            "/internal/chatos/project-execution/confirm",
+            post(confirm_chatos_project_execution),
+        )
+        .route(
+            "/internal/chatos/project-execution/pause",
+            post(pause_chatos_project_execution),
+        )
+        .route(
+            "/internal/chatos/project-execution/resume",
+            post(resume_chatos_project_execution),
+        )
+        .route(
+            "/internal/chatos/project-execution/clone",
+            post(clone_chatos_project_execution),
+        )
+        .route(
+            "/internal/chatos/project-execution/retire",
+            post(retire_chatos_project_execution),
+        )
 }
 
 #[derive(Debug, Deserialize)]
@@ -71,6 +103,13 @@ struct ChatosMessageTaskQuery {
     source_session_id: String,
     source_user_message_id: Option<String>,
     source_turn_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RetryChatosMessageRunRequest {
+    #[serde(flatten)]
+    source: ChatosMessageTaskQuery,
+    retry_instruction: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -126,6 +165,34 @@ struct ChatosSessionActiveMessageTasksResponse {
     items: Vec<ChatosActiveMessageTaskSource>,
 }
 
+#[derive(Debug, Deserialize)]
+struct ConfirmChatosProjectExecutionRequest {
+    project_id: String,
+    requirement_id: String,
+    source_session_id: String,
+    source_user_message_id: String,
+}
+
+type MutateChatosProjectExecutionRequest = ConfirmChatosProjectExecutionRequest;
+
+#[derive(Debug, Deserialize)]
+struct CloneChatosProjectExecutionRequest {
+    project_id: String,
+    requirement_id: String,
+    old_source_session_id: String,
+    old_source_user_message_id: String,
+    new_source_session_id: String,
+    new_source_user_message_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct RetireChatosProjectExecutionRequest {
+    project_id: String,
+    requirement_id: String,
+    source_session_id: String,
+    source_user_message_id: String,
+}
+
 #[derive(Debug)]
 pub(super) struct InternalApiError {
     status: StatusCode,
@@ -143,6 +210,13 @@ impl InternalApiError {
     fn not_found(message: impl Into<String>) -> Self {
         Self {
             status: StatusCode::NOT_FOUND,
+            message: message.into(),
+        }
+    }
+
+    fn conflict(message: impl Into<String>) -> Self {
+        Self {
+            status: StatusCode::CONFLICT,
             message: message.into(),
         }
     }
@@ -373,6 +447,410 @@ async fn list_chatos_session_active_message_tasks(
     )?))
 }
 
+async fn confirm_chatos_project_execution(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(request): Json<ConfirmChatosProjectExecutionRequest>,
+) -> Result<Json<Value>, InternalApiError> {
+    require_task_runner_internal_request(
+        &state.config,
+        &headers,
+        &[CHATOS_CALLER],
+        CHATOS_EXECUTION_START_SCOPE,
+    )
+    .map_err(|error| InternalApiError {
+        status: error.status,
+        message: error.message,
+    })?;
+    let project_id = request.project_id.trim();
+    let requirement_id = request.requirement_id.trim();
+    let source_session_id = request.source_session_id.trim();
+    let source_user_message_id = request.source_user_message_id.trim();
+    if project_id.is_empty()
+        || requirement_id.is_empty()
+        || source_session_id.is_empty()
+        || source_user_message_id.is_empty()
+    {
+        return Err(InternalApiError::bad_request(
+            "project_id, requirement_id, source_session_id and source_user_message_id are required",
+        ));
+    }
+
+    let tasks = state
+        .task_service
+        .list_tasks_for_chatos_source(source_session_id, Some(source_user_message_id), None)
+        .await
+        .map_err(InternalApiError::internal)?;
+    if tasks.is_empty() {
+        return Err(InternalApiError::not_found(
+            "project execution task graph is not ready",
+        ));
+    }
+    for task in &tasks {
+        let payload = task.input_payload.as_ref();
+        let payload_source = payload
+            .and_then(|value| value.get("source"))
+            .and_then(Value::as_str);
+        let payload_requirement_id = payload
+            .and_then(|value| value.get("root_requirement_id"))
+            .or_else(|| payload.and_then(|value| value.get("requirement_id")))
+            .and_then(Value::as_str);
+        if task.project_id.trim() != project_id
+            || payload_source != Some("chatos_project_requirement_execution")
+            || payload_requirement_id != Some(requirement_id)
+        {
+            return Err(InternalApiError::conflict(
+                "task graph does not belong to the requested project requirement execution",
+            ));
+        }
+        if matches!(
+            task.status,
+            TaskStatus::Failed | TaskStatus::Blocked | TaskStatus::Cancelled | TaskStatus::Archived
+        ) {
+            return Err(InternalApiError::conflict(
+                "project execution task graph contains failed or cancelled tasks",
+            ));
+        }
+    }
+
+    let root_task_ids = tasks
+        .iter()
+        .filter(|task| task.prerequisite_task_ids.is_empty())
+        .map(|task| task.id.clone())
+        .collect::<Vec<_>>();
+    if root_task_ids.is_empty() {
+        return Err(InternalApiError::conflict(
+            "project execution task graph has no runnable roots",
+        ));
+    }
+    let already_confirmed = tasks
+        .iter()
+        .any(|task| task.last_run_id.is_some() || task.status != TaskStatus::Ready);
+    let started_runs = if already_confirmed {
+        let mut existing_runs = Vec::new();
+        for run_id in tasks.iter().filter_map(|task| task.last_run_id.as_deref()) {
+            if let Some(run) = state
+                .run_service
+                .get_run(run_id)
+                .await
+                .map_err(InternalApiError::internal)?
+            {
+                existing_runs.push(run);
+            }
+        }
+        existing_runs
+    } else {
+        state
+            .run_service
+            .dispatch_confirmed_project_execution_tasks(tasks.as_slice())
+            .await
+            .map_err(InternalApiError::internal)?
+    };
+    let task_ids = tasks.iter().map(|task| task.id.clone()).collect::<Vec<_>>();
+    Ok(Json(redact_workspace_paths_internal(
+        &state,
+        json!({
+            "success": true,
+            "status": if already_confirmed { STATUS_ALREADY_CONFIRMED } else { STATUS_EXECUTION_STARTED },
+            "project_id": project_id,
+            "requirement_id": requirement_id,
+            "source_session_id": source_session_id,
+            "source_user_message_id": source_user_message_id,
+            "task_ids": task_ids,
+            "root_task_ids": root_task_ids,
+            "started_runs": started_runs,
+        }),
+    )?))
+}
+
+async fn pause_chatos_project_execution(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(request): Json<MutateChatosProjectExecutionRequest>,
+) -> Result<Json<Value>, InternalApiError> {
+    mutate_chatos_project_execution_pause(state, headers, request, true).await
+}
+
+async fn resume_chatos_project_execution(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(request): Json<MutateChatosProjectExecutionRequest>,
+) -> Result<Json<Value>, InternalApiError> {
+    mutate_chatos_project_execution_pause(state, headers, request, false).await
+}
+
+async fn mutate_chatos_project_execution_pause(
+    state: AppState,
+    headers: HeaderMap,
+    request: MutateChatosProjectExecutionRequest,
+    paused: bool,
+) -> Result<Json<Value>, InternalApiError> {
+    require_chatos_execution_mutation(&state, &headers)?;
+    let project_id = required_internal_text(request.project_id, "project_id")?;
+    let requirement_id = required_internal_text(request.requirement_id, "requirement_id")?;
+    let source_session_id = required_internal_text(request.source_session_id, "source_session_id")?;
+    let source_user_message_id =
+        required_internal_text(request.source_user_message_id, "source_user_message_id")?;
+    let tasks = state
+        .task_service
+        .list_tasks_for_chatos_source(
+            source_session_id.as_str(),
+            Some(source_user_message_id.as_str()),
+            None,
+        )
+        .await
+        .map_err(InternalApiError::internal)?;
+    if tasks.is_empty() {
+        return Err(InternalApiError::not_found(
+            "project execution task graph is not ready",
+        ));
+    }
+    for task in &tasks {
+        validate_project_execution_task(task, project_id.as_str(), requirement_id.as_str())?;
+    }
+    if !tasks
+        .iter()
+        .any(|task| task.last_run_id.is_some() || task.status != TaskStatus::Ready)
+    {
+        return Err(InternalApiError::conflict(
+            "project execution has not started yet",
+        ));
+    }
+    let started_runs = state
+        .run_service
+        .set_project_execution_paused(tasks.as_slice(), paused)
+        .await
+        .map_err(InternalApiError::internal)?;
+    let task_ids = tasks.iter().map(|task| task.id.clone()).collect::<Vec<_>>();
+    let mut running_count = 0usize;
+    let mut queued_count = 0usize;
+    for task_id in &task_ids {
+        for run in state
+            .run_service
+            .list_runs(Some(task_id.as_str()))
+            .await
+            .map_err(InternalApiError::internal)?
+        {
+            match run.status {
+                TaskRunStatus::Running => running_count += 1,
+                TaskRunStatus::Queued => queued_count += 1,
+                _ => {}
+            }
+        }
+    }
+    Ok(Json(redact_workspace_paths_internal(
+        &state,
+        json!({
+            "success": true,
+            "status": if paused { STATUS_PAUSED } else { STATUS_EXECUTION_STARTED },
+            "execution_paused": paused,
+            "pause_scope": "future_dispatch",
+            "active_runs_continue": true,
+            "project_id": project_id,
+            "requirement_id": requirement_id,
+            "source_session_id": source_session_id,
+            "source_user_message_id": source_user_message_id,
+            "task_ids": task_ids,
+            "running_count": running_count,
+            "queued_count": queued_count,
+            "started_runs": started_runs,
+        }),
+    )?))
+}
+
+async fn clone_chatos_project_execution(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(request): Json<CloneChatosProjectExecutionRequest>,
+) -> Result<Json<Value>, InternalApiError> {
+    require_chatos_execution_mutation(&state, &headers)?;
+    let project_id = required_internal_text(request.project_id, "project_id")?;
+    let requirement_id = required_internal_text(request.requirement_id, "requirement_id")?;
+    let old_source_session_id =
+        required_internal_text(request.old_source_session_id, "old_source_session_id")?;
+    let old_source_user_message_id = required_internal_text(
+        request.old_source_user_message_id,
+        "old_source_user_message_id",
+    )?;
+    let new_source_session_id =
+        required_internal_text(request.new_source_session_id, "new_source_session_id")?;
+    let new_source_user_message_id = required_internal_text(
+        request.new_source_user_message_id,
+        "new_source_user_message_id",
+    )?;
+    let cloned = state
+        .task_service
+        .clone_stopped_project_execution_tasks(
+            project_id.as_str(),
+            requirement_id.as_str(),
+            old_source_session_id.as_str(),
+            old_source_user_message_id.as_str(),
+            new_source_session_id.as_str(),
+            new_source_user_message_id.as_str(),
+        )
+        .await
+        .map_err(InternalApiError::conflict)?;
+    let tasks = cloned
+        .iter()
+        .map(|item| item.task.clone())
+        .collect::<Vec<_>>();
+    let task_mappings = cloned
+        .iter()
+        .map(|item| {
+            json!({
+                "old_task_id": item.old_task_id,
+                "new_task_id": item.task.id,
+                "project_task_id": item.project_task_id,
+                "status": "ready",
+                "run_id": Value::Null,
+            })
+        })
+        .collect::<Vec<_>>();
+    Ok(Json(redact_workspace_paths_internal(
+        &state,
+        json!({
+            "success": true,
+            "status": STATUS_AWAITING_CONFIRMATION,
+            "project_id": project_id,
+            "requirement_id": requirement_id,
+            "source_session_id": new_source_session_id,
+            "source_user_message_id": new_source_user_message_id,
+            "task_mappings": task_mappings,
+            "task_ids": tasks.iter().map(|task| task.id.clone()).collect::<Vec<_>>(),
+            "root_task_ids": tasks.iter().filter(|task| task.prerequisite_task_ids.is_empty()).map(|task| task.id.clone()).collect::<Vec<_>>(),
+            "started_runs": [],
+        }),
+    )?))
+}
+
+async fn retire_chatos_project_execution(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(request): Json<RetireChatosProjectExecutionRequest>,
+) -> Result<Json<Value>, InternalApiError> {
+    require_chatos_execution_mutation(&state, &headers)?;
+    let project_id = required_internal_text(request.project_id, "project_id")?;
+    let requirement_id = required_internal_text(request.requirement_id, "requirement_id")?;
+    let source_session_id = required_internal_text(request.source_session_id, "source_session_id")?;
+    let source_user_message_id =
+        required_internal_text(request.source_user_message_id, "source_user_message_id")?;
+    let tasks = state
+        .task_service
+        .list_tasks_for_chatos_source(
+            source_session_id.as_str(),
+            Some(source_user_message_id.as_str()),
+            None,
+        )
+        .await
+        .map_err(InternalApiError::internal)?;
+    for task in &tasks {
+        validate_project_execution_task(task, project_id.as_str(), requirement_id.as_str())?;
+        if state
+            .run_service
+            .has_active_run_for_task(task.id.as_str())
+            .await
+            .map_err(InternalApiError::internal)?
+        {
+            return Err(InternalApiError::conflict(format!(
+                "project execution task still has an active run: {}",
+                task.id
+            )));
+        }
+    }
+    let mut cleaned_artifacts = Vec::new();
+    for task in &tasks {
+        let runs = state
+            .run_service
+            .list_runs(Some(task.id.as_str()))
+            .await
+            .map_err(InternalApiError::internal)?;
+        for run in &runs {
+            state
+                .run_service
+                .release_sandboxes_for_terminal_run(run)
+                .await
+                .map_err(InternalApiError::internal)?;
+            cleaned_artifacts.extend(
+                state
+                    .run_service
+                    .cleanup_harness_artifacts_for_run(run)
+                    .await
+                    .map_err(InternalApiError::internal)?,
+            );
+        }
+    }
+    let mut deleted_task_ids = Vec::new();
+    for task in &tasks {
+        if state
+            .task_service
+            .delete_task(task.id.as_str())
+            .await
+            .map_err(InternalApiError::internal)?
+        {
+            deleted_task_ids.push(task.id.clone());
+        }
+    }
+    Ok(Json(json!({
+        "success": true,
+        "project_id": project_id,
+        "requirement_id": requirement_id,
+        "source_session_id": source_session_id,
+        "source_user_message_id": source_user_message_id,
+        "deleted_task_ids": deleted_task_ids,
+        "cleaned_artifacts": cleaned_artifacts,
+    })))
+}
+
+fn required_internal_text(value: String, field: &str) -> Result<String, InternalApiError> {
+    let value = value.trim();
+    if value.is_empty() {
+        return Err(InternalApiError::bad_request(format!(
+            "{field} is required"
+        )));
+    }
+    Ok(value.to_string())
+}
+
+fn require_chatos_execution_mutation(
+    state: &AppState,
+    headers: &HeaderMap,
+) -> Result<(), InternalApiError> {
+    require_task_runner_internal_request(
+        &state.config,
+        headers,
+        &[CHATOS_CALLER],
+        CHATOS_EXECUTION_START_SCOPE,
+    )
+    .map_err(|error| InternalApiError {
+        status: error.status,
+        message: error.message,
+    })
+}
+
+fn validate_project_execution_task(
+    task: &crate::models::TaskRecord,
+    project_id: &str,
+    requirement_id: &str,
+) -> Result<(), InternalApiError> {
+    let payload = task.input_payload.as_ref();
+    let payload_source = payload
+        .and_then(|value| value.get("source"))
+        .and_then(Value::as_str);
+    let payload_requirement_id = payload
+        .and_then(|value| value.get("root_requirement_id"))
+        .or_else(|| payload.and_then(|value| value.get("requirement_id")))
+        .and_then(Value::as_str);
+    if task.project_id.trim() != project_id
+        || payload_source != Some("chatos_project_requirement_execution")
+        || payload_requirement_id != Some(requirement_id)
+    {
+        return Err(InternalApiError::conflict(
+            "task graph does not belong to the requested project requirement execution",
+        ));
+    }
+    Ok(())
+}
+
 async fn get_chatos_message_task(
     Path(task_id): Path<String>,
     State(state): State<AppState>,
@@ -468,6 +946,93 @@ async fn get_chatos_message_run(
             events_offset: event_offset,
             events_has_more,
         },
+    )?))
+}
+
+async fn retry_chatos_message_run(
+    Path(run_id): Path<String>,
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(request): Json<RetryChatosMessageRunRequest>,
+) -> Result<(StatusCode, Json<Value>), InternalApiError> {
+    require_chatos_execution_mutation(&state, &headers)?;
+    let (source_session_id, source_user_message_id, source_turn_id) =
+        validate_chatos_message_query(&request.source)?;
+    let retry_instruction = request
+        .retry_instruction
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    if retry_instruction.is_some_and(|value| value.chars().count() > 4000) {
+        return Err(InternalApiError::bad_request(
+            "retry_instruction must not exceed 4000 characters",
+        ));
+    }
+    let run = require_chatos_message_run(
+        &state,
+        run_id.trim(),
+        source_session_id,
+        source_user_message_id,
+        source_turn_id,
+    )
+    .await?;
+    require_retryable_message_run(&run.status)?;
+    let retried = state
+        .run_service
+        .retry_run_with_instruction(run.id.as_str(), retry_instruction.map(ToOwned::to_owned))
+        .await
+        .map_err(InternalApiError::bad_request)?
+        .ok_or_else(|| InternalApiError::not_found("run not found for message"))?;
+    Ok((
+        StatusCode::CREATED,
+        Json(json!({
+            "success": true,
+            "run": ChatosMessageTaskRun::from(retried),
+        })),
+    ))
+}
+
+fn require_retryable_message_run(status: &TaskRunStatus) -> Result<(), InternalApiError> {
+    if matches!(status, TaskRunStatus::Failed | TaskRunStatus::Blocked) {
+        return Ok(());
+    }
+    Err(InternalApiError::bad_request(
+        "only a failed or blocked message task run can be retried",
+    ))
+}
+
+async fn get_chatos_message_run_event(
+    Path((run_id, event_id)): Path<(String, String)>,
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(query): Query<ChatosMessageTaskQuery>,
+) -> Result<Json<Value>, InternalApiError> {
+    require_chatos_internal_auth(&state, &headers)?;
+    let (source_session_id, source_user_message_id, source_turn_id) =
+        validate_chatos_message_query(&query)?;
+    let run = require_chatos_message_run(
+        &state,
+        run_id.trim(),
+        source_session_id,
+        source_user_message_id,
+        source_turn_id,
+    )
+    .await?;
+    let event_id = event_id.trim();
+    if event_id.is_empty() {
+        return Err(InternalApiError::bad_request("run event id is required"));
+    }
+    let event = state
+        .run_service
+        .list_run_events(run.id.as_str())
+        .await
+        .map_err(InternalApiError::internal)?
+        .into_iter()
+        .find(|event| event.id == event_id && event.run_id == run.id)
+        .ok_or_else(|| InternalApiError::not_found("run event not found for message"))?;
+    Ok(Json(redact_workspace_paths_internal(
+        &state,
+        ChatosMessageTaskRunEvent::from(event),
     )?))
 }
 
@@ -623,4 +1188,29 @@ fn require_chatos_internal_auth(
         status: err.status,
         message: err.message,
     })
+}
+
+#[cfg(test)]
+mod retry_tests {
+    use axum::http::StatusCode;
+
+    use super::{require_retryable_message_run, TaskRunStatus};
+
+    #[test]
+    fn message_run_retry_accepts_failed_and_blocked_nodes() {
+        for status in [TaskRunStatus::Failed, TaskRunStatus::Blocked] {
+            require_retryable_message_run(&status)
+                .expect("terminal problem run should be retryable");
+        }
+        for status in [
+            TaskRunStatus::Queued,
+            TaskRunStatus::Running,
+            TaskRunStatus::Succeeded,
+            TaskRunStatus::Cancelled,
+        ] {
+            let error = require_retryable_message_run(&status)
+                .expect_err("non-retryable run must not be retried from a message task card");
+            assert_eq!(error.status, StatusCode::BAD_REQUEST);
+        }
+    }
 }

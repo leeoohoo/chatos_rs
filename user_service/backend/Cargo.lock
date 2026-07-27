@@ -331,9 +331,13 @@ dependencies = [
 name = "chatos_plugin_management_sdk"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
  "chatos_service_runtime",
+ "chrono",
  "hex",
  "reqwest",
+ "ring",
+ "semver 1.0.28",
  "serde",
  "serde_json",
  "sha2 0.11.0",

@@ -17,10 +17,11 @@ impl TaskService {
 
     pub async fn effective_task_execution_max_iterations(&self) -> Result<usize, String> {
         let snapshot = load_managed_config_snapshot().await;
-        Ok(chatos_agent::resolve_agent_max_iterations(
-            snapshot.as_ref(),
-            self.config.default_task_execution_max_iterations,
-        ))
+        Ok(snapshot
+            .as_ref()
+            .and_then(|snapshot| snapshot.usize("task_runner.runtime.max_iterations"))
+            .unwrap_or(self.config.default_task_execution_max_iterations)
+            .max(2))
     }
 
     pub async fn effective_execution_timeout_ms(&self) -> Result<u64, String> {

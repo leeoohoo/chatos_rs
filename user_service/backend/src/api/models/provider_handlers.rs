@@ -17,8 +17,8 @@ use super::access::{ensure_owner_user_exists, ensure_provider_access, resolve_ta
 use super::contracts::{ModelConfigGetQuery, UserScopeQuery};
 use super::model_values::model_provider_public_value;
 use super::normalization::{
-    is_supported_provider, normalize_api_key_input, normalize_optional_string,
-    normalize_prompt_vendor_input, normalize_provider_input, normalized_base_url,
+    is_supported_provider, model_config_belongs_to_provider, normalize_api_key_input,
+    normalize_optional_string, normalize_prompt_vendor_input, normalize_provider_input,
 };
 use super::provider_sync::{
     apply_model_provider_update, refresh_provider_models_from_record,
@@ -234,18 +234,30 @@ pub(in crate::api) async fn delete_model_provider(
         .await
         .map_err(internal_error)?;
     for model in owner_models {
-        if model.provider == record.provider
-            && normalized_base_url(model.base_url.as_deref())
-                == normalized_base_url(record.base_url.as_deref())
-            && !model.model.trim().is_empty()
-            && state
-                .store
-                .delete_user_model_config(model.id.as_str())
-                .await
-                .map_err(internal_error)?
+        if !model_config_belongs_to_provider(
+            model.source_provider_id.as_deref(),
+            model.provider.as_str(),
+            model.base_url.as_deref(),
+            record.id.as_str(),
+            record.provider.as_str(),
+            record.base_url.as_deref(),
+        ) || model.model.trim().is_empty()
         {
-            let _sync_warnings = sync_model_config_delete(&state, model.id.as_str()).await;
+            continue;
         }
+        let sync_warnings = sync_model_config_delete(&state, model.id.as_str()).await;
+        if !sync_warnings.is_empty() {
+            return Err(internal_error(format!(
+                "model provider downstream cleanup failed for {}: {}",
+                model.id,
+                sync_warnings.join("; ")
+            )));
+        }
+        state
+            .store
+            .delete_user_model_config(model.id.as_str())
+            .await
+            .map_err(internal_error)?;
     }
 
     let deleted = state

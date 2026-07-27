@@ -278,6 +278,12 @@ pub struct UpdateProjectRuntimeEnvironmentVariablesRequest {
     pub variables: Vec<ProjectRuntimeEnvironmentVariableOverride>,
 }
 
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct AnalyzeProjectRuntimeEnvironmentRequest {
+    #[serde(default, alias = "analysisRequirement")]
+    pub analysis_requirement: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProjectRuntimeEnvironmentVariableOverride {
     pub name: String,

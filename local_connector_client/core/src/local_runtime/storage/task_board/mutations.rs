@@ -34,7 +34,7 @@ impl LocalDatabase {
             next.blocker_reason.as_str(),
         )
         .map_err(anyhow::Error::msg)?;
-        persist_task(self, owner_user_id, next).await
+        persist_task(self, owner_user_id, next, None).await
     }
 
     pub(crate) async fn complete_local_task_board_task(
@@ -69,7 +69,7 @@ impl LocalDatabase {
     }
 }
 
-fn merge_task(
+pub(super) fn merge_task(
     mut task: LocalTaskBoardTaskRecord,
     patch: TaskUpdatePatch,
 ) -> LocalTaskBoardTaskRecord {
@@ -134,19 +134,24 @@ fn apply_terminal_defaults(task: &mut LocalTaskBoardTaskRecord) {
     }
 }
 
-async fn persist_task(
+pub(super) async fn persist_task(
     database: &LocalDatabase,
     owner_user_id: &str,
     task: LocalTaskBoardTaskRecord,
+    expected_task_session_id: Option<&str>,
 ) -> Result<LocalTaskBoardTaskRecord> {
-    sqlx::query(
+    let result = sqlx::query(
         r#"
         UPDATE task_board_tasks SET
             title = ?, details = ?, priority = ?, status = ?, tags_json = ?,
             due_at = ?, outcome_summary = ?, outcome_items_json = ?, resume_hint = ?,
             blocker_reason = ?, blocker_needs_json = ?, blocker_kind = ?,
-            completed_at = ?, last_outcome_at = ?, updated_at = ?
+            completed_at = ?, last_outcome_at = ?, updated_at = ?,
+            manager_scope = ?, task_session_id = ?,
+            required_for_parent_completion = ?, closure_state = ?,
+            closure_reason = ?, idempotency_key = ?, lifecycle_updated_at = ?
         WHERE id = ? AND session_id = ? AND owner_user_id = ?
+          AND (? IS NULL OR task_session_id = ?)
         "#,
     )
     .bind(task.title.as_str())
@@ -164,11 +169,23 @@ async fn persist_task(
     .bind(task.completed_at.as_deref())
     .bind(task.last_outcome_at.as_deref())
     .bind(task.updated_at.as_str())
+    .bind(task.manager_scope.as_deref())
+    .bind(task.task_session_id.as_deref())
+    .bind(task.required_for_parent_completion)
+    .bind(task.closure_state.as_deref())
+    .bind(task.closure_reason.as_deref())
+    .bind(task.idempotency_key.as_deref())
+    .bind(task.lifecycle_updated_at.as_deref())
     .bind(task.id.as_str())
     .bind(task.conversation_id.as_str())
     .bind(owner_user_id)
+    .bind(expected_task_session_id)
+    .bind(expected_task_session_id)
     .execute(database.pool())
     .await
     .context("update local task board task")?;
+    if result.rows_affected() != 1 {
+        return Err(anyhow::anyhow!("local task board task was not found"));
+    }
     Ok(task)
 }

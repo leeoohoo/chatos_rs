@@ -16,13 +16,16 @@ use crate::request_payload::{
 };
 use crate::request_retry::should_retry_without_prompt_cache_retention;
 use http::{
-    log_preview, read_error_response_text_limited, send_json_request, serialize_request_payload,
-    validate_request_payload_size,
+    log_preview, read_error_response_text_limited, retry_after_delay_ms, send_json_request,
+    serialize_request_payload, validate_request_payload_size,
 };
 use streaming::parse_stream_response;
 
-const DEFAULT_CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
-const DEFAULT_READ_TIMEOUT: Duration = Duration::from_secs(120);
+const DEFAULT_CONNECT_TIMEOUT_SECS: u64 = 15;
+const DEFAULT_READ_TIMEOUT_SECS: u64 = 300;
+const MAX_CONFIGURED_TIMEOUT_SECS: u64 = 3_600;
+const AI_CONNECT_TIMEOUT_SECS_ENV: &str = "CHATOS_AI_CONNECT_TIMEOUT_SECS";
+const AI_READ_TIMEOUT_SECS_ENV: &str = "CHATOS_AI_READ_TIMEOUT_SECS";
 
 mod http;
 mod streaming;
@@ -38,23 +41,37 @@ use streaming::emit_finalized_stream_callbacks;
 #[derive(Clone)]
 pub struct AiRequestHandler {
     client: reqwest::Client,
+    read_timeout: Option<Duration>,
 }
 
 impl AiRequestHandler {
     pub fn new() -> Self {
+        let connect_timeout =
+            configured_timeout(AI_CONNECT_TIMEOUT_SECS_ENV, DEFAULT_CONNECT_TIMEOUT_SECS);
+        let read_timeout = configured_timeout(AI_READ_TIMEOUT_SECS_ENV, DEFAULT_READ_TIMEOUT_SECS);
         let client = reqwest::Client::builder()
-            .connect_timeout(DEFAULT_CONNECT_TIMEOUT)
-            .read_timeout(DEFAULT_READ_TIMEOUT)
+            .connect_timeout(connect_timeout)
+            .read_timeout(read_timeout)
             .build()
             .unwrap_or_else(|err| {
                 warn!("failed to build AI http client with timeouts: {err}");
                 reqwest::Client::new()
             });
-        Self { client }
+        Self {
+            client,
+            read_timeout: Some(read_timeout),
+        }
     }
 
     pub fn from_client(client: reqwest::Client) -> Self {
-        Self { client }
+        Self {
+            client,
+            read_timeout: None,
+        }
+    }
+
+    pub fn read_timeout_seconds(&self) -> Option<u64> {
+        self.read_timeout.map(|value| value.as_secs())
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -143,6 +160,7 @@ impl AiRequestHandler {
                 options.request_body_limit_bytes,
                 options.abort_token.clone(),
                 options.force_identity_encoding,
+                options.stream,
             )
             .await;
 
@@ -176,6 +194,7 @@ impl AiRequestHandler {
                     options.request_body_limit_bytes,
                     options.abort_token,
                     options.force_identity_encoding,
+                    retry_options.stream,
                 )
                 .await;
         }
@@ -208,6 +227,7 @@ impl AiRequestHandler {
             options.request_body_limit_bytes,
             options.abort_token,
             options.force_identity_encoding,
+            options.stream,
         )
         .await
     }
@@ -226,6 +246,7 @@ impl AiRequestHandler {
         request_body_limit_bytes: Option<usize>,
         abort_token: Option<CancellationToken>,
         force_identity_encoding: bool,
+        stream: bool,
     ) -> Result<AiResponse, String> {
         let payload_body = serialize_request_payload(&payload)?;
         validate_request_payload_size(payload_body.len(), request_body_limit_bytes)?;
@@ -242,6 +263,7 @@ impl AiRequestHandler {
             transport = transport_label(transport),
             url = url.as_str(),
             payload_bytes = payload_body.len(),
+            stream,
             "dispatching ai provider request"
         );
         let request_started_at = Instant::now();
@@ -263,16 +285,21 @@ impl AiRequestHandler {
         );
         if !response.status().is_success() {
             let status = response.status();
+            let retry_after_ms = retry_after_delay_ms(response.headers());
             let body = read_error_response_text_limited(response).await;
             let body_preview = log_preview(body.as_str());
             warn!(
                 transport = transport_label(transport),
                 url = url.as_str(),
                 status = status.as_u16(),
+                retry_after_ms,
                 response_body = body_preview.as_str(),
                 "ai provider request failed"
             );
-            return Err(format!("status {status}: {body}"));
+            let retry_hint = retry_after_ms
+                .map(|value| format!(" [retry_after_ms={value}]"))
+                .unwrap_or_default();
+            return Err(format!("status {status}{retry_hint}: {body}"));
         }
 
         let parsed = parse_stream_response(
@@ -297,6 +324,7 @@ impl AiRequestHandler {
                     has_provider_error = ai_response.provider_error.is_some(),
                     has_usage = ai_response.usage.is_some(),
                     ai_provider_request_ms = request_started_at.elapsed().as_millis(),
+                    stream,
                     "received ai provider response"
                 );
             }
@@ -305,6 +333,7 @@ impl AiRequestHandler {
                     transport = transport_label(transport),
                     url = url.as_str(),
                     error = err.as_str(),
+                    stream,
                     "failed to parse ai provider response"
                 );
             }
@@ -343,7 +372,7 @@ fn build_request_payload(
             max_output_tokens,
             provider,
             thinking_level,
-            true,
+            options.stream,
             options.include_prompt_cache_retention,
         ),
         AiTransport::ChatCompletions => build_chat_completions_request_payload(
@@ -355,9 +384,35 @@ fn build_request_payload(
             max_output_tokens,
             provider,
             thinking_level,
-            true,
+            options.stream,
         ),
     }
+}
+
+fn configured_timeout(env_key: &str, default_seconds: u64) -> Duration {
+    let configured = std::env::var(env_key).ok();
+    let seconds = parse_timeout_seconds(configured.as_deref(), default_seconds);
+    if configured
+        .as_deref()
+        .is_some_and(|value| value.trim().parse::<u64>().ok() != Some(seconds))
+    {
+        warn!(
+            env_key,
+            configured_value = configured.as_deref().unwrap_or_default(),
+            default_seconds,
+            "invalid AI timeout configuration; using default"
+        );
+    }
+    Duration::from_secs(seconds)
+}
+
+fn parse_timeout_seconds(value: Option<&str>, default_seconds: u64) -> u64 {
+    value
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .and_then(|value| value.parse::<u64>().ok())
+        .filter(|value| (1..=MAX_CONFIGURED_TIMEOUT_SECS).contains(value))
+        .unwrap_or(default_seconds)
 }
 
 fn effective_provider_for_request(base_url: &str, provider: Option<String>) -> Option<String> {

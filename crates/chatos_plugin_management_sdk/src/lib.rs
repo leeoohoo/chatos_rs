@@ -7,6 +7,9 @@ pub mod client;
 pub mod config;
 pub mod dto;
 pub mod error;
+pub mod plugin_manifest;
+pub mod plugin_runtime;
+pub mod plugin_signing;
 pub mod policy;
 pub mod provider_skills;
 
@@ -19,6 +22,9 @@ pub use client::PluginManagementClient;
 pub use config::PluginManagementClientConfig;
 pub use dto::*;
 pub use error::{PluginManagementClientError, PolicyError};
+pub use plugin_manifest::*;
+pub use plugin_runtime::*;
+pub use plugin_signing::*;
 pub use provider_skills::{
     compose_mcp_provider_skills_prompt, provider_skills_from_metadata, McpProviderSkill,
     PROVIDER_SKILLS_METADATA_KEY,

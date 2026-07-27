@@ -4,14 +4,114 @@
 use serde_json::json;
 
 use super::actions::{
-    browser_back_with_context, browser_click_with_context, browser_get_images_with_context,
-    browser_navigate_with_context, browser_press_with_context, browser_scroll_with_context,
-    browser_snapshot_with_context, browser_type_with_context,
+    browser_back_with_context, browser_click_with_context, browser_download_with_context,
+    browser_get_images_with_context, browser_navigate_with_context, browser_press_with_context,
+    browser_scroll_with_context, browser_snapshot_with_context, browser_tab_close_with_context,
+    browser_tab_new_with_context, browser_tab_switch_with_context, browser_tabs_with_context,
+    browser_type_with_context, browser_upload_with_context, MAX_BROWSER_UPLOAD_FILES,
 };
-use super::context::{optional_bool, required_trimmed_string};
+use super::context::{optional_bool, optional_trimmed_string, required_trimmed_string};
 use super::{async_browser_text_tool_handler, BoundContext, BrowserToolsService};
 
 impl BrowserToolsService {
+    pub(super) fn register_browser_tabs(&mut self, bound: BoundContext) {
+        self.register_tool(
+            "browser_tabs",
+            "List open browser tabs using stable session-scoped tab IDs. Returned web URLs have credentials removed and query values redacted; non-web URLs are omitted.",
+            json!({
+                "type": "object",
+                "properties": {},
+                "additionalProperties": false
+            }),
+            async_browser_text_tool_handler(move |_args, browser_context| {
+                let ctx = bound.clone();
+                Ok(async move {
+                    browser_tabs_with_context(ctx, browser_context.conversation_id.as_deref()).await
+                })
+            }),
+        );
+    }
+
+    pub(super) fn register_browser_tab_new(&mut self, bound: BoundContext) {
+        self.register_tool(
+            "browser_tab_new",
+            "Open a new browser tab and make it active. The optional URL follows the same navigation policy as browser_navigate. Returns refreshed stable tab IDs and page state.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "url": { "type": "string" }
+                },
+                "additionalProperties": false
+            }),
+            async_browser_text_tool_handler(move |args, browser_context| {
+                let url = optional_trimmed_string(&args, "url");
+                let ctx = bound.clone();
+                Ok(async move {
+                    browser_tab_new_with_context(
+                        ctx,
+                        browser_context.conversation_id.as_deref(),
+                        url,
+                    )
+                    .await
+                })
+            }),
+        );
+    }
+
+    pub(super) fn register_browser_tab_switch(&mut self, bound: BoundContext) {
+        self.register_tool(
+            "browser_tab_switch",
+            "Switch the active browser page using a stable tab_id returned by browser_tabs. Returns the refreshed tab list and current page snapshot.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "tab_id": { "type": "string", "pattern": "^t[0-9]+$" }
+                },
+                "required": ["tab_id"],
+                "additionalProperties": false
+            }),
+            async_browser_text_tool_handler(move |args, browser_context| {
+                let tab_id = required_trimmed_string(&args, "tab_id")?;
+                let ctx = bound.clone();
+                Ok(async move {
+                    browser_tab_switch_with_context(
+                        ctx,
+                        browser_context.conversation_id.as_deref(),
+                        tab_id,
+                    )
+                    .await
+                })
+            }),
+        );
+    }
+
+    pub(super) fn register_browser_tab_close(&mut self, bound: BoundContext) {
+        self.register_tool(
+            "browser_tab_close",
+            "Close a specific browser tab using a stable tab_id returned by browser_tabs. The last remaining page tab cannot be closed.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "tab_id": { "type": "string", "pattern": "^t[0-9]+$" }
+                },
+                "required": ["tab_id"],
+                "additionalProperties": false
+            }),
+            async_browser_text_tool_handler(move |args, browser_context| {
+                let tab_id = required_trimmed_string(&args, "tab_id")?;
+                let ctx = bound.clone();
+                Ok(async move {
+                    browser_tab_close_with_context(
+                        ctx,
+                        browser_context.conversation_id.as_deref(),
+                        tab_id,
+                    )
+                    .await
+                })
+            }),
+        );
+    }
+
     pub(super) fn register_browser_navigate(&mut self, bound: BoundContext) {
         self.register_tool(
             "browser_navigate",
@@ -205,6 +305,82 @@ impl BrowserToolsService {
                     browser_get_images_with_context(
                         ctx,
                         browser_context.conversation_id.as_deref(),
+                    )
+                    .await
+                })
+            }),
+        );
+    }
+
+    pub(super) fn register_browser_upload(&mut self, bound: BoundContext) {
+        self.register_tool(
+            "browser_upload",
+            "Upload one or more existing workspace-relative regular files into a file input ref. Paths cannot escape the workspace; symlinks and oversized files are rejected.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "ref": { "type": "string" },
+                    "paths": {
+                        "type": "array",
+                        "items": { "type": "string" },
+                        "minItems": 1,
+                        "maxItems": MAX_BROWSER_UPLOAD_FILES
+                    }
+                },
+                "required": ["ref", "paths"],
+                "additionalProperties": false
+            }),
+            async_browser_text_tool_handler(move |args, browser_context| {
+                let reference = required_trimmed_string(&args, "ref")?;
+                let paths = args
+                    .get("paths")
+                    .and_then(|value| value.as_array())
+                    .ok_or_else(|| "paths is required".to_string())?
+                    .iter()
+                    .map(|value| {
+                        value
+                            .as_str()
+                            .map(ToOwned::to_owned)
+                            .ok_or_else(|| "paths must contain only strings".to_string())
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                let ctx = bound.clone();
+                Ok(async move {
+                    browser_upload_with_context(
+                        ctx,
+                        browser_context.conversation_id.as_deref(),
+                        reference,
+                        paths,
+                    )
+                    .await
+                })
+            }),
+        );
+    }
+
+    pub(super) fn register_browser_download(&mut self, bound: BoundContext) {
+        self.register_tool(
+            "browser_download",
+            "Click a download element ref and save the resulting file to a new workspace-relative path. The parent directory must exist, existing targets are never overwritten, and downloads over 100 MiB are removed.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "ref": { "type": "string" },
+                    "path": { "type": "string" }
+                },
+                "required": ["ref", "path"],
+                "additionalProperties": false
+            }),
+            async_browser_text_tool_handler(move |args, browser_context| {
+                let reference = required_trimmed_string(&args, "ref")?;
+                let path = required_trimmed_string(&args, "path")?;
+                let ctx = bound.clone();
+                Ok(async move {
+                    browser_download_with_context(
+                        ctx,
+                        browser_context.conversation_id.as_deref(),
+                        reference,
+                        path,
                     )
                     .await
                 })

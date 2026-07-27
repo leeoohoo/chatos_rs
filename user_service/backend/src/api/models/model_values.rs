@@ -13,6 +13,7 @@ pub(super) fn model_config_public_value(
     let mut value = json!({
         "id": record.id,
         "owner_user_id": record.owner_user_id,
+        "source_provider_id": record.source_provider_id,
         "name": record.name,
         "provider": record.provider,
         "prompt_vendor": record.prompt_vendor,

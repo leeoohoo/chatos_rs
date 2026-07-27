@@ -22,8 +22,10 @@ chatos_service_runtime = { path = "../../crates/chatos_service_runtime", feature
 chatos_terminal_runtime = { path = "../../crates/chatos_terminal_runtime" }
 chatos_config_sdk = { path = "../../crates/chatos_config_sdk" }
 chatos_plugin_management_sdk = { path = "../../crates/chatos_plugin_management_sdk" }
+chatos_project_execution = { path = "../../crates/chatos_project_execution" }
 chrono = { version = "0.4", features = ["clock", "serde"] }
 futures-util = "0.3"
+hex = "0.4"
 jsonwebtoken = { version = "10", features = ["rust_crypto"] }
 libc = "0.2"
 memory_engine_sdk = { path = "../../crates/memory_engine_sdk" }
@@ -33,6 +35,7 @@ rand = "0.10"
 reqwest = { version = "0.12", features = ["json", "stream", "gzip", "brotli", "deflate", "rustls-tls"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+sha2 = "0.11"
 ssh2 = "0.9"
 tokio = { version = "1", features = ["full"] }
 tokio-stream = { version = "0.1", features = ["sync"] }

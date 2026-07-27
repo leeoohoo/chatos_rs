@@ -10,12 +10,18 @@ pub(super) fn environment_analysis_prompt(
     project_name: &str,
     evidence: &LocalProjectScanEvidence,
     capability_prompt: Option<&str>,
+    analysis_requirement: Option<&str>,
 ) -> Result<String, String> {
     let context = serde_json::json!({
         "mode": "local_json_analysis",
         "project": {
             "id": project_id,
             "name": project_name,
+        },
+        "analysis_request": {
+            "user_requirement": analysis_requirement
+                .map(str::trim)
+                .filter(|value| !value.is_empty()),
         },
         "local_scan_evidence": evidence,
         "plugin_capability_constraints": capability_prompt

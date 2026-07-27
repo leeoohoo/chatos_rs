@@ -1,7 +1,16 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ChangeEvent,
+  type KeyboardEvent,
+  type SyntheticEvent,
+} from 'react';
 
 import { useI18n } from '../../i18n/I18nProvider';
 import { useDialogService } from '../ui/DialogProvider';
@@ -13,10 +22,22 @@ import { useProjectFilePicker } from './useProjectFilePicker';
 import { useWorkspaceDirectoryPicker } from './useWorkspaceDirectoryPicker';
 import { useInputAreaContextModel } from './useInputAreaContextModel';
 import { useInputAreaMessageDraft } from './useInputAreaMessageDraft';
+import {
+  parseLeadingPluginCommand,
+  replaceLeadingPluginCommand,
+  type TaskPluginCommandOption,
+} from './pluginCommands';
+import {
+  findPluginMentionAtCursor,
+  replacePluginMention,
+} from './pluginMentions';
+import { useTaskPluginPicker } from './useTaskPluginPicker';
+import type { TaskRunnerSelectablePluginResponse } from '../../lib/api/client/types';
 
 type UseInputAreaControllerParams = Pick<
   InputAreaProps,
   | 'onSend'
+  | 'conversationId'
   | 'disabled'
   | 'maxLength'
   | 'allowAttachments'
@@ -36,6 +57,7 @@ type UseInputAreaControllerParams = Pick<
   | 'showWorkspaceRootPicker'
   | 'workspaceRoot'
   | 'onWorkspaceRootChange'
+  | 'planModeEnabled'
 >;
 
 const DEFAULT_SUPPORTED_FILE_TYPES = [
@@ -48,6 +70,7 @@ const DEFAULT_SUPPORTED_FILE_TYPES = [
 
 export function useInputAreaController({
   onSend,
+  conversationId = null,
   disabled = false,
   maxLength = 4000,
   allowAttachments = false,
@@ -67,14 +90,30 @@ export function useInputAreaController({
   showWorkspaceRootPicker = false,
   workspaceRoot = null,
   onWorkspaceRootChange,
+  planModeEnabled = false,
 }: UseInputAreaControllerParams) {
   const { t } = useI18n();
   const effectiveAllowAttachments = allowAttachments;
 
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [commandSuggestionIndex, setCommandSuggestionIndex] = useState(0);
+  const [pluginMentionSuggestionIndex, setPluginMentionSuggestionIndex] = useState(0);
+  const [messageCursor, setMessageCursor] = useState(0);
+  const [dismissedCommandSuggestionMessage, setDismissedCommandSuggestionMessage] = useState<
+    string | null
+  >(null);
+  const [dismissedPluginMentionKey, setDismissedPluginMentionKey] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const commandDiscoveryRequestedRef = useRef(false);
+  const pluginMentionDiscoveryRequestedRef = useRef(false);
   const client = useApiClient();
   const { alert } = useDialogService();
+  const pluginPicker = useTaskPluginPicker({
+    client,
+    conversationId,
+    disabled,
+    planMode: planModeEnabled,
+  });
   const normalizeNullableText = useCallback((value: string | null | undefined) => {
     const normalized = typeof value === 'string' ? value.trim() : '';
     return normalized.length > 0 ? normalized : null;
@@ -314,11 +353,50 @@ export function useInputAreaController({
     return false;
   }, [alert, effectiveSelectedModelId, showModelSelector, t]);
 
+  const requireValidPluginSelection = useCallback(() => {
+    if (pluginPicker.selectedPluginIds.length === 0) {
+      return false;
+    }
+    if (!pluginPicker.selectedDeviceId) {
+      void alert({
+        title: t('inputArea.plugin.invalidTitle'),
+        message: t('inputArea.plugin.deviceRequired'),
+        type: 'warning',
+      });
+      return true;
+    }
+    if (pluginPicker.browserWorkspaceRequired) {
+      void alert({
+        title: t('inputArea.plugin.invalidTitle'),
+        message: t('inputArea.plugin.browserNeedsWorkspace'),
+        type: 'warning',
+      });
+      return true;
+    }
+    if (pluginPicker.commandArgumentIssue) {
+      void alert({
+        title: t('inputArea.plugin.invalidTitle'),
+        message: t('inputArea.plugin.commandArgumentsInvalid'),
+        type: 'warning',
+      });
+      return true;
+    }
+    return false;
+  }, [
+    alert,
+    pluginPicker.browserWorkspaceRequired,
+    pluginPicker.commandArgumentIssue,
+    pluginPicker.selectedDeviceId,
+    pluginPicker.selectedPluginIds.length,
+    t,
+  ]);
+
   const {
     message,
     textareaRef,
-    handleInputChange,
-    handleKeyDown,
+    handleInputChange: handleDraftInputChange,
+    setMessageValue,
+    handleKeyDown: handleDraftKeyDown,
     handleSend,
     canSend,
   } = useInputAreaMessageDraft({
@@ -329,9 +407,240 @@ export function useInputAreaController({
     maxLength,
     onSend,
     requireModelSelection,
+    requireValidPluginSelection,
+    pluginDeviceId: pluginPicker.selectedDeviceId,
+    pluginWorkspaceId: pluginPicker.selectedWorkspaceId,
+    selectedPluginIds: pluginPicker.selectedPluginIds,
+    pluginCommandInvocations: pluginPicker.pluginCommandInvocations,
+    pluginAgentSelection: pluginPicker.selectedAgentSelection,
+    commandMessageFallback: pluginPicker.commandMessageFallback,
+    clearSelectedPlugins: pluginPicker.clearSelectedPlugins,
     selectedProjectId,
     selectedRuntimeProject,
   });
+
+  const handleInputChange = useCallback((event: ChangeEvent<HTMLTextAreaElement>) => {
+    setMessageCursor(event.currentTarget.selectionStart ?? event.currentTarget.value.length);
+    handleDraftInputChange(event);
+  }, [handleDraftInputChange]);
+
+  const handleTextareaSelect = useCallback((event: SyntheticEvent<HTMLTextAreaElement>) => {
+    setMessageCursor(event.currentTarget.selectionStart ?? event.currentTarget.value.length);
+  }, []);
+
+  const leadingPluginCommand = useMemo(
+    () => parseLeadingPluginCommand(message),
+    [message],
+  );
+  const pluginCommandSuggestions = useMemo(() => (
+    leadingPluginCommand
+      ? pluginPicker.commandSuggestions(leadingPluginCommand.query).slice(0, 24)
+      : []
+  ), [leadingPluginCommand, pluginPicker]);
+  const selectedLeadingPluginCommand = useMemo(() => (
+    leadingPluginCommand?.query
+      ? pluginPicker.selectedCommands.find(({ command }) => (
+          command.command_id.toLowerCase() === leadingPluginCommand.query
+        )) || null
+      : null
+  ), [leadingPluginCommand, pluginPicker.selectedCommands]);
+  const leadingCommandAlreadySelected = Boolean(selectedLeadingPluginCommand);
+  const commandSuggestionsOpen = Boolean(
+    pluginPicker.enabled
+    && leadingPluginCommand
+    && !pluginPicker.open
+    && !leadingCommandAlreadySelected
+    && dismissedCommandSuggestionMessage !== message
+  );
+  const pluginMention = useMemo(
+    () => findPluginMentionAtCursor(message, messageCursor),
+    [message, messageCursor],
+  );
+  const pluginMentionKey = pluginMention ? `${message}\u0000${messageCursor}` : null;
+  const pluginMentionSuggestions = useMemo(() => (
+    pluginMention
+      ? pluginPicker.pluginSuggestions(pluginMention.query).slice(0, 24)
+      : []
+  ), [pluginMention, pluginPicker]);
+  const pluginMentionSuggestionsOpen = Boolean(
+    pluginPicker.enabled
+    && pluginMention
+    && !pluginPicker.open
+    && !commandSuggestionsOpen
+    && dismissedPluginMentionKey !== pluginMentionKey
+  );
+
+  useEffect(() => {
+    if (!leadingPluginCommand || !pluginPicker.enabled) {
+      commandDiscoveryRequestedRef.current = false;
+      return;
+    }
+    if (commandDiscoveryRequestedRef.current) {
+      return;
+    }
+    commandDiscoveryRequestedRef.current = true;
+    void pluginPicker.loadPicker();
+  }, [leadingPluginCommand, pluginPicker.enabled, pluginPicker.loadPicker]);
+
+  useEffect(() => {
+    if (!pluginMention || !pluginPicker.enabled) {
+      pluginMentionDiscoveryRequestedRef.current = false;
+      return;
+    }
+    if (pluginMentionDiscoveryRequestedRef.current) {
+      return;
+    }
+    pluginMentionDiscoveryRequestedRef.current = true;
+    void pluginPicker.loadPicker();
+  }, [pluginMention, pluginPicker.enabled, pluginPicker.loadPicker]);
+
+  useEffect(() => {
+    if (!leadingPluginCommand || !selectedLeadingPluginCommand) {
+      return;
+    }
+    if (selectedLeadingPluginCommand.arguments === leadingPluginCommand.arguments) {
+      return;
+    }
+    pluginPicker.setCommandArguments(
+      selectedLeadingPluginCommand.plugin.id,
+      selectedLeadingPluginCommand.command.command_id,
+      leadingPluginCommand.arguments,
+    );
+  }, [leadingPluginCommand, pluginPicker, selectedLeadingPluginCommand]);
+
+  useEffect(() => {
+    setCommandSuggestionIndex((current) => (
+      pluginCommandSuggestions.length === 0
+        ? 0
+        : Math.min(current, pluginCommandSuggestions.length - 1)
+    ));
+  }, [pluginCommandSuggestions.length, leadingPluginCommand?.query]);
+
+  useEffect(() => {
+    setPluginMentionSuggestionIndex((current) => (
+      pluginMentionSuggestions.length === 0
+        ? 0
+        : Math.min(current, pluginMentionSuggestions.length - 1)
+    ));
+  }, [pluginMention?.query, pluginMentionSuggestions.length]);
+
+  const selectPluginCommandSuggestion = useCallback((option: TaskPluginCommandOption) => {
+    const argumentsText = leadingPluginCommand?.arguments || '';
+    pluginPicker.selectCommand(
+      option.plugin.id,
+      option.command.command_id,
+      argumentsText,
+    );
+    setMessageValue(replaceLeadingPluginCommand(
+      message,
+      option.command.command_id,
+      Boolean(option.command.argument_hint),
+    ));
+    setDismissedCommandSuggestionMessage(null);
+    window.requestAnimationFrame(() => textareaRef.current?.focus());
+  }, [leadingPluginCommand?.arguments, message, pluginPicker, setMessageValue, textareaRef]);
+
+  const selectPluginMentionSuggestion = useCallback((
+    plugin: TaskRunnerSelectablePluginResponse,
+  ) => {
+    if (!pluginMention) {
+      return;
+    }
+    const replaced = replacePluginMention(message, pluginMention, plugin.plugin_key);
+    if (replaced.message.length > maxLength) {
+      return;
+    }
+    pluginPicker.selectPlugin(plugin.id);
+    setMessageValue(replaced.message);
+    setMessageCursor(replaced.cursor);
+    setDismissedPluginMentionKey(null);
+    window.requestAnimationFrame(() => {
+      const textarea = textareaRef.current;
+      textarea?.focus();
+      textarea?.setSelectionRange(replaced.cursor, replaced.cursor);
+    });
+  }, [maxLength, message, pluginMention, pluginPicker, setMessageValue, textareaRef]);
+
+  const handleKeyDown = useCallback((event: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (commandSuggestionsOpen) {
+      if (event.key === 'ArrowDown' && pluginCommandSuggestions.length > 0) {
+        event.preventDefault();
+        setCommandSuggestionIndex((current) => (
+          (current + 1) % pluginCommandSuggestions.length
+        ));
+        return;
+      }
+      if (event.key === 'ArrowUp' && pluginCommandSuggestions.length > 0) {
+        event.preventDefault();
+        setCommandSuggestionIndex((current) => (
+          (current - 1 + pluginCommandSuggestions.length) % pluginCommandSuggestions.length
+        ));
+        return;
+      }
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        setDismissedCommandSuggestionMessage(message);
+        return;
+      }
+      if (event.key === 'Enter' && !event.shiftKey && pluginCommandSuggestions.length > 0) {
+        event.preventDefault();
+        selectPluginCommandSuggestion(
+          pluginCommandSuggestions[Math.min(
+            commandSuggestionIndex,
+            pluginCommandSuggestions.length - 1,
+          )],
+        );
+        return;
+      }
+    }
+    if (pluginMentionSuggestionsOpen) {
+      if (event.key === 'ArrowDown' && pluginMentionSuggestions.length > 0) {
+        event.preventDefault();
+        setPluginMentionSuggestionIndex((current) => (
+          (current + 1) % pluginMentionSuggestions.length
+        ));
+        return;
+      }
+      if (event.key === 'ArrowUp' && pluginMentionSuggestions.length > 0) {
+        event.preventDefault();
+        setPluginMentionSuggestionIndex((current) => (
+          (current - 1 + pluginMentionSuggestions.length) % pluginMentionSuggestions.length
+        ));
+        return;
+      }
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        setDismissedPluginMentionKey(pluginMentionKey);
+        return;
+      }
+      if (
+        ((event.key === 'Enter' && !event.shiftKey) || event.key === 'Tab')
+        && pluginMentionSuggestions.length > 0
+      ) {
+        event.preventDefault();
+        selectPluginMentionSuggestion(
+          pluginMentionSuggestions[Math.min(
+            pluginMentionSuggestionIndex,
+            pluginMentionSuggestions.length - 1,
+          )],
+        );
+        return;
+      }
+    }
+    handleDraftKeyDown(event);
+  }, [
+    commandSuggestionIndex,
+    commandSuggestionsOpen,
+    handleDraftKeyDown,
+    message,
+    pluginMentionKey,
+    pluginMentionSuggestionIndex,
+    pluginMentionSuggestions,
+    pluginMentionSuggestionsOpen,
+    pluginCommandSuggestions,
+    selectPluginMentionSuggestion,
+    selectPluginCommandSuggestion,
+  ]);
 
   return {
     effectiveAllowAttachments,
@@ -352,6 +661,17 @@ export function useInputAreaController({
     workspacePickerRef,
     projectFilePickerRef,
     pickerOpen,
+    pluginPicker,
+    pluginCommandSuggestions,
+    commandSuggestionsOpen,
+    commandSuggestionIndex,
+    setCommandSuggestionIndex,
+    selectPluginCommandSuggestion,
+    pluginMentionSuggestions,
+    pluginMentionSuggestionsOpen,
+    pluginMentionSuggestionIndex,
+    setPluginMentionSuggestionIndex,
+    selectPluginMentionSuggestion,
     selectedRuntimeProject,
     normalizedWorkspaceRoot,
     workspacePickerOpen,
@@ -396,6 +716,7 @@ export function useInputAreaController({
     handleAttachProjectFile,
     toRelativeProjectPath,
     handleInputChange,
+    handleTextareaSelect,
     handleKeyDown,
     handleSend,
     canSend,

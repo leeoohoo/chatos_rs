@@ -120,6 +120,7 @@
   .approvalModeGrid,
   .approvalConfigGrid,
   .approvalFormGrid,
+  .actionAuditGrid,
   .settingsFormGrid,
   .twoCols,
   .metaGrid,
@@ -139,6 +140,16 @@
 
   .approvalActions {
     grid-template-columns: 1fr;
+  }
+
+  .highRiskConfirmation {
+    grid-template-columns: 1fr;
+  }
+
+  .highRiskConfirmation code,
+  .highRiskConfirmation input,
+  .highRiskConfirmation span {
+    grid-column: 1;
   }
 
   .modelSelectRow,

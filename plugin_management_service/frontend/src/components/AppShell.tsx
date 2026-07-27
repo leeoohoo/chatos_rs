@@ -7,7 +7,10 @@ import {
   BranchesOutlined,
   GlobalOutlined,
   LogoutOutlined,
+  RocketOutlined,
   RobotOutlined,
+  SafetyCertificateOutlined,
+  ShopOutlined,
   ThunderboltOutlined,
 } from '@ant-design/icons';
 import type { ReactNode } from 'react';
@@ -17,7 +20,15 @@ import { clearAuthToken } from '../api/client';
 import { useI18n } from '../i18n/I18nProvider';
 import type { CurrentUser } from '../types';
 
-export type AppSection = 'mcps' | 'skills' | 'packages' | 'agents' | 'runtime';
+export type AppSection =
+  | 'mcps'
+  | 'skills'
+  | 'packages'
+  | 'marketplaces'
+  | 'plugins'
+  | 'releases'
+  | 'agents'
+  | 'runtime';
 
 interface AppShellProps {
   user: CurrentUser;
@@ -32,8 +43,11 @@ export function AppShell({ user, section, onSectionChange, children }: AppShellP
     { key: 'mcps', icon: <ApiOutlined />, label: t('nav.mcps') },
     { key: 'skills', icon: <ThunderboltOutlined />, label: t('nav.skills') },
     { key: 'packages', icon: <AppstoreOutlined />, label: t('nav.packages') },
+    { key: 'marketplaces', icon: <ShopOutlined />, label: t('nav.pluginMarketplaces') },
     ...(user.role === 'super_admin'
       ? [
+          { key: 'plugins', icon: <SafetyCertificateOutlined />, label: t('nav.plugins') },
+          { key: 'releases', icon: <RocketOutlined />, label: t('nav.pluginReleases') },
           { key: 'agents', icon: <RobotOutlined />, label: t('nav.agents') },
           { key: 'runtime', icon: <BranchesOutlined />, label: t('nav.runtime') },
         ]

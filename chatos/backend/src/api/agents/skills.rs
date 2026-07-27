@@ -8,9 +8,12 @@ use axum::{
 };
 use serde::Deserialize;
 use serde_json::{json, Value};
+use tracing::warn;
 
 use crate::core::auth::AuthUser;
 use crate::services::chatos_skills;
+
+const LEGACY_SKILL_PLUGIN_WRITES_ENV: &str = "CHATOS_LEGACY_SKILL_PLUGIN_WRITES_ENABLED";
 
 #[derive(Debug, Deserialize)]
 pub(super) struct ListSkillsQuery {
@@ -161,6 +164,9 @@ pub(super) async fn import_skills_from_git(
     auth: AuthUser,
     Json(req): Json<ImportSkillsFromGitRequest>,
 ) -> (StatusCode, Json<Value>) {
+    if let Err(response) = ensure_legacy_skill_plugin_write_enabled("import_git") {
+        return response;
+    }
     let user_id = match super::resolve_scope_user_id(req.user_id.clone(), &auth) {
         Ok(value) => value,
         Err(err) => return err,
@@ -237,6 +243,9 @@ pub(super) async fn install_skill_plugins(
     auth: AuthUser,
     Json(req): Json<InstallSkillPluginsRequest>,
 ) -> (StatusCode, Json<Value>) {
+    if let Err(response) = ensure_legacy_skill_plugin_write_enabled("install") {
+        return response;
+    }
     let user_id = match super::resolve_scope_user_id(req.user_id.clone(), &auth) {
         Ok(value) => value,
         Err(err) => return err,
@@ -274,5 +283,62 @@ pub(super) async fn install_skill_plugins(
             StatusCode::BAD_REQUEST,
             Json(json!({"error": "install plugins failed", "detail": err})),
         ),
+    }
+}
+
+fn ensure_legacy_skill_plugin_write_enabled(
+    operation: &str,
+) -> Result<(), (StatusCode, Json<Value>)> {
+    let enabled = legacy_skill_plugin_writes_enabled_from(
+        std::env::var(LEGACY_SKILL_PLUGIN_WRITES_ENV)
+            .ok()
+            .as_deref(),
+    );
+    warn!(
+        operation,
+        enabled,
+        feature_flag = LEGACY_SKILL_PLUGIN_WRITES_ENV,
+        "deprecated ChatOS legacy skill plugin write API requested"
+    );
+    if enabled {
+        Ok(())
+    } else {
+        Err((
+            StatusCode::GONE,
+            Json(json!({
+                "error": "legacy skill plugin write API is disabled",
+                "code": "legacy_skill_plugin_write_disabled",
+                "migration_target": "local_connector_plugin_runtime",
+                "feature_flag": LEGACY_SKILL_PLUGIN_WRITES_ENV
+            })),
+        ))
+    }
+}
+
+fn legacy_skill_plugin_writes_enabled_from(value: Option<&str>) -> bool {
+    value.is_some_and(|value| {
+        matches!(
+            value.trim().to_ascii_lowercase().as_str(),
+            "1" | "true" | "yes" | "on"
+        )
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::legacy_skill_plugin_writes_enabled_from;
+
+    #[test]
+    fn legacy_plugin_writes_are_disabled_by_default() {
+        assert!(!legacy_skill_plugin_writes_enabled_from(None));
+        assert!(!legacy_skill_plugin_writes_enabled_from(Some("false")));
+        assert!(!legacy_skill_plugin_writes_enabled_from(Some("0")));
+    }
+
+    #[test]
+    fn legacy_plugin_writes_require_an_explicit_true_value() {
+        assert!(legacy_skill_plugin_writes_enabled_from(Some("true")));
+        assert!(legacy_skill_plugin_writes_enabled_from(Some(" ON ")));
+        assert!(legacy_skill_plugin_writes_enabled_from(Some("1")));
     }
 }

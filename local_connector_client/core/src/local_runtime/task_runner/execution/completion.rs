@@ -22,7 +22,8 @@ pub(super) async fn finish_task_run(
     let database = runtime
         .local_database()
         .map_err(|error| error.to_string())?;
-    if canceled || report.status == AiTurnStatus::Aborted {
+    if canceled {
+        finalize_task_manager_session(database, run, "canceled").await?;
         let _ = persist_task_run_receipt(
             database,
             run,
@@ -43,17 +44,14 @@ pub(super) async fn finish_task_run(
             .await
             .map_err(|error| error.to_string())?;
         if run.task_kind == "conversation_task" {
-            database
-                .set_local_conversation_task_status(
-                    run.owner_user_id.as_str(),
-                    run.session_id.as_str(),
-                    run.task_id.as_str(),
-                    "cancelled",
-                    None,
-                    Some("Task run canceled"),
-                )
-                .await
-                .map_err(|error| error.to_string())?;
+            set_conversation_task_status_and_sync(
+                runtime,
+                run,
+                "cancelled",
+                None,
+                Some("Task run canceled"),
+            )
+            .await?;
         } else {
             set_work_item_status(runtime, run, "todo").await?;
         }
@@ -65,6 +63,7 @@ pub(super) async fn finish_task_run(
             .error
             .clone()
             .unwrap_or_else(|| report.user_message());
+        finalize_task_manager_session(database, run, "failed").await?;
         let _ = persist_task_run_receipt(
             database,
             run,
@@ -86,23 +85,64 @@ pub(super) async fn finish_task_run(
             .await
             .map_err(|failure| failure.to_string())?;
         if run.task_kind == "conversation_task" {
-            database
-                .set_local_conversation_task_status(
-                    run.owner_user_id.as_str(),
-                    run.session_id.as_str(),
-                    run.task_id.as_str(),
-                    "blocked",
-                    None,
-                    Some(error.as_str()),
-                )
-                .await
-                .map_err(|failure| failure.to_string())?;
+            set_conversation_task_status_and_sync(
+                runtime,
+                run,
+                "blocked",
+                None,
+                Some(error.as_str()),
+            )
+            .await?;
         } else {
             set_work_item_status(runtime, run, "blocked").await?;
         }
         set_requirement_status(runtime, run, "failed").await?;
         return Ok(());
     }
+    let task_session = database
+        .local_task_manager_session_snapshot(
+            run.owner_user_id.as_str(),
+            run.session_id.as_str(),
+            run.id.as_str(),
+        )
+        .await
+        .map_err(|error| error.to_string())?;
+    if !task_session.terminal_blocked.is_empty() {
+        let error = format!(
+            "Task Manager 运行会话存在 {} 个终态阻塞清单，父任务不能标记成功",
+            task_session.terminal_blocked.len()
+        );
+        finalize_task_manager_session(database, run, "blocked").await?;
+        let _ = persist_task_run_receipt(database, run, "blocked", error.clone()).await;
+        database
+            .fail_turn(
+                run.owner_user_id.as_str(),
+                run.turn_id.as_str(),
+                "task_run_blocked",
+                error.as_str(),
+            )
+            .await
+            .map_err(|failure| failure.to_string())?;
+        database
+            .fail_local_task_run(run, "blocked", error.as_str())
+            .await
+            .map_err(|failure| failure.to_string())?;
+        if run.task_kind == "conversation_task" {
+            set_conversation_task_status_and_sync(
+                runtime,
+                run,
+                "blocked",
+                None,
+                Some(error.as_str()),
+            )
+            .await?;
+        } else {
+            set_work_item_status(runtime, run, "blocked").await?;
+        }
+        set_requirement_status(runtime, run, "blocked").await?;
+        return Ok(());
+    }
+    finalize_task_manager_session(database, run, "completed").await?;
     let completion_content = report
         .content
         .clone()
@@ -138,21 +178,55 @@ pub(super) async fn finish_task_run(
         .await
         .map_err(|error| error.to_string())?;
     if run.task_kind == "conversation_task" {
-        database
-            .set_local_conversation_task_status(
-                run.owner_user_id.as_str(),
-                run.session_id.as_str(),
-                run.task_id.as_str(),
-                "done",
-                Some(completion_content.as_str()),
-                None,
-            )
-            .await
-            .map_err(|error| error.to_string())?;
+        set_conversation_task_status_and_sync(
+            runtime,
+            run,
+            "done",
+            Some(completion_content.as_str()),
+            None,
+        )
+        .await?;
     } else {
         set_work_item_status(runtime, run, "done").await?;
     }
     complete_requirement_if_done(runtime, run).await
+}
+
+pub(in crate::local_runtime::task_runner) async fn finalize_task_manager_session(
+    database: &LocalDatabase,
+    run: &LocalTaskRunRecord,
+    terminal_status: &str,
+) -> Result<(), String> {
+    let summary = database
+        .finalize_local_task_manager_session(
+            run.owner_user_id.as_str(),
+            run.session_id.as_str(),
+            run.id.as_str(),
+            terminal_status,
+        )
+        .await
+        .map_err(|error| error.to_string())?;
+    if summary.total_changed() > 0 || summary.blocked_terminal > 0 {
+        database
+            .append_local_task_run_event(
+                run.owner_user_id.as_str(),
+                run.id.as_str(),
+                "task_session_finalized",
+                json!({
+                    "task_session_id": run.id,
+                    "terminal_status": terminal_status,
+                    "satisfied": summary.satisfied,
+                    "waived": summary.waived,
+                    "blocked_terminal": summary.blocked_terminal,
+                    "cancelled": summary.cancelled,
+                    "orphaned": summary.orphaned,
+                    "durable_detached": summary.durable_detached,
+                }),
+            )
+            .await
+            .map_err(|error| error.to_string())?;
+    }
+    Ok(())
 }
 
 pub(in crate::local_runtime::task_runner) async fn persist_task_run_receipt(
@@ -222,20 +296,7 @@ pub(in crate::local_runtime::task_runner) async fn set_work_item_status(
             "todo" => "todo",
             other => other,
         };
-        runtime
-            .local_database()
-            .map_err(|error| error.to_string())?
-            .set_local_conversation_task_status(
-                run.owner_user_id.as_str(),
-                run.session_id.as_str(),
-                run.task_id.as_str(),
-                status,
-                None,
-                None,
-            )
-            .await
-            .map_err(|error| error.to_string())?;
-        return Ok(());
+        return set_conversation_task_status_and_sync(runtime, run, status, None, None).await;
     }
     runtime
         .local_database()
@@ -253,6 +314,94 @@ pub(in crate::local_runtime::task_runner) async fn set_work_item_status(
     Ok(())
 }
 
+async fn set_conversation_task_status_and_sync(
+    runtime: &LocalRuntime,
+    run: &LocalTaskRunRecord,
+    status: &str,
+    result: Option<&str>,
+    error_message: Option<&str>,
+) -> Result<(), String> {
+    let task = runtime
+        .local_database()
+        .map_err(|error| error.to_string())?
+        .set_local_conversation_task_status(
+            run.owner_user_id.as_str(),
+            run.session_id.as_str(),
+            run.task_id.as_str(),
+            status,
+            result,
+            error_message,
+        )
+        .await
+        .map_err(|error| error.to_string())?;
+    if let Some(task) = task {
+        sync_local_project_execution_work_item(runtime, run, &task).await?;
+    }
+    Ok(())
+}
+
+async fn sync_local_project_execution_work_item(
+    runtime: &LocalRuntime,
+    run: &LocalTaskRunRecord,
+    task: &crate::local_runtime::task_board::LocalTaskBoardTaskRecord,
+) -> Result<(), String> {
+    let Some(project_work_item_id) = task.project_work_item_id.as_deref() else {
+        return Ok(());
+    };
+    let Some(execution_group_id) = task.execution_group_id.as_deref() else {
+        return Ok(());
+    };
+    let database = runtime
+        .local_database()
+        .map_err(|error| error.to_string())?;
+    let related = database
+        .list_local_conversation_tasks(run.owner_user_id.as_str(), run.session_id.as_str(), 200)
+        .await
+        .map_err(|error| error.to_string())?
+        .into_iter()
+        .filter(|candidate| {
+            candidate.execution_group_id.as_deref() == Some(execution_group_id)
+                && candidate.project_work_item_id.as_deref() == Some(project_work_item_id)
+        })
+        .collect::<Vec<_>>();
+    if related.is_empty() {
+        return Ok(());
+    }
+    let status = aggregate_local_project_execution_status(
+        related.iter().map(|candidate| candidate.status.as_str()),
+    );
+    database
+        .update_local_work_item(
+            run.owner_user_id.as_str(),
+            project_work_item_id,
+            UpdateLocalWorkItemInput {
+                status: Some(status.to_string()),
+                ..Default::default()
+            },
+        )
+        .await
+        .map_err(|error| error.to_string())?;
+    Ok(())
+}
+
+fn aggregate_local_project_execution_status<'a>(
+    statuses: impl Iterator<Item = &'a str>,
+) -> &'static str {
+    let statuses = statuses.collect::<Vec<_>>();
+    if statuses.iter().any(|status| *status == "blocked") {
+        "blocked"
+    } else if statuses
+        .iter()
+        .any(|status| matches!(*status, "todo" | "doing"))
+    {
+        "in_progress"
+    } else if !statuses.is_empty() && statuses.iter().all(|status| *status == "done") {
+        "done"
+    } else {
+        "ready"
+    }
+}
+
 pub(in crate::local_runtime::task_runner) async fn set_requirement_status(
     runtime: &LocalRuntime,
     run: &LocalTaskRunRecord,
@@ -261,19 +410,43 @@ pub(in crate::local_runtime::task_runner) async fn set_requirement_status(
     let Some(requirement_id) = run.requirement_id.as_deref() else {
         return Ok(());
     };
-    runtime
+    let database = runtime
         .local_database()
-        .map_err(|error| error.to_string())?
-        .update_local_requirement(
-            run.owner_user_id.as_str(),
-            requirement_id,
-            UpdateLocalRequirementInput {
-                status: Some(status.to_string()),
-                ..Default::default()
-            },
-        )
-        .await
         .map_err(|error| error.to_string())?;
+    let mut requirement_ids = vec![requirement_id.to_string()];
+    if matches!(status, "failed" | "blocked") {
+        let snapshot = database
+            .local_project_plan(run.owner_user_id.as_str(), run.project_id.as_str(), false)
+            .await
+            .map_err(|error| error.to_string())?;
+        let by_id = snapshot
+            .requirements
+            .iter()
+            .map(|requirement| (requirement.id.as_str(), requirement))
+            .collect::<std::collections::BTreeMap<_, _>>();
+        let mut current = by_id
+            .get(requirement_id)
+            .and_then(|requirement| requirement.parent_requirement_id.as_deref());
+        while let Some(parent_id) = current {
+            requirement_ids.push(parent_id.to_string());
+            current = by_id
+                .get(parent_id)
+                .and_then(|requirement| requirement.parent_requirement_id.as_deref());
+        }
+    }
+    for requirement_id in requirement_ids {
+        database
+            .update_local_requirement(
+                run.owner_user_id.as_str(),
+                requirement_id.as_str(),
+                UpdateLocalRequirementInput {
+                    status: Some(status.to_string()),
+                    ..Default::default()
+                },
+            )
+            .await
+            .map_err(|error| error.to_string())?;
+    }
     Ok(())
 }
 
@@ -338,7 +511,7 @@ async fn restore_requirement_after_cancellation(
     set_requirement_status(runtime, run, "approved").await
 }
 
-async fn complete_requirement_if_done(
+pub(in crate::local_runtime::task_runner) async fn complete_requirement_if_done(
     runtime: &LocalRuntime,
     run: &LocalTaskRunRecord,
 ) -> Result<(), String> {
@@ -348,36 +521,105 @@ async fn complete_requirement_if_done(
     let database = runtime
         .local_database()
         .map_err(|error| error.to_string())?;
-    let items = database
-        .list_local_work_items_for_requirement(
-            run.owner_user_id.as_str(),
-            run.project_id.as_str(),
-            requirement_id,
-            false,
-        )
+    let snapshot = database
+        .local_project_plan(run.owner_user_id.as_str(), run.project_id.as_str(), false)
         .await
         .map_err(|error| error.to_string())?;
-    if items.iter().all(|item| {
-        crate::local_runtime::project_management::is_completed_project_status(item.status.as_str())
-    }) {
-        database
-            .update_local_requirement(
-                run.owner_user_id.as_str(),
-                requirement_id,
-                UpdateLocalRequirementInput {
-                    status: Some("done".to_string()),
-                    ..Default::default()
-                },
-            )
-            .await
-            .map_err(|error| error.to_string())?;
+    let by_id = snapshot
+        .requirements
+        .iter()
+        .map(|requirement| (requirement.id.as_str(), requirement))
+        .collect::<std::collections::BTreeMap<_, _>>();
+    let mut candidate_ids = vec![requirement_id.to_string()];
+    let mut current = by_id
+        .get(requirement_id)
+        .and_then(|requirement| requirement.parent_requirement_id.as_deref());
+    while let Some(parent_id) = current {
+        candidate_ids.push(parent_id.to_string());
+        current = by_id
+            .get(parent_id)
+            .and_then(|requirement| requirement.parent_requirement_id.as_deref());
+    }
+    for candidate_id in candidate_ids {
+        let subtree_ids = collect_local_requirement_subtree_ids(
+            snapshot.requirements.as_slice(),
+            candidate_id.as_str(),
+        );
+        let items = snapshot
+            .work_items
+            .iter()
+            .filter(|item| subtree_ids.contains(item.requirement_id.as_str()))
+            .filter(|item| item.status != "archived")
+            .collect::<Vec<_>>();
+        if !items.is_empty()
+            && items.iter().all(|item| {
+                crate::local_runtime::project_management::is_completed_project_status(
+                    item.status.as_str(),
+                )
+            })
+        {
+            database
+                .update_local_requirement(
+                    run.owner_user_id.as_str(),
+                    candidate_id.as_str(),
+                    UpdateLocalRequirementInput {
+                        status: Some("done".to_string()),
+                        ..Default::default()
+                    },
+                )
+                .await
+                .map_err(|error| error.to_string())?;
+        }
     }
     Ok(())
 }
 
+fn collect_local_requirement_subtree_ids(
+    requirements: &[crate::local_runtime::project_management::LocalRequirementRecord],
+    root_id: &str,
+) -> std::collections::BTreeSet<String> {
+    let mut ids = std::collections::BTreeSet::from([root_id.to_string()]);
+    loop {
+        let before = ids.len();
+        for requirement in requirements {
+            if requirement
+                .parent_requirement_id
+                .as_deref()
+                .is_some_and(|parent_id| ids.contains(parent_id))
+            {
+                ids.insert(requirement.id.clone());
+            }
+        }
+        if ids.len() == before {
+            break;
+        }
+    }
+    ids
+}
+
 #[cfg(test)]
 mod tests {
-    use super::user_visible_task_run_failure_receipt;
+    use super::{aggregate_local_project_execution_status, user_visible_task_run_failure_receipt};
+
+    #[test]
+    fn aggregates_generated_local_tasks_into_project_work_item_status() {
+        assert_eq!(
+            aggregate_local_project_execution_status(["done", "doing"].into_iter()),
+            "in_progress"
+        );
+        assert_eq!(
+            aggregate_local_project_execution_status(["done", "done"].into_iter()),
+            "done"
+        );
+        assert_eq!(
+            aggregate_local_project_execution_status(["done", "blocked"].into_iter()),
+            "blocked"
+        );
+        assert_eq!(
+            aggregate_local_project_execution_status(["done", "cancelled"].into_iter()),
+            "ready"
+        );
+    }
 
     #[test]
     fn hides_internal_model_identifiers_in_failure_receipts() {

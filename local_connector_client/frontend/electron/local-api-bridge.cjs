@@ -60,6 +60,9 @@ function localApiTimeoutMs(endpoint) {
   if (/^\/api\/local\/runtime\/sessions\/[^/]+\/tools(?:\?|$)/.test(endpoint)) {
     return LOCAL_TOOLS_TIMEOUT_MS;
   }
+  if (/^\/api\/local\/runtime\/browser\/sessions\/[^/]+\/command(?:\?|$)/.test(endpoint)) {
+    return LOCAL_TOOLS_TIMEOUT_MS;
+  }
   return DEFAULT_API_TIMEOUT_MS;
 }
 

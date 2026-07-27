@@ -172,6 +172,33 @@ pub(crate) enum ApprovalSource {
     StaticRule,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub(crate) struct ApprovalActionAuditDetail {
+    pub(crate) key: String,
+    pub(crate) value: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub(crate) struct ApprovalActionAudit {
+    pub(crate) kind: String,
+    pub(crate) operation: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) details: Vec<ApprovalActionAuditDetail>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) privacy: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) safety: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) recovery: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub(crate) struct ApprovalConfirmationRequirement {
+    pub(crate) kind: String,
+    pub(crate) risk: String,
+    pub(crate) challenge: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct ApprovalHistoryEntry {
     pub(crate) id: String,
@@ -189,6 +216,8 @@ pub(crate) struct ApprovalHistoryEntry {
     pub(crate) whitelist_entry_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) permission_scope: Option<PermissionGrantScope>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) action_audit: Option<ApprovalActionAudit>,
     pub(crate) created_at: String,
 }
 
@@ -198,10 +227,12 @@ pub(crate) struct CommandApprovalRequest {
     pub(crate) project_key: ApprovalProjectKey,
     pub(crate) command: String,
     pub(crate) args: Vec<String>,
+    pub(crate) redact_arguments_in_history: bool,
     pub(crate) cwd: String,
     pub(crate) source: String,
     pub(crate) requested_permissions: Option<RequestPermissionProfile>,
     pub(crate) session_id: Option<String>,
+    pub(crate) action_audit: Option<ApprovalActionAudit>,
 }
 
 #[derive(Debug, Clone)]
@@ -232,5 +263,9 @@ pub(crate) struct PendingApprovalItem {
     pub(crate) created_at: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) requested_permissions: Option<RequestPermissionProfile>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) action_audit: Option<ApprovalActionAudit>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) confirmation: Option<ApprovalConfirmationRequirement>,
     pub(crate) available_decisions: Vec<CommandExecutionApprovalDecision>,
 }

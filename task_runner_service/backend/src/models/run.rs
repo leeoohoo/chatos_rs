@@ -2,6 +2,7 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use chatos_mcp::{AskUserPromptPayload, AskUserResponseSubmission};
+use chatos_plugin_management_sdk::RunPluginSnapshot;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use uuid::Uuid;
@@ -64,12 +65,16 @@ pub struct TaskRunRecord {
     pub started_at: Option<String>,
     pub finished_at: Option<String>,
     pub input_snapshot: Value,
+    #[serde(default)]
+    pub plugin_snapshots: Vec<RunPluginSnapshot>,
     pub context_snapshot: Option<Value>,
     pub result_summary: Option<String>,
     pub error_message: Option<String>,
     pub usage: Option<Value>,
     pub report: Option<Value>,
     pub cancel_requested: bool,
+    #[serde(default)]
+    pub dispatch_paused: bool,
     pub summary_job_run_id: Option<String>,
     #[serde(default)]
     pub worker_id: Option<String>,
@@ -92,6 +97,7 @@ impl TaskRunRecord {
         model_config_id: String,
         memory_thread_id: String,
         input_snapshot: Value,
+        plugin_snapshots: Vec<RunPluginSnapshot>,
         now: String,
     ) -> Self {
         Self {
@@ -103,12 +109,14 @@ impl TaskRunRecord {
             started_at: None,
             finished_at: None,
             input_snapshot,
+            plugin_snapshots,
             context_snapshot: None,
             result_summary: None,
             error_message: None,
             usage: None,
             report: None,
             cancel_requested: false,
+            dispatch_paused: false,
             summary_job_run_id: None,
             worker_id: None,
             claim_token: None,
@@ -258,6 +266,7 @@ pub struct AskUserPromptTaskCountRecord {
 pub struct StartTaskRunRequest {
     pub model_config_id: Option<String>,
     pub prompt_override: Option<String>,
+    pub retry_instruction: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

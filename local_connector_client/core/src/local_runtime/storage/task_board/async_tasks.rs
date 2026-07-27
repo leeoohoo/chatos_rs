@@ -46,9 +46,10 @@ impl LocalDatabase {
                 completed_at, last_outcome_at, created_at, updated_at,
                 task_kind, objective, model_config_id, is_planning_task,
                 enabled_builtin_kinds_json, external_mcp_config_ids_json,
-                selected_skill_ids_json
+                selected_skill_ids_json, project_work_item_id, requirement_id,
+                execution_group_id, execution_client_ref, dependency_context_refs_json
             ) VALUES (?, ?, ?, ?, ?, ?, ?, 'todo', ?, ?, NULL, '', '[]', '', '', '[]', '', NULL, NULL, ?, ?,
-                      'task_runner', ?, ?, ?, ?, ?, ?)
+                      'task_runner', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             "#,
         )
         .bind(task_id.as_str())
@@ -68,6 +69,11 @@ impl LocalDatabase {
         .bind(serde_json::to_string(&input.enabled_builtin_kinds)?)
         .bind(serde_json::to_string(&input.external_mcp_config_ids)?)
         .bind(serde_json::to_string(&input.selected_skill_ids)?)
+        .bind(input.project_work_item_id.as_deref())
+        .bind(input.requirement_id.as_deref())
+        .bind(input.execution_group_id.as_deref())
+        .bind(input.execution_client_ref.as_deref())
+        .bind(serde_json::to_string(&input.dependency_context_refs)?)
         .execute(self.pool())
         .await
         .context("create local conversation task")?;
@@ -77,23 +83,22 @@ impl LocalDatabase {
             input.description.as_str(),
             input.objective.as_str(),
         );
-        let _run = match self
-            .enqueue_local_task_run(EnqueueLocalTaskRunInput {
-                owner_user_id: input.owner_user_id.clone(),
-                project_id: input.project_id,
-                requirement_id: None,
-                task_kind: "conversation_task".to_string(),
-                task_id: task_id.clone(),
-                session_id: input.session_id.clone(),
-                execution_group_id: input.source_turn_id,
-                priority: input.priority,
-                prompt,
-                model_config_id: input.model_config_id,
-            })
-            .await
-        {
-            Ok(run) => run,
-            Err(error) => {
+        if !input.defer_execution {
+            let enqueue_result = self
+                .enqueue_local_task_run(EnqueueLocalTaskRunInput {
+                    owner_user_id: input.owner_user_id.clone(),
+                    project_id: input.project_id.clone(),
+                    requirement_id: input.requirement_id.clone(),
+                    task_kind: "conversation_task".to_string(),
+                    task_id: task_id.clone(),
+                    session_id: input.session_id.clone(),
+                    execution_group_id: input.source_turn_id.clone(),
+                    priority: input.priority,
+                    prompt,
+                    model_config_id: input.model_config_id.clone(),
+                })
+                .await;
+            if let Err(error) = enqueue_result {
                 let _ =
                     sqlx::query("DELETE FROM task_board_tasks WHERE id = ? AND owner_user_id = ?")
                         .bind(task_id.as_str())
@@ -102,7 +107,7 @@ impl LocalDatabase {
                         .await;
                 return Err(error);
             }
-        };
+        }
         let task = select_task(
             self,
             input.owner_user_id.as_str(),
@@ -112,6 +117,132 @@ impl LocalDatabase {
         .await?
         .context("local conversation task was not persisted")?;
         Ok(task)
+    }
+
+    pub(crate) async fn enqueue_deferred_local_conversation_task(
+        &self,
+        owner_user_id: &str,
+        project_id: &str,
+        task: &LocalTaskBoardTaskRecord,
+    ) -> Result<Option<crate::local_runtime::task_runner::LocalTaskRunRecord>> {
+        if task.last_run_id.is_some() {
+            return Ok(None);
+        }
+        if task.status != "todo" {
+            return Err(anyhow::anyhow!(
+                "local deferred task is not startable from status {}",
+                task.status
+            ));
+        }
+        let model_config_id = task
+            .model_config_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .context("local deferred task has no model config")?;
+        let execution_group_id = task
+            .execution_group_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .context("local deferred task has no execution group")?;
+        let run = self
+            .enqueue_local_task_run(EnqueueLocalTaskRunInput {
+                owner_user_id: owner_user_id.to_string(),
+                project_id: project_id.to_string(),
+                requirement_id: task.requirement_id.clone(),
+                task_kind: "conversation_task".to_string(),
+                task_id: task.id.clone(),
+                session_id: task.conversation_id.clone(),
+                execution_group_id: execution_group_id.to_string(),
+                priority: priority_value(task.priority.as_str()),
+                prompt: conversation_task_prompt(
+                    task.title.as_str(),
+                    task.details.as_str(),
+                    task.objective.as_str(),
+                ),
+                model_config_id: model_config_id.to_string(),
+            })
+            .await?;
+        Ok(Some(run))
+    }
+
+    pub(crate) async fn delete_local_execution_task_with_runs(
+        &self,
+        owner_user_id: &str,
+        session_id: &str,
+        task_id: &str,
+    ) -> Result<Vec<String>> {
+        let mut transaction = self
+            .begin_write()
+            .await
+            .context("delete local execution task and runs")?;
+        let active_count = sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM local_task_runs WHERE owner_user_id = ? AND session_id = ? AND task_kind = 'conversation_task' AND task_id = ? AND status IN ('queued', 'running')",
+        )
+        .bind(owner_user_id)
+        .bind(session_id)
+        .bind(task_id)
+        .fetch_one(&mut *transaction)
+        .await
+        .context("check active local execution task runs")?;
+        if active_count > 0 {
+            return Err(anyhow::anyhow!(
+                "local execution task still has active runs: {task_id}"
+            ));
+        }
+        let runs = sqlx::query_as::<_, (String, String)>(
+            "SELECT id, turn_id FROM local_task_runs WHERE owner_user_id = ? AND session_id = ? AND task_kind = 'conversation_task' AND task_id = ?",
+        )
+        .bind(owner_user_id)
+        .bind(session_id)
+        .bind(task_id)
+        .fetch_all(&mut *transaction)
+        .await
+        .context("list local execution task runs for deletion")?;
+        for (run_id, turn_id) in &runs {
+            sqlx::query("DELETE FROM local_task_run_events WHERE run_id = ? AND owner_user_id = ?")
+                .bind(run_id)
+                .bind(owner_user_id)
+                .execute(&mut *transaction)
+                .await
+                .context("delete local execution task run events")?;
+            sqlx::query("DELETE FROM messages WHERE turn_id = ? AND session_id = ?")
+                .bind(turn_id)
+                .bind(session_id)
+                .execute(&mut *transaction)
+                .await
+                .context("delete local execution task run messages")?;
+            sqlx::query("DELETE FROM turns WHERE id = ? AND session_id = ?")
+                .bind(turn_id)
+                .bind(session_id)
+                .execute(&mut *transaction)
+                .await
+                .context("delete local execution task run turn")?;
+        }
+        sqlx::query(
+            "DELETE FROM local_task_runs WHERE owner_user_id = ? AND session_id = ? AND task_kind = 'conversation_task' AND task_id = ?",
+        )
+        .bind(owner_user_id)
+        .bind(session_id)
+        .bind(task_id)
+        .execute(&mut *transaction)
+        .await
+        .context("delete local execution task runs")?;
+        sqlx::query(
+            "DELETE FROM task_board_tasks WHERE id = ? AND session_id = ? AND owner_user_id = ? AND task_kind = 'task_runner'",
+        )
+        .bind(task_id)
+        .bind(session_id)
+        .bind(owner_user_id)
+        .execute(&mut *transaction)
+        .await
+        .context("delete local execution task")?;
+        transaction
+            .commit()
+            .await
+            .context("commit local execution task deletion")?;
+        Ok(runs.into_iter().map(|(run_id, _)| run_id).collect())
     }
 
     pub(crate) async fn first_local_conversation_task_for_turn(
@@ -131,7 +262,12 @@ impl LocalDatabase {
                    tasks.task_kind, tasks.objective, tasks.model_config_id,
                    tasks.is_planning_task, tasks.enabled_builtin_kinds_json,
                    tasks.external_mcp_config_ids_json, tasks.selected_skill_ids_json,
-                   tasks.last_run_id
+                   tasks.last_run_id, tasks.project_work_item_id, tasks.requirement_id,
+                   tasks.execution_group_id, tasks.execution_client_ref,
+                   tasks.dependency_context_refs_json, tasks.manager_scope,
+                   tasks.task_session_id, tasks.required_for_parent_completion,
+                   tasks.closure_state, tasks.closure_reason, tasks.idempotency_key,
+                   tasks.lifecycle_updated_at
             FROM task_board_tasks AS tasks
             INNER JOIN turns ON turns.id = tasks.turn_id
             WHERE tasks.owner_user_id = ? AND tasks.session_id = ? AND tasks.turn_id = ?
@@ -209,6 +345,14 @@ fn priority_name(priority: i64) -> &'static str {
         "low"
     } else {
         "medium"
+    }
+}
+
+fn priority_value(priority: &str) -> i64 {
+    match priority.trim() {
+        "high" => 10,
+        "low" => -10,
+        _ => 0,
     }
 }
 

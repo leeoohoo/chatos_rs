@@ -14,6 +14,8 @@ import { MessageHeader } from './messageItem/MessageHeader';
 import { SessionSummaryCard } from './messageItem/SessionSummaryCard';
 import type { MessageItemProps } from './messageItem/messageItemTypes';
 import { useMessageItemModel } from './messageItem/useMessageItemModel';
+import PluginCommandAuditList from './pluginCommands/PluginCommandAuditList';
+import PluginAgentAuditBadge from './pluginCommands/PluginAgentAuditBadge';
 export type { MessageItemProps } from './messageItem/messageItemTypes';
 
 const readDisplayName = (value: unknown): string | null => {
@@ -236,6 +238,13 @@ const MessageItemComponent: React.FC<MessageItemProps> = ({
             </div>
           )
         )}
+
+        {isUser ? (
+          <>
+            <PluginAgentAuditBadge selection={message.metadata?.plugin_agent_selection} />
+            <PluginCommandAuditList entries={message.metadata?.plugin_command_invocations} />
+          </>
+        ) : null}
 
         {/* Token使用信息 */}
         {message.tokensUsed && (

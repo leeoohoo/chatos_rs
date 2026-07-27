@@ -109,9 +109,15 @@ pub(crate) async fn local_approve_pending_approval(
             "session or persistent approval requires explicit risk acknowledgement",
         ));
     }
-    let ok = approve_pending_approval(id.as_str(), decision, req.granted_permissions)
-        .await
-        .map_err(LocalApiError::bad_request)?;
+    let confirmation_response = req.confirmation_response;
+    let ok = approve_pending_approval(
+        id.as_str(),
+        decision,
+        req.granted_permissions,
+        confirmation_response.as_deref(),
+    )
+    .await
+    .map_err(LocalApiError::bad_request)?;
     if !ok {
         return Err(LocalApiError::bad_request("pending approval not found"));
     }
@@ -301,6 +307,7 @@ mod tests {
             granted_permissions: None,
             reason: None,
             risk_acknowledged: false,
+            confirmation_response: None,
         };
         assert!(req.remember_allow.unwrap_or(false) && !req.risk_acknowledged);
 
@@ -310,6 +317,7 @@ mod tests {
             granted_permissions: None,
             reason: None,
             risk_acknowledged: true,
+            confirmation_response: None,
         };
         assert!(req.remember_allow.unwrap_or(false) && req.risk_acknowledged);
     }

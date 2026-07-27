@@ -39,6 +39,7 @@ pub(crate) async fn prepare_local_chat_tools(
     settings: &LocalRuntimeSettingsRecord,
     agent_key: SystemAgentKey,
     include_all_configured: bool,
+    expected_project_task_ids: &[String],
 ) -> Result<PreparedLocalChatTools, String> {
     let context = resolve_local_chat_tool_context(
         runtime,
@@ -48,6 +49,7 @@ pub(crate) async fn prepare_local_chat_tools(
         settings,
         agent_key,
         include_all_configured,
+        expected_project_task_ids,
     )
     .await?;
     if !context.enabled {

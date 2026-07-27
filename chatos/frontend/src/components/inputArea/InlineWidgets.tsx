@@ -5,13 +5,101 @@ import React from 'react';
 import { useI18n } from '../../i18n/I18nProvider';
 import { cn, formatFileSize } from '../../lib/utils';
 import type { AiModelConfig } from '../../types';
+import type { TaskRunnerSelectablePluginResponse } from '../../lib/api/client/types';
 import { thinkingOptionsForProvider } from '../../lib/modelThinkingOptions';
 import type { InputAreaRefObject } from './InputAreaComposerTypes';
+import type {
+  SelectedTaskPluginAgent,
+  SelectedTaskPluginCommand,
+} from './useTaskPluginPicker';
 
 interface InputAreaAttachmentsPreviewProps {
   attachments: File[];
   onRemoveAttachment: (index: number) => void;
 }
+
+export const InputAreaPluginChips: React.FC<{
+  plugins: TaskRunnerSelectablePluginResponse[];
+  commands: SelectedTaskPluginCommand[];
+  agent: SelectedTaskPluginAgent | null;
+  onRemove: (pluginId: string) => void;
+  onRemoveCommand: (pluginId: string, commandId: string) => void;
+  onRemoveAgent: () => void;
+}> = ({ plugins, commands, agent, onRemove, onRemoveCommand, onRemoveAgent }) => {
+  const { t } = useI18n();
+  if (plugins.length === 0 && commands.length === 0 && !agent) {
+    return null;
+  }
+  return (
+    <div className="mb-3 flex flex-wrap gap-2">
+      {plugins.map((plugin) => (
+        <div
+          key={plugin.id}
+          className="flex items-center gap-2 rounded-full border border-primary/30 bg-primary/5 px-3 py-1.5 text-xs"
+        >
+          <span className="text-primary">{t('inputArea.plugin.chipPrefix')}</span>
+          <span className="font-medium">{plugin.display_name}</span>
+          <span className="text-muted-foreground">v{plugin.version}</span>
+          <button
+            type="button"
+            onClick={() => onRemove(plugin.id)}
+            className="text-muted-foreground hover:text-destructive"
+            aria-label={t('inputArea.plugin.remove', { name: plugin.display_name })}
+          >
+            ×
+          </button>
+        </div>
+      ))}
+      {commands.map(({ key, plugin, command }) => (
+        <div
+          key={key}
+          className="flex items-center gap-2 rounded-full border border-violet-500/30 bg-violet-500/5 px-3 py-1.5 text-xs"
+        >
+          <span className="font-mono font-medium text-violet-700 dark:text-violet-300">
+            /{command.command_id}
+          </span>
+          <span className="max-w-40 truncate text-muted-foreground">
+            {plugin.display_name}
+          </span>
+          {command.requires_confirmation ? (
+            <span className="text-amber-700 dark:text-amber-300" title={t('inputArea.plugin.confirmationRequired')}>
+              !
+            </span>
+          ) : null}
+          <button
+            type="button"
+            onClick={() => onRemoveCommand(plugin.id, command.command_id)}
+            className="text-muted-foreground hover:text-destructive"
+            aria-label={t('inputArea.plugin.removeCommand', { command: command.display_name })}
+          >
+            ×
+          </button>
+        </div>
+      ))}
+      {agent ? (
+        <div
+          key={agent.key}
+          className="flex items-center gap-2 rounded-full border border-emerald-500/30 bg-emerald-500/5 px-3 py-1.5 text-xs"
+        >
+          <span className="font-mono font-medium text-emerald-700 dark:text-emerald-300">
+            @{agent.agent.agent_id}
+          </span>
+          <span className="max-w-40 truncate text-muted-foreground">
+            {agent.plugin.display_name}
+          </span>
+          <button
+            type="button"
+            onClick={onRemoveAgent}
+            className="text-muted-foreground hover:text-destructive"
+            aria-label={t('inputArea.plugin.removeAgent', { agent: agent.agent.display_name })}
+          >
+            ×
+          </button>
+        </div>
+      ) : null}
+    </div>
+  );
+};
 
 export const InputAreaAttachmentsPreview: React.FC<InputAreaAttachmentsPreviewProps> = ({
   attachments,

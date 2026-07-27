@@ -306,31 +306,75 @@ pub(super) async fn cancel_run(
     Ok(Json(json!({ "success": true, "run": run })))
 }
 
+#[derive(Debug, Default, Deserialize)]
+pub(super) struct RetryLocalTaskRunRequest {
+    retry_instruction: Option<String>,
+}
+
 pub(super) async fn retry_run(
     Path(run_id): Path<String>,
     State(runtime): State<LocalRuntime>,
+    payload: Option<Json<RetryLocalTaskRunRequest>>,
 ) -> Result<Json<Value>, LocalRuntimeApiError> {
     let owner = owner_context(&runtime).await?;
-    let model_config_id = runtime
-        .state
-        .read()
-        .await
-        .model_configs
-        .settings
-        .project_management_agent_model_config_id
-        .clone()
+    let database = runtime.local_database()?;
+    let failed_run = database
+        .get_local_task_run(owner.owner_user_id.as_str(), run_id.as_str())
+        .await?
         .ok_or_else(|| {
-            LocalRuntimeApiError::conflict(
-                "local_task_runner_model_required",
-                "Configure the Project Management Agent model in Local Connector first",
+            LocalRuntimeApiError::not_found(
+                "local_task_run_not_found",
+                "Local task run was not found",
             )
         })?;
-    let run = runtime
-        .local_database()?
+    if !matches!(
+        failed_run.status.as_str(),
+        "failed" | "blocked" | "interrupted"
+    ) {
+        return Err(LocalRuntimeApiError::conflict(
+            "local_task_run_not_failed",
+            "Only a failed, blocked, or interrupted local task run can be retried",
+        ));
+    }
+    let retry_instruction = payload
+        .as_ref()
+        .and_then(|payload| payload.0.retry_instruction.as_deref())
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    if retry_instruction.is_some_and(|value| value.chars().count() > 4000) {
+        return Err(LocalRuntimeApiError::conflict(
+            "local_task_retry_instruction_too_long",
+            "Local task retry instruction must not exceed 4000 characters",
+        ));
+    }
+    let current_task_model_config_id = if failed_run.task_kind == "conversation_task" {
+        database
+            .get_local_task_board_task(
+                owner.owner_user_id.as_str(),
+                failed_run.session_id.as_str(),
+                failed_run.task_id.as_str(),
+            )
+            .await?
+            .and_then(|task| task.model_config_id)
+    } else {
+        None
+    };
+    let model_config_id = retry_model_config_id(
+        current_task_model_config_id.as_deref(),
+        failed_run.model_config_id.as_str(),
+    )
+    .ok_or_else(|| {
+        LocalRuntimeApiError::conflict(
+            "local_task_runner_model_required",
+            "The local task has no model configuration available for retry",
+        )
+    })?;
+    let run = database
         .retry_local_task_run(
             owner.owner_user_id.as_str(),
             run_id.as_str(),
             model_config_id.as_str(),
+            retry_instruction,
         )
         .await?
         .ok_or_else(|| {
@@ -340,4 +384,39 @@ pub(super) async fn retry_run(
             )
         })?;
     Ok(Json(json!({ "success": true, "run": run })))
+}
+
+fn retry_model_config_id(
+    current_task_model_config_id: Option<&str>,
+    failed_run_model_config_id: &str,
+) -> Option<String> {
+    current_task_model_config_id
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .or_else(|| {
+            let value = failed_run_model_config_id.trim();
+            (!value.is_empty()).then_some(value)
+        })
+        .map(ToOwned::to_owned)
+}
+
+#[cfg(test)]
+mod retry_tests {
+    use super::retry_model_config_id;
+
+    #[test]
+    fn retry_prefers_the_tasks_current_model_configuration() {
+        assert_eq!(
+            retry_model_config_id(Some("model-current"), "model-failed-run").as_deref(),
+            Some("model-current")
+        );
+    }
+
+    #[test]
+    fn retry_falls_back_to_the_failed_runs_model_configuration() {
+        assert_eq!(
+            retry_model_config_id(Some("  "), "model-failed-run").as_deref(),
+            Some("model-failed-run")
+        );
+    }
 }

@@ -47,4 +47,4 @@ pub(crate) use environment::{
 pub(crate) use memory::LocalMemoryJobRegistry;
 pub(crate) use memory_policy::{managed_memory_policy, sync_managed_memory_policy};
 pub(crate) use storage::{database_path_for_state, LocalDatabase};
-pub(crate) use task_runner::{run_local_task_worker_loop, EnqueueLocalTaskRunInput};
+pub(crate) use task_runner::run_local_task_worker_loop;

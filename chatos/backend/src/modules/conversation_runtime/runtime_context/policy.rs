@@ -10,6 +10,7 @@ use crate::services::plugin_management_capabilities;
 pub(super) async fn resolve_chatos_mcp_policy(
     agent_profile: ChatosAgentProfile,
     effective_user_id: Option<&str>,
+    enable_project_management: bool,
 ) -> Result<ResolvedAgentCapabilities, String> {
     let owner_user_id = effective_user_id
         .map(str::trim)
@@ -21,18 +22,21 @@ pub(super) async fn resolve_chatos_mcp_policy(
     )
     .await?;
     capabilities
-        .ensure_required_available()
-        .map_err(|err| err.to_string())?;
-    capabilities
-        .ensure_required_skills_supported(std::iter::empty::<&str>())
+        .ensure_required_runtime_supported([], [])
         .map_err(|err| err.to_string())?;
     capabilities
         .require_available_mcp(CHATOS_TASK_RUNNER_MCP_RESOURCE_ID)
         .map_err(|err| err.to_string())?;
-    if agent_profile.requires_project_management_mcp() {
-        capabilities
-            .require_available_mcp(PROJECT_MANAGEMENT_MCP_ID)
-            .map_err(|err| err.to_string())?;
+    if enable_project_management
+        && capabilities
+            .available_mcps_matching([PROJECT_MANAGEMENT_MCP_ID])
+            .is_empty()
+    {
+        return Err(format!(
+            "project-scoped MCP is unavailable for {}: {}",
+            agent_profile.key(),
+            PROJECT_MANAGEMENT_MCP_ID
+        ));
     }
     Ok(capabilities)
 }

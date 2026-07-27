@@ -16,18 +16,18 @@ pub(super) struct InternalSkillCatalog {
 #[derive(Debug, Deserialize)]
 pub(super) struct InternalSkillCatalogItem {
     pub(super) skill_id: String,
-    bundle_id: String,
-    version: String,
-    name: String,
-    display_name: String,
-    description: String,
-    category: String,
-    entrypoint_kind: String,
-    implementation_status: String,
+    pub(super) bundle_id: String,
+    pub(super) version: String,
+    pub(super) name: String,
+    pub(super) display_name: String,
+    pub(super) description: String,
+    pub(super) category: String,
+    pub(super) entrypoint_kind: String,
+    pub(super) implementation_status: String,
     #[serde(default)]
-    requires_workspace: bool,
+    pub(super) requires_workspace: bool,
     #[serde(default)]
-    permissions: Vec<String>,
+    pub(super) permissions: Vec<String>,
 }
 
 pub(super) fn internal_skill_catalog() -> Result<InternalSkillCatalog, String> {
@@ -95,6 +95,7 @@ pub(super) async fn seed_internal_skills(
                 ..SkillContent::default()
             },
             metadata,
+            plugin_component: PluginComponentOwnership::default(),
             created_by: existing
                 .as_ref()
                 .map(|record| record.created_by.clone())
@@ -111,7 +112,7 @@ pub(super) async fn seed_internal_skills(
     Ok(())
 }
 
-fn internal_skill_bundle_hash(item: &InternalSkillCatalogItem) -> String {
+pub(super) fn internal_skill_bundle_hash(item: &InternalSkillCatalogItem) -> String {
     let instructions_hash = internal_skill_instructions(item.skill_id.as_str())
         .map(|value| hex::encode(Sha256::digest(value.as_bytes())))
         .unwrap_or_else(|| "none".to_string());
@@ -154,19 +155,19 @@ fn internal_skill_manifest(skill_id: &str) -> Option<&'static str> {
             "../../../../local_connector_client/skill_bundles/internal/visualize/1.0.0/skill.json"
         )),
         "internal_skill_documents" => Some(include_str!(
-            "../../../../local_connector_client/skill_bundles/internal/documents/1.0.0/skill.json"
+            "../../../../local_connector_client/skill_bundles/internal/documents/1.22.0/skill.json"
         )),
         "internal_skill_pdf" => Some(include_str!(
-            "../../../../local_connector_client/skill_bundles/internal/pdf/1.0.0/skill.json"
+            "../../../../local_connector_client/skill_bundles/internal/pdf/1.12.0/skill.json"
         )),
         "internal_skill_presentations" => Some(include_str!(
-            "../../../../local_connector_client/skill_bundles/internal/presentations/1.0.0/skill.json"
+            "../../../../local_connector_client/skill_bundles/internal/presentations/1.24.0/skill.json"
         )),
         "internal_skill_spreadsheets" => Some(include_str!(
-            "../../../../local_connector_client/skill_bundles/internal/spreadsheets/1.0.0/skill.json"
+            "../../../../local_connector_client/skill_bundles/internal/spreadsheets/1.4.0/skill.json"
         )),
         "internal_skill_template_creator" => Some(include_str!(
-            "../../../../local_connector_client/skill_bundles/internal/template-creator/1.0.0/skill.json"
+            "../../../../local_connector_client/skill_bundles/internal/template-creator/1.2.0/skill.json"
         )),
         "internal_skill_imagegen" => Some(include_str!(
             "../../../../local_connector_client/skill_bundles/internal/imagegen/1.0.0/skill.json"
@@ -208,13 +209,16 @@ fn internal_skill_manifest(skill_id: &str) -> Option<&'static str> {
             "../../../../local_connector_client/skill_bundles/internal/figma-use-slides/1.0.0/skill.json"
         )),
         "internal_skill_browser" => Some(include_str!(
-            "../../../../local_connector_client/skill_bundles/internal/control-in-app-browser/1.0.0/skill.json"
+            "../../../../local_connector_client/skill_bundles/internal/control-in-app-browser/1.8.0/skill.json"
+        )),
+        "internal_skill_chrome" => Some(include_str!(
+            "../../../../local_connector_client/skill_bundles/internal/control-chrome/1.4.0/skill.json"
         )),
         "internal_skill_computer_use" => Some(include_str!(
-            "../../../../local_connector_client/skill_bundles/internal/computer-use/1.0.0/skill.json"
+            "../../../../local_connector_client/skill_bundles/internal/computer-use/1.15.0/skill.json"
         )),
         "internal_skill_excel_live_control" => Some(include_str!(
-            "../../../../local_connector_client/skill_bundles/internal/excel-live-control/1.0.0/skill.json"
+            "../../../../local_connector_client/skill_bundles/internal/excel-live-control/1.4.0/skill.json"
         )),
         _ => None,
     }
@@ -241,19 +245,19 @@ fn internal_skill_instructions(skill_id: &str) -> Option<&'static str> {
             "../../../../local_connector_client/skill_bundles/internal/visualize/1.0.0/instructions.md"
         )),
         "internal_skill_documents" => Some(include_str!(
-            "../../../../local_connector_client/skill_bundles/internal/documents/1.0.0/instructions.md"
+            "../../../../local_connector_client/skill_bundles/internal/documents/1.22.0/instructions.md"
         )),
         "internal_skill_pdf" => Some(include_str!(
-            "../../../../local_connector_client/skill_bundles/internal/pdf/1.0.0/instructions.md"
+            "../../../../local_connector_client/skill_bundles/internal/pdf/1.12.0/instructions.md"
         )),
         "internal_skill_presentations" => Some(include_str!(
-            "../../../../local_connector_client/skill_bundles/internal/presentations/1.0.0/instructions.md"
+            "../../../../local_connector_client/skill_bundles/internal/presentations/1.24.0/instructions.md"
         )),
         "internal_skill_spreadsheets" => Some(include_str!(
-            "../../../../local_connector_client/skill_bundles/internal/spreadsheets/1.0.0/instructions.md"
+            "../../../../local_connector_client/skill_bundles/internal/spreadsheets/1.4.0/instructions.md"
         )),
         "internal_skill_template_creator" => Some(include_str!(
-            "../../../../local_connector_client/skill_bundles/internal/template-creator/1.0.0/instructions.md"
+            "../../../../local_connector_client/skill_bundles/internal/template-creator/1.2.0/instructions.md"
         )),
         "internal_skill_imagegen" => Some(include_str!(
             "../../../../local_connector_client/skill_bundles/internal/imagegen/1.0.0/instructions.md"
@@ -295,13 +299,16 @@ fn internal_skill_instructions(skill_id: &str) -> Option<&'static str> {
             "../../../../local_connector_client/skill_bundles/internal/figma-use-slides/1.0.0/instructions.md"
         )),
         "internal_skill_browser" => Some(include_str!(
-            "../../../../local_connector_client/skill_bundles/internal/control-in-app-browser/1.0.0/instructions.md"
+            "../../../../local_connector_client/skill_bundles/internal/control-in-app-browser/1.8.0/instructions.md"
+        )),
+        "internal_skill_chrome" => Some(include_str!(
+            "../../../../local_connector_client/skill_bundles/internal/control-chrome/1.4.0/instructions.md"
         )),
         "internal_skill_computer_use" => Some(include_str!(
-            "../../../../local_connector_client/skill_bundles/internal/computer-use/1.0.0/instructions.md"
+            "../../../../local_connector_client/skill_bundles/internal/computer-use/1.15.0/instructions.md"
         )),
         "internal_skill_excel_live_control" => Some(include_str!(
-            "../../../../local_connector_client/skill_bundles/internal/excel-live-control/1.0.0/instructions.md"
+            "../../../../local_connector_client/skill_bundles/internal/excel-live-control/1.4.0/instructions.md"
         )),
         _ => None,
     }
@@ -320,7 +327,7 @@ mod tests {
                 .iter()
                 .filter(|item| item.implementation_status == "ready")
                 .count(),
-            12
+            15
         );
         let rows = catalog
             .skills
@@ -331,14 +338,14 @@ mod tests {
             .join("\n");
         assert_eq!(
             hex::encode(Sha256::digest(rows.as_bytes())),
-            "a35f8389f83ffdfaffdf849e7bd505f6444e9de1147cc7741bd7997f7bd9f68d"
+            "e77e59dc908731b8e248575d872ddabedde72c3368e9c752cde35ae20df1cb5a"
         );
     }
 
     #[test]
-    fn all_27_bundled_skill_fingerprints_match_local_connector() {
+    fn all_28_bundled_skill_fingerprints_match_local_connector() {
         let catalog = internal_skill_catalog().expect("catalog");
-        assert_eq!(catalog.skills.len(), 27);
+        assert_eq!(catalog.skills.len(), 28);
         let rows = catalog
             .skills
             .iter()
@@ -347,7 +354,7 @@ mod tests {
             .join("\n");
         assert_eq!(
             hex::encode(Sha256::digest(rows.as_bytes())),
-            "223fd6a9576b6c6f90f7c4a7e0f3862d68e8a212c4e308a3701844d0e5398ef9"
+            "708f0c3a0f07340e0e5a0045e5ecb9c990d0375188ccd510d7195c1b72871816"
         );
     }
 }

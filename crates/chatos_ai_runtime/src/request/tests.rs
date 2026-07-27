@@ -7,9 +7,9 @@ use serde_json::{json, Value};
 
 use super::{
     build_chat_completions_request_payload, build_responses_request_payload,
-    effective_provider_for_request, emit_finalized_stream_callbacks,
-    response_items_to_chat_messages, validate_request_payload_size, AiRequestOptions,
-    StreamCallbacks,
+    effective_provider_for_request, emit_finalized_stream_callbacks, parse_timeout_seconds,
+    response_items_to_chat_messages, validate_request_payload_size, AiRequestHandler,
+    AiRequestOptions, StreamCallbacks,
 };
 use crate::stream_parse::FinalizedStreamState;
 
@@ -105,6 +105,7 @@ fn responses_payload_supports_prompt_cache_and_cwd() {
         request_body_limit_bytes: None,
         abort_token: None,
         force_identity_encoding: false,
+        stream: true,
     };
     let payload = build_responses_request_payload(
         json!([]),
@@ -133,6 +134,14 @@ fn responses_payload_supports_prompt_cache_and_cwd() {
         payload.get("cwd"),
         Some(&Value::String("/workspace".to_string()))
     );
+}
+
+#[test]
+fn ai_read_timeout_defaults_to_five_minutes_and_accepts_valid_override() {
+    assert_eq!(parse_timeout_seconds(None, 300), 300);
+    assert_eq!(parse_timeout_seconds(Some("450"), 300), 450);
+    assert_eq!(parse_timeout_seconds(Some("0"), 300), 300);
+    assert_eq!(parse_timeout_seconds(Some("invalid"), 300), 300);
 }
 
 #[test]
@@ -263,6 +272,35 @@ fn request_payload_size_limit_rejects_oversized_body() {
 fn request_payload_size_limit_allows_unset_or_zero_limit() {
     assert!(validate_request_payload_size(usize::MAX, None).is_ok());
     assert!(validate_request_payload_size(usize::MAX, Some(0)).is_ok());
+}
+
+#[tokio::test]
+async fn transport_errors_preserve_error_kind_and_source_chain() {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind unused port");
+    let address = listener.local_addr().expect("unused port address");
+    drop(listener);
+
+    let error = AiRequestHandler::new()
+        .handle_request(
+            format!("http://{address}").as_str(),
+            "test-key",
+            json!({"messages": []}),
+            false,
+            "test-model".to_string(),
+            None,
+            None,
+            None,
+            None,
+            StreamCallbacks::default(),
+            Some("openai_compatible".to_string()),
+            None,
+            None,
+        )
+        .await
+        .expect_err("closed port should fail");
+
+    assert!(error.contains("AI transport error (kind=connect)"));
+    assert!(error.contains("caused by:"));
 }
 
 #[test]

@@ -16,6 +16,12 @@ pub(super) struct ProjectRuntimeEnvironmentSettingsRequest {
     sandbox_enabled: Option<bool>,
 }
 
+#[derive(Debug, Default, Deserialize)]
+pub(super) struct ProjectRuntimeEnvironmentAnalysisRequest {
+    #[serde(default, alias = "analysisRequirement")]
+    analysis_requirement: Option<String>,
+}
+
 fn is_cloud_project(project: &Project) -> bool {
     project
         .source_type
@@ -107,6 +113,7 @@ pub(super) async fn update_project_runtime_environment_settings(
 pub(super) async fn analyze_project_runtime_environment(
     auth: AuthUser,
     Path(id): Path<String>,
+    request: Option<Json<ProjectRuntimeEnvironmentAnalysisRequest>>,
 ) -> (StatusCode, Json<Value>) {
     let project = match ensure_owned_project(&id, &auth).await {
         Ok(project) => project,
@@ -120,6 +127,9 @@ pub(super) async fn analyze_project_runtime_environment(
         cfg.project_service_base_url.as_str(),
         access_token.as_str(),
         project.id.as_str(),
+        &project_management_api_client::AnalyzeProjectRuntimeEnvironmentRequest {
+            analysis_requirement: request.and_then(|Json(request)| request.analysis_requirement),
+        },
     )
     .await
     {

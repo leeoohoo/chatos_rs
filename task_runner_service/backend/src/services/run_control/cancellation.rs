@@ -3,6 +3,9 @@
 
 use super::*;
 use crate::auth::CurrentUser;
+use crate::services::task_manager_lifecycle::{
+    append_task_session_finalized_event, finalize_task_session_entries,
+};
 
 impl RunService {
     pub async fn cancel_run(&self, run_id: &str) -> Result<Option<TaskRunRecord>, String> {
@@ -83,6 +86,14 @@ impl RunService {
                 task_record.updated_at = now_rfc3339();
                 self.store.save_task(task_record).await?;
             }
+            let summary = finalize_task_session_entries(
+                &self.store,
+                run.task_id.as_str(),
+                run.id.as_str(),
+                run.status,
+            )
+            .await?;
+            append_task_session_finalized_event(&self.store, &run, &summary).await;
             self.try_send_terminal_callback(run.task_id.as_str(), &run)
                 .await;
         }
@@ -90,7 +101,16 @@ impl RunService {
     }
 
     pub async fn retry_run(&self, run_id: &str) -> Result<Option<TaskRunRecord>, String> {
-        self.retry_run_with_user(run_id, None).await
+        self.retry_run_with_user(run_id, None, None).await
+    }
+
+    pub async fn retry_run_with_instruction(
+        &self,
+        run_id: &str,
+        retry_instruction: Option<String>,
+    ) -> Result<Option<TaskRunRecord>, String> {
+        self.retry_run_with_user(run_id, None, retry_instruction)
+            .await
     }
 
     pub async fn retry_run_for_user(
@@ -98,13 +118,25 @@ impl RunService {
         run_id: &str,
         current_user: &CurrentUser,
     ) -> Result<Option<TaskRunRecord>, String> {
-        self.retry_run_with_user(run_id, Some(current_user)).await
+        self.retry_run_with_user(run_id, Some(current_user), None)
+            .await
+    }
+
+    pub async fn retry_run_for_user_with_instruction(
+        &self,
+        run_id: &str,
+        current_user: &CurrentUser,
+        retry_instruction: Option<String>,
+    ) -> Result<Option<TaskRunRecord>, String> {
+        self.retry_run_with_user(run_id, Some(current_user), retry_instruction)
+            .await
     }
 
     async fn retry_run_with_user(
         &self,
         run_id: &str,
         current_user: Option<&CurrentUser>,
+        retry_instruction: Option<String>,
     ) -> Result<Option<TaskRunRecord>, String> {
         let Some(run) = self.store.get_run(run_id).await? else {
             return Ok(None);
@@ -118,21 +150,27 @@ impl RunService {
             .get("prompt_override")
             .and_then(Value::as_str)
             .map(ToOwned::to_owned);
-        let request = retry_request_with_current_task_config(prompt_override);
+        let request = retry_request_with_current_task_config(prompt_override, retry_instruction);
         let restarted = self
-            .start_retry_run_with_user(&run.task_id, request, current_user)
+            .start_retry_run_with_user(&run.task_id, request, run.id.as_str(), current_user)
             .await?;
         Ok(Some(restarted))
     }
 }
 
-fn retry_request_with_current_task_config(prompt_override: Option<String>) -> StartTaskRunRequest {
+fn retry_request_with_current_task_config(
+    prompt_override: Option<String>,
+    retry_instruction: Option<String>,
+) -> StartTaskRunRequest {
     StartTaskRunRequest {
         // A retry is explicitly described in the UI as using the task's current
         // configuration. Leaving this unset lets start_run_with_trigger resolve
         // the latest task default instead of pinning the failed run's old model.
         model_config_id: None,
         prompt_override,
+        retry_instruction: retry_instruction
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty()),
     }
 }
 
@@ -142,9 +180,16 @@ mod tests {
 
     #[test]
     fn retry_uses_current_task_model_configuration() {
-        let request = retry_request_with_current_task_config(Some("keep prompt".to_string()));
+        let request = retry_request_with_current_task_config(
+            Some("keep prompt".to_string()),
+            Some("  use the repaired configuration  ".to_string()),
+        );
 
         assert_eq!(request.model_config_id, None);
         assert_eq!(request.prompt_override.as_deref(), Some("keep prompt"));
+        assert_eq!(
+            request.retry_instruction.as_deref(),
+            Some("use the repaired configuration")
+        );
     }
 }

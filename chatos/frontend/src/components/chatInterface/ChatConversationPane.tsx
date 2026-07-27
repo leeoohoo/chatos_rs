@@ -54,7 +54,7 @@ interface ChatConversationPaneProps {
   runtimeContextOpen?: boolean;
   runtimeContextSessionId?: string | null;
   onToggleSessionSummary?: (sessionId: string) => void;
-  onOpenSessionRuntimeContext?: (sessionId: string) => void;
+  onOpenSessionRuntimeContext?: (sessionId: string, turnId?: string | null) => void;
   toggleSidebar: () => void;
   onSend: SendMessageHandler;
   onStop: () => void | Promise<void>;
@@ -313,6 +313,9 @@ const ChatConversationPane: React.FC<ChatConversationPaneProps> = ({
           onOpenRuntimeContext={onOpenSessionRuntimeContext && currentSession?.id ? () => {
             onOpenSessionRuntimeContext(currentSession.id);
           } : undefined}
+          onOpenTurnRuntimeContext={onOpenSessionRuntimeContext && currentSession?.id ? (item) => {
+            onOpenSessionRuntimeContext(currentSession.id, item.turnId);
+          } : undefined}
           reviewRepairRunning={reviewRepairRunning}
           reviewRepairPendingCount={reviewRepairPendingCount}
           reviewRepairDisabled={reviewRepairDisabled}
@@ -360,6 +363,7 @@ const ChatConversationPane: React.FC<ChatConversationPaneProps> = ({
               projectId={askUserPromptProjectId}
             />
             <ChatComposerPanel
+              conversationId={currentSession.id}
               onSend={onSend}
               onStop={onStop}
               isRunning={isLoading || isStreaming}

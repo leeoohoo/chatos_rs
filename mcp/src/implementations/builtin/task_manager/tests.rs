@@ -83,11 +83,20 @@ impl TaskManagerStore for NoopTaskStore {
 }
 
 fn test_service(auto_create_task: bool) -> TaskManagerService {
+    test_service_with_lifecycle(auto_create_task, false)
+}
+
+fn test_service_with_lifecycle(
+    auto_create_task: bool,
+    lifecycle_tools_enabled: bool,
+) -> TaskManagerService {
     TaskManagerService::new(TaskManagerOptions {
         server_name: "task_manager".to_string(),
         review_timeout_ms: 120_000,
         auto_create_task,
         expose_context_ids: true,
+        default_current_turn_only: false,
+        lifecycle_tools_enabled,
         store: TaskManagerStoreRef::new(Arc::new(NoopTaskStore)),
     })
     .expect("task manager service should initialize")
@@ -132,6 +141,22 @@ fn parse_task_drafts_supports_optional_prerequisite_ids() {
 }
 
 #[test]
+fn parse_task_drafts_defaults_to_run_checklist_and_detaches_durable_followups() {
+    let run_checklist = parse_task_drafts(&json!({ "title": "verify output" }))
+        .expect("default task payload should parse");
+    assert_eq!(run_checklist[0].scope, "run_checklist");
+    assert!(run_checklist[0].required_for_parent_completion);
+
+    let durable = parse_task_drafts(&json!({
+        "title": "future cleanup",
+        "scope": "durable_followup"
+    }))
+    .expect("durable task payload should parse");
+    assert_eq!(durable[0].scope, "durable_followup");
+    assert!(!durable[0].required_for_parent_completion);
+}
+
+#[test]
 fn add_task_schema_is_strict_and_compatible() {
     let add_task_tool = test_service(false)
         .list_tools()
@@ -160,6 +185,9 @@ fn add_task_schema_is_strict_and_compatible() {
         root_properties.contains_key("prerequisite_task_id"),
         "add_task schema should expose optional prerequisite_task_id"
     );
+    assert!(root_properties.contains_key("scope"));
+    assert!(root_properties.contains_key("required_for_parent_completion"));
+    assert!(root_properties.contains_key("idempotency_key"));
     assert!(
         !root_properties.contains_key("prerequisite_task_ids"),
         "add_task schema should not expose plural prerequisite ids"
@@ -225,6 +253,77 @@ fn task_manager_tools_include_mutations() {
     assert!(tool_names.contains(&"update_task"));
     assert!(tool_names.contains(&"complete_task"));
     assert!(tool_names.contains(&"delete_task"));
+    assert!(!tool_names.contains(&"reconcile_tasks"));
+    assert!(!tool_names.contains(&"finalize_session"));
+}
+
+#[test]
+fn task_manager_lifecycle_tools_are_exposed_only_when_enabled() {
+    let tools = test_service_with_lifecycle(true, true).list_tools();
+    let tool_names: Vec<&str> = tools
+        .iter()
+        .filter_map(|tool| tool.get("name").and_then(Value::as_str))
+        .collect();
+
+    assert!(tool_names.contains(&"reconcile_tasks"));
+    assert!(tool_names.contains(&"finalize_session"));
+}
+
+#[test]
+fn auto_create_result_advertises_run_lifecycle_only_when_host_supports_it() {
+    let without_lifecycle = test_service_with_lifecycle(true, false)
+        .call_tool(
+            "add_task",
+            json!({ "title": "plain host task" }),
+            Some("conversation-1"),
+            Some("turn-1"),
+            None,
+        )
+        .expect("plain host add task");
+    let without_payload = without_lifecycle
+        .get("_structured_result")
+        .expect("plain host payload");
+    assert_eq!(
+        without_payload
+            .get("run_scoped_lifecycle")
+            .and_then(Value::as_bool),
+        Some(false)
+    );
+    assert_eq!(
+        without_payload
+            .get("closure_required")
+            .and_then(Value::as_bool),
+        Some(false)
+    );
+
+    let with_lifecycle = test_service_with_lifecycle(true, true)
+        .call_tool(
+            "add_task",
+            json!({ "title": "run checklist" }),
+            Some("conversation-1"),
+            Some("turn-1"),
+            None,
+        )
+        .expect("lifecycle host add task");
+    let with_payload = with_lifecycle
+        .get("_structured_result")
+        .expect("lifecycle host payload");
+    assert_eq!(
+        with_payload
+            .get("run_scoped_lifecycle")
+            .and_then(Value::as_bool),
+        Some(true)
+    );
+    assert_eq!(
+        with_payload
+            .get("closure_required")
+            .and_then(Value::as_bool),
+        Some(true)
+    );
+    assert!(with_payload
+        .get("lifecycle_notice")
+        .and_then(Value::as_str)
+        .is_some_and(|notice| notice.contains("blocked_terminal")));
 }
 
 #[test]
@@ -249,6 +348,8 @@ fn task_manager_can_hide_context_ids_from_tool_results() {
         review_timeout_ms: 120_000,
         auto_create_task: true,
         expose_context_ids: false,
+        default_current_turn_only: true,
+        lifecycle_tools_enabled: false,
         store: TaskManagerStoreRef::new(Arc::new(NoopTaskStore)),
     })
     .expect("task manager service should initialize");
@@ -293,7 +394,7 @@ fn update_task_schema_changes_is_string() {
 }
 
 #[test]
-fn add_task_description_mentions_confirmation_behavior() {
+fn add_task_description_reflects_host_persistence_behavior() {
     let manual_description = test_service(false)
         .list_tools()
         .into_iter()

@@ -11,6 +11,11 @@ const requestedHeaders = (fetchMock: ReturnType<typeof vi.fn>): Headers => {
   return new Headers(options?.headers);
 };
 
+const requestedJsonBody = (fetchMock: ReturnType<typeof vi.fn>): Record<string, unknown> => {
+  const options = fetchMock.mock.calls[0]?.[1] as RequestInit | undefined;
+  return JSON.parse(String(options?.body || '{}')) as Record<string, unknown>;
+};
+
 const enableDesktopBridge = (): void => {
   vi.stubGlobal('window', {
     chatosLocalRuntime: { apiRequest: vi.fn() },
@@ -44,6 +49,50 @@ describe('direct API transport surface header', () => {
     expect(requestedHeaders(fetchMock).has('X-Chatos-Client-Surface')).toBe(false);
     expect(requestedHeaders(fetchMock).get('X-Requested-With'))
       .toBe('local-connector-desktop');
+  });
+
+  it('forwards the exact user Plugin selection with the cloud chat command', async () => {
+    enableDesktopBridge();
+    const fetchMock = vi.fn().mockResolvedValue(new Response(
+      JSON.stringify({ accepted: true }),
+      { status: 200 },
+    ));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await sendChatCommand(
+      {
+        baseUrl: 'https://api.example.com/api',
+        accessToken: 'token-1',
+        applyRefreshedAccessToken: vi.fn(),
+      },
+      'conversation-1',
+      'browse the site',
+      { id: 'model-1', model_name: 'gpt-test', provider: 'openai' },
+      'user-1',
+      [],
+      false,
+      {
+        pluginDeviceId: 'device-1',
+        pluginWorkspaceId: 'workspace-1',
+        selectedPluginIds: ['plugin-browser'],
+        pluginCommandInvocations: [{
+          plugin_id: 'plugin-browser',
+          command_id: 'inspect',
+          arguments: 'https://example.com',
+        }],
+      },
+    );
+
+    expect(requestedJsonBody(fetchMock)).toMatchObject({
+      plugin_device_id: 'device-1',
+      plugin_workspace_id: 'workspace-1',
+      selected_plugin_ids: ['plugin-browser'],
+      plugin_command_invocations: [{
+        plugin_id: 'plugin-browser',
+        command_id: 'inspect',
+        arguments: 'https://example.com',
+      }],
+    });
   });
 
   it('marks cloud file downloads from the desktop client', async () => {

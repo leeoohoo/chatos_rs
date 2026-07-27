@@ -10,8 +10,8 @@ use crate::terminal::controller::kill_local_terminal_sessions_for_task_run;
 use crate::{tracing_stdout, LocalRuntime};
 
 use super::execution::{
-    execute_local_task_run, persist_task_run_receipt, set_requirement_status, set_work_item_status,
-    user_visible_task_run_failure_receipt,
+    execute_local_task_run, finalize_task_manager_session, persist_task_run_receipt,
+    set_requirement_status, set_work_item_status, user_visible_task_run_failure_receipt,
 };
 
 pub(crate) async fn run_local_task_worker_loop(runtime: LocalRuntime) {
@@ -45,6 +45,7 @@ pub(crate) async fn run_local_task_worker_loop(runtime: LocalRuntime) {
                 ));
                 if let Err(error) = execute_local_task_run(&runtime, &run, abort).await {
                     if let Ok(database) = runtime.local_database() {
+                        let _ = finalize_task_manager_session(database, &run, "failed").await;
                         let _ = persist_task_run_receipt(
                             database,
                             &run,

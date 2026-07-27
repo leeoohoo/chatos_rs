@@ -83,6 +83,23 @@ impl AppStore {
         }
     }
 
+    pub async fn set_queued_runs_dispatch_paused(
+        &self,
+        task_ids: &[String],
+        paused: bool,
+    ) -> Result<u64, String> {
+        match self {
+            Self::InMemory(store) => {
+                Ok(store.set_queued_runs_dispatch_paused(task_ids, paused) as u64)
+            }
+            Self::Mongo(store) => {
+                store
+                    .set_queued_runs_dispatch_paused(task_ids, paused)
+                    .await
+            }
+        }
+    }
+
     pub async fn renew_run_claim(
         &self,
         run_id: &str,
@@ -102,10 +119,18 @@ impl AppStore {
         }
     }
 
-    pub async fn fail_expired_run_claims(&self, now: &str) -> Result<Vec<TaskRunRecord>, String> {
+    pub async fn fail_expired_run_claims(
+        &self,
+        expired_before: &str,
+        failed_at: &str,
+    ) -> Result<Vec<TaskRunRecord>, String> {
         match self {
-            Self::InMemory(store) => Ok(store.fail_expired_run_claims(now)),
-            Self::Mongo(store) => store.fail_expired_run_claims(now).await,
+            Self::InMemory(store) => Ok(store.fail_expired_run_claims(expired_before, failed_at)),
+            Self::Mongo(store) => {
+                store
+                    .fail_expired_run_claims(expired_before, failed_at)
+                    .await
+            }
         }
     }
 
@@ -164,6 +189,20 @@ impl AppStore {
         match self.clone() {
             Self::InMemory(store) => store.clear_cancel_requested(run_id),
             Self::Mongo(store) => store.clear_cancel_requested(run_id),
+        }
+    }
+
+    pub fn signal_local_run_abort(&self, run_id: &str) {
+        match self {
+            Self::InMemory(store) => store.signal_local_run_abort(run_id),
+            Self::Mongo(store) => store.signal_local_run_abort(run_id),
+        }
+    }
+
+    pub fn clear_local_run_abort(&self, run_id: &str) {
+        match self {
+            Self::InMemory(store) => store.clear_local_run_abort(run_id),
+            Self::Mongo(store) => store.clear_local_run_abort(run_id),
         }
     }
 

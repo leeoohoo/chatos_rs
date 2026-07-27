@@ -138,7 +138,7 @@ impl InMemoryStore {
         let run_id = data
             .runs
             .values()
-            .filter(|run| run.status == TaskRunStatus::Queued)
+            .filter(|run| run.status == TaskRunStatus::Queued && !run.dispatch_paused)
             .min_by(|left, right| {
                 left.created_at
                     .cmp(&right.created_at)
@@ -156,6 +156,25 @@ impl InMemoryStore {
         }
         run.updated_at = now_rfc3339();
         Some(run.clone())
+    }
+
+    pub(in crate::store) fn set_queued_runs_dispatch_paused(
+        &self,
+        task_ids: &[String],
+        paused: bool,
+    ) -> usize {
+        let task_ids = task_ids.iter().map(String::as_str).collect::<BTreeSet<_>>();
+        let mut data = self.inner.write();
+        let mut updated = 0;
+        for run in data.runs.values_mut() {
+            if run.status != TaskRunStatus::Queued || !task_ids.contains(run.task_id.as_str()) {
+                continue;
+            }
+            run.dispatch_paused = paused;
+            run.updated_at = now_rfc3339();
+            updated += 1;
+        }
+        updated
     }
 
     pub(in crate::store) fn renew_run_claim(
@@ -180,7 +199,11 @@ impl InMemoryStore {
         true
     }
 
-    pub(in crate::store) fn fail_expired_run_claims(&self, now: &str) -> Vec<TaskRunRecord> {
+    pub(in crate::store) fn fail_expired_run_claims(
+        &self,
+        expired_before: &str,
+        failed_at: &str,
+    ) -> Vec<TaskRunRecord> {
         let mut data = self.inner.write();
         let mut failed_runs = Vec::new();
         for run in data.runs.values_mut() {
@@ -190,13 +213,13 @@ impl InMemoryStore {
             let expired = run
                 .claim_until
                 .as_deref()
-                .is_some_and(|claim_until| claim_until <= now);
+                .is_some_and(|claim_until| claim_until <= expired_before);
             if !expired {
                 continue;
             }
             run.status = TaskRunStatus::Failed;
-            run.finished_at = Some(now.to_string());
-            run.updated_at = now.to_string();
+            run.finished_at = Some(failed_at.to_string());
+            run.updated_at = failed_at.to_string();
             run.result_summary = Some("任务运行节点心跳过期，已标记为失败".to_string());
             run.error_message = Some("worker claim expired".to_string());
             run.cancel_requested = false;
@@ -269,6 +292,17 @@ impl InMemoryStore {
         }
     }
 
+    pub(in crate::store) fn signal_local_run_abort(&self, run_id: &str) {
+        self.inner
+            .write()
+            .cancel_requested_runs
+            .insert(run_id.to_string());
+    }
+
+    pub(in crate::store) fn clear_local_run_abort(&self, run_id: &str) {
+        self.inner.write().cancel_requested_runs.remove(run_id);
+    }
+
     pub(in crate::store) fn is_cancel_requested(&self, run_id: &str) -> bool {
         self.inner.read().cancel_requested_runs.contains(run_id)
     }
@@ -301,12 +335,14 @@ mod tests {
             started_at: None,
             finished_at: None,
             input_snapshot: serde_json::json!({}),
+            plugin_snapshots: Vec::new(),
             context_snapshot: None,
             result_summary: None,
             error_message: None,
             usage: None,
             report: None,
             cancel_requested: false,
+            dispatch_paused: false,
             summary_job_run_id: None,
             worker_id: None,
             claim_token: None,
@@ -348,6 +384,27 @@ mod tests {
     }
 
     #[test]
+    fn paused_queued_run_is_not_claimed_until_resumed() {
+        let store = test_store();
+        store.save_run(queued_run()).expect("save queued run");
+        assert_eq!(
+            store.set_queued_runs_dispatch_paused(&["task-1".to_string()], true),
+            1
+        );
+        assert!(store
+            .claim_next_queued_run("worker-1", "claim-1", "2999-01-01T00:00:00Z")
+            .is_none());
+
+        assert_eq!(
+            store.set_queued_runs_dispatch_paused(&["task-1".to_string()], false),
+            1
+        );
+        assert!(store
+            .claim_next_queued_run("worker-1", "claim-2", "2999-01-01T00:00:00Z")
+            .is_some());
+    }
+
+    #[test]
     fn stale_worker_cannot_save_after_claim_expires() {
         let store = test_store();
         store.save_run(queued_run()).expect("save queued run");
@@ -355,9 +412,14 @@ mod tests {
             .claim_next_queued_run("worker-1", "claim-1", "2000-01-01T00:00:00Z")
             .expect("claim run");
 
-        let failed_runs = store.fail_expired_run_claims("2001-01-01T00:00:00Z");
+        let failed_runs =
+            store.fail_expired_run_claims("2001-01-01T00:00:00Z", "2001-01-01T00:01:00Z");
         assert_eq!(failed_runs.len(), 1);
         assert_eq!(failed_runs[0].id, "run-1");
+        assert_eq!(
+            failed_runs[0].finished_at.as_deref(),
+            Some("2001-01-01T00:01:00Z")
+        );
         stale.status = TaskRunStatus::Succeeded;
         stale.finished_at = Some(now_rfc3339());
         stale.updated_at = now_rfc3339();
@@ -370,5 +432,35 @@ mod tests {
             persisted.error_message.as_deref(),
             Some("worker claim expired")
         );
+    }
+
+    #[test]
+    fn claim_is_not_failed_before_expiry_cutoff() {
+        let store = test_store();
+        store.save_run(queued_run()).expect("save queued run");
+        store
+            .claim_next_queued_run("worker-1", "claim-1", "2001-01-01T00:00:00Z")
+            .expect("claim run");
+
+        assert!(store
+            .fail_expired_run_claims("2000-12-31T23:59:59Z", "2001-01-01T00:01:00Z",)
+            .is_empty());
+        assert_eq!(
+            store.get_run("run-1").expect("persisted run").status,
+            TaskRunStatus::Running
+        );
+    }
+
+    #[test]
+    fn local_abort_signal_does_not_mutate_persisted_cancel_flag() {
+        let store = test_store();
+        store.save_run(queued_run()).expect("save queued run");
+
+        store.signal_local_run_abort("run-1");
+        assert!(store.is_cancel_requested("run-1"));
+        assert!(!store.get_run("run-1").expect("run").cancel_requested);
+
+        store.clear_local_run_abort("run-1");
+        assert!(!store.is_cancel_requested("run-1"));
     }
 }

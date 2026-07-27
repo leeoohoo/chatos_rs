@@ -8,8 +8,9 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::sync::{broadcast, mpsc, oneshot, Mutex};
+use uuid::Uuid;
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RelayRequest {
     #[serde(rename = "type")]
     pub message_type: String,
@@ -21,6 +22,50 @@ pub struct RelayRequest {
     pub path: String,
     pub headers: BTreeMap<String, String>,
     pub body: Value,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PluginArtifactRelayAction {
+    List,
+    Read,
+    Create,
+    Update,
+}
+
+impl PluginArtifactRelayAction {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::List => "list",
+            Self::Read => "read",
+            Self::Create => "create",
+            Self::Update => "update",
+        }
+    }
+
+    pub const fn is_write(self) -> bool {
+        matches!(self, Self::Create | Self::Update)
+    }
+}
+
+pub fn plugin_artifact_relay_request(
+    owner_user_id: impl Into<String>,
+    device_id: impl Into<String>,
+    workspace_id: impl Into<String>,
+    action: PluginArtifactRelayAction,
+    body: Value,
+) -> RelayRequest {
+    let action = action.as_str();
+    RelayRequest {
+        message_type: format!("plugin_artifact_{action}_request"),
+        request_id: Uuid::new_v4().to_string(),
+        owner_user_id: owner_user_id.into(),
+        device_id: device_id.into(),
+        workspace_id: workspace_id.into(),
+        method: "POST".to_string(),
+        path: format!("/plugins/artifacts/{action}"),
+        headers: BTreeMap::new(),
+        body,
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -260,6 +305,14 @@ impl ConnectorRelay {
                 | "terminal_response"
                 | "terminal_session_create_response"
                 | "terminal_close_response"
+                | "plugin_prepare_response"
+                | "plugin_execute_response"
+                | "plugin_cancel_response"
+                | "plugin_ui_asset_response"
+                | "plugin_artifact_list_response"
+                | "plugin_artifact_read_response"
+                | "plugin_artifact_create_response"
+                | "plugin_artifact_update_response"
                 | "relay_response"
         ) {
             return Ok(false);
@@ -346,4 +399,139 @@ impl RelayError {
 
 fn default_body() -> Value {
     Value::Null
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn plugin_response_completes_pending_relay_request() {
+        let relay = ConnectorRelay::default();
+        let (outbound, mut inbound) = mpsc::channel(1);
+        relay
+            .register_session(
+                "device-1".to_string(),
+                "owner-1".to_string(),
+                "session-1".to_string(),
+                outbound,
+            )
+            .await;
+        let dispatch_relay = relay.clone();
+        let dispatch = tokio::spawn(async move {
+            dispatch_relay
+                .dispatch(
+                    RelayRequest {
+                        message_type: "plugin_prepare_request".to_string(),
+                        request_id: "request-1".to_string(),
+                        owner_user_id: "owner-1".to_string(),
+                        device_id: "device-1".to_string(),
+                        workspace_id: "workspace-1".to_string(),
+                        method: "POST".to_string(),
+                        path: "/plugins/prepare".to_string(),
+                        headers: BTreeMap::new(),
+                        body: serde_json::json!({"plugin_id":"plugin-browser"}),
+                    },
+                    Duration::from_secs(1),
+                )
+                .await
+        });
+        let outbound = inbound.recv().await.expect("Plugin relay request");
+        assert!(outbound.contains("plugin_prepare_request"));
+        assert!(relay
+            .handle_inbound_text(
+                r#"{"type":"plugin_prepare_response","request_id":"request-1","status":200,"body":{"adapter_session_id":"adapter-1"}}"#,
+            )
+            .await
+            .expect("Plugin relay response"));
+
+        let response = dispatch.await.expect("dispatch task").expect("response");
+        assert_eq!(response.status, 200);
+        assert_eq!(
+            response.body["adapter_session_id"].as_str(),
+            Some("adapter-1")
+        );
+
+        let asset_relay = relay.clone();
+        let asset_dispatch = tokio::spawn(async move {
+            asset_relay
+                .dispatch(
+                    RelayRequest {
+                        message_type: "plugin_ui_asset_request".to_string(),
+                        request_id: "request-2".to_string(),
+                        owner_user_id: "owner-1".to_string(),
+                        device_id: "device-1".to_string(),
+                        workspace_id: String::new(),
+                        method: "POST".to_string(),
+                        path: "/plugins/ui/assets".to_string(),
+                        headers: BTreeMap::new(),
+                        body: serde_json::json!({"relative_path":"./ui/index.html"}),
+                    },
+                    Duration::from_secs(1),
+                )
+                .await
+        });
+        let outbound = inbound.recv().await.expect("Plugin UI asset relay request");
+        assert!(outbound.contains("plugin_ui_asset_request"));
+        assert!(relay
+            .handle_inbound_text(
+                r#"{"type":"plugin_ui_asset_response","request_id":"request-2","status":200,"body":{"kind":"entrypoint","body_base64":"PGh0bWw+"}}"#,
+            )
+            .await
+            .expect("Plugin UI asset relay response"));
+        let response = asset_dispatch
+            .await
+            .expect("asset dispatch task")
+            .expect("asset response");
+        assert_eq!(response.status, 200);
+        assert_eq!(response.body["kind"].as_str(), Some("entrypoint"));
+
+        for (index, action) in ["list", "read", "create", "update"].into_iter().enumerate() {
+            let request_id = format!("artifact-request-{index}");
+            let request_type = format!("plugin_artifact_{action}_request");
+            let response_type = format!("plugin_artifact_{action}_response");
+            let artifact_relay = relay.clone();
+            let dispatch_request_id = request_id.clone();
+            let dispatch_request_type = request_type.clone();
+            let dispatch = tokio::spawn(async move {
+                artifact_relay
+                    .dispatch(
+                        RelayRequest {
+                            message_type: dispatch_request_type,
+                            request_id: dispatch_request_id,
+                            owner_user_id: "owner-1".to_string(),
+                            device_id: "device-1".to_string(),
+                            workspace_id: "workspace-1".to_string(),
+                            method: "POST".to_string(),
+                            path: format!("/plugins/artifacts/{action}"),
+                            headers: BTreeMap::new(),
+                            body: serde_json::json!({"access":{"run_id":"run-1"}}),
+                        },
+                        Duration::from_secs(1),
+                    )
+                    .await
+            });
+            let outbound = inbound.recv().await.expect("Plugin Artifact relay request");
+            assert!(outbound.contains(request_type.as_str()));
+            assert!(relay
+                .handle_inbound_text(
+                    serde_json::json!({
+                        "type": response_type,
+                        "request_id": request_id,
+                        "status": 200,
+                        "body": {"action": action},
+                    })
+                    .to_string()
+                    .as_str(),
+                )
+                .await
+                .expect("Plugin Artifact relay response"));
+            let response = dispatch
+                .await
+                .expect("Artifact dispatch task")
+                .expect("Artifact response");
+            assert_eq!(response.status, 200);
+            assert_eq!(response.body["action"].as_str(), Some(action));
+        }
+    }
 }

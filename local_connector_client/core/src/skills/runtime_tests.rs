@@ -95,6 +95,7 @@ fn resolved_skill(inventory: &crate::skills::LocalSkillInventoryItem) -> Resolve
                 ..SkillContent::default()
             },
             metadata: ResourceMetadata::default(),
+            plugin_component: Default::default(),
             created_by: "system".to_string(),
             updated_by: "system".to_string(),
             created_at: "now".to_string(),
@@ -111,6 +112,7 @@ fn resolved_skill(inventory: &crate::skills::LocalSkillInventoryItem) -> Resolve
             required: false,
             priority: 0,
             conditions: BindingConditions::default(),
+            component_allowlist: Vec::new(),
             created_by: "system".to_string(),
             updated_by: "system".to_string(),
             created_at: "now".to_string(),

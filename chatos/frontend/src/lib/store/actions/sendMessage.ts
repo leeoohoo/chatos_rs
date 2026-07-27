@@ -1,8 +1,12 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-import type { Message } from '../../../types';
-import type { SendMessageRuntimeOptions } from '../../../types';
+import type {
+  Message,
+  PluginAgentSelectionPayload,
+  PluginCommandInvocationPayload,
+  SendMessageRuntimeOptions,
+} from '../../../types';
 import type ApiClient from '../../api/client';
 import type { SessionRuntimeSettingsResponse } from '../../api/client/types';
 import {
@@ -59,6 +63,8 @@ import { rollbackFailedSendMessage } from './sendMessage/streamExecution';
 
 const REALTIME_STREAM_CONNECT_GRACE_MS = 2200;
 const REALTIME_TOPIC_SUBSCRIBE_GRACE_MS = 5000;
+const MAX_PLUGIN_COMMAND_INVOCATIONS = 64;
+const MAX_PLUGIN_COMMAND_ARGUMENT_BYTES = 16 * 1024;
 
 const mergeMessageByIdAndTime = (messages: Message[] = [], nextMessage: Message): Message[] => {
   const next = [...messages.filter((message) => message.id !== nextMessage.id), nextMessage];
@@ -96,6 +102,84 @@ const normalizeRuntimeText = (value: unknown): string | null => {
   }
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : null;
+};
+
+const normalizeRuntimeIds = (value: unknown): string[] => {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  const seen = new Set<string>();
+  return value.flatMap((item) => {
+    const normalized = normalizeRuntimeText(item);
+    if (!normalized || seen.has(normalized)) {
+      return [];
+    }
+    seen.add(normalized);
+    return [normalized];
+  });
+};
+
+const normalizePluginCommandInvocations = (
+  value: unknown,
+): PluginCommandInvocationPayload[] => {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  const seen = new Set<string>();
+  const normalized: PluginCommandInvocationPayload[] = [];
+  for (const item of value) {
+    if (!item || typeof item !== 'object') {
+      continue;
+    }
+    const record = item as Partial<PluginCommandInvocationPayload>;
+    const pluginId = normalizeRuntimeText(record.plugin_id);
+    const commandId = normalizeRuntimeText(record.command_id);
+    if (!pluginId || !commandId) {
+      continue;
+    }
+    const key = `${pluginId}\u0000${commandId}`;
+    if (seen.has(key)) {
+      continue;
+    }
+    const argumentsText = typeof record.arguments === 'string'
+      ? record.arguments.trim()
+      : '';
+    if (
+      argumentsText.includes('\0')
+      || new TextEncoder().encode(argumentsText).length > MAX_PLUGIN_COMMAND_ARGUMENT_BYTES
+    ) {
+      continue;
+    }
+    seen.add(key);
+    normalized.push({
+      plugin_id: pluginId,
+      command_id: commandId,
+      arguments: argumentsText || null,
+    });
+    if (normalized.length >= MAX_PLUGIN_COMMAND_INVOCATIONS) {
+      break;
+    }
+  }
+  return normalized;
+};
+
+const normalizePluginAgentSelectionPayload = (
+  value: unknown,
+  selectedPluginIds: string[],
+): PluginAgentSelectionPayload | null => {
+  if (!value || typeof value !== 'object') {
+    return null;
+  }
+  const record = value as Partial<PluginAgentSelectionPayload>;
+  const pluginId = normalizeRuntimeText(record.plugin_id);
+  const agentId = normalizeRuntimeText(record.agent_id);
+  if (!pluginId || !agentId || !selectedPluginIds.includes(pluginId)) {
+    return null;
+  }
+  return {
+    plugin_id: pluginId,
+    agent_id: agentId,
+  };
 };
 
 const attachmentTypeForFile = (file: File): ApiAttachmentPayload['type'] => {
@@ -434,6 +518,15 @@ export function createSendMessageHandler({
             },
           );
 
+      const normalizedPluginCommandInvocations = normalizePluginCommandInvocations(
+        runtimeOptions.pluginCommandInvocations,
+      );
+      const normalizedSelectedPluginIds = normalizeRuntimeIds(runtimeOptions.selectedPluginIds);
+      const normalizedPluginAgentSelection = normalizePluginAgentSelectionPayload(
+        runtimeOptions.pluginAgentSelection,
+        normalizedSelectedPluginIds,
+      );
+
       // 创建用户消息（仅前端展示，不立即保存数据库）
       const userMessageTime = new Date();
       const userMessage: Message = createDraftUserMessage({
@@ -442,6 +535,13 @@ export function createSendMessageHandler({
         conversationTurnId,
         selectedModel: selectedModelForRequest,
         previewAttachments,
+        pluginCommandInvocations: normalizedPluginCommandInvocations.map((invocation) => ({
+          plugin_id: invocation.plugin_id,
+          command_id: invocation.command_id,
+          arguments_present: Boolean(invocation.arguments),
+          arguments_sha256: null,
+        })),
+        pluginAgentSelection: normalizedPluginAgentSelection,
         createdAt: userMessageTime,
       });
       const turnProcessKey = conversationTurnId || userMessage.id;
@@ -482,6 +582,11 @@ export function createSendMessageHandler({
         projectId: effectiveProjectId,
         projectRoot: effectiveExecutionRoot,
         workspaceRoot: effectiveWorkspaceRoot,
+        pluginDeviceId: normalizeRuntimeText(runtimeOptions.pluginDeviceId),
+        pluginWorkspaceId: normalizeRuntimeText(runtimeOptions.pluginWorkspaceId),
+        selectedPluginIds: normalizedSelectedPluginIds,
+        pluginCommandInvocations: normalizedPluginCommandInvocations,
+        pluginAgentSelection: normalizedPluginAgentSelection,
         planMode,
       });
       streamRuntimeOptions.systemPrompt = activeSystemContext?.content
@@ -544,6 +649,15 @@ export function createSendMessageHandler({
         project_id: streamRuntimeOptions.projectId || undefined,
         project_root: streamRuntimeOptions.projectRoot || undefined,
         workspace_root: streamRuntimeOptions.workspaceRoot || undefined,
+        plugin_device_id: streamRuntimeOptions.pluginDeviceId || undefined,
+        plugin_workspace_id: streamRuntimeOptions.pluginWorkspaceId || undefined,
+        selected_plugin_ids: streamRuntimeOptions.selectedPluginIds.length
+          ? streamRuntimeOptions.selectedPluginIds
+          : undefined,
+        plugin_command_invocations: streamRuntimeOptions.pluginCommandInvocations.length
+          ? streamRuntimeOptions.pluginCommandInvocations
+          : undefined,
+        plugin_agent_selection: streamRuntimeOptions.pluginAgentSelection || undefined,
         plan_mode: streamRuntimeOptions.planMode,
         model_config_id: selectedModelForRequest.id,
         ai_model_config: {

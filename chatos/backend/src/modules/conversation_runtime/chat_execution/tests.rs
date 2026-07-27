@@ -7,6 +7,9 @@ use std::sync::{Arc, Mutex};
 use super::*;
 use crate::core::internal_context_locale::InternalContextLocale;
 use crate::core::mcp_runtime::empty_mcp_server_bundle;
+use crate::models::memory_runtime_types::{
+    TurnRuntimeSnapshotPluginAgentSelectionDto, TurnRuntimeSnapshotPluginCommandInvocationDto,
+};
 use crate::services::mcp_loader::McpHttpServer;
 
 fn lifecycle_hook_with_state(state: TaskTurnLifecycleState) -> ChatosRuntimeLifecycleHook {
@@ -76,10 +79,13 @@ fn runtime_context(
         contact_system_prompt: None,
         builtin_mcp_system_prompt: None,
         selected_commands_for_snapshot: Arc::new(Mutex::new(Vec::new())),
+        plugin_command_invocations_for_snapshot: Vec::new(),
+        plugin_agent_selection_for_snapshot: None,
         resolved_project_id: Some("project-1".to_string()),
         resolved_project_name: Some("Demo Project".to_string()),
         resolved_project_source_type: Some("local".to_string()),
         resolved_project_root: Some("C:/project/demo".to_string()),
+        local_project_workspace_root: Some("C:/project/demo".to_string()),
         default_remote_connection_id: None,
         workspace_root: Some("C:/project/demo".to_string()),
         mcp_enabled: true,
@@ -178,10 +184,23 @@ fn agent_instructions_apply_user_language_to_project_artifacts() {
 
 #[test]
 fn builds_shared_runtime_execution_contract_from_chat_context() {
+    let mut context = runtime_context(false);
+    context.plugin_command_invocations_for_snapshot =
+        vec![TurnRuntimeSnapshotPluginCommandInvocationDto {
+            plugin_id: "plugin-a".to_string(),
+            command_id: "review".to_string(),
+            arguments_present: true,
+            arguments_sha256: Some("a".repeat(64)),
+        }];
+    context.plugin_agent_selection_for_snapshot =
+        Some(TurnRuntimeSnapshotPluginAgentSelectionDto {
+            plugin_id: "plugin-a".to_string(),
+            agent_id: "reviewer".to_string(),
+        });
     let options = build_agent_chat_options(
         "session-1",
         &model_runtime(true),
-        &runtime_context(false),
+        &context,
         &json!({
             "MAX_ITERATIONS": 42,
             "TASK_FOLLOW_UP_MAX_ROUNDS": 4,
@@ -226,12 +245,40 @@ fn builds_shared_runtime_execution_contract_from_chat_context() {
             .and_then(|value| value["project_requirement_execution"]["requirement_title"].as_str()),
         Some("JDK 21 upgrade")
     );
+    assert_eq!(
+        options
+            .persisted_user_message_metadata
+            .as_ref()
+            .and_then(|value| { value["plugin_command_invocations"][0]["plugin_id"].as_str() }),
+        Some("plugin-a")
+    );
+    assert_eq!(
+        options
+            .persisted_user_message_metadata
+            .as_ref()
+            .and_then(|value| {
+                value["plugin_command_invocations"][0]["arguments_sha256"].as_str()
+            }),
+        Some("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+    );
+    assert!(options
+        .persisted_user_message_metadata
+        .as_ref()
+        .and_then(|value| value["plugin_command_invocations"][0].as_object())
+        .is_some_and(|value| !value.contains_key("arguments")));
+    assert_eq!(
+        options
+            .persisted_user_message_metadata
+            .as_ref()
+            .and_then(|value| value["plugin_agent_selection"]["agent_id"].as_str()),
+        Some("reviewer")
+    );
 }
 
 #[test]
 fn shared_runtime_record_contract_preserves_chatos_message_metadata() {
     let record_options =
-        build_chatos_record_options(TASK_RUNNER_ASYNC_PLAN_MESSAGE_MODE, "model-source");
+        build_chatos_record_options(TASK_RUNNER_ASYNC_PLAN_MESSAGE_MODE, "model-source", false);
     let user_record = build_chatos_user_record(
         "session-1",
         Some("turn-1".to_string()),
@@ -267,6 +314,29 @@ fn shared_runtime_record_contract_preserves_chatos_message_metadata() {
     );
     assert_eq!(user_record.message_source.as_deref(), Some("model-source"));
     assert_eq!(user_record.content, "hello");
+}
+
+#[test]
+fn hidden_planning_turn_hides_assistant_and_tool_records_until_confirmation() {
+    let record_options =
+        build_chatos_record_options(TASK_RUNNER_ASYNC_PLAN_MESSAGE_MODE, "model-source", true);
+
+    assert_eq!(
+        record_options
+            .assistant_metadata
+            .as_ref()
+            .and_then(|value| value.get("hidden"))
+            .and_then(Value::as_bool),
+        Some(true)
+    );
+    assert_eq!(
+        record_options
+            .tool_metadata
+            .as_ref()
+            .and_then(|value| value.get("hidden"))
+            .and_then(Value::as_bool),
+        Some(true)
+    );
 }
 
 #[test]

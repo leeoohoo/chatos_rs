@@ -84,6 +84,8 @@ pub(crate) struct WorkspaceProjectConfigTrust {
 pub(crate) struct LocalRuntimeSettings {
     #[serde(default)]
     pub(crate) developer_mode: bool,
+    #[serde(default)]
+    pub(crate) browser_full_cdp_access_enabled: bool,
     #[serde(default = "default_developer_cloud_base_url")]
     pub(crate) developer_cloud_base_url: String,
     #[serde(default = "default_developer_user_service_base_url")]
@@ -96,6 +98,7 @@ impl Default for LocalRuntimeSettings {
     fn default() -> Self {
         Self {
             developer_mode: false,
+            browser_full_cdp_access_enabled: false,
             developer_cloud_base_url: default_developer_cloud_base_url(),
             developer_user_service_base_url: default_developer_user_service_base_url(),
             developer_chatos_web_url: default_developer_chatos_web_url(),
@@ -223,6 +226,7 @@ mod tests {
     fn developer_mode_defaults_to_local_stack_endpoints() {
         let settings = LocalRuntimeSettings::default();
         assert!(!settings.developer_mode);
+        assert!(!settings.browser_full_cdp_access_enabled);
         assert_eq!(settings.developer_cloud_base_url, "http://127.0.0.1:39230");
         assert_eq!(settings.developer_chatos_web_url, "http://127.0.0.1:8088");
     }

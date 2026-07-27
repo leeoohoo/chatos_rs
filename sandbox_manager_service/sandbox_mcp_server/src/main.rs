@@ -7,6 +7,7 @@ mod command_sandbox;
 mod config;
 mod network_proxy;
 mod network_proxy_mitm;
+mod plugin_stdio_wrapper;
 mod quota;
 mod terminal_store;
 mod tools;
@@ -79,6 +80,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .await
             .map_err(std::io::Error::other)?;
         return Ok(());
+    }
+    if plugin_stdio_wrapper::is_internal_plugin_stdio_wrapper() {
+        let status = plugin_stdio_wrapper::run_internal_plugin_stdio_wrapper()
+            .await
+            .map_err(std::io::Error::other)?;
+        std::process::exit(status);
     }
     tracing_subscriber::fmt()
         .with_env_filter(

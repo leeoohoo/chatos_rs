@@ -2,7 +2,13 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 import React, { useEffect, useMemo, useState } from 'react';
-import { ClipboardList, FileText, RefreshCw } from 'lucide-react';
+import {
+  ClipboardList,
+  FileText,
+  LoaderCircle,
+  RefreshCw,
+  Square,
+} from 'lucide-react';
 
 import type {
   ProjectRequirementDocumentResponse,
@@ -99,16 +105,58 @@ export const PlanStatsBar: React.FC<{
 export const PlanBannerMessages: React.FC<{
   error: string | null;
   executionMessage: string | null;
-}> = ({ error, executionMessage }) => (
+  onOpenExecutionProcess?: () => void;
+  onStopActiveExecution?: () => void;
+  stoppingActiveExecution?: boolean;
+}> = ({
+  error,
+  executionMessage,
+  onOpenExecutionProcess,
+  onStopActiveExecution,
+  stoppingActiveExecution = false,
+}) => (
   <>
     {error ? (
-      <div className="border-b border-destructive/30 bg-destructive/10 px-4 py-2 text-sm text-destructive">
-        {error}
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-destructive/30 bg-destructive/10 px-4 py-2 text-sm text-destructive">
+        <span>{error}</span>
+        <div className="flex items-center gap-2">
+          {onOpenExecutionProcess ? (
+            <button
+              type="button"
+              className="rounded-md border border-destructive/30 bg-background px-2.5 py-1 text-xs font-medium text-destructive hover:bg-destructive/10"
+              onClick={onOpenExecutionProcess}
+            >
+              查看当前执行
+            </button>
+          ) : null}
+          {onStopActiveExecution ? (
+            <button
+              type="button"
+              className="inline-flex items-center gap-1.5 rounded-md bg-destructive px-2.5 py-1 text-xs font-medium text-destructive-foreground hover:bg-destructive/90 disabled:cursor-wait disabled:opacity-60"
+              disabled={stoppingActiveExecution}
+              onClick={onStopActiveExecution}
+            >
+              {stoppingActiveExecution
+                ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
+                : <Square className="h-3.5 w-3.5" />}
+              {stoppingActiveExecution ? '取消中' : '取消当前执行'}
+            </button>
+          ) : null}
+        </div>
       </div>
     ) : null}
     {executionMessage ? (
-      <div className="border-b border-emerald-200 bg-emerald-50 px-4 py-2 text-sm text-emerald-700 dark:border-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-300">
-        {executionMessage}
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-emerald-200 bg-emerald-50 px-4 py-2 text-sm text-emerald-700 dark:border-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-300">
+        <span>{executionMessage}</span>
+        {onOpenExecutionProcess ? (
+          <button
+            type="button"
+            className="rounded-md border border-emerald-300 bg-background px-2.5 py-1 text-xs font-medium text-emerald-700 hover:bg-emerald-100 dark:border-emerald-800 dark:text-emerald-200 dark:hover:bg-emerald-950/50"
+            onClick={onOpenExecutionProcess}
+          >
+            查看过程
+          </button>
+        ) : null}
       </div>
     ) : null}
   </>

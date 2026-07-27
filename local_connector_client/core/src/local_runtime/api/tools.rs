@@ -69,6 +69,7 @@ pub(super) async fn get_agent_tools(
         &settings,
         agent_key,
         false,
+        &[],
     )
     .await
     .map_err(|error| LocalRuntimeApiError::conflict("local_runtime_tools_unavailable", error))?;

@@ -35,6 +35,12 @@ pub(crate) struct CreateLocalConversationTaskInput {
     pub(crate) external_mcp_config_ids: Vec<String>,
     pub(crate) selected_skill_ids: Vec<String>,
     pub(crate) prerequisite_task_ids: Vec<String>,
+    pub(crate) project_work_item_id: Option<String>,
+    pub(crate) requirement_id: Option<String>,
+    pub(crate) execution_group_id: Option<String>,
+    pub(crate) execution_client_ref: Option<String>,
+    pub(crate) dependency_context_refs: Vec<String>,
+    pub(crate) defer_execution: bool,
 }
 
 #[derive(Debug, Clone, Serialize, FromRow)]
@@ -58,6 +64,7 @@ pub(crate) struct LocalTaskRunRecord {
     pub(crate) lease_expires_at: Option<String>,
     pub(crate) heartbeat_at: Option<String>,
     pub(crate) cancel_requested: bool,
+    pub(crate) dispatch_paused: bool,
     pub(crate) result_content: Option<String>,
     pub(crate) result_reasoning: Option<String>,
     pub(crate) tool_calls_json: Option<String>,

@@ -14,12 +14,25 @@ import {
   TASK_GRAPH_NODE_WIDTH,
   type TaskGraphLayoutPoint,
 } from './messageTaskGraphLayout';
-import { readString, readStringArray } from './utils';
+import { isRecord, readString, readStringArray } from './utils';
+
+export type TaskGraphDisplayMode = 'reduced' | 'full';
+
+export interface MessageTaskGraphDisplayNode extends MessageTaskRunnerGraphNode {
+  groupedTasks?: MessageTaskRunnerTask[];
+  projectTaskId?: string | null;
+}
+
+export interface MessageTaskGraphDisplay {
+  nodes: MessageTaskGraphDisplayNode[];
+  edges: MessageTaskRunnerGraphEdge[];
+}
 
 export interface TaskGraphNodeData extends Record<string, unknown> {
-  graphNode: MessageTaskRunnerGraphNode;
+  graphNode: MessageTaskGraphDisplayNode;
   currentSourceUserMessageId: string | null;
   isActive: boolean;
+  isFocusEmphasized: boolean;
   isDimmed: boolean;
   loadingProcessLog: boolean;
   loadingRun: boolean;
@@ -36,6 +49,9 @@ export type TaskGraphEdgeData = {
   stroke: string;
   animated: boolean;
   markerId: string;
+  kind: string;
+  focusAnimated: boolean;
+  dashArray?: string;
   layoutPoints?: TaskGraphLayoutPoint[];
 };
 export type TaskGraphFlowEdge = Edge<TaskGraphEdgeData>;
@@ -80,9 +96,200 @@ export const walkTaskIds = (
   return visited;
 };
 
+const projectTaskIdForTask = (task: MessageTaskRunnerTask): string | null => {
+  if (isRecord(task.input_payload)) {
+    const projectTaskId = readString(task.input_payload.project_task_id);
+    if (projectTaskId) {
+      return projectTaskId;
+    }
+  }
+  return readString(task.project_task_id);
+};
+
+const executionClientRefForTask = (task: MessageTaskRunnerTask): string | null => {
+  if (isRecord(task.input_payload)) {
+    const clientRef = readString(task.input_payload.execution_client_ref);
+    if (clientRef) {
+      return clientRef;
+    }
+  }
+  return readString(task.execution_client_ref);
+};
+
+const dependencyContextRefsForTask = (task: MessageTaskRunnerTask): string[] => {
+  if (isRecord(task.input_payload)) {
+    const refs = readStringArray(task.input_payload.dependency_context_refs);
+    if (refs.length > 0) {
+      return refs;
+    }
+  }
+  return readStringArray(task.dependency_context_refs);
+};
+
+const edgePathExistsWithout = (
+  origin: string,
+  target: string,
+  adjacency: Map<string, string[]>,
+  excludedKey: string,
+): boolean => {
+  const pending = [origin];
+  const visited = new Set<string>();
+  while (pending.length > 0) {
+    const current = pending.pop();
+    if (!current || visited.has(current)) {
+      continue;
+    }
+    visited.add(current);
+    for (const next of adjacency.get(current) || []) {
+      if (`${current}->${next}` === excludedKey) {
+        continue;
+      }
+      if (next === target) {
+        return true;
+      }
+      pending.push(next);
+    }
+  }
+  return false;
+};
+
+const transitiveReduceDisplayEdges = (
+  edges: MessageTaskRunnerGraphEdge[],
+): MessageTaskRunnerGraphEdge[] => {
+  const nodeIds = new Set<string>();
+  const indegree = new Map<string, number>();
+  const adjacency = new Map<string, string[]>();
+  edges.forEach(({ source, target }) => {
+    nodeIds.add(source);
+    nodeIds.add(target);
+    adjacency.set(source, [...(adjacency.get(source) || []), target]);
+    indegree.set(source, indegree.get(source) || 0);
+    indegree.set(target, (indegree.get(target) || 0) + 1);
+  });
+  const ready = Array.from(nodeIds).filter((nodeId) => (indegree.get(nodeId) || 0) === 0);
+  let visitedCount = 0;
+  while (ready.length > 0) {
+    const current = ready.pop();
+    if (!current) continue;
+    visitedCount += 1;
+    (adjacency.get(current) || []).forEach((next) => {
+      const nextIndegree = (indegree.get(next) || 0) - 1;
+      indegree.set(next, nextIndegree);
+      if (nextIndegree === 0) ready.push(next);
+    });
+  }
+  if (visitedCount !== nodeIds.size) {
+    return edges;
+  }
+  return edges.filter((edge) => !edgePathExistsWithout(
+    edge.source,
+    edge.target,
+    adjacency,
+    `${edge.source}->${edge.target}`,
+  ));
+};
+
+const aggregateGroupedStatus = (tasks: MessageTaskRunnerTask[]): string | null => {
+  const statuses = tasks
+    .map((task) => normalizeStatus(task.status))
+    .filter((status): status is string => Boolean(status));
+  const has = (...values: string[]) => statuses.some((status) => values.includes(status));
+  if (has('failed', 'error')) return 'failed';
+  if (has('running', 'processing', 'in_progress', 'doing')) return 'running';
+  if (has('blocked')) return 'blocked';
+  if (has('queued', 'ready', 'todo', 'pending')) return 'ready';
+  if (has('cancelled', 'canceled')) return 'cancelled';
+  if (statuses.length > 0 && statuses.every((status) => ['succeeded', 'success', 'completed', 'done'].includes(status))) {
+    return 'completed';
+  }
+  return statuses[0] || null;
+};
+
+const isReviewTitle = (title?: string | null): boolean => (
+  /(^|\b)review(\b|$)|复核|审查|验收/i.test(readString(title) || '')
+);
+
+const withRecomputedDepth = (graph: MessageTaskGraphDisplay): MessageTaskGraphDisplay => {
+  const depthById = new Map(graph.nodes.map((node) => [node.task.id, 0]));
+  for (let iteration = 0; iteration < graph.nodes.length; iteration += 1) {
+    let changed = false;
+    graph.edges.forEach(({ source, target }) => {
+      const targetDepth = depthById.get(target) ?? 0;
+      const sourceDepth = depthById.get(source) ?? 0;
+      if (targetDepth + 1 > sourceDepth) {
+        depthById.set(source, targetDepth + 1);
+        changed = true;
+      }
+    });
+    if (!changed) break;
+  }
+  return {
+    nodes: graph.nodes.map((node) => ({
+      ...node,
+      depth: depthById.get(node.task.id) ?? node.depth,
+    })),
+    edges: graph.edges,
+  };
+};
+
+const collapseProjectTaskStages = (graph: MessageTaskGraphDisplay): MessageTaskGraphDisplay => {
+  const groups = new Map<string, MessageTaskGraphDisplayNode[]>();
+  graph.nodes.forEach((node) => {
+    const projectTaskId = projectTaskIdForTask(node.task);
+    const key = projectTaskId ? `project:${projectTaskId}` : `task:${node.task.id}`;
+    groups.set(key, [...(groups.get(key) || []), node]);
+  });
+
+  const representativeByTaskId = new Map<string, string>();
+  const nodes = Array.from(groups.values()).map((group) => {
+    const representative = group.find((node) => !isReviewTitle(node.task.title)) || group[0];
+    const groupedTasks = group.map((node) => node.task);
+    group.forEach((node) => representativeByTaskId.set(node.task.id, representative.task.id));
+    const projectTaskId = projectTaskIdForTask(representative.task);
+    return {
+      ...representative,
+      is_current_message: group.some((node) => node.is_current_message),
+      is_root: group.some((node) => node.is_root),
+      projectTaskId,
+      groupedTasks,
+      task: {
+        ...representative.task,
+        status: aggregateGroupedStatus(groupedTasks),
+      },
+    };
+  });
+
+  const edgeByKey = new Map<string, MessageTaskRunnerGraphEdge>();
+  graph.edges.forEach((edge) => {
+    const source = representativeByTaskId.get(edge.source) || edge.source;
+    const target = representativeByTaskId.get(edge.target) || edge.target;
+    if (source === target) return;
+    const key = `${source}->${target}`;
+    if (!edgeByKey.has(key)) {
+      edgeByKey.set(key, { ...edge, id: key, source, target });
+    }
+  });
+  const edges = transitiveReduceDisplayEdges(Array.from(edgeByKey.values()));
+  const prerequisitesByTaskId = new Map<string, string[]>();
+  edges.forEach(({ source, target }) => {
+    prerequisitesByTaskId.set(target, [...(prerequisitesByTaskId.get(target) || []), source]);
+  });
+  return withRecomputedDepth({
+    nodes: nodes.map((node) => ({
+      ...node,
+      task: {
+        ...node.task,
+        prerequisite_task_ids: prerequisitesByTaskId.get(node.task.id) || [],
+      },
+    })),
+    edges,
+  });
+};
+
 export const normalizeMessageTaskGraphForDisplay = (
   graph: Pick<MessageTaskRunnerGraphResponse, 'nodes' | 'edges'>,
-): Pick<MessageTaskRunnerGraphResponse, 'nodes' | 'edges'> => {
+  mode: TaskGraphDisplayMode = 'reduced',
+): MessageTaskGraphDisplay => {
   const nodes = graph.nodes
     .filter((node) => readString(node.task?.id))
     .map((node) => ({ ...node }));
@@ -126,31 +333,25 @@ export const normalizeMessageTaskGraphForDisplay = (
     });
   }
 
-  const displayEdges = Array.from(edgeByKey.values());
-  const depthById = new Map(nodes.map((node) => [node.task.id, 0]));
-  for (let iteration = 0; iteration < nodes.length; iteration += 1) {
-    let changed = false;
-    displayEdges.forEach(({ source, target }) => {
-      const targetDepth = depthById.get(target) ?? 0;
-      const sourceDepth = depthById.get(source) ?? 0;
-      const nextSourceDepth = targetDepth + 1;
-      if (nextSourceDepth > sourceDepth) {
-        depthById.set(source, nextSourceDepth);
-        changed = true;
-      }
+  if (mode === 'full') {
+    const taskIdByClientRef = new Map<string, string>();
+    nodes.forEach((node) => {
+      const clientRef = executionClientRefForTask(node.task);
+      if (clientRef) taskIdByClientRef.set(clientRef, node.task.id);
     });
-    if (!changed) {
-      break;
-    }
+    nodes.forEach((node) => {
+      dependencyContextRefsForTask(node.task).forEach((contextRef) => {
+        addEdge(taskIdByClientRef.get(contextRef), node.task.id, 'context');
+      });
+    });
   }
 
-  return {
-    nodes: nodes.map((node) => ({
-      ...node,
-      depth: depthById.get(node.task.id) ?? node.depth,
-    })),
-    edges: displayEdges,
-  };
+  const displayEdges = Array.from(edgeByKey.values());
+  const normalized = withRecomputedDepth({
+    nodes,
+    edges: mode === 'reduced' ? transitiveReduceDisplayEdges(displayEdges) : displayEdges,
+  });
+  return mode === 'reduced' ? collapseProjectTaskStages(normalized) : normalized;
 };
 
 export const normalizeMessageTaskGraphEdgesForDisplay = (
@@ -165,10 +366,11 @@ export const getNodeDimensions = (node: TaskGraphFlowNode) => ({
 });
 
 export const buildFlowNodes = (
-  graphNodes: MessageTaskRunnerGraphResponse['nodes'],
+  graphNodes: MessageTaskGraphDisplayNode[],
   currentSourceUserMessageId: string | null,
   activeTaskId: string | null,
   relatedTaskIds: Set<string> | null,
+  focusTaskIds: Set<string> | null,
   loadingProcessTaskId: string | null,
   loadingRunId: string | null,
   loadingChangesRunId: string | null,
@@ -178,32 +380,36 @@ export const buildFlowNodes = (
   onOpenRun: (task: MessageTaskRunnerTask) => void | Promise<void>,
   onOpenChanges: (task: MessageTaskRunnerTask) => void | Promise<void>,
 ): TaskGraphFlowNode[] => (
-  graphNodes.map((graphNode) => ({
-    id: graphNode.task.id,
-    type: 'task',
-    position: { x: 0, y: 0 },
-    draggable: false,
-    selectable: false,
-    data: {
-      currentSourceUserMessageId,
-      graphNode,
-      isActive: activeTaskId === graphNode.task.id,
-      isDimmed: Boolean(activeTaskId && relatedTaskIds && !relatedTaskIds.has(graphNode.task.id)),
-      loadingProcessLog: graphNode.task.id === loadingProcessTaskId,
-      loadingRun: Boolean(graphNode.task.last_run_id && graphNode.task.last_run_id === loadingRunId),
-      loadingChanges: Boolean(graphNode.task.last_run_id && graphNode.task.last_run_id === loadingChangesRunId),
-      onSelectTask: (taskId) => onSelectTask(activeTaskId === taskId ? null : taskId),
-      onOpenDetail,
-      onOpenProcessLog,
-      onOpenRun,
-      onOpenChanges,
-    },
-    style: {
-      width: TASK_GRAPH_NODE_WIDTH,
-      height: TASK_GRAPH_NODE_HEIGHT,
-    },
-    zIndex: activeTaskId === graphNode.task.id ? 30 : graphNode.is_current_message ? 20 : 10,
-  }))
+  graphNodes.map((graphNode) => {
+    const groupedTasks = graphNode.groupedTasks?.length ? graphNode.groupedTasks : [graphNode.task];
+    return {
+      id: graphNode.task.id,
+      type: 'task',
+      position: { x: 0, y: 0 },
+      draggable: false,
+      selectable: false,
+      data: {
+        currentSourceUserMessageId,
+        graphNode,
+        isActive: activeTaskId === graphNode.task.id,
+        isFocusEmphasized: Boolean(focusTaskIds?.has(graphNode.task.id)),
+        isDimmed: Boolean(activeTaskId && relatedTaskIds && !relatedTaskIds.has(graphNode.task.id)),
+        loadingProcessLog: groupedTasks.some((task) => task.id === loadingProcessTaskId),
+        loadingRun: groupedTasks.some((task) => Boolean(task.last_run_id && task.last_run_id === loadingRunId)),
+        loadingChanges: groupedTasks.some((task) => Boolean(task.last_run_id && task.last_run_id === loadingChangesRunId)),
+        onSelectTask: (taskId) => onSelectTask(activeTaskId === taskId ? null : taskId),
+        onOpenDetail,
+        onOpenProcessLog,
+        onOpenRun,
+        onOpenChanges,
+      },
+      style: {
+        width: TASK_GRAPH_NODE_WIDTH,
+        height: TASK_GRAPH_NODE_HEIGHT,
+      },
+      zIndex: activeTaskId === graphNode.task.id ? 30 : graphNode.is_current_message ? 20 : 10,
+    };
+  })
 );
 
 export const buildFlowEdges = (
@@ -222,7 +428,10 @@ export const buildFlowEdges = (
     );
     const isRunningEdge = isRunningTask(nodeById.get(edge.source)?.task)
       || isRunningTask(nodeById.get(edge.target)?.task);
-    const stroke = isRunningEdge
+    const isContextEdge = edge.kind === 'context';
+    const stroke = isContextEdge
+      ? 'rgba(148, 163, 184, 0.62)'
+      : isRunningEdge
       ? 'rgba(59, 130, 246, 0.95)'
       : isActiveLink
         ? 'rgba(37, 99, 235, 0.78)'
@@ -240,8 +449,17 @@ export const buildFlowEdges = (
       zIndex: isActiveLink ? 20 : isHighlighted ? 16 : 12,
       data: {
         stroke,
-        animated: isRunningEdge,
-        markerId: isRunningEdge ? 'task-graph-arrow-running' : 'task-graph-arrow',
+        animated: !isContextEdge && isRunningEdge,
+        markerId: isContextEdge
+          ? 'task-graph-arrow-context'
+          : isActiveLink
+            ? 'task-graph-arrow-focus'
+          : isRunningEdge
+            ? 'task-graph-arrow-running'
+            : 'task-graph-arrow',
+        kind: edge.kind || 'prerequisite',
+        focusAnimated: isActiveLink,
+        dashArray: isContextEdge ? '7 7' : undefined,
       },
     };
   })

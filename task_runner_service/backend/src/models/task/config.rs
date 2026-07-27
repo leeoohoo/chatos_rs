@@ -39,6 +39,25 @@ pub enum TaskStatus {
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
+pub enum TaskManagerScope {
+    RunChecklist,
+    DurableFollowup,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum TaskClosureState {
+    Open,
+    Satisfied,
+    BlockedTerminal,
+    Cancelled,
+    Superseded,
+    Waived,
+    Orphaned,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
 #[derive(Default)]
 pub enum TaskProcessLogOperation {
     #[default]
@@ -210,6 +229,8 @@ pub struct TaskToolOutcomeItem {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct TaskToolState {
     #[serde(default)]
+    pub execution_paused: bool,
+    #[serde(default)]
     pub due_at: Option<String>,
     #[serde(default)]
     pub outcome_items: Vec<TaskToolOutcomeItem>,
@@ -241,4 +262,20 @@ pub struct TaskToolState {
     pub cancelled_because_task_id: Option<String>,
     #[serde(default)]
     pub cascade_root_task_id: Option<String>,
+    #[serde(default)]
+    pub manager_scope: Option<TaskManagerScope>,
+    #[serde(default)]
+    pub task_session_id: Option<String>,
+    #[serde(default)]
+    pub required_for_parent_completion: Option<bool>,
+    #[serde(default)]
+    pub closure_state: Option<TaskClosureState>,
+    #[serde(default)]
+    pub closure_reason: Option<String>,
+    #[serde(default)]
+    pub superseded_by_run_id: Option<String>,
+    #[serde(default)]
+    pub idempotency_key: Option<String>,
+    #[serde(default)]
+    pub lifecycle_updated_at: Option<String>,
 }

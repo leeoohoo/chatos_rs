@@ -11,14 +11,15 @@ use chatos_agent::{
 };
 use chatos_ai_runtime::{
     AiRuntimeOptions, AiTurnReport, MemoryRecordScope, MemoryScope, RuntimeCallbacks,
-    TaskMemoryRuntimeConfig, TaskRunReport, TaskRunSpec, TaskRuntime, TaskRuntimeConfig,
-    ToolResultModelBudgetLimits,
+    TaskFinalizationLifecycleHook, TaskMemoryRuntimeConfig, TaskRunReport, TaskRunSpec,
+    TaskRuntime, TaskRuntimeConfig, ToolResultModelBudgetLimits, DEFAULT_TASK_RUN_MAX_ITERATIONS,
 };
 use chatos_mcp_runtime::{
     builtin_servers_from_kinds, BuiltinMcpPromptLocale, BuiltinMcpServerOptions,
     McpExecutorBuilder, McpHttpServer, McpStdioServer,
 };
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 use tracing::{info, warn};
 
 use crate::models::{
@@ -28,6 +29,9 @@ use crate::models::{
 use crate::services::TaskRunnerCapabilityPolicy;
 
 use super::harness_run_git::{HarnessRunContext, HarnessRunOutputReport};
+use super::plugin_runtime_relay::{
+    cancel_prepared_plugin_sessions, dispatch_prepared_plugin_hooks, PreparedPluginSession,
+};
 use super::prerequisite_context::{
     attach_prerequisite_context_to_run, build_task_prompt, PrerequisiteTaskContext,
 };
@@ -46,7 +50,7 @@ use super::workspace_mcp::{
 };
 use super::{
     build_builtin_registry, summarized_report_content, unfinished_subtasks_error,
-    unfinished_subtasks_for_task, DisabledBuiltinProvider, RunService, TaskService,
+    DisabledBuiltinProvider, RunService, TaskService,
 };
 
 mod callbacks;
@@ -62,6 +66,7 @@ pub(in crate::services) struct PreparedModelExecution {
     sandbox_context: Option<crate::services::sandbox_runtime::SandboxRuntimeContext>,
     harness_run_context: Option<HarnessRunContext>,
     effective_workspace_dir: String,
+    plugin_sessions: Vec<PreparedPluginSession>,
 }
 
 impl RunService {
@@ -123,15 +128,97 @@ impl RunService {
 
         let sandbox_context = prepared_execution.sandbox_context.clone();
         let harness_run_context = prepared_execution.harness_run_context.clone();
+        let plugin_sessions = prepared_execution.plugin_sessions.clone();
         let finalized_workspace_dir = prepared_execution.effective_workspace_dir.clone();
-        let report = self
+        let mut report = self
             .execute_prepared_model_run(&task, &run, &model_config, prepared_execution)
             .await;
+        let hook_event = if report.status == chatos_ai_runtime::AiTurnStatus::Completed {
+            chatos_plugin_management_sdk::PluginHookEvent::RunCompleted
+        } else {
+            chatos_plugin_management_sdk::PluginHookEvent::RunFailed
+        };
+        let hook_outcome = dispatch_prepared_plugin_hooks(
+            plugin_sessions.as_slice(),
+            hook_event,
+            &chatos_plugin_management_sdk::PluginHookEventContext {
+                agent_key: Some(
+                    crate::models::task_runner_agent_key_for(
+                        task.task_profile.as_str(),
+                        task.mcp_config.requires_execution,
+                    )
+                    .as_str()
+                    .to_string(),
+                ),
+                outcome: Some(match report.status {
+                    chatos_ai_runtime::AiTurnStatus::Completed => {
+                        chatos_plugin_management_sdk::PluginHookOutcome::Succeeded
+                    }
+                    chatos_ai_runtime::AiTurnStatus::Failed => {
+                        chatos_plugin_management_sdk::PluginHookOutcome::Failed
+                    }
+                    chatos_ai_runtime::AiTurnStatus::Aborted => {
+                        chatos_plugin_management_sdk::PluginHookOutcome::Cancelled
+                    }
+                }),
+                summary_sha256: Some(hex::encode(Sha256::digest(
+                    report
+                        .error
+                        .as_deref()
+                        .or(report.content.as_deref())
+                        .unwrap_or_default()
+                        .as_bytes(),
+                ))),
+                ..chatos_plugin_management_sdk::PluginHookEventContext::default()
+            },
+        )
+        .await;
+        if hook_outcome.blocking_failure {
+            let message = if hook_outcome.errors.is_empty() {
+                format!(
+                    "Plugin Hook {} failed with fail_run policy",
+                    hook_event.as_str()
+                )
+            } else {
+                format!(
+                    "Plugin Hook {} dispatch failed: {}",
+                    hook_event.as_str(),
+                    hook_outcome.errors.join("; ")
+                )
+            };
+            self.store.append_run_event_sync(TaskRunEventRecord::new(
+                run.id.clone(),
+                "plugin_hook_blocked",
+                Some(message.clone()),
+                Some(json!({
+                    "event": hook_event,
+                    "blocking_failure": true,
+                })),
+            ));
+            report.status = chatos_ai_runtime::AiTurnStatus::Failed;
+            report.error = Some(match report.error.take() {
+                Some(error) => format!("{error}; {message}"),
+                None => message,
+            });
+        }
+        cancel_prepared_plugin_sessions(plugin_sessions.as_slice()).await;
         let sandbox_output = if let Some(context) = sandbox_context.as_ref() {
             self.release_sandbox(&run, context).await
         } else {
             None
         };
+        if !self.run_claim_is_current(&run).await {
+            warn!(
+                run_id = run.id.as_str(),
+                task_id = task.id.as_str(),
+                "task runner stopped stale execution before committing output"
+            );
+            if let Some(context) = harness_run_context.as_ref() {
+                self.cleanup_harness_run_workspace(context);
+            }
+            self.clear_local_run_abort(run.id.as_str());
+            return;
+        }
         let harness_output = if let Some(context) = harness_run_context.as_ref() {
             Some(
                 self.commit_harness_run_output(

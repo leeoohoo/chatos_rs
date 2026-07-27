@@ -50,6 +50,18 @@ impl MongoStore {
             .await?;
         self.ensure_index(&self.tasks, doc! { "source_run_id": 1 }, false)
             .await?;
+        self.ensure_index(
+            &self.tasks,
+            doc! { "task_tool_state.task_session_id": 1, "task_tool_state.closure_state": 1 },
+            false,
+        )
+        .await?;
+        self.ensure_index(
+            &self.tasks,
+            doc! { "parent_task_id": 1, "task_tool_state.task_session_id": 1 },
+            false,
+        )
+        .await?;
         self.ensure_index(&self.tasks, doc! { "source_session_id": 1 }, false)
             .await?;
         self.ensure_index(&self.tasks, doc! { "source_turn_id": 1 }, false)

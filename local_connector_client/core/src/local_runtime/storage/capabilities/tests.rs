@@ -45,6 +45,7 @@ fn capabilities(revision: &str) -> ResolvedAgentCapabilities {
         agent_enabled: true,
         mcps: Vec::new(),
         skills: Vec::new(),
+        plugins: Vec::new(),
         local_connector_requirements: Vec::new(),
     }
 }
@@ -60,6 +61,7 @@ fn complete_capabilities(revision: &str) -> Vec<ResolvedAgentCapabilities> {
             agent_enabled: true,
             mcps: Vec::new(),
             skills: Vec::new(),
+            plugins: Vec::new(),
             local_connector_requirements: Vec::new(),
         })
         .collect()

@@ -223,6 +223,58 @@ fn terminal_callback_keeps_group_processing_until_all_created_tasks_finish() {
 }
 
 #[test]
+fn callback_preserves_pause_until_every_created_task_is_terminal() {
+    let mut message = Message::new(
+        "session-1".to_string(),
+        "user".to_string(),
+        "please handle this".to_string(),
+    );
+    message.id = "user-1".to_string();
+    message.metadata = Some(json!({
+        "task_runner_async": {
+            "overall_status": "paused",
+            "execution_paused": true,
+            "created_task_ids": ["task-1", "task-2"],
+            "running_task_ids": ["task-1"],
+            "terminal_task_ids": []
+        }
+    }));
+
+    let mut payload = sample_callback_payload();
+    apply_task_runner_callback_to_user_message(&mut message, &payload);
+    assert_eq!(
+        message
+            .metadata
+            .as_ref()
+            .and_then(|value| value.get("task_runner_async"))
+            .and_then(|value| value.get("overall_status"))
+            .and_then(|value| value.as_str()),
+        Some("paused")
+    );
+
+    payload.task_id = "task-2".to_string();
+    apply_task_runner_callback_to_user_message(&mut message, &payload);
+    assert_eq!(
+        message
+            .metadata
+            .as_ref()
+            .and_then(|value| value.get("task_runner_async"))
+            .and_then(|value| value.get("overall_status"))
+            .and_then(|value| value.as_str()),
+        Some("completed")
+    );
+    assert_eq!(
+        message
+            .metadata
+            .as_ref()
+            .and_then(|value| value.get("task_runner_async"))
+            .and_then(|value| value.get("execution_paused"))
+            .and_then(|value| value.as_bool()),
+        Some(false)
+    );
+}
+
+#[test]
 fn task_runner_terminal_event_includes_failed_blocked_and_cancelled() {
     assert!(is_task_runner_terminal_event("task.completed"));
     assert!(is_task_runner_terminal_event("task.failed"));

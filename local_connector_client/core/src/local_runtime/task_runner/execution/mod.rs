@@ -5,11 +5,9 @@ mod completion;
 
 use std::sync::Arc;
 
-use async_trait::async_trait;
 use chatos_ai_runtime::{
-    AiRuntimeOptions, RuntimeBeforeModelRequest, RuntimeIterationContext, RuntimeLifecycleHook,
-    RuntimeRecordOptions, TaskMcpInitMode, TaskRunExecution, TaskRunSpec, TaskRuntime,
-    TaskRuntimeConfig,
+    AiRuntimeOptions, RuntimeRecordOptions, TaskFinalizationLifecycleHook, TaskMcpInitMode,
+    TaskRunExecution, TaskRunSpec, TaskRuntime, TaskRuntimeConfig, DEFAULT_TASK_RUN_MAX_ITERATIONS,
 };
 use chatos_plugin_management_sdk::{required_agent_prompt_vendor, SystemAgentKey};
 use serde_json::json;
@@ -31,37 +29,14 @@ use crate::terminal::controller::{
 };
 use crate::LocalRuntime;
 
+#[cfg(test)]
+pub(super) use self::completion::complete_requirement_if_done;
 use self::completion::finish_task_run;
 pub(crate) use self::completion::user_visible_task_run_failure_receipt;
 pub(super) use self::completion::{
-    persist_task_run_receipt, set_requirement_status, set_work_item_status,
+    finalize_task_manager_session, persist_task_run_receipt, set_requirement_status,
+    set_work_item_status,
 };
-
-// Keep local task execution aligned with the single shared Agent default.
-// Do not introduce a local numeric override here: that previously caused the
-// desktop Task Runner to stop earlier than ChatOS and the server Task Runner.
-const LOCAL_TASK_RUN_MAX_ITERATIONS: usize = chatos_agent::DEFAULT_AGENT_MAX_ITERATIONS;
-const LOCAL_TASK_RUN_FINALIZATION_ITERATION: usize = LOCAL_TASK_RUN_MAX_ITERATIONS - 1;
-
-struct LocalTaskFinalizationLifecycleHook;
-
-#[async_trait]
-impl RuntimeLifecycleHook for LocalTaskFinalizationLifecycleHook {
-    async fn before_model_request(
-        &self,
-        context: RuntimeIterationContext,
-    ) -> Result<RuntimeBeforeModelRequest, String> {
-        if context.iteration < LOCAL_TASK_RUN_FINALIZATION_ITERATION {
-            return Ok(RuntimeBeforeModelRequest::unchanged());
-        }
-        Ok(RuntimeBeforeModelRequest::unchanged()
-            .with_tools_enabled(false)
-            .with_input_items(vec![json!({
-                "role": "system",
-                "content": "[Task Runner Finalization]\n工具执行预算即将结束。不要再调用任何工具。请根据已经完成的真实操作和验证结果，立即给用户输出简洁、准确的最终总结；如仍有未完成项，明确说明实际状态，不要声称已完成。"
-            })]))
-    }
-}
 
 pub(super) async fn execute_local_task_run(
     runtime: &LocalRuntime,
@@ -146,6 +121,7 @@ pub(super) async fn execute_local_task_run(
         &task_settings,
         agent_key,
         conversation_task.is_none(),
+        &[],
     )
     .await?;
     let resolved_model = {
@@ -184,7 +160,7 @@ pub(super) async fn execute_local_task_run(
             run.session_id.as_str(),
             run.turn_id.as_str(),
         )))
-        .with_max_iterations(LOCAL_TASK_RUN_MAX_ITERATIONS);
+        .with_max_iterations(DEFAULT_TASK_RUN_MAX_ITERATIONS);
     if let Some(executor) = prepared.executor {
         builder = builder.with_tool_executor_arc(executor);
     }
@@ -218,7 +194,9 @@ pub(super) async fn execute_local_task_run(
                 .with_caller_model(Some(model_name))
                 .with_caller_model_runtime(Some(model.to_tool_caller_model_runtime()))
                 .with_abort_token(Some(abort_token.clone()))
-                .with_lifecycle_hook(Some(Arc::new(LocalTaskFinalizationLifecycleHook)))
+                .with_lifecycle_hook(Some(Arc::new(TaskFinalizationLifecycleHook::new(
+                    DEFAULT_TASK_RUN_MAX_ITERATIONS,
+                ))))
                 .with_callbacks(events.callbacks())
                 .with_record_options(RuntimeRecordOptions::persist_all()),
         )
@@ -238,33 +216,37 @@ pub(super) async fn execute_local_task_run(
             format!("local task run {} terminal cleanup failed: {error}", run.id).as_str(),
         );
     }
-    finish_task_run(runtime, run, report, abort_token.is_cancelled()).await
+    let cancel_requested = database
+        .local_task_run_cancel_requested(run.id.as_str())
+        .await
+        .unwrap_or(false);
+    finish_task_run(runtime, run, report, cancel_requested).await
 }
 
 #[cfg(test)]
 mod execution_policy_tests {
-    use chatos_ai_runtime::{RuntimeIterationContext, RuntimeLifecycleHook};
+    use chatos_ai_runtime::{
+        RuntimeIterationContext, RuntimeLifecycleHook, TaskFinalizationLifecycleHook,
+        DEFAULT_TASK_RUN_MAX_ITERATIONS,
+    };
     use serde_json::Value;
 
-    use super::{
-        task_run_idempotency_key, LocalTaskFinalizationLifecycleHook,
-        LOCAL_TASK_RUN_FINALIZATION_ITERATION, LOCAL_TASK_RUN_MAX_ITERATIONS,
-    };
+    use super::task_run_idempotency_key;
 
     #[tokio::test]
     async fn implementation_tasks_reserve_a_tool_free_finalization_round() {
-        assert_eq!(LOCAL_TASK_RUN_MAX_ITERATIONS, 600);
-        assert!(LOCAL_TASK_RUN_FINALIZATION_ITERATION < LOCAL_TASK_RUN_MAX_ITERATIONS);
+        assert_eq!(DEFAULT_TASK_RUN_MAX_ITERATIONS, 25);
+        let hook = TaskFinalizationLifecycleHook::new(DEFAULT_TASK_RUN_MAX_ITERATIONS);
 
-        let normal = LocalTaskFinalizationLifecycleHook
-            .before_model_request(iteration_context(1))
+        let normal = hook
+            .before_model_request(iteration_context(hook.finalization_iteration() - 1))
             .await
             .expect("normal task iteration");
         assert!(normal.tools_enabled);
         assert!(normal.input_items.is_empty());
 
-        let finalization = LocalTaskFinalizationLifecycleHook
-            .before_model_request(iteration_context(LOCAL_TASK_RUN_FINALIZATION_ITERATION))
+        let finalization = hook
+            .before_model_request(iteration_context(hook.finalization_iteration()))
             .await
             .expect("task finalization iteration");
         assert!(!finalization.tools_enabled);

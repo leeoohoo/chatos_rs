@@ -108,12 +108,14 @@ pub async fn analyze_project_runtime_environment(
     project: &ProjectRecord,
     user_access_token: Option<&str>,
     run_id: &str,
+    analysis_requirement: Option<&str>,
 ) -> Result<ProjectRuntimeEnvironmentResponse, String> {
     runtime::analysis::analyze_project_runtime_environment_impl(
         state,
         project,
         user_access_token,
         run_id,
+        analysis_requirement,
     )
     .await
 }

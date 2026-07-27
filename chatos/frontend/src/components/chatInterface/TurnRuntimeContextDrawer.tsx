@@ -10,6 +10,8 @@ import type {
   TurnRuntimeSnapshotTool,
 } from '../../lib/api/client/types';
 import { useI18n, type TranslateFn } from '../../i18n/I18nProvider';
+import PluginCommandAuditList from '../pluginCommands/PluginCommandAuditList';
+import PluginAgentAuditBadge from '../pluginCommands/PluginAgentAuditBadge';
 
 interface TurnRuntimeContextDrawerProps {
   open: boolean;
@@ -92,6 +94,10 @@ const buildRequestMetaPayload = (
       description: tool.description ?? null,
     })),
     selected_commands: Array.isArray(runtime?.selected_commands) ? runtime?.selected_commands : [],
+    plugin_command_invocations: Array.isArray(runtime?.plugin_command_invocations)
+      ? runtime.plugin_command_invocations
+      : [],
+    plugin_agent_selection: runtime?.plugin_agent_selection || null,
     unavailable_builtin_tools: Array.isArray(runtime?.unavailable_builtin_tools)
       ? runtime?.unavailable_builtin_tools
       : [],
@@ -124,6 +130,10 @@ const TurnRuntimeContextDrawer: React.FC<TurnRuntimeContextDrawerProps> = ({
     ? runtime.actual_context_items
     : [];
   const lastModelRequestPayload = runtime?.last_model_request_payload || null;
+  const pluginCommandInvocations = Array.isArray(runtime?.plugin_command_invocations)
+    ? runtime.plugin_command_invocations
+    : [];
+  const pluginAgentSelection = runtime?.plugin_agent_selection || null;
   const requestMetaPayload = buildRequestMetaPayload(runtime, tools);
   const status = data?.status || 'unknown';
   const snapshotSource = data?.snapshot_source || 'missing';
@@ -180,11 +190,41 @@ const TurnRuntimeContextDrawer: React.FC<TurnRuntimeContextDrawerProps> = ({
               <div>{`system_message_count: ${systemMessages.length}`}</div>
               <div>{`actual_item_count: ${actualPreviewItems.length}`}</div>
               <div>{`tool_count: ${tools.length}`}</div>
+              <div>{`plugin_command_count: ${pluginCommandInvocations.length}`}</div>
+              <div>{`plugin_agent_selected: ${pluginAgentSelection ? 'yes' : 'no'}`}</div>
             </div>
 
             <div className="mb-3 rounded-md border border-sky-500/30 bg-sky-500/10 p-3 text-xs text-sky-950 dark:text-sky-100">
               {t('runtimeContext.description')}
             </div>
+
+            <div className="mb-2 text-xs font-medium text-foreground">
+              {t('runtimeContext.pluginAgent')}
+            </div>
+            {pluginAgentSelection ? (
+              <PluginAgentAuditBadge
+                selection={pluginAgentSelection}
+                className="mb-4"
+              />
+            ) : (
+              <div className="mb-4 rounded-md border border-border bg-background/70 px-3 py-2 text-xs text-muted-foreground">
+                {t('runtimeContext.emptyPluginAgent')}
+              </div>
+            )}
+
+            <div className="mb-2 text-xs font-medium text-foreground">
+              {t('runtimeContext.pluginCommands')}
+            </div>
+            {pluginCommandInvocations.length === 0 ? (
+              <div className="mb-4 rounded-md border border-border bg-background/70 px-3 py-2 text-xs text-muted-foreground">
+                {t('runtimeContext.emptyPluginCommands')}
+              </div>
+            ) : (
+              <PluginCommandAuditList
+                entries={pluginCommandInvocations}
+                className="mb-4 mt-0"
+              />
+            )}
 
             <div className="mb-2 text-xs font-medium text-foreground">{t('runtimeContext.systemMessages')}</div>
             {systemMessages.length === 0 ? (

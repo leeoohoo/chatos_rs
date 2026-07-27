@@ -12,6 +12,7 @@ use chatos_plugin_management_sdk::SystemAgentKey;
 use serde::Deserialize;
 use serde_json::{json, Value};
 
+use crate::local_runtime::project_management::UpdateLocalWorkItemInput;
 use crate::local_runtime::storage::LocalDatabase;
 use crate::local_runtime::task_board::LocalTaskBoardTaskRecord;
 use crate::local_runtime::task_runner::CreateLocalConversationTaskInput;
@@ -37,6 +38,8 @@ pub(crate) struct LocalTaskRunnerServiceProvider {
     planning_external_mcp_ids: BTreeSet<String>,
     execution_skill_ids: BTreeSet<String>,
     planning_skill_ids: BTreeSet<String>,
+    agent_key: SystemAgentKey,
+    expected_project_task_ids: BTreeSet<String>,
 }
 
 impl LocalTaskRunnerServiceProvider {
@@ -47,6 +50,8 @@ impl LocalTaskRunnerServiceProvider {
         session_id: impl Into<String>,
         source_turn_id: impl Into<String>,
         default_model_config_id: Option<String>,
+        agent_key: SystemAgentKey,
+        expected_project_task_ids: BTreeSet<String>,
         state: &LocalState,
     ) -> Result<Self, String> {
         let owner_user_id = owner_user_id.into();
@@ -61,7 +66,7 @@ impl LocalTaskRunnerServiceProvider {
                 "Plugin capability snapshot is missing for task_runner_run_phase".to_string()
             })?;
         capabilities
-            .ensure_required_available()
+            .ensure_required_runtime_supported([], [])
             .map_err(|error| error.to_string())?;
         let planning_capabilities = database
             .get_capability_snapshot(
@@ -74,7 +79,7 @@ impl LocalTaskRunnerServiceProvider {
                 "Plugin capability snapshot is missing for task_runner_plan_phase".to_string()
             })?;
         planning_capabilities
-            .ensure_required_available()
+            .ensure_required_runtime_supported([], [])
             .map_err(|error| error.to_string())?;
         let manifests = database
             .list_mcp_manifests(
@@ -172,11 +177,61 @@ impl LocalTaskRunnerServiceProvider {
             planning_external_mcp_ids,
             execution_skill_ids,
             planning_skill_ids,
+            agent_key,
+            expected_project_task_ids,
         })
     }
 
     fn tools(&self) -> Vec<Value> {
         let task_properties = self.task_properties();
+        if self.agent_key == SystemAgentKey::ProjectRequirementExecutionPlannerAgent {
+            return vec![
+                tool(
+                    "list_tasks",
+                    "查看当前本地规划会话已经生成的执行任务。",
+                    json!({
+                        "type": "object",
+                        "properties": {
+                            "status": {"type": "string"},
+                            "keyword": {"type": "string"},
+                            "limit": {"type": "integer", "minimum": 1, "maximum": 200},
+                            "offset": {"type": "integer", "minimum": 0}
+                        },
+                        "additionalProperties": false
+                    }),
+                ),
+                tool(
+                    "get_task",
+                    "读取当前本地规划会话中的一个执行任务。",
+                    required_id_schema("task_id"),
+                ),
+                tool(
+                    "get_task_dependency_graph",
+                    "读取当前本地执行任务及其前置依赖。",
+                    required_id_schema("task_id"),
+                ),
+                tool(
+                    "create_project_execution_tasks",
+                    "根据项目任务和技术文档创建仅在当前设备本地执行的任务图。每个任务必须绑定 project_task_id，禁止创建云端任务。",
+                    project_execution_tasks_schema(&task_properties),
+                ),
+                tool(
+                    "list_mcp_builtin_catalog",
+                    "列出插件管理允许本地任务选择的内置能力。",
+                    empty_schema(),
+                ),
+                tool(
+                    "list_external_mcp_configs",
+                    "列出插件管理允许且当前设备可执行的外部 MCP。",
+                    empty_schema(),
+                ),
+                tool(
+                    "list_available_skills",
+                    "列出插件管理允许且当前设备可用的 Skills。",
+                    empty_schema(),
+                ),
+            ];
+        }
         vec![
             tool(
                 "list_tasks",
@@ -324,6 +379,14 @@ impl LocalTaskRunnerServiceProvider {
                 "type": "boolean",
                 "description": "规划、拆解类任务为 true；实际执行、检索、修改类任务为 false。"
             },
+            "requires_execution": {
+                "type": "boolean",
+                "default": true,
+                "description": "与云端执行契约兼容。本地任务始终在当前设备执行；该字段仅表达是否需要项目运行环境。"
+            },
+            "input_payload": {
+                "description": "与项目执行任务一起保存的结构化上下文；本地执行当前从生成后的任务目标读取主要上下文。"
+            },
             "enabled_builtin_kinds": {
                 "type": "array",
                 "items": {"type": "string", "enum": builtin_kinds},
@@ -367,6 +430,7 @@ impl LocalTaskRunnerServiceProvider {
         args: CreateTaskArgs,
         context: &ToolCallContext,
         prerequisite_task_ids: Vec<String>,
+        project_binding: Option<ProjectExecutionBinding>,
     ) -> Result<LocalTaskBoardTaskRecord, String> {
         let (session_id, source_turn_id) = self.source(context)?;
         let model_config_id = args
@@ -404,6 +468,7 @@ impl LocalTaskRunnerServiceProvider {
             },
             "Skill",
         )?;
+        let defer_execution = project_binding.is_some();
         self.database
             .create_local_conversation_task(CreateLocalConversationTaskInput {
                 owner_user_id: self.owner_user_id.clone(),
@@ -421,6 +486,23 @@ impl LocalTaskRunnerServiceProvider {
                 external_mcp_config_ids,
                 selected_skill_ids,
                 prerequisite_task_ids,
+                project_work_item_id: project_binding
+                    .as_ref()
+                    .map(|binding| binding.project_work_item_id.clone()),
+                requirement_id: project_binding
+                    .as_ref()
+                    .map(|binding| binding.requirement_id.clone()),
+                execution_group_id: project_binding
+                    .as_ref()
+                    .map(|binding| binding.execution_group_id.clone()),
+                execution_client_ref: project_binding
+                    .as_ref()
+                    .map(|binding| binding.execution_client_ref.clone()),
+                dependency_context_refs: project_binding
+                    .as_ref()
+                    .map(|binding| binding.dependency_context_refs.clone())
+                    .unwrap_or_default(),
+                defer_execution,
             })
             .await
             .map_err(|error| error.to_string())
@@ -487,6 +569,13 @@ impl BuiltinToolProvider for LocalTaskRunnerServiceProvider {
         context: ToolCallContext,
         _on_stream_chunk: Option<ToolStreamChunkCallback>,
     ) -> Result<Value, String> {
+        if self.agent_key == SystemAgentKey::ProjectRequirementExecutionPlannerAgent
+            && !project_requirement_planner_tool_allowed(name)
+        {
+            return Err(format!(
+                "tool is not allowed for the local requirement execution planner: {name}"
+            ));
+        }
         let payload = match name {
             "list_tasks" => {
                 let args: ListTasksArgs = decode(args)?;
@@ -539,7 +628,11 @@ impl BuiltinToolProvider for LocalTaskRunnerServiceProvider {
                 } else {
                     let decoded: CreateTaskArgs = decode(args)?;
                     let prerequisites = decoded.prerequisite_task_ids.clone();
-                    task_value(&self.create_one(decoded, &context, prerequisites).await?)
+                    task_value(
+                        &self
+                            .create_one(decoded, &context, prerequisites, None)
+                            .await?,
+                    )
                 }
             }
             "list_mcp_builtin_catalog" => json!(self
@@ -615,7 +708,7 @@ impl BuiltinToolProvider for LocalTaskRunnerServiceProvider {
                         prerequisite_task_ids = normalize_ids(prerequisite_task_ids);
                         let client_ref = item.client_ref.trim().to_string();
                         let created = self
-                            .create_one(item.task, &context, prerequisite_task_ids)
+                            .create_one(item.task, &context, prerequisite_task_ids, None)
                             .await?;
                         created_by_ref.insert(client_ref, created);
                     }
@@ -625,6 +718,210 @@ impl BuiltinToolProvider for LocalTaskRunnerServiceProvider {
                         .map(task_value)
                         .collect::<Vec<_>>())
                 }
+            }
+            "create_project_execution_tasks" => {
+                if self.agent_key != SystemAgentKey::ProjectRequirementExecutionPlannerAgent {
+                    return Err("create_project_execution_tasks is restricted to the requirement execution planner".to_string());
+                }
+                let _ = self.source(&context)?;
+                let args: CreateProjectExecutionTasksArgs = decode(args)?;
+                if args.project_id.trim() != self.project_id {
+                    return Err("project_id does not match the current local project".to_string());
+                }
+                if args.requirement_id.trim().is_empty() {
+                    return Err("requirement_id must not be empty".to_string());
+                }
+                if args.tasks.is_empty() || args.tasks.len() > 50 {
+                    return Err("tasks must contain between 1 and 50 items".to_string());
+                }
+                let execution_group_id = self.source_turn_id.clone();
+                let mut pending = args.tasks;
+                let refs = pending
+                    .iter()
+                    .map(|item| item.client_ref.trim().to_string())
+                    .collect::<Vec<_>>();
+                if refs.iter().any(|value| value.is_empty())
+                    || refs.iter().collect::<BTreeSet<_>>().len() != refs.len()
+                {
+                    return Err("client_ref values must be non-empty and unique".to_string());
+                }
+                let ref_set = refs.iter().map(String::as_str).collect::<BTreeSet<_>>();
+                for item in &pending {
+                    if item.project_task_id.trim().is_empty() {
+                        return Err(format!("project_task_id is required: {}", item.client_ref));
+                    }
+                    if !self
+                        .expected_project_task_ids
+                        .contains(item.project_task_id.trim())
+                    {
+                        return Err(format!(
+                            "project_task_id is outside the selected local execution scope: {}",
+                            item.project_task_id
+                        ));
+                    }
+                    for dependency in &item.prerequisite_refs {
+                        if !ref_set.contains(dependency.trim()) {
+                            return Err(format!("Unknown prerequisite_ref: {dependency}"));
+                        }
+                    }
+                    for context_ref in &item.context_refs {
+                        if !ref_set.contains(context_ref.trim()) {
+                            return Err(format!("Unknown context_ref: {context_ref}"));
+                        }
+                        if context_ref.trim() == item.client_ref.trim() {
+                            return Err(format!(
+                                "Task cannot reference itself as context: {context_ref}"
+                            ));
+                        }
+                    }
+                }
+                let submitted_project_task_ids = pending
+                    .iter()
+                    .map(|item| item.project_task_id.trim().to_string())
+                    .collect::<BTreeSet<_>>();
+                if let Err(mismatch) = chatos_project_execution::validate_exact_project_task_scope(
+                    &self.expected_project_task_ids,
+                    &submitted_project_task_ids,
+                ) {
+                    return Err(format!(
+                        "local execution graph does not match the selected project tasks; missing=[{}], unexpected=[{}]",
+                        mismatch.missing.join(","),
+                        mismatch.unexpected.join(",")
+                    ));
+                }
+                add_local_project_task_prerequisites(self, pending.as_mut_slice()).await?;
+                let dependency_diagnostics =
+                    reduce_local_project_execution_dependencies(pending.as_mut_slice())?;
+                let existing = self
+                    .database
+                    .list_local_conversation_tasks(
+                        self.owner_user_id.as_str(),
+                        self.session_id.as_str(),
+                        200,
+                    )
+                    .await
+                    .map_err(|error| error.to_string())?
+                    .into_iter()
+                    .filter(|task| {
+                        task.execution_group_id.as_deref() == Some(execution_group_id.as_str())
+                    })
+                    .collect::<Vec<_>>();
+                if !existing.is_empty() {
+                    let existing_project_task_ids = existing
+                        .iter()
+                        .filter_map(|task| task.project_work_item_id.clone())
+                        .collect::<BTreeSet<_>>();
+                    if let Err(mismatch) =
+                        chatos_project_execution::validate_exact_project_task_scope(
+                            &self.expected_project_task_ids,
+                            &existing_project_task_ids,
+                        )
+                    {
+                        return Err(format!(
+                            "existing local execution graph does not match the selected project tasks; missing=[{}], unexpected=[{}]",
+                            mismatch.missing.join(","),
+                            mismatch.unexpected.join(",")
+                        ));
+                    }
+                    return Ok(tool_result(json!({
+                        "execution_plane": chatos_project_execution::ExecutionPlane::LocalConnector.as_str(),
+                        "awaiting_confirmation": true,
+                        "idempotent_reused": true,
+                        "created_tasks": existing.iter().map(project_execution_task_value).collect::<Vec<_>>(),
+                        "dependency_edges": project_execution_dependency_edges(existing.as_slice()),
+                        "removed_redundant_edges": dependency_diagnostics.removed_edges,
+                        "dependency_diagnostics": {
+                            "submitted_edge_count": dependency_diagnostics.submitted_edge_count,
+                            "persisted_edge_count": dependency_diagnostics.persisted_edge_count,
+                        },
+                        "auto_started_runs": [],
+                        "task_links": existing.iter().filter_map(|task| {
+                            task.project_work_item_id.as_ref().map(|project_task_id| json!({
+                                "project_task_id": project_task_id,
+                                "local_task_id": task.id,
+                                "execution_group_id": execution_group_id,
+                            }))
+                        }).collect::<Vec<_>>(),
+                    })));
+                }
+                let mut created_by_ref = BTreeMap::<String, LocalTaskBoardTaskRecord>::new();
+                while !pending.is_empty() {
+                    let ready_index = pending.iter().position(|item| {
+                        item.prerequisite_refs
+                            .iter()
+                            .all(|dependency| created_by_ref.contains_key(dependency.trim()))
+                    });
+                    let Some(index) = ready_index else {
+                        return Err("Task prerequisite_refs contain a cycle".to_string());
+                    };
+                    let item = pending.remove(index);
+                    let project_task_id = item.project_task_id.trim().to_string();
+                    let work_item = self
+                        .database
+                        .get_local_work_item(self.owner_user_id.as_str(), project_task_id.as_str())
+                        .await
+                        .map_err(|error| error.to_string())?
+                        .filter(|work_item| work_item.project_id == self.project_id)
+                        .ok_or_else(|| {
+                            format!("Local project task is unavailable: {project_task_id}")
+                        })?;
+                    let mut prerequisite_task_ids = item.task.prerequisite_task_ids.clone();
+                    prerequisite_task_ids.extend(item.prerequisite_refs.iter().filter_map(
+                        |value| created_by_ref.get(value.trim()).map(|task| task.id.clone()),
+                    ));
+                    prerequisite_task_ids = normalize_ids(prerequisite_task_ids);
+                    let client_ref = item.client_ref.trim().to_string();
+                    let created = self
+                        .create_one(
+                            item.task,
+                            &context,
+                            prerequisite_task_ids,
+                            Some(ProjectExecutionBinding {
+                                project_work_item_id: project_task_id.clone(),
+                                requirement_id: work_item.requirement_id.clone(),
+                                execution_group_id: execution_group_id.clone(),
+                                execution_client_ref: client_ref.clone(),
+                                dependency_context_refs: item.context_refs.clone(),
+                            }),
+                        )
+                        .await?;
+                    self.database
+                        .update_local_work_item(
+                            self.owner_user_id.as_str(),
+                            project_task_id.as_str(),
+                            UpdateLocalWorkItemInput {
+                                status: Some("ready".to_string()),
+                                ..Default::default()
+                            },
+                        )
+                        .await
+                        .map_err(|error| error.to_string())?;
+                    created_by_ref.insert(client_ref, created);
+                }
+                let tasks = refs
+                    .iter()
+                    .filter_map(|client_ref| created_by_ref.get(client_ref))
+                    .cloned()
+                    .collect::<Vec<_>>();
+                json!({
+                    "execution_plane": chatos_project_execution::ExecutionPlane::LocalConnector.as_str(),
+                    "awaiting_confirmation": true,
+                    "created_tasks": tasks.iter().map(project_execution_task_value).collect::<Vec<_>>(),
+                    "dependency_edges": project_execution_dependency_edges(tasks.as_slice()),
+                    "removed_redundant_edges": dependency_diagnostics.removed_edges,
+                    "dependency_diagnostics": {
+                        "submitted_edge_count": dependency_diagnostics.submitted_edge_count,
+                        "persisted_edge_count": dependency_diagnostics.persisted_edge_count,
+                    },
+                    "auto_started_runs": [],
+                    "task_links": tasks.iter().filter_map(|task| {
+                        task.project_work_item_id.as_ref().map(|project_task_id| json!({
+                            "project_task_id": project_task_id,
+                            "local_task_id": task.id,
+                            "execution_group_id": execution_group_id,
+                        }))
+                    }).collect::<Vec<_>>(),
+                })
             }
             "cancel_task" => {
                 let args: CancelTaskArgs = decode(args)?;
@@ -685,6 +982,19 @@ impl BuiltinToolProvider for LocalTaskRunnerServiceProvider {
     }
 }
 
+fn project_requirement_planner_tool_allowed(name: &str) -> bool {
+    matches!(
+        name,
+        "list_tasks"
+            | "get_task"
+            | "get_task_dependency_graph"
+            | "create_project_execution_tasks"
+            | "list_mcp_builtin_catalog"
+            | "list_external_mcp_configs"
+            | "list_available_skills"
+    )
+}
+
 #[derive(Debug, Default, Deserialize)]
 struct ListTasksArgs {
     status: Option<String>,
@@ -711,6 +1021,10 @@ struct CreateTaskArgs {
     #[serde(default)]
     default_model_config_id: Option<String>,
     is_planning_task: bool,
+    #[serde(default, rename = "requires_execution")]
+    _requires_execution: Option<bool>,
+    #[serde(default, rename = "input_payload")]
+    _input_payload: Option<Value>,
     #[serde(default)]
     enabled_builtin_kinds: Vec<String>,
     #[serde(default)]
@@ -737,6 +1051,35 @@ struct CreateTasksArgs {
 }
 
 #[derive(Debug, Deserialize)]
+struct CreateProjectExecutionTaskWithRef {
+    client_ref: String,
+    project_task_id: String,
+    #[serde(default)]
+    prerequisite_refs: Vec<String>,
+    #[serde(default)]
+    context_refs: Vec<String>,
+    #[serde(flatten)]
+    task: CreateTaskArgs,
+}
+
+#[derive(Debug, Deserialize)]
+struct CreateProjectExecutionTasksArgs {
+    project_id: String,
+    requirement_id: String,
+    #[serde(default)]
+    tasks: Vec<CreateProjectExecutionTaskWithRef>,
+}
+
+#[derive(Debug, Clone)]
+struct ProjectExecutionBinding {
+    project_work_item_id: String,
+    requirement_id: String,
+    execution_group_id: String,
+    execution_client_ref: String,
+    dependency_context_refs: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
 struct CancelTaskArgs {
     task_id: String,
     reason: String,
@@ -757,6 +1100,158 @@ async fn require_task(
         .map_err(|error| error.to_string())?
         .filter(|task| task.task_kind == "task_runner")
         .ok_or_else(|| "Local Task Runner task was not found in this conversation".to_string())
+}
+
+#[derive(Debug)]
+struct LocalDependencyDiagnostics {
+    submitted_edge_count: usize,
+    persisted_edge_count: usize,
+    removed_edges: Vec<chatos_project_execution::DependencyEdge>,
+}
+
+fn reduce_local_project_execution_dependencies(
+    tasks: &mut [CreateProjectExecutionTaskWithRef],
+) -> Result<LocalDependencyDiagnostics, String> {
+    let node_ids = tasks
+        .iter()
+        .map(|task| task.client_ref.trim().to_string())
+        .collect::<BTreeSet<_>>();
+    let dependency_map = tasks
+        .iter()
+        .map(|task| {
+            (
+                task.client_ref.trim().to_string(),
+                task.prerequisite_refs.clone(),
+            )
+        })
+        .collect::<BTreeMap<_, _>>();
+    let submitted_edge_count = dependency_map
+        .values()
+        .map(|dependencies| {
+            dependencies
+                .iter()
+                .map(|value| value.trim())
+                .filter(|value| !value.is_empty())
+                .collect::<BTreeSet<_>>()
+                .len()
+        })
+        .sum();
+    let reduction =
+        chatos_project_execution::transitive_reduce_prerequisite_map(&node_ids, &dependency_map)?;
+    let mut removed_by_dependent = BTreeMap::<String, Vec<String>>::new();
+    for edge in &reduction.removed_edges {
+        removed_by_dependent
+            .entry(edge.dependent_id.clone())
+            .or_default()
+            .push(edge.prerequisite_id.clone());
+    }
+    for task in tasks {
+        let client_ref = task.client_ref.trim();
+        task.prerequisite_refs = reduction
+            .dependencies
+            .get(client_ref)
+            .cloned()
+            .unwrap_or_default();
+        task.context_refs
+            .extend(removed_by_dependent.remove(client_ref).unwrap_or_default());
+        task.context_refs = task
+            .context_refs
+            .drain(..)
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty() && value != client_ref)
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect();
+    }
+    let persisted_edge_count = reduction.dependencies.values().map(Vec::len).sum();
+    Ok(LocalDependencyDiagnostics {
+        submitted_edge_count,
+        persisted_edge_count,
+        removed_edges: reduction.removed_edges,
+    })
+}
+
+async fn add_local_project_task_prerequisites(
+    provider: &LocalTaskRunnerServiceProvider,
+    tasks: &mut [CreateProjectExecutionTaskWithRef],
+) -> Result<(), String> {
+    let project_task_by_ref = tasks
+        .iter()
+        .map(|item| {
+            (
+                item.client_ref.trim().to_string(),
+                item.project_task_id.trim().to_string(),
+            )
+        })
+        .collect::<BTreeMap<_, _>>();
+    let mut refs_by_project_task = BTreeMap::<String, Vec<String>>::new();
+    let mut referenced_within_project_task = BTreeMap::<String, BTreeSet<String>>::new();
+    for item in tasks.iter() {
+        let project_task_id = item.project_task_id.trim().to_string();
+        refs_by_project_task
+            .entry(project_task_id.clone())
+            .or_default()
+            .push(item.client_ref.trim().to_string());
+        for prerequisite_ref in &item.prerequisite_refs {
+            if project_task_by_ref.get(prerequisite_ref.trim()) == Some(&project_task_id) {
+                referenced_within_project_task
+                    .entry(project_task_id.clone())
+                    .or_default()
+                    .insert(prerequisite_ref.trim().to_string());
+            }
+        }
+    }
+    let terminal_refs_by_project_task = refs_by_project_task
+        .iter()
+        .map(|(project_task_id, refs)| {
+            let referenced = referenced_within_project_task
+                .get(project_task_id)
+                .cloned()
+                .unwrap_or_default();
+            (
+                project_task_id.clone(),
+                refs.iter()
+                    .filter(|client_ref| !referenced.contains(client_ref.as_str()))
+                    .cloned()
+                    .collect::<Vec<_>>(),
+            )
+        })
+        .collect::<BTreeMap<_, _>>();
+    let mut additions = BTreeMap::<String, Vec<String>>::new();
+    for item in tasks.iter() {
+        let project_task_id = item.project_task_id.trim();
+        let has_internal_prerequisite =
+            item.prerequisite_refs.iter().any(|client_ref| {
+                project_task_by_ref.get(client_ref.trim()).is_some_and(
+                    |dependency_project_task_id| dependency_project_task_id == project_task_id,
+                )
+            });
+        if has_internal_prerequisite {
+            continue;
+        }
+        let dependencies = provider
+            .database
+            .list_local_work_item_dependencies(project_task_id)
+            .await
+            .map_err(|error| error.to_string())?;
+        let entry = additions
+            .entry(item.client_ref.trim().to_string())
+            .or_default();
+        for dependency in dependencies {
+            if let Some(terminal_refs) =
+                terminal_refs_by_project_task.get(dependency.prerequisite_work_item_id.as_str())
+            {
+                entry.extend(terminal_refs.iter().cloned());
+            }
+        }
+    }
+    for item in tasks {
+        if let Some(values) = additions.remove(item.client_ref.trim()) {
+            item.prerequisite_refs.extend(values);
+            item.prerequisite_refs = normalize_ids(std::mem::take(&mut item.prerequisite_refs));
+        }
+    }
+    Ok(())
 }
 
 fn local_external_mcp_views(
@@ -836,6 +1331,16 @@ fn task_value(task: &LocalTaskBoardTaskRecord) -> Value {
         "source_user_message_id": task.source_user_message_id,
         "prerequisite_task_ids": task.prerequisite_task_ids,
         "last_run_id": task.last_run_id,
+        "project_task_id": task.project_work_item_id,
+        "input_payload": {
+            "project_task_id": task.project_work_item_id,
+            "requirement_id": task.requirement_id,
+            "execution_group_id": task.execution_group_id,
+            "execution_client_ref": task.execution_client_ref,
+            "dependency_context_refs": task.dependency_context_refs,
+        },
+        "requirement_id": task.requirement_id,
+        "execution_group_id": task.execution_group_id,
         "result_summary": task.outcome_summary,
         "error": task.blocker_reason,
         "mcp_config": {
@@ -846,6 +1351,41 @@ fn task_value(task: &LocalTaskBoardTaskRecord) -> Value {
         "created_at": task.created_at,
         "updated_at": task.updated_at,
     })
+}
+
+fn project_execution_task_value(task: &LocalTaskBoardTaskRecord) -> Value {
+    json!({
+        "id": task.id,
+        "task_id": task.id,
+        "title": task.title,
+        "status": if task.last_run_id.is_none() && task.status == "todo" {
+            "ready"
+        } else {
+            external_status(task.status.as_str())
+        },
+        "project_task_id": task.project_work_item_id,
+        "requirement_id": task.requirement_id,
+        "execution_group_id": task.execution_group_id,
+        "prerequisite_task_ids": task.prerequisite_task_ids,
+        "execution_client_ref": task.execution_client_ref,
+        "dependency_context_refs": task.dependency_context_refs,
+    })
+}
+
+fn project_execution_dependency_edges(tasks: &[LocalTaskBoardTaskRecord]) -> Vec<Value> {
+    tasks
+        .iter()
+        .flat_map(|task| {
+            task.prerequisite_task_ids
+                .iter()
+                .map(move |prerequisite_task_id| {
+                    json!({
+                        "task_id": task.id,
+                        "prerequisite_task_id": prerequisite_task_id,
+                    })
+                })
+        })
+        .collect()
 }
 
 fn external_status(status: &str) -> &str {
@@ -891,6 +1431,47 @@ fn required_text(value: String, field: &str) -> Result<String, String> {
     Ok(value)
 }
 
+fn project_execution_tasks_schema(task_properties: &Value) -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "project_id": {"type": "string", "minLength": 1},
+            "requirement_id": {"type": "string", "minLength": 1},
+            "tasks": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 50,
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "client_ref": {"type": "string", "minLength": 1},
+                        "project_task_id": {"type": "string", "minLength": 1},
+                        "prerequisite_refs": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+                        "context_refs": {"type": "array", "items": {"type": "string"}, "uniqueItems": true, "description": "只传递上下文、不阻塞本地调度的关系。"},
+                        "prerequisite_task_ids": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+                        "title": task_properties["title"].clone(),
+                        "description": task_properties["description"].clone(),
+                        "objective": task_properties["objective"].clone(),
+                        "priority": task_properties["priority"].clone(),
+                        "tags": task_properties["tags"].clone(),
+                        "default_model_config_id": task_properties["default_model_config_id"].clone(),
+                        "is_planning_task": task_properties["is_planning_task"].clone(),
+                        "requires_execution": task_properties["requires_execution"].clone(),
+                        "input_payload": task_properties["input_payload"].clone(),
+                        "enabled_builtin_kinds": task_properties["enabled_builtin_kinds"].clone(),
+                        "external_mcp_config_ids": task_properties["external_mcp_config_ids"].clone(),
+                        "selected_skill_ids": task_properties["selected_skill_ids"].clone()
+                    },
+                    "required": ["client_ref", "project_task_id", "title", "objective", "is_planning_task"],
+                    "additionalProperties": false
+                }
+            }
+        },
+        "required": ["project_id", "requirement_id", "tasks"],
+        "additionalProperties": false
+    })
+}
+
 fn decode<T: serde::de::DeserializeOwned>(value: Value) -> Result<T, String> {
     serde_json::from_value(value).map_err(|error| error.to_string())
 }
@@ -926,4 +1507,35 @@ fn tool_result(payload: Value) -> Value {
         "structuredContent": payload,
         "isError": false
     })
+}
+
+#[cfg(test)]
+mod dependency_reduction_tests {
+    use serde_json::json;
+
+    use super::{
+        decode, reduce_local_project_execution_dependencies, CreateProjectExecutionTasksArgs,
+    };
+
+    #[test]
+    fn local_materializer_preserves_removed_hard_edges_as_context() {
+        let mut args: CreateProjectExecutionTasksArgs = decode(json!({
+            "project_id": "project-1",
+            "requirement_id": "requirement-1",
+            "tasks": [
+                { "client_ref": "a", "project_task_id": "p-a", "title": "A", "objective": "A", "is_planning_task": false },
+                { "client_ref": "b", "project_task_id": "p-b", "title": "B", "objective": "B", "is_planning_task": false, "prerequisite_refs": ["a"] },
+                { "client_ref": "c", "project_task_id": "p-c", "title": "C", "objective": "C", "is_planning_task": false, "prerequisite_refs": ["a", "b"] }
+            ]
+        }))
+        .expect("local project graph args");
+
+        let diagnostics = reduce_local_project_execution_dependencies(args.tasks.as_mut_slice())
+            .expect("valid local graph");
+
+        assert_eq!(diagnostics.submitted_edge_count, 3);
+        assert_eq!(diagnostics.persisted_edge_count, 2);
+        assert_eq!(args.tasks[2].prerequisite_refs, vec!["b"]);
+        assert_eq!(args.tasks[2].context_refs, vec!["a"]);
+    }
 }

@@ -5,6 +5,25 @@ use futures::{Stream, StreamExt};
 use serde_json::Value;
 use tokio_util::sync::CancellationToken;
 
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct SseStreamStats {
+    pub parsed_event_count: usize,
+    pub malformed_event_count: usize,
+    pub buffered_tail_bytes: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SseStreamError {
+    pub message: String,
+    pub stats: SseStreamStats,
+}
+
+#[derive(Default)]
+struct SseEventBatch {
+    events: Vec<Value>,
+    malformed_event_count: usize,
+}
+
 #[derive(Default)]
 struct Utf8ChunkDecoder {
     pending: Vec<u8>,
@@ -55,10 +74,15 @@ impl Utf8ChunkDecoder {
 }
 
 pub fn drain_sse_json_events(buffer: &mut String) -> Vec<Value> {
-    let mut events = Vec::new();
+    drain_sse_json_event_batch(buffer).events
+}
+
+fn drain_sse_json_event_batch(buffer: &mut String) -> SseEventBatch {
+    let mut batch = SseEventBatch::default();
     while let Some(idx) = buffer.find("\n\n") {
         let packet = buffer[..idx].to_string();
         *buffer = buffer[idx + 2..].to_string();
+        let mut data_lines = Vec::new();
         for line in packet.lines() {
             let line = line.trim();
             if !line.starts_with("data:") {
@@ -71,19 +95,24 @@ pub fn drain_sse_json_events(buffer: &mut String) -> Vec<Value> {
             if data.is_empty() {
                 continue;
             }
-            if let Ok(value) = serde_json::from_str::<Value>(data) {
-                events.push(value);
-            }
+            data_lines.push(data);
+        }
+        if data_lines.is_empty() {
+            continue;
+        }
+        match serde_json::from_str::<Value>(data_lines.join("\n").as_str()) {
+            Ok(value) => batch.events.push(value),
+            Err(_) => batch.malformed_event_count += 1,
         }
     }
-    events
+    batch
 }
 
 pub async fn consume_sse_stream<S, E, F>(
     mut stream: S,
     token: Option<CancellationToken>,
     mut on_event: F,
-) -> Result<(), String>
+) -> Result<SseStreamStats, SseStreamError>
 where
     S: Stream<Item = Result<bytes::Bytes, E>> + Unpin,
     E: ToString,
@@ -91,23 +120,34 @@ where
 {
     let mut buffer = String::new();
     let mut decoder = Utf8ChunkDecoder::default();
-    let mut process_chunk = |chunk: Result<bytes::Bytes, E>| -> Result<(), String> {
-        let bytes = chunk.map_err(|err| err.to_string())?;
-        let text = decoder.push(bytes.as_ref());
-        buffer.push_str(&text);
-        for event in drain_sse_json_events(&mut buffer) {
-            on_event(event);
-        }
-        Ok(())
-    };
+    let mut stats = SseStreamStats::default();
 
     if let Some(token) = token {
         loop {
             tokio::select! {
-                _ = token.cancelled() => return Err("aborted".to_string()),
+                _ = token.cancelled() => {
+                    stats.buffered_tail_bytes = buffer.len() + decoder.pending.len();
+                    return Err(SseStreamError {
+                        message: "aborted".to_string(),
+                        stats,
+                    });
+                },
                 next = stream.next() => {
                     match next {
-                        Some(chunk) => process_chunk(chunk)?,
+                        Some(Ok(bytes)) => process_stream_bytes(
+                            bytes,
+                            &mut decoder,
+                            &mut buffer,
+                            &mut stats,
+                            &mut on_event,
+                        ),
+                        Some(Err(err)) => {
+                            stats.buffered_tail_bytes = buffer.len() + decoder.pending.len();
+                            return Err(SseStreamError {
+                                message: err.to_string(),
+                                stats,
+                            });
+                        }
                         None => break,
                     }
                 }
@@ -115,7 +155,22 @@ where
         }
     } else {
         while let Some(chunk) = stream.next().await {
-            process_chunk(chunk)?;
+            match chunk {
+                Ok(bytes) => process_stream_bytes(
+                    bytes,
+                    &mut decoder,
+                    &mut buffer,
+                    &mut stats,
+                    &mut on_event,
+                ),
+                Err(err) => {
+                    stats.buffered_tail_bytes = buffer.len() + decoder.pending.len();
+                    return Err(SseStreamError {
+                        message: err.to_string(),
+                        stats,
+                    });
+                }
+            }
         }
     }
 
@@ -123,54 +178,97 @@ where
     if !tail_text.is_empty() {
         buffer.push_str(&tail_text);
     }
-    flush_stream_tail_events(&mut buffer, &mut on_event);
-    Ok(())
+    normalize_sse_line_endings(&mut buffer);
+    let tail_stats = flush_stream_tail_events(&mut buffer, &mut on_event);
+    stats.parsed_event_count += tail_stats.parsed_event_count;
+    stats.malformed_event_count += tail_stats.malformed_event_count;
+    stats.buffered_tail_bytes = buffer.len();
+    Ok(stats)
 }
 
-fn flush_stream_tail_events<F>(buffer: &mut String, on_event: &mut F)
+fn process_stream_bytes<F>(
+    bytes: bytes::Bytes,
+    decoder: &mut Utf8ChunkDecoder,
+    buffer: &mut String,
+    stats: &mut SseStreamStats,
+    on_event: &mut F,
+) where
+    F: FnMut(Value),
+{
+    let text = decoder.push(bytes.as_ref());
+    buffer.push_str(&text);
+    normalize_sse_line_endings(buffer);
+    let batch = drain_sse_json_event_batch(buffer);
+    stats.malformed_event_count += batch.malformed_event_count;
+    for event in batch.events {
+        stats.parsed_event_count += 1;
+        on_event(event);
+    }
+}
+
+fn normalize_sse_line_endings(buffer: &mut String) {
+    if buffer.contains("\r\n") {
+        *buffer = buffer.replace("\r\n", "\n");
+    }
+}
+
+fn flush_stream_tail_events<F>(buffer: &mut String, on_event: &mut F) -> SseStreamStats
 where
     F: FnMut(Value),
 {
+    let mut stats = SseStreamStats::default();
     if buffer.trim().is_empty() {
-        return;
+        return stats;
     }
 
     if buffer.contains("data:") {
         if !buffer.ends_with("\n\n") {
             buffer.push_str("\n\n");
         }
-        for event in drain_sse_json_events(buffer) {
+        let batch = drain_sse_json_event_batch(buffer);
+        stats.malformed_event_count += batch.malformed_event_count;
+        for event in batch.events {
+            stats.parsed_event_count += 1;
             on_event(event);
         }
     }
 
     let tail = buffer.trim();
     if tail.is_empty() {
-        return;
+        return stats;
     }
 
-    if let Ok(value) = serde_json::from_str::<Value>(tail) {
-        emit_json_value(value, on_event);
-        buffer.clear();
+    match serde_json::from_str::<Value>(tail) {
+        Ok(value) => {
+            stats.parsed_event_count += emit_json_value(value, on_event);
+            buffer.clear();
+        }
+        Err(_) => stats.malformed_event_count += 1,
     }
+    stats.buffered_tail_bytes = buffer.len();
+    stats
 }
 
-fn emit_json_value<F>(value: Value, on_event: &mut F)
+fn emit_json_value<F>(value: Value, on_event: &mut F) -> usize
 where
     F: FnMut(Value),
 {
     if let Some(array) = value.as_array() {
+        let mut emitted = 0usize;
         for item in array {
             if item.is_object() {
                 on_event(item.clone());
+                emitted += 1;
             }
         }
-        return;
+        return emitted;
     }
 
     if value.is_object() {
         on_event(value);
+        return 1;
     }
+    0
 }
 
 #[cfg(test)]
@@ -247,5 +345,43 @@ mod tests {
 
         assert_eq!(events.len(), 1);
         assert_eq!(events[0], json!({"type":"delta","text":"我是"}));
+    }
+
+    #[tokio::test]
+    async fn consume_sse_stream_counts_malformed_packets() {
+        let chunks = vec![Ok::<Bytes, String>(Bytes::from(concat!(
+            "data: {bad json}\n\n",
+            "data: {\"type\":\"usage\",\"value\":1}\n\n"
+        )))];
+
+        let mut events = Vec::new();
+        let stats = consume_sse_stream(stream::iter(chunks), None, |event| {
+            events.push(event);
+        })
+        .await
+        .expect("stream consumption should finish with diagnostics");
+
+        assert_eq!(stats.parsed_event_count, 1);
+        assert_eq!(stats.malformed_event_count, 1);
+        assert_eq!(events, vec![json!({"type":"usage","value":1})]);
+    }
+
+    #[tokio::test]
+    async fn consume_sse_stream_accepts_crlf_and_multiline_data_packets() {
+        let chunks = vec![
+            Ok::<Bytes, String>(Bytes::from("data: {\"type\":\"delta\",\r")),
+            Ok::<Bytes, String>(Bytes::from("\n data: \"text\":\"hello\"}\r\n\r\n")),
+        ];
+
+        let mut events = Vec::new();
+        let stats = consume_sse_stream(stream::iter(chunks), None, |event| {
+            events.push(event);
+        })
+        .await
+        .expect("CRLF SSE packet should parse");
+
+        assert_eq!(stats.parsed_event_count, 1);
+        assert_eq!(stats.malformed_event_count, 0);
+        assert_eq!(events, vec![json!({"type":"delta","text":"hello"})]);
     }
 }

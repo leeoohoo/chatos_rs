@@ -4,7 +4,28 @@
 import { describe, expect, it } from 'vitest';
 
 import type { MessageTaskRunnerGraphResponse } from '../../lib/api/client/types';
-import { normalizeMessageTaskGraphEdgesForDisplay } from './MessageTaskGraphPanel';
+import {
+  calculateTaskGraphFitZoom,
+  clampTaskGraphZoom,
+  normalizeMessageTaskGraphEdgesForDisplay,
+  normalizeMessageTaskGraphForDisplay,
+  TASK_GRAPH_MAX_ZOOM,
+  TASK_GRAPH_MIN_ZOOM,
+} from './MessageTaskGraphPanel';
+
+describe('task graph viewport zoom', () => {
+  it('clamps manual zoom to readable limits', () => {
+    expect(clampTaskGraphZoom(0.1)).toBe(TASK_GRAPH_MIN_ZOOM);
+    expect(clampTaskGraphZoom(1.26)).toBe(1.3);
+    expect(clampTaskGraphZoom(3)).toBe(TASK_GRAPH_MAX_ZOOM);
+  });
+
+  it('fits the whole graph without rounding above the available viewport', () => {
+    expect(calculateTaskGraphFitZoom(900, 600, 1_500, 1_200)).toBe(0.5);
+    expect(calculateTaskGraphFitZoom(900, 700, 1_200, 800)).toBe(0.7);
+    expect(calculateTaskGraphFitZoom(1_600, 1_200, 1_200, 800)).toBe(1);
+  });
+});
 
 describe('normalizeMessageTaskGraphEdgesForDisplay', () => {
   it('keeps multiple direct prerequisites parallel instead of serializing same-depth nodes', () => {
@@ -138,5 +159,89 @@ describe('normalizeMessageTaskGraphEdgesForDisplay', () => {
         kind: 'prerequisite',
       },
     ]);
+  });
+
+  it('shows only the transitive reduction by default and preserves the full graph on demand', () => {
+    const graph: MessageTaskRunnerGraphResponse = {
+      root_task_ids: ['task-c'],
+      nodes: [
+        { depth: 2, is_root: false, is_current_message: true, task: { id: 'task-a', title: 'A', prerequisite_task_ids: [] } },
+        { depth: 1, is_root: false, is_current_message: true, task: { id: 'task-b', title: 'B', prerequisite_task_ids: ['task-a'] } },
+        { depth: 0, is_root: true, is_current_message: true, task: { id: 'task-c', title: 'C', prerequisite_task_ids: ['task-a', 'task-b'] } },
+      ],
+      edges: [],
+    };
+
+    expect(normalizeMessageTaskGraphForDisplay(graph).edges.map((edge) => edge.id)).toEqual([
+      'task-a->task-b',
+      'task-b->task-c',
+    ]);
+    expect(normalizeMessageTaskGraphForDisplay(graph, 'full').edges.map((edge) => edge.id)).toEqual([
+      'task-a->task-b',
+      'task-a->task-c',
+      'task-b->task-c',
+    ]);
+  });
+
+  it('renders non-blocking context only in the full graph', () => {
+    const graph: MessageTaskRunnerGraphResponse = {
+      root_task_ids: ['task-b'],
+      nodes: [
+        {
+          depth: 1,
+          is_root: false,
+          is_current_message: true,
+          task: {
+            id: 'task-a',
+            title: 'A',
+            prerequisite_task_ids: [],
+            input_payload: { execution_client_ref: 'a', dependency_context_refs: [] },
+          },
+        },
+        {
+          depth: 0,
+          is_root: true,
+          is_current_message: true,
+          task: {
+            id: 'task-b',
+            title: 'B',
+            prerequisite_task_ids: [],
+            input_payload: { execution_client_ref: 'b', dependency_context_refs: ['a'] },
+          },
+        },
+      ],
+      edges: [],
+    };
+
+    expect(normalizeMessageTaskGraphForDisplay(graph).edges).toEqual([]);
+    expect(normalizeMessageTaskGraphForDisplay(graph, 'full').edges).toEqual([
+      { id: 'task-a->task-b', source: 'task-a', target: 'task-b', kind: 'context' },
+    ]);
+  });
+
+  it('folds implementation and review stages bound to the same project task', () => {
+    const graph: MessageTaskRunnerGraphResponse = {
+      root_task_ids: ['review'],
+      nodes: [
+        {
+          depth: 1,
+          is_root: false,
+          is_current_message: true,
+          task: { id: 'implement', title: '实现订单校验', prerequisite_task_ids: [], input_payload: { project_task_id: 'project-task-1' } },
+        },
+        {
+          depth: 0,
+          is_root: true,
+          is_current_message: true,
+          task: { id: 'review', title: 'Review 订单校验', prerequisite_task_ids: ['implement'], input_payload: { project_task_id: 'project-task-1' } },
+        },
+      ],
+      edges: [],
+    };
+
+    const display = normalizeMessageTaskGraphForDisplay(graph);
+    expect(display.nodes).toHaveLength(1);
+    expect(display.nodes[0].groupedTasks).toHaveLength(2);
+    expect(display.edges).toEqual([]);
   });
 });

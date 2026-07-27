@@ -21,6 +21,17 @@ impl LocalDatabase {
             r#"
             SELECT {TASK_RUN_COLUMNS} FROM local_task_runs AS runs
             WHERE runs.status = 'queued' AND runs.cancel_requested = 0
+              AND runs.dispatch_paused = 0
+              AND NOT EXISTS (
+                SELECT 1 FROM messages AS source_message
+                WHERE source_message.session_id = runs.session_id
+                  AND source_message.turn_id = runs.execution_group_id
+                  AND source_message.role = 'user'
+                  AND (
+                    COALESCE(json_extract(source_message.metadata_json, '$.task_runner_async.execution_paused'), 0) = 1
+                    OR LOWER(COALESCE(json_extract(source_message.metadata_json, '$.task_runner_async.overall_status'), '')) = 'paused'
+                  )
+              )
               AND NOT EXISTS (
                 SELECT 1 FROM work_item_dependencies AS dependencies
                 INNER JOIN project_work_items AS prerequisite
@@ -77,6 +88,17 @@ impl LocalDatabase {
                 worker_id = ?, lease_expires_at = ?, heartbeat_at = ?,
                 started_at = COALESCE(started_at, ?), updated_at = ?
             WHERE id = ? AND status = 'queued' AND cancel_requested = 0
+              AND dispatch_paused = 0
+              AND NOT EXISTS (
+                SELECT 1 FROM messages AS source_message
+                WHERE source_message.session_id = local_task_runs.session_id
+                  AND source_message.turn_id = local_task_runs.execution_group_id
+                  AND source_message.role = 'user'
+                  AND (
+                    COALESCE(json_extract(source_message.metadata_json, '$.task_runner_async.execution_paused'), 0) = 1
+                    OR LOWER(COALESCE(json_extract(source_message.metadata_json, '$.task_runner_async.overall_status'), '')) = 'paused'
+                  )
+              )
             "#,
         )
         .bind(worker_id)
@@ -158,10 +180,11 @@ impl LocalDatabase {
         status: &str,
         error: &str,
     ) -> Result<()> {
-        let status = if status == "canceled" {
-            "canceled"
-        } else {
-            "failed"
+        let status = match status {
+            "canceled" | "cancelled" => "canceled",
+            "blocked" => "blocked",
+            "interrupted" => "interrupted",
+            _ => "failed",
         };
         let now = local_now_rfc3339();
         sqlx::query(

@@ -24,14 +24,14 @@ pub(super) use plan::{
 };
 pub(super) use request_context::load_requirement_execution_request_context;
 pub(super) use status::{
-    is_done_status, task_runner_callback_event_for_status, task_runner_status_is_active,
+    task_runner_callback_event_for_status, task_runner_status_is_active,
     task_runner_status_is_success,
 };
 pub(super) use sync::{
     load_execution_links_for_work_items, mark_execution_messages_for_stop,
-    sync_execution_link_status, sync_execution_message_task_tracking,
+    set_execution_turn_hidden, sync_execution_link_status, sync_execution_message_task_tracking,
     sync_requirement_execution_state,
 };
 pub(super) use tasks::ensure_requirement_execution_not_active;
-pub(super) use types::{RequirementPlanItem, WorkItemPlanItem};
+pub(super) use types::{ExecutionLink, WorkItemPlanItem};
 pub(super) use values::value_string;

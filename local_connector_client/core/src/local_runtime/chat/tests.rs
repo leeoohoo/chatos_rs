@@ -11,7 +11,7 @@ use tokio::sync::RwLock;
 use uuid::Uuid;
 
 use crate::local_runtime::storage::{
-    CreateLocalSessionInput, LocalDatabase, UpsertLocalProjectInput,
+    BeginLocalTurnInput, CreateLocalSessionInput, LocalDatabase, UpsertLocalProjectInput,
 };
 use crate::local_runtime::{
     LOCAL_UNSCOPED_PROJECT_ID, LOCAL_UNSCOPED_PROJECT_NAME, LOCAL_UNSCOPED_WORKSPACE_ID,
@@ -82,6 +82,7 @@ async fn prepares_non_project_contact_tools_in_a_private_local_workspace() {
         &settings,
         chatos_plugin_management_sdk::SystemAgentKey::ChatosConversationAgent,
         false,
+        &[],
     )
     .await
     .expect("prepare local contact tools");
@@ -208,6 +209,17 @@ async fn executes_text_chat_with_device_model_and_persists_both_messages() {
         reqwest::Client::new(),
         database.clone(),
     );
+    database
+        .begin_turn(BeginLocalTurnInput {
+            session_id: session.id.clone(),
+            owner_user_id: "user-1".to_string(),
+            turn_id: "lc_turn_1".to_string(),
+            idempotency_key: "request-1".to_string(),
+            content: "hello".to_string(),
+            metadata_json: Some(json!({ "conversation_turn_id": "lc_turn_1" }).to_string()),
+        })
+        .await
+        .expect("precreate local chat turn");
 
     let result = execute_chat_turn(
         &runtime,
@@ -219,6 +231,11 @@ async fn executes_text_chat_with_device_model_and_persists_both_messages() {
             idempotency_key: Some("request-1".to_string()),
             model_config_id: Some("model-1".to_string()),
             reasoning_enabled: Some(false),
+            project_requirement_execution_planner: false,
+            resume_precreated_turn: true,
+            project_requirement_execution_task_ids: Vec::new(),
+            project_requirement_execution_requirement_id: None,
+            project_requirement_execution_requirement_title: None,
             system_prompt: Some("Answer briefly".to_string()),
             attachments: Vec::new(),
             ai_model_config: Default::default(),

@@ -47,6 +47,14 @@ function createCoreRuntime({ app, desktopAuthToken }) {
     return `${os}-${arch}`;
   }
 
+  function chromeExtensionPath() {
+    const packaged = resourcePath('chrome-extension');
+    if (fs.existsSync(path.join(packaged, 'manifest.json'))) {
+      return packaged;
+    }
+    return path.join(__dirname, '..', '..', 'chrome_extension');
+  }
+
   function bundledBrowserRuntime() {
     const toolsDir = resourcePath('bundled-tools', bundledToolsPlatformName());
     const agentBrowser = path.join(
@@ -106,6 +114,12 @@ function createCoreRuntime({ app, desktopAuthToken }) {
     const coreName = process.platform === 'win32'
       ? 'local_connector_client_core.exe'
       : 'local_connector_client_core';
+    const chromeNativeHostName = process.platform === 'win32'
+      ? 'chatos_chrome_native_host.exe'
+      : 'chatos_chrome_native_host';
+    const computerUseHelperName = process.platform === 'win32'
+      ? 'chatos_computer_use_helper.exe'
+      : 'chatos_computer_use_helper';
     const corePath = resourcePath(coreName);
     const browserRuntime = bundledBrowserRuntime();
     const browserStateDir = process.platform === 'win32'
@@ -116,12 +130,24 @@ function createCoreRuntime({ app, desktopAuthToken }) {
       ...process.env,
       PATH: coreExecutablePath(),
       CHATOS_BUNDLED_TOOLS_DIR: resourcePath('bundled-tools'),
+      CHATOS_DOCUMENT_RUNTIME_DIR: path.join(browserRuntime.toolsDir, 'documents-runtime'),
       CHATOS_BUNDLED_SKILLS_DIR: resourcePath('skill-bundles'),
+      CHATOS_BUNDLED_PLUGINS_DIR: resourcePath('plugin-bundles'),
+      CHATOS_CHROME_NATIVE_HOST_PATH: resourcePath(chromeNativeHostName),
+      CHATOS_CHROME_EXTENSION_DIR: chromeExtensionPath(),
       LOCAL_CONNECTOR_DESKTOP_AUTH_TOKEN: desktopAuthToken,
       LOCAL_CONNECTOR_IPC_ENDPOINT: ipcEndpoint,
+      LOCAL_CONNECTOR_ENABLE_TCP_API: '1',
+      LOCAL_CONNECTOR_ENABLE_PLUGIN_STDIO_SANDBOX: process.platform === 'darwin' ? '1' : '0',
       LOCAL_CONNECTOR_OPEN_UI: '0',
       LOCAL_CONNECTOR_REQUIRE_SECURE_REMOTE: process.env.LOCAL_CONNECTOR_REQUIRE_SECURE_REMOTE || '1',
     };
+    if (process.platform === 'darwin') {
+      env.CHATOS_COMPUTER_USE_HELPER_PATH = resourcePath(computerUseHelperName);
+      if (app.isPackaged) {
+        env.CHATOS_COMPUTER_USE_HELPER_REQUIRE_SIGNED = '1';
+      }
+    }
     env.AGENT_BROWSER_BIN = browserRuntime.agentBrowser;
     env.AGENT_BROWSER_EXECUTABLE_PATH = browserRuntime.browserExecutable;
     env.AGENT_BROWSER_SOCKET_DIR = browserStateDir;
@@ -323,6 +349,7 @@ function createCoreRuntime({ app, desktopAuthToken }) {
 
   return {
     cleanupIpcEndpoint,
+    chromeExtensionPath,
     getIpcEndpoint,
     isRunning,
     resourcePath,

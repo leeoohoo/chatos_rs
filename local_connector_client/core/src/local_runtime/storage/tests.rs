@@ -7,8 +7,9 @@ use serde_json::json;
 use uuid::Uuid;
 
 use super::{
-    AppendLocalRuntimeEventInput, BeginLocalTurnInput, BeginLocalTurnResult,
-    CompleteLocalTurnInput, CreateLocalSessionInput, LocalDatabase, UpsertLocalProjectInput,
+    AppendLocalMessageInput, AppendLocalRuntimeEventInput, BeginLocalTurnInput,
+    BeginLocalTurnResult, CompleteLocalTurnInput, CreateLocalSessionInput, LocalDatabase,
+    UpsertLocalProjectInput,
 };
 
 mod concurrent_writes;
@@ -183,6 +184,98 @@ async fn persists_and_reuses_idempotent_local_turns() {
 
     database.close().await;
     fs::remove_dir_all(root).expect("cleanup local database");
+}
+
+#[tokio::test]
+async fn failed_planner_turn_can_publish_failure_status_and_receipt() {
+    let root = std::env::temp_dir().join(format!("chatos-local-failed-plan-{}", Uuid::new_v4()));
+    let database = LocalDatabase::open(root.join("runtime.sqlite3"))
+        .await
+        .expect("open local database");
+    database
+        .upsert_project(UpsertLocalProjectInput {
+            project_id: "project-failed-plan".to_string(),
+            owner_user_id: "user-failed-plan".to_string(),
+            device_id: "device-failed-plan".to_string(),
+            workspace_id: "workspace-failed-plan".to_string(),
+            project_name: "Failed plan project".to_string(),
+            root_relative_path: None,
+        })
+        .await
+        .expect("create failed plan project");
+    let session = database
+        .create_session(CreateLocalSessionInput {
+            project_id: "project-failed-plan".to_string(),
+            owner_user_id: "user-failed-plan".to_string(),
+            title: "Failed plan session".to_string(),
+            selected_model_id: Some("model-1".to_string()),
+            selected_agent_id: None,
+        })
+        .await
+        .expect("create failed plan session");
+    database
+        .begin_turn(BeginLocalTurnInput {
+            session_id: session.id.clone(),
+            owner_user_id: "user-failed-plan".to_string(),
+            turn_id: "failed-plan-turn".to_string(),
+            idempotency_key: "failed-plan-turn".to_string(),
+            content: "Generate plan".to_string(),
+            metadata_json: Some(
+                json!({
+                    "task_runner_async": {
+                        "mode": "project_requirement_execution",
+                        "overall_status": "planning",
+                        "confirmation_status": "planning"
+                    }
+                })
+                .to_string(),
+            ),
+        })
+        .await
+        .expect("create failed planner turn");
+    database
+        .fail_turn(
+            "user-failed-plan",
+            "failed-plan-turn",
+            "planner_failed",
+            "planner failed before creating tasks",
+        )
+        .await
+        .expect("fail planner turn");
+    database
+        .set_turn_task_runner_status("user-failed-plan", "failed-plan-turn", "failed", "failed")
+        .await
+        .expect("mark planner metadata failed");
+    database
+        .append_turn_result_message(AppendLocalMessageInput {
+            session_id: session.id,
+            owner_user_id: "user-failed-plan".to_string(),
+            turn_id: "failed-plan-turn".to_string(),
+            message_id: None,
+            role: "assistant".to_string(),
+            content: "Execution planning failed".to_string(),
+            reasoning: None,
+            tool_calls_json: None,
+            tool_call_id: None,
+            metadata_json: None,
+            created_at: None,
+        })
+        .await
+        .expect("append failed planner receipt");
+
+    let messages = database
+        .list_turn_messages("user-failed-plan", "failed-plan-turn")
+        .await
+        .expect("load failed planner messages");
+    assert_eq!(messages.len(), 2);
+    assert!(messages[0]
+        .metadata_json
+        .as_deref()
+        .is_some_and(|metadata| metadata.contains("\"overall_status\":\"failed\"")));
+    assert_eq!(messages[1].content, "Execution planning failed");
+
+    database.close().await;
+    fs::remove_dir_all(root).expect("cleanup failed planner database");
 }
 
 #[tokio::test]

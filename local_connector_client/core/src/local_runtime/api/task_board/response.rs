@@ -21,6 +21,14 @@ pub(in crate::local_runtime::api) fn task_response(record: &LocalTaskBoardTaskRe
         "source_turn_id": record.source_turn_id,
         "source_user_message_id": record.source_user_message_id,
         "prerequisite_task_ids": record.prerequisite_task_ids,
+        "project_task_id": record.project_work_item_id,
+        "input_payload": {
+            "project_task_id": record.project_work_item_id,
+            "requirement_id": record.requirement_id,
+            "execution_group_id": record.execution_group_id,
+            "execution_client_ref": record.execution_client_ref,
+            "dependency_context_refs": record.dependency_context_refs,
+        },
         "default_model_config_id": record.model_config_id,
         "mcp_config": {
             "enabled_builtin_kinds": record.enabled_builtin_kinds,

@@ -191,6 +191,74 @@ export const buildToolActionSummary = (
     const target = clipped(url || '网页');
     return action('browse', `已打开 ${target}`, `正在打开 ${target}`, `打开 ${target} 失败`);
   }
+  if (displayName === 'browser_tabs') {
+    return action('read', '已读取浏览器标签页', '正在读取浏览器标签页', '读取浏览器标签页失败');
+  }
+  if (displayName === 'chrome_status') {
+    return action('read', '已检查 Chrome 连接状态', '正在检查 Chrome 连接状态', '检查 Chrome 连接状态失败');
+  }
+  if (displayName === 'chrome_tabs') {
+    return action('read', '已读取授权的 Chrome 标签页', '正在读取授权的 Chrome 标签页', '读取 Chrome 标签页失败');
+  }
+  if (displayName === 'chrome_tab_snapshot') {
+    const target = stringValue(args, ['tab_id', 'tabId']) || 'Chrome 标签页';
+    return action('read', `已读取 ${clipped(target, 80)}`, `正在读取 ${clipped(target, 80)}`, `读取 ${clipped(target, 80)} 失败`);
+  }
+  if (displayName === 'chrome_tab_navigate') {
+    const target = clipped(url || 'Chrome 页面');
+    return action('browse', `已打开 ${target}`, `正在打开 ${target}`, `打开 ${target} 失败`);
+  }
+  if (displayName === 'chrome_tab_click') {
+    const target = stringValue(args, ['target_id', 'targetId']) || 'Chrome 页面元素';
+    return action('browse', `已点击 ${clipped(target, 80)}`, `正在点击 ${clipped(target, 80)}`, `点击 ${clipped(target, 80)} 失败`);
+  }
+  if (displayName === 'chrome_tab_type_text') {
+    const target = stringValue(args, ['target_id', 'targetId']) || 'Chrome 输入框';
+    return action('browse', `已在 ${clipped(target, 80)} 输入内容`, `正在向 ${clipped(target, 80)} 输入内容`, `向 ${clipped(target, 80)} 输入失败`);
+  }
+  if (displayName === 'chrome_tab_select') {
+    const option = stringValue(args, ['option_label', 'optionLabel']) || '选项';
+    return action('browse', `已选择 ${clipped(option, 100)}`, `正在选择 ${clipped(option, 100)}`, `选择 ${clipped(option, 100)} 失败`);
+  }
+  if (displayName === 'chrome_tab_scroll') {
+    const target = stringValue(args, ['tab_id', 'tabId']) || 'Chrome 标签页';
+    return action('browse', `已滚动 ${clipped(target, 80)}`, `正在滚动 ${clipped(target, 80)}`, `滚动 ${clipped(target, 80)} 失败`);
+  }
+  if (displayName === 'chrome_tab_history') {
+    const direction = stringValue(args, ['direction']) === 'forward' ? '前进' : '后退';
+    return action('browse', `已${direction}`, `正在${direction}`, `${direction}失败`);
+  }
+  if (displayName === 'chrome_tab_activate') {
+    const target = stringValue(args, ['tab_id', 'tabId']) || 'Chrome 标签页';
+    return action('browse', `已激活 ${clipped(target, 80)}`, `正在激活 ${clipped(target, 80)}`, `激活 ${clipped(target, 80)} 失败`);
+  }
+  if (displayName === 'chrome_tab_upload') {
+    const target = stringValue(args, ['path']) || '工作区文件';
+    return action('browse', `已上传 ${clipped(target, 100)}`, `正在上传 ${clipped(target, 100)}`, `上传 ${clipped(target, 100)} 失败`);
+  }
+  if (displayName === 'chrome_tab_download') {
+    const target = stringValue(args, ['path']) || '工作区文件';
+    return action('browse', `已下载到 ${clipped(target, 100)}`, `正在下载到 ${clipped(target, 100)}`, `下载到 ${clipped(target, 100)} 失败`);
+  }
+  if (displayName === 'chrome_tab_screenshot') {
+    const target = stringValue(args, ['tab_id', 'tabId']) || 'Chrome 标签页';
+    return action('read', `已截取 ${clipped(target, 80)}`, `正在截取 ${clipped(target, 80)}`, `截取 ${clipped(target, 80)} 失败`);
+  }
+  if (displayName === 'chrome_tab_release') {
+    const target = stringValue(args, ['tab_id', 'tabId']) || 'Chrome 标签页';
+    return action('browse', `已断开 ${clipped(target, 80)}`, `正在断开 ${clipped(target, 80)}`, `断开 ${clipped(target, 80)} 失败`);
+  }
+  if (displayName === 'browser_tab_new') {
+    return action('browse', '已新建浏览器标签页', '正在新建浏览器标签页', '新建浏览器标签页失败');
+  }
+  if (displayName === 'browser_tab_switch') {
+    const target = stringValue(args, ['tab_id', 'tabId']) || '标签页';
+    return action('browse', `已切换到 ${clipped(target, 80)}`, `正在切换到 ${clipped(target, 80)}`, `切换到 ${clipped(target, 80)} 失败`);
+  }
+  if (displayName === 'browser_tab_close') {
+    const target = stringValue(args, ['tab_id', 'tabId']) || '标签页';
+    return action('browse', `已关闭 ${clipped(target, 80)}`, `正在关闭 ${clipped(target, 80)}`, `关闭 ${clipped(target, 80)} 失败`);
+  }
   if (displayName === 'browser_click') {
     const target = stringValue(args, ['text', 'label', 'ref', 'selector']) || '页面元素';
     return action('browse', `已点击 ${clipped(target)}`, `正在点击 ${clipped(target)}`, `点击 ${clipped(target)} 失败`);
@@ -209,8 +277,56 @@ export const buildToolActionSummary = (
     const key = stringValue(args, ['key']) || '按键';
     return action('browse', `已按下 ${clipped(key, 80)}`, `正在按下 ${clipped(key, 80)}`, `按下 ${clipped(key, 80)} 失败`);
   }
+  if (displayName === 'browser_upload') {
+    const target = stringValue(args, ['ref', 'selector']) || '文件元素';
+    return action('browse', `已向 ${clipped(target, 80)} 上传文件`, '正在上传文件', '上传文件失败');
+  }
+  if (displayName === 'browser_download') {
+    const target = path || '工作区文件';
+    return action('browse', `已下载 ${clipped(target)}`, `正在下载 ${clipped(target)}`, `下载 ${clipped(target)} 失败`);
+  }
   if (displayName === 'browser_console') {
     return action('read', '已读取浏览器控制台', '正在读取浏览器控制台', '读取浏览器控制台失败');
+  }
+  if (displayName === 'browser_network') {
+    return action('read', '已读取浏览器网络记录', '正在读取浏览器网络记录', '读取浏览器网络记录失败');
+  }
+  if (displayName === 'browser_network_request') {
+    return action('read', '已读取网络请求详情', '正在读取网络请求详情', '读取网络请求详情失败');
+  }
+  if (displayName === 'browser_har_start') {
+    return action('read', '已开始 HAR 网络记录', '正在开始 HAR 网络记录', '开始 HAR 网络记录失败');
+  }
+  if (displayName === 'browser_har_stop') {
+    const target = path || '工作区 HAR 文件';
+    return action('modify', `已导出脱敏 HAR ${clipped(target)}`, `正在导出脱敏 HAR ${clipped(target)}`, `导出脱敏 HAR ${clipped(target)} 失败`);
+  }
+  if (displayName === 'browser_websocket_start') {
+    return action('read', '已开始观察 WebSocket 帧', '正在开始观察 WebSocket 帧', '开始观察 WebSocket 帧失败');
+  }
+  if (displayName === 'browser_websocket_frames') {
+    return action('read', '已读取 WebSocket 帧', '正在读取 WebSocket 帧', '读取 WebSocket 帧失败');
+  }
+  if (displayName === 'browser_websocket_stop') {
+    return action('read', '已停止观察 WebSocket 帧', '正在停止观察 WebSocket 帧', '停止观察 WebSocket 帧失败');
+  }
+  if (displayName === 'browser_route_add') {
+    const target = stringValue(args, ['pattern']) || 'URL 模式';
+    return action('modify', `已添加浏览器拦截规则 ${clipped(target)}`, `正在申请并添加浏览器拦截规则 ${clipped(target)}`, `添加浏览器拦截规则 ${clipped(target)} 失败`);
+  }
+  if (displayName === 'browser_route_list') {
+    return action('read', '已读取浏览器拦截规则', '正在读取浏览器拦截规则', '读取浏览器拦截规则失败');
+  }
+  if (displayName === 'browser_route_remove') {
+    const target = stringValue(args, ['route_id', 'routeId']) || '拦截规则';
+    return action('modify', `已移除 ${clipped(target, 80)}`, `正在移除 ${clipped(target, 80)}`, `移除 ${clipped(target, 80)} 失败`);
+  }
+  if (displayName === 'browser_route_clear') {
+    return action('modify', '已清除浏览器拦截规则', '正在清除浏览器拦截规则', '清除浏览器拦截规则失败');
+  }
+  if (displayName === 'browser_cdp_command') {
+    const method = stringValue(args, ['method']) || 'CDP 命令';
+    return action('execute', `已执行高风险 CDP 命令 ${clipped(method, 100)}`, `正在等待审批并执行 CDP 命令 ${clipped(method, 100)}`, `执行 CDP 命令 ${clipped(method, 100)} 失败`);
   }
   if (displayName === 'browser_get_images') {
     return action('read', '已读取页面图片', '正在读取页面图片', '读取页面图片失败');

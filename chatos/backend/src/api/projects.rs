@@ -27,7 +27,11 @@ use self::crud_handlers::{
 use self::plan_handlers::{
     get_project_plan, list_requirement_documents, list_requirement_work_items,
 };
-use self::requirement_execution_handlers::{execute_requirement, stop_requirement_execution};
+use self::requirement_execution_handlers::{
+    confirm_requirement_execution, execute_requirement, get_requirement_execution_plan,
+    pause_requirement_execution, rerun_requirement_execution, resume_requirement_execution,
+    stop_requirement_execution,
+};
 use self::run_handlers::{
     analyze_project_run, execute_project_run, get_project_run_catalog, get_project_run_environment,
     get_project_run_state, set_project_run_default, update_project_run_environment,
@@ -60,8 +64,28 @@ pub fn router() -> Router {
             post(execute_requirement),
         )
         .route(
+            "/api/projects/{id}/requirements/{requirement_id}/execution-plan",
+            get(get_requirement_execution_plan),
+        )
+        .route(
+            "/api/projects/{id}/requirements/{requirement_id}/confirm-execution",
+            post(confirm_requirement_execution),
+        )
+        .route(
+            "/api/projects/{id}/requirements/{requirement_id}/pause",
+            post(pause_requirement_execution),
+        )
+        .route(
+            "/api/projects/{id}/requirements/{requirement_id}/resume",
+            post(resume_requirement_execution),
+        )
+        .route(
             "/api/projects/{id}/requirements/{requirement_id}/stop",
             post(stop_requirement_execution),
+        )
+        .route(
+            "/api/projects/{id}/requirements/{requirement_id}/rerun",
+            post(rerun_requirement_execution),
         )
         .route(
             "/api/projects/{id}/contacts",

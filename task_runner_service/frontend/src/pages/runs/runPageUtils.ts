@@ -42,6 +42,21 @@ export function formatUserVisibleRunText(
   const lower = trimmed.toLowerCase();
   if (
     [
+      'connection closed before message completed',
+      'disconnect/reset before headers',
+      'upstream connect error',
+      'connection reset by peer',
+      'peer closed connection',
+    ].some((marker) => lower.includes(marker))
+  ) {
+    const retryCount = trimmed.match(/已重试\s*(\d+)\s*次/i)?.[1]
+      ?? trimmed.match(/retried\s*(\d+)\s*times?/i)?.[1];
+    return retryCount
+      ? t('runs.error.modelConnectionInterruptedWithRetries', { count: retryCount })
+      : t('runs.error.modelConnectionInterrupted');
+  }
+  if (
+    [
       'sandbox environment',
       'sandbox_environment',
       'docker environment image build',

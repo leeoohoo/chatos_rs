@@ -73,19 +73,62 @@ const withTaskMetadata = (
   const ids = (status: string) => tasks
     .filter((task) => String(task.status || '').toLowerCase() === status)
     .map((task) => task.id);
-  const running = [...ids('todo'), ...ids('doing')];
+  const existingTaskRunnerAsync: Record<string, unknown> = (
+    message.metadata?.task_runner_async
+    && typeof message.metadata.task_runner_async === 'object'
+    && !Array.isArray(message.metadata.task_runner_async)
+  ) ? message.metadata.task_runner_async as Record<string, unknown> : {};
+  const originalStatus = String(
+    existingTaskRunnerAsync.confirmation_status
+    || existingTaskRunnerAsync.overall_status
+    || '',
+  ).trim().toLowerCase();
+  const planningFailed = ['failed', 'error', 'cancelled', 'canceled', 'stopped']
+    .includes(originalStatus);
+  const allCancelled = tasks.length > 0 && tasks.every((task) => (
+    ['cancelled', 'canceled'].includes(String(task.status || '').toLowerCase())
+  ));
+  const awaitingConfirmation = !planningFailed && tasks.every((task) => (
+    String(task.status || '').toLowerCase() === 'todo'
+    && !String(task.last_run_id || '').trim()
+  ));
+  const running = tasks
+    .filter((task) => {
+      const status = String(task.status || '').toLowerCase();
+      return status === 'doing'
+        || (status === 'todo' && Boolean(String(task.last_run_id || '').trim()));
+    })
+    .map((task) => task.id);
   return {
     ...message,
     metadata: {
       ...(message.metadata || {}),
       task_runner_async: {
+        ...existingTaskRunnerAsync,
+        mode: 'project_requirement_execution',
+        execution_kind: 'project_requirement_execution',
         source_user_message_id: message.id,
         source_turn_id: message.turn_id,
         created_task_ids: tasks.map((task) => task.id),
         running_task_ids: running,
         blocked_task_ids: ids('blocked'),
         succeeded_task_ids: ids('done'),
-        overall_status: running.length > 0 ? 'running' : 'completed',
+        overall_status: allCancelled
+          ? 'stopped'
+          : planningFailed
+          ? originalStatus
+          : awaitingConfirmation
+            ? 'awaiting_confirmation'
+            : running.length > 0
+              ? 'running'
+              : 'completed',
+        confirmation_status: allCancelled
+          ? 'stopped'
+          : planningFailed
+          ? originalStatus
+          : awaitingConfirmation
+            ? 'awaiting_confirmation'
+            : 'confirmed',
       },
     },
   };

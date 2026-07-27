@@ -9,6 +9,30 @@ impl MongoStore {
         Ok(task)
     }
 
+    pub(in crate::store) async fn set_tasks_execution_paused(
+        &self,
+        task_ids: &[String],
+        paused: bool,
+    ) -> Result<u64, String> {
+        if task_ids.is_empty() {
+            return Ok(0);
+        }
+        self.tasks
+            .update_many(
+                doc! { "id": { "$in": task_ids } },
+                doc! {
+                    "$set": {
+                        "task_tool_state.execution_paused": paused,
+                        "updated_at": now_rfc3339(),
+                    }
+                },
+                None,
+            )
+            .await
+            .map(|result| result.modified_count)
+            .map_err(|err| err.to_string())
+    }
+
     pub(in crate::store) async fn update_task_schedule_if_next_run_at(
         &self,
         task_id: &str,

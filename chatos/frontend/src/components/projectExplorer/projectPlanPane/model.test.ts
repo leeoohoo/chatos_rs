@@ -19,10 +19,12 @@ describe('projectPlanPane model', () => {
   it('propagates the selected model when executing a requirement', () => {
     expect(buildRequirementExecutionPayload({
       includePrerequisiteDependents: true,
+      planningFeedback: '  先补测试，再拆分接口  ',
       selectedModelId: '  model-selected  ',
     })).toEqual({
       include_prerequisite_dependents: true,
       model_config_id: 'model-selected',
+      planning_feedback: '先补测试，再拆分接口',
     });
   });
 

@@ -1,6 +1,12 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
+import type {
+  PluginCatalogRecord,
+  PluginComponentDescriptor,
+  PluginReleaseRecord,
+} from './pluginTypes';
+
 export type Visibility = 'private' | 'public' | 'system_private';
 export type RuntimeKind =
   | 'system'
@@ -10,7 +16,7 @@ export type RuntimeKind =
   | 'local_connector_stdio'
   | 'local_connector_http'
   | 'local_connector_builtin_proxy';
-export type ResourceKind = 'mcp' | 'skill' | 'skill_package';
+export type ResourceKind = 'mcp' | 'skill' | 'skill_package' | 'plugin' | 'plugin_component';
 export type BindingScope = 'global_default' | 'user_override' | 'system_required';
 export type McpBindingMode = 'disabled' | 'optional' | 'required';
 export type AgentPromptVendor = 'glm' | 'deepseek' | 'gpt' | 'kimi';
@@ -79,7 +85,15 @@ export interface ResourceMetadata {
   extra?: Record<string, unknown>;
 }
 
-export interface McpRecord {
+export interface PluginComponentOwnership {
+  plugin_id?: string | null;
+  release_id?: string | null;
+  component_key?: string | null;
+  managed_by_plugin?: boolean;
+  immutable_from_release?: boolean;
+}
+
+export interface McpRecord extends PluginComponentOwnership {
   id: string;
   owner_user_id: string;
   owner_kind: string;
@@ -153,6 +167,7 @@ export interface McpDescriptorResponse {
 
 export interface SkillContent {
   kind:
+    | 'local_connector_bundle'
     | 'inline_content'
     | 'cloud_package'
     | 'git_package'
@@ -164,9 +179,13 @@ export interface SkillContent {
   repository?: string | null;
   branch?: string | null;
   local_connector?: LocalConnectorRef | null;
+  bundle_id?: string | null;
+  bundle_version?: string | null;
+  bundle_hash?: string | null;
+  entrypoint_kind?: string | null;
 }
 
-export interface SkillRecord {
+export interface SkillRecord extends PluginComponentOwnership {
   id: string;
   owner_user_id: string;
   owner_kind: string;
@@ -201,7 +220,7 @@ export interface SkillPackageRecord {
   updated_at: string;
 }
 
-export interface SystemAgentRecord {
+export interface SystemAgentRecord extends PluginComponentOwnership {
   id: string;
   agent_key: string;
   display_name: string;
@@ -303,6 +322,7 @@ export interface AgentBindingRecord {
   required: boolean;
   priority: number;
   conditions: BindingConditions;
+  component_allowlist: string[];
   created_by: string;
   updated_by: string;
   created_at: string;
@@ -347,6 +367,23 @@ export interface ResolvedSkill {
   reason?: string | null;
 }
 
+export interface ResolvedPluginComponent {
+  component: PluginComponentDescriptor;
+  available: boolean;
+  status: string;
+  reason?: string | null;
+}
+
+export interface ResolvedPlugin {
+  catalog: PluginCatalogRecord;
+  release?: PluginReleaseRecord | null;
+  binding: AgentBindingRecord;
+  components: ResolvedPluginComponent[];
+  available: boolean;
+  status: string;
+  reason?: string | null;
+}
+
 export interface LocalConnectorRequirement {
   resource_kind: ResourceKind;
   resource_id: string;
@@ -362,5 +399,6 @@ export interface RuntimeCapabilitiesResponse {
   owner_user_id: string;
   mcps: ResolvedMcp[];
   skills: ResolvedSkill[];
+  plugins: ResolvedPlugin[];
   local_connector_requirements: LocalConnectorRequirement[];
 }

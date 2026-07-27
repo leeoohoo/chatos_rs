@@ -1,11 +1,14 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
+use std::collections::BTreeSet;
+
 use crate::models::{
-    normalize_project_id, TaskSourceContext, PUBLIC_PROJECT_ID, TASK_PROFILE_CHATOS_PLAN,
-    TASK_PROFILE_DEFAULT,
+    normalize_project_id, CreateTaskRequest, TaskSourceContext, PUBLIC_PROJECT_ID,
+    TASK_PROFILE_CHATOS_PLAN, TASK_PROFILE_DEFAULT,
 };
 use chatos_mcp_runtime::BuiltinMcpPromptLocale;
+use chatos_plugin_management_sdk::TaskPluginConfig;
 
 use super::{
     decode_remote_server_config_header, CHATOS_ASYNC_PLANNER_TOOL_PROFILE,
@@ -32,6 +35,8 @@ pub struct McpRequestContext {
     pub task_profile: Option<String>,
     pub builtin_prompt_locale: Option<String>,
     pub chatos_plan_mode: bool,
+    pub expected_project_task_ids: BTreeSet<String>,
+    pub plugin_config_override: Option<TaskPluginConfig>,
 }
 
 impl McpRequestContext {
@@ -149,6 +154,12 @@ impl McpRequestContext {
             _ => BuiltinMcpPromptLocale::DEFAULT_KEY,
         };
         key.to_string()
+    }
+
+    pub(super) fn enforce_plugin_config(&self, input: &mut CreateTaskRequest) {
+        if let Some(plugin_config) = self.plugin_config_override.as_ref() {
+            input.plugin_config = plugin_config.clone();
+        }
     }
 }
 

@@ -2,7 +2,7 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use chatos_mcp::{system_mcp_descriptor_for_record, SystemMcpHost};
-use chatos_mcp_runtime::BuiltinMcpKind;
+use chatos_mcp_runtime::{BuiltinMcpKind, PROJECT_MANAGEMENT_MCP_ID};
 use chatos_plugin_management_sdk::{ResolvedAgentCapabilities, SystemAgentKey, SystemMcpKey};
 
 use crate::local_runtime::storage::{LocalDatabase, LocalRuntimeSettingsRecord};
@@ -60,6 +60,7 @@ pub(crate) async fn resolve_local_chat_capabilities(
     request: &RelayRequest,
     agent_key: SystemAgentKey,
     include_all_configured: bool,
+    auto_include_project_management: bool,
     manifest_candidates: Vec<LocalMcpManifestRecord>,
 ) -> Result<ResolvedLocalChatCapabilities, String> {
     let resolver = LocalCapabilityResolver::new(database, owner_user_id);
@@ -67,7 +68,7 @@ pub(crate) async fn resolve_local_chat_capabilities(
     validate_primary(&capabilities)?;
     validate_required_system_mcps_for_local_connector(&capabilities)?;
 
-    let selected_mcp_ids = if include_all_configured {
+    let mut selected_mcp_ids = if include_all_configured {
         capabilities
             .selectable_mcps()
             .map(|item| item.resource.id.clone())
@@ -80,6 +81,13 @@ pub(crate) async fn resolve_local_chat_capabilities(
     } else {
         Vec::new()
     };
+    if auto_include_project_management
+        && !selected_mcp_ids
+            .iter()
+            .any(|id| id == PROJECT_MANAGEMENT_MCP_ID)
+    {
+        selected_mcp_ids.push(PROJECT_MANAGEMENT_MCP_ID.to_string());
+    }
     let selected_optional_mcp_ids = selected_optional_mcp_ids(&capabilities, &selected_mcp_ids)?;
     let effective_mcp_ids =
         capabilities.effective_mcp_ids(selected_optional_mcp_ids.iter().map(String::as_str));
@@ -264,7 +272,7 @@ fn validate_primary(capabilities: &ResolvedAgentCapabilities) -> Result<(), Stri
         ));
     }
     capabilities
-        .ensure_required_available()
+        .ensure_required_runtime_supported([], [])
         .map_err(|error| error.to_string())
 }
 
@@ -341,6 +349,7 @@ mod tests {
                     },
                     security: ResourceSecurity::default(),
                     metadata: ResourceMetadata::default(),
+                    plugin_component: Default::default(),
                     created_by: "system".to_string(),
                     updated_by: "system".to_string(),
                     created_at: "now".to_string(),
@@ -357,6 +366,7 @@ mod tests {
                     required: true,
                     priority: 10,
                     conditions: BindingConditions::default(),
+                    component_allowlist: Vec::new(),
                     created_by: "system".to_string(),
                     updated_by: "system".to_string(),
                     created_at: "now".to_string(),
@@ -367,6 +377,7 @@ mod tests {
                 reason: None,
             }],
             skills: Vec::new(),
+            plugins: Vec::new(),
             local_connector_requirements: Vec::new(),
         };
 

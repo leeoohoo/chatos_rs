@@ -2,6 +2,7 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use super::*;
+use chatos_plugin_management_sdk::{SelectedPluginRef, TaskPluginConfig};
 
 #[derive(Debug, Default, Deserialize)]
 pub(in crate::mcp_server) struct ListTasksArgs {
@@ -31,6 +32,11 @@ pub(in crate::mcp_server) struct TaskIdArgs {
 }
 
 #[derive(Debug, Deserialize)]
+pub(in crate::mcp_server) struct ListAvailablePluginsArgs {
+    pub(in crate::mcp_server) device_id: String,
+}
+
+#[derive(Debug, Deserialize)]
 pub(in crate::mcp_server) struct CreateTaskArgs {
     pub(in crate::mcp_server) title: String,
     #[serde(default)]
@@ -56,6 +62,12 @@ pub(in crate::mcp_server) struct CreateTaskArgs {
     pub(in crate::mcp_server) external_mcp_config_ids: Option<Vec<String>>,
     #[serde(default)]
     pub(in crate::mcp_server) selected_skill_ids: Option<Vec<String>>,
+    #[serde(default)]
+    pub(in crate::mcp_server) plugin_device_id: Option<String>,
+    #[serde(default)]
+    pub(in crate::mcp_server) plugin_workspace_id: Option<String>,
+    #[serde(default)]
+    pub(in crate::mcp_server) selected_plugins: Option<Vec<SelectedPluginRef>>,
     #[serde(default)]
     pub(in crate::mcp_server) prerequisite_task_ids: Option<Vec<String>>,
     #[serde(default)]
@@ -88,6 +100,12 @@ impl CreateTaskArgs {
                 .get_or_insert_with(TaskMcpConfig::default)
                 .requires_execution = requires_execution;
         }
+        let plugin_config = TaskPluginConfig {
+            device_id: normalize_optional_id(self.plugin_device_id),
+            workspace_id: normalize_optional_id(self.plugin_workspace_id),
+            selected_plugins: normalize_selected_plugins(self.selected_plugins.unwrap_or_default()),
+            command_invocations: Vec::new(),
+        };
         Ok(CreateTaskRequest {
             title: self.title,
             description: self.description,
@@ -102,6 +120,7 @@ impl CreateTaskArgs {
             tenant_id: None,
             subject_id: None,
             schedule: self.schedule,
+            plugin_config,
             mcp_config,
             prerequisite_task_ids: self.prerequisite_task_ids,
         })
@@ -173,8 +192,6 @@ pub(in crate::mcp_server) struct CreateProjectExecutionTasksArgs {
     pub(in crate::mcp_server) project_id: String,
     pub(in crate::mcp_server) requirement_id: String,
     #[serde(default)]
-    pub(in crate::mcp_server) execution_group_id: Option<String>,
-    #[serde(default)]
     pub(in crate::mcp_server) tasks: Vec<CreateProjectExecutionTaskItem>,
 }
 
@@ -207,6 +224,8 @@ pub(in crate::mcp_server) struct CreateProjectExecutionTaskItem {
     #[serde(default)]
     pub(in crate::mcp_server) prerequisite_refs: Vec<String>,
     #[serde(default)]
+    pub(in crate::mcp_server) context_refs: Vec<String>,
+    #[serde(default)]
     pub(in crate::mcp_server) prerequisite_task_ids: Vec<String>,
 }
 
@@ -217,6 +236,8 @@ pub(in crate::mcp_server) struct CreateTaskWithPrerequisitesItem {
     pub(in crate::mcp_server) task: CreateTaskArgs,
     #[serde(default)]
     pub(in crate::mcp_server) prerequisite_refs: Vec<String>,
+    #[serde(default)]
+    pub(in crate::mcp_server) context_refs: Vec<String>,
 }
 
 pub(in crate::mcp_server) fn normalize_external_mcp_config_ids(values: Vec<String>) -> Vec<String> {
@@ -225,6 +246,33 @@ pub(in crate::mcp_server) fn normalize_external_mcp_config_ids(values: Vec<Strin
 
 pub(in crate::mcp_server) fn normalize_skill_ids(values: Vec<String>) -> Vec<String> {
     normalize_unique_ids(values)
+}
+
+fn normalize_selected_plugins(values: Vec<SelectedPluginRef>) -> Vec<SelectedPluginRef> {
+    let mut out = Vec::new();
+    for value in values {
+        let plugin_id = value.plugin_id.trim();
+        if plugin_id.is_empty()
+            || out
+                .iter()
+                .any(|item: &SelectedPluginRef| item.plugin_id == plugin_id)
+        {
+            continue;
+        }
+        out.push(SelectedPluginRef {
+            plugin_id: plugin_id.to_string(),
+            selected_skill_ids: normalize_unique_ids(value.selected_skill_ids),
+            selected_command_ids: normalize_unique_ids(value.selected_command_ids),
+            selected_agent_ids: normalize_unique_ids(value.selected_agent_ids),
+        });
+    }
+    out
+}
+
+fn normalize_optional_id(value: Option<String>) -> Option<String> {
+    value
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
 }
 
 fn normalize_unique_ids(values: Vec<String>) -> Vec<String> {

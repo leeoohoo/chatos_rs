@@ -24,6 +24,7 @@ pub(super) struct PrerequisiteTaskContext {
 pub(super) fn build_task_prompt(
     task: &TaskRecord,
     prompt_override: Option<&str>,
+    retry_instruction: Option<&str>,
     prerequisite_context: &[PrerequisiteTaskContext],
     locale: BuiltinMcpPromptLocale,
 ) -> String {
@@ -71,6 +72,7 @@ pub(super) fn build_task_prompt(
             "\n\n执行策略：这是一个仅文件处理任务。使用默认沙箱读取和修改项目文件；除非用户明确修改任务策略，否则不要要求、初始化、启动、构建、测试或验证项目专属运行环境。"
         });
     }
+    append_retry_instruction(&mut current_task_prompt, retry_instruction, locale);
 
     if prerequisite_context.is_empty() {
         return current_task_prompt;
@@ -82,6 +84,25 @@ pub(super) fn build_task_prompt(
         text.current_task_heading,
         current_task_prompt
     )
+}
+
+fn append_retry_instruction(
+    prompt: &mut String,
+    retry_instruction: Option<&str>,
+    locale: BuiltinMcpPromptLocale,
+) {
+    let Some(instruction) = retry_instruction
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return;
+    };
+    prompt.push_str(if locale.is_english() {
+        "\n\n[User guidance for this retry]\n"
+    } else {
+        "\n\n[用户对本次重试的补充处理意见]\n"
+    });
+    prompt.push_str(instruction);
 }
 
 pub(super) fn build_task_prompt_template(locale: BuiltinMcpPromptLocale) -> String {
@@ -302,5 +323,19 @@ mod tests {
         assert!(english.contains("Output Language Policy"));
         assert!(english.contains("current task title/objective"));
         assert!(english.contains("Project Management artifacts"));
+    }
+
+    #[test]
+    fn retry_instruction_is_appended_without_replacing_the_task_prompt() {
+        let mut prompt = "任务标题：修复阻塞节点".to_string();
+        append_retry_instruction(
+            &mut prompt,
+            Some("  配置已经补齐，请重新验证  "),
+            BuiltinMcpPromptLocale::ZhCn,
+        );
+
+        assert!(prompt.starts_with("任务标题：修复阻塞节点"));
+        assert!(prompt.contains("[用户对本次重试的补充处理意见]"));
+        assert!(prompt.ends_with("配置已经补齐，请重新验证"));
     }
 }

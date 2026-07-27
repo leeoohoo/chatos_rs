@@ -45,6 +45,45 @@ export interface LocalConnectorWorkspaceResponse {
   updatedAt?: string;
 }
 
+export interface TaskRunnerSelectablePluginCommandResponse {
+  command_id: string;
+  display_name: string;
+  description?: string | null;
+  argument_hint?: string | null;
+  requires_confirmation: boolean;
+  target_agent?: string | null;
+  allowed_tools?: string[];
+}
+
+export interface TaskRunnerSelectablePluginAgentResponse {
+  agent_id: string;
+  display_name: string;
+  description?: string | null;
+  base_agent: string;
+  allowed_tools?: string[];
+  max_iterations: number;
+}
+
+export interface TaskRunnerSelectablePluginResponse {
+  id: string;
+  plugin_key: string;
+  display_name: string;
+  description: string;
+  version: string;
+  release_id: string;
+  artifact_sha256: string;
+  device_id: string;
+  component_keys: string[];
+  commands: TaskRunnerSelectablePluginCommandResponse[];
+  agents: TaskRunnerSelectablePluginAgentResponse[];
+}
+
+export interface TaskRunnerAvailablePluginsResponse {
+  agent_key: string;
+  policy_revision: string;
+  selectable_plugins: TaskRunnerSelectablePluginResponse[];
+}
+
 export interface LocalConnectorProjectBindingResponse {
   id: string;
   owner_user_id?: string;

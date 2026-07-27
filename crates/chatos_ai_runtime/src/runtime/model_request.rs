@@ -24,7 +24,10 @@ pub(super) async fn dispatch_model_request(
     input_item_count: usize,
     input_bytes: usize,
     tool_count: usize,
+    request_attempt: usize,
     stream_output: bool,
+    provider_stream: bool,
+    force_identity_encoding: bool,
 ) -> Result<AiResponse, String> {
     info!(
         conversation_id = options.conversation_id.as_deref().unwrap_or(""),
@@ -37,6 +40,14 @@ pub(super) async fn dispatch_model_request(
         input_item_count,
         input_bytes,
         tool_count,
+        request_attempt,
+        provider_stream,
+        read_timeout_seconds = request_handler.read_timeout_seconds(),
+        connection_mode = if force_identity_encoding {
+            "isolated_retry"
+        } else {
+            "pooled"
+        },
         "ai runtime dispatching model request"
     );
     let request_debug = json!({
@@ -48,6 +59,10 @@ pub(super) async fn dispatch_model_request(
         "input_bytes": input_bytes,
         "tool_count": tool_count,
         "supports_responses": request.supports_responses,
+        "request_attempt": request_attempt,
+        "stream": provider_stream,
+        "connection_mode": if force_identity_encoding { "isolated_retry" } else { "pooled" },
+        "read_timeout_seconds": request_handler.read_timeout_seconds(),
     });
     if let Some(callback) = &options.callbacks.on_before_model_input {
         callback(request.input.clone());
@@ -84,7 +99,8 @@ pub(super) async fn dispatch_model_request(
                 include_prompt_cache_retention: request.include_prompt_cache_retention,
                 request_body_limit_bytes: request.request_body_limit_bytes,
                 abort_token: options.abort_token.clone(),
-                force_identity_encoding: false,
+                force_identity_encoding,
+                stream: provider_stream,
             },
         )
         .await;
@@ -105,6 +121,8 @@ pub(super) async fn dispatch_model_request(
                 reason = iteration_reason,
                 model = request.model.as_str(),
                 provider = request.provider.as_str(),
+                request_attempt,
+                provider_stream,
                 model_request_ms,
                 response_id = response.response_id.as_deref().unwrap_or(""),
                 tool_call_count = response
@@ -124,6 +142,8 @@ pub(super) async fn dispatch_model_request(
                 reason = iteration_reason,
                 model = request.model.as_str(),
                 provider = request.provider.as_str(),
+                request_attempt,
+                provider_stream,
                 model_request_ms,
                 error = err.as_str(),
                 "ai runtime model request failed"

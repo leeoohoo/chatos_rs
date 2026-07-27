@@ -3,6 +3,7 @@
 
 use super::*;
 use crate::models::normalize_task_profile;
+use crate::services::task_manager_lifecycle::{apply_task_closure, task_has_manager_lifecycle};
 
 impl TaskService {
     pub async fn update_task(
@@ -69,6 +70,35 @@ impl TaskService {
                 ensure_task_has_no_unfinished_subtasks(&self.store, &task).await?;
             }
             task.status = status;
+            if task_has_manager_lifecycle(&task) {
+                let now = now_rfc3339();
+                match status {
+                    TaskStatus::Succeeded => apply_task_closure(
+                        &mut task,
+                        TaskClosureState::Satisfied,
+                        None,
+                        now.as_str(),
+                    )?,
+                    TaskStatus::Archived => apply_task_closure(
+                        &mut task,
+                        TaskClosureState::Superseded,
+                        Some("任务已归档，不再阻止所属运行完成".to_string()),
+                        now.as_str(),
+                    )?,
+                    TaskStatus::Draft
+                    | TaskStatus::Ready
+                    | TaskStatus::Queued
+                    | TaskStatus::Running
+                    | TaskStatus::Failed
+                    | TaskStatus::Blocked
+                    | TaskStatus::Cancelled => {
+                        task.task_tool_state.closure_state = Some(TaskClosureState::Open);
+                        task.task_tool_state.closure_reason = None;
+                        task.task_tool_state.completed_at = None;
+                        task.task_tool_state.lifecycle_updated_at = Some(now);
+                    }
+                }
+            }
         }
         if let Some(priority) = patch.priority {
             task.priority = priority;
@@ -97,6 +127,10 @@ impl TaskService {
             task.mcp_config = sanitize_task_mcp_config(mcp_config);
             capability_boundary_changed = true;
         }
+        if let Some(plugin_config) = patch.plugin_config {
+            task.plugin_config = plugin_config;
+            capability_boundary_changed = true;
+        }
         if capability_boundary_changed {
             let task_owner_user_id = task_owner_or_creator(&task);
             let agent_key = crate::models::task_runner_agent_key_for(
@@ -105,13 +139,24 @@ impl TaskService {
             );
             self.validate_task_mcp_config_for_agent(
                 &task.mcp_config,
+                &task.plugin_config,
                 current_user,
                 task_owner_user_id,
                 agent_key,
             )
             .await?;
             if let Some(policy) = self
-                .resolve_task_runner_policy_for_agent(current_user, task_owner_user_id, agent_key)
+                .resolve_task_runner_policy_for_agent_on_device(
+                    current_user,
+                    task_owner_user_id,
+                    agent_key,
+                    task.plugin_config
+                        .device_id
+                        .as_deref()
+                        .map(str::trim)
+                        .filter(|value| !value.is_empty())
+                        .map(str::to_string),
+                )
                 .await?
             {
                 task.mcp_config.skill_policy_revision = Some(policy.policy_revision().to_string());
@@ -213,13 +258,24 @@ impl TaskService {
         );
         self.validate_task_mcp_config_for_agent(
             &task.mcp_config,
+            &task.plugin_config,
             current_user,
             task_owner_user_id,
             agent_key,
         )
         .await?;
         if let Some(policy) = self
-            .resolve_task_runner_policy_for_agent(current_user, task_owner_user_id, agent_key)
+            .resolve_task_runner_policy_for_agent_on_device(
+                current_user,
+                task_owner_user_id,
+                agent_key,
+                task.plugin_config
+                    .device_id
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(str::to_string),
+            )
             .await?
         {
             task.mcp_config.skill_policy_revision = Some(policy.policy_revision().to_string());
@@ -318,6 +374,7 @@ mod tests {
                     tenant_id: None,
                     subject_id: None,
                     schedule: None,
+                    plugin_config: Default::default(),
                     mcp_config: None,
                     prerequisite_task_ids: None,
                 },

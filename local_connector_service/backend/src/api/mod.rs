@@ -25,7 +25,10 @@ use uuid::Uuid;
 use crate::models::{
     normalize_optional_text, CurrentUser, HealthResponse, WORKSPACE_STATUS_DISABLED,
 };
-use crate::relay::{RelayError, RelayRequest, RelayResponse};
+use crate::relay::{
+    plugin_artifact_relay_request, PluginArtifactRelayAction, RelayError, RelayRequest,
+    RelayResponse,
+};
 use crate::state::AppState;
 
 mod auth_middleware;
@@ -35,8 +38,11 @@ mod managed_memory_policy;
 mod managed_requirements;
 mod managed_requirements_admin;
 mod memory_engine_proxy;
+mod plugin_artifact_relay;
 mod plugin_management_capabilities;
 mod plugin_management_mcps;
+mod plugin_management_oauth;
+mod plugin_management_plugins;
 mod plugin_management_prompts;
 mod plugin_management_skills;
 mod project_bindings;
@@ -45,12 +51,13 @@ mod sandbox_pairings;
 mod terminal_relay;
 mod workspaces;
 
-use self::auth_middleware::require_auth;
 pub use self::auth_middleware::ApiError;
+use self::auth_middleware::{require_auth, AuthState};
 use self::devices::{
     connect_device, create_device, disconnect_device, get_device, heartbeat_device, list_devices,
     load_owned_device, revoke_device,
 };
+use self::internal_auth::require_chatos_service_caller;
 use self::managed_memory_policy::get_managed_memory_policy;
 use self::managed_requirements::get_managed_requirements;
 use self::managed_requirements_admin::{
@@ -60,9 +67,15 @@ use self::managed_requirements_admin::{
     update_managed_requirements_assignment, update_managed_requirements_policy,
 };
 use self::memory_engine_proxy::memory_engine_proxy;
+use self::plugin_artifact_relay::PluginArtifactRelayState;
+#[cfg(feature = "test-support")]
+pub use self::plugin_artifact_relay::PluginArtifactRelayTestScope;
 use self::plugin_management_capabilities::resolve_local_runtime_capabilities;
 use self::plugin_management_mcps::{
     create_local_mcp, delete_local_mcp, list_local_mcps, update_local_mcp, update_local_mcp_status,
+};
+use self::plugin_management_plugins::{
+    list_plugin_install_sources, proxy_plugin_release_artifact, update_plugin_preference,
 };
 use self::plugin_management_prompts::{get_agent_prompt_bundle, get_agent_prompt_bundle_manifest};
 use self::plugin_management_skills::{
@@ -72,6 +85,10 @@ use self::project_bindings::{
     create_project_binding, delete_project_binding, list_project_bindings, update_project_binding,
 };
 pub use self::router::build_router;
+#[cfg(feature = "test-support")]
+pub use self::router::{
+    build_plugin_artifact_relay_store_test_router, build_plugin_artifact_relay_test_router,
+};
 use self::sandbox_pairings::{
     create_sandbox_pairing, delete_sandbox_pairing, list_sandbox_pairings,
     load_owned_sandbox_pairing, update_sandbox_pairing,
@@ -253,10 +270,7 @@ async fn resolve_local_command_approval_capabilities(
         .await
         .map_err(|err| ApiError::service_unavailable(err.to_string()))?;
     capabilities
-        .ensure_required_available()
-        .map_err(|err| ApiError::service_unavailable(err.to_string()))?;
-    capabilities
-        .ensure_required_skills_supported(std::iter::empty::<&str>())
+        .ensure_required_runtime_supported([], [])
         .map_err(|err| ApiError::service_unavailable(err.to_string()))?;
     let code_maintainer_read = capabilities.mcps.iter().any(|item| {
         item.binding.required
@@ -391,6 +405,231 @@ async fn skill_relay(
         body,
     };
     let response = dispatch_relay(&state, request, state.config.relay_request_timeout).await?;
+    Ok(relay_response_to_http(response))
+}
+
+async fn plugin_prepare_relay(
+    State(state): State<AppState>,
+    Extension(user): Extension<CurrentUser>,
+    Path(device_id): Path<String>,
+    Query(query): Query<SkillRelayQuery>,
+    Json(body): Json<Value>,
+) -> Result<Response, ApiError> {
+    plugin_relay(state, user, device_id, query, "prepare", body).await
+}
+
+async fn plugin_execute_relay(
+    State(state): State<AppState>,
+    Extension(user): Extension<CurrentUser>,
+    Path(device_id): Path<String>,
+    Query(query): Query<SkillRelayQuery>,
+    Json(body): Json<Value>,
+) -> Result<Response, ApiError> {
+    plugin_relay(state, user, device_id, query, "execute", body).await
+}
+
+async fn plugin_cancel_relay(
+    State(state): State<AppState>,
+    Extension(user): Extension<CurrentUser>,
+    Path(device_id): Path<String>,
+    Query(query): Query<SkillRelayQuery>,
+    Json(body): Json<Value>,
+) -> Result<Response, ApiError> {
+    plugin_relay(state, user, device_id, query, "cancel", body).await
+}
+
+async fn plugin_ui_asset_relay(
+    State(state): State<AppState>,
+    Extension(user): Extension<CurrentUser>,
+    Path(device_id): Path<String>,
+    Query(query): Query<SkillRelayQuery>,
+    Json(body): Json<Value>,
+) -> Result<Response, ApiError> {
+    require_chatos_service_caller(&user)?;
+    let workspace_id = normalize_optional_text(query.workspace_id)
+        .or_else(|| {
+            body.get("workspace_id")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+        })
+        .unwrap_or_default();
+    if workspace_id.is_empty() {
+        load_owned_device(&state, &user, device_id.as_str(), true).await?;
+        ensure_device_active_lease(&state, user.effective_owner_user_id(), device_id.as_str())
+            .await?;
+    } else {
+        validate_device_workspace(&state, &user, device_id.as_str(), workspace_id.as_str()).await?;
+    }
+    let request = RelayRequest {
+        message_type: "plugin_ui_asset_request".to_string(),
+        request_id: Uuid::new_v4().to_string(),
+        owner_user_id: user.effective_owner_user_id().to_string(),
+        device_id,
+        workspace_id,
+        method: "POST".to_string(),
+        path: "/plugins/ui/assets".to_string(),
+        headers: BTreeMap::new(),
+        body,
+    };
+    let response = dispatch_relay(&state, request, state.config.relay_request_timeout).await?;
+    Ok(relay_response_to_http(response))
+}
+
+async fn plugin_artifact_list_relay(
+    State(state): State<PluginArtifactRelayState>,
+    Extension(user): Extension<CurrentUser>,
+    Path(device_id): Path<String>,
+    Query(query): Query<SkillRelayQuery>,
+    Json(body): Json<Value>,
+) -> Result<Response, ApiError> {
+    plugin_artifact_relay(
+        state,
+        user,
+        device_id,
+        query,
+        PluginArtifactRelayAction::List,
+        body,
+    )
+    .await
+}
+
+async fn plugin_artifact_read_relay(
+    State(state): State<PluginArtifactRelayState>,
+    Extension(user): Extension<CurrentUser>,
+    Path(device_id): Path<String>,
+    Query(query): Query<SkillRelayQuery>,
+    Json(body): Json<Value>,
+) -> Result<Response, ApiError> {
+    plugin_artifact_relay(
+        state,
+        user,
+        device_id,
+        query,
+        PluginArtifactRelayAction::Read,
+        body,
+    )
+    .await
+}
+
+async fn plugin_artifact_create_relay(
+    State(state): State<PluginArtifactRelayState>,
+    Extension(user): Extension<CurrentUser>,
+    Path(device_id): Path<String>,
+    Query(query): Query<SkillRelayQuery>,
+    Json(body): Json<Value>,
+) -> Result<Response, ApiError> {
+    plugin_artifact_relay(
+        state,
+        user,
+        device_id,
+        query,
+        PluginArtifactRelayAction::Create,
+        body,
+    )
+    .await
+}
+
+async fn plugin_artifact_update_relay(
+    State(state): State<PluginArtifactRelayState>,
+    Extension(user): Extension<CurrentUser>,
+    Path(device_id): Path<String>,
+    Query(query): Query<SkillRelayQuery>,
+    Json(body): Json<Value>,
+) -> Result<Response, ApiError> {
+    plugin_artifact_relay(
+        state,
+        user,
+        device_id,
+        query,
+        PluginArtifactRelayAction::Update,
+        body,
+    )
+    .await
+}
+
+async fn plugin_artifact_relay(
+    state: PluginArtifactRelayState,
+    user: CurrentUser,
+    device_id: String,
+    query: SkillRelayQuery,
+    action: PluginArtifactRelayAction,
+    body: Value,
+) -> Result<Response, ApiError> {
+    require_chatos_service_caller(&user)?;
+    let workspace_id = normalize_optional_text(query.workspace_id)
+        .or_else(|| {
+            body.get("workspace_id")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+        })
+        .unwrap_or_default();
+    if workspace_id.is_empty() {
+        return Err(ApiError::bad_request(
+            "workspace_id is required for Plugin Artifact access",
+        ));
+    }
+    state
+        .authorize(&user, device_id.as_str(), workspace_id.as_str())
+        .await?;
+    let request = plugin_artifact_relay_request(
+        user.effective_owner_user_id(),
+        device_id,
+        workspace_id,
+        action,
+        body,
+    );
+    let relay_timeout = if action.is_write() {
+        state.write_timeout
+    } else {
+        state.read_timeout
+    };
+    let response = state
+        .relay
+        .dispatch(request, relay_timeout)
+        .await
+        .map_err(relay_error_to_api_error)?;
+    Ok(relay_response_to_http(response))
+}
+
+async fn plugin_relay(
+    state: AppState,
+    user: CurrentUser,
+    device_id: String,
+    query: SkillRelayQuery,
+    action: &str,
+    body: Value,
+) -> Result<Response, ApiError> {
+    let workspace_id = normalize_optional_text(query.workspace_id)
+        .or_else(|| {
+            body.get("workspace_id")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+        })
+        .unwrap_or_default();
+    if workspace_id.is_empty() {
+        load_owned_device(&state, &user, device_id.as_str(), true).await?;
+        ensure_device_active_lease(&state, user.effective_owner_user_id(), device_id.as_str())
+            .await?;
+    } else {
+        validate_device_workspace(&state, &user, device_id.as_str(), workspace_id.as_str()).await?;
+    }
+    let relay_timeout = if is_plugin_hook_dispatch(action, &body) {
+        state.config.plugin_hook_relay_request_timeout
+    } else {
+        state.config.relay_request_timeout
+    };
+    let request = RelayRequest {
+        message_type: format!("plugin_{action}_request"),
+        request_id: Uuid::new_v4().to_string(),
+        owner_user_id: user.effective_owner_user_id().to_string(),
+        device_id,
+        workspace_id,
+        method: "POST".to_string(),
+        path: format!("/plugins/{action}"),
+        headers: BTreeMap::new(),
+        body,
+    };
+    let response = dispatch_relay(&state, request, relay_timeout).await?;
     Ok(relay_response_to_http(response))
 }
 
@@ -623,4 +862,31 @@ fn relay_response_to_http(response: RelayResponse) -> Response {
 fn required_text(value: Option<String>, field: &str) -> Result<String, ApiError> {
     normalize_optional_text(value)
         .ok_or_else(|| ApiError::bad_request(format!("{field} is required and cannot be empty")))
+}
+
+fn is_plugin_hook_dispatch(action: &str, body: &Value) -> bool {
+    action == "execute"
+        && body.get("operation").and_then(Value::as_str) == Some("dispatch_hook_event")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_plugin_hook_dispatch;
+    use serde_json::json;
+
+    #[test]
+    fn only_hook_dispatch_uses_the_extended_interactive_relay_window() {
+        assert!(is_plugin_hook_dispatch(
+            "execute",
+            &json!({"operation": "dispatch_hook_event"})
+        ));
+        assert!(!is_plugin_hook_dispatch(
+            "execute",
+            &json!({"operation": "mcp_tools_call"})
+        ));
+        assert!(!is_plugin_hook_dispatch(
+            "prepare",
+            &json!({"operation": "dispatch_hook_event"})
+        ));
+    }
 }

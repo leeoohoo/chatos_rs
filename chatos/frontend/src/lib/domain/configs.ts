@@ -46,6 +46,7 @@ export const normalizeAiModelConfig = (config: AiModelConfigResponse): AiModelCo
 
   return {
     id: config.id,
+    source_provider_id: config.source_provider_id || null,
     name: config.name,
     provider: config.provider || 'gpt',
     prompt_vendor: config.prompt_vendor,

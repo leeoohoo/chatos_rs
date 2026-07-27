@@ -42,6 +42,7 @@ export interface McpConfig {
 
 export interface AiModelConfig {
   id: string;
+  source_provider_id?: string | null;
   name: string;
   provider: string;
   prompt_vendor?: AgentPromptVendor;

@@ -91,6 +91,7 @@ export interface AiModelConfigUpdatePayload {
 
 export interface AiModelConfigResponse {
   id: string;
+  source_provider_id?: string | null;
   name: string;
   provider: string;
   prompt_vendor?: 'glm' | 'deepseek' | 'gpt' | 'kimi';

@@ -92,6 +92,11 @@ impl ChatosStreamRuntime for AgentAiServer {
             task_turn,
         } = options;
         let turn_id = normalize_turn_id(Some(turn_id.as_str()));
+        let hidden_turn = persisted_user_message_metadata
+            .as_ref()
+            .and_then(|metadata| metadata.get("hidden"))
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
         let user_metadata = merge_user_record_metadata(
             persisted_user_message_metadata,
             build_user_message_metadata(&attachments, turn_id.as_deref()),
@@ -117,8 +122,11 @@ impl ChatosStreamRuntime for AgentAiServer {
             message_mode.as_str(),
             message_source.as_str(),
         );
-        let record_options =
-            build_chatos_record_options(message_mode.as_str(), message_source.as_str());
+        let record_options = build_chatos_record_options(
+            message_mode.as_str(),
+            message_source.as_str(),
+            hidden_turn,
+        );
         let abort_checker = Arc::new(|session_id: &str| abort_registry::is_aborted(session_id));
         let abort_token = abort_registry::abort_token_for_turn(conversation_id, turn_id.as_deref());
         let runtime_options = AiRuntimeOptions::new(Some(conversation_id.to_string()), turn_id)
@@ -191,21 +199,39 @@ fn build_chatos_user_record(
     }
 }
 
-fn build_chatos_record_options(message_mode: &str, message_source: &str) -> RuntimeRecordOptions {
+fn build_chatos_record_options(
+    message_mode: &str,
+    message_source: &str,
+    hidden_turn: bool,
+) -> RuntimeRecordOptions {
     let task_runner_async_plan = message_mode.trim() == TASK_RUNNER_ASYNC_PLAN_MESSAGE_MODE;
+    let with_visibility = |metadata: Option<Value>| {
+        if !hidden_turn {
+            return metadata;
+        }
+        let mut metadata = metadata
+            .and_then(|value| value.as_object().cloned())
+            .unwrap_or_default();
+        metadata.insert("hidden".to_string(), Value::Bool(true));
+        Some(Value::Object(metadata))
+    };
     RuntimeRecordOptions {
         persist_assistant_records: true,
         persist_tool_records: true,
         assistant_message_mode: Some(message_mode.to_string()),
         assistant_message_source: Some(message_source.to_string()),
-        assistant_metadata: task_runner_async_plan
-            .then(|| normalize_task_runner_async_plan_metadata(None))
-            .flatten(),
+        assistant_metadata: with_visibility(
+            task_runner_async_plan
+                .then(|| normalize_task_runner_async_plan_metadata(None))
+                .flatten(),
+        ),
         tool_message_mode: Some(message_mode.to_string()),
         tool_message_source: Some(message_source.to_string()),
-        tool_metadata: task_runner_async_plan
-            .then(|| normalize_task_runner_async_tool_call_metadata(None))
-            .flatten(),
+        tool_metadata: with_visibility(
+            task_runner_async_plan
+                .then(|| normalize_task_runner_async_tool_call_metadata(None))
+                .flatten(),
+        ),
     }
 }
 
@@ -707,7 +733,7 @@ pub fn build_agent_chat_options(
         task_turn: Arc::clone(&task_turn),
     }) as Arc<dyn RuntimeLifecycleHook>;
     let request_cwd = if use_codex_gateway_mcp_passthrough {
-        runtime_context.resolved_project_root.clone()
+        runtime_context.local_project_workspace_root.clone()
     } else {
         None
     };
@@ -720,13 +746,40 @@ pub fn build_agent_chat_options(
         .with_request_body_limit_bytes(Some(request_body_limit_bytes_from_settings(
             effective_settings,
         )));
+    let plugin_audit_metadata = if runtime_context
+        .plugin_command_invocations_for_snapshot
+        .is_empty()
+        && runtime_context
+            .plugin_agent_selection_for_snapshot
+            .is_none()
+    {
+        None
+    } else {
+        let mut metadata = serde_json::Map::new();
+        if !runtime_context
+            .plugin_command_invocations_for_snapshot
+            .is_empty()
+        {
+            metadata.insert(
+                "plugin_command_invocations".to_string(),
+                json!(runtime_context.plugin_command_invocations_for_snapshot),
+            );
+        }
+        if let Some(selection) = runtime_context.plugin_agent_selection_for_snapshot.as_ref() {
+            metadata.insert("plugin_agent_selection".to_string(), json!(selection));
+        }
+        Some(Value::Object(metadata))
+    };
     ChatosAgentExecutionOptions {
         use_tools: input.use_tools,
         attachments: input.attachments,
         turn_id: input.turn_id,
         user_message_id: input.user_message_id,
         persisted_user_message_content: input.persisted_user_message_content,
-        persisted_user_message_metadata: input.persisted_user_message_metadata,
+        persisted_user_message_metadata: merge_user_record_metadata(
+            input.persisted_user_message_metadata,
+            plugin_audit_metadata,
+        ),
         message_mode: TASK_RUNNER_ASYNC_PLAN_MESSAGE_MODE.to_string(),
         message_source: input.message_source,
         prefixed_input_items,

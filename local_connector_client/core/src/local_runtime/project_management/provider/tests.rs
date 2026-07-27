@@ -127,6 +127,58 @@ async fn project_management_tools_write_and_read_local_sqlite() {
     fs::remove_dir_all(root).expect("cleanup provider database");
 }
 
+#[tokio::test]
+async fn project_management_provider_cannot_access_another_project() {
+    let root = std::env::temp_dir().join(format!("chatos-local-pm-scope-{}", Uuid::new_v4()));
+    let database = LocalDatabase::open(root.join("runtime.sqlite3"))
+        .await
+        .expect("open provider database");
+    for project_id in ["project-a", "project-b"] {
+        database
+            .upsert_project(UpsertLocalProjectInput {
+                project_id: project_id.to_string(),
+                owner_user_id: USER_ID.to_string(),
+                device_id: "provider-device".to_string(),
+                workspace_id: "provider-workspace".to_string(),
+                project_name: project_id.to_string(),
+                root_relative_path: None,
+            })
+            .await
+            .expect("upsert scoped project");
+    }
+    let project_a = LocalProjectManagementProvider::new(database.clone(), USER_ID, "project-a");
+    let project_b = LocalProjectManagementProvider::new(database.clone(), USER_ID, "project-b");
+    let requirement = call(
+        &project_a,
+        tools::CREATE_REQUIREMENT,
+        json!({ "title": "Project A only" }),
+    )
+    .await;
+    let requirement_id = string_at(&requirement, "/id");
+
+    let error = project_b
+        .call_tool(
+            tools::UPDATE_REQUIREMENT,
+            json!({
+                "requirement_id": requirement_id,
+                "patch": { "title": "Cross-project write" }
+            }),
+            ToolCallContext::default(),
+            None,
+        )
+        .await
+        .expect_err("project-scoped provider must reject another project's requirement");
+    assert!(error.contains("not found"), "unexpected error: {error}");
+
+    let project_b_requirements = call(&project_b, tools::LIST_REQUIREMENTS, json!({})).await;
+    assert_eq!(
+        project_b_requirements.get("total").and_then(Value::as_u64),
+        Some(0)
+    );
+    database.close().await;
+    fs::remove_dir_all(root).expect("cleanup provider database");
+}
+
 async fn call(provider: &LocalProjectManagementProvider, name: &str, args: Value) -> Value {
     let result = provider
         .call_tool(name, args, ToolCallContext::default(), None)

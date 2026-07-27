@@ -146,11 +146,20 @@ pub(super) fn apply_task_runner_callback_to_user_message(
         && created_task_ids
             .iter()
             .all(|task_id| terminal_task_ids.contains(task_id));
+    let execution_paused = task_runner_meta
+        .get("execution_paused")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    if all_created_tasks_terminal && execution_paused {
+        task_runner_meta.insert("execution_paused".to_string(), Value::Bool(false));
+    }
     upsert_string(
         task_runner_meta,
         "overall_status",
         if all_created_tasks_terminal {
             "completed"
+        } else if execution_paused {
+            "paused"
         } else {
             "processing"
         },

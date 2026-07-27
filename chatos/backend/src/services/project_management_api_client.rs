@@ -73,6 +73,11 @@ pub struct UpdateProjectRuntimeEnvironmentSettingsRequest {
     pub sandbox_enabled: Option<bool>,
 }
 
+#[derive(Debug, Default, Serialize)]
+pub struct AnalyzeProjectRuntimeEnvironmentRequest {
+    pub analysis_requirement: Option<String>,
+}
+
 pub async fn list_project_service_projects(
     base_url: &str,
     access_token: &str,
@@ -253,6 +258,7 @@ pub async fn analyze_project_service_runtime_environment(
     base_url: &str,
     access_token: &str,
     project_id: &str,
+    request: &AnalyzeProjectRuntimeEnvironmentRequest,
 ) -> Result<Value, String> {
     let base_url = resolve_project_service_base_url(base_url).await;
     let endpoint = format!(
@@ -263,7 +269,8 @@ pub async fn analyze_project_service_runtime_environment(
     send_json(
         reqwest::Client::new()
             .post(endpoint)
-            .bearer_auth(access_token.trim()),
+            .bearer_auth(access_token.trim())
+            .json(request),
     )
     .await
 }
@@ -482,6 +489,33 @@ pub async fn list_work_item_task_runner_links(
             .bearer_auth(access_token.trim()),
     )
     .await
+}
+
+pub async fn delete_work_item_task_runner_link(
+    base_url: &str,
+    access_token: &str,
+    work_item_id: &str,
+    link_id: &str,
+) -> Result<(), String> {
+    let base_url = resolve_project_service_base_url(base_url).await;
+    let endpoint = format!(
+        "{}/api/work-items/{}/task-runner-links/{}",
+        base_url.trim().trim_end_matches('/'),
+        urlencoding::encode(work_item_id.trim()),
+        urlencoding::encode(link_id.trim()),
+    );
+    let response = reqwest::Client::new()
+        .delete(endpoint)
+        .bearer_auth(access_token.trim())
+        .send()
+        .await
+        .map_err(|error| error.to_string())?;
+    if response.status().is_success() || response.status() == reqwest::StatusCode::NOT_FOUND {
+        return Ok(());
+    }
+    let status = response.status();
+    let body = response.text().await.unwrap_or_default();
+    Err(format!("delete task runner link failed: {status} {body}"))
 }
 
 #[derive(Debug, Default, Serialize)]

@@ -3,6 +3,27 @@
 
 use super::*;
 
+use crate::services::task_manager_lifecycle::{
+    append_task_session_finalized_event, finalize_task_session_entries,
+};
+
+const MIN_WORKER_CLAIM_EXPIRY_GRACE: Duration = Duration::from_secs(120);
+const WORKER_CLAIM_EXPIRED_ERROR: &str = "worker claim expired";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RejectedRunClaimHeartbeatAction {
+    Continue,
+    Stop,
+    Abort,
+}
+
+pub(crate) fn worker_claim_expiry_grace(claim_ttl: Duration) -> Duration {
+    claim_ttl
+        .checked_mul(2)
+        .unwrap_or(Duration::MAX)
+        .max(MIN_WORKER_CLAIM_EXPIRY_GRACE)
+}
+
 impl RunService {
     #[cfg(test)]
     pub(crate) fn new(
@@ -38,10 +59,11 @@ impl RunService {
 
     pub(super) async fn effective_task_execution_max_iterations(&self) -> Result<usize, String> {
         let snapshot = load_managed_config_snapshot().await;
-        Ok(chatos_agent::resolve_agent_max_iterations(
-            snapshot.as_ref(),
-            self.config.default_task_execution_max_iterations,
-        ))
+        Ok(snapshot
+            .as_ref()
+            .and_then(|snapshot| snapshot.usize("task_runner.runtime.max_iterations"))
+            .unwrap_or(self.config.default_task_execution_max_iterations)
+            .max(2))
     }
 
     pub(super) async fn effective_execution_timeout(&self) -> Result<Duration, String> {
@@ -178,10 +200,29 @@ impl RunService {
             .await
     }
 
-    pub async fn fail_expired_run_claims(&self) -> Result<usize, String> {
+    pub async fn fail_expired_run_claims(&self, claim_ttl: Duration) -> Result<usize, String> {
         let now = now_rfc3339();
-        let failed_runs = self.store.fail_expired_run_claims(now.as_str()).await?;
+        let expiry_cutoff = (chrono::Utc::now()
+            - chrono::Duration::from_std(worker_claim_expiry_grace(claim_ttl))
+                .map_err(|err| err.to_string())?)
+        .to_rfc3339();
+        let failed_runs = self
+            .store
+            .fail_expired_run_claims(expiry_cutoff.as_str(), now.as_str())
+            .await?;
         for run in &failed_runs {
+            self.store.signal_local_run_abort(run.id.as_str());
+            if let Err(err) = self
+                .ask_user_prompt_service
+                .cancel_pending_prompts_for_run(run.id.as_str(), WORKER_CLAIM_EXPIRED_ERROR)
+                .await
+            {
+                tracing::warn!(
+                    run_id = run.id.as_str(),
+                    error = err.as_str(),
+                    "failed to cancel pending ask user prompts after worker claim expired"
+                );
+            }
             if let Some(mut task) = self.store.get_task(run.task_id.as_str()).await? {
                 if task.last_run_id.as_deref() == Some(run.id.as_str()) {
                     task.status = TaskStatus::Failed;
@@ -201,6 +242,23 @@ impl RunService {
                     })),
                 ))
                 .await?;
+            match finalize_task_session_entries(
+                &self.store,
+                run.task_id.as_str(),
+                run.id.as_str(),
+                run.status,
+            )
+            .await
+            {
+                Ok(summary) => {
+                    append_task_session_finalized_event(&self.store, run, &summary).await
+                }
+                Err(err) => tracing::warn!(
+                    run_id = run.id.as_str(),
+                    error = err.as_str(),
+                    "failed to finalize Task Manager session after worker claim expiry"
+                ),
+            }
             if let Err(err) = self.release_sandboxes_for_terminal_run(run).await {
                 tracing::warn!(
                     run_id = run.id.as_str(),
@@ -213,6 +271,88 @@ impl RunService {
         }
         self.store.refresh_runtime_guards().await?;
         Ok(failed_runs.len())
+    }
+
+    pub(crate) fn signal_local_run_abort(&self, run_id: &str) {
+        self.store.signal_local_run_abort(run_id);
+    }
+
+    pub(crate) fn clear_local_run_abort(&self, run_id: &str) {
+        self.store.clear_local_run_abort(run_id);
+    }
+
+    pub(crate) async fn run_claim_is_current(&self, run: &TaskRunRecord) -> bool {
+        let Some(current) = self.store.get_run(run.id.as_str()).await.ok().flatten() else {
+            return false;
+        };
+        current.status == TaskRunStatus::Running
+            && current.worker_id.as_deref() == run.worker_id.as_deref()
+            && current.claim_token.as_deref() == run.claim_token.as_deref()
+    }
+
+    pub(crate) async fn handle_rejected_run_claim_heartbeat(
+        &self,
+        claimed_run: &TaskRunRecord,
+        worker_id: &str,
+    ) -> Result<RejectedRunClaimHeartbeatAction, String> {
+        let current = self.store.get_run(claimed_run.id.as_str()).await?;
+        let action = match current.as_ref() {
+            None => RejectedRunClaimHeartbeatAction::Abort,
+            Some(current) if current.status == TaskRunStatus::Running => {
+                if current.worker_id.as_deref() == Some(worker_id)
+                    && current.claim_token.as_deref() == claimed_run.claim_token.as_deref()
+                {
+                    RejectedRunClaimHeartbeatAction::Continue
+                } else {
+                    RejectedRunClaimHeartbeatAction::Abort
+                }
+            }
+            Some(current)
+                if current.error_message.as_deref() == Some(WORKER_CLAIM_EXPIRED_ERROR) =>
+            {
+                RejectedRunClaimHeartbeatAction::Abort
+            }
+            Some(_) => RejectedRunClaimHeartbeatAction::Stop,
+        };
+        if action != RejectedRunClaimHeartbeatAction::Abort {
+            return Ok(action);
+        }
+
+        self.store.signal_local_run_abort(claimed_run.id.as_str());
+        if let Err(err) = self
+            .ask_user_prompt_service
+            .cancel_pending_prompts_for_run(
+                claimed_run.id.as_str(),
+                "run claim lost while task was executing",
+            )
+            .await
+        {
+            tracing::warn!(
+                run_id = claimed_run.id.as_str(),
+                error = err.as_str(),
+                "failed to cancel pending ask user prompts after run claim was lost"
+            );
+        }
+        if let Err(err) = self
+            .store
+            .append_run_event(TaskRunEventRecord::new(
+                claimed_run.id.clone(),
+                "run.claim.execution_abort_requested".to_string(),
+                Some("运行租约已丢失，旧 Worker 已停止继续执行".to_string()),
+                Some(serde_json::json!({
+                    "reason": "run_claim_lost",
+                    "worker_id": worker_id,
+                })),
+            ))
+            .await
+        {
+            tracing::warn!(
+                run_id = claimed_run.id.as_str(),
+                error = err.as_str(),
+                "failed to append lost-claim execution abort event"
+            );
+        }
+        Ok(RejectedRunClaimHeartbeatAction::Abort)
     }
 
     pub async fn batch_start_runs(
@@ -246,6 +386,7 @@ impl RunService {
                     StartTaskRunRequest {
                         model_config_id: request.model_config_id.clone(),
                         prompt_override: request.prompt_override.clone(),
+                        retry_instruction: None,
                     },
                     current_user,
                 )
@@ -256,6 +397,7 @@ impl RunService {
                     StartTaskRunRequest {
                         model_config_id: request.model_config_id.clone(),
                         prompt_override: request.prompt_override.clone(),
+                        retry_instruction: None,
                     },
                 )
                 .await
@@ -285,5 +427,26 @@ impl RunService {
 
     pub async fn list_run_events(&self, run_id: &str) -> Result<Vec<TaskRunEventRecord>, String> {
         self.store.list_run_events(run_id).await
+    }
+}
+
+#[cfg(test)]
+mod worker_claim_tests {
+    use super::*;
+
+    #[test]
+    fn claim_expiry_grace_is_at_least_two_lease_periods() {
+        assert_eq!(
+            worker_claim_expiry_grace(Duration::from_secs(120)),
+            Duration::from_secs(240)
+        );
+    }
+
+    #[test]
+    fn short_claim_ttl_still_gets_minimum_expiry_grace() {
+        assert_eq!(
+            worker_claim_expiry_grace(Duration::from_secs(30)),
+            MIN_WORKER_CLAIM_EXPIRY_GRACE
+        );
     }
 }

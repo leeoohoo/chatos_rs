@@ -20,6 +20,7 @@ use crate::{select_local_shell, LocalState};
 const PERMISSION_WORKSPACE_FILES: &str = "workspace_files";
 const PERMISSION_TERMINAL_EXECUTION: &str = "terminal_execution";
 const PERMISSION_BROWSER_AUTOMATION: &str = "browser_automation";
+const PERMISSION_CHROME_EXISTING_SESSION: &str = "chrome_existing_session";
 const PERMISSION_NETWORK_ACCESS: &str = "network_access";
 const PERMISSION_ACCESSIBILITY_CONTROL: &str = "accessibility_control";
 const PERMISSION_SCREEN_RECORDING: &str = "screen_recording";
@@ -58,6 +59,7 @@ pub(crate) async fn system_permissions_response(state: &LocalState) -> SystemPer
             workspace_files_permission(state),
             terminal_execution_permission().await,
             browser_automation_permission(),
+            chrome_existing_session_permission(),
             network_access_permission(),
             accessibility_control_permission(),
             screen_recording_permission(),
@@ -172,6 +174,48 @@ fn browser_automation_permission() -> SystemPermissionItem {
     }
 }
 
+fn chrome_existing_session_permission() -> SystemPermissionItem {
+    let integration = crate::chrome_integration::chrome_integration_status();
+    let (status, status_label, last_error) = if !integration.platform_supported {
+        (
+            "not_applicable",
+            "当前平台未启用",
+            integration.last_error.clone(),
+        )
+    } else if !integration.native_host_available || !integration.extension_available {
+        (
+            "missing_dependency",
+            "安装资源缺失",
+            integration.last_error.clone(),
+        )
+    } else if integration.enabled && integration.bridge.connected {
+        ("ready", "已连接", None)
+    } else {
+        (
+            "needs_attention",
+            "等待用户设置",
+            Some(integration.setup_note.clone()),
+        )
+    };
+    SystemPermissionItem {
+        id: PERMISSION_CHROME_EXISTING_SESSION.to_string(),
+        label: "Chrome existing-session".to_string(),
+        summary: "用于连接用户明确授权的现有 Chrome 站点和标签页。".to_string(),
+        status: status.to_string(),
+        status_label: status_label.to_string(),
+        required: false,
+        can_request: false,
+        request_label: "请在 Chrome 整合面板设置".to_string(),
+        settings_target: None,
+        builtin_kinds: Vec::new(),
+        skill_ids: skill_ids_requiring(&["browser.chrome.control"]),
+        note:
+            "扩展不申请 Cookie、历史记录、下载、书签或全站静默权限；敏感页面读取还需本机逐次批准。"
+                .to_string(),
+        last_error,
+    }
+}
+
 fn network_access_permission() -> SystemPermissionItem {
     SystemPermissionItem {
         id: PERMISSION_NETWORK_ACCESS.to_string(),
@@ -195,12 +239,12 @@ fn accessibility_control_permission() -> SystemPermissionItem {
         "macos" => (
             "unknown",
             "等待系统检测",
-            "macOS 的桌面控件操作需要“辅助功能”权限；桌面版会读取系统实际授权状态。",
+            "macOS 的窗口/控件树观察和受限输入需要“辅助功能”权限；每个输入动作还会强制进入独立人工审批。",
         ),
         "windows" => (
             "not_applicable",
             "无需单独授权",
-            "Windows UI Automation 通常不需要单独的隐私权限，但仍受当前用户权限和应用完整性级别限制。",
+            "Windows 当前支持窗口/显示器观察与审批式非文本输入，通常不需要单独隐私权限，但仍受当前用户桌面、前台策略、受保护内容、UAC 和应用完整性级别限制；UI Automation 控件树与安全文本输入尚未开放。",
         ),
         _ => (
             "not_applicable",
@@ -211,7 +255,8 @@ fn accessibility_control_permission() -> SystemPermissionItem {
     SystemPermissionItem {
         id: PERMISSION_ACCESSIBILITY_CONTROL.to_string(),
         label: "辅助功能控制".to_string(),
-        summary: "用于未来的 Computer Use Skill 读取并操作桌面控件。".to_string(),
+        summary: "用于 Computer Use 观察桌面窗口和控件树，并在强制人工审批后执行受限输入。"
+            .to_string(),
         status: status.to_string(),
         status_label: status_label.to_string(),
         required: false,
@@ -226,27 +271,38 @@ fn accessibility_control_permission() -> SystemPermissionItem {
 }
 
 fn screen_recording_permission() -> SystemPermissionItem {
-    let (status, status_label, note) = match std::env::consts::OS {
-        "macos" => (
-            "unknown",
-            "等待系统检测",
-            "macOS 读取其他应用画面需要“屏幕与系统音频录制”权限；桌面版会读取系统实际授权状态。",
-        ),
+    let (status, status_label, note, last_error) = match std::env::consts::OS {
+        "macos" => match crate::skills::native::computer_use_screen_capture_dependency_error() {
+            None => (
+                "ready",
+                "已授权",
+                "macOS 已允许 Local Connector 捕获主显示器画面；截图只作为下一轮模型的瞬时输入。",
+                None,
+            ),
+            Some(error) => (
+                "needs_attention",
+                "需要授权",
+                "macOS 读取其他应用画面需要“屏幕与系统音频录制”权限。",
+                Some(error),
+            ),
+        },
         "windows" => (
             "not_applicable",
             "无需单独授权",
-            "Windows 桌面捕获通常不需要单独的隐私开关，但受系统策略和受保护内容限制。",
+            "Windows 当前使用 GDI 做有界瞬时显示器 PNG 捕获，通常不需要单独隐私开关，但受系统策略、受保护内容和当前用户桌面限制。",
+            None,
         ),
         _ => (
             "not_applicable",
             "当前平台未启用",
             "当前版本尚未提供该平台的桌面观察 Adapter。",
+            None,
         ),
     };
     SystemPermissionItem {
         id: PERMISSION_SCREEN_RECORDING.to_string(),
         label: "屏幕录制".to_string(),
-        summary: "用于未来的 Computer Use Skill 观察其他桌面应用。".to_string(),
+        summary: "用于 Computer Use 只读主显示器截图；截图不写入工具历史或工作区。".to_string(),
         status: status.to_string(),
         status_label: status_label.to_string(),
         required: false,
@@ -256,7 +312,7 @@ fn screen_recording_permission() -> SystemPermissionItem {
         builtin_kinds: Vec::new(),
         skill_ids: skill_ids_requiring(&["desktop.observe"]),
         note: note.to_string(),
-        last_error: None,
+        last_error,
     }
 }
 
@@ -281,7 +337,9 @@ fn office_automation_permission() -> SystemPermissionItem {
     SystemPermissionItem {
         id: PERMISSION_OFFICE_AUTOMATION.to_string(),
         label: "Office 自动化".to_string(),
-        summary: "用于未来的 Excel Live Control Skill 控制已打开的 Microsoft Excel。".to_string(),
+        summary:
+            "用于 Excel Live Control Skill 只读发现已运行 Microsoft Excel 的工作簿和工作表元数据。"
+                .to_string(),
         status: status.to_string(),
         status_label: status_label.to_string(),
         required: false,
@@ -554,7 +612,7 @@ mod tests {
     #[tokio::test]
     async fn system_permissions_include_skill_capability_mappings() {
         let response = system_permissions_response(&LocalState::default()).await;
-        assert_eq!(response.items.len(), 7);
+        assert_eq!(response.items.len(), 8);
         let workspace = response
             .items
             .iter()
@@ -570,6 +628,12 @@ mod tests {
             .find(|item| item.id == PERMISSION_BROWSER_AUTOMATION)
             .expect("browser permission");
         assert_eq!(browser.skill_ids, vec!["internal_skill_browser"]);
+        let chrome = response
+            .items
+            .iter()
+            .find(|item| item.id == PERMISSION_CHROME_EXISTING_SESSION)
+            .expect("Chrome existing-session permission");
+        assert_eq!(chrome.skill_ids, vec!["internal_skill_chrome"]);
         let accessibility = response
             .items
             .iter()
@@ -589,6 +653,10 @@ mod tests {
         );
         assert_eq!(
             skill_ids_requiring(&["desktop.observe"]),
+            vec!["internal_skill_computer_use"]
+        );
+        assert_eq!(
+            skill_ids_requiring(&["system.accessibility"]),
             vec!["internal_skill_computer_use"]
         );
         assert_eq!(

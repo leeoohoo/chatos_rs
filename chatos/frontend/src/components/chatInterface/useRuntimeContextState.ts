@@ -27,62 +27,82 @@ export const useRuntimeContextState = ({
   const { t } = useI18n();
   const [runtimeContextOpen, setRuntimeContextOpen] = useState(false);
   const [runtimeContextSessionId, setRuntimeContextSessionId] = useState<string | null>(null);
+  const [runtimeContextTurnId, setRuntimeContextTurnId] = useState<string | null>(null);
   const [runtimeContextData, setRuntimeContextData] =
     useState<TurnRuntimeSnapshotLookupResponse | null>(null);
   const [runtimeContextLoading, setRuntimeContextLoading] = useState(false);
   const [runtimeContextError, setRuntimeContextError] = useState<string | null>(null);
-  const latestSessionIdRef = useRef<string | null>(null);
+  const latestRequestKeyRef = useRef<string | null>(null);
   const refreshNonceRef = useRef(runtimeContextRefreshNonce);
   const lastRefreshSignatureRef = useRef<string | null>(null);
 
   refreshNonceRef.current = runtimeContextRefreshNonce;
 
-  const loadLatestRuntimeContext = useCallback(async (
+  const loadSelectedRuntimeContext = useCallback(async (
     sessionId: string,
+    turnId: string | null,
     options?: { force?: boolean; silent?: boolean },
   ) => {
     if (!sessionId) {
       return;
     }
-    latestSessionIdRef.current = sessionId;
+    const requestKey = `${sessionId}\u0000${turnId || ''}`;
+    latestRequestKeyRef.current = requestKey;
     if (!options?.silent) {
       setRuntimeContextLoading(true);
     }
     setRuntimeContextError(null);
     try {
-      const payload = await loadRuntimeContextSnapshot(apiClient, sessionId, options);
-      if (latestSessionIdRef.current !== sessionId) {
+      const payload = turnId
+        ? await apiClient.getConversationTurnRuntimeContextByTurn(sessionId, turnId)
+        : await loadRuntimeContextSnapshot(apiClient, sessionId, options);
+      if (latestRequestKeyRef.current !== requestKey) {
         return;
       }
       setRuntimeContextData(payload);
     } catch (error) {
       console.error('Failed to load turn runtime context:', error);
-      if (latestSessionIdRef.current === sessionId) {
+      if (latestRequestKeyRef.current === requestKey) {
         setRuntimeContextError(error instanceof Error ? error.message : t('runtimeContext.loadFailed'));
       }
     } finally {
-      if (latestSessionIdRef.current === sessionId && !options?.silent) {
+      if (latestRequestKeyRef.current === requestKey && !options?.silent) {
         setRuntimeContextLoading(false);
       }
     }
   }, [apiClient, t]);
 
-  const handleOpenRuntimeContext = useCallback((sessionId: string) => {
+  const handleOpenRuntimeContext = useCallback((sessionId: string, turnId?: string | null) => {
     if (!sessionId) {
       return;
     }
     setRuntimeContextOpen(true);
     setRuntimeContextSessionId(sessionId);
-    setRuntimeContextData(getCachedRuntimeContextData(apiClient, sessionId));
+    const normalizedTurnId = typeof turnId === 'string' ? turnId.trim() : '';
+    setRuntimeContextTurnId(normalizedTurnId || null);
+    setRuntimeContextData(normalizedTurnId
+      ? null
+      : getCachedRuntimeContextData(apiClient, sessionId));
   }, [apiClient]);
 
   const handleRefreshRuntimeContext = useCallback(() => {
     if (!runtimeContextSessionId) {
       return;
     }
-    markRuntimeContextStale(apiClient, runtimeContextSessionId);
-    void loadLatestRuntimeContext(runtimeContextSessionId, { force: true });
-  }, [apiClient, loadLatestRuntimeContext, runtimeContextSessionId]);
+    if (!runtimeContextTurnId) {
+      markRuntimeContextStale(apiClient, runtimeContextSessionId);
+    }
+    void loadSelectedRuntimeContext(
+      runtimeContextSessionId,
+      runtimeContextTurnId,
+      { force: true },
+    );
+  }, [
+    apiClient,
+    loadSelectedRuntimeContext,
+    runtimeContextSessionId,
+    runtimeContextTurnId,
+  ]);
 
   useEffect(() => {
     if (!runtimeContextOpen || !runtimeContextSessionId) {
@@ -92,15 +112,18 @@ export const useRuntimeContextState = ({
     if (currentSession?.id !== runtimeContextSessionId) {
       return;
     }
-    setRuntimeContextData(getCachedRuntimeContextData(apiClient, runtimeContextSessionId));
-    lastRefreshSignatureRef.current = `${runtimeContextSessionId}:${refreshNonceRef.current}`;
-    void loadLatestRuntimeContext(runtimeContextSessionId);
+    setRuntimeContextData(runtimeContextTurnId
+      ? null
+      : getCachedRuntimeContextData(apiClient, runtimeContextSessionId));
+    lastRefreshSignatureRef.current = `${runtimeContextSessionId}:${runtimeContextTurnId || ''}:${refreshNonceRef.current}`;
+    void loadSelectedRuntimeContext(runtimeContextSessionId, runtimeContextTurnId);
   }, [
     apiClient,
     currentSession?.id,
-    loadLatestRuntimeContext,
+    loadSelectedRuntimeContext,
     runtimeContextOpen,
     runtimeContextSessionId,
+    runtimeContextTurnId,
   ]);
 
   useEffect(() => {
@@ -110,21 +133,28 @@ export const useRuntimeContextState = ({
     if (currentSession?.id !== runtimeContextSessionId) {
       return;
     }
-    const signature = `${runtimeContextSessionId}:${runtimeContextRefreshNonce}`;
+    const signature = `${runtimeContextSessionId}:${runtimeContextTurnId || ''}:${runtimeContextRefreshNonce}`;
     if (lastRefreshSignatureRef.current === signature) {
       return;
     }
     lastRefreshSignatureRef.current = signature;
-    markRuntimeContextStale(apiClient, runtimeContextSessionId);
-    setRuntimeContextData(getCachedRuntimeContextData(apiClient, runtimeContextSessionId));
-    void loadLatestRuntimeContext(runtimeContextSessionId, { silent: true });
+    if (!runtimeContextTurnId) {
+      markRuntimeContextStale(apiClient, runtimeContextSessionId);
+      setRuntimeContextData(getCachedRuntimeContextData(apiClient, runtimeContextSessionId));
+    }
+    void loadSelectedRuntimeContext(
+      runtimeContextSessionId,
+      runtimeContextTurnId,
+      { silent: true },
+    );
   }, [
     apiClient,
     currentSession?.id,
-    loadLatestRuntimeContext,
+    loadSelectedRuntimeContext,
     runtimeContextOpen,
     runtimeContextRefreshNonce,
     runtimeContextSessionId,
+    runtimeContextTurnId,
   ]);
 
   return {

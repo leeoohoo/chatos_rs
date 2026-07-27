@@ -212,6 +212,7 @@ fn runtime_request(owner_user_id: &str) -> RuntimeCapabilitiesRequest {
         project_source_type: None,
         runtime_provider: None,
         schedule_mode: None,
+        device_id: None,
     }
 }
 
@@ -248,6 +249,10 @@ async fn test_state_with_secret(internal_api_secret: Option<&str>) -> AppState {
             require_signed_internal_requests: false,
             local_connector_check_ttl: Duration::from_secs(60),
             local_connector_max_tool_snapshot_bytes: 512 * 1024,
+            plugin_catalog_sync_enabled: false,
+            plugin_catalog_sync_interval: Duration::from_secs(15 * 60),
+            plugin_catalog_request_timeout: Duration::from_secs(30),
+            plugin_catalog_max_bytes: 8 * 1024 * 1024,
             super_admin_username: "admin".to_string(),
             super_admin_password: "admin".to_string(),
             seed_system_resources: false,

@@ -2,6 +2,7 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 import type { FC } from 'react';
+import type { MessageTaskRunnerLookupOptions } from '../../lib/api/client/messages';
 import type { MessageTaskRunnerRunDetailResponse } from '../../lib/api/client/types';
 import { sanitizeUserVisibleAppError } from '../../lib/domain/userVisibleError';
 import { CollapsibleSection, CollapsibleText } from './CollapsibleSection';
@@ -10,10 +11,15 @@ import { RunEventTimeline } from './RunEventTimeline';
 import { RunProcessTimeline } from './RunProcessTimeline';
 import { buildRunEventTimelineEntries } from './runEventTimelineUtils';
 import { buildRunProcessTimelineItems } from './runProcessTimelineModel';
+import { BrowserSessionEventsCard } from './BrowserSessionEventsCard';
+import { PluginRuntimeEventsCard } from './PluginRuntimeEventsCard';
+import { PluginUiWorkbenchCard } from './PluginUiWorkbenchCard';
 import { extractReportContent, formatDateTime, isRecord, readString } from './utils';
 
 interface MessageTaskRunDetailModalProps {
   detail: MessageTaskRunnerRunDetailResponse | null;
+  messageId?: string;
+  taskLookup?: MessageTaskRunnerLookupOptions;
   loadingMoreEvents?: boolean;
   onLoadMoreEvents?: () => void;
   onClose: () => void;
@@ -55,6 +61,8 @@ const extractSandboxOutputCounts = (report: unknown): Record<string, unknown> | 
 
 export const MessageTaskRunDetailModal: FC<MessageTaskRunDetailModalProps> = ({
   detail,
+  messageId,
+  taskLookup,
   loadingMoreEvents = false,
   onLoadMoreEvents,
   onClose,
@@ -103,6 +111,12 @@ export const MessageTaskRunDetailModal: FC<MessageTaskRunDetailModalProps> = ({
           ['已加载工具事件', toolEventCount],
         ]}
       />
+
+      <BrowserSessionEventsCard events={events} />
+      <PluginRuntimeEventsCard events={events} />
+      {messageId && taskLookup ? (
+        <PluginUiWorkbenchCard events={events} messageId={messageId} lookup={taskLookup} />
+      ) : null}
 
       {resultSummary ? (
         <CollapsibleSection title="最终结果" defaultOpen>

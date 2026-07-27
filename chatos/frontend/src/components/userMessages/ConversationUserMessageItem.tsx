@@ -8,6 +8,8 @@ import { useI18n } from '../../i18n/I18nProvider';
 import { cn } from '../../lib/utils';
 import type { Message } from '../../types';
 import type { UserMessageTurn } from './types';
+import PluginCommandAuditList from '../pluginCommands/PluginCommandAuditList';
+import PluginAgentAuditBadge from '../pluginCommands/PluginAgentAuditBadge';
 
 interface ConversationUserMessageItemProps {
   item: UserMessageTurn;
@@ -15,6 +17,7 @@ interface ConversationUserMessageItemProps {
   onSelect: () => void;
   onOpenProcessTimeline: (item: UserMessageTurn) => void;
   onOpenTasks: (message: Message) => void;
+  onOpenRuntimeContext?: (item: UserMessageTurn) => void;
 }
 
 const clipText = (value: string, limit = 110): string => {
@@ -35,6 +38,7 @@ export const ConversationUserMessageItem: React.FC<ConversationUserMessageItemPr
   onSelect,
   onOpenProcessTimeline,
   onOpenTasks,
+  onOpenRuntimeContext,
 }) => {
   const { t } = useI18n();
   const { userMessage, taskState } = item;
@@ -92,6 +96,16 @@ export const ConversationUserMessageItem: React.FC<ConversationUserMessageItemPr
           <div className="mt-1 line-clamp-2 text-sm font-semibold leading-5 text-foreground">
             {clipText(userMessage.content) || userMessage.id}
           </div>
+          <PluginCommandAuditList
+            entries={userMessage.metadata?.plugin_command_invocations}
+            compact
+            onOpen={onOpenRuntimeContext ? () => onOpenRuntimeContext(item) : undefined}
+          />
+          <PluginAgentAuditBadge
+            selection={userMessage.metadata?.plugin_agent_selection}
+            compact
+            onOpen={onOpenRuntimeContext ? () => onOpenRuntimeContext(item) : undefined}
+          />
         </div>
 
         {taskState.hasTask ? (

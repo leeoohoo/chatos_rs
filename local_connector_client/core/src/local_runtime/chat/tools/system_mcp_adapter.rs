@@ -61,6 +61,8 @@ impl SystemMcpHostAdapter for LocalConnectorSystemMcpAdapter {
                     self.context.session_id.clone(),
                     self.context.source_turn_id.clone(),
                     self.context.default_model_config_id.clone(),
+                    self.context.agent_key,
+                    self.context.expected_project_task_ids.clone(),
                     &self.context.state,
                 )
                 .await?,
@@ -95,12 +97,29 @@ impl SystemMcpHostAdapter for LocalConnectorSystemMcpAdapter {
                 owner_user_id(&self.context),
                 project_id(&self.context),
             )),
-            SystemMcpKey::TaskManager => Arc::new(LocalTaskManagerProvider::new(
-                self.context.database.clone(),
-                owner_user_id(&self.context),
-                self.context.auto_create_task,
-                self.context.ask_user_prompts.clone(),
-            )),
+            SystemMcpKey::TaskManager => {
+                let provider = if matches!(
+                    self.context.agent_key,
+                    chatos_plugin_management_sdk::SystemAgentKey::TaskRunnerPlanPhase
+                        | chatos_plugin_management_sdk::SystemAgentKey::TaskRunnerRunPhase
+                ) {
+                    LocalTaskManagerProvider::for_task_run(
+                        self.context.database.clone(),
+                        owner_user_id(&self.context),
+                        self.context.auto_create_task,
+                        self.context.ask_user_prompts.clone(),
+                        self.context.request.request_id.clone(),
+                    )
+                } else {
+                    LocalTaskManagerProvider::new(
+                        self.context.database.clone(),
+                        owner_user_id(&self.context),
+                        self.context.auto_create_task,
+                        self.context.ask_user_prompts.clone(),
+                    )
+                };
+                Arc::new(provider)
+            }
             SystemMcpKey::AskUser => Arc::new(LocalAskUserProvider::new(
                 self.context.database.clone(),
                 owner_user_id(&self.context),

@@ -22,6 +22,7 @@ mod readiness;
 use launcher::{native_sandbox_command, NativeLauncherSpec};
 pub(crate) use readiness::native_process_sandbox_capability;
 use readiness::native_sandbox_agent_executable;
+pub(crate) use readiness::plugin_stdio_sandbox_agent_executable;
 
 const MCP_CALL_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 const STARTUP_TIMEOUT: Duration = Duration::from_secs(10);

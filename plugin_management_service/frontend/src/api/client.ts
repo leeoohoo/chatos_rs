@@ -24,6 +24,12 @@ import type {
   SkillRecord,
   SystemAgentRecord,
 } from '../types';
+import type {
+  PluginCatalogRecord,
+  PluginCatalogSyncResponse,
+  PluginMarketplaceRecord,
+  PluginReleaseRecord,
+} from '../pluginTypes';
 
 import {
   buildApiUrl as buildSharedApiUrl,
@@ -158,6 +164,42 @@ export const api = {
     request<void>(`/api/skill-packages/${id}`, {
       method: 'DELETE',
     }),
+  listPluginMarketplaces: () =>
+    request<ListResponse<PluginMarketplaceRecord>>('/api/plugin-marketplaces'),
+  createPluginMarketplace: (payload: unknown) =>
+    request<PluginMarketplaceRecord>('/api/plugin-marketplaces', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+  syncPluginMarketplace: (marketplaceId: string) =>
+    request<PluginCatalogSyncResponse>(
+      `/api/plugin-marketplaces/${encodeURIComponent(marketplaceId)}/sync`,
+      { method: 'POST' },
+    ),
+  listAdminPlugins: (params?: Record<string, QueryValue>) =>
+    request<ListResponse<PluginCatalogRecord>>(withQuery('/api/admin/plugins', params || {})),
+  createPluginCatalogEntry: (payload: unknown) =>
+    request<PluginCatalogRecord>('/api/admin/plugins', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+  listPluginReleases: (pluginId: string) =>
+    request<ListResponse<PluginReleaseRecord>>(
+      `/api/admin/plugins/${encodeURIComponent(pluginId)}/releases`,
+    ),
+  createPluginRelease: (pluginId: string, payload: unknown) =>
+    request<PluginReleaseRecord>(
+      `/api/admin/plugins/${encodeURIComponent(pluginId)}/releases`,
+      {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      },
+    ),
+  revokePluginRelease: (releaseId: string) =>
+    request<PluginReleaseRecord>(
+      `/api/admin/plugin-releases/${encodeURIComponent(releaseId)}/revoke`,
+      { method: 'POST' },
+    ),
   listSystemAgents: () => request<SystemAgentRecord[]>('/api/system-agents'),
   createSystemAgent: (payload: unknown) =>
     request<SystemAgentRecord>('/api/system-agents', {

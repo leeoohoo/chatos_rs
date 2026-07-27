@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-import type { FC } from 'react';
+import { useEffect, useState, type FC } from 'react';
+import { CircleAlert, LoaderCircle, RotateCcw } from 'lucide-react';
 import type {
   MessageTaskRunnerModelConfigSummary,
   MessageTaskRunnerRunSummary,
@@ -15,6 +16,11 @@ import { formatDateTime, isRecord, readString, readStringArray } from './utils';
 interface MessageTaskDetailModalProps {
   task: MessageTaskRunnerTask | null;
   relatedTasks?: MessageTaskRunnerTask[];
+  onRetry?: (
+    task: MessageTaskRunnerTask,
+    retryInstruction?: string,
+  ) => unknown | Promise<unknown>;
+  retrying?: boolean;
   onClose: () => void;
 }
 
@@ -25,6 +31,11 @@ interface MessageTaskProcessLogModalProps {
 
 const shortId = (value: string): string => (
   value.length > 16 ? `${value.slice(0, 8)}...${value.slice(-4)}` : value
+);
+
+export const canRetryMessageTask = (task: MessageTaskRunnerTask): boolean => (
+  ['failed', 'blocked'].includes(readString(task.status)?.toLowerCase() || '')
+  && Boolean(readString(task.last_run_id))
 );
 
 const formatModelConfig = (
@@ -78,11 +89,26 @@ const formatTaskSummary = (
 export const MessageTaskDetailModal: FC<MessageTaskDetailModalProps> = ({
   task,
   relatedTasks = [],
+  onRetry,
+  retrying = false,
   onClose,
 }) => {
+  const [retryInstruction, setRetryInstruction] = useState('');
+  useEffect(() => {
+    setRetryInstruction('');
+  }, [task?.id]);
+
   if (!task) {
     return null;
   }
+  const normalizedStatus = readString(task.status)?.toLowerCase();
+  const isBlocked = normalizedStatus === 'blocked';
+  const taskToolState = isRecord(task.task_tool_state) ? task.task_tool_state : {};
+  const blockedReason = readString(task.last_run?.error_message)
+    || readString(taskToolState.blocker_reason)
+    || readString(task.result_summary)
+    || '该节点进入了阻塞状态，但运行记录没有返回具体原因。';
+  const blockerNeeds = readStringArray(taskToolState.blocker_needs);
   const prerequisiteIds = readStringArray(task.prerequisite_task_ids);
   const prerequisiteSummaries = Array.isArray(task.prerequisite_tasks)
     ? task.prerequisite_tasks
@@ -113,8 +139,9 @@ export const MessageTaskDetailModal: FC<MessageTaskDetailModalProps> = ({
       status: readString(prerequisiteTask?.status),
     };
   });
-  const toolState = isRecord(task.task_tool_state) ? task.task_tool_state : {};
-  const outcomeItems = Array.isArray(toolState.outcome_items) ? toolState.outcome_items : [];
+  const outcomeItems = Array.isArray(taskToolState.outcome_items)
+    ? taskToolState.outcome_items
+    : [];
 
   return (
     <ModalShell
@@ -123,6 +150,77 @@ export const MessageTaskDetailModal: FC<MessageTaskDetailModalProps> = ({
       onClose={onClose}
       widthClassName="max-w-5xl"
     >
+      {canRetryMessageTask(task) && onRetry ? (
+        <div className="space-y-3 rounded-md border border-amber-300 bg-amber-50 px-3 py-3 dark:border-amber-800 dark:bg-amber-950/30">
+          <div className="flex items-start gap-2.5">
+            {isBlocked ? (
+              <CircleAlert className="mt-0.5 h-4 w-4 shrink-0 text-orange-600 dark:text-orange-300" />
+            ) : null}
+            <div className="min-w-0 flex-1">
+              <div className="text-sm font-medium text-amber-900 dark:text-amber-100">
+                {isBlocked ? '当前节点需要人工处理' : '当前节点执行失败'}
+              </div>
+              <p className="mt-0.5 text-xs leading-5 text-amber-800 dark:text-amber-200">
+                {isBlocked
+                  ? '补充处理意见后重新运行此节点；节点成功后，满足依赖条件的后续节点会自动继续。'
+                  : '仅重新运行此节点；成功后，满足依赖条件的后续节点会继续调度。'}
+              </p>
+            </div>
+          </div>
+
+          {isBlocked ? (
+            <div className="rounded-md border border-orange-200 bg-white/70 px-3 py-2 dark:border-orange-900/70 dark:bg-background/50">
+              <div className="text-xs font-medium text-orange-900 dark:text-orange-100">阻塞原因</div>
+              <p className="mt-1 whitespace-pre-wrap break-words text-xs leading-5 text-orange-800 dark:text-orange-200">
+                {blockedReason}
+              </p>
+              {blockerNeeds.length > 0 ? (
+                <div className="mt-2 text-xs text-orange-800 dark:text-orange-200">
+                  <span className="font-medium">继续处理需要：</span>
+                  {blockerNeeds.join('、')}
+                </div>
+              ) : null}
+            </div>
+          ) : null}
+
+          {isBlocked ? (
+            <label className="block">
+              <span className="text-xs font-medium text-amber-900 dark:text-amber-100">
+                补充处理意见（可选）
+              </span>
+              <textarea
+                className="mt-1.5 min-h-24 w-full resize-y rounded-md border border-amber-300 bg-background px-3 py-2 text-sm text-foreground outline-none focus:border-amber-500 focus:ring-2 focus:ring-amber-500/20 disabled:cursor-not-allowed disabled:opacity-60 dark:border-amber-800"
+                value={retryInstruction}
+                maxLength={4000}
+                disabled={retrying}
+                placeholder="例如：相关配置已经补齐；请使用新的接口约束继续处理，并重新完成验证。留空表示外部阻塞已经处理，直接重新检查。"
+                onChange={(event) => setRetryInstruction(event.target.value)}
+              />
+            </label>
+          ) : null}
+
+          <div className="flex justify-end">
+            <button
+              type="button"
+              className="inline-flex items-center gap-1.5 rounded-md bg-amber-600 px-3 py-2 text-xs font-semibold text-white hover:bg-amber-700 disabled:cursor-not-allowed disabled:opacity-60"
+              disabled={retrying}
+              onClick={() => {
+                if (isBlocked) {
+                  void onRetry(task, retryInstruction.trim());
+                  return;
+                }
+                void onRetry(task);
+              }}
+            >
+              {retrying
+                ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
+                : <RotateCcw className="h-3.5 w-3.5" />}
+              {retrying ? '正在重新处理' : isBlocked ? '重新处理此节点' : '重试此任务'}
+            </button>
+          </div>
+        </div>
+      ) : null}
+
       <FieldGrid
         items={[
           ['任务 ID', task.id],

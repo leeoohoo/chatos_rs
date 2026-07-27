@@ -68,9 +68,7 @@ pub fn build_responses_request_payload(
         }
         payload["reasoning"] = reasoning_payload;
     }
-    if stream {
-        payload["stream"] = Value::Bool(true);
-    }
+    payload["stream"] = Value::Bool(stream);
     payload
 }
 
@@ -138,8 +136,8 @@ pub fn build_chat_completions_request_payload(
     if let Some(mode) = thinking_mode_for_provider(provider.as_deref(), thinking_level.as_deref()) {
         payload["thinking"] = json!({ "type": mode });
     }
+    payload["stream"] = Value::Bool(stream);
     if stream {
-        payload["stream"] = Value::Bool(true);
         payload["stream_options"] = json!({ "include_usage": true });
     }
     payload

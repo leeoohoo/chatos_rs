@@ -32,8 +32,7 @@ mod tests {
             }
         ]);
 
-        let fields =
-            chatos_mcp::normalize_kv_fields(Some(&input), 50).expect("normalize fields");
+        let fields = chatos_mcp::normalize_kv_fields(Some(&input), 50).expect("normalize fields");
         assert_eq!(fields.len(), 3);
         assert_eq!(fields[0].key, "repo");
         assert_eq!(fields[1].key, "api_token");

@@ -11,6 +11,7 @@ impl RunService {
         model_config: &ModelConfigRecord,
         run_spec: &TaskRunSpec,
         tool_result_model_budget_limits: ToolResultModelBudgetLimits,
+        max_iterations: usize,
         effective_workspace_dir: &str,
     ) -> RuntimeExecutionState {
         let path_redactor = crate::services::path_redaction::WorkspacePathRedactor::for_workspace(
@@ -41,6 +42,9 @@ impl RunService {
             .with_caller_model(Some(model_config.model.clone()))
             .with_record_options(run_spec.record_options.clone())
             .with_tool_result_model_budget_limits(Some(tool_result_model_budget_limits))
+            .with_lifecycle_hook(Some(Arc::new(TaskFinalizationLifecycleHook::new(
+                max_iterations,
+            ))))
             .with_callbacks(callbacks)
             .with_abort_token(Some(abort_token))
             .with_abort_checker(Some(Arc::new({
@@ -156,12 +160,21 @@ impl RunService {
                     }
                     let mut payload = sanitize_runtime_event_payload(payload);
                     path_redactor.redact_value(&mut payload);
+                    let browser_session = browser_session_event_payload(&payload);
                     store.append_run_event_sync(TaskRunEventRecord::new(
                         run_id.clone(),
                         "tool_stream",
                         None,
                         Some(payload),
                     ));
+                    if let Some(browser_session) = browser_session {
+                        store.append_run_event_sync(TaskRunEventRecord::new(
+                            run_id.clone(),
+                            "browser_session",
+                            None,
+                            Some(browser_session),
+                        ));
+                    }
                 }
             })),
             on_tools_end: Some(Arc::new({
@@ -272,6 +285,19 @@ const EVENT_SECRET_VALUE_MASK: &str = "******";
 fn sanitize_runtime_event_payload(mut payload: Value) -> Value {
     sanitize_runtime_event_value(&mut payload);
     payload
+}
+
+fn browser_session_event_payload(value: &Value) -> Option<Value> {
+    match value {
+        Value::Object(map) => {
+            if let Some(session) = map.get("browser_session").filter(|value| value.is_object()) {
+                return Some(session.clone());
+            }
+            map.values().find_map(browser_session_event_payload)
+        }
+        Value::Array(items) => items.iter().find_map(browser_session_event_payload),
+        _ => None,
+    }
 }
 
 fn sanitize_runtime_event_value(value: &mut Value) {
@@ -432,6 +458,26 @@ fn tool_result_marks_root_task_done(payload: &Value, task_id: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn browser_session_event_is_extracted_from_nested_tool_result() {
+        let payload = json!({
+            "name": "browser_tools_browser_navigate",
+            "result": {
+                "success": true,
+                "browser_session": {
+                    "id": "h_session_123",
+                    "mode": "managed",
+                    "status": "active",
+                    "event": "updated"
+                }
+            }
+        });
+
+        let session = browser_session_event_payload(&payload).expect("browser session");
+        assert_eq!(session["id"], "h_session_123");
+        assert_eq!(session["status"], "active");
+    }
 
     #[test]
     fn tool_result_marks_root_task_done_for_complete_result() {

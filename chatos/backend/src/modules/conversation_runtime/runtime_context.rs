@@ -19,13 +19,19 @@ use std::sync::{Arc, Mutex};
 use chatos_agent::ChatosAgentProfile;
 use chatos_mcp_runtime::PROJECT_MANAGEMENT_MCP_ID;
 use chatos_plugin_management_sdk::CHATOS_TASK_RUNNER_MCP_RESOURCE_ID;
+use chatos_plugin_management_sdk::{PluginAgentSelection, PluginCommandInvocation};
+use sha2::{Digest, Sha256};
 use tracing::warn;
 
 use self::policy::{merge_optional_system_prompts, resolve_chatos_mcp_policy};
 use self::project_mcp::build_project_management_mcp_runtime;
 use self::support::{is_concrete_project_id, normalize_optional_text};
-use self::task_runner::build_contact_task_runner_runtime;
-use self::workspace::authorize_runtime_workspace_dir;
+use self::task_runner::{
+    build_contact_task_runner_runtime, normalize_plugin_agent_selection,
+    normalize_plugin_command_invocations, normalize_selected_plugin_ids,
+    ContactTaskRunnerRuntimeRequest,
+};
+use self::workspace::{authorize_runtime_workspace_dir, resolve_runtime_project_root};
 use crate::config::Config;
 use crate::core::builtin_mcp_prompt::compose_builtin_mcp_system_prompt;
 use crate::core::chat_context::resolve_system_prompt;
@@ -36,7 +42,10 @@ use crate::core::chat_runtime::{
 use crate::core::internal_context_locale::InternalContextLocale;
 use crate::core::mcp_runtime::{empty_mcp_server_bundle, McpServerBundle};
 use crate::core::mcp_tools::ToolInfo;
-use crate::models::memory_runtime_types::TurnRuntimeSnapshotSelectedCommandDto;
+use crate::models::memory_runtime_types::{
+    TurnRuntimeSnapshotPluginAgentSelectionDto, TurnRuntimeSnapshotPluginCommandInvocationDto,
+    TurnRuntimeSnapshotSelectedCommandDto,
+};
 use crate::models::project::PUBLIC_PROJECT_ID;
 use crate::services::{
     chatos_agents, chatos_memory_engine, chatos_memory_mappings, chatos_sessions,
@@ -50,8 +59,14 @@ pub struct ConversationRuntimeRequest {
     pub project_root: Option<String>,
     pub workspace_root: Option<String>,
     pub remote_connection_id: Option<String>,
+    pub plugin_device_id: Option<String>,
+    pub plugin_workspace_id: Option<String>,
+    pub selected_plugin_ids: Vec<String>,
+    pub plugin_command_invocations: Vec<PluginCommandInvocation>,
+    pub plugin_agent_selection: Option<PluginAgentSelection>,
     pub plan_mode: bool,
     pub project_requirement_execution_planner: bool,
+    pub project_requirement_execution_task_ids: Vec<String>,
     pub model_config_id: Option<String>,
     pub model_provider: String,
     pub prompt_vendor: Option<String>,
@@ -70,10 +85,13 @@ pub struct ResolvedConversationRuntimeContext {
     pub contact_system_prompt: Option<String>,
     pub builtin_mcp_system_prompt: Option<String>,
     pub selected_commands_for_snapshot: Arc<Mutex<Vec<TurnRuntimeSnapshotSelectedCommandDto>>>,
+    pub plugin_command_invocations_for_snapshot: Vec<TurnRuntimeSnapshotPluginCommandInvocationDto>,
+    pub plugin_agent_selection_for_snapshot: Option<TurnRuntimeSnapshotPluginAgentSelectionDto>,
     pub resolved_project_id: Option<String>,
     pub resolved_project_name: Option<String>,
     pub resolved_project_source_type: Option<String>,
     pub resolved_project_root: Option<String>,
+    pub local_project_workspace_root: Option<String>,
     pub default_remote_connection_id: Option<String>,
     pub workspace_root: Option<String>,
     pub mcp_enabled: bool,
@@ -188,11 +206,13 @@ pub async fn resolve_runtime_context(
     let resolved_project_id = resolved_project_runtime.project_id;
     let resolved_project_name = resolved_project_runtime.project_name;
     let resolved_project_source_type = resolved_project_runtime.source_type;
-    let resolved_project_root = authorize_runtime_workspace_dir(
+    let resolved_project_root = resolve_runtime_project_root(
         effective_user_id.as_deref(),
         resolved_project_runtime.project_root,
     )
     .await;
+    let local_project_workspace_root = resolved_project_root.local_workspace_root;
+    let resolved_project_root = resolved_project_root.logical_root;
 
     let default_remote_connection_id = normalize_id(req.remote_connection_id.clone())
         .or_else(|| runtime_metadata.remote_connection_id.clone());
@@ -207,6 +227,35 @@ pub async fn resolve_runtime_context(
     let mut effective_mcp_resource_ids = Vec::new();
     let agent_profile =
         ChatosAgentProfile::from_flags(req.plan_mode, req.project_requirement_execution_planner);
+    let normalized_selected_plugin_ids =
+        normalize_selected_plugin_ids(req.selected_plugin_ids.as_slice());
+    let normalized_plugin_command_invocations = normalize_plugin_command_invocations(
+        normalized_selected_plugin_ids.as_slice(),
+        req.plugin_command_invocations.as_slice(),
+    );
+    let normalized_plugin_agent_selection = normalize_plugin_agent_selection(
+        normalized_selected_plugin_ids.as_slice(),
+        req.plugin_agent_selection.as_ref(),
+    );
+    let plugin_command_invocations_for_snapshot = normalized_plugin_command_invocations
+        .iter()
+        .map(|invocation| TurnRuntimeSnapshotPluginCommandInvocationDto {
+            plugin_id: invocation.plugin_id.clone(),
+            command_id: invocation.command_id.clone(),
+            arguments_present: invocation.arguments.is_some(),
+            arguments_sha256: invocation
+                .arguments
+                .as_deref()
+                .map(|arguments| hex::encode(Sha256::digest(arguments.as_bytes()))),
+        })
+        .collect::<Vec<_>>();
+    let plugin_agent_selection_for_snapshot =
+        normalized_plugin_agent_selection.as_ref().map(|selection| {
+            TurnRuntimeSnapshotPluginAgentSelectionDto {
+                plugin_id: selection.plugin_id.clone(),
+                agent_id: selection.agent_id.clone(),
+            }
+        });
 
     let agent_system_prompt = match plugin_management_prompts::resolve_for_model(
         agent_profile.key(),
@@ -223,6 +272,9 @@ pub async fn resolve_runtime_context(
     };
 
     let requires_concrete_project = agent_profile.requires_concrete_project();
+    let has_concrete_project_scope = resolved_project_id
+        .as_deref()
+        .is_some_and(is_concrete_project_id);
     let task_runner_project_id = if requires_concrete_project {
         resolved_project_id
             .as_deref()
@@ -235,8 +287,12 @@ pub async fn resolve_runtime_context(
     }
 
     if runtime_error.is_none() {
-        let policy_result =
-            resolve_chatos_mcp_policy(agent_profile, effective_user_id.as_deref()).await;
+        let policy_result = resolve_chatos_mcp_policy(
+            agent_profile,
+            effective_user_id.as_deref(),
+            has_concrete_project_scope,
+        )
+        .await;
         match policy_result {
             Ok(policy) => capability_policy = Some(policy),
             Err(err) => {
@@ -252,22 +308,30 @@ pub async fn resolve_runtime_context(
     }
 
     if runtime_error.is_none() {
-        match build_contact_task_runner_runtime(
-            effective_user_id.as_deref(),
-            runtime_metadata.contact_id.as_deref(),
-            contact_agent_id.as_deref(),
-            Some(session_id),
-            task_runner_project_id,
-            workspace_root
+        match build_contact_task_runner_runtime(ContactTaskRunnerRuntimeRequest {
+            effective_user_id: effective_user_id.as_deref(),
+            contact_id: runtime_metadata.contact_id.as_deref(),
+            contact_agent_id: contact_agent_id.as_deref(),
+            source_session_id: Some(session_id),
+            project_id: task_runner_project_id,
+            workspace_dir: workspace_root
                 .as_deref()
-                .or(resolved_project_root.as_deref()),
-            default_remote_connection_id.as_deref(),
-            req.conversation_turn_id.as_deref(),
-            req.source_user_message_id.as_deref(),
-            req.model_config_id.as_deref(),
-            user_output_locale,
+                .or(local_project_workspace_root.as_deref()),
+            remote_connection_id: default_remote_connection_id.as_deref(),
+            plugin_device_id: req.plugin_device_id.as_deref(),
+            plugin_workspace_id: req.plugin_workspace_id.as_deref(),
+            selected_plugin_ids: normalized_selected_plugin_ids.as_slice(),
+            plugin_command_invocations: normalized_plugin_command_invocations.as_slice(),
+            plugin_agent_selection: normalized_plugin_agent_selection.as_ref(),
+            conversation_turn_id: req.conversation_turn_id.as_deref(),
+            source_user_message_id: req.source_user_message_id.as_deref(),
+            model_config_id: req.model_config_id.as_deref(),
+            project_requirement_execution_task_ids: req
+                .project_requirement_execution_task_ids
+                .as_slice(),
+            locale: user_output_locale,
             agent_profile,
-        )
+        })
         .await
         {
             Some(runtime) => {
@@ -281,7 +345,7 @@ pub async fn resolve_runtime_context(
         }
     }
 
-    if runtime_error.is_none() && agent_profile.requires_project_management_mcp() {
+    if runtime_error.is_none() && has_concrete_project_scope {
         match Config::try_get()
             .map_err(|err| err.to_string())
             .and_then(|cfg| {
@@ -289,6 +353,7 @@ pub async fn resolve_runtime_context(
                     cfg,
                     effective_user_id.as_deref(),
                     task_runner_project_id,
+                    agent_profile.requires_project_management_mcp(),
                 )
             }) {
             Ok(server) => {
@@ -344,10 +409,13 @@ pub async fn resolve_runtime_context(
         contact_system_prompt,
         builtin_mcp_system_prompt,
         selected_commands_for_snapshot,
+        plugin_command_invocations_for_snapshot,
+        plugin_agent_selection_for_snapshot,
         resolved_project_id,
         resolved_project_name,
         resolved_project_source_type,
         resolved_project_root,
+        local_project_workspace_root,
         default_remote_connection_id,
         workspace_root,
         mcp_enabled: true,

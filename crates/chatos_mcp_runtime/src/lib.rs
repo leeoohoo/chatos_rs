@@ -53,9 +53,13 @@ pub use rpc::{
     list_tools_http, list_tools_stdio,
 };
 pub use schema::{build_function_tool_schema, parse_mcp_tool_definition, parse_tool_definition};
-pub use text::{inject_agent_builder_args, to_text_and_structured_result};
+pub use text::{
+    inject_agent_builder_args, to_text_and_structured_result,
+    to_text_and_structured_result_with_transient,
+};
 pub use types::{
     McpBuiltinServer, McpHttpHeaderProvider, McpHttpServer, McpStdioServer, McpToolNameAlias,
-    ParsedToolDefinition, ToolAbortCheckCallback, ToolCallContext, ToolCallerModelRuntime,
-    ToolInfo, ToolResult, ToolResultCallback, ToolStreamChunkCallback,
+    ParsedToolDefinition, ToolAbortCheckCallback, ToolCallContext, ToolCallError,
+    ToolCallerModelRuntime, ToolInfo, ToolLifecycleEvent, ToolLifecycleHook, ToolLifecycleOutcome,
+    ToolResult, ToolResultCallback, ToolStreamChunkCallback, TransientToolModelInput,
 };

@@ -159,10 +159,12 @@ async fn approve_sandbox_tool_call(
             project_key,
             command: tool_call.command.clone(),
             args: tool_call.args.clone(),
+            redact_arguments_in_history: false,
             cwd: cwd.clone(),
             source: "task_runner_sandbox".to_string(),
             requested_permissions: Some(requested_permissions.clone()),
             session_id: Some(sandbox_id.to_string()),
+            action_audit: None,
         },
         mode,
     )

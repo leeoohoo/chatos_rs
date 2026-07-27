@@ -38,8 +38,9 @@ pub use ask_user::{
     AskUserStreamChunkCallback, ASK_USER_PROMPT_TIMEOUT_MS_DEFAULT,
 };
 pub use browser_tools::{
-    BrowserToolCallContext, BrowserToolsOptions, BrowserToolsService, BrowserVisionAdapter,
-    BrowserVisionAdapterRef, BrowserVisionFailure, BrowserVisionRequest, BrowserVisionResponse,
+    browser_interactive_approval_command, BrowserToolCallContext, BrowserToolsOptions,
+    BrowserToolsService, BrowserVisionAdapter, BrowserVisionAdapterRef, BrowserVisionFailure,
+    BrowserVisionRequest, BrowserVisionResponse,
 };
 pub use bundled_tools::{
     agent_browser_binary_path, bundled_tool_path, discover_bundled_tool_dirs,
@@ -69,9 +70,9 @@ pub use remote_connection_controller::{
     DEFAULT_MAX_READ_FILE_BYTES, MAX_COMMAND_TIMEOUT_SECONDS,
 };
 pub use task_manager::{
-    TaskDraft, TaskManagerOptions, TaskManagerService, TaskManagerStore, TaskManagerStoreRef,
-    TaskOutcomeItem, TaskStreamChunkCallback, TaskUpdatePatch, REVIEW_TIMEOUT_MS_DEFAULT,
-    TASK_NOT_FOUND_ERR,
+    TaskClosureDecision, TaskDraft, TaskManagerOptions, TaskManagerService, TaskManagerStore,
+    TaskManagerStoreRef, TaskOutcomeItem, TaskStreamChunkCallback, TaskUpdatePatch,
+    REVIEW_TIMEOUT_MS_DEFAULT, TASK_NOT_FOUND_ERR,
 };
 pub use terminal_controller::{
     coerce_process_identifier, resolve_wait_timeout_ms, TerminalCommandPermissions,

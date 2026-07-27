@@ -1,0 +1,42 @@
+# ChatOS Chrome existing-session control
+
+Use this Skill only when the task depends on the user's existing Google Chrome state, such as an already signed-in website or a tab the user explicitly connected. Use the separate Browser Plugin for isolated browsing, localhost testing, disposable sessions, file pages, network diagnostics, HAR, WebSocket observation, route interception, or CDP developer mode.
+
+## Setup and authorization
+
+- `chrome_status` is non-sensitive and reports whether the packaged Native Messaging Host is registered, whether the exact bundled extension version is connected, and how many tabs/sites are currently authorized. It never returns local paths, authentication tokens, tab URLs, titles, or page content.
+- The macOS Local Connector settings page registers the user-level Native Messaging Host only after an explicit risk confirmation. The extension itself must still be loaded by the user from Chrome's extension page.
+- The extension uses a fixed bundled identity and connects only to `com.chatos.chrome`. The native host accepts only the exact bundled extension origin and communicates with the running Local Connector through a private 0600 rendezvous file and the existing bearer-authenticated loopback API. It does not open another port.
+- The extension has no Cookie, history-reading, downloads, bookmarks, clipboard, debugger, webRequest, `tabs`, or all-sites permission. HTTP(S) origins are optional permissions. A user gesture in the extension popup is required to grant one exact origin and connect the current tab.
+- A site permission does not automatically expose every tab on that site. The user must explicitly connect a tab. Navigation to another origin, tab closure, permission removal, Native Host disconnect, or explicit release invalidates access.
+
+## Observe and target
+
+- Call `chrome_status` first. If setup is required, explain that the user must enable Chrome integration in Local Connector, load the bundled extension, then authorize and connect the desired tab from the extension popup.
+- `chrome_tabs` requires local approval for every call and returns at most 50 explicitly connected tabs. Use only stable `ct...` tab IDs. URL query values are redacted and fragments are removed.
+- `chrome_tab_snapshot` requires local approval for every call. It reads one bounded structural snapshot from an explicitly connected tab, with a 1,000–50,000 character limit. It does not read form values, password values, cookies, local/session storage, history entries, downloads, bookmarks, or hidden script/style content.
+- Actionable snapshot rows contain short-lived `cr...` target IDs. A target is bound to the exact tab, origin, latest snapshot, DOM path, role/type, accessible name, direct-link URL and other behavior-sensitive attributes. Native single-select rows include at most 20 enabled visible option labels and the currently selected label, never option values. Targets become invalid after navigation, click, text input, selection, scroll, history movement, upload, download, tab release, origin change or permission removal.
+
+## Controlled actions
+
+- `chrome_tab_navigate` requires local approval and accepts only an absolute HTTP(S) URL on the connected tab's currently authorized exact origin. It rejects embedded credentials and cross-origin navigation.
+- `chrome_tab_click` requires local approval and clicks one visible, enabled, unchanged target from the latest snapshot. It does not accept CSS selectors or arbitrary JavaScript.
+- `chrome_tab_type_text` requires local approval and writes at most 2,000 visible Unicode characters to one safe editable target. Password/secure, disabled, readonly, file and other non-text controls are rejected. Approval and results store only character count and SHA-256, not the raw text.
+- `chrome_tab_select` requires local approval and chooses an exact visible label in one native single-select. Missing, duplicated, disabled or multi-select options are rejected; arbitrary custom combobox scripting is not claimed.
+- `chrome_tab_scroll` requires local approval and accepts bounded integer pixel deltas from -2,000 to 2,000 on each axis, with at least one non-zero value. Capture a new snapshot afterwards.
+- `chrome_tab_history` requires local approval and moves only `back` or `forward`. If the resulting history entry leaves the authorized origin, the extension releases the tab claim and the action fails closed.
+- `chrome_tab_activate` requires local approval and activates the connected tab inside its existing window without forcing the Chrome window to the foreground. Use it before `chrome_tab_screenshot` when necessary.
+- `chrome_tab_upload` requires a selected workspace and local approval. It reads one 1-byte–10-MiB regular non-symlink workspace file, sends bounded chunks through Native Messaging, verifies SHA-256 inside the isolated extension world, and assigns it only to a snapshot-bound file input. It never sends the local absolute path to Chrome.
+- `chrome_tab_download` requires a selected workspace and local approval. It accepts only one unchanged `<a href>` target from the latest snapshot and fetches it inside Chrome's isolated world with a fixed credentialed GET. Sources are limited to same-origin HTTP(S), same-origin `blob:`, or bounded `data:` URLs. Redirected HTTP(S) responses must remain on the authorized exact origin.
+- A Chrome download is capped by the approved `max_bytes` and the 10-MiB hard limit, split into at most 64 chunks of 192 KiB, and SHA-256 verified independently by the extension and Local Connector. It is written through a same-directory `.chatos-chrome-download-*.part` staging file and atomically linked to a workspace destination that must not already exist. Parent directories must already exist and must not be symlinks; existing files, directories and symlinks are never overwritten. HTTP(S) query values are redacted in results, while `blob:` and `data:` source URLs are never returned.
+- `chrome_tab_screenshot` requires local approval and captures only the visible viewport of the active connected tab as a bounded JPEG. The image is transient model input and is omitted from persisted structured result history. If the active tab changes during capture, the image is discarded.
+- `chrome_tab_release` requires local approval and disconnects one stable tab ID. It does not revoke the site's user-managed Chrome permission.
+
+## Keyboard and safety
+
+- This extension deliberately does not expose a fake keyboard tool. JavaScript-created keyboard events are untrusted and cannot reliably equal real input without `debugger` or OS control. Use target click/type/select when possible, or the separately approved Computer Use Plugin for real Enter, shortcuts or other keys.
+- This release still does not request Chrome `downloads` permission and never scans or silently copies files from the user's Downloads directory. Existing-session download handoff is restricted to a user-approved, snapshot-bound direct link and a create-new workspace destination.
+- Task or Plugin cancellation sends a bounded cancel message to the extension, releases the Core pending request, tolerates a late extension result and cleans up in-progress upload/download buffers plus partial workspace staging files. Cancellation stops waiting and prevents undispatched work, but it cannot reverse an action already accepted by Chrome.
+- Treat returned snapshots and screenshots as sensitive signed-in page content. Request the smallest useful snapshot and screenshot quality, and capture a fresh snapshot after any action that invalidates targets.
+- Never ask the user to expose a DevTools port, WebSocket URL, cookie database, Chrome profile directory, Native Messaging token, or Local Connector rendezvous file.
+- This release still does not read cookies, storage, history entries, browser download history, bookmarks or password values; does not run model-provided JavaScript; and does not provide arbitrary selectors, CDP, network interception or cross-origin silent control.

@@ -15,6 +15,11 @@ use crate::dto::{
     UpdateUserSkillPreferenceRequest, UserSkillCatalogItem, UserSkillCatalogResponse,
 };
 use crate::error::PluginManagementClientError;
+use crate::plugin_runtime::{
+    PluginInstallSource, PluginInstallSourceList, UpdateUserPluginPreferenceRequest,
+    UpdateUserPluginPreferenceResponse,
+};
+use crate::plugin_runtime::{PluginOAuthConnectionRecord, PluginOAuthStatusSyncPayload};
 
 const INTERNAL_SECRET_HEADER: &str = "x-plugin-management-internal-secret";
 const INTERNAL_TOKEN_HEADER: &str = "x-plugin-management-internal-token";
@@ -25,6 +30,8 @@ const AGENT_PROMPTS_RESOLVE_SCOPE: &str = "agent-prompts.resolve";
 const AGENT_PROMPTS_SYNC_SCOPE: &str = "agent-prompts.sync";
 const LOCAL_CONNECTOR_READ_SCOPE: &str = "local-connector.read";
 const LOCAL_CONNECTOR_WRITE_SCOPE: &str = "local-connector.write";
+const PLUGIN_OAUTH_MANAGE_SCOPE: &str = "plugin.oauth.manage";
+const PLUGIN_INSTALL_MANAGE_SCOPE: &str = "plugin.install.manage";
 
 #[derive(Clone)]
 pub struct PluginManagementClient {
@@ -79,6 +86,9 @@ impl PluginManagementClient {
         }
         if let Some(value) = request.schedule_mode.as_deref() {
             query.push(("schedule_mode", value));
+        }
+        if let Some(value) = request.device_id.as_deref() {
+            query.push(("device_id", value));
         }
         let response = self
             .http
@@ -302,6 +312,76 @@ impl PluginManagementClient {
         );
         let response = self
             .internal_request(Method::PUT, url, LOCAL_CONNECTOR_WRITE_SCOPE)?
+            .json(request)
+            .send()
+            .await?;
+        parse_response(response).await
+    }
+
+    pub async fn sync_plugin_oauth_status(
+        &self,
+        request: &PluginOAuthStatusSyncPayload,
+    ) -> Result<PluginOAuthConnectionRecord, PluginManagementClientError> {
+        let url = format!(
+            "{}/api/internal/local-connector/plugins/oauth",
+            self.config.base_url
+        );
+        let response = self
+            .internal_request(Method::PUT, url, PLUGIN_OAUTH_MANAGE_SCOPE)?
+            .json(request)
+            .send()
+            .await?;
+        parse_response(response).await
+    }
+
+    pub async fn list_plugin_install_sources_for_service(
+        &self,
+        owner_user_id: &str,
+    ) -> Result<PluginInstallSourceList, PluginManagementClientError> {
+        let url = format!(
+            "{}/api/internal/local-connector/plugins/install-sources",
+            self.config.base_url
+        );
+        let response = self
+            .internal_request(Method::GET, url, PLUGIN_INSTALL_MANAGE_SCOPE)?
+            .query(&[("owner_user_id", owner_user_id)])
+            .send()
+            .await?;
+        parse_response(response).await
+    }
+
+    pub async fn get_plugin_install_source_for_service(
+        &self,
+        plugin_id: &str,
+        release_id: &str,
+        owner_user_id: &str,
+    ) -> Result<PluginInstallSource, PluginManagementClientError> {
+        let url = format!(
+            "{}/api/internal/local-connector/plugins/install-sources/{}/{}",
+            self.config.base_url,
+            urlencoding::encode(plugin_id),
+            urlencoding::encode(release_id),
+        );
+        let response = self
+            .internal_request(Method::GET, url, PLUGIN_INSTALL_MANAGE_SCOPE)?
+            .query(&[("owner_user_id", owner_user_id)])
+            .send()
+            .await?;
+        parse_response(response).await
+    }
+
+    pub async fn update_user_plugin_preference_for_service(
+        &self,
+        plugin_id: &str,
+        request: &UpdateUserPluginPreferenceRequest,
+    ) -> Result<UpdateUserPluginPreferenceResponse, PluginManagementClientError> {
+        let url = format!(
+            "{}/api/internal/local-connector/plugins/{}/preference",
+            self.config.base_url,
+            urlencoding::encode(plugin_id),
+        );
+        let response = self
+            .internal_request(Method::PUT, url, PLUGIN_INSTALL_MANAGE_SCOPE)?
             .json(request)
             .send()
             .await?;

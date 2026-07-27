@@ -63,6 +63,8 @@ fn expand_tool_results_duplicates_results_for_alias_ids() {
         conversation_turn_id: None,
         content: "done".to_string(),
         result: None,
+        fatal_error: false,
+        transient_model_input: None,
     }];
     let alias_map =
         std::collections::HashMap::from([("call_1".to_string(), vec!["call_2".to_string()])]);
@@ -83,6 +85,8 @@ fn append_tool_results_supports_chat_and_responses_shapes() {
         conversation_turn_id: None,
         content: "done".to_string(),
         result: None,
+        fatal_error: false,
+        transient_model_input: None,
     }];
     let tool_calls = json!([{
         "id": "call_1",
@@ -130,6 +134,8 @@ fn sanitize_tool_results_for_model_omits_large_content() {
         conversation_turn_id: None,
         content: "x".repeat(9_000),
         result: None,
+        fatal_error: false,
+        transient_model_input: None,
     }];
 
     let sanitized = sanitize_tool_results_for_model(results);
@@ -152,6 +158,8 @@ fn sanitize_tool_results_for_model_uses_explicit_budget_limits() {
         conversation_turn_id: None,
         content: "x".repeat(101),
         result: None,
+        fatal_error: false,
+        transient_model_input: None,
     }];
 
     let sanitized = sanitize_tool_results_for_model_with_budget(
@@ -179,6 +187,8 @@ fn build_tool_output_items_for_calls_fills_missing_outputs() {
         conversation_turn_id: None,
         content: "done".to_string(),
         result: None,
+        fatal_error: false,
+        transient_model_input: None,
     }];
 
     let outputs = build_tool_output_items_for_calls_with_budget(
@@ -343,6 +353,8 @@ fn build_tool_output_items_sanitizes_large_content() {
         conversation_turn_id: None,
         content: "x".repeat(9_000),
         result: None,
+        fatal_error: false,
+        transient_model_input: None,
     }];
 
     let items = build_tool_output_items(results.as_slice());
@@ -353,4 +365,43 @@ fn build_tool_output_items_sanitizes_large_content() {
 
     assert!(output.contains("Tool result omitted"));
     assert!(output.contains("code.read_file"));
+}
+
+#[tokio::test]
+async fn transient_tool_images_become_model_input_without_entering_serialized_result() {
+    let calls = vec![json!({
+        "id": "call_image",
+        "function": {"name": "computer_capture_main_display", "arguments": "{}"}
+    })];
+    let results = chatos_mcp_runtime::execute_tool_calls_stream(
+        calls.as_slice(),
+        chatos_mcp_runtime::ToolCallContext::new(None, None, None),
+        None,
+        |_name, _args, _stream| async { Ok(chat_os_image_tool_result()) },
+    )
+    .await;
+    assert_eq!(results.len(), 1);
+    assert!(results[0].transient_model_input.is_some());
+    assert!(!serde_json::to_string(&results[0])
+        .expect("serialize ToolResult")
+        .contains("base64"));
+
+    let items =
+        build_tool_output_items_for_calls_with_budget(calls.as_slice(), results.as_slice(), None);
+    assert!(items.iter().any(|item| {
+        item.pointer("/content/0/image_url").and_then(Value::as_str)
+            == Some("data:image/jpeg;base64,/9j/AA==")
+    }));
+}
+
+fn chat_os_image_tool_result() -> (String, Option<Value>) {
+    chatos_mcp_runtime::to_text_and_structured_result_with_transient(&json!({
+        "text": "captured",
+        "_structured_result": {"persisted": false},
+        "_model_input": [{
+            "type": "input_image",
+            "image_url": "data:image/jpeg;base64,/9j/AA==",
+            "detail": "high"
+        }]
+    }))
 }

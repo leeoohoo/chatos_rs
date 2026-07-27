@@ -48,12 +48,15 @@ pub fn build_tool_output_items_with_budget(
     limits: Option<ToolResultModelBudgetLimits>,
 ) -> Vec<Value> {
     let results = sanitize_tool_results_for_model_with_budget(results.to_vec(), limits);
-    results
+    let model_input_items = build_transient_model_input_items(results.as_slice());
+    let mut items = results
         .into_iter()
         .map(|result| {
             build_function_call_output_item(result.tool_call_id.as_str(), result.content.as_str())
         })
-        .collect()
+        .collect::<Vec<_>>();
+    items.extend(model_input_items);
+    items
 }
 
 pub fn build_tool_output_items_for_calls_with_budget(
@@ -63,7 +66,14 @@ pub fn build_tool_output_items_for_calls_with_budget(
 ) -> Vec<Value> {
     let tool_call_items = build_tool_call_items(tool_calls);
     let tool_output_items = build_tool_output_items_with_budget(results, limits);
-    complete_tool_outputs_for_calls(tool_call_items.as_slice(), tool_output_items.as_slice())
+    let mut completed =
+        complete_tool_outputs_for_calls(tool_call_items.as_slice(), tool_output_items.as_slice());
+    completed.extend(
+        tool_output_items.into_iter().filter(|item| {
+            item.get("type").and_then(Value::as_str) != Some("function_call_output")
+        }),
+    );
+    completed
 }
 
 pub fn append_tool_results(
@@ -96,6 +106,7 @@ pub fn append_tool_results_with_budget(
     }
 
     let results = sanitize_tool_results_for_model_with_budget(results, limits);
+    let model_input_items = build_transient_model_input_items(results.as_slice());
     let mut items = input.as_array().cloned().unwrap_or_else(|| vec![input]);
     items.push(json!({
         "role": "assistant",
@@ -109,6 +120,7 @@ pub fn append_tool_results_with_budget(
             "content": result.content
         }));
     }
+    items.extend(model_input_items);
     Value::Array(items)
 }
 
@@ -284,6 +296,30 @@ pub fn merge_pending_tool_turn_items(
     let tool_call_items = pending_tool_calls.unwrap_or(&[]);
     let tool_outputs = pending_tool_outputs.unwrap_or(&[]);
     merge_missing_tool_turn_items(items, tool_call_items, tool_outputs);
+    for item in tool_outputs
+        .iter()
+        .filter(|item| item.get("type").and_then(Value::as_str) != Some("function_call_output"))
+    {
+        if !items.contains(item) {
+            items.push(item.clone());
+        }
+    }
+}
+
+fn build_transient_model_input_items(results: &[ToolResult]) -> Vec<Value> {
+    results
+        .iter()
+        .filter(|result| result.success && !result.is_error)
+        .filter_map(|result| result.transient_model_input.as_ref())
+        .filter(|input| !input.items().is_empty())
+        .map(|input| {
+            json!({
+                "type": "message",
+                "role": "user",
+                "content": input.items(),
+            })
+        })
+        .collect()
 }
 
 pub fn append_tool_turn_items(

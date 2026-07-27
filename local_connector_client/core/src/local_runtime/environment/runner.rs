@@ -26,6 +26,7 @@ pub(crate) async fn run_local_environment_analysis(
     project_id: String,
     model_config_id: String,
     run_id: String,
+    analysis_requirement: Option<String>,
 ) -> Result<(), String> {
     let database = runtime
         .local_database()
@@ -42,7 +43,7 @@ pub(crate) async fn run_local_environment_analysis(
         return Err("Project Environment Agent is disabled by Plugin Management".to_string());
     }
     capability
-        .ensure_required_available()
+        .ensure_required_runtime_supported([], [])
         .map_err(|error| error.to_string())?;
     let code_read_resource_id = BuiltinMcpKind::CodeMaintainerRead
         .config_id()
@@ -101,6 +102,7 @@ pub(crate) async fn run_local_environment_analysis(
         project.project_name.as_str(),
         &evidence,
         capability_prompt.as_deref(),
+        analysis_requirement.as_deref(),
     )?;
     let model = build_local_model_config(
         resolved_model,

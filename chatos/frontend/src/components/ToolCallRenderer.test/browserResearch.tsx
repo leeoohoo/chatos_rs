@@ -11,6 +11,68 @@ import {
 } from './helpers';
 
 describe('ToolCallRenderer browser and research cards', () => {
+  it('renders sanitized browser tabs with stable IDs', () => {
+    renderWithEnglishI18n(
+      <ToolCallRenderer
+        toolCall={buildToolCall({
+          name: 'browser_tabs',
+          result: {
+            tab_count: 2,
+            active_tab_id: 't2',
+            tabs: [
+              { tab_id: 't1', active: false, title: 'App', url: 'https://example.com/app?token=%5BREDACTED%5D' },
+              { tab_id: 't2', active: true, title: 'Docs', url: 'https://example.com/docs' },
+            ],
+          },
+        })}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'View details' }));
+    expect(screen.getByText('Browser tabs')).toBeInTheDocument();
+    expect(screen.getByText('t1 · https://example.com/app?token=%5BREDACTED%5D')).toBeInTheDocument();
+    expect(screen.getByText('● Docs')).toBeInTheDocument();
+    expect(screen.queryByText(/token=secret/)).not.toBeInTheDocument();
+  });
+
+  it('renders the browser session identity and status', () => {
+    window.chatosLocalRuntime = {
+      apiRequest: async () => ({ ok: true, status: 200, body: '{}' }),
+    };
+    renderWithEnglishI18n(
+      <ToolCallRenderer
+        toolCall={buildToolCall({
+          name: 'browser_navigate',
+          result: {
+            success: true,
+            url: 'https://example.com',
+            browser_session: {
+              id: 'h_session_123',
+              mode: 'managed',
+              status: 'active',
+              event: 'started',
+              workspace_id: 'workspace-1',
+              device_id: 'device-1',
+            },
+          },
+        })}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'View details' }));
+
+    const sessionCard = screen
+      .getByText('Browser session')
+      .closest('.tool-detail-card') as HTMLElement;
+    expect(sessionCard).toBeInTheDocument();
+    expect(within(sessionCard).getByText('h_session_123')).toBeInTheDocument();
+    expect(within(sessionCard).getByText('managed')).toBeInTheDocument();
+    expect(within(sessionCard).getByText('active')).toBeInTheDocument();
+    expect(within(sessionCard).getByText('started')).toBeInTheDocument();
+    expect(within(sessionCard).getByText('workspace-1')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Open browser in ChatOS' })).toBeInTheDocument();
+  });
+
   it('renders console summary card with message counters', () => {
     renderWithEnglishI18n(
       <ToolCallRenderer
@@ -48,6 +110,239 @@ describe('ToolCallRenderer browser and research cards', () => {
     expect(within(consoleCard).queryByText('warn')).not.toBeInTheDocument();
     expect(screen.getByText('Console messages')).toBeInTheDocument();
     expect(screen.getByText('JavaScript errors')).toBeInTheDocument();
+  });
+
+  it('renders sanitized browser network timing without headers or query secrets', () => {
+    renderWithEnglishI18n(
+      <ToolCallRenderer
+        toolCall={buildToolCall({
+          name: 'browser_network',
+          result: {
+            resource_count: 2,
+            returned_count: 1,
+            omitted_count: 1,
+            truncated: true,
+            query_and_fragment_redacted: true,
+            request_headers_included: false,
+            response_headers_included: false,
+            resources: [
+              {
+                url: 'https://example.com/api/data',
+                initiator_type: 'fetch',
+                duration_ms: 18.5,
+                transfer_size: 512,
+              },
+            ],
+            navigation: {
+              url: 'https://example.com/app',
+              type: 'navigate',
+              duration_ms: 120,
+              transfer_size: 2048,
+            },
+          },
+        })}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'View details' }));
+
+    expect(screen.getByText('Network summary')).toBeInTheDocument();
+    expect(screen.getByText('Navigation timing')).toBeInTheDocument();
+    expect(screen.getByText('Network resources')).toBeInTheDocument();
+    expect(screen.getByText('https://example.com/api/data')).toBeInTheDocument();
+    expect(screen.queryByText(/token=secret/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/authorization/i)).not.toBeInTheDocument();
+  });
+
+  it('renders sanitized CDP request lists and explicit request detail bodies', () => {
+    const { unmount } = renderWithEnglishI18n(
+      <ToolCallRenderer
+        toolCall={buildToolCall({
+          name: 'browser_network',
+          result: {
+            request_count: 1,
+            returned_count: 1,
+            requests: [{
+              request_id: '7253.2',
+              url: 'https://example.com/api?token=%5BREDACTED%5D',
+              method: 'POST',
+              status: 200,
+              resource_type: 'Fetch',
+            }],
+          },
+        })}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'View details' }));
+    expect(screen.getByText('Network requests')).toBeInTheDocument();
+    expect(screen.getByText('https://example.com/api?token=%5BREDACTED%5D')).toBeInTheDocument();
+    expect(screen.getByText(/POST · 200 · Fetch · 7253\.2/)).toBeInTheDocument();
+    unmount();
+
+    renderWithEnglishI18n(
+      <ToolCallRenderer
+        toolCall={buildToolCall({
+          name: 'browser_network_request',
+          result: {
+            request: {
+              request_id: '7253.2',
+              url: 'https://example.com/api?token=%5BREDACTED%5D',
+              method: 'POST',
+              status: 200,
+              resource_type: 'Fetch',
+              request_headers: { 'content-type': 'application/json', authorization: '[REDACTED]' },
+              response_headers: { 'content-type': 'application/json', 'set-cookie': '[REDACTED]' },
+              request_body: { text: '{\n  "password": "[REDACTED]",\n  "safe": "visible"\n}' },
+              response_body: { text: '{\n  "result": "ok"\n}' },
+            },
+          },
+        })}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'View details' }));
+    expect(screen.getByText('Network request detail')).toBeInTheDocument();
+    expect(screen.getByText('Request headers')).toBeInTheDocument();
+    expect(screen.getByText('Response headers')).toBeInTheDocument();
+    expect(screen.getByText(/visible/)).toBeInTheDocument();
+    expect(screen.queryByText(/body-secret/)).not.toBeInTheDocument();
+  });
+
+  it('renders bounded browser upload and download results', () => {
+    const { unmount } = renderWithEnglishI18n(
+      <ToolCallRenderer
+        toolCall={buildToolCall({
+          name: 'browser_upload',
+          result: {
+            file_count: 2,
+            total_bytes: 1536,
+          },
+        })}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'View details' }));
+    expect(screen.getByText('Uploaded files')).toBeInTheDocument();
+    expect(screen.getByText('1536')).toBeInTheDocument();
+    unmount();
+
+    const browserDownload = renderWithEnglishI18n(
+      <ToolCallRenderer
+        toolCall={buildToolCall({
+          name: 'browser_download',
+          result: {
+            path: 'browser-download.bin',
+            bytes: 2048,
+            overwrote_existing: false,
+          },
+        })}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'View details' }));
+    expect(screen.getByText('Downloaded file')).toBeInTheDocument();
+    expect(screen.getByText('browser-download.bin')).toBeInTheDocument();
+    expect(screen.getByText('2048')).toBeInTheDocument();
+    browserDownload.unmount();
+
+    renderWithEnglishI18n(
+      <ToolCallRenderer
+        toolCall={buildToolCall({
+          name: 'chrome_tab_download',
+          result: {
+            path: 'downloads/report.pdf',
+            size_bytes: 4096,
+            sha256: 'a'.repeat(64),
+            chunk_count: 1,
+            mime_type: 'application/pdf',
+            source_kind: 'https',
+            source_url: 'https://example.com/report.pdf?token=%5BREDACTED%5D',
+            overwritten: false,
+          },
+        })}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'View details' }));
+    expect(screen.getByText('Downloaded file')).toBeInTheDocument();
+    expect(screen.getByText('downloads/report.pdf')).toBeInTheDocument();
+    expect(screen.getByText('application/pdf')).toBeInTheDocument();
+  });
+
+  it('renders sanitized HAR export metadata without raw traffic', () => {
+    renderWithEnglishI18n(
+      <ToolCallRenderer
+        toolCall={buildToolCall({
+          name: 'browser_har_stop',
+          result: {
+            path: 'diagnostics/network.har',
+            bytes: 4096,
+            raw_capture_deleted: true,
+            request_bodies_included: false,
+            response_bodies_included: false,
+            overwrote_existing: false,
+            sanitization: {
+              exported_entries: 7,
+            },
+          },
+        })}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'View details' }));
+    expect(screen.getByText('Sanitized HAR export')).toBeInTheDocument();
+    expect(screen.getByText('diagnostics/network.har')).toBeInTheDocument();
+    expect(screen.getByText('4096')).toBeInTheDocument();
+    expect(screen.getByText('7')).toBeInTheDocument();
+    expect(screen.queryByText(/authorization/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/cookie-secret/i)).not.toBeInTheDocument();
+  });
+
+  it('renders bounded WebSocket metadata and only explicitly returned redacted text', () => {
+    renderWithEnglishI18n(
+      <ToolCallRenderer
+        toolCall={buildToolCall({
+          name: 'browser_websocket_frames',
+          result: {
+            status: 'active',
+            active: true,
+            socket_count: 1,
+            open_socket_count: 1,
+            total_frame_count: 2,
+            returned_count: 2,
+            text_payloads_included: true,
+            binary_payloads_included: false,
+            frames: [
+              {
+                sequence: 1,
+                request_id: '7253.7',
+                url: 'wss://example.com/socket?token=%5BREDACTED%5D',
+                direction: 'sent',
+                frame_type: 'text',
+                payload_bytes: 48,
+                text_payload: '{"token":"[REDACTED]","event":"ready"}',
+              },
+              {
+                sequence: 2,
+                request_id: '7253.7',
+                direction: 'received',
+                frame_type: 'binary',
+                payload_bytes: 512,
+                text_payload: null,
+              },
+            ],
+          },
+        })}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'View details' }));
+    expect(screen.getByText('WebSocket observation')).toBeInTheDocument();
+    expect(screen.getByText('WebSocket frames')).toBeInTheDocument();
+    expect(screen.getByText('wss://example.com/socket?token=%5BREDACTED%5D')).toBeInTheDocument();
+    expect(screen.getByText(/"event":"ready"/)).toBeInTheDocument();
+    expect(screen.queryByText(/socket-secret/)).not.toBeInTheDocument();
   });
 
   it('renders vision analysis without exposing transport metadata', () => {

@@ -8,6 +8,7 @@ import type {
   MessageTaskRunnerRunDetailResponse,
   MessageTaskRunnerRunOutputChangesResponse,
   MessageTaskRunnerRunOutputDiffResponse,
+  MessageTaskRunnerRetryRunResponse,
   MessageTaskRunnerTask,
   MessageTaskRunnerTasksResponse,
   TaskManagerTaskResponse,
@@ -63,6 +64,21 @@ export const getLocalTaskRunnerRunDetail = (
     `/api/local/runtime/task-runs/${encodeURIComponent(runId)}/detail${suffix}`,
   );
 };
+
+export const retryLocalTaskRunnerRun = (
+  runId: string,
+  retryInstruction?: string | null,
+): Promise<MessageTaskRunnerRetryRunResponse> => requestLocalRuntime<
+  MessageTaskRunnerRetryRunResponse
+>(
+  `/api/local/runtime/task-runs/${encodeURIComponent(runId)}/retry`,
+  retryInstruction?.trim()
+    ? {
+      method: 'POST',
+      body: JSON.stringify({ retry_instruction: retryInstruction.trim() }),
+    }
+    : { method: 'POST' },
+);
 
 export const getLocalTaskRunnerRunOutputChanges = (
   runId: string,

@@ -78,6 +78,7 @@ mod tests {
             },
             security: ResourceSecurity::default(),
             metadata: ResourceMetadata::default(),
+            plugin_component: PluginComponentOwnership::default(),
             created_by: "user-1".to_string(),
             updated_by: "user-1".to_string(),
             created_at: "now".to_string(),

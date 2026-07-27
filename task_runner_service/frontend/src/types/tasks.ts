@@ -58,12 +58,89 @@ export interface SelectableTaskExternalMcp {
   visibility: string;
 }
 
+export interface SelectedTaskPlugin {
+  plugin_id: string;
+  selected_skill_ids: string[];
+  selected_command_ids: string[];
+  selected_agent_ids?: string[];
+}
+
+export interface TaskPluginCommandInvocation {
+  plugin_id: string;
+  command_id: string;
+  arguments?: string | null;
+}
+
+export interface TaskPluginConfig {
+  device_id?: string | null;
+  workspace_id?: string | null;
+  selected_plugins: SelectedTaskPlugin[];
+  command_invocations: TaskPluginCommandInvocation[];
+}
+
+export interface SelectableTaskPluginCommand {
+  command_id: string;
+  display_name: string;
+  description?: string | null;
+  argument_hint?: string | null;
+  requires_confirmation: boolean;
+  target_agent?: string | null;
+  allowed_tools?: string[];
+}
+
+export interface SelectableTaskPluginAgent {
+  agent_id: string;
+  display_name: string;
+  description?: string | null;
+  base_agent: 'task_runner_plan_phase' | 'task_runner_run_phase';
+  allowed_tools?: string[];
+  max_iterations: number;
+}
+
+export interface SelectableTaskPlugin {
+  id: string;
+  plugin_key: string;
+  display_name: string;
+  description: string;
+  version: string;
+  release_id: string;
+  artifact_sha256: string;
+  device_id: string;
+  component_keys: string[];
+  commands: SelectableTaskPluginCommand[];
+  agents: SelectableTaskPluginAgent[];
+}
+
+export interface TaskPluginConnectorDevice {
+  id: string;
+  display_name: string;
+  client_version?: string | null;
+  os?: string | null;
+  status: string;
+  last_seen_at?: string | null;
+}
+
+export interface TaskPluginConnectorWorkspace {
+  id: string;
+  device_id: string;
+  display_name: string;
+  local_path_alias: string;
+  capabilities: string[];
+  status: string;
+}
+
+export interface TaskPluginConnectorsResponse {
+  devices: TaskPluginConnectorDevice[];
+  workspaces: TaskPluginConnectorWorkspace[];
+}
+
 export interface TaskCapabilityCatalogResponse {
   agent_key: 'task_runner_plan_phase' | 'task_runner_run_phase';
   policy_revision: string;
   selectable_builtin_mcps: McpCatalogEntry[];
   selectable_external_mcps: SelectableTaskExternalMcp[];
   selectable_skills: SelectableTaskSkill[];
+  selectable_plugins: SelectableTaskPlugin[];
 }
 
 export interface TaskMcpRequiredBuiltinCapability {
@@ -144,6 +221,7 @@ export interface TaskRecord {
   source_user_message_id?: string | null;
   prerequisite_task_ids: string[];
   task_tool_state: TaskToolState;
+  plugin_config: TaskPluginConfig;
   mcp_config: TaskMcpConfig;
   created_at: string;
   updated_at: string;
@@ -183,6 +261,7 @@ export interface CreateTaskPayload {
   project_id?: string;
   task_profile?: TaskProfile;
   schedule?: TaskScheduleConfig;
+  plugin_config?: TaskPluginConfig;
   mcp_config?: TaskMcpConfig;
   prerequisite_task_ids?: string[];
 }

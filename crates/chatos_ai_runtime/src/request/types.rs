@@ -29,7 +29,7 @@ pub enum AiTransport {
     ChatCompletions,
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct AiRequestOptions {
     pub prompt_cache_key: Option<String>,
     pub request_cwd: Option<String>,
@@ -37,4 +37,22 @@ pub struct AiRequestOptions {
     pub request_body_limit_bytes: Option<usize>,
     pub abort_token: Option<CancellationToken>,
     pub force_identity_encoding: bool,
+    /// Controls the provider protocol independently from whether callers
+    /// subscribe to incremental callbacks. Recovery requests can disable
+    /// streaming for OpenAI-compatible gateways that truncate SSE bodies.
+    pub stream: bool,
+}
+
+impl Default for AiRequestOptions {
+    fn default() -> Self {
+        Self {
+            prompt_cache_key: None,
+            request_cwd: None,
+            include_prompt_cache_retention: false,
+            request_body_limit_bytes: None,
+            abort_token: None,
+            force_identity_encoding: false,
+            stream: true,
+        }
+    }
 }

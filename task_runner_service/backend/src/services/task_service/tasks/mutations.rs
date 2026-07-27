@@ -4,6 +4,7 @@
 use super::*;
 
 mod cancellation;
+mod cloning;
 mod creation;
 mod deletion;
 mod updates;

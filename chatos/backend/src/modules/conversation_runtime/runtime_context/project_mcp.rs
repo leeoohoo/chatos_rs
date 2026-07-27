@@ -3,6 +3,7 @@
 
 use std::collections::HashMap;
 
+use chatos_mcp::project_management_contract::tools;
 use chatos_mcp_runtime::PROJECT_MANAGEMENT_SERVER_NAME;
 
 use super::support::is_concrete_project_id;
@@ -24,6 +25,7 @@ pub(super) fn build_project_management_mcp_runtime(
     config: &Config,
     effective_user_id: Option<&str>,
     project_id: Option<&str>,
+    read_only: bool,
 ) -> Result<McpHttpServer, String> {
     let sync_secret = config
         .project_service_sync_secret
@@ -68,10 +70,14 @@ pub(super) fn build_project_management_mcp_runtime(
         ),
         headers: Some(headers),
         allowed_tool_names: Some(
-            PROJECT_REQUIREMENT_PLANNER_PROJECT_MCP_READ_TOOLS
-                .iter()
-                .map(|name| (*name).to_string())
-                .collect(),
+            if read_only {
+                PROJECT_REQUIREMENT_PLANNER_PROJECT_MCP_READ_TOOLS
+            } else {
+                tools::PROJECT_MANAGEMENT_SERVER_TOOL_NAMES
+            }
+            .iter()
+            .map(|name| (*name).to_string())
+            .collect(),
         ),
         header_provider: None,
     })

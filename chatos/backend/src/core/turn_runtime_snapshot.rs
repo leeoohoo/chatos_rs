@@ -10,7 +10,8 @@ use crate::core::internal_context_locale::InternalContextLocale;
 use crate::core::mcp_tools::ToolInfo;
 use crate::models::memory_runtime_types::{
     SyncTurnRuntimeSnapshotRequestDto, TurnRuntimeSnapshotBuiltinMcpPromptDto,
-    TurnRuntimeSnapshotContextItemDto, TurnRuntimeSnapshotRuntimeDto,
+    TurnRuntimeSnapshotContextItemDto, TurnRuntimeSnapshotPluginAgentSelectionDto,
+    TurnRuntimeSnapshotPluginCommandInvocationDto, TurnRuntimeSnapshotRuntimeDto,
     TurnRuntimeSnapshotSelectedCommandDto, TurnRuntimeSnapshotSystemMessageDto,
     TurnRuntimeSnapshotToolDto, TurnRuntimeSnapshotUnavailableToolDto,
 };
@@ -34,6 +35,8 @@ pub struct BuildTurnRuntimeSnapshotInput<'a> {
     pub mcp_enabled: bool,
     pub enabled_mcp_ids: &'a [String],
     pub selected_commands: &'a [TurnRuntimeSnapshotSelectedCommandDto],
+    pub plugin_command_invocations: &'a [TurnRuntimeSnapshotPluginCommandInvocationDto],
+    pub plugin_agent_selection: Option<&'a TurnRuntimeSnapshotPluginAgentSelectionDto>,
     pub unavailable_builtin_tools: &'a [Value],
     pub builtin_mcp_prompt_debug: Option<&'a BuiltinMcpPromptBuildResult>,
     pub actual_context_mode: Option<&'a str>,
@@ -97,7 +100,7 @@ pub fn build_turn_runtime_snapshot_payload(
         user_message_id: input.user_message_id,
         status: Some(normalize_status(input.status)),
         snapshot_source: Some("captured".to_string()),
-        snapshot_version: Some(1),
+        snapshot_version: Some(3),
         captured_at: None,
         system_messages: Some(system_messages),
         tools: Some(tools),
@@ -112,6 +115,10 @@ pub fn build_turn_runtime_snapshot_payload(
             mcp_enabled: Some(input.mcp_enabled),
             enabled_mcp_ids: normalize_string_list(input.enabled_mcp_ids),
             selected_commands: normalize_selected_commands(input.selected_commands),
+            plugin_command_invocations: normalize_plugin_command_invocations(
+                input.plugin_command_invocations,
+            ),
+            plugin_agent_selection: normalize_plugin_agent_selection(input.plugin_agent_selection),
             unavailable_builtin_tools: normalize_unavailable_builtin_tools(
                 input.unavailable_builtin_tools,
             ),
@@ -121,6 +128,60 @@ pub fn build_turn_runtime_snapshot_payload(
             last_model_request_payload: input.last_model_request_payload.cloned(),
         }),
     }
+}
+
+fn normalize_plugin_agent_selection(
+    selection: Option<&TurnRuntimeSnapshotPluginAgentSelectionDto>,
+) -> Option<TurnRuntimeSnapshotPluginAgentSelectionDto> {
+    let selection = selection?;
+    let plugin_id = selection.plugin_id.trim();
+    let agent_id = selection.agent_id.trim();
+    if plugin_id.is_empty() || agent_id.is_empty() {
+        return None;
+    }
+    Some(TurnRuntimeSnapshotPluginAgentSelectionDto {
+        plugin_id: plugin_id.to_string(),
+        agent_id: agent_id.to_string(),
+    })
+}
+
+fn normalize_plugin_command_invocations(
+    invocations: &[TurnRuntimeSnapshotPluginCommandInvocationDto],
+) -> Vec<TurnRuntimeSnapshotPluginCommandInvocationDto> {
+    let mut out = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    for invocation in invocations {
+        let plugin_id = invocation.plugin_id.trim();
+        let command_id = invocation.command_id.trim();
+        if plugin_id.is_empty() || command_id.is_empty() {
+            continue;
+        }
+        let dedup_key = format!("{plugin_id}::{command_id}");
+        if !seen.insert(dedup_key) {
+            continue;
+        }
+        let arguments_sha256 = invocation
+            .arguments_sha256
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| {
+                value.len() == 64
+                    && value
+                        .bytes()
+                        .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+            })
+            .map(ToOwned::to_owned);
+        out.push(TurnRuntimeSnapshotPluginCommandInvocationDto {
+            plugin_id: plugin_id.to_string(),
+            command_id: command_id.to_string(),
+            arguments_present: invocation.arguments_present,
+            arguments_sha256: invocation
+                .arguments_present
+                .then_some(arguments_sha256)
+                .flatten(),
+        });
+    }
+    out
 }
 
 fn extract_tool_description(tool_info: &Value) -> Option<String> {
@@ -311,6 +372,9 @@ mod tests {
     use super::{build_turn_runtime_snapshot_payload, BuildTurnRuntimeSnapshotInput};
     use crate::core::builtin_mcp_prompt::BuiltinMcpPromptBuildResult;
     use crate::core::internal_context_locale::InternalContextLocale;
+    use crate::models::memory_runtime_types::{
+        TurnRuntimeSnapshotPluginAgentSelectionDto, TurnRuntimeSnapshotPluginCommandInvocationDto,
+    };
 
     #[test]
     fn snapshot_payload_includes_builtin_mcp_system_prompt() {
@@ -333,6 +397,8 @@ mod tests {
             mcp_enabled: true,
             enabled_mcp_ids: &[],
             selected_commands: &[],
+            plugin_command_invocations: &[],
+            plugin_agent_selection: None,
             unavailable_builtin_tools: &[],
             builtin_mcp_prompt_debug: None,
             actual_context_mode: None,
@@ -371,6 +437,8 @@ mod tests {
             mcp_enabled: true,
             enabled_mcp_ids: &[],
             selected_commands: &[],
+            plugin_command_invocations: &[],
+            plugin_agent_selection: None,
             unavailable_builtin_tools: &[json!({
                 "server_name": "browser_tools",
                 "tool_name": "browser_inspect",
@@ -419,6 +487,8 @@ mod tests {
             mcp_enabled: true,
             enabled_mcp_ids: &[],
             selected_commands: &[],
+            plugin_command_invocations: &[],
+            plugin_agent_selection: None,
             unavailable_builtin_tools: &[],
             builtin_mcp_prompt_debug: Some(&BuiltinMcpPromptBuildResult {
                 prompt: Some("builtin mcp prompt".to_string()),
@@ -475,6 +545,8 @@ mod tests {
             mcp_enabled: false,
             enabled_mcp_ids: &[],
             selected_commands: &[],
+            plugin_command_invocations: &[],
+            plugin_agent_selection: None,
             unavailable_builtin_tools: &[],
             builtin_mcp_prompt_debug: None,
             actual_context_mode: None,
@@ -483,5 +555,69 @@ mod tests {
         });
 
         assert_eq!(payload.status.as_deref(), Some("cancelled"));
+    }
+
+    #[test]
+    fn snapshot_payload_normalizes_plugin_command_audit_without_raw_arguments() {
+        let payload = build_turn_runtime_snapshot_payload(BuildTurnRuntimeSnapshotInput {
+            user_message_id: Some("user-1".to_string()),
+            status: "running",
+            base_system_prompt: None,
+            contact_system_prompt: None,
+            task_board_prompt: None,
+            builtin_mcp_system_prompt: None,
+            memory_summary_prompt: None,
+            tools: &HashMap::new(),
+            model: None,
+            provider: None,
+            contact_agent_id: None,
+            remote_connection_id: None,
+            project_id: None,
+            project_root: None,
+            workspace_root: None,
+            mcp_enabled: true,
+            enabled_mcp_ids: &[],
+            selected_commands: &[],
+            plugin_command_invocations: &[
+                TurnRuntimeSnapshotPluginCommandInvocationDto {
+                    plugin_id: " plugin-a ".to_string(),
+                    command_id: " review ".to_string(),
+                    arguments_present: true,
+                    arguments_sha256: Some("a".repeat(64)),
+                },
+                TurnRuntimeSnapshotPluginCommandInvocationDto {
+                    plugin_id: "plugin-a".to_string(),
+                    command_id: "review".to_string(),
+                    arguments_present: true,
+                    arguments_sha256: Some("b".repeat(64)),
+                },
+            ],
+            plugin_agent_selection: Some(&TurnRuntimeSnapshotPluginAgentSelectionDto {
+                plugin_id: " plugin-a ".to_string(),
+                agent_id: " reviewer ".to_string(),
+            }),
+            unavailable_builtin_tools: &[],
+            builtin_mcp_prompt_debug: None,
+            actual_context_mode: None,
+            actual_context_items: &[],
+            last_model_request_payload: None,
+        });
+
+        assert_eq!(payload.snapshot_version, Some(3));
+        let runtime = payload.runtime.expect("runtime");
+        let agent = runtime
+            .plugin_agent_selection
+            .expect("Plugin Agent selection");
+        assert_eq!(agent.plugin_id, "plugin-a");
+        assert_eq!(agent.agent_id, "reviewer");
+        let invocations = runtime.plugin_command_invocations;
+        assert_eq!(invocations.len(), 1);
+        assert_eq!(invocations[0].plugin_id, "plugin-a");
+        assert_eq!(invocations[0].command_id, "review");
+        assert!(invocations[0].arguments_present);
+        assert_eq!(
+            invocations[0].arguments_sha256.as_deref(),
+            Some("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+        );
     }
 }

@@ -12,8 +12,8 @@ use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
 use crate::core::mcp_tools::{
     execute_tools_stream as execute_tools_stream_common, inject_agent_builder_args,
-    jsonrpc_http_call, jsonrpc_stdio_call, to_text_and_structured_result, BuiltinToolService,
-    ToolInfo, ToolResult, ToolResultCallback, ToolStreamChunkCallback,
+    jsonrpc_http_call, jsonrpc_stdio_call, to_text_and_structured_result_with_transient,
+    BuiltinToolService, ToolInfo, ToolResult, ToolResultCallback, ToolStreamChunkCallback,
 };
 use crate::core::tool_call::extract_tool_call_name;
 use crate::utils::abort_registry;
@@ -95,6 +95,7 @@ pub(crate) async fn execute_tools_stream_with_registry(
                 on_stream_chunk,
             )
             .await
+            .map_err(chatos_mcp_runtime::ToolCallError::non_fatal)
         },
     )
     .await
@@ -130,7 +131,7 @@ pub(crate) async fn call_tool_once(
             json!({"name": info.original_name, "arguments": args}),
         )
         .await?;
-        Ok(to_text_and_structured_result(&result))
+        Ok(to_text_and_structured_result_with_transient(&result))
     } else if info.server_type == "builtin" {
         let service = builtin_services
             .get(&info.server_name)
@@ -155,7 +156,7 @@ pub(crate) async fn call_tool_once(
             &tool_call_context,
             on_stream_chunk,
         )?;
-        Ok(to_text_and_structured_result(&result))
+        Ok(to_text_and_structured_result_with_transient(&result))
     } else {
         let config = info.server_config.clone().ok_or("missing server config")?;
         let result = jsonrpc_stdio_call(
@@ -165,7 +166,7 @@ pub(crate) async fn call_tool_once(
             session_id,
         )
         .await?;
-        Ok(to_text_and_structured_result(&result))
+        Ok(to_text_and_structured_result_with_transient(&result))
     }
 }
 
@@ -280,6 +281,7 @@ async fn execute_tools_stream_parallel_with_registry(
                     on_stream_chunk,
                 )
                 .await
+                .map_err(chatos_mcp_runtime::ToolCallError::non_fatal)
             }
         },
     )

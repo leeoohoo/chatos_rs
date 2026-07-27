@@ -13,8 +13,8 @@ use crate::store::now_rfc3339;
 
 use super::super::{bad_request, internal_error};
 use super::normalization::{
-    model_config_id_for, normalize_api_key_input, normalize_optional_string,
-    normalize_prompt_vendor_input, normalize_provider_input, normalized_base_url,
+    model_config_belongs_to_provider, model_config_id_for, normalize_api_key_input,
+    normalize_optional_string, normalize_prompt_vendor_input, normalize_provider_input,
 };
 use super::provider_fetch::fetch_provider_model_names;
 
@@ -78,10 +78,14 @@ pub(super) async fn sync_imported_models_from_provider_state(
     let now = now_rfc3339();
 
     for mut model in owner_models {
-        if model.provider.as_str() != provider_record.provider.as_str()
-            || normalized_base_url(model.base_url.as_deref())
-                != normalized_base_url(provider_record.base_url.as_deref())
-            || model.model.trim().is_empty()
+        if !model_config_belongs_to_provider(
+            model.source_provider_id.as_deref(),
+            model.provider.as_str(),
+            model.base_url.as_deref(),
+            provider_record.id.as_str(),
+            provider_record.provider.as_str(),
+            provider_record.base_url.as_deref(),
+        ) || model.model.trim().is_empty()
         {
             continue;
         }
@@ -230,6 +234,7 @@ pub(super) async fn refresh_provider_models_from_record(
         let record = UserModelConfigRecord {
             id: target_id,
             owner_user_id: provider_record.owner_user_id.clone(),
+            source_provider_id: Some(provider_record.id.clone()),
             name: if imported_count == 1 {
                 provider_record.name.clone()
             } else {
@@ -281,10 +286,14 @@ pub(super) async fn refresh_provider_models_from_record(
         .map_err(internal_error)?;
     let mut stale_deleted_count = 0usize;
     for stale in owner_models {
-        if stale.provider != provider_record.provider
-            || normalized_base_url(stale.base_url.as_deref())
-                != normalized_base_url(provider_record.base_url.as_deref())
-            || stale.model.trim().is_empty()
+        if !model_config_belongs_to_provider(
+            stale.source_provider_id.as_deref(),
+            stale.provider.as_str(),
+            stale.base_url.as_deref(),
+            provider_record.id.as_str(),
+            provider_record.provider.as_str(),
+            provider_record.base_url.as_deref(),
+        ) || stale.model.trim().is_empty()
             || imported.contains(stale.model.trim())
         {
             continue;

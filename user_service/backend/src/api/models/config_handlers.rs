@@ -3,6 +3,7 @@
 
 use axum::extract::{Path, Query, State};
 use axum::{Extension, Json};
+use std::collections::HashSet;
 
 use crate::auth::CurrentPrincipal;
 use crate::integrations::{sync_model_config_delete, sync_model_config_upsert};
@@ -36,12 +37,29 @@ pub(in crate::api) async fn list_model_configs(
             .await
     }
     .map_err(internal_error)?;
+    let provider_ids = if principal.is_super_admin() && owner_user_id.is_none() {
+        state.store.list_user_model_providers(None).await
+    } else {
+        state
+            .store
+            .list_user_model_providers(owner_user_id.as_deref())
+            .await
+    }
+    .map_err(internal_error)?
+    .into_iter()
+    .map(|provider| provider.id)
+    .collect::<HashSet<_>>();
 
     Ok(Json(
         items
             .into_iter()
             .filter(|item| {
                 !item.model.trim().is_empty() && is_supported_provider(item.provider.as_str())
+            })
+            .filter(|item| {
+                item.source_provider_id
+                    .as_deref()
+                    .is_none_or(|provider_id| provider_ids.contains(provider_id))
             })
             .map(|item| model_config_public_value(item, false, None))
             .collect::<Vec<_>>(),
@@ -94,6 +112,9 @@ pub(in crate::api) async fn create_model_config(
     let record = UserModelConfigRecord {
         id,
         owner_user_id: owner_user_id.clone(),
+        source_provider_id: existing
+            .as_ref()
+            .and_then(|item| item.source_provider_id.clone()),
         name,
         provider: provider.clone(),
         prompt_vendor,
@@ -311,13 +332,19 @@ pub(in crate::api) async fn delete_model_config(
     };
     ensure_model_access(&principal, &record)?;
 
+    let sync_warnings = sync_model_config_delete(&state, id.as_str()).await;
+    if !sync_warnings.is_empty() {
+        return Err(internal_error(format!(
+            "model config downstream cleanup failed: {}",
+            sync_warnings.join("; ")
+        )));
+    }
     let deleted = state
         .store
         .delete_user_model_config(id.as_str())
         .await
         .map_err(internal_error)?;
     if deleted {
-        let _sync_warnings = sync_model_config_delete(&state, id.as_str()).await;
         Ok(axum::http::StatusCode::NO_CONTENT)
     } else {
         Err(not_found("model config not found"))

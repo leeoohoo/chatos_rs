@@ -3,6 +3,7 @@
 
 import { buildQuery } from '../shared';
 import type {
+  AnalyzeProjectRuntimeEnvironmentPayload,
   DeleteSuccessResponse,
   ProjectContactLockResponse,
   ProjectContactLinkResponse,
@@ -11,7 +12,10 @@ import type {
   ProjectRequirementWorkItemsOptions,
   ProjectRequirementWorkItemsResponse,
   ProjectRequirementDocumentResponse,
+  ProjectRequirementConfirmResponse,
   ProjectRequirementExecuteResponse,
+  ProjectRequirementExecutionPlanResponse,
+  ProjectRequirementDispatchResponse,
   ProjectRequirementStopResponse,
   ProjectRuntimeEnvironmentResponse,
   ProjectRuntimeEnvironmentProgressResponse,
@@ -91,10 +95,11 @@ export const updateProjectRuntimeEnvironmentSettings = (
 export const analyzeProjectRuntimeEnvironment = (
   request: ApiRequestFn,
   projectId: string,
+  data: AnalyzeProjectRuntimeEnvironmentPayload = {},
 ): Promise<ProjectRuntimeEnvironmentResponse> => {
   return request<ProjectRuntimeEnvironmentResponse>(
     `/projects/${encodeURIComponent(projectId)}/runtime-environment/analyze`,
-    { method: 'POST' },
+    { method: 'POST', body: JSON.stringify(data) },
   );
 };
 
@@ -165,6 +170,12 @@ export const executeProjectRequirement = (
     modelConfigId?: string;
     include_prerequisite_dependents?: boolean;
     includePrerequisiteDependents?: boolean;
+    planning_feedback?: string;
+    planningFeedback?: string;
+    replaces_execution_group_id?: string;
+    replacesExecutionGroupId?: string;
+    replaces_conversation_id?: string;
+    replacesConversationId?: string;
   },
 ): Promise<ProjectRequirementExecuteResponse> => {
   return request<ProjectRequirementExecuteResponse>(
@@ -176,17 +187,119 @@ export const executeProjectRequirement = (
   );
 };
 
+export const getProjectRequirementExecutionPlan = (
+  request: ApiRequestFn,
+  projectId: string,
+  requirementId: string,
+  identity?: { conversationId?: string; executionGroupId?: string },
+): Promise<ProjectRequirementExecutionPlanResponse> => {
+  const query = buildQuery({
+    conversation_id: identity?.conversationId,
+    execution_group_id: identity?.executionGroupId,
+  });
+  return request<ProjectRequirementExecutionPlanResponse>(
+    `/projects/${encodeURIComponent(projectId)}/requirements/${encodeURIComponent(requirementId)}/execution-plan${query}`,
+  );
+};
+
 export const stopProjectRequirementExecution = (
   request: ApiRequestFn,
   projectId: string,
   requirementId: string,
-  data?: { contact_id?: string },
+  data?: {
+    contact_id?: string;
+    execution_group_id?: string;
+    conversation_id?: string;
+    discard_tasks?: boolean;
+  },
 ): Promise<ProjectRequirementStopResponse> => {
   return request<ProjectRequirementStopResponse>(
     `/projects/${encodeURIComponent(projectId)}/requirements/${encodeURIComponent(requirementId)}/stop`,
     {
       method: 'POST',
       body: JSON.stringify(data || {}),
+    },
+  );
+};
+
+export const confirmProjectRequirementExecution = (
+  request: ApiRequestFn,
+  projectId: string,
+  requirementId: string,
+  data: {
+    execution_group_id: string;
+    conversation_id: string;
+    contact_id?: string;
+  },
+): Promise<ProjectRequirementConfirmResponse> => {
+  return request<ProjectRequirementConfirmResponse>(
+    `/projects/${encodeURIComponent(projectId)}/requirements/${encodeURIComponent(requirementId)}/confirm-execution`,
+    {
+      method: 'POST',
+      body: JSON.stringify(data),
+    },
+  );
+};
+
+const mutateProjectRequirementExecutionDispatch = (
+  request: ApiRequestFn,
+  projectId: string,
+  requirementId: string,
+  action: 'pause' | 'resume',
+  data: {
+    execution_group_id: string;
+    conversation_id: string;
+    contact_id?: string;
+  },
+): Promise<ProjectRequirementDispatchResponse> => request<ProjectRequirementDispatchResponse>(
+  `/projects/${encodeURIComponent(projectId)}/requirements/${encodeURIComponent(requirementId)}/${action}`,
+  {
+    method: 'POST',
+    body: JSON.stringify(data),
+  },
+);
+
+export const pauseProjectRequirementExecution = (
+  request: ApiRequestFn,
+  projectId: string,
+  requirementId: string,
+  data: {
+    execution_group_id: string;
+    conversation_id: string;
+    contact_id?: string;
+  },
+): Promise<ProjectRequirementDispatchResponse> => (
+  mutateProjectRequirementExecutionDispatch(request, projectId, requirementId, 'pause', data)
+);
+
+export const resumeProjectRequirementExecution = (
+  request: ApiRequestFn,
+  projectId: string,
+  requirementId: string,
+  data: {
+    execution_group_id: string;
+    conversation_id: string;
+    contact_id?: string;
+  },
+): Promise<ProjectRequirementDispatchResponse> => (
+  mutateProjectRequirementExecutionDispatch(request, projectId, requirementId, 'resume', data)
+);
+
+export const rerunProjectRequirementExecution = (
+  request: ApiRequestFn,
+  projectId: string,
+  requirementId: string,
+  data: {
+    execution_group_id: string;
+    conversation_id: string;
+    contact_id?: string;
+  },
+): Promise<ProjectRequirementExecuteResponse> => {
+  return request<ProjectRequirementExecuteResponse>(
+    `/projects/${encodeURIComponent(projectId)}/requirements/${encodeURIComponent(requirementId)}/rerun`,
+    {
+      method: 'POST',
+      body: JSON.stringify(data),
     },
   );
 };

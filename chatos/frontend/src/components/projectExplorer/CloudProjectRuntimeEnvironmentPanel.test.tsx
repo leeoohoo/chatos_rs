@@ -72,8 +72,15 @@ describe('CloudProjectRuntimeEnvironmentPanel', () => {
     expect(screen.getByRole('checkbox', { name: '固定使用沙箱' })).toBeDisabled();
 
     fireEvent.click(screen.getByRole('button', { name: '初始化/重新分析' }));
+    expect(screen.getByRole('dialog', { name: '运行环境分析要求' })).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText('本次分析要求'), {
+      target: { value: '使用 Node.js 22，并将服务暴露在 3000 端口。' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: '开始分析' }));
     await waitFor(() => {
-      expect(analyzeProjectRuntimeEnvironment).toHaveBeenCalledWith('project-1');
+      expect(analyzeProjectRuntimeEnvironment).toHaveBeenCalledWith('project-1', {
+        analysis_requirement: '使用 Node.js 22，并将服务暴露在 3000 端口。',
+      });
     });
     expect(getProjectRuntimeEnvironment).toHaveBeenCalledWith('project-1');
   });
@@ -183,9 +190,15 @@ describe('CloudProjectRuntimeEnvironmentPanel', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent('缺少环境初始化模型。');
     expect(screen.getByRole('button', { name: '暂无可准备镜像' })).toBeDisabled();
     fireEvent.click(screen.getByRole('button', { name: '检查配置并初始化' }));
+    fireEvent.change(screen.getByLabelText('本次分析要求'), {
+      target: { value: '检查现有配置，并继续使用项目声明的运行时版本。' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: '开始分析' }));
 
     await waitFor(() => {
-      expect(analyzeProjectRuntimeEnvironment).toHaveBeenCalledWith('project-config');
+      expect(analyzeProjectRuntimeEnvironment).toHaveBeenCalledWith('project-config', {
+        analysis_requirement: '检查现有配置，并继续使用项目声明的运行时版本。',
+      });
     });
     expect(await screen.findByRole('alert')).toHaveTextContent('已完成检查：缺少环境初始化模型。');
   });

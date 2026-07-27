@@ -147,6 +147,23 @@ pub fn builtin_definitions() -> Vec<ConfigDefinitionRecord> {
             &now,
         ),
         definition(
+            "task_runner.runtime.max_iterations",
+            "任务执行最大迭代次数",
+            "单次 Task Run 允许的模型与工具循环总次数；最后两轮会自动关闭工具并强制收尾",
+            "Task Runner / Execution",
+            "service",
+            Some("task-runner"),
+            "integer",
+            json!(25),
+            Some(2),
+            Some(500),
+            &[],
+            "next_run",
+            &["TASK_RUNNER_EXECUTION_MAX_ITERATIONS"],
+            200,
+            &now,
+        ),
+        definition(
             "task_runner.execution.timeout_ms",
             "任务执行超时",
             "单次 Task Run 执行超时毫秒数",
@@ -509,22 +526,29 @@ mod tests {
     use super::*;
 
     #[test]
-    fn catalog_exposes_one_shared_agent_iteration_limit() {
+    fn catalog_exposes_shared_and_task_runner_iteration_limits() {
         let definitions = builtin_definitions();
         let iteration_definitions = definitions
             .iter()
             .filter(|definition| definition.key.contains("max_iterations"))
             .collect::<Vec<_>>();
 
-        assert_eq!(iteration_definitions.len(), 1);
-        let definition = iteration_definitions[0];
-        assert_eq!(definition.key, AGENT_MAX_ITERATIONS_CONFIG_KEY);
-        assert_eq!(definition.scope, "shared");
-        assert_eq!(definition.service_name, None);
-        assert_eq!(
-            definition.default_value,
-            json!(DEFAULT_AGENT_MAX_ITERATIONS)
-        );
+        assert_eq!(iteration_definitions.len(), 2);
+        let shared = iteration_definitions
+            .iter()
+            .find(|definition| definition.key == AGENT_MAX_ITERATIONS_CONFIG_KEY)
+            .expect("shared agent iteration definition");
+        assert_eq!(shared.scope, "shared");
+        assert_eq!(shared.service_name, None);
+        assert_eq!(shared.default_value, json!(DEFAULT_AGENT_MAX_ITERATIONS));
+
+        let task_runner = iteration_definitions
+            .iter()
+            .find(|definition| definition.key == "task_runner.runtime.max_iterations")
+            .expect("task runner iteration definition");
+        assert_eq!(task_runner.scope, "service");
+        assert_eq!(task_runner.service_name.as_deref(), Some("task-runner"));
+        assert_eq!(task_runner.default_value, json!(25));
     }
 
     #[test]

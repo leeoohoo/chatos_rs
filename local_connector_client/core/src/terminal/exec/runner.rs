@@ -75,10 +75,12 @@ pub(super) async fn run_terminal_exec(
                     project_key,
                     command: command.clone(),
                     args: args.clone(),
+                    redact_arguments_in_history: false,
                     cwd: cwd_label.clone(),
                     source: context.source.clone(),
                     requested_permissions: None,
                     session_id: None,
+                    action_audit: None,
                 })
                 .await?;
         if let ApprovalDecision::Denied { reason, .. } = approval {

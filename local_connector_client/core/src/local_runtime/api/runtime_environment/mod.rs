@@ -19,11 +19,20 @@ use super::context::owner_context;
 use super::error::LocalRuntimeApiError;
 use response::{environment_response, idle_progress_response, progress_response};
 
+const MAX_ANALYSIS_REQUIREMENT_LENGTH: usize = 4_000;
+
 #[derive(Debug, Default, Deserialize)]
 struct EnvironmentSettingsPayload {
     sandbox_enabled: Option<bool>,
     #[serde(rename = "sandboxEnabled")]
     sandbox_enabled_camel: Option<bool>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct EnvironmentAnalysisPayload {
+    analysis_requirement: Option<String>,
+    #[serde(rename = "analysisRequirement")]
+    analysis_requirement_camel: Option<String>,
 }
 
 pub(super) fn router() -> Router<LocalRuntime> {
@@ -87,8 +96,15 @@ async fn update_settings(
 async fn analyze_environment(
     Path(project_id): Path<String>,
     State(runtime): State<LocalRuntime>,
+    payload: Option<Json<EnvironmentAnalysisPayload>>,
 ) -> Result<Json<Value>, LocalRuntimeApiError> {
     let owner = owner_context(&runtime).await?;
+    let analysis_requirement =
+        normalize_analysis_requirement(payload.and_then(|Json(payload)| {
+            payload
+                .analysis_requirement
+                .or(payload.analysis_requirement_camel)
+        }))?;
     let model_config_id = {
         let state = runtime.state.read().await;
         state
@@ -122,6 +138,7 @@ async fn analyze_environment(
     let task_runtime = runtime.clone();
     let task_owner = owner.owner_user_id.clone();
     let task_project = project_id.clone();
+    let task_analysis_requirement = analysis_requirement;
     tokio::spawn(async move {
         if let Err(error) = run_local_environment_analysis(
             task_runtime.clone(),
@@ -129,6 +146,7 @@ async fn analyze_environment(
             task_project.clone(),
             model_config_id,
             run_id.clone(),
+            task_analysis_requirement,
         )
         .await
         {
@@ -149,6 +167,26 @@ async fn analyze_environment(
             .await;
     });
     response_for(&runtime, owner.owner_user_id.as_str(), &environment).await
+}
+
+fn normalize_analysis_requirement(
+    value: Option<String>,
+) -> Result<Option<String>, LocalRuntimeApiError> {
+    let requirement = value
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    if requirement
+        .as_deref()
+        .is_some_and(|value| value.chars().count() > MAX_ANALYSIS_REQUIREMENT_LENGTH)
+    {
+        return Err(LocalRuntimeApiError::bad_request(
+            "local_environment_analysis_requirement_too_long",
+            format!(
+                "analysis_requirement must not exceed {MAX_ANALYSIS_REQUIREMENT_LENGTH} characters"
+            ),
+        ));
+    }
+    Ok(requirement)
 }
 
 async fn get_progress(
@@ -176,4 +214,20 @@ pub(super) async fn response_for(
         .list_local_runtime_environment_images(owner_user_id, environment.project_id.as_str())
         .await?;
     Ok(Json(environment_response(environment, images.as_slice())))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::normalize_analysis_requirement;
+
+    #[test]
+    fn analysis_requirement_is_trimmed_and_length_limited() {
+        assert_eq!(
+            normalize_analysis_requirement(Some("  Use Node.js 22  ".to_string()))
+                .expect("valid requirement")
+                .as_deref(),
+            Some("Use Node.js 22")
+        );
+        assert!(normalize_analysis_requirement(Some("x".repeat(4_001))).is_err());
+    }
 }

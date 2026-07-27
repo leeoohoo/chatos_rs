@@ -8,6 +8,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Message } from '../../types';
 import {
   hasOutstandingTaskRunnerCallbacks,
+  TASK_RUNNER_CALLBACK_RECONCILE_INTERVAL_MS,
   useTaskRunnerCallbackReconciliation,
 } from './useTaskRunnerCallbackReconciliation';
 
@@ -42,6 +43,10 @@ afterEach(() => {
 });
 
 describe('task runner callback reconciliation', () => {
+  it('uses a ten-second default reconciliation interval', () => {
+    expect(TASK_RUNNER_CALLBACK_RECONCILE_INTERVAL_MS).toBe(10_000);
+  });
+
   it('tracks created tasks until every task has a terminal callback', () => {
     expect(hasOutstandingTaskRunnerCallbacks([
       userMessage({
@@ -67,6 +72,21 @@ describe('task runner callback reconciliation', () => {
         overall_status: 'processing',
       }),
     ])).toBe(true);
+  });
+
+  it('keeps polling while the planner is generating the graph and stops at confirmation', () => {
+    expect(hasOutstandingTaskRunnerCallbacks([
+      projectExecutionUserMessage({
+        created_task_ids: [],
+        overall_status: 'planning',
+      }),
+    ])).toBe(true);
+    expect(hasOutstandingTaskRunnerCallbacks([
+      projectExecutionUserMessage({
+        created_task_ids: ['task-1'],
+        overall_status: 'awaiting_confirmation',
+      }),
+    ])).toBe(false);
   });
 
   it('polls while a task callback is outstanding and stops when disabled', async () => {

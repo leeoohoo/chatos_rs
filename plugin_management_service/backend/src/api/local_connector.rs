@@ -179,6 +179,7 @@ pub(super) async fn sync_local_connector_mcp_record(
             .map(|record| record.security.clone())
             .unwrap_or_default(),
         metadata,
+        plugin_component: PluginComponentOwnership::default(),
         created_by: existing
             .as_ref()
             .map(|record| record.created_by.clone())

@@ -74,6 +74,7 @@ export function TasksPage() {
   const editorProjectId = Form.useWatch('projectId', form);
   const editorTaskProfile = Form.useWatch('taskProfile', form);
   const editorRequiresExecution = Form.useWatch('requiresExecution', form);
+  const editorPluginDeviceId = Form.useWatch('pluginDeviceId', form);
   const [runForm] = Form.useForm<RunTaskFormValues>();
   const [batchRunForm] = Form.useForm<RunTaskFormValues>();
   const routeTaskId = searchParams.get('task_id');
@@ -92,6 +93,7 @@ export function TasksPage() {
     taskRunDerivedQuery,
     taskPromptsQuery,
     taskCapabilityCatalogQuery,
+    taskPluginConnectorsQuery,
     projectRuntimeEnvironmentQuery,
     remoteServersQuery,
     externalMcpConfigsQuery,
@@ -141,9 +143,11 @@ export function TasksPage() {
     mcpPreviewTask,
     batchRunTaskIds,
     editingTaskId: editingTask?.id,
+    taskEditorOpen: drawerOpen,
     editorProjectId,
     editorTaskProfile,
     editorRequiresExecution,
+    editorPluginDeviceId,
   });
 
   const { taskSubtasksQuery } = useTasksPageEffects({
@@ -543,6 +547,11 @@ export function TasksPage() {
         prerequisiteTaskOptions={prerequisiteTaskOptions}
         mcpCatalogEntries={taskCapabilityCatalogQuery.data?.selectable_builtin_mcps}
         selectableSkills={taskCapabilityCatalogQuery.data?.selectable_skills}
+        selectablePlugins={taskCapabilityCatalogQuery.data?.selectable_plugins}
+        pluginConnectors={taskPluginConnectorsQuery.data}
+        pluginConnectorsLoading={taskPluginConnectorsQuery.isLoading}
+        pluginConnectorsUnavailable={taskPluginConnectorsQuery.isError}
+        pluginCatalogLoading={taskCapabilityCatalogQuery.isLoading}
         remoteServers={remoteServersQuery.data}
         externalMcpConfigs={(externalMcpConfigsQuery.data || []).filter((config) =>
           (taskCapabilityCatalogQuery.data?.selectable_external_mcps || []).some(

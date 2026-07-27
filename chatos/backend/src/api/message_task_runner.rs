@@ -17,6 +17,15 @@ use crate::services::task_runner_api_client;
 
 mod context;
 mod graph;
+mod plugin_ui;
+
+#[cfg(feature = "test-support")]
+pub use self::plugin_ui::{
+    prepare_plugin_artifact_relay_request_for_test,
+    validate_plugin_artifact_list_response_for_test,
+    validate_plugin_artifact_read_response_for_test,
+    validate_plugin_artifact_write_response_for_test, PreparedPluginArtifactRelayRequest,
+};
 
 use self::context::{
     resolve_message_task_runner_context, resolve_session_task_runner_context,
@@ -26,6 +35,7 @@ use self::graph::normalize_message_task_graph_payload_edges_with_tasks;
 
 pub fn router() -> Router {
     Router::new()
+        .merge(plugin_ui::router())
         .route(
             "/api/messages/{id}/task-runner/tasks",
             get(list_message_task_runner_tasks),
@@ -41,6 +51,10 @@ pub fn router() -> Router {
         .route(
             "/api/messages/{message_id}/task-runner/runs/{run_id}",
             get(get_message_task_runner_run),
+        )
+        .route(
+            "/api/messages/{message_id}/task-runner/runs/{run_id}/retry",
+            post(retry_message_task_runner_run),
         )
         .route(
             "/api/messages/{message_id}/task-runner/runs/{run_id}/output/changes",
@@ -60,10 +74,19 @@ pub fn router() -> Router {
         )
 }
 
+pub fn plugin_ui_public_router() -> Router {
+    plugin_ui::public_router()
+}
+
 #[derive(Debug, Clone, Default, Deserialize)]
 struct ConversationTaskRunnerActiveMessageTasksRequest {
     source_user_message_ids: Option<Vec<String>>,
     source_turn_ids: Option<Vec<String>>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+struct RetryMessageTaskRunnerRunRequest {
+    retry_instruction: Option<String>,
 }
 
 fn normalize_text(value: Option<&str>) -> Option<String> {
@@ -408,6 +431,54 @@ async fn get_message_task_runner_run(
         );
     }
     (StatusCode::OK, Json(payload))
+}
+
+async fn retry_message_task_runner_run(
+    auth: AuthUser,
+    Path((message_id, run_id)): Path<(String, String)>,
+    Query(query): Query<MessageTaskRunnerLookupQuery>,
+    payload: Option<Json<RetryMessageTaskRunnerRunRequest>>,
+) -> (StatusCode, Json<Value>) {
+    let context = match resolve_message_task_runner_context(&auth, &message_id, &query).await {
+        Ok(Some(context)) => context,
+        Ok(None) => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(json!({"error": "当前消息没有关联的任务来源"})),
+            );
+        }
+        Err(err) => return err,
+    };
+    let retry_instruction = normalize_text(
+        payload
+            .as_ref()
+            .and_then(|Json(payload)| payload.retry_instruction.as_deref()),
+    );
+    if retry_instruction
+        .as_deref()
+        .is_some_and(|value| value.chars().count() > 4000)
+    {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": "阻塞处理意见不能超过 4000 个字符"})),
+        );
+    }
+    match task_runner_api_client::retry_message_run(
+        context.base_url.as_str(),
+        run_id.as_str(),
+        context.source_session_id.as_str(),
+        context.source_user_message_id.as_deref(),
+        context.source_turn_id.as_deref(),
+        retry_instruction.as_deref(),
+    )
+    .await
+    {
+        Ok(payload) => (StatusCode::CREATED, Json(payload)),
+        Err(err) => (
+            StatusCode::BAD_GATEWAY,
+            Json(json!({"error": "重试任务节点失败", "detail": err})),
+        ),
+    }
 }
 
 async fn get_message_task_runner_run_output_changes(
