@@ -201,7 +201,7 @@ enum PresentationChartMarkerStyle {
     Triangle,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 struct PresentationChartValueAxisOptions {
     minimum: Option<f64>,
     maximum: Option<f64>,
@@ -534,6 +534,14 @@ struct PresentationChart {
     title: String,
     categories: Option<Vec<String>>,
     x_values: Option<Vec<f64>>,
+    x_axis_minimum: Option<f64>,
+    x_axis_maximum: Option<f64>,
+    x_axis_log_base: Option<f64>,
+    x_axis_major_tick_mark: PresentationChartAxisTickMark,
+    x_axis_minor_tick_mark: PresentationChartAxisTickMark,
+    x_axis_major_unit: Option<f64>,
+    x_axis_minor_unit: Option<f64>,
+    x_axis_number_format: PresentationChartValueAxisNumberFormat,
     series: Vec<PresentationChartSeries>,
     show_legend: bool,
     legend_position: PresentationChartLegendPosition,
@@ -3116,6 +3124,13 @@ pub(super) fn inspect_pptx_charts(
                 .map(|(index, _)| index + 1)
                 .collect::<Vec<_>>();
             let horizontal_bar = pptx_chart_inspection_is_horizontal_bar(&chart);
+            let scatter = chart.chart_types.len() == 1 && chart.chart_types[0] == "scatter";
+            let x_axis = scatter
+                .then(|| pptx_chart_value_axis_by_position(chart.axes.as_slice(), "b"))
+                .flatten();
+            let secondary_x_axis = scatter
+                .then(|| pptx_chart_value_axis_by_position(chart.axes.as_slice(), "t"))
+                .flatten();
             let value_axis_position = if horizontal_bar { "b" } else { "l" };
             let secondary_value_axis_position = if horizontal_bar { "t" } else { "r" };
             let value_axis =
@@ -3185,6 +3200,8 @@ pub(super) fn inspect_pptx_charts(
             let metadata_object = metadata
                 .as_object_mut()
                 .expect("PPTX chart metadata object");
+            insert_pptx_chart_axis_metadata(metadata_object, "x_axis", x_axis);
+            insert_pptx_chart_axis_metadata(metadata_object, "secondary_x_axis", secondary_x_axis);
             metadata_object.insert(
                 "value_axis_minimum".to_string(),
                 json!(value_axis.and_then(|axis| axis.minimum.clone())),
@@ -3679,6 +3696,14 @@ fn parse_presentation_chart(value: &Value, slide_number: usize) -> Result<Presen
                 | "title"
                 | "categories"
                 | "x_values"
+                | "x_axis_minimum"
+                | "x_axis_maximum"
+                | "x_axis_log_base"
+                | "x_axis_major_tick_mark"
+                | "x_axis_minor_tick_mark"
+                | "x_axis_major_unit"
+                | "x_axis_minor_unit"
+                | "x_axis_number_format"
                 | "series"
                 | "show_legend"
                 | "legend_position"
@@ -3794,6 +3819,46 @@ fn parse_presentation_chart(value: &Value, slide_number: usize) -> Result<Presen
             "slide {slide_number} chart secondary_value_axis_title cannot contain only whitespace"
         ));
     }
+    let x_axis_minimum = parse_presentation_chart_axis_bound(
+        object.get("x_axis_minimum"),
+        slide_number,
+        "x_axis_minimum",
+    )?;
+    let x_axis_maximum = parse_presentation_chart_axis_bound(
+        object.get("x_axis_maximum"),
+        slide_number,
+        "x_axis_maximum",
+    )?;
+    let x_axis_log_base = parse_presentation_chart_axis_log_base(
+        object.get("x_axis_log_base"),
+        slide_number,
+        "x_axis_log_base",
+    )?;
+    let x_axis_major_tick_mark = parse_presentation_chart_axis_tick_mark(
+        object.get("x_axis_major_tick_mark"),
+        slide_number,
+        "x_axis_major_tick_mark",
+    )?;
+    let x_axis_minor_tick_mark = parse_presentation_chart_axis_tick_mark(
+        object.get("x_axis_minor_tick_mark"),
+        slide_number,
+        "x_axis_minor_tick_mark",
+    )?;
+    let x_axis_major_unit = parse_presentation_chart_axis_unit(
+        object.get("x_axis_major_unit"),
+        slide_number,
+        "x_axis_major_unit",
+    )?;
+    let x_axis_minor_unit = parse_presentation_chart_axis_unit(
+        object.get("x_axis_minor_unit"),
+        slide_number,
+        "x_axis_minor_unit",
+    )?;
+    let x_axis_number_format = parse_presentation_chart_axis_number_format(
+        object.get("x_axis_number_format"),
+        slide_number,
+        "x_axis_number_format",
+    )?;
     let value_axis_minimum = parse_presentation_chart_axis_bound(
         object.get("value_axis_minimum"),
         slide_number,
@@ -3874,6 +3939,20 @@ fn parse_presentation_chart(value: &Value, slide_number: usize) -> Result<Presen
         slide_number,
         "secondary_value_axis_number_format",
     )?;
+    if chart_type != PresentationChartType::Scatter
+        && (x_axis_minimum.is_some()
+            || x_axis_maximum.is_some()
+            || x_axis_log_base.is_some()
+            || x_axis_major_tick_mark != PresentationChartAxisTickMark::None
+            || x_axis_minor_tick_mark != PresentationChartAxisTickMark::None
+            || x_axis_major_unit.is_some()
+            || x_axis_minor_unit.is_some()
+            || x_axis_number_format != PresentationChartValueAxisNumberFormat::General)
+    {
+        return Err(anyhow!(
+            "slide {slide_number} non-scatter chart does not support X-axis bounds, logarithmic scale, tick marks, units, or number format"
+        ));
+    }
     if chart_type.is_part_to_whole()
         && (!category_axis_title.is_empty()
             || !value_axis_title.is_empty()
@@ -3940,6 +4019,19 @@ fn parse_presentation_chart(value: &Value, slide_number: usize) -> Result<Presen
                 Ok(value)
             })
             .collect::<Result<Vec<_>>>()?;
+        validate_presentation_chart_numeric_axis_bounds(
+            x_values.as_slice(),
+            x_axis_minimum,
+            x_axis_maximum,
+            x_axis_log_base,
+            x_axis_major_unit,
+            x_axis_minor_unit,
+            slide_number,
+            "scatter X-axis",
+            "scatter logarithmic X-axis",
+            "X value",
+            "X values",
+        )?;
         let point_count = x_values.len();
         (None, Some(x_values), point_count)
     } else {
@@ -4238,6 +4330,14 @@ fn parse_presentation_chart(value: &Value, slide_number: usize) -> Result<Presen
         title,
         categories,
         x_values,
+        x_axis_minimum,
+        x_axis_maximum,
+        x_axis_log_base,
+        x_axis_major_tick_mark,
+        x_axis_minor_tick_mark,
+        x_axis_major_unit,
+        x_axis_minor_unit,
+        x_axis_number_format,
         series: parsed_series,
         show_legend,
         legend_position,
@@ -4505,65 +4605,97 @@ fn validate_presentation_chart_axis_bounds(
     slide_number: usize,
     label: &str,
 ) -> Result<()> {
+    let values = series
+        .iter()
+        .filter(|series| series.value_axis == axis)
+        .flat_map(|series| series.values.iter().copied())
+        .collect::<Vec<_>>();
+    validate_presentation_chart_numeric_axis_bounds(
+        values.as_slice(),
+        minimum,
+        maximum,
+        log_base,
+        major_unit,
+        minor_unit,
+        slide_number,
+        format!("{label} value-axis").as_str(),
+        format!("{label} logarithmic value-axis").as_str(),
+        "series value",
+        "series values",
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn validate_presentation_chart_numeric_axis_bounds(
+    values: &[f64],
+    minimum: Option<f64>,
+    maximum: Option<f64>,
+    log_base: Option<f64>,
+    major_unit: Option<f64>,
+    minor_unit: Option<f64>,
+    slide_number: usize,
+    axis_label: &str,
+    logarithmic_axis_label: &str,
+    positive_data_item: &str,
+    hidden_data_items: &str,
+) -> Result<()> {
     if matches!((minimum, maximum), (Some(minimum), Some(maximum)) if minimum >= maximum) {
         return Err(anyhow!(
-            "slide {slide_number} chart {label} value-axis minimum must be below its maximum"
+            "slide {slide_number} chart {axis_label} minimum must be below its maximum"
         ));
     }
     if matches!((major_unit, minor_unit), (Some(major_unit), Some(minor_unit)) if minor_unit >= major_unit)
     {
         return Err(anyhow!(
-            "slide {slide_number} chart {label} value-axis minor unit must be below its major unit"
+            "slide {slide_number} chart {axis_label} minor unit must be below its major unit"
         ));
     }
     if let (Some(minimum), Some(maximum)) = (minimum, maximum) {
         let span = maximum - minimum;
         if major_unit.is_some_and(|major_unit| major_unit > span) {
             return Err(anyhow!(
-                "slide {slide_number} chart {label} value-axis major unit exceeds its explicit range"
+                "slide {slide_number} chart {axis_label} major unit exceeds its explicit range"
             ));
         }
         if minor_unit.is_some_and(|minor_unit| minor_unit > span) {
             return Err(anyhow!(
-                "slide {slide_number} chart {label} value-axis minor unit exceeds its explicit range"
+                "slide {slide_number} chart {axis_label} minor unit exceeds its explicit range"
             ));
         }
     }
-    let values = series
+    let data_minimum = values
         .iter()
-        .filter(|series| series.value_axis == axis)
-        .flat_map(|series| series.values.iter().copied())
-        .collect::<Vec<_>>();
-    let data_minimum =
-        values.iter().copied().reduce(f64::min).ok_or_else(|| {
-            anyhow!("slide {slide_number} chart {label} value axis has no series")
-        })?;
-    let data_maximum =
-        values.iter().copied().reduce(f64::max).ok_or_else(|| {
-            anyhow!("slide {slide_number} chart {label} value axis has no series")
-        })?;
+        .copied()
+        .reduce(f64::min)
+        .ok_or_else(|| anyhow!("slide {slide_number} chart {axis_label} has no data values"))?;
+    let data_maximum = values
+        .iter()
+        .copied()
+        .reduce(f64::max)
+        .ok_or_else(|| anyhow!("slide {slide_number} chart {axis_label} has no data values"))?;
     if log_base.is_some() {
         if minimum.is_some_and(|minimum| minimum <= 0.0)
             || maximum.is_some_and(|maximum| maximum <= 0.0)
         {
             return Err(anyhow!(
-                "slide {slide_number} chart {label} logarithmic value-axis bounds must be positive"
+                "slide {slide_number} chart {logarithmic_axis_label} bounds must be positive"
             ));
         }
         if data_minimum <= 0.0 {
+            let logarithmic_data_axis_label = logarithmic_axis_label.replace("-axis", " axis");
             return Err(anyhow!(
-                "slide {slide_number} chart {label} logarithmic value axis requires every series value to be positive"
+                "slide {slide_number} chart {logarithmic_data_axis_label} requires every {positive_data_item} to be positive"
             ));
         }
     }
     if minimum.is_some_and(|minimum| minimum > data_minimum) {
         return Err(anyhow!(
-            "slide {slide_number} chart {label} value-axis minimum would hide series values"
+            "slide {slide_number} chart {axis_label} minimum would hide {hidden_data_items}"
         ));
     }
     if maximum.is_some_and(|maximum| maximum < data_maximum) {
         return Err(anyhow!(
-            "slide {slide_number} chart {label} value-axis maximum would hide series values"
+            "slide {slide_number} chart {axis_label} maximum would hide {hidden_data_items}"
         ));
     }
     Ok(())
@@ -5338,6 +5470,16 @@ fn presentation_chart_xml(chart: &PresentationChart) -> Result<String> {
         } else {
             "between"
         };
+        let x_options = PresentationChartValueAxisOptions {
+            minimum: chart.x_axis_minimum,
+            maximum: chart.x_axis_maximum,
+            log_base: chart.x_axis_log_base,
+            major_tick_mark: chart.x_axis_major_tick_mark,
+            minor_tick_mark: chart.x_axis_minor_tick_mark,
+            major_unit: chart.x_axis_major_unit,
+            minor_unit: chart.x_axis_minor_unit,
+            number_format: chart.x_axis_number_format,
+        };
         let primary_options = PresentationChartValueAxisOptions {
             minimum: chart.value_axis_minimum,
             maximum: chart.value_axis_maximum,
@@ -5354,6 +5496,7 @@ fn presentation_chart_xml(chart: &PresentationChart) -> Result<String> {
                 PPTX_PRIMARY_VALUE_AXIS_ID,
                 chart.category_axis_title.as_str(),
                 chart.value_axis_title.as_str(),
+                x_options,
                 primary_options,
             )
         } else {
@@ -5390,6 +5533,7 @@ fn presentation_chart_xml(chart: &PresentationChart) -> Result<String> {
                     PPTX_SECONDARY_CATEGORY_AXIS_ID,
                     PPTX_SECONDARY_VALUE_AXIS_ID,
                     chart.secondary_value_axis_title.as_str(),
+                    x_options,
                     secondary_options,
                 )
             } else {
@@ -5624,6 +5768,14 @@ fn presentation_chart_snapshot(chart: &PresentationChart) -> Value {
         "title": chart.title,
         "categories": chart.categories,
         "x_values": chart.x_values,
+        "x_axis_minimum": chart.x_axis_minimum,
+        "x_axis_maximum": chart.x_axis_maximum,
+        "x_axis_log_base": chart.x_axis_log_base,
+        "x_axis_major_tick_mark": chart.x_axis_major_tick_mark.as_str(),
+        "x_axis_minor_tick_mark": chart.x_axis_minor_tick_mark.as_str(),
+        "x_axis_major_unit": chart.x_axis_major_unit,
+        "x_axis_minor_unit": chart.x_axis_minor_unit,
+        "x_axis_number_format": chart.x_axis_number_format.as_str(),
         "series": chart.series.iter().map(|series| json!({
             "name": series.name,
             "values": series.values,
@@ -5796,6 +5948,22 @@ fn canonical_pptx_chart_snapshot(
         minor_unit: None,
         number_format: PresentationChartValueAxisNumberFormat::General,
     };
+    let x_axis_options = if chart_type == PresentationChartType::Scatter {
+        let bottom_axis = pptx_chart_value_axis_by_position(inspection.axes.as_slice(), "b")
+            .ok_or_else(|| anyhow!("canonical scatter chart is missing its bottom X axis"))?;
+        let bottom_options = canonical_pptx_chart_axis_options(bottom_axis, "scatter X")?;
+        if let Some(top_axis) = pptx_chart_value_axis_by_position(inspection.axes.as_slice(), "t") {
+            let top_options = canonical_pptx_chart_axis_options(top_axis, "secondary scatter X")?;
+            if top_options != bottom_options {
+                return Err(anyhow!(
+                    "canonical scatter chart bottom and hidden top X axes must use identical bounds, logarithmic scale, tick marks, units, and number format"
+                ));
+            }
+        }
+        bottom_options
+    } else {
+        default_axis_options()
+    };
     let (value_axis_options, secondary_value_axis_options) = if chart_type.is_part_to_whole() {
         (default_axis_options(), default_axis_options())
     } else {
@@ -5938,6 +6106,14 @@ fn canonical_pptx_chart_snapshot(
         title: inspection.title.clone(),
         categories,
         x_values,
+        x_axis_minimum: x_axis_options.minimum,
+        x_axis_maximum: x_axis_options.maximum,
+        x_axis_log_base: x_axis_options.log_base,
+        x_axis_major_tick_mark: x_axis_options.major_tick_mark,
+        x_axis_minor_tick_mark: x_axis_options.minor_tick_mark,
+        x_axis_major_unit: x_axis_options.major_unit,
+        x_axis_minor_unit: x_axis_options.minor_unit,
+        x_axis_number_format: x_axis_options.number_format,
         series,
         show_legend: inspection.legend_count == 1,
         legend_position,
@@ -6054,8 +6230,19 @@ fn presentation_scatter_chart_axes_xml(
     y_axis_id: u32,
     x_axis_title: &str,
     y_axis_title: &str,
+    x_axis_options: PresentationChartValueAxisOptions,
     y_axis_options: PresentationChartValueAxisOptions,
 ) -> String {
+    let PresentationChartValueAxisOptions {
+        minimum: x_minimum,
+        maximum: x_maximum,
+        log_base: x_log_base,
+        major_tick_mark: x_major_tick_mark,
+        minor_tick_mark: x_minor_tick_mark,
+        major_unit: x_major_unit,
+        minor_unit: x_minor_unit,
+        number_format: x_number_format,
+    } = x_axis_options;
     let PresentationChartValueAxisOptions {
         minimum,
         maximum,
@@ -6076,13 +6263,18 @@ fn presentation_scatter_chart_axes_xml(
     } else {
         presentation_chart_title_xml(y_axis_title)
     };
+    let x_axis_scaling = presentation_chart_axis_scaling_xml(x_minimum, x_maximum, x_log_base);
+    let x_axis_number_format = presentation_chart_axis_number_format_xml(x_number_format);
+    let x_axis_tick_marks =
+        presentation_chart_axis_tick_marks_xml(x_major_tick_mark, x_minor_tick_mark);
+    let x_axis_units = presentation_chart_axis_units_xml(x_major_unit, x_minor_unit);
     let y_axis_scaling = presentation_chart_axis_scaling_xml(minimum, maximum, log_base);
     let y_axis_number_format = presentation_chart_axis_number_format_xml(number_format);
     let y_axis_tick_marks =
         presentation_chart_axis_tick_marks_xml(major_tick_mark, minor_tick_mark);
     let y_axis_units = presentation_chart_axis_units_xml(major_unit, minor_unit);
     format!(
-        r#"<c:valAx><c:axId val="{x_axis_id}"/><c:scaling><c:orientation val="minMax"/></c:scaling><c:delete val="0"/><c:axPos val="b"/>{x_axis_title}<c:numFmt formatCode="General" sourceLinked="1"/><c:tickLblPos val="nextTo"/><c:crossAx val="{y_axis_id}"/><c:crosses val="autoZero"/><c:crossBetween val="midCat"/></c:valAx><c:valAx><c:axId val="{y_axis_id}"/>{y_axis_scaling}<c:delete val="0"/><c:axPos val="l"/><c:majorGridlines/>{y_axis_title}{y_axis_number_format}{y_axis_tick_marks}<c:tickLblPos val="nextTo"/><c:crossAx val="{x_axis_id}"/><c:crosses val="autoZero"/><c:crossBetween val="midCat"/>{y_axis_units}</c:valAx>"#
+        r#"<c:valAx><c:axId val="{x_axis_id}"/>{x_axis_scaling}<c:delete val="0"/><c:axPos val="b"/>{x_axis_title}{x_axis_number_format}{x_axis_tick_marks}<c:tickLblPos val="nextTo"/><c:crossAx val="{y_axis_id}"/><c:crosses val="autoZero"/><c:crossBetween val="midCat"/>{x_axis_units}</c:valAx><c:valAx><c:axId val="{y_axis_id}"/>{y_axis_scaling}<c:delete val="0"/><c:axPos val="l"/><c:majorGridlines/>{y_axis_title}{y_axis_number_format}{y_axis_tick_marks}<c:tickLblPos val="nextTo"/><c:crossAx val="{x_axis_id}"/><c:crosses val="autoZero"/><c:crossBetween val="midCat"/>{y_axis_units}</c:valAx>"#
     )
 }
 
@@ -6090,8 +6282,19 @@ fn presentation_scatter_chart_secondary_axes_xml(
     x_axis_id: u32,
     y_axis_id: u32,
     y_axis_title: &str,
+    x_axis_options: PresentationChartValueAxisOptions,
     y_axis_options: PresentationChartValueAxisOptions,
 ) -> String {
+    let PresentationChartValueAxisOptions {
+        minimum: x_minimum,
+        maximum: x_maximum,
+        log_base: x_log_base,
+        major_tick_mark: x_major_tick_mark,
+        minor_tick_mark: x_minor_tick_mark,
+        major_unit: x_major_unit,
+        minor_unit: x_minor_unit,
+        number_format: x_number_format,
+    } = x_axis_options;
     let PresentationChartValueAxisOptions {
         minimum,
         maximum,
@@ -6107,13 +6310,18 @@ fn presentation_scatter_chart_secondary_axes_xml(
     } else {
         presentation_chart_title_xml(y_axis_title)
     };
+    let x_axis_scaling = presentation_chart_axis_scaling_xml(x_minimum, x_maximum, x_log_base);
+    let x_axis_number_format = presentation_chart_axis_number_format_xml(x_number_format);
+    let x_axis_tick_marks =
+        presentation_chart_axis_tick_marks_xml(x_major_tick_mark, x_minor_tick_mark);
+    let x_axis_units = presentation_chart_axis_units_xml(x_major_unit, x_minor_unit);
     let y_axis_scaling = presentation_chart_axis_scaling_xml(minimum, maximum, log_base);
     let y_axis_number_format = presentation_chart_axis_number_format_xml(number_format);
     let y_axis_tick_marks =
         presentation_chart_axis_tick_marks_xml(major_tick_mark, minor_tick_mark);
     let y_axis_units = presentation_chart_axis_units_xml(major_unit, minor_unit);
     format!(
-        r#"<c:valAx><c:axId val="{x_axis_id}"/><c:scaling><c:orientation val="minMax"/></c:scaling><c:delete val="1"/><c:axPos val="t"/><c:numFmt formatCode="General" sourceLinked="1"/><c:tickLblPos val="none"/><c:crossAx val="{y_axis_id}"/><c:crosses val="max"/><c:crossBetween val="midCat"/></c:valAx><c:valAx><c:axId val="{y_axis_id}"/>{y_axis_scaling}<c:delete val="0"/><c:axPos val="r"/>{y_axis_title}{y_axis_number_format}{y_axis_tick_marks}<c:tickLblPos val="nextTo"/><c:crossAx val="{x_axis_id}"/><c:crosses val="max"/><c:crossBetween val="midCat"/>{y_axis_units}</c:valAx>"#
+        r#"<c:valAx><c:axId val="{x_axis_id}"/>{x_axis_scaling}<c:delete val="1"/><c:axPos val="t"/>{x_axis_number_format}{x_axis_tick_marks}<c:tickLblPos val="none"/><c:crossAx val="{y_axis_id}"/><c:crosses val="max"/><c:crossBetween val="midCat"/>{x_axis_units}</c:valAx><c:valAx><c:axId val="{y_axis_id}"/>{y_axis_scaling}<c:delete val="0"/><c:axPos val="r"/>{y_axis_title}{y_axis_number_format}{y_axis_tick_marks}<c:tickLblPos val="nextTo"/><c:crossAx val="{x_axis_id}"/><c:crosses val="max"/><c:crossBetween val="midCat"/>{y_axis_units}</c:valAx>"#
     )
 }
 
@@ -10762,6 +10970,61 @@ fn pptx_chart_value_axis_by_position<'a>(
 ) -> Option<&'a PptxChartAxisInspection> {
     axes.iter()
         .find(|axis| axis.axis_type == "value" && axis.position.as_deref() == Some(position))
+}
+
+fn insert_pptx_chart_axis_metadata(
+    metadata: &mut serde_json::Map<String, Value>,
+    prefix: &str,
+    axis: Option<&PptxChartAxisInspection>,
+) {
+    metadata.insert(
+        format!("{prefix}_minimum"),
+        json!(axis.and_then(|axis| axis.minimum.clone())),
+    );
+    metadata.insert(
+        format!("{prefix}_maximum"),
+        json!(axis.and_then(|axis| axis.maximum.clone())),
+    );
+    metadata.insert(
+        format!("{prefix}_log_base"),
+        json!(axis.and_then(|axis| axis.log_base.clone())),
+    );
+    metadata.insert(
+        format!("{prefix}_major_tick_mark"),
+        json!(pptx_chart_axis_tick_mark_name(axis, true)),
+    );
+    metadata.insert(
+        format!("{prefix}_major_tick_mark_value"),
+        json!(axis.and_then(|axis| axis.major_tick_mark.clone())),
+    );
+    metadata.insert(
+        format!("{prefix}_minor_tick_mark"),
+        json!(pptx_chart_axis_tick_mark_name(axis, false)),
+    );
+    metadata.insert(
+        format!("{prefix}_minor_tick_mark_value"),
+        json!(axis.and_then(|axis| axis.minor_tick_mark.clone())),
+    );
+    metadata.insert(
+        format!("{prefix}_major_unit"),
+        json!(axis.and_then(|axis| axis.major_unit.clone())),
+    );
+    metadata.insert(
+        format!("{prefix}_minor_unit"),
+        json!(axis.and_then(|axis| axis.minor_unit.clone())),
+    );
+    metadata.insert(
+        format!("{prefix}_number_format"),
+        json!(pptx_chart_axis_number_format_name(axis)),
+    );
+    metadata.insert(
+        format!("{prefix}_number_format_code"),
+        json!(axis.and_then(|axis| axis.number_format_code.clone())),
+    );
+    metadata.insert(
+        format!("{prefix}_number_format_source_linked"),
+        json!(axis.and_then(|axis| axis.number_format_source_linked)),
+    );
 }
 
 fn pptx_chart_axis_number_format_name(

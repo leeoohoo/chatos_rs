@@ -4572,6 +4572,14 @@ fn creates_appends_and_replaces_canonical_line_marker_scatter_pptx_charts() {
                     "type":"scatter",
                     "title":"Output by elapsed time",
                     "x_values":[1,2,4],
+                    "x_axis_minimum":1,
+                    "x_axis_maximum":5,
+                    "x_axis_log_base":10,
+                    "x_axis_major_tick_mark":"inside",
+                    "x_axis_minor_tick_mark":"outside",
+                    "x_axis_major_unit":1,
+                    "x_axis_minor_unit":0.5,
+                    "x_axis_number_format":"decimal_2",
                     "series":[
                         {"name":"Output","values":[2,4,8],"color":"#2255AA","marker_style":"diamond","marker_size":8,"smooth":true},
                         {"name":"Reference","values":[10,20,40],"value_axis":"secondary","color":"#EE8800","marker_style":"square","marker_size":6,"smooth":false}
@@ -4622,6 +4630,38 @@ fn creates_appends_and_replaces_canonical_line_marker_scatter_pptx_charts() {
         Some(&json!([1.0, 2.0, 4.0]))
     );
     assert_eq!(
+        inspected.pointer("/chart_metadata/0/self_contained_edit_snapshot/x_axis_minimum"),
+        Some(&json!(1.0))
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/0/self_contained_edit_snapshot/x_axis_maximum"),
+        Some(&json!(5.0))
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/0/self_contained_edit_snapshot/x_axis_log_base"),
+        Some(&json!(10.0))
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/0/self_contained_edit_snapshot/x_axis_major_tick_mark"),
+        Some(&json!("inside"))
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/0/self_contained_edit_snapshot/x_axis_minor_tick_mark"),
+        Some(&json!("outside"))
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/0/self_contained_edit_snapshot/x_axis_major_unit"),
+        Some(&json!(1.0))
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/0/self_contained_edit_snapshot/x_axis_minor_unit"),
+        Some(&json!(0.5))
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/0/self_contained_edit_snapshot/x_axis_number_format"),
+        Some(&json!("decimal_2"))
+    );
+    assert_eq!(
         inspected.pointer("/chart_metadata/0/category_axis_title"),
         Some(&json!("Elapsed time"))
     );
@@ -4666,6 +4706,58 @@ fn creates_appends_and_replaces_canonical_line_marker_scatter_pptx_charts() {
         Some(&json!("decimal_1"))
     );
     assert_eq!(
+        inspected.pointer("/chart_metadata/0/x_axis_minimum"),
+        Some(&json!("1"))
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/0/x_axis_maximum"),
+        Some(&json!("5"))
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/0/x_axis_log_base"),
+        Some(&json!("10"))
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/0/x_axis_major_tick_mark"),
+        Some(&json!("inside"))
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/0/x_axis_major_tick_mark_value"),
+        Some(&json!("in"))
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/0/x_axis_minor_tick_mark"),
+        Some(&json!("outside"))
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/0/x_axis_minor_tick_mark_value"),
+        Some(&json!("out"))
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/0/x_axis_major_unit"),
+        Some(&json!("1"))
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/0/x_axis_minor_unit"),
+        Some(&json!("0.5"))
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/0/x_axis_number_format"),
+        Some(&json!("decimal_2"))
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/0/x_axis_number_format_code"),
+        Some(&json!("0.00"))
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/0/secondary_x_axis_maximum"),
+        Some(&json!("5"))
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/0/secondary_x_axis_number_format"),
+        Some(&json!("decimal_2"))
+    );
+    assert_eq!(
         inspected.pointer("/chart_metadata/0/secondary_value_axis_number_format"),
         Some(&json!("integer"))
     );
@@ -4699,6 +4791,25 @@ fn creates_appends_and_replaces_canonical_line_marker_scatter_pptx_charts() {
     assert_eq!(source_chart.matches("<c:catAx>").count(), 0);
     assert_eq!(source_chart.matches("<c:valAx>").count(), 4);
     assert_eq!(source_chart.matches("<a:ln>").count(), 2);
+    assert_eq!(source_chart.matches("<c:logBase val=\"10\"/>").count(), 2);
+    assert_eq!(
+        source_chart
+            .matches("<c:numFmt formatCode=\"0.00\" sourceLinked=\"0\"/>")
+            .count(),
+        2
+    );
+    assert_eq!(
+        source_chart
+            .matches("<c:majorTickMark val=\"in\"/>")
+            .count(),
+        2
+    );
+    assert_eq!(
+        source_chart
+            .matches("<c:minorTickMark val=\"out\"/>")
+            .count(),
+        2
+    );
     drop(source_archive);
 
     presentation::append_pptx_slides(
@@ -4784,6 +4895,72 @@ fn creates_appends_and_replaces_canonical_line_marker_scatter_pptx_charts() {
     assert_eq!(
         replaced.pointer("/chart_metadata/0/self_contained_edit_snapshot/x_values"),
         Some(&Value::Null)
+    );
+    assert_eq!(
+        replaced.pointer("/chart_metadata/0/self_contained_edit_snapshot/x_axis_minimum"),
+        Some(&Value::Null)
+    );
+
+    fs::copy(
+        source.as_path(),
+        root.join("mismatched-scatter-x-axes.pptx"),
+    )
+    .expect("copy mismatched scatter X-axis fixture");
+    rewrite_zip_text_entry(
+        root.join("mismatched-scatter-x-axes.pptx").as_path(),
+        "ppt/charts/chart1.xml",
+        |xml| xml.replacen("<c:max val=\"5\"/>", "<c:max val=\"6\"/>", 1),
+    );
+    let mismatched_x_axes = presentation::inspect_pptx_charts(
+        &json!({"path":"mismatched-scatter-x-axes.pptx"}),
+        &state,
+        &request,
+    )
+    .expect("inspect mismatched scatter X axes");
+    assert_eq!(
+        mismatched_x_axes.pointer("/chart_metadata/0/x_axis_maximum"),
+        Some(&json!("6"))
+    );
+    assert_eq!(
+        mismatched_x_axes.pointer("/chart_metadata/0/secondary_x_axis_maximum"),
+        Some(&json!("5"))
+    );
+    assert_eq!(
+        mismatched_x_axes
+            .pointer("/chart_metadata/0/eligible_for_self_contained_chart_replacement"),
+        Some(&json!(false))
+    );
+
+    fs::copy(source.as_path(), root.join("custom-scatter-x-ticks.pptx"))
+        .expect("copy custom scatter X tick fixture");
+    rewrite_zip_text_entry(
+        root.join("custom-scatter-x-ticks.pptx").as_path(),
+        "ppt/charts/chart1.xml",
+        |xml| {
+            xml.replacen(
+                "<c:majorTickMark val=\"in\"/>",
+                "<c:majorTickMark val=\"diagonal\"/>",
+                1,
+            )
+        },
+    );
+    let custom_x_ticks = presentation::inspect_pptx_charts(
+        &json!({"path":"custom-scatter-x-ticks.pptx"}),
+        &state,
+        &request,
+    )
+    .expect("inspect custom scatter X ticks");
+    assert_eq!(
+        custom_x_ticks.pointer("/chart_metadata/0/x_axis_major_tick_mark"),
+        Some(&json!("custom"))
+    );
+    assert_eq!(
+        custom_x_ticks.pointer("/chart_metadata/0/x_axis_major_tick_mark_value"),
+        Some(&json!("diagonal"))
+    );
+    assert_eq!(
+        custom_x_ticks.pointer("/chart_metadata/0/eligible_for_self_contained_chart_replacement"),
+        Some(&json!(false))
     );
 
     for (filename, replacement) in [
@@ -4889,6 +5066,91 @@ fn creates_appends_and_replaces_canonical_line_marker_scatter_pptx_charts() {
                 "series":[{"name":"Y","values":[2]}]
             }),
             "one value per x_value",
+        ),
+        (
+            "scatter-minimum-hides-x.pptx",
+            json!({
+                "type":"scatter",
+                "x_values":[1,2],
+                "x_axis_minimum":1.5,
+                "series":[{"name":"Y","values":[2,3]}]
+            }),
+            "scatter X-axis minimum would hide X values",
+        ),
+        (
+            "scatter-maximum-hides-x.pptx",
+            json!({
+                "type":"scatter",
+                "x_values":[1,2],
+                "x_axis_maximum":1.5,
+                "series":[{"name":"Y","values":[2,3]}]
+            }),
+            "scatter X-axis maximum would hide X values",
+        ),
+        (
+            "scatter-invalid-x-range.pptx",
+            json!({
+                "type":"scatter",
+                "x_values":[1],
+                "x_axis_minimum":2,
+                "x_axis_maximum":2,
+                "series":[{"name":"Y","values":[2]}]
+            }),
+            "scatter X-axis minimum must be below its maximum",
+        ),
+        (
+            "scatter-log-zero-x.pptx",
+            json!({
+                "type":"scatter",
+                "x_values":[0,1],
+                "x_axis_log_base":10,
+                "series":[{"name":"Y","values":[2,3]}]
+            }),
+            "scatter logarithmic X axis requires every X value to be positive",
+        ),
+        (
+            "scatter-log-zero-bound.pptx",
+            json!({
+                "type":"scatter",
+                "x_values":[1,2],
+                "x_axis_minimum":0,
+                "x_axis_log_base":10,
+                "series":[{"name":"Y","values":[2,3]}]
+            }),
+            "scatter logarithmic X-axis bounds must be positive",
+        ),
+        (
+            "scatter-invalid-x-units.pptx",
+            json!({
+                "type":"scatter",
+                "x_values":[1,2],
+                "x_axis_major_unit":1,
+                "x_axis_minor_unit":1,
+                "series":[{"name":"Y","values":[2,3]}]
+            }),
+            "scatter X-axis minor unit must be below its major unit",
+        ),
+        (
+            "scatter-x-unit-exceeds-range.pptx",
+            json!({
+                "type":"scatter",
+                "x_values":[1,2],
+                "x_axis_minimum":1,
+                "x_axis_maximum":2,
+                "x_axis_major_unit":2,
+                "series":[{"name":"Y","values":[2,3]}]
+            }),
+            "scatter X-axis major unit exceeds its explicit range",
+        ),
+        (
+            "line-with-x-format.pptx",
+            json!({
+                "type":"line",
+                "categories":["A"],
+                "x_axis_number_format":"integer",
+                "series":[{"name":"Y","values":[2]}]
+            }),
+            "non-scatter chart does not support X-axis bounds, logarithmic scale, tick marks, units, or number format",
         ),
     ] {
         let error = presentation::create_pptx(

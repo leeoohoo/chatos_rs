@@ -276,7 +276,7 @@ fn presentations_release_publishes_render_and_existing_edit_contracts() {
         .into_iter()
         .find(|item| item.skill_id == "internal_skill_presentations")
         .expect("Presentations catalog item");
-    assert_eq!(catalog_item.version, "1.30.0");
+    assert_eq!(catalog_item.version, "1.31.0");
     let instructions = internal_skill_instructions("internal_skill_presentations")
         .expect("Presentations instructions");
     assert!(instructions.contains("image_right"));
@@ -327,6 +327,10 @@ fn presentations_release_publishes_render_and_existing_edit_contracts() {
     assert!(instructions.contains("canonical XY `scatter`"));
     assert!(instructions.contains("exact `c:scatterStyle val=\"lineMarker\"`"));
     assert!(instructions.contains("shared finite numeric `x_values`"));
+    assert!(instructions.contains("`x_axis_minimum`/`x_axis_maximum`"));
+    assert!(instructions.contains("Every explicit X bound must include all shared `x_values`"));
+    assert!(instructions.contains("`x_axis_number_format`"));
+    assert!(instructions.contains("bottom and hidden-top X axes receive identical canonical"));
     assert!(instructions.contains("`<c:xVal><c:numLit>` and `<c:yVal><c:numLit>`"));
     assert!(instructions.contains("bottom X `c:valAx` crossing a left primary Y `c:valAx`"));
     assert!(instructions
@@ -503,6 +507,16 @@ fn presentations_release_publishes_render_and_existing_edit_contracts() {
         ),
         Some(&json!(["array", "null"]))
     );
+    assert_eq!(
+        create.pointer(
+            "/inputSchema/properties/slides/items/properties/chart/properties/x_axis_minimum/type"
+        ),
+        Some(&json!(["number", "null"]))
+    );
+    assert!(create
+        .pointer("/inputSchema/properties/slides/items/properties/chart/properties/x_axis_number_format/enum")
+        .and_then(Value::as_array)
+        .is_some_and(|values| values.contains(&json!("scientific"))));
     let replace_chart = tools
         .iter()
         .find(|tool| tool.get("name").and_then(Value::as_str) == Some("replace_pptx_chart"))
@@ -527,6 +541,10 @@ fn presentations_release_publishes_render_and_existing_edit_contracts() {
         .pointer("/inputSchema/properties/expected_self_contained_edit_snapshot/required")
         .and_then(Value::as_array)
         .is_some_and(|required| required.contains(&json!("x_values"))));
+    assert!(replace_chart
+        .pointer("/inputSchema/properties/expected_self_contained_edit_snapshot/required")
+        .and_then(Value::as_array)
+        .is_some_and(|required| required.contains(&json!("x_axis_number_format"))));
 }
 
 #[test]
@@ -895,7 +913,7 @@ fn ready_bundle_v2_fingerprint_matches_plugin_management_seed() {
         .join("\n");
     assert_eq!(
         hex::encode(Sha256::digest(rows.as_bytes())),
-        "4804728fce7404e7993ac329fdbb7b1a2b0b15d63f83b98419b03d96cd4c1e03"
+        "a57b1bb68f01536a8012831e8fc22e712b6b0458004226040e63b201e98ef271"
     );
 }
 
@@ -910,7 +928,7 @@ fn all_28_bundled_skill_fingerprints_match_plugin_management_seed() {
         .join("\n");
     assert_eq!(
         hex::encode(Sha256::digest(rows.as_bytes())),
-        "794c2c4ce1ec66c3cc5ad07343288bf935c037dca185fe3d579facdc82605d1b"
+        "f563b812d6a6d2d58e12e9d5d7ea75a8c0ff1eebbf78cdf509b1edf0cfbf136d"
     );
 }
 

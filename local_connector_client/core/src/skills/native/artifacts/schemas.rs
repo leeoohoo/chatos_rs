@@ -1578,6 +1578,14 @@ fn self_contained_pptx_chart_schema(description: &str, complete_snapshot: bool) 
             "title",
             "categories",
             "x_values",
+            "x_axis_minimum",
+            "x_axis_maximum",
+            "x_axis_log_base",
+            "x_axis_major_tick_mark",
+            "x_axis_minor_tick_mark",
+            "x_axis_major_unit",
+            "x_axis_minor_unit",
+            "x_axis_number_format",
             "series",
             "show_legend",
             "legend_position",
@@ -1618,7 +1626,7 @@ fn self_contained_pptx_chart_schema(description: &str, complete_snapshot: bool) 
     } else {
         json!(["name", "values"])
     };
-    json!({
+    let mut schema = json!({
         "type":"object",
         "description":description,
         "properties":{
@@ -1677,7 +1685,20 @@ fn self_contained_pptx_chart_schema(description: &str, complete_snapshot: bool) 
             }
         ],
         "additionalProperties":false
-    })
+    });
+    let properties = schema
+        .get_mut("properties")
+        .and_then(Value::as_object_mut)
+        .expect("self-contained PPTX chart schema properties");
+    properties.insert("x_axis_minimum".to_string(), json!({"type":["number","null"],"minimum":-1000000000000i64,"maximum":1000000000000i64,"default":null,"description":"Optional explicit scatter X-axis minimum. It must include every shared x_values point and remain below x_axis_maximum when both are set. Non-scatter charts require null or omission."}));
+    properties.insert("x_axis_maximum".to_string(), json!({"type":["number","null"],"minimum":-1000000000000i64,"maximum":1000000000000i64,"default":null,"description":"Optional explicit scatter X-axis maximum. It must include every shared x_values point and remain above x_axis_minimum when both are set. Non-scatter charts require null or omission."}));
+    properties.insert("x_axis_log_base".to_string(), json!({"type":["number","null"],"minimum":2,"maximum":1000,"default":null,"description":"Optional logarithmic base for the scatter X axis. Every x_values point and every explicit X bound must be strictly positive. Non-scatter charts require null or omission."}));
+    properties.insert("x_axis_major_tick_mark".to_string(), json!({"type":"string","enum":["none","inside","outside","cross"],"default":"none","description":"Canonical scatter X-axis major tick-mark style. Non-scatter charts require none or omission."}));
+    properties.insert("x_axis_minor_tick_mark".to_string(), json!({"type":"string","enum":["none","inside","outside","cross"],"default":"none","description":"Canonical scatter X-axis minor tick-mark style. Non-scatter charts require none or omission."}));
+    properties.insert("x_axis_major_unit".to_string(), json!({"type":["number","null"],"exclusiveMinimum":0,"maximum":1000000000000i64,"default":null,"description":"Optional explicit scatter X-axis major unit. It must exceed x_axis_minor_unit when both are set and must not exceed an explicit X-axis span. Non-scatter charts require null or omission."}));
+    properties.insert("x_axis_minor_unit".to_string(), json!({"type":["number","null"],"exclusiveMinimum":0,"maximum":1000000000000i64,"default":null,"description":"Optional explicit scatter X-axis minor unit. It must remain below x_axis_major_unit when both are set and must not exceed an explicit X-axis span. Non-scatter charts require null or omission."}));
+    properties.insert("x_axis_number_format".to_string(), json!({"type":"string","enum":["general","integer","decimal_1","decimal_2","thousands","thousands_2","percentage","percentage_1","scientific"],"default":"general","description":"Canonical scatter X-axis number format. Non-scatter charts require general or omission."}));
+    schema
 }
 
 fn append_pptx_slides_tool() -> Value {
