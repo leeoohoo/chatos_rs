@@ -237,24 +237,23 @@ pub(super) fn apply_task_closure(
     Ok(())
 }
 
-pub(super) async fn waive_open_task_session_entries(
+pub(super) async fn block_open_required_task_session_entries(
     store: &AppStore,
     root_task_id: &str,
     session_id: &str,
     reason: &str,
-    required_only: bool,
 ) -> Result<Vec<TaskRecord>, String> {
     let snapshot = load_task_session_snapshot(store, root_task_id, session_id).await?;
     let mut changed = Vec::new();
     for mut task in snapshot.entries.into_iter().filter(|task| {
         effective_task_closure_state(task) == TaskClosureState::Open
-            && (!required_only || effective_task_required_for_parent_completion(task))
+            && effective_task_required_for_parent_completion(task)
             && effective_task_manager_scope(task) == TaskManagerScope::RunChecklist
     }) {
         let now = now_rfc3339();
         apply_task_closure(
             &mut task,
-            TaskClosureState::Waived,
+            TaskClosureState::BlockedTerminal,
             Some(reason.to_string()),
             now.as_str(),
         )?;

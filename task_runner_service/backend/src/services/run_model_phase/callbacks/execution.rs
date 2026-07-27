@@ -5,7 +5,7 @@ use super::*;
 use std::time::Instant;
 
 use crate::services::task_manager_lifecycle::{
-    load_task_session_snapshot, waive_open_task_session_entries,
+    block_open_required_task_session_entries, load_task_session_snapshot,
 };
 
 const MAX_COMPLETION_GATE_FOLLOWUPS: usize = 3;
@@ -164,20 +164,19 @@ impl RunService {
                 }
                 if no_progress || completion_gate_attempts >= MAX_COMPLETION_GATE_FOLLOWUPS {
                     let reason = if no_progress {
-                        "模型完成声明后，连续两次 Task Manager 校验没有状态进展；系统未伪造成功，而是将遗漏关闭的运行内清单记录为 waived"
+                        "模型完成声明后，连续两次 Task Manager 校验没有状态进展；仍有必需清单未完成，父任务不能标记为成功"
                     } else {
-                        "模型完成声明后达到 Task Manager 最大收口轮次；系统未伪造成功，而是将遗漏关闭的运行内清单记录为 waived"
+                        "模型完成声明后达到 Task Manager 最大收口轮次；仍有必需清单未完成，父任务不能标记为成功"
                     };
-                    let waived = match waive_open_task_session_entries(
+                    let blocked = match block_open_required_task_session_entries(
                         &self.store,
                         task.id.as_str(),
                         run.id.as_str(),
                         reason,
-                        true,
                     )
                     .await
                     {
-                        Ok(waived) => waived,
+                        Ok(blocked) => blocked,
                         Err(err) => {
                             return TaskRunReport::from_ai_report(
                                 task.id.clone(),
@@ -193,14 +192,14 @@ impl RunService {
                         .store
                         .append_run_event(TaskRunEventRecord::new(
                             run.id.clone(),
-                            "completion_gate_reconciled",
+                            "completion_gate_blocked",
                             Some(format!(
-                                "Task Manager 会话已程序化收口，{} 个遗漏关闭的运行内清单被标记为 waived",
-                                waived.len()
+                                "Task Manager 收口失败，{} 个未完成的必需清单已标记为终态阻塞",
+                                blocked.len()
                             )),
                             Some(json!({
                                 "task_id": task.id,
-                                "waived_task_ids": waived.iter().map(|task| task.id.clone()).collect::<Vec<_>>(),
+                                "blocked_task_ids": blocked.iter().map(|task| task.id.clone()).collect::<Vec<_>>(),
                                 "attempt": completion_gate_attempts,
                                 "reason": reason,
                             })),
@@ -210,7 +209,7 @@ impl RunService {
                         warn!(
                             run_id = run.id.as_str(),
                             error = err.as_str(),
-                            "failed to append completion gate reconciliation event"
+                            "failed to append completion gate blocked event"
                         );
                     }
                     return report;

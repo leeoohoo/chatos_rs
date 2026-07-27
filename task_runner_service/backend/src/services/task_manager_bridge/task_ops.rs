@@ -619,9 +619,9 @@ mod tests {
     use crate::config::{AppConfig, StoreMode};
     use crate::models::{CancelTaskRequest, CreateTaskRequest, TaskRunStatus, UpdateTaskRequest};
     use crate::services::task_manager_lifecycle::{
-        adopt_task_session_entries_for_retry, effective_task_closure_state,
-        effective_task_required_for_parent_completion, finalize_task_session_entries,
-        load_task_session_snapshot, waive_open_task_session_entries,
+        adopt_task_session_entries_for_retry, block_open_required_task_session_entries,
+        effective_task_closure_state, effective_task_required_for_parent_completion,
+        finalize_task_session_entries, load_task_session_snapshot,
     };
     use crate::store::AppStore;
     use std::net::{IpAddr, Ipv4Addr};
@@ -975,7 +975,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn repeated_no_progress_waives_only_current_run_required_checklists() {
+    async fn repeated_no_progress_blocks_only_current_run_required_checklists() {
         let service = test_service().await;
         let parent = create_task(&service, "parent", TaskStatus::Ready).await;
         let old = service
@@ -995,22 +995,22 @@ mod tests {
             .await
             .expect("create current child");
 
-        let waived = waive_open_task_session_entries(
+        let blocked = block_open_required_task_session_entries(
             &service.store,
             parent.id.as_str(),
             "run-current",
             "completion gate made no progress",
-            true,
         )
         .await
-        .expect("waive current session");
+        .expect("block current session");
 
-        assert_eq!(waived.len(), 1);
-        assert_eq!(waived[0].id, current.id);
+        assert_eq!(blocked.len(), 1);
+        assert_eq!(blocked[0].id, current.id);
         assert_eq!(
-            effective_task_closure_state(&waived[0]),
-            TaskClosureState::Waived
+            effective_task_closure_state(&blocked[0]),
+            TaskClosureState::BlockedTerminal
         );
+        assert_eq!(blocked[0].status, TaskStatus::Blocked);
         let old = service
             .get_task(old.id.as_str())
             .await

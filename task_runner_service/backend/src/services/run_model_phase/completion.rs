@@ -4,7 +4,8 @@
 use super::*;
 
 use crate::services::task_manager_lifecycle::{
-    append_task_session_finalized_event, finalize_task_session_entries, load_task_session_snapshot,
+    append_task_session_finalized_event, block_open_required_task_session_entries,
+    finalize_task_session_entries, load_task_session_snapshot,
 };
 
 impl RunService {
@@ -51,7 +52,7 @@ impl RunService {
             chatos_ai_runtime::AiTurnStatus::Failed => TaskRunStatus::Failed,
             chatos_ai_runtime::AiTurnStatus::Aborted => TaskRunStatus::Cancelled,
         };
-        let (session_snapshot, session_inspection_succeeded) =
+        let (mut session_snapshot, mut session_inspection_succeeded) =
             match load_task_session_snapshot(&self.store, &task.id, &run.id).await {
                 Ok(snapshot) => (snapshot, true),
                 Err(err) => {
@@ -62,6 +63,38 @@ impl RunService {
                     (Default::default(), false)
                 }
             };
+        if report.status == chatos_ai_runtime::AiTurnStatus::Completed
+            && session_inspection_succeeded
+            && !session_snapshot.open_required.is_empty()
+        {
+            let reason = "模型已声明完成，但当前运行仍有必需清单未关闭；父任务不能标记为成功";
+            match block_open_required_task_session_entries(
+                &self.store,
+                task.id.as_str(),
+                run.id.as_str(),
+                reason,
+            )
+            .await
+            {
+                Ok(_) => match load_task_session_snapshot(&self.store, &task.id, &run.id).await {
+                    Ok(snapshot) => session_snapshot = snapshot,
+                    Err(err) => {
+                        session_inspection_succeeded = false;
+                        run.status = TaskRunStatus::Failed;
+                        run.error_message = Some(format!(
+                            "failed to inspect Task Manager session after blocking unfinished required tasks: {err}"
+                        ));
+                    }
+                },
+                Err(err) => {
+                    session_inspection_succeeded = false;
+                    run.status = TaskRunStatus::Failed;
+                    run.error_message = Some(format!(
+                        "failed to block unfinished required Task Manager tasks: {err}"
+                    ));
+                }
+            }
+        }
         if report.status != chatos_ai_runtime::AiTurnStatus::Aborted
             && !session_snapshot.terminal_blocked.is_empty()
         {
@@ -539,7 +572,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn successful_run_waives_unclosed_current_session_checklist_without_faking_success() {
+    async fn completed_report_blocks_unclosed_required_current_session_checklist() {
         let (task_service, run_service) = test_services().await;
         let parent = create_task(&task_service, "parent", TaskStatus::Ready).await;
         let mut run = run_record(&parent);
@@ -569,6 +602,86 @@ mod tests {
             .save_task(child.clone())
             .await
             .expect("save forgotten child");
+
+        let report = TaskRunReport {
+            task_id: parent.id.clone(),
+            run_id: run.id.clone(),
+            model_config_id: Some(run.model_config_id.clone()),
+            status: AiTurnStatus::Completed,
+            content: Some("done".to_string()),
+            reasoning: None,
+            error: None,
+            tool_calls: None,
+            finish_reason: Some("stop".to_string()),
+            usage: None,
+            response_id: None,
+            completed_at: now_rfc3339(),
+        };
+
+        run_service
+            .finalize_model_phase(&parent, &mut run, report, ".", None, None)
+            .await;
+
+        let saved_child = task_service
+            .get_task(child.id.as_str())
+            .await
+            .expect("get child")
+            .expect("child");
+        assert_eq!(
+            saved_child.task_tool_state.closure_state,
+            Some(TaskClosureState::BlockedTerminal)
+        );
+        assert_eq!(saved_child.status, TaskStatus::Blocked);
+        let saved_run = run_service
+            .store
+            .get_run(run.id.as_str())
+            .await
+            .expect("get run")
+            .expect("run");
+        assert_eq!(saved_run.status, TaskRunStatus::Blocked);
+        assert!(saved_run
+            .error_message
+            .as_deref()
+            .is_some_and(|message| message.contains("forgotten child")));
+        let saved_parent = task_service
+            .get_task(parent.id.as_str())
+            .await
+            .expect("get parent")
+            .expect("parent");
+        assert_eq!(saved_parent.status, TaskStatus::Blocked);
+    }
+
+    #[tokio::test]
+    async fn successful_run_waives_unclosed_optional_current_session_checklist() {
+        let (task_service, run_service) = test_services().await;
+        let parent = create_task(&task_service, "parent", TaskStatus::Ready).await;
+        let mut run = run_record(&parent);
+        run_service
+            .store
+            .save_run(run.clone())
+            .await
+            .expect("save run");
+
+        let now = now_rfc3339();
+        let mut child = parent.clone();
+        child.id = "optional-child".to_string();
+        child.title = "optional child".to_string();
+        child.status = TaskStatus::Ready;
+        child.parent_task_id = Some(parent.id.clone());
+        child.source_run_id = Some(run.id.clone());
+        child.last_run_id = None;
+        child.task_tool_state.manager_scope = Some(TaskManagerScope::RunChecklist);
+        child.task_tool_state.task_session_id = Some(run.id.clone());
+        child.task_tool_state.required_for_parent_completion = Some(false);
+        child.task_tool_state.closure_state = Some(TaskClosureState::Open);
+        child.task_tool_state.lifecycle_updated_at = Some(now.clone());
+        child.created_at = now.clone();
+        child.updated_at = now;
+        run_service
+            .store
+            .save_task(child.clone())
+            .await
+            .expect("save optional child");
 
         let report = TaskRunReport {
             task_id: parent.id.clone(),
