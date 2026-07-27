@@ -60,6 +60,9 @@ pub(super) fn execute_with_cancellation(
         ("internal_skill_pdf", "render_pdf_pages") => {
             docx_render::render_pdf_pages(arguments, state, request, action_cancelled)
         }
+        ("internal_skill_pdf", "export_pdf_pages_to_png") => {
+            docx_render::export_pdf_pages_to_png(arguments, state, request, action_cancelled)
+        }
         ("internal_skill_pdf", "create_text_pdf") => {
             pdf_edit::create_text_pdf(arguments, state, request)
         }

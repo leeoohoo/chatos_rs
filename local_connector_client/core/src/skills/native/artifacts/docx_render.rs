@@ -34,8 +34,11 @@ const RUNTIME_MANIFEST_NAME: &str = "runtime.json";
 const MAX_RUNTIME_MANIFEST_BYTES: u64 = 32 * 1024;
 const MAX_DOCUMENT_PAGES: usize = 500;
 const MAX_RENDERED_PAGES: usize = 8;
+const MAX_EXPORTED_PDF_PAGES: usize = 50;
 const MAX_PAGE_PNG_BYTES: usize = 8 * 1024 * 1024;
 const MAX_RENDERED_PNG_BYTES: usize = 32 * 1024 * 1024;
+const MAX_EXPORTED_PAGE_PNG_BYTES: usize = 16 * 1024 * 1024;
+const MAX_EXPORTED_PNG_BYTES: usize = 100 * 1024 * 1024;
 const MAX_PAGE_DIMENSION: u32 = 10_000;
 const MAX_PAGE_PIXELS: u64 = 40_000_000;
 const MAX_COMMAND_OUTPUT_BYTES: usize = 64 * 1024;
@@ -91,6 +94,17 @@ struct RenderOptions {
 }
 
 #[derive(Debug)]
+struct PdfPageExportOptions {
+    target_directory: PathBuf,
+    target_directory_relative: String,
+    first_page: usize,
+    requested_last_page: Option<usize>,
+    dpi: u32,
+    filename_prefix: String,
+    timeout: Duration,
+}
+
+#[derive(Debug)]
 struct CommandOutput {
     status: ExitStatus,
     stdout: Vec<u8>,
@@ -123,6 +137,15 @@ pub(super) fn render_pdf_pages(
     action_cancelled: Option<&AtomicBool>,
 ) -> Result<Value> {
     render_pdf_pages_with_runtime(arguments, state, request, action_cancelled, None)
+}
+
+pub(super) fn export_pdf_pages_to_png(
+    arguments: &Value,
+    state: &LocalState,
+    request: &RelayRequest,
+    action_cancelled: Option<&AtomicBool>,
+) -> Result<Value> {
+    export_pdf_pages_to_png_with_runtime(arguments, state, request, action_cancelled, None)
 }
 
 pub(super) fn render_spreadsheet_pages(
@@ -336,18 +359,7 @@ fn render_spreadsheet_pages_with_runtime_inner(
 
     let page_prefix = output_dir.join("page");
     let mut poppler_env = private_process_environment(home_dir.as_path(), temp_dir.as_path());
-    if let Some(library_dir) = runtime.poppler_library_dir.as_deref() {
-        #[cfg(target_os = "macos")]
-        poppler_env.insert(
-            "DYLD_FALLBACK_LIBRARY_PATH".to_string(),
-            library_dir.as_os_str().to_os_string(),
-        );
-        #[cfg(target_os = "linux")]
-        poppler_env.insert(
-            "LD_LIBRARY_PATH".to_string(),
-            library_dir.as_os_str().to_os_string(),
-        );
-    }
+    add_poppler_library_environment(&mut poppler_env, runtime.poppler_library_dir.as_deref());
     let raster_args = vec![
         OsString::from("-png"),
         OsString::from("-r"),
@@ -684,18 +696,7 @@ fn render_presentation_pages_with_runtime_inner(
 
     let page_prefix = output_dir.join("page");
     let mut poppler_env = private_process_environment(home_dir.as_path(), temp_dir.as_path());
-    if let Some(library_dir) = runtime.poppler_library_dir.as_deref() {
-        #[cfg(target_os = "macos")]
-        poppler_env.insert(
-            "DYLD_FALLBACK_LIBRARY_PATH".to_string(),
-            library_dir.as_os_str().to_os_string(),
-        );
-        #[cfg(target_os = "linux")]
-        poppler_env.insert(
-            "LD_LIBRARY_PATH".to_string(),
-            library_dir.as_os_str().to_os_string(),
-        );
-    }
+    add_poppler_library_environment(&mut poppler_env, runtime.poppler_library_dir.as_deref());
     let raster_args = vec![
         OsString::from("-png"),
         OsString::from("-r"),
@@ -892,18 +893,7 @@ pub(super) fn render_pdf_pages_with_runtime(
     let deadline = Instant::now() + options.timeout;
     let page_prefix = output_dir.join("page");
     let mut poppler_env = private_process_environment(home_dir.as_path(), temp_dir.as_path());
-    if let Some(library_dir) = runtime.poppler_library_dir.as_deref() {
-        #[cfg(target_os = "macos")]
-        poppler_env.insert(
-            "DYLD_FALLBACK_LIBRARY_PATH".to_string(),
-            library_dir.as_os_str().to_os_string(),
-        );
-        #[cfg(target_os = "linux")]
-        poppler_env.insert(
-            "LD_LIBRARY_PATH".to_string(),
-            library_dir.as_os_str().to_os_string(),
-        );
-    }
+    add_poppler_library_environment(&mut poppler_env, runtime.poppler_library_dir.as_deref());
     let raster_args = vec![
         OsString::from("-png"),
         OsString::from("-r"),
@@ -991,6 +981,184 @@ pub(super) fn render_pdf_pages_with_runtime(
             "source_modified": false,
         },
         "_model_input": model_input,
+    }))
+}
+
+pub(super) fn export_pdf_pages_to_png_with_runtime(
+    arguments: &Value,
+    state: &LocalState,
+    request: &RelayRequest,
+    action_cancelled: Option<&AtomicBool>,
+    runtime_root_override: Option<&Path>,
+) -> Result<Value> {
+    ensure_not_cancelled(action_cancelled).map_err(remap_pdf_render_error)?;
+    let (source, source_relative) =
+        input_file(state, request, required_text(arguments, "path")?, ".pdf")
+            .map_err(|error| pdf_render_error("source_invalid", error))?;
+    ensure_regular_non_symlink_file(source.as_path(), "PDF source")
+        .map_err(remap_pdf_render_error)?;
+    let source_bytes =
+        file_size(source.as_path()).map_err(|error| pdf_render_error("source_invalid", error))?;
+    if source_bytes == 0 || source_bytes > MAX_ARTIFACT_BYTES {
+        return Err(pdf_render_error(
+            "output_limit_exceeded",
+            "PDF source is empty or exceeds the 100 MiB safety limit",
+        ));
+    }
+    let source_sha256 = sha256_file(source.as_path())
+        .map_err(|error| pdf_render_error("source_invalid", format!("hash PDF source: {error}")))?;
+    let options = pdf_page_export_options(arguments, state, request)?;
+    let runtime = load_document_runtime(runtime_root_override).map_err(remap_pdf_render_error)?;
+    let work = private_render_directory().map_err(remap_pdf_render_error)?;
+    let source_copy = work.path().join("input.pdf");
+    fs::copy(source.as_path(), source_copy.as_path()).map_err(|error| {
+        pdf_render_error(
+            "source_copy_failed",
+            format!(
+                "copy PDF source into private render directory: {error}; source={}",
+                source.display()
+            ),
+        )
+    })?;
+    ensure_regular_non_symlink_file(source_copy.as_path(), "private PDF copy")
+        .map_err(remap_pdf_render_error)?;
+    let source_copy_sha256 = sha256_file(source_copy.as_path()).map_err(|error| {
+        pdf_render_error(
+            "source_copy_failed",
+            format!("hash private PDF source copy: {error}"),
+        )
+    })?;
+    if source_copy_sha256 != source_sha256 {
+        return Err(pdf_render_error(
+            "source_copy_failed",
+            "private PDF source copy does not match the validated source snapshot",
+        ));
+    }
+    let pdf_document = Document::load(source_copy.as_path())
+        .map_err(|error| pdf_render_error("source_invalid", format!("open PDF: {error}")))?;
+    if pdf_document.is_encrypted() {
+        return Err(pdf_render_error(
+            "source_invalid",
+            "encrypted PDFs cannot be exported as page images",
+        ));
+    }
+    let page_count = pdf_document.get_pages().len();
+    if page_count == 0 || page_count > MAX_DOCUMENT_PAGES {
+        return Err(pdf_render_error(
+            "page_limit_exceeded",
+            format!("PDF page count must be between 1 and {MAX_DOCUMENT_PAGES}"),
+        ));
+    }
+    let (first_page, last_page) =
+        selected_pdf_export_page_range(&options, page_count).map_err(remap_pdf_render_error)?;
+
+    let output_dir = work.path().join("output");
+    let home_dir = work.path().join("home");
+    let temp_dir = work.path().join("tmp");
+    for directory in [&output_dir, &home_dir, &temp_dir] {
+        fs::create_dir(directory).map_err(|error| {
+            pdf_render_error(
+                "private_directory_failed",
+                format!("create private PDF page export directory: {error}"),
+            )
+        })?;
+    }
+    let deadline = Instant::now() + options.timeout;
+    let page_prefix = output_dir.join("page");
+    let mut poppler_env = private_process_environment(home_dir.as_path(), temp_dir.as_path());
+    add_poppler_library_environment(&mut poppler_env, runtime.poppler_library_dir.as_deref());
+    let raster_args = vec![
+        OsString::from("-png"),
+        OsString::from("-r"),
+        OsString::from(options.dpi.to_string()),
+        OsString::from("-f"),
+        OsString::from(first_page.to_string()),
+        OsString::from("-l"),
+        OsString::from(last_page.to_string()),
+        source_copy.as_os_str().to_os_string(),
+        page_prefix.as_os_str().to_os_string(),
+    ];
+    let rasterization = run_bounded_command(
+        runtime.pdftoppm.as_path(),
+        raster_args.as_slice(),
+        work.path(),
+        &poppler_env,
+        remaining_time(deadline).map_err(remap_pdf_render_error)?,
+        action_cancelled,
+        "PDF page export rasterization",
+    )
+    .map_err(remap_pdf_render_error)?;
+    if !rasterization.status.success() {
+        return Err(remap_pdf_render_error(command_failure(
+            "rasterization_failed",
+            "Poppler did not rasterize the requested PDF page export range",
+            &rasterization,
+        )));
+    }
+    let pages = collect_rendered_pages_with_limits(
+        output_dir.as_path(),
+        first_page,
+        last_page,
+        MAX_EXPORTED_PAGE_PNG_BYTES,
+        MAX_EXPORTED_PNG_BYTES,
+    )
+    .map_err(remap_pdf_render_error)?;
+    let source_sha256_after = sha256_file(source.as_path()).map_err(|error| {
+        pdf_render_error(
+            "source_invalid",
+            format!("re-hash PDF source after rendering: {error}"),
+        )
+    })?;
+    if source_sha256_after != source_sha256 {
+        return Err(pdf_render_error(
+            "source_modified",
+            "PDF source changed while page images were rendered; the result was discarded",
+        ));
+    }
+    ensure_not_cancelled(action_cancelled).map_err(remap_pdf_render_error)?;
+    let files = persist_new_rendered_page_directory(
+        pages.as_slice(),
+        options.target_directory.as_path(),
+        options.target_directory_relative.as_str(),
+        options.filename_prefix.as_str(),
+        action_cancelled,
+    )
+    .map_err(remap_pdf_render_error)?;
+    let rendered_all_pages = first_page == 1 && last_page == page_count;
+    Ok(json!({
+        "text": format!(
+            "Exported PDF pages {first_page}-{last_page} of {page_count} as {} verified PNG files in {}. The files were persisted, but visual review has not been performed.",
+            files.len(),
+            options.target_directory_relative,
+        ),
+        "_structured_result": {
+            "success": true,
+            "path": source_relative,
+            "source_bytes": source_bytes,
+            "source_sha256": source_sha256,
+            "structure_validation": "passed",
+            "target_directory": options.target_directory_relative,
+            "pages_total": page_count,
+            "first_page": first_page,
+            "last_page": last_page,
+            "rendered_pages": files.len(),
+            "rendered_all_pages": rendered_all_pages,
+            "remaining_pages": page_count.saturating_sub(last_page),
+            "dpi": options.dpi,
+            "filename_prefix": options.filename_prefix,
+            "files": files,
+            "render_runtime": {
+                "revision": runtime.revision,
+                "poppler": runtime.pdftoppm_version,
+                "manifest_verified": true,
+                "ambient_path_used": false,
+            },
+            "output_transaction": "new_directory_with_per_file_atomic_commit_and_error_rollback",
+            "visual_review_status": "not_performed",
+            "layout_verified": false,
+            "transient_images": false,
+            "source_modified": false,
+        }
     }))
 }
 
@@ -1119,18 +1287,7 @@ pub(super) fn render_docx_pages_with_runtime(
 
     let page_prefix = output_dir.join("page");
     let mut poppler_env = private_process_environment(home_dir.as_path(), temp_dir.as_path());
-    if let Some(library_dir) = runtime.poppler_library_dir.as_deref() {
-        #[cfg(target_os = "macos")]
-        poppler_env.insert(
-            "DYLD_FALLBACK_LIBRARY_PATH".to_string(),
-            library_dir.as_os_str().to_os_string(),
-        );
-        #[cfg(target_os = "linux")]
-        poppler_env.insert(
-            "LD_LIBRARY_PATH".to_string(),
-            library_dir.as_os_str().to_os_string(),
-        );
-    }
+    add_poppler_library_environment(&mut poppler_env, runtime.poppler_library_dir.as_deref());
     let raster_args = vec![
         OsString::from("-png"),
         OsString::from("-r"),
@@ -1366,6 +1523,110 @@ fn pdf_render_options(arguments: &Value) -> Result<RenderOptions> {
         pdf_target: None,
         overwrite: false,
     })
+}
+
+fn pdf_page_export_options(
+    arguments: &Value,
+    state: &LocalState,
+    request: &RelayRequest,
+) -> Result<PdfPageExportOptions> {
+    let target_requested = required_text(arguments, "target_directory")
+        .map_err(|error| pdf_render_error("invalid_arguments", error))?;
+    let (target_directory, target_directory_relative) =
+        safe_workspace_path(state, request, target_requested)
+            .map_err(|error| pdf_render_error("output_invalid", error))?;
+    validate_new_output_directory_target(target_directory.as_path())
+        .map_err(remap_pdf_render_error)?;
+    let first_page = bounded_integer(arguments, "first_page", 1, MAX_DOCUMENT_PAGES, 1)
+        .map_err(remap_pdf_render_error)?;
+    let requested_last_page = arguments
+        .get("last_page")
+        .map(|_| bounded_integer(arguments, "last_page", 1, MAX_DOCUMENT_PAGES, 1))
+        .transpose()
+        .map_err(remap_pdf_render_error)?;
+    if requested_last_page.is_some_and(|last| last < first_page) {
+        return Err(pdf_render_error(
+            "invalid_page_range",
+            "last_page must be greater than or equal to first_page",
+        ));
+    }
+    if requested_last_page.is_some_and(|last| {
+        last.saturating_sub(first_page).saturating_add(1) > MAX_EXPORTED_PDF_PAGES
+    }) {
+        return Err(pdf_render_error(
+            "page_batch_limit_exceeded",
+            format!("at most {MAX_EXPORTED_PDF_PAGES} PDF pages may be exported per call"),
+        ));
+    }
+    let dpi =
+        bounded_integer(arguments, "dpi", 96, 300, 150).map_err(remap_pdf_render_error)? as u32;
+    let filename_prefix = match arguments.get("filename_prefix") {
+        None => "page".to_string(),
+        Some(value) => value
+            .as_str()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string)
+            .ok_or_else(|| {
+                pdf_render_error(
+                    "invalid_arguments",
+                    "filename_prefix must be a non-empty string",
+                )
+            })?,
+    };
+    if filename_prefix.len() > 64
+        || !filename_prefix
+            .as_bytes()
+            .first()
+            .is_some_and(u8::is_ascii_alphanumeric)
+        || !filename_prefix
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+    {
+        return Err(pdf_render_error(
+            "invalid_arguments",
+            "filename_prefix must begin with an ASCII letter or digit and contain only ASCII letters, digits, hyphens, or underscores",
+        ));
+    }
+    let timeout_seconds = bounded_integer(arguments, "timeout_seconds", 15, 300, 180)
+        .map_err(remap_pdf_render_error)?;
+    Ok(PdfPageExportOptions {
+        target_directory,
+        target_directory_relative,
+        first_page,
+        requested_last_page,
+        dpi,
+        filename_prefix,
+        timeout: Duration::from_secs(timeout_seconds as u64),
+    })
+}
+
+fn selected_pdf_export_page_range(
+    options: &PdfPageExportOptions,
+    page_count: usize,
+) -> Result<(usize, usize)> {
+    if options.first_page > page_count {
+        return Err(render_error(
+            "invalid_page_range",
+            format!(
+                "first_page {} exceeds PDF page count {page_count}",
+                options.first_page
+            ),
+        ));
+    }
+    let last_page = options.requested_last_page.unwrap_or_else(|| {
+        options
+            .first_page
+            .saturating_add(MAX_EXPORTED_PDF_PAGES - 1)
+            .min(page_count)
+    });
+    if last_page > page_count {
+        return Err(render_error(
+            "invalid_page_range",
+            format!("last_page {last_page} exceeds PDF page count {page_count}"),
+        ));
+    }
+    Ok((options.first_page, last_page))
 }
 
 fn selected_page_range(options: &RenderOptions, page_count: usize) -> Result<(usize, usize)> {
@@ -1823,6 +2084,28 @@ fn private_process_environment(home: &Path, temp: &Path) -> BTreeMap<String, OsS
     environment
 }
 
+fn add_poppler_library_environment(
+    environment: &mut BTreeMap<String, OsString>,
+    library_dir: Option<&Path>,
+) {
+    #[cfg(target_os = "macos")]
+    if let Some(library_dir) = library_dir {
+        environment.insert(
+            "DYLD_FALLBACK_LIBRARY_PATH".to_string(),
+            library_dir.as_os_str().to_os_string(),
+        );
+    }
+    #[cfg(target_os = "linux")]
+    if let Some(library_dir) = library_dir {
+        environment.insert(
+            "LD_LIBRARY_PATH".to_string(),
+            library_dir.as_os_str().to_os_string(),
+        );
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    let _ = (environment, library_dir);
+}
+
 fn trusted_font_paths(runtime_fonts: &Path) -> Result<OsString> {
     let mut paths = vec![runtime_fonts.to_path_buf()];
     #[cfg(target_os = "macos")]
@@ -2115,6 +2398,22 @@ fn collect_rendered_pages(
     first: usize,
     last: usize,
 ) -> Result<Vec<RenderedPage>> {
+    collect_rendered_pages_with_limits(
+        output_dir,
+        first,
+        last,
+        MAX_PAGE_PNG_BYTES,
+        MAX_RENDERED_PNG_BYTES,
+    )
+}
+
+fn collect_rendered_pages_with_limits(
+    output_dir: &Path,
+    first: usize,
+    last: usize,
+    max_page_bytes: usize,
+    max_total_bytes: usize,
+) -> Result<Vec<RenderedPage>> {
     let expected = (first..=last).collect::<BTreeSet<_>>();
     let mut discovered = BTreeMap::new();
     for entry in fs::read_dir(output_dir).map_err(|error| {
@@ -2161,17 +2460,23 @@ fn collect_rendered_pages(
                 format!("read rendered page {number}: {error}"),
             )
         })?;
-        if bytes.is_empty() || bytes.len() > MAX_PAGE_PNG_BYTES {
+        if bytes.is_empty() || bytes.len() > max_page_bytes {
             return Err(render_error(
                 "output_limit_exceeded",
-                format!("rendered page {number} is empty or exceeds 8 MiB"),
+                format!(
+                    "rendered page {number} is empty or exceeds {} MiB",
+                    max_page_bytes / (1024 * 1024)
+                ),
             ));
         }
         total_bytes = total_bytes.saturating_add(bytes.len());
-        if total_bytes > MAX_RENDERED_PNG_BYTES {
+        if total_bytes > max_total_bytes {
             return Err(render_error(
                 "output_limit_exceeded",
-                "rendered page batch exceeds 32 MiB",
+                format!(
+                    "rendered page batch exceeds {} MiB",
+                    max_total_bytes / (1024 * 1024)
+                ),
             ));
         }
         let (width, height) = png_dimensions(bytes.as_slice())?;
@@ -2208,6 +2513,188 @@ fn png_dimensions(bytes: &[u8]) -> Result<(u32, u32)> {
         ));
     }
     Ok((width, height))
+}
+
+fn validate_new_output_directory_target(target: &Path) -> Result<()> {
+    match fs::symlink_metadata(target) {
+        Ok(metadata) => {
+            if metadata.file_type().is_symlink() {
+                return Err(render_error(
+                    "output_invalid",
+                    "PDF page export target_directory must not be a symlink",
+                ));
+            }
+            Err(render_error(
+                "output_exists",
+                "PDF page export target_directory already exists; choose a new directory",
+            ))
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(render_error(
+            "output_invalid",
+            format!("inspect PDF page export target_directory: {error}"),
+        )),
+    }
+}
+
+fn persist_new_rendered_page_directory(
+    pages: &[RenderedPage],
+    target_directory: &Path,
+    target_directory_relative: &str,
+    filename_prefix: &str,
+    action_cancelled: Option<&AtomicBool>,
+) -> Result<Vec<Value>> {
+    validate_new_output_directory_target(target_directory)?;
+    let parent = target_directory.parent().ok_or_else(|| {
+        render_error(
+            "output_invalid",
+            "PDF page export target_directory has no parent directory",
+        )
+    })?;
+    fs::create_dir_all(parent).map_err(|error| {
+        render_error(
+            "output_invalid",
+            format!("create PDF page export parent directory: {error}"),
+        )
+    })?;
+    validate_new_output_directory_target(target_directory)?;
+    fs::create_dir(target_directory).map_err(|error| {
+        render_error(
+            if error.kind() == std::io::ErrorKind::AlreadyExists {
+                "output_exists"
+            } else {
+                "output_invalid"
+            },
+            format!("create new PDF page export directory: {error}"),
+        )
+    })?;
+
+    let commit = (|| {
+        let mut files = Vec::with_capacity(pages.len());
+        for page in pages {
+            ensure_not_cancelled(action_cancelled)?;
+            let filename = format!("{filename_prefix}-{}.png", page.number);
+            let target = target_directory.join(filename.as_str());
+            let mut temporary = NamedTempFile::new_in(target_directory).map_err(|error| {
+                render_error(
+                    "output_invalid",
+                    format!("create temporary exported page {}: {error}", page.number),
+                )
+            })?;
+            temporary
+                .write_all(page.bytes.as_slice())
+                .map_err(|error| {
+                    render_error(
+                        "output_invalid",
+                        format!("write temporary exported page {}: {error}", page.number),
+                    )
+                })?;
+            temporary.as_file_mut().flush().map_err(|error| {
+                render_error(
+                    "output_invalid",
+                    format!("flush temporary exported page {}: {error}", page.number),
+                )
+            })?;
+            temporary.as_file_mut().sync_all().map_err(|error| {
+                render_error(
+                    "output_invalid",
+                    format!("sync temporary exported page {}: {error}", page.number),
+                )
+            })?;
+            let temporary_bytes = temporary
+                .as_file()
+                .metadata()
+                .map_err(|error| {
+                    render_error(
+                        "output_invalid",
+                        format!("inspect temporary exported page {}: {error}", page.number),
+                    )
+                })?
+                .len();
+            if temporary_bytes != page.bytes.len() as u64 {
+                return Err(render_error(
+                    "output_invalid",
+                    format!(
+                        "temporary exported page {} has an unexpected size",
+                        page.number
+                    ),
+                ));
+            }
+            temporary
+                .persist_noclobber(target.as_path())
+                .map_err(|error| {
+                    render_error(
+                        if error.error.kind() == std::io::ErrorKind::AlreadyExists {
+                            "output_exists"
+                        } else {
+                            "output_invalid"
+                        },
+                        format!("persist exported page {}: {}", page.number, error.error),
+                    )
+                })?;
+            let persisted_metadata = fs::symlink_metadata(target.as_path()).map_err(|error| {
+                render_error(
+                    "output_invalid",
+                    format!("inspect persisted exported page {}: {error}", page.number),
+                )
+            })?;
+            if persisted_metadata.file_type().is_symlink() || !persisted_metadata.is_file() {
+                return Err(render_error(
+                    "output_invalid",
+                    format!(
+                        "persisted exported page {} is not a regular non-symlink file",
+                        page.number
+                    ),
+                ));
+            }
+            let persisted_sha256 = sha256_file(target.as_path()).map_err(|error| {
+                render_error(
+                    "output_invalid",
+                    format!("hash persisted exported page {}: {error}", page.number),
+                )
+            })?;
+            if persisted_sha256 != page.sha256 {
+                return Err(render_error(
+                    "output_invalid",
+                    format!(
+                        "persisted exported page {} failed SHA-256 verification",
+                        page.number
+                    ),
+                ));
+            }
+            files.push(json!({
+                "page": page.number,
+                "path": format!("{target_directory_relative}/{filename}"),
+                "width": page.width,
+                "height": page.height,
+                "mime_type": "image/png",
+                "size_bytes": page.bytes.len(),
+                "sha256": page.sha256,
+                "persisted": true,
+            }));
+        }
+        ensure_not_cancelled(action_cancelled)?;
+        Ok(files)
+    })();
+
+    match commit {
+        Ok(files) => Ok(files),
+        Err(error) => {
+            let cleanup = fs::symlink_metadata(target_directory)
+                .ok()
+                .filter(|metadata| !metadata.file_type().is_symlink() && metadata.is_dir())
+                .map(|_| fs::remove_dir_all(target_directory));
+            if cleanup.is_some_and(|result| result.is_err()) {
+                return Err(render_error(
+                    "output_rollback_failed",
+                    format!(
+                        "{error}; additionally failed to remove incomplete PDF page export directory"
+                    ),
+                ));
+            }
+            Err(error)
+        }
+    }
 }
 
 fn persist_verified_pdf(source: &Path, target: &Path, overwrite: bool) -> Result<u64> {
@@ -2598,6 +3085,212 @@ mod tests {
             .to_string()
             .contains("pdf_render/page_batch_limit_exceeded"));
         let _ = fs::remove_dir_all(workspace);
+    }
+
+    #[test]
+    fn fake_verified_runtime_persists_pdf_page_range_in_one_new_directory() {
+        let (workspace, state, request) = test_context();
+        let runtime = tempfile::tempdir().expect("runtime");
+        let fixture_png = runtime.path().join("fixture.png");
+        fs::write(
+            fixture_png.as_path(),
+            STANDARD
+                .decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=")
+                .expect("PNG"),
+        )
+        .expect("write PNG");
+        let soffice = runtime.path().join("soffice");
+        write_executable(soffice.as_path(), "#!/bin/sh\nexit 99\n");
+        let pdftoppm = runtime.path().join("pdftoppm");
+        write_executable(
+            pdftoppm.as_path(),
+            format!(
+                "#!/bin/sh\nprefix=''\nfirst=''\nlast=''\nprevious=''\nfor value in \"$@\"; do\n  if [ \"$previous\" = '-f' ]; then first=\"$value\"; fi\n  if [ \"$previous\" = '-l' ]; then last=\"$value\"; fi\n  prefix=\"$value\"\n  previous=\"$value\"\ndone\npage=\"$first\"\nwhile [ \"$page\" -le \"$last\" ]; do\n  /bin/cp '{}' \"${{prefix}}-${{page}}.png\"\n  page=$((page + 1))\ndone\n",
+                fixture_png.display()
+            )
+            .as_str(),
+        );
+        write_runtime_manifest(
+            runtime.path(),
+            "soffice",
+            sha256_file(soffice.as_path())
+                .expect("soffice hash")
+                .as_str(),
+            "pdftoppm",
+            sha256_file(pdftoppm.as_path())
+                .expect("pdftoppm hash")
+                .as_str(),
+        );
+        let source = workspace.join("input.pdf");
+        write_blank_pdf_pages(source.as_path(), 3);
+        let source_before = fs::read(source.as_path()).expect("source PDF");
+
+        let result = export_pdf_pages_to_png_with_runtime(
+            &json!({
+                "path":"input.pdf",
+                "target_directory":"exports/pages",
+                "first_page":2,
+                "last_page":3,
+                "dpi":200,
+                "filename_prefix":"sheet"
+            }),
+            &state,
+            &request,
+            Some(&AtomicBool::new(false)),
+            Some(runtime.path()),
+        )
+        .expect("export PDF page images");
+        assert_eq!(
+            result
+                .pointer("/_structured_result/rendered_pages")
+                .and_then(Value::as_u64),
+            Some(2)
+        );
+        assert_eq!(
+            result
+                .pointer("/_structured_result/files/0/path")
+                .and_then(Value::as_str),
+            Some("exports/pages/sheet-2.png")
+        );
+        assert_eq!(
+            result
+                .pointer("/_structured_result/files/1/path")
+                .and_then(Value::as_str),
+            Some("exports/pages/sheet-3.png")
+        );
+        assert_eq!(
+            result
+                .pointer("/_structured_result/visual_review_status")
+                .and_then(Value::as_str),
+            Some("not_performed")
+        );
+        assert!(result.get("_model_input").is_none());
+        assert!(workspace.join("exports/pages/sheet-2.png").is_file());
+        assert!(workspace.join("exports/pages/sheet-3.png").is_file());
+        assert_eq!(
+            fs::read_dir(workspace.join("exports/pages"))
+                .expect("export directory")
+                .count(),
+            2
+        );
+        assert_eq!(
+            fs::read(source.as_path()).expect("source after export"),
+            source_before
+        );
+        let _ = fs::remove_dir_all(workspace);
+    }
+
+    #[test]
+    fn pdf_page_export_rejects_unsafe_targets_ranges_prefixes_and_cancellation() {
+        let (workspace, state, request) = test_context();
+        let source = workspace.join("input.pdf");
+        write_blank_pdf(source.as_path());
+        fs::create_dir_all(workspace.join("existing")).expect("existing directory");
+        fs::write(workspace.join("existing/keep.txt"), b"keep").expect("existing file");
+
+        let existing = export_pdf_pages_to_png_with_runtime(
+            &json!({"path":"input.pdf","target_directory":"existing"}),
+            &state,
+            &request,
+            Some(&AtomicBool::new(false)),
+            None,
+        )
+        .expect_err("existing directory must fail before runtime loading");
+        assert!(existing.to_string().contains("pdf_render/output_exists"));
+        assert_eq!(
+            fs::read(workspace.join("existing/keep.txt")).expect("preserved existing file"),
+            b"keep"
+        );
+
+        let range = export_pdf_pages_to_png_with_runtime(
+            &json!({
+                "path":"input.pdf",
+                "target_directory":"range-output",
+                "first_page":1,
+                "last_page":51
+            }),
+            &state,
+            &request,
+            Some(&AtomicBool::new(false)),
+            None,
+        )
+        .expect_err("oversized page export must fail before runtime loading");
+        assert!(range
+            .to_string()
+            .contains("pdf_render/page_batch_limit_exceeded"));
+        assert!(!workspace.join("range-output").exists());
+
+        let prefix = export_pdf_pages_to_png_with_runtime(
+            &json!({
+                "path":"input.pdf",
+                "target_directory":"prefix-output",
+                "filename_prefix":"../unsafe"
+            }),
+            &state,
+            &request,
+            Some(&AtomicBool::new(false)),
+            None,
+        )
+        .expect_err("unsafe filename prefix must fail before runtime loading");
+        assert!(prefix.to_string().contains("pdf_render/invalid_arguments"));
+        assert!(!workspace.join("prefix-output").exists());
+
+        let cancelled = export_pdf_pages_to_png_with_runtime(
+            &json!({"path":"input.pdf","target_directory":"cancelled-output"}),
+            &state,
+            &request,
+            Some(&AtomicBool::new(true)),
+            None,
+        )
+        .expect_err("pre-cancelled page export must fail");
+        assert!(cancelled.to_string().contains("pdf_render/cancelled"));
+        assert!(!workspace.join("cancelled-output").exists());
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::symlink;
+
+            symlink(workspace.join("existing"), workspace.join("linked-output"))
+                .expect("output symlink");
+            let symlink_error = export_pdf_pages_to_png_with_runtime(
+                &json!({"path":"input.pdf","target_directory":"linked-output"}),
+                &state,
+                &request,
+                Some(&AtomicBool::new(false)),
+                None,
+            )
+            .expect_err("symlink output must fail");
+            assert!(symlink_error
+                .to_string()
+                .contains("pdf_render/output_invalid"));
+        }
+        let _ = fs::remove_dir_all(workspace);
+    }
+
+    #[test]
+    fn pdf_page_export_rolls_back_a_new_directory_when_commit_is_cancelled() {
+        let workspace = tempfile::tempdir().expect("workspace");
+        let bytes = STANDARD
+            .decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=")
+            .expect("PNG");
+        let page = RenderedPage {
+            number: 1,
+            width: 1,
+            height: 1,
+            sha256: hex::encode(Sha256::digest(bytes.as_slice())),
+            bytes,
+        };
+        let target = workspace.path().join("cancelled-pages");
+        let error = persist_new_rendered_page_directory(
+            &[page],
+            target.as_path(),
+            "cancelled-pages",
+            "page",
+            Some(&AtomicBool::new(true)),
+        )
+        .expect_err("cancelled commit must fail");
+        assert!(error.to_string().contains("documents_render/cancelled"));
+        assert!(!target.exists());
     }
 
     #[test]
@@ -3013,6 +3706,80 @@ mod tests {
 
     #[test]
     #[ignore = "requires CHATOS_DOCUMENT_RUNTIME_DIR with a real packaged runtime"]
+    fn packaged_runtime_smoke_exports_real_pdf_pages_to_png() {
+        let (workspace, state, request) = test_context();
+        super::super::pdf_edit::create_text_pdf(
+            &json!({
+                "target_path":"smoke.pdf",
+                "title":"PDF page export smoke test",
+                "paragraphs":[
+                    "The packaged Poppler runtime must persist this page as a verified PNG.",
+                    "The exported image remains a workspace artifact and is not transient model input."
+                ]
+            }),
+            &state,
+            &request,
+        )
+        .expect("create page export smoke PDF");
+        let source_before = fs::read(workspace.join("smoke.pdf")).expect("source PDF");
+        let result = export_pdf_pages_to_png(
+            &json!({
+                "path":"smoke.pdf",
+                "target_directory":"exports",
+                "dpi":150,
+                "filename_prefix":"page"
+            }),
+            &state,
+            &request,
+            Some(&AtomicBool::new(false)),
+        )
+        .expect("export smoke PDF page");
+        assert_eq!(
+            result
+                .pointer("/_structured_result/rendered_pages")
+                .and_then(Value::as_u64),
+            Some(1)
+        );
+        assert_eq!(
+            result
+                .pointer("/_structured_result/files/0/path")
+                .and_then(Value::as_str),
+            Some("exports/page-1.png")
+        );
+        assert_eq!(
+            result
+                .pointer("/_structured_result/visual_review_status")
+                .and_then(Value::as_str),
+            Some("not_performed")
+        );
+        assert_eq!(
+            result
+                .pointer("/_structured_result/layout_verified")
+                .and_then(Value::as_bool),
+            Some(false)
+        );
+        assert!(result.get("_model_input").is_none());
+        assert!(workspace.join("exports/page-1.png").is_file());
+        assert_eq!(
+            fs::read(workspace.join("smoke.pdf")).expect("source after export"),
+            source_before
+        );
+        if let Some(output) = std::env::var_os("CHATOS_PDF_EXPORT_SMOKE_OUTPUT_DIR") {
+            let output = PathBuf::from(output);
+            fs::create_dir_all(output.as_path()).expect("create smoke output directory");
+            fs::copy(workspace.join("smoke.pdf"), output.join("source.pdf"))
+                .expect("write smoke source PDF");
+            fs::copy(
+                workspace.join("exports/page-1.png"),
+                output.join("page-1.png"),
+            )
+            .expect("write smoke page PNG");
+        }
+        let _ = fs::remove_dir_all(workspace);
+    }
+
+    #[test]
+    #[ignore = "requires CHATOS_DOCUMENT_RUNTIME_DIR with a real packaged runtime"]
     fn packaged_runtime_smoke_renders_a_real_spreadsheet_workbook() {
         let (workspace, state, request) = test_context();
         super::super::spreadsheet::create_xlsx(
@@ -3325,19 +4092,27 @@ mod tests {
     }
 
     fn write_blank_pdf(path: &Path) {
+        write_blank_pdf_pages(path, 1);
+    }
+
+    fn write_blank_pdf_pages(path: &Path, page_count: usize) {
         let mut document = Document::with_version("1.5");
         let pages_id = document.new_object_id();
-        let page_id = document.add_object(dictionary! {
-            "Type" => "Page",
-            "Parent" => pages_id,
-            "MediaBox" => vec![0.into(), 0.into(), 595.into(), 842.into()],
-        });
+        let page_ids = (0..page_count)
+            .map(|_| {
+                document.add_object(dictionary! {
+                    "Type" => "Page",
+                    "Parent" => pages_id,
+                    "MediaBox" => vec![0.into(), 0.into(), 595.into(), 842.into()],
+                })
+            })
+            .collect::<Vec<_>>();
         document.objects.insert(
             pages_id,
             Object::Dictionary(dictionary! {
                 "Type" => "Pages",
-                "Kids" => vec![Object::Reference(page_id)],
-                "Count" => 1,
+                "Kids" => page_ids.into_iter().map(Object::Reference).collect::<Vec<_>>(),
+                "Count" => page_count as i64,
             }),
         );
         let catalog_id = document.add_object(dictionary! {

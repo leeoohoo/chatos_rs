@@ -9,6 +9,7 @@ pub(super) fn tool_definitions(skill_id: &str) -> Vec<Value> {
             inspect_pdf_tool(),
             extract_pdf_text_tool(),
             render_pdf_pages_tool(),
+            export_pdf_pages_to_png_tool(),
             create_text_pdf_tool(),
             create_pdf_from_images_tool(),
             update_pdf_metadata_tool(),
@@ -159,6 +160,27 @@ fn render_pdf_pages_tool() -> Value {
                 "timeout_seconds":{"type":"integer","minimum":15,"maximum":180,"default":120}
             },
             "required":["path"],
+            "additionalProperties":false
+        }),
+    )
+}
+
+fn export_pdf_pages_to_png_tool() -> Value {
+    tool(
+        "export_pdf_pages_to_png",
+        "Validate one regular non-symlink workspace PDF and use the packaged, manifest-verified Poppler runtime to persist a bounded physical page range as PNG files in one new workspace directory. The complete batch is rendered and validated before output begins; existing directories are never replaced, and a handled write failure or cancellation rolls back the new directory.",
+        json!({
+            "type":"object",
+            "properties":{
+                "path":{"type":"string","description":"Workspace-relative source .pdf path."},
+                "target_directory":{"type":"string","description":"Workspace-relative output directory. It must not already exist; the tool creates it and never replaces existing files or directories."},
+                "first_page":{"type":"integer","minimum":1,"maximum":500,"default":1},
+                "last_page":{"type":"integer","minimum":1,"maximum":500,"description":"Inclusive final physical page. At most 50 pages may be exported per call; omit to export up to 50 pages from first_page."},
+                "dpi":{"type":"integer","minimum":96,"maximum":300,"default":150},
+                "filename_prefix":{"type":"string","minLength":1,"maxLength":64,"pattern":"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$","default":"page","description":"Safe ASCII prefix. Output names are <prefix>-<physical-page-number>.png."},
+                "timeout_seconds":{"type":"integer","minimum":15,"maximum":300,"default":180}
+            },
+            "required":["path","target_directory"],
             "additionalProperties":false
         }),
     )

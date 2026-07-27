@@ -35,7 +35,7 @@ fn pdf_release_publishes_bounded_generation_and_editing_tools() {
         .into_iter()
         .find(|item| item.skill_id == "internal_skill_pdf")
         .expect("PDF catalog item");
-    assert_eq!(catalog_item.version, "1.13.0");
+    assert_eq!(catalog_item.version, "1.14.0");
     assert_eq!(
         catalog_item.permissions,
         vec!["workspace.read", "workspace.write"]
@@ -56,10 +56,11 @@ fn pdf_release_publishes_bounded_generation_and_editing_tools() {
         .iter()
         .filter_map(|tool| tool.get("name").and_then(Value::as_str))
         .collect::<HashSet<_>>();
-    assert_eq!(tools.len(), 15);
+    assert_eq!(tools.len(), 16);
     assert!(names.contains("inspect_pdf"));
     assert!(names.contains("extract_pdf_text"));
     assert!(names.contains("render_pdf_pages"));
+    assert!(names.contains("export_pdf_pages_to_png"));
     assert!(names.contains("create_text_pdf"));
     assert!(names.contains("create_pdf_from_images"));
     assert!(names.contains("update_pdf_metadata"));
@@ -91,6 +92,8 @@ fn pdf_release_publishes_bounded_generation_and_editing_tools() {
     assert!(instructions.contains("Editable choice fields"));
     assert!(instructions.contains("combined inputs are limited to 100 MiB and 100 megapixels"));
     assert!(instructions.contains("Always call `render_pdf_pages` on the generated PDF"));
+    assert!(instructions.contains("target_directory` that does not already exist"));
+    assert!(instructions.contains("per-file atomic commit"));
 }
 
 #[test]
@@ -758,7 +761,7 @@ fn ready_bundle_v2_fingerprint_matches_plugin_management_seed() {
         .join("\n");
     assert_eq!(
         hex::encode(Sha256::digest(rows.as_bytes())),
-        "997f9d07a72ad17d2408d67c92cd28fd68ad465afbbe6746dc40db284dbb85c0"
+        "3d047d20130c1e535733d2266774bd6f17e4fc3d5f36ce15487ef450cdb4d86a"
     );
 }
 
@@ -773,7 +776,7 @@ fn all_28_bundled_skill_fingerprints_match_plugin_management_seed() {
         .join("\n");
     assert_eq!(
         hex::encode(Sha256::digest(rows.as_bytes())),
-        "052c79450ae60346d008665d03fd4f39719e8318bee7a2770fae8c369eadc305"
+        "2b30460b6886b9e9619994d4e5e2a989ced9046a8aa92a67bf557a9d78ca09b4"
     );
 }
 
