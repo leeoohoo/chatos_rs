@@ -56,6 +56,7 @@ pub(in crate::services::environment_agent) async fn generate_project_runtime_env
                 .then_some(index)
         })
         .collect::<Vec<_>>();
+    let include_project_stack_evidence = application_indexes.len() == 1;
     for index in &application_indexes {
         if images[*index]
             .dockerfile
@@ -67,8 +68,11 @@ pub(in crate::services::environment_agent) async fn generate_project_runtime_env
                 images[*index].service_id
             ));
         }
-        let features =
-            program_managed_sandbox_features(&images[*index], &environment.detected_stack);
+        let features = program_managed_sandbox_features(
+            &images[*index],
+            &environment.detected_stack,
+            include_project_stack_evidence,
+        );
         images[*index].features = serde_json::json!(features);
         images[*index].status = "building".to_string();
         images[*index].error = None;
@@ -331,6 +335,7 @@ fn runtime_image_is_ready(image: &ProjectRuntimeEnvironmentImageRecord) -> bool 
 fn program_managed_sandbox_features(
     image: &ProjectRuntimeEnvironmentImageRecord,
     detected_stack: &Value,
+    include_project_stack_evidence: bool,
 ) -> Vec<String> {
     const ORDERED_RUNTIMES: [&str; 10] = [
         "java", "node", "python", "rust", "go", "dotnet", "php", "ruby", "gcc", "clang",
@@ -351,10 +356,15 @@ fn program_managed_sandbox_features(
         }
     }
 
+    let project_stack_evidence = if include_project_stack_evidence {
+        serde_json::to_string(detected_stack).unwrap_or_default()
+    } else {
+        String::new()
+    };
     let evidence = format!(
         "{} {}",
         image.dockerfile.as_deref().unwrap_or_default(),
-        serde_json::to_string(detected_stack).unwrap_or_default(),
+        project_stack_evidence,
     )
     .to_ascii_lowercase();
     for (runtime, markers) in [
@@ -536,8 +546,40 @@ mod tests {
             "FROM maven:3-eclipse-temurin-21 AS build\nFROM eclipse-temurin:21-jre\n",
         );
         assert_eq!(
-            program_managed_sandbox_features(&image, &serde_json::json!({})),
+            program_managed_sandbox_features(&image, &serde_json::json!({}), false),
             vec!["java"]
+        );
+    }
+
+    #[test]
+    fn project_stack_evidence_is_not_shared_across_independent_applications() {
+        let image = application(
+            serde_json::json!(["base"]),
+            "FROM nginx:1.27-alpine\nCOPY . /usr/share/nginx/html\n",
+        );
+        assert_eq!(
+            program_managed_sandbox_features(
+                &image,
+                &serde_json::json!({"languages": ["Python"]}),
+                false,
+            ),
+            Vec::<String>::new()
+        );
+    }
+
+    #[test]
+    fn single_application_can_use_project_stack_evidence() {
+        let image = application(
+            serde_json::json!(["base"]),
+            "FROM nginx:1.27-alpine\nCOPY . /usr/share/nginx/html\n",
+        );
+        assert_eq!(
+            program_managed_sandbox_features(
+                &image,
+                &serde_json::json!({"languages": ["Python"]}),
+                true,
+            ),
+            vec!["python"]
         );
     }
 
@@ -548,7 +590,11 @@ mod tests {
             "FROM node:24-bookworm AS build\n",
         );
         assert_eq!(
-            program_managed_sandbox_features(&image, &serde_json::json!({"languages": ["Python"]}),),
+            program_managed_sandbox_features(
+                &image,
+                &serde_json::json!({"languages": ["Python"]}),
+                true,
+            ),
             vec!["node", "python"]
         );
     }
@@ -560,7 +606,7 @@ mod tests {
             "FROM eclipse-temurin:8-jre\n",
         );
         assert_eq!(
-            program_managed_sandbox_features(&image, &serde_json::json!({})),
+            program_managed_sandbox_features(&image, &serde_json::json!({}), false),
             vec!["java@8", "node@22"]
         );
     }
