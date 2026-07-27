@@ -18,8 +18,9 @@ use tempfile::TempDir;
 
 use super::{
     dependency_error_local, execute_approved_local, execute_local,
-    macos_frontmost_window_control_target_local, screen_capture_dependency_error_local,
-    ApprovedFrontmostWindowGuard, CONTROL_OPERATIONS,
+    macos_frontmost_window_control_target_local, preflight_window_layout_snapshot_local,
+    screen_capture_dependency_error_local, ApprovedFrontmostWindowGuard, WindowLayoutSnapshot,
+    CONTROL_OPERATIONS,
 };
 
 const HELPER_PROTOCOL_VERSION: u32 = 1;
@@ -59,6 +60,9 @@ struct HelperRequest {
 enum HelperCommand {
     ProtocolProbe,
     FrontmostWindowControlTarget,
+    WindowLayoutPreflight {
+        snapshot: WindowLayoutSnapshot,
+    },
     DependencyProbe {
         screen_capture_only: bool,
     },
@@ -123,6 +127,20 @@ pub(super) fn frontmost_window_control_target() -> Result<ApprovedFrontmostWindo
         .context("decode helper frontmost window control target")?;
     target.validate()?;
     Ok(target)
+}
+
+pub(super) fn preflight_window_layout(snapshot: &WindowLayoutSnapshot) -> Result<()> {
+    let request = HelperRequest {
+        protocol_version: HELPER_PROTOCOL_VERSION,
+        command: HelperCommand::WindowLayoutPreflight {
+            snapshot: snapshot.clone(),
+        },
+    };
+    let result = invoke_helper(&request, None, None)?;
+    if result.get("validated").and_then(Value::as_bool) != Some(true) {
+        bail!("macOS Computer Use helper did not validate the window layout snapshot");
+    }
+    Ok(())
 }
 
 fn dependency_probe(screen_capture_only: bool) -> Option<String> {
@@ -688,6 +706,9 @@ fn dispatch(request: HelperRequest) -> Result<Value> {
         HelperCommand::FrontmostWindowControlTarget => {
             serde_json::to_value(macos_frontmost_window_control_target_local()?)
                 .context("encode helper frontmost window control target")
+        }
+        HelperCommand::WindowLayoutPreflight { snapshot } => {
+            preflight_window_layout_snapshot_local(&snapshot)
         }
         HelperCommand::DependencyProbe {
             screen_capture_only,

@@ -106,6 +106,7 @@ fn computer_use_confirmation_requirement(
     }
     let risk = match audit.operation.as_str() {
         "computer_type_text" => "sensitive_text_entry",
+        "computer_restore_window_layout" => "multi_window_layout_restore",
         "computer_press_key" => {
             let key = audit_detail_value(audit, "key")?;
             let modifiers = audit_detail_value(audit, "modifiers").unwrap_or("none");
@@ -404,6 +405,13 @@ mod tests {
         assert_eq!(type_text_confirmation.kind, "typed_challenge");
         assert_eq!(type_text_confirmation.risk, "sensitive_text_entry");
         assert!(type_text_confirmation.challenge.starts_with("CONFIRM-"));
+
+        let restore = computer_use_request("computer_restore_window_layout", Vec::new());
+        let restore_confirmation = computer_use_confirmation_requirement(&restore)
+            .expect("window layout restore confirmation requirement");
+        assert_eq!(restore_confirmation.kind, "typed_challenge");
+        assert_eq!(restore_confirmation.risk, "multi_window_layout_restore");
+        assert!(restore_confirmation.challenge.starts_with("CONFIRM-"));
 
         for (key, modifiers, expected_risk) in [
             ("enter", "none", Some("submit_or_activate")),

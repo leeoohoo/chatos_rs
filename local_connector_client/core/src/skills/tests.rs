@@ -626,7 +626,7 @@ fn computer_use_release_keeps_control_on_the_plugin_approval_path() {
         .find(|item| item.skill_id == "internal_skill_computer_use")
         .expect("computer use catalog item");
     assert_eq!(catalog_item.implementation_status, "ready");
-    assert_eq!(catalog_item.version, "1.18.0");
+    assert_eq!(catalog_item.version, "1.19.0");
     assert_eq!(
         catalog_item.permissions,
         vec!["system.accessibility", "desktop.observe", "desktop.control"]
@@ -657,7 +657,7 @@ fn computer_use_release_keeps_control_on_the_plugin_approval_path() {
         &relay_request,
     )
     .expect("computer use tool definitions");
-    assert_eq!(tools.len(), 6);
+    assert_eq!(tools.len(), 7);
     let plugin_tools = native::plugin_tool_definitions(
         "internal_skill_computer_use",
         &LocalState::default(),
@@ -666,7 +666,7 @@ fn computer_use_release_keeps_control_on_the_plugin_approval_path() {
         true,
     )
     .expect("approved Plugin Computer Use tool definitions");
-    assert_eq!(plugin_tools.len(), 14);
+    assert_eq!(plugin_tools.len(), 16);
     let instructions = internal_skill_instructions("internal_skill_computer_use")
         .expect("Computer Use instructions");
     assert!(instructions.contains("left-button double-click"));
@@ -693,14 +693,19 @@ fn computer_use_release_keeps_control_on_the_plugin_approval_path() {
     assert!(instructions.contains("standard Windows window state"));
     assert!(instructions.contains("Frontmost-window geometry and state contract"));
     assert!(instructions.contains("capture only that frontmost window"));
+    assert!(instructions.contains("computer_capture_window_layout"));
+    assert!(instructions.contains("computer_restore_window_layout"));
+    assert!(instructions.contains("multi_window_layout_restore"));
+    assert!(instructions.contains("at most 8 ordinary visible top-level windows"));
+    assert!(instructions.contains("application_content_rollback=false"));
     assert!(
         instructions.contains("never assumes the controlled window remains on the main display")
     );
     assert!(instructions.contains("No Computer Use action exposes `acceptForSession`"));
     let manifest: Value = serde_json::from_str(include_str!(
-        "../../../skill_bundles/internal/computer-use/1.18.0/skill.json"
+        "../../../skill_bundles/internal/computer-use/1.19.0/skill.json"
     ))
-    .expect("Computer Use 1.18.0 manifest");
+    .expect("Computer Use 1.19.0 manifest");
     assert_eq!(
         manifest["platforms"],
         json!(["macos-arm64", "macos-x64", "windows-arm64", "windows-x64"])
@@ -713,7 +718,7 @@ fn computer_use_release_keeps_control_on_the_plugin_approval_path() {
         false,
     )
     .expect("fail-closed Plugin Computer Use tool definitions");
-    assert_eq!(plugin_tools_without_approval.len(), 6);
+    assert_eq!(plugin_tools_without_approval.len(), 7);
 
     let bundle_hash = internal_skill_bundle_hash(&catalog_item);
     let prepare = handle_skill_prepare(
@@ -761,7 +766,7 @@ fn ready_bundle_v2_fingerprint_matches_plugin_management_seed() {
         .join("\n");
     assert_eq!(
         hex::encode(Sha256::digest(rows.as_bytes())),
-        "3d047d20130c1e535733d2266774bd6f17e4fc3d5f36ce15487ef450cdb4d86a"
+        "f7f06221f534a3973bffc12d516c4494e72cffb0b8e9d7b1ffd44560c3f179e1"
     );
 }
 
@@ -776,7 +781,7 @@ fn all_28_bundled_skill_fingerprints_match_plugin_management_seed() {
         .join("\n");
     assert_eq!(
         hex::encode(Sha256::digest(rows.as_bytes())),
-        "2b30460b6886b9e9619994d4e5e2a989ced9046a8aa92a67bf557a9d78ca09b4"
+        "d87becf1cc59efc0dae803e69e087a8e4f9d8483b7a9afd908b7c20685a8e2e7"
     );
 }
 

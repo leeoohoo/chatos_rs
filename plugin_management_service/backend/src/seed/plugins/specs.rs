@@ -165,12 +165,12 @@ static BUNDLED_PLUGIN_SPECS: [BundledPluginSpec; 12] = [
     bundled_plugin_release(
         "computer-use",
         "Computer Use",
-        "Observe and control macOS or Windows desktops with exact window identity binding. Window move/resize, macOS AXFullScreen, and Windows maximize/restore now revalidate the requested native state, capture that exact frontmost window even after it moves to another display, and revalidate again without making observation failures replayable.",
+        "Observe and control macOS or Windows desktops with exact native identity binding. Adds a volatile 10-minute opaque snapshot and one-time restore for at most 8 ordinary windows; restore accepts only snapshot ID/SHA-256, requires fresh typed confirmation, and fails closed on display, process, native-window, state, or capability drift.",
         "Automation",
         &["internal_skill_computer_use"],
-        "1.18.0",
-        "2026-07-27T10:00:00Z",
-        "computer-use-1.18.0",
+        "1.19.0",
+        "2026-07-27T15:00:00Z",
+        "computer-use-1.19.0",
     ),
     bundled_plugin(
         "visualize",

@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "catalog_revision": "2026-07-27.4",
+  "catalog_revision": "2026-07-27.5",
   "release_version": "1.0.0",
   "release_epoch": "2026-07-22T00:00:00Z",
   "artifact_revision": "2026-07-13.5",
@@ -108,12 +108,12 @@
     {
       "name": "computer-use",
       "display_name": "Computer Use",
-      "description": "Observe and control macOS or Windows desktops with exact window identity binding. Window move/resize, macOS AXFullScreen, and Windows maximize/restore now revalidate the requested native state, capture that exact frontmost window even after it moves to another display, and revalidate again without making observation failures replayable.",
+      "description": "Observe and control macOS or Windows desktops with exact native identity binding. Adds a volatile 10-minute opaque snapshot and one-time restore for at most 8 ordinary windows; restore accepts only snapshot ID/SHA-256, requires fresh typed confirmation, and fails closed on display, process, native-window, state, or capability drift.",
       "category": "Automation",
       "skill_ids": ["internal_skill_computer_use"],
-      "release_version": "1.18.0",
-      "release_epoch": "2026-07-27T10:00:00Z",
-      "artifact_revision": "computer-use-1.18.0"
+      "release_version": "1.19.0",
+      "release_epoch": "2026-07-27T15:00:00Z",
+      "artifact_revision": "computer-use-1.19.0"
     },
     {
       "name": "visualize",

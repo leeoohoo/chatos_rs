@@ -6,6 +6,7 @@ mod helper;
 #[cfg(target_os = "windows")]
 mod windows;
 
+use std::collections::BTreeMap;
 #[cfg(target_os = "macos")]
 use std::ffi::c_void;
 use std::fs;
@@ -13,6 +14,7 @@ use std::io::Read;
 use std::path::Path;
 use std::process::{Command, ExitStatus, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Mutex, OnceLock};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -50,8 +52,12 @@ const MAX_WINDOW_DIMENSION: i64 = 32_768;
 const MIN_WINDOW_COORDINATE: i64 = -100_000;
 const MAX_WINDOW_COORDINATE: i64 = 100_000;
 const POST_ACTION_SETTLE_DELAY: Duration = Duration::from_millis(160);
+const MAX_WINDOW_LAYOUT_WINDOWS: usize = 8;
+const MAX_WINDOW_LAYOUT_SNAPSHOTS: usize = 8;
+const WINDOW_LAYOUT_SNAPSHOT_TTL: Duration = Duration::from_secs(10 * 60);
+const WINDOW_LAYOUT_SCHEMA_VERSION: u32 = 1;
 
-const CONTROL_OPERATIONS: [&str; 9] = [
+const CONTROL_OPERATIONS: [&str; 10] = [
     "computer_click",
     "computer_drag",
     "computer_press_key",
@@ -61,6 +67,7 @@ const CONTROL_OPERATIONS: [&str; 9] = [
     "computer_set_frontmost_window_bounds",
     "computer_set_frontmost_window_fullscreen",
     "computer_set_frontmost_window_maximized",
+    "computer_restore_window_layout",
 ];
 
 #[derive(Debug, Clone)]
@@ -240,6 +247,105 @@ impl ApprovedFrontmostWindowGuard {
     }
 }
 
+#[derive(Debug, Clone, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+struct ApprovedWindowLayoutGuard {
+    platform: String,
+    application: String,
+    process_identity: String,
+    pid: u32,
+    window_id: String,
+    position: [f64; 2],
+    size: [f64; 2],
+}
+
+impl ApprovedWindowLayoutGuard {
+    fn validate(&self) -> Result<()> {
+        if !matches!(self.platform.as_str(), "macos" | "windows")
+            || self.application.is_empty()
+            || self.application.chars().count() > 240
+            || self.application.chars().any(is_unsafe_typed_character)
+            || self.process_identity.is_empty()
+            || self.process_identity.chars().count() > 500
+            || self.process_identity.chars().any(is_unsafe_typed_character)
+            || self.pid == 0
+            || self.window_id.is_empty()
+            || self.window_id.chars().count() > 64
+            || self.window_id.chars().any(is_unsafe_typed_character)
+            || self
+                .position
+                .iter()
+                .chain(self.size.iter())
+                .any(|value| !value.is_finite())
+            || self.size[0] < MIN_WINDOW_DIMENSION as f64
+            || self.size[1] < MIN_WINDOW_DIMENSION as f64
+        {
+            return Err(anyhow!("window layout identity or geometry is invalid"));
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+struct WindowLayoutCapturePayload {
+    platform: String,
+    #[serde(default)]
+    display_layout: Vec<ApprovedDisplayGuard>,
+    windows: Vec<ApprovedWindowLayoutGuard>,
+    excluded_window_count: usize,
+    truncated: bool,
+}
+
+#[derive(Debug, Clone, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+struct WindowLayoutSnapshot {
+    schema_version: u32,
+    snapshot_id: String,
+    snapshot_sha256: String,
+    platform: String,
+    display_layout: Vec<ApprovedDisplayGuard>,
+    windows: Vec<ApprovedWindowLayoutGuard>,
+    excluded_window_count: usize,
+    truncated: bool,
+}
+
+impl WindowLayoutSnapshot {
+    fn validate(&self) -> Result<()> {
+        if self.schema_version != WINDOW_LAYOUT_SCHEMA_VERSION
+            || !uuid::Uuid::parse_str(self.snapshot_id.as_str())
+                .is_ok_and(|snapshot_id| snapshot_id.hyphenated().to_string() == self.snapshot_id)
+            || self.snapshot_sha256.len() != 64
+            || !self
+                .snapshot_sha256
+                .bytes()
+                .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+            || self.platform != current_platform_name()
+            || self.display_layout.is_empty()
+            || self.display_layout.len() > MAX_ACTIVE_DISPLAYS
+            || self.windows.is_empty()
+            || self.windows.len() > MAX_WINDOW_LAYOUT_WINDOWS
+            || self
+                .windows
+                .iter()
+                .any(|window| window.platform != self.platform || window.validate().is_err())
+            || window_layout_sha256(self)? != self.snapshot_sha256
+        {
+            return Err(anyhow!("window layout snapshot is invalid"));
+        }
+        for window in &self.windows {
+            validate_window_layout_geometry(window, &self.display_layout)?;
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone)]
+struct StoredWindowLayoutSnapshot {
+    captured_at: Instant,
+    snapshot: WindowLayoutSnapshot,
+}
+
 #[cfg(target_os = "macos")]
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -400,6 +506,247 @@ function run(argv) {
     return left.frontmost ? -1 : 1;
   });
   return JSON.stringify({platform: "macos", process_count: rows.length, processes: rows});
+}
+"#;
+
+const CAPTURE_WINDOW_LAYOUT_JXA: &str = r#"
+function safe(callable, fallback) { try { return callable(); } catch (_) { return fallback; } }
+function text(value, maxLength) {
+  var output = value === undefined || value === null ? "" : String(value);
+  return output.length <= maxLength ? output : output.slice(0, maxLength);
+}
+function pair(value) {
+  try {
+    var first = Number(value[0]); var second = Number(value[1]);
+    return Number.isFinite(first) && Number.isFinite(second) ? [first, second] : null;
+  } catch (_) { return null; }
+}
+function attribute(window, name) { return safe(function() { return window.attributes.byName(name); }, null); }
+function attributeValue(window, name, fallback) {
+  var candidate = attribute(window, name);
+  return candidate === null ? fallback : safe(function() { return candidate.value(); }, fallback);
+}
+function attributeSettable(window, name) {
+  var candidate = attribute(window, name);
+  return candidate !== null && Boolean(safe(function() { return candidate.settable(); }, false));
+}
+function processIdentity(process) {
+  var bundleIdentifier = text(safe(function() { return process.bundleIdentifier(); }, ""), 480);
+  return bundleIdentifier ? "bundle:" + bundleIdentifier : "";
+}
+function run(argv) {
+  var maximum = Number.parseInt(argv[0] || "8", 10);
+  if (!Number.isFinite(maximum) || maximum < 1 || maximum > 8) throw new Error("Window layout limit is invalid");
+  var systemEvents = Application("System Events");
+  var processes = systemEvents.applicationProcesses.whose({backgroundOnly: false})();
+  var rows = []; var excluded = 0; var truncated = false;
+  for (var processIndex = 0; processIndex < processes.length && !truncated; processIndex += 1) {
+    var process = processes[processIndex];
+    var application = text(safe(function() { return process.name(); }, ""), 240);
+    var pid = Number(safe(function() { return process.unixId(); }, 0));
+    var identity = processIdentity(process);
+    var windows = safe(function() { return process.windows(); }, []);
+    for (var windowIndex = 0; windowIndex < windows.length; windowIndex += 1) {
+      var window = windows[windowIndex];
+      var windowId = Number(attributeValue(window, "AXWindowNumber", safe(function() { return window.id(); }, 0)));
+      var position = pair(safe(function() { return window.position(); }, null));
+      var size = pair(safe(function() { return window.size(); }, null));
+      var subrole = text(safe(function() { return window.subrole(); }, ""), 120);
+      var visible = Boolean(safe(function() { return window.visible(); }, false));
+      var minimized = Boolean(attributeValue(window, "AXMinimized", false));
+      var fullscreen = Boolean(attributeValue(window, "AXFullScreen", false));
+      var eligible = application && identity && Number.isFinite(pid) && pid >= 1 && Math.floor(pid) === pid &&
+        Number.isFinite(windowId) && windowId >= 1 && Math.floor(windowId) === windowId &&
+        subrole === "AXStandardWindow" && visible && !minimized && !fullscreen &&
+        position !== null && size !== null && size[0] >= 64 && size[1] >= 64 &&
+        attributeSettable(window, "AXPosition") && attributeSettable(window, "AXSize");
+      if (!eligible) { excluded += 1; continue; }
+      if (rows.length >= maximum) { truncated = true; break; }
+      rows.push({
+        platform: "macos", application: application, process_identity: identity, pid: pid,
+        window_id: String(windowId), position: position, size: size
+      });
+    }
+  }
+  if (rows.length === 0) throw new Error("No ordinary restorable macOS windows are available");
+  return JSON.stringify({platform: "macos", windows: rows, excluded_window_count: excluded, truncated: truncated});
+}
+"#;
+
+const PREFLIGHT_WINDOW_LAYOUT_JXA: &str = r#"
+function safe(callable, fallback) { try { return callable(); } catch (_) { return fallback; } }
+function pair(value) {
+  try { var a = Number(value[0]); var b = Number(value[1]); return Number.isFinite(a) && Number.isFinite(b) ? [a, b] : null; }
+  catch (_) { return null; }
+}
+function attribute(window, name) { return safe(function() { return window.attributes.byName(name); }, null); }
+function attributeValue(window, name, fallback) { var candidate = attribute(window, name); return candidate === null ? fallback : safe(function() { return candidate.value(); }, fallback); }
+function attributeSettable(window, name) { var candidate = attribute(window, name); return candidate !== null && Boolean(safe(function() { return candidate.settable(); }, false)); }
+function processIdentity(process) { var value = String(safe(function() { return process.bundleIdentifier(); }, "")); return value ? "bundle:" + value : ""; }
+function currentWindow(systemEvents, guard) {
+  var processes = systemEvents.applicationProcesses(); var process = null;
+  for (var p = 0; p < processes.length; p += 1) {
+    var candidate = processes[p];
+    if (Number(safe(function() { return candidate.unixId(); }, 0)) === guard.pid &&
+        String(safe(function() { return candidate.name(); }, "")) === guard.application &&
+        processIdentity(candidate) === guard.process_identity) { process = candidate; break; }
+  }
+  if (process === null) return null;
+  var windows = safe(function() { return process.windows(); }, []);
+  for (var w = 0; w < windows.length; w += 1) {
+    var window = windows[w];
+    var id = String(Number(attributeValue(window, "AXWindowNumber", safe(function() { return window.id(); }, 0))));
+    if (id !== guard.window_id) continue;
+    var position = pair(safe(function() { return window.position(); }, null));
+    var size = pair(safe(function() { return window.size(); }, null));
+    var ordinary = String(safe(function() { return window.subrole(); }, "")) === "AXStandardWindow" &&
+      Boolean(safe(function() { return window.visible(); }, false)) && !Boolean(attributeValue(window, "AXMinimized", false)) &&
+      !Boolean(attributeValue(window, "AXFullScreen", false)) && attributeSettable(window, "AXPosition") && attributeSettable(window, "AXSize");
+    return ordinary && position !== null && size !== null && size[0] >= 64 && size[1] >= 64 ? {position: position, size: size} : null;
+  }
+  return null;
+}
+function run(argv) {
+  var snapshot = JSON.parse(argv[0]); var systemEvents = Application("System Events");
+  for (var index = 0; index < snapshot.windows.length; index += 1) {
+    if (currentWindow(systemEvents, snapshot.windows[index]) === null) {
+      throw new Error("A snapshotted macOS window identity, capability, or ordinary-window state changed before approval");
+    }
+  }
+  return JSON.stringify({validated: true, window_count: snapshot.windows.length});
+}
+"#;
+
+const RESTORE_WINDOW_LAYOUT_JXA: &str = r#"
+function safe(callable, fallback) { try { return callable(); } catch (_) { return fallback; } }
+function pair(value) { try { var a = Number(value[0]); var b = Number(value[1]); return Number.isFinite(a) && Number.isFinite(b) ? [a, b] : null; } catch (_) { return null; } }
+function equalPair(left, right) { return left !== null && right !== null && left[0] === right[0] && left[1] === right[1]; }
+function attribute(window, name) { return safe(function() { return window.attributes.byName(name); }, null); }
+function attributeValue(window, name, fallback) { var candidate = attribute(window, name); return candidate === null ? fallback : safe(function() { return candidate.value(); }, fallback); }
+function attributeSettable(window, name) { var candidate = attribute(window, name); return candidate !== null && Boolean(safe(function() { return candidate.settable(); }, false)); }
+function processIdentity(process) { var value = String(safe(function() { return process.bundleIdentifier(); }, "")); return value ? "bundle:" + value : ""; }
+function currentWindow(systemEvents, guard) {
+  var processes = systemEvents.applicationProcesses(); var process = null;
+  for (var p = 0; p < processes.length; p += 1) {
+    var candidate = processes[p];
+    if (Number(safe(function() { return candidate.unixId(); }, 0)) === guard.pid && String(safe(function() { return candidate.name(); }, "")) === guard.application && processIdentity(candidate) === guard.process_identity) { process = candidate; break; }
+  }
+  if (process === null) return null;
+  var windows = safe(function() { return process.windows(); }, []);
+  for (var w = 0; w < windows.length; w += 1) {
+    var window = windows[w]; var id = String(Number(attributeValue(window, "AXWindowNumber", safe(function() { return window.id(); }, 0))));
+    if (id !== guard.window_id) continue;
+    var position = pair(safe(function() { return window.position(); }, null)); var size = pair(safe(function() { return window.size(); }, null));
+    var ordinary = String(safe(function() { return window.subrole(); }, "")) === "AXStandardWindow" && Boolean(safe(function() { return window.visible(); }, false)) &&
+      !Boolean(attributeValue(window, "AXMinimized", false)) && !Boolean(attributeValue(window, "AXFullScreen", false)) &&
+      attributeSettable(window, "AXPosition") && attributeSettable(window, "AXSize");
+    return ordinary && position !== null && size !== null && size[0] >= 64 && size[1] >= 64 ? {window: window, position: position, size: size} : null;
+  }
+  return null;
+}
+function rollback(systemEvents, snapshot, before, applied) {
+  var restored = 0; var skipped = 0; var failed = 0;
+  for (var offset = applied.length - 1; offset >= 0; offset -= 1) {
+    var index = applied[offset]; var current = currentWindow(systemEvents, snapshot.windows[index]);
+    if (current === null || !equalPair(current.position, snapshot.windows[index].position) || !equalPair(current.size, snapshot.windows[index].size)) { skipped += 1; continue; }
+    try { current.window.size.set(before[index].size); current.window.position.set(before[index].position); }
+    catch (_) { failed += 1; continue; }
+    var after = currentWindow(systemEvents, snapshot.windows[index]);
+    if (after !== null && equalPair(after.position, before[index].position) && equalPair(after.size, before[index].size)) restored += 1; else failed += 1;
+  }
+  return {attempted: applied.length > 0, restored_count: restored, skipped_count: skipped, failed_count: failed, complete: restored === applied.length};
+}
+function failure(reason, systemEvents, snapshot, before, applied, partialIndex) {
+  var recovery = rollback(systemEvents, snapshot, before, applied);
+  return JSON.stringify({
+    success: false, mode: "approved_input", action: "restore_window_layout", platform: "macos",
+    snapshot_id: snapshot.snapshot_id, snapshot_sha256: snapshot.snapshot_sha256,
+    target_window_count: snapshot.windows.length, applied_window_count: applied.length,
+    target_layout_retained: false,
+    action_already_executed: applied.length > 0 || partialIndex !== null, automatic_replay_safe: false,
+    failure_reason: reason, partial_window_index: partialIndex,
+    window_layout_recovery: recovery,
+    application_content_rollback: false, manual_review_required: partialIndex !== null || !recovery.complete
+  });
+}
+function run(argv) {
+  var snapshot = JSON.parse(argv[0]); var systemEvents = Application("System Events"); var before = [];
+  for (var index = 0; index < snapshot.windows.length; index += 1) {
+    var current = currentWindow(systemEvents, snapshot.windows[index]);
+    if (current === null) throw new Error("A snapshotted macOS window identity, capability, or ordinary-window state changed before layout restore");
+    before.push({platform: "macos", application: snapshot.windows[index].application, process_identity: snapshot.windows[index].process_identity,
+      pid: snapshot.windows[index].pid, window_id: snapshot.windows[index].window_id, position: current.position, size: current.size});
+  }
+  var applied = [];
+  for (var targetIndex = 0; targetIndex < snapshot.windows.length; targetIndex += 1) {
+    var target = snapshot.windows[targetIndex]; var live = currentWindow(systemEvents, target);
+    if (live === null || !equalPair(live.position, before[targetIndex].position) || !equalPair(live.size, before[targetIndex].size)) {
+      return failure("window_drift_during_restore", systemEvents, snapshot, before, applied, null);
+    }
+    try { live.window.size.set(target.size); live.window.position.set(target.position); }
+    catch (_) { return failure("platform_apply_failed", systemEvents, snapshot, before, applied, targetIndex); }
+    var after = currentWindow(systemEvents, target);
+    if (after === null || !equalPair(after.position, target.position) || !equalPair(after.size, target.size)) {
+      return failure("target_geometry_readback_mismatch", systemEvents, snapshot, before, applied, targetIndex);
+    }
+    applied.push(targetIndex);
+  }
+  delay(0.16);
+  for (var verifyIndex = 0; verifyIndex < snapshot.windows.length; verifyIndex += 1) {
+    var verified = currentWindow(systemEvents, snapshot.windows[verifyIndex]);
+    if (verified === null || !equalPair(verified.position, snapshot.windows[verifyIndex].position) || !equalPair(verified.size, snapshot.windows[verifyIndex].size)) {
+      return failure("post_action_window_drift", systemEvents, snapshot, before, applied, null);
+    }
+  }
+  return JSON.stringify({
+    success: true, mode: "approved_input", action: "restore_window_layout", platform: "macos",
+    snapshot_id: snapshot.snapshot_id, snapshot_sha256: snapshot.snapshot_sha256,
+    target_window_count: snapshot.windows.length, restored_window_count: snapshot.windows.length,
+    identity_geometry_and_display_layout_revalidated: true, automatic_replay_safe: false,
+    application_content_rollback: false, pre_action_windows: before,
+    window_layout_recovery: {attempted: false, restored_count: 0, skipped_count: 0, failed_count: 0, complete: false}
+  });
+}
+"#;
+
+const ROLLBACK_WINDOW_LAYOUT_JXA: &str = r#"
+function safe(callable, fallback) { try { return callable(); } catch (_) { return fallback; } }
+function pair(value) { try { var a = Number(value[0]); var b = Number(value[1]); return Number.isFinite(a) && Number.isFinite(b) ? [a, b] : null; } catch (_) { return null; } }
+function equalPair(left, right) { return left !== null && right !== null && left[0] === right[0] && left[1] === right[1]; }
+function attribute(window, name) { return safe(function() { return window.attributes.byName(name); }, null); }
+function attributeValue(window, name, fallback) { var candidate = attribute(window, name); return candidate === null ? fallback : safe(function() { return candidate.value(); }, fallback); }
+function attributeSettable(window, name) { var candidate = attribute(window, name); return candidate !== null && Boolean(safe(function() { return candidate.settable(); }, false)); }
+function processIdentity(process) { var value = String(safe(function() { return process.bundleIdentifier(); }, "")); return value ? "bundle:" + value : ""; }
+function currentWindow(systemEvents, guard) {
+  var processes = systemEvents.applicationProcesses();
+  for (var p = 0; p < processes.length; p += 1) {
+    var process = processes[p];
+    if (Number(safe(function() { return process.unixId(); }, 0)) !== guard.pid || String(safe(function() { return process.name(); }, "")) !== guard.application || processIdentity(process) !== guard.process_identity) continue;
+    var windows = safe(function() { return process.windows(); }, []);
+    for (var w = 0; w < windows.length; w += 1) {
+      var window = windows[w]; var id = String(Number(attributeValue(window, "AXWindowNumber", safe(function() { return window.id(); }, 0))));
+      if (id !== guard.window_id) continue;
+      var ordinary = String(safe(function() { return window.subrole(); }, "")) === "AXStandardWindow" && Boolean(safe(function() { return window.visible(); }, false)) &&
+        !Boolean(attributeValue(window, "AXMinimized", false)) && !Boolean(attributeValue(window, "AXFullScreen", false)) &&
+        attributeSettable(window, "AXPosition") && attributeSettable(window, "AXSize");
+      if (!ordinary) return null;
+      return {window: window, position: pair(safe(function() { return window.position(); }, null)), size: pair(safe(function() { return window.size(); }, null))};
+    }
+  }
+  return null;
+}
+function run(argv) {
+  var snapshot = JSON.parse(argv[0]); var before = JSON.parse(argv[1]); var systemEvents = Application("System Events");
+  var restored = 0; var skipped = 0; var failed = 0;
+  for (var index = snapshot.windows.length - 1; index >= 0; index -= 1) {
+    var current = currentWindow(systemEvents, snapshot.windows[index]);
+    if (current === null || !equalPair(current.position, snapshot.windows[index].position) || !equalPair(current.size, snapshot.windows[index].size)) { skipped += 1; continue; }
+    try { current.window.size.set(before[index].size); current.window.position.set(before[index].position); }
+    catch (_) { failed += 1; continue; }
+    var after = currentWindow(systemEvents, snapshot.windows[index]);
+    if (after !== null && equalPair(after.position, before[index].position) && equalPair(after.size, before[index].size)) restored += 1; else failed += 1;
+  }
+  return JSON.stringify({attempted: true, restored_count: restored, skipped_count: skipped, failed_count: failed, complete: restored === snapshot.windows.length});
 }
 "#;
 
@@ -1117,6 +1464,15 @@ fn tool_definitions_for_platform(include_control: bool, platform: &str) -> Vec<V
             }
         }),
         json!({
+            "name": "computer_capture_window_layout",
+            "description": "Read-only capture of a short-lived opaque layout snapshot for at most 8 ordinary visible top-level windows on the current desktop. Only non-minimized, non-fullscreen/non-maximized windows with writable native position and size are included. The model receives only a snapshot ID, SHA-256, counts, and application summary; native window identities and coordinates remain in volatile Local Connector memory for 10 minutes and are never persisted.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {},
+                "additionalProperties": false
+            }
+        }),
+        json!({
             "name": "computer_inspect_frontmost_window",
             "description": "Read-only bounded Accessibility/UI Automation inspection of the frontmost window on the current supported platform. Editable and secure text values are redacted; only reviewed visible control metadata is returned.",
             "inputSchema": {
@@ -1294,6 +1650,19 @@ fn tool_definitions_for_platform(include_control: bool, platform: &str) -> Vec<V
                         "maximized": {"type": "boolean"}
                     },
                     "required": ["maximized"],
+                    "additionalProperties": false
+                }
+            }),
+            json!({
+                "name": "computer_restore_window_layout",
+                "description": "Restore one exact short-lived layout snapshot created by computer_capture_window_layout. The request accepts only the opaque snapshot ID and its SHA-256, never PID, HWND/AX window ID, application identity, or coordinates. A fresh local approval plus one-time typed confirmation is mandatory. Display-layout drift or any missing/changed/non-ordinary window fails the whole batch before mutation; partial execution rolls back only windows changed by this batch whose exact identity and target geometry still match. Application content, navigation, text, and document state are never rolled back, and automatic replay is always unsafe.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "snapshot_id": {"type": "string", "minLength": 36, "maxLength": 36},
+                        "snapshot_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+                    },
+                    "required": ["snapshot_id", "snapshot_sha256"],
                     "additionalProperties": false
                 }
             }),
@@ -1568,6 +1937,35 @@ pub(super) fn approval_command(
                 ),
             ))
         }
+        "computer_restore_window_layout" => {
+            let reference = parse_window_layout_reference(arguments)?;
+            let snapshot = stored_window_layout_snapshot(&reference)?;
+            validate_window_layout_snapshot_for_approval(&snapshot)?;
+            Ok((
+                operation.to_string(),
+                vec![window_layout_approval_argument(&snapshot)?],
+                computer_use_audit(
+                    operation,
+                    vec![
+                        audit_detail("snapshot_id", &snapshot.snapshot_id),
+                        audit_detail("snapshot_sha256", &snapshot.snapshot_sha256),
+                        audit_detail("window_count", snapshot.windows.len()),
+                        audit_detail(
+                            "applications",
+                            window_layout_application_summary(&snapshot.windows),
+                        ),
+                        audit_detail("confirmation_risk", "multi_window_layout_restore"),
+                    ],
+                    Some("native_window_identities_and_coordinates_redacted_from_model_request"),
+                    Some(
+                        "exact_volatile_snapshot_display_and_window_identities_revalidated_before_batch",
+                    ),
+                    Some(
+                        "identity_bound_batch_rollback_without_application_content_rollback",
+                    ),
+                ),
+            ))
+        }
         _ => Err(anyhow!(
             "Computer Use operation does not require interactive approval: {operation}"
         )),
@@ -1624,7 +2022,10 @@ fn display_geometry(display: &DisplayTarget) -> String {
 }
 
 pub(super) fn redact_approval_arguments(operation: &str) -> bool {
-    operation == "computer_type_text"
+    matches!(
+        operation,
+        "computer_type_text" | "computer_restore_window_layout"
+    )
 }
 
 #[cfg(target_os = "macos")]
@@ -1725,6 +2126,80 @@ fn list_windows(_limit: u64) -> Result<Value> {
     ))
 }
 
+fn capture_window_layout_payload() -> Result<Value> {
+    let display_layout = active_display_layout_guard()?;
+    let mut payload = capture_window_layout_platform()?;
+    if active_display_layout_guard()? != display_layout {
+        return Err(anyhow!(
+            "active display identity or geometry changed during window layout capture"
+        ));
+    }
+    payload.display_layout = display_layout;
+    serde_json::to_value(payload).context("encode native window layout capture")
+}
+
+#[cfg(target_os = "macos")]
+fn capture_window_layout_platform() -> Result<WindowLayoutCapturePayload> {
+    let value = execute_jxa_action(
+        CAPTURE_WINDOW_LAYOUT_JXA,
+        &[MAX_WINDOW_LAYOUT_WINDOWS.to_string()],
+    )?;
+    let mut payload = serde_json::from_value::<WindowLayoutCapturePayload>(value)
+        .context("decode macOS window layout capture")?;
+    payload.display_layout.clear();
+    Ok(payload)
+}
+
+#[cfg(target_os = "windows")]
+fn capture_window_layout_platform() -> Result<WindowLayoutCapturePayload> {
+    windows::capture_window_layout(MAX_WINDOW_LAYOUT_WINDOWS)
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+fn capture_window_layout_platform() -> Result<WindowLayoutCapturePayload> {
+    Err(anyhow!(
+        "Computer Use window layout capture is unsupported on this platform"
+    ))
+}
+
+#[cfg(target_os = "macos")]
+fn preflight_window_layout_snapshot(snapshot: &WindowLayoutSnapshot) -> Result<()> {
+    helper::preflight_window_layout(snapshot)
+}
+
+#[cfg(target_os = "windows")]
+fn preflight_window_layout_snapshot(snapshot: &WindowLayoutSnapshot) -> Result<()> {
+    preflight_window_layout_snapshot_local(snapshot).map(|_| ())
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+fn preflight_window_layout_snapshot(_snapshot: &WindowLayoutSnapshot) -> Result<()> {
+    Err(anyhow!(
+        "Computer Use window layout restore is unsupported on this platform"
+    ))
+}
+
+#[cfg(target_os = "macos")]
+fn preflight_window_layout_snapshot_local(snapshot: &WindowLayoutSnapshot) -> Result<Value> {
+    snapshot.validate()?;
+    execute_jxa_action(
+        PREFLIGHT_WINDOW_LAYOUT_JXA,
+        &[serde_json::to_string(snapshot)?],
+    )
+}
+
+#[cfg(target_os = "windows")]
+fn preflight_window_layout_snapshot_local(snapshot: &WindowLayoutSnapshot) -> Result<Value> {
+    windows::preflight_window_layout(snapshot)
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+fn preflight_window_layout_snapshot_local(_snapshot: &WindowLayoutSnapshot) -> Result<Value> {
+    Err(anyhow!(
+        "Computer Use window layout restore is unsupported on this platform"
+    ))
+}
+
 #[cfg(target_os = "macos")]
 fn inspect_frontmost_window(max_depth: u64, max_nodes: u64) -> Result<Value> {
     execute_jxa(
@@ -1747,12 +2222,22 @@ fn inspect_frontmost_window(_max_depth: u64, _max_nodes: u64) -> Result<Value> {
 
 #[cfg(target_os = "macos")]
 pub(super) fn execute(operation: &str, arguments: &Value) -> Result<Value> {
-    helper::execute(operation, arguments)
+    let result = helper::execute(operation, arguments)?;
+    if operation == "computer_capture_window_layout" {
+        finalize_window_layout_capture(result)
+    } else {
+        Ok(result)
+    }
 }
 
 #[cfg(not(target_os = "macos"))]
 pub(super) fn execute(operation: &str, arguments: &Value) -> Result<Value> {
-    execute_local(operation, arguments)
+    let result = execute_local(operation, arguments)?;
+    if operation == "computer_capture_window_layout" {
+        finalize_window_layout_capture(result)
+    } else {
+        Ok(result)
+    }
 }
 
 fn execute_local(operation: &str, arguments: &Value) -> Result<Value> {
@@ -1767,6 +2252,10 @@ fn execute_local(operation: &str, arguments: &Value) -> Result<Value> {
                 MAX_WINDOW_LIMIT,
             )?;
             list_windows(limit)
+        }
+        "computer_capture_window_layout" => {
+            reject_unknown_fields(arguments, &[])?;
+            capture_window_layout_payload()
         }
         "computer_inspect_frontmost_window" => {
             let max_depth = bounded_integer(
@@ -1805,6 +2294,9 @@ pub(super) fn execute_approved(
     approved_command_args: Option<&[String]>,
     action_cancelled: Option<&AtomicBool>,
 ) -> Result<Value> {
+    if operation == "computer_restore_window_layout" {
+        consume_approved_window_layout_snapshot(arguments, approved_command_args)?;
+    }
     helper::execute_approved(
         operation,
         arguments,
@@ -1820,6 +2312,9 @@ pub(super) fn execute_approved(
     approved_command_args: Option<&[String]>,
     action_cancelled: Option<&AtomicBool>,
 ) -> Result<Value> {
+    if operation == "computer_restore_window_layout" {
+        consume_approved_window_layout_snapshot(arguments, approved_command_args)?;
+    }
     execute_approved_local(
         operation,
         arguments,
@@ -1836,6 +2331,19 @@ fn execute_approved_local(
 ) -> Result<Value> {
     ensure_observation_runtime()?;
     ensure_action_not_cancelled(action_cancelled)?;
+    if operation == "computer_restore_window_layout" {
+        let reference = parse_window_layout_reference(arguments)?;
+        let snapshot = approved_window_layout_snapshot(approved_command_args)?;
+        if snapshot.snapshot_id != reference.snapshot_id
+            || snapshot.snapshot_sha256 != reference.snapshot_sha256
+        {
+            return Err(anyhow!(
+                "approved window layout snapshot does not match the requested opaque reference"
+            ));
+        }
+        validate_approved_window_layout_snapshot(&snapshot)?;
+        return restore_window_layout(&snapshot, action_cancelled);
+    }
     if operation == "computer_activate_application" {
         let (result, rollback_guard) = activate_application_with_rollback(
             parse_application_pid(arguments)?,
@@ -2499,6 +3007,12 @@ struct WindowBoundsRequest {
     height: i32,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct WindowLayoutReference {
+    snapshot_id: String,
+    snapshot_sha256: String,
+}
+
 impl WindowBoundsRequest {
     fn geometry(&self) -> String {
         format!("{} x {} @ {}, {}", self.width, self.height, self.x, self.y)
@@ -2827,6 +3341,295 @@ fn parse_window_maximized_request(arguments: &Value) -> Result<bool> {
         .get("maximized")
         .and_then(Value::as_bool)
         .ok_or_else(|| anyhow!("maximized must be a boolean"))
+}
+
+fn parse_window_layout_reference(arguments: &Value) -> Result<WindowLayoutReference> {
+    reject_unknown_fields(arguments, &["snapshot_id", "snapshot_sha256"])?;
+    let snapshot_id = arguments
+        .get("snapshot_id")
+        .and_then(Value::as_str)
+        .ok_or_else(|| anyhow!("snapshot_id is required"))?;
+    let parsed_id = uuid::Uuid::parse_str(snapshot_id)
+        .map_err(|_| anyhow!("snapshot_id must be a canonical UUID"))?;
+    if parsed_id.hyphenated().to_string() != snapshot_id {
+        return Err(anyhow!("snapshot_id must be a canonical lowercase UUID"));
+    }
+    let snapshot_sha256 = arguments
+        .get("snapshot_sha256")
+        .and_then(Value::as_str)
+        .filter(|value| {
+            value.len() == 64
+                && value
+                    .bytes()
+                    .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+        })
+        .ok_or_else(|| anyhow!("snapshot_sha256 must be 64 lowercase hexadecimal characters"))?;
+    Ok(WindowLayoutReference {
+        snapshot_id: snapshot_id.to_string(),
+        snapshot_sha256: snapshot_sha256.to_string(),
+    })
+}
+
+fn window_layout_sha256(snapshot: &WindowLayoutSnapshot) -> Result<String> {
+    let payload = serde_json::to_vec(&(
+        snapshot.schema_version,
+        snapshot.snapshot_id.as_str(),
+        snapshot.platform.as_str(),
+        &snapshot.display_layout,
+        &snapshot.windows,
+        snapshot.excluded_window_count,
+        snapshot.truncated,
+    ))
+    .context("encode window layout snapshot hash payload")?;
+    Ok(hex::encode(Sha256::digest(payload)))
+}
+
+fn validate_window_layout_geometry(
+    window: &ApprovedWindowLayoutGuard,
+    display_layout: &[ApprovedDisplayGuard],
+) -> Result<()> {
+    let left = window.position[0];
+    let top = window.position[1];
+    let right = left + window.size[0];
+    let bottom = top + window.size[1];
+    if !display_layout.iter().any(|display| {
+        let overlap_width =
+            right.min(display.origin_x + display.width) - left.max(display.origin_x);
+        let overlap_height =
+            bottom.min(display.origin_y + display.height) - top.max(display.origin_y);
+        overlap_width >= MIN_WINDOW_DIMENSION as f64
+            && overlap_height >= MIN_WINDOW_DIMENSION as f64
+    }) {
+        return Err(anyhow!(
+            "snapshotted window geometry must leave at least {MIN_WINDOW_DIMENSION} x {MIN_WINDOW_DIMENSION} desktop units visible"
+        ));
+    }
+    Ok(())
+}
+
+fn window_layout_snapshot_store() -> &'static Mutex<BTreeMap<String, StoredWindowLayoutSnapshot>> {
+    static STORE: OnceLock<Mutex<BTreeMap<String, StoredWindowLayoutSnapshot>>> = OnceLock::new();
+    STORE.get_or_init(|| Mutex::new(BTreeMap::new()))
+}
+
+fn prune_expired_window_layout_snapshots(
+    snapshots: &mut BTreeMap<String, StoredWindowLayoutSnapshot>,
+    now: Instant,
+) {
+    snapshots.retain(|_, stored| {
+        now.checked_duration_since(stored.captured_at)
+            .is_some_and(|age| age <= WINDOW_LAYOUT_SNAPSHOT_TTL)
+    });
+}
+
+fn evict_window_layout_snapshot_for_insert(
+    snapshots: &mut BTreeMap<String, StoredWindowLayoutSnapshot>,
+) {
+    while snapshots.len() >= MAX_WINDOW_LAYOUT_SNAPSHOTS {
+        let Some(oldest) = snapshots
+            .iter()
+            .min_by_key(|(_, stored)| stored.captured_at)
+            .map(|(snapshot_id, _)| snapshot_id.clone())
+        else {
+            break;
+        };
+        snapshots.remove(oldest.as_str());
+    }
+}
+
+fn store_window_layout_snapshot(snapshot: WindowLayoutSnapshot) -> Result<()> {
+    snapshot.validate()?;
+    let now = Instant::now();
+    let mut snapshots = window_layout_snapshot_store()
+        .lock()
+        .map_err(|_| anyhow!("window layout snapshot store is unavailable"))?;
+    prune_expired_window_layout_snapshots(&mut snapshots, now);
+    evict_window_layout_snapshot_for_insert(&mut snapshots);
+    snapshots.insert(
+        snapshot.snapshot_id.clone(),
+        StoredWindowLayoutSnapshot {
+            captured_at: now,
+            snapshot,
+        },
+    );
+    Ok(())
+}
+
+fn stored_window_layout_snapshot(
+    reference: &WindowLayoutReference,
+) -> Result<WindowLayoutSnapshot> {
+    let now = Instant::now();
+    let mut snapshots = window_layout_snapshot_store()
+        .lock()
+        .map_err(|_| anyhow!("window layout snapshot store is unavailable"))?;
+    prune_expired_window_layout_snapshots(&mut snapshots, now);
+    let snapshot = snapshots
+        .get(reference.snapshot_id.as_str())
+        .map(|stored| stored.snapshot.clone())
+        .ok_or_else(|| anyhow!("window layout snapshot is missing or expired; capture it again"))?;
+    if snapshot.snapshot_sha256 != reference.snapshot_sha256 {
+        return Err(anyhow!("window layout snapshot SHA-256 does not match"));
+    }
+    snapshot.validate()?;
+    Ok(snapshot)
+}
+
+fn window_layout_approval_argument(snapshot: &WindowLayoutSnapshot) -> Result<String> {
+    snapshot.validate()?;
+    Ok(format!(
+        "--window-layout-json={}",
+        serde_json::to_string(snapshot)?
+    ))
+}
+
+fn approved_window_layout_snapshot(
+    approved_command_args: Option<&[String]>,
+) -> Result<WindowLayoutSnapshot> {
+    let arguments = approved_command_args
+        .ok_or_else(|| anyhow!("approved window layout snapshot is missing"))?;
+    let encoded = arguments
+        .iter()
+        .find_map(|argument| argument.strip_prefix("--window-layout-json="))
+        .ok_or_else(|| anyhow!("approved window layout snapshot is missing"))?;
+    let snapshot = serde_json::from_str::<WindowLayoutSnapshot>(encoded)
+        .context("decode approved window layout snapshot")?;
+    snapshot.validate()?;
+    Ok(snapshot)
+}
+
+fn consume_approved_window_layout_snapshot(
+    arguments: &Value,
+    approved_command_args: Option<&[String]>,
+) -> Result<()> {
+    let reference = parse_window_layout_reference(arguments)?;
+    let approved = approved_window_layout_snapshot(approved_command_args)?;
+    if approved.snapshot_id != reference.snapshot_id
+        || approved.snapshot_sha256 != reference.snapshot_sha256
+    {
+        return Err(anyhow!(
+            "approved window layout snapshot does not match the requested opaque reference"
+        ));
+    }
+    let now = Instant::now();
+    let mut snapshots = window_layout_snapshot_store()
+        .lock()
+        .map_err(|_| anyhow!("window layout snapshot store is unavailable"))?;
+    prune_expired_window_layout_snapshots(&mut snapshots, now);
+    let stored = snapshots
+        .get(reference.snapshot_id.as_str())
+        .ok_or_else(|| anyhow!("window layout snapshot is missing or expired; capture it again"))?;
+    if stored.snapshot != approved {
+        return Err(anyhow!(
+            "approved window layout snapshot no longer matches volatile Local Connector state"
+        ));
+    }
+    snapshots.remove(reference.snapshot_id.as_str());
+    Ok(())
+}
+
+fn window_layout_application_summary(windows: &[ApprovedWindowLayoutGuard]) -> String {
+    let mut counts = BTreeMap::<&str, usize>::new();
+    for window in windows {
+        *counts.entry(window.application.as_str()).or_default() += 1;
+    }
+    counts
+        .into_iter()
+        .map(|(application, count)| format!("{} ({count})", safe_approval_label(application)))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+fn finalize_window_layout_capture(result: Value) -> Result<Value> {
+    let payload = serde_json::from_value::<WindowLayoutCapturePayload>(result)
+        .context("decode native window layout capture")?;
+    if payload.platform != current_platform_name()
+        || payload.windows.is_empty()
+        || payload.windows.len() > MAX_WINDOW_LAYOUT_WINDOWS
+        || payload
+            .windows
+            .iter()
+            .any(|window| window.platform != payload.platform || window.validate().is_err())
+    {
+        return Err(anyhow!("native window layout capture is invalid"));
+    }
+    let mut identities = BTreeMap::<(&str, u32, &str), ()>::new();
+    for window in &payload.windows {
+        if identities
+            .insert(
+                (
+                    window.process_identity.as_str(),
+                    window.pid,
+                    window.window_id.as_str(),
+                ),
+                (),
+            )
+            .is_some()
+        {
+            return Err(anyhow!(
+                "native window layout capture contains duplicate identities"
+            ));
+        }
+    }
+    let display_layout = payload.display_layout;
+    for window in &payload.windows {
+        validate_window_layout_geometry(window, &display_layout)?;
+    }
+    let mut snapshot = WindowLayoutSnapshot {
+        schema_version: WINDOW_LAYOUT_SCHEMA_VERSION,
+        snapshot_id: uuid::Uuid::new_v4().hyphenated().to_string(),
+        snapshot_sha256: String::new(),
+        platform: payload.platform,
+        display_layout,
+        windows: payload.windows,
+        excluded_window_count: payload.excluded_window_count,
+        truncated: payload.truncated,
+    };
+    snapshot.snapshot_sha256 = window_layout_sha256(&snapshot)?;
+    snapshot.validate()?;
+    store_window_layout_snapshot(snapshot.clone())?;
+    Ok(json!({
+        "text": format!(
+            "Captured a short-lived opaque layout snapshot for {} ordinary {} windows. The snapshot remains only in volatile Local Connector memory.",
+            snapshot.windows.len(), snapshot.platform
+        ),
+        "_structured_result": {
+            "success": true,
+            "mode": "read_only",
+            "capture_scope": "ordinary_window_layout",
+            "platform": snapshot.platform,
+            "snapshot_id": snapshot.snapshot_id,
+            "snapshot_sha256": snapshot.snapshot_sha256,
+            "window_count": snapshot.windows.len(),
+            "applications": window_layout_application_summary(&snapshot.windows),
+            "excluded_window_count": snapshot.excluded_window_count,
+            "truncated": snapshot.truncated,
+            "maximum_windows": MAX_WINDOW_LAYOUT_WINDOWS,
+            "expires_in_seconds": WINDOW_LAYOUT_SNAPSHOT_TTL.as_secs(),
+            "persisted": false,
+            "ordinary_visible_normal_windows_only": true,
+            "model_supplied_window_identities_or_coordinates": false,
+        }
+    }))
+}
+
+fn validate_window_layout_snapshot_for_approval(snapshot: &WindowLayoutSnapshot) -> Result<()> {
+    snapshot.validate()?;
+    if active_display_layout_guard()? != snapshot.display_layout {
+        return Err(anyhow!(
+            "active display identity or geometry changed after layout capture; capture a new snapshot"
+        ));
+    }
+    preflight_window_layout_snapshot(snapshot)
+}
+
+fn validate_approved_window_layout_snapshot(snapshot: &WindowLayoutSnapshot) -> Result<()> {
+    snapshot.validate()?;
+    if active_display_layout_guard()? != snapshot.display_layout {
+        return Err(anyhow!(
+            "active display identity or geometry changed after layout restore approval; capture and approve again"
+        ));
+    }
+    Ok(())
 }
 
 fn required_bounded_i32(arguments: &Value, field: &str, minimum: i64, maximum: i64) -> Result<i32> {
@@ -4103,6 +4906,75 @@ fn frontmost_window_control_target_local() -> Result<ApprovedFrontmostWindowGuar
 }
 
 #[cfg(target_os = "macos")]
+fn restore_window_layout(
+    snapshot: &WindowLayoutSnapshot,
+    action_cancelled: Option<&AtomicBool>,
+) -> Result<Value> {
+    snapshot.validate()?;
+    ensure_action_not_cancelled(action_cancelled)?;
+    let snapshot_json = serde_json::to_string(snapshot)?;
+    let mut result = execute_jxa_action(
+        RESTORE_WINDOW_LAYOUT_JXA,
+        std::slice::from_ref(&snapshot_json),
+    )?;
+    let pre_action_windows = result
+        .as_object_mut()
+        .and_then(|map| map.remove("pre_action_windows"));
+    if action_cancelled.is_some_and(|cancelled| cancelled.load(Ordering::SeqCst))
+        && result.get("success").and_then(Value::as_bool) == Some(true)
+    {
+        let recovery = pre_action_windows
+            .as_ref()
+            .and_then(|before| serde_json::to_string(before).ok())
+            .and_then(|before_json| {
+                execute_jxa_action(ROLLBACK_WINDOW_LAYOUT_JXA, &[snapshot_json, before_json]).ok()
+            })
+            .unwrap_or_else(|| {
+                json!({
+                    "attempted": true,
+                    "restored_count": 0,
+                    "skipped_count": 0,
+                    "failed_count": snapshot.windows.len(),
+                    "complete": false,
+                })
+            });
+        if let Some(map) = result.as_object_mut() {
+            map.insert("success".to_string(), Value::Bool(false));
+            map.insert(
+                "failure_reason".to_string(),
+                Value::String("cancelled_after_action".to_string()),
+            );
+            map.insert("restored_window_count".to_string(), json!(0));
+            map.insert("action_already_executed".to_string(), Value::Bool(true));
+            map.insert("window_layout_recovery".to_string(), recovery.clone());
+            map.insert(
+                "manual_review_required".to_string(),
+                Value::Bool(recovery.get("complete").and_then(Value::as_bool) != Some(true)),
+            );
+        }
+    }
+    Ok(result)
+}
+
+#[cfg(target_os = "windows")]
+fn restore_window_layout(
+    snapshot: &WindowLayoutSnapshot,
+    action_cancelled: Option<&AtomicBool>,
+) -> Result<Value> {
+    windows::restore_window_layout(snapshot, action_cancelled)
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+fn restore_window_layout(
+    _snapshot: &WindowLayoutSnapshot,
+    _action_cancelled: Option<&AtomicBool>,
+) -> Result<Value> {
+    Err(anyhow!(
+        "Computer Use window layout restore is unsupported on this platform"
+    ))
+}
+
+#[cfg(target_os = "macos")]
 fn set_frontmost_window_bounds(
     request: WindowBoundsRequest,
     approved: ApprovedFrontmostWindowGuard,
@@ -5013,7 +5885,7 @@ mod tests {
     #[test]
     fn tool_contract_is_read_only_and_bounded() {
         let tools = tool_definitions(false);
-        assert_eq!(tools.len(), 6);
+        assert_eq!(tools.len(), 7);
         assert_eq!(tools[0]["name"], "computer_list_windows");
         let names = tools
             .iter()
@@ -5024,6 +5896,7 @@ mod tests {
         assert!(names.contains(&"computer_list_displays"));
         assert!(names.contains(&"computer_capture_display"));
         assert!(names.contains(&"computer_inspect_frontmost_window"));
+        assert!(names.contains(&"computer_capture_window_layout"));
         assert!(tools.iter().all(|tool| tool["description"]
             .as_str()
             .is_some_and(|description| description.contains("Read-only"))));
@@ -5039,9 +5912,9 @@ mod tests {
         assert_eq!(
             tools.len(),
             if matches!(current_platform_name(), "macos" | "windows") {
-                14
+                16
             } else {
-                13
+                15
             }
         );
         let find = |name: &str| {
@@ -5064,6 +5937,9 @@ mod tests {
         assert!(find("computer_set_frontmost_window_bounds")["description"]
             .as_str()
             .is_some_and(|description| description.contains("partial platform failures")));
+        assert!(find("computer_restore_window_layout")["description"]
+            .as_str()
+            .is_some_and(|description| description.contains("snapshot ID")));
         if current_platform_name() == "macos" {
             assert!(
                 find("computer_set_frontmost_window_fullscreen")["description"]
@@ -5092,8 +5968,9 @@ mod tests {
             .iter()
             .filter_map(|tool| tool.get("name").and_then(Value::as_str))
             .collect::<Vec<_>>();
-        assert_eq!(tools.len(), 14);
+        assert_eq!(tools.len(), 16);
         assert!(names.contains(&"computer_list_windows"));
+        assert!(names.contains(&"computer_capture_window_layout"));
         assert!(names.contains(&"computer_inspect_frontmost_window"));
         assert!(names.contains(&"computer_capture_main_display"));
         assert!(names.contains(&"computer_capture_frontmost_window"));
@@ -5107,6 +5984,7 @@ mod tests {
         assert!(names.contains(&"computer_type_text"));
         assert!(names.contains(&"computer_set_frontmost_window_bounds"));
         assert!(names.contains(&"computer_set_frontmost_window_maximized"));
+        assert!(names.contains(&"computer_restore_window_layout"));
         assert!(!names.contains(&"computer_set_frontmost_window_fullscreen"));
         assert!(tools.iter().any(|tool| {
             tool["name"] == "computer_type_text"
@@ -5130,6 +6008,12 @@ mod tests {
         assert!(source.contains("IsZoomed(hwnd)"));
         assert!(source.contains("restore_window_bounds"));
         assert!(source.contains("restore_window_maximized_state"));
+        assert!(source.contains("pub(super) fn capture_window_layout"));
+        assert!(source.contains("pub(super) fn restore_window_layout"));
+        assert!(source.contains("rollback_layout_windows"));
+        assert!(source.contains("WS_EX_TOOLWINDOW"));
+        assert!(source.contains("GW_OWNER"));
+        assert!(source.contains("WS_CAPTION"));
     }
 
     #[test]
@@ -5139,7 +6023,9 @@ mod tests {
             .iter()
             .filter_map(|tool| tool.get("name").and_then(Value::as_str))
             .collect::<Vec<_>>();
-        assert_eq!(tools.len(), 14);
+        assert_eq!(tools.len(), 16);
+        assert!(names.contains(&"computer_capture_window_layout"));
+        assert!(names.contains(&"computer_restore_window_layout"));
         assert!(names.contains(&"computer_set_frontmost_window_bounds"));
         assert!(names.contains(&"computer_set_frontmost_window_fullscreen"));
         assert!(!names.contains(&"computer_set_frontmost_window_maximized"));
@@ -5152,6 +6038,11 @@ mod tests {
             .contains("fullscreen_attribute.value.set(requested)"));
         assert!(RESTORE_FRONTMOST_WINDOW_FULLSCREEN_JXA
             .contains("fullscreen_attribute.value.set(approved.fullscreen)"));
+        assert!(CAPTURE_WINDOW_LAYOUT_JXA.contains("AXStandardWindow"));
+        assert!(PREFLIGHT_WINDOW_LAYOUT_JXA.contains("process_identity"));
+        assert!(RESTORE_WINDOW_LAYOUT_JXA.contains("rollback(systemEvents"));
+        assert!(RESTORE_WINDOW_LAYOUT_JXA.contains("!recovery.complete"));
+        assert!(ROLLBACK_WINDOW_LAYOUT_JXA.contains("snapshot.windows.length - 1"));
         assert!(!SET_FRONTMOST_WINDOW_FULLSCREEN_JXA.contains("keystroke"));
     }
 
@@ -5224,6 +6115,114 @@ mod tests {
         let mut invalid = guard.clone();
         invalid.fullscreen = None;
         assert!(invalid.validate().is_err());
+    }
+
+    #[test]
+    fn window_layout_snapshot_is_opaque_bounded_one_shot_and_redacted() {
+        let display_layout = vec![ApprovedDisplayGuard {
+            index: 1,
+            display_id: 99,
+            is_main: true,
+            origin_x: 0.0,
+            origin_y: 0.0,
+            width: 1920.0,
+            height: 1080.0,
+            pixels_wide: 3840,
+            pixels_high: 2160,
+            rotation_degrees: 0.0,
+        }];
+        let window = ApprovedWindowLayoutGuard {
+            platform: current_platform_name().to_string(),
+            application: "Example".to_string(),
+            process_identity: "bundle:com.example.app".to_string(),
+            pid: 42,
+            window_id: "1001".to_string(),
+            position: [100.0, 120.0],
+            size: [1280.0, 720.0],
+        };
+        let mut snapshot = WindowLayoutSnapshot {
+            schema_version: WINDOW_LAYOUT_SCHEMA_VERSION,
+            snapshot_id: uuid::Uuid::new_v4().hyphenated().to_string(),
+            snapshot_sha256: String::new(),
+            platform: current_platform_name().to_string(),
+            display_layout,
+            windows: vec![window],
+            excluded_window_count: 2,
+            truncated: false,
+        };
+        snapshot.snapshot_sha256 = window_layout_sha256(&snapshot).unwrap();
+        snapshot.validate().unwrap();
+
+        let reference_arguments = json!({
+            "snapshot_id": snapshot.snapshot_id,
+            "snapshot_sha256": snapshot.snapshot_sha256,
+        });
+        let reference = parse_window_layout_reference(&reference_arguments).unwrap();
+        assert!(parse_window_layout_reference(&json!({
+            "snapshot_id": reference.snapshot_id,
+            "snapshot_sha256": reference.snapshot_sha256,
+            "pid": 42,
+        }))
+        .is_err());
+
+        let approved_argument = window_layout_approval_argument(&snapshot).unwrap();
+        let approved_arguments = vec![approved_argument];
+        assert_eq!(
+            approved_window_layout_snapshot(Some(approved_arguments.as_slice())).unwrap(),
+            snapshot
+        );
+        assert!(redact_approval_arguments("computer_restore_window_layout"));
+
+        store_window_layout_snapshot(snapshot.clone()).unwrap();
+        assert_eq!(stored_window_layout_snapshot(&reference).unwrap(), snapshot);
+        consume_approved_window_layout_snapshot(
+            &reference_arguments,
+            Some(approved_arguments.as_slice()),
+        )
+        .unwrap();
+        assert!(stored_window_layout_snapshot(&reference).is_err());
+
+        let public = finalize_window_layout_capture(
+            serde_json::to_value(WindowLayoutCapturePayload {
+                platform: snapshot.platform.clone(),
+                display_layout: snapshot.display_layout.clone(),
+                windows: snapshot.windows.clone(),
+                excluded_window_count: 0,
+                truncated: false,
+            })
+            .unwrap(),
+        )
+        .unwrap();
+        let serialized = public.to_string();
+        assert!(!serialized.contains("com.example.app"));
+        assert!(!serialized.contains("1001"));
+        assert_eq!(
+            public.pointer("/_structured_result/persisted"),
+            Some(&Value::Bool(false))
+        );
+        assert_eq!(
+            public.pointer("/_structured_result/model_supplied_window_identities_or_coordinates"),
+            Some(&Value::Bool(false))
+        );
+
+        let now = Instant::now();
+        let mut at_capacity = BTreeMap::new();
+        for _ in 0..MAX_WINDOW_LAYOUT_SNAPSHOTS {
+            let mut stored_snapshot = snapshot.clone();
+            stored_snapshot.snapshot_id = uuid::Uuid::new_v4().hyphenated().to_string();
+            stored_snapshot.snapshot_sha256 = window_layout_sha256(&stored_snapshot).unwrap();
+            at_capacity.insert(
+                stored_snapshot.snapshot_id.clone(),
+                StoredWindowLayoutSnapshot {
+                    captured_at: now,
+                    snapshot: stored_snapshot,
+                },
+            );
+        }
+        prune_expired_window_layout_snapshots(&mut at_capacity, now);
+        assert_eq!(at_capacity.len(), MAX_WINDOW_LAYOUT_SNAPSHOTS);
+        evict_window_layout_snapshot_for_insert(&mut at_capacity);
+        assert_eq!(at_capacity.len(), MAX_WINDOW_LAYOUT_SNAPSHOTS - 1);
     }
 
     #[test]
@@ -5776,6 +6775,10 @@ mod tests {
         let temp = tempfile::tempdir().expect("temporary script directory");
         for (index, script) in [
             LIST_WINDOWS_JXA,
+            CAPTURE_WINDOW_LAYOUT_JXA,
+            PREFLIGHT_WINDOW_LAYOUT_JXA,
+            RESTORE_WINDOW_LAYOUT_JXA,
+            ROLLBACK_WINDOW_LAYOUT_JXA,
             INSPECT_FRONTMOST_WINDOW_JXA,
             FRONTMOST_WINDOW_CAPTURE_TARGET_JXA,
             FRONTMOST_WINDOW_CONTROL_TARGET_JXA,
