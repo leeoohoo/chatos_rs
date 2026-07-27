@@ -12,6 +12,8 @@ use std::process::Stdio;
 mod windows;
 #[cfg(any(windows, test))]
 mod windows_command_line;
+#[cfg(any(windows, test))]
+mod windows_workspace;
 
 const WRAPPER_MODE: &str = "--internal-plugin-stdio-wrapper";
 
@@ -278,6 +280,10 @@ fn validate_environment_name(value: &str) -> Result<(), String> {
             | "SYSTEMROOT"
             | "WINDIR"
             | "USERPROFILE"
+            | "APPDATA"
+            | "LOCALAPPDATA"
+            | "CHATOS_PLUGIN_ROOT"
+            | "CHATOS_WORKSPACE"
             | "NODE_OPTIONS"
             | "PYTHONHOME"
             | "PYTHONPATH"
@@ -659,6 +665,10 @@ mod tests {
             "/bin/true".to_string(),
         ])
         .is_err());
+        assert!(super::validate_environment_name("CHATOS_WORKSPACE").is_err());
+        assert!(super::validate_environment_name("CHATOS_PLUGIN_ROOT").is_err());
+        assert!(super::validate_environment_name("APPDATA").is_err());
+        assert!(super::validate_environment_name("LOCALAPPDATA").is_err());
     }
 
     #[test]
@@ -669,12 +679,16 @@ mod tests {
             "CapabilityCount: 0",
             "PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES",
             "PROC_THREAD_ATTRIBUTE_HANDLE_LIST",
+            "PROC_THREAD_ATTRIBUTE_ALL_APPLICATION_PACKAGES_POLICY",
+            "PROCESS_CREATION_ALL_APPLICATION_PACKAGES_OPT_OUT",
             "signed Plugin package file failed SHA-256 verification",
             "grant_appcontainer_read_only",
             "Do not deny FILE_GENERIC_WRITE as a single mask",
             "JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE",
             "JOB_OBJECT_LIMIT_ACTIVE_PROCESS",
-            "does not yet support workspace-write",
+            "WindowsWorkspaceMirror",
+            "workspace.commit()",
+            "CHATOS_WORKSPACE",
         ] {
             assert!(
                 source.contains(required),

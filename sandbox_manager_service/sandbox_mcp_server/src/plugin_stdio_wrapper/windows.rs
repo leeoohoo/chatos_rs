@@ -26,7 +26,8 @@ use windows_sys::Win32::Security::Isolation::{
     CreateAppContainerProfile, DeleteAppContainerProfile, GetAppContainerFolderPath,
 };
 use windows_sys::Win32::Security::{
-    FreeSid, DACL_SECURITY_INFORMATION, NO_INHERITANCE, PSID, SECURITY_CAPABILITIES,
+    FreeSid, CONTAINER_INHERIT_ACE, DACL_SECURITY_INFORMATION, INHERIT_ONLY_ACE, NO_INHERITANCE,
+    OBJECT_INHERIT_ACE, PSID, SECURITY_CAPABILITIES,
 };
 use windows_sys::Win32::Storage::FileSystem::{
     DELETE, FILE_APPEND_DATA, FILE_ATTRIBUTE_REPARSE_POINT, FILE_DELETE_CHILD,
@@ -50,11 +51,15 @@ use windows_sys::Win32::System::Threading::{
     CreateProcessW, DeleteProcThreadAttributeList, GetExitCodeProcess,
     InitializeProcThreadAttributeList, ResumeThread, TerminateProcess, UpdateProcThreadAttribute,
     WaitForSingleObject, CREATE_NO_WINDOW, CREATE_SUSPENDED, CREATE_UNICODE_ENVIRONMENT,
-    EXTENDED_STARTUPINFO_PRESENT, INFINITE, PROCESS_INFORMATION, PROC_THREAD_ATTRIBUTE_HANDLE_LIST,
+    EXTENDED_STARTUPINFO_PRESENT, INFINITE, PROCESS_INFORMATION,
+    PROC_THREAD_ATTRIBUTE_ALL_APPLICATION_PACKAGES_POLICY, PROC_THREAD_ATTRIBUTE_HANDLE_LIST,
     PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES, STARTF_USESTDHANDLES, STARTUPINFOEXW,
 };
+use windows_sys::Win32::System::WindowsProgramming::PROCESS_CREATION_ALL_APPLICATION_PACKAGES_OPT_OUT;
 
-use super::{windows_command_line, PluginStdioSandboxSpec};
+use super::{
+    windows_command_line, windows_workspace::WindowsWorkspaceMirror, PluginStdioSandboxSpec,
+};
 
 const PACKAGE_INDEX_MAX_BYTES: u64 = 2 * 1024 * 1024;
 const PACKAGE_FILE_MAX_BYTES: u64 = 256 * 1024 * 1024;
@@ -77,17 +82,17 @@ pub(super) async fn run(spec: &PluginStdioSandboxSpec) -> Result<i32, String> {
 }
 
 fn run_blocking(spec: &PluginStdioSandboxSpec) -> Result<i32, String> {
-    if spec.workspace_root.is_some() {
-        return Err(
-            "Windows Plugin stdio AppContainer does not yet support workspace-write".to_string(),
-        );
-    }
-
     let profile = AppContainerProfile::create(spec.sandbox_id.as_str())?;
     let profile_root = profile.folder_path()?;
     let staged = stage_signed_package(spec, profile_root.as_path(), profile.sid())?;
     let environment = safe_environment_block(spec, &staged)?;
-    launch_appcontainer_process(spec, &profile, &staged, environment.as_slice())
+    let exit_code = launch_appcontainer_process(spec, &profile, &staged, environment.as_slice())?;
+    if exit_code == 0 {
+        if let Some(workspace) = staged.workspace.as_ref() {
+            workspace.commit()?;
+        }
+    }
+    Ok(exit_code)
 }
 
 struct StagedPackage {
@@ -98,6 +103,7 @@ struct StagedPackage {
     temp_root: PathBuf,
     cwd: PathBuf,
     command: PathBuf,
+    workspace: Option<WindowsWorkspaceMirror>,
 }
 
 fn stage_signed_package(
@@ -188,6 +194,16 @@ fn stage_signed_package(
     if !command.is_file() {
         return Err("Windows Plugin staged command is unavailable".to_string());
     }
+    let workspace = spec
+        .workspace_root
+        .as_ref()
+        .map(|source| {
+            WindowsWorkspaceMirror::stage(
+                source.as_path(),
+                sandbox_root.join("workspace").as_path(),
+            )
+        })
+        .transpose()?;
 
     // The profile grants its AppContainer write access. Exact deny ACEs on the sandbox root stop
     // entry replacement, and exact deny ACEs on every staged package object keep signed content
@@ -199,6 +215,20 @@ fn stage_signed_package(
     for path in staged_paths {
         grant_appcontainer_read_only(path.as_path(), appcontainer_sid)?;
     }
+    if let Some(workspace) = workspace.as_ref() {
+        for (index, path) in workspace.acl_paths().into_iter().enumerate() {
+            if path.protected_git {
+                grant_appcontainer_read_only(path.path.as_path(), appcontainer_sid)?;
+            } else {
+                grant_appcontainer_workspace_access(
+                    path.path.as_path(),
+                    appcontainer_sid,
+                    path.directory,
+                    index == 0,
+                )?;
+            }
+        }
+    }
 
     Ok(StagedPackage {
         sandbox_root,
@@ -208,6 +238,7 @@ fn stage_signed_package(
         temp_root,
         cwd,
         command,
+        workspace,
     })
 }
 
@@ -405,6 +436,103 @@ fn copy_verified_file(
 }
 
 fn grant_appcontainer_read_only(path: &Path, sid: PSID) -> Result<(), String> {
+    // Do not deny FILE_GENERIC_WRITE as a single mask: it contains READ_CONTROL and would
+    // also block FILE_GENERIC_READ/EXECUTE. Deny only the concrete mutation rights.
+    let denied = FILE_WRITE_DATA
+        | FILE_APPEND_DATA
+        | FILE_WRITE_EA
+        | FILE_WRITE_ATTRIBUTES
+        | DELETE
+        | FILE_DELETE_CHILD
+        | WRITE_DAC
+        | WRITE_OWNER;
+    let allowed = FILE_GENERIC_READ | FILE_GENERIC_EXECUTE;
+    let mut entries = [EXPLICIT_ACCESS_W::default(), EXPLICIT_ACCESS_W::default()];
+    entries[0].grfAccessPermissions = denied;
+    entries[0].grfAccessMode = DENY_ACCESS;
+    entries[0].grfInheritance = NO_INHERITANCE;
+    entries[1].grfAccessPermissions = allowed;
+    entries[1].grfAccessMode = GRANT_ACCESS;
+    entries[1].grfInheritance = NO_INHERITANCE;
+    apply_appcontainer_acl(path, sid, entries.as_mut_slice())
+}
+
+fn grant_appcontainer_workspace_access(
+    path: &Path,
+    sid: PSID,
+    directory: bool,
+    workspace_root: bool,
+) -> Result<(), String> {
+    let mutation = FILE_WRITE_DATA
+        | FILE_APPEND_DATA
+        | FILE_WRITE_EA
+        | FILE_WRITE_ATTRIBUTES
+        | DELETE
+        | FILE_DELETE_CHILD;
+    let exact_allowed = FILE_GENERIC_READ
+        | FILE_GENERIC_EXECUTE
+        | FILE_WRITE_DATA
+        | FILE_APPEND_DATA
+        | FILE_WRITE_EA
+        | FILE_WRITE_ATTRIBUTES
+        | if workspace_root { 0 } else { DELETE }
+        | if directory && !workspace_root {
+            FILE_DELETE_CHILD
+        } else {
+            0
+        };
+    let inherited = if directory {
+        OBJECT_INHERIT_ACE | CONTAINER_INHERIT_ACE
+    } else {
+        NO_INHERITANCE
+    };
+    let mut entries = Vec::with_capacity(if workspace_root { 4 } else { 2 });
+    entries.push(EXPLICIT_ACCESS_W {
+        grfAccessPermissions: WRITE_DAC | WRITE_OWNER,
+        grfAccessMode: DENY_ACCESS,
+        grfInheritance: inherited,
+        ..EXPLICIT_ACCESS_W::default()
+    });
+    if workspace_root {
+        entries.push(EXPLICIT_ACCESS_W {
+            grfAccessPermissions: DELETE | FILE_DELETE_CHILD,
+            grfAccessMode: DENY_ACCESS,
+            grfInheritance: NO_INHERITANCE,
+            ..EXPLICIT_ACCESS_W::default()
+        });
+    }
+    entries.push(EXPLICIT_ACCESS_W {
+        grfAccessPermissions: exact_allowed,
+        grfAccessMode: GRANT_ACCESS,
+        grfInheritance: if directory && !workspace_root {
+            inherited
+        } else {
+            NO_INHERITANCE
+        },
+        ..EXPLICIT_ACCESS_W::default()
+    });
+    if workspace_root {
+        entries.push(EXPLICIT_ACCESS_W {
+            grfAccessPermissions: FILE_GENERIC_READ | FILE_GENERIC_EXECUTE | mutation,
+            grfAccessMode: GRANT_ACCESS,
+            grfInheritance: inherited | INHERIT_ONLY_ACE,
+            ..EXPLICIT_ACCESS_W::default()
+        });
+    }
+    apply_appcontainer_acl(path, sid, entries.as_mut_slice())
+}
+
+fn apply_appcontainer_acl(
+    path: &Path,
+    sid: PSID,
+    entries: &mut [EXPLICIT_ACCESS_W],
+) -> Result<(), String> {
+    for entry in entries.iter_mut() {
+        unsafe {
+            BuildTrusteeWithSidW(&mut entry.Trustee, sid);
+        }
+        entry.Trustee.TrusteeType = TRUSTEE_IS_UNKNOWN;
+    }
     let path_wide = wide_nul(path.as_os_str())?;
     let mut old_dacl = null_mut();
     let mut security_descriptor = null_mut();
@@ -425,28 +553,6 @@ fn grant_appcontainer_read_only(path: &Path, sid: PSID) -> Result<(), String> {
                 "read Windows Plugin sandbox ACL failed with Win32 error {status}"
             ))
         } else {
-            // Do not deny FILE_GENERIC_WRITE as a single mask: it contains READ_CONTROL and would
-            // also block FILE_GENERIC_READ/EXECUTE. Deny only the concrete mutation rights.
-            let denied = FILE_WRITE_DATA
-                | FILE_APPEND_DATA
-                | FILE_WRITE_EA
-                | FILE_WRITE_ATTRIBUTES
-                | DELETE
-                | FILE_DELETE_CHILD
-                | WRITE_DAC
-                | WRITE_OWNER;
-            let allowed = FILE_GENERIC_READ | FILE_GENERIC_EXECUTE;
-            let mut entries = [EXPLICIT_ACCESS_W::default(), EXPLICIT_ACCESS_W::default()];
-            entries[0].grfAccessPermissions = denied;
-            entries[0].grfAccessMode = DENY_ACCESS;
-            entries[0].grfInheritance = NO_INHERITANCE;
-            BuildTrusteeWithSidW(&mut entries[0].Trustee, sid);
-            entries[0].Trustee.TrusteeType = TRUSTEE_IS_UNKNOWN;
-            entries[1].grfAccessPermissions = allowed;
-            entries[1].grfAccessMode = GRANT_ACCESS;
-            entries[1].grfInheritance = NO_INHERITANCE;
-            BuildTrusteeWithSidW(&mut entries[1].Trustee, sid);
-            entries[1].Trustee.TrusteeType = TRUSTEE_IS_UNKNOWN;
             let status = SetEntriesInAclW(
                 entries.len() as u32,
                 entries.as_ptr(),
@@ -553,6 +659,13 @@ fn safe_environment_block(
         "CHATOS_PLUGIN_ROOT",
         staged.plugin_root.as_os_str().to_os_string(),
     )?;
+    if let Some(workspace) = staged.workspace.as_ref() {
+        insert_environment(
+            &mut values,
+            "CHATOS_WORKSPACE",
+            workspace.staged_root().as_os_str().to_os_string(),
+        )?;
+    }
     for name in ["LANG", "LC_ALL", "LC_CTYPE", "LOGNAME", "TERM", "USER"] {
         if let Some(value) = std::env::var_os(name).filter(|value| !value.is_empty()) {
             insert_environment(&mut values, name, value)?;
@@ -612,7 +725,8 @@ fn launch_appcontainer_process(
         CapabilityCount: 0,
         Reserved: 0,
     };
-    let mut attributes = ProcThreadAttributes::new(2)?;
+    let mut all_application_packages_policy = PROCESS_CREATION_ALL_APPLICATION_PACKAGES_OPT_OUT;
+    let mut attributes = ProcThreadAttributes::new(3)?;
     attributes.update(
         PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES as usize,
         (&mut security_capabilities as *mut SECURITY_CAPABILITIES).cast(),
@@ -622,6 +736,11 @@ fn launch_appcontainer_process(
         PROC_THREAD_ATTRIBUTE_HANDLE_LIST as usize,
         std_handles.as_ptr().cast(),
         std_handles.len() * size_of::<HANDLE>(),
+    )?;
+    attributes.update(
+        PROC_THREAD_ATTRIBUTE_ALL_APPLICATION_PACKAGES_POLICY as usize,
+        (&mut all_application_packages_policy as *mut u32).cast(),
+        size_of::<u32>(),
     )?;
 
     let job = JobHandle::new()?;
