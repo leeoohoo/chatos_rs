@@ -156,6 +156,7 @@ enum PresentationChartType {
     Doughnut,
     Radar,
     Scatter,
+    Bubble,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -459,6 +460,7 @@ impl PresentationChartType {
             "doughnut" => Ok(Self::Doughnut),
             "radar" => Ok(Self::Radar),
             "scatter" => Ok(Self::Scatter),
+            "bubble" => Ok(Self::Bubble),
             value => Err(anyhow!("unsupported PPTX chart type: {value}")),
         }
     }
@@ -473,6 +475,7 @@ impl PresentationChartType {
             Self::Doughnut => "doughnut",
             Self::Radar => "radar",
             Self::Scatter => "scatter",
+            Self::Bubble => "bubble",
         }
     }
 
@@ -482,6 +485,10 @@ impl PresentationChartType {
 
     fn uses_line_color(self) -> bool {
         matches!(self, Self::Line | Self::Radar | Self::Scatter)
+    }
+
+    fn uses_numeric_x_axis(self) -> bool {
+        matches!(self, Self::Scatter | Self::Bubble)
     }
 
     fn primary_category_axis_position(self) -> &'static str {
@@ -521,6 +528,7 @@ impl PresentationChartType {
 struct PresentationChartSeries {
     name: String,
     values: Vec<f64>,
+    bubble_sizes: Option<Vec<f64>>,
     value_axis: PresentationChartValueAxis,
     color: Option<String>,
     marker_style: Option<PresentationChartMarkerStyle>,
@@ -736,6 +744,10 @@ struct PptxChartGroupInspection {
     bar_direction: Option<String>,
     radar_style: Option<String>,
     scatter_style: Option<String>,
+    bubble_scale: Option<String>,
+    show_negative_bubbles: Option<String>,
+    bubble_size_represents: Option<String>,
+    bubble_3d: Option<String>,
     axis_ids: Vec<String>,
 }
 
@@ -3124,11 +3136,12 @@ pub(super) fn inspect_pptx_charts(
                 .map(|(index, _)| index + 1)
                 .collect::<Vec<_>>();
             let horizontal_bar = pptx_chart_inspection_is_horizontal_bar(&chart);
-            let scatter = chart.chart_types.len() == 1 && chart.chart_types[0] == "scatter";
-            let x_axis = scatter
+            let numeric_x = chart.chart_types.len() == 1
+                && matches!(chart.chart_types[0].as_str(), "scatter" | "bubble");
+            let x_axis = numeric_x
                 .then(|| pptx_chart_value_axis_by_position(chart.axes.as_slice(), "b"))
                 .flatten();
-            let secondary_x_axis = scatter
+            let secondary_x_axis = numeric_x
                 .then(|| pptx_chart_value_axis_by_position(chart.axes.as_slice(), "t"))
                 .flatten();
             let value_axis_position = if horizontal_bar { "b" } else { "l" };
@@ -3156,6 +3169,30 @@ pub(super) fn inspect_pptx_charts(
                 .iter()
                 .filter(|group| group.chart_type == "scatter")
                 .map(|group| group.scatter_style.clone())
+                .collect::<Vec<_>>();
+            let bubble_scales = chart
+                .chart_groups
+                .iter()
+                .filter(|group| group.chart_type == "bubble")
+                .map(|group| group.bubble_scale.clone())
+                .collect::<Vec<_>>();
+            let show_negative_bubbles = chart
+                .chart_groups
+                .iter()
+                .filter(|group| group.chart_type == "bubble")
+                .map(|group| group.show_negative_bubbles.clone())
+                .collect::<Vec<_>>();
+            let bubble_size_represents = chart
+                .chart_groups
+                .iter()
+                .filter(|group| group.chart_type == "bubble")
+                .map(|group| group.bubble_size_represents.clone())
+                .collect::<Vec<_>>();
+            let bubble_3d = chart
+                .chart_groups
+                .iter()
+                .filter(|group| group.chart_type == "bubble")
+                .map(|group| group.bubble_3d.clone())
                 .collect::<Vec<_>>();
             let mut metadata = json!({
                 "slide_number": slide_number,
@@ -3200,6 +3237,16 @@ pub(super) fn inspect_pptx_charts(
             let metadata_object = metadata
                 .as_object_mut()
                 .expect("PPTX chart metadata object");
+            metadata_object.insert("bubble_scales".to_string(), json!(bubble_scales));
+            metadata_object.insert(
+                "show_negative_bubbles".to_string(),
+                json!(show_negative_bubbles),
+            );
+            metadata_object.insert(
+                "bubble_size_represents".to_string(),
+                json!(bubble_size_represents),
+            );
+            metadata_object.insert("bubble_3d".to_string(), json!(bubble_3d));
             insert_pptx_chart_axis_metadata(metadata_object, "x_axis", x_axis);
             insert_pptx_chart_axis_metadata(metadata_object, "secondary_x_axis", secondary_x_axis);
             metadata_object.insert(
@@ -3939,7 +3986,7 @@ fn parse_presentation_chart(value: &Value, slide_number: usize) -> Result<Presen
         slide_number,
         "secondary_value_axis_number_format",
     )?;
-    if chart_type != PresentationChartType::Scatter
+    if !chart_type.uses_numeric_x_axis()
         && (x_axis_minimum.is_some()
             || x_axis_maximum.is_some()
             || x_axis_log_base.is_some()
@@ -3950,7 +3997,7 @@ fn parse_presentation_chart(value: &Value, slide_number: usize) -> Result<Presen
             || x_axis_number_format != PresentationChartValueAxisNumberFormat::General)
     {
         return Err(anyhow!(
-            "slide {slide_number} non-scatter chart does not support X-axis bounds, logarithmic scale, tick marks, units, or number format"
+            "slide {slide_number} chart without a numeric X axis does not support X-axis bounds, logarithmic scale, tick marks, units, or number format"
         ));
     }
     if chart_type.is_part_to_whole()
@@ -3980,24 +4027,29 @@ fn parse_presentation_chart(value: &Value, slide_number: usize) -> Result<Presen
             chart_type.as_str()
         ));
     }
-    let (categories, x_values, point_count) = if chart_type == PresentationChartType::Scatter {
+    let (categories, x_values, point_count) = if chart_type.uses_numeric_x_axis() {
         if object
             .get("categories")
             .is_some_and(|value| !value.is_null())
         {
             return Err(anyhow!(
-                "slide {slide_number} scatter chart categories must be null or omitted"
+                "slide {slide_number} {} chart categories must be null or omitted",
+                chart_type.as_str()
             ));
         }
         let x_values = object
             .get("x_values")
             .and_then(Value::as_array)
             .ok_or_else(|| {
-                anyhow!("slide {slide_number} scatter chart x_values must be an array")
+                anyhow!(
+                    "slide {slide_number} {} chart x_values must be an array",
+                    chart_type.as_str()
+                )
             })?;
         if x_values.is_empty() || x_values.len() > MAX_PPTX_CREATE_CHART_CATEGORIES {
             return Err(anyhow!(
-                "slide {slide_number} scatter chart must contain between 1 and {MAX_PPTX_CREATE_CHART_CATEGORIES} x_values"
+                "slide {slide_number} {} chart must contain between 1 and {MAX_PPTX_CREATE_CHART_CATEGORIES} x_values",
+                chart_type.as_str()
             ));
         }
         let x_values = x_values
@@ -4006,13 +4058,15 @@ fn parse_presentation_chart(value: &Value, slide_number: usize) -> Result<Presen
             .map(|(index, value)| {
                 let value = value.as_f64().ok_or_else(|| {
                     anyhow!(
-                        "slide {slide_number} scatter chart x_value {} must be a finite number",
+                        "slide {slide_number} {} chart x_value {} must be a finite number",
+                        chart_type.as_str(),
                         index + 1
                     )
                 })?;
                 if !value.is_finite() || value.abs() > MAX_PPTX_CREATE_CHART_VALUE_ABS {
                     return Err(anyhow!(
-                        "slide {slide_number} scatter chart x_value {} exceeds the numeric safety limit",
+                        "slide {slide_number} {} chart x_value {} exceeds the numeric safety limit",
+                        chart_type.as_str(),
                         index + 1
                     ));
                 }
@@ -4027,8 +4081,8 @@ fn parse_presentation_chart(value: &Value, slide_number: usize) -> Result<Presen
             x_axis_major_unit,
             x_axis_minor_unit,
             slide_number,
-            "scatter X-axis",
-            "scatter logarithmic X-axis",
+            format!("{} X-axis", chart_type.as_str()).as_str(),
+            format!("{} logarithmic X-axis", chart_type.as_str()).as_str(),
             "X value",
             "X values",
         )?;
@@ -4037,7 +4091,7 @@ fn parse_presentation_chart(value: &Value, slide_number: usize) -> Result<Presen
     } else {
         if object.get("x_values").is_some_and(|value| !value.is_null()) {
             return Err(anyhow!(
-                "slide {slide_number} non-scatter chart x_values must be null or omitted"
+                "slide {slide_number} chart without a numeric X axis x_values must be null or omitted"
             ));
         }
         let categories = object
@@ -4099,6 +4153,7 @@ fn parse_presentation_chart(value: &Value, slide_number: usize) -> Result<Presen
                 key.as_str(),
                 "name"
                     | "values"
+                    | "bubble_sizes"
                     | "value_axis"
                     | "color"
                     | "marker_style"
@@ -4143,7 +4198,7 @@ fn parse_presentation_chart(value: &Value, slide_number: usize) -> Result<Presen
             return Err(anyhow!(
                 "slide {slide_number} chart series {} must contain exactly one value per {}",
                 series_index + 1,
-                if chart_type == PresentationChartType::Scatter {
+                if chart_type.uses_numeric_x_axis() {
                     "x_value"
                 } else {
                     "category"
@@ -4177,6 +4232,60 @@ fn parse_presentation_chart(value: &Value, slide_number: usize) -> Result<Presen
                 Ok(value)
             })
             .collect::<Result<Vec<_>>>()?;
+        let bubble_sizes = if chart_type == PresentationChartType::Bubble {
+            let bubble_sizes = series
+                .get("bubble_sizes")
+                .and_then(Value::as_array)
+                .ok_or_else(|| {
+                    anyhow!(
+                        "slide {slide_number} bubble chart series {} bubble_sizes must be an array",
+                        series_index + 1
+                    )
+                })?;
+            if bubble_sizes.len() != point_count {
+                return Err(anyhow!(
+                    "slide {slide_number} bubble chart series {} must contain exactly one bubble_size per x_value",
+                    series_index + 1
+                ));
+            }
+            Some(
+                bubble_sizes
+                    .iter()
+                    .enumerate()
+                    .map(|(value_index, value)| {
+                        let value = value.as_f64().ok_or_else(|| {
+                            anyhow!(
+                                "slide {slide_number} bubble chart series {} bubble_size {} must be a finite positive number",
+                                series_index + 1,
+                                value_index + 1
+                            )
+                        })?;
+                        if !value.is_finite()
+                            || value <= 0.0
+                            || value > MAX_PPTX_CREATE_CHART_VALUE_ABS
+                        {
+                            return Err(anyhow!(
+                                "slide {slide_number} bubble chart series {} bubble_size {} must be positive and within the numeric safety limit",
+                                series_index + 1,
+                                value_index + 1
+                            ));
+                        }
+                        Ok(value)
+                    })
+                    .collect::<Result<Vec<_>>>()?,
+            )
+        } else {
+            if series
+                .get("bubble_sizes")
+                .is_some_and(|value| !value.is_null())
+            {
+                return Err(anyhow!(
+                    "slide {slide_number} non-bubble chart series {} bubble_sizes must be null or omitted",
+                    series_index + 1
+                ));
+            }
+            None
+        };
         if chart_type.is_part_to_whole() && !values.iter().any(|value| *value > 0.0) {
             return Err(anyhow!(
                 "slide {slide_number} {} chart requires at least one positive value",
@@ -4218,6 +4327,7 @@ fn parse_presentation_chart(value: &Value, slide_number: usize) -> Result<Presen
         parsed_series.push(PresentationChartSeries {
             name: name.to_string(),
             values,
+            bubble_sizes,
             value_axis,
             color,
             marker_style,
@@ -5490,7 +5600,7 @@ fn presentation_chart_xml(chart: &PresentationChart) -> Result<String> {
             minor_unit: chart.value_axis_minor_unit,
             number_format: chart.value_axis_number_format,
         };
-        let axes = if chart.chart_type == PresentationChartType::Scatter {
+        let axes = if chart.chart_type.uses_numeric_x_axis() {
             presentation_scatter_chart_axes_xml(
                 PPTX_PRIMARY_CATEGORY_AXIS_ID,
                 PPTX_PRIMARY_VALUE_AXIS_ID,
@@ -5528,7 +5638,7 @@ fn presentation_chart_xml(chart: &PresentationChart) -> Result<String> {
                 minor_unit: chart.secondary_value_axis_minor_unit,
                 number_format: chart.secondary_value_axis_number_format,
             };
-            let secondary_axes = if chart.chart_type == PresentationChartType::Scatter {
+            let secondary_axes = if chart.chart_type.uses_numeric_x_axis() {
                 presentation_scatter_chart_secondary_axes_xml(
                     PPTX_SECONDARY_CATEGORY_AXIS_ID,
                     PPTX_SECONDARY_VALUE_AXIS_ID,
@@ -5587,7 +5697,11 @@ fn presentation_chart_xml(chart: &PresentationChart) -> Result<String> {
                 .series
                 .len()
                 .saturating_mul(point_count)
-                .saturating_mul(2)
+                .saturating_mul(if chart.chart_type == PresentationChartType::Bubble {
+                    3
+                } else {
+                    2
+                })
     {
         return Err(anyhow!(
             "generated PPTX chart did not pass the standard chart inspection contract"
@@ -5627,6 +5741,9 @@ fn presentation_chart_group_xml(
         ),
         PresentationChartType::Scatter => format!(
             r#"<c:scatterChart><c:scatterStyle val="lineMarker"/><c:varyColors val="0"/>{series}{data_labels}<c:axId val="{category_axis_id}"/><c:axId val="{value_axis_id}"/></c:scatterChart>"#
+        ),
+        PresentationChartType::Bubble => format!(
+            r#"<c:bubbleChart><c:varyColors val="0"/>{series}{data_labels}<c:bubbleScale val="100"/><c:showNegBubbles val="0"/><c:sizeRepresents val="area"/><c:axId val="{category_axis_id}"/><c:axId val="{value_axis_id}"/></c:bubbleChart>"#
         ),
     }
 }
@@ -5672,6 +5789,24 @@ fn presentation_chart_series_xml(
                     .expect("validated scatter X values")
             ),
             presentation_chart_number_literal(series.values.as_slice())
+        )
+    } else if chart.chart_type == PresentationChartType::Bubble {
+        format!(
+            r#"<c:ser><c:idx val="{index}"/><c:order val="{index}"/><c:tx><c:v>{}</c:v></c:tx>{color}<c:xVal>{}</c:xVal><c:yVal>{}</c:yVal><c:bubbleSize>{}</c:bubbleSize></c:ser>"#,
+            escape_xml(series.name.as_str()),
+            presentation_chart_number_literal(
+                chart
+                    .x_values
+                    .as_deref()
+                    .expect("validated bubble X values")
+            ),
+            presentation_chart_number_literal(series.values.as_slice()),
+            presentation_chart_number_literal(
+                series
+                    .bubble_sizes
+                    .as_deref()
+                    .expect("validated bubble sizes")
+            )
         )
     } else {
         format!(
@@ -5779,6 +5914,7 @@ fn presentation_chart_snapshot(chart: &PresentationChart) -> Value {
         "series": chart.series.iter().map(|series| json!({
             "name": series.name,
             "values": series.values,
+            "bubble_sizes": series.bubble_sizes,
             "value_axis": series.value_axis.as_str(),
             "color": series.color,
             "marker_style": series.marker_style.map(PresentationChartMarkerStyle::as_str),
@@ -5879,9 +6015,23 @@ fn canonical_pptx_chart_snapshot(
                 ));
             }
         }
+        "bubble" => {
+            if inspection.chart_groups.iter().all(|group| {
+                group.bubble_scale.as_deref() == Some("100")
+                    && group.show_negative_bubbles.as_deref() == Some("0")
+                    && group.bubble_size_represents.as_deref() == Some("area")
+                    && group.bubble_3d.is_none()
+            }) {
+                PresentationChartType::Bubble
+            } else {
+                return Err(anyhow!(
+                    "canonical bubble chart groups require bubbleScale=100, showNegBubbles=0, sizeRepresents=area, and no bubble3D"
+                ));
+            }
+        }
         _ => {
             return Err(anyhow!(
-                "chart type is outside the canonical column, bar, line, pie, area, doughnut, radar, or scatter contract"
+                "chart type is outside the canonical column, bar, line, pie, area, doughnut, radar, scatter, or bubble contract"
             ));
         }
     };
@@ -5948,15 +6098,15 @@ fn canonical_pptx_chart_snapshot(
         minor_unit: None,
         number_format: PresentationChartValueAxisNumberFormat::General,
     };
-    let x_axis_options = if chart_type == PresentationChartType::Scatter {
+    let x_axis_options = if chart_type.uses_numeric_x_axis() {
         let bottom_axis = pptx_chart_value_axis_by_position(inspection.axes.as_slice(), "b")
-            .ok_or_else(|| anyhow!("canonical scatter chart is missing its bottom X axis"))?;
-        let bottom_options = canonical_pptx_chart_axis_options(bottom_axis, "scatter X")?;
+            .ok_or_else(|| anyhow!("canonical numeric-X chart is missing its bottom X axis"))?;
+        let bottom_options = canonical_pptx_chart_axis_options(bottom_axis, "numeric X")?;
         if let Some(top_axis) = pptx_chart_value_axis_by_position(inspection.axes.as_slice(), "t") {
-            let top_options = canonical_pptx_chart_axis_options(top_axis, "secondary scatter X")?;
+            let top_options = canonical_pptx_chart_axis_options(top_axis, "secondary numeric X")?;
             if top_options != bottom_options {
                 return Err(anyhow!(
-                    "canonical scatter chart bottom and hidden top X axes must use identical bounds, logarithmic scale, tick marks, units, and number format"
+                    "canonical numeric-X chart bottom and hidden top X axes must use identical bounds, logarithmic scale, tick marks, units, and number format"
                 ));
             }
         }
@@ -6006,11 +6156,41 @@ fn canonical_pptx_chart_snapshot(
                 "canonical self-contained charts must not contain formulas"
             ));
         }
-        if !item.bubble_sizes.is_empty() {
-            return Err(anyhow!(
-                "canonical self-contained charts must not contain bubble-size caches"
-            ));
-        }
+        let bubble_sizes = if chart_type == PresentationChartType::Bubble {
+            if item.bubble_sizes.len() != item.categories.len() || item.bubble_sizes.is_empty() {
+                return Err(anyhow!(
+                    "canonical bubble chart series require one bubble-size value per X value"
+                ));
+            }
+            Some(
+                item.bubble_sizes
+                    .iter()
+                    .map(|value| {
+                        let value = value.parse::<f64>().map_err(|_| {
+                            anyhow!(
+                                "canonical bubble sizes must be finite positive decimal numbers"
+                            )
+                        })?;
+                        if !value.is_finite()
+                            || value <= 0.0
+                            || value > MAX_PPTX_CREATE_CHART_VALUE_ABS
+                        {
+                            return Err(anyhow!(
+                                "canonical bubble sizes must be positive and within the numeric safety limit"
+                            ));
+                        }
+                        Ok(value)
+                    })
+                    .collect::<Result<Vec<_>>>()?,
+            )
+        } else {
+            if !item.bubble_sizes.is_empty() {
+                return Err(anyhow!(
+                    "canonical non-bubble charts must not contain bubble-size caches"
+                ));
+            }
+            None
+        };
         if item.categories != cached_categories {
             return Err(anyhow!(
                 "canonical self-contained chart series must share identical categories or X values"
@@ -6079,6 +6259,7 @@ fn canonical_pptx_chart_snapshot(
         series.push(PresentationChartSeries {
             name: item.name.clone(),
             values,
+            bubble_sizes,
             value_axis,
             color: item.color.clone(),
             marker_style,
@@ -6086,13 +6267,13 @@ fn canonical_pptx_chart_snapshot(
             smooth: item.smooth,
         });
     }
-    let (categories, x_values) = if chart_type == PresentationChartType::Scatter {
+    let (categories, x_values) = if chart_type.uses_numeric_x_axis() {
         let x_values = cached_categories
             .iter()
             .map(|value| {
                 value.parse::<f64>().map_err(|_| {
                     anyhow!(
-                        "canonical self-contained scatter X values must be finite decimal numbers"
+                        "canonical self-contained numeric X values must be finite decimal numbers"
                     )
                 })
             })
@@ -9966,6 +10147,10 @@ fn inspect_standard_pptx_chart_xml(xml: &str) -> Result<PptxChartInspection> {
                         bar_direction: None,
                         radar_style: None,
                         scatter_style: None,
+                        bubble_scale: None,
+                        show_negative_bubbles: None,
+                        bubble_size_represents: None,
+                        bubble_3d: None,
                         axis_ids: Vec::new(),
                     });
                 }
@@ -10312,11 +10497,12 @@ fn inspect_standard_pptx_chart_xml(xml: &str) -> Result<PptxChartInspection> {
     }
     let title_truncated = title.chars().count() > 1_000;
     let horizontal_bar = pptx_chart_is_horizontal_bar(&chart_types, &chart_groups);
-    let scatter = chart_types.len() == 1 && chart_types.contains("scatter");
+    let numeric_x = chart_types.len() == 1
+        && (chart_types.contains("scatter") || chart_types.contains("bubble"));
     let category_axis_position = if horizontal_bar { "l" } else { "b" };
     let value_axis_position = if horizontal_bar { "b" } else { "l" };
     let secondary_value_axis_position = if horizontal_bar { "t" } else { "r" };
-    let category_axis = if scatter {
+    let category_axis = if numeric_x {
         axes.iter().find(|axis| {
             axis.axis_type == "value" && axis.position.as_deref() == Some(category_axis_position)
         })
@@ -10442,6 +10628,36 @@ fn record_pptx_chart_structure_element(
         if chart_group.scatter_style.replace(value).is_some() {
             return Err(anyhow!(
                 "PPTX chart scatter group contains multiple scatter styles"
+            ));
+        }
+    } else if matches!(
+        qualified.as_slice(),
+        b"c:bubbleScale" | b"c:showNegBubbles" | b"c:sizeRepresents" | b"c:bubble3D"
+    ) && parent == Some("bubbleChart")
+    {
+        let value = required_xml_attribute(reader, event, "val")?;
+        if value.is_empty() || value.len() > 128 {
+            return Err(anyhow!(
+                "PPTX bubble chart group metadata is empty or exceeds the safety limit"
+            ));
+        }
+        let chart_group = chart_group
+            .ok_or_else(|| anyhow!("PPTX bubble metadata is outside a bubble chart group"))?;
+        if chart_group.chart_type != "bubble" {
+            return Err(anyhow!(
+                "PPTX bubble metadata is attached to a non-bubble chart group"
+            ));
+        }
+        let slot = match qualified.as_slice() {
+            b"c:bubbleScale" => &mut chart_group.bubble_scale,
+            b"c:showNegBubbles" => &mut chart_group.show_negative_bubbles,
+            b"c:sizeRepresents" => &mut chart_group.bubble_size_represents,
+            b"c:bubble3D" => &mut chart_group.bubble_3d,
+            _ => unreachable!("matched bubble metadata element"),
+        };
+        if slot.replace(value).is_some() {
+            return Err(anyhow!(
+                "PPTX bubble chart group contains duplicate group metadata"
             ));
         }
     } else if qualified.as_slice() == b"c:axId" {
@@ -10889,7 +11105,7 @@ fn resolve_pptx_chart_series_value_axis(
     let Some(group) = chart_groups.get(series.chart_group_index) else {
         return "unknown".to_string();
     };
-    if series.chart_type == "scatter" {
+    if matches!(series.chart_type.as_str(), "scatter" | "bubble") {
         let Some(y_axis_id) = group.axis_ids.get(1) else {
             return "unknown".to_string();
         };
@@ -11152,6 +11368,10 @@ fn ensure_standard_pptx_chart_namespace(qualified: &[u8], local: &str) -> Result
             | "barDir"
             | "radarStyle"
             | "scatterStyle"
+            | "bubbleScale"
+            | "showNegBubbles"
+            | "sizeRepresents"
+            | "bubble3D"
             | "axId"
             | "axPos"
             | "scaling"
@@ -11315,7 +11535,7 @@ fn add_pptx_chart_text_chars(current: usize, value: &str) -> Result<usize> {
 }
 
 fn pptx_chart_series_json(series: &PptxChartSeriesInspection) -> Value {
-    let scatter = series.chart_type == "scatter";
+    let numeric_x = matches!(series.chart_type.as_str(), "scatter" | "bubble");
     let categories_truncated = series.categories.len() > MAX_PPTX_CHART_PREVIEW_POINTS;
     let values_truncated = series.values.len() > MAX_PPTX_CHART_PREVIEW_POINTS;
     let bubble_sizes_truncated = series.bubble_sizes.len() > MAX_PPTX_CHART_PREVIEW_POINTS;
@@ -11353,13 +11573,13 @@ fn pptx_chart_series_json(series: &PptxChartSeriesInspection) -> Value {
         "bubble_size_formula": series.bubble_size_formula,
         "cached_category_points": series.categories.len(),
         "cached_value_points": series.values.len(),
-        "cached_x_value_points": if scatter { series.categories.len() } else { 0 },
-        "cached_y_value_points": if scatter { series.values.len() } else { 0 },
+        "cached_x_value_points": if numeric_x { series.categories.len() } else { 0 },
+        "cached_y_value_points": if numeric_x { series.values.len() } else { 0 },
         "cached_bubble_size_points": series.bubble_sizes.len(),
         "categories_preview": series.categories.iter().take(MAX_PPTX_CHART_PREVIEW_POINTS).collect::<Vec<_>>(),
         "values_preview": series.values.iter().take(MAX_PPTX_CHART_PREVIEW_POINTS).collect::<Vec<_>>(),
-        "x_values_preview": if scatter { series.categories.iter().take(MAX_PPTX_CHART_PREVIEW_POINTS).collect::<Vec<_>>() } else { Vec::<&String>::new() },
-        "y_values_preview": if scatter { series.values.iter().take(MAX_PPTX_CHART_PREVIEW_POINTS).collect::<Vec<_>>() } else { Vec::<&String>::new() },
+        "x_values_preview": if numeric_x { series.categories.iter().take(MAX_PPTX_CHART_PREVIEW_POINTS).collect::<Vec<_>>() } else { Vec::<&String>::new() },
+        "y_values_preview": if numeric_x { series.values.iter().take(MAX_PPTX_CHART_PREVIEW_POINTS).collect::<Vec<_>>() } else { Vec::<&String>::new() },
         "bubble_sizes_preview": series.bubble_sizes.iter().take(MAX_PPTX_CHART_PREVIEW_POINTS).collect::<Vec<_>>(),
         "preview_truncated": categories_truncated || values_truncated || bubble_sizes_truncated,
     })

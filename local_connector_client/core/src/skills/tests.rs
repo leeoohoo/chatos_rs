@@ -276,7 +276,7 @@ fn presentations_release_publishes_render_and_existing_edit_contracts() {
         .into_iter()
         .find(|item| item.skill_id == "internal_skill_presentations")
         .expect("Presentations catalog item");
-    assert_eq!(catalog_item.version, "1.31.0");
+    assert_eq!(catalog_item.version, "1.32.0");
     let instructions = internal_skill_instructions("internal_skill_presentations")
         .expect("Presentations instructions");
     assert!(instructions.contains("image_right"));
@@ -319,13 +319,21 @@ fn presentations_release_publishes_render_and_existing_edit_contracts() {
     assert!(instructions.contains("visible left category axis with bottom primary value axis"));
     assert!(instructions.contains("missing, inconsistent, duplicated, attributed"));
     assert!(instructions.contains("standard 2D `radar`"));
-    assert!(instructions.contains("raw per-group bar direction, radar style, and scatter style"));
+    assert!(instructions
+        .contains("raw per-group bar direction, radar style, scatter style, and bubble"));
     assert!(instructions.contains("exact `c:radarStyle val=\"standard\"`"));
     assert!(
         instructions.contains("line, radar, and scatter charts emit an exact series line color")
     );
     assert!(instructions.contains("canonical XY `scatter`"));
     assert!(instructions.contains("exact `c:scatterStyle val=\"lineMarker\"`"));
+    assert!(instructions.contains("canonical `bubble`"));
+    assert!(instructions.contains("strictly positive `bubble_sizes`"));
+    assert!(instructions.contains("`<c:bubbleSize><c:numLit>` caches"));
+    assert!(instructions.contains("`c:bubbleScale val=\"100\"`"));
+    assert!(instructions.contains("`c:showNegBubbles val=\"0\"`"));
+    assert!(instructions.contains("`c:sizeRepresents val=\"area\"`"));
+    assert!(instructions.contains("no `c:bubble3D`"));
     assert!(instructions.contains("shared finite numeric `x_values`"));
     assert!(instructions.contains("`x_axis_minimum`/`x_axis_maximum`"));
     assert!(instructions.contains("Every explicit X bound must include all shared `x_values`"));
@@ -335,7 +343,8 @@ fn presentations_release_publishes_render_and_existing_edit_contracts() {
     assert!(instructions.contains("bottom X `c:valAx` crossing a left primary Y `c:valAx`"));
     assert!(instructions
         .contains("hidden top X `c:valAx` crossing a visible right secondary Y `c:valAx`"));
-    assert!(instructions.contains("bar directions, radar styles, or scatter styles"));
+    assert!(instructions
+        .contains("bar directions, radar styles, scatter styles, or bubble group metadata"));
     assert!(instructions.contains("`table` layout"));
     assert!(instructions.contains("1–50 rows and 1–20 string columns"));
     assert!(instructions.contains("immediately eligible for `inspect_pptx_table`"));
@@ -501,6 +510,10 @@ fn presentations_release_publishes_render_and_existing_edit_contracts() {
         .pointer("/inputSchema/properties/slides/items/properties/chart/properties/type/enum")
         .and_then(Value::as_array)
         .is_some_and(|values| values.contains(&json!("scatter"))));
+    assert!(create
+        .pointer("/inputSchema/properties/slides/items/properties/chart/properties/type/enum")
+        .and_then(Value::as_array)
+        .is_some_and(|values| values.contains(&json!("bubble"))));
     assert_eq!(
         create.pointer(
             "/inputSchema/properties/slides/items/properties/chart/properties/x_values/type"
@@ -512,6 +525,18 @@ fn presentations_release_publishes_render_and_existing_edit_contracts() {
             "/inputSchema/properties/slides/items/properties/chart/properties/x_axis_minimum/type"
         ),
         Some(&json!(["number", "null"]))
+    );
+    assert_eq!(
+        create.pointer(
+            "/inputSchema/properties/slides/items/properties/chart/properties/series/items/properties/bubble_sizes/type"
+        ),
+        Some(&json!(["array", "null"]))
+    );
+    assert_eq!(
+        create.pointer(
+            "/inputSchema/properties/slides/items/properties/chart/properties/series/items/properties/bubble_sizes/items/exclusiveMinimum"
+        ),
+        Some(&json!(0))
     );
     assert!(create
         .pointer("/inputSchema/properties/slides/items/properties/chart/properties/x_axis_number_format/enum")
@@ -537,6 +562,10 @@ fn presentations_release_publishes_render_and_existing_edit_contracts() {
         .pointer("/inputSchema/properties/expected_self_contained_edit_snapshot/properties/series/items/required")
         .and_then(Value::as_array)
         .is_some_and(|required| required.contains(&json!("smooth"))));
+    assert!(replace_chart
+        .pointer("/inputSchema/properties/expected_self_contained_edit_snapshot/properties/series/items/required")
+        .and_then(Value::as_array)
+        .is_some_and(|required| required.contains(&json!("bubble_sizes"))));
     assert!(replace_chart
         .pointer("/inputSchema/properties/expected_self_contained_edit_snapshot/required")
         .and_then(Value::as_array)
@@ -913,7 +942,7 @@ fn ready_bundle_v2_fingerprint_matches_plugin_management_seed() {
         .join("\n");
     assert_eq!(
         hex::encode(Sha256::digest(rows.as_bytes())),
-        "a57b1bb68f01536a8012831e8fc22e712b6b0458004226040e63b201e98ef271"
+        "51b5c8afc1534e3d77c92e1d4b2b1eb3ccfa364081d935a4f935abb9682b288f"
     );
 }
 
@@ -928,7 +957,7 @@ fn all_28_bundled_skill_fingerprints_match_plugin_management_seed() {
         .join("\n");
     assert_eq!(
         hex::encode(Sha256::digest(rows.as_bytes())),
-        "f563b812d6a6d2d58e12e9d5d7ea75a8c0ff1eebbf78cdf509b1edf0cfbf136d"
+        "412e255452cee4204512c3f595c60b052ad418050196afe248523f23c55de9fe"
     );
 }
 

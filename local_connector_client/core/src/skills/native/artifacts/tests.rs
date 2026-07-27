@@ -5150,7 +5150,7 @@ fn creates_appends_and_replaces_canonical_line_marker_scatter_pptx_charts() {
                 "x_axis_number_format":"integer",
                 "series":[{"name":"Y","values":[2]}]
             }),
-            "non-scatter chart does not support X-axis bounds, logarithmic scale, tick marks, units, or number format",
+            "chart without a numeric X axis does not support X-axis bounds, logarithmic scale, tick marks, units, or number format",
         ),
     ] {
         let error = presentation::create_pptx(
@@ -5162,6 +5162,359 @@ fn creates_appends_and_replaces_canonical_line_marker_scatter_pptx_charts() {
             &request,
         )
         .expect_err("invalid scatter input must be rejected");
+        assert!(error.to_string().contains(expected_error));
+    }
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn creates_appends_inspects_and_replaces_canonical_bubble_pptx_charts() {
+    let (root, state, request) = test_context();
+    presentation::create_pptx(
+        &json!({
+            "target_path":"bubble-charts.pptx",
+            "slides":[{
+                "title":"Portfolio",
+                "layout":"chart",
+                "chart":{
+                    "type":"bubble",
+                    "title":"Return by risk and size",
+                    "x_values":[1,2,4],
+                    "x_axis_minimum":1,
+                    "x_axis_maximum":5,
+                    "x_axis_log_base":10,
+                    "x_axis_major_tick_mark":"inside",
+                    "x_axis_minor_tick_mark":"outside",
+                    "x_axis_major_unit":1,
+                    "x_axis_minor_unit":0.5,
+                    "x_axis_number_format":"decimal_2",
+                    "series":[
+                        {"name":"Growth","values":[2,4,8],"bubble_sizes":[5,10,20],"color":"#2255AA"},
+                        {"name":"Income","values":[10,20,40],"bubble_sizes":[8,16,32],"value_axis":"secondary","color":"#EE8800"}
+                    ],
+                    "legend_position":"bottom",
+                    "data_labels":"value",
+                    "category_axis_title":"Risk",
+                    "value_axis_title":"Return",
+                    "secondary_value_axis_title":"Income return",
+                    "value_axis_minimum":0,
+                    "value_axis_maximum":10,
+                    "value_axis_major_unit":2,
+                    "value_axis_number_format":"decimal_1",
+                    "secondary_value_axis_minimum":0,
+                    "secondary_value_axis_maximum":50,
+                    "secondary_value_axis_major_unit":10,
+                    "secondary_value_axis_number_format":"integer"
+                }
+            }]
+        }),
+        &state,
+        &request,
+    )
+    .expect("create canonical bubble chart");
+    let source = root.join("bubble-charts.pptx");
+    let source_before = fs::read(source.as_path()).expect("bubble source bytes");
+    let inspected =
+        presentation::inspect_pptx_charts(&json!({"path":"bubble-charts.pptx"}), &state, &request)
+            .expect("inspect canonical bubble chart");
+    assert_eq!(
+        inspected.pointer("/chart_metadata/0/chart_types"),
+        Some(&json!(["bubble"]))
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/0/bubble_scales"),
+        Some(&json!(["100", "100"]))
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/0/show_negative_bubbles"),
+        Some(&json!(["0", "0"]))
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/0/bubble_size_represents"),
+        Some(&json!(["area", "area"]))
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/0/bubble_3d"),
+        Some(&json!([null, null]))
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/0/cached_points"),
+        Some(&json!(18))
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/0/series/0/x_values_preview"),
+        Some(&json!(["1", "2", "4"]))
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/0/series/0/y_values_preview"),
+        Some(&json!(["2", "4", "8"]))
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/0/series/0/bubble_sizes_preview"),
+        Some(&json!(["5", "10", "20"]))
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/0/series/0/color"),
+        Some(&json!("#2255AA"))
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/0/series/0/marker_style"),
+        Some(&Value::Null)
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/0/series/0/smooth"),
+        Some(&Value::Null)
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/0/self_contained_edit_snapshot/series/0/bubble_sizes"),
+        Some(&json!([5.0, 10.0, 20.0]))
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/0/x_axis_number_format"),
+        Some(&json!("decimal_2"))
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/0/secondary_x_axis_number_format"),
+        Some(&json!("decimal_2"))
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/0/eligible_for_self_contained_chart_replacement"),
+        Some(&json!(true))
+    );
+    let hash = inspected
+        .pointer("/chart_metadata/0/chart_xml_sha256")
+        .and_then(Value::as_str)
+        .expect("bubble chart hash")
+        .to_string();
+    let snapshot = inspected
+        .pointer("/chart_metadata/0/self_contained_edit_snapshot")
+        .expect("bubble chart snapshot")
+        .clone();
+    let mut archive = ZipArchive::new(File::open(source.as_path()).expect("bubble source"))
+        .expect("bubble source ZIP");
+    let xml = read_zip_text(&mut archive, "ppt/charts/chart1.xml").expect("bubble chart XML");
+    assert_eq!(xml.matches("<c:bubbleChart>").count(), 2);
+    assert_eq!(xml.matches("<c:bubbleScale val=\"100\"/>").count(), 2);
+    assert_eq!(xml.matches("<c:showNegBubbles val=\"0\"/>").count(), 2);
+    assert_eq!(xml.matches("<c:sizeRepresents val=\"area\"/>").count(), 2);
+    assert_eq!(xml.matches("<c:xVal>").count(), 2);
+    assert_eq!(xml.matches("<c:yVal>").count(), 2);
+    assert_eq!(xml.matches("<c:bubbleSize>").count(), 2);
+    assert_eq!(xml.matches("<c:catAx>").count(), 0);
+    assert_eq!(xml.matches("<c:valAx>").count(), 4);
+    assert_eq!(xml.matches("<a:ln>").count(), 0);
+    drop(archive);
+
+    presentation::append_pptx_slides(
+        &json!({
+            "path":"bubble-charts.pptx",
+            "target_path":"bubble-charts-appended.pptx",
+            "slides":[{
+                "title":"Markets",
+                "layout":"chart",
+                "chart":{
+                    "type":"bubble",
+                    "x_values":[10,20],
+                    "series":[{"name":"Markets","values":[30,45],"bubble_sizes":[12,24]}],
+                    "show_legend":false
+                }
+            }]
+        }),
+        &state,
+        &request,
+    )
+    .expect("append canonical bubble chart");
+    let appended = presentation::inspect_pptx_charts(
+        &json!({"path":"bubble-charts-appended.pptx"}),
+        &state,
+        &request,
+    )
+    .expect("inspect appended bubble chart");
+    assert_eq!(appended.get("charts"), Some(&json!(2)));
+    assert_eq!(
+        appended.pointer("/chart_metadata/1/chart_types"),
+        Some(&json!(["bubble"]))
+    );
+
+    presentation::replace_pptx_chart(
+        &json!({
+            "path":"bubble-charts.pptx",
+            "target_path":"bubble-to-scatter.pptx",
+            "slide_number":1,
+            "chart_number":1,
+            "expected_chart_xml_sha256":hash,
+            "expected_self_contained_edit_snapshot":snapshot,
+            "replacement":{
+                "type":"scatter",
+                "title":"Return by risk",
+                "x_values":[1,2,4],
+                "series":[{"name":"Growth","values":[3,5,9],"color":"#2255AA"}],
+                "legend_position":"bottom",
+                "category_axis_title":"Risk",
+                "value_axis_title":"Return"
+            }
+        }),
+        &state,
+        &request,
+    )
+    .expect("replace bubble chart with canonical scatter chart");
+    assert_eq!(
+        fs::read(source.as_path()).expect("bubble source after replacement"),
+        source_before
+    );
+    let replaced = presentation::inspect_pptx_charts(
+        &json!({"path":"bubble-to-scatter.pptx"}),
+        &state,
+        &request,
+    )
+    .expect("inspect bubble-to-scatter replacement");
+    assert_eq!(
+        replaced.pointer("/chart_metadata/0/chart_types"),
+        Some(&json!(["scatter"]))
+    );
+    assert_eq!(
+        replaced.pointer("/chart_metadata/0/bubble_scales"),
+        Some(&json!([]))
+    );
+    assert_eq!(
+        replaced.pointer("/chart_metadata/0/series/0/cached_bubble_size_points"),
+        Some(&json!(0))
+    );
+
+    for (filename, from, replacement) in [
+        (
+            "missing-bubble-scale.pptx",
+            "<c:bubbleScale val=\"100\"/>",
+            "",
+        ),
+        (
+            "custom-negative-bubbles.pptx",
+            "<c:showNegBubbles val=\"0\"/>",
+            "<c:showNegBubbles val=\"1\"/>",
+        ),
+        (
+            "custom-bubble-representation.pptx",
+            "<c:sizeRepresents val=\"area\"/>",
+            "<c:sizeRepresents val=\"w\"/>",
+        ),
+    ] {
+        fs::copy(source.as_path(), root.join(filename)).expect("copy noncanonical bubble fixture");
+        rewrite_zip_text_entry(
+            root.join(filename).as_path(),
+            "ppt/charts/chart1.xml",
+            |xml| xml.replacen(from, replacement, 1),
+        );
+        let inspection =
+            presentation::inspect_pptx_charts(&json!({"path":filename}), &state, &request)
+                .expect("inspect noncanonical bubble metadata");
+        assert_eq!(
+            inspection.pointer("/chart_metadata/0/eligible_for_self_contained_chart_replacement"),
+            Some(&json!(false))
+        );
+    }
+
+    for (filename, replacement, expected_error) in [
+        (
+            "duplicate-bubble-scale.pptx",
+            "<c:bubbleScale val=\"100\"/><c:bubbleScale val=\"100\"/>",
+            "duplicate group metadata",
+        ),
+        (
+            "wrong-namespace-bubble-scale.pptx",
+            "<a:bubbleScale val=\"100\"/>",
+            "standard c namespace",
+        ),
+    ] {
+        fs::copy(source.as_path(), root.join(filename)).expect("copy invalid bubble fixture");
+        rewrite_zip_text_entry(
+            root.join(filename).as_path(),
+            "ppt/charts/chart1.xml",
+            |xml| xml.replacen("<c:bubbleScale val=\"100\"/>", replacement, 1),
+        );
+        let error = presentation::inspect_pptx_charts(&json!({"path":filename}), &state, &request)
+            .expect_err("invalid bubble metadata must fail closed");
+        assert!(error.to_string().contains(expected_error));
+    }
+
+    fs::copy(source.as_path(), root.join("oversized-bubble-scale.pptx"))
+        .expect("copy oversized bubble fixture");
+    rewrite_zip_text_entry(
+        root.join("oversized-bubble-scale.pptx").as_path(),
+        "ppt/charts/chart1.xml",
+        |xml| {
+            xml.replacen(
+                "<c:bubbleScale val=\"100\"/>",
+                format!("<c:bubbleScale val=\"{}\"/>", "x".repeat(129)).as_str(),
+                1,
+            )
+        },
+    );
+    let oversized = presentation::inspect_pptx_charts(
+        &json!({"path":"oversized-bubble-scale.pptx"}),
+        &state,
+        &request,
+    )
+    .expect_err("oversized bubble metadata must fail closed");
+    assert!(oversized
+        .to_string()
+        .contains("bubble chart group metadata is empty or exceeds the safety limit"));
+
+    for (target, chart, expected_error) in [
+        (
+            "bubble-missing-sizes.pptx",
+            json!({
+                "type":"bubble",
+                "x_values":[1],
+                "series":[{"name":"Y","values":[2]}]
+            }),
+            "bubble_sizes must be an array",
+        ),
+        (
+            "bubble-size-length-mismatch.pptx",
+            json!({
+                "type":"bubble",
+                "x_values":[1,2],
+                "series":[{"name":"Y","values":[2,3],"bubble_sizes":[1]}]
+            }),
+            "one bubble_size per x_value",
+        ),
+        (
+            "bubble-zero-size.pptx",
+            json!({
+                "type":"bubble",
+                "x_values":[1],
+                "series":[{"name":"Y","values":[2],"bubble_sizes":[0]}]
+            }),
+            "must be positive",
+        ),
+        (
+            "bubble-with-marker.pptx",
+            json!({
+                "type":"bubble",
+                "x_values":[1],
+                "series":[{"name":"Y","values":[2],"bubble_sizes":[1],"marker_style":"circle"}]
+            }),
+            "supported only for line or scatter charts",
+        ),
+        (
+            "line-with-bubble-sizes.pptx",
+            json!({
+                "type":"line",
+                "categories":["A"],
+                "series":[{"name":"Y","values":[2],"bubble_sizes":[1]}]
+            }),
+            "non-bubble chart series 1 bubble_sizes must be null or omitted",
+        ),
+    ] {
+        let error = presentation::create_pptx(
+            &json!({
+                "target_path":target,
+                "slides":[{"title":"Invalid", "layout":"chart", "chart":chart}]
+            }),
+            &state,
+            &request,
+        )
+        .expect_err("invalid bubble input must be rejected");
         assert!(error.to_string().contains(expected_error));
     }
     let _ = fs::remove_dir_all(root);
