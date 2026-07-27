@@ -194,6 +194,8 @@ pub struct ProjectRuntimeEnvironmentRecord {
     pub file_provider: RuntimeEnvironmentProvider,
     pub analysis_summary: Option<String>,
     pub not_runnable_reason: Option<String>,
+    #[serde(default)]
+    pub primary_service_id: Option<String>,
     #[serde(default = "empty_object")]
     pub detected_stack: Value,
     #[serde(default = "empty_array")]

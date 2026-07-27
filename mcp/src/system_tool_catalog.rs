@@ -24,6 +24,10 @@ pub fn project_environment_tool_definitions() -> Vec<Value> {
                         "type": ["string", "null"],
                         "description": "Allowed only when no executable application or infrastructure component can be identified. External service/configuration gaps are not valid reasons."
                     },
+                    "primary_application": {
+                        "type": ["string", "null"],
+                        "description": "Stable environment_key or service id of the project's single primary application execution image. Required when application plans exist; auxiliary application components remain in the Compose plan but are not separate task execution targets."
+                    },
                     "detected_stack": {"type": "object"},
                     "required_services": {"type": "array"},
                     "env_vars": {
@@ -110,7 +114,7 @@ pub fn project_environment_tool_definitions() -> Vec<Value> {
                     },
                     "images": {
                         "type": "array",
-                        "description": "Service plans for one project-level Docker Compose environment. Before saving an application plan, search the current sandbox image catalog. If an initialized matching image exists, return its exact image_id; otherwise omit image_id so the program can initialize it when the user executes image preparation. Generate a Dockerfile only for the application runtime; detected databases, caches, and configuration centers are dependency service records that the platform maps to maintained images under the same Compose project.",
+                        "description": "Service plans for one project-level Docker Compose environment. Exactly one application is selected by primary_application as the project's main task execution image. Other independently deployable application components may remain as auxiliary Compose plans, but they are not additional task execution targets. Before saving an application plan, search the current sandbox image catalog. If an initialized matching image exists, return its exact image_id; otherwise omit image_id so the program can initialize it when the user executes image preparation. Detected databases, caches, and configuration centers are dependency service records that the platform maps to maintained images under the same Compose project.",
                         "items": {
                             "type": "object",
                             "properties": {
@@ -217,6 +221,7 @@ mod tests {
             .pointer("/inputSchema/properties")
             .and_then(Value::as_object)
             .expect("top-level properties");
+        assert!(top_level_properties.contains_key("primary_application"));
         for forbidden in [
             "status",
             "analysis_summary",

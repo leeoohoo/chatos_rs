@@ -23,12 +23,6 @@ interface MessageTaskDetailModalProps {
   ) => unknown | Promise<unknown>;
   retrying?: boolean;
   retryError?: string | null;
-  executionServiceOptions?: Array<{ id: string; label: string }>;
-  executionServiceLoading?: boolean;
-  executionServiceError?: string | null;
-  executionServiceRequired?: boolean;
-  selectedExecutionServiceId?: string;
-  onExecutionServiceChange?: (serviceId: string) => void;
   onClose: () => void;
 }
 
@@ -100,12 +94,6 @@ export const MessageTaskDetailModal: FC<MessageTaskDetailModalProps> = ({
   onRetry,
   retrying = false,
   retryError = null,
-  executionServiceOptions = [],
-  executionServiceLoading = false,
-  executionServiceError = null,
-  executionServiceRequired = false,
-  selectedExecutionServiceId = '',
-  onExecutionServiceChange,
   onClose,
 }) => {
   const [retryInstruction, setRetryInstruction] = useState('');
@@ -198,36 +186,6 @@ export const MessageTaskDetailModal: FC<MessageTaskDetailModalProps> = ({
             </div>
           ) : null}
 
-          {executionServiceRequired ? (
-            <label className="block">
-              <span className="text-xs font-medium text-amber-900 dark:text-amber-100">
-                执行服务
-              </span>
-              <select
-                aria-label="执行服务"
-                className="mt-1.5 w-full rounded-md border border-amber-300 bg-background px-3 py-2 text-sm text-foreground outline-none focus:border-amber-500 focus:ring-2 focus:ring-amber-500/20 disabled:cursor-not-allowed disabled:opacity-60 dark:border-amber-800"
-                value={selectedExecutionServiceId}
-                disabled={retrying || executionServiceLoading}
-                onChange={(event) => onExecutionServiceChange?.(event.target.value)}
-              >
-                <option value="">
-                  {executionServiceLoading ? '正在读取可用服务…' : '请选择本任务要运行的应用服务'}
-                </option>
-                {executionServiceOptions.map((option) => (
-                  <option key={option.id} value={option.id}>{option.label}</option>
-                ))}
-              </select>
-              <span className="mt-1 block text-xs leading-5 text-amber-800 dark:text-amber-200">
-                项目包含多个应用镜像，必须明确选择本任务的代码与终端挂载目标。
-              </span>
-              {executionServiceError ? (
-                <span className="mt-1 block text-xs leading-5 text-destructive">
-                  {executionServiceError}
-                </span>
-              ) : null}
-            </label>
-          ) : null}
-
           {isBlocked ? (
             <label className="block">
               <span className="text-xs font-medium text-amber-900 dark:text-amber-100">
@@ -248,21 +206,13 @@ export const MessageTaskDetailModal: FC<MessageTaskDetailModalProps> = ({
             <button
               type="button"
               className="inline-flex items-center gap-1.5 rounded-md bg-amber-600 px-3 py-2 text-xs font-semibold text-white hover:bg-amber-700 disabled:cursor-not-allowed disabled:opacity-60"
-              disabled={retrying || (executionServiceRequired && !selectedExecutionServiceId)}
+              disabled={retrying}
               onClick={() => {
                 if (isBlocked) {
-                  if (selectedExecutionServiceId) {
-                    void onRetry(task, retryInstruction.trim(), selectedExecutionServiceId);
-                  } else {
-                    void onRetry(task, retryInstruction.trim());
-                  }
+                  void onRetry(task, retryInstruction.trim());
                   return;
                 }
-                if (selectedExecutionServiceId) {
-                  void onRetry(task, undefined, selectedExecutionServiceId);
-                } else {
-                  void onRetry(task);
-                }
+                void onRetry(task);
               }}
             >
               {retrying

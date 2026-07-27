@@ -64,6 +64,7 @@ pub fn default_runtime_environment_for_project(
         file_provider: RuntimeEnvironmentProvider::None,
         analysis_summary: None,
         not_runnable_reason: None,
+        primary_service_id: None,
         detected_stack: empty_object(),
         required_services: empty_array(),
         env_vars: empty_object(),
@@ -182,7 +183,7 @@ pub fn enforce_project_runtime_boundary(
     }
 
     let mut application_image_reset = false;
-    for image in images {
+    for image in images.iter_mut() {
         let mut image_changed = apply_program_managed_image_policy(image);
         let wrong_provider = execution_plane == ProjectExecutionPlane::Cloud
             && image.image_provider != RuntimeEnvironmentProvider::CloudSandboxManager;
@@ -203,6 +204,28 @@ pub fn enforce_project_runtime_boundary(
         if image_changed {
             changed = true;
             image.updated_at = now_rfc3339();
+        }
+    }
+
+    let primary_service_id = normalized_primary_service_id(environment, images)
+        .or_else(|| single_existing_application_target(images))
+        .or_else(|| program_selected_primary_service_id(images));
+    if environment.primary_service_id != primary_service_id {
+        environment.primary_service_id = primary_service_id.clone();
+        changed = true;
+    }
+    for image in images.iter_mut() {
+        let desired_policy = if image.service_role == RuntimeServiceRole::Application
+            && primary_service_id.as_deref() == Some(image.service_id.as_str())
+        {
+            ProgramManagedMcpPolicy::application_target()
+        } else {
+            ProgramManagedMcpPolicy::default()
+        };
+        if image.mcp_policy != desired_policy {
+            image.mcp_policy = desired_policy;
+            image.updated_at = now_rfc3339();
+            changed = true;
         }
     }
 
@@ -250,7 +273,12 @@ pub fn apply_program_managed_image_policy(
     let service_role = program_managed_service_role(image);
     let service_id = program_managed_service_id_for_role(image, service_role);
     let mcp_policy = match service_role {
-        RuntimeServiceRole::Application => ProgramManagedMcpPolicy::application_target(),
+        RuntimeServiceRole::Application
+            if image.mcp_policy == ProgramManagedMcpPolicy::application_target() =>
+        {
+            ProgramManagedMcpPolicy::application_target()
+        }
+        RuntimeServiceRole::Application => ProgramManagedMcpPolicy::default(),
         RuntimeServiceRole::Dependency | RuntimeServiceRole::Unknown => {
             ProgramManagedMcpPolicy::default()
         }
@@ -264,8 +292,109 @@ pub fn apply_program_managed_image_policy(
     changed
 }
 
+pub fn assign_requested_primary_application(
+    environment: &mut ProjectRuntimeEnvironmentRecord,
+    images: &[ProjectRuntimeEnvironmentImageRecord],
+    requested: Option<&str>,
+) -> Result<(), String> {
+    let Some(requested) = requested.map(str::trim).filter(|value| !value.is_empty()) else {
+        return Ok(());
+    };
+    let image = images
+        .iter()
+        .find(|image| {
+            image.service_role == RuntimeServiceRole::Application
+                && (image.service_id == requested || image.environment_key.trim() == requested)
+        })
+        .ok_or_else(|| format!("primary application is not an application service: {requested}"))?;
+    environment.primary_service_id = Some(image.service_id.clone());
+    Ok(())
+}
+
+fn normalized_primary_service_id(
+    environment: &ProjectRuntimeEnvironmentRecord,
+    images: &[ProjectRuntimeEnvironmentImageRecord],
+) -> Option<String> {
+    let requested = environment
+        .primary_service_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())?;
+    images
+        .iter()
+        .find(|image| {
+            image.service_role == RuntimeServiceRole::Application && image.service_id == requested
+        })
+        .map(|image| image.service_id.clone())
+}
+
+fn single_existing_application_target(
+    images: &[ProjectRuntimeEnvironmentImageRecord],
+) -> Option<String> {
+    let mut targets = images.iter().filter(|image| {
+        image.service_role == RuntimeServiceRole::Application
+            && image.mcp_policy == ProgramManagedMcpPolicy::application_target()
+    });
+    let target = targets.next()?;
+    targets.next().is_none().then(|| target.service_id.clone())
+}
+
+fn program_selected_primary_service_id(
+    images: &[ProjectRuntimeEnvironmentImageRecord],
+) -> Option<String> {
+    let mut applications = images
+        .iter()
+        .filter(|image| image.service_role == RuntimeServiceRole::Application)
+        .collect::<Vec<_>>();
+    applications.sort_by(|left, right| {
+        primary_application_score(right)
+            .cmp(&primary_application_score(left))
+            .then_with(|| left.service_id.cmp(&right.service_id))
+    });
+    applications.first().map(|image| image.service_id.clone())
+}
+
+fn primary_application_score(image: &ProjectRuntimeEnvironmentImageRecord) -> i32 {
+    let identity = format!(
+        "{} {} {}",
+        image.service_id, image.environment_key, image.display_name
+    )
+    .to_ascii_lowercase();
+    let mut score = 0;
+    if matches!(image.service_id.as_str(), "app" | "application" | "main") {
+        score += 100;
+    }
+    if ["backend", "api", "server", "service", "core"]
+        .iter()
+        .any(|marker| identity.contains(marker))
+    {
+        score += 40;
+    }
+    if [
+        "prototype",
+        "demo",
+        "example",
+        "storybook",
+        "docs",
+        "mock",
+        "fixture",
+    ]
+    .iter()
+    .any(|marker| identity.contains(marker))
+    {
+        score -= 100;
+    }
+    score
+}
+
 pub fn program_managed_service_id(image: &ProjectRuntimeEnvironmentImageRecord) -> String {
     program_managed_service_id_for_role(image, program_managed_service_role(image))
+}
+
+pub fn runtime_image_is_execution_required(image: &ProjectRuntimeEnvironmentImageRecord) -> bool {
+    image.service_role == RuntimeServiceRole::Dependency
+        || (image.service_role == RuntimeServiceRole::Application
+            && image.mcp_policy == ProgramManagedMcpPolicy::application_target())
 }
 
 fn program_managed_service_id_for_role(

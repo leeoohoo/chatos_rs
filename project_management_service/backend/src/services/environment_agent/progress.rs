@@ -488,6 +488,7 @@ mod tests {
             file_provider: RuntimeEnvironmentProvider::LocalConnector,
             analysis_summary: None,
             not_runnable_reason: None,
+            primary_service_id: None,
             detected_stack: json!({}),
             required_services: json!([]),
             env_vars: json!({}),

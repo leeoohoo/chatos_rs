@@ -230,6 +230,7 @@ fn sandbox_environment_plan_for_task(
     }
     let primary_service_id = resolve_execution_service_id(
         task.mcp_config.execution_service_id.as_deref(),
+        runtime.environment.primary_service_id.as_deref(),
         application_service_ids.as_slice(),
     )?;
     Ok(Some(SandboxEnvironmentPlan {
@@ -249,21 +250,75 @@ fn sandbox_environment_plan_for_task(
 
 fn resolve_execution_service_id(
     requested: Option<&str>,
+    project_primary_service_id: Option<&str>,
     application_service_ids: &[String],
 ) -> Result<String, String> {
     match requested.map(str::trim).filter(|value| !value.is_empty()) {
-        Some(requested) if application_service_ids.iter().any(|value| value == requested) => {
+        Some(requested)
+            if application_service_ids
+                .iter()
+                .any(|value| value == requested) =>
+        {
             Ok(requested.to_string())
         }
         Some(requested) => Err(format!(
             "execution_service_id is not a ready application service: {requested}"
         )),
+        None if project_primary_service_id
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .is_some_and(|primary| {
+                application_service_ids.iter().any(|value| value == primary)
+            }) =>
+        {
+            Ok(project_primary_service_id
+                .expect("validated project primary service")
+                .trim()
+                .to_string())
+        }
         None if application_service_ids.len() == 1 => Ok(application_service_ids[0].clone()),
-        None => Err(format!(
-                "project runtime has multiple application services ({}); execution_service_id must be selected by the user or program",
-                application_service_ids.join(", ")
-            )),
+        None => program_selected_execution_service_id(application_service_ids)
+            .ok_or_else(|| "project runtime has no ready application service".to_string()),
     }
+}
+
+fn program_selected_execution_service_id(application_service_ids: &[String]) -> Option<String> {
+    let mut service_ids = application_service_ids.to_vec();
+    service_ids.sort_by(|left, right| {
+        execution_service_score(right)
+            .cmp(&execution_service_score(left))
+            .then_with(|| left.cmp(right))
+    });
+    service_ids.into_iter().next()
+}
+
+fn execution_service_score(service_id: &str) -> i32 {
+    let service_id = service_id.to_ascii_lowercase();
+    let mut score = 0;
+    if matches!(service_id.as_str(), "app" | "application" | "main") {
+        score += 100;
+    }
+    if ["backend", "api", "server", "service", "core"]
+        .iter()
+        .any(|marker| service_id.contains(marker))
+    {
+        score += 40;
+    }
+    if [
+        "prototype",
+        "demo",
+        "example",
+        "storybook",
+        "docs",
+        "mock",
+        "fixture",
+    ]
+    .iter()
+    .any(|marker| service_id.contains(marker))
+    {
+        score -= 100;
+    }
+    score
 }
 
 fn runtime_image_is_program_managed_dependency(image: &ProjectRuntimeEnvironmentImage) -> bool {
@@ -413,22 +468,36 @@ fn sandbox_image_id_for_runtime(
                 format!("execution_service_id is not a ready application service: {requested}")
             });
     }
-    if images.len() > 1 {
+    let project_primary = runtime
+        .environment
+        .primary_service_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .filter(|primary| {
+            images
+                .iter()
+                .any(|image| image.service_id.trim() == *primary)
+        })
+        .map(ToOwned::to_owned);
+    let selected_service_id = project_primary.or_else(|| {
         let service_ids = images
             .iter()
-            .map(|image| {
-                if image.service_id.trim().is_empty() {
-                    image.environment_key.as_str()
-                } else {
-                    image.service_id.as_str()
-                }
+            .filter_map(|image| {
+                let service_id = image.service_id.trim();
+                (!service_id.is_empty()).then(|| service_id.to_string())
             })
-            .filter(|value| !value.trim().is_empty())
-            .collect::<Vec<_>>()
-            .join(", ");
-        return Err(format!(
-            "project runtime has multiple ready system-managed application targets ({service_ids}); program-controlled service selection is required before cloud execution"
-        ));
+            .collect::<Vec<_>>();
+        program_selected_execution_service_id(service_ids.as_slice())
+    });
+    if let Some(selected_service_id) = selected_service_id {
+        return Ok(images
+            .iter()
+            .find(|image| image.service_id.trim() == selected_service_id)
+            .and_then(|image| image.image_id.as_deref())
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToOwned::to_owned));
     }
     Ok(images
         .first()
@@ -565,7 +634,7 @@ mod tests {
     }
 
     #[test]
-    fn multiple_application_targets_are_never_selected_by_array_order() {
+    fn project_primary_application_is_used_without_task_level_selection() {
         let api = image("application", "project_gateway_target", true, true);
         let mut worker = image("application", "project_gateway_target", true, true);
         worker.environment_key = "services/worker".to_string();
@@ -575,32 +644,50 @@ mod tests {
             environment: ProjectRuntimeEnvironmentSettings {
                 sandbox_enabled: true,
                 status: "ready".to_string(),
+                primary_service_id: Some("services-worker".to_string()),
                 env_vars: serde_json::json!({}),
                 generated_config_files: Vec::new(),
             },
             images: vec![api, worker],
         };
 
-        let error = sandbox_image_id_for_runtime(&runtime, "cloud_sandbox_manager", None)
-            .expect_err("ambiguous application targets must be rejected");
-        assert!(error.contains("services-api, services-worker"));
-        assert!(error.contains("program-controlled service selection"));
+        assert_eq!(
+            sandbox_image_id_for_runtime(&runtime, "cloud_sandbox_manager", None)
+                .expect("project primary image"),
+            Some("image-2".to_string())
+        );
     }
 
     #[test]
-    fn environment_execution_service_is_selected_only_explicitly_or_for_single_application() {
-        let service_ids = vec!["api".to_string(), "worker".to_string()];
-        let error = resolve_execution_service_id(None, service_ids.as_slice())
-            .expect_err("multiple applications must be explicit");
-        assert!(error.contains("user or program"));
+    fn environment_execution_service_prefers_explicit_then_project_primary_then_program_default() {
+        let service_ids = vec!["web-prototype".to_string(), "mdm-service".to_string()];
         assert_eq!(
-            resolve_execution_service_id(Some("worker"), service_ids.as_slice())
-                .expect("explicit selection"),
-            "worker"
+            resolve_execution_service_id(
+                Some("web-prototype"),
+                Some("mdm-service"),
+                service_ids.as_slice()
+            )
+            .expect("explicit selection"),
+            "web-prototype"
         );
-        assert!(resolve_execution_service_id(Some("redis"), service_ids.as_slice()).is_err());
         assert_eq!(
-            resolve_execution_service_id(None, &["api".to_string()])
+            resolve_execution_service_id(None, Some("mdm-service"), service_ids.as_slice())
+                .expect("project primary selection"),
+            "mdm-service"
+        );
+        assert_eq!(
+            resolve_execution_service_id(None, None, service_ids.as_slice())
+                .expect("program default selection"),
+            "mdm-service"
+        );
+        assert!(resolve_execution_service_id(
+            Some("redis"),
+            Some("mdm-service"),
+            service_ids.as_slice()
+        )
+        .is_err());
+        assert_eq!(
+            resolve_execution_service_id(None, None, &["api".to_string()])
                 .expect("single application auto selection"),
             "api"
         );
@@ -643,6 +730,7 @@ mod tests {
             environment: ProjectRuntimeEnvironmentSettings {
                 sandbox_enabled: true,
                 status: "pending".to_string(),
+                primary_service_id: None,
                 env_vars: serde_json::json!({}),
                 generated_config_files: Vec::new(),
             },
@@ -669,6 +757,7 @@ mod tests {
             environment: ProjectRuntimeEnvironmentSettings {
                 sandbox_enabled: true,
                 status: "pending".to_string(),
+                primary_service_id: None,
                 env_vars: serde_json::json!({}),
                 generated_config_files: Vec::new(),
             },
@@ -698,6 +787,7 @@ mod tests {
             environment: ProjectRuntimeEnvironmentSettings {
                 sandbox_enabled: true,
                 status: "ready".to_string(),
+                primary_service_id: Some("services-api".to_string()),
                 env_vars: serde_json::json!({}),
                 generated_config_files: Vec::new(),
             },

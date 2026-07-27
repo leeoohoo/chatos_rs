@@ -137,6 +137,7 @@ export interface ProjectRuntimeEnvironmentRecord {
   file_provider: RuntimeEnvironmentProvider;
   analysis_summary?: string | null;
   not_runnable_reason?: string | null;
+  primary_service_id?: string | null;
   detected_stack: unknown;
   required_services: unknown;
   env_vars: unknown;

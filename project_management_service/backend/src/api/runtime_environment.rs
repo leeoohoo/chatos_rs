@@ -431,6 +431,7 @@ fn reset_environment_for_analysis(environment: &mut ProjectRuntimeEnvironmentRec
     environment.file_provider = RuntimeEnvironmentProvider::None;
     environment.analysis_summary = Some("正在重新分析项目并准备沙箱运行环境。".to_string());
     environment.not_runnable_reason = None;
+    environment.primary_service_id = None;
     environment.detected_stack = empty_object();
     environment.required_services = empty_array();
     refresh_environment_variable_values(environment);
@@ -534,6 +535,7 @@ mod tests {
             file_provider: RuntimeEnvironmentProvider::Harness,
             analysis_summary: Some("old summary".to_string()),
             not_runnable_reason: Some("old reason".to_string()),
+            primary_service_id: Some("old-service".to_string()),
             detected_stack: json!({"stale": true}),
             required_services: json!([{"stale": true}]),
             env_vars: json!({"STALE": "1"}),
@@ -567,6 +569,7 @@ mod tests {
         assert_eq!(environment.last_agent_run_id.as_deref(), Some("run-new"));
         assert!(environment.last_error.is_none());
         assert!(environment.not_runnable_reason.is_none());
+        assert!(environment.primary_service_id.is_none());
         assert_eq!(environment.detected_stack, json!({}));
         assert_eq!(environment.required_services, json!([]));
         assert_eq!(environment.env_vars, json!({"STALE": "1"}));

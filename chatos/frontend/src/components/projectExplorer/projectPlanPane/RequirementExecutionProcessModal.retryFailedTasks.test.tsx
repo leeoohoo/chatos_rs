@@ -197,14 +197,11 @@ describe('failed task retry entry in execution workbench', () => {
       name: `失败任务：${mocks.failedTask.title}`,
     });
     const retryButton = within(taskRow).getByRole('button', { name: '重新开始' });
-    expect((retryButton as HTMLButtonElement).disabled).toBe(true);
-    await user.selectOptions(
-      within(taskRow).getByRole('combobox', { name: `执行服务：${mocks.failedTask.title}` }),
-      'mdm-service',
-    );
+    expect((retryButton as HTMLButtonElement).disabled).toBe(false);
+    expect(within(taskRow).queryByRole('combobox')).toBeNull();
     await user.click(retryButton);
 
     expect(mocks.retryTask).toHaveBeenCalledTimes(1);
-    expect(mocks.retryTask).toHaveBeenCalledWith(mocks.failedTask, undefined, 'mdm-service');
+    expect(mocks.retryTask).toHaveBeenCalledWith(mocks.failedTask);
   });
 });

@@ -36,13 +36,14 @@ export const CloudRuntimeImagePlans: React.FC<CloudRuntimeImagePlansProps> = ({
   const applicationImageId = images
     .map((image, index) => {
       const record = asRecord(image);
-      return readString(record, ['dockerfile'])
+      return readString(record, ['dockerfile']) && isMcpTargetRecord(record)
         ? readString(record, ['id'], `image-${index}`)
         : '';
     })
     .find(Boolean);
   const isPreparingAll = buildingImageId !== null;
-  const allImagesReady = images.length > 0 && images.every((image) => (
+  const requiredImages = images.filter((image) => isRequiredRuntimeImage(asRecord(image)));
+  const allImagesReady = requiredImages.length > 0 && requiredImages.every((image) => (
     READY_IMAGE_STATUSES.has(readString(asRecord(image), ['status']).toLowerCase())
   ));
   const prepareDisabled = !applicationImageId || isPreparingAll || allImagesReady;
@@ -110,9 +111,7 @@ export const CloudRuntimeImagePlans: React.FC<CloudRuntimeImagePlansProps> = ({
               const dockerfile = readString(record, ['dockerfile']);
               const serviceRole = readString(record, ['service_role', 'serviceRole'], 'unknown');
               const serviceId = readString(record, ['service_id', 'serviceId', 'environment_key', 'environmentKey'], '-');
-              const mcpPolicy = asRecord(record.mcp_policy ?? record.mcpPolicy);
-              const isMcpTarget = readString(mcpPolicy, ['managed_by', 'managedBy']) === 'system'
-                && readString(mcpPolicy, ['attachment']) === 'project_gateway_target';
+              const isMcpTarget = isMcpTargetRecord(record);
               const isBuilding = isPreparingAll;
               const expanded = expandedImageId === id;
               return (
@@ -126,7 +125,11 @@ export const CloudRuntimeImagePlans: React.FC<CloudRuntimeImagePlansProps> = ({
                     <td className="px-3 py-2 font-mono">{readString(record, ['image_provider', 'imageProvider'], '-')}</td>
                     <td className="px-3 py-2">
                       <span className={isMcpTarget ? 'text-emerald-700' : 'text-muted-foreground'}>
-                        {isMcpTarget ? t('cloudRuntime.mcpTarget') : t('cloudRuntime.mcpNone')}
+                        {isMcpTarget
+                          ? t('cloudRuntime.mcpTarget')
+                          : serviceRole === 'application'
+                            ? t('cloudRuntime.auxiliaryApplication')
+                            : t('cloudRuntime.mcpNone')}
                       </span>
                     </td>
                     <td className="px-3 py-2">{status}</td>
@@ -145,11 +148,15 @@ export const CloudRuntimeImagePlans: React.FC<CloudRuntimeImagePlansProps> = ({
                       ) : '-'}
                     </td>
                     <td className="px-3 py-2">
-                      {isCloudProject && dockerfile ? (
+                      {isCloudProject && dockerfile && isMcpTarget ? (
                         <span className={isBuilding ? 'text-primary' : 'text-muted-foreground'}>
                           {isBuilding
                             ? t('cloudRuntime.generatingImage')
                             : t('cloudRuntime.includedInBatchPreparation')}
+                        </span>
+                      ) : isCloudProject && dockerfile ? (
+                        <span className="text-muted-foreground">
+                          {t('cloudRuntime.auxiliaryApplication')}
                         </span>
                       ) : !isCloudProject && dockerfile ? (
                         <span className="text-muted-foreground">{t('cloudRuntime.localDockerfilePlan')}</span>
@@ -192,6 +199,17 @@ const readString = (record: ImageRecord, keys: string[], fallback = ''): string 
     if (typeof value === 'string' && value.trim()) return value.trim();
   }
   return fallback;
+};
+
+const isMcpTargetRecord = (record: ImageRecord): boolean => {
+  const mcpPolicy = asRecord(record.mcp_policy ?? record.mcpPolicy);
+  return readString(mcpPolicy, ['managed_by', 'managedBy']) === 'system'
+    && readString(mcpPolicy, ['attachment']) === 'project_gateway_target';
+};
+
+const isRequiredRuntimeImage = (record: ImageRecord): boolean => {
+  const serviceRole = readString(record, ['service_role', 'serviceRole']).toLowerCase();
+  return serviceRole === 'dependency' || isMcpTargetRecord(record);
 };
 
 const displayValue = (value: unknown): string => {

@@ -357,6 +357,8 @@ export interface ProjectRuntimeEnvironmentRecordResponse {
   analysisSummary?: string | null;
   not_runnable_reason?: string | null;
   notRunnableReason?: string | null;
+  primary_service_id?: string | null;
+  primaryServiceId?: string | null;
   detected_stack?: unknown;
   detectedStack?: unknown;
   required_services?: unknown;

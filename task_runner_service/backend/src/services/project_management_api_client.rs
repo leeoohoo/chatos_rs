@@ -92,6 +92,8 @@ pub(crate) struct ProjectRuntimeEnvironmentSettings {
     #[serde(default)]
     pub(crate) status: String,
     #[serde(default)]
+    pub(crate) primary_service_id: Option<String>,
+    #[serde(default)]
     pub(crate) env_vars: Value,
     #[serde(default)]
     pub(crate) generated_config_files: Vec<ProjectRuntimeEnvironmentConfigFile>,

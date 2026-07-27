@@ -466,6 +466,7 @@ fn apply_stop_decision(
     environment.file_provider = RuntimeEnvironmentProvider::None;
     environment.analysis_summary = Some(stop.summary);
     environment.not_runnable_reason = stop.not_runnable_reason;
+    environment.primary_service_id = None;
     environment.last_agent_run_id = Some(run_id);
     environment.last_error = stop.last_error;
     environment.updated_at = now_rfc3339();

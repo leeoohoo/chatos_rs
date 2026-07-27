@@ -84,61 +84,6 @@ const readTextList = (value: unknown): string[] => (
     : []
 );
 
-interface RuntimeApplicationOption {
-  id: string;
-  label: string;
-}
-
-const AVAILABLE_RUNTIME_IMAGE_STATUSES = new Set([
-  'ready',
-  'local',
-  'available',
-  'succeeded',
-]);
-
-const taskRequiresExecution = (task: MessageTaskRunnerTask): boolean => {
-  const config = task.mcp_config;
-  return Boolean(config && typeof config === 'object' && config.requires_execution === true);
-};
-
-const configuredExecutionServiceId = (task: MessageTaskRunnerTask): string => {
-  const config = task.mcp_config;
-  return config && typeof config === 'object'
-    ? readString(config.execution_service_id) || ''
-    : '';
-};
-
-const taskFailedBecauseExecutionServiceIsMissing = (task: MessageTaskRunnerTask): boolean => (
-  (readString(task.last_run?.error_message) || '').includes(
-    'execution_service_id must be selected by the user or program',
-  )
-);
-
-export const runtimeApplicationOptionsFromImages = (
-  images: Array<Record<string, unknown>> | undefined,
-): RuntimeApplicationOption[] => {
-  const options = new Map<string, RuntimeApplicationOption>();
-  (images || []).forEach((image) => {
-    const role = (readString(image.service_role) || readString(image.serviceRole) || '')
-      .toLowerCase();
-    const status = (readString(image.status) || '').toLowerCase();
-    const id = readString(image.service_id) || readString(image.serviceId) || '';
-    if (
-      role !== 'application'
-      || !AVAILABLE_RUNTIME_IMAGE_STATUSES.has(status)
-      || !id
-    ) {
-      return;
-    }
-    const displayName = readString(image.display_name) || readString(image.displayName) || '';
-    options.set(id, {
-      id,
-      label: displayName && displayName !== id ? `${displayName} (${id})` : id,
-    });
-  });
-  return Array.from(options.values()).sort((left, right) => left.label.localeCompare(right.label));
-};
-
 export const REQUIREMENT_EXECUTION_REFRESH_INTERVAL_MS = 10_000;
 
 export const isPendingRequirementExecutionPlanError = (error: unknown): boolean => {
@@ -822,10 +767,6 @@ export const RequirementExecutionProcessModal: React.FC<{
   const [executionConfirmed, setExecutionConfirmed] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [actionMessage, setActionMessage] = useState<string | null>(null);
-  const [runtimeApplicationOptions, setRuntimeApplicationOptions] = useState<RuntimeApplicationOption[]>([]);
-  const [runtimeApplicationsLoading, setRuntimeApplicationsLoading] = useState(false);
-  const [runtimeApplicationsError, setRuntimeApplicationsError] = useState<string | null>(null);
-  const [executionServiceSelections, setExecutionServiceSelections] = useState<Record<string, string>>({});
   const [fullscreen, setFullscreen] = useState(false);
   const [panelWidth, setPanelWidth] = useState(900);
   const graphContainerRef = useRef<HTMLDivElement>(null);
@@ -854,9 +795,6 @@ export const RequirementExecutionProcessModal: React.FC<{
     setExecutionConfirmed(Boolean(process.hasStartedRuns));
     setActionError(null);
     setActionMessage(null);
-    setRuntimeApplicationOptions([]);
-    setRuntimeApplicationsError(null);
-    setExecutionServiceSelections({});
     setSyncError(null);
     setRerunConfirmOpen(false);
     setFailedTaskRetryOpen(false);
@@ -954,13 +892,6 @@ export const RequirementExecutionProcessModal: React.FC<{
     readString(task.status)?.toLowerCase() === 'failed'
     && Boolean(readString(task.last_run_id))
   )), [allTasks]);
-  const executionServiceSelectionRequired = useCallback((task: MessageTaskRunnerTask) => (
-    taskRequiresExecution(task)
-    && (
-      runtimeApplicationOptions.length > 1
-      || taskFailedBecauseExecutionServiceIsMissing(task)
-    )
-  ), [runtimeApplicationOptions.length]);
   const graphReady = confirmationState.graphReadyForConfirmation
     && allTasks.length > 0
     && !actuallyStarted
@@ -1139,69 +1070,16 @@ export const RequirementExecutionProcessModal: React.FC<{
   const retryFailedTask = useCallback(async (task: MessageTaskRunnerTask) => {
     setActionError(null);
     setActionMessage(null);
-    const executionServiceId = executionServiceSelections[task.id] || '';
-    if (executionServiceSelectionRequired(task) && !executionServiceId) {
-      setActionError(`请先为任务“${task.title || task.id}”选择执行服务。`);
-      return;
-    }
-    const retried = await retryTask(task, undefined, executionServiceId || undefined);
+    const retried = await retryTask(task);
     if (retried) {
       setActionMessage(liveProcess.executionPaused
         ? `任务“${task.title || task.id}”已重新进入暂停队列，将在继续执行后启动。`
         : `任务“${task.title || task.id}”已重新进入执行队列。`);
     }
   }, [
-    executionServiceSelectionRequired,
-    executionServiceSelections,
     liveProcess.executionPaused,
     retryTask,
   ]);
-
-  useEffect(() => {
-    let cancelled = false;
-    setRuntimeApplicationsLoading(true);
-    setRuntimeApplicationsError(null);
-    void apiClient.getProjectRuntimeEnvironment(liveProcess.projectId)
-      .then((response) => {
-        if (cancelled) return;
-        setRuntimeApplicationOptions(runtimeApplicationOptionsFromImages(
-          response.images as Array<Record<string, unknown>> | undefined,
-        ));
-      })
-      .catch((err) => {
-        if (cancelled) return;
-        setRuntimeApplicationOptions([]);
-        setRuntimeApplicationsError(
-          err instanceof Error ? err.message : '读取项目应用服务失败',
-        );
-      })
-      .finally(() => {
-        if (!cancelled) setRuntimeApplicationsLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [apiClient, liveProcess.projectId]);
-
-  useEffect(() => {
-    setExecutionServiceSelections((current) => {
-      const next = { ...current };
-      let changed = false;
-      allTasks.forEach((task) => {
-        if (next[task.id]) return;
-        const configured = configuredExecutionServiceId(task);
-        const automatic = runtimeApplicationOptions.length === 1
-          ? runtimeApplicationOptions[0].id
-          : '';
-        const selected = configured || automatic;
-        if (selected) {
-          next[task.id] = selected;
-          changed = true;
-        }
-      });
-      return changed ? next : current;
-    });
-  }, [allTasks, runtimeApplicationOptions]);
 
   useEffect(() => {
     if (
@@ -1872,8 +1750,6 @@ export const RequirementExecutionProcessModal: React.FC<{
                 const taskTitle = task.title || taskId;
                 const retrying = retryingTaskId === taskId;
                 const errorMessage = readString(task.last_run?.error_message);
-                const serviceSelectionRequired = executionServiceSelectionRequired(task);
-                const selectedExecutionServiceId = executionServiceSelections[taskId] || '';
                 return (
                   <div
                     key={taskId}
@@ -1904,49 +1780,11 @@ export const RequirementExecutionProcessModal: React.FC<{
                             {errorMessage}
                           </div>
                         ) : null}
-                        {serviceSelectionRequired ? (
-                          <label className="mt-3 block">
-                            <span className="text-xs font-medium text-red-800 dark:text-red-100">
-                              执行服务
-                            </span>
-                            <select
-                              aria-label={`执行服务：${taskTitle}`}
-                              className="mt-1.5 w-full rounded-md border border-red-300 bg-background px-3 py-2 text-sm text-foreground outline-none focus:border-red-500 focus:ring-2 focus:ring-red-500/20 disabled:cursor-not-allowed disabled:opacity-60 dark:border-red-800"
-                              value={selectedExecutionServiceId}
-                              disabled={Boolean(retryingTaskId) || runtimeApplicationsLoading}
-                              onChange={(event) => {
-                                const serviceId = event.target.value;
-                                setExecutionServiceSelections((current) => ({
-                                  ...current,
-                                  [taskId]: serviceId,
-                                }));
-                              }}
-                            >
-                              <option value="">
-                                {runtimeApplicationsLoading
-                                  ? '正在读取可用服务…'
-                                  : '请选择本任务要运行的应用服务'}
-                              </option>
-                              {runtimeApplicationOptions.map((option) => (
-                                <option key={option.id} value={option.id}>{option.label}</option>
-                              ))}
-                            </select>
-                            <span className="mt-1 block text-xs leading-5 text-red-700 dark:text-red-200">
-                              项目包含多个应用镜像，选择后会写入该任务配置并用于本次及后续重试。
-                            </span>
-                            {runtimeApplicationsError ? (
-                              <span className="mt-1 block text-xs leading-5 text-destructive">
-                                无法读取应用服务：{runtimeApplicationsError}
-                              </span>
-                            ) : null}
-                          </label>
-                        ) : null}
                       </div>
                       <button
                         type="button"
                         className="inline-flex shrink-0 items-center gap-1.5 rounded-md bg-red-600 px-4 py-2 text-xs font-semibold text-white hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-60"
-                        disabled={Boolean(retryingTaskId)
-                          || (serviceSelectionRequired && !selectedExecutionServiceId)}
+                        disabled={Boolean(retryingTaskId)}
                         onClick={() => void retryFailedTask(task)}
                       >
                         {retrying
@@ -2101,24 +1939,6 @@ export const RequirementExecutionProcessModal: React.FC<{
         relatedTasks={allTasks}
         retrying={Boolean(retryingTaskId)}
         retryError={retryError}
-        executionServiceOptions={runtimeApplicationOptions}
-        executionServiceLoading={runtimeApplicationsLoading}
-        executionServiceError={runtimeApplicationsError
-          ? `无法读取应用服务：${runtimeApplicationsError}`
-          : null}
-        executionServiceRequired={Boolean(
-          detailTask && executionServiceSelectionRequired(detailTask)
-        )}
-        selectedExecutionServiceId={detailTask
-          ? executionServiceSelections[detailTask.id] || ''
-          : ''}
-        onExecutionServiceChange={(serviceId) => {
-          if (!detailTask) return;
-          setExecutionServiceSelections((current) => ({
-            ...current,
-            [detailTask.id]: serviceId,
-          }));
-        }}
         onRetry={retryTask}
         onClose={closeDetail}
       />

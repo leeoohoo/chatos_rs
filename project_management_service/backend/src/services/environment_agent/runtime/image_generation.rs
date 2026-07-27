@@ -186,7 +186,14 @@ pub(in crate::services::environment_agent) async fn generate_project_runtime_env
             errors.push(error);
         }
     }
-    environment.status = if errors.is_empty() && images.iter().all(runtime_image_is_ready) {
+    environment.status = if errors.is_empty()
+        && images
+            .iter()
+            .filter(|image| {
+                crate::services::runtime_environment::runtime_image_is_execution_required(image)
+            })
+            .all(runtime_image_is_ready)
+    {
         if crate::services::runtime_environment::required_environment_variables_are_complete(
             &environment.environment_variables,
         ) {

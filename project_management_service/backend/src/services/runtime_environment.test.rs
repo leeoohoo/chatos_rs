@@ -61,12 +61,7 @@ mod tests {
         let mut application = runtime_image("api", "application", Some("FROM node:24\n"), None);
         assert!(apply_program_managed_image_policy(&mut application));
         assert_eq!(application.service_role, RuntimeServiceRole::Application);
-        assert_eq!(
-            application.mcp_policy.attachment,
-            RuntimeMcpAttachment::ProjectGatewayTarget
-        );
-        assert!(application.mcp_policy.filesystem);
-        assert!(application.mcp_policy.terminal);
+        assert_eq!(application.mcp_policy, ProgramManagedMcpPolicy::default());
         assert_eq!(application.service_id, "api");
 
         let mut redis = runtime_image(
@@ -84,6 +79,62 @@ mod tests {
         assert_eq!(unverified.service_id, "api");
         assert_eq!(unverified.service_role, RuntimeServiceRole::Unknown);
         assert_eq!(unverified.mcp_policy, ProgramManagedMcpPolicy::default());
+    }
+
+    #[test]
+    fn project_boundary_persists_one_program_selected_primary_application() {
+        let mut environment = ProjectRuntimeEnvironmentRecord {
+            project_id: "project-1".to_string(),
+            status: ProjectRuntimeEnvironmentStatus::Ready,
+            sandbox_enabled: true,
+            sandbox_provider: RuntimeEnvironmentProvider::CloudSandboxManager,
+            file_provider: RuntimeEnvironmentProvider::Harness,
+            analysis_summary: None,
+            not_runnable_reason: None,
+            primary_service_id: None,
+            detected_stack: empty_object(),
+            required_services: empty_array(),
+            env_vars: empty_object(),
+            environment_variables: Vec::new(),
+            generated_config_files: Vec::new(),
+            last_agent_run_id: None,
+            last_error: None,
+            created_at: "now".to_string(),
+            updated_at: "now".to_string(),
+        };
+        let mut mdm = runtime_image(
+            "mdm-service",
+            "application",
+            Some("FROM python:3.14"),
+            None,
+        );
+        mdm.mcp_policy = ProgramManagedMcpPolicy::application_target();
+        let mut prototype = runtime_image(
+            "web-prototype",
+            "application",
+            Some("FROM nginx:alpine"),
+            None,
+        );
+        prototype.mcp_policy = ProgramManagedMcpPolicy::application_target();
+        let mut images = vec![prototype, mdm];
+
+        assert!(enforce_project_runtime_boundary(
+            ProjectExecutionPlane::Cloud,
+            &mut environment,
+            images.as_mut_slice(),
+        ));
+        assert_eq!(
+            environment.primary_service_id.as_deref(),
+            Some("mdm-service")
+        );
+        assert_eq!(
+            images[0].mcp_policy,
+            ProgramManagedMcpPolicy::default()
+        );
+        assert_eq!(
+            images[1].mcp_policy,
+            ProgramManagedMcpPolicy::application_target()
+        );
     }
 
     #[test]
@@ -126,6 +177,7 @@ mod tests {
             file_provider: RuntimeEnvironmentProvider::LocalConnector,
             analysis_summary: None,
             not_runnable_reason: None,
+            primary_service_id: None,
             detected_stack: empty_object(),
             required_services: empty_array(),
             env_vars: empty_object(),
@@ -163,6 +215,7 @@ mod tests {
                 "云端项目只通过 Harness MCP 读取文件，并只使用云端 Sandbox Manager。".to_string(),
             ),
             not_runnable_reason: None,
+            primary_service_id: None,
             detected_stack: empty_object(),
             required_services: empty_array(),
             env_vars: empty_object(),
@@ -199,6 +252,7 @@ mod tests {
             file_provider: RuntimeEnvironmentProvider::Harness,
             analysis_summary: None,
             not_runnable_reason: None,
+            primary_service_id: None,
             detected_stack: empty_object(),
             required_services: empty_array(),
             env_vars: empty_object(),

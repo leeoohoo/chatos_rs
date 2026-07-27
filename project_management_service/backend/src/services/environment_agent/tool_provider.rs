@@ -15,9 +15,11 @@ use crate::models::{
     RuntimeEnvironmentProvider, RuntimeEnvironmentVariableSource, RuntimeServiceRole,
 };
 use crate::services::runtime_environment::{
+    assign_requested_primary_application, enforce_project_runtime_boundary,
     environment_variable_name_is_secret, normalize_environment_variable_name,
     normalize_environment_variable_records, program_generated_runtime_analysis_summary,
     refresh_environment_variable_record, required_environment_variables_are_complete,
+    runtime_image_is_execution_required,
 };
 use crate::state::AppState;
 
@@ -38,6 +40,8 @@ pub(super) struct ProjectEnvironmentToolProvider {
 struct UpdateProjectEnvironmentToolArgs {
     #[serde(default)]
     not_runnable_reason: Option<String>,
+    #[serde(default)]
+    primary_application: Option<String>,
     #[serde(default)]
     detected_stack: Option<Value>,
     #[serde(default)]
@@ -188,6 +192,7 @@ impl ProjectEnvironmentToolProvider {
 
         let environment_variable_scan =
             require_completed_environment_variable_scan(args.environment_variable_scan.clone())?;
+        let requested_primary_application = args.primary_application.clone();
         let generated_config_files =
             normalize_generated_config_files(args.generated_config_files.ok_or_else(|| {
                 "generated_config_files must be provided before saving the runtime environment"
@@ -312,6 +317,18 @@ impl ProjectEnvironmentToolProvider {
                 selected_service_kinds,
                 &mut image_records,
             )?;
+            assign_requested_primary_application(
+                &mut environment,
+                image_records.as_slice(),
+                requested_primary_application.as_deref(),
+            )?;
+            enforce_project_runtime_boundary(
+                self.project.execution_plane,
+                &mut environment,
+                image_records.as_mut_slice(),
+            );
+        } else {
+            environment.primary_service_id = None;
         }
         environment.generated_config_files = generated_config_files;
         if !matches!(
@@ -332,6 +349,7 @@ impl ProjectEnvironmentToolProvider {
             )?;
             if image_records
                 .iter()
+                .filter(|image| runtime_image_is_execution_required(image))
                 .any(|image| !image_is_real_and_ready(image))
             {
                 environment.status = ProjectRuntimeEnvironmentStatus::PendingImageBuild;
@@ -435,6 +453,7 @@ fn agent_visible_runtime_state(
         },
         "analysis": {
             "not_runnable_reason": environment.not_runnable_reason,
+            "primary_service_id": environment.primary_service_id,
             "detected_stack": environment.detected_stack,
             "required_services": environment.required_services,
             "environment_variables": environment.environment_variables.iter().map(|record| json!({

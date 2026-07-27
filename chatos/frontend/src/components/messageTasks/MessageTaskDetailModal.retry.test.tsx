@@ -90,7 +90,7 @@ describe('message task node retry', () => {
     expect(screen.getByRole('alert').textContent).toContain('模型配置不可用，无法重新处理此节点');
   });
 
-  it('requires an execution service before retrying a multi-application task', async () => {
+  it('retries a multi-application task without asking the user to choose an image', async () => {
     const user = userEvent.setup();
     const task = {
       id: 'task-multi-app',
@@ -99,42 +99,16 @@ describe('message task node retry', () => {
       last_run_id: 'run-multi-app',
     };
     const onRetry = vi.fn();
-    const onExecutionServiceChange = vi.fn();
-    const { rerender } = render(
+    render(
       <MessageTaskDetailModal
         task={task}
-        executionServiceOptions={[
-          { id: 'mdm-service', label: 'MDM Service (mdm-service)' },
-          { id: 'web-prototype', label: 'Web Prototype (web-prototype)' },
-        ]}
-        executionServiceRequired
-        selectedExecutionServiceId=""
-        onExecutionServiceChange={onExecutionServiceChange}
         onRetry={onRetry}
         onClose={vi.fn()}
       />,
     );
 
-    expect((screen.getByRole('button', { name: '重试此任务' }) as HTMLButtonElement).disabled)
-      .toBe(true);
-    await user.selectOptions(screen.getByRole('combobox', { name: '执行服务' }), 'mdm-service');
-    expect(onExecutionServiceChange).toHaveBeenCalledWith('mdm-service');
-
-    rerender(
-      <MessageTaskDetailModal
-        task={task}
-        executionServiceOptions={[
-          { id: 'mdm-service', label: 'MDM Service (mdm-service)' },
-          { id: 'web-prototype', label: 'Web Prototype (web-prototype)' },
-        ]}
-        executionServiceRequired
-        selectedExecutionServiceId="mdm-service"
-        onExecutionServiceChange={onExecutionServiceChange}
-        onRetry={onRetry}
-        onClose={vi.fn()}
-      />,
-    );
+    expect(screen.queryByRole('combobox')).toBeNull();
     await user.click(screen.getByRole('button', { name: '重试此任务' }));
-    expect(onRetry).toHaveBeenCalledWith(task, undefined, 'mdm-service');
+    expect(onRetry).toHaveBeenCalledWith(task);
   });
 });

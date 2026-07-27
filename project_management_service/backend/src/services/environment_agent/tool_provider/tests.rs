@@ -156,10 +156,7 @@ fn application_image_plan_without_catalog_match_is_program_managed_and_planned()
     assert!(record.image_id.is_none());
     assert!(record.image_ref.is_none());
     assert_eq!(record.service_role, RuntimeServiceRole::Application);
-    assert_eq!(
-        record.mcp_policy.attachment,
-        crate::models::RuntimeMcpAttachment::ProjectGatewayTarget
-    );
+    assert_eq!(record.mcp_policy, ProgramManagedMcpPolicy::default());
 }
 
 #[test]
