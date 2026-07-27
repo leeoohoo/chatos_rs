@@ -4288,6 +4288,291 @@ pub(super) fn add_pdf_annotation_reply(
     }))
 }
 
+pub(super) fn update_pdf_annotation_text(
+    arguments: &Value,
+    state: &LocalState,
+    request: &RelayRequest,
+) -> Result<Value> {
+    let (source, source_relative) =
+        input_file(state, request, required_text(arguments, "path")?, ".pdf")?;
+    let expected_source_sha256 = required_lowercase_sha256(arguments, "expected_source_sha256")?;
+    let source_bytes =
+        fs::read(source.as_path()).with_context(|| format!("read PDF {}", source.display()))?;
+    if source_bytes.len() as u64 > MAX_ARTIFACT_BYTES {
+        return Err(anyhow!("local artifact exceeds the 100 MiB safety limit"));
+    }
+    let actual_source_sha256 = hex::encode(Sha256::digest(source_bytes.as_slice()));
+    if actual_source_sha256 != expected_source_sha256 {
+        return Err(anyhow!(
+            "PDF source SHA-256 does not match expected_source_sha256; inspect the current file again"
+        ));
+    }
+    if sha256_file(source.as_path())? != expected_source_sha256 {
+        return Err(anyhow!(
+            "PDF source changed while it was being read; inspect the current file again"
+        ));
+    }
+
+    let mut document = Document::load_mem(source_bytes.as_slice())
+        .with_context(|| format!("open PDF {}", source.display()))?;
+    if document.is_encrypted() {
+        return Err(anyhow!(
+            "encrypted PDFs cannot be edited without an explicit decryption workflow"
+        ));
+    }
+    let page_map = document.get_pages();
+    if page_map.is_empty() {
+        return Err(anyhow!("PDF contains no pages: {}", source.display()));
+    }
+    if page_map.len() > MAX_PDF_PAGES {
+        return Err(anyhow!(
+            "PDF exceeds the {MAX_PDF_PAGES} page annotation safety limit"
+        ));
+    }
+    let annotation_inspection = inspect_pdf_annotations(&document, &page_map, None)?;
+    let initial_annotation_count = annotation_inspection
+        .get("count")
+        .and_then(Value::as_u64)
+        .ok_or_else(|| anyhow!("PDF annotation inspection did not return a valid count"))?;
+
+    let page_number = arguments
+        .get("page")
+        .and_then(Value::as_u64)
+        .and_then(|value| u32::try_from(value).ok())
+        .filter(|value| (1..=MAX_PDF_PAGES as u32).contains(value))
+        .ok_or_else(|| anyhow!("page must be an integer between 1 and {MAX_PDF_PAGES}"))?;
+    let page_id = page_map
+        .get(&page_number)
+        .copied()
+        .ok_or_else(|| anyhow!("page {page_number} does not exist"))?;
+    let annotation_index = arguments
+        .get("annotation_index")
+        .and_then(Value::as_u64)
+        .and_then(|value| usize::try_from(value).ok())
+        .filter(|value| (1..=MAX_PDF_ANNOTATION_PREVIEW).contains(value))
+        .ok_or_else(|| {
+            anyhow!(
+                "annotation_index must be an integer between 1 and {MAX_PDF_ANNOTATION_PREVIEW}"
+            )
+        })?;
+    let mut annotations = pdf_page_annotations(
+        &document,
+        page_id,
+        format!("page {page_number} Annots").as_str(),
+    )?;
+    let selected_object = annotations
+        .get(annotation_index - 1)
+        .cloned()
+        .ok_or_else(|| {
+            anyhow!("page {page_number} annotation_index {annotation_index} does not exist")
+        })?;
+    let selected_id = selected_object.as_reference().ok();
+    let selected_label = format!("page {page_number} annotation {annotation_index}");
+    let mut selected =
+        resolved_pdf_dictionary(&document, selected_object, selected_label.as_str())?;
+    let subtype = selected
+        .get(b"Subtype")
+        .and_then(Object::as_name)
+        .with_context(|| format!("{selected_label} is missing a valid Subtype"))?;
+    let subtype = String::from_utf8_lossy(subtype).to_string();
+    if subtype != "Text" && !is_pdf_markup_subtype(subtype.as_str()) {
+        return Err(anyhow!(
+            "{selected_label} subtype /{subtype} is not eligible for safe annotation text updates"
+        ));
+    }
+    if required_text(arguments, "expected_subtype")? != subtype {
+        return Err(anyhow!(
+            "expected_subtype does not match {selected_label}; inspect the current PDF again"
+        ));
+    }
+    let relation_type = match selected.get(b"IRT") {
+        Err(_) => "root",
+        Ok(_) => match selected.get(b"RT") {
+            Err(_) => "reply",
+            Ok(value) => match value
+                .as_name()
+                .with_context(|| format!("{selected_label} RT must be a name"))?
+            {
+                b"R" => "reply",
+                b"Group" => "group",
+                _ => return Err(anyhow!("{selected_label} RT must be /R or /Group")),
+            },
+        },
+    };
+    if required_text(arguments, "expected_relation_type")? != relation_type {
+        return Err(anyhow!(
+            "expected_relation_type does not match {selected_label}; inspect the current PDF again"
+        ));
+    }
+
+    let text = match arguments.get("text") {
+        None => None,
+        Some(Value::String(value)) => Some(normalized_pdf_unicode_text(
+            value,
+            "text",
+            MAX_PDF_ANNOTATION_CHARACTERS,
+            true,
+        )?),
+        Some(_) => return Err(anyhow!("text must be a string")),
+    };
+    let author = match arguments.get("author") {
+        None => None,
+        Some(Value::String(value)) => Some(normalized_pdf_unicode_text(
+            value,
+            "author",
+            MAX_PDF_ANNOTATION_AUTHOR_CHARACTERS,
+            false,
+        )?),
+        Some(_) => return Err(anyhow!("author must be a string")),
+    };
+    let remove_fields = pdf_annotation_text_remove_fields(arguments)?;
+    if text.is_some() && remove_fields.iter().any(|field| field == "text") {
+        return Err(anyhow!(
+            "PDF annotation text cannot be both updated and removed"
+        ));
+    }
+    if author.is_some() && remove_fields.iter().any(|field| field == "author") {
+        return Err(anyhow!(
+            "PDF annotation author cannot be both updated and removed"
+        ));
+    }
+    if text.is_none() && author.is_none() && remove_fields.is_empty() {
+        return Err(anyhow!(
+            "PDF annotation text update requires text, author, or remove_fields"
+        ));
+    }
+
+    let current_text = optional_bounded_pdf_text(
+        &selected,
+        b"Contents",
+        selected_label.as_str(),
+        MAX_PDF_ANNOTATION_CHARACTERS,
+        true,
+    )?;
+    let current_author = optional_bounded_pdf_text(
+        &selected,
+        b"T",
+        selected_label.as_str(),
+        MAX_PDF_ANNOTATION_AUTHOR_CHARACTERS,
+        false,
+    )?;
+    let mut updated_fields = Vec::new();
+    let mut removed_fields = Vec::new();
+    if let Some(text) = text.as_deref() {
+        if current_text.as_deref() != Some(text) {
+            selected.set("Contents", text_string(text));
+            updated_fields.push("text");
+        }
+    }
+    if let Some(author) = author.as_deref() {
+        if current_author.as_deref() != Some(author) {
+            selected.set("T", text_string(author));
+            updated_fields.push("author");
+        }
+    }
+    for field in remove_fields {
+        let key = match field.as_str() {
+            "text" => b"Contents".as_slice(),
+            "author" => b"T".as_slice(),
+            _ => unreachable!("annotation remove_fields entries are validated"),
+        };
+        if selected.has(key) {
+            selected.remove(key);
+            removed_fields.push(field);
+        }
+    }
+    if updated_fields.is_empty() && removed_fields.is_empty() {
+        return Err(anyhow!(
+            "PDF annotation text update would not change the document"
+        ));
+    }
+
+    if let Some(selected_id) = selected_id {
+        document
+            .objects
+            .insert(selected_id, Object::Dictionary(selected));
+    } else {
+        annotations[annotation_index - 1] = Object::Dictionary(selected);
+        document
+            .get_object_mut(page_id)
+            .and_then(Object::as_dict_mut)
+            .with_context(|| format!("read page {page_number} dictionary"))?
+            .set("Annots", annotations);
+    }
+
+    let updated_page_map = document.get_pages();
+    let updated_inspection =
+        inspect_pdf_annotations(&document, &updated_page_map, Some(&json!(page_number)))?;
+    if updated_inspection.get("count").and_then(Value::as_u64) != Some(initial_annotation_count) {
+        return Err(anyhow!(
+            "PDF annotation text update changed the annotation count unexpectedly"
+        ));
+    }
+    let updated_object = pdf_page_annotations(
+        &document,
+        page_id,
+        format!("updated page {page_number} Annots").as_str(),
+    )?
+    .get(annotation_index - 1)
+    .cloned()
+    .ok_or_else(|| anyhow!("updated annotation disappeared unexpectedly"))?;
+    let updated = resolved_pdf_dictionary(&document, updated_object, selected_label.as_str())?;
+    let final_text = optional_bounded_pdf_text(
+        &updated,
+        b"Contents",
+        selected_label.as_str(),
+        MAX_PDF_ANNOTATION_CHARACTERS,
+        true,
+    )?;
+    let final_author = optional_bounded_pdf_text(
+        &updated,
+        b"T",
+        selected_label.as_str(),
+        MAX_PDF_ANNOTATION_AUTHOR_CHARACTERS,
+        false,
+    )?;
+
+    let target_requested = required_text(arguments, "target_path")?;
+    let (target, target_relative) = pdf_output_path(
+        state,
+        request,
+        target_requested,
+        std::slice::from_ref(&source),
+    )?;
+    let guards = [PdfFileGuard {
+        path: source.as_path(),
+        expected_sha256: expected_source_sha256.as_str(),
+        changed_message:
+            "PDF source changed while the annotation text update was being prepared; no output was written",
+        require_regular_non_symlink: false,
+    }];
+    let bytes = save_pdf_document_with_file_guards(
+        &mut document,
+        target.as_path(),
+        optional_bool(arguments, "overwrite"),
+        guards.as_slice(),
+    )?;
+    Ok(json!({
+        "updated": true,
+        "operation": "update_annotation_text",
+        "source_path": source_relative,
+        "source_sha256": expected_source_sha256,
+        "path": target_relative,
+        "page": page_number,
+        "annotation_index": annotation_index,
+        "subtype": subtype,
+        "relation_type": relation_type,
+        "updated_indirect_object": selected_id.is_some(),
+        "updated_fields": updated_fields,
+        "removed_fields": removed_fields,
+        "text_characters": final_text.as_ref().map(|value| value.chars().count()),
+        "text_sha256": final_text.as_ref().map(|value| hex::encode(Sha256::digest(value.as_bytes()))),
+        "author": final_author,
+        "annotation_count": initial_annotation_count,
+        "bytes": bytes,
+    }))
+}
+
 pub(super) fn delete_pdf_annotation(
     arguments: &Value,
     state: &LocalState,
@@ -6194,6 +6479,33 @@ fn pdf_metadata_remove_fields(arguments: &Value) -> Result<Vec<String>> {
             .ok_or_else(|| {
                 anyhow!("remove_fields entries must be title, author, subject, or keywords")
             })?;
+        if !seen.insert(field) {
+            return Err(anyhow!("remove_fields entries must be unique"));
+        }
+        fields.push(field.to_string());
+    }
+    Ok(fields)
+}
+
+fn pdf_annotation_text_remove_fields(arguments: &Value) -> Result<Vec<String>> {
+    let Some(value) = arguments.get("remove_fields") else {
+        return Ok(Vec::new());
+    };
+    let values = value
+        .as_array()
+        .ok_or_else(|| anyhow!("remove_fields must be an array"))?;
+    if values.is_empty() || values.len() > 2 {
+        return Err(anyhow!(
+            "remove_fields must contain between 1 and 2 annotation fields"
+        ));
+    }
+    let mut fields = Vec::with_capacity(values.len());
+    let mut seen = HashSet::with_capacity(values.len());
+    for value in values {
+        let field = value
+            .as_str()
+            .filter(|field| matches!(*field, "text" | "author"))
+            .ok_or_else(|| anyhow!("remove_fields entries must be text or author"))?;
         if !seen.insert(field) {
             return Err(anyhow!("remove_fields entries must be unique"));
         }

@@ -78,9 +78,9 @@ static BUNDLED_PLUGIN_SPECS: [BundledPluginSpec; 12] = [
         "Read, create, inspect, render, and verify PDF artifacts.",
         "Productivity",
         &["internal_skill_pdf"],
-        "1.21.0",
-        "2026-07-27T22:00:00Z",
-        "pdf-1.21.0",
+        "1.22.0",
+        "2026-07-27T23:00:00Z",
+        "pdf-1.22.0",
     ),
     bundled_plugin_release(
         "spreadsheets",

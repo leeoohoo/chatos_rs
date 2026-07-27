@@ -14867,6 +14867,377 @@ fn pdf_annotation_deletion_rejects_stale_mismatched_referenced_and_unsafe_target
 }
 
 #[test]
+fn updates_exact_markup_reply_and_direct_pdf_annotation_text_without_modifying_sources() {
+    let (root, state, request) = test_context();
+    let source = root.join("source.pdf");
+    write_blank_pdf(source.as_path(), 1);
+    let mut prepared = Document::load(source.as_path()).expect("source PDF");
+    let page_id = prepared.get_pages()[&1];
+    let highlight_id = prepared.add_object(dictionary! {
+        "Type" => "Annot",
+        "Subtype" => "Highlight",
+        "Rect" => vec![10.into(), 40.into(), 180.into(), 56.into()],
+        "QuadPoints" => vec![
+            10.into(), 56.into(), 180.into(), 56.into(),
+            10.into(), 40.into(), 180.into(), 40.into(),
+        ],
+        "Contents" => lopdf::text_string("old highlight"),
+        "T" => lopdf::text_string("old reviewer"),
+        "C" => vec![1.into(), 1.into(), 0.into()],
+        "CA" => 0.4,
+        "P" => page_id,
+    });
+    let reply_id = prepared.add_object(dictionary! {
+        "Type" => "Annot",
+        "Subtype" => "Text",
+        "Rect" => vec![10.into(), 40.into(), 34.into(), 64.into()],
+        "Contents" => lopdf::text_string("old reply"),
+        "T" => lopdf::text_string("reply reviewer"),
+        "IRT" => highlight_id,
+        "RT" => "R",
+        "P" => page_id,
+    });
+    let direct_text = Object::Dictionary(dictionary! {
+        "Type" => "Annot",
+        "Subtype" => "Text",
+        "Rect" => vec![200.into(), 40.into(), 224.into(), 64.into()],
+        "Contents" => lopdf::text_string("direct text"),
+        "P" => page_id,
+    });
+    prepared
+        .get_object_mut(page_id)
+        .and_then(Object::as_dict_mut)
+        .expect("page dictionary")
+        .set(
+            "Annots",
+            vec![
+                Object::Reference(highlight_id),
+                Object::Reference(reply_id),
+                direct_text,
+            ],
+        );
+    prepared.save(source.as_path()).expect("save source PDF");
+    let source_before = fs::read(source.as_path()).expect("source bytes");
+    let source_sha256 = sha256_file(source.as_path()).expect("source hash");
+
+    let updated_markup = pdf_edit::update_pdf_annotation_text(
+        &json!({
+            "path":"source.pdf",
+            "expected_source_sha256":source_sha256,
+            "page":1,
+            "annotation_index":1,
+            "expected_subtype":"Highlight",
+            "expected_relation_type":"root",
+            "text":"更新后的重点批注",
+            "author":"审阅人乙",
+            "target_path":"markup-updated.pdf",
+        }),
+        &state,
+        &request,
+    )
+    .expect("update exact markup annotation text");
+    assert_eq!(updated_markup.get("updated"), Some(&Value::Bool(true)));
+    assert_eq!(
+        updated_markup.get("updated_indirect_object"),
+        Some(&Value::Bool(true))
+    );
+    assert_eq!(updated_markup.get("annotation_count"), Some(&json!(3)));
+    assert_eq!(
+        updated_markup.get("author").and_then(Value::as_str),
+        Some("审阅人乙")
+    );
+    assert!(!updated_markup.to_string().contains("更新后的重点批注"));
+    let markup_path = root.join("markup-updated.pdf");
+    let markup_before = fs::read(markup_path.as_path()).expect("markup output bytes");
+    let inspected_markup = inspect_pdf(
+        &json!({"path":"markup-updated.pdf","annotation_page":1}),
+        &state,
+        &request,
+    )
+    .expect("inspect updated markup annotation");
+    assert_eq!(
+        inspected_markup.pointer("/annotations/preview/0/contents"),
+        Some(&json!("更新后的重点批注"))
+    );
+    assert_eq!(
+        inspected_markup.pointer("/annotations/preview/0/author"),
+        Some(&json!("审阅人乙"))
+    );
+
+    let markup_sha256 = sha256_file(markup_path.as_path()).expect("markup output hash");
+    let updated_reply = pdf_edit::update_pdf_annotation_text(
+        &json!({
+            "path":"markup-updated.pdf",
+            "expected_source_sha256":markup_sha256,
+            "page":1,
+            "annotation_index":2,
+            "expected_subtype":"Text",
+            "expected_relation_type":"reply",
+            "text":"更新后的回复\n第二行",
+            "remove_fields":["author"],
+            "target_path":"reply-updated.pdf",
+        }),
+        &state,
+        &request,
+    )
+    .expect("update exact reply annotation text");
+    assert_eq!(updated_reply.get("relation_type"), Some(&json!("reply")));
+    assert_eq!(
+        updated_reply.get("removed_fields"),
+        Some(&json!(["author"]))
+    );
+    assert!(updated_reply.get("author").is_some_and(Value::is_null));
+    let reply_path = root.join("reply-updated.pdf");
+    let reply_before = fs::read(reply_path.as_path()).expect("reply output bytes");
+    let inspected_reply = inspect_pdf(
+        &json!({"path":"reply-updated.pdf","annotation_page":1}),
+        &state,
+        &request,
+    )
+    .expect("inspect updated reply annotation");
+    assert_eq!(
+        inspected_reply.pointer("/annotations/preview/1/contents"),
+        Some(&json!("更新后的回复\n第二行"))
+    );
+    assert!(inspected_reply
+        .pointer("/annotations/preview/1/author")
+        .is_some_and(Value::is_null));
+    assert_eq!(
+        inspected_reply.pointer("/annotations/preview/1/relation_type"),
+        Some(&json!("reply"))
+    );
+
+    let reply_sha256 = sha256_file(reply_path.as_path()).expect("reply output hash");
+    let updated_direct = pdf_edit::update_pdf_annotation_text(
+        &json!({
+            "path":"reply-updated.pdf",
+            "expected_source_sha256":reply_sha256,
+            "page":1,
+            "annotation_index":3,
+            "expected_subtype":"Text",
+            "expected_relation_type":"root",
+            "author":"直接批注作者",
+            "remove_fields":["text"],
+            "target_path":"direct-updated.pdf",
+        }),
+        &state,
+        &request,
+    )
+    .expect("update exact direct annotation text");
+    assert_eq!(
+        updated_direct.get("updated_indirect_object"),
+        Some(&Value::Bool(false))
+    );
+    assert!(updated_direct
+        .get("text_characters")
+        .is_some_and(Value::is_null));
+    let inspected_direct = inspect_pdf(
+        &json!({"path":"direct-updated.pdf","annotation_page":1}),
+        &state,
+        &request,
+    )
+    .expect("inspect updated direct annotation");
+    assert!(inspected_direct
+        .pointer("/annotations/preview/2/contents")
+        .is_some_and(Value::is_null));
+    assert_eq!(
+        inspected_direct.pointer("/annotations/preview/2/author"),
+        Some(&json!("直接批注作者"))
+    );
+    assert_eq!(
+        fs::read(source.as_path()).expect("source after annotation updates"),
+        source_before
+    );
+    assert_eq!(
+        fs::read(markup_path.as_path()).expect("markup output after reply update"),
+        markup_before
+    );
+    assert_eq!(
+        fs::read(reply_path.as_path()).expect("reply output after direct update"),
+        reply_before
+    );
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn pdf_annotation_text_update_rejects_stale_mismatched_noop_and_unsafe_targets() {
+    let (root, state, request) = test_context();
+    let source = root.join("source.pdf");
+    write_blank_pdf(source.as_path(), 1);
+    let mut prepared = Document::load(source.as_path()).expect("source PDF");
+    let page_id = prepared.get_pages()[&1];
+    let root_id = prepared.add_object(dictionary! {
+        "Type" => "Annot",
+        "Subtype" => "Text",
+        "Rect" => vec![10.into(), 10.into(), 34.into(), 34.into()],
+        "Contents" => lopdf::text_string("root"),
+        "P" => page_id,
+    });
+    let reply_id = prepared.add_object(dictionary! {
+        "Type" => "Annot",
+        "Subtype" => "Text",
+        "Rect" => vec![10.into(), 10.into(), 34.into(), 34.into()],
+        "Contents" => lopdf::text_string("reply"),
+        "IRT" => root_id,
+        "RT" => "R",
+        "P" => page_id,
+    });
+    let link_id = prepared.add_object(dictionary! {
+        "Type" => "Annot",
+        "Subtype" => "Link",
+        "Rect" => vec![40.into(), 10.into(), 140.into(), 30.into()],
+        "Dest" => vec![Object::Reference(page_id), Object::Name(b"Fit".to_vec())],
+        "P" => page_id,
+    });
+    prepared
+        .get_object_mut(page_id)
+        .and_then(Object::as_dict_mut)
+        .expect("page dictionary")
+        .set(
+            "Annots",
+            vec![
+                Object::Reference(root_id),
+                Object::Reference(reply_id),
+                Object::Reference(link_id),
+            ],
+        );
+    prepared.save(source.as_path()).expect("save source PDF");
+    let source_before = fs::read(source.as_path()).expect("source bytes");
+    let source_sha256 = sha256_file(source.as_path()).expect("source hash");
+
+    for (target, overrides, expected) in [
+        (
+            "stale.pdf",
+            json!({"expected_source_sha256":"0".repeat(64),"text":"changed"}),
+            "expected_source_sha256",
+        ),
+        (
+            "missing.pdf",
+            json!({"annotation_index":4,"text":"changed"}),
+            "does not exist",
+        ),
+        (
+            "subtype.pdf",
+            json!({"expected_subtype":"Highlight","text":"changed"}),
+            "expected_subtype does not match",
+        ),
+        (
+            "relation.pdf",
+            json!({"annotation_index":2,"expected_relation_type":"root","text":"changed"}),
+            "expected_relation_type does not match",
+        ),
+        (
+            "link.pdf",
+            json!({"annotation_index":3,"expected_subtype":"Link","text":"changed"}),
+            "not eligible for safe annotation text updates",
+        ),
+        ("missing-update.pdf", json!({}), "requires text, author"),
+        (
+            "overlap.pdf",
+            json!({"text":"changed","remove_fields":["text"]}),
+            "cannot be both updated and removed",
+        ),
+        ("noop.pdf", json!({"text":"root"}), "would not change"),
+        (
+            "missing-remove.pdf",
+            json!({"remove_fields":["author"]}),
+            "would not change",
+        ),
+        ("wrong-type.pdf", json!({"text":7}), "text must be a string"),
+        (
+            "control.pdf",
+            json!({"text":"bad\u{0000}text"}),
+            "unsupported control character",
+        ),
+        (
+            "duplicate-remove.pdf",
+            json!({"remove_fields":["text","text"]}),
+            "must be unique",
+        ),
+        (
+            "unknown-remove.pdf",
+            json!({"remove_fields":["contents"]}),
+            "must be text or author",
+        ),
+        (
+            "source.pdf",
+            json!({"text":"changed"}),
+            "distinct target_path",
+        ),
+    ] {
+        let mut arguments = json!({
+            "path":"source.pdf",
+            "expected_source_sha256":source_sha256,
+            "page":1,
+            "annotation_index":1,
+            "expected_subtype":"Text",
+            "expected_relation_type":"root",
+            "target_path":target,
+        });
+        for (key, value) in overrides.as_object().expect("update overrides") {
+            arguments[key] = value.clone();
+        }
+        let error = pdf_edit::update_pdf_annotation_text(&arguments, &state, &request)
+            .expect_err("unsafe annotation text update must fail");
+        assert!(
+            error.to_string().contains(expected),
+            "unexpected error for {target}: {error:#}"
+        );
+        if target != "source.pdf" {
+            assert!(!root.join(target).exists(), "unexpected output {target}");
+        }
+    }
+
+    fs::hard_link(source.as_path(), root.join("source-hard-link.pdf"))
+        .expect("hard-linked annotation update target");
+    let hard_link_error = pdf_edit::update_pdf_annotation_text(
+        &json!({
+            "path":"source.pdf",
+            "expected_source_sha256":source_sha256,
+            "page":1,
+            "annotation_index":1,
+            "expected_subtype":"Text",
+            "expected_relation_type":"root",
+            "text":"changed",
+            "target_path":"source-hard-link.pdf",
+            "overwrite":true,
+        }),
+        &state,
+        &request,
+    )
+    .expect_err("hard-linked annotation update target must fail");
+    assert!(hard_link_error.to_string().contains("distinct target_path"));
+
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(source.as_path(), root.join("linked-output.pdf"))
+            .expect("annotation update target symlink");
+        let symlink_error = pdf_edit::update_pdf_annotation_text(
+            &json!({
+                "path":"source.pdf",
+                "expected_source_sha256":source_sha256,
+                "page":1,
+                "annotation_index":1,
+                "expected_subtype":"Text",
+                "expected_relation_type":"root",
+                "text":"changed",
+                "target_path":"linked-output.pdf",
+                "overwrite":true,
+            }),
+            &state,
+            &request,
+        )
+        .expect_err("symlink annotation update target must fail");
+        assert!(symlink_error.to_string().contains("regular non-symlink"));
+    }
+    assert_eq!(
+        fs::read(source.as_path()).expect("source after failed annotation updates"),
+        source_before
+    );
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
 fn adds_and_inspects_unicode_pdf_annotation_reply_without_modifying_source() {
     let (root, state, request) = test_context();
     let source = root.join("artifacts/source.pdf");

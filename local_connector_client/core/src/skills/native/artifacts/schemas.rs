@@ -22,6 +22,7 @@ pub(super) fn tool_definitions(skill_id: &str) -> Vec<Value> {
             add_pdf_markup_annotation_tool(),
             add_pdf_link_annotation_tool(),
             add_pdf_annotation_reply_tool(),
+            update_pdf_annotation_text_tool(),
             delete_pdf_annotation_tool(),
             add_pdf_file_attachment_annotation_tool(),
             extract_pdf_file_attachment_tool(),
@@ -520,6 +521,31 @@ fn add_pdf_annotation_reply_tool() -> Value {
                 "overwrite":{"type":"boolean","default":false}
             },
             "required":["path","expected_source_sha256","page","annotation_index","text","target_path"],
+            "additionalProperties":false
+        }),
+    )
+}
+
+fn update_pdf_annotation_text_tool() -> Value {
+    tool(
+        "update_pdf_annotation_text",
+        "Update or remove the Unicode contents and author of one inspected PDF Text or markup annotation in a distinct output. The exact source SHA-256, physical page, page-local preview index, subtype, and root/reply/group relation are required; unsupported subtypes, stale snapshots, no-op updates, and in-place targets fail closed.",
+        json!({
+            "type":"object",
+            "properties":{
+                "path":{"type":"string","description":"Workspace-relative source .pdf path."},
+                "expected_source_sha256":{"type":"string","pattern":"^[0-9a-f]{64}$","description":"Exact source SHA-256 returned by inspect_pdf."},
+                "page":{"type":"integer","minimum":1,"maximum":5000,"description":"One-based physical page containing the inspected annotation."},
+                "annotation_index":{"type":"integer","minimum":1,"maximum":100,"description":"One-based page-local annotation index returned by inspect_pdf(annotation_page=page)."},
+                "expected_subtype":{"type":"string","enum":["Text","Highlight","Underline","StrikeOut","Squiggly"],"description":"Exact annotation subtype returned by the focused preview."},
+                "expected_relation_type":{"type":"string","enum":["root","reply","group"],"description":"Use root when the preview has no relation_type; otherwise submit the exact reply or group relation."},
+                "text":{"type":"string","minLength":1,"maxLength":4096,"description":"Optional replacement Unicode annotation contents. Line breaks and tabs are allowed."},
+                "author":{"type":"string","minLength":1,"maxLength":256,"description":"Optional replacement Unicode annotation author."},
+                "remove_fields":{"type":"array","minItems":1,"maxItems":2,"uniqueItems":true,"items":{"type":"string","enum":["text","author"]},"description":"Optional existing fields to remove."},
+                "target_path":{"type":"string","description":"Distinct workspace-relative .pdf output path."},
+                "overwrite":{"type":"boolean","default":false}
+            },
+            "required":["path","expected_source_sha256","page","annotation_index","expected_subtype","expected_relation_type","target_path"],
             "additionalProperties":false
         }),
     )

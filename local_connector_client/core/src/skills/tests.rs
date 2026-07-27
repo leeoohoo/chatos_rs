@@ -35,7 +35,7 @@ fn pdf_release_publishes_bounded_generation_and_editing_tools() {
         .into_iter()
         .find(|item| item.skill_id == "internal_skill_pdf")
         .expect("PDF catalog item");
-    assert_eq!(catalog_item.version, "1.21.0");
+    assert_eq!(catalog_item.version, "1.22.0");
     assert_eq!(
         catalog_item.permissions,
         vec!["workspace.read", "workspace.write"]
@@ -56,7 +56,7 @@ fn pdf_release_publishes_bounded_generation_and_editing_tools() {
         .iter()
         .filter_map(|tool| tool.get("name").and_then(Value::as_str))
         .collect::<HashSet<_>>();
-    assert_eq!(tools.len(), 23);
+    assert_eq!(tools.len(), 24);
     assert!(names.contains("inspect_pdf"));
     assert!(names.contains("extract_pdf_text"));
     assert!(names.contains("render_pdf_pages"));
@@ -73,6 +73,7 @@ fn pdf_release_publishes_bounded_generation_and_editing_tools() {
     assert!(names.contains("add_pdf_markup_annotation"));
     assert!(names.contains("add_pdf_link_annotation"));
     assert!(names.contains("add_pdf_annotation_reply"));
+    assert!(names.contains("update_pdf_annotation_text"));
     assert!(names.contains("delete_pdf_annotation"));
     assert!(names.contains("add_pdf_file_attachment_annotation"));
     assert!(names.contains("extract_pdf_file_attachment"));
@@ -100,6 +101,7 @@ fn pdf_release_publishes_bounded_generation_and_editing_tools() {
     assert!(instructions.contains("direct physical-page `/Fit` navigation"));
     assert!(instructions.contains("full URL is never returned"));
     assert!(instructions.contains("expected_relation_type=root"));
+    assert!(instructions.contains("result returns only character count and SHA-256"));
     assert!(instructions.contains("unsafe Link actions may be removed"));
     assert!(instructions.contains("prunes its Filespec/EmbeddedFile chain"));
     assert!(instructions.contains("100 MiB aggregate decoded limits"));
@@ -788,7 +790,7 @@ fn ready_bundle_v2_fingerprint_matches_plugin_management_seed() {
         .join("\n");
     assert_eq!(
         hex::encode(Sha256::digest(rows.as_bytes())),
-        "02c32a10914115db9b88a142b80ca6e478c2082322e97812813b9cc6cfef97c9"
+        "acff75f500612b4555c45e3725b4ca3aa57bad2ff54f615a32ca4d9b8fb91b8a"
     );
 }
 
@@ -803,7 +805,7 @@ fn all_28_bundled_skill_fingerprints_match_plugin_management_seed() {
         .join("\n");
     assert_eq!(
         hex::encode(Sha256::digest(rows.as_bytes())),
-        "5d4e98142ec93009797a6093a34bf6cd64c01ef716a2034c2bfdcd7c15bcb2cd"
+        "dd93020395d96fdbfa0c8c0a48cdaa3aa49aba35be98fdf7c7da64d517af28fd"
     );
 }
 
