@@ -271,7 +271,7 @@ describe('useMessageTaskGraph', () => {
 
     expect(request).toHaveBeenCalledWith(
       '/messages/message-1/task-runner/runs/run-failed/retry?session_id=session-1&turn_id=turn-1&source_user_message_id=message-1',
-      { method: 'POST' },
+      { method: 'POST', body: '{}' },
     );
     expect(result.current.detailTask).toMatchObject({
       id: 'task-failed',

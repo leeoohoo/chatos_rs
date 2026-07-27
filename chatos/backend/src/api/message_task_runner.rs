@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use axum::http::StatusCode;
 use axum::{
+    body::Bytes,
     extract::{Path, Query},
+    http::StatusCode,
     routing::{get, post},
     Json, Router,
 };
@@ -87,6 +88,15 @@ struct ConversationTaskRunnerActiveMessageTasksRequest {
 #[derive(Debug, Clone, Default, Deserialize)]
 struct RetryMessageTaskRunnerRunRequest {
     retry_instruction: Option<String>,
+}
+
+fn parse_retry_message_task_runner_run_request(
+    body: &[u8],
+) -> Result<RetryMessageTaskRunnerRunRequest, serde_json::Error> {
+    if body.iter().all(|byte| byte.is_ascii_whitespace()) {
+        return Ok(RetryMessageTaskRunnerRunRequest::default());
+    }
+    serde_json::from_slice(body)
 }
 
 fn normalize_text(value: Option<&str>) -> Option<String> {
@@ -437,8 +447,20 @@ async fn retry_message_task_runner_run(
     auth: AuthUser,
     Path((message_id, run_id)): Path<(String, String)>,
     Query(query): Query<MessageTaskRunnerLookupQuery>,
-    payload: Option<Json<RetryMessageTaskRunnerRunRequest>>,
+    body: Bytes,
 ) -> (StatusCode, Json<Value>) {
+    let payload = match parse_retry_message_task_runner_run_request(body.as_ref()) {
+        Ok(payload) => payload,
+        Err(err) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({
+                    "error": "重试请求格式不正确",
+                    "detail": err.to_string(),
+                })),
+            );
+        }
+    };
     let context = match resolve_message_task_runner_context(&auth, &message_id, &query).await {
         Ok(Some(context)) => context,
         Ok(None) => {
@@ -449,11 +471,7 @@ async fn retry_message_task_runner_run(
         }
         Err(err) => return err,
     };
-    let retry_instruction = normalize_text(
-        payload
-            .as_ref()
-            .and_then(|Json(payload)| payload.retry_instruction.as_deref()),
-    );
+    let retry_instruction = normalize_text(payload.retry_instruction.as_deref());
     if retry_instruction
         .as_deref()
         .is_some_and(|value| value.chars().count() > 4000)
@@ -558,4 +576,25 @@ async fn get_message_task_runner_run_output_diff(
         }
     };
     (StatusCode::OK, Json(payload))
+}
+
+#[cfg(test)]
+mod retry_request_tests {
+    use super::parse_retry_message_task_runner_run_request;
+
+    #[test]
+    fn empty_retry_body_uses_default_request() {
+        let request = parse_retry_message_task_runner_run_request(b"")
+            .expect("empty retry body must be accepted");
+        assert!(request.retry_instruction.is_none());
+    }
+
+    #[test]
+    fn retry_body_keeps_user_instruction() {
+        let request = parse_retry_message_task_runner_run_request(
+            r#"{"retry_instruction":"配置已经补齐"}"#.as_bytes(),
+        )
+        .expect("retry instruction body must be parsed");
+        assert_eq!(request.retry_instruction.as_deref(), Some("配置已经补齐"));
+    }
 }

@@ -139,12 +139,12 @@ export const retryMessageTaskRunnerRun = (
   const normalizedInstruction = retryInstruction?.trim();
   return request<MessageTaskRunnerRetryRunResponse>(
     `/messages/${encodeURIComponent(messageId)}/task-runner/runs/${encodeURIComponent(runId)}/retry${messageTaskRunnerLookupQuery(options)}`,
-    normalizedInstruction
-      ? {
-        method: 'POST',
-        body: JSON.stringify({ retry_instruction: normalizedInstruction }),
-      }
-      : { method: 'POST' },
+    {
+      method: 'POST',
+      body: JSON.stringify(normalizedInstruction
+        ? { retry_instruction: normalizedInstruction }
+        : {}),
+    },
   );
 };
 
