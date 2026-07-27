@@ -4295,6 +4295,271 @@ fn creates_appends_and_replaces_canonical_clustered_bar_pptx_charts() {
 }
 
 #[test]
+fn creates_appends_and_replaces_canonical_standard_radar_pptx_charts() {
+    let (root, state, request) = test_context();
+    presentation::create_pptx(
+        &json!({
+            "target_path":"radar-charts.pptx",
+            "slides":[{
+                "title":"Capability profile",
+                "layout":"chart",
+                "chart":{
+                    "type":"radar",
+                    "title":"Team comparison",
+                    "categories":["Speed","Quality","Cost"],
+                    "series":[
+                        {"name":"Team A","values":[8,7,6],"color":"#2255AA"},
+                        {"name":"Benchmark","values":[70,80,60],"value_axis":"secondary","color":"#EE8800"}
+                    ],
+                    "legend_position":"bottom",
+                    "data_labels":"value",
+                    "category_axis_title":"Capability",
+                    "value_axis_title":"Score",
+                    "secondary_value_axis_title":"Benchmark",
+                    "value_axis_minimum":0,
+                    "value_axis_maximum":10,
+                    "value_axis_major_unit":2,
+                    "value_axis_number_format":"integer",
+                    "secondary_value_axis_minimum":0,
+                    "secondary_value_axis_maximum":100,
+                    "secondary_value_axis_major_unit":20,
+                    "secondary_value_axis_number_format":"integer"
+                }
+            }]
+        }),
+        &state,
+        &request,
+    )
+    .expect("create canonical standard radar chart");
+    let source = root.join("radar-charts.pptx");
+    let source_before = fs::read(source.as_path()).expect("radar source bytes");
+    let inspected =
+        presentation::inspect_pptx_charts(&json!({"path":"radar-charts.pptx"}), &state, &request)
+            .expect("inspect canonical standard radar chart");
+    assert_eq!(
+        inspected.pointer("/chart_metadata/0/chart_types"),
+        Some(&json!(["radar"]))
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/0/radar_styles"),
+        Some(&json!(["standard", "standard"]))
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/0/self_contained_edit_snapshot/type"),
+        Some(&json!("radar"))
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/0/category_axis_title"),
+        Some(&json!("Capability"))
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/0/value_axis_title"),
+        Some(&json!("Score"))
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/0/secondary_value_axis_title"),
+        Some(&json!("Benchmark"))
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/0/series/1/value_axis"),
+        Some(&json!("secondary"))
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/0/series/0/color"),
+        Some(&json!("#2255AA"))
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/0/eligible_for_self_contained_chart_replacement"),
+        Some(&json!(true))
+    );
+    let hash = inspected
+        .pointer("/chart_metadata/0/chart_xml_sha256")
+        .and_then(Value::as_str)
+        .expect("radar chart hash")
+        .to_string();
+    let snapshot = inspected
+        .pointer("/chart_metadata/0/self_contained_edit_snapshot")
+        .expect("radar chart snapshot")
+        .clone();
+    let mut source_archive =
+        ZipArchive::new(File::open(source.as_path()).expect("radar chart source"))
+            .expect("radar chart source ZIP");
+    let source_chart =
+        read_zip_text(&mut source_archive, "ppt/charts/chart1.xml").expect("radar chart XML");
+    assert_eq!(source_chart.matches("<c:radarChart>").count(), 2);
+    assert_eq!(
+        source_chart
+            .matches("<c:radarStyle val=\"standard\"/>")
+            .count(),
+        2
+    );
+    assert_eq!(source_chart.matches("<a:ln>").count(), 2);
+    assert_eq!(source_chart.matches("<c:catAx>").count(), 2);
+    assert_eq!(source_chart.matches("<c:valAx>").count(), 2);
+    drop(source_archive);
+
+    presentation::append_pptx_slides(
+        &json!({
+            "path":"radar-charts.pptx",
+            "target_path":"radar-charts-appended.pptx",
+            "slides":[{
+                "title":"Risk profile",
+                "layout":"chart",
+                "chart":{
+                    "type":"radar",
+                    "categories":["Impact","Likelihood"],
+                    "series":[{"name":"Risk","values":[4,3]}],
+                    "show_legend":false
+                }
+            }]
+        }),
+        &state,
+        &request,
+    )
+    .expect("append canonical standard radar chart");
+    let appended = presentation::inspect_pptx_charts(
+        &json!({"path":"radar-charts-appended.pptx"}),
+        &state,
+        &request,
+    )
+    .expect("inspect appended radar chart");
+    assert_eq!(appended.get("charts"), Some(&json!(2)));
+    assert_eq!(
+        appended.pointer("/chart_metadata/1/radar_styles"),
+        Some(&json!(["standard"]))
+    );
+    assert_eq!(
+        appended.pointer("/chart_metadata/1/self_contained_edit_snapshot/type"),
+        Some(&json!("radar"))
+    );
+
+    presentation::replace_pptx_chart(
+        &json!({
+            "path":"radar-charts.pptx",
+            "target_path":"radar-to-area.pptx",
+            "slide_number":1,
+            "chart_number":1,
+            "expected_chart_xml_sha256":hash,
+            "expected_self_contained_edit_snapshot":snapshot,
+            "replacement":{
+                "type":"area",
+                "title":"Team comparison",
+                "categories":["Speed","Quality","Cost"],
+                "series":[{"name":"Team A","values":[9,8,7],"color":"#2255AA"}],
+                "legend_position":"bottom",
+                "data_labels":"value",
+                "category_axis_title":"Capability",
+                "value_axis_title":"Score",
+                "value_axis_minimum":0,
+                "value_axis_maximum":10,
+                "value_axis_major_unit":2,
+                "value_axis_number_format":"integer"
+            }
+        }),
+        &state,
+        &request,
+    )
+    .expect("replace radar chart with canonical area chart");
+    assert_eq!(
+        fs::read(source.as_path()).expect("radar source after replacement"),
+        source_before
+    );
+    let replaced =
+        presentation::inspect_pptx_charts(&json!({"path":"radar-to-area.pptx"}), &state, &request)
+            .expect("inspect radar-to-area replacement");
+    assert_eq!(
+        replaced.pointer("/chart_metadata/0/chart_types"),
+        Some(&json!(["area"]))
+    );
+    assert_eq!(
+        replaced.pointer("/chart_metadata/0/radar_styles"),
+        Some(&json!([]))
+    );
+    let mut replaced_archive =
+        ZipArchive::new(File::open(root.join("radar-to-area.pptx")).expect("area replacement"))
+            .expect("area replacement ZIP");
+    let replaced_chart = read_zip_text(&mut replaced_archive, "ppt/charts/chart1.xml")
+        .expect("area replacement XML");
+    assert!(replaced_chart.contains("<c:areaChart>"));
+    assert!(!replaced_chart.contains("<c:radarStyle"));
+    drop(replaced_archive);
+
+    for (filename, replacement) in [
+        ("custom-radar-style.pptx", "<c:radarStyle val=\"marker\"/>"),
+        ("missing-radar-style.pptx", ""),
+        (
+            "attributed-radar-style.pptx",
+            "<c:radarStyle val=\"standard\" custom=\"1\"/>",
+        ),
+    ] {
+        fs::copy(source.as_path(), root.join(filename)).expect("copy noncanonical radar fixture");
+        rewrite_zip_text_entry(
+            root.join(filename).as_path(),
+            "ppt/charts/chart1.xml",
+            |xml| xml.replacen("<c:radarStyle val=\"standard\"/>", replacement, 1),
+        );
+        let inspection =
+            presentation::inspect_pptx_charts(&json!({"path":filename}), &state, &request)
+                .expect("inspect noncanonical radar style");
+        assert_eq!(
+            inspection.pointer("/chart_metadata/0/eligible_for_self_contained_chart_replacement"),
+            Some(&json!(false))
+        );
+        assert!(inspection
+            .pointer("/chart_metadata/0/self_contained_replacement_unsupported_reason")
+            .and_then(Value::as_str)
+            .is_some());
+    }
+
+    for (filename, replacement, expected_error) in [
+        (
+            "duplicate-radar-style.pptx",
+            "<c:radarStyle val=\"standard\"/><c:radarStyle val=\"standard\"/>",
+            "multiple radar styles",
+        ),
+        (
+            "wrong-namespace-radar-style.pptx",
+            "<a:radarStyle val=\"standard\"/>",
+            "standard c namespace",
+        ),
+    ] {
+        fs::copy(source.as_path(), root.join(filename)).expect("copy invalid radar fixture");
+        rewrite_zip_text_entry(
+            root.join(filename).as_path(),
+            "ppt/charts/chart1.xml",
+            |xml| xml.replacen("<c:radarStyle val=\"standard\"/>", replacement, 1),
+        );
+        let error = presentation::inspect_pptx_charts(&json!({"path":filename}), &state, &request)
+            .expect_err("invalid radar style must fail closed");
+        assert!(error.to_string().contains(expected_error));
+    }
+
+    fs::copy(source.as_path(), root.join("oversized-radar-style.pptx"))
+        .expect("copy oversized radar fixture");
+    rewrite_zip_text_entry(
+        root.join("oversized-radar-style.pptx").as_path(),
+        "ppt/charts/chart1.xml",
+        |xml| {
+            xml.replacen(
+                "<c:radarStyle val=\"standard\"/>",
+                format!("<c:radarStyle val=\"{}\"/>", "x".repeat(129)).as_str(),
+                1,
+            )
+        },
+    );
+    let oversized = presentation::inspect_pptx_charts(
+        &json!({"path":"oversized-radar-style.pptx"}),
+        &state,
+        &request,
+    )
+    .expect_err("oversized radar style must fail closed");
+    assert!(oversized
+        .to_string()
+        .contains("radar style is empty or exceeds the safety limit"));
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
 fn replaces_canonical_self_contained_pptx_chart_without_modifying_source_or_relationships() {
     let (root, state, request) = test_context();
     presentation::create_pptx(

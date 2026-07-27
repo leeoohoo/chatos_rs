@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "catalog_revision": "2026-07-27.17",
+  "catalog_revision": "2026-07-27.18",
   "release_version": "1.0.0",
   "release_epoch": "2026-07-22T00:00:00Z",
   "artifact_revision": "2026-07-13.5",
@@ -44,9 +44,9 @@
       "description": "Create and edit presentation decks with visual verification.",
       "category": "Productivity",
       "skill_ids": ["internal_skill_presentations"],
-      "release_version": "1.28.0",
-      "release_epoch": "2026-07-28T03:00:00Z",
-      "artifact_revision": "presentations-1.28.0"
+      "release_version": "1.29.0",
+      "release_epoch": "2026-07-28T04:00:00Z",
+      "artifact_revision": "presentations-1.29.0"
     },
     {
       "name": "template-creator",

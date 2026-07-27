@@ -154,6 +154,7 @@ enum PresentationChartType {
     Pie,
     Area,
     Doughnut,
+    Radar,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -455,6 +456,7 @@ impl PresentationChartType {
             "pie" => Ok(Self::Pie),
             "area" => Ok(Self::Area),
             "doughnut" => Ok(Self::Doughnut),
+            "radar" => Ok(Self::Radar),
             value => Err(anyhow!("unsupported PPTX chart type: {value}")),
         }
     }
@@ -467,11 +469,16 @@ impl PresentationChartType {
             Self::Pie => "pie",
             Self::Area => "area",
             Self::Doughnut => "doughnut",
+            Self::Radar => "radar",
         }
     }
 
     fn is_part_to_whole(self) -> bool {
         matches!(self, Self::Pie | Self::Doughnut)
+    }
+
+    fn uses_line_color(self) -> bool {
+        matches!(self, Self::Line | Self::Radar)
     }
 
     fn primary_category_axis_position(self) -> &'static str {
@@ -715,6 +722,7 @@ struct PptxChartSeriesInspection {
 struct PptxChartGroupInspection {
     chart_type: String,
     bar_direction: Option<String>,
+    radar_style: Option<String>,
     axis_ids: Vec<String>,
 }
 
@@ -3117,6 +3125,12 @@ pub(super) fn inspect_pptx_charts(
                 .filter(|group| group.chart_type == "bar")
                 .map(|group| group.bar_direction.clone())
                 .collect::<Vec<_>>();
+            let radar_styles = chart
+                .chart_groups
+                .iter()
+                .filter(|group| group.chart_type == "radar")
+                .map(|group| group.radar_style.clone())
+                .collect::<Vec<_>>();
             let mut metadata = json!({
                 "slide_number": slide_number,
                 "chart_number": chart_index + 1,
@@ -3125,6 +3139,7 @@ pub(super) fn inspect_pptx_charts(
                 "chart_xml_sha256": hex::encode(Sha256::digest(chart_xml.as_bytes())),
                 "chart_types": chart.chart_types,
                 "bar_directions": bar_directions,
+                "radar_styles": radar_styles,
                 "chart_group_count": chart.chart_groups.len(),
                 "axis_count": chart.axes.len(),
                 "title": chart.title,
@@ -5362,6 +5377,9 @@ fn presentation_chart_group_xml(
         PresentationChartType::Doughnut => format!(
             r#"<c:doughnutChart><c:varyColors val="1"/>{series}{data_labels}<c:firstSliceAng val="0"/><c:holeSize val="50"/></c:doughnutChart>"#
         ),
+        PresentationChartType::Radar => format!(
+            r#"<c:radarChart><c:radarStyle val="standard"/><c:varyColors val="0"/>{series}{data_labels}<c:axId val="{category_axis_id}"/><c:axId val="{value_axis_id}"/></c:radarChart>"#
+        ),
     }
 }
 
@@ -5426,7 +5444,7 @@ fn presentation_chart_series_color_xml(
     let Some(rgb) = color.and_then(|value| value.strip_prefix('#')) else {
         return String::new();
     };
-    if chart_type == PresentationChartType::Line {
+    if chart_type.uses_line_color() {
         format!(
             r#"<c:spPr><a:ln><a:solidFill><a:srgbClr val="{rgb}"/></a:solidFill></a:ln></c:spPr>"#
         )
@@ -5557,9 +5575,23 @@ fn canonical_pptx_chart_snapshot(
         "pie" => PresentationChartType::Pie,
         "area" => PresentationChartType::Area,
         "doughnut" => PresentationChartType::Doughnut,
+        "radar" => {
+            let styles = inspection
+                .chart_groups
+                .iter()
+                .map(|group| group.radar_style.as_deref())
+                .collect::<BTreeSet<_>>();
+            if styles.len() == 1 && styles.contains(&Some("standard")) {
+                PresentationChartType::Radar
+            } else {
+                return Err(anyhow!(
+                    "canonical radar chart groups require one consistent standard style"
+                ));
+            }
+        }
         _ => {
             return Err(anyhow!(
-                "chart type is outside the canonical column, bar, line, pie, area, or doughnut contract"
+                "chart type is outside the canonical column, bar, line, pie, area, doughnut, or radar contract"
             ));
         }
     };
@@ -9496,6 +9528,7 @@ fn inspect_standard_pptx_chart_xml(xml: &str) -> Result<PptxChartInspection> {
                     current_chart_group = Some(PptxChartGroupInspection {
                         chart_type: chart_type.to_string(),
                         bar_direction: None,
+                        radar_style: None,
                         axis_ids: Vec::new(),
                     });
                 }
@@ -9929,6 +9962,25 @@ fn record_pptx_chart_structure_element(
                 "PPTX chart bar group contains multiple bar directions"
             ));
         }
+    } else if qualified.as_slice() == b"c:radarStyle" && parent == Some("radarChart") {
+        let value = required_xml_attribute(reader, event, "val")?;
+        if value.is_empty() || value.len() > 128 {
+            return Err(anyhow!(
+                "PPTX chart radar style is empty or exceeds the safety limit"
+            ));
+        }
+        let chart_group = chart_group
+            .ok_or_else(|| anyhow!("PPTX chart radar style is outside a radar chart group"))?;
+        if chart_group.chart_type != "radar" {
+            return Err(anyhow!(
+                "PPTX chart radar style is attached to a non-radar chart group"
+            ));
+        }
+        if chart_group.radar_style.replace(value).is_some() {
+            return Err(anyhow!(
+                "PPTX chart radar group contains multiple radar styles"
+            ));
+        }
     } else if qualified.as_slice() == b"c:axId" {
         let value = required_xml_attribute(reader, event, "val")?;
         if parent.and_then(standard_pptx_chart_type_local).is_some() {
@@ -10079,7 +10131,7 @@ fn record_pptx_chart_series_color_element(
     series.color_style_present = true;
     let relative_ancestors = &stack[shape_properties_index + 1..];
     let expected = match series.chart_type.as_str() {
-        "line" => match (relative_ancestors, local.as_slice()) {
+        "line" | "radar" => match (relative_ancestors, local.as_slice()) {
             ([], b"ln") => Some((b"a:ln".as_slice(), false, &[][..])),
             ([line], b"solidFill") if line == "ln" => {
                 Some((b"a:solidFill".as_slice(), false, &[][..]))
@@ -10154,7 +10206,7 @@ fn finalize_pptx_chart_series_color(series: &mut PptxChartSeriesInspection) {
     if !series.color_style_present {
         return;
     }
-    let expected_line_count = usize::from(series.chart_type == "line");
+    let expected_line_count = usize::from(matches!(series.chart_type.as_str(), "line" | "radar"));
     if series.color_shape_properties_count != 1
         || series.color_line_count != expected_line_count
         || series.color_solid_fill_count != 1
@@ -10558,6 +10610,7 @@ fn ensure_standard_pptx_chart_namespace(qualified: &[u8], local: &str) -> Result
             | "showVal"
             | "showPercent"
             | "barDir"
+            | "radarStyle"
             | "axId"
             | "axPos"
             | "scaling"

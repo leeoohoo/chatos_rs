@@ -276,7 +276,7 @@ fn presentations_release_publishes_render_and_existing_edit_contracts() {
         .into_iter()
         .find(|item| item.skill_id == "internal_skill_presentations")
         .expect("Presentations catalog item");
-    assert_eq!(catalog_item.version, "1.28.0");
+    assert_eq!(catalog_item.version, "1.29.0");
     let instructions = internal_skill_instructions("internal_skill_presentations")
         .expect("Presentations instructions");
     assert!(instructions.contains("image_right"));
@@ -318,6 +318,11 @@ fn presentations_release_publishes_render_and_existing_edit_contracts() {
     assert!(instructions.contains("exact `c:barDir val=\"bar\"`"));
     assert!(instructions.contains("visible left category axis with bottom primary value axis"));
     assert!(instructions.contains("missing, inconsistent, duplicated, attributed"));
+    assert!(instructions.contains("standard 2D `radar`"));
+    assert!(instructions.contains("raw per-group bar direction and radar style"));
+    assert!(instructions.contains("exact `c:radarStyle val=\"standard\"`"));
+    assert!(instructions.contains("line and radar charts emit an exact series line color"));
+    assert!(instructions.contains("bar directions or radar styles"));
     assert!(instructions.contains("`table` layout"));
     assert!(instructions.contains("1–50 rows and 1–20 string columns"));
     assert!(instructions.contains("immediately eligible for `inspect_pptx_table`"));
@@ -475,6 +480,10 @@ fn presentations_release_publishes_render_and_existing_edit_contracts() {
         .pointer("/inputSchema/properties/slides/items/properties/chart/properties/type/enum")
         .and_then(Value::as_array)
         .is_some_and(|values| values.contains(&json!("bar"))));
+    assert!(create
+        .pointer("/inputSchema/properties/slides/items/properties/chart/properties/type/enum")
+        .and_then(Value::as_array)
+        .is_some_and(|values| values.contains(&json!("radar"))));
     let replace_chart = tools
         .iter()
         .find(|tool| tool.get("name").and_then(Value::as_str) == Some("replace_pptx_chart"))
@@ -863,7 +872,7 @@ fn ready_bundle_v2_fingerprint_matches_plugin_management_seed() {
         .join("\n");
     assert_eq!(
         hex::encode(Sha256::digest(rows.as_bytes())),
-        "040add2481ae387d458bf83d58cdb10e717d2e9b11d8f5959a271a02b6df2124"
+        "72af271d569ddedf98700da2303dd8d951ba04c9ff4c679f41a64fc3db1f7153"
     );
 }
 
@@ -878,7 +887,7 @@ fn all_28_bundled_skill_fingerprints_match_plugin_management_seed() {
         .join("\n");
     assert_eq!(
         hex::encode(Sha256::digest(rows.as_bytes())),
-        "4f726298daf3246c49d022a0a3c81a6f52903c39fb64743fc446157ec0a7b981"
+        "f097b69dc1ea25987ae6b6e73ddd2c53d8ff51789670b76c5432a3b05ed5d7df"
     );
 }
 
