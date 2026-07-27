@@ -215,7 +215,7 @@ fn internal_skill_manifest(skill_id: &str) -> Option<&'static str> {
             "../../../../local_connector_client/skill_bundles/internal/control-chrome/1.4.0/skill.json"
         )),
         "internal_skill_computer_use" => Some(include_str!(
-            "../../../../local_connector_client/skill_bundles/internal/computer-use/1.17.0/skill.json"
+            "../../../../local_connector_client/skill_bundles/internal/computer-use/1.18.0/skill.json"
         )),
         "internal_skill_excel_live_control" => Some(include_str!(
             "../../../../local_connector_client/skill_bundles/internal/excel-live-control/1.4.0/skill.json"
@@ -305,7 +305,7 @@ fn internal_skill_instructions(skill_id: &str) -> Option<&'static str> {
             "../../../../local_connector_client/skill_bundles/internal/control-chrome/1.4.0/instructions.md"
         )),
         "internal_skill_computer_use" => Some(include_str!(
-            "../../../../local_connector_client/skill_bundles/internal/computer-use/1.17.0/instructions.md"
+            "../../../../local_connector_client/skill_bundles/internal/computer-use/1.18.0/instructions.md"
         )),
         "internal_skill_excel_live_control" => Some(include_str!(
             "../../../../local_connector_client/skill_bundles/internal/excel-live-control/1.4.0/instructions.md"
@@ -338,7 +338,7 @@ mod tests {
             .join("\n");
         assert_eq!(
             hex::encode(Sha256::digest(rows.as_bytes())),
-            "295d621473d2ead62dad8221cbcc6a377c56adef0b3f8d9b47761dab343773d9"
+            "daa920d0166074e8b4edbd2880b666cfa2f393479dfc7d5dd211b4375a89acdc"
         );
     }
 
@@ -354,7 +354,7 @@ mod tests {
             .join("\n");
         assert_eq!(
             hex::encode(Sha256::digest(rows.as_bytes())),
-            "cdd4c00a190c2ada08a51980f55d197c0ea9e7ca86af58351e0e7934202aaf7f"
+            "ac82e4554d7b8eb45141b1edfc56f247d539b109e079507754cf3aeb37dfabd9"
         );
     }
 }

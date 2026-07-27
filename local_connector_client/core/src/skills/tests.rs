@@ -620,7 +620,7 @@ fn computer_use_release_keeps_control_on_the_plugin_approval_path() {
         .find(|item| item.skill_id == "internal_skill_computer_use")
         .expect("computer use catalog item");
     assert_eq!(catalog_item.implementation_status, "ready");
-    assert_eq!(catalog_item.version, "1.17.0");
+    assert_eq!(catalog_item.version, "1.18.0");
     assert_eq!(
         catalog_item.permissions,
         vec!["system.accessibility", "desktop.observe", "desktop.control"]
@@ -686,11 +686,15 @@ fn computer_use_release_keeps_control_on_the_plugin_approval_path() {
     assert!(instructions.contains("AXFullScreen"));
     assert!(instructions.contains("standard Windows window state"));
     assert!(instructions.contains("Frontmost-window geometry and state contract"));
+    assert!(instructions.contains("capture only that frontmost window"));
+    assert!(
+        instructions.contains("never assumes the controlled window remains on the main display")
+    );
     assert!(instructions.contains("No Computer Use action exposes `acceptForSession`"));
     let manifest: Value = serde_json::from_str(include_str!(
-        "../../../skill_bundles/internal/computer-use/1.17.0/skill.json"
+        "../../../skill_bundles/internal/computer-use/1.18.0/skill.json"
     ))
-    .expect("Computer Use 1.17.0 manifest");
+    .expect("Computer Use 1.18.0 manifest");
     assert_eq!(
         manifest["platforms"],
         json!(["macos-arm64", "macos-x64", "windows-arm64", "windows-x64"])
@@ -751,7 +755,7 @@ fn ready_bundle_v2_fingerprint_matches_plugin_management_seed() {
         .join("\n");
     assert_eq!(
         hex::encode(Sha256::digest(rows.as_bytes())),
-        "295d621473d2ead62dad8221cbcc6a377c56adef0b3f8d9b47761dab343773d9"
+        "daa920d0166074e8b4edbd2880b666cfa2f393479dfc7d5dd211b4375a89acdc"
     );
 }
 
@@ -766,7 +770,7 @@ fn all_28_bundled_skill_fingerprints_match_plugin_management_seed() {
         .join("\n");
     assert_eq!(
         hex::encode(Sha256::digest(rows.as_bytes())),
-        "cdd4c00a190c2ada08a51980f55d197c0ea9e7ca86af58351e0e7934202aaf7f"
+        "ac82e4554d7b8eb45141b1edfc56f247d539b109e079507754cf3aeb37dfabd9"
     );
 }
 

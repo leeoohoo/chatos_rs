@@ -1260,7 +1260,7 @@ fn tool_definitions_for_platform(include_control: bool, platform: &str) -> Vec<V
             }),
             json!({
                 "name": "computer_set_frontmost_window_bounds",
-                "description": "Move and resize only the current frontmost non-fullscreen, non-maximized window to one reviewed global desktop rectangle. Approval binds the exact process, native window identity, original state and geometry, and requested rectangle. The target must leave at least 64 x 64 desktop units visible on one active display. Identity, foreground, state, capability, display-layout, or geometry drift fails closed; partial platform failures attempt an identity-bound restoration and are never automatically replayed.",
+                "description": "Move and resize only the current frontmost non-fullscreen, non-maximized window to one reviewed global desktop rectangle. Approval binds the exact process, native window identity, original state and geometry, and requested rectangle. The target must leave at least 64 x 64 desktop units visible on one active display. Identity, foreground, state, capability, display-layout, or geometry drift fails closed; partial platform failures attempt an identity-bound restoration and are never automatically replayed. After settling, ChatOS revalidates the requested state and captures the exact frontmost window rather than assuming it remained on the main display.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
@@ -1275,7 +1275,7 @@ fn tool_definitions_for_platform(include_control: bool, platform: &str) -> Vec<V
             }),
             json!({
                 "name": "computer_set_frontmost_window_fullscreen",
-                "description": "macOS only: set the exact current frontmost Accessibility window's native AXFullScreen state. Approval binds its process, AX window number, original geometry/state, and requested state. The AXFullScreen attribute must be explicitly writable, and foreground or identity drift fails closed. This does not simulate the green button or send a keyboard shortcut.",
+                "description": "macOS only: set the exact current frontmost Accessibility window's native AXFullScreen state. Approval binds its process, AX window number, original geometry/state, and requested state. The AXFullScreen attribute must be explicitly writable, and foreground or identity drift fails closed. This does not simulate the green button or send a keyboard shortcut. Post-action observation revalidates the exact window and requested fullscreen state before and after capturing that window.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
@@ -1287,7 +1287,7 @@ fn tool_definitions_for_platform(include_control: bool, platform: &str) -> Vec<V
             }),
             json!({
                 "name": "computer_set_frontmost_window_maximized",
-                "description": "Windows only: maximize or restore the exact current foreground HWND. This is standard Windows maximize/restore, not true application fullscreen. Approval binds HWND, PID/process image, original geometry/state, and requested state; foreground, identity, state, or geometry drift fails closed and cancellation attempts to restore the approved prior state.",
+                "description": "Windows only: maximize or restore the exact current foreground HWND. This is standard Windows maximize/restore, not true application fullscreen. Approval binds HWND, PID/process image, original geometry/state, and requested state; foreground, identity, state, or geometry drift fails closed and cancellation attempts to restore the approved prior state. Post-action observation captures only that exact foreground window after revalidating its requested maximize state.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
@@ -1859,7 +1859,6 @@ fn execute_approved_local(
             operation,
             result,
             WindowControlRollbackGuard::Bounds { request, approved },
-            PostActionObservationTarget::MainDisplay,
             action_cancelled,
         ));
     }
@@ -1875,7 +1874,6 @@ fn execute_approved_local(
                 fullscreen,
                 approved,
             },
-            PostActionObservationTarget::MainDisplay,
             action_cancelled,
         ));
     }
@@ -1890,7 +1888,6 @@ fn execute_approved_local(
                 maximized,
                 approved,
             },
-            PostActionObservationTarget::MainDisplay,
             action_cancelled,
         ));
     }
@@ -1939,6 +1936,15 @@ fn execute_approved_local(
 enum PostActionObservationTarget {
     MainDisplay,
     ApprovedDisplay(ApprovedDisplayGuard),
+    FrontmostWindow(FrontmostWindowObservationGuard),
+}
+
+#[derive(Debug, Clone)]
+struct FrontmostWindowObservationGuard {
+    platform: String,
+    application: String,
+    pid: u32,
+    window_id: String,
 }
 
 #[derive(Debug, Clone)]
@@ -1962,6 +1968,7 @@ impl PostActionObservationTarget {
         match self {
             Self::MainDisplay => None,
             Self::ApprovedDisplay(display) => Some(display.index),
+            Self::FrontmostWindow(_) => None,
         }
     }
 
@@ -1972,6 +1979,13 @@ impl PostActionObservationTarget {
                 "scope": "approved_display",
                 "display_index": display.index,
                 "display_id": display.display_id,
+            }),
+            Self::FrontmostWindow(window) => json!({
+                "scope": "frontmost_window",
+                "platform": window.platform,
+                "application": window.application,
+                "pid": window.pid,
+                "window_id": window.window_id,
             }),
         }
     }
@@ -1988,6 +2002,67 @@ impl PostActionObservationTarget {
                     && capture.get("display_id").and_then(Value::as_u64)
                         == Some(u64::from(display.display_id))
             }
+            Self::FrontmostWindow(window) => {
+                capture.get("capture_scope").and_then(Value::as_str) == Some("frontmost_window")
+                    && capture.get("platform").and_then(Value::as_str)
+                        == Some(window.platform.as_str())
+                    && capture.get("application").and_then(Value::as_str)
+                        == Some(window.application.as_str())
+                    && capture.get("pid").and_then(Value::as_u64) == Some(u64::from(window.pid))
+                    && capture.get("window_id").and_then(Value::as_str)
+                        == Some(window.window_id.as_str())
+            }
+        }
+    }
+
+    fn mismatch_reason(&self) -> &'static str {
+        match self {
+            Self::MainDisplay | Self::ApprovedDisplay(_) => "display_identity_changed",
+            Self::FrontmostWindow(_) => "frontmost_window_identity_changed",
+        }
+    }
+}
+
+impl WindowControlRollbackGuard {
+    fn observation_target(&self) -> PostActionObservationTarget {
+        let approved = match self {
+            Self::Bounds { approved, .. }
+            | Self::Fullscreen { approved, .. }
+            | Self::Maximized { approved, .. } => approved,
+        };
+        PostActionObservationTarget::FrontmostWindow(FrontmostWindowObservationGuard {
+            platform: approved.platform.clone(),
+            application: approved.application.clone(),
+            pid: approved.pid,
+            window_id: approved.window_id.clone(),
+        })
+    }
+
+    fn matches_target_identity(&self, current: &ApprovedFrontmostWindowGuard) -> bool {
+        let approved = match self {
+            Self::Bounds { approved, .. }
+            | Self::Fullscreen { approved, .. }
+            | Self::Maximized { approved, .. } => approved,
+        };
+        current.platform == approved.platform
+            && current.application == approved.application
+            && current.pid == approved.pid
+            && current.window_id == approved.window_id
+    }
+
+    fn matches_applied_state(&self, current: &ApprovedFrontmostWindowGuard) -> bool {
+        if !self.matches_target_identity(current) {
+            return false;
+        }
+        match self {
+            Self::Bounds { request, .. } => {
+                current.position == [f64::from(request.x), f64::from(request.y)]
+                    && current.size == [f64::from(request.width), f64::from(request.height)]
+                    && current.fullscreen != Some(true)
+                    && current.maximized != Some(true)
+            }
+            Self::Fullscreen { fullscreen, .. } => current.fullscreen == Some(*fullscreen),
+            Self::Maximized { maximized, .. } => current.maximized == Some(*maximized),
         }
     }
 }
@@ -2077,9 +2152,10 @@ fn attach_window_post_action_observation(
     operation: &str,
     action_result: Value,
     rollback_guard: WindowControlRollbackGuard,
-    target: PostActionObservationTarget,
     action_cancelled: Option<&AtomicBool>,
 ) -> Value {
+    let target = rollback_guard.observation_target();
+    let require_applied_state = window_control_target_was_applied(&action_result);
     if action_cancelled.is_some_and(|cancelled| cancelled.load(Ordering::SeqCst)) {
         return build_cancelled_window_result(operation, action_result, &rollback_guard, &target);
     }
@@ -2087,12 +2163,42 @@ fn attach_window_post_action_observation(
     if action_cancelled.is_some_and(|cancelled| cancelled.load(Ordering::SeqCst)) {
         return build_cancelled_window_result(operation, action_result, &rollback_guard, &target);
     }
-    let observation = capture_display(target.requested_index())
+    let observation = capture_window_control_observation(&rollback_guard, require_applied_state)
         .map_err(|error| classify_post_action_observation_error(error.to_string().as_str()));
     if action_cancelled.is_some_and(|cancelled| cancelled.load(Ordering::SeqCst)) {
         return build_cancelled_window_result(operation, action_result, &rollback_guard, &target);
     }
     build_post_action_result(operation, action_result, &target, observation)
+}
+
+fn capture_window_control_observation(
+    rollback_guard: &WindowControlRollbackGuard,
+    require_applied_state: bool,
+) -> Result<Value> {
+    let before = frontmost_window_control_target_local()?;
+    let matches_before = if require_applied_state {
+        rollback_guard.matches_applied_state(&before)
+    } else {
+        rollback_guard.matches_target_identity(&before)
+    };
+    if !matches_before {
+        return Err(anyhow!(
+            "frontmost window identity or target state changed before post-action capture"
+        ));
+    }
+    let screenshot = capture_frontmost_window()?;
+    let after = frontmost_window_control_target_local()?;
+    let matches_after = if require_applied_state {
+        rollback_guard.matches_applied_state(&after)
+    } else {
+        rollback_guard.matches_target_identity(&after)
+    };
+    if !matches_after {
+        return Err(anyhow!(
+            "frontmost window identity or target state changed during post-action capture"
+        ));
+    }
+    Ok(screenshot)
 }
 
 fn build_cancelled_window_result(
@@ -2232,10 +2338,10 @@ fn build_post_action_result(
             if !target.matches_capture(&capture) {
                 structured.insert(
                     "post_action_observation".to_string(),
-                    post_action_observation_failure(target, "display_identity_changed"),
+                    post_action_observation_failure(target, target.mismatch_reason()),
                 );
                 return json!({
-                    "text": "The approved Computer Use action completed, but its post-action display identity changed. Do not replay the action automatically; observe the desktop again before deciding what to do next.",
+                    "text": "The approved Computer Use action completed, but its post-action capture target identity changed. Do not replay the action automatically; observe the desktop again before deciding what to do next.",
                     "_structured_result": Value::Object(structured),
                 });
             }
@@ -2299,6 +2405,11 @@ fn post_action_observation_failure(
             "computer_capture_frontmost_window",
             "computer_inspect_frontmost_window"
         ]),
+        PostActionObservationTarget::FrontmostWindow(_) => json!([
+            "computer_capture_frontmost_window",
+            "computer_inspect_frontmost_window",
+            "computer_list_windows"
+        ]),
     };
     json!({
         "attempted": reason != "cancelled_after_action",
@@ -2318,6 +2429,8 @@ fn classify_post_action_observation_error(message: &str) -> &'static str {
         "screen_capture_permission_unavailable"
     } else if normalized.contains("timed out") {
         "capture_timeout"
+    } else if normalized.contains("frontmost window") || normalized.contains("target state") {
+        "frontmost_window_identity_or_state_changed"
     } else if normalized.contains("display") {
         "display_unavailable"
     } else {
@@ -3973,6 +4086,23 @@ fn frontmost_window_control_target() -> Result<ApprovedFrontmostWindowGuard> {
 }
 
 #[cfg(target_os = "macos")]
+fn frontmost_window_control_target_local() -> Result<ApprovedFrontmostWindowGuard> {
+    macos_frontmost_window_control_target_local()
+}
+
+#[cfg(target_os = "windows")]
+fn frontmost_window_control_target_local() -> Result<ApprovedFrontmostWindowGuard> {
+    windows::frontmost_window_control_target()
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+fn frontmost_window_control_target_local() -> Result<ApprovedFrontmostWindowGuard> {
+    Err(anyhow!(
+        "Computer Use frontmost-window control is unsupported on this platform"
+    ))
+}
+
+#[cfg(target_os = "macos")]
 fn set_frontmost_window_bounds(
     request: WindowBoundsRequest,
     approved: ApprovedFrontmostWindowGuard,
@@ -5515,6 +5645,87 @@ mod tests {
         assert_eq!(structured["post_action_observation"]["persisted"], false);
         assert_eq!(structured["recovery"]["automatic_replay_safe"], false);
         assert!(!structured.to_string().contains("base64"));
+    }
+
+    #[test]
+    fn window_post_action_observation_binds_exact_window_and_requested_state() {
+        let approved = ApprovedFrontmostWindowGuard {
+            platform: "windows".to_string(),
+            application: "Example.exe".to_string(),
+            pid: 42,
+            window_id: "0x1234".to_string(),
+            position: [10.0, 20.0],
+            size: [800.0, 600.0],
+            fullscreen: None,
+            maximized: Some(false),
+            position_settable: true,
+            size_settable: true,
+            fullscreen_settable: false,
+        };
+        let guard = WindowControlRollbackGuard::Bounds {
+            request: WindowBoundsRequest {
+                x: 120,
+                y: 80,
+                width: 1000,
+                height: 700,
+            },
+            approved,
+        };
+        let current = ApprovedFrontmostWindowGuard {
+            position: [120.0, 80.0],
+            size: [1000.0, 700.0],
+            ..match &guard {
+                WindowControlRollbackGuard::Bounds { approved, .. } => approved.clone(),
+                _ => unreachable!(),
+            }
+        };
+        assert!(guard.matches_applied_state(&current));
+
+        let screenshot_target = FrontmostWindowCaptureTarget {
+            platform: "windows",
+            application: "Example.exe".to_string(),
+            pid: 42,
+            window_id: "0x1234".to_string(),
+            title: "A dynamic title is not identity".to_string(),
+            position: [120.0, 80.0],
+            size: [1000.0, 700.0],
+            capture_position: [120.0, 80.0],
+            capture_size: [1000.0, 700.0],
+            clipped_to_visible_desktop: false,
+        };
+        let screenshot = frontmost_window_screenshot_result(
+            b"\x89PNG\r\n\x1a\nwindow-observation",
+            &screenshot_target,
+        )
+        .unwrap();
+        let target = guard.observation_target();
+        let result = build_post_action_result(
+            "computer_set_frontmost_window_bounds",
+            json!({"success": true, "target_geometry_applied": true}),
+            &target,
+            Ok(screenshot),
+        );
+        assert_eq!(
+            result["_structured_result"]["post_action_observation"]["target"]["scope"],
+            "frontmost_window"
+        );
+        assert_eq!(
+            result["_structured_result"]["post_action_observation"]["captured"],
+            true
+        );
+
+        let restored = match &guard {
+            WindowControlRollbackGuard::Bounds { approved, .. } => approved.clone(),
+            _ => unreachable!(),
+        };
+        assert!(guard.matches_target_identity(&restored));
+        assert!(!guard.matches_applied_state(&restored));
+
+        let changed = ApprovedFrontmostWindowGuard {
+            window_id: "0x9999".to_string(),
+            ..current
+        };
+        assert!(!guard.matches_applied_state(&changed));
     }
 
     #[test]

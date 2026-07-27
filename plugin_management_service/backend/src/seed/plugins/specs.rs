@@ -165,12 +165,12 @@ static BUNDLED_PLUGIN_SPECS: [BundledPluginSpec; 12] = [
     bundled_plugin_release(
         "computer-use",
         "Computer Use",
-        "Observe macOS or Windows displays, bounded accessibility state, and transient frontmost-window screenshots; after a fresh approval, move or resize only the exact foreground window, use writable AXFullScreen on macOS, and use explicitly non-fullscreen maximize/restore on Windows, with pre/post identity readback and bounded same-window restoration on partial failure or in-flight cancellation.",
+        "Observe and control macOS or Windows desktops with exact window identity binding. Window move/resize, macOS AXFullScreen, and Windows maximize/restore now revalidate the requested native state, capture that exact frontmost window even after it moves to another display, and revalidate again without making observation failures replayable.",
         "Automation",
         &["internal_skill_computer_use"],
-        "1.17.0",
-        "2026-07-27T08:00:00Z",
-        "computer-use-1.17.0",
+        "1.18.0",
+        "2026-07-27T10:00:00Z",
+        "computer-use-1.18.0",
     ),
     bundled_plugin(
         "visualize",
