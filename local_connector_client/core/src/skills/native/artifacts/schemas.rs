@@ -20,6 +20,7 @@ pub(super) fn tool_definitions(skill_id: &str) -> Vec<Value> {
             rotate_pdf_pages_tool(),
             add_pdf_text_annotation_tool(),
             add_pdf_markup_annotation_tool(),
+            add_pdf_link_annotation_tool(),
             add_pdf_annotation_reply_tool(),
             add_pdf_file_attachment_annotation_tool(),
             extract_pdf_file_attachment_tool(),
@@ -468,6 +469,34 @@ fn add_pdf_markup_annotation_tool() -> Value {
                 "overwrite":{"type":"boolean","default":false}
             },
             "required":["path","page","markup","rectangles","target_path"],
+            "additionalProperties":false
+        }),
+    )
+}
+
+fn add_pdf_link_annotation_tool() -> Value {
+    tool(
+        "add_pdf_link_annotation",
+        "Add one standard PDF Link annotation to an unrotated physical page using exact source SHA-256 binding and CropBox-relative geometry. Only credential-free HTTPS destinations or direct in-document Fit page destinations are created; JavaScript, Launch, file, remote-file, additional-action, chained-action, stale-source, and in-place paths fail closed.",
+        json!({
+            "type":"object",
+            "properties":{
+                "path":{"type":"string","description":"Workspace-relative source .pdf path."},
+                "expected_source_sha256":{"type":"string","pattern":"^[0-9a-f]{64}$","description":"Exact source SHA-256 returned by inspect_pdf."},
+                "page":{"type":"integer","minimum":1,"maximum":5000,"description":"One-based physical page receiving the Link annotation."},
+                "x":{"type":"number","minimum":0,"maximum":20000,"description":"Left edge in PDF points relative to the effective CropBox lower-left corner."},
+                "y":{"type":"number","minimum":0,"maximum":20000,"description":"Bottom edge in PDF points relative to the effective CropBox lower-left corner."},
+                "width":{"type":"number","minimum":0.1,"maximum":20000},
+                "height":{"type":"number","minimum":0.1,"maximum":20000},
+                "destination_type":{"type":"string","enum":["https","page"]},
+                "url":{"type":"string","minLength":1,"maxLength":2048,"description":"Credential-free HTTPS URL. Only valid when destination_type=https."},
+                "destination_page":{"type":"integer","minimum":1,"maximum":5000,"description":"Existing one-based physical destination page. Only valid when destination_type=page."},
+                "description":{"type":"string","minLength":1,"maxLength":4096,"description":"Optional bounded Unicode Link contents/accessibility description."},
+                "author":{"type":"string","minLength":1,"maxLength":256},
+                "target_path":{"type":"string","description":"Distinct workspace-relative .pdf output path."},
+                "overwrite":{"type":"boolean","default":false}
+            },
+            "required":["path","expected_source_sha256","page","x","y","width","height","destination_type","target_path"],
             "additionalProperties":false
         }),
     )

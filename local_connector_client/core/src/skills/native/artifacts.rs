@@ -91,6 +91,9 @@ pub(super) fn execute_with_cancellation(
         ("internal_skill_pdf", "add_pdf_markup_annotation") => {
             pdf_edit::add_pdf_markup_annotation(arguments, state, request)
         }
+        ("internal_skill_pdf", "add_pdf_link_annotation") => {
+            pdf_edit::add_pdf_link_annotation(arguments, state, request)
+        }
         ("internal_skill_pdf", "add_pdf_annotation_reply") => {
             pdf_edit::add_pdf_annotation_reply(arguments, state, request)
         }

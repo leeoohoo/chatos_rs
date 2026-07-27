@@ -13910,6 +13910,534 @@ fn pdf_markup_annotation_rejects_invalid_geometry_rotation_existing_markup_and_i
 }
 
 #[test]
+fn adds_and_inspects_safe_pdf_link_annotations_without_exposing_urls() {
+    let (root, state, request) = test_context();
+    let source = root.join("source.pdf");
+    write_blank_pdf(source.as_path(), 3);
+    let source_before = fs::read(source.as_path()).expect("source PDF bytes");
+    let source_sha256 = sha256_file(source.as_path()).expect("source hash");
+    let url = "https://example.com/docs?token=secret#section";
+    let url_sha256 = hex::encode(Sha256::digest(url.as_bytes()));
+
+    let external = pdf_edit::add_pdf_link_annotation(
+        &json!({
+            "path":"source.pdf",
+            "expected_source_sha256":source_sha256,
+            "page":1,
+            "x":10,
+            "y":20,
+            "width":120,
+            "height":18,
+            "destination_type":"https",
+            "url":url,
+            "description":"打开复核说明",
+            "author":"李雷",
+            "target_path":"linked.pdf",
+        }),
+        &state,
+        &request,
+    )
+    .expect("add HTTPS Link annotation");
+    assert_eq!(
+        external.get("operation").and_then(Value::as_str),
+        Some("add_link_annotation")
+    );
+    assert_eq!(
+        external.get("annotation_index").and_then(Value::as_u64),
+        Some(1)
+    );
+    assert_eq!(
+        external.pointer("/destination/destination_type"),
+        Some(&json!("https"))
+    );
+    assert_eq!(
+        external.pointer("/destination/origin"),
+        Some(&json!("https://example.com"))
+    );
+    assert_eq!(
+        external.pointer("/destination/url_sha256"),
+        Some(&json!(url_sha256))
+    );
+    assert!(external.pointer("/destination/url").is_none());
+
+    let linked_path = root.join("linked.pdf");
+    let linked_before = fs::read(linked_path.as_path()).expect("linked PDF bytes");
+    let linked_document = Document::load(linked_path.as_path()).expect("linked PDF");
+    let linked_page_id = linked_document.get_pages()[&1];
+    let link_annotation = linked_document
+        .get_object(linked_page_id)
+        .and_then(Object::as_dict)
+        .and_then(|page| page.get(b"Annots"))
+        .and_then(Object::as_array)
+        .expect("Link annotations")[0]
+        .as_reference()
+        .and_then(|id| linked_document.get_object(id))
+        .and_then(Object::as_dict)
+        .expect("Link annotation");
+    assert_eq!(
+        link_annotation
+            .get(b"Subtype")
+            .and_then(Object::as_name)
+            .expect("Link subtype"),
+        b"Link"
+    );
+    assert_eq!(
+        link_annotation
+            .get(b"A")
+            .and_then(Object::as_dict)
+            .and_then(|action| action.get(b"URI"))
+            .map(lopdf::decode_text_string)
+            .expect("Link URI")
+            .expect("decode Link URI"),
+        url
+    );
+
+    let inspected_external = inspect_pdf(
+        &json!({"path":"linked.pdf","annotation_page":1}),
+        &state,
+        &request,
+    )
+    .expect("inspect HTTPS Link annotation");
+    let external_summary = inspected_external
+        .get("annotations")
+        .expect("external annotation summary");
+    assert_eq!(
+        external_summary.get("link_count").and_then(Value::as_u64),
+        Some(1)
+    );
+    assert_eq!(
+        external_summary
+            .get("safe_link_count")
+            .and_then(Value::as_u64),
+        Some(1)
+    );
+    assert_eq!(
+        external_summary
+            .get("unsafe_link_count")
+            .and_then(Value::as_u64),
+        Some(0)
+    );
+    let external_preview = external_summary
+        .pointer("/preview/0/link")
+        .expect("external Link preview");
+    assert_eq!(external_preview.get("safe"), Some(&Value::Bool(true)));
+    assert_eq!(
+        external_preview.get("target_type").and_then(Value::as_str),
+        Some("https")
+    );
+    assert_eq!(
+        external_preview.get("origin").and_then(Value::as_str),
+        Some("https://example.com")
+    );
+    assert_eq!(
+        external_preview.get("url_sha256").and_then(Value::as_str),
+        Some(url_sha256.as_str())
+    );
+    assert_eq!(external_preview.get("has_query"), Some(&Value::Bool(true)));
+    assert_eq!(
+        external_preview.get("has_fragment"),
+        Some(&Value::Bool(true))
+    );
+    assert!(external_preview.get("url").is_none());
+    assert!(!external_preview.to_string().contains("secret"));
+
+    let linked_sha256 = sha256_file(linked_path.as_path()).expect("linked hash");
+    let internal = pdf_edit::add_pdf_link_annotation(
+        &json!({
+            "path":"linked.pdf",
+            "expected_source_sha256":linked_sha256,
+            "page":1,
+            "x":10,
+            "y":50,
+            "width":100,
+            "height":18,
+            "destination_type":"page",
+            "destination_page":3,
+            "description":"跳转到第三页",
+            "target_path":"linked-internal.pdf",
+        }),
+        &state,
+        &request,
+    )
+    .expect("add internal page Link annotation");
+    assert_eq!(
+        internal.get("annotation_index").and_then(Value::as_u64),
+        Some(2)
+    );
+    assert_eq!(
+        internal.pointer("/destination/destination_page"),
+        Some(&json!(3))
+    );
+    assert_eq!(
+        internal.pointer("/destination/destination_mode"),
+        Some(&json!("Fit"))
+    );
+
+    let inspected_internal = inspect_pdf(
+        &json!({"path":"linked-internal.pdf","annotation_page":1}),
+        &state,
+        &request,
+    )
+    .expect("inspect internal Link annotation");
+    let internal_summary = inspected_internal
+        .get("annotations")
+        .expect("internal annotation summary");
+    assert_eq!(
+        internal_summary.get("link_count").and_then(Value::as_u64),
+        Some(2)
+    );
+    assert_eq!(
+        internal_summary
+            .get("safe_link_count")
+            .and_then(Value::as_u64),
+        Some(2)
+    );
+    let internal_preview = internal_summary
+        .pointer("/preview/1/link")
+        .expect("internal Link preview");
+    assert_eq!(
+        internal_preview.get("target_type").and_then(Value::as_str),
+        Some("page")
+    );
+    assert_eq!(
+        internal_preview
+            .get("destination_page")
+            .and_then(Value::as_u64),
+        Some(3)
+    );
+    assert_eq!(
+        fs::read(source.as_path()).expect("source after Link annotations"),
+        source_before
+    );
+    assert_eq!(
+        fs::read(linked_path.as_path()).expect("linked source after internal Link"),
+        linked_before
+    );
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn pdf_link_annotations_reject_stale_unsafe_malformed_and_overlapping_inputs() {
+    let (root, state, request) = test_context();
+    let source = root.join("source.pdf");
+    write_blank_pdf(source.as_path(), 2);
+    let source_before = fs::read(source.as_path()).expect("source PDF bytes");
+    let source_sha256 = sha256_file(source.as_path()).expect("source hash");
+
+    for (target, overrides, expected) in [
+        (
+            "stale.pdf",
+            json!({"expected_source_sha256":"0".repeat(64)}),
+            "expected_source_sha256",
+        ),
+        (
+            "http.pdf",
+            json!({"url":"http://example.com"}),
+            "must use the https scheme",
+        ),
+        (
+            "credentials.pdf",
+            json!({"url":"https://user:secret@example.com"}),
+            "must not contain embedded credentials",
+        ),
+        (
+            "javascript.pdf",
+            json!({"url":"javascript:alert(1)"}),
+            "must use the https scheme",
+        ),
+        (
+            "missing-url.pdf",
+            json!({"url":Value::Null}),
+            "url is required",
+        ),
+        (
+            "mixed-page.pdf",
+            json!({"destination_type":"page","destination_page":2}),
+            "url is only valid",
+        ),
+        (
+            "mixed-https.pdf",
+            json!({"destination_page":2}),
+            "destination_page is only valid",
+        ),
+        (
+            "missing-page.pdf",
+            json!({"destination_type":"page","url":Value::Null,"destination_page":3}),
+            "destination_page 3 does not exist",
+        ),
+        (
+            "outside.pdf",
+            json!({"x":590,"width":20}),
+            "Rect exceeds the effective page bounds",
+        ),
+        (
+            "unknown.pdf",
+            json!({"destination_type":"launch","url":Value::Null}),
+            "destination_type must be https or page",
+        ),
+        ("source.pdf", json!({}), "distinct target_path"),
+    ] {
+        let mut arguments = json!({
+            "path":"source.pdf",
+            "expected_source_sha256":source_sha256,
+            "page":1,
+            "x":10,
+            "y":20,
+            "width":100,
+            "height":18,
+            "destination_type":"https",
+            "url":"https://example.com",
+            "target_path":target,
+        });
+        for (key, value) in overrides.as_object().expect("Link overrides") {
+            if value.is_null() {
+                arguments
+                    .as_object_mut()
+                    .expect("Link arguments")
+                    .remove(key);
+            } else {
+                arguments[key] = value.clone();
+            }
+        }
+        let error = pdf_edit::add_pdf_link_annotation(&arguments, &state, &request)
+            .expect_err("invalid Link request must fail");
+        assert!(
+            error.to_string().contains(expected),
+            "unexpected error for {target}: {error:#}"
+        );
+        if target != "source.pdf" {
+            assert!(!root.join(target).exists(), "unexpected output {target}");
+        }
+    }
+
+    fs::hard_link(source.as_path(), root.join("source-hard-link.pdf"))
+        .expect("source hard-linked target");
+    let hard_link_error = pdf_edit::add_pdf_link_annotation(
+        &json!({
+            "path":"source.pdf",
+            "expected_source_sha256":source_sha256,
+            "page":1,
+            "x":10,
+            "y":20,
+            "width":100,
+            "height":18,
+            "destination_type":"page",
+            "destination_page":2,
+            "target_path":"source-hard-link.pdf",
+            "overwrite":true,
+        }),
+        &state,
+        &request,
+    )
+    .expect_err("hard-linked Link target must fail");
+    assert!(hard_link_error.to_string().contains("distinct target_path"));
+
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(source.as_path(), root.join("linked-output.pdf"))
+            .expect("Link target symlink");
+        let symlink_error = pdf_edit::add_pdf_link_annotation(
+            &json!({
+                "path":"source.pdf",
+                "expected_source_sha256":source_sha256,
+                "page":1,
+                "x":10,
+                "y":20,
+                "width":100,
+                "height":18,
+                "destination_type":"page",
+                "destination_page":2,
+                "target_path":"linked-output.pdf",
+                "overwrite":true,
+            }),
+            &state,
+            &request,
+        )
+        .expect_err("symlink Link target must fail");
+        assert!(symlink_error.to_string().contains("regular non-symlink"));
+    }
+
+    let unsafe_path = root.join("unsafe.pdf");
+    write_blank_pdf(unsafe_path.as_path(), 1);
+    let mut unsafe_document = Document::load(unsafe_path.as_path()).expect("unsafe PDF");
+    let unsafe_page_id = unsafe_document.get_pages()[&1];
+    let javascript_id = unsafe_document.add_object(dictionary! {
+        "Type" => "Annot",
+        "Subtype" => "Link",
+        "Rect" => vec![10.into(), 10.into(), 110.into(), 28.into()],
+        "A" => dictionary! {
+            "S" => "JavaScript",
+            "JS" => lopdf::text_string("app.alert('secret')"),
+        },
+        "P" => unsafe_page_id,
+    });
+    let both_id = unsafe_document.add_object(dictionary! {
+        "Type" => "Annot",
+        "Subtype" => "Link",
+        "Rect" => vec![10.into(), 40.into(), 110.into(), 58.into()],
+        "A" => dictionary! {
+            "S" => "URI",
+            "URI" => lopdf::text_string("https://example.com"),
+        },
+        "Dest" => vec![Object::Reference(unsafe_page_id), Object::Name(b"Fit".to_vec())],
+        "P" => unsafe_page_id,
+    });
+    let launch_id = unsafe_document.add_object(dictionary! {
+        "Type" => "Annot",
+        "Subtype" => "Link",
+        "Rect" => vec![10.into(), 70.into(), 110.into(), 88.into()],
+        "A" => dictionary! {
+            "S" => "Launch",
+            "F" => lopdf::text_string("private-file.exe"),
+        },
+        "P" => unsafe_page_id,
+    });
+    let remote_id = unsafe_document.add_object(dictionary! {
+        "Type" => "Annot",
+        "Subtype" => "Link",
+        "Rect" => vec![10.into(), 100.into(), 110.into(), 118.into()],
+        "A" => dictionary! {
+            "S" => "GoToR",
+            "F" => lopdf::text_string("remote-secret.pdf"),
+            "D" => lopdf::text_string("destination"),
+        },
+        "P" => unsafe_page_id,
+    });
+    let additional_action_id = unsafe_document.add_object(dictionary! {
+        "Type" => "Annot",
+        "Subtype" => "Link",
+        "Rect" => vec![10.into(), 130.into(), 110.into(), 148.into()],
+        "Dest" => vec![Object::Reference(unsafe_page_id), Object::Name(b"Fit".to_vec())],
+        "AA" => dictionary! {
+            "E" => dictionary! {
+                "S" => "JavaScript",
+                "JS" => lopdf::text_string("extra-secret"),
+            },
+        },
+        "P" => unsafe_page_id,
+    });
+    let chained_id = unsafe_document.add_object(dictionary! {
+        "Type" => "Annot",
+        "Subtype" => "Link",
+        "Rect" => vec![10.into(), 160.into(), 110.into(), 178.into()],
+        "A" => dictionary! {
+            "S" => "URI",
+            "URI" => lopdf::text_string("https://example.com"),
+            "Next" => dictionary! {
+                "S" => "JavaScript",
+                "JS" => lopdf::text_string("next-secret"),
+            },
+        },
+        "P" => unsafe_page_id,
+    });
+    let unsupported_destination_id = unsafe_document.add_object(dictionary! {
+        "Type" => "Annot",
+        "Subtype" => "Link",
+        "Rect" => vec![10.into(), 190.into(), 110.into(), 208.into()],
+        "Dest" => vec![
+            Object::Reference(unsafe_page_id),
+            Object::Name(b"XYZ".to_vec()),
+            Object::Null,
+            Object::Null,
+            Object::Integer(1),
+        ],
+        "P" => unsafe_page_id,
+    });
+    let named_destination_id = unsafe_document.add_object(dictionary! {
+        "Type" => "Annot",
+        "Subtype" => "Link",
+        "Rect" => vec![10.into(), 220.into(), 110.into(), 238.into()],
+        "Dest" => lopdf::text_string("secret-destination"),
+        "P" => unsafe_page_id,
+    });
+    unsafe_document
+        .get_object_mut(unsafe_page_id)
+        .and_then(Object::as_dict_mut)
+        .expect("unsafe page")
+        .set(
+            "Annots",
+            vec![
+                Object::Reference(javascript_id),
+                Object::Reference(both_id),
+                Object::Reference(launch_id),
+                Object::Reference(remote_id),
+                Object::Reference(additional_action_id),
+                Object::Reference(chained_id),
+                Object::Reference(unsupported_destination_id),
+                Object::Reference(named_destination_id),
+            ],
+        );
+    unsafe_document
+        .save(unsafe_path.as_path())
+        .expect("save unsafe PDF");
+
+    let inspected = inspect_pdf(
+        &json!({"path":"unsafe.pdf","annotation_page":1}),
+        &state,
+        &request,
+    )
+    .expect("inspect unsafe Links without executing actions");
+    assert_eq!(
+        inspected.pointer("/annotations/link_count"),
+        Some(&json!(8))
+    );
+    assert_eq!(
+        inspected.pointer("/annotations/safe_link_count"),
+        Some(&json!(0))
+    );
+    assert_eq!(
+        inspected.pointer("/annotations/unsafe_link_count"),
+        Some(&json!(8))
+    );
+    assert_eq!(
+        inspected.pointer("/annotations/preview/0/link/target_type"),
+        Some(&json!("unsafe_or_unsupported_action"))
+    );
+    assert_eq!(
+        inspected.pointer("/annotations/preview/1/link/target_type"),
+        Some(&json!("malformed_link_target"))
+    );
+    let inspected_text = inspected.to_string();
+    for secret in [
+        "app.alert",
+        "private-file.exe",
+        "remote-secret.pdf",
+        "extra-secret",
+        "next-secret",
+        "secret-destination",
+    ] {
+        assert!(!inspected_text.contains(secret));
+    }
+
+    let unsafe_error = pdf_edit::add_pdf_link_annotation(
+        &json!({
+            "path":"unsafe.pdf",
+            "expected_source_sha256":sha256_file(unsafe_path.as_path()).expect("unsafe hash"),
+            "page":1,
+            "x":10,
+            "y":70,
+            "width":100,
+            "height":18,
+            "destination_type":"page",
+            "destination_page":1,
+            "target_path":"unsafe-output.pdf",
+        }),
+        &state,
+        &request,
+    )
+    .expect_err("source with unsafe Links must fail closed");
+    assert!(unsafe_error
+        .to_string()
+        .contains("unsafe or unsupported existing Link actions"));
+    assert!(!root.join("unsafe-output.pdf").exists());
+    assert_eq!(
+        fs::read(source.as_path()).expect("source after Link failures"),
+        source_before
+    );
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
 fn adds_and_inspects_unicode_pdf_annotation_reply_without_modifying_source() {
     let (root, state, request) = test_context();
     let source = root.join("artifacts/source.pdf");
