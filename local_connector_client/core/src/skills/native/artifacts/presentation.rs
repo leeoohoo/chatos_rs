@@ -155,6 +155,7 @@ enum PresentationChartType {
     Area,
     Doughnut,
     Radar,
+    Scatter,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -350,7 +351,7 @@ impl PresentationChartMarkerStyle {
             "diamond" => Ok(Self::Diamond),
             "triangle" => Ok(Self::Triangle),
             value => Err(anyhow!(
-                "unsupported PPTX line-chart series marker style: {value}"
+                "unsupported PPTX line/scatter-chart series marker style: {value}"
             )),
         }
     }
@@ -358,7 +359,7 @@ impl PresentationChartMarkerStyle {
     fn from_ooxml(value: &str) -> Result<Self> {
         Self::parse(value).with_context(|| {
             format!(
-                "chart line-series marker style is outside the canonical bounded contract: {value}"
+                "chart line/scatter-series marker style is outside the canonical bounded contract: {value}"
             )
         })
     }
@@ -457,6 +458,7 @@ impl PresentationChartType {
             "area" => Ok(Self::Area),
             "doughnut" => Ok(Self::Doughnut),
             "radar" => Ok(Self::Radar),
+            "scatter" => Ok(Self::Scatter),
             value => Err(anyhow!("unsupported PPTX chart type: {value}")),
         }
     }
@@ -470,6 +472,7 @@ impl PresentationChartType {
             Self::Area => "area",
             Self::Doughnut => "doughnut",
             Self::Radar => "radar",
+            Self::Scatter => "scatter",
         }
     }
 
@@ -478,7 +481,7 @@ impl PresentationChartType {
     }
 
     fn uses_line_color(self) -> bool {
-        matches!(self, Self::Line | Self::Radar)
+        matches!(self, Self::Line | Self::Radar | Self::Scatter)
     }
 
     fn primary_category_axis_position(self) -> &'static str {
@@ -529,7 +532,8 @@ struct PresentationChartSeries {
 struct PresentationChart {
     chart_type: PresentationChartType,
     title: String,
-    categories: Vec<String>,
+    categories: Option<Vec<String>>,
+    x_values: Option<Vec<f64>>,
     series: Vec<PresentationChartSeries>,
     show_legend: bool,
     legend_position: PresentationChartLegendPosition,
@@ -723,6 +727,7 @@ struct PptxChartGroupInspection {
     chart_type: String,
     bar_direction: Option<String>,
     radar_style: Option<String>,
+    scatter_style: Option<String>,
     axis_ids: Vec<String>,
 }
 
@@ -3131,6 +3136,12 @@ pub(super) fn inspect_pptx_charts(
                 .filter(|group| group.chart_type == "radar")
                 .map(|group| group.radar_style.clone())
                 .collect::<Vec<_>>();
+            let scatter_styles = chart
+                .chart_groups
+                .iter()
+                .filter(|group| group.chart_type == "scatter")
+                .map(|group| group.scatter_style.clone())
+                .collect::<Vec<_>>();
             let mut metadata = json!({
                 "slide_number": slide_number,
                 "chart_number": chart_index + 1,
@@ -3140,6 +3151,7 @@ pub(super) fn inspect_pptx_charts(
                 "chart_types": chart.chart_types,
                 "bar_directions": bar_directions,
                 "radar_styles": radar_styles,
+                "scatter_styles": scatter_styles,
                 "chart_group_count": chart.chart_groups.len(),
                 "axis_count": chart.axes.len(),
                 "title": chart.title,
@@ -3527,6 +3539,7 @@ fn parse_slides(
                             + chart
                                 .categories
                                 .iter()
+                                .flatten()
                                 .map(|category| category.chars().count())
                                 .sum::<usize>()
                             + chart
@@ -3665,6 +3678,7 @@ fn parse_presentation_chart(value: &Value, slide_number: usize) -> Result<Presen
             "type"
                 | "title"
                 | "categories"
+                | "x_values"
                 | "series"
                 | "show_legend"
                 | "legend_position"
@@ -3887,33 +3901,83 @@ fn parse_presentation_chart(value: &Value, slide_number: usize) -> Result<Presen
             chart_type.as_str()
         ));
     }
-    let categories = object
-        .get("categories")
-        .and_then(Value::as_array)
-        .ok_or_else(|| anyhow!("slide {slide_number} chart categories must be an array"))?;
-    if categories.is_empty() || categories.len() > MAX_PPTX_CREATE_CHART_CATEGORIES {
-        return Err(anyhow!(
-            "slide {slide_number} chart must contain between 1 and {MAX_PPTX_CREATE_CHART_CATEGORIES} categories"
-        ));
-    }
-    let categories = categories
-        .iter()
-        .enumerate()
-        .map(|(index, category)| {
-            let category = category.as_str().ok_or_else(|| {
-                anyhow!(
-                    "slide {slide_number} chart category {} must be a string",
-                    index + 1
-                )
+    let (categories, x_values, point_count) = if chart_type == PresentationChartType::Scatter {
+        if object
+            .get("categories")
+            .is_some_and(|value| !value.is_null())
+        {
+            return Err(anyhow!(
+                "slide {slide_number} scatter chart categories must be null or omitted"
+            ));
+        }
+        let x_values = object
+            .get("x_values")
+            .and_then(Value::as_array)
+            .ok_or_else(|| {
+                anyhow!("slide {slide_number} scatter chart x_values must be an array")
             })?;
-            let label = format!("slide {slide_number} chart category {}", index + 1);
-            validate_slide_text(category, label.as_str(), 1_000)?;
-            if category.trim().is_empty() {
-                return Err(anyhow!("{label} cannot be empty"));
-            }
-            Ok(category.to_string())
-        })
-        .collect::<Result<Vec<_>>>()?;
+        if x_values.is_empty() || x_values.len() > MAX_PPTX_CREATE_CHART_CATEGORIES {
+            return Err(anyhow!(
+                "slide {slide_number} scatter chart must contain between 1 and {MAX_PPTX_CREATE_CHART_CATEGORIES} x_values"
+            ));
+        }
+        let x_values = x_values
+            .iter()
+            .enumerate()
+            .map(|(index, value)| {
+                let value = value.as_f64().ok_or_else(|| {
+                    anyhow!(
+                        "slide {slide_number} scatter chart x_value {} must be a finite number",
+                        index + 1
+                    )
+                })?;
+                if !value.is_finite() || value.abs() > MAX_PPTX_CREATE_CHART_VALUE_ABS {
+                    return Err(anyhow!(
+                        "slide {slide_number} scatter chart x_value {} exceeds the numeric safety limit",
+                        index + 1
+                    ));
+                }
+                Ok(value)
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let point_count = x_values.len();
+        (None, Some(x_values), point_count)
+    } else {
+        if object.get("x_values").is_some_and(|value| !value.is_null()) {
+            return Err(anyhow!(
+                "slide {slide_number} non-scatter chart x_values must be null or omitted"
+            ));
+        }
+        let categories = object
+            .get("categories")
+            .and_then(Value::as_array)
+            .ok_or_else(|| anyhow!("slide {slide_number} chart categories must be an array"))?;
+        if categories.is_empty() || categories.len() > MAX_PPTX_CREATE_CHART_CATEGORIES {
+            return Err(anyhow!(
+                "slide {slide_number} chart must contain between 1 and {MAX_PPTX_CREATE_CHART_CATEGORIES} categories"
+            ));
+        }
+        let categories = categories
+            .iter()
+            .enumerate()
+            .map(|(index, category)| {
+                let category = category.as_str().ok_or_else(|| {
+                    anyhow!(
+                        "slide {slide_number} chart category {} must be a string",
+                        index + 1
+                    )
+                })?;
+                let label = format!("slide {slide_number} chart category {}", index + 1);
+                validate_slide_text(category, label.as_str(), 1_000)?;
+                if category.trim().is_empty() {
+                    return Err(anyhow!("{label} cannot be empty"));
+                }
+                Ok(category.to_string())
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let point_count = categories.len();
+        (Some(categories), None, point_count)
+    };
     let series = object
         .get("series")
         .and_then(Value::as_array)
@@ -3983,10 +4047,15 @@ fn parse_presentation_chart(value: &Value, slide_number: usize) -> Result<Presen
                     series_index + 1
                 )
             })?;
-        if values.len() != categories.len() {
+        if values.len() != point_count {
             return Err(anyhow!(
-                "slide {slide_number} chart series {} must contain exactly one value per category",
-                series_index + 1
+                "slide {slide_number} chart series {} must contain exactly one value per {}",
+                series_index + 1,
+                if chart_type == PresentationChartType::Scatter {
+                    "x_value"
+                } else {
+                    "category"
+                }
             ));
         }
         let values = values
@@ -4168,6 +4237,7 @@ fn parse_presentation_chart(value: &Value, slide_number: usize) -> Result<Presen
         chart_type,
         title,
         categories,
+        x_values,
         series: parsed_series,
         show_legend,
         legend_position,
@@ -4238,11 +4308,14 @@ fn parse_presentation_chart_series_marker(
     slide_number: usize,
     series_number: usize,
 ) -> Result<(Option<PresentationChartMarkerStyle>, Option<u8>)> {
-    if chart_type != PresentationChartType::Line {
+    if !matches!(
+        chart_type,
+        PresentationChartType::Line | PresentationChartType::Scatter
+    ) {
         if style.is_some_and(|value| !value.is_null()) || size.is_some_and(|value| !value.is_null())
         {
             return Err(anyhow!(
-                "slide {slide_number} chart series {series_number} marker_style and marker_size are supported only for line charts"
+                "slide {slide_number} chart series {series_number} marker_style and marker_size are supported only for line or scatter charts"
             ));
         }
         return Ok((None, None));
@@ -4297,10 +4370,13 @@ fn parse_presentation_chart_series_smooth(
     slide_number: usize,
     series_number: usize,
 ) -> Result<Option<bool>> {
-    if chart_type != PresentationChartType::Line {
+    if !matches!(
+        chart_type,
+        PresentationChartType::Line | PresentationChartType::Scatter
+    ) {
         if value.is_some_and(|value| !value.is_null()) {
             return Err(anyhow!(
-                "slide {slide_number} chart series {series_number} smooth is supported only for line charts"
+                "slide {slide_number} chart series {series_number} smooth is supported only for line or scatter charts"
             ));
         }
         return Ok(None);
@@ -5217,6 +5293,12 @@ fn chart_shape(
 }
 
 fn presentation_chart_xml(chart: &PresentationChart) -> Result<String> {
+    let point_count = chart
+        .categories
+        .as_ref()
+        .map(Vec::len)
+        .or_else(|| chart.x_values.as_ref().map(Vec::len))
+        .ok_or_else(|| anyhow!("PPTX chart has no category or X values"))?;
     let title = if chart.title.is_empty() {
         "<c:autoTitleDeleted val=\"1\"/>".to_string()
     } else {
@@ -5256,24 +5338,35 @@ fn presentation_chart_xml(chart: &PresentationChart) -> Result<String> {
         } else {
             "between"
         };
-        let axes = presentation_chart_axes_xml(
-            chart.chart_type,
-            PPTX_PRIMARY_CATEGORY_AXIS_ID,
-            PPTX_PRIMARY_VALUE_AXIS_ID,
-            cross_between,
-            chart.category_axis_title.as_str(),
-            chart.value_axis_title.as_str(),
-            PresentationChartValueAxisOptions {
-                minimum: chart.value_axis_minimum,
-                maximum: chart.value_axis_maximum,
-                log_base: chart.value_axis_log_base,
-                major_tick_mark: chart.value_axis_major_tick_mark,
-                minor_tick_mark: chart.value_axis_minor_tick_mark,
-                major_unit: chart.value_axis_major_unit,
-                minor_unit: chart.value_axis_minor_unit,
-                number_format: chart.value_axis_number_format,
-            },
-        );
+        let primary_options = PresentationChartValueAxisOptions {
+            minimum: chart.value_axis_minimum,
+            maximum: chart.value_axis_maximum,
+            log_base: chart.value_axis_log_base,
+            major_tick_mark: chart.value_axis_major_tick_mark,
+            minor_tick_mark: chart.value_axis_minor_tick_mark,
+            major_unit: chart.value_axis_major_unit,
+            minor_unit: chart.value_axis_minor_unit,
+            number_format: chart.value_axis_number_format,
+        };
+        let axes = if chart.chart_type == PresentationChartType::Scatter {
+            presentation_scatter_chart_axes_xml(
+                PPTX_PRIMARY_CATEGORY_AXIS_ID,
+                PPTX_PRIMARY_VALUE_AXIS_ID,
+                chart.category_axis_title.as_str(),
+                chart.value_axis_title.as_str(),
+                primary_options,
+            )
+        } else {
+            presentation_chart_axes_xml(
+                chart.chart_type,
+                PPTX_PRIMARY_CATEGORY_AXIS_ID,
+                PPTX_PRIMARY_VALUE_AXIS_ID,
+                cross_between,
+                chart.category_axis_title.as_str(),
+                chart.value_axis_title.as_str(),
+                primary_options,
+            )
+        };
         if has_secondary_axis {
             let secondary_group = presentation_chart_group_xml(
                 chart.chart_type,
@@ -5282,26 +5375,34 @@ fn presentation_chart_xml(chart: &PresentationChart) -> Result<String> {
                 PPTX_SECONDARY_CATEGORY_AXIS_ID,
                 PPTX_SECONDARY_VALUE_AXIS_ID,
             );
-            format!(
-                "{primary_group}{secondary_group}{axes}{}",
+            let secondary_options = PresentationChartValueAxisOptions {
+                minimum: chart.secondary_value_axis_minimum,
+                maximum: chart.secondary_value_axis_maximum,
+                log_base: chart.secondary_value_axis_log_base,
+                major_tick_mark: chart.secondary_value_axis_major_tick_mark,
+                minor_tick_mark: chart.secondary_value_axis_minor_tick_mark,
+                major_unit: chart.secondary_value_axis_major_unit,
+                minor_unit: chart.secondary_value_axis_minor_unit,
+                number_format: chart.secondary_value_axis_number_format,
+            };
+            let secondary_axes = if chart.chart_type == PresentationChartType::Scatter {
+                presentation_scatter_chart_secondary_axes_xml(
+                    PPTX_SECONDARY_CATEGORY_AXIS_ID,
+                    PPTX_SECONDARY_VALUE_AXIS_ID,
+                    chart.secondary_value_axis_title.as_str(),
+                    secondary_options,
+                )
+            } else {
                 presentation_chart_secondary_axes_xml(
                     chart.chart_type,
                     PPTX_SECONDARY_CATEGORY_AXIS_ID,
                     PPTX_SECONDARY_VALUE_AXIS_ID,
                     cross_between,
                     chart.secondary_value_axis_title.as_str(),
-                    PresentationChartValueAxisOptions {
-                        minimum: chart.secondary_value_axis_minimum,
-                        maximum: chart.secondary_value_axis_maximum,
-                        log_base: chart.secondary_value_axis_log_base,
-                        major_tick_mark: chart.secondary_value_axis_major_tick_mark,
-                        minor_tick_mark: chart.secondary_value_axis_minor_tick_mark,
-                        major_unit: chart.secondary_value_axis_major_unit,
-                        minor_unit: chart.secondary_value_axis_minor_unit,
-                        number_format: chart.secondary_value_axis_number_format,
-                    },
+                    secondary_options,
                 )
-            )
+            };
+            format!("{primary_group}{secondary_group}{axes}{secondary_axes}")
         } else {
             format!("{primary_group}{axes}")
         }
@@ -5341,7 +5442,7 @@ fn presentation_chart_xml(chart: &PresentationChart) -> Result<String> {
             != chart
                 .series
                 .len()
-                .saturating_mul(chart.categories.len())
+                .saturating_mul(point_count)
                 .saturating_mul(2)
     {
         return Err(anyhow!(
@@ -5380,6 +5481,9 @@ fn presentation_chart_group_xml(
         PresentationChartType::Radar => format!(
             r#"<c:radarChart><c:radarStyle val="standard"/><c:varyColors val="0"/>{series}{data_labels}<c:axId val="{category_axis_id}"/><c:axId val="{value_axis_id}"/></c:radarChart>"#
         ),
+        PresentationChartType::Scatter => format!(
+            r#"<c:scatterChart><c:scatterStyle val="lineMarker"/><c:varyColors val="0"/>{series}{data_labels}<c:axId val="{category_axis_id}"/><c:axId val="{value_axis_id}"/></c:scatterChart>"#
+        ),
     }
 }
 
@@ -5413,12 +5517,31 @@ fn presentation_chart_series_xml(
         .smooth
         .map(|smooth| format!(r#"<c:smooth val="{}"/>"#, u8::from(smooth)))
         .unwrap_or_default();
-    format!(
-        r#"<c:ser><c:idx val="{index}"/><c:order val="{index}"/><c:tx><c:v>{}</c:v></c:tx>{color}{marker}<c:cat>{}</c:cat><c:val>{}</c:val>{smooth}</c:ser>"#,
-        escape_xml(series.name.as_str()),
-        presentation_chart_string_literal(chart.categories.as_slice()),
-        presentation_chart_number_literal(series.values.as_slice())
-    )
+    if chart.chart_type == PresentationChartType::Scatter {
+        format!(
+            r#"<c:ser><c:idx val="{index}"/><c:order val="{index}"/><c:tx><c:v>{}</c:v></c:tx>{color}{marker}<c:xVal>{}</c:xVal><c:yVal>{}</c:yVal>{smooth}</c:ser>"#,
+            escape_xml(series.name.as_str()),
+            presentation_chart_number_literal(
+                chart
+                    .x_values
+                    .as_deref()
+                    .expect("validated scatter X values")
+            ),
+            presentation_chart_number_literal(series.values.as_slice())
+        )
+    } else {
+        format!(
+            r#"<c:ser><c:idx val="{index}"/><c:order val="{index}"/><c:tx><c:v>{}</c:v></c:tx>{color}{marker}<c:cat>{}</c:cat><c:val>{}</c:val>{smooth}</c:ser>"#,
+            escape_xml(series.name.as_str()),
+            presentation_chart_string_literal(
+                chart
+                    .categories
+                    .as_deref()
+                    .expect("validated chart categories")
+            ),
+            presentation_chart_number_literal(series.values.as_slice())
+        )
+    }
 }
 
 fn presentation_chart_series_marker_xml(
@@ -5500,6 +5623,7 @@ fn presentation_chart_snapshot(chart: &PresentationChart) -> Value {
         "type": chart.chart_type.as_str(),
         "title": chart.title,
         "categories": chart.categories,
+        "x_values": chart.x_values,
         "series": chart.series.iter().map(|series| json!({
             "name": series.name,
             "values": series.values,
@@ -5589,9 +5713,23 @@ fn canonical_pptx_chart_snapshot(
                 ));
             }
         }
+        "scatter" => {
+            let styles = inspection
+                .chart_groups
+                .iter()
+                .map(|group| group.scatter_style.as_deref())
+                .collect::<BTreeSet<_>>();
+            if styles.len() == 1 && styles.contains(&Some("lineMarker")) {
+                PresentationChartType::Scatter
+            } else {
+                return Err(anyhow!(
+                    "canonical scatter chart groups require one consistent lineMarker style"
+                ));
+            }
+        }
         _ => {
             return Err(anyhow!(
-                "chart type is outside the canonical column, bar, line, pie, area, doughnut, or radar contract"
+                "chart type is outside the canonical column, bar, line, pie, area, doughnut, radar, or scatter contract"
             ));
         }
     };
@@ -5683,7 +5821,7 @@ fn canonical_pptx_chart_snapshot(
     }
 
     let expected_series_type = inspection.chart_types[0].as_str();
-    let categories = inspection.series[0].categories.clone();
+    let cached_categories = inspection.series[0].categories.clone();
     let mut series = Vec::with_capacity(inspection.series.len());
     for item in &inspection.series {
         if item.chart_type != expected_series_type {
@@ -5705,9 +5843,9 @@ fn canonical_pptx_chart_snapshot(
                 "canonical self-contained charts must not contain bubble-size caches"
             ));
         }
-        if item.categories != categories {
+        if item.categories != cached_categories {
             return Err(anyhow!(
-                "canonical self-contained chart series must share identical categories"
+                "canonical self-contained chart series must share identical categories or X values"
             ));
         }
         let values = item
@@ -5737,15 +5875,18 @@ fn canonical_pptx_chart_snapshot(
             .map(PresentationChartMarkerStyle::from_ooxml)
             .transpose()
             .context("chart series marker style is outside the canonical bounded contract")?;
-        if chart_type == PresentationChartType::Line {
+        if matches!(
+            chart_type,
+            PresentationChartType::Line | PresentationChartType::Scatter
+        ) {
             if marker_style.is_none() {
                 return Err(anyhow!(
-                    "canonical line chart series requires one marker style"
+                    "canonical line or scatter chart series requires one marker style"
                 ));
             }
         } else if marker_style.is_some() || item.marker_size.is_some() {
             return Err(anyhow!(
-                "canonical non-line chart series must not contain marker styling"
+                "canonical chart series outside line or scatter must not contain marker styling"
             ));
         }
         if item.smooth_custom {
@@ -5753,15 +5894,18 @@ fn canonical_pptx_chart_snapshot(
                 "canonical self-contained chart series smoothing is outside the exact bounded line-smoothing contract"
             ));
         }
-        if chart_type == PresentationChartType::Line {
+        if matches!(
+            chart_type,
+            PresentationChartType::Line | PresentationChartType::Scatter
+        ) {
             if item.smooth.is_none() {
                 return Err(anyhow!(
-                    "canonical line chart series requires one smooth value"
+                    "canonical line or scatter chart series requires one smooth value"
                 ));
             }
         } else if item.smooth.is_some() {
             return Err(anyhow!(
-                "canonical non-line chart series must not contain smoothing"
+                "canonical chart series outside line or scatter must not contain smoothing"
             ));
         }
         series.push(PresentationChartSeries {
@@ -5774,10 +5918,26 @@ fn canonical_pptx_chart_snapshot(
             smooth: item.smooth,
         });
     }
+    let (categories, x_values) = if chart_type == PresentationChartType::Scatter {
+        let x_values = cached_categories
+            .iter()
+            .map(|value| {
+                value.parse::<f64>().map_err(|_| {
+                    anyhow!(
+                        "canonical self-contained scatter X values must be finite decimal numbers"
+                    )
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
+        (None, Some(x_values))
+    } else {
+        (Some(cached_categories), None)
+    };
     let candidate = PresentationChart {
         chart_type,
         title: inspection.title.clone(),
         categories,
+        x_values,
         series,
         show_legend: inspection.legend_count == 1,
         legend_position,
@@ -5886,6 +6046,74 @@ fn presentation_chart_secondary_axes_xml(
     let value_axis_position = chart_type.secondary_value_axis_position();
     format!(
         r#"<c:catAx><c:axId val="{category_axis_id}"/><c:scaling><c:orientation val="minMax"/></c:scaling><c:delete val="1"/><c:axPos val="{category_axis_position}"/><c:tickLblPos val="none"/><c:crossAx val="{value_axis_id}"/><c:crosses val="max"/><c:auto val="1"/><c:lblAlgn val="ctr"/><c:lblOffset val="100"/></c:catAx><c:valAx><c:axId val="{value_axis_id}"/>{value_axis_scaling}<c:delete val="0"/><c:axPos val="{value_axis_position}"/>{value_axis_title}{value_axis_number_format}{value_axis_tick_marks}<c:tickLblPos val="nextTo"/><c:crossAx val="{category_axis_id}"/><c:crosses val="max"/><c:crossBetween val="{cross_between}"/>{value_axis_units}</c:valAx>"#
+    )
+}
+
+fn presentation_scatter_chart_axes_xml(
+    x_axis_id: u32,
+    y_axis_id: u32,
+    x_axis_title: &str,
+    y_axis_title: &str,
+    y_axis_options: PresentationChartValueAxisOptions,
+) -> String {
+    let PresentationChartValueAxisOptions {
+        minimum,
+        maximum,
+        log_base,
+        major_tick_mark,
+        minor_tick_mark,
+        major_unit,
+        minor_unit,
+        number_format,
+    } = y_axis_options;
+    let x_axis_title = if x_axis_title.is_empty() {
+        String::new()
+    } else {
+        presentation_chart_title_xml(x_axis_title)
+    };
+    let y_axis_title = if y_axis_title.is_empty() {
+        String::new()
+    } else {
+        presentation_chart_title_xml(y_axis_title)
+    };
+    let y_axis_scaling = presentation_chart_axis_scaling_xml(minimum, maximum, log_base);
+    let y_axis_number_format = presentation_chart_axis_number_format_xml(number_format);
+    let y_axis_tick_marks =
+        presentation_chart_axis_tick_marks_xml(major_tick_mark, minor_tick_mark);
+    let y_axis_units = presentation_chart_axis_units_xml(major_unit, minor_unit);
+    format!(
+        r#"<c:valAx><c:axId val="{x_axis_id}"/><c:scaling><c:orientation val="minMax"/></c:scaling><c:delete val="0"/><c:axPos val="b"/>{x_axis_title}<c:numFmt formatCode="General" sourceLinked="1"/><c:tickLblPos val="nextTo"/><c:crossAx val="{y_axis_id}"/><c:crosses val="autoZero"/><c:crossBetween val="midCat"/></c:valAx><c:valAx><c:axId val="{y_axis_id}"/>{y_axis_scaling}<c:delete val="0"/><c:axPos val="l"/><c:majorGridlines/>{y_axis_title}{y_axis_number_format}{y_axis_tick_marks}<c:tickLblPos val="nextTo"/><c:crossAx val="{x_axis_id}"/><c:crosses val="autoZero"/><c:crossBetween val="midCat"/>{y_axis_units}</c:valAx>"#
+    )
+}
+
+fn presentation_scatter_chart_secondary_axes_xml(
+    x_axis_id: u32,
+    y_axis_id: u32,
+    y_axis_title: &str,
+    y_axis_options: PresentationChartValueAxisOptions,
+) -> String {
+    let PresentationChartValueAxisOptions {
+        minimum,
+        maximum,
+        log_base,
+        major_tick_mark,
+        minor_tick_mark,
+        major_unit,
+        minor_unit,
+        number_format,
+    } = y_axis_options;
+    let y_axis_title = if y_axis_title.is_empty() {
+        String::new()
+    } else {
+        presentation_chart_title_xml(y_axis_title)
+    };
+    let y_axis_scaling = presentation_chart_axis_scaling_xml(minimum, maximum, log_base);
+    let y_axis_number_format = presentation_chart_axis_number_format_xml(number_format);
+    let y_axis_tick_marks =
+        presentation_chart_axis_tick_marks_xml(major_tick_mark, minor_tick_mark);
+    let y_axis_units = presentation_chart_axis_units_xml(major_unit, minor_unit);
+    format!(
+        r#"<c:valAx><c:axId val="{x_axis_id}"/><c:scaling><c:orientation val="minMax"/></c:scaling><c:delete val="1"/><c:axPos val="t"/><c:numFmt formatCode="General" sourceLinked="1"/><c:tickLblPos val="none"/><c:crossAx val="{y_axis_id}"/><c:crosses val="max"/><c:crossBetween val="midCat"/></c:valAx><c:valAx><c:axId val="{y_axis_id}"/>{y_axis_scaling}<c:delete val="0"/><c:axPos val="r"/>{y_axis_title}{y_axis_number_format}{y_axis_tick_marks}<c:tickLblPos val="nextTo"/><c:crossAx val="{x_axis_id}"/><c:crosses val="max"/><c:crossBetween val="midCat"/>{y_axis_units}</c:valAx>"#
     )
 }
 
@@ -9529,6 +9757,7 @@ fn inspect_standard_pptx_chart_xml(xml: &str) -> Result<PptxChartInspection> {
                         chart_type: chart_type.to_string(),
                         bar_direction: None,
                         radar_style: None,
+                        scatter_style: None,
                         axis_ids: Vec::new(),
                     });
                 }
@@ -9875,15 +10104,22 @@ fn inspect_standard_pptx_chart_xml(xml: &str) -> Result<PptxChartInspection> {
     }
     let title_truncated = title.chars().count() > 1_000;
     let horizontal_bar = pptx_chart_is_horizontal_bar(&chart_types, &chart_groups);
+    let scatter = chart_types.len() == 1 && chart_types.contains("scatter");
     let category_axis_position = if horizontal_bar { "l" } else { "b" };
     let value_axis_position = if horizontal_bar { "b" } else { "l" };
     let secondary_value_axis_position = if horizontal_bar { "t" } else { "r" };
-    let category_axis = axes
-        .iter()
-        .find(|axis| {
-            axis.axis_type == "category" && axis.position.as_deref() == Some(category_axis_position)
+    let category_axis = if scatter {
+        axes.iter().find(|axis| {
+            axis.axis_type == "value" && axis.position.as_deref() == Some(category_axis_position)
         })
-        .or_else(|| axes.iter().find(|axis| axis.axis_type == "category"));
+    } else {
+        axes.iter()
+            .find(|axis| {
+                axis.axis_type == "category"
+                    && axis.position.as_deref() == Some(category_axis_position)
+            })
+            .or_else(|| axes.iter().find(|axis| axis.axis_type == "category"))
+    };
     let value_axis = axes
         .iter()
         .find(|axis| {
@@ -9979,6 +10215,25 @@ fn record_pptx_chart_structure_element(
         if chart_group.radar_style.replace(value).is_some() {
             return Err(anyhow!(
                 "PPTX chart radar group contains multiple radar styles"
+            ));
+        }
+    } else if qualified.as_slice() == b"c:scatterStyle" && parent == Some("scatterChart") {
+        let value = required_xml_attribute(reader, event, "val")?;
+        if value.is_empty() || value.len() > 128 {
+            return Err(anyhow!(
+                "PPTX chart scatter style is empty or exceeds the safety limit"
+            ));
+        }
+        let chart_group = chart_group
+            .ok_or_else(|| anyhow!("PPTX chart scatter style is outside a scatter chart group"))?;
+        if chart_group.chart_type != "scatter" {
+            return Err(anyhow!(
+                "PPTX chart scatter style is attached to a non-scatter chart group"
+            ));
+        }
+        if chart_group.scatter_style.replace(value).is_some() {
+            return Err(anyhow!(
+                "PPTX chart scatter group contains multiple scatter styles"
             ));
         }
     } else if qualified.as_slice() == b"c:axId" {
@@ -10131,7 +10386,7 @@ fn record_pptx_chart_series_color_element(
     series.color_style_present = true;
     let relative_ancestors = &stack[shape_properties_index + 1..];
     let expected = match series.chart_type.as_str() {
-        "line" | "radar" => match (relative_ancestors, local.as_slice()) {
+        "line" | "radar" | "scatter" => match (relative_ancestors, local.as_slice()) {
             ([], b"ln") => Some((b"a:ln".as_slice(), false, &[][..])),
             ([line], b"solidFill") if line == "ln" => {
                 Some((b"a:solidFill".as_slice(), false, &[][..]))
@@ -10206,7 +10461,10 @@ fn finalize_pptx_chart_series_color(series: &mut PptxChartSeriesInspection) {
     if !series.color_style_present {
         return;
     }
-    let expected_line_count = usize::from(matches!(series.chart_type.as_str(), "line" | "radar"));
+    let expected_line_count = usize::from(matches!(
+        series.chart_type.as_str(),
+        "line" | "radar" | "scatter"
+    ));
     if series.color_shape_properties_count != 1
         || series.color_line_count != expected_line_count
         || series.color_solid_fill_count != 1
@@ -10309,7 +10567,7 @@ fn pptx_chart_series_marker_index(stack: &[String]) -> Option<usize> {
 }
 
 fn finalize_pptx_chart_series_marker(series: &mut PptxChartSeriesInspection) {
-    if series.chart_type != "line" {
+    if !matches!(series.chart_type.as_str(), "line" | "scatter") {
         if series.marker_count != 0
             || series.marker_symbol_count != 0
             || series.marker_size_count != 0
@@ -10384,7 +10642,7 @@ fn record_pptx_chart_series_smooth_element(
 }
 
 fn finalize_pptx_chart_series_smooth(series: &mut PptxChartSeriesInspection) {
-    if series.chart_type == "line" {
+    if matches!(series.chart_type.as_str(), "line" | "scatter") {
         if series.smooth_count != 1 || series.smooth.is_none() || series.smooth_value.is_none() {
             series.smooth_custom = true;
         }
@@ -10423,6 +10681,25 @@ fn resolve_pptx_chart_series_value_axis(
     let Some(group) = chart_groups.get(series.chart_group_index) else {
         return "unknown".to_string();
     };
+    if series.chart_type == "scatter" {
+        let Some(y_axis_id) = group.axis_ids.get(1) else {
+            return "unknown".to_string();
+        };
+        let Some(position) = axes
+            .iter()
+            .find(|axis| {
+                axis.axis_type == "value" && axis.axis_id.as_deref() == Some(y_axis_id.as_str())
+            })
+            .and_then(|axis| axis.position.as_deref())
+        else {
+            return "unknown".to_string();
+        };
+        return match position {
+            "l" => "primary".to_string(),
+            "r" => "secondary".to_string(),
+            _ => "unknown".to_string(),
+        };
+    }
     let positions = group
         .axis_ids
         .iter()
@@ -10611,6 +10888,7 @@ fn ensure_standard_pptx_chart_namespace(qualified: &[u8], local: &str) -> Result
             | "showPercent"
             | "barDir"
             | "radarStyle"
+            | "scatterStyle"
             | "axId"
             | "axPos"
             | "scaling"
@@ -10774,6 +11052,7 @@ fn add_pptx_chart_text_chars(current: usize, value: &str) -> Result<usize> {
 }
 
 fn pptx_chart_series_json(series: &PptxChartSeriesInspection) -> Value {
+    let scatter = series.chart_type == "scatter";
     let categories_truncated = series.categories.len() > MAX_PPTX_CHART_PREVIEW_POINTS;
     let values_truncated = series.values.len() > MAX_PPTX_CHART_PREVIEW_POINTS;
     let bubble_sizes_truncated = series.bubble_sizes.len() > MAX_PPTX_CHART_PREVIEW_POINTS;
@@ -10811,9 +11090,13 @@ fn pptx_chart_series_json(series: &PptxChartSeriesInspection) -> Value {
         "bubble_size_formula": series.bubble_size_formula,
         "cached_category_points": series.categories.len(),
         "cached_value_points": series.values.len(),
+        "cached_x_value_points": if scatter { series.categories.len() } else { 0 },
+        "cached_y_value_points": if scatter { series.values.len() } else { 0 },
         "cached_bubble_size_points": series.bubble_sizes.len(),
         "categories_preview": series.categories.iter().take(MAX_PPTX_CHART_PREVIEW_POINTS).collect::<Vec<_>>(),
         "values_preview": series.values.iter().take(MAX_PPTX_CHART_PREVIEW_POINTS).collect::<Vec<_>>(),
+        "x_values_preview": if scatter { series.categories.iter().take(MAX_PPTX_CHART_PREVIEW_POINTS).collect::<Vec<_>>() } else { Vec::<&String>::new() },
+        "y_values_preview": if scatter { series.values.iter().take(MAX_PPTX_CHART_PREVIEW_POINTS).collect::<Vec<_>>() } else { Vec::<&String>::new() },
         "bubble_sizes_preview": series.bubble_sizes.iter().take(MAX_PPTX_CHART_PREVIEW_POINTS).collect::<Vec<_>>(),
         "preview_truncated": categories_truncated || values_truncated || bubble_sizes_truncated,
     })

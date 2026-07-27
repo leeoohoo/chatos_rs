@@ -4560,6 +4560,352 @@ fn creates_appends_and_replaces_canonical_standard_radar_pptx_charts() {
 }
 
 #[test]
+fn creates_appends_and_replaces_canonical_line_marker_scatter_pptx_charts() {
+    let (root, state, request) = test_context();
+    presentation::create_pptx(
+        &json!({
+            "target_path":"scatter-charts.pptx",
+            "slides":[{
+                "title":"Experiment results",
+                "layout":"chart",
+                "chart":{
+                    "type":"scatter",
+                    "title":"Output by elapsed time",
+                    "x_values":[1,2,4],
+                    "series":[
+                        {"name":"Output","values":[2,4,8],"color":"#2255AA","marker_style":"diamond","marker_size":8,"smooth":true},
+                        {"name":"Reference","values":[10,20,40],"value_axis":"secondary","color":"#EE8800","marker_style":"square","marker_size":6,"smooth":false}
+                    ],
+                    "legend_position":"bottom",
+                    "data_labels":"value",
+                    "category_axis_title":"Elapsed time",
+                    "value_axis_title":"Output",
+                    "secondary_value_axis_title":"Reference",
+                    "value_axis_minimum":0,
+                    "value_axis_maximum":10,
+                    "value_axis_major_unit":2,
+                    "value_axis_number_format":"decimal_1",
+                    "secondary_value_axis_minimum":0,
+                    "secondary_value_axis_maximum":50,
+                    "secondary_value_axis_major_unit":10,
+                    "secondary_value_axis_number_format":"integer"
+                }
+            }]
+        }),
+        &state,
+        &request,
+    )
+    .expect("create canonical line-marker scatter chart");
+    let source = root.join("scatter-charts.pptx");
+    let source_before = fs::read(source.as_path()).expect("scatter source bytes");
+    let inspected =
+        presentation::inspect_pptx_charts(&json!({"path":"scatter-charts.pptx"}), &state, &request)
+            .expect("inspect canonical line-marker scatter chart");
+    assert_eq!(
+        inspected.pointer("/chart_metadata/0/chart_types"),
+        Some(&json!(["scatter"]))
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/0/scatter_styles"),
+        Some(&json!(["lineMarker", "lineMarker"]))
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/0/self_contained_edit_snapshot/type"),
+        Some(&json!("scatter"))
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/0/self_contained_edit_snapshot/categories"),
+        Some(&Value::Null)
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/0/self_contained_edit_snapshot/x_values"),
+        Some(&json!([1.0, 2.0, 4.0]))
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/0/category_axis_title"),
+        Some(&json!("Elapsed time"))
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/0/value_axis_title"),
+        Some(&json!("Output"))
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/0/secondary_value_axis_title"),
+        Some(&json!("Reference"))
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/0/series/1/value_axis"),
+        Some(&json!("secondary"))
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/0/series/0/color"),
+        Some(&json!("#2255AA"))
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/0/series/0/marker_style"),
+        Some(&json!("diamond"))
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/0/series/0/marker_size"),
+        Some(&json!(8))
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/0/series/0/smooth"),
+        Some(&json!(true))
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/0/series/0/x_values_preview"),
+        Some(&json!(["1", "2", "4"]))
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/0/series/0/y_values_preview"),
+        Some(&json!(["2", "4", "8"]))
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/0/value_axis_number_format"),
+        Some(&json!("decimal_1"))
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/0/secondary_value_axis_number_format"),
+        Some(&json!("integer"))
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/0/eligible_for_self_contained_chart_replacement"),
+        Some(&json!(true))
+    );
+    let hash = inspected
+        .pointer("/chart_metadata/0/chart_xml_sha256")
+        .and_then(Value::as_str)
+        .expect("scatter chart hash")
+        .to_string();
+    let snapshot = inspected
+        .pointer("/chart_metadata/0/self_contained_edit_snapshot")
+        .expect("scatter chart snapshot")
+        .clone();
+    let mut source_archive =
+        ZipArchive::new(File::open(source.as_path()).expect("scatter chart source"))
+            .expect("scatter chart source ZIP");
+    let source_chart =
+        read_zip_text(&mut source_archive, "ppt/charts/chart1.xml").expect("scatter chart XML");
+    assert_eq!(source_chart.matches("<c:scatterChart>").count(), 2);
+    assert_eq!(
+        source_chart
+            .matches("<c:scatterStyle val=\"lineMarker\"/>")
+            .count(),
+        2
+    );
+    assert_eq!(source_chart.matches("<c:xVal>").count(), 2);
+    assert_eq!(source_chart.matches("<c:yVal>").count(), 2);
+    assert_eq!(source_chart.matches("<c:catAx>").count(), 0);
+    assert_eq!(source_chart.matches("<c:valAx>").count(), 4);
+    assert_eq!(source_chart.matches("<a:ln>").count(), 2);
+    drop(source_archive);
+
+    presentation::append_pptx_slides(
+        &json!({
+            "path":"scatter-charts.pptx",
+            "target_path":"scatter-charts-appended.pptx",
+            "slides":[{
+                "title":"Latency",
+                "layout":"chart",
+                "chart":{
+                    "type":"scatter",
+                    "x_values":[10,20],
+                    "series":[{"name":"Latency","values":[30,45]}],
+                    "show_legend":false
+                }
+            }]
+        }),
+        &state,
+        &request,
+    )
+    .expect("append canonical scatter chart");
+    let appended = presentation::inspect_pptx_charts(
+        &json!({"path":"scatter-charts-appended.pptx"}),
+        &state,
+        &request,
+    )
+    .expect("inspect appended scatter chart");
+    assert_eq!(appended.get("charts"), Some(&json!(2)));
+    assert_eq!(
+        appended.pointer("/chart_metadata/1/scatter_styles"),
+        Some(&json!(["lineMarker"]))
+    );
+    assert_eq!(
+        appended.pointer("/chart_metadata/1/self_contained_edit_snapshot/x_values"),
+        Some(&json!([10.0, 20.0]))
+    );
+
+    presentation::replace_pptx_chart(
+        &json!({
+            "path":"scatter-charts.pptx",
+            "target_path":"scatter-to-line.pptx",
+            "slide_number":1,
+            "chart_number":1,
+            "expected_chart_xml_sha256":hash,
+            "expected_self_contained_edit_snapshot":snapshot,
+            "replacement":{
+                "type":"line",
+                "title":"Output by elapsed time",
+                "categories":["1s","2s","4s"],
+                "series":[{"name":"Output","values":[3,5,9],"color":"#2255AA","marker_style":"diamond","marker_size":8,"smooth":true}],
+                "legend_position":"bottom",
+                "data_labels":"value",
+                "category_axis_title":"Elapsed time",
+                "value_axis_title":"Output",
+                "value_axis_minimum":0,
+                "value_axis_maximum":10,
+                "value_axis_major_unit":2,
+                "value_axis_number_format":"decimal_1"
+            }
+        }),
+        &state,
+        &request,
+    )
+    .expect("replace scatter chart with canonical line chart");
+    assert_eq!(
+        fs::read(source.as_path()).expect("scatter source after replacement"),
+        source_before
+    );
+    let replaced = presentation::inspect_pptx_charts(
+        &json!({"path":"scatter-to-line.pptx"}),
+        &state,
+        &request,
+    )
+    .expect("inspect scatter-to-line replacement");
+    assert_eq!(
+        replaced.pointer("/chart_metadata/0/chart_types"),
+        Some(&json!(["line"]))
+    );
+    assert_eq!(
+        replaced.pointer("/chart_metadata/0/scatter_styles"),
+        Some(&json!([]))
+    );
+    assert_eq!(
+        replaced.pointer("/chart_metadata/0/self_contained_edit_snapshot/x_values"),
+        Some(&Value::Null)
+    );
+
+    for (filename, replacement) in [
+        (
+            "custom-scatter-style.pptx",
+            "<c:scatterStyle val=\"smoothMarker\"/>",
+        ),
+        ("missing-scatter-style.pptx", ""),
+        (
+            "attributed-scatter-style.pptx",
+            "<c:scatterStyle val=\"lineMarker\" custom=\"1\"/>",
+        ),
+    ] {
+        fs::copy(source.as_path(), root.join(filename)).expect("copy noncanonical scatter fixture");
+        rewrite_zip_text_entry(
+            root.join(filename).as_path(),
+            "ppt/charts/chart1.xml",
+            |xml| xml.replacen("<c:scatterStyle val=\"lineMarker\"/>", replacement, 1),
+        );
+        let inspection =
+            presentation::inspect_pptx_charts(&json!({"path":filename}), &state, &request)
+                .expect("inspect noncanonical scatter style");
+        assert_eq!(
+            inspection.pointer("/chart_metadata/0/eligible_for_self_contained_chart_replacement"),
+            Some(&json!(false))
+        );
+        assert!(inspection
+            .pointer("/chart_metadata/0/self_contained_replacement_unsupported_reason")
+            .and_then(Value::as_str)
+            .is_some());
+    }
+
+    for (filename, replacement, expected_error) in [
+        (
+            "duplicate-scatter-style.pptx",
+            "<c:scatterStyle val=\"lineMarker\"/><c:scatterStyle val=\"lineMarker\"/>",
+            "multiple scatter styles",
+        ),
+        (
+            "wrong-namespace-scatter-style.pptx",
+            "<a:scatterStyle val=\"lineMarker\"/>",
+            "standard c namespace",
+        ),
+    ] {
+        fs::copy(source.as_path(), root.join(filename)).expect("copy invalid scatter fixture");
+        rewrite_zip_text_entry(
+            root.join(filename).as_path(),
+            "ppt/charts/chart1.xml",
+            |xml| xml.replacen("<c:scatterStyle val=\"lineMarker\"/>", replacement, 1),
+        );
+        let error = presentation::inspect_pptx_charts(&json!({"path":filename}), &state, &request)
+            .expect_err("invalid scatter style must fail closed");
+        assert!(error.to_string().contains(expected_error));
+    }
+
+    fs::copy(source.as_path(), root.join("oversized-scatter-style.pptx"))
+        .expect("copy oversized scatter fixture");
+    rewrite_zip_text_entry(
+        root.join("oversized-scatter-style.pptx").as_path(),
+        "ppt/charts/chart1.xml",
+        |xml| {
+            xml.replacen(
+                "<c:scatterStyle val=\"lineMarker\"/>",
+                format!("<c:scatterStyle val=\"{}\"/>", "x".repeat(129)).as_str(),
+                1,
+            )
+        },
+    );
+    let oversized = presentation::inspect_pptx_charts(
+        &json!({"path":"oversized-scatter-style.pptx"}),
+        &state,
+        &request,
+    )
+    .expect_err("oversized scatter style must fail closed");
+    assert!(oversized
+        .to_string()
+        .contains("scatter style is empty or exceeds the safety limit"));
+
+    for (target, chart, expected_error) in [
+        (
+            "scatter-with-categories.pptx",
+            json!({
+                "type":"scatter",
+                "categories":["A"],
+                "x_values":[1],
+                "series":[{"name":"Y","values":[2]}]
+            }),
+            "categories must be null or omitted",
+        ),
+        (
+            "scatter-missing-x.pptx",
+            json!({
+                "type":"scatter",
+                "series":[{"name":"Y","values":[2]}]
+            }),
+            "x_values must be an array",
+        ),
+        (
+            "scatter-length-mismatch.pptx",
+            json!({
+                "type":"scatter",
+                "x_values":[1,2],
+                "series":[{"name":"Y","values":[2]}]
+            }),
+            "one value per x_value",
+        ),
+    ] {
+        let error = presentation::create_pptx(
+            &json!({
+                "target_path":target,
+                "slides":[{"title":"Invalid", "layout":"chart", "chart":chart}]
+            }),
+            &state,
+            &request,
+        )
+        .expect_err("invalid scatter input must be rejected");
+        assert!(error.to_string().contains(expected_error));
+    }
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
 fn replaces_canonical_self_contained_pptx_chart_without_modifying_source_or_relationships() {
     let (root, state, request) = test_context();
     presentation::create_pptx(
@@ -5950,7 +6296,7 @@ fn rejects_invalid_self_contained_pptx_chart_inputs_without_output() {
                 "title":"Invalid marker","layout":"chart",
                 "chart":{"type":"column","categories":["A"],"series":[{"name":"S","values":[1],"marker_style":"circle"}]}
             }),
-            "supported only for line charts",
+            "supported only for line or scatter charts",
         ),
         (
             "unknown-series-marker.pptx",
@@ -5958,7 +6304,7 @@ fn rejects_invalid_self_contained_pptx_chart_inputs_without_output() {
                 "title":"Invalid marker","layout":"chart",
                 "chart":{"type":"line","categories":["A"],"series":[{"name":"S","values":[1],"marker_style":"star"}]}
             }),
-            "unsupported PPTX line-chart series marker style",
+            "unsupported PPTX line/scatter-chart series marker style",
         ),
         (
             "hidden-series-marker-size.pptx",
@@ -5990,7 +6336,7 @@ fn rejects_invalid_self_contained_pptx_chart_inputs_without_output() {
                 "title":"Invalid smoothing","layout":"chart",
                 "chart":{"type":"area","categories":["A"],"series":[{"name":"S","values":[1],"smooth":true}]}
             }),
-            "smooth is supported only for line charts",
+            "smooth is supported only for line or scatter charts",
         ),
         (
             "non-boolean-series-smooth.pptx",

@@ -276,7 +276,7 @@ fn presentations_release_publishes_render_and_existing_edit_contracts() {
         .into_iter()
         .find(|item| item.skill_id == "internal_skill_presentations")
         .expect("Presentations catalog item");
-    assert_eq!(catalog_item.version, "1.29.0");
+    assert_eq!(catalog_item.version, "1.30.0");
     let instructions = internal_skill_instructions("internal_skill_presentations")
         .expect("Presentations instructions");
     assert!(instructions.contains("image_right"));
@@ -302,15 +302,15 @@ fn presentations_release_publishes_render_and_existing_edit_contracts() {
     assert!(instructions.contains("omission or null preserves the prior theme-driven XML bytes"));
     assert!(instructions.contains("line-only `a:ln/a:solidFill/a:srgbClr`"));
     assert!(instructions.contains("transformed/duplicated/wrong-namespace series color styling"));
-    assert!(instructions.contains("bounded canonical line-series markers"));
+    assert!(instructions.contains("bounded canonical line/scatter-series markers and smoothing"));
     assert!(instructions.contains("recognized/custom marker style"));
     assert!(instructions.contains("`marker_style=none|circle|square|diamond|triangle`"));
     assert!(instructions.contains("integer `marker_size` from 2 through 72"));
     assert!(instructions.contains("one exact direct-series `c:marker`"));
     assert!(instructions.contains("out-of-range series marker styling"));
-    assert!(instructions.contains("canonical line smoothing"));
+    assert!(instructions.contains("line/scatter-series marker styles and sizes"));
     assert!(instructions.contains("recognized/custom smoothing state"));
-    assert!(instructions.contains("Line series also accept boolean `smooth`"));
+    assert!(instructions.contains("Line and scatter series also accept boolean `smooth`"));
     assert!(instructions.contains("one exact direct-series `c:smooth` boolean"));
     assert!(instructions.contains("over-limit series smoothing"));
     assert!(instructions.contains("2D clustered horizontal `bar`"));
@@ -319,10 +319,19 @@ fn presentations_release_publishes_render_and_existing_edit_contracts() {
     assert!(instructions.contains("visible left category axis with bottom primary value axis"));
     assert!(instructions.contains("missing, inconsistent, duplicated, attributed"));
     assert!(instructions.contains("standard 2D `radar`"));
-    assert!(instructions.contains("raw per-group bar direction and radar style"));
+    assert!(instructions.contains("raw per-group bar direction, radar style, and scatter style"));
     assert!(instructions.contains("exact `c:radarStyle val=\"standard\"`"));
-    assert!(instructions.contains("line and radar charts emit an exact series line color"));
-    assert!(instructions.contains("bar directions or radar styles"));
+    assert!(
+        instructions.contains("line, radar, and scatter charts emit an exact series line color")
+    );
+    assert!(instructions.contains("canonical XY `scatter`"));
+    assert!(instructions.contains("exact `c:scatterStyle val=\"lineMarker\"`"));
+    assert!(instructions.contains("shared finite numeric `x_values`"));
+    assert!(instructions.contains("`<c:xVal><c:numLit>` and `<c:yVal><c:numLit>`"));
+    assert!(instructions.contains("bottom X `c:valAx` crossing a left primary Y `c:valAx`"));
+    assert!(instructions
+        .contains("hidden top X `c:valAx` crossing a visible right secondary Y `c:valAx`"));
+    assert!(instructions.contains("bar directions, radar styles, or scatter styles"));
     assert!(instructions.contains("`table` layout"));
     assert!(instructions.contains("1–50 rows and 1–20 string columns"));
     assert!(instructions.contains("immediately eligible for `inspect_pptx_table`"));
@@ -335,7 +344,7 @@ fn presentations_release_publishes_render_and_existing_edit_contracts() {
     assert!(instructions.contains("expected_self_contained_edit_snapshot"));
     assert!(instructions.contains("workbook is never opened"));
     assert!(instructions.contains("The `chart` layout"));
-    assert!(instructions.contains("literal `c:strLit`/`c:numLit` caches"));
+    assert!(instructions.contains("literal `c:strLit` category and `c:numLit` value caches"));
     assert!(instructions.contains("Pie and doughnut charts require exactly one series"));
     assert!(instructions.contains("standard 2D `area`"));
     assert!(instructions.contains("fixed 50% hole"));
@@ -343,10 +352,10 @@ fn presentations_release_publishes_render_and_existing_edit_contracts() {
     assert!(instructions.contains("`percentage` only for pie/doughnut"));
     assert!(instructions.contains("optional `category_axis_title` and `value_axis_title`"));
     assert!(instructions.contains("canonical `c:dLbls`"));
-    assert!(instructions.contains("literal rich-text category/value-axis titles"));
+    assert!(instructions.contains("literal rich-text category/X/value-axis titles"));
     assert!(instructions.contains("`value_axis=primary` or `secondary`"));
     assert!(instructions.contains("one same-type group on a hidden top category axis"));
-    assert!(instructions.contains("secondary value-axis assignments"));
+    assert!(instructions.contains("primary/secondary Y-axis assignments"));
     assert!(instructions.contains("`value_axis_minimum`/`value_axis_maximum`"));
     assert!(instructions.contains("must include every series value assigned to that axis"));
     assert!(instructions.contains("`value_axis_major_unit`/`value_axis_minor_unit`"));
@@ -484,6 +493,16 @@ fn presentations_release_publishes_render_and_existing_edit_contracts() {
         .pointer("/inputSchema/properties/slides/items/properties/chart/properties/type/enum")
         .and_then(Value::as_array)
         .is_some_and(|values| values.contains(&json!("radar"))));
+    assert!(create
+        .pointer("/inputSchema/properties/slides/items/properties/chart/properties/type/enum")
+        .and_then(Value::as_array)
+        .is_some_and(|values| values.contains(&json!("scatter"))));
+    assert_eq!(
+        create.pointer(
+            "/inputSchema/properties/slides/items/properties/chart/properties/x_values/type"
+        ),
+        Some(&json!(["array", "null"]))
+    );
     let replace_chart = tools
         .iter()
         .find(|tool| tool.get("name").and_then(Value::as_str) == Some("replace_pptx_chart"))
@@ -504,6 +523,10 @@ fn presentations_release_publishes_render_and_existing_edit_contracts() {
         .pointer("/inputSchema/properties/expected_self_contained_edit_snapshot/properties/series/items/required")
         .and_then(Value::as_array)
         .is_some_and(|required| required.contains(&json!("smooth"))));
+    assert!(replace_chart
+        .pointer("/inputSchema/properties/expected_self_contained_edit_snapshot/required")
+        .and_then(Value::as_array)
+        .is_some_and(|required| required.contains(&json!("x_values"))));
 }
 
 #[test]
@@ -872,7 +895,7 @@ fn ready_bundle_v2_fingerprint_matches_plugin_management_seed() {
         .join("\n");
     assert_eq!(
         hex::encode(Sha256::digest(rows.as_bytes())),
-        "72af271d569ddedf98700da2303dd8d951ba04c9ff4c679f41a64fc3db1f7153"
+        "4804728fce7404e7993ac329fdbb7b1a2b0b15d63f83b98419b03d96cd4c1e03"
     );
 }
 
@@ -887,7 +910,7 @@ fn all_28_bundled_skill_fingerprints_match_plugin_management_seed() {
         .join("\n");
     assert_eq!(
         hex::encode(Sha256::digest(rows.as_bytes())),
-        "f097b69dc1ea25987ae6b6e73ddd2c53d8ff51789670b76c5432a3b05ed5d7df"
+        "794c2c4ce1ec66c3cc5ad07343288bf935c037dca185fe3d579facdc82605d1b"
     );
 }
 
