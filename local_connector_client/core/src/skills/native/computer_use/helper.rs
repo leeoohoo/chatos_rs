@@ -18,7 +18,8 @@ use tempfile::TempDir;
 
 use super::{
     dependency_error_local, execute_approved_local, execute_local,
-    screen_capture_dependency_error_local, CONTROL_OPERATIONS,
+    macos_frontmost_window_control_target_local, screen_capture_dependency_error_local,
+    ApprovedFrontmostWindowGuard, CONTROL_OPERATIONS,
 };
 
 const HELPER_PROTOCOL_VERSION: u32 = 1;
@@ -57,6 +58,7 @@ struct HelperRequest {
 #[serde(tag = "kind", rename_all = "snake_case")]
 enum HelperCommand {
     ProtocolProbe,
+    FrontmostWindowControlTarget,
     DependencyProbe {
         screen_capture_only: bool,
     },
@@ -109,6 +111,18 @@ pub(super) fn dependency_error() -> Option<String> {
 
 pub(super) fn screen_capture_dependency_error() -> Option<String> {
     dependency_probe(true)
+}
+
+pub(super) fn frontmost_window_control_target() -> Result<ApprovedFrontmostWindowGuard> {
+    let request = HelperRequest {
+        protocol_version: HELPER_PROTOCOL_VERSION,
+        command: HelperCommand::FrontmostWindowControlTarget,
+    };
+    let result = invoke_helper(&request, None, None)?;
+    let target = serde_json::from_value::<ApprovedFrontmostWindowGuard>(result)
+        .context("decode helper frontmost window control target")?;
+    target.validate()?;
+    Ok(target)
 }
 
 fn dependency_probe(screen_capture_only: bool) -> Option<String> {
@@ -671,6 +685,10 @@ fn dispatch(request: HelperRequest) -> Result<Value> {
             "transport": "single_process_length_prefixed_stdio",
             "network_listener": false,
         })),
+        HelperCommand::FrontmostWindowControlTarget => {
+            serde_json::to_value(macos_frontmost_window_control_target_local()?)
+                .context("encode helper frontmost window control target")
+        }
         HelperCommand::DependencyProbe {
             screen_capture_only,
         } => Ok(json!({

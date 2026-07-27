@@ -100,8 +100,8 @@ fn bundled_plugin_specs_cover_all_twenty_eight_internal_skills_once() {
         .iter()
         .find(|spec| spec.name == "computer-use")
         .expect("Computer Use spec");
-    assert_eq!(computer_use.release_version, "1.16.0");
-    assert_eq!(computer_use.artifact_revision, "computer-use-1.16.0");
+    assert_eq!(computer_use.release_version, "1.17.0");
+    assert_eq!(computer_use.artifact_revision, "computer-use-1.17.0");
 }
 
 #[test]
@@ -233,8 +233,8 @@ fn bundled_releases_have_stable_component_and_content_snapshots() {
         (
             "computer-use",
             (
-                "7f60164e794fd818495feb3fa97a0007299c2b4c984d5d4f18a1b4c91f3f9072",
-                "f99ea220572590739032f7b00c45c679f40e9c2f27b8d0b6cd9c3a7b48f5393f",
+                "0891578b06580d2d03fcad04d64ee123fdcdde0d5aee3d29856f42f2d8a02a6d",
+                "694611d23329a25d86f616fbe003fa75978d6202b13f869414794c8194598344",
             ),
         ),
         (

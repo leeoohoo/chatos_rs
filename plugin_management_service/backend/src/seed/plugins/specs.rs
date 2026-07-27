@@ -165,12 +165,12 @@ static BUNDLED_PLUGIN_SPECS: [BundledPluginSpec; 12] = [
     bundled_plugin_release(
         "computer-use",
         "Computer Use",
-        "Observe macOS or Windows displays, bounded accessibility control state, and the current frontmost window through identity-and-geometry-revalidated transient screenshots; isolate macOS TCC actions in a no-listener signed helper, safely type into writable native and explicit contenteditable targets, and restore the exact previous foreground application when an in-flight activation is cancelled without identity or foreground drift.",
+        "Observe macOS or Windows displays, bounded accessibility state, and transient frontmost-window screenshots; after a fresh approval, move or resize only the exact foreground window, use writable AXFullScreen on macOS, and use explicitly non-fullscreen maximize/restore on Windows, with pre/post identity readback and bounded same-window restoration on partial failure or in-flight cancellation.",
         "Automation",
         &["internal_skill_computer_use"],
-        "1.16.0",
-        "2026-07-27T04:00:00Z",
-        "computer-use-1.16.0",
+        "1.17.0",
+        "2026-07-27T08:00:00Z",
+        "computer-use-1.17.0",
     ),
     bundled_plugin(
         "visualize",

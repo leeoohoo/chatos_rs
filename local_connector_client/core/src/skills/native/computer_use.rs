@@ -45,15 +45,22 @@ const DEFAULT_DRAG_DURATION_MS: u64 = 300;
 const MIN_DRAG_DURATION_MS: u64 = 80;
 const MAX_DRAG_DURATION_MS: u64 = 1_000;
 const MAX_DRAG_STEPS: u32 = 60;
+const MIN_WINDOW_DIMENSION: i64 = 64;
+const MAX_WINDOW_DIMENSION: i64 = 32_768;
+const MIN_WINDOW_COORDINATE: i64 = -100_000;
+const MAX_WINDOW_COORDINATE: i64 = 100_000;
 const POST_ACTION_SETTLE_DELAY: Duration = Duration::from_millis(160);
 
-const CONTROL_OPERATIONS: [&str; 6] = [
+const CONTROL_OPERATIONS: [&str; 9] = [
     "computer_click",
     "computer_drag",
     "computer_press_key",
     "computer_type_text",
     "computer_scroll",
     "computer_activate_application",
+    "computer_set_frontmost_window_bounds",
+    "computer_set_frontmost_window_fullscreen",
+    "computer_set_frontmost_window_maximized",
 ];
 
 #[derive(Debug, Clone)]
@@ -170,6 +177,66 @@ impl From<&DisplayTarget> for ApprovedDisplayGuard {
             pixels_high: display.pixels_high,
             rotation_degrees: display.rotation_degrees,
         }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+struct ApprovedFrontmostWindowGuard {
+    platform: String,
+    application: String,
+    pid: u32,
+    window_id: String,
+    position: [f64; 2],
+    size: [f64; 2],
+    fullscreen: Option<bool>,
+    maximized: Option<bool>,
+    position_settable: bool,
+    size_settable: bool,
+    fullscreen_settable: bool,
+}
+
+impl ApprovedFrontmostWindowGuard {
+    fn validate(&self) -> Result<()> {
+        if !matches!(self.platform.as_str(), "macos" | "windows")
+            || self.application.is_empty()
+            || self.application.chars().count() > 240
+            || self.application.chars().any(is_unsafe_typed_character)
+            || self.pid == 0
+            || self.window_id.is_empty()
+            || self.window_id.chars().count() > 64
+            || self.window_id.chars().any(is_unsafe_typed_character)
+            || self
+                .position
+                .iter()
+                .chain(self.size.iter())
+                .any(|value| !value.is_finite())
+            || self.size[0] <= 0.0
+            || self.size[1] <= 0.0
+        {
+            return Err(anyhow!(
+                "frontmost window identity, state, or geometry is invalid"
+            ));
+        }
+        match self.platform.as_str() {
+            "macos" if self.fullscreen.is_none() || self.maximized.is_some() => {
+                Err(anyhow!("macOS frontmost window state contract is invalid"))
+            }
+            "windows" if self.maximized.is_none() || self.fullscreen.is_some() => Err(anyhow!(
+                "Windows frontmost window state contract is invalid"
+            )),
+            _ => Ok(()),
+        }
+    }
+
+    fn geometry(&self) -> String {
+        format!(
+            "{} x {} @ {}, {}",
+            format_audit_number(self.size[0]),
+            format_audit_number(self.size[1]),
+            format_audit_number(self.position[0]),
+            format_audit_number(self.position[1]),
+        )
     }
 }
 
@@ -471,10 +538,421 @@ function run() {
     application: text(safe(function() { return process.name(); }, ""), 240),
     pid: pid,
     window_id: windowId,
-    title: text(safe(function() { return window.name(); }, ""), 500),
     position: position,
     size: size
   });
+}
+"#;
+
+const FRONTMOST_WINDOW_CONTROL_TARGET_JXA: &str = r#"
+function safe(callable, fallback) {
+  try { return callable(); } catch (_) { return fallback; }
+}
+function text(value, maxLength) {
+  var output = value === undefined || value === null ? "" : String(value);
+  return output.length <= maxLength ? output : output.slice(0, maxLength);
+}
+function pair(value) {
+  try {
+    var first = Number(value[0]);
+    var second = Number(value[1]);
+    if (!Number.isFinite(first) || !Number.isFinite(second)) return null;
+    return [first, second];
+  } catch (_) {
+    return null;
+  }
+}
+function attribute(window, name) {
+  return safe(function() { return window.attributes.byName(name); }, null);
+}
+function attributeValue(window, name, fallback) {
+  var candidate = attribute(window, name);
+  return candidate === null ? fallback : safe(function() { return candidate.value(); }, fallback);
+}
+function attributeSettable(window, name) {
+  var candidate = attribute(window, name);
+  return candidate !== null && Boolean(safe(function() { return candidate.settable(); }, false));
+}
+function run() {
+  var systemEvents = Application("System Events");
+  var processes = systemEvents.applicationProcesses.whose({frontmost: true})();
+  if (processes.length !== 1) throw new Error("A unique frontmost application process is required");
+  var process = processes[0];
+  var windows = safe(function() { return process.windows(); }, []);
+  if (windows.length === 0) throw new Error("The frontmost application has no controllable window");
+  var window = windows[0];
+  var visible = Boolean(safe(function() { return window.visible(); }, false));
+  var minimized = Boolean(attributeValue(window, "AXMinimized", false));
+  var windowId = Number(attributeValue(window, "AXWindowNumber", safe(function() { return window.id(); }, 0)));
+  var pid = Number(safe(function() { return process.unixId(); }, 0));
+  var position = pair(safe(function() { return window.position(); }, null));
+  var size = pair(safe(function() { return window.size(); }, null));
+  var fullscreenAttribute = attribute(window, "AXFullScreen");
+  var fullscreen = fullscreenAttribute === null ? false : Boolean(safe(function() { return fullscreenAttribute.value(); }, false));
+  if (!visible || minimized) throw new Error("The frontmost window is not visibly controllable");
+  if (!Number.isFinite(windowId) || windowId < 1 || Math.floor(windowId) !== windowId) {
+    throw new Error("The frontmost window identity is invalid");
+  }
+  if (!Number.isFinite(pid) || pid < 1 || Math.floor(pid) !== pid) {
+    throw new Error("The frontmost application identity is invalid");
+  }
+  if (position === null || size === null || size[0] <= 0 || size[1] <= 0) {
+    throw new Error("The frontmost window geometry is invalid");
+  }
+  if (!Boolean(process.frontmost())) throw new Error("The frontmost application changed during observation");
+  return JSON.stringify({
+    platform: "macos",
+    application: text(safe(function() { return process.name(); }, ""), 240),
+    pid: pid,
+    window_id: String(windowId),
+    title: text(safe(function() { return window.name(); }, ""), 500),
+    position: position,
+    size: size,
+    fullscreen: fullscreen,
+    maximized: null,
+    position_settable: attributeSettable(window, "AXPosition"),
+    size_settable: attributeSettable(window, "AXSize"),
+    fullscreen_settable: fullscreenAttribute !== null && attributeSettable(window, "AXFullScreen")
+  });
+}
+"#;
+
+const SET_FRONTMOST_WINDOW_BOUNDS_JXA: &str = r#"
+function safe(callable, fallback) {
+  try { return callable(); } catch (_) { return fallback; }
+}
+function pair(value) {
+  try {
+    var first = Number(value[0]);
+    var second = Number(value[1]);
+    if (!Number.isFinite(first) || !Number.isFinite(second)) return null;
+    return [first, second];
+  } catch (_) { return null; }
+}
+function attribute(window, name) {
+  return safe(function() { return window.attributes.byName(name); }, null);
+}
+function attributeValue(window, name, fallback) {
+  var candidate = attribute(window, name);
+  return candidate === null ? fallback : safe(function() { return candidate.value(); }, fallback);
+}
+function attributeSettable(window, name) {
+  var candidate = attribute(window, name);
+  return candidate !== null && Boolean(safe(function() { return candidate.settable(); }, false));
+}
+function currentTarget() {
+  var systemEvents = Application("System Events");
+  var processes = systemEvents.applicationProcesses.whose({frontmost: true})();
+  if (processes.length !== 1) return null;
+  var process = processes[0];
+  var windows = safe(function() { return process.windows(); }, []);
+  if (windows.length === 0) return null;
+  var window = windows[0];
+  var position = pair(safe(function() { return window.position(); }, null));
+  var size = pair(safe(function() { return window.size(); }, null));
+  var fullscreenAttribute = attribute(window, "AXFullScreen");
+  if (position === null || size === null) return null;
+  return {
+    process: process,
+    window: window,
+    application: String(safe(function() { return process.name(); }, "")),
+    pid: Number(safe(function() { return process.unixId(); }, 0)),
+    window_id: String(Number(attributeValue(window, "AXWindowNumber", safe(function() { return window.id(); }, 0)))),
+    position: position,
+    size: size,
+    fullscreen: fullscreenAttribute === null ? false : Boolean(safe(function() { return fullscreenAttribute.value(); }, false)),
+    position_settable: attributeSettable(window, "AXPosition"),
+    size_settable: attributeSettable(window, "AXSize"),
+    fullscreen_settable: fullscreenAttribute !== null && attributeSettable(window, "AXFullScreen"),
+    visible: Boolean(safe(function() { return window.visible(); }, false)),
+    minimized: Boolean(attributeValue(window, "AXMinimized", false)),
+    frontmost: Boolean(safe(function() { return process.frontmost(); }, false))
+  };
+}
+function equalPair(left, right) {
+  return left !== null && right !== null && left[0] === right[0] && left[1] === right[1];
+}
+function matchesApproved(target, approved) {
+  return target !== null && target.frontmost && target.visible && !target.minimized &&
+    target.application === approved.application && target.pid === approved.pid &&
+    target.window_id === approved.window_id && equalPair(target.position, approved.position) &&
+    equalPair(target.size, approved.size) && target.fullscreen === approved.fullscreen &&
+    target.position_settable === approved.position_settable &&
+    target.size_settable === approved.size_settable &&
+    target.fullscreen_settable === approved.fullscreen_settable;
+}
+function identityMatches(target, approved) {
+  return target !== null && target.frontmost && target.visible && !target.minimized &&
+    target.application === approved.application && target.pid === approved.pid &&
+    target.window_id === approved.window_id;
+}
+function recoveryResult(approved) {
+  var current = currentTarget();
+  if (!identityMatches(current, approved)) {
+    return {attempted: false, restored: false, reason: "foreground_or_identity_changed"};
+  }
+  try {
+    current.window.size.set(approved.size);
+    current.window.position.set(approved.position);
+  } catch (_) {
+    return {attempted: true, restored: false, reason: "platform_restore_failed"};
+  }
+  var restored = currentTarget();
+  var exact = matchesApproved(restored, approved);
+  return {attempted: true, restored: exact, reason: exact ? "original_geometry_restored" : "restore_readback_mismatch"};
+}
+function run(argv) {
+  var approved = JSON.parse(argv[0]);
+  var requested = JSON.parse(argv[1]);
+  var before = currentTarget();
+  if (!matchesApproved(before, approved)) {
+    throw new Error("The approved frontmost window identity, state, capability, or geometry changed before bounds control");
+  }
+  if (before.fullscreen || !before.position_settable || !before.size_settable) {
+    throw new Error("The approved frontmost window is not safely movable and resizable");
+  }
+  try {
+    before.window.size.set([requested.width, requested.height]);
+    before.window.position.set([requested.x, requested.y]);
+  } catch (_) {
+    return JSON.stringify({
+      success: false,
+      mode: "approved_input",
+      action: "set_frontmost_window_bounds",
+      target_geometry_applied: false,
+      action_already_executed: true,
+      automatic_replay_safe: false,
+      failure_reason: "platform_apply_failed",
+      window_geometry_recovery: recoveryResult(approved)
+    });
+  }
+  var after = currentTarget();
+  var exact = identityMatches(after, approved) &&
+    equalPair(after.position, [requested.x, requested.y]) &&
+    equalPair(after.size, [requested.width, requested.height]) && !after.fullscreen;
+  if (!exact) {
+    return JSON.stringify({
+      success: false,
+      mode: "approved_input",
+      action: "set_frontmost_window_bounds",
+      target_geometry_applied: false,
+      action_already_executed: true,
+      automatic_replay_safe: false,
+      failure_reason: "target_geometry_readback_mismatch",
+      window_geometry_recovery: recoveryResult(approved)
+    });
+  }
+  return JSON.stringify({
+    success: true,
+    mode: "approved_input",
+    action: "set_frontmost_window_bounds",
+    platform: "macos",
+    application: approved.application,
+    pid: approved.pid,
+    window_id: approved.window_id,
+    original_position: approved.position,
+    original_size: approved.size,
+    position: after.position,
+    size: after.size,
+    target_geometry_applied: true,
+    identity_and_geometry_revalidated_after_action: true,
+    window_geometry_recovery: {attempted: false, restored: false, reason: "action_completed"}
+  });
+}
+"#;
+
+const RESTORE_FRONTMOST_WINDOW_BOUNDS_JXA: &str = r#"
+function safe(callable, fallback) { try { return callable(); } catch (_) { return fallback; } }
+function pair(value) {
+  try {
+    var first = Number(value[0]); var second = Number(value[1]);
+    return Number.isFinite(first) && Number.isFinite(second) ? [first, second] : null;
+  } catch (_) { return null; }
+}
+function attributeValue(window, name, fallback) {
+  return safe(function() { return window.attributes.byName(name).value(); }, fallback);
+}
+function currentTarget() {
+  var systemEvents = Application("System Events");
+  var processes = systemEvents.applicationProcesses.whose({frontmost: true})();
+  if (processes.length !== 1) return null;
+  var process = processes[0]; var windows = safe(function() { return process.windows(); }, []);
+  if (windows.length === 0) return null;
+  var window = windows[0];
+  return {
+    process: process, window: window,
+    application: String(safe(function() { return process.name(); }, "")),
+    pid: Number(safe(function() { return process.unixId(); }, 0)),
+    window_id: String(Number(attributeValue(window, "AXWindowNumber", safe(function() { return window.id(); }, 0)))),
+    position: pair(safe(function() { return window.position(); }, null)),
+    size: pair(safe(function() { return window.size(); }, null)),
+    frontmost: Boolean(safe(function() { return process.frontmost(); }, false))
+  };
+}
+function equalPair(left, right) { return left !== null && left[0] === right[0] && left[1] === right[1]; }
+function identityMatches(target, approved) {
+  return target !== null && target.frontmost && target.application === approved.application &&
+    target.pid === approved.pid && target.window_id === approved.window_id;
+}
+function run(argv) {
+  var approved = JSON.parse(argv[0]); var requested = JSON.parse(argv[1]);
+  var current = currentTarget();
+  if (!identityMatches(current, approved) || !equalPair(current.position, [requested.x, requested.y]) ||
+      !equalPair(current.size, [requested.width, requested.height])) {
+    return JSON.stringify({attempted: false, restored: false, reason: "foreground_identity_or_target_geometry_changed"});
+  }
+  try { current.window.size.set(approved.size); current.window.position.set(approved.position); }
+  catch (_) { return JSON.stringify({attempted: true, restored: false, reason: "platform_restore_failed"}); }
+  var after = currentTarget();
+  var restored = identityMatches(after, approved) && equalPair(after.position, approved.position) && equalPair(after.size, approved.size);
+  return JSON.stringify({attempted: true, restored: restored, reason: restored ? "cancelled_action_restored" : "restore_readback_mismatch"});
+}
+"#;
+
+const SET_FRONTMOST_WINDOW_FULLSCREEN_JXA: &str = r#"
+function safe(callable, fallback) { try { return callable(); } catch (_) { return fallback; } }
+function pair(value) {
+  try {
+    var first = Number(value[0]); var second = Number(value[1]);
+    return Number.isFinite(first) && Number.isFinite(second) ? [first, second] : null;
+  } catch (_) { return null; }
+}
+function attribute(window, name) { return safe(function() { return window.attributes.byName(name); }, null); }
+function attributeValue(window, name, fallback) {
+  var candidate = attribute(window, name);
+  return candidate === null ? fallback : safe(function() { return candidate.value(); }, fallback);
+}
+function attributeSettable(window, name) {
+  var candidate = attribute(window, name);
+  return candidate !== null && Boolean(safe(function() { return candidate.settable(); }, false));
+}
+function currentTarget() {
+  var systemEvents = Application("System Events");
+  var processes = systemEvents.applicationProcesses.whose({frontmost: true})();
+  if (processes.length !== 1) return null;
+  var process = processes[0]; var windows = safe(function() { return process.windows(); }, []);
+  if (windows.length === 0) return null;
+  var window = windows[0]; var fullscreenAttribute = attribute(window, "AXFullScreen");
+  return {
+    process: process, window: window, fullscreen_attribute: fullscreenAttribute,
+    application: String(safe(function() { return process.name(); }, "")),
+    pid: Number(safe(function() { return process.unixId(); }, 0)),
+    window_id: String(Number(attributeValue(window, "AXWindowNumber", safe(function() { return window.id(); }, 0)))),
+    position: pair(safe(function() { return window.position(); }, null)),
+    size: pair(safe(function() { return window.size(); }, null)),
+    fullscreen: fullscreenAttribute === null ? false : Boolean(safe(function() { return fullscreenAttribute.value(); }, false)),
+    position_settable: attributeSettable(window, "AXPosition"),
+    size_settable: attributeSettable(window, "AXSize"),
+    fullscreen_settable: fullscreenAttribute !== null && attributeSettable(window, "AXFullScreen"),
+    visible: Boolean(safe(function() { return window.visible(); }, false)),
+    minimized: Boolean(attributeValue(window, "AXMinimized", false)),
+    frontmost: Boolean(safe(function() { return process.frontmost(); }, false))
+  };
+}
+function equalPair(left, right) { return left !== null && left[0] === right[0] && left[1] === right[1]; }
+function matchesApproved(target, approved) {
+  return target !== null && target.frontmost && target.visible && !target.minimized &&
+    target.application === approved.application && target.pid === approved.pid &&
+    target.window_id === approved.window_id && equalPair(target.position, approved.position) &&
+    equalPair(target.size, approved.size) && target.fullscreen === approved.fullscreen &&
+    target.position_settable === approved.position_settable && target.size_settable === approved.size_settable &&
+    target.fullscreen_settable === approved.fullscreen_settable;
+}
+function identityMatches(target, approved) {
+  return target !== null && target.frontmost && target.visible && !target.minimized &&
+    target.application === approved.application && target.pid === approved.pid && target.window_id === approved.window_id;
+}
+function waitForState(approved, expected) {
+  for (var index = 0; index < 20; index += 1) {
+    var current = currentTarget();
+    if (!identityMatches(current, approved)) return current;
+    if (current.fullscreen === expected) return current;
+    delay(0.04);
+  }
+  return currentTarget();
+}
+function restoreState(approved) {
+  var current = currentTarget();
+  if (!identityMatches(current, approved) || current.fullscreen_attribute === null || !current.fullscreen_settable) {
+    return {attempted: false, restored: false, reason: "foreground_identity_or_capability_changed"};
+  }
+  try { current.fullscreen_attribute.value.set(approved.fullscreen); }
+  catch (_) { return {attempted: true, restored: false, reason: "platform_restore_failed"}; }
+  var restored = waitForState(approved, approved.fullscreen);
+  var exact = identityMatches(restored, approved) && restored.fullscreen === approved.fullscreen;
+  return {attempted: true, restored: exact, reason: exact ? "original_fullscreen_state_restored" : "restore_readback_mismatch"};
+}
+function run(argv) {
+  var approved = JSON.parse(argv[0]); var requested = argv[1] === "true";
+  var before = currentTarget();
+  if (!matchesApproved(before, approved)) {
+    throw new Error("The approved frontmost window identity, state, capability, or geometry changed before fullscreen control");
+  }
+  if (before.fullscreen_attribute === null || !before.fullscreen_settable || before.fullscreen === requested) {
+    throw new Error("The approved frontmost window fullscreen transition is unavailable");
+  }
+  try { before.fullscreen_attribute.value.set(requested); }
+  catch (_) {
+    return JSON.stringify({
+      success: false, mode: "approved_input", action: "set_frontmost_window_fullscreen",
+      target_fullscreen_applied: false, action_already_executed: true, automatic_replay_safe: false,
+      failure_reason: "platform_apply_failed", window_state_recovery: restoreState(approved)
+    });
+  }
+  var after = waitForState(approved, requested);
+  if (!identityMatches(after, approved) || after.fullscreen !== requested) {
+    return JSON.stringify({
+      success: false, mode: "approved_input", action: "set_frontmost_window_fullscreen",
+      target_fullscreen_applied: false, action_already_executed: true, automatic_replay_safe: false,
+      failure_reason: "target_state_readback_mismatch", window_state_recovery: restoreState(approved)
+    });
+  }
+  return JSON.stringify({
+    success: true, mode: "approved_input", action: "set_frontmost_window_fullscreen", platform: "macos",
+    application: approved.application, pid: approved.pid, window_id: approved.window_id,
+    original_fullscreen: approved.fullscreen, fullscreen: after.fullscreen,
+    position: after.position, size: after.size, target_fullscreen_applied: true,
+    identity_and_state_revalidated_after_action: true,
+    window_state_recovery: {attempted: false, restored: false, reason: "action_completed"}
+  });
+}
+"#;
+
+const RESTORE_FRONTMOST_WINDOW_FULLSCREEN_JXA: &str = r#"
+function safe(callable, fallback) { try { return callable(); } catch (_) { return fallback; } }
+function attributeValue(window, name, fallback) { return safe(function() { return window.attributes.byName(name).value(); }, fallback); }
+function currentTarget() {
+  var systemEvents = Application("System Events"); var processes = systemEvents.applicationProcesses.whose({frontmost: true})();
+  if (processes.length !== 1) return null;
+  var process = processes[0]; var windows = safe(function() { return process.windows(); }, []); if (windows.length === 0) return null;
+  var window = windows[0]; var fullscreenAttribute = safe(function() { return window.attributes.byName("AXFullScreen"); }, null);
+  return {
+    window: window, fullscreen_attribute: fullscreenAttribute,
+    application: String(safe(function() { return process.name(); }, "")),
+    pid: Number(safe(function() { return process.unixId(); }, 0)),
+    window_id: String(Number(attributeValue(window, "AXWindowNumber", safe(function() { return window.id(); }, 0)))),
+    fullscreen: fullscreenAttribute === null ? false : Boolean(safe(function() { return fullscreenAttribute.value(); }, false)),
+    frontmost: Boolean(safe(function() { return process.frontmost(); }, false))
+  };
+}
+function identityMatches(target, approved) {
+  return target !== null && target.frontmost && target.application === approved.application &&
+    target.pid === approved.pid && target.window_id === approved.window_id;
+}
+function run(argv) {
+  var approved = JSON.parse(argv[0]); var requested = argv[1] === "true"; var current = currentTarget();
+  if (!identityMatches(current, approved) || current.fullscreen !== requested || current.fullscreen_attribute === null) {
+    return JSON.stringify({attempted: false, restored: false, reason: "foreground_identity_or_target_state_changed"});
+  }
+  try { current.fullscreen_attribute.value.set(approved.fullscreen); }
+  catch (_) { return JSON.stringify({attempted: true, restored: false, reason: "platform_restore_failed"}); }
+  for (var index = 0; index < 20; index += 1) {
+    var after = currentTarget();
+    if (!identityMatches(after, approved) || after.fullscreen === approved.fullscreen) break;
+    delay(0.04);
+  }
+  var restored = currentTarget(); var exact = identityMatches(restored, approved) && restored.fullscreen === approved.fullscreen;
+  return JSON.stringify({attempted: true, restored: exact, reason: exact ? "cancelled_action_restored" : "restore_readback_mismatch"});
 }
 "#;
 
@@ -622,6 +1100,10 @@ function run(argv) {
 "#;
 
 pub(super) fn tool_definitions(include_control: bool) -> Vec<Value> {
+    tool_definitions_for_platform(include_control, current_platform_name())
+}
+
+fn tool_definitions_for_platform(include_control: bool, platform: &str) -> Vec<Value> {
     let mut tools = vec![
         json!({
             "name": "computer_list_windows",
@@ -776,13 +1258,61 @@ pub(super) fn tool_definitions(include_control: bool) -> Vec<Value> {
                     "additionalProperties": false
                 }
             }),
+            json!({
+                "name": "computer_set_frontmost_window_bounds",
+                "description": "Move and resize only the current frontmost non-fullscreen, non-maximized window to one reviewed global desktop rectangle. Approval binds the exact process, native window identity, original state and geometry, and requested rectangle. The target must leave at least 64 x 64 desktop units visible on one active display. Identity, foreground, state, capability, display-layout, or geometry drift fails closed; partial platform failures attempt an identity-bound restoration and are never automatically replayed.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "x": {"type": "integer", "minimum": MIN_WINDOW_COORDINATE, "maximum": MAX_WINDOW_COORDINATE, "description": "Global desktop x coordinate for the window's top-left corner."},
+                        "y": {"type": "integer", "minimum": MIN_WINDOW_COORDINATE, "maximum": MAX_WINDOW_COORDINATE, "description": "Global desktop y coordinate for the window's top-left corner."},
+                        "width": {"type": "integer", "minimum": MIN_WINDOW_DIMENSION, "maximum": MAX_WINDOW_DIMENSION},
+                        "height": {"type": "integer", "minimum": MIN_WINDOW_DIMENSION, "maximum": MAX_WINDOW_DIMENSION}
+                    },
+                    "required": ["x", "y", "width", "height"],
+                    "additionalProperties": false
+                }
+            }),
+            json!({
+                "name": "computer_set_frontmost_window_fullscreen",
+                "description": "macOS only: set the exact current frontmost Accessibility window's native AXFullScreen state. Approval binds its process, AX window number, original geometry/state, and requested state. The AXFullScreen attribute must be explicitly writable, and foreground or identity drift fails closed. This does not simulate the green button or send a keyboard shortcut.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "fullscreen": {"type": "boolean"}
+                    },
+                    "required": ["fullscreen"],
+                    "additionalProperties": false
+                }
+            }),
+            json!({
+                "name": "computer_set_frontmost_window_maximized",
+                "description": "Windows only: maximize or restore the exact current foreground HWND. This is standard Windows maximize/restore, not true application fullscreen. Approval binds HWND, PID/process image, original geometry/state, and requested state; foreground, identity, state, or geometry drift fails closed and cancellation attempts to restore the approved prior state.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "maximized": {"type": "boolean"}
+                    },
+                    "required": ["maximized"],
+                    "additionalProperties": false
+                }
+            }),
         ]);
     }
-    filter_tools_for_platform(&mut tools, current_platform_name());
+    filter_tools_for_platform(&mut tools, platform);
     tools
 }
 
-fn filter_tools_for_platform(_tools: &mut Vec<Value>, _platform: &str) {}
+fn filter_tools_for_platform(tools: &mut Vec<Value>, platform: &str) {
+    tools.retain(|tool| {
+        let name = tool.get("name").and_then(Value::as_str).unwrap_or_default();
+        match name {
+            "computer_set_frontmost_window_fullscreen" => platform == "macos",
+            "computer_set_frontmost_window_maximized" => platform == "windows",
+            _ => true,
+        }
+    });
+}
 
 pub(super) fn requires_interactive_approval(operation: &str) -> bool {
     CONTROL_OPERATIONS.contains(&operation)
@@ -950,6 +1480,91 @@ pub(super) fn approval_command(
                     None,
                     Some("process_identity_revalidated_before_activation"),
                     Some("post_action_observation_before_retry"),
+                ),
+            ))
+        }
+        "computer_set_frontmost_window_bounds" => {
+            let request = parse_window_bounds_request(arguments)?;
+            let display_layout = active_display_layout_guard()?;
+            validate_requested_window_bounds_against_layout(&request, &display_layout)?;
+            let target = frontmost_window_control_target()?;
+            validate_window_bounds_capability(&target)?;
+            Ok((
+                operation.to_string(),
+                vec![
+                    format!("--x={}", request.x),
+                    format!("--y={}", request.y),
+                    format!("--width={}", request.width),
+                    format!("--height={}", request.height),
+                    window_approval_argument(&target)?,
+                    window_display_layout_approval_argument(&display_layout)?,
+                ],
+                computer_use_audit(
+                    operation,
+                    vec![
+                        audit_detail("application", safe_approval_label(&target.application)),
+                        audit_detail("pid", target.pid),
+                        audit_detail("window_id", &target.window_id),
+                        audit_detail("original_geometry", target.geometry()),
+                        audit_detail("target_geometry", request.geometry()),
+                    ],
+                    None,
+                    Some("frontmost_window_identity_state_geometry_and_display_layout_revalidated"),
+                    Some(
+                        "identity_bound_window_geometry_restore_on_partial_failure_or_cancellation",
+                    ),
+                ),
+            ))
+        }
+        "computer_set_frontmost_window_fullscreen" => {
+            let fullscreen = parse_window_fullscreen_request(arguments)?;
+            let target = frontmost_window_control_target()?;
+            validate_window_fullscreen_capability(&target, fullscreen)?;
+            Ok((
+                operation.to_string(),
+                vec![
+                    format!("--fullscreen={fullscreen}"),
+                    window_approval_argument(&target)?,
+                ],
+                computer_use_audit(
+                    operation,
+                    vec![
+                        audit_detail("application", safe_approval_label(&target.application)),
+                        audit_detail("pid", target.pid),
+                        audit_detail("window_id", &target.window_id),
+                        audit_detail("original_fullscreen", target.fullscreen.unwrap_or(false)),
+                        audit_detail("target_fullscreen", fullscreen),
+                        audit_detail("original_geometry", target.geometry()),
+                    ],
+                    None,
+                    Some("macos_ax_fullscreen_identity_and_state_revalidated"),
+                    Some("identity_bound_fullscreen_state_restore_on_failure_or_cancellation"),
+                ),
+            ))
+        }
+        "computer_set_frontmost_window_maximized" => {
+            let maximized = parse_window_maximized_request(arguments)?;
+            let target = frontmost_window_control_target()?;
+            validate_window_maximized_capability(&target, maximized)?;
+            Ok((
+                operation.to_string(),
+                vec![
+                    format!("--maximized={maximized}"),
+                    window_approval_argument(&target)?,
+                ],
+                computer_use_audit(
+                    operation,
+                    vec![
+                        audit_detail("application", safe_approval_label(&target.application)),
+                        audit_detail("pid", target.pid),
+                        audit_detail("window_id", &target.window_id),
+                        audit_detail("original_maximized", target.maximized.unwrap_or(false)),
+                        audit_detail("target_maximized", maximized),
+                        audit_detail("original_geometry", target.geometry()),
+                    ],
+                    None,
+                    Some("windows_foreground_hwnd_identity_and_state_revalidated"),
+                    Some("identity_bound_maximized_state_restore_on_failure_or_cancellation"),
                 ),
             ))
         }
@@ -1235,6 +1850,50 @@ fn execute_approved_local(
             action_cancelled,
         ));
     }
+    if operation == "computer_set_frontmost_window_bounds" {
+        let request = parse_window_bounds_request(arguments)?;
+        validate_approved_window_display_layout(&request, approved_command_args)?;
+        let approved = approved_window_guard(approved_command_args)?;
+        let result = set_frontmost_window_bounds(request, approved.clone(), action_cancelled)?;
+        return Ok(attach_window_post_action_observation(
+            operation,
+            result,
+            WindowControlRollbackGuard::Bounds { request, approved },
+            PostActionObservationTarget::MainDisplay,
+            action_cancelled,
+        ));
+    }
+    if operation == "computer_set_frontmost_window_fullscreen" {
+        let fullscreen = parse_window_fullscreen_request(arguments)?;
+        let approved = approved_window_guard(approved_command_args)?;
+        let result =
+            set_frontmost_window_fullscreen(fullscreen, approved.clone(), action_cancelled)?;
+        return Ok(attach_window_post_action_observation(
+            operation,
+            result,
+            WindowControlRollbackGuard::Fullscreen {
+                fullscreen,
+                approved,
+            },
+            PostActionObservationTarget::MainDisplay,
+            action_cancelled,
+        ));
+    }
+    if operation == "computer_set_frontmost_window_maximized" {
+        let maximized = parse_window_maximized_request(arguments)?;
+        let approved = approved_window_guard(approved_command_args)?;
+        let result = set_frontmost_window_maximized(maximized, approved.clone(), action_cancelled)?;
+        return Ok(attach_window_post_action_observation(
+            operation,
+            result,
+            WindowControlRollbackGuard::Maximized {
+                maximized,
+                approved,
+            },
+            PostActionObservationTarget::MainDisplay,
+            action_cancelled,
+        ));
+    }
     let (result, observation_target) = match operation {
         "computer_click" => {
             let action = parse_click(arguments)?;
@@ -1280,6 +1939,22 @@ fn execute_approved_local(
 enum PostActionObservationTarget {
     MainDisplay,
     ApprovedDisplay(ApprovedDisplayGuard),
+}
+
+#[derive(Debug, Clone)]
+enum WindowControlRollbackGuard {
+    Bounds {
+        request: WindowBoundsRequest,
+        approved: ApprovedFrontmostWindowGuard,
+    },
+    Fullscreen {
+        fullscreen: bool,
+        approved: ApprovedFrontmostWindowGuard,
+    },
+    Maximized {
+        maximized: bool,
+        approved: ApprovedFrontmostWindowGuard,
+    },
 }
 
 impl PostActionObservationTarget {
@@ -1398,6 +2073,92 @@ fn attach_activation_post_action_observation(
     )
 }
 
+fn attach_window_post_action_observation(
+    operation: &str,
+    action_result: Value,
+    rollback_guard: WindowControlRollbackGuard,
+    target: PostActionObservationTarget,
+    action_cancelled: Option<&AtomicBool>,
+) -> Value {
+    if action_cancelled.is_some_and(|cancelled| cancelled.load(Ordering::SeqCst)) {
+        return build_cancelled_window_result(operation, action_result, &rollback_guard, &target);
+    }
+    thread::sleep(POST_ACTION_SETTLE_DELAY);
+    if action_cancelled.is_some_and(|cancelled| cancelled.load(Ordering::SeqCst)) {
+        return build_cancelled_window_result(operation, action_result, &rollback_guard, &target);
+    }
+    let observation = capture_display(target.requested_index())
+        .map_err(|error| classify_post_action_observation_error(error.to_string().as_str()));
+    if action_cancelled.is_some_and(|cancelled| cancelled.load(Ordering::SeqCst)) {
+        return build_cancelled_window_result(operation, action_result, &rollback_guard, &target);
+    }
+    build_post_action_result(operation, action_result, &target, observation)
+}
+
+fn build_cancelled_window_result(
+    operation: &str,
+    mut action_result: Value,
+    rollback_guard: &WindowControlRollbackGuard,
+    target: &PostActionObservationTarget,
+) -> Value {
+    if window_control_target_was_applied(&action_result) {
+        let recovery = rollback_window_control(rollback_guard);
+        if let Some(map) = action_result.as_object_mut() {
+            map.insert("success".to_string(), Value::Bool(false));
+            map.insert(
+                "failure_reason".to_string(),
+                Value::String("cancelled_after_action".to_string()),
+            );
+            match rollback_guard {
+                WindowControlRollbackGuard::Bounds { .. } => {
+                    map.insert("target_geometry_applied".to_string(), Value::Bool(false));
+                    map.insert("window_geometry_recovery".to_string(), recovery);
+                }
+                WindowControlRollbackGuard::Fullscreen { .. } => {
+                    map.insert("target_fullscreen_applied".to_string(), Value::Bool(false));
+                    map.insert("window_state_recovery".to_string(), recovery);
+                }
+                WindowControlRollbackGuard::Maximized { .. } => {
+                    map.insert("target_maximized_applied".to_string(), Value::Bool(false));
+                    map.insert("window_state_recovery".to_string(), recovery);
+                }
+            }
+        }
+    }
+    build_post_action_result(
+        operation,
+        action_result,
+        target,
+        Err("cancelled_after_action"),
+    )
+}
+
+fn window_control_target_was_applied(result: &Value) -> bool {
+    [
+        "target_geometry_applied",
+        "target_fullscreen_applied",
+        "target_maximized_applied",
+    ]
+    .iter()
+    .any(|field| result.get(*field).and_then(Value::as_bool) == Some(true))
+}
+
+fn rollback_window_control(guard: &WindowControlRollbackGuard) -> Value {
+    match guard {
+        WindowControlRollbackGuard::Bounds { request, approved } => {
+            rollback_frontmost_window_bounds(*request, approved)
+        }
+        WindowControlRollbackGuard::Fullscreen {
+            fullscreen,
+            approved,
+        } => rollback_frontmost_window_fullscreen(*fullscreen, approved),
+        WindowControlRollbackGuard::Maximized {
+            maximized,
+            approved,
+        } => rollback_frontmost_window_maximized(*maximized, approved),
+    }
+}
+
 fn build_cancelled_activation_result(
     operation: &str,
     action_result: Value,
@@ -1449,6 +2210,10 @@ fn build_post_action_result(
     observation: std::result::Result<Value, &'static str>,
 ) -> Value {
     let mut structured = action_result.as_object().cloned().unwrap_or_default();
+    let action_succeeded = structured
+        .get("success")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
     structured.insert(
         "recovery".to_string(),
         json!({
@@ -1490,7 +2255,11 @@ fn build_post_action_result(
                 .and_then(|map| map.remove("_model_input"))
                 .unwrap_or_else(|| Value::Array(Vec::new()));
             json!({
-                "text": "The approved Computer Use action completed. A transient post-action screenshot is attached for recovery and the next model step; its pixels are not persisted.",
+                "text": if action_succeeded {
+                    "The approved Computer Use action completed. A transient post-action screenshot is attached for recovery and the next model step; its pixels are not persisted."
+                } else {
+                    "The approved Computer Use action ran, but the requested final state was not retained. Review the identity-bound recovery metadata and transient screenshot before deciding what to do next; never replay the action automatically."
+                },
                 "_structured_result": Value::Object(structured),
                 "_model_input": model_input,
             })
@@ -1501,7 +2270,11 @@ fn build_post_action_result(
                 post_action_observation_failure(target, reason),
             );
             json!({
-                "text": "The approved Computer Use action completed, but the automatic post-action screenshot was unavailable. Do not replay the action automatically; observe the desktop again before deciding whether another action is needed.",
+                "text": if action_succeeded {
+                    "The approved Computer Use action completed, but the automatic post-action screenshot was unavailable. Do not replay the action automatically; observe the desktop again before deciding whether another action is needed."
+                } else {
+                    "The approved Computer Use action ran without retaining the requested final state, and the automatic post-action screenshot was unavailable. Review the recovery metadata, observe again, and do not replay automatically."
+                },
                 "_structured_result": Value::Object(structured),
             })
         }
@@ -1603,6 +2376,20 @@ struct TypedTextAction<'a> {
 struct ScrollAction {
     delta_y: i32,
     delta_x: i32,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct WindowBoundsRequest {
+    x: i32,
+    y: i32,
+    width: i32,
+    height: i32,
+}
+
+impl WindowBoundsRequest {
+    fn geometry(&self) -> String {
+        format!("{} x {} @ {}, {}", self.width, self.height, self.x, self.y)
+    }
 }
 
 #[cfg(target_os = "macos")]
@@ -1891,6 +2678,208 @@ fn parse_application_pid(arguments: &Value) -> Result<u32> {
         return Err(anyhow!("pid must be between 1 and {}", i32::MAX));
     }
     Ok(pid as u32)
+}
+
+fn parse_window_bounds_request(arguments: &Value) -> Result<WindowBoundsRequest> {
+    reject_unknown_fields(arguments, &["x", "y", "width", "height"])?;
+    Ok(WindowBoundsRequest {
+        x: required_bounded_i32(arguments, "x", MIN_WINDOW_COORDINATE, MAX_WINDOW_COORDINATE)?,
+        y: required_bounded_i32(arguments, "y", MIN_WINDOW_COORDINATE, MAX_WINDOW_COORDINATE)?,
+        width: required_bounded_i32(
+            arguments,
+            "width",
+            MIN_WINDOW_DIMENSION,
+            MAX_WINDOW_DIMENSION,
+        )?,
+        height: required_bounded_i32(
+            arguments,
+            "height",
+            MIN_WINDOW_DIMENSION,
+            MAX_WINDOW_DIMENSION,
+        )?,
+    })
+}
+
+fn parse_window_fullscreen_request(arguments: &Value) -> Result<bool> {
+    reject_unknown_fields(arguments, &["fullscreen"])?;
+    arguments
+        .get("fullscreen")
+        .and_then(Value::as_bool)
+        .ok_or_else(|| anyhow!("fullscreen must be a boolean"))
+}
+
+fn parse_window_maximized_request(arguments: &Value) -> Result<bool> {
+    reject_unknown_fields(arguments, &["maximized"])?;
+    arguments
+        .get("maximized")
+        .and_then(Value::as_bool)
+        .ok_or_else(|| anyhow!("maximized must be a boolean"))
+}
+
+fn required_bounded_i32(arguments: &Value, field: &str, minimum: i64, maximum: i64) -> Result<i32> {
+    let value = arguments
+        .get(field)
+        .and_then(Value::as_i64)
+        .filter(|value| (minimum..=maximum).contains(value))
+        .ok_or_else(|| anyhow!("{field} must be an integer between {minimum} and {maximum}"))?;
+    i32::try_from(value).map_err(|_| anyhow!("{field} is outside the supported integer range"))
+}
+
+fn active_display_layout_guard() -> Result<Vec<ApprovedDisplayGuard>> {
+    active_displays().map(|displays| {
+        displays
+            .iter()
+            .map(ApprovedDisplayGuard::from)
+            .collect::<Vec<_>>()
+    })
+}
+
+fn validate_requested_window_bounds_against_layout(
+    request: &WindowBoundsRequest,
+    display_layout: &[ApprovedDisplayGuard],
+) -> Result<()> {
+    let requested_left = f64::from(request.x);
+    let requested_top = f64::from(request.y);
+    let requested_right = requested_left + f64::from(request.width);
+    let requested_bottom = requested_top + f64::from(request.height);
+    let visible = display_layout.iter().any(|display| {
+        let overlap_width = requested_right.min(display.origin_x + display.width)
+            - requested_left.max(display.origin_x);
+        let overlap_height = requested_bottom.min(display.origin_y + display.height)
+            - requested_top.max(display.origin_y);
+        overlap_width >= MIN_WINDOW_DIMENSION as f64
+            && overlap_height >= MIN_WINDOW_DIMENSION as f64
+    });
+    if !visible {
+        return Err(anyhow!(
+            "requested window bounds must leave at least {MIN_WINDOW_DIMENSION} x {MIN_WINDOW_DIMENSION} desktop units visible on one active display"
+        ));
+    }
+    Ok(())
+}
+
+fn window_display_layout_approval_argument(
+    display_layout: &[ApprovedDisplayGuard],
+) -> Result<String> {
+    if display_layout.is_empty() || display_layout.len() > MAX_ACTIVE_DISPLAYS {
+        return Err(anyhow!("approved active display layout is invalid"));
+    }
+    Ok(format!(
+        "--display-layout-json={}",
+        serde_json::to_string(display_layout)?
+    ))
+}
+
+fn approved_window_display_layout(
+    approved_command_args: Option<&[String]>,
+) -> Result<Vec<ApprovedDisplayGuard>> {
+    let arguments = approved_command_args
+        .ok_or_else(|| anyhow!("approved active display layout is missing"))?;
+    let encoded = arguments
+        .iter()
+        .find_map(|argument| argument.strip_prefix("--display-layout-json="))
+        .ok_or_else(|| anyhow!("approved active display layout is missing"))?;
+    let layout = serde_json::from_str::<Vec<ApprovedDisplayGuard>>(encoded)
+        .context("decode approved active display layout")?;
+    if layout.is_empty() || layout.len() > MAX_ACTIVE_DISPLAYS {
+        return Err(anyhow!("approved active display layout is invalid"));
+    }
+    Ok(layout)
+}
+
+fn validate_approved_window_display_layout(
+    request: &WindowBoundsRequest,
+    approved_command_args: Option<&[String]>,
+) -> Result<()> {
+    let approved = approved_window_display_layout(approved_command_args)?;
+    let current = active_display_layout_guard()?;
+    if current != approved {
+        return Err(anyhow!(
+            "active display identity or geometry changed after window-bounds approval; observe and approve again"
+        ));
+    }
+    validate_requested_window_bounds_against_layout(request, &current)
+}
+
+fn validate_window_bounds_capability(target: &ApprovedFrontmostWindowGuard) -> Result<()> {
+    target.validate()?;
+    if !target.position_settable || !target.size_settable {
+        return Err(anyhow!(
+            "the current frontmost window does not expose writable position and size"
+        ));
+    }
+    if target.fullscreen == Some(true) {
+        return Err(anyhow!(
+            "exit fullscreen before moving or resizing the frontmost macOS window"
+        ));
+    }
+    if target.maximized == Some(true) {
+        return Err(anyhow!(
+            "restore the Windows foreground window before moving or resizing it"
+        ));
+    }
+    Ok(())
+}
+
+fn validate_window_fullscreen_capability(
+    target: &ApprovedFrontmostWindowGuard,
+    requested: bool,
+) -> Result<()> {
+    target.validate()?;
+    if target.platform != "macos" {
+        return Err(anyhow!(
+            "native frontmost-window fullscreen control is available only on macOS"
+        ));
+    }
+    if !target.fullscreen_settable {
+        return Err(anyhow!(
+            "the current frontmost macOS window does not expose writable AXFullScreen state"
+        ));
+    }
+    if target.fullscreen == Some(requested) {
+        return Err(anyhow!(
+            "the current frontmost macOS window is already in the requested fullscreen state"
+        ));
+    }
+    Ok(())
+}
+
+fn validate_window_maximized_capability(
+    target: &ApprovedFrontmostWindowGuard,
+    requested: bool,
+) -> Result<()> {
+    target.validate()?;
+    if target.platform != "windows" {
+        return Err(anyhow!(
+            "frontmost-window maximize control is available only on Windows"
+        ));
+    }
+    if target.maximized == Some(requested) {
+        return Err(anyhow!(
+            "the current Windows foreground window is already in the requested maximized state"
+        ));
+    }
+    Ok(())
+}
+
+fn window_approval_argument(target: &ApprovedFrontmostWindowGuard) -> Result<String> {
+    target.validate()?;
+    Ok(format!("--window-json={}", serde_json::to_string(target)?))
+}
+
+fn approved_window_guard(
+    approved_command_args: Option<&[String]>,
+) -> Result<ApprovedFrontmostWindowGuard> {
+    let arguments = approved_command_args
+        .ok_or_else(|| anyhow!("approved frontmost window identity is missing"))?;
+    let encoded = arguments
+        .iter()
+        .find_map(|argument| argument.strip_prefix("--window-json="))
+        .ok_or_else(|| anyhow!("approved frontmost window identity is missing"))?;
+    let target = serde_json::from_str::<ApprovedFrontmostWindowGuard>(encoded)
+        .context("decode approved frontmost window identity")?;
+    target.validate()?;
+    Ok(target)
 }
 
 fn required_display_index(arguments: &Value) -> Result<u32> {
@@ -2966,6 +3955,177 @@ fn lookup_application(_pid: u32) -> Result<Value> {
     ))
 }
 
+#[cfg(target_os = "macos")]
+fn frontmost_window_control_target() -> Result<ApprovedFrontmostWindowGuard> {
+    helper::frontmost_window_control_target()
+}
+
+#[cfg(target_os = "windows")]
+fn frontmost_window_control_target() -> Result<ApprovedFrontmostWindowGuard> {
+    windows::frontmost_window_control_target()
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+fn frontmost_window_control_target() -> Result<ApprovedFrontmostWindowGuard> {
+    Err(anyhow!(
+        "Computer Use frontmost-window control is unsupported on this platform"
+    ))
+}
+
+#[cfg(target_os = "macos")]
+fn set_frontmost_window_bounds(
+    request: WindowBoundsRequest,
+    approved: ApprovedFrontmostWindowGuard,
+    action_cancelled: Option<&AtomicBool>,
+) -> Result<Value> {
+    set_macos_frontmost_window_bounds(request, approved, action_cancelled)
+}
+
+#[cfg(target_os = "windows")]
+fn set_frontmost_window_bounds(
+    request: WindowBoundsRequest,
+    approved: ApprovedFrontmostWindowGuard,
+    action_cancelled: Option<&AtomicBool>,
+) -> Result<Value> {
+    windows::set_frontmost_window_bounds(request, approved, action_cancelled)
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+fn set_frontmost_window_bounds(
+    _request: WindowBoundsRequest,
+    _approved: ApprovedFrontmostWindowGuard,
+    _action_cancelled: Option<&AtomicBool>,
+) -> Result<Value> {
+    Err(anyhow!(
+        "Computer Use frontmost-window bounds control is unsupported on this platform"
+    ))
+}
+
+#[cfg(target_os = "macos")]
+fn rollback_frontmost_window_bounds(
+    request: WindowBoundsRequest,
+    approved: &ApprovedFrontmostWindowGuard,
+) -> Value {
+    let approved_json = serde_json::to_string(approved);
+    let request_json = serde_json::to_string(&json!({
+        "x": request.x,
+        "y": request.y,
+        "width": request.width,
+        "height": request.height,
+    }));
+    match (approved_json, request_json) {
+        (Ok(approved_json), Ok(request_json)) => execute_jxa_action(
+            RESTORE_FRONTMOST_WINDOW_BOUNDS_JXA,
+            &[approved_json, request_json],
+        )
+        .unwrap_or_else(
+            |_| json!({"attempted": true, "restored": false, "reason": "platform_restore_failed"}),
+        ),
+        _ => {
+            json!({"attempted": false, "restored": false, "reason": "approved_restore_context_invalid"})
+        }
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn rollback_frontmost_window_bounds(
+    request: WindowBoundsRequest,
+    approved: &ApprovedFrontmostWindowGuard,
+) -> Value {
+    windows::rollback_frontmost_window_bounds(request, approved)
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+fn rollback_frontmost_window_bounds(
+    _request: WindowBoundsRequest,
+    _approved: &ApprovedFrontmostWindowGuard,
+) -> Value {
+    json!({"attempted": false, "restored": false, "reason": "platform_restore_unavailable"})
+}
+
+#[cfg(target_os = "macos")]
+fn set_frontmost_window_fullscreen(
+    fullscreen: bool,
+    approved: ApprovedFrontmostWindowGuard,
+    action_cancelled: Option<&AtomicBool>,
+) -> Result<Value> {
+    set_macos_frontmost_window_fullscreen(fullscreen, approved, action_cancelled)
+}
+
+#[cfg(not(target_os = "macos"))]
+fn set_frontmost_window_fullscreen(
+    _fullscreen: bool,
+    _approved: ApprovedFrontmostWindowGuard,
+    _action_cancelled: Option<&AtomicBool>,
+) -> Result<Value> {
+    Err(anyhow!(
+        "native frontmost-window fullscreen control is available only on macOS"
+    ))
+}
+
+#[cfg(target_os = "macos")]
+fn rollback_frontmost_window_fullscreen(
+    fullscreen: bool,
+    approved: &ApprovedFrontmostWindowGuard,
+) -> Value {
+    match serde_json::to_string(approved) {
+        Ok(approved_json) => execute_jxa_action(
+            RESTORE_FRONTMOST_WINDOW_FULLSCREEN_JXA,
+            &[approved_json, fullscreen.to_string()],
+        )
+        .unwrap_or_else(
+            |_| json!({"attempted": true, "restored": false, "reason": "platform_restore_failed"}),
+        ),
+        Err(_) => {
+            json!({"attempted": false, "restored": false, "reason": "approved_restore_context_invalid"})
+        }
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn rollback_frontmost_window_fullscreen(
+    _fullscreen: bool,
+    _approved: &ApprovedFrontmostWindowGuard,
+) -> Value {
+    json!({"attempted": false, "restored": false, "reason": "platform_restore_unavailable"})
+}
+
+#[cfg(target_os = "windows")]
+fn set_frontmost_window_maximized(
+    maximized: bool,
+    approved: ApprovedFrontmostWindowGuard,
+    action_cancelled: Option<&AtomicBool>,
+) -> Result<Value> {
+    windows::set_frontmost_window_maximized(maximized, approved, action_cancelled)
+}
+
+#[cfg(not(target_os = "windows"))]
+fn set_frontmost_window_maximized(
+    _maximized: bool,
+    _approved: ApprovedFrontmostWindowGuard,
+    _action_cancelled: Option<&AtomicBool>,
+) -> Result<Value> {
+    Err(anyhow!(
+        "frontmost-window maximize control is available only on Windows"
+    ))
+}
+
+#[cfg(target_os = "windows")]
+fn rollback_frontmost_window_maximized(
+    maximized: bool,
+    approved: &ApprovedFrontmostWindowGuard,
+) -> Value {
+    windows::rollback_frontmost_window_maximized(maximized, approved)
+}
+
+#[cfg(not(target_os = "windows"))]
+fn rollback_frontmost_window_maximized(
+    _maximized: bool,
+    _approved: &ApprovedFrontmostWindowGuard,
+) -> Value {
+    json!({"attempted": false, "restored": false, "reason": "platform_restore_unavailable"})
+}
+
 fn approved_application_name(approved_command_args: Option<&[String]>) -> Result<String> {
     let arguments = approved_command_args.ok_or_else(|| {
         anyhow!("Computer Use application activation is missing approved identity context")
@@ -3175,6 +4335,108 @@ fn macos_frontmost_window_identity() -> Result<MacosFrontmostWindowIdentity> {
         .context("decode macOS frontmost window capture target")?;
     identity.validate()?;
     Ok(identity)
+}
+
+#[cfg(target_os = "macos")]
+fn macos_frontmost_window_control_target_local() -> Result<ApprovedFrontmostWindowGuard> {
+    let value = execute_jxa_action(FRONTMOST_WINDOW_CONTROL_TARGET_JXA, &[])?;
+    let target = serde_json::from_value::<ApprovedFrontmostWindowGuard>(value)
+        .context("decode macOS frontmost window control target")?;
+    target.validate()?;
+    Ok(target)
+}
+
+#[cfg(target_os = "macos")]
+fn set_macos_frontmost_window_bounds(
+    request: WindowBoundsRequest,
+    approved: ApprovedFrontmostWindowGuard,
+    action_cancelled: Option<&AtomicBool>,
+) -> Result<Value> {
+    validate_window_bounds_capability(&approved)?;
+    ensure_action_not_cancelled(action_cancelled)?;
+    let approved_json = serde_json::to_string(&approved)?;
+    let request_json = serde_json::to_string(&json!({
+        "x": request.x,
+        "y": request.y,
+        "width": request.width,
+        "height": request.height,
+    }))?;
+    let mut result = execute_jxa_action(
+        SET_FRONTMOST_WINDOW_BOUNDS_JXA,
+        &[approved_json.clone(), request_json.clone()],
+    )?;
+    if action_cancelled.is_some_and(|cancelled| cancelled.load(Ordering::SeqCst))
+        && result
+            .get("target_geometry_applied")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+    {
+        let recovery = execute_jxa_action(
+            RESTORE_FRONTMOST_WINDOW_BOUNDS_JXA,
+            &[approved_json, request_json],
+        )
+        .unwrap_or_else(|_| {
+            json!({
+                "attempted": true,
+                "restored": false,
+                "reason": "platform_restore_failed",
+            })
+        });
+        if let Some(map) = result.as_object_mut() {
+            map.insert("success".to_string(), Value::Bool(false));
+            map.insert("target_geometry_applied".to_string(), Value::Bool(false));
+            map.insert(
+                "failure_reason".to_string(),
+                Value::String("cancelled_after_action".to_string()),
+            );
+            map.insert("window_geometry_recovery".to_string(), recovery);
+        }
+    }
+    Ok(result)
+}
+
+#[cfg(target_os = "macos")]
+fn set_macos_frontmost_window_fullscreen(
+    fullscreen: bool,
+    approved: ApprovedFrontmostWindowGuard,
+    action_cancelled: Option<&AtomicBool>,
+) -> Result<Value> {
+    validate_window_fullscreen_capability(&approved, fullscreen)?;
+    ensure_action_not_cancelled(action_cancelled)?;
+    let approved_json = serde_json::to_string(&approved)?;
+    let requested = fullscreen.to_string();
+    let mut result = execute_jxa_action(
+        SET_FRONTMOST_WINDOW_FULLSCREEN_JXA,
+        &[approved_json.clone(), requested.clone()],
+    )?;
+    if action_cancelled.is_some_and(|cancelled| cancelled.load(Ordering::SeqCst))
+        && result
+            .get("target_fullscreen_applied")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+    {
+        let recovery = execute_jxa_action(
+            RESTORE_FRONTMOST_WINDOW_FULLSCREEN_JXA,
+            &[approved_json, requested],
+        )
+        .unwrap_or_else(|_| {
+            json!({
+                "attempted": true,
+                "restored": false,
+                "reason": "platform_restore_failed",
+            })
+        });
+        if let Some(map) = result.as_object_mut() {
+            map.insert("success".to_string(), Value::Bool(false));
+            map.insert("target_fullscreen_applied".to_string(), Value::Bool(false));
+            map.insert(
+                "failure_reason".to_string(),
+                Value::String("cancelled_after_action".to_string()),
+            );
+            map.insert("window_state_recovery".to_string(), recovery);
+        }
+    }
+    Ok(result)
 }
 
 #[cfg(target_os = "macos")]
@@ -3457,6 +4719,18 @@ fn bounded_integer(
 }
 
 fn execute_jxa(script: &str, arguments: &[String]) -> Result<Value> {
+    execute_jxa_with_policy(script, arguments, true)
+}
+
+fn execute_jxa_action(script: &str, arguments: &[String]) -> Result<Value> {
+    execute_jxa_with_policy(script, arguments, false)
+}
+
+fn execute_jxa_with_policy(
+    script: &str,
+    arguments: &[String],
+    mark_read_only: bool,
+) -> Result<Value> {
     let mut command = Command::new(MACOS_OSASCRIPT_PATH);
     command
         .args(["-l", "JavaScript", "-e", script, "--"])
@@ -3498,7 +4772,7 @@ fn execute_jxa(script: &str, arguments: &[String]) -> Result<Value> {
     };
     let stdout = join_reader(stdout_reader, "stdout")?;
     let stderr = join_reader(stderr_reader, "stderr")?;
-    decode_jxa_result(status, stdout.as_slice(), stderr.as_slice())
+    decode_jxa_result_with_policy(status, stdout.as_slice(), stderr.as_slice(), mark_read_only)
 }
 
 fn read_limited<R: Read>(mut reader: R, label: &str, limit: usize) -> Result<Vec<u8>> {
@@ -3526,7 +4800,17 @@ fn join_reader(handle: thread::JoinHandle<Result<Vec<u8>>>, label: &str) -> Resu
         .map_err(|_| anyhow!("Computer Use observer {label} reader panicked"))?
 }
 
+#[cfg(test)]
 fn decode_jxa_result(status: ExitStatus, stdout: &[u8], stderr: &[u8]) -> Result<Value> {
+    decode_jxa_result_with_policy(status, stdout, stderr, true)
+}
+
+fn decode_jxa_result_with_policy(
+    status: ExitStatus,
+    stdout: &[u8],
+    stderr: &[u8],
+    mark_read_only: bool,
+) -> Result<Value> {
     let stdout = String::from_utf8_lossy(stdout).trim().to_string();
     let stderr = String::from_utf8_lossy(stderr).trim().to_string();
     if !status.success() {
@@ -3540,12 +4824,14 @@ fn decode_jxa_result(status: ExitStatus, stdout: &[u8], stderr: &[u8]) -> Result
     let map = value
         .as_object_mut()
         .ok_or_else(|| anyhow!("Computer Use observer output must be a JSON object"))?;
-    map.insert("success".to_string(), Value::Bool(true));
-    map.insert("mode".to_string(), Value::String("read_only".to_string()));
-    map.insert(
-        "sensitive_text_policy".to_string(),
-        Value::String("editable_values_redacted".to_string()),
-    );
+    if mark_read_only {
+        map.insert("success".to_string(), Value::Bool(true));
+        map.insert("mode".to_string(), Value::String("read_only".to_string()));
+        map.insert(
+            "sensitive_text_policy".to_string(),
+            Value::String("editable_values_redacted".to_string()),
+        );
+    }
     Ok(value)
 }
 
@@ -3620,7 +4906,14 @@ mod tests {
     #[test]
     fn control_tools_are_published_only_for_the_approved_plugin_path() {
         let tools = tool_definitions(true);
-        assert_eq!(tools.len(), 12);
+        assert_eq!(
+            tools.len(),
+            if matches!(current_platform_name(), "macos" | "windows") {
+                14
+            } else {
+                13
+            }
+        );
         let find = |name: &str| {
             tools
                 .iter()
@@ -3638,6 +4931,25 @@ mod tests {
             .is_some_and(|description| description.contains("one-time random confirmation")));
         assert!(find("computer_scroll").is_object());
         assert!(find("computer_activate_application").is_object());
+        assert!(find("computer_set_frontmost_window_bounds")["description"]
+            .as_str()
+            .is_some_and(|description| description.contains("partial platform failures")));
+        if current_platform_name() == "macos" {
+            assert!(
+                find("computer_set_frontmost_window_fullscreen")["description"]
+                    .as_str()
+                    .is_some_and(|description| description.contains("AXFullScreen"))
+            );
+        }
+        if current_platform_name() == "windows" {
+            assert!(
+                find("computer_set_frontmost_window_maximized")["description"]
+                    .as_str()
+                    .is_some_and(
+                        |description| description.contains("not true application fullscreen")
+                    )
+            );
+        }
         assert!(tools
             .iter()
             .any(|tool| tool["name"] == "computer_type_text"));
@@ -3645,13 +4957,12 @@ mod tests {
 
     #[test]
     fn windows_contract_includes_ui_automation_and_secure_text_entry() {
-        let mut tools = tool_definitions(true);
-        filter_tools_for_platform(&mut tools, "windows");
+        let tools = tool_definitions_for_platform(true, "windows");
         let names = tools
             .iter()
             .filter_map(|tool| tool.get("name").and_then(Value::as_str))
             .collect::<Vec<_>>();
-        assert_eq!(tools.len(), 12);
+        assert_eq!(tools.len(), 14);
         assert!(names.contains(&"computer_list_windows"));
         assert!(names.contains(&"computer_inspect_frontmost_window"));
         assert!(names.contains(&"computer_capture_main_display"));
@@ -3664,6 +4975,9 @@ mod tests {
         assert!(names.contains(&"computer_scroll"));
         assert!(names.contains(&"computer_activate_application"));
         assert!(names.contains(&"computer_type_text"));
+        assert!(names.contains(&"computer_set_frontmost_window_bounds"));
+        assert!(names.contains(&"computer_set_frontmost_window_maximized"));
+        assert!(!names.contains(&"computer_set_frontmost_window_fullscreen"));
         assert!(tools.iter().any(|tool| {
             tool["name"] == "computer_type_text"
                 && tool["description"]
@@ -3682,6 +4996,104 @@ mod tests {
         assert!(source.contains("pub(super) fn capture_frontmost_window()"));
         assert!(source.contains("same_identity_and_geometry"));
         assert!(source.contains("intersect_rect(window_rect, virtual_desktop_rect()?"));
+        assert!(source.contains("SetWindowPos("));
+        assert!(source.contains("IsZoomed(hwnd)"));
+        assert!(source.contains("restore_window_bounds"));
+        assert!(source.contains("restore_window_maximized_state"));
+    }
+
+    #[test]
+    fn macos_window_control_contract_uses_native_ax_state_without_shortcuts() {
+        let tools = tool_definitions_for_platform(true, "macos");
+        let names = tools
+            .iter()
+            .filter_map(|tool| tool.get("name").and_then(Value::as_str))
+            .collect::<Vec<_>>();
+        assert_eq!(tools.len(), 14);
+        assert!(names.contains(&"computer_set_frontmost_window_bounds"));
+        assert!(names.contains(&"computer_set_frontmost_window_fullscreen"));
+        assert!(!names.contains(&"computer_set_frontmost_window_maximized"));
+        assert!(FRONTMOST_WINDOW_CONTROL_TARGET_JXA.contains("AXPosition"));
+        assert!(FRONTMOST_WINDOW_CONTROL_TARGET_JXA.contains("AXSize"));
+        assert!(FRONTMOST_WINDOW_CONTROL_TARGET_JXA.contains("AXFullScreen"));
+        assert!(SET_FRONTMOST_WINDOW_BOUNDS_JXA.contains("matchesApproved(before, approved)"));
+        assert!(SET_FRONTMOST_WINDOW_BOUNDS_JXA.contains("recoveryResult(approved)"));
+        assert!(SET_FRONTMOST_WINDOW_FULLSCREEN_JXA
+            .contains("fullscreen_attribute.value.set(requested)"));
+        assert!(RESTORE_FRONTMOST_WINDOW_FULLSCREEN_JXA
+            .contains("fullscreen_attribute.value.set(approved.fullscreen)"));
+        assert!(!SET_FRONTMOST_WINDOW_FULLSCREEN_JXA.contains("keystroke"));
+    }
+
+    #[test]
+    fn window_bounds_and_approval_guard_are_bounded_and_fail_closed() {
+        let request = parse_window_bounds_request(&json!({
+            "x": -1200,
+            "y": 80,
+            "width": 1280,
+            "height": 720,
+        }))
+        .unwrap();
+        assert_eq!(request.geometry(), "1280 x 720 @ -1200, 80");
+        assert!(parse_window_bounds_request(&json!({
+            "x": 0,
+            "y": 0,
+            "width": 63,
+            "height": 720,
+        }))
+        .is_err());
+        assert!(parse_window_bounds_request(&json!({
+            "x": 0,
+            "y": 0,
+            "width": 1280,
+            "height": 720,
+            "pid": 42,
+        }))
+        .is_err());
+        assert!(parse_window_fullscreen_request(&json!({"fullscreen": true})).unwrap());
+        assert!(parse_window_fullscreen_request(&json!({"fullscreen": 1})).is_err());
+        assert!(!parse_window_maximized_request(&json!({"maximized": false})).unwrap());
+
+        let guard = ApprovedFrontmostWindowGuard {
+            platform: "macos".to_string(),
+            application: "Example".to_string(),
+            pid: 42,
+            window_id: "1001".to_string(),
+            position: [10.0, 20.0],
+            size: [1280.0, 720.0],
+            fullscreen: Some(false),
+            maximized: None,
+            position_settable: true,
+            size_settable: true,
+            fullscreen_settable: true,
+        };
+        let encoded = vec![window_approval_argument(&guard).unwrap()];
+        assert!(!encoded.join(" ").contains("title"));
+        assert_eq!(approved_window_guard(Some(&encoded)).unwrap(), guard);
+        assert!(approved_window_guard(Some(&[])).is_err());
+        let display_layout = vec![ApprovedDisplayGuard {
+            index: 1,
+            display_id: 99,
+            is_main: true,
+            origin_x: 0.0,
+            origin_y: 0.0,
+            width: 1920.0,
+            height: 1080.0,
+            pixels_wide: 3840,
+            pixels_high: 2160,
+            rotation_degrees: 0.0,
+        }];
+        validate_requested_window_bounds_against_layout(&request, &display_layout).unwrap();
+        let encoded_layout =
+            vec![window_display_layout_approval_argument(&display_layout).unwrap()];
+        assert_eq!(
+            approved_window_display_layout(Some(&encoded_layout)).unwrap(),
+            display_layout
+        );
+        assert!(approved_window_display_layout(Some(&[])).is_err());
+        let mut invalid = guard.clone();
+        invalid.fullscreen = None;
+        assert!(invalid.validate().is_err());
     }
 
     #[test]
@@ -4155,6 +5567,11 @@ mod tests {
             LIST_WINDOWS_JXA,
             INSPECT_FRONTMOST_WINDOW_JXA,
             FRONTMOST_WINDOW_CAPTURE_TARGET_JXA,
+            FRONTMOST_WINDOW_CONTROL_TARGET_JXA,
+            SET_FRONTMOST_WINDOW_BOUNDS_JXA,
+            RESTORE_FRONTMOST_WINDOW_BOUNDS_JXA,
+            SET_FRONTMOST_WINDOW_FULLSCREEN_JXA,
+            RESTORE_FRONTMOST_WINDOW_FULLSCREEN_JXA,
             LOOKUP_APPLICATION_JXA,
             ACTIVATE_APPLICATION_JXA,
             FRONTMOST_APPLICATION_JXA,

@@ -46,15 +46,17 @@ use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     EnumWindows, GetForegroundWindow, GetSystemMetrics, GetWindowRect, GetWindowTextLengthW,
-    GetWindowTextW, GetWindowThreadProcessId, IsIconic, IsWindowVisible, SetForegroundWindow,
-    ShowWindow, MONITORINFOF_PRIMARY, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN,
-    SM_YVIRTUALSCREEN, SW_RESTORE,
+    GetWindowTextW, GetWindowThreadProcessId, IsIconic, IsWindowVisible, IsZoomed,
+    SetForegroundWindow, SetWindowPos, ShowWindow, MONITORINFOF_PRIMARY, SM_CXVIRTUALSCREEN,
+    SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN, SWP_NOACTIVATE, SWP_NOOWNERZORDER,
+    SWP_NOZORDER, SW_MAXIMIZE, SW_RESTORE,
 };
 
 use super::{
     click_result, drag_step_count, ensure_action_not_cancelled, frontmost_window_screenshot_result,
-    is_unsafe_typed_character, screenshot_result, typed_text_result, ClickAction, DisplayTarget,
-    DragAction, FrontmostWindowCaptureTarget, KeyAction, ScrollAction, TypedTextAction,
+    is_unsafe_typed_character, screenshot_result, typed_text_result, ApprovedFrontmostWindowGuard,
+    ClickAction, DisplayTarget, DragAction, FrontmostWindowCaptureTarget, KeyAction, ScrollAction,
+    TypedTextAction, WindowBoundsRequest,
 };
 
 const MAX_WINDOWS_PER_PROCESS: usize = 20;
@@ -461,6 +463,75 @@ fn foreground_window_capture_identity() -> Result<ForegroundWindowCaptureIdentit
         window_rect,
         capture_rect,
     })
+}
+
+fn foreground_window_control_target() -> Result<(HWND, ApprovedFrontmostWindowGuard)> {
+    let (hwnd, pid) = foreground_window()?;
+    // SAFETY: hwnd is the current foreground top-level window and these calls only inspect its
+    // current visibility, minimized/maximized state, title, and rectangle.
+    if unsafe { IsWindowVisible(hwnd) } == 0 || unsafe { IsIconic(hwnd) } != 0 {
+        return Err(anyhow!(
+            "Windows foreground window is not visibly controllable"
+        ));
+    }
+    let mut rect = RECT::default();
+    if unsafe { GetWindowRect(hwnd, &mut rect) } == 0
+        || rect.right <= rect.left
+        || rect.bottom <= rect.top
+    {
+        return Err(anyhow!("Windows foreground window geometry is invalid"));
+    }
+    let application = process_name(pid)?;
+    let target = ApprovedFrontmostWindowGuard {
+        platform: "windows".to_string(),
+        application,
+        pid,
+        window_id: format!("0x{:x}", hwnd as usize),
+        position: [f64::from(rect.left), f64::from(rect.top)],
+        size: [
+            f64::from(rect.right.saturating_sub(rect.left)),
+            f64::from(rect.bottom.saturating_sub(rect.top)),
+        ],
+        fullscreen: None,
+        maximized: Some(unsafe { IsZoomed(hwnd) != 0 }),
+        position_settable: true,
+        size_settable: true,
+        fullscreen_settable: false,
+    };
+    target.validate()?;
+    if unsafe { GetForegroundWindow() } != hwnd {
+        return Err(anyhow!(
+            "Windows foreground window changed during control-target discovery"
+        ));
+    }
+    Ok((hwnd, target))
+}
+
+pub(super) fn frontmost_window_control_target() -> Result<ApprovedFrontmostWindowGuard> {
+    foreground_window_control_target().map(|(_, target)| target)
+}
+
+fn same_window_identity(
+    left: &ApprovedFrontmostWindowGuard,
+    right: &ApprovedFrontmostWindowGuard,
+) -> bool {
+    left.platform == right.platform
+        && left.application == right.application
+        && left.pid == right.pid
+        && left.window_id == right.window_id
+}
+
+fn same_approved_window_snapshot(
+    current: &ApprovedFrontmostWindowGuard,
+    approved: &ApprovedFrontmostWindowGuard,
+) -> bool {
+    same_window_identity(current, approved)
+        && current.position == approved.position
+        && current.size == approved.size
+        && current.maximized == approved.maximized
+        && current.position_settable == approved.position_settable
+        && current.size_settable == approved.size_settable
+        && current.fullscreen_settable == approved.fullscreen_settable
 }
 
 fn virtual_desktop_rect() -> Result<RECT> {
@@ -1021,6 +1092,329 @@ pub(super) fn capture_frontmost_window() -> Result<Value> {
         ));
     }
     frontmost_window_screenshot_result(png.as_slice(), &before.capture_target())
+}
+
+pub(super) fn set_frontmost_window_bounds(
+    request: WindowBoundsRequest,
+    approved: ApprovedFrontmostWindowGuard,
+    action_cancelled: Option<&AtomicBool>,
+) -> Result<Value> {
+    approved.validate()?;
+    if approved.platform != "windows"
+        || approved.maximized != Some(false)
+        || !approved.position_settable
+        || !approved.size_settable
+    {
+        return Err(anyhow!(
+            "approved Windows foreground window is not safely movable and resizable"
+        ));
+    }
+    ensure_action_not_cancelled(action_cancelled)?;
+    let (hwnd, current) = foreground_window_control_target()?;
+    if !same_approved_window_snapshot(&current, &approved) {
+        return Err(anyhow!(
+            "approved Windows foreground HWND identity, state, or geometry changed before bounds control"
+        ));
+    }
+    // SAFETY: hwnd is the currently revalidated foreground top-level window. The request is
+    // bounded and already intersects an active display. The flags preserve z-order and focus.
+    let applied = unsafe {
+        SetWindowPos(
+            hwnd,
+            null_mut(),
+            request.x,
+            request.y,
+            request.width,
+            request.height,
+            SWP_NOACTIVATE | SWP_NOZORDER | SWP_NOOWNERZORDER,
+        )
+    } != 0;
+    let after = foreground_window_control_target()
+        .ok()
+        .map(|(_, target)| target);
+    let target_applied = applied
+        && after.as_ref().is_some_and(|target| {
+            same_window_identity(target, &approved)
+                && target.maximized == Some(false)
+                && target.position == [f64::from(request.x), f64::from(request.y)]
+                && target.size == [f64::from(request.width), f64::from(request.height)]
+        });
+    let cancelled =
+        action_cancelled.is_some_and(|flag| flag.load(std::sync::atomic::Ordering::SeqCst));
+    if !target_applied || cancelled {
+        let recovery = restore_window_bounds(hwnd, &approved);
+        return Ok(json!({
+            "success": false,
+            "mode": "approved_input",
+            "action": "set_frontmost_window_bounds",
+            "platform": "windows",
+            "application": approved.application,
+            "pid": approved.pid,
+            "window_id": approved.window_id,
+            "target_geometry_applied": false,
+            "action_already_executed": true,
+            "automatic_replay_safe": false,
+            "failure_reason": if cancelled { "cancelled_after_action" } else { "target_geometry_readback_mismatch" },
+            "window_geometry_recovery": recovery,
+        }));
+    }
+    Ok(json!({
+        "success": true,
+        "mode": "approved_input",
+        "action": "set_frontmost_window_bounds",
+        "platform": "windows",
+        "application": approved.application,
+        "pid": approved.pid,
+        "window_id": approved.window_id,
+        "original_position": approved.position,
+        "original_size": approved.size,
+        "position": [request.x, request.y],
+        "size": [request.width, request.height],
+        "target_geometry_applied": true,
+        "identity_and_geometry_revalidated_after_action": true,
+        "window_geometry_recovery": {
+            "attempted": false,
+            "restored": false,
+            "reason": "action_completed",
+        },
+    }))
+}
+
+fn restore_window_bounds(hwnd: HWND, approved: &ApprovedFrontmostWindowGuard) -> Value {
+    let Ok((current_hwnd, current)) = foreground_window_control_target() else {
+        return json!({
+            "attempted": false,
+            "restored": false,
+            "reason": "foreground_or_identity_changed",
+        });
+    };
+    if current_hwnd != hwnd || !same_window_identity(&current, approved) {
+        return json!({
+            "attempted": false,
+            "restored": false,
+            "reason": "foreground_or_identity_changed",
+        });
+    }
+    let Some((x, y, width, height)) = guard_geometry_i32(approved) else {
+        return json!({
+            "attempted": false,
+            "restored": false,
+            "reason": "approved_geometry_invalid",
+        });
+    };
+    // SAFETY: hwnd is still the exact foreground identity approved for this action; flags preserve
+    // focus and z-order while restoring only the approved original geometry.
+    let restored_call = unsafe {
+        SetWindowPos(
+            hwnd,
+            null_mut(),
+            x,
+            y,
+            width,
+            height,
+            SWP_NOACTIVATE | SWP_NOZORDER | SWP_NOOWNERZORDER,
+        )
+    } != 0;
+    let exact = restored_call
+        && foreground_window_control_target()
+            .ok()
+            .map(|(_, target)| target)
+            .is_some_and(|target| same_approved_window_snapshot(&target, approved));
+    json!({
+        "attempted": true,
+        "restored": exact,
+        "reason": if exact { "original_geometry_restored" } else { "restore_readback_mismatch" },
+    })
+}
+
+pub(super) fn rollback_frontmost_window_bounds(
+    request: WindowBoundsRequest,
+    approved: &ApprovedFrontmostWindowGuard,
+) -> Value {
+    let Ok((hwnd, current)) = foreground_window_control_target() else {
+        return json!({"attempted": false, "restored": false, "reason": "foreground_or_identity_changed"});
+    };
+    if !same_window_identity(&current, approved)
+        || current.maximized != Some(false)
+        || current.position != [f64::from(request.x), f64::from(request.y)]
+        || current.size != [f64::from(request.width), f64::from(request.height)]
+    {
+        return json!({
+            "attempted": false,
+            "restored": false,
+            "reason": "foreground_identity_or_target_geometry_changed",
+        });
+    }
+    restore_window_bounds(hwnd, approved)
+}
+
+fn guard_geometry_i32(approved: &ApprovedFrontmostWindowGuard) -> Option<(i32, i32, i32, i32)> {
+    let values = [
+        approved.position[0],
+        approved.position[1],
+        approved.size[0],
+        approved.size[1],
+    ];
+    if values
+        .iter()
+        .any(|value| !value.is_finite() || value.fract() != 0.0)
+    {
+        return None;
+    }
+    Some((
+        i32::try_from(values[0] as i64).ok()?,
+        i32::try_from(values[1] as i64).ok()?,
+        i32::try_from(values[2] as i64).ok()?,
+        i32::try_from(values[3] as i64).ok()?,
+    ))
+}
+
+pub(super) fn set_frontmost_window_maximized(
+    maximized: bool,
+    approved: ApprovedFrontmostWindowGuard,
+    action_cancelled: Option<&AtomicBool>,
+) -> Result<Value> {
+    approved.validate()?;
+    if approved.platform != "windows" || approved.maximized == Some(maximized) {
+        return Err(anyhow!(
+            "approved Windows foreground window maximize transition is unavailable"
+        ));
+    }
+    ensure_action_not_cancelled(action_cancelled)?;
+    let (hwnd, current) = foreground_window_control_target()?;
+    if !same_approved_window_snapshot(&current, &approved) {
+        return Err(anyhow!(
+            "approved Windows foreground HWND identity, state, or geometry changed before maximize control"
+        ));
+    }
+    // SAFETY: hwnd is the exact current foreground HWND. ShowWindow performs the standard Windows
+    // maximize/restore transition and remains subject to system and integrity policy.
+    unsafe {
+        ShowWindow(hwnd, if maximized { SW_MAXIMIZE } else { SW_RESTORE });
+    }
+    let mut target_applied = false;
+    for _ in 0..20 {
+        if let Ok((current_hwnd, target)) = foreground_window_control_target() {
+            if current_hwnd != hwnd || !same_window_identity(&target, &approved) {
+                break;
+            }
+            if target.maximized == Some(maximized) {
+                target_applied = true;
+                break;
+            }
+        }
+        thread::sleep(Duration::from_millis(25));
+    }
+    let cancelled =
+        action_cancelled.is_some_and(|flag| flag.load(std::sync::atomic::Ordering::SeqCst));
+    if !target_applied || cancelled {
+        let recovery = restore_window_maximized_state(hwnd, &approved);
+        return Ok(json!({
+            "success": false,
+            "mode": "approved_input",
+            "action": "set_frontmost_window_maximized",
+            "platform": "windows",
+            "application": approved.application,
+            "pid": approved.pid,
+            "window_id": approved.window_id,
+            "target_maximized_applied": false,
+            "action_already_executed": true,
+            "automatic_replay_safe": false,
+            "failure_reason": if cancelled { "cancelled_after_action" } else { "target_state_readback_mismatch" },
+            "window_state_recovery": recovery,
+        }));
+    }
+    let after = foreground_window_control_target()?.1;
+    Ok(json!({
+        "success": true,
+        "mode": "approved_input",
+        "action": "set_frontmost_window_maximized",
+        "platform": "windows",
+        "application": approved.application,
+        "pid": approved.pid,
+        "window_id": approved.window_id,
+        "original_maximized": approved.maximized,
+        "maximized": maximized,
+        "position": after.position,
+        "size": after.size,
+        "target_maximized_applied": true,
+        "identity_and_state_revalidated_after_action": true,
+        "window_state_recovery": {
+            "attempted": false,
+            "restored": false,
+            "reason": "action_completed",
+        },
+    }))
+}
+
+fn restore_window_maximized_state(hwnd: HWND, approved: &ApprovedFrontmostWindowGuard) -> Value {
+    let Ok((current_hwnd, current)) = foreground_window_control_target() else {
+        return json!({"attempted": false, "restored": false, "reason": "foreground_or_identity_changed"});
+    };
+    if current_hwnd != hwnd || !same_window_identity(&current, approved) {
+        return json!({"attempted": false, "restored": false, "reason": "foreground_or_identity_changed"});
+    }
+    let original_maximized = approved.maximized.unwrap_or(false);
+    // SAFETY: hwnd remains the exact approved foreground identity. This restores only the approved
+    // standard maximize state; normal geometry is separately restored below when applicable.
+    unsafe {
+        ShowWindow(
+            hwnd,
+            if original_maximized {
+                SW_MAXIMIZE
+            } else {
+                SW_RESTORE
+            },
+        );
+    }
+    if !original_maximized {
+        if let Some((x, y, width, height)) = guard_geometry_i32(approved) {
+            unsafe {
+                SetWindowPos(
+                    hwnd,
+                    null_mut(),
+                    x,
+                    y,
+                    width,
+                    height,
+                    SWP_NOACTIVATE | SWP_NOZORDER | SWP_NOOWNERZORDER,
+                );
+            }
+        }
+    }
+    for _ in 0..20 {
+        if foreground_window_control_target()
+            .ok()
+            .map(|(_, target)| target)
+            .is_some_and(|target| {
+                same_window_identity(&target, approved)
+                    && target.maximized == approved.maximized
+                    && (original_maximized
+                        || (target.position == approved.position && target.size == approved.size))
+            })
+        {
+            return json!({"attempted": true, "restored": true, "reason": "original_window_state_restored"});
+        }
+        thread::sleep(Duration::from_millis(25));
+    }
+    json!({"attempted": true, "restored": false, "reason": "restore_readback_mismatch"})
+}
+
+pub(super) fn rollback_frontmost_window_maximized(
+    maximized: bool,
+    approved: &ApprovedFrontmostWindowGuard,
+) -> Value {
+    let Ok((hwnd, current)) = foreground_window_control_target() else {
+        return json!({"attempted": false, "restored": false, "reason": "foreground_or_identity_changed"});
+    };
+    if !same_window_identity(&current, approved) || current.maximized != Some(maximized) {
+        return json!({
+            "attempted": false,
+            "restored": false,
+            "reason": "foreground_identity_or_target_state_changed",
+        });
+    }
+    restore_window_maximized_state(hwnd, approved)
 }
 
 fn capture_region_png(left: i32, top: i32, width: i32, height: i32) -> Result<Vec<u8>> {

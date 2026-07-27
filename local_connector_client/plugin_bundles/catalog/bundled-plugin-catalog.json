@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "catalog_revision": "2026-07-27.0",
+  "catalog_revision": "2026-07-27.1",
   "release_version": "1.0.0",
   "release_epoch": "2026-07-22T00:00:00Z",
   "artifact_revision": "2026-07-13.5",
@@ -108,12 +108,12 @@
     {
       "name": "computer-use",
       "display_name": "Computer Use",
-      "description": "Observe macOS or Windows displays, bounded accessibility control state, and the current frontmost window through identity-and-geometry-revalidated transient screenshots; isolate macOS TCC actions in a no-listener signed helper, safely type into writable native and explicit contenteditable targets, and restore the exact previous foreground application when an in-flight activation is cancelled without identity or foreground drift.",
+      "description": "Observe macOS or Windows displays, bounded accessibility state, and transient frontmost-window screenshots; after a fresh approval, move or resize only the exact foreground window, use writable AXFullScreen on macOS, and use explicitly non-fullscreen maximize/restore on Windows, with pre/post identity readback and bounded same-window restoration on partial failure or in-flight cancellation.",
       "category": "Automation",
       "skill_ids": ["internal_skill_computer_use"],
-      "release_version": "1.16.0",
-      "release_epoch": "2026-07-27T04:00:00Z",
-      "artifact_revision": "computer-use-1.16.0"
+      "release_version": "1.17.0",
+      "release_epoch": "2026-07-27T08:00:00Z",
+      "artifact_revision": "computer-use-1.17.0"
     },
     {
       "name": "visualize",

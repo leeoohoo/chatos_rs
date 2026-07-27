@@ -188,19 +188,19 @@ test('stages complete Plugin Bundles and rejects staged file tampering', () => {
       true,
     );
     const computerUse = index.plugins.find((plugin) => plugin.name === 'computer-use');
-    assert.equal(computerUse.release_id, 'bundled-release-computer-use-1-16-0');
-    assert.equal(computerUse.version, '1.16.0');
-    assert.equal(computerUse.published_at, '2026-07-27T04:00:00Z');
+    assert.equal(computerUse.release_id, 'bundled-release-computer-use-1-17-0');
+    assert.equal(computerUse.version, '1.17.0');
+    assert.equal(computerUse.published_at, '2026-07-27T08:00:00Z');
     assert.equal(
       computerUse.skills[0].bundle_hash,
-      'c6b4900cee927413b1c52cd4af0beaeb8e66462089ca2a6899ff2e4f1b3a8e10',
+      'ee414f9cc8feb68e63ad7d30651f21583a767c7f500f2c1e0aef27f44c60d6d5',
     );
     assert.equal(
       fs.existsSync(path.join(
         output,
         'internal',
         'computer-use',
-        '1.16.0',
+        '1.17.0',
         'skills',
         'computer-use',
         'SKILL.md',

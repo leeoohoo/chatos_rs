@@ -620,7 +620,7 @@ fn computer_use_release_keeps_control_on_the_plugin_approval_path() {
         .find(|item| item.skill_id == "internal_skill_computer_use")
         .expect("computer use catalog item");
     assert_eq!(catalog_item.implementation_status, "ready");
-    assert_eq!(catalog_item.version, "1.16.0");
+    assert_eq!(catalog_item.version, "1.17.0");
     assert_eq!(
         catalog_item.permissions,
         vec!["system.accessibility", "desktop.observe", "desktop.control"]
@@ -660,7 +660,7 @@ fn computer_use_release_keeps_control_on_the_plugin_approval_path() {
         true,
     )
     .expect("approved Plugin Computer Use tool definitions");
-    assert_eq!(plugin_tools.len(), 12);
+    assert_eq!(plugin_tools.len(), 14);
     let instructions = internal_skill_instructions("internal_skill_computer_use")
         .expect("Computer Use instructions");
     assert!(instructions.contains("left-button double-click"));
@@ -681,12 +681,16 @@ fn computer_use_release_keeps_control_on_the_plugin_approval_path() {
     assert!(instructions.contains("foreground_changed_after_activation"));
     assert!(instructions.contains("frontmost_application_activation_only"));
     assert!(instructions.contains("computer_capture_frontmost_window"));
-    assert!(instructions.contains("identity/geometry"));
+    assert!(instructions.contains("identity and geometry"));
+    assert!(instructions.contains("computer_set_frontmost_window_bounds"));
+    assert!(instructions.contains("AXFullScreen"));
+    assert!(instructions.contains("standard Windows window state"));
+    assert!(instructions.contains("Frontmost-window geometry and state contract"));
     assert!(instructions.contains("No Computer Use action exposes `acceptForSession`"));
     let manifest: Value = serde_json::from_str(include_str!(
-        "../../../skill_bundles/internal/computer-use/1.16.0/skill.json"
+        "../../../skill_bundles/internal/computer-use/1.17.0/skill.json"
     ))
-    .expect("Computer Use 1.16.0 manifest");
+    .expect("Computer Use 1.17.0 manifest");
     assert_eq!(
         manifest["platforms"],
         json!(["macos-arm64", "macos-x64", "windows-arm64", "windows-x64"])
@@ -747,7 +751,7 @@ fn ready_bundle_v2_fingerprint_matches_plugin_management_seed() {
         .join("\n");
     assert_eq!(
         hex::encode(Sha256::digest(rows.as_bytes())),
-        "ab968cf0c4e0138cec865d72c442fd5de3e7308ea03bcacbc2482b900e91d201"
+        "295d621473d2ead62dad8221cbcc6a377c56adef0b3f8d9b47761dab343773d9"
     );
 }
 
@@ -762,7 +766,7 @@ fn all_28_bundled_skill_fingerprints_match_plugin_management_seed() {
         .join("\n");
     assert_eq!(
         hex::encode(Sha256::digest(rows.as_bytes())),
-        "af84dd2d7b52c5d9b92017070e90dea73151717c4c4d83173e9ece18576ef50c"
+        "cdd4c00a190c2ada08a51980f55d197c0ea9e7ca86af58351e0e7934202aaf7f"
     );
 }
 
