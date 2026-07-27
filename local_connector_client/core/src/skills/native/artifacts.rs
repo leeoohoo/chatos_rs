@@ -91,6 +91,9 @@ pub(super) fn execute_with_cancellation(
         ("internal_skill_pdf", "add_pdf_markup_annotation") => {
             pdf_edit::add_pdf_markup_annotation(arguments, state, request)
         }
+        ("internal_skill_pdf", "add_pdf_annotation_reply") => {
+            pdf_edit::add_pdf_annotation_reply(arguments, state, request)
+        }
         ("internal_skill_pdf", "stamp_pdf_text") => {
             pdf_edit::stamp_pdf_text(arguments, state, request)
         }
@@ -273,13 +276,24 @@ pub(super) fn execute_with_cancellation(
 
 fn inspect_pdf(arguments: &Value, state: &LocalState, request: &RelayRequest) -> Result<Value> {
     let (path, relative) = input_file(state, request, required_text(arguments, "path")?, ".pdf")?;
-    let document =
-        Document::load(path.as_path()).with_context(|| format!("open PDF {}", path.display()))?;
+    let source_bytes =
+        fs::read(path.as_path()).with_context(|| format!("read PDF {}", path.display()))?;
+    if source_bytes.len() as u64 > MAX_ARTIFACT_BYTES {
+        return Err(anyhow!("local artifact exceeds the 100 MiB safety limit"));
+    }
+    let source_sha256 = sha256_bytes(source_bytes.as_slice());
+    if sha256_file(path.as_path())? != source_sha256 {
+        return Err(anyhow!(
+            "PDF source changed while it was being inspected; inspect the current file again"
+        ));
+    }
+    let document = Document::load_mem(source_bytes.as_slice())
+        .with_context(|| format!("open PDF {}", path.display()))?;
     let pages = document.get_pages();
     let annotations = if document.is_encrypted() {
         Value::Null
     } else {
-        pdf_edit::inspect_pdf_annotations(&document, &pages)?
+        pdf_edit::inspect_pdf_annotations(&document, &pages, arguments.get("annotation_page"))?
     };
     let page_geometry = if document.is_encrypted() {
         Value::Null
@@ -296,9 +310,15 @@ fn inspect_pdf(arguments: &Value, state: &LocalState, request: &RelayRequest) ->
     } else {
         pdf_edit::inspect_pdf_form(&document)?
     };
+    if sha256_file(path.as_path())? != source_sha256 {
+        return Err(anyhow!(
+            "PDF source changed while it was being inspected; inspect the current file again"
+        ));
+    }
     Ok(json!({
         "path": relative,
-        "bytes": file_size(path.as_path())?,
+        "sha256": source_sha256,
+        "bytes": source_bytes.len(),
         "pages": pages.len(),
         "pdf_version": document.version,
         "encrypted": document.is_encrypted(),

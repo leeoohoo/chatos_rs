@@ -23,8 +23,8 @@ use crate::relay::RelayRequest;
 use crate::LocalState;
 
 use super::{
-    file_size, input_file, input_file_any, optional_bool, required_text, safe_workspace_path,
-    MAX_ARTIFACT_BYTES,
+    file_size, input_file, input_file_any, optional_bool, required_lowercase_sha256, required_text,
+    safe_workspace_path, sha256_file, MAX_ARTIFACT_BYTES,
 };
 
 const MAX_PDF_INPUTS: usize = 20;
@@ -2918,12 +2918,33 @@ pub(super) fn inspect_pdf_page_geometry(
 pub(super) fn inspect_pdf_annotations(
     document: &Document,
     page_map: &BTreeMap<u32, ObjectId>,
+    requested_preview_page: Option<&Value>,
 ) -> Result<Value> {
+    let preview_page = match requested_preview_page {
+        None => None,
+        Some(value) => {
+            let page_number = value
+                .as_u64()
+                .and_then(|value| u32::try_from(value).ok())
+                .filter(|value| (1..=MAX_PDF_PAGES as u32).contains(value))
+                .ok_or_else(|| {
+                    anyhow!("annotation_page must be an integer between 1 and {MAX_PDF_PAGES}")
+                })?;
+            if !page_map.contains_key(&page_number) {
+                return Err(anyhow!("annotation_page page {page_number} does not exist"));
+            }
+            Some(page_number)
+        }
+    };
     let mut total = 0usize;
     let mut text_annotations = 0usize;
     let mut markup_annotations = 0usize;
+    let mut reply_annotations = 0usize;
+    let mut grouped_annotations = 0usize;
+    let mut preview_candidates = 0usize;
     let mut subtypes = BTreeMap::<String, usize>::new();
     let mut preview = Vec::new();
+    let mut seen_annotation_ids = BTreeMap::new();
 
     for (page_number, page_id) in page_map {
         let annotations = pdf_page_annotations(
@@ -2937,8 +2958,29 @@ pub(super) fn inspect_pdf_annotations(
             .ok_or_else(|| {
                 anyhow!("PDF exceeds the {MAX_PDF_ANNOTATIONS} annotation inspection limit")
             })?;
+        let mut annotation_ids = BTreeMap::new();
+        for (index, annotation) in annotations.iter().enumerate() {
+            let Ok(annotation_id) = annotation.as_reference() else {
+                continue;
+            };
+            if let Some((existing_page, existing_index)) =
+                seen_annotation_ids.insert(annotation_id, (*page_number, index + 1))
+            {
+                return Err(anyhow!(
+                    "page {page_number} annotation {} duplicates indirect annotation reference from page {existing_page} annotation {existing_index}",
+                    index + 1
+                ));
+            }
+            if annotation_ids.insert(annotation_id, index + 1).is_some() {
+                return Err(anyhow!(
+                    "page {page_number} Annots contains a duplicate indirect annotation reference"
+                ));
+            }
+        }
+        let mut reply_targets = BTreeMap::new();
         for (index, annotation) in annotations.into_iter().enumerate() {
             let label = format!("page {page_number} annotation {}", index + 1);
+            let annotation_id = annotation.as_reference().ok();
             let dictionary = resolved_pdf_dictionary(document, annotation, label.as_str())?;
             if let Ok(annotation_type) = dictionary.get(b"Type") {
                 if annotation_type.as_name().ok() != Some(b"Annot") {
@@ -2979,13 +3021,61 @@ pub(super) fn inspect_pdf_annotations(
             } else {
                 None
             };
+            let reply_relation = match dictionary.get(b"IRT") {
+                Err(_) if dictionary.has(b"RT") => {
+                    return Err(anyhow!("{label} RT requires IRT"));
+                }
+                Err(_) => None,
+                Ok(value) => {
+                    let target_id = value
+                        .as_reference()
+                        .with_context(|| format!("{label} IRT must be an indirect reference"))?;
+                    if annotation_id == Some(target_id) {
+                        return Err(anyhow!("{label} IRT cannot reference itself"));
+                    }
+                    let target_index =
+                        annotation_ids.get(&target_id).copied().ok_or_else(|| {
+                            anyhow!("{label} IRT must reference an annotation on the same page")
+                        })?;
+                    let relation_type = match dictionary.get(b"RT") {
+                        Err(_) => "reply",
+                        Ok(value) => match value
+                            .as_name()
+                            .with_context(|| format!("{label} RT must be a name"))?
+                        {
+                            b"R" => "reply",
+                            b"Group" => "group",
+                            _ => return Err(anyhow!("{label} RT must be /R or /Group")),
+                        },
+                    };
+                    if relation_type == "reply" {
+                        reply_annotations += 1;
+                    } else {
+                        grouped_annotations += 1;
+                    }
+                    if let Some(annotation_id) = annotation_id {
+                        reply_targets.insert(annotation_id, target_id);
+                    }
+                    Some((target_index, relation_type))
+                }
+            };
+            if preview_page.is_some_and(|requested| requested != *page_number) {
+                continue;
+            }
+            preview_candidates += 1;
             if preview.len() >= MAX_PDF_ANNOTATION_PREVIEW {
                 continue;
             }
             let mut item = json!({
                 "page": page_number,
+                "annotation_index": index + 1,
                 "subtype": subtype.clone(),
+                "is_reply": reply_relation.is_some_and(|(_, relation)| relation == "reply"),
             });
+            if let Some((target_index, relation_type)) = reply_relation {
+                item["reply_to_annotation_index"] = json!(target_index);
+                item["relation_type"] = Value::String(relation_type.to_string());
+            }
             if subtype == "Text" {
                 let contents = pdf_annotation_text(&dictionary, b"Contents", label.as_str())?;
                 let author = pdf_annotation_text(&dictionary, b"T", label.as_str())?;
@@ -3023,14 +3113,30 @@ pub(super) fn inspect_pdf_annotations(
             }
             preview.push(item);
         }
+        for start in reply_targets.keys().copied() {
+            let mut current = start;
+            let mut visited = HashSet::new();
+            while let Some(target) = reply_targets.get(&current).copied() {
+                if !visited.insert(current) {
+                    return Err(anyhow!(
+                        "page {page_number} annotation reply relationships contain a cycle"
+                    ));
+                }
+                current = target;
+            }
+        }
     }
 
-    let preview_truncated = total > preview.len();
+    let preview_truncated = preview_candidates > preview.len();
     Ok(json!({
         "count": total,
         "text_count": text_annotations,
         "markup_count": markup_annotations,
+        "reply_count": reply_annotations,
+        "group_count": grouped_annotations,
         "subtypes": subtypes,
+        "preview_page": preview_page,
+        "preview_candidates": preview_candidates,
         "preview": preview,
         "preview_truncated": preview_truncated,
     }))
@@ -3050,7 +3156,16 @@ pub(super) fn add_pdf_text_annotation(
             "PDF exceeds the {MAX_PDF_PAGES} page annotation safety limit"
         ));
     }
-    inspect_pdf_annotations(&document, &page_map)?;
+    let annotation_inspection = inspect_pdf_annotations(&document, &page_map, None)?;
+    if annotation_inspection
+        .get("count")
+        .and_then(Value::as_u64)
+        .is_some_and(|count| count >= MAX_PDF_ANNOTATIONS as u64)
+    {
+        return Err(anyhow!(
+            "PDF already reaches the {MAX_PDF_ANNOTATIONS} annotation limit"
+        ));
+    }
     let page_number = arguments
         .get("page")
         .and_then(Value::as_u64)
@@ -3208,7 +3323,16 @@ pub(super) fn add_pdf_markup_annotation(
             "PDF exceeds the {MAX_PDF_PAGES} page annotation safety limit"
         ));
     }
-    inspect_pdf_annotations(&document, &page_map)?;
+    let annotation_inspection = inspect_pdf_annotations(&document, &page_map, None)?;
+    if annotation_inspection
+        .get("count")
+        .and_then(Value::as_u64)
+        .is_some_and(|count| count >= MAX_PDF_ANNOTATIONS as u64)
+    {
+        return Err(anyhow!(
+            "PDF already reaches the {MAX_PDF_ANNOTATIONS} annotation limit"
+        ));
+    }
     let page_number = arguments
         .get("page")
         .and_then(Value::as_u64)
@@ -3370,6 +3494,211 @@ pub(super) fn add_pdf_markup_annotation(
         "author": author,
         "color": color,
         "opacity": opacity,
+        "bytes": bytes,
+    }))
+}
+
+pub(super) fn add_pdf_annotation_reply(
+    arguments: &Value,
+    state: &LocalState,
+    request: &RelayRequest,
+) -> Result<Value> {
+    let (source, source_relative) =
+        input_file(state, request, required_text(arguments, "path")?, ".pdf")?;
+    let expected_source_sha256 = required_lowercase_sha256(arguments, "expected_source_sha256")?;
+    let source_bytes =
+        fs::read(source.as_path()).with_context(|| format!("read PDF {}", source.display()))?;
+    if source_bytes.len() as u64 > MAX_ARTIFACT_BYTES {
+        return Err(anyhow!("local artifact exceeds the 100 MiB safety limit"));
+    }
+    let actual_source_sha256 = hex::encode(Sha256::digest(source_bytes.as_slice()));
+    if actual_source_sha256 != expected_source_sha256 {
+        return Err(anyhow!(
+            "PDF source SHA-256 does not match expected_source_sha256; inspect the current file again"
+        ));
+    }
+    if sha256_file(source.as_path())? != expected_source_sha256 {
+        return Err(anyhow!(
+            "PDF source changed while it was being read; inspect the current file again"
+        ));
+    }
+
+    let mut document = Document::load_mem(source_bytes.as_slice())
+        .with_context(|| format!("open PDF {}", source.display()))?;
+    if document.is_encrypted() {
+        return Err(anyhow!(
+            "encrypted PDFs cannot be edited without an explicit decryption workflow"
+        ));
+    }
+    if document.get_pages().is_empty() {
+        return Err(anyhow!("PDF contains no pages: {}", source.display()));
+    }
+    let page_map = document.get_pages();
+    if page_map.len() > MAX_PDF_PAGES {
+        return Err(anyhow!(
+            "PDF exceeds the {MAX_PDF_PAGES} page annotation safety limit"
+        ));
+    }
+    let annotation_inspection = inspect_pdf_annotations(&document, &page_map, None)?;
+    if annotation_inspection
+        .get("count")
+        .and_then(Value::as_u64)
+        .is_some_and(|count| count >= MAX_PDF_ANNOTATIONS as u64)
+    {
+        return Err(anyhow!(
+            "PDF already reaches the {MAX_PDF_ANNOTATIONS} annotation limit"
+        ));
+    }
+
+    let page_number = arguments
+        .get("page")
+        .and_then(Value::as_u64)
+        .and_then(|value| u32::try_from(value).ok())
+        .filter(|value| (1..=MAX_PDF_PAGES as u32).contains(value))
+        .ok_or_else(|| anyhow!("page must be an integer between 1 and {MAX_PDF_PAGES}"))?;
+    let page_id = page_map
+        .get(&page_number)
+        .copied()
+        .ok_or_else(|| anyhow!("page {page_number} does not exist"))?;
+    let annotation_index = arguments
+        .get("annotation_index")
+        .and_then(Value::as_u64)
+        .and_then(|value| usize::try_from(value).ok())
+        .filter(|value| (1..=MAX_PDF_ANNOTATION_PREVIEW).contains(value))
+        .ok_or_else(|| {
+            anyhow!(
+                "annotation_index must be an integer between 1 and {MAX_PDF_ANNOTATION_PREVIEW}"
+            )
+        })?;
+    let mut annotations = pdf_page_annotations(
+        &document,
+        page_id,
+        format!("page {page_number} Annots").as_str(),
+    )?;
+    let parent_object = annotations
+        .get(annotation_index - 1)
+        .cloned()
+        .ok_or_else(|| {
+            anyhow!("page {page_number} annotation_index {annotation_index} does not exist")
+        })?;
+    let parent_id = parent_object.as_reference().with_context(|| {
+        format!(
+            "page {page_number} annotation {annotation_index} is direct and cannot receive a reply"
+        )
+    })?;
+    let parent_label = format!("page {page_number} annotation {annotation_index}");
+    let parent = resolved_pdf_dictionary(&document, parent_object, parent_label.as_str())?;
+    let subtype = parent
+        .get(b"Subtype")
+        .and_then(Object::as_name)
+        .with_context(|| format!("{parent_label} is missing a valid Subtype"))?;
+    let subtype = String::from_utf8_lossy(subtype).to_string();
+    if subtype != "Text" && !is_pdf_markup_subtype(subtype.as_str()) {
+        return Err(anyhow!(
+            "{parent_label} subtype /{subtype} cannot receive a standard annotation reply"
+        ));
+    }
+    if parent.has(b"IRT") {
+        return Err(anyhow!(
+            "{parent_label} is already a reply or group member; replies-to-replies are not supported"
+        ));
+    }
+    if let Ok(parent_page) = parent.get(b"P") {
+        let parent_page_id = parent_page
+            .as_reference()
+            .with_context(|| format!("{parent_label} P must be an indirect page reference"))?;
+        if parent_page_id != page_id {
+            return Err(anyhow!(
+                "{parent_label} P does not reference physical page {page_number}"
+            ));
+        }
+    }
+    let parent_rect_values =
+        pdf_annotation_number_array(&parent, b"Rect", 4, 4, parent_label.as_str())?;
+    if parent_rect_values[2] <= parent_rect_values[0]
+        || parent_rect_values[3] <= parent_rect_values[1]
+    {
+        return Err(anyhow!(
+            "{parent_label} Rect must have positive width and height"
+        ));
+    }
+    let parent_rect = parent
+        .get(b"Rect")
+        .with_context(|| format!("{parent_label} Rect is missing"))?
+        .clone();
+    let text = normalized_pdf_unicode_text(
+        required_text(arguments, "text")?,
+        "text",
+        MAX_PDF_ANNOTATION_CHARACTERS,
+        true,
+    )?;
+    let author = match arguments.get("author") {
+        None => None,
+        Some(Value::String(value)) => Some(normalized_pdf_unicode_text(
+            value,
+            "author",
+            MAX_PDF_ANNOTATION_AUTHOR_CHARACTERS,
+            false,
+        )?),
+        Some(_) => return Err(anyhow!("author must be a string")),
+    };
+
+    if annotations.len() >= MAX_PDF_ANNOTATIONS {
+        return Err(anyhow!(
+            "page {page_number} already reaches the {MAX_PDF_ANNOTATIONS} annotation limit"
+        ));
+    }
+    let reply_annotation_index = annotations.len() + 1;
+    let mut reply = dictionary! {
+        "Type" => "Annot",
+        "Subtype" => "Text",
+        "Rect" => parent_rect,
+        "Contents" => text_string(text.as_str()),
+        "Name" => "Comment",
+        "Open" => false,
+        "F" => 4,
+        "P" => page_id,
+        "IRT" => parent_id,
+        "RT" => "R",
+    };
+    if let Some(author) = author.as_deref() {
+        reply.set("T", text_string(author));
+    }
+    let reply_id = document.add_object(reply);
+    annotations.push(Object::Reference(reply_id));
+    document
+        .get_object_mut(page_id)
+        .and_then(Object::as_dict_mut)
+        .with_context(|| format!("read page {page_number} dictionary"))?
+        .set("Annots", annotations);
+
+    let target_requested = required_text(arguments, "target_path")?;
+    let (target, target_relative) = pdf_output_path(
+        state,
+        request,
+        target_requested,
+        std::slice::from_ref(&source),
+    )?;
+    let bytes = save_pdf_document_with_source_guard(
+        &mut document,
+        target.as_path(),
+        optional_bool(arguments, "overwrite"),
+        source.as_path(),
+        expected_source_sha256.as_str(),
+    )?;
+    Ok(json!({
+        "created": true,
+        "operation": "add_annotation_reply",
+        "source_path": source_relative,
+        "source_sha256": expected_source_sha256,
+        "path": target_relative,
+        "page": page_number,
+        "parent_annotation_index": annotation_index,
+        "reply_annotation_index": reply_annotation_index,
+        "characters": text.chars().count(),
+        "contents_sha256": hex::encode(Sha256::digest(text.as_bytes())),
+        "author": author,
+        "relation_type": "reply",
         "bytes": bytes,
     }))
 }
@@ -5009,6 +5338,30 @@ fn pdf_output_path(
 }
 
 fn save_pdf_document(document: &mut Document, target: &Path, overwrite: bool) -> Result<u64> {
+    save_pdf_document_inner(document, target, overwrite, None)
+}
+
+fn save_pdf_document_with_source_guard(
+    document: &mut Document,
+    target: &Path,
+    overwrite: bool,
+    source: &Path,
+    expected_source_sha256: &str,
+) -> Result<u64> {
+    save_pdf_document_inner(
+        document,
+        target,
+        overwrite,
+        Some((source, expected_source_sha256)),
+    )
+}
+
+fn save_pdf_document_inner(
+    document: &mut Document,
+    target: &Path,
+    overwrite: bool,
+    source_guard: Option<(&Path, &str)>,
+) -> Result<u64> {
     match fs::symlink_metadata(target) {
         Ok(metadata) => {
             if metadata.file_type().is_symlink() || !metadata.is_file() {
@@ -5053,6 +5406,13 @@ fn save_pdf_document(document: &mut Document, target: &Path, overwrite: bool) ->
         .len();
     if bytes > MAX_ARTIFACT_BYTES {
         return Err(anyhow!("generated PDF exceeds the 100 MiB safety limit"));
+    }
+    if let Some((source, expected_source_sha256)) = source_guard {
+        if sha256_file(source)? != expected_source_sha256 {
+            return Err(anyhow!(
+                "PDF source changed while the annotation reply was being prepared; no output was written"
+            ));
+        }
     }
     match fs::symlink_metadata(target) {
         Ok(metadata) => {

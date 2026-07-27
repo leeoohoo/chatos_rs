@@ -20,6 +20,7 @@ pub(super) fn tool_definitions(skill_id: &str) -> Vec<Value> {
             rotate_pdf_pages_tool(),
             add_pdf_text_annotation_tool(),
             add_pdf_markup_annotation_tool(),
+            add_pdf_annotation_reply_tool(),
             stamp_pdf_text_tool(),
             stamp_pdf_page_numbers_tool(),
             stamp_pdf_image_tool(),
@@ -102,7 +103,8 @@ fn inspect_pdf_tool() -> Value {
             "type":"object",
             "properties":{
                 "path":{"type":"string"},
-                "page_geometry":{"type":"integer","minimum":1,"maximum":5000,"description":"Optional one-based physical page whose effective CropBox/MediaBox bounds and rotation should be returned."}
+                "page_geometry":{"type":"integer","minimum":1,"maximum":5000,"description":"Optional one-based physical page whose effective CropBox/MediaBox bounds and rotation should be returned."},
+                "annotation_page":{"type":"integer","minimum":1,"maximum":5000,"description":"Optional one-based physical page used to focus the bounded annotation preview for exact reply targeting."}
             },
             "required":["path"],
             "additionalProperties":false
@@ -463,6 +465,28 @@ fn add_pdf_markup_annotation_tool() -> Value {
                 "overwrite":{"type":"boolean","default":false}
             },
             "required":["path","page","markup","rectangles","target_path"],
+            "additionalProperties":false
+        }),
+    )
+}
+
+fn add_pdf_annotation_reply_tool() -> Value {
+    tool(
+        "add_pdf_annotation_reply",
+        "Append one standard Unicode PDF annotation reply to an inspected indirect Text or markup root annotation. The exact source SHA-256 and one-based page-local annotation index are required; direct annotations, replies-to-replies, stale sources, malformed relationships, and in-place output fail closed.",
+        json!({
+            "type":"object",
+            "properties":{
+                "path":{"type":"string","description":"Workspace-relative source .pdf path."},
+                "expected_source_sha256":{"type":"string","pattern":"^[0-9a-f]{64}$","description":"Exact source SHA-256 returned by inspect_pdf."},
+                "page":{"type":"integer","minimum":1,"maximum":5000,"description":"One-based physical page containing the inspected root annotation."},
+                "annotation_index":{"type":"integer","minimum":1,"maximum":100,"description":"One-based page-local annotation index returned in the focused inspect_pdf annotation preview."},
+                "text":{"type":"string","minLength":1,"maxLength":4096,"description":"Unicode reply contents. Bounded line breaks and tabs are supported."},
+                "author":{"type":"string","minLength":1,"maxLength":256},
+                "target_path":{"type":"string","description":"Distinct workspace-relative .pdf output path."},
+                "overwrite":{"type":"boolean","default":false}
+            },
+            "required":["path","expected_source_sha256","page","annotation_index","text","target_path"],
             "additionalProperties":false
         }),
     )

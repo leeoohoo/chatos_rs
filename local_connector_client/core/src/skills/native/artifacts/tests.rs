@@ -13835,6 +13835,638 @@ fn pdf_markup_annotation_rejects_invalid_geometry_rotation_existing_markup_and_i
 }
 
 #[test]
+fn adds_and_inspects_unicode_pdf_annotation_reply_without_modifying_source() {
+    let (root, state, request) = test_context();
+    let source = root.join("artifacts/source.pdf");
+    write_blank_pdf(source.as_path(), 3);
+    let mut prepared = Document::load(source.as_path()).expect("source PDF");
+    let page_id = prepared.get_pages()[&2];
+    let parent_id = prepared.add_object(dictionary! {
+        "Type" => "Annot",
+        "Subtype" => "Highlight",
+        "Rect" => vec![30.into(), 50.into(), 230.into(), 62.into()],
+        "QuadPoints" => vec![
+            30.into(), 62.into(), 230.into(), 62.into(),
+            30.into(), 50.into(), 230.into(), 50.into(),
+        ],
+        "Contents" => lopdf::text_string("原始重点批注"),
+        "T" => lopdf::text_string("审阅人甲"),
+        "C" => vec![1.into(), 1.into(), 0.into()],
+        "CA" => 0.4,
+        "P" => page_id,
+    });
+    prepared
+        .get_object_mut(page_id)
+        .and_then(Object::as_dict_mut)
+        .expect("page dictionary")
+        .set("Annots", vec![Object::Reference(parent_id)]);
+    prepared.save(source.as_path()).expect("save source PDF");
+    let source_before = fs::read(source.as_path()).expect("source PDF bytes");
+
+    let inspected_source = inspect_pdf(
+        &json!({"path":"artifacts/source.pdf","annotation_page":2}),
+        &state,
+        &request,
+    )
+    .expect("inspect reply target");
+    let source_sha256 = inspected_source
+        .get("sha256")
+        .and_then(Value::as_str)
+        .expect("source SHA-256")
+        .to_string();
+    assert_eq!(
+        inspected_source.pointer("/annotations/preview_page"),
+        Some(&json!(2))
+    );
+    assert_eq!(
+        inspected_source.pointer("/annotations/preview/0/annotation_index"),
+        Some(&json!(1))
+    );
+
+    let added = pdf_edit::add_pdf_annotation_reply(
+        &json!({
+            "path":"artifacts/source.pdf",
+            "expected_source_sha256":source_sha256,
+            "page":2,
+            "annotation_index":1,
+            "text":"同意，金额已经复核。\n请保留这条说明。",
+            "author":"李雷",
+            "target_path":"artifacts/replied.pdf"
+        }),
+        &state,
+        &request,
+    )
+    .expect("add PDF annotation reply");
+    assert_eq!(
+        added.get("operation").and_then(Value::as_str),
+        Some("add_annotation_reply")
+    );
+    assert_eq!(
+        added.get("parent_annotation_index").and_then(Value::as_u64),
+        Some(1)
+    );
+    assert_eq!(
+        added.get("reply_annotation_index").and_then(Value::as_u64),
+        Some(2)
+    );
+
+    let output = Document::load(root.join("artifacts/replied.pdf")).expect("replied PDF");
+    let output_page_id = output.get_pages()[&2];
+    let annotations = output
+        .get_object(output_page_id)
+        .and_then(Object::as_dict)
+        .and_then(|page| page.get(b"Annots"))
+        .and_then(Object::as_array)
+        .expect("reply annotation array");
+    assert_eq!(annotations.len(), 2);
+    let output_parent_id = annotations[0]
+        .as_reference()
+        .expect("parent annotation reference");
+    let reply_id = annotations[1]
+        .as_reference()
+        .expect("reply annotation reference");
+    let parent = output
+        .get_object(output_parent_id)
+        .and_then(Object::as_dict)
+        .expect("parent annotation");
+    let reply = output
+        .get_object(reply_id)
+        .and_then(Object::as_dict)
+        .expect("reply annotation");
+    assert_eq!(
+        reply
+            .get(b"Subtype")
+            .and_then(Object::as_name)
+            .expect("reply subtype"),
+        b"Text"
+    );
+    assert_eq!(
+        reply
+            .get(b"IRT")
+            .and_then(Object::as_reference)
+            .expect("reply IRT"),
+        output_parent_id
+    );
+    assert_eq!(
+        reply
+            .get(b"RT")
+            .and_then(Object::as_name)
+            .expect("reply relation type"),
+        b"R"
+    );
+    assert_eq!(
+        reply
+            .get(b"P")
+            .and_then(Object::as_reference)
+            .expect("reply page"),
+        output_page_id
+    );
+    assert_eq!(
+        reply
+            .get(b"F")
+            .and_then(Object::as_i64)
+            .expect("reply flags"),
+        4
+    );
+    assert_eq!(
+        reply
+            .get(b"Name")
+            .and_then(Object::as_name)
+            .expect("reply icon"),
+        b"Comment"
+    );
+    assert!(!reply
+        .get(b"Open")
+        .and_then(Object::as_bool)
+        .expect("reply open state"));
+    assert_eq!(
+        reply.get(b"Rect").expect("reply Rect"),
+        parent.get(b"Rect").expect("parent Rect")
+    );
+    assert_eq!(
+        reply
+            .get(b"Contents")
+            .map(lopdf::decode_text_string)
+            .expect("reply contents")
+            .expect("decode reply contents"),
+        "同意，金额已经复核。\n请保留这条说明。"
+    );
+    assert_eq!(
+        reply
+            .get(b"T")
+            .map(lopdf::decode_text_string)
+            .expect("reply author")
+            .expect("decode reply author"),
+        "李雷"
+    );
+
+    let inspected_output = inspect_pdf(
+        &json!({"path":"artifacts/replied.pdf","annotation_page":2}),
+        &state,
+        &request,
+    )
+    .expect("inspect PDF reply");
+    let summary = inspected_output
+        .get("annotations")
+        .expect("annotation summary");
+    assert_eq!(summary.get("count").and_then(Value::as_u64), Some(2));
+    assert_eq!(summary.get("text_count").and_then(Value::as_u64), Some(1));
+    assert_eq!(summary.get("markup_count").and_then(Value::as_u64), Some(1));
+    assert_eq!(summary.get("reply_count").and_then(Value::as_u64), Some(1));
+    assert_eq!(summary.get("group_count").and_then(Value::as_u64), Some(0));
+    assert_eq!(
+        summary.get("preview_candidates").and_then(Value::as_u64),
+        Some(2)
+    );
+    let reply_preview = summary
+        .get("preview")
+        .and_then(Value::as_array)
+        .and_then(|items| {
+            items
+                .iter()
+                .find(|item| item.get("annotation_index").and_then(Value::as_u64) == Some(2))
+        })
+        .expect("reply preview");
+    assert_eq!(reply_preview.get("is_reply"), Some(&Value::Bool(true)));
+    assert_eq!(
+        reply_preview
+            .get("reply_to_annotation_index")
+            .and_then(Value::as_u64),
+        Some(1)
+    );
+    assert_eq!(
+        reply_preview.get("relation_type").and_then(Value::as_str),
+        Some("reply")
+    );
+    assert_eq!(
+        fs::read(source.as_path()).expect("source after reply"),
+        source_before
+    );
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn pdf_annotation_reply_rejects_stale_ambiguous_unsupported_and_malformed_targets() {
+    let (root, state, request) = test_context();
+    let source = root.join("source.pdf");
+    write_blank_pdf(source.as_path(), 2);
+    let mut document = Document::load(source.as_path()).expect("source PDF");
+    let page_id = document.get_pages()[&1];
+    let annotation_id = document.add_object(dictionary! {
+        "Type" => "Annot",
+        "Subtype" => "Text",
+        "Rect" => vec![10.into(), 10.into(), 30.into(), 30.into()],
+        "Contents" => lopdf::text_string("Root note"),
+        "P" => page_id,
+    });
+    document
+        .get_object_mut(page_id)
+        .and_then(Object::as_dict_mut)
+        .expect("page dictionary")
+        .set("Annots", vec![Object::Reference(annotation_id)]);
+    document.save(source.as_path()).expect("save source PDF");
+    let source_before = fs::read(source.as_path()).expect("source PDF bytes");
+    let source_sha256 = sha256_file(source.as_path()).expect("source hash");
+
+    for (target, overrides, expected) in [
+        (
+            "stale.pdf",
+            json!({"expected_source_sha256":"0".repeat(64)}),
+            "expected_source_sha256",
+        ),
+        (
+            "missing-page.pdf",
+            json!({"page":3}),
+            "page 3 does not exist",
+        ),
+        (
+            "missing-index.pdf",
+            json!({"annotation_index":2}),
+            "annotation_index 2 does not exist",
+        ),
+        (
+            "uninspected-index.pdf",
+            json!({"annotation_index":101}),
+            "annotation_index must be an integer between 1 and 100",
+        ),
+    ] {
+        let mut arguments = json!({
+            "path":"source.pdf",
+            "expected_source_sha256":source_sha256,
+            "page":1,
+            "annotation_index":1,
+            "text":"Reply",
+            "target_path":target,
+        });
+        for (key, value) in overrides.as_object().expect("reply overrides") {
+            arguments[key] = value.clone();
+        }
+        let error = pdf_edit::add_pdf_annotation_reply(&arguments, &state, &request)
+            .expect_err("invalid reply target must fail");
+        assert!(
+            error.to_string().contains(expected),
+            "unexpected error for {target}: {error}"
+        );
+        assert!(!root.join(target).exists());
+    }
+
+    let in_place = pdf_edit::add_pdf_annotation_reply(
+        &json!({
+            "path":"source.pdf",
+            "expected_source_sha256":source_sha256,
+            "page":1,
+            "annotation_index":1,
+            "text":"Reply",
+            "target_path":"source.pdf",
+            "overwrite":true,
+        }),
+        &state,
+        &request,
+    )
+    .expect_err("in-place reply must fail");
+    assert!(in_place.to_string().contains("distinct target_path"));
+
+    let direct = root.join("direct.pdf");
+    write_blank_pdf(direct.as_path(), 1);
+    let mut document = Document::load(direct.as_path()).expect("direct PDF");
+    let page_id = document.get_pages()[&1];
+    document
+        .get_object_mut(page_id)
+        .and_then(Object::as_dict_mut)
+        .expect("direct page")
+        .set(
+            "Annots",
+            vec![Object::Dictionary(dictionary! {
+                "Type" => "Annot",
+                "Subtype" => "Text",
+                "Rect" => vec![10.into(), 10.into(), 30.into(), 30.into()],
+                "Contents" => lopdf::text_string("Direct note"),
+                "P" => page_id,
+            })],
+        );
+    document.save(direct.as_path()).expect("save direct PDF");
+    let direct_hash = sha256_file(direct.as_path()).expect("direct hash");
+    let direct_error = pdf_edit::add_pdf_annotation_reply(
+        &json!({
+            "path":"direct.pdf",
+            "expected_source_sha256":direct_hash,
+            "page":1,
+            "annotation_index":1,
+            "text":"Reply",
+            "target_path":"direct-output.pdf",
+        }),
+        &state,
+        &request,
+    )
+    .expect_err("direct annotation target must fail");
+    assert!(direct_error.to_string().contains("is direct"));
+
+    let widget = root.join("widget.pdf");
+    write_blank_pdf(widget.as_path(), 1);
+    let mut document = Document::load(widget.as_path()).expect("widget PDF");
+    let page_id = document.get_pages()[&1];
+    let widget_id = document.add_object(dictionary! {
+        "Type" => "Annot",
+        "Subtype" => "Widget",
+        "Rect" => vec![10.into(), 10.into(), 30.into(), 30.into()],
+        "P" => page_id,
+    });
+    document
+        .get_object_mut(page_id)
+        .and_then(Object::as_dict_mut)
+        .expect("widget page")
+        .set("Annots", vec![Object::Reference(widget_id)]);
+    document.save(widget.as_path()).expect("save widget PDF");
+    let widget_hash = sha256_file(widget.as_path()).expect("widget hash");
+    let widget_error = pdf_edit::add_pdf_annotation_reply(
+        &json!({
+            "path":"widget.pdf",
+            "expected_source_sha256":widget_hash,
+            "page":1,
+            "annotation_index":1,
+            "text":"Reply",
+            "target_path":"widget-output.pdf",
+        }),
+        &state,
+        &request,
+    )
+    .expect_err("Widget target must fail");
+    assert!(widget_error.to_string().contains("subtype /Widget"));
+
+    let reply_target = root.join("reply-target.pdf");
+    write_blank_pdf(reply_target.as_path(), 1);
+    let mut document = Document::load(reply_target.as_path()).expect("reply target PDF");
+    let page_id = document.get_pages()[&1];
+    let root_id = document.add_object(dictionary! {
+        "Type" => "Annot",
+        "Subtype" => "Text",
+        "Rect" => vec![10.into(), 10.into(), 30.into(), 30.into()],
+        "P" => page_id,
+    });
+    let existing_reply_id = document.add_object(dictionary! {
+        "Type" => "Annot",
+        "Subtype" => "Text",
+        "Rect" => vec![10.into(), 10.into(), 30.into(), 30.into()],
+        "P" => page_id,
+        "IRT" => root_id,
+        "RT" => "R",
+    });
+    document
+        .get_object_mut(page_id)
+        .and_then(Object::as_dict_mut)
+        .expect("reply target page")
+        .set(
+            "Annots",
+            vec![
+                Object::Reference(root_id),
+                Object::Reference(existing_reply_id),
+            ],
+        );
+    document
+        .save(reply_target.as_path())
+        .expect("save reply target PDF");
+    let reply_target_hash = sha256_file(reply_target.as_path()).expect("reply target hash");
+    let nested_error = pdf_edit::add_pdf_annotation_reply(
+        &json!({
+            "path":"reply-target.pdf",
+            "expected_source_sha256":reply_target_hash,
+            "page":1,
+            "annotation_index":2,
+            "text":"Nested reply",
+            "target_path":"nested-output.pdf",
+        }),
+        &state,
+        &request,
+    )
+    .expect_err("reply-to-reply must fail");
+    assert!(nested_error.to_string().contains("replies-to-replies"));
+
+    let malformed_rect = root.join("malformed-rect.pdf");
+    write_blank_pdf(malformed_rect.as_path(), 1);
+    let mut document = Document::load(malformed_rect.as_path()).expect("malformed Rect PDF");
+    let page_id = document.get_pages()[&1];
+    let malformed_id = document.add_object(dictionary! {
+        "Type" => "Annot",
+        "Subtype" => "Text",
+        "Rect" => vec![30.into(), 30.into(), 10.into(), 10.into()],
+        "P" => page_id,
+    });
+    document
+        .get_object_mut(page_id)
+        .and_then(Object::as_dict_mut)
+        .expect("malformed Rect page")
+        .set("Annots", vec![Object::Reference(malformed_id)]);
+    document
+        .save(malformed_rect.as_path())
+        .expect("save malformed Rect PDF");
+    let malformed_hash = sha256_file(malformed_rect.as_path()).expect("malformed Rect hash");
+    let malformed_error = pdf_edit::add_pdf_annotation_reply(
+        &json!({
+            "path":"malformed-rect.pdf",
+            "expected_source_sha256":malformed_hash,
+            "page":1,
+            "annotation_index":1,
+            "text":"Reply",
+            "target_path":"malformed-rect-output.pdf",
+        }),
+        &state,
+        &request,
+    )
+    .expect_err("malformed parent Rect must fail");
+    assert!(malformed_error
+        .to_string()
+        .contains("Rect must have positive width and height"));
+
+    let malformed_irt = root.join("malformed-irt.pdf");
+    write_blank_pdf(malformed_irt.as_path(), 1);
+    let mut document = Document::load(malformed_irt.as_path()).expect("malformed IRT PDF");
+    let page_id = document.get_pages()[&1];
+    let malformed_id = document.add_object(dictionary! {
+        "Type" => "Annot",
+        "Subtype" => "Text",
+        "Rect" => vec![10.into(), 10.into(), 30.into(), 30.into()],
+        "P" => page_id,
+        "IRT" => 7,
+    });
+    document
+        .get_object_mut(page_id)
+        .and_then(Object::as_dict_mut)
+        .expect("malformed IRT page")
+        .set("Annots", vec![Object::Reference(malformed_id)]);
+    document
+        .save(malformed_irt.as_path())
+        .expect("save malformed IRT PDF");
+    let malformed_hash = sha256_file(malformed_irt.as_path()).expect("malformed IRT hash");
+    let malformed_error = pdf_edit::add_pdf_annotation_reply(
+        &json!({
+            "path":"malformed-irt.pdf",
+            "expected_source_sha256":malformed_hash,
+            "page":1,
+            "annotation_index":1,
+            "text":"Reply",
+            "target_path":"malformed-irt-output.pdf",
+        }),
+        &state,
+        &request,
+    )
+    .expect_err("malformed IRT must fail");
+    assert!(malformed_error
+        .to_string()
+        .contains("IRT must be an indirect reference"));
+
+    let orphan_rt = root.join("orphan-rt.pdf");
+    write_blank_pdf(orphan_rt.as_path(), 1);
+    let mut document = Document::load(orphan_rt.as_path()).expect("orphan RT PDF");
+    let page_id = document.get_pages()[&1];
+    let orphan_id = document.add_object(dictionary! {
+        "Type" => "Annot",
+        "Subtype" => "Text",
+        "Rect" => vec![10.into(), 10.into(), 30.into(), 30.into()],
+        "P" => page_id,
+        "RT" => "R",
+    });
+    document
+        .get_object_mut(page_id)
+        .and_then(Object::as_dict_mut)
+        .expect("orphan RT page")
+        .set("Annots", vec![Object::Reference(orphan_id)]);
+    document
+        .save(orphan_rt.as_path())
+        .expect("save orphan RT PDF");
+    let orphan_hash = sha256_file(orphan_rt.as_path()).expect("orphan RT hash");
+    let orphan_error = pdf_edit::add_pdf_annotation_reply(
+        &json!({
+            "path":"orphan-rt.pdf",
+            "expected_source_sha256":orphan_hash,
+            "page":1,
+            "annotation_index":1,
+            "text":"Reply",
+            "target_path":"orphan-rt-output.pdf",
+        }),
+        &state,
+        &request,
+    )
+    .expect_err("RT without IRT must fail");
+    assert!(orphan_error.to_string().contains("RT requires IRT"));
+
+    let cyclic = root.join("cyclic.pdf");
+    write_blank_pdf(cyclic.as_path(), 1);
+    let mut document = Document::load(cyclic.as_path()).expect("cyclic PDF");
+    let page_id = document.get_pages()[&1];
+    let first_id = document.new_object_id();
+    let second_id = document.new_object_id();
+    document.objects.insert(
+        first_id,
+        Object::Dictionary(dictionary! {
+            "Type" => "Annot",
+            "Subtype" => "Text",
+            "Rect" => vec![10.into(), 10.into(), 30.into(), 30.into()],
+            "P" => page_id,
+            "IRT" => second_id,
+        }),
+    );
+    document.objects.insert(
+        second_id,
+        Object::Dictionary(dictionary! {
+            "Type" => "Annot",
+            "Subtype" => "Text",
+            "Rect" => vec![40.into(), 10.into(), 60.into(), 30.into()],
+            "P" => page_id,
+            "IRT" => first_id,
+        }),
+    );
+    document
+        .get_object_mut(page_id)
+        .and_then(Object::as_dict_mut)
+        .expect("cyclic page")
+        .set(
+            "Annots",
+            vec![Object::Reference(first_id), Object::Reference(second_id)],
+        );
+    document.save(cyclic.as_path()).expect("save cyclic PDF");
+    let cyclic_hash = sha256_file(cyclic.as_path()).expect("cyclic hash");
+    let cyclic_error = pdf_edit::add_pdf_annotation_reply(
+        &json!({
+            "path":"cyclic.pdf",
+            "expected_source_sha256":cyclic_hash,
+            "page":1,
+            "annotation_index":1,
+            "text":"Reply",
+            "target_path":"cyclic-output.pdf",
+        }),
+        &state,
+        &request,
+    )
+    .expect_err("cyclic IRT must fail");
+    assert!(cyclic_error.to_string().contains("contain a cycle"));
+
+    let cross_page = root.join("cross-page.pdf");
+    write_blank_pdf(cross_page.as_path(), 2);
+    let mut document = Document::load(cross_page.as_path()).expect("cross-page PDF");
+    let page_one_id = document.get_pages()[&1];
+    let page_two_id = document.get_pages()[&2];
+    let root_id = document.add_object(dictionary! {
+        "Type" => "Annot",
+        "Subtype" => "Text",
+        "Rect" => vec![10.into(), 10.into(), 30.into(), 30.into()],
+        "P" => page_one_id,
+    });
+    let reply_id = document.add_object(dictionary! {
+        "Type" => "Annot",
+        "Subtype" => "Text",
+        "Rect" => vec![10.into(), 10.into(), 30.into(), 30.into()],
+        "P" => page_two_id,
+        "IRT" => root_id,
+    });
+    document
+        .get_object_mut(page_one_id)
+        .and_then(Object::as_dict_mut)
+        .expect("page one")
+        .set("Annots", vec![Object::Reference(root_id)]);
+    document
+        .get_object_mut(page_two_id)
+        .and_then(Object::as_dict_mut)
+        .expect("page two")
+        .set("Annots", vec![Object::Reference(reply_id)]);
+    document
+        .save(cross_page.as_path())
+        .expect("save cross-page PDF");
+    let cross_page_hash = sha256_file(cross_page.as_path()).expect("cross-page hash");
+    let cross_page_error = pdf_edit::add_pdf_annotation_reply(
+        &json!({
+            "path":"cross-page.pdf",
+            "expected_source_sha256":cross_page_hash,
+            "page":2,
+            "annotation_index":1,
+            "text":"Reply",
+            "target_path":"cross-page-output.pdf",
+        }),
+        &state,
+        &request,
+    )
+    .expect_err("cross-page IRT must fail");
+    assert!(cross_page_error.to_string().contains("same page"));
+
+    assert_eq!(
+        fs::read(source.as_path()).expect("source after failures"),
+        source_before
+    );
+    for output in [
+        "direct-output.pdf",
+        "widget-output.pdf",
+        "nested-output.pdf",
+        "malformed-rect-output.pdf",
+        "malformed-irt-output.pdf",
+        "orphan-rt-output.pdf",
+        "cyclic-output.pdf",
+        "cross-page-output.pdf",
+    ] {
+        assert!(!root.join(output).exists(), "unexpected output {output}");
+    }
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
 fn creates_multi_page_pdf_from_png_images_with_bounded_layout() {
     let (root, state, request) = test_context();
     fs::create_dir_all(root.join("assets")).expect("assets");
